@@ -20,6 +20,15 @@ const ARGV_IDS = [
 ] as const;
 
 describe('cli install recipes', () => {
+  it.each(['darwin', 'linux', 'win32'] as const)('updates the recognized Qwen npm installation on %s', (platform) => {
+    const prefix = platform === 'win32' ? 'C:/Users/operator/npm' : '/home/operator/.npm-global';
+    const binPath = platform === 'win32' ? `${prefix}/qwen.cmd` : `${prefix}/bin/qwen`;
+    const realBinPath = `${prefix}/${platform === 'win32' ? '' : 'lib/'}node_modules/@qwen-code/qwen-code/cli.js`;
+    expect(selectCliUpdateRecipe({ adapterId: 'qwen', platform, binPath, realBinPath,
+      isRunnerResolvable: () => true })).toMatchObject({ ok: true,
+      recipe: { argv: ['npm', 'install', '-g', '--prefix', prefix, '@qwen-code/qwen-code'] } });
+  });
+
   it('covers the fresh-client core on macOS', () => {
     for (const id of [...ARGV_IDS, 'agy']) {
       expect(cliInstallRecipeFor(id, 'darwin')).not.toBeNull();

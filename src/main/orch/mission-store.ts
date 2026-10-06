@@ -360,6 +360,10 @@ function assertIntentContractRevision(
 
 export type MissionStoreOptions = ScopedStoreOptions & { assertCreateAccess?: () => void };
 
+// Pending callbacks are shared across store instances on the same SQLite connection.
+// A same-tick retry must invalidate a rolled-back callback even if timestamps match.
+const pendingLifecycleNotifications = new WeakMap<Database.Database, Map<string, symbol>>();
+
 export class ScopedMissionStore {
   readonly #binding: ScopedStoreBinding;
   readonly #assertCreateAccess: () => void;
@@ -1584,6 +1588,7 @@ export class ScopedMissionStore {
     }
     const db = this.#binding.writeDatabase();
     const nestedTransaction = db.inTransaction;
+    let newlyCompleted = false;
     const applyTransition = (): ScopedMission | null => {
         const existing = this.#getFromDatabase(db, id);
         if (!existing) return null;
@@ -1625,6 +1630,7 @@ export class ScopedMissionStore {
             expectation.intentVersion,
           );
         if (result.changes !== 1) return null;
+        newlyCompleted = existing.status !== 'done' && patch.status === 'done';
 
         const lifecycleRevoked =
           patch.status === 'blocked' ||
@@ -1667,20 +1673,35 @@ export class ScopedMissionStore {
       ? applyTransition()
       : db.transaction(applyTransition).immediate();
     if (!updated) return null;
+    // A state observation or historical edit is not proof of a new completion.
+    // Nested callers publish only after the enclosing SQLite commit survives.
+    const publishCommittedChange = (): void => {
+      if (newlyCompleted) {
+        emitAppEvent('mission.completed', { missionId: id.slice(0, 128) });
+      }
+      this.#binding.emitChange();
+    };
+    const pending = pendingLifecycleNotifications.get(db) ?? new Map<string, symbol>();
+    pendingLifecycleNotifications.set(db, pending);
+    pending.delete(id);
     if (nestedTransaction) {
+      const notification = Symbol();
+      pending.set(id, notification);
       const committedUpdatedAt = updated.updatedAt;
       queueMicrotask(() => {
+        if (pending.get(id) !== notification) return;
+        pending.delete(id);
         const committed = this.get(id);
         if (
           committed?.updatedAt === committedUpdatedAt &&
           committed.status === updated.status &&
           committed.intentState === updated.intentState
         ) {
-          this.#binding.emitChange();
+          publishCommittedChange();
         }
       });
     } else {
-      this.#binding.emitChange();
+      publishCommittedChange();
     }
     return cloneMission(updated);
   }

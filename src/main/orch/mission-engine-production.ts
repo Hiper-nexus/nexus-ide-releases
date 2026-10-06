@@ -1353,6 +1353,7 @@ export function projectMissionEngineSnapshotView(
       paneId: pane.paneId,
       agentId,
       state,
+      terminalLive: liveSessionState === "busy" || liveSessionState === "spawning" || liveSessionState === "idle",
       ...(currentUnitId ? { currentUnitId } : {}),
       // F-231: o quadro rotula "aberto por você" e o close do Maestro é recusado.
       ...(pane.operatorOpened === true ? { operatorOpened: true } : {}),

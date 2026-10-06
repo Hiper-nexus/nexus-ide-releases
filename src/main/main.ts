@@ -1,5 +1,6 @@
 // DEVE ser o primeiro import: `nexus-ide --redline-status` (barra do desktop) roda e sai aqui.
 import './redline/redline-cli-boot';
+import { cliUpdateKey } from './adapters/cli-auto-update';
 import { stopOrientationForWorkspace } from './context/orientation/orientation-bootstrap';
 import { stopQwenReadiness } from './adapters/qwen-readiness-cache';
 import { stopPaneSessionOutputGc } from './orch/pane-session-output';
@@ -405,6 +406,7 @@ import {
 import { registerBillingIpc } from "./persistence/billing-ipc";
 import { registerAccountChoiceIpc } from "./persistence/account-choice-ipc";
 import { syncLicenseOnBoot, stopLicenseSync } from "./license-sync";
+import { startProductActivity } from "./product-activity";
 import { registerTeamIpc } from "./team-ipc";
 import { installAppMenu } from "./app-menu";
 import { findTrustedMainWindow } from "./security/trusted-ipc";
@@ -521,6 +523,7 @@ let sessionAliveSentinel: SessionAliveSentinel | null = null;
 /** Nexus Redline (menu bar): sink de snapshots + vigia do pedido de refresh. */
 let redlineSink: ReturnType<typeof createRedlineSink> | null = null;
 let stopRedlineRefreshWatch: (() => Promise<void>) | null = null;
+let stopProductActivity: (() => Promise<void>) | null = null;
 let stopCliAutoUpdate: (() => void | Promise<void>) | null = null;
 
 function traceBootstrap(phase: string): void {
@@ -743,7 +746,7 @@ async function bootstrap(): Promise<void> {
   if (!isAutomatedReleaseTest()) {
     stopCliAutoUpdate = startCliAutoUpdate(app.getPath('userData'), (adapterId) =>
       listLiveSessionLocations().some(({ sessionId }) =>
-        getAgentSessionInfo(sessionId)?.adapterId === adapterId,
+        cliUpdateKey(getAgentSessionInfo(sessionId)?.adapterId ?? '') === cliUpdateKey(adapterId),
       ),
     );
   }
@@ -915,6 +918,7 @@ async function bootstrap(): Promise<void> {
   if (!isAutomatedReleaseTest()) {
     traceBootstrap('before license sync');
     syncLicenseOnBoot();
+    stopProductActivity = startProductActivity();
     traceBootstrap('after license sync');
   }
   registerPipeIpc(); // also calls initPanePipes()
@@ -1508,6 +1512,8 @@ function shutdown(): Promise<void> {
     await stopClaudeSubscriptionFreshness();
     await stopQwenReadiness();
     await stopAutoUpdater();
+    await stopProductActivity?.();
+    stopProductActivity = null;
     await stopLicenseSync();
     await stopOrientationForWorkspace();
     await stopEventLoopMonitor();

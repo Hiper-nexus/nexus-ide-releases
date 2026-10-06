@@ -8,7 +8,7 @@ import type { NoticeKind } from '../db/schema.js';
  * sem a sua confirmação", descadastro em todo e-mail e HTML simples (estilo inline, sem imagem, sem script, sem fonte remota).
  */
 export const DEFAULT_TRIAL_DAYS = 15;
-export const DEFAULT_TRIAL_MAX_AGENTS = 2;
+export const DEFAULT_TRIAL_MAX_AGENTS = 6;
 
 const ACCOUNT_URL = 'https://nexuside.app/conta/';
 const PLAN_URL = 'https://nexuside.app/conta/?plano=pro';
@@ -145,7 +145,7 @@ function copyFor(kind: NoticeKind, input: NoticeTemplateInput): Copy {
           date === null
             ? `Sua conta está criada e o teste de ${days(trialDays)} já está valendo.`
             : `Sua conta está criada e o teste de ${days(trialDays)} já está valendo, até ${date}.`,
-          `Durante o teste você pode usar até ${maxAgents} agentes ao mesmo tempo. Eles trabalham em paralelo e você só revisa o diff com cara de quem entendeu tudo. ${noCharge}`,
+          `Durante o teste você pode usar até ${maxAgents} agentes ao mesmo tempo. No Pro, os agentes simultâneos são ilimitados. O consumo de IA segue os limites e preços dos seus provedores. ${noCharge}`,
         ],
         ps: 'P.S.: funciona na sua máquina. E na nossa também.',
         cta: { label: 'Abrir minha conta', url: ACCOUNT_URL },
@@ -167,7 +167,7 @@ function copyFor(kind: NoticeKind, input: NoticeTemplateInput): Copy {
           date === null
             ? 'Seu teste do NexusIDE está chegando ao fim. Até lá, tudo segue funcionando como hoje, sem feature flag escondida e sem surpresa no deploy.'
             : `Seu teste do NexusIDE termina em ${date}. Até lá, tudo segue funcionando como hoje, sem feature flag escondida e sem surpresa no deploy.`,
-          `Curtiu? Escolha o plano Pro na sua conta e siga codando. Não curtiu? Não precisa fazer nada: o teste só termina. ${price}${noCharge}`,
+          `Curtiu? Escolha o plano Pro na sua conta, com agentes simultâneos ilimitados, e siga codando. Não curtiu? Não precisa fazer nada: o teste só termina. ${price}${noCharge}`,
         ],
         ps: 'P.S.: este e-mail saiu de um cron. Ele não tem opinião sobre o seu código, só sobre o calendário.',
         cta: { label: 'Ver o plano Pro', url: PLAN_URL },
@@ -188,7 +188,7 @@ function copyFor(kind: NoticeKind, input: NoticeTemplateInput): Copy {
           date === null
             ? 'Seu teste do NexusIDE termina em menos de 24 horas. Hora de decidir se esse teste vai pra produção.'
             : `Seu teste do NexusIDE termina em ${date}, em menos de 24 horas. Hora de decidir se esse teste vai pra produção.`,
-          `Depois disso o app pede o plano Pro para continuar. Escolha na sua conta quando quiser. ${price}${noCharge}`,
+          `Depois disso o app pede o plano Pro, com agentes simultâneos ilimitados, para continuar. Escolha na sua conta quando quiser. ${price}${noCharge}`,
         ],
         ps: 'P.S.: a gente sabe que dava pra ter decidido na segunda. Todo mundo deixa o merge pro fim da sprint.',
         cta: { label: 'Ver o plano Pro', url: PLAN_URL },
@@ -209,7 +209,7 @@ function copyFor(kind: NoticeKind, input: NoticeTemplateInput): Copy {
           date === null
             ? 'O teste do NexusIDE terminou. Sua conta continua existindo, e seus projetos continuam na sua máquina, do jeitinho que você deixou.'
             : `O teste do NexusIDE terminou em ${date}. Sua conta continua existindo, e seus projetos continuam na sua máquina, do jeitinho que você deixou.`,
-          `Para voltar a usar o app, escolha o plano Pro na sua conta. ${price}${noCharge}`,
+          `Para voltar a usar o app, escolha o plano Pro na sua conta, com agentes simultâneos ilimitados. ${price}${noCharge}`,
         ],
         ps: 'P.S.: nada de git stash aqui. A gente guarda a sua conta direitinho até você voltar.',
         cta: { label: 'Ver o plano Pro', url: PLAN_URL },

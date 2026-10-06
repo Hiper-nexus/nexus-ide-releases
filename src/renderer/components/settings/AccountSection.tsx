@@ -655,7 +655,7 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
                   </span>
                 </div>
                 <p className="account__plan-tagline">{plan.tagline}</p>
-                {plan.id === 'trial' && <p className="account__zone-hint">Teste de 15 dias · 2 agentes · sem sync na nuvem</p>}
+                {plan.id === 'trial' && <p className="account__zone-hint">Teste de 15 dias · 6 agentes simultâneos · sem sync na nuvem</p>}
                 <ul className="account__plan-features">
                   {plan.features.map((f) => (
                     <li key={f}>{f}</li>

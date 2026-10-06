@@ -186,6 +186,8 @@ export async function apiFetch(
   if (!session) return { status: 401, json: null };
   try {
     let res = await doFetch(deps, path, init, session);
+    // A body belongs to this login generation; never replay it under a new account.
+    if (deps.generation?.() !== generation) return { status: 401, json: null };
     if (res.status === 401) {
       const current = deps.getSecret('auth:session');
       if (current && current !== session) {
@@ -195,7 +197,7 @@ export async function apiFetch(
         res = await doFetch(deps, path, init, current);
       } else {
         const renewed = await tryRefresh(deps);
-        if (!renewed) return { status: 401, json: null };
+        if (!renewed || deps.generation?.() !== generation) return { status: 401, json: null };
         session = renewed;
         res = await doFetch(deps, path, init, renewed);
       }

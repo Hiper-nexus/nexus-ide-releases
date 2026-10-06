@@ -58,7 +58,7 @@ test('account list filters by situation and exposes only what the panel needs', 
   assert.equal(all.length, 5);
   assert.equal(listed.nextCursor, null);
   const byId = Object.fromEntries(all.map(row => [row.id, row]));
-  assert.deepEqual(Object.keys(byId.paid).sort(), ['access', 'email', 'id', 'lastSeenAt', 'name', 'role', 'subscriptionStatus', 'trialEndsAt']);
+  assert.deepEqual(Object.keys(byId.paid).sort(), ['access', 'email', 'id', 'lastAppSeenAt', 'lastSeenAt', 'name', 'role', 'subscriptionStatus', 'trialEndsAt']);
   assert.equal(byId.paid.lastSeenAt, null);
   assert.deepEqual([byId.paid.access, byId.paid.subscriptionStatus, byId.paid.role], ['pro', 'active', 'user']);
   assert.deepEqual([byId.trial.access, byId.trial.subscriptionStatus], ['trial', 'none']);

@@ -217,7 +217,7 @@ describe('AccountSection', () => {
       expect.stringContaining('Pro'),
     ]);
     expect(planCards[0].textContent).toContain('primeiro login verificado');
-    expect(host.textContent).toContain('Teste de 15 dias · 2 agentes · sem sync na nuvem');
+    expect(host.textContent).toContain('Teste de 15 dias · 6 agentes simultâneos · sem sync na nuvem');
     expect(host.textContent).not.toContain('não expira');
     expect(planCards[1].textContent).toMatch(/R\$\s*59,99/);
     expect(planCards[1].textContent).toContain('Preço promocional');

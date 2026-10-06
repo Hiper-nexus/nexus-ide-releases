@@ -23,6 +23,7 @@ export function accountsQuery({ status, email, cursor } = {}) {
 function validAccount(account) {
   if (!isObject(account) || typeof account.id !== 'string' || account.id === '') return false;
   if (typeof account.email !== 'string' || typeof account.role !== 'string' || typeof account.access !== 'string') return false;
+  if (account.lastAppSeenAt !== undefined && account.lastAppSeenAt !== null && (typeof account.lastAppSeenAt !== 'string' || !ISO.test(account.lastAppSeenAt) || !Number.isFinite(Date.parse(account.lastAppSeenAt)))) return false;
   if (account.lastSeenAt === null) return true;
   return typeof account.lastSeenAt === 'string' && ISO.test(account.lastSeenAt) && Number.isFinite(Date.parse(account.lastSeenAt));
 }

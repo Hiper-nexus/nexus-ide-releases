@@ -306,3 +306,17 @@ it('um redirecionamento recusado vira falha de rede, sem seguir o destino', asyn
   expect(result).toEqual({ status: 0, json: null });
   expect((d.fetchFn as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
 });
+
+it('never retries an activity body with another login after an in-flight 401', async () => {
+  let generation = 1;
+  const response = Promise.withResolvers<Response>();
+  const d = deps({ generation: () => generation });
+  d.fetchFn.mockImplementationOnce(() => response.promise).mockResolvedValue(json({ ok: true }));
+  const flight = apiFetch('/v1/activity', { method: 'POST', body: { agentStarted: true, agentWorking: false, missionCompleted: false } }, d as never);
+  generation += 1;
+  d.store['auth:session'] = 'account-b-session';
+  d.store['auth:refresh'] = 'account-b-refresh';
+  response.resolve(json({ ok: false }, 401));
+  expect((await flight).status).toBe(401);
+  expect(d.fetchFn).toHaveBeenCalledTimes(1);
+});

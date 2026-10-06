@@ -464,14 +464,15 @@ const aiCliCommands = new Map<string, string>([
   ['cursor-agent', 'cursor-agent'], ['qodercli', 'qoder'],
   ['prime-agent', 'prime-agent'], ['omp', 'omp'], ['codex-fugu', 'sakana'],
 ]);
-/** Versão por arquivo real + mtime, inclusive sondas que falharam (F-790). */
-const cliVersionCache = new Map<string, { mtimeMs: number; version: string | null }>();
+/** Versão por arquivo real + mtime; falhas transitórias expiram para nova sonda. */
+const cliVersionCache = new Map<string, { mtimeMs: number; version: string | null; probedAt: number }>();
 /** Sondas em voo, uma por arquivo real + mtime. */
 const cliVersionProbes = new Map<string, Promise<string | null>>();
 const cliVersionListeners = new Set<() => void>();
 /** Sobe a cada reset de teste: sonda de geração antiga não grava no cache. */
 let cliVersionGeneration = 0;
 const CLI_VERSION_PROBE_TIMEOUT_MS = 1_500;
+const CLI_VERSION_FAILURE_RETRY_MS = 60_000;
 
 function aiAdapterIdFor(binPath: string): string | undefined {
   return aiCliCommands.get(path.basename(binPath).replace(/\.(?:exe|com|cmd|bat)$/iu, ''));
@@ -494,7 +495,7 @@ function cliVersionKey(
 
 /**
  * Versão já sondada desta instalação (cache por caminho real + mtime,
- * inclusive falhas). `undefined` = ainda não sondada: quem resolve mantém a
+ * inclusive falhas por um minuto). `undefined` = ainda não sondada: quem resolve mantém a
  * ordem do PATH e agenda a sonda assíncrona. Nunca executa a CLI.
  */
 export function cachedCliBinaryVersion(
@@ -505,7 +506,9 @@ export function cachedCliBinaryVersion(
   const key = cliVersionKey(binPath, adapterId);
   if (!key) return null;
   const cached = cliVersionCache.get(key.realPath);
-  return cached?.mtimeMs === key.mtimeMs ? cached.version : undefined;
+  return cached?.mtimeMs === key.mtimeMs &&
+    (cached.version !== null || Date.now() - cached.probedAt < CLI_VERSION_FAILURE_RETRY_MS)
+    ? cached.version : undefined;
 }
 
 function runCliVersionProbe(
@@ -548,7 +551,10 @@ export function probeCliBinaryVersion(
   const key = cliVersionKey(binPath, adapterId);
   if (!key) return Promise.resolve(null);
   const cached = cliVersionCache.get(key.realPath);
-  if (cached?.mtimeMs === key.mtimeMs) return Promise.resolve(cached.version);
+  if (cached?.mtimeMs === key.mtimeMs &&
+      (cached.version !== null || Date.now() - cached.probedAt < CLI_VERSION_FAILURE_RETRY_MS)) {
+    return Promise.resolve(cached.version);
+  }
   const probeKey = `${key.realPath}\0${key.mtimeMs}`;
   const inFlight = cliVersionProbes.get(probeKey);
   if (inFlight) return inFlight;
@@ -556,7 +562,7 @@ export function probeCliBinaryVersion(
   const probe = runCliVersionProbe(binPath, adapterId, effectivePath).then((version) => {
     if (generation !== cliVersionGeneration) return version;
     cliVersionProbes.delete(probeKey);
-    cliVersionCache.set(key.realPath, { mtimeMs: key.mtimeMs, version });
+    cliVersionCache.set(key.realPath, { mtimeMs: key.mtimeMs, version, probedAt: Date.now() });
     for (const listener of cliVersionListeners) {
       try {
         listener();

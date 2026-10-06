@@ -105,6 +105,25 @@ describe('path-resolver CLI binary resolution', () => {
     expect(count()).toBe(4);
   });
 
+  it.skipIf(process.platform === 'win32')('retries a transient failed version probe without changing the executable mtime', async () => {
+    const old = path.join(binDir, 'codex');
+    const recent = path.join(kimiDir, 'codex');
+    const ready = path.join(tmp, 'ready');
+    fs.writeFileSync(old, '#!/bin/sh\necho codex-cli 0.146.0\n', { mode: 0o755 });
+    fs.writeFileSync(recent, `#!/bin/sh\n[ -f '${ready}' ] || exit 1\necho codex-cli 0.160.1\n`, { mode: 0o755 });
+    const options = { processPath: binDir, effectivePath: [binDir, kimiDir].join(path.delimiter), home: tmp };
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    try {
+      await warmCliBinaryVersions({ commands: ['codex'], ...options });
+      expect(resolveCliBinary('codex', options)?.binPath).toBe(old);
+      fs.writeFileSync(ready, '');
+      now.mockReturnValue(1_061_000);
+      await warmCliBinaryVersions({ commands: ['codex'], ...options });
+      expect(resolveCliBinary('codex', options)?.binPath).toBe(recent);
+      expect(cachedCliBinaryVersion(recent, 'codex')).toBe('0.160.1');
+    } finally { now.mockRestore(); }
+  });
+
   it.skipIf(process.platform === 'win32')('F-790: keeps PATH order when any candidate version is unreadable, and on equal versions', async () => {
     const old = path.join(binDir, 'codex');
     const recent = path.join(kimiDir, 'codex');

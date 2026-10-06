@@ -35,7 +35,7 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
 async function main(accountId) {
   const status = (await (await fetch(`${API}/v1/public/status`)).json()).data;
   const trialDays = status.trial?.days ?? 15;
-  const maxAgents = status.trial?.maxAgents ?? 2;
+  const maxAgents = status.trial?.maxAgents ?? 6;
   check('API pronta e vendas abertas', status.ready === true && status.billing?.available === true);
 
   const now = Date.now();

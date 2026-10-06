@@ -1,6 +1,14 @@
 import path from 'node:path';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import type { CliInstallRecipe } from './cli-install-recipes';
 import { selectCliUpdateRecipe } from './cli-install-recipes';
+
+/** Providers hosted by the same CLI share update/spawn exclusion and liveness. */
+export function cliUpdateKey(adapterId: string): string {
+  const adapter = BUILTIN_ADAPTERS.find((raw) => (raw as { id: string }).id === adapterId) as
+    { kind?: string; bin?: string } | undefined;
+  return adapter?.kind === 'cli-pty' && adapter.bin ? adapter.bin : adapterId;
+}
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60_000;
 const RETRY_AFTER_FAILURE_MS = 60 * 60_000;
@@ -21,6 +29,7 @@ export class CliUpdateLease {
   private readonly spawnWaiters = new Map<string, Array<(release: () => void) => void>>();
 
   isHeld(adapterId: string): boolean {
+    adapterId = cliUpdateKey(adapterId);
     return this.active === adapterId;
   }
 
@@ -49,6 +58,7 @@ export class CliUpdateLease {
   }
 
   acquire(adapterId: string, owner: 'manual' | 'provisioning' = 'manual'): boolean {
+    adapterId = cliUpdateKey(adapterId);
     if (this.active || this.autoConsent || (this.provisioning && owner !== 'provisioning') ||
         (this.spawning.get(adapterId) ?? 0) > 0) return false;
     this.active = adapterId;
@@ -56,6 +66,7 @@ export class CliUpdateLease {
   }
 
   release(adapterId: string): void {
+    adapterId = cliUpdateKey(adapterId);
     if (this.active !== adapterId) return;
     this.active = null;
     const waiters = this.spawnWaiters.get(adapterId) ?? [];
@@ -76,6 +87,7 @@ export class CliUpdateLease {
   }
 
   acquireSpawnPermit(adapterId: string): Promise<() => void> {
+    adapterId = cliUpdateKey(adapterId);
     if (this.active !== adapterId) return Promise.resolve(this.grantSpawnPermit(adapterId));
     return new Promise((resolve) => {
       const waiters = this.spawnWaiters.get(adapterId) ?? [];

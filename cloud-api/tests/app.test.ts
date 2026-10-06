@@ -25,7 +25,7 @@ test('public status reports price, trial limits and configured logins without ex
         { id: 'year', months: 12, amount: 71988, available: false },
       ],
     },
-    trial: { days: 15, maxAgents: 2, cloudSync: false },
+    trial: { days: 15, maxAgents: 6, cloudSync: false },
   });
   assert.equal(JSON.stringify(body).includes('fixture'), false);
   db.close();
@@ -106,7 +106,7 @@ test('web session is readable through the composed app with credentials', async 
   assert.equal(response.headers.get('access-control-allow-origin'), SITE);
   const body = await json(response);
   assert.equal(body.data?.entitlement.access, 'trial');
-  assert.equal(body.data?.entitlement.maxAgents, 2);
+  assert.equal(body.data?.entitlement.maxAgents, 6);
   db.close();
 });
 

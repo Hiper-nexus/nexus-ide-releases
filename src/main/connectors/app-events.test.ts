@@ -27,6 +27,16 @@ describe('app-events — fila com cursor do conector Arms', () => {
     expect(latestAppEventSeq()).toBe(third.seq);
   });
 
+  it('completion events are distinct from state observations and reach subscribers', () => {
+    const received: string[] = [];
+    const unsubscribe = subscribeAppEvents(event => received.push(event.kind));
+    emitAppEvent('mission.state', { status: 'done' });
+    emitAppEvent('mission.completed', { missionId: 'mission-test' });
+    unsubscribe();
+    expect(received).toEqual(['mission.state', 'mission.completed']);
+    expect(appEventsAfter(0).events[1]?.payload).toEqual({ missionId: 'mission-test' });
+  });
+
   it('payload vira imutável — mutação externa não contamina a fila', () => {
     const payload: { status: string } = { status: 'running' };
     emitAppEvent('mission.state', payload);

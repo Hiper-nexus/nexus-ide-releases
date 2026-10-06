@@ -76,6 +76,16 @@ describe('worktrees na projeção', () => {
 });
 
 describe('projectMissionSnapshot', () => {
+  it.each([false, true, undefined])('só oferece terminal cujo sinal de vida não foi negado (%s)', (terminalLive) => {
+    const view = runningView();
+    if (terminalLive !== undefined) Object.assign(view.panes[0]!, { terminalLive });
+    const agent = projectMissionSnapshot(view).agents[0]!;
+    if (terminalLive === false) expect(agent).not.toHaveProperty('paneId');
+    else expect(agent.paneId).toBe('pane-1');
+    if (terminalLive === undefined) expect(agent).not.toHaveProperty('terminalLive');
+    else expect(agent).toHaveProperty('terminalLive', terminalLive);
+  });
+
   it('Via Rápida: running sem recibo cerimonial continua running', () => {
     // O tripé autoridade+recibo+liveness era do motor antigo e projetava
     // "Precisa de reparo" sobre equipes vivas. Sob a Via Rápida (padrão),

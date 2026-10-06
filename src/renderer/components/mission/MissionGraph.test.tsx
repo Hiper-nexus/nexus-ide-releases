@@ -545,6 +545,19 @@ describe('MissionGraph', () => {
     expect(onSelectAgent).toHaveBeenCalledWith('worker-implementation');
   });
 
+  it('seleciona o agente sem tentar abrir um terminal cuja sessão acabou', () => {
+    const ended = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) => agent.id === 'coordinator'
+        ? { ...agent, paneId: 'pane-antigo', terminalLive: false }
+        : agent),
+    };
+    const { host, onSelectAgent, onOpenAgentPane } = renderGraph(null, { snapshot: ended });
+    act(() => agentButton(host, 'Coordenação principal da missão canônica').click());
+    expect(onSelectAgent).toHaveBeenCalledWith('coordinator');
+    expect(onOpenAgentPane).not.toHaveBeenCalled();
+  });
+
   it('abre o terminal do agente que já tem pane (F-005)', () => {
     const seated = {
       ...snapshot,

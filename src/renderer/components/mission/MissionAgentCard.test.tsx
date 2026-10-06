@@ -5,6 +5,20 @@ import type { MissionAgentSnapshot } from '../../../shared/mission-engine-contra
 import { MissionAgentCard } from './MissionAgentCard';
 
 it.each([
+  [false, 'Sem terminal ativo'],
+  [true, 'Terminal ativo · sem unidade em curso'],
+])('o rack explica a presença física %s sem confundir com unidade em curso', (terminalLive, label) => {
+  const host = document.createElement('div');
+  host.innerHTML = renderToStaticMarkup(<MissionAgentCard
+    agent={{ id: 'rack', agentName: 'Rack', category: 'executor', cli: 'codex', state: 'queued', terminalLive } as MissionAgentSnapshot}
+    position={{ x: 0, y: 0 }} selected={false} onSelectAgent={() => {}}
+  />);
+  expect(host.querySelector('.mission-agent-card__idle')?.textContent).toBe(label);
+  expect(host.querySelector('button')?.getAttribute('aria-label')).toContain(label);
+  expect(host.querySelector('.mission-agent-card__state')?.textContent).toBe('Na fila');
+});
+
+it.each([
   ['orchestrator', 540, '--mission-core-width'],
   ['orchestrator', 304, '--mission-core-width'],
   ['executor', 208, '--mission-rack-width'],

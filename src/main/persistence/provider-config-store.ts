@@ -2223,7 +2223,18 @@ function readAutoCliPreferences(file: string): AutoCliPreferences | null {
       checkedAt: z.record(z.string(), z.number().finite().nonnegative()).default({}),
     }).safeParse(data);
     return parsed.success ? parsed.data : null;
-  } catch { return null; }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      // A dangling symlink is an existing choice whose content is unavailable.
+      try { fs.lstatSync(file); }
+      catch (statError) {
+        if ((statError as NodeJS.ErrnoException).code === 'ENOENT') {
+          return { enabled: true, checkedAt: {} };
+        }
+      }
+    }
+    return null;
+  }
 }
 
 let autoCliPreferencesRevision = 0;
@@ -2244,6 +2255,7 @@ function writeAutoCliPreferences(file: string, state: AutoCliPreferences): boole
 
 async function readAutoCliPreferencesAsync(file: string): Promise<AutoCliPreferences | null> {
   const result = await readRegularFileCappedAsync(file, 256 * 1024);
+  if (result.kind === 'none' && result.stamp === 'missing') return { enabled: true, checkedAt: {} };
   if (result.kind !== 'text') return null;
   try {
     const parsed = z.object({ enabled: z.boolean(), askAgainAt: z.number().finite().nonnegative().optional(),
@@ -2304,7 +2316,7 @@ export function startCliAutoUpdate(
   userDataDir: string,
   hasLivePane: (adapterId: string) => boolean,
 ): () => Promise<void> {
-  if (process.platform !== 'darwin' && process.platform !== 'win32') return async () => {};
+  if (!['darwin', 'win32', 'linux'].includes(process.platform)) return async () => {};
   const file = path.join(userDataDir, 'cli-auto-update.json');
   const controller = new AbortController();
   const taskId = `cli-auto-update:${randomUUID()}`;

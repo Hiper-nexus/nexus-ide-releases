@@ -369,7 +369,7 @@ export function MissionGraph({
                 onSelectAgent={(agentId) => {
                   onSelectAgent(agentId);
                   const paneId = agent.paneId;
-                  if (paneId) onOpenAgentPane?.(paneId);
+                  if (paneId && agent.terminalLive !== false) onOpenAgentPane?.(paneId);
                 }}
               />
             );

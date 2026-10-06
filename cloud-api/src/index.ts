@@ -5,6 +5,7 @@ import type { AppEnv } from './context.js';
 import { authConfigured, billingConfigured, configFrom } from './config.js';
 import { createAuthRoutes } from './auth.js';
 import { createBillingRoutes, type StripeFactory } from './billing.js';
+import { createActivityRoutes, purgeActivityDays } from './activity.js';
 import { adminRoutes } from './admin.js';
 import { teamRoutes } from './teams.js';
 import { cronRoutes } from './cron.js';
@@ -83,7 +84,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     } });
   });
   // O envio de teste e o painel de relatos de bug vêm ANTES de adminRoutes: respondem sozinhos (com as próprias guardas) e não herdam nem duplicam o middleware de /admin/*.
-  app.route('/v1', createAuthRoutes(deps.fetchFn)).route('/v1', createBillingRoutes(deps.stripeFor, deps.now)).route('/v1', createNoticeAdminRoutes(deps.fetchFn)).route('/v1', bugReportRoutes).route('/v1', createBugAdminRoutes()).route('/v1', adminRoutes)
+  app.route('/v1', createAuthRoutes(deps.fetchFn)).route('/v1', createBillingRoutes(deps.stripeFor, deps.now)).route('/v1', createNoticeAdminRoutes(deps.fetchFn)).route('/v1', bugReportRoutes).route('/v1', createBugAdminRoutes()).route('/v1', createActivityRoutes(deps.now)).route('/v1', adminRoutes)
     .route('/v1', teamRoutes).route('/v1', cronRoutes).route('/v1', syncRoutes).route('/v1', noticeRoutes);
   return app;
 }
@@ -96,6 +97,10 @@ export async function cleanupExpired(db: D1Database, now = Date.now()): Promise<
     // An expired lease can be re-acquired by any peer, so keeping it only grows the table.
     db.prepare('DELETE FROM cron_leases WHERE expires_at<?').bind(now - LEASE_RETENTION_MS),
   ]);
+  // Older deployments may not have the activity migration yet. Other cleanup still runs.
+  try { await purgeActivityDays(db, now); } catch (error) {
+    console.error('nexus-cloud-api: limpeza dos dias de atividade falhou:', error instanceof Error ? error.message : 'unknown');
+  }
   // Retenção do diagnóstico dos relatos de bug (180 dias; o relato fica). Separada da batch acima: se a migração 0007
   // ainda não foi aplicada, a falha fica no log e a limpeza de sessões, tokens e avisos por e-mail segue normalmente.
   try {

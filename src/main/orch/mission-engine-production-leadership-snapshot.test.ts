@@ -294,6 +294,22 @@ describe('Quadro fiel ao terminal (campo 23/09)', () => {
 });
 
 describe('missão da aba (sem squad): o quadro desenha os panes que a missão gravou', () => {
+  it.each(['busy', 'spawning', 'idle', 'exited', null])('distingue terminal físico %s de um pane durável antigo', (sessionState) => {
+    harness.resolveMissionLeader.mockReturnValue(null);
+    if (sessionState) harness.sessionStates.set('s-worker', sessionState);
+    harness.paneSnapshots = [{ paneId: 'pane-worker', sessionId: 's-worker' }];
+    const view = projectMissionEngineSnapshotView(scope, stores({
+      mission: mission(),
+      panes: [pane({ paneId: 'pane-worker', role: 'worker', adapterId: 'codex' })],
+    }), missionId);
+    const live = ['busy', 'spawning', 'idle'].includes(sessionState ?? '');
+    expect(view.panes[0]).toHaveProperty('terminalLive', live);
+    const agent = projectMissionSnapshot(view).agents[0]!;
+    expect(agent).toHaveProperty('terminalLive', live);
+    if (live) expect(agent.paneId).toBe('pane-worker');
+    else expect(agent).not.toHaveProperty('paneId');
+  });
+
   function liveOrchestrator(paneId: string, sessionId: string, overrides: Record<string, unknown> = {}) {
     harness.sessionStates.set(sessionId, 'busy');
     harness.agentSessionsByPane.set(paneId, [

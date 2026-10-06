@@ -52,6 +52,7 @@ export const PLANS: PlanDef[] = [
     tagline: 'Para quem opera todo dia',
     features: [
       'Acesso após o período de teste',
+      'Agentes simultâneos ilimitados',
       'Failover multi-conta avançado',
       'Squads na nuvem',
       'Sincronização entre máquinas',

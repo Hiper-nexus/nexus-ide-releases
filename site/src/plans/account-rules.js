@@ -3,7 +3,7 @@
 
 /** `maxAgents` nulo é o contrato do Pro: sem o limite do teste. */
 export function agentLimitLabel(maxAgents) {
-  if (maxAgents === null) return 'Sem limite do teste';
+  if (maxAgents === null) return 'Agentes simultâneos ilimitados';
   return Number.isInteger(maxAgents) ? String(maxAgents) : 'A confirmar';
 }
 

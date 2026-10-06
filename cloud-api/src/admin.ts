@@ -62,8 +62,9 @@ adminRoutes.get('/admin/accounts', async (c) => {
   if (query.data.cursor !== undefined && cursor === null) throw new HTTPException(400, { message: 'Cursor inválido.' });
   // last_seen_at é a última entrada real: findOrCreateAccount grava no login OAuth (conta nova, vínculo por e-mail e retorno).
   // sessions.last_used_at não é preenchido e a sessão expira; a lista não deriva dali.
-  type Row = Pick<AccountRow, 'id' | 'email' | 'name' | 'trial_expires_at' | 'last_seen_at' | 'created_at'> & { is_admin: number; situation: Situation; subscription_status: string | null };
+  type Row = Pick<AccountRow, 'id' | 'email' | 'name' | 'trial_expires_at' | 'last_seen_at' | 'created_at'> & { is_admin: number; situation: Situation; subscription_status: string | null; last_app_seen_at: number | null };
   const rows = await c.env.DB.prepare(`${CLASSIFIED} SELECT id,email,name,trial_expires_at,last_seen_at,created_at,is_admin,situation,
+      (SELECT t.last_app_seen_at FROM account_activity t WHERE t.account_id=classified.id) AS last_app_seen_at,
       (SELECT s.status FROM subscriptions s WHERE (s.owner_type='account' AND s.account_id=classified.id)
         OR (s.owner_type='team' AND s.team_id IN (SELECT team_id FROM team_members WHERE account_id=classified.id)) ORDER BY ${LIVE} DESC,s.updated_at DESC LIMIT 1) AS subscription_status
     FROM classified WHERE (?3='all' OR situation=?3)
@@ -79,6 +80,7 @@ adminRoutes.get('/admin/accounts', async (c) => {
       access: row.situation === 'active' ? 'pro' : row.situation, trialEndsAt: row.trial_expires_at === null ? null : new Date(row.trial_expires_at).toISOString(),
       subscriptionStatus: row.subscription_status ?? 'none',
       lastSeenAt: row.last_seen_at === null ? null : new Date(row.last_seen_at).toISOString(),
+      lastAppSeenAt: row.last_app_seen_at === null ? null : new Date(row.last_app_seen_at).toISOString(),
     })),
     nextCursor: last ? encodeAccountCursor({ createdAt: last.created_at, id: last.id }) : null,
   } });

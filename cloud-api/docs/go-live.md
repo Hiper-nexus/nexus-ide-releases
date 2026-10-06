@@ -2,7 +2,7 @@
 
 Roteiro operacional. Revisado em 30/09/2026 contra o código e as fontes oficiais ao final; revisado de novo em 01/10/2026 contra o estado real da produção. Os comandos abaixo são para o operador executar. A elaboração deste documento não publicou serviços nem configurou contas externas.
 
-Destino: Worker `nexus-cloud-api`, API `https://api.nexuside.app`, site `https://nexuside.app`. Oferta: Nexus Pro por R$ 59,99/mês, em BRL. O teste do Nexus dura 15 dias, permite 2 agentes simultâneos e não permite sync em nuvem. Não existe Free permanente. O valor interno `plan=free` não significa acesso gratuito sem prazo.
+Destino: Worker `nexus-cloud-api`, API `https://api.nexuside.app`, site `https://nexuside.app`. Oferta: Nexus Pro por R$ 59,99/mês, em BRL. O teste do Nexus dura 15 dias, permite 6 agentes simultâneos e não permite sync em nuvem. Não existe Free permanente. O valor interno `plan=free` não significa acesso gratuito sem prazo.
 
 Execute uma etapa por vez. Pare quando a conferência falhar. Substitua os marcadores `<...>` antes de executar. IDs, arquivos de credenciais e chaves usam placeholders. Endereços públicos, preço e parâmetros da oferta são as constantes decididas para o produto.
 
@@ -223,7 +223,7 @@ Confira as 20 variáveis de `src/config.ts`:
 | `MIGRATION_READY` | `false` | `/v1/public/status` tem `ready=false` |
 | `ADMIN_EMAILS` | `<EMAIL_ADMIN_1>,<EMAIL_ADMIN_2>` | Os dois endereços de 1.1, sem outros usuários |
 | `TRIAL_DAYS` | `15` | `trial.days=15` |
-| `TRIAL_MAX_AGENTS` | `2` | `trial.maxAgents=2` |
+| `TRIAL_MAX_AGENTS` | `6` | `trial.maxAgents=6` |
 | `TRIAL_CLOUD_SYNC` | `false` | `trial.cloudSync=false` |
 | `GOOGLE_OAUTH_ID`, `GITHUB_OAUTH_ID` | `<CLIENT_ID_GOOGLE>`, `<CLIENT_ID_GITHUB>` | Clientes de 2.4 |
 | `STRIPE_PRICE_PRO` | `<PRICE_ID_TESTE>` | Price validado em 2.5 |
@@ -352,7 +352,7 @@ Autoridade administrativa: exige `accounts.role=admin` **e** identidade do prove
 | Google | Em janela privada, `/conta/` > entrar com Google usando conta comum nova | Consentimento no Google, retorno à API e depois ao site; `GET /v1/web/session` com `authenticated=true`, `profile.role=user`, `entitlement.access=trial`. |
 | GitHub | Saia. Em outra janela privada, entre pelo GitHub com segunda conta comum | Mesmo fluxo; identidade GitHub verificada; sessão de usuário comum. |
 | Identidade | Se testar os dois provedores com o mesmo e-mail verificado | A API pode vincular ambos à mesma conta. Isso não é nova conta nem novo teste. |
-| Duração | Consulte a sessão e o SQL abaixo | `trialEndsAt` 15 dias após a criação, `maxAgents=2`, `cloudSync=false`. Novo login não reinicia o prazo. |
+| Duração | Consulte a sessão e o SQL abaixo | `trialEndsAt` 15 dias após a criação, `maxAgents=6`, `cloudSync=false`. Novo login não reinicia o prazo. |
 | Admin | Entre em outra janela com um dos administradores de 1.1 e abra `/admin/` | `profile.role=admin`, lista e resumo acessíveis. Repetir com o segundo administrador. |
 | Isolamento | Com conta comum, abra `/admin/` e confira a requisição à API | API responde 403. Ocultar a tela sem bloquear a API não passa. |
 | Checkout fechado | Com a flag falsa e usuário comum, conferir chamada autenticada de checkout | 503. O botão fica desabilitado. Uma chamada sem sessão daria 401 e não provaria a flag. |
@@ -404,7 +404,7 @@ No app instalado, entre com a mesma conta comum que comprou em 2.10. Repita logi
 
 Depois de comprar no site, faça sair/entrar explicitamente no app para obter uma licença nova. Não dependa de reiniciar o app: o código atual pode evitar sync no boot sem sessão já desbloqueada. A licença de trial também usa `plan=pro`, por isso o rótulo “Pro” isolado não prova pagamento.
 
-Conferência: assinatura aceita pela pública efetiva do instalador, conta correta e token novo com `access=pro`, `limits.cloudSync=true`, `limits.maxAgents=null`, `aud=nexus-desktop`, `iss=https://api.nexuside.app`, `sub` da conta e `exp` futuro. Confira apenas claims selecionadas em diagnóstico local, sem imprimir/copiar o JWT inteiro. Compare com o trial anterior: `access=trial`, limite 2 e sync falso.
+Conferência: assinatura aceita pela pública efetiva do instalador, conta correta e token novo com `access=pro`, `limits.cloudSync=true`, `limits.maxAgents=null`, `aud=nexus-desktop`, `iss=https://api.nexuside.app`, `sub` da conta e `exp` futuro. Confira apenas claims selecionadas em diagnóstico local, sem imprimir/copiar o JWT inteiro. Compare com o trial anterior: `access=trial`, limite 6 e sync falso.
 
 O app grava o token em `~/.nexus/license.json`. No terminal comum do mesmo usuário, confira o arquivo produzido pelo login. Use a pública efetiva obtida em 2.3 e o ID da conta observado em 2.10:
 
@@ -661,7 +661,7 @@ Antes de nova mudança, faça export privado e registre nome do banco, horário 
 | Pendente ou não confirmado | Onde conferir | Impede declarar o quê |
 | --- | --- | --- |
 | Exceção para abrir checkout de teste, ou homologação separada | Decisão do operador de 2.8 | Ensaio manual completo mantendo a regra literal de `MIGRATION_READY=false` |
-| Enforcement desktop de 2 agentes, sync bloqueado, fim do teste e suspensão | Implementação/release da Fase 4 e app instalado | Produto com os limites e bloqueios prometidos |
+| Enforcement desktop de 6 agentes, sync bloqueado, fim do teste e suspensão | Implementação/release da Fase 4 e app instalado | Produto com os limites e bloqueios prometidos |
 | Pública realmente fornecida ao instalador e privada Railway acessível | Pipeline/artefato e cofre Railway | Compatibilidade de licença após deploy |
 | Renovação de licença, revogação e janela offline | `license-sync.ts`, `billing-ipc.ts`, testes em app instalado | Bloqueio no prazo combinado, inclusive offline |
 | Validação completa de `sub`, `iss`, `aud`, `exp` e vínculo à conta no app | Revisão de segurança do consumidor desktop | Resistência à reutilização de licença entre contas. O emissor já inclui essas claims; isso não prova o consumidor. |
@@ -765,7 +765,7 @@ Depois de qualquer deploy da API, e sempre que a chave de licença mudar, rode:
 node scripts/smoke-prod-license.mjs
 ```
 
-Ele cria uma conta sintética (`@nexus-e2e.invalid`) com um código de login de uso único no D1 de produção, troca o código pelo endpoint real, confere a licença e **apaga a conta** (também se algo falhar no meio). Prova, em 12 conferências: sessão e renovação, código de uso único, licença **assinada pela API e aceita pela chave pública embutida no app** (`../nexus-ide/resources/license-pubkey.pem`), teste de 15 dias com teto de 2 agentes e validade de até 24 h. Se a chave pública do app divergir da de assinatura da API, todo cliente novo fica bloqueado e este é o teste que acusa. Não toca no Stripe nem em conta de cliente e não imprime token.
+Ele cria uma conta sintética (`@nexus-e2e.invalid`) com um código de login de uso único no D1 de produção, troca o código pelo endpoint real, confere a licença e **apaga a conta** (também se algo falhar no meio). Prova, em 12 conferências: sessão e renovação, código de uso único, licença **assinada pela API e aceita pela chave pública embutida no app** (`../nexus-ide/resources/license-pubkey.pem`), teste de 15 dias com teto de 6 agentes e validade de até 24 h. Se a chave pública do app divergir da de assinatura da API, todo cliente novo fica bloqueado e este é o teste que acusa. Não toca no Stripe nem em conta de cliente e não imprime token.
 
 ## Verificação dos segredos OAuth (Google e GitHub) sem usar conta de ninguém
 

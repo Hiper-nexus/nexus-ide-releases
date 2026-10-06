@@ -228,6 +228,11 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     linux: [npmRecipe('@openai/codex')],
     win32: [npmRecipe('@openai/codex')],
   },
+  qwen: {
+    darwin: [npmRecipe('@qwen-code/qwen-code')],
+    linux: [npmRecipe('@qwen-code/qwen-code')],
+    win32: [npmRecipe('@qwen-code/qwen-code')],
+  },
   'mimo-code': {
     darwin: [npmRecipe('@mimo-ai/cli')],
     linux: [npmRecipe('@mimo-ai/cli')],

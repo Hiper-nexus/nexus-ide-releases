@@ -328,7 +328,7 @@ test('the desktop license reflects trial, paid and suspended access and is signe
   };
   const trial = await claims();
   assert.equal(trial.access, 'trial');
-  assert.deepEqual(trial.limits, { maxAgents: 2, cloudSync: false });
+  assert.deepEqual(trial.limits, { maxAgents: 6, cloudSync: false });
   assert.equal(trial.sub, 'user');
   await seedSubscription(context.db, 'user');
   const paid = await claims();

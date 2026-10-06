@@ -2,9 +2,11 @@ import { api, byId, message, displayDate, subscriptionLabel, ACCESS_LABELS } fro
 import { initCodes, resetCodes } from './admin-codes.js';
 import { initCoupons, resetCoupons } from './admin-coupons.js';
 import { initBugs, resetBugs } from './admin-bugs.js';
+import { activityView } from './plans/activity.js';
 import { accountsQuery, parseAccountsPage } from './plans/admin-accounts.js';
 
 const ACTIONS = { suspend: 'Suspender acesso', resume: 'Restaurar acesso', 'extend-trial': 'Estender teste' };
+let activityBusy = false;
 let session = null, selectedAction = null, isBusy = false, accountsCursor = null;
 
 function denyAccess(text) {
@@ -16,6 +18,8 @@ function denyAccess(text) {
   byId('admin-content').hidden = true;
   byId('admin-denied').hidden = false;
   byId('admin-overview').replaceChildren();
+  byId('admin-activity-metrics').replaceChildren();
+  byId('admin-activity-note').textContent = 'Entre com uma conta administrativa para consultar.';
   byId('account-rows').replaceChildren();
   accountsCursor = null;
   byId('accounts-more').hidden = true;
@@ -30,7 +34,7 @@ function setBusy(value) {
 }
 
 function renderOverview(data) {
-  const metrics = [['accounts', 'Contas'], ['trial', 'Em teste'], ['active', 'Ativas'], ['suspended', 'Suspensas'], ['expired', 'Teste encerrado']];
+  const metrics = [['accounts', 'Contas'], ['trial', 'Em teste'], ['active', 'Com acesso Pro'], ['suspended', 'Suspensas'], ['expired', 'Teste encerrado']];
   if (!metrics.every(([key]) => Number.isInteger(data[key]) && data[key] >= 0)) throw new Error('O serviço não retornou um resumo válido. Atualize novamente.');
   byId('admin-overview').replaceChildren(...metrics.map(([key, label]) => {
     const item = document.createElement('div'), title = document.createElement('dt'), count = document.createElement('dd');
@@ -40,6 +44,28 @@ function renderOverview(data) {
     return item;
   }));
   byId('admin-overview').hidden = false;
+}
+
+async function refreshActivity() {
+  if (!session || activityBusy || document.hidden) return;
+  activityBusy = true;
+  try {
+    const view = activityView(await api('/v1/admin/activity'));
+    if (!view) throw new Error('O serviço não retornou métricas válidas.');
+    if (!session) return;
+    byId('admin-activity-metrics').replaceChildren(...view.metrics.map(({ label, value }) => {
+      const item = document.createElement('div'), title = document.createElement('dt'), count = document.createElement('dd');
+      title.textContent = label;
+      count.textContent = new Intl.NumberFormat('pt-BR').format(value);
+      item.append(title, count);
+      return item;
+    }));
+    byId('admin-activity-note').textContent = view.note;
+  } catch (error) {
+    byId('admin-activity-metrics').replaceChildren();
+    byId('admin-activity-note').textContent = `Medição indisponível: ${error.message} Nenhum número foi estimado.`;
+    if (error.status === 401 || error.status === 403) denyAccess(error.message);
+  } finally { activityBusy = false; }
 }
 
 function textCell(text) {
@@ -79,7 +105,7 @@ function accountRow(account) {
   }
   actions.append(group);
   row.append(identity, textCell(ACCESS_LABELS[account.access] || 'A confirmar'), textCell(displayDate(account.trialEndsAt)),
-    textCell(subscriptionLabel(account.subscriptionStatus)), textCell(account.role === 'admin' ? 'Administrador' : 'Usuário'), lastSeenCell(account.lastSeenAt), actions);
+    textCell(subscriptionLabel(account.subscriptionStatus)), textCell(account.role === 'admin' ? 'Administrador' : 'Usuário'), lastSeenCell(account.lastSeenAt), account.lastAppSeenAt ? lastSeenCell(account.lastAppSeenAt) : textCell('Sem medição'), actions);
   return row;
 }
 
@@ -116,6 +142,7 @@ async function loadAccounts({ append = false } = {}) {
     catch (error) { errors.push(error); }
   }
   setBusy(false);
+  if (!append) void refreshActivity();
   const permissionError = errors.find(error => error.status === 401 || error.status === 403);
   if (permissionError) { denyAccess(permissionError.message); return false; }
   if (errors.length && append && accountsCursor) byId('accounts-more').hidden = false;
@@ -207,3 +234,7 @@ byId('accounts-more').addEventListener('click', () => { void loadAccounts({ appe
 byId('admin-action-form').addEventListener('submit', submitAction);
 byId('cancel-admin-action').addEventListener('click', closeAction);
 void initializeAdmin();
+
+byId('refresh-activity').addEventListener('click', () => void refreshActivity());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshActivity(); });
+setInterval(() => { if (!document.hidden) void refreshActivity(); }, 60_000);

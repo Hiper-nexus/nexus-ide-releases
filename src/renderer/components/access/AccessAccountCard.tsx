@@ -145,7 +145,7 @@ export function AccessAccountCard(props: AccessAccountCardProps) {
           {props.offerTrial && (
             <div className="access-plans__row">
               <dt>Teste de 15 dias</dt>
-              <dd>2 agentes · sem sync na nuvem. Começa no primeiro login.</dd>
+              <dd>6 agentes simultâneos · sem sync na nuvem. Começa no primeiro login.</dd>
             </div>
           )}
           <div className="access-plans__row">

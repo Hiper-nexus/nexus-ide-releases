@@ -95,7 +95,7 @@ Começa com um levantamento somente leitura: como o app lê a licença hoje, ond
 
 | Decisão | Recomendação usada até resposta |
 |---|---|
-| Limites finais do teste | 15 dias, 2 agentes simultâneos, sem sync em nuvem, resto igual ao Pro |
+| Limites finais do teste | 15 dias, 6 agentes simultâneos, sem sync em nuvem, resto igual ao Pro |
 | O que é "bloquear" no app | Tela de bloqueio: sem terminais, agentes e missões; conta, assinatura e saída continuam acessíveis; arquivos locais intactos |
 | Tolerância offline | Teste: até 24 h. Pro: 7 dias. Hoje a API limita todos a 24 h |
 | Quem já usa o app sem conta | Passa a exigir login na atualização que trouxer o bloqueio; precisa de aviso antes |

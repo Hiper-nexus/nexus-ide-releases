@@ -140,6 +140,23 @@ describe('automatic CLI updates', () => {
     expect(shouldOfferAutoCliConsent({ enabled: true }, 9 * 24 * 60 * 60_000)).toBe(false);
   });
 
+  it('keeps Claude-derived provider spawns out of a Claude update lease', async () => {
+    const lease = new CliUpdateLease();
+    expect(lease.acquire('claude')).toBe(true);
+    let entered = false;
+    const pending = lease.acquireSpawnPermit('deepseek').then((release) => { entered = true; return release; });
+    await Promise.resolve();
+    expect(entered).toBe(false);
+    lease.release('claude');
+    const release = await pending;
+    expect(lease.acquire('glm')).toBe(false);
+    release();
+    expect(lease.acquire('glm-flash')).toBe(true);
+    expect(lease.isHeld('muse-claude')).toBe(true);
+    lease.release('longcat');
+    expect(lease.acquire('claude')).toBe(true);
+  });
+
   it('prevents manual and automatic updates from holding the same adapter at once', () => {
     const lease = new CliUpdateLease();
     expect(lease.acquire('claude')).toBe(true);

@@ -23,6 +23,7 @@ import {
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
 } from './mission-orchestrator-exit-policy';
 import { hashMissionIntentAuthority } from './mission-pane-authority';
+import { appEventsAfter, resetAppEventsForTests } from '../connectors/app-events';
 import { RETIRED_ROSTER_ROUTE_MARKER } from '../../shared/retired-adapter-policy';
 
 let baseDir = '';
@@ -38,6 +39,7 @@ function manager(): ProjectRuntimeManager {
 }
 
 beforeEach(() => {
+  resetAppEventsForTests();
   baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mission-store-'));
 });
 
@@ -770,6 +772,42 @@ describe('scoped mission store', () => {
     ).toEqual({ result_json: null });
   });
 
+  it('emits completion only for a successful new lifecycle completion, without mission content', () => {
+    const store = createScopedMissionStore(manager(), testProjectScope(), {
+      idFactory: () => 'mission-completion-event',
+    });
+    const mission = store.create({ title: 'Private project', intentState: 'executing', intentVersion: 1 });
+    const running = store.setStatus(mission.id, 'running')!;
+    const result = { outcome: 'success' as const, summary: 'Private delivery', evidenceIds: ['private-evidence'], artifactRefs: ['private-artifact'] };
+    const patch = { status: 'done' as const, intentState: 'done' as const, result };
+    const expectation = { updatedAt: running.updatedAt, intentVersion: running.intentVersion! };
+    expect(store.transitionLifecycle(mission.id, { ...expectation, updatedAt: running.updatedAt - 1 }, patch)).toBeNull();
+    expect(appEventsAfter(0).events.filter(event => event.kind === 'mission.completed')).toEqual([]);
+    const completed = store.transitionLifecycle(mission.id, expectation, patch)!;
+    expect(appEventsAfter(0).events.filter(event => event.kind === 'mission.completed').map(event => event.payload)).toEqual([{ missionId: mission.id }]);
+    expect(store.transitionLifecycle(mission.id, expectation, patch)).toBeNull();
+    store.updateContent(mission.id, { description: 'Historical correction containing private content' });
+    const historical = store.get(mission.id)!;
+    store.transitionLifecycle(mission.id, { updatedAt: historical.updatedAt, intentVersion: historical.intentVersion! }, patch);
+    expect(completed.result).toEqual(result);
+    expect(appEventsAfter(0).events.filter(event => event.kind === 'mission.completed')).toHaveLength(1);
+  });
+
+  it('does not mistake an identical same-tick retry for the rolled-back completion', async () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const store = createScopedMissionStore(runtimeManager, scope, { now: () => 100, idFactory: () => 'same-tick-completion' });
+    const mission = store.create({ title: 'Same tick', intentState: 'executing', intentVersion: 1 });
+    const running = store.setStatus(mission.id, 'running')!;
+    const expectation = { updatedAt: running.updatedAt, intentVersion: running.intentVersion! };
+    const patch = { status: 'done' as const, intentState: 'done' as const, result: { outcome: 'success' as const, summary: 'Delivery', evidenceIds: [], artifactRefs: [] } };
+    const db = runtimeManager.open(scope).db;
+    expect(() => db.transaction(() => { store.transitionLifecycle(mission.id, expectation, patch); throw new Error('rollback'); }).immediate()).toThrow('rollback');
+    store.transitionLifecycle(mission.id, expectation, patch);
+    await Promise.resolve();
+    expect(appEventsAfter(0).events.filter(event => event.kind === 'mission.completed')).toHaveLength(1);
+  });
+
   it('requires a canonical result for every terminal lifecycle commit', () => {
     const runtimeManager = manager();
     const scope = testProjectScope({ checkoutId: 'mission-result-required' });
@@ -849,6 +887,7 @@ describe('scoped mission store', () => {
     ).toThrow(/rollback outer verification/);
     await Promise.resolve();
     expect(changed).not.toHaveBeenCalled();
+    expect(appEventsAfter(0).events.filter(event => event.kind === 'mission.completed')).toEqual([]);
     expect(store.get(mission.id)).toMatchObject({
       status: 'running',
       intentState: 'executing',
@@ -872,8 +911,10 @@ describe('scoped mission store', () => {
       )
       .immediate();
     expect(changed).not.toHaveBeenCalled();
+    expect(appEventsAfter(0).events.filter(event => event.kind === 'mission.completed')).toEqual([]);
     await Promise.resolve();
     expect(changed).toHaveBeenCalledOnce();
+    expect(appEventsAfter(0).events.filter(event => event.kind === 'mission.completed').map(event => event.payload)).toEqual([{ missionId: mission.id }]);
     expect(completed?.result).toEqual(result);
     expect(store.get(mission.id)?.result).toEqual(result);
     unsubscribe();

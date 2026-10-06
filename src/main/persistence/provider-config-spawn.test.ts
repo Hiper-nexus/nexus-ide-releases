@@ -531,6 +531,33 @@ describe('background CLI maintenance during pane startup', () => {
     vi.useRealTimers();
   });
 
+  it('runs automatic CLI maintenance on Linux', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+    stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(finishUpdate).toBeTypeOf('function');
+  });
+
+  it('enables daily idle updates when no preference file exists', async () => {
+    vi.spyOn(fs, 'readFileSync').mockImplementation(() => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); });
+    vi.spyOn(fs, 'lstatSync').mockImplementation(() => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); });
+    vi.spyOn(periodicFileRead, 'readRegularFileCappedAsync').mockResolvedValue({ kind: 'none', stamp: 'missing' });
+    stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(finishUpdate).toBeTypeOf('function');
+  });
+
+  it.each([
+    { kind: 'none', stamp: 'unreadable' },
+    { kind: 'text', stamp: 'bad', text: '{' },
+    { kind: 'text', stamp: 'off', text: JSON.stringify({ enabled: false, askAgainAt: Number.MAX_SAFE_INTEGER, checkedAt: {} }) },
+  ] as const)('does not update with unreadable, corrupt, or explicitly disabled preferences: $stamp', async (read) => {
+    vi.spyOn(periodicFileRead, 'readRegularFileCappedAsync').mockResolvedValue(read);
+    stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(finishUpdate).toBeUndefined();
+  });
+
   it('leaves launchers available while the operator is active, then updates when idle', async () => {
     spawnDeps.systemIdleTime.mockReturnValue(0);
     stop = startCliAutoUpdate('/fixture-quota-home', () => false);

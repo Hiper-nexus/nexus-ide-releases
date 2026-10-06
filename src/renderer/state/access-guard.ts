@@ -2,7 +2,7 @@ import { useAccessStore } from './access-store';
 import { useToastStore } from './toast-store';
 import { useProductNavigationStore } from './product-navigation-store';
 
-export const TRIAL_AGENT_LIMIT_COPY = 'Você já está usando os 2 agentes do teste. Feche um para abrir outro ou assine o Pro.';
+export const TRIAL_AGENT_LIMIT_COPY = 'Você atingiu o limite de agentes simultâneos do teste. Feche um para abrir outro ou assine o Pro para ter agentes simultâneos ilimitados.';
 export function showAccessRefusal(limit = false): void {
   useToastStore.getState().push('warn', limit ? 'Limite de agentes atingido' : 'Acesso necessário', {
     detail: limit ? TRIAL_AGENT_LIMIT_COPY : 'Abra Minha conta para entrar ou atualizar sua assinatura.',

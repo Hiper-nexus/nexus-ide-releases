@@ -190,6 +190,8 @@ export const missionAgentSchema = squadAgentObjectSchema
     state: missionAgentStateSchema,
     currentUnitId: idSchema.optional(),
     paneId: idSchema.optional(),
+    /** Physical session observation; absence preserves legacy snapshots. */
+    terminalLive: z.boolean().optional(),
     detail: detailSchema.optional(),
     /**
      * F-231: worker aberto pelo operador dentro da missão ("+ Pane" na aba).

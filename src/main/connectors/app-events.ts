@@ -14,6 +14,7 @@ export type AppEventKind =
   | 'handoff.delivered'
   | 'handoff.consumed'
   | 'mission.state'
+  | 'mission.completed'
   | 'arms.token';
 
 export interface AppEvent {

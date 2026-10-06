@@ -2,11 +2,11 @@
 
 ## Oferta pública
 
-- **Teste de 15 dias:** começa no primeiro login verificado. Não há acesso
+- **Teste de 15 dias:** começa no primeiro login verificado, com até 6 agentes simultâneos. Não há acesso
   permanente sem conta nem plano gratuito local. `plan: "pro"` com
   `access: "trial"` significa teste, não pagamento.
 - **Pro promocional:** **R$ 59,99 por mês**, cobrança recorrente mensal em BRL.
-  É o único plano pago disponível para novos checkouts e é necessário após o teste.
+  Permite agentes simultâneos ilimitados. É o único plano pago disponível para novos checkouts e é necessário após o teste.
 - **Team:** não aparece mais na oferta. Licenças assinadas legadas com
   `access: "pro"` continuam reconhecidas; novos checkouts aceitam somente Pro.
 

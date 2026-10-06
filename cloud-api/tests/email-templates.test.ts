@@ -69,10 +69,10 @@ test('o preço nunca vem escrito no modelo: só aparece se quem chama o passar',
   assert.ok(withPrice.html.includes('R$ 59,99 / mês') && withPrice.text.includes('R$ 59,99 / mês'));
 });
 
-test('os números do teste vêm dos parâmetros (padrão 15 dias e 2 agentes) e a data sai em português, no horário de Brasília', () => {
+test('os números do teste vêm dos parâmetros (padrão 15 dias e 6 agentes) e a data sai em português, no horário de Brasília', () => {
   const standard = renderNotice('welcome', base);
   assert.match(standard.text, /15 dias/);
-  assert.match(standard.text, /até 2 agentes/);
+  assert.match(standard.text, /até 6 agentes/);
   assert.match(standard.text, /16 de outubro de 2026/);
   const custom = renderNotice('welcome', { ...base, trialDays: 7, maxAgents: 3 });
   assert.match(custom.text, /7 dias/);

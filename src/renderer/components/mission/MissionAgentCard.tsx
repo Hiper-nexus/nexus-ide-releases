@@ -84,12 +84,19 @@ export function MissionAgentCard({
   const toolLabel = rackToolLabel(agent);
   const currentUnitId = currentUnit?.id ?? agent.currentUnitId;
   const currentUnitTitle = currentUnit?.title;
+  const idleLabel = agent.terminalLive === false
+    ? 'Sem terminal ativo'
+    : agent.terminalLive === true
+      ? 'Terminal ativo · sem unidade em curso'
+      : 'sem unidade em curso';
   const accessibleText = [
     agent.agentName,
     agent.operatorOpened === true ? 'Aberto por você' : null,
     `Papel: ${categoryLabel}`,
     `Ferramenta: ${toolLabel}`,
     `Estado: ${stateLabel}`,
+    agent.terminalLive === false || (agent.terminalLive === true && !currentUnitId && !agent.detail)
+      ? idleLabel : null,
     currentUnitId
       ? currentUnitTitle
         ? `Unidade atual: ${currentUnitTitle} (${currentUnitId})`
@@ -168,9 +175,9 @@ export function MissionAgentCard({
       )}
 
       <span className="mission-agent-card__display">
-        {!currentUnitId && !agent.detail && (
+        {(agent.terminalLive === false || (!currentUnitId && !agent.detail)) && (
           <span className="mission-agent-card__idle" aria-hidden="true">
-            sem unidade em curso
+            {idleLabel}
           </span>
         )}
         {(currentUnitId || agent.detail) && (

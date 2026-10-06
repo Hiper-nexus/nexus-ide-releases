@@ -40,7 +40,7 @@ test('sem cobrança configurada ou sem status o portal fica desabilitado e nada 
 
 test('limite de agentes: número, sem limite do teste no Pro e a confirmar quando o contrato vem estranho', () => {
   assert.equal(agentLimitLabel(2), '2');
-  assert.equal(agentLimitLabel(null), 'Sem limite do teste');
+  assert.equal(agentLimitLabel(null), 'Agentes simultâneos ilimitados');
   assert.equal(agentLimitLabel(undefined), 'A confirmar');
   assert.equal(agentLimitLabel('7'), 'A confirmar');
 });

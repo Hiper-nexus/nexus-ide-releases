@@ -1288,6 +1288,13 @@ export function ProvidersPanel() {
           </p>
         )}
 
+        {tab === 'clis' && autoCliUpdates?.enabled && (
+          <p className="settings-field__note">
+            Verificação diária no macOS, Windows e Linux, quando você está ausente e a CLI está sem panes ativos.
+            Canais desconhecidos ou que exigem privilégios continuam manuais.
+          </p>
+        )}
+
         <div className="prov-hub__workspace">
         {visible.length === 0 ? (
           <div className="prov-hub__empty" data-testid="prov-empty">
