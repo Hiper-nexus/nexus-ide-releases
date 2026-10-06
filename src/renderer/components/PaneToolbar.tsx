@@ -408,8 +408,6 @@ export function PaneToolbar({ pane, isFocused }: Props) {
   const promoteMissionPaneRole = useLayoutStore((s) => s.promoteMissionPaneRole);
   const setPaneRole = useLayoutStore((s) => s.setPaneRole);
   const destination = useProductNavigationStore((s) => s.destination);
-  const activeMissions = useOrchStore((s) => s.missions);
-  const paneMissions = useOrchStore((s) => s.paneMissions);
   // Slot posicional ⌘1-9: derivado do layout AO VIVO — recalcula quando panes
   // abrem/fecham, exatamente como o atalho resolve o alvo.
   const paneSlot = useLayoutStore((s) =>
@@ -719,8 +717,6 @@ export function PaneToolbar({ pane, isFocused }: Props) {
     promoteMissionPaneRole,
     setPaneRole,
     destination,
-    paneMissions,
-    activeMissions,
     respawnWithResume,
     split,
     toggleMaximizePane,

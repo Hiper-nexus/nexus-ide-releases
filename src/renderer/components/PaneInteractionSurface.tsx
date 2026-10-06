@@ -36,8 +36,6 @@ export function PaneInteractionSurface({
   const [skillDragActive, setSkillDragActive] = useState(false);
   const dragDepth = useRef(0);
   const focusPane = useLayoutStore((state) => state.focus);
-  const missions = useOrchStore((state) => state.missions);
-  const squads = useOrchStore((state) => state.squads);
   const pushToast = useToastStore((state) => state.push);
 
   function isSkillDrag(event: DragEvent<HTMLDivElement>): boolean {
@@ -62,6 +60,9 @@ export function PaneInteractionSurface({
       pushToast("warn", "Skill rejeitada", "O payload arrastado é inválido.");
       return;
     }
+    // Lido no momento do evento: inscrever o wrapper de cada pane no store
+    // inteiro de missões re-renderizava a grade a cada broadcast do motor.
+    const { missions, squads } = useOrchStore.getState();
     const policy = resolveSkillDropPolicy({
       pane,
       skillName: payload.name,
