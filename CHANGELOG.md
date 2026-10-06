@@ -1,7 +1,10 @@
 # Changelog
 
-## 0.76.205 — Missões com entrega verificada
+## 0.76.206 — Missões com entrega verificada
 
+A candidata 0.76.205 foi substituída antes da publicação para atualizar dependências de produção e da toolchain sinalizadas no portão de segurança.
+
+- Atualiza o parser TOML para evitar leitura quadrática e a dependência de validação de proxies para corrigir a interpretação de sub-redes IPv4 mapeadas em IPv6.
 - Teste de 15 dias com seis agentes simultâneos e Pro sem limite de licença para agentes. A execução continua respeitando a memória disponível e as cotas dos provedores.
 - Admissão automática com orçamento físico compartilhado entre panes, workers e verificações. Comandos pesados executam um por vez por projeto; timeout lógico não libera memória nem remove o ambiente antes da saída física.
 - Missões de código, comuns ou iniciadas pelo + Pane, exigem verificações aplicáveis e revisão independente da entrega atual antes de concluir. Achados retornam ao orquestrador para correção; mudanças posteriores invalidam a evidência anterior.

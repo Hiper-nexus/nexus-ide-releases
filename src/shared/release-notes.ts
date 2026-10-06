@@ -10157,7 +10157,7 @@ export const RELEASE_076202: AppRelease = {
 
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.205',
+  version: '0.76.206',
   date: '2026-10-06',
   codename: 'Missões com entrega verificada',
   summary: 'Mais controle de memória, envio confiável aos agentes e revisão independente antes de concluir missões de código.',
@@ -10168,6 +10168,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Quadro em destaque', detail: 'Tela inteira, orientação horizontal ou vertical, zoom e ajuste da visão. Os cartões acompanham os terminais e a atividade atual da missão.' },
   ],
   fixes: [
+    { title: 'Dependências de segurança atualizadas', detail: 'Corrige a leitura lenta de documentos TOML e a validação de sub-redes de proxies. A candidata anterior foi retida antes da publicação pelo portão de segurança.' },
     { title: 'Envio ao Kimi confirmado', detail: 'O envio espera a confirmação do transporte e protege o Enter de recuperação quando há um diálogo ativo.' },
     { title: 'Menos bloqueios no trabalho', detail: 'Corrige o loop na leitura de saída que podia ocupar o processo principal. Avisos opcionais sobre versões de dependências deixam de impedir a conclusão da missão.' },
     { title: 'Validação de projetos nativos', detail: 'Verificações de Go e Rust usam a configuração do projeto. Dependências de execução ausentes aparecem como não verificadas, sem inventar um resultado aprovado.' },
