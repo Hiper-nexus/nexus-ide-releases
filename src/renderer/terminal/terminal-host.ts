@@ -1573,21 +1573,24 @@ function startSpawn(
             pack ??
             (`Continue the current mission from exactly where you stopped as the ${role}. ` +
               'Preserve existing context and execute the next pending step now.');
-          if (
-            submitPanePrompt(pane.id, continuation, {
-              getSessionId: getPaneSessionId,
-              write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
-              writeConfirmed: (sessionId, data) =>
-                window.nexus.pty.writeConfirmed(sessionId, data),
-              schedule: (callback, delayMs) => setTimeout(callback, delayMs),
-            })
-          ) {
+          const ports = {
+            ...kimiPromptProofPorts(pane.id),
+            getSessionId: typingSessionId,
+            write: (sessionId: string, data: string) => window.nexus.pty.write(sessionId, data),
+            writeConfirmed: (sessionId: string, data: string) => window.nexus.pty.writeConfirmed(sessionId, data),
+            schedule: (callback: () => void, delayMs: number) => setTimeout(callback, delayMs),
+          };
+          const submitted = pane.adapterId === 'kimi'
+            ? submitPromptToPane(pane.id, continuation)
+            : Promise.resolve(submitPanePrompt(pane.id, continuation, ports));
+          void submitted.then((accepted) => {
+            if (!accepted || cancelled || host.disposed || typingSessionId(pane.id) !== resumedSessionId) return;
             host.term.writeln(
               pack
                 ? '\r\n\x1b[36m[nexus] handoff multi-conta submetido (sessão nova nesta conta).\x1b[0m'
                 : '\r\n\x1b[36m[nexus] continuidade submetida automaticamente ao agente.\x1b[0m',
             );
-          }
+          }).catch(() => {});
         };
         const continuationTimer = setTimeout(tryInject, 1_800);
         host.cleanups.push(() => {
@@ -4341,14 +4344,42 @@ export function writeToPane(paneId: string, data: string): boolean {
   return true;
 }
 
+/** Kimi submission uses Main's hook sequence, never the busy echo of our own CR. */
+function kimiPromptProofPorts(paneId: string) {
+  const pane = listPanes(useLayoutStore.getState().root).find(candidate => candidate.id === paneId);
+  if (pane?.adapterId !== 'kimi') return {};
+  return {
+    bracketedPaste: false,
+    submitPromptEnter: async (sessionId: string, sequence: number, retry: boolean) => {
+      if (typingSessionId(paneId) !== sessionId) return false;
+      const accepted = await window.nexus.pty.submitPromptEnter(sessionId, sequence, retry);
+      return typingSessionId(paneId) === sessionId && accepted;
+    },
+    probePromptState: async (sessionId: string) => {
+      if (typingSessionId(paneId) !== sessionId) return null;
+      const state = await window.nexus.pty.promptState(sessionId);
+      return typingSessionId(paneId) === sessionId ? state : null;
+    },
+  };
+}
+
 /**
  * Submit a complete prompt to an agent TUI. Newlines stay inside a bracketed
  * paste; a delayed CR performs the actual Enter instead of leaving text in the
  * multiline composer.
  */
-export function submitPromptToPane(paneId: string, text: string): boolean {
+export async function submitPromptToPane(paneId: string, text: string): Promise<boolean> {
   const host = hosts.get(paneId);
   if (host && !host.disposed) host.inputVisibility.onUserInput();
+  const proof = kimiPromptProofPorts(paneId);
+  if (proof.probePromptState) {
+    const sessionId = typingSessionId(paneId);
+    if (!sessionId) return false;
+    const pane = listPanes(useLayoutStore.getState().root).find(candidate => candidate.id === paneId);
+    return paneInputLane(pane, useOrchStore.getState().paneMissions[paneId]) === 'operator'
+      ? submitPromptToPaneOperatorInput(paneId, text, sessionId)
+      : submitPromptToPaneConfirmed(paneId, text, sessionId);
+  }
   return submitPanePrompt(paneId, text, {
     getSessionId: typingSessionId,
     write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
@@ -4367,6 +4398,7 @@ export function submitPromptToPaneConfirmed(
   const host = hosts.get(paneId);
   if (host && !host.disposed) host.inputVisibility.onUserInput();
   return submitPanePromptConfirmed(paneId, text, expectedSessionId, {
+    ...kimiPromptProofPorts(paneId),
     getSessionId: typingSessionId,
     write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
     writeConfirmed: (sessionId, data) =>
@@ -4387,6 +4419,7 @@ export function submitPromptToPaneOperatorInput(
   const host = hosts.get(paneId);
   if (host && !host.disposed) host.inputVisibility.onUserInput();
   return submitPanePromptOperator(paneId, text, expectedSessionId, {
+    ...kimiPromptProofPorts(paneId),
     getSessionId: typingSessionId,
     operatorWrite: (sessionId, data) =>
       window.nexus.orch.sendPaneOperatorInput({ sessionId, data }),

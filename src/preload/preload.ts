@@ -770,6 +770,8 @@ const api: NexusApi = {
     },
     write: (sessionId, data) =>
       ipcRenderer.send(PTY_CHANNELS.write, { sessionId, data }),
+    submitPromptEnter: (sessionId, turnStartSequence, retry) => ipcRenderer.invoke(PTY_CHANNELS.promptEnter, { sessionId, turnStartSequence, retry }),
+    promptState: (sessionId) => ipcRenderer.invoke(PTY_CHANNELS.promptState, { sessionId }),
     writeConfirmed: (sessionId, data) =>
       ipcRenderer.invoke(PTY_CHANNELS.writeConfirmed, { sessionId, data }),
     resize: (sessionId, cols, rows, options) =>
