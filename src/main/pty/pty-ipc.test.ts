@@ -166,6 +166,7 @@ vi.mock("../orch/pane-registry", () => ({
   attachOrchMeta: authorityDeps.attachOrchMeta,
   attachSessionScope: authorityDeps.attachSessionScope,
   reportPendingSpawnStartFailure: authorityDeps.reportPendingSpawnStartFailure,
+  hasLivePaneSession: () => false,
 }));
 
 vi.mock("../orch/mission-pane-store", () => ({
@@ -273,6 +274,12 @@ vi.mock("../persistence/account-store", () => ({
     adapterId: "claude",
     label: "Selected",
   }),
+}));
+
+const persistedSeal = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock('../orch/mission-pane-authority', async original => ({
+  ...await original<typeof import('../orch/mission-pane-authority')>(),
+  resolveMissionPaneAuthoritySeal: () => persistedSeal.current,
 }));
 
 const traceDeps = vi.hoisted(() => ({ trace: vi.fn() }));
@@ -385,6 +392,7 @@ describe("registerPtyIpc account fail-fast", () => {
       findByPaneId: authorityDeps.findMissionPaneByPaneId,
     });
     authorityDeps.getMission.mockReturnValue(null);
+    persistedSeal.current = null;
     authorityDeps.createScopedMissionStore.mockReturnValue({
       get: authorityDeps.getMission,
     });
@@ -593,7 +601,7 @@ describe("registerPtyIpc account fail-fast", () => {
     const original = sealedPendingSpawn();
     const pending = { ...original, sealedRequest: { ...original.sealedRequest, adapterId: 'muse' } };
     authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
-    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce('/workspace/a/packages/api');
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
     const result = await handler?.({ sender: { id: 7 } }, {
@@ -668,7 +676,7 @@ describe("registerPtyIpc account fail-fast", () => {
     const sender = { id: 7 };
     const pending = sealedPendingSpawn();
     authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
-    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(
       "/workspace/a/packages/api",
     );
@@ -805,7 +813,7 @@ describe("registerPtyIpc account fail-fast", () => {
     const base = sealedPendingSpawn();
     const pending = { ...base, sealedRequest: { ...base.sealedRequest, adapterId: "codex" } };
     authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
-    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true, overrides: { selectedAccountId: "different-account", keyEnv: { CODEX_HOME: "/synthetic/account" } },
     });
@@ -824,7 +832,7 @@ describe("registerPtyIpc account fail-fast", () => {
     const base = sealedPendingSpawn();
     const pending = { ...base, sealedRequest: { ...base.sealedRequest, adapterId: "codex" } };
     authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
-    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     const refusal = 'Qwen Code: modelo selado "qwen3.7-plus" não entrou no argv do spawn';
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: false, error: refusal });
     const sender = { id: 7 };
@@ -856,7 +864,7 @@ describe("registerPtyIpc account fail-fast", () => {
   it("F-723: grant pendente cujo PTY sobe não é reportado como falha", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
     authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(sealedPendingSpawn());
-    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce("/workspace/a/packages/api");
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
     const result = await handler?.({ sender: { id: 7 } }, {
@@ -891,7 +899,7 @@ describe("registerPtyIpc account fail-fast", () => {
     const base = sealedPendingSpawn();
     const pending = { ...base, sealedRequest: { ...base.sealedRequest, adapterId: "codex" } };
     authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
-    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true, overrides: { binPath: "/mock/bin/codex", keyEnv: { CODEX_HOME: "/synthetic/account" } },
     });
@@ -926,7 +934,7 @@ describe("registerPtyIpc account fail-fast", () => {
       },
     };
     authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
-    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(
       "/workspace/a/packages/api",
     );
@@ -986,6 +994,42 @@ describe("registerPtyIpc account fail-fast", () => {
     );
     expect(providerDeps.prepareProviderSpawn).not.toHaveBeenCalled();
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
+  it.each(['authentication', 'permit', 'pane-revoked', 'stop-verdict'])('F-429: refuses persisted spawn if authority changes during %s', async waitingOn => {
+    const seal = sealedPendingSpawn().authoritySeal;
+    persistedSeal.current = seal;
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue({ id: 'spec-429', missionId: 'mission-a', paneId: 'pane-429',
+      role: 'orchestrator', adapterId: 'claude', title: 'Maestro', cwd: '/workspace/a',
+      scope: authorityDeps.scope, executionScope: authorityDeps.scope, authoritySeal: seal, allowedTools: null, allowedSkills: null });
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const release = vi.fn();
+    if (waitingOn === 'authentication') providerDeps.prepareProviderSpawnAuthoritative.mockImplementationOnce(async () => {
+      await pending; return { ok: true, overrides: {} };
+    });
+    else {
+      providerDeps.prepareProviderSpawn.mockReturnValue({ ok: true, overrides: {} });
+      providerDeps.acquireCliSpawnPermit.mockImplementationOnce(async () => { await pending; return release; });
+    }
+    const request = ipcDeps.handlers.get(PTY_CHANNELS.spawn)!({ sender: { id: 7 } }, {
+      kind: 'cli-agent', adapterId: 'claude', paneId: 'pane-429', missionId: 'mission-a', cwd: '/workspace/a', resume: true, cols: 100, rows: 30,
+    });
+    const early = await Promise.race([Promise.resolve(request), Promise.resolve(null)]);
+    if (early) throw new Error(JSON.stringify(early));
+    await vi.waitFor(() => expect(waitingOn === 'authentication' ? providerDeps.prepareProviderSpawnAuthoritative : providerDeps.acquireCliSpawnPermit).toHaveBeenCalled());
+    if (waitingOn === 'pane-revoked') authorityDeps.findMissionPaneByPaneId.mockReturnValue(null);
+    else if (waitingOn === 'stop-verdict') authorityDeps.getMission.mockReturnValue({ ...approvedMissionForSpawn(),
+      description: '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Encerrada.' });
+    else {
+      authorityDeps.getMission.mockReturnValue({ ...approvedMissionForSpawn(), status: 'blocked', intentState: 'blocked_user' });
+      authorityDeps.assertMissionSpawnAuthorityCurrent.mockImplementation(() => { throw new Error('mission stopped while preparing spawn'); });
+    }
+    finish();
+    await expect(request).resolves.toMatchObject({ ok: false, error: expect.stringContaining(waitingOn === 'pane-revoked' ? 'authority changed' : 'approval_required') });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    if (waitingOn !== 'authentication') expect(release).toHaveBeenCalledOnce();
   });
 
   it('waits for a same-CLI update permit and releases it after physical spawn', async () => {
@@ -1048,7 +1092,7 @@ describe("registerPtyIpc account fail-fast", () => {
         },
       };
       authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
-      authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+      authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
       authorityDeps.resolveCwdForScope.mockReturnValueOnce(
         "/workspace/a/packages/api",
       );
@@ -1095,7 +1139,7 @@ describe("registerPtyIpc account fail-fast", () => {
     });
     const pending = sealedPendingSpawn();
     authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
-    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.assertMissionSpawnAuthorityCurrent.mockImplementationOnce(
       () => {
         throw new Error(
@@ -1186,7 +1230,7 @@ describe("registerPtyIpc account fail-fast", () => {
     const sender = { id: 7 };
     const pending = sealedPendingSpawn();
     authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
-    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.bindPendingSpawnSession.mockReturnValueOnce(false);
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 

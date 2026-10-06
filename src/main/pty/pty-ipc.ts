@@ -514,6 +514,7 @@ function spawnCliPtyAgentPane(
     assertNoLivePhysicalPaneProcess(spawn);
     const workerRestart = resolvePersistedWorkerRestart(spawn);
     assertMainOwnedAgentSpawnGrantActive({
+      runtimeManager: projectRuntimeManager,
       owner: sender,
       requestId: request.orchRequestId,
       pending,

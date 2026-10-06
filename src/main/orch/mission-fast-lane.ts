@@ -19,6 +19,7 @@ import type { Mission, Squad, SquadAgent } from '../../shared/orch-types';
 import { isUiMissionText } from '../../shared/mission-work-kind';
 import {
   MISSION_RUNTIME_CLOSED_MARKER,
+  hasCurrentMissionRuntimeCloseVerdict,
   missionAwaitsAdjustment,
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
@@ -53,7 +54,7 @@ import {
   orchTerminateSession,
   registeredOrchestratorSessionsForMission,
 } from '../pty/pty-manager';
-import { getAcpDriverSession } from '../acp/acp-harness-driver';
+import { getAcpDriverSession, listAcpDriverAgentSessions } from '../acp/acp-harness-driver';
 import { getAdapter } from '../adapters/adapter-registry';
 import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlocksAsync } from './tool-util';
 import { canUseNexusMcp } from './cli-mcp-inject';
@@ -137,6 +138,8 @@ import {
   isMissionPaneOperatorDismissed,
   listPaneSnapshots,
   requestPaneSpawn,
+  resolveCurrentMissionSpawnAuthoritySeal,
+  getPaneRuntimeAuthorityBySession,
   waitForIdle,
   readSessionOutput,
   wasOrchestratorOperatorDismissed,
@@ -165,7 +168,8 @@ import {
 } from './via-rapida-first-wave';
 import { currentParallelHelperBudget } from './parallel-helper-budget';
 import { firstWaveWorkerPrompt, metaPaneAskPrompt } from './via-rapida-walk';
-import { hashMissionIntentAuthority } from './mission-pane-authority';
+import { hashMissionIntentAuthority, sameMissionPaneAuthoritySeal } from './mission-pane-authority';
+import type { ScopedMissionPaneSpec } from './mission-pane-store';
 import {
   MissionLeadershipError,
   type MissionLeader,
@@ -251,11 +255,12 @@ function bindSpawnedMissionPane(
     title?: string;
     readOnly?: boolean;
   },
+  previous?: ScopedMissionPaneSpec,
 ): void {
   const executionScope = missionExecutionScope(scope, mission);
   const spawnedSession = getAgentSessionInfo(spawn.sessionId)
     ?? getAcpDriverSession(spawn.sessionId)?.agent;
-  const physical = role === 'worker' ? spawnedSession : undefined;
+  const physical = spawnedSession;
   if (role === 'worker' && (!physical || physical.sessionId !== spawn.sessionId ||
     physical.paneId !== spawn.paneId || physical.missionId !== mission.id ||
     physical.role !== role || physical.agentName !== agent.agentName ||
@@ -266,7 +271,39 @@ function bindSpawnedMissionPane(
     physical.authoritySeal.intentContractHash !== hashMissionIntentAuthority(mission.intentContract))) {
     throw new Error('first-wave worker physical spawn authority is missing or mismatched');
   }
+  const approved = role === 'orchestrator' ? mission.intentContract?.orchestratorRuntime : undefined;
+  if (approved) {
+    const current = stores.missions.get(mission.id);
+    const runtime = getPaneRuntimeAuthorityBySession(spawn.sessionId);
+    if (!runtime || runtime.sessionId !== spawn.sessionId || runtime.paneId !== spawn.paneId ||
+      runtime.kind !== 'cli-agent' || runtime.role !== role || runtime.missionId !== mission.id ||
+      !isDeepStrictEqual(runtime.scope, scope) ||
+      !current || current.intentVersion !== mission.intentVersion ||
+      !current.intentContract || !mission.intentContract ||
+      hashMissionIntentAuthority(current.intentContract) !== hashMissionIntentAuthority(mission.intentContract) ||
+      !isDeepStrictEqual(current.intentContract?.orchestratorRuntime, approved) ||
+      !physical || physical.sessionId !== spawn.sessionId || physical.paneId !== spawn.paneId ||
+      physical.missionId !== mission.id || physical.role !== role || physical.adapterId !== approved.adapterId ||
+      physical.requestedModel !== approved.model || physical.effort !== approved.effort ||
+      physical.accountId !== approved.accountId || physical.readOnly !== approved.readOnly ||
+      physical.nativeReadOnly !== approved.nativeReadOnly ||
+      physical.cwd !== executionScope.rootRealPath || !isDeepStrictEqual(physical.scope, executionScope) ||
+      !sameMissionPaneAuthoritySeal(physical.authoritySeal, resolveCurrentMissionSpawnAuthoritySeal(scope, mission.id)) ||
+      [...registeredOrchestratorSessionsForMission(mission.id),
+        ...listAcpDriverAgentSessions().filter(session => session.missionId === mission.id && session.role === 'orchestrator')]
+        .some(session => session.sessionId !== spawn.sessionId)) {
+      throw new Error('orchestrator physical spawn authority is missing or mismatched');
+    }
+  }
   const title = spawn.title?.trim() || agent.agentName;
+  if (previous) {
+    stores.missionPanes.moveOrchestratorPane(mission.id, previous.id, spawn.paneId, {
+      expected: previous, model: agent.model || undefined, effort: agent.effort || undefined,
+      physical: { accountId: physical?.accountId, authoritySeal: physical?.authoritySeal,
+        allowedTools: physical?.allowedTools, allowedSkills: physical?.allowedSkills, readOnly: physical?.readOnly },
+    });
+    return;
+  }
   stores.missionPanes.record({
     missionId: mission.id,
     paneId: spawn.paneId,
@@ -1138,6 +1175,19 @@ async function spawnAgentPane(
   const runtimeAgent = approvedRuntime ? {
     ...agent, model: agent.model || approvedRuntime.model, effort: agent.effort || approvedRuntime.effort,
   } : agent;
+  const stores = getProjectDomainStores(scope);
+  const priorLeaders = approvedRuntime ? stores.missionPanes.list(mission.id).filter(pane => pane.role === 'orchestrator') : [];
+  if (priorLeaders.length > 1) return { error: 'orchestrator pane authority is ambiguous' };
+  const previous = priorLeaders[0];
+  if (previous && (previous.adapterId !== approvedRuntime?.adapterId ||
+    previous.model !== undefined && previous.model !== approvedRuntime?.model ||
+    previous.effort !== undefined && previous.effort !== approvedRuntime?.effort ||
+    previous.accountId !== undefined && previous.accountId !== approvedRuntime?.accountId ||
+    (previous.readOnly === true) !== approvedRuntime?.readOnly ||
+    previous.cwd !== executionScope.rootRealPath ||
+    !isDeepStrictEqual(previous.executionScope, executionScope))) {
+    return { error: 'persisted orchestrator runtime differs from approved authority' };
+  }
   const title = paneTitle?.trim() || agent.agentName;
   const readOnly = spawnOpts?.readOnly === true;
   // Mesmos blocos de contexto do wrapper de spawn (<business-model>,
@@ -1222,13 +1272,16 @@ async function spawnAgentPane(
     };
   }
 
-  const stores = getProjectDomainStores(scope);
-  bindSpawnedMissionPane(stores, scope, mission, runtimeAgent, role, {
-    paneId: spawn.paneId,
-    sessionId: spawn.sessionId,
-    title,
-    readOnly,
-  });
+  try {
+    bindSpawnedMissionPane(stores, scope, mission, runtimeAgent, role, {
+      paneId: spawn.paneId, sessionId: spawn.sessionId, title, readOnly,
+    }, previous);
+  } catch (error) {
+    const acp = getAcpDriverSession(spawn.sessionId);
+    if (acp) await acp.shutdown();
+    else await orchTerminateSession(spawn.sessionId, { origin: 'fast-lane:spawn-binding-failed' });
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
   if (role === 'orchestrator') {
     stores.missions.setOrchestratorSession(mission.id, spawn.sessionId);
     rememberKickoffBrief({
@@ -3030,6 +3083,11 @@ export async function resumeFastLaneMission(
   if (!mission) throw new Error('missão não encontrada para retomar');
 
   const remountKind = options.remountKind ?? 'operator';
+  const operatorStopped = hasCurrentMissionRuntimeCloseVerdict(mission);
+  if (remountKind === 'automatic' &&
+    (operatorStopped || wasMissionLeftoverParked(mission))) {
+    throw new Error('mission_closed_by_operator: missão encerrada pelo operador — use Retomar');
+  }
   if (
     !mayResumeAfterOperatorDismiss({
       remountKind,
@@ -3078,7 +3136,7 @@ export async function resumeFastLaneMission(
   }
 
   const action = decideFastLaneResumeAction({
-    status: mission.status,
+    status: operatorStopped ? 'blocked' : mission.status,
     liveOrchestratorSession: liveMaestroSessionId !== null,
   });
   if (action === 'watch') {
@@ -3102,8 +3160,8 @@ export async function resumeFastLaneMission(
   // saída autorizada é answer-question. Retomar/retry-kickoff que chegasse
   // nesse estado limparia a pergunta sem resposta (bug de campo 2026-08-18).
   // Leftover parked é isolamento de rail, não pergunta — Retomar religa.
-  if (mission.status === 'blocked' && mission.intentState) {
-    const runtimeClosedByOperator = wasMissionRuntimeClosedByOperator(mission);
+  if ((mission.status === 'blocked' || operatorStopped) && mission.intentState) {
+    const runtimeClosedByOperator = operatorStopped;
     const leftoverParked = wasMissionLeftoverParked(mission);
     // F-738: só a pergunta REGISTRADA (clarify no ledger) prende a missão à
     // resposta. O bloqueio declarado pelo Maestro por set_status não registra
@@ -3129,9 +3187,9 @@ export async function resumeFastLaneMission(
     }
     // Reabrir tira o selo de quem parou: o de "dormindo", ou o de encerrado
     // pelo operador junto com o bloqueio declarado pelo Maestro (F-738).
-    const sealedMarkers = leftoverParked
+    const sealedMarkers = leftoverParked && !runtimeClosedByOperator
       ? [NEXUS_LEFTOVER_PARKED_MARKER]
-      : [MISSION_RUNTIME_CLOSED_MARKER, AGENT_STATUS_BLOCK_MARKER];
+      : [MISSION_RUNTIME_CLOSED_MARKER, AGENT_STATUS_BLOCK_MARKER, NEXUS_LEFTOVER_PARKED_MARKER];
     try {
       missionEngineForScope(scope).resumeTechnical(scope, {
         missionId,

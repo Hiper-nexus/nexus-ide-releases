@@ -3,6 +3,7 @@ import type { MissionIntentContract } from './mission-intent';
 import {
   formatRecoveryAttemptBlock,
   hasAutomaticTechnicalRecovery,
+  hasCurrentMissionRuntimeCloseVerdict,
   parseRecoveryAttemptBlock,
   RECOVERY_ATTEMPT_BLOCK_MARKER,
   replaceRecoveryAttemptBlock,
@@ -207,4 +208,13 @@ describe('bloco de tentativa de recuperação automática', () => {
     expect(replaced).toContain('## Learnings\n- algo');
     expect(parseRecoveryAttemptBlock(replaced)?.attempt).toBe(2);
   });
+});
+
+
+it('F-429: the latest Stop verdict survives inconsistent running status, without changing UI classification', () => {
+  const legacy = { ...blockedMission(RUNTIME_CLOSED_VERDICT), status: 'running', intentState: 'executing' };
+  expect(hasCurrentMissionRuntimeCloseVerdict(legacy)).toBe(true);
+  expect(wasMissionRuntimeClosedByOperator(legacy)).toBe(false);
+  expect(hasCurrentMissionRuntimeCloseVerdict(blockedMission(RUNTIME_CLOSED_VERDICT, '<!-- nexus:leftover-parked --> Dormindo'))).toBe(true);
+  expect(hasCurrentMissionRuntimeCloseVerdict(blockedMission(RUNTIME_CLOSED_VERDICT, AGENT_BLOCK_VERDICT))).toBe(false);
 });

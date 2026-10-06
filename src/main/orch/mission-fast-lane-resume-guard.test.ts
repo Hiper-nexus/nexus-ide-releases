@@ -24,6 +24,7 @@ const harness = vi.hoisted(() => ({
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: () => null,
   listAgentSessions: () => [],
+  registeredOrchestratorSessionsForMission: () => [],
   orchTerminateSession: async () => true,
 }));
 
@@ -139,4 +140,13 @@ describe('resumeFastLaneMission — guarda de blocked_user', () => {
       }),
     );
   });
+});
+
+
+it('F-429: automatic remount cannot remove the operator stop seal', async () => {
+  harness.mission = blockedUserMission('<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador.');
+  harness.handoffs = []; harness.resumeTechnical.mockClear();
+  await expect(resumeFastLaneMission(scope, 'mission-1', { remountKind: 'automatic' })).rejects.toThrow(/encerrada pelo operador/);
+  expect(harness.resumeTechnical).not.toHaveBeenCalled();
+  expect(harness.mission.description).toContain('runtime-closed');
 });

@@ -949,13 +949,26 @@ async function routeBlockedMissionToResume(
   // operador é decisão nova e sempre pode tentar de novo.
   if (!options.manual && missionAutoResumeSpent.has(missionId)) return false;
   missionAutoResumeSpent.add(missionId);
+  const workspace = getActiveWorkspacePath();
+  const generation = host.spawnGeneration;
+  const current = () => !host.disposed && !host.parked && hosts.get(host.paneId) === host &&
+    host.spawnGeneration === generation && getActiveWorkspacePath() === workspace;
   try {
     const missions = await window.nexus.orch.listMissions();
     const mission = missions.find((candidate) => candidate.id === missionId);
-    if (!mission || mission.status !== 'blocked') return false;
+    if (!current() || !mission || mission.status !== 'blocked') return false;
+    if (!options.manual) {
+      if (wasMissionRuntimeClosedByOperator(mission) || wasMissionLeftoverParked(mission)) return false;
+      // Automatic recovery carries only mechanical authority. Main rechecks
+      // the durable stop seal under its lifecycle lock before retrying.
+      await window.nexus.mission.command({ kind: 'retry-kickoff', missionId });
+      return current();
+    }
     host.term.writeln(`\r\n\x1b[36m${BLOCKED_RESUME_NOTICE}\x1b[0m`);
     const { reopenMission } = await import('../orch/mission-reopen');
+    if (!current()) return false;
     const resumed = await reopenMission(mission);
+    if (!current()) return false;
     if (!resumed.ok) {
       host.term.writeln(
         `\r\n\x1b[31m[nexus] retomada recusada: ${resumed.error ?? 'motivo desconhecido'}\x1b[0m`,
@@ -1409,6 +1422,7 @@ function startSpawn(
           } else if (deliberateClose) {
             awaitDeliberatePaneClose(host);
           } else if (
+            !terminationOrigin &&
             decideOrchestratorProcessExit({
               isOrchestrator: pane.role === 'orchestrator',
               exitCode,

@@ -19,6 +19,7 @@ import {
 } from "../../shared/mission-intent";
 import {
   MISSION_RUNTIME_CLOSED_MARKER,
+  hasCurrentMissionRuntimeCloseVerdict,
   withAwaitingAdjustmentMarker,
   wasMissionRuntimeClosedByOperator,
 } from "../../shared/mission-recovery-policy";
@@ -56,7 +57,7 @@ import { resolveFrozenMissionReviewProof } from "./mission-review-proof";
 import { assertTeamQuestionCompletion, teamQuestionResponseSummary, type TeamQuestionObserverBinding, type TeamQuestionPaneRuntime } from "./mission-team-question-completion";
 import { noteOperatorDirection } from "./operator-cli-mentions";
 import { loadObserverPaneSessions } from "./mission-team-question-observer";
-import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
+import { requireLiveRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import {
   revalidateSealedAttachmentSnapshots,
   workspaceRootAuthorityFromScope,
@@ -1908,7 +1909,7 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       // Do not block mission.start on first pane / Maestro boot idle.
       await fastLaneBootstrap(scope, missionId, { waitForFirstPane: false });
     },
-    retryKickoff: async (command) => {
+    retryKickoff: (command) => withMissionLifecycleLock(scope, command.missionId, async () => {
       // O STOP do operador é lei (print de campo 19/08: "encerrei todas as
       // missões e ele iniciando de novo sozinho"). retry-kickoff é gatilho
       // MECÂNICO (tecla em pane morto, auto-cura de grant, watchdogs) — ele
@@ -1917,7 +1918,7 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       const mission = stores.missions.get(command.missionId);
       if (
         mission &&
-        (wasMissionRuntimeClosedByOperator(mission) ||
+        (hasCurrentMissionRuntimeCloseVerdict(mission) ||
           wasMissionLeftoverParked(mission))
       ) {
         throw new Error(
@@ -1937,13 +1938,13 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       await resumeFastLaneMission(scope, command.missionId, {
         remountKind: "automatic",
       });
-    },
-    resume: async (command) => {
+    }),
+    resume: (command) => withMissionLifecycleLock(scope, command.missionId, async () => {
       const mission = stores.missions.get(command.missionId);
       if (!mission) throw new Error("mission not found");
       if (
         mission.status === "running" &&
-        mission.intentState === "executing"
+        mission.intentState === "executing" && !hasCurrentMissionRuntimeCloseVerdict(mission)
       ) {
         // A durable running row does not prove a live coordinator. The
         // physical recovery path watches an existing leader or respawns one.
@@ -1958,7 +1959,7 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       // o selo de encerramento (a presença dele numa missão blocked É a
       // prova de "Encerrada pelo operador"), volta a running/executing e
       // religa a coordenação pela Via Rápida (respawn + re-entrega).
-      const runtimeClosedByOperator = wasMissionRuntimeClosedByOperator(mission);
+      const runtimeClosedByOperator = hasCurrentMissionRuntimeCloseVerdict(mission);
       const leftoverParked = wasMissionLeftoverParked(mission);
       const residualWork =
         mission.status === "done" &&
@@ -1996,9 +1997,12 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
                   MISSION_RUNTIME_CLOSED_MARKER,
                 ) || "Missão reaberta pelo operador."
               : (mission.description ?? "");
-        const description = completedAwaitingReview
-          ? withAwaitingAdjustmentMarker(reopened)
+        const resumedDescription = runtimeClosedByOperator
+          ? stripMissionVerdictParagraph(stripMissionVerdictParagraph(reopened, MISSION_RUNTIME_CLOSED_MARKER), NEXUS_LEFTOVER_PARKED_MARKER)
           : reopened;
+        const description = completedAwaitingReview
+          ? withAwaitingAdjustmentMarker(resumedDescription)
+          : resumedDescription;
         transitionMissionEngineLifecycle(
           stores,
           {
@@ -2090,7 +2094,7 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
           ),
         },
       );
-    },
+    }),
     stop: async (command) => {
       // Native confirmation + lifecycle lock + physical teardown belong to
       // the renderer IPC authority boundary. This port is deliberately
@@ -2285,34 +2289,37 @@ export async function resumeBlockedMissionBootstrapFromRenderer(
   raw: unknown,
 ): Promise<MissionOrchestratorBootstrapResult> {
   const input = missionOrchestratorBootstrapRequestSchema.parse(raw);
-  const scope = requireRendererWorkspaceScope(owner);
-  try {
-    await resumeFastLaneMission(scope, input.missionId);
-    const pane = fastLaneOrchestratorPaneSummary(scope, input.missionId);
-    if (pane) {
+  const scope = requireLiveRendererWorkspaceScope(owner);
+  return withMissionLifecycleLock(scope, input.missionId, async () => {
+    try {
+      requireLiveRendererWorkspaceScope(owner, scope);
+      await resumeFastLaneMission(scope, input.missionId);
+      const pane = fastLaneOrchestratorPaneSummary(scope, input.missionId);
+      if (pane) {
+        return {
+          ok: true,
+          missionId: input.missionId,
+          pane,
+          kickoff: { accepted: true },
+          reused: true,
+        };
+      }
       return {
-        ok: true,
+        ok: false,
         missionId: input.missionId,
-        pane,
-        kickoff: { accepted: true },
-        reused: true,
+        reason: "spawn_failed",
+        error: "a retomada não conseguiu religar a coordenação",
+        cta: BOOTSTRAP_CTA,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        missionId: input.missionId,
+        reason: "materialization_failed",
+        error:
+          error instanceof Error ? error.message : "retomada da Via Rápida falhou",
+        cta: BOOTSTRAP_CTA,
       };
     }
-    return {
-      ok: false,
-      missionId: input.missionId,
-      reason: "spawn_failed",
-      error: "a retomada não conseguiu religar a coordenação",
-      cta: BOOTSTRAP_CTA,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      missionId: input.missionId,
-      reason: "materialization_failed",
-      error:
-        error instanceof Error ? error.message : "retomada da Via Rápida falhou",
-      cta: BOOTSTRAP_CTA,
-    };
-  }
+  });
 }

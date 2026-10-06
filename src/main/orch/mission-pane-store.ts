@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type Database from 'better-sqlite3';
 import type {
   MissionPaneAuthoritySeal,
@@ -523,6 +524,12 @@ export class ScopedMissionPaneStore {
     rawMissionId: string,
     rawSpecId: string,
     rawPaneId: string,
+    replacement?: {
+      readonly expected: ScopedMissionPaneSpec;
+      readonly model?: string;
+      readonly effort?: string;
+      readonly physical?: Pick<RecordMissionPaneInput, 'accountId' | 'authoritySeal' | 'allowedTools' | 'allowedSkills' | 'readOnly'>;
+    },
   ): ScopedMissionPaneSpec {
     const missionId = entityIdSchema.parse(rawMissionId);
     const specId = entityIdSchema.parse(rawSpecId);
@@ -533,17 +540,39 @@ export class ScopedMissionPaneStore {
       if (!spec || spec.role !== 'orchestrator') {
         throw new Error('only a mission orchestrator pane may move');
       }
+      if (replacement && !isDeepStrictEqual(spec, replacement.expected)) {
+        throw new Error('mission orchestrator spec changed during spawn');
+      }
+      if (replacement && spec.paneId === paneId) {
+        throw new Error('runtime replacement requires a new pane');
+      }
+      for (const field of ['model', 'effort'] as const) {
+        if (replacement && spec[field] !== undefined && spec[field] !== replacement[field]) {
+          throw new Error(`cannot replace explicit orchestrator ${field}`);
+        }
+      }
       if (spec.paneId === paneId) return { spec, changed: false };
       if (this.#findRowsByPaneId(db, paneId).length > 0) {
         throw new Error('pane id already belongs to a mission pane');
       }
-      const update = db
-        .prepare('UPDATE mission_panes SET pane_id = ? WHERE id = ?')
-        .run(paneId, specId);
+      // Only the caller that proved a NEW physical spawn may replace its
+      // runtime binding. Ordinary record/dedup never moves a live pane.
+      const runtime = replacement ? recordMissionPaneInputSchema.parse({
+        missionId, adapterId: spec.adapterId, model: replacement.model,
+        effort: replacement.effort, ...replacement.physical,
+      }) : undefined;
+      const next = runtime ? { ...spec, ...runtime, paneId } : { ...spec, paneId };
+      const update = db.prepare(`UPDATE mission_panes SET pane_id = ?, model = ?, effort = ?,
+        account_id = ?, allowed_tools_json = ?, allowed_skills_json = ?, scope_json = ? WHERE id = ?`).run(
+        paneId, next.model ?? null, next.effort ?? null, next.accountId ?? null,
+        encodeCapabilityList(next.allowedTools), encodeCapabilityList(next.allowedSkills),
+        encodePersistedPaneScopes({ coordinationScope: next.scope, executionScope: next.executionScope,
+          readOnly: next.readOnly === true, workerIncarnationId: next.workerIncarnationId,
+          authoritySeal: next.authoritySeal, visualTask: next.visualTask }), specId);
       if (update.changes !== 1) {
         throw new ScopedStoreCorruptionError('mission orchestrator pane move');
       }
-      return { spec: { ...spec, paneId }, changed: true };
+      return { spec: next, changed: true };
     })();
     if (result.changed) this.#binding.emitChange();
     return cloneSpec(result.spec);

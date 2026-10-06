@@ -5,6 +5,9 @@ import type {
   PaneRegistryEntry,
   PaneSnapshot,
 } from "../../shared/orch-types";
+import { hasCurrentMissionRuntimeCloseVerdict } from "../../shared/mission-recovery-policy";
+import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
+import { getProjectDomainStores } from "./project-domain-store-registry";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import { copyProviderPaneSession } from '../persistence/provider-session-store';
@@ -391,6 +394,14 @@ type MissionPaneSpawnOptions = PaneSpawnOptions & {
   role: "orchestrator" | "worker";
 };
 
+/** Autopilot relaxes roster choice, never a durable Stop or lost approval. */
+function assertMissionDispatchCurrent(options: MissionPaneSpawnOptions): void {
+  const mission = getProjectDomainStores(options.scope).missions.get(options.missionId);
+  if (!mission || hasCurrentMissionRuntimeCloseVerdict(mission) || !hasCurrentDispatchAuthority(mission)) {
+    throw new Error('approval_required: mission current intent is not authorized for agent spawn');
+  }
+}
+
 /**
  * Create a physical mission PTY owned by main. Presentation can be adopted by
  * a renderer later without changing pane/session identity.
@@ -422,7 +433,7 @@ export function spawnMainOwnedMissionPane(
   spawnPermitHeld = false,
 ): OrchPaneSpawnResult | Promise<OrchPaneSpawnResult> {
   const requestId = makeId("orchspawn");
-  try { options.assertOriginCurrent?.(); }
+  try { options.assertOriginCurrent?.(); assertMissionDispatchCurrent(options); }
   catch (error) { return { requestId, ok: false, error: error instanceof Error ? error.message : 'origin pane is stale' }; }
   const paneId = makeId("pane");
   const operatorChoice = isOperatorChoicePolicy(
@@ -754,6 +765,7 @@ export function spawnMainOwnedMissionPane(
     // This closure remains in Main. Publication transfers dispatch authority
     // to this exact new record; presentation may retire the ended origin.
     assertDeferredSpawnCurrent: () => {
+      assertMissionDispatchCurrent(options);
       if (reservationFailed) throw new Error('main-owned spawn reservation failed');
       if (!reservation) options.assertOriginCurrent?.();
       else if (panes.get(paneId) !== reservation ||
@@ -945,6 +957,7 @@ export async function spawnMainOwnedMissionPaneAsync(
   return spawnMainOwnedAcpMissionPane(
     {
       ...options,
+      assertOriginCurrent: () => { options.assertOriginCurrent?.(); assertMissionDispatchCurrent(options); },
       contextRevision: sealedAuthority.contextRevision,
       authoritySeal: sealedAuthority,
     },
