@@ -3,6 +3,7 @@ import { listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useOrchStore } from '../state/orch-store';
+import { suppressPendingMissionCloseNotice } from './mission-last-pane-notify';
 
 const MISSION_CLOSE_UI_TIMEOUT_MS = 15_000;
 
@@ -64,8 +65,12 @@ export async function closeMissionRuntimeAndPanes(
   const workspace = useWorkspaceStore.getState().current;
   const isCurrentWorkspace = () => useWorkspaceStore.getState().current === workspace;
   let result: MissionRuntimeCloseResult;
+  const releaseNoticeSuppression = suppressPendingMissionCloseNotice(missionId);
   try {
     const close = window.nexus.orch.closeMissionRuntime(missionId);
+    // A UI timeout does not end Main's shutdown. Keep the notice suppressed
+    // until the actual reply (including cancellation/failure), not Promise.race.
+    void close.then(releaseNoticeSuppression, releaseNoticeSuppression);
     let didTimeOut = false;
     void close.then(
       (lateResult) => {
@@ -98,6 +103,7 @@ export async function closeMissionRuntimeAndPanes(
       }),
     ]);
   } catch (error) {
+    releaseNoticeSuppression();
     // Authority fences (scope change, runtime changed under the modal) reject
     // the IPC. Surfacing them as a result keeps the caller's busy state
     // recoverable instead of freezing the mission list on a dangling promise.
