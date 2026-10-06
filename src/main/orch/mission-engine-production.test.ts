@@ -13,6 +13,7 @@ import type { OwnedAgentSessionInfo } from '../pty/pty-manager';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import {
   deliverMissionDirectInstruction,
+  runtimeAuthorityMismatches,
   type MissionDirectDeliveryDeps,
 } from './mission-engine-production';
 import { takeKickoffDirects } from './mission-kickoff-direct-queue';
@@ -248,6 +249,19 @@ function directCommand(
     ...overrides,
   };
 }
+
+it('keeps the approved Maestro model and effort strict after default materialization (F-428)', () => {
+  const scope = makeScope();
+  const mission = makeMission({ orchestratorSessionId: 'sess-orch-live' });
+  const runtime = { adapterId: 'cli', model: 'approved-model', effort: 'medium', readOnly: false, nativeReadOnly: false } satisfies Parameters<typeof runtimeAuthorityMismatches>[5];
+  const seal = { intentVersion: 1, intentContractHash: 'a'.repeat(64), contextRevision: 'reviewed', contractHash: 'b'.repeat(64), squadRevisionHash: 'c'.repeat(64) };
+  const pane = makeOrchPane({ model: runtime.model, effort: runtime.effort, cwd: scope.rootRealPath, authoritySeal: seal });
+  const agent = makeOrchSession({ requestedModel: runtime.model, effort: runtime.effort, nativeReadOnly: false, authoritySeal: seal });
+  const authority = { sessionId: agent.sessionId, paneId: pane.paneId!, kind: 'cli-agent' as const, missionId: mission.id, role: 'orchestrator' as const, scope, owner: null };
+  expect(runtimeAuthorityMismatches(scope, mission, pane, agent, authority, runtime)).toEqual([]);
+  expect(runtimeAuthorityMismatches(scope, mission, { ...pane, effort: 'high' }, { ...agent, effort: 'high' }, authority, runtime)).toContain('pane.effort×runtime[high != medium]');
+  expect(runtimeAuthorityMismatches(scope, mission, { ...pane, model: 'other-model' }, { ...agent, requestedModel: 'other-model' }, authority, runtime)).toContain('pane.model×runtime[other-model != approved-model]');
+});
 
 describe('mission direct — operador como orquestrador', () => {
   it('squad sem orquestrador + worker vivo → direção aceita contra o worker', async () => {

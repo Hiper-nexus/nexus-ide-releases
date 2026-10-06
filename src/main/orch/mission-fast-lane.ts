@@ -1132,6 +1132,12 @@ async function spawnAgentPane(
   const executionScope = missionExecutionScope(scope, mission);
   const role: 'orchestrator' | 'worker' =
     agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
+  const approvedRuntime = role === 'orchestrator' ? mission.intentContract?.orchestratorRuntime : undefined;
+  // "Default" was resolved at review time. Send that exact value to the new
+  // process and persist it, without changing the roster or a live session.
+  const runtimeAgent = approvedRuntime ? {
+    ...agent, model: agent.model || approvedRuntime.model, effort: agent.effort || approvedRuntime.effort,
+  } : agent;
   const title = paneTitle?.trim() || agent.agentName;
   const readOnly = spawnOpts?.readOnly === true;
   // Mesmos blocos de contexto do wrapper de spawn (<business-model>,
@@ -1189,8 +1195,8 @@ async function spawnAgentPane(
 
   const spawn = await requestPaneSpawn({
     adapterId: agent.cli,
-    model: agent.model || undefined,
-    effort: agent.effort || undefined,
+    model: runtimeAgent.model || undefined,
+    effort: runtimeAgent.effort || undefined,
     cwd: executionScope.rootRealPath,
     title,
     missionId: mission.id,
@@ -1217,7 +1223,7 @@ async function spawnAgentPane(
   }
 
   const stores = getProjectDomainStores(scope);
-  bindSpawnedMissionPane(stores, scope, mission, agent, role, {
+  bindSpawnedMissionPane(stores, scope, mission, runtimeAgent, role, {
     paneId: spawn.paneId,
     sessionId: spawn.sessionId,
     title,
@@ -2594,7 +2600,7 @@ export async function fastLaneBootstrap(
   // Auth pre-gate: CLI sem credencial não sobe como fake-run.
   try {
     await assertPreSpawnProbe(orchestrator.cli, {
-      model: orchestrator.model || undefined,
+      model: orchestrator.model || mission.intentContract?.orchestratorRuntime?.model,
       failClosed: true,
     });
   } catch (error) {

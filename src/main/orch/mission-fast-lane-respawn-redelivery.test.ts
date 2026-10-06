@@ -34,6 +34,7 @@ const harness = vi.hoisted(() => ({
   handoffsOfSession: undefined as string | undefined,
   deliver: vi.fn(async (_sessionId: string, _prompt: string) => true),
   missionPaneSpecs: [] as Array<Record<string, unknown>>,
+  recordedPaneSpecs: [] as Array<Record<string, unknown>>,
   movePane: vi.fn(),
   registeredOrchestrators: [] as Array<{
     missionId: string;
@@ -85,6 +86,10 @@ vi.mock('../adapters/adapter-registry', async importOriginal => ({
 // This fixture owns respawn/retry/mortality, not installed CLI credentials.
 // First-wave warming must never probe the operator's Keychain/Kimi process.
 vi.mock('./squad-runtime-inventory', () => ({ warmSquadRuntimeSubscriptionAuth: async () => undefined }));
+vi.mock('../pty/pre-spawn-probe', async importOriginal => ({
+  ...await importOriginal<typeof import('../pty/pre-spawn-probe')>(),
+  assertPreSpawnProbe: async () => undefined,
+}));
 vi.mock('../adapters/subscription-auth', async importOriginal => ({
   ...await importOriginal<typeof import('../adapters/subscription-auth')>(),
   detectSubscriptionAuthReadiness: () => 'missing',
@@ -178,7 +183,7 @@ vi.mock('./project-domain-store-registry', async (importOriginal) => ({
       hasCurrentKickoffAcceptance: () => false,
     },
     missionPanes: {
-      record: () => {},
+      record: (spec: Record<string, unknown>) => { harness.recordedPaneSpecs.push(spec); },
       list: () => harness.missionPaneSpecs,
       findByPaneId: () => null,
       moveOrchestratorPane: harness.movePane,
@@ -298,6 +303,7 @@ beforeEach(async () => {
   harness.deliver.mockClear();
   harness.handoffsOfSession = undefined;
   harness.missionPaneSpecs = [];
+  harness.recordedPaneSpecs = [];
   harness.registeredOrchestrators.length = 0;
   harness.terminate.mockClear();
   harness.trace.mockClear();
@@ -319,6 +325,34 @@ afterEach(() => {
 });
 
 describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
+  it.each(['pending', 'running'] as const)('materializes approved defaults in a %s Maestro, persisted pane and later remount (F-428)', async status => {
+    liveMission = { ...mission, status, intentState: status === 'pending' ? 'ready_to_start' : 'executing', intentContract: {
+      orchestratorRuntime: { adapterId: 'codex', model: 'approved-model', effort: 'medium', readOnly: false, nativeReadOnly: false },
+    } } as Mission;
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    expect(harness.spawnOptions[0]).toMatchObject({ model: 'approved-model', effort: 'medium' });
+    expect(harness.recordedPaneSpecs[0]).toMatchObject({ model: 'approved-model', effort: 'medium' });
+    expect(squadAgents[0].model).toBeUndefined();
+    expect(squadAgents[0].effort).toBeUndefined();
+    for (const session of harness.sessionStates.keys()) harness.sessionStates.set(session, 'exited');
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(harness.spawnOptions.length).toBeGreaterThan(1);
+    expect(harness.spawnOptions.at(-1)).toMatchObject({ model: 'approved-model', effort: 'medium' });
+    expect(harness.recordedPaneSpecs.at(-1)).toMatchObject({ model: 'approved-model', effort: 'medium' });
+  });
+
+  it('preserves explicit reviewed roster model and effort (F-428)', async () => {
+    reviewedSquad = { id: 'squad-1', name: 'Fixture', createdAt: '1', builtin: false, orchestratorInstructions: '',
+      agents: squadAgents.map(agent => agent.category === 'orchestrator' ? { ...agent, model: 'explicit-model', effort: 'high' } : agent),
+    };
+    liveMission = { ...mission, intentContract: {
+      orchestratorRuntime: { adapterId: 'codex', model: 'explicit-model', effort: 'high', readOnly: false, nativeReadOnly: false },
+    } } as Mission;
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    expect(harness.spawnOptions[0]).toMatchObject({ model: 'explicit-model', effort: 'high' });
+    expect(harness.recordedPaneSpecs[0]).toMatchObject({ model: 'explicit-model', effort: 'high' });
+  });
+
   it('keeps a new mission in its durable tab on bootstrap and Retomar; deleted tab never falls back to main', async () => {
     const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-resume-tab-')));
     const repository = path.join(root, 'repo'); fs.mkdirSync(repository);
