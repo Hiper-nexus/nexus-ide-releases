@@ -590,6 +590,20 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(JSON.stringify(h.submit.mock.calls)).not.toContain('--example');
   });
 
+  it('boot failure diagnostics never request an unbounded output scan before recovery', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    trackPaneStart(watchInit());
+    h.spawnedAt.mockReturnValue(NOW - 3_000);
+    h.sessionOutput.mockImplementationOnce((_sessionId, lines) => {
+      if (lines === undefined || lines > 100) throw new Error('unbounded boot diagnostic read');
+      return '\nSynthetic boot error';
+    });
+    h.terminationTap!('bounded-boot', { paneId: 'pane-qwen', adapterId: 'qwen' });
+    await checkPaneStarts(NOW);
+    expect(reroute).toHaveBeenCalledWith(['qwen']);
+    expect(h.trace.mock.calls.map(([event]) => event).find(event => event.kind === 'pane-not-started')?.outputTail).toContain('Synthetic boot error');
+  });
+
   it('F-792: agy one-shot que saiu com código 1 em 4 s (caso do F-773) vira pane-not-started e é reroteado', async () => {
     vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     trackPaneStart(watchInit({ paneId: 'pane-agy', requestId: 'orchspawn-agy', adapterId: 'agy' }));

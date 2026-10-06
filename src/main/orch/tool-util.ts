@@ -514,6 +514,15 @@ export function clearAdaptiveEnterTimers(sessionId?: string): void {
   }
 }
 
+/** A Kimi kickoff already pasted its brief; working echo is not a dialog. */
+function isPromptRetryIdle(sessionId: string, requireInjectableIdle: boolean): boolean {
+  if (!requireInjectableIdle) return getSessionState(sessionId) === 'idle';
+  if (isSessionInjectableIdle(sessionId)) return true;
+  return getAgentSessionInfo(sessionId)?.adapterId === 'kimi' &&
+    getSessionState(sessionId) === 'idle' &&
+    getAgentSemanticStatusBySession(sessionId)?.status === 'working';
+}
+
 function scheduleAdaptiveEnterRescue(
   sessionId: string,
   requireInjectableIdle = false,
@@ -558,9 +567,7 @@ function scheduleAdaptiveEnterRescue(
     const delayMs = delays[idx++];
     const timer = setTimeout(() => {
       timers.delete(timer);
-      const isIdleNow = requireInjectableIdle
-        ? isSessionInjectableIdle(sessionId)
-        : getSessionState(sessionId) === 'idle';
+      const isIdleNow = isPromptRetryIdle(sessionId, requireInjectableIdle);
       if (!isIdleNow || getSessionState(sessionId) === 'busy') {
         teardown();
         return;
@@ -643,9 +650,7 @@ async function submitEnter(
         throw new Error('agent prompt Enter was not delivered to the PTY');
       }
       await delay(ENTER_RETRY_MS);
-      const isIdleNow = requireInjectableIdle
-        ? isSessionInjectableIdle(sessionId)
-        : getSessionState(sessionId) === 'idle';
+      const isIdleNow = isPromptRetryIdle(sessionId, requireInjectableIdle);
       if (!enterAcceptedBusy && isIdleNow) {
         assertMcpInvocationCurrent(invocation);
         if (onBeforeSubmit?.() === false) return;

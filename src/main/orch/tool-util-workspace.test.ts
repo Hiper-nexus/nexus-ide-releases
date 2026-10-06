@@ -1608,6 +1608,58 @@ describe('agent prompt injection', () => {
       expect(failures).toEqual([]);
     });
 
+    it.each([2, 3])('F-949: Kimi submits one pasted brief when Enter attempt %s starts the turn', async (acceptedEnter) => {
+      let enters = 0;
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data.includes('revise o diff')) stubs.semanticStatus = 'working';
+          if (data === '\r' || data === '\r\n') {
+            enters += 1;
+            if (enters === acceptedEnter) {
+              queueMicrotask(() => {
+                stubs.turnStartSequence += 1;
+                for (const tap of [...stubs.turnStartTaps]) tap({ sessionId, sequence: stubs.turnStartSequence });
+                stubs.sessionState.mockReturnValue('busy');
+                for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+                for (const tap of [...stubs.dataTaps]) tap(sessionId, 'working');
+              });
+            }
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+      await spawnPendingKimi();
+      bindAttempt('session-kimi');
+      await vi.advanceTimersByTimeAsync(3_000);
+      const typed = typedInto('session-kimi');
+      expect(typed.filter(([, data]) => data.includes('revise o diff'))).toHaveLength(1);
+      expect(enters).toBe(acceptedEnter);
+      expect(stubs.turnStartSequence).toBe(1);
+      expect(failures).toEqual([]);
+    });
+
+    it.each(['busy', 'awaiting-input'] as const)('F-949: Kimi does not retry Enter after %s', async (blockingState) => {
+      let enters = 0;
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data.includes('revise o diff')) stubs.semanticStatus = 'working';
+          if (data === '\r' || data === '\r\n') {
+            enters += 1;
+            if (blockingState === 'busy') {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+            } else stubs.semanticStatus = 'awaiting-input';
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+      await spawnPendingKimi();
+      bindAttempt('session-kimi');
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(enters).toBe(1);
+      expect(typedInto('session-kimi').filter(([, data]) => data.includes('revise o diff'))).toHaveLength(1);
+    });
+
     it('F-926: semantic "awaiting-input" (diálogo real) ainda bloqueia o Enter', async () => {
       // Mesmo com o brief já colado, um diálogo aberto (awaiting-input) faz o
       // Enter ir para o lugar errado — segue recusado.

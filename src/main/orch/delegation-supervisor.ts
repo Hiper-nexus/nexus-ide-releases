@@ -11,6 +11,7 @@ import { wasUpdatedBeforeThisProcess } from '../../shared/session-restore-livene
 import { wasMissionApprovedByOperator } from '../../shared/mission-recovery-policy';
 import {
   hasCurrentApprovedDispatchContract,
+  hasCurrentDispatchAuthority,
   isRecoveryEligibleIntentState,
   recoveryHandoffIdempotencyKey,
   resolveDispatchAuthorizedAt,
@@ -78,7 +79,7 @@ import {
   zeroDeliveryPokeSummary,
 } from './zero-delivery-watchdog';
 import { flushAllNexusTaskFailClosedRetries } from './nexus-task-fail-closed-recovery';
-import { decideMomentumNudge, momentumNudgeSummary } from './mission-momentum-watchdog';
+import { decideMomentumNudge, momentumNudgeSummary, momentumReadyBacklog } from './mission-momentum-watchdog';
 import {
   getAgentLastTurnEnd,
   getAgentSemanticStatusBySession,
@@ -104,7 +105,8 @@ const chefIdleTrackers = new Map<string, ChefIdleTracker>();
 
 /** Esteira (F-714): desde quando a missão está sem worker e o último lembrete. */
 const momentumSoloSince = new Map<string, number>();
-const momentumNudgedAt = new Map<string, number>();
+const momentumNudgedAt = new Map<string, { at: number; backlogKey?: string }>();
+const momentumReadySince = new Map<string, number>();
 
 /**
  * F-242: worker `working` sem ferramenta/saída por 20 min com o PTY parado =
@@ -864,8 +866,9 @@ async function handlePaneNotStarted(
   });
   // F-788/F-789: a cauda do PTY é lida antes de fechar/rerotear (o ring da
   // sessão morta some depois) e vai só para o trace local, já sanitizada.
+  // F-953: diagnóstico nunca pede uma varredura ilimitada antes da recuperação.
   const outputTail = watch.sessionId !== null
-    ? sanitizePaneBootOutput(readSessionOutput(watch.sessionId, Number.MAX_SAFE_INTEGER))
+    ? sanitizePaneBootOutput(readSessionOutput(watch.sessionId, 100))
     : null;
   if (watch.sessionId === null) {
     // Um PTY atrasado desta tentativa não pode nascer depois do reenvio.
@@ -1307,40 +1310,78 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
       }
     }
 
-    // Esteira (F-714): Maestro vivo, nenhum worker há muito tempo.
+    // Registered ready work and vacant physical slots cannot hide behind idle
+    // helpers or a long gate. This advises the exact leader; it never spawns.
     {
-      if (workerPaneCount > 0) momentumSoloSince.delete(mission.id);
-      else if (!momentumSoloSince.has(mission.id)) momentumSoloSince.set(mission.id, now);
+      const key = `${scopeKey(suite)}\0${mission.id}`;
+      const leader = panes.find(pane => pane.role === 'orchestrator' &&
+        pane.sessionId === mission.orchestratorSessionId && pane.scope && sameProjectScope(pane.scope, suite.scope));
+      const physicalLeaderState = leader?.sessionId ? getSessionState(leader.sessionId) : null;
+      const orchestratorAlive = physicalLeaderState === 'busy' || physicalLeaderState === 'spawning' || physicalLeaderState === 'idle';
+      const authorized = orchestratorAlive && leader?.readOnly !== true &&
+        lane !== 'plan' && lane !== 'consult' &&
+        hasCurrentDispatchAuthority(mission, { workerPaneCount });
+      let readyTaskIds: readonly string[] = [];
+      let backlogKey: string | undefined;
+      const cap = mission.intentContract?.budgets?.maxWorkers ?? 0;
+      // Match the spawn gate's durable pre-bind reservations as well as visible
+      // workers. An unbound spawn is not a free slot; old exited rows are.
+      const snapshotStates = new Map(listPaneSnapshots().map(pane => [pane.paneId, pane.state]));
+      const reservedWorkers = authorized ? suite.missionPanes.list(mission.id).filter(row => row.role === 'worker' &&
+        (!row.paneId || (snapshotStates.has(row.paneId) && snapshotStates.get(row.paneId) !== 'exited'))).length : 0;
+      const availableSlots = Math.max(0, cap - Math.max(workerPaneCount, reservedWorkers));
+      if (authorized && availableSlots > 0) {
+        // The current sealed receipt supplies immutable dependency metadata. An
+        // absent receipt is acceptable only for already-approved free execution.
+        const receipt = suite.tasks.getPlanReceipt(mission.id, mission.intentVersion!);
+        if (receipt || mission.intentContract?.freeAgentChoice === true) {
+          const backlog = momentumReadyBacklog({
+            tasks: suite.tasks.list(mission.id), sealedTasks: receipt?.tasks,
+            dispatches: suite.taskDispatches.list(mission.id).filter(row => row.intentVersion === mission.intentVersion),
+            intentVersion: mission.intentVersion,
+          });
+          readyTaskIds = backlog.readyTaskIds; backlogKey = backlog.backlogKey;
+        }
+      }
+      if (readyTaskIds.length && availableSlots > 0) {
+        if (!momentumReadySince.has(key)) momentumReadySince.set(key, now);
+      } else momentumReadySince.delete(key);
+      const usefulWorkingWorkers = panes.filter(pane => {
+        if (pane.role !== 'worker' || !pane.sessionId) return false;
+        const physical = getSessionState(pane.sessionId);
+        if (physical !== 'busy' && physical !== 'spawning' && physical !== 'idle') return false;
+        const semantic = getAgentSemanticStatusBySession(pane.sessionId);
+        if (semantic) return semantic.status === 'working' && (physical === 'busy' || physical === 'spawning' || now - semantic.updatedAt < WORKER_HUNG_AFTER_MS);
+        return physical === 'busy' || physical === 'spawning';
+      }).length;
+      if (workerPaneCount > 0) momentumSoloSince.delete(key);
+      else if (!momentumSoloSince.has(key)) momentumSoloSince.set(key, now);
+      const persisted = recoveries.filter(row => row.summary.startsWith(`[momentum:${mission.id}]`)).at(-1);
+      const remembered = momentumNudgedAt.get(key);
+      const lastNotice = remembered && (!persisted || remembered.at >= persisted.createdAt)
+        ? remembered : persisted ? { at: persisted.createdAt, backlogKey: persisted.summary.match(/\[momentum-ready:([a-f0-9]{64})\]/u)?.[1] } : null;
       const momentum = decideMomentumNudge({
-        missionStatus: mission.status,
-        lane: lane ?? null,
-        maxWorkers: mission.intentContract?.budgets?.maxWorkers ?? null,
-        workerPanes: workerPaneCount,
-        orchestratorAlive:
-          orchestratorPaneState !== undefined &&
-          orchestratorPaneState !== 'exited' &&
-          orchestratorPaneState !== 'parked' &&
-          orchestratorPaneState !== 'hibernated',
-        soloSinceMs: momentumSoloSince.get(mission.id) ?? null,
-        lastNudgeAtMs: momentumNudgedAt.get(mission.id) ?? null,
+        missionStatus: mission.status, lane: lane ?? null, maxWorkers: cap,
+        workerPanes: workerPaneCount, orchestratorAlive, dispatchAuthorized: authorized,
+        readOnly: leader?.readOnly === true, readyTaskIds, availableSlots, usefulWorkingWorkers,
+        readySinceMs: momentumReadySince.get(key) ?? null,
+        soloSinceMs: momentumSoloSince.get(key) ?? null,
+        lastNudgeAtMs: lastNotice?.at ?? null, backlogKey, lastBacklogKey: lastNotice?.backlogKey,
         now,
       });
-      if (momentum.action === 'nudge') {
-        momentumNudgedAt.set(mission.id, now);
+      if (momentum.action === 'nudge' && current()) {
         try {
           const handoff = suite.handoffs.submit({
-            missionId: mission.id,
-            status: 'progress',
-            summary: momentumNudgeSummary(mission.id, momentum.soloForMs),
+            missionId: mission.id, status: 'progress',
+            summary: momentumNudgeSummary(mission.id, momentum.soloForMs, momentum),
             fromAgent: DELEGATION_SUPERVISOR_AGENT,
           });
+          // Failed submission cannot consume the only opportunity to resume work.
+          momentumNudgedAt.set(key, { at: now, backlogKey: momentum.backlogKey });
           onHandoffSubmitted(handoff, suite.scope);
           console.warn(`[delegation-supervisor] momentum nudge for ${mission.id}`);
         } catch (error) {
-          console.warn(
-            `[delegation-supervisor] momentum nudge falhou:`,
-            error instanceof Error ? error.message : error,
-          );
+          console.warn('[delegation-supervisor] momentum nudge falhou:', error instanceof Error ? error.message : error);
         }
       }
     }
@@ -1553,4 +1594,5 @@ export async function shutdownDelegationSupervisor(): Promise<void> {
   hungWorkerNotifiedAt.clear();
   momentumSoloSince.clear();
   momentumNudgedAt.clear();
+  momentumReadySince.clear();
 }

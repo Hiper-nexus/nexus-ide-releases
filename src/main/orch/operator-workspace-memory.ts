@@ -21,6 +21,7 @@ export function operatorWorkspaceMemoryContext(
   ctx: OperatorContext,
   channel: 'mcp' | 'hook',
   prompt?: string,
+  deferRecall?: (acknowledge: () => void) => void,
 ): string | null {
   if (!isOperatorHandContext(ctx) || ctx.operatorParentSessionId) return null;
   if (providerReceivesContextOnlyByHook(ctx.providerId) !== (channel === 'hook')) return null;
@@ -32,6 +33,7 @@ export function operatorWorkspaceMemoryContext(
   return channel === 'hook'
     ? workspaceMemoryContextBlock(scope, prompt ?? '', 'execution', {
         missionId: ctx.missionId ?? undefined,
+        deferRecall,
       })
     : standingWorkspaceMemoryBlock(scope);
 }

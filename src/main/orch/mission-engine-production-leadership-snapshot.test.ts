@@ -16,6 +16,7 @@ import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
 
 const harness = vi.hoisted(() => ({
   sessionStates: new Map<string, string | null>(),
+  semanticByPane: new Map<string, 'working' | 'awaiting-input' | 'error'>(),
   resolveMissionLeader: vi.fn<(scope: ProjectExecutionScope, missionId: string) => MissionLeader | null>(),
   agentSessionsByPane: new Map<string, Array<Record<string, unknown>>>(),
   paneSnapshots: [] as Array<Record<string, unknown>>,
@@ -25,6 +26,15 @@ const harness = vi.hoisted(() => ({
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: (sessionId: string) => harness.sessionStates.get(sessionId) ?? null,
   listAgentSessionsForPane: (paneId: string) => harness.agentSessionsByPane.get(paneId) ?? [],
+}));
+
+vi.mock('./agent-status', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./agent-status')>()),
+  getAgentSemanticStatus: (paneId: string) => {
+    const status = harness.semanticByPane.get(paneId);
+    return status ? { status, paneId, sessionId: 's-worker', source: 'hook', updatedAt: Date.now() } : null;
+  },
+  getAgentSemanticStatusBySession: () => null,
 }));
 
 vi.mock('./squad-store', async (importOriginal) => ({
@@ -93,6 +103,7 @@ function stores(input: {
 
 beforeEach(() => {
   harness.sessionStates = new Map();
+  harness.semanticByPane = new Map();
   harness.resolveMissionLeader.mockReset();
   harness.agentSessionsByPane = new Map();
   harness.paneSnapshots = [];
@@ -294,6 +305,36 @@ describe('Quadro fiel ao terminal (campo 23/09)', () => {
 });
 
 describe('missão da aba (sem squad): o quadro desenha os panes que a missão gravou', () => {
+  it.each([
+    ['working', 'exited'], ['working', null],
+    ['awaiting-input', 'exited'], ['awaiting-input', null],
+    ['error', 'exited'], ['error', null],
+  ] as const)('F-952: stale %s hook does not revive a durable pane with transport %s', (semantic, transport) => {
+    harness.resolveMissionLeader.mockReturnValue(null);
+    if (transport) harness.sessionStates.set('s-worker', transport);
+    harness.semanticByPane.set('pane-worker', semantic);
+    harness.paneSnapshots = [{ paneId: 'pane-worker', sessionId: 's-worker' }];
+    const view = projectMissionEngineSnapshotView(scope, stores({
+      mission: mission(), panes: [pane({ paneId: 'pane-worker', role: 'worker', adapterId: 'codex' })],
+    }), missionId);
+    expect(view.panes[0]).toMatchObject({ terminalLive: false, state: 'queued' });
+    const agent = projectMissionSnapshot(view).agents[0]!;
+    expect(agent).toMatchObject({ terminalLive: false, state: 'queued' });
+    expect(agent).not.toHaveProperty('paneId');
+  });
+
+  it('F-952: current semantic working survives a live idle transport', () => {
+    harness.resolveMissionLeader.mockReturnValue(null);
+    harness.sessionStates.set('s-worker', 'idle');
+    harness.semanticByPane.set('pane-worker', 'working');
+    harness.paneSnapshots = [{ paneId: 'pane-worker', sessionId: 's-worker' }];
+    const view = projectMissionEngineSnapshotView(scope, stores({
+      mission: mission(), panes: [pane({ paneId: 'pane-worker', role: 'worker', adapterId: 'codex' })],
+    }), missionId);
+    expect(view.panes[0]).toMatchObject({ terminalLive: true, state: 'working' });
+    expect(projectMissionSnapshot(view).agents[0]).toMatchObject({ terminalLive: true, state: 'working', paneId: 'pane-worker' });
+  });
+
   it.each(['busy', 'spawning', 'idle', 'exited', null])('distingue terminal físico %s de um pane durável antigo', (sessionState) => {
     harness.resolveMissionLeader.mockReturnValue(null);
     if (sessionState) harness.sessionStates.set('s-worker', sessionState);

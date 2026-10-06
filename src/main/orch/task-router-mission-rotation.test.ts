@@ -52,10 +52,10 @@ describe('rotação garantida por missão (usar todas as LLMs)', () => {
     expect(decision!.reason).not.toContain('rotação garantida');
   });
 
-  it('critical não rotaciona — o topo entre CLIs continua mandando', () => {
+  it('correção crítica de achado provado não rotaciona — o topo continua mandando', () => {
     const decision = routeTask(
       'corrigir falha de autenticação crítica', adapters, DEFAULT_ROUTING_TABLE, 'critical', false,
-      undefined, context({ claude: 2, codex: 1 }),
+      undefined, { ...context({ claude: 2, codex: 1 }), reviewedFindingFix: true },
     );
     expect(['claude', 'codex', 'glm']).toContain(decision!.adapterId);
     expect(decision!.adapterId).not.toBe('muse');

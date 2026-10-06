@@ -110,7 +110,8 @@ describe('routeTask', () => {
       const task = 'corrigir typo no README do projeto agora';
       expect(routeTask(task, pool)).not.toMatchObject({ adapterId: 'grok', model: 'grok-4.7' });
       accountId = 'account-b';
-      expect(routeTask(task, pool)).toMatchObject({ adapterId: 'grok', model: 'grok-4.7' });
+      const restored = routeTask(task, pool)!;
+      expect([restored, ...restored.alternatives]).toContainEqual(expect.objectContaining({ adapterId: 'grok', model: 'grok-4.7' }));
     } finally {
       resetModelAccessQuarantineForTests();
     }
@@ -119,11 +120,11 @@ describe('routeTask', () => {
   it('F-683: modelo recusado pelo provider sai do roteamento até a quarentena vencer', () => {
     resetModelAccessQuarantineForTests();
     const before = routeTask('corrigir typo no README do projeto agora', adapters('grok', 'claude', 'codex'));
-    expect(before).toMatchObject({ adapterId: 'grok', model: 'grok-4.7' });
+    expect([before, ...before!.alternatives]).toContainEqual(expect.objectContaining({ adapterId: 'grok', model: 'grok-4.7' }));
     quarantineRejectedModel('grok', 'grok-4.7', 'Model access is disabled');
     const after = routeTask('corrigir typo no README do projeto agora', adapters('grok', 'claude', 'codex'));
     expect(after).not.toBeNull();
-    expect(`${after!.adapterId}:${after!.model}`).not.toBe('grok:grok-4.7');
+    expect([after, ...after!.alternatives]).not.toContainEqual(expect.objectContaining({ adapterId: 'grok', model: 'grok-4.7' }));
     resetModelAccessQuarantineForTests();
   });
 
@@ -134,10 +135,9 @@ describe('routeTask', () => {
     );
     expect(decision).not.toBeNull();
     expect(decision!.tier).toBe('easy');
-    expect(decision!.adapterId).toBe('grok');
-    // xAI aposentou o grok-4-fast (`grok models` só lista 4.7/4.7-build-fast/
-    // 4.6/4.5, 2026-09-27) — o catálogo unificou o grok no vigente.
-    expect(decision!.model).toBe('grok-4.7');
+    // Implementation cost policy uses the known economic same-tier seat.
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.model).toBe('gpt-6-luna');
     expect(decision!.effort).toBe('low');
   });
 
@@ -983,7 +983,8 @@ describe('F-217 — o mais novo da linha vence mesmo sem catálogo', () => {
       flat,
     );
     expect(decision?.adapterId).toBe('codex');
-    expect(decision?.model).toBeUndefined();
+    // Bind the actual safe fallback; never leave a potentially Astra default implicit.
+    expect(decision?.model).toBe('gpt-6-sol');
     expect(decision?.reason).toContain('CLI sem o modelo roteado: codex:gpt-7-sol');
   });
 

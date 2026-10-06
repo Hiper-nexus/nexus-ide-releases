@@ -6,6 +6,7 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import type { judge as jevJudge } from '../jev/jev-client';
+import { configureJevDecisionLog } from '../jev/jev-decision-log';
 import {
   configureWorkspaceMemory,
   disposeWorkspaceMemoryStores,
@@ -32,11 +33,13 @@ beforeEach(() => {
     identitySource: 'manifest',
   };
   configureWorkspaceMemory({ baseDir });
+  configureJevDecisionLog(path.join(baseDir, 'jev-log'));
   getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.workspaceMemory, true);
 });
 
 afterEach(() => {
   disposeWorkspaceMemoryStores();
+  configureJevDecisionLog();
   getFeatureFlagRegistry().clearOverride(FEATURE_FLAG_IDS.workspaceMemory);
   for (const dir of dirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -72,6 +75,71 @@ describe('operator preference extraction', () => {
 });
 
 describe('operator preference memory', () => {
+  it('an explicit named correction replaces only that operator topic and preserves history', async () => {
+    await distillOperatorPreferenceMemory(scope, 'Preferência idioma: sempre responda em inglês.', deps(judge(0.99)));
+    await distillOperatorPreferenceMemory(scope, 'Preferência pacotes: sempre use pnpm.', deps(judge(0.99)));
+    await distillOperatorPreferenceMemory(scope, 'Preferência idioma: a partir de agora, prefiro respostas em português.', deps(judge(0.99)));
+    const store = getWorkspaceMemoryStore(scope);
+    const active = store.activeBySource('trusted:operator-preference');
+    expect(active).toHaveLength(2);
+    expect(active.some(hit => hit.content.includes('sempre responda em inglês'))).toBe(false);
+    expect(active.some(hit => hit.content.includes('sempre use pnpm'))).toBe(true);
+    expect(active.some(hit => hit.content.includes('prefiro respostas em português'))).toBe(true);
+    expect(store.stats().workspace.total).toBe(3);
+  });
+
+  it('named changes without an explicit correction marker never revoke prior preferences', async () => {
+    await distillOperatorPreferenceMemory(scope, 'Preferência idioma: sempre responda em inglês.', deps(judge(0.99)));
+    await distillOperatorPreferenceMemory(scope, 'Preferência idioma: sempre responda em português.', deps(judge(0.99)));
+    expect(getWorkspaceMemoryStore(scope).activeBySource('trusted:operator-preference')).toHaveLength(2);
+  });
+
+  it('a quoted named correction cannot replace a genuine operator preference', async () => {
+    await distillOperatorPreferenceMemory(scope, 'Preferência idioma: sempre responda em inglês.', deps(judge(0.99)));
+    const classifier = judge(0.99);
+    await distillOperatorPreferenceMemory(scope, '> Preferência idioma: a partir de agora, nunca use inglês.', deps(classifier));
+    expect(classifier).not.toHaveBeenCalled();
+    expect(getWorkspaceMemoryStore(scope).activeBySource('trusted:operator-preference')).toHaveLength(1);
+  });
+
+  it('two named topics in one candidate cannot revoke the first topic from a later correction phrase', async () => {
+    await distillOperatorPreferenceMemory(scope, 'Preferência pacotes: sempre use pnpm.', deps(judge(0.99)));
+    await distillOperatorPreferenceMemory(scope, 'Preferência pacotes: nunca use yarn. Preferência idioma: a partir de agora, prefiro inglês.', deps(judge(0.99)));
+    expect(getWorkspaceMemoryStore(scope).activeBySource('trusted:operator-preference').some(hit => hit.content.includes('sempre use pnpm'))).toBe(true);
+  });
+
+  it.each([
+    'Preferência UI: Sempre preserve o tema; nunca substitua por gradientes.',
+    'Preferência UI: Sempre preserve o tema; não quero que substitua a identidade.',
+    "Preference UI: Always keep the theme; do not replace it with gradients.",
+    "Preference UI: Always keep the theme; don't ever replace its identity.",
+  ])('a negated correction action never revokes a prior preference: %s', async (prompt) => {
+    await distillOperatorPreferenceMemory(scope, 'Preferência UI: sempre use um tema escuro.', deps(judge(0.99)));
+    await distillOperatorPreferenceMemory(scope, prompt, deps(judge(0.99)));
+    expect(getWorkspaceMemoryStore(scope).activeBySource('trusted:operator-preference').some(hit => hit.content.includes('sempre use um tema escuro'))).toBe(true);
+  });
+
+  it('a late correction classifier cannot revoke a newer operator attestation', async () => {
+    await distillOperatorPreferenceMemory(scope, 'Preferência idioma: sempre use inglês.', deps(judge(0.99)));
+    let release!: (result: Awaited<ReturnType<typeof jevJudge>>) => void;
+    const pendingJudge = vi.fn<typeof jevJudge>(() => new Promise(resolve => { release = resolve; }));
+    const pending = distillOperatorPreferenceMemory(scope, 'Preferência idioma: a partir de agora, prefiro português.', deps(pendingJudge));
+    const { retainOperatorMemoryAttestation } = await import('./operator-memory-attestation');
+    retainOperatorMemoryAttestation(scope, { type: 'operator-preference', title: 'idioma', summary: 'Sempre responda em espanhol.', scope: 'workspace' });
+    release({ model: 'jev-1.13.0', usage: { input_tokens: 1, output_tokens: 1 }, answers: { is_preference: { type: 'noul', noul: 0.99 } } });
+    expect(await pending).toMatchObject({ retained: false });
+    expect(getWorkspaceMemoryStore(scope).activeBySource('trusted:operator-preference').some(hit => hit.content.includes('espanhol'))).toBe(true);
+  });
+
+  it('an action inside an additional preference is not a correction of the previous preference', async () => {
+    await distillOperatorPreferenceMemory(scope, 'Preferência UI: sempre use um tema escuro.', deps(judge(0.99)));
+    await distillOperatorPreferenceMemory(scope, 'Preferência UI: sempre substitua dados fictícios por dados reais.', deps(judge(0.99)));
+    expect(getWorkspaceMemoryStore(scope).activeBySource('trusted:operator-preference').some(hit => hit.content.includes('sempre use um tema escuro'))).toBe(true);
+    await distillOperatorPreferenceMemory(scope, 'Preferência UI: substitua a regra antiga; sempre use um tema claro.', deps(judge(0.99)));
+    const active = getWorkspaceMemoryStore(scope).activeBySource('trusted:operator-preference');
+    expect(active).toHaveLength(1);
+    expect(active[0]?.content).toContain('sempre use um tema claro');
+  });
   it('skips prompts without a marker using zero Jev calls', async () => {
     const judgeFn = judge(0.95);
     const outcome = await distillOperatorPreferenceMemory(

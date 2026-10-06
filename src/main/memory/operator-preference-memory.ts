@@ -15,6 +15,7 @@ import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { retainTrustedMemoryBestEffort } from './trusted-memory';
 import { getWorkspaceMemoryStore } from './workspace-memory';
+import { operatorPreferenceReference } from './operator-memory-attestation';
 
 /** Marcadores pt-BR/EN de preferência duradoura. */
 export const PREFERENCE_MARKER_RE =
@@ -32,6 +33,20 @@ const PROMPT_MAX_CHARS = 65_536;
 const INJECTED_MESSAGE_RE = /<\/?(?:task-notification|pasted_content|system-reminder|tool_result|workspace-handoff)\b|\[Nexus\]|^\s*#\s*AGENTS\.md\b|^\s*(?:log da CI|CI log)\b/im;
 
 const PREFERENCE_SOURCE = 'trusted:operator-preference';
+const NAMED_PREFERENCE_RE = /^(?:prefer[eê]ncia|preference)[ \t]+([^:\n]{1,80}):[ \t]+(.+)$/i;
+const EXPLICIT_CORRECTION_RE = /\b(?:substitua|substituir|corrigindo|corre[cç][aã]o|a partir de agora|de agora em diante|instead|replace|from now on)\b/i;
+
+function hasPositiveCorrection(text: string): boolean {
+  for (const match of text.matchAll(new RegExp(EXPLICIT_CORRECTION_RE.source, 'gi'))) {
+    const prefix = text.slice(Math.max(0, match.index! - 80), match.index);
+    const clausePrefix = prefix.split(/[.!?;,:]/).at(-1)?.trim() ?? '';
+    // The marker leads an explicit correction clause; an action such as
+    // "sempre substitua dados fictícios" merely adds another preference.
+    if (/^(?:por favor|please|agora|now)?$/i.test(clausePrefix) &&
+        !/\b(?:não|nao|nunca|jamais|never|not|don't|dont)\b[^.!?;,:]{0,60}$/i.test(prefix)) return true;
+  }
+  return false;
+}
 
 /**
  * Candidatos aguardando o Jev, por banco de workspace. Sem teto diário
@@ -98,12 +113,19 @@ export async function distillOperatorPreferenceMemory(
   if (!PREFERENCE_MARKER_RE.test(prompt)) return { retained: false, reason: 'no-marker' };
   const candidate = extractPreferenceCandidate(prompt);
   if (!candidate) return { retained: false, reason: 'not-adopted' };
+  const topic = [...candidate.matchAll(/\b(?:prefer[eê]ncia|preference)[ \t]+[^:\n]{1,80}:/gi)].length === 1
+    ? NAMED_PREFERENCE_RE.exec(candidate) : null;
+  const reference = topic ? operatorPreferenceReference(topic[1]!) : undefined;
+  const replaces = Boolean(reference && hasPositiveCorrection(topic![2]!));
+  let predecessors: string[] = [];
 
   // Duplicata sai antes do Jev: "never/always" é comum em prompt trivial e
   // cada chamada custa.
   let pending: Set<string>;
   try {
     const store = getWorkspaceMemoryStore(scope);
+    if (replaces) predecessors = store.activeBySource(PREFERENCE_SOURCE)
+      .filter(hit => (`\n${hit.content}\n`).includes(`\nReference: ${reference}\n`)).map(hit => hit.id);
     const hits = store.recall({ query: candidate, limit: 3, includeGlobal: false, trustedOnly: true });
     if (hits.some((hit) => hit.source === PREFERENCE_SOURCE && hit.content.includes(candidate))) {
       return { retained: false, reason: 'dedupe' };
@@ -124,12 +146,20 @@ export async function distillOperatorPreferenceMemory(
       deps,
     );
     if (!confirmed) return { retained: false, reason: 'jev-skip' };
-
+    // A delayed classifier must not revoke a preference changed meanwhile.
+    if (replaces) {
+      const current = getWorkspaceMemoryStore(scope).activeBySource(PREFERENCE_SOURCE)
+        .filter(hit => (`\n${hit.content}\n`).includes(`\nReference: ${reference}\n`)).map(hit => hit.id);
+      if (JSON.stringify(current) !== JSON.stringify(predecessors)) return { retained: false, reason: 'store-unavailable' };
+    }
+    const event = {
+      type: 'operator-preference' as const, title: 'Operator preference', summary: candidate,
+      ...(reference ? { reference } : {}),
+    };
     const result = retainTrustedMemoryBestEffort(scope, {
-      type: 'operator-preference',
-      title: 'Operator preference',
-      summary: candidate,
-    });
+      ...event,
+    }, predecessors[0] ? { supersedes: predecessors[0] } : {});
+    if (result) for (const id of predecessors.slice(1)) retainTrustedMemoryBestEffort(scope, event, { supersedes: id });
     return result ? { retained: true, reason: 'ok' } : { retained: false, reason: 'store-unavailable' };
   } finally {
     pending.delete(candidate);

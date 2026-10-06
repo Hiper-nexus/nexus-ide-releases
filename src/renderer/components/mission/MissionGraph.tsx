@@ -1,4 +1,7 @@
 import type { CSSProperties } from 'react';
+import { OverlayLayer } from '../../overlay/overlay-layer';
+import { layoutHorizontalMissionGraph } from './mission-graph-horizontal';
+import { MIN_GRAPH_ZOOM, MissionGraphToolbar, useMissionGraphPresentation } from './mission-graph-presentation';
 import type {
   MissionAgentSnapshot,
   MissionEdge,
@@ -18,6 +21,7 @@ import {
   type CablePort,
   type CableSpec,
   type RackBox,
+  type GraphOrientation,
 } from './mission-graph-cabling';
 
 const AGENTS_PER_ROW = 4;
@@ -80,7 +84,9 @@ type GraphSurfaceStyle = CSSProperties & {
 export function layoutMissionGraph(
   agents: readonly MissionAgentSnapshot[],
   relations?: readonly CableSpec[],
+  orientation: GraphOrientation = 'vertical',
 ): readonly MissionGraphPosition[] {
+  if (orientation === 'horizontal') return layoutHorizontalMissionGraph(agents, relations);
   if (agents.length === 0) return [];
 
   const orchestratorIndex = agents.findIndex(
@@ -224,7 +230,8 @@ export function MissionGraph({
   onOpenAgentPane,
   onRetry,
 }: MissionGraphProps) {
-  const layout = layoutMissionGraph(snapshot.agents, snapshot.edges);
+  const view = useMissionGraphPresentation(snapshot.agents.length > 0);
+  const layout = layoutMissionGraph(snapshot.agents, snapshot.edges, view.orientation);
 
   if (layout.length === 0) {
     return (
@@ -296,9 +303,14 @@ export function MissionGraph({
     boxes,
     agents: agentsById,
     missionState: snapshot.state,
+    orientation: view.orientation,
   });
-  const width = GRAPH_WIDTH;
-  const height = Math.max(graphHeight(layout), ...cables.map((cable) => cable.extent?.bottom ?? 0));
+  const width = view.orientation === 'horizontal'
+    ? Math.max(...layout.map(position => position.x + position.width / 2 + 48), ...cables.map(cable => cable.extent?.right ?? 0)) : GRAPH_WIDTH;
+  const height = Math.max(view.orientation === 'horizontal' ? GRAPH_WIDTH : graphHeight(layout), ...cables.map((cable) => cable.extent?.bottom ?? 0));
+  const availableZoom = view.viewport.width > 0 && view.viewport.height > 0
+    ? Math.min((view.viewport.width - 32) / width, (view.viewport.height - 32) / height, 1) : 1;
+  const zoom = view.fit ? Math.max(0.05, availableZoom) : view.manualZoom;
   const surfaceStyle: GraphSurfaceStyle = {
     '--mission-graph-width': `${width}px`,
     '--mission-graph-height': `${height}px`,
@@ -308,13 +320,21 @@ export function MissionGraph({
     '--mission-core-height': `${CORE_HEIGHT}px`,
   };
 
-  return (
+  const content = (
     <section
-      className="mission-graph"
+      ref={view.sectionRef}
+      className={`mission-graph${view.mode !== 'inline' ? ' mission-graph--presentation' : ''}`}
+      role={view.mode === 'overlay' ? 'dialog' : undefined}
+      aria-modal={view.mode === 'overlay' ? true : undefined}
       aria-label={`Equipe e conexões da missão ${snapshot.title}`}
       data-mission-state={snapshot.state}
+      data-orientation={view.orientation}
+      data-fit={view.fit ? 'true' : 'false'}
     >
-      <div className="mission-graph__surface" style={surfaceStyle}>
+      <MissionGraphToolbar view={view} zoom={zoom} />
+      <div className="mission-graph__viewport" ref={view.viewportRef} tabIndex={0} aria-label="Área do grafo" >
+      <div className="mission-graph__scaled" style={{ width: width * zoom, height: height * zoom }}>
+      <div className="mission-graph__surface" style={{ ...surfaceStyle, transform: `scale(${zoom})` }}>
         <svg
           className="mission-graph__edges"
           viewBox={`0 0 ${width} ${height}`}
@@ -405,6 +425,10 @@ export function MissionGraph({
         </svg>
       </div>
 
+      </div>
+      </div>
+
+      {view.fit && availableZoom < MIN_GRAPH_ZOOM ? <p className="mission-graph__fit-note">Amplie o zoom para ler os detalhes.</p> : null}
       {edges.length > 0 ? (
         <section
           className="mission-graph__relationships"
@@ -479,4 +503,5 @@ export function MissionGraph({
       </aside>
     </section>
   );
+  return view.mode === 'overlay' ? <OverlayLayer>{content}</OverlayLayer> : content;
 }

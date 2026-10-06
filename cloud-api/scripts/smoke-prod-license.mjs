@@ -3,7 +3,7 @@
 // assinada pela API é aceita pela chave pública embutida no app. Se as duas chaves divergirem, todo cliente novo
 // fica bloqueado: este é o teste que pega isso.
 //
-//   node scripts/smoke-prod-license.mjs [--pubkey ../nexus-ide/resources/license-pubkey.pem]
+//   node scripts/smoke-prod-license.mjs [--pubkey ../resources/license-pubkey.pem]
 //
 // Cria UMA conta sintética (e-mail @nexus-e2e.invalid) com um código de login de uso único no D1 de produção, troca o
 // código pelo endpoint real (/v1/auth/exchange), confere a licença e APAGA a conta (cascata) mesmo se algo falhar.
@@ -18,7 +18,7 @@ const API = 'https://api.nexuside.app';
 const DB = 'nexus-cloud-prod';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const pubkeyArg = process.argv.indexOf('--pubkey');
-const PUBKEY = resolve(ROOT, pubkeyArg > 0 ? process.argv[pubkeyArg + 1] : '../nexus-ide/resources/license-pubkey.pem');
+const PUBKEY = resolve(ROOT, pubkeyArg > 0 ? process.argv[pubkeyArg + 1] : '../resources/license-pubkey.pem');
 const DAY_MS = 86_400_000;
 
 const b64url = (buffer) => Buffer.from(buffer).toString('base64url');
@@ -69,6 +69,16 @@ async function main(accountId) {
 
   const licenseRoute = await fetch(`${API}/v1/license`, { headers: { authorization: `Bearer ${body.data.session}` } });
   check('GET /v1/license com a sessão nova responde 200', licenseRoute.status === 200, `HTTP ${licenseRoute.status}`);
+  const activityHeaders = { authorization: `Bearer ${body.data.session}`, 'content-type': 'application/json' };
+  const activityBody = JSON.stringify({ agentStarted: true, agentWorking: true, missionCompleted: true });
+  const activity = await fetch(`${API}/v1/activity`, { method: 'POST', headers: activityHeaders, body: activityBody });
+  const replayActivity = await fetch(`${API}/v1/activity`, { method: 'POST', headers: activityHeaders, body: activityBody });
+  check('uso mínimo do app autenticado é aceito e pode ser repetido', activity.status === 200 && replayActivity.status === 200);
+  const observed = JSON.parse(d1(`SELECT (SELECT count(*) FROM account_activity WHERE account_id='${accountId}' AND first_agent_at IS NOT NULL AND first_mission_at IS NOT NULL) AS milestones,(SELECT count(*) FROM account_activity_days WHERE account_id='${accountId}') AS days`))[0].results[0];
+  check('marcos e dia de uso não duplicam no replay', observed.milestones === 1 && observed.days === 1);
+  const extraActivity = await fetch(`${API}/v1/activity`, { method: 'POST', headers: activityHeaders, body: JSON.stringify({ agentStarted: false, agentWorking: false, missionCompleted: false, prompt: 'fixture' }) });
+  check('campos de conteúdo são recusados pela medição', extraActivity.status === 400);
+
   const refreshed = await fetch(`${API}/v1/auth/refresh`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ refresh: body.data.refresh }) });
   check('a sessão se renova (/v1/auth/refresh)', refreshed.status === 200, `HTTP ${refreshed.status}`);
 }
@@ -79,10 +89,10 @@ try { await main(accountId); } catch (error) { failure = error; console.log(`FAL
 finally {
   try {
     d1(`DELETE FROM accounts WHERE id='${accountId}'`);
-    const left = JSON.parse(d1(`SELECT (SELECT count(*) FROM accounts WHERE id='${accountId}')+(SELECT count(*) FROM sessions WHERE account_id='${accountId}')+(SELECT count(*) FROM refresh_tokens WHERE account_id='${accountId}')+(SELECT count(*) FROM auth_codes WHERE account_id='${accountId}') AS rest`))[0].results[0].rest;
+    const left = JSON.parse(d1(`SELECT (SELECT count(*) FROM accounts WHERE id='${accountId}')+(SELECT count(*) FROM sessions WHERE account_id='${accountId}')+(SELECT count(*) FROM refresh_tokens WHERE account_id='${accountId}')+(SELECT count(*) FROM auth_codes WHERE account_id='${accountId}')+(SELECT count(*) FROM account_activity WHERE account_id='${accountId}')+(SELECT count(*) FROM account_activity_days WHERE account_id='${accountId}') AS rest`))[0].results[0].rest;
     check('a conta sintética e tudo que ela criou foram apagados', left === 0, `${left} linhas restantes`);
   } catch (error) { console.log(`FALHA limpeza — apague à mão: DELETE FROM accounts WHERE id='${accountId}' (${error instanceof Error ? error.message.split('\n')[0] : ''})`); results.push({ name: 'limpeza', ok: false }); }
 }
-const failed = results.filter((r) => !r.ok).length;
+const failed = results.filter((r) => !r.ok).length + (failure === undefined ? 0 : 1);
 console.log(`\n${failed === 0 && failure === undefined ? 'TUDO OK' : `${failed} VERIFICAÇÃO(ÕES) FALHARAM`} (${results.length} conferências)`);
 process.exit(failed === 0 && failure === undefined ? 0 : 1);

@@ -82,21 +82,21 @@ export function MissionAgentCard({
   const categoryLabel = CATEGORY_LABELS[agent.category];
   const stateLabel = STATE_LABELS[agent.state];
   const toolLabel = rackToolLabel(agent);
-  const currentUnitId = currentUnit?.id ?? agent.currentUnitId;
+  const currentUnitId = currentUnit?.id;
   const currentUnitTitle = currentUnit?.title;
   const idleLabel = agent.terminalLive === false
     ? 'Sem terminal ativo'
     : agent.terminalLive === true
-      ? 'Terminal ativo · sem unidade em curso'
-      : 'sem unidade em curso';
+      ? 'Terminal ativo · Sem tarefa vinculada'
+      : 'Sem tarefa vinculada';
   const accessibleText = [
     agent.agentName,
     agent.operatorOpened === true ? 'Aberto por você' : null,
     `Papel: ${categoryLabel}`,
     `Ferramenta: ${toolLabel}`,
     `Estado: ${stateLabel}`,
-    agent.terminalLive === false || (agent.terminalLive === true && !currentUnitId && !agent.detail)
-      ? idleLabel : null,
+    agent.terminalLive === false || !currentUnitId ? idleLabel : null,
+    agent.terminalLive === false && !currentUnitId ? 'Sem tarefa vinculada' : null,
     currentUnitId
       ? currentUnitTitle
         ? `Unidade atual: ${currentUnitTitle} (${currentUnitId})`
@@ -128,6 +128,7 @@ export function MissionAgentCard({
       data-agent-id={agent.id}
       data-category={agent.category}
       data-state={agent.state}
+      data-activity-live={agent.state === 'working' && agent.terminalLive !== false ? 'true' : 'false'}
       aria-label={accessibleText}
       aria-pressed={selected}
       title={accessibleText}
@@ -175,9 +176,10 @@ export function MissionAgentCard({
       )}
 
       <span className="mission-agent-card__display">
-        {(agent.terminalLive === false || (!currentUnitId && !agent.detail)) && (
+        {(agent.terminalLive === false || !currentUnitId) && (
           <span className="mission-agent-card__idle" aria-hidden="true">
             {idleLabel}
+            {agent.terminalLive === false && !currentUnitId ? ' · Sem tarefa vinculada' : null}
           </span>
         )}
         {(currentUnitId || agent.detail) && (

@@ -297,7 +297,7 @@ export function formatAutoRecallContext(
  * `workspaceMemoryInjection` (desligar só tira o bloco dos prompts; o resto
  * da memória segue). Settings indisponíveis: default ligado.
  */
-function injectionEnabled(): boolean {
+export function workspaceMemoryInjectionEnabled(): boolean {
   if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)) return false;
   try {
     return getOrchSettings().workspaceMemoryInjection !== false;
@@ -314,6 +314,7 @@ function blockFrom(
   },
   phase: AutoRecallPhase,
   maxBytes: number,
+  deferRecall?: (acknowledge: () => void) => void,
 ): string | null {
   try {
     const store = getWorkspaceMemoryStore(scope);
@@ -321,7 +322,15 @@ function blockFrom(
     const injection = planAutoRecallInjection(hits, phase, maxBytes, unverifiedHits);
     if (!injection) return null;
     // Contador honesto (F-769): só o que foi escrito no bloco conta recall.
-    store.markRecalled(injection.injectedIds);
+    let acknowledged = false;
+    const acknowledge = () => {
+      if (acknowledged) return;
+      acknowledged = true;
+      try { store.markRecalled(injection.injectedIds); }
+      catch { /* Auxiliary accounting never discards already prepared context. */ }
+    };
+    if (deferRecall) deferRecall(acknowledge);
+    else acknowledge();
     return injection.text;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -340,6 +349,17 @@ export interface WorkspaceMemoryContextOptions {
    * missão entram na camada não verificada. Sem missão, só as do operador.
    */
   readonly missionId?: string;
+  /** Hook assembly acknowledges only a block that survives delivery dedupe. */
+  readonly deferRecall?: (acknowledge: () => void) => void;
+}
+
+function reserveLinkedHits(lexical: readonly MemoryRecallHit[], linked: readonly MemoryRecallHit[]): MemoryRecallHit[] {
+  const seen = new Set<string>();
+  return [...linked.slice(0, 2), ...lexical, ...linked.slice(2)].filter((hit) => {
+    if (seen.has(hit.id)) return false;
+    seen.add(hit.id);
+    return true;
+  });
 }
 
 /**
@@ -356,7 +376,7 @@ export function workspaceMemoryContextBlock(
   phase: AutoRecallPhase = 'execution',
   options: WorkspaceMemoryContextOptions = {},
 ): string | null {
-  if (hasMountedPromptContextBlock(prompt, 'workspace-memory') || !injectionEnabled()) return null;
+  if (hasMountedPromptContextBlock(prompt, 'workspace-memory') || !workspaceMemoryInjectionEnabled()) return null;
   const query = buildRecallQuery(prompt);
   if (!query) return null;
   const targets = memoryImpactTargets(scope, prompt);
@@ -370,18 +390,17 @@ export function workspaceMemoryContextBlock(
       });
       const notes = store.recall({ query, limit: AUTO_RECALL_CANDIDATES, trustedOnly: false });
       return {
-      hits: [...lexical, ...store.recallLinked({ targets, trustedOnly: true,
-        limit: AUTO_RECALL_CANDIDATES, excludeIds: lexical.map((hit) => hit.id) })],
-      unverifiedHits: briefEligibleUnverified(
-        store,
-        [...notes, ...store.recallLinked({ targets, limit: AUTO_RECALL_CANDIDATES,
-          excludeIds: notes.map((hit) => hit.id) })],
-        options.missionId,
-      ),
-    };
+        hits: reserveLinkedHits(lexical, store.recallLinked({ targets, trustedOnly: true,
+          limit: AUTO_RECALL_CANDIDATES })),
+        unverifiedHits: reserveLinkedHits(
+          briefEligibleUnverified(store, notes, options.missionId),
+          briefEligibleUnverified(store, store.recallLinked({ targets, limit: AUTO_RECALL_CANDIDATES }), options.missionId),
+        ),
+      };
     },
     phase,
     AUTO_RECALL_DEFAULT_MAX_BYTES,
+    options.deferRecall,
   );
 }
 
@@ -391,7 +410,7 @@ export function workspaceMemoryContextBlock(
  * mínimo de bytes — as instructions já levam doutrina e modelo de negócio.
  */
 export function standingWorkspaceMemoryBlock(scope: ProjectExecutionScope): string | null {
-  if (!injectionEnabled()) return null;
+  if (!workspaceMemoryInjectionEnabled()) return null;
   return blockFrom(
     scope,
     (store) => ({ hits: store.topTrustedWorkspace(AUTO_RECALL_CANDIDATES) }),

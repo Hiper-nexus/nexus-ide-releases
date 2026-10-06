@@ -24,6 +24,7 @@ import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
 
 const harness = vi.hoisted(() => ({
   sessionStates: new Map<string, string | null>(),
+  semanticBySession: new Map<string, 'awaiting-input' | 'error'>(),
   resolveMissionLeader: vi.fn<(scope: ProjectExecutionScope, missionId: string) => MissionLeader | null>(),
   paneSnapshots: [] as Array<Record<string, unknown>>,
   squads: new Map<string, { id: string; agents: Array<Record<string, unknown>> }>(),
@@ -32,6 +33,15 @@ const harness = vi.hoisted(() => ({
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: (sessionId: string) => harness.sessionStates.get(sessionId) ?? null,
   listAgentSessionsForPane: () => [],
+}));
+
+vi.mock('./agent-status', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./agent-status')>()),
+  getAgentSemanticStatus: () => null,
+  getAgentSemanticStatusBySession: (sessionId: string) => {
+    const status = harness.semanticBySession.get(sessionId);
+    return status ? { status, sessionId, source: 'hook', updatedAt: Date.now() } : null;
+  },
 }));
 
 vi.mock('./squad-store', async (importOriginal) => ({
@@ -182,6 +192,7 @@ function dumpForScreenshot(name: string, host: HTMLElement): void {
 
 beforeEach(() => {
   harness.sessionStates = new Map();
+  harness.semanticBySession = new Map();
   harness.resolveMissionLeader.mockReset();
   harness.paneSnapshots = [];
   harness.squads = new Map();
@@ -194,6 +205,26 @@ afterEach(() => {
 });
 
 describe('F-777: o grafo da missão desenha o orquestrador, todos os helpers e os cabos', () => {
+  it.each([
+    ['awaiting-input', 'busy', 'waiting'],
+    ['awaiting-input', 'spawning', 'waiting'],
+    ['error', 'busy', 'failed'],
+    ['error', 'spawning', 'failed'],
+  ] as const)('F-951: live %s with %s transport keeps helper cables inactive', (semantic, transport, expected) => {
+    liveTeam(1);
+    harness.sessionStates.set('s-helper-0', transport);
+    harness.semanticBySession.set('s-helper-0', semantic);
+    const view = projectMissionEngineSnapshotView(scope,
+      stores({ mission: mission(), panes: [orchestratorRow] }), missionId);
+    expect(view.panes.find((pane) => pane.paneId === 'pane-helper-0')?.state).toBe(expected);
+    const snapshot = projectMissionSnapshot(view);
+    expect(snapshot.agents.find((agent) => agent.id === 'pane:pane-helper-0')?.state).toBe(expected);
+    const host = renderSnapshot(snapshot);
+    expect(host.querySelectorAll(`.mission-agent-card[data-state="${expected}"]`)).toHaveLength(1);
+    expect(host.querySelectorAll('.mission-graph__cable-group[data-edge-live="true"]')).toHaveLength(0);
+    expect(host.querySelectorAll('.mission-graph__packets')).toHaveLength(0);
+  });
+
   it('missão da aba com 8 helpers vivos sem linha em missionPanes → 9 cards e 8 cabos de Delegação', () => {
     liveTeam();
     const view = projectMissionEngineSnapshotView(

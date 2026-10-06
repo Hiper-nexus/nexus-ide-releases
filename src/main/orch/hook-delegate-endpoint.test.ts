@@ -886,7 +886,7 @@ describe('bloco <workspace-memory> no primeiro prompt do Codex (fatia 4)', () =>
       { prompt: 'Implemente o fluxo.' },
       { advise: vi.fn(async () => null), memoryBlock },
     );
-    expect(memoryBlock).toHaveBeenCalledWith(ctx, 'hook', 'Implemente o fluxo.');
+    expect(memoryBlock).toHaveBeenCalledWith(ctx, 'hook', 'Implemente o fluxo.', expect.any(Function));
   });
 });
 

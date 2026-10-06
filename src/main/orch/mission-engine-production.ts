@@ -1335,7 +1335,7 @@ export function projectMissionEngineSnapshotView(
         : null) ??
       (paneSessionId ? getAcpDriverSemanticStatus(paneSessionId) : null);
     const state = resolveMissionAgentLiveState({
-      semantic,
+      semantic: ["busy", "spawning", "idle"].includes(liveSessionState ?? "") ? semantic : null,
       sessionState:
         liveSessionState === "spawning" ||
         liveSessionState === "busy" ||

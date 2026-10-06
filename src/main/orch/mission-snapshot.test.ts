@@ -551,6 +551,17 @@ describe('projectMissionSnapshot', () => {
 });
 
 describe('resolveMissionAgentLiveState', () => {
+  it.each([
+    ['awaiting-input', 'busy', 'waiting'],
+    ['awaiting-input', 'spawning', 'waiting'],
+    ['awaiting-input', 'idle', 'waiting'],
+    ['error', 'busy', 'failed'],
+    ['error', 'spawning', 'failed'],
+    ['error', 'idle', 'failed'],
+  ] as const)('F-951: explicit %s overrides transport %s', (semantic, sessionState, expected) => {
+    expect(resolveMissionAgentLiveState({ semantic, sessionState, taskState: 'working' })).toBe(expected);
+  });
+
   it('projects busy and spawning sessions as working', () => {
     expect(
       resolveMissionAgentLiveState({ sessionState: 'busy', taskState: 'queued' }),

@@ -91,14 +91,17 @@ describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () =
     const deps = { advise: async () => null, now: () => 1_000 };
     const first = await handleHookDelegateRequest(codex, { prompt: 'instale com pnpm' }, deps);
     expect(JSON.stringify(first.payload)).toContain('<workspace-memory');
+    const deliveredCount = getWorkspaceMemoryStore(scope).stats().workspace.totalRecalls;
     const again = await handleHookDelegateRequest(codex, { prompt: 'pnpm de novo' }, deps);
     expect(JSON.stringify(again.payload)).not.toContain('<workspace-memory');
+    expect(getWorkspaceMemoryStore(scope).stats().workspace.totalRecalls).toBe(deliveredCount);
     // Pane longevo (/clear na mesma pty): volta depois da janela de 30 min.
     const later = await handleHookDelegateRequest(codex, { prompt: 'pnpm depois do clear' }, {
       ...deps,
       now: () => 1_000 + 30 * 60_000,
     });
     expect(JSON.stringify(later.payload)).toContain('<workspace-memory');
+    expect(getWorkspaceMemoryStore(scope).stats().workspace.totalRecalls).toBe(deliveredCount + 1);
   });
 
   it('o pane promovido pelo Main continua recebendo memória por tarefa sem esperar 30 min', async () => {

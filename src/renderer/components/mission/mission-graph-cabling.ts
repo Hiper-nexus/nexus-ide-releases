@@ -41,6 +41,8 @@ const LIVE_MISSION_STATES: ReadonlySet<MissionLifecycleState> = new Set([
  */
 export const PACKET_GLYPHS = ['λ', 'fn', '{ }', '0x', '=>', '[ ]', '∑', '01'] as const;
 
+export type GraphOrientation = 'vertical' | 'horizontal';
+
 export type CableKind = MissionEdge['kind'] | 'topology';
 export type PortSide = 'top' | 'bottom' | 'left' | 'right';
 
@@ -102,11 +104,12 @@ export function cableWorkerEnd<T>(kind: CableKind, source: T, target: T): T {
 export function isCableLive(
   missionState: MissionLifecycleState,
   kind: CableKind,
-  source: Pick<MissionAgentSnapshot, 'state'>,
-  target: Pick<MissionAgentSnapshot, 'state'>,
+  source: Pick<MissionAgentSnapshot, 'state' | 'terminalLive'>,
+  target: Pick<MissionAgentSnapshot, 'state' | 'terminalLive'>,
 ): boolean {
   if (!LIVE_MISSION_STATES.has(missionState)) return false;
-  return cableWorkerEnd(kind, source, target).state === 'working';
+  const worker = cableWorkerEnd(kind, source, target);
+  return worker.state === 'working' && worker.terminalLive !== false;
 }
 
 /** Glifo estável por cabo: o mesmo cabo mostra sempre os mesmos tokens. */
@@ -384,7 +387,27 @@ export function layoutCables(input: {
   readonly boxes: ReadonlyMap<string, RackBox>;
   readonly agents: ReadonlyMap<string, MissionAgentSnapshot>;
   readonly missionState: MissionLifecycleState;
+  readonly orientation?: GraphOrientation;
 }): readonly Cable[] {
+  if (input.orientation === 'horizontal') {
+    // Route against the same verified corridors on a transposed geometric canvas.
+    // Cards and packet glyphs remain upright; only points and port faces swap axes.
+    const boxes = new Map([...input.boxes].map(([id, box]) => [id, {
+      ...box, x: box.y, y: box.x, width: box.height, height: box.width,
+    }]));
+    const sides: Readonly<Record<PortSide, PortSide>> = { top: 'left', bottom: 'right', left: 'top', right: 'bottom' };
+    const transposePath = (path: string): string => {
+      const values = path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+      let index = 0;
+      return path.replace(/-?\d+(?:\.\d+)?/g, () => String(values[index++ ^ 1]));
+    };
+    const transposePort = (port: CablePort): CablePort => ({ x: port.y, y: port.x, side: sides[port.side] });
+    return layoutCables({ ...input, boxes, orientation: 'vertical' }).map(cable => ({
+      ...cable, source: transposePort(cable.source), target: transposePort(cable.target),
+      d: transposePath(cable.d), packetPath: cable.packetPath ? transposePath(cable.packetPath) : undefined,
+      extent: cable.extent ? { right: cable.extent.bottom, bottom: cable.extent.right } : undefined,
+    }));
+  }
   const usable = input.specs.filter(
     (spec) =>
       spec.sourceAgentId !== spec.targetAgentId &&

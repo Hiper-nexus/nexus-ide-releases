@@ -271,6 +271,7 @@ const TRUSTED_MEMORY_SOURCE_LABELS: Readonly<Record<string, string>> = {
   'trusted:approved-merge': 'merge aprovado',
   'trusted:session-digest': 'resumo de sessão',
   'trusted:operator-preference': 'preferência do operador',
+  'trusted:business-fact': 'fato do negócio confirmado pelo operador',
 };
 
 /** Rótulo curto da origem para a linha de meta da nota. */
@@ -365,7 +366,7 @@ export function MemoryPanelBody({
   const [activity, setActivity] = useState<MemoryActivitySnapshot | null>(null);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
-  const [memoryType, setMemoryType] = useState<'note' | 'architecture-rule' | 'operator-preference'>('note');
+  const [memoryType, setMemoryType] = useState<'note' | 'architecture-rule' | 'operator-preference' | 'business-fact'>('note');
   const [preferenceScope, setPreferenceScope] = useState<'workspace' | 'global'>('workspace');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -689,6 +690,7 @@ export function MemoryPanelBody({
             <option value="note">Nota</option>
             <option value="architecture-rule">Regra aprovada por mim</option>
             <option value="operator-preference">Minha preferência</option>
+            <option value="business-fact">Fato do negócio confirmado por mim</option>
           </select>
         </label>
         {memoryType === 'operator-preference' ? <label className="product-pane__field">

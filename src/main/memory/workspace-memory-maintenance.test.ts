@@ -80,3 +80,27 @@ it('file verification resumes after restart beyond the first bounded page', asyn
   await runPeriodicTask('memory-maintenance:pages-test', (ctx) => maintainWorkspaceMemory(scope, ctx));
   expect(getWorkspaceMemoryStore(scope).flagsOf(ids).size).toBe(18);
 });
+
+it('marks changed linked file bytes against a durable baseline, without moving the coordinator to a worktree', async () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-file-revision-'));
+  fs.mkdirSync(path.join(root, 'src'));
+  const file = path.join(root, 'src/charge.ts');
+  fs.writeFileSync(file, 'export const cap = 1;');
+  const scope = testProjectScope({ rootRealPath: fs.realpathSync(root) });
+  const options = { baseDir: path.join(root, 'bank'), coordinationScopeFor: () => scope };
+  configureWorkspaceMemory(options);
+  const id = getWorkspaceMemoryStore(scope).retain({ content: 'src/charge.ts caps retries at 1.', kind: 'fact', source: 'trusted:resolved-problem' }).id;
+  const { maintainWorkspaceMemory } = await import('./workspace-memory-maintenance');
+  await runPeriodicTask('memory-maintenance:revision-test', ctx => maintainWorkspaceMemory(scope, ctx));
+  fs.writeFileSync(file, 'export const cap = 6;');
+  configureWorkspaceMemory(options);
+  const execution = testProjectScope({ projectId: scope.projectId, checkoutId: 'another-checkout', rootRealPath: path.join(root, 'elsewhere') });
+  await runPeriodicTask('memory-maintenance:revision-test', ctx => maintainWorkspaceMemory(execution, ctx));
+  const store = getWorkspaceMemoryStore(scope);
+  expect(store.workspaceRoot).toBe(scope.rootRealPath);
+  expect(store.flagsOf([id]).get(id)).toContain('reverify');
+  expect(store.recall({ query: 'charge retries' })[0]?.reverify).toContain('File changed');
+  fs.writeFileSync(file, 'export const cap = 1;');
+  await runPeriodicTask('memory-maintenance:revision-test', ctx => maintainWorkspaceMemory(scope, ctx));
+  expect(store.flagsOf([id]).get(id)).toBeUndefined();
+});

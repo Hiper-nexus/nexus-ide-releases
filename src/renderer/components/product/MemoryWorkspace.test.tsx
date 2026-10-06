@@ -118,6 +118,19 @@ afterEach(() => {
 });
 
 describe('MemoryWorkspace contracts', () => {
+  it('business facts use the existing explicit operator attestation and remain workspace-only', async () => {
+    memoryBoundary.memoryList.mockResolvedValue([]);
+    agenticMemoryBoundary.attest.mockResolvedValue({ enabled: true, id: 'business', scope: 'workspace' });
+    const host = mount(<MemoryWorkspace />); await settleMemoryEffects();
+    const select = host.querySelector<HTMLSelectElement>('[aria-label="Tipo de memória"]')!;
+    act(() => { select.value = 'business-fact'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    setFieldValue(host.querySelector('[aria-label="Título da memória"]')!, 'Cliente');
+    setFieldValue(host.querySelector('[aria-label="Corpo da memória"]')!, 'Salões independentes.');
+    await act(async () => { findButton(host, /^salvar$/i).click(); await Promise.resolve(); });
+    expect(agenticMemoryBoundary.attest).toHaveBeenCalledWith({ type: 'business-fact', title: 'Cliente', summary: 'Salões independentes.', scope: 'workspace' });
+    expect(host.querySelector('[aria-label="Escopo da preferência"]')).toBeNull();
+    expect(memoryBoundary.memoryRemember).not.toHaveBeenCalled();
+  });
   it('explicit native import refreshes scoped notes and describes quarantine without asking for a path', async () => {
     memoryBoundary.memoryList.mockResolvedValue([]);
     agenticMemoryBoundary.importNative.mockResolvedValue({ enabled: true, imported: 2, deduped: 1, skipped: 0, cancelled: false });

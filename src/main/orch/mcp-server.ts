@@ -215,7 +215,7 @@ import { startJevPaneStateClassifier } from "../jev/jev-pane-state";
 import { setToolPickRegistry } from "./tools-tool-pick";
 import { installMcpSessionTerminationRevocation } from "./mcp-session-revocation";
 import { codexStatusHookArgs } from "./hook-status-config";
-import { codexHookTrustBypassArgs } from "./codex-cli-version";
+import { codexPrivateHookArgs } from "./codex-private-hook-trust";
 import {
   cleanupAgyMcpConfig,
   canUseNexusMcp,
@@ -1462,16 +1462,11 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
                   : undefined,
             }),
           );
-          // Additive status hooks as per-session -c overrides (emdash wave 1)
-          // — same argv-only channel as the MCP injection, zero disk writes.
-          extraArgs.push(...codexStatusHookArgs());
-          // Codex >= 0.129 requires interactive review of untrusted hooks —
-          // fatal for orchestrated boot. The -c hooks.* above have no on-disk
-          // identity that could be pre-trusted via config.toml hooks.state,
-          // so bypass trust: Nexus IS the automation that vets these hook
-          // sources (it writes them). Version-gated (>= 0.134): unknown flag
-          // on older codex would break the spawn; unresolved version omits.
-          extraArgs.push(...codexHookTrustBypassArgs(adapter.bin));
+          // The preparer writes our hooks.json and exact trust in the private
+          // profile. Empty event overrides preserve the old inline-hook
+          // replacement without extending trust to user/plugin hooks.
+          // Without a prepared private profile, retain Codex's review gate.
+          extraArgs.push(...(preparedEnv?.CODEX_HOME ? codexPrivateHookArgs() : codexStatusHookArgs()));
         } else if (flavor === "opencode") {
           const prepared = prepareOpenCodeMcpSession(mcpUrl(), ctx.token, {
             userDataPath: app.getPath("userData"),

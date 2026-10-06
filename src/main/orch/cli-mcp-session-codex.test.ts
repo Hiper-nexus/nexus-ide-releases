@@ -55,6 +55,36 @@ function fixture() {
 }
 const exactId = '11111111-1111-4111-8111-111111111111';
 
+it.each(['operator', 'governed'] as const)('F-950: %s trusts only generated hooks in its private home', (mode) => {
+  const options = fixture();
+  const nativeConfig = '[hooks.state."foreign-key"]\ntrusted_hash="sha256:foreign"\n';
+  fs.writeFileSync(path.join(options.providerHome, 'config.toml'), nativeConfig);
+  fs.writeFileSync(path.join(options.providerHome, 'hooks.json'), '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo foreign"}]}]}}');
+  const token = `codex-hook-trust-${mode}`;
+  tokens.push(token);
+  const prepared = mode === 'governed'
+    ? prepareCodexGovernedSession(token, options)
+    : prepareCodexOperatorMissionHome(token, options);
+  const hookFile = path.join(prepared.env.CODEX_HOME, 'hooks.json');
+  expect(fs.existsSync(hookFile)).toBe(true);
+  const generated = JSON.parse(fs.readFileSync(hookFile, 'utf8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
+  const state = (parse(fs.readFileSync(path.join(prepared.env.CODEX_HOME, 'config.toml'), 'utf8')).hooks as { state: Record<string, { trusted_hash: string }> }).state;
+  for (const [event, groups] of Object.entries(generated.hooks)) {
+    const snake = event.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+    groups[0]!.hooks.forEach((hook, index) => {
+      expect(hook.command).not.toContain('echo foreign');
+      expect(state[`${fs.realpathSync(hookFile)}:${snake}:0:${index}`]?.trusted_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    });
+  }
+  expect(fs.readFileSync(path.join(options.providerHome, 'config.toml'), 'utf8')).toBe(nativeConfig);
+  expect(fs.readFileSync(path.join(options.providerHome, 'hooks.json'), 'utf8')).toContain('echo foreign');
+  if (mode === 'governed') expect((prepared as CliMcpSessionResult).codexProcessSandbox?.protectedWritePaths)
+    .toContain(hookFile);
+  cleanupCliMcpSession(token);
+  expect(fs.readFileSync(path.join(options.providerHome, 'config.toml'), 'utf8')).toBe(nativeConfig);
+  expect(fs.readFileSync(path.join(options.providerHome, 'hooks.json'), 'utf8')).toContain('echo foreign');
+});
+
 describe('F-567 Codex checkout conversations', () => {
   it.each(['operator', 'governed', 'common'] as const)(
     'persists only checkout state across overlay purge (%s)',

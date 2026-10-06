@@ -113,7 +113,7 @@ beforeEach(() => {
 });
 
 describe('"+ Pane": diversidade da rota (como na missão)', () => {
-  it('quatro helpers em sequência ocupam quatro CLIs diferentes (nenhuma repete antes de todas terem assento)', async () => {
+  it('helpers de implementação esgotam os três writers econômicos antes de repetir sem gastar Grok', async () => {
     const picked: string[] = [];
     for (let i = 0; i < 4; i += 1) {
       const route = await routeLikeSpawn(MEDIUM_TASK);
@@ -121,8 +121,9 @@ describe('"+ Pane": diversidade da rota (como na missão)', () => {
       h.livePanes = [...h.livePanes, livePane(`pane-helper${i}`, route.adapterId)];
       h.livePanes[h.livePanes.length - 1] = { ...h.livePanes[h.livePanes.length - 1], sessionId: `s-helper${i}` };
     }
-    // O pai (claude) já ocupa um assento; cada helper cai numa CLI nova.
-    expect(new Set(picked).size).toBe(4);
+    // The parent occupies Claude; the economic pool is Codex/Kimi/AGY.
+    expect(new Set(picked.slice(0, 3)).size).toBe(3);
+    expect(picked).not.toContain('grok');
     expect(picked).not.toContain('claude');
   });
 
@@ -140,7 +141,8 @@ describe('"+ Pane": fair-share dos últimos 7 dias (F-232)', () => {
     h.globalUse = new Map([
       [cold.adapterId, 12],
       ['claude', 12], ['codex', 12], ['kimi', 12], ['agy', 12], ['grok', 12],
-      ...(cold.adapterId === 'grok' ? [] : [['grok', 0] as [string, number]]),
+      // Fair-share is retained within the economic implementation pool.
+      [[ 'codex', 'kimi', 'agy' ].find(id => id !== cold.adapterId)!, 0],
     ]);
     h.globalUse.set(cold.adapterId, 12);
     const balanced = await routeLikeSpawn(MEDIUM_TASK);

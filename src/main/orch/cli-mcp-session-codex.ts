@@ -23,6 +23,7 @@ import type {
 } from './cli-mcp-session-types';
 import { resolveGovernedCliProfile } from './governed-cli-profile';
 import { codexPermissionProfileFor } from '../pty/codex-native-authority';
+import { installCodexPrivateHookTrust } from './codex-private-hook-trust';
 
 function heavyCommandShellPolicy(env: Readonly<Record<string, string>> | undefined): Record<string, string> {
   const selected: Record<string, string> = {};
@@ -149,6 +150,7 @@ const CODEX_CONVERSATION_FILES = {
 };
 const CODEX_OVERLAY_EXCLUSIONS = new Set([
   'config.toml',
+  'hooks.json',
   ...CODEX_CONVERSATION_DIRECTORIES,
   ...Object.keys(CODEX_CONVERSATION_FILES),
   'state_5.sqlite',
@@ -331,6 +333,7 @@ function codexProtectedWritePaths(options: {
     // prevents a qualified-but-compromised parent process from widening the
     // network or filesystem policy for later child executions.
     path.join(options.artifactDir, 'config.toml'),
+    path.join(options.artifactDir, 'hooks.json'),
     path.join(options.artifactDir, 'skills'),
     path.join(options.home, '.agents'),
     path.join(options.providerHome, 'skills'),
@@ -531,8 +534,8 @@ export function prepareCodexGovernedSession(
           computer_use: false,
           enable_mcp_apps: false,
           goals: false,
-          // Hooks in this private CODEX_HOME come only from main-owned `-c
-          // hooks.*` overrides. Keep the engine active so UserPromptSubmit can
+          // Hooks in this private CODEX_HOME come only from main-owned
+          // hooks.json with exact persisted trust. Keep the engine active so UserPromptSubmit can
           // reach the bearer-scoped loopback status endpoint; project/user
           // hook discovery remains absent from this isolated profile.
           hooks: true,
@@ -600,10 +603,11 @@ export function prepareCodexGovernedSession(
         path.join(artifactDir, 'config.toml'),
         `${config.trimEnd()}\n`,
       );
+      installCodexPrivateHookTrust(artifactDir, providerHome);
       activateArtifact(token, {
         artifactDir,
         providerHome: null,
-        configFiles: ['config.toml'],
+        configFiles: ['config.toml', 'hooks.json'],
         syncBack: false,
       });
       return {
@@ -715,6 +719,7 @@ export function prepareCodexOperatorMissionHome(
       // Skills live under the private home so deliverGrantedSkills can land
       // without mutating the operator's real ~/.codex/skills permanently.
       ensurePrivateDirectory(path.join(artifactDir, 'skills'));
+      installCodexPrivateHookTrust(artifactDir, providerHome);
       activateArtifact(token, {
         artifactDir,
         providerHome,

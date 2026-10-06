@@ -1,3 +1,4 @@
+import { isFindingCorrectionTask, matchesReviewedFinding } from './routing-cost-policy';
 import { missionExecutionScope } from './mission-execution-scope';
 import { sharedPaneSpaceId } from '../pty/pane-space-worktree';
 import {
@@ -49,6 +50,7 @@ import {
   assertIntegrationReviewed,
   isIntegrationReviewRequiredError,
   measureIntegrationState,
+  measureIntegrationStateAsync,
 } from './integration-review-gate';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import {
@@ -1998,10 +2000,23 @@ export async function routeTaskForCaller(
         : adapter,
     );
   }
+  // A task mentioning a finding is not proof. Read the existing Main ledger
+  // only for correction candidates, bound to the current clean execution HEAD.
+  let reviewedFindingFix = false;
+  if (missionId && isFindingCorrectionTask(task)) {
+    try {
+      const measured = await measureIntegrationStateAsync(executionScopeFor(ctx).rootRealPath);
+      if (!measured.treeDirty) {
+        const verdict = getProjectDomainStores(ctx.scope).missions.reviewVerdicts.latestFor(missionId, measured.headSha);
+        reviewedFindingFix = matchesReviewedFinding(task, verdict, missionId, measured.headSha);
+      }
+    } catch { /* No proof: the normal economic implementation preference remains. */ }
+  }
   // Contexto da REGRA: tudo que o roteador sabe, menos o que o Jev decidiu.
   // O contrafactual do recibo (`ruleChoice`, abaixo) reusa este objeto como
   // está — por construção ele não carrega especialidade nem esforço do Jev.
   const ruleContext: RouteContext = {
+    reviewedFindingFix,
     missionUsedAdapters:
       usedAdapterIds.length > 0 ? new Set(usedAdapterIds) : undefined,
     missionUseCounts,

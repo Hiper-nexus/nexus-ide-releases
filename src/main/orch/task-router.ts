@@ -8,11 +8,13 @@
  * Ranking layers (highest wins when present):
  *   1. operator/sealed roster (call site)
  *   2. specialty benchmark table (measured rows only — fixture/estimate ignored)
- *   3. nexus-eval quality by dimension (when every installed adapter is scored;
+ *   3. implementation cost preference among validated same-tier candidates;
+ *      frontier judgment and Main-bound reviewed finding correction
+ *   4. nexus-eval quality by dimension (when every installed adapter is scored;
  *      `.../fixture` sources are not authoritative)
- *   4. heuristic specialty prior + operational band (cost/availability) +
+ *   5. heuristic specialty prior + operational band (cost/availability) +
  *      DEFAULT_ROUTING_TABLE
- *   5. mission diversity (open RouteReservations + live panes)
+ *   6. mission diversity (open RouteReservations + live panes)
  *
  * Pure logic (no electron imports) — fully unit-testable; the MCP tool
  * nexus_route_task feeds it the live adapter list and the merged benchmark.
@@ -47,10 +49,12 @@ import { adapterSchema } from '../../shared/adapter-types';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import {
   multiScoreRerank,
+  routeSuccessRate,
   tieBreakByUse,
   type RouteSuccessIndex,
 } from './route-pipeline';
 import { modelAccessQuarantine } from './model-access-quarantine';
+import { isAstraModel, routingPurpose } from './routing-cost-policy';
 
 export type TaskTier = 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
 
@@ -80,6 +84,8 @@ export type RoutingTable = Record<TaskTier, RouteCandidate[]>;
  * Pure — call sites inject orch settings and mission pane history.
  */
 export interface RouteContext {
+  /** Main proved a clean, current-HEAD frontier rejection identifying this fix. Never MCP input. */
+  reviewedFindingFix?: boolean;
   /** Adapters already used by panes in this mission (diversity boost). */
   missionUsedAdapters?: ReadonlySet<string>;
   /** How many times each adapter appears in the mission (diversity attenuation). */
@@ -1355,6 +1361,8 @@ export function routeTask(
         reason: `especialidade julgada pelo Jev (heurística: ${heuristicSpecialty.specialty})`,
       }
     : heuristicSpecialty;
+  const purpose = routingPurpose(taskText, codeReviewTierFloor(taskText) !== null, context.reviewedFindingFix);
+  const permitsAutomaticAstra = specialtyVerdict.specialty === 'visual';
   const policy = resolveSpecialtyPolicy(
     specialtyVerdict.specialty,
     context.specialtyBenchmark,
@@ -1374,9 +1382,9 @@ export function routeTask(
       );
     }),
   );
-  const evaluated = evaluationCoversAllInstalled
+  const evaluated = (evaluationCoversAllInstalled
     ? evaluatedCandidates(specialtyVerdict.specialty, tier, available, modelCatalog, contextRequirement)
-    : [];
+    : []).filter(candidate => permitsAutomaticAstra || !isAstraModel(candidate.adapterId, candidate.model));
   const why =
     classification.signals.length > 0
       ? `sinais: ${classification.signals.slice(0, 5).join(', ')}`
@@ -1408,6 +1416,7 @@ export function routeTask(
     fromTier: tier,
     evaluated: true,
   }));
+  const writerTierKeys = new Set<string>();
   const skippedRisk: string[] = [];
   const missingFromCli: string[] = [];
   const lineUpgrades: string[] = [];
@@ -1469,6 +1478,7 @@ export function routeTask(
           }
           routed = { ...c, model: upgraded };
         }
+        if (!permitsAutomaticAstra && isAstraModel(routed.adapterId, routed.model)) return [];
         const info = modelCatalogInfo(modelCatalog, routed.adapterId, routed.model);
         if (isModelBlockedForAutoRouting(info)) {
           skippedRisk.push(
@@ -1495,6 +1505,7 @@ export function routeTask(
       });
 
     for (const c of tierCandidates) {
+      if (candidateTier === tier) writerTierKeys.add(`${c.adapterId}:${c.model ?? ''}`);
       if (!ranked.some((entry) => entry.c.adapterId === c.adapterId && entry.c.model === c.model)) {
         ranked.push({ c, fromTier: candidateTier });
       }
@@ -1649,6 +1660,7 @@ export function routeTask(
         ? (newestInModelLine(resolved.model ?? seat.model, eligible) ?? resolved.model ?? seat.model)
         : newestInModelLine(seat.model, eligible);
       if (!chosen) return;
+      if (!permitsAutomaticAstra && isAstraModel(seat.adapterId, chosen)) return;
       // Lista de modelos exposta pela CLI: o modelo tem que estar nela.
       // Sem lista (contrato bundled), confia na lane como a tabela confia.
       if (adapter.models !== undefined && !eligible.includes(chosen)) return;
@@ -1726,6 +1738,10 @@ export function routeTask(
       judgeNote = '; sem juiz frontier disponível — o Maestro julga';
       judgeUnavailable = true;
     }
+  }
+
+  if (purpose === 'finding-fix' && mention.model === undefined && frontier === null) {
+    applyFrontierLane(JUDGE_FRONTIER_LANE.filter(seat => !isAstraModel(seat.adapterId, seat.model)));
   }
 
   // Rotação garantida por missão (regra do operador, 29/09): uma missão deve
@@ -1818,6 +1834,29 @@ export function routeTask(
     }
   }
 
+  let writerCostNote = `; purpose=${purpose}`;
+  let writerCostApplied = false;
+  if (purpose === 'writer' && table === DEFAULT_ROUTING_TABLE && specialtyVerdict.specialty !== 'visual' &&
+      mention.model === undefined && policy.source !== 'benchmark') {
+    const baseline = ranked[0];
+    const baselineOutcome = baseline && routeSuccessRate(context.routeOutcomes, baseline.c.adapterId, baseline.c.model);
+    const economic = ranked.filter(entry => {
+      if (!writerTierKeys.has(`${entry.c.adapterId}:${entry.c.model ?? ''}`) || adapterCircuitBreakers.isOpen(entry.c.adapterId)) return false;
+      const info = modelCatalogInfo(modelCatalog, entry.c.adapterId, entry.c.model);
+      const knownEconomic = info && (['free', 'low', 'medium'].includes(info.costTier ?? '') ||
+        info.availability === 'free' || info.availability === 'cheap');
+      if (!knownEconomic) return false;
+      const outcome = routeSuccessRate(context.routeOutcomes, entry.c.adapterId, entry.c.model);
+      return !baselineOutcome || !outcome || outcome.rate >= baselineOutcome.rate;
+    });
+    if (economic.length > 0) {
+      const economical = new Set(economic);
+      ranked = [...economic, ...ranked.filter(entry => !economical.has(entry))];
+      writerCostApplied = true;
+      writerCostNote += '; escritor econômico elegível no mesmo tier';
+    }
+  }
+
   let mentionNote = '';
   if (mention.model) {
     const { adapterId, model } = mention.model;
@@ -1876,7 +1915,9 @@ export function routeTask(
     );
     const costNote = costRank <= 1 ? '; preferiu rota free/cheap' : '';
     const evaluationNote = chosen.evaluated
-      ? '; selecionado por avaliação Nexus por dimensão'
+      ? writerCostApplied
+        ? '; elegível na avaliação Nexus; prioridade de custo da implementação'
+        : '; selecionado por avaliação Nexus por dimensão'
       : '';
     const specialtyNote =
       `; specialty=${specialtyVerdict.specialty} source=${policySource}` +
@@ -1906,7 +1947,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${writerCostNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,
@@ -1933,8 +1974,20 @@ export function routeTask(
             return maxContext === undefined || maxContext >= contextRequirement;
           });
         });
+  const safeFallbackModels = new Map<string, string>();
   const fallbackPool =
-    contextFitFallbacks.length > 0 ? contextFitFallbacks : [...available.keys()];
+    (contextFitFallbacks.length > 0 ? contextFitFallbacks : [...available.keys()]).filter(id => {
+      const adapter = available.get(id)!;
+      const models = adapter.models;
+      if (!permitsAutomaticAstra && id === 'codex' && models !== undefined) {
+        const safe = eligibleModels(adapter).filter(model => !isAstraModel(id, model) && fitsContext(id, model));
+        if (safe.length === 0) return false;
+        safeFallbackModels.set(id, newestInModelLine(safe[0]!, safe));
+      }
+      return permitsAutomaticAstra || models === undefined || models.length === 0 ||
+        models.some(model => !isAstraModel(id, model) && !isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, id, model)) && !modelAccessQuarantine(id, model));
+    });
+  if (fallbackPool.length === 0) return null;
   const useCount = (id: string): number =>
     context.missionUseCounts?.get(id) ?? 0;
   const fallback = fallbackPool.reduce((least, id) =>
@@ -1943,6 +1996,7 @@ export function routeTask(
   return {
     tier,
     adapterId: fallback,
+    ...(safeFallbackModels.has(fallback) ? { model: safeFallbackModels.get(fallback)! } : {}),
     effort: effortFor(fallback),
     reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${contextNote}${missingNote}${effortNoteFor(fallback)}`,
     alternatives: [],

@@ -357,3 +357,51 @@ describe('cabo sem rota segura', () => {
     expect(cables[0]!.packetPath).toBeUndefined();
   });
 });
+
+
+describe('horizontal presentation cabling', () => {
+  it('routes a dense horizontal team around upright racks with distinct live packet runs', () => {
+    const agents = [agent('core', { category: 'orchestrator' }), ...Array.from({ length: 20 }, (_, i) => agent(`worker-${i}`))];
+    const specs = agents.slice(1).map(worker => delegation(`d-${worker.id}`, 'core', worker.id));
+    const positions = layoutMissionGraph(agents, specs, 'horizontal');
+    const boxes = new Map(positions.map(position => [position.agentId, position]));
+    const cables = layoutCables({ specs, boxes, agents: new Map(agents.map(agent => [agent.id, agent])), missionState: 'running', orientation: 'horizontal' });
+    expect(cables).toHaveLength(20);
+    for (const cable of cables) {
+      expect(cable.source.side).toBe('right');
+      expect(cable.target.side).toBe('left');
+      for (const rack of positions.filter(rack => rack.agentId !== cable.sourceAgentId && rack.agentId !== cable.targetAgentId)) expect(intersectsCard(cable.d, rack)).toBe(false);
+      expect(cable.packetPath).toBeDefined();
+    }
+    expect(new Set(cables.map(cable => cable.packetPath)).size).toBe(20);
+  });
+
+  it('attaches outgoing and return cables to the actual right and left rack faces', () => {
+    const core = agent('core', { category: 'orchestrator' });
+    const worker = agent('worker');
+    const boxes = new Map([['core', box('core', 184, 480, true)], ['worker', box('worker', 620, 260)]]);
+    const cables = layoutCables({ specs: [delegation('out', 'core', 'worker'), { ...delegation('return', 'worker', 'core'), kind: 'handoff' }], boxes, agents: new Map([['core', core], ['worker', worker]]), missionState: 'running', orientation: 'horizontal' });
+    expect(cables[0].source).toMatchObject({ x: 336, side: 'right' });
+    expect(cables[0].target).toMatchObject({ x: 516, side: 'left' });
+    expect(cables[1].source.side).toBe('left');
+    expect(cables[1].target.side).toBe('right');
+    expect(cables.every(cable => cable.live)).toBe(true);
+  });
+});
+
+it('a known-ended worker cannot energize a cable despite stale working state', () => {
+  const source = agent('core', { category: 'orchestrator' });
+  expect(isCableLive('running', 'delegation', source, agent('worker', { terminalLive: false }))).toBe(false);
+  expect(isCableLive('running', 'delegation', source, agent('worker', { terminalLive: true }))).toBe(true);
+  expect(isCableLive('running', 'delegation', source, agent('worker'))).toBe(true);
+  expect(isCableLive('running', 'handoff', agent('worker', { terminalLive: false }), source)).toBe(false);
+});
+
+it.each(['vertical', 'horizontal'] as const)('known-ended workers have no energized cables in %s orientation', (orientation) => {
+  const agents = [agent('core', { category: 'orchestrator' }), agent('worker', { terminalLive: false })];
+  const specs = [delegation('out', 'core', 'worker'), { ...delegation('back', 'worker', 'core'), kind: 'handoff' as const }];
+  const positions = layoutMissionGraph(agents, specs, orientation);
+  const cables = layoutCables({ specs, boxes: new Map(positions.map(position => [position.agentId, position])), agents: new Map(agents.map(agent => [agent.id, agent])), missionState: 'running', orientation });
+  expect(cables).toHaveLength(2);
+  expect(cables.every(cable => !cable.live)).toBe(true);
+});

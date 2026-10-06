@@ -26,3 +26,16 @@ it('operator attestation writes architecture rule and explicit global preference
   expect(other.recall({ query: 'português' })[0]?.scope).toBe('global');
   expect(() => retainOperatorMemoryAttestation(scope, { type: 'architecture-rule', title: 'Bad scope', summary: 'Global rule', scope: 'global' })).toThrow();
 });
+
+it('business facts require explicit operator attestation and cannot be global', async () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-business-attest-'));
+  const scope = testProjectScope();
+  configureWorkspaceMemory({ baseDir: root });
+  getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.workspaceMemory, true);
+  const { retainOperatorMemoryAttestation } = await import('./operator-memory-attestation');
+  retainOperatorMemoryAttestation(scope, { type: 'business-fact', title: 'Cliente', summary: 'Atendemos salões independentes.', scope: 'workspace' });
+  const store = getWorkspaceMemoryStore(scope);
+  expect(store.activeBySource('trusted:business-fact')[0]?.content).toContain('Atendemos salões independentes');
+  expect(() => retainOperatorMemoryAttestation(scope, { type: 'business-fact', title: 'Cliente', summary: 'Global customer profile', scope: 'global' })).toThrow();
+  expect(getWorkspaceMemoryStore(testProjectScope({ projectId: 'other' })).recall({ query: 'salões' })).toHaveLength(0);
+});

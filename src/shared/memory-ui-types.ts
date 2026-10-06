@@ -85,7 +85,7 @@ export type MemoryPromoteResult =
   | { readonly enabled: true; readonly promoted: boolean };
 
 export interface MemoryAttestationRequest {
-  readonly type: 'architecture-rule' | 'operator-preference';
+  readonly type: 'architecture-rule' | 'operator-preference' | 'business-fact';
   readonly title: string;
   readonly summary: string;
   readonly scope: MemoryUiScope;

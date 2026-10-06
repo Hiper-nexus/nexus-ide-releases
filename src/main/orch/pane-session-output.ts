@@ -246,10 +246,22 @@ export function newOutputSince(before: string, after: string): string {
 }
 
 export function readSessionOutput(sessionId: string, lines = 200): string {
+  // Infinity deliberately means all retained lines. Other invalid/negative
+  // requests are empty; valid positive integers preserve the public tail API.
+  const requestedLines = lines === Infinity ? Number.MAX_SAFE_INTEGER
+    : Number.isFinite(lines) ? Math.max(0, Math.floor(lines)) : 0;
+  if (requestedLines === 0) return "";
   if (isPtyAnalysisEnabled()) {
     const text = analysisClient.text(sessionId);
     let start = text.length;
-    for (let index = 0; index < lines; index++) { const previous = text.lastIndexOf('\n', start - 1); if (previous < 0) return text; start = previous; }
+    for (let index = 0; index < requestedLines; index++) {
+      // String.lastIndexOf clamps a negative fromIndex to zero. A leading LF
+      // would otherwise be found forever after start reaches zero (F-953).
+      if (start === 0) return text;
+      const previous = text.lastIndexOf('\n', start - 1);
+      if (previous < 0) return text;
+      start = previous;
+    }
     return text.slice(start + 1);
   }
   const buffer = buffers.get(sessionId);
@@ -259,7 +271,7 @@ export function readSessionOutput(sessionId: string, lines = 200): string {
     buffer.stripCache = { key, text: stripAnsi(buffer.chunks.join("")) };
   }
   const allLines = buffer.stripCache.text.split("\n");
-  return allLines.slice(Math.max(0, allLines.length - lines)).join("\n");
+  return allLines.slice(Math.max(0, allLines.length - requestedLines)).join("\n");
 }
 
 export function sessionOutputExitedAt(sessionId: string): number | null {

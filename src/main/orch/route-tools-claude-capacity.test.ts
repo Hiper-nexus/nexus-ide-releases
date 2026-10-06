@@ -8,6 +8,8 @@ const h = vi.hoisted(() => ({
   mission: {} as Record<string, unknown>,
   recorded: [] as Array<Record<string, unknown>>,
   claudeCapacity: vi.fn(() => 1),
+  integrationState: { headSha: 'a'.repeat(40), treeDirty: false },
+  reviewVerdict: null as Record<string, unknown> | null,
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
@@ -22,6 +24,10 @@ vi.mock('../persistence/account-store', async () => ({
   hasAvailableAccount: () => true,
   countAccountsWithLiveCredential: (adapterId: string) =>
     adapterId === 'claude' ? h.claudeCapacity() : 0,
+}));
+vi.mock('./integration-review-gate', async (original) => ({
+  ...(await original<typeof import('./integration-review-gate')>()),
+  measureIntegrationStateAsync: async () => h.integrationState,
 }));
 vi.mock('./jev-task-routing', async (original) => ({
   ...(await original<typeof import('./jev-task-routing')>()),
@@ -55,6 +61,7 @@ vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({
     missions: {
       get: () => h.mission,
+      reviewVerdicts: { latestFor: () => h.reviewVerdict },
       listOpenRouteAdapterIds: () => [],
       reserveRouteDecision: () => ({ id: 'rr', expiresAt: 1 }),
       consumedRouteCountsByAdapterSince: () => new Map(),
@@ -86,6 +93,8 @@ const TAB_MISSION = {
 
 beforeEach(() => {
   h.mission = TAB_MISSION;
+  h.integrationState = { headSha: 'a'.repeat(40), treeDirty: false };
+  h.reviewVerdict = null;
   h.recorded = [{ paneId: 'pane-orch', adapterId: 'claude', role: 'orchestrator' }];
   h.livePanes = [livePane('pane-orch', 'claude')];
   h.claudeCapacity.mockReturnValue(1);
@@ -140,4 +149,40 @@ describe('F-235: capacidade de panes Claude por conta utilizável', () => {
     expect(decision.adapterId).not.toBe('claude');
     expect(decision.reason).toContain('claude=não instalado');
   });
+});
+
+
+describe('Main-bound reviewed finding cost escalation', () => {
+  beforeEach(() => {
+    // Kimi is economic but still needs real first-wave credential evidence.
+    h.listProviderSettings.mockReturnValue(h.listProviderSettings().map((provider: Record<string, unknown>) =>
+      provider.adapterId === 'kimi' ? { ...provider, hasKey: true } : provider));
+  });
+  const task = 'Corrija o achado src/main/orch/tool-util.ts:653 do segundo Enter';
+  const proof = () => ({ missionId: 'mission-tab', headSha: 'a'.repeat(40), treeDirty: false,
+    verdict: 'reject', frontier: true, findings: ['src/main/orch/tool-util.ts:653 segundo Enter suprimido'] });
+
+  it('uses a current clean frontier finding recorded by Main to route its correction', async () => {
+    h.claudeCapacity.mockReturnValue(2);
+    h.reviewVerdict = proof();
+    const decision = await routeTaskForCaller({ task, tier: 'hard' }, ctx);
+    expect(decision.reason).toContain('purpose=finding-fix');
+    expect(decision.adapterId).not.toBe('kimi');
+  });
+
+  it.each(['stale-head', 'dirty-review', 'dirty-current', 'not-frontier', 'unrelated-finding', 'caller-boolean'] as const)(
+    '%s cannot prove a finding fix or force expensive routing', async (reason) => {
+      h.claudeCapacity.mockReturnValue(2);
+      h.reviewVerdict = proof();
+      if (reason === 'stale-head') h.reviewVerdict.headSha = 'b'.repeat(40);
+      if (reason === 'dirty-review') h.reviewVerdict.treeDirty = true;
+      if (reason === 'dirty-current') h.integrationState.treeDirty = true;
+      if (reason === 'not-frontier') h.reviewVerdict.frontier = false;
+      if (reason === 'unrelated-finding') h.reviewVerdict.findings = ['src/main/orch/other.ts:10 outro achado'];
+      if (reason === 'caller-boolean') h.reviewVerdict = null;
+      const decision = await routeTaskForCaller({ task, tier: 'hard', reviewedFindingFix: true }, ctx);
+      expect(decision.reason).toContain('purpose=writer');
+      expect(decision.adapterId).toBe('kimi');
+    },
+  );
 });

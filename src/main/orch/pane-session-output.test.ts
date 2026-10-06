@@ -1,14 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
+import { Worker } from 'node:worker_threads';
 
 const stubs = vi.hoisted(() => ({
   getSessionState: vi.fn((): "busy" | "idle" | null => "busy"),
+  analysisEnabled: vi.fn(() => false),
+  analysisText: vi.fn(() => ""),
 }));
 
 vi.mock("../pty/pty-manager", () => ({
   getSessionState: stubs.getSessionState,
 }));
 
+vi.mock('../pty/pty-analysis-runtime', () => ({
+  isPtyAnalysisEnabled: stubs.analysisEnabled,
+  analysisClient: { text: stubs.analysisText },
+}));
+
 import {
+  readSessionOutput,
   __evictExitedBufferForTests,
   __resetDeliberatelyClosedPanesForTests,
   markPaneDeliberatelyClosed,
@@ -142,4 +151,56 @@ describe('newOutputSince — resposta do nexus_pane_ask', () => {
     const after = 'fim\nmeio\nfim\nnovo\n';
     expect(newOutputSince(before, after)).toBe('novo\n');
   });
+});
+
+
+// Run the actual exported reader off-thread: the unfixed MAX_SAFE_INTEGER loop
+// must never trap Vitest's process. Only its analysis dependency is substituted.
+async function readAnalysisOffThread(text: string, lines: number): Promise<string> {
+  const reader = readSessionOutput.toString()
+    .replace(/\b[\w$]+\.isPtyAnalysisEnabled/g, 'isPtyAnalysisEnabled')
+    .replace(/\b[\w$]+\.analysisClient/g, 'analysisClient');
+  const worker = new Worker(`
+    const { parentPort } = require('node:worker_threads');
+    const isPtyAnalysisEnabled = () => true;
+    const analysisClient = { text: () => ${JSON.stringify(text)} };
+    const read = (${reader});
+    parentPort.postMessage(read('synthetic-boot', ${String(lines)}));
+  `, { eval: true });
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      void worker.terminate();
+      reject(new Error('session output reader exceeded its bounded worker deadline'));
+    }, 2000);
+    worker.once('message', (result: string) => { clearTimeout(timeout); void worker.terminate(); resolve(result); });
+    worker.once('error', (error) => { clearTimeout(timeout); void worker.terminate(); reject(error); });
+  });
+}
+
+describe('analysis output tail terminates at the first character', () => {
+  it('leading newline with MAX_SAFE_INTEGER returns promptly instead of looping at index zero', async () => {
+    await expect(readAnalysisOffThread('\nSynthetic boot error', Number.MAX_SAFE_INTEGER)).resolves.toBe('\nSynthetic boot error');
+  });
+
+  it('ordinary tails keep requested line semantics, including empty and excess requests', () => {
+    stubs.analysisEnabled.mockReturnValue(true);
+    try {
+      for (const text of ['\nfirst\nlast', 'first\nlast', '\n', '']) {
+        stubs.analysisText.mockReturnValue(text);
+        for (const lines of [0, 1, 2, 4]) {
+          expect(readSessionOutput('synthetic', lines)).toBe(text.split('\n').slice(Math.max(0, text.split('\n').length - lines)).join('\n'));
+        }
+      }
+    } finally { stubs.analysisEnabled.mockReturnValue(false); }
+  });
+});
+
+it('normalizes invalid line counts consistently without truncating intentional all-lines reads', async () => {
+  await expect(readAnalysisOffThread('\nSynthetic boot error', Infinity)).resolves.toBe('\nSynthetic boot error');
+  stubs.analysisEnabled.mockReturnValue(true);
+  stubs.analysisText.mockReturnValue('first\nsecond\nlast');
+  try {
+    for (const lines of [NaN, -Infinity, -1, 0]) expect(readSessionOutput('synthetic', lines)).toBe('');
+    expect(readSessionOutput('synthetic', 2.8)).toBe('second\nlast');
+  } finally { stubs.analysisEnabled.mockReturnValue(false); }
 });

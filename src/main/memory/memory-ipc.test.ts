@@ -35,6 +35,16 @@ it('renderer attestation derives project authority from Main and rejects claimed
   expect(() => attest({ sender: { id: 123 } }, request)).toThrow('authorized');
 });
 
+it('business-fact attestation is sender-scoped and never accepts global or agent-selected provenance', () => {
+  const attest = boundary.handlers.get(MEMORY_CHANNELS.attest)!;
+  const request = { type: 'business-fact', title: 'Cliente', summary: 'Salões independentes.', scope: 'workspace' };
+  expect(attest({ sender }, request)).toMatchObject({ enabled: true, scope: 'workspace' });
+  expect(getWorkspaceMemoryStore(scope).activeBySource('trusted:business-fact')).toHaveLength(1);
+  expect(() => attest({ sender }, { ...request, scope: 'global' })).toThrow();
+  expect(() => attest({ sender }, { ...request, source: 'trusted:business-fact', projectId: 'foreign' })).toThrow();
+  expect(() => attest({ sender: { id: 123 } }, request)).toThrow('authorized');
+});
+
 it('operator import opens native selection, writes only quarantined scoped notes and rejects changed workspace', async () => {
   const file = path.join(root, 'native.md'); fs.writeFileSync(file, 'Only selected native insight.');
   boundary.dialog.mockResolvedValue({ canceled: false, filePaths: [file] });

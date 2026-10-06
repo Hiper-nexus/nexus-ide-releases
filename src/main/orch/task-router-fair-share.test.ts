@@ -87,7 +87,7 @@ describe('fair-share global de rotas (F-232)', () => {
     expect(decision!.reason).not.toContain('fair-share');
   });
 
-  it('tier critical ignora o fair-share mesmo com gap enorme', () => {
+  it('correção crítica de achado provado ignora fair-share mesmo com gap enorme', () => {
     const frontierAdapters: AdapterAvailability[] = [
       {
         id: 'claude',
@@ -104,7 +104,7 @@ describe('fair-share global de rotas (F-232)', () => {
       'critical',
       false,
       undefined,
-      context({ claude: 99, glm: 0 }),
+      { ...context({ claude: 99, glm: 0 }), reviewedFindingFix: true },
     );
     expect(decision!.reason).not.toContain('fair-share');
     expect(decision!.adapterId).not.toBe('glm');

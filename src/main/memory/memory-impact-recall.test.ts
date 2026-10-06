@@ -40,6 +40,25 @@ it('production prompt assembly recalls an impacted file with zero lexical overla
   expect(fact.id).toBeDefined();
 });
 
+it('linked knowledge survives eight unrelated lexical matches within the byte budget', () => {
+  const store = getWorkspaceMemoryStore(scope);
+  for (let i = 0; i < 12; i++) store.retain({ content: `entrySwitch general note ${i}`, source: 'trusted:resolved-problem' });
+  store.retain({ content: 'Cobrança exige identidade durável.', source: 'trusted:resolved-problem' }, { links: ['file:src/billing.ts'] });
+  const block = workspaceMemoryContextBlock(scope, 'Inspect entrySwitch');
+  expect(block).toContain('Cobrança exige identidade durável');
+  expect(Buffer.byteLength(block ?? '', 'utf8')).toBeLessThanOrEqual(3072);
+});
+
+it('linked knowledge that also matches FTS is reserved once even below eight higher lexical scores', () => {
+  const store = getWorkspaceMemoryStore(scope);
+  for (let i = 0; i < 12; i++) store.retain({ content: `entrySwitch general note ${i}`, importance: 5, source: 'trusted:resolved-problem' });
+  const linked = store.retain({ content: 'entrySwitch low lexical billing invariant', importance: 1, source: 'trusted:resolved-problem' }, { links: ['file:src/billing.ts'] });
+  const block = workspaceMemoryContextBlock(scope, 'Inspect entrySwitch');
+  expect(block).toContain('low lexical billing invariant');
+  expect(block?.match(/low lexical billing invariant/g)).toHaveLength(1);
+  expect(store.recallLinked({ targets: ['file:src/billing.ts'] }).find(hit => hit.id === linked.id)?.recallCount).toBe(1);
+});
+
 it('relations use the same mission/quarantine filters and union deduplication as lexical recall', () => {
   const store = getWorkspaceMemoryStore(scope);
   const add = (text: string, mission: string, quarantine?: string) => store.retainAgentAuthored(

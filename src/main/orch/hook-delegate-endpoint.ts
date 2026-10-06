@@ -332,7 +332,8 @@ function memoryContextFor(
   block: MemoryBlockFn,
 ): string | null {
   if (!ctx.sessionId) return null;
-  const context = block(ctx, 'hook', prompt);
+  let acknowledge: (() => void) | undefined;
+  const context = block(ctx, 'hook', prompt, (ack) => { acknowledge = ack; });
   if (!context) return null;
   const scope = ctx.executionScope ?? ctx.scope;
   const hash = createHash('sha256')
@@ -344,6 +345,7 @@ function memoryContextFor(
     if (now - entry.at >= LEAN_REMINDER_INTERVAL_MS) memoryDeliveredAt.delete(id);
   }
   memoryDeliveredAt.set(ctx.sessionId, { hash, at: now });
+  acknowledge?.();
   return context;
 }
 

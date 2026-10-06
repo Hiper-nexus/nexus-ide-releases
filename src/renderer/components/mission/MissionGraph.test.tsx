@@ -148,6 +148,7 @@ function renderGraph(
   onSelectAgent: typeof onSelectAgent;
   onOpenAgentPane: typeof onOpenAgentPane;
   onRetry: typeof onRetry;
+  rerender: (updated: MissionSnapshot) => void;
 } {
   const host = document.createElement('div');
   document.body.append(host);
@@ -166,7 +167,9 @@ function renderGraph(
     );
   });
 
-  return { host, onSelectAgent, onOpenAgentPane, onRetry };
+  return { host, onSelectAgent, onOpenAgentPane, onRetry,
+    rerender: (updated) => act(() => root.render(<MissionGraph snapshot={updated} selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} onOpenAgentPane={onOpenAgentPane} onRetry={onRetry} />)),
+  };
 }
 
 function positionById(
@@ -194,6 +197,7 @@ afterEach(() => {
   for (const root of mountedRoots) act(() => root.unmount());
   mountedRoots.clear();
   document.body.replaceChildren();
+  vi.restoreAllMocks();
 });
 
 describe('layoutMissionGraph', () => {
@@ -225,6 +229,21 @@ describe('layoutMissionGraph', () => {
     expect(coordinator.x).toBe((workers[0].x + workers[2].x) / 2);
   });
 
+  it('lays out horizontal delegation/dependency layers left to right with upright rack dimensions', () => {
+    const horizontal = layoutMissionGraph(agents, [
+      { id: 'delegate', kind: 'delegation', sourceAgentId: 'coordinator', targetAgentId: 'worker-discovery' },
+      { id: 'dependency', kind: 'dependency', sourceAgentId: 'worker-discovery', targetAgentId: 'worker-implementation' },
+      { id: 'feedback', kind: 'handoff', sourceAgentId: 'worker-implementation', targetAgentId: 'coordinator' },
+    ], 'horizontal');
+    const coordinator = positionById(horizontal, 'coordinator');
+    const scout = positionById(horizontal, 'worker-discovery');
+    const executor = positionById(horizontal, 'worker-implementation');
+    expect(coordinator.x).toBeLessThan(scout.x);
+    expect(scout.x).toBeLessThan(executor.x);
+    expect(horizontal.find(position => position.agentId === 'worker-implementation')).toMatchObject({ width: 208, height: 150 });
+    expect(layoutMissionGraph(agents)).toEqual(layoutMissionGraph(agents, undefined, 'vertical'));
+  });
+
   it('uses the first stable agent as visual root when no coordinator exists without mutating input', () => {
     const malformedAgents: MissionAgentSnapshot[] = [
       { ...agents[2] },
@@ -253,6 +272,95 @@ describe('layoutMissionGraph', () => {
 });
 
 describe('MissionGraph', () => {
+  it('offers visible orientation, fit, zoom and full-screen controls without affecting agents', () => {
+    const { host, onSelectAgent, onOpenAgentPane } = renderGraph(null);
+    const button = (label: string) => [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => (node.getAttribute('aria-label') ?? node.textContent) === label)!;
+    expect(button('Tela inteira')).toBeDefined();
+    expect(button('Ajustar à tela')).toBeDefined();
+    act(() => button('Horizontal').click());
+    expect(host.querySelector('.mission-graph')?.getAttribute('data-orientation')).toBe('horizontal');
+    expect(button('Horizontal').getAttribute('aria-pressed')).toBe('true');
+    expect(button('Vertical').getAttribute('aria-pressed')).toBe('false');
+    act(() => button('Aumentar zoom').click());
+    expect(host.querySelector('.mission-graph__zoom')?.textContent).toBe('110%');
+    act(() => button('Ajustar à tela').click());
+    expect(host.querySelector('.mission-graph')?.getAttribute('data-fit')).toBe('true');
+    expect(onSelectAgent).not.toHaveBeenCalled();
+    expect(onOpenAgentPane).not.toHaveBeenCalled();
+  });
+
+  it('measures the viewport when an initially empty mission gains agents and fits above the readable floor', () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(640);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
+    const { host, rerender } = renderGraph(null, { snapshot: { ...snapshot, agents: [], edges: [] } });
+    rerender(snapshot);
+    const fit = [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Ajustar à tela')!;
+    act(() => fit.click());
+    expect(host.querySelector('.mission-graph__zoom')?.textContent).toBe('63%');
+    expect(host.querySelector<HTMLElement>('.mission-graph__surface')?.style.transform).toContain('scale(0.633');
+  });
+
+  it('fits the whole dense graph even when presentation scale is below the manual reading limit', () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(500);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300);
+    const denseAgents = Array.from({ length: 21 }, (_, i) => ({ ...agents[1], id: `fit-${i}`, category: i === 0 ? 'orchestrator' as const : 'executor' as const }));
+    const { host } = renderGraph(null, { snapshot: { ...snapshot, agents: denseAgents, edges: [] } });
+    const fit = [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Ajustar à tela')!;
+    act(() => fit.click());
+    const scaled = host.querySelector<HTMLElement>('.mission-graph__scaled')!;
+    expect(parseFloat(scaled.style.width)).toBeLessThanOrEqual(468);
+    expect(parseFloat(scaled.style.height)).toBeLessThanOrEqual(268);
+    expect(host.querySelectorAll('.mission-agent-card')).toHaveLength(21);
+    expect(host.querySelector('.mission-graph__fit-note')?.textContent).toContain('Amplie o zoom');
+  });
+
+  it('full-screen retains orientation and receives live snapshot updates without extra agent actions', async () => {
+    const { host, rerender, onSelectAgent, onOpenAgentPane } = renderGraph('worker-implementation');
+    const button = (root: ParentNode, label: string) => [...root.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === label)!;
+    act(() => button(host, 'Horizontal').click());
+    await act(async () => button(host, 'Tela inteira').click());
+    rerender({ ...snapshot, state: 'failed', agents: snapshot.agents.map(agent => ({ ...agent, state: 'failed' })) });
+    const expanded = document.querySelector('.mission-graph--presentation')!;
+    expect(expanded.getAttribute('data-mission-state')).toBe('failed');
+    expect(expanded.getAttribute('data-orientation')).toBe('horizontal');
+    expect(expanded.querySelector('.mission-graph__packets')).toBeNull();
+    expect(expanded.querySelector('[data-agent-id="worker-implementation"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(onSelectAgent).not.toHaveBeenCalled();
+    expect(onOpenAgentPane).not.toHaveBeenCalled();
+    await act(async () => button(expanded, 'Sair da tela inteira').click());
+    expect(host.querySelector('.mission-graph')?.getAttribute('data-orientation')).toBe('horizontal');
+  });
+
+  it('fallback fills the app, Escape exits and returns keyboard focus', async () => {
+    const { host } = renderGraph(null);
+    const enter = [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Tela inteira')!;
+    enter.focus();
+    await act(async () => enter.click());
+    const expanded = document.querySelector('.mission-graph--presentation');
+    expect(expanded).not.toBeNull();
+    expect(expanded?.getAttribute('aria-modal')).toBe('true');
+    expect(document.activeElement?.textContent).toBe('Sair da tela inteira');
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(document.querySelector('.mission-graph--presentation')).toBeNull();
+    expect(document.activeElement?.textContent).toBe('Tela inteira');
+  });
+
+  it('native full-screen exit follows fullscreenchange and restores focus', async () => {
+    const { host } = renderGraph(null);
+    const section = host.querySelector<HTMLElement>('.mission-graph')!;
+    let fullscreen: Element | null = null;
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => fullscreen });
+    Object.defineProperty(section, 'requestFullscreen', { configurable: true, value: async () => { fullscreen = section; document.dispatchEvent(new Event('fullscreenchange')); } });
+    const enter = [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Tela inteira')!;
+    enter.focus();
+    await act(async () => enter.click());
+    expect(section.classList.contains('mission-graph--presentation')).toBe(true);
+    act(() => { fullscreen = null; document.dispatchEvent(new Event('fullscreenchange')); });
+    expect(section.classList.contains('mission-graph--presentation')).toBe(false);
+    expect(document.activeElement).toBe(enter);
+    delete (document as unknown as { fullscreenElement?: Element }).fullscreenElement;
+  });
+
   it.each([0, 8, 20])('keeps dense packet motion exclusive with 20 helpers and %i handoffs', (handoffs) => {
     const denseAgents = Array.from({ length: 21 }, (_, index) => ({
       ...agents[1], id: `dense-${index}`, agentName: `Agente ${index}`,
@@ -371,7 +479,7 @@ describe('MissionGraph', () => {
 
   it('renders only edges with both endpoints present in an SVG layer beneath the cards', () => {
     const { host } = renderGraph(null);
-    const svg = host.querySelector('svg');
+    const svg = host.querySelector('.mission-graph__edges');
     expect(svg).not.toBeNull();
 
     const renderedConnections = [
@@ -379,7 +487,7 @@ describe('MissionGraph', () => {
     ];
     expect(renderedConnections).toHaveLength(2);
 
-    const firstCard = host.querySelector('button');
+    const firstCard = host.querySelector('.mission-agent-card');
     expect(firstCard).not.toBeNull();
     expect(
       svg!.compareDocumentPosition(firstCard!) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -389,7 +497,7 @@ describe('MissionGraph', () => {
   it('layers a state signal over every visible canonical connection', () => {
     const { host } = renderGraph(null);
     const graph = host.querySelector<HTMLElement>('.mission-graph');
-    const svg = host.querySelector('svg');
+    const svg = host.querySelector('.mission-graph__edges');
 
     expect(graph?.dataset.missionState).toBe('running');
     expect(
@@ -500,7 +608,7 @@ describe('MissionGraph', () => {
 
   it('renders semantic agent-card buttons with complete canonical details', () => {
     const { host } = renderGraph(null);
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>('button')];
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('.mission-agent-card')];
     expect(buttons).toHaveLength(snapshot.agents.length);
     expect(buttons.every((button) => button.type === 'button')).toBe(true);
 
@@ -607,5 +715,36 @@ describe('MissionGraph', () => {
 
     act(() => retryButton!.click());
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('presentation review regressions', () => {
+  it('lets an outside dialog receive Escape while the graph is presented', async () => {
+    const { host } = renderGraph(null);
+    const enter = [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Tela inteira')!;
+    await act(async () => enter.click());
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const input = document.createElement('input');
+    dialog.append(input); document.body.append(dialog);
+    const escape = vi.fn(); dialog.addEventListener('keydown', escape);
+    try {
+      input.focus();
+      const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      await act(async () => input.dispatchEvent(event));
+      expect(escape).toHaveBeenCalledOnce();
+      expect(event.defaultPrevented).toBe(false);
+      expect(document.querySelector('.mission-graph--presentation')).not.toBeNull();
+    } finally { dialog.remove(); }
+  });
+  it('leaves presentation when the current mission loses its agents', async () => {
+    const { host, rerender } = renderGraph(null);
+    const enter = [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Tela inteira')!;
+    await act(async () => enter.click());
+    rerender({ ...snapshot, agents: [], edges: [] });
+    await act(async () => {});
+    rerender(snapshot);
+    expect(document.querySelector('.mission-graph--presentation')).toBeNull();
+    expect(host.querySelector('.mission-graph')).not.toBeNull();
   });
 });

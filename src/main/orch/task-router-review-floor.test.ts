@@ -186,7 +186,7 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
     expect(decision!.reason).not.toContain('topo entre CLIs');
   });
 
-  it('critical sem revisão vai ao topo high-risk (Opus 5.5 quando o claude está instalado)', () => {
+  it('correção crítica com achado provado pelo Main vai ao topo high-risk', () => {
     // F-233: 'auditar' virou sinal de revisão (cross-review → lane de
     // julgamento); o texto agora é falha crítica SEM verbo de julgamento.
     const decision = routeTask(
@@ -198,13 +198,13 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
       catalog,
       // claude já usado na missão: a diversidade do multi-score derruba o
       // Opus hoje (−18 por uso); o topo entre CLIs o traz de volta.
-      { multiScore: true, missionUseCounts: new Map([['claude', 1]]) },
+      { multiScore: true, missionUseCounts: new Map([['claude', 1]]), reviewedFindingFix: true },
     );
     expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5' });
     expect(decision!.reason).toContain('topo entre CLIs (high-risk)');
   });
 
-  it('hard de alto risco sem revisão NÃO atravessa CLIs — pin do pick de hoje', () => {
+  it('implementação hard sem achado provado prefere escritor econômico elegível', () => {
     const decision = routeTask(
       'corrigir a race condition na integração entre main e renderer',
       fieldAdapters,
@@ -214,13 +214,11 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
       catalog,
       missionHistory,
     );
-    // Era mimo-pro até o GPT-6.1 Sol: DeepSWE 75,2 (vs 71,9 do MiMo) faz a
-    // qualidade saturada vencer o custo no multi-score — o pick mudou pelo
-    // modelo novo, NÃO pelo passo entre CLIs (hard high-risk não o dispara).
     expect(decision).toMatchObject({
-      adapterId: 'codex',
-      model: 'gpt-6.1-sol',
+      adapterId: 'mimo-code',
+      model: 'xiaomi/mimo-v2.6-pro',
     });
+    expect(decision!.reason).toContain('purpose=writer');
     expect(decision!.reason).not.toContain('topo entre CLIs');
   });
 
@@ -302,7 +300,7 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
       'critical',
       false,
       catalog,
-      { multiScore: true, missionUseCounts: new Map([['claude', 1]]) },
+      { multiScore: true, missionUseCounts: new Map([['claude', 1]]), reviewedFindingFix: true },
     );
     expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-6' });
     expect(decision!.reason).toContain('topo entre CLIs (high-risk)');

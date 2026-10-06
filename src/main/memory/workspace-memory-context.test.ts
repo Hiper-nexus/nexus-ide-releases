@@ -48,6 +48,19 @@ afterEach(() => {
 });
 
 describe('automatic workspace-memory recall', () => {
+  it('deferred delivery is counted once, and an accounting failure cannot discard prepared context', () => {
+    const store = getWorkspaceMemoryStore(scope);
+    store.retain({ content: 'Use atomic billing.', source: 'trusted:architecture-rule' });
+    let acknowledge!: () => void;
+    const block = workspaceMemoryContextBlock(scope, 'billing', 'execution', { deferRecall: ack => { acknowledge = ack; } });
+    expect(block).toContain('atomic billing');
+    expect(store.stats().workspace.totalRecalls).toBe(0);
+    acknowledge(); acknowledge();
+    expect(store.stats().workspace.totalRecalls).toBe(1);
+    workspaceMemoryContextBlock(scope, 'billing', 'execution', { deferRecall: ack => { acknowledge = ack; } });
+    disposeWorkspaceMemoryStores();
+    expect(() => acknowledge()).not.toThrow();
+  });
   it('maps orchestrator, workers, and reviewers to the three recall phases', () => {
     expect(autoRecallPhaseForAgent({ role: 'orchestrator' })).toBe('planning');
     expect(autoRecallPhaseForAgent({ role: 'worker' })).toBe('execution');

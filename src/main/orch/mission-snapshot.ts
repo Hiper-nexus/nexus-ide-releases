@@ -532,6 +532,10 @@ export function resolveMissionAgentLiveState(input: {
   const sessionState = input.sessionState ?? null;
   const taskState = input.taskState ?? 'queued';
 
+  // A permission dialog/error can repaint the PTY; output activity does not
+  // override the explicit semantic state of that same agent.
+  if (semantic === 'awaiting-input') return 'waiting';
+  if (semantic === 'error') return 'failed';
   if (
     semantic === 'working' ||
     sessionState === 'busy' ||
@@ -539,9 +543,6 @@ export function resolveMissionAgentLiveState(input: {
   ) {
     return 'working';
   }
-  if (semantic === 'awaiting-input') return 'waiting';
-  if (semantic === 'error') return 'failed';
-
   if (sessionState === null) {
     if (taskState === 'failed') return 'failed';
     if (taskState === 'done') return 'done';
