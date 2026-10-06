@@ -10137,7 +10137,7 @@ export const RELEASE_076201: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076202: AppRelease = {
   version: '0.76.202',
   date: '2026-10-05',
   codename: 'Experimente uma equipe inteira',
@@ -10152,5 +10152,25 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Sonda de versão pode se recuperar', detail: 'Falhas transitórias de leitura de versão deixam de ficar cacheadas indefinidamente.' },
     { title: 'Proteção na troca de login', detail: 'Requisições do login anterior não são reenviadas com a sessão de outra conta.' },
     { title: 'Atualização do Linux preservada', detail: 'Inclui a correção da 0.76.201 para extrair o pacote com original-fs, mantendo a atualização real do ZIP.' },
+  ],
+};
+
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.205',
+  date: '2026-10-06',
+  codename: 'Missões com entrega verificada',
+  summary: 'Mais controle de memória, envio confiável aos agentes e revisão independente antes de concluir missões de código.',
+  highlights: [
+    { title: 'Seis agentes para experimentar', detail: 'O teste de 15 dias permite até seis agentes simultâneos, incluindo o orquestrador. No Pro, a licença não limita agentes; a execução respeita a capacidade da máquina e as cotas dos provedores.' },
+    { title: 'Execução ajustada à memória', detail: 'A admissão automática considera processos e memória disponíveis. Compilações e testes pesados compartilham uma fila por projeto, e a reserva só é liberada quando o processo termina.' },
+    { title: 'Conclusão com evidência', detail: 'Missões de código passam por verificações aplicáveis e revisão independente da entrega atual. Achados voltam ao orquestrador para correção, tanto nas missões comuns quanto nas iniciadas por um pane.' },
+    { title: 'Quadro em destaque', detail: 'Tela inteira, orientação horizontal ou vertical, zoom e ajuste da visão. Os cartões acompanham os terminais e a atividade atual da missão.' },
+  ],
+  fixes: [
+    { title: 'Envio ao Kimi confirmado', detail: 'O envio espera a confirmação do transporte e protege o Enter de recuperação quando há um diálogo ativo.' },
+    { title: 'Menos bloqueios no trabalho', detail: 'Corrige o loop na leitura de saída que podia ocupar o processo principal. Avisos opcionais sobre versões de dependências deixam de impedir a conclusão da missão.' },
+    { title: 'Validação de projetos nativos', detail: 'Verificações de Go e Rust usam a configuração do projeto. Dependências de execução ausentes aparecem como não verificadas, sem inventar um resultado aprovado.' },
+    { title: 'Experiência do teste e manutenção', detail: 'Inclui a medição mínima de uso real no painel, sem código ou prompts, e a manutenção automática das CLIs compatíveis nos três sistemas, respeitando suas preferências.' },
   ],
 };

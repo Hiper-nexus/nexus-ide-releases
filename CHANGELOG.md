@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.76.205 — Missões com entrega verificada
+
+- Teste de 15 dias com seis agentes simultâneos e Pro sem limite de licença para agentes. A execução continua respeitando a memória disponível e as cotas dos provedores.
+- Admissão automática com orçamento físico compartilhado entre panes, workers e verificações. Comandos pesados executam um por vez por projeto; timeout lógico não libera memória nem remove o ambiente antes da saída física.
+- Missões de código, comuns ou iniciadas pelo + Pane, exigem verificações aplicáveis e revisão independente da entrega atual antes de concluir. Achados retornam ao orquestrador para correção; mudanças posteriores invalidam a evidência anterior.
+- Verificação de projetos Go e Rust, incluindo módulos/workspaces suportados, sem tratar ferramenta ausente ou saída inconclusiva como teste aprovado.
+- Corrige o envio confirmado ao Kimi e impede Enter de recuperação em diálogos ativos. Mantém o tratamento de confiança somente para os hooks próprios do Nexus no Codex.
+- Corrige o loop na leitura da saída de terminal que podia travar o processo principal. Reduz atualizações desnecessárias de panes e preserva a retomada de missões.
+- Quadro da missão com tela inteira, orientação horizontal/vertical, zoom, ajuste da visão e estados ligados aos terminais reais.
+- Memória com contexto limitado, relevância e origem verificadas; roteamento econômico para execução e modelos fortes para revisão e correção de achados confirmados, preservando escolhas explícitas do operador.
+- Avisos opcionais de atualização de dependências não impedem mais a conclusão. Typecheck, auditoria e outras verificações obrigatórias continuam exigidos quando aplicáveis.
+- Inclui medição mínima de adoção no painel administrativo e manutenção automática das CLIs compatíveis no macOS, Windows e Linux, sem coletar código ou prompts.
+
 ## 0.76.202 — Experimente uma equipe inteira
 
 - Teste de 15 dias com até 6 agentes simultâneos; plano Pro com agentes simultâneos ilimitados.
