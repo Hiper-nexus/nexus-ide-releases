@@ -116,7 +116,7 @@ export async function ensureMissionCodeCompletion(input: MissionCodeCompletionIn
   const verification = mechanical.verification;
   if (!verification || !verification.analysisComplete) return refuse('code_checks_incomplete', 'A análise estática completa do candidato ainda não foi comprovada.');
   if (verification.headSha !== candidate.headSha || verification.baseSha !== input.baselineSha) return refuse('code_checks_stale', 'As verificações mecânicas pertencem a outro candidato.', 'waiting');
-  if (verification.checks.some(check => check.status === 'failed' || check.status === 'unavailable')) return refuse('code_checks_unavailable', 'Há verificação aplicável que falhou ou não pôde executar.');
+  if (verification.checks.some(check => check.kind !== 'dependency-freshness' && (check.status === 'failed' || check.status === 'unavailable'))) return refuse('code_checks_unavailable', 'Há verificação aplicável que falhou ou não pôde executar.');
   const regression = verification.regression;
   if ((!regression && verification.regressionApplicable !== false) || regression && (
     regression.status === 'failed' || regression.status === 'unavailable' || regression.testsNotRun.length > 0 ||

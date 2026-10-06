@@ -45,7 +45,7 @@
     "typecheck": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc --noEmit",
     "lint:oxlint": "oxlint src server scripts",
     "lint:oxlint:ratchet": "oxlint --max-warnings 168 src server scripts",
-    "pretest": "node scripts/check-node-natives.mjs",
+    "pretest": "node scripts/check-node-natives.mjs && node scripts/build-darwin-pty-supervisor.mjs",
     "test": "vitest run",
     "test:changed": "vitest run --changed",
     "eval:export-ranking": "node --import tsx scripts/export-public-ranking.mjs",

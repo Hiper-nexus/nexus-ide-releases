@@ -72,10 +72,10 @@ describe('Main code completion across pane and ordinary missions', () => {
   });
 
   it('does not spend a frontier review while applicable mechanics are unavailable or repairing', async () => {
-    for (const status of ['failed', 'unavailable'] as const) {
+    for (const status of ['failed', 'unavailable'] as const) for (const kind of ['typecheck', 'dependency-audit'] as const) {
       const f = fixture();
       f.ports.runMechanical = async () => ({ ...mechanical(), verification: { ...mechanical().verification,
-        checks: [{ kind: 'typecheck', status, summary: 'Runner ausente ou falhou' }] } });
+        checks: [{ kind, status, summary: 'Verificação obrigatória indisponível ou falhou' }] } });
       expect((await ensureMissionCodeCompletion(f.input, f.ports)).kind).not.toBe('verified');
       expect(f.ports.ensureIndependentReview).not.toHaveBeenCalled();
     }
@@ -83,6 +83,21 @@ describe('Main code completion across pane and ordinary missions', () => {
     f.ports.runMechanical = async () => ({ kind: 'repair-dispatched' });
     expect((await ensureMissionCodeCompletion(f.input, f.ports)).kind).toBe('waiting');
     expect(f.ports.ensureIndependentReview).not.toHaveBeenCalled();
+  });
+
+  it.each(['failed', 'unavailable'] as const)('preserves %s dependency freshness advice without blocking independent review', async status => {
+    const f = fixture();
+    const advice = { kind: 'dependency-freshness' as const, status, summary: `Atualidade npm consultiva: ${status}.` };
+    const receipt = { ...mechanical(), note: `${mechanical().note}\n${advice.summary}`,
+      verification: { ...mechanical().verification, checks: [...mechanical().verification.checks, advice] } };
+    f.ports.runMechanical = async () => receipt;
+    const result = await ensureMissionCodeCompletion(f.input, f.ports);
+    expect(result.kind).toBe('verified');
+    expect(f.ports.ensureIndependentReview).toHaveBeenCalledOnce();
+    expect(receipt.verification.checks.at(-1)).toEqual(advice);
+    if (result.kind !== 'verified') return;
+    expect(result.proof.note).toContain(advice.summary);
+    expect(f.finalGate(result.proof)).toBe(true);
   });
 
   it.each(['writer', 'maestro'])('cannot accept the implementation or orchestrator session as judge: %s', async (sessionId) => {
