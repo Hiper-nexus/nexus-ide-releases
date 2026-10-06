@@ -44,7 +44,6 @@ import type {
   PaneSnapshot,
   SquadAgent,
 } from "../../shared/orch-types";
-import { listAdapters } from "../adapters/adapter-registry";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   PET_STUDIO_SQUAD,
@@ -1376,7 +1375,7 @@ export function projectMissionEngineSnapshotView(
     if (!agentId) {
       if (roster.length >= 64) continue;
       agentId = `session:${delivery.sessionId}`;
-      const helper = closedHelperAgent(agentId, delivery.fromAgent);
+      const helper = closedHelperAgent(agentId, delivery.fromAgent, delivery.routeAttribution);
       roster.push(helper);
       rosterById.set(agentId, helper);
     }
@@ -1555,22 +1554,21 @@ function missionHelperAgent(
   };
 }
 
-/** Helper que entregou e fechou o pane: só o handoff sobrou para nomeá-lo. */
-function closedHelperAgent(id: string, fromAgent: string | undefined): SquadAgent {
+/** Closed helper identity comes only from Main's persisted handoff attribution. */
+function closedHelperAgent(
+  id: string,
+  fromAgent: string | undefined,
+  attribution: Handoff["routeAttribution"],
+): SquadAgent {
   const label = helperLabel(fromAgent);
-  let adapterId: string | undefined;
-  try {
-    adapterId = label
-      ? listAdapters().find((adapter) => adapter.label === label || adapter.id === label)?.id
-      : undefined;
-  } catch {
-    adapterId = undefined;
-  }
+  const adapterId = helperLabel(attribution?.adapterId, 64);
+  const model = adapterId ? helperLabel(attribution?.model, 128) : "";
   return {
     id,
     agentName: label || "Helper",
     category: missionHelperCategory({ agentName: label }),
-    cli: adapterId ?? (helperLabel(label, 64) || "agente"),
+    cli: adapterId || "Ferramenta não identificada",
+    ...(model ? { model } : {}),
   };
 }
 
@@ -1619,6 +1617,7 @@ interface MissionHandoffDelivery {
   readonly sessionId: string;
   readonly workerIncarnationId?: string;
   readonly fromAgent?: string;
+  readonly routeAttribution?: Handoff["routeAttribution"];
   readonly state: "done" | "failed" | "blocked";
 }
 
@@ -1658,6 +1657,7 @@ function missionHandoffDeliveries(
         ? { workerIncarnationId: handoff.workerIncarnationId }
         : {}),
       ...(handoff.fromAgent ? { fromAgent: handoff.fromAgent } : {}),
+      ...(handoff.routeAttribution ? { routeAttribution: handoff.routeAttribution } : {}),
       state,
     });
   }

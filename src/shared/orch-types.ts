@@ -514,6 +514,8 @@ export interface Handoff {
   /** Main-issued generation nonce for the exact physical worker process. */
   workerIncarnationId?: string;
   fromAgent?: string;
+  /** Main-owned physical session attribution persisted at submission; never reporter input. */
+  readonly routeAttribution?: { readonly adapterId: string; readonly model?: string };
   /** Main-owned provenance. Renderer/MCP payloads cannot select this value. */
   readonly authorityOrigin?: 'agent' | 'operator-confirmed';
   /** Present only when a physical agent transport emitted the durable row. */

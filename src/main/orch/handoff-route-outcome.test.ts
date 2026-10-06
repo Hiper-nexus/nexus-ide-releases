@@ -73,6 +73,28 @@ describe("F-773: handoff grava quem entregou e alimenta a taxa de sucesso", () =
     expect(attributionOf(handoff.id)).toEqual({ adapter_id: "kimi", model: "kimi-code/k3" });
   });
 
+  it("preserves Main-owned attribution for historical cards after the session disappears", () => {
+    const handoff = submit("pty-kimi-1", "success", "implementar utilitário de texto");
+    expect(handoff).toMatchObject({ routeAttribution: { adapterId: "kimi", model: "kimi-code/k3" } });
+    setHandoffRouteAttributionResolver(null);
+    expect(handoffs.get(handoff.id)).toMatchObject({
+      fromAgent: "implementar utilitário de texto",
+      routeAttribution: { adapterId: "kimi", model: "kimi-code/k3" },
+    });
+    expect(handoffs.list({ includeDelivered: true })[0]).toMatchObject({
+      routeAttribution: { adapterId: "kimi", model: "kimi-code/k3" },
+    });
+  });
+
+  it("does not accept reporter-selected attribution or infer it from a provider-shaped role", () => {
+    expect(() => handoffs.submit({
+      sessionId: "pty-unknown-1", fromAgent: "kimi", status: "success", summary: "done",
+      routeAttribution: { adapterId: "kimi", model: "forged" },
+    } as never)).toThrow();
+    const handoff = submit("pty-unknown-1", "success", "kimi");
+    expect(handoffs.get(handoff.id)).not.toHaveProperty("routeAttribution");
+  });
+
   it("sessão desconhecida, sem sessão ou resolvedor quebrado: grava sem atribuição e não falha", () => {
     expect(attributionOf(submit("pty-desconhecida-1", "success").id)).toEqual({
       adapter_id: null,
