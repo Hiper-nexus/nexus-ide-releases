@@ -40,6 +40,7 @@ import {
   armAutoCloseOnHandoff,
   armAutoCloseOnHandoffForPane,
   selectScopedPaneCloseTargets,
+  shouldArmAutoCloseOnHandoff,
 } from './pane-close-scopes';
 import { armDeliveryContract, parseExpectArg } from './delivery-contract';
 import {
@@ -898,7 +899,11 @@ const paneSpawn: McpToolDef = {
         type: 'boolean',
         description:
           'Close this pane automatically when it submits a SUCCESS handoff ' +
-          '(declared at birth; failure keeps the pane open for diagnosis).',
+          '(declared at birth; failure keeps the pane open for diagnosis). ' +
+          'Default ON for operator helpers without a mission and for mission ' +
+          'workers (the piece is done — free the RAM). Orchestrator panes and ' +
+          'operator-opened panes inside a mission never auto-close. Pass ' +
+          'false to keep a pane alive after delivery.',
       },
       expect: {
         type: 'object',
@@ -2076,9 +2081,17 @@ const paneSpawnAfterTabMission = {
         : {};
       // C3 (25/09): helper da mão do operador fecha sozinho no handoff de
       // sucesso por padrão — a aba não enche de panes que já entregaram.
-      const autoClose =
-        args.autoCloseOnHandoff === true ||
-        (operatorHand && !options.missionId && args.autoCloseOnHandoff !== false);
+      // Motor (06/10): worker de missão TAMBÉM fecha — a peça terminou, o
+      // pane não pode ficar comendo RAM à toa. Orquestrador e a mão do
+      // operador dentro da missão (F-231, operatorOpened) continuam vivos.
+      // Falha preserva o pane: o braço só dispara em success.
+      const autoClose = shouldArmAutoCloseOnHandoff({
+        explicit: args.autoCloseOnHandoff === true ? true : args.autoCloseOnHandoff === false ? false : undefined,
+        operatorHand,
+        missionId: options.missionId,
+        role: options.role,
+        operatorOpened: options.operatorOpened === true ? true : undefined,
+      });
       if (spawnTiming) {
         spawnTiming.meta.adapterId = options.adapterId;
         spawnTiming.meta.missionId = options.missionId;

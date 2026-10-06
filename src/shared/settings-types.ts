@@ -161,6 +161,8 @@ export const orchSettingsSchema = z.object({
       missionPick: z.boolean().default(true),
       /** F-757: agentes e instruções do Marketplace recomendados para a stack do projeto. */
       catalogPick: z.boolean().default(true),
+      /** Motor (06/10): julgamento do momentum da missão (preso vs gate longo). */
+      missionMomentum: z.boolean().default(true),
     })
     .prefault({}),
   /**

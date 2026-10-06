@@ -8,6 +8,7 @@ import {
   disarmAutoCloseOnHandoff,
   selectScopedPaneCloseTargets,
   scheduleAutoCloseAfterHandoff,
+  shouldArmAutoCloseOnHandoff,
   shouldAutoCloseAfterHandoff,
 } from "./pane-close-scopes";
 
@@ -199,6 +200,99 @@ describe("shouldAutoCloseAfterHandoff", () => {
     expect(
       shouldAutoCloseAfterHandoff({ armed: false, status: "success" }),
     ).toBe(false);
+  });
+});
+
+// Motor (06/10): quem nasce com o braço armado. Worker de missão fecha após
+// entregar a peça — nada de RAM parada. Orquestrador e a mão do operador
+// dentro da missão (F-231) nunca entram.
+describe("shouldArmAutoCloseOnHandoff", () => {
+  const base = {
+    explicit: undefined,
+    operatorHand: false,
+    missionId: undefined,
+    role: undefined,
+    operatorOpened: undefined,
+  };
+
+  it("helper da mão do operador sem missão arma por padrão (C3)", () => {
+    expect(
+      shouldArmAutoCloseOnHandoff({ ...base, operatorHand: true }),
+    ).toBe(true);
+  });
+
+  it("worker de missão arma por padrão (motor: peça terminou, fecha)", () => {
+    expect(
+      shouldArmAutoCloseOnHandoff({
+        ...base,
+        missionId: "m1",
+        role: "worker",
+      }),
+    ).toBe(true);
+  });
+
+  it("orquestrador nunca arma", () => {
+    expect(
+      shouldArmAutoCloseOnHandoff({
+        ...base,
+        missionId: "m1",
+        role: "orchestrator",
+      }),
+    ).toBe(false);
+  });
+
+  it("mão do operador dentro da missão (operatorOpened) nunca arma", () => {
+    expect(
+      shouldArmAutoCloseOnHandoff({
+        ...base,
+        missionId: "m1",
+        role: "worker",
+        operatorOpened: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("autoCloseOnHandoff: false explícito vence sempre", () => {
+    expect(
+      shouldArmAutoCloseOnHandoff({ ...base, explicit: false, operatorHand: true }),
+    ).toBe(false);
+    expect(
+      shouldArmAutoCloseOnHandoff({
+        ...base,
+        explicit: false,
+        missionId: "m1",
+        role: "worker",
+      }),
+    ).toBe(false);
+  });
+
+  it("autoCloseOnHandoff: true força para qualquer um", () => {
+    expect(
+      shouldArmAutoCloseOnHandoff({
+        ...base,
+        explicit: true,
+        missionId: "m1",
+        role: "orchestrator",
+      }),
+    ).toBe(true);
+    expect(
+      shouldArmAutoCloseOnHandoff({
+        ...base,
+        explicit: true,
+        missionId: "m1",
+        role: "worker",
+        operatorOpened: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("helper sem missão e sem role (filho ad-hoc) também arma", () => {
+    expect(shouldArmAutoCloseOnHandoff({ ...base, operatorHand: true })).toBe(
+      true,
+    );
+    // Sem operador, sem missão, sem role: nasce helper puro — não arma
+    // (só o braço explícito ou a mão do operador).
+    expect(shouldArmAutoCloseOnHandoff({ ...base })).toBe(false);
   });
 });
 

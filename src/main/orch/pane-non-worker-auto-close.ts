@@ -121,14 +121,31 @@ export interface NonWorkerAutoCloseDeps {
    * PANE_WAKE_GRACE_MS para não fazer ping-pong estaciona→acorda→estaciona.
    */
   readonly wokeAgoMs?: (sessionId: string) => number | null;
-  /** 0.76.45: amostra de memória indisponível neste tick (gate cego). */
+  /**
+   * 0.76.45: amostra de memória indisponível neste tick (gate cego).
+   */
   readonly isMemorySampleMissing?: () => boolean;
+  /**
+   * Otimização multi-pane (06/10): pressão severa (livre < 50 % do mínimo)
+   * estaciona até 3 panes por tick. Ausente = só 1 por tick (comportamento
+   * antigo).
+   */
+  readonly isSevereMemoryPressure?: () => boolean;
 }
 
 /** Carência pós-acordar antes de o reaper de emergência poder estacionar de novo. */
 export const PANE_WAKE_GRACE_MS = 5 * 60_000;
 /** Ticks seguidos sem amostra de memória antes de avisar que o gate está cego. */
 const MEMORY_SAMPLE_BLIND_TICKS = 3;
+/**
+ * Otimização multi-pane (06/10): sob pressão severa o reaper estaciona vários
+ * panes ociosos por tick, não apenas um. Um pane por minuto não drena RAM
+ * rápido o suficiente quando 4-6 CLIs + validadores já empurraram a máquina
+ * para o swap — o freeze acontece antes do segundo tick.
+ */
+const SEVERE_PRESSURE_PARKS_PER_TICK = 3;
+/** Fração do mínimo livre abaixo da qual a pressão é considerada severa. */
+const SEVERE_PRESSURE_RATIO = 0.5;
 
 function productionDeps(): NonWorkerAutoCloseDeps {
   return {
@@ -211,6 +228,7 @@ function productionDeps(): NonWorkerAutoCloseDeps {
     isUnderMemoryPressure: () =>
       isUnderMemoryPressure(getCachedSystemMemory(), readPaneAdmissionLimits()),
     isMemorySampleMissing: () => getCachedSystemMemory() === null,
+    isSevereMemoryPressure: productionSevereMemoryPressure,
     registerAdvisor: () =>
       registerPaneAdmissionAdvisor({
         idleCandidates: (now) =>
@@ -405,35 +423,56 @@ export async function sweepIdlePanes(deps: NonWorkerAutoCloseDeps, context?: Per
   // 0.76.44 / F-588 — reaper de emergência: com a máquina sob pressão (mesmos
   // limiares do gate de spawn), não espera o TTL. Estaciona UM pane ocioso
   // elegível por tick, o mais parado primeiro; os vetos (orquestrador,
-  // entrega armada, awaiting-input) continuam.
+  // entrega armada, awaiting-input) continuam. Otimização multi-pane (06/10):
+  // sob pressão severa (abaixo de 50 % do mínimo livre) estaciona até 3 por
+  // tick — um por minuto não drena RAM antes do freeze.
   if (deps.isUnderMemoryPressure?.()) {
-    let oldest: string | null = null;
-    let oldestAt = Number.POSITIVE_INFINITY;
-    for (const [sessionId, idleAt] of [...idleSince.entries()]) {
+    const severe = deps.isSevereMemoryPressure?.() ?? false;
+    const parksThisTick = severe ? SEVERE_PRESSURE_PARKS_PER_TICK : 1;
+    let parked = 0;
+    while (parked < parksThisTick) {
       await context?.checkpoint();
-      if (!new Set(list()).has(sessionId) || closing.has(sessionId) || !paneIsParkableUnderPressure(deps, sessionId)) continue;
-      const wokeAgo = deps.wokeAgoMs?.(sessionId);
-      if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) continue;
-      if (idleAt < oldestAt) { oldest = sessionId; oldestAt = idleAt; }
-    }
-    if (oldest && deps.isUnderMemoryPressure?.() && new Set(list()).has(oldest)) {
+      if (!deps.isUnderMemoryPressure?.()) break;
+      let oldest: string | null = null;
+      let oldestAt = Number.POSITIVE_INFINITY;
+      for (const [sessionId, idleAt] of [...idleSince.entries()]) {
+        await context?.checkpoint();
+        if (!new Set(list()).has(sessionId) || closing.has(sessionId) || !paneIsParkableUnderPressure(deps, sessionId)) continue;
+        const wokeAgo = deps.wokeAgoMs?.(sessionId);
+        if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) continue;
+        if (idleAt < oldestAt) { oldest = sessionId; oldestAt = idleAt; }
+      }
+      if (!oldest || !new Set(list()).has(oldest)) break;
       const sessionId = oldest;
       const wokeAgo = deps.wokeAgoMs?.(sessionId);
-      if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) return;
+      if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) break;
       const parkRef = paneIsParkableUnderPressure(deps, sessionId);
-      if (!parkRef) return;
+      if (!parkRef) break;
       // Se não temos parkPane (apenas closePane destrutivo), fechamos apenas
       // se for elegível a fechamento definitivo (isGuardianEligiblePane).
-      if (!deps.parkPane && !isGuardianEligiblePane(parkRef)) return;
+      if (!deps.parkPane && !isGuardianEligiblePane(parkRef)) break;
       const verb = deps.parkPane ? 'estacionando' : 'fechando';
       const roleLabel = parkRef.role ?? 'none';
       deps.log(
-        `pressão de memória: ${verb} o pane ocioso mais antigo sem esperar o TTL ` +
-          `(pane=${parkRef.paneId}, role=${roleLabel}, ocioso há ${Math.round((now - (idleSince.get(sessionId) ?? now)) / 1000)} s)`,
+        `pressão de memória${severe ? ' severa' : ''}: ${verb} o pane ocioso mais antigo sem esperar o TTL ` +
+          `(pane=${parkRef.paneId}, role=${roleLabel}, ocioso há ${Math.round((now - (idleSince.get(sessionId) ?? now)) / 1000)} s)` +
+          (severe ? ` [lote ${parked + 1}/${parksThisTick}]` : ''),
       );
       await closeIdlePane(deps, parkRef, sessionId, 'varredura', 'memory-pressure');
       context?.assertCurrent();
+      parked += 1;
     }
+  }
+}
+
+/** Pressão severa: memória livre abaixo de 50 % do mínimo do gate. */
+function productionSevereMemoryPressure(): boolean {
+  try {
+    const sample = getCachedSystemMemory();
+    const limits = readPaneAdmissionLimits();
+    return sample?.freeMB !== null && sample !== null && sample.freeMB < limits.minFreeMB * SEVERE_PRESSURE_RATIO;
+  } catch {
+    return false;
   }
 }
 

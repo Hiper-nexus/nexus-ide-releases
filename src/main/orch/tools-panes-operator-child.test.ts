@@ -585,6 +585,11 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect(harness.armAutoCloseOnHandoff).not.toHaveBeenCalled();
   });
 
+  // A decisão de ARMAR o braço (worker de missão fecha, orquestrador e
+  // operatorOpened ficam) é pura e testada em pane-close-scopes.test.ts
+  // (shouldArmAutoCloseOnHandoff). Aqui só o caminho de integração do
+  // helper sem missão, que não precisa dos domain stores.
+
   it('agentName: título e agente do roster, CLI e modelo da rota', async () => {
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex', model: 'gpt-5.6-luna' })));
     await paneSpawnTool.handler({ agentName: 'Executor', prompt: 'tela de login' }, userPane());

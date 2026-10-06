@@ -78,6 +78,31 @@ export function shouldAutoCloseAfterHandoff(input: {
   return input.armed && input.status === "success";
 }
 
+/**
+ * Motor (06/10): quem nasce com o braço de auto-close armado.
+ * - helper da mão do operador SEM missão (C3, 25/09);
+ * - worker de missão que NÃO é a mão do operador dentro dela (F-231).
+ * Nunca: orquestrador, nem `operatorOpened` (a mão do operador na missão).
+ * `autoCloseOnHandoff: false` explícito vence sempre; `true` força para
+ * qualquer um (inclusive os que não entrariam pelo default).
+ */
+export function shouldArmAutoCloseOnHandoff(input: {
+  readonly explicit: boolean | undefined;
+  readonly operatorHand: boolean;
+  readonly missionId: string | undefined;
+  readonly role: string | undefined;
+  readonly operatorOpened: boolean | undefined;
+}): boolean {
+  if (input.explicit === true) return true;
+  if (input.explicit === false) return false;
+  if (input.operatorHand && input.missionId === undefined) return true;
+  return (
+    input.missionId !== undefined &&
+    input.role === "worker" &&
+    input.operatorOpened !== true
+  );
+}
+
 /** A short notification alone must not destroy the pane's only complete report. */
 export function assertAutoCloseReportPreserved(
   sessionId: string | undefined,

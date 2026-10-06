@@ -80,6 +80,7 @@ import {
 } from './zero-delivery-watchdog';
 import { flushAllNexusTaskFailClosedRetries } from './nexus-task-fail-closed-recovery';
 import { decideMomentumNudge, momentumNudgeSummary, momentumReadyBacklog } from './mission-momentum-watchdog';
+import { judgeMissionMomentum, momentumNudgeFromJudgment } from './jev-mission-momentum';
 import {
   getAgentLastTurnEnd,
   getAgentSemanticStatusBySession,
@@ -1371,9 +1372,38 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
       });
       if (momentum.action === 'nudge' && current()) {
         try {
+          // Jev (06/10): o watchdog mecânico detetou o candidato; o Jev
+          // refina (preso vs gate longo vs recuperando). Fail-open: sem
+          // resposta o texto mecânico vale. Só roda quando a regra dispara,
+          // nunca a cada tick.
+          const mechanicalText = momentumNudgeSummary(mission.id, momentum.soloForMs, momentum);
+          let nudgeText = mechanicalText;
+          try {
+            const judgment = await judgeMissionMomentum({
+              missionId: mission.id,
+              missionStatus: mission.status,
+              workerPanes: workerPaneCount,
+              readyTaskIds,
+              availableSlots: momentum.availableSlots ?? 0,
+              soloForMs: momentum.soloForMs,
+              readyForMs: momentum.readyTaskIds?.length ? (now - (momentumReadySince.get(key) ?? now)) : null,
+              heavyCommandsActive: 0,
+              recentHandoffs: 0,
+              orchestratorAlive,
+            });
+            if (judgment.kind === 'judged' && judgment.action === 'wait-gate') {
+              // Gate longo: não empurra abrir workers para o mesmo validador.
+              console.warn(`[delegation-supervisor] momentum ${mission.id}: wait-gate (Jev), nudge suprimido`);
+              momentumNudgedAt.set(key, { at: now, backlogKey: momentum.backlogKey });
+              continue;
+            }
+            nudgeText = momentumNudgeFromJudgment(judgment, mechanicalText);
+          } catch {
+            // Jev indisponível: decisão mecânica vale.
+          }
           const handoff = suite.handoffs.submit({
             missionId: mission.id, status: 'progress',
-            summary: momentumNudgeSummary(mission.id, momentum.soloForMs, momentum),
+            summary: nudgeText,
             fromAgent: DELEGATION_SUPERVISOR_AGENT,
           });
           // Failed submission cannot consume the only opportunity to resume work.

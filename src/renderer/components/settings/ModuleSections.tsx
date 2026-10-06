@@ -443,6 +443,7 @@ export function SquadsSection() {
     businessModel: true,
     missionPick: true,
     catalogPick: true,
+    missionMomentum: true,
   });
   const [designPro, setDesignPro] = useState(true);
   const [memoryInjection, setMemoryInjection] = useState(true);
@@ -474,6 +475,7 @@ export function SquadsSection() {
         businessModel: o.jevSurfaces?.businessModel !== false,
         missionPick: o.jevSurfaces?.missionPick !== false,
         catalogPick: o.jevSurfaces?.catalogPick !== false,
+        missionMomentum: o.jevSurfaces?.missionMomentum !== false,
       });
       setDesignPro(o.designPro);
       setMemoryInjection(o.workspaceMemoryInjection !== false);
