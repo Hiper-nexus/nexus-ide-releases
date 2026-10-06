@@ -10157,7 +10157,7 @@ export const RELEASE_076202: AppRelease = {
 
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.207',
+  version: '0.76.208',
   date: '2026-10-06',
   codename: 'Missões com entrega verificada',
   summary: 'Mais controle de memória, envio confiável aos agentes e revisão independente antes de concluir missões de código.',
@@ -10168,6 +10168,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Quadro em destaque', detail: 'Tela inteira, orientação horizontal ou vertical, zoom e ajuste da visão. Os cartões acompanham os terminais e a atividade atual da missão.' },
   ],
   fixes: [
+    { title: 'Encerrar mantém a missão parada', detail: 'Recuperações automáticas e spawns pendentes respeitam o encerramento. Só a retomada explícita reabre a missão e vincula o novo terminal do Maestro.' },
     { title: 'Verificações que conseguem iniciar', detail: 'Máquinas com muitas ferramentas instaladas deixam de exceder o limite interno do supervisor. As permissões de isolamento permanecem preservadas.' },
     { title: 'Padrão coerente no Maestro', detail: 'Modelo e esforço aprovados acompanham a criação e a retomada do coordenador. A orientação da missão não é recusada por uma diferença entre esses valores.' },
     { title: 'Histórico fiel e encerramento claro', detail: 'O grafo conserva a ferramenta e o modelo reais dos workers encerrados; Encerrar não mostra o aviso incorreto de execução em segundo plano.' },
