@@ -1,4 +1,5 @@
 import { periodicCallback } from './observability/periodic-task';
+import { trace } from './observability/main-trace';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
@@ -245,6 +246,8 @@ export function registerExternalLinkIpc(): void {
 
 let cspRegistered = false;
 const deferredRendererStarts = new WeakMap<BrowserWindow, () => void>();
+/** Guarda do trace `boot-complete`: só o primeiro mount da sessão é boot. */
+let bootCompleteTraceEmitted = false;
 
 export interface CreateMainWindowOptions {
   /**
@@ -555,6 +558,16 @@ export function createMainWindow(
     rendererRecoveryCircuitBreaker.reset();
     recoveryScreenShown = false;
     stopMountMonitoring();
+    if (!bootCompleteTraceEmitted) {
+      bootCompleteTraceEmitted = true;
+      // Fim-a-fim do boot (main-boot → boot-complete): início do processo
+      // (timeOrigin) até o primeiro mount do renderer. Recovery/recarga de
+      // renderer não emite de novo — não é boot.
+      trace({
+        kind: 'boot-complete',
+        bootMs: Math.round(Date.now() - performance.timeOrigin),
+      });
+    }
     showNativeWindow();
   };
 
