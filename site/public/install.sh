@@ -184,19 +184,25 @@ case "$METHOD" in
     case "$DEST" in /*) ;; *) die "o caminho de instalação precisa ser absoluto" ;; esac
 
     say "Descompactando em $DEST…"
-    mkdir -p "$TMP/x"
+    mkdir -p "$(dirname "$DEST")" "$BIN_DIR"
+    # Extrai NO MESMO disco do destino: o app descompactado tem ~600 MB e o /tmp costuma ser um tmpfs pequeno
+    # (na instalação de teste ele encheu e o unzip parou com "disk full"); o mv final vira um rename, sem copiar.
+    STAGE="$(dirname "$DEST")/.nexus-ide-install.$$"
+    rm -rf "$STAGE"
+    mkdir -p "$STAGE"
     if have unzip; then
-      unzip -q "$TMP/$FILE" -d "$TMP/x"
+      unzip -q "$TMP/$FILE" -d "$STAGE" || { rm -rf "$STAGE"; die "não consegui descompactar (falta espaço em $(dirname "$DEST")?); nada foi instalado"; }
     elif have bsdtar; then
-      bsdtar -xf "$TMP/$FILE" -C "$TMP/x"
+      bsdtar -xf "$TMP/$FILE" -C "$STAGE" || { rm -rf "$STAGE"; die "não consegui descompactar (falta espaço em $(dirname "$DEST")?); nada foi instalado"; }
     else
+      rm -rf "$STAGE"
       die "preciso do unzip para o pacote portátil (sudo pacman -S unzip ou sudo apt install unzip)"
     fi
-    [ -x "$TMP/x/$PORTABLE_DIR_NAME/nexus-ide" ] || die "o pacote portátil veio sem o executável nexus-ide"
+    [ -x "$STAGE/$PORTABLE_DIR_NAME/nexus-ide" ] || { rm -rf "$STAGE"; die "o pacote portátil veio sem o executável nexus-ide"; }
 
-    mkdir -p "$(dirname "$DEST")" "$BIN_DIR"
     rm -rf "$DEST.new"
-    mv "$TMP/x/$PORTABLE_DIR_NAME" "$DEST.new"
+    mv "$STAGE/$PORTABLE_DIR_NAME" "$DEST.new"
+    rm -rf "$STAGE"
     if [ -d "$DEST" ]; then
       rm -rf "$DEST.old"
       mv "$DEST" "$DEST.old"

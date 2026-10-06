@@ -29,7 +29,7 @@ test('só baixa do espelho público de releases que o site usa, e nomeia os paco
 test('confere o SHA-256 ANTES de instalar qualquer coisa', () => {
   const verified = script.indexOf('SHA-256 conferido');
   assert.ok(verified > 0);
-  for (const install of ['as_root apt-get install', 'as_root dnf install', 'as_root yum install', 'as_root zypper --non-interactive install', 'mv "$TMP/x/', 'ln -sf']) {
+  for (const install of ['as_root apt-get install', 'as_root dnf install', 'as_root yum install', 'as_root zypper --non-interactive install', 'mv "$STAGE/', 'ln -sf']) {
     const at = script.indexOf(install);
     assert.ok(at > verified, `${install} aparece antes da conferência do hash`);
   }
@@ -44,7 +44,7 @@ test('não executa texto baixado nem mexe no sistema além do pacote', () => {
   }
   // O único rm -rf é do diretório temporário e dos próprios arquivos de instalação.
   const removals = [...script.matchAll(/rm -rf ("[^"]+"|\S+)/g)].map(match => match[1]);
-  for (const target of removals) assert.match(target, /\$TMP|\$DEST\.(new|old)|"\$TMP"/, `rm -rf inesperado: ${target}`);
+  for (const target of removals) assert.match(target, /\$TMP|\$DEST\.(new|old)|"\$TMP"|\$STAGE/, `rm -rf inesperado: ${target}`);
 });
 
 test('o portátil avisa quando falta o bubblewrap, que só os pacotes puxam como dependência', () => {
@@ -52,4 +52,13 @@ test('o portátil avisa quando falta o bubblewrap, que só os pacotes puxam como
   assert.match(zipBranch, /have bwrap \|\| warn /);
   // É só um aviso: o instalador não chama gerenciador de pacotes no modo portátil.
   assert.doesNotMatch(zipBranch.slice(0, zipBranch.indexOf('esac\n\nsay ""')), /as_root /);
+});
+
+test('o portátil extrai no mesmo disco do destino e não no /tmp, e recusa instalar pela metade', () => {
+  const zipBranch = script.slice(script.indexOf('  zip)\n'));
+  assert.match(zipBranch, /STAGE="\$\(dirname "\$DEST"\)\/\.nexus-ide-install\.\$\$"/);
+  assert.doesNotMatch(zipBranch, /unzip -q "\$TMP\/\$FILE" -d "\$TMP\/x"/);
+  assert.match(zipBranch, /nada foi instalado/);
+  // A pasta velha só sai DEPOIS de a nova estar inteira e conferida.
+  assert.ok(zipBranch.indexOf('o pacote portátil veio sem o executável') < zipBranch.indexOf('mv "$DEST" "$DEST.old"'));
 });
