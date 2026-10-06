@@ -1,8 +1,12 @@
 # Changelog
 
-## 0.76.206 — Missões com entrega verificada
+## 0.76.207 — Missões com entrega verificada
 
-A candidata 0.76.205 foi substituída antes da publicação para atualizar dependências de produção e da toolchain sinalizadas no portão de segurança.
+- Verificações da missão passam pelo supervisor mesmo em máquinas com muitas ferramentas no PATH: permissões redundantes deixam de estourar o limite de transporte, mantendo o isolamento.
+- Modelo e esforço escolhidos como Padrão usam no novo Maestro os valores aprovados na revisão, inclusive ao retomar; enviar orientação não falha mais por essa divergência.
+- O histórico do grafo mantém a ferramenta e o modelo reais de quem entregou, sem confundir o nome do papel com o provedor. Encerrar pelo Quadro deixa de mostrar o aviso incorreto de que a missão continua rodando.
+
+As candidatas 0.76.205 e 0.76.206 foram retidas antes da publicação pelos gates de segurança e pela missão real de aceitação. Esta versão inclui as correções encontradas.
 
 - Atualiza o parser TOML para evitar leitura quadrática e a dependência de validação de proxies para corrigir a interpretação de sub-redes IPv4 mapeadas em IPv6.
 - Teste de 15 dias com seis agentes simultâneos e Pro sem limite de licença para agentes. A execução continua respeitando a memória disponível e as cotas dos provedores.
