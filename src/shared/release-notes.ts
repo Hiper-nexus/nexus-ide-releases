@@ -10126,7 +10126,7 @@ export const RELEASE_076200: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076201: AppRelease = {
   version: '0.76.201',
   date: '2026-10-05',
   codename: 'A atualização do Linux funciona',
@@ -10135,4 +10135,22 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Linux se atualiza sozinho, de verdade', detail: 'O teste real achou uma falha ao gravar o app.asar da versão nova. Corrigida e coberta por teste no runtime do Electron. Quem está na 0.76.199 ou 0.76.200 pelo ZIP roda o install.sh uma vez.' },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.202',
+  date: '2026-10-05',
+  codename: 'Experimente uma equipe inteira',
+  summary: 'Teste de 15 dias com seis agentes simultâneos, Pro ilimitado e uma experiência mais clara de terminais e atualização das CLIs.',
+  highlights: [
+    { title: 'Seis agentes no teste', detail: 'Até seis agentes simultâneos, incluindo o orquestrador, durante os 15 dias. O Pro permite agentes simultâneos ilimitados; consumo e cotas das IAs seguem seus provedores.' },
+    { title: 'Uso real no painel administrativo', detail: 'Presença do aplicativo, execução de agentes, primeira missão concluída, retorno em outro dia e assinatura paga aparecem separados. Sem envio de código, prompts ou conteúdo dos projetos.' },
+    { title: 'CLIs atualizadas nos três sistemas', detail: 'Manutenção diária de instalações reconhecidas e graváveis no macOS, Windows e Linux, com Qwen incluído. Ligada por padrão quando ainda não há preferência; respeita sua escolha anterior e espera a CLI ficar sem panes ativos. Canais desconhecidos ou com privilégios continuam manuais.' },
+  ],
+  fixes: [
+    { title: 'Quadro distingue terminal vivo', detail: 'Um worker sem processo mostra Sem terminal ativo; o cartão não tenta abrir um pane antigo encerrado.' },
+    { title: 'Sonda de versão pode se recuperar', detail: 'Falhas transitórias de leitura de versão deixam de ficar cacheadas indefinidamente.' },
+    { title: 'Proteção na troca de login', detail: 'Requisições do login anterior não são reenviadas com a sessão de outra conta.' },
+    { title: 'Atualização do Linux preservada', detail: 'Inclui a correção da 0.76.201 para extrair o pacote com original-fs, mantendo a atualização real do ZIP.' },
+  ],
 };

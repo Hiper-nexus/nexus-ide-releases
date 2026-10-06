@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.202 — Experimente uma equipe inteira
+
+- Teste de 15 dias com até 6 agentes simultâneos; plano Pro com agentes simultâneos ilimitados.
+- Medição mínima de adoção e pagamento no painel: presença do app, agentes, primeira missão concluída e retorno, sem código ou prompts.
+- Manutenção automática das CLIs reconhecidas no macOS, Windows e Linux; Qwen incluído, preferência anterior preservada e proteção para executáveis compartilhados pelos providers.
+- Workers sem processo deixam de abrir panes antigos pelo quadro; sonda de versão desconhecida pode tentar de novo.
+- Reenvio HTTP respeita a geração do login; eventos de conclusão saem somente de transição canônica confirmada.
+- Preserva a correção da 0.76.201 para atualização do ZIP Linux.
+
 ## 0.76.201 — A atualização do Linux funciona
 
 Build do Linux (DEB, RPM e ZIP). Inclui tudo da 0.76.200.
