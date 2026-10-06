@@ -319,12 +319,33 @@ function waitForOwnedInventory(
 }
 
 function processExists(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error(`invalid fixture PID: ${pid}`);
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
     return error?.code === "EPERM";
   }
+}
+
+// Marker existence is a readiness signal: never publish the name before the
+// complete PID is closed. A delayed writer exercises the old open/write race.
+const PYTHON_PUBLISH_PID = [
+  'def publish_pid(file, delay=0):',
+  '  pending=file+".pending"',
+  '  with open(pending,"w") as f:',
+  '    time.sleep(delay)',
+  '    f.write(str(os.getpid())+"\\n")',
+  '  os.replace(pending,file)',
+];
+
+function readPidMarker(file) {
+  const text = readFileSync(file, 'utf8');
+  const pid = Number(text);
+  if (!/^[1-9]\d*\r?\n$/.test(text) || !Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error(`incomplete fixture PID marker: ${path.basename(file)}`);
+  }
+  return pid;
 }
 
 function waitForTerminalExit(terminal, timeoutMs = 25_000) {
@@ -386,6 +407,7 @@ async function launchLongLivedCohort(
   const descendantPidFile = path.join(fixtureRoot, `${slug}-descendant.pid`);
   const python = [
     "import os,signal,time",
+    ...PYTHON_PUBLISH_PID,
     `child_pid_file=${JSON.stringify(childPidFile)}`,
     `descendant_pid_file=${JSON.stringify(descendantPidFile)}`,
     'def keep_running_after_interrupt(_signal, _frame): os.write(1,b"CHILD_KEPT_RUNNING\\n")',
@@ -395,10 +417,10 @@ async function launchLongLivedCohort(
       : []),
     "descendant=os.fork()",
     "if descendant == 0:",
-    '  with open(descendant_pid_file,"w") as f: f.write(str(os.getpid()))',
+    '  publish_pid(descendant_pid_file)',
     "  time.sleep(30)",
     "  os._exit(0)",
-    'with open(child_pid_file,"w") as f: f.write(str(os.getpid()))',
+    'publish_pid(child_pid_file)',
     "time.sleep(30)",
   ].join("\n");
   const terminal = spawnDarwinPty(
@@ -419,8 +441,8 @@ async function launchLongLivedCohort(
       () =>
         existsSync(childPidFile) &&
         existsSync(descendantPidFile) &&
-        Number.parseInt(readFileSync(childPidFile, "utf8"), 10) &&
-        Number.parseInt(readFileSync(descendantPidFile, "utf8"), 10),
+        readPidMarker(childPidFile) &&
+        readPidMarker(descendantPidFile),
     );
   } catch (error) {
     throw new Error(
@@ -431,8 +453,8 @@ async function launchLongLivedCohort(
   return {
     terminal,
     output,
-    childPid: Number.parseInt(readFileSync(childPidFile, "utf8"), 10),
-    descendantPid: Number.parseInt(readFileSync(descendantPidFile, "utf8"), 10),
+    childPid: readPidMarker(childPidFile),
+    descendantPid: readPidMarker(descendantPidFile),
   };
 }
 
@@ -778,8 +800,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
       );
       const tracedPid = await waitFor(() => {
         if (!existsSync(ready)) return false;
-        const parsed = Number.parseInt(readFileSync(ready, "utf8"), 10);
-        return Number.isInteger(parsed) && parsed > 0 ? parsed : false;
+        return readPidMarker(ready);
       });
 
       for (let index = 0; index < 5_000; index += 1) {
@@ -819,8 +840,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
       try {
         tracedPid = await waitFor(() => {
           if (!existsSync(ready)) return false;
-          const parsed = Number.parseInt(readFileSync(ready, "utf8"), 10);
-          return Number.isInteger(parsed) && parsed > 0 ? parsed : false;
+          return readPidMarker(ready);
         });
 
         launch.child.kill("SIGKILL");
@@ -1031,6 +1051,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
     const releaseFile = path.join(fixtureRoot, "root.release");
     const python = [
       "import os,signal,sys,time",
+      ...PYTHON_PUBLISH_PID,
       `pid_file=${JSON.stringify(daemonPidFile)}`,
       `ready_file=${JSON.stringify(readyFile)}`,
       `release_file=${JSON.stringify(releaseFile)}`,
@@ -1040,7 +1061,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
       "  daemon=os.fork()",
       "  if daemon > 0: os._exit(0)",
       "  signal.signal(signal.SIGTERM, signal.SIG_IGN)",
-      '  with open(pid_file,"w") as f: f.write(str(os.getpid()))',
+      '  publish_pid(pid_file)',
       "  time.sleep(30)",
       "  os._exit(0)",
       "os.waitpid(first,0)",
@@ -1061,9 +1082,9 @@ suite("Darwin PTY native responsibility supervisor", () => {
       () =>
         existsSync(daemonPidFile) &&
         existsSync(readyFile) &&
-        Number.parseInt(readFileSync(daemonPidFile, "utf8"), 10),
+        readPidMarker(daemonPidFile),
     );
-    const daemonPid = Number.parseInt(readFileSync(daemonPidFile, "utf8"), 10);
+    const daemonPid = readPidMarker(daemonPidFile);
     await waitFor(() => {
       const result = spawnSync(
         "/bin/ps",
@@ -1135,10 +1156,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
         grant = () => { if (res.writableEnded) return; res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ allow: Boolean(id), leaseId: 'finite-native-lease' })); }; }); }); });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); const port = server.address().port;
     const python = ['import os,sys,time,signal', `daemon=${JSON.stringify(daemonFile)}`, `primary=${JSON.stringify(primaryFile)}`, `release=${JSON.stringify(releaseFile)}`,
-      // Existence is the ready signal: publish only a closed, complete PID.
-      // The delayed write preserves the interleaving that previously exposed
-      // an empty file: Number('') == 0, and kill(0, 0) observes our own group.
-      'def publish_pid(file, delay=0):', '  pending=file+".pending"', '  with open(pending,"w") as f:', '    time.sleep(delay)', '    f.write(str(os.getpid()))', '  os.replace(pending,file)',
+      ...PYTHON_PUBLISH_PID,
       'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()', '  if second > 0: os._exit(0)', '  signal.signal(signal.SIGTERM, signal.SIG_IGN)', `  publish_pid(daemon, ${completion === 'killed-helper' ? '0.15' : '0'})`, '  while not os.path.exists(release): time.sleep(0.01)', '  os._exit(0)',
       'os.waitpid(first,0)', 'publish_pid(primary)', `try: open(${JSON.stringify(forbidden)},"w").write("widened")`, 'except PermissionError: pass', ...(['killed-helper', 'killed-owner'].includes(completion) ? ['while not os.path.exists(release): time.sleep(0.02)'] : []), 'sys.exit(23)'].join('\n');
     const base = nestedHeavyJobBaseCommand(runtime);
@@ -1152,8 +1170,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
     try {
       await waitFor(() => grant !== null || finished, 8_000); expect(finished, stderr).toBe(false);
       expect(claim).toBeTypeOf('string'); expect(observedProof).toBe('darwin-job'); expect(existsSync(primaryFile)).toBe(false); expect(await proof.probe('s', claim)).toBe('live');
-      grant(); phases.push('granted'); await waitFor(() => existsSync(primaryFile) && existsSync(daemonFile) || finished, 8000); expect(finished, stderr).toBe(false); phases.push('daemon-created'); daemonPid = Number(readFileSync(daemonFile, 'utf8'));
-      const primaryPid = Number(readFileSync(primaryFile, 'utf8'));
+      grant(); phases.push('granted'); await waitFor(() => existsSync(primaryFile) && existsSync(daemonFile) || finished, 8000); expect(finished, stderr).toBe(false); phases.push('daemon-created'); daemonPid = readPidMarker(daemonFile);
+      const primaryPid = readPidMarker(primaryFile);
       expect(Number.isSafeInteger(daemonPid) && daemonPid > 0).toBe(true); expect(Number.isSafeInteger(primaryPid) && primaryPid > 0).toBe(true);
       if (!['killed-helper', 'killed-owner'].includes(completion)) await waitFor(() => !processExists(primaryPid));
       expect(processExists(daemonPid)).toBe(true); expect(await proof.probe('s', claim)).toBe('live'); expect(finished).toBe(false); expect(existsSync(forbidden)).toBe(false);
@@ -1270,29 +1288,42 @@ suite("Darwin PTY native responsibility supervisor", () => {
     const primaryRelease = path.join(fixtureRoot, `${tag}.release-primary`), daemonRelease = path.join(fixtureRoot, `${tag}.release-daemon`);
     const python = [
       'import os,signal,sys,time',
+      ...PYTHON_PUBLISH_PID,
       `daemon_file=${JSON.stringify(daemonFile)}`, `primary_file=${JSON.stringify(primaryFile)}`,
       `primary_release=${JSON.stringify(primaryRelease)}`, `daemon_release=${JSON.stringify(daemonRelease)}`,
       'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()',
       '  if second > 0: os._exit(0)', '  signal.signal(signal.SIGTERM, signal.SIG_IGN)',
-      '  with open(daemon_file,"w") as f: f.write(str(os.getpid()))',
+      `  publish_pid(daemon_file, ${mode === 'natural' ? '0.15' : '0'})`,
       '  while not os.path.exists(daemon_release): time.sleep(0.02)', '  os._exit(0)',
-      'os.waitpid(first,0)', 'with open(primary_file,"w") as f: f.write(str(os.getpid()))',
+      'os.waitpid(first,0)', 'publish_pid(primary_file)',
       'while not os.path.exists(primary_release): time.sleep(0.02)', 'sys.exit(23)',
     ].join('\n');
     const job = spawn(helper, ['supervise-job', '--', '/usr/bin/python3', '-c', python], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let finished = false; let daemonPid = 0;
+    let finished = false; let daemonPid = 0, primaryPid = 0, phase = 'waiting-pid-markers', stderr = '';
+    job.stderr.on('data', part => { stderr = (stderr + part.toString()).slice(-4096); });
     const exit = new Promise((resolve) => job.once('exit', (code, signal) => { finished = true; resolve({ code, signal }); }));
+    const diagnosticTimer = setTimeout(() => {
+      try {
+        const daemonText = existsSync(daemonFile) ? readFileSync(daemonFile, 'utf8') : null;
+        const primaryText = existsSync(primaryFile) ? readFileSync(primaryFile, 'utf8') : null;
+        console.error('supervise-job-fixture-pending', { mode, phase, daemonPid, primaryPid, daemonText, primaryText, finished, exitCode: job.exitCode, signalCode: job.signalCode, stderr,
+          processes: inventory().processes.filter(row => [job.pid, daemonPid, primaryPid, Number(daemonText), Number(primaryText)].includes(row.pid)) });
+      } catch (error) { console.error('supervise-job-fixture-diagnostic-unavailable', { mode, phase, error: String(error) }); }
+    }, 20_000);
     try {
       await waitFor(() => { if (finished) throw new Error('supervise-job exited before starting the fixture'); return existsSync(primaryFile) && existsSync(daemonFile); });
-      daemonPid = Number(readFileSync(daemonFile, 'utf8')); const primaryPid = Number(readFileSync(primaryFile, 'utf8'));
+      daemonPid = readPidMarker(daemonFile); primaryPid = readPidMarker(primaryFile); phase = 'waiting-daemon-ppid-1';
       await waitFor(() => Number(spawnSync('/bin/ps', ['-o', 'ppid=', '-p', String(daemonPid)], { encoding: 'utf8' }).stdout.trim()) === 1);
-      writeFileSync(primaryRelease, 'go'); await waitFor(() => !processExists(primaryPid));
+      writeFileSync(primaryRelease, 'go'); phase = 'waiting-primary-exit'; await waitFor(() => !processExists(primaryPid));
       await new Promise((resolve) => setTimeout(resolve, 400));
       expect(finished).toBe(false); expect(processExists(daemonPid)).toBe(true);
       if (mode === 'natural') writeFileSync(daemonRelease, 'go'); else job.kill('SIGTERM');
+      phase = 'waiting-job-exit';
       const result = await exit; expect(result).toEqual({ code: mode === 'natural' ? 23 : 0, signal: null });
+      phase = 'waiting-daemon-absence';
       await waitFor(() => !processExists(daemonPid)); expect(processExists(daemonPid)).toBe(false);
     } finally {
+      clearTimeout(diagnosticTimer);
       if (!finished) job.kill('SIGTERM');
       if (daemonPid && processExists(daemonPid)) { try { process.kill(daemonPid, 'SIGKILL'); } catch {} }
       await exit;
@@ -1304,19 +1335,19 @@ suite("Darwin PTY native responsibility supervisor", () => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
     const tag = `job-owner-${Math.random().toString(16).slice(2)}`;
     const daemonFile = path.join(fixtureRoot, `${tag}.daemon`), primaryFile = path.join(fixtureRoot, `${tag}.primary`), ownerReady = path.join(fixtureRoot, `${tag}.owner`), releaseFile = path.join(fixtureRoot, `${tag}.release`);
-    const python = ['import os,signal,sys,time', `daemon_file=${JSON.stringify(daemonFile)}`, `primary_file=${JSON.stringify(primaryFile)}`, `release_file=${JSON.stringify(releaseFile)}`,
+    const python = ['import os,signal,sys,time', ...PYTHON_PUBLISH_PID, `daemon_file=${JSON.stringify(daemonFile)}`, `primary_file=${JSON.stringify(primaryFile)}`, `release_file=${JSON.stringify(releaseFile)}`,
       'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()', '  if second > 0: os._exit(0)',
-      '  signal.signal(signal.SIGTERM, signal.SIG_IGN)', '  with open(daemon_file,"w") as f: f.write(str(os.getpid()))', '  time.sleep(30)', '  os._exit(0)',
-      'os.waitpid(first,0)', 'with open(primary_file,"w") as f: f.write(str(os.getpid()))', 'while not os.path.exists(release_file): time.sleep(0.02)', 'sys.exit(23)',
+      '  signal.signal(signal.SIGTERM, signal.SIG_IGN)', '  publish_pid(daemon_file)', '  time.sleep(30)', '  os._exit(0)',
+      'os.waitpid(first,0)', 'publish_pid(primary_file)', 'while not os.path.exists(release_file): time.sleep(0.02)', 'sys.exit(23)',
     ].join('\n');
     const command = supervisedJobCommand({ platform: 'darwin', packaged: false, cwd: fixtureRoot, moduleDir: fixtureRoot }, '/usr/bin/python3', ['-c', python]);
-    const ownerScript = `const fs=require('node:fs');const task=require('node:child_process').spawn(${JSON.stringify(command.file)},${JSON.stringify(command.args)},{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(ownerReady)},String(task.pid));setInterval(()=>{},1000);`;
+    const ownerScript = `const fs=require('node:fs');const task=require('node:child_process').spawn(${JSON.stringify(command.file)},${JSON.stringify(command.args)},{stdio:'ignore'});const marker=${JSON.stringify(ownerReady)};fs.writeFileSync(marker+'.pending',String(task.pid)+'\\n');fs.renameSync(marker+'.pending',marker);setInterval(()=>{},1000);`;
     const owner = spawn(process.execPath, ['-e', ownerScript], { stdio: 'ignore' });
     let daemonPid = 0, stagePid = 0;
     const ownerExit = new Promise((resolve) => owner.once('exit', resolve));
     try {
       await waitFor(() => existsSync(ownerReady) && existsSync(primaryFile) && existsSync(daemonFile));
-      stagePid = Number(readFileSync(ownerReady, 'utf8')); daemonPid = Number(readFileSync(daemonFile, 'utf8')); const primaryPid = Number(readFileSync(primaryFile, 'utf8'));
+      stagePid = readPidMarker(ownerReady); daemonPid = readPidMarker(daemonFile); const primaryPid = readPidMarker(primaryFile);
       writeFileSync(releaseFile, 'go'); await waitFor(() => !processExists(primaryPid));
       expect(processExists(stagePid)).toBe(true); expect(processExists(daemonPid)).toBe(true);
       owner.kill('SIGKILL'); await ownerExit;
