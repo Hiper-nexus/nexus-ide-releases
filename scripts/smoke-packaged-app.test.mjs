@@ -592,6 +592,21 @@ describe('proofs: renderer, functional, marker, natives', () => {
     ).toThrow(/native module load failure/);
   });
 
+  it('requires a physical Main-owned command proof for a signed release, while keeping ordinary ad-hoc smoke separate', () => {
+    const ready = '[smoke] renderer-mounted\n[smoke] functional-ready\n';
+    const unavailable = '[smoke] main-owned-command {"status":"unavailable","reason":"ad-hoc"}\n';
+    for (const output of [ready, ready + unavailable,
+      ready + '[smoke] main-owned-command {"status":"failed"}\n']) {
+      expect(() => assertPackagedSmokeProof(0, output, { requireMainOwnedCommand: true })).toThrow(/Main-owned command proof/);
+    }
+    expect(() => assertPackagedSmokeProof(0, ready + unavailable)).not.toThrow();
+    const proof = { status: 'passed', densePathFiles: 768, profileBytes: 4096, exitCode: 0, physicalExitProven: true };
+    expect(() => assertPackagedSmokeProof(0, ready + `[smoke] main-owned-command ${JSON.stringify(proof)}\n`, { requireMainOwnedCommand: true })).not.toThrow();
+    for (const patch of [{ physicalExitProven: false }, { exitCode: 1 }, { profileBytes: 65537 }, { densePathFiles: 1 }]) {
+      expect(() => assertPackagedSmokeProof(0, ready + `[smoke] main-owned-command ${JSON.stringify({ ...proof, ...patch })}\n`, { requireMainOwnedCommand: true })).toThrow(/Main-owned command proof/);
+    }
+  });
+
   it('validates functional marker content', async () => {
     const userData = makeTemp();
     const marker = packagedSmokeMarkerPath(userData);

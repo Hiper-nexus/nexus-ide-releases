@@ -23,6 +23,9 @@ import { isSoakSmokeRequested, proveSoakForSmoke } from './soak-smoke';
 import { SOAK_POLICY } from '../shared/soak-smoke';
 import { runtimeGateConfiguration } from './runtime-gate-mode';
 import { RUNTIME_TIMEOUT_MS } from '../shared/runtime-gates';
+import { proveMainOwnedCommandForSmoke } from './smoke-owned-command';
+import { requireLiveRendererWorkspaceScope } from './persistence/renderer-workspace-scope';
+import { sameProjectScope } from './orch/project-scoped-broadcast';
 
 
 
@@ -61,7 +64,7 @@ export function initSmokeTest(): void {
     (line, isError) => (isError ? console.error(line) : console.log(line)),
   );
   const settle: SmokeSettler = (event, detail) => {
-    if (soakFlight && event !== 'functional-ready') {
+    if (event !== 'functional-ready') {
       soakCancellation.abort();
       // FAIL enters the existing sealed physical shutdown immediately, even
       // if the soak is still awaiting setup IO or a wedged renderer callback.
@@ -114,7 +117,7 @@ export function initSmokeTest(): void {
         onFunctionalResult,
       );
     };
-    const onFunctionalResult = (event: Electron.IpcMainEvent, raw: unknown) => {
+    const onFunctionalResult = async (event: Electron.IpcMainEvent, raw: unknown) => {
       if (event.sender !== wc || event.senderFrame !== wc.mainFrame) return;
       const result = parseFunctionalSmokeResult(raw);
       if (!result) {
@@ -133,6 +136,23 @@ export function initSmokeTest(): void {
         return;
       }
       removeListeners();
+      try {
+        const frame = wc.mainFrame;
+        const scope = requireLiveRendererWorkspaceScope(wc);
+        const assertCurrent = () => {
+          if (soakCancellation.signal.aborted || wc.isDestroyed() || wc.mainFrame !== frame ||
+            scope.rootRealPath !== smokeWorkspacePath ||
+            !sameProjectScope(requireLiveRendererWorkspaceScope(wc), scope)) throw new Error('owned-smoke-authority');
+        };
+        assertCurrent();
+        const proof = await proveMainOwnedCommandForSmoke({ userData: app.getPath('userData'),
+          scope, assertCurrent, signal: soakCancellation.signal });
+        assertCurrent();
+        console.log(`[smoke] main-owned-command ${JSON.stringify(proof)}`);
+      } catch {
+        settle('functional-failed', 'main-owned-command');
+        return;
+      }
       if (runtime) {
         if (soak || busyBannerProbe) { settle('functional-failed', 'runtime verifier cannot combine acceptance modes'); return; }
         console.log('[smoke] runtime-start: initial functional probes passed');

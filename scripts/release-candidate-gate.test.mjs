@@ -277,7 +277,10 @@ describe('manual release candidate gate', () => {
     fs.writeFileSync(dmg, 'dmg');
     fs.writeFileSync(zip, 'zip');
     const runChecked = vi.fn(() => ({ stdout: '', stderr: '' }));
-    const runPackagedSmoke = vi.fn(async () => {});
+    const runPackagedSmoke = vi.fn(async () => ({ code: 0, output:
+      '[smoke] renderer-mounted\n[smoke] functional-ready\n' +
+      '[smoke] main-owned-command {"status":"passed","densePathFiles":768,"profileBytes":4096,"exitCode":0,"physicalExitProven":true}\n',
+    }));
     const result = await runReleaseCandidateGateTestCore({
       root,
       environment: {
@@ -320,6 +323,7 @@ describe('manual release candidate gate', () => {
     );
     const smokeReport = JSON.parse(fs.readFileSync(smokeReportPath, 'utf8'));
     expect(smokeReport).toMatchObject({
+      mainOwnedCommandProof: { status: 'passed', densePathFiles: 768, profileBytes: 4096, exitCode: 0, physicalExitProven: true },
       schemaVersion: 1,
       status: 'pass',
       smoke: 'packaged-app',
@@ -394,7 +398,7 @@ describe('manual release candidate gate', () => {
     );
   });
 
-  it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('fails closed when the packaged smoke fails against the sealed ZIP app', async () => {
+  it.runIf(process.platform === 'darwin' && process.arch === 'arm64').each(['failed', 'missing-proof', 'ad-hoc-proof'])('fails closed when packaged smoke has %s against the sealed ZIP app', async fault => {
     const root = tempRoot();
     const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
     const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
@@ -407,7 +411,9 @@ describe('manual release candidate gate', () => {
     fs.writeFileSync(dmg, 'dmg');
     fs.writeFileSync(zip, 'zip');
     const runPackagedSmoke = vi.fn(async () => {
-      throw new Error('functional smoke probes failed');
+      if (fault === 'failed') throw new Error('functional smoke probes failed');
+      return { code: 0, output: '[smoke] renderer-mounted\n[smoke] functional-ready\n' +
+        (fault === 'ad-hoc-proof' ? '[smoke] main-owned-command {"status":"unavailable","reason":"ad-hoc"}\n' : '') };
     });
 
     await expect(
@@ -432,7 +438,7 @@ describe('manual release candidate gate', () => {
         extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
           callback(app),
       }),
-    ).rejects.toThrow(/functional smoke probes failed/i);
+    ).rejects.toThrow(fault === 'failed' ? /functional smoke probes failed/i : /Main-owned command proof/);
     expect(runPackagedSmoke).toHaveBeenCalledOnce();
     expect(
       fs.existsSync(
