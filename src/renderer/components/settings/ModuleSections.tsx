@@ -894,6 +894,10 @@ export function SquadsSection() {
                 'catalogPick',
                 'Marketplace (agentes e instruções recomendados para a stack do projeto)',
               ],
+              [
+                'missionMomentum',
+                'Momentum da missão (preso vs gate longo — refina o nudge do supervisor)',
+              ],
             ] as const
           ).map(([surface, label]) => (
             <OrchestrationToggle
