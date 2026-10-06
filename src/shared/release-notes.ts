@@ -10113,7 +10113,7 @@ export const RELEASE_076199: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076200: AppRelease = {
   version: '0.76.200',
   date: '2026-10-05',
   codename: 'Linux atualiza pelo sistema',
@@ -10124,4 +10124,15 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Troca automática do ZIP mais limpa', detail: 'Resíduo de uma troca que não aconteceu é removido no boot, e o script espera mais tempo o app fechar.' },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.201',
+  date: '2026-10-05',
+  codename: 'A atualização do Linux funciona',
+  summary: 'A atualização automática do ZIP portátil do Linux agora termina: o app grava o pacote novo e troca a própria pasta.',
+  highlights: [
+    { title: 'Linux se atualiza sozinho, de verdade', detail: 'O teste real achou uma falha ao gravar o app.asar da versão nova. Corrigida e coberta por teste no runtime do Electron. Quem está na 0.76.199 ou 0.76.200 pelo ZIP roda o install.sh uma vez.' },
+  ],
+  fixes: [],
 };

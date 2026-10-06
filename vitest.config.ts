@@ -1,6 +1,8 @@
 import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // `original-fs` só existe dentro do Electron; nos testes é o fs normal (src/main/util/real-fs.ts).
+  resolve: { alias: { 'original-fs': 'node:fs' } },
   test: {
     exclude: [
       ...configDefaults.exclude,

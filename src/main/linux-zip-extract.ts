@@ -8,12 +8,12 @@
  *
  * Só ZIP comum (sem ZIP64, sem criptografia): o build do app nunca gera outra coisa.
  */
-import fs from 'node:fs';
+import fs from './util/real-fs';
+import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
 import zlib from 'node:zlib';
-import { removeTree } from './util/remove-tree';
 
 export const ZIP_ROOT = 'NexusIDE-linux-x64';
 export const ZIP_LIMITS = Object.freeze({
@@ -52,7 +52,7 @@ const reject = (message: string): never => {
   throw new ZipRejected(message);
 };
 
-async function readAt(handle: fs.promises.FileHandle, position: number, length: number): Promise<Buffer> {
+async function readAt(handle: FileHandle, position: number, length: number): Promise<Buffer> {
   const buffer = Buffer.alloc(length);
   const { bytesRead } = await handle.read(buffer, 0, length, position);
   if (bytesRead !== length) reject('arquivo truncado');
@@ -177,7 +177,7 @@ function checker(entry: ZipEntry): Transform {
   });
 }
 
-async function dataStart(handle: fs.promises.FileHandle, entry: ZipEntry): Promise<number> {
+async function dataStart(handle: FileHandle, entry: ZipEntry): Promise<number> {
   const header = await readAt(handle, entry.localHeaderOffset, 30);
   if (header.readUInt32LE(0) !== 0x04034b50) reject('cabeçalho local corrompido');
   return entry.localHeaderOffset + 30 + header.readUInt16LE(26) + header.readUInt16LE(28);
@@ -272,7 +272,8 @@ export async function extractLinuxZip(archivePath: string, destination: string):
     }
     return binary;
   } catch (error) {
-    await removeTree(root, { force: true });
+    // Só links de dentro da raiz, que este extrator mesmo criou: o rm recursivo não segue symlink no Linux.
+    await fs.promises.rm(root, { recursive: true, force: true });
     throw error;
   }
 }
