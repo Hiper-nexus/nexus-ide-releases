@@ -1135,8 +1135,12 @@ suite("Darwin PTY native responsibility supervisor", () => {
         grant = () => { if (res.writableEnded) return; res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ allow: Boolean(id), leaseId: 'finite-native-lease' })); }; }); }); });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); const port = server.address().port;
     const python = ['import os,sys,time,signal', `daemon=${JSON.stringify(daemonFile)}`, `primary=${JSON.stringify(primaryFile)}`, `release=${JSON.stringify(releaseFile)}`,
-      'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()', '  if second > 0: os._exit(0)', '  signal.signal(signal.SIGTERM, signal.SIG_IGN)', '  with open(daemon,"w") as f: f.write(str(os.getpid()))', '  while not os.path.exists(release): time.sleep(0.01)', '  os._exit(0)',
-      'os.waitpid(first,0)', 'with open(primary,"w") as f: f.write(str(os.getpid()))', `try: open(${JSON.stringify(forbidden)},"w").write("widened")`, 'except PermissionError: pass', ...(['killed-helper', 'killed-owner'].includes(completion) ? ['while not os.path.exists(release): time.sleep(0.02)'] : []), 'sys.exit(23)'].join('\n');
+      // Existence is the ready signal: publish only a closed, complete PID.
+      // The delayed write preserves the interleaving that previously exposed
+      // an empty file: Number('') == 0, and kill(0, 0) observes our own group.
+      'def publish_pid(file, delay=0):', '  pending=file+".pending"', '  with open(pending,"w") as f:', '    time.sleep(delay)', '    f.write(str(os.getpid()))', '  os.replace(pending,file)',
+      'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()', '  if second > 0: os._exit(0)', '  signal.signal(signal.SIGTERM, signal.SIG_IGN)', `  publish_pid(daemon, ${completion === 'killed-helper' ? '0.15' : '0'})`, '  while not os.path.exists(release): time.sleep(0.01)', '  os._exit(0)',
+      'os.waitpid(first,0)', 'publish_pid(primary)', `try: open(${JSON.stringify(forbidden)},"w").write("widened")`, 'except PermissionError: pass', ...(['killed-helper', 'killed-owner'].includes(completion) ? ['while not os.path.exists(release): time.sleep(0.02)'] : []), 'sys.exit(23)'].join('\n');
     const base = nestedHeavyJobBaseCommand(runtime);
     const script = `const child=require('node:child_process').spawn(${JSON.stringify(base.file)},${JSON.stringify([...base.args, 'build', '--', '/usr/bin/python3', '-c', python])},{stdio:'inherit'});child.on('exit',(code)=>process.exit(code));`;
     const resources = path.join(process.cwd(), 'resources/heavy-command');
@@ -1149,9 +1153,13 @@ suite("Darwin PTY native responsibility supervisor", () => {
       await waitFor(() => grant !== null || finished, 8_000); expect(finished, stderr).toBe(false);
       expect(claim).toBeTypeOf('string'); expect(observedProof).toBe('darwin-job'); expect(existsSync(primaryFile)).toBe(false); expect(await proof.probe('s', claim)).toBe('live');
       grant(); phases.push('granted'); await waitFor(() => existsSync(primaryFile) && existsSync(daemonFile) || finished, 8000); expect(finished, stderr).toBe(false); phases.push('daemon-created'); daemonPid = Number(readFileSync(daemonFile, 'utf8'));
-      const primaryPid = Number(readFileSync(primaryFile, 'utf8')); if (!['killed-helper', 'killed-owner'].includes(completion)) await waitFor(() => !processExists(primaryPid));
+      const primaryPid = Number(readFileSync(primaryFile, 'utf8'));
+      expect(Number.isSafeInteger(daemonPid) && daemonPid > 0).toBe(true); expect(Number.isSafeInteger(primaryPid) && primaryPid > 0).toBe(true);
+      if (!['killed-helper', 'killed-owner'].includes(completion)) await waitFor(() => !processExists(primaryPid));
       expect(processExists(daemonPid)).toBe(true); expect(await proof.probe('s', claim)).toBe('live'); expect(finished).toBe(false); expect(existsSync(forbidden)).toBe(false);
-      expect(await proof.borrow('s', claim, daemonPid)).toBe(true); expect(await proof.borrow('s', claim, process.pid)).toBe(false);
+      const borrowed = await proof.borrow('s', claim, daemonPid);
+      const diagnostic = borrowed ? '' : JSON.stringify({ daemonPid, daemonText: readFileSync(daemonFile, 'utf8'), helperPid, claimState: await proof.probe('s', claim), processes: inventory().processes.filter(row => row.pid === daemonPid || row.pid === helperPid) });
+      expect(borrowed, diagnostic).toBe(true); expect(await proof.borrow('s', claim, process.pid)).toBe(false);
       if (completion !== 'natural') {
         const authorityPid = inventory().processes.find((row) => row.pid === daemonPid).responsiblePid;
         const ownerPid = inventory().processes.find((row) => row.pid === authorityPid).ppid;
