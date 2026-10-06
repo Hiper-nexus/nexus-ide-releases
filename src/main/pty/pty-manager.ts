@@ -4449,13 +4449,22 @@ export { warmSpawnInProgress };
  * F-572: footprint (RSS da árvore de processos) de cada sessão viva no host
  * PTY. `null` = host ausente/mudo ou plataforma sem `ps` — telemetria ausente,
  * nunca pressão inventada. Usado por nexus_perf_snapshot e pelo doctor.
+ *
+ * Coalescência (padrão Orca `memory/collector`): chamadas concorrentes
+ * compartilham o MESMO sweep — um burst de polls do renderer nunca produz
+ * `ps` sobrepostos nem sobrecarrega o host PTY.
  */
+let footprintsInflight: Promise<readonly import("./pane-footprint").SessionFootprint[] | null> | null = null;
 export function probePaneFootprints(): Promise<
   readonly import("./pane-footprint").SessionFootprint[] | null
 > {
+  if (footprintsInflight) return footprintsInflight;
   const probe = ptyHost?.probeFootprints;
   if (!probe) return Promise.resolve(null);
-  return probe.call(ptyHost).catch(() => null);
+  footprintsInflight = probe.call(ptyHost)
+    .catch(() => null)
+    .finally(() => { footprintsInflight = null; });
+  return footprintsInflight;
 }
 
 /** F-572: sessões de agente (cli-agent) vivas neste main — insumo do teto. */

@@ -9,6 +9,7 @@
  * FAIL-OPEN em tudo: sem chave, autopilot desligado, timeout ou `judge()`
  * null → a decisão mecânica vale exatamente como antes.
  */
+import { decisionResultUsage } from '../decision-models/decision-usage';
 import {
   capText,
   judge,
@@ -52,10 +53,10 @@ export interface MissionMomentumFacts {
   readonly soloForMs: number | null;
   /** Há quanto tempo as tarefas prontas estão paradas (null = sem backlog). */
   readonly readyForMs: number | null;
-  /** Comandos pesados rodando agora (validador, suite, build). */
-  readonly heavyCommandsActive: number;
-  /** Handoffs recentes (últimos 10 min). */
-  readonly recentHandoffs: number;
+  /** Comandos pesados nesta missão; null quando não medido. */
+  readonly heavyCommandsActive: number | null;
+  /** Handoffs recentes (últimos 10 min); null quando não medido. */
+  readonly recentHandoffs: number | null;
   /** Sessão do Maestro viva. */
   readonly orchestratorAlive: boolean;
 }
@@ -253,8 +254,7 @@ export async function judgeMissionMomentum(
       questions: Object.keys(MISSION_MOMENTUM_QUESTIONS),
       probabilities,
       decision: verdict.action,
-      inputTokens: result.usageMissing ? null : result.usage.input_tokens,
-      usd: result.usageMissing ? null : (result.usage.input_tokens * 0.000042),
+      ...decisionResultUsage(result),
     });
   } catch {
     // Diário nunca bloqueia.
@@ -282,14 +282,13 @@ export function momentumNudgeFromJudgment(
   switch (verdict.action) {
     case 'wait-gate':
       return (
-        `[momentum:${verdict.probabilities?.is_stuck ?? ''}] Gate longo detectado: ` +
+        mechanicalText + '\n\n' + 'Jev sugere conferir se há um gate longo: ' +
         'não abra workers para o mesmo validador. Continue o trabalho independente ' +
-        'que não depende do gate (planejar, revisar, documentar). ' +
-        mechanicalText
+        'que não depende do gate (planejar, revisar, documentar).'
       );
     case 'escalate-operator':
       return (
-        `[momentum:escalate] A missão precisa do operador. ` + mechanicalText
+        mechanicalText + '\n\n[momentum:escalate] Jev sugere conferir se falta uma decisão do operador.'
       );
     case 'open-workers':
       return mechanicalText;

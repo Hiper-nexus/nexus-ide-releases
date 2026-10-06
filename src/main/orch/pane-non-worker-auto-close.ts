@@ -329,8 +329,8 @@ function closeIdlePane(
   sessionId: string,
   trail: 'evento' | 'varredura',
   reason: 'idle' | 'memory-pressure' = 'idle',
-): Promise<void> {
-  if (closing.has(sessionId)) return Promise.resolve();
+): Promise<boolean> {
+  if (closing.has(sessionId)) return Promise.resolve(false);
   closing.add(sessionId);
   const verb = deps.parkPane ? 'estacionando' : 'encerrando';
   deps.log(
@@ -350,6 +350,7 @@ function closeIdlePane(
             `(pane=${ref.paneId}, session=${sessionId})`,
         );
       }
+      return Boolean(closed);
     },
     (error) => {
       closing.delete(sessionId);
@@ -358,6 +359,7 @@ function closeIdlePane(
           error instanceof Error ? error.message : String(error)
         }`,
       );
+      return false;
     },
   );
   closeFlights.add(flight);
@@ -430,27 +432,31 @@ export async function sweepIdlePanes(deps: NonWorkerAutoCloseDeps, context?: Per
     const severe = deps.isSevereMemoryPressure?.() ?? false;
     const parksThisTick = severe ? SEVERE_PRESSURE_PARKS_PER_TICK : 1;
     let parked = 0;
-    while (parked < parksThisTick) {
+    const candidatesThisTick = new Set(idleSince.keys());
+    const attempted = new Set<string>();
+    while (parked < parksThisTick && attempted.size < candidatesThisTick.size) {
       await context?.checkpoint();
       if (!deps.isUnderMemoryPressure?.()) break;
       let oldest: string | null = null;
       let oldestAt = Number.POSITIVE_INFINITY;
       for (const [sessionId, idleAt] of [...idleSince.entries()]) {
         await context?.checkpoint();
-        if (!new Set(list()).has(sessionId) || closing.has(sessionId) || !paneIsParkableUnderPressure(deps, sessionId)) continue;
+        if (!candidatesThisTick.has(sessionId) || attempted.has(sessionId) || !new Set(list()).has(sessionId) || closing.has(sessionId) || !paneIsParkableUnderPressure(deps, sessionId)) continue;
         const wokeAgo = deps.wokeAgoMs?.(sessionId);
         if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) continue;
         if (idleAt < oldestAt) { oldest = sessionId; oldestAt = idleAt; }
       }
       if (!oldest || !new Set(list()).has(oldest)) break;
       const sessionId = oldest;
+      attempted.add(sessionId);
       const wokeAgo = deps.wokeAgoMs?.(sessionId);
-      if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) break;
+      if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) continue;
       const parkRef = paneIsParkableUnderPressure(deps, sessionId);
-      if (!parkRef) break;
+      if (!parkRef) continue;
       // Se não temos parkPane (apenas closePane destrutivo), fechamos apenas
       // se for elegível a fechamento definitivo (isGuardianEligiblePane).
-      if (!deps.parkPane && !isGuardianEligiblePane(parkRef)) break;
+      if (!deps.parkPane && !isGuardianEligiblePane(parkRef)) continue;
+      if (!deps.isUnderMemoryPressure?.()) break;
       const verb = deps.parkPane ? 'estacionando' : 'fechando';
       const roleLabel = parkRef.role ?? 'none';
       deps.log(
@@ -458,9 +464,9 @@ export async function sweepIdlePanes(deps: NonWorkerAutoCloseDeps, context?: Per
           `(pane=${parkRef.paneId}, role=${roleLabel}, ocioso há ${Math.round((now - (idleSince.get(sessionId) ?? now)) / 1000)} s)` +
           (severe ? ` [lote ${parked + 1}/${parksThisTick}]` : ''),
       );
-      await closeIdlePane(deps, parkRef, sessionId, 'varredura', 'memory-pressure');
+      const closed = await closeIdlePane(deps, parkRef, sessionId, 'varredura', 'memory-pressure');
       context?.assertCurrent();
-      parked += 1;
+      if (closed) parked += 1;
     }
   }
 }

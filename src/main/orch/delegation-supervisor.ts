@@ -1371,6 +1371,14 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
         now,
       });
       if (momentum.action === 'nudge' && current()) {
+        // Task/dispatch/reservation changes do not necessarily update the
+        // mission row or physical pane list while the model is answering.
+        const workStamp = () => JSON.stringify([
+          suite.tasks.list(mission.id).map(row => [row.id, row.status, row.detail, row.providerWaiverReason]),
+          suite.taskDispatches.list(mission.id).map(row => [row.taskId, row.intentVersion, row.state, row.revision, row.attempt]),
+          suite.missionPanes.list(mission.id).map(row => [row.paneId, row.role]),
+        ]);
+        const initialWorkStamp = workStamp();
         try {
           // Jev (06/10): o watchdog mecânico detetou o candidato; o Jev
           // refina (preso vs gate longo vs recuperando). Fail-open: sem
@@ -1379,7 +1387,7 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
           const mechanicalText = momentumNudgeSummary(mission.id, momentum.soloForMs, momentum);
           let nudgeText = mechanicalText;
           try {
-            const judgment = await judgeMissionMomentum({
+            const judgment = await context.wait(judgeMissionMomentum({
               missionId: mission.id,
               missionStatus: mission.status,
               workerPanes: workerPaneCount,
@@ -1387,20 +1395,19 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
               availableSlots: momentum.availableSlots ?? 0,
               soloForMs: momentum.soloForMs,
               readyForMs: momentum.readyTaskIds?.length ? (now - (momentumReadySince.get(key) ?? now)) : null,
-              heavyCommandsActive: 0,
-              recentHandoffs: 0,
+              heavyCommandsActive: null,
+              recentHandoffs: null,
               orchestratorAlive,
-            });
-            if (judgment.kind === 'judged' && judgment.action === 'wait-gate') {
-              // Gate longo: não empurra abrir workers para o mesmo validador.
-              console.warn(`[delegation-supervisor] momentum ${mission.id}: wait-gate (Jev), nudge suprimido`);
-              momentumNudgedAt.set(key, { at: now, backlogKey: momentum.backlogKey });
-              continue;
-            }
-            nudgeText = momentumNudgeFromJudgment(judgment, mechanicalText);
+            }, { signal: context.signal }));
+            // Durable dependency/slot proof wins over a model's suggestion
+            // to wait. The judgment refines uncertain solo work only.
+            nudgeText = momentum.readyTaskIds?.length
+              ? mechanicalText
+              : momentumNudgeFromJudgment(judgment, mechanicalText);
           } catch {
             // Jev indisponível: decisão mecânica vale.
           }
+          if (!current() || workStamp() !== initialWorkStamp) continue missions;
           const handoff = suite.handoffs.submit({
             missionId: mission.id, status: 'progress',
             summary: nudgeText,
@@ -1411,6 +1418,7 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
           onHandoffSubmitted(handoff, suite.scope);
           console.warn(`[delegation-supervisor] momentum nudge for ${mission.id}`);
         } catch (error) {
+          context.assertCurrent();
           console.warn('[delegation-supervisor] momentum nudge falhou:', error instanceof Error ? error.message : error);
         }
       }

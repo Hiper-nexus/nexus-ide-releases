@@ -507,6 +507,36 @@ describe('pane guardian (0.76.44): reaper de emergência sob pressão de memóri
     expect(h.closed).toHaveLength(4);
   });
 
+  it('F-257: recusas e falhas não consomem o lote nem repetem o mesmo pane', async () => {
+    const idle = new Set(['cannot-resume', 'failed', 'ready-1', 'ready-2', 'ready-3', 'ready-4']);
+    const h = pressureHarness({ on: true }, idle);
+    const attempts: string[] = [];
+    initNonWorkerAutoClose({ ...h.deps, isSevereMemoryPressure: () => true,
+      parkPane: async (paneId) => {
+        attempts.push(paneId);
+        if (paneId === 'pane-cannot-resume') return false;
+        if (paneId === 'pane-failed') throw new Error('physical exit unavailable');
+        idle.delete(paneId.replace('pane-', ''));
+        return 'parked';
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(attempts).toEqual(['pane-cannot-resume', 'pane-failed', 'pane-ready-1', 'pane-ready-2', 'pane-ready-3']);
+    expect(idle.has('ready-4')).toBe(true);
+    expect(h.closed).toEqual([]);
+  });
+
+  it('F-257: todos recusados são tentados uma vez por tick, sem laço infinito', async () => {
+    const idle = new Set(['blocked-1', 'blocked-2']);
+    const h = pressureHarness({ on: true }, idle);
+    const attempts: string[] = [];
+    initNonWorkerAutoClose({ ...h.deps, isSevereMemoryPressure: () => true,
+      parkPane: paneId => { attempts.push(paneId); return false; },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(attempts).toEqual(['pane-blocked-1', 'pane-blocked-2']);
+  });
+
   it('sem pressão severa, mantém 1 por tick (comportamento antigo)', async () => {
     const pressure: { on: boolean } = { on: true };
     const idle = new Set<string>(['pty-n1', 'pty-n2', 'pty-n3']);

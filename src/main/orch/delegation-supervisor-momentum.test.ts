@@ -14,6 +14,11 @@ const h = vi.hoisted(() => ({
     (_sessionId: string): { status: string; updatedAt: number } | null => null,
   ),
   delivered: vi.fn(),
+  judge: vi.fn(),
+}));
+vi.mock('./jev-mission-momentum', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./jev-mission-momentum')>()),
+  judgeMissionMomentum: h.judge,
 }));
 vi.mock('./project-domain-store-registry', () => ({
   requireProjectDomainStoreRegistry: () => ({
@@ -89,6 +94,7 @@ beforeEach(async () => {
   h.panes = [];
   h.semantic.mockReset();
   h.delivered.mockClear();
+  h.judge.mockReset().mockResolvedValue({ kind: 'skipped' });
   clock = NOW;
   directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-momentum-'));
   runtime = new ProjectRuntimeManager({
@@ -192,6 +198,43 @@ function setup(
 }
 
 describe('real supervisor momentum queue', () => {
+  it('a model wait-gate cannot suppress registered independent work', async () => {
+    const c = setup();
+    const ready = c.tasks.create({ missionId: c.mission.id, title: 'Independent work' });
+    h.judge.mockResolvedValue({ kind: 'judged', action: 'wait-gate', confidence: 0.9 });
+    await c.scan(0);
+    await c.scan(30_000);
+    expect(c.notices()).toHaveLength(1);
+    expect(c.notices()[0].summary).toContain(ready.id);
+    expect(h.delivered).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['status', 'leader', 'shutdown', 'task', 'reservation'] as const)('discards a pending judgment after %s changes', async (change) => {
+    const c = setup();
+    const task = c.tasks.create({ missionId: c.mission.id, title: 'Independent work' });
+    await c.scan(0);
+    let started!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    let resolveJudge!: (value: unknown) => void;
+    h.judge.mockImplementationOnce(() => {
+      started();
+      return new Promise(resolve => { resolveJudge = resolve; });
+    });
+    const scan = c.scan(30_000).catch(() => {});
+    await entered;
+    let stopped: Promise<void> | undefined;
+    if (change === 'status') c.suite.missions.setStatus(c.mission.id, 'blocked');
+    if (change === 'leader') h.panes[0].sessionId = 'replacement-session';
+    if (change === 'shutdown') stopped = shutdownDelegationSupervisor();
+    if (change === 'task') c.tasks.update(task.id, { status: 'done' });
+    if (change === 'reservation') c.suite.missionPanes.record({ missionId: c.mission.id, adapterId: 'codex', title: 'Pending spawn', role: 'worker' });
+    resolveJudge({ kind: 'skipped' });
+    await scan;
+    await stopped;
+    expect(c.notices()).toHaveLength(0);
+    expect(h.delivered).not.toHaveBeenCalled();
+  });
+
   it('registered ready task and idle helper cause a directive after thirty seconds, not twenty minutes', async () => {
     const c = setup();
     const upstream = c.tasks.create({

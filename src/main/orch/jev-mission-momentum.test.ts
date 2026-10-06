@@ -6,6 +6,13 @@ import {
   type MissionMomentumFacts,
 } from './jev-mission-momentum';
 import type { JevAnswer } from '../jev/jev-client';
+const calls = vi.hoisted(() => ({ judge: vi.fn(), record: vi.fn() }));
+vi.mock('../jev/jev-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../jev/jev-client')>()), judge: calls.judge,
+}));
+vi.mock('../jev/jev-decision-log', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../jev/jev-decision-log')>()), recordJevDecision: calls.record,
+}));
 
 vi.mock('../jev/jev-autopilot', () => ({
   isJevSurfaceEnabled: vi.fn(() => true),
@@ -112,6 +119,15 @@ describe('evaluateMomentumJudgment (política em código)', () => {
 });
 
 describe('judgeMissionMomentum (fail-open)', () => {
+  it.each([['jev', 0.000042], ['clef', 0.00024], ['clef-flash', 0.00009]] as const)('records canonical pricing for %s', async (model, usd) => {
+    calls.judge.mockResolvedValueOnce({
+      model, usage: { input_tokens: 1000 },
+      answers: { best_action: { type: 'choice', choice: 'open-workers', confidence: 0.9, probabilities: {} } },
+    });
+    await judgeMissionMomentum(facts);
+    expect(calls.record).toHaveBeenLastCalledWith(expect.objectContaining({ model, inputTokens: 1000, usd }));
+  });
+
   it('sem credencial → skipped', async () => {
     const { hasDecisionCredential } = await import('../decision-models/decision-availability');
     vi.mocked(hasDecisionCredential).mockReturnValueOnce(false);
@@ -130,6 +146,10 @@ describe('judgeMissionMomentum (fail-open)', () => {
 });
 
 describe('momentumNudgeFromJudgment', () => {
+  it.each(['wait-gate', 'escalate-operator'] as const)('keeps the durable mission marker first for %s', (action) => {
+    const text = momentumNudgeFromJudgment({ kind: 'judged', action, confidence: 0.9 }, '[momentum:m1] Existing instruction');
+    expect(text.startsWith('[momentum:m1]')).toBe(true);
+  });
   it('sem julgamento, o texto mecânico vale', () => {
     const text = momentumNudgeFromJudgment({ kind: 'skipped' }, 'texto mecânico');
     expect(text).toBe('texto mecânico');
@@ -146,7 +166,7 @@ describe('momentumNudgeFromJudgment', () => {
       },
       'base',
     );
-    expect(text).toContain('Gate longo');
+    expect(text).toContain('Jev sugere conferir se há um gate longo');
     expect(text).toContain('base');
   });
 

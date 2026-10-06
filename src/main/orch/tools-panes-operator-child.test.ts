@@ -9,6 +9,10 @@ const harness = vi.hoisted(() => ({
   })),
   takePendingPaneSpawnResult: vi.fn((): unknown => null),
   armAutoCloseOnHandoff: vi.fn(),
+  disarmAutoCloseOnHandoff: vi.fn(),
+  injectPrompt: vi.fn(async () => {}),
+  reuseChoice: null as null | { candidate: { paneId: string; sessionId: string; title: string; idleForMs: number }; reason: string; confidence: number },
+  reuseAuthority: null as null | Record<string, unknown>,
   armAutoCloseOnHandoffForPane: vi.fn(),
   settings: {
     squadCliPolicy: 'operator-choice' as 'operator-choice' | 'governed',
@@ -37,13 +41,14 @@ vi.mock('../adapters/cli-model-discovery', async (importOriginal) => ({
 vi.mock('./tool-util', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./tool-util')>()),
   spawnPaneAndMaybePrompt: harness.spawnPaneAndMaybePrompt,
+  injectPrompt: harness.injectPrompt,
 }));
 vi.mock('./pane-registry', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./pane-registry')>()),
   takePendingPaneSpawnResult: harness.takePendingPaneSpawnResult,
   listPaneSnapshots: vi.fn(() => harness.snapshots),
   getPaneRuntimeAuthorityBySession: vi.fn((sessionId: string) =>
-    harness.parentBySession[sessionId]
+    sessionId === 'pty-reused' ? harness.reuseAuthority : harness.parentBySession[sessionId]
       ? { operatorParentSessionId: harness.parentBySession[sessionId] }
       : null,
   ),
@@ -52,7 +57,12 @@ vi.mock('./pane-registry', async (importOriginal) => ({
 vi.mock('./pane-close-scopes', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./pane-close-scopes')>()),
   armAutoCloseOnHandoff: harness.armAutoCloseOnHandoff,
+  disarmAutoCloseOnHandoff: harness.disarmAutoCloseOnHandoff,
   armAutoCloseOnHandoffForPane: harness.armAutoCloseOnHandoffForPane,
+}));
+vi.mock('./idle-helper-reuse', () => ({
+  listIdleHelperCandidates: () => harness.reuseChoice ? [harness.reuseChoice.candidate] : [],
+  judgeIdleHelperReuse: async () => harness.reuseChoice,
 }));
 vi.mock('./squad-store', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./squad-store')>()),
@@ -137,6 +147,9 @@ beforeEach(() => {
   harness.snapshots = [];
   harness.parentBySession = {};
   harness.panesByRef = {};
+  harness.reuseChoice = null;
+  harness.reuseAuthority = null;
+  harness.injectPrompt.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -833,5 +846,49 @@ describe('nexus_pane_spawn — F-213 pane spawn timing', () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ source: 'mcp' });
     expect(events[0].phases).toHaveProperty('route-resolve');
+  });
+});
+
+
+describe('F-258: política de fechamento no reuso', () => {
+  function reusable() {
+    const caller = userPane();
+    harness.reuseChoice = { candidate: { paneId: 'pane-reused', sessionId: 'pty-reused', title: 'Helper', idleForMs: 30_000 }, reason: 'mesmo trabalho', confidence: 0.95 };
+    harness.reuseAuthority = { paneId: 'pane-reused', sessionId: 'pty-reused', scope: caller.scope, operatorParentSessionId: caller.sessionId };
+    return caller;
+  }
+
+  it('arma a sessão reutilizada somente depois de injetar o novo pedido', async () => {
+    const caller = reusable();
+    harness.injectPrompt.mockImplementationOnce(async () => {
+      expect(harness.armAutoCloseOnHandoff).not.toHaveBeenCalled();
+    });
+    const result = await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'Ajuste a API existente' }, caller);
+    expect(result).toMatchObject({ reused: true, sessionId: 'pty-reused' });
+    expect(harness.armAutoCloseOnHandoff).toHaveBeenCalledWith('pty-reused', 'pane-reused');
+    expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+  });
+
+  it('false explícito mantém o helper reutilizado aberto', async () => {
+    const result = await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'Ajuste a API existente', autoCloseOnHandoff: false }, reusable());
+    expect(result).toMatchObject({ reused: true });
+    expect(harness.armAutoCloseOnHandoff).not.toHaveBeenCalled();
+  });
+
+  it.each([{ operatorOpened: true }, { role: 'orchestrator' }, { paneId: 'substituto' }])('não arma autoridade protegida ou substituída: %j', async (changed) => {
+    const caller = reusable();
+    harness.injectPrompt.mockImplementationOnce(async () => { Object.assign(harness.reuseAuthority!, changed); });
+    await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'Ajuste a API existente' }, caller);
+    expect(harness.armAutoCloseOnHandoff).not.toHaveBeenCalled();
+    expect(harness.disarmAutoCloseOnHandoff).not.toHaveBeenCalled();
+  });
+
+  it('falha de injeção preserva a política anterior e segue pelo spawn normal', async () => {
+    const caller = reusable();
+    harness.injectPrompt.mockRejectedValueOnce(new Error('stale session'));
+    const result = await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'Ajuste a API existente' }, caller);
+    expect(result).toMatchObject({ paneId: 'pane-child' });
+    expect(harness.armAutoCloseOnHandoff).not.toHaveBeenCalledWith('pty-reused', 'pane-reused');
+    expect(harness.disarmAutoCloseOnHandoff).not.toHaveBeenCalled();
   });
 });

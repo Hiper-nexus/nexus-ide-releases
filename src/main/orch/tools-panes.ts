@@ -39,6 +39,7 @@ import { adapterSchema } from '../../shared/adapter-types';
 import {
   armAutoCloseOnHandoff,
   armAutoCloseOnHandoffForPane,
+  disarmAutoCloseOnHandoff,
   selectScopedPaneCloseTargets,
   shouldArmAutoCloseOnHandoff,
 } from './pane-close-scopes';
@@ -2178,6 +2179,21 @@ const paneSpawnAfterTabMission = {
                 reusedContext.visualTask = previousVisualTask;
               }
               throw error;
+            }
+            // Apply the new assignment's policy only after delivery succeeds.
+            // Re-read physical authority: the helper may have been promoted,
+            // replaced or moved while the prompt transport was awaiting.
+            const reusedAuthority = getPaneRuntimeAuthorityBySession(reuseChoice.candidate.sessionId);
+            if (reusedAuthority?.paneId === reuseChoice.candidate.paneId &&
+              reusedAuthority.sessionId === reuseChoice.candidate.sessionId &&
+              reusedAuthority.scope?.projectId === ctx.scope.projectId &&
+              reusedAuthority.scope.checkoutId === ctx.scope.checkoutId &&
+              reusedAuthority.scope.rootRealPath === ctx.scope.rootRealPath &&
+              reusedAuthority.missionId === options.missionId &&
+              (reuseMissionId !== undefined || reusedAuthority.operatorParentSessionId === ctx.sessionId) &&
+              reusedAuthority.role !== 'orchestrator' && reusedAuthority.operatorOpened !== true) {
+              if (autoClose) armAutoCloseOnHandoff(reuseChoice.candidate.sessionId, reuseChoice.candidate.paneId);
+              else disarmAutoCloseOnHandoff(reuseChoice.candidate.sessionId, reuseChoice.candidate.paneId);
             }
             if (spawnTiming) {
               // F-787: reuso não é rejeição nem spawn novo — fica marcado.
