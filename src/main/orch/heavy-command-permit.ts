@@ -32,39 +32,16 @@ interface PermitPoolOptions {
 }
 const error = (code: string) => new Error(`heavy_command_${code}`);
 
-/**
- * Reserva de RAM por tipo de comando pesado (otimização multi-pane, 06/10).
- * `tsc` medido em ~720 MB no Mac do operador; testes tipam na mesma faixa.
- * `install`/`build` usam o fallback do pool (2048 por default) — `npm ci` e
- * builds de bundle estouram com facilidade.
- */
-export function heavyCommandReserveMB(kind: HeavyCommandKind, fallback = 2048): number {
-  if (kind === 'typescript' || kind === 'tests') return 1024;
-  return fallback;
-}
-
-/**
- * Vagas por projeto. A regra histórica é 1 (a worktree é local de execução,
- * nunca orçamento próprio de CPU/RAM). Com memória de sobra o pool abre a
- * 2ª vaga do MESMO projeto: dois `tsc`/suites em um Mac de 8+ núcleos não
- * brigam por CPU o suficiente para justificar a fila, e a fila era o que
- * parava a missão no meio (7h30 de validações em fila única, F-714). Memória
- * apertada volta a 1 — a proteção real é a reserva de RAM, não o número fixo.
- */
-const PROJECT_SLOTS_ABUNDANT = 2;
-const PROJECT_SLOTS_TIGHT = 1;
-/** Sobra mínima além das reservas para considerar a 2ª vaga do projeto. */
-const ABUNDANT_HEADROOM_MB = 1024;
-
-/** Espera do worker de missão: a fila drena, o worker não pode falhar no meio. */
-const MISSION_WAIT_MS = 900_000;
+// Shipped HTTP/curl/file clients expire at 360 s. Return a bounded, retryable
+// admission failure first; extending this requires a matching transport and
+// cancellation contract. Mission and loose-helper requests share this limit.
 const DEFAULT_WAIT_MS = 300_000;
 
-/** One or two physical heavy jobs per project (RAM-gated); RAM reservations span projects. */
+/** One physical heavy job per project; machine RAM reservations span projects. */
 export class HeavyCommandPermitPool {
   readonly #options: PermitPoolOptions;
   readonly #waiters: Waiter[] = [];
-  readonly #active = new Map<string, { project: string; kind: HeavyCommandKind; reserveMB: number }>();
+  readonly #active = new Map<string, { project: string; kind: HeavyCommandKind }>();
   #timer: ReturnType<typeof setTimeout> | undefined;
   #refresh: Promise<void> | undefined;
   #closed = false;
@@ -72,9 +49,8 @@ export class HeavyCommandPermitPool {
   constructor(options: PermitPoolOptions) { this.#options = options; }
 
   snapshot(): { active: number; waiting: number; reservedMB: number } {
-    let reservedMB = 0;
-    for (const entry of this.#active.values()) reservedMB += entry.reserveMB;
-    return { active: this.#active.size, waiting: this.#waiters.length, reservedMB };
+    return { active: this.#active.size, waiting: this.#waiters.length,
+      reservedMB: this.#active.size * (this.#options.reserveMB ?? 2048) };
   }
 
   acquire(request: HeavyCommandRequest): Promise<HeavyCommandPermit> {
@@ -86,14 +62,9 @@ export class HeavyCommandPermitPool {
     if (this.#waiters.length >= (this.#options.maxWaiters ?? 128)) return Promise.reject(error('queue_full'));
     // A worktree is an execution location, never a separate CPU/RAM budget.
     const project = JSON.stringify([request.scope.installationId, request.scope.projectId]);
-    // Missão espera a fila drenar (otimização multi-pane): o worker não pode
-    // falhar o tool call em 5 min enquanto o validador anterior termina.
-    const waitMs = request.missionId !== undefined
-      ? (this.#options.waitMs ?? MISSION_WAIT_MS)
-      : (this.#options.waitMs ?? DEFAULT_WAIT_MS);
     return new Promise((resolve, reject) => {
       const waiter: Waiter = { request, project, resolve, reject,
-        deadline: Date.now() + waitMs,
+        deadline: Date.now() + (this.#options.waitMs ?? DEFAULT_WAIT_MS),
         aborted: () => { this.#remove(waiter); reject(error('aborted')); this.#pump(); },
       };
       this.#waiters.push(waiter);
@@ -117,7 +88,7 @@ export class HeavyCommandPermitPool {
     waiter.request.signal?.removeEventListener('abort', waiter.aborted);
   }
 
-  #hasRam(reserveMB: number): boolean {
+  #hasRam(): boolean {
     let memory: SystemMemorySample | null;
     try { memory = this.#options.memory(); } catch { memory = null; }
     if (memory?.freeMB === null || memory === null || !Number.isFinite(memory.freeMB)) {
@@ -127,33 +98,11 @@ export class HeavyCommandPermitPool {
     }
     const limits = this.#options.limits();
     if (limits.maxSwapUsedMB > 0 && memory.swapUsedMB !== null && memory.swapUsedMB > limits.maxSwapUsedMB) return false;
-    return memory.freeMB >= limits.minFreeMB + this.snapshot().reservedMB + reserveMB;
-  }
-
-  /** Vagas do projeto: 2 com memória de sobra, 1 sob pressão (ver PROJECT_SLOTS_*). */
-  #projectSlots(): number {
-    let memory: SystemMemorySample | null;
-    try { memory = this.#options.memory(); } catch { memory = null; }
-    if (memory?.freeMB === null || memory === null || !Number.isFinite(memory.freeMB)) {
-      return PROJECT_SLOTS_TIGHT;
-    }
-    const limits = this.#options.limits();
-    if (limits.maxSwapUsedMB > 0 && memory.swapUsedMB !== null && memory.swapUsedMB > limits.maxSwapUsedMB) {
-      return PROJECT_SLOTS_TIGHT;
-    }
-    const reserve = this.#options.reserveMB ?? 2048;
-    return memory.freeMB >= limits.minFreeMB + this.snapshot().reservedMB + reserve + ABUNDANT_HEADROOM_MB
-      ? PROJECT_SLOTS_ABUNDANT
-      : PROJECT_SLOTS_TIGHT;
+    return memory.freeMB >= limits.minFreeMB + this.snapshot().reservedMB + (this.#options.reserveMB ?? 2048);
   }
 
   #pump(): void {
     if (this.#closed) return;
-    const projectSlots = this.#projectSlots();
-    const perProjectActive = new Map<string, number>();
-    for (const entry of this.#active.values()) {
-      perProjectActive.set(entry.project, (perProjectActive.get(entry.project) ?? 0) + 1);
-    }
     const blockedProjects = new Set<string>();
     for (const waiter of [...this.#waiters]) {
       let current = false;
@@ -164,15 +113,11 @@ export class HeavyCommandPermitPool {
         this.#remove(waiter); waiter.reject(error(current ? 'wait_timeout' : 'authority_revoked')); continue;
       }
       if (blockedProjects.has(waiter.project)) continue;
-      const activeInProject = perProjectActive.get(waiter.project) ?? 0;
-      const reserveMB = heavyCommandReserveMB(waiter.request.kind, this.#options.reserveMB ?? 2048);
-      if (activeInProject >= projectSlots || this.#active.size >= 32 || !this.#hasRam(reserveMB)) {
-        blockedProjects.add(waiter.project); continue;
-      }
+      const activeProject = [...this.#active.values()].some(entry => entry.project === waiter.project);
+      if (activeProject || this.#active.size >= 32 || !this.#hasRam()) { blockedProjects.add(waiter.project); continue; }
       this.#remove(waiter);
       const id = `heavy-${randomUUID()}`;
-      this.#active.set(id, { project: waiter.project, kind: waiter.request.kind, reserveMB });
-      perProjectActive.set(waiter.project, activeInProject + 1);
+      this.#active.set(id, { project: waiter.project, kind: waiter.request.kind });
       // The synchronous reservation precedes resolving the caller's promise.
       // Two project spawns cannot both spend the same cached free RAM.
       waiter.resolve(Object.freeze({ id, release: () => {

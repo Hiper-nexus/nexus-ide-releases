@@ -8,7 +8,8 @@
 
 ADE (AI Development Environment) para frota de agentes paralelos: Codex,
 Claude Code, OpenCode, Pi etc., cada um em worktree isolada. Desktop +
-mobile + SSH remoto. 85k+ stars, ship diário.
+mobile + SSH remoto. A revisão de integração abaixo se limita ao código local
+do Nexus; não valida popularidade nem frequência de releases do projeto externo.
 
 ## Padrões de otimização encontrados
 
@@ -35,11 +36,12 @@ um único sweep.
 O worker posta um contador de arquivos enquanto trabalha (`UsageScanWorkerProgress`).
 O timeout só cobre o gap entre dois arquivos, não o tempo total.
 
-**Lição para o Nexus:** o regression gate e a fila de comandos pesados
-usam timeout de parede. Um `make verify` legítimo de 10 min seria morto.
-O padrão seria: timeout por progresso (saída do PTY avançando) em vez de
-wall-clock. *Não implementado ainda* — é mudança de contrato dos gates e
-precisa de calibração.
+**Lição para o Nexus:** espera na fila e prazo de execução são contratos
+diferentes. O deadline do `HeavyCommandPermitPool` limita somente o waiter;
+depois da admissão ele é removido da fila. Portanto, esse prazo não mata um
+`make verify` já admitido de 10 minutos. Timeout por progresso é uma proposta
+para caminhos de execução específicos, ainda não implementada nem validada;
+saída no PTY, sozinha, também não prova avanço útil.
 
 ### 3. Limpeza de PTY oculto (`rate-limits/hidden-pty-cleanup.ts`)
 
@@ -47,8 +49,10 @@ Windows ConPTY: `destroy()` chama `kill()` de novo e fecha o handle duas
 vezes. O cleanup do Orca neutraliza o `kill` pós-exit no POSIX (evita
 SIGHUP em PID reusado) e pula `destroy` no Windows após kill intencional.
 
-**Já coberto no Nexus** por `pty-descendant-termination` e
-`removeTreeSync` (F-663). Sem ação.
+O Nexus tem lógica própria em `pty-descendant-termination`. `removeTreeSync`
+remove arquivos e não comprova proteção contra double-close do ConPTY. Esta
+comparação não adicionou um teste Windows de handles; essa afirmação exige
+validação do caminho de encerramento e não deve ser tratada como prova.
 
 ### 4. Rastreio de dispatch (`agent-launch/agent-launch-not-started.ts`)
 

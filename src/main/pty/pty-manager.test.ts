@@ -258,6 +258,7 @@ import {
   killSessionsFor,
   listAgentSessions,
   liveSessionSummary,
+  probePaneFootprints,
   recoverSessionOutput,
   setPtyHost,
   setAgentSpawnHook,
@@ -963,6 +964,88 @@ function fakeHost(): {
     specFor: (id) => specs.get(id)!,
   };
 }
+
+describe('PTY footprint probe coalescing', () => {
+  type Footprints = Awaited<ReturnType<typeof probePaneFootprints>>;
+  function deferred() {
+    let resolve!: (value: Footprints) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<Footprints>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  }
+  const sample = (sessionId: string) => [{ sessionId, rootPid: 123, processCount: 2, rssBytes: 1024 }];
+  afterEach(() => { setPtyHost(fakeHost().host); });
+
+  it('shares one physical probe between concurrent consumers and probes afresh afterward', async () => {
+    const pending = deferred();
+    const probe = vi.fn(() => pending.promise);
+    const host = { ...fakeHost().host, probeFootprints: probe };
+    setPtyHost(host);
+    const first = probePaneFootprints();
+    const second = probePaneFootprints();
+    expect(second).toBe(first);
+    await Promise.resolve();
+    expect(probe).toHaveBeenCalledOnce();
+    expect(probe.mock.contexts[0]).toBe(host);
+    pending.resolve(sample('current'));
+    expect(await first).toEqual(sample('current'));
+    expect(await second).toEqual(sample('current'));
+    await probePaneFootprints();
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['reject', 'null'] as const)('%s releases the shared flight so the next consumer can retry', async (outcome) => {
+    const pending = deferred();
+    const probe = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(sample('retry'));
+    setPtyHost({ ...fakeHost().host, probeFootprints: probe });
+    const first = probePaneFootprints();
+    const second = probePaneFootprints();
+    if (outcome === 'reject') pending.reject(new Error('host unavailable'));
+    else pending.resolve(null);
+    expect(await first).toBeNull();
+    expect(await second).toBeNull();
+    expect(await probePaneFootprints()).toEqual(sample('retry'));
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it('a replaced host never shares or publishes the old flight, whose completion cannot clear the new one', async () => {
+    const old = deferred();
+    const current = deferred();
+    const oldProbe = vi.fn(() => old.promise);
+    const currentProbe = vi.fn(() => current.promise);
+    setPtyHost({ ...fakeHost().host, probeFootprints: oldProbe });
+    const oldRead = probePaneFootprints();
+    await Promise.resolve();
+    setPtyHost({ ...fakeHost().host, probeFootprints: currentProbe });
+    const currentRead = probePaneFootprints();
+    const thirdRead = probePaneFootprints();
+    await Promise.resolve();
+    // Resolve both in finally so RED never leaves an unhandled fixture flight.
+    try {
+      expect(currentRead).not.toBe(oldRead);
+      expect(thirdRead).toBe(currentRead);
+      expect(oldProbe).toHaveBeenCalledOnce();
+      expect(currentProbe).toHaveBeenCalledOnce();
+      old.resolve(sample('stale'));
+      expect(await oldRead).toBeNull();
+      expect(probePaneFootprints()).toBe(currentRead);
+      current.resolve(sample('fresh'));
+      expect(await currentRead).toEqual(sample('fresh'));
+      expect(currentProbe).toHaveBeenCalledOnce();
+    } finally { old.resolve(null); current.resolve(null); await Promise.all([oldRead, currentRead, thirdRead]); }
+  });
+
+  it('switching to a host without probes cannot expose the previous host sample', async () => {
+    const old = deferred();
+    setPtyHost({ ...fakeHost().host, probeFootprints: () => old.promise });
+    const oldRead = probePaneFootprints();
+    setPtyHost(fakeHost().host);
+    const currentRead = probePaneFootprints();
+    old.resolve(sample('stale'));
+    expect(await oldRead).toBeNull();
+    expect(await currentRead).toBeNull();
+  });
+});
 
 describe('automatic worker resource admission at physical spawn', () => {
   afterEach(() => {

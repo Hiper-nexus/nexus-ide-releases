@@ -345,6 +345,7 @@ const MISSION_ORCHESTRATOR_GRANT_TTL_MS = 120_000;
 const MAX_NATIVE_INITIAL_PROMPT_BYTES = 64 * 1024;
 
 let ptyHost: PtyHost | null = null;
+let footprintsInflight: Promise<readonly import("./pane-footprint").SessionFootprint[] | null> | null = null;
 let agentHookEndpointPath: string | null = null;
 
 export function configureAgentHookEndpointPath(
@@ -361,6 +362,7 @@ export function configureAgentHookEndpointPath(
 
 /** Wire the utilityProcess-backed host (called once at IPC bootstrap). */
 export function setPtyHost(host: PtyHost): void {
+  if (ptyHost !== host) footprintsInflight = null;
   ptyHost = host;
 }
 
@@ -4454,17 +4456,20 @@ export { warmSpawnInProgress };
  * compartilham o MESMO sweep — um burst de polls do renderer nunca produz
  * `ps` sobrepostos nem sobrecarrega o host PTY.
  */
-let footprintsInflight: Promise<readonly import("./pane-footprint").SessionFootprint[] | null> | null = null;
 export function probePaneFootprints(): Promise<
   readonly import("./pane-footprint").SessionFootprint[] | null
 > {
   if (footprintsInflight) return footprintsInflight;
   const probe = ptyHost?.probeFootprints;
   if (!probe) return Promise.resolve(null);
-  footprintsInflight = probe.call(ptyHost)
+  const flight: Promise<readonly import("./pane-footprint").SessionFootprint[] | null> = probe.call(ptyHost)
+    // A replacement host invalidates the old inventory. Its late completion
+    // must neither publish stale sessions nor clear the replacement's sweep.
+    .then((sample) => footprintsInflight === flight ? sample : null)
     .catch(() => null)
-    .finally(() => { footprintsInflight = null; });
-  return footprintsInflight;
+    .finally(() => { if (footprintsInflight === flight) footprintsInflight = null; });
+  footprintsInflight = flight;
+  return flight;
 }
 
 /** F-572: sessões de agente (cli-agent) vivas neste main — insumo do teto. */

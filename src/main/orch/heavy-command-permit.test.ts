@@ -1,5 +1,8 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { afterEach, expect, it, vi } from 'vitest';
-import { HeavyCommandPermitPool, heavyCommandReserveMB } from './heavy-command-permit';
+import { HeavyCommandPermitPool } from './heavy-command-permit';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const pools: HeavyCommandPermitPool[] = [];
@@ -13,99 +16,70 @@ function pool(memory: () => { freeMB: number | null; swapUsedMB: number | null }
 }
 afterEach(() => { for (const value of pools.splice(0)) value.close(); vi.useRealTimers(); });
 
-it('com memória de sobra o mesmo projeto abre 2 vagas; projetos independentes seguem livres', async () => {
-  // freeMB 20_000 é de sobra para minFree 1000 + 2×1000 + headroom 1024.
+it.each(['typescript', 'tests', 'build', 'install'] as const)('reserves the conservative 2048 MB for %s in production', async (kind) => {
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 20_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {} });
+  pools.push(value);
+  const permit = await value.acquire({ ...request(), kind });
+  try { expect(value.snapshot().reservedMB).toBe(2048); }
+  finally { permit.release(); }
+});
+
+it('expires mission and loose-helper waits before the shipped file transport times out', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  let freeMB = 100;
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {} });
+  pools.push(value);
+  const reasons: string[] = [];
+  const waits = [request(), { ...request(), missionId: undefined }].map(input => value.acquire(input)
+    .then(permit => { permit.release(); reasons.push('unexpected admission'); }, error => { reasons.push(error.message); }));
+
+  // Execute the shipped client, with no disk/network effects: zero available
+  // file slots keeps a genuine transport request pending until its deadline.
+  const transportModule = { exports: undefined as unknown as (directory: string, packet: object) => Promise<string> };
+  let poll = () => {};
+  runInNewContext(fs.readFileSync(path.resolve('resources/heavy-command/file-channel-client.cjs'), 'utf8'), {
+    module: transportModule, Date,
+    require: () => ({ fs: {}, path: {}, SLOTS: 0, directoryIdentity: () => ({}), checkDirectory: () => {} }),
+    process: { once: () => {}, removeListener: () => {} },
+    setTimeout: (fn: () => void) => { poll = fn; return 1; }, clearTimeout: () => {},
+  });
+  let transportReason: string | undefined;
+  const transport = transportModule.exports('/isolated-channel', { id: 'fixture' })
+    .catch((error: Error) => { transportReason = error.message; });
+  try {
+    await vi.advanceTimersByTimeAsync(300_001);
+    poll(); await Promise.resolve();
+    expect([...reasons]).toEqual(['heavy_command_wait_timeout', 'heavy_command_wait_timeout']);
+    expect(value.snapshot()).toMatchObject({ active: 0, waiting: 0 });
+    expect(transportReason).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(60_000);
+    poll(); await transport;
+    expect(transportReason).toBe('file_request_timeout');
+    // Timeout is retryable admission failure, not a retained slot/permission.
+    freeMB = 20_000;
+    const retry = await value.acquire(request());
+    expect(value.snapshot().active).toBe(1);
+    retry.release();
+  } finally {
+    value.close(); await Promise.all(waits);
+    vi.setSystemTime(360_001); poll(); await transport;
+  }
+});
+
+it('serializes workers and worktrees of one project while independent projects can proceed', async () => {
   const value = pool(); const first = await value.acquire(request());
   let admitted = false;
   const second = value.acquire({ ...request(), scope: { ...scope, checkoutId: 'worker-checkout', rootRealPath: '/isolated' } }).then(p => { admitted = true; return p; });
-  await Promise.resolve(); expect(admitted).toBe(true); // 2ª vaga do MESMO projeto
   const other = await value.acquire(request('another-project'));
-  expect(value.snapshot().active).toBe(3);
-  first.release(); (await second).release(); other.release();
-  expect(value.snapshot().active).toBe(0);
-});
-
-it('sob pressão de memória o mesmo projeto volta a 1 vaga (a fila protege a máquina)', async () => {
-  // Livre o bastante para 1 reserva (1000+1000) mas sem headroom para a 2ª.
-  const value = pool(() => ({ freeMB: 2_100, swapUsedMB: 0 }));
-  const first = await value.acquire(request());
-  let admitted = false;
-  const second = value.acquire(request()).then(p => { admitted = true; return p; });
   await Promise.resolve(); expect(admitted).toBe(false);
-  first.release(); (await second).release();
-});
-
-it('serializa além da 2ª vaga do projeto: a 3ª espera a liberação', async () => {
-  const value = pool();
-  const first = await value.acquire(request());
-  const second = await value.acquire(request());
-  let thirdAdmitted = false;
-  const third = value.acquire(request()).then(p => { thirdAdmitted = true; return p; });
-  await Promise.resolve(); expect(thirdAdmitted).toBe(false);
-  first.release(); const thirdPermit = await third; expect(thirdAdmitted).toBe(true);
-  second.release(); thirdPermit.release();
-});
-
-it('worktree compartilha o orçamento do projeto (não ganha vaga própria)', async () => {
-  const value = pool(() => ({ freeMB: 2_100, swapUsedMB: 0 })); // só 1 vaga
-  const first = await value.acquire(request());
-  let worktreeAdmitted = false;
-  const worktree = value.acquire({ ...request(), scope: { ...scope, checkoutId: 'wt', rootRealPath: '/isolated' } })
-    .then(p => { worktreeAdmitted = true; return p; });
-  await Promise.resolve(); expect(worktreeAdmitted).toBe(false);
-  first.release(); (await worktree).release();
-});
-
-it('reserva por tipo: tsc/tests 1024 MB, build/install 2048 MB', () => {
-  expect(heavyCommandReserveMB('typescript')).toBe(1024);
-  expect(heavyCommandReserveMB('tests')).toBe(1024);
-  expect(heavyCommandReserveMB('build')).toBe(2048);
-  expect(heavyCommandReserveMB('install')).toBe(2048);
-  expect(heavyCommandReserveMB('build', 4096)).toBe(4096);
-});
-
-it('com waitMs injetado (teste) missão e helper compartilham o prazo do pool', async () => {
-  vi.useFakeTimers();
-  const value = new HeavyCommandPermitPool({
-    memory: () => ({ freeMB: 100, swapUsedMB: 0 }),
-    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }),
-    refreshMemory: async () => {}, pollMs: 10, waitMs: 200, maxWaiters: 4, reserveMB: 1000,
-  });
-  pools.push(value);
-  const missionWait = expect(value.acquire({ ...request(), missionId: 'm' })).rejects.toThrow('wait_timeout');
-  const helperWait = expect(value.acquire({ ...request(), missionId: undefined })).rejects.toThrow('wait_timeout');
-  await vi.advanceTimersByTimeAsync(210);
-  await helperWait;
-  await missionWait;
-});
-
-it('produção (sem waitMs): missão espera 15 min, helper solto 5 min', async () => {
-  vi.useFakeTimers();
-  const value = new HeavyCommandPermitPool({
-    memory: () => ({ freeMB: 100, swapUsedMB: 0 }),
-    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }),
-    refreshMemory: async () => {}, pollMs: 10, maxWaiters: 4, reserveMB: 1000,
-  });
-  pools.push(value);
-  const missionWait = expect(value.acquire({ ...request(), missionId: 'm' })).rejects.toThrow('wait_timeout');
-  const helperWait = expect(value.acquire({ ...request(), missionId: undefined })).rejects.toThrow('wait_timeout');
-  // Helper solto: 300 s.
-  await vi.advanceTimersByTimeAsync(300_001);
-  await helperWait;
-  // Missão ainda esperando aos 300 s.
-  let missionSettled = false;
-  void missionWait.then(() => { missionSettled = true; }, () => { missionSettled = true; });
-  await Promise.resolve();
-  expect(missionSettled).toBe(false);
-  // 15 min totais.
-  await vi.advanceTimersByTimeAsync(600_000);
-  await missionWait;
+  first.release(); const next = await second; expect(admitted).toBe(true);
+  next.release(); other.release(); expect(value.snapshot().active).toBe(0);
 });
 
 it('cancels queued commands and keeps an active reservation through caller cancellation', async () => {
-  // Memória apertada: 1 vaga por projeto, então o segundo fica na fila.
-  const value = pool(() => ({ freeMB: 2_100, swapUsedMB: 0 }));
-  const activeController = new AbortController();
+  const value = pool(); const activeController = new AbortController();
   const active = await value.acquire({ ...request(), signal: activeController.signal });
   const cancelled = new AbortController();
   const waiting = value.acquire({ ...request(), signal: cancelled.signal });
@@ -115,20 +89,15 @@ it('cancels queued commands and keeps an active reservation through caller cance
 });
 
 it('reserves RAM atomically across projects and admits after physical release', async () => {
-  // 2500 livres: cabe a reserva de tsc (1024) + minFree 1000, mas não a 2ª.
   const value = pool(() => ({ freeMB: 2500, swapUsedMB: 99999 })); // stale swap peak is not pressure by default
   const first = await value.acquire(request()); let admitted = false;
   const second = value.acquire(request('second')).then(p => { admitted = true; return p; });
-  await Promise.resolve(); expect(admitted).toBe(false);
-  // kind 'typescript' reserva 1024 (não o fallback do pool).
-  expect(value.snapshot().reservedMB).toBe(1024);
+  await Promise.resolve(); expect(admitted).toBe(false); expect(value.snapshot().reservedMB).toBe(1000);
   first.release(); (await second).release();
 });
 
 it('does not let stale authority consume the next slot and bounds its waiting queue', async () => {
-  // Memória apertada: 1 vaga; dois waiters enchem o maxWaiters: 2.
-  const value = pool(() => ({ freeMB: 2_100, swapUsedMB: 0 }));
-  const first = await value.acquire(request()); let current = true;
+  const value = pool(); const first = await value.acquire(request()); let current = true;
   const stale = value.acquire({ ...request(), isCurrent: () => current });
   const staleResult = expect(stale).rejects.toThrow('authority');
   const last = value.acquire(request());
@@ -150,8 +119,7 @@ it('uses one machine slot when RAM is unknown', async () => {
 });
 
 it('queues Main-owned loose helpers without a mission, including direct assistant tools', async () => {
-  // Memória apertada: 1 vaga; o helper solto ocupa e o assistente espera.
-  const value = pool(() => ({ freeMB: 2_100, swapUsedMB: 0 }));
+  const value = pool();
   const helper = await value.acquire({ ...request(), missionId: undefined });
   expect(helper.id).not.toBe('');
   let admitted = false;

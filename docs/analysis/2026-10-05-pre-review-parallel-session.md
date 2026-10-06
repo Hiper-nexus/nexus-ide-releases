@@ -1,8 +1,9 @@
 # Revisão antecipada da sessão paralela
 
-Base: `596fa7651`. As alterações ainda estavam sendo implementadas durante a
-revisão; este parecer não aprova o conjunto para produção. A integração final
-deve conferir os arquivos novamente no commit enviado a `main`.
+Base inicial: `596fa7651`. A entrega chegou em `9078910b8` e confirmou os
+achados abaixo. Correções de integração registradas em F-257 a F-263;
+regressões e revisão independente concluídas; gate integrado com 395 testes aprovados, oito ignorados e TypeScript válido.
+Este relatório não declara o aplicativo empacotado pronto para produção.
 
 ## Bloqueadores encontrados no diff em andamento
 
@@ -39,8 +40,9 @@ elegibilidade e pressão antes de cada ação; preservar `operatorOpened`.
 
 `src/main/orch/tools-panes.ts` calcula `autoClose`, mas o caminho de
 `reused: true` retorna sem aplicá-lo à sessão reutilizada. Worker criado com
-`false` continua desarmado após novo pedido com o padrão automático; o
-inverso também ignora `false` explícito quando a sessão já estava armada.
+`false` continua desarmado após novo pedido com o padrão automático. A
+hipótese inversa não corresponde ao caminho normal: helpers já armados são
+excluídos da seleção de reuso.
 
 Aplicar a política da nova atribuição à sessão exata após envio bem-sucedido,
 antes do retorno, com proteção contra mudança de sessão. Cobrir as duas
@@ -53,10 +55,12 @@ reuso, entrega durável, revisão, conclusão, retomada e saída física. No
 spawn novo, a revisão encontrou preservação do relatório e do ledger para
 ACK, identidade da sessão no callback e preservação de WIP/branch.
 
-O Jev de momentum também está em elaboração. Na revisão final, conferir
-que sua resposta não suprime trabalho independente já pronto apenas porque
-há outro comando pesado em execução, nem atua com autoridade obsoleta após
-o await. Ainda não há aprovação desse novo caminho.
+No Jev entregue, a revisão confirmou atuação sobre estado obsoleto depois
+do await e supressão do backlog provado. A integração revalida missão,
+panes, tarefas, despachos e reservas; preserva a instrução mecânica de
+trabalho pronto, o prefixo do recibo durável e o preço canônico de Jev/Clef.
+As regressões correspondentes falharam antes da correção. Cinco suítes do
+supervisor/Jev passaram depois: 104 testes, com revisão independente limpa.
 
 Os gates de RAM PTY/ACP e as reservas entre agentes e validadores são uma
 correção separada, coberta pelo F-256. Ela preserva a política de fila de
