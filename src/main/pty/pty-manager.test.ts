@@ -4,6 +4,7 @@ import { licensedAgentCount } from '../license-enforcement';
 import { AcpClient } from '../acp/acp-client';
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import { requireAccess, maxAgents } from '../license-access';
+import { limitsForMachine, AGENT_PANE_FOOTPRINT_MB, primeSystemMemoryCacheForTest } from '../orch/pane-admission';
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -307,7 +308,11 @@ import { qwenNeedsLogicalCwd } from "./qwen-long-cwd";
 
 afterAll(() => fs.rmSync(app.getPath("userData"), { recursive: true, force: true }));
 
+const inheritedPaneGuard = process.env.NEXUS_PANE_GUARD;
 beforeEach(() => {
+  // Ownership fixtures retain fake children across cases. Resource admission
+  // has its own block below, which explicitly enables the real gate.
+  process.env.NEXUS_PANE_GUARD = 'off';
   windowsNpmShimLaunch.launch = null;
   // Most legacy hardening cases exercise the explicit hardened mode. Tests for
   // the default autopilot opt into operator-choice locally.
@@ -315,6 +320,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (inheritedPaneGuard === undefined) delete process.env.NEXUS_PANE_GUARD;
+  else process.env.NEXUS_PANE_GUARD = inheritedPaneGuard;
   setSquadCliPolicyLookupForTests(null);
 });
 
@@ -956,6 +963,105 @@ function fakeHost(): {
     specFor: (id) => specs.get(id)!,
   };
 }
+
+describe('automatic worker resource admission at physical spawn', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    primeSystemMemoryCacheForTest(null);
+  });
+
+  it('counts ACP, pending PTY children and physical termination, then resumes in the same scope', async () => {
+    vi.stubEnv('NEXUS_PANE_GUARD', '');
+    vi.stubEnv('NEXUS_PANE_CAP', '2');
+    primeSystemMemoryCacheForTest({ freeMB: 64_000, swapUsedMB: 0 });
+    const h = fakeHost(); setPtyHost(h.host);
+    const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false });
+    const req = { kind: 'cli-agent' as const, cols: 80, rows: 24 };
+    const authority = legacyManualWorker();
+    const user = spawnAgentSession(fakeWc(), req, adapter, {}, trustedSpawn());
+    const acp = AcpClient.spawn({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] });
+    const children = [user.sessionId];
+    try {
+      expect(() => spawnAgentSession(null, req, adapter, {}, authority)).toThrow(/Teto/);
+      await acp.shutdown();
+      const worker = spawnAgentSession(null, req, adapter, {}, authority);
+      children.push(worker.sessionId);
+      expect(getSessionState(worker.sessionId)).toBe('spawning');
+      expect(() => spawnAgentSession(null, req, adapter, {}, authority)).toThrow(/Teto/);
+      let prove!: () => void;
+      const proof = new Promise<void>(resolve => { prove = resolve; });
+      vi.mocked(h.procFor(worker.sessionId).terminate).mockImplementationOnce(async () => {
+        await proof; return { ok: true, rootExited: true, descendantsExited: true };
+      });
+      const stopping = orchTerminateSession(worker.sessionId);
+      try {
+        expect(() => spawnAgentSession(null, req, adapter, {}, authority)).toThrow(/Teto/);
+      } finally { prove(); await stopping; }
+      const resumed = spawnAgentSession(null, req, adapter, {}, authority);
+      children.push(resumed.sessionId);
+      expect(getAgentSessionInfo(resumed.sessionId)).toMatchObject({ scope: authority.scope, missionId: authority.context!.missionId });
+    } finally {
+      for (const id of children) await orchTerminateSession(id);
+      await acp.shutdown();
+    }
+  });
+
+  it.each([16, 32])('requires room for one child on %i GB but preserves explicit human choices', async (gb) => {
+    const totalmem = vi.spyOn(os, 'totalmem').mockReturnValue(gb * 1024 ** 3);
+    vi.stubEnv('NEXUS_PANE_GUARD', '');
+    const limits = limitsForMachine(gb * 1024);
+    primeSystemMemoryCacheForTest({ freeMB: limits.minFreeMB + AGENT_PANE_FOOTPRINT_MB - 1, swapUsedMB: 0 });
+    const h = fakeHost(); setPtyHost(h.host);
+    const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false });
+    const req = { kind: 'cli-agent' as const, cols: 80, rows: 24 };
+    const worker = legacyManualWorker();
+    const children: string[] = [];
+    try {
+      expect(() => spawnAgentSession(null, req, adapter, {}, worker)).toThrow(/Memória/);
+      const hand = { ...worker, context: { ...worker.context!, operatorOpened: true as const } };
+      children.push(spawnAgentSession(fakeWc(), req, adapter, {}, hand).sessionId);
+      children.push(spawnAgentSession(fakeWc(), req, adapter, {}, trustedSpawn()).sessionId);
+      vi.stubEnv('NEXUS_PANE_GUARD', 'off');
+      children.push(spawnAgentSession(null, req, adapter, {}, worker).sessionId);
+    } finally {
+      for (const id of children) await orchTerminateSession(id);
+      totalmem.mockRestore();
+    }
+  });
+
+  it.each([16, 32])('reserves the cached memory headroom across a %i GB burst and pending startup', async (gb) => {
+    const totalmem = vi.spyOn(os, 'totalmem').mockReturnValue(gb * 1024 ** 3);
+    vi.stubEnv('NEXUS_PANE_GUARD', '');
+    const limits = limitsForMachine(gb * 1024);
+    const sample = { freeMB: limits.minFreeMB + 1.5 * AGENT_PANE_FOOTPRINT_MB, swapUsedMB: 0 };
+    primeSystemMemoryCacheForTest(sample);
+    const h = fakeHost(); setPtyHost(h.host);
+    const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false });
+    const req = { kind: 'cli-agent' as const, cols: 80, rows: 24 };
+    const authority = legacyManualWorker();
+    const children: string[] = [];
+    try {
+      const first = spawnAgentSession(null, req, adapter, {}, authority);
+      children.push(first.sessionId);
+      expect(() => spawnAgentSession(null, req, adapter, {}, authority)).toThrow(/Memória/);
+      // A fresh sample still cannot include a child waiting on async readiness.
+      primeSystemMemoryCacheForTest({ ...sample });
+      expect(() => spawnAgentSession(null, req, adapter, {}, authority)).toThrow(/Memória/);
+      await orchTerminateSession(first.sessionId);
+      const resumed = spawnAgentSession(null, req, adapter, {}, authority);
+      children.push(resumed.sessionId);
+      publishSessionActivityState(resumed.sessionId, 'idle');
+      // Finishing startup alone does not re-use the old sample. Only a new
+      // measurement taken after startup can absorb that reservation.
+      expect(() => spawnAgentSession(null, req, adapter, {}, authority)).toThrow(/Memória/);
+      primeSystemMemoryCacheForTest({ ...sample });
+      children.push(spawnAgentSession(null, req, adapter, {}, authority).sessionId);
+    } finally {
+      for (const id of children) await orchTerminateSession(id);
+      totalmem.mockRestore();
+    }
+  });
+});
 
 it('enforces a shared two-agent cap across PTY and ACP and releases only on physical finalization', async () => {
   // Run before legacy ownership fixtures accumulate their fake live sessions.

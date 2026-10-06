@@ -72,6 +72,7 @@ const roots: string[] = [];
 function tempRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-wiring-'));
   roots.push(root);
+  fs.mkdirSync(path.join(root, 'home'));
   return root;
 }
 
@@ -2018,4 +2019,39 @@ describe('F-781: WebFetch negado só onde o navegador do Nexus está ao alcance'
       decoration.onSpawnFailed?.();
     }
   });
+});
+
+it.runIf(process.platform === 'darwin')('MCP shutdown retains an unproven child bootstrap until physical exit', async () => {
+  const { stopMcpServer } = await import('./mcp-server');
+  const { publishExternalSessionExit } = await import('../pty/pty-manager');
+  const { spawnSync } = await import('node:child_process');
+  const home = path.join(tempRoot(), 'home');
+  const cwd = path.join(home, 'workspace'); fs.mkdirSync(cwd);
+  vi.stubEnv('HOME', home);
+  const decoration = prepareAgentSpawnDecoration(adapter('claude'), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, false))!;
+  const profile = decoration.env.NEXUS_HEAVY_ZDOTDIR;
+  expect(fs.existsSync(path.join(profile, '.zshenv'))).toBe(true);
+  const sessionId = 'finite-unproven-heavy-zsh';
+  decoration.onSpawned?.(sessionId);
+  await stopMcpServer();
+  try {
+    expect(fs.existsSync(path.join(profile, '.zshenv'))).toBe(true);
+    const result = spawnSync('/bin/zsh', ['-s'], { cwd,
+      env: { ...decoration.env, PATH: '/usr/bin:/bin', HOME: home, NEXUS_HEAVY_NODE: process.execPath,
+        NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1/hook/heavy-command', NODE_OPTIONS: '' },
+      input: '/usr/bin/make --version', encoding: 'utf8', timeout: 10_000 });
+    expect(result.status, result.stdout + result.stderr).toBe(78);
+  } finally { publishExternalSessionExit(sessionId); }
+  expect(fs.existsSync(profile)).toBe(false);
+});
+
+it.runIf(process.platform === 'darwin')('failed spawn removes its unbound private bootstrap', () => {
+  const home = path.join(tempRoot(), 'home');
+  const cwd = path.join(home, 'workspace'); fs.mkdirSync(cwd);
+  vi.stubEnv('HOME', home);
+  const decoration = prepareAgentSpawnDecoration(adapter('claude'), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, false))!;
+  const profile = decoration.env.NEXUS_HEAVY_ZDOTDIR;
+  expect(fs.existsSync(profile)).toBe(true);
+  decoration.onSpawnFailed?.();
+  expect(fs.existsSync(profile)).toBe(false);
 });

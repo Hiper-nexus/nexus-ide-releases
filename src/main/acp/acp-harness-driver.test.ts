@@ -3,6 +3,7 @@ beforeEach(resetLicensedAccessMock);
 import { beforeEach } from 'vitest';
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import { requireAccess } from '../license-access';
+import { primeSystemMemoryCacheForTest } from '../orch/pane-admission';
 import { vi } from 'vitest';
 /**
  * Integration tests for the production ACP harness driver (fake peer subprocess).
@@ -79,6 +80,24 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await rm(fixtureDir, { recursive: true, force: true });
+});
+
+test('mission authority activates RAM admission only for automatic workers', async () => {
+  vi.stubEnv('NEXUS_PANE_GUARD', '');
+  primeSystemMemoryCacheForTest({ freeMB: 1, swapUsedMB: 0 });
+  const base = {
+    harness: { ...PRESET_HARNESSES[0], command: process.execPath, args: [fakePeerPath] },
+    cwd: fixtureDir, paneId: 'resource-pane', missionId: 'resource-mission',
+    scope: { version: 1 as const, installationId: 'install-test', projectId: 'p', checkoutId: 'c', rootRealPath: fixtureDir, identitySource: 'manifest' as const },
+    publishFrame: () => {},
+  };
+  try {
+    await expect(spawnAcpHarnessSession(base)).rejects.toThrow(/Memória/);
+    for (const override of [{ role: 'orchestrator' as const }, { role: 'worker' as const, operatorOpened: true as const }]) {
+      const session = await spawnAcpHarnessSession({ ...base, ...override });
+      await session.shutdown();
+    }
+  } finally { vi.unstubAllEnvs(); primeSystemMemoryCacheForTest(null); }
 });
 
 describe('acp-harness-driver', () => {

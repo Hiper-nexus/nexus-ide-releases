@@ -161,6 +161,7 @@ export async function spawnMainOwnedAcpMissionPane(
       role: options.role,
       workerIncarnationId: options.workerIncarnationId,
       mcpToken,
+      operatorOpened: options.operatorOpened,
       mcpServers: [buildAcpMcpStdioServer(mcp.url, mcpToken)],
       model: options.model,
       accountId: options.accountId,

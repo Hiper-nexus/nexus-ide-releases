@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { getCachedSystemMemory, readPaneAdmissionLimits, refreshSystemMemorySample, type SystemMemorySample } from './pane-admission';
+import { getMemoryAfterAgentReservations, readPaneAdmissionLimits, refreshSystemMemorySample, registerHeavyCommandMemoryReservation, type SystemMemorySample } from './pane-admission';
 
 export type HeavyCommandKind = 'typescript' | 'tests' | 'build' | 'install';
 export interface HeavyCommandRequest {
@@ -135,8 +135,9 @@ export class HeavyCommandPermitPool {
   }
 }
 
-const permits = new HeavyCommandPermitPool({ memory: getCachedSystemMemory, limits: readPaneAdmissionLimits,
+const permits = new HeavyCommandPermitPool({ memory: getMemoryAfterAgentReservations, limits: readPaneAdmissionLimits,
   refreshMemory: refreshSystemMemorySample });
+registerHeavyCommandMemoryReservation(() => permits.snapshot().reservedMB);
 export function acquireHeavyCommandPermit(request: HeavyCommandRequest): Promise<HeavyCommandPermit> { return permits.acquire(request); }
 export function heavyCommandPermitSnapshot(): ReturnType<HeavyCommandPermitPool['snapshot']> { return permits.snapshot(); }
 export function closeHeavyCommandPermits(): void { permits.close(); }

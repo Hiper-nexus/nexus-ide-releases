@@ -1,4 +1,5 @@
 import { noteMimoMissionAuthority } from '../agent-hooks/mimo-mission-authority';
+import { heavyZshProfile } from '../orch/native-heavy-zdotdir';
 import { stripInheritedHeavyCommandEnvironment, reassertHeavyCommandBashEnvironment } from '../orch/native-heavy-preload';
 import { reserveMuseNativeHeavyProfile } from '../orch/native-heavy-muse-profile';
 import { cleanupCliMcpSession } from '../orch/cli-mcp-session-artifacts';
@@ -7,7 +8,7 @@ import { getContext as getNativeHeavyGateContext, isCurrentGateContext } from '.
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { recordSessionInputReceipt, forgetSessionInputReceipt, type SystemInputWriter } from '../orch/operator-input-receipts';
 import { configurePtyAnalysis, bindPtyAnalysisSession, feedPtyAnalysis, inputPtyAnalysis, statePtyAnalysis, exitPtyAnalysis, terminatePtyAnalysis } from './pty-analysis-runtime';
-import { assertLicenseAccess, reserveLicensedAgent } from '../license-enforcement';
+import { assertLicenseAccess, reserveLicensedAgent, licensedAgentCount } from '../license-enforcement';
 import fs from "node:fs";
 import { canResumeMimoNativeSession } from "../adapters/mimo-session-owner";
 import { mimoSkipPermissionsViaEnv } from "../adapters/mimo-skip-permissions";
@@ -115,7 +116,7 @@ import {
   type CodexGovernedProcessSandbox,
 } from "../orch/cli-mcp-session-config";
 import { requiresSpawnGate } from "../orch/spawn-home-policy";
-import { admitAgentSpawnSync } from "../orch/pane-admission";
+import { admitAgentSpawnSync, registerAgentMemoryCensus } from "../orch/pane-admission";
 import { isReleaseQualifiedMissionWorkerCli } from "../orch/squad-runtime-policy";
 import {
   codexGovernedSandboxLaunchMode,
@@ -1711,11 +1712,15 @@ export function spawnAgentSession(
   // ("+ Pane", nexus_pane_spawn, Via Rápida, respawn, revival e spawns
   // main-owned), então o gate mora aqui. Shells comuns (spawnSession) são
   // baratos e não contam. A recusa nomeia os panes ociosos a fechar.
-  const liveAgentPanes = countLiveAgentSessions();
+  const automaticWorker = authority?.context?.role === 'worker' &&
+    Boolean(authority.context.missionId) && authority.context.operatorOpened !== true;
+  // Physical reservations include pending startup, ACP and terminating children.
+  const liveAgentPanes = automaticWorker ? licensedAgentCount() : countLiveAgentSessions();
   const admission = admitAgentSpawnSync(liveAgentPanes, Date.now(), process.env, {
     // `authority` pode faltar num chamador inválido: a recusa "trusted spawn
     // authority" logo abaixo é quem responde, não um TypeError aqui.
     agentRequested: authority?.context?.operatorParentSessionId !== undefined,
+    automaticWorker,
   });
   if (!admission.ok) {
     console.warn(
@@ -2540,6 +2545,7 @@ export function spawnAgentSession(
   let spawnCwd = cwd;
   let spawnEnv = cleanEnv(env);
   reassertHeavyCommandBashEnvironment(spawnEnv, /^node(?:\.exe)?$/i.test(path.basename(bin)) && args[0] ? args[0] : bin);
+  const heavyZsh = heavyZshProfile(spawnEnv.NEXUS_GATE_TOKEN);
   /** Seatbelt/Bubblewrap already owns this spawn — never wrap with tmux attach. */
   let processSandboxActive = false;
   if (codexProcessSandbox) {
@@ -2621,6 +2627,7 @@ export function spawnAgentSession(
           // file already produced. Read-only lanes never commit, so they get
           // neither.
           extraReadPaths: [
+            ...(heavyZsh ? [heavyZsh.directory] : []),
             ...codexProcessSandbox.providerStatePaths,
             ...(decoration?.missionShimReadPaths ?? []),
             ...(decoration?.attachmentReadPaths ?? []),
@@ -2629,11 +2636,14 @@ export function spawnAgentSession(
             ...worktreeGit.readPaths,
           ],
           extraWritePaths: [
+            ...(heavyZsh ? [heavyZsh.directory] : []),
             ...codexProcessSandbox.providerStatePaths,
             ...(decoration?.missionShimWritePaths ?? []),
             ...worktreeGit.writePaths,
           ],
+          protectedDirectoryPaths: heavyZsh?.protectedDirectoryPaths,
           protectedWritePaths: [
+            ...(heavyZsh?.protectedWritePaths ?? []),
             ...codexProcessSandbox.protectedWritePaths,
             ...worktreeGit.protectedPaths,
           ],
@@ -2786,7 +2796,10 @@ export function spawnAgentSession(
           // also broke helper subprocesses while leaving the CLI itself online,
           // which is inconsistent rather than safe.
           sandboxProfile: "workspace-net",
+          protectedWritePaths: heavyZsh?.protectedWritePaths,
+          protectedDirectoryPaths: heavyZsh?.protectedDirectoryPaths,
           extraReadPaths: [
+            ...(heavyZsh ? [heavyZsh.directory] : []),
             ...advisorySandbox.extraWritePaths,
             ...advisorySandbox.providerStateReadPaths,
             ...(checkoutProviderHome?.sharedFiles ?? []),
@@ -2794,6 +2807,7 @@ export function spawnAgentSession(
             ...(decoration?.attachmentReadPaths ?? []),
           ],
           extraWritePaths: [
+            ...(heavyZsh ? [heavyZsh.directory] : []),
             ...advisorySandbox.extraWritePaths,
             ...advisorySandbox.providerStateWritePaths,
             ...(checkoutProviderHome?.sharedFiles ?? []),
@@ -4453,6 +4467,11 @@ export function countLiveAgentSessions(): number {
   return count;
 }
 
+
+registerAgentMemoryCensus(() => ({
+  live: licensedAgentCount(),
+  pending: [...sessions.values()].filter(session => session.agent && session.state === 'spawning').length,
+}));
 
 configurePtyAnalysis({
   describe: (sessionId) => { const info = getAgentSessionInfo(sessionId); return info ? { adapterId: info.adapterId, paneId: info.paneId } : {}; },

@@ -3,6 +3,8 @@ beforeEach(resetLicensedAccessMock);
 import { beforeEach } from 'vitest';
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import { requireAccess } from '../license-access';
+import { licensedAgentCount } from '../license-enforcement';
+import { AGENT_PANE_FOOTPRINT_MB, limitsForMachine, primeSystemMemoryCacheForTest } from '../orch/pane-admission';
 /**
  * TDD suite for the ACP client, driven against a REAL subprocess: an inline
  * fake peer (Node script written to a temp dir) that speaks ACP on the other
@@ -607,4 +609,54 @@ test('license denial prevents a physical ACP child from being created', async ()
   try {
     expect(() => { child = AcpClient.spawn({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] }); }).toThrow(/license_access_denied/);
   } finally { await child?.shutdown(); }
+});
+
+describe('automatic ACP worker resource admission', () => {
+  test.each([16, 32])('reserves startup RAM on %i GB, including refreshed samples, and releases after exit', async (gb) => {
+    const totalmem = vi.spyOn(os, 'totalmem').mockReturnValue(gb * 1024 ** 3);
+    vi.stubEnv('NEXUS_PANE_GUARD', '');
+    const limits = limitsForMachine(gb * 1024);
+    const sample = { freeMB: limits.minFreeMB + 1.5 * AGENT_PANE_FOOTPRINT_MB, swapUsedMB: 0 };
+    primeSystemMemoryCacheForTest(sample);
+    const children: AcpClient[] = [];
+    const spawnWorker = () => {
+      const child = AcpClient.spawn({ command: process.execPath, args: [fakePeerPath, 'happy'], automaticWorker: true });
+      children.push(child); return child;
+    };
+    try {
+      const first = spawnWorker();
+      expect(() => spawnWorker()).toThrow(/Memória/);
+      primeSystemMemoryCacheForTest({ ...sample });
+      expect(() => spawnWorker()).toThrow(/Memória/);
+      await first.initialize();
+      expect(() => spawnWorker()).toThrow(/Memória/);
+      primeSystemMemoryCacheForTest({ ...sample });
+      const second = spawnWorker();
+      await second.shutdown();
+      expect(licensedAgentCount()).toBe(1);
+      spawnWorker();
+    } finally {
+      for (const child of children) await child.shutdown();
+      totalmem.mockRestore(); vi.unstubAllEnvs(); primeSystemMemoryCacheForTest(null);
+    }
+  });
+
+  test('counts the shared physical inventory at cap while keeping probes and guard off available', async () => {
+    vi.stubEnv('NEXUS_PANE_GUARD', ''); vi.stubEnv('NEXUS_PANE_CAP', '1');
+    primeSystemMemoryCacheForTest({ freeMB: 64_000, swapUsedMB: 0 });
+    const children: AcpClient[] = [];
+    const spawnChild = (automaticWorker = false) => {
+      const child = AcpClient.spawn({ command: process.execPath, args: [fakePeerPath, 'happy'], automaticWorker });
+      children.push(child); return child;
+    };
+    try {
+      spawnChild();
+      expect(() => spawnChild(true)).toThrow(/Teto/);
+      spawnChild();
+      vi.stubEnv('NEXUS_PANE_GUARD', 'off'); spawnChild(true);
+    } finally {
+      for (const child of children) await child.shutdown();
+      vi.unstubAllEnvs(); primeSystemMemoryCacheForTest(null);
+    }
+  });
 });

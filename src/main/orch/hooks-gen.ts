@@ -1,3 +1,4 @@
+import { cleanupHeavyZshProfile } from './native-heavy-zdotdir';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -962,6 +963,7 @@ export function writeMcpConfigFile(tokenId: string, mcpConfig: object): string {
 
 /** Remove per-session artifacts once the session dies (best effort). */
 export function cleanupSessionArtifacts(tokenId: string): void {
+  try { cleanupHeavyZshProfile(tokenId); } catch { /* best-effort physical-session cleanup */ }
   const short = tokenId.slice(0, 12);
   const overlay = path.join(os.homedir(), '.nexus', 'ephemeral', short);
   try {

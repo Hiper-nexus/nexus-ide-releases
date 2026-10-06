@@ -1,4 +1,5 @@
-import { reserveLicensedAgent } from '../license-enforcement';
+import { licensedAgentCount, reserveLicensedAgent } from '../license-enforcement';
+import { admitAgentSpawnSync, registerAgentMemoryCensus } from '../orch/pane-admission';
 /**
  * ACP client — drives an ACP-speaking agent subprocess over stdio.
  *
@@ -229,6 +230,8 @@ interface ActiveTurn {
 
 export interface AcpSpawnOptions {
   command: string;
+  /** Derived only by Main's mission driver; probes and operator panes omit it. */
+  automaticWorker?: boolean;
   args?: readonly string[];
   /** Merged over process.env. Reserved-key stripping happens upstream. */
   env?: Readonly<Record<string, string>>;
@@ -390,6 +393,9 @@ export function killHarnessProcessTree(
 // Client
 // ---------------------------------------------------------------------------
 
+let pendingAcpAgents = 0;
+registerAgentMemoryCensus(() => ({ live: licensedAgentCount(), pending: pendingAcpAgents }), 'acp');
+
 export class AcpClient {
   private readonly sessionConfigById = new Map<string, readonly AcpSessionConfigOption[]>();
   private readonly child: ChildProcess;
@@ -414,7 +420,7 @@ export class AcpClient {
     null;
   private readonly exitWaiters: Array<() => void> = [];
 
-  private constructor(child: ChildProcess, options: AcpSpawnOptions) {
+  private constructor(child: ChildProcess, options: AcpSpawnOptions, private readonly finishStartup: () => void) {
     this.child = child;
     this.requestTimeoutMs = options.requestTimeoutMs ?? ACP_REQUEST_TIMEOUT_MS;
     this.writeTimeoutMs = options.writeTimeoutMs ?? ACP_WRITE_TIMEOUT_MS;
@@ -437,7 +443,18 @@ export class AcpClient {
    */
   static spawn(options: AcpSpawnOptions): AcpClient {
     validateSpawnOptions(options);
-    const release = reserveLicensedAgent();
+    const admission = admitAgentSpawnSync(licensedAgentCount(), Date.now(), process.env, {
+      automaticWorker: options.automaticWorker === true,
+    });
+    if (!admission.ok) throw new AcpClientError('spawn-failed', admission.message);
+    if (admission.warning) console.warn(`[pane-admission] ${admission.warning}`);
+    const releaseLicense = reserveLicensedAgent();
+    pendingAcpAgents += 1;
+    let starting = true;
+    const finishStartup = () => {
+      if (starting) { starting = false; pendingAcpAgents -= 1; }
+    };
+    const release = () => { finishStartup(); releaseLicense(); };
     let child: ChildProcess | undefined;
     try {
     child = spawn(options.command, [...(options.args ?? [])], {
@@ -448,7 +465,7 @@ export class AcpClient {
     });
     child.once('exit', release);
     child.once('error', () => { if (child?.pid === undefined) release(); });
-    const client = new AcpClient(child, options);
+    const client = new AcpClient(child, options, finishStartup);
     client.attach();
     return client;
     } catch (error) {
@@ -523,6 +540,7 @@ export class AcpClient {
       this.destroy(error);
       throw error;
     }
+    this.finishStartup();
     return parsed.value;
   }
 

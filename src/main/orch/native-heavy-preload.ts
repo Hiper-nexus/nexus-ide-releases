@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { app } from 'electron';
 import { DARWIN_NESTED_HEAVY_JOB_LAUNCH_SOURCE, DARWIN_PTY_SUPERVISOR_IDENTIFIER, NEXUS_APPLE_TEAM_ID } from '../pty/darwin-pty-supervisor';
+import { heavyZshProfile, prepareHeavyZshProfile } from './native-heavy-zdotdir';
 let mainOwnedJobBase: string | undefined;
 export function heavyCommandPreloadPath(): string {
   return app.isPackaged ? path.join(process.resourcesPath, 'heavy-command', 'preload.cjs') : path.join(app.getAppPath(), 'resources', 'heavy-command', 'preload.cjs');
@@ -13,7 +14,7 @@ export function appendHeavyCommandPreload(existing: string | undefined, file: st
 }
 
 /** Main constructs these values from bundled resources after caller overrides. */
-export function heavyCommandShellEnvironment(prepared: NodeJS.ProcessEnv, preload = heavyCommandPreloadPath()): Record<string, string> {
+export function heavyCommandShellEnvironment(prepared: NodeJS.ProcessEnv, preload = heavyCommandPreloadPath(), token?: string): Record<string, string> {
   const directory = path.dirname(fs.realpathSync(preload));
   const bash = path.join(directory, 'shell.bash');
   for (const name of ['shell.bash', 'shell.zsh', '.zshenv', 'request.cjs', 'classify.cjs', 'job-launch.cjs', 'tool-hook.cjs', 'catalog.cjs', 'child-process.cjs', 'local-channel.cjs']) {
@@ -23,7 +24,9 @@ export function heavyCommandShellEnvironment(prepared: NodeJS.ProcessEnv, preloa
   const node = (prepared.PATH ?? process.env.PATH ?? '').split(path.delimiter).filter(path.isAbsolute)
     .slice(0, 256).map((entry) => path.join(entry, process.platform === 'win32' ? 'node.exe' : 'node'))
     .find((file) => { try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); } catch { return false; } });
+  const profile = process.platform === 'darwin' && token ? prepareHeavyZshProfile(token, directory) : undefined;
   return {
+    ...(profile ? { NEXUS_HEAVY_ZDOTDIR: profile.directory } : {}),
     ...(process.platform === 'darwin' ? { NEXUS_HEAVY_CURL: '/usr/bin/curl', ...(mainOwnedJobBase ? { NEXUS_HEAVY_JOB_BASE: mainOwnedJobBase } : {}) } : {}),
     NEXUS_HEAVY_DIR: directory,
     NEXUS_HEAVY_NODE: node ? fs.realpathSync(node) : 'node',
@@ -31,7 +34,7 @@ export function heavyCommandShellEnvironment(prepared: NodeJS.ProcessEnv, preloa
     BASH_ENV: bash,
     NEXUS_HEAVY_ORIG_BASH_ENV: prepared.BASH_ENV ?? '',
     NEXUS_HEAVY_ORIG_ZDOTDIR: prepared.ZDOTDIR ?? prepared.HOME ?? os.homedir(),
-    ZDOTDIR: directory,
+    ZDOTDIR: profile?.directory ?? directory,
   };
 }
 
@@ -39,7 +42,7 @@ export function heavyCommandShellEnvironment(prepared: NodeJS.ProcessEnv, preloa
 export function stripInheritedHeavyCommandEnvironment(env: Record<string, string>): void {
   const dir = env.NEXUS_HEAVY_DIR;
   if (dir && env.BASH_ENV === path.join(dir, 'shell.bash')) delete env.BASH_ENV;
-  if (dir && env.ZDOTDIR === dir) {
+  if (dir && (env.ZDOTDIR === dir || env.ZDOTDIR === env.NEXUS_HEAVY_ZDOTDIR)) {
     const original = env.NEXUS_HEAVY_ORIG_ZDOTDIR;
     if (original) env.ZDOTDIR = original; else delete env.ZDOTDIR;
   }
@@ -58,7 +61,10 @@ export function reassertHeavyCommandBashEnvironment(env: Record<string, string>,
   env.NEXUS_HEAVY_DIR = directory;
   env.NEXUS_HEAVY_BASH_ENV = bash;
   env.BASH_ENV = bash;
-  env.ZDOTDIR = directory;
+  const profile = heavyZshProfile(env.NEXUS_GATE_TOKEN);
+  if (process.platform === 'darwin' && !profile) throw new Error('heavy_zsh_profile_authority_unavailable');
+  if (profile) env.NEXUS_HEAVY_ZDOTDIR = profile.directory; else delete env.NEXUS_HEAVY_ZDOTDIR;
+  env.ZDOTDIR = profile?.directory ?? directory;
 }
 
 export async function nativeHeavyJobEnvironment(): Promise<Record<string, string>> {

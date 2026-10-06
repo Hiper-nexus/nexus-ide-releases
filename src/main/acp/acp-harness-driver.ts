@@ -54,6 +54,7 @@ export interface AcpDriverSpawnInput {
   readonly scope: ProjectExecutionScope;
   readonly adapterId?: string;
   readonly role?: 'orchestrator' | 'worker';
+  readonly operatorOpened?: boolean;
   readonly workerIncarnationId?: string;
   readonly mcpServers?: readonly AcpMcpServerSpec[];
   /** Nexus bearer bound to the ACP session after session/new succeeds. */
@@ -134,6 +135,7 @@ function agentInfoForInput(
     source: 'pending' as const,
     role,
     missionId: input.missionId,
+    ...(input.operatorOpened === true ? { operatorOpened: true } : {}),
     ...(input.agentName !== undefined ? { agentName: input.agentName } : {}),
     ...(input.workerIncarnationId !== undefined
       ? { workerIncarnationId: input.workerIncarnationId }
@@ -282,6 +284,7 @@ export async function spawnAcpHarnessSession(
   let client: AcpClient;
   try {
     client = AcpClient.spawn({
+      automaticWorker: (input.role ?? 'worker') === 'worker' && Boolean(input.missionId) && input.operatorOpened !== true,
       command: input.harness.command,
       args: input.harness.args,
       cwd: input.cwd,

@@ -11,7 +11,7 @@ module.exports = function install() {
     // project-slot wait here deadlocks its 1s target-registration contract.
     if (require('./sdk-control.cjs')(file, args, options, process.env.NEXUS_HEAVY_AGENT_ENTRY)) return { file, args, options };
     const env = { ...(options.env || process.env) };
-    for (const key of ['NEXUS_HEAVY_CHANNEL_DIR', 'NEXUS_HEAVY_CHANNEL_KEY', 'NEXUS_HEAVY_CHANNEL_EPOCH', 'NEXUS_HEAVY_CHANNEL_PUBLIC_KEY', 'NEXUS_HEAVY_JOB_BASE', 'NEXUS_HEAVY_CURL', 'NEXUS_HEAVY_AGENT_ENTRY', 'NEXUS_GATE_TOKEN', 'NEXUS_HEAVY_COMMAND_URL', 'NEXUS_HEAVY_DIR', 'NEXUS_HEAVY_NODE', 'NEXUS_HEAVY_BASH_ENV', 'NEXUS_HEAVY_LEASE', 'NEXUS_HEAVY_ORIG_BASH_ENV', 'NEXUS_HEAVY_ORIG_ZDOTDIR', 'NEXUS_HEAVY_DISPATCHED']) {
+    for (const key of ['NEXUS_HEAVY_CHANNEL_DIR', 'NEXUS_HEAVY_CHANNEL_KEY', 'NEXUS_HEAVY_CHANNEL_EPOCH', 'NEXUS_HEAVY_CHANNEL_PUBLIC_KEY', 'NEXUS_HEAVY_JOB_BASE', 'NEXUS_HEAVY_CURL', 'NEXUS_HEAVY_AGENT_ENTRY', 'NEXUS_GATE_TOKEN', 'NEXUS_HEAVY_COMMAND_URL', 'NEXUS_HEAVY_DIR', 'NEXUS_HEAVY_ZDOTDIR', 'NEXUS_HEAVY_NODE', 'NEXUS_HEAVY_BASH_ENV', 'NEXUS_HEAVY_LEASE', 'NEXUS_HEAVY_ORIG_BASH_ENV', 'NEXUS_HEAVY_ORIG_ZDOTDIR', 'NEXUS_HEAVY_DISPATCHED']) {
       if (process.env[key] !== undefined) env[key] = process.env[key]; else delete env[key];
     }
     const helperEntry = typeof args[0] === 'string' && ['request.cjs', 'classify.cjs', 'tool-hook.cjs', 'job-launch.cjs'].some((name) => args[0] === path.join(__dirname, name));
@@ -19,7 +19,7 @@ module.exports = function install() {
     delete env.NEXUS_HEAVY_HELPER;
     if (!(env.NODE_OPTIONS || '').includes(preload)) env.NODE_OPTIONS = `${env.NODE_OPTIONS || ''} --require ${JSON.stringify(preload)}`.trim();
     if (process.env.NEXUS_HEAVY_BASH_ENV) env.BASH_ENV = process.env.NEXUS_HEAVY_BASH_ENV;
-    if (process.env.NEXUS_HEAVY_DIR) env.ZDOTDIR = process.env.NEXUS_HEAVY_DIR;
+    if (process.env.NEXUS_HEAVY_DIR) env.ZDOTDIR = process.env.NEXUS_HEAVY_ZDOTDIR || process.env.NEXUS_HEAVY_DIR;
     const node = file === process.execPath || /^node(?:\.exe)?$/i.test(path.basename(file));
     const kind = node ? catalog.entryKind([process.execPath, ...args]) || (process.env.NEXUS_HEAVY_JOB_BASE && !catalog.isPersistent([process.execPath, ...args]) ? 'build' : null) : catalog.commandKind([file, ...args].join(' '));
     if (kind && env.NEXUS_HEAVY_JOB_BASE && !env.NEXUS_HEAVY_LEASE) {

@@ -2,10 +2,61 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_PANE_ADMISSION_LIMITS,
+  AGENT_PANE_FOOTPRINT_MB,
+  limitsForMachine,
   evaluatePaneAdmission,
   readPaneAdmissionLimits,
+  registerAgentMemoryCensus,
+  getCachedSystemMemory,
+  getMemoryAfterAgentReservations,
+  primeSystemMemoryCacheForTest,
   type PaneAdmissionInput,
 } from './pane-admission';
+
+it('combines PTY and ACP pending startups without doubling their shared physical count', () => {
+  let live = 1;
+  let pending = 0;
+  const undoPty = registerAgentMemoryCensus(() => ({ live, pending }), 'test-pty');
+  const undoAcp = registerAgentMemoryCensus(() => ({ live, pending }), 'test-acp');
+  try {
+    const sample = { freeMB: 10_000, swapUsedMB: 0 };
+    primeSystemMemoryCacheForTest(sample);
+    live = 3; pending = 1;
+    expect(getMemoryAfterAgentReservations()?.freeMB).toBe(10_000 - 2 * AGENT_PANE_FOOTPRINT_MB);
+    expect(getCachedSystemMemory()).toEqual(sample);
+    pending = 0;
+    expect(getMemoryAfterAgentReservations()?.freeMB).toBe(10_000 - 2 * AGENT_PANE_FOOTPRINT_MB);
+    primeSystemMemoryCacheForTest(sample);
+    expect(getMemoryAfterAgentReservations()).toEqual(sample);
+  } finally { undoPty(); undoAcp(); primeSystemMemoryCacheForTest(null); }
+});
+
+describe('automatic mission worker admission', () => {
+  it.each([16, 32])('enforces the existing %i GB budget and admits again after capacity returns', (gb) => {
+    const limits = limitsForMachine(gb * 1024);
+    const worker = (liveAgentPanes: number, freeMB: number) => evaluatePaneAdmission({
+      liveAgentPanes, limits, memory: { freeMB, swapUsedMB: 9_000 },
+      idleCandidates: [], automaticWorker: true,
+    });
+    const enough = limits.minFreeMB + 3 * AGENT_PANE_FOOTPRINT_MB;
+    expect(worker(1, enough).ok).toBe(true);
+    expect(worker(limits.maxAgentPanes, enough)).toMatchObject({ ok: false, reason: 'cap' });
+    expect(worker(limits.maxAgentPanes - 1, enough).ok).toBe(true);
+    // Merely being above the minimum is insufficient: the next child needs room.
+    expect(worker(1, limits.minFreeMB + AGENT_PANE_FOOTPRINT_MB - 1)).toMatchObject({ ok: false, reason: 'memory' });
+    expect(worker(1, limits.minFreeMB - 1)).toMatchObject({ ok: false, reason: 'memory' });
+    expect(worker(1, limits.minFreeMB + AGENT_PANE_FOOTPRINT_MB).ok).toBe(true);
+  });
+
+  it('respects explicit resource limits, guard off, and human warning-only admission', () => {
+    const limits = readPaneAdmissionLimits({ NEXUS_PANE_CAP: '2', NEXUS_PANE_MIN_FREE_MB: '512' }, 16 * 1024);
+    const atCap = input({ limits, liveAgentPanes: 2, automaticWorker: true });
+    expect(evaluatePaneAdmission(atCap)).toMatchObject({ ok: false, reason: 'cap' });
+    expect(evaluatePaneAdmission({ ...atCap, automaticWorker: false }).ok).toBe(true);
+    expect(evaluatePaneAdmission({ ...atCap, limits: { ...limits, enabled: false }, memory: { freeMB: 1, swapUsedMB: 0 } }).ok).toBe(true);
+    expect(evaluatePaneAdmission({ ...atCap, liveAgentPanes: 1, memory: null }).ok).toBe(true);
+  });
+});
 
 function input(overrides: Partial<PaneAdmissionInput> = {}): PaneAdmissionInput {
   return {
@@ -282,11 +333,19 @@ describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', (
     expect(limits.maxAgentPanes).toBe(12);
   });
 
-  it('num Mac de 16 GB o teto cai para 6 e o mínimo disponível nunca fica abaixo de 1 GB', async () => {
+  it('num Mac de 16 GB o teto cai para 4 (reserva de 10 GB para SO) e o mínimo disponível nunca fica abaixo de 1 GB', async () => {
     const { limitsForMachine } = await import('./pane-admission');
     const limits = limitsForMachine(16 * 1024);
-    expect(limits.maxAgentPanes).toBe(6);
+    // Otimização multi-pane 06/10: 6 panes × ~1,5 GB reais + SO + validadores
+    // estouravam 16 GB e a máquina congelava. Com reserva de 10 GB o teto é 4.
+    expect(limits.maxAgentPanes).toBe(4);
     expect(limits.minFreeMB).toBeGreaterThanOrEqual(1024);
+  });
+
+  it('num Mac de 12 GB o teto permanece 3 (minPanes vence o byRam da reserva ampliada)', async () => {
+    const { limitsForMachine } = await import('./pane-admission');
+    expect(limitsForMachine(12 * 1024).maxAgentPanes).toBe(3);
+    expect(limitsForMachine(8 * 1024).maxAgentPanes).toBe(2);
   });
 
   it('numa máquina de 64 GB o teto satura em 12 (o guardian, não a RAM, governa)', async () => {

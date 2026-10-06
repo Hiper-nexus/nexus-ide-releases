@@ -1,3 +1,4 @@
+import { heavyZshProfile } from './native-heavy-zdotdir';
 import { handleNativeHeavyCommandHttp, nativeHeavyCommands } from './native-heavy-command';
 import { appendHeavyCommandPreload, heavyCommandPreloadPath, heavyCommandShellEnvironment } from './native-heavy-preload';
 import { analysisClient, flushPtyAnalysis, subscribePtyAnalysis } from '../pty/pty-analysis-runtime';
@@ -1174,7 +1175,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       : {};
     {
       // Every CLI agent has a Main-minted session token, including the operator hand and loose helpers.
-      Object.assign(env, heavyCommandShellEnvironment(preparedEnv ?? process.env));
+      Object.assign(env, heavyCommandShellEnvironment(preparedEnv ?? process.env, heavyCommandPreloadPath(), ctx.token));
       env.NEXUS_GATE_TOKEN = ctx.token;
       env.NEXUS_HEAVY_COMMAND_URL = `http://127.0.0.1:${port}/hook/heavy-command`;
       env.NODE_OPTIONS = appendHeavyCommandPreload(preparedEnv?.NODE_OPTIONS ?? process.env.NODE_OPTIONS, heavyCommandPreloadPath());
@@ -1707,6 +1708,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     });
   }
 
+  let disposeHeavyProfileExit: (() => void) | undefined;
   const decoration: AgentSpawnDecoration = {
     authorityToken: ctx.token,
     env,
@@ -1752,6 +1754,17 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     onSpawned: (sessionId) => {
       bindTokenToSession(ctx.token, sessionId);
       sessionTokens.set(sessionId, ctx.token);
+      if (heavyZshProfile(ctx.token)) {
+        // This ownership tap outlives MCP shutdown. Only the PTY's physical
+        // exit proof authorizes removing a surviving child's bootstrap.
+        disposeHeavyProfileExit?.();
+        disposeHeavyProfileExit = tapSessionExit((exitedSessionId) => {
+          if (exitedSessionId !== sessionId) return;
+          disposeHeavyProfileExit?.();
+          disposeHeavyProfileExit = undefined;
+          cleanupSessionArtifacts(ctx.token);
+        });
+      }
       cliPromptAutoResponder.bind(sessionId, adapter.id, Date.now(), {
         governed: gated,
       });
@@ -1788,6 +1801,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       }
     },
     onSpawnFailed: () => {
+      disposeHeavyProfileExit?.();
+      disposeHeavyProfileExit = undefined;
       // No session will ever exist for this token — drop it from the auth
       // registry and remove any token-bearing files we wrote.
       releaseSessionByToken(ctx.token);
@@ -2237,7 +2252,10 @@ export function stopMcpServer(): Promise<void> {
   for (const token of sessionTokens.values()) {
     cleanupAgyMcpConfig(token);
     cleanupCliMcpSession(token);
-    cleanupSessionArtifacts(token);
+    // Proven physical exits already removed their sessionTokens entry. A
+    // remaining child may still start zsh; preserve its entire overlay (the
+    // bootstrap lives inside it) until the independent exit tap cleans it.
+    if (!heavyZshProfile(token)) cleanupSessionArtifacts(token);
     releaseSessionByToken(token);
   }
   sessionTokens.clear();

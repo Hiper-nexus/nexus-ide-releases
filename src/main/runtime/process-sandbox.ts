@@ -117,6 +117,8 @@ export interface ScopedExecPlanInput {
    * writable checkout. Paths may be absent when the profile is compiled.
    */
   protectedWritePaths?: readonly string[];
+  /** macOS: keep control ancestors in place while permitting writable cache children. */
+  protectedDirectoryPaths?: readonly string[];
 }
 
 interface NormalizedExecPlanInput {
@@ -136,6 +138,7 @@ interface NormalizedExecPlanInput {
     readonly port: number;
   }[];
   readonly protectedWritePaths: readonly string[];
+  readonly protectedDirectoryPaths: readonly string[];
 }
 
 /**
@@ -448,6 +451,7 @@ function buildMacosProfile(
     readonly port: number;
   }[] = [],
   protectedWritePaths: readonly string[] = [],
+  protectedDirectoryPaths: readonly string[] = [],
 ): string {
   const deniedReads = MACOS_DENIED_READ_ROOTS.map(
     (root) => `(subpath ${sbplString(root)})`,
@@ -499,6 +503,7 @@ function buildMacosProfile(
     ...processScopedEndpointRules,
     '(deny file-write*)',
     `(allow file-write* ${allowedWrites})`,
+    ...protectedDirectoryPaths.map(candidate => `(deny file-write-unlink (literal ${sbplString(candidate)}))`),
     ...(deniedControlWrites
       ? [`(deny file-write* ${deniedControlWrites})`]
       : []),
@@ -634,6 +639,7 @@ function normalizeExecPlan(input: ScopedExecPlanInput): NormalizedExecPlanInput 
     networkAllowedProcessEndpoints: Object.freeze(
       networkAllowedProcessEndpoints,
     ),
+    protectedDirectoryPaths: Object.freeze(normalizedProtectedWritePaths(input.protectedDirectoryPaths)),
     protectedWritePaths: Object.freeze(
       normalizedProtectedWritePaths(input.protectedWritePaths),
     ),
@@ -824,7 +830,8 @@ function linuxPlan(
   if (
     input.networkAllowedProcessPaths.length > 0 ||
     input.networkAllowedProcessEndpoints.length > 0 ||
-    input.protectedWritePaths.length > 0
+    input.protectedWritePaths.length > 0 ||
+    input.protectedDirectoryPaths.length > 0
   ) {
     throw new Error(
       'supplemental process sandbox roots are unavailable on linux',
@@ -925,6 +932,7 @@ function macosPlan(
         input.networkAllowedProcessPaths,
         input.networkAllowedProcessEndpoints,
         input.protectedWritePaths,
+        input.protectedDirectoryPaths,
       ),
       input.executable,
       ...input.args,
@@ -950,7 +958,8 @@ function windowsOciPlan(
     input.extraWritePaths.length > 0 ||
     input.networkAllowedProcessPaths.length > 0 ||
     input.networkAllowedProcessEndpoints.length > 0 ||
-    input.protectedWritePaths.length > 0
+    input.protectedWritePaths.length > 0 ||
+    input.protectedDirectoryPaths.length > 0
   ) {
     throw new Error(
       'supplemental process sandbox roots are unavailable on win32',

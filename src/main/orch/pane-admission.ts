@@ -9,7 +9,8 @@
  *
  * Doutrina "menos travas" (0.76.47): o gate AVISA por padrão — nomeia o dano
  * (freeze da máquina) e o caminho que funciona (quais panes ociosos fechar).
- * Trava dura é opt-in (NEXUS_PANE_CAP_HARD=1 ou NEXUS_PANE_GUARD=hard);
+ * Workers automáticos de missão respeitam o orçamento de paralelismo; para
+ * a mão do operador a trava dura é opt-in (CAP_HARD=1 ou GUARD=hard).
  * limites vêm de env para o operador ajustar sem rebuild; NEXUS_PANE_GUARD=off
  * desliga o teto e a pressão (a telemetria continua).
  *
@@ -65,13 +66,19 @@ export interface PaneAdmissionLimits {
  * Cada máquina tem a sua medida, então não existe número universal: quem
  * quiser o gate numa máquina específica arma com NEXUS_PANE_MAX_SWAP_MB.
  * O swap segue na telemetria (custo por pane).
+ *
+ * Máquinas ≤ 16 GB usam uma estimativa conservadora de 10 GB para SO +
+ * apps, limitando o teto de 16 GB a 4 panes. A admissão também considera a
+ * memória disponível; este teto não garante ausência de swap em todo projeto.
+ * Acima de 16 GB a reserva histórica de 8 GB permanece.
  */
 export function limitsForMachine(totalMB: number): PaneAdmissionLimits {
   const total = Number.isFinite(totalMB) && totalMB > 0 ? totalMB : 24 * 1024;
   // F-588: Em máquinas inferiores (<= 8 GB), 2 panes é o limite de segurança;
   // em 12 GB, 3; em 16 GB+, 4 a 12 proporcional à RAM livre.
   const minPanes = total <= 8 * 1024 ? 2 : total <= 12 * 1024 ? 3 : 4;
-  const byRam = Math.floor((total - 8 * 1024) / 1280);
+  const osReserveMB = total <= 16 * 1024 ? 10 * 1024 : 8 * 1024;
+  const byRam = Math.floor((total - osReserveMB) / 1280);
   return Object.freeze({
     enabled: true,
     hardBlocks: false,
@@ -121,6 +128,8 @@ export interface PaneAdmissionInput {
   readonly limits: PaneAdmissionLimits;
   readonly memory: SystemMemorySample | null;
   readonly idleCandidates: readonly IdlePaneCandidate[];
+  /** Main-owned mission worker; explicit operator panes keep warning-only policy. */
+  readonly automaticWorker?: boolean;
 }
 
 export type PaneAdmissionVerdict =
@@ -162,6 +171,19 @@ export function evaluatePaneAdmission(input: PaneAdmissionInput): PaneAdmissionV
     `Teto de ${limits.maxAgentPanes} panes de agente atingido ` +
     `(${input.liveAgentPanes} vivos). ${idleHint} ` +
     'Ajuste o teto com NEXUS_PANE_CAP se esta máquina aguenta mais.';
+  if (input.automaticWorker) {
+    const budget = parallelHelperBudget(input);
+    if (budget && budget.slots === 0) {
+      const message = budget.limitedBy === 'cap'
+        ? capMessage
+        : `Memória sem folga para outro worker (${AGENT_PANE_FOOTPRINT_MB} MB acima da reserva de ${limits.minFreeMB} MB). ${idleHint}`;
+      return {
+        ok: false,
+        reason: budget.limitedBy === 'cap' ? 'cap' : 'memory',
+        message: `${message} Aguarde a saída dos workers em andamento e tente novamente; continue a missão em lotes.`,
+      };
+    }
+  }
   if (input.liveAgentPanes >= limits.maxAgentPanes && limits.hardBlocks) {
     return { ok: false, reason: 'cap', message: capMessage };
   }
@@ -449,18 +471,58 @@ export async function sampleSystemMemory(
 // ---------------------------------------------------------------------------
 
 const MEMORY_CACHE_TTL_MS = 5_000;
-let memoryCache: { at: number; sample: SystemMemorySample | null } | null = null;
+interface AgentMemoryCensus {
+  readonly live: number;
+  readonly pending: number;
+}
+const agentMemoryCensuses = new Map<string, () => AgentMemoryCensus>();
+let heavyCommandMemoryReservation: (() => number) | null = null;
+
+/** Main's heavy-command pool owns this counter; keeps admission acyclic. */
+export function registerHeavyCommandMemoryReservation(read: () => number): void {
+  heavyCommandMemoryReservation = read;
+}
+
+/** Main supplies physical reservations; no process probe runs on the spawn path. */
+export function registerAgentMemoryCensus(read: () => AgentMemoryCensus, source = 'pty'): () => void {
+  agentMemoryCensuses.set(source, read);
+  return () => { if (agentMemoryCensuses.get(source) === read) agentMemoryCensuses.delete(source); };
+}
+
+function readAgentMemoryCensus(): AgentMemoryCensus | null {
+  if (agentMemoryCensuses.size === 0) return null;
+  let live = 0;
+  let pending = 0;
+  for (const read of agentMemoryCensuses.values()) {
+    const census = read();
+    // Each transport reads the SAME physical license count, but owns only
+    // its own pending startups. Never count the shared live inventory twice.
+    live = Math.max(live, census.live);
+    pending += census.pending;
+  }
+  return { live, pending };
+}
+
+let memoryCache: { at: number; sample: SystemMemorySample | null; allocatedAgents: number | null } | null = null;
 let memoryRefreshInFlight: Promise<void> | null = null;
+
+function allocatedAgentCount(): number | null {
+  const census = readAgentMemoryCensus();
+  return census ? census.live - census.pending : null;
+}
 
 export function refreshSystemMemorySample(): Promise<void> {
   if (memoryRefreshInFlight) return memoryRefreshInFlight;
+  // Capture BEFORE reading: children starting during the async sample cannot
+  // be assumed to have their footprint reflected in it.
+  const allocatedAgents = allocatedAgentCount();
   memoryRefreshInFlight = sampleSystemMemory()
     .then(
       (sample) => {
-        memoryCache = { at: Date.now(), sample };
+        memoryCache = { at: Date.now(), sample, allocatedAgents };
       },
       () => {
-        memoryCache = { at: Date.now(), sample: null };
+        memoryCache = { at: Date.now(), sample: null, allocatedAgents };
       },
     )
     .finally(() => {
@@ -477,11 +539,23 @@ export function getCachedSystemMemory(now = Date.now()): SystemMemorySample | nu
   return memoryCache?.sample ?? null;
 }
 
+/** Shared by agent and heavy-command admission; never mutates the raw sample. */
+export function getMemoryAfterAgentReservations(now = Date.now()): SystemMemorySample | null {
+  const memory = getCachedSystemMemory(now);
+  if (!memory || memory.freeMB === null) return memory;
+  const census = readAgentMemoryCensus();
+  if (!census) return memory;
+  // A cached MB cannot fund multiple children. Pending startup stays reserved
+  // across refreshes until a sample starts after startup has completed.
+  const unmeasured = Math.max(census.pending, census.live - (memoryCache?.allocatedAgents ?? census.live));
+  return { ...memory, freeMB: memory.freeMB - unmeasured * AGENT_PANE_FOOTPRINT_MB };
+}
+
 export function primeSystemMemoryCacheForTest(
   sample: SystemMemorySample | null,
   at = Date.now(),
 ): void {
-  memoryCache = { at, sample };
+  memoryCache = { at, sample, allocatedAgents: allocatedAgentCount() };
 }
 
 // ---------------------------------------------------------------------------
@@ -511,24 +585,32 @@ export function admitAgentSpawnSync(
   liveAgentPanes: number,
   now = Date.now(),
   env: NodeJS.ProcessEnv = process.env,
-  _request: { readonly agentRequested?: boolean } = {},
+  request: { readonly agentRequested?: boolean; readonly automaticWorker?: boolean } = {},
 ): PaneAdmissionVerdict {
   try {
     const limits = readPaneAdmissionLimits(env);
     if (!limits.enabled) return { ok: true };
-    // F-572: a origem do pedido não ativa trava dura. Delegação também segue
-    // o opt-in do operador; o guardian continua tratando pressão real.
+    // Only trusted automatic mission workers consume the delegation budget.
+    // Human panes and workspace helpers retain the existing warning policy.
     let idleCandidates: readonly IdlePaneCandidate[] = [];
     try {
       idleCandidates = advisor?.idleCandidates(now) ?? [];
     } catch {
       idleCandidates = [];
     }
+    let memory = request.automaticWorker ? getMemoryAfterAgentReservations(now) : getCachedSystemMemory(now);
+    if (request.automaticWorker && memory && memory.freeMB !== null) {
+      // The inverse race: a heavy job may have reserved the same cached MB
+      // before this spawn. Its pool already debits itself, so only agent
+      // admission applies this additional reservation.
+      memory = { ...memory, freeMB: memory.freeMB - (heavyCommandMemoryReservation?.() ?? 0) };
+    }
     return evaluatePaneAdmission({
       liveAgentPanes,
       limits,
-      memory: getCachedSystemMemory(now),
+      memory,
       idleCandidates,
+      automaticWorker: request.automaticWorker,
     });
   } catch (error) {
     return {

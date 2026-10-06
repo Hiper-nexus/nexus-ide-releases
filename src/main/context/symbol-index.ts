@@ -61,6 +61,9 @@ export function buildProjectSymbolIndex(
       if (entry.isSymbolicLink()) continue;
       const child = relative ? path.join(relative, entry.name) : entry.name;
       if (entry.isDirectory()) {
+        // Other agent checkouts duplicate this project and can exhaust the
+        // scan budget. Opening one as the root still indexes it normally.
+        if (entry.name === 'worktrees' && path.basename(relative) === '.claude') continue;
         if (!SKIP_DIRECTORIES.has(entry.name)) walk(child, depth + 1);
         continue;
       }
