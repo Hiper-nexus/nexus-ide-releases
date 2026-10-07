@@ -94,6 +94,37 @@ export function liveMissionAdapterIds(
     .map((pane) => pane.adapterId!);
 }
 
+/**
+ * F-959: panes VIVOS da missão nesta CLI — a régua dos assentos Claude
+ * (F-235). A composição durável (`mission_panes`) guarda o pane depois que
+ * ele fecha; contar a linha do worker que entregou e fechou segurava a conta
+ * até o fim da missão e a rota dizia "claude=não instalado". Linha sem paneId
+ * conta (sem prova de que fechou); vivos sem linha (F-658) também contam.
+ */
+export function liveMissionAdapterSeats(
+  adapterId: string,
+  missionId: string,
+  recorded: readonly { readonly adapterId?: string | null; readonly paneId?: string | null }[],
+  panes: readonly MissionUsePane[],
+): number {
+  const live = new Set(
+    panes
+      .filter((pane) => pane.paneId && !INACTIVE.has(pane.state))
+      .map((pane) => pane.paneId!),
+  );
+  const recordedPaneIds = new Set(
+    recorded
+      .map((row) => row.paneId)
+      .filter((paneId): paneId is string => Boolean(paneId)),
+  );
+  const recordedLive = recorded.filter(
+    (row) => row.adapterId === adapterId && (!row.paneId || live.has(row.paneId)),
+  ).length;
+  const unrecordedLive = liveMissionAdapterIds(missionId, panes, recordedPaneIds)
+    .filter((id) => id === adapterId).length;
+  return recordedLive + unrecordedLive;
+}
+
 /** Helpers vivos na mesma CLI a partir dos quais o recibo sugere diversificar. */
 export const SAME_ADAPTER_DIVERSITY_THRESHOLD = 2;
 
@@ -158,7 +189,9 @@ export function limitToReadOnlyCapable<
   }
   return {
     adapters: adapters.map((adapter) =>
-      adapter.installed && !capable(adapter) ? { ...adapter, installed: false } : adapter,
+      adapter.installed && !capable(adapter)
+        ? { ...adapter, installed: false, unavailableReason: 'não confina leitura (helper somente leitura)' }
+        : adapter,
     ),
     note: '; helper somente leitura fora do Autopilot — pool limitado às CLIs que confinam leitura',
   };

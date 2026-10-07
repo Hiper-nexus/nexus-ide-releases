@@ -669,6 +669,20 @@ describe('describePreferAdaptersOutcome (bug F — prefer não é silêncio)', (
     ).toContain('claude=não instalado');
   });
 
+  it('F-959: preferido fora por política diz o motivo, não "não instalado"', () => {
+    const reserved = [
+      { id: 'codex', installed: true },
+      {
+        id: 'claude',
+        installed: false,
+        unavailableReason: 'reservado: 2 pane(s) Claude vivo(s) nesta missão para 2 conta(s) Claude utilizável(is) (um pane por conta)',
+      },
+    ];
+    const note = describePreferAdaptersOutcome(['claude'], 'codex', reserved, ['codex']);
+    expect(note).toContain('claude=reservado: 2 pane(s) Claude vivo(s)');
+    expect(note).not.toContain('claude=não instalado');
+  });
+
   it('preferido ausente do pool (reservado/indisponível) não vira "não instalado"', () => {
     // F-249: claude reservado ao Maestro sai do pool antes da lista — o motivo
     // não pode dizer "não instalado/sem login" para uma CLI logada.

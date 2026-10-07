@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { PaneRuntimeState } from '../../shared/orch-types';
 import {
   ignoredRouteChoice,
   limitToReadOnlyCapable,
+  liveMissionAdapterSeats,
   operatorChildUseCounts,
   operatorRouteTask,
   parentPaneIdFor,
@@ -145,6 +147,10 @@ describe('somente leitura fora do Autopilot só roteia para CLI que confina (F-8
     const limited = limitToReadOnlyCapable(pool, true);
     expect(limited.adapters.filter((a) => a.installed).map((a) => a.id)).toEqual(['codex']);
     expect(limited.note).toContain('somente leitura');
+    // F-959: o recibo do preferAdapters não diz "não instalado" para elas.
+    expect(limited.adapters.find((a) => a.id === 'kimi')).toMatchObject({
+      unavailableReason: 'não confina leitura (helper somente leitura)',
+    });
   });
 
   it('sem exigência, o pool fica como está', () => {
@@ -154,5 +160,36 @@ describe('somente leitura fora do Autopilot só roteia para CLI que confina (F-8
   it('se NENHUMA instalada confina, o pool não é tocado (o spawn mostra o erro real)', () => {
     const none = pool.map((a) => ({ ...a, capabilities: { readOnlyEnforceable: false } }));
     expect(limitToReadOnlyCapable(none, true)).toEqual({ adapters: none, note: '' });
+  });
+});
+
+describe('assentos vivos da missão por CLI (F-959)', () => {
+  const pane = (
+    paneId: string,
+    adapterId: string,
+    state: PaneRuntimeState = 'busy',
+    missionId = 'm1',
+  ) => ({ paneId, sessionId: `s-${paneId}`, adapterId, state, missionId });
+
+  it('conta só a linha durável cujo pane segue vivo, mais os vivos sem linha', () => {
+    const recorded = [
+      { paneId: 'orch', adapterId: 'claude' },
+      { paneId: 'w-fechado', adapterId: 'claude' },
+      { paneId: 'w-exited', adapterId: 'claude' },
+      { paneId: 'w-codex', adapterId: 'codex' },
+    ];
+    const panes = [
+      pane('orch', 'claude'),
+      pane('w-exited', 'claude', 'exited'),
+      pane('w-codex', 'codex'),
+      pane('helper-sem-linha', 'claude', 'idle'),
+      pane('outra-missao', 'claude', 'busy', 'm2'),
+    ];
+    expect(liveMissionAdapterSeats('claude', 'm1', recorded, panes)).toBe(2);
+    expect(liveMissionAdapterSeats('codex', 'm1', recorded, panes)).toBe(1);
+  });
+
+  it('linha sem paneId conta (sem prova de que o pane fechou)', () => {
+    expect(liveMissionAdapterSeats('claude', 'm1', [{ paneId: null, adapterId: 'claude' }], [])).toBe(1);
   });
 });

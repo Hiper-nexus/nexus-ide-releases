@@ -117,10 +117,23 @@ async function route() {
 }
 
 describe('F-235: capacidade de panes Claude por conta utilizável', () => {
-  it('Maestro Claude + 1 conta: claude segue reservado (comportamento atual)', async () => {
+  // F-959: a reserva é política de assentos — o recibo diz isso, nunca
+  // "claude=não instalado" para o Claude que roda o próprio orquestrador.
+  it('Maestro Claude + 1 conta: claude segue reservado, e o motivo diz que é reserva', async () => {
     const decision = await route();
     expect(decision.adapterId).not.toBe('claude');
-    expect(decision.reason).toContain('claude=não instalado');
+    expect(decision.reason).not.toContain('claude=não instalado');
+    expect(decision.reason).toContain(
+      'claude=reservado: 1 pane(s) Claude vivo(s) nesta missão para 1 conta(s) Claude utilizável(is)',
+    );
+  });
+
+  it('nenhuma conta Claude utilizável: reservado, sem dizer "não instalado"', async () => {
+    h.claudeCapacity.mockReturnValue(0);
+    const decision = await route();
+    expect(decision.adapterId).not.toBe('claude');
+    expect(decision.reason).not.toContain('claude=não instalado');
+    expect(decision.reason).toContain('claude=reservado: nenhuma conta Claude utilizável');
   });
 
   it('Maestro Claude + 2 contas com credencial: um worker Claude é roteado', async () => {
@@ -147,7 +160,35 @@ describe('F-235: capacidade de panes Claude por conta utilizável', () => {
     h.livePanes = [livePane('pane-orch', 'claude'), livePane('pane-w1', 'claude')];
     const decision = await route();
     expect(decision.adapterId).not.toBe('claude');
-    expect(decision.reason).toContain('claude=não instalado');
+    expect(decision.reason).not.toContain('claude=não instalado');
+    expect(decision.reason).toContain(
+      'claude=reservado: 2 pane(s) Claude vivo(s) nesta missão para 2 conta(s) Claude utilizável(is)',
+    );
+  });
+
+  // F-959: `mission_panes` guarda o worker depois que ele fecha (o worker de
+  // missão fecha sozinho no handoff de sucesso). Contar a linha morta segurava
+  // a conta e o Claude saía como "não instalado" até o fim da missão.
+  it.each([
+    ['fechado (fora da grade)', [] as Array<Record<string, unknown>>],
+    ['exited na grade', [{ ...livePane('pane-w1', 'claude'), state: 'exited' }]],
+  ])('worker Claude %s não segura assento: o Claude volta à rota', async (_label, deadWorker) => {
+    h.claudeCapacity.mockReturnValue(2);
+    h.listProviderSettings.mockReturnValue([
+      { adapterId: 'claude', enabled: true, installed: true, authStrategy: 'oauth',
+        models: ['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] },
+      { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth',
+        models: ['kimi-code/k3'] },
+    ]);
+    h.recorded = [
+      { paneId: 'pane-orch', adapterId: 'claude', role: 'orchestrator' },
+      { paneId: 'pane-w1', adapterId: 'claude', role: 'worker' },
+    ];
+    h.livePanes = [livePane('pane-orch', 'claude'), ...deadWorker];
+    const decision = await route();
+    expect(decision.adapterId).toBe('claude');
+    expect(decision.reason).not.toContain('claude=não instalado');
+    expect(decision.reason).not.toContain('claude=reservado');
   });
 });
 
