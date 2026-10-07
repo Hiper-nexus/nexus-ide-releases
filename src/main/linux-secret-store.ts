@@ -16,10 +16,27 @@
  * A correção só ESCOLHE o backend; a recusa do `basic_text` continua valendo.
  * Sem Secret Service o libsecret falha e o cofre segue indisponível, como
  * antes — nunca degrada para texto plano.
+ *
+ * A decisão vem do port do T3 Code (`linux-secret-storage.ts`): só um literal
+ * EXATO do `XDG_CURRENT_DESKTOP` que o Chromium reconhece (KDE, GNOME, XFCE…)
+ * deixa a detecção nativa agir. `KDE_FULL_SESSION`/`DESKTOP_SESSION` são
+ * restos de sessão — sway/Hyprland abertos de um login KDE herdam
+ * `KDE_FULL_SESSION=true` e antes caíam em `basic_text` com o cofre
+ * desligado. LXQt é reconhecido pelo Chromium e mesmo assim vai a
+ * `basic_text`, então também é forçado. Quem precisa de uma geração de
+ * KWallet escolhe com `NEXUS_LINUX_PASSWORD_STORE=kwallet5|kwallet6|kwallet|
+ * gnome-libsecret` (ou com `--password-store`, que tem precedência).
  */
 
+import {
+  normalizeLinuxPasswordStorePreference,
+  resolveLinuxPasswordStoreSwitch,
+  type LinuxPasswordStoreSwitch,
+} from './linux-secret-storage';
+
 export const LINUX_PASSWORD_STORE_SWITCH = 'password-store';
-export const LINUX_LIBSECRET_STORE = 'gnome-libsecret';
+/** Preferência explícita do operador, lida antes do `ready` (sem settings ainda). */
+export const LINUX_PASSWORD_STORE_ENV = 'NEXUS_LINUX_PASSWORD_STORE';
 
 export interface LinuxSecretStoreContext {
   platform: NodeJS.Platform;
@@ -30,20 +47,20 @@ export interface LinuxSecretStoreContext {
   automatedTest: boolean;
 }
 
-function isKdeSession(env: Readonly<Record<string, string | undefined>>): boolean {
-  const desktops = (env.XDG_CURRENT_DESKTOP ?? '')
-    .split(':')
-    .map((token) => token.trim().toLowerCase());
-  return desktops.includes('kde') || env.KDE_FULL_SESSION === 'true';
-}
-
 /** PURO: o backend a forçar, ou `null` para deixar a detecção do Chromium. */
-export function linuxPasswordStoreOverride(context: LinuxSecretStoreContext): string | null {
+export function linuxPasswordStoreOverride(
+  context: LinuxSecretStoreContext,
+): LinuxPasswordStoreSwitch | null {
   if (context.platform !== 'linux') return null;
   if (context.automatedTest || context.hasExplicitStore) return null;
-  // No KDE a detecção nativa escolhe o KWallet da versão certa (5 ou 6).
-  if (isKdeSession(context.env)) return null;
-  return LINUX_LIBSECRET_STORE;
+  // No KDE canônico (literal exato) a detecção nativa escolhe o KWallet da
+  // versão certa (5 ou 6); nos demais desktops o resultado é gnome-libsecret.
+  return resolveLinuxPasswordStoreSwitch({
+    preference: normalizeLinuxPasswordStorePreference(
+      context.env[LINUX_PASSWORD_STORE_ENV]?.trim(),
+    ),
+    env: context.env,
+  });
 }
 
 interface CommandLineLike {

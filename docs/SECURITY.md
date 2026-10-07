@@ -149,11 +149,15 @@ cobre a validação compartilhada.
   vindos de URL continuam exigindo o diálogo nativo. A mudança só faz o link
   chegar ao app no Linux, como já chegava no macOS e no Windows.
 - **Backend do cofre.** `src/main/linux-secret-store.ts` pede
-  `--password-store=gnome-libsecret` fora do KDE, porque o Chromium cai em
-  `basic_text` em qualquer desktop que não reconhece (Hyprland, sway…). A
+  `--password-store=gnome-libsecret` sempre que o `XDG_CURRENT_DESKTOP` não
+  traz um literal exato que o Chromium protege sozinho (KDE, GNOME, XFCE…),
+  porque ele cai em `basic_text` em qualquer outro (Hyprland, sway, LXQt…).
+  `KDE_FULL_SESSION`/`DESKTOP_SESSION` herdados de um login KDE não contam. A
   recusa de `basic_text` em `isSecureStorageBackendAllowed` não mudou: sem
   Secret Service o cofre continua indisponível, nunca vira texto plano. Um
-  `--password-store` explícito do operador tem precedência. Não verificado: com
+  `--password-store` explícito do operador tem precedência; depois dele,
+  `NEXUS_LINUX_PASSWORD_STORE` (`kwallet5`, `kwallet6`, `kwallet`,
+  `gnome-libsecret`) escolhe o backend. Não verificado: com
   o chaveiro TRAVADO no boot (autologin sem desbloqueio por PAM) o libsecret
   pode esperar um diálogo de desbloqueio; no macOS esse bloqueio do Main
   existiu, por isso o cofre não é sondado cedo demais lá.
