@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
+import { compileIntentContract, reserveEffectfulSpend } from '../../shared/mission-intent';
+import { isEffectfulTool } from './mcp-effect-policy';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { WorkingTreeCandidateSnapshot } from '../context/candidate-working-tree-snapshot';
 import { testProjectScope } from './__tests__/scope-fixture';
@@ -19,7 +21,7 @@ const state = vi.hoisted(() => ({
 vi.mock('../context/candidate-working-tree-snapshot', () => ({ captureWorkingTreeCandidate: (...args: unknown[]) => state.capture(...args) }));
 vi.mock('../pty/pty-manager', () => ({ getAgentSessionInfo: (id: string) => state.acp ? undefined : state.live.get(id), getSessionState: (id: string) => !state.acp && state.live.has(id) ? 'idle' : undefined }));
 vi.mock('../acp/acp-harness-driver', () => ({ getAcpDriverSession: (id: string) => state.acp && state.live.has(id) ? { agent: state.live.get(id) } : null }));
-vi.mock('./gate', () => ({ getContextBySession: () => ({ sessionId: 'maestro', missionId: state.mission!.id, scope: state.scope, role: 'orchestrator' }), isCurrentGateContext: () => true,
+vi.mock('./gate', async original => ({ canonicalToolName: (await original<typeof import('./gate')>()).canonicalToolName, getContextBySession: () => ({ sessionId: 'maestro', missionId: state.mission!.id, scope: state.scope, role: 'orchestrator' }), isCurrentGateContext: () => true,
   executionScopeFor: (ctx: { executionScope?: ProjectExecutionScope; scope: ProjectExecutionScope }) => ctx.executionScope ?? ctx.scope }));
 vi.mock('./project-domain-store-registry', () => ({ getProjectDomainStores: () => ({ missions: {
   get: (id: string) => state.mission?.id === id ? state.mission : null,
@@ -275,5 +277,62 @@ describe('Main code completion production ports', () => {
     await record('reject');
     expect(await isCurrentCodeCompletionFindingFix(state.scope!, state.mission!.id, 'Corrija F-42')).toBe(true);
     expect(state.capture.mock.calls.every(([options]) => options.requiredPaths?.includes('src/app.ts'))).toBe(true);
+  });
+});
+
+
+describe('F-430 — review submission spend is ledger, not review authority', () => {
+  function installContract() {
+    state.mission = { ...state.mission!, intentContract: {
+      ...compileIntentContract({ goal: 'Corrigir o produto', acceptanceCriteria: ['Código corrigido'], intentVersion: 1 }),
+      freeAgentChoice: true, approvedAt: 1, dispatchedAt: 2,
+    } };
+  }
+
+  it('accepts the same candidate after the real spend reservation that precedes review_verdict', async () => {
+    installContract();
+    expect(isEffectfulTool('nexus_review_verdict')).toBe(true);
+    await run();
+    const original = state.mission!.intentContract!;
+    const candidate = { ...state.candidate! };
+    // reserveProductionMissionBudget persists this exact helper result before
+    // the dispatcher enters the review handler (including read-only reviewers).
+    const reserved = reserveEffectfulSpend(original, 'nexus_review_verdict');
+    expect(reserved.ok).toBe(true);
+    if (!reserved.ok) throw new Error(reserved.error);
+    state.mission = { ...state.mission!, intentContract: reserved.contract };
+    expect(reserved.contract.spentSteps).toBe((original.spentSteps ?? 0) + 1);
+    expect(reserved.contract.spentTokens).toBeGreaterThan(original.spentTokens ?? 0);
+    expect(reserved.contract.budgets).toEqual(original.budgets);
+    expect(state.candidate).toEqual(candidate);
+    expect(await record()).toMatchObject({ handled: true, accepted: true });
+    expect(state.events).toMatchObject([{ runId: 'nexus-code-completion-review', origin: 'main',
+      payload: { fingerprint: candidate.fingerprint } }]);
+    expect(state.mission!.intentContract).toEqual(reserved.contract);
+    expect((await run()).kind).toBe('verified');
+    expect(state.spawn).toHaveBeenCalledOnce();
+  });
+
+  it.each(['limit', 'goal', 'tools', 'roster', 'context', 'version'] as const)('still revokes a same-candidate review after %s authority changes', async field => {
+    installContract(); await run();
+    const original = state.mission!.intentContract!;
+    const patch = field === 'limit' ? { budgets: { ...original.budgets, maxWorkers: original.budgets.maxWorkers + 1 } }
+      : field === 'goal' ? { goal: 'Outro objetivo aprovado' }
+      : field === 'tools' ? { deniedTools: ['terminal_exec'] }
+      : field === 'roster' ? { squadRevisionHash: 'c'.repeat(64) }
+      : field === 'context' ? { contextPaths: ['different-context.md'] }
+      : { intentVersion: original.intentVersion + 1 };
+    state.mission = { ...state.mission!, intentContract: { ...original, ...patch } };
+    expect(await record()).toMatchObject({ handled: true, accepted: false });
+    expect(state.events).toHaveLength(0);
+  });
+
+  it('does not turn the Maestro into its own canonical independent reviewer', async () => {
+    installContract(); await run();
+    state.live.set('maestro', { model: state.route!.model, readOnly: false });
+    const result = await recordMissionCodeCompletionReview({ scope: state.scope!, executionScope: state.executionScope!,
+      missionId: state.mission!.id, sessionId: 'maestro', providerId: state.route!.adapterId, role: 'orchestrator', readOnly: false } as never,
+    { verdict: 'approve', summary: 'Own verdict', findings: [] });
+    expect(result.accepted).toBe(false); expect(state.events).toHaveLength(0);
   });
 });

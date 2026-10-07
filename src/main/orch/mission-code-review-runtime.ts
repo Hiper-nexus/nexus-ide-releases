@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { missionIntentAuthoritySnapshot } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { WorkingTreeCandidateSnapshot } from '../context/candidate-working-tree-snapshot';
 import { missionLifecycleKey } from './mission-lifecycle-lock';
@@ -18,7 +19,8 @@ export type CodeReviewBinding = Pick<MissionCodeCandidate, 'scope' | 'executionS
 };
 export function codeReviewMissionSignature(mission: MissionCodeCandidate['mission']): string {
   return createHash('sha256').update(JSON.stringify([mission.id, mission.intentVersion,
-    mission.title, mission.description, mission.intentContract])).digest('hex');
+    mission.title, mission.description, mission.intentContract == null
+      ? mission.intentContract : missionIntentAuthoritySnapshot(mission.intentContract)])).digest('hex');
 }
 export interface CodeReviewerPorts {
   now(): number;
