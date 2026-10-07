@@ -109,4 +109,13 @@ describe('ordered off-Main analysis', () => {
     expect(client.status('s')).toBe('degraded');
     expect(pauses).toContainEqual(['s', true]);
   });
+
+  it('orders a winsize between the chunks around it (DSK-03 grid reflow)', () => {
+    const { client, sent, ack } = fixture();
+    client.bind('s', {}); ack();
+    client.data('s', 'before'); client.resize('s', 120, 40); client.data('s', 'after');
+    ack(); ack(); ack();
+    expect(sent.slice(1).map((r) => (r.kind === 'resize' ? `resize:${r.cols}x${r.rows}` : r.kind === 'data' ? r.data : r.kind)))
+      .toEqual(['before', 'resize:120x40', 'after']);
+  });
 });

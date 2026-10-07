@@ -4,3 +4,8 @@
 *.cjs text eol=lf
 # F-930: o smoke do pacote confere o SHA-256 destes textos; em CRLF não bate.
 third_party/licenses/onnxruntime-v1.19.2-*.txt text eol=lf
+# libghostty-vt (DSK-03): o teste de ABI confere o SHA-256 do wasm e a revisão
+# fixada em VERSION; nenhum dos dois pode passar por conversão de texto.
+resources/ghostty/*.wasm binary
+resources/ghostty/LICENSE text eol=lf
+third_party/ghostty-vt/* text eol=lf

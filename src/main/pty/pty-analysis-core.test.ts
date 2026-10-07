@@ -1,6 +1,46 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { compileManifest } from '../detect/compiler';
+import { loadManifestDir } from '../detect/manifest';
 import { PtyAnalysisCore } from './pty-analysis-core';
-import type { AnalysisInput, AnalysisResult } from './pty-analysis-protocol';
+import type { AnalysisInput, AnalysisResult, AnalysisWorkerTrace } from './pty-analysis-protocol';
+
+describe('detector grid winsize (DSK-03)', () => {
+  const codex = loadManifestDir(path.join(process.cwd(), 'resources/agent-detection'))
+    .filter(({ manifest }) => manifest.id === 'codex').map(({ manifest }) => compileManifest(manifest));
+  // An old question five rows above the live footer: visible on 24 rows, gone on 3.
+  const output = 'Would you like to continue? yes\r\n' + [1, 2, 3, 4, 5].map((n) => `out ${n}\r\n`).join('') + '• Working (1s • esc to interrupt)';
+  function screenStates(resize?: { cols: number; rows: number }, ghosttyWasmPath?: string) {
+    const results: AnalysisResult[] = [];
+    const traces: AnalysisWorkerTrace[] = [];
+    const core = new PtyAnalysisCore(codex, (result) => results.push(result), undefined, { ghosttyWasmPath, trace: (event) => traces.push(event) });
+    let seq = 0;
+    const feed = (body: object) => core.process({ workerEpoch: 1, generation: 1, sessionId: 's', eventSeq: ++seq, observedAt: 100 + seq, ...body } as AnalysisInput);
+    feed({ kind: 'bind', binding: { adapterId: 'codex', paneId: 'p' } });
+    feed({ kind: 'arm', consumer: 'screen', registration: 1 });
+    if (resize) feed({ kind: 'resize', ...resize });
+    feed({ kind: 'data', data: output });
+    feed({ kind: 'flush' });
+    core.close();
+    const states = results.flatMap((r) => r.events).filter((e) => e.consumer === 'screen')
+      .map((e) => (e.value as { record?: { state: string } }).record?.state).filter(Boolean);
+    return { states, traces };
+  }
+  it('applies the PTY winsize before the bytes that follow it', () => {
+    expect(screenStates().states.at(-1)).toBe('blocked');
+    expect(screenStates({ cols: 80, rows: 3 })).toEqual({ states: ['working'], traces: [] });
+  });
+  it('ignores an out-of-range winsize', () => {
+    expect(screenStates({ cols: 0, rows: 3 }).states.at(-1)).toBe('blocked');
+    expect(screenStates({ cols: 80, rows: 100_000 }).states.at(-1)).toBe('blocked');
+  });
+  it('falls back to the text stream when the grid cannot load, and says so', () => {
+    const { states, traces } = screenStates({ cols: 80, rows: 3 }, path.join(process.cwd(), 'resources/ghostty/absent-for-test.wasm'));
+    expect(traces).toEqual([{ kind: 'detector-ghostty-unavailable', reason: 'unavailable', detail: 'ENOENT' }]);
+    // Text stream: the stale question is still in the tail.
+    expect(states.at(-1)).toBe('blocked');
+  });
+});
 
 function fixture() {
   const results: AnalysisResult[] = [];

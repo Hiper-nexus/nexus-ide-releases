@@ -13,7 +13,7 @@ import { LegacyHandoffParser } from '../orch/legacy-handoff';
 import { MissionMarkerObserver } from '../orch/mission-completion-marker-core';
 import { Osc133Scanner } from '../terminal/shell-integration-osc133';
 import { redactCommandLine } from '../terminal/command-redaction';
-import { ANALYSIS_EVENT_CAP, type AnalysisBinding, type AnalysisConsumer, type AnalysisEvent, type AnalysisInput, type AnalysisResult } from './pty-analysis-protocol';
+import { ANALYSIS_EVENT_CAP, validAnalysisGrid, type AnalysisBinding, type AnalysisConsumer, type AnalysisEvent, type AnalysisInput, type AnalysisResult, type AnalysisWorkerTrace } from './pty-analysis-protocol';
 
 interface Consumer { registration: number; config?: unknown }
 interface Session {
@@ -35,8 +35,12 @@ export class PtyAnalysisCore {
   readonly #handoff: LegacyHandoffParser;
   #events: AnalysisEvent[] = [];
   #current: Session | null = null;
-  constructor(manifests: CompiledManifest[], private readonly publish: (result: AnalysisResult) => void, risky?: { start: (sessionId: string, manifestId: string) => void; end: () => void }) {
-    this.#detector = new AgentScreenDetector({ manifests, diagnostic: (id, adapterId, explain, state) => {
+  constructor(manifests: CompiledManifest[], private readonly publish: (result: AnalysisResult) => void, risky?: { start: (sessionId: string, manifestId: string) => void; end: () => void },
+    screen?: { ghosttyWasmPath?: string; trace?: (event: AnalysisWorkerTrace) => void }) {
+    this.#detector = new AgentScreenDetector({ manifests, ghosttyWasmPath: screen?.ghosttyWasmPath, trace: (event) => {
+      // Only the grid fallback leaves the Worker; the closed protocol carries no other trace.
+      if (event.kind === 'detector-ghostty-unavailable') screen?.trace?.({ kind: 'detector-ghostty-unavailable', reason: String(event.reason), detail: String(event.detail) });
+    }, diagnostic: (id, adapterId, explain, state) => {
       const session = this.#sessions.get(id); if (!session) return;
       const value = { adapterId, explain, state };
       if (this.#current === session) this.#emit(session, 'screen', value);
@@ -136,6 +140,9 @@ export class PtyAnalysisCore {
           if (marker && !priorMarker) this.#emit(s, 'completion', marker, true);
           if (s.lines) this.#emit(s, 'pipe', [s.lines], true);
         }
+        break;
+      case 'resize':
+        if (validAnalysisGrid(record.cols, record.rows)) this.#detector.onResize(record.sessionId, record.cols, record.rows);
         break;
       case 'terminate': break;
     }

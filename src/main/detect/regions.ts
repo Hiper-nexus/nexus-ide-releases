@@ -3,9 +3,10 @@
 // block markers `• ■ ✗ ✓`, and box-border `─` rules.
 //
 // Fidelity note: Herdr slices a rendered terminal grid (logical lines after
-// soft-wrap). Nexus slices a stripped PTY text tail, so offsets are computed
-// in UTF-16 code units over `\n`-joined logical lines. The heuristics are
-// identical; only the input fidelity differs (see detector.ts header).
+// soft-wrap). Nexus slices the libghostty-vt grid formatted as `\n`-joined
+// logical lines (or, on the fail-soft fallback, a stripped PTY text tail);
+// offsets are UTF-16 code units either way. The heuristics are identical;
+// see the detector.ts header for when the fallback applies.
 
 export interface DetectionInput {
   screen: string;

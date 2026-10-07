@@ -252,5 +252,9 @@ describe('agent detection manifests packaging', () => {
       'resources/agent-detection',
     );
   });
+
+  it('ships the libghostty-vt grid outside the asar on every Forge target', () => {
+    expect(forgeConfig.packagerConfig?.extraResource).toContain('resources/ghostty');
+  });
 });
 
