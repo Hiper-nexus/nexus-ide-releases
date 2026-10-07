@@ -349,7 +349,7 @@ describe('ficha do spawn pendente (F-723)', () => {
         started: false,
         now: NOW + 4_276,
       });
-      expect(watch.failure).toEqual({ cause: 'boot-exit', at: NOW + 4_276 });
+      expect(watch.failure).toEqual({ cause: 'boot-exit', at: NOW + 4_276, exitCode: exit.exitCode });
       expect(watch.sessionEnded).toBe(false);
     }
   });
@@ -363,7 +363,8 @@ describe('ficha do spawn pendente (F-723)', () => {
       // Encerramento pedido pelo Nexus num one-shot também não é falha.
       { requested: true, oneShot: true, exit: { exitCode: 1, signal: 0 }, now: NOW + 5_000 },
       { requested: false, oneShot: false, now: NOW + START_GRACE_MS + 1 },
-      { requested: false, oneShot: true, exit: { exitCode: 1, signal: 0 }, now: NOW + START_GRACE_MS + 1 },
+      // F-958: saída LIMPA depois da graça continua sem veredito.
+      { requested: false, oneShot: false, exit: { exitCode: 0, signal: 0 }, now: NOW + START_GRACE_MS + 1 },
     ];
     for (const end of cases) {
       resetPaneStartWatchdogForTests();
@@ -376,6 +377,40 @@ describe('ficha do spawn pendente (F-723)', () => {
       });
       expect(watch.failure).toBeNull();
       expect(watch.sessionEnded).toBe(true);
+    }
+  });
+
+  it('F-958: saída com erro DEPOIS da graça, sem início provado, é morte (writers Codex com 74 aos 303 s)', () => {
+    for (const end of [
+      { oneShot: false, exit: { exitCode: 74, signal: 0 } },
+      { oneShot: true, exit: { exitCode: 1, signal: 0 } },
+      { oneShot: false, exit: { exitCode: 0, signal: 15 } },
+    ]) {
+      resetPaneStartWatchdogForTests();
+      const watch = trackPaneStart(base());
+      notePaneSessionEnded(watch, {
+        sessionId: 'session-a',
+        requested: false,
+        spawnedAt: NOW,
+        started: false,
+        now: NOW + 303_140,
+        ...end,
+      });
+      expect(watch.failure).toEqual({ cause: 'boot-exit', at: NOW + 303_140, exitCode: end.exit.exitCode });
+    }
+    // Com início provado (trabalhou) ou encerramento pedido, não.
+    for (const end of [{ started: true, requested: false }, { started: false, requested: true }]) {
+      resetPaneStartWatchdogForTests();
+      const watch = trackPaneStart(base());
+      notePaneSessionEnded(watch, {
+        sessionId: 'session-a',
+        oneShot: false,
+        exit: { exitCode: 74, signal: 0 },
+        spawnedAt: NOW,
+        now: NOW + 303_140,
+        ...end,
+      });
+      expect(watch.failure).toBeNull();
     }
   });
 

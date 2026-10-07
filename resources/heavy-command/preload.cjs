@@ -51,7 +51,7 @@ if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GAT
     return load.apply(this, arguments);
   };
   // The helper dispatch uses a captured primitive rather than another wrapper.
-  if (process.argv[1] !== path.join(__dirname, 'dispatch.cjs')) require('./child-process.cjs')();
+  if (process.argv[1] !== path.join(__dirname, 'dispatch.cjs')) require('./child-process.cjs')({ agentRoot: Boolean(agentRoot) });
   if (typeof Module.registerHooks === 'function') {
     Module.registerHooks({ resolve(specifier, context, nextResolve) {
       const result = nextResolve(specifier, context);

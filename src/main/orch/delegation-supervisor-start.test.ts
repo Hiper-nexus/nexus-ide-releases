@@ -163,6 +163,7 @@ import {
   type PaneStartWatchInit,
 } from './pane-start-watchdog';
 import { adapterCircuitBreakers } from './circuit-breaker';
+import { modelAccessQuarantine, resetModelAccessQuarantineForTests } from './model-access-quarantine';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
 import {
   recordPaneSessionData,
@@ -268,6 +269,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     redeliver.mockResolvedValue(false);
     adapterCircuitBreakers.reset();
     resetPaneStartWatchdogForTests();
+    resetModelAccessQuarantineForTests();
     await shutdownDelegationSupervisor();
     prepareDelegationSupervisor();
     registerSuite();
@@ -639,6 +641,128 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     const summary = (h.submit.mock.calls[0]![0] as { summary: string }).summary;
     expect(summary).toContain('o processo saiu antes de abrir o primeiro turno');
     expect(getPaneStartWatch('pane-agy')).toBeNull();
+  });
+
+  it('F-958: AGY que não reconhece o modelo vira model-rejected, avisa o motivo e tira o modelo das rotas', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    trackPaneStart(watchInit({ paneId: 'pane-agy', requestId: 'orchspawn-agy', adapterId: 'agy' }));
+    h.spawnedAt.mockReturnValue(NOW - 3_838);
+    h.agentInfo.mockReturnValue({ paneId: 'pane-agy', adapterId: 'agy', model: 'gemini-4-argon', accountId: null });
+    // Saída real do pane-muym5dik-a (07/10 18:22, AGY 1.3.0).
+    recordPaneSessionData(
+      'session-agy-958',
+      'error: invalid model selection (--model "gemini-4-argon" --effort ""): model gemini-4-argon ' +
+        'is not recognized as a known model or custom model in settings\r\nAvailable models:\r\n' +
+        'Gemini 3.8 Flash (High)\r\nGemini 3.8 Flash (Medium)\r\n',
+    );
+    h.terminationTap!(
+      'session-agy-958',
+      { paneId: 'pane-agy', adapterId: 'agy', oneShot: true },
+      { exitCode: 1, signal: 0 },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await flush();
+
+    expect(reroute).toHaveBeenCalledWith(['agy']);
+    const event = h.trace.mock.calls.map(([value]) => value).find(
+      (value) => value.kind === 'pane-not-started',
+    );
+    expect(event).toMatchObject({ paneId: 'pane-agy', cause: 'model-rejected', exitCode: 1 });
+    const summary = (h.submit.mock.calls[0]![0] as { summary: string }).summary;
+    expect(summary).toContain('a CLI instalada recusou o modelo roteado');
+    expect(summary).toContain('não reconhece o modelo "gemini-4-argon"');
+    expect(summary).toContain('saiu com código 1');
+    expect(summary).not.toContain('Available models');
+    // Rota e alternativas: o roteador consulta esta quarentena (F-683).
+    expect(modelAccessQuarantine('agy', 'gemini-4-argon')).toContain('gemini-4-argon');
+    expect(modelAccessQuarantine('agy', 'gemini-3.8-flash-high')).toBeNull();
+  });
+
+  it('F-958: writer Codex que sai com 74 aos 303 s (fila de pesados) sem começar avisa o Maestro com o motivo', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    trackPaneStart(watchInit({
+      paneId: 'pane-codex-w1',
+      requestId: 'orchspawn-codex-w1',
+      adapterId: 'codex',
+      createdAt: NOW - 304_000,
+    }));
+    h.spawnedAt.mockReturnValue(NOW - 303_140);
+    recordPaneSessionData('session-codex-w1', 'nexus-heavy: local admission request failed\r\n');
+    h.terminationTap!(
+      'session-codex-w1',
+      { paneId: 'pane-codex-w1', adapterId: 'codex' },
+      { exitCode: 74, signal: 0 },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await flush();
+
+    const event = h.trace.mock.calls.map(([value]) => value).find(
+      (value) => value.kind === 'pane-not-started',
+    );
+    expect(event).toMatchObject({ paneId: 'pane-codex-w1', cause: 'boot-exit', exitCode: 74 });
+    expect(h.submit).toHaveBeenCalledTimes(1);
+    const summary = (h.submit.mock.calls[0]![0] as { summary: string }).summary;
+    expect(summary).toContain('[nao-iniciou:pane-codex-w1]');
+    expect(summary).toContain('nexus-heavy');
+    expect(summary).toContain('saiu com código 74');
+    expect(h.onHandoffSubmitted).toHaveBeenCalledTimes(1);
+  });
+
+  it('F-958: saída LIMPA depois da graça continua sem veredito (não é morte)', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    trackPaneStart(watchInit({ adapterId: 'codex', createdAt: NOW - 400_000 }));
+    h.spawnedAt.mockReturnValue(NOW - 300_000);
+    h.terminationTap!('session-clean', { paneId: 'pane-qwen', adapterId: 'codex' }, { exitCode: 0, signal: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    await checkPaneStarts(NOW);
+    expect(h.submit).not.toHaveBeenCalled();
+    expect(reroute).not.toHaveBeenCalled();
+  });
+
+  it('F-958: worker que já trabalhou (ferramenta) e sai com erro depois da graça não é "não iniciou"', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    trackPaneStart(watchInit({ adapterId: 'codex', createdAt: NOW - 400_000 }));
+    h.spawnedAt.mockReturnValue(NOW - 300_000);
+    h.toolActivity.mockReturnValue(3);
+    h.terminationTap!('session-worked', { paneId: 'pane-qwen', adapterId: 'codex' }, { exitCode: 1, signal: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    await checkPaneStarts(NOW);
+    expect(h.submit).not.toHaveBeenCalled();
+  });
+
+  it('F-958: MiMo vivo sem NENHUM byte (spawning) depois da graça vira boot-silent e é avisado', async () => {
+    trackPaneStart(watchInit({
+      paneId: 'pane-mimo',
+      requestId: 'orchspawn-mimo',
+      adapterId: 'mimo-code',
+      rerouted: true,
+      createdAt: NOW - START_GRACE_MS - 2_000,
+    }));
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-mimo' });
+    h.spawnedAt.mockReturnValue(NOW - START_GRACE_MS - 1_000);
+    h.sessionState.mockReturnValue('spawning');
+    h.listPaneSnapshots.mockReturnValue([
+      { paneId: 'pane-mimo', kind: 'cli-agent', role: 'worker', state: 'spawning', sessionId: 'session-mimo', missionId: 'mission-f723' },
+    ]);
+    await checkPaneStarts(NOW);
+
+    const event = h.trace.mock.calls.map(([value]) => value).find(
+      (value) => value.kind === 'pane-not-started',
+    );
+    expect(event).toMatchObject({ paneId: 'pane-mimo', cause: 'boot-silent', outcome: 'not-rerouted' });
+    expect(h.requestPaneClose).toHaveBeenCalledWith('pane-mimo', 'session-mimo');
+    const summary = (h.submit.mock.calls[0]![0] as { summary: string }).summary;
+    expect(summary).toContain('a CLI não escreveu nada no terminal');
+  });
+
+  it('F-958: sessão em spawning ainda dentro da graça não é julgada', async () => {
+    trackPaneStart(watchInit({ adapterId: 'mimo-code', createdAt: NOW - 30_000 }));
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-mimo-early' });
+    h.spawnedAt.mockReturnValue(NOW - 30_000);
+    h.sessionState.mockReturnValue('spawning');
+    await checkPaneStarts(NOW);
+    expect(h.submit).not.toHaveBeenCalled();
+    expect(reroute).not.toHaveBeenCalled();
   });
 
   it('F-792: one-shot que terminou com código 0 continua sem veredito (a tarefa acabou)', async () => {

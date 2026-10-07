@@ -8,6 +8,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isNexusHookText } from '../../vendor/emdash/hooks/hook-commands';
 import {
+  ensureKimiWorkspaceTrust,
+  kimiWorkDirKey,
   prepareKimiMcpSession,
   projectKimiNativeCatalog,
   restoreKimiOverlayCatalog,
@@ -349,5 +351,38 @@ describe('F-611 kimi overlay model catalog', () => {
     } finally {
       cleanupCliMcpSession(token);
     }
+  });
+});
+
+describe('F-958 kimi workspace trust key', () => {
+  // Raiz real do incidente (07/10 18:25): o Kimi 2.1.1 gravou o próprio trust
+  // como `wd_task-f2a55551505a31ef497991782ab75148879_4c46c235dc66` depois de
+  // perguntar "Trust this folder?", ao lado do arquivo de nome inteiro do Nexus.
+  const incidentRoot =
+    '/Users/cleofaspereirarocha/Library/Application Support/NexusIDE/project-runtime/projects/' +
+    'project-5c533be885a824a09199ffb9c0d2ee8cb9a88ca6eb881cec920cf98bb0718c0f/' +
+    'checkout-72eb2822b28bfda2e715c32e48902f3e75a2009ea593760804ca0bf7b72bc804/worktrees.noindex/' +
+    'project-4bd6404c5885df95fc2ad9477d576c3a17870146029c7c433cdee26c29072e0d/' +
+    'checkout-d09990af7caf34c0193a760f59eb215e1701f117f326a6862b6d638f0c348727/' +
+    'task-f2a55551505a31ef497991782ab75148879788cb4fb43c037a322ad723383efb';
+
+  it('uses the slug the Kimi CLI reads (40-char lowercase basename + sha12 of the root)', () => {
+    expect(kimiWorkDirKey(incidentRoot)).toBe('wd_task-f2a55551505a31ef497991782ab75148879_4c46c235dc66');
+    expect(kimiWorkDirKey(`${incidentRoot}/`)).toBe(kimiWorkDirKey(incidentRoot));
+    expect(kimiWorkDirKey('/tmp/My Project!')).toMatch(/^wd_my-project_[0-9a-f]{12}$/);
+    expect(kimiWorkDirKey('/')).toMatch(/^wd_workspace_[0-9a-f]{12}$/);
+  });
+
+  it('pre-seeds the trust file under the key the CLI looks up', () => {
+    const home = tempDir();
+    const cwd = path.join(tempDir(), `task-${'a'.repeat(64)}`);
+    fs.mkdirSync(cwd);
+    ensureKimiWorkspaceTrust(home, cwd);
+    const files = fs.readdirSync(path.join(home, 'workspace-trust'));
+    expect(files).toContain(kimiWorkDirKey(cwd));
+    expect(kimiWorkDirKey(cwd)).toMatch(new RegExp(`^wd_task-${'a'.repeat(35)}_[0-9a-f]{12}$`));
+    expect(files.some((name) => name.includes('a'.repeat(64)))).toBe(false);
+    const registry = JSON.parse(fs.readFileSync(path.join(home, 'workspaces.json'), 'utf8'));
+    expect(Object.keys(registry.workspaces)).toContain(kimiWorkDirKey(cwd));
   });
 });
