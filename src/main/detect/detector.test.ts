@@ -11,6 +11,7 @@ import {
   type ScreenDetectionRecord,
 } from './detector';
 import { parseManifest } from './manifest';
+import { SessionScreenBuffer, type ScreenSource } from './screen-buffer';
 
 const TEST_MANIFEST = [
   'id = "testcli"',
@@ -35,10 +36,11 @@ const TEST_MANIFEST = [
   'contains = ["ready>"]',
 ].join('\n');
 
-function makeDetector(agentAdapter = 'testcli') {
+function makeDetector(agentAdapter = 'testcli', screen?: ScreenSource) {
   const published: ScreenDetectionRecord[] = [];
   const detector = new AgentScreenDetector({
     manifests: [compileManifest(parseManifest(TEST_MANIFEST))],
+    ...(screen ? { screen } : {}),
     getAgentInfo: (sessionId) =>
       sessionId === 'shell' ? null : { adapterId: agentAdapter, paneId: 'p1' },
     publish: (record) => published.push(record),
@@ -223,9 +225,9 @@ describe('AgentScreenDetector', () => {
   });
 });
 
-describe('getScreenText — cauda do buffer limpo', () => {
+describe('getScreenText — cauda do buffer limpo (motor de texto, fallback)', () => {
   it('null sem buffer, texto com buffer, respeita maxChars pela cauda', () => {
-    const { detector } = makeDetector();
+    const { detector } = makeDetector('testcli', new SessionScreenBuffer());
     expect(detector.getScreenText('s-none')).toBeNull();
     detector.onData('s1', 'primeira linha\nsegunda linha\n');
     expect(detector.getScreenText('s1')).toBe('primeira linha\nsegunda linha\n');
@@ -250,10 +252,15 @@ describe('avaliação com janela e orçamento (F-764 C.3)', () => {
     'contains = ["banner-antigo"]',
   ].join('\n');
 
-  function detectorWith(manifest: string, trace?: (event: Record<string, unknown>) => void) {
+  function detectorWith(
+    manifest: string,
+    trace?: (event: Record<string, unknown>) => void,
+    screen?: ScreenSource,
+  ) {
     const published: ScreenDetectionRecord[] = [];
     const detector = new AgentScreenDetector({
       manifests: [compileManifest(parseManifest(manifest))],
+      ...(screen ? { screen } : {}),
       getAgentInfo: () => ({ adapterId: 'testcli', paneId: 'p1' }),
       publish: (record) => published.push(record),
       now: () => Date.now(),
@@ -266,8 +273,8 @@ describe('avaliação com janela e orçamento (F-764 C.3)', () => {
     vi.restoreAllMocks();
   });
 
-  it('avalia só a janela final do buffer, em linhas inteiras', () => {
-    const { detector } = detectorWith(WHOLE_RECENT_MANIFEST);
+  it('avalia só a janela final do buffer, em linhas inteiras (motor de texto)', () => {
+    const { detector } = detectorWith(WHOLE_RECENT_MANIFEST, undefined, new SessionScreenBuffer());
     detector.onData('s', 'banner-antigo\n');
     expect(detector.evaluateSession('s')?.state).toBe('working');
     // Mais que a janela depois do banner: ele saiu da TELA avaliada.

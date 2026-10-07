@@ -1,10 +1,11 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
+import { resolveGhosttyWasmPath } from '../detect/ghostty-runtime';
 import { resolveManifestDir } from '../detect/manifest';
 import { trace } from '../observability/main-trace';
 import { PtyAnalysisClient } from './pty-analysis-client';
 import { AnalysisJobProgress } from './pty-analysis-progress';
-import { validAnalysisResult, type AnalysisBinding, type AnalysisConsumer, type AnalysisFence, type AnalysisInput, type AnalysisWorkerMessage } from './pty-analysis-protocol';
+import { validAnalysisResult, validWorkerTrace, type AnalysisBinding, type AnalysisConsumer, type AnalysisFence, type AnalysisInput, type AnalysisWorkerMessage } from './pty-analysis-protocol';
 
 let enabled = false;
 let worker: Worker | null = null;
@@ -19,6 +20,7 @@ export function setPtyAnalysisWorkerFactoryForTests(factory: (progress: SharedAr
   if (worker) throw new Error('analysis worker already started'); workerFactory = factory;
 }
 let describe: (id: string) => AnalysisBinding = () => ({});
+let grid: (id: string) => { cols: number; rows: number } | null = () => null;
 const failures: number[] = [];
 const quarantinedManifests = new Set<string>();
 let riskyManifest: string | null = null;
@@ -58,8 +60,9 @@ function ensureWorker() {
   let appPath = process.cwd(); let packaged = false;
   try { const { app } = require('electron') as typeof import('electron'); appPath = app.getAppPath(); packaged = app.isPackaged; } catch {}
   const manifestDir = resolveManifestDir({ appPath, packaged, resourcesPath: process.resourcesPath });
+  const ghosttyWasmPath = resolveGhosttyWasmPath({ appPath, packaged, resourcesPath: process.resourcesPath });
   progress = new AnalysisJobProgress();
-  const created = workerFactory ? workerFactory(progress.buffer) : new Worker(path.join(__dirname, 'pty-analysis-worker-entry.js'), { workerData: { manifestDir, quarantinedManifests: [...quarantinedManifests], analysisProgress: progress.buffer } });
+  const created = workerFactory ? workerFactory(progress.buffer) : new Worker(path.join(__dirname, 'pty-analysis-worker-entry.js'), { workerData: { manifestDir, ghosttyWasmPath, quarantinedManifests: [...quarantinedManifests], analysisProgress: progress.buffer } });
   worker = created;
   armDeadline(2_000, 'startup-timeout');
   created.on('message', (message: AnalysisWorkerMessage) => {
@@ -83,6 +86,8 @@ function ensureWorker() {
       const manifest = (message as { manifestId?: unknown }).manifestId;
       riskyManifest = typeof manifest === 'string' && manifest.length <= 128 ? manifest : null;
       if (workStartedToken !== activeToken) { workStartedToken = activeToken; armDeadline(250, 'work-timeout'); }
+    } else if (message.kind === 'trace') {
+      const event = validWorkerTrace(message.event); if (event) trace({ ...event });
     } else if (message.kind === 'failed') fail(message.reason);
     else {
       if (validAnalysisResult(message) && message.done !== false && activeRecord &&
@@ -106,8 +111,8 @@ function send(record: AnalysisInput) {
 }
 export const analysisClient = new PtyAnalysisClient({ post: send, now: Date.now,
   flow: (id, paused) => flow(id, paused), acknowledged: (id, bytes) => credit(id, bytes), trace });
-export function configurePtyAnalysis(deps: { describe: typeof describe; flow: typeof flow; credit: typeof credit }) {
-  describe = deps.describe; flow = deps.flow; credit = deps.credit;
+export function configurePtyAnalysis(deps: { describe: typeof describe; flow: typeof flow; credit: typeof credit; grid?: typeof grid }) {
+  describe = deps.describe; flow = deps.flow; credit = deps.credit; grid = deps.grid ?? (() => null);
 }
 export function startPtyAnalysis() { enabled = true; }
 export function isPtyAnalysisEnabled() { return enabled; }
@@ -115,7 +120,11 @@ export function bindPtyAnalysisSession(id: string) {
   if (!enabled) return 0;
   while (failures.length && Date.now() - failures[0] >= 60_000) failures.shift();
   if (analysisClient.metrics().degraded && failures.length <= 3 && !worker) analysisClient.recoverFreshSessions();
-  const binding = describe(id); bindings.set(id, binding); return analysisClient.bind(id, binding);
+  const binding = describe(id); bindings.set(id, binding);
+  const generation = analysisClient.bind(id, binding);
+  // Every (re)bind starts a fresh screen in the Worker: give it the winsize.
+  const size = grid(id); if (size) analysisClient.resize(id, size.cols, size.rows);
+  return generation;
 }
 function ensureBinding(id: string) {
   if (!enabled) return;
@@ -132,6 +141,7 @@ export function feedPtyAnalysis(id: string, data: string) {
 }
 export function inputPtyAnalysis(id: string, data: string) { if (!enabled) return; ensureBinding(id); analysisClient.input(id, data); }
 export function statePtyAnalysis(id: string, state: string) { if (analysisClient.has(id)) analysisClient.state(id, state); }
+export function resizePtyAnalysis(id: string, cols: number, rows: number) { if (enabled && analysisClient.has(id)) analysisClient.resize(id, cols, rows); }
 export function exitPtyAnalysis(id: string) { analysisClient.exit(id); bindings.delete(id); }
 export function terminatePtyAnalysis(id: string) { analysisClient.terminate(id); }
 export function subscribePtyAnalysis(consumer: AnalysisConsumer, callback: (id: string, value: unknown, fence: AnalysisFence) => void, config?: unknown) {

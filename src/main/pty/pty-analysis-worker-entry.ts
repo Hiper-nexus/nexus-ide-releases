@@ -11,6 +11,7 @@ try {
   let current: AnalysisInput | null = null;
   let activityToken = 0;
   const manifests = loadManifestDir(workerData.manifestDir).filter(({ manifest }) => !workerData.quarantinedManifests?.includes(manifest.id)).map(({ manifest }) => compileManifest(manifest));
+  const ghosttyWasmPath = typeof workerData.ghosttyWasmPath === 'string' ? workerData.ghosttyWasmPath : undefined;
   const core = new PtyAnalysisCore(manifests, (result) => port.postMessage(result), {
     start: (sessionId, manifestId) => {
       progress?.startActivity(++activityToken);
@@ -20,7 +21,7 @@ try {
       progress?.completeActivity(activityToken);
       port.postMessage({ kind: 'work-end', watchdogToken: current?.watchdogToken, activityToken });
     },
-  });
+  }, { ghosttyWasmPath, trace: (event) => port.postMessage({ kind: 'trace', event }) });
   port.on('message', (record: AnalysisInput) => {
     current = record;
     if (record.watchdogToken) progress?.start(record.watchdogToken);

@@ -80,6 +80,8 @@ export class PtyAnalysisClient {
   }
   input(id: string, data: string): void { this.#enqueue(id, { kind: 'input', data }); }
   state(id: string, state: string): void { this.#enqueue(id, { kind: 'state', state }); }
+  /** Winsize joins the session FIFO, so the grid reflows between the right chunks. */
+  resize(id: string, cols: number, rows: number): void { this.#enqueue(id, { kind: 'resize', cols, rows }); }
   control(id: string, consumer: AnalysisConsumer, value: unknown): void { this.#enqueue(id, { kind: 'control', consumer, value }); }
   arm(id: string, consumer: AnalysisConsumer, config?: unknown): void {
     const sub = this.#subscribers.get(consumer);

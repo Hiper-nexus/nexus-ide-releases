@@ -7,7 +7,7 @@ import { prepareOpenCodeSessionArgs, isOpenCodeOwnedServerProved } from './openc
 import { getContext as getNativeHeavyGateContext, isCurrentGateContext } from '../orch/gate';
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { recordSessionInputReceipt, forgetSessionInputReceipt, type SystemInputWriter } from '../orch/operator-input-receipts';
-import { configurePtyAnalysis, bindPtyAnalysisSession, feedPtyAnalysis, inputPtyAnalysis, statePtyAnalysis, exitPtyAnalysis, terminatePtyAnalysis } from './pty-analysis-runtime';
+import { configurePtyAnalysis, bindPtyAnalysisSession, feedPtyAnalysis, inputPtyAnalysis, statePtyAnalysis, resizePtyAnalysis, exitPtyAnalysis, terminatePtyAnalysis } from './pty-analysis-runtime';
 import { assertLicenseAccess, reserveLicensedAgent, licensedAgentCount } from '../license-enforcement';
 import fs from "node:fs";
 import { canResumeMimoNativeSession } from "../adapters/mimo-session-owner";
@@ -3795,7 +3795,10 @@ export function resizeSession(
     session.grid = { cols, rows };
   } catch {
     // A resize racing with process exit can throw; safe to ignore.
+    return;
   }
+  // The detector grid reflows with the PTY (ordered with its output).
+  resizePtyAnalysis(sessionId, cols, rows);
 }
 
 export function killSession(
@@ -3907,10 +3910,11 @@ export function orchResizeSession(
   try {
     session.proc.resize(cols, rows);
     session.grid = { cols, rows };
-    return true;
   } catch {
     return false;
   }
+  resizePtyAnalysis(sessionId, cols, rows);
+  return true;
 }
 
 /** Trusted main-process kill (MCP pane_close on a session-only target). */
@@ -4491,6 +4495,8 @@ configurePtyAnalysis({
   describe: (sessionId) => { const info = getAgentSessionInfo(sessionId); return info ? { adapterId: info.adapterId, paneId: info.paneId } : {}; },
   credit: (sessionId, bytes) => sessions.get(sessionId)?.proc.acknowledgeOutput?.(bytes),
   flow: (sessionId, paused) => sessions.get(sessionId)?.proc.setOutputPaused?.(paused),
+  // Spawn and every rebind hand the detector grid the winsize the PTY has.
+  grid: (sessionId) => sessions.get(sessionId)?.grid ?? null,
 });
 
 /** Authenticated Main callers only; utility host proves exact PTY ancestry. */

@@ -8,21 +8,24 @@
 //
 // FIDELITY vs HERDR: Herdr reads a rendered terminal cell grid — logical
 // lines after soft-wrap, with cursor-addressed redraws resolved in place.
-// NexusIDE has no terminal emulator in the main process, so the snapshot is
-// a rolling ANSI-stripped text tail of the PTY stream (screen-buffer.ts).
-// Consequences:
-//  - Physical-row wraps are not rejoined; line_regex rules that anchor on a
-//    full rendered row can miss when the row wrapped mid-pattern.
-//  - TUI repaints append a fresh frame instead of replacing the old one, so
-//    the tail holds several stale frames above the newest one. Every bundled
-//    region heuristic keys on the BOTTOM of the buffer (bottom_non_empty_*,
-//    prompt box from the last borders, after_last_*) which keeps the newest
-//    frame authoritative; `whole_recent` rules see extra stale history and
-//    lean on their `not` gates to compensate.
-//  - OSC title/progress never reach the stripped text; osc.ts extracts them
-//    from the raw stream separately.
-// These divergences are deliberate: the manifests are kept byte-identical to
-// upstream so Herdr's evidence-based manifest workflow stays portable.
+// The analysis Worker now renders the same kind of grid: one headless
+// libghostty-vt terminal per manifest-backed session (ghostty-screen.ts,
+// Ghostty MIT via t3code), sized by the PTY winsize ('resize' records) and
+// read through Ghostty's plain formatter with unwrap + trim. So:
+//  - Soft-wrapped rows are rejoined into one logical line before slicing.
+//  - A TUI repaint replaces the old frame in place; the alternate screen
+//    replaces the primary one while active. `whole_recent` sees the visible
+//    grid only (no scrollback), not stale frames.
+//  - OSC title/progress are not grid content; osc.ts extracts them from the
+//    raw stream separately.
+// Remaining divergence — the fail-soft fallback: if the wasm cannot load,
+// the session is not manifest-backed, or the grid budget is spent, the
+// session uses the rolling ANSI-stripped text tail (screen-buffer.ts
+// SessionScreenBuffer) with its old limits: wraps not rejoined, repaints
+// appended below stale frames (bottom-anchored regions keep the newest frame
+// authoritative). A `detector-ghostty-unavailable` trace records why.
+// The manifests stay byte-identical to upstream so Herdr's evidence-based
+// manifest workflow stays portable.
 //
 // Anti-flicker and scan-skip semantics port
 // src/pane/agent_detection.rs: PendingIdleConfirmation holds a working→idle

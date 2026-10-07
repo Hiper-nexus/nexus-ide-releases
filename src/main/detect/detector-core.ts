@@ -2,7 +2,7 @@ import type { CompiledManifest } from './compiler';
 import { evaluateManifest, type DetectedAgentState, type DetectionExplain } from './evaluator';
 import { OscTracker } from './osc';
 import type { DetectionInput } from './regions';
-import { SessionScreenBuffer } from './screen-buffer';
+import { createDetectorScreenSource, type ScreenSource } from './screen-buffer';
 export const PENDING_IDLE_RECHECK_MS = 100;
 export const PENDING_IDLE_CONFIRMATIONS = 3;
 export const PENDING_IDLE_CAP_MS = 700;
@@ -131,6 +131,13 @@ export interface AgentScreenDetectorDeps {
   now: () => number;
   /** Trace persistido do main (`detector-eval-slow`); opcional nos testes. */
   trace?: (event: Record<string, unknown>) => void;
+  /**
+   * Screen model. Default: libghostty-vt grid per manifest-backed session,
+   * falling back to the stripped-text stream (`detector-ghostty-unavailable`).
+   */
+  screen?: ScreenSource;
+  /** Artifact path for the default grid (dev/packaged resolution otherwise). */
+  ghosttyWasmPath?: string;
 }
 
 /**
@@ -161,13 +168,23 @@ export class ManifestRegistry {
 
 export class AgentScreenDetector {
   private readonly registry: ManifestRegistry;
-  private readonly buffers = new SessionScreenBuffer();
+  private readonly buffers: ScreenSource;
   private readonly osc = new OscTracker();
   private readonly sessions = new Map<string, SessionRuntime>();
   private readonly taps = new Set<ScreenDetectionTap>();
 
   constructor(private readonly deps: AgentScreenDetectorDeps) {
     this.registry = new ManifestRegistry(deps.manifests);
+    this.buffers = deps.screen ?? createDetectorScreenSource({
+      wasmPath: deps.ghosttyWasmPath,
+      // Only sessions a manifest can classify pay for a grid.
+      eligible: (sessionId) => {
+        const adapterId = deps.getAgentInfo(sessionId)?.adapterId;
+        return !!adapterId && this.registry.forAdapter(adapterId) !== null;
+      },
+      onFallback: (reason, detail) =>
+        deps.trace?.({ kind: 'detector-ghostty-unavailable', reason, detail }),
+    });
   }
 
   tapDetections(cb: ScreenDetectionTap): () => void {
@@ -183,6 +200,11 @@ export class AgentScreenDetector {
     this.scheduleEval(sessionId);
   }
 
+  /** PTY winsize change: the grid reflows before the next bytes land. */
+  onResize(sessionId: string, cols: number, rows: number): void {
+    this.buffers.resize(sessionId, cols, rows);
+  }
+
   onExit(sessionId: string): void {
     const runtime = this.sessions.get(sessionId);
     if (runtime) {
@@ -194,7 +216,7 @@ export class AgentScreenDetector {
     this.osc.drop(sessionId);
   }
 
-  /** Tail of the buffered stripped screen text; null when nothing buffered. */
+  /** Tail of the session's screen text; null when nothing buffered. */
   getScreenText(sessionId: string, maxChars = 6_000): string | null {
     const text = this.buffers.text(sessionId);
     if (!text) return null;

@@ -20,8 +20,23 @@ export type AnalysisInput = AnalysisFence & { readonly watchdogToken?: number } 
   | { readonly kind: 'disarm'; readonly consumer: AnalysisConsumer; readonly registration: number }
   | { readonly kind: 'control'; readonly consumer: AnalysisConsumer; readonly value: unknown }
   | { readonly kind: 'state'; readonly state: string }
+  /** PTY winsize, ordered with the data so the grid reflows at the right byte. */
+  | { readonly kind: 'resize'; readonly cols: number; readonly rows: number }
   | { readonly kind: 'flush' | 'exit' | 'terminate' }
 );
+/** Same ceiling the detector grid clamps to; anything else is dropped. */
+export function validAnalysisGrid(cols: unknown, rows: unknown): boolean {
+  return Number.isSafeInteger(cols) && Number.isSafeInteger(rows) &&
+    (cols as number) >= 1 && (cols as number) <= 1_000 && (rows as number) >= 1 && (rows as number) <= 500;
+}
+/** The only trace a Worker may raise; Main re-validates before tracing. */
+export interface AnalysisWorkerTrace { readonly kind: 'detector-ghostty-unavailable'; readonly reason: string; readonly detail: string }
+export function validWorkerTrace(value: unknown): AnalysisWorkerTrace | null {
+  const t = value as Partial<AnalysisWorkerTrace> | null;
+  if (!t || typeof t !== 'object' || t.kind !== 'detector-ghostty-unavailable') return null;
+  if (typeof t.reason !== 'string' || !/^[a-z-]{1,32}$/.test(t.reason)) return null;
+  return { kind: t.kind, reason: t.reason, detail: typeof t.detail === 'string' ? t.detail.slice(0, 64) : '' };
+}
 export interface AnalysisEvent {
   readonly consumer: AnalysisConsumer;
   readonly registration: number;
@@ -36,7 +51,7 @@ export type AnalysisResult = AnalysisFence & {
   readonly done?: boolean;
   readonly screenText?: string;
 };
-export type AnalysisWorkerMessage = AnalysisResult | { kind: 'ready' } | { kind: 'work-start'; workerEpoch: number; job: number; sessionId: string; watchdogToken?: number; activityToken?: number; manifestId?: string } | { kind: 'work-end'; watchdogToken?: number; activityToken?: number } | { kind: 'failed'; reason: string };
+export type AnalysisWorkerMessage = AnalysisResult | { kind: 'ready' } | { kind: 'trace'; event: AnalysisWorkerTrace } | { kind: 'work-start'; workerEpoch: number; job: number; sessionId: string; watchdogToken?: number; activityToken?: number; manifestId?: string } | { kind: 'work-end'; watchdogToken?: number; activityToken?: number } | { kind: 'failed'; reason: string };
 const CONSUMERS = new Set<AnalysisConsumer>(['screen', 'dev-server', 'failover', 'completion', 'handoff', 'paste', 'command', 'pipe', 'token', 'prompt', 'first-run', 'mission-control']);
 export function validAnalysisResult(value: unknown): value is AnalysisResult {
   if (!value || typeof value !== 'object') return false;
