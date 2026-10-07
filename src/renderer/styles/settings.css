@@ -1946,6 +1946,246 @@
     transform: translateY(0);
   }
 }
+/* Folga conjunta por ferramenta (adaptado do T3 Code, MIT): uma linha por
+   janela, um segmento de mesma largura por conta. Mesmo registro do Fleet
+   Pulse — tokens de status, hachura só onde a renovação devolve cota, sem
+   vidro nem sombra. Coluna sem leitura é tracejada, nunca barra vazia. */
+.quota-pool {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+.quota-pool__head {
+  display: grid;
+  gap: var(--space-1);
+}
+.quota-pool__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.quota-pool__hint {
+  margin: 0;
+  max-width: 65ch;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.quota-pool__group {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.quota-pool__group-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.quota-pool__supplier {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+.quota-pool__window {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr);
+  gap: var(--space-2) var(--space-5);
+  align-items: center;
+  padding-block: var(--space-2);
+}
+.quota-pool__summary {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.quota-pool__window-label {
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+.quota-pool__number {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+.quota-pool__number strong {
+  margin-right: var(--space-1);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-3xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.quota-pool__coverage,
+.quota-pool__refill {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.quota-pool__refill strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.quota-pool__bar-wrap {
+  container: quota-pool-bar / inline-size;
+  min-width: 0;
+}
+.quota-pool__bar {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.quota-pool__segment {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 20px;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--border);
+}
+.quota-pool__segment--unknown {
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+}
+.quota-pool__fill {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--ok) 35%, transparent);
+}
+.quota-pool__fill--warn {
+  background: color-mix(in srgb, var(--warn) 35%, transparent);
+}
+.quota-pool__fill--danger {
+  background: color-mix(in srgb, var(--danger) 35%, transparent);
+}
+/* A parte gasta é hachurada, não vazia: é o que a renovação devolve. */
+.quota-pool__spent {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--text) 22%, transparent) 0 1px,
+    transparent 1px 5px
+  );
+}
+.quota-pool__segment-index {
+  position: relative;
+  flex: 1;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-align: center;
+}
+.quota-pool__segment-detail {
+  position: relative;
+  display: none;
+  align-items: center;
+  gap: var(--space-1-5);
+  width: 100%;
+  min-width: 0;
+  padding-inline: var(--space-2);
+  font-size: var(--text-xs);
+}
+.quota-pool__segment-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quota-pool__segment-pct {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* A contagem tem placa própria: preenchimento e hachura correm por baixo. */
+.quota-pool__segment-reset {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 1px var(--space-1-5);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+.quota-pool__legend {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.quota-pool__legend-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--text-sm);
+}
+.quota-pool__legend-index {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+.quota-pool__legend-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quota-pool__legend-pct {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.quota-pool__legend-reset {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+/* Largo, cada segmento carrega o próprio texto e a legenda sai. */
+@container quota-pool-bar (min-width: 480px) {
+  .quota-pool__segment {
+    height: 32px;
+  }
+  .quota-pool__segment-index,
+  .quota-pool__legend {
+    display: none;
+  }
+  .quota-pool__segment-detail {
+    display: flex;
+  }
+}
 /* Limiares de urgência (60% / 85%) marcados no trilho — a barra lê como
    instrumento calibrado, não como progresso genérico. */
 .quota-window__track {
@@ -2214,6 +2454,9 @@
   }
   .quota-window__reset:empty {
     display: none;
+  }
+  .quota-pool__window {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 .account-switcher__quota {
