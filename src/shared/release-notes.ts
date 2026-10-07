@@ -10168,6 +10168,8 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Quadro em destaque', detail: 'Tela inteira, orientação horizontal ou vertical, zoom e ajuste da visão. Os cartões acompanham os terminais e a atividade atual da missão.' },
   ],
   fixes: [
+    { title: 'Abre mesmo com o Mac lento', detail: 'Se o terminal nativo demora a responder na abertura, o Nexus inicia assim mesmo e conclui essa preparação em segundo plano. Quando a abertura falha, o aviso mostra o motivo.' },
+    { title: 'Sem erro fatal do git', detail: 'Uma falha do git ao restaurar os painéis de uma missão não derruba mais o aplicativo. O painel afetado só deixa de recuperar a autorização anterior.' },
     { title: 'Revisão aceita a entrega revisada', detail: 'O gasto registrado pelo próprio veredito do revisor não invalida mais a revisão independente. Mudanças reais de objetivo, limites, ferramentas ou equipe continuam exigindo nova revisão.' },
     { title: 'Encerrar mantém a missão parada', detail: 'Recuperações automáticas e spawns pendentes respeitam o encerramento. Só a retomada explícita reabre a missão e vincula o novo terminal do Maestro.' },
     { title: 'Verificações que conseguem iniciar', detail: 'Máquinas com muitas ferramentas instaladas deixam de exceder o limite interno do supervisor. As permissões de isolamento permanecem preservadas.' },
