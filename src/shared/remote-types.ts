@@ -1,18 +1,57 @@
+export type RemoteBridgeTailscaleStatus =
+  | 'available'
+  | 'requires-configuration'
+  | 'unavailable';
+
+/** Rótulos fechados — nunca texto cru da CLI (stderr carrega tskey-… e nós). */
+export type RemoteBridgeTailscaleDiagnostic =
+  | 'not-installed'
+  | 'not-logged-in'
+  | 'not-running'
+  | 'no-magicdns'
+  | 'serve-not-enabled'
+  | 'permission-denied'
+  | 'port-in-use'
+  | 'timeout'
+  | 'probe-failed'
+  | 'unknown';
+
+export interface RemoteBridgeTailscaleInfo {
+  magicDnsName: string | null;
+  /** Presente só enquanto o Nexus mantém o handler do Tailscale Serve ativo. */
+  httpsUrl?: string;
+  status: RemoteBridgeTailscaleStatus;
+  diagnostic?: RemoteBridgeTailscaleDiagnostic;
+}
+
+export interface RemoteBridgeEndpoint {
+  url: string;
+  label: 'Tailscale HTTPS' | 'Tailscale IP' | 'Rede local' | 'Este computador';
+}
+
 export interface RemoteBridgeInfo {
   running: boolean;
   port?: number;
   urls: string[];
+  /** As mesmas URLs de `urls`, rotuladas pela rede de origem. */
+  endpoints?: RemoteBridgeEndpoint[];
   pairingCode?: string;
   pairingExpiresAt?: number;
   tokenCount: number;
   clientCount: number;
   certFingerprint?: string;
+  tailscale?: RemoteBridgeTailscaleInfo;
 }
 
 export interface RemoteBridgeStartRequest {
   port?: number;
   /** Bind address. Defaults to 127.0.0.1; set 0.0.0.0 to expose on the LAN. */
   host?: string;
+  /**
+   * Publica a bridge no tailnet via Tailscale Serve (HTTPS *.ts.net). Só age
+   * neste pedido explícito de start; ausente mantém o estado atual.
+   */
+  tailscale?: boolean;
 }
 
 export interface RemoteCliDetection {

@@ -456,7 +456,11 @@ import {
 } from "./context/sync-runtime";
 import { wireDeepLinks, consumeLaunchDeepLink } from "./deep-link";
 import { initAutoUpdater, stopAutoUpdater } from "./updater";
-import { stopRemoteBridge } from "./remote/remote-bridge";
+import {
+  cleanupRemoteBridgeTailscaleOrphan,
+  settleRemoteBridgeTailscale,
+  stopRemoteBridge,
+} from "./remote/remote-bridge";
 import { initSmokeTest } from "./smoke-test";
 import {
   disposeAgentAwakeService,
@@ -923,6 +927,9 @@ async function bootstrap(): Promise<void> {
   }
   registerPipeIpc(); // also calls initPanePipes()
   registerRemoteIpc();
+  // Handler do Tailscale Serve deixado por um crash anterior: sem marcador em
+  // ~/.nexus não há spawn algum; com marcador, remove só se ainda for nosso.
+  void cleanupRemoteBridgeTailscaleOrphan();
   registerIntegrationsIpc();
   traceBootstrap('after remaining IPC registration');
   // Desktop pet (opt-in): companion flutuante que reage à frota. Depois da
@@ -1572,6 +1579,9 @@ function shutdown(): Promise<void> {
     );
     await trackShutdownPhase("rest", async () => {
       stopRemoteBridge();
+      // `tailscale serve off` da bridge publicada no tailnet, com teto curto;
+      // o que não couber o próximo boot remove pelo marcador.
+      await settleRemoteBridgeTailscale();
     configureAgentHookEndpointPath(null);
     await stopAgentHookHttpServer().catch(() => {});
     await stopShotBridgeServer().catch(() => {});
