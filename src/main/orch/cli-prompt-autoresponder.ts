@@ -6,7 +6,12 @@ class WorkerCliPromptAutoResponder extends CliPromptAutoResponder {
   readonly cache = new Map<string, { generation: number | null; at: number; value: ReturnType<CliPromptAutoResponder['analysisSnapshot']> }>();
   readonly settling = new Map<string, number>();
   acceptWorker(sessionId: string, value: ReturnType<CliPromptAutoResponder['analysisSnapshot']> & { verified?: boolean }, at: number) {
-    this.cache.set(sessionId, { generation: analysisClient.generation(sessionId), at, value });
+    // F-956: a prova do aceite é o último snapshot que o Worker publica (a
+    // assinatura já saiu do watch). O `defer` dele é só o settle do aceite, que
+    // `settling` já mede; guardado no cache, segurava a colagem por 180 s e o
+    // composer pronto do Kimi nunca era conferido.
+    const cached = value.verified ? { ...value, defer: false } : value;
+    this.cache.set(sessionId, { generation: analysisClient.generation(sessionId), at, value: cached });
     this.acceptAnalysis(sessionId, value, at);
     if (value.response) this.settling.set(sessionId, at + 450);
   }

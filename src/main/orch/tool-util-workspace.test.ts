@@ -293,7 +293,42 @@ import {
 } from './pane-start-watchdog';
 import { testProjectScope } from './__tests__/scope-fixture';
 const KIMI_COMPOSER_SCREEN = 'Welcome to Kimi Code!\n│ >   │\nAsk When Needed K3 thinking: high\ncontext: 0% (0/1M)';
+/** F-956: cauda real do pane `pane-muyma29q-p` (Kimi Code 2.1.1, K3) em 07/10. */
+const KIMI_211_COMPOSER_SCREEN = [
+  ' ╭────────────────────────────────────────────────────────────────────────────╮',
+  ' │                                                                            │',
+  ' │   ▐█▛█▛█▌  Welcome to Kimi Code!                                          │',
+  ' │   ▐█████▌  Send /help for help information.                               │',
+  ' │                                                                            │',
+  ' │   Directory: /Users/cleofaspereirarocha/Library/Application Support/NexusID…│',
+  ' │   Session:                                                                 │',
+  ' │   Model: K3                                                                │',
+  ' │   Version: 2.1.1                                                           │',
+  ' │                                                                            │',
+  ' ╰────────────────────────────────────────────────────────────────────────────╯',
+  ' ✦ Kimi Code Desktop is here — Everything you love about Kimi Code, now on',
+  '                             desktop',
+  '   Run /desktop or visit https://www.kimi.com/code to install',
+  '',
+  '   No session yet — one will be created on your first message.',
+  '',
+  ' ╭────────────────────────────────────────────────────────────────────────────╮',
+  ' │ >                                                                          │',
+  ' ╰────────────────────────────────────────────────────────────────────────────╯',
+  ' Ask When Needed  K3 thinking: high  …/project-4bd6404c5885df95fc2ad9477d576c3…',
+  '                                                             context: 0% (0/1M)',
+].join('\n');
+/** Diálogo de trust do Kimi em dois pedaços do mesmo quadro (leitura do PTY). */
+const KIMI_TRUST_DIALOG_HEAD =
+  'Trust this folder?\n↑↓ navigate · Enter select · Esc exit\n\n' +
+  'Project-level MCP servers are disabled until you explicitly choose Trust.\n' +
+  'Trust starts the listed project MCP targets and remembers this folder.\n\n' +
+  ' ❯ Trust this folder\n   Enable project MCP servers. Remembered for this folder.\n\n' +
+  "   Don't trust\n";
+const KIMI_TRUST_DIALOG_TAIL = '   Exit Kimi Code. Asked again next launch.\n';
 import fs from 'node:fs';
+import { analysisClient } from '../pty/pty-analysis-runtime';
+import { PtyAnalysisCore } from '../pty/pty-analysis-core';
 import { applyAttestedBusinessModel, createBarbershopRepo } from '../context/business-model/__fixtures__/barbershop';
 
 const DEVIN_TRUST_SCREEN = `
@@ -2802,6 +2837,91 @@ describe('agent prompt injection', () => {
       await expect(pending).resolves.toBe(true);
       expect(stubs.writeSession).toHaveBeenCalledWith('session-1', 'revise o diff', expect.objectContaining({ markInputBusy: false }));
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * F-956: produção roda o autoresponder no Worker de análise. O trust do
+   * Kimi aceito no boot vira dois eventos no Main — a resposta e, com o resto
+   * do quadro, a verificação — e o Worker para de publicar depois disso.
+   * Nada de colar no diálogo; nada de segurar o composer pronto depois dele.
+   */
+  function acceptKimiTrustInAnalysisWorker(options: { readonly verify: boolean }): void {
+    let seq = 0;
+    const core = new PtyAnalysisCore([], (result) => {
+      for (const event of result.events) {
+        if (event.consumer !== 'prompt') continue;
+        cliPromptAutoResponder.acceptWorker(
+          'session-1',
+          event.value as Parameters<typeof cliPromptAutoResponder.acceptWorker>[1],
+          result.observedAt,
+        );
+      }
+    });
+    const feed = (body: object) => core.process({
+      sessionId: 'session-1', generation: 1, workerEpoch: 1, eventSeq: ++seq, observedAt: Date.now(), ...body,
+    } as Parameters<typeof core.process>[0]);
+    feed({ kind: 'bind', binding: { adapterId: 'kimi' } });
+    feed({ kind: 'arm', consumer: 'prompt', registration: 1 });
+    feed({ kind: 'control', consumer: 'prompt', value: { bind: { adapterId: 'kimi', now: Date.now(), governed: true } } });
+    feed({ kind: 'data', data: KIMI_TRUST_DIALOG_HEAD });
+    vi.advanceTimersByTime(30);
+    if (options.verify) feed({ kind: 'data', data: KIMI_TRUST_DIALOG_TAIL });
+    core.close();
+  }
+
+  it('F-956: trust do Kimi aceito no Worker não trava a entrega no composer pronto do Kimi Code 2.1.1', async () => {
+    vi.useFakeTimers();
+    const status = vi.spyOn(analysisClient, 'status').mockReturnValue('active');
+    const generation = vi.spyOn(analysisClient, 'generation').mockReturnValue(1);
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.injectable = true;
+      acceptKimiTrustInAnalysisWorker({ verify: true });
+      // A janela curta depois do aceite continua segurando a colagem.
+      expect(cliPromptAutoResponder.shouldDeferInjection('session-1')).toBe(true);
+      stubs.readSessionOutput.mockReturnValue(KIMI_211_COMPOSER_SCREEN);
+      stubs.writeSession.mockImplementation(((sessionId: string, data: string) => {
+        if (data === '\r') queueMicrotask(() => {
+          stubs.sessionState.mockReturnValue('busy');
+          for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+          for (const tap of [...stubs.dataTaps]) tap(sessionId, 'revisando o diff');
+        });
+        return true;
+      }) as typeof stubs.writeSession);
+      const pending = deliverAgentPrompt('session-1', 'revise o diff', undefined, { adapterId: 'kimi' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      // Antes: o defer do settle ficava no cache por 180 s; 85 s depois o
+      // pane era fechado com "Kimi composer did not become ready".
+      expect(stubs.writeSession).toHaveBeenCalledWith('session-1', 'revise o diff', expect.objectContaining({ markInputBusy: false }));
+      await expect(pending).resolves.toBe(true);
+    } finally {
+      cliPromptAutoResponder.drop('session-1');
+      status.mockRestore();
+      generation.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-956: trust do Kimi respondido sem prova de aceite segue segurando a colagem', async () => {
+    vi.useFakeTimers();
+    const status = vi.spyOn(analysisClient, 'status').mockReturnValue('active');
+    const generation = vi.spyOn(analysisClient, 'generation').mockReturnValue(1);
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.injectable = true;
+      // TUI muda depois do Enter: nada prova que o diálogo saiu da tela.
+      acceptKimiTrustInAnalysisWorker({ verify: false });
+      stubs.readSessionOutput.mockReturnValue(KIMI_211_COMPOSER_SCREEN);
+      void deliverAgentPrompt('session-1', 'revise o diff', undefined, { adapterId: 'kimi' }).catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(cliPromptAutoResponder.shouldDeferInjection('session-1')).toBe(true);
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+    } finally {
+      cliPromptAutoResponder.drop('session-1');
+      status.mockRestore();
+      generation.mockRestore();
       vi.useRealTimers();
     }
   });
