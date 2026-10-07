@@ -1,9 +1,9 @@
 // Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
 // Copyright (c) 2026 T3 Tools Inc. — MIT License
 // See third_party/licenses/t3code-MIT.txt. Nexus changes: JavaScript engine only (no native
-// engine, no Effect), Nexus theme colors, every grammar lazy, a curated 26-language list (others
-// stay plain), rows highlighted per 200-row block with an LRU cache and grammar state carried
-// between blocks (technique from incrementalSnippet.ts).
+// engine, no Effect), Nexus theme colors, every grammar lazy, a curated language list (JS/JSX
+// via TSX, C++ via C, others stay plain), rows highlighted per 200-row block with an LRU cache
+// and grammar state carried between blocks (technique from incrementalSnippet.ts).
 import {
   createHighlighterCore,
   type GrammarState,
@@ -28,12 +28,11 @@ const loadedLanguages = new Set<string>(['text'])
 const languageLoadingPromises = new Map<string, Promise<boolean>>()
 // Why: Metro puts every import() target in the same bundle, so this is a curated
 // list of the languages most common in the operator's repositories; anything else
-// renders as plain text.
+// renders as plain text. JavaScript/JSX use the TSX grammar and C++ the C grammar
+// (see languageAliases) so their own grammars stay out of the list.
 const languageImports: Partial<Record<string, () => Promise<unknown>>> = {
   typescript: () => import('@shikijs/langs/typescript'),
   tsx: () => import('@shikijs/langs/tsx'),
-  javascript: () => import('@shikijs/langs/javascript'),
-  jsx: () => import('@shikijs/langs/jsx'),
   json: () => import('@shikijs/langs/json'),
   css: () => import('@shikijs/langs/css'),
   scss: () => import('@shikijs/langs/scss'),
@@ -52,16 +51,17 @@ const languageImports: Partial<Record<string, () => Promise<unknown>>> = {
   php: () => import('@shikijs/langs/php'),
   ruby: () => import('@shikijs/langs/ruby'),
   c: () => import('@shikijs/langs/c'),
-  cpp: () => import('@shikijs/langs/cpp'),
   csharp: () => import('@shikijs/langs/csharp'),
   docker: () => import('@shikijs/langs/docker'),
   diff: () => import('@shikijs/langs/diff')
 }
 
 const languageAliases: Record<string, string> = {
-  js: 'javascript',
-  mjs: 'javascript',
-  cjs: 'javascript',
+  javascript: 'tsx',
+  jsx: 'tsx',
+  js: 'tsx',
+  mjs: 'tsx',
+  cjs: 'tsx',
   ts: 'typescript',
   mts: 'typescript',
   cts: 'typescript',
@@ -74,7 +74,8 @@ const languageAliases: Record<string, string> = {
   shell: 'shellscript',
   yml: 'yaml',
   md: 'markdown',
-  'c++': 'cpp',
+  cpp: 'c',
+  'c++': 'c',
   'c#': 'csharp',
   cs: 'csharp',
   dockerfile: 'docker',
@@ -87,7 +88,6 @@ const languageAliases: Record<string, string> = {
 // know them); Shiki has dedicated grammars for them.
 const EXTENSION_LANGUAGE_OVERRIDES: Record<string, string> = {
   '.tsx': 'tsx',
-  '.jsx': 'jsx',
   '.toml': 'toml',
   '.diff': 'diff',
   '.patch': 'diff'

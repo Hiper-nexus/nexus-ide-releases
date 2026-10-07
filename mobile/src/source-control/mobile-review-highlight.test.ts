@@ -66,7 +66,15 @@ describe('resolveMobileReviewLanguage', () => {
   it.each([
     ['src/app.ts', 'typescript'],
     ['src/App.tsx', 'tsx'],
-    ['src/view.jsx', 'jsx'],
+    // JavaScript and JSX reuse the TSX grammar; C++ reuses the C grammar.
+    ['src/view.jsx', 'tsx'],
+    ['src/index.js', 'tsx'],
+    ['scripts/build.mjs', 'tsx'],
+    ['config/babel.cjs', 'tsx'],
+    ['native/engine.cpp', 'c'],
+    ['native/engine.cc', 'c'],
+    ['native/engine.hpp', 'c'],
+    ['native/engine.h', 'c'],
     ['pyproject.toml', 'toml'],
     ['scripts/run.sh', 'shellscript'],
     ['Dockerfile', 'docker'],
@@ -110,6 +118,17 @@ describe('highlightMobileReviewBlock', () => {
     expect(colorOf(tokens!, 'const')).toBe(colors.syntaxKeyword.toLowerCase())
     expect(colorOf(tokens!, '42')).toBe(colors.syntaxNumber.toLowerCase())
     expect(colorOf(tokens!, 'note')).toBe(colors.syntaxComment.toLowerCase())
+  })
+
+  it.each([
+    ['src/index.js', 'const view = <App />'],
+    ['native/engine.cpp', 'int main() { return 0; }']
+  ])('still colors %s through its substitute grammar', { retry: 3 }, async (filePath, code) => {
+    const [tokens] = await highlightAll(reviewOf(contextRows([code])), filePath)
+
+    expect(joined(tokens)).toBe(code)
+    const plain = colors.textPrimary.toLowerCase()
+    expect(tokens!.some((token) => token.color && token.color.toLowerCase() !== plain)).toBe(true)
   })
 
   it('keeps lines longer than 1000 characters as raw text', async () => {
