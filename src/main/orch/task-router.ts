@@ -680,6 +680,13 @@ export interface AdapterRouteCapabilities {
 export interface AdapterAvailability {
   id: string;
   installed: boolean;
+  /**
+   * F-959: por que `installed` é false quando o binário existe — política da
+   * missão (assento Claude reservado), exclusão, cooldown, credencial. Sem
+   * isto o recibo do `preferAdapters` dizia "não instalado" para a CLI que
+   * roda o próprio orquestrador. Ausente = não instalado de fato.
+   */
+  unavailableReason?: string;
   /** Optional resolved model list; when present, candidates outside it are skipped. */
   models?: string[];
   /**
@@ -980,7 +987,7 @@ export function describePreferAdaptersOutcome(
     if (!info) {
       fates.push(`${id}=fora do pool (reservado/indisponível)`);
     } else if (!info.installed) {
-      fates.push(`${id}=não instalado`);
+      fates.push(`${id}=${info.unavailableReason ?? 'não instalado'}`);
     } else if (!rankedAdapterIds.includes(id)) {
       fates.push(`${id}=fora do ranking do tier`);
     } else {

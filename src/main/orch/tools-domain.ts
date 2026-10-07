@@ -35,6 +35,7 @@ import {
   adapterIdsWithoutNexusMcp,
   limitToReadOnlyCapable,
   liveMissionAdapterIds,
+  liveMissionAdapterSeats,
   operatorChildUseCounts,
 } from './operator-spawn-route';
 import { isOperatorTabMission } from './operator-tab-mission-resume';
@@ -80,7 +81,7 @@ import {
   countAccountsWithLiveCredential,
   hasAvailableAccount,
 } from '../persistence/account-store';
-import { adapterCircuitBreakers } from './circuit-breaker';
+import { adapterCircuitBreakers, DEFAULT_CIRCUIT_CONFIG } from './circuit-breaker';
 import { workerMortalityCount } from './worker-mortality';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
 import { discoveredModelsFor } from '../adapters/model-discovery';
@@ -1604,6 +1605,8 @@ const todoManagerTool: McpToolDef = {
 };
 
 const TIERS: TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critical'];
+/** F-959: janela (min) em que a falha ao nascer conta para o exclude do caller. */
+const START_FAILURE_WINDOW_MIN = Math.round(DEFAULT_CIRCUIT_CONFIG.windowMs / 60_000);
 
 const clarifyTool: McpToolDef = {
   name: 'nexus_clarify',
@@ -1774,9 +1777,20 @@ export async function routeTaskForCaller(
   // exclusão saudável é ignorada e avisada no reason. Exclusões internas
   // (F-662 sem MCP, selo, reserva) seguem autoritárias.
   const callerExclude = strArray(args, 'exclude');
+  // F-959: CLI que falhou ao NASCER há pouco também é doente — o watchdog de
+  // início (nao-iniciou: saiu antes do 1º turno, briefing recusado, sem sessão
+  // na graça) e o spawn (recusado, writer sem conexão) contam essas falhas no
+  // disjuntor do adapter, mas 1 ou 2 de 3 o deixam fechado, e o pane que não
+  // iniciou é FECHADO pelo watchdog (não conta como morte, F-918). Falha na
+  // janela do disjuntor sem início provado depois (o 1º início zera) basta
+  // para honrar o exclude do caller; nunca exclui sozinha.
+  const startFailedExclude = callerExclude.filter(
+    (id) => adapterCircuitBreakers.snapshot(id).recentFailures > 0,
+  );
   const ignoredHealthyExclude = callerExclude.filter(
     (id) =>
       !adapterCircuitBreakers.isOpen(id) &&
+      !startFailedExclude.includes(id) &&
       hasAvailableAccount(id) &&
       !(missionId && workerMortalityCount(missionId, id) > 0),
   );
@@ -1840,13 +1854,19 @@ export async function routeTaskForCaller(
         const adapter = getAdapter(a.adapterId);
         return adapter?.kind === 'cli-pty' ? adapter : undefined;
       })();
-      return {
-        id: a.adapterId,
-        installed:
-          !skip.has(a.adapterId) &&
-          a.enabled &&
-          a.installed &&
-          firstWaveCanSeat({
+      // F-959: o motivo de cada CLI fora do pool vai ao recibo do
+      // `preferAdapters` — "não instalado" só quando não está instalada.
+      // Mesma ordem (e mesmo curto-circuito) do `&&` que decidia `installed`.
+      const unavailableReason = ((): string | undefined => {
+        if (skip.has(a.adapterId)) {
+          return quotaExcluded.includes(a.adapterId)
+            ? 'todas as contas em cooldown'
+            : 'excluído da rota';
+        }
+        if (!a.enabled) return 'desabilitado em Providers';
+        if (!a.installed) return 'não instalado';
+        if (
+          !firstWaveCanSeat({
             adapterId: a.adapterId,
             authStrategy: a.authStrategy,
             hasKey: a.hasKey,
@@ -1855,12 +1875,25 @@ export async function routeTaskForCaller(
               a.adapterId === 'kimi' ? peekKimiSeatReadiness() : undefined,
             hasCredentiallessModel:
               a.adapterId === 'opencode' && models.length > 0,
-          }) &&
-          !writerCircuitBlocksSeat({
+          })
+        ) {
+          return 'sem credencial pronta';
+        }
+        if (
+          writerCircuitBlocksSeat({
             adapterId: a.adapterId,
             role: 'worker',
             missionId: missionId ?? undefined,
-          }),
+          })
+        ) {
+          return 'disjuntor de writer aberto nesta missão';
+        }
+        return undefined;
+      })();
+      return {
+        id: a.adapterId,
+        installed: unavailableReason === undefined,
+        ...(unavailableReason ? { unavailableReason } : {}),
         models,
         // F-817: o que a PRÓPRIA CLI anunciou (`agy models`, cache vivo do
         // Main — leitura de Map, sem I/O) e passou pela auth. É a prova de
@@ -1900,6 +1933,8 @@ export async function routeTaskForCaller(
   quotaFallbackNote += readOnlyPool.note;
   let missionAdapterIds: string[] | undefined;
   let reservedAdapterIds: string[] | undefined;
+  /** F-959: assentos Claude ocupados AGORA (panes vivos + reservas abertas). */
+  let claudeMissionSeats: number | undefined;
   let globalUseCounts: Map<string, number> | undefined;
   if (!missionId) {
     // F-802: o fair-share de 7 dias (F-232) vale também para o "+ Pane" — as
@@ -1917,13 +1952,14 @@ export async function routeTaskForCaller(
     try {
       const stores = getProjectDomainStores(ctx.scope);
       const recorded = stores.missionPanes.list(missionId);
+      const panes = listPaneSnapshots();
       missionAdapterIds = [
         ...recorded.map((pane) => pane.adapterId).filter(Boolean),
         // F-658: helpers vivos sem linha em mission_panes também contam — sem
         // eles a diversidade do rerank não via os irmãos já abertos.
         ...liveMissionAdapterIds(
           missionId,
-          listPaneSnapshots(),
+          panes,
           new Set(
             recorded
               .map((pane) => pane.paneId)
@@ -1932,9 +1968,13 @@ export async function routeTaskForCaller(
         ),
       ];
       reservedAdapterIds = stores.missions.listOpenRouteAdapterIds(missionId);
+      claudeMissionSeats =
+        liveMissionAdapterSeats('claude', missionId, recorded, panes) +
+        reservedAdapterIds.filter((id) => id === 'claude').length;
     } catch {
       missionAdapterIds = undefined;
       reservedAdapterIds = undefined;
+      claudeMissionSeats = undefined;
     }
     // F-232: uso GLOBAL de rota neste checkout (7 dias, todas as missões) —
     // alimenta o fair-share para os providers nunca escolhidos entrarem.
@@ -1987,16 +2027,29 @@ export async function routeTaskForCaller(
   // com credencial utilizável fora de bloco efetivo; sem conta gerenciada
   // a capacidade é 1 — o login nativo, e o comportamento histórico de
   // reservar o Claude ao primeiro pane persiste.
+  // F-959: assento é pane VIVO — o worker Claude que entregou e fechou não
+  // segura mais a conta (o spawn confere as contas vivas e recusa colisão).
   const claudeSeats = Math.max(
-    usedAdapterIds.filter((id) => id === 'claude').length,
+    claudeMissionSeats ?? usedAdapterIds.filter((id) => id === 'claude').length,
     ctx.providerId === 'claude' ? 1 : 0,
   );
   const claudeCapacity = countAccountsWithLiveCredential('claude');
   const reserveClaude = Boolean(missionId && claudeSeats >= claudeCapacity);
   if (reserveClaude) {
+    // F-959: é a política de assentos, não falta de instalação — o recibo do
+    // `preferAdapters` diz isso em vez de "claude=não instalado".
+    const seatReason =
+      claudeCapacity === 0
+        ? 'reservado: nenhuma conta Claude utilizável (cooldown ou sem credencial)'
+        : `reservado: ${claudeSeats} pane(s) Claude vivo(s) nesta missão para ` +
+          `${claudeCapacity} conta(s) Claude utilizável(is) (um pane por conta)`;
     adapters = adapters.map((adapter) =>
       adapter.id === 'claude'
-        ? { ...adapter, installed: false }
+        ? {
+            ...adapter,
+            installed: false,
+            ...(adapter.installed ? { unavailableReason: seatReason } : {}),
+          }
         : adapter,
     );
   }
@@ -2067,7 +2120,17 @@ export async function routeTaskForCaller(
       ...decision,
       reason:
         `${decision.reason}; exclude ignorado (CLI saudável): ` +
-        ignoredHealthyExclude.join(','),
+        ignoredHealthyExclude.join(',') +
+        ` — sem falha ao nascer nos últimos ${START_FAILURE_WINDOW_MIN} min, ` +
+        'disjuntor fechado, conta disponível e sem morte nesta missão',
+    };
+  }
+  if (startFailedExclude.length > 0) {
+    decision = {
+      ...decision,
+      reason:
+        `${decision.reason}; exclude honrado (falhou ao nascer nos últimos ` +
+        `${START_FAILURE_WINDOW_MIN} min): ${startFailedExclude.join(',')}`,
     };
   }
   const sealedSquad = missionId && mission?.squadId ? getSquad(mission.squadId) : null;

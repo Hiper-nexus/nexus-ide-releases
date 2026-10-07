@@ -466,6 +466,65 @@ describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
     expect(decision.adapterId).toBe('codex');
     expect(decision.reason).not.toContain('exclude ignorado');
   });
+
+  // F-959 (missão 07/10): agy saiu antes do 1º turno ("nao-iniciou") e o
+  // Maestro re-roteou com exclude: ["agy"] — a rota respondeu "exclude
+  // ignorado (CLI saudável)" porque 1 falha de 3 deixa o disjuntor fechado.
+  it('CLI que falhou ao nascer há pouco (disjuntor ainda fechado): o exclude é honrado', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider, codexProvider]);
+    // O que o watchdog de início faz no pane que não iniciou (breaker 'count').
+    adapterCircuitBreakers.recordFailure('kimi');
+    try {
+      expect(adapterCircuitBreakers.isOpen('kimi')).toBe(false);
+      const decision = (await routeTaskForCaller(
+        { task: 'tarefa média', exclude: ['kimi'] },
+        context(),
+      )) as { adapterId: string; reason: string };
+      expect(decision.adapterId).toBe('codex');
+      expect(decision.reason).not.toContain('exclude ignorado');
+      expect(decision.reason).toContain(
+        'exclude honrado (falhou ao nascer nos últimos 10 min): kimi',
+      );
+    } finally {
+      adapterCircuitBreakers.reset('kimi');
+    }
+  });
+
+  it('falha ao nascer seguida de início provado: a CLI volta a ser saudável', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider, codexProvider]);
+    adapterCircuitBreakers.recordFailure('kimi');
+    adapterCircuitBreakers.recordSuccess('kimi');
+    try {
+      const decision = (await routeTaskForCaller(
+        { task: 'tarefa média', exclude: ['kimi'] },
+        context(),
+      )) as { adapterId: string; reason: string };
+      expect(decision.adapterId).toBe('kimi');
+      expect(decision.reason).toContain('exclude ignorado (CLI saudável): kimi');
+    } finally {
+      adapterCircuitBreakers.reset('kimi');
+    }
+  });
+
+  it('falha ao nascer fora da janela de 10 min não torna a CLI doente', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider, codexProvider]);
+    const t0 = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(t0);
+    adapterCircuitBreakers.recordFailure('kimi');
+    now.mockReturnValue(t0 + 11 * 60_000);
+    try {
+      const decision = (await routeTaskForCaller(
+        { task: 'tarefa média', exclude: ['kimi'] },
+        context(),
+      )) as { adapterId: string; reason: string };
+      expect(decision.adapterId).toBe('kimi');
+      expect(decision.reason).toContain('exclude ignorado (CLI saudável): kimi');
+      expect(decision.reason).not.toContain('exclude honrado');
+    } finally {
+      now.mockRestore();
+      adapterCircuitBreakers.reset('kimi');
+    }
+  });
 });
 
 describe('nexus_route_task — preferAdapters é soft (uso geral)', () => {
