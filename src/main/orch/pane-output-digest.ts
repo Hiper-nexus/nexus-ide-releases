@@ -4,11 +4,18 @@
  * `nexus_pane_read` devolvia até 200 linhas cruas; um orquestrador que lê
  * vários panes queimava tokens com moldura de TUI. O digest mantém o que
  * decide a próxima ação: as linhas de sinal da parte mais antiga da janela
- * (erros, testes, prompts, handoffs) e as últimas 30 linhas não-vazias
- * verbatim. `mode: 'full'` continua devolvendo o tail inteiro.
+ * (erros, testes, prompts, handoffs) e as últimas 30 linhas não-vazias.
+ * `mode: 'full'` continua devolvendo o tail inteiro.
+ *
+ * F-961: uma "linha" de TUI pode ser dezenas de KB de redesenho — o cursor
+ * volta, o texto é reescrito e, sem os escapes, tudo fica colado ("✻✶✳✢·",
+ * "WWoWorWork…", o mesmo quadro "Working (2m 54s • esc to interrupt)" mil
+ * vezes). O digest agora normaliza o redesenho (CR, spinner, prefixos
+ * progressivos, quadros repetidos), deduplica quadros e status, e tem teto
+ * de caracteres por linha e por pane, marcando o que omitiu.
  *
  * Puro: sem Electron, sem PTY — a entrada já chega ANSI-stripped do
- * `readSessionOutput`.
+ * `readSessionOutput` (o que sobrar de escape é removido aqui).
  */
 
 /** Linhas que costumam carregar a decisão (erro, teste, pergunta, handoff). */
@@ -20,42 +27,293 @@ const SIGNAL_PATTERN =
  * blocos ou ruído de progresso — nunca é conteúdo.
  */
 const GLYPH_ONLY_PATTERN =
-  /^[\s─━│┃┄┅┆┇┈┉┊┋┌┍┎┏┐┑┒┓└┕┖┗┘┙┚┛├┝┞┟┠┡┢┣┤┥┦┧┨┩┪┫┬┭┮┯┰┱┲┳┴┵┶┷┸┹┺┻┼╀╁╂╃╄╅╆╇╈╉╊╋═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬╭╮╯╰╱╲╳╴╵╶╷▀▄█▌▐░▒▓⠁-⣿◐◓◑◒○◔◕●◌•∙⋅·■□▪▫▲►▼◄◆◇]+$/u;
+  /^[\s─━│┃┄┅┆┇┈┉┊┋┌┍┎┏┐┑┒┓└┕┖┗┘┙┚┛├┝┞┟┠┡┢┣┤┥┦┧┨┩┪┫┬┭┮┯┰┱┲┳┴┵┶┷┸┹┺┻┼╀╁╂╃╄╅╆╇╈╉╊╋═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬╭╮╯╰╱╲╳╴╵╶╷▀▄█▌▐░▒▓⠁-⣿◐◓◑◒○◔◕●◌•∙⋅·■□▪▫▲►▼◄◆◇✢✳✶✻✽✺✹✸✷✴✵❋❊❉❈*…]+$/u;
+
+/** Glifos de spinner (Claude ✢✳✶✻✽, braille do Gemini/Qwen, meia-lua): decoração pura. */
+const SPINNER_GLYPHS = /[✢✳✶✻✽✺✹✸✷✴✵❋❊❉❈⠀-⣿◐◓◑◒]/gu;
+/** Escape residual (CSI/OSC/ESC solto) e controle, menos TAB e CR. */
+// eslint-disable-next-line no-control-regex
+const RESIDUAL_ESCAPE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]/g;
+// eslint-disable-next-line no-control-regex
+const RESIDUAL_CONTROL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+
+/**
+ * Linha de status/progresso da TUI (o quadro que se redesenha): só a mais
+ * recente da janela diz alguma coisa.
+ */
+const STATUS_LINE_PATTERN =
+  /\besc to (?:interrupt|cancel)\b|\bctrl\+c to (?:interrupt|cancel|stop)\b|^\W{0,4}\p{Lu}\p{Ll}+(?:ing|ndo)\b\S{0,2}\s*\(\s*\d+(?:m\s*\d+)?s\b/iu;
 
 export const DIGEST_MAX_SIGNAL_LINES = 12;
 export const DIGEST_TAIL_LINES = 30;
+/** Teto de caracteres por linha emitida (cabeça + "…" + cauda). */
+export const DIGEST_MAX_LINE_CHARS = 240;
+/** Teto de caracteres do texto de UM pane (`nexus_pane_read`). */
+export const DIGEST_MAX_CHARS = 6_000;
+/** Teto somado dos textos em `nexus_pane_read_many` (dividido entre os panes). */
+export const DIGEST_MANY_MAX_CHARS = 24_000;
+/** Piso por pane quando o teto somado é dividido entre muitos panes. */
+export const DIGEST_MIN_CHARS = 800;
+
 const ELLIPSIS = '…';
+const LINE_HEAD_CHARS = 60;
+/** Acima disto a linha passa pela compactação de quadros repetidos. */
+const LONG_LINE_CHARS = 160;
+/** Só a cauda (o desenho mais recente) de uma linha gigante é analisada. */
+const LONG_LINE_ANALYSIS_CHARS = 2_048;
+const REPEAT_MIN_UNIT = 6;
+const REPEAT_MAX_UNIT = 120;
+/** Linhas idênticas com pelo menos isto de texto viram uma só (a última). */
+const DEDUP_MIN_CHARS = 6;
+/** Espaço reservado para a linha "… [digest: N linha(s) omitida(s) …]". */
+const MARKER_RESERVE_CHARS = 120;
 
 export interface PaneTailDigest {
   /** Texto compactado: sinais (até 12, ordem original) + gap "…" + tail 30. */
   readonly text: string;
-  /** Linhas do input emitidas verbatim (sinais + tail). */
+  /** Linhas do input emitidas (sinais + tail), já normalizadas. */
   readonly keptLines: number;
-  /** Linhas do input omitidas (inclui moldura, blanks e o miolo comprimido). */
+  /** Linhas do input omitidas (moldura, redesenho, duplicatas, miolo, teto). */
   readonly omittedLines: number;
+  /** O teto de caracteres cortou linhas que ainda seriam emitidas. */
+  readonly truncated: boolean;
 }
 
-export function digestPaneTail(tail: string): PaneTailDigest {
-  const lines = tail.split('\n');
-  const informative = lines.map((line, index) => ({
-    index,
-    line,
-    drop: line.trim().length === 0 || GLYPH_ONLY_PATTERN.test(line.trim()),
-  }));
+export interface DigestOptions {
+  /** Teto de caracteres do texto (padrão DIGEST_MAX_CHARS). */
+  readonly maxChars?: number;
+}
 
-  // Últimas 30 linhas não-vazias verbatim (moldura pura não conta).
-  const tailBlock = informative
+/** Teto por pane quando `count` panes dividem DIGEST_MANY_MAX_CHARS. */
+export function digestBudgetPerPane(count: number): number {
+  const panes = Number.isFinite(count) && count > 0 ? Math.floor(count) : 1;
+  return Math.max(
+    DIGEST_MIN_CHARS,
+    Math.min(DIGEST_MAX_CHARS, Math.floor(DIGEST_MANY_MAX_CHARS / panes)),
+  );
+}
+
+/**
+ * Orçamento de comparações por linha: a compactação é heurística e nunca
+ * pode custar mais que O(64·n) — linha uniforme ("xxxx…") ou patológica para
+ * de compactar e segue intacta.
+ */
+const WORK_PER_CHAR = 64;
+
+class WorkBudget {
+  #left: number;
+  constructor(length: number) {
+    this.#left = WORK_PER_CHAR * Math.max(1, length);
+  }
+  get exhausted(): boolean {
+    return this.#left <= 0;
+  }
+  sameRange(text: string, a: number, b: number, length: number): boolean {
+    for (let offset = 0; offset < length; offset += 1) {
+      this.#left -= 1;
+      if (text.charCodeAt(a + offset) !== text.charCodeAt(b + offset)) return false;
+    }
+    return true;
+  }
+}
+
+function distinctChars(text: string): number {
+  return new Set(text).size;
+}
+
+/** Relógio/progresso que muda a cada quadro ("12s", "2m 54s", "45%"). */
+const TICKING_PATTERN = /\d+(?:\.\d+)?\s?(?:ms|s|m|%)(?![\p{L}\d])/u;
+
+/**
+ * "WWoWorWorkWorki…" (cada quadro reescreve o texto com uma letra a mais):
+ * uma corrida de ≥4 prefixos crescentes consecutivos vira só o último.
+ */
+function collapseProgressiveRuns(line: string): string {
+  const budget = new WorkBudget(line.length);
+  const parts: string[] = [];
+  let copyFrom = 0;
+  let index = 0;
+  while (index < line.length && !budget.exhausted) {
+    let bestStart = -1;
+    let bestEnd = -1;
+    for (let seed = 1; seed <= 3; seed += 1) {
+      let segmentStart = index;
+      let segmentLength = seed;
+      let segments = 1;
+      while (true) {
+        const next = segmentStart + segmentLength;
+        if (next + segmentLength + 1 > line.length) break;
+        if (!budget.sameRange(line, segmentStart, next, segmentLength)) break;
+        segmentStart = next;
+        segmentLength += 1;
+        segments += 1;
+      }
+      const end = segmentStart + segmentLength;
+      if (segments >= 4 && end > bestEnd) {
+        bestStart = segmentStart;
+        bestEnd = end;
+      }
+    }
+    if (bestEnd > 0 && distinctChars(line.slice(bestStart, bestEnd)) >= 2) {
+      parts.push(line.slice(copyFrom, index), line.slice(bestStart, bestEnd));
+      index = bestEnd;
+      copyFrom = index;
+    } else {
+      index += 1;
+    }
+  }
+  if (copyFrom === 0) return line;
+  parts.push(line.slice(copyFrom));
+  return parts.join('');
+}
+
+/**
+ * O mesmo quadro colado N vezes: fica só a última cópia. Cópias precisam ser
+ * idênticas; só um quadro com relógio ("2m 54s", "45%") compara sem os
+ * dígitos. Unidade precisa ter letra e ≥3 caracteres distintos — "0000",
+ * "----" e listas como "a1.ts a2.ts" nunca colapsam.
+ */
+function collapseRepeatedUnits(line: string): string {
+  const budget = new WorkBudget(line.length);
+  const masked = line.replace(/\d/g, '0');
+  const parts: string[] = [];
+  let copyFrom = 0;
+  let index = 0;
+  while (index < line.length && !budget.exhausted) {
+    let advanced = false;
+    const maxUnit = Math.min(REPEAT_MAX_UNIT, Math.floor((line.length - index) / 2));
+    for (let unit = REPEAT_MIN_UNIT; unit <= maxUnit && !budget.exhausted; unit += 1) {
+      if (masked.charCodeAt(index) !== masked.charCodeAt(index + unit)) continue;
+      if (!budget.sameRange(masked, index, index + unit, unit)) continue;
+      const pattern = line.slice(index, index + unit);
+      if (!/\p{L}/u.test(pattern) || distinctChars(pattern) < 3) continue;
+      const text = TICKING_PATTERN.test(pattern) ? masked : line;
+      if (text === line && !budget.sameRange(line, index, index + unit, unit)) continue;
+      let copies = 2;
+      while (
+        index + (copies + 1) * unit <= line.length &&
+        budget.sameRange(text, index, index + copies * unit, unit)
+      ) {
+        copies += 1;
+      }
+      parts.push(
+        line.slice(copyFrom, index),
+        line.slice(index + (copies - 1) * unit, index + copies * unit),
+      );
+      index += copies * unit;
+      copyFrom = index;
+      advanced = true;
+      break;
+    }
+    if (!advanced) index += 1;
+  }
+  if (copyFrom === 0) return line;
+  parts.push(line.slice(copyFrom));
+  return parts.join('');
+}
+
+function capLine(line: string): string {
+  if (line.length <= DIGEST_MAX_LINE_CHARS) return line;
+  const tailChars = DIGEST_MAX_LINE_CHARS - LINE_HEAD_CHARS - 3;
+  return `${line.slice(0, LINE_HEAD_CHARS)} ${ELLIPSIS} ${line.slice(-tailChars)}`;
+}
+
+/** Uma linha crua de terminal → o que o operador veria por último nela. */
+export function normalizeRedrawLine(raw: string): string {
+  let line = raw;
+  if (line.includes('\r')) {
+    // CR volta o cursor ao início: vale o último trecho com conteúdo.
+    const segments = line.split('\r');
+    line = segments.findLast((segment) => segment.trim().length > 0) ?? '';
+  }
+  if (line.includes('\x1b')) line = line.replace(RESIDUAL_ESCAPE, '');
+  line = line.replace(RESIDUAL_CONTROL, '').replace(SPINNER_GLYPHS, '');
+  let clipped = false;
+  if (line.length > LONG_LINE_ANALYSIS_CHARS) {
+    // O começo de uma linha gigante é redesenho antigo; o fim é o estado atual.
+    line = line.slice(-LONG_LINE_ANALYSIS_CHARS);
+    clipped = true;
+  }
+  line = collapseProgressiveRuns(line);
+  if (line.length > LONG_LINE_CHARS) line = collapseRepeatedUnits(line);
+  line = line
+    .replace(/·{2,}/g, '·')
+    .replace(/(\S)[ \t]{3,}/g, '$1  ')
+    .trimEnd();
+  if (clipped) line = `${ELLIPSIS} ${line.trimStart()}`;
+  return capLine(line);
+}
+
+/**
+ * Chave de quadro: só linhas com relógio/progresso comparam sem os dígitos —
+ * "linha 1"/"linha 2" continuam distintas; "Elapsed 12s"/"Elapsed 13s" não.
+ */
+function frameKey(line: string): string | null {
+  const trimmed = line.trim();
+  return TICKING_PATTERN.test(trimmed) ? trimmed.replace(/\d+/g, '0') : null;
+}
+
+export function digestPaneTail(
+  tail: string,
+  options: DigestOptions = {},
+): PaneTailDigest {
+  const maxChars = Math.max(
+    DIGEST_MIN_CHARS,
+    Math.floor(options.maxChars ?? DIGEST_MAX_CHARS),
+  );
+  const lines = tail.split('\n');
+  const items = lines.map((raw, index) => {
+    const line = normalizeRedrawLine(raw);
+    const trimmed = line.trim();
+    return {
+      index,
+      line,
+      drop: trimmed.length === 0 || GLYPH_ONLY_PATTERN.test(trimmed),
+      status: STATUS_LINE_PATTERN.test(trimmed),
+    };
+  });
+
+  // Quadros redesenhados: só o último status da janela, só a última cópia de
+  // uma linha repetida e só o último de quadros consecutivos que diferem
+  // apenas no relógio.
+  let lastStatus = -1;
+  for (const item of items) {
+    if (!item.drop && item.status) lastStatus = item.index;
+  }
+  const seenLater = new Set<string>();
+  let nextKey: string | null = null;
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i]!;
+    if (item.drop) continue;
+    if (item.status && item.index !== lastStatus) {
+      item.drop = true;
+      continue;
+    }
+    const trimmed = item.line.trim();
+    const key = frameKey(item.line);
+    if (
+      (trimmed.length >= DEDUP_MIN_CHARS && seenLater.has(trimmed)) ||
+      (key !== null && key === nextKey)
+    ) {
+      item.drop = true;
+      continue;
+    }
+    if (trimmed.length >= DEDUP_MIN_CHARS) seenLater.add(trimmed);
+    nextKey = key;
+  }
+
+  // Últimas 30 linhas informativas (moldura e redesenho não contam).
+  const tailBlock = items
     .filter((item) => !item.drop)
     .slice(-DIGEST_TAIL_LINES);
   const tailStart = tailBlock[0]?.index ?? lines.length;
-  const earlier = informative.slice(0, tailStart);
+  const earlier = items.slice(0, tailStart);
 
   // Sinais da parte anterior: dedup exato (uma cópia basta — eco repetido de
   // tela não é informação nova), teto de 12 escolhidos a partir do FIM da
   // parte anterior (o resumo de teste/erro mais recente decide a próxima
-  // ação), emitidos na ordem original. O que ficou de fora entre dois
-  // trechos mantidos vira uma linha "…".
-  const signals: Array<{ index: number; line: string }> = [];
+  // ação), emitidos na ordem original.
+  let signals: Array<{ index: number; line: string }> = [];
   const seen = new Set<string>();
   for (let i = earlier.length - 1; i >= 0; i -= 1) {
     const item = earlier[i]!;
@@ -67,30 +325,51 @@ export function digestPaneTail(tail: string): PaneTailDigest {
     signals.push({ index: item.index, line: item.line });
   }
   signals.reverse();
+  let tailLines = tailBlock.map((item) => ({ index: item.index, line: item.line }));
+
+  // Teto por pane: sinais antigos saem primeiro, depois o começo do tail. As
+  // últimas linhas (o estado atual) são as que ficam.
+  const size = () =>
+    [...signals, ...tailLines].reduce((total, item) => total + item.line.length + 1, 0) +
+    2 * (signals.length + 2);
+  const before = signals.length + tailLines.length;
+  if (size() > maxChars) {
+    // Reserva a linha que marca o corte.
+    const limit = maxChars - MARKER_RESERVE_CHARS;
+    while (size() > limit && signals.length > 0) signals = signals.slice(1);
+    while (size() > limit && tailLines.length > 1) tailLines = tailLines.slice(1);
+  }
+  const cutByBudget = before - signals.length - tailLines.length;
 
   const out: string[] = [];
+  const firstEmitted = signals[0]?.index ?? tailLines[0]?.index ?? lines.length;
+  if (cutByBudget > 0) {
+    out.push(
+      `${ELLIPSIS} [digest: ${cutByBudget} linha(s) omitida(s) pelo teto de ` +
+        `${maxChars} caracteres; mode:'full' devolve tudo]`,
+    );
+  } else if (items.slice(0, firstEmitted).some((item) => !item.drop)) {
+    out.push(ELLIPSIS);
+  }
   for (const [i, signal] of signals.entries()) {
-    if (i === 0) {
-      if (signal.index > 0) out.push(ELLIPSIS);
-    } else if (signal.index > signals[i - 1]!.index + 1) {
-      out.push(ELLIPSIS);
-    }
+    if (i > 0 && signal.index > signals[i - 1]!.index + 1) out.push(ELLIPSIS);
     out.push(signal.line);
   }
   const lastSignal = signals.at(-1);
+  const tailFirst = tailLines[0]?.index ?? lines.length;
   if (
-    (lastSignal !== undefined && tailStart > lastSignal.index + 1) ||
-    (lastSignal === undefined &&
-      earlier.some((item) => !item.drop))
+    lastSignal !== undefined &&
+    items.slice(lastSignal.index + 1, tailFirst).some((item) => !item.drop)
   ) {
     out.push(ELLIPSIS);
   }
-  for (const item of tailBlock) out.push(item.line);
+  for (const item of tailLines) out.push(item.line);
 
-  const keptLines = signals.length + tailBlock.length;
+  const keptLines = signals.length + tailLines.length;
   return {
     text: out.join('\n'),
     keptLines,
     omittedLines: Math.max(0, lines.length - keptLines),
+    truncated: cutByBudget > 0,
   };
 }

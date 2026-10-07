@@ -287,6 +287,50 @@ describe('in-mission pane observation (Overclock parity)', () => {
     expect(fullResult).toEqual([{ paneId: 'pane-b', output: 'worker B idle' }]);
   });
 
+  it('F-961: read_many digest de 6 panes com redesenho de TUI cabe no teto e mantém o fim útil', async () => {
+    const status = (seconds: number) => `Working (2m ${seconds}s • esc to interrupt)`;
+    const typed = (text: string) =>
+      Array.from({ length: text.length }, (_, i) => text.slice(0, i + 1)).join('');
+    const glued = Array.from({ length: 60 }, (_, i) => `✻ ${status(10 + (i % 50))}`).join('');
+    const garbage = (pane: number) => [
+      ...Array.from({ length: 35 }, (_, i) =>
+        i % 2 === 0 ? '✻✶✳✢·'.repeat(40) : typed(status(54)) + glued),
+      `⏺ Read(src/pane-${pane}.ts)`,
+      `Achado ${pane}: leitura concluída`,
+      `> estudo ${pane} em andamento`,
+    ].join('\n');
+    const paneIds: string[] = [];
+    let raw = 0;
+    for (let pane = 0; pane < 6; pane += 1) {
+      const output = garbage(pane);
+      raw += output.length;
+      registerPane({
+        paneId: `pane-${pane}`,
+        sessionId: `session-${pane}`,
+        kind: 'cli-agent',
+        missionId: 'mission-a',
+        role: 'worker',
+        scope,
+      }, output);
+      paneIds.push(`pane-${pane}`);
+    }
+    expect(raw).toBeGreaterThan(86_402);
+
+    const result = await tool('nexus_pane_read_many').handler(
+      { paneIds, lines: 40, mode: 'digest' },
+      context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null }),
+    ) as Array<Record<string, unknown>>;
+    expect(JSON.stringify(result).length).toBeLessThanOrEqual(26_000);
+    expect(result).toHaveLength(6);
+    for (const [pane, item] of result.entries()) {
+      expect(item).toMatchObject({ paneId: `pane-${pane}`, mode: 'digest' });
+      const text = String(item.text);
+      expect(text.endsWith(`> estudo ${pane} em andamento`)).toBe(true);
+      expect(text).toContain(`Achado ${pane}: leitura concluída`);
+      expect(text).not.toContain('WWoWor');
+    }
+  });
+
   it('fails closed for an unknown pane', async () => {
     await expect(
       tool('nexus_pane_read').handler({ paneId: 'pane-missing' }, context()),
