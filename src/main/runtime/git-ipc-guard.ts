@@ -14,7 +14,8 @@ export function isGitOperationalFailure(error: unknown): error is GitCommandErro
   return error instanceof GitCommandError;
 }
 
-function reportGitFailure(where: string, error: GitCommandError): void {
+/** Registra no trace e no console uma falha de git que o chamador contornou. */
+export function reportGitFailure(where: string, error: GitCommandError): void {
   // O motivo real fica em `cause` (ETIMEDOUT, ENOENT, ENOBUFS...). Sinal sem
   // erro de spawn é morte por sinal.
   const cause = error.cause as NodeJS.ErrnoException | undefined;
@@ -28,7 +29,7 @@ function reportGitFailure(where: string, error: GitCommandError): void {
     status: error.status,
   });
   console.warn(
-    `[git-ipc] ${where}: git ${subcommand} não completou (${reason}); o pedido foi descartado`,
+    `[git-ipc] ${where}: git ${subcommand} não completou (${reason}); o passo seguiu sem esse resultado`,
   );
 }
 
