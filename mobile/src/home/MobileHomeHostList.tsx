@@ -1,7 +1,10 @@
 import { memo, useCallback, type ReactElement } from 'react'
-import { FlatList, StyleSheet, View } from 'react-native'
-import type { ListRenderItemInfo } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { MobileHostCard } from '../components/MobileHostCard'
+import {
+  MobileLegendList,
+  type MobileLegendListRenderItemProps
+} from '../components/MobileLegendList'
 import type { HomeStatsSummary } from '../stats/home-stats-total'
 import { spacing } from '../theme/mobile-theme'
 import { classifyConnection } from '../transport/connection-health'
@@ -34,7 +37,7 @@ type MobileHomeHostListProps = {
 
 export function MobileHomeHostList(props: MobileHomeHostListProps) {
   const renderHost = useCallback(
-    ({ item }: ListRenderItemInfo<HostCatalogEntry>) => (
+    ({ item }: MobileLegendListRenderItemProps<HostCatalogEntry>) => (
       <MobileHomeHostRow
         item={item}
         autoConnectHostIds={props.autoConnectHostIds}
@@ -68,9 +71,13 @@ export function MobileHomeHostList(props: MobileHomeHostListProps) {
   )
 
   return (
-    <FlatList
+    <MobileLegendList
       data={props.hosts}
       keyExtractor={(host) => host.id}
+      estimatedItemSize={ESTIMATED_HOST_CARD_HEIGHT}
+      // Why: renderHost's identity changes exactly when a row's inputs do, and
+      // LegendList only re-renders visible rows when extraData changes.
+      extraData={renderHost}
       contentContainerStyle={[
         styles.list,
         { paddingBottom: spacing.xl + props.bottomInset },
@@ -87,6 +94,9 @@ export function MobileHomeHostList(props: MobileHomeHostListProps) {
     />
   )
 }
+
+// Host card with status line and worktree summary.
+const ESTIMATED_HOST_CARD_HEIGHT = 120
 
 type MobileHomeHostRowProps = Pick<
   MobileHomeHostListProps,

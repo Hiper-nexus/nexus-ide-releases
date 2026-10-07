@@ -26,6 +26,7 @@ import { colors, spacing } from '../theme/mobile-theme'
 import { resolveBottomDrawerMounted } from './bottom-drawer-mount-state'
 import { resolveRightDrawerPanelWidth } from './right-drawer-panel-width'
 import { useResponsiveLayout } from '../layout/responsive-layout'
+import { createSwipeArmHaptic } from '../platform/gesture-haptics'
 
 const DISMISS_THRESHOLD = 80
 const SPRING_CONFIG = { damping: 28, stiffness: 400 }
@@ -87,6 +88,8 @@ function MountedRightDrawer({
   const translateX = useSharedValue(0)
   const progress = useSharedValue(0)
   const scrollOffsetY = useSharedValue(0)
+  const dismissArmed = useSharedValue(false)
+  const [onDismissArmedChange] = useState(() => createSwipeArmHaptic())
   const { width: screenWidth } = useWindowDimensions()
   const insets = useSafeAreaInsets()
   const { isWideLayout } = useResponsiveLayout()
@@ -138,8 +141,18 @@ function MountedRightDrawer({
       } else {
         translateX.value = e.translationX * RUBBER_BAND_FACTOR
       }
+      // Haptic the moment releasing would dismiss, once per crossing.
+      const armed = e.translationX > DISMISS_THRESHOLD
+      if (armed !== dismissArmed.value) {
+        dismissArmed.value = armed
+        runOnJS(onDismissArmedChange)(armed)
+      }
     })
     .onEnd((e) => {
+      if (dismissArmed.value) {
+        dismissArmed.value = false
+        runOnJS(onDismissArmedChange)(false)
+      }
       if (e.translationX > DISMISS_THRESHOLD || e.velocityX > 500) {
         const velocity = Math.max(e.velocityX, 800)
         const remaining = panelWidth - e.translationX

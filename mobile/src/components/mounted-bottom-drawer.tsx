@@ -28,6 +28,7 @@ import { BOTTOM_DRAWER_HIDE_DURATION_MS } from './bottom-drawer-constants'
 import { bottomDrawerStyles as styles } from './bottom-drawer-styles'
 import { useInsideBottomDrawerModalHost } from './bottom-drawer-modal-host'
 import { useResponsiveLayout } from '../layout/responsive-layout'
+import { createSwipeArmHaptic } from '../platform/gesture-haptics'
 
 const DISMISS_THRESHOLD = 80
 const SPRING_CONFIG = { damping: 28, stiffness: 400 }
@@ -69,6 +70,8 @@ export function MountedBottomDrawer({
   const scrollOffsetY = useSharedValue(0)
   const contentDragStartY = useSharedValue(0)
   const contentDragCanDismiss = useSharedValue(false)
+  const dismissArmed = useSharedValue(false)
+  const [onDismissArmedChange] = useState(() => createSwipeArmHaptic())
   // Why: fill mode needs the keyboard inset in React layout (not only the
   // reanimated translate) so height shrinks as the sheet lifts and the top
   // edge stays under the status bar.
@@ -209,6 +212,15 @@ export function MountedBottomDrawer({
     scrollOffsetY.value = Math.max(event.contentOffset.y, 0)
   })
 
+  // Haptic the moment releasing would dismiss, once per crossing.
+  const trackDismissArm = (armed: boolean) => {
+    'worklet'
+    if (armed !== dismissArmed.value) {
+      dismissArmed.value = armed
+      runOnJS(onDismissArmedChange)(armed)
+    }
+  }
+
   const scrollGesture = Gesture.Native()
   const handlePanGesture = Gesture.Pan()
     .activeOffsetY([-8, 8])
@@ -219,8 +231,10 @@ export function MountedBottomDrawer({
       } else {
         translateY.value = e.translationY * RUBBER_BAND_FACTOR
       }
+      trackDismissArm(e.translationY > DISMISS_THRESHOLD)
     })
     .onEnd((e) => {
+      trackDismissArm(false)
       if (e.translationY > DISMISS_THRESHOLD || e.velocityY > 500) {
         const velocity = Math.max(e.velocityY, 800)
         const remaining = screenHeight - e.translationY
@@ -246,6 +260,7 @@ export function MountedBottomDrawer({
       if (scrollOffsetY.value > TOP_SCROLL_EPSILON) {
         contentDragCanDismiss.value = false
         contentDragStartY.value = 0
+        trackDismissArm(false)
         if (translateY.value !== 0) {
           translateY.value = withSpring(0, SPRING_CONFIG)
         }
@@ -263,8 +278,10 @@ export function MountedBottomDrawer({
       } else {
         translateY.value = translationY * RUBBER_BAND_FACTOR
       }
+      trackDismissArm(translationY > DISMISS_THRESHOLD)
     })
     .onEnd((e) => {
+      trackDismissArm(false)
       if (!contentDragCanDismiss.value || scrollOffsetY.value > TOP_SCROLL_EPSILON) {
         return
       }

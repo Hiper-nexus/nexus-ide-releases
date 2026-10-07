@@ -53,6 +53,8 @@ export { MobileSyntaxSegments } from '../components/MobileSyntaxSegments'
 export { PickerModal } from '../components/PickerModal'
 export type { PickerOption } from '../components/PickerModal'
 export { TaskProviderLogo } from '../components/TaskProviderLogo'
+export { MobileLegendList } from '../components/MobileLegendList'
+export type { MobileLegendListSeparatorProps } from '../components/MobileLegendList'
 export { buildGitHubPrFileDiffPreview } from './github-pr-file-diff'
 export type { GitHubPrFileDiffLine } from './github-pr-file-diff'
 export {

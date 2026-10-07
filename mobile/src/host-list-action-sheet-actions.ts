@@ -1,6 +1,7 @@
 import { Activity, Edit3, PowerOff, RefreshCw } from 'lucide-react-native'
 import type { ActionSheetAction } from './components/ActionSheetModal'
 import type { ConnectionState, HostProfile } from './transport/types'
+import { triggerListActionHaptic } from './platform/gesture-haptics'
 
 /** Builds the home-screen host long-press menu. Navigation and second drawers
  *  defer until this sheet's native Modal has unmounted —
@@ -32,6 +33,7 @@ export function getHostListActionSheetActions(args: {
       label: args.hasEverConnected && isLive ? 'Reconnect' : 'Connect',
       icon: RefreshCw,
       onPress: () => {
+        triggerListActionHaptic()
         args.onDismiss()
         args.onReconnect(host.id)
       }
@@ -42,6 +44,7 @@ export function getHostListActionSheetActions(args: {
             label: 'Disconnect',
             icon: PowerOff,
             onPress: () => {
+              triggerListActionHaptic()
               args.onDismiss()
               args.onDisconnect(host.id)
             }

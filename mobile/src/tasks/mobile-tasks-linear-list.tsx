@@ -9,16 +9,20 @@ import {
   Pressable,
   triggerMediumImpact,
   ChevronDown,
-  FlatList,
+  MobileLegendList,
   TaskProviderLogo
 } from './mobile-tasks-dependencies'
 import { styles } from './mobile-tasks-legacy-styles'
+import { TaskEntrySeparator } from './mobile-tasks-provider-item-list'
 import {
   createLinearTask,
   type TaskItem,
   linearIssueSecondaryParts,
   formatUpdatedAt
 } from './mobile-tasks-legacy-foundation'
+
+// Issue row: two-line title + meta line; section headers are shorter and measured.
+const ESTIMATED_LINEAR_ROW_HEIGHT = 64
 
 export function renderMobileTasksLinearList(model: ConnectionPresentationModel) {
   const {
@@ -110,16 +114,16 @@ export function renderMobileTasksLinearList(model: ConnectionPresentationModel) 
       ))}
     </ScrollView>
   ) : (
-    <FlatList
+    <MobileLegendList
       data={linearListEntries}
       keyExtractor={(entry) =>
         entry.type === 'section' ? `linear-section:${entry.section.key}` : entry.issue.id
       }
-      ItemSeparatorComponent={({ leadingItem, trailingItem }) =>
-        leadingItem?.type === 'section' || trailingItem?.type === 'section' ? null : (
-          <View style={styles.separator} />
-        )
-      }
+      getItemType={(entry) => entry.type}
+      estimatedItemSize={ESTIMATED_LINEAR_ROW_HEIGHT}
+      // Why: rows only re-render when extraData changes; these are what they read.
+      extraData={{ effectiveLinearDisplayProperties, mutatingStatus }}
+      ItemSeparatorComponent={TaskEntrySeparator}
       contentContainerStyle={[styles.list, { paddingBottom: spacing.lg + insets.bottom }]}
       refreshing={refreshing}
       onRefresh={refreshTasks}

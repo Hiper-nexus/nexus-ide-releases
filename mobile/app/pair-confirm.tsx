@@ -12,6 +12,7 @@ import type { ConnectionLogEntry } from '../src/transport/types'
 import { useRefreshHostClient } from '../src/transport/client-context'
 import { colors, spacing, radii, typography } from '../src/theme/mobile-theme'
 import { ConnectionLog } from '../src/components/ConnectionLog'
+import { triggerError, triggerSuccess } from '../src/platform/haptics'
 import {
   loadMobileOnboardingSteps,
   mobileOnboardingDestination
@@ -114,6 +115,7 @@ export default function PairConfirmScreen() {
       // pairing would keep the stale endpoint/relay. Close it so the
       // Refresh any cached client from the newly persisted pairing profile.
       refreshHostClient(hostId)
+      triggerSuccess()
       const onboardingSteps = await loadMobileOnboardingSteps()
       if (!mountedRef.current) {
         return
@@ -130,6 +132,7 @@ export default function PairConfirmScreen() {
         return
       }
       console.warn('[pair-confirm] connect failed', err)
+      triggerError()
       setStatus('error')
       setErrorMessage(
         timedOut

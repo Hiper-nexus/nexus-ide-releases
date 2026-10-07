@@ -4,6 +4,7 @@ import { Copy, FileText, Globe, RefreshCw, SquareTerminal } from 'lucide-react-n
 import { MobileSessionHeaderMoreActionsSheet } from './MobileSessionHeaderMoreActionsSheet'
 import { QuickCommandsSheet } from './QuickCommandsSheet'
 import { triggerSuccess, triggerError } from '../platform/haptics'
+import { triggerListActionHaptic } from '../platform/gesture-haptics'
 import { ActionSheetModal } from '../components/ActionSheetModal'
 import { TextInputModal } from '../components/TextInputModal'
 import { ConfirmModal } from '../components/ConfirmModal'
@@ -80,7 +81,7 @@ export function MobileSessionSheets({ controller }: { controller: MobileSessionC
     handleBrowserNavigationCommand,
     handleRenameTerminal,
     handleCloseTerminal,
-    handleCloseSessionTab,
+    closeSessionTabFromSheet,
     bulkCloseActions,
     closeWithBulkActions,
     createTabAgentActions,
@@ -198,8 +199,11 @@ export function MobileSessionSheets({ controller }: { controller: MobileSessionC
           onToggleDisplayMode: (handle) => void toggleDisplayMode(handle),
           onRename: setRenameTarget,
           onClear: (target) => void handleClearTerminal(target),
-          onClose: (target) => void handleCloseTerminal(target),
-          onCloseSessionTab: (tab) => void handleCloseSessionTab(tab),
+          onClose: (target) => {
+            triggerListActionHaptic()
+            void handleCloseTerminal(target)
+          },
+          onCloseSessionTab: (tab) => void closeSessionTabFromSheet(tab),
           bulkCloseActions
         })}
         onClose={() => setActionTarget(null)}
@@ -260,7 +264,7 @@ export function MobileSessionSheets({ controller }: { controller: MobileSessionC
         target={browserActionTarget}
         onClose={() => setBrowserActionTarget(null)}
         onNavigate={handleBrowserNavigationCommand}
-        onCloseTab={handleCloseSessionTab}
+        onCloseTab={closeSessionTabFromSheet}
         bulkCloseActions={bulkCloseActions}
       />
       <ActionSheetModal

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { Check } from 'lucide-react-native'
 
 import { colors, spacing, typography } from '../theme/mobile-theme'
 import { BottomDrawer } from './BottomDrawer'
 import { BOTTOM_DRAWER_HIDE_DURATION_MS } from './bottom-drawer-constants'
+import { MobileLegendList } from './MobileLegendList'
 
 type PickerListItem = { id: string; label: string; detail?: string }
 
@@ -63,6 +64,12 @@ export function PickerListDrawer<T extends PickerListItem>({
     [onClose, onSelect]
   )
 
+  // Why: rows only re-render when extraData changes; these are what they read.
+  const listExtraData = useMemo(
+    () => ({ selectedId, renderIcon, closeThenSelect }),
+    [selectedId, renderIcon, closeThenSelect]
+  )
+
   return (
     <BottomDrawer
       visible={drawerVisible}
@@ -73,9 +80,11 @@ export function PickerListDrawer<T extends PickerListItem>({
       <View style={styles.header}>
         <Text style={styles.title}>{title}</Text>
       </View>
-      <FlatList
+      <MobileLegendList
         data={items}
         keyExtractor={(item) => item.id}
+        estimatedItemSize={ESTIMATED_PICKER_ROW_HEIGHT}
+        extraData={listExtraData}
         style={styles.group}
         contentContainerStyle={items.length === 0 ? styles.emptyContent : undefined}
         keyboardShouldPersistTaps="handled"
@@ -110,6 +119,9 @@ export function PickerListDrawer<T extends PickerListItem>({
     </BottomDrawer>
   )
 }
+
+// Label row (detail line adds ~14) inside spacing.md vertical padding.
+const ESTIMATED_PICKER_ROW_HEIGHT = 44
 
 function PickerSeparator() {
   return <View style={styles.separator} />

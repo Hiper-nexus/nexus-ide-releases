@@ -10,6 +10,7 @@ import { hostNewWorktreeRoute } from '../host-route-action-state'
 import { hostRouteWithNotice } from '../host-route-notice'
 import { useResponsiveLayout } from '../layout/responsive-layout'
 import { triggerMediumImpact } from '../platform/haptics'
+import { triggerListActionHaptic } from '../platform/gesture-haptics'
 import { useOpenMobileSession } from '../session/use-open-mobile-session'
 import type { TaskProvider } from '../tasks/mobile-task-providers'
 import { useOpenMobileTasks } from '../tasks/use-open-mobile-tasks'
@@ -101,6 +102,7 @@ export function MobileHomeScreen() {
       return
     }
     const host = confirmRemove
+    triggerListActionHaptic()
     try {
       await removeHostAndCloseClient(host.id, forgetHostClient)
       setConfirmRemove(null)

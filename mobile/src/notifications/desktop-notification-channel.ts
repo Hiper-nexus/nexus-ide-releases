@@ -1,5 +1,6 @@
 import * as Notifications from 'expo-notifications'
 import { Platform } from 'react-native'
+import { ensureAgentNotificationChannels } from './agent-notification-channels'
 
 // Why an id both sides share: the gateway's FCM payload names this channel, so a
 // background push can be the first thing that ever targets it. Android drops a
@@ -24,4 +25,5 @@ export async function ensureDesktopNotificationChannel(): Promise<void> {
     vibrationPattern: [0, 250],
     lightColor: '#6366f1'
   })
+  await ensureAgentNotificationChannels()
 }

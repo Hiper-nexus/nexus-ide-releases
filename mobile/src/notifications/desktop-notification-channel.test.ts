@@ -34,6 +34,13 @@ describe('ensureDesktopNotificationChannel', () => {
     expect(DESKTOP_NOTIFICATION_CHANNEL_ID).toBe('orca-desktop')
   })
 
+  it('also creates the agent alert and activity channels, leaving the legacy ids as they were', async () => {
+    await ensureDesktopNotificationChannel()
+
+    const ids = vi.mocked(Notifications.setNotificationChannelAsync).mock.calls.map(([id]) => id)
+    expect(ids).toEqual(['orca-desktop-silent', 'orca-desktop', 'agent-alerts', 'agent-activity'])
+  })
+
   it('does nothing on iOS, which has no notification channels', () => {
     Object.assign(Platform, { OS: 'ios' })
 
