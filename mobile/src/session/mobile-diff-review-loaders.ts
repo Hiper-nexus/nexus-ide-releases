@@ -6,7 +6,6 @@ import {
 } from './mobile-diff-review-state'
 import { normalizeMobileDiffComments } from './mobile-diff-comments'
 import { buildMobileDiffHunks } from './mobile-diff-hunks'
-import { highlightMobileDiffLines, resolveMobileSyntaxLanguage } from './mobile-file-syntax'
 import {
   readMobileBranchCompareResult,
   readMobileGitStatusResult,
@@ -18,6 +17,7 @@ import {
   type MobileGitBranchCompareResult
 } from '../source-control/mobile-branch-compare'
 import { resolveMobileBranchCompareBaseRef } from '../source-control/mobile-branch-base-ref'
+import { buildMobileReviewLines } from '../source-control/mobile-review-model'
 import { isMobileGitUnavailable } from '../source-control/mobile-git-status'
 import type { RpcClient } from '../transport/rpc-client'
 import type { MobileDiffReviewQueueItem } from './mobile-diff-review-queue'
@@ -149,11 +149,14 @@ export async function loadMobileDiffReviewDiff(input: DiffLoadInput): Promise<Re
     return { kind: 'too-large', itemKey: item.key, byteLength: result.byteLength }
   }
   const diff = buildMobileDiffLines(result.originalContent, result.modifiedContent)
-  const language = resolveMobileSyntaxLanguage(item.filePath)
+  // Why: syntax colors arrive later, per visible 200-row block (MobileDiffReviewBody),
+  // so opening a large or minified file never tokenizes it all on the JS thread.
+  const review = buildMobileReviewLines(diff.lines, item.key)
   return {
     kind: 'ready',
     itemKey: item.key,
-    lines: highlightMobileDiffLines(diff.lines, language),
+    cacheKey: review.cacheKey,
+    lines: review.rows,
     hunks: buildMobileDiffHunks(diff.lines),
     truncated: diff.truncated
   }

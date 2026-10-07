@@ -10,7 +10,12 @@ import type {
   ReviewScreenState
 } from '../session/mobile-diff-review-screen-model'
 import type { MobileDiffReviewQueueItem } from '../session/mobile-diff-review-queue'
+import {
+  useMobileDiffReviewBlockHighlights
+} from '../session/use-mobile-diff-review-block-highlights'
 import { mobileDiffReviewStyles as styles } from './mobile-diff-review-screen-styles'
+
+const NO_ROWS: ReviewDiffLine[] = []
 
 type Props = {
   activeHunkIndex: number | null
@@ -39,6 +44,12 @@ export function MobileDiffReviewBody({
   onEditNote,
   onRetry
 }: Props) {
+  const readyDiff = diffState.kind === 'ready' ? diffState : null
+  const highlights = useMobileDiffReviewBlockHighlights({
+    cacheKey: readyDiff?.cacheKey ?? null,
+    filePath: readyDiff ? (currentItem?.filePath ?? null) : null,
+    rows: readyDiff?.lines ?? NO_ROWS
+  })
   if (screenState.kind === 'loading') {
     return <CenteredState text="Loading review..." busy />
   }
@@ -64,7 +75,10 @@ export function MobileDiffReviewBody({
     <FlatList
       ref={listRef}
       data={diffState.lines}
-      keyExtractor={(_, index) => `${currentItem?.key ?? 'diff'}:${index}`}
+      keyExtractor={(item) => item.id}
+      extraData={highlights.highlightVersion}
+      onViewableItemsChanged={highlights.onViewableItemsChanged}
+      viewabilityConfig={highlights.viewabilityConfig}
       renderItem={({ item, index }) => {
         const lineNumber = item.newLineNumber ?? -1
         const active =
@@ -74,6 +88,7 @@ export function MobileDiffReviewBody({
         return (
           <MobileDiffReviewLine
             line={item}
+            tokens={highlights.tokensForRow(index)}
             comments={commentsByLine.get(lineNumber) ?? []}
             staleCommentIds={staleCommentIds}
             active={active}

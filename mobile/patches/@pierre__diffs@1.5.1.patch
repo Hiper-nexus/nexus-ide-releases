@@ -1,0 +1,24 @@
+Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
+Copyright (c) 2026 T3 Tools Inc. — MIT License
+See third_party/licenses/t3code-MIT.txt. Nexus changes: only the package.json exports hunk
+(the DOM/editor hunks do not apply to React Native), rebased on 1.5.1, without
+./utils/getFiletypeFromFileName.
+
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -58,6 +58,14 @@
+     "./worker/worker-portable.js": {
+       "types": "./dist/worker/worker-portable.d.ts",
+       "import": "./dist/worker/worker-portable.js"
++    },
++    "./types": {
++      "types": "./dist/types.d.ts",
++      "import": "./dist/types.js"
++    },
++    "./utils/parsePatchFiles": {
++      "types": "./dist/utils/parsePatchFiles.d.ts",
++      "import": "./dist/utils/parsePatchFiles.js"
+     }
+   },
+   "publishConfig": {

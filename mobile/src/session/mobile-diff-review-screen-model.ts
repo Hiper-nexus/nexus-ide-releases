@@ -1,14 +1,13 @@
 import type { DiffComment, MobileDiffReviewState } from '../../../src/shared/diff-comment-types'
 import type { MobileGitBranchCompareResult } from '../source-control/mobile-branch-compare'
 import type { MobileGitStatusResult } from '../source-control/mobile-git-status'
-import type { MobileDiffLine } from './mobile-diff-lines'
+import type { MobileReviewLineRow } from '../source-control/mobile-review-model'
 import type { MobileDiffHunk } from './mobile-diff-hunks'
 import type {
   MobileDiffReviewQueueFilter,
   MobileDiffReviewQueueItem
 } from './mobile-diff-review-queue'
 import type { MobileDiffReviewFileDescriptor } from './mobile-diff-review-state'
-import type { MobileHighlightedDiffLine } from './mobile-file-syntax'
 import type { MobileReviewTerminalTab } from './mobile-diff-review-rpc'
 
 export type ReviewScreenState =
@@ -24,7 +23,7 @@ export type ReviewScreenState =
   | { kind: 'unavailable'; message: string }
   | { kind: 'error'; message: string }
 
-export type ReviewDiffLine = MobileHighlightedDiffLine<MobileDiffLine>
+export type ReviewDiffLine = MobileReviewLineRow
 
 export type ReviewDiffState =
   | { kind: 'idle' }
@@ -32,6 +31,8 @@ export type ReviewDiffState =
   | {
       kind: 'ready'
       itemKey: string
+      /** Content hash of `lines`; keys the per-block syntax highlight cache. */
+      cacheKey: string
       lines: ReviewDiffLine[]
       hunks: MobileDiffHunk[]
       truncated: boolean
