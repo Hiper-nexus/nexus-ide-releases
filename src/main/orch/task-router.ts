@@ -181,7 +181,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // (only headless `exec` does), so the model's native default stands.
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
-    { adapterId: 'claude', model: 'claude-haiku-4-5', effort: 'low' },
+    // Haiku 5.5 ($0,10/$0,50, anthropic.com/claude/haiku): substitui o 4.5 no
+    // trivial; sem nota própria herda o piso do 4.5 (F-217).
+    { adapterId: 'claude', model: 'claude-haiku-5-5', effort: 'low' },
     // F-696: Muse Spark 1.3 (free, DeepSWE 75,4 / TB2.1 88,8) em todo tier.
     { adapterId: 'muse', model: 'muse-spark-1.3' },
   ],
