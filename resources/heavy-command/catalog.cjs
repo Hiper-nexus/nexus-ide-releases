@@ -107,19 +107,126 @@ function isPersistent(argv) {
   if (/(?:^|\/)esbuild(?:\/|$)/.test(normalized) || knownPackage(entry) === 'esbuild') return args.some((arg) => /^--(?:serve|watch)(?:=|$)/.test(arg));
   return false;
 }
+// F-956: classify the program each simple command runs, the way the shell
+// reads it. Matching tool names anywhere in the text queued `type node`,
+// `which node`, `node -v`, grep patterns, commit messages and heredoc bodies
+// ("…must not make them…") behind the project's build slot for up to 300 s.
+const KIND_ORDER = ['typescript', 'tests', 'install', 'build'];
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+// Shell keywords and wrappers precede the program that actually runs.
+const COMMAND_PREFIXES = new Set(['time', 'exec', 'command', 'nohup', 'env', 'caffeinate', 'nice', 'sudo',
+  'if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{']);
+const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+const PM_VALUE_OPTIONS = new Set(['--workspace', '-w', '--prefix', '--dir', '-C', '--filter', '--cache', '--userconfig', '--globalconfig', '--package', '-p']);
+function stripHeredocBodies(command) {
+  return command.replace(/<<-?[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g, '\n');
+}
+/** Unquoted-operator split into simple commands; quotes are removed from words. */
+function shellSegments(command) {
+  const segments = []; let words = []; let word = ''; let inWord = false; let quote = '';
+  const endWord = () => { if (inWord) words.push(word); word = ''; inWord = false; };
+  const endSegment = () => { endWord(); if (words.length) segments.push(words); words = []; };
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (quote) {
+      if (ch === quote) quote = '';
+      else if (ch === '\\' && quote === '"' && i + 1 < command.length) word += command[++i];
+      else word += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') { quote = ch; inWord = true; continue; }
+    if (ch === '\\' && i + 1 < command.length) { const next = command[++i]; if (next !== '\n') { word += next; inWord = true; } continue; }
+    if (ch === '#' && !inWord) { while (i + 1 < command.length && command[i + 1] !== '\n') i++; continue; }
+    if (ch === '\n') { endSegment(); continue; }
+    if (/\s/.test(ch)) { endWord(); continue; }
+    if (';&|()`'.includes(ch)) { endSegment(); continue; }
+    if (ch === '$' && command[i + 1] === '(') { endSegment(); i++; continue; }
+    word += ch; inWord = true;
+  }
+  endSegment();
+  return segments;
+}
+const toolName = (word) => path.basename(String(word || '').replace(/\\/g, '/')).toLowerCase().replace(/\.(?:cmd|bat|exe|[cm]?js)$/, '');
+function programIndex(words, start = 0) {
+  let i = start;
+  while (i < words.length) {
+    const name = toolName(words[i]);
+    if (ENV_ASSIGNMENT.test(words[i]) || COMMAND_PREFIXES.has(name)) { i++; while (i < words.length && words[i].startsWith('-')) i++; continue; }
+    if (name === 'timeout' || name === 'gtimeout') { i++; while (i < words.length && words[i].startsWith('-')) i++; i++; continue; }
+    return i;
+  }
+  return i;
+}
+function firstValue(args) {
+  for (let i = 0; i < args.length; i++) {
+    if (PM_VALUE_OPTIONS.has(args[i])) { i++; continue; }
+    if (args[i] === '--' || args[i].startsWith('-')) continue;
+    return i;
+  }
+  return -1;
+}
+function scriptKind(script) {
+  const name = String(script || '').toLowerCase();
+  if (/^(?:typecheck|check-types|tsc)(?::|$)/.test(name)) return 'typescript';
+  if (/^tests?(?::|$)/.test(name)) return 'tests';
+  if (/^(?:build|check|verify|lint|publish)(?::|$)/.test(name)) return 'build';
+  return null;
+}
+function segmentKind(words) {
+  let at = programIndex(words);
+  if (at >= words.length) return null;
+  let name = toolName(words[at]);
+  let args = words.slice(at + 1);
+  // npx / bunx / npm exec / pnpm dlx run another program: classify that one.
+  const verbAt = firstValue(args);
+  const verb = verbAt >= 0 ? args[verbAt].toLowerCase() : '';
+  if (name === 'npx' || name === 'bunx' || (PACKAGE_MANAGERS.has(name) && ['exec', 'dlx', 'x'].includes(verb))) {
+    const rest = name === 'npx' || name === 'bunx' ? args : args.slice(verbAt + 1);
+    const target = firstValue(rest);
+    if (target < 0) return null;
+    name = toolName(rest[target]); args = rest.slice(target + 1);
+  } else if (PACKAGE_MANAGERS.has(name)) {
+    if (/^(?:test|tests|t)$/.test(verb)) return 'tests';
+    if (/^(?:ci|install|i|add)$/.test(verb)) return 'install';
+    if (verb === 'run' || verb === 'run-script') { const script = firstValue(args.slice(verbAt + 1)); return script < 0 ? null : scriptKind(args.slice(verbAt + 1)[script]); }
+    return name === 'npm' ? null : scriptKind(verb);
+  }
+  if (name === 'tsc' || name === 'tsgo' || name === '_tsc') return 'typescript';
+  if (['vitest', 'jest', 'pytest', 'mocha'].includes(name)) return 'tests';
+  if (['go', 'cargo', 'dotnet'].includes(name)) {
+    const sub = (args.find((arg) => !arg.startsWith('-')) || '').toLowerCase();
+    if (sub === 'test') return 'tests';
+    return ['build', 'check', 'install', 'publish'].includes(sub) ? 'build' : null;
+  }
+  if (['make', 'cmake', 'ninja', 'gradle', 'gradlew', 'mvn'].includes(name)) return 'build';
+  if (name === 'vite') return args.includes('build') ? 'build' : null; // the dev server is persistent
+  if (name === 'esbuild') return args.some((arg) => /^--(?:serve|watch)(?:=|$)/.test(arg)) ? null : 'build';
+  if (name === 'webpack' || name === 'rollup') return 'build';
+  if (name === 'node') {
+    const real = args.filter((arg) => arg !== '--');
+    if (real.length > 0 && real.every((arg) => /^(?:-v|--version|-h|--help)$/.test(arg))) return null;
+    const scriptAt = real.findIndex((arg) => !arg.startsWith('-'));
+    const script = scriptAt >= 0 ? real[scriptAt] : undefined;
+    // Dev servers, watchers and MCP services are persistent, not finite work.
+    if (script && isPersistent([words[at], script, ...real.slice(scriptAt + 1)])) return null;
+    return (script && moduleKind(script)) || 'build';
+  }
+  // `sh -c "…"` runs a whole command line: classify that line.
+  if (['sh', 'bash', 'zsh', 'dash'].includes(name)) {
+    const flagAt = args.findIndex((arg) => /^-[a-z]*c[a-z]*$/.test(arg));
+    if (flagAt >= 0 && flagAt + 1 < args.length) return commandKind(args[flagAt + 1]);
+  }
+  return null;
+}
 function commandKind(command) {
   if (typeof command !== 'string') return null;
   if (command.length > 16384) return 'build';
-  const evaluation = /(?:^|[\s/\\'\";&|])node(?:\.exe)?[\s'\"][^;&|]*?[\s'\"](?:-e|--eval|-p|--print)(?:[\s'\"=]|$)/i.test(command);
-  if (!evaluation && /(?:^|[\s/\\'\";&|])vite(?:\.[cm]?js)?(?=$|[\s'\";&|])/i.test(command) && !/\bvite(?:\.[cm]?js)?[\s'\"]+build\b/i.test(command)) return null;
-  if (!evaluation && /(?:^|[\s/\\'\";&|])esbuild(?=$|[\s'\";&|])/i.test(command) && /--(?:serve|watch)(?:=|\s|$)/.test(command)) return null;
-  if (/\bnode(?:\.exe)?[\s'\"][^;&|]*?(?:^|[\s/\\'\"])(?:server|dev|serve)\.[cm]?js(?=$|[\s'\";&|])/i.test(command)) return null;
-  if (/(?:^|[\s/\\'";&|])(?:tsc(?:\.[cm]?js)?|tsgo|typecheck)(?=$|[\s'";&|:])/i.test(command)) return 'typescript';
-  if (/(?:^|[\s/\\'";&|])(?:vitest|jest|pytest|mocha)(?=$|[\s'";&|])/i.test(command) || /\b(?:npm|pnpm|yarn|bun|go|cargo|dotnet)\s+(?:run\s+)?tests?(?=$|[\s'";&|:])/i.test(command)) return 'tests';
-  if (/\b(?:npm|pnpm|yarn|bun)\s+(?:ci|install|add)(?=$|[\s'";&|])/i.test(command)) return 'install';
-  if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|check|verify|lint)(?=$|[\s'";&|:])/i.test(command) || /\b(?:cargo|go|dotnet)\s+(?:build|check|install|publish)(?=$|[\s'";&|])/i.test(command) || /(?:^|[\s/\\'";&|])(?:vite|esbuild|webpack|rollup|make|cmake|ninja|gradle|mvn)(?=$|[\s'";&|])/i.test(command)) return 'build';
-  if (/(?:^|[\s/\\'\";&|])node(?:\.exe)?(?=$|[\s'\";&|])/i.test(command)) return 'build';
-  return null;
+  let best = null;
+  for (const words of shellSegments(stripHeredocBodies(command))) {
+    const kind = segmentKind(words);
+    if (kind && (best === null || KIND_ORDER.indexOf(kind) < KIND_ORDER.indexOf(best))) best = kind;
+  }
+  return best;
 }
 function entryKind(argv) {
   if (isPersistent(argv)) return null;
