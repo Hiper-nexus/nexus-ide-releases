@@ -34,6 +34,7 @@ import {
   RendererMountWatchdog,
 } from './reliability/renderer-mount-watchdog';
 import { RendererBootRecovery } from './reliability/renderer-boot-recovery';
+import { confirmDbBoot } from './persistence/db';
 import { handleRenderProcessGone } from './agent-runtime/agent-runtime-bridge';
 import {
   applyMacOSDockIcon,
@@ -567,6 +568,9 @@ export function createMainWindow(
         kind: 'boot-complete',
         bootMs: Math.round(Date.now() - performance.timeOrigin),
       });
+      // Boot confirmado (DSK-05): a versão que migrou o nexus.db subiu
+      // saudável, então o snapshot pré-migração deixa de ser o rollback aberto.
+      confirmDbBoot();
     }
     showNativeWindow();
   };

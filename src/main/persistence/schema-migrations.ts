@@ -72,6 +72,53 @@ function ensureColumn(db: MigrationDb, migration: AddColumnMigration): void {
   }
 }
 
+export interface SchemaMigrationPlan {
+  /** Elementos do schema (tabelas + colunas migradas) já presentes no banco. */
+  fromVersion: number;
+  /** Total de elementos que esta versão do app espera. */
+  toVersion: number;
+  /** `table:<nome>` / `column:<tabela>.<coluna>` que o boot vai criar. */
+  pending: string[];
+  /** Banco sem nenhuma tabela do Nexus (instalação nova): nada a preservar. */
+  fresh: boolean;
+}
+
+/**
+ * O que o boot vai mudar no schema, sem mudar nada. A "versão" é estrutural
+ * (quantos elementos esperados já existem) porque o nexus.db nunca gravou
+ * `user_version`: assim ela não depende de alguém lembrar de incrementar um
+ * número a cada coluna nova.
+ */
+export function planSchemaMigration(db: MigrationDb, schemaSql: string): SchemaMigrationPlan {
+  // Só instruções (início de linha + parêntese): o SCHEMA tem comentários que
+  // citam "CREATE TABLE IF NOT EXISTS" em prosa.
+  const tables = [
+    ...schemaSql.matchAll(/^\s*CREATE TABLE IF NOT EXISTS (\w+)\s*\(/gm),
+  ].map((match) => match[1]);
+  const existing = new Set(
+    (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{
+      name?: unknown;
+    }>)
+      .map((row) => (typeof row.name === 'string' ? row.name : ''))
+      .filter(Boolean),
+  );
+  const pending = tables
+    .filter((table) => !existing.has(table))
+    .map((table) => `table:${table}`);
+  for (const migration of ADD_COLUMN_MIGRATIONS) {
+    if (!columnNames(db, migration.table).has(migration.column)) {
+      pending.push(`column:${migration.table}.${migration.column}`);
+    }
+  }
+  const toVersion = tables.length + ADD_COLUMN_MIGRATIONS.length;
+  return {
+    fromVersion: toVersion - pending.length,
+    toVersion,
+    pending,
+    fresh: !tables.some((table) => existing.has(table)),
+  };
+}
+
 /** Additive SQLite migrations are atomic and verified instead of catch-all ignored. */
 export function migrateSchema(db: MigrationDb): void {
   db.exec('BEGIN IMMEDIATE');
