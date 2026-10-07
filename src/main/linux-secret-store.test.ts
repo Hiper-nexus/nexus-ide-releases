@@ -17,36 +17,74 @@ function context(overrides: Partial<LinuxSecretStoreContext> = {}): LinuxSecretS
 
 describe('linuxPasswordStoreOverride', () => {
   it.each([
-    ['Hyprland (Omarchy)', 'Hyprland'],
-    ['sway', 'sway'],
-    ['niri', 'niri'],
-    ['LXQt', 'LXQt'],
-    ['GNOME (same choice Chromium makes on its own)', 'GNOME'],
-    ['Ubuntu GNOME', 'ubuntu:GNOME'],
-  ])('selects libsecret on %s', (_name, desktop) => {
-    expect(linuxPasswordStoreOverride(context({ env: { XDG_CURRENT_DESKTOP: desktop } }))).toBe(
-      'gnome-libsecret',
-    );
-  });
-
-  it('selects libsecret when the session does not name a desktop at all', () => {
-    expect(linuxPasswordStoreOverride(context({ env: {} }))).toBe('gnome-libsecret');
+    ['Hyprland (Omarchy)', { XDG_CURRENT_DESKTOP: 'Hyprland' }],
+    ['sway', { XDG_CURRENT_DESKTOP: 'sway' }],
+    ['niri', { XDG_CURRENT_DESKTOP: 'niri' }],
+    // Chromium reconhece LXQt e mesmo assim escolhe basic_text.
+    ['LXQt', { XDG_CURRENT_DESKTOP: 'LXQt' }],
+    // Hyprland/sway abertos de um login KDE herdam KDE_FULL_SESSION=true: antes
+    // isso desligava o override e o cofre caía em basic_text.
+    ['Hyprland from a KDE login', { XDG_CURRENT_DESKTOP: 'Hyprland', KDE_FULL_SESSION: 'true' }],
+    ['sway from a KDE login', { XDG_CURRENT_DESKTOP: 'sway', KDE_FULL_SESSION: 'true' }],
+    ['only KDE_FULL_SESSION', { XDG_CURRENT_DESKTOP: '', KDE_FULL_SESSION: 'true' }],
+    // O Chromium compara com caixa: "kde" minúsculo não é reconhecido.
+    ['a lowercase kde value', { XDG_CURRENT_DESKTOP: 'plasma:kde' }],
+    ['a session that does not name a desktop', {}],
+  ])('selects libsecret on %s', (_name, env) => {
+    expect(linuxPasswordStoreOverride(context({ env }))).toBe('gnome-libsecret');
   });
 
   it.each([
     ['XDG_CURRENT_DESKTOP=KDE', { XDG_CURRENT_DESKTOP: 'KDE' }],
-    ['a composite KDE value', { XDG_CURRENT_DESKTOP: 'plasma:kde' }],
-    ['KDE_FULL_SESSION', { XDG_CURRENT_DESKTOP: '', KDE_FULL_SESSION: 'true' }],
-  ])('leaves KWallet detection alone for %s', (_name, env) => {
+    ['KDE 6', { XDG_CURRENT_DESKTOP: 'KDE', KDE_SESSION_VERSION: '6' }],
+    ['GNOME (Chromium already picks libsecret)', { XDG_CURRENT_DESKTOP: 'GNOME' }],
+    ['Ubuntu GNOME', { XDG_CURRENT_DESKTOP: 'ubuntu:GNOME' }],
+  ])('leaves Chromium detection alone for %s', (_name, env) => {
     expect(linuxPasswordStoreOverride(context({ env }))).toBeNull();
+  });
+
+  it('honors an explicit KWallet generation chosen through NEXUS_LINUX_PASSWORD_STORE', () => {
+    for (const store of ['kwallet', 'kwallet5', 'kwallet6', 'gnome-libsecret']) {
+      expect(
+        linuxPasswordStoreOverride(
+          context({ env: { XDG_CURRENT_DESKTOP: 'KDE', NEXUS_LINUX_PASSWORD_STORE: ` ${store} ` } }),
+        ),
+      ).toBe(store);
+    }
+  });
+
+  it('never lets the env preference pick basic_text', () => {
+    expect(
+      linuxPasswordStoreOverride(
+        context({ env: { XDG_CURRENT_DESKTOP: 'Hyprland', NEXUS_LINUX_PASSWORD_STORE: 'basic' } }),
+      ),
+    ).toBe('gnome-libsecret');
+    expect(
+      linuxPasswordStoreOverride(
+        context({ env: { XDG_CURRENT_DESKTOP: 'KDE', NEXUS_LINUX_PASSWORD_STORE: 'basic' } }),
+      ),
+    ).toBeNull();
   });
 
   it('never overrides an explicit --password-store from the operator', () => {
     expect(linuxPasswordStoreOverride(context({ hasExplicitStore: true }))).toBeNull();
+    expect(
+      linuxPasswordStoreOverride(
+        context({
+          hasExplicitStore: true,
+          env: { XDG_CURRENT_DESKTOP: 'KDE', NEXUS_LINUX_PASSWORD_STORE: 'kwallet6' },
+        }),
+      ),
+    ).toBeNull();
   });
 
   it('stays out of the packaged smoke and of other platforms', () => {
     expect(linuxPasswordStoreOverride(context({ automatedTest: true }))).toBeNull();
+    expect(
+      linuxPasswordStoreOverride(
+        context({ automatedTest: true, env: { NEXUS_LINUX_PASSWORD_STORE: 'kwallet6' } }),
+      ),
+    ).toBeNull();
     expect(linuxPasswordStoreOverride(context({ platform: 'darwin' }))).toBeNull();
     expect(linuxPasswordStoreOverride(context({ platform: 'win32' }))).toBeNull();
   });

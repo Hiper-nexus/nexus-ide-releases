@@ -1,6 +1,16 @@
 import path from 'node:path';
 import { app } from 'electron';
-import { migrateSchema } from './schema-migrations';
+import { migrateSchema, planSchemaMigration } from './schema-migrations';
+import {
+  confirmDbMigrationBoot,
+  markDbMigrationApplied,
+  pruneDbMigrationSnapshots,
+  readDbMigrationState,
+  recoverInterruptedDbMigration,
+  restoreDbMigrationSnapshot,
+  takeDbMigrationSnapshot,
+  type DbMigrationState,
+} from './db-migration-snapshot';
 
 /**
  * SQLite persistence layer.
@@ -169,16 +179,75 @@ CREATE TABLE IF NOT EXISTS persistent_pty_sessions (
 let db: Db | null = null;
 let initialized = false;
 let degraded = false;
+/** nexus.db cuja migração ainda espera o primeiro mount do renderer. */
+let awaitingBootConfirmation: string | null = null;
+
+function appVersion(): string {
+  try {
+    return typeof app.getVersion === 'function' ? app.getVersion() : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Snapshot antes de migrar (DSK-05). Só existe migração pendente quando falta
+ * tabela ou coluna; banco novo ou já atual não gera cópia. Se o snapshot
+ * falhar (disco cheio, permissão), a migração segue como antes desta mudança:
+ * o snapshot é uma rede extra, nunca um motivo novo para o modo degradado.
+ */
+function snapshotBeforeMigration(open: Db, file: string): DbMigrationState | null {
+  const plan = planSchemaMigration(open, SCHEMA);
+  if (plan.fresh || plan.pending.length === 0) return null;
+  try {
+    return takeDbMigrationSnapshot(open, file, {
+      fromSchema: plan.fromVersion,
+      toSchema: plan.toVersion,
+      appVersion: appVersion(),
+    });
+  } catch (err) {
+    console.error(
+      '[nexus] não consegui gravar o snapshot do nexus.db antes de migrar ' +
+        `(${plan.pending.join(', ')}); migrando SEM cópia de segurança:`,
+      err,
+    );
+    return null;
+  }
+}
+
+/** Migração de um boot anterior que nunca montou a interface: espera este boot. */
+function noteUnconfirmedMigration(file: string): void {
+  try {
+    const state = readDbMigrationState(file);
+    if (state?.phase !== 'migrated') return;
+    awaitingBootConfirmation = file;
+    console.warn(
+      `[nexus] o boot anterior (app ${state.appVersion}) migrou o nexus.db e não chegou a ` +
+        `montar a interface; snapshot ${state.snapshot} preservado em db-snapshots/ até um boot confirmar.`,
+    );
+  } catch (err) {
+    console.warn('[nexus] estado de migração do nexus.db ilegível:', err);
+  }
+}
 
 /** Lazily open the DB and create the schema. Returns null if unavailable. */
 export function getDb(): Db | null {
   if (initialized) return db;
   initialized = true;
+  let file: string | null = null;
+  let snapshot: DbMigrationState | null = null;
   try {
     // Required lazily so a missing/broken native binary is contained here.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Database = require('better-sqlite3') as new (file: string) => Db;
-    const file = path.join(app.getPath('userData'), 'nexus.db');
+    file = path.join(app.getPath('userData'), 'nexus.db');
+    const recovered = recoverInterruptedDbMigration(file);
+    if (recovered) {
+      console.warn(
+        `[nexus] o boot anterior caiu no meio da migração do nexus.db (app ${recovered.appVersion}); ` +
+          `banco restaurado do snapshot ${recovered.snapshot} — dados intactos, migrando de novo.`,
+      );
+    }
     db = new Database(file);
     // WAL + synchronous FULL: a mesma durabilidade do journal de rollback,
     // com um fsync por commit em vez de criar/apagar o -journal a cada
@@ -188,11 +257,21 @@ export function getDb(): Db | null {
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA synchronous = FULL');
     db.exec('PRAGMA busy_timeout = 5000');
+    snapshot = snapshotBeforeMigration(db, file);
     db.exec(SCHEMA);
     migrateSchema(db);
     db.exec(`INSERT OR IGNORE INTO provider_session_accounts
       SELECT installation_id, project_id, checkout_id, adapter_id, session_id, account_id
       FROM provider_pane_sessions WHERE adapter_id = 'mimo-code' AND session_key = 'session_id'`);
+    if (snapshot) {
+      // Dentro do try de propósito: se nem o estado `migrated` grava, o
+      // `migrating` no disco faria o próximo boot desfazer esta sessão inteira;
+      // restaurar agora não perde nada (ninguém escreveu desde o snapshot).
+      snapshot = markDbMigrationApplied(file, snapshot);
+      awaitingBootConfirmation = file;
+    } else {
+      noteUnconfirmedMigration(file);
+    }
   } catch (err) {
     degraded = true;
     console.error(
@@ -206,8 +285,45 @@ export function getDb(): Db | null {
       // The original open/migration error is the actionable failure.
     }
     db = null;
+    if (file && snapshot) {
+      try {
+        restoreDbMigrationSnapshot(file, snapshot);
+        console.error(
+          `[nexus] a migração do nexus.db falhou; banco restaurado do snapshot ${snapshot.snapshot} ` +
+            '— dados intactos no disco. O próximo boot tenta migrar de novo.',
+        );
+      } catch (restoreErr) {
+        console.error(
+          `[nexus] a restauração do snapshot ${snapshot.snapshot} não terminou; ` +
+            'o próximo boot conclui antes de abrir o banco:',
+          restoreErr,
+        );
+      }
+    }
+  }
+  if (file) {
+    try {
+      pruneDbMigrationSnapshots(file);
+    } catch (err) {
+      console.warn('[nexus] retenção de snapshots do nexus.db falhou:', err);
+    }
   }
   return db;
+}
+
+/**
+ * Boot confirmado: a versão que migrou o nexus.db montou o renderer. Chamado
+ * no primeiro mount da sessão (window.ts); sem migração em aberto, não faz nada.
+ */
+export function confirmDbBoot(): void {
+  const file = awaitingBootConfirmation;
+  if (!file) return;
+  awaitingBootConfirmation = null;
+  try {
+    confirmDbMigrationBoot(file);
+  } catch (err) {
+    console.warn('[nexus] não consegui gravar o boot confirmado do nexus.db:', err);
+  }
 }
 
 /** True quando o better-sqlite3 falhou no load e a persistência está degradada. */
