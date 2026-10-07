@@ -144,4 +144,29 @@ describe('git-scm-store runPrimaryAction', () => {
     expect(ok).toBe(true);
     expect(window.nexus.integrations.gitCheckout).toHaveBeenCalledWith('feature/x', false);
   });
+  it('mantém o diff na tela enquanto relê o mesmo arquivo e limpa ao trocar', async () => {
+    let resolveDiff: (value: { ok: true; diff: string }) => void = () => {};
+    Object.assign(window.nexus.integrations, {
+      gitFileDiff: vi.fn(
+        () => new Promise((resolve) => {
+          resolveDiff = resolve;
+        }),
+      ),
+    });
+    useGitScmStore.setState({
+      selected: { path: 'a.ts', section: 'unstaged' },
+      diffText: 'diff antigo',
+    });
+
+    const reread = useGitScmStore.getState().selectFile({ path: 'a.ts', section: 'unstaged' });
+    expect(useGitScmStore.getState().diffText).toBe('diff antigo');
+    resolveDiff({ ok: true, diff: 'diff novo' });
+    await reread;
+    expect(useGitScmStore.getState().diffText).toBe('diff novo');
+
+    const other = useGitScmStore.getState().selectFile({ path: 'b.ts', section: 'unstaged' });
+    expect(useGitScmStore.getState().diffText).toBe('');
+    resolveDiff({ ok: true, diff: 'diff de b' });
+    await other;
+  });
 });
