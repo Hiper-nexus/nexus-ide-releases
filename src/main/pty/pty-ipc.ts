@@ -90,6 +90,7 @@ import { getCommandBlockTracker } from "../terminal/command-block-tracker";
 import { registerCommandBlockScope } from "../terminal/command-block-scope-registry";
 import { getProjectDomainStores } from "../orch/project-domain-store-registry";
 import { settleCodexCliVersionForSpawn } from "../orch/codex-cli-version";
+import { ensureNativeHeavyJobBase } from "../orch/native-heavy-preload";
 import {
   type TaskDispatchRecord,
   type TaskDispatchStore,
@@ -493,6 +494,9 @@ function spawnCliPtyAgentPane(
         async (release) => {
           timer.mark("cli-spawn-permit");
           try {
+            // F-955: env do agente nasce com a base do job nativo quando possível.
+            const proving = ensureNativeHeavyJobBase();
+            if (proving) await proving;
             return await spawnCliPtyAgentPane(
               sender, adapter, spawn, preparation, true, true, timer,
             );

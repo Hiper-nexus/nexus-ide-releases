@@ -2,8 +2,8 @@
 
 ## 0.76.209 — Missões com entrega verificada
 
-- O Nexus abre mesmo quando o terminal nativo demora a responder no boot; antes, um Mac lento ou carregado mostrava "NexusIDE não conseguiu inicializar". Se o boot falhar, o aviso agora mostra o motivo (F-955).
-- Uma falha do git ao restaurar panes de missão deixa de derrubar o app com "A JavaScript error occurred in the main process" (F-954).
+- O Nexus abre mesmo quando o terminal nativo demora a responder no boot; antes, um Mac lento ou carregado mostrava "NexusIDE não conseguiu inicializar". Até essa preparação terminar, os agentes não executam comandos pesados; ela é refeita em segundo plano e antes de abrir cada agente. Se o boot falhar, o aviso agora mostra o motivo (F-955).
+- Uma falha do git ao restaurar panes de missão deixa de derrubar o app com "A JavaScript error occurred in the main process", e o pane afetado espera alguns minutos antes de tentar de novo, sem travar a interface (F-954).
 - A revisão independente da conclusão aceita a entrega revisada: o gasto registrado pelo próprio veredito deixa de ser tratado como mudança de autorização (F-430).
 - Claude Haiku 5.5 no catálogo e como primeira opção das tarefas triviais, com o Haiku 4.5 mantido como alternativa.
 - Encerrar impede que saídas de terminais ou spawns pendentes reiniciem a missão. A retomada explícita continua disponível depois do encerramento físico.

@@ -25,6 +25,7 @@ import {
 } from "../adapters/managed-credentials";
 import { recordAccountChoiceReceipt } from "../persistence/account-choice-receipts";
 import { settleCodexCliVersionForSpawn } from "./codex-cli-version";
+import { ensureNativeHeavyJobBase } from "./native-heavy-preload";
 import {
   resolveRotatingAuthFile,
   ROTATING_REFRESH_SPAWN_ADAPTERS,
@@ -869,6 +870,9 @@ export async function spawnMainOwnedMissionPaneAsync(
       const release = await acquireCliSpawnPermit(options.adapterId);
       options.spawnTimer?.mark("cli-spawn-permit");
       try {
+        // F-955: env do agente nasce com a base do job nativo quando possível.
+        const proving = ensureNativeHeavyJobBase();
+        if (proving) await proving;
         const out = await run();
         options.spawnTimer?.mark("pty-spawn");
         return out;

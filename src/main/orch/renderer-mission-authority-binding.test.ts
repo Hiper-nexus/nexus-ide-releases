@@ -345,14 +345,44 @@ describe("renderer mission authority", () => {
     expect(deps.restoreSessionAuthority).toHaveBeenCalledTimes(1);
   });
 
+  // Instância própria: o backoff do F-954 não pode vazar para os outros testes.
+  const isolatedAuthority = () => new RendererMissionAuthority(
+    { forScope: deps.forScope } as never,
+    () => "context-revision-a",
+    deps.resolvePaneActivity,
+  );
+
   it("a git failure while reading the scope fails closed instead of throwing into IPC", () => {
     deps.forScope.mockImplementationOnce(() => {
       throw new GitCommandError("Git process could not complete", ["rev-parse"]);
     });
 
-    expect(authority.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+    expect(isolatedAuthority().restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
     expect(deps.forScope).toHaveBeenCalledTimes(1);
     expect(deps.restoreSessionAuthority).not.toHaveBeenCalled();
+  });
+
+  it("F-954: after a git failure the pane waits the backoff instead of re-running git on every sync", () => {
+    vi.useFakeTimers({ now: new Date("2026-10-07T12:00:00Z") });
+    try {
+      const restoring = isolatedAuthority();
+      const gitFails = () => {
+        throw new GitCommandError("Git process could not complete", ["rev-parse"]);
+      };
+      deps.forScope.mockImplementationOnce(gitFails).mockImplementationOnce(gitFails);
+
+      expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+      // Próximos panesSync dentro do backoff: nada de git de novo.
+      expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+      expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+      expect(deps.forScope).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(5 * 60_000 + 1);
+      expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+      expect(deps.forScope).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rebinds only an owned restored orchestrator session for that mission", () => {

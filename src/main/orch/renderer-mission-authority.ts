@@ -336,8 +336,11 @@ function matchesPersistedRuntime(
   );
 }
 
+const RESTORE_FAILURE_BACKOFF_MS = 5 * 60_000;
+
 export class RendererMissionAuthority {
   readonly #stores: ProjectDomainStoreRegistry;
+  readonly #restoreFailedUntil = new Map<string, number>();
   readonly #captureBaseline: typeof captureMissionCodeBaseline;
   readonly #resolveContextRevision: (
     scope: ProjectExecutionScope,
@@ -643,12 +646,28 @@ export class RendererMissionAuthority {
 
 
     restorePersistedPaneAuthority(owner: WebContents, paneId: string): boolean {
-    // Fail-closed: a leitura do escopo passa pelo git (forScope). Se o git
-    // falhar ou estourar o prazo, a autoridade não é restaurada — a exceção
-    // não pode subir até o handler de IPC, que derrubaria o processo principal.
+    // F-954: o escopo de um pane de aba é lido com git síncrono (prazo de
+    // 30 s) a cada panesSync. Depois de uma falha, o pane espera o backoff em
+    // vez de travar a thread principal de novo a cada sync.
+    const key = `${owner.id}:${paneId}`;
+    if ((this.#restoreFailedUntil.get(key) ?? 0) > Date.now()) return false;
+    return this.#tryRestorePersistedPaneAuthority(owner, paneId, key);
+  }
+
+  #tryRestorePersistedPaneAuthority(
+    owner: WebContents,
+    paneId: string,
+    key = `${owner.id}:${paneId}`,
+  ): boolean {
+    // Fail-closed: se o git falhar ou estourar o prazo, a autoridade não é
+    // restaurada — a exceção não pode subir até o handler de IPC, que
+    // derrubaria o processo principal.
     try {
-      return this.#restorePersistedPaneAuthority(owner, paneId);
+      const restored = this.#restorePersistedPaneAuthority(owner, paneId);
+      this.#restoreFailedUntil.delete(key);
+      return restored;
     } catch (error) {
+      this.#restoreFailedUntil.set(key, Date.now() + RESTORE_FAILURE_BACKOFF_MS);
       console.warn("[mission-authority] restauração de autoridade do pane pulada", error);
       return false;
     }
@@ -746,7 +765,8 @@ export class RendererMissionAuthority {
       !spec ||
       spec.missionId !== missionId ||
       spec.role !== "orchestrator" ||
-      !this.restorePersistedPaneAuthority(owner, owned.paneId)
+      // Rebind é ação explícita do operador: tenta já, sem o backoff do sync.
+      !this.#tryRestorePersistedPaneAuthority(owner, owned.paneId)
     ) {
       return null;
     }

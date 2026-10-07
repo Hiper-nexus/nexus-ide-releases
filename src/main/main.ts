@@ -675,8 +675,8 @@ async function bootstrap(): Promise<void> {
   registerPtyIpc();
   // Authenticate the native job base in the utility host before any agent
   // receives its synchronous spawn environment. A slow PTY host must not stop
-  // the app from opening: without the base, heavy commands stay on Main's
-  // admission path while the proof retries in the background.
+  // the app from opening: until the base is proved, agents' heavy commands are
+  // refused; the proof retries in the background and before each agent spawn.
   await proveNativeHeavyJobBaseAtBoot();
   // Semantic CommandBlock layer (OSC 133). Fail-closed behind feature flag;
   // never mutates the PTY byte stream — lateral tap only.
