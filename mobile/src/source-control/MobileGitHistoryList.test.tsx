@@ -1,29 +1,25 @@
-import { createElement, type ReactElement } from 'react'
+import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import { MobileGitHistoryList } from './MobileGitHistoryList'
 
-vi.mock('react-native', () => ({
-  ActivityIndicator: 'ActivityIndicator',
-  FlatList: ({
-    data,
-    renderItem
-  }: {
-    data: { id: string }[]
-    renderItem: (info: { item: { id: string } }) => ReactElement
-  }) =>
-    createElement(
-      'FlatList',
-      null,
-      data.map((item) => createElement('Row', { key: item.id }, renderItem({ item })))
-    ),
-  Pressable: 'Pressable',
-  StyleSheet: { create: <T,>(styles: T) => styles },
-  Text: 'Text',
-  View: 'View'
-}))
+const listMounts = vi.hoisted(() => ({ scrollView: 0 }))
+
+// The real LegendList native build renders against this mock (see the vitest.config.ts
+// alias), so the row counts below are the virtualizer's, not a test double's.
+vi.mock('react-native', async () => {
+  const { createLegendListReactNativeMock } = await import(
+    '../test-support/legend-list-react-native-mock'
+  )
+  return createLegendListReactNativeMock({
+    windowHeight: 800,
+    onScrollViewMount: () => {
+      listMounts.scrollView += 1
+    }
+  })
+})
 vi.mock('lucide-react-native', () => ({ ChevronDown: 'ChevronDown', ChevronRight: 'ChevronRight' }))
 vi.mock('../transport/client-context', () => ({ useForceReconnect: () => vi.fn() }))
 
@@ -49,6 +45,22 @@ function historyResponse(subject: string) {
   }
 }
 
+function manyCommitsResponse(count: number) {
+  return {
+    ok: true,
+    result: {
+      items: Array.from({ length: count }, (_, index) => ({
+        id: `commit-${index}`,
+        displayId: `c${index}`,
+        subject: `commit subject ${index}`,
+        author: 'Ada',
+        parentIds: [],
+        timestamp: RENDER_NOW - index * 60_000
+      }))
+    }
+  }
+}
+
 const compareResponse = {
   ok: true,
   result: { entries: [{ path: 'src/app.ts', added: 3, removed: 1 }] }
@@ -60,15 +72,17 @@ describe('MobileGitHistoryList', () => {
   afterEach(() => {
     act(() => renderer?.unmount())
     renderer = null
+    listMounts.scrollView = 0
   })
 
-  function listElement(client: RpcClient | null, connState: ConnectionState) {
+  function listElement(client: RpcClient | null, connState: ConnectionState, refreshNonce = 0) {
     return createElement(MobileGitHistoryList, {
       client,
       connState,
       worktreeId: 'wt-1',
       hostId: 'host-1',
-      bottomInset: 0
+      bottomInset: 0,
+      refreshNonce
     })
   }
 
@@ -86,9 +100,113 @@ describe('MobileGitHistoryList', () => {
     })
   }
 
+  // Rendered text only: LegendList hosts carry extraData/context props (some circular),
+  // and extraData still holds a collapsed commit's cached files.
   function tree(): string {
-    return JSON.stringify(renderer?.toJSON())
+    const texts: string[] = []
+    const visit = (node: unknown): void => {
+      if (typeof node === 'string') {
+        texts.push(node)
+      } else if (Array.isArray(node)) {
+        node.forEach(visit)
+      } else if (node && typeof node === 'object' && 'children' in node) {
+        visit((node as { children: unknown }).children)
+      }
+    }
+    visit(renderer?.toJSON())
+    return texts.join('\n')
   }
+
+  function renderedSubjects(): string[] {
+    return (
+      renderer?.root
+        .findAll(
+          (node) =>
+            node.type === 'Text' &&
+            typeof node.props.children === 'string' &&
+            node.props.children.startsWith('commit subject ')
+        )
+        .map((node) => node.props.children as string) ?? []
+    )
+  }
+
+  function commitHeaders() {
+    return (
+      renderer?.root.findAll(
+        (node) => node.type === 'Pressable' && node.props.onPress !== undefined
+      ) ?? []
+    )
+  }
+
+  it('mounts only a viewport-sized window of rows for a 2000-commit history', async () => {
+    const sendRequest = vi.fn().mockResolvedValue(manyCommitsResponse(2000))
+    await render({ sendRequest } as unknown as RpcClient, 'connected')
+
+    const subjects = renderedSubjects()
+    expect(subjects).toContain('commit subject 0')
+    // A FlatList-style regression mounts far more; LegendList pools ~viewport / row height.
+    expect(subjects.length).toBeGreaterThan(0)
+    expect(subjects.length).toBeLessThan(60)
+    expect(subjects).not.toContain('commit subject 1999')
+  })
+
+  it('shows the refresh indicator from a header refresh bump until the new history lands', async () => {
+    let releaseRefresh: (() => void) | null = null
+    const sendRequest = vi
+      .fn()
+      .mockResolvedValueOnce(manyCommitsResponse(3))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseRefresh = () => resolve(manyCommitsResponse(4))
+          })
+      )
+    const client = { sendRequest } as unknown as RpcClient
+    // LegendList hands its RefreshControl to the ScrollView as the refreshControl prop.
+    const refreshing = () =>
+      renderer?.root.findByType('ScrollView').props.refreshControl.props.refreshing
+    await render(client, 'connected')
+    expect(refreshing()).toBe(false)
+
+    await act(async () => {
+      renderer?.update(listElement(client, 'connected', 1))
+      await Promise.resolve()
+    })
+    expect(refreshing()).toBe(true)
+
+    await act(async () => {
+      releaseRefresh?.()
+      await Promise.resolve()
+    })
+    expect(refreshing()).toBe(false)
+    expect(renderedSubjects()).toContain('commit subject 3')
+    expect(listMounts.scrollView).toBe(1)
+  })
+
+  it('expands a commit and shows its files without remounting the list', async () => {
+    const sendRequest = vi
+      .fn()
+      .mockImplementation((method: string) =>
+        Promise.resolve(method === 'git.history' ? manyCommitsResponse(3) : compareResponse)
+      )
+    await render({ sendRequest } as unknown as RpcClient, 'connected')
+    expect(listMounts.scrollView).toBe(1)
+
+    await act(async () => {
+      commitHeaders()[0]?.props.onPress()
+      await Promise.resolve()
+    })
+    // expanded + filesById reach the visible row through extraData…
+    expect(tree()).toContain('src/app.ts')
+    // …while the list itself stays the same mounted instance.
+    expect(listMounts.scrollView).toBe(1)
+
+    await act(async () => {
+      commitHeaders()[0]?.props.onPress()
+    })
+    expect(tree()).not.toContain('src/app.ts')
+    expect(listMounts.scrollView).toBe(1)
+  })
 
   it('keeps loaded commits visible across a disconnect and its reconnect refetch', async () => {
     let releaseRefetch: (() => void) | null = null

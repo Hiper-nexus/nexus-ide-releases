@@ -61,6 +61,31 @@ it('presents a title-only data push with its original identity, routing and chan
   expect(mocks.remove).toHaveBeenCalledOnce()
 })
 
+it('re-presents activity on the low-importance activity channel without sound', async () => {
+  startAndroidForegroundPushPresentation()
+  const incoming = notification()
+  incoming.request.content.data.kind = 'activity'
+  mocks.receive(incoming)
+  await vi.waitFor(() => expect(mocks.schedule).toHaveBeenCalledOnce())
+  expect(mocks.schedule).toHaveBeenCalledWith(
+    expect.objectContaining({
+      content: expect.objectContaining({ sound: false }),
+      trigger: { channelId: 'agent-activity' }
+    })
+  )
+})
+
+it('falls back to the agent alert channel when the payload names none', async () => {
+  startAndroidForegroundPushPresentation()
+  const incoming = notification()
+  delete incoming.request.content.data.channelId
+  mocks.receive(incoming)
+  await vi.waitFor(() => expect(mocks.schedule).toHaveBeenCalledOnce())
+  expect(mocks.schedule).toHaveBeenCalledWith(
+    expect.objectContaining({ trigger: { channelId: 'agent-alerts' } })
+  )
+})
+
 it('does not reschedule its own local notification or normal provider notifications', () => {
   startAndroidForegroundPushPresentation()
   mocks.receive(notification(null))

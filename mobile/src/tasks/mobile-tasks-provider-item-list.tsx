@@ -4,7 +4,8 @@ import {
   ActivityIndicator,
   colors,
   Text,
-  FlatList,
+  MobileLegendList,
+  type MobileLegendListSeparatorProps,
   spacing,
   Pressable,
   ChevronLeft,
@@ -28,6 +29,19 @@ import {
   getGitHubReviewSummary,
   getGitHubMergeLabel
 } from './mobile-tasks-legacy-foundation'
+
+// Task row with branch/PR signal lines; plain rows are shorter and get measured.
+const ESTIMATED_PROVIDER_ROW_HEIGHT = 84
+
+/** No hairline next to a section header — FlatList's trailingItem rule, kept on LegendList. */
+export function TaskEntrySeparator({
+  leadingItem,
+  trailingItem
+}: MobileLegendListSeparatorProps<{ readonly type: string }>) {
+  return leadingItem.type === 'section' || trailingItem?.type === 'section' ? null : (
+    <View style={styles.separator} />
+  )
+}
 
 export function renderMobileTasksProviderItemList(model: ConnectionPresentationModel) {
   const {
@@ -62,14 +76,14 @@ export function renderMobileTasksProviderItemList(model: ConnectionPresentationM
       <Text style={styles.emptyText}>{emptyLabel}</Text>
     </View>
   ) : (
-    <FlatList
+    <MobileLegendList
       data={displayedEntries}
       keyExtractor={(entry) => entry.key}
-      ItemSeparatorComponent={({ leadingItem, trailingItem }) =>
-        leadingItem?.type === 'section' || trailingItem?.type === 'section' ? null : (
-          <View style={styles.separator} />
-        )
-      }
+      getItemType={(entry) => entry.type}
+      estimatedItemSize={ESTIMATED_PROVIDER_ROW_HEIGHT}
+      // Why: rows only re-render when extraData changes; repo colors are what they read.
+      extraData={reposById}
+      ItemSeparatorComponent={TaskEntrySeparator}
       contentContainerStyle={[styles.list, { paddingBottom: spacing.lg + insets.bottom }]}
       refreshing={refreshing}
       onRefresh={refreshTasks}

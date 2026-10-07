@@ -2,7 +2,7 @@
 // carries them flat in `data` as strings. Both reach JS as the notification's
 // `content.data`, so the reader accepts either and coerces the numeric fields.
 export type OrcaPushPayload = {
-  readonly kind?: 'alert' | 'dismiss'
+  readonly kind?: 'alert' | 'activity' | 'dismiss'
   readonly hostFingerprint: string
   readonly notificationId?: string
   readonly notificationSeq?: number
@@ -33,7 +33,9 @@ export function readOrcaPushPayload(data: unknown): OrcaPushPayload | null {
   }
   return {
     hostFingerprint,
-    ...(record.kind === 'dismiss' || record.kind === 'alert' ? { kind: record.kind } : {}),
+    ...(record.kind === 'dismiss' || record.kind === 'alert' || record.kind === 'activity'
+      ? { kind: record.kind }
+      : {}),
     notificationId: readString(record.notificationId),
     notificationSeq: readSeq(record.notificationSeq),
     notificationEpoch: readString(record.notificationEpoch),

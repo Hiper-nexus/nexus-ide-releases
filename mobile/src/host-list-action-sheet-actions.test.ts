@@ -8,6 +8,12 @@ vi.mock('lucide-react-native', () => ({
   PowerOff: vi.fn(),
   RefreshCw: vi.fn()
 }))
+const haptics = vi.hoisted(() => ({ impactAsync: vi.fn(() => Promise.resolve()) }))
+vi.mock('react-native', () => ({ Platform: { OS: 'ios' } }))
+vi.mock('expo-haptics', () => ({
+  impactAsync: haptics.impactAsync,
+  ImpactFeedbackStyle: { Light: 'light', Medium: 'medium' }
+}))
 
 const HOST: HostProfile = {
   id: 'host-1',
@@ -56,6 +62,22 @@ describe('getHostListActionSheetActions', () => {
     disconnect?.onPress()
     expect(spies.onDisconnect).toHaveBeenCalledWith(HOST.id)
     expect(spies.onDismiss).toHaveBeenCalled()
+  })
+
+  it.each(['Reconnect', 'Disconnect'])('taps a light haptic when %s is dispatched', (label) => {
+    haptics.impactAsync.mockClear()
+    const { actions } = build()
+    actions.find((action) => action.label === label)?.onPress()
+    expect(haptics.impactAsync).toHaveBeenCalledOnce()
+    expect(haptics.impactAsync).toHaveBeenCalledWith('light')
+  })
+
+  it('leaves navigation actions without a dispatch haptic', () => {
+    haptics.impactAsync.mockClear()
+    const { actions } = build()
+    actions.find((action) => action.label === 'Edit host')?.onPress()
+    actions.find((action) => action.label === 'Network diagnostics')?.onPress()
+    expect(haptics.impactAsync).not.toHaveBeenCalled()
   })
 
   it('hands Remove the whole host so the confirm sheet can name it', () => {

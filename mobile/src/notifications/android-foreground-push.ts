@@ -2,6 +2,8 @@ import { Platform } from 'react-native'
 import * as Notifications from 'expo-notifications'
 import { canPresentForegroundPush } from './push-receive'
 import { readOrcaPushPayload } from './push-payload'
+import { classifyForegroundNotification } from './foreground-notification-policy'
+import { foregroundPresentationChannel } from './agent-notification-channels'
 
 export function startAndroidForegroundPushPresentation(): () => void {
   if (Platform.OS !== 'android') {
@@ -32,16 +34,16 @@ export function startAndroidForegroundPushPresentation(): () => void {
       if (!payload || !(await canPresentForegroundPush(payload))) {
         return
       }
+      const kind = classifyForegroundNotification(payload)
       await Notifications.scheduleNotificationAsync({
         identifier,
         content: {
           title: content.title,
           body: content.body,
           data: content.data,
-          sound: content.sound === 'default' ? 'default' : false
+          sound: kind === 'alert' && content.sound === 'default' ? 'default' : false
         },
-        trigger:
-          typeof content.data?.channelId === 'string' ? { channelId: content.data.channelId } : null
+        trigger: { channelId: foregroundPresentationChannel(kind, content.data?.channelId) }
       })
     }
   })

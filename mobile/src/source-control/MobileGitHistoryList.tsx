@@ -1,10 +1,11 @@
-import { memo, useCallback, useEffect, useState } from 'react'
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
 import type { ConnectionState } from '../transport/types'
 import type { RpcClient } from '../transport/rpc-client'
 import { useForceReconnect } from '../transport/client-context'
+import { MobileLegendList } from '../components/MobileLegendList'
 import { gitCommitCompareRead } from './mobile-git-read-operations'
 import {
   fetchMobileGitHistory,
@@ -28,7 +29,7 @@ type Props = {
 // Headerless commit-history list. Extracted from the /history route so the hub's
 // History segment and the standalone route render the same body over one code path.
 // Memoized: it stays mounted (hidden) while the Changes segment is active, and must
-// not re-reconcile its FlatList on every commit-message keystroke re-render.
+// not re-reconcile its list on every commit-message keystroke re-render.
 export const MobileGitHistoryList = memo(function MobileGitHistoryList({
   client,
   connState,
@@ -130,6 +131,12 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
   }, [client, connState, expanded, worktreeId])
 
   const connected = client !== null && connState === 'connected'
+  // Why: LegendList re-renders visible rows only when extraData changes identity, so
+  // expand/file-load state rides here instead of remounting the list.
+  const listExtraData = useMemo(
+    () => ({ connected, expanded, filesById }),
+    [connected, expanded, filesById]
+  )
 
   const renderCommit = useCallback(
     ({ item }: { item: MobileCommitRow }) => {
@@ -216,14 +223,26 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
     )
   }
   return (
-    <FlatList
+    <MobileLegendList
       data={view.rows}
       renderItem={renderCommit}
-      keyExtractor={(row) => row.id}
+      keyExtractor={commitKey}
+      extraData={listExtraData}
+      estimatedItemSize={ESTIMATED_COMMIT_ROW_HEIGHT}
+      refreshNonce={refreshNonce + reloadNonce}
+      // Pull-to-refresh is Retry: it revives a parked reconnect instead of spinning offline.
+      onRefresh={retry}
       contentContainerStyle={{ paddingBottom: spacing.lg + bottomInset }}
     />
   )
 })
+
+// Collapsed commit row: subject + meta lines inside the header's vertical padding.
+const ESTIMATED_COMMIT_ROW_HEIGHT = 52
+
+function commitKey(row: MobileCommitRow): string {
+  return row.id
+}
 
 const styles = StyleSheet.create({
   state: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },

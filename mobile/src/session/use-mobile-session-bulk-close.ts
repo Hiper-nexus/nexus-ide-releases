@@ -7,6 +7,7 @@ import type { RpcSuccess } from '../transport/types'
 import { activateMobileSessionTab } from './mobile-session-tab-activation'
 import type { MobileSessionTab, SessionTabsResult } from './mobile-session-route-types'
 import type { MobileSessionCloseActionsModel } from './use-mobile-session-close-actions'
+import { triggerListActionHaptic } from '../platform/gesture-haptics'
 
 export function useMobileSessionBulkClose(scope: MobileSessionCloseActionsModel) {
   const {
@@ -35,7 +36,12 @@ export function useMobileSessionBulkClose(scope: MobileSessionCloseActionsModel)
     switchSessionTab,
     closeSessionTab: handleCloseSessionTab
   })
-  const closeWithBulkActions = createCloseWithBulkActions(handleCloseSessionTab, bulkCloseActions)
+  // A tab the user picked to close gets one light tap; bulk closes stay silent per tab.
+  const closeSessionTabFromSheet = (tab: MobileSessionTab): Promise<void> => {
+    triggerListActionHaptic()
+    return handleCloseSessionTab(tab)
+  }
+  const closeWithBulkActions = createCloseWithBulkActions(closeSessionTabFromSheet, bulkCloseActions)
 
   const visibleTabs: MobileSessionTab[] = sessionTabs
   const activeMarkdownTab = activeSessionTab?.type === 'markdown' ? activeSessionTab : null
@@ -99,6 +105,7 @@ export function useMobileSessionBulkClose(scope: MobileSessionCloseActionsModel)
   ])
   return {
     bulkCloseActions,
+    closeSessionTabFromSheet,
     closeWithBulkActions,
     visibleTabs,
     activeMarkdownTab,

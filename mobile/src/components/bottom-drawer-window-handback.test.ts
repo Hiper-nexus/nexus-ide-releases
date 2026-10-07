@@ -23,6 +23,7 @@ vi.mock('react-native', () => ({
   View: 'View',
   useWindowDimensions: () => ({ width: 440, height: 956 })
 }))
+vi.mock('../platform/gesture-haptics', () => ({ createSwipeArmHaptic: () => () => {} }))
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 62, bottom: 34, left: 0, right: 0 })
 }))

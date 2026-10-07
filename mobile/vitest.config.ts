@@ -1,9 +1,19 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 
 const vitestOxcConfig = { tsconfig: false } as never
 
 export default defineConfig({
   root: import.meta.dirname,
+  resolve: {
+    alias: {
+      // Why: the package's import condition is its DOM build; Metro picks the native one.
+      // Tests must exercise the same virtualizer the app ships.
+      '@legendapp/list/react-native': fileURLToPath(
+        new URL('./node_modules/@legendapp/list/react-native.mjs', import.meta.url)
+      )
+    }
+  },
   // Why: the app tsconfig intentionally excludes tests; Vite 8's OXC transform
   // otherwise fails before Vitest can run the test modules.
   oxc: vitestOxcConfig,
@@ -13,6 +23,8 @@ export default defineConfig({
     onConsoleLog: (log) => !log.includes('react-test-renderer is deprecated'),
     // .tsx too: component tests exist (react-test-renderer + mocked react-native) and were
     // silently never collected, so render-level regressions shipped untested.
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx']
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    // Inlined so a test's vi.mock('react-native') reaches LegendList's own imports.
+    server: { deps: { inline: [/@legendapp\/list/] } }
   }
 })

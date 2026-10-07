@@ -8,6 +8,11 @@ import { readOrcaPushPayload, type OrcaPushPayload } from './push-payload'
 import type { Notification, NotificationBehavior } from 'expo-notifications'
 import { readNativeNotificationData } from './native-notification-data'
 import { loadNotificationDeliveryPreferences } from './notification-delivery-preferences'
+import {
+  classifyForegroundNotification,
+  resolveForegroundNotificationBehavior,
+  suppressesWhileOnScreen
+} from './foreground-notification-policy'
 
 const RECENT_FOREGROUND_PUSH_CAP = 512
 const recentForegroundPushes = new Set<string>()
@@ -51,24 +56,24 @@ export async function foregroundNotificationBehavior(
   const data = readNativeNotificationData(notification.request)
   const payload = readOrcaPushPayload(data)
   const preferences = await loadNotificationDeliveryPreferences()
+  const kind = classifyForegroundNotification(payload)
   // Unrecognized notifications retain normal behavior; recognized pushes fail closed
   // when consent, host, viewing, or dismissal checks cannot complete.
   const ineligible = await shouldSuppressForegroundPush(
     payload,
-    preferences.suppressWhileViewing
+    suppressesWhileOnScreen(kind) && preferences.suppressWhileViewing
   ).catch(() => payload !== null)
   const suppressed = ineligible || (payload !== null && !claimForegroundPush(payload))
-  return {
-    shouldShowBanner: !suppressed,
-    shouldShowList: !suppressed,
-    shouldPlaySound: !suppressed && preferences.sound,
-    shouldSetBadge: false
-  }
+  return resolveForegroundNotificationBehavior(kind, { suppressed, sound: preferences.sound })
 }
 
 export async function canPresentForegroundPush(payload: OrcaPushPayload): Promise<boolean> {
   const preferences = await loadNotificationDeliveryPreferences()
-  return !(await shouldSuppressForegroundPush(payload, preferences.suppressWhileViewing))
+  const kind = classifyForegroundNotification(payload)
+  return !(await shouldSuppressForegroundPush(
+    payload,
+    suppressesWhileOnScreen(kind) && preferences.suppressWhileViewing
+  ))
 }
 
 async function resolvePushHostId(payload: OrcaPushPayload): Promise<string | null> {
