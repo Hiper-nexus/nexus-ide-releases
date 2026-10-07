@@ -12,6 +12,7 @@ import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useAttentionInboxStore } from '../state/attention-inbox-store';
 import { useBugReportDialogStore } from '../state/bug-report-dialog-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { setActiveWorkspacePath } from '../state/active-workspace';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -215,5 +216,131 @@ describe('CommandPalette product navigation', () => {
       missionId: 'mission-release',
       surface: 'terminals',
     });
+  });
+});
+
+describe('CommandPalette modal focus', () => {
+  let frames: FrameRequestCallback[] = [];
+  let invoker: HTMLButtonElement;
+
+  beforeEach(() => {
+    frames = [];
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      }),
+    );
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    setActiveWorkspacePath('/projects/a');
+    useCommandPaletteStore.setState({ open: false });
+    invoker = document.createElement('button');
+    invoker.textContent = 'Terminal do pane 1';
+    document.body.appendChild(invoker);
+    invoker.focus();
+  });
+
+  afterEach(() => {
+    setActiveWorkspacePath(null);
+  });
+
+  function openPalette(): HTMLElement {
+    const host = render(<CommandPalette />);
+    act(() => useCommandPaletteStore.setState({ open: true }));
+    return host;
+  }
+
+  function paint(): void {
+    act(() => {
+      for (const callback of frames.splice(0)) callback(0);
+    });
+  }
+
+  function press(key: string, shiftKey = false): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', {
+      key,
+      shiftKey,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      (document.activeElement ?? document.body).dispatchEvent(event);
+    });
+    return event;
+  }
+
+  it('declares a modal dialog and keeps Tab and Shift+Tab inside it', () => {
+    const host = openPalette();
+    paint();
+    const dialog = host.querySelector<HTMLElement>('[role="dialog"]');
+    const input = host.querySelector<HTMLInputElement>('.palette__input');
+    const options = host.querySelectorAll<HTMLButtonElement>(
+      'button[role="option"]',
+    );
+    const lastOption = options[options.length - 1];
+
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+    expect(document.activeElement).toBe(input);
+
+    expect(press('Tab', true).defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(lastOption);
+    expect(press('Tab').defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect(dialog?.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(invoker);
+  });
+
+  it('returns focus to the invoker when Escape dismisses the palette', () => {
+    const host = openPalette();
+    paint();
+
+    press('Escape');
+
+    expect(useCommandPaletteStore.getState().open).toBe(false);
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(invoker);
+  });
+
+  it('cancels the pending input focus when it closes before the frame', () => {
+    openPalette();
+    const frameId = frames.length;
+
+    act(() => useCommandPaletteStore.getState().close());
+    paint();
+
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(frameId);
+    expect(document.activeElement).toBe(invoker);
+  });
+
+  it('leaves focus alone when the invoker was removed while open', () => {
+    openPalette();
+    paint();
+    invoker.remove();
+
+    expect(() => press('Escape')).not.toThrow();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('does not restore focus into another workspace', () => {
+    openPalette();
+    paint();
+
+    act(() => {
+      setActiveWorkspacePath('/projects/b');
+      useCommandPaletteStore.getState().close();
+    });
+
+    expect(document.activeElement).not.toBe(invoker);
+  });
+
+  it('lets a chosen action own focus instead of the invoker', () => {
+    const host = openPalette();
+    paint();
+
+    act(() => actionButton(host, 'Lista de atenção').click());
+
+    expect(useAttentionInboxStore.getState().open).toBe(true);
+    expect(document.activeElement).not.toBe(invoker);
   });
 });

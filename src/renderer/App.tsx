@@ -1477,6 +1477,14 @@ export function App() {
         inspector={
           contextualPanelVisible ? contextualPanel : undefined
         }
+        // Workspace/checkout + destino + conteúdo: fechar o painel no mesmo
+        // lugar anima a saída; trocar de projeto ou destino nunca mostra o
+        // painel do lugar anterior.
+        inspectorScopeKey={
+          currentWorkspace
+            ? `${currentWorkspace.path}\n${productDestinationKey(destination)}\ncontextual-panel`
+            : null
+        }
         overlays={
           <>
             {canUseApp && <CloseWorkspaceDialog />}

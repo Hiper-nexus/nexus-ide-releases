@@ -251,6 +251,58 @@ describe('DirectionComposer', () => {
     });
   });
 
+  it('ignores Enter while an IME composition is active and sends once after it commits', async () => {
+    const onCommand = successfulCommand();
+    const host = mountComposer(onCommand);
+    const { target, draft } = composerControls(host);
+    const appKeydown = vi.fn();
+    document.addEventListener('keydown', appKeydown);
+
+    selectTarget(target, 'interface-executor');
+    setDraft(draft, 'Revise a função de ação');
+    const composing = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter',
+      isComposing: true,
+    });
+    // WebKit/Electron antigos sinalizam a composição só pelo keyCode 229.
+    const legacyComposing = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter',
+    });
+    Object.defineProperty(legacyComposing, 'keyCode', { value: 229 });
+    act(() => {
+      draft.dispatchEvent(composing);
+      draft.dispatchEvent(legacyComposing);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onCommand).not.toHaveBeenCalled();
+    // O IME precisa do default para confirmar o texto; atalhos da app não veem a tecla.
+    expect(composing.defaultPrevented).toBe(false);
+    expect(legacyComposing.defaultPrevented).toBe(false);
+    expect(appKeydown).not.toHaveBeenCalled();
+
+    const enter = pressEnter(draft);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    document.removeEventListener('keydown', appKeydown);
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(onCommand).toHaveBeenCalledTimes(1);
+    expect(onCommand).toHaveBeenCalledWith({
+      kind: 'direct',
+      missionId: MISSION_ID,
+      targetAgentId: 'interface-executor',
+      text: 'Revise a função de ação',
+    });
+  });
+
   it('allows only one submission while pending, disables every control, and clears only after success', async () => {
     const pending = deferred<MissionSnapshot>();
     const onCommand = vi.fn(
