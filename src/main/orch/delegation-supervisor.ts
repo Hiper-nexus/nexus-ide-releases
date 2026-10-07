@@ -62,8 +62,10 @@ import {
   shortStartError,
   startFailureBreakerAction,
   MODEL_REJECTION_HANDOFF_MS,
+  START_GRACE_MS,
   START_SETTLE_MS,
   START_WATCH_TTL_MS,
+  type PaneNotStartedCause,
   type PaneStartOutcome,
   type PaneStartProgress,
   type PaneStartWatch,
@@ -93,6 +95,12 @@ import {
 } from './agent-status';
 import { trace } from '../observability/main-trace';
 import { sanitizePaneBootOutput } from './pane-boot-output';
+import { diagnosePaneBoot } from './pane-boot-diagnosis';
+import {
+  currentModelQuarantineScope,
+  MODEL_ACCESS_QUARANTINE_MS,
+  quarantineRejectedModel,
+} from './model-access-quarantine';
 import {
   persistLeftoverIsolation,
   shouldSkipLeftoverRemount,
@@ -868,7 +876,7 @@ async function handlePaneNotStarted(
   context?: PeriodicTaskContext,
 ): Promise<void> {
   watch.phase = 'acting';
-  const cause = notStartedCause({
+  const failureCause = notStartedCause({
     failure: watch.failure?.cause ?? null,
     hasSession: watch.sessionId !== null,
   });
@@ -878,6 +886,32 @@ async function handlePaneNotStarted(
   const outputTail = watch.sessionId !== null
     ? sanitizePaneBootOutput(readSessionOutput(watch.sessionId, 100))
     : null;
+  // F-958: motivo legível (frase fixa, modelo, código de saída) para o aviso.
+  // A CLI que recusou o modelo ao nascer tira o modelo das rotas dela: a
+  // quarentena é da INSTALAÇÃO (some quando a CLI muda, isto é, quando o
+  // catálogo é revalidado) ou, sem instalação provada, da conta.
+  const diagnosis = diagnosePaneBoot(outputTail, watch.failure?.exitCode ?? null);
+  // Só a saída no boot vira recusa de modelo: a recusa do provedor no turno
+  // (`provider-request`, F-765) já tem causa e é do failover.
+  const cause: PaneNotStartedCause =
+    diagnosis.modelRejected && failureCause === 'boot-exit' ? 'model-rejected' : failureCause;
+  if (cause === 'model-rejected') {
+    const session = watch.sessionId !== null ? getAgentSessionInfo(watch.sessionId) : null;
+    const model = diagnosis.rejectedModel ?? session?.model ?? null;
+    if (model) {
+      const scope = currentModelQuarantineScope(watch.adapterId, {
+        accountId: session?.accountId ?? null,
+      });
+      quarantineRejectedModel(
+        watch.adapterId,
+        model,
+        diagnosis.detail ?? 'modelo recusado no nascimento',
+        Date.now(),
+        MODEL_ACCESS_QUARANTINE_MS,
+        { ...scope, kind: scope.installationId ? 'installation' : 'access' },
+      );
+    }
+  }
   if (watch.sessionId === null) {
     // Um PTY atrasado desta tentativa não pode nascer depois do reenvio.
     abandonPendingOrchSpawn(watch.requestId, 'pane did not start within the start window');
@@ -921,6 +955,7 @@ async function handlePaneNotStarted(
     adapterId: watch.adapterId,
     cause,
     outcome,
+    detail: diagnosis.detail,
   });
   trace({
     kind: 'pane-not-started',
@@ -931,6 +966,8 @@ async function handlePaneNotStarted(
     cause,
     outcome: outcome.kind,
     breaker,
+    ...(watch.failure?.exitCode !== undefined ? { exitCode: watch.failure.exitCode } : {}),
+    ...(diagnosis.detail ? { detail: diagnosis.detail } : {}),
     ...(outputTail !== null ? { outputTail } : {}),
     ...(outcome.kind === 'rerouted'
       ? { nextPaneId: outcome.paneId, nextAdapterId: outcome.adapterId }
@@ -1008,6 +1045,18 @@ async function checkPaneStart(watch: PaneStartWatch, now: number, context?: Peri
       tracePaneStartRejected(watch, 'provider-request');
     }
   }
+  // F-958: sessão viva que não escreveu NENHUM byte (ainda 'spawning') depois
+  // da graça não está "ocupada": a CLI travou antes de pintar — o MiMo ficou
+  // 158 s mudo esperando a fila de pesados. Vale para qualquer CLI, com ou sem
+  // prova de turno; sem isto a ficha só caía no TTL de 30 min, em silêncio.
+  if (
+    !watch.failure &&
+    sessionId !== null &&
+    state === 'spawning' &&
+    now - (watch.sessionSpawnedAt ?? watch.createdAt) >= START_GRACE_MS
+  ) {
+    watch.failure = { cause: 'boot-silent', at: now };
+  }
   const action = decideStartAction({
     role: watch.role,
     operatorOpened: watch.operatorOpened === true,
@@ -1071,7 +1120,10 @@ function installPaneStartTaps(): void {
       // F-792: one-shot com código de erro morreu; com 0, terminou.
       exit: rootExit,
       spawnedAt: getSessionSpawnedAtMs(sessionId),
-      started: hasPaneStartEvidence(watch, sessionId),
+      // F-958: trabalho provado (ferramenta) também é início — a saída com
+      // erro de quem já trabalhou não é "não iniciou".
+      started:
+        hasPaneStartEvidence(watch, sessionId) || getAgentToolActivityCount(sessionId) > 0,
       now: Date.now(),
     });
   });

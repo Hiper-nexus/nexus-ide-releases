@@ -4,7 +4,23 @@ const { promisify } = require('node:util');
 const catalog = require('./catalog.cjs');
 const preload = path.join(__dirname, 'preload.cjs');
 const dispatch = path.join(__dirname, 'dispatch.cjs');
-module.exports = function install() {
+// F-958: the Main-proved Node launcher of an AI CLI (codex.js -> vendored
+// codex, bin/mimo -> .mimocode) re-executes ITS OWN argv in its native payload.
+// That child is the agent itself, not finite work: classifying its command
+// line read the mission brief, so a brief mentioning "typecheck"/"vitest" or
+// longer than 16 KB made the agent wait silently for the project's single heavy
+// slot and exit 74 after 300 s. Only an exact argv hand-off to a non-Node,
+// non-shell, non-heavy executable qualifies; its own tool children stay metered.
+function isAgentLauncherHandoff(agentRoot, file, args, options) {
+  if (!agentRoot || typeof file !== 'string' || !path.isAbsolute(file) || options.shell) return false;
+  const own = process.argv.slice(2);
+  if (args.length !== own.length || !args.every((arg, index) => arg === own[index])) return false;
+  const name = path.basename(file).toLowerCase();
+  if (file === process.execPath || /^node(?:\.exe)?$/.test(name) || /^(?:sh|bash|zsh|dash|fish|ksh|csh|tcsh|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?)$/.test(name)) return false;
+  return !catalog.commandKind(name) && !catalog.moduleKind(file);
+}
+module.exports = function install(installOptions = {}) {
+  const agentRoot = installOptions.agentRoot === true;
   const originals = Object.fromEntries(['fork', 'spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync'].map((key) => [key, cp[key]]));
   function plan(file, args, options = {}) {
     // Preserve the SDK's intentionally empty service env and native IPC. A
@@ -20,6 +36,7 @@ module.exports = function install() {
     if (!(env.NODE_OPTIONS || '').includes(preload)) env.NODE_OPTIONS = `${env.NODE_OPTIONS || ''} --require ${JSON.stringify(preload)}`.trim();
     if (process.env.NEXUS_HEAVY_BASH_ENV) env.BASH_ENV = process.env.NEXUS_HEAVY_BASH_ENV;
     if (process.env.NEXUS_HEAVY_DIR) env.ZDOTDIR = process.env.NEXUS_HEAVY_ZDOTDIR || process.env.NEXUS_HEAVY_DIR;
+    if (isAgentLauncherHandoff(agentRoot, file, args, options)) return { file, args, options: { ...options, env } };
     const node = file === process.execPath || /^node(?:\.exe)?$/i.test(path.basename(file));
     const kind = node ? catalog.entryKind([process.execPath, ...args]) || (process.env.NEXUS_HEAVY_JOB_BASE && !catalog.isPersistent([process.execPath, ...args]) ? 'build' : null) : catalog.commandKind([file, ...args].join(' '));
     if (kind && env.NEXUS_HEAVY_JOB_BASE && !env.NEXUS_HEAVY_LEASE) {

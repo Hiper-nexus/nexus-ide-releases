@@ -722,6 +722,48 @@ const BUNDLED_EFFORTS = new Map(BUILTIN_ADAPTERS.map((raw) => {
   return [adapter.id, adapter.kind === 'cli-pty' ? adapter.control?.effort?.levels ?? [] : []];
 }));
 
+const BUNDLED_MODELS = new Map(BUILTIN_ADAPTERS.map((raw) => {
+  const adapter = adapterSchema.parse(raw);
+  return [adapter.id, adapter.kind === 'cli-pty' ? adapter.models.list : []];
+}));
+
+/**
+ * F-958 (regra do operador: catálogo atual, nunca tabela velha): CLIs cuja
+ * listagem viva é a fonte de verdade dos ids aceitos. Em 07/10 o AGY 1.3.0
+ * já não reconhecia `gemini-4-argon` (bundled e 1ª linha do hard) e o pane
+ * morreu em 3,8 s com "is not recognized as a known model".
+ */
+const LIVE_CATALOG_AUTHORITATIVE_ADAPTERS: ReadonlySet<string> = new Set(['agy']);
+
+/**
+ * Modelos roteáveis do adapter segundo o que a CLI instalada anunciou:
+ *  - CLI autoritativa com listagem viva → só os ids que ela listou. Listagem
+ *    que não contém NENHUM id conhecido do bundled é parse quebrado, não
+ *    catálogo: aí vale o contrato bundled (não some a CLI inteira);
+ *  - assento de acesso restrito (Argon, F-817) só com a prova da sonda viva,
+ *    agora em TODO o roteamento, não só na lane de julgamento.
+ */
+export function withLiveRouteCatalog(adapter: AdapterAvailability): AdapterAvailability {
+  const live = adapter.liveModels ?? [];
+  let models = adapter.models;
+  if (
+    models &&
+    LIVE_CATALOG_AUTHORITATIVE_ADAPTERS.has(adapter.id) &&
+    live.length > 0 &&
+    live.some((model) => (BUNDLED_MODELS.get(adapter.id) ?? []).includes(model))
+  ) {
+    models = models.filter((model) => live.includes(model));
+  }
+  if (models) {
+    models = models.filter(
+      (model) => !judgeSeatNeedsAccessProof({ adapterId: adapter.id, model }) || live.includes(model),
+    );
+  }
+  return models && adapter.models && models.length !== adapter.models.length
+    ? { ...adapter, models }
+    : adapter;
+}
+
 function effortForTier(tier: TaskTier): RouteEffort {
   return tier === 'critical' ? 'xhigh' : tier === 'hard' ? 'high' : tier === 'medium' ? 'medium' : 'low';
 }
@@ -1117,6 +1159,9 @@ function evaluatedCandidates(
       if (!hasAuthoritativeModelQuality(info) || isModelBlockedForAutoRouting(info)) {
         return [];
       }
+      // F-958: modelo recusado pela CLI (no nascimento ou no failover) sai
+      // também do ranking avaliado e das alternativas, não só da tabela.
+      if (modelAccessQuarantine(adapter.id, model)) return [];
       // F-912: candidato com janela documentada menor que o pedido sai do
       // ranking (ausência de maxContext = sem filtro).
       if (contextRequirement !== null) {
@@ -1348,7 +1393,7 @@ export function routeTask(
       ? `; exige contexto ≥ ${contextRequirement.toLocaleString('en-US')} tokens — excluídos os com maxContext documentado menor`
       : '';
   const available = new Map(
-    routedAdapters.filter((a) => a.installed).map((a) => [a.id, a]),
+    routedAdapters.filter((a) => a.installed).map((a) => [a.id, withLiveRouteCatalog(a)]),
   );
   if (available.size === 0) return null;
 
@@ -1486,6 +1531,16 @@ export function routeTask(
           routed = { ...c, model: upgraded };
         }
         if (!permitsAutomaticAstra && isAstraModel(routed.adapterId, routed.model)) return [];
+        // F-958: sem lista de modelos (contrato bundled) a tabela é confiada —
+        // menos no assento de acesso restrito, que exige a sonda viva.
+        if (
+          routed.model !== undefined &&
+          judgeSeatNeedsAccessProof({ adapterId: routed.adapterId, model: routed.model }) &&
+          !(adapter.liveModels ?? []).includes(routed.model)
+        ) {
+          missingFromCli.push(`${routed.adapterId}:${routed.model}`);
+          return [];
+        }
         const info = modelCatalogInfo(modelCatalog, routed.adapterId, routed.model);
         if (isModelBlockedForAutoRouting(info)) {
           skippedRisk.push(

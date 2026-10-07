@@ -178,6 +178,27 @@ const KIMI_SESSION_ENTRIES = [
 ];
 
 /**
+ * F-958: a chave que o Kimi Code 2.x LÊ (`encodeWorkDirKey` do binário 2.1.1):
+ * basename em minúsculas, `[^a-z0-9._-]+` → `-`, sem traços nas pontas,
+ * cortado em 40 caracteres; hash = sha256 da raiz com `/` e sem barra final.
+ * O nome inteiro (`wd_task-<64 hex>_…`) nunca era lido: toda worktree de
+ * tarefa abria "Trust this folder?" e o autoresponder segurava o brief.
+ */
+export function kimiWorkDirKey(root: string): string {
+  const normalized = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  const name = normalized.split('/').pop() ?? normalized;
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/^-+|-+$/g, '');
+  const safeSlug = slug === '' || slug === '.' || slug === '..' ? 'workspace' : slug;
+  const hash = crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 12);
+  return `wd_${safeSlug}_${hash}`;
+}
+
+/**
  * Pre-seed trust for the workspace in Kimi's workspace-trust and workspaces.json
  * so Kimi doesn't ask "Trust this folder?" when opened by Nexus.
  */
@@ -223,9 +244,8 @@ export function ensureKimiWorkspaceTrust(
     const nowMs = Date.now();
 
     for (const root of targets) {
-      const hash = crypto.createHash('sha256').update(root).digest('hex').slice(0, 12);
+      const workspaceId = kimiWorkDirKey(root);
       const base = path.basename(root) || 'workspace';
-      const workspaceId = `wd_${base}_${hash}`;
 
       const trustFile = path.join(trustDir, workspaceId);
       fs.writeFileSync(

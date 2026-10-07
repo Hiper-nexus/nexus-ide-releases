@@ -77,6 +77,10 @@ export type PaneStartFailureCause =
   | 'spawn-refused'
   | 'boot-exit'
   | 'brief-rejected'
+  /** F-958: sessão viva sem NENHUM byte no terminal depois da graça. */
+  | 'boot-silent'
+  /** F-958: a CLI instalada recusou o modelo roteado ao nascer. */
+  | 'model-rejected'
   | ProviderRejectedCause;
 export type PaneNotStartedCause =
   | PaneStartFailureCause
@@ -249,6 +253,9 @@ const CAUSE_TEXT: Readonly<Record<PaneNotStartedCause, string>> = {
   'spawn-refused': 'o CLI não subiu (o spawn foi recusado)',
   'boot-exit': 'o processo saiu antes de abrir o primeiro turno',
   'brief-rejected': 'o briefing não foi aceito pelo pane',
+  'boot-silent': `a CLI não escreveu nada no terminal em ${Math.round(START_GRACE_MS / 1000)} s`,
+  'model-rejected':
+    'a CLI instalada recusou o modelo roteado — o modelo saiu das rotas desta CLI até a instalação mudar',
   'no-session': `nenhuma sessão nasceu em ${Math.round(START_GRACE_MS / 1000)} s`,
   'never-started':
     'a sessão ficou parada sem abrir turno, mesmo com o briefing reenviado',
@@ -286,10 +293,17 @@ export function paneStartNoticeSummary(input: {
   readonly adapterId: string;
   readonly cause: PaneNotStartedCause;
   readonly outcome: PaneStartOutcome;
+  /**
+   * F-958: motivo legível já categorizado pelo Main (frase fixa, id do modelo,
+   * código de saída) — nunca a saída crua do terminal.
+   */
+  readonly detail?: string | null;
 }): string {
+  const detail = input.detail?.trim();
   const head =
     `[nao-iniciou:${input.paneId}] O pane ${input.paneId} (${input.adapterId}) ` +
-    `não começou a tarefa: ${CAUSE_TEXT[input.cause]}.`;
+    `não começou a tarefa: ${CAUSE_TEXT[input.cause]}.` +
+    (detail ? ` Motivo: ${detail}.` : '');
   const outcome = input.outcome;
   if (outcome.kind === 'rerouted') {
     return `${head} Reenviada para ${outcome.adapterId} (pane ${outcome.paneId}).`;
@@ -345,7 +359,12 @@ export interface PaneStartWatch extends PaneStartWatchInit {
   sessionId: string | null;
   sessionSpawnedAt: number | null;
   accepted: boolean;
-  failure: { readonly cause: PaneStartFailureCause; readonly at: number } | null;
+  failure: {
+    readonly cause: PaneStartFailureCause;
+    readonly at: number;
+    /** F-958: código de saída da raiz quando o processo saiu sozinho. */
+    readonly exitCode?: number;
+  } | null;
   /** A sessão acabou sem falha provada (pedido de encerramento, one-shot, fora da janela). */
   sessionEnded: boolean;
   /**
@@ -587,13 +606,23 @@ export function notePaneSessionEnded(
   if (input.started) watch.accepted = true;
   const windowStart =
     watch.redeliveredAt ?? input.spawnedAt ?? watch.sessionSpawnedAt ?? watch.createdAt;
+  // F-958: saída com código de erro (ou sinal) sem nunca ter começado é
+  // morte provada a QUALQUER momento da ficha — três writers Codex saíram com
+  // 74 aos 303 s (fila de pesados) e ninguém foi avisado porque a janela de
+  // 90 s já tinha passado. Saída limpa depois da graça continua sem veredito.
+  const exit = input.exit ?? null;
+  const errorExit = exit !== null && (exit.exitCode !== 0 || (exit.signal ?? 0) !== 0);
   if (
     !input.requested &&
     !(input.oneShot && oneShotFinished(input.exit)) &&
     !input.started &&
-    input.now - windowStart < START_GRACE_MS
+    (input.now - windowStart < START_GRACE_MS || errorExit)
   ) {
-    watch.failure = { cause: 'boot-exit', at: input.now };
+    watch.failure = {
+      cause: 'boot-exit',
+      at: input.now,
+      ...(exit !== null ? { exitCode: exit.exitCode } : {}),
+    };
     scheduleKick();
     return;
   }
