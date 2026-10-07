@@ -85,6 +85,68 @@ function nexusSpoolHandoff(env, transport, payload, requestId) {
   }
 }
 
+// F-962: `--help`/`-h`/`help` responde aqui, na hora, sem tocar o canal do
+// Main. Nenhuma execução pode passar deste teto total (lock + resposta + folga).
+const HARD_DEADLINE_MS = LOCK_TIMEOUT_MS + DEFAULT_RESPONSE_TIMEOUT_MS + 10_000;
+const COMMAND_BY_EXECUTABLE = {
+  "nx-mail": "mail",
+  "nx-task": "task",
+  "nx-notify": "notify",
+  nexus_handoff_submit: "handoff-submit",
+};
+const USAGE = {
+  "handoff-submit": [
+    'uso: nexus_handoff_submit --status success|partial|blocked|failed --summary "<resumo objetivo>"',
+    "                          [--artifact <caminho ou JSON>]... [--evidence <id>]...",
+    '  ou: nexus_handoff_submit \'{"status":"success","summary":"<resumo>","artifacts":["<caminho>"]}\'',
+  ],
+  mail: [
+    'uso: nx-mail send --status success|partial|blocked|failed --summary "<resumo objetivo>"',
+    "                  [--artifact <caminho ou JSON>]... [--evidence <id>]...",
+    "     nx-mail list [--all]",
+  ],
+  task: ["uso: nx-task list"],
+  notify: ["uso: nx-notify heartbeat"],
+};
+
+function executableName() {
+  return path.basename(process.argv[1] || "").replace(/\.cmd$/i, "");
+}
+
+/** Pedido de ajuda? Devolve o comando (ou null = todos); undefined = não é ajuda. */
+function requestedHelp(argv) {
+  let command = COMMAND_BY_EXECUTABLE[executableName()];
+  let rest = argv;
+  if (!command) {
+    if (argv.length === 0) return undefined;
+    if (argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") return null;
+    command = argv[0];
+    rest = argv.slice(1);
+  }
+  // A forma JSON (estilo tool-call) nunca é ajuda.
+  if (typeof rest[0] === "string" && rest[0].trimStart().startsWith("{")) return undefined;
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index];
+    if (token === "--help" || token === "-h") return command;
+    if (index === 0 && token === "help") return command;
+    // Valor de uma opção (`--summary -h`) não é pedido de ajuda.
+    if (token.startsWith("--") && token !== "--all") index += 1;
+  }
+  return undefined;
+}
+
+function helpText(command) {
+  const sections = command && USAGE[command]
+    ? [USAGE[command]]
+    : [USAGE["handoff-submit"], USAGE.mail, USAGE.task, USAGE.notify];
+  return [
+    ...sections.flat(),
+    "",
+    "Ajuda local: nada foi enviado ao Nexus. Entregue o handoff uma única vez, ao terminar.",
+    "",
+  ].join("\n");
+}
+
 function fail(message, exitCode = 2) {
   process.stderr.write(`${message}\n`);
   process.exitCode = exitCode;
@@ -229,7 +291,7 @@ function parseHandoffSubmitAlias(argv) {
 }
 
 function parseCommand(argv) {
-  const executable = path.basename(process.argv[1]).replace(/\.cmd$/i, "");
+  const executable = executableName();
   const commandFromName = {
     "nx-mail": "mail",
     "nx-task": "task",
@@ -474,6 +536,20 @@ async function submitRequest(parsed, env) {
 }
 
 async function main() {
+  const help = requestedHelp(process.argv.slice(2));
+  if (help !== undefined) {
+    process.stdout.write(helpText(help));
+    process.exitCode = 0;
+    return;
+  }
+  // Teto total: lock e espera já têm prazo; isto cobre qualquer outra espera.
+  const deadline = setTimeout(() => {
+    process.stderr.write(
+      `nx shim: sem resposta em ${Math.round(HARD_DEADLINE_MS / 1000)} s; encerrado.\n`,
+    );
+    process.exit(1);
+  }, HARD_DEADLINE_MS);
+  if (typeof deadline.unref === "function") deadline.unref();
   let parsed;
   try {
     parsed = parseCommand(process.argv.slice(2));

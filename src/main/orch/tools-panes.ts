@@ -161,7 +161,11 @@ import {
   judgeIdleHelperReuse,
   listIdleHelperCandidates,
 } from './idle-helper-reuse';
-import { digestPaneTail } from './pane-output-digest';
+import {
+  DIGEST_MAX_CHARS,
+  digestBudgetPerPane,
+  digestPaneTail,
+} from './pane-output-digest';
 import { classifyPaneTailForDigest } from '../jev/jev-pane-state';
 import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
 import { getOrchSettings } from '../persistence/settings-store';
@@ -2846,8 +2850,12 @@ function paneReadMode(
   return ctx.role === 'orchestrator' ? 'digest' : 'full';
 }
 
-async function paneDigestResult(tail: string): Promise<Record<string, unknown>> {
-  const digest = digestPaneTail(tail);
+async function paneDigestResult(
+  tail: string,
+  maxChars: number = DIGEST_MAX_CHARS,
+): Promise<Record<string, unknown>> {
+  // F-961: redesenho de TUI colapsado e teto de caracteres por pane.
+  const digest = digestPaneTail(tail, { maxChars });
   const classified = await classifyPaneTailForDigest(digest.text);
   return {
     mode: 'digest',
@@ -2861,6 +2869,7 @@ async function paneDigestResult(tail: string): Promise<Record<string, unknown>> 
     text: digest.text,
     keptLines: digest.keptLines,
     omittedLines: digest.omittedLines,
+    ...(digest.truncated ? { truncated: true } : {}),
     hint: paneReadHint,
   };
 }
@@ -2871,7 +2880,9 @@ const paneRead: McpToolDef = {
     "Read a pane's terminal (ANSI stripped). mode:'digest' (default for the " +
     'orchestrator) returns a compact object: signal lines (errors, test ' +
     'results, prompts, handoffs) from the older part of the window plus the ' +
-    'last 30 non-blank lines verbatim, Jev state when the classifier ' +
+    'last 30 non-blank lines, with TUI redraw/spinner/status frames ' +
+    'collapsed and a per-pane character cap (truncated:true marks a cut), ' +
+    'Jev state when the classifier ' +
     'answers, keptLines/omittedLines counts and a hint — much cheaper than ' +
     'raw text. mode:\'full\' returns the raw tail string as before (default ' +
     'for workers/user/unknown roles). ' +
@@ -2917,7 +2928,8 @@ const paneReadMany: McpToolDef = {
   description:
     'Read the output of several panes at once. Same visibility and ' +
     "mode:'digest'|'full' semantics as nexus_pane_read (orchestrator " +
-    'defaults to digest); errors come back per item. ' +
+    'defaults to digest); errors come back per item. In digest mode the ' +
+    'panes share one total character budget (each item marks truncated). ' +
     'Prefer this over looping nexus_pane_read; prefer handoff_list when ' +
     'you only need structured completion, not the raw PTY.',
   inputSchema: {
@@ -2932,15 +2944,19 @@ const paneReadMany: McpToolDef = {
   handler: async (args, ctx) => {
     const lines = num(args, 'lines') ?? 200;
     const mode = paneReadMode(args, ctx);
+    const paneIds = strArray(args, 'paneIds');
+    // F-961: seis panes × redesenho de TUI estouravam o limite da ferramenta;
+    // o digest divide um teto total entre os panes pedidos.
+    const budget = digestBudgetPerPane(paneIds.length);
     return Promise.all(
-      strArray(args, 'paneIds').map(async (paneId) => {
+      paneIds.map(async (paneId) => {
         try {
           const tail = readSessionOutput(
             authorizedSessionIdOf(ctx, paneId, 'read'),
             lines,
           );
           if (mode !== 'digest') return { paneId, output: tail };
-          return { paneId, ...(await paneDigestResult(tail)) };
+          return { paneId, ...(await paneDigestResult(tail, budget)) };
         } catch (err) {
           return {
             paneId,

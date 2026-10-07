@@ -77,6 +77,8 @@ import {
   decideZeroDeliveryWatchdog,
   zeroDeliveryEscalateSummary,
   zeroDeliveryPokeSummary,
+  zeroDeliveryWorkerActivity,
+  type ZeroDeliverySeen,
 } from './zero-delivery-watchdog';
 import { flushAllNexusTaskFailClosedRetries } from './nexus-task-fail-closed-recovery';
 import { decideMomentumNudge, momentumNudgeSummary, momentumReadyBacklog } from './mission-momentum-watchdog';
@@ -172,6 +174,11 @@ export function decideWorkerHung(input: {
 /** Zero-entrega: Maestro dormiu esperando handoff com disco vazio. */
 const zeroDeliveryPoked = new Set<string>();
 const zeroDeliveryEscalated = new Set<string>();
+/**
+ * F-960: última atividade vista por sessão de worker, POR suite (mesmo
+ * motivo do F-725: a poda de uma suite usa só as sessões vivas dela).
+ */
+const zeroDeliverySeen = new Map<string, Map<string, ZeroDeliverySeen>>();
 const leftoverSkipLogged = new Set<string>();
 
 function trackChefIdleEscalation(
@@ -1257,6 +1264,24 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
         zeroDeliveryEscalated.delete(mission.id);
       }
       const executingSinceMs = resolveDispatchAuthorizedAt(mission);
+      // F-960: o sinal é a atividade real do pane (saída, turno, ferramenta),
+      // não o disco — estudo somente leitura nunca grava arquivo.
+      const seenKey = scopeKey(suite);
+      let seenBySession = zeroDeliverySeen.get(seenKey);
+      if (!seenBySession) {
+        seenBySession = new Map();
+        zeroDeliverySeen.set(seenKey, seenBySession);
+      }
+      const activity = zeroDeliveryWorkerActivity({
+        workers: panes.filter((pane) => pane.role === 'worker'),
+        now,
+        semanticStatus: getAgentSemanticStatusBySession,
+        toolActivityCount: getAgentToolActivityCount,
+        previous: (sessionId) => seenBySession.get(sessionId),
+      });
+      for (const [sessionId, seen] of activity.seen) {
+        seenBySession.set(sessionId, seen);
+      }
       const zd = decideZeroDeliveryWatchdog({
         missionStatus: mission.status,
         lane: lane ?? null,
@@ -1266,6 +1291,7 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
         executingSinceMs,
         now,
         alreadyPoked: zeroDeliveryPoked.has(mission.id),
+        workerActivity: activity,
       });
       if (zd.action === 'poke' && !zeroDeliveryPoked.has(mission.id)) {
         zeroDeliveryPoked.add(mission.id);
@@ -1273,7 +1299,10 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
           const handoff = suite.handoffs.submit({
             missionId: mission.id,
             status: 'progress',
-            summary: zeroDeliveryPokeSummary(mission.id, zd.sinceMs),
+            summary: zeroDeliveryPokeSummary(mission.id, zd.sinceMs, {
+              readOnly: zd.readOnly,
+              quietMs: zd.quietMs,
+            }),
             fromAgent: DELEGATION_SUPERVISOR_AGENT,
           });
           onHandoffSubmitted(handoff, suite.scope);
@@ -1295,7 +1324,10 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
           const handoff = suite.handoffs.submit({
             missionId: mission.id,
             status: 'stalled',
-            summary: zeroDeliveryEscalateSummary(mission.id),
+            summary: zeroDeliveryEscalateSummary(mission.id, {
+              readOnly: zd.readOnly,
+              quietMs: zd.quietMs,
+            }),
             fromAgent: DELEGATION_SUPERVISOR_AGENT,
           });
           onHandoffSubmitted(handoff, suite.scope);
@@ -1556,6 +1588,12 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
       if (!liveSessionIds.has(sessionId)) notifiedAt.delete(sessionId);
     }
   }
+  const seenBySession = zeroDeliverySeen.get(scopeKey(suite));
+  if (seenBySession) {
+    for (const sessionId of [...seenBySession.keys()]) {
+      if (!liveSessionIds.has(sessionId)) seenBySession.delete(sessionId);
+    }
+  }
 }
 
 const suites = new Map<string, ProjectDomainStoreSuite>();
@@ -1628,6 +1666,7 @@ export async function shutdownDelegationSupervisor(): Promise<void> {
   chefIdleTrackers.clear();
   zeroDeliveryPoked.clear();
   zeroDeliveryEscalated.clear();
+  zeroDeliverySeen.clear();
   handoffRearmLastRun.clear();
   hungWorkerNotifiedAt.clear();
   momentumSoloSince.clear();

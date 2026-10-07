@@ -15,6 +15,7 @@ import {
 import {
   createMissionShimRuntime,
   isMissionShimSandboxSupported,
+  missionShimPosixLauncher,
   type MissionShimInvocation,
   type MissionShimRuntime,
 } from "./mission-shim-runtime";
@@ -539,5 +540,134 @@ describe("mission shim filesystem transport", () => {
       toolName: "nexus_handoff_submit",
       args: { status: "partial", summary: "Metade entregue." },
     });
+  });
+
+  // ── F-962: worker Muse relatou que `nx-mail --help` e
+  // `nexus_handoff_submit --help` penduravam até o timeout. ──
+  const bin = (name: string) =>
+    path.join(runtime.binDir, process.platform === "win32" ? `${name}.cmd` : name);
+  /** Ambiente sem o canal do Main: prova que a ajuda não depende dele. */
+  const offlineEnv = () => {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const key of Object.keys(runtime.env)) delete env[key];
+    delete env.NEXUS_HEAVY_HELPER;
+    delete env.NEXUS_HEAVY_LEASE;
+    return env;
+  };
+
+  it("F-962: --help/-h/help responde localmente, na hora, sem dispatcher", async () => {
+    const cases: Array<[string, string[], RegExp]> = [
+      ["nx-mail", ["--help"], /uso: nx-mail send --status/],
+      ["nx-mail", ["send", "--help"], /uso: nx-mail send --status/],
+      ["nx-mail", ["help"], /nx-mail list \[--all\]/],
+      ["nexus_handoff_submit", ["--help"], /uso: nexus_handoff_submit --status/],
+      ["nexus_handoff_submit", ["-h"], /ou: nexus_handoff_submit '\{"status"/],
+      ["nx-task", ["-h"], /uso: nx-task list/],
+      ["nx-notify", ["--help"], /uso: nx-notify heartbeat/],
+      ["nexus", ["--help"], /nx-mail send[\s\S]*nx-task list[\s\S]*nx-notify heartbeat/],
+      ["nexus", ["handoff-submit", "--help"], /uso: nexus_handoff_submit/],
+    ];
+    for (const [name, args, usage] of cases) {
+      const started = Date.now();
+      const result = await execFileAsync(bin(name), args, {
+        env: offlineEnv(),
+        timeout: 5_000,
+      });
+      expect(result.stdout, `${name} ${args.join(" ")}`).toMatch(usage);
+      expect(result.stdout).toContain("nada foi enviado ao Nexus");
+      expect(Date.now() - started).toBeLessThan(5_000);
+    }
+    // Com o canal disponível, a ajuda também não vira pedido ao Main.
+    await execFileAsync(bin("nx-mail"), ["--help"], {
+      env: { ...process.env, ...runtime.env },
+      timeout: 5_000,
+    });
+    expect(invocations).toHaveLength(0);
+    expect(fs.readdirSync(path.join(runtime.rootDir, "requests"))).toEqual([]);
+  }, 60_000);
+
+  it("F-962: o valor de uma opção não é pedido de ajuda", async () => {
+    await execFileAsync(
+      bin("nx-mail"),
+      ["send", "--status", "blocked", "--summary", "-h"],
+      { env: { ...process.env, ...runtime.env }, timeout: 10_000 },
+    );
+    expect(invocations.at(-1)).toMatchObject({
+      toolName: "nexus_handoff_submit",
+      args: { status: "blocked", summary: "-h" },
+    });
+  }, 20_000);
+
+  it.skipIf(process.platform !== "darwin" || !fs.existsSync("/usr/bin/perl"))(
+    "F-962: a fila de admissão pesada do pane não segura --help nem o handoff",
+    async () => {
+      // Reproduz o ambiente do pane no macOS: preload de admissão no
+      // NODE_OPTIONS e uma base de job pesado que fica 20 s "na fila".
+      const preload = path.resolve(
+        __dirname,
+        "../../../resources/heavy-command/preload.cjs",
+      );
+      const heavyEnv = {
+        ...offlineEnv(),
+        NODE_OPTIONS: `--require ${JSON.stringify(preload)}`,
+        NEXUS_HEAVY_COMMAND_URL: "http://127.0.0.1:9/hook/heavy-command",
+        NEXUS_GATE_TOKEN: "f962-token",
+        NEXUS_HEAVY_JOB_BASE: JSON.stringify({
+          file: "/usr/bin/perl",
+          args: ["-e", "sleep 20", "heavy-job"],
+        }),
+      };
+      const help = await execFileAsync(bin("nexus_handoff_submit"), ["--help"], {
+        env: heavyEnv,
+        timeout: 5_000,
+      });
+      expect(help.stdout).toMatch(/uso: nexus_handoff_submit --status/);
+
+      const sent = await execFileAsync(
+        bin("nx-mail"),
+        ["send", "--status", "success", "--summary", "Estudo entregue sem fila."],
+        { env: { ...heavyEnv, ...runtime.env }, timeout: 5_000 },
+      );
+      expect(JSON.parse(sent.stdout)).toMatchObject({ ok: true });
+      expect(invocations.at(-1)).toMatchObject({
+        toolName: "nexus_handoff_submit",
+        args: { status: "success", summary: "Estudo entregue sem fila." },
+      });
+    },
+    15_000,
+  );
+
+  it("F-962: sem Main respondendo, o shim termina dentro do prazo (nunca pendura)", async () => {
+    // Canal órfão: ninguém lê os pedidos (Main travado/ausente).
+    const orphan = fs.mkdtempSync(path.join(baseDir, "orphan-"));
+    for (const dir of ["requests", "responses", "state"]) {
+      fs.mkdirSync(path.join(orphan, dir), { mode: 0o700 });
+    }
+    const started = Date.now();
+    const result = await execFileAsync(bin("nx-task"), ["list"], {
+      env: {
+        ...offlineEnv(),
+        NEXUS_SHIM_ROOT: orphan,
+        NEXUS_SHIM_CAPABILITY_ID: "00000000-0000-4000-8000-00000000f962",
+        NEXUS_SHIM_SECRET: "a".repeat(64),
+        NEXUS_SHIM_RESPONSE_TIMEOUT_MS: "200",
+      },
+      timeout: 5_000,
+    }).catch((error: { stdout: string }) => error);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      error: "shim_response_timeout",
+    });
+    expect(Date.now() - started).toBeLessThan(5_000);
+  }, 20_000);
+
+  it("F-962: lançador POSIX marca o cliente como auxiliar e repassa o prefixo", () => {
+    const launcher = missionShimPosixLauncher("/tmp/a b/it's/nx-shim.cjs", "mail");
+    expect(launcher.startsWith("#!/bin/sh\n")).toBe(true);
+    expect(launcher).toContain("NEXUS_HEAVY_HELPER=1\nexport NEXUS_HEAVY_HELPER\n");
+    expect(launcher).toContain(`'/tmp/a b/it'\\''s/nx-shim.cjs' mail "$@"`);
+    expect(missionShimPosixLauncher("/x/nx-shim.cjs", "")).toContain(
+      `'/x/nx-shim.cjs' "$@"`,
+    );
   });
 });
