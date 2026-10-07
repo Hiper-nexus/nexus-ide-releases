@@ -108,7 +108,8 @@ describe('registerAccountChoiceIpc', () => {
   it('is wired into the main-process bootstrap, like the other IPC registrations', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'main.ts'), 'utf8');
     expect(source).toContain('registerAccountChoiceIpc } from "./persistence/account-choice-ipc"');
-    expect(source).toMatch(/^\s*registerAccountChoiceIpc\(\);/m);
+    // Passos do boot ficam protegidos por bootStep (falha de git não derruba o app).
+    expect(source).toMatch(/bootStep\('registerAccountChoiceIpc', \(\) => registerAccountChoiceIpc\(\)\);/);
   });
 
   it('never throws, even if the store does', async () => {

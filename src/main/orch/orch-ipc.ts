@@ -243,6 +243,7 @@ import {
   completeMissionByOperator,
   planOperatorCompleteIpc,
 } from "./mission-operator-complete";
+import { onIpcGuarded } from '../runtime/git-ipc-guard';
 
 /**
  * Renderer-facing IPC for the orchestration domain, plus the domain
@@ -1849,7 +1850,7 @@ export function registerOrchIpc(): void {
     });
   });
 
-  ipcMain.on(ORCH_CHANNELS.panesSync, (event, raw) => {
+  onIpcGuarded(ORCH_CHANNELS.panesSync, (event, raw) => {
     const envelope = panesSyncEnvelopeSchema.safeParse(raw);
     const legacy = envelope.success ? null : panesSyncSchema.safeParse(raw);
     const entries = envelope.success
@@ -1878,21 +1879,21 @@ export function registerOrchIpc(): void {
     }
   });
 
-  ipcMain.on(ORCH_CHANNELS.paneSpawnResult, (event, raw) => {
+  onIpcGuarded(ORCH_CHANNELS.paneSpawnResult, (event, raw) => {
     const parsed = orchPaneSpawnResultSchema.safeParse(raw);
     if (parsed.success) {
       resolvePaneSpawn(parsed.data, event.sender);
     }
   });
 
-  ipcMain.on(ORCH_CHANNELS.paneRecoveryResult, (event, raw) => {
+  onIpcGuarded(ORCH_CHANNELS.paneRecoveryResult, (event, raw) => {
     const parsed = missionPaneRecoveryResultSchema.safeParse(raw);
     if (parsed.success) {
       resolveMissionPaneRecovery(parsed.data, event.sender);
     }
   });
 
-  ipcMain.on(ORCH_CHANNELS.browserOpenResult, (event, raw) => {
+  onIpcGuarded(ORCH_CHANNELS.browserOpenResult, (event, raw) => {
     const parsed = browserPaneOpenResultSchema.safeParse(raw);
     if (parsed.success) resolveBrowserOpen(parsed.data, event.sender);
   });

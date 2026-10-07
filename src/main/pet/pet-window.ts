@@ -73,6 +73,7 @@ import {
 import { readFileSync, statSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import { onIpcGuarded } from '../runtime/git-ipc-guard';
 
 /**
  * Desktop pet: uma janela transparente, sempre-no-topo e fora da taskbar que
@@ -1479,14 +1480,14 @@ function registerPetIpc(): void {
     }
   });
 
-  ipcMain.on(PET_CHANNELS.setInteractive, (event, interactive: unknown) => {
+  onIpcGuarded(PET_CHANNELS.setInteractive, (event, interactive: unknown) => {
     if (!fromPetWindow(event) || !petWindow) return;
     // Idempotent no cache; force=false evita spam de recompose no macOS.
     // O renderer re-sincroniza em mousemove (corrige ignore perdido após drag).
     applyIgnoreMouseEvents(interactive !== true, false);
   });
 
-  ipcMain.on(PET_CHANNELS.rendererReady, (event) => {
+  onIpcGuarded(PET_CHANNELS.rendererReady, (event) => {
     if (!fromPetWindow(event) || !petWindow) return;
     petReady = true;
     flushPendingPetEvents();
@@ -1496,13 +1497,13 @@ function registerPetIpc(): void {
     petWindow.webContents.send(PET_CHANNELS.stats, getPetStats().stats());
   });
 
-  ipcMain.on(PET_CHANNELS.roamHold, (event, held: unknown) => {
+  onIpcGuarded(PET_CHANNELS.roamHold, (event, held: unknown) => {
     if (!fromPetWindow(event)) return;
     roamRendererHold = held === true;
     if (!roamRendererHold) kickRoamLoop();
   });
 
-  ipcMain.on(PET_CHANNELS.eventShown, (event, kind: unknown) => {
+  onIpcGuarded(PET_CHANNELS.eventShown, (event, kind: unknown) => {
     if (!fromPetWindow(event)) return;
     if (
       typeof kind !== 'string' ||
@@ -1567,7 +1568,7 @@ function registerPetIpc(): void {
     raisePetAboveAll(false);
   };
 
-  ipcMain.on(PET_CHANNELS.dragBegin, (event, _rawOffset: unknown) => {
+  onIpcGuarded(PET_CHANNELS.dragBegin, (event, _rawOffset: unknown) => {
     if (!fromPetWindow(event) || !petWindow) return;
     stopDrag();
     lastDragPos = null;
@@ -1615,7 +1616,7 @@ function registerPetIpc(): void {
     }, { cadenceMs: DRAG_TICK_MS, timeoutMs: Math.max(1000, DRAG_TICK_MS) }), DRAG_TICK_MS);
   });
 
-  ipcMain.on(PET_CHANNELS.dragEnd, (event) => {
+  onIpcGuarded(PET_CHANNELS.dragEnd, (event) => {
     if (!fromPetWindow(event)) return;
     settleDrag();
   });
@@ -1629,22 +1630,22 @@ function registerPetIpc(): void {
     return main;
   };
 
-  ipcMain.on(PET_CHANNELS.focusMain, (event) => {
+  onIpcGuarded(PET_CHANNELS.focusMain, (event) => {
     if (!fromPetWindow(event)) return;
     focusMainWindow();
   });
 
-  ipcMain.on(PET_CHANNELS.requestSettings, (event) => {
+  onIpcGuarded(PET_CHANNELS.requestSettings, (event) => {
     if (!fromPetWindow(event)) return;
     focusMainWindow()?.webContents.send(PET_CHANNELS.openSettings);
   });
 
-  ipcMain.on(PET_CHANNELS.requestOpenTerminal, (event) => {
+  onIpcGuarded(PET_CHANNELS.requestOpenTerminal, (event) => {
     if (!fromPetWindow(event)) return;
     focusMainWindow()?.webContents.send(PET_CHANNELS.openTerminal);
   });
 
-  ipcMain.on(PET_CHANNELS.requestOpenOps, (event) => {
+  onIpcGuarded(PET_CHANNELS.requestOpenOps, (event) => {
     if (!fromPetWindow(event)) return;
     focusMainWindow()?.webContents.send(PET_CHANNELS.openOps);
   });

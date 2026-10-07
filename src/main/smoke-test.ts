@@ -26,6 +26,7 @@ import { RUNTIME_TIMEOUT_MS } from '../shared/runtime-gates';
 import { proveMainOwnedCommandForSmoke } from './smoke-owned-command';
 import { requireLiveRendererWorkspaceScope } from './persistence/renderer-workspace-scope';
 import { sameProjectScope } from './orch/project-scoped-broadcast';
+import { onIpcGuarded } from './runtime/git-ipc-guard';
 
 
 
@@ -238,8 +239,8 @@ export function initSmokeTest(): void {
           settle("functional-failed", "workspace-open");
         });
     };
-    ipcMain.on(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
-    ipcMain.on(WINDOW_CHANNELS.mounted, onMounted);
+    onIpcGuarded(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
+    onIpcGuarded(WINDOW_CHANNELS.mounted, onMounted);
     win.once("closed", () => {
       removeListeners();
     });
