@@ -48,10 +48,26 @@ export function guardGitFailures<A extends unknown[]>(
   };
 }
 
+type IpcListener = (event: IpcMainEvent, ...args: any[]) => void;
+
+// O ipcMain só conhece o wrapper: sem este vínculo, removeListener com o
+// listener original não remove nada e o listener dispara de novo a cada evento.
+const guardedListeners = new Map<string, WeakMap<IpcListener, IpcListener>>();
+
 /** `ipcMain.on` com a proteção contra falha de git já aplicada. */
-export function onIpcGuarded(
-  channel: string,
-  listener: (event: IpcMainEvent, ...args: any[]) => void,
-): void {
-  ipcMain.on(channel, guardGitFailures(channel, listener));
+export function onIpcGuarded(channel: string, listener: IpcListener): void {
+  const wrapped = guardGitFailures(channel, listener);
+  let byListener = guardedListeners.get(channel);
+  if (!byListener) guardedListeners.set(channel, (byListener = new WeakMap()));
+  byListener.set(listener, wrapped);
+  ipcMain.on(channel, wrapped);
+}
+
+/** Remove um listener registrado com `onIpcGuarded`. */
+export function offIpcGuarded(channel: string, listener: IpcListener): void {
+  const byListener = guardedListeners.get(channel);
+  const wrapped = byListener?.get(listener);
+  if (!wrapped) return;
+  byListener!.delete(listener);
+  ipcMain.removeListener(channel, wrapped);
 }

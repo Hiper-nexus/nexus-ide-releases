@@ -29,7 +29,7 @@ const deps = vi.hoisted(() => ({
 }));
 
 // F-954: o git da aba (worktree do espaço) pode falhar; o resto segue real.
-const tabGit = vi.hoisted(() => ({ fail: false, calls: 0 }));
+const tabGit = vi.hoisted(() => ({ fail: false, calls: 0, resolveTo: undefined as unknown }));
 vi.mock("./mission-execution-scope", async (importOriginal) => {
   const real = await importOriginal<typeof import("./mission-execution-scope")>();
   return {
@@ -38,6 +38,7 @@ vi.mock("./mission-execution-scope", async (importOriginal) => {
       if (args[1].intentContract?.workspaceBinding?.spaceId) {
         tabGit.calls += 1;
         if (tabGit.fail) throw new Error("Git process could not complete");
+        if (tabGit.resolveTo) return tabGit.resolveTo as ReturnType<typeof real.missionExecutionScope>;
       }
       return real.missionExecutionScope(...args);
     },
@@ -414,6 +415,37 @@ describe("renderer mission authority", () => {
     } finally {
       vi.useRealTimers();
       tabGit.fail = false;
+    }
+  });
+
+  it("F-954: the operator's explicit rebind is not held by a stale tab backoff once git answers", () => {
+    vi.useFakeTimers({ now: new Date("2026-10-07T12:00:00Z") });
+    try {
+      const restoring = isolatedAuthority();
+      deps.getMission.mockReturnValue({
+        ...approvedMission,
+        orchestratorSessionId: "pty-old",
+        intentContract: { ...approvedMission.intentContract, workspaceBinding: { version: 1, spaceId: "space-tab" } },
+      });
+      deps.getContextBySession.mockReturnValue({ role: "orchestrator", missionId: "mission-a", scope });
+      deps.getOwnedAgentSessionInfo.mockReturnValue({ ...session, source: "persisted-pane", missionId: "mission-a" });
+      deps.findMissionPaneByPaneId.mockReturnValue({
+        id: "mpane-a", missionId: "mission-a", paneId: "pane-a", adapterId: "codex", model: "gpt-5.4",
+        accountId: "account-a", effort: "high", cwd: session.cwd, title: "Review · orq", role: "orchestrator",
+        scope, createdAt: 1,
+      });
+      tabGit.fail = true;
+      expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+
+      // Um minuto depois o git da aba voltou; o operador religa ainda dentro do backoff.
+      tabGit.fail = false;
+      tabGit.resolveTo = scope;
+      vi.advanceTimersByTime(60_000);
+      expect(restoring.rebindMissionFromRenderer(owner, "mission-a", "pty-a")).toBe(mission);
+    } finally {
+      vi.useRealTimers();
+      tabGit.fail = false;
+      tabGit.resolveTo = undefined;
     }
   });
 

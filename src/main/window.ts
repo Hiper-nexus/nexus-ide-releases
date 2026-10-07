@@ -46,7 +46,7 @@ import {
 } from './security/trusted-ipc';
 import { resolveWindowsRuntimeIconPath } from './windows-app-identity';
 import { resolveLinuxRuntimeIconPath } from './linux-desktop-entry';
-import { onIpcGuarded } from './runtime/git-ipc-guard';
+import { offIpcGuarded, onIpcGuarded } from './runtime/git-ipc-guard';
 
 export { bindTrustedMainWindow } from './security/trusted-ipc';
 
@@ -591,7 +591,7 @@ export function createMainWindow(
       loadWatchdog = null;
     }
     stopMountMonitoring();
-    ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
+    offIpcGuarded(WINDOW_CHANNELS.mounted, onMounted);
     killSessionsFor(wc);
   });
 

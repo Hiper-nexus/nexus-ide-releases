@@ -338,6 +338,10 @@ function matchesPersistedRuntime(
 
 const TAB_SCOPE_FAILURE_BACKOFF_MS = 5 * 60_000;
 
+function tabScopeKey(scope: ProjectExecutionScope, mission: Pick<Mission, "intentContract">): string {
+  return `${scope.rootRealPath}\0${mission.intentContract?.workspaceBinding?.spaceId ?? ""}`;
+}
+
 export class RendererMissionAuthority {
   readonly #stores: ProjectDomainStoreRegistry;
   readonly #tabScopeFailedUntil = new Map<string, number>();
@@ -666,9 +670,8 @@ export class RendererMissionAuthority {
     scope: ProjectExecutionScope,
     mission: Pick<Mission, "intentContract">,
   ): ProjectExecutionScope | null {
-    const spaceId = mission.intentContract?.workspaceBinding?.spaceId;
-    if (!spaceId) return missionExecutionScope(scope, mission);
-    const key = `${scope.rootRealPath}\0${spaceId}`;
+    if (!mission.intentContract?.workspaceBinding?.spaceId) return missionExecutionScope(scope, mission);
+    const key = tabScopeKey(scope, mission);
     if ((this.#tabScopeFailedUntil.get(key) ?? 0) > Date.now()) return null;
     try {
       const resolved = missionExecutionScope(scope, mission);
@@ -762,7 +765,11 @@ export class RendererMissionAuthority {
     } catch {
       return null;
     }
-    if (!sameScope(owned.info.scope, missionExecutionScope(rendererScope, mission))) return null;
+    const executionScope = missionExecutionScope(rendererScope, mission);
+    // O git da aba acabou de responder: um backoff de panesSync antigo não
+    // segura o religar explícito do operador.
+    this.#tabScopeFailedUntil.delete(tabScopeKey(rendererScope, mission));
+    if (!sameScope(owned.info.scope, executionScope)) return null;
     if (
       mission.orchestratorSessionId === sessionId &&
       owned.info.missionId === missionId &&

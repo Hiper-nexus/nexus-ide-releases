@@ -26,7 +26,7 @@ import { RUNTIME_TIMEOUT_MS } from '../shared/runtime-gates';
 import { proveMainOwnedCommandForSmoke } from './smoke-owned-command';
 import { requireLiveRendererWorkspaceScope } from './persistence/renderer-workspace-scope';
 import { sameProjectScope } from './orch/project-scoped-broadcast';
-import { onIpcGuarded } from './runtime/git-ipc-guard';
+import { offIpcGuarded, onIpcGuarded } from './runtime/git-ipc-guard';
 
 
 
@@ -112,8 +112,8 @@ export function initSmokeTest(): void {
         settle("functional-failed", smokeErrorMessage(error));
       });
     const removeListeners = () => {
-      ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
-      ipcMain.removeListener(
+      offIpcGuarded(WINDOW_CHANNELS.mounted, onMounted);
+      offIpcGuarded(
         WINDOW_CHANNELS.functionalSmokeResult,
         onFunctionalResult,
       );
@@ -183,9 +183,9 @@ export function initSmokeTest(): void {
       report?: { ok?: unknown; error?: unknown },
     ) => {
       if (event.sender !== wc || event.senderFrame !== wc.mainFrame) return;
-      ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
+      offIpcGuarded(WINDOW_CHANNELS.mounted, onMounted);
       if (report?.ok === false) {
-        ipcMain.removeListener(
+        offIpcGuarded(
           WINDOW_CHANNELS.functionalSmokeResult,
           onFunctionalResult,
         );
@@ -232,7 +232,7 @@ export function initSmokeTest(): void {
           console.error(
             `[smoke] workspace setup error: ${smokeErrorMessage(error)}`,
           );
-          ipcMain.removeListener(
+          offIpcGuarded(
             WINDOW_CHANNELS.functionalSmokeResult,
             onFunctionalResult,
           );

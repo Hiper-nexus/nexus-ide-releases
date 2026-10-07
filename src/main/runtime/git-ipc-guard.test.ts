@@ -3,12 +3,12 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const hoisted = vi.hoisted(() => ({ on: vi.fn(), trace: vi.fn() }));
-vi.mock('electron', () => ({ ipcMain: { on: hoisted.on } }));
+const hoisted = vi.hoisted(() => ({ on: vi.fn(), removeListener: vi.fn(), trace: vi.fn() }));
+vi.mock('electron', () => ({ ipcMain: { on: hoisted.on, removeListener: hoisted.removeListener } }));
 vi.mock('../observability/main-trace', () => ({ trace: hoisted.trace }));
 
 import { GitCommandError, ProcessGitRunner } from './git-command';
-import { guardGitFailures, isGitOperationalFailure, onIpcGuarded } from './git-ipc-guard';
+import { guardGitFailures, isGitOperationalFailure, offIpcGuarded, onIpcGuarded } from './git-ipc-guard';
 
 function gitFailure(code: string): GitCommandError {
   return new GitCommandError(
@@ -22,6 +22,7 @@ function gitFailure(code: string): GitCommandError {
 describe('falha de git num listener de IPC', () => {
   beforeEach(() => {
     hoisted.on.mockReset();
+    hoisted.removeListener.mockReset();
     hoisted.trace.mockReset();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
@@ -55,6 +56,20 @@ describe('falha de git num listener de IPC', () => {
         reason: 'ETIMEDOUT',
       }),
     );
+  });
+
+  it('offIpcGuarded remove o wrapper que o ipcMain conhece, não o listener original', () => {
+    const inner = vi.fn();
+    onIpcGuarded('window:mounted', inner);
+    const wrapped = hoisted.on.mock.calls[0][1];
+    expect(wrapped).not.toBe(inner);
+
+    offIpcGuarded('window:mounted', inner);
+    expect(hoisted.removeListener).toHaveBeenCalledWith('window:mounted', wrapped);
+    // Segunda remoção, ou listener nunca registrado: nada a fazer.
+    offIpcGuarded('window:mounted', inner);
+    offIpcGuarded('window:mounted', vi.fn());
+    expect(hoisted.removeListener).toHaveBeenCalledTimes(1);
   });
 
   it('onIpcGuarded registra o canal com o listener protegido', () => {

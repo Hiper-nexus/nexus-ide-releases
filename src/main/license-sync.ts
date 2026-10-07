@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { runPeriodicTask, stopPeriodicTask } from './observability/periodic-task';
 import type { apiFetch } from './api-client';
-import { onIpcGuarded } from './runtime/git-ipc-guard';
+import { offIpcGuarded, onIpcGuarded } from './runtime/git-ipc-guard';
 
 export interface LicenseSyncDeps {
   api: typeof apiFetch;
@@ -145,7 +145,7 @@ function defaultBootSyncDeps(): LicenseBootSyncDeps {
     afterFirstPaint: callback => {
       // Keychain may synchronously block in SecItemCopyMatching. Wait for the
       // renderer's existing ready signal, then yield before any cold decryption.
-      const { ipcMain, BrowserWindow } = require('electron') as typeof import('electron');
+      const { BrowserWindow } = require('electron') as typeof import('electron');
       const { WINDOW_CHANNELS } = require('../shared/channels') as typeof import('../shared/channels');
       const win = BrowserWindow.getAllWindows()[0];
       afterFirstPaintOrFallback(callback, {
@@ -153,7 +153,7 @@ function defaultBootSyncDeps(): LicenseBootSyncDeps {
         listen: (fire) => {
           const mounted = (event: import('electron').IpcMainEvent): void => {
             if (win && event.sender !== win.webContents) return;
-            ipcMain.removeListener(WINDOW_CHANNELS.mounted, mounted);
+            offIpcGuarded(WINDOW_CHANNELS.mounted, mounted);
             fire();
           };
           onIpcGuarded(WINDOW_CHANNELS.mounted, mounted);
