@@ -23,6 +23,7 @@ import { isSoakSmokeRequested, proveSoakForSmoke } from './soak-smoke';
 import { SOAK_POLICY } from '../shared/soak-smoke';
 import { runtimeGateConfiguration } from './runtime-gate-mode';
 import { RUNTIME_TIMEOUT_MS } from '../shared/runtime-gates';
+import { onIpcGuarded } from './runtime/git-ipc-guard';
 
 
 
@@ -218,8 +219,8 @@ export function initSmokeTest(): void {
           settle("functional-failed", "workspace-open");
         });
     };
-    ipcMain.on(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
-    ipcMain.on(WINDOW_CHANNELS.mounted, onMounted);
+    onIpcGuarded(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
+    onIpcGuarded(WINDOW_CHANNELS.mounted, onMounted);
     win.once("closed", () => {
       removeListeners();
     });

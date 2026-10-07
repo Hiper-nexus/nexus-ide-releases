@@ -99,6 +99,7 @@ import {
   startPhaseTimer,
   type PhaseTimer,
 } from "../observability/phase-timer";
+import { onIpcGuarded } from '../runtime/git-ipc-guard';
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 const RESTARTED_WORKER_LEASE_MS = 10 * 60_000;
@@ -794,7 +795,7 @@ export function registerPtyIpc(): void {
     }
   });
 
-  ipcMain.on(PTY_CHANNELS.write, (event, raw) => {
+  onIpcGuarded(PTY_CHANNELS.write, (event, raw) => {
     const parsed = writeSchema.safeParse(raw);
     if (parsed.success) {
       writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
@@ -807,7 +808,7 @@ export function registerPtyIpc(): void {
     return writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
   });
 
-  ipcMain.on(PTY_CHANNELS.resize, (event, raw) => {
+  onIpcGuarded(PTY_CHANNELS.resize, (event, raw) => {
     const parsed = resizeSchema.safeParse(raw);
     if (parsed.success) {
       resizeSession(
@@ -820,7 +821,7 @@ export function registerPtyIpc(): void {
     }
   });
 
-  ipcMain.on(PTY_CHANNELS.kill, (event, raw) => {
+  onIpcGuarded(PTY_CHANNELS.kill, (event, raw) => {
     const parsed = killSchema.safeParse(raw);
     if (parsed.success) {
       killSession(event.sender, parsed.data.sessionId, {
@@ -829,7 +830,7 @@ export function registerPtyIpc(): void {
     }
   });
 
-  ipcMain.on(PTY_CHANNELS.acknowledge, (event, raw) => {
+  onIpcGuarded(PTY_CHANNELS.acknowledge, (event, raw) => {
     const parsed = ptyAcknowledgeSchema.safeParse(raw);
     if (parsed.success) {
       acknowledgeSessionOutput(

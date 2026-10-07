@@ -160,6 +160,7 @@ import { injectPastedPrompt } from '../orch/tool-util';
 import { resolveCwdForScope } from '../orch/workspace-path';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { z } from 'zod';
+import { onIpcGuarded } from '../runtime/git-ipc-guard';
 
 export interface BrowserEntry {
   paneId: string;
@@ -3343,7 +3344,7 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
     return imported.result;
   });
 
-  ipcMain.on(BROWSER_DESIGN_CHANNELS.event, (event, raw) => {
+  onIpcGuarded(BROWSER_DESIGN_CHANNELS.event, (event, raw) => {
     const resolved = browserEntryForWebContents(event.sender);
     if (!resolved) return;
     ingestDesignEvent(resolved.key, raw, {
@@ -3590,7 +3591,7 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
     );
   });
 
-  ipcMain.on(BROWSER_CHANNELS.bounds, (event, raw) => {
+  onIpcGuarded(BROWSER_CHANNELS.bounds, (event, raw) => {
     const parsed = boundsSchema.safeParse(raw);
     if (!parsed.success) return;
     try {
@@ -3617,7 +3618,7 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
     }
   });
 
-  ipcMain.on(BROWSER_CHANNELS.destroy, (event, raw) => {
+  onIpcGuarded(BROWSER_CHANNELS.destroy, (event, raw) => {
     const parsed = paneSchema.safeParse(raw);
     if (!parsed.success) return;
     try {

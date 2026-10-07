@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+
 import type { IpcMainEvent, WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import {
@@ -7,6 +7,7 @@ import {
   type BrowserAutomationRequest,
 } from '../../shared/browser-automation';
 import { browserAutomationEnvelopeSchema } from './browser-automation-schema';
+import { onIpcGuarded } from '../runtime/git-ipc-guard';
 
 const AUTOMATION_TIMEOUT_MS = 7_000;
 
@@ -26,7 +27,7 @@ let isResponseHandlerRegistered = false;
 export function registerBrowserAutomationResponseHandler(): void {
   if (isResponseHandlerRegistered) return;
   isResponseHandlerRegistered = true;
-  ipcMain.on(
+  onIpcGuarded(
     BROWSER_AUTOMATION_CHANNELS.response,
     (event: IpcMainEvent, raw: unknown) => {
       const parsed = browserAutomationEnvelopeSchema.safeParse(raw);

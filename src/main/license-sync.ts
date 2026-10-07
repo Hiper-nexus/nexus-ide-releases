@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { runPeriodicTask, stopPeriodicTask } from './observability/periodic-task';
 import type { apiFetch } from './api-client';
+import { onIpcGuarded } from './runtime/git-ipc-guard';
 
 export interface LicenseSyncDeps {
   api: typeof apiFetch;
@@ -155,7 +156,7 @@ function defaultBootSyncDeps(): LicenseBootSyncDeps {
             ipcMain.removeListener(WINDOW_CHANNELS.mounted, mounted);
             fire();
           };
-          ipcMain.on(WINDOW_CHANNELS.mounted, mounted);
+          onIpcGuarded(WINDOW_CHANNELS.mounted, mounted);
         },
       });
     },

@@ -5,6 +5,7 @@ import {
   type IpcMainInvokeEvent,
   type WebContents,
 } from 'electron';
+import { guardGitFailures } from '../runtime/git-ipc-guard';
 
 interface TrustedMainWindowRecord {
   window: BrowserWindow;
@@ -133,11 +134,11 @@ type EventListener = (event: IpcMainEvent, ...args: unknown[]) => void;
 
 /** Registers an event listener that silently drops untrusted senders. */
 export function onTrusted(channel: string, listener: EventListener): void {
-  ipcMain.on(channel, (event, ...args) => {
+  ipcMain.on(channel, guardGitFailures(channel, (event: IpcMainEvent, ...args: unknown[]) => {
     if (!isLiveTrustedMainWindowSender(event)) {
       deny(channel, event);
       return;
     }
     listener(event, ...args);
-  });
+  }));
 }

@@ -6,6 +6,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedLayoutStore } from './layout-store';
 import { requireRendererWorkspaceScope } from './renderer-workspace-scope';
+import { onIpcGuarded } from '../runtime/git-ipc-guard';
 
 const workspacePathSchema = z.string().min(1).max(4_096);
 
@@ -45,7 +46,7 @@ export function registerLayoutIpc(
     return { ok: true };
   });
 
-  ipcMain.on(LAYOUT_CHANNELS.saveSync, (event, raw) => {
+  onIpcGuarded(LAYOUT_CHANNELS.saveSync, (event, raw) => {
     try {
       const scope = requireRendererWorkspaceScope(event.sender);
       const parsed = saveRequestSchema.safeParse(raw);
