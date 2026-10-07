@@ -4,6 +4,9 @@
 
 - O Nexus abre mesmo quando o terminal nativo demora a responder no boot; antes, um Mac lento ou carregado mostrava "NexusIDE não conseguiu inicializar". Até essa preparação terminar, os agentes não executam comandos pesados; ela é refeita em segundo plano e antes de abrir cada agente. Se o boot falhar, o aviso agora mostra o motivo (F-955).
 - Uma falha do git ao restaurar panes de missão deixa de derrubar o app com "A JavaScript error occurred in the main process", e o pane afetado espera alguns minutos antes de tentar de novo, sem travar a interface (F-954).
+- Uma sessão do Codex não ocupa mais a vaga de comandos pesados do projeto: compilações e testes dos outros agentes deixavam de rodar e falhavam por espera na admissão (F-958).
+- Agentes Kimi recebem o briefing depois de aceitar a confiança na pasta; o aceite automático deixava a colagem adiada até o painel ser fechado e a tarefa ser repassada a outro agente (F-956).
+- O AGY só é aberto com o Gemini 4 Argon quando a CLI instalada oferece esse modelo; caso contrário a rota usa o Gemini 3.8 Flash, em vez de abrir um painel que morre no início (F-957).
 - A revisão independente da conclusão aceita a entrega revisada: o gasto registrado pelo próprio veredito deixa de ser tratado como mudança de autorização (F-430).
 - Claude Haiku 5.5 no catálogo e como primeira opção das tarefas triviais, com o Haiku 4.5 mantido como alternativa.
 - Encerrar impede que saídas de terminais ou spawns pendentes reiniciem a missão. A retomada explícita continua disponível depois do encerramento físico.
