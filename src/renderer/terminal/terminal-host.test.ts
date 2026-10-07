@@ -1939,6 +1939,74 @@ describe('F-369 — TUI repinta depois de saída perdida', () => {
   });
 });
 
+describe('DSK-01 — saída antiga regravada não responde queries de terminal', () => {
+  // DA1/DSR-CPR/DA2/DECRQM/OSC 11 regravados num xterm novo fazem o xterm
+  // responder pelo mesmo onData da digitação: lixo atrasado no PTY.
+  const agent: PaneModel = {
+    id: 'agent-dsk01',
+    kind: 'cli-agent',
+    adapterId: 'codex',
+    title: 'Codex',
+  };
+
+  function openAgent() {
+    useLayoutStore.setState({
+      root: buildGridTree([agent]),
+      focusedPaneId: agent.id,
+    });
+    const host = getOrCreateHost(agent);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(agent, slot);
+    return host;
+  }
+
+  it('pane hibernado guarda a saída sem queries para a reidratação', async () => {
+    const host = openAgent();
+    expect(await waitForSession(agent.id, 1000)).toBe('pty-hidden');
+    for (let i = 0; i < 24; i++) {
+      getOrCreateHost({ id: `filler-${i}`, kind: 'shell', title: `t${i}` });
+    }
+    setHostVisibility(agent.id, false);
+    expect(host.virtualized).not.toBeNull();
+
+    const emit = ptyDataListeners.get('pty-hidden')!;
+    // Query cortada entre chunks, como o PTY entrega.
+    emit('antes \x1b[');
+    emit('6nmeio\x1b]11;?\x07 \x1b[32mok\x1b[0m');
+    expect(host.virtualized!.pendingOutput).toBe('antes meio \x1b[32mok\x1b[0m');
+  });
+
+  it('replay de adoção e repaint local chegam sem queries; saída ao vivo segue crua', async () => {
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-adopted', adopted: true });
+    vi.mocked(window.nexus.pty.replay).mockImplementation(async (sessionId) => {
+      await Promise.resolve(); // a fita volta por IPC, depois do pull
+      const emit = ptyDataListeners.get(sessionId)!;
+      emit('hello\r\n\x1b[c\x1b[');
+      emit('6n\x1b[>c\x1b[?2004$p\x1b]11;?\x07');
+    });
+    const output = vi.spyOn(terminalOutputScheduler, 'writeTerminalOutput');
+    const host = openAgent();
+    const termWrite = vi.spyOn(host.term, 'write');
+    expect(await waitForSession(agent.id, 1000)).toBe('pty-adopted');
+    await vi.advanceTimersByTimeAsync(0);
+
+    const written = () => output.mock.calls.map(([, data]) => data).join('');
+    expect(written()).toBe('hello\r\n');
+
+    // Depois do replay é o TUI vivo perguntando: a resposta tem de sair já.
+    ptyDataListeners.get('pty-adopted')!('\x1b[6n');
+    expect(output.mock.calls.at(-1)?.[1]).toBe('\x1b[6n');
+
+    // Reset (350 ms) + backstop (1,2 s): a fita local é regravada sem queries,
+    // inclusive a do chunk ao vivo que ela também guardou.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(termWrite).toHaveBeenCalledWith('hello\r\n');
+    output.mockRestore();
+  });
+});
+
 describe('F-370 — foco da janela repinta os terminais (macOS)', () => {
   const paneA: PaneModel = { id: 'f370-a', kind: 'shell', title: 'A' };
   const paneB: PaneModel = { id: 'f370-b', kind: 'shell', title: 'B' };

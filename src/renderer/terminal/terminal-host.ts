@@ -115,6 +115,10 @@ import {
   repaintAdoptedFrame,
 } from './adoption-repaint';
 import {
+  createReplaySanitizer,
+  type TerminalReplaySanitizer,
+} from '../../shared/terminal-replay-sanitizer';
+import {
   SCROLLBACK_WIDTH_MISMATCH_NOTICE,
   SESSION_BOUNDARY_NOTICE,
   TERMINAL_INPUT_MODE_RESET,
@@ -168,7 +172,9 @@ interface Host {
   virtualized: {
     cols: number;
     snapshot: string;
+    /** Regravado na reidratação: guardado SEM queries de terminal (DSK-01). */
     pendingOutput: string;
+    pendingSanitizer: TerminalReplaySanitizer;
   } | null;
   /** Relive do Maestro: não despejar [nexus] no PTY. */
   quietSpawn?: boolean;
@@ -1311,6 +1317,12 @@ function startSpawn(
       // erases the frame and main cannot re-serve it (its replay window is
       // unacked-only). See adoption-repaint.ts.
       let adoptionTape = res.adopted ? createAdoptionRepaintTape() : null;
+      // DSK-01: o replay da adoção reescreve saída ANTIGA do PTY headless
+      // (DA1/CPR/OSC 11 do arranque do TUI); o xterm novo responderia pelo
+      // mesmo onData da digitação e a resposta chegaria ao PTY como lixo.
+      // Só o replay passa pelo sanitizer — a saída ao vivo segue crua.
+      let adoptionReplay = res.adopted ? createReplaySanitizer() : null;
+      let adoptionReplaySettled = false;
 
       if (!host.ghostAssist && pane.kind === 'shell') {
         setupGhostAssist(host, pane.cwd);
@@ -1320,14 +1332,24 @@ function startSpawn(
       // write); hidden panes queue with a bounded backlog so concurrent agent
       // floods cannot pin the renderer. See terminal-output-scheduler.ts.
       host.cleanups.push(
-        window.nexus.pty.onData(res.sessionId, (data) => {
-          adoptionTape?.retain(data);
-          host.ghostAssist?.ingestPtyData(data);
+        window.nexus.pty.onData(res.sessionId, (raw) => {
+          adoptionTape?.retain(raw);
+          host.ghostAssist?.ingestPtyData(raw);
+          let data = raw;
+          if (adoptionReplay) {
+            data = adoptionReplay.push(raw);
+            // Sequência que começou no replay termina nele; depois, cru.
+            if (adoptionReplaySettled && !adoptionReplay.pendingControlSequence) {
+              adoptionReplay = null;
+            }
+          }
           if (host.virtualized) {
             // Pane hibernado: xterm descartado; reter saída no buffer do
             // estado e sair antes do scheduler (o ring do main cobre o resto).
+            // Ela será REGRAVADA na reidratação: sem queries (DSK-01).
             host.virtualized.pendingOutput = (
-              host.virtualized.pendingOutput + data
+              host.virtualized.pendingOutput +
+              host.virtualized.pendingSanitizer.push(data)
             ).slice(-HIBERNATE_PENDING_OUTPUT_CHARS);
             return;
           }
@@ -1483,7 +1505,10 @@ function startSpawn(
         // Listener installation must precede the pull: headless output may
         // already exist and must paint immediately, not wait for the preload
         // recovery backstop.
-        void window.nexus.pty.replay(res.sessionId);
+        void window.nexus.pty.replay(res.sessionId).finally(() => {
+          adoptionReplaySettled = true;
+          if (!adoptionReplay?.pendingControlSequence) adoptionReplay = null;
+        });
         // O replay foi desenhado na grade do spawn headless (120 colunas);
         // reescrito num xterm mais estreito ele vira lixo permanente no
         // scrollback. Depois do replay: zera o terminal e força SIGWINCH
@@ -2219,7 +2244,12 @@ function virtualizeHost(host: Host): void {
   host.opened = false;
   host.reportedGrid = null;
   host.hasFittedGrid = false;
-  host.virtualized = { cols, snapshot, pendingOutput: '' };
+  host.virtualized = {
+    cols,
+    snapshot,
+    pendingOutput: '',
+    pendingSanitizer: createReplaySanitizer(),
+  };
 }
 
 /** Reidrata um pane hibernado que voltou à tela. */
@@ -2250,8 +2280,12 @@ function rehydrateHost(host: Host): void {
   requestAnimationFrame(() => {
     if (host.disposed || !host.opened) return;
     flushPendingScrollback(host);
-    if (state.pendingOutput.length > 0) {
-      writeTerminalOutput(host.term, state.pendingOutput, {
+    // Uma sequência cortada no fim da hibernação segue junto: o próximo
+    // chunk ao vivo a completa no parser do xterm.
+    const retainedOutput =
+      state.pendingOutput + state.pendingSanitizer.pendingControlSequence;
+    if (retainedOutput.length > 0) {
+      writeTerminalOutput(host.term, retainedOutput, {
         foreground: true,
         latencySensitive: true,
       });
