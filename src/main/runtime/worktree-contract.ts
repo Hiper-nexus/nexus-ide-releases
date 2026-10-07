@@ -92,6 +92,13 @@ export interface CreateWorktreeInput {
   readonly workerId: string;
   readonly ownership: WorktreeOwnership;
   readonly dependsOn?: readonly WorktreeDependencyInput[];
+  /**
+   * F-954: writer de pane aberto da pasta isolada de uma aba nasce do HEAD da
+   * worktree da ABA (outra raiz Git do mesmo repositório), não do checkout de
+   * coordenação. Só `baseSha` vem dela: raiz e integrationRef do registro são
+   * únicas por escopo. Caminho derivado pelo Main, nunca argumento de tool.
+   */
+  readonly baseRootRealPath?: string;
   /** Main-owned checkpoint: revalidate authority after async proofs, before effects. */
   readonly assertCurrentAuthority?: () => void;
   readonly signal?: AbortSignal;

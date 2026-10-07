@@ -327,10 +327,18 @@ saber isto antes de mexer:
   Retomada não recria worktree perdida; fechar aba não remove WIP/branch.
 - Primeira onda, retomada, sensores mecânicos, revisão, artefatos e push usam
   a execução da missão. Mtime do checkout novo não prova entrega: use o
-  SHA-base da aba. PREVC mutável/sensores congelados e `isolatedWriter` ainda
-  são recusados explicitamente na aba; jamais caia em main. Estado e limites
+  SHA-base da aba. PREVC mutável/sensores congelados ainda são recusados
+  explicitamente na aba; jamais caia em main. Estado e limites
   em `docs/analysis/2026-09-23-abas-feature-worktree.md`. Não crie worktree
   dentro da raiz do projeto.
+- F-954: `isolatedWriter` (e o auto-isolamento do 2º writer) na pasta isolada
+  da aba nasce do HEAD da ABA (`baseRootRealPath` → `baseSha`), sem o WIP dela;
+  o registro fica no escopo do checkout (raiz/integrationRef únicas) e a GC
+  aceita branch contida no HEAD da aba. Aba sem prova de identidade recusa com
+  a saída escrita. F-955: `cwd` na raiz de outra worktree ligada ao repo vira
+  `executionScope` próprio (serializa só contra writers dela); o worker de
+  missão nunca descarta `cwd` em silêncio; o claim do writer só cai quando o
+  pane tem sessão e saiu de `spawning`/`unknown`.
 - F-654: o Git para Windows recusa `git worktree add` com `<worktree>\.git`
   acima de 220 caracteres (`'$GIT_DIR' too big`; `core.longpaths` não ajuda),
   e o runtime do checkout em `%APPDATA%` já tem ~219. Por isso, no win32,

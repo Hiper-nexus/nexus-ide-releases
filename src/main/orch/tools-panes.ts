@@ -1,7 +1,8 @@
 import { assertLicenseAccess } from '../license-enforcement';
 import { captureMissionPaneResume } from './mission-pane-resume';
 import { createVisualTaskRequirement, visualTaskRequirement } from './visual-handoff-gate';
-import { assertTabSupportsOperation, missionExecutionScope } from './mission-execution-scope';
+import { assertTabSupportsOperation, isolatedWriterBaseRoot, missionExecutionScope } from './mission-execution-scope';
+import { nestedWorktreeExecution, requestedCwdInside } from './nested-worktree-execution';
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
@@ -10,6 +11,7 @@ import {
 import type { PaneSnapshot } from '../../shared/orch-types';
 import {
   getPaneRuntimeAuthorityBySession,
+  isPaneSpawnPending,
   listPaneSnapshots,
   listVisiblePaneSnapshots,
   newOutputSince,
@@ -516,6 +518,15 @@ export function decideSameCheckoutSpawn(input: {
 /** Aviso do auto-isolamento: a worktree sai do HEAD, sem o WIP do operador. */
 export const ISOLATED_WORKTREE_NOTE =
   'não contém alterações não commitadas do checkout principal';
+/** F-954: writer aberto da pasta isolada de uma aba nasce do HEAD dela. */
+export const ISOLATED_TAB_WORKTREE_NOTE =
+  'nasce do HEAD da pasta isolada da aba e não contém as alterações não commitadas dela';
+
+/** F-955: worktree aninhada já tem writer — a recusa diz a saída. */
+function nestedWorktreeBusy(reason: string, worktreeRoot: string): string {
+  return `${reason} (worktree ${worktreeRoot}); para writers em paralelo use isolatedWriter:true — ` +
+    'o Nexus cria worktree/branch própria, registrada para integração';
+}
 
 function isolatedWriterOptions(
   options: SpawnToolOptions,
@@ -548,12 +559,15 @@ export function withSameCheckoutWorkerContract(prompt: string): string {
 
 export function withIsolatedWriterContract(
   prompt: string,
-  workspace: { branch: string; worktreePath: string; baseSha?: string },
+  workspace: { branch: string; worktreePath: string; baseSha?: string; baseRootRealPath?: string },
 ): string {
   return '## Nexus execution authority\n' +
     `executionMode=\`isolated_worktree\`: esta tarefa roda na worktree própria ${workspace.worktreePath}, ` +
     `na branch ${workspace.branch}. ` +
-    `A worktree nasce do commit ${workspace.baseSha ?? 'HEAD'} do checkout de coordenação e ${ISOLATED_WORKTREE_NOTE}. ` +
+    (workspace.baseRootRealPath
+      ? `A worktree nasce do commit ${workspace.baseSha ?? 'HEAD'}, o HEAD da pasta isolada da aba ` +
+        `(${workspace.baseRootRealPath}), e não contém as alterações não commitadas dela. `
+      : `A worktree nasce do commit ${workspace.baseSha ?? 'HEAD'} do checkout de coordenação e ${ISOLATED_WORKTREE_NOTE}. `) +
     'Commit na própria branch é permitido e esperado. ' +
     'A branch não pode ser publicada: não use push, pull, stash, checkout, reset ou clean; ' +
     'não toque em outras branches nem no checkout de coordenação. ' +
@@ -869,7 +883,13 @@ const paneSpawn: McpToolDef = {
           'Reasoning effort for this spawn (low|medium|high|xhigh) — use ' +
           'the value returned by nexus_route_task',
       },
-      cwd: { type: 'string' },
+      cwd: {
+        type: 'string',
+        description:
+          'Working directory inside the workspace. A writer whose cwd is the root of another git worktree of ' +
+          'this repository runs in that worktree and is serialized only against writers of that same worktree. ' +
+          'Prefer isolatedWriter:true, which creates and registers the worktree/branch for integration.',
+      },
       title: { type: 'string' },
       missionId: { type: 'string' },
       routeReservationId: {
@@ -886,7 +906,7 @@ const paneSpawn: McpToolDef = {
       },
       isolatedWriter: {
         type: 'boolean',
-        description: 'Spawn this writer in its own git worktree/branch so several writers run in parallel (with or without a mission); the orchestrator integrates the branch afterwards. The worktree and branch are kept for integration after the pane closes; a merged, clean one is garbage-collected. It starts at the checkout HEAD without uncommitted changes (the receipt carries baseSha). Resuming such a pane reuses its original worktree. Errors in a tab with its own shared worktree (open writers there one at a time)',
+        description: 'Spawn this writer in its own git worktree/branch so several writers run in parallel (with or without a mission); the orchestrator integrates the branch afterwards. The worktree and branch are kept for integration after the pane closes; a merged, clean one is garbage-collected. It starts at the checkout HEAD without uncommitted changes (the receipt carries baseSha); called from a tab with its own isolated folder, it starts at that tab\'s HEAD instead. Resuming such a pane reuses its original worktree.',
       },
       allowedTools: {
         type: 'array',
@@ -1598,7 +1618,13 @@ const paneSpawnAfterTabMission = {
       if (resumed) {
         isolatedWriter = resumed;
       } else if (options.readOnly !== true) {
-        const checkoutRoot = callerExecutionScope.rootRealPath;
+        // F-955: cwd na raiz de outra worktree Git deste repositório roda lá,
+        // sem disputar a vez com os writers do checkout.
+        const nested = args.isolatedWriter !== true
+          ? await nestedWorktreeExecution(callerExecutionScope, options.cwd)
+          : undefined;
+        if (nested) options = { ...options, executionScope: nested.scope, cwd: nested.cwd };
+        const checkoutRoot = (nested?.scope ?? callerExecutionScope).rootRealPath;
         let blockedBy: string | undefined;
         if (args.isolatedWriter !== true) {
           const snapshots = listPaneSnapshots();
@@ -1614,16 +1640,19 @@ const paneSpawnAfterTabMission = {
           });
           blockedBy = !writerDecision.allowed
             ? writerDecision.reason
-            : hasPendingWriterClaim(checkoutRoot, snapshots)
+            : hasPendingWriterClaim(checkoutRoot, snapshots, isPaneSpawnPending)
               ? 'writer em spawn ainda ativo — espere a entrega dele ou abra este como readOnly'
               : undefined;
           if (blockedBy === undefined) writerClaim = claimSameCheckoutWriter(checkoutRoot);
         }
+        if (nested && blockedBy !== undefined) throw new Error(nestedWorktreeBusy(blockedBy, checkoutRoot));
         if (args.isolatedWriter === true || blockedBy !== undefined) {
+          let baseRootRealPath: string | undefined;
           try {
-            assertTabSupportsOperation(ctx.scope, callerExecutionScope, 'isolatedWriter', ctx.sharedTabWorktree);
+            // F-954: na pasta isolada da aba a worktree nasce do HEAD da aba.
+            baseRootRealPath = isolatedWriterBaseRoot(ctx.scope, callerExecutionScope, ctx.sharedTabWorktree);
           } catch (error) {
-            // Aba em pasta compartilhada não suporta worktree: mantém a fila.
+            // Aba sem prova de identidade não ganha worktree: mantém a fila.
             throw blockedBy !== undefined ? new Error(blockedBy) : error;
           }
           if (blockedBy !== undefined) {
@@ -1633,6 +1662,7 @@ const paneSpawnAfterTabMission = {
             isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, undefined, {
               assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
               signal: invocation?.signal,
+              ...(baseRootRealPath ? { baseRootRealPath } : {}),
             });
             if (spawnTiming && isolatedWriter.materialize) {
               spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
@@ -1649,13 +1679,18 @@ const paneSpawnAfterTabMission = {
       }
     }
     let isolatedWriterPending = false;
+    const requestedCwd = str(args, 'cwd');
     // Recibo: quem spawnou sabe qual branch/worktree integrar depois.
     const isolatedReceipt = () => isolatedWriter
       ? { isolatedWorktree: {
           branch: isolatedWriter.branch,
           worktreePath: isolatedWriter.worktreePath,
           baseSha: isolatedWriter.baseSha,
-          note: ISOLATED_WORKTREE_NOTE,
+          note: isolatedWriter.baseRootRealPath ? ISOLATED_TAB_WORKTREE_NOTE : ISOLATED_WORKTREE_NOTE,
+          // F-955: o writer isolado roda na raiz da worktree própria; o cwd pedido não vale.
+          ...(requestedCwd && requestedCwd !== isolatedWriter.worktreePath
+            ? { cwdDiscarded: { requested: requestedCwd, reason: 'o writer isolado roda na raiz da worktree própria' } }
+            : {}),
           ...(isolatedWriterReason ? { reason: isolatedWriterReason } : {}),
         } }
       : {};
@@ -1926,9 +1961,15 @@ const paneSpawnAfterTabMission = {
               options.prompt;
           }
         } else {
-          const checkoutRoot = callerExecutionScope.rootRealPath;
           const spawnReadOnly =
             options.readOnly === true || options.executionMode === 'read_only';
+          // F-955: o guard olha a worktree Git REAL do pane — cwd na raiz de
+          // outra worktree deste repositório roda lá, em escopo próprio.
+          const nested = !spawnReadOnly && args.isolatedWriter !== true
+            ? await nestedWorktreeExecution(callerExecutionScope, options.cwd)
+            : undefined;
+          const writerExecutionScope = nested?.scope ?? callerExecutionScope;
+          const checkoutRoot = writerExecutionScope.rootRealPath;
           isolatedWriter =
             resumeIsolatedWriterWorktree(ctx.scope, missionId, options.resumeFromPaneId) ??
             recoveryWorktree(missionId) ??
@@ -1945,18 +1986,21 @@ const paneSpawnAfterTabMission = {
                 spawnReadOnly,
                 activeWorker:
                   activeSameCheckoutWorker(snapshots, checkoutRoot) ??
-                  (hasPendingWriterClaim(checkoutRoot, snapshots)
+                  (hasPendingWriterClaim(checkoutRoot, snapshots, isPaneSpawnPending)
                     ? { paneId: 'em spawn', state: 'spawning' }
                     : null),
               });
               blockedBy = decision.allowed ? undefined : decision.reason;
               if (blockedBy === undefined) writerClaim = claimSameCheckoutWriter(checkoutRoot);
             }
+            if (nested && blockedBy !== undefined) throw new Error(nestedWorktreeBusy(blockedBy, checkoutRoot));
             // Paridade com a mão do operador: o segundo writer comum é
             // auto-isolado numa worktree própria em vez de recusado.
             if (args.isolatedWriter === true || blockedBy !== undefined) {
+              let baseRootRealPath: string | undefined;
               try {
-                assertTabSupportsOperation(ctx.scope, callerExecutionScope, 'isolatedWriter', ctx.sharedTabWorktree);
+                // F-954: na pasta isolada da aba a worktree nasce do HEAD da aba.
+                baseRootRealPath = isolatedWriterBaseRoot(ctx.scope, callerExecutionScope, ctx.sharedTabWorktree);
               } catch (error) {
                 throw blockedBy !== undefined ? new Error(blockedBy) : error;
               }
@@ -1967,6 +2011,7 @@ const paneSpawnAfterTabMission = {
                 isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, missionId, {
                   assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
                   signal: invocation?.signal,
+                  ...(baseRootRealPath ? { baseRootRealPath } : {}),
                 });
                 if (spawnTiming && isolatedWriter.materialize) {
                   spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
@@ -1984,8 +2029,9 @@ const paneSpawnAfterTabMission = {
             executionMode = 'same_checkout';
             options = {
               ...options,
-              cwd: checkoutRoot,
-              executionScope: callerExecutionScope,
+              // F-955: nunca descarta o cwd em silêncio — honra ou recusa.
+              cwd: nested?.cwd ?? requestedCwdInside(checkoutRoot, options.cwd) ?? checkoutRoot,
+              executionScope: writerExecutionScope,
               memoryQuery: options.memoryQuery ?? options.prompt,
               prompt: withSameCheckoutWorkerContract(
                 options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.',

@@ -4,7 +4,7 @@ import type { CreateWorktreeInput, WorktreeRecord } from '../runtime/worktree-co
 import type { MaterializeWorktreeResult } from '../runtime/worktree-cow';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { tapSessionExit } from '../pty/pty-manager';
-import { getPaneRuntimeAuthorityBySession, listPaneSnapshots } from './pane-registry';
+import { getPaneRuntimeAuthorityBySession, isPaneSpawnPending, listPaneSnapshots } from './pane-registry';
 import { claimSameCheckoutWriter, hasPendingWriterClaim } from './delegated-writer-gate';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { scheduleWorktreeSalvage } from './isolated-writer-salvage';
@@ -21,6 +21,11 @@ export interface IsolatedWriterAllocation {
   readonly branch: string;
   /** Commit de onde a worktree nasceu (HEAD do checkout, sem o WIP dele). */
   readonly baseSha: string;
+  /**
+   * F-954: pasta isolada da aba de onde a worktree nasceu (o HEAD dela é o
+   * `baseSha`). Ausente quando a base é o checkout de coordenação.
+   */
+  readonly baseRootRealPath?: string;
   readonly release: () => void;
   /**
    * Liga o pane nascido (e a sessão, se já existe) a esta worktree no
@@ -197,7 +202,7 @@ export function resetWorktreeSalvageSweepForTests(): void {
 export async function allocateIsolatedWriterWorktree(
   scope: ProjectExecutionScope,
   missionId: string | undefined,
-  authority: Pick<CreateWorktreeInput, 'assertCurrentAuthority' | 'signal'> = {},
+  authority: Pick<CreateWorktreeInput, 'assertCurrentAuthority' | 'signal' | 'baseRootRealPath'> = {},
 ): Promise<IsolatedWriterAllocation> {
   authority.assertCurrentAuthority?.();
   authority.signal?.throwIfAborted();
@@ -218,7 +223,10 @@ export async function allocateIsolatedWriterWorktree(
       materialize = result;
     },
   });
-  const allocation = trackAllocation(scope, missionId, registryKey, record);
+  const tracked = trackAllocation(scope, missionId, registryKey, record);
+  const allocation = authority.baseRootRealPath && authority.baseRootRealPath !== scope.rootRealPath
+    ? { ...tracked, baseRootRealPath: authority.baseRootRealPath }
+    : tracked;
   sweepReleasedPaneWriterWorktrees(scope);
   return materialize ? { ...allocation, materialize } : allocation;
 }
@@ -262,7 +270,7 @@ export function resumeIsolatedWriterWorktree(
       !['exited', 'parked', 'hibernated'].includes(pane.state))) {
       throw new Error('ainda há um pane ativo nela');
     }
-    if (hasPendingWriterClaim(linked.worktreePath, snapshots)) {
+    if (hasPendingWriterClaim(linked.worktreePath, snapshots, isPaneSpawnPending)) {
       throw new Error('outra retomada dela já está em andamento');
     }
     claim = claimSameCheckoutWriter(linked.worktreePath);

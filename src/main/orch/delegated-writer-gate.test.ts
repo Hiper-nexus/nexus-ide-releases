@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { PaneSnapshot } from '../../shared/orch-types';
 import {
+  claimSameCheckoutWriter,
   decideDelegatedWriterSpawn,
   delegatedPaneFacts,
+  hasPendingWriterClaim,
+  resetWriterClaimsForTests,
   type DelegatedPaneFact,
 } from './delegated-writer-gate';
 
@@ -57,5 +60,39 @@ describe('decideDelegatedWriterSpawn', () => {
       ['a', true, 'ck'],
       ['b', false, undefined],
     ]);
+  });
+});
+
+describe('F-955: claim do writer vale até o pane nascido passar da largada', () => {
+  const snap = (state: PaneSnapshot['state'], sessionId: string | null = null): PaneSnapshot[] =>
+    [{ paneId: 'p1', sessionId, title: 'w', kind: 'cli-agent', state }];
+
+  it('ACK pendente ainda não espelhado segura o checkout enquanto o Main tem o spawn pendente', () => {
+    resetWriterClaimsForTests();
+    let pending = true;
+    const spawnPending = (paneId: string) => pending && paneId === 'p1';
+    claimSameCheckoutWriter('/repo').settle('p1');
+    expect(hasPendingWriterClaim('/repo', [], spawnPending)).toBe(true);
+    expect(hasPendingWriterClaim('/other', [], spawnPending)).toBe(false);
+    pending = false;
+    expect(hasPendingWriterClaim('/repo', [], spawnPending)).toBe(false);
+    // Visto no espelho e depois sumido: fechou, mesmo com concessão pendente.
+    pending = true;
+    claimSameCheckoutWriter('/repo').settle('p1');
+    expect(hasPendingWriterClaim('/repo', snap('unknown'), spawnPending)).toBe(true);
+    expect(hasPendingWriterClaim('/repo', [], spawnPending)).toBe(false);
+  });
+
+  it('com sessão: spawning/unknown seguram; busy/idle passam aos snapshots; encerrado solta', () => {
+    for (const [state, held] of [['spawning', true], ['unknown', true], ['busy', false], ['idle', false], ['exited', false], ['parked', false]] as const) {
+      resetWriterClaimsForTests();
+      claimSameCheckoutWriter('/repo').settle('p1');
+      expect(hasPendingWriterClaim('/repo', snap(state, 's1'))).toBe(held);
+    }
+    resetWriterClaimsForTests();
+    claimSameCheckoutWriter('/repo').settle('p1');
+    expect(hasPendingWriterClaim('/repo', snap('exited'))).toBe(false);
+    claimSameCheckoutWriter('/repo').settle();
+    expect(hasPendingWriterClaim('/repo', [])).toBe(false);
   });
 });

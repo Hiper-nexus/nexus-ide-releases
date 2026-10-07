@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   parents: {} as Record<string, string>,
   handoffs: {} as Record<string, { sessionId?: string }>,
   resumeRecords: new Map<string, Record<string, unknown>>(),
+  pendingPanes: new Set<string>(),
 }));
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
@@ -30,6 +31,7 @@ vi.mock('./pane-registry', async (original) => ({
   ...(await original<typeof import('./pane-registry')>()),
   listPaneSnapshots: () => h.panes,
   takePendingPaneSpawnResult: h.pending,
+  isPaneSpawnPending: (paneId: string) => h.pendingPanes.has(paneId),
   getPaneRuntimeAuthorityBySession: (sessionId: string) =>
     h.parents[sessionId] ? { operatorParentSessionId: h.parents[sessionId] } : null,
 }));
@@ -76,8 +78,10 @@ vi.mock('./squad-store', () => ({
   getSquad: () => null,
 }));
 
-import { paneSpawnTool } from './tools-panes';
+import { ISOLATED_TAB_WORKTREE_NOTE, paneSpawnTool } from './tools-panes';
 import { OPERATOR_HAND_WORKTREE_KEY, operatorHandGcIdle } from './isolated-writer-worktree';
+import { newMissionWorkspaceBinding, prepareMissionExecutionScope } from './mission-execution-scope';
+import { resetWriterClaimsForTests } from './delegated-writer-gate';
 import { worktreeSalvageIdle } from './isolated-writer-salvage';
 
 let temp: string;
@@ -102,6 +106,7 @@ beforeEach(() => {
   h.parents = {};
   h.handoffs = {};
   h.resumeRecords.clear();
+  h.pendingPanes.clear();
   temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-pane-writer-')));
   const root = path.join(temp, 'repo');
   fs.mkdirSync(root);
@@ -724,5 +729,99 @@ describe('1d: vínculo pane→worktree sobrevive ao reinício do app', () => {
     await expect(after.tool.handler({ adapterId: 'codex', resume: 'pane-0' }, op))
       .rejects.toThrow(/pertence a outro escopo/);
     expect(h.spawn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('F-954/F-955: writers paralelos da aba isolada e cwd em outra worktree', () => {
+  beforeEach(() => resetWriterClaimsForTests());
+  const tabMission = async () => {
+    h.mission = { ...h.mission, intentContract: { ...(h.mission.intentContract as object), workspaceBinding: newMissionWorkspaceBinding() } };
+    const tab = await prepareMissionExecutionScope(ctx.scope, h.mission as never);
+    fs.writeFileSync(path.join(tab.rootRealPath, 'tab.txt'), 'commit da aba\n');
+    git(tab.rootRealPath, 'add', 'tab.txt');
+    git(tab.rootRealPath, 'commit', '-qm', 'tab work');
+    fs.writeFileSync(path.join(tab.rootRealPath, 'base.txt'), 'WIP da aba\n');
+    return { tab, head: git(tab.rootRealPath, 'rev-parse', 'HEAD') };
+  };
+
+  it('F-954: isolatedWriter na missão da aba nasce do HEAD da aba, numa branch própria registrada', async () => {
+    const { tab, head } = await tabMission();
+    expect(head).not.toBe(git(ctx.scope.rootRealPath, 'rev-parse', 'HEAD'));
+    const receipt = await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true, prompt: 'Implement feature' }, ctx) as Record<string, any>;
+    const [record] = registry.listMission(ctx.scope, ctx.missionId!);
+    expect(record).toMatchObject({ ownerKind: 'pane', status: 'ready', baseSha: head, rootRealPath: ctx.scope.rootRealPath });
+    expect(git(record.worktreePath, 'rev-parse', 'HEAD')).toBe(head);
+    expect(git(record.worktreePath, 'symbolic-ref', 'HEAD')).toBe(record.branchRef);
+    expect(fs.readFileSync(path.join(record.worktreePath, 'tab.txt'), 'utf8')).toBe('commit da aba\n');
+    expect(fs.readFileSync(path.join(record.worktreePath, 'base.txt'), 'utf8')).toBe('committed\n');
+    const [options] = h.spawn.mock.calls[0] as [SpawnToolOptions];
+    expect(options).toMatchObject({ cwd: record.worktreePath, executionMode: 'isolated_worktree', isolatedWriter: true, scope: ctx.scope });
+    expect(options.executionScope?.rootRealPath).toBe(record.worktreePath);
+    expect(options.prompt).toContain(tab.rootRealPath);
+    expect(receipt.isolatedWorktree).toMatchObject({ baseSha: head, worktreePath: record.worktreePath, note: ISOLATED_TAB_WORKTREE_NOTE });
+    expect(fs.readFileSync(path.join(tab.rootRealPath, 'base.txt'), 'utf8')).toBe('WIP da aba\n');
+  });
+
+  it('F-954: o segundo writer comum da aba é auto-isolado do HEAD da aba em vez de recusado', async () => {
+    const { tab, head } = await tabMission();
+    await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ cwd: tab.rootRealPath });
+    const receipt = await paneSpawnTool.handler({ agentName: 'Executor' }, ctx) as Record<string, any>;
+    const [record] = registry.listMission(ctx.scope, ctx.missionId!);
+    expect(record.baseSha).toBe(head);
+    expect(h.spawn.mock.calls[1][0]).toMatchObject({ cwd: record.worktreePath, isolatedWriter: true });
+    expect(receipt.isolatedWorktree.reason).toMatch(/auto-isolado/);
+  });
+
+  it('F-955: cwd na raiz de outra worktree git roda lá e não serializa contra o writer do checkout', async () => {
+    const root = ctx.scope.rootRealPath;
+    await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
+    const nested = path.join(root, '.harvest', 'w1');
+    git(root, 'worktree', 'add', '-q', '-b', 'harvest/w1', nested);
+    const receipt = await paneSpawnTool.handler({ agentName: 'Executor', cwd: nested }, ctx) as Record<string, any>;
+    expect(receipt.executionMode).toBe('same_checkout');
+    expect(receipt.isolatedWorktree).toBeUndefined();
+    expect(h.spawn.mock.calls[1][0]).toMatchObject({ cwd: nested });
+    expect(h.spawn.mock.calls[1][0].executionScope.rootRealPath).toBe(nested);
+    expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(0);
+    // Segundo writer na MESMA worktree aninhada: serializado, com a saída.
+    await expect(paneSpawnTool.handler({ agentName: 'Executor', cwd: path.join(nested, '.') }, ctx))
+      .rejects.toThrow(/same-checkout delegation is serialized.*isolatedWriter:true/);
+    expect(h.spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it('F-955: o cwd do worker de missão é honrado dentro do checkout e recusado fora — nunca descartado em silêncio', async () => {
+    const root = ctx.scope.rootRealPath;
+    fs.mkdirSync(path.join(root, 'sub'));
+    await paneSpawnTool.handler({ agentName: 'Executor', cwd: 'sub' }, ctx);
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ cwd: path.join(root, 'sub'), executionScope: ctx.scope });
+    await expect(paneSpawnTool.handler({ agentName: 'Executor', readOnly: true, cwd: path.join(temp, 'fora') }, ctx))
+      .rejects.toThrow(/cwd descartado/);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('F-955: writer ainda em spawn (ACK pendente, não espelhado ou sem papel nos snapshots) conta como escritor do checkout', async () => {
+    const root = ctx.scope.rootRealPath;
+    h.spawn.mockImplementationOnce(async () => { throw new Error('pane spawn pending'); });
+    h.pending.mockReturnValueOnce({ ok: true, paneId: 'pending-pane', sessionId: null, pending: true });
+    h.pendingPanes.add('pending-pane');
+    await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
+    expect(h.spawn.mock.calls[0][0].cwd).toBe(root);
+    // O renderer ainda não espelhou o pane (concessão pendente no Main): o segundo writer não divide o checkout.
+    const receipt = await paneSpawnTool.handler({ agentName: 'Executor' }, ctx) as Record<string, any>;
+    expect(h.spawn.mock.calls[1][0]).toMatchObject({ isolatedWriter: true });
+    expect(h.spawn.mock.calls[1][0].cwd).not.toBe(root);
+    expect(receipt.isolatedWorktree.reason).toMatch(/em spawn/);
+    // Espelhado com sessão, ainda em spawning e sem papel/escopo: continua contando.
+    const pending: PaneSnapshot = { paneId: 'pending-pane', sessionId: 'pending-session', kind: 'cli-agent', title: 'w', state: 'spawning' };
+    h.panes.push(pending);
+    await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
+    expect(h.spawn.mock.calls[2][0]).toMatchObject({ isolatedWriter: true });
+    // Terminou: o checkout volta a ficar livre.
+    pending.state = 'exited';
+    await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
+    expect(h.spawn.mock.calls[3][0].cwd).toBe(root);
+    expect(h.spawn.mock.calls[3][0].isolatedWriter).toBeUndefined();
+    h.panes.splice(h.panes.indexOf(pending), 1);
   });
 });

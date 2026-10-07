@@ -62,23 +62,39 @@ export function decideDelegatedWriterSpawn(input: {
  * `tools/call` por sessão, então dois spawns em paralelo liam os snapshots
  * antes de qualquer pane existir e caíam no mesmo checkout. O claim é tomado
  * no MESMO bloco síncrono da decisão (mesmo padrão de pendingWorkerSpawns) e
- * conta como writer ativo até a sessão real aparecer nos snapshots.
+ * conta como writer ativo até o pane nascido passar da largada.
+ *
+ * F-955: o ACK pendente chega antes de o renderer espelhar o pane, e um pane
+ * em `spawning`/`unknown` pode ainda não ter papel/escopo nos snapshots — o
+ * claim caía nessas janelas e 4 writers dividiram o mesmo checkout. Agora ele
+ * só sai quando o pane já tem sessão e saiu da largada (os snapshots o contam
+ * sozinhos), terminou, sumiu depois de ter aparecido, ou não aparece e o Main
+ * já não tem o spawn dele pendente (o spawn morreu).
  */
 interface WriterClaim {
   readonly executionRoot: string;
   paneId?: string;
+  seen?: boolean;
 }
 const writerClaims = new Set<WriterClaim>();
+
+const STARTING: ReadonlySet<PaneRuntimeState> = new Set(['spawning', 'unknown']);
 
 export function hasPendingWriterClaim(
   executionRoot: string,
   snapshots: readonly PaneSnapshot[],
+  /** Concessão de spawn ainda pendente no Main para este pane (pane-registry). */
+  spawnPending: (paneId: string) => boolean = () => false,
 ): boolean {
   for (const claim of [...writerClaims]) {
     if (claim.paneId === undefined) continue;
     const pane = snapshots.find((candidate) => candidate.paneId === claim.paneId);
-    // Com sessão o pane já conta pelos snapshots; sem pane, o spawn morreu.
-    if (!pane || pane.sessionId || pane.state === 'exited') writerClaims.delete(claim);
+    if (!pane) {
+      if (claim.seen || !spawnPending(claim.paneId)) writerClaims.delete(claim);
+      continue;
+    }
+    claim.seen = true;
+    if (INACTIVE.has(pane.state) || (pane.sessionId && !STARTING.has(pane.state))) writerClaims.delete(claim);
   }
   return [...writerClaims].some((claim) => claim.executionRoot === executionRoot);
 }
@@ -96,4 +112,9 @@ export function claimSameCheckoutWriter(executionRoot: string): { settle: (paneI
       else writerClaims.delete(claim);
     },
   };
+}
+
+/** Testes: claims são estado do processo. */
+export function resetWriterClaimsForTests(): void {
+  writerClaims.clear();
 }

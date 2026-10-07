@@ -275,6 +275,34 @@ export async function assertRepositoryUnchangedAsync(
   }
 }
 
+/**
+ * F-954: base de um writer de pane que nasce de outra worktree do MESMO
+ * repositório (a pasta isolada de uma aba). Mesmas provas do checkout
+ * (raiz canônica = top-level, config local segura, branch, HEAD) mais o
+ * diretório comum do Git idêntico ao do checkout de coordenação.
+ */
+export async function readLinkedBaseSnapshotAsync(
+  git: AsyncGitRunner,
+  repository: RepositorySnapshot,
+  baseRootRealPath: string,
+): Promise<RepositorySnapshot> {
+  if (baseRootRealPath === repository.rootRealPath) return repository;
+  const base = await readRepositorySnapshotAsync(
+    git,
+    { projectId: "", checkoutId: "", rootRealPath: baseRootRealPath },
+    false,
+  );
+  const commonDirectory = async (root: string) => fs.realpathSync(
+    await gitOutputAsync(git, root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+  );
+  if (await commonDirectory(base.rootRealPath) !== await commonDirectory(repository.rootRealPath)) {
+    throw new WorktreeStateConflictError(
+      "writer base worktree is not linked to the coordination repository",
+    );
+  }
+  return base;
+}
+
 export async function assertTaskWorktreeAsync(
   git: AsyncGitRunner,
   record: WorktreeRecord,
