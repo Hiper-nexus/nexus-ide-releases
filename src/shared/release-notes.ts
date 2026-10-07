@@ -10169,7 +10169,7 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     { title: 'Abre mesmo com o Mac lento', detail: 'Se o terminal nativo demora a responder na abertura, o Nexus inicia assim mesmo. Até essa preparação terminar, os agentes não executam comandos pesados; ela é refeita em segundo plano e antes de abrir cada agente. Quando a abertura falha, o aviso mostra o motivo.' },
-    { title: 'Sem erro fatal do git', detail: 'Uma falha do git ao restaurar os painéis de uma missão não derruba mais o aplicativo. O painel afetado espera alguns minutos antes de tentar de novo, sem travar a interface.' },
+    { title: 'Sem erro fatal do git', detail: 'Uma falha do git ao restaurar os painéis de uma missão não derruba mais o aplicativo. O painel afetado espera alguns minutos antes de tentar de novo, sem travar a interface; falhas do git na abertura também não encerram mais o app.' },
     { title: 'Fila de comandos pesados livre', detail: 'Um agente Codex aberto não ocupa mais a vez das compilações e dos testes do projeto. Os demais agentes deixam de falhar esperando a admissão.' },
     { title: 'Kimi recebe a tarefa', detail: 'Depois de aceitar a confiança na pasta, o Nexus envia o briefing assim que o Kimi fica pronto, em vez de esperar até o painel ser fechado.' },
     { title: 'Modelo do AGY confirmado', detail: 'Missões só usam o Gemini 4 Argon quando a CLI do AGY instalada oferece esse modelo; caso contrário usam o Gemini 3.8 Flash.' },

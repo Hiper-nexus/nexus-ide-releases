@@ -3,7 +3,7 @@
 ## 0.76.209 — Missões com entrega verificada
 
 - O Nexus abre mesmo quando o terminal nativo demora a responder no boot; antes, um Mac lento ou carregado mostrava "NexusIDE não conseguiu inicializar". Até essa preparação terminar, os agentes não executam comandos pesados; ela é refeita em segundo plano e antes de abrir cada agente. Se o boot falhar, o aviso agora mostra o motivo (F-955).
-- Uma falha do git ao restaurar panes de missão deixa de derrubar o app com "A JavaScript error occurred in the main process", e o pane afetado espera alguns minutos antes de tentar de novo, sem travar a interface (F-954).
+- Uma falha do git ao restaurar panes de missão deixa de derrubar o app com "A JavaScript error occurred in the main process", e o pane afetado espera alguns minutos antes de tentar de novo, sem travar a interface (F-954). Falhas do git em passos da abertura e nos canais internos do app também deixam de encerrá-lo.
 - Uma sessão do Codex não ocupa mais a vaga de comandos pesados do projeto: compilações e testes dos outros agentes deixavam de rodar e falhavam por espera na admissão (F-958).
 - Agentes Kimi recebem o briefing depois de aceitar a confiança na pasta; o aceite automático deixava a colagem adiada até o painel ser fechado e a tarefa ser repassada a outro agente (F-956).
 - O AGY só é aberto com o Gemini 4 Argon quando a CLI instalada oferece esse modelo; caso contrário a rota usa o Gemini 3.8 Flash, em vez de abrir um painel que morre no início (F-957).
