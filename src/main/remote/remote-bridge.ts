@@ -7,6 +7,7 @@ import path from 'node:path';
 import { generate } from 'selfsigned';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import type {
+  RemoteBridgeEndpoint,
   RemoteBridgeInfo,
   RemoteBridgeStartRequest,
 } from '../../shared/remote-types';
@@ -54,6 +55,14 @@ import {
   type RemoteDeviceTokenRecord,
 } from './remote-device-token-store';
 import { serveRemoteClientPage } from './remote-client-server';
+import {
+  cleanupOrphanRemoteBridgeTailscale,
+  detectRemoteBridgeTailscale,
+  publishRemoteBridgeOnTailnet,
+  unpublishRemoteBridgeFromTailnet,
+  type RemoteBridgeTailscaleState,
+} from './remote-bridge-tailscale';
+import { isTailscaleIpv4Address } from './tailscale';
 
 interface TlsRecord {
   key: string;
@@ -110,6 +119,56 @@ const clients = new Set<WebSocket>();
 const authenticatedClients = new Map<WebSocket, AuthenticatedClient>();
 const authenticationChallenges = new Map<WebSocket, AuthenticationChallenge>();
 const rate = new Map<string, { count: number; resetAt: number }>();
+// Tailscale Serve: estado do handler desta bridge + fila que serializa todo
+// spawn da CLI (publicar, despublicar, limpar órfão) para que um stop no meio
+// de um start nunca intercale `serve --bg` e `serve off` fora de ordem.
+let bridgeTailscale: RemoteBridgeTailscaleState | null = null;
+let bridgeGeneration = 0;
+let tailscaleQueue: Promise<unknown> = Promise.resolve();
+
+function enqueueTailscale<T>(task: () => Promise<T>): Promise<T> {
+  const run = tailscaleQueue.then(task, task);
+  tailscaleQueue = run.catch(() => undefined);
+  return run;
+}
+
+function releaseBridgeTailscale(): void {
+  const current = bridgeTailscale;
+  bridgeTailscale = null;
+  if (!current?.target) return;
+  const { target, servePort } = current;
+  void enqueueTailscale(() => unpublishRemoteBridgeFromTailnet(target, servePort)).catch(
+    () => undefined,
+  );
+}
+
+/** Aplica o pedido explícito de start: publica (ou despublica) no tailnet. */
+async function applyBridgeTailscale(enabled: boolean): Promise<void> {
+  if (!enabled) {
+    releaseBridgeTailscale();
+    return;
+  }
+  const localPort = port;
+  if (!localPort || bridgeTailscale?.target) return;
+  const generation = bridgeGeneration;
+  const published = await enqueueTailscale(() =>
+    publishRemoteBridgeOnTailnet({
+      localPort,
+      localHost: boundHost === '::1' ? '[::1]' : '127.0.0.1',
+    }),
+  );
+  if (generation !== bridgeGeneration || port !== localPort) {
+    // A bridge parou enquanto o Serve era configurado: desfaz o que entrou.
+    const { target, servePort } = published;
+    if (target) {
+      void enqueueTailscale(() => unpublishRemoteBridgeFromTailnet(target, servePort)).catch(
+        () => undefined,
+      );
+    }
+    return;
+  }
+  bridgeTailscale = published;
+}
 
 function ensureRoot(): void {
   fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 });
@@ -390,23 +449,40 @@ function certFingerprint256(certPem: string): string {
   }
 }
 
-function localUrls(currentPort: number): string[] {
-  const urls = new Set<string>([`wss://127.0.0.1:${currentPort}`]);
+function localEndpoints(currentPort: number): RemoteBridgeEndpoint[] {
+  const endpoints: RemoteBridgeEndpoint[] = [];
+  const seen = new Set<string>();
+  const add = (url: string, label: RemoteBridgeEndpoint['label']) => {
+    if (seen.has(url)) return;
+    seen.add(url);
+    endpoints.push({ url, label });
+  };
+  // Tailscale Serve primeiro: certificado válido *.ts.net, sem aviso de
+  // self-signed, alcançável fora da LAN sem abrir porta.
+  const httpsUrl = bridgeTailscale?.info.httpsUrl;
+  if (httpsUrl) add(`wss://${new URL(httpsUrl).host}`, 'Tailscale HTTPS');
+  add(`wss://127.0.0.1:${currentPort}`, 'Este computador');
   // Só anuncia IPs da LAN quando o bind é wildcard — bound a localhost, essas
   // URLs não funcionariam.
   if (boundHost === '0.0.0.0' || boundHost === '::') {
     for (const entries of Object.values(os.networkInterfaces())) {
       for (const iface of entries ?? []) {
         if (iface.family === 'IPv4' && !iface.internal) {
-          urls.add(`wss://${iface.address}:${currentPort}`);
+          add(
+            `wss://${iface.address}:${currentPort}`,
+            isTailscaleIpv4Address(iface.address) ? 'Tailscale IP' : 'Rede local',
+          );
         }
       }
     }
   }
-  return [...urls];
+  return endpoints;
 }
 
 function clientIp(req: { socket: { remoteAddress?: string } }): string {
+  // Só o socket. Atrás do Tailscale Serve todo cliente chega como loopback;
+  // X-Forwarded-For/Tailscale-User-* são cabeçalhos que qualquer cliente na
+  // porta local forja, então nunca viram identidade nem chave de rate limit.
   return req.socket.remoteAddress ?? 'unknown';
 }
 
@@ -689,7 +765,9 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
   // only same-origin browser pages (the served thin-client) are accepted. Native
   // apps send no Origin and are unaffected. Auth uses an explicit device-bound
   // token + proof in messages (never an ambient cookie), so this remains
-  // defense-in-depth against pre-auth reach.
+  // defense-in-depth against pre-auth reach. Tailscale Serve preserves Host, so
+  // the *.ts.net page passes the same check; X-Forwarded-Host and
+  // Tailscale-User-* are never accepted as proof of origin.
   const origin = req.headers.origin;
   if (typeof origin === 'string' && origin.length > 0) {
     const host = req.headers.host;
@@ -885,6 +963,7 @@ export async function startRemoteBridge(
   if (!scope) throw new Error('remote bridge requires a project scope');
   if (server && port) {
     assertBridgeScope(scope);
+    if (req.tailscale !== undefined) await applyBridgeTailscale(req.tailscale);
     return getRemoteBridgeInfo(scope);
   }
   activeBridgeScope = Object.freeze({ ...scope });
@@ -911,6 +990,9 @@ export async function startRemoteBridge(
       resolve();
     });
   });
+  // O Serve encaminha o tailnet ao loopback: funciona até com o bind padrão
+  // 127.0.0.1, sem expor a bridge na LAN.
+  if (req.tailscale) await applyBridgeTailscale(true);
   return getRemoteBridgeInfo(scope);
 }
 
@@ -918,6 +1000,8 @@ export function stopRemoteBridge(scope?: ProjectExecutionScope): RemoteBridgeInf
   clearStreamSubscriptions();
   clearRemoteTerminalStreams();
   if (scope && activeBridgeScope) assertBridgeScope(scope);
+  bridgeGeneration += 1;
+  releaseBridgeTailscale();
   for (const client of clients) client.close(1001, 'bridge stopped');
   clients.clear();
   clearAllAuthenticatedClients();
@@ -986,14 +1070,53 @@ export function getRemoteBridgeInfo(
   const pairingAvailable =
     current.code.length === PAIRING_LEN && current.expiresAt > Date.now();
   const tokenScope = scope ?? activeBridgeScope;
+  const endpoints = port ? localEndpoints(port) : [];
   return {
     running: Boolean(server && port),
     port: port ?? undefined,
-    urls: port ? localUrls(port) : [],
+    urls: endpoints.map((endpoint) => endpoint.url),
+    endpoints,
     pairingCode: pairingAvailable ? current.code : undefined,
     pairingExpiresAt: pairingAvailable ? current.expiresAt : undefined,
     tokenCount: countRemoteDeviceTokens(tokenScope ?? undefined),
     clientCount: clients.size,
     certFingerprint: tlsRecord?.fingerprint,
+    ...(bridgeTailscale ? { tailscale: { ...bridgeTailscale.info } } : {}),
   };
+}
+
+/**
+ * Status para a UI: sem Serve desta bridge, anexa a detecção da CLI (só
+ * `status --json`, sem efeito) para o toggle nascer ligado quando dá.
+ */
+export async function getRemoteBridgeStatus(
+  scope?: ProjectExecutionScope,
+): Promise<RemoteBridgeInfo> {
+  const info = getRemoteBridgeInfo(scope);
+  if (info.tailscale) return info;
+  return { ...info, tailscale: await detectRemoteBridgeTailscale() };
+}
+
+/**
+ * Quit: espera o `serve off` em curso, com teto — nunca segura o encerramento.
+ * O que não couber fica no marcador e o próximo boot remove.
+ */
+export async function settleRemoteBridgeTailscale(timeoutMs = 2_500): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      tailscaleQueue,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** Boot: remove o handler do Serve que uma execução anterior deixou. */
+export function cleanupRemoteBridgeTailscaleOrphan(): Promise<void> {
+  return enqueueTailscale(() => cleanupOrphanRemoteBridgeTailscale()).catch(() => undefined);
 }

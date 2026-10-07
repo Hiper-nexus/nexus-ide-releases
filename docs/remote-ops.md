@@ -7,6 +7,7 @@ Nexus **não** embute o React Native do Orca. O caminho de produto é o **thin c
 | Peça | Path |
 |------|------|
 | Bridge TLS + WS | `src/main/remote/remote-bridge.ts` |
+| Tailscale Serve (tailnet HTTPS) | `src/main/remote/tailscale.ts` + `remote-bridge-tailscale.ts` |
 | Thin client HTML | `src/main/remote/remote-client-page.ts` |
 | Policy mobile RPCs | `src/main/remote/mobile-companion-policy.ts` (ligada em `handleAuthedMessage` via `mobileRpcKindForBridgeType`) |
 | Pairing LAN ativo | `src/main/remote/remote-bridge.ts` + `remote-device-authority.ts` |
@@ -36,8 +37,10 @@ fica no desktop.
 ## Fluxo de uso
 
 1. Desktop: iniciar Remote Bridge (Config / remote IPC).
-2. Telemóvel: abrir a URL HTTPS da bridge. Em rede não confiável, não ignorar
-   aviso de certificado: instalar/confiar uma CA local ou usar VPN identificada.
+2. Telemóvel: abrir a URL HTTPS da bridge. Com **Publicar no tailnet (HTTPS)**
+   ligado, use `https://<máquina>.<tailnet>.ts.net/` (certificado válido, sem
+   aviso). Em rede não confiável, não ignorar aviso de certificado da URL da
+   LAN: prefira o endereço do tailnet.
 3. Inserir o código emitido pelo desktop. Ele aprova exatamente um aparelho:
    expirar ou consumir não gera outro; para um segundo aparelho, clicar em
    **Girar código de pareamento** no desktop.
@@ -77,11 +80,48 @@ não afirma que o vínculo ECDSA do aparelho resolve MITM: ele reduz roubo/repla
 do token, mas a primeira visita continua dependendo da decisão de confiança do
 navegador/OS.
 
-Para LAN hostil, a opção segura continua sendo CA local confiável/VPN com
-identidade ou um app first-party capaz de verificar fingerprint fora de banda.
-TOFU automático no PWA seria apenas um valor entregue pelo mesmo canal
+Para LAN hostil, use o **Tailscale Serve** (abaixo) em vez da URL self-signed
+da LAN. TOFU automático no PWA seria apenas um valor entregue pelo mesmo canal
 potencialmente interceptado e, por isso, não foi implementado nem anunciado
-como controle de segurança.
+como controle de segurança. O PWA continua **sem pinning** também no tailnet:
+a confiança passa a ser a CA pública do certificado `*.ts.net` + a identidade
+de nó do WireGuard do Tailscale, não um fingerprint verificado pelo cliente.
+
+## Tailscale Serve (tailnet HTTPS)
+
+Toggle **Publicar no tailnet (HTTPS)** no card *Celular na rede local*. Nasce
+ligado quando a CLI do Tailscale existe e está logada com MagicDNS, e só age
+quando você clica em **Iniciar** (ação explícita). Com ele:
+
+- a bridge anuncia primeiro `https://<máquina>.<tailnet>.ts.net/` e
+  `wss://<máquina>.<tailnet>.ts.net` (rótulo *Tailscale HTTPS*); IPs
+  100.64.0.0/10 da lista de LAN aparecem como *Tailscale IP*;
+- o Nexus roda `tailscale serve --bg --https=443 https+insecure://127.0.0.1:<porta>`
+  (a bridge é TLS self-signed; o Serve termina o TLS válido e encaminha ao
+  loopback). Funciona até com o bind padrão `127.0.0.1` — não precisa expor a
+  bridge na LAN nem abrir porta no roteador; o acesso segue as ACLs do tailnet;
+- parar a bridge e sair do app rodam `tailscale serve --https=443 off`
+  (tolerando "handler does not exist"). Um marcador em
+  `~/.nexus/remote-bridge/tailscale-serve.json` deixa o próximo boot remover o
+  handler que um crash tenha deixado — só se ainda for o proxy exato do Nexus;
+- se a porta 443 do Serve já tem outra configuração, o Nexus **não** a
+  substitui nem desliga (diagnóstico *porta em uso*);
+- o binário vem de caminhos absolutos fixos (macOS:
+  `/Applications/Tailscale.app/Contents/MacOS/Tailscale`, depois Homebrew e
+  `/usr/local/bin`), sem shell; `execFile` com timeout, `SIGKILL`, `maxBuffer`
+  1 MiB e `LANG=C`. stderr da CLI nunca é logado nem enviado por IPC (carrega
+  `tskey-…` e nomes de nós): só rótulos fechados como `not-logged-in`;
+- após o Serve, um probe `GET /manifest.webmanifest` (rota pública, sem
+  estado, `redirect: 'error'`, 2,5 s) decide entre *disponível* e *requer
+  configuração* (ex.: certificado HTTPS ainda sendo emitido ou HTTPS
+  desligado no painel do tailnet).
+
+O pareamento por aparelho continua obrigatório: o tailnet é transporte, não
+autenticação. A checagem de Origin continua same-origin pelo `Host` (o Serve o
+preserva); `X-Forwarded-*` e `Tailscale-User-*` **não** são aceitos como prova de
+origem nem de identidade — qualquer processo local poderia forjá-los. Atrás do
+Serve todo cliente chega como loopback, então o rate limit e o bloqueio de
+pareamento por IP passam a ser compartilhados pelos aparelhos do tailnet.
 
 ## PWA e alertas locais (feito)
 

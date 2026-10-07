@@ -793,6 +793,14 @@
   outline-offset: 2px;
 }
 
+.settings-toggle-row:has(> input:disabled) {
+  cursor: not-allowed;
+}
+
+.settings-toggle-row > input:disabled + .settings-toggle-row__control {
+  opacity: 0.5;
+}
+
 .settings-error {
   margin: var(--space-2) 0 var(--space-3);
   color: var(--danger);

@@ -1,6 +1,45 @@
 import { useEffect, useState } from 'react';
 import type { RemoteBridgeInfo } from '../../../shared/types';
+import type {
+  RemoteBridgeStartRequest,
+  RemoteBridgeTailscaleDiagnostic,
+  RemoteBridgeTailscaleInfo,
+} from '../../../shared/remote-types';
 import { QrCode } from '../QrCode';
+
+const TAILNET_DIAGNOSTIC: Record<RemoteBridgeTailscaleDiagnostic, string> = {
+  'not-installed':
+    'Tailscale não encontrado neste computador. Instale e entre no app para publicar no tailnet.',
+  'not-logged-in': 'Tailscale instalado, mas sem login. Entre no app do Tailscale.',
+  'not-running': 'Tailscale desconectado. Conecte pelo app do Tailscale.',
+  'no-magicdns': 'MagicDNS desligado no tailnet. Ative em DNS no painel do Tailscale.',
+  'serve-not-enabled':
+    'HTTPS não está habilitado no tailnet. Ative os certificados HTTPS no painel do Tailscale.',
+  'permission-denied':
+    'Sem permissão para configurar o Serve. No Linux, rode: sudo tailscale set --operator=$USER',
+  'port-in-use':
+    'A porta 443 do Serve já tem outra configuração neste computador. O Nexus não a substitui.',
+  timeout: 'O Tailscale não respondeu a tempo. Inicie de novo para tentar outra vez.',
+  'probe-failed':
+    'Serve configurado, mas o endereço HTTPS ainda não respondeu. Na primeira vez o certificado pode levar alguns segundos.',
+  unknown: 'O Tailscale recusou o comando.',
+};
+
+function tailnetDescription(
+  tailnet: RemoteBridgeTailscaleInfo | null,
+  publishing: boolean,
+): string {
+  if (publishing) return 'Publicando no tailnet…';
+  if (!tailnet) return 'Verificando o Tailscale neste computador…';
+  if (tailnet.httpsUrl && tailnet.status === 'available') {
+    return `Publicado em ${tailnet.httpsUrl} com certificado válido do tailnet.`;
+  }
+  if (tailnet.diagnostic) return TAILNET_DIAGNOSTIC[tailnet.diagnostic];
+  return (
+    'Certificado HTTPS válido (*.ts.net) e acesso fora da LAN sem abrir porta. ' +
+    'Vale quando você inicia o bridge; o pareamento do aparelho continua obrigatório.'
+  );
+}
 
 /**
  * "Celular na rede local": bridge LAN (código de pareamento + QR) que antes
@@ -10,20 +49,54 @@ import { QrCode } from '../QrCode';
  */
 export function LocalPhoneBridgeCard() {
   const [info, setInfo] = useState<RemoteBridgeInfo | null>(null);
+  // Última leitura do Tailscale: rotate/revoke não a repetem, e o toggle não
+  // deve piscar por isso.
+  const [tailnet, setTailnet] = useState<RemoteBridgeTailscaleInfo | null>(null);
+  const [publishChoice, setPublishChoice] = useState<boolean | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  const applyInfo = (next: RemoteBridgeInfo) => {
+    setInfo(next);
+    if (next.tailscale) setTailnet(next.tailscale);
+  };
 
   useEffect(() => {
     let cancelled = false;
     void window.nexus.remote.bridgeStatus().then((bridge) => {
-      if (!cancelled) setInfo(bridge);
+      if (!cancelled) applyInfo(bridge);
     });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const lanUrl = info?.urls
-    .filter((u) => !u.includes('127.0.0.1'))
-    .map((u) => u.replace('wss://', 'https://'))[0];
+  // Nasce LIGADO quando a CLI existe e está logada; só age no start.
+  const tailnetUsable = tailnet !== null && tailnet.status !== 'unavailable';
+  const publishTailnet = tailnetUsable && (publishChoice ?? true);
+
+  const start = async (request: RemoteBridgeStartRequest) => {
+    setStarting(true);
+    try {
+      applyInfo(await window.nexus.remote.bridgeStart({ ...request, tailscale: publishTailnet }));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  // LAN de verdade antes do IP do tailnet (este usa o certificado self-signed).
+  const lanWss = info?.endpoints
+    ? (
+        info.endpoints.find((endpoint) => endpoint.label === 'Rede local') ??
+        info.endpoints.find((endpoint) => endpoint.label === 'Tailscale IP')
+      )?.url
+    : info?.urls.find((u) => !u.includes('127.0.0.1'));
+  const lanUrl = lanWss?.replace('wss://', 'https://');
+  const tailnetUrl = info?.tailscale?.httpsUrl;
+  const phoneUrl =
+    (info?.tailscale?.status === 'available' ? tailnetUrl : undefined) ?? lanUrl ?? tailnetUrl;
+  const urlText = info?.endpoints?.length
+    ? info.endpoints.map((endpoint) => `${endpoint.label}: ${endpoint.url}`).join(' · ')
+    : info?.urls.join(' · ');
 
   return (
     <section className="settings-card" aria-labelledby="remote-bridge-title">
@@ -50,23 +123,38 @@ export function LocalPhoneBridgeCard() {
         </span>
       </div>
 
+      <div className="settings-toggle-list">
+        <label className="settings-toggle-row">
+          <span className="settings-toggle-row__copy">
+            <strong>Publicar no tailnet (HTTPS)</strong>
+            <span>{tailnetDescription(tailnet, starting && publishTailnet)}</span>
+          </span>
+          <input
+            type="checkbox"
+            aria-label="Publicar no tailnet (HTTPS)"
+            checked={publishTailnet}
+            disabled={!tailnetUsable || starting}
+            onChange={(event) => setPublishChoice(event.target.checked)}
+          />
+          <span className="settings-toggle-row__control" aria-hidden="true" />
+        </label>
+      </div>
+
       <div className="settings-action-row" role="group" aria-label="Ações do bridge">
         <button
           type="button"
           className="settings-btn"
-          onClick={async () => {
-            setInfo(await window.nexus.remote.bridgeStart());
-          }}
-          title="Só este computador (127.0.0.1)"
+          disabled={starting}
+          onClick={() => void start({})}
+          title="Este computador (127.0.0.1); com o tailnet ligado, também os aparelhos do seu tailnet"
         >
           Iniciar neste computador
         </button>
         <button
           type="button"
           className="settings-btn settings-btn--primary"
-          onClick={async () => {
-            setInfo(await window.nexus.remote.bridgeStart({ host: '0.0.0.0' }));
-          }}
+          disabled={starting}
+          onClick={() => void start({ host: '0.0.0.0' })}
           title="Expõe na rede local para o celular conectar — só faça em redes de confiança"
         >
           Iniciar na rede local
@@ -75,7 +163,7 @@ export function LocalPhoneBridgeCard() {
           type="button"
           className="settings-btn"
           onClick={async () => {
-            setInfo(await window.nexus.remote.bridgeRotatePairing());
+            applyInfo(await window.nexus.remote.bridgeRotatePairing());
           }}
         >
           Novo código
@@ -84,7 +172,7 @@ export function LocalPhoneBridgeCard() {
           type="button"
           className="settings-btn"
           onClick={async () => {
-            setInfo(await window.nexus.remote.bridgeRevokeTokens());
+            applyInfo(await window.nexus.remote.bridgeRevokeTokens());
           }}
         >
           Revogar acessos
@@ -111,7 +199,7 @@ export function LocalPhoneBridgeCard() {
             <div className="settings-meta settings-meta--wide">
               <span className="settings-meta__label">URL</span>
               <strong className="settings-meta__value settings-meta__value--mono">
-                {info.urls.join(' · ') || 'sem URL ativa'}
+                {urlText || 'sem URL ativa'}
               </strong>
             </div>
             <div className="settings-meta settings-meta--wide">
@@ -125,14 +213,14 @@ export function LocalPhoneBridgeCard() {
           {info.urls.length > 0 ? (
             <div className="settings-card__aside">
               <p className="settings-card__note">
-                {lanUrl
-                  ? `Abra no celular: ${lanUrl}`
-                  : 'Só localhost — inicie em LAN e conecte na mesma rede.'}
+                {phoneUrl
+                  ? `Abra no celular: ${phoneUrl}`
+                  : 'Só localhost — inicie na rede local ou publique no tailnet.'}
               </p>
-              {lanUrl ? (
+              {phoneUrl ? (
                 <div className="settings-qr">
                   <QrCode
-                    value={`${lanUrl}#code=${info.pairingCode ?? ''}`}
+                    value={`${phoneUrl}#code=${info.pairingCode ?? ''}`}
                     size={180}
                     label="QR code para parear o celular"
                   />

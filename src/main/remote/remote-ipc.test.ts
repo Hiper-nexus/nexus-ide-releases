@@ -101,6 +101,7 @@ vi.mock('./remote-spawn', () => ({
 
 vi.mock('./remote-bridge', () => ({
   getRemoteBridgeInfo: vi.fn(() => ({ running: false, urls: [], tokenCount: 0, clientCount: 0 })),
+  getRemoteBridgeStatus: vi.fn(async () => ({ running: false, urls: [], tokenCount: 0, clientCount: 0 })),
   revokeRemoteTokens: vi.fn(),
   rotateRemotePairing: vi.fn(),
   startRemoteBridge: harness.startRemoteBridge,

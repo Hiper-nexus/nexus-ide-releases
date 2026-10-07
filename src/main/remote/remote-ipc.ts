@@ -14,6 +14,7 @@ import {
 } from '../jarvis/guardrails';
 import {
   getRemoteBridgeInfo,
+  getRemoteBridgeStatus,
   revokeRemoteTokens,
   rotateRemotePairing,
   startRemoteBridge,
@@ -36,6 +37,7 @@ import { listSshHostViews } from './ssh/ssh-host-registry';
 const startSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   host: z.enum(['0.0.0.0', '127.0.0.1', '::1', '::']).optional(),
+  tailscale: z.boolean().optional(),
 });
 const targetSchema = z.object({
   target: z.string().min(1).max(63),
@@ -162,7 +164,7 @@ export function registerRemoteIpc(): void {
   // default OFF) — canais tipados em shared/companion-relay-types.
   registerCompanionRelayIpc();
   ipcMain.handle(REMOTE_CHANNELS.bridgeStatus, (event) =>
-    getRemoteBridgeInfo(requireLiveRendererWorkspaceScope(event.sender)),
+    getRemoteBridgeStatus(requireLiveRendererWorkspaceScope(event.sender)),
   );
   ipcMain.handle(REMOTE_CHANNELS.bridgeStart, async (event, raw) => {
     const scope = requireLiveRendererWorkspaceScope(event.sender);
