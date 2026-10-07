@@ -1,8 +1,8 @@
 // Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
 // Copyright (c) 2026 T3 Tools Inc. — MIT License
 // See third_party/licenses/t3code-MIT.txt. Nexus changes: JavaScript engine only (no native
-// engine, no Effect), Nexus theme colors, every grammar lazy, languages limited to what the Nexus
-// detector returns, rows highlighted per 200-row block with an LRU cache and grammar state carried
+// engine, no Effect), Nexus theme colors, every grammar lazy, a curated 26-language list (others
+// stay plain), rows highlighted per 200-row block with an LRU cache and grammar state carried
 // between blocks (technique from incrementalSnippet.ts).
 import {
   createHighlighterCore,
@@ -26,44 +26,36 @@ export const MOBILE_REVIEW_HIGHLIGHT_CACHE_LIMIT = 48
 
 const loadedLanguages = new Set<string>(['text'])
 const languageLoadingPromises = new Map<string, Promise<boolean>>()
-// Why: Metro bundles every import() target, so only grammars the Nexus language
-// detector (plus the extension overrides below) can actually ask for are listed.
+// Why: Metro puts every import() target in the same bundle, so this is a curated
+// list of the languages most common in the operator's repositories; anything else
+// renders as plain text.
 const languageImports: Partial<Record<string, () => Promise<unknown>>> = {
-  javascript: () => import('@shikijs/langs/javascript'),
   typescript: () => import('@shikijs/langs/typescript'),
-  jsx: () => import('@shikijs/langs/jsx'),
   tsx: () => import('@shikijs/langs/tsx'),
+  javascript: () => import('@shikijs/langs/javascript'),
+  jsx: () => import('@shikijs/langs/jsx'),
+  json: () => import('@shikijs/langs/json'),
+  css: () => import('@shikijs/langs/css'),
+  scss: () => import('@shikijs/langs/scss'),
+  html: () => import('@shikijs/langs/html'),
+  markdown: () => import('@shikijs/langs/markdown'),
   python: () => import('@shikijs/langs/python'),
-  rust: () => import('@shikijs/langs/rust'),
   go: () => import('@shikijs/langs/go'),
-  java: () => import('@shikijs/langs/java'),
-  kotlin: () => import('@shikijs/langs/kotlin'),
+  rust: () => import('@shikijs/langs/rust'),
+  shellscript: () => import('@shikijs/langs/shellscript'),
+  yaml: () => import('@shikijs/langs/yaml'),
+  toml: () => import('@shikijs/langs/toml'),
+  sql: () => import('@shikijs/langs/sql'),
   swift: () => import('@shikijs/langs/swift'),
+  kotlin: () => import('@shikijs/langs/kotlin'),
+  java: () => import('@shikijs/langs/java'),
+  php: () => import('@shikijs/langs/php'),
+  ruby: () => import('@shikijs/langs/ruby'),
   c: () => import('@shikijs/langs/c'),
   cpp: () => import('@shikijs/langs/cpp'),
   csharp: () => import('@shikijs/langs/csharp'),
-  php: () => import('@shikijs/langs/php'),
-  ruby: () => import('@shikijs/langs/ruby'),
-  lua: () => import('@shikijs/langs/lua'),
-  r: () => import('@shikijs/langs/r'),
-  html: () => import('@shikijs/langs/html'),
-  css: () => import('@shikijs/langs/css'),
-  scss: () => import('@shikijs/langs/scss'),
-  less: () => import('@shikijs/langs/less'),
-  xml: () => import('@shikijs/langs/xml'),
-  json: () => import('@shikijs/langs/json'),
-  jsonc: () => import('@shikijs/langs/jsonc'),
-  yaml: () => import('@shikijs/langs/yaml'),
-  toml: () => import('@shikijs/langs/toml'),
-  ini: () => import('@shikijs/langs/ini'),
-  shellscript: () => import('@shikijs/langs/shellscript'),
-  powershell: () => import('@shikijs/langs/powershell'),
-  sql: () => import('@shikijs/langs/sql'),
-  graphql: () => import('@shikijs/langs/graphql'),
   docker: () => import('@shikijs/langs/docker'),
-  markdown: () => import('@shikijs/langs/markdown'),
-  makefile: () => import('@shikijs/langs/makefile'),
-  cmake: () => import('@shikijs/langs/cmake')
+  diff: () => import('@shikijs/langs/diff')
 }
 
 const languageAliases: Record<string, string> = {
@@ -86,21 +78,19 @@ const languageAliases: Record<string, string> = {
   'c#': 'csharp',
   cs: 'csharp',
   dockerfile: 'docker',
-  ps1: 'powershell',
-  pwsh: 'powershell',
-  make: 'makefile',
   plain: 'text',
   plaintext: 'text',
   txt: 'text'
 }
 
-// Why: the Nexus detector folds these into lowlight-friendly names; Shiki has
-// dedicated grammars for them.
+// Why: the Nexus detector folds these into lowlight-friendly names (or does not
+// know them); Shiki has dedicated grammars for them.
 const EXTENSION_LANGUAGE_OVERRIDES: Record<string, string> = {
   '.tsx': 'tsx',
   '.jsx': 'jsx',
   '.toml': 'toml',
-  '.jsonc': 'jsonc'
+  '.diff': 'diff',
+  '.patch': 'diff'
 }
 
 let highlighterPromise: Promise<HighlighterCore> | null = null

@@ -23,9 +23,6 @@ importers:
       '@orca/expo-two-way-audio':
         specifier: file:./packages/expo-two-way-audio
         version: file:packages/expo-two-way-audio(expo@55.0.30)(react-native@0.83.10(patch_hash=44876634a8efbb0f2c3f66cd4332be170ec821d1cbfc0264ac80680983e8513d)(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.85.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.8)(supports-color@8.1.1))(react@19.2.8)
-      '@pierre/diffs':
-        specifier: 1.5.1
-        version: 1.5.1(patch_hash=2d242da128da26f519fd21bf1ee5b02e29f26177ba319fa641d61ac130118358)(@shikijs/themes@4.5.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@react-native-async-storage/async-storage':
         specifier: ^2.2.0
         version: 2.2.0(react-native@0.83.10(patch_hash=44876634a8efbb0f2c3f66cd4332be170ec821d1cbfc0264ac80680983e8513d)(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.85.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.8)(supports-color@8.1.1))
@@ -177,6 +174,9 @@ importers:
         specifier: ^5.0.13
         version: 5.0.13(@types/react@19.2.14)(react@19.2.8)(use-sync-external-store@1.6.0(react@19.2.8))
     devDependencies:
+      '@pierre/diffs':
+        specifier: 1.5.1
+        version: 1.5.1(patch_hash=2d242da128da26f519fd21bf1ee5b02e29f26177ba319fa641d61ac130118358)(@shikijs/themes@4.5.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@types/react':
         specifier: ^19.2.14
         version: 19.2.14

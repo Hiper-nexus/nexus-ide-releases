@@ -70,8 +70,14 @@ describe('resolveMobileReviewLanguage', () => {
     ['pyproject.toml', 'toml'],
     ['scripts/run.sh', 'shellscript'],
     ['Dockerfile', 'docker'],
+    ['changes.diff', 'diff'],
+    ['fix.patch', 'diff'],
     ['notes.txt', 'text'],
-    ['assets/logo.unknownext', 'text']
+    ['assets/logo.unknownext', 'text'],
+    // Outside the curated list: shipped as plain text to keep grammars out of the bundle.
+    ['config/app.xml', 'text'],
+    ['scripts/build.ps1', 'text'],
+    ['plugin/init.lua', 'text']
   ])('maps %s to %s', (filePath, language) => {
     expect(resolveMobileReviewLanguage(filePath)).toBe(language)
   })

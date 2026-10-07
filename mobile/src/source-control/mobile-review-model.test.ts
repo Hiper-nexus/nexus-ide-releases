@@ -1,19 +1,26 @@
 // Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
 // Copyright (c) 2026 T3 Tools Inc. — MIT License
 // See third_party/licenses/t3code-MIT.txt. Nexus changes: assertions use the Nexus row shape;
-// adds LCS pairing tests and line-number parity against a real `git diff`.
+// adds LCS pairing tests, line-number parity against a real `git diff`, and a guard that keeps
+// the @pierre/diffs patch oracle out of app code.
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { buildMobileDiffLines, type MobileDiffLine } from '../session/mobile-diff-lines'
-import {
-  buildMobileReviewLines,
-  buildMobileReviewParsedDiff,
-  type MobileReviewLineRow,
-  type MobileReviewPatchRow
-} from './mobile-review-model'
+import { buildMobileReviewLines, type MobileReviewLineRow } from './mobile-review-model'
+import { buildMobileReviewParsedDiff, type MobileReviewPatchRow } from './mobile-review-patch'
+
+const MOBILE_ROOT = join(import.meta.dirname, '..', '..')
+
+function appSourceFiles(): string[] {
+  return ['src', 'app'].flatMap((root) =>
+    (readdirSync(join(MOBILE_ROOT, root), { recursive: true }) as string[])
+      .filter((file) => /\.(ts|tsx|js|jsx)$/.test(file) && !/\.test\.tsx?$/.test(file))
+      .map((file) => join(root, file))
+  )
+}
 
 function realGitDiff(original: string, modified: string, context: number): string {
   const dir = mkdtempSync(join(tmpdir(), 'nexus-review-parity-'))
@@ -242,5 +249,19 @@ describe('line-number parity with a real git diff', () => {
       expect(found, `git row ${JSON.stringify(numbersOf(row))}`).toBeGreaterThanOrEqual(cursor)
       cursor = found + 1
     }
+  })
+})
+
+describe('patch oracle stays out of the app bundle', () => {
+  it('lets only the oracle import @pierre/diffs and no app module import the oracle', () => {
+    const files = appSourceFiles()
+    const importers = (pattern: RegExp) =>
+      files.filter((file) => pattern.test(readFileSync(join(MOBILE_ROOT, file), 'utf8')))
+
+    expect(files.length).toBeGreaterThan(100)
+    expect(importers(/['"]@pierre\/diffs/)).toEqual([
+      join('src', 'source-control', 'mobile-review-patch.ts')
+    ])
+    expect(importers(/mobile-review-patch['"]/)).toEqual([])
   })
 })
