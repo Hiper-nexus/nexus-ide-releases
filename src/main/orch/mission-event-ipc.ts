@@ -70,7 +70,15 @@ export function registerMissionEventIpc(): void {
       const query = missionEventReplayQuerySchema.parse(raw ?? {});
       const journal = journalFor(event.sender);
       if (!journal) return { events: [], enabled: false };
-      return { enabled: true, events: journal.replay(query) };
+      // ORC-10: reconnect com cursor velho não puxa histórico ilimitado —
+      // acima do teto vem snapshot + cursor; abaixo, a resposta de sempre.
+      const result = journal.replayBounded(query);
+      if (result.mode === 'replay') return { enabled: true, events: result.events };
+      return {
+        enabled: true,
+        events: result.events,
+        snapshot: { cursor: result.cursor, hasMoreHistory: result.hasMoreHistory },
+      };
     } catch (err) {
       return {
         events: [],
