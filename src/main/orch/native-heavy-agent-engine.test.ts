@@ -30,10 +30,10 @@ function fakeAgentPackage() {
   return { entry, engineInPackage: engine(path.join(pkg, 'vendor')), engineOutside: engine(outside) };
 }
 
-function launch(entry: string, engine: string, agentEntry: string) {
+function launch(entry: string, engine: string, agentEntry: string, extraEnv: Record<string, string> = {}) {
   const run = spawnSync(process.execPath, [entry, engine], {
     encoding: 'utf8',
-    env: { PATH: process.env.PATH ?? '', HOME: os.tmpdir(), NEXUS_HEAVY_AGENT_ENTRY: agentEntry },
+    env: { PATH: process.env.PATH ?? '', HOME: os.tmpdir(), NEXUS_HEAVY_AGENT_ENTRY: agentEntry, ...extraEnv },
     timeout: 20_000,
   });
   expect(run.status).toBe(0);
@@ -46,6 +46,14 @@ describe.skipIf(process.platform === 'win32')('heavy-command hook × motor nativ
     const result = launch(entry, engineInPackage, entry);
     expect(result.stdout).toBe('ENGINE_RAN 1\n');
     expect(result.stderr).not.toContain('Heavy command not started');
+  });
+
+  it('no macOS com a base do job nativo, o motor também não vira job pesado (ramo perl)', () => {
+    const { entry, engineInPackage } = fakeAgentPackage();
+    // Se o filho fosse classificado, viraria `/usr/bin/perl heavy-job <kind> -- …` e o motor não rodaria.
+    const jobBase = JSON.stringify({ file: '/usr/bin/perl', args: ['heavy-job'] });
+    const result = launch(entry, engineInPackage, entry, { NEXUS_HEAVY_JOB_BASE: jobBase });
+    expect(result.stdout).toBe('ENGINE_RAN 1\n');
   });
 
   it('binário fora do pacote do agente continua classificado pelo comando', () => {

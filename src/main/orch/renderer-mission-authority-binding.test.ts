@@ -28,6 +28,22 @@ const deps = vi.hoisted(() => ({
   orchestrationEvidenceForAdapter: vi.fn(),
 }));
 
+// F-954: o git da aba (worktree do espaço) pode falhar; o resto segue real.
+const tabGit = vi.hoisted(() => ({ fail: false, calls: 0 }));
+vi.mock("./mission-execution-scope", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./mission-execution-scope")>();
+  return {
+    ...real,
+    missionExecutionScope: (...args: Parameters<typeof real.missionExecutionScope>) => {
+      if (args[1].intentContract?.workspaceBinding?.spaceId) {
+        tabGit.calls += 1;
+        if (tabGit.fail) throw new Error("Git process could not complete");
+      }
+      return real.missionExecutionScope(...args);
+    },
+  };
+});
+
 vi.mock("./squad-store", () => ({
   getSquad: () => savedSquad,
   pinMissionRuntimeSquad: (squad: unknown) => squad,
@@ -362,26 +378,42 @@ describe("renderer mission authority", () => {
     expect(deps.restoreSessionAuthority).not.toHaveBeenCalled();
   });
 
-  it("F-954: after a git failure the pane waits the backoff instead of re-running git on every sync", () => {
+  it("F-954: a tab whose git failed waits the backoff instead of re-running git on every sync", () => {
     vi.useFakeTimers({ now: new Date("2026-10-07T12:00:00Z") });
+    tabGit.fail = true;
+    tabGit.calls = 0;
     try {
       const restoring = isolatedAuthority();
-      const gitFails = () => {
-        throw new GitCommandError("Git process could not complete", ["rev-parse"]);
-      };
-      deps.forScope.mockImplementationOnce(gitFails).mockImplementationOnce(gitFails);
+      deps.getMission.mockReturnValue({
+        ...approvedMission,
+        intentContract: { ...approvedMission.intentContract, workspaceBinding: { version: 1, spaceId: "space-tab" } },
+      });
+      deps.getContextBySession.mockReturnValue({ role: "orchestrator", missionId: "mission-a", scope });
+      // Dois panes persistidos da mesma aba.
+      deps.findPaneOwnedBy.mockImplementation((_owner: unknown, paneRef: string) => ({
+        paneId: paneRef, sessionId: `pty-${paneRef}`, kind: "cli-agent",
+      }));
+      deps.getOwnedAgentSessionInfo.mockImplementation((_owner: unknown, sessionId: string) => ({
+        ...session, source: "persisted-pane", missionId: "mission-a", paneId: sessionId.replace("pty-", ""),
+      }));
+      deps.findMissionPaneByPaneId.mockImplementation((paneId: string) => ({
+        id: `mpane-${paneId}`, missionId: "mission-a", paneId,
+      }));
 
       expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
-      // Próximos panesSync dentro do backoff: nada de git de novo.
+      expect(tabGit.calls).toBe(1);
+      // Outro pane da mesma aba e os próximos panesSync dentro do backoff: nada de git de novo.
+      expect(restoring.restorePersistedPaneAuthority(owner, "pane-b")).toBe(false);
       expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
-      expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
-      expect(deps.forScope).toHaveBeenCalledTimes(1);
+      expect(tabGit.calls).toBe(1);
+      expect(deps.restoreSessionAuthority).not.toHaveBeenCalled();
 
       vi.advanceTimersByTime(5 * 60_000 + 1);
       expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
-      expect(deps.forScope).toHaveBeenCalledTimes(2);
+      expect(tabGit.calls).toBe(2);
     } finally {
       vi.useRealTimers();
+      tabGit.fail = false;
     }
   });
 

@@ -112,6 +112,11 @@ export async function proveNativeHeavyJobBaseAtBoot(
   }
 }
 
+/** Boot falhou e a base ainda não foi provada: agente nascido agora fica sem comandos pesados. */
+export function nativeHeavyJobBaseMissing(): boolean {
+  return process.platform === 'darwin' && jobBaseBootFailed && !mainOwnedJobBase;
+}
+
 /**
  * Depois de um boot sem a base, o spawn físico de agente tenta prová-la antes
  * de montar o ambiente: o env fica fixo pela vida do agente. Num boot normal

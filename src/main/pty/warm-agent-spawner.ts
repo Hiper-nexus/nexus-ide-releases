@@ -15,7 +15,7 @@ import { onAccessChanged, requireAccess } from '../license-access';
 
 import { WARM_IDLE_CONTEXT } from './warm-adoption';
 import { settleCodexCliVersionForSpawn } from '../orch/codex-cli-version';
-import { ensureNativeHeavyJobBase } from '../orch/native-heavy-preload';
+import { ensureNativeHeavyJobBase, nativeHeavyJobBaseMissing } from '../orch/native-heavy-preload';
 import {
   setWarmAgentSpawner,
   spawnAgentSession,
@@ -71,9 +71,11 @@ export function registerWarmAgentSpawner(deps: {
       // F-790: o pane ocioso do Codex também espera a versão ser conhecida.
       const settling = settleCodexCliVersionForSpawn(adapter);
       if (settling) await settling;
-      // F-955: o pane aquecido também fixa o env no spawn.
+      // F-955: o pane aquecido também fixa o env no spawn. Sem a base ele
+      // seria adotado depois por uma missão sem comandos pesados: não nasce.
       const proving = ensureNativeHeavyJobBase();
       if (proving) await proving;
+      if (nativeHeavyJobBaseMissing()) return null;
       const spawned = spawnAgentSession(null, req, adapter, {}, authority);
       if (!spawned.sessionId || !spawned.startKey) {
         // Sem startKey o lease não prova dono — não entra no pool.

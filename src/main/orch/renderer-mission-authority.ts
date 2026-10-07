@@ -336,11 +336,11 @@ function matchesPersistedRuntime(
   );
 }
 
-const RESTORE_FAILURE_BACKOFF_MS = 5 * 60_000;
+const TAB_SCOPE_FAILURE_BACKOFF_MS = 5 * 60_000;
 
 export class RendererMissionAuthority {
   readonly #stores: ProjectDomainStoreRegistry;
-  readonly #restoreFailedUntil = new Map<string, number>();
+  readonly #tabScopeFailedUntil = new Map<string, number>();
   readonly #captureBaseline: typeof captureMissionCodeBaseline;
   readonly #resolveContextRevision: (
     scope: ProjectExecutionScope,
@@ -646,30 +646,37 @@ export class RendererMissionAuthority {
 
 
     restorePersistedPaneAuthority(owner: WebContents, paneId: string): boolean {
-    // F-954: o escopo de um pane de aba é lido com git síncrono (prazo de
-    // 30 s) a cada panesSync. Depois de uma falha, o pane espera o backoff em
-    // vez de travar a thread principal de novo a cada sync.
-    const key = `${owner.id}:${paneId}`;
-    if ((this.#restoreFailedUntil.get(key) ?? 0) > Date.now()) return false;
-    return this.#tryRestorePersistedPaneAuthority(owner, paneId, key);
-  }
-
-  #tryRestorePersistedPaneAuthority(
-    owner: WebContents,
-    paneId: string,
-    key = `${owner.id}:${paneId}`,
-  ): boolean {
     // Fail-closed: se o git falhar ou estourar o prazo, a autoridade não é
     // restaurada — a exceção não pode subir até o handler de IPC, que
     // derrubaria o processo principal.
     try {
-      const restored = this.#restorePersistedPaneAuthority(owner, paneId);
-      this.#restoreFailedUntil.delete(key);
-      return restored;
+      return this.#restorePersistedPaneAuthority(owner, paneId);
     } catch (error) {
-      this.#restoreFailedUntil.set(key, Date.now() + RESTORE_FAILURE_BACKOFF_MS);
       console.warn("[mission-authority] restauração de autoridade do pane pulada", error);
       return false;
+    }
+  }
+
+  /**
+   * F-954: a aba resolve a worktree com git síncrono (prazo de 30 s) e o
+   * panesSync passa por todos os panes dela a cada sync. Uma falha põe a aba
+   * (raiz + espaço) em backoff: nenhum pane dela refaz o git até lá.
+   */
+  #tabExecutionScope(
+    scope: ProjectExecutionScope,
+    mission: Pick<Mission, "intentContract">,
+  ): ProjectExecutionScope | null {
+    const spaceId = mission.intentContract?.workspaceBinding?.spaceId;
+    if (!spaceId) return missionExecutionScope(scope, mission);
+    const key = `${scope.rootRealPath}\0${spaceId}`;
+    if ((this.#tabScopeFailedUntil.get(key) ?? 0) > Date.now()) return null;
+    try {
+      const resolved = missionExecutionScope(scope, mission);
+      this.#tabScopeFailedUntil.delete(key);
+      return resolved;
+    } catch (error) {
+      this.#tabScopeFailedUntil.set(key, Date.now() + TAB_SCOPE_FAILURE_BACKOFF_MS);
+      throw error;
     }
   }
 
@@ -684,11 +691,15 @@ export class RendererMissionAuthority {
     const paneStore = suite.missionPanes;
     const spec = paneStore.findByPaneId(owned.paneId);
     const mission = spec ? suite.missions.get(spec.missionId) : null;
+    if (!spec || !mission || !hasCurrentDispatchAuthority(mission)) {
+      return false;
+    }
+    const tabScope = mission.intentContract?.workspaceBinding !== undefined
+      ? this.#tabExecutionScope(owned.scope, mission)
+      : undefined;
     if (
-      !spec ||
-      !mission ||
-      !hasCurrentDispatchAuthority(mission) ||
-      (mission.intentContract?.workspaceBinding !== undefined && !sameScope(owned.info.scope, missionExecutionScope(owned.scope, mission))) ||
+      tabScope === null ||
+      (tabScope !== undefined && !sameScope(owned.info.scope, tabScope)) ||
       !matchesPersistedRuntime(owned.info, spec) ||
       !hasMatchingGateContext(owned.sessionId, owned.info, spec.missionId)
     ) {
@@ -765,8 +776,7 @@ export class RendererMissionAuthority {
       !spec ||
       spec.missionId !== missionId ||
       spec.role !== "orchestrator" ||
-      // Rebind é ação explícita do operador: tenta já, sem o backoff do sync.
-      !this.#tryRestorePersistedPaneAuthority(owner, owned.paneId)
+      !this.restorePersistedPaneAuthority(owner, owned.paneId)
     ) {
       return null;
     }

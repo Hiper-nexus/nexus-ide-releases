@@ -13,6 +13,7 @@ import {
 } from '../orch/pane-registry';
 import { getSessionState } from '../pty/pty-manager';
 import { routeTask } from '../orch/task-router';
+import { discoveredModelsFor } from '../adapters/model-discovery';
 import {
   assertReleaseQualifiedMissionWorkerSpawn,
   deliverAgentPrompt,
@@ -263,6 +264,10 @@ export function selectIndependentContextReviewerRoute(
       id: candidate.adapterId,
       installed: true,
       models: [...candidate.models],
+      // F-957: prova da própria CLI para o assento restrito (Argon).
+      liveModels: discoveredModelsFor(candidate.adapterId).filter((model) =>
+        candidate.models.includes(model),
+      ),
     })),
     undefined,
     'hard',
