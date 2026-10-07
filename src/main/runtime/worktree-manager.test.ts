@@ -466,6 +466,49 @@ describe("WorktreeManager", () => {
     expect(gc.get(scope, "operator-hand", dirty.taskId)).not.toBeNull();
   });
 
+  it("F-954: writer de pane nasce do HEAD da aba (sem o WIP dela) e a GC aceita a branch integrada na aba", async () => {
+    const scope = projectScope();
+    const canonical = new WorktreeManager({ runtimeRoot: path.join(fs.realpathSync(tempDir), "runtime"),
+      stateStore, gitRunner, now: () => 1_700_000_000_000 });
+    const pane = (id: string) => ({ scope, missionId: "operator-hand", taskId: `pane-${id}`, workerId: id,
+      ownerKind: "pane" as const, ownership: { files: [], symbols: [], domains: [`pane-${id}`] } });
+    const tab = await canonical.create({ scope, missionId: "space-f954", taskId: "tab", workerId: "space-f954",
+      ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["space-f954"] } });
+    write("tab.txt", "commit da aba\n", tab.worktreePath);
+    git(tab.worktreePath, "add", "tab.txt");
+    git(tab.worktreePath, "commit", "-qm", "tab work");
+    write("README.md", "WIP da aba\n", tab.worktreePath);
+    const tabHead = git(tab.worktreePath, "rev-parse", "HEAD");
+    expect(tabHead).not.toBe(git(root, "rev-parse", "HEAD"));
+
+    const writer = await canonical.create({ ...pane("w"), baseRootRealPath: tab.worktreePath });
+    expect(writer.baseSha).toBe(tabHead);
+    expect(writer.rootRealPath).toBe(scope.rootRealPath);
+    expect(git(writer.worktreePath, "rev-parse", "HEAD")).toBe(tabHead);
+    expect(git(writer.worktreePath, "symbolic-ref", "HEAD")).toBe(writer.branchRef);
+    expect(fs.readFileSync(path.join(writer.worktreePath, "tab.txt"), "utf8")).toBe("commit da aba\n");
+    expect(fs.readFileSync(path.join(writer.worktreePath, "README.md"), "utf8")).toBe("# Test\n");
+
+    const other = path.join(fs.realpathSync(tempDir), "other");
+    fs.mkdirSync(other);
+    git(other, "init", "-q", "-b", "main");
+    git(other, "-c", "user.name=x", "-c", "user.email=x@example.test", "commit", "-q", "--allow-empty", "-m", "x");
+    await expect(canonical.create({ ...pane("x"), baseRootRealPath: other })).rejects.toThrow(/not linked/);
+    await expect(canonical.create({ ...pane("y"), ownerKind: undefined, baseRootRealPath: tab.worktreePath }))
+      .rejects.toThrow(/only pane writers/);
+
+    write("w.txt", "w", writer.worktreePath);
+    git(writer.worktreePath, "add", "w.txt");
+    git(writer.worktreePath, "commit", "-qm", "w");
+    canonical.markFailed(scope, "operator-hand", writer.taskId, "pane closed");
+    git(tab.worktreePath, "merge", "-q", "--ff-only", writer.branchRef.slice("refs/heads/".length));
+    const removed = await canonical.collectIntegratedPaneWorktrees(scope, "operator-hand", () => false);
+    expect(removed.map((record) => record.taskId)).toEqual([writer.taskId]);
+    expect(fs.existsSync(writer.worktreePath)).toBe(false);
+    expect(() => git(root, "rev-parse", "--verify", "--quiet", writer.branchRef)).toThrow();
+    expect(fs.readFileSync(path.join(tab.worktreePath, "README.md"), "utf8")).toBe("WIP da aba\n");
+  });
+
   describe("F-908: coleta de writers de pane", () => {
     const scope = () => projectScope();
     const writer = async (id: string, commit = true) => {

@@ -42,6 +42,21 @@ export async function prepareMissionExecutionScope(scope: ProjectExecutionScope,
 export function assertTabSupportsOperation(scope: ProjectExecutionScope, execution: ProjectExecutionScope, operation: string, sharedTabWorktree = false): void {
   // A missing record cannot erase provenance already minted into a live bearer.
   if (sharedTabWorktree || sharedPaneSpaceId(scope, execution)) {
-    throw new Error(`A operação ${operation} ainda não suporta a pasta isolada da aba. Use os panes da própria aba e a revisão automática da missão; não execute essa operação no checkout principal.`);
+    throw new Error(`A operação ${operation} ainda não suporta a pasta isolada da aba. Use os panes da própria aba e a revisão automática da missão; para escritores em paralelo, use nexus_pane_spawn com isolatedWriter:true (a worktree nasce do HEAD da aba). Não execute essa operação no checkout principal.`);
   }
+}
+
+/**
+ * F-954: de onde nasce o writer isolado. Fora de aba: HEAD do checkout de
+ * coordenação (undefined). Na pasta isolada da aba, comprovada pelo registro
+ * do Main: HEAD da worktree da aba. Bearer marcado como aba sem essa prova:
+ * recusa dizendo o que fazer — nunca cai no checkout principal.
+ */
+export function isolatedWriterBaseRoot(scope: ProjectExecutionScope, execution: ProjectExecutionScope, sharedTabWorktree = false): string | undefined {
+  if (sharedPaneSpaceId(scope, execution)) return execution.rootRealPath;
+  if (sharedTabWorktree) {
+    throw new Error('isolatedWriter: a pasta isolada desta aba não pôde ser comprovada pelo registro do Nexus, então a worktree do writer não tem de onde nascer. ' +
+      'Abra o writer pela missão da aba (o Nexus cria a worktree a partir do HEAD da aba), use readOnly:true para leitura, ou abra um writer por vez na própria aba; não execute essa operação no checkout principal.');
+  }
+  return undefined;
 }

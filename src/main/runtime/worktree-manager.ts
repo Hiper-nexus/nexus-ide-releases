@@ -55,6 +55,7 @@ import {
   assertRepositoryUnchangedAsync,
   assertTaskWorktreeAsync,
   readRepositorySnapshotAsync,
+  readLinkedBaseSnapshotAsync,
   assertTaskWorktree,
   readRepositorySnapshot,
   reconcileInterruptedReservation,
@@ -346,7 +347,15 @@ export class WorktreeManager {
     };
     assertCurrentAuthority();
     const requireClean = input.ownerKind !== "pane";
+    if (input.baseRootRealPath !== undefined && input.ownerKind !== "pane") {
+      throw new Error("only pane writers may start from another worktree");
+    }
     const repository = await readRepositorySnapshotAsync(this.#asyncGit, input.scope, requireClean);
+    assertCurrentAuthority();
+    // F-954: writer da aba isolada nasce do HEAD da aba (sem o WIP dela).
+    const base = input.baseRootRealPath === undefined
+      ? repository
+      : await readLinkedBaseSnapshotAsync(this.#asyncGit, repository, input.baseRootRealPath);
     assertCurrentAuthority();
     const missionId = assertIdentifier(input.missionId, "missionId");
     const taskId = assertIdentifier(input.taskId, "taskId");
@@ -394,7 +403,7 @@ export class WorktreeManager {
       worktreePath,
       branchRef,
       integrationRef: repository.integrationRef,
-      baseSha: repository.headSha,
+      baseSha: base.headSha,
       ownership,
       dependencies,
       status: "reserved",
@@ -538,6 +547,7 @@ export class WorktreeManager {
 
     try {
       await assertRepositoryUnchangedAsync(this.#asyncGit, repository, requireClean);
+      if (base !== repository) await assertRepositoryUnchangedAsync(this.#asyncGit, base, false);
       assertCurrentAuthority();
       if (reservation.resurrected) {
         // The derived path and branch exist by design: the slot was released
@@ -574,7 +584,7 @@ export class WorktreeManager {
           repositoryRoot: repository.rootRealPath,
           worktreePath,
           branchRef,
-          headSha: repository.headSha,
+          headSha: base.headSha,
           git: this.#asyncGit,
         });
         assertCurrentAuthority();
@@ -584,6 +594,7 @@ export class WorktreeManager {
       }
       assertCurrentAuthority();
       await assertRepositoryUnchangedAsync(this.#asyncGit, repository, requireClean);
+      if (base !== repository) await assertRepositoryUnchangedAsync(this.#asyncGit, base, false);
       assertCurrentAuthority();
       return this.#transition(scopeKey, taskKey, (record) => {
         if (record.status !== "reserved" || record.workerId !== workerId ||
@@ -1192,9 +1203,15 @@ export class WorktreeManager {
     // Toda prova abaixo é sobre ESTE commit; a ref é conferida de novo antes de remover.
     const tip = await this.#branchTip(root, candidate.branchRef);
     if (!tip) return "branch-missing";
-    const isMerged = async () => (await git.run(root,
+    const isMergedAt = async (at: string) => (await git.run(at,
       ["merge-base", "--is-ancestor", tip, "HEAD"], { allowFailure: true })).status === 0;
-    const merged = await isMerged();
+    // F-954: o writer nascido de uma aba isolada é integrado na branch da ABA;
+    // contido no HEAD dela vale como contido no checkout.
+    let mergedAt: string | null = null;
+    for (const at of [root, ...this.#tabRoots(scopeKey, root)]) {
+      if (await isMergedAt(at)) { mergedAt = at; break; }
+    }
+    const merged = mergedAt !== null;
     if (!merged && !aged) return "unmerged";
     if (!aged && tip === candidate.baseSha) return "no-commits";
     const entry = await fs.promises.lstat(candidate.worktreePath).catch((error: NodeJS.ErrnoException) => {
@@ -1246,7 +1263,7 @@ export class WorktreeManager {
     try {
       // Revalida depois dos awaits da prova: ref da branch, ancestralidade,
       // HEAD, status e uso da worktree têm de ser os que foram provados.
-      if (await this.#branchTip(root, record.branchRef) !== tip || (merged && !await isMerged())) {
+      if (await this.#branchTip(root, record.branchRef) !== tip || (mergedAt !== null && !await isMergedAt(mergedAt))) {
         return "changed";
       }
       if (real !== undefined) {
@@ -1263,7 +1280,7 @@ export class WorktreeManager {
       }
       // -d (não -D): o Git só apaga a branch se ela estiver mesclada.
       if (await this.#branchTip(root, record.branchRef) !== tip) return "changed";
-      await git.run(root, ["branch", "-d", record.branchRef.slice("refs/heads/".length)], { allowFailure: true });
+      await git.run(mergedAt ?? root, ["branch", "-d", record.branchRef.slice("refs/heads/".length)], { allowFailure: true });
       this.#mutate(scopeKey, (records) => ({
         records: records.filter((current) => current.taskKey !== record.taskKey),
         result: undefined,
@@ -1272,6 +1289,15 @@ export class WorktreeManager {
     } finally {
       this.#collecting.delete(record.taskKey);
     }
+  }
+
+  /** Worktrees das abas isoladas deste checkout que ainda existem no disco. */
+  #tabRoots(scopeKey: string, root: string): string[] {
+    return this.#snapshot(scopeKey).records
+      .filter((record) => record.ownerKind === "pane" && record.taskId === "tab" &&
+        record.rootRealPath === root && fs.existsSync(record.worktreePath) &&
+        fs.realpathSync(record.worktreePath) === record.worktreePath)
+      .map((record) => record.worktreePath);
   }
 
   async #branchTip(root: string, branchRef: string): Promise<string> {

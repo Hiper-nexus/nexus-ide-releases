@@ -278,6 +278,17 @@ const pendingSpawns = new Map<string, PendingSpawn>();
 const pendingSpawnResults = new WeakMap<AbortSignal, OrchPaneSpawnResult>();
 
 /**
+ * F-955: o pane deste spawn ainda está nascendo — a concessão segue pendente
+ * (ACK do renderer sem resultado final, PTY ainda sem vínculo).
+ */
+export function isPaneSpawnPending(paneId: string): boolean {
+  for (const pending of pendingSpawns.values()) {
+    if (pending.request.paneId === paneId && !pending.settled) return true;
+  }
+  return false;
+}
+
+/**
  * `spawnPaneAndMaybePrompt` predates the pending spawn ACK and still expects
  * a session id. Keep the compatibility seam local to this registry: the MCP
  * pane tool consumes the already-resolved pending result and returns it to the
