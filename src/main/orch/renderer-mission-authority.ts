@@ -639,6 +639,18 @@ export class RendererMissionAuthority {
 
 
     restorePersistedPaneAuthority(owner: WebContents, paneId: string): boolean {
+    // Fail-closed: a leitura do escopo passa pelo git (forScope). Se o git
+    // falhar ou estourar o prazo, a autoridade não é restaurada — a exceção
+    // não pode subir até o handler de IPC, que derrubaria o processo principal.
+    try {
+      return this.#restorePersistedPaneAuthority(owner, paneId);
+    } catch (error) {
+      console.warn("[mission-authority] restauração de autoridade do pane pulada", error);
+      return false;
+    }
+  }
+
+    #restorePersistedPaneAuthority(owner: WebContents, paneId: string): boolean {
     let owned: ReturnType<typeof ownedPaneSession>;
     try {
       owned = ownedPaneSession(owner, paneId);
