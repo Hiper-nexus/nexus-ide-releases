@@ -85,6 +85,7 @@ import {
 } from "../regression-gate/regression-gate-handoff";
 import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
 import { withHandoffSubmitResilience } from "./handoff-submit-resilience";
+import { captureWriterHandoffCheckpoint } from "./handoff-checkpoint";
 
 function buildOverclockArtifacts(
   args: Record<string, unknown>,
@@ -518,6 +519,9 @@ const handoffSubmitTool: McpToolDef = {
     ) {
       summary = `${REGRESSION_UNVERIFIED_PREFIX} ${summary}`;
     }
+    // ORC-03: a árvore do writer no fim do turno vira ref oculta, registrada
+    // no próprio handoff; o checkpoint abaixo revalida a autoridade.
+    const checkpointArtifact = await captureWriterHandoffCheckpoint(ctx);
     assertMcpInvocationCurrent(invocation);
     const fromAgent = ctx.agentName ?? ctx.label;
     const atSeconds = Math.floor(Date.now() / 1000);
@@ -577,6 +581,7 @@ const handoffSubmitTool: McpToolDef = {
       ...condensedFullText,
       ...contextDagArtifacts,
       ...(terminalTail ? [{ kind: 'nexus.terminal-tail', payload: terminalTail }] : []),
+      ...(checkpointArtifact ? [checkpointArtifact] : []),
       ...(contractVerdict.kind === "exhausted"
         ? [deliveryContractExhaustedArtifact(contractVerdict, declaredStatus)]
         : []),

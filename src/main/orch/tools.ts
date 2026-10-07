@@ -5,6 +5,7 @@ import { buildMediaTools } from './tools-media';
 import { buildFileTools } from './tools-files';
 import { buildTerminalTools } from './tools-terminal';
 import { buildGitTools } from './tools-git';
+import { buildCheckpointTools } from './tools-checkpoint';
 import { buildPrTools } from './tools-pr';
 import { buildEditorTools } from './tools-editor';
 import { buildVisionTools } from './tools-vision';
@@ -52,6 +53,7 @@ export function buildToolset(): McpToolDef[] {
     ...buildHunkTools(),
     ...buildLspTools(),
     ...buildGitTools(),
+    ...buildCheckpointTools(),
     ...buildPrTools(),
     ...buildEditorTools(),
     ...buildVisionTools(),

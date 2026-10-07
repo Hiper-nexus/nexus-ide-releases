@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { canonicalToolName } from './gate';
+import { CHECKPOINT_REF_PATTERN } from '../git/hidden-checkpoint';
 
 export const MAX_MCP_PAYLOAD_BYTES = 256 * 1024;
 const MAX_MCP_ARG_DEPTH = 8;
@@ -300,6 +301,8 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
     z.object({ count: positiveInt.max(100).optional(), cwd: optionalPathText }).strict(),
   ],
   ['git_branch_list', z.object({ cwd: optionalPathText }).strict()],
+  ['checkpoint_list', z.object({ ref: z.string().regex(CHECKPOINT_REF_PATTERN).optional() }).strict()],
+  ['checkpoint_restore', z.object({ ref: z.string().regex(CHECKPOINT_REF_PATTERN) }).strict()],
   [
     'git_branch_create',
     z.object({ name: z.string().min(1).max(255), cwd: optionalPathText }).strict(),
