@@ -35,6 +35,35 @@ function failure(code: string, message: string): RpcResponse {
 }
 
 describe('loadMobileDiffReviewDiff', () => {
+  it('returns paired review rows keyed by content, leaving syntax colors to the list', async () => {
+    const response: RpcResponse = {
+      id: 'rpc-1',
+      ok: true,
+      result: { kind: 'text', originalContent: 'a\nold\nz\n', modifiedContent: 'a\nnew\nz\n' },
+      _meta: { runtimeId: 'runtime-1' }
+    }
+    const diff = await loadMobileDiffReviewDiff({
+      client: clientWith(response),
+      worktreeId: 'wt-1',
+      item: { ...DELETED_ITEM, status: 'modified' },
+      branchCompare: null
+    })
+
+    expect(diff.kind).toBe('ready')
+    if (diff.kind !== 'ready') {
+      return
+    }
+    expect(diff.cacheKey).toEqual(expect.any(String))
+    expect(diff.lines.map(({ kind, text, pairIndex }) => ({ kind, text, pairIndex }))).toEqual([
+      { kind: 'context', text: 'a', pairIndex: null },
+      { kind: 'delete', text: 'old', pairIndex: 2 },
+      { kind: 'add', text: 'new', pairIndex: 1 },
+      { kind: 'context', text: 'z', pairIndex: null }
+    ])
+    expect(diff.lines[0]).not.toHaveProperty('segments')
+    expect(diff.hunks).toHaveLength(1)
+  })
+
   it('shows the too-large state for an oversized deleted diff', async () => {
     await expect(
       loadMobileDiffReviewDiff({

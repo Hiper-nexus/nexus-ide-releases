@@ -35,6 +35,9 @@ export const colors = {
   gitDecorationDeleted: '#c74e39',
   diffAddedBg: 'rgba(129, 184, 139, 0.1)',
   diffDeletedBg: 'rgba(199, 78, 57, 0.11)',
+  // Word diff: the changed span inside an added/deleted row, a stronger tint of the row.
+  diffAddedWordBg: 'rgba(129, 184, 139, 0.32)',
+  diffDeletedWordBg: 'rgba(199, 78, 57, 0.36)',
 
   syntaxComment: '#6a9955',
   syntaxKeyword: '#569cd6',

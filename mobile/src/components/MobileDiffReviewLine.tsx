@@ -1,14 +1,15 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, Text, View, type TextStyle } from 'react-native'
 import { MessageSquare } from 'lucide-react-native'
 import type { DiffComment } from '../../../src/shared/diff-comment-types'
 import type { MobileDiffLine } from '../session/mobile-diff-lines'
-import type { MobileHighlightedDiffLine } from '../session/mobile-file-syntax'
 import { mobileDiffLineNumber, mobileDiffLinePrefix } from '../source-control/mobile-diff-format'
+import type { MobileReviewToken } from '../source-control/mobile-review-model'
 import { colors, spacing, typography } from '../theme/mobile-theme'
-import { MobileSyntaxSegments } from './MobileSyntaxSegments'
 
 type Props = {
-  line: MobileHighlightedDiffLine<MobileDiffLine>
+  line: MobileDiffLine
+  /** Syntax + word-diff tokens for this row; null until its block is highlighted. */
+  tokens?: ReadonlyArray<MobileReviewToken> | null
   comments: readonly DiffComment[]
   staleCommentIds: ReadonlySet<string>
   active: boolean
@@ -26,8 +27,54 @@ function canCommentOnLine(line: MobileDiffLine): boolean {
   return line.kind !== 'delete' && line.newLineNumber !== undefined
 }
 
+// Shiki FontStyle bit flags.
+const FONT_STYLE_ITALIC = 1
+const FONT_STYLE_BOLD = 2
+const FONT_STYLE_UNDERLINE = 4
+const tokenStyleCache = new Map<string, TextStyle>()
+
+function tokenStyle(token: MobileReviewToken): TextStyle {
+  const fontStyle = token.fontStyle ?? 0
+  const key = `${token.color ?? ''}:${fontStyle}`
+  let style = tokenStyleCache.get(key)
+  if (!style) {
+    style = {
+      color: token.color ?? colors.textPrimary,
+      ...(fontStyle & FONT_STYLE_ITALIC ? { fontStyle: 'italic' as const } : {}),
+      ...(fontStyle & FONT_STYLE_BOLD ? { fontWeight: '700' as const } : {}),
+      ...(fontStyle & FONT_STYLE_UNDERLINE ? { textDecorationLine: 'underline' as const } : {})
+    }
+    tokenStyleCache.set(key, style)
+  }
+  return style
+}
+
+function MobileReviewTokens({
+  tokens,
+  kind
+}: {
+  tokens: ReadonlyArray<MobileReviewToken>
+  kind: MobileDiffLine['kind']
+}) {
+  const wordStyle =
+    kind === 'add' ? styles.addedWord : kind === 'delete' ? styles.deletedWord : null
+  return (
+    <>
+      {tokens.map((token, index) => {
+        const style = tokenStyle(token)
+        return (
+          <Text key={index} style={token.diffHighlight && wordStyle ? [style, wordStyle] : style}>
+            {token.content}
+          </Text>
+        )
+      })}
+    </>
+  )
+}
+
 export function MobileDiffReviewLine({
   line,
+  tokens,
   comments,
   staleCommentIds,
   active,
@@ -66,7 +113,11 @@ export function MobileDiffReviewLine({
         }
       >
         <Text style={styles.codeText}>
-          <MobileSyntaxSegments segments={line.segments} />
+          {tokens && tokens.length > 0 ? (
+            <MobileReviewTokens tokens={tokens} kind={line.kind} />
+          ) : (
+            line.text
+          )}
         </Text>
       </Pressable>
       {comments.length > 0 ? (
@@ -141,6 +192,12 @@ const styles = StyleSheet.create({
     fontFamily: typography.monoFamily,
     fontSize: 12,
     lineHeight: 18
+  },
+  addedWord: {
+    backgroundColor: colors.diffAddedWordBg
+  },
+  deletedWord: {
+    backgroundColor: colors.diffDeletedWordBg
   },
   notes: {
     width: 40,
