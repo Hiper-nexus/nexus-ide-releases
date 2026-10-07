@@ -1,18 +1,21 @@
 // Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
 // Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: lista virtualizada
-// com @legendapp/list (uso de LegendList espelhado de MessagesTimeline.tsx);
-// scroll ancora/follow portados de timelineScrollAnchoring.ts para
-// lib/activity-timeline-scroll.ts; sem composer overlay (inset 0).
-import { memo, useCallback, useMemo, useState } from 'react';
+// See third_party/licenses/t3code-MIT.txt. Nexus changes: só o uso do
+// LegendList de MessagesTimeline.tsx (data/extraData/keyExtractor/renderItem,
+// estimatedItemSize, maintainScrollAtEnd suspenso durante a expansão de um
+// detalhe, MVCP); a lista abre no topo como antes (sem initialScrollAtEnd nem
+// memória de posição) e remonta por missão+filtro; parse, filtros, cards e
+// teclado continuam os do Nexus.
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LegendList } from '@legendapp/list/react';
 import type { MissionEvent } from '../../../shared/mission-events';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 import {
+  ACTIVITY_TIMELINE_FOLLOW_THRESHOLD,
+  ACTIVITY_TIMELINE_MAINTAIN_VISIBLE_CONTENT_POSITION,
   createActivityScopeKey,
-  isAtTimelineEnd,
-  readTimelinePosition,
-  rememberTimelinePosition,
+  resolveMaintainScrollAtEnd,
+  scheduleDisclosureSettle,
 } from '../../lib/activity-timeline-scroll';
 
 export type ActivityCategory = 'all' | 'tools' | 'turns' | 'decisions';
@@ -30,7 +33,6 @@ export interface TimelineItemModel {
   readonly status: 'running' | 'completed' | 'failed';
   readonly detail?: string;
   readonly icon: PixelIconName;
-  readonly runId: string;
 }
 
 function classifyToolKind(toolName: string): { kind: ToolKind; label: string; icon: PixelIconName } {
@@ -78,7 +80,6 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
     if (event.missionId !== missionId) continue;
     const p = (event.payload ?? {}) as Record<string, unknown>;
     const detail = stringifyPayload(p);
-    const runId = typeof event.runId === 'string' ? event.runId : '';
 
     switch (event.type) {
       case 'tool.invoked':
@@ -100,7 +101,6 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
           status: 'running',
           detail,
           icon: classification.icon,
-          runId,
         });
         break;
       }
@@ -122,7 +122,6 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
           status: isOk ? 'completed' : 'failed',
           detail,
           icon: classification.icon,
-          runId,
         });
         break;
       }
@@ -139,7 +138,6 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
           status: 'running',
           detail,
           icon: 'status-busy',
-          runId,
         });
         break;
 
@@ -155,7 +153,6 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
           status: p.outcome === 'error' ? 'failed' : 'completed',
           detail,
           icon: 'check',
-          runId,
         });
         break;
 
@@ -171,7 +168,6 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
           status: 'running',
           detail,
           icon: 'user',
-          runId,
         });
         break;
 
@@ -186,7 +182,6 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
           status: p.status === 'error' ? 'failed' : (p.status === 'completed' ? 'completed' : 'running'),
           detail,
           icon: 'status-busy',
-          runId,
         });
         break;
 
@@ -202,7 +197,6 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
           status: 'completed',
           detail,
           icon: 'status-idle',
-          runId,
         });
         break;
     }
@@ -219,8 +213,9 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-const TIMELINE_MAINTAIN_SCROLL_AT_END = { animated: false };
-const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = { animated: true };
+// Card fechado medido no Chromium: 40 px + 8 px de padding-bottom do item. O
+// Legend troca pela média medida assim que as primeiras linhas montam.
+const TIMELINE_ESTIMATED_ITEM_SIZE = 48;
 
 function timelineKeyExtractor(item: TimelineItemModel): string {
   return item.id;
@@ -303,8 +298,9 @@ export function AgentActivityTimeline({
 }) {
   const [filter, setFilter] = useState<ActivityCategory>('all');
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
-  // Começa grudado no fim; qualquer scroll para cima desliga o follow.
-  const [stickToEnd, setStickToEnd] = useState(true);
+  // Enquanto um detalhe abre/fecha, o follow do fim fica suspenso (2 frames).
+  const [disclosureSettling, setDisclosureSettling] = useState(false);
+  const cancelDisclosureSettleRef = useRef<(() => void) | null>(null);
 
   const allItems = useMemo(() => parseTimelineItems(events, missionId), [events, missionId]);
 
@@ -325,48 +321,22 @@ export function AgentActivityTimeline({
     [allItems],
   );
 
-  // Trocar de missão ou filtro remonta a lista: nenhuma âncora antiga é
-  // reaproveitada (posição, expansão e follow voltam ao fim).
+  // A key da lista: trocar de missão ou filtro remonta o Legend sem herdar
+  // âncora, offset ou follow do escopo anterior. A expansão dos cards é estado
+  // deste componente e sobrevive à troca de filtro, como antes da virtualização.
   const scopeKey = createActivityScopeKey(missionId, filter);
 
-  const expandedKey = useMemo(
-    () =>
-      Object.keys(expandedIds)
-        .filter((id) => expandedIds[id])
-        .sort()
-        .join(''),
-    [expandedIds],
-  );
+  useEffect(() => () => cancelDisclosureSettleRef.current?.(), []);
 
   const toggleExpanded = useCallback((id: string) => {
+    cancelDisclosureSettleRef.current?.();
+    setDisclosureSettling(true);
+    cancelDisclosureSettleRef.current = scheduleDisclosureSettle(() => {
+      cancelDisclosureSettleRef.current = null;
+      setDisclosureSettling(false);
+    });
     setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
-
-  const handleScroll = useCallback(
-    (e: { readonly currentTarget?: unknown; readonly target?: unknown }) => {
-      const viewport = (e.currentTarget ?? e.target) as {
-        scrollTop?: unknown;
-        scrollHeight?: unknown;
-        clientHeight?: unknown;
-      } | null;
-      if (!viewport || typeof viewport !== 'object') return;
-      const atEnd = isAtTimelineEnd({
-        scrollTop: Number(viewport.scrollTop),
-        scrollHeight: Number(viewport.scrollHeight),
-        clientHeight: Number(viewport.clientHeight),
-        threshold: 1,
-      });
-      setStickToEnd(atEnd);
-      const last = filteredItems[filteredItems.length - 1];
-      rememberTimelinePosition(scopeKey, {
-        itemId: last?.id ?? '',
-        offsetWithinItem: 0,
-        scrollOffset: Number(viewport.scrollTop) || 0,
-        atEnd,
-      });
-    },
-    [filteredItems, scopeKey],
-  );
 
   const renderItem = useCallback(
     ({ item }: { readonly item: TimelineItemModel }) => (
@@ -374,16 +344,6 @@ export function AgentActivityTimeline({
     ),
     [expandedIds, toggleExpanded],
   );
-
-  const initialScrollIndex = useMemo(() => {
-    if (filteredItems.length === 0) return undefined;
-    const remembered = readTimelinePosition(scopeKey);
-    if (remembered && !remembered.atEnd && remembered.itemId) {
-      const index = filteredItems.findIndex((item) => item.id === remembered.itemId);
-      if (index >= 0) return index;
-    }
-    return filteredItems.length - 1;
-  }, [filteredItems, scopeKey]);
 
   const reducedMotion = useMemo(() => prefersReducedMotion(), []);
 
@@ -439,23 +399,19 @@ export function AgentActivityTimeline({
       <LegendList<TimelineItemModel>
         key={scopeKey}
         data={filteredItems}
-        extraData={`${scopeKey}:${filteredItems.length}:${expandedKey}`}
+        // Linhas visíveis re-renderizam quando um card abre/fecha.
+        extraData={expandedIds}
         keyExtractor={timelineKeyExtractor}
         renderItem={renderItem}
-        estimatedItemSize={56}
-        initialScrollIndex={initialScrollIndex}
-        maintainScrollAtEnd={
-          stickToEnd
-            ? reducedMotion
-              ? TIMELINE_MAINTAIN_SCROLL_AT_END
-              : TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-            : false
-        }
-        maintainScrollAtEndThreshold={1}
-        // Expansão acima da viewport conserva a posição; sem overlay de
-        // composer o deslocamento é só a âncora da lista.
-        maintainVisibleContentPosition
-        onScroll={handleScroll}
+        estimatedItemSize={TIMELINE_ESTIMATED_ITEM_SIZE}
+        // Contêiner reaproveitado remonta a linha: o card focado nunca passa a
+        // mostrar outro evento.
+        recycleItems={false}
+        // Sem initialScrollIndex/initialScrollAtEnd: abre no topo, como antes.
+        // O stream só puxa a lista se ela já estava no fim (banda do Legend).
+        maintainScrollAtEnd={resolveMaintainScrollAtEnd({ disclosureSettling, reducedMotion })}
+        maintainScrollAtEndThreshold={ACTIVITY_TIMELINE_FOLLOW_THRESHOLD}
+        maintainVisibleContentPosition={ACTIVITY_TIMELINE_MAINTAIN_VISIBLE_CONTENT_POSITION}
         className="agent-timeline__list"
         role="list"
       />
