@@ -68,6 +68,8 @@ import {
 import { maskAccountLabel } from '../../shared/account-choice';
 import { detectLimit } from './limit-detector';
 import { createVisualTaskRequirement, visualTaskAtSpawn } from './visual-handoff-gate';
+import { CONTEXT_HANDOFF_BUDGET_ERROR } from './context-handoff-budget';
+import { forgetPaneTaskReroute, registerPaneTaskReroute } from './pane-task-reroute';
 
 const meta = {
   missionId: 'mission-1',
@@ -158,6 +160,43 @@ describe('planMainOwnedFailoverRespawn (failover de conta em pane de missão)', 
     expect(plan).toMatchObject({ action: 'skip' });
   });
 
+  it('ORC-05: troca de CLI leva o pack intacto + recorte com orçamento dentro da faixa do detector', () => {
+    const pack = `${FAILOVER_HANDOFF_HEADER}\n${'Pedido corrente da troca de CLI. '.repeat(1_800)}\n${FAILOVER_HANDOFF_FOOTER}`;
+    const body = pack.slice(0, pack.lastIndexOf(FAILOVER_HANDOFF_FOOTER));
+    const terminal = Array.from({ length: 300 }, (_, i) => `saída ${i} ${'x'.repeat(90)}`).join('\n');
+    const plan = planMainOwnedFailoverRespawn({
+      adapterId: 'codex', toModel: 'gpt-5.5', meta, fromAccountLabel: 'fixture', reason: 'quota',
+      continuityPack: pack, paneId: 'old-pane', originalRequest: 'Portar o ORC-05 para o Nexus',
+      scrollbackExcerpt: `${terminal}\nAPI Error: 401 Unauthorized\nTOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123`,
+    });
+    expect(plan.action).toBe('respawn');
+    if (plan.action !== 'respawn') return;
+    const prompt = plan.options.initialPrompt ?? '';
+    // Pedido corrente byte a byte intacto; histórico antes do único footer.
+    expect(prompt.startsWith(body)).toBe(true);
+    expect(prompt.endsWith(FAILOVER_HANDOFF_FOOTER)).toBe(true);
+    expect(prompt.indexOf(FAILOVER_HANDOFF_FOOTER)).toBe(prompt.length - FAILOVER_HANDOFF_FOOTER.length);
+    const history = prompt.slice(body.length);
+    expect(Buffer.byteLength(JSON.stringify(history))).toBeLessThanOrEqual(16_000);
+    expect(history).toContain('Portar o ORC-05 para o Nexus');
+    expect(history).toContain('previous pane: old-pane');
+    expect(history).toContain('nexus_mission_get({missionId:"mission-1"})');
+    expect(history).toMatch(/omitted [1-9]\d* items/);
+    expect(history).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123');
+    expect(detectLimit(prompt)).toBeNull();
+    expect(detectLimit(prompt.replace(FAILOVER_HANDOFF_HEADER, ''))).toBeNull();
+  });
+
+  it('ORC-05: estouro do orçamento pula o respawn com erro — o pack nunca é encurtado', () => {
+    const pack = `${FAILOVER_HANDOFF_HEADER}\n${'p'.repeat(100_000)}\n${FAILOVER_HANDOFF_FOOTER}`;
+    const plan = planMainOwnedFailoverRespawn({
+      adapterId: 'codex', meta, fromAccountLabel: 'fixture', reason: 'quota', continuityPack: pack,
+    });
+    expect(plan.action).toBe('skip');
+    if (plan.action !== 'skip') return;
+    expect(plan.reason).toContain(CONTEXT_HANDOFF_BUDGET_ERROR);
+  });
+
   it('pula meta ausente (pane main-owned não registrado)', () => {
     const plan = planMainOwnedFailoverRespawn({
       adapterId: 'claude',
@@ -234,6 +273,47 @@ describe('respawnMainOwnedPaneWithAccount', () => {
     release({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
     await expect(result).resolves.toBe(true);
     expect(finished).toBe(true);
+  });
+
+  it('ORC-05: o pedido guardado do spawn entra no recorte da troca de conta; F-520 não recebe recorte', async () => {
+    registerPaneTaskReroute({
+      paneId: 'old-pane', adapterId: 'claude', missionId: 'mission-1', role: 'worker',
+      callerSessionId: 'maestro', routeTask: 'Implementar o motor de contexto com orçamento',
+      lineageId: 'old-pane', operatorOpened: false, pinnedRuntime: false, generation: 0,
+      reroute: async () => ({ ok: false, error: 'unused' }) as never, hasAlternative: () => false,
+    });
+    try {
+      deps.spawnAsync.mockResolvedValue({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+      await expect(respawnMainOwnedPaneWithAccount({
+        paneId: 'old-pane', adapterId: 'claude', toAccountId: 'account-b',
+        fromAccountLabel: 'fixture', reason: 'quota', scrollbackExcerpt: 'último passo feito',
+      })).resolves.toBe(true);
+      const account = deps.spawnAsync.mock.calls[0]![0] as { initialPrompt: string };
+      expect(account.initialPrompt).toContain('[Historical user; original_request; item=request]');
+      expect(account.initialPrompt).toContain('Implementar o motor de contexto com orçamento');
+      expect(account.initialPrompt).toContain('último passo feito');
+      expect(account.initialPrompt).toContain('the account switch was already decided');
+
+      await expect(respawnMainOwnedPaneWithAccount({
+        paneId: 'old-pane', adapterId: 'claude', toModel: 'claude-sonnet-5-5',
+        fromAccountLabel: 'fixture', reason: 'model rejected',
+      })).resolves.toBe(true);
+      const model = deps.spawnAsync.mock.calls[1]![0] as { initialPrompt: string };
+      expect(model.initialPrompt).not.toContain('Historical context');
+      expect(model.initialPrompt).not.toContain('Implementar o motor de contexto');
+    } finally {
+      forgetPaneTaskReroute('old-pane');
+    }
+  });
+
+  it('ORC-05: recorte que não cabe recusa a troca antes de matar a sessão', async () => {
+    deps.spawnAsync.mockResolvedValue({ requestId: 'unexpected', ok: true, paneId: 'unexpected', sessionId: 'unexpected' });
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'codex', fromAccountLabel: 'fixture', reason: 'quota',
+      continuityPack: `${FAILOVER_HANDOFF_HEADER}\n${'p'.repeat(100_000)}\n${FAILOVER_HANDOFF_FOOTER}`,
+    })).resolves.toBe(false);
+    expect(deps.terminate).not.toHaveBeenCalled();
+    expect(deps.spawnAsync).not.toHaveBeenCalled();
   });
 
   it('reports an auth gate refusal as failed failover', async () => {

@@ -19,9 +19,16 @@ import { getMainOwnedPane } from './main-owned-pane-runtime';
 import { spawnMainOwnedMissionPaneAsync } from './pane-registry';
 import { orchTerminateSession } from '../pty/pty-manager';
 import {
+  FAILOVER_HANDOFF_FOOTER,
   buildContinuityPack,
+  stripNestedHandoffPacks,
   type ContinuityPackInput,
 } from '../../shared/failover-handoff';
+import {
+  prepareContextHandoff,
+  type HandoffHistoricalMessage,
+} from './context-handoff-budget';
+import { getPaneTaskReroute } from './pane-task-reroute';
 import { parseGitPorcelain } from './worker-files-modified';
 import {
   AsyncProcessGitRunner,
@@ -60,6 +67,10 @@ export interface MainOwnedFailoverPlanInput {
    * `adapterId` é então a CLI NOVA, escolhida pela rota.
    */
   readonly continuityPack?: string;
+  /** ORC-05: pane de origem — ponteiro auditável do recorte de contexto. */
+  readonly paneId?: string;
+  /** ORC-05: pedido original da tarefa (memória do Main), item do recorte. */
+  readonly originalRequest?: string;
 }
 
 export type MainOwnedFailoverPlan =
@@ -139,6 +150,9 @@ export async function collectGitTaskState(
  * motivo cru português de antes: o texto passa pelas máscaras anti-detector
  * e carrega arquivos/diff/próximo passo. F-520 (rotação de modelo, mesma
  * conta) mantém o prompt curto próprio — não é handoff entre credenciais.
+ * ORC-05: quando a conversa nativa não pode ser retomada, o pack ganha um
+ * recorte com orçamento (pedido original + terminal recente + ponteiros);
+ * se nem isso cabe, o plano é `skip` com o erro — o pack nunca é encurtado.
  */
 export function planMainOwnedFailoverRespawn(
   input: MainOwnedFailoverPlanInput,
@@ -153,13 +167,28 @@ export function planMainOwnedFailoverRespawn(
   // F-520: o prompt de modelo NUNCA ecoa o reason cru — o texto canónico
   // ("model requires a newer version", …) casaria de novo no detector ao ser
   // digitado no PTY novo e dispararia um failover fantasma na sessão sadia.
-  const initialPrompt = input.continuityPack
-    ? input.continuityPack
-    : input.toModel
-    ? `O modelo anterior foi rejeitado pelo provider. ` +
+  let initialPrompt: string;
+  if (!nativeResumeImpossible(input)) {
+    initialPrompt =
+      `O modelo anterior foi rejeitado pelo provider. ` +
       `Você foi religado automaticamente no modelo "${input.toModel}" — ` +
-      `continuar a tarefa de onde parou, sem repetir trabalho já entregue.`
-    : buildCrossAccountPack(input, meta);
+      `continuar a tarefa de onde parou, sem repetir trabalho já entregue.`;
+  } else {
+    // ORC-05: a conversa nativa não atravessa a troca — o pedido corrente (o
+    // pack) segue intacto e o histórico entra como recorte com orçamento. O
+    // trecho do terminal vai no recorte (itens inteiros), não duplicado no pack.
+    const currentRequest = input.continuityPack ?? buildCrossAccountPack(input, meta);
+    const handoff = prepareContextHandoff({
+      currentRequest,
+      messages: handoffHistory(input),
+      coverage: handoffCoverage(input, meta),
+      compactCoverage:
+        `Nexus context handoff (mission ${meta.missionId}). ` +
+        `Recover omitted history with nexus_mission_get({missionId:"${meta.missionId}"}).`,
+    });
+    if (!handoff.ok) return { action: 'skip', reason: handoff.message };
+    initialPrompt = withHandoffContext(currentRequest, handoff.context);
+  }
   return {
     action: 'respawn',
     options: {
@@ -204,11 +233,83 @@ function buildCrossAccountPack(
     limitResetsAt: input.limitResetsAt,
     limitCooldownMs: input.limitCooldownMs,
     nextStep: input.nextStep,
-    scrollbackExcerpt: input.scrollbackExcerpt,
     touchedFiles: input.touchedFiles,
     diffStat: input.diffStat,
   };
   return buildContinuityPack(packInput);
+}
+
+/**
+ * ORC-05: o respawn main-owned é SEMPRE sessão nova. Troca de CLI (pack
+ * pronto) e troca de conta (ids de sessão do provider são da conta) não têm
+ * como retomar a conversa nativa; só a rotação de modelo F-520 (mesma conta,
+ * mesma CLI) fica de fora do recorte.
+ */
+export function nativeResumeImpossible(
+  input: Pick<MainOwnedFailoverPlanInput, 'continuityPack' | 'toModel'>,
+): boolean {
+  return Boolean(input.continuityPack) || !input.toModel;
+}
+
+/** Granularidade dos itens do terminal: inteiros no recorte, sem corte. */
+const TERMINAL_ITEM_CHARS = 2_000;
+
+/** Pedido original + trecho recente do terminal, em ordem cronológica. */
+function handoffHistory(input: MainOwnedFailoverPlanInput): HandoffHistoricalMessage[] {
+  const messages: HandoffHistoricalMessage[] = [];
+  const request = input.originalRequest?.trim();
+  if (request) {
+    messages.push({ role: 'user', kind: 'original_request', itemId: 'request', text: request });
+  }
+  if (!input.scrollbackExcerpt) return messages;
+  const chunks: string[] = [];
+  let chunk = '';
+  for (const raw of stripNestedHandoffPacks(input.scrollbackExcerpt).split('\n')) {
+    for (let at = 0; at < Math.max(raw.length, 1); at += TERMINAL_ITEM_CHARS) {
+      const line = raw.slice(at, at + TERMINAL_ITEM_CHARS);
+      if (chunk && chunk.length + 1 + line.length > TERMINAL_ITEM_CHARS) {
+        chunks.push(chunk);
+        chunk = '';
+      }
+      chunk = chunk ? `${chunk}\n${line}` : line;
+    }
+  }
+  chunks.push(chunk);
+  chunks
+    .filter((text) => text.trim())
+    .forEach((text, index) =>
+      messages.push({
+        role: 'assistant',
+        kind: 'terminal_output',
+        itemId: `terminal-${index + 1}`,
+        text: text.trim(),
+      }),
+    );
+  return messages;
+}
+
+/** Ponteiros auditáveis: de onde veio o recorte e como buscar o resto. */
+function handoffCoverage(input: MainOwnedFailoverPlanInput, meta: PaneOrchMeta): string {
+  const change = input.continuityPack ? 'CLI' : 'account';
+  return [
+    `Nexus context handoff: the ${change} switch was already decided and the previous provider conversation cannot be resumed in this new session.`,
+    `Mission: ${meta.missionId}; agent: ${meta.agentName ?? 'unknown'}; previous pane: ${input.paneId ?? 'unknown'}.`,
+    `Recover omitted history with nexus_mission_get({missionId:"${meta.missionId}"}) and nexus_handoff_list; the worktree's git status and diff are the real state of the work.`,
+  ].join('\n');
+}
+
+/**
+ * O recorte entra DENTRO da faixa header→footer do pack (o limit-detector
+ * ignora a faixa enquanto ela está na tela), logo antes do footer. O corpo do
+ * pedido corrente fica byte a byte intacto.
+ */
+function withHandoffContext(currentRequest: string, context: string): string {
+  const footerAt = currentRequest.lastIndexOf(FAILOVER_HANDOFF_FOOTER);
+  const body = footerAt >= 0 ? currentRequest.slice(0, footerAt) : `${currentRequest}\n`;
+  return (
+    `${body}Historical context (budgeted Nexus selection, not a summary):\n` +
+    `${context}\n${FAILOVER_HANDOFF_FOOTER}`
+  );
 }
 
 /**
@@ -279,6 +380,9 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     diffStat: git.diffStat,
     toAccountLabel: input.toAccountLabel,
     continuityPack: input.continuityPack,
+    paneId: input.paneId,
+    // O pedido guardado do spawn (só memória do Main) é o pedido original.
+    originalRequest: getPaneTaskReroute(input.paneId)?.routeTask ?? undefined,
   });
   if (plan.action === 'skip') {
     console.info(
