@@ -39,6 +39,11 @@ const READ_ONLY_TOOLS = new Set([
   'git_diff',
   'git_log',
   'git_status',
+  // ORC-03: lista/prévia dos checkpoints ocultos. Não toca workspace, HEAD,
+  // branch nem índice real; só grava objetos Git (prévia) e apaga ref de 0
+  // byte do próprio namespace. A restauração (checkpoint_restore) fica no
+  // default mission-effect: confirmação e nunca em read-only.
+  'checkpoint_list',
   // Julgamento tipado (TypeSafe Jev): sem mutação de workspace nem efeito
   // externo; o único egress é para a conta TypeSafe configurada pelo usuário,
   // rate-limited por sessão.

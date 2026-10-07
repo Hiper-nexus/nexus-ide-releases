@@ -55,6 +55,7 @@ import {
   isPlaceholderSummary,
 } from "./legacy-handoff";
 import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
+import { captureWriterHandoffCheckpoint } from "./handoff-checkpoint";
 import { normalizeFilesModified } from "./worker-files-modified";
 import { REGRESSION_UNVERIFIED_PREFIX } from "../regression-gate/regression-gate-handoff";
 import {
@@ -449,6 +450,8 @@ async function preparePtyHandoff(
   }) : undefined;
   const visualPending = visual?.required === true && !visual.verified;
   if (visualPending) summary = `[verificação visual pendente] ${summary}`;
+  // ORC-03: mesmo checkpoint oculto do handoff MCP (fim do turno do writer).
+  const checkpointArtifact = await captureWriterHandoffCheckpoint(ctx);
   return Object.freeze({
     visualPending,
     sessionId,
@@ -464,7 +467,8 @@ async function preparePtyHandoff(
           ? "partial"
           : payload.status,
     artifacts: [...payload.artifacts, ...regressionArtifact, ...jevOutcome.artifacts,
-      ...(visual?.required ? [{ kind: 'nexus.visualVerification', payload: visual }] : [])],
+      ...(visual?.required ? [{ kind: 'nexus.visualVerification', payload: visual }] : []),
+      ...(checkpointArtifact ? [checkpointArtifact] : [])],
     rawArgs,
     rawPayloadSha256: handoffRawPayloadSha256(rawArgs),
     summary,

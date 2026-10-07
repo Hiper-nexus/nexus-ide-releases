@@ -903,6 +903,22 @@ saber isto antes de mexer:
   Read/wait continuam disponíveis dentro da missão. O handoff do writer deve
   listar arquivos tocados e diff; branches isoladas não têm merge automático.
 
+## Checkpoint oculto do writer (ORC-03)
+
+- Todo handoff de worker escritor de missão (MCP e PTY/turn-end) fotografa a
+  raiz de execução dele (worktree isolada ou da aba, nunca a de coordenação) em
+  `refs/nexus-checkpoint/<32 hex do escopo missão+raiz>/ordinal/<n>` e grava a
+  ref no artifact `nexus.checkpoint` do próprio handoff (`src/main/git/hidden-checkpoint.ts`).
+- A captura não move HEAD, não cria branch e não escreve o índice real (índice
+  privado em tmp + write-tree + commit-tree com identidade fixa do Nexus).
+  Mesma árvore sobre o mesmo HEAD reaproveita o ordinal (replay do handoff dá
+  o mesmo artifact). Sparse checkout é recusado com erro visível no artifact.
+- Ref de 0 byte (rename sem fsync) é ignorada e apagada na captura e na listagem.
+- Restaurar é só explícito: `nexus_checkpoint_list` (leitura; com `ref`, prévia
+  do que sobrescreve/cria) e `nexus_checkpoint_restore` (efeito de missão). A
+  restauração guarda o estado atual como checkpoint novo, escreve só arquivos do
+  checkpoint, nunca apaga nada e recusa ref fora das raízes da missão.
+
 ## Grok: não spawna `grok models` (ciclo 5)
 
 - O binário `grok models` faz silent refresh e rotaciona o refresh token a
