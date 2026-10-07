@@ -35,6 +35,22 @@ describe('createAdoptionRepaintTape', () => {
     expect(tape.read()).toBe('efgh');
   });
 
+  it('retains only replay-safe output: old terminal queries are dropped, even split across chunks (DSK-01)', () => {
+    const tape = createAdoptionRepaintTape();
+    tape.retain('\x1b[2Jframe\x1b[');
+    tape.retain('6n\x1b]11;');
+    tape.retain('?\x07\x1b[>c\x1b[32mok\x1b[0m');
+    // Rewriting a query makes the new xterm answer it straight into the PTY.
+    expect(tape.read()).toBe('\x1b[2Jframe\x1b[32mok\x1b[0m');
+  });
+
+  it('applies the tail cap to the sanitized output', () => {
+    const tape = createAdoptionRepaintTape(8);
+    tape.retain('12345\x1b[c');
+    tape.retain('67890');
+    expect(tape.read()).toBe('34567890');
+  });
+
   it('caps at a bounded default so a chatty adoption cannot pin the renderer', () => {
     expect(ADOPTION_TAPE_MAX_CHARS).toBeGreaterThan(0);
     const tape = createAdoptionRepaintTape();

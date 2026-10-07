@@ -210,6 +210,29 @@ describe('preload PTY delivery', () => {
     expect(recoverInvokes()).toEqual([]);
   });
 
+  it('replay of an adopted session delivers the retained window inside the pull, before any live chunk (DSK-01)', async () => {
+    const api = await loadPreloadApi();
+    const received: string[] = [];
+    api.pty.onData('s-adopted', (data) => received.push(data));
+    electronMock.ipcRenderer.invoke.mockResolvedValue([
+      { sessionId: 's-adopted', sequence: 1, data: 'old ' },
+      { sessionId: 's-adopted', sequence: 2, data: 'frame' },
+    ]);
+
+    await api.pty.replay('s-adopted');
+
+    // Delivered before replay() settles: the renderer sanitizes exactly that
+    // window. Dropping it left the old frame to the 15 s recover, raw.
+    expect(received).toEqual(['old ', 'frame']);
+    expect(recoverInvokes()).toEqual([{ sessionId: 's-adopted', afterSequence: 0 }]);
+    expect(ackSends().map((ack) => ack.sequence)).toEqual([1, 2]);
+
+    // Live output continues contiguously after the replayed window.
+    emitPtyData({ sessionId: 's-adopted', sequence: 3, data: 'live' });
+    expect(received).toEqual(['old ', 'frame', 'live']);
+    expect(recoverInvokes()).toHaveLength(1);
+  });
+
   it('single-flights the recover pull while a gap is outstanding', async () => {
     const api = await loadPreloadApi();
     const received: string[] = [];

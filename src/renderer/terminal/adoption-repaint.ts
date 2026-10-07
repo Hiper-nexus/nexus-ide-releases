@@ -16,6 +16,8 @@
  * Pure helpers with no Electron or xterm imports so they stay unit-testable.
  */
 
+import { createReplaySanitizer } from '../../shared/terminal-replay-sanitizer';
+
 /**
  * Bound on the retained frame. A fullscreen TUI redraw at 120 columns is a
  * few tens of KB; this holds several of them while keeping a chatty adoption
@@ -23,10 +25,14 @@
  */
 export const ADOPTION_TAPE_MAX_CHARS = 256_000;
 
-/** Bounded, tail-preserving copy of the bytes painted during adoption. */
+/**
+ * Bounded, tail-preserving copy of the output painted during adoption, kept
+ * replay-safe: the tape is written into the xterm AGAIN, and a terminal query
+ * in it (DA1, CPR, OSC 11…) would make xterm answer into the PTY (DSK-01).
+ */
 export interface AdoptionRepaintTape {
   retain(data: string): void;
-  /** Everything still retained, oldest first. */
+  /** Everything still retained, oldest first, without terminal queries. */
   read(): string;
   clear(): void;
 }
@@ -35,18 +41,21 @@ export function createAdoptionRepaintTape(
   maxChars: number = ADOPTION_TAPE_MAX_CHARS,
 ): AdoptionRepaintTape {
   let retained = '';
+  let sanitizer = createReplaySanitizer();
   return {
     retain(data) {
-      if (!data) return;
+      const safe = sanitizer.push(data);
+      if (!safe) return;
       // The tail describes the current frame: an eviction must drop the
       // OLDEST bytes, never the redraw that is about to be replayed.
-      const next = retained + data;
+      const next = retained + safe;
       retained =
         next.length > maxChars ? next.slice(next.length - maxChars) : next;
     },
     read: () => retained,
     clear() {
       retained = '';
+      sanitizer = createReplaySanitizer();
     },
   };
 }

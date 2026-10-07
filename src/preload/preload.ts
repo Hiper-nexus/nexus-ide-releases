@@ -761,7 +761,11 @@ const api: NexusApi = {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>
       ipcRenderer.invoke(PTY_CHANNELS.spawn, req),
     replay: async (sessionId: string): Promise<void> => {
-      const afterSequence = ptyGapBuffers.get(sessionId)?.highWater ?? 0;
+      // Buffer criado ANTES do pull: sem ele a entrega descartava a janela
+      // retida de uma sessão adotada que ainda não mandou chunk ao vivo, e a
+      // fita antiga só chegava no recover de 15 s — depois do reset da
+      // adoção e fora da janela em que o renderer a sanitiza (DSK-01).
+      const afterSequence = ptyGapBuffer(sessionId).highWater;
       const events = (await ipcRenderer.invoke(PTY_CHANNELS.recover, {
         sessionId,
         afterSequence,
