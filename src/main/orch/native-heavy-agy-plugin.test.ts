@@ -159,17 +159,57 @@ it('the generated hook denies inside Nexus and asks outside when Node or the scr
 it.runIf(process.platform !== 'win32')('the CLI deadline SIGKILLs a group that ignores SIGTERM and settles only after physical exit', async () => {
   const { runAgyPluginCli } = await import('./native-heavy-agy-plugin');
   const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'nexus-agy-cli-deadline-'))), cli=path.join(root,'agy');
-  fs.writeFileSync(cli,`#!/bin/sh\ntrap '' TERM\n/bin/sleep 30 &\necho "$$ $!" > '${root}/pids'\nwhile :; do /bin/sleep 1; done\n`,{mode:0o755});
+  // Deliberately slower than the 300ms deadline: the deadline clock is advanced
+  // only once the real process group is ready to exercise ignored SIGTERM.
+  fs.writeFileSync(cli,`#!/bin/sh\n/bin/sleep 1\ntrap '' TERM\n/bin/sleep 30 &\necho "$$ $!" > '${root}/pids'\nwhile :; do /bin/sleep 1; done\n`,{mode:0o755});
   const gone=(pid:number)=>{try{return execFileSync('/bin/ps',['-p',String(pid),'-o','stat='],{encoding:'utf8'}).trim().startsWith('Z');}catch{return true;}};
+  let running: Promise<void> | undefined;
+  let readinessPoll: ReturnType<typeof setInterval> | undefined;
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
-    const started=Date.now();
-    await expect(runAgyPluginCli(cli,['plugin','install','x'],{home:root,cwd:root},300,300)).rejects.toThrow('agy_heavy_plugin_cli_timeout');
-    expect(Date.now()-started).toBeLessThan(5000);
-    const pids=fs.readFileSync(path.join(root,'pids'),'utf8').trim().split(' ').map(Number);
+    running = runAgyPluginCli(cli,['plugin','install','x'],{home:root,cwd:root},300,300);
+    let settled = false;
+    void running.then(() => { settled = true; }, () => { settled = true; });
+    const pids = await new Promise<number[]>((resolve, reject) => {
+      const deadline = Date.now() + 5000;
+      // setInterval and Date are real; polling must not advance the CLI clock.
+      readinessPoll = setInterval(() => {
+        try {
+          const text = fs.readFileSync(path.join(root, 'pids'), 'utf8');
+          if (/^[1-9]\d* [1-9]\d*\n$/.test(text)) {
+            const values = text.trim().split(' ').map(Number);
+            if (values.every(pid => Number.isSafeInteger(pid) && pid > 0) && new Set(values).size === 2) {
+              clearInterval(readinessPoll); resolve(values); return;
+            }
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { clearInterval(readinessPoll); reject(error); return; }
+        }
+        if (Date.now() >= deadline) { clearInterval(readinessPoll); reject(new Error('AGY CLI fixture did not publish two complete PIDs')); }
+      }, 20);
+    });
+    expect(pids.map(gone)).toEqual([false, false]);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(300); // real SIGTERM; both ignore it
+    expect(settled).toBe(false);
+    expect(pids.map(gone)).toEqual([false, false]);
+    await vi.advanceTimersByTimeAsync(299);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); // real SIGKILL, then kernel exit
+    await expect(running).rejects.toThrow('agy_heavy_plugin_cli_timeout');
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
     await vi.waitFor(()=>expect(pids.map(gone)).toEqual([true,true]),{timeout:2000});
     await expect(runAgyPluginCli('/usr/bin/true',[],{home:root,cwd:root})).resolves.toBeUndefined();
     await expect(runAgyPluginCli('/usr/bin/false',[],{home:root,cwd:root})).rejects.toThrow('agy_heavy_plugin_cli_failed');
-  } finally {fs.rmSync(root,{recursive:true,force:true});}
+  } finally {
+    clearInterval(readinessPoll);
+    try {
+      if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(600);
+    } finally { vi.useRealTimers(); }
+    await running?.catch(() => undefined);
+    fs.rmSync(root,{recursive:true,force:true});
+  }
 });
 it('a cancelled pane stops waiting at once; the shared flight still serves the next caller', async () => {
   const f=await registrationFixture(); let finish!:()=>void, installing=false; const waiting=new Promise<void>(r=>finish=r);

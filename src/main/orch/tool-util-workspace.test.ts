@@ -274,6 +274,7 @@ vi.mock('../persistence/settings-store', () => ({
 import {
   deliverAgentPrompt,
   injectPrompt,
+  clearAdaptiveEnterTimers,
   spawnPaneAndMaybePrompt,
   submitPendingAgentPrompt,
   withHandoffContract,
@@ -2102,6 +2103,32 @@ describe('agent prompt injection', () => {
       });
       expect(stubs.writeSession).toHaveBeenCalledTimes(2);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([1, 2])('F-265: direct Kimi injection stops retries when dialog appears after Enter %s', async (dialogAfter) => {
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue({ adapterId: 'kimi' });
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.semanticStatus = 'working';
+      let enters = 0;
+      stubs.writeSession.mockImplementation(((_sessionId: string, data: string) => {
+        if (data === '\r' || data === '\r\n') {
+          enters += 1;
+          if (enters === dialogAfter) stubs.semanticStatus = 'awaiting-input';
+        }
+        return true;
+      }) as typeof stubs.writeSession);
+      const pending = injectPrompt('session-1', 'continue the task');
+      await vi.advanceTimersByTimeAsync(6_000);
+      await pending;
+      expect(enters).toBe(dialogAfter);
+    } finally {
+      clearAdaptiveEnterTimers();
+      stubs.semanticStatus = undefined;
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
       vi.useRealTimers();
     }
   });

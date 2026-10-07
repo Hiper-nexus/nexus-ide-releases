@@ -127,7 +127,7 @@ export async function runJarvisTurn(
         path: 'classic',
         tool: 'send_to_pane',
       });
-      const ok = submitPromptToPane(
+      const ok = await submitPromptToPane(
         delegationReply.delegation.targetPaneId,
         delegationReply.delegation.text,
       );
@@ -345,7 +345,7 @@ export async function runJarvisTurn(
 }
 
 /** Route transcribed prompt into focused/orchestrator pane PTY. */
-export function routePrompt(text: string): string | null {
+export async function routePrompt(text: string): Promise<string | null> {
   const { focusedPaneId, root } = useLayoutStore.getState();
   const routing = useVoiceStore.getState().info?.routing ?? 'focused-pane';
   // Orquestrador do MESMO escopo do foco: a fala da missão A nunca vai para o
@@ -355,7 +355,7 @@ export function routePrompt(text: string): string | null {
       ? findOrchestratorPane(root, focusedPaneId) ?? focusedPaneId
       : focusedPaneId;
   if (!targetPaneId) return null;
-  const ok = submitPromptToPane(targetPaneId, text);
+  const ok = await submitPromptToPane(targetPaneId, text);
   return ok ? targetPaneId : null;
 }
 

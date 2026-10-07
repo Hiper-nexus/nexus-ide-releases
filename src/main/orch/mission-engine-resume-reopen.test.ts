@@ -18,6 +18,7 @@ const harness = vi.hoisted(() => ({
   resumeFastLaneMission: vi.fn(async () => {}),
   taskList: [] as Array<{ id: string; title: string; status: string }>,
   orchestratorDismissed: false,
+  rendererCurrent: true,
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -58,6 +59,8 @@ vi.mock('./pane-registry', () => ({
 vi.mock('./squad-store', () => ({
   getSquad: () => null,
 }));
+
+vi.mock('../persistence/renderer-workspace-scope', () => ({ requireRendererWorkspaceScope: () => scope, requireLiveRendererWorkspaceScope: () => { if (!harness.rendererCurrent) throw new Error('workspace changed'); return scope; } }));
 
 vi.mock('./mission-fast-lane', () => ({
   fastLaneBootstrap: vi.fn(async () => {}),
@@ -147,6 +150,7 @@ beforeEach(async () => {
   harness.resumeFastLaneMission.mockClear();
   harness.taskList = [];
   harness.orchestratorDismissed = false;
+  harness.rendererCurrent = true;
   transitionCount = 0;
   await import('./mission-engine-production');
   const { missionEngineForScope } = await import('./mission-engine-registry');
@@ -346,4 +350,56 @@ describe('engine resume — os estados em que a UI oferece Retomar', () => {
       expect.objectContaining({ remountKind: 'automatic' }),
     );
   });
+});
+
+
+it.each(['bootstrap', 'resume', 'retry-kickoff'] as const)('F-429: %s waits for the same physical stop lock', async lane => {
+  liveMission = baseMission({});
+  const { withMissionLifecycleLock } = await import('./mission-lifecycle-lock');
+  const { resumeBlockedMissionBootstrapFromRenderer } = await import('./mission-engine-production');
+  let finishStop!: () => void;
+  const stopExit = new Promise<void>(resolve => { finishStop = resolve; });
+  const stopping = withMissionLifecycleLock(scope, 'mission-1', () => stopExit);
+  await Promise.resolve();
+  const resume = lane === 'bootstrap' ? resumeBlockedMissionBootstrapFromRenderer({} as never, { missionId: 'mission-1' }) : engine.command(scope, { kind: lane, missionId: 'mission-1' });
+  void resume.catch(() => {});
+  try {
+    await Promise.resolve(); await Promise.resolve();
+    expect(harness.resumeFastLaneMission).not.toHaveBeenCalled();
+  } finally {
+    liveMission = baseMission({ description: '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Encerrada.' });
+    finishStop();
+  }
+  await stopping;
+  if (lane === 'retry-kickoff') { await expect(resume).rejects.toThrow(/encerrada pelo operador/); expect(harness.resumeFastLaneMission).not.toHaveBeenCalled(); }
+  else { await resume; expect(harness.resumeFastLaneMission).toHaveBeenCalledOnce(); }
+});
+
+
+it('F-429: queued human resume revalidates renderer scope after Stop releases', async () => {
+  liveMission = baseMission({});
+  const { withMissionLifecycleLock } = await import('./mission-lifecycle-lock');
+  const { resumeBlockedMissionBootstrapFromRenderer } = await import('./mission-engine-production');
+  let finish!: () => void;
+  const held = withMissionLifecycleLock(scope, 'mission-1', () => new Promise<void>(resolve => { finish = resolve; }));
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  const resume = resumeBlockedMissionBootstrapFromRenderer({} as never, { missionId: 'mission-1' });
+  harness.rendererCurrent = false; finish(); await held;
+  await expect(resume).resolves.toMatchObject({ ok: false, error: 'workspace changed' });
+  expect(harness.resumeFastLaneMission).not.toHaveBeenCalled();
+});
+
+
+it.each(['resume', 'retry-kickoff'] as const)('F-429: legacy running Stop row distinguishes explicit %s from recovery', async kind => {
+  const description = '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Encerrada.\n\n<!-- nexus:leftover-parked -->\n[NEXUS_LEFTOVER_PARKED] Dormindo.';
+  liveMission = baseMission({ status: 'running', intentState: 'executing', description });
+  if (kind === 'retry-kickoff') {
+    await expect(engine.command(scope, { kind, missionId: 'mission-1' })).rejects.toThrow(/encerrada pelo operador/);
+    expect(harness.resumeFastLaneMission).not.toHaveBeenCalled(); expect(liveMission.description).toBe(description);
+  } else {
+    await engine.command(scope, { kind, missionId: 'mission-1' });
+    expect(liveMission.description).not.toContain('runtime-closed');
+    expect(liveMission.description).not.toContain('leftover-parked');
+    expect(harness.resumeFastLaneMission).toHaveBeenCalledOnce();
+  }
 });

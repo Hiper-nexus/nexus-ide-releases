@@ -80,6 +80,75 @@ describe('process sandbox', () => {
     expect(profile).not.toContain(JSON.stringify(os.homedir()) + ')');
   });
 
+  it('keeps a dense PATH below the host argument limit without changing its directory grant (F-427)', () => {
+    const root = makeDir('nexus-sandbox-dense-root');
+    const runtime = makeDir('nexus-sandbox-dense-runtime');
+    const bin = makeDir('nexus-sandbox-dense-bin');
+    for (let index = 0; index < 768; index++) {
+      fs.writeFileSync(path.join(bin, `tool-${index}-${'x'.repeat(64)}`), 'fixture');
+    }
+    const plan = buildMacosSeatbeltPlan({
+      platform: 'darwin', executable: '/bin/sh', args: ['-c', 'true'], cwd: root,
+      rootRealPath: root, sandboxDir: runtime, env: { PATH: bin },
+    }, '/usr/bin/sandbox-exec');
+    const profile = plan.args[1];
+    expect(profile.length).toBeLessThan(65_536);
+    expect(Buffer.byteLength(profile)).toBeLessThan(65_536);
+    expect(profile).toContain(`(subpath ${JSON.stringify(bin)})`);
+    expect(profile).not.toContain(`(literal ${JSON.stringify(path.join(bin, `tool-0-${'x'.repeat(64)}`))})`);
+    expect(profile).toContain('(deny network*)');
+    expect(profile).toContain('(deny file-write*)');
+  });
+
+  it.runIf(process.platform !== 'win32')('retains escaping symlink literals and Node runtime roots without granting a sibling prefix (F-427)', () => {
+    const root = makeDir('nexus-sandbox-tc-root');
+    const runtime = makeDir('nexus-sandbox-tc-runtime');
+    const tools = makeDir('nexus-sandbox-tc-tools');
+    const bin = path.join(tools, 'bin');
+    const sibling = path.join(tools, 'bin-private');
+    fs.mkdirSync(bin); fs.mkdirSync(sibling);
+    const localTool = path.join(bin, 'local-tool');
+    const escapedTool = path.join(sibling, 'external-tool');
+    const siblingSecret = path.join(sibling, 'secret');
+    fs.writeFileSync(localTool, 'local-ok');
+    fs.writeFileSync(escapedTool, 'external-ok');
+    fs.writeFileSync(siblingSecret, 'must-stay-private');
+    fs.symlinkSync(escapedTool, path.join(bin, 'linked-tool'));
+    const nodeRoot = makeDir('nexus-sandbox-node-runtime');
+    const nodeBin = path.join(nodeRoot, 'bin');
+    const npmRoot = path.join(nodeRoot, 'lib/node_modules/npm');
+    const npmCli = path.join(npmRoot, 'bin/npm-cli.js');
+    fs.mkdirSync(nodeBin); fs.mkdirSync(path.dirname(npmCli), { recursive: true });
+    fs.writeFileSync(path.join(nodeBin, 'node'), 'fixture');
+    fs.writeFileSync(path.join(nodeRoot, 'support'), 'runtime-ok');
+    fs.writeFileSync(npmCli, 'npm-ok');
+    fs.symlinkSync(npmCli, path.join(nodeBin, 'npm'));
+    const plan = buildMacosSeatbeltPlan({
+      platform: 'darwin', executable: '/bin/sh', args: ['-c', [
+        '/bin/cat "$LOCAL_TOOL" "$ESCAPED_TOOL" "$NODE_SUPPORT" "$NPM_CLI"',
+        'if /bin/cat "$SIBLING_SECRET" 2>/dev/null; then exit 91; fi',
+        'if printf leak > "$ESCAPED_TOOL" 2>/dev/null; then exit 92; fi',
+      ].join('\n')], cwd: root, rootRealPath: root, sandboxDir: runtime,
+      env: { PATH: `${bin}${path.delimiter}${nodeBin}`, LOCAL_TOOL: localTool, ESCAPED_TOOL: escapedTool,
+        NODE_SUPPORT: path.join(nodeRoot, 'support'), NPM_CLI: npmCli, SIBLING_SECRET: siblingSecret },
+    }, '/usr/bin/sandbox-exec');
+    const profile = plan.args[1];
+    expect(profile).toContain(`(subpath ${JSON.stringify(bin)})`);
+    expect(profile).toContain(`(literal ${JSON.stringify(escapedTool)})`);
+    expect(profile).toContain(`(subpath ${JSON.stringify(nodeRoot)})`);
+    expect(profile).toContain(`(literal ${JSON.stringify(npmCli)})`);
+    expect(profile).toContain(`(subpath ${JSON.stringify(npmRoot)})`);
+    expect(profile).not.toContain(`(subpath ${JSON.stringify(sibling)})`);
+    expect(profile).not.toContain(`(literal ${JSON.stringify(siblingSecret)})`);
+    expect(profile).not.toContain(`(subpath ${JSON.stringify(tools)})`);
+    if (process.platform === 'darwin') {
+      const result = spawnSync(plan.file, plan.args, { cwd: plan.cwd, env: plan.env, encoding: 'utf8' });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe('local-okexternal-okruntime-oknpm-ok');
+      expect(fs.readFileSync(escapedTool, 'utf8')).toBe('external-ok');
+    }
+  });
+
   it.runIf(process.platform !== 'win32')(
     'keeps default HOME and temp confined when the runtime uses a symlink alias',
     () => {

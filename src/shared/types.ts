@@ -289,6 +289,13 @@ export interface BgTaskEventPayload {
  * `source` is one hook plane; the renderer keeps the pane listed while
  * either plane still needs a human.
  */
+/** Content-free, Main-owned proof for a bounded prompt submission. */
+export interface PtyPromptState {
+  readonly turnStartSequence: number;
+  readonly state: PaneSessionState;
+  readonly awaitingInput: boolean;
+}
+
 export interface AgentWaitingEvent {
   readonly source: 'orca' | 'semantic';
   readonly sessionId: string;
@@ -487,6 +494,8 @@ export interface NexusApi {
     replay(sessionId: string): Promise<void>;
     write(sessionId: string, data: string): void;
     writeConfirmed(sessionId: string, data: string): Promise<boolean>;
+    promptState(sessionId: string): Promise<PtyPromptState | null>;
+    submitPromptEnter(sessionId: string, turnStartSequence: number, retry: boolean): Promise<boolean>;
     resize(
       sessionId: string,
       cols: number,

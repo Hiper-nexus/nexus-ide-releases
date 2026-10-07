@@ -1,11 +1,13 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { WebContents } from "electron";
 import type { z } from "zod";
 import { spawnRequestSchema } from "../../shared/ipc";
+import { hasCurrentMissionRuntimeCloseVerdict } from "../../shared/mission-recovery-policy";
 import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
 import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 import type { SpawnResult } from "../../shared/types";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
-import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
+import { requireRendererWorkspaceScope, requireLiveRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import { getOrchSettings } from "../persistence/settings-store";
 import {
   assertPendingRecoverySpawnGrantActive,
@@ -109,7 +111,7 @@ export function bindMissionLaunchAuthority(
     ) {
       throw new Error("mission squad does not match spawn authority");
     }
-    if (!hasCurrentDispatchAuthority(mission)) {
+    if (hasCurrentMissionRuntimeCloseVerdict(mission) || !hasCurrentDispatchAuthority(mission)) {
       throw new Error(
         "approval_required: mission current intent is not authorized for agent spawn",
       );
@@ -688,10 +690,26 @@ export function assertMainOwnedAgentSpawnGrantActive(input: {
   readonly pending: PendingSpawnMeta | null;
   readonly recovery: PendingRecoverySpawnMeta | null;
   /** F-721: a retomada da aba pode ter começado durante a preparação. */
-  readonly persistedPane?: Pick<ScopedMissionPaneSpec, "missionId" | "paneId"> | null;
+  readonly persistedPane?: ScopedMissionPaneSpec | null;
+  readonly runtimeManager?: ProjectRuntimeManager | null;
 }): void {
+  const assertMissionStillDispatchable = (missionId: string, scope: ScopedMissionPaneSpec['scope']) => {
+    if (!input.runtimeManager) throw new Error('mission runtime authority unavailable');
+    const mission = createScopedMissionStore(input.runtimeManager, scope).get(missionId);
+    if (!mission || hasCurrentMissionRuntimeCloseVerdict(mission) || !hasCurrentDispatchAuthority(mission)) {
+      throw new Error('approval_required: mission stopped during spawn preparation');
+    }
+  };
   if (input.persistedPane) {
-    assertPersistedPaneNotInTabResumeTransfer(input.persistedPane);
+    const pane = input.persistedPane;
+    assertPersistedPaneNotInTabResumeTransfer(pane);
+    requireLiveRendererWorkspaceScope(input.owner, pane.scope);
+    if (!input.runtimeManager || !pane.paneId) throw new Error('persisted pane runtime authority unavailable');
+    const current = createScopedMissionPaneStore(input.runtimeManager, pane.scope).findByPaneId(pane.paneId);
+    if (!isDeepStrictEqual(current, pane)) throw new Error('persisted mission pane authority changed during preparation');
+    assertMissionStillDispatchable(pane.missionId, pane.scope);
+    assertMissionSpawnAuthorityCurrent({ missionId: pane.missionId, scope: pane.scope,
+      contextRevision: pane.authoritySeal?.contextRevision, authoritySeal: pane.authoritySeal });
   }
   if (input.pending && input.requestId) {
     assertPendingSpawnGrantActive(input.requestId, input.owner);
@@ -701,6 +719,7 @@ export function assertMainOwnedAgentSpawnGrantActive(input: {
         input.pending.role === "worker") &&
       input.pending.scope
     ) {
+      assertMissionStillDispatchable(input.pending.missionId, input.pending.scope);
       assertMissionSpawnAuthorityCurrent({
         missionId: input.pending.missionId,
         scope: input.pending.scope,
@@ -711,6 +730,7 @@ export function assertMainOwnedAgentSpawnGrantActive(input: {
   }
   if (input.recovery && input.requestId) {
     assertPendingRecoverySpawnGrantActive(input.requestId, input.owner);
+    assertMissionStillDispatchable(input.recovery.request.missionId, input.recovery.scope);
   }
 }
 

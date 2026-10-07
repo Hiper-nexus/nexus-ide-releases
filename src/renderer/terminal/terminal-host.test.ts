@@ -138,6 +138,8 @@ import {
   revealTerminalHostsAfterWorkspaceShow,
   setHostVisibility,
   submitPromptToPane,
+  submitPromptToPaneConfirmed,
+  submitPromptToPaneOperatorInput,
   waitForSession,
   writeToPane,
 } from './terminal-host';
@@ -997,7 +999,7 @@ describe('estacionamento de hosts na troca de workspace', () => {
     ptyWrite.mockClear();
 
     expect(writeToPane(paneA1.id, 'front-end e-commerce')).toBe(false);
-    expect(submitPromptToPane(paneA1.id, 'front-end e-commerce')).toBe(false);
+    expect(await submitPromptToPane(paneA1.id, 'front-end e-commerce')).toBe(false);
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(ptyWrite).not.toHaveBeenCalled();
@@ -2523,5 +2525,69 @@ describe('anexo solto/colado resolve contra a RAIZ do projeto, não a pasta do p
     expect(importDroppedUri).not.toHaveBeenCalled();
     expect(importMissionAttachment).not.toHaveBeenCalled();
     expect(write).toHaveBeenCalledWith('pty-hidden', "'" + `${WORKTREE}/src/app.ts` + "' ");
+  });
+});
+
+
+describe('F-266: real terminal host wires Kimi prompt proof on every submission lane', () => {
+  it.each(['raw', 'raw-mission', 'confirmed', 'operator'] as const)('%s submits once, retries swallowed CR with canonical proof', async lane => {
+    const agent: PaneModel = { id: 'kimi-proof-' + lane, kind: 'cli-agent', adapterId: 'kimi', title: 'Kimi', ...(lane === 'raw-mission' ? { role: 'worker' as const, missionId: 'mission-kimi' } : {}) };
+    useLayoutStore.setState({ root: buildGridTree([agent]), focusedPaneId: agent.id });
+    const host = getOrCreateHost(agent); host.sessionId = 'kimi-proof-session';
+    let enters = 0;
+    const writes: string[] = [];
+    const send = vi.fn(async (_session: unknown, data: string) => { writes.push(data); if (data === '\r') enters++; return true; });
+    const probe = vi.fn(async () => ({ turnStartSequence: enters >= 2 ? 1 : 0, state: 'idle' as const, awaitingInput: false }));
+    Object.assign(window.nexus.pty, { promptState: probe, writeConfirmed: send,
+      submitPromptEnter: async (session: string) => send(session, '\r') });
+    Object.assign(window.nexus, { orch: { sendPaneOperatorInput: async (input: { sessionId: string; data: string }) => send(input.sessionId, input.data) } });
+    const result = lane === 'raw' || lane === 'raw-mission' ? submitPromptToPane(agent.id, 'new prompt') : lane === 'confirmed'
+      ? submitPromptToPaneConfirmed(agent.id, 'new prompt', host.sessionId)
+      : submitPromptToPaneOperatorInput(agent.id, 'new prompt', host.sessionId);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await result).toBe(true);
+    expect(probe).toHaveBeenCalledWith('kimi-proof-session');
+    expect(writes).toEqual(['new prompt', '\r', '\r']);
+  });
+});
+
+
+describe('F-429 — Encerrar never becomes automatic human resume', () => {
+  it('does not relive a Maestro after Main deliberately terminated it', async () => {
+    const agent: PaneModel = { id: 'maestro-429-exit', kind: 'cli-agent', adapterId: 'claude', title: 'Maestro', role: 'orchestrator', missionId: 'mission-429-exit' };
+    useLayoutStore.setState({ root: buildGridTree([agent]), focusedPaneId: agent.id });
+    useOrchStore.setState({ paneMissions: { [agent.id]: agent.missionId! }, missions: [{ id: agent.missionId, status: 'running' } as never] });
+    spawn.mockResolvedValue({ ok: true, sessionId: 'pty-429-exit' });
+    const host = getOrCreateHost(agent); setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div'); document.body.appendChild(slot); attachHost(agent, slot);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spawn).toHaveBeenCalledOnce();
+    ptyExitListeners.get('pty-429-exit')!({ exitCode: 0, terminationOrigin: 'mission-termination' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
+  it.each([true, false])('uses only mechanical retry for stale authority; stopped=%s', async stopped => {
+    const missionId = `mission-429-recovery-${stopped}`;
+    const agent: PaneModel = { id: `pane-${missionId}`, kind: 'cli-agent', adapterId: 'claude', title: 'Maestro', role: 'orchestrator', missionId };
+    const command = vi.fn(async () => ({}));
+    const resumeMissionBootstrap = vi.fn(async () => ({ ok: false, error: 'must not call human resume' }));
+    let completeRead!: (rows: unknown[]) => void;
+    const listMissions = vi.fn(() => new Promise(resolve => { completeRead = resolve; }));
+    Object.assign(window.nexus, { mission: { command, snapshot: vi.fn(async () => null) }, orch: { listMissions, resumeMissionBootstrap } });
+    useLayoutStore.setState({ root: buildGridTree([agent]), focusedPaneId: agent.id });
+    useOrchStore.setState({ paneMissions: { [agent.id]: missionId }, missions: [{ id: missionId, status: 'running' } as never] });
+    spawn.mockResolvedValue({ ok: false, error: 'stale or legacy persisted mission pane authority' });
+    const host = getOrCreateHost(agent); setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div'); document.body.appendChild(slot); attachHost(agent, slot);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(listMissions).toHaveBeenCalled();
+    completeRead([{ id: missionId, status: 'blocked', intentState: stopped ? 'blocked_user' : 'blocked_technical',
+      description: stopped ? '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador.' : 'Falha técnica' }]);
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.dynamicImportSettled();
+    expect(resumeMissionBootstrap).not.toHaveBeenCalled();
+    if (stopped) expect(command).not.toHaveBeenCalled();
+    else expect(command).toHaveBeenCalledWith({ kind: 'retry-kickoff', missionId });
   });
 });

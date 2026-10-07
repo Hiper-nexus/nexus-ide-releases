@@ -9,6 +9,11 @@ const deps = vi.hoisted(() => ({
   assertCurrent: vi.fn(),
   track: vi.fn(),
   adapterId: 'codex',
+  missionCurrent: true,
+  missionDescription: '',
+  policy: 'governed' as 'governed' | 'operator-choice',
+  transport: 'pty' as 'pty' | 'acp',
+  acpSpawn: vi.fn(),
   authoritative: vi.fn<(...args: unknown[]) => Promise<ProviderSpawnPreparation>>(),
   acquirePermit: vi.fn(async (_adapterId: string): Promise<() => void> => () => {}),
   liveClaudeAccounts: vi.fn(() => [] as string[]),
@@ -56,10 +61,14 @@ vi.mock('../pty/autonomous-cli-policy', () => ({
   supportsEnforceableWorkspaceWriteNativeAuthority: () => true,
 }));
 vi.mock('../pty/trusted-native-cli-binary', () => ({ assertTrustedNativeConfinementBinary: vi.fn() }));
-vi.mock('../persistence/settings-store', () => ({ getOrchSettings: () => ({ squadCliPolicy: 'governed', agentTransport: 'pty' }) }));
+vi.mock('../persistence/settings-store', () => ({ getOrchSettings: () => ({ squadCliPolicy: deps.policy, agentTransport: deps.transport }) }));
+vi.mock('./project-domain-store-registry', () => ({ getProjectDomainStores: () => ({ missions: { get: () => ({
+  id: 'synthetic-mission', description: deps.missionDescription, status: deps.missionCurrent ? 'running' : 'blocked', intentState: deps.missionCurrent ? 'executing' : 'blocked_user',
+  intentVersion: 1, intentContract: { goal: 'Authorized mission', intentVersion: 1, approvedAt: 1 },
+}) } }) }));
 vi.mock('./workspace-path', () => ({ resolveCwdForScope: () => '/synthetic/workspace' }));
 vi.mock('./mission-pane-authority', () => ({ sameMissionPaneAuthoritySeal: vi.fn() }));
-vi.mock('./acp-mission-spawn', () => ({ spawnMainOwnedAcpMissionPane: vi.fn() }));
+vi.mock('./acp-mission-spawn', () => ({ spawnMainOwnedAcpMissionPane: deps.acpSpawn }));
 vi.mock('./agent-identity-spawn', () => ({ issueAgentIdentityBestEffort: vi.fn() }));
 
 import { deleteMainOwnedPane, getMainOwnedPane, setMainOwnedPane, spawnMainOwnedMissionPane, spawnMainOwnedMissionPaneAsync } from './main-owned-pane-runtime';
@@ -86,6 +95,7 @@ beforeEach(() => {
   deps.prepare.mockReturnValue({ ok: true, overrides });
   deps.gate.mockResolvedValue('fresh');
   deps.adapterId = 'codex';
+  deps.missionCurrent = true; deps.missionDescription = ''; deps.policy = 'governed'; deps.transport = 'pty';
   deps.authoritative.mockResolvedValue({ ok: true, overrides });
   deps.acquirePermit.mockReset().mockResolvedValue(() => {});
   deps.copyConversation.mockReturnValue(true);
@@ -358,5 +368,82 @@ describe('main-owned Codex auth gate', () => {
     await expect(spawnMainOwnedMissionPaneAsync(options, hooks)).resolves.toMatchObject({ ok: false, error: 'account unavailable' });
     expect(deps.gate).not.toHaveBeenCalled();
     expect(deps.spawn).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('F-429 — Main Autopilot spawn cannot outlive Stop', () => {
+  it('refuses a running legacy row whose latest verdict still records operator Stop', async () => {
+    deps.policy = 'operator-choice';
+    deps.missionDescription = '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Encerrada.';
+    const result = await spawnMainOwnedMissionPaneAsync(options, hooks);
+    try { expect(result.ok).toBe(false); expect(deps.spawn).not.toHaveBeenCalled(); }
+    finally { if (result.paneId) deleteMainOwnedPane(result.paneId); }
+  });
+  it('allows current dispatch after a later verdict supersedes the historical close marker', async () => {
+    deps.policy = 'operator-choice';
+    deps.missionDescription = '<!-- nexus:runtime-closed -->\nEncerrada.\n<!-- nexus:agent-status-block -->\nBloqueio posterior.';
+    const result = await spawnMainOwnedMissionPaneAsync(options, hooks);
+    try { expect(result.ok).toBe(true); }
+    finally { if (result.paneId) deleteMainOwnedPane(result.paneId); }
+  });
+
+  it.each([true, false])('keeps active Autopilot roster freedom with sealed=%s', async sealed => {
+    deps.policy = 'operator-choice';
+    deps.assertCurrent.mockImplementation(() => { throw new Error('roster changed, dispatch still approved'); });
+    const result = await spawnMainOwnedMissionPaneAsync({ ...options, authoritySeal: sealed ? options.authoritySeal : undefined }, hooks);
+    try {
+      expect(result.ok).toBe(true);
+      const call = deps.spawn.mock.calls.at(-1) as unknown as [unknown, unknown, { assertDeferredSpawnCurrent: () => void }];
+      expect(() => call[2].assertDeferredSpawnCurrent()).not.toThrow();
+      deps.missionCurrent = false;
+      expect(() => call[2].assertDeferredSpawnCurrent()).toThrow(/mission.*authorized/);
+    } finally { if (result.paneId) deleteMainOwnedPane(result.paneId); }
+  });
+
+  it.each(['authentication', 'permit'])('rechecks dispatch after pending %s without changing CLI choice', async waitingOn => {
+    deps.policy = 'operator-choice'; deps.adapterId = 'claude';
+    let finish!: () => void;
+    const blocked = new Promise<void>(resolve => { finish = resolve; });
+    const release = vi.fn();
+    if (waitingOn === 'authentication') deps.authoritative.mockImplementationOnce(async () => { await blocked; return { ok: true, overrides }; });
+    else deps.acquirePermit.mockImplementationOnce(async () => { await blocked; return release; });
+    deps.assertCurrent.mockImplementation(() => { if (!deps.missionCurrent) throw new Error('mission stopped'); });
+    const pending = spawnMainOwnedMissionPaneAsync({ ...options, adapterId: 'claude', role: 'orchestrator' }, hooks);
+    await vi.waitFor(() => expect(waitingOn === 'authentication' ? deps.authoritative : deps.acquirePermit).toHaveBeenCalled());
+    deps.missionCurrent = false; finish();
+    const result = await pending;
+    try {
+      expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/mission.*(?:stopped|authorized)/) });
+      expect(deps.spawn).not.toHaveBeenCalled();
+      if (waitingOn === 'permit') expect(release).toHaveBeenCalledOnce();
+    } finally { if (result.paneId) deleteMainOwnedPane(result.paneId); }
+  });
+
+  it('rechecks dispatch at deferred physical birth in Autopilot', async () => {
+    deps.policy = 'operator-choice';
+    const result = await spawnMainOwnedMissionPaneAsync(options, hooks);
+    expect(result.ok).toBe(true);
+    const call = deps.spawn.mock.calls.at(-1) as unknown as [unknown, unknown, { assertDeferredSpawnCurrent: () => void }];
+    deps.missionCurrent = false;
+    try { expect(() => call[2].assertDeferredSpawnCurrent()).toThrow(/mission.*authorized/); }
+    finally { deleteMainOwnedPane(result.paneId!); }
+  });
+
+  it('carries the dispatch fence to ACP before its asynchronous imports finish', async () => {
+    deps.policy = 'operator-choice'; deps.transport = 'acp';
+    let finish!: () => void;
+    const blocked = new Promise<void>(resolve => { finish = resolve; });
+    const physicalSpawn = vi.fn();
+    deps.acpSpawn.mockImplementationOnce(async (input: PaneSpawnOptions) => {
+      await blocked;
+      try { input.assertOriginCurrent?.(); physicalSpawn(); return { requestId: 'acp-test', ok: true }; }
+      catch (error) { return { requestId: 'acp-test', ok: false, error: String(error) }; }
+    });
+    const pending = spawnMainOwnedMissionPaneAsync(options, hooks);
+    await vi.waitFor(() => expect(deps.acpSpawn).toHaveBeenCalled());
+    deps.missionCurrent = false; finish();
+    await expect(pending).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/mission.*authorized/) });
+    expect(physicalSpawn).not.toHaveBeenCalled();
   });
 });

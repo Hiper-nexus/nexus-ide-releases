@@ -111,7 +111,13 @@ export function wasMissionRuntimeClosedByOperator(
   // como "encerrada pelo operador": a missão ia para o Arquivo e o Retomar
   // seguia o caminho errado. O de "dormindo" (leftover-parked) é isolamento
   // do mesmo encerramento e não o substitui.
-  if (mission.status !== 'blocked') return false;
+  return mission.status === 'blocked' && hasCurrentMissionRuntimeCloseVerdict(mission);
+}
+
+/** Durable stop fence, even if a stale status-only write left the row running. */
+export function hasCurrentMissionRuntimeCloseVerdict(
+  mission: Pick<RecoverableMission, 'description'>,
+): boolean {
   const description = mission.description ?? '';
   const sealAt = description.lastIndexOf(MISSION_RUNTIME_CLOSED_MARKER);
   if (sealAt < 0) return false;

@@ -411,6 +411,7 @@ export type CivilianProntoDependencies = {
   readonly listProductFiles?: (root: string) => readonly string[];
   readonly missionEngine?: Pick<MissionEngine, 'completeVerified' | 'blockUser'>;
   readonly runAutoReviewGate?: CivilianDeliveryDependencies['runAutoReviewGate'];
+  readonly runCodeCompletionGate?: CivilianDeliveryDependencies['runCodeCompletionGate'];
   readonly captureCandidate?: CivilianDeliveryDependencies['captureCandidate'];
   /** Injetável para testes; produção usa `getMissionLeadership().resolveMissionLeader`. */
   readonly resolveMissionLeader?: (
@@ -622,6 +623,7 @@ export async function maybeApplyCivilianPronto(
   try {
     const result = await maybeCompleteFastLaneOnDelivery(scope, missionId, {
       ...deps,
+      runCodeCompletionGate: deps.runCodeCompletionGate,
       resolveMissionLeader: resolveMissionLeaderFn,
     });
     completed = result.completed;

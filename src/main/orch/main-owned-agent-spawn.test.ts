@@ -58,6 +58,7 @@ vi.mock("./mission-pane-store", () => ({
 }));
 vi.mock("../persistence/renderer-workspace-scope", () => ({
   requireRendererWorkspaceScope: () => scope,
+  requireLiveRendererWorkspaceScope: () => scope,
 }));
 vi.mock("../../shared/mission-intent", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../shared/mission-intent")>()),
@@ -421,7 +422,9 @@ describe("main-owned agent spawn boundary", () => {
   });
 
   it("uses one pre-effect fence for pending and recovery grants", () => {
+    missionDeps.mission = { id: 'mission-a' };
     assertMainOwnedAgentSpawnGrantActive({
+      runtimeManager: {} as never,
       owner: owner as never,
       requestId: "spawn-a",
       pending,
@@ -519,4 +522,32 @@ describe("main-owned agent spawn boundary", () => {
       expect(registryDeps.attachOrchMeta).not.toHaveBeenCalled();
     },
   );
+});
+
+
+it('F-429: persisted authority is re-read before effect, never repaired from the stale envelope', () => {
+  missionDeps.mission = { id: 'mission-a' };
+  const sealed = { ...persistedPane, authoritySeal };
+  missionPaneDeps.pane = sealed as never;
+  const input = { owner: owner as never, requestId: undefined, pending: null, recovery: null,
+    persistedPane: sealed, runtimeManager: {} as never };
+  expect(() => assertMainOwnedAgentSpawnGrantActive(input)).not.toThrow();
+  missionPaneDeps.pane = { ...sealed, paneId: 'replacement-pane' } as never;
+  expect(() => assertMainOwnedAgentSpawnGrantActive(input)).toThrow(/authority changed/);
+});
+
+
+it('F-429: renderer fallback cannot launch a running row with an unsuperseded Stop verdict', () => {
+  missionDeps.mission = { id: 'mission-a', status: 'running', intentState: 'executing',
+    description: '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Encerrada.' } as never;
+  expect(() => bindMissionLaunchAuthority({} as never, authority, 'mission-a')).toThrow(/approval_required/);
+});
+
+
+it.each(['pending', 'recovery'] as const)('F-429: %s grants also re-read the durable Stop before effect', lane => {
+  missionDeps.mission = { id: 'mission-a', status: 'running', intentState: 'executing',
+    description: '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Encerrada.' } as never;
+  expect(() => assertMainOwnedAgentSpawnGrantActive({ owner: owner as never, requestId: 'spawn-a',
+    pending: lane === 'pending' ? pending : null, recovery: lane === 'recovery' ? recovery : null,
+    runtimeManager: {} as never })).toThrow(/approval_required/);
 });

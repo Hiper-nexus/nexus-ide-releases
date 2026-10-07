@@ -17,7 +17,10 @@
  * ("não verificado", explícito para agente e orquestrador) — não bloqueia por
  * infraestrutura, mas também nunca vira `passed`. Só bloqueia teste que FALHOU.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { nativeRegressionArgs, cargoRegressionWorkspaces, isNativeContainerCommand, parseGoTestEvents, parseRustTestOutput, type NativeRegressionKind } from './native-regression-runners';
+import { discoverScopedGoWorkspace } from './go-workspace';
+import { prepareNativeRegressionCommand } from './native-regression-command';
+import { execOwnedCheck, containerCheckArgs } from '../orch/owned-check-exec';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -256,7 +259,7 @@ export function registerRegressionGateExtensions(
   registeredExtensions = { ...registeredExtensions, ...extensions };
 }
 
-export type RegressionRunnerKind = 'vitest' | 'jest' | 'pytest';
+export type RegressionRunnerKind = 'vitest' | 'jest' | 'pytest' | NativeRegressionKind;
 
 export interface RegressionTestFailure {
   readonly file: string;
@@ -271,6 +274,7 @@ export type RegressionGateStatus =
   | 'unavailable';
 
 export interface RegressionGateResult {
+  readonly retryable?: boolean;
   readonly version: typeof GATE_VERSION;
   readonly status: RegressionGateStatus;
   readonly diffHash: string;
@@ -283,6 +287,8 @@ export interface RegressionGateResult {
   readonly testsRun: readonly string[];
   /** Impactados que não rodaram (config do runner, prazo, sandbox): não verificados. */
   readonly testsNotRun: readonly string[];
+  /** Structured discovery limits; skipped tests are not evidence of non-applicability. */
+  readonly coverage?: { readonly indexComplete: boolean; readonly skippedTests: readonly string[] };
   readonly failures: readonly RegressionTestFailure[];
   /** Falhas só em testes impactados por WIP anterior ao spawn (não do agente): aviso. */
   readonly inheritedFailures: readonly RegressionTestFailure[];
@@ -304,6 +310,10 @@ export interface RegressionGateResult {
 }
 
 export interface RegressionExecResult {
+  readonly outputTruncated?: boolean;
+  readonly retryable?: boolean;
+  /** Main-only lifetime: unknown physical state must retain the private HOME. */
+  readonly physicalExit?: Promise<void>;
   readonly exitCode: number | null;
   readonly timedOut: boolean;
   readonly aborted?: boolean;
@@ -312,6 +322,8 @@ export interface RegressionExecResult {
 }
 
 export interface RegressionExecOptions {
+  /** Main-created native command, never a renderer/provider field. */
+  readonly nativeCommand?: NativeRegressionKind;
   readonly cwd: string;
   readonly scope: ProjectExecutionScope;
   /** Runtime privado do sandbox (HOME/TMPDIR); o relatório do runner vai para cá. */
@@ -346,6 +358,8 @@ export interface RunRegressionGateInput {
   /** Prazo TOTAL (mapa + execução + retentativa), não por execução. */
   readonly timeoutMs?: number;
   readonly maxTestFiles?: number;
+  /** Completion only: include impacted E2E in the already recognized runner. */
+  readonly includeE2E?: boolean;
   /** Cancelamento (sessão fechada, handoff abortado): mata o grupo de processos. */
   readonly signal?: AbortSignal;
   /** Autoridade MCP revalidada imediatamente antes de cada spawn. */
@@ -769,6 +783,7 @@ interface ImpactedTests {
   readonly sources: ReadonlyMap<string, ReadonlySet<string>>;
   readonly untestedFiles: readonly string[];
   readonly e2eSkipped: readonly string[];
+  readonly indexComplete: boolean;
   readonly warnings: readonly string[];
 }
 
@@ -778,6 +793,7 @@ async function buildReverseGraph(
 ): Promise<{ reverse: ReadonlyMap<string, readonly string[]>; files: readonly string[]; truncated: boolean }> {
   const walk = await walkOrientationTreeAsync(scope, GRAPH_LIMITS);
   const facts: OrientationImportFileFact[] = [];
+  let incomplete = walk.truncated || walk.treeFingerprintParts.some(part => { const [file, state] = part.split('\0'); return state === 'skip-size' && isOrientationImportSource(path.posix.extname(file!).toLowerCase()); });
   // Módulo removido/renomeado continua nó resolvível: quem ainda o importa
   // (e agora quebra) entra no conjunto com os seus testes.
   const present = new Set(walk.files.map((file) => file.relativePath));
@@ -798,6 +814,7 @@ async function buildReverseGraph(
         importSpecifiers: extractOrientationImportSpecifiers(read.content),
       });
     } catch {
+      incomplete = true;
       continue;
     }
     if (facts.length % 256 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
@@ -807,7 +824,7 @@ async function buildReverseGraph(
   return {
     reverse: graph.reverse,
     files: walk.files.map((file) => file.relativePath),
-    truncated: walk.truncated,
+    truncated: incomplete,
   };
 }
 
@@ -850,9 +867,12 @@ export async function computeImpactedTests(
   extraTests: readonly string[] = [],
   /** Consumidores via banco: seus testes entram, mas eles não são "área sem teste". */
   dbConsumers: readonly string[] = [],
+  includeE2E = false,
 ): Promise<ImpactedTests> {
   const { reverse, files, truncated } = await buildReverseGraph(scope, changedFiles);
   const fileSet = new Set(files);
+  const uncoveredChangedSource = changedFiles.some(file => !fileSet.has(file) &&
+    isOrientationImportSource(path.posix.extname(file).toLowerCase()) && fs.existsSync(path.join(scope.rootRealPath, file)));
   const ordered: string[] = [];
   const sources = new Map<string, Set<string>>();
   /** true se o teste existe (mesmo já selecionado por outro arquivo do diff). */
@@ -868,6 +888,7 @@ export async function computeImpactedTests(
     return true;
   };
   const untested: string[] = [];
+  let traversalIncomplete = false;
   /** Testes co-localizados e importadores (até REVERSE_DEPTH saltos) de `file`. */
   const testsOf = (file: string, source: string): boolean => {
     let found = false;
@@ -879,7 +900,8 @@ export async function computeImpactedTests(
       const next: string[] = [];
       for (const node of frontier) {
         for (const importer of reverse.get(node) ?? []) {
-          if (seen.has(importer) || ++visits > MAX_REVERSE_VISITS) continue;
+          if (seen.has(importer)) continue;
+          if (++visits > MAX_REVERSE_VISITS) { traversalIncomplete = true; continue; }
           seen.add(importer);
           if (TEST_FILE_RE.test(importer)) found = addTest(importer, source) || found;
           else next.push(importer);
@@ -908,13 +930,15 @@ export async function computeImpactedTests(
     const normalized = normalizeRelative(test);
     if (normalized) addTest(normalized, '(extensão)');
   }
-  const e2eSkipped = ordered.filter((test) => E2E_FILE_RE.test(test));
+  const e2eSkipped = includeE2E ? [] : ordered.filter((test) => E2E_FILE_RE.test(test));
   return {
-    tests: ordered.filter((test) => !E2E_FILE_RE.test(test)),
+    tests: includeE2E ? ordered : ordered.filter((test) => !E2E_FILE_RE.test(test)),
     sources,
     untestedFiles: untested,
     e2eSkipped,
-    warnings: truncated ? ['índice do projeto truncado: o grafo de imports pode estar incompleto'] : [],
+    indexComplete: !truncated && !uncoveredChangedSource && !traversalIncomplete,
+    warnings: [...(truncated ? ['índice do projeto truncado: o grafo de imports pode estar incompleto'] : []),
+      ...(traversalIncomplete ? ['raio de imports truncado pelo limite de visitas'] : [])],
   };
 }
 
@@ -1018,27 +1042,6 @@ function resolveExecutable(executable: string, envPath: string): string {
   throw new Error(`executável não encontrado: ${executable}`);
 }
 
-function killTree(proc: ChildProcess, signal: NodeJS.Signals): void {
-  if (proc.pid === undefined) return;
-  try {
-    if (process.platform === 'win32') proc.kill(signal);
-    else process.kill(-proc.pid, signal);
-  } catch {
-    try {
-      proc.kill(signal);
-    } catch {
-      // já saiu
-    }
-  }
-}
-
-const OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
-/**
- * Depois que o runner sai, espera isto pelo fim do stdout/stderr. Um filho que
- * saiu do grupo (setsid/daemon) e herdou o pipe nunca deixa o `close` vir.
- */
-const EXIT_STDIO_GRACE_MS = 2_000;
-
 /**
  * Runner no MESMO isolamento do terminal do writer (process-sandbox): cwd no
  * checkout, HOME/TMPDIR privados, leitura fora do checkout negada (credenciais
@@ -1048,103 +1051,28 @@ const EXIT_STDIO_GRACE_MS = 2_000;
  * (Linux sem bubblewrap, Windows sem OCI) o teste NÃO roda fora dele: o
  * resultado vira "não verificado".
  */
-const execSandboxed: RegressionExec = (file, args, options) =>
-  new Promise((resolve) => {
-    let plan: ReturnType<typeof buildScopedExecPlan>;
-    try {
-      assertMcpInvocationCurrent(options.authority);
-      plan = buildScopedExecPlan({
-        platform: process.platform,
-        executable: resolveExecutable(file, options.env.PATH ?? '/usr/bin:/bin'),
-        args,
-        cwd: options.cwd,
-        rootRealPath: options.scope.rootRealPath,
-        sandboxDir: options.sandboxDir,
-        env: options.env,
-        sandboxProfile: 'workspace-net',
-        extraReadPaths: options.extraReadPaths,
-      });
-      assertMcpInvocationCurrent(options.authority);
-    } catch (error) {
-      resolve({
-        exitCode: null,
-        timedOut: false,
-        stdout: '',
-        stderr: `sandbox do runner indisponível: ${error instanceof Error ? error.message : String(error)}`,
-      });
-      return;
-    }
-    let proc: ChildProcess;
-    try {
-      proc = spawn(plan.file, plan.args, {
-        cwd: plan.cwd,
-        env: plan.env,
-        detached: plan.detached,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
-    } catch (error) {
-      resolve({ exitCode: null, timedOut: false, stdout: '', stderr: String(error) });
-      return;
-    }
-    let stdout = '';
-    let stderr = '';
-    let captured = 0;
-    let timedOut = false;
-    let aborted = false;
-    let settled = false;
-    let forceKill: NodeJS.Timeout | null = null;
-    let exitGrace: NodeJS.Timeout | null = null;
-    const capture = (stream: 'out' | 'err', chunk: Buffer) => {
-      const room = OUTPUT_LIMIT_BYTES - captured;
-      if (room <= 0) return;
-      const text = chunk.subarray(0, room).toString('utf8');
-      captured += Math.min(room, chunk.length);
-      if (stream === 'out') stdout += text;
-      else stderr += text;
-    };
-    const stop = () => {
-      killTree(proc, 'SIGTERM');
-      if (forceKill) return;
-      forceKill = setTimeout(() => killTree(proc, 'SIGKILL'), 2_000);
-      forceKill.unref();
-    };
-    const onAbort = () => {
-      aborted = true;
-      stop();
-    };
-    const timer = setTimeout(() => {
-      timedOut = true;
-      stop();
-    }, Math.max(1, options.timeoutMs));
-    timer.unref();
-    const finish = (exitCode: number | null, extra = '') => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (forceKill) clearTimeout(forceKill);
-      if (exitGrace) clearTimeout(exitGrace);
-      options.signal?.removeEventListener('abort', onAbort);
-      // Descendentes que sobraram (servidor aberto pelo teste) morrem junto.
-      killTree(proc, 'SIGKILL');
-      resolve({
-        exitCode: timedOut || aborted ? null : exitCode,
-        timedOut,
-        aborted,
-        stdout,
-        stderr: stderr + extra,
-      });
-    };
-    proc.stdout?.on('data', (chunk: Buffer) => capture('out', chunk));
-    proc.stderr?.on('data', (chunk: Buffer) => capture('err', chunk));
-    proc.once('error', (error) => finish(null, `\n${error.message}`));
-    proc.once('close', (code) => finish(code));
-    proc.once('exit', (code) => {
-      exitGrace = setTimeout(() => finish(code), EXIT_STDIO_GRACE_MS);
+const execSandboxed: RegressionExec = async (file, args, options) => {
+  try {
+    assertMcpInvocationCurrent(options.authority);
+    if (process.platform === 'win32' && options.nativeCommand && !isNativeContainerCommand(file, args, options.nativeCommand)) throw new Error('Plano de verificação nativa não reconhecido.');
+    const plan = buildScopedExecPlan({
+      platform: process.platform,
+      executable: process.platform === 'win32' && options.nativeCommand && file === 'env'
+        ? file : resolveExecutable(file, options.env.PATH ?? '/usr/bin:/bin'),
+      args: process.platform === 'win32' ? containerCheckArgs(args, options.scope.rootRealPath, options.sandboxDir) : args,
+      cwd: options.cwd, rootRealPath: options.scope.rootRealPath,
+      sandboxDir: options.sandboxDir, env: options.env,
+      sandboxProfile: 'workspace-net', extraReadPaths: options.extraReadPaths,
     });
-    options.signal?.addEventListener('abort', onAbort, { once: true });
-    if (options.signal?.aborted) onAbort();
-  });
+    return await execOwnedCheck({ plan, timeoutMs: options.timeoutMs, request: {
+      scope: options.scope, kind: 'tests', signal: options.signal,
+      isCurrent: () => { assertMcpInvocationCurrent(options.authority); return true; },
+    } });
+  } catch (error) {
+    return { exitCode: null, timedOut: false, stdout: '',
+      stderr: `Sandbox de validação indisponível: ${error instanceof Error ? error.message : String(error)}. Configure o runtime de isolamento e tente novamente.` };
+  }
+};
 
 const UNSAFE_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/gu;
 
@@ -1354,6 +1282,8 @@ function externalDependencyReads(
 }
 
 interface RunnerGroup {
+  /** Main-proved members covered by this native suite, never fixture crates. */
+  readonly nativeModuleRoots?: readonly string[];
   readonly runner: RunnerDetection;
   /** Diretório do runner, relativo à raiz ('' = raiz). */
   readonly dir: string;
@@ -1361,6 +1291,11 @@ interface RunnerGroup {
 }
 
 interface GroupOutcome {
+  readonly complete?: boolean;
+  readonly noTests?: boolean;
+  readonly skipped?: readonly string[];
+  readonly physicalExit?: Promise<void>;
+  readonly retryable?: boolean;
   readonly failures: RegressionTestFailure[];
   readonly ran: string[];
   /** Suítes que não carregaram (erro de parse): viram falha só se o diff as explica. */
@@ -1379,7 +1314,8 @@ async function runTests(
   const cwd = group.dir ? path.join(root, group.dir) : root;
   const { runner } = group;
   const relTests = group.tests.map((test) => (group.dir ? path.posix.relative(group.dir, test) : test));
-  const dependencies = externalDependencyReads(root, cwd, control.trustedDependencyRoot);
+  const native = runner.kind === 'go' || runner.kind === 'cargo';
+  const dependencies = native ? { reads: [] as string[], rejected: null } : externalDependencyReads(root, cwd, control.trustedDependencyRoot);
   if (dependencies.rejected) {
     return {
       failures: [],
@@ -1400,8 +1336,26 @@ async function runTests(
     signal: control.signal,
     authority: control.authority,
   };
-  const notVerified = (why: string): GroupOutcome => ({ failures: [], ran: [], warning: why });
+  let physicalExit: Promise<void> | undefined;
+  const notVerified = (why: string, retryable = false): GroupOutcome => ({ failures: [], ran: [], warning: why, retryable, physicalExit });
   try {
+    if (runner.kind === 'go' || runner.kind === 'cargo') {
+      const command = await prepareNativeRegressionCommand(runner.kind, cwd, sandbox.dir, options.env,
+        { rootRealPath: root, signal: control.signal, assertCurrent: () => assertMcpInvocationCurrent(control.authority) });
+      const result = await exec(command.file, [...(command.argsPrefix ?? []), ...nativeRegressionArgs(runner.kind, fs.existsSync(path.join(cwd, 'Cargo.lock')))],
+        { ...options, nativeCommand: runner.kind, env: command.env, extraReadPaths: command.extraReadPaths });
+      physicalExit = result.physicalExit;
+      if (result.retryable || result.aborted || result.timedOut) return notVerified(result.stderr || 'Verificação nativa aguardando recursos; tente novamente.', true);
+      if (result.outputTruncated) return notVerified('Relatório nativo excedeu o limite de captura; execução não verificada integralmente.');
+      const parsed = runner.kind === 'go' ? parseGoTestEvents(result.stdout, result.exitCode) : parseRustTestOutput(result.stdout, result.exitCode, result.stderr);
+      const noTests = parsed.noTests === true && !await (await import('../context/mechanical-sensors')).hasNativeTestsOrUnknown(
+        cwd, runner.kind === 'go', runner.kind === 'cargo', group.nativeModuleRoots ?? [cwd]);
+      const identity = (id: string) => group.dir && !id.startsWith('(') ? `${group.dir}::${id}` : id;
+      return { complete: parsed.complete || noTests, noTests, ran: parsed.ran.map(identity), skipped: parsed.skipped.map(identity),
+        failures: parsed.failures.map(failure => ({ file: identity(failure.file), message: neutralizeRunnerText(failure.message, 400) })),
+        ...(noTests ? { warning: `${runner.kind}: compilação concluída; nenhum teste aplicável identificado, zero testes executados.` } : !parsed.complete ? { warning: `Suíte ${runner.kind} não verificada integralmente: relatório ausente/incompleto, testes ignorados ou ferramenta indisponível. ${neutralizeRunnerText(result.stderr, 200)}` } : {}),
+      };
+    }
     if (runner.kind === 'pytest') {
       const junitFile = path.join(sandbox.tmp, 'pytest.xml');
       const result = await exec(
@@ -1409,6 +1363,8 @@ async function runTests(
         ['-m', 'pytest', '-q', '--no-header', '-p', 'no:cacheprovider', '-o', 'junit_family=xunit1', `--junitxml=${junitFile}`, ...relTests],
         options,
       );
+      physicalExit = result.physicalExit;
+      if (result.retryable) return notVerified(result.stderr || 'Verificação aguardando recursos; tente novamente.', true);
       if (result.aborted) return notVerified('pytest cancelado');
       if (result.timedOut) return notVerified(`pytest excedeu ${timeoutMs}ms`);
       const junit = (() => {
@@ -1450,6 +1406,8 @@ async function runTests(
         ? ['run', ...configArgs, '--reporter=json', `--outputFile=${outFile}`, '--passWithNoTests', ...relTests]
         : [...configArgs, '--json', `--outputFile=${outFile}`, '--passWithNoTests', '--runTestsByPath', ...relTests];
     const result = await exec(runner.bin, args, options);
+    physicalExit = result.physicalExit;
+    if (result.retryable) return notVerified(result.stderr || 'Verificação aguardando recursos; tente novamente.', true);
     if (result.aborted) return notVerified(`${runner.kind} cancelado`);
     if (result.timedOut) return notVerified(`${runner.kind} excedeu ${timeoutMs}ms`);
     const report = (() => {
@@ -1486,8 +1444,12 @@ async function runTests(
       ran,
       loadFailures,
     };
+  } catch (error) {
+    if (!native) throw error;
+    return notVerified(`Verificação nativa indisponível: ${neutralizeRunnerText(error instanceof Error ? error.message : String(error), 300)}`);
   } finally {
-    removeTreeSync(sandbox.dir, { recursive: true, force: true });
+    const cleanup = () => { try { removeTreeSync(sandbox.dir, { recursive: true, force: true }); } catch { /* Locked private HOME can be cleaned on a later sweep. */ } };
+    if (physicalExit) void physicalExit.then(cleanup, () => {}); else cleanup();
   }
 }
 
@@ -1553,6 +1515,8 @@ async function compareFailuresAgainstBase(opts: {
   readonly now: () => number;
   readonly git: GitRunner;
   readonly warnings: string[];
+  readonly nativeRunner?: NativeRegressionKind;
+  readonly nativeDir?: string;
 }): Promise<ReadonlySet<string>> {
   const { root, scope, baseSha, failures, exec, control, budgetMs, now, git, warnings } = opts;
   const sha7 = baseSha.slice(0, 7);
@@ -1562,7 +1526,7 @@ async function compareFailuresAgainstBase(opts: {
   );
   const inBase = candidates.filter(
     (file) =>
-      git.run(root, ['cat-file', '-e', `${baseSha}:${file}`], { allowFailure: true }).status === 0,
+      git.run(root, ['cat-file', '-e', `${baseSha}:${opts.nativeRunner ? path.posix.join(opts.nativeDir ?? '', opts.nativeRunner === 'go' ? 'go.mod' : 'Cargo.toml') : file}`], { allowFailure: true }).status === 0,
   );
   // Arquivo novo é do worker: não existe na base e segue contando; sem nada a
   // comparar, nem sobe worktree.
@@ -1573,8 +1537,9 @@ async function compareFailuresAgainstBase(opts: {
     );
     return new Set();
   }
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-gate-base-'));
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-gate-base-')));
   fs.chmodSync(tmp, 0o700);
+  const physicalExits: Promise<void>[] = [];
   try {
     const added = git.run(root, ['worktree', 'add', '--detach', tmp, baseSha], { allowFailure: true });
     if (added.status !== 0) {
@@ -1600,7 +1565,7 @@ async function compareFailuresAgainstBase(opts: {
       ...scope,
       rootRealPath: tmp,
     });
-    const { groups } = planRunnerGroups(tmp, inBase);
+    const groups: RunnerGroup[] = opts.nativeRunner ? [{ dir: opts.nativeDir ?? '', runner: { kind: opts.nativeRunner, bin: opts.nativeRunner }, tests: [] }] : planRunnerGroups(tmp, inBase).groups;
     if (groups.length === 0) {
       warnings.push(`comparação com a base não rodou (sem runner na base ${sha7})`);
       return new Set();
@@ -1611,6 +1576,8 @@ async function compareFailuresAgainstBase(opts: {
       const left = deadline - now();
       if (left < MIN_RUN_BUDGET_MS) break;
       const outcome = await runTests(baseScope, group, left, exec, control);
+      if (outcome.physicalExit) physicalExits.push(outcome.physicalExit);
+      if (opts.nativeRunner && !outcome.complete) continue;
       for (const failure of outcome.failures) reproduced.add(failure.file);
       for (const load of outcome.loadFailures ?? []) reproduced.add(load.file);
     }
@@ -1626,13 +1593,14 @@ async function compareFailuresAgainstBase(opts: {
     );
     return new Set();
   } finally {
-    try {
-      git.run(root, ['worktree', 'remove', '--force', tmp], { allowFailure: true });
-      git.run(root, ['worktree', 'prune'], { allowFailure: true });
-    } catch {
-      // A remoção manual abaixo cobre worktree órfã; o nunca bloqueia o portão.
-    }
-    removeTreeSync(tmp, { recursive: true, force: true });
+    const cleanup = () => {
+      try {
+        git.run(root, ['worktree', 'remove', '--force', tmp], { allowFailure: true });
+        git.run(root, ['worktree', 'prune'], { allowFailure: true });
+      } catch { /* Preserve the existing orphan cleanup after physical proof. */ }
+      try { removeTreeSync(tmp, { recursive: true, force: true }); } catch { /* Keep an undeletable temporary worktree; never reject Main cleanup. */ }
+    };
+    if (physicalExits.length) void Promise.all(physicalExits).then(cleanup, () => {}); else cleanup();
   }
 }
 
@@ -1645,7 +1613,7 @@ async function safeExtension<T>(label: string, warnings: string[], call: () => P
   }
 }
 
-async function evaluate(
+async function evaluateMappedTests(
   input: RunRegressionGateInput,
   root: string,
   state: ObservedState,
@@ -1726,13 +1694,14 @@ async function evaluate(
 
   let impacted: ImpactedTests;
   try {
-    impacted = await computeImpactedTests(input.scope, changedFiles, extraTests, radius?.dbConsumers ?? []);
+    impacted = await computeImpactedTests(input.scope, changedFiles, extraTests, radius?.dbConsumers ?? [], input.includeE2E === true);
   } catch (error) {
     warnings.push(`mapa de testes indisponível: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200));
     return finish({
       status: 'unavailable',
       testsRun: [],
       testsNotRun: [],
+      coverage: { indexComplete: false, skippedTests: [] },
       failures: [],
       inheritedFailures: [],
       preexistingFailures: [],
@@ -1764,12 +1733,13 @@ async function evaluate(
       `raio grande: ${impacted.tests.length} testes impactados, rodando os ${maxTests} mais próximos do diff`,
     );
   }
-  const common = { untestedFiles: impacted.untestedFiles, invariantsTouched };
+  const coverage = Object.freeze({ indexComplete: impacted.indexComplete && !state.changed.truncated, skippedTests: Object.freeze([...impacted.e2eSkipped]) });
+  const common = { untestedFiles: impacted.untestedFiles, invariantsTouched, coverage };
   if (tests.length === 0) {
     // Seleção incompleta (diff além do limite): "sem testes" seria aprovação
     // de um diff que o portão nem viu inteiro — fica NÃO verificado.
     return finish({
-      status: state.changed.truncated ? 'unavailable' : 'no-tests',
+      status: state.changed.truncated || input.includeE2E && !coverage.indexComplete ? 'unavailable' : 'no-tests',
       testsRun: [], testsNotRun: [], failures: [], inheritedFailures: [], preexistingFailures: [], runner: null,
       businessRisk: await businessRiskPromise, ...common,
     });
@@ -1814,12 +1784,14 @@ async function evaluate(
   const failures: RegressionTestFailure[] = [];
   const ran = new Set<string>();
   const failuresByGroup = new Map<RunnerGroup, RegressionTestFailure[]>();
+  let retryable = false;
   for (const group of groups) {
     if (remaining() < MIN_RUN_BUDGET_MS) {
       warnings.push(`prazo esgotado antes de rodar ${group.tests.length} teste(s) (${group.runner.kind})`);
       continue;
     }
     const outcome = await runTests(input.scope, group, remaining(), exec, control);
+    retryable ||= outcome.retryable === true;
     if (outcome.warning) warnings.push(outcome.warning);
     for (const file of outcome.ran) ran.add(file);
     const groupFailures = [...outcome.failures];
@@ -1920,11 +1892,13 @@ async function evaluate(
     status:
       countedFailures.length > 0
         ? 'failed'
-        : ownRun.length > 0 && ownNotRun.length === 0 && !state.changed.truncated
+        : ownRun.length > 0 && ownNotRun.length === 0 && !state.changed.truncated && (!input.includeE2E || coverage.indexComplete)
           ? 'passed'
           : 'unavailable',
     testsRun,
     testsNotRun,
+    coverage,
+    retryable: retryable && countedFailures.length === 0,
     failures: countedFailures,
     inheritedFailures,
     preexistingFailures,
@@ -1933,6 +1907,102 @@ async function evaluate(
     invariantsTouched: touchedSummary(new Set(countedFailures.map((failure) => failure.file))),
     businessRisk: await businessRiskPromise,
   });
+}
+
+/** Native languages use complete suites, not the JavaScript import graph. */
+async function evaluate(input: RunRegressionGateInput, root: string, state: ObservedState,
+  deps: RegressionGateDependencies, git: GitRunner): Promise<RegressionGateResult> {
+  const started = (deps.now ?? Date.now)();
+  const mapped = await evaluateMappedTests(input, root, state, deps, git);
+  if (!fs.existsSync(path.join(root, 'go.mod')) && !fs.existsSync(path.join(root, 'go.work')) && !fs.existsSync(path.join(root, 'Cargo.toml')) &&
+    !state.changed.files.some(file => /(?:\.go|\.rs|(?:^|\/)go\.(?:mod|work)|(?:^|\/)Cargo\.toml)$/.test(file))) return mapped;
+  const walk = await walkOrientationTreeAsync(input.scope, GRAPH_LIMITS);
+  const inventory = new Set(walk.files.map(file => file.relativePath.replaceAll('\\', '/')));
+  const manifestIssues: string[] = [];
+  const selected = new Set(['go.mod', 'Cargo.toml'].filter(file => fs.existsSync(path.join(root, file))));
+  // Orientation excludes build/vendor trees. A changed or explicitly claimed
+  // native artifact can still live there: recover its real ancestor manifests
+  // rather than claiming root ./... covers a nested Go module.
+  const inspectedDirs = new Set<string>();
+  for (const file of state.changed.files) {
+    for (let dir = path.posix.dirname(file); ; dir = path.posix.dirname(dir)) {
+      if (inspectedDirs.has(dir)) break;
+      inspectedDirs.add(dir);
+      for (const name of ['go.mod', 'Cargo.toml']) {
+        const lexical = path.join(root, dir, name);
+        if (!fs.existsSync(lexical)) continue;
+        try {
+          const real = fs.realpathSync(lexical); const stat = fs.statSync(real);
+          if (!isInside(root, real) || !stat.isFile() || stat.size > GRAPH_LIMITS.maxFileBytes) throw new Error('manifesto fora da cobertura autorizada');
+          const manifest = path.relative(root, real).replaceAll('\\', '/');
+          inventory.add(manifest); selected.add(manifest);
+        } catch { manifestIssues.push(path.posix.join(dir, name)); }
+      }
+      if (dir === '.' || dir === '/') break;
+    }
+  }
+  for (const dir of new Set(['.', ...inspectedDirs])) {
+    if (!fs.existsSync(path.join(root, dir))) continue;
+    try {
+      const workspace = await discoverScopedGoWorkspace(path.join(root, dir), root);
+      for (const module of workspace?.moduleRoots ?? []) {
+        const manifest = path.relative(root, path.join(module, 'go.mod')).replaceAll('\\', '/');
+        inventory.add(manifest); selected.add(manifest);
+      }
+    } catch (error) { manifestIssues.push(`${path.posix.join(dir, 'go.work')}: ${neutralizeRunnerText(error instanceof Error ? error.message : String(error), 200)}`); }
+  }
+  const manifests = [...inventory];
+  const cargoManifests = new Map(manifests.filter(file => /(?:^|\/)Cargo\.toml$/.test(file)).map(file => [file, fs.readFileSync(path.join(root, file), 'utf8')]));
+  const cargo = cargoRegressionWorkspaces(cargoManifests);
+  const selectedRoots = new Set([...selected].map(file => file.endsWith('Cargo.toml') ? cargo.owners[file] ?? file : file));
+  const groups: RunnerGroup[] = [...selectedRoots].map(file => {
+    const kind: NativeRegressionKind = file.endsWith('go.mod') ? 'go' : 'cargo';
+    const dir = path.posix.dirname(file);
+    const nativeModuleRoots = kind === 'go' ? [path.join(root, dir)] :
+      Object.entries(cargo.owners).filter(([, owner]) => owner === file).map(([member]) => path.join(root, path.posix.dirname(member)));
+    return { dir: dir === '.' ? '' : dir, runner: { kind, bin: kind }, tests: [], nativeModuleRoots };
+  });
+  if (!groups.length) {
+    const knownManifest = ['go.mod', 'go.work', 'Cargo.toml', ...state.changed.files.filter(file => /(?:^|\/)(?:go\.mod|Cargo\.toml)$/.test(file))]
+      .some(file => fs.existsSync(path.join(root, file)));
+    return knownManifest || manifestIssues.length > 0 ? { ...mapped, status: 'unavailable', coverage: { indexComplete: false, skippedTests: [] },
+      warnings: [...mapped.warnings, ...manifestIssues, 'Manifesto nativo indisponível ou fora do inventário completo; suíte não verificada.'] } : mapped;
+  }
+  const warnings = [...mapped.warnings, ...manifestIssues.map(file => `Manifesto nativo não verificado: ${file}`), 'Go/Rust: execução das suítes completas reconhecidas, sem inferir grafo de impacto nativo.'];
+  const failures = [...mapped.failures]; const preexistingFailures = [...mapped.preexistingFailures];
+  const testsRun = [...mapped.testsRun]; const testsNotRun = [...mapped.testsNotRun];
+  const skipped = [...(mapped.coverage?.skippedTests ?? [])];
+  let complete = !walk.truncated && manifestIssues.length === 0 && mapped.coverage?.indexComplete !== false && mapped.status !== 'unavailable';
+  let retryable = mapped.retryable === true;
+  const now = deps.now ?? Date.now;
+  const remaining = () => started + (input.timeoutMs ?? DEFAULT_REGRESSION_TEST_TIMEOUT_MS) - now();
+  const control = { signal: input.signal, authority: input.authority, trustedDependencyRoot: input.trustedDependencyRoot };
+  const exec = deps.exec ?? execSandboxed;
+  for (const group of groups) {
+    const kind = group.runner.kind as NativeRegressionKind;
+    const label = `(${kind} suite: ${group.dir || '.'})`;
+    if (remaining() < MIN_RUN_BUDGET_MS) { complete = false; retryable = true; testsNotRun.push(label); continue; }
+    if (kind === 'cargo' && cargo.unsupported.some(file => cargo.owners[file] === path.posix.join(group.dir, 'Cargo.toml'))) {
+      complete = false; testsNotRun.push(label); warnings.push(`${label}: harness personalizado sem recibo libtest reconhecido.`); continue;
+    }
+    const outcome = await runTests(input.scope, group, remaining(), exec, control);
+    testsRun.push(...outcome.ran); skipped.push(...(outcome.skipped ?? []));
+    if (outcome.warning) warnings.push(outcome.warning);
+    retryable ||= outcome.retryable === true;
+    if (!outcome.complete) { complete = false; testsNotRun.push(label); }
+    let reproduced: ReadonlySet<string> = new Set();
+    if (kind === 'cargo' && outcome.failures.length) warnings.push('Rust: falhas não reclassificadas na base sem identidade inequívoca de crate/alvo; nome de teste sozinho não basta.');
+    if (kind === 'go' && outcome.complete && outcome.failures.length && state.base.sha) {
+      reproduced = await compareFailuresAgainstBase({ root, scope: input.scope, baseSha: state.base.sha,
+        failures: outcome.failures, exec, control, budgetMs: Math.floor(remaining() / 2), now, git, warnings,
+        nativeRunner: kind, nativeDir: group.dir });
+    }
+    for (const failure of outcome.failures) (reproduced.has(failure.file) ? preexistingFailures : failures).push(failure);
+  }
+  if (preexistingFailures.length > mapped.preexistingFailures.length) warnings.push('Falhas nativas reproduzidas pelo mesmo caso na base não contam contra a alteração.');
+  return Object.freeze({ ...mapped, status: failures.length ? 'failed' : complete ? testsRun.length ? 'passed' : 'no-tests' : 'unavailable',
+    runner: mapped.runner ?? groups[0].runner.kind, testsRun, testsNotRun, failures, preexistingFailures, warnings,
+    retryable: retryable && !failures.length, coverage: { indexComplete: complete, skippedTests: skipped }, durationMs: now() - started });
 }
 
 /**
@@ -1967,6 +2037,7 @@ export async function runRegressionGate(
       changedFiles: [],
       testsRun: [],
       testsNotRun: [],
+      coverage: { indexComplete: gitAnswered, skippedTests: [] },
       failures: [],
       inheritedFailures: [],
       preexistingFailures: [],
@@ -1986,6 +2057,7 @@ export async function runRegressionGate(
     before.diffHash,
     before.changed.foreign.join(','),
     input.maxTestFiles ?? '',
+    input.includeE2E === true ? 'with-e2e' : 'fast',
     input.trustedDependencyRoot ?? '',
   ].join('\0');
   const cacheable = !before.changed.truncated;
@@ -2007,13 +2079,14 @@ export async function runRegressionGate(
       return Object.freeze({
         ...result,
         status: 'unavailable' as const,
+        retryable: true,
         warnings: Object.freeze([
           ...result.warnings,
           'o checkout mudou durante a verificação: resultado descartado, reavalie o estado atual',
         ]),
       });
     }
-    if (cacheable && result.status !== 'unavailable') {
+    if (cacheable && result.status !== 'unavailable' && result.coverage?.indexComplete !== false) {
       cache.set(key, result);
       while (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value!);
     }
@@ -2048,7 +2121,9 @@ export function formatRegressionGateReport(result: RegressionGateResult): string
     lines.push('Se a falha já existia antes do seu diff, prove isso (rode o teste na base) e diga no relatório.');
   } else if (result.status === 'passed') {
     lines.push(
-      `[Nexus · portão de regressão] ${result.testsRun.length} teste(s) impactado(s) passaram (${result.runner}).`,
+      result.preexistingFailures.length + result.inheritedFailures.length > 0
+        ? `[Nexus · portão de regressão] ${result.testsRun.length} teste(s) executado(s); falhas pré-existentes/herdadas excluídas do veredito (${result.runner}).`
+        : `[Nexus · portão de regressão] ${result.testsRun.length} teste(s) impactado(s) passaram (${result.runner}).`,
     );
   } else if (result.status === 'unavailable') {
     lines.push(

@@ -377,3 +377,128 @@ describe('runTestCoverageSensor', () => {
     expect(result.findings[0]?.recommendation).toContain('src/bar.test.ts');
   });
 });
+
+describe('declared typecheck configurations', () => {
+  it.each(['tsc', 'vue-tsc'] as const)('runs only declared %s argv with an alternative local config', async compiler => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-typecheck-project-')));
+    try {
+      fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: `${compiler} --noEmit -p "tsconfig.app.json"` } }));
+      fs.writeFileSync(path.join(root, 'tsconfig.app.json'), '{}');
+      fs.mkdirSync(path.join(root, 'node_modules/.bin'), { recursive: true }); fs.writeFileSync(path.join(root, 'node_modules/.bin', compiler), 'fixture');
+      const exec = vi.fn(async () => ({ stdout: '', stderr: '' }));
+      const result = await runTypecheckSensor(root, { exec });
+      expect(result.status).toBe('passed');
+      expect(exec).toHaveBeenCalledWith(path.join(root, 'node_modules/.bin', compiler), ['--project', path.join(root, 'tsconfig.app.json'), '--noEmit', '--pretty', 'false'], expect.objectContaining({ cwd: root, timeout: 120000 }));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  it.each(['echo success', 'tsc -p ../outside.json', 'tsc --noEmit && echo done', 'nx typecheck',
+    'node ./scripts/typecheck.js', 'node --require ./hook.js ./node_modules/typescript/bin/tsc',
+    'node ./node_modules/typescript/bin/tsserver', 'node --max-old-space-size=999999 ./node_modules/typescript/bin/tsc',
+  ])('unsupported/unsafe script never claims execution: %s', async command => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-typecheck-denied-')));
+    try {
+      fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: command } })); fs.writeFileSync(path.join(root, 'tsconfig.json'), '{}');
+      const exec = vi.fn(async () => ({ stdout: '', stderr: '' }));
+      expect((await runTypecheckSensor(root, { exec })).status).toBe('unavailable'); expect(exec).not.toHaveBeenCalled();
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+it.each(['tsc', 'vue-tsc'] as const)('Windows launches %s via native Node and package entry, never .cmd or shell', async compiler => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus windows compiler ')));
+  try {
+    const name = compiler === 'tsc' ? 'typescript' : 'vue-tsc';
+    const pkg = path.join(root, 'node_modules', name);
+    fs.mkdirSync(path.join(pkg, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ name, bin: { [compiler]: 'bin/compiler.js' } }));
+    fs.writeFileSync(path.join(pkg, 'bin/compiler.js'), 'fixture compiler entry');
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: `${compiler} -p tsconfig.app.json` } }));
+    fs.writeFileSync(path.join(root, 'tsconfig.app.json'), '{}');
+    const exec = vi.fn(async () => ({ stdout: '', stderr: '' }));
+    const result = await runTypecheckSensor(root, { platform: 'win32', nodeExecutable: () => '/installed/node.exe', exec });
+    expect(result.status).toBe('passed');
+    expect(exec).toHaveBeenCalledWith('/installed/node.exe', [path.join(pkg, 'bin/compiler.js'), '--project', path.join(root, 'tsconfig.app.json'), '--noEmit', '--pretty', 'false'], expect.objectContaining({ cwd: root, windowsHide: true }));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it('supports the actual Nexus Node-wrapped typecheck without running an arbitrary script', async () => {
+  const script = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')).scripts.typecheck as string;
+  expect(script).toContain('node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc');
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus own compiler ')));
+  try {
+    fs.mkdirSync(path.join(root, 'node_modules/typescript/bin'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'node_modules/typescript/package.json'), JSON.stringify({ name: 'typescript', bin: { tsc: './bin/tsc' } }));
+    fs.writeFileSync(path.join(root, 'node_modules/typescript/bin/tsc'), 'fixture');
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: script } }));
+    fs.writeFileSync(path.join(root, 'tsconfig.json'), '{}');
+    const exec = vi.fn(async () => ({ stdout: '', stderr: '' }));
+    expect((await runTypecheckSensor(root, { exec, nodeExecutable: () => process.execPath })).status).toBe('passed');
+    expect(exec).toHaveBeenCalledWith(process.execPath, ['--max-old-space-size=4096', path.join(root, 'node_modules/typescript/bin/tsc'), '--noEmit', '--pretty', 'false'], expect.objectContaining({ cwd: root }));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it.each([
+  ['Makefile', 'all:\n\tprintf build-only\n'],
+  ['pyproject.toml', '[build-system]\nrequires = ["setuptools"]\nbuild-backend = "setuptools.build_meta"\n'],
+  ['Cargo.toml', '[package]\nname = "fixture"\nversion = "0.1.0"\n'],
+  ['go.mod', 'module example.invalid/fixture\ngo 1.23\n'],
+])('build-only %s does not invent applicable tests', async (file, content) => {
+  const { mechanicalProjectRequirements } = await import('./mechanical-sensors');
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus build-only ')));
+  try { fs.writeFileSync(path.join(root, file), content); expect((await mechanicalProjectRequirements(root)).tests).toBe(false); }
+  finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it.each([
+  ['pytest.ini', '[pytest]\n'],
+  ['pyproject.toml', '[tool.pytest.ini_options]\naddopts = "-q"\n'],
+  ['Makefile', 'test:\n\tpython -m unittest\n'],
+  ['Cargo.toml', '[[test]]\nname = "integration"\n'],
+  ['calc_test.go', 'package fixture\n'],
+  ['package.json', JSON.stringify({ scripts: { test: 'node tests/check.cjs' } })],
+])('positive test declaration %s remains applicable', async (file, content) => {
+  const { mechanicalProjectRequirements } = await import('./mechanical-sensors');
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus declared tests ')));
+  try { fs.writeFileSync(path.join(root, file), content); expect((await mechanicalProjectRequirements(root)).tests).toBe(true); }
+  finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it('rejects a Node wrapper when the installed package bin points to another entry', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus compiler mismatch ')));
+  try {
+    fs.mkdirSync(path.join(root, 'node_modules/typescript/bin'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'node_modules/typescript/package.json'), JSON.stringify({ name: 'typescript', bin: { tsc: './bin/other.js' } }));
+    fs.writeFileSync(path.join(root, 'node_modules/typescript/bin/tsc'), 'fixture');
+    fs.writeFileSync(path.join(root, 'node_modules/typescript/bin/other.js'), 'fixture');
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'node ./node_modules/typescript/bin/tsc --noEmit' } }));
+    fs.writeFileSync(path.join(root, 'tsconfig.json'), '{}');
+    const exec = vi.fn(async () => ({ stdout: '', stderr: '' }));
+    expect((await runTypecheckSensor(root, { exec, nodeExecutable: () => process.execPath })).status).toBe('unavailable');
+    expect(exec).not.toHaveBeenCalled();
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it.each([
+  ['go.mod', 'internal/calc_test.go', 'package internal\n'],
+  ['Cargo.toml', 'src/calc.rs', '#[test]\nfn addition() {}\n'],
+  ['Cargo.toml', 'tests/addition.rs', 'fn helper() {}\n'],
+])('unchanged nested native tests remain applicable: %s / %s', async (manifest, test, content) => {
+  const { mechanicalProjectRequirements } = await import('./mechanical-sensors');
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus nested native tests ')));
+  try {
+    fs.writeFileSync(path.join(root, manifest), '');
+    fs.mkdirSync(path.dirname(path.join(root, test)), { recursive: true });
+    fs.writeFileSync(path.join(root, test), content);
+    expect((await mechanicalProjectRequirements(root, ['src/changed-source.rs'])).tests).toBe(true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it('Cargo source without test declarations does not invent a regression suite', async () => {
+  const { mechanicalProjectRequirements } = await import('./mechanical-sensors');
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus rust build only ')));
+  try {
+    fs.writeFileSync(path.join(root, 'Cargo.toml'), '[package]\nname="fixture"\n');
+    fs.mkdirSync(path.join(root, 'src')); fs.writeFileSync(path.join(root, 'src/main.rs'), 'fn main() {}\n');
+    expect((await mechanicalProjectRequirements(root)).tests).toBe(false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

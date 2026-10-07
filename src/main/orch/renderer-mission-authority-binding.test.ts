@@ -72,7 +72,7 @@ import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import { createMissionPaneAuthoritySeal } from "./mission-pane-authority";
 import { beginOperatorTabResumeTransfer } from "./operator-tab-mission-resume";
 
-const owner = { id: 7 } as WebContents;
+const owner = { id: 7, isDestroyed: () => false, isCrashed: () => false } as WebContents;
 const scope = testProjectScope({
   projectId: "project-a",
   checkoutId: "checkout-a",
@@ -522,6 +522,8 @@ describe("renderer mission authority", () => {
           create,
           update,
           remove,
+          atomically: <T>(fn: () => T): T => fn(),
+          codeBaseline: { record: vi.fn() },
           rebindOrchestratorSession: deps.rebindMissionOrchestratorSession,
         },
         missionPanes: {
@@ -534,7 +536,7 @@ describe("renderer mission authority", () => {
       return { created, create, update, remove };
     }
 
-    it("cria missão Autopilot livre, sem squad, liderada pelo pane solto", () => {
+    it("cria missão Autopilot livre, sem squad, liderada pelo pane solto", async () => {
       const store = wireLightMissionStore();
       deps.findPaneOwnedBy.mockReturnValue({
         paneId: "pane-b",
@@ -551,10 +553,10 @@ describe("renderer mission authority", () => {
         squadId: undefined,
       });
 
-      const result = authority.createPaneMissionFromRenderer(owner, {
+      const result = (await authority.createPaneMissionFromRenderer(owner, {
         paneId: "pane-b",
         title: "Missão · Checkout",
-      });
+      }));
 
       expect(result.ok).toBe(true);
       expect(result.mission?.id).toBe("mission-light");
@@ -585,7 +587,7 @@ describe("renderer mission authority", () => {
       expect(store.remove).not.toHaveBeenCalled();
     });
 
-    it("não arranca pane de outra missão e não cria nada", () => {
+    it("não arranca pane de outra missão e não cria nada", async () => {
       const store = wireLightMissionStore();
       deps.findPaneOwnedBy.mockReturnValue({
         paneId: "pane-a",
@@ -595,13 +597,13 @@ describe("renderer mission authority", () => {
       deps.getOwnedAgentSessionInfo.mockReturnValue({ ...session, missionId: "mission-a" });
 
       expect(
-        authority.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · A" }),
+        (await authority.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · A" })),
       ).toEqual({ ok: false, error: "pane_mission_mismatch" });
       expect(store.create).not.toHaveBeenCalled();
       expect(deps.updateOwnedAgentSessionRole).not.toHaveBeenCalled();
     });
 
-    it("promoção recusada desfaz a missão recém-criada", () => {
+    it("promoção recusada desfaz a missão recém-criada", async () => {
       const store = wireLightMissionStore();
       deps.findPaneOwnedBy.mockReturnValue({
         paneId: "pane-b",
@@ -620,10 +622,10 @@ describe("renderer mission authority", () => {
       store.create.mockImplementationOnce(() => ({ ...mission, id: "mission-light" }));
       deps.rebindMissionOrchestratorSession.mockReturnValue(null);
 
-      const result = authority.createPaneMissionFromRenderer(owner, {
+      const result = (await authority.createPaneMissionFromRenderer(owner, {
         paneId: "pane-b",
         title: "Missão · B",
-      });
+      }));
       expect(result.ok).toBe(false);
       expect(store.remove).toHaveBeenCalledWith("mission-light");
     });

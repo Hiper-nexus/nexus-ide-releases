@@ -1121,7 +1121,7 @@ export async function finishAndProcess(
     }
 
     store.setStatus('routing');
-    const paneId = routePrompt(transcript);
+    const paneId = await routePrompt(transcript);
     if (!paneId) {
       store.setError('No focused pane to route the prompt into.');
       return;

@@ -101,7 +101,9 @@ limite explicitamente. Nunca marque a release pronta apenas por um build unsigne
 - [ ] O smoke empacotado rodou sob `xvfb-run`; o DEB foi instalado e aberto no próprio runner (`apt-get install`), com `dpkg-query` confirmando a versão e `rpm -qpR` mostrando a dependência `bubblewrap`. O ZIP foi validado contra path/symlink escape, extraído e aberto pelo mesmo harness.
 - [ ] `npm run release:publish:linux -- --version <v> --run <id>` revalidou run, recibo (commit/tagObject), bytes e SHA-256 antes de anexar deb, rpm, ZIP e `SHA256SUMS-linux-x64.txt` na canônica e depois no espelho — nunca `--clobber`, nunca delete.
 - [ ] `bubblewrap` está instalado na máquina de validação (dependência de runtime declarada nos dois pacotes).
-- [ ] Nenhuma versão Linux estável maior já foi publicada. Linux não tem auto-update: o usuário instala o pacote novo por cima; uma release somente macOS/Windows não avança nem bloqueia o canal Linux.
+- [ ] `SHA256SUMS-linux-x64.txt.sig` foi assinado com a chave Ed25519 autorizada e publicado nos dois repositórios; assinatura e ZIP listado foram conferidos. A chave privada nunca entra no repositório, container ou log. Sem a assinatura, a instalação portátil não consegue atualizar.
+- [ ] O upgrade portátil (`linux-self`, instalação via `install.sh`) foi validado. Instalações DEB/RPM em diretórios do sistema permanecem manuais; não anunciar auto-update para elas.
+- [ ] Nenhuma versão Linux estável maior já foi publicada. Uma release somente macOS/Windows não avança nem bloqueia o canal Linux.
 
 - [ ] O preview de PR/main registrou o SHA exato e os resultados de build/smokes; `linux-x64-preview` e `linux-browser-smoke` são evidência de CI, não candidatas publicáveis.
 - [ ] Compatibilidade Omarchy/Hyprland, se anunciada, tem prova na máquina alvo. Xvfb com sandbox desabilitada exclusivamente no harness não comprova essa sessão nem Bubblewrap real.

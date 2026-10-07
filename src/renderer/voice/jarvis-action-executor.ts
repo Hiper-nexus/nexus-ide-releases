@@ -1124,7 +1124,7 @@ export async function executeJarvisAction(
       });
       const sessionId = await waitForSession(target.paneId, 750);
       checkpoint(control);
-      const ok = Boolean(sessionId) && submitPromptToPane(target.paneId, action.text);
+      const ok = Boolean(sessionId) && await submitPromptToPane(target.paneId, action.text);
       logVoiceEvent(ok ? 'info' : 'warn', ok ? 'pane.deliverySubmitted' : 'pane.deliveryFailed', ok ? 'texto submetido ao PTY' : 'sessão do pane indisponível', {
         commandId,
         paneId: target.paneId,
@@ -1191,7 +1191,7 @@ export async function executeJarvisAction(
       const sessionId = await waitForSession(target.orchestratorPaneId, 750);
       checkpoint(control);
       const ok = Boolean(sessionId) &&
-        submitPromptToPane(target.orchestratorPaneId, missionPrompt);
+        await submitPromptToPane(target.orchestratorPaneId, missionPrompt);
       if (ok) markEffect(control);
       logVoiceEvent(
         ok ? 'info' : 'warn',

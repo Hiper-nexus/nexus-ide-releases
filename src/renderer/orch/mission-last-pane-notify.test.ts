@@ -5,6 +5,7 @@ import { buildGridTree } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
+import { useWorkspaceStore } from '../state/workspace-store';
 
 const confirmAndReopenMission = vi.hoisted(() =>
   vi.fn(async () => ({ ok: true as const, panes: 1 })),
@@ -192,6 +193,74 @@ describe('mission last pane closed', () => {
     useLayoutStore.getState().close('pane-m1', 'pane-toolbar-close');
 
     expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('does not announce background execution when the MissionBoard sweep closes the last pane', () => {
+    seedLayout([missionPane]);
+    seedOrch([makeMission('running')], { 'pane-m1': 'mission-1' });
+    useLayoutStore.getState().close('pane-m1', 'mission-board-close');
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+
+  it.each([true, false])('suppresses close events during explicit shutdown and releases suppression after ok=%s', async (ok) => {
+    const actual = await vi.importActual<typeof import('./close-mission-runtime')>('./close-mission-runtime');
+    let finish!: (value: { ok: boolean; terminatedSessionIds: string[] }) => void;
+    const closeRuntime = new Promise<{ ok: boolean; terminatedSessionIds: string[] }>(resolve => { finish = resolve; });
+    vi.stubGlobal('window', { nexus: { orch: { closeMissionRuntime: () => closeRuntime } } });
+    seedLayout([missionPane]);
+    seedOrch([makeMission('running')], { 'pane-m1': 'mission-1' });
+    const pending = actual.closeMissionRuntimeAndPanes('mission-1', 'mission-board-close');
+    try {
+      // Main's physical close event can arrive before both the IPC reply and mission broadcast.
+      useLayoutStore.getState().close('pane-m1', 'orch-close-request');
+      expect(useToastStore.getState().toasts).toHaveLength(0);
+    } finally {
+      finish({ ok, terminatedSessionIds: [] });
+      await pending;
+      vi.unstubAllGlobals();
+    }
+    // A subsequent ordinary runtime retirement must retain its legitimate notice.
+    seedLayout([missionPane]);
+    seedOrch([makeMission('running')], { 'pane-m1': 'mission-1' });
+    useLayoutStore.getState().close('pane-m1', 'orch-close-request');
+    expect(useToastStore.getState().toasts).toEqual([
+      expect.objectContaining({ title: 'Missão continua em execução' }),
+    ]);
+  });
+
+  it('keeps shutdown suppression after the UI deadline but does not carry it to a new workspace epoch', async () => {
+    const actual = await vi.importActual<typeof import('./close-mission-runtime')>('./close-mission-runtime');
+    let finish!: (value: { ok: boolean; terminatedSessionIds: string[] }) => void;
+    const reply = new Promise<{ ok: boolean; terminatedSessionIds: string[] }>(resolve => { finish = resolve; });
+    const previousWorkspace = useWorkspaceStore.getState().current;
+    const previousEpoch = useOrchStore.getState().workspaceEpoch;
+    vi.useFakeTimers();
+    vi.stubGlobal('window', { nexus: { orch: { closeMissionRuntime: () => reply } } });
+    seedLayout([missionPane]);
+    seedOrch([makeMission('running')], { 'pane-m1': 'mission-1' });
+    const pending = actual.closeMissionRuntimeAndPanes('mission-1', 'mission-board-close');
+    try {
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect((await pending).ok).toBe(false);
+      useLayoutStore.getState().close('pane-m1', 'orch-close-request');
+      expect(useToastStore.getState().toasts).toHaveLength(0);
+      useOrchStore.setState({ workspaceEpoch: previousEpoch + 1 });
+      useWorkspaceStore.setState({ current: { path: '/new-project' } as never });
+      seedLayout([missionPane]);
+      seedOrch([makeMission('running')], { 'pane-m1': 'mission-1' });
+      useLayoutStore.getState().close('pane-m1', 'orch-close-request');
+      expect(useToastStore.getState().toasts).toEqual([
+        expect.objectContaining({ title: 'Missão continua em execução' }),
+      ]);
+    } finally {
+      finish({ ok: true, terminatedSessionIds: [] });
+      await reply;
+      await pending;
+      useWorkspaceStore.setState({ current: previousWorkspace });
+      useOrchStore.setState({ workspaceEpoch: previousEpoch });
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 
   it('operador fecha pane de missão Aguardando você (ajuste) — não encerra nem reabre', async () => {

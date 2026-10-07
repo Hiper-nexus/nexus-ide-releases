@@ -164,6 +164,7 @@ const DELEGATION_AUTHORITY_TOOLS = new Set([
 
 /** PREVC state transitions whose handlers enforce mission/stage authority. */
 const WORKFLOW_AUTHORITY_TOOLS = new Set([
+  'review_verdict',
   'merge_review_submit',
   'merge_retry',
   'merge_task',
@@ -192,6 +193,8 @@ const HANDOFF_AUTHORITY_TOOLS = new Set([
  * handler is reviewed specifically for the read-only boundary.
  */
 const READ_ONLY_CONTEXT_METADATA_TOOLS = new Set([
+  // Main revalidates reviewer/session/candidate and writes only a receipt.
+  'review_verdict',
   'context_draft_review',
   'handoff_submit',
   'handoff_ack',

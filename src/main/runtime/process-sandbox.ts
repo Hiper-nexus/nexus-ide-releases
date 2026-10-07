@@ -427,7 +427,9 @@ function collectToolchainReadRules(envPath: string | undefined): string[] {
     for (const name of names) {
       const target = existingRealPath(path.join(dir, name));
       if (!target) continue;
-      rules.add(`(literal ${sbplString(target)})`);
+      // The directory subpath already covers its real children. Keep only
+      // escaping symlink targets here so dense PATHs fit the host argv bound.
+      if (!isWithin(dir, target)) rules.add(`(literal ${sbplString(target)})`);
       if (NODE_TOOL_NAMES.has(name)) {
         const runtimeRoot = nodeRuntimeRoot(target);
         if (runtimeRoot) rules.add(`(subpath ${sbplString(runtimeRoot)})`);

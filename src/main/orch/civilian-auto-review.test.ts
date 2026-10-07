@@ -18,6 +18,22 @@ import {
 } from './civilian-auto-review';
 import type { RegressionGateResult } from '../regression-gate/regression-gate';
 
+it('reports structured applicability without treating a configured but unavailable typecheck as not-applicable', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-code-checks-')));
+  try {
+    writeFileSync(join(root, 'tsconfig.json'), '{}');
+    const { dependencies } = deps();
+    const result = await enforceCivilianAutoReview({ mission: missionFixture(), scope: { ...scope, rootRealPath: root },
+      productFiles: ['app.ts'], completionBaseSha: BASE_SHA,
+    }, { ...dependencies, typecheck: async () => ({ kind: 'typecheck', status: 'unavailable', summary: 'Compiler absent', findings: [] }) });
+    expect(result.kind).toBe('approved'); // Legacy callers retain their existing outcome contract.
+    if (result.kind !== 'approved') return;
+    expect(result.verification).toMatchObject({ analysisComplete: true, headSha: HEAD_SHA, baseSha: BASE_SHA,
+      checks: expect.arrayContaining([{ kind: 'typecheck', status: 'unavailable', summary: 'Compiler absent' }]),
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 const scope = testProjectScope({ rootRealPath: '/workspace/loja' });
 
 const HEAD_SHA = 'b'.repeat(40);
@@ -614,4 +630,110 @@ describe('enforceCivilianAutoReview — sensores mecânicos (Etapa 2)', () => {
     if (outcome.kind !== 'approved') return;
     expect(outcome.note).toContain('indisponível');
   });
+});
+
+describe('strict completion applicability from project declarations', () => {
+  it.each(['tsc -p tsconfig.app.json', 'vue-tsc --noEmit -p tsconfig.app.json', 'nx typecheck'])('declared %s is required even without root tsconfig', async script => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-required-check-')));
+    try {
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: script } }));
+      writeFileSync(join(root, 'tsconfig.app.json'), '{}');
+      const result = await enforceCivilianAutoReview({ mission: missionFixture(), scope: { ...scope, rootRealPath: root }, productFiles: ['app.ts'], completionBaseSha: BASE_SHA }, {
+        ...deps().dependencies, typecheck: async () => ({ kind: 'typecheck', status: 'unavailable', summary: 'tool unavailable', findings: [] }),
+      });
+      expect(result.kind).toBe('approved');
+      if (result.kind === 'approved') expect(result.verification?.checks.find(check => check.kind === 'typecheck')?.status).toBe('unavailable');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('dependencies without lockfile retain an unavailable required audit', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-required-audit-')));
+    try {
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { react: '^19.0.0' } }));
+      const result = await enforceCivilianAutoReview({ mission: missionFixture(), scope: { ...scope, rootRealPath: root }, productFiles: ['app.js'], completionBaseSha: BASE_SHA }, {
+        ...deps().dependencies, audit: async () => ({ kind: 'dependency-audit', status: 'unavailable', summary: 'lockfile missing', findings: [] }),
+      });
+      if (result.kind !== 'approved') throw new Error('fixture');
+      expect(result.verification?.checks.find(check => check.kind === 'dependency-audit')?.status).toBe('unavailable');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('completion requests E2E and does not relabel structured skipped tests as not applicable', async () => {
+    const gate = vi.fn(async () => regressionResult({ status: 'no-tests', testsRun: [],
+      coverage: { indexComplete: true, skippedTests: ['e2e/app.test.ts'] } }));
+    const result = await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA }, { ...deps().dependencies, regressionGate: gate });
+    expect(gate).toHaveBeenCalledWith(expect.objectContaining({ includeE2E: true }));
+    if (result.kind !== 'approved') throw new Error('fixture');
+    expect(result.verification?.regressionApplicable).toBe(true);
+    expect(result.verification?.regression?.status).toBe('unavailable');
+  });
+
+  it('preserves preexisting exemptions but does not claim their failed executions passed', async () => {
+    const result = await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA }, {
+      ...deps().dependencies, regressionGate: async () => regressionResult({ preexistingFailures: [{ file: 'src/app.test.ts', message: 'already fails at base' }] }),
+    });
+    if (result.kind !== 'approved') throw new Error('fixture');
+    expect(result.note).toContain('pré-existente'); expect(result.note).not.toContain('1 passaram');
+  });
+});
+
+it('strict completion executes its tests even when the optional worker fast gate is disabled', async () => {
+  const gate = await import('../regression-gate/regression-gate');
+  const enabled = vi.spyOn(gate, 'isRegressionGateEnabled').mockReturnValue(false);
+  const run = vi.spyOn(gate, 'runRegressionGate').mockResolvedValue(regressionResult({
+    coverage: { indexComplete: true, skippedTests: [] }, headSha: HEAD_SHA, baseSha: BASE_SHA,
+  }));
+  const { regressionGate: _fixtureOverride, ...dependencies } = deps().dependencies;
+  try {
+    await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA }, dependencies);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ includeE2E: true }));
+    run.mockClear();
+    await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'] }, dependencies);
+    expect(run).not.toHaveBeenCalled();
+    await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA }, { ...dependencies, regressionGate: null });
+    expect(run).not.toHaveBeenCalled();
+  } finally { run.mockRestore(); enabled.mockRestore(); }
+});
+
+it('strict admission retries never consume repair budget or dispatch code repair', async () => {
+  __resetCivilianAutoReviewForTests(); const { dependencies, calls } = deps();
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const result = await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA,
+      liveOrchestratorSessionId: 'maestro',
+    }, { ...dependencies, typecheck: async () => ({ kind: 'typecheck', status: 'unavailable', retryable: true, summary: 'Aguardando recursos', findings: [] }) });
+    expect(result).toMatchObject({ kind: 'defer-to-roster-review', retryable: true });
+  }
+  expect(calls.repairs).toEqual([]);
+});
+
+it('strict completion uses Main owned sensors sequentially, while legacy keeps its sensor ports', async () => {
+  const module = await import('./completion-check-executors');
+  let finishCompiler!: () => void;
+  const compiler = new Promise<void>(resolve => { finishCompiler = resolve; });
+  const typecheck = vi.fn(async () => { await compiler; return healthySensors.typecheck(); });
+  const audit = vi.fn(healthySensors.audit);
+  const configured = vi.spyOn(module, 'createCompletionCheckExecutors').mockReturnValue({ typecheck, audit,
+    regression: async () => ({ exitCode: 0, timedOut: false, aborted: false, stdout: '', stderr: '' }),
+  });
+  try {
+    const { dependencies } = deps();
+    const running = enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: BASE_SHA }, { ...dependencies, typecheck: undefined, audit: undefined });
+    await vi.waitFor(() => expect(typecheck).toHaveBeenCalledOnce());
+    expect(audit).not.toHaveBeenCalled(); finishCompiler(); await running;
+    expect(audit).toHaveBeenCalledOnce(); expect(configured).toHaveBeenCalledWith(expect.objectContaining({ scope, missionId: 'mission-autoreview' }));
+    configured.mockClear(); await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'] }, dependencies);
+    expect(configured).not.toHaveBeenCalled();
+  } finally { finishCompiler(); configured.mockRestore(); }
+});
+
+it('strict completion runs applicable checks without a Git repository or an invented baseline', async () => {
+  __resetCivilianAutoReviewForTests();
+  const regressionGate = vi.fn(async (_input: unknown) => regressionResult({ headSha: null, baseSha: null }));
+  const result = await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['app.ts'], completionBaseSha: null }, {
+    ...deps({ git: fakeGit({ failRevParse: true }) }).dependencies, regressionGate,
+  });
+  expect(regressionGate).toHaveBeenCalledOnce();
+  expect(regressionGate.mock.calls[0]?.[0]).not.toHaveProperty('baseSha');
+  if (result.kind !== 'approved') throw new Error('fixture');
+  expect(result.verification).toMatchObject({ headSha: null, baseSha: null, regression: { headSha: null, status: 'passed' } });
 });

@@ -17,6 +17,10 @@ vi.mock('./pty/pty-host-client', () => ({ createRealPtyHost: () => ({}) }));
 vi.mock('./pty/darwin-pty-smoke', () => ({ proveDarwinPtyPipelineForSmoke: async () => false }));
 vi.mock('./hang-watchdog/smoke-busy-banner', () => ({ isSmokeBusyBannerProbeRequested: () => false, proveMountedBusyBannerForSmoke: async () => {} }));
 vi.mock('./persistence/workspace-store', () => ({ grantWorkspacePathFromTrustedMain: (_wc: unknown, value: string) => value }));
+vi.mock('./smoke-owned-command', () => ({ proveMainOwnedCommandForSmoke: async () => ({ status: 'unavailable', reason: 'ad-hoc' }) }));
+vi.mock('./persistence/renderer-workspace-scope', () => ({ requireLiveRendererWorkspaceScope: () => ({
+  installationId: 'smoke', projectId: 'smoke', checkoutId: 'smoke', rootRealPath: path.join(seam.userData, 'functional-smoke-workspace'),
+}) }));
 
 it.each(['uncaught-exception', 'timeout'])('real smoke caller arms FAIL physical quit during preflight IO for %s', async kind => {
   vi.resetModules(); seam.quit.mockClear(); seam.ipc.clear();
@@ -39,9 +43,11 @@ it.each(['uncaught-exception', 'timeout'])('real smoke caller arms FAIL physical
   try {
     const { initSmokeTest } = await import('./smoke-test');
     initSmokeTest();
-    const frame = {}, wc = Object.assign(new EventEmitter(), { mainFrame: frame, getOSProcessId: () => 1234, send: vi.fn() });
+    const frame = {}, wc = Object.assign(new EventEmitter(), { mainFrame: frame, isDestroyed: () => false, getOSProcessId: () => 1234, send: vi.fn() });
     const win = Object.assign(new EventEmitter(), { webContents: wc });
     seam.windowCreated!(null, win);
+    seam.ipc.get(WINDOW_CHANNELS.mounted)!({ sender: wc, senderFrame: frame }, { ok: true });
+    await vi.waitFor(() => expect(wc.send).toHaveBeenCalled());
     seam.ipc.get(WINDOW_CHANNELS.functionalSmokeResult)!({ sender: wc, senderFrame: frame }, {
       ok: true, probes: [...FUNCTIONAL_SMOKE_REQUIRED_PROBES], adapterCount: FUNCTIONAL_SMOKE_MIN_ADAPTERS, toolCount: FUNCTIONAL_SMOKE_MIN_TOOLS,
     });

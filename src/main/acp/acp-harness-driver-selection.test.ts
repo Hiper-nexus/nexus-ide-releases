@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-vi.mock('../license-enforcement', () => ({ assertLicenseAccess: vi.fn(), reserveLicensedAgent: vi.fn(() => () => {}) }));
+vi.mock('../license-enforcement', () => ({ assertLicenseAccess: vi.fn(), licensedAgentCount: vi.fn(() => 0), reserveLicensedAgent: vi.fn(() => () => {}) }));
 import { spawnAcpHarnessSession } from './acp-harness-driver';
 import { readSessionOutput } from '../orch/pane-session-output';
 

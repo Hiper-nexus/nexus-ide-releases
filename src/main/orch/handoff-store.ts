@@ -188,6 +188,8 @@ const handoffRowSchema = z
     session_id: identifierSchema.nullable(),
     worker_incarnation_id: identifierSchema.nullable(),
     from_agent: agentLabelSchema.nullable(),
+    adapter_id: z.string().min(1).max(128).nullable(),
+    model: z.string().max(256).nullable(),
     authority_origin: z.enum(["agent", "operator-confirmed"]),
     status: handoffStatusSchema,
     summary: z.string().min(1).max(65_536),
@@ -269,7 +271,7 @@ const BINDING_KEYS: readonly (keyof EvidenceBinding)[] = [
 ];
 
 const HANDOFF_SELECT = `
-  SELECT id, mission_id, session_id, worker_incarnation_id, from_agent,
+  SELECT id, mission_id, session_id, worker_incarnation_id, from_agent, adapter_id, model,
          authority_origin, status, summary,
          artifacts_json, evidence_ids_json, evidence_trusted,
          context_revision, contract_hash, base_sha, head_sha, diff_hash,
@@ -933,6 +935,7 @@ export class ScopedHandoffStore {
         sessionId: input.sessionId,
         workerIncarnationId: input.workerIncarnationId,
         fromAgent: input.fromAgent,
+        ...(attribution ? { routeAttribution: Object.freeze({ ...attribution }) } : {}),
         authorityOrigin,
         mcpProvenance: submitProvenance,
         status: input.status,
@@ -2714,6 +2717,10 @@ export class ScopedHandoffStore {
       sessionId: row.session_id ?? undefined,
       workerIncarnationId: row.worker_incarnation_id ?? undefined,
       fromAgent: row.from_agent ?? undefined,
+      ...(row.adapter_id ? { routeAttribution: Object.freeze({
+        adapterId: row.adapter_id,
+        ...(row.model ? { model: row.model } : {}),
+      }) } : {}),
       authorityOrigin: row.authority_origin,
       mcpProvenance,
       status: row.status,

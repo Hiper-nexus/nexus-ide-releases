@@ -52,6 +52,7 @@ vi.mock('./squad-runtime-inventory', async () => {
 });
 
 import { buildDomainTools } from './tools-domain';
+import { suggestOperatorRoute } from './tools-panes';
 
 const testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-route-tool-store-'));
 const scope = testProjectScope({ rootRealPath: testDir });
@@ -111,6 +112,13 @@ afterAll(() => {
 });
 
 describe('nexus_route_task RouteReservation durável', () => {
+  it('a Main read-only suggestion does not reserve a phantom worker slot', async () => {
+    const before = getProjectDomainStores(scope).missions.listOpenRouteAdapterIds(missionId);
+    const route = await suggestOperatorRoute('Revisão independente de código', context(), { requireReadOnlyEnforceable: true });
+    expect(route).toHaveProperty('adapterId');
+    expect(route).not.toHaveProperty('routeReservationId');
+    expect(getProjectDomainStores(scope).missions.listOpenRouteAdapterIds(missionId)).toEqual(before);
+  });
   it.each([
     { effort: 'low' as const, confidence: 0.9, efforts: ['low', 'medium', 'high'], expected: 'low' },
     { effort: 'xhigh' as const, confidence: 0.9, efforts: ['low', 'medium', 'high'], expected: 'high' },

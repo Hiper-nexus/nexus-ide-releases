@@ -6,7 +6,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { setPtyHost } from '../pty/pty-manager';
+import { currentDarwinPtySupervisorRuntime, supervisedJobCommand } from '../pty/darwin-pty-supervisor';
 import { processSandboxRuntimeAvailable } from '../runtime/process-sandbox-capability';
 import { ProcessGitRunner } from '../runtime/git-command';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
@@ -59,6 +61,11 @@ function realProject(files: Record<string, string>) {
 }
 
 darwinOnly('runner real no sandbox do writer', () => {
+  beforeAll(() => setPtyHost({
+    spawn: () => { throw new Error('command fixture allocates no PTY'); },
+    prepareCommandSupervisor: async (file, args) => supervisedJobCommand(currentDarwinPtySupervisorRuntime(process.cwd()), file, args),
+  }));
+
   it('teste excluído pela config do runner não vira aprovação', async () => {
     const { write, scope, trustedDependencyRoot } = realProject({
       'vitest.config.mjs': "export default { test: { exclude: ['mobile/**', '**/node_modules/**'] } };\n",
@@ -175,7 +182,7 @@ darwinOnly('runner real no sandbox do writer', () => {
     expect(() => process.kill(pid, 0)).toThrow();
   }, 60_000);
 
-  it('filho que escapa do grupo (setsid) segurando o stdout não prende o portão', async () => {
+  it('aguarda a saída física do filho setsid antes de aprovar o relatório do runner', async () => {
     const root = tempDir('nexus-regression-escape-');
     const write = (file: string, content: string, mode?: number) => {
       fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
@@ -189,15 +196,15 @@ darwinOnly('runner real no sandbox do writer', () => {
     git.run(root, ['init', '-q']);
     git.run(root, ['add', '-A']);
     git.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'fixture']);
-    // "Runner": grava o relatório, deixa um daemon em outra sessão com o
-    // stdout herdado e sai.
+    // O relatório e a saída do runner não provam que o daemon terminou.
+    // Ele escapa do grupo, conserva stdout e deixa uma prova ao terminar.
     write(
       'node_modules/.bin/vitest',
       [
         '#!/bin/sh',
         'for a in "$@"; do case "$a" in --outputFile=*) out="${a#--outputFile=}" ;; esac; done',
         `printf '{"testResults":[{"name":"%s/src/a.test.ts","status":"passed","assertionResults":[{"status":"passed"}]}]}' "$PWD" > "$out"`,
-        "/usr/bin/perl -e 'use POSIX; exit if fork; POSIX::setsid(); sleep 30' &",
+        "/usr/bin/perl -e 'use POSIX; exit if fork; POSIX::setsid(); open(my $pid, q(>), $ARGV[0]) or die; print $pid $$; close $pid; sleep 1; open(my $done, q(>), $ARGV[1]) or die; print $done q(done); close $done;' \"$PWD/node_modules/detached.pid\" \"$PWD/node_modules/detached.done\" &",
         'exit 0',
         '',
       ].join('\n'),
@@ -209,7 +216,11 @@ darwinOnly('runner real no sandbox do writer', () => {
     const result = await runRegressionGate({ scope: testProjectScope({ rootRealPath: root }), timeoutMs: 30_000 });
 
     expect(Date.now() - started).toBeLessThan(15_000);
-    expect(result.status).toBe('passed');
+    expect(result.status, result.warnings.join('\n')).toBe('passed');
+    expect(fs.readFileSync(path.join(root, 'node_modules/detached.done'), 'utf8')).toBe('done');
+    const childPid = Number(fs.readFileSync(path.join(root, 'node_modules/detached.pid'), 'utf8'));
+    expect(childPid).toBeGreaterThan(0);
+    expect(() => process.kill(childPid, 0)).toThrow();
   }, 60_000);
 
   it('título de teste com instruções vira citação neutralizada, nunca linha própria', async () => {

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { isAstraModel, isFindingCorrectionTask, matchesReviewedFinding, routingPurpose } from './routing-cost-policy';
+import { isAstraModel, isFindingCorrectionTask, matchesReviewedFinding, routingPurpose, taskReferencesReviewedFindings } from './routing-cost-policy';
 import type { MissionReviewVerdict } from './mission-review-verdict-ledger';
 const verdict: MissionReviewVerdict = {
   verdictId: 'v1', missionId: 'm1', headSha: 'a'.repeat(40), treeDirty: false,
@@ -17,6 +17,14 @@ it('finding identity is exact, including path and line, rather than a substring 
   expect(matchesReviewedFinding('Corrija src/main/orch/tool-util.ts:653', verdict, 'm1', verdict.headSha)).toBe(true);
   expect(matchesReviewedFinding('Corrija src/main/orch/tool-util.ts:6530', verdict, 'm1', verdict.headSha)).toBe(false);
   expect(matchesReviewedFinding('Corrija F-949', verdict, 'other', verdict.headSha)).toBe(false);
+});
+it.each(['app.py:42', 'package.json', 'CMakeLists.txt'])('recognizes exact root-level finding reference %s without matching backups or another directory', reference => {
+  const findings = [`${reference}: ajuste o problema apontado`];
+  expect(isFindingCorrectionTask(`Corrija ${reference}`)).toBe(true);
+  expect(taskReferencesReviewedFindings(`Corrija ${reference}`, findings)).toBe(true);
+  expect(taskReferencesReviewedFindings(`Corrija ${reference}.bak`, findings)).toBe(false);
+  expect(taskReferencesReviewedFindings(`Corrija other/${reference}`, findings)).toBe(false);
+  expect(matchesReviewedFinding(`Corrija ${reference}`, { ...verdict, findings, treeDirty: true }, 'm1', verdict.headSha)).toBe(false);
 });
 it('a read-only code review remains judgment even when it describes implementing or fixing code', () => {
   expect(routingPurpose('Revise somente leitura a implementação; não altere código', true)).toBe('reviewer');

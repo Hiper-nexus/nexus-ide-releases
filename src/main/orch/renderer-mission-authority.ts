@@ -1,3 +1,4 @@
+import { captureMissionCodeBaseline } from './mission-code-baseline-ledger';
 import { createHash } from "node:crypto";
 import type { WebContents } from "electron";
 import { adoptedMissionWorkspaceBinding, missionExecutionScope } from './mission-execution-scope';
@@ -337,6 +338,7 @@ function matchesPersistedRuntime(
 
 export class RendererMissionAuthority {
   readonly #stores: ProjectDomainStoreRegistry;
+  readonly #captureBaseline: typeof captureMissionCodeBaseline;
   readonly #resolveContextRevision: (
     scope: ProjectExecutionScope,
     missionId: string,
@@ -356,8 +358,10 @@ export class RendererMissionAuthority {
     resolvePaneActivity: (
       input: MissionPaneActivityInput,
     ) => PaneActivitySummary = resolveMissionPaneActivity,
+    captureBaseline: typeof captureMissionCodeBaseline = captureMissionCodeBaseline,
   ) {
     this.#stores = stores;
+    this.#captureBaseline = captureBaseline;
     this.#resolveContextRevision = resolveContextRevision;
     this.#resolvePaneActivity = resolvePaneActivity;
   }
@@ -772,7 +776,7 @@ export class RendererMissionAuthority {
    * orquestradores de outras abas não são tocados. A aba (worktree isolada,
    * quando houver) vem da proveniência main-owned da sessão, nunca do renderer.
    */
-  createPaneMissionFromRenderer(
+  async createPaneMissionFromRenderer(
     owner: WebContents,
     input: {
       readonly paneId: string;
@@ -786,7 +790,7 @@ export class RendererMissionAuthority {
        */
       readonly ownGroup?: boolean;
     },
-  ): PromoteMissionOrchestratorResult {
+  ): Promise<PromoteMissionOrchestratorResult> {
     let owned: ReturnType<typeof ownedPaneSession>;
     try {
       owned = ownedPaneSession(owner, input.paneId);
@@ -811,7 +815,30 @@ export class RendererMissionAuthority {
     } catch {
       return { ok: false, error: "pane_unavailable" };
     }
+    const beforeCapture = owned;
+    const baseline = await this.#captureBaseline(owned.info.scope.rootRealPath);
+    try {
+      if (owner.isDestroyed() || owner.isCrashed()) return { ok: false, error: "pane_unavailable" };
+      owned = ownedPaneSession(owner, input.paneId);
+      if (owned.sessionId !== beforeCapture.sessionId || owned.paneId !== beforeCapture.paneId ||
+        !sameScope(owned.scope, beforeCapture.scope) || !sameScope(owned.info.scope, beforeCapture.info.scope)) {
+        return { ok: false, error: "pane_unavailable" };
+      }
+      const currentBinding = adoptedMissionWorkspaceBinding(owned.scope, owned.info.scope, owned.paneId);
+      if (JSON.stringify(currentBinding) !== JSON.stringify(workspaceBinding)) return { ok: false, error: "pane_unavailable" };
+    } catch { return { ok: false, error: "pane_unavailable" }; }
     const suite = this.#stores.forScope(owned.scope);
+    // Another same-pane call may have created/adopted while Git was awaited.
+    // Reuse that exact live leader instead of manufacturing a second mission.
+    if (owned.info.missionId) {
+      const concurrent = suite.missions.get(owned.info.missionId);
+      if (concurrent && concurrent.orchestratorSessionId === owned.sessionId &&
+        hasCurrentDispatchAuthority(concurrent) && owned.info.role === "orchestrator" &&
+        hasMatchingGateContext(owned.sessionId, owned.info, concurrent.id)) {
+        return { ok: true, mission: concurrent };
+      }
+      return { ok: false, error: "pane_mission_mismatch" };
+    }
     // Uma missão por aba: a segunda promoção (ou o segundo clique antes da
     // primeira resposta) reusa a que já nasceu. Tudo aqui é síncrono no Main,
     // então procurar e criar é atômico. A aba fica gravada no vínculo da
@@ -824,18 +851,22 @@ export class RendererMissionAuthority {
     }
     // A 1ª missão da aba segue sendo "a da aba" para o clique explícito.
     const tabKey = input.tabKey && !existing ? input.tabKey : undefined;
-    const created = suite.missions.create({
-      title: input.title,
-      milestones: [],
-      orchestratorSessionId: owned.sessionId,
-      intentState: "dispatched",
-      intentVersion: 1,
-      intentContract: {
-        ...operatorHandMissionContract(input.title, undefined, []),
-        workspaceBinding: tabKey ? { ...workspaceBinding, tabKey } : workspaceBinding,
-      },
+    const created = suite.missions.atomically(() => {
+      const mission = suite.missions.create({
+        title: input.title,
+        milestones: [],
+        orchestratorSessionId: owned.sessionId,
+        intentState: "dispatched",
+        intentVersion: 1,
+        intentContract: {
+          ...operatorHandMissionContract(input.title, undefined, []),
+          workspaceBinding: tabKey ? { ...workspaceBinding, tabKey } : workspaceBinding,
+        },
+      });
+      suite.missions.codeBaseline.record(mission.id, baseline);
+      suite.missions.update(mission.id, { status: "running" });
+      return mission;
     });
-    suite.missions.update(created.id, { status: "running" });
     let result: PromoteMissionOrchestratorResult;
     try {
       result = this.promoteOrchestratorFromRenderer(owner, created.id, {
@@ -880,10 +911,10 @@ export class RendererMissionAuthority {
    * Outro pane da mesma aba que delega ganha a sua: a aba pode ter várias
    * missões, uma por grupo, e ninguém perde a coroa (nem as entregas).
    */
-  adoptOperatorHandForSpawn(
+  async adoptOperatorHandForSpawn(
     sessionId: string,
     task: string | null,
-  ): PromoteMissionOrchestratorResult {
+  ): Promise<PromoteMissionOrchestratorResult> {
     const runtime = getPaneRuntimeAuthorityBySession(sessionId);
     if (!runtime?.owner || runtime.kind !== "cli-agent") {
       return { ok: false, error: "pane_unavailable" };

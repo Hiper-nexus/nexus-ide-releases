@@ -1,3 +1,4 @@
+import { readOwnedPromptState, submitOwnedPromptEnter } from './pty-prompt-state';
 import { licenseFailure } from '../../shared/license-errors';
 import { ipcMain } from "electron";
 import type { WebContents } from "electron";
@@ -513,6 +514,7 @@ function spawnCliPtyAgentPane(
     assertNoLivePhysicalPaneProcess(spawn);
     const workerRestart = resolvePersistedWorkerRestart(spawn);
     assertMainOwnedAgentSpawnGrantActive({
+      runtimeManager: projectRuntimeManager,
       owner: sender,
       requestId: request.orchRequestId,
       pending,
@@ -800,6 +802,9 @@ export function registerPtyIpc(): void {
       writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
     }
   });
+
+  ipcMain.handle(PTY_CHANNELS.promptEnter, (event, raw) => submitOwnedPromptEnter(event.sender, raw));
+  ipcMain.handle(PTY_CHANNELS.promptState, (event, raw) => readOwnedPromptState(event.sender, raw));
 
   ipcMain.handle(PTY_CHANNELS.writeConfirmed, (event, raw): boolean => {
     const parsed = writeSchema.safeParse(raw);

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.76.208 — Missões com entrega verificada
+
+- Encerrar impede que saídas de terminais ou spawns pendentes reiniciem a missão. A retomada explícita continua disponível depois do encerramento físico.
+- Retomar substitui o vínculo antigo do Maestro pelo terminal real e conserva a autorização aprovada, inclusive em missões criadas com modelo e esforço Padrão.
+- Verificações da missão passam pelo supervisor mesmo em máquinas com muitas ferramentas no PATH: permissões redundantes deixam de estourar o limite de transporte, mantendo o isolamento.
+- Modelo e esforço escolhidos como Padrão usam no novo Maestro os valores aprovados na revisão, inclusive ao retomar; enviar orientação não falha mais por essa divergência.
+- O histórico do grafo mantém a ferramenta e o modelo reais de quem entregou, sem confundir o nome do papel com o provedor. Encerrar pelo Quadro deixa de mostrar o aviso incorreto de que a missão continua rodando.
+
+As candidatas 0.76.205, 0.76.206 e 0.76.207 foram retidas antes da publicação pelos gates de segurança e pela missão real de aceitação. Esta versão inclui as correções encontradas.
+
+- Atualiza o parser TOML para evitar leitura quadrática e a dependência de validação de proxies para corrigir a interpretação de sub-redes IPv4 mapeadas em IPv6.
+- Teste de 15 dias com seis agentes simultâneos e Pro sem limite de licença para agentes. A execução continua respeitando a memória disponível e as cotas dos provedores.
+- Admissão automática com orçamento físico compartilhado entre panes, workers e verificações. Comandos pesados executam um por vez por projeto; timeout lógico não libera memória nem remove o ambiente antes da saída física.
+- Missões de código, comuns ou iniciadas pelo + Pane, exigem verificações aplicáveis e revisão independente da entrega atual antes de concluir. Achados retornam ao orquestrador para correção; mudanças posteriores invalidam a evidência anterior.
+- Verificação de projetos Go e Rust, incluindo módulos/workspaces suportados, sem tratar ferramenta ausente ou saída inconclusiva como teste aprovado.
+- Corrige o envio confirmado ao Kimi e impede Enter de recuperação em diálogos ativos. Mantém o tratamento de confiança somente para os hooks próprios do Nexus no Codex.
+- Corrige o loop na leitura da saída de terminal que podia travar o processo principal. Reduz atualizações desnecessárias de panes e preserva a retomada de missões.
+- Quadro da missão com tela inteira, orientação horizontal/vertical, zoom, ajuste da visão e estados ligados aos terminais reais.
+- Memória com contexto limitado, relevância e origem verificadas; roteamento econômico para execução e modelos fortes para revisão e correção de achados confirmados, preservando escolhas explícitas do operador.
+- Avisos opcionais de atualização de dependências não impedem mais a conclusão. Typecheck, auditoria e outras verificações obrigatórias continuam exigidos quando aplicáveis.
+- Inclui medição mínima de adoção no painel administrativo e manutenção automática das CLIs compatíveis no macOS, Windows e Linux, sem coletar código ou prompts.
+
 ## 0.76.202 — Experimente uma equipe inteira
 
 - Teste de 15 dias com até 6 agentes simultâneos; plano Pro com agentes simultâneos ilimitados.

@@ -67,6 +67,7 @@ import {
   inspectDeliveryEvidence,
   listDeliveredProductFiles,
   maybeCompleteFastLaneOnDelivery,
+  configureCivilianCodeCompletionGate,
   toArtifactRefs,
 } from './civilian-delivery-completion';
 import { maybeApplyCivilianPronto } from './civilian-pronto';
@@ -956,6 +957,18 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
           // pré-religação. Testes que precisam de um líder injetam via
           // `depsExtras.resolveMissionLeader`.
           resolveMissionLeader: () => null,
+          // Reconciliation tests mock the new Main verifier boundary. The real
+          // independent proof/identity policy is exercised in mission-code-completion.
+          runCodeCompletionGate: async (verificationInput: Parameters<import('./civilian-delivery-completion').CivilianCodeCompletionGate>[0]) => {
+            const run = (input.depsExtras?.runAutoReviewGate as import('./civilian-delivery-completion').CivilianDeliveryDependencies['runAutoReviewGate']) ?? autoReviewSpy.enforceCivilianAutoReview;
+            const review = await run({ ...verificationInput, liveOrchestratorSessionId: verificationInput.liveOrchestratorSessionId ?? null } as never);
+            if (review.kind === 'approved') return { kind: 'verified' as const,
+              proof: { status: 'verified' as const, note: review.note,
+                codeCompletion: { kind: 'code' as const, coverage: 'delta' as const, headSha: 'a'.repeat(40),
+                  fingerprint: 'candidate-1', evidenceIds: [review.evidenceId] }, candidateFingerprint: 'candidate-1' } };
+            return { kind: review.kind === 'blocked' ? 'blocked' as const : 'waiting' as const,
+              code: 'fixture-verification', reason: review.kind === 'blocked' ? review.description : 'Verificação pendente', hint: 'Tente novamente.' };
+          },
           ...(input.depsExtras ?? {}),
         }),
     };
@@ -1521,6 +1534,52 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     });
   }
 
+  it('waits for the Main code reviewer even when the mission has no squad', async () => {
+    completeVerified.mockClear(); blockUser.mockClear();
+    const runCodeCompletionGate = vi.fn(async () => ({ kind: 'waiting' as const,
+      code: 'code_review_pending', reason: 'Revisor em execução', hint: 'Tente done novamente.' }));
+    const { reconcile } = boardDoneHarness({ missionOverrides: { squadId: undefined, intentContract: civilianContract },
+      depsExtras: { runCodeCompletionGate } });
+    expect((await reconcile()).completed).toBe(false);
+    expect(runCodeCompletionGate).toHaveBeenCalledOnce();
+    expect(completeVerified).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing production code verifier instead of silently falling back to scanner-only approval', async () => {
+    completeVerified.mockClear(); blockUser.mockClear();
+    configureCivilianCodeCompletionGate(null);
+    const { reconcile } = boardDoneHarness({ missionOverrides: { squadId: undefined, intentContract: civilianContract }, depsExtras: { runCodeCompletionGate: undefined } });
+    expect((await reconcile()).completed).toBe(false);
+    expect(completeVerified).not.toHaveBeenCalled();
+    expect(blockUser).toHaveBeenCalled();
+  });
+
+  it('retries the configured Main verifier and preserves its candidate identity across the legacy outer fence', async () => {
+    completeVerified.mockClear(); blockUser.mockClear();
+    const certification = Object.freeze({ kind: 'code' as const, coverage: 'delta' as const,
+      headSha: 'a'.repeat(40), fingerprint: 'historical-candidate', reviewerSessionId: 'independent-reviewer', evidenceIds: ['review:current'] });
+    const verify = vi.fn<import('./civilian-delivery-completion').CivilianCodeCompletionGate>()
+      .mockResolvedValueOnce({ kind: 'waiting', code: 'review_pending', reason: 'Aguardando juiz', hint: 'Tente novamente.' })
+      .mockResolvedValue({ kind: 'verified', proof: { status: 'verified', codeCompletion: certification,
+        candidateFingerprint: certification.fingerprint, deletedArtifactPaths: ['src/removed.ts'], note: 'Verificação independente do candidato.' } });
+    configureCivilianCodeCompletionGate(verify);
+    try {
+      const { reconcile } = boardDoneHarness({ missionOverrides: { squadId: undefined, intentContract: civilianContract }, depsExtras: { runCodeCompletionGate: undefined } });
+      expect((await reconcile()).completed).toBe(false);
+      let observed: ReturnType<typeof getAutomaticCompletionProof>;
+      const original = completeVerified.getMockImplementation()!;
+      completeVerified.mockImplementation((executionScope, input) => {
+        const call = verify.mock.calls.at(-1)![0];
+        observed = getAutomaticCompletionProof(executionScope, call.mission);
+        return original(executionScope, input);
+      });
+      expect((await reconcile()).completed).toBe(true);
+      expect(observed!).toMatchObject({ candidateFingerprint: 'historical-candidate', deletedArtifactPaths: ['src/removed.ts'] });
+      expect(observed!.codeCompletion).toBe(certification);
+      expect(verify).toHaveBeenCalledTimes(2);
+    } finally { configureCivilianCodeCompletionGate(null); }
+  });
+
   it('civil aprovada pelo scanner → completa com nota e evidência main-owned', async () => {
     completeVerified.mockClear();
     blockUser.mockClear();
@@ -1596,7 +1655,8 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(result.action).toBe('refuse-fail-closed');
     expect(completeVerified).not.toHaveBeenCalled();
     expect(blockUser).toHaveBeenCalledOnce();
-    expect(blockUser.mock.calls[0]![1]!.description).toBe(description);
+    expect(blockUser.mock.calls[0]![1]!.description).toContain(description);
+    expect(blockUser.mock.calls[0]![1]!.description).toContain('Tente novamente.');
   });
 
   it('civil com reparo despachado ao Maestro → espera, não completa', async () => {
@@ -1620,6 +1680,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
   it('Pronto respeita reparo pendente mesmo com board completo e pane idle', async () => {
     completeVerified.mockClear();
     const runAutoReviewGate = vi.fn(async () => ({ kind: 'repair-dispatched' as const }));
+    const runCodeCompletionGate = vi.fn(async () => ({ kind: 'waiting' as const, code: 'repair-running', reason: 'Reparo pendente', hint: 'Tente novamente.' }));
     const state = boardDoneHarness({
       missionOverrides: { intentContract: civilianContract },
       depsExtras: { runAutoReviewGate },
@@ -1631,11 +1692,14 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
       listProductFiles: () => ['server.js'],
       missionEngine: { completeVerified, blockUser },
       runAutoReviewGate,
+      runCodeCompletionGate,
       resolveMissionLeader: () => null,
     });
 
     expect(outcome.completed).toBe(false);
     expect(outcome.action).toBe('wait');
+    expect(runCodeCompletionGate).toHaveBeenCalledOnce();
+    expect(runCodeCompletionGate).toHaveBeenCalledWith(expect.objectContaining({ scope, mission: state.liveMission }));
     expect(completeVerified).not.toHaveBeenCalled();
   });
 
@@ -1740,7 +1804,11 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
       files: [], tasks: [], planned: [], handoffs: [handoff()],
       panes: [{ missionId: 'mission-a906d36d', role: 'worker', agentName: 'Frontend', state: 'idle' }],
       missionOverrides: { intentContract: civilianContract },
-      depsExtras: { captureCandidate: async () => ({ fingerprint: 'deleted-candidate', complete: true, deletedPaths: ['old.ts'] }) },
+      depsExtras: {
+        captureCandidate: async () => ({ fingerprint: 'deleted-candidate', complete: true, deletedPaths: ['old.ts'] }),
+        runCodeCompletionGate: async () => ({ kind: 'verified', proof: { status: 'verified', candidateFingerprint: 'deleted-candidate', deletedArtifactPaths: ['old.ts'],
+          codeCompletion: { kind: 'code', coverage: 'delta', headSha: 'a'.repeat(40), fingerprint: 'deleted-candidate', evidenceIds: ['review:deletion'] } } }),
+      },
     });
     let deletionPaths: readonly string[] | undefined;
     completeVerified.mockImplementationOnce((_scope, input) => {
@@ -1797,7 +1865,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect((await state.reconcile()).completed).toBe(true);
   });
 
-  it('scanner indisponível + revisor no roster → abre revisor e espera', async () => {
+  it('verificação pendente aguarda o Main sem abrir um revisor de roster por fora', async () => {
     completeVerified.mockClear();
     blockUser.mockClear();
     const planned = storyPlan(2);
@@ -1827,13 +1895,13 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     });
 
     const result = await reconcile();
-    expect(spawnReviewers).toHaveBeenCalledOnce();
+    expect(spawnReviewers).not.toHaveBeenCalled();
     expect(result.action).toBe('wait');
-    expect(result.spawnedReviewers).toEqual(['QA']);
+    expect(result.spawnedReviewers).toEqual([]);
     expect(completeVerified).not.toHaveBeenCalled();
   });
 
-  it('missão guiada com candidato congelado mantém seu gate próprio sem scanner duplicado', async () => {
+  it.each(['guided', 'free'] as const)('missão %s com candidato congelado mantém seu gate próprio sem scanner duplicado', async (mode) => {
     completeVerified.mockClear();
     blockUser.mockClear();
     const runAutoReviewGate = vi.fn();
@@ -1847,9 +1915,10 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
       ),
       planned,
       missionOverrides: {
+        ...(mode === 'free' ? { squadId: undefined } : {}),
         intentContract: {
           ...civilianContract,
-          orchestrationMode: 'guided',
+          orchestrationMode: mode === 'guided' ? 'guided' : 'free',
         } as Mission['intentContract'],
       },
       depsExtras: { runAutoReviewGate, readFrozenReviewContext: () => ({ workflow: {} }) },
