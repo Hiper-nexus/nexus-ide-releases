@@ -10157,8 +10157,8 @@ export const RELEASE_076202: AppRelease = {
 
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.208',
-  date: '2026-10-06',
+  version: '0.76.209',
+  date: '2026-10-07',
   codename: 'Missões com entrega verificada',
   summary: 'Mais controle de memória, envio confiável aos agentes e revisão independente antes de concluir missões de código.',
   highlights: [
@@ -10168,6 +10168,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Quadro em destaque', detail: 'Tela inteira, orientação horizontal ou vertical, zoom e ajuste da visão. Os cartões acompanham os terminais e a atividade atual da missão.' },
   ],
   fixes: [
+    { title: 'Revisão aceita a entrega revisada', detail: 'O gasto registrado pelo próprio veredito do revisor não invalida mais a revisão independente. Mudanças reais de objetivo, limites, ferramentas ou equipe continuam exigindo nova revisão.' },
     { title: 'Encerrar mantém a missão parada', detail: 'Recuperações automáticas e spawns pendentes respeitam o encerramento. Só a retomada explícita reabre a missão e vincula o novo terminal do Maestro.' },
     { title: 'Verificações que conseguem iniciar', detail: 'Máquinas com muitas ferramentas instaladas deixam de exceder o limite interno do supervisor. As permissões de isolamento permanecem preservadas.' },
     { title: 'Padrão coerente no Maestro', detail: 'Modelo e esforço aprovados acompanham a criação e a retomada do coordenador. A orientação da missão não é recusada por uma diferença entre esses valores.' },
