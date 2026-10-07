@@ -29,7 +29,8 @@ const languageLoadingPromises = new Map<string, Promise<boolean>>()
 // Why: Metro puts every import() target in the same bundle, so this is a curated
 // list of the languages most common in the operator's repositories; anything else
 // renders as plain text. JavaScript/JSX use the TSX grammar and C++ the C grammar
-// (see languageAliases) so their own grammars stay out of the list.
+// (see languageAliases) so their own grammars stay out of the list. Ruby stays out
+// too: its grammar embeds cpp and graphql (which embeds js/jsx/ts/tsx), ~0.9 MB.
 const languageImports: Partial<Record<string, () => Promise<unknown>>> = {
   typescript: () => import('@shikijs/langs/typescript'),
   tsx: () => import('@shikijs/langs/tsx'),
@@ -49,7 +50,6 @@ const languageImports: Partial<Record<string, () => Promise<unknown>>> = {
   kotlin: () => import('@shikijs/langs/kotlin'),
   java: () => import('@shikijs/langs/java'),
   php: () => import('@shikijs/langs/php'),
-  ruby: () => import('@shikijs/langs/ruby'),
   c: () => import('@shikijs/langs/c'),
   csharp: () => import('@shikijs/langs/csharp'),
   docker: () => import('@shikijs/langs/docker'),

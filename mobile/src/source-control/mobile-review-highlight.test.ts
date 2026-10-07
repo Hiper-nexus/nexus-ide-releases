@@ -85,7 +85,9 @@ describe('resolveMobileReviewLanguage', () => {
     // Outside the curated list: shipped as plain text to keep grammars out of the bundle.
     ['config/app.xml', 'text'],
     ['scripts/build.ps1', 'text'],
-    ['plugin/init.lua', 'text']
+    ['plugin/init.lua', 'text'],
+    // Ruby's grammar embeds cpp and graphql (js/jsx/ts/tsx); kept plain to keep those out.
+    ['app/models/user.rb', 'text']
   ])('maps %s to %s', (filePath, language) => {
     expect(resolveMobileReviewLanguage(filePath)).toBe(language)
   })
