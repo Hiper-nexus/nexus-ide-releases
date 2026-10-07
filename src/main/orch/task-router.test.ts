@@ -1062,6 +1062,57 @@ describe('F-217 — o mais novo da linha vence mesmo sem catálogo', () => {
     }
   });
 
+  describe('F-957 — Argon no hard só com a prova da sonda viva (`agy models`)', () => {
+    // Missão real de 07/10: a rota do hard abriu o AGY com `--model
+    // gemini-4-argon` e a CLI instalada saiu no boot ("model gemini-4-argon
+    // is not recognized as a known model"). A lista mesclada do adapter
+    // (manifest + catálogo + descoberta) sempre traz o Argon; só o que a
+    // própria CLI anunciou prova que ela o aceita.
+    const agyManifest = adapterSchema.parse(
+      BUILTIN_ADAPTERS.find((raw) => (raw as { id?: string }).id === 'agy'),
+    );
+    const mergedModels = [...agyManifest.models.list];
+    // Ids do "Available models" que a CLI instalada imprimiu (sem o Argon).
+    const announced = [
+      'gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low',
+      'gemini-3.7-flash-high', 'gemini-3.7-flash-medium', 'gemini-3.7-flash-low',
+      'gemini-3.6-flash-high', 'gemini-3.6-flash-medium', 'gemini-3.6-flash-low',
+      'gemini-3.1-pro-high', 'gemini-3.1-pro-low',
+    ];
+    const TASK =
+      'Análise profunda somente leitura: motor de orquestração v2 do T3 Code ' +
+      '(event log, effect worker, checkpoints, settlement)';
+    const route = (agy: Partial<AdapterAvailability>) =>
+      routeTask(
+        TASK,
+        [{ id: 'agy', installed: true, models: mergedModels, ...agy }],
+        DEFAULT_ROUTING_TABLE,
+        'hard',
+        false,
+        flat,
+        { multiScore: false },
+      );
+
+    it('CLI que não anuncia o Argon: o hard cai no gemini-3.8-flash-high e o motivo diz', () => {
+      expect(mergedModels).toContain('gemini-4-argon');
+      const decision = route({ liveModels: announced });
+      expect(decision?.adapterId).toBe('agy');
+      expect(decision?.model).toBe('gemini-3.8-flash-high');
+      expect(decision?.effort).toBe('high');
+      expect(decision?.reason).toContain('agy:gemini-4-argon (a CLI não anunciou o modelo)');
+      expect(decision?.alternatives.map((alt) => alt.model)).not.toContain('gemini-4-argon');
+    });
+
+    it('sem descoberta viva (liveModels ausente) o Argon também não entra', () => {
+      expect(route({})?.model).toBe('gemini-3.8-flash-high');
+    });
+
+    it('com a CLI anunciando o Argon, o hard continua indo para ele', () => {
+      const decision = route({ liveModels: ['gemini-4-argon', ...announced] });
+      expect(decision?.model).toBe('gemini-4-argon');
+    });
+  });
+
   it('modelo pedido no texto sobe para o mais novo da linha e continua vencendo (F-218)', () => {
     // Regra do operador 29/09 repetida hoje: "Sol 6.1 saiu; nunca use o Sol
     // normal". A menção ainda decide CLI e linha — mas o id exato pedido é

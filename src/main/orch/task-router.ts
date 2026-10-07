@@ -270,8 +270,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // (74,1 × 75,2).
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
-    // Gemini 4 Argon (Google, 30/09): geração nova entra sempre; só roda se
-    // a conta tiver acesso (Fairwind→Ultra→API) — sem acesso, quarentena.
+    // Gemini 4 Argon (Google, 30/09): acesso restrito (Fairwind→Ultra→API).
+    // Só entra quando o `agy models` o anuncia (F-957, mesma prova do F-817);
+    // sem a prova o hard segue no 3.8 Flash High logo abaixo.
     { adapterId: 'agy', model: 'gemini-4-argon', effort: 'high' },
     { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'high' },
@@ -609,6 +610,23 @@ export function judgeSeatNeedsAccessProof(seat: {
   model: string;
 }): boolean {
   return JUDGE_LANE_ACCESS_PROOF_REQUIRED.has(`${seat.adapterId}:${seat.model}`);
+}
+
+/**
+ * F-957: a mesma prova vale para a rota da tabela. `models` é a união
+ * manifest + catálogo + descoberta, então o Argon sempre consta dela; o hard
+ * roteava para ele sem a CLI o anunciar e o AGY instalado saía no boot
+ * ("model gemini-4-argon is not recognized as a known model", 07/10).
+ */
+function lacksAccessProof(
+  adapter: AdapterAvailability,
+  model: string | undefined,
+): boolean {
+  return (
+    model !== undefined &&
+    judgeSeatNeedsAccessProof({ adapterId: adapter.id, model }) &&
+    !(adapter.liveModels ?? []).includes(model)
+  );
 }
 
 /**
@@ -1112,7 +1130,11 @@ function evaluatedCandidates(
   return [...available.values()]
     .flatMap((adapter) => (adapter.models ?? []).flatMap((model) => {
       const info = modelCatalogInfo(catalog, adapter.id, model);
-      if (!hasAuthoritativeModelQuality(info) || isModelBlockedForAutoRouting(info)) {
+      if (
+        !hasAuthoritativeModelQuality(info) ||
+        isModelBlockedForAutoRouting(info) ||
+        lacksAccessProof(adapter, model)
+      ) {
         return [];
       }
       // F-912: candidato com janela documentada menor que o pedido sai do
@@ -1496,6 +1518,11 @@ export function routeTask(
           skippedRisk.push(
             `${routed.adapterId}:${routed.model ?? '(default)'} (recusado pelo provider)`,
           );
+          return [];
+        }
+        // F-957: acesso restrito (Argon) só com a prova da sonda viva.
+        if (lacksAccessProof(adapter, routed.model)) {
+          skippedRisk.push(`${routed.adapterId}:${routed.model} (a CLI não anunciou o modelo)`);
           return [];
         }
         // F-912: janela documentada menor que a exigida pela tarefa.
