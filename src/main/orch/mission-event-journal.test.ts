@@ -162,6 +162,59 @@ describe('MissionEventJournal', () => {
     ).toThrow(/payload exceeds size limit/);
   });
 
+  function journalWith(count: number, payload: (n: number) => Record<string, unknown> = (n) => ({ n })) {
+    const manager = new ProjectRuntimeManager({ baseDir, appVersion: '0.15.5' });
+    managers.push(manager);
+    seedMission(manager, 'mission-fixture');
+    const journal = new MissionEventJournal(manager, testProjectScope());
+    for (let n = 1; n <= count; n += 1) {
+      journal.append(createMissionEventFixture({ idempotencyKey: `idem-orc10-${n}`, payload: payload(n) }));
+    }
+    return journal;
+  }
+
+  it('ORC-10: abaixo do teto o replay limitado é idêntico ao replay atual', () => {
+    const journal = journalWith(130);
+    for (const query of [
+      { missionId: 'mission-fixture', afterSequence: 2, limit: 1000 },
+      { missionId: 'mission-fixture', afterSequence: 3, limit: 5 },
+      { missionId: 'mission-fixture', afterSequence: 130, limit: 100 },
+      { missionId: 'mission-fixture', afterSequence: 10, limit: 100, runId: 'run-fixture' },
+    ]) {
+      expect(journal.replayBounded(query)).toEqual({ mode: 'replay', events: journal.replay(query) });
+    }
+    expect(journal.replayBounded({ missionId: 'mission-fixture', afterSequence: 2, limit: 1000 }).events)
+      .toHaveLength(128);
+  });
+
+  it('ORC-10: acima do teto de eventos devolve snapshot + cursor, não o histórico', () => {
+    const journal = journalWith(130);
+    const result = journal.replayBounded({ missionId: 'mission-fixture', afterSequence: 1, limit: 1000 });
+    expect(result.mode).toBe('snapshot');
+    if (result.mode !== 'snapshot') return;
+    expect(result.cursor).toBe(130);
+    expect(result.hasMoreHistory).toBe(true);
+    expect(result.events.map((e) => e.sequence)).toEqual(
+      Array.from({ length: 50 }, (_, i) => 81 + i),
+    );
+    // Cursor velho (além da maior sequência) também recebe snapshot atual.
+    const stale = journal.replayBounded({ missionId: 'mission-fixture', afterSequence: 999, limit: 100 });
+    expect(stale).toMatchObject({ mode: 'snapshot', cursor: 130 });
+  });
+
+  it('ORC-10: acima do teto de bytes o snapshot também cabe em 1 MiB', () => {
+    const journal = journalWith(20, (n) => ({ n, blob: 'x'.repeat(60_000) }));
+    const result = journal.replayBounded({ missionId: 'mission-fixture', afterSequence: 0, limit: 1000 });
+    expect(result.mode).toBe('snapshot');
+    if (result.mode !== 'snapshot') return;
+    expect(result.cursor).toBe(20);
+    expect(result.events.at(-1)?.sequence).toBe(20);
+    expect(result.events.length).toBeLessThan(20);
+    expect(result.hasMoreHistory).toBe(true);
+    const bytes = result.events.reduce((sum, e) => sum + Buffer.byteLength(JSON.stringify(e)), 0);
+    expect(bytes).toBeLessThanOrEqual(1_048_576);
+  });
+
   it('lists raw session_spawned payloads in append order', () => {
     const manager = new ProjectRuntimeManager({ baseDir, appVersion: '0.15.5' });
     managers.push(manager);

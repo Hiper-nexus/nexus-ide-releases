@@ -835,12 +835,22 @@ export interface NexusApi {
       missionId: string;
       limit?: number;
     }): Promise<{ events: unknown[]; enabled?: boolean; error?: string }>;
+    /**
+     * ORC-10: acima de 128 eventos ou 1 MiB depois do cursor (ou cursor além
+     * da maior sequência) vem `snapshot`: `events` são os mais recentes e o
+     * próximo replay parte de `snapshot.cursor`.
+     */
     missionEventsReplay(input: {
       missionId: string;
       afterSequence?: number;
       limit?: number;
       runId?: string;
-    }): Promise<{ events: unknown[]; enabled?: boolean; error?: string }>;
+    }): Promise<{
+      events: unknown[];
+      enabled?: boolean;
+      error?: string;
+      snapshot?: { cursor: number; hasMoreHistory: boolean };
+    }>;
     missionEventsAck(input: {
       missionId: string;
       upToSequence: number;

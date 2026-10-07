@@ -26,6 +26,7 @@ const projectRecent = vi.fn(() => [
   },
 ]);
 const replay = vi.fn(() => []);
+const replayBounded = vi.fn((): unknown => ({ mode: 'replay', events: [] }));
 const ack = vi.fn(() => ({
   consumerId: 'ui-main',
   missionId: 'm1',
@@ -43,6 +44,7 @@ vi.mock('./mission-event-journal', () => ({
   MissionEventJournal: class {
     projectRecent = projectRecent;
     replay = replay;
+    replayBounded = replayBounded;
     ack = ack;
     getCursor = getCursor;
   },
@@ -100,5 +102,29 @@ describe('registerMissionEventIpc', () => {
     );
     expect(ack).toHaveBeenCalledWith('ui-main', 'm1', 1);
     expect(ackResult).toMatchObject({ ok: true });
+  });
+
+  it('ORC-10: replay usa o teto — idêntico abaixo dele, snapshot + cursor acima', async () => {
+    const { registerMissionEventIpc } = await import('./mission-event-ipc');
+    const { ORCH_CHANNELS } = await import('../../shared/orch-channels');
+    handle.mockClear();
+    registerMissionEventIpc();
+    const replayHandler = handle.mock.calls.find(
+      (c) => c[0] === ORCH_CHANNELS.missionEventsReplay,
+    )?.[1] as (e: { sender: unknown }, raw: unknown) => unknown;
+
+    const event = projectRecent()[0];
+    replayBounded.mockReturnValueOnce({ mode: 'replay', events: [event] });
+    expect(replayHandler({ sender: {} }, { missionId: 'm1', afterSequence: 0 }))
+      .toEqual({ enabled: true, events: [event] });
+    expect(replayBounded).toHaveBeenCalledWith({ missionId: 'm1', afterSequence: 0, limit: 100 });
+    expect(replay).not.toHaveBeenCalled();
+
+    replayBounded.mockReturnValueOnce({ mode: 'snapshot', events: [event], cursor: 900, hasMoreHistory: true });
+    expect(replayHandler({ sender: {} }, { missionId: 'm1', afterSequence: 0 })).toEqual({
+      enabled: true,
+      events: [event],
+      snapshot: { cursor: 900, hasMoreHistory: true },
+    });
   });
 });

@@ -18,6 +18,27 @@ import {
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { canonicalJson } from '../context/canonical-json';
+import {
+  MISSION_REPLAY_MAX_ENCODED_BYTES,
+  MISSION_REPLAY_MAX_EVENTS,
+  MISSION_REPLAY_SNAPSHOT_EVENTS,
+  decideMissionEventReplay,
+  isMissionReplayRawPayloadSafe,
+  missionReplayEncodedBytes,
+} from './mission-event-replay-budget';
+
+/** ORC-10: replay por cursor para o IPC — idêntico abaixo do teto, snapshot acima. */
+export type MissionEventReplayResult =
+  | { readonly mode: 'replay'; readonly events: readonly MissionEvent[] }
+  | {
+      readonly mode: 'snapshot';
+      /** Eventos mais recentes, em ordem crescente, dentro dos tetos. */
+      readonly events: readonly MissionEvent[];
+      /** Maior sequência no momento do snapshot: o próximo replay parte daqui. */
+      readonly cursor: number;
+      /** Há eventos mais antigos que o primeiro do snapshot. */
+      readonly hasMoreHistory: boolean;
+    };
 
 /**
  * Append-only mission event journal with consumer cursors and ACK.
@@ -153,6 +174,82 @@ export class MissionEventJournal {
           .all(query.missionId, query.afterSequence, query.limit);
 
     return rows.map((row) => rowToEvent(row));
+  }
+
+  /**
+   * ORC-10: replay por cursor com teto, para consumidores fora do Main (IPC).
+   * Abaixo do teto devolve exatamente `replay(query)`. Acima do teto de
+   * eventos ou de bytes — ou com cursor além da maior sequência — devolve
+   * snapshot (cauda limitada) + cursor, sem decodificar o intervalo inteiro.
+   */
+  replayBounded(raw: MissionEventReplayQuery): MissionEventReplayResult {
+    const query = missionEventReplayQuerySchema.parse(raw);
+    const db = this.#binding.readDatabase();
+    const runFilter = query.runId ? ' AND run_id = ?' : '';
+    const runArgs = query.runId ? [query.runId] : [];
+    const { highWater } = db
+      .prepare(
+        `SELECT COALESCE(MAX(sequence), 0) AS highWater
+         FROM mission_events WHERE mission_id = ?`,
+      )
+      .get(query.missionId) as { highWater: number };
+    // Pré-checagem sem decodificar: lê no máximo teto+1 linhas do intervalo.
+    const gap = db
+      .prepare(
+        `SELECT COUNT(*) AS count,
+                COALESCE(SUM(LENGTH(CAST(payload_json AS BLOB))), 0) AS rawBytes
+         FROM (SELECT payload_json FROM mission_events
+               WHERE mission_id = ? AND sequence > ?${runFilter}
+               ORDER BY sequence ASC LIMIT ?)`,
+      )
+      .get(
+        query.missionId,
+        query.afterSequence,
+        ...runArgs,
+        MISSION_REPLAY_MAX_EVENTS + 1,
+      ) as { count: number; rawBytes: number };
+    const decide = (replayEncodedBytes: number) =>
+      decideMissionEventReplay({
+        afterSequence: query.afterSequence,
+        highWater,
+        replayEventCount: gap.count,
+        replayEncodedBytes,
+      });
+    if (decide(0).mode === 'replay' && isMissionReplayRawPayloadSafe(gap.rawBytes)) {
+      const events = this.replay(query);
+      if (decide(missionReplayEncodedBytes(events)).mode === 'replay') {
+        return { mode: 'replay', events };
+      }
+    }
+    const rows = db
+      .prepare(
+        `SELECT * FROM mission_events
+         WHERE mission_id = ? AND sequence <= ?${runFilter}
+         ORDER BY sequence DESC LIMIT ?`,
+      )
+      .all(query.missionId, highWater, ...runArgs, MISSION_REPLAY_SNAPSHOT_EVENTS);
+    const events: MissionEvent[] = [];
+    let bytes = 0;
+    for (const row of rows) {
+      const event = rowToEvent(row);
+      const cost = missionReplayEncodedBytes([event]);
+      if (bytes + cost > MISSION_REPLAY_MAX_ENCODED_BYTES) break;
+      bytes += cost;
+      events.push(event);
+    }
+    events.reverse();
+    const older = db
+      .prepare(
+        `SELECT 1 AS found FROM mission_events
+         WHERE mission_id = ? AND sequence < ?${runFilter} LIMIT 1`,
+      )
+      .get(query.missionId, events[0]?.sequence ?? highWater + 1, ...runArgs);
+    return {
+      mode: 'snapshot',
+      events,
+      cursor: highWater,
+      hasMoreHistory: older !== undefined,
+    };
   }
 
   getCursor(consumerId: string, missionId: string): MissionEventCursor {
