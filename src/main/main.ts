@@ -189,7 +189,7 @@ import {
   configurePtyProjectRuntimeManager,
   registerPtyIpc,
 } from "./pty/pty-ipc";
-import { nativeHeavyJobEnvironment } from "./orch/native-heavy-preload";
+import { proveNativeHeavyJobBaseAtBoot } from "./orch/native-heavy-preload";
 import {
   registerBrowserIpc,
   destroyBrowsersFor,
@@ -674,8 +674,10 @@ async function bootstrap(): Promise<void> {
   setPaneTerminalIdentity({ name: "NexusIDE", version: app.getVersion() });
   registerPtyIpc();
   // Authenticate the native job base in the utility host before any agent
-  // receives its synchronous spawn environment.
-  await nativeHeavyJobEnvironment();
+  // receives its synchronous spawn environment. A slow PTY host must not stop
+  // the app from opening: without the base, heavy commands stay on Main's
+  // admission path while the proof retries in the background.
+  await proveNativeHeavyJobBaseAtBoot();
   // Semantic CommandBlock layer (OSC 133). Fail-closed behind feature flag;
   // never mutates the PTY byte stream — lateral tap only.
   // Persist finished blocks into project runtime SQLite when flag + scope ok.
@@ -1073,11 +1075,15 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
       }
     } catch (error) {
       console.error("[main] bootstrap failed before renderer navigation:", error);
+      // O print do operador precisa trazer a causa: sem ela, a falha de boot
+      // num Mac de terceiro não tem diagnóstico.
+      const detail = error instanceof Error ? error.message : String(error);
       try {
         dialog.showErrorBox(
           "NexusIDE não conseguiu inicializar",
           "O núcleo do aplicativo falhou antes de abrir a interface. " +
-            "Reinicie o Nexus; nenhum renderer parcial foi carregado.",
+            "Reinicie o Nexus; nenhum renderer parcial foi carregado.\n\n" +
+            `Detalhe: ${detail.slice(0, 300)}`,
         );
       } catch {
         // The process still exits instead of exposing a renderer with partial IPC.

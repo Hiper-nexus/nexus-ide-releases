@@ -1857,7 +1857,11 @@ export function registerOrchIpc(): void {
       : legacy?.success
         ? legacy.data
         : null;
-    if (entries) {
+    if (!entries) return;
+    // ipcMain.on não tem quem receba a exceção: ela vira o diálogo
+    // "A JavaScript error occurred in the main process" (GitCommandError na
+    // 0.76.198). O espelho dos panes é refeito no próximo sync.
+    try {
       syncPanes(
         entries,
         event.sender,
@@ -1869,6 +1873,8 @@ export function registerOrchIpc(): void {
           pane.paneId,
         );
       }
+    } catch (error) {
+      console.warn("[orch] sync de panes falhou; o próximo sync refaz o espelho", error);
     }
   });
 

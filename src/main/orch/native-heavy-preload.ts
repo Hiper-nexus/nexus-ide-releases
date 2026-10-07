@@ -81,3 +81,32 @@ export async function nativeHeavyJobEnvironment(): Promise<Record<string, string
   mainOwnedJobBase = JSON.stringify(command);
   return { NEXUS_HEAVY_JOB_BASE: mainOwnedJobBase };
 }
+
+/**
+ * Boot não pode morrer porque o host de PTY demorou (Mac frio ou carregado):
+ * o prazo de 15 s virava "NexusIDE não conseguiu inicializar". Sem a base,
+ * os comandos pesados seguem só pela admissão do Main; a prova é refeita em
+ * background e passa a valer para os próximos spawns.
+ */
+export async function proveNativeHeavyJobBaseAtBoot(
+  retryDelaysMs: readonly number[] = [5_000, 30_000, 120_000],
+): Promise<boolean> {
+  try {
+    await nativeHeavyJobEnvironment();
+    return true;
+  } catch (error) {
+    console.warn('[native-heavy] base do job nativo indisponível no boot; nova prova em background', error);
+    void (async () => {
+      for (const delayMs of retryDelaysMs) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        try {
+          await nativeHeavyJobEnvironment();
+          return;
+        } catch {
+          // Próxima tentativa; os spawns continuam sem a base até lá.
+        }
+      }
+    })();
+    return false;
+  }
+}
