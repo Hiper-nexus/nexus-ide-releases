@@ -1030,6 +1030,38 @@ describe('F-217 — o mais novo da linha vence mesmo sem catálogo', () => {
     }
   });
 
+  it('Haiku 5.5 é o padrão do trivial; recusado pelo provider, o 4.5 segue como fallback Claude', () => {
+    const claude = (models: string[]): AdapterAvailability[] => [
+      { id: 'claude', installed: true, models },
+    ];
+    resetModelAccessQuarantineForTests();
+    try {
+      const open = routeTask(
+        'renomear uma variável',
+        claude(['claude-haiku-5-5', 'claude-haiku-4-5']),
+        DEFAULT_ROUTING_TABLE,
+        'trivial',
+        false,
+        flat,
+      );
+      expect(open?.model).toBe('claude-haiku-5-5');
+
+      quarantineRejectedModel('claude', 'claude-haiku-5-5', 'Model access is disabled');
+      const refused = routeTask(
+        'renomear uma variável',
+        claude(['claude-haiku-5-5', 'claude-haiku-4-5']),
+        DEFAULT_ROUTING_TABLE,
+        'trivial',
+        false,
+        flat,
+      );
+      expect(refused?.model).toBe('claude-haiku-4-5');
+      expect(refused?.reason).not.toContain('→claude-haiku-5-5');
+    } finally {
+      resetModelAccessQuarantineForTests();
+    }
+  });
+
   it('modelo pedido no texto sobe para o mais novo da linha e continua vencendo (F-218)', () => {
     // Regra do operador 29/09 repetida hoje: "Sol 6.1 saiu; nunca use o Sol
     // normal". A menção ainda decide CLI e linha — mas o id exato pedido é
