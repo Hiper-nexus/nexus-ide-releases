@@ -198,7 +198,12 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
   selectFile: async (file) => {
     const api = window.nexus?.integrations;
     const seq = ++selectSeq;
-    set({ selected: file, diffText: '', error: null });
+    const previous = get().selected;
+    const rereading =
+      previous?.path === file.path && previous.section === file.section;
+    // O poll de 8s relê o arquivo aberto: limpar o diff aqui desmontava o viewer
+    // (e a linha em que o leitor estava) a cada volta.
+    set({ selected: file, diffText: rereading ? get().diffText : '', error: null });
     if (!api?.gitFileDiff) return;
     try {
       const result = await api.gitFileDiff({

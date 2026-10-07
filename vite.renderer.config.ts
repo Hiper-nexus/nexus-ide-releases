@@ -19,6 +19,10 @@ export default defineConfig({
       ignored: ['**/.dev-user-data/**', '**/.vite/**', '**/.dev-electron/**'],
     },
   },
+  // O worker de realce do diff (@pierre/diffs/worker/worker.js?worker) importa
+  // a gramática/engine sob demanda; workers IIFE não aceitam code-splitting.
+  // Módulo ES servido de 'self' cabe no CSP do renderer (worker-src 'self' blob:).
+  worker: { format: 'es' },
   build: {
     // AudioWorklet modules are loaded as scripts at runtime. Inlining `?url`
     // assets as data: URLs makes production CSP reject addModule(), silently
