@@ -884,6 +884,45 @@ describe('UsageQuotaSection', () => {
     act(() => root.unmount());
   });
 
+  it('soma a folga das contas da mesma ferramenta sem mudar a melhor folga', async () => {
+    const pro: ProviderQuotaEntry = {
+      id: 'codex:acc-2', adapterId: 'codex', accountId: 'acc-2', label: 'Codex · Pro',
+      installed: true, onCooldown: false, updatedAt: 1723630000000,
+      windows: [
+        { kind: 'hours', label: '5 Horas', usedRatio: 0.35, source: 'provider-api', confidence: 'high' },
+        { kind: 'weekly', label: 'Semanal', usedRatio: 0.5, source: 'provider-api', confidence: 'high' },
+      ],
+    };
+    useAccountStore.setState({ accounts: [
+      ...useAccountStore.getState().accounts,
+      { ...useAccountStore.getState().accounts[0]!, id: 'acc-2', label: 'Pro', active: false, onCooldown: false },
+    ] });
+    const snapshot = { ...sampleSnapshot, entries: [...sampleEntries, pro] };
+    vi.mocked(window.nexus.quota.snapshot).mockResolvedValue(snapshot);
+    vi.mocked(window.nexus.quota.refresh).mockResolvedValue(snapshot);
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // Claude e OpenCode têm uma linha só: conjunto apenas para o Codex.
+    expect([...host.querySelectorAll('.quota-pool__group')].map((group) => group.getAttribute('data-pool-adapter'))).toEqual(['codex']);
+    const rows = [...host.querySelectorAll('.quota-pool__window')].map((row) => [
+      row.querySelector('.quota-pool__window-label')?.textContent,
+      row.querySelector('.quota-pool__number')?.textContent,
+      row.querySelector('.quota-pool__coverage')?.textContent,
+    ]);
+    expect(rows).toEqual([
+      ['5 Horas', '35% restante', '2 contas somadas'],
+      ['Semanal', '50% restante', '1 de 2 contas com leitura'],
+    ]);
+    // A escolha segue o scorer: a conta em pausa não ganha o selo por estar no conjunto.
+    const flagged = [...host.querySelectorAll('.quota-entry[data-adapter="codex"]')]
+      .filter((row) => row.querySelector('.quota-entry__flag'))
+      .map((row) => row.querySelector('.quota-entry__label')?.textContent);
+    expect(flagged).toEqual(['Codex · Pro']);
+    expect(host.querySelectorAll('.quota-entry')).toHaveLength(4);
+    act(() => root.unmount());
+  });
+
   it('mantém à vista a conta sem cota que precisa entrar novamente', async () => {
     useAccountStore.setState({
       accounts: [{ ...useAccountStore.getState().accounts[0], id: 'acc-2', adapterId: 'opencode', needsRelogin: true }],

@@ -27,6 +27,7 @@ import { defaultAccountLabel, emailFromAuthDetail } from './account-default-labe
 import type { AdapterAuthStatus } from '../../../shared/provider-settings-types';
 import type { RedlineInstallStatus } from '../../../shared/redline-types';
 import { RedlineLinuxTrayRow } from './RedlineLinuxTrayRow';
+import { QuotaPoolSection } from './QuotaPool';
 import { buildPulseMarkers, buildPulseTicks } from '../../lib/quota-pulse';
 // Puro (só imports de shared) — o chip "melhor folga" usa a MESMA aritmética
 // que o scorer do main e o app de menu bar; nenhuma implementação paralela.
@@ -647,6 +648,9 @@ export function UsageQuotaSection() {
       {status !== 'error' && entries.length > 0 && (
         <QuotaPulseBand entries={entries} now={now} />
       )}
+      {status !== 'error' && entries.length > 0 && (
+        <QuotaPoolSection entries={entries} now={now} supplierLabels={PROVIDER_LABELS} />
+      )}
       {lifetime && (lifetime.tokensBurned > 0 || lifetime.usdEquivalent > 0) && (
         <div
           className="quota-panel__consumption"
@@ -721,8 +725,9 @@ export function UsageQuotaSection() {
       )}
       <footer className="quota-panel__help">
         <p>
-          Cada linha identifica a conexão atual ou uma conta salva. Os
-          percentuais não são somados entre contas.
+          Cada linha identifica a conexão atual ou uma conta salva, com os
+          percentuais dela. A folga conjunta soma só janelas iguais da mesma
+          ferramenta, com o mesmo peso por conta.
         </p>
         <button
           type="button"
