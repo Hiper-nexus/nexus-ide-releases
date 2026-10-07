@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
 import type { Squad } from "../../shared/orch-types";
 import { testProjectScope } from "./__tests__/scope-fixture";
+import { GitCommandError } from "../runtime/git-command";
 
 const deps = vi.hoisted(() => ({
   findPaneOwnedBy: vi.fn(),
@@ -342,6 +343,16 @@ describe("renderer mission authority", () => {
     });
     expect(authority.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
     expect(deps.restoreSessionAuthority).toHaveBeenCalledTimes(1);
+  });
+
+  it("a git failure while reading the scope fails closed instead of throwing into IPC", () => {
+    deps.forScope.mockImplementationOnce(() => {
+      throw new GitCommandError("Git process could not complete", ["rev-parse"]);
+    });
+
+    expect(authority.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+    expect(deps.forScope).toHaveBeenCalledTimes(1);
+    expect(deps.restoreSessionAuthority).not.toHaveBeenCalled();
   });
 
   it("rebinds only an owned restored orchestrator session for that mission", () => {
