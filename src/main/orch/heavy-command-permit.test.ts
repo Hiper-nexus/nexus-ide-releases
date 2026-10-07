@@ -68,14 +68,29 @@ it('expires mission and loose-helper waits before the shipped file transport tim
   }
 });
 
-it('serializes workers and worktrees of one project while independent projects can proceed', async () => {
+it('serializes jobs in one checkout while worktrees of the same project run in parallel (F-957)', async () => {
   const value = pool(); const first = await value.acquire(request());
-  let admitted = false;
-  const second = value.acquire({ ...request(), scope: { ...scope, checkoutId: 'worker-checkout', rootRealPath: '/isolated' } }).then(p => { admitted = true; return p; });
+  let sameCheckout = false;
+  const second = value.acquire({ ...request(), sessionId: 'other-worker' }).then(p => { sameCheckout = true; return p; });
+  // Parallel writers own separate worktrees: one project-wide slot made them
+  // queue behind each other until the 300 s admission timeout (exit 74).
+  const worktree = await value.acquire({ ...request(), scope: { ...scope, checkoutId: 'worker-checkout', rootRealPath: '/isolated' } });
   const other = await value.acquire(request('another-project'));
-  await Promise.resolve(); expect(admitted).toBe(false);
-  first.release(); const next = await second; expect(admitted).toBe(true);
-  next.release(); other.release(); expect(value.snapshot().active).toBe(0);
+  await Promise.resolve(); expect(sameCheckout).toBe(false); expect(value.snapshot().active).toBe(3);
+  first.release(); const next = await second; expect(sameCheckout).toBe(true);
+  next.release(); worktree.release(); other.release(); expect(value.snapshot().active).toBe(0);
+});
+
+it('bounds machine-wide concurrency even when RAM would admit more lanes', async () => {
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {}, pollMs: 10, waitMs: 1000, reserveMB: 1000, maxActive: 2 });
+  pools.push(value);
+  const lane = (root: string) => ({ ...request(), scope: { ...scope, rootRealPath: root } });
+  const [a, b] = await Promise.all([value.acquire(lane('/a')), value.acquire(lane('/b'))]);
+  let third = false;
+  const c = value.acquire(lane('/c')).then(p => { third = true; return p; });
+  await Promise.resolve(); expect(third).toBe(false);
+  a.release(); (await c).release(); b.release(); expect(value.snapshot().active).toBe(0);
 });
 
 it('cancels queued commands and keeps an active reservation through caller cancellation', async () => {

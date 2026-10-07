@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import os from 'node:os';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getMemoryAfterAgentReservations, readPaneAdmissionLimits, refreshSystemMemorySample, registerHeavyCommandMemoryReservation, type SystemMemorySample } from './pane-admission';
 
@@ -15,7 +16,7 @@ export interface HeavyCommandRequest {
 export interface HeavyCommandPermit { readonly id: string; release(): void }
 interface Waiter {
   readonly request: HeavyCommandRequest;
-  readonly project: string;
+  readonly lane: string;
   readonly deadline: number;
   readonly resolve: (permit: HeavyCommandPermit) => void;
   readonly reject: (error: Error) => void;
@@ -29,6 +30,7 @@ interface PermitPoolOptions {
   readonly maxWaiters?: number;
   readonly waitMs?: number;
   readonly pollMs?: number;
+  readonly maxActive?: number;
 }
 const error = (code: string) => new Error(`heavy_command_${code}`);
 
@@ -37,11 +39,24 @@ const error = (code: string) => new Error(`heavy_command_${code}`);
 // cancellation contract. Mission and loose-helper requests share this limit.
 const DEFAULT_WAIT_MS = 300_000;
 
-/** One physical heavy job per project; machine RAM reservations span projects. */
+/**
+ * F-957: one physical heavy job per execution root (checkout or worktree),
+ * never one per project. Parallel writers each own a worktree and must be able
+ * to test at the same time; the machine RAM reservation and the CPU bound
+ * below are what keep that safe. Two jobs in the SAME root still serialize:
+ * they share build outputs and caches.
+ */
+const machineActiveLimit = (): number => {
+  const cpus = typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length;
+  // Hang prevention, not rationing: past half the cores, parallel test
+  // runners starve the UI and the PTYs of the agents themselves.
+  return Math.max(2, Math.floor(cpus / 2));
+};
+
 export class HeavyCommandPermitPool {
   readonly #options: PermitPoolOptions;
   readonly #waiters: Waiter[] = [];
-  readonly #active = new Map<string, { project: string; kind: HeavyCommandKind }>();
+  readonly #active = new Map<string, { lane: string; kind: HeavyCommandKind }>();
   #timer: ReturnType<typeof setTimeout> | undefined;
   #refresh: Promise<void> | undefined;
   #closed = false;
@@ -60,10 +75,11 @@ export class HeavyCommandPermitPool {
     if (this.#closed) return Promise.reject(error('closed'));
     if (request.signal?.aborted) return Promise.reject(error('aborted'));
     if (this.#waiters.length >= (this.#options.maxWaiters ?? 128)) return Promise.reject(error('queue_full'));
-    // A worktree is an execution location, never a separate CPU/RAM budget.
-    const project = JSON.stringify([request.scope.installationId, request.scope.projectId]);
+    // RAM/CPU are machine-wide budgets; the lane only serializes jobs that
+    // share one physical checkout (same build outputs and caches).
+    const lane = JSON.stringify([request.scope.installationId, request.scope.projectId, request.scope.rootRealPath]);
     return new Promise((resolve, reject) => {
-      const waiter: Waiter = { request, project, resolve, reject,
+      const waiter: Waiter = { request, lane, resolve, reject,
         deadline: Date.now() + (this.#options.waitMs ?? DEFAULT_WAIT_MS),
         aborted: () => { this.#remove(waiter); reject(error('aborted')); this.#pump(); },
       };
@@ -103,7 +119,8 @@ export class HeavyCommandPermitPool {
 
   #pump(): void {
     if (this.#closed) return;
-    const blockedProjects = new Set<string>();
+    const blockedLanes = new Set<string>();
+    const maxActive = this.#options.maxActive ?? machineActiveLimit();
     for (const waiter of [...this.#waiters]) {
       let current = false;
       try { current = !waiter.request.signal?.aborted && (waiter.request.isCurrent?.() ?? true); } catch { /* revoked */ }
@@ -112,14 +129,14 @@ export class HeavyCommandPermitPool {
       if (!current || Date.now() >= waiter.deadline) {
         this.#remove(waiter); waiter.reject(error(current ? 'wait_timeout' : 'authority_revoked')); continue;
       }
-      if (blockedProjects.has(waiter.project)) continue;
-      const activeProject = [...this.#active.values()].some(entry => entry.project === waiter.project);
-      if (activeProject || this.#active.size >= 32 || !this.#hasRam()) { blockedProjects.add(waiter.project); continue; }
+      if (blockedLanes.has(waiter.lane)) continue;
+      const activeLane = [...this.#active.values()].some(entry => entry.lane === waiter.lane);
+      if (activeLane || this.#active.size >= maxActive || !this.#hasRam()) { blockedLanes.add(waiter.lane); continue; }
       this.#remove(waiter);
       const id = `heavy-${randomUUID()}`;
-      this.#active.set(id, { project: waiter.project, kind: waiter.request.kind });
+      this.#active.set(id, { lane: waiter.lane, kind: waiter.request.kind });
       // The synchronous reservation precedes resolving the caller's promise.
-      // Two project spawns cannot both spend the same cached free RAM.
+      // Two lanes cannot both spend the same cached free RAM.
       waiter.resolve(Object.freeze({ id, release: () => {
         if (this.#active.delete(id)) this.#pump();
       } }));
