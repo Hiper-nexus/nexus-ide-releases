@@ -2,8 +2,10 @@ import { useEffect, useId, useRef, useState } from 'react';
 import {
   classifyMissionAttachment,
   consumeDroppedFiles,
+  formatMissionAttachmentSize,
   isMissionContextAttachmentPath,
   MISSION_ATTACHMENT_LIMITS,
+  normalizeMissionImageFileMimeType,
   stageMissionAttachment,
   validateMissionAttachment,
   filesFromClipboardData,
@@ -11,14 +13,57 @@ import {
   type MissionAttachment,
 } from '../../lib/mission-attachments';
 import {
+  imageNeedsPreparation,
+  isHeicImageFile,
+  prepareImageForAttachment,
+  type CompressImageFileResult,
+} from '../../lib/image-compression';
+import {
   describeShellDrop,
   importDroppedUriForMission,
   type DroppedUri,
 } from '../../lib/mission-shell-file-intake';
+import { useWorkspaceStore } from '../../state/workspace-store';
 
 const FILE_ACCEPT =
-  'audio/*,image/*,application/pdf,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.odt,.rtf,' +
+  'audio/*,image/*,.heic,.heif,application/pdf,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.odt,.rtf,' +
   '.txt,.md,.mdx,.csv,.json,.ts,.tsx,.js,.jsx,.css,.html,.yml,.yaml';
+
+const WORKSPACE_CHANGED_MESSAGE =
+  'A pasta do projeto mudou enquanto o anexo era preparado. Anexe o arquivo de novo.';
+
+function currentWorkspacePath(): string | null {
+  return useWorkspaceStore.getState().current?.path ?? null;
+}
+
+function imageFormatLabel(mime: string): string {
+  if (mime === 'image/jpeg') return 'JPEG';
+  if (mime === 'image/webp') return 'WebP';
+  return mime;
+}
+
+/** Conversão/compressão troca o arquivo: o usuário precisa saber o que foi. */
+function preparationNotice(original: File, prepared: File): string {
+  const action = isHeicImageFile(original) ? 'convertida' : 'comprimida';
+  return (
+    `A imagem ${original.name} foi ${action} para ${imageFormatLabel(prepared.type)} ` +
+    `(${prepared.name}, ${formatMissionAttachmentSize(prepared.size)}).`
+  );
+}
+
+function preparationFailure(
+  name: string,
+  failure: Extract<CompressImageFileResult, { ok: false }>,
+): string {
+  if (failure.message) return `${name}: ${failure.message}`;
+  if (failure.reason === 'too-large') {
+    return `${name} é grande demais para anexar, mesmo depois de comprimir (limite de 14 MB por arquivo).`;
+  }
+  if (failure.reason === 'unsupported') {
+    return `${name}: HEIC não suportado neste sistema.`;
+  }
+  return `${name} não pôde ser lido como imagem.`;
+}
 
 interface MissionAttachmentPickerProps {
   contextPaths: readonly string[];
@@ -62,15 +107,23 @@ export function MissionAttachmentPicker({
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
   const importingFileKeysRef = useRef(new Set<string>());
   const importedContentKeysRef = useRef(new Map<string, string>());
+  const importedSizesRef = useRef(new Map<string, number>());
 
   const importFiles = async (files: readonly File[]): Promise<void> => {
     if (disabled || files.length === 0) return;
+    // Cada await pode atravessar uma troca de projeto: o anexo e o rascunho
+    // de agora pertencem ao projeto do início, nunca ao novo.
+    const workspaceAtStart = currentWorkspacePath();
+    const workspaceMoved = (): boolean =>
+      currentWorkspacePath() !== workspaceAtStart;
     setBusy(true);
     setError(null);
+    setNotice(null);
     const next = [...contextPaths];
     const nextPathSet = new Set(next);
     const currentImported = importedPaths(next);
@@ -83,14 +136,22 @@ export function MissionAttachmentPicker({
         name: displayName(path),
         kind: classifyMissionAttachment({ name: displayName(path), type: '' }) ?? 'file',
         mime: '',
-        size: 0,
+        size: importedSizesRef.current.get(path) ?? 0,
         path,
       }),
     );
+    const failures: string[] = [];
+    const notices: string[] = [];
+    let stopReason: string | null = null;
     try {
-      for (const file of files) {
-        const contentKey = await missionAttachmentContentKey(file);
-        const signature = fileSignature(file);
+      for (const original of files) {
+        // A chave é do ORIGINAL: o mesmo HEIC colado de novo não reconverte.
+        const contentKey = await missionAttachmentContentKey(original);
+        if (workspaceMoved()) {
+          setError(WORKSPACE_CHANGED_MESSAGE);
+          return;
+        }
+        const signature = fileSignature(original);
         if (
           importingFileKeysRef.current.has(signature) ||
           importingFileKeysRef.current.has(contentKey) ||
@@ -98,17 +159,55 @@ export function MissionAttachmentPicker({
         ) {
           continue;
         }
-        const invalid = validateMissionAttachment(file, currentAttachments);
-        if (invalid) {
-          setError(invalid);
-          break;
-        }
         importingFileKeysRef.current.add(signature);
         importingFileKeysRef.current.add(contentKey);
         try {
+          let file = original;
+          if (classifyMissionAttachment(original) === 'image') {
+            // Tipo, vazio e contagem antes de preparar; os limites de bytes
+            // valem para o arquivo que será anexado de fato (abaixo).
+            const preflight = validateMissionAttachment(
+              { name: original.name, type: original.type, size: Math.min(original.size, 1) },
+              currentAttachments,
+            );
+            if (preflight) {
+              stopReason = preflight;
+              break;
+            }
+            file = normalizeMissionImageFileMimeType(original);
+            if (imageNeedsPreparation(file, MISSION_ATTACHMENT_LIMITS.maxBytesPerFile)) {
+              const prepared = await prepareImageForAttachment(
+                file,
+                MISSION_ATTACHMENT_LIMITS.maxBytesPerFile,
+              );
+              if (workspaceMoved()) {
+                setError(WORKSPACE_CHANGED_MESSAGE);
+                return;
+              }
+              if (!prepared.ok) {
+                // Uma foto sem conversão não derruba os outros anexos.
+                failures.push(preparationFailure(original.name || 'imagem', prepared));
+                continue;
+              }
+              if (prepared.recompressed) {
+                notices.push(preparationNotice(original, prepared.file));
+              }
+              file = prepared.file;
+            }
+          }
+          const invalid = validateMissionAttachment(file, currentAttachments);
+          if (invalid) {
+            stopReason = invalid;
+            break;
+          }
           const staged = await stageMissionAttachment(file);
+          if (workspaceMoved()) {
+            setError(WORKSPACE_CHANGED_MESSAGE);
+            return;
+          }
           currentAttachments.push(staged);
           importedContentKeysRef.current.set(contentKey, staged.path);
+          importedSizesRef.current.set(staged.path, staged.size);
           if (!nextPathSet.has(staged.path)) {
             nextPathSet.add(staged.path);
             next.push(staged.path);
@@ -121,6 +220,9 @@ export function MissionAttachmentPicker({
       if (next.length !== contextPaths.length) {
         onContextPathsChange(next);
       }
+      const problems = stopReason ? [...failures, stopReason] : failures;
+      if (problems.length > 0) setError(problems.join(' '));
+      if (notices.length > 0) setNotice(notices.join(' '));
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -141,14 +243,20 @@ export function MissionAttachmentPicker({
     uris: readonly DroppedUri[],
   ): Promise<void> => {
     if (disabled || uris.length === 0) return;
+    const workspaceAtStart = currentWorkspacePath();
     setBusy(true);
     setError(null);
+    setNotice(null);
     const next = [...contextPaths];
     const nextPathSet = new Set(next);
     try {
       const failures: string[] = [];
       for (const dropped of uris) {
         const result = await importDroppedUriForMission(dropped.uri);
+        if (currentWorkspacePath() !== workspaceAtStart) {
+          setError(WORKSPACE_CHANGED_MESSAGE);
+          return;
+        }
         if (!result.ok) {
           failures.push(result.message);
           continue;
@@ -281,6 +389,12 @@ export function MissionAttachmentPicker({
       {error && (
         <p className="mission-setup__inline-error" role="alert">
           {error}
+        </p>
+      )}
+
+      {notice && (
+        <p className="mission-setup__hint" role="status">
+          {notice}
         </p>
       )}
 

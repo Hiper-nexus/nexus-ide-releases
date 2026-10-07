@@ -129,6 +129,7 @@ import type {
 } from './workspace-types';
 import type {
   FileTreeResult,
+  HeicConvertResult,
   ReadFileResult,
 } from './files-types';
 import type {
@@ -1083,6 +1084,11 @@ export interface NexusApi {
      * them. Only file:// URIs, never contents.
      */
     clipboardFileUris(): Promise<{ uris: string[] }>;
+    /**
+     * HEIC/HEIF bytes → JPEG bytes, decoded by the OS in Main (macOS `sips`).
+     * Other systems answer `unsupported` with a readable message.
+     */
+    convertHeicToJpeg(bytes: Uint8Array): Promise<HeicConvertResult>;
     /** Resolve a dragged File to its absolute filesystem path (webUtils). */
     pathForFile(file: File): string;
   };

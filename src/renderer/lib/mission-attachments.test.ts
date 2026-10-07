@@ -4,9 +4,11 @@ import {
   buildMissionAttachmentsContext,
   classifyMissionAttachment,
   filesFromClipboardData,
+  inferImageMimeTypeFromName,
   isMissionContextAttachmentPath,
   missionAttachmentContentKey,
   namePastedMissionFile,
+  normalizeMissionImageFileMimeType,
   validateMissionAttachment,
   type MissionAttachment,
 } from './mission-attachments';
@@ -53,6 +55,34 @@ describe('mission attachments', () => {
     expect(classifyMissionAttachment(file('entrevista.aiff', ''))).toBe(
       'audio',
     );
+  });
+
+  it('HEIC/HEIF do Finder com MIME vazio ou genérico são imagem', () => {
+    // `.heif` com MIME vazio era recusado ("Use uma imagem…") e o paste
+    // descartava a foto em silêncio.
+    expect(classifyMissionAttachment(file('retrato.heif', ''))).toBe('image');
+    expect(classifyMissionAttachment(file('IMG_0001.HEIC', ''))).toBe('image');
+    expect(
+      classifyMissionAttachment(file('IMG_0001.heic', 'application/octet-stream')),
+    ).toBe('image');
+    expect(
+      filesFromClipboardData({ files: [realFile('retrato.heif', '', 'heif-bytes')] }),
+    ).toHaveLength(1);
+  });
+
+  it('normaliza o MIME de imagem só quando ele falta ou é genérico', () => {
+    const heif = normalizeMissionImageFileMimeType(realFile('retrato.HEIF', ''));
+    expect(heif.type).toBe('image/heif');
+    expect(heif.name).toBe('retrato.HEIF');
+    expect(
+      normalizeMissionImageFileMimeType(realFile('a.heic', 'application/octet-stream')).type,
+    ).toBe('image/heic');
+    expect(normalizeMissionImageFileMimeType(realFile('a.jpg', '')).type).toBe('image/jpeg');
+    const typed = realFile('a.png', 'image/webp');
+    expect(normalizeMissionImageFileMimeType(typed)).toBe(typed);
+    const unknown = realFile('notas.txt', '');
+    expect(normalizeMissionImageFileMimeType(unknown)).toBe(unknown);
+    expect(inferImageMimeTypeFromName('.heic')).toBeNull();
   });
 
   it('rejects unsupported, oversized, and empty files', () => {

@@ -19,6 +19,7 @@ import {
 } from './dropped-files';
 import { importDroppedUri } from './dropped-uri-import';
 import { readClipboardFileUris } from './clipboard-file-uris';
+import { convertHeicToJpeg, heicConvertPayloadBytes } from './heic-convert';
 import { requireRendererWorkspaceScope } from './renderer-workspace-scope';
 
 /**
@@ -440,6 +441,22 @@ export function registerFilesIpc(hooks: FilesIpcTestHooks = {}): void {
   ipcMain.handle(FILES_CHANNELS.clipboardFileUris, (event) => {
     requireRendererWorkspaceScope(event.sender);
     return { uris: readClipboardFileUris() };
+  });
+
+  // HEIC/HEIF → JPEG com o decoder do sistema. Só bytes entram e saem; o
+  // Main valida tamanho e pixels antes do processo filho (heic-convert.ts).
+  ipcMain.handle(FILES_CHANNELS.convertHeicToJpeg, (event, raw) => {
+    requireRendererWorkspaceScope(event.sender);
+    const bytes = heicConvertPayloadBytes(raw);
+    if (!bytes) {
+      return { ok: false, reason: 'unreadable', error: 'Conteúdo HEIC inválido.' };
+    }
+    return convertHeicToJpeg(bytes).then((result) => {
+      if (!result.ok) {
+        console.warn('[files] HEIC conversion failed:', result.reason);
+      }
+      return result;
+    });
   });
 
   ipcMain.handle(FILES_CHANNELS.list, (event, raw) => {

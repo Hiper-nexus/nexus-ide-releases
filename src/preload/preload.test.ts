@@ -476,4 +476,26 @@ describe('files.clipboardFileUris (F-582)', () => {
     ).toContainEqual([FILES_CHANNELS.clipboardFileUris]);
     expect(result).toEqual({ uris: ['file:///Users/ana/foto.jpg'] });
   });
+
+  it('convertHeicToJpeg sends only the bytes to the Main converter', async () => {
+    const api = await loadPreloadApi();
+    const bytes = new Uint8Array([1, 2, 3]);
+    electronMock.ipcRenderer.invoke.mockResolvedValueOnce({
+      ok: false,
+      reason: 'unsupported',
+      error: 'HEIC não suportado neste sistema.',
+    });
+
+    const result = await api.files.convertHeicToJpeg(bytes);
+
+    expect(electronMock.ipcRenderer.invoke.mock.calls).toContainEqual([
+      FILES_CHANNELS.convertHeicToJpeg,
+      { bytes },
+    ]);
+    expect(result).toEqual({
+      ok: false,
+      reason: 'unsupported',
+      error: 'HEIC não suportado neste sistema.',
+    });
+  });
 });

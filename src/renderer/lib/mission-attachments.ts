@@ -1,3 +1,9 @@
+// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
+// Copyright (c) 2026 T3 Tools Inc. — MIT License
+// See third_party/licenses/t3code-MIT.txt. Nexus changes: só a normalização
+// de MIME por extensão (composerAttachmentFiles.ts:23–63) veio do T3, com
+// avif/heic/heif no mapa; classificação, limites, paste e staging são do Nexus.
+
 export const MISSION_CONTEXT_ATTACHMENT_PREFIX =
   '.nexus/attachments/mission-context/';
 
@@ -22,7 +28,8 @@ export const MISSION_ATTACHMENT_LIMITS = {
   maxBytesTotal: 40 * 1024 * 1024,
 } as const;
 
-const IMAGE_EXTENSIONS = /\.(avif|gif|heic|jpeg|jpg|png|webp)$/i;
+// heif: o Finder entrega `.heif` com MIME vazio — sem ele a foto sumia.
+const IMAGE_EXTENSIONS = /\.(avif|gif|heic|heif|jpeg|jpg|png|webp)$/i;
 // opus = áudio de WhatsApp/Telegram (o paste do Finder entrega MIME vazio);
 // oga = ogg de áudio; aiff/wma = gravadores e Windows.
 const AUDIO_EXTENSIONS = /\.(aac|aiff|flac|m4a|mp3|oga|ogg|opus|wav|webm|wma)$/i;
@@ -58,6 +65,51 @@ export function classifyMissionAttachment(
   return null;
 }
 
+const IMAGE_MIME_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
+  avif: 'image/avif',
+  gif: 'image/gif',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
+/**
+ * Some sources (drags from other apps, files piped through a shell) hand over
+ * a `File` with an empty or generic MIME type. Maps the extension to a
+ * concrete image type so a plain `photo.heif` still lands on the image path;
+ * anything unrecognized stays as it was.
+ */
+export function inferImageMimeTypeFromName(name: string): string | null {
+  const dotIndex = name.lastIndexOf('.');
+  if (dotIndex <= 0) {
+    return null;
+  }
+  return IMAGE_MIME_TYPE_BY_EXTENSION[name.slice(dotIndex + 1).toLowerCase()] ?? null;
+}
+
+function inferImageMimeTypeForUnknownFile(file: Pick<File, 'name' | 'type'>): string | null {
+  const mimeType = file.type.toLowerCase();
+  if (mimeType !== '' && mimeType !== 'application/octet-stream') {
+    return null;
+  }
+  return inferImageMimeTypeFromName(file.name);
+}
+
+/** Give extension-recognized images a concrete type before preparation. */
+export function normalizeMissionImageFileMimeType(file: File): File {
+  const inferredMimeType = inferImageMimeTypeForUnknownFile(file);
+  if (!inferredMimeType) {
+    return file;
+  }
+  return new File([file], file.name, {
+    type: inferredMimeType,
+    lastModified: file.lastModified,
+  });
+}
+
 /** Clipboard image names are often blank or generic (`image.png`). */
 const GENERIC_PASTE_NAMES = new Set(['', 'image.png', 'image.jpg', 'image.jpeg', 'blob', 'untitled']);
 
@@ -67,6 +119,8 @@ function extensionForMime(mime: string, kind: MissionAttachmentKind): string {
   if (normalized === 'image/png') return 'png';
   if (normalized === 'image/webp') return 'webp';
   if (normalized === 'image/gif') return 'gif';
+  if (normalized === 'image/heic') return 'heic';
+  if (normalized === 'image/heif') return 'heif';
   if (normalized === 'audio/mpeg') return 'mp3';
   if (normalized === 'audio/mp4' || normalized === 'audio/x-m4a') return 'm4a';
   if (normalized === 'audio/wav' || normalized === 'audio/wave') return 'wav';

@@ -45,6 +45,16 @@ export const importDroppedUriSchema = z.object({
   uri: z.string().min(1).max(4096),
 });
 
+/**
+ * HEIC/HEIF → JPEG no Main (o renderer não tem decoder; heic-to é LGPL).
+ * Mesmo teto de fonte do renderer: acima disso nem o Main decodifica.
+ */
+export const HEIC_CONVERT_MAX_SOURCE_BYTES = 50 * 1024 * 1024;
+export type HeicConvertFailureReason = 'too-large' | 'unreadable' | 'unsupported';
+export type HeicConvertResult =
+  | { ok: true; bytes: Uint8Array }
+  | { ok: false; reason: HeicConvertFailureReason; error: string };
+
 export const FILES_CHANNELS = {
   list: 'files:list',
   read: 'files:read',
@@ -53,4 +63,5 @@ export const FILES_CHANNELS = {
   importMissionAttachment: 'files:importMissionAttachment',
   importDroppedUri: 'files:importDroppedUri',
   clipboardFileUris: 'files:clipboardFileUris',
+  convertHeicToJpeg: 'files:convertHeicToJpeg',
 } as const;
