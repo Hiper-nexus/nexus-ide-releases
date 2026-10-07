@@ -258,9 +258,36 @@ function installClients(binDir: string, sourcePath: string): void {
         0o700,
       );
     } else {
-      writePrivateFileAtomic(path.join(binDir, command), source, 0o700);
+      writePrivateFileAtomic(
+        path.join(binDir, command),
+        missionShimPosixLauncher(sharedClient, prefix),
+        0o700,
+      );
     }
   }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * F-962: o pane tem o preload de admissão CPU/RAM no NODE_OPTIONS e, no
+ * macOS, todo processo Node desconhecido entra na fila única de trabalho
+ * pesado do projeto. O cliente nx é IPC leve: com a cópia `#!/usr/bin/env
+ * node`, `nx-mail --help` (e o próprio handoff) esperava minutos na fila.
+ * O lançador marca o processo como auxiliar do Nexus (o preload não age) e
+ * entrega ao cliente compartilhado o prefixo do comando, como o `.cmd`.
+ */
+export function missionShimPosixLauncher(client: string, prefix: string): string {
+  return [
+    "#!/bin/sh",
+    "# Nexus mission shim: gerado pelo Nexus, não edite.",
+    "NEXUS_HEAVY_HELPER=1",
+    "export NEXUS_HEAVY_HELPER",
+    `exec /usr/bin/env node ${shellQuote(client)}${prefix ? ` ${prefix}` : ""} "$@"`,
+    "",
+  ].join("\n");
 }
 
 function mapOperation(request: MissionShimRequest): {
