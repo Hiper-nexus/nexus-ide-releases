@@ -259,6 +259,49 @@ describe('Nexus V2 shell and product workspace style contracts', () => {
       ).toBe('none');
     }
   });
+
+  it('animates inspector presence with opacity/transform only and drops it under reduced motion', () => {
+    // O inspector é irmão do palco do xterm: largura/altura nunca animam.
+    const keyframes = [
+      ...appShellCss.matchAll(
+        /@keyframes product-inspector-[\w-]+\s*\{([\s\S]*?\})\s*\}/g,
+      ),
+    ];
+    expect(keyframes).toHaveLength(2);
+    for (const [, body] of keyframes) {
+      const properties = [...body!.matchAll(/([a-z-]+)\s*:/g)].map(
+        (match) => match[1],
+      );
+      expect(properties.length).toBeGreaterThan(0);
+      for (const property of properties) {
+        expect(['opacity', 'transform']).toContain(property);
+      }
+    }
+
+    const selectors = [
+      '.product-inspector[data-enter="animated"]',
+      '.product-inspector[data-state="closing"]',
+    ] as const;
+    const normalStyle = installStyleContract(productStyles, { width: 1_400 });
+    for (const selector of selectors) {
+      expect(
+        cssDeclarationHasPositiveDuration(
+          activeCssomDeclaration(normalStyle, selector, 'animation'),
+        ),
+      ).toBe(true);
+    }
+
+    normalStyle.remove();
+    const reducedStyle = installStyleContract(productStyles, {
+      width: 1_400,
+      reducedMotion: true,
+    });
+    for (const selector of selectors) {
+      expect(activeCssomDeclaration(reducedStyle, selector, 'animation')).toBe(
+        'none',
+      );
+    }
+  });
   it('gives the project list a floor and lets the rail utilities yield instead', () => {
     installStyleContract(productStyles, { width: 1_100, height: 700 });
     const host = render(<ProductShellFixture />, 1_100, 700);

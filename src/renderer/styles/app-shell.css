@@ -211,6 +211,36 @@
   background: var(--bg-elevated);
 }
 
+/*
+  Presença do inspector: entra e sai só com opacity + transform (DESIGN.md
+  §4/§11, `--ease-out-quart`). A duração vem do AppShell em
+  `--panel-motion-duration`, a mesma do timeout que desmonta. A coluna do
+  grid nunca anima: o palco do xterm muda de largura uma vez, na desmontagem.
+*/
+.product-inspector[data-enter="animated"] {
+  animation: product-inspector-enter var(--panel-motion-duration, 200ms)
+    var(--ease-out-quart);
+}
+
+.product-inspector[data-state="closing"] {
+  animation: product-inspector-exit var(--panel-motion-duration, 200ms)
+    var(--ease-out-quart) forwards;
+}
+
+@keyframes product-inspector-enter {
+  from {
+    opacity: 0;
+    transform: translateX(var(--space-1));
+  }
+}
+
+@keyframes product-inspector-exit {
+  to {
+    opacity: 0;
+    transform: translateX(var(--space-1));
+  }
+}
+
 /* The slot is a sibling of the clipped grid. Portal-backed overlays may pass
    through it without inheriting the frame's layout or overflow context. */
 .nexus-shell__overlays {
@@ -2163,6 +2193,12 @@
   .workspace-rail__row,
   .launcher-action {
     transition: none;
+  }
+
+  /* O JS já desmonta na hora sob reduce; isto cobre a troca no meio da saída. */
+  .product-inspector[data-enter="animated"],
+  .product-inspector[data-state="closing"] {
+    animation: none;
   }
 
   .workspace-rail__new:active,

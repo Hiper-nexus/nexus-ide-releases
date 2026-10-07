@@ -1,3 +1,6 @@
+// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
+// Copyright (c) 2026 T3 Tools Inc. — MIT License
+// See third_party/licenses/t3code-MIT.txt. Nexus changes: só a guarda de IME do Enter (ComposerPromptEditorTiptap.tsx:975–977) levada a um textarea React via nativeEvent.isComposing/keyCode 229; o resto do composer é do Nexus.
 import { useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type {
   MissionAgentSnapshot,
@@ -69,6 +72,14 @@ export function DirectionComposer({
   const handleDraftKeyDown = (
     event: KeyboardEvent<HTMLTextAreaElement>,
   ): void => {
+    // Enter que confirma a composição do IME (acentos, pinyin, kana) não envia.
+    if (
+      event.key === 'Enter' &&
+      (event.nativeEvent.isComposing || event.keyCode === 229)
+    ) {
+      event.stopPropagation();
+      return;
+    }
     if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
     void submitDirection();

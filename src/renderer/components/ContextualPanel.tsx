@@ -323,7 +323,11 @@ export function ContextualPanel({
     );
   }
 
-  if (!state.visible) {
+  // No slot do inspector o painel oculto continua desenhado: é a cópia que o
+  // AppShell mantém inerte durante a saída (o botão de reabrir nasce no
+  // cabeçalho). Trocar pelo botão encolheria a coluna antes da hora e
+  // redimensionaria o terminal duas vezes.
+  if (!state.visible && placement !== 'inspector') {
     return (
       <button
         ref={showButtonRef}

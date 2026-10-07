@@ -1,5 +1,10 @@
+// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
+// Copyright (c) 2026 T3 Tools Inc. — MIT License
+// See third_party/licenses/t3code-MIT.txt. Nexus changes: só o contrato modal da paleta (CommandPalette.tsx:630–640, 668–670; CommandPaletteContent.tsx:42–47) — aria-modal, foco preso pelo useFocusTrap do Nexus e devolução ao invocador no lugar de finalFocus/focusAtEnd; ações e layout da paleta são do Nexus.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCommandPaletteStore } from '../state/command-palette-store';
+import { getActiveWorkspacePath } from '../state/active-workspace';
+import { useFocusTrap } from '../lib/use-focus-trap';
 import { useAttentionInboxStore } from '../state/attention-inbox-store';
 import { useCheatsheetStore } from '../state/cheatsheet-store';
 import { useBugReportDialogStore } from '../state/bug-report-dialog-store';
@@ -41,6 +46,13 @@ interface PaletteAction {
   run(): void;
 }
 
+/** Workspace/checkout + destino: devolver o foco só faz sentido no mesmo lugar. */
+function focusScope(): string {
+  return `${getActiveWorkspacePath() ?? ''}\n${JSON.stringify(
+    useProductNavigationStore.getState().destination,
+  )}`;
+}
+
 export function CommandPalette() {
   const open = useCommandPaletteStore((state) => state.open);
   const close = useCommandPaletteStore((state) => state.close);
@@ -54,6 +66,11 @@ export function CommandPalette() {
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  /** Uma ação escolheu o próximo foco; só a dispensa devolve ao invocador. */
+  const actionRanRef = useRef(false);
+
+  useFocusTrap(dialogRef, open);
 
   const actions = useMemo<PaletteAction[]>(() => {
     if (!open) return [];
@@ -329,12 +346,31 @@ export function CommandPalette() {
 
   // Reset ao abrir; cursor sempre dentro dos limites do filtro corrente.
   useEffect(() => {
-    if (open) {
-      setQuery('');
-      setCursor(0);
-      // O input só existe após o paint deste render.
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
+    if (!open) return;
+    // O foco ainda está com quem abriu: o input só o recebe no quadro seguinte.
+    const invoker =
+      document.activeElement instanceof HTMLElement &&
+      document.activeElement !== document.body
+        ? document.activeElement
+        : null;
+    const scope = focusScope();
+    actionRanRef.current = false;
+    setQuery('');
+    setCursor(0);
+    // O input só existe após o paint deste render.
+    const frame = requestAnimationFrame(() => inputRef.current?.focus());
+    return () => {
+      // Fechar antes do quadro não pode puxar o foco para um input morto.
+      cancelAnimationFrame(frame);
+      if (
+        actionRanRef.current ||
+        !invoker?.isConnected ||
+        focusScope() !== scope
+      ) {
+        return;
+      }
+      invoker.focus({ preventScroll: true });
+    };
   }, [open]);
 
   useEffect(() => {
@@ -349,9 +385,10 @@ export function CommandPalette() {
 
   if (!open) return null;
 
-  const runAction = (action: PaletteAction) => {
+  const runAction = (run: () => void) => {
+    actionRanRef.current = true;
     close();
-    action.run();
+    run();
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -367,14 +404,20 @@ export function CommandPalette() {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const action = filtered[cursor];
-      if (action) runAction(action);
+      if (action) runAction(action.run);
     }
   };
 
   let lastGroup: string | null = null;
 
   return (
-    <div className="palette" role="dialog" aria-label="Command palette">
+    <div
+      ref={dialogRef}
+      className="palette"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Command palette"
+    >
       <div
         className="palette__overlay overlay-scrim-glass overlay-scrim-enter"
         onClick={close}
@@ -408,32 +451,33 @@ export function CommandPalette() {
                       title="Nova missão"
                       variant="primary"
                       size="sm"
-                      onClick={() => {
-                        close();
-                        useProductNavigationStore
-                          .getState()
-                          .openNewMission();
-                      }}
+                      onClick={() =>
+                        runAction(() =>
+                          useProductNavigationStore
+                            .getState()
+                            .openNewMission(),
+                        )
+                      }
                     />
                     <ActionCard
                       icon="key"
                       title="Contas de IA"
                       size="sm"
-                      onClick={() => {
-                        close();
-                        useProductNavigationStore
-                          .getState()
-                          .openSettings('providers');
-                      }}
+                      onClick={() =>
+                        runAction(() =>
+                          useProductNavigationStore
+                            .getState()
+                            .openSettings('providers'),
+                        )
+                      }
                     />
                     <ActionCard
                       icon="key"
                       title="Ajuda e atalhos"
                       size="sm"
-                      onClick={() => {
-                        close();
-                        useCheatsheetStore.getState().toggle();
-                      }}
+                      onClick={() =>
+                        runAction(() => useCheatsheetStore.getState().toggle())
+                      }
                     />
                   </>
                 }
@@ -457,7 +501,7 @@ export function CommandPalette() {
                   data-active={index === cursor}
                   className="palette__item"
                   onMouseEnter={() => setCursor(index)}
-                  onClick={() => runAction(action)}
+                  onClick={() => runAction(action.run)}
                 >
                   <PixelIcon name={action.icon} size={12} />
                   <span className="palette__item-label">{action.label}</span>
