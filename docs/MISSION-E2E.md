@@ -55,6 +55,15 @@ Uma missão numa aba com pasta isolada em que o Maestro abre, **em paralelo**,
 | handoff pelo shim chega ao Maestro (6 entregas, ACK) | F-962 |
 | vigia de zero entrega "9 min depois" não cutuca writer ocupado; nenhum aviso de sistema | F-960 |
 | a missão chega a `done` por `nexus_mission_set_status` com as branches integradas | caminho normal |
+| nenhum writer some antes do próprio handoff (só o `autoCloseOnHandoff` fecha, depois do sucesso) | mortes caladas |
+
+Na primeira rodada ele achou quatro defeitos que os unitários deixavam passar
+(F-971): a vaga pesada pelo checkout de coordenação (writers em fila), worker
+sem janela sem `workerIncarnationId` (sem shim), o timer do shim herdando a
+fronteira do orquestrador (todo handoff "nested") e o exit 74 na hora com a
+máquina ocupada (prova de dono com prazo de 1–2 s). Toda recusa de comando
+pesado agora vai para o trace do Main como `heavy-command-denied` com o motivo,
+e o `evidence.json` do E2E a traz.
 
 ## Gate de release
 

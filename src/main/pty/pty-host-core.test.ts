@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { spawn as spawnNode } from 'node:child_process';
 import {
+  COMMAND_PROCESS_TIMEOUT_MS,
   createPtyHostBridge,
   escalateDarwinSupervisorTermination,
   PhysicalExitReceipts,
@@ -717,7 +718,8 @@ it('a timed-out tentative claim cancels its host request before the late physica
   const transport = fakeTransport(); const bridge = createPtyHostBridge(transport.transport);
   const result = bridge.host.claimCommandProcess!('s1', 123); const request = transport.posted.at(-1)!;
   if (request.type !== 'command-process') throw new Error('missing request');
-  await vi.advanceTimersByTimeAsync(2001); expect(await result).toBeNull();
+  await vi.advanceTimersByTimeAsync(COMMAND_PROCESS_TIMEOUT_MS - 1); expect(transport.posted.at(-1)).toBe(request);
+  await vi.advanceTimersByTimeAsync(2); expect(await result).toBeNull();
   expect(transport.posted.at(-1)).toEqual({ type: 'command-process-cancel', requestId: request.requestId, sessionId: 's1' });
   bridge.dispatchEvent({ type: 'command-process-result', requestId: request.requestId, sessionId: 's1', claimId: 'late', state: null });
   expect(transport.posted.filter((message) => message.type === 'command-process-confirm')).toHaveLength(0);

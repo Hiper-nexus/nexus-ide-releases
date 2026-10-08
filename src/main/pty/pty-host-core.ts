@@ -160,6 +160,14 @@ export interface PtyHostBridge {
 
 
 const TERMINATION_PROCESS_SCAN_BUDGET_MS = 4_000;
+/**
+ * F-971: a prova de dono de um comando pesado (duas leituras do `ps` mais o
+ * vigia nativo, no host) leva segundos com a máquina ocupada. Com 2 s, writers
+ * em paralelo recebiam "ownership unproved" e o comando morria com exit 74
+ * na hora. Continua fail-closed: estourou, recusa.
+ */
+export const COMMAND_PROCESS_TIMEOUT_MS = 20_000;
+const COMMAND_PROCESS_STOP_TIMEOUT_MS = 15_000;
 const TERMINATION_TRANSPORT_MARGIN_MS = 500;
 /** Janela do probe de mortalidade; estourou = unverifiable, nunca morte. */
 const LIVENESS_PROBE_TIMEOUT_MS = 3_000;
@@ -475,7 +483,7 @@ export function createPtyHostBridge(
     if (pendingCommands.size >= 128) return Promise.resolve(null);
     const requestId = `pty-command-${++commandCounter}`;
     return new Promise<Extract<HostEventMsg, { type: 'command-process-result' }> | null>((resolve) => {
-      const timer = setTimeout(() => { if (pendingCommands.delete(requestId)) { if (body.op === 'claim') { try { transport.post({ type: 'command-process-cancel', requestId, sessionId }); } catch {} } resolve(null); } }, body.op === 'stop' ? 15_000 : 2_000); timer.unref?.();
+      const timer = setTimeout(() => { if (pendingCommands.delete(requestId)) { if (body.op === 'claim') { try { transport.post({ type: 'command-process-cancel', requestId, sessionId }); } catch {} } resolve(null); } }, body.op === 'stop' ? COMMAND_PROCESS_STOP_TIMEOUT_MS : COMMAND_PROCESS_TIMEOUT_MS); timer.unref?.();
       pendingCommands.set(requestId, { sessionId, claim: body.op === 'claim', resolve, timer });
       try { transport.post({ type: 'command-process', requestId, sessionId, ...body }); }
       catch { pendingCommands.delete(requestId); clearTimeout(timer); resolve(null); }

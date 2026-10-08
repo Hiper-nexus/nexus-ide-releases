@@ -188,11 +188,11 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
   const sessions: string[] = [];
   let teardown: Array<() => Promise<void> | void> = [];
   let traceFlush: () => Promise<void> = async () => undefined;
-  /** Encerramentos PEDIDOS de PTY (origem) registrados pelo pty-manager no trace do Main. */
-  const terminations = async () => {
+  /** Trace do Main: encerramentos pedidos (origem), saídas de PTY e recusas de comando pesado (causa). */
+  const traceEvents = async () => {
     await traceFlush().catch(() => undefined);
-    return readNdjson<{ kind?: string; sessionId?: string; origin?: string; at?: number; t?: number }>(path.join(state.userData, 'logs', 'main.trace.ndjson'))
-      .filter((event) => event.kind === 'agent-pty-terminate' || event.kind === 'agent-pty-exit');
+    return readNdjson<{ kind?: string; sessionId?: string; origin?: string; reason?: string; elapsedMs?: number; at?: number; t?: number }>(
+      path.join(state.userData, 'logs', 'main.trace.ndjson'));
   };
 
   beforeAll(async () => {
@@ -314,17 +314,19 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
       () => { disposeWorktreeRuntimeRegistry(); },
       () => { manager.closeAll(); },
     ];
-  }, 240_000);
+  }, 300_000);
 
   afterAll(async () => {
+    // Cada passo tem prazo: teardown lento sob carga não vira vermelho falso
+    // (o veredito é o da missão, dado no teste).
     for (const step of teardown) {
-      try { await step(); } catch { /* teardown best-effort; a asserção já falou */ }
+      try { await Promise.race([Promise.resolve().then(step), sleep(30_000)]); } catch { /* best-effort */ }
     }
     if (host && host.connected) host.disconnect();
     host?.kill('SIGTERM');
     if (process.env.NEXUS_MISSION_E2E_KEEP === '1' || !root) return;
     fs.rmSync(root, { recursive: true, force: true });
-  }, 120_000);
+  }, 180_000);
 
   it('5 writers isolados + 1 em worktree aninhada nascem, rodam o comando pesado em paralelo, entregam e a missão chega a done', async () => {
     const { getProjectDomainStores } = await import('./project-domain-store-registry');
@@ -464,7 +466,11 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
     const successByWorker = new Map(ALL_WRITERS.map((id) => [id, stores.handoffs.list({ missionId: mission.id, includeDelivered: true })
       .find((h) => h.status === 'success' && h.summary.includes(`Writer ${id} entregou`))]));
     const handoffAtBySession = new Map([...successByWorker.values()].filter(Boolean).map((h) => [h!.sessionId, h!.createdAt]));
-    const lifecycle = (await terminations()).map((event) => ({ kind: event.kind, sessionId: event.sessionId, origin: event.origin, at: event.at ?? event.t ?? 0 }));
+    const events = await traceEvents();
+    const heavyDenied = events.filter((event) => event.kind === 'heavy-command-denied')
+      .map((event) => ({ sessionId: event.sessionId, reason: event.reason, elapsedMs: event.elapsedMs }));
+    const lifecycle = events.filter((event) => event.kind === 'agent-pty-terminate' || event.kind === 'agent-pty-exit')
+      .map((event) => ({ kind: event.kind, sessionId: event.sessionId, origin: event.origin, at: event.at ?? event.t ?? 0 }));
     const requested = new Set(lifecycle.filter((event) => event.kind === 'agent-pty-terminate').map((event) => event.sessionId));
     const killed = lifecycle.filter((event) => event.kind === 'agent-pty-terminate');
     const killedBeforeDone = killed.filter((event) => event.sessionId !== orchestratorSession && event.at < doneAt &&
@@ -472,7 +478,7 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
     const diedAlone = lifecycle.filter((event) => event.kind === 'agent-pty-exit' && event.sessionId !== orchestratorSession &&
       !requested.has(event.sessionId) && event.at < doneAt);
     const evidence = {
-      elapsedMs, lifecycle, barrierOpenedAt: barrierOpenedAt ? barrierOpenedAt - started : null, maxPermits, maxOverlap,
+      elapsedMs, lifecycle, heavyDenied, barrierOpenedAt: barrierOpenedAt ? barrierOpenedAt - started : null, maxPermits, maxOverlap,
       mission: finalMission ? { status: finalMission.status, intentState: finalMission.intentState } : null,
       spawnCalls, boots, results, orchestratorDone: orchestratorResult?.done, merges: orchestratorResult?.merges,
       deliveries, heavyLog, workerHandoffs: workerHandoffs.map((h) => ({ id: h.id, from: h.fromAgent, status: h.status, session: h.sessionId })),
@@ -515,7 +521,8 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
       check(result, `[entrega] ${id}: o writer não terminou o turno (sem recibo de resultado)`);
       if (!result) continue;
       check(result.light.code === 0 && result.light.lease === 'none', `[F-956] ${id}: comando leve com node/make/vitest/tsc no TEXTO entrou na fila pesada (exit ${result.light.code}, lease ${result.light.lease})`);
-      check(result.heavy.code === 0, `[F-956/F-957] ${id}: o comando pesado saiu com ${result.heavy.code}${[74, 78].includes(result.heavy.code) ? ' (admissão negada/fila esgotada)' : ''}: ${result.heavy.output.slice(-300)}`);
+      check(result.heavy.code === 0, `[F-956/F-957] ${id}: o comando pesado saiu com ${result.heavy.code}${[74, 78].includes(result.heavy.code) ? ' (admissão negada/fila esgotada)' : ''}: ${result.heavy.output.slice(-300)}` +
+        (heavyDenied.length > 0 ? ` — recusas no Main: ${JSON.stringify(heavyDenied)}` : ''));
       check(result.heavy.lease !== 'none', `[admissão] ${id}: o comando pesado rodou SEM passar pela admissão real (sem lease)`);
       check(result.commit.code === 0 && /^[0-9a-f]{40}$/.test(result.sha), `[git] ${id}: commit falhou (exit ${result.commit.code}): ${result.commit.output.slice(-300)}`);
       check(result.commit.lease === 'none', `[F-956] ${id}: git commit com "make/vitest/tsc" na mensagem entrou na fila pesada`);
@@ -523,14 +530,16 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
       check(successByWorker.get(id), `[F-962] ${id}: nenhum handoff de sucesso no banco — o shim nexus_handoff_submit não entregou${result.handoff ? ` (exit ${result.handoff.code}: ${result.handoff.output.slice(-300)})` : ''}`);
       if (result.handoff) check(result.handoff.code === 0, `[F-962] ${id}: nexus_handoff_submit pelo shim saiu com ${result.handoff.code}: ${result.handoff.output.slice(-300)}`);
     }
-    check(maxOverlap >= 2, `[F-957] writers em worktrees diferentes não testaram ao mesmo tempo: sobreposição máxima ${maxOverlap} (fila única por projeto/checkout)`);
-    check(maxPermits >= 2, `[F-957] a admissão nunca concedeu dois jobs pesados simultâneos (máximo ${maxPermits})`);
+    check(spans.length < 2 || maxOverlap >= 2, `[F-957] writers em worktrees diferentes não testaram ao mesmo tempo: sobreposição máxima ${maxOverlap} (fila única por projeto/checkout)`);
+    check(spans.length === ALL_WRITERS.length, `[admissão] só ${spans.length} de ${ALL_WRITERS.length} comandos pesados chegaram a rodar`);
+    check(spans.length < 2 || maxPermits >= 2, `[F-957] a admissão nunca concedeu dois jobs pesados simultâneos (máximo ${maxPermits})`);
     // Entregas: o Maestro recebeu as 5+1 e o banco tem as 6 dos writers.
     const workerDeliveries = new Set(deliveries.filter((d) => d.worker).map((d) => d.handoff));
     check(workerDeliveries.size === ALL_WRITERS.length, `[entrega] o Maestro recebeu ${workerDeliveries.size} de ${ALL_WRITERS.length} entregas de writer no PTY`);
     check(workerSessions.size === ALL_WRITERS.length, `[entrega] ${workerSessions.size} sessões de writer com handoff no banco (esperado ${ALL_WRITERS.length})`);
     // F-960 e mortes caladas: nenhum aviso falso, nenhum worker morto antes do done.
-    check(zeroDeliveryProbe !== null && zeroDeliveryProbe.length === 0, `[F-960] aviso de zero entrega/"não iniciou" para writers ocupados: ${JSON.stringify(zeroDeliveryProbe)}`);
+    check(zeroDeliveryProbe !== null, '[F-960] o vigia de zero entrega não foi provado: os 6 writers nunca chegaram vivos à barreira');
+    check(zeroDeliveryProbe === null || zeroDeliveryProbe.length === 0, `[F-960] aviso de zero entrega/"não iniciou" para writers ocupados: ${JSON.stringify(zeroDeliveryProbe)}`);
     check(systemNotices.length === 0, `[vigias] avisos do sistema na missão: ${JSON.stringify(systemNotices)}`);
     for (const id of ALL_WRITERS) {
       const input = readNdjson<{ text: string }>(path.join(e2eDir, 'agents', `${id}.input.ndjson`));
