@@ -94,6 +94,17 @@ describe('readRegularFileCapped', () => {
     expect(result.kind === 'text' && result.text).toBe('ok');
   });
 
+  it('refuses any symlink with noFollow (files Nexus writes itself)', () => {
+    const real = path.join(dir, 'real.json');
+    writeFileSync(real, 'ok');
+    symlinkSync(real, file());
+    expect(readRegularFileCapped(file(), 1024, undefined, { noFollow: true })).toEqual({
+      kind: 'none',
+      stamp: 'unreadable',
+    });
+    expect(readRegularFileCapped(real, 1024, undefined, { noFollow: true }).kind).toBe('text');
+  });
+
   it('an empty file is text (the caller decides it is not valid)', () => {
     writeFileSync(file(), '');
     const result = readRegularFileCapped(file(), 1024);
