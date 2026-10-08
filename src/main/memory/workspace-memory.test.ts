@@ -62,7 +62,7 @@ afterEach(() => {
 
 describe('workspace memory engine (FTS5)', () => {
   it('canário: better-sqlite3 do repo cria tabela virtual FTS5', () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- carregado dentro do canário: binário nativo com ABI errado derruba só este teste, não o arquivo
     const Database = require('better-sqlite3') as new (
       file: string,
     ) => import('better-sqlite3').Database;

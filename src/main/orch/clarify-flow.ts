@@ -102,7 +102,7 @@ function activeMission(stores: ClarifyStores, missionId: string): Mission {
 
 function safeAgentLabel(ctx: Pick<AgentGateContext, 'agentName' | 'label'>): string {
   const label = (ctx.agentName ?? ctx.label)
-    // eslint-disable-next-line no-control-regex
+    // eslint-disable-next-line no-control-regex -- troca controles C0 e DEL do rótulo do agente por espaço de propósito
     .replace(/[\x00-\x1f\x7f]/g, ' ')
     .trim()
     .slice(0, 256);

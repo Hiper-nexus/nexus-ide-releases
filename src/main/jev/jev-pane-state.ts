@@ -204,7 +204,7 @@ function broadcastPaneHint(payload: {
 
 function defaultPaneLabel(sessionId: string, paneId?: string): string | null {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- pane-registry arrasta ~600 módulos do orquestrador e o Electron; tardio, o classificador segue testável e o catch cobre a ausência
     const { listPaneSnapshots } =
       require('../orch/pane-registry') as typeof import('../orch/pane-registry');
     const snap = listPaneSnapshots().find(
@@ -223,7 +223,7 @@ function defaultPaneLabel(sessionId: string, paneId?: string): string | null {
 
 function defaultNarrate(text: string, paneId?: string): void {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- Electron só existe no app; nos testes o require cai no catch
     const { BrowserWindow } = require('electron') as typeof import('electron');
     for (const win of BrowserWindow.getAllWindows()) {
       const wc = win.webContents;

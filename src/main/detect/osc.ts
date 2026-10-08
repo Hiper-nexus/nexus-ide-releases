@@ -115,7 +115,7 @@ function sanitizeAgentOsc(payload: string): string {
   let out = '';
   for (const ch of payload) {
     if (out.length >= AGENT_OSC_MAX_CHARS) break;
-    // eslint-disable-next-line no-control-regex
+    // eslint-disable-next-line no-control-regex -- descarta controles C0/C1 do payload OSC de propósito
     if (!/[\x00-\x1f\x7f-\x9f]/.test(ch)) out += ch;
   }
   return out;

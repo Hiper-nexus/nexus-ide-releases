@@ -10,11 +10,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * delivery from the build-time digests alone, without reading the payload.
  */
 const offload = vi.hoisted(() => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- vi.hoisted roda antes dos imports do arquivo: só require alcança node:fs/os/path aqui
   const nodeFs = require('node:fs') as typeof import('node:fs');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- vi.hoisted roda antes dos imports do arquivo: só require alcança node:fs/os/path aqui
   const nodeOs = require('node:os') as typeof import('node:os');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- vi.hoisted roda antes dos imports do arquivo: só require alcança node:fs/os/path aqui
   const nodePath = require('node:path') as typeof import('node:path');
   const dir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'nexus-offload-payload-'));
   return { dir, payloadFile: nodePath.join(dir, 'impeccable-manifest.json') };

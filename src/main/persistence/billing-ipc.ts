@@ -95,7 +95,7 @@ function defaultBillingIpcDeps(): BillingIpcDeps {
   // Lazy require: mantém applyLicenseToken testável sem carregar o cliente HTTP.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { apiFetch } = require('../api-client') as typeof import('../api-client');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires -- license-sync também fala com a rede: tardio pelo mesmo motivo de cima
   const { startCheckoutPolling } = require('../license-sync') as typeof import('../license-sync');
   return {
     apiFetch,

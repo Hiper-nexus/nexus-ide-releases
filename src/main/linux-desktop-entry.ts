@@ -78,7 +78,7 @@ export function resolveLinuxRuntimeIconPath(
  * registrar um comando truncado.
  */
 export function quoteDesktopExecArg(arg: string): string | null {
-  // eslint-disable-next-line no-control-regex
+  // eslint-disable-next-line no-control-regex -- recusa caracteres de controle no argumento do Exec de propósito
   if (arg.length === 0 || /[\u0000-\u001f\u007f]/.test(arg)) return null;
   const escaped = arg.replace(/(["`$\\])/g, '\\$1').replace(/%/g, '%%');
   // O valor inteiro ainda passa pelo escape de string do arquivo .desktop,
@@ -97,7 +97,7 @@ export function quoteDesktopExecArg(arg: string): string | null {
  * com xdg-utils e o Chromium padrão: o login voltava para uma aba em branco.
  */
 export function isPlainDesktopExecPath(value: string): boolean {
-  // eslint-disable-next-line no-control-regex
+  // eslint-disable-next-line no-control-regex -- o caminho do Exec não pode ter controle nem espaço: a classe casa controles de propósito
   return value.length > 0 && !/[\u0000-\u0020\u007f"'\\<>~|&;$*?#()`%]/.test(value);
 }
 
@@ -140,7 +140,7 @@ export interface PortableDesktopEntryInput {
 
 export function buildPortableDesktopEntry(input: PortableDesktopEntryInput): string {
   const exec = input.exec;
-  // eslint-disable-next-line no-control-regex
+  // eslint-disable-next-line no-control-regex -- ícone com caractere de controle cai no nome padrão: a classe casa controles de propósito
   const icon = input.iconPath && !/[\u0000-\u001f\u007f]/.test(input.iconPath)
     ? input.iconPath.replace(/\\/g, '\\\\')
     : 'nexus-ide';

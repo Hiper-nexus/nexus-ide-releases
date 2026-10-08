@@ -40,7 +40,7 @@ let mode: HotkeyMode = 'toggle';
 /** Best-effort load of the optional native uiohook module. */
 function tryLoadUiohook(): UiohookModule | null {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- módulo nativo opcional: ausente ou com ABI errado cai no catch
     const mod = require('uiohook-napi') as UiohookModule;
     if (mod && mod.uIOhook && typeof mod.uIOhook.start === 'function') return mod;
     return null;

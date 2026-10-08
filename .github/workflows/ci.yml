@@ -75,8 +75,16 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint:main-sync
+      # Só erros: hoje o único erro é a regra nexus/require-suppression-reason
+      # (toda supressão de lint/type diz por quê). Warnings não reprovam aqui.
+      - name: Oxlint (erros, incluindo supressão sem motivo)
+        run: npm run lint:oxlint -- --quiet
       - run: npm run security:renderer-sinks
       - run: npm test
+      # Tetos de trabalho determinísticos (contagem, nunca relógio); ver
+      # docs/perf-budgets.md. Também rodam no npm test; aqui a falha tem nome.
+      - name: Perf budgets
+        run: npm run test:perf
       - name: Prove Linux command namespace lifetime
         env:
           NEXUS_LINUX_OWNED_COMMAND_TEST: "1"

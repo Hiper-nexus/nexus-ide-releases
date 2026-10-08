@@ -77,7 +77,7 @@ export interface CodexScannerOptions {
 
 function defaultPersistDir(): string | null {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- Electron só existe no app; fora dele o catch desliga a persistência
     const electron = require('electron') as {
       app?: { getPath(name: 'userData'): string };
     };

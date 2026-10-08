@@ -8,7 +8,7 @@ import { createScopedBrowserArtifactStore } from './browser-artifact-store';
 
 let sqliteAvailable = true;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires -- sonda: o better-sqlite3 pode estar compilado para o ABI do Electron; o require no try decide se a suíte roda
   const Database = require('better-sqlite3') as new (file: string) => {
     close(): void;
   };

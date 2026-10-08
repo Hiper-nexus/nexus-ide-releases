@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
+import { BILLING_CHANNELS } from '../shared/billing-types';
+import { WINDOW_CHANNELS } from '../shared/channels';
 import { confirmNativeAction } from './native-confirm';
 import { finishAuthDeepLink } from './auth-deep-link';
 import { ensureLinuxDesktopEntry } from './linux-desktop-entry';
@@ -121,8 +123,6 @@ function defaultHandler(link: DeepLink, trusted: boolean): void {
     const billing = require('./persistence/billing-ipc') as typeof import('./persistence/billing-ipc');
     const res = billing.applyLicenseToken(link.token);
     if (!res.ok) console.warn('[deep-link] licença inválida:', res.error);
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { BILLING_CHANNELS } = require('../shared/billing-types') as typeof import('../shared/billing-types');
     win?.webContents.send(BILLING_CHANNELS.changed);
   } else if (link.kind === 'open') {
     // SEGURANÇA: um deep link nexus://open pode ser disparado por QUALQUER site.
@@ -153,8 +153,6 @@ function defaultHandler(link: DeepLink, trusted: boolean): void {
 }
 
 function sendOpenQuota(win?: BrowserWindow | null): void {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { WINDOW_CHANNELS } = require('../shared/channels') as typeof import('../shared/channels');
   win?.webContents.send(WINDOW_CHANNELS.deepOpenQuota);
 }
 

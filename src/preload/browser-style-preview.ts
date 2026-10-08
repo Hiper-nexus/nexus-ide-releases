@@ -15,7 +15,7 @@ const MAX_SELECTOR_CHARS = 1_024;
 const MAX_PROPERTIES = 64;
 const MAX_VALUE_CHARS = 512;
 const PROPERTY_PATTERN = /^-?[a-z][a-z-]*$/;
-/* eslint-disable-next-line no-control-regex */
+/* eslint-disable-next-line no-control-regex -- valores CSS com controle C0 são recusados de propósito */
 const UNSAFE_VALUE = /[{};\u0000-\u001f]|<\/|\burl\s*\(/i;
 
 export interface StylePreviewController {

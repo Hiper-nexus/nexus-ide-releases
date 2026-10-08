@@ -415,7 +415,7 @@ describe('error mapping', () => {
       error: `linha\u0000\u001b[31m\n${'palavra '.repeat(200)}`,
     });
     const message = (result as { message: string }).message;
-    // eslint-disable-next-line no-control-regex
+    // eslint-disable-next-line no-control-regex -- a asserção procura justamente caracteres de controle
     expect(message).not.toMatch(/[\u0000-\u001f\u007f]/);
     expect(message.length).toBeLessThanOrEqual(400);
   });

@@ -140,7 +140,7 @@ const defaultSettle = (ms: number) =>
 
 function defaultUserDataDir(): string | undefined {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- Electron só existe no app; fora dele o catch devolve undefined
     const electron = require('electron') as typeof import('electron');
     return electron.app?.getPath('userData');
   } catch {

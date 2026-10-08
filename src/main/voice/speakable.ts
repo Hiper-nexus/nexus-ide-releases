@@ -11,7 +11,7 @@ const MAX_SUMMARY_SENTENCES = 3;
 const MAX_FULL_CHARS = 1200;
 const MIN_MEANINGFUL_CHARS = 8;
 
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- ANSI começa com ESC: o regex casa caractere de controle de propósito
 const ANSI_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 const FENCED_CODE_RE = /```[\s\S]*?```/g;
 const INLINE_CODE_RE = /`[^`]*`/g;

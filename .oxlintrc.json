@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["import", "typescript", "unicorn", "oxc", "promise"],
+  "jsPlugins": ["./oxlint-plugin-nexus/index.mjs"],
   "categories": {
     "correctness": "off",
     "suspicious": "off",
@@ -10,6 +11,7 @@
     "nursery": "off"
   },
   "rules": {
+    "nexus/require-suppression-reason": "error",
     "no-unsafe-optional-chaining": "warn",
     "no-unsafe-finally": "warn",
     "no-misleading-character-class": "warn",

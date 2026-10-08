@@ -79,7 +79,7 @@ const CLI_MENTION_TYPOS: Readonly<Record<string, readonly string[]>> = {
   xiaomi: ['xiomi', 'xiaomy'],
 };
 
-/* eslint-disable no-control-regex */
+/* eslint-disable no-control-regex -- os padrões removem sequências ANSI (ESC/BEL) de propósito */
 const OSC_PATTERN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const CSI_PATTERN = /\x1b\[[0-9;?]*[ -\/]*[@-~]/g;
 const ESC_PATTERN = /\x1b[@-_]/g;

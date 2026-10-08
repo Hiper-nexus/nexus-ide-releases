@@ -38,7 +38,7 @@ async function showRemoteDesktopConfirmation(
   // shutdown. This boundary is deliberately fail-closed.
   let dialog: typeof import('electron').dialog | undefined;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- ver acima: sem Electron (testes ou shutdown) o catch nega a confirmação
     const electron = require('electron') as typeof import('electron');
     dialog = electron.dialog;
   } catch {

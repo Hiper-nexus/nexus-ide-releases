@@ -17,7 +17,10 @@ import {
   writeMediaOutput,
   type MediaInputFile,
 } from './media-path-policy';
-import type { BrowserAddressResolver } from '../browser/url-policy';
+import {
+  resolveBrowserHostname,
+  type BrowserAddressResolver,
+} from '../browser/url-policy';
 import { geminiImageAspect, openaiImageSize } from './media-aspect';
 import {
   getVideoJob,
@@ -1287,9 +1290,6 @@ function defaultMediaDeps(): MediaDeps {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { resolveMediaKey } =
     require('./media-keys') as typeof import('./media-keys');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { resolveBrowserHostname } =
-    require('../browser/url-policy') as typeof import('../browser/url-policy');
   return {
     fetchFn: fetch,
     resolveHostname: resolveBrowserHostname,

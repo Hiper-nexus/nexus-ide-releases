@@ -123,7 +123,7 @@ function serverMessage(json: unknown, redaction: RedactionContext | undefined): 
     (value): value is string => typeof value === 'string',
   );
   if (!candidate) return null;
-  // eslint-disable-next-line no-control-regex
+  // eslint-disable-next-line no-control-regex -- a mensagem do servidor é achatada tirando controles C0 e DEL de propósito
   const flat = candidate.slice(0, SERVER_MESSAGE_SCAN_MAX).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
   const safe = redactBugReportText(flat, redaction).slice(0, SERVER_MESSAGE_MAX).trim();
   return safe || null;

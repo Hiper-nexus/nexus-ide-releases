@@ -217,7 +217,7 @@ export async function buildDiagnostics(deps: DiagnosticsDeps): Promise<Diagnosti
 
 /** Fontes reais do Main. `require` tardio: o módulo continua testável sem Electron. */
 export function createDefaultDiagnosticsDeps(): DiagnosticsDeps {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- require tardio: Electron só existe no app e o módulo segue testável em Node
   const { app } = require('electron') as typeof import('electron');
   const systemVersion = (process as NodeJS.Process & { getSystemVersion?: () => string })
     .getSystemVersion?.();
@@ -227,7 +227,7 @@ export function createDefaultDiagnosticsDeps(): DiagnosticsDeps {
     arch: process.arch,
     osVersion: systemVersion || os.release(),
     listAgentSessions: () =>
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- pty-manager importa Electron: tardio para o diagnóstico seguir testável
       (require('../pty/pty-manager') as typeof import('../pty/pty-manager')).listAgentSessions(),
     readTraceTail: async () => {
       const file = getTraceFilePath();

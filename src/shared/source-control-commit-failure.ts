@@ -10,10 +10,10 @@ const COMMIT_FAILURE_REPLY_INSTRUCTION =
   'Reply with the root cause, files changed, validation run, final git status, and anything left for the user.'
 
 const ANSI_PATTERN =
-  // eslint-disable-next-line no-control-regex
+  // eslint-disable-next-line no-control-regex -- ANSI começa com ESC: o regex casa caractere de controle de propósito
   /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g
 const CONTROL_PATTERN =
-  // eslint-disable-next-line no-control-regex
+  // eslint-disable-next-line no-control-regex -- remove controles C0/C1 (menos TAB, LF e CR) da saída de propósito
   /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g
 const LOW_SIGNAL_LINE_PATTERN =
   /^(?:npm\s+(?:warn|warning)\b.*(?:env|config)|npm\s+notice\b|husky\s+-\s+deprecated\b)/i

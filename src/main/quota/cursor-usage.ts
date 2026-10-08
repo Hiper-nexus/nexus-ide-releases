@@ -192,7 +192,7 @@ export async function cursorSessionFromEditorStore(
     ) => SqliteDatabase)
     | null = null;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- nativo opcional aqui: ausente ou com ABI errado vira null em vez de derrubar a leitura de cota
     Database = require('better-sqlite3');
   } catch {
     return null;

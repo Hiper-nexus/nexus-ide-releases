@@ -33,7 +33,7 @@ function recordStudioUsage(
     (typeof import('../usage/media-usage-recorder'))['recordMediaUsage']
   >
 ): Promise<string> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires -- ver o docblock: media-usage-recorder arrasta usage-service e Electron
   const { recordMediaUsage } =
     require('../usage/media-usage-recorder') as typeof import('../usage/media-usage-recorder');
   return recordMediaUsage(...args);

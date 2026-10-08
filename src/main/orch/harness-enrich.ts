@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { writeJsonFileAtomic } from '../persistence/atomic-json-file';
+import { listInstalledCatalogItems } from './catalog';
 
 /**
  * Harness Enrich — a passada de LLM que transforma o arsenal instalado
@@ -288,8 +289,6 @@ export function loadEnrichedCatalog(): EnrichedCatalog | null {
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { listInstalledCatalogItems } = require('./catalog') as typeof import('./catalog');
     const rawItems = listInstalledCatalogItems().filter(
       (i) => i.kind === 'agent' || i.kind === 'skill',
     );
@@ -319,7 +318,7 @@ export function saveEnrichedCatalog(cat: EnrichedCatalog): void {
 
 /**
  * Borda: enriquece o arsenal INSTALADO usando a cadeia de brain providers
- * (Gemini → OpenAI → Groq). Lazy requires mantêm o módulo testável.
+ * (Gemini → OpenAI → Groq). O require tardio do jarvis-brain mantém o módulo testável.
  */
 export interface RunHarnessEnrichWithBrainOptions {
   readonly signal?: AbortSignal;
@@ -339,16 +338,12 @@ export interface RunHarnessEnrichWithBrainOptions {
 export async function runHarnessEnrichWithBrain(
   options: RunHarnessEnrichWithBrainOptions = {},
 ): Promise<EnrichedCatalog> {
-  const listInstalledItems = options.listInstalledItems ?? (() => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { listInstalledCatalogItems } = require('./catalog') as typeof import('./catalog');
-    return listInstalledCatalogItems();
-  });
+  const listInstalledItems = options.listInstalledItems ?? listInstalledCatalogItems;
   const chat = options.chat ?? ((
     messages: Array<{ role: string; content: string }>,
     signal?: AbortSignal,
   ) => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- jarvis-brain arrasta ~960 módulos e o Electron; tardio, harness-enrich segue testável com `chat` injetado
     const { chatViaBrainChain } = require('../voice/jarvis-brain') as typeof import('../voice/jarvis-brain');
     return chatViaBrainChain(messages, 4_000, undefined, signal);
   });

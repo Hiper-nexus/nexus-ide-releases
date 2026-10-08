@@ -251,7 +251,7 @@ export class GeminiLiveProvider implements TurnManagedRealtimeProvider {
 function defaultGeminiDeps(): LiveTransportDeps {
   return {
     wsFactory: (url) => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-var-requires -- ws só carrega no connect real (os testes injetam wsFactory); a anotação tipa só a superfície usada
       const WsCtor = require('ws').WebSocket as new (url: string) => {
         readyState: number;
         send(data: string): void;

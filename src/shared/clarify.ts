@@ -11,7 +11,7 @@ const MAX_OPTIONS = 6;
 const MAX_QUESTION_CHARS = 2_000;
 const MAX_OPTION_CHARS = 240;
 const MAX_ANSWER_CHARS = 4_000;
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- recusa controles (menos TAB, LF e CR) no texto do operador de propósito
 const FORBIDDEN_CONTROLS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u;
 
 export interface ClarifyChip {

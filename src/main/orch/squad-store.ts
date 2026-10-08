@@ -291,7 +291,7 @@ function recoverMissingUserSquadsFromSiblingDbs(): void {
   for (const candidate of SIBLING_DB_CANDIDATES) {
     try {
       if (!fs.existsSync(candidate)) continue;
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-var-requires -- nativo só no caminho de recuperação: abre bancos irmãos read-only e um ABI errado cai no catch e pula o candidato
       const Database = require('better-sqlite3') as new (
         file: string,
         opts?: { readonly?: boolean; fileMustExist?: boolean },

@@ -303,7 +303,7 @@ function compactPromptText(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9?]/g, '');
 }
 
-/* eslint-disable no-control-regex */
+/* eslint-disable no-control-regex -- os padrões de menu casam ESC e BEL das sequências ANSI de propósito */
 const MENU_CSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 const MENU_OSC_INTRODUCER = /\x1b\]/g;
 const MENU_OSC_TERMINATOR = /\x07/g;
