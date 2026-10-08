@@ -1,11 +1,11 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { extractFile as extractAsarFile, listPackage } from '@electron/asar';
-import { constants as fsConstants, existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
+import { constants as fsConstants, existsSync, lstatSync, readFileSync, renameSync, statSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // 100 s: duas sondas de eco de PTY podem esperar até 15 s cada sob carga
 // (ver PTY_ECHO_WAIT_MS no preload) sem estourar o prazo do smoke inteiro.
@@ -1330,6 +1330,29 @@ export async function disposePackagedSmokeSession(session) {
   await fs.rm(session.userData, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 }
 
+/**
+ * F-1011: no macOS o app abre com a responsabilidade renunciada, como pelo
+ * Finder (LaunchServices). Aberto direto por `spawn`, ele herdava como
+ * processo responsável o node do gate e o supervisor de PTY recusava o
+ * comando do Main (`responsible_not_packaged`, exit 76). O lançador é
+ * compilado do fonte versionado e troca de imagem no mesmo pid (SETEXEC).
+ */
+let darwinDisclaimLauncher = null;
+export function packagedSmokeDarwinLauncher() {
+  if (darwinDisclaimLauncher) return darwinDisclaimLauncher;
+  const source = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'native', 'darwin-disclaim-exec', 'main.c');
+  const digest = createHash('sha256').update(readFileSync(source)).digest('hex').slice(0, 16);
+  const output = path.join(os.tmpdir(), `nexus-smoke-disclaim-exec-${digest}`);
+  if (!existsSync(output)) {
+    const staging = `${output}.${process.pid}`;
+    const built = spawnSync('/usr/bin/xcrun', ['clang', '-O2', '-Wall', '-Werror', '-o', staging, source], { encoding: 'utf8' });
+    if (built.status !== 0) throw new Error(`packaged smoke disclaim launcher failed to build: ${built.stderr || built.error?.message || built.status}`);
+    renameSync(staging, output);
+  }
+  darwinDisclaimLauncher = output;
+  return output;
+}
+
 export async function runPackagedSmoke(
   targetPath,
   {
@@ -1412,11 +1435,13 @@ export async function runPackagedSmoke(
       }
     }
     const code = await new Promise((resolve, reject) => {
+      const appArgs = [...packagedSmokeArgs(userData, platform), ...(remoteDebugging
+        ? ['--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1']
+        : [])];
+      const disclaimed = platform === 'darwin' && process.platform === 'darwin' && spawnImpl === spawn;
       const child = spawnImpl(
-        target.binary,
-        [...packagedSmokeArgs(userData, platform), ...(remoteDebugging
-          ? ['--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1']
-          : [])],
+        disclaimed ? packagedSmokeDarwinLauncher() : target.binary,
+        disclaimed ? [target.binary, ...appArgs] : appArgs,
         packagedSmokeSpawnOptions(userData, env, platform),
       );
       if (runtimeProbe) {
