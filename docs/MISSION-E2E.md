@@ -14,7 +14,9 @@ npm run test:mission-e2e          # = node scripts/mission-e2e.mjs
   supervisor de PTY recusa a responsabilidade herdada de um pane (F-715) e o
   runner recusa com a saída em vez de dar um vermelho falso.
 - Node 22 com `better-sqlite3` no ABI dele (`npm run rebuild:node` se o runner
-  avisar). Leva ~40 s; nenhuma conta de IA é usada.
+  avisar). Leva 25–70 s (mais com a CPU saturada); nenhuma conta de IA é usada.
+- Precisa das ferramentas de linha de comando do Xcode: o supervisor de PTY é
+  compilado e assinado ad hoc numa pasta temporária a cada execução.
 - `NEXUS_MISSION_E2E_KEEP=1` guarda a pasta temporária; o relatório de falha
   aponta o `evidence.json` (recibos de cada agente, log do comando pesado,
   respostas MCP, entregas).
