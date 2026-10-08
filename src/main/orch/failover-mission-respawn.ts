@@ -21,11 +21,11 @@ import { orchTerminateSession } from '../pty/pty-manager';
 import {
   FAILOVER_HANDOFF_FOOTER,
   buildContinuityPack,
-  stripNestedHandoffPacks,
   type ContinuityPackInput,
 } from '../../shared/failover-handoff';
 import {
   prepareContextHandoff,
+  terminalHistoryItems,
   type HandoffHistoricalMessage,
 } from './context-handoff-budget';
 import { getPaneTaskReroute } from './pane-task-reroute';
@@ -251,41 +251,18 @@ export function nativeResumeImpossible(
   return Boolean(input.continuityPack) || !input.toModel;
 }
 
-/** Granularidade dos itens do terminal: inteiros no recorte, sem corte. */
-const TERMINAL_ITEM_CHARS = 2_000;
-
-/** Pedido original + trecho recente do terminal, em ordem cronológica. */
+/**
+ * Pedido original + trecho recente do terminal, em ordem cronológica. A cauda
+ * é redigida e neutralizada INTEIRA antes de virar itens (terminalHistoryItems).
+ */
 function handoffHistory(input: MainOwnedFailoverPlanInput): HandoffHistoricalMessage[] {
-  const messages: HandoffHistoricalMessage[] = [];
   const request = input.originalRequest?.trim();
-  if (request) {
-    messages.push({ role: 'user', kind: 'original_request', itemId: 'request', text: request });
-  }
-  if (!input.scrollbackExcerpt) return messages;
-  const chunks: string[] = [];
-  let chunk = '';
-  for (const raw of stripNestedHandoffPacks(input.scrollbackExcerpt).split('\n')) {
-    for (let at = 0; at < Math.max(raw.length, 1); at += TERMINAL_ITEM_CHARS) {
-      const line = raw.slice(at, at + TERMINAL_ITEM_CHARS);
-      if (chunk && chunk.length + 1 + line.length > TERMINAL_ITEM_CHARS) {
-        chunks.push(chunk);
-        chunk = '';
-      }
-      chunk = chunk ? `${chunk}\n${line}` : line;
-    }
-  }
-  chunks.push(chunk);
-  chunks
-    .filter((text) => text.trim())
-    .forEach((text, index) =>
-      messages.push({
-        role: 'assistant',
-        kind: 'terminal_output',
-        itemId: `terminal-${index + 1}`,
-        text: text.trim(),
-      }),
-    );
-  return messages;
+  return [
+    ...(request
+      ? [{ role: 'user' as const, kind: 'original_request', itemId: 'request', text: request }]
+      : []),
+    ...(input.scrollbackExcerpt ? terminalHistoryItems(input.scrollbackExcerpt) : []),
+  ];
 }
 
 /** Ponteiros auditáveis: de onde veio o recorte e como buscar o resto. */

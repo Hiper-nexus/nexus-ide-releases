@@ -783,7 +783,11 @@ async function missionOrchestratorSessionId(authority: FailoverAuthority): Promi
   }
 }
 
-function cliSwitchPack(req: SwitchRequest, facts: NonNullable<FailoverEvent['continuity']>): string {
+function cliSwitchPack(
+  req: SwitchRequest,
+  facts: NonNullable<FailoverEvent['continuity']>,
+  options: { readonly withExcerpt?: boolean } = {},
+): string {
   const { authority, adapterId, hit, current } = req;
   return buildContinuityPack({
     fromAccountLabel: current?.label ?? adapterId,
@@ -797,7 +801,9 @@ function cliSwitchPack(req: SwitchRequest, facts: NonNullable<FailoverEvent['con
     limitCooldownMs: facts.limitCooldownMs ?? null,
     touchedFiles: facts.touchedFiles,
     diffStat: facts.diffStat,
-    scrollbackExcerpt: readSessionOutput(authority.sessionId, CLI_SWITCH_EXCERPT_LINES),
+    ...(options.withExcerpt === false
+      ? {}
+      : { scrollbackExcerpt: readSessionOutput(authority.sessionId, CLI_SWITCH_EXCERPT_LINES) }),
     nextStep: CLI_SWITCH_NEXT_STEP,
     fromAdapterLabel: adapterLabelOf(adapterId),
   });
@@ -962,7 +968,10 @@ async function continueOnAnotherCli(
         ...(route.model ? { toModel: route.model } : {}),
         fromAccountLabel: fromLabel,
         reason: hit.reason,
-        continuityPack: cliSwitchPack(req, facts),
+        // ORC-05/F-249: o trecho do terminal vai no recorte do respawn
+        // (redigido e neutralizado inteiro), não cru dentro do pack.
+        continuityPack: cliSwitchPack(req, facts, { withExcerpt: false }),
+        scrollbackExcerpt: readSessionOutput(authority.sessionId, CLI_SWITCH_EXCERPT_LINES),
       });
     } catch (error) {
       console.warn(

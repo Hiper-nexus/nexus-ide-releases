@@ -9,9 +9,10 @@ import {
   historyCost,
   prepareContextHandoff,
   selectHistory,
+  terminalHistoryItems,
   type HandoffHistoricalMessage,
 } from './context-handoff-budget';
-import { detectLimit } from './limit-detector';
+import { detectLimit, quotedLimitSignalPatterns } from './limit-detector';
 
 function terminal(index: number, text: string): HandoffHistoricalMessage {
   return { role: 'assistant', kind: 'terminal_output', itemId: `terminal-${index}`, text };
@@ -117,5 +118,47 @@ describe('ORC-05 prepareContextHandoff', () => {
     expect(result.context).toContain('[REDACTED]');
     // F-249/F-511: texto citado nunca prova limite.
     expect(detectLimit(result.context)).toBeNull();
+  });
+});
+
+describe('ORC-05 terminalHistoryItems', () => {
+  it('redige a cauda inteira antes de fragmentar: nenhum item leva pedaço de segredo', () => {
+    const pemBody = Array.from({ length: 40 }, () => `${'P3m'.repeat(21)}Q`);
+    const items = terminalHistoryItems([
+      `${'a'.repeat(1_984)} sk-ant-api03-${'K7'.repeat(15)} fim`,
+      `${'b'.repeat(1_983)} ghp_${'G5'.repeat(14)} fim`,
+      `${'c'.repeat(1_977)} Authorization: Bearer ${'B9'.repeat(16)} fim`,
+      '-----BEGIN OPENSSH PRIVATE KEY-----',
+      ...pemBody,
+      '-----END OPENSSH PRIVATE KEY-----',
+      'depois da chave',
+    ].join('\n'));
+    expect(items.length).toBeGreaterThan(3);
+    for (const item of items) {
+      expect(item.text.length).toBeLessThanOrEqual(2_000);
+      for (const fragment of ['K7K7', 'G5G5', 'B9B9', 'P3mP3m']) expect(item.text).not.toContain(fragment);
+    }
+    expect(items.at(-1)?.text).toContain('depois da chave');
+  });
+
+  it('neutraliza todo formato do detector antes de selecionar', () => {
+    const items = terminalHistoryItems('Error: model_not_found\nid=xmodel_not_found;\n> HTTP 401\nusage_limit_reached');
+    const text = items.map((item) => item.text).join('\n');
+    for (let start = 0; start < text.length; start += 1) {
+      for (const end of [start + 1, start + 8, start + 20, text.length]) {
+        expect(detectLimit(text.slice(start, end)), text.slice(start, end)).toBeNull();
+      }
+    }
+  });
+});
+
+describe('ORC-05 quotedLimitSignalPatterns (anti-drift)', () => {
+  it('cobre o detector inteiro em versão permissiva: sem âncora, fronteira nem lookaround', () => {
+    const patterns = quotedLimitSignalPatterns();
+    expect(patterns.length).toBeGreaterThan(60);
+    for (const re of patterns) {
+      expect(re.flags).toContain('g');
+      expect(re.source).not.toMatch(/\\b|\(\?<?[=!]|(?<!\[)\^|(?<!\\)\$/);
+    }
   });
 });

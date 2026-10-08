@@ -3,8 +3,9 @@
 // See third_party/licenses/t3code-MIT.txt. Nexus changes: ContextHandoffBudget.ts e o corte de
 // orçamento de ContextHandoffDelivery.ts viram funções puras (sem Effect nem contratos v2);
 // entrega só em texto (initialPrompt do pane novo), sem anexos; histórico com segredos
-// redigidos e citações de limite mascaradas (F-249/F-511) antes de custear; estouro devolve
-// resultado de erro em vez de exceção Effect.
+// redigidos no texto inteiro (antes de fragmentar) e sinais de limite neutralizados pela fonte
+// única do limit-detector (F-249/F-511) antes de selecionar; estouro devolve resultado de erro
+// em vez de exceção Effect.
 
 /**
  * ORC-05 — recorte de contexto com orçamento para quando a troca de conta ou
@@ -21,8 +22,12 @@
  * cabem, o resultado é erro.
  *
  * Invariante F-249: nada aqui decide troca nem prova limite. Texto citado do
- * terminal antigo é histórico — mascarado contra o limit-detector — e não
- * sinal vivo.
+ * terminal antigo é histórico — neutralizado com os próprios padrões do
+ * limit-detector, em qualquer janela — e não sinal vivo.
+ *
+ * Ordem obrigatória: redigir e neutralizar o TEXTO INTEIRO e só depois
+ * fragmentar e selecionar. Fragmentar antes partia um segredo (ou um bloco
+ * PEM) entre itens, e nenhum pedaço casava com o redator.
  */
 
 import { redactSecretText } from '../terminal/command-redaction';
@@ -30,7 +35,9 @@ import {
   FAILOVER_HANDOFF_FOOTER,
   FAILOVER_HANDOFF_HEADER,
   sanitizeHandoffExcerptForDetector,
+  stripNestedHandoffPacks,
 } from '../../shared/failover-handoff';
+import { neutralizeLimitSignals } from './limit-detector';
 
 /** Teto inicial do histórico importado (tokens = bytes UTF-8). */
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
@@ -105,16 +112,73 @@ export function handoffBudget(input: {
   );
 }
 
+const PEM_BEGIN_RE = /-----BEGIN (?:[A-Z0-9 ]*)?PRIVATE KEY-----/;
+const PEM_END_RE = /-----END (?:[A-Z0-9 ]*)?PRIVATE KEY-----/;
+
 /**
- * Texto histórico pronto para o prompt: segredos redigidos com o redator do
- * Nexus, frases de limite mascaradas (F-511) e marcas de pack antigo
- * neutralizadas — a faixa header→footer do pack novo continua contígua para o
- * limit-detector.
+ * Redator do Nexus sobre o texto inteiro, com o estado de bloco PEM: uma
+ * cauda de terminal que começa no meio de uma chave (END sem BEGIN antes) tem
+ * o corpo inteiro até o END redigido — o redator de linha não reconhece base64.
+ */
+function redactWholeText(raw: string): string {
+  let text = raw;
+  const end = PEM_END_RE.exec(text);
+  if (end) {
+    const begin = PEM_BEGIN_RE.exec(text);
+    if (!begin || begin.index > end.index) {
+      text = `[REDACTED]${text.slice(end.index + end[0].length)}`;
+    }
+  }
+  return redactSecretText(text).text;
+}
+
+/**
+ * Texto histórico pronto para o prompt, SEMPRE sobre o texto inteiro antes de
+ * fragmentar: segredos redigidos, frases de limite mascaradas (F-511) e todo
+ * sinal que o limit-detector reconhece neutralizado em qualquer janela; marcas
+ * de pack antigo trocadas para a faixa header→footer do pack novo seguir
+ * contígua. Idempotente.
  */
 export function sanitizeHandoffHistoryText(raw: string): string {
-  return sanitizeHandoffExcerptForDetector(redactSecretText(raw).text)
-    .replaceAll(FAILOVER_HANDOFF_HEADER, '[handoff anterior]')
-    .replaceAll(FAILOVER_HANDOFF_FOOTER, '[fim do handoff anterior]');
+  return neutralizeLimitSignals(
+    sanitizeHandoffExcerptForDetector(redactWholeText(raw))
+      .replaceAll(FAILOVER_HANDOFF_HEADER, '[handoff anterior]')
+      .replaceAll(FAILOVER_HANDOFF_FOOTER, '[fim do handoff anterior]'),
+  );
+}
+
+/** Granularidade dos itens do terminal: inteiros no recorte, sem corte. */
+const TERMINAL_ITEM_CHARS = 2_000;
+
+/**
+ * Cauda do terminal em itens cronológicos. Packs aninhados saem, a cauda
+ * INTEIRA é sanitizada e só então vira itens — nenhum fragmento carrega um
+ * pedaço de segredo ou de sinal de limite que o texto inteiro não tinha.
+ */
+export function terminalHistoryItems(scrollback: string): HandoffHistoricalMessage[] {
+  const text = sanitizeHandoffHistoryText(stripNestedHandoffPacks(scrollback));
+  const chunks: string[] = [];
+  let chunk = '';
+  for (const raw of text.split('\n')) {
+    for (let at = 0; at < Math.max(raw.length, 1); at += TERMINAL_ITEM_CHARS) {
+      const line = raw.slice(at, at + TERMINAL_ITEM_CHARS);
+      if (chunk && chunk.length + 1 + line.length > TERMINAL_ITEM_CHARS) {
+        chunks.push(chunk);
+        chunk = '';
+      }
+      chunk = chunk ? `${chunk}\n${line}` : line;
+    }
+  }
+  chunks.push(chunk);
+  return chunks
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item, index) => ({
+      role: 'assistant' as const,
+      kind: 'terminal_output',
+      itemId: `terminal-${index + 1}`,
+      text: item,
+    }));
 }
 
 function renderHistoricalMessage(message: HandoffHistoricalMessage): string {

@@ -419,8 +419,11 @@ describe('F-775: tarefa de missão segue em outra CLI por um pane novo', () => {
     expect(h.respawnMainOwned).toHaveBeenCalledWith(expect.objectContaining({
       paneId: 'pane-headless', sessionId: 'session-headless', adapterId: 'codex', toModel: 'gpt-6.1-sol',
     }));
-    const call = h.respawnMainOwned.mock.calls[0]![0] as { continuityPack?: string };
+    const call = h.respawnMainOwned.mock.calls[0]![0] as { continuityPack?: string; scrollbackExcerpt?: string };
     expect(call.continuityPack).toContain(FAILOVER_HANDOFF_HEADER);
+    // ORC-05/F-249: o trecho do terminal vai para o recorte neutralizado, não cru no pack.
+    expect(call.continuityPack).not.toContain('Recent terminal excerpt');
+    expect(call.scrollbackExcerpt).toContain('You exceeded your current quota');
     expect(events().at(-1)).toMatchObject({ switched: true, toAdapterId: 'codex' });
   });
 });
