@@ -102,6 +102,10 @@ const PROCESS_LOSS_CANCELLED_ERROR =
   'Cancelled because the server process ended before the effect completed.';
 const PROCESS_LOSS_REQUEUED_ERROR =
   'Requeued after the previous server process ended.';
+const LEASE_EXPIRED_FAILED_ERROR =
+  'Failed because the running lease expired before the effect completed.';
+const LEASE_EXPIRED_REQUEUED_ERROR =
+  'Requeued because the running lease expired before the effect completed.';
 
 const rowSchema = z
   .object({
@@ -267,6 +271,40 @@ export class EffectOutboxStore {
     const now = this.#binding.now();
     const leaseExpiresAt = now + leaseMs;
     return db.transaction((): EffectOutboxEntry | null => {
+      const replaySafePlaceholders = REPLAY_SAFE_EFFECT_TYPES.map(() => '?').join(',');
+      // Lease vencido não pode continuar 'running': process_bound falha
+      // (não reexecuta) e replay_safe volta a pending. Tipo fora da lista
+      // replay-safe falha fechado, senão a linha bloqueia o thread para sempre.
+      db.prepare(
+        `UPDATE effect_outbox
+         SET status = 'failed', lease_owner = NULL, lease_expires_at = NULL,
+             completed_at = ?, updated_at = ?, last_error = ?
+         WHERE status = 'running'
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at <= ?
+           AND effect_type NOT IN (${replaySafePlaceholders})`,
+      ).run(
+        now,
+        now,
+        LEASE_EXPIRED_FAILED_ERROR,
+        now,
+        ...REPLAY_SAFE_EFFECT_TYPES,
+      );
+      db.prepare(
+        `UPDATE effect_outbox
+         SET status = 'pending', available_at = ?, lease_owner = NULL,
+             lease_expires_at = NULL, updated_at = ?, last_error = ?
+         WHERE status = 'running'
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at <= ?
+           AND effect_type IN (${replaySafePlaceholders})`,
+      ).run(
+        now,
+        now,
+        LEASE_EXPIRED_REQUEUED_ERROR,
+        now,
+        ...REPLAY_SAFE_EFFECT_TYPES,
+      );
       // Varre candidatos em ordem e pula os já tentados neste passe.
       const candidates = db
         .prepare(

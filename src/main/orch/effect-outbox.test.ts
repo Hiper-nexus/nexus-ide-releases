@@ -119,10 +119,12 @@ describe("ORC-01 effect outbox", () => {
 
   it("reconcileAfterProcessLoss: PROCESS_BOUND pending+running → cancelled; REPLAY_SAFE running → pending (T3)", () => {
     const { store } = freshStore();
+    const notYet = Date.now() + 60_000;
     const boundPending = store.enqueue({
       commandId: "cmd-bound-pending",
       threadId: "thread-a",
       type: "turn.start",
+      availableAt: notYet,
     });
     const boundRunning = store.enqueue({
       commandId: "cmd-bound-running",
@@ -138,35 +140,82 @@ describe("ORC-01 effect outbox", () => {
       commandId: "cmd-safe-pending",
       threadId: "thread-d",
       type: "runtime.continue",
+      availableAt: notYet,
     });
-    store.claimNext({ workerId: "dead-worker", leaseDurationMs: 30_000 });
-    // claimNext is per-thread ordered; claim the others explicitly by walking.
-    // thread-a has only boundPending → claimed as running. Claim the rest.
-    for (let i = 0; i < 3; i += 1) {
-      store.claimNext({ workerId: "dead-worker", leaseDurationMs: 30_000 });
-    }
-    // boundPending is now running (claimed). Force it back is unnecessary —
-    // policy also cancels running PROCESS_BOUND. safePending may still be
-    // pending if claim order left it; either way policy holds.
+    const claimed = [
+      store.claimNext({ workerId: "dead-worker", leaseDurationMs: 30_000 })?.id,
+      store.claimNext({ workerId: "dead-worker", leaseDurationMs: 30_000 })?.id,
+    ].sort();
+    expect(claimed).toEqual([boundRunning.id, safeRunning.id].sort());
+    expect(
+      store.claimNext({ workerId: "dead-worker", leaseDurationMs: 30_000 }),
+    ).toBeNull();
+    expect(store.get(boundPending.id)?.status).toBe("pending");
+    expect(store.get(boundRunning.id)?.status).toBe("running");
+    expect(store.get(safeRunning.id)?.status).toBe("running");
+    expect(store.get(safePending.id)?.status).toBe("pending");
 
     const settled = store.reconcileAfterProcessLoss();
-    expect(settled.cancelled).toBeGreaterThanOrEqual(1);
-    expect(settled.requeued).toBeGreaterThanOrEqual(0);
+    expect(settled.cancelled).toBe(2);
+    expect(settled.requeued).toBe(1);
 
-    // Every PROCESS_BOUND that was pending or running must be cancelled.
     expect(store.get(boundPending.id)?.status).toBe("cancelled");
     expect(store.get(boundRunning.id)?.status).toBe("cancelled");
     expect(store.get(boundPending.id)?.lastError).toContain(
       "server process ended",
     );
-    // REPLAY_SAFE that was running must be back to pending.
-    const safeAfter = store.get(safeRunning.id);
-    if (safeAfter?.status !== "pending") {
-      // It may have been left pending already (never claimed) — also fine.
-      expect(["pending", "running"]).toContain(safeAfter?.status);
-    }
-    // REPLAY_SAFE pending stays pending (already re-executable).
+    expect(store.get(safeRunning.id)?.status).toBe("pending");
     expect(store.get(safePending.id)?.status).toBe("pending");
+    expect(store.get(safePending.id)?.lastError).toBeNull();
+  });
+
+  it("expired running lease fails process_bound and requeues replay_safe", () => {
+    let now = 1_000_000;
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-effect-lease-"));
+    directories.push(baseDir);
+    const scope = testProjectScope();
+    const manager = runtime(baseDir);
+    const store = createScopedEffectOutboxStore(manager, scope, {
+      now: () => now,
+    });
+    const bound = store.enqueue({
+      commandId: "cmd-lease-bound",
+      threadId: "thread-a",
+      type: "turn.start",
+    });
+    const blocked = store.enqueue({
+      commandId: "cmd-lease-next",
+      threadId: "thread-a",
+      type: "terminal.cleanup",
+    });
+    const safe = store.enqueue({
+      commandId: "cmd-lease-safe",
+      threadId: "thread-b",
+      type: "checkpoint.capture",
+    });
+    const claimed = [
+      store.claimNext({ workerId: "worker-1", leaseDurationMs: 1_000 })?.id,
+      store.claimNext({ workerId: "worker-1", leaseDurationMs: 1_000 })?.id,
+    ].sort();
+    expect(claimed).toEqual([bound.id, safe.id].sort());
+    expect(
+      store.claimNext({ workerId: "worker-2", leaseDurationMs: 1_000 }),
+    ).toBeNull();
+    now += 1_001;
+    const next = store.claimNext({
+      workerId: "worker-2",
+      leaseDurationMs: 1_000,
+    });
+    expect(store.get(bound.id)?.status).toBe("failed");
+    expect(store.get(bound.id)?.leaseOwner).toBeNull();
+    expect(store.get(bound.id)?.completedAt).not.toBeNull();
+    expect(store.get(bound.id)?.lastError).toContain("lease expired");
+    expect(next?.id).toBe(blocked.id);
+    expect(next?.status).toBe("running");
+    const safeAfter = store.get(safe.id);
+    expect(safeAfter?.status).toBe("pending");
+    expect(safeAfter?.leaseOwner).toBeNull();
+    expect(safeAfter?.lastError).toContain("lease expired");
   });
 
   it("pruneSettled keeps failed rows and drops old succeeded/cancelled", () => {
@@ -206,6 +255,35 @@ describe("ORC-04 command receipts (T3 policy)", () => {
     expect(receipt?.aggregateId).toBe("thread-a");
     expect(receipt?.resultSequence).toBe(0);
     expect(receipt?.status).toBe("accepted");
+  });
+
+  it("classifies only listed replay-safe commands as replay_safe", () => {
+    const { manager, scope } = freshStore();
+    const receipts = createScopedCommandReceiptStore(manager, scope);
+    receipts.insertIfAbsent({
+      commandId: "cmd-unknown-class",
+      commandType: "not.a.real.command",
+      threadId: "thread-a",
+    });
+    receipts.insertIfAbsent({
+      commandId: "cmd-safe-class",
+      commandType: "checkpoint.capture",
+      threadId: "thread-a",
+    });
+    receipts.insertIfAbsent({
+      commandId: "cmd-bound-class",
+      commandType: "turn.start",
+      threadId: "thread-a",
+    });
+    expect(receipts.getByCommandId("cmd-unknown-class")?.effectClass).toBe(
+      "process_bound",
+    );
+    expect(receipts.getByCommandId("cmd-safe-class")?.effectClass).toBe(
+      "replay_safe",
+    );
+    expect(receipts.getByCommandId("cmd-bound-class")?.effectClass).toBe(
+      "process_bound",
+    );
   });
 
   it("upsert settles the final resultSequence and status", () => {
@@ -299,6 +377,48 @@ describe("ORC-01 worker drain", () => {
       handler: () => undefined,
     });
     expect(second.claimed).toBe(0);
+  });
+
+  it("cancellation releases the claimed row before the abort propagates", async () => {
+    const { store, scope } = freshStore();
+    const bound = store.enqueue({
+      commandId: "cmd-cancel-bound",
+      threadId: "thread-a",
+      type: "turn.start",
+    });
+    const safe = store.enqueue({
+      commandId: "cmd-cancel-safe",
+      threadId: "thread-b",
+      type: "checkpoint.capture",
+      availableAt: Date.now() + 60_000,
+    });
+    const context = {
+      signal: AbortSignal.abort(new Error("periodic task aborted")),
+      assertCurrent() {
+        throw new Error("periodic task aborted");
+      },
+      async checkpoint() {},
+      async wait<T>(promise: Promise<T>): Promise<T> {
+        await promise;
+        throw new Error("periodic task aborted");
+      },
+    };
+    await expect(
+      drainEffectOutbox(
+        {
+          store,
+          scope,
+          workerId: "worker-1",
+          batchSize: 1,
+          handler: () => undefined,
+        },
+        context,
+      ),
+    ).rejects.toThrow("periodic task aborted");
+    expect(store.get(bound.id)?.status).toBe("failed");
+    expect(store.get(bound.id)?.leaseOwner).toBeNull();
+    expect(store.get(safe.id)?.status).toBe("pending");
+    expect(store.get(safe.id)?.lastError).toBeNull();
   });
 });
 

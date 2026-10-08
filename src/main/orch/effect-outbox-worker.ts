@@ -72,16 +72,38 @@ export async function drainEffectOutbox(
       else await outcome;
       if (deps.store.succeed(entry.id, deps.workerId)) succeeded += 1;
     } catch (error) {
-      context?.assertCurrent();
+      let cancellation: unknown;
+      try {
+        context?.assertCurrent();
+      } catch (currentError) {
+        cancellation = currentError;
+      }
+      const surfaced = cancellation ?? error;
       const reason =
-        error instanceof Error ? error.message : 'effect outbox handler failed';
+        surfaced instanceof Error
+          ? surfaced.message
+          : cancellation
+            ? 'effect outbox worker cancelled'
+            : 'effect outbox handler failed';
       if (entry.class === 'replay_safe') {
-        if (deps.store.retry(entry.id, deps.workerId, reason, retryDelayMs)) {
+        if (
+          deps.store.retry(
+            entry.id,
+            deps.workerId,
+            reason,
+            cancellation ? 0 : retryDelayMs,
+          ) &&
+          !cancellation
+        ) {
           retried += 1;
         }
-      } else if (deps.store.fail(entry.id, deps.workerId, reason)) {
+      } else if (
+        deps.store.fail(entry.id, deps.workerId, reason) &&
+        !cancellation
+      ) {
         failed += 1;
       }
+      if (cancellation) throw cancellation;
       console.warn(
         `[effect-outbox] handler failed (${entry.class} ${entry.type} ${entry.id}):`,
         error,

@@ -6,8 +6,10 @@ import {
 } from './scoped-store';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import type { EffectClass } from './effect-outbox';
-import { effectClassFor, type EffectType } from './effect-outbox';
+import {
+  REPLAY_SAFE_EFFECT_TYPES,
+  type EffectClass,
+} from './effect-outbox';
 
 /**
  * ORC-04 — recibo de comando com `resultSequence` (porte da política T3
@@ -113,7 +115,9 @@ function resolveAggregate(input: {
 }
 
 function classForCommandType(commandType: string): EffectClass {
-  return effectClassFor(commandType as EffectType);
+  return (REPLAY_SAFE_EFFECT_TYPES as readonly string[]).includes(commandType)
+    ? 'replay_safe'
+    : 'process_bound';
 }
 
 export class CommandReceiptStore {
