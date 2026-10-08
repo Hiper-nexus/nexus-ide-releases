@@ -1,5 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { OverlayLayer } from '../../overlay/overlay-layer';
+import { formatShortcut } from '../../lib/platform';
+import {
+  TAB_DRAG_MIME,
+  dropIndex,
+  dropSideFromPointer,
+  type DropSide,
+} from '../../lib/tab-drag';
 import type { MissionLifecycleState } from '../../../shared/mission-engine-contract';
 import {
   MISSION_AWAITING_INSTRUCTION_REASON_CODE,
@@ -50,6 +57,11 @@ export interface WorkspaceTabsProps {
    * missão leve da aba — um clique, sem assistente.
    */
   readonly onStartTabMission?: (scope: PaneScopeEntry) => void;
+  /**
+   * WEB-13: reordenar a barra. `toIndex` é a posição final da aba na lista.
+   * Ausente, a barra não arrasta nem oferece "Mover".
+   */
+  readonly onMoveTab?: (scopeKey: string, toIndex: number) => void;
 }
 
 const LIFECYCLE_STATES: ReadonlySet<string> = new Set<MissionLifecycleState>([
@@ -176,7 +188,12 @@ function tabGlyph(scope: PaneScopeEntry): PixelIconName {
   return 'terminal';
 }
 
-function tabTooltip(scope: PaneScopeEntry, side: boolean): string {
+/** Atalho de mover a aba focada (WEB-13): ⌥⇧←/→ no mac, Alt+Shift+←/→ nos demais. */
+function moveShortcutLabel(): string {
+  return `${formatShortcut('alt', 'shift', '←')} / ${formatShortcut('alt', 'shift', '→')}`;
+}
+
+function tabTooltip(scope: PaneScopeEntry, side: boolean, movable = false): string {
   const lines = [scope.title];
   if (scope.isolated) lines.push('Pasta isolada desta aba');
   const label = stateLabel(scope.state, scope.stateReasonCode);
@@ -192,6 +209,7 @@ function tabTooltip(scope: PaneScopeEntry, side: boolean): string {
   lines.push(`${scope.paneCount} ${scope.paneCount === 1 ? 'painel' : 'painéis'}`);
   if (side) lines.push('Aberta ao lado');
   if (scope.kind !== 'mission') lines.push('Duplo clique para renomear');
+  if (movable) lines.push(`Arraste para mudar a ordem (teclado: ${moveShortcutLabel()})`);
   return lines.join('\n');
 }
 
@@ -225,10 +243,45 @@ export function WorkspaceTabs({
   onTabPaneCreated,
   onNewMission,
   onStartTabMission,
+  onMoveTab,
 }: WorkspaceTabsProps) {
   const railRef = useRef<HTMLDivElement>(null);
   const menuReturnFocusRef = useRef<HTMLButtonElement>(null);
   const [menu, setMenu] = useState<TabMenuState | null>(null);
+  // WEB-13: arraste e anúncio da nova posição (teclado e leitor de tela).
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ key: string; side: DropSide } | null>(null);
+  const [moveAnnouncement, setMoveAnnouncement] = useState('');
+  const refocusKeyRef = useRef<string | null>(null);
+  const keys = scopes.map((scope) => scope.key);
+  const canReorder = Boolean(onMoveTab) && scopes.length > 1 && !editing;
+
+  const moveTab = (scopeKey: string, toIndex: number) => {
+    if (!onMoveTab) return;
+    const from = keys.indexOf(scopeKey);
+    const target = Math.max(0, Math.min(keys.length - 1, toIndex));
+    if (from < 0 || from === target) return;
+    const scope = scopes[from]!;
+    onMoveTab(scopeKey, target);
+    setMoveAnnouncement(`Aba ${scope.title} movida para a posição ${target + 1} de ${keys.length}.`);
+  };
+
+  // Depois de mover pelo teclado, o foco continua na aba que andou — mesmo
+  // que o navegador a tenha desfocado ao reposicionar o nó.
+  useLayoutEffect(() => {
+    const key = refocusKeyRef.current;
+    if (!key) return;
+    refocusKeyRef.current = null;
+    const tab = [
+      ...(railRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []),
+    ].find((node) => node.dataset.scopeKey === key);
+    if (tab && document.activeElement !== tab) tab.focus();
+  }, [scopes]);
+
+  const endDrag = () => {
+    setDragKey(null);
+    setDropTarget(null);
+  };
 
   // A aba ativa nunca fica escondida atrás da rolagem da barra.
   useLayoutEffect(() => {
@@ -250,6 +303,23 @@ export function WorkspaceTabs({
     ];
     const current = tabs.findIndex((tab) => tab === document.activeElement);
     if (current < 0) return;
+    // WEB-13: Alt+Shift+←/→ leva a aba focada uma casa para o lado.
+    if (
+      canReorder &&
+      event.altKey &&
+      event.shiftKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      const scope = scopes[current];
+      if (!scope) return;
+      refocusKeyRef.current = scope.key;
+      moveTab(scope.key, current + (event.key === 'ArrowLeft' ? -1 : 1));
+      return;
+    }
     let next = current;
     if (event.key === 'ArrowRight') next = (current + 1) % tabs.length;
     else if (event.key === 'ArrowLeft') next = (current - 1 + tabs.length) % tabs.length;
@@ -303,6 +373,53 @@ export function WorkspaceTabs({
               data-side={side || undefined}
               data-scope-kind={scope.kind}
               data-tone={tone ?? undefined}
+              data-dragging={dragKey === scope.key || undefined}
+              data-drop={dropTarget?.key === scope.key ? dropTarget.side : undefined}
+              draggable={canReorder && !isEditing}
+              onDragStart={
+                canReorder && !isEditing
+                  ? (event) => {
+                      event.dataTransfer?.setData(TAB_DRAG_MIME, scope.key);
+                      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+                      setDragKey(scope.key);
+                    }
+                  : undefined
+              }
+              onDragOver={(event) => {
+                // Só arraste de aba: arquivo, texto e skill seguem para quem os aceita.
+                const fromTab =
+                  dragKey !== null ||
+                  Array.from(event.dataTransfer?.types ?? []).includes(TAB_DRAG_MIME);
+                if (!canReorder || !fromTab) return;
+                event.preventDefault();
+                if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+                const side = dropSideFromPointer(
+                  event.currentTarget.getBoundingClientRect(),
+                  event.clientX,
+                );
+                setDropTarget((current) =>
+                  current?.key === scope.key && current.side === side
+                    ? current
+                    : { key: scope.key, side },
+                );
+              }}
+              onDragLeave={(event) => {
+                if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                setDropTarget((current) => (current?.key === scope.key ? null : current));
+              }}
+              onDrop={(event) => {
+                const dragged = event.dataTransfer?.getData(TAB_DRAG_MIME) || dragKey;
+                if (!canReorder || !dragged) return;
+                event.preventDefault();
+                const side =
+                  dropTarget?.key === scope.key
+                    ? dropTarget.side
+                    : dropSideFromPointer(event.currentTarget.getBoundingClientRect(), event.clientX);
+                const index = dropIndex(keys, dragged, scope.key, side);
+                endDrag();
+                if (index !== null) moveTab(dragged, index);
+              }}
+              onDragEnd={endDrag}
               onContextMenu={(event) => {
                 event.preventDefault();
                 setMenu({ scope, x: event.clientX, y: event.clientY });
@@ -339,8 +456,12 @@ export function WorkspaceTabs({
                   className="workspace-tab__main"
                   aria-selected={active}
                   aria-label={tabAccessibleName(scope)}
+                  aria-keyshortcuts={
+                    canReorder ? 'Alt+Shift+ArrowLeft Alt+Shift+ArrowRight' : undefined
+                  }
+                  data-scope-key={scope.key}
                   tabIndex={active || (!activeScopeKey && scope === scopes[0]) ? 0 : -1}
-                  title={tabTooltip(scope, side)}
+                  title={tabTooltip(scope, side, canReorder)}
                   onClick={() => onFocusScope(scope.key)}
                   onKeyDown={(event) => {
                     if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
@@ -388,6 +509,9 @@ export function WorkspaceTabs({
           );
         })}
       </div>
+      <span className="workspace-tabs__live" role="status" aria-live="polite">
+        {moveAnnouncement}
+      </span>
       <PanePicker
         placement="tabbar"
         acceptsPendingOpen={false}
@@ -438,6 +562,16 @@ export function WorkspaceTabs({
           onStartTabMission={
             onStartTabMission ? () => onStartTabMission(menu.scope) : undefined
           }
+          onMoveLeft={
+            canReorder && keys.indexOf(menu.scope.key) > 0
+              ? () => moveTab(menu.scope.key, keys.indexOf(menu.scope.key) - 1)
+              : undefined
+          }
+          onMoveRight={
+            canReorder && keys.indexOf(menu.scope.key) < keys.length - 1
+              ? () => moveTab(menu.scope.key, keys.indexOf(menu.scope.key) + 1)
+              : undefined
+          }
         />
       ) : null}
     </header>
@@ -455,10 +589,12 @@ interface WorkspaceTabMenuProps {
   readonly onRename: () => void;
   readonly onCloseTab: () => void;
   readonly onStartTabMission?: () => void;
+  readonly onMoveLeft?: () => void;
+  readonly onMoveRight?: () => void;
 }
 
 const MENU_WIDTH = 268;
-const MENU_HEIGHT = 240;
+const MENU_HEIGHT = 320;
 
 /** Mesmo vocabulário do menu de contexto do pane — nada de segunda linguagem. */
 function WorkspaceTabMenu({
@@ -472,6 +608,8 @@ function WorkspaceTabMenu({
   onRename,
   onCloseTab,
   onStartTabMission,
+  onMoveLeft,
+  onMoveRight,
 }: WorkspaceTabMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const { scope } = menu;
@@ -534,6 +672,25 @@ function WorkspaceTabMenu({
       label: 'Criar missão desta aba',
       detail: 'O orquestrador da aba lidera; os painéis dela ficam juntos.',
       run: onStartTabMission,
+    });
+  }
+  // WEB-13: a alternativa de mouse e teclado ao arraste.
+  if (onMoveLeft) {
+    items.push({
+      id: 'move-left',
+      icon: 'arrow-left',
+      label: 'Mover para a esquerda',
+      detail: `Troca de lugar com a aba ao lado (${formatShortcut('alt', 'shift', '←')}).`,
+      run: onMoveLeft,
+    });
+  }
+  if (onMoveRight) {
+    items.push({
+      id: 'move-right',
+      icon: 'arrow-right',
+      label: 'Mover para a direita',
+      detail: `Troca de lugar com a aba ao lado (${formatShortcut('alt', 'shift', '→')}).`,
+      run: onMoveRight,
     });
   }
   if (scope.kind !== 'mission') {
