@@ -385,6 +385,70 @@ describe("ORC-04 command receipts (T3 policy)", () => {
     expect(receipt?.status).toBe("accepted");
   });
 
+  it("commits the receipt and the effect in one transaction", () => {
+    const { manager, store, scope } = freshStore();
+    const receipts = createScopedCommandReceiptStore(manager, scope);
+    const accepted = receipts.acceptCommandEffect(
+      store,
+      {
+        commandId: "cmd-atomic",
+        commandType: "turn.start",
+        threadId: "thread-a",
+      },
+      {
+        commandId: "cmd-atomic",
+        threadId: "thread-a",
+        type: "turn.start",
+      },
+    );
+    expect(accepted.inserted).toBe(true);
+    expect(accepted.effect.id).toBe("cmd-atomic");
+    expect(accepted.effect.status).toBe("pending");
+    expect(receipts.getByCommandId("cmd-atomic")?.resultSequence).toBe(0);
+    const again = receipts.acceptCommandEffect(
+      store,
+      {
+        commandId: "cmd-atomic",
+        commandType: "turn.start",
+        threadId: "thread-a",
+      },
+      {
+        commandId: "cmd-atomic",
+        threadId: "thread-a",
+        type: "turn.start",
+      },
+    );
+    expect(again.inserted).toBe(false);
+    expect(again.effect.id).toBe(accepted.effect.id);
+    expect(store.listByCommandId("cmd-atomic")).toHaveLength(1);
+
+    store.enqueue({
+      id: "eff-taken",
+      commandId: "cmd-taken",
+      threadId: "thread-z",
+      type: "checkpoint.capture",
+    });
+    expect(() =>
+      receipts.acceptCommandEffect(
+        store,
+        {
+          commandId: "cmd-rollback",
+          commandType: "turn.start",
+          threadId: "thread-a",
+        },
+        {
+          id: "eff-taken",
+          commandId: "cmd-rollback",
+          threadId: "thread-a",
+          type: "turn.start",
+        },
+      ),
+    ).toThrow(/already bound/);
+    expect(receipts.getByCommandId("cmd-rollback")).toBeNull();
+    expect(store.listByCommandId("cmd-rollback")).toHaveLength(0);
+    expect(store.get("eff-taken")?.commandId).toBe("cmd-taken");
+  });
+
   it("classifies only listed replay-safe commands as replay_safe", () => {
     const { manager, scope } = freshStore();
     const receipts = createScopedCommandReceiptStore(manager, scope);
@@ -547,6 +611,70 @@ describe("ORC-01 worker drain", () => {
     expect(store.get(bound.id)?.leaseOwner).toBeNull();
     expect(store.get(safe.id)?.status).toBe("pending");
     expect(store.get(safe.id)?.lastError).toBeNull();
+  });
+
+  it("a lease renewal error settles through the drain instead of escaping", async () => {
+    const { store, scope } = freshStore();
+    const bound = store.enqueue({
+      commandId: "cmd-renew-bound",
+      threadId: "thread-a",
+      type: "turn.start",
+    });
+    const crashing = new Proxy(store, {
+      get(target, prop, receiver) {
+        if (prop === "renewLease") {
+          return () => {
+            throw new Error("sqlite unavailable");
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const uncaught: unknown[] = [];
+    const onUncaught = (error: unknown) => {
+      uncaught.push(error);
+    };
+    process.on("uncaughtException", onUncaught);
+    try {
+      const result = await drainEffectOutbox({
+        store: crashing,
+        scope,
+        workerId: "worker-1",
+        leaseDurationMs: 3,
+        batchSize: 1,
+        handler: () => new Promise<void>((resolve) => setTimeout(resolve, 40)),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(uncaught).toEqual([]);
+      expect(result.claimed).toBe(1);
+      expect(result.succeeded).toBe(0);
+      expect(result.failed).toBe(1);
+      expect(store.get(bound.id)?.status).toBe("failed");
+      expect(store.get(bound.id)?.leaseOwner).toBeNull();
+      expect(store.get(bound.id)?.lastError).toContain("sqlite unavailable");
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+
+    const safe = store.enqueue({
+      commandId: "cmd-renew-safe",
+      threadId: "thread-b",
+      type: "checkpoint.capture",
+    });
+    const safeResult = await drainEffectOutbox({
+      store: crashing,
+      scope,
+      workerId: "worker-1",
+      leaseDurationMs: 3,
+      batchSize: 1,
+      handler: () => new Promise<void>((resolve) => setTimeout(resolve, 40)),
+    });
+    expect(safeResult.retried).toBe(1);
+    expect(safeResult.succeeded).toBe(0);
+    expect(store.get(safe.id)?.status).toBe("pending");
+    expect(store.get(safe.id)?.leaseOwner).toBeNull();
+    expect(store.get(safe.id)?.lastError).toContain("sqlite unavailable");
   });
 });
 

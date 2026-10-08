@@ -7,8 +7,11 @@ import {
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
+  EffectOutboxStore,
   REPLAY_SAFE_EFFECT_TYPES,
   type EffectClass,
+  type EffectOutboxEnqueueInput,
+  type EffectOutboxEntry,
 } from './effect-outbox';
 
 /**
@@ -129,6 +132,48 @@ export class CommandReceiptStore {
     options: ScopedStoreOptions = {},
   ) {
     this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
+  }
+
+  get scope(): ProjectExecutionScope {
+    return this.#binding.scope;
+  }
+
+  /**
+   * Recibo e efeito na mesma transação. `insertIfAbsent` seguido de
+   * `enqueue` commitava o sequence 0 antes do efeito: um crash no meio
+   * deixava o retry achar o comando aceito e não executá-lo. O id do
+   * efeito, quando omitido, é o `commandId`.
+   */
+  acceptCommandEffect(
+    outbox: EffectOutboxStore,
+    receiptInput: CommandReceiptInsertInput,
+    effectInput: EffectOutboxEnqueueInput,
+  ): { readonly inserted: boolean; readonly effect: EffectOutboxEntry } {
+    const receipt = insertSchema.parse(receiptInput);
+    if (effectInput.commandId !== receipt.commandId) {
+      throw new Error('command receipt and effect commandId must match');
+    }
+    if (receipt.threadId && effectInput.threadId !== receipt.threadId) {
+      throw new Error('command receipt and effect threadId must match');
+    }
+    if (effectInput.type !== receipt.commandType) {
+      throw new Error('command receipt and effect type must match');
+    }
+    if (
+      outbox.scope.projectId !== this.scope.projectId ||
+      outbox.scope.checkoutId !== this.scope.checkoutId
+    ) {
+      throw new Error('command receipt and effect must share a project scope');
+    }
+    const db = this.#binding.writeDatabase();
+    return db.transaction(() => {
+      const inserted = this.insertIfAbsent(receipt);
+      const effect = outbox.enqueue({
+        ...effectInput,
+        id: effectInput.id ?? receipt.commandId,
+      });
+      return { inserted, effect };
+    })();
   }
 
   /**
