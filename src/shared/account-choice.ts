@@ -30,10 +30,18 @@ export interface AccountChoiceAlternative {
   usedPct: number | null;
   window: string | null;
   resetsAt: number | null;
+  /**
+   * Por que esta conta não foi a escolhida. F-969: `less-headroom` só quando
+   * ela tinha MENOS folga em janelas comparáveis; `active-kept` quando tinha
+   * mais, mas a ativa fica até a cota medida zerar; `not-compared` quando a
+   * conta do pane foi fixada (ou é a nativa) e as irmãs não concorreram.
+   */
   skipped:
     | 'cooldown'
     | 'no-credential'
     | 'less-headroom'
+    | 'active-kept'
+    | 'not-compared'
     | 'unknown-quota';
 }
 
@@ -123,6 +131,8 @@ const SKIPPED_REASONS: ReadonlySet<string> = new Set<AlternativeSkipReason>([
   'cooldown',
   'no-credential',
   'less-headroom',
+  'active-kept',
+  'not-compared',
   'unknown-quota',
 ]);
 

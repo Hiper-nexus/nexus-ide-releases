@@ -1,4 +1,11 @@
 import type { Account } from '../../shared/account-types';
+import {
+  compareAccountHeadroom,
+  headroomReadings,
+  isHeadroomExhausted,
+  unreadWindowWithProvenHeadroom,
+  type HeadroomInput,
+} from '../quota/account-headroom';
 
 /**
  * Pure failover selection: from the accounts of one adapter, choose the next
@@ -8,6 +15,13 @@ import type { Account } from '../../shared/account-types';
  * worst window is full) or it is no longer a candidate. A sibling with more
  * remaining quota does not take a new pane early. Unknown quota keeps the
  * active account. With no active account, the freest measured candidate wins.
+ *
+ * F-969: with the per-window readings (`quotaByAccountId`) the comparison only
+ * uses comparable windows (`compareAccountHeadroom`), and an active account
+ * that was read partially (e.g. Semanal measured, 5 Horas unread) does not
+ * keep the pane against a sibling that PROVED headroom in the window the
+ * active one never read — unread is not headroom. An active account with no
+ * reading at all still stays (quota service down is not evidence).
  * No I/O — unit tested in isolation.
  */
 export function chooseAccount(
@@ -16,12 +30,16 @@ export function chooseAccount(
   excludeId: string | null,
   now: number,
   quotaScoreByAccountId?: ReadonlyMap<string, number>,
+  quotaByAccountId?: ReadonlyMap<string, HeadroomInput>,
 ): Account | null {
   const candidates = accounts.filter(
     (a) => a.id !== excludeId && (!a.cooldownUntil || a.cooldownUntil <= now),
   );
   if (candidates.length === 0) return null;
   const active = candidates.find((a) => a.id === activeId) ?? null;
+  if (quotaByAccountId) {
+    return chooseByWindows(candidates, active, quotaByAccountId);
+  }
   const measured = candidates
     .map((account) => ({
       account,
@@ -57,4 +75,33 @@ export function chooseAccount(
     measured[0]?.account ??
     [...candidates].sort((a, b) => a.createdAt - b.createdAt)[0]
   );
+}
+
+function chooseByWindows(
+  candidates: readonly Account[],
+  active: Account | null,
+  quotaByAccountId: ReadonlyMap<string, HeadroomInput>,
+): Account {
+  const quota = (account: Account) => quotaByAccountId.get(account.id);
+  const ranked = [...candidates].sort(
+    (left, right) =>
+      compareAccountHeadroom(quota(right), quota(left)) ||
+      left.createdAt - right.createdAt,
+  );
+  if (!active) return ranked[0];
+  const best = ranked.find(
+    (account) => account.id !== active.id && !isHeadroomExhausted(quota(account)),
+  );
+  if (!best) return active;
+  const activeQuota = quota(active);
+  if (isHeadroomExhausted(activeQuota)) return best;
+  // Ativa sem leitura nenhuma: nada a comparar — fica (cota fora do ar).
+  if (headroomReadings(activeQuota).size === 0) return active;
+  if (
+    unreadWindowWithProvenHeadroom(activeQuota, quota(best)) &&
+    compareAccountHeadroom(quota(best), activeQuota) > 0
+  ) {
+    return best;
+  }
+  return active;
 }

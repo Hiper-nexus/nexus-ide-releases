@@ -850,6 +850,99 @@ describe('orchestration bridge pane recovery', () => {
     act(() => mounted.root.unmount());
   });
 
+  it('F-969: a conta selada pelo Main na recuperação vence o espelho do layout (troca por limite)', async () => {
+    let recoveryHandler: ((req: MissionPaneRecoveryRequest) => void) | null = null;
+    const sendPaneRecoveryResult = vi.fn();
+    const rebindMissionOrchestrator = vi.fn(async () => ({ ok: true }));
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        mission: missionBridge(),
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPaneRecoveryRequest: vi.fn(
+            (cb: (req: MissionPaneRecoveryRequest) => void) => {
+              recoveryHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onPaneParkRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+          sendPaneSpawnResult: vi.fn(),
+          sendPaneRecoveryResult,
+          sendBrowserOpenResult: vi.fn(),
+          rebindMissionOrchestrator,
+        },
+      },
+    });
+    const pane = {
+      id: 'pane-orch',
+      kind: 'cli-agent' as const,
+      title: 'Orchestrator',
+      adapterId: 'codex',
+      accountId: 'acct-esgotada',
+        role: 'orchestrator' as const,
+    };
+    useLayoutStore.setState({
+      root: { kind: 'leaf', id: 'leaf-orch', pane },
+      focusedPaneId: 'pane-orch',
+    });
+    const mounted = mount();
+
+    await act(async () => {
+      recoveryHandler?.({
+        requestId: 'recovery-f969',
+        missionId: 'mission-a',
+        paneId: 'pane-orch',
+        expectedSessionId: 'session-old',
+        role: 'orchestrator',
+        pane: {
+          adapterId: 'codex',
+          accountId: 'acct-com-folga',
+          title: 'Orchestrator',
+          role: 'orchestrator',
+        },
+        recap: 'Continue safely.',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(terminal.respawnMissionPaneFresh).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'pane-orch', accountId: 'acct-com-folga' }),
+      'session-old',
+      75_000,
+      'recovery-f969',
+    );
+    expect(
+      listPanes(useLayoutStore.getState().root).find((entry) => entry.id === 'pane-orch')?.accountId,
+    ).toBe('acct-com-folga');
+    expect(rebindMissionOrchestrator).toHaveBeenCalledWith(
+      'mission-a',
+      'session-new',
+    );
+    expect(terminal.submitPromptToPaneConfirmed).toHaveBeenCalledWith(
+      'pane-orch',
+      'Continue safely.',
+      'session-new',
+    );
+    expect(terminal.submitPromptToPaneConfirmed.mock.invocationCallOrder[0])
+      .toBeLessThan(rebindMissionOrchestrator.mock.invocationCallOrder[0]);
+    expect(sendPaneRecoveryResult).toHaveBeenCalledWith({
+      requestId: 'recovery-f969',
+      ok: true,
+      paneId: 'pane-orch',
+      sessionId: 'session-new',
+    });
+    act(() => mounted.root.unmount());
+  });
+
   it('cancels a late missing-pane spawn when it never becomes healthy', async () => {
     let recoveryHandler: ((req: MissionPaneRecoveryRequest) => void) | null = null;
     const sendPaneRecoveryResult = vi.fn();

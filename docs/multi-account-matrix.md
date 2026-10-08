@@ -47,9 +47,21 @@ O renderer não troca credenciais globais para abrir um pane. O fluxo canônico 
    Sessões já abertas mantêm a conta antiga até **↻ reiniciar panes**.
 2. **Continuar na mesma conversa após limite**  
    Conta A em cooldown → failover → Conta B → spawn com resume flags do adapter.
+   Vale também para o orquestrador de missão e para o pane do operador adotado
+   pela missão da aba (F-969): com limite CONFIRMADO (F-249), o Main troca a
+   conta selada do orquestrador e religa o MESMO pane na Conta B pela
+   recuperação do orquestrador, com o pacote de continuidade. O recibo da
+   sessão nova diz "troca automática por limite confirmado".
 3. **Pin de conta no pane**  
-   `accountId` na composição da missão; reopen restaura a conta.
-4. **Troca manual**  
+   `accountId` na composição da missão; reopen restaura a conta. O pin não
+   prende o pane numa conta esgotada: limite confirmado troca para a irmã com
+   folga e avisa (F-969).
+4. **Escolha de conta (regra de folga)**  
+   Folga só entre janelas comparáveis (`compareAccountHeadroom`): a janela
+   que limita de fato decide; conta sem leitura de uma janela não tem mais
+   folga nela; a ativa lida pela metade cede à irmã que provou folga na janela
+   que a ativa não leu (F-969).
+5. **Troca manual**  
    WorkspaceBar / Activity Rail → AccountSwitcher → `account:activate`.
 
 ## Não suportado (ainda)

@@ -170,11 +170,14 @@ import {
   type AccountChoiceReceipt,
   type AccountHeadroom,
 } from '../../shared/account-choice';
-import type {
-  ProviderQuotaEntry,
-  QuotaWindow,
-} from '../../shared/quota-types';
+import type { ProviderQuotaEntry } from '../../shared/quota-types';
 import { quotaAvailabilityScore } from '../quota/quota-policy';
+import {
+  bindingHeadroomWindow,
+  compareAccountHeadroom,
+  headroomInputsByAccount,
+  type HeadroomInput,
+} from '../quota/account-headroom';
 import { requireQuotaService } from '../quota/quota-service';
 import type { ApiQuotaKeyRequest } from '../quota/provider-live-usage';
 import { activateAgyAccountForSpawn } from './agy-keyring-activation';
@@ -1368,6 +1371,22 @@ function quotaScoresFor(
   }
 }
 
+/**
+ * F-969: janelas medidas por conta do adapter — a regra de folga compara só
+ * janelas comparáveis. undefined quando não há medição.
+ */
+function quotaHeadroomFor(
+  adapterId: string,
+): ReadonlyMap<string, HeadroomInput> | undefined {
+  try {
+    const snap = requireQuotaService().lastSnapshot();
+    return snap ? headroomInputsByAccount(snap.entries, adapterId) : undefined;
+  } catch {
+    /* quota service opcional na corrida de boot — sem medição */
+    return undefined;
+  }
+}
+
 function quotaEntryFor(
   adapterId: string,
   accountId: string,
@@ -1382,20 +1401,16 @@ function quotaEntryFor(
   }
 }
 
-/** Pior janela medida da conta: a de maior usedRatio conhecido. */
+/**
+ * A janela que limita a conta (F-969): a medida mais apertada, com reset.
+ * Janela sem leitura não entra — nunca vira "0% usado".
+ */
 function headroomFromEntry(entry: ProviderQuotaEntry): AccountHeadroom {
-  let worst: QuotaWindow | null = null;
-  for (const w of entry.windows) {
-    if (w.usedRatio === null) continue;
-    if (!worst || (worst.usedRatio ?? -1) < w.usedRatio) worst = w;
-  }
+  const binding = bindingHeadroomWindow(entry);
   return {
-    usedPct:
-      worst && worst.usedRatio !== null
-        ? Math.round(worst.usedRatio * 100)
-        : null,
-    window: worst?.label ?? null,
-    resetsAt: worst?.resetsAt ?? null,
+    usedPct: binding ? Math.round(binding.usedRatio * 100) : null,
+    window: binding?.label ?? null,
+    resetsAt: binding?.resetsAt ?? null,
     score: quotaAvailabilityScore(entry),
   };
 }
@@ -1423,13 +1438,20 @@ function receiptAccount(account: Account): {
   };
 }
 
-/** As outras contas do adapter e o motivo categórico de cada derrota. */
+/**
+ * As outras contas do adapter e o motivo categórico de cada derrota.
+ * F-969: o motivo é verdadeiro — conta fixada/nativa não concorreu
+ * (`not-compared`); sob "ativa mantida" a irmã com MAIS folga em janelas
+ * comparáveis aparece como `active-kept`, nunca como "menos folga".
+ */
 function accountChoiceAlternatives(
   adapterId: string,
   chosenId: string | null,
-  scores: ReadonlyMap<string, number> | undefined,
+  quota: ReadonlyMap<string, HeadroomInput> | undefined,
   now: number,
+  competed = true,
 ): AccountChoiceAlternative[] {
+  const chosen = chosenId ? quota?.get(chosenId) : undefined;
   return listAccounts(adapterId)
     .filter((a) => a.id !== chosenId)
     .map((a) => {
@@ -1439,9 +1461,13 @@ function accountChoiceAlternatives(
         ? ('cooldown' as const)
         : !accountHasFailoverCredential(a)
           ? ('no-credential' as const)
-          : !scores?.has(a.id)
-            ? ('unknown-quota' as const)
-            : ('less-headroom' as const);
+          : !competed
+            ? ('not-compared' as const)
+            : !quota?.has(a.id)
+              ? ('unknown-quota' as const)
+              : compareAccountHeadroom(quota.get(a.id), chosen) > 0
+                ? ('active-kept' as const)
+                : ('less-headroom' as const);
       return {
         label: maskAccountLabel(a.label),
         usedPct: head?.usedPct ?? null,
@@ -1485,11 +1511,13 @@ function resolveSpawnAccountChoice(
         source: 'pinned',
         account: receiptAccount(account),
         headroom: headroomFor(adapterId, account.id),
+        // Fixada pelo chamador: as irmãs não concorreram (F-969).
         alternatives: accountChoiceAlternatives(
           adapterId,
           account.id,
-          quotaScoresFor(adapterId),
+          quotaHeadroomFor(adapterId),
           decidedAt,
+          false,
         ),
         decidedAt,
       },
@@ -1543,8 +1571,9 @@ function resolveSpawnAccountChoice(
           alternatives: accountChoiceAlternatives(
             adapterId,
             slotOwner.id,
-            quotaScoresFor(adapterId),
+            quotaHeadroomFor(adapterId),
             decidedAt,
+            false,
           ),
           decidedAt,
         },
@@ -1577,15 +1606,15 @@ function pickUnpinnedAccountWithHeadroom(
   const decidedAt = Date.now();
   const active = getActiveAccount(adapterId);
   const quotaScores = quotaScoresFor(adapterId);
+  // F-969: folga comparada só entre janelas comparáveis.
+  const quotaByAccountId = quotaHeadroomFor(adapterId);
+  const pickOptions = {
+    ...(excludeIds?.size ? { excludeIds } : {}),
+    ...(quotaByAccountId ? { quotaByAccountId } : {}),
+  };
   const picked = (
-    excludeIds?.size
-      ? pickAvailableForFailover(
-          adapterId,
-          null,
-          decidedAt,
-          quotaScores,
-          { excludeIds },
-        )
+    Object.keys(pickOptions).length > 0
+      ? pickAvailableForFailover(adapterId, null, decidedAt, quotaScores, pickOptions)
       : pickAvailableForFailover(adapterId, null, decidedAt, quotaScores)
   ).account;
   // F-235: exclusões vêm de panes Claude vivos na mesma missão. Se nada livre
@@ -1607,7 +1636,7 @@ function pickUnpinnedAccountWithHeadroom(
         alternatives: accountChoiceAlternatives(
           adapterId,
           null,
-          quotaScores,
+          quotaByAccountId,
           decidedAt,
         ),
         decidedAt,
@@ -1618,7 +1647,7 @@ function pickUnpinnedAccountWithHeadroom(
   const alternatives = accountChoiceAlternatives(
     adapterId,
     picked?.id ?? null,
-    quotaScores,
+    quotaByAccountId,
     decidedAt,
   );
   if (picked) {

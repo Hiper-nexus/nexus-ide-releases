@@ -117,6 +117,12 @@ function skippedReason(
       return 'sem credencial';
     case 'unknown-quota':
       return 'cota desconhecida';
+    case 'not-compared':
+      return 'não comparada (conta fixada)';
+    case 'active-kept':
+      return alternative.usedPct === null
+        ? 'disponível, com mais folga'
+        : `disponível, com mais folga (${clampPercent(alternative.usedPct)}% usado)`;
     case 'less-headroom': {
       // Sob "ativa mantida" a irmã não perdeu por folga — a ativa fica até a
       // cota medida zerar —, então só se diz que ela estava disponível.
