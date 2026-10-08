@@ -1,6 +1,7 @@
 import { useCallback, type MutableRefObject } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
+import { respondToHookApproval } from './mobile-hook-approval-operation'
 import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
 import {
   MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS,
@@ -41,17 +42,8 @@ export async function sendMobileHookApprovalResponse(args: {
   target: StructuredPromptResponseTarget
 }): Promise<MobileNativeChatSendOutcome> {
   try {
-    const response = await args.client.sendRequest(
-      'agentSession.respondToApproval',
-      {
-        itemId: args.target.itemId,
-        expectedRevision: args.target.expectedRevision,
-        optionId: args.target.optionId
-      },
-      { timeoutMs: MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS, budgetSpansConnect: true }
-    )
-    const result = response.ok ? (response.result as { status?: unknown } | null) : null
-    return result?.status === 'accepted' ? 'accepted' : 'rejected'
+    // Through the RpcOperation: the reply is decoded once, by the operation's own policy.
+    return await respondToHookApproval(args.client, args.target, MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS)
   } catch (error) {
     return isRpcDeliveryUnknown(error) || isLogicalClientCutoverError(error)
       ? 'unknown'

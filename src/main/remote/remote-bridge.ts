@@ -6,14 +6,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { generate } from 'selfsigned';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
-import { z } from 'zod';
-import {
-  APPROVAL_DECISIONS,
-  APPROVAL_REQUEST_ID_MAX_CHARS,
-  type ApprovalOption,
-  type ApprovalProvider,
-  type ApprovalResponseCapability,
+import type {
+  ApprovalOption,
+  ApprovalProvider,
+  ApprovalResponseCapability,
 } from '../../shared/approval-decision';
+import { HookApprovalRespondParams } from '../../shared/rpc-contract/structured-agent-session-params';
 import {
   approvalBroker,
   registerRemoteApprovalResponder,
@@ -612,14 +610,6 @@ export type RemoteApprovalResult =
   | ApprovalRespondResult
   | { readonly status: 'rejected'; readonly reason: string };
 
-const RemoteApprovalParams = z
-  .object({
-    itemId: z.string().min(1).max(APPROVAL_REQUEST_ID_MAX_CHARS),
-    expectedRevision: z.number().int().positive(),
-    optionId: z.enum(APPROVAL_DECISIONS),
-  })
-  .strict();
-
 function remoteApprovalsFor(scope: ProjectExecutionScope): RemoteApproval[] {
   return approvalBroker.list().flatMap((request) => {
     const pane = getPaneAuthzInfo(request.sessionId);
@@ -673,7 +663,8 @@ async function respondToApprovalFromRemote(
   scope: ProjectExecutionScope,
   confirmationSessionId: string,
 ): Promise<RemoteApprovalResult> {
-  const parsed = RemoteApprovalParams.safeParse({
+  // Mesmo esquema do contrato RPC (ramo sem envelope de respondToApproval).
+  const parsed = HookApprovalRespondParams.safeParse({
     itemId: msg.itemId,
     expectedRevision: msg.expectedRevision,
     optionId: msg.optionId,
