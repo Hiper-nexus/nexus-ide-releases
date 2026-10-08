@@ -111,6 +111,26 @@ it('native input transformation preserves fields and never grants permission or 
  expect(result.stdout).not.toContain('finite-token');
 });
 
+// F-956 review: these ran with exit 0 and no reservation through this hook.
+it.each([
+ ['nice -n 10 make', 'build'],
+ ['find . -name "*.test.ts" | xargs -0 vitest', 'tests'],
+ ["sh <<'EOF'\nmake\nEOF", 'build'],
+ ['cat <<EOF && make\nbody\nEOF', 'build'],
+ ['echo "$(make)"', 'build'],
+ ['command -v make', null],
+])('the Bash hook admits %j as %s before it runs', (command, kind) => {
+ const resources = path.join(process.cwd(), 'resources/heavy-command');
+ const result = spawnSync(process.execPath, [path.join(resources, 'tool-hook.cjs')], { encoding: 'utf8', input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
+   env: { NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1234/hook/heavy-command', NEXUS_GATE_TOKEN: 'finite-token', NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources } });
+ expect(result.status).toBe(0);
+ const value = JSON.parse(result.stdout);
+ if (kind === null) { expect(value).toEqual({}); return; }
+ const rewritten = value.hookSpecificOutput.updatedInput.command as string;
+ expect(rewritten).toContain(`"$$" '${kind}'`);
+ expect(rewritten.endsWith(command)).toBe(true);
+});
+
 it('a remote scheduling URL denies a heavy native call before any command rewrite', () => {
  const result = spawnSync(process.execPath, [path.join(process.cwd(), 'resources/heavy-command/tool-hook.cjs')], { encoding: 'utf8', input: JSON.stringify({ tool_input: { command: 'make' } }),
    env: { NEXUS_HEAVY_COMMAND_URL: 'https://example.invalid/hook/heavy-command', NEXUS_GATE_TOKEN: 'finite-secret', NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: process.cwd() } });

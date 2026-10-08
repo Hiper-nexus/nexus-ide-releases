@@ -111,51 +111,295 @@ function isPersistent(argv) {
 // reads it. Matching tool names anywhere in the text queued `type node`,
 // `which node`, `node -v`, grep patterns, commit messages and heredoc bodies
 // ("…must not make them…") behind the project's build slot for up to 300 s.
+// Reading only command position must not let heavy work escape either: wrapper
+// option values, xargs/find -exec, shells reading a heredoc or pipe, and
+// substitutions in double quotes or unquoted heredocs all name programs too.
 const KIND_ORDER = ['typescript', 'tests', 'install', 'build'];
-const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-// Shell keywords and wrappers precede the program that actually runs.
-const COMMAND_PREFIXES = new Set(['time', 'exec', 'command', 'nohup', 'env', 'caffeinate', 'nice', 'sudo',
-  'if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{']);
+const heavier = (a, b) => (!b ? a : !a ? b : KIND_ORDER.indexOf(b) < KIND_ORDER.indexOf(a) ? b : a);
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+// Reserved words that precede the command they run.
+const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{', 'coproc']);
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 const PM_VALUE_OPTIONS = new Set(['--workspace', '-w', '--prefix', '--dir', '-C', '--filter', '--cache', '--userconfig', '--globalconfig', '--package', '-p']);
-function stripHeredocBodies(command) {
-  return command.replace(/<<-?[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g, '\n');
-}
-/** Unquoted-operator split into simple commands; quotes are removed from words. */
+// Wrappers run the command that follows their own options. Option letters and
+// names under `values` take an argument (so it is never the program); an
+// option missing from the table might, so the command stays metered.
+// `operands` precede the command (timeout DURATION); `noexec` options only
+// describe the command (`command -v`, `sudo -l`); xargs gives the program
+// its stdin as arguments, never as a script.
+const TIME = { flags: 'ahlpqvV', values: 'fo', longFlags: ['append', 'portability', 'quiet', 'verbose'], longValues: ['format', 'output'] };
+const TIMEOUT = { flags: 'fpv', values: 'ks', longFlags: ['foreground', 'preserve-status', 'verbose'], longValues: ['kill-after', 'signal'], operands: 1 };
+const WRAPPERS = {
+  env: { flags: 'i0v', values: 'aCLPSUu',
+    longFlags: ['ignore-environment', 'null', 'debug', 'block-signal', 'default-signal', 'ignore-signal', 'list-signal-handling'],
+    longValues: ['argv0', 'chdir', 'split-string', 'unset'] },
+  nice: { values: 'n', longValues: ['adjustment'], numeric: true },
+  nohup: {},
+  caffeinate: { flags: 'dimsu', values: 'tw' },
+  sudo: { flags: 'ABbEeHiKklNnPSsVv', values: 'CDghpRrTtUu', noexec: 'eKlVv', longNoexec: ['edit', 'list', 'remove-timestamp', 'validate'],
+    longFlags: ['askpass', 'bell', 'background', 'preserve-env', 'set-home', 'login', 'reset-timestamp', 'no-update', 'non-interactive', 'preserve-groups', 'stdin', 'shell'],
+    longValues: ['close-from', 'chdir', 'group', 'host', 'prompt', 'chroot', 'role', 'command-timeout', 'type', 'other-user', 'user', 'login-class'] },
+  doas: { flags: 'nsL', values: 'uC' },
+  time: TIME,
+  exec: { flags: 'cl', values: 'a' },
+  command: { flags: 'pvV', noexec: 'vV' },
+  builtin: {},
+  stdbuf: { values: 'eio', longValues: ['error', 'input', 'output'] },
+  timeout: TIMEOUT,
+  gtimeout: TIMEOUT,
+  'cross-env': {},
+  xargs: { flags: '0oprtx', optional: 'eil', values: 'adEIJLnPRSs', ownStdin: true,
+    longFlags: ['null', 'open-tty', 'interactive', 'no-run-if-empty', 'verbose', 'exit', 'show-limits', 'eof', 'replace', 'max-lines'],
+    longValues: ['arg-file', 'delimiter', 'max-args', 'max-procs', 'max-chars', 'process-slot-var'] },
+};
+// A run-time value ($VAR, $(…), `…`) inside a word.
+const DYNAMIC = '\u0000';
+const MAX_NESTING = 64;
+const MAX_DEPTH = 16;
+const newSegment = (pipedIn = false) => ({ words: [], heredocs: [], herestrings: [], stdinFile: false, pipedIn });
+/**
+ * Splits a command line the way the shell reads it into simple commands
+ * ({ words, heredocs, herestrings, stdinFile, pipedIn }). Quotes are removed;
+ * $(…), `…`, <(…) and ${…} run their own commands (in double quotes and in
+ * unquoted heredoc bodies too), which become segments of their own. A heredoc
+ * body is read only after the rest of its opening line, which stays a command;
+ * redirection targets never become words.
+ */
 function shellSegments(command) {
-  const segments = []; let words = []; let word = ''; let inWord = false; let quote = '';
-  const endWord = () => { if (inWord) words.push(word); word = ''; inWord = false; };
-  const endSegment = () => { endWord(); if (words.length) segments.push(words); words = []; };
-  for (let i = 0; i < command.length; i++) {
-    const ch = command[i];
-    if (quote) {
-      if (ch === quote) quote = '';
-      else if (ch === '\\' && quote === '"' && i + 1 < command.length) word += command[++i];
-      else word += ch;
-      continue;
+  const ctx = { all: [], nesting: 0 };
+  lex(String(command), ctx, 'list');
+  return ctx.all;
+}
+function lex(src, ctx, mode) {
+  let i = 0;
+  const pending = [];
+  const nested = (fn) => { if (++ctx.nesting > MAX_NESTING) throw new Error('shell nesting too deep'); try { return fn(); } finally { ctx.nesting--; } };
+  function backtick(inDouble) {
+    let inner = '';
+    while (i < src.length && src[i] !== '`') {
+      if (src[i] === '\\' && i + 1 < src.length && ('`$\\'.includes(src[i + 1]) || (inDouble && src[i + 1] === '"'))) { inner += src[i + 1]; i += 2; continue; }
+      inner += src[i++];
     }
-    if (ch === "'" || ch === '"') { quote = ch; inWord = true; continue; }
-    if (ch === '\\' && i + 1 < command.length) { const next = command[++i]; if (next !== '\n') { word += next; inWord = true; } continue; }
-    if (ch === '#' && !inWord) { while (i + 1 < command.length && command[i + 1] !== '\n') i++; continue; }
-    if (ch === '\n') { endSegment(); continue; }
-    if (/\s/.test(ch)) { endWord(); continue; }
-    if (';&|()`'.includes(ch)) { endSegment(); continue; }
-    if (ch === '$' && command[i + 1] === '(') { endSegment(); i++; continue; }
-    word += ch; inWord = true;
+    i++;
+    nested(() => lex(inner, ctx, 'list'));
+    return DYNAMIC;
   }
-  endSegment();
-  return segments;
+  function single() { const end = src.indexOf("'", i); const text = src.slice(i, end < 0 ? src.length : end); i = end < 0 ? src.length : end + 1; return text; }
+  function ansi() {
+    let text = '';
+    while (i < src.length && src[i] !== "'") { if (src[i] === '\\' && i + 1 < src.length) { text += src[i + 1]; i += 2; } else text += src[i++]; }
+    i++;
+    return text;
+  }
+  // "…" after its opening quote, or (untilEnd) a whole unquoted heredoc body.
+  function double(untilEnd = false) {
+    let text = '';
+    while (i < src.length) {
+      const ch = src[i++];
+      if (ch === '"' && !untilEnd) return text;
+      if (ch === '\\' && i < src.length) {
+        const next = src[i];
+        if (next === '\n') i++;
+        else if ('$`\\'.includes(next) || (next === '"' && !untilEnd)) { text += next; i++; } else text += ch;
+        continue;
+      }
+      if (ch === '`') text += backtick(!untilEnd);
+      else if (ch === '$') text += dollar(true);
+      else text += ch;
+    }
+    return text;
+  }
+  // ${…} and $((…)): the value is run-time, nested substitutions still run.
+  // Inside "…", a `'` in ${…} is a plain character.
+  function expansion(close, inDouble) {
+    let depth = 0;
+    while (i < src.length) {
+      const ch = src[i++];
+      if (ch === '\\') { i++; continue; }
+      if (close === '}' && ch === "'" && !inDouble) { single(); continue; }
+      if (ch === '"') { double(); continue; }
+      if (ch === '`') { backtick(false); continue; }
+      if (ch === '$') { dollar(false); continue; }
+      if (ch === (close === '}' ? '{' : '(')) { depth++; continue; }
+      if (close === '}' && ch === '}') { if (depth-- === 0) return; continue; }
+      if (close === '))' && ch === ')') { if (depth === 0 && src[i] === ')') { i++; return; } depth--; }
+    }
+  }
+  function dollar(inDouble) {
+    const next = src[i];
+    if (next === '(' && src[i + 1] === '(') { i += 2; nested(() => expansion('))', inDouble)); return DYNAMIC; }
+    if (next === '(') { i++; nested(() => list(')', ctx.all)); return DYNAMIC; }
+    if (next === '{') { i++; nested(() => expansion('}', inDouble)); return DYNAMIC; }
+    if (!inDouble && next === "'") { i++; return ansi(); }
+    if (!inDouble && next === '"') { i++; return double(); }
+    if (next !== undefined && /[A-Za-z_]/.test(next)) { while (i < src.length && /[A-Za-z0-9_]/.test(src[i])) i++; return DYNAMIC; }
+    if (next !== undefined && /[0-9@*#?$!-]/.test(next)) { i++; return DYNAMIC; }
+    return '$';
+  }
+  function heredoc(owner, strip) {
+    while (src[i] === ' ' || src[i] === '\t') i++;
+    let delimiter = '', quoted = false;
+    while (i < src.length && !/[\s;&|()<>]/.test(src[i])) {
+      const ch = src[i++];
+      if (ch === "'" || ch === '"') { quoted = true; const end = src.indexOf(ch, i); delimiter += src.slice(i, end < 0 ? src.length : end); i = end < 0 ? src.length : end + 1; }
+      else if (ch === '\\') { quoted = true; if (i < src.length) delimiter += src[i++]; }
+      else delimiter += ch;
+    }
+    pending.push({ owner, strip, delimiter, quoted });
+  }
+  // Bodies start after the newline that ends their opening line. Ending a body
+  // early (trimmed delimiter) only exposes more lines as commands.
+  function bodies() {
+    while (pending.length) {
+      const doc = pending.shift(); const lines = [];
+      while (i < src.length) {
+        let end = src.indexOf('\n', i); if (end < 0) end = src.length;
+        const line = src.slice(i, end); i = Math.min(end + 1, src.length);
+        const text = doc.strip ? line.replace(/^\t+/, '') : line;
+        if (text.trim() === doc.delimiter) break;
+        lines.push(text);
+      }
+      const body = lines.join('\n');
+      doc.owner.heredocs.push(body);
+      // An unquoted body runs its $(…) and `…` in the shell that reads it.
+      if (!doc.quoted) nested(() => lex(body, ctx, 'text'));
+    }
+  }
+  function list(stop, out) {
+    let seg = newSegment(), word = null, target = null, depth = 0, cases = 0;
+    const endWord = () => {
+      if (word === null) return;
+      if (target === 'herestring') seg.herestrings.push(word);
+      else if (target === 'stdin') seg.stdinFile = true;
+      else if (target === null) {
+        if (!seg.words.length && word === 'case') cases++;
+        if (!seg.words.length && word === 'esac' && cases > 0) cases--;
+        seg.words.push(word);
+      }
+      word = null; target = null;
+    };
+    const endSegment = (piped = false) => { endWord(); target = null; if (seg.words.length) out.push(seg); seg = newSegment(piped); };
+    // `2>`, `{fd}>`: the number belongs to the redirection, not to the words.
+    const endWordBeforeRedirect = () => { if (word !== null && /^(?:\d+|\{[A-Za-z_][A-Za-z0-9_]*\})$/.test(word)) word = null; else endWord(); };
+    while (i < src.length) {
+      const ch = src[i];
+      if (ch === '\n') { i++; endSegment(); bodies(); continue; }
+      if (ch === ' ' || ch === '\t' || ch === '\r') { i++; endWord(); continue; }
+      if (ch === '#' && word === null) { while (i < src.length && src[i] !== '\n') i++; continue; }
+      if (ch === ';') { i++; endSegment(); continue; }
+      if (ch === '|') { i++; if (src[i] === '|') { i++; endSegment(); } else { if (src[i] === '&') i++; endSegment(true); } continue; }
+      if (ch === '&') {
+        if (src[i + 1] === '>') { endWord(); i += 2; if (src[i] === '>') i++; target = 'drop'; continue; }
+        i++; if (src[i] === '&') i++; endSegment(); continue;
+      }
+      if (ch === '<' || ch === '>') {
+        if (src[i + 1] === '(') { i += 2; word = (word ?? '') + DYNAMIC; nested(() => list(')', ctx.all)); continue; }
+        endWordBeforeRedirect();
+        if (src.startsWith('<<<', i)) { i += 3; target = 'herestring'; continue; }
+        if (src.startsWith('<<', i)) { i += 2; const strip = src[i] === '-'; if (strip) i++; heredoc(seg, strip); continue; }
+        i++;
+        if (ch === '>' && (src[i] === '>' || src[i] === '|')) i++;
+        else if (ch === '<' && src[i] === '>') i++;
+        if (src[i] === '&' && /[0-9-]/.test(src[i + 1] || '')) { i++; while (/[0-9-]/.test(src[i] || '')) i++; continue; }
+        if (src[i] === '&') i++;
+        target = ch === '<' ? 'stdin' : 'drop';
+        continue;
+      }
+      if (ch === '(') {
+        i++;
+        // name=(…) is an array: its elements are words, not a subshell.
+        if (word !== null && /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=$/.test(word)) { nested(() => list(')', [])); word += DYNAMIC; continue; }
+        endSegment(); depth++; continue;
+      }
+      if (ch === ')') {
+        i++; endSegment();
+        if (depth > 0) depth--;
+        else if (cases > 0) continue; // `pattern)` inside case … esac
+        else if (stop === ')') return;
+        continue;
+      }
+      i++;
+      if (word === null) word = '';
+      if (ch === "'") word += single();
+      else if (ch === '"') word += double();
+      else if (ch === '\\') { if (src[i] === '\n') { i++; if (word === '') word = null; } else if (i < src.length) word += src[i++]; }
+      else if (ch === '`') word += backtick(false);
+      else if (ch === '$') word += dollar(false);
+      else word += ch;
+    }
+    endSegment();
+  }
+  if (mode === 'text') double(true); else list(null, ctx.all);
 }
 const toolName = (word) => path.basename(String(word || '').replace(/\\/g, '/')).toLowerCase().replace(/\.(?:cmd|bat|exe|[cm]?js)$/, '');
-function programIndex(words, start = 0) {
-  let i = start;
-  while (i < words.length) {
-    const name = toolName(words[i]);
-    if (ENV_ASSIGNMENT.test(words[i]) || COMMAND_PREFIXES.has(name)) { i++; while (i < words.length && words[i].startsWith('-')) i++; continue; }
-    if (name === 'timeout' || name === 'gtimeout') { i++; while (i < words.length && words[i].startsWith('-')) i++; i++; continue; }
-    return i;
+const splitWords = (value) => shellSegments(value || '').flatMap((seg) => seg.words);
+function wrapperKind(name, args, seg, depth) {
+  const spec = WRAPPERS[name];
+  let i = 0;
+  for (; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--') { i++; break; }
+    if (arg === '-' && name === 'env') continue;
+    if (arg.length < 2 || arg[0] !== '-') break;
+    if (spec.numeric && /^-\d+$/.test(arg)) continue;
+    if (arg.startsWith('--')) {
+      const eq = arg.indexOf('='), long = arg.slice(2, eq < 0 ? undefined : eq);
+      if (long === 'help' || long === 'version' || spec.longNoexec?.includes(long)) return null;
+      if (spec.longValues?.includes(long)) {
+        const value = eq < 0 ? args[++i] : arg.slice(eq + 1);
+        // env -S splits its value into the arguments that follow.
+        if (long === 'split-string') return wrapperKind(name, [...splitWords(value), ...args.slice(i + 1)], seg, depth + 1);
+        continue;
+      }
+      if (spec.longFlags?.includes(long)) continue;
+      return 'build';
+    }
+    for (let k = 1; k < arg.length; k++) {
+      const letter = arg[k];
+      if (spec.noexec?.includes(letter)) return null;
+      if (spec.flags?.includes(letter)) continue;
+      if (spec.optional?.includes(letter)) break;
+      if (!spec.values?.includes(letter)) return 'build';
+      const value = k + 1 < arg.length ? arg.slice(k + 1) : args[++i];
+      if (name === 'env' && letter === 'S') return wrapperKind(name, [...splitWords(value), ...args.slice(i + 1)], seg, depth + 1);
+      break;
+    }
   }
-  return i;
+  const rest = args.slice(i + (spec.operands || 0));
+  return rest.length ? wordsKind(rest, spec.ownStdin ? newSegment() : seg, depth + 1) : null;
+}
+// sh/bash/zsh run `-c STRING`, a script file, or the program on their stdin.
+function shellKind(args, seg, depth) {
+  let command = false, stdin = false, i = 0;
+  for (; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--' || arg === '-') { i++; break; }
+    if (arg.startsWith('--')) { if (arg === '--rcfile' || arg === '--init-file') i++; continue; }
+    if (!/^[-+]./.test(arg)) break;
+    if (arg[0] === '-' && arg.includes('c')) command = true;
+    if (arg[0] === '-' && arg.includes('s')) stdin = true;
+    if (/[oO]/.test(arg)) i++; // -o option / -O shopt name
+  }
+  const rest = args.slice(i);
+  if (command) return rest.length ? commandKind(rest[0], depth + 1) : null;
+  if (rest.length && !stdin) return null; // a script file, like ./script.sh
+  const texts = [...seg.heredocs, ...seg.herestrings];
+  if (texts.length) return texts.reduce((best, text) => heavier(best, commandKind(text, depth + 1)), null);
+  if (seg.stdinFile) return null;
+  // A pipe hands the shell a program this reader cannot see.
+  return seg.pipedIn ? 'build' : null;
+}
+// find -exec/-execdir/-ok/-okdir run the words up to `;` or `+`.
+function findKind(args, depth) {
+  let best = null;
+  for (let i = 0; i < args.length; i++) {
+    if (!/^-(?:exec|execdir|ok|okdir)$/.test(args[i])) continue;
+    const start = i + 1;
+    while (i + 1 < args.length && args[i + 1] !== ';' && args[i + 1] !== '+') i++;
+    best = heavier(best, wordsKind(args.slice(start, i + 1), newSegment(), depth + 1));
+  }
+  return best;
 }
 function firstValue(args) {
   for (let i = 0; i < args.length; i++) {
@@ -172,19 +416,37 @@ function scriptKind(script) {
   if (/^(?:build|check|verify|lint|publish)(?::|$)/.test(name)) return 'build';
   return null;
 }
-function segmentKind(words) {
-  let at = programIndex(words);
+function wordsKind(words, seg, depth) {
+  if (depth > MAX_DEPTH) return 'build';
+  let at = 0;
+  while (at < words.length && (ENV_ASSIGNMENT.test(words[at]) || KEYWORDS.has(words[at]))) at++;
   if (at >= words.length) return null;
-  let name = toolName(words[at]);
-  let args = words.slice(at + 1);
+  const name = toolName(words[at]);
+  // A program named by $VAR or $(…) is known only at run time. Native tool
+  // wrappers run `builtin eval -- "$snap"` (Grok), so metering it would queue
+  // every command; the eval'd user command is classified from its own text.
+  if (name.includes(DYNAMIC)) return null;
+  const args = words.slice(at + 1);
+  if (Object.prototype.hasOwnProperty.call(WRAPPERS, name)) return wrapperKind(name, args, seg, depth);
+  if (name === 'eval') return commandKind((args[0] === '--' ? args.slice(1) : args).join(' '), depth + 1);
+  if (SHELLS.has(name)) return shellKind(args, seg, depth);
+  if (name === 'find') return findKind(args, depth);
   // npx / bunx / npm exec / pnpm dlx run another program: classify that one.
   const verbAt = firstValue(args);
   const verb = verbAt >= 0 ? args[verbAt].toLowerCase() : '';
   if (name === 'npx' || name === 'bunx' || (PACKAGE_MANAGERS.has(name) && ['exec', 'dlx', 'x'].includes(verb))) {
     const rest = name === 'npx' || name === 'bunx' ? args : args.slice(verbAt + 1);
+    for (let k = 0; k < rest.length; k++) {
+      // `npx -c 'cmd'` / `npm exec --call 'cmd'` run a command line.
+      if (rest[k] === '-c' || rest[k] === '--call') return commandKind(rest[k + 1] || '', depth + 1);
+      if (rest[k].startsWith('--call=')) return commandKind(rest[k].slice(7), depth + 1);
+      if (PM_VALUE_OPTIONS.has(rest[k])) { k++; continue; }
+      if (rest[k] === '--' || !rest[k].startsWith('-')) break;
+    }
     const target = firstValue(rest);
     if (target < 0) return null;
-    name = toolName(rest[target]); args = rest.slice(target + 1);
+    // `vitest@3` runs the vitest bin.
+    return wordsKind([rest[target].replace(/(?!^)@[^/]*$/, ''), ...rest.slice(target + 1)], seg, depth + 1);
   } else if (PACKAGE_MANAGERS.has(name)) {
     if (/^(?:test|tests|t)$/.test(verb)) return 'tests';
     if (/^(?:ci|install|i|add)$/.test(verb)) return 'install';
@@ -211,22 +473,18 @@ function segmentKind(words) {
     if (script && isPersistent([words[at], script, ...real.slice(scriptAt + 1)])) return null;
     return (script && moduleKind(script)) || 'build';
   }
-  // `sh -c "…"` runs a whole command line: classify that line.
-  if (['sh', 'bash', 'zsh', 'dash'].includes(name)) {
-    const flagAt = args.findIndex((arg) => /^-[a-z]*c[a-z]*$/.test(arg));
-    if (flagAt >= 0 && flagAt + 1 < args.length) return commandKind(args[flagAt + 1]);
-  }
   return null;
 }
-function commandKind(command) {
+function commandKind(command, depth = 0) {
   if (typeof command !== 'string') return null;
-  if (command.length > 16384) return 'build';
-  let best = null;
-  for (const words of shellSegments(stripHeredocBodies(command))) {
-    const kind = segmentKind(words);
-    if (kind && (best === null || KIND_ORDER.indexOf(kind) < KIND_ORDER.indexOf(best))) best = kind;
+  if (command.length > 16384 || depth > MAX_DEPTH) return 'build';
+  try {
+    let best = null;
+    for (const seg of shellSegments(command)) best = heavier(best, wordsKind(seg.words, seg, depth));
+    return best;
+  } catch {
+    return 'build'; // unreadable (too deeply nested): keep it metered
   }
-  return best;
 }
 function entryKind(argv) {
   if (isPersistent(argv)) return null;

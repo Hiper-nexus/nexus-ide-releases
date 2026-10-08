@@ -65,3 +65,90 @@ describe('commandKind still meters programs that do heavy work', () => {
     expect(catalog.commandKind(`echo ${'x'.repeat(17_000)}`)).toBe('build');
   });
 });
+
+// F-956 review: reading only the command position let heavy work run with
+// exit 0 and no CPU/RAM reservation. Each of these returned null.
+describe('commandKind follows every way the shell reaches a heavy program', () => {
+  it.each([
+    // A wrapper option's value is not the program.
+    ['nice -n 10 make', 'build'],
+    ['env -u NAME make', 'build'],
+    ['env -S "make -j8"', 'build'],
+    ['timeout -s KILL 60 make', 'build'],
+    ['caffeinate -t 600 make', 'build'],
+    ['sudo -u x make', 'build'],
+    ['/usr/bin/time -o timing.txt make', 'build'],
+    ['exec -a builder make', 'build'],
+    ['sudo -u x env -u HOME nice -n 5 timeout -k 5 60 make', 'build'],
+    // An option the table does not know might take the program as its value.
+    ['env -Z value make', 'build'],
+    // xargs and find -exec run the program that follows their options.
+    ['xargs make', 'build'],
+    ['find . -name "*.test.ts" -print0 | xargs -0 vitest', 'tests'],
+    ['ls | xargs -I{} -n 1 sh -c "make {}"', 'build'],
+    ['find . -name Makefile -execdir make \\;', 'build'],
+    // A shell without -c reads its program from the heredoc, here-string or pipe.
+    ["sh <<'EOF'\nmake\nEOF", 'build'],
+    ['bash -s <<EOF\nnpx vitest run\nEOF', 'tests'],
+    ["bash <<< 'make -j8'", 'build'],
+    ['echo make | sh', 'build'],
+    // Only the heredoc body is skipped: the rest of its opening line runs.
+    ['cat <<EOF && make\nbody\nEOF', 'build'],
+    // Unquoted heredocs and double quotes still run $(…) and `…`.
+    ['cat <<EOF > notes.txt\n$(make)\nEOF', 'build'],
+    ['cat <<EOF\n`npx vitest run`\nEOF', 'tests'],
+    ['echo "$(make)"', 'build'],
+    ['echo "`make`"', 'build'],
+    ['echo "${OUT:-$(npx tsc --noEmit)}"', 'typescript'],
+    ['diff <(make -n) expected.txt', 'build'],
+    ['x=$(case $y in a) make;; esac)', 'build'],
+    // Redirections are never the program.
+    ['make>/dev/null', 'build'],
+    ['2>/dev/null make -j8', 'build'],
+    // eval and package runners hand over a command line or a versioned bin.
+    ["eval 'make -j8'", 'build'],
+    ["npx -c 'vitest run'", 'tests'],
+    ['npx vitest@3 run', 'tests'],
+    ['npx cross-env CI=1 vitest run', 'tests'],
+    // `1<<2` is arithmetic, not a heredoc that hides the next line.
+    ['echo $((1<<2))\nmake', 'build'],
+  ])('%s → %s', (command, kind) => {
+    expect(catalog.commandKind(command)).toBe(kind);
+  });
+
+  it.each([
+    ['nohup make > build.log 2>&1 &', 'build'],
+    ['caffeinate -i make', 'build'],
+    ['time -p make', 'build'],
+  ])('keeps flag-only wrappers metered: %s → %s', (command, kind) => {
+    expect(catalog.commandKind(command)).toBe(kind);
+  });
+
+  it.each([
+    // The commit/PR body idiom: a quoted heredoc inside $(…) is only text.
+    "git commit -m \"$(cat <<'EOF'\nfix: make vitest and tsc pass\nEOF\n)\"",
+    "cat <<'EOF'\n$(make) and `npx vitest run`\nEOF\necho ok",
+    "echo '$(make)'",
+    'echo "\\$(make) costs \\`make\\`"',
+    'command -v make',
+    'sudo -l make',
+    'ls | xargs -n1 basename',
+    'find . -name "*.ts" | xargs grep -l make',
+    'find . -name "*.log" -exec rm {} \\;',
+    'sh scripts/check.sh',
+    'nice -n 10 git gc',
+    'timeout 5 node -v',
+    'arr=(make vitest); echo "${arr[@]}"',
+    'echo $((1<<2))\ngit status',
+    'case "$x" in make) echo make;; esac',
+    // Native wrappers: Grok evaluates a snapshot, Claude Code a quoted command.
+    'snap=$(command cat <&3); builtin eval -- "$snap"; builtin eval -- "$1"',
+    "source /tmp/snapshot.sh && setopt NO_EXTENDED_GLOB 2>/dev/null || true && eval 'git status' \\< /dev/null && pwd -P >| /tmp/cwd",
+  ])('%s → null', (command) => {
+    expect(catalog.commandKind(command)).toBeNull();
+  });
+
+  it('keeps unreadable nesting metered', () => {
+    expect(catalog.commandKind(`echo ${'$('.repeat(100)}make`)).toBe('build');
+  });
+});
