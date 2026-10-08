@@ -145,8 +145,10 @@ const RUNTIME_META = { runtimeId: 'nexus-bridge' }
 // CSI, OSC, escapes de 2 bytes e CR: a tela mostra texto, não emula terminal.
 // oxlint-disable-next-line no-control-regex -- removendo sequências de controle de propósito
 const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]|\r/g
+// Mesma classe que o desktop recusa (authorizeRemotePaneInput, F-1000). Aqui é só
+// UX — avisar sem ir à bridge; a autoridade é o Main.
 // oxlint-disable-next-line no-control-regex -- detectando tecla crua de propósito
-const RAW_KEY_PATTERN = /[\u0000-\u0008\u000b-\u001f\u007f]/
+const RAW_KEY_PATTERN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/
 
 export function stripTerminalControl(text: string): string {
   return text.replace(ANSI_PATTERN, '')

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import https from 'node:https';
+import { isIPv4, isIPv6 } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { generate } from 'selfsigned';
@@ -112,12 +113,19 @@ const UNAUTH_TIMEOUT_MS = 15_000;
 const MAX_PAIRING_FAILURES = 8;
 const PAIRING_LOCKOUT_MS = 60_000;
 const RATE_LIMIT_PER_MINUTE = 60;
-// Atrás do Tailscale Serve todo cliente chega por loopback, então o IP não
-// distingue ninguém: a pré-autenticação dessas conexões conta por conexão, e
-// só as tentativas de pareamento somam num teto global (força bruta do código
-// de 8 caracteres: ≤ 30/min × 5 min de validade ≈ 150 palpites em ~1e12).
-const PROXY_PAIR_ATTEMPTS_PER_MINUTE = 30;
+// Atrás do Tailscale Serve todo cliente chega por loopback, então o IP do
+// socket não distingue ninguém. A pré-autenticação conta por conexão; as
+// tentativas de pareamento contam por PARTIÇÃO — o peer do tailnet que o
+// próprio Serve carimba (servePeerPartition) — com um teto global maior como
+// rede. Loopback sem partição (desktop local, Serve que não é desta bridge)
+// divide um balde próprio. Força bruta do código de 8 caracteres: ≤ 240/min
+// × 5 min de validade ≈ 1200 palpites em ~1,1e12.
+const PEER_PAIR_ATTEMPTS_PER_MINUTE = 10;
+const LOCAL_PAIR_ATTEMPTS_PER_MINUTE = 30;
+const PROXY_PAIR_ATTEMPTS_PER_MINUTE = 240;
 const PROXY_PAIR_RATE_KEY = 'pre:proxy:pair';
+const LOCAL_PAIR_RATE_KEY = 'pre:proxy:pair:local';
+const MAX_PAIRING_FAILURE_KEYS = 4096;
 // Unambiguous alphabet (no 0/O/1/I/L) over 8 chars ≈ 32^8 ≈ 1.1e12 keyspace.
 const PAIRING_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 const PAIRING_LEN = 8;
@@ -147,8 +155,14 @@ let bridgeGeneration = 0;
 let tailscaleQueue: Promise<unknown> = Promise.resolve();
 let connectionSeq = 0;
 // Consulta do Serve que falhou = dono desconhecido: nada é desligado e a
-// tentativa se repete (o boot também repete, pelo marcador).
-const UNPUBLISH_RETRY_MS = [5_000, 30_000, 120_000] as const;
+// tentativa se repete — 5 s/30 s/2 min e depois a cada 10 min, sem desistir,
+// enquanto o handler pode ser nosso (stop) ou houver marcador de pid morto
+// (boot). Um handler que aponta para uma porta efêmera fechada continuaria
+// publicado para o tailnet inteiro.
+const TAILSCALE_RETRY_MS = [5_000, 30_000, 120_000] as const;
+const TAILSCALE_RETRY_STEADY_MS = 10 * 60_000;
+const tailscaleRetryTimers = new Set<ReturnType<typeof setTimeout>>();
+let orphanRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function enqueueTailscale<T>(task: () => Promise<T>): Promise<T> {
   const run = tailscaleQueue.then(task, task);
@@ -156,20 +170,50 @@ function enqueueTailscale<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
+function tailscaleRetryDelay(attempt: number): number {
+  return TAILSCALE_RETRY_MS[attempt] ?? TAILSCALE_RETRY_STEADY_MS;
+}
+
+function scheduleTailscaleRetry(attempt: number, run: () => void): ReturnType<typeof setTimeout> {
+  const timer = setTimeout(() => {
+    tailscaleRetryTimers.delete(timer);
+    run();
+  }, tailscaleRetryDelay(attempt));
+  timer.unref?.();
+  tailscaleRetryTimers.add(timer);
+  return timer;
+}
+
 function scheduleUnpublish(target: string, servePort: number, attempt = 0): void {
-  void enqueueTailscale(() => unpublishRemoteBridgeFromTailnet(target, servePort)).then(
+  void enqueueTailscale(async () => {
+    // Conferido na VEZ da tarefa (não ao armar o timer): um republish no mesmo
+    // alvo (porta fixa) que entrou na fila antes desta tarefa já é da bridge
+    // viva, e `serve off` derrubaria a bridge em uso.
+    if (bridgeTailscale?.target === target) return 'superseded' as const;
+    return unpublishRemoteBridgeFromTailnet(target, servePort);
+  }).then(
     (outcome) => {
-      const delay = UNPUBLISH_RETRY_MS[attempt];
-      if (outcome !== 'unknown' || delay === undefined) return;
-      const timer = setTimeout(() => {
-        // Republicado no mesmo alvo neste meio-tempo: o handler é da bridge viva.
-        if (bridgeTailscale?.target === target) return;
-        scheduleUnpublish(target, servePort, attempt + 1);
-      }, delay);
-      timer.unref?.();
+      if (outcome !== 'unknown') return;
+      scheduleTailscaleRetry(attempt, () => scheduleUnpublish(target, servePort, attempt + 1));
     },
     () => undefined,
   );
+}
+
+function runOrphanCleanup(attempt: number): Promise<void> {
+  return enqueueTailscale(() =>
+    cleanupOrphanRemoteBridgeTailscale(bridgeTailscale?.target ?? null),
+  )
+    .catch(() => 'unknown' as const)
+    .then((outcome) => {
+      // Para quando limpou, quando o marcador sumiu ou o dono está vivo.
+      if (outcome !== 'unknown') return;
+      if (orphanRetryTimer) clearTimeout(orphanRetryTimer);
+      orphanRetryTimer = scheduleTailscaleRetry(attempt, () => {
+        orphanRetryTimer = null;
+        void runOrphanCleanup(attempt + 1);
+      });
+    });
 }
 
 function releaseBridgeTailscale(): void {
@@ -188,18 +232,18 @@ async function applyBridgeTailscale(enabled: boolean): Promise<void> {
   const localPort = port;
   if (!localPort || bridgeTailscale?.target) return;
   const generation = bridgeGeneration;
-  const published = await enqueueTailscale(() =>
-    publishRemoteBridgeOnTailnet({
-      localPort,
-      localHost: boundHost === '::1' ? '[::1]' : '127.0.0.1',
-    }),
-  );
-  if (generation !== bridgeGeneration || port !== localPort) {
-    // A bridge parou enquanto o Serve era configurado: desfaz o que entrou.
-    if (published.target) scheduleUnpublish(published.target, published.servePort);
-    return;
-  }
-  bridgeTailscale = published;
+  const localHost = boundHost === '::1' ? '[::1]' : '127.0.0.1';
+  await enqueueTailscale(async () => {
+    const published = await publishRemoteBridgeOnTailnet({ localPort, localHost });
+    if (generation !== bridgeGeneration || port !== localPort) {
+      // A bridge parou enquanto o Serve era configurado: desfaz o que entrou.
+      if (published.target) scheduleUnpublish(published.target, published.servePort);
+      return;
+    }
+    // Dentro da tarefa da fila: qualquer unpublish/limpeza enfileirado depois
+    // já enxerga o handler como da bridge viva.
+    bridgeTailscale = published;
+  });
 }
 
 function ensureRoot(): void {
@@ -233,6 +277,13 @@ function pairingLockRemaining(key: string): number {
 
 /** Record a failed pairing attempt for a key and lock it out past the cap. */
 function recordPairingFailure(key: string): void {
+  if (pairingFailuresByIp.size >= MAX_PAIRING_FAILURE_KEYS && !pairingFailuresByIp.has(key)) {
+    // Partições sobrevivem ao close: poda as que não estão bloqueadas agora.
+    const now = Date.now();
+    for (const [stale, entry] of pairingFailuresByIp) {
+      if (entry.lockedUntil <= now) pairingFailuresByIp.delete(stale);
+    }
+  }
   const entry = pairingFailuresByIp.get(key) ?? { count: 0, lockedUntil: 0 };
   entry.count += 1;
   if (entry.count >= MAX_PAIRING_FAILURES) {
@@ -513,13 +564,48 @@ function localEndpoints(currentPort: number): RemoteBridgeEndpoint[] {
 
 function clientIp(req: { socket: { remoteAddress?: string } }): string {
   // Só o socket. Atrás do Tailscale Serve todo cliente chega como loopback;
-  // X-Forwarded-For/Tailscale-User-* são cabeçalhos que qualquer cliente na
-  // porta local forja, então nunca viram identidade nem chave de rate limit.
+  // X-Forwarded-For/Tailscale-User-* nunca viram identidade (ver
+  // servePeerPartition para o único uso deles).
   return req.socket.remoteAddress ?? 'unknown';
 }
 
 function isLoopbackAddress(address: string): boolean {
   return address === '::1' || address.startsWith('127.') || address.startsWith('::ffff:127.');
+}
+
+function singleHeader(value: string | string[] | undefined): string | null {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256 ? value : null;
+}
+
+/** IP do tailnet: 100.64.0.0/10 ou fd7a:115c:a1e0::/48, em forma canônica. */
+function isTailnetPeerAddress(value: string): boolean {
+  if (isIPv4(value)) return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value) && isTailscaleIpv4Address(value);
+  return isIPv6(value) && value.toLowerCase().startsWith('fd7a:115c:a1e0:');
+}
+
+/**
+ * Chave de PARTIÇÃO do rate limit/lockout de pareamento pré-auth para quem
+ * chega pelo Tailscale Serve — nunca identidade, nunca autorização.
+ *
+ * Por que dá para usar: o proxy do Serve (tailscaled, ipnlocal/serve.go)
+ * descarta o X-Forwarded-For de entrada e grava o IP tailnet do peer, e apaga
+ * Tailscale-User-* antes de gravar o login do dono do nó (ausente em nó com
+ * tag). Um peer do tailnet não escolhe esses valores.
+ *
+ * Quando vale: SÓ com socket de loopback (é por onde o Serve entrega) E com o
+ * Serve publicado por ESTA bridge (sem ele não há proxy, e o cabeçalho só pode
+ * ter vindo de um processo local) E com X-Forwarded-For único e do tailnet.
+ * LAN direta nunca usa cabeçalho (vale o IP do socket). Um processo local na
+ * porta loopback ainda forja tudo: por isso o teto global segue como rede e
+ * nada aqui libera acesso — só separa baldes.
+ */
+function servePeerPartition(req: IncomingMessage, proxied: boolean): string | null {
+  if (!proxied || !bridgeTailscale?.target) return null;
+  const forwardedFor = singleHeader(req.headers['x-forwarded-for']);
+  if (!forwardedFor || !isTailnetPeerAddress(forwardedFor)) return null;
+  const login = singleHeader(req.headers['tailscale-user-login']);
+  if (login && /^[\x21-\x7e]+$/.test(login)) return `login:${login.toLowerCase()}`;
+  return `node:${forwardedFor.toLowerCase()}`;
 }
 
 function rateOk(key: string, limit = RATE_LIMIT_PER_MINUTE): boolean {
@@ -958,10 +1044,13 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
   // Loopback = desktop local ou qualquer aparelho do tailnet via Serve: o IP
   // não distingue ninguém e X-Forwarded-* nunca vira identidade. A
   // pré-autenticação conta por conexão; depois do auth, pela identidade
-  // comprovada no Main (tokenId), em bucket próprio.
+  // comprovada no Main (tokenId), em bucket próprio. O pareamento conta pela
+  // partição do peer carimbada pelo Serve, quando há (servePeerPartition).
   const proxied = isLoopbackAddress(ip);
+  const partition = servePeerPartition(req, proxied);
   const preAuthKey = proxied ? `pre:conn:${(connectionSeq += 1)}` : `pre:ip:${ip}`;
-  const pairingKey = proxied ? preAuthKey : ip;
+  // Lockout por partição sobrevive à reconexão; sem partição, por conexão.
+  const pairingKey = partition ? `peer:${partition}` : proxied ? preAuthKey : ip;
   // Reap sockets that connect but never authenticate — they otherwise pin a
   // slot and file descriptors indefinitely.
   const unauthTimer = setTimeout(() => {
@@ -971,7 +1060,7 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
     clearTimeout(unauthTimer);
     if (proxied) {
       rate.delete(preAuthKey);
-      pairingFailuresByIp.delete(pairingKey);
+      if (!partition) pairingFailuresByIp.delete(pairingKey);
     }
     clearAuthenticatedClient(ws);
     dropStreamSubscriber(ws);
@@ -1005,12 +1094,14 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
         throw new Error('rate limited');
       }
       const msg = command(parsed);
-      if (
-        proxied &&
-        msg.type === 'pair' &&
-        !rateOk(PROXY_PAIR_RATE_KEY, PROXY_PAIR_ATTEMPTS_PER_MINUTE)
-      ) {
-        throw new Error('rate limited');
+      if (proxied && msg.type === 'pair') {
+        // Partição primeiro: um peer acima do próprio teto não gasta a rede.
+        const partitionOk = partition
+          ? rateOk(`pre:peer:${partition}`, PEER_PAIR_ATTEMPTS_PER_MINUTE)
+          : rateOk(LOCAL_PAIR_RATE_KEY, LOCAL_PAIR_ATTEMPTS_PER_MINUTE);
+        if (!partitionOk || !rateOk(PROXY_PAIR_RATE_KEY, PROXY_PAIR_ATTEMPTS_PER_MINUTE)) {
+          throw new Error('rate limited');
+        }
       }
       if (msg.type === 'ping') {
         send(ws, { id: msg.id, ok: true, result: { pong: true } });
@@ -1312,7 +1403,24 @@ export async function settleRemoteBridgeTailscale(timeoutMs = 2_500): Promise<vo
   }
 }
 
-/** Boot: remove o handler do Serve que uma execução anterior deixou. */
+/**
+ * Boot: remove o handler do Serve que uma execução anterior deixou. Com a
+ * consulta do Serve falhando (ex.: o Nexus subiu antes do Tailscale.app) a
+ * limpeza se repete no mesmo cronograma do stop, sem desistir, enquanto
+ * houver marcador de pid morto. Uma nova chamada reinicia o cronograma.
+ */
 export function cleanupRemoteBridgeTailscaleOrphan(): Promise<void> {
-  return enqueueTailscale(() => cleanupOrphanRemoteBridgeTailscale()).catch(() => undefined);
+  if (orphanRetryTimer) {
+    clearTimeout(orphanRetryTimer);
+    tailscaleRetryTimers.delete(orphanRetryTimer);
+    orphanRetryTimer = null;
+  }
+  return runOrphanCleanup(0);
+}
+
+/** Só para testes: cancela as novas tentativas pendentes de unpublish/limpeza. */
+export function cancelRemoteBridgeTailscaleRetries(): void {
+  for (const timer of tailscaleRetryTimers) clearTimeout(timer);
+  tailscaleRetryTimers.clear();
+  orphanRetryTimer = null;
 }

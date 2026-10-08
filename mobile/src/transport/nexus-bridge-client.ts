@@ -90,6 +90,10 @@ type ConnectWaiter = {
 const DEFAULT_REQUEST_TIMEOUT_MS = 8_000
 // O desktop fecha com estes motivos quando o token morre (closeAuthenticatedClient).
 const AUTH_CLOSE_REASON = /token|revoked|revogad|expired|expirad/i
+// Recusas da credencial no auth (remote-bridge.ts: `auth.challenge` → "invalid
+// token or device"; `auth` → "invalid device authentication"). O resto
+// ("rate limited", "bridge project scope is unavailable"…) é transitório.
+const CREDENTIAL_REJECTED = /invalid token|invalid device|revoked|expired/i
 
 export class NexusBridgeClient {
   private readonly options: NexusBridgeClientOptions
@@ -145,9 +149,18 @@ export class NexusBridgeClient {
     return () => this.pushListeners.delete(listener)
   }
 
-  /** Conecta e autentica com o token salvo. Idempotente. */
+  /**
+   * Conecta e autentica com o token salvo. Idempotente. Durante o backoff não
+   * abre socket: quem chama espera o timer (só reconnectNow pula a espera).
+   */
   start(): void {
-    if (this.closed || !this.token || this.socket || this.state === 'auth-failed') {
+    if (
+      this.closed ||
+      !this.token ||
+      this.socket ||
+      this.reconnectTimer ||
+      this.state === 'auth-failed'
+    ) {
       return
     }
     this.openSocket()
@@ -312,14 +325,28 @@ export class NexusBridgeClient {
       if (generation !== this.generation || this.closed) {
         return
       }
-      // Igual ao PWA: com o socket aberto, uma recusa no auth é rejeição da
-      // credencial (token revogado/expirado, chave trocada) — não adianta repetir.
-      if (error instanceof NexusBridgeRemoteError) {
+      // Só a recusa da CREDENCIAL é final (token revogado/expirado, chave
+      // trocada): repetir não adianta e só um novo pareamento resolve. Rate
+      // limit, bridge parando ou resposta estranha passam: nova tentativa com
+      // backoff, sem jogar fora um token válido.
+      if (error instanceof NexusBridgeRemoteError && CREDENTIAL_REJECTED.test(error.message)) {
         this.failAuth(`autenticação recusada pelo desktop (${error.message})`)
+        return
+      }
+      if (error instanceof NexusBridgeRemoteError) {
+        this.retryAuthLater(`autenticação adiada pelo desktop (${error.message})`)
         return
       }
       this.log('warn', `autenticação interrompida: ${errorMessage(error)}`)
     }
+  }
+
+  private retryAuthLater(message: string): void {
+    this.log('warn', message)
+    const socket = this.socket
+    this.dropSocket(new NexusBridgeDeliveryUnknownError(message))
+    socket?.close(1000, 'auth retry')
+    this.scheduleReconnect()
   }
 
   private markConnected(): void {
@@ -381,6 +408,11 @@ export class NexusBridgeClient {
     const exponential = Math.min(max, base * 2 ** (this.attempt - 1))
     const delay = Math.round(exponential * (0.8 + 0.4 * random()))
     this.setState('reconnecting')
+    // Um único timer: um segundo agendamento substitui o anterior em vez de
+    // deixar dois sockets nascerem no fim do backoff.
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+    }
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       if (!this.closed && !this.socket) {

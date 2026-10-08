@@ -39,7 +39,9 @@ o broker, nunca tecla no PTY).
 
 **Não disponível em host Nexus** (a tela avisa e o adaptador responde
 `nexus_host_unsupported` com "… não disponível em host Nexus"): teclas cruas (Ctrl-C, Esc,
-"1"…) — a bridge recusa entrada parcial de propósito; arquivos, Git, worktrees, abas de sessão,
+"1"…) — o desktop recusa entrada parcial e caracteres de controle de propósito
+(`authorizeRemotePaneInput`, no Main, vale para qualquer cliente; o aviso no app é só UX e
+evita a ida à bridge); arquivos, Git, worktrees, abas de sessão,
 contas, voz/ditado, screencast do navegador, Linear/GitHub/GitLab, notificações push e o chat
 nativo estruturado. O relay do companion (`/r/<roomId>`) ainda não é usado pelo app.
 

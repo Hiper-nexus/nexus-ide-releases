@@ -175,6 +175,34 @@ describe('authorizeRemotePaneInput', () => {
       });
   });
 
+  it.each([
+    ['Ctrl-C depois de linha rotineira', 'git commit -m x\u0003'],
+    ['Ctrl-C sozinho', '\u0003'],
+    ['Shift-Tab (ESC [ Z)', 'git status\u001b[Z'],
+    ['colagem entre colchetes', 'git status\u001b[200~rm -rf /\u001b[201~'],
+    ['CR solto reescrevendo a linha', 'git status\rrm -rf /tmp/x'],
+    ['DEL', 'ls\u007f'],
+    ['C1 CSI', 'ls\u009b2J'],
+    ['NUL', 'pwd\u0000'],
+  ])('F-1000: recusa caractere de controle no Main (%s)', (_label, input) => {
+    expect(authorizeRemotePaneInput(input, true)).toEqual({
+      allowed: false,
+      reason: 'control-characters-not-allowed',
+    });
+  });
+
+  it('F-1000: CRLF é só fim de linha (normalizado para LF) e Tab nunca é rotina', () => {
+    expect(authorizeRemotePaneInput('git status\r\nnpm test', true)).toEqual({
+      allowed: true,
+      requiresDesktopConfirmation: false,
+      command: 'git status\nnpm test',
+    });
+    expect(authorizeRemotePaneInput('git status\t', true)).toMatchObject({
+      allowed: true,
+      requiresDesktopConfirmation: true,
+    });
+  });
+
   it('nega escrita parcial para impedir montar comando fora do gate', () => {
     expect(authorizeRemotePaneInput('rm -rf /tmp/nexus-build', false)).toEqual({
       allowed: false,
