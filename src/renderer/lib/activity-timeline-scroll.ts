@@ -5,6 +5,7 @@
 // (opções de maintainScrollAtEnd, suspensão do follow ao abrir/fechar um
 // detalhe, MVCP data+size); sem composer, citação, minimapa nem memória de
 // posição por thread — a timeline do Nexus abre no topo, como antes.
+// markListWrappersPresentational é do Nexus (acessibilidade da lista virtual).
 import type {
   MaintainScrollAtEndOptions,
   MaintainVisibleContentPositionConfig,
@@ -57,6 +58,27 @@ export const ACTIVITY_TIMELINE_MAINTAIN_VISIBLE_CONTENT_POSITION = {
   data: true,
   size: true,
 } as const satisfies MaintainVisibleContentPositionConfig;
+
+/**
+ * O Legend envolve cada linha em divs próprias (camada e contêiner posicionado)
+ * e o Chromium as expõe como `generic` entre o role=list e cada role=listitem:
+ * a lista deixa de possuir os itens na árvore de acessibilidade. Marca essas
+ * divs como apresentação (role="none"), do item até a lista. Fora de uma lista
+ * ou em quem já declara role, não toca em nada.
+ */
+export function markListWrappersPresentational(item: Element | null): void {
+  if (!item) return;
+  const wrappers: Element[] = [];
+  for (let el = item.parentElement; el && wrappers.length <= 8; el = el.parentElement) {
+    if (el.getAttribute('role') === 'list') {
+      for (const wrapper of wrappers) {
+        if (!wrapper.hasAttribute('role')) wrapper.setAttribute('role', 'none');
+      }
+      return;
+    }
+    wrappers.push(el);
+  }
+}
 
 type FrameScheduler = {
   readonly request: (callback: FrameRequestCallback) => number;
