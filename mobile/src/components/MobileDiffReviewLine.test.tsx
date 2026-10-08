@@ -75,6 +75,30 @@ describe('MobileDiffReviewLine', () => {
     expect(flatStyle(node).backgroundColor).toBe(colors.diffDeletedWordBg)
   })
 
+  it('read-only rows (Nexus host, F-1014) are not note buttons', () => {
+    const onAddNote = vi.fn()
+    act(() => {
+      renderer = create(
+        createElement(MobileDiffReviewLine, {
+          line: { kind: 'add', text: 'x', newLineNumber: 7 },
+          tokens: null,
+          comments: [],
+          staleCommentIds: new Set(),
+          active: false,
+          onAddNote,
+          onEditNote: () => {},
+          readOnly: true
+        })
+      )
+    })
+    const code = renderer!.root.findByType('Pressable' as never)
+    expect(code.props.disabled).toBe(true)
+    expect(code.props.accessibilityRole).toBe('text')
+    expect(code.props.accessibilityLabel).toBe('Added line 7')
+    code.props.onPress()
+    expect(onAddNote).not.toHaveBeenCalled()
+  })
+
   it('shows the raw line text until its block is highlighted', () => {
     const view = render(
       { kind: 'context', text: 'plain row', oldLineNumber: 1, newLineNumber: 1 },

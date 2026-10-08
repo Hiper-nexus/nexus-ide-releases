@@ -17,6 +17,11 @@ export type MobileRpcKind =
   | 'approval.respond'
   | 'mission.list'
   | 'ops.snapshot'
+  // F-1014: Git e arquivos do checkout de um pane — só leitura.
+  | 'git.status'
+  | 'git.diff'
+  | 'files.list'
+  | 'files.read'
   | 'mission.complete'
   | 'git.push'
   | 'git.reset'
@@ -39,6 +44,10 @@ const READ_ONLY: ReadonlySet<MobileRpcKind> = new Set([
   'pane.stream.subscribe',
   'mission.list',
   'ops.snapshot',
+  'git.status',
+  'git.diff',
+  'files.list',
+  'files.read',
 ]);
 
 export type MobileAuthorizeInput = {
@@ -202,6 +211,11 @@ export function mobileRpcKindForBridgeType(type: string): MobileRpcKind | null {
       return 'pane.input';
     case 'agentSession.respondToApproval':
       return 'approval.respond';
+    case 'git.status':
+    case 'git.diff':
+    case 'files.list':
+    case 'files.read':
+      return type;
     case 'mission.complete':
       return 'mission.complete';
     case 'git.push':

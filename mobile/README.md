@@ -37,16 +37,28 @@ fora da lista de rotina pedem confirmação no desktop); fechar pane; aprovaçõ
 card estruturado (push `approvals.changed` + `agentSession.respondToApproval` — decisão para
 o broker, nunca tecla no PTY).
 
+**Git e arquivos do pane, só leitura (F-1014):** no detalhe de um pane, **Alterações** mostra o
+`git status` do checkout DESSE pane (a worktree do worker, quando ele tem uma) e abre o diff de
+cada arquivo com o componente de diff do app; **Arquivos** navega pelas pastas e abre um arquivo
+para leitura. Comandos da bridge: `git.status`, `git.diff`, `files.list`, `files.read` (o
+adaptador também aceita os nomes do Orca: `worktree: id:<pane>`, `filePath`, `relativePath`).
+O desktop decide tudo: o pane precisa ser visível ao aparelho; o caminho é relativo, sem `..`,
+e todo link simbólico no caminho precisa resolver (`realpath`) para dentro da raiz real do
+checkout; `.git/` e arquivos de segredo (`.env*`, chaves, `credentials.json`…) são recusados;
+leitura e diff são cortados em 256 KB com `truncated: true`; binário vem como `binary`. Sem
+stage, commit, checkout nem escrita.
+
 **Não disponível em host Nexus** (a tela avisa e o adaptador responde
 `nexus_host_unsupported` com "… não disponível em host Nexus"): teclas cruas (Ctrl-C, Esc,
 "1"…) — o desktop recusa entrada parcial e caracteres de controle de propósito
 (`authorizeRemotePaneInput`, no Main, vale para qualquer cliente; o aviso no app é só UX e
-evita a ida à bridge); arquivos, Git, worktrees, abas de sessão,
+evita a ida à bridge); escrita no Git e em arquivos (stage, commit, edição), worktrees, abas de sessão,
 contas, voz/ditado, screencast do navegador, Linear/GitHub/GitLab, notificações push e o chat
 nativo estruturado. O relay do companion (`/r/<roomId>`) ainda não é usado pelo app.
 
-Código: `src/transport/nexus-bridge-{client,device-key,device-store,pairing,pair-host,rpc-adapter}.ts`
-e `src/nexus-host/NexusHostScreen.tsx`. Prova de ponta a ponta contra a bridge real:
+Código: `src/transport/nexus-bridge-{client,device-key,device-store,pairing,pair-host,rpc-adapter,git-files}.ts`,
+`src/nexus-host/NexusHostScreen.tsx` e `src/nexus-host/NexusPaneWorkspace.tsx`; no desktop,
+`src/main/remote/remote-workspace-rpc.ts`. Prova de ponta a ponta contra a bridge real:
 `src/main/remote/remote-bridge.mobile-app.test.ts` (raiz do repositório).
 
 ## Desktop Orca (protocolo legado)

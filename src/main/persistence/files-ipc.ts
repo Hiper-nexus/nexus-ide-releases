@@ -219,7 +219,8 @@ function safeListEntry(
   }
 }
 
-function listDir(scope: ProjectExecutionScope, relPath: string): FileTreeResult {
+/** Também usado pela Remote Bridge (F-1014) com o escopo do checkout do pane. */
+export function listDir(scope: ProjectExecutionScope, relPath: string): FileTreeResult {
   const resolved = resolveLexicalPath(scope, relPath);
   if (!resolved) return { ok: false, error: 'path outside workspace' };
   const directory = canonicalDirectory(resolved.root, resolved.abs);
@@ -256,7 +257,7 @@ function listDir(scope: ProjectExecutionScope, relPath: string): FileTreeResult 
   }
 }
 
-function looksBinary(buffer: Buffer): boolean {
+export function looksBinary(buffer: Buffer): boolean {
   const sample = buffer.subarray(0, 8000);
   for (const byte of sample) {
     if (byte === 0) return true; // NUL byte → binary.

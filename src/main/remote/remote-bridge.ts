@@ -54,6 +54,13 @@ import {
   mobileRpcKindForBridgeType,
 } from './mobile-companion-policy';
 import { requestRemoteDesktopConfirmation } from './remote-desktop-confirmation';
+import {
+  remoteFilesList,
+  remoteFilesRead,
+  remoteGitDiff,
+  remoteGitStatus,
+  resolveRemotePaneWorkspace,
+} from './remote-workspace-rpc';
 import { createRemoteInputDedup, remoteInputMessageId } from './remote-input-dedup';
 import {
   parseRemoteDeviceIdentity,
@@ -1012,6 +1019,20 @@ export async function handleAuthedMessage(
     }
     case 'status':
       return redactRemoteBridgeSecrets(getRemoteBridgeInfo(scope));
+    // F-1014: Git e arquivos do checkout de um pane que o aparelho pode LER —
+    // só leitura, pelos serviços do desktop (remote-workspace-rpc.ts). Stage,
+    // commit, checkout e escrita não têm comando aqui: caem em `unknown command`.
+    case 'git.status':
+      return remoteGitStatus(resolveRemotePaneWorkspace(msg.paneId, scope));
+    case 'git.diff':
+      return remoteGitDiff(resolveRemotePaneWorkspace(msg.paneId, scope), msg.path, {
+        staged: msg.staged === true,
+        untracked: msg.untracked === true,
+      });
+    case 'files.list':
+      return remoteFilesList(resolveRemotePaneWorkspace(msg.paneId, scope), msg.path);
+    case 'files.read':
+      return remoteFilesRead(resolveRemotePaneWorkspace(msg.paneId, scope), msg.path);
     default:
       throw new Error(`unknown command: ${msg.type}`);
   }

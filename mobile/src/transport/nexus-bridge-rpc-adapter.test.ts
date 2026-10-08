@@ -281,7 +281,8 @@ describe('Nexus bridge adapter — Orca methods mapped to bridge commands', () =
     const menuKey = await client.sendRequest('terminal.send', { terminal: 'p1', text: '1', enter: false })
     expect(menuKey).toMatchObject({ ok: false, error: { code: NEXUS_HOST_UNSUPPORTED, message: NEXUS_RAW_KEYS_MESSAGE } })
 
-    for (const method of ['git.status', 'files.list', 'worktree.ps', 'session.tabs.list', 'speech.models.list', 'linear.listIssues']) {
+    // F-1014: git.status/git.diff/files.list/files.read são atendidos; a escrita segue recusada.
+    for (const method of ['git.commit', 'git.stage', 'files.write', 'worktree.ps', 'session.tabs.list', 'speech.models.list', 'linear.listIssues']) {
       const response = await client.sendRequest(method)
       expect(response).toMatchObject({ ok: false, error: { code: NEXUS_HOST_UNSUPPORTED } })
       expect(!response.ok && response.error.message).toMatch(/não disponível em host Nexus$/)
@@ -291,8 +292,110 @@ describe('Nexus bridge adapter — Orca methods mapped to bridge commands', () =
     })
     unsubscribe()
     expect(bridge.last.sent.length).toBe(before)
-    expect(logs).toContain('Git (git.status) não disponível em host Nexus')
+    expect(logs).toContain('Escrita no Git (git.commit) não disponível em host Nexus')
+    expect(logs).toContain('Escrita e busca de arquivos (files.write) não disponível em host Nexus')
     expect(logs).toContain('Contas (accounts.subscribe) não disponível em host Nexus')
+    client.close()
+  })
+
+  it('F-1014: maps git.status/git.diff/files.list/files.read (Orca names) to read-only bridge commands', async () => {
+    const bridge = new FakeBridge()
+    bridge.overrides['git.status'] = () => ({
+      result: {
+        paneId: 'p1',
+        branch: 'main',
+        ahead: 1,
+        behind: 0,
+        hasUpstream: true,
+        clean: false,
+        truncated: false,
+        hasUnresolvedConflicts: true,
+        staged: [{ path: 'src/a.ts', status: 'M' }],
+        unstaged: [
+          { path: 'b.ts', status: 'D' },
+          { path: 'c.ts', status: 'U' },
+          { path: 'new.ts', status: 'R', originalPath: 'old.ts' },
+          { path: '.env', status: 'M', restricted: true },
+          { bogus: true }
+        ],
+        untracked: [{ path: 'notes.txt', status: '?' }]
+      }
+    })
+    bridge.overrides['git.diff'] = (frame) => ({
+      result: { kind: 'patch', path: frame.path, staged: frame.staged, patch: '@@ -1 +1 @@\n-a\n+b\n', truncated: false }
+    })
+    bridge.overrides['files.list'] = (frame) => ({
+      result: {
+        path: frame.path,
+        entries: [
+          { name: 'src', path: 'src', kind: 'dir' },
+          { name: 'x', path: 'x', kind: 'symlink' }
+        ],
+        truncated: false
+      }
+    })
+    bridge.overrides['files.read'] = (frame) => ({
+      result: { path: frame.path, content: 'oi\n', truncated: false, byteLength: 3, binary: false }
+    })
+    const { client } = open(bridge)
+    await settle()
+
+    const status = await client.sendRequest('git.status', { worktree: 'id:p1' })
+    expect(status).toMatchObject({
+      ok: true,
+      result: {
+        branch: 'main',
+        upstreamStatus: { hasUpstream: true, ahead: 1, behind: 0 },
+        clean: false,
+        entries: [
+          { path: 'src/a.ts', area: 'staged', status: 'modified', letter: 'M', restricted: false },
+          { path: 'b.ts', area: 'unstaged', status: 'deleted' },
+          { path: 'c.ts', area: 'unstaged', status: 'modified', conflictStatus: 'unresolved' },
+          { path: 'new.ts', area: 'unstaged', status: 'renamed', oldPath: 'old.ts' },
+          { path: '.env', restricted: true },
+          { path: 'notes.txt', area: 'untracked', status: 'untracked' }
+        ]
+      }
+    })
+    // O leitor de status das telas do Orca entende a mesma resposta.
+    const { readMobileGitStatusResult } = await import('../session/mobile-diff-review-rpc')
+    expect(readMobileGitStatusResult(status.ok ? status.result : null)?.entries).toHaveLength(6)
+
+    await expect(
+      client.sendRequest('git.diff', { worktree: 'id:p1', filePath: 'src/a.ts', staged: true })
+    ).resolves.toMatchObject({ ok: true, result: { kind: 'patch', path: 'src/a.ts', staged: true } })
+    await expect(
+      client.sendRequest('files.list', { paneId: 'p1', path: 'src' })
+    ).resolves.toMatchObject({ ok: true, result: { path: 'src', entries: [{ name: 'src', kind: 'dir' }] } })
+    await expect(
+      client.sendRequest('files.read', { worktree: 'id:p1', relativePath: 'README.md' })
+    ).resolves.toMatchObject({ ok: true, result: { content: 'oi\n', truncated: false, byteLength: 3 } })
+    await expect(client.nexus.workspace.gitDiff('p1', { path: 'notes.txt', area: 'untracked' })).resolves.toMatchObject({
+      kind: 'patch'
+    })
+
+    const sent = bridge.last.sent
+    expect(sent.find((frame) => frame.type === 'git.status')).toMatchObject({ paneId: 'p1' })
+    expect(sent.filter((frame) => frame.type === 'git.diff')).toEqual([
+      expect.objectContaining({ paneId: 'p1', path: 'src/a.ts', staged: true, untracked: false }),
+      expect.objectContaining({ paneId: 'p1', path: 'notes.txt', staged: false, untracked: true })
+    ])
+    expect(sent.find((frame) => frame.type === 'files.list')).toMatchObject({ paneId: 'p1', path: 'src' })
+    expect(sent.find((frame) => frame.type === 'files.read')).toMatchObject({ paneId: 'p1', path: 'README.md' })
+
+    // Recusa do desktop (caminho para fora do checkout) vira falha do host, não erro de transporte.
+    bridge.overrides['files.read'] = () => ({ error: 'not authorized: path-escapes-checkout' })
+    await expect(client.sendRequest('files.read', { paneId: 'p1', relativePath: 'leak' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'nexus_bridge_refused', message: 'not authorized: path-escapes-checkout' }
+    })
+    // Sem pane: recusa de forma, sem ir à bridge.
+    const before = bridge.last.sent.length
+    await expect(client.sendRequest('files.read', { relativePath: 'x' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'nexus_bridge_refused', message: 'parâmetro paneId ausente' }
+    })
+    expect(bridge.last.sent.length).toBe(before)
     client.close()
   })
 

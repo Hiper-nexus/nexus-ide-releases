@@ -59,6 +59,24 @@ describe('mobileRpcKindForBridgeType', () => {
     expect(mobileRpcKindForBridgeType('pane.stream.frame')).toBe('pane.input');
   });
 
+  it('F-1014: Git e arquivos de leitura são só leitura; escrita no Git/arquivos não ganha kind', () => {
+    for (const type of ['git.status', 'git.diff', 'files.list', 'files.read'] as const) {
+      expect(mobileRpcKindForBridgeType(type)).toBe(type);
+      expect(isDestructiveMobileRpc(type)).toBe(false);
+      expect(authorizeMobileRpc({ kind: type, deviceActive: true })).toEqual({
+        allowed: true,
+        requiresConfirmation: false,
+      });
+      expect(authorizeMobileRpc({ kind: type, deviceActive: false })).toEqual({
+        allowed: false,
+        reason: 'device-revoked',
+      });
+    }
+    for (const type of ['git.commit', 'git.stage', 'git.checkout', 'files.write']) {
+      expect(mobileRpcKindForBridgeType(type)).toBeNull();
+    }
+  });
+
   it('mapeia tipos destrutivos futuros para o kind gateado', () => {
     expect(mobileRpcKindForBridgeType('git.push')).toBe('git.push');
     expect(mobileRpcKindForBridgeType('git.reset')).toBe('git.reset');
