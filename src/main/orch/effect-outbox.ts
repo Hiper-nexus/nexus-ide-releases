@@ -205,7 +205,8 @@ export class EffectOutboxStore {
 
   /**
    * Persiste a linha (política T3: notificar workers só depois do commit).
-   * Id determinístico por comando/run: `enqueue` ignora um id que já existe.
+   * O mesmo id com a mesma identidade devolve a linha existente, mesmo se o
+   * payload mudou. commandId, threadId ou type diferentes são conflito.
    */
   enqueue(raw: EffectOutboxEnqueueInput): EffectOutboxEntry {
     const input = enqueueSchema.parse(raw);
@@ -220,7 +221,17 @@ export class EffectOutboxStore {
       const existing = db
         .prepare(`SELECT * FROM effect_outbox WHERE effect_id = ?`)
         .get(id);
-      if (existing) return rowToEntry(existing);
+      if (existing) {
+        const current = rowToEntry(existing);
+        if (
+          current.commandId !== input.commandId ||
+          current.threadId !== input.threadId ||
+          current.type !== input.type
+        ) {
+          throw new Error('effect outbox id is already bound to another command');
+        }
+        return current;
+      }
       db.prepare(
         `INSERT INTO effect_outbox (
            effect_id, command_id, thread_id, effect_type, payload_json,

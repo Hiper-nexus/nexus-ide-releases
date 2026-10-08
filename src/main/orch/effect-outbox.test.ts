@@ -78,7 +78,45 @@ describe("ORC-01 effect outbox", () => {
       payload: { paneId: "pane-other" },
     });
     expect(second.id).toBe(first.id);
+    expect(second.payload).toEqual({ paneId: "pane-a" });
     expect(store.listByStatus("pending")).toHaveLength(1);
+  });
+
+  it("rejects a reused id bound to another command, thread, or type", () => {
+    const { store } = freshStore();
+    store.enqueue({
+      id: "eff-bound",
+      commandId: "cmd-turn-1",
+      threadId: "thread-a",
+      type: "turn.start",
+    });
+    expect(() =>
+      store.enqueue({
+        id: "eff-bound",
+        commandId: "cmd-other",
+        threadId: "thread-a",
+        type: "turn.start",
+      }),
+    ).toThrow(/already bound/);
+    expect(() =>
+      store.enqueue({
+        id: "eff-bound",
+        commandId: "cmd-turn-1",
+        threadId: "thread-b",
+        type: "turn.start",
+      }),
+    ).toThrow(/already bound/);
+    expect(() =>
+      store.enqueue({
+        id: "eff-bound",
+        commandId: "cmd-turn-1",
+        threadId: "thread-a",
+        type: "checkpoint.capture",
+      }),
+    ).toThrow(/already bound/);
+    expect(store.get("eff-bound")?.commandId).toBe("cmd-turn-1");
+    expect(store.get("eff-bound")?.threadId).toBe("thread-a");
+    expect(store.get("eff-bound")?.type).toBe("turn.start");
   });
 
   it("claimNext is exclusive and uses a lease", () => {
