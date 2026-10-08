@@ -36,6 +36,7 @@ const REQUIRED_SCOPE = new Map<string, RemoteDeviceScope | null>([
   ['git.diff', 'read'],
   ['files.list', 'read'],
   ['files.read', 'read'],
+  ['pane.activity.list', 'read'], // MOB-05 (F-1021)
   ['pane.input', 'input'],
   ['pane.resize', 'input'],
   ['pane.stream.frame', 'input'],

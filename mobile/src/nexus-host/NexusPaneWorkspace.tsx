@@ -3,9 +3,11 @@
 // edição aqui. As linhas do diff usam o mesmo componente da revisão do app
 // (MobileDiffReviewLine, com realce de sintaxe por bloco).
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
 import { ChevronLeft, ChevronRight, FileText, Folder, Lock, RefreshCw } from 'lucide-react-native'
 import { MobileDiffReviewLine } from '../components/MobileDiffReviewLine'
+// MOB-01: a lista virtualizada do app (a mesma do caminho Orca).
+import { MobileLegendList } from '../components/MobileLegendList'
 import { useMobileDiffReviewBlockHighlights } from '../session/use-mobile-diff-review-block-highlights'
 import { buildMobileReviewLines, type MobileReviewLineRow } from '../source-control/mobile-review-model'
 import {
@@ -148,12 +150,13 @@ function NexusChanges({ paneId, workspace }: { paneId: string; workspace: NexusW
   }
   const { entries, branch, upstreamStatus, truncated } = status.value
   return (
-    <FlatList
+    <MobileLegendList
       data={AREA_ORDER.flatMap((area) => {
         const rows = entries.filter((entry) => entry.area === area)
         return rows.length > 0 ? [{ area, rows }] : []
       })}
       keyExtractor={(section) => section.area}
+      estimatedItemSize={160}
       ListHeaderComponent={
         <View style={styles.toolbar}>
           <Text style={styles.toolbarText} numberOfLines={1}>
@@ -271,13 +274,13 @@ function NexusDiff({
           onAction={reload}
         />
       ) : (
-        <FlatList<MobileReviewLineRow>
+        <MobileLegendList<MobileReviewLineRow>
           data={review.rows}
           keyExtractor={(row) => row.id}
+          estimatedItemSize={20}
           extraData={highlights.highlightVersion}
           onViewableItemsChanged={highlights.onViewableItemsChanged}
           viewabilityConfig={highlights.viewabilityConfig}
-          initialNumToRender={60}
           renderItem={({ item, index }) => (
             <MobileDiffReviewLine
               line={item}
@@ -328,9 +331,10 @@ function NexusFiles({ paneId, workspace }: { paneId: string; workspace: NexusWor
       {listing.kind !== 'ready' ? (
         <LoadState state={listing} busyText="Listando a pasta no desktop…" onRetry={reload} />
       ) : (
-        <FlatList
+        <MobileLegendList
           data={listing.value.entries}
           keyExtractor={(entry) => entry.path}
+          estimatedItemSize={48}
           ListEmptyComponent={
             <EmptyState
               text="Pasta vazia, ou só com itens que o desktop não mostra (.git, node_modules, links e arquivos de segredo)."
@@ -399,10 +403,10 @@ function NexusFile({
       ) : read.value.byteLength === 0 ? (
         <EmptyState text="Arquivo vazio." />
       ) : (
-        <FlatList
+        <MobileLegendList
           data={lines}
           keyExtractor={(_line, index) => String(index)}
-          initialNumToRender={80}
+          estimatedItemSize={18}
           renderItem={({ item, index }) => (
             <View style={styles.fileLine}>
               <Text style={styles.fileLineNumber}>{index + 1}</Text>
@@ -555,7 +559,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: radii.button
   },
-  listContent: { gap: spacing.xs, paddingBottom: spacing.lg },
+  listContent: { paddingBottom: spacing.lg },
   section: {
     color: colors.textSecondary,
     fontSize: typography.metaSize,

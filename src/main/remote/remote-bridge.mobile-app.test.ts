@@ -22,6 +22,7 @@ import {
   type NexusPaneOutput,
 } from '../../../mobile/src/transport/nexus-bridge-rpc-adapter';
 import { nexusDiffLines } from '../../../mobile/src/transport/nexus-bridge-git-files';
+import type { RemoteDeviceScope } from '../../shared/remote-types';
 
 // Prova de compatibilidade de ponta a ponta: a Remote Bridge REAL (HTTPS/WSS,
 // pareamento, desafio assinado, política mobile, broker de aprovação) em
@@ -37,6 +38,11 @@ const h = vi.hoisted(() => ({
   repo: '',
   worktree: '',
   repoLink: '',
+  // MOB-05 (F-1021): os sinais de atividade que o desktop já publica.
+  stateTap: null as ((sessionId: string, state: string) => void) | null,
+  exitTap: null as ((sessionId: string) => void) | null,
+  semanticTap: null as ((entry: { sessionId: string; paneId: string; status: string }) => void) | null,
+  orcaTap: null as ((sessionId: string, state: string) => void) | null,
 }));
 
 vi.mock('../orch/project-domain-store-registry', () => ({
@@ -123,6 +129,36 @@ vi.mock('../pty/pty-manager', () => ({
     h.tap = cb;
     return () => {
       if (h.tap === cb) h.tap = null;
+    };
+  },
+  // MOB-05: estado do PTY (canal do toolbar) e saída da sessão.
+  tapSessionState: (cb: (sessionId: string, state: string) => void) => {
+    h.stateTap = cb;
+    return () => {
+      h.stateTap = null;
+    };
+  },
+  tapSessionExit: (cb: (sessionId: string) => void) => {
+    h.exitTap = cb;
+    return () => {
+      h.exitTap = null;
+    };
+  },
+}));
+// MOB-05: os dois planos de "pede você" da caixa ⌘J.
+vi.mock('../orch/agent-status', () => ({
+  tapAgentSemanticStatus: (cb: NonNullable<typeof h.semanticTap>) => {
+    h.semanticTap = cb;
+    return () => {
+      h.semanticTap = null;
+    };
+  },
+}));
+vi.mock('../agent-hooks/hook-ingest', () => ({
+  tapAgentHookStatus: (cb: NonNullable<typeof h.orcaTap>) => {
+    h.orcaTap = cb;
+    return () => {
+      h.orcaTap = null;
     };
   },
 }));
@@ -434,8 +470,11 @@ describe('app Expo ↔ Remote Bridge real (F-994)', () => {
 // pane, só leitura, pelos serviços do desktop — contra a bridge real.
 // ---------------------------------------------------------------------------
 
-async function connectApp(track?: (socket: WebSocket) => void) {
-  const info = bridge.rotateRemotePairing(scope);
+async function connectApp(
+  track?: (socket: WebSocket) => void,
+  scopes?: readonly RemoteDeviceScope[], // MOB-05: aparelho com escopos estreitos (MOB-12)
+) {
+  const info = bridge.rotateRemotePairing(scope, scopes);
   const factory = pinnedSocketFactory(info.certFingerprint!, track);
   const identity = newIdentity();
   const pairing = new NexusBridgeClient({ url, identity: async () => identity, createSocket: factory });
@@ -694,4 +733,116 @@ describe('host Nexus no app: Git e arquivos do pane pela bridge real (F-1014)', 
     });
     again.client.close();
   }, 20_000);
+});
+
+// ---------------------------------------------------------------------------
+// MOB-05 (F-1021): atividade dos panes empurrada pela bridge real, a partir dos
+// sinais que o desktop já publica (estado do PTY + planos de "pede você").
+// ---------------------------------------------------------------------------
+
+describe('host Nexus no app: atividade dos panes pela bridge real (MOB-05)', () => {
+  type ActivityFrame = { type?: string; [key: string]: unknown };
+  let stopSources: (() => void) | null = null;
+  let activity: typeof import('./remote-pane-activity');
+
+  beforeAll(async () => {
+    activity = await import('./remote-pane-activity');
+    const sources = await import('./remote-pane-activity-sources');
+    stopSources = sources.startRemotePaneActivitySources();
+  });
+
+  afterAll(() => {
+    stopSources?.();
+    activity.__setRemotePaneActivityLimitsForTests(null);
+  });
+
+  async function connectRecording(scopes?: readonly RemoteDeviceScope[]) {
+    const frames: ActivityFrame[] = [];
+    const app = await connectApp(
+      (socket) =>
+        socket.on('message', (data) => frames.push(JSON.parse(data.toString()) as ActivityFrame)),
+      scopes,
+    );
+    const pushes: Array<{ paneId: string; activity: string; at: number }> = [];
+    app.client.nexus.onPaneActivity((entry) => pushes.push({ ...entry }));
+    return { ...app, frames, pushes };
+  }
+
+  it('empurra a transição só para quem lê o pane, sem saída, e o app relê o estado atual', async () => {
+    activity.__setRemotePaneActivityLimitsForTests({ coalesceMs: 20, maxPerWindow: 50, windowMs: 60_000 });
+    const { client, frames, pushes } = await connectRecording();
+    const last = (paneId: string) => pushes.filter((push) => push.paneId === paneId).at(-1)?.activity;
+
+    h.stateTap!('sess-app', 'busy');
+    h.stateTap!('sess-other', 'busy'); // pane de outro projeto: este aparelho não lê
+    await waitFor(() => last('pane-app') === 'working', 'push trabalhando');
+
+    h.semanticTap!({ sessionId: 'sess-app', paneId: 'pane-app', status: 'awaiting-input' });
+    h.orcaTap!('sess-other', 'waiting');
+    await waitFor(() => last('pane-app') === 'waiting', 'push pede você');
+
+    // O app reconstrói o cartão depois de conectar: só panes legíveis.
+    await expect(client.nexus.paneActivity()).resolves.toEqual([
+      { paneId: 'pane-app', activity: 'waiting', at: expect.any(Number) },
+    ]);
+
+    h.semanticTap!({ sessionId: 'sess-app', paneId: 'pane-app', status: 'completed' });
+    h.stateTap!('sess-app', 'idle');
+    await waitFor(() => last('pane-app') === 'idle', 'push parado/terminou');
+    h.exitTap!('sess-app');
+    h.exitTap!('sess-other');
+    await waitFor(() => last('pane-app') === 'exited', 'push encerrado');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const wire = frames.filter((frame) => frame.type === 'pane.activity');
+    expect(wire.map((frame) => frame.activity)).toEqual(['working', 'waiting', 'idle', 'exited']);
+    for (const frame of wire) {
+      // Só pane, atividade e instante: nada de sessão nem de saída do terminal.
+      expect(Object.keys(frame).sort()).toEqual(['activity', 'at', 'paneId', 'type']);
+      expect(frame.paneId).toBe('pane-app');
+    }
+    expect(JSON.stringify(frames)).not.toContain('pane-other');
+    expect(JSON.stringify(frames)).not.toContain('boot ok');
+    client.close();
+  });
+
+  it('aparelho sem o escopo "Ver" (read, MOB-12) não recebe atividade nem lê a lista', async () => {
+    activity.__setRemotePaneActivityLimitsForTests({ coalesceMs: 20, maxPerWindow: 50, windowMs: 60_000 });
+    const reader = await connectRecording();
+    const blind = await connectRecording(['input', 'approve']);
+    h.stateTap!('sess-moved', 'busy');
+    await waitFor(
+      () => reader.pushes.some((push) => push.paneId === 'pane-moved' && push.activity === 'working'),
+      'push para o aparelho com read',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(blind.frames.filter((frame) => frame.type === 'pane.activity')).toEqual([]);
+    expect(blind.pushes).toEqual([]);
+    await expect(blind.client.nexus.paneActivity()).rejects.toThrow(/permissão "Ver"/);
+    reader.client.close();
+    blind.client.close();
+  });
+
+  it('agrupa a rajada em um push e, acima do teto, segura até a janela abrir sem perder o estado final', async () => {
+    activity.__setRemotePaneActivityLimitsForTests({ coalesceMs: 30, maxPerWindow: 2, windowMs: 800 });
+    const { client, pushes } = await connectRecording();
+    const worker = () =>
+      pushes.filter((push) => push.paneId === 'pane-worker').map((push) => push.activity);
+
+    // 20 trocas busy↔idle no mesmo instante: um push só, com o estado final.
+    for (let i = 0; i < 20; i += 1) h.stateTap!('sess-worker', i % 2 === 0 ? 'busy' : 'idle');
+    await waitFor(() => worker().length === 1, 'push agrupado');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(worker()).toEqual(['idle']);
+
+    // A 2ª troca sai; a 3ª passa do teto (2 por janela) e espera a janela abrir.
+    h.stateTap!('sess-worker', 'busy');
+    await waitFor(() => worker().length === 2, '2º push');
+    h.stateTap!('sess-worker', 'idle');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(worker()).toEqual(['idle', 'working']);
+    await waitFor(() => worker().length === 3, 'estado final depois da janela', 3_000);
+    expect(worker()).toEqual(['idle', 'working', 'idle']);
+    client.close();
+  });
 });

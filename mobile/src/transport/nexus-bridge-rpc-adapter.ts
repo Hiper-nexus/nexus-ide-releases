@@ -14,6 +14,7 @@
 //   agentSession.respondToApproval  → agentSession.respondToApproval
 //   aprovações pendentes            → ops.snapshot.approvals + push approvals.changed
 //   git.status/git.diff, files.list/files.read (só leitura, F-1014) → nexus-bridge-git-files.ts
+//   atividade dos panes (MOB-05, F-1021) → pane.activity.list + push pane.activity
 import { parseApprovalPrompt, type PendingApprovalEnvelope } from '../../../src/shared/approval-decision'
 // F-1014 (início)
 import {
@@ -121,6 +122,16 @@ export type NexusOpsSnapshot = {
   readonly approvals: readonly NexusApproval[]
 }
 
+// MOB-05 (F-1021): trabalhando / pede você / parado / encerrado, sem nada da saída.
+export const NEXUS_PANE_ACTIVITIES = ['working', 'waiting', 'idle', 'exited'] as const
+export type NexusPaneActivityState = (typeof NEXUS_PANE_ACTIVITIES)[number]
+export type NexusPaneActivity = {
+  readonly paneId: string
+  readonly activity: NexusPaneActivityState
+  /** Quando o pane entrou nesta atividade (relógio do desktop). */
+  readonly at: number
+}
+
 /** `reset` = texto completo (pane.read); sem reset = trecho novo do push. */
 export type NexusPaneOutput = { readonly type: 'nexus.output'; readonly text: string; readonly reset: boolean }
 
@@ -130,6 +141,10 @@ export type NexusHostApi = {
   closePane: (paneId: string) => Promise<void>
   subscribePane: (paneId: string, listener: (output: NexusPaneOutput) => void) => () => void
   onApprovalsChanged: (listener: () => void) => () => void
+  /** MOB-05: atividade atual dos panes que o aparelho lê. */
+  paneActivity: () => Promise<readonly NexusPaneActivity[]>
+  /** MOB-05: cada transição empurrada pelo desktop. */
+  onPaneActivity: (listener: (entry: NexusPaneActivity) => void) => () => void
   /** F-1014: Git e arquivos do checkout de um pane, só leitura. */
   workspace: NexusWorkspaceApi
 }
@@ -198,6 +213,7 @@ export function createNexusBridgeRpcClient(
 ): NexusBridgeRpcClient {
   const client = new NexusBridgeClient(options)
   const approvalListeners = new Set<() => void>()
+  const activityListeners = new Set<(entry: NexusPaneActivity) => void>() // MOB-05
   const loggedUnsupported = new Set<string>()
   let active: PaneSubscription | null = null
   let everConnected = false
@@ -369,6 +385,14 @@ export function createNexusBridgeRpcClient(
     }
     if (push.type === 'pane.stream.data') {
       handlePanePush(push)
+      return
+    }
+    // MOB-05 (F-1021)
+    const entry = push.type === 'pane.activity' ? readPaneActivity(push) : null
+    if (entry) {
+      for (const listener of [...activityListeners]) {
+        listener(entry)
+      }
     }
   })
 
@@ -466,6 +490,19 @@ export function createNexusBridgeRpcClient(
       approvalListeners.add(listener)
       return () => approvalListeners.delete(listener)
     },
+    // MOB-05 (F-1021) (início)
+    paneActivity: async () => {
+      const result = await request('pane.activity.list')
+      return arrayOf(isRecord(result) ? result.panes : null).flatMap((item) => {
+        const entry = readPaneActivity(item)
+        return entry ? [entry] : []
+      })
+    },
+    onPaneActivity: (listener) => {
+      activityListeners.add(listener)
+      return () => activityListeners.delete(listener)
+    },
+    // MOB-05 (F-1021) (fim)
     workspace // F-1014
   }
 
@@ -520,6 +557,7 @@ export function createNexusBridgeRpcClient(
         active = null
       }
       approvalListeners.clear()
+      activityListeners.clear()
       client.close()
     },
     nexus
@@ -571,6 +609,16 @@ function readSnapshot(raw: unknown): NexusOpsSnapshot {
     ]
   })
   return { panes, missions, approvals }
+}
+
+function readPaneActivity(raw: unknown): NexusPaneActivity | null {
+  if (!isRecord(raw) || typeof raw.paneId !== 'string' || !raw.paneId) {
+    return null
+  }
+  const activity = NEXUS_PANE_ACTIVITIES.find((item) => item === raw.activity)
+  return activity
+    ? { paneId: raw.paneId, activity, at: typeof raw.at === 'number' ? raw.at : 0 }
+    : null
 }
 
 function arrayOf(value: unknown): Record<string, unknown>[] {

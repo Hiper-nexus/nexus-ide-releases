@@ -21,6 +21,7 @@ import {
   takeNexusHostNotificationFocus,
   type NexusApprovalNotificationRequest
 } from './nexus-host-notifications'
+import type { NexusPaneActivityTransition } from './nexus-pane-activity'
 
 function approval(requestId: string, paneId = 'p1'): NexusApproval {
   return {
@@ -180,5 +181,96 @@ describe('toque na notificação', () => {
     expect(
       resolveNexusNotificationFocus({ ...focus, paneId: 'sumiu' }, snapshot([]))
     ).toEqual({ kind: 'host' })
+  })
+})
+
+// ─── MOB-05 (F-1021): atividade dos panes ───
+
+describe('notificação de atividade do pane (MOB-05)', () => {
+  const activityOf = (
+    t: ReturnType<typeof notifierWith>,
+    transition: NexusPaneActivityTransition,
+    attention: 'watching' | 'away' = 'away',
+    hostId = 'host-a'
+  ) =>
+    t.notifier.onActivity({ hostId, hostName: 'Mac', transition, paneTitle: 'Claude', attention })
+  const waiting = (at: number, paneId = 'p1'): NexusPaneActivityTransition => ({
+    paneId,
+    from: 'working',
+    to: 'waiting',
+    at
+  })
+
+  it('"esperando você" avisa uma vez por pane e transição — push repetido e releitura não repetem', async () => {
+    const t = notifierWith()
+    expect(await activityOf(t, waiting(100))).toBe(true)
+    expect(await activityOf(t, waiting(100))).toBe(false)
+    // Outra transição do mesmo pane (o desktop mudou de novo) avisa de novo, no mesmo lugar da bandeja.
+    expect(await activityOf(t, waiting(200))).toBe(true)
+    // Outro pane é outro aviso.
+    expect(await activityOf(t, waiting(100, 'p2'))).toBe(true)
+    expect(t.scheduled.map((request) => request.identifier)).toEqual([
+      'nexus-activity:host-a:p1',
+      'nexus-activity:host-a:p1',
+      'nexus-activity:host-a:p2'
+    ])
+    expect(t.scheduled[0]).toMatchObject({
+      title: 'Esperando você · Mac',
+      body: 'Claude: o agente parou numa pergunta ou permissão.',
+      data: { hostId: 'host-a', nexusHost: { paneId: 'p1' } }
+    })
+    expect(JSON.stringify(t.scheduled[0]!.data)).not.toContain('requestId')
+  })
+
+  it('dois avisos simultâneos e o reinício do app não duplicam', async () => {
+    const kv = memoryKv()
+    const t = notifierWith(kv)
+    const results = await Promise.all([activityOf(t, waiting(100)), activityOf(t, waiting(100))])
+    expect(results.filter(Boolean)).toHaveLength(1)
+    const restarted = notifierWith(kv)
+    expect(await activityOf(restarted, waiting(100))).toBe(false)
+    expect(restarted.scheduled).toEqual([])
+  })
+
+  it('"terminou" só de trabalhando para parado; o resto não avisa', async () => {
+    const t = notifierWith()
+    const finished = (from: NexusPaneActivityTransition['from'], at: number) =>
+      activityOf(t, { paneId: 'p1', from, to: 'idle', at })
+    expect(await finished('working', 1)).toBe(true)
+    expect(t.scheduled[0]).toMatchObject({
+      title: 'Terminou · Mac',
+      body: 'Claude: o agente terminou o turno.'
+    })
+    expect(await finished(null, 2)).toBe(false)
+    expect(await finished('waiting', 3)).toBe(false)
+    expect(await activityOf(t, { paneId: 'p1', from: 'idle', to: 'working', at: 4 })).toBe(false)
+    expect(await activityOf(t, { paneId: 'p1', from: 'working', to: 'exited', at: 5 })).toBe(false)
+    expect(t.scheduled).toHaveLength(1)
+  })
+
+  it('olhando o pane não avisa (e conta como visto); sem consentimento/permissão nada é agendado', async () => {
+    const t = notifierWith()
+    expect(await activityOf(t, waiting(100), 'watching')).toBe(false)
+    expect(await activityOf(t, waiting(100))).toBe(false)
+    expect(t.scheduled).toEqual([])
+    const denied = notifierWith(memoryKv(), false)
+    expect(await activityOf(denied, waiting(100))).toBe(false)
+    expect(denied.scheduled).toEqual([])
+  })
+
+  it('o toque abre o pane do aviso (sem aprovação para focar)', () => {
+    const data = { hostId: 'host-a', nexusHost: { paneId: 'p1' } }
+    const focus = readNexusNotificationFocus(data)
+    expect(focus).toEqual({ hostId: 'host-a', paneId: 'p1', requestId: null })
+    expect(
+      resolveNexusNotificationFocus(focus!, { panes: PANES, missions: [], approvals: [approval('r1')] })
+    ).toEqual({ kind: 'pane', pane: PANES[0] })
+    expect(getNotificationNavigationTarget(data, { knownHostIds: new Set(['host-a']) })).toEqual({
+      hostId: 'host-a',
+      sessionTarget: null
+    })
+    expect(
+      readNexusNotificationFocus({ hostId: 'host-a', nexusHost: { paneId: 'p1', requestId: 7 } })
+    ).toBeNull()
   })
 })
