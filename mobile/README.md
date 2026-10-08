@@ -1,8 +1,55 @@
-# Orca Mobile
+# Nexus Mobile
 
-React Native companion app for Orca. Monitor worktrees, view terminal output, and send commands from your phone.
+App Expo (React Native) companheiro do desktop. O mesmo app fala dois protocolos e o
+tipo do host vem do QR de pareamento:
 
-Local development uses two processes:
+| Host | Transporte | QR |
+|------|------------|----|
+| **Desktop Nexus** | Remote Bridge: HTTPS/WSS, chave do aparelho ECDSA P-256 (Keychain/Keystore) e desafio assinado a cada conexão | `https://<máquina>.<tailnet>.ts.net/#code=XXXXXXXX` |
+| Desktop Orca (legado, herdado do fork) | `ws://<ip>:6768` com E2EE tweetnacl; relay `wss://<cell>/v1/connect/<hostId>` | `orca://pair?...` |
+
+## Parear com o desktop Nexus
+
+1. No desktop: **Configurações › Celular na rede local**. Ligue **Publicar no tailnet
+   (HTTPS)** e clique em **Iniciar**. O card mostra o código e o QR
+   `https://<máquina>.<tailnet>.ts.net/#code=…` (certificado público do Tailscale Serve).
+2. O celular precisa estar no mesmo tailnet (app Tailscale logado).
+3. No app: **Pair → escaneie o QR** (ou cole a URL inteira em *Paste code*). O app gera a
+   chave do aparelho uma vez, assina `nexus-remote-pair-v1:<código>` e recebe o token, que vai
+   para o Keychain/Keystore. O código vale para um aparelho e cinco minutos; para outro
+   aparelho, use **Girar código de pareamento** no desktop.
+4. Cada reconexão pede `auth.challenge` e responde `auth` com o desafio assinado — copiar só o
+   token para outro aparelho não autentica. Queda de rede reconecta sozinha (backoff
+   exponencial de 1 s a 30 s; voltar o app para a frente tenta na hora).
+5. Revogar os tokens no desktop (ou o token expirar em 7 dias) leva a tela do host para
+   **Parear de novo**, sem ficar em loop de reconexão.
+
+**Por que não a URL da LAN.** A bridge na rede local usa certificado autoassinado. O WebSocket
+do React Native só aceita certificado em que o sistema confia e não deixa o JavaScript fixar
+impressão digital, então o app recusa o QR com IP/`localhost` e explica como ligar o Tailscale
+Serve — aceitar sem verificar seria MITM aberto. O PWA *Nexus Remote* (abrir a URL no
+navegador do celular) continua sendo a alternativa para a LAN pura.
+
+**O que funciona com o desktop Nexus:** status do host; lista de panes e missões
+(`ops.snapshot`); terminal ao vivo (`pane.stream.open` + `pane.read`, cura de lacuna por
+releitura); envio de **um comando completo** com Enter (`pane.input`, até 8 KB; comandos
+fora da lista de rotina pedem confirmação no desktop); fechar pane; aprovações pendentes com o
+card estruturado (push `approvals.changed` + `agentSession.respondToApproval` — decisão para
+o broker, nunca tecla no PTY).
+
+**Não disponível em host Nexus** (a tela avisa e o adaptador responde
+`nexus_host_unsupported` com "… não disponível em host Nexus"): teclas cruas (Ctrl-C, Esc,
+"1"…) — a bridge recusa entrada parcial de propósito; arquivos, Git, worktrees, abas de sessão,
+contas, voz/ditado, screencast do navegador, Linear/GitHub/GitLab, notificações push e o chat
+nativo estruturado. O relay do companion (`/r/<roomId>`) ainda não é usado pelo app.
+
+Código: `src/transport/nexus-bridge-{client,device-key,device-store,pairing,pair-host,rpc-adapter}.ts`
+e `src/nexus-host/NexusHostScreen.tsx`. Prova de ponta a ponta contra a bridge real:
+`src/main/remote/remote-bridge.mobile-app.test.ts` (raiz do repositório).
+
+## Desktop Orca (protocolo legado)
+
+Local development against an Orca desktop uses two processes:
 
 - Orca desktop/Electron from the repo root. This hosts the mobile WebSocket RPC server on port `6768`.
 - Expo Metro from `mobile/`. This serves the React Native app on port `8081`.

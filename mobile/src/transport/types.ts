@@ -91,6 +91,10 @@ export type ConnectionState =
 // network-change nudge marks the socket suspect enough to replace it.
 export type ForegroundNudgeReason = 'focus' | 'app-resume' | 'network-change'
 
+// Why: absent = host Orca (ws:// + E2EE). 'nexus-bridge' = desktop Nexus pela Remote Bridge
+// (wss:// + chave do aparelho); publicKeyB64 guarda `nexus-bridge:<origin>` só para deduplicar.
+export const NEXUS_BRIDGE_HOST_KIND = 'nexus-bridge'
+
 export type HostProfile = {
   id: string
   name: string
@@ -98,6 +102,7 @@ export type HostProfile = {
   deviceToken: string
   publicKeyB64: string
   lastConnected: number
+  kind?: typeof NEXUS_BRIDGE_HOST_KIND
   endpoints?: MobileAccessEndpoint[]
   relayHostId?: MobileRelayHostOverlay['relayHostId']
   relay?: MobileRelayHostOverlay['relay']
@@ -117,6 +122,7 @@ export const HostProfileSchema = z.object({
   deviceToken: z.string().min(1),
   publicKeyB64: z.string().min(1),
   lastConnected: z.number().finite(),
+  kind: z.literal(NEXUS_BRIDGE_HOST_KIND).optional(),
   endpoints: z.array(MobileAccessEndpointSchema).min(1).max(16).optional(),
   relayHostId: z
     .string()
@@ -133,7 +139,8 @@ export const StoredHostProfileSchema = z.object({
   name: z.string().min(1),
   endpoint: z.string().min(1),
   publicKeyB64: z.string().min(1),
-  lastConnected: z.number().finite()
+  lastConnected: z.number().finite(),
+  kind: z.literal(NEXUS_BRIDGE_HOST_KIND).optional()
 })
 
 export type StoredHostProfile = z.infer<typeof StoredHostProfileSchema>

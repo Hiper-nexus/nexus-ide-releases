@@ -1,6 +1,6 @@
 # Remote Ops (Fase 5) — companion thin client
 
-Nexus **não** embute o React Native do Orca. O caminho de produto é o **thin client PWA** servido pela remote bridge (HTTPS + WebSocket), com pairing por código.
+Dois clientes falam com a remote bridge (HTTPS + WebSocket), com pairing por código: o **thin client PWA** que a própria bridge serve e o **app Expo** de `mobile/` (F-968, seção abaixo). O protocolo do Orca que o app herdou continua no app para hosts Orca; o desktop Nexus não o serve.
 
 ## Stack
 
@@ -45,6 +45,33 @@ fica no desktop.
    expirar ou consumir não gera outro; para um segundo aparelho, clicar em
    **Girar código de pareamento** no desktop.
 4. Ecrã **Ops**: resumo + missões + panes; tocar pane → output + input.
+
+## App Expo (`mobile/`, F-968)
+
+O app trata o desktop Nexus como host `nexus-bridge`, separado dos hosts Orca. O
+leitor de QR aceita `https://<host>[:porta]/#code=XXXXXXXX` (o QR do card *Celular na
+rede local*) e o transporte é um porte em TS puro do lado cliente do PWA:
+`mobile/src/transport/nexus-bridge-client.ts` (pair/auth.challenge/auth, pedidos,
+pushes, reconexão com backoff), `nexus-bridge-device-key.ts` (ECDSA P-256 por
+`@noble/curves`, chave privada no Keychain/Keystore do aparelho) e
+`nexus-bridge-rpc-adapter.ts` (métodos do app → comandos da bridge; o que não tem
+equivalente responde "… não disponível em host Nexus").
+
+- **TLS:** o WebSocket do React Native só confia no que o sistema confia e não expõe
+  a cadeia ao JS. Por isso o app **recusa** o QR com IP/`localhost` (certificado
+  autoassinado da LAN) e pede o Tailscale Serve (`*.ts.net`, CA pública). Não há
+  "aceitar mesmo assim". Para LAN pura sem tailnet, use o PWA no navegador.
+- **Mapeamento:** `status.get`→`status`, `terminal.list`→`ops.snapshot`,
+  `terminal.subscribe`→`pane.stream.open` + `pane.read`, `terminal.send` (com Enter)→
+  `pane.input` com `messageId`, `terminal.updateViewport`→`pane.resize`,
+  `terminal.close`→`pane.close`, `mission.list`, `agentSession.respondToApproval`
+  (+ push `approvals.changed`). Teclas cruas, arquivos, Git, worktrees, abas, contas,
+  voz, screencast e Linear/GitHub/GitLab ficam desabilitados com aviso.
+- **Prova:** `src/main/remote/remote-bridge.mobile-app.test.ts` sobe esta bridge real
+  em processo e conecta o cliente do app (importado por caminho) com o certificado
+  fixado pela `certFingerprint`: pareia, autentica, lista, abre stream, envia uma
+  linha, recebe a saída e responde uma aprovação.
+- O relay do companion (`/r/<roomId>`) ainda não é usado pelo app.
 
 ## Relação com Orca mobile
 

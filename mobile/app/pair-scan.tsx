@@ -13,6 +13,11 @@ import { useRouter } from 'expo-router'
 import { ChevronLeft, Clipboard as ClipboardIcon, QrCode } from 'lucide-react-native'
 import { decodePairingUrl, parsePairingCode } from '../src/transport/pairing'
 import {
+  parseNexusBridgePairingUrl,
+  type NexusBridgePairingTarget
+} from '../src/transport/nexus-bridge-pairing'
+import { pairNexusBridgeHost } from '../src/transport/nexus-bridge-pair-host'
+import {
   startPreProfilePairing,
   type PreProfilePairingAttempt
 } from '../src/transport/pre-profile-pairing-coordinator'
@@ -79,10 +84,17 @@ export default function PairScanScreen() {
       }
       processingRef.current = true
 
+      // Desktop Nexus (Remote Bridge) primeiro; o resto segue o pareamento do Orca.
+      const nexus = parseNexusBridgePairingUrl(data)
+      if (nexus) {
+        startNexusPairing(nexus)
+        return
+      }
+
       const offer = decodePairingUrl(data)
       if (!offer) {
         setStatus('error')
-        setErrorMessage('Not a valid Orca QR code')
+        setErrorMessage('Not a valid Orca or Nexus QR code')
         processingRef.current = false
         return
       }
@@ -98,6 +110,12 @@ export default function PairScanScreen() {
       return
     }
     processingRef.current = true
+
+    const nexus = parseNexusBridgePairingUrl(input)
+    if (nexus) {
+      startNexusPairing(nexus)
+      return
+    }
 
     const offer = parsePairingCode(input)
     if (!offer) {
@@ -122,6 +140,59 @@ export default function PairScanScreen() {
         : nextBounds
     )
   }, [])
+
+  function startNexusPairing(parsed: NonNullable<ReturnType<typeof parseNexusBridgePairingUrl>>) {
+    if (parsed.kind === 'error') {
+      setStatus('error')
+      setErrorMessage(parsed.message)
+      processingRef.current = false
+      return
+    }
+    void pairNexus(parsed)
+  }
+
+  async function pairNexus(target: NexusBridgePairingTarget) {
+    setStatus('connecting')
+    logsRef.current = []
+    setLogs([])
+    activePairingAttemptRef.current?.dispose()
+    activePairingAttemptRef.current = null
+    let logSeq = 0
+    try {
+      const { hostId } = await pairNexusBridgeHost({
+        target,
+        timeoutMs: PAIRING_OVERALL_TIMEOUT_MS,
+        onLog: (level, message) => {
+          if (!mountedRef.current) {
+            return
+          }
+          logsRef.current = [
+            ...logsRef.current,
+            { id: `nexus-pair-${++logSeq}`, ts: Date.now(), level, message }
+          ]
+          setLogs(logsRef.current)
+        }
+      })
+      if (!mountedRef.current) {
+        return
+      }
+      refreshHostClient(hostId)
+      const onboardingSteps = await loadMobileOnboardingSteps()
+      if (!mountedRef.current) {
+        return
+      }
+      router.replace(mobileOnboardingDestination(onboardingSteps, hostId))
+    } catch (err) {
+      if (!mountedRef.current) {
+        return
+      }
+      setStatus('error')
+      setErrorMessage(
+        `Pareamento com o Nexus falhou: ${err instanceof Error ? err.message : String(err)}`
+      )
+      processingRef.current = false
+    }
+  }
 
   async function testAndSave(offer: PairingOffer) {
     setStatus('connecting')
@@ -227,7 +298,7 @@ export default function PairScanScreen() {
           </Text>
           <Text style={styles.subtitle}>
             {canAskAgain
-              ? 'Scan the QR code from Orca on your desktop, or paste the pairing code instead.'
+              ? 'Scan the QR code from Orca or Nexus on your desktop, or paste the pairing code instead.'
               : 'Enable camera access in Settings, or paste the pairing code instead.'}
           </Text>
           <Pressable
@@ -251,7 +322,7 @@ export default function PairScanScreen() {
           visible={pasteVisible}
           title="Paste pairing code"
           message="Copy the code shown under the QR on your computer."
-          placeholder="orca://pair?code=... or paste the code"
+          placeholder="orca://pair?code=…, https://<mac>.<tailnet>.ts.net/#code=… or the code"
           onSubmit={handlePasteSubmit}
           onCancel={() => setPasteVisible(false)}
         />
@@ -266,8 +337,11 @@ export default function PairScanScreen() {
       </Pressable>
 
       <View style={styles.steps}>
-        <Step number={1} text="Open Orca on your computer" />
-        <Step number={2} text="Go to Settings → Mobile" />
+        <Step number={1} text="Open Orca or Nexus on your computer" />
+        <Step
+          number={2}
+          text="Orca: Settings → Mobile · Nexus: Configurações › Celular na rede local, com Publicar no tailnet (HTTPS)"
+        />
         <Step number={3} text="Scan the QR code" />
       </View>
 
@@ -349,7 +423,7 @@ export default function PairScanScreen() {
         visible={pasteVisible}
         title="Paste pairing code"
         message="Copy the code shown under the QR on your computer."
-        placeholder="orca://pair?code=... or paste the code"
+        placeholder="orca://pair?code=…, https://<mac>.<tailnet>.ts.net/#code=… or the code"
         onSubmit={handlePasteSubmit}
         onCancel={() => setPasteVisible(false)}
       />
