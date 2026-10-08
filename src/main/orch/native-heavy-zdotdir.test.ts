@@ -110,7 +110,9 @@ it.runIf(process.platform === 'darwin').each(['stdin', 'script', 'variable'])(
   'nested zsh %s retains admission before native execution', (mode) => {
     const { root, home, env } = fixture();
     fs.writeFileSync(path.join(home, '.zshrc'), '');
-    const program = '/usr/bin/make --version';
+    // `make --version` sozinho é pedido trivial e não é medido (F-956, segunda
+    // revisão); `-s` mantém uma invocação real do make, que sai 0 e imprime a versão.
+    const program = '/usr/bin/make -s --version';
     const script = path.join(root, 'child.zsh'); fs.writeFileSync(script, program);
     const command = mode === 'stdin' ? '/bin/zsh -s' : mode === 'script' ? '/bin/zsh "$NEXUS_TEST_SCRIPT"' : '$SHELL -c "$NEXUS_TEST_PROGRAM"';
     const run = spawnSync('/bin/zsh', ['-c', command], { cwd: root,
@@ -172,7 +174,9 @@ it.runIf(process.platform === 'darwin').each(['stdin', 'script', 'variable', 'ba
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as { port: number }).port;
-    const program = '/usr/bin/make --version';
+    // `make --version` sozinho é pedido trivial e não é medido (F-956, segunda
+    // revisão); `-s` mantém uma invocação real do make, que sai 0 e imprime a versão.
+    const program = '/usr/bin/make -s --version';
     const script = path.join(root, 'child.zsh'); fs.writeFileSync(script, program);
     const command = mode === 'stdin' ? '/bin/zsh -s' : mode === 'script' ? '/bin/zsh "$NEXUS_TEST_SCRIPT"' :
       mode === 'bash' ? '/bin/bash -c "$NEXUS_TEST_PROGRAM"' : '$SHELL -c "$NEXUS_TEST_PROGRAM"';

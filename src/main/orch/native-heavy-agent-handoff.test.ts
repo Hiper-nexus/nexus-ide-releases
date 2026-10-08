@@ -89,16 +89,23 @@ describe.runIf(process.platform !== 'win32')('F-958 — hand-off do launcher do 
     expect(fs.existsSync(argvOut)).toBe(false);
   });
 
-  it('filho do agente com argv diferente do próprio continua medido', () => {
+  // F-956 (segunda revisão): o argv de um filho não passa por shell. Antes, o
+  // texto juntado do brief ("vitest", "typecheck") media este filho por acaso;
+  // agora ele é classificado pelo programa que roda: o brief não mede nada e
+  // um filho do agente que roda um programa pesado continua medido.
+  it('filho do agente com argv diferente do próprio é classificado pelo programa, não pelo brief', () => {
     const child = path.join(root, 'bin', 'child.cjs');
     fs.writeFileSync(
       child,
-      "const r = require('node:child_process').spawnSync(process.env.NEXUS_TEST_NATIVE, " +
-        "[...process.argv.slice(2), '--extra'], { stdio: 'inherit' }); process.exit(r.status ?? 1);\n",
+      "const cp = require('node:child_process');\n" +
+        "const prompt = cp.spawnSync(process.env.NEXUS_TEST_NATIVE, [...process.argv.slice(2), '--extra'], { stdio: 'inherit' });\n" +
+        "const heavy = cp.spawnSync('/usr/bin/env', ['make', '-C', '/nonexistent-f958'], { stdio: 'inherit' });\n" +
+        "console.log(JSON.stringify([prompt.status, heavy.status]));\n",
     );
     const result = run(child, ['--prompt', F958_BRIEF], { NEXUS_HEAVY_AGENT_ENTRY: child });
-    expect(result.status).toBe(74);
-    expect(fs.existsSync(argvOut)).toBe(false);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual([0, 74]);
+    expect(fs.readFileSync(argvOut, 'utf8')).toBe(['--prompt', F958_BRIEF, '--extra'].join('\0'));
   });
 
   it('hand-off para um executável pesado pelo nome continua medido', () => {
@@ -111,5 +118,30 @@ describe.runIf(process.platform !== 'win32')('F-958 — hand-off do launcher do 
     });
     expect(result.status).toBe(74);
     expect(fs.existsSync(argvOut)).toBe(false);
+  });
+});
+
+// F-956 (segunda revisão): child-process.cjs relia `argv.join(' ')` como texto
+// de shell. Um argumento com `|` ou quebra de linha virava outro comando
+// (`rg -e 'a|vitest'` → tests; mensagem de commit com "\nmake …" → build) e o
+// filho leve esperava a fila. O argv direto é classificado palavra por palavra.
+describe.runIf(process.platform !== 'win32')('F-956 — argv direto de spawn/execFile', () => {
+  it('child-process classifica o argv direto, sem reler o texto juntado como shell', () => {
+    const agent = path.join(root, 'bin', 'agent.cjs');
+    fs.writeFileSync(agent, [
+      "const cp = require('node:child_process');",
+      "const run = (file, args, options = {}) => cp.spawnSync(file, args, { encoding: 'utf8', ...options }).status;",
+      'console.log(JSON.stringify([',
+      "  run('/bin/echo', ['-e', 'a|vitest']),",
+      "  run('/bin/echo', ['commit', '-m', 'fix: queue\\nmake all']),",
+      "  run('/usr/bin/env', ['make', '-C', '/nonexistent-nexus-argv']),",
+      "  run('/bin/sh', ['-c', 'make -C /nonexistent-nexus-argv']),",
+      "  run('/bin/echo', ['a|make'], { shell: true }),",
+      ']));',
+    ].join('\n'));
+    const result = run(agent, [], { NEXUS_HEAVY_AGENT_ENTRY: agent });
+    expect(result.status, result.stderr).toBe(0);
+    // Leves rodam (0); os pesados passam pela base de job, que é a fila (74).
+    expect(JSON.parse(result.stdout.trim())).toEqual([0, 0, 74, 74, 74]);
   });
 });

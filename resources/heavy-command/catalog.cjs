@@ -152,7 +152,36 @@ const WRAPPERS = {
   xargs: { flags: '0oprtx', optional: 'eil', values: 'adEIJLnPRSs', ownStdin: true,
     longFlags: ['null', 'open-tty', 'interactive', 'no-run-if-empty', 'verbose', 'exit', 'show-limits', 'eof', 'replace', 'max-lines'],
     longValues: ['arg-file', 'delimiter', 'max-args', 'max-procs', 'max-chars', 'process-slot-var'] },
+  // F-956 (second review). `dashLong`: a single-dash word longer than one
+  // letter is a long option (`arch -x86_64`, `xcrun -sdk`), not letters.
+  // `commandValues`: the value is a command line (`script -c`, `flock -c`);
+  // `trailingCommand`: `-c CMD` may also follow the operands (`flock FILE -c`).
+  arch: { dashLong: true, flags: 'c', values: 'de', noexec: 'h',
+    longFlags: ['32', '64', 'i386', 'x86_64', 'x86_64h', 'arm64', 'arm64e'], longValues: ['arch'] },
+  xcrun: { dashLong: true, flags: 'klnrv', noexec: 'fh',
+    longFlags: ['kill-cache', 'log', 'no-cache', 'run', 'verbose'], longValues: ['sdk', 'toolchain'],
+    longNoexec: ['find', 'show-sdk-path', 'show-sdk-version', 'show-sdk-build-version', 'show-sdk-platform-path', 'show-sdk-platform-version', 'show-toolchain-path'] },
+  // BSD `script [-adeFkqr] [-t time] [file [command …]]`; util-linux `script [-c command] [file]`.
+  script: { flags: 'adeFfkqQr', values: 'tTIOBEmo', commandValues: 'c', noexec: 'pV', operands: 1, trailingCommand: true,
+    longFlags: ['append', 'flush', 'force', 'quiet', 'return', 'timing'], longCommandValues: ['command'],
+    longValues: ['echo', 'log-in', 'log-out', 'log-io', 'log-timing', 'logging-format', 'output-limit'] },
+  setsid: { flags: 'cfw', noexec: 'hV', longFlags: ['ctty', 'fork', 'wait'] },
+  flock: { flags: 'sexnouF', values: 'wE', noexec: 'hV', operands: 1, trailingCommand: true,
+    longFlags: ['shared', 'exclusive', 'unlock', 'nonblock', 'nb', 'close', 'no-fork', 'verbose'],
+    longValues: ['wait', 'timeout', 'conflict-exit-code'] },
+  ionice: { flags: 't', values: 'cn', noexec: 'pPuhV', longFlags: ['ignore'], longValues: ['class', 'classdata'], longNoexec: ['pid', 'pgid', 'uid'] },
+  taskset: { flags: 'ac', noexec: 'phV', longFlags: ['all-tasks', 'cpu-list'], longNoexec: ['pid'], operands: 1 },
+  chrt: { flags: 'abdfioRrv', values: 'TPD', noexec: 'mphV', operands: 1,
+    longFlags: ['all-tasks', 'batch', 'deadline', 'fifo', 'idle', 'other', 'rr', 'reset-on-fork', 'verbose'],
+    longValues: ['sched-runtime', 'sched-period', 'sched-deadline'], longNoexec: ['max', 'pid'] },
+  unbuffer: { flags: 'p' },
 };
+// Asking a heavy tool only for its version or help starts no work. `-v` is
+// the version only for these (pytest -v and ninja -v run verbosely).
+const INFO_ONLY_ARGS = new Set(['--version', '--help', '-h']);
+const SHORT_VERSION = new Set(['tsc', 'tsgo', '_tsc', 'vitest', 'jest', 'make', 'gradle', 'gradlew', 'mvn', 'webpack', 'rollup', 'vite']);
+const infoOnly = (name, args) => args.length > 0 &&
+  args.every((arg) => INFO_ONLY_ARGS.has(arg) || (arg === '-v' && SHORT_VERSION.has(name)) || (arg === '-V' && (name === 'pytest' || name === 'mocha')));
 // A run-time value ($VAR, $(…), `…`) inside a word.
 const DYNAMIC = '\u0000';
 const MAX_NESTING = 64;
@@ -338,14 +367,16 @@ function wrapperKind(name, args, seg, depth) {
   const spec = WRAPPERS[name];
   let i = 0;
   for (; i < args.length; i++) {
-    const arg = args[i];
+    let arg = args[i];
     if (arg === '--') { i++; break; }
     if (arg === '-' && name === 'env') continue;
     if (arg.length < 2 || arg[0] !== '-') break;
     if (spec.numeric && /^-\d+$/.test(arg)) continue;
+    if (spec.dashLong && arg.length > 2 && arg[1] !== '-') arg = '-' + arg;
     if (arg.startsWith('--')) {
       const eq = arg.indexOf('='), long = arg.slice(2, eq < 0 ? undefined : eq);
       if (long === 'help' || long === 'version' || spec.longNoexec?.includes(long)) return null;
+      if (spec.longCommandValues?.includes(long)) return commandKind(String((eq < 0 ? args[++i] : arg.slice(eq + 1)) ?? ''), depth + 1);
       if (spec.longValues?.includes(long)) {
         const value = eq < 0 ? args[++i] : arg.slice(eq + 1);
         // env -S splits its value into the arguments that follow.
@@ -360,13 +391,20 @@ function wrapperKind(name, args, seg, depth) {
       if (spec.noexec?.includes(letter)) return null;
       if (spec.flags?.includes(letter)) continue;
       if (spec.optional?.includes(letter)) break;
-      if (!spec.values?.includes(letter)) return 'build';
+      const command = spec.commandValues?.includes(letter);
+      if (!command && !spec.values?.includes(letter)) return 'build';
       const value = k + 1 < arg.length ? arg.slice(k + 1) : args[++i];
+      if (command) return commandKind(String(value ?? ''), depth + 1);
       if (name === 'env' && letter === 'S') return wrapperKind(name, [...splitWords(value), ...args.slice(i + 1)], seg, depth + 1);
       break;
     }
   }
-  const rest = args.slice(i + (spec.operands || 0));
+  let rest = args.slice(i + (spec.operands || 0));
+  if (spec.trailingCommand && rest.length) {
+    if (rest[0] === '-c' || rest[0] === '--command') return commandKind(String(rest[1] ?? ''), depth + 1);
+    if (rest[0].startsWith('--command=')) return commandKind(rest[0].slice(10), depth + 1);
+    if (rest[0] === '--') rest = rest.slice(1);
+  }
   return rest.length ? wordsKind(rest, spec.ownStdin ? newSegment() : seg, depth + 1) : null;
 }
 // sh/bash/zsh run `-c STRING`, a script file, or the program on their stdin.
@@ -420,7 +458,11 @@ function wordsKind(words, seg, depth) {
   if (depth > MAX_DEPTH) return 'build';
   let at = 0;
   while (at < words.length && (ENV_ASSIGNMENT.test(words[at]) || KEYWORDS.has(words[at]))) at++;
-  if (at >= words.length) return null;
+  return at < words.length ? programKind(at ? words.slice(at) : words, seg, depth) : null;
+}
+// words[0] is the program; the rest are its arguments, one word each.
+function programKind(words, seg, depth) {
+  const at = 0;
   const name = toolName(words[at]);
   // A program named by $VAR or $(…) is known only at run time. Native tool
   // wrappers run `builtin eval -- "$snap"` (Grok), so metering it would queue
@@ -453,6 +495,7 @@ function wordsKind(words, seg, depth) {
     if (verb === 'run' || verb === 'run-script') { const script = firstValue(args.slice(verbAt + 1)); return script < 0 ? null : scriptKind(args.slice(verbAt + 1)[script]); }
     return name === 'npm' ? null : scriptKind(verb);
   }
+  if (infoOnly(name, args)) return null;
   if (name === 'tsc' || name === 'tsgo' || name === '_tsc') return 'typescript';
   if (['vitest', 'jest', 'pytest', 'mocha'].includes(name)) return 'tests';
   if (['go', 'cargo', 'dotnet'].includes(name)) {
@@ -486,6 +529,14 @@ function commandKind(command, depth = 0) {
     return 'build'; // unreadable (too deeply nested): keep it metered
   }
 }
+// F-956 (second review): an exec/spawn argv never went through a shell. Joining
+// it and re-reading the text as shell turned a `|` or newline inside one
+// argument (`rg -e 'a|vitest'`, a commit message with "\nmake …") into another
+// command. Each element is one word; only an explicit shell reads text.
+function argvKind(argv) {
+  if (!Array.isArray(argv) || argv.length === 0 || !argv.every((word) => typeof word === 'string')) return null;
+  try { return programKind(argv, newSegment(), 0); } catch { return 'build'; }
+}
 function entryKind(argv) {
   if (isPersistent(argv)) return null;
   const entry = argv[1] || '';
@@ -509,4 +560,4 @@ function entryKind(argv) {
   }
   return moduleKind(entry) || commandKind(name);
 }
-module.exports = { moduleKind, entryKind, commandKind, isPersistent, isDispatcher };
+module.exports = { moduleKind, entryKind, commandKind, argvKind, isPersistent, isDispatcher };
