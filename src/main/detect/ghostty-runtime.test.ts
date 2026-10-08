@@ -92,7 +92,7 @@ describe('vendored libghostty-vt WebAssembly (ABI)', () => {
       const slot = runtime.allocOpaque();
       expect(runtime.call('ghostty_terminal_new', 0, slot, options)).toBe(0);
       const terminal = runtime.readPointer(slot);
-      const input = new TextEncoder().encode('é 👨‍👩‍👧‍👦 العربية\r\n');
+      const input = new TextEncoder().encode('e\u0301 👨\u200D👩\u200D👧\u200D👦 العربية\r\n');
       const pointer = runtime.alloc(input.length);
       runtime.bytes(pointer, input.length).set(input);
       runtime.call('ghostty_terminal_vt_write', terminal, pointer, input.length);
