@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.76.212 — Nexus no celular de verdade
+
+Continua a integração do T3 Code (pingdotgg/t3code @ 26285ab, MIT): o app do celular passa a ser um cliente completo do desktop Nexus, e o cruzamento dos 64 candidatos do T3 está em `docs/analysis/t3code-crosswalk-26285ab.md` (39 integrados, 4 equivalentes, 20 pendentes, 1 incompatível).
+
+**Celular (host Nexus)**
+- Git e arquivos do pane, só leitura: "Alterações" com o diff de cada arquivo e "Arquivos" para navegar e ler. O desktop resolve o checkout real do pane e recusa `..`, caminho absoluto, link simbólico que sai do checkout, `.git` e arquivos de segredo (F-1014).
+- Fila offline: sem conexão, o comando fica na fila do aparelho e sai em ordem ao reconectar, com o mesmo `messageId` (o desktop não digita duas vezes). Comando com mais de 8 minutos na fila só sai com confirmação; revogação segura a fila (F-1015).
+- Notificação local de aprovação, de "esperando você" e de "terminou", uma vez por pedido ou transição, com o consentimento do app (F-1015, F-1021).
+- Atividade de cada pane ao vivo (trabalhando, esperando você, parado, encerrado) e listas virtualizadas (F-1021).
+- Escopos por aparelho no pareamento: ver, enviar comandos, aprovar, fechar panes. O desktop confere em cada pedido; aparelhos já pareados mantêm o acesso de hoje (F-1022).
+- App em pt-BR com a marca Nexus, sem os atalhos que só funcionam no Orca, e tela limpa depois de revogar (F-1037).
+- `npm run mobile:visual`: o app real na web contra a Remote Bridge real, com 18 telas capturadas a cada execução. Não substitui o teste em aparelho (F-1035).
+
+**Desktop**
+- Histórico de uso de 30 dias em Uso e cotas, em tokens ou custo de API (F-1030).
+- "Citar" na timeline da missão leva o trecho com a origem do evento para a orientação (F-1031).
+- Reordenar as abas de Terminais por arraste, teclado (Alt+Shift+←/→) ou menu (F-1032).
+
+**Motor e segurança**
+- Redação de mais segredos: chaves da Stripe, chave do age e valores com cara de segredo em variáveis `*_KEY` (F-1016).
+- A troca de líder pela interface recusa pane somente leitura (F-1017).
+- Checkpoint publicado depois do prazo do handoff é desfeito, sem ref órfã (F-1018).
+- Proteção contra padrão de limite fora da tabela compartilhada do failover (F-1019).
+- Filas por chave unificadas em `KeyedLock` e `KeyedCoalescingWorker`, com um vazamento de memória corrigido no design (F-1025, F-1026); amostra atrasada de memória do pane descartada (F-1027).
+- Novas regras de lint: teste dentro de laço e IPC sem o wrapper confiável (F-1023, F-1024).
+- O auditor de regex do CI compara a grade libghostty e o texto, e voltou a passar (F-1020); os testes do supervisor PTY constroem o próprio binário (F-1036).
+
 ## 0.76.211 — Atualização que chega sozinha
 
 A 0.76.210 foi publicada, mas ficou horas como "disponível" no Mac do operador sem ninguém clicar e não chegou. Esta versão faz a próxima atualização chegar sozinha e corrige a recusa que impedia um pane de concluir a missão que o próprio Nexus mandou concluir.
