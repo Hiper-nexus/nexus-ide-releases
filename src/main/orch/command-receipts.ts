@@ -1,0 +1,235 @@
+import { z } from 'zod';
+import {
+  ScopedStoreBinding,
+  ScopedStoreCorruptionError,
+  type ScopedStoreOptions,
+} from './scoped-store';
+import type { ProjectExecutionScope } from '../../shared/types';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import type { EffectClass } from './effect-outbox';
+import { effectClassFor, type EffectType } from './effect-outbox';
+
+/**
+ * ORC-04 — recibo de comando com `resultSequence` (porte da política T3
+ * `CommandReceiptStore.ts` @ 26285ab; casca reescrita em better-sqlite).
+ *
+ * Idempotência cobre o journal, mas não devolvia o MESMO recibo de um
+ * `nexus_*` com efeito. Retry após timeout caía em `effectMayHaveCommitted`.
+ * Mesmo `commandId` duas vezes → um efeito; o segundo lê o recibo e a
+ * sequence final. Recibo reservado com sequence 0 se o processo morrer no
+ * meio (o T3 faz isso de propósito).
+ *
+ * Status T3: `accepted` | `rejected`. `insertIfAbsent` para o primeiro
+ * aceite; `upsert` para assentar sequence/erro.
+ */
+
+export type CommandReceiptStatus = 'accepted' | 'rejected';
+export type CommandReceiptAggregateKind = 'thread' | 'project';
+
+export interface CommandReceipt {
+  readonly commandId: string;
+  readonly aggregateKind: CommandReceiptAggregateKind;
+  readonly aggregateId: string;
+  readonly commandType: string;
+  readonly acceptedAt: number;
+  /** 0 enquanto não assentado; a sequence final só no upsert. */
+  readonly resultSequence: number;
+  readonly status: CommandReceiptStatus;
+  readonly error: string | null;
+  readonly effectClass: EffectClass;
+}
+
+export interface CommandReceiptInsertInput {
+  readonly commandId: string;
+  readonly commandType: string;
+  readonly acceptedAt?: number;
+  readonly resultSequence?: number;
+  readonly status?: CommandReceiptStatus;
+  readonly error?: string | null;
+  /** Identidade do aggregate: thread (missão/pane) ou projeto. */
+  readonly threadId?: string;
+  readonly projectId?: string;
+}
+
+export interface CommandReceiptUpsertInput extends CommandReceiptInsertInput {
+  readonly commandId: string;
+  readonly resultSequence: number;
+  readonly status: CommandReceiptStatus;
+}
+
+const rowSchema = z
+  .object({
+    command_id: z.string().min(1).max(128),
+    aggregate_kind: z.enum(['thread', 'project']),
+    aggregate_id: z.string().min(1).max(128),
+    command_type: z.string().min(1).max(128),
+    accepted_at: z.number().int().nonnegative(),
+    result_sequence: z.number().int().nonnegative(),
+    status: z.enum(['accepted', 'rejected']),
+    error: z.string().max(512).nullable(),
+    effect_class: z.enum(['process_bound', 'replay_safe']),
+  })
+  .strict();
+
+const insertSchema = z
+  .object({
+    commandId: z.string().min(1).max(128),
+    commandType: z.string().min(1).max(128),
+    acceptedAt: z.number().int().nonnegative().optional(),
+    resultSequence: z.number().int().nonnegative().optional(),
+    status: z.enum(['accepted', 'rejected']).optional(),
+    error: z.string().max(512).nullish(),
+    threadId: z.string().min(1).max(128).optional(),
+    projectId: z.string().min(1).max(128).optional(),
+  })
+  .strict();
+
+function rowToReceipt(row: unknown): CommandReceipt {
+  const parsed = rowSchema.safeParse(row);
+  if (!parsed.success) {
+    throw new ScopedStoreCorruptionError('command_receipts', { cause: parsed.error });
+  }
+  const value = parsed.data;
+  return {
+    commandId: value.command_id,
+    aggregateKind: value.aggregate_kind,
+    aggregateId: value.aggregate_id,
+    commandType: value.command_type,
+    acceptedAt: value.accepted_at,
+    resultSequence: value.result_sequence,
+    status: value.status,
+    error: value.error,
+    effectClass: value.effect_class,
+  };
+}
+
+function resolveAggregate(input: {
+  readonly threadId?: string;
+  readonly projectId?: string;
+}): { kind: CommandReceiptAggregateKind; id: string } {
+  if (input.threadId) return { kind: 'thread', id: input.threadId };
+  if (input.projectId) return { kind: 'project', id: input.projectId };
+  throw new Error('command receipt requires threadId or projectId');
+}
+
+function classForCommandType(commandType: string): EffectClass {
+  return effectClassFor(commandType as EffectType);
+}
+
+export class CommandReceiptStore {
+  readonly #binding: ScopedStoreBinding;
+
+  constructor(
+    runtimeManager: ProjectRuntimeManager,
+    scope: ProjectExecutionScope,
+    options: ScopedStoreOptions = {},
+  ) {
+    this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
+  }
+
+  /**
+   * Polítia T3 `insertIfAbsent`: primeiro aceite. Segunda chamada com o mesmo
+   * `commandId` devolve false e NÃO sobrescreve o recibo que o agente já leu.
+   */
+  insertIfAbsent(raw: CommandReceiptInsertInput): boolean {
+    const input = insertSchema.parse(raw);
+    const aggregate = resolveAggregate(input);
+    const db = this.#binding.writeDatabase();
+    const now = this.#binding.now();
+    return db.transaction((): boolean => {
+      const existing = db
+        .prepare(`SELECT 1 FROM command_receipts WHERE command_id = ?`)
+        .get(input.commandId);
+      if (existing) return false;
+      db.prepare(
+        `INSERT INTO command_receipts (
+           command_id, aggregate_kind, aggregate_id, command_type,
+           accepted_at, result_sequence, status, error, effect_class
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        input.commandId,
+        aggregate.kind,
+        aggregate.id,
+        input.commandType,
+        input.acceptedAt ?? now,
+        input.resultSequence ?? 0,
+        input.status ?? 'accepted',
+        input.error ?? null,
+        classForCommandType(input.commandType),
+      );
+      return true;
+    })();
+  }
+
+  /**
+   * Política T3 `upsert`: assenta sequence/erro. Cria se ainda não existe
+   * (caminho de recovery que não passou pelo insertIfAbsent).
+   */
+  upsert(raw: CommandReceiptUpsertInput): CommandReceipt {
+    const input = insertSchema.extend({
+      resultSequence: z.number().int().nonnegative(),
+      status: z.enum(['accepted', 'rejected']),
+    }).parse(raw);
+    const aggregate = resolveAggregate(input);
+    const db = this.#binding.writeDatabase();
+    const now = this.#binding.now();
+    return db.transaction((): CommandReceipt => {
+      db.prepare(
+        `INSERT INTO command_receipts (
+           command_id, aggregate_kind, aggregate_id, command_type,
+           accepted_at, result_sequence, status, error, effect_class
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(command_id) DO UPDATE SET
+           result_sequence = excluded.result_sequence,
+           status = excluded.status,
+           error = excluded.error`,
+      ).run(
+        input.commandId,
+        aggregate.kind,
+        aggregate.id,
+        input.commandType,
+        input.acceptedAt ?? now,
+        input.resultSequence,
+        input.status,
+        input.error ?? null,
+        classForCommandType(input.commandType),
+      );
+      const row = db
+        .prepare(`SELECT * FROM command_receipts WHERE command_id = ?`)
+        .get(input.commandId);
+      return rowToReceipt(row);
+    })();
+  }
+
+  getByCommandId(commandId: string): CommandReceipt | null {
+    const row = this.#binding
+      .readDatabase()
+      .prepare(`SELECT * FROM command_receipts WHERE command_id = ?`)
+      .get(commandId);
+    return row ? rowToReceipt(row) : null;
+  }
+
+  /**
+   * Recibo com sequence 0 = não assentado (processo morreu no meio).
+   * O T3 mantém a marca de propósito; não a inventa depois.
+   */
+  listUnsettled(): CommandReceipt[] {
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT * FROM command_receipts
+         WHERE result_sequence = 0
+         ORDER BY accepted_at ASC`,
+      )
+      .all();
+    return rows.map(rowToReceipt);
+  }
+}
+
+export function createScopedCommandReceiptStore(
+  runtimeManager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  options: ScopedStoreOptions = {},
+): CommandReceiptStore {
+  return new CommandReceiptStore(runtimeManager, scope, options);
+}

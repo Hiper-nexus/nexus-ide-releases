@@ -1,0 +1,457 @@
+import { z } from 'zod';
+import {
+  ScopedStoreBinding,
+  ScopedStoreCorruptionError,
+  type ScopedStoreOptions,
+} from './scoped-store';
+import type { ProjectExecutionScope } from '../../shared/types';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+
+/**
+ * ORC-01 — outbox transacional de efeitos (porte da política T3
+ * `EffectOutbox.ts` @ 26285ab; casca reescrita em better-sqlite).
+ *
+ * Classe vem do TIPO do efeito (não de um campo livre):
+ * - PROCESS_BOUND: turno/pedido amarrado a este processo. Após perda do
+ *   processo NÃO reexecuta (pane duplicado) — `pending`/`running` → `cancelled`.
+ * - REPLAY_SAFE: efeito idempotente. Após perda do processo reentra —
+ *   `running` → `pending`.
+ *
+ * Status (mesmo vocabulário do T3): pending | running | succeeded | failed |
+ * cancelled. Claim é por lease (`leaseOwner` + `leaseExpiresAt`).
+ * Primeiro corte: não substitui `handoff-delivery-outbox`.
+ */
+
+/** Replay-safe após perda do processo (política T3 `REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS`). */
+export const REPLAY_SAFE_EFFECT_TYPES = [
+  'runtime.continue',
+  'session.detach',
+  'thread.rollback',
+  'checkpoint.capture',
+  'terminal.cleanup',
+  'attachment.cleanup',
+  'thread-title.generate',
+  'delegated-tasks.stop',
+] as const;
+
+/** Amarrado ao processo (política T3 `PROCESS_BOUND_EFFECT_TYPES`). */
+export const PROCESS_BOUND_EFFECT_TYPES = [
+  'turn.start',
+  'turn.interrupt',
+  'turn.steer',
+  'turn.restart',
+  'runtime-request.respond',
+] as const;
+
+export type ReplaySafeEffectType = (typeof REPLAY_SAFE_EFFECT_TYPES)[number];
+export type ProcessBoundEffectType = (typeof PROCESS_BOUND_EFFECT_TYPES)[number];
+export type EffectType = ReplaySafeEffectType | ProcessBoundEffectType;
+export type EffectClass = 'process_bound' | 'replay_safe';
+export type EffectOutboxStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+export function effectClassFor(type: EffectType): EffectClass {
+  return (PROCESS_BOUND_EFFECT_TYPES as readonly string[]).includes(type)
+    ? 'process_bound'
+    : 'replay_safe';
+}
+
+export interface EffectOutboxEntry {
+  readonly id: string;
+  readonly commandId: string;
+  readonly threadId: string;
+  readonly type: EffectType;
+  readonly class: EffectClass;
+  readonly payload: unknown;
+  readonly status: EffectOutboxStatus;
+  readonly attemptCount: number;
+  readonly availableAt: number;
+  readonly leaseOwner: string | null;
+  readonly leaseExpiresAt: number | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly completedAt: number | null;
+  readonly lastError: string | null;
+}
+
+export interface EffectOutboxEnqueueInput {
+  readonly id?: string;
+  readonly commandId: string;
+  readonly threadId: string;
+  readonly type: EffectType;
+  readonly payload?: unknown;
+  readonly availableAt?: number;
+}
+
+export interface ClaimNextInput {
+  readonly workerId: string;
+  readonly leaseDurationMs: number;
+  /** Pula `runtime.continue` (continuação de restart) — política T3. */
+  readonly excludeRestartContinuations?: boolean;
+  /** Pula efeitos já tentados neste passe (retry os devolveu a pending). */
+  readonly excludeIds?: ReadonlySet<string>;
+}
+
+export const SETTLED_EFFECT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+const PROCESS_LOSS_CANCELLED_ERROR =
+  'Cancelled because the server process ended before the effect completed.';
+const PROCESS_LOSS_REQUEUED_ERROR =
+  'Requeued after the previous server process ended.';
+
+const rowSchema = z
+  .object({
+    effect_id: z.string().min(1).max(128),
+    command_id: z.string().min(1).max(128),
+    thread_id: z.string().min(1).max(128),
+    effect_type: z.string().min(1).max(64),
+    payload_json: z.string(),
+    status: z.enum(['pending', 'running', 'succeeded', 'failed', 'cancelled']),
+    attempt_count: z.number().int().nonnegative(),
+    available_at: z.number().int().nonnegative(),
+    lease_owner: z.string().min(1).max(128).nullable(),
+    lease_expires_at: z.number().int().nonnegative().nullable(),
+    created_at: z.number().int().nonnegative(),
+    updated_at: z.number().int().nonnegative(),
+    completed_at: z.number().int().nonnegative().nullable(),
+    last_error: z.string().max(512).nullable(),
+  })
+  .strict();
+
+const enqueueSchema = z
+  .object({
+    id: z.string().min(1).max(128).optional(),
+    commandId: z.string().min(1).max(128),
+    threadId: z.string().min(1).max(128),
+    type: z.enum([
+      ...REPLAY_SAFE_EFFECT_TYPES,
+      ...PROCESS_BOUND_EFFECT_TYPES,
+    ] as [EffectType, ...EffectType[]]),
+    payload: z.unknown().optional(),
+    availableAt: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+const MAX_PAYLOAD_BYTES = 32 * 1024;
+
+function rowToEntry(row: unknown): EffectOutboxEntry {
+  const parsed = rowSchema.safeParse(row);
+  if (!parsed.success) {
+    throw new ScopedStoreCorruptionError('effect_outbox', { cause: parsed.error });
+  }
+  const value = parsed.data;
+  let payload: unknown = {};
+  try {
+    payload = JSON.parse(value.payload_json) as unknown;
+  } catch (error) {
+    throw new ScopedStoreCorruptionError('effect_outbox payload', { cause: error });
+  }
+  return {
+    id: value.effect_id,
+    commandId: value.command_id,
+    threadId: value.thread_id,
+    type: value.effect_type as EffectType,
+    class: effectClassFor(value.effect_type as EffectType),
+    payload,
+    status: value.status,
+    attemptCount: value.attempt_count,
+    availableAt: value.available_at,
+    leaseOwner: value.lease_owner,
+    leaseExpiresAt: value.lease_expires_at,
+    createdAt: value.created_at,
+    updatedAt: value.updated_at,
+    completedAt: value.completed_at,
+    lastError: value.last_error,
+  };
+}
+
+export class EffectOutboxStore {
+  readonly #binding: ScopedStoreBinding;
+
+  constructor(
+    runtimeManager: ProjectRuntimeManager,
+    scope: ProjectExecutionScope,
+    options: ScopedStoreOptions = {},
+  ) {
+    this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
+  }
+
+  get scope(): ProjectExecutionScope {
+    return this.#binding.scope;
+  }
+
+  /**
+   * Persiste a linha (política T3: notificar workers só depois do commit).
+   * Id determinístico por comando/run: `enqueue` ignora um id que já existe.
+   */
+  enqueue(raw: EffectOutboxEnqueueInput): EffectOutboxEntry {
+    const input = enqueueSchema.parse(raw);
+    const payloadJson = JSON.stringify(input.payload ?? {});
+    if (Buffer.byteLength(payloadJson, 'utf8') > MAX_PAYLOAD_BYTES) {
+      throw new Error('effect outbox payload exceeds size limit');
+    }
+    const db = this.#binding.writeDatabase();
+    const now = this.#binding.now();
+    const id = input.id ?? this.#binding.makeId('eff');
+    return db.transaction((): EffectOutboxEntry => {
+      const existing = db
+        .prepare(`SELECT * FROM effect_outbox WHERE effect_id = ?`)
+        .get(id);
+      if (existing) return rowToEntry(existing);
+      db.prepare(
+        `INSERT INTO effect_outbox (
+           effect_id, command_id, thread_id, effect_type, payload_json,
+           status, attempt_count, available_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+      ).run(
+        id,
+        input.commandId,
+        input.threadId,
+        input.type,
+        payloadJson,
+        input.availableAt ?? now,
+        now,
+        now,
+      );
+      const inserted = db
+        .prepare(`SELECT * FROM effect_outbox WHERE effect_id = ?`)
+        .get(id);
+      return rowToEntry(inserted);
+    })();
+  }
+
+  get(id: string): EffectOutboxEntry | null {
+    const row = this.#binding
+      .readDatabase()
+      .prepare(`SELECT * FROM effect_outbox WHERE effect_id = ?`)
+      .get(id);
+    return row ? rowToEntry(row) : null;
+  }
+
+  listByCommandId(commandId: string): EffectOutboxEntry[] {
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT * FROM effect_outbox WHERE command_id = ?
+         ORDER BY created_at ASC, effect_id ASC`,
+      )
+      .all(commandId);
+    return rows.map(rowToEntry);
+  }
+
+  listByStatus(status: EffectOutboxStatus, limit = 100): EffectOutboxEntry[] {
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT * FROM effect_outbox WHERE status = ?
+         ORDER BY available_at ASC, created_at ASC, effect_id ASC LIMIT ?`,
+      )
+      .all(status, Math.max(1, Math.min(limit, 1000)));
+    return rows.map(rowToEntry);
+  }
+
+  /**
+   * Claim por lease (política T3 `claimNext`): uma linha por vez, em ordem,
+   * sem pular efeito anterior pendente do mesmo thread. Título
+   * (`thread-title.generate`) tem faixa própria e não bloqueia lifecycle.
+   */
+  claimNext(input: ClaimNextInput): EffectOutboxEntry | null {
+    const leaseMs = Math.max(1, input.leaseDurationMs);
+    const excludeContinuations = input.excludeRestartContinuations === true;
+    const excludeIds = input.excludeIds;
+    const db = this.#binding.writeDatabase();
+    const now = this.#binding.now();
+    const leaseExpiresAt = now + leaseMs;
+    return db.transaction((): EffectOutboxEntry | null => {
+      // Varre candidatos em ordem e pula os já tentados neste passe.
+      const candidates = db
+        .prepare(
+          `SELECT candidate.* FROM effect_outbox AS candidate
+           WHERE candidate.status = 'pending'
+             AND candidate.available_at <= ?
+             AND (? = 0 OR candidate.effect_type != 'runtime.continue')
+             AND NOT EXISTS (
+               SELECT 1 FROM effect_outbox AS active
+               WHERE active.thread_id = candidate.thread_id
+                 AND (
+                   active.status = 'running'
+                   OR (
+                     active.status = 'pending'
+                     AND active.rowid < candidate.rowid
+                     AND (? = 0 OR active.effect_type != 'runtime.continue')
+                   )
+                 )
+                 AND (
+                   (candidate.effect_type = 'thread-title.generate'
+                    AND active.effect_type = 'thread-title.generate')
+                   OR
+                   (candidate.effect_type != 'thread-title.generate'
+                    AND active.effect_type != 'thread-title.generate')
+                 )
+             )
+           ORDER BY candidate.available_at ASC, candidate.created_at ASC,
+                    candidate.effect_id ASC
+           LIMIT 32`,
+        )
+        .all(now, excludeContinuations ? 1 : 0, excludeContinuations ? 1 : 0) as unknown[];
+      const candidate = candidates
+        .map(rowToEntry)
+        .find((entry) => !excludeIds?.has(entry.id));
+      if (!candidate) return null;
+      const updated = db
+        .prepare(
+          `UPDATE effect_outbox
+           SET status = 'running', attempt_count = attempt_count + 1,
+               lease_owner = ?, lease_expires_at = ?, updated_at = ?,
+               last_error = NULL
+           WHERE effect_id = ? AND status = 'pending'`,
+        )
+        .run(input.workerId, leaseExpiresAt, now, candidate.id);
+      if (updated.changes === 0) return null;
+      const row = db
+        .prepare(`SELECT * FROM effect_outbox WHERE effect_id = ?`)
+        .get(candidate.id);
+      return rowToEntry(row);
+    })();
+  }
+
+  succeed(id: string, workerId: string): boolean {
+    const db = this.#binding.writeDatabase();
+    const now = this.#binding.now();
+    return db.transaction((): boolean => {
+      const updated = db
+        .prepare(
+          `UPDATE effect_outbox
+           SET status = 'succeeded', lease_owner = NULL, lease_expires_at = NULL,
+               completed_at = ?, updated_at = ?, last_error = NULL
+           WHERE effect_id = ? AND status = 'running' AND lease_owner = ?`,
+        )
+        .run(now, now, id, workerId);
+      return updated.changes === 1;
+    })();
+  }
+
+  /**
+   * Volta a `pending` com `availableAt` atrasado (backoff do worker).
+   * Só o dono do lease assenta.
+   */
+  retry(
+    id: string,
+    workerId: string,
+    error: string,
+    delayMs: number,
+  ): boolean {
+    const db = this.#binding.writeDatabase();
+    const now = this.#binding.now();
+    const availableAt = now + Math.max(0, delayMs);
+    return db.transaction((): boolean => {
+      const updated = db
+        .prepare(
+          `UPDATE effect_outbox
+           SET status = 'pending', available_at = ?, lease_owner = NULL,
+               lease_expires_at = NULL, updated_at = ?, last_error = ?
+           WHERE effect_id = ? AND status = 'running' AND lease_owner = ?`,
+        )
+        .run(availableAt, now, error.slice(0, 512), id, workerId);
+      return updated.changes === 1;
+    })();
+  }
+
+  fail(id: string, workerId: string, error: string): boolean {
+    const db = this.#binding.writeDatabase();
+    const now = this.#binding.now();
+    return db.transaction((): boolean => {
+      const updated = db
+        .prepare(
+          `UPDATE effect_outbox
+           SET status = 'failed', lease_owner = NULL, lease_expires_at = NULL,
+               completed_at = ?, updated_at = ?, last_error = ?
+           WHERE effect_id = ? AND status = 'running' AND lease_owner = ?`,
+        )
+        .run(now, now, error.slice(0, 512), id, workerId);
+      return updated.changes === 1;
+    })();
+  }
+
+  /**
+   * ORC-06 / política T3 `reconcileAfterProcessLoss`:
+   * - PROCESS_BOUND em pending OU running → `cancelled` (não reexecuta).
+   * - REPLAY_SAFE em running → `pending` (reentra).
+   * REPLAY_SAFE em pending já é reexecutável e fica. Succeeded/failed intocados.
+   */
+  reconcileAfterProcessLoss(): { requeued: number; cancelled: number } {
+    const db = this.#binding.writeDatabase();
+    const now = this.#binding.now();
+    return db.transaction(() => {
+      const cancelled = db
+        .prepare(
+          `UPDATE effect_outbox
+           SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL,
+               completed_at = ?, updated_at = ?, last_error = ?
+           WHERE status IN ('pending', 'running')
+             AND effect_type IN (${PROCESS_BOUND_EFFECT_TYPES.map(() => '?').join(',')})`,
+        )
+        .run(
+          now,
+          now,
+          PROCESS_LOSS_CANCELLED_ERROR,
+          ...PROCESS_BOUND_EFFECT_TYPES,
+        );
+      const requeued = db
+        .prepare(
+          `UPDATE effect_outbox
+           SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL,
+               available_at = ?, updated_at = ?, last_error = ?
+           WHERE status = 'running'
+             AND effect_type IN (${REPLAY_SAFE_EFFECT_TYPES.map(() => '?').join(',')})`,
+        )
+        .run(
+          now,
+          now,
+          PROCESS_LOSS_REQUEUED_ERROR,
+          ...REPLAY_SAFE_EFFECT_TYPES,
+        );
+      return { requeued: requeued.changes, cancelled: cancelled.changes };
+    })();
+  }
+
+  /**
+   * Poda succeeded/cancelled com `completed_at <= now - retentionMs`.
+   * `retentionMs = 0` poda todo assentado. Failed fica (limpeza de thread
+   * mantém a worktree enquanto houver falha) — política T3.
+   */
+  pruneSettled(retentionMs = SETTLED_EFFECT_RETENTION_MS): number {
+    const db = this.#binding.writeDatabase();
+    const cutoff = this.#binding.now() - Math.max(0, retentionMs);
+    return db.transaction((): number => {
+      let deleted = 0;
+      for (;;) {
+        const batch = db
+          .prepare(
+            `DELETE FROM effect_outbox
+             WHERE effect_id IN (
+               SELECT effect_id FROM effect_outbox
+               WHERE status IN ('succeeded', 'cancelled') AND completed_at <= ?
+               LIMIT 500
+             )`,
+          )
+          .run(cutoff);
+        deleted += batch.changes;
+        if (batch.changes < 500) break;
+      }
+      return deleted;
+    })();
+  }
+}
+
+export function createScopedEffectOutboxStore(
+  runtimeManager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  options: ScopedStoreOptions = {},
+): EffectOutboxStore {
+  return new EffectOutboxStore(runtimeManager, scope, options);
+}
