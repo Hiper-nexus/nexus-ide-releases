@@ -1,3 +1,6 @@
+// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
+// Copyright (c) 2026 T3 Tools Inc. — MIT License
+// See third_party/licenses/t3code-MIT.txt. Nexus changes: só modelCatalogReferenceErrors e o portão do refreshRemoteModelCatalog — porte de hasValidProviderCatalogReferences/resolveProviderCatalog (ModelManifest.ts:99-128, 152-194: ids únicos e default presente na lista) e da regra de refresh (ModelManifest.ts:378-421: dado inválido ou edição mais velha nunca substitui a última versão boa), no formato de catálogo em camadas do Nexus; o restante do arquivo é do Nexus.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +16,7 @@ import publishedCatalogRaw from '../../../resources/model-catalog.json';
 import { MIMO_CODE_DEFAULT_MODEL, MIMO_CODE_MODEL_IDS } from '../../shared/mimo-models';
 import { CODEX_FRONTIER_MODEL, GROK_FRONTIER_MODEL, migrateModelId } from '../../shared/model-defaults';
 import { bareModelId } from '../../vendor/omp/catalog/identity';
+import { modelListAuthority } from './model-availability';
 import {
   RICH_MODEL_CATALOG,
   findRichModelInProvider,
@@ -197,10 +201,6 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       // abre sempre na geração mais nova (2026-09-19, dono do produto).
       default: 'gemini-3.8-flash-high',
       models: [
-        // Gemini 4 Argon (Google, 30/09): flagship novo — $2/M entrada,
-        // acesso restrito (Fairwind → Ultra → API paga). Entra no pool quando
-        // o `agy models` o anunciar; quarentena absorve a conta sem acesso.
-        { id: 'gemini-4-argon', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gemini-3.8-flash-high', availability: 'cheap', costTier: 'high', source: 'bundled' },
         { id: 'gemini-3.8-flash-medium', availability: 'cheap', costTier: 'medium', source: 'bundled' },
         { id: 'gemini-3.8-flash-low', availability: 'cheap', costTier: 'low', source: 'bundled' },
@@ -210,6 +210,11 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         { id: 'gemini-3.6-flash-low', availability: 'free', costTier: 'free', source: 'bundled' },
         { id: 'gemini-3.6-flash-medium', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'gemini-3.6-flash-high', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        // Gemini 4 Argon (Google, 30/09): flagship de acesso restrito
+        // (Fairwind → Ultra → API paga), $2/M entrada. F-964: só METADADO —
+        // o `agy models` do AGY 1.3.1 não o lista, e o catálogo nunca
+        // acrescenta id a CLI que lista. Volta à oferta quando a CLI o listar.
+        { id: 'gemini-4-argon', availability: 'paid', costTier: 'high', source: 'bundled' },
       ],
     },
     kimi: {
@@ -570,6 +575,33 @@ async function loadCatalogFromUrl(url: string): Promise<ModelCatalog | null> {
   }
 }
 
+/**
+ * F-964 (PRV-10): validação referencial — por adapter, ids únicos e o
+ * `default` presente na própria lista. Um catálogo que manda o seletor abrir
+ * num id que ele mesmo não descreve (ou descreve duas vezes) é dado quebrado.
+ */
+export function modelCatalogReferenceErrors(catalog: ModelCatalog): string[] {
+  const errors: string[] = [];
+  for (const [adapterId, entry] of Object.entries(catalog.adapters ?? {})) {
+    const ids = new Set<string>();
+    for (const model of entry.models ?? []) {
+      if (ids.has(model.id)) errors.push(`${adapterId}: id duplicado "${model.id}"`);
+      ids.add(model.id);
+    }
+    if (entry.default !== undefined && !ids.has(entry.default)) {
+      errors.push(`${adapterId}: default "${entry.default}" fora da lista`);
+    }
+  }
+  return errors;
+}
+
+/** Edição datada estritamente mais velha que a que já está em disco. */
+function isOlderCatalogEdit(candidate: ModelCatalog, current: ModelCatalog): boolean {
+  const candidateAt = Date.parse(candidate.updatedAt ?? '');
+  const currentAt = Date.parse(current.updatedAt ?? '');
+  return Number.isFinite(candidateAt) && Number.isFinite(currentAt) && candidateAt < currentAt;
+}
+
 export async function refreshRemoteModelCatalog(
   url = resolveModelCatalogUrl(),
   file = USER_MODEL_CATALOG_FILE,
@@ -583,6 +615,15 @@ export async function refreshRemoteModelCatalog(
   // Start IO together so cancellation/deadline ownership starts immediately.
   let [json, initial] = await Promise.all([loadCatalogFromUrl(url), identity()]);
   if (epoch !== catalogEpoch) return false;
+  // F-964 (PRV-10): catálogo remoto inválido conta como fetch que falhou — a
+  // última versão boa (o arquivo em disco ou, sem ele, o publicado) fica.
+  if (json && modelCatalogReferenceErrors(json).length > 0) json = null;
+  // CDN atrasada pode servir uma edição anterior à que já está em disco.
+  if (json && initial !== null) {
+    let current: ModelCatalog | null = null;
+    try { current = normaliseCatalog(JSON.parse(await readCatalogText(file)), 'local'); } catch { /* ilegível: o remoto substitui */ }
+    if (current && isOlderCatalogEdit(json, current)) return false;
+  }
 
   // Private GitHub raw → 404. Seed only a missing catalog; never replace a
   // newer local/CLI-discovered catalog with the older bundled snapshot.
@@ -669,12 +710,20 @@ export function modelRoutingRankWithAuth(
   return modelRoutingRank(info);
 }
 
+/**
+ * Catálogo → adapter. Para CLI sem listagem (`bundled`, ex.: Claude) o
+ * catálogo É o manifesto e acrescenta ids, como no T3. F-964 (PRV-01): para
+ * CLI que sabe listar ele só classifica — nunca acrescenta id (o
+ * `gemini-4-argon` do catálogo era oferecido ao AGY 1.3.1, que não o lista) —
+ * e só move o default para um id que o adapter já oferece.
+ */
 export function applyModelCatalogToAdapter(adapter: Adapter, catalog: ModelCatalog): Adapter {
   const adapterCatalog = catalog.adapters?.[adapter.id];
   if (!adapterCatalog) return adapter;
+  const addsIds = modelListAuthority(adapter.id) === 'bundled';
 
   const list = [...adapter.models.list];
-  for (const entry of adapterCatalog.models ?? []) {
+  for (const entry of addsIds ? adapterCatalog.models ?? [] : []) {
     // Id oferecido não pode estar migrado: um overlay antigo do operador
     // (~/.nexus/model-catalog.json) ainda listava kimi-k2.7 e o pane nascia
     // com um alias que o Kimi Code recusa.
@@ -682,7 +731,9 @@ export function applyModelCatalogToAdapter(adapter: Adapter, catalog: ModelCatal
     if (!list.includes(entry.id)) list.push(entry.id);
   }
 
-  const requestedDefault = adapterCatalog.default ?? adapter.models.default;
+  const requestedDefault = addsIds || (adapterCatalog.default && list.includes(adapterCatalog.default))
+    ? adapterCatalog.default ?? adapter.models.default
+    : adapter.models.default;
   const defaultInfo = modelCatalogInfo(catalog, adapter.id, requestedDefault);
   const defaultModel = isModelBlockedForAutoRouting(defaultInfo)
     ? (list.find((model) => !isModelBlockedForAutoRouting(modelCatalogInfo(catalog, adapter.id, model))) ??

@@ -20,6 +20,7 @@ import {
   seedLocalModelCatalogFromPublished,
   invalidateModelCatalogCache,
   isStaleUserModelCatalog,
+  modelCatalogReferenceErrors,
 } from './model-catalog';
 
 const ADAPTER: Adapter = {
@@ -57,10 +58,11 @@ const ADAPTER: Adapter = {
 };
 
 describe('model catalog overlays', () => {
-  it('adds newly shipped models without replacing the adapter JSON', () => {
+  it('CLI sem listagem: o catálogo acrescenta ids sem substituir o JSON do adapter', () => {
+    const BUNDLED = { ...ADAPTER, id: 'example-bundled' };
     const merged = mergeModelCatalogs(BUILTIN_MODEL_CATALOG, {
       adapters: {
-        grok: {
+        'example-bundled': {
           models: [
             {
               id: 'grok-4.5',
@@ -73,12 +75,27 @@ describe('model catalog overlays', () => {
       },
     });
 
-    const adapter = applyModelCatalogToAdapter(ADAPTER, merged);
+    const adapter = applyModelCatalogToAdapter(BUNDLED, merged);
 
     expect(adapter.models.list).toEqual(
       expect.arrayContaining(['grok-4-fast', 'grok-4.5']),
     );
-    expect(modelCatalogInfo(merged, 'grok', 'grok-4.5')?.source).toBe('remote');
+    expect(modelCatalogInfo(merged, 'example-bundled', 'grok-4.5')?.source).toBe('remote');
+  });
+
+  it('F-964: CLI que lista (grok, agy, codex…) — o catálogo classifica, nunca acrescenta id', () => {
+    const merged = mergeModelCatalogs(BUILTIN_MODEL_CATALOG, {
+      adapters: { grok: { default: 'grok-4.5', models: [{ id: 'grok-4.5', availability: 'cheap', source: 'remote' }] } },
+    });
+    const adapter = applyModelCatalogToAdapter(ADAPTER, merged);
+    expect(adapter.models.list).toEqual(['grok-4-fast']);
+    // Default do catálogo fora da oferta não move o default (applyManifestDefault).
+    expect(adapter.models.default).toBe('grok-4-fast');
+    const offered = applyModelCatalogToAdapter({ ...ADAPTER, models: { ...ADAPTER.models, list: ['grok-4-fast', 'grok-4.5'] } }, merged);
+    expect(offered.models.default).toBe('grok-4.5');
+    const agy = applyModelCatalogToAdapter({ ...ADAPTER, id: 'agy', models: { flag: '--model', list: ['gemini-3.8-flash-high'], default: 'gemini-3.8-flash-high' } }, BUILTIN_MODEL_CATALOG);
+    expect(agy.models.list).toEqual(['gemini-3.8-flash-high']);
+    expect(modelCatalogInfo(BUILTIN_MODEL_CATALOG, 'agy', 'gemini-4-argon')).not.toBeNull();
   });
 
   it('marks API-only models as blocked for automatic routing', () => {
@@ -144,10 +161,12 @@ describe('published catalog JSON', () => {
     const combined = mergeModelCatalogs(PUBLISHED_MODEL_CATALOG, {
       adapters: { grok: { default: 'grok-4.6', models: [{ id: 'grok-4.6', availability: 'paid' }] } },
     });
-    const adapter = applyModelCatalogToAdapter(ADAPTER, combined);
+    // F-964: o grok oferece o que lista; o catálogo só move o default entre esses.
+    const GROK = { ...ADAPTER, models: { ...ADAPTER.models, list: ['grok-4.7', 'grok-4.6', 'grok-4-fast'] } };
+    const adapter = applyModelCatalogToAdapter(GROK, combined);
     expect(adapter.models.list).toContain('grok-4.7');
     expect(adapter.models.default).toBe('grok-4.6');
-    expect(applyModelCatalogToAdapter(ADAPTER, PUBLISHED_MODEL_CATALOG).models.default).toBe('grok-4.7');
+    expect(applyModelCatalogToAdapter(GROK, PUBLISHED_MODEL_CATALOG).models.default).toBe('grok-4.7');
     expect(modelCatalogInfo(BUILTIN_MODEL_CATALOG, 'grok', 'grok-4.7')).toMatchObject({ availability: 'paid', costTier: 'high' });
   });
   it('ships Claude Opus 5.5 (replacing Opus 5) and grok-4.5, and marks claude-fable-5 as api-only/high', () => {
@@ -665,6 +684,46 @@ describe('refreshRemoteModelCatalog', () => {
     );
     expect(ok).toBe(false);
     expect(fs.existsSync(file)).toBe(false);
+  });
+
+  it('F-964 (PRV-10): default fora da lista ou id duplicado — remoto rejeitado, a última versão boa fica', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-model-catalog-'));
+    tmpDirs.push(dir);
+    const file = path.join(dir, 'model-catalog.json');
+    const lastGood = JSON.stringify({ version: 1, updatedAt: '2026-10-01T00:00:00.000Z', adapters: {
+      'x-cli': { default: 'x-a', models: [{ id: 'x-a' }] },
+    } });
+    fs.writeFileSync(file, lastGood);
+    for (const remote of [
+      { version: 1, updatedAt: '2099-01-01T00:00:00.000Z', adapters: { 'x-cli': { default: 'x-ghost', models: [{ id: 'x-a' }] } } },
+      { version: 1, updatedAt: '2099-01-01T00:00:00.000Z', adapters: { 'x-cli': { default: 'x-a', models: [{ id: 'x-a' }, { id: 'x-a' }] } } },
+    ]) {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(remote))));
+      expect(await refreshRemoteModelCatalog('https://example.test/catalog.json', file)).toBe(false);
+      expect(fs.readFileSync(file, 'utf8')).toBe(lastGood);
+    }
+    expect(modelCatalogReferenceErrors({ adapters: { 'x-cli': { default: 'x-ghost', models: [{ id: 'x-a' }] } } }))
+      .toEqual(['x-cli: default "x-ghost" fora da lista']);
+    expect(modelCatalogReferenceErrors({ adapters: { 'x-cli': { models: [{ id: 'x-a' }, { id: 'x-a' }] } } }))
+      .toEqual(['x-cli: id duplicado "x-a"']);
+  });
+
+  it('F-964 (PRV-10): edição remota mais velha que a do disco não substitui', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-model-catalog-'));
+    tmpDirs.push(dir);
+    const file = path.join(dir, 'model-catalog.json');
+    const current = JSON.stringify({ version: 1, updatedAt: '2026-10-07T00:00:00.000Z', adapters: { 'x-cli': { models: [{ id: 'x-new' }] } } });
+    fs.writeFileSync(file, current);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      version: 1, updatedAt: '2026-10-01T00:00:00.000Z', adapters: { 'x-cli': { models: [{ id: 'x-old' }] } },
+    }))));
+    expect(await refreshRemoteModelCatalog('https://example.test/catalog.json', file)).toBe(false);
+    expect(fs.readFileSync(file, 'utf8')).toBe(current);
+  });
+
+  it('F-964 (PRV-10): os catálogos que o app traz passam na validação referencial', () => {
+    expect(modelCatalogReferenceErrors(PUBLISHED_MODEL_CATALOG)).toEqual([]);
+    expect(modelCatalogReferenceErrors(BUILTIN_MODEL_CATALOG)).toEqual([]);
   });
 
   it('seeds a missing local overlay from the published catalog', () => {

@@ -139,6 +139,33 @@ CLI genuinely needs.
 The user picks from `list` in the agent launcher dialog. The selected value
 replaces `{{MODEL}}` in the spawn args.
 
+`list` is the **bundled fallback**, not the offer, when the CLI can list its own
+models (F-964). For those CLIs the live listing is the truth:
+
+| Authority | CLIs | Source of the offered ids |
+|---|---|---|
+| `live` | agy, codex, kimi, opencode, cursor-agent, mimo-code, qoder, prime-agent, omp | the CLI's own listing (`agy models`, Codex app-server `model/list`, …) |
+| `version-cache` | grok | the CLI's official cache, only when written by the installed version |
+| `bundled` | claude, wrappers, plugins | `list` ∪ CLI cache ∪ model catalog (unchanged) |
+
+For `live`/`version-cache` CLIs (`src/main/adapters/model-availability.ts`):
+
+- listing OK → offered = listing ∪ the operator's custom ids;
+- listing OK but empty → only the custom ids (an authoritative empty list clears);
+- listing failed → the last good listing (kept in memory by `model-discovery.ts`);
+- no listing ever → the CLI's cache file, else `list` (bundled contract) until the CLI answers;
+- ids from `list` or from the catalog that the listing does not carry become
+  `unverified` (`ProviderSettingsInfo.unverifiedModels`): never offered, never routed.
+
+Automatic routing only picks ids the listing proves, in every lane (tier table,
+evaluated ranking, frontier/judge lanes and a model named in the task text);
+custom ids stay manual. Keep `list` equal to what the installed CLI prints today
+(the AGY 1.3.1 output is pinned in
+`src/main/adapters/__fixtures__/agy-models-1.3.1.stdout.txt`), never ids from a
+blog post. A new CLI with a list command goes into `STRATEGIES` /
+`MODEL_DISCOVERY_INVENTORY` (`kind: 'cli'`) **and** into `LIVE_LISTING_ADAPTERS`
+in `model-availability.ts`; a test ties the two.
+
 ### `stateParsing`
 
 Use `"timeout"` for CLIs that use alt-screen TUIs (idle is assumed after N ms
@@ -242,9 +269,15 @@ adapters immediately appear in the `+ Agent` picker without restarting the app.
 
 ## Model catalog (new models / free→paid without a release)
 
-Besides adapter JSON, Nexus merges a **model catalog** that can add model ids
-and mark availability/cost (`free` | `cheap` | `paid` | `api-only` | `deprecated`,
-plus `costTier`). Sources, in order:
+Besides adapter JSON, Nexus merges a **model catalog** that marks
+availability/cost (`free` | `cheap` | `paid` | `api-only` | `deprecated`, plus
+`costTier`) and picks the default. **It only adds model ids to CLIs without a
+live listing** (`bundled` authority, e.g. Claude, where the catalog is the
+manifest). For a CLI that lists its models it classifies and moves the default
+to an id the CLI already offers — a catalog id the CLI does not list is
+`unverified` and never reaches the picker or the router (F-964; the
+`gemini-4-argon` offered to an AGY 1.3.1 that does not list it died with "not
+recognized"). Sources, in order:
 
 1. Bundled defaults in `src/main/adapters/model-catalog.ts`
 2. Local overlay: `~/.nexus/model-catalog.json` (hot-reloaded)
@@ -261,6 +294,12 @@ https://raw.githubusercontent.com/Hiper-nexus/nexus-ide-releases/catalog/resourc
 
 If the default URL fails, Nexus seeds a missing `~/.nexus/model-catalog.json`
 from the JSON **bundled** with the app. An existing local overlay is preserved.
+
+A fetched catalog must pass referential validation before it replaces the local
+overlay (`modelCatalogReferenceErrors`, PRV-10): per adapter, ids are unique and
+`default` is one of that adapter's `models`. An invalid catalog, or a dated edit
+older than the one on disk, is dropped and the last good version stays. Bump
+`updatedAt` whenever you edit `resources/model-catalog.json`.
 
 Override (HTTPS, `file://`, or absolute path):
 

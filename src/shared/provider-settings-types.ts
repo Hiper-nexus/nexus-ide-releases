@@ -84,6 +84,13 @@ export interface ProviderSettingsInfo {
   defaultModel: string;
   models: string[];
   /**
+   * F-964: ids do adapter/catálogo que a listagem da CLI não traz — não são
+   * oferecidos nem roteados. Ausente = nenhum.
+   */
+  unverifiedModels?: string[];
+  /** F-964: de onde veio `models` (listagem viva, última boa, cache, bundled). */
+  modelListSource?: 'live' | 'last-good' | 'cache' | 'bundled';
+  /**
    * Exact model ids whose provider-specific auth is ready in this snapshot.
    */
   authReadyModels?: string[];

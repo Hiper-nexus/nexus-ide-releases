@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { WebContents } from 'electron';
 import {
@@ -20,6 +22,7 @@ import {
   taskHandoffCapabilityForAdapter,
 } from './adapter-registry';
 import { applyDiscoveredModelsToAdapter } from './cli-model-discovery';
+import { parseAgyModelsOutput } from './model-discovery';
 import type { ModelCatalog } from './model-catalog';
 
 // ── Minimal valid cli-pty adapter for reuse across tests ────────────────────
@@ -304,18 +307,13 @@ describe('builtin adapters', () => {
     const models = agy?.models?.list ?? [];
 
     expect(agy?.models?.default).toBe('gemini-3.8-flash-high');
-    expect(models).toEqual(
-      expect.arrayContaining([
-        'gemini-3.7-flash-high',
-        'gemini-3.7-flash-medium',
-        'gemini-3.7-flash-low',
-        'gemini-3.6-flash-high',
-        'gemini-3.6-flash-medium',
-        'gemini-3.6-flash-low',
-        'claude-sonnet-4-6',
-      ]),
-    );
-    expect(models).not.toContain('claude-sonnet-4-6-thinking');
+    // F-964: a lista bundled (fallback até a CLI responder) é exatamente o
+    // que o `agy models` do AGY 1.3.1 imprime — sem Argon, sem Claude 4-6.
+    const fixture = fs.readFileSync(path.join(__dirname, '__fixtures__', 'agy-models-1.3.1.stdout.txt'), 'utf8');
+    expect(models).toEqual(parseAgyModelsOutput(fixture));
+    for (const ghost of ['gemini-4-argon', 'claude-opus-4-6-thinking', 'claude-sonnet-4-6']) {
+      expect(models).not.toContain(ghost);
+    }
     // `agy models` (2026-09-27) não tem mais a linha 3.5.
     expect(models.filter((id) => id.startsWith('gemini-3.5-'))).toEqual([]);
   });
@@ -941,10 +939,12 @@ describe('authMethodForAdapter', () => {
 
 describe('F-217 — default do pane sobe para o mais novo da linha descoberto pela CLI', () => {
   const flatCatalog: ModelCatalog = { adapters: {} };
+  // F-964: CLI sem listagem (`bundled`) — a união com o cache vale; para CLI
+  // que lista (codex de verdade) a mesma regra roda no model-offer.test.ts.
   const codexLike = (): Adapter =>
     ({
       ...MINIMAL_CLI_PTY,
-      id: 'codex',
+      id: 'example-cli',
       models: {
         flag: '--model',
         list: ['gpt-6.1-sol', 'gpt-6-sol'],
@@ -955,7 +955,7 @@ describe('F-217 — default do pane sobe para o mais novo da linha descoberto pe
   it('modelo anunciado pela CLI (não catalogado) vira o default', () => {
     const discovered = applyDiscoveredModelsToAdapter(
       codexLike(),
-      new Map([['codex', ['gpt-6.2-sol']]]),
+      new Map([['example-cli', ['gpt-6.2-sol']]]),
     );
     expect(discovered.models.list).toContain('gpt-6.2-sol');
     expect(applyNewestModelLineDefault(discovered, flatCatalog).models.default).toBe(
@@ -966,11 +966,11 @@ describe('F-217 — default do pane sobe para o mais novo da linha descoberto pe
   it('modelo mais novo api-only NÃO vira default', () => {
     const discovered = applyDiscoveredModelsToAdapter(
       codexLike(),
-      new Map([['codex', ['gpt-6.2-sol']]]),
+      new Map([['example-cli', ['gpt-6.2-sol']]]),
     );
     const catalog: ModelCatalog = {
       adapters: {
-        codex: {
+        'example-cli': {
           models: [
             { id: 'gpt-6.2-sol', availability: 'api-only', source: 'bundled' },
           ],
@@ -985,7 +985,7 @@ describe('F-217 — default do pane sobe para o mais novo da linha descoberto pe
   it('modelo mais novo de linha distinta NÃO vira default', () => {
     const discovered = applyDiscoveredModelsToAdapter(
       codexLike(),
-      new Map([['codex', ['gpt-6.1-sol-ultrafast']]]),
+      new Map([['example-cli', ['gpt-6.1-sol-ultrafast']]]),
     );
     expect(applyNewestModelLineDefault(discovered, flatCatalog).models.default).toBe(
       'gpt-6.1-sol',

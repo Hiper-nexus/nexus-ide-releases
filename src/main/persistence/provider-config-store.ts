@@ -61,10 +61,8 @@ import {
   getCustomModels,
   removeCustomModel,
 } from '../adapters/custom-models';
-import {
-  discoveredModelsFor,
-  refreshAllDiscoveredModels,
-} from '../adapters/model-discovery';
+import { refreshAllDiscoveredModels } from '../adapters/model-discovery';
+import { currentModelOffer } from '../adapters/model-offer';
 import {
   cliInstallRecipeCandidates,
   cliInstallRecipeFor,
@@ -1057,17 +1055,16 @@ function buildProviderSpawnOverrides(
   const deepseekPlan =
     adapterId === DEEPSEEK_DIRECT_PROVIDER &&
     deepseekChoice(cfg.upstream) === DEEPSEEK_TOKEN_PLAN_PROVIDER;
+  // F-964: o default salvo só vale se a CLI ainda o oferece (listagem viva
+  // autoritativa); senão o pane abre no default resolvido, nunca num fantasma.
+  const offer = adapter ? currentModelOffer(adapter) : null;
   const savedDefault =
-    cfg.defaultModel.trim() && adapter
+    cfg.defaultModel.trim() && adapter && offer
       ? effectiveDefaultModel(
           adapterId,
           cfg.defaultModel,
-          [
-            ...adapter.models.list,
-            ...getCustomModels(adapterId),
-            ...discoveredModelsFor(adapterId),
-          ],
-          adapter.models.default,
+          offer.offered,
+          offer.defaultModel,
         )
       : null;
   const base = {
@@ -1859,24 +1856,17 @@ function toInfo(
     adapter.kind !== 'api-provider'
       ? Boolean(userBinOk || resolved)
       : true;
-  const custom = getCustomModels(adapterId).filter(
-    (m) => !adapter.models.list.includes(m),
-  );
-  // adapter.models.list já passou por applyDiscoveredModelsToAdapter e
-  // applyModelCatalogToAdapter no registry refresh. Mas cache discovered é
-  // volátil: um refresh asyncrono pode esvaziar-se se a CLI não responder.
-  // Adicionamos discovered do cache vivo novamente para garantir união durável.
-  const staticIds = [...adapter.models.list, ...custom];
-  const discovered = discoveredModelsFor(adapterId).filter(
-    (m) => !staticIds.includes(m),
-  );
+  // F-964 (PRV-01): a oferta é a listagem viva da CLI (+ custom do operador),
+  // não a união estático ∪ catálogo ∪ descoberta. Falha mantém a última boa;
+  // listagem vazia com sucesso limpa; o que a CLI não lista vira unverified.
+  const offer = currentModelOffer(adapter);
   // F-724: o catálogo do DeepSeek é o que o provedor escolhido serve (no
   // Token Plan só o v4-pro; o flash dá 403).
   const deepseekSelected =
     adapterId === DEEPSEEK_DIRECT_PROVIDER ? deepseekChoice(cfg.upstream) : null;
   const models = deepseekSelected
-    ? deepseekModelsForProvider([...staticIds, ...discovered], deepseekSelected)
-    : [...staticIds, ...discovered];
+    ? deepseekModelsForProvider([...offer.offered], deepseekSelected)
+    : [...offer.offered];
   const keySlot = deepseekSelected
     ? deepseekKeyVaultSlot(deepseekSelected)
     : adapterId;
@@ -1910,7 +1900,7 @@ function toInfo(
     adapterId,
     cfg.defaultModel,
     models,
-    adapter.models.default,
+    models.includes(offer.defaultModel) ? offer.defaultModel : adapter.models.default,
   );
   const strategy = authDecision(adapterId, defaultModel, {
     statusSnapshot: options.nonBlockingAuth === true,
@@ -1933,6 +1923,8 @@ function toInfo(
     ...(cliInstallationWarning ? { cliInstallationWarning } : {}),
     defaultModel,
     models,
+    ...(offer.unverified.length > 0 ? { unverifiedModels: [...offer.unverified] } : {}),
+    modelListSource: offer.source,
     authReadyModels,
     ...(strategy === 'api-key' && credentialReadiness ? { credentialReadiness } : {}),
     modelInfo: modelInfoForAdapter(loadModelCatalog(), adapterId, models),

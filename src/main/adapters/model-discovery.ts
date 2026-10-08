@@ -9,14 +9,20 @@ import {
   readCliModelCacheAsync,
   type CliModelCacheReadOptions,
 } from './cli-model-discovery';
+import { discoverCodexModelsViaAppServer } from './codex-model-list';
+import type { LiveModelListing } from './model-availability';
 
 /**
  * Descoberta VIVA de modelos por CLI: "saiu modelo novo → aparece no Nexus"
  * sem esperar release. Cada estratégia pergunta à própria CLI instalada quais
  * modelos ela conhece (a CLI se atualiza sozinha e é a fonte de verdade do
- * provider). O resultado entra em cache com TTL e é mesclado à lista estática
- * do adapter em listProviderSettings; "Atualizar modelos" força um refresh e
- * o broadcast de providers empurra a lista nova para a UI.
+ * provider). O resultado entra em cache com TTL; "Atualizar modelos" força um
+ * refresh e o broadcast de providers empurra a lista nova para a UI.
+ *
+ * F-964 (PRV-01): a listagem MANDA na oferta (model-availability.ts) — não é
+ * mais unida à lista estática. Por isso o cache guarda a última listagem boa:
+ * uma falha (timeout, CLI deslogada) mantém a última boa; uma listagem vazia
+ * vinda com sucesso limpa.
  */
 
 interface DiscoveryStrategy {
@@ -184,14 +190,13 @@ export const MODEL_DISCOVERY_INVENTORY: Readonly<
     kind: 'cache',
     reason: 'sem subcomando list; usa ~/.claude/models_cache.json + bundled',
   },
+  // F-964 (PRV-03): o `model/list` do app-server diz o que a CONTA enxerga;
+  // o ~/.codex/models_cache.json vira fallback quando o app-server falha.
+  codex: { kind: 'cli', command: 'codex app-server (model/list)' },
   openclaude: {
     kind: 'cache',
     reason:
       'sem subcomando list; usa ~/.openclaude/models_cache.json + bundled',
-  },
-  codex: {
-    kind: 'cache',
-    reason: 'sem subcomando list; usa ~/.codex/models_cache.json + bundled',
   },
   aider: {
     kind: 'bundled',
@@ -267,6 +272,18 @@ const STRATEGIES: Readonly<Record<string, DiscoveryStrategy>> = Object.freeze({
   },
 });
 
+/**
+ * Listagem que não é um `execFile` (app-server JSON-RPC). Devolve ids crus;
+ * `sanitizeDiscoveredModels` filtra antes de entrar no cache.
+ */
+const ASYNC_STRATEGIES: Readonly<Record<string, () => Promise<{ models: readonly string[]; defaultModel?: string }>>> =
+  Object.freeze({
+    codex: async () => {
+      const listing = await discoverCodexModelsViaAppServer();
+      return { models: listing.ids, ...(listing.defaultModel ? { defaultModel: listing.defaultModel } : {}) };
+    },
+  });
+
 /** In-memory freshness for a successful live listing or cache hydrate. */
 export const MODEL_DISCOVERY_TTL_MS = 60 * 60_000;
 /**
@@ -283,9 +300,14 @@ const EXEC_TIMEOUT_MS = 15_000;
 export const MODEL_DISCOVERY_CAP = 256;
 const MAX_MODELS = MODEL_DISCOVERY_CAP;
 interface CacheEntry {
+  /** O que a última tentativa deixou visível (falha = a última boa). */
   readonly models: readonly string[];
   readonly fetchedAt: number;
   readonly failed: boolean;
+  /** F-964: última listagem `ok` (vazia inclusive). Ausente = nunca respondeu. */
+  readonly lastGood?: readonly string[];
+  /** Default que a própria CLI marcou (Codex `isDefault`). */
+  readonly defaultModel?: string;
   /** Present only when the source declared producer-version metadata. */
   readonly consumerVersion?: string | null;
 }
@@ -293,17 +315,58 @@ interface CacheEntry {
 let discoveryEpoch = 0;
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<void>>();
+const changeListeners = new Set<(adapterId: string) => void>();
+
+/** Avisado quando a listagem visível (ids ou ok/falha) de uma CLI muda. */
+export function onDiscoveredModelsChanged(listener: (adapterId: string) => void): () => void {
+  changeListeners.add(listener);
+  return () => { changeListeners.delete(listener); };
+}
+
+function storeEntry(adapterId: string, entry: CacheEntry): void {
+  const previous = cache.get(adapterId);
+  cache.set(adapterId, entry);
+  const changed = !previous || previous.failed !== entry.failed ||
+    previous.models.length !== entry.models.length ||
+    previous.models.some((model, index) => entry.models[index] !== model) ||
+    previous.defaultModel !== entry.defaultModel;
+  if (!changed) return;
+  for (const listener of [...changeListeners]) {
+    try { listener(adapterId); } catch { /* um ouvinte quebrado não derruba a descoberta */ }
+  }
+}
+
+function succeeded(models: readonly string[], defaultModel?: string): CacheEntry {
+  return {
+    models,
+    fetchedAt: Date.now(),
+    failed: false,
+    lastGood: models,
+    ...(defaultModel && models.includes(defaultModel) ? { defaultModel } : {}),
+  };
+}
+
+/** Falha mantém a última boa (e o default que veio com ela). */
+function failedAfter(previous: CacheEntry | undefined): CacheEntry {
+  return {
+    models: previous?.lastGood ?? previous?.models ?? [],
+    fetchedAt: Date.now(),
+    failed: true,
+    ...(previous?.lastGood ? { lastGood: previous.lastGood } : {}),
+    ...(previous?.defaultModel ? { defaultModel: previous.defaultModel } : {}),
+  };
+}
 
 /** Adapters whose official `models_cache.json` is the listing — never a CLI exec. */
 const CACHE_HYDRATE_ADAPTERS: ReadonlySet<string> = new Set(['grok']);
 
 export function supportsModelDiscovery(adapterId: string): boolean {
-  return adapterId in STRATEGIES || CACHE_HYDRATE_ADAPTERS.has(adapterId);
+  return adapterId in STRATEGIES || adapterId in ASYNC_STRATEGIES || CACHE_HYDRATE_ADAPTERS.has(adapterId);
 }
 
-/** True only when refresh will `execFile` the provider binary. */
+/** True only when refresh will run the provider binary (exec or app-server). */
 export function usesCliExecForModelDiscovery(adapterId: string): boolean {
-  return adapterId in STRATEGIES;
+  return adapterId in STRATEGIES || adapterId in ASYNC_STRATEGIES;
 }
 
 export function modelsFromOfficialCliCache(files: readonly string[], options: CliModelCacheReadOptions = {}): string[] {
@@ -319,16 +382,47 @@ function officialCacheFiles(adapterId: string): readonly string[] {
   );
 }
 
-/** Leitura síncrona do cache — usada na montagem de listProviderSettings. */
-export function discoveredModelsFor(adapterId: string): readonly string[] {
+function currentEntry(adapterId: string): CacheEntry | undefined {
   const entry = cache.get(adapterId);
   if (entry && 'consumerVersion' in entry &&
       entry.consumerVersion !== (cliCacheConsumerVersion(adapterId) ?? null)) {
     cache.delete(adapterId);
     void refreshDiscoveredModels(adapterId, { force: true }).catch(() => undefined);
-    return [];
+    return undefined;
   }
-  return entry?.models ?? [];
+  return entry;
+}
+
+/** Leitura síncrona do cache — usada na montagem de listProviderSettings. */
+export function discoveredModelsFor(adapterId: string): readonly string[] {
+  return currentEntry(adapterId)?.models ?? [];
+}
+
+/**
+ * F-964: estado da listagem para o resolvedor de oferta (leitura de Map, sem
+ * I/O): `absent` nunca perguntou, `ok` respondeu, `failed` traz a última boa.
+ */
+export function discoveredModelStateFor(adapterId: string): LiveModelListing {
+  const entry = currentEntry(adapterId);
+  if (!entry) return { status: 'absent', models: [] };
+  return {
+    status: entry.failed ? 'failed' : 'ok',
+    models: entry.models,
+    ...(entry.lastGood ? { lastGood: entry.lastGood } : {}),
+    ...(entry.defaultModel ? { defaultModel: entry.defaultModel } : {}),
+  };
+}
+
+/**
+ * F-964 (PRV-03): a sonda de cota do Codex já abre o app-server da conta
+ * ativa; a listagem que veio no mesmo processo entra aqui (sem outro spawn).
+ */
+export function recordDiscoveredModelListing(
+  adapterId: string,
+  models: readonly string[],
+  options: { defaultModel?: string } = {},
+): void {
+  storeEntry(adapterId, succeeded(sanitizeDiscoveredModels(models), options.defaultModel));
 }
 
 export function sanitizeDiscoveredModels(raw: readonly string[]): string[] {
@@ -409,10 +503,11 @@ async function hydrateFromOfficialCache(
     },
   }));
   if (epoch !== discoveryEpoch || (producerChecked && consumerVersion !== (cliCacheConsumerVersion(adapterId) ?? null))) return;
-  cache.set(adapterId, {
-    models: sanitizeDiscoveredModels(models),
-    fetchedAt: Date.now(),
-    failed: models.length === 0,
+  const clean = sanitizeDiscoveredModels(models);
+  // Cache ausente/vazio não prova nada (a CLI pode só não ter escrito ainda):
+  // é falha, e a última boa continua.
+  storeEntry(adapterId, {
+    ...(clean.length > 0 ? succeeded(clean) : failedAfter(cache.get(adapterId))),
     ...(producerChecked ? { consumerVersion } : {}),
   });
   return Promise.resolve();
@@ -441,24 +536,24 @@ export function refreshDiscoveredModels(
     return task;
   }
   const strategy = STRATEGIES[adapterId];
-  if (!strategy) return Promise.resolve();
+  const asyncStrategy = ASYNC_STRATEGIES[adapterId];
+  if (!strategy && !asyncStrategy) return Promise.resolve();
   const now = Date.now();
   if (!options.force && isFresh(cache.get(adapterId), now)) {
     return Promise.resolve();
   }
   const epoch = discoveryEpoch;
-  const task = execDiscovery(strategy)
-    .then((models) => {
+  const listing: Promise<{ models: readonly string[]; defaultModel?: string }> = strategy
+    ? execDiscovery(strategy).then((models) => ({ models }))
+    : asyncStrategy!().then((result) => ({ ...result, models: sanitizeDiscoveredModels(result.models) }));
+  const task = listing
+    .then(({ models, defaultModel }) => {
       if (discoveryEpoch !== epoch) return;
-      cache.set(adapterId, { models, fetchedAt: Date.now(), failed: false });
+      storeEntry(adapterId, succeeded(models, defaultModel));
     })
     .catch(() => {
       if (discoveryEpoch !== epoch) return;
-      cache.set(adapterId, {
-        models: cache.get(adapterId)?.models ?? [],
-        fetchedAt: Date.now(),
-        failed: true,
-      });
+      storeEntry(adapterId, failedAfter(cache.get(adapterId)));
     })
     .finally(() => {
       if (inFlight.get(adapterId) === task) inFlight.delete(adapterId);
@@ -489,4 +584,5 @@ export function resetModelDiscoveryForTests(): void {
   discoveryEpoch++;
   cache.clear();
   inFlight.clear();
+  changeListeners.clear();
 }

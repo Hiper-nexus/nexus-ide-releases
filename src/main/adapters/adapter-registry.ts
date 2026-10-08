@@ -27,7 +27,6 @@ import {
   warmCliBinaryVersions,
   type CliBinaryResolution,
 } from '../path-resolver';
-import { getCustomModels } from './custom-models';
 import {
   applyDiscoveredEffortsToAdapter,
   applyDiscoveredModelsToAdapter,
@@ -38,10 +37,12 @@ import {
   discoverCliModelsAsync,
 } from './cli-model-discovery';
 import {
-  discoveredModelsFor,
   MODEL_DISCOVERY_POLL_MS,
+  onDiscoveredModelsChanged,
   refreshAllDiscoveredModels,
 } from './model-discovery';
+import { modelListAuthority } from './model-availability';
+import { currentModelOffer, resolveAdapterModelOffer, setModelOfferBase } from './model-offer';
 import {
   USER_MODEL_CATALOG_FILE,
   applyModelCatalogToAdapter,
@@ -363,16 +364,10 @@ function toAdapterInfo(
     ? resolveCliBinary(adapter.bin)?.installationWarning : undefined;
   const loginHint =
     adapter.kind !== 'api-provider' ? adapter.auth.loginHint : undefined;
-  // Merge user-added custom models so a CLI's newest models (added by hand)
-  // appear everywhere the adapter's models show.
-  const custom = getCustomModels(adapter.id).filter(
-    (m) => !adapter.models.list.includes(m),
-  );
-  const staticIds = [...adapter.models.list, ...custom];
-  const discovered = discoveredModelsFor(adapter.id).filter(
-    (m) => !staticIds.includes(m),
-  );
-  const modelList = [...staticIds, ...discovered];
+  // F-964: a oferta sai do resolvedor (listagem viva autoritativa + custom do
+  // operador), não da união estático ∪ catálogo ∪ descoberta.
+  const offer = currentModelOffer(adapter);
+  const modelList = [...offer.offered];
   const capabilities = adapterCapabilityMatrixForAdapter(adapter, origin);
   const authMethod = authMethodForAdapter(adapter);
   return {
@@ -383,6 +378,7 @@ function toAdapterInfo(
     models: {
       ...adapter.models,
       list: modelList,
+      default: offer.defaultModel,
       info: modelInfoForAdapter(loadModelCatalog(), adapter.id, modelList),
     },
     installed: resolution.installed,
@@ -408,6 +404,7 @@ function toAdapterInfo(
 // ── Registry state ──────────────────────────────────────────────────────────
 
 let registry = new Map<string, Adapter>();
+let stopDiscoveryListener: (() => void) | null = null;
 let adapterOrigins = new Map<string, AdapterOrigin>();
 /** Discovery cache: installed flag + absolute bin path for spawn. */
 let installedCache = new Map<string, AdapterBinResolution>();
@@ -476,33 +473,53 @@ export function applyNewestModelLineDefault(
   return { ...adapter, models: { ...adapter.models, default: newest } };
 }
 
+/**
+ * Composição de modelos no reload. CLI sem listagem (`bundled`) segue a união
+ * de sempre (estático ∪ cache ∪ catálogo); CLI que lista recebe a oferta
+ * autoritativa — o resto do Main (squad, failover, spawn) lê este registro.
+ */
+function composeAdapterModels(
+  adapter: Adapter,
+  discovered: ReadonlyMap<string, readonly string[]>,
+  efforts: ReadonlyMap<string, readonly string[]>,
+  catalog: ModelCatalog,
+): Adapter {
+  const withEfforts = applyDiscoveredEffortsToAdapter(adapter, efforts);
+  if (modelListAuthority(adapter.id) === 'bundled') {
+    return applyNewestModelLineDefault(
+      applyModelCatalogToAdapter(applyDiscoveredModelsToAdapter(withEfforts, discovered), catalog),
+      catalog,
+    );
+  }
+  const offer = resolveAdapterModelOffer(withEfforts, {
+    catalog,
+    cacheIds: discovered.get(adapter.id) ?? [],
+  });
+  return {
+    ...withEfforts,
+    models: { ...withEfforts.models, list: [...offer.offered], default: offer.defaultModel },
+  };
+}
+
 function reload(): void {
   const catalog = loadModelCatalog();
   const discovered = discoverCliModels();
   const discoveredEfforts = discoverCliEfforts();
   const builtins = loadBuiltins();
   const userAdapters = loadUserAdapters();
-  registry = mergeAdapters(builtins, userAdapters);
+  const baseAdapters = mergeAdapters(builtins, userAdapters);
+  setModelOfferBase(baseAdapters, discovered);
   const userIds = new Set(userAdapters.map((adapter) => adapter.id));
   adapterOrigins = new Map(
-    [...registry.keys()].map((id) => [
+    [...baseAdapters.keys()].map((id) => [
       id,
       userIds.has(id) ? 'user' : 'builtin',
     ]),
   );
   registry = new Map(
-    [...registry.entries()].map(([id, adapter]) => [
+    [...baseAdapters.entries()].map(([id, adapter]) => [
       id,
-      applyNewestModelLineDefault(
-        applyModelCatalogToAdapter(
-          applyDiscoveredEffortsToAdapter(
-            applyDiscoveredModelsToAdapter(adapter, discovered),
-            discoveredEfforts,
-          ),
-          catalog,
-        ),
-        catalog,
-      ),
+      composeAdapterModels(adapter, discovered, discoveredEfforts, catalog),
     ]),
   );
   refreshInstalledCache();
@@ -532,11 +549,11 @@ async function reloadBudgeted(context: PeriodicTaskContext): Promise<void> {
       }
     } finally { await directory.close(); }
   }
-  const next = mergeAdapters(loadBuiltins(), users);
-  for (const [id, adapter] of next) {
+  const base = mergeAdapters(loadBuiltins(), users);
+  const next = new Map<string, Adapter>();
+  for (const [id, adapter] of base) {
     await context.checkpoint();
-    next.set(id, applyNewestModelLineDefault(applyModelCatalogToAdapter(
-      applyDiscoveredEffortsToAdapter(applyDiscoveredModelsToAdapter(adapter, discovered), efforts), catalog), catalog));
+    next.set(id, composeAdapterModels(adapter, discovered, efforts, catalog));
   }
   if (registryEpoch !== epoch) return;
   context.assertCurrent();
@@ -549,6 +566,7 @@ async function reloadBudgeted(context: PeriodicTaskContext): Promise<void> {
   }
   if (registryEpoch !== epoch || registry !== previousRegistry) return;
   registry = next;
+  setModelOfferBase(base, discovered);
   adapterOrigins = new Map([...next.keys()].map((id) => [id, origins.has(id) ? 'user' : 'builtin']));
   installedCache = installations;
   invalidateAdapterHotCache();
@@ -645,6 +663,9 @@ export function initAdapterRegistry(): void {
   // sem versão conhecida fica na ordem do PATH). As sondas rodam fora do Main;
   // quando voltam, o cache de binários é refeito e o renderer avisado.
   stopCliVersionListener ??= onCliVersionLearned(scheduleCliVersionRefresh);
+  // F-964: a listagem viva mudou (ou falhou e caiu na última boa) → o
+  // registro recompõe a oferta para spawn, squad e failover.
+  stopDiscoveryListener ??= onDiscoveredModelsChanged(scheduleReloadAndBroadcast);
   void warmAdapterCliVersions();
 
   try {
@@ -835,6 +856,8 @@ export async function closeAdapterRegistry(): Promise<void> {
   }
   stopCliVersionListener?.();
   stopCliVersionListener = null;
+  stopDiscoveryListener?.();
+  stopDiscoveryListener = null;
   watcher?.close();
   watcher = null;
   modelCatalogWatcher?.close();

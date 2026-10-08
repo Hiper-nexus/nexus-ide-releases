@@ -80,8 +80,9 @@ describe('fetchCodexCliUsage', () => {
     expect(mocks.spawn).toHaveBeenCalledWith('/cli/codex', expect.arrayContaining([
       'app-server', 'cli_auth_credentials_store="file"',
     ]), expect.objectContaining({ env: expect.objectContaining({ CODEX_HOME: home }), shell: false }));
+    // F-964 (PRV-03): o mesmo processo também lista os modelos da conta.
     expect(requests.map(r => r.method)).toEqual([
-      'initialize', 'initialized', 'account/read', 'account/rateLimits/read',
+      'initialize', 'initialized', 'account/read', 'account/rateLimits/read', 'model/list',
     ]);
     expect(requests.find(r => r.method === 'account/read')?.params).toEqual({ refreshToken: true });
     expect(child.kill).toHaveBeenCalled();
@@ -170,5 +171,46 @@ describe('fetchCodexCliUsage', () => {
     fakeServer(r => r.method === 'account/read' ? { account: null, requiresOpenaiAuth: true } : undefined);
     expect(await probeCodexCliUsage({ authFile, expectedAuthBlob: auth(), now: NOW }))
       .toEqual({ windows: null, failure: 'auth-expired' });
+  });
+});
+
+describe('F-964 (PRV-03) — model/list no mesmo app-server da cota', () => {
+  const model = (id: string, extra: Record<string, unknown> = {}) => ({
+    id, model: id, displayName: id, description: '', hidden: false, isDefault: false,
+    defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: '' }], ...extra,
+  });
+
+  it('um spawn: cota + listagem paginada (2 páginas, 1 hidden) do CODEX_HOME da conta', async () => {
+    fakeServer((request) => {
+      if (request.method !== 'model/list') return undefined;
+      return request.params?.cursor === 'p2'
+        ? { data: [model('x-luna')], nextCursor: null }
+        : { data: [model('x-sol', { isDefault: true }), model('x-hidden', { hidden: true })], nextCursor: 'p2' };
+    });
+    const probe = await probeCodexCliUsage({ authFile, expectedAuthBlob: auth(), now: NOW });
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(mocks.spawn.mock.calls[0][2].env.CODEX_HOME).toBe(home);
+    expect(probe.windows).toHaveLength(2);
+    expect(probe.models?.ids).toEqual(['x-sol', 'x-luna']);
+    expect(probe.models?.hidden).toEqual(['x-hidden']);
+    expect(probe.models?.defaultModel).toBe('x-sol');
+    expect(requests.filter(r => r.method === 'model/list').map(r => r.params)).toEqual([{}, { cursor: 'p2' }]);
+  });
+
+  it('listagem que falha não custa a cota', async () => {
+    fakeServer((request) => request.method === 'model/list'
+      ? { $error: { code: -32601, message: 'method not found' } } : undefined);
+    const probe = await probeCodexCliUsage({ authFile, expectedAuthBlob: auth(), now: NOW });
+    expect(probe.windows).toHaveLength(2);
+    expect(probe.models).toBeUndefined();
+  });
+
+  it('listagem que não responde também não custa a cota (folga curta)', async () => {
+    fakeServer((request) => (request.method === 'model/list' ? false : undefined));
+    const started = Date.now();
+    const probe = await probeCodexCliUsage({ authFile, expectedAuthBlob: auth(), now: NOW });
+    expect(probe.windows).toHaveLength(2);
+    expect(probe.models).toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 });
