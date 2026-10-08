@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { isAgentSessionId } from '../agent-session-record'
+import { APPROVAL_DECISIONS, APPROVAL_REQUEST_ID_MAX_CHARS } from '../approval-decision'
 import { normalizeExecutionHostId } from '../execution-host'
 import {
   AGENT_SESSION_HISTORY_DIRECTIONS,
@@ -180,6 +181,22 @@ export const RespondParams = z
     optionId: Identifier('Invalid option id', MAX_RESPONSE_OPTION_ID_LENGTH)
   })
   .strict()
+
+/**
+ * PRV-02/MOB-07: an approval the host's hook broker holds (Claude/Codex in a PTY) has no
+ * structured agent session, so no mutation envelope — the request id and revision are the
+ * whole compare-and-set. Only the broker's decisions are valid options.
+ */
+export const HookApprovalRespondParams = z
+  .object({
+    itemId: Identifier('Invalid item id', APPROVAL_REQUEST_ID_MAX_CHARS),
+    expectedRevision: z.number().int().positive(),
+    optionId: z.enum(APPROVAL_DECISIONS)
+  })
+  .strict()
+
+/** `agentSession.respondToApproval`: a structured-session item, or a host hook approval. */
+export const RespondToApprovalParams = z.union([RespondParams, HookApprovalRespondParams])
 
 export const SetOptionParams = z
   .object({
