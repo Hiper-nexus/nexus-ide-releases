@@ -107,6 +107,26 @@ describe('MobileNativeChatMessage', () => {
     expect(texts.some((text) => text.includes('/tmp/host.png'))).toBe(true)
   })
 
+  it('offers edit and cancel only on a bubble still waiting in the outbox', () => {
+    const queuedActions = { onEdit: vi.fn(), onCancel: vi.fn() }
+    const queued = userMessage([{ type: 'text', text: 'na fila' }])
+    const tree = render(queued, { queuedActions } as never)
+    const press = (label: string) =>
+      tree.root
+        .findAllByType('Pressable' as never)
+        .find((node) => node.props.accessibilityLabel === label)!
+        .props.onPress()
+
+    act(() => press('Edit queued message'))
+    act(() => press('Cancel queued message'))
+    expect(queuedActions.onEdit).toHaveBeenCalledWith('u1')
+    expect(queuedActions.onCancel).toHaveBeenCalledWith('u1')
+
+    act(() => renderer?.unmount())
+    const echoed = render(queued)
+    expect(echoed.root.findAllByType('Pressable' as never)).toHaveLength(0)
+  })
+
   it('makes user message text selectable', () => {
     const tree = render(userMessage([{ type: 'text', text: 'Prompt I typed' }]))
     const text = tree.root

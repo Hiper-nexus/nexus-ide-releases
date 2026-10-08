@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, type MutableRefObject } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, type MutableRefObject } from 'react'
+import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import type { MobileNativeChatTab } from './mobile-native-chat-eligibility'
@@ -16,10 +17,40 @@ import { useThrottledLatestValue } from './use-throttled-latest-value'
 import type { MobileNativeChatController } from './mobile-native-chat-controller-contract'
 import { useMobileBridgeChatPromptWrites } from './use-mobile-bridge-chat-prompt-writes'
 import { useMobileNativeChatActiveResolution } from './use-mobile-native-chat-active-resolution'
+import {
+  findLandedUnconfirmedSends,
+  normalizeReconcileText
+} from './mobile-native-chat-draft-reconcile'
+import { classifyMobileNativeChatSend } from './mobile-native-chat-send-classification'
+import type { MobileNativeChatSendOutcome } from './mobile-native-chat-send'
+import type { MobileNativeChatQueuedActions } from './mobile-native-chat-render-data'
+import { mobileNativeChatScopeKey } from './mobile-native-chat-scope-key'
+import { appendPendingThreadMessages, type MobileQueuedThreadMessage } from './mobile-thread-outbox'
+import { useMobileThreadOutbox } from './use-mobile-thread-outbox'
 
 export type { MobileNativeChatController } from './mobile-native-chat-controller-contract'
 
 const NATIVE_CHAT_STREAM_THROTTLE_MS = 50
+
+/** An earlier attempt of a queued message already reached the transcript: the
+ *  same text as a user turn after the tail captured when it was queued. */
+function hasQueuedMessageLanded(
+  messages: readonly NativeChatMessage[],
+  message: MobileQueuedThreadMessage
+): boolean {
+  return (
+    findLandedUnconfirmedSends(messages, [
+      {
+        draftKey: message.scopeKey,
+        pendingKey: null,
+        text: message.text,
+        normalizedText: normalizeReconcileText(message.text),
+        baselineTailMessageId: message.baselineTailMessageId,
+        deadline: null
+      }
+    ]).length > 0
+  )
+}
 
 /** Owns mobile native-chat state and teardown outside the already dense session
  *  route. The route remains responsible only for choosing and rendering the view. */
@@ -199,7 +230,8 @@ export function useMobileNativeChatController(args: {
     send: handleNativeChatSend,
     sendWithOutcome: handleNativeChatSendWithOutcome,
     answerQuestion: legacyHandleNativeChatQuestionAnswer,
-    dispatchCommand: handleNativeChatDispatchCommand
+    dispatchCommand: handleNativeChatDispatchCommand,
+    deliverQueued: deliverQueuedNativeChatMessage
   } = useMobileNativeChatMessageSend({
     client,
     enabled: inputSendable && !activeChatStructured,
@@ -215,6 +247,118 @@ export function useMobileNativeChatController(args: {
     holdUnconfirmedSend,
     onSendError
   })
+
+  // Durable outbox (terminal lane): a chat message sent while the desktop is out
+  // of reach waits on disk and goes out, in order, on boot or reconnect.
+  const outboxScopeKey =
+    !activeChatStructured && activeChatResolution != null
+      ? mobileNativeChatScopeKey(hostId, worktreeId, activeSessionTabId)
+      : null
+  const outbox = useMobileThreadOutbox({
+    scopeKey: outboxScopeKey,
+    // A settled transcript is what the landing check reads before any resend.
+    sendable: inputSendable && nativeChatSession.status === 'ready',
+    deliver: deliverQueuedNativeChatMessage,
+    hasLanded: (message) => hasQueuedMessageLanded(nativeChatSession.messages, message)
+  })
+  const {
+    editingMessageId: editingQueuedMessageId,
+    saveEdit: saveQueuedEdit,
+    enqueue: enqueueOutboxMessage
+  } = outbox
+  const sendOrQueueWithOutcome = useCallback(
+    async (
+      text: string,
+      images?: string[],
+      deadline?: number
+    ): Promise<MobileNativeChatSendOutcome> => {
+      const queueable = outboxScopeKey !== null && !images?.length
+      if (queueable && editingQueuedMessageId !== null) {
+        const origin = captureSendOrigin(text.trimEnd())
+        if (!(await saveQueuedEdit(text))) {
+          onSendError('Queued message could not be updated')
+          return 'rejected'
+        }
+        if (origin) {
+          clearDraftForSend(origin, text)
+        }
+        return 'accepted'
+      }
+      if (
+        queueable &&
+        !inputSendable &&
+        text.trim() !== '' &&
+        classifyMobileNativeChatSend(activeChatAgentRef.current, text.trimEnd()) === 'chat'
+      ) {
+        const origin = captureSendOrigin(text.trimEnd())
+        if (origin) {
+          clearDraftForSend(origin, text)
+          if (await enqueueOutboxMessage(text.trimEnd(), origin.baselineTailMessageId)) {
+            return 'accepted'
+          }
+          restoreRejectedDraft(origin, text)
+          onSendError('Message not queued')
+          return 'rejected'
+        }
+      }
+      return handleNativeChatSendWithOutcome(text, images, deadline)
+    },
+    [
+      activeChatAgentRef,
+      captureSendOrigin,
+      clearDraftForSend,
+      editingQueuedMessageId,
+      enqueueOutboxMessage,
+      handleNativeChatSendWithOutcome,
+      inputSendable,
+      onSendError,
+      outboxScopeKey,
+      restoreRejectedDraft,
+      saveQueuedEdit
+    ]
+  )
+  // Stable for the list rows: the latest values are read at tap time.
+  const queuedActionDepsRef = useRef({
+    outbox,
+    onSendError,
+    setChatComposerText,
+    chatComposerText
+  })
+  queuedActionDepsRef.current = { outbox, onSendError, setChatComposerText, chatComposerText }
+  const chatQueuedActions = useMemo<MobileNativeChatQueuedActions>(
+    () => ({
+      onEdit: (messageId) => {
+        const deps = queuedActionDepsRef.current
+        // The edit borrows the composer; never clobber a draft being written.
+        if (deps.chatComposerText.trim() !== '') {
+          deps.onSendError('Send or clear your draft to edit a queued message')
+          return
+        }
+        const text = deps.outbox.beginEdit(messageId)
+        if (text !== null) {
+          deps.setChatComposerText(text)
+        }
+      },
+      onCancel: (messageId) => {
+        void queuedActionDepsRef.current.outbox.cancel(messageId)
+      }
+    }),
+    []
+  )
+  const { cancelEdit: cancelQueuedEditHold } = outbox
+  const cancelChatQueuedEdit = useCallback(() => {
+    cancelQueuedEditHold()
+    setChatComposerText('')
+  }, [cancelQueuedEditHold, setChatComposerText])
+  const chatPendingWithQueue = useMemo(
+    () =>
+      appendPendingThreadMessages(
+        chatPending,
+        [...nativeChatSession.messages, ...chatPending],
+        outbox.queued
+      ),
+    [chatPending, nativeChatSession.messages, outbox.queued]
+  )
 
   const structuredNativeChatSend = useMobileStructuredNativeChatSendBridge({
     agent: activeChatResolution?.agent === 'claude' ? 'claude' : 'codex',
@@ -268,7 +412,11 @@ export function useMobileNativeChatController(args: {
     chatComposerText,
     setChatComposerText,
     getChatComposerEditGeneration,
-    chatPending,
+    chatPending: chatPendingWithQueue,
+    chatQueuedActions,
+    chatEditingQueuedMessage: editingQueuedMessageId !== null,
+    cancelChatQueuedEdit,
+    chatCanQueueOffline: outboxScopeKey !== null,
     chatImagePreviewsByMessageId,
     nativeChatSession,
     /** Structured lane: drives the per-turn status row and live tool progress. */
@@ -304,7 +452,7 @@ export function useMobileNativeChatController(args: {
       : handleNativeChatSend,
     handleNativeChatSendWithOutcome: activeChatStructured
       ? structuredNativeChatSend.sendWithOutcome
-      : handleNativeChatSendWithOutcome,
+      : sendOrQueueWithOutcome,
     readSeededLaunchDraft,
     nativeChatSessionOptions
   }

@@ -64,6 +64,9 @@ type Props = {
   onMicPressIn?: () => void
   onMicPressOut?: () => void
   disabled?: boolean
+  /** While `disabled`, a text-only send may still go out: it lands in the
+   *  durable outbox instead of the terminal. Attach and dictation stay locked. */
+  sendWhileLocked?: boolean
   placeholder?: string
   filePaths?: string[]
   onNeedFiles?: (query: string) => void
@@ -89,6 +92,7 @@ export function MobileNativeChatComposer({
   onMicPressIn,
   onMicPressOut,
   disabled = false,
+  sendWhileLocked = false,
   placeholder = 'Message, @files, /commands',
   filePaths = NO_FILE_PATHS,
   onNeedFiles
@@ -117,7 +121,7 @@ export function MobileNativeChatComposer({
   // along even when the user sends no accompanying text.
   const canSend =
     (trimmed.length > 0 || attachments.length > 0) &&
-    !disabled &&
+    (!disabled || (sendWhileLocked && attachments.length === 0)) &&
     !sending &&
     !isAttaching &&
     !sessionOptionDispatching

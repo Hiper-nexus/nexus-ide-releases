@@ -32,6 +32,21 @@ export const styles = StyleSheet.create({
   reasoning: {
     opacity: 0.7
   },
+  queuedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginTop: spacing.xs
+  },
+  queuedLabel: {
+    color: colors.textMuted,
+    fontSize: typography.metaSize
+  },
+  queuedAction: {
+    color: colors.accentBlue,
+    fontSize: typography.metaSize,
+    fontWeight: '600'
+  },
   toolRun: {
     marginTop: spacing.xs
   },

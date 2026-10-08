@@ -284,6 +284,32 @@ describe('MobileNativeChatComposer', () => {
     expect(sendButton().props).toMatchObject({ disabled: true })
   })
 
+  it('lets a locked composer send text into the outbox, but never images', async () => {
+    const onSend = vi.fn().mockResolvedValue(true)
+    const element = (attachments: { id: string; previewUri: string; path: string }[]) =>
+      createElement(MobileNativeChatComposer, {
+        value: 'offline',
+        onChangeText: vi.fn(),
+        onSend,
+        sendSurfaceId: 'tab-a',
+        getSendCompletionGeneration: getCurrentSendCompletionGeneration,
+        disabled: true,
+        sendWhileLocked: true,
+        attachments: attachments as never
+      })
+    await act(async () => {
+      renderer = create(element([]))
+    })
+    expect(sendButton().props).toMatchObject({ disabled: false })
+    await act(async () => sendButton().props.onPress())
+    expect(onSend).toHaveBeenCalledWith('offline')
+
+    await act(async () => {
+      renderer!.update(element([{ id: 'img-1', previewUri: 'file:///a.jpg', path: '/tmp/a.png' }]))
+    })
+    expect(sendButton().props).toMatchObject({ disabled: true })
+  })
+
   it('renders a removable thumbnail for each pending image attachment', async () => {
     const onRemoveAttachment = vi.fn()
     await act(async () => {
@@ -584,7 +610,9 @@ describe('MobileNativeChatComposer', () => {
       )
     })
     const input = renderer!.root.find((node) => node.type === 'TextInput') as {
-      props: { onSelectionChange: (event: { nativeEvent: { selection: { end: number } } }) => void }
+      props: {
+        onSelectionChange: (event: { nativeEvent: { selection: { end: number } } }) => void
+      }
     }
     await act(async () => input.props.onSelectionChange({ nativeEvent: { selection: { end: 2 } } }))
 

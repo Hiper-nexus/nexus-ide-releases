@@ -13,3 +13,15 @@ export function isTerminalSendRpcAccepted(response: RpcResponse): boolean {
   }
   return response.result.send.accepted === true
 }
+
+/** The host recognized the send's clientMessageId as already delivered and wrote nothing. */
+export function isTerminalSendRpcDeduplicated(response: RpcResponse): boolean {
+  if (!response.ok || !isTerminalSendRpcAccepted(response)) {
+    return false
+  }
+  return (
+    isRecord(response.result) &&
+    isRecord(response.result.send) &&
+    response.result.send.deduplicated === true
+  )
+}

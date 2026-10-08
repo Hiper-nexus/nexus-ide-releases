@@ -22,8 +22,10 @@ import { styles } from './mobile-native-chat-view-styles'
 import {
   buildMobileNativeChatTransientData,
   mobileNativeChatEmptyState,
-  type MobileNativeChatPendingItem
+  type MobileNativeChatPendingItem,
+  type MobileNativeChatQueuedActions
 } from './mobile-native-chat-render-data'
+import { MobileNativeChatQueuedEditBanner } from './MobileNativeChatQueuedEditBanner'
 import { useMobileNativeChatPinchGesture } from './use-mobile-native-chat-pinch-gesture'
 import { useMobileNativeChatTailFollow } from './use-mobile-native-chat-tail-follow'
 import { useMobileNativeChatTurnDisclosure } from './use-mobile-native-chat-turn-disclosure'
@@ -78,8 +80,16 @@ type Props = {
   getSendCompletionGeneration: () => number
   /** Reads user draft mutations from the route-owned controller. */
   getComposerEditGeneration: () => number
-  /** Accepted user echoes awaiting transcript replacement, including image previews. */
-  pending: MobileNativeChatPendingItem[]
+  /** Accepted user echoes awaiting transcript replacement, including image previews,
+   *  plus messages still queued in the outbox (`queued`). */
+  pending: readonly MobileNativeChatPendingItem[]
+  /** Edit/cancel for queued bubbles; null hides them. */
+  queuedActions?: MobileNativeChatQueuedActions | null
+  /** The composer holds a queued message being edited. */
+  editingQueuedMessage?: boolean
+  onCancelQueuedEdit?: () => void
+  /** While disconnected the composer still sends: text goes to the outbox. */
+  canQueueOffline?: boolean
   /** Local photo URIs retained when the authoritative transcript replaces an
    *  optimistic image bubble. */
   imagePreviewsByMessageId?: Record<string, string[]>
@@ -133,6 +143,8 @@ type Props = {
   keyboardInset?: number
 }
 
+const NO_QUEUED_IDS: ReadonlySet<string> = new Set()
+
 export function MobileNativeChatView({
   messages,
   folded,
@@ -155,6 +167,10 @@ export function MobileNativeChatView({
   getSendCompletionGeneration,
   getComposerEditGeneration,
   pending,
+  queuedActions = null,
+  editingQueuedMessage = false,
+  onCancelQueuedEdit,
+  canQueueOffline = false,
   imagePreviewsByMessageId,
   composerText,
   onComposerTextChange,
@@ -268,6 +284,10 @@ export function MobileNativeChatView({
   })
   const hasPendingStructuredInteraction =
     structuredActivityUi && (ask != null || permission != null || question != null)
+  const queuedIds = useMemo(() => {
+    const ids = pending.filter((item) => item.queued).map((item) => item.id)
+    return ids.length > 0 ? new Set(ids) : NO_QUEUED_IDS
+  }, [pending])
 
   const renderItem = useCallback(
     ({ item, index }: { item: NativeChatMessage; index: number }) => (
@@ -278,16 +298,18 @@ export function MobileNativeChatView({
         onOpenFile={onOpenFile}
         structuredActivityUi={structuredActivityUi}
         onToggleTurn={turns.onToggleTurn}
+        queuedActions={queuedIds.has(item.id) ? queuedActions : null}
         {...turns.resolveRow(index, item)}
       />
     ),
-    [toolsExpanded, fontScale, onOpenFile, structuredActivityUi, turns]
+    [toolsExpanded, fontScale, onOpenFile, structuredActivityUi, turns, queuedIds, queuedActions]
   )
 
   const emptyState = mobileNativeChatEmptyState(status, agent ?? null, error)
   const showLoading = status === 'loading' && messages.length === 0
 
   const lockReason = useSettledMobileNativeChatInputLock(inputLockReason)
+  const queuesOffline = lockReason === 'disconnected' && canQueueOffline
 
   return (
     <View style={[styles.root, { paddingBottom: bottomPad }]}>
@@ -414,6 +436,9 @@ export function MobileNativeChatView({
           <Text style={styles.sendErrorText}>{sendErrorMessage}</Text>
         </View>
       ) : null}
+      {editingQueuedMessage && onCancelQueuedEdit ? (
+        <MobileNativeChatQueuedEditBanner onCancel={onCancelQueuedEdit} />
+      ) : null}
       <MobileNativeChatComposer
         structuredCommands={
           structuredActivityUi ? (sessionOptions?.controller.conversationCommands ?? []) : undefined
@@ -435,12 +460,15 @@ export function MobileNativeChatView({
         onMicPressIn={onMicPressIn}
         onMicPressOut={onMicPressOut}
         disabled={lockReason !== null}
+        sendWhileLocked={queuesOffline}
         placeholder={
-          lockReason === 'disconnected'
-            ? 'Reconnecting…'
-            : lockReason === 'waiting'
-              ? 'Waiting for terminal…'
-              : 'Message, @files, /commands'
+          queuesOffline
+            ? 'Offline — messages queue until reconnect'
+            : lockReason === 'disconnected'
+              ? 'Reconnecting…'
+              : lockReason === 'waiting'
+                ? 'Waiting for terminal…'
+                : 'Message, @files, /commands'
         }
         filePaths={filePaths}
         onNeedFiles={onNeedFiles}

@@ -11,7 +11,10 @@ import type {
   NativeChatSettledTurns
 } from '../../../src/shared/native-chat-turn-status'
 import type { MobileNativeChatSendOutcome } from './mobile-native-chat-send'
-import type { MobileNativeChatPendingMessage } from './use-mobile-native-chat-drafts'
+import type {
+  MobileNativeChatPendingItem,
+  MobileNativeChatQueuedActions
+} from './mobile-native-chat-render-data'
 import type { useMobileNativeChatSession } from './use-mobile-native-chat-session'
 import type { MobileNativeChatSessionOptionPickersProps } from './MobileNativeChatSessionOptionPickers'
 
@@ -26,7 +29,14 @@ export type MobileNativeChatController = {
   chatComposerText: string
   setChatComposerText: Dispatch<SetStateAction<string>>
   getChatComposerEditGeneration: () => number
-  chatPending: MobileNativeChatPendingMessage[]
+  /** Accepted echoes awaiting the transcript, then messages still in the outbox. */
+  chatPending: readonly MobileNativeChatPendingItem[]
+  chatQueuedActions: MobileNativeChatQueuedActions
+  /** The composer holds a queued message being edited (the drain skips it). */
+  chatEditingQueuedMessage: boolean
+  cancelChatQueuedEdit: () => void
+  /** Offline sends go to the durable outbox (terminal lane only). */
+  chatCanQueueOffline: boolean
   chatImagePreviewsByMessageId: Record<string, string[]>
   nativeChatSession: ReturnType<typeof useMobileNativeChatSession>
   /** Structured lane: drives the per-turn status row and live tool progress. */

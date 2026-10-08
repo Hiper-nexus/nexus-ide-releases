@@ -70,7 +70,14 @@ export function useMobileNativeChatDrafts(args: {
   clearDraftForSend: (origin: MobileNativeChatSendOrigin, text: string) => void
   /** Put the text back after a definite rejection, unless newer edits exist. */
   restoreRejectedDraft: (origin: MobileNativeChatSendOrigin, text: string) => void
-  acceptSend: (origin: MobileNativeChatSendOrigin, text: string, images?: string[]) => void
+  /** `id` keeps an outbox message's id on its echo, so the echo takes over the
+   *  queued bubble instead of rendering beside it. */
+  acceptSend: (
+    origin: MobileNativeChatSendOrigin,
+    text: string,
+    images?: string[],
+    id?: string
+  ) => void
   holdUnconfirmedSend: (
     origin: MobileNativeChatSendOrigin,
     text: string,
@@ -180,12 +187,12 @@ export function useMobileNativeChatDrafts(args: {
   }, [])
 
   const acceptSend = useCallback(
-    (origin: MobileNativeChatSendOrigin, text: string, images?: string[]) => {
+    (origin: MobileNativeChatSendOrigin, text: string, images?: string[], explicitId?: string) => {
       if (!origin.pendingKey && !images?.length) {
         return
       }
       pendingCounterRef.current += 1
-      const id = `pending-${pendingCounterRef.current}`
+      const id = explicitId ?? `pending-${pendingCounterRef.current}`
       const key = origin.pendingKey
       if (key) {
         setPendingBySession((previous) =>

@@ -42,6 +42,7 @@ import {
   mobileRpcKindForBridgeType,
 } from './mobile-companion-policy';
 import { requestRemoteDesktopConfirmation } from './remote-desktop-confirmation';
+import { createRemoteInputDedup, remoteInputMessageId } from './remote-input-dedup';
 import {
   parseRemoteDeviceIdentity,
   verifyRemoteDeviceSignature,
@@ -548,6 +549,9 @@ function sessionIdOf(
   return pane.sessionId;
 }
 
+// Reenvio do outbox mobile (mesmo messageId) não digita o prompt de novo.
+const paneInputDedup = createRemoteInputDedup<boolean>({ isDelivered: (ok) => ok });
+
 /** Shape das mensagens autenticadas aceitas pelo dispatch da bridge. */
 export type AuthedBridgeCommand = {
   id?: string;
@@ -630,27 +634,44 @@ export async function handleAuthedMessage(
       if (!inputDecision.allowed) {
         throw new Error(`not authorized: ${inputDecision.reason}`);
       }
-      if (inputDecision.requiresDesktopConfirmation) {
-        const granted = await requestRemoteDesktopConfirmation({
-          confirmationSessionId,
-          scope,
-          toolName: 'remote_pane_input',
-          reason: 'comando destrutivo, remoto, de deploy ou publicação',
-          args: { command: inputDecision.command, paneId: msg.paneId },
-        });
-        if (!granted) {
-          throw new Error(
-            'not authorized: desktop confirmation required or denied',
-          );
+      const messageId = remoteInputMessageId(msg.messageId);
+      // Com messageId a autorização vem antes do cache: um reenvio nunca pula
+      // a checagem do pane. Sem ele, a ordem original (confirmação primeiro).
+      let sessionId = messageId ? sessionIdOf(msg.paneId, scope, 'write') : null;
+      const deliverInput = async (): Promise<boolean> => {
+        if (inputDecision.requiresDesktopConfirmation) {
+          const granted = await requestRemoteDesktopConfirmation({
+            confirmationSessionId,
+            scope,
+            toolName: 'remote_pane_input',
+            reason: 'comando destrutivo, remoto, de deploy ou publicação',
+            args: { command: inputDecision.command, paneId: msg.paneId },
+          });
+          if (!granted) {
+            throw new Error(
+              'not authorized: desktop confirmation required or denied',
+            );
+          }
         }
-      }
-      const text = `${inputDecision.command}\n`;
-      const sessionId = sessionIdOf(msg.paneId, scope, 'write');
-      const ok = orchWriteSession(sessionId, text);
+        sessionId ??= sessionIdOf(msg.paneId, scope, 'write');
+        return orchWriteSession(sessionId, `${inputDecision.command}\n`);
+      };
+      // Reenvio do outbox (mesmo messageId): devolve a primeira entrega sem
+      // escrever de novo no PTY.
+      const { result: ok, deduplicated } =
+        messageId && sessionId
+          ? await paneInputDedup.run(
+              `${scope.projectId}\0${sessionId}\0${messageId}`,
+              deliverInput,
+            )
+          : { result: await deliverInput(), deduplicated: false };
       // Keep stream session alive for resume; optional echo frame for clients
       // that consume binary terminal-stream-protocol over JSON transport.
-      const stream = encodeRemoteTerminalOutput(sessionId, '');
-      return { ok, stream };
+      const stream = encodeRemoteTerminalOutput(
+        sessionId ?? sessionIdOf(msg.paneId, scope, 'write'),
+        '',
+      );
+      return deduplicated ? { ok, stream, deduplicated } : { ok, stream };
     }
     case 'pane.stream.open': {
       const sessionId = sessionIdOf(msg.paneId, scope, 'read');

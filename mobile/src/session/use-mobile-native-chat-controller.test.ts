@@ -138,6 +138,25 @@ vi.mock('./use-mobile-native-chat-stop', () => ({
 vi.mock('./use-mobile-native-chat-file-search', () => ({
   useMobileNativeChatFileSearch: () => ({ nativeChatFilePaths: [], loadNativeChatFiles: vi.fn() })
 }))
+// The durable outbox is exercised on its own; here only its wiring is observed.
+const outboxArgs: Record<string, unknown>[] = []
+const outboxState = { queued: [] as unknown[], editingMessageId: null as string | null }
+const outboxEnqueue = vi.fn(async (_text: string, _baseline: string | null) => true)
+const outboxSaveEdit = vi.fn(async (_text: string) => true)
+vi.mock('./use-mobile-thread-outbox', () => ({
+  useMobileThreadOutbox: (args: Record<string, unknown>) => {
+    outboxArgs.push(args)
+    return {
+      queued: outboxState.queued,
+      editingMessageId: outboxState.editingMessageId,
+      enqueue: outboxEnqueue,
+      beginEdit: vi.fn(() => null),
+      saveEdit: outboxSaveEdit,
+      cancelEdit: vi.fn(),
+      cancel: vi.fn(async () => {})
+    }
+  }
+}))
 // Partial: the stale-input heal reaches the real transport through image-send,
 // which must read the REAL timeout constant, not a copy that can silently drift.
 vi.mock('./mobile-native-chat-send', async (importOriginal) => ({
@@ -971,5 +990,159 @@ describe('useMobileNativeChatController streaming scope', () => {
     expect(after).not.toBe(before)
     expect(after).not.toContain('session-1')
     expect(controller?.nativeChatStreamScopeKey).toBe(before)
+  })
+})
+
+describe('useMobileNativeChatController durable outbox', () => {
+  let renderer: ReactTestRenderer | null = null
+  let controller: MobileNativeChatController | null = null
+  const onSendError = vi.fn()
+  const clientStub = { sendRequest: vi.fn() }
+  const chatTab = {
+    type: 'terminal',
+    id: 'tab-1',
+    title: 'Claude',
+    terminal: 'term-1',
+    launchAgent: 'claude',
+    isActive: true
+  }
+
+  function Harness({
+    connState,
+    inputLeaseReady
+  }: {
+    connState: ConnectionState
+    inputLeaseReady: boolean
+  }): null {
+    controller = useMobileNativeChatController({
+      client: clientStub as unknown as RpcClient,
+      connState,
+      hostId: 'h',
+      worktreeId: 'w',
+      activeSessionTab: chatTab as never,
+      activeSessionTabId: 'tab-1',
+      activeHandleRef: { current: 'term-1' },
+      deviceTokenRef: { current: null },
+      nativeChatTranscriptIsLocalReadable: true,
+      nativeChatInputLeaseReady: inputLeaseReady,
+      onSendError,
+      onSendResolved: vi.fn()
+    })
+    return null
+  }
+
+  function render(connState: ConnectionState, inputLeaseReady: boolean): void {
+    act(() => {
+      renderer = create(createElement(Harness, { connState, inputLeaseReady }))
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    outboxArgs.length = 0
+    outboxState.queued = []
+    outboxState.editingMessageId = null
+    viewMode.isTabChatView = () => true
+    sessionState.messages = []
+    sessionState.status = 'ready'
+    sessionState.transcriptLoading = false
+    captureSendOrigin.mockReturnValue(ORIGIN)
+    clientStub.sendRequest.mockResolvedValue({
+      id: 'send',
+      ok: true,
+      result: { send: { accepted: true } },
+      _meta: { runtimeId: 'r' }
+    })
+    resetMobileNativeChatStaleInputForTests()
+  })
+  afterEach(() => {
+    act(() => renderer?.unmount())
+    renderer = null
+    controller = null
+  })
+
+  it('queues an offline composer send in the durable outbox instead of rejecting it', async () => {
+    render('disconnected', false)
+    expect(outboxArgs.at(-1)).toMatchObject({ scopeKey: 'h\0w\0tab-1', sendable: false })
+    expect(controller!.chatCanQueueOffline).toBe(true)
+
+    let outcome = 'rejected'
+    await act(async () => {
+      outcome = await controller!.handleNativeChatSendWithOutcome('rode os testes  ')
+    })
+
+    expect(outcome).toBe('accepted')
+    expect(outboxEnqueue).toHaveBeenCalledWith('rode os testes', ORIGIN.baselineTailMessageId)
+    expect(clearDraftForSend).toHaveBeenCalledWith(ORIGIN, 'rode os testes  ')
+    expect(sendWithOutcome).not.toHaveBeenCalled()
+    expect(onSendError).not.toHaveBeenCalled()
+  })
+
+  it('does not queue slash commands: they drive the agent TUI, not the conversation', async () => {
+    render('disconnected', false)
+    let outcome = 'accepted'
+    await act(async () => {
+      outcome = await controller!.handleNativeChatSendWithOutcome('/model sonnet')
+    })
+    expect(outcome).toBe('rejected')
+    expect(outboxEnqueue).not.toHaveBeenCalled()
+  })
+
+  it('saves the composer into the queued message being edited instead of sending it', async () => {
+    outboxState.editingMessageId = 'm-1'
+    render('connected', true)
+
+    let outcome = 'rejected'
+    await act(async () => {
+      outcome = await controller!.handleNativeChatSendWithOutcome('texto corrigido')
+    })
+
+    expect(outcome).toBe('accepted')
+    expect(outboxSaveEdit).toHaveBeenCalledWith('texto corrigido')
+    expect(sendWithOutcome).not.toHaveBeenCalled()
+    expect(clearDraftForSend).toHaveBeenCalledWith(ORIGIN, 'texto corrigido')
+    expect(controller!.chatEditingQueuedMessage).toBe(true)
+  })
+
+  it('delivers a queued message with its messageId so the host can drop a replay', async () => {
+    sendWithOutcome.mockResolvedValue('accepted')
+    render('connected', true)
+    const { deliver, sendable } = outboxArgs.at(-1) as {
+      deliver: (message: { messageId: string; text: string }) => Promise<string>
+      sendable: boolean
+    }
+    expect(sendable).toBe(true)
+
+    let outcome = 'rejected'
+    await act(async () => {
+      outcome = await deliver({ messageId: 'm-1', text: 'rode os testes' })
+    })
+
+    expect(outcome).toBe('accepted')
+    expect(sendWithOutcome).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: 'rode os testes', clientMessageId: 'm-1' })
+    )
+    // The echo keeps the outbox id, so it replaces the queued bubble in place.
+    expect(acceptSend).toHaveBeenCalledWith(ORIGIN, 'rode os testes', undefined, 'm-1')
+    // Delivery is not a composer send: the draft is never touched.
+    expect(clearDraftForSend).not.toHaveBeenCalled()
+  })
+
+  it('shows queued messages after the pending echoes until each is echoed', () => {
+    outboxState.queued = [
+      {
+        messageId: 'm-2',
+        scopeKey: 'h\0w\0tab-1',
+        text: 'segunda',
+        createdAt: '2026-10-07T10:00:00.000Z',
+        baselineTailMessageId: null,
+        attempts: 0
+      }
+    ]
+    render('disconnected', false)
+
+    expect(controller!.chatPending).toEqual([
+      { id: 'm-2', text: 'segunda', baselineTailMessageId: null, queued: true }
+    ])
   })
 })

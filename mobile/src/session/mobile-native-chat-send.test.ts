@@ -51,6 +51,32 @@ describe('sendMobileNativeChatMessage', () => {
     )
   })
 
+  it('carries the outbox messageId and reports a host-side duplicate', async () => {
+    const client = clientWithResponse({
+      id: 'request',
+      ok: true,
+      result: { send: { accepted: true, bytesWritten: 0, deduplicated: true } },
+      _meta: { runtimeId: 'runtime' }
+    })
+    const onDeduplicated = vi.fn()
+
+    await expect(
+      sendMobileNativeChatMessageWithOutcome({
+        client,
+        terminal: 'term',
+        text: 'hello',
+        clientMessageId: 'msg-1',
+        onDeduplicated
+      })
+    ).resolves.toBe('accepted')
+    expect(client.sendRequest).toHaveBeenCalledWith(
+      'terminal.send',
+      expect.objectContaining({ text: 'hello', clientMessageId: 'msg-1' }),
+      expect.any(Object)
+    )
+    expect(onDeduplicated).toHaveBeenCalledTimes(1)
+  })
+
   it('returns false when the terminal rejects the send', async () => {
     const client = clientWithResponse({
       id: 'request',
