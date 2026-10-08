@@ -71,6 +71,7 @@ import { createVisualTaskRequirement, visualTaskAtSpawn } from './visual-handoff
 import { CONTEXT_HANDOFF_BUDGET_ERROR } from './context-handoff-budget';
 import { forgetPaneTaskReroute, registerPaneTaskReroute } from './pane-task-reroute';
 import { FailoverTextReducer, type FailoverTextProposal } from './failover-text-core';
+import { inkWrap } from '../../shared/__tests__/synthetic-secrets';
 
 /** Formatos REAIS que o detector reconhece: cada linha sozinha dispara. */
 const LIVE_LIMIT_LINES = [
@@ -274,6 +275,23 @@ describe('planMainOwnedFailoverRespawn (failover de conta em pane de missão)', 
       expect(proposals.filter((proposal) => proposal.hit)).toEqual([]);
     }
   }, 300_000);
+
+  it('F-999: motivo model_not_found na 2ª linha do pack não dispara em janela que começa no meio da linha', () => {
+    const plan = planMainOwnedFailoverRespawn({
+      adapterId: 'claude', meta, toAccountId: 'acct-2', fromAccountLabel: 'fixture',
+      reason: 'model_not_found', limitKind: 'model', paneId: 'old-pane',
+    });
+    expect(plan.action).toBe('respawn');
+    if (plan.action !== 'respawn') return;
+    const prompt = plan.options.initialPrompt ?? '';
+    expect(prompt).toContain('hit a provider limit');
+    for (const echo of [prompt, inkWrap(prompt, 80)]) {
+      for (let start = 1; start < echo.length; start += 1) {
+        const hit = detectLimit(echo.slice(start, start + 4_000));
+        if (hit) throw new Error(`janela em ${start} disparou ${hit.kind} (${hit.reason})`);
+      }
+    }
+  });
 
   it('ORC-05: segredo atravessando a fronteira de 2.000 caracteres não sai em nenhum fragmento', () => {
     const pemBody = Array.from({ length: 40 }, () => `${'P3m'.repeat(21)}Q`);

@@ -2589,6 +2589,8 @@ function acceptAnalysisProposal(sessionId: string, proposal: FailoverTextProposa
   watch.analysisUnavailable = proposal.unavailable === true;
   if (proposal.slowScanMs) trace({ kind: 'failover-detect-slow', sessionId, paneId: pane.paneId, scanMs: proposal.slowScanMs, backoffMs: 5_000 });
   if (proposal.unavailable) return;
+  // F-999: sinal de modelo citado logo depois do pack de continuidade, à espera da 2ª ocorrência.
+  if (proposal.held) logSuppressedFailover(pane, paneAccount(pane), proposal.held, 'model-signal-after-continuity-pack-unconfirmed', 'scrollback');
   if (proposal.hit) {
     if (proposal.at - watch.firedAt < REARM_MS) return;
     if (proposal.hit.kind === 'transient') {

@@ -9,6 +9,7 @@ import {
   stashPendingContinuity,
   takePendingContinuity,
 } from './stranded-mission-handoff';
+import { dotenvDump, expectNoSecretFragment, hardWrap } from '../../shared/__tests__/synthetic-secrets';
 
 describe('cliAcceptsContinuityPrompt', () => {
   it('não injeta com o menu de confiança de pasta na tela (Enter cairia em "No, exit")', () => {
@@ -206,6 +207,25 @@ describe('planOperatorAgentSpawn', () => {
     expect(planned.continuityPack).toContain('Radar BI');
     // F-775: rótulos de conta no pack saem mascarados.
     expect(planned.continuityPack).toContain(maskAccountLabel('arrumou a baderna'));
+  });
+
+  it('F-999: a cauda do pane morto entra no pack com segredos redigidos (inclusive partidos pela TUI)', () => {
+    const planned = planOperatorAgentSpawn({
+      accountId: 'acc-good',
+      focusedPaneId: 'pane-dead',
+      panes: [{ id: 'pane-dead', kind: 'cli-agent', missionId: 'm-radar', role: 'worker' }],
+      paneMissions: { 'pane-dead': 'm-radar' },
+      paneStates: { 'pane-dead': 'exited' },
+      recentOutputByPane: {
+        'pane-dead': `${hardWrap(dotenvDump(), 80)}\nAPI Error: 401 OAuth access token has expired. Please run /login`,
+      },
+      missions: [{ id: 'm-radar', title: 'Radar BI', status: 'running' }],
+      fromAccountLabel: 'conta adm',
+      toAccountLabel: 'outra',
+    });
+    expect(planned.continuityPack).toContain(FAILOVER_HANDOFF_HEADER);
+    expect(planned.continuityPack).toContain('[REDACTED]');
+    expectNoSecretFragment(planned.continuityPack ?? '');
   });
 
   it('does not attach a pack when the focused agent is healthy', () => {
