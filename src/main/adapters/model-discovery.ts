@@ -20,7 +20,7 @@ import type { LiveModelListing } from './model-availability';
  * provider). O resultado entra em cache com TTL; "Atualizar modelos" força um
  * refresh e o broadcast de providers empurra a lista nova para a UI.
  *
- * F-964 (PRV-01): a listagem MANDA na oferta (model-availability.ts) — não é
+ * F-990 (PRV-01): a listagem MANDA na oferta (model-availability.ts) — não é
  * mais unida à lista estática. Por isso o cache guarda a última listagem boa:
  * uma falha (timeout, CLI deslogada) mantém a última boa; uma listagem vazia
  * vinda com sucesso limpa.
@@ -191,7 +191,7 @@ export const MODEL_DISCOVERY_INVENTORY: Readonly<
     kind: 'cache',
     reason: 'sem subcomando list; usa ~/.claude/models_cache.json + bundled',
   },
-  // F-964 (PRV-03): o `model/list` do app-server diz o que a CONTA enxerga;
+  // F-990 (PRV-03): o `model/list` do app-server diz o que a CONTA enxerga;
   // o ~/.codex/models_cache.json vira fallback quando o app-server falha.
   codex: { kind: 'cli', command: 'codex app-server (model/list)' },
   openclaude: {
@@ -305,7 +305,7 @@ interface CacheEntry {
   readonly models: readonly string[];
   readonly fetchedAt: number;
   readonly failed: boolean;
-  /** F-964: última listagem `ok` (vazia inclusive). Ausente = nunca respondeu. */
+  /** F-990: última listagem `ok` (vazia inclusive). Ausente = nunca respondeu. */
   readonly lastGood?: readonly string[];
   /** Default que a própria CLI marcou (Codex `isDefault`). */
   readonly defaultModel?: string;
@@ -400,7 +400,7 @@ export function discoveredModelsFor(adapterId: string): readonly string[] {
 }
 
 /**
- * F-964: estado da listagem para o resolvedor de oferta (leitura de Map, sem
+ * F-990: estado da listagem para o resolvedor de oferta (leitura de Map, sem
  * I/O): `absent` nunca perguntou, `ok` respondeu, `failed` traz a última boa.
  */
 export function discoveredModelStateFor(adapterId: string): LiveModelListing {
@@ -415,7 +415,7 @@ export function discoveredModelStateFor(adapterId: string): LiveModelListing {
 }
 
 /**
- * F-964 (PRV-03): a sonda de cota do Codex já abre o app-server da conta
+ * F-990 (PRV-03): a sonda de cota do Codex já abre o app-server da conta
  * ativa; a listagem que veio no mesmo processo entra aqui (sem outro spawn).
  */
 export function recordDiscoveredModelListing(

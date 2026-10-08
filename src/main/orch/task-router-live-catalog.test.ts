@@ -11,7 +11,7 @@ import {
 } from './model-access-quarantine';
 
 /**
- * F-958 (07/10, missão harvest T3 Code): a 1ª linha do hard mandava o estudo
+ * F-984 (07/10, missão harvest T3 Code): a 1ª linha do hard mandava o estudo
  * somente leitura para `agy:gemini-4-argon`; o AGY 1.3.0 instalado respondeu
  * "model gemini-4-argon is not recognized as a known model" e o pane morreu
  * em 3,8 s. O Argon seguiu nas alternativas das rotas seguintes.
@@ -42,7 +42,7 @@ function routed(adapters: AdapterAvailability[]) {
   return decision!;
 }
 
-describe('F-958 — catálogo vivo da CLI manda no roteamento', () => {
+describe('F-984 — catálogo vivo da CLI manda no roteamento', () => {
   it('AGY cuja listagem viva não traz o Argon nunca recebe o Argon (nem nas alternativas)', () => {
     const decision = routed([agy({ liveModels: AGY_LIVE }), kimi]);
     expect(`${decision.adapterId}:${decision.model}`).not.toBe('agy:gemini-4-argon');
@@ -58,7 +58,7 @@ describe('F-958 — catálogo vivo da CLI manda no roteamento', () => {
   });
 
   it('com a CLI anunciando o Argon, o assento da lane de julgamento volta a valer', () => {
-    // F-964: a tabela do hard não carrega mais o Argon (o AGY 1.3.1 não o
+    // F-990: a tabela do hard não carrega mais o Argon (o AGY 1.3.1 não o
     // lista); a lane de julgamento o usa quando a listagem viva o prova.
     const decision = routeTask('Revisão cruzada crítica do diff de autenticação',
       [agy({ liveModels: AGY_BUNDLED })], DEFAULT_ROUTING_TABLE, 'hard', false, undefined, ctx());
@@ -85,8 +85,8 @@ describe('F-958 — catálogo vivo da CLI manda no roteamento', () => {
   });
 });
 
-describe('F-964 — prova viva em TODAS as lanes, para toda CLI que lista', () => {
-  it('generaliza o F-958: Kimi com listagem só roteia o que ela anuncia', () => {
+describe('F-990 — prova viva em TODAS as lanes, para toda CLI que lista', () => {
+  it('generaliza o F-984: Kimi com listagem só roteia o que ela anuncia', () => {
     const kimiLive = withLiveRouteCatalog({
       ...kimi,
       models: ['kimi-code/k3', 'kimi-code/kimi-for-coding'],

@@ -438,7 +438,7 @@ function emitFailover(
 }
 
 /**
- * F-969: recibo de uma troca que o Main aplicou no pane do renderer. A sessão
+ * F-995: recibo de uma troca que o Main aplicou no pane do renderer. A sessão
  * velha já não existe (a autoridade mudou de propósito): o destino é o mesmo
  * dono, no mesmo escopo, enquanto ele ainda escuta.
  */
@@ -451,7 +451,7 @@ function emitToPaneOwner(
   broadcastToProject([owner], authority.scope, ACCOUNT_CHANNELS.failover, event);
 }
 
-/** Próximo passo do orquestrador religado na conta nova (F-969). */
+/** Próximo passo do orquestrador religado na conta nova (F-995). */
 const ORCHESTRATOR_SWITCH_NEXT_STEP =
   'Check nexus_handoff_list and the panes still running (nexus_pane_list), then ' +
   'continue coordinating the mission from the first pending step. Do not redo delivered work.';
@@ -609,7 +609,7 @@ function quotaScoresFor(adapterId: string): Map<string, number> | undefined {
   }
 }
 
-/** F-969: janelas medidas por conta — a troca compara só janelas comparáveis. */
+/** F-995: janelas medidas por conta — a troca compara só janelas comparáveis. */
 function quotaHeadroomFor(
   adapterId: string,
 ): ReadonlyMap<string, HeadroomInput> | undefined {
@@ -1389,7 +1389,7 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
     return;
   }
 
-  // F-969: orquestrador de missão num pane do renderer (inclusive o pane do
+  // F-995: orquestrador de missão num pane do renderer (inclusive o pane do
   // operador adotado pela missão da aba). O renderer não religa pane de
   // missão viva nem mata sessão de missão, e a cerca do spawn persistido
   // exige a conta selada — o "switched" de antes não trocava nada e o pane

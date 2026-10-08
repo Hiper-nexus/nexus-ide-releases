@@ -294,7 +294,7 @@ export function applyDiscoveredEffortsToAdapter(
 
 /**
  * Cache oficial ∪ lista do adapter — só para CLI SEM listagem (`bundled`).
- * F-964: CLI que sabe listar não ganha união; a oferta dela sai do
+ * F-990: CLI que sabe listar não ganha união; a oferta dela sai do
  * resolvedor (model-availability.ts), que usa este cache como fallback.
  */
 export function applyDiscoveredModelsToAdapter(

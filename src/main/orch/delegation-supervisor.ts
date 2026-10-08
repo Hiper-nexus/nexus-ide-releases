@@ -183,7 +183,7 @@ export function decideWorkerHung(input: {
 const zeroDeliveryPoked = new Set<string>();
 const zeroDeliveryEscalated = new Set<string>();
 /**
- * F-960: última atividade vista por sessão de worker, POR suite (mesmo
+ * F-986: última atividade vista por sessão de worker, POR suite (mesmo
  * motivo do F-725: a poda de uma suite usa só as sessões vivas dela).
  */
 const zeroDeliverySeen = new Map<string, Map<string, ZeroDeliverySeen>>();
@@ -886,7 +886,7 @@ async function handlePaneNotStarted(
   const outputTail = watch.sessionId !== null
     ? sanitizePaneBootOutput(readSessionOutput(watch.sessionId, 100))
     : null;
-  // F-958: motivo legível (frase fixa, modelo, código de saída) para o aviso.
+  // F-984: motivo legível (frase fixa, modelo, código de saída) para o aviso.
   // A CLI que recusou o modelo ao nascer tira o modelo das rotas dela: a
   // quarentena é da INSTALAÇÃO (some quando a CLI muda, isto é, quando o
   // catálogo é revalidado) ou, sem instalação provada, da conta.
@@ -1045,7 +1045,7 @@ async function checkPaneStart(watch: PaneStartWatch, now: number, context?: Peri
       tracePaneStartRejected(watch, 'provider-request');
     }
   }
-  // F-958: sessão viva que não escreveu NENHUM byte (ainda 'spawning') depois
+  // F-984: sessão viva que não escreveu NENHUM byte (ainda 'spawning') depois
   // da graça não está "ocupada": a CLI travou antes de pintar — o MiMo ficou
   // 158 s mudo esperando a fila de pesados. Vale para qualquer CLI, com ou sem
   // prova de turno; sem isto a ficha só caía no TTL de 30 min, em silêncio.
@@ -1120,7 +1120,7 @@ function installPaneStartTaps(): void {
       // F-792: one-shot com código de erro morreu; com 0, terminou.
       exit: rootExit,
       spawnedAt: getSessionSpawnedAtMs(sessionId),
-      // F-958: trabalho provado (ferramenta) também é início — a saída com
+      // F-984: trabalho provado (ferramenta) também é início — a saída com
       // erro de quem já trabalhou não é "não iniciou".
       started:
         hasPaneStartEvidence(watch, sessionId) || getAgentToolActivityCount(sessionId) > 0,
@@ -1316,7 +1316,7 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
         zeroDeliveryEscalated.delete(mission.id);
       }
       const executingSinceMs = resolveDispatchAuthorizedAt(mission);
-      // F-960: o sinal é a atividade real do pane (saída, turno, ferramenta),
+      // F-986: o sinal é a atividade real do pane (saída, turno, ferramenta),
       // não o disco — estudo somente leitura nunca grava arquivo.
       const seenKey = scopeKey(suite);
       let seenBySession = zeroDeliverySeen.get(seenKey);

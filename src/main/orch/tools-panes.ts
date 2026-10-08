@@ -525,11 +525,11 @@ export function decideSameCheckoutSpawn(input: {
 /** Aviso do auto-isolamento: a worktree sai do HEAD, sem o WIP do operador. */
 export const ISOLATED_WORKTREE_NOTE =
   'não contém alterações não commitadas do checkout principal';
-/** F-954: writer aberto da pasta isolada de uma aba nasce do HEAD dela. */
+/** F-980: writer aberto da pasta isolada de uma aba nasce do HEAD dela. */
 export const ISOLATED_TAB_WORKTREE_NOTE =
   'nasce do HEAD da pasta isolada da aba e não contém as alterações não commitadas dela';
 
-/** F-955: worktree aninhada já tem writer — a recusa diz a saída. */
+/** F-981: worktree aninhada já tem writer — a recusa diz a saída. */
 function nestedWorktreeBusy(reason: string, worktreeRoot: string): string {
   return `${reason} (worktree ${worktreeRoot}); para writers em paralelo use isolatedWriter:true — ` +
     'o Nexus cria worktree/branch própria, registrada para integração';
@@ -1625,7 +1625,7 @@ const paneSpawnAfterTabMission = {
       if (resumed) {
         isolatedWriter = resumed;
       } else if (options.readOnly !== true) {
-        // F-955: cwd na raiz de outra worktree Git deste repositório roda lá,
+        // F-981: cwd na raiz de outra worktree Git deste repositório roda lá,
         // sem disputar a vez com os writers do checkout.
         const nested = args.isolatedWriter !== true
           ? await nestedWorktreeExecution(callerExecutionScope, options.cwd)
@@ -1656,7 +1656,7 @@ const paneSpawnAfterTabMission = {
         if (args.isolatedWriter === true || blockedBy !== undefined) {
           let baseRootRealPath: string | undefined;
           try {
-            // F-954: na pasta isolada da aba a worktree nasce do HEAD da aba.
+            // F-980: na pasta isolada da aba a worktree nasce do HEAD da aba.
             baseRootRealPath = isolatedWriterBaseRoot(ctx.scope, callerExecutionScope, ctx.sharedTabWorktree);
           } catch (error) {
             // Aba sem prova de identidade não ganha worktree: mantém a fila.
@@ -1694,7 +1694,7 @@ const paneSpawnAfterTabMission = {
           worktreePath: isolatedWriter.worktreePath,
           baseSha: isolatedWriter.baseSha,
           note: isolatedWriter.baseRootRealPath ? ISOLATED_TAB_WORKTREE_NOTE : ISOLATED_WORKTREE_NOTE,
-          // F-955: o writer isolado roda na raiz da worktree própria; o cwd pedido não vale.
+          // F-981: o writer isolado roda na raiz da worktree própria; o cwd pedido não vale.
           ...(requestedCwd && requestedCwd !== isolatedWriter.worktreePath
             ? { cwdDiscarded: { requested: requestedCwd, reason: 'o writer isolado roda na raiz da worktree própria' } }
             : {}),
@@ -1970,7 +1970,7 @@ const paneSpawnAfterTabMission = {
         } else {
           const spawnReadOnly =
             options.readOnly === true || options.executionMode === 'read_only';
-          // F-955: o guard olha a worktree Git REAL do pane — cwd na raiz de
+          // F-981: o guard olha a worktree Git REAL do pane — cwd na raiz de
           // outra worktree deste repositório roda lá, em escopo próprio.
           const nested = !spawnReadOnly && args.isolatedWriter !== true
             ? await nestedWorktreeExecution(callerExecutionScope, options.cwd)
@@ -2006,7 +2006,7 @@ const paneSpawnAfterTabMission = {
             if (args.isolatedWriter === true || blockedBy !== undefined) {
               let baseRootRealPath: string | undefined;
               try {
-                // F-954: na pasta isolada da aba a worktree nasce do HEAD da aba.
+                // F-980: na pasta isolada da aba a worktree nasce do HEAD da aba.
                 baseRootRealPath = isolatedWriterBaseRoot(ctx.scope, callerExecutionScope, ctx.sharedTabWorktree);
               } catch (error) {
                 throw blockedBy !== undefined ? new Error(blockedBy) : error;
@@ -2036,7 +2036,7 @@ const paneSpawnAfterTabMission = {
             executionMode = 'same_checkout';
             options = {
               ...options,
-              // F-955: nunca descarta o cwd em silêncio — honra ou recusa.
+              // F-981: nunca descarta o cwd em silêncio — honra ou recusa.
               cwd: nested?.cwd ?? requestedCwdInside(checkoutRoot, options.cwd) ?? checkoutRoot,
               executionScope: writerExecutionScope,
               memoryQuery: options.memoryQuery ?? options.prompt,
@@ -2903,7 +2903,7 @@ async function paneDigestResult(
   tail: string,
   maxChars: number = DIGEST_MAX_CHARS,
 ): Promise<Record<string, unknown>> {
-  // F-961: redesenho de TUI colapsado e teto de caracteres por pane.
+  // F-987: redesenho de TUI colapsado e teto de caracteres por pane.
   const digest = digestPaneTail(tail, { maxChars });
   const classified = await classifyPaneTailForDigest(digest.text);
   return {
@@ -2996,7 +2996,7 @@ const paneReadMany: McpToolDef = {
   handler: async (args, ctx) => {
     const lines = num(args, 'lines') ?? 200;
     const mode = paneReadMode(args, ctx);
-    // F-961: seis panes × redesenho de TUI estouravam o limite da ferramenta.
+    // F-987: seis panes × redesenho de TUI estouravam o limite da ferramenta.
     // Ids repetidos (e apelidos do mesmo pane) são lidos uma vez, a lista tem
     // teto e o digest divide um teto total que é conferido antes de devolver.
     // Segunda revisão: o teto vale para panes distintos RESOLVIDOS — 8 panes

@@ -1428,7 +1428,7 @@ export interface SpawnedSession {
   sessionId: string;
   startKey?: string;
   resumeMode?: "exact" | "latest" | "unsupported" | "fresh-context";
-  /** F-966: avisos de versão da CLI calculados antes do spawn (nunca bloqueiam). */
+  /** F-992: avisos de versão da CLI calculados antes do spawn (nunca bloqueiam). */
   warnings?: string[];
 }
 
@@ -1829,7 +1829,7 @@ export function spawnAgentSession(
   if (process.platform === "win32" && adapter.id === "codex") {
     bin = windowsCodexShimWithinMaxPath(bin, { home: realUserHome() });
   }
-  // F-966: versão quebrada conhecida ou abaixo do mínimo do modelo vira aviso
+  // F-992: versão quebrada conhecida ou abaixo do mínimo do modelo vira aviso
   // legível ANTES do processo nascer — nunca bloqueia. Só lê a versão já
   // sondada (cache do boot, F-764); desconhecida não avisa.
   const spawnWarnings = cliVersionWarnings({
@@ -1974,7 +1974,7 @@ export function spawnAgentSession(
     if (agyEffort?.dropEffort && effortFlag) {
       extraArgs = withoutEffortArg(extraArgs, effortFlag);
     }
-    // F-966: o Claude aceita esforço por modelo — haiku-4-5 nenhum (sai do
+    // F-992: o Claude aceita esforço por modelo — haiku-4-5 nenhum (sai do
     // argv), opus-4-7 recebe `max` no lugar de `xhigh`, sonnet-4-6 `high` no
     // de `max`; nível que o modelo não tem vira o padrão dele.
     if (adapter.bin === "claude" && effortFlag) {

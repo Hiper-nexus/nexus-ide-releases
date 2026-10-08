@@ -244,7 +244,7 @@ function paneFromRecovery(req: MissionPaneRecoveryRequest): PaneModel {
 }
 
 /**
- * F-969: a recuperação do orquestrador vem com a composição SELADA pelo Main
+ * F-995: a recuperação do orquestrador vem com a composição SELADA pelo Main
  * (conta, modelo, esforço, pasta). O pane do layout é só espelho: quando o
  * Main trocou a conta por limite confirmado, o espelho ainda traz a conta
  * esgotada e a cerca do spawn persistido recusaria o religamento. A CLI não

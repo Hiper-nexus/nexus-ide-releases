@@ -78,7 +78,7 @@ describe('detectLimit', () => {
     expect(detectLimit('O modelo requer uma versão mais nova? melhor atualizar.')).toBeNull();
   });
 
-  it('F-966: recusa de modelo do Claude Code entra na quarentena de modelo', () => {
+  it('F-992: recusa de modelo do Claude Code entra na quarentena de modelo', () => {
     // Texto do 404 nas CLIs 2.1.283 e 2.1.293 (strings do binário).
     const hit = detectLimit(
       "  ⎿  API Error: There's an issue with the selected model (claude-haiku-5-5). It may not exist or you may not have access to it. Run /model to pick a different model.",

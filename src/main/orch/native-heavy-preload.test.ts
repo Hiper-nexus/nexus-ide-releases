@@ -268,7 +268,7 @@ it.runIf(process.platform === 'darwin')('preserves a user zshenv redirect for la
  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-// F-962 (revisão): NEXUS_HEAVY_HELPER=1 era autoisenção genérica — qualquer
+// F-988 (revisão): NEXUS_HEAVY_HELPER=1 era autoisenção genérica — qualquer
 // lançador podia definir a variável e pular a admissão. A flag só isenta um
 // entrypoint exato e confiável, provado pelo caminho real do script.
 function scopedHeavyEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -323,7 +323,7 @@ it.skipIf(process.platform !== 'darwin' || !fs.existsSync('/usr/bin/perl'))('a f
  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
 
-// F-962 (segunda revisão): a isenção lia o NODE_OPTIONS com regex, não como o
+// F-988 (segunda revisão): a isenção lia o NODE_OPTIONS com regex, não como o
 // Node. `"--require" /x/evil.cjs` (aspas que o Node remove) passava pela regex,
 // a isenção valia e o módulo extra rodava sem admissão.
 it.skipIf(process.platform === 'win32' || !fs.existsSync('/usr/bin/perl'))('a isenção tokeniza o NODE_OPTIONS como o Node: pré-carregamento extra entre aspas não passa', () => {

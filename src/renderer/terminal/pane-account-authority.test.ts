@@ -32,7 +32,7 @@ describe('pane account authority', () => {
     ).toBe(false);
   });
 
-  it('F-969: pane Claude do "+ Pane" não é fixado na ativa pelo renderer — o Main escolhe pela regra de folga', () => {
+  it('F-995: pane Claude do "+ Pane" não é fixado na ativa pelo renderer — o Main escolhe pela regra de folga', () => {
     expect(shouldAutoPinPaneAccount(cliPane({ adapterId: 'claude' }), undefined)).toBe(false);
     // A conta que o Main escolheu e o renderer persistiu continua valendo.
     expect(

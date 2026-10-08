@@ -32,7 +32,7 @@ export class NativeHeavyCommands {
     const pending = this.#admit(ctx, raw, signal); this.#pending.set(pending, ctx);
     void pending.then((result) => {
       this.#pending.delete(pending);
-      // F-971: o "exit 74/78" do pane ganha causa no trace do Main.
+      // F-997: o "exit 74/78" do pane ganha causa no trace do Main.
       if (!result.allow) trace({ kind: 'heavy-command-denied', sessionId: ctx.sessionId ?? '', reason: result.reason ?? 'unknown', elapsedMs: Date.now() - started });
     }, () => this.#pending.delete(pending)); return pending;
   }
@@ -51,7 +51,7 @@ export class NativeHeavyCommands {
     try { claim = await this.ports.claim(ctx.sessionId, body.data.pid, body.data.proof); } catch { /* ownership unavailable */ }
     if (!claim || !this.#accepting || !this.#current(ctx) || signal?.aborted) { if (claim) this.#reap(ctx, claim); return { allow: false, reason: 'heavy_command_process_ownership_unproved' }; }
     let permit: HeavyCommandPermit;
-    // F-957/F-971: a fila é por raiz de EXECUÇÃO (a worktree do writer), não
+    // F-983/F-997: a fila é por raiz de EXECUÇÃO (a worktree do writer), não
     // pelo checkout de coordenação do token — senão writers isolados voltam à
     // fila única do projeto.
     try { permit = await this.ports.acquire({ scope: executionScopeFor(ctx), missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting }); }

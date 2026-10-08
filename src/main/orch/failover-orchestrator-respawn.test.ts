@@ -55,7 +55,7 @@ const input = {
   buildRecap: () => '[NEXUS FAILOVER HANDOFF] recap',
 };
 
-describe('switchRendererOrchestratorAccount (F-969)', () => {
+describe('switchRendererOrchestratorAccount (F-995)', () => {
   it('troca a conta SELADA (CAS na conta esgotada) e religa o mesmo pane pela recuperação do orquestrador', async () => {
     const d = deps();
     await expect(switchRendererOrchestratorAccount(input, d)).resolves.toEqual({

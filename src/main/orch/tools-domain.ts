@@ -1606,7 +1606,7 @@ const todoManagerTool: McpToolDef = {
 };
 
 const TIERS: TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critical'];
-/** F-959: janela (min) em que a falha ao nascer conta para o exclude do caller. */
+/** F-985: janela (min) em que a falha ao nascer conta para o exclude do caller. */
 const START_FAILURE_WINDOW_MIN = Math.round(DEFAULT_CIRCUIT_CONFIG.windowMs / 60_000);
 
 const clarifyTool: McpToolDef = {
@@ -1778,7 +1778,7 @@ export async function routeTaskForCaller(
   // exclusão saudável é ignorada e avisada no reason. Exclusões internas
   // (F-662 sem MCP, selo, reserva) seguem autoritárias.
   const callerExclude = strArray(args, 'exclude');
-  // F-959: CLI que falhou ao NASCER há pouco também é doente — o watchdog de
+  // F-985: CLI que falhou ao NASCER há pouco também é doente — o watchdog de
   // início (nao-iniciou: saiu antes do 1º turno, briefing recusado, sem sessão
   // na graça) e o spawn (recusado, writer sem conexão) contam essas falhas no
   // disjuntor do adapter, mas 1 ou 2 de 3 o deixam fechado, e o pane que não
@@ -1855,7 +1855,7 @@ export async function routeTaskForCaller(
         const adapter = getAdapter(a.adapterId);
         return adapter?.kind === 'cli-pty' ? adapter : undefined;
       })();
-      // F-959: o motivo de cada CLI fora do pool vai ao recibo do
+      // F-985: o motivo de cada CLI fora do pool vai ao recibo do
       // `preferAdapters` — "não instalado" só quando não está instalada.
       // Mesma ordem (e mesmo curto-circuito) do `&&` que decidia `installed`.
       const unavailableReason = ((): string | undefined => {
@@ -1891,7 +1891,7 @@ export async function routeTaskForCaller(
         }
         return undefined;
       })();
-      // F-964 (PRV-01): CLI que sabe listar entra na rota com a listagem
+      // F-990 (PRV-01): CLI que sabe listar entra na rota com a listagem
       // autoritativa (viva, última boa ou cache oficial) — toda lane só
       // escolhe id provado; custom do operador e ids do catálogo não entram.
       const offer = cliAdapter ? currentModelOffer(cliAdapter) : null;
@@ -1940,7 +1940,7 @@ export async function routeTaskForCaller(
   quotaFallbackNote += readOnlyPool.note;
   let missionAdapterIds: string[] | undefined;
   let reservedAdapterIds: string[] | undefined;
-  /** F-959: assentos Claude ocupados AGORA (panes vivos + reservas abertas). */
+  /** F-985: assentos Claude ocupados AGORA (panes vivos + reservas abertas). */
   let claudeMissionSeats: number | undefined;
   let globalUseCounts: Map<string, number> | undefined;
   if (!missionId) {
@@ -2034,7 +2034,7 @@ export async function routeTaskForCaller(
   // com credencial utilizável fora de bloco efetivo; sem conta gerenciada
   // a capacidade é 1 — o login nativo, e o comportamento histórico de
   // reservar o Claude ao primeiro pane persiste.
-  // F-959: assento é pane VIVO — o worker Claude que entregou e fechou não
+  // F-985: assento é pane VIVO — o worker Claude que entregou e fechou não
   // segura mais a conta (o spawn confere as contas vivas e recusa colisão).
   const claudeSeats = Math.max(
     claudeMissionSeats ?? usedAdapterIds.filter((id) => id === 'claude').length,
@@ -2043,7 +2043,7 @@ export async function routeTaskForCaller(
   const claudeCapacity = countAccountsWithLiveCredential('claude');
   const reserveClaude = Boolean(missionId && claudeSeats >= claudeCapacity);
   if (reserveClaude) {
-    // F-959: é a política de assentos, não falta de instalação — o recibo do
+    // F-985: é a política de assentos, não falta de instalação — o recibo do
     // `preferAdapters` diz isso em vez de "claude=não instalado".
     const seatReason =
       claudeCapacity === 0

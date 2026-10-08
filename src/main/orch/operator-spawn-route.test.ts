@@ -147,7 +147,7 @@ describe('somente leitura fora do Autopilot só roteia para CLI que confina (F-8
     const limited = limitToReadOnlyCapable(pool, true);
     expect(limited.adapters.filter((a) => a.installed).map((a) => a.id)).toEqual(['codex']);
     expect(limited.note).toContain('somente leitura');
-    // F-959: o recibo do preferAdapters não diz "não instalado" para elas.
+    // F-985: o recibo do preferAdapters não diz "não instalado" para elas.
     expect(limited.adapters.find((a) => a.id === 'kimi')).toMatchObject({
       unavailableReason: 'não confina leitura (helper somente leitura)',
     });
@@ -163,7 +163,7 @@ describe('somente leitura fora do Autopilot só roteia para CLI que confina (F-8
   });
 });
 
-describe('assentos vivos da missão por CLI (F-959)', () => {
+describe('assentos vivos da missão por CLI (F-985)', () => {
   const pane = (
     paneId: string,
     adapterId: string,

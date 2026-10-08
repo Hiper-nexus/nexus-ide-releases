@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * F-960: scan real do supervisor com o watchdog de zero entrega VERDADEIRO.
+ * F-986: scan real do supervisor com o watchdog de zero entrega VERDADEIRO.
  * Campo: missão de estudo com seis panes somente leitura vivos e ocupados
  * recebeu "[zero-delivery-escalate] Declare o worker anterior morto" após
  * 7 min. Aqui: pane ocupado nunca dispara, e pane parado só depois do prazo
@@ -142,7 +142,7 @@ function zeroDeliverySummaries(): string[] {
     .filter((summary) => summary.includes('[zero-delivery'));
 }
 
-describe('F-960: vigia de zero entrega no scan real', () => {
+describe('F-986: vigia de zero entrega no scan real', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     h.getSemantic.mockReturnValue(null);

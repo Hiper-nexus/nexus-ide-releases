@@ -47,7 +47,7 @@ export function assertTabSupportsOperation(scope: ProjectExecutionScope, executi
 }
 
 /**
- * F-954: de onde nasce o writer isolado. Fora de aba: HEAD do checkout de
+ * F-980: de onde nasce o writer isolado. Fora de aba: HEAD do checkout de
  * coordenação (undefined). Na pasta isolada da aba, comprovada pelo registro
  * do Main: HEAD da worktree da aba. Bearer marcado como aba sem essa prova:
  * recusa dizendo o que fazer — nunca cai no checkout principal.

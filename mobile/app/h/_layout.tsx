@@ -64,7 +64,7 @@ export default function HostGroupLayout() {
   const { isWideLayout, width: windowWidth } = useResponsiveLayout()
   const { hostId, action } = useGlobalSearchParams<{ hostId?: string; action?: string }>()
   const pathname = usePathname()
-  // F-968: desktop Nexus não fala o protocolo Orca — nem o portão de versão nem as telas de worktree se aplicam.
+  // F-994: desktop Nexus não fala o protocolo Orca — nem o portão de versão nem as telas de worktree se aplicam.
   const nexusHost = useIsNexusBridgeHost(hostId)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useState(HOST_SIDEBAR_DEFAULT_WIDTH)

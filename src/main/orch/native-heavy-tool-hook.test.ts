@@ -111,7 +111,7 @@ it('native input transformation preserves fields and never grants permission or 
  expect(result.stdout).not.toContain('finite-token');
 });
 
-// F-956 review: these ran with exit 0 and no reservation through this hook.
+// F-982 review: these ran with exit 0 and no reservation through this hook.
 it.each([
  ['nice -n 10 make', 'build'],
  ['find . -name "*.test.ts" | xargs -0 vitest', 'tests'],

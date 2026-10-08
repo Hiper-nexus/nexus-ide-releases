@@ -272,7 +272,7 @@ function shellQuote(value: string): string {
 }
 
 /**
- * F-962: o pane tem o preload de admissão CPU/RAM no NODE_OPTIONS e, no
+ * F-988: o pane tem o preload de admissão CPU/RAM no NODE_OPTIONS e, no
  * macOS, todo processo Node desconhecido entra na fila única de trabalho
  * pesado do projeto. O cliente nx é IPC leve: com a cópia `#!/usr/bin/env
  * node`, `nx-mail --help` (e o próprio handoff) esperava minutos na fila.
@@ -607,7 +607,7 @@ export function createMissionShimRuntime(
       }
       sessionId = boundSessionId;
       if (!timer) {
-        // F-971: o bind acontece no spawn, muitas vezes DENTRO da chamada MCP
+        // F-997: o bind acontece no spawn, muitas vezes DENTRO da chamada MCP
         // do orquestrador que abriu este worker; o timer não pode herdar a
         // fronteira de transporte dele (handoff do worker seria "nested").
         timer = outsideAgentTransport(() => setInterval(() => void scan(), pollIntervalMs));

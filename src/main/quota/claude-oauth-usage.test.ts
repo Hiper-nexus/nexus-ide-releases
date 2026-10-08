@@ -319,7 +319,7 @@ describe('fetchClaudeCliUsageWindows', () => {
   it('spawna print-only: sem sessão persistida, sem MCP, sem hooks, stdin fechado', () => {
     // Contrato ToS/higiene (Codenotch): só --print evita gravar
     // ~/.claude/projects e diálogos de trust; --strict-mcp-config sem
-    // --mcp-config impede MCP servers no probe; F-966: hooks desligados.
+    // --mcp-config impede MCP servers no probe; F-992: hooks desligados.
     expect(CLAUDE_CLI_USAGE_ARGS).toEqual([
       '--print',
       '--no-session-persistence',

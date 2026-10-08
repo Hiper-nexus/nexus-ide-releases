@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { TLSSocket } from 'node:tls';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-// F-968: o cliente de transporte do APP EXPO, importado por caminho (TS puro).
+// F-994: o cliente de transporte do APP EXPO, importado por caminho (TS puro).
 import {
   NexusBridgeClient,
   type NexusBridgeSocketFactory,
@@ -167,7 +167,7 @@ afterAll(() => {
   }
 });
 
-describe('app Expo ↔ Remote Bridge real (F-968)', () => {
+describe('app Expo ↔ Remote Bridge real (F-994)', () => {
   it('refuses a bridge whose certificate does not match the pinned fingerprint', async () => {
     const code = bridge.rotateRemotePairing(scope).pairingCode!;
     const wrongPin = new NexusBridgeClient({

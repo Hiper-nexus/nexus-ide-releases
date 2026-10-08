@@ -354,7 +354,7 @@ describe('F-611 kimi overlay model catalog', () => {
   });
 });
 
-describe('F-958 kimi workspace trust key', () => {
+describe('F-984 kimi workspace trust key', () => {
   // Raiz real do incidente (07/10 18:25): o Kimi 2.1.1 gravou o próprio trust
   // como `wd_task-f2a55551505a31ef497991782ab75148879_4c46c235dc66` depois de
   // perguntar "Trust this folder?", ao lado do arquivo de nome inteiro do Nexus.

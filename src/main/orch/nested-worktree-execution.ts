@@ -5,7 +5,7 @@ import { AsyncProcessGitRunner, type AsyncGitRunner } from '../runtime/git-comma
 import { isInsidePath } from './workspace-path';
 
 /**
- * F-955: o guard "um escritor por checkout" olha a worktree Git REAL em que o
+ * F-981: o guard "um escritor por checkout" olha a worktree Git REAL em que o
  * pane vai rodar. Um `cwd` dentro do workspace cuja raiz Git é OUTRA worktree
  * ligada ao mesmo repositório (ex.: `.harvest/<nome>` criada pelo Maestro)
  * vira um escopo de execução próprio: o pane roda lá e não disputa a vez com
@@ -62,7 +62,7 @@ export async function nestedWorktreeExecution(
 }
 
 /**
- * F-955: o worker de missão no checkout descartava o `cwd` pedido em silêncio
+ * F-981: o worker de missão no checkout descartava o `cwd` pedido em silêncio
  * (rodava na raiz e editava lá). Pasta real dentro da raiz é honrada; o resto
  * é recusado dizendo que o cwd foi descartado e qual é a saída.
  */

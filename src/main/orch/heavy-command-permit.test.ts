@@ -68,7 +68,7 @@ it('expires mission and loose-helper waits before the shipped file transport tim
   }
 });
 
-it('serializes jobs in one checkout while worktrees of the same project run in parallel (F-957)', async () => {
+it('serializes jobs in one checkout while worktrees of the same project run in parallel (F-983)', async () => {
   const value = pool(); const first = await value.acquire(request());
   let sameCheckout = false;
   const second = value.acquire({ ...request(), sessionId: 'other-worker' }).then(p => { sameCheckout = true; return p; });

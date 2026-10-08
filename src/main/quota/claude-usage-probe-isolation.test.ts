@@ -12,11 +12,11 @@ import {
 const posixIt = process.platform === 'win32' ? it.skip : it;
 
 /**
- * F-966 (PRV-08): o `/usage` roda a cada poucos minutos. Sem isolamento, cada
+ * F-992 (PRV-08): o `/usage` roda a cada poucos minutos. Sem isolamento, cada
  * sonda dispara os hooks do operador (SessionStart etc.), conecta os MCP do
  * claude.ai e procura IDE.
  */
-describe('F-966: sonda /usage do Claude isolada de hooks, MCP e IDE', () => {
+describe('F-992: sonda /usage do Claude isolada de hooks, MCP e IDE', () => {
   let root: string;
   const saved = { HOME: process.env.HOME, FORCE_CODE_TERMINAL: process.env.FORCE_CODE_TERMINAL };
 

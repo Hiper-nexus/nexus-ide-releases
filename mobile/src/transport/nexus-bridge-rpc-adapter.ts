@@ -1,4 +1,4 @@
-// Host "nexus-bridge" (F-968): o RpcClient do app falando com a Remote Bridge do
+// Host "nexus-bridge" (F-994): o RpcClient do app falando com a Remote Bridge do
 // desktop Nexus. Os métodos do app (protocolo Orca) que têm equivalente viram
 // comandos da bridge; o resto responde `nexus_host_unsupported` com a frase
 // "… não disponível em host Nexus" — nunca uma falha muda. TS puro: o teste de

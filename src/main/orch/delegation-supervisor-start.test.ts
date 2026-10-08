@@ -643,7 +643,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(getPaneStartWatch('pane-agy')).toBeNull();
   });
 
-  it('F-958: AGY que não reconhece o modelo vira model-rejected, avisa o motivo e tira o modelo das rotas', async () => {
+  it('F-984: AGY que não reconhece o modelo vira model-rejected, avisa o motivo e tira o modelo das rotas', async () => {
     vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     trackPaneStart(watchInit({ paneId: 'pane-agy', requestId: 'orchspawn-agy', adapterId: 'agy' }));
     h.spawnedAt.mockReturnValue(NOW - 3_838);
@@ -678,7 +678,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(modelAccessQuarantine('agy', 'gemini-3.8-flash-high')).toBeNull();
   });
 
-  it('F-958: writer Codex que sai com 74 aos 303 s (fila de pesados) sem começar avisa o Maestro com o motivo', async () => {
+  it('F-984: writer Codex que sai com 74 aos 303 s (fila de pesados) sem começar avisa o Maestro com o motivo', async () => {
     vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     trackPaneStart(watchInit({
       paneId: 'pane-codex-w1',
@@ -708,7 +708,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(h.onHandoffSubmitted).toHaveBeenCalledTimes(1);
   });
 
-  it('F-958: saída LIMPA depois da graça continua sem veredito (não é morte)', async () => {
+  it('F-984: saída LIMPA depois da graça continua sem veredito (não é morte)', async () => {
     vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     trackPaneStart(watchInit({ adapterId: 'codex', createdAt: NOW - 400_000 }));
     h.spawnedAt.mockReturnValue(NOW - 300_000);
@@ -719,7 +719,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(reroute).not.toHaveBeenCalled();
   });
 
-  it('F-958: worker que já trabalhou (ferramenta) e sai com erro depois da graça não é "não iniciou"', async () => {
+  it('F-984: worker que já trabalhou (ferramenta) e sai com erro depois da graça não é "não iniciou"', async () => {
     vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     trackPaneStart(watchInit({ adapterId: 'codex', createdAt: NOW - 400_000 }));
     h.spawnedAt.mockReturnValue(NOW - 300_000);
@@ -730,7 +730,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(h.submit).not.toHaveBeenCalled();
   });
 
-  it('F-958: MiMo vivo sem NENHUM byte (spawning) depois da graça vira boot-silent e é avisado', async () => {
+  it('F-984: MiMo vivo sem NENHUM byte (spawning) depois da graça vira boot-silent e é avisado', async () => {
     trackPaneStart(watchInit({
       paneId: 'pane-mimo',
       requestId: 'orchspawn-mimo',
@@ -755,7 +755,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(summary).toContain('a CLI não escreveu nada no terminal');
   });
 
-  it('F-958: sessão em spawning ainda dentro da graça não é julgada', async () => {
+  it('F-984: sessão em spawning ainda dentro da graça não é julgada', async () => {
     trackPaneStart(watchInit({ adapterId: 'mimo-code', createdAt: NOW - 30_000 }));
     h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-mimo-early' });
     h.spawnedAt.mockReturnValue(NOW - 30_000);

@@ -116,7 +116,7 @@ describe('digestPaneTail', () => {
   });
 });
 
-// F-961: nexus_pane_read_many com 6 panes e lines:40 devolveu 86.402
+// F-987: nexus_pane_read_many com 6 panes e lines:40 devolveu 86.402
 // caracteres, quase tudo redesenho de TUI. Fixture reproduz o lixo do campo:
 // spinners colados, "Working (… • esc to interrupt)" letra a letra, quadros de
 // status repetidos e redesenho por CR — com o conteúdo útil no fim.
@@ -149,7 +149,7 @@ function tuiGarbagePane(pane: number): string {
   return lines.join('\n');
 }
 
-describe('F-961: redesenho de TUI não estoura o digest', () => {
+describe('F-987: redesenho de TUI não estoura o digest', () => {
   it('normaliza CR, spinner e texto digitado letra a letra', () => {
     expect(normalizeRedrawLine(typed(STATUS(54))).trim()).toBe(STATUS(54));
     expect(normalizeRedrawLine(`✻ W✶ Wo✳ Wor✢ Work✽ Worki`).trim()).toBe('Worki');

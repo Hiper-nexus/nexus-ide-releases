@@ -64,7 +64,7 @@ export interface CodexCliUsageProbe {
   windows: QuotaWindow[] | null;
   failure?: 'auth-expired' | 'unavailable' | 'cli-missing';
   /**
-   * F-964 (PRV-03): `model/list` do MESMO processo do app-server (um spawn
+   * F-990 (PRV-03): `model/list` do MESMO processo do app-server (um spawn
    * por conta e por ciclo). Ausente = a listagem falhou; a cota não depende dela.
    */
   models?: CodexModelListing;

@@ -1338,7 +1338,7 @@ function startSpawn(
         if (!quietSpawn) host.term.writeln(SESSION_BOUNDARY_NOTICE);
       }
       host.hasVisibleContent = true;
-      // F-966: versão da CLI com incompatibilidade conhecida ou anterior ao
+      // F-992: versão da CLI com incompatibilidade conhecida ou anterior ao
       // modelo — o Main já abriu o pane; a linha explica uma falha provável.
       if (!res.adopted && !quietSpawn) {
         for (const warning of res.warnings ?? []) {

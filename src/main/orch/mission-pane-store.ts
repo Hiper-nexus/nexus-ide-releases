@@ -550,7 +550,7 @@ export class ScopedMissionPaneStore {
   }
 
   /**
-   * F-969: o failover de conta do Main troca a conta SELADA do orquestrador
+   * F-995: o failover de conta do Main troca a conta SELADA do orquestrador
    * antes de pedir o religamento do pane (a cerca do spawn persistido exige
    * `accountId` igual ao da linha). Compare-and-swap estreito: só a linha
    * exata (missão + pane + orquestrador) na conta esperada; o resto da

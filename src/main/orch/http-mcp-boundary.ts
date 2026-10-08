@@ -311,7 +311,7 @@ export function runInsidePtyStreamAgentTransport<T>(
 }
 
 /**
- * F-971: trabalho AGENDADO de dentro do transporte de um agente (o timer de
+ * F-997: trabalho AGENDADO de dentro do transporte de um agente (o timer de
  * leitura do shim que um worker ganha quando o orquestrador o abre por MCP)
  * não herda a fronteira física desse agente. Sem isto todo handoff do worker
  * pelo shim morria com "mission shim boundary cannot be nested".

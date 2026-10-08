@@ -214,7 +214,7 @@ export async function fetchCodexAccountUsage(accountId: string): Promise<LivePro
   const expectedAuthBlob = safeGetSecret(CRED_PREFIX + accountId);
   if (!env?.CODEX_HOME || !expectedAuthBlob) return { windows: null, hint: 'no-credential' };
   const probe = await probeCodexCliUsage({ authFile: path.join(env.CODEX_HOME, 'auth.json'), expectedAuthBlob });
-  // F-964 (PRV-03): o `model/list` veio no mesmo processo da cota. A conta
+  // F-990 (PRV-03): o `model/list` veio no mesmo processo da cota. A conta
   // ativa é a que os panes sem conta fixada usam — a lista dela vira a oferta.
   if (probe.models && getActiveAccount('codex')?.id === accountId) {
     recordDiscoveredModelListing('codex', probe.models.ids, {

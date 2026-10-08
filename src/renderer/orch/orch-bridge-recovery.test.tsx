@@ -850,7 +850,7 @@ describe('orchestration bridge pane recovery', () => {
     act(() => mounted.root.unmount());
   });
 
-  it('F-969: a conta selada pelo Main na recuperação vence o espelho do layout (troca por limite)', async () => {
+  it('F-995: a conta selada pelo Main na recuperação vence o espelho do layout (troca por limite)', async () => {
     let recoveryHandler: ((req: MissionPaneRecoveryRequest) => void) | null = null;
     const sendPaneRecoveryResult = vi.fn();
     const rebindMissionOrchestrator = vi.fn(async () => ({ ok: true }));

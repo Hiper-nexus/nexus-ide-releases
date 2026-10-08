@@ -1,5 +1,5 @@
 /**
- * F-958: motivo LEGÍVEL de um pane que não começou, tirado da cauda já
+ * F-984: motivo LEGÍVEL de um pane que não começou, tirado da cauda já
  * sanitizada do PTY (pane-boot-output). O aviso ao orquestrador só leva
  * frases fixas, o id do modelo e o código de saída — nunca a saída crua.
  *

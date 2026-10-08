@@ -16,7 +16,7 @@ export async function watchDarwinHeavyCommand(runtime: DarwinPtySupervisorRuntim
   let settle!: (value: PhysicalCommandClaim | null) => void;
   let closed!: () => void; const completion = new Promise<void>((resolve) => closed = resolve);
   const ready = new Promise<PhysicalCommandClaim | null>((resolve) => settle = resolve);
-  // F-971: o vigia nasce pelo estágio zero (perl -T + validação da imagem); sob
+  // F-997: o vigia nasce pelo estágio zero (perl -T + validação da imagem); sob
   // carga passa de 1,5 s. Estourou o prazo, a admissão recusa (fail-closed).
   const timer = setTimeout(() => { settle(null); watcher.kill('SIGTERM'); }, DARWIN_HEAVY_WATCH_READY_MS); timer.unref?.();
   const claim: PhysicalCommandClaim = {

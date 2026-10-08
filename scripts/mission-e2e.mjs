@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// F-971: `npm run test:mission-e2e` — a missão inteira de ponta a ponta
+// F-997: `npm run test:mission-e2e` — a missão inteira de ponta a ponta
 // (src/main/orch/mission-e2e.test.ts) com o Main real, PTY real e uma CLI de
 // agente falsa. O gate de release roda este script; exit ≠ 0 bloqueia a
 // publicação. Ver docs/MISSION-E2E.md.

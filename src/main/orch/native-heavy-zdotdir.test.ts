@@ -110,7 +110,7 @@ it.runIf(process.platform === 'darwin').each(['stdin', 'script', 'variable'])(
   'nested zsh %s retains admission before native execution', (mode) => {
     const { root, home, env } = fixture();
     fs.writeFileSync(path.join(home, '.zshrc'), '');
-    // `make --version` sozinho é pedido trivial e não é medido (F-956, segunda
+    // `make --version` sozinho é pedido trivial e não é medido (F-982, segunda
     // revisão); `-s` mantém uma invocação real do make, que sai 0 e imprime a versão.
     const program = '/usr/bin/make -s --version';
     const script = path.join(root, 'child.zsh'); fs.writeFileSync(script, program);
@@ -174,7 +174,7 @@ it.runIf(process.platform === 'darwin').each(['stdin', 'script', 'variable', 'ba
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as { port: number }).port;
-    // `make --version` sozinho é pedido trivial e não é medido (F-956, segunda
+    // `make --version` sozinho é pedido trivial e não é medido (F-982, segunda
     // revisão); `-s` mantém uma invocação real do make, que sai 0 e imprime a versão.
     const program = '/usr/bin/make -s --version';
     const script = path.join(root, 'child.zsh'); fs.writeFileSync(script, program);

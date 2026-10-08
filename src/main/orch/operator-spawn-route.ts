@@ -95,7 +95,7 @@ export function liveMissionAdapterIds(
 }
 
 /**
- * F-959: panes VIVOS da missão nesta CLI — a régua dos assentos Claude
+ * F-985: panes VIVOS da missão nesta CLI — a régua dos assentos Claude
  * (F-235). A composição durável (`mission_panes`) guarda o pane depois que
  * ele fecha; contar a linha do worker que entregou e fechou segurava a conta
  * até o fim da missão e a rota dizia "claude=não instalado". Linha sem paneId

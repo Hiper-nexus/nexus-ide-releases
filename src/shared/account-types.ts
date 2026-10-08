@@ -167,7 +167,7 @@ export interface FailoverEvent {
    */
   transientPhase?: 'detected' | 'stopped' | 'nudged' | 'stalled';
   /**
-   * F-969: o Main JÁ religou o pane na conta nova (orquestrador de missão
+   * F-995: o Main JÁ religou o pane na conta nova (orquestrador de missão
    * num pane do renderer, inclusive o pane do operador adotado). O evento é
    * o recibo da troca aplicada: o renderer só espelha a conta e avisa — nunca
    * religa de novo nem tenta matar a sessão de missão.

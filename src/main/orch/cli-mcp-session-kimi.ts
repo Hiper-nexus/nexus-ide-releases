@@ -178,7 +178,7 @@ const KIMI_SESSION_ENTRIES = [
 ];
 
 /**
- * F-958: a chave que o Kimi Code 2.x LÊ (`encodeWorkDirKey` do binário 2.1.1):
+ * F-984: a chave que o Kimi Code 2.x LÊ (`encodeWorkDirKey` do binário 2.1.1):
  * basename em minúsculas, `[^a-z0-9._-]+` → `-`, sem traços nas pontas,
  * cortado em 40 caracteres; hash = sha256 da raiz com `/` e sem barra final.
  * O nome inteiro (`wd_task-<64 hex>_…`) nunca era lido: toda worktree de

@@ -285,7 +285,7 @@ describe('ProvidersPanel hub', () => {
     act(() => root.unmount());
   });
 
-  it('F-966: avisa a versão quebrada da CLI no detalhe, antes de qualquer spawn', () => {
+  it('F-992: avisa a versão quebrada da CLI no detalhe, antes de qualquer spawn', () => {
     const warning = 'Codex 0.148.0 tem incompatibilidade conhecida com o Nexus. Atualize para >=0.159.0; o pane abre assim mesmo.';
     useProviderStore.setState({ providers: [provider('codex', 'Codex', { cliCompatibilityWarning: warning })] });
     const { host, root } = mount();

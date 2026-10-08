@@ -1,6 +1,6 @@
 # Remote Ops (Fase 5) — companion thin client
 
-Dois clientes falam com a remote bridge (HTTPS + WebSocket), com pairing por código: o **thin client PWA** que a própria bridge serve e o **app Expo** de `mobile/` (F-968, seção abaixo). O protocolo do Orca que o app herdou continua no app para hosts Orca; o desktop Nexus não o serve.
+Dois clientes falam com a remote bridge (HTTPS + WebSocket), com pairing por código: o **thin client PWA** que a própria bridge serve e o **app Expo** de `mobile/` (F-994, seção abaixo). O protocolo do Orca que o app herdou continua no app para hosts Orca; o desktop Nexus não o serve.
 
 ## Stack
 
@@ -52,7 +52,7 @@ fica no desktop.
    **Girar código de pareamento** no desktop.
 4. Ecrã **Ops**: resumo + missões + panes; tocar pane → output + input.
 
-## App Expo (`mobile/`, F-968)
+## App Expo (`mobile/`, F-994)
 
 O app trata o desktop Nexus como host `nexus-bridge`, separado dos hosts Orca. O
 leitor de QR aceita `https://<host>[:porta]/#code=XXXXXXXX` (o QR do card *Celular na

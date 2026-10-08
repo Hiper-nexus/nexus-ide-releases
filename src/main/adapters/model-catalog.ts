@@ -112,7 +112,7 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         },
         { id: 'claude-sonnet-5', availability: 'paid', costTier: 'medium', source: 'bundled' },
         // Manifesto T3 26285ab (07/10): current, Claude Code >= 2.1.293 — e
-        // 81 turnos reais na 2.1.293 dos panes. Abaixo disso só avisa (F-966).
+        // 81 turnos reais na 2.1.293 dos panes. Abaixo disso só avisa (F-992).
         { id: 'claude-haiku-5-5', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'claude-haiku-4-5', availability: 'cheap', costTier: 'low', source: 'bundled' },
       ],
@@ -215,7 +215,7 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         { id: 'gemini-3.6-flash-medium', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'gemini-3.6-flash-high', availability: 'cheap', costTier: 'low', source: 'bundled' },
         // Gemini 4 Argon (Google, 30/09): flagship de acesso restrito
-        // (Fairwind → Ultra → API paga), $2/M entrada. F-964: só METADADO —
+        // (Fairwind → Ultra → API paga), $2/M entrada. F-990: só METADADO —
         // o `agy models` do AGY 1.3.1 não o lista, e o catálogo nunca
         // acrescenta id a CLI que lista. Volta à oferta quando a CLI o listar.
         { id: 'gemini-4-argon', availability: 'paid', costTier: 'high', source: 'bundled' },
@@ -454,7 +454,7 @@ function composeModelCatalog(user: ModelCatalog): ModelCatalog {
  * SEM o campo — nenhum número é inventado. O roteador trata ausência como
  * "não filtrar", nunca como janela zero.
  *
- * F-966: no Claude o perfil do modelo (manifesto do T3) vem antes — esforços
+ * F-992: no Claude o perfil do modelo (manifesto do T3) vem antes — esforços
  * aceitos, versão mínima da CLI e a janela do Claude Code (o id sem `[1m]`
  * do sonnet-4-6 abre 200k, não o 1M da API).
  */
@@ -585,7 +585,7 @@ async function loadCatalogFromUrl(url: string): Promise<ModelCatalog | null> {
 }
 
 /**
- * F-964 (PRV-10): validação referencial — por adapter, ids únicos e o
+ * F-990 (PRV-10): validação referencial — por adapter, ids únicos e o
  * `default` presente na própria lista. Um catálogo que manda o seletor abrir
  * num id que ele mesmo não descreve (ou descreve duas vezes) é dado quebrado.
  */
@@ -624,7 +624,7 @@ export async function refreshRemoteModelCatalog(
   // Start IO together so cancellation/deadline ownership starts immediately.
   let [json, initial] = await Promise.all([loadCatalogFromUrl(url), identity()]);
   if (epoch !== catalogEpoch) return false;
-  // F-964 (PRV-10): catálogo remoto inválido conta como fetch que falhou — a
+  // F-990 (PRV-10): catálogo remoto inválido conta como fetch que falhou — a
   // última versão boa (o arquivo em disco ou, sem ele, o publicado) fica.
   if (json && modelCatalogReferenceErrors(json).length > 0) json = null;
   // CDN atrasada pode servir uma edição anterior à que já está em disco.
@@ -721,7 +721,7 @@ export function modelRoutingRankWithAuth(
 
 /**
  * Catálogo → adapter. Para CLI sem listagem (`bundled`, ex.: Claude) o
- * catálogo É o manifesto e acrescenta ids, como no T3. F-964 (PRV-01): para
+ * catálogo É o manifesto e acrescenta ids, como no T3. F-990 (PRV-01): para
  * CLI que sabe listar ele só classifica — nunca acrescenta id (o
  * `gemini-4-argon` do catálogo era oferecido ao AGY 1.3.1, que não o lista) —
  * e só move o default para um id que o adapter já oferece.

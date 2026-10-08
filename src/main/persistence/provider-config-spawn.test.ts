@@ -1558,7 +1558,7 @@ describe('G3 — pane sem conta pinada nasce na conta com folga', () => {
 
     // api_key path: keyEnv vem do vault da conta escolhida (accountKey mock).
     expect(result).toMatchObject({ ok: true });
-    // F-969: além do escore, a regra recebe as janelas por conta.
+    // F-995: além do escore, a regra recebe as janelas por conta.
     expect(spawnDeps.pickAvailableForFailover).toHaveBeenCalledWith(
       'kimi',
       null,
@@ -2026,7 +2026,7 @@ describe('Recibo da escolha de conta (overrides.accountChoice)', () => {
     expect(receipt.source).toBe('legacy');
   });
 
-  it('F-969: conta fixada não concorreu — a irmã livre aparece como "não comparada", nunca "menos folga"', () => {
+  it('F-995: conta fixada não concorreu — a irmã livre aparece como "não comparada", nunca "menos folga"', () => {
     const pinned = kimiAccount('kimi-co', 'cobrancade@corp.com', 1);
     spawnDeps.prepareAccount.mockReturnValueOnce({
       ok: true,
@@ -2075,7 +2075,7 @@ describe('Recibo da escolha de conta (overrides.accountChoice)', () => {
     ]);
   });
 
-  it('F-969: ativa mantida com irmã MAIS livre em janelas comparáveis — recibo diz "active-kept"', () => {
+  it('F-995: ativa mantida com irmã MAIS livre em janelas comparáveis — recibo diz "active-kept"', () => {
     const active = kimiAccount('kimi-a', 'ana@corp.com', 1);
     const sibling = kimiAccount('kimi-b', 'bia@corp.com', 2);
     spawnDeps.listAccounts.mockReturnValue([active, sibling]);

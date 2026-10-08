@@ -10,7 +10,7 @@
  *
  * Fallback print-only (Codenotch, ClaudeUsageCLI.swift): `claude --print
  * --no-session-persistence --strict-mcp-config --settings
- * '{"disableAllHooks":true}' /usage` (F-966: sem hooks, sem MCP do claude.ai,
+ * '{"disableAllHooks":true}' /usage` (F-992: sem hooks, sem MCP do claude.ai,
  * sem IDE — ver CLAUDE_CLI_PROBE_ENV) responde com as mesmas
  * janelas usando o login que o CLI já tem — cobre 429/backoff do endpoint e
  * token de keychain rodado. Só --print: sem isso cada chamada grava sessão em
@@ -220,7 +220,7 @@ export async function fetchClaudeOauthUsageWindows(
 // ---------------------------------------------------------------------------
 
 /**
- * F-966 (padrão do T3 `buildClaudeCapabilitiesProbeQueryOptions`, MIT): a
+ * F-992 (padrão do T3 `buildClaudeCapabilitiesProbeQueryOptions`, MIT): a
  * sonda roda a cada poucos minutos e não pode disparar os hooks do operador
  * (SessionStart etc.). `--settings` com JSON inline vale no `--print` desde a
  * 2.1.283 (strings do binário: `--settings <file-or-json>`, `disableAllHooks`).

@@ -117,7 +117,7 @@ async function route() {
 }
 
 describe('F-235: capacidade de panes Claude por conta utilizável', () => {
-  // F-959: a reserva é política de assentos — o recibo diz isso, nunca
+  // F-985: a reserva é política de assentos — o recibo diz isso, nunca
   // "claude=não instalado" para o Claude que roda o próprio orquestrador.
   it('Maestro Claude + 1 conta: claude segue reservado, e o motivo diz que é reserva', async () => {
     const decision = await route();
@@ -166,7 +166,7 @@ describe('F-235: capacidade de panes Claude por conta utilizável', () => {
     );
   });
 
-  // F-959: `mission_panes` guarda o worker depois que ele fecha (o worker de
+  // F-985: `mission_panes` guarda o worker depois que ele fecha (o worker de
   // missão fecha sozinho no handoff de sucesso). Contar a linha morta segurava
   // a conta e o Claude saía como "não instalado" até o fim da missão.
   it.each([

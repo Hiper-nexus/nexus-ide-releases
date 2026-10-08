@@ -8,7 +8,7 @@ import {
   parseMissionE2EArgs,
 } from './mission-e2e.mjs';
 
-describe('F-971 — runner do E2E de missão', () => {
+describe('F-997 — runner do E2E de missão', () => {
   it('aponta para o teste que existe e só roda com a chave explícita', () => {
     const source = fs.readFileSync(path.join(process.cwd(), MISSION_E2E_TEST), 'utf8');
     expect(source).toContain("process.env.NEXUS_MISSION_E2E === '1'");

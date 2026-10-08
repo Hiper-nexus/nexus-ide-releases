@@ -154,7 +154,7 @@ export function isLivePaneSessionState(
  * o pane focado vivo, senão o primeiro vivo. `null` quando nenhum pane da aba
  * tem sessão de IA viva — quem chama pede "Abra uma IA nesta aba".
  *
- * F-970: worker de missão (revisor readOnly, helper aberto pelo Maestro) nunca
+ * F-996: worker de missão (revisor readOnly, helper aberto pelo Maestro) nunca
  * é escolhido no lugar do orquestrador — foco não é designação. Na queda do
  * líder de 07/10 o revisor Codex focado virou o "orquestrador" da missão e o
  * pane do operador voltou a `user`. Sem orquestrador nem pane do operador

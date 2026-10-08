@@ -352,7 +352,7 @@ export class WorktreeManager {
     }
     const repository = await readRepositorySnapshotAsync(this.#asyncGit, input.scope, requireClean);
     assertCurrentAuthority();
-    // F-954: writer da aba isolada nasce do HEAD da aba (sem o WIP dela).
+    // F-980: writer da aba isolada nasce do HEAD da aba (sem o WIP dela).
     const base = input.baseRootRealPath === undefined
       ? repository
       : await readLinkedBaseSnapshotAsync(this.#asyncGit, repository, input.baseRootRealPath);
@@ -1205,7 +1205,7 @@ export class WorktreeManager {
     if (!tip) return "branch-missing";
     const isMergedAt = async (at: string) => (await git.run(at,
       ["merge-base", "--is-ancestor", tip, "HEAD"], { allowFailure: true })).status === 0;
-    // F-954: o writer nascido de uma aba isolada é integrado na branch da ABA;
+    // F-980: o writer nascido de uma aba isolada é integrado na branch da ABA;
     // contido no HEAD dela vale como contido no checkout.
     let mergedAt: string | null = null;
     for (const at of [root, ...this.#tabRoots(scopeKey, root)]) {

@@ -8,7 +8,7 @@
 // invalidação quando a TUI respondeu primeiro e registro de quem pode
 // responder (card do desktop visível, aparelho pareado conectado).
 //
-// Sonda real (claude 2.1.283, docs/qa/items/F-965.md): a TUI desenha o
+// Sonda real (claude 2.1.283, docs/qa/items/F-991.md): a TUI desenha o
 // diálogo no mesmo instante em que o hook começa e uma tecla do operador
 // vence na hora; o hook continua vivo e a decisão tardia é ignorada. Por isso
 // esperar aqui não tira o terminal do operador — e por isso um evento de

@@ -78,10 +78,10 @@ describe('zero-delivery watchdog', () => {
   });
 });
 
-// F-960: estudo somente leitura com seis panes vivos e ocupados recebeu
+// F-986: estudo somente leitura com seis panes vivos e ocupados recebeu
 // "[zero-delivery-escalate] Declare o worker anterior morto" após 7 min —
 // disco vazio não é sinal para quem não grava, e pane ocupado está vivo.
-describe('F-960: vigia de entrega olha atividade real, não o disco', () => {
+describe('F-986: vigia de entrega olha atividade real, não o disco', () => {
   const T0 = 10_000_000;
   const base = {
     missionStatus: 'running',
@@ -212,7 +212,7 @@ describe('F-960: vigia de entrega olha atividade real, não o disco', () => {
   });
 });
 
-describe('F-960: zeroDeliveryWorkerActivity', () => {
+describe('F-986: zeroDeliveryWorkerActivity', () => {
   const now = 50_000_000;
   const none = () => null;
   const zero = () => 0;

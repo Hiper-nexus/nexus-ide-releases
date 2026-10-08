@@ -81,16 +81,16 @@ export interface ProviderSettingsInfo {
   detectedBin: string;
   /** Duplicate versions and the selected version, without filesystem paths. */
   cliInstallationWarning?: string;
-  /** F-966: versão quebrada conhecida ou anterior ao modelo padrão; não bloqueia. */
+  /** F-992: versão quebrada conhecida ou anterior ao modelo padrão; não bloqueia. */
   cliCompatibilityWarning?: string;
   defaultModel: string;
   models: string[];
   /**
-   * F-964: ids do adapter/catálogo que a listagem da CLI não traz — não são
+   * F-990: ids do adapter/catálogo que a listagem da CLI não traz — não são
    * oferecidos nem roteados. Ausente = nenhum.
    */
   unverifiedModels?: string[];
-  /** F-964: de onde veio `models` (listagem viva, última boa, cache, bundled). */
+  /** F-990: de onde veio `models` (listagem viva, última boa, cache, bundled). */
   modelListSource?: 'live' | 'last-good' | 'cache' | 'bundled';
   /**
    * Exact model ids whose provider-specific auth is ready in this snapshot.

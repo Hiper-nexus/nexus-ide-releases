@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# F-971: `vitest` FALSO do repositório de fixture do E2E de missão. Barato
+# F-997: `vitest` FALSO do repositório de fixture do E2E de missão. Barato
 # (segura alguns segundos e sai 0), mas o catálogo de comandos pesados o vê
 # pelo nome e o classifica como "tests" — então ele passa pela admissão REAL
 # de CPU/RAM do Nexus. Grava início/fim para o teste medir paralelismo.

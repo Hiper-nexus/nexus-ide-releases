@@ -107,7 +107,7 @@ function isPersistent(argv) {
   if (/(?:^|\/)esbuild(?:\/|$)/.test(normalized) || knownPackage(entry) === 'esbuild') return args.some((arg) => /^--(?:serve|watch)(?:=|$)/.test(arg));
   return false;
 }
-// F-956: classify the program each simple command runs, the way the shell
+// F-982: classify the program each simple command runs, the way the shell
 // reads it. Matching tool names anywhere in the text queued `type node`,
 // `which node`, `node -v`, grep patterns, commit messages and heredoc bodies
 // ("…must not make them…") behind the project's build slot for up to 300 s.
@@ -152,7 +152,7 @@ const WRAPPERS = {
   xargs: { flags: '0oprtx', optional: 'eil', values: 'adEIJLnPRSs', ownStdin: true,
     longFlags: ['null', 'open-tty', 'interactive', 'no-run-if-empty', 'verbose', 'exit', 'show-limits', 'eof', 'replace', 'max-lines'],
     longValues: ['arg-file', 'delimiter', 'max-args', 'max-procs', 'max-chars', 'process-slot-var'] },
-  // F-956 (second review). `dashLong`: a single-dash word longer than one
+  // F-982 (second review). `dashLong`: a single-dash word longer than one
   // letter is a long option (`arch -x86_64`, `xcrun -sdk`), not letters.
   // `commandValues`: the value is a command line (`script -c`, `flock -c`);
   // `trailingCommand`: `-c CMD` may also follow the operands (`flock FILE -c`).
@@ -529,7 +529,7 @@ function commandKind(command, depth = 0) {
     return 'build'; // unreadable (too deeply nested): keep it metered
   }
 }
-// F-956 (second review): an exec/spawn argv never went through a shell. Joining
+// F-982 (second review): an exec/spawn argv never went through a shell. Joining
 // it and re-reading the text as shell turned a `|` or newline inside one
 // argument (`rg -e 'a|vitest'`, a commit message with "\nmake …") into another
 // command. Each element is one word; only an explicit shell reads text.

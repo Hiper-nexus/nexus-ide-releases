@@ -3,7 +3,7 @@
  * worker — o Maestro "dormiu aguardando handoff" e o disco ficou vazio.
  * Poke curto; não depende de morte de processo.
  *
- * F-960: o relógio é a ATIVIDADE real dos workers (saída do PTY, turno aberto,
+ * F-986: o relógio é a ATIVIDADE real dos workers (saída do PTY, turno aberto,
  * chamadas de ferramenta), não o disco. Worker ocupado nunca dispara poke nem
  * escalada; estudo somente leitura (que por definição não grava arquivo) ganha
  * prazo de estudo longo e a mensagem nunca manda fechar pane ocupado.
@@ -131,7 +131,7 @@ export function decideZeroDeliveryWatchdog(input: {
   readonly now: number;
   /** Já houve poke de zero-entrega nesta missão. */
   readonly alreadyPoked: boolean;
-  /** F-960: atividade real dos workers; ausente = sem evidência (parados). */
+  /** F-986: atividade real dos workers; ausente = sem evidência (parados). */
   readonly workerActivity?: ZeroDeliveryWorkerActivity;
 }): ZeroDeliveryDecision {
   if (input.missionStatus !== 'running' && input.missionStatus !== 'pending') {

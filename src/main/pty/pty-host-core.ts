@@ -161,7 +161,7 @@ export interface PtyHostBridge {
 
 const TERMINATION_PROCESS_SCAN_BUDGET_MS = 4_000;
 /**
- * F-971: a prova de dono de um comando pesado (duas leituras do `ps` mais o
+ * F-997: a prova de dono de um comando pesado (duas leituras do `ps` mais o
  * vigia nativo, no host) leva segundos com a máquina ocupada. Com 2 s, writers
  * em paralelo recebiam "ownership unproved" e o comando morria com exit 74
  * na hora. Continua fail-closed: estourou, recusa.

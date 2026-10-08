@@ -184,7 +184,7 @@ describe('multi-account credential scoping', () => {
     mocks.getAccount.mockReturnValue({ adapterId: 'codex', mode: 'api-key' });
     expect((await fetchCodexAccountUsage('acct-a')).hint).toBe('no-credential');
   });
-  it('F-964 (PRV-03): a listagem do model/list da conta ATIVA vira a oferta do Codex; a de outra conta não', async () => {
+  it('F-990 (PRV-03): a listagem do model/list da conta ATIVA vira a oferta do Codex; a de outra conta não', async () => {
     resetModelDiscoveryForTests();
     mocks.getAccount.mockReturnValue({ id: 'acct-a', adapterId: 'codex', mode: 'subscription' });
     mocks.getSecret.mockReturnValue('{"tokens":{"account_id":"a","access_token":"fixture"}}');

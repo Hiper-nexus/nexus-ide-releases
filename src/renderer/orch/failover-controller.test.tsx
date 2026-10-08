@@ -224,7 +224,7 @@ describe('failover notifications', () => {
     }
   });
 
-  it('F-969: troca já aplicada pelo Main no orquestrador — espelha a conta e avisa, sem religar de novo', async () => {
+  it('F-995: troca já aplicada pelo Main no orquestrador — espelha a conta e avisa, sem religar de novo', async () => {
     let notify!: (event: FailoverEvent) => void;
     Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
       onFailover: (callback: typeof notify) => { notify = callback; return () => {}; },

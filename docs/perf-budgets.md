@@ -22,7 +22,7 @@ código dá o mesmo número em qualquer máquina.
 | idem | fluxo 60 quadros/16 ms: ≤ 31 escritas no pane mais ativo, 242 na grade, 181 drenos | mesmo, em regime |
 | `src/main/pty/pty-output-wire.budget.test.ts` | 1 mensagem de dados por chunk, 1 `stateChange` por rajada, ≤ 64 bytes de envelope por evento (53), 2 entregas aos taps por rajada de 400 chunks | evento magro `{ sessionId, data, sequence }`; virada para busy uma vez; F-764 C.1 (taps em lote) |
 | idem | 524288 caracteres (512 KiB) empurrados a um renderer que nunca confirma | backpressure: a fila de IPC do Main não cresce sem limite |
-| `src/main/orch/pane-output-digest.budget.test.ts` | 742 caracteres e 26 linhas para 12 passos × 15 quadros de TUI | dedupe de status/quadros/linha repetida do digest (F-961) — tokens do Maestro |
+| `src/main/orch/pane-output-digest.budget.test.ts` | 742 caracteres e 26 linhas para 12 passos × 15 quadros de TUI | dedupe de status/quadros/linha repetida do digest (F-987) — tokens do Maestro |
 
 O DOM da timeline virtualizada já tem teto próprio em
 `AgentActivityTimeline.test.tsx` (10 mil eventos, menos de 60 linhas montadas).

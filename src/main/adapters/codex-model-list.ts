@@ -11,7 +11,7 @@ import { authBlobIsFreshForSpawn, waitForRotatingAuthSpawnGate } from './managed
 import { withCodexAppServer, type CodexAppServerRpc } from './codex-app-server-rpc';
 
 /**
- * F-964 (PRV-03): a lista de modelos do Codex vem do `model/list` do
+ * F-990 (PRV-03): a lista de modelos do Codex vem do `model/list` do
  * app-server (o que a CONTA do CODEX_HOME pode usar), não do
  * `models_cache.json` — que traz ids que não são de chat (`codex-auto-review`)
  * e não diz o que a conta enxerga. O cache fica como fallback.

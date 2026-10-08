@@ -1,4 +1,4 @@
-// Tela de um host "nexus-bridge" (F-968): o mesmo escopo do PWA Nexus Remote —
+// Tela de um host "nexus-bridge" (F-994): o mesmo escopo do PWA Nexus Remote —
 // aprovações, missões, panes, saída ao vivo e envio de um comando completo. As
 // telas do Orca (worktrees, abas, arquivos, Git…) não têm equivalente na bridge.
 import { useCallback, useEffect, useRef, useState } from 'react'

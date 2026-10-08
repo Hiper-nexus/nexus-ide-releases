@@ -22,7 +22,7 @@ export interface IsolatedWriterAllocation {
   /** Commit de onde a worktree nasceu (HEAD do checkout, sem o WIP dele). */
   readonly baseSha: string;
   /**
-   * F-954: pasta isolada da aba de onde a worktree nasceu (o HEAD dela é o
+   * F-980: pasta isolada da aba de onde a worktree nasceu (o HEAD dela é o
    * `baseSha`). Ausente quando a base é o checkout de coordenação.
    */
   readonly baseRootRealPath?: string;

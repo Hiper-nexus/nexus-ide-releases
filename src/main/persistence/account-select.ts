@@ -16,7 +16,7 @@ import {
  * remaining quota does not take a new pane early. Unknown quota keeps the
  * active account. With no active account, the freest measured candidate wins.
  *
- * F-969: with the per-window readings (`quotaByAccountId`) the comparison only
+ * F-995: with the per-window readings (`quotaByAccountId`) the comparison only
  * uses comparable windows (`compareAccountHeadroom`), and an active account
  * that was read partially (e.g. Semanal measured, 5 Horas unread) does not
  * keep the pane against a sibling that PROVED headroom in the window the

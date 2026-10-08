@@ -287,7 +287,7 @@ describe('in-mission pane observation (Overclock parity)', () => {
     expect(fullResult).toEqual([{ paneId: 'pane-b', output: 'worker B idle' }]);
   });
 
-  it('F-961: read_many digest de 6 panes com redesenho de TUI cabe no teto e mantém o fim útil', async () => {
+  it('F-987: read_many digest de 6 panes com redesenho de TUI cabe no teto e mantém o fim útil', async () => {
     const status = (seconds: number) => `Working (2m ${seconds}s • esc to interrupt)`;
     const typed = (text: string) =>
       Array.from({ length: text.length }, (_, i) => text.slice(0, i + 1)).join('');
@@ -331,7 +331,7 @@ describe('in-mission pane observation (Overclock parity)', () => {
     }
   });
 
-  it('F-961: read_many lê cada pane uma vez, recusa lista acima do teto e nunca passa do teto total', async () => {
+  it('F-987: read_many lê cada pane uma vez, recusa lista acima do teto e nunca passa do teto total', async () => {
     const orchestrator = context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null });
     const useful = (pane: number) => Array.from(
       { length: 40 },
@@ -386,7 +386,7 @@ describe('in-mission pane observation (Overclock parity)', () => {
     }
   });
 
-  it('F-961 (segunda revisão): o teto conta panes distintos resolvidos, não grafias', async () => {
+  it('F-987 (segunda revisão): o teto conta panes distintos resolvidos, não grafias', async () => {
     const orchestrator = context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null });
     for (let pane = 0; pane < 8; pane += 1) {
       const info: PaneAuthzInfo = {

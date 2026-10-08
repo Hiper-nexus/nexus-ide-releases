@@ -1052,7 +1052,7 @@ export class RendererMissionAuthority {
       (gateCtx.role === "worker" || gateCtx.role === "orchestrator") &&
       (owned.info.role !== "user" || alignCreatorPty);
     if (!adopting && !switching) return { ok: false, error: "promotion_failed" };
-    // F-970: um pane somente leitura (revisor, auditor) nunca recebe a coroa.
+    // F-996: um pane somente leitura (revisor, auditor) nunca recebe a coroa.
     // A missão de 07/10 foi re-hospedada num revisor Codex readOnly e o pane
     // do operador que a liderava voltou a `user`: o "orquestrador" novo não
     // podia delegar nem escrever. Só o líder que já é desta missão (Maestro

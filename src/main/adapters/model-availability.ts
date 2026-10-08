@@ -1,9 +1,9 @@
 // Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied)
 // Referência (T3 Code, MIT): a regra "a listagem da CLI é a verdade; o manifesto só classifica e escolhe o default, nunca acrescenta id" (apps/server/src/provider/ModelManifest.ts:214-330, applyManifestDefault/classifyModels; AntigravityProvider.ts:45-79, 308-316; docs/internals/providers.md "an authoritative empty catalog must clear the old list").
-// Implementação do Nexus: função pura em TS, com as três autoridades do Nexus (live | version-cache | bundled), a última listagem boa no lugar do snapshot do provider, ids custom do operador e o guarda de parse quebrado do F-958.
+// Implementação do Nexus: função pura em TS, com as três autoridades do Nexus (live | version-cache | bundled), a última listagem boa no lugar do snapshot do provider, ids custom do operador e o guarda de parse quebrado do F-984.
 
 /**
- * F-964 (PRV-01): quais modelos o Nexus OFERECE e quais ROTEIA por CLI.
+ * F-990 (PRV-01): quais modelos o Nexus OFERECE e quais ROTEIA por CLI.
  *
  * Antes, o seletor e o roteador uniam lista estática do adapter, catálogo e
  * listagem viva. O `gemini-4-argon` (bundled + catálogo) continuou oferecido
@@ -20,7 +20,7 @@
  *    id do estático ou do catálogo fora da listagem vira `unverified` (nunca
  *    oferecido nem roteado); id só do catálogo também.
  *  - listagem não vazia sem NENHUM id da linha de um id conhecido é parse
- *    quebrado (F-958), não catálogo: cai para a próxima fonte em vez de
+ *    quebrado (F-984), não catálogo: cai para a próxima fonte em vez de
  *    oferecer rótulos.
  *  - default: o do catálogo se estiver na oferta, senão o do adapter, senão o
  *    que a CLI marcou, senão o mais novo da linha do default; sem nenhum, ''

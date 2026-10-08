@@ -1,5 +1,5 @@
 'use strict';
-// F-971: o host de PTY REAL (src/main/pty/pty-host-entry.ts) fora do Electron.
+// F-997: o host de PTY REAL (src/main/pty/pty-host-entry.ts) fora do Electron.
 // No app ele roda num utilityProcess e fala com o Main por `process.parentPort`;
 // aqui o mesmo contrato viaja pelo canal IPC do Node (fork com
 // serialization 'advanced', o mesmo clone estruturado do utilityProcess).

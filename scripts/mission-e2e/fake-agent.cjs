@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
-// F-971: lançador Node de uma CLI de agente FALSA, no formato exato do
+// F-997: lançador Node de uma CLI de agente FALSA, no formato exato do
 // codex.js / bin/mimo — repassa o PRÓPRIO argv (com o brief da missão) ao
-// binário "nativo". É esse hand-off que o F-958 tirou da fila de comandos
+// binário "nativo". É esse hand-off que o F-984 tirou da fila de comandos
 // pesados; nenhum modelo de IA é chamado em lugar nenhum.
 const path = require('node:path');
 const { spawn } = require('node:child_process');

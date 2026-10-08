@@ -1,4 +1,4 @@
-// Cliente WSS da Remote Bridge do Nexus (F-968). Porte em TS puro do lado
+// Cliente WSS da Remote Bridge do Nexus (F-994). Porte em TS puro do lado
 // cliente do PWA "Nexus Remote" (src/main/remote/remote-client-page.ts: connect,
 // send, pareamento e bootWithSavedToken) para o app Expo — sem React Native, para
 // o teste de ponta a ponta do desktop importar este arquivo por caminho.

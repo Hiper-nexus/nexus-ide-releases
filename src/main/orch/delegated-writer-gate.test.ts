@@ -63,7 +63,7 @@ describe('decideDelegatedWriterSpawn', () => {
   });
 });
 
-describe('F-955: claim do writer vale até o pane nascido passar da largada', () => {
+describe('F-981: claim do writer vale até o pane nascido passar da largada', () => {
   const snap = (state: PaneSnapshot['state'], sessionId: string | null = null): PaneSnapshot[] =>
     [{ paneId: 'p1', sessionId, title: 'w', kind: 'cli-agent', state }];
 

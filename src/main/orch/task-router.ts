@@ -182,7 +182,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // (only headless `exec` does), so the model's native default stands.
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
-    // F-966: Haiku 5.5 é o mais novo da linha (Claude Code >= 2.1.293, com
+    // F-992: Haiku 5.5 é o mais novo da linha (Claude Code >= 2.1.293, com
     // esforço); o 4.5 fica atrás para CLI antiga que recuse o 5.5.
     { adapterId: 'claude', model: 'claude-haiku-5-5', effort: 'low' },
     { adapterId: 'claude', model: 'claude-haiku-4-5', effort: 'low' },
@@ -269,7 +269,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // (74,1 × 75,2).
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
-    // F-964: o Gemini 4 Argon saiu da tabela — o `agy models` do AGY 1.3.1
+    // F-990: o Gemini 4 Argon saiu da tabela — o `agy models` do AGY 1.3.1
     // não o lista (tabela velha = pane morto com "not recognized"). Ele segue
     // como assento da lane de julgamento, que só entra com a prova viva.
     { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
@@ -685,7 +685,7 @@ export interface AdapterAvailability {
   id: string;
   installed: boolean;
   /**
-   * F-959: por que `installed` é false quando o binário existe — política da
+   * F-985: por que `installed` é false quando o binário existe — política da
    * missão (assento Claude reservado), exclusão, cooldown, credencial. Sem
    * isto o recibo do `preferAdapters` dizia "não instalado" para a CLI que
    * roda o próprio orquestrador. Ausente = não instalado de fato.
@@ -700,7 +700,7 @@ export interface AdapterAvailability {
    */
   liveModels?: readonly string[];
   /**
-   * F-964 (PRV-01): `liveModels` é a listagem autoritativa da CLI (viva, a
+   * F-990 (PRV-01): `liveModels` é a listagem autoritativa da CLI (viva, a
    * última boa ou o cache oficial) — mesmo vazia. Toda lane automática só
    * escolhe id que está nela; ausente = sem listagem, vale o contrato bundled.
    */
@@ -739,7 +739,7 @@ const BUNDLED_MODELS = new Map(BUILTIN_ADAPTERS.map((raw) => {
 
 /**
  * Modelos roteáveis do adapter segundo o que a CLI instalada anunciou.
- * F-958 valia só para o AGY; o F-964 (PRV-01) generaliza para toda CLI que
+ * F-984 valia só para o AGY; o F-990 (PRV-01) generaliza para toda CLI que
  * sabe listar (`modelListAuthority` live | version-cache — agy, codex, kimi,
  * opencode, cursor-agent, mimo, qoder, prime-agent, omp, grok):
  *  - listagem autoritativa (`liveModelsAuthoritative`) → só os ids dela, em
@@ -1174,7 +1174,7 @@ function evaluatedCandidates(
       if (!hasAuthoritativeModelQuality(info) || isModelBlockedForAutoRouting(info)) {
         return [];
       }
-      // F-958: modelo recusado pela CLI (no nascimento ou no failover) sai
+      // F-984: modelo recusado pela CLI (no nascimento ou no failover) sai
       // também do ranking avaliado e das alternativas, não só da tabela.
       if (modelAccessQuarantine(adapter.id, model)) return [];
       // F-912: candidato com janela documentada menor que o pedido sai do
@@ -1407,7 +1407,7 @@ export function routeTask(
     contextRequirement !== null
       ? `; exige contexto ≥ ${contextRequirement.toLocaleString('en-US')} tokens — excluídos os com maxContext documentado menor`
       : '';
-  // F-964: a prova viva vale para TODA lane — inclusive a menção no texto.
+  // F-990: a prova viva vale para TODA lane — inclusive a menção no texto.
   const provenAdapters = routedAdapters.map((a) => (a.installed ? withLiveRouteCatalog(a) : a));
   const available = new Map(
     provenAdapters.filter((a) => a.installed).map((a) => [a.id, a]),
@@ -1548,7 +1548,7 @@ export function routeTask(
           routed = { ...c, model: upgraded };
         }
         if (!permitsAutomaticAstra && isAstraModel(routed.adapterId, routed.model)) return [];
-        // F-958: sem lista de modelos (contrato bundled) a tabela é confiada —
+        // F-984: sem lista de modelos (contrato bundled) a tabela é confiada —
         // menos no assento de acesso restrito, que exige a sonda viva.
         if (
           routed.model !== undefined &&

@@ -16,7 +16,7 @@ import {
 } from './model-availability';
 
 /**
- * F-964 (PRV-01): a oferta de modelos de uma CLI no Main — o lado com estado
+ * F-990 (PRV-01): a oferta de modelos de uma CLI no Main — o lado com estado
  * do resolvedor puro (model-availability.ts). O registro de adapters entrega
  * aqui a lista estática pura de cada adapter e os ids dos caches oficiais a
  * cada reload; quem lê (registro, Providers, spawn, rota) recebe a oferta

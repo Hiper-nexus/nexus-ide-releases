@@ -5,7 +5,7 @@
 // "wire" aqui é o texto que vai para o contexto do orquestrador (tokens).
 
 /**
- * QLT-01 — orçamento do digest de pane (F-digest / F-961).
+ * QLT-01 — orçamento do digest de pane (F-digest / F-987).
  *
  * O orquestrador lê o tail de vários panes a cada decisão; cada caractere do
  * digest é token gasto. A janela sintética é o que uma TUI de agente deixa no

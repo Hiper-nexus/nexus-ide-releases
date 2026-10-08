@@ -1060,7 +1060,7 @@ function buildProviderSpawnOverrides(
   const deepseekPlan =
     adapterId === DEEPSEEK_DIRECT_PROVIDER &&
     deepseekChoice(cfg.upstream) === DEEPSEEK_TOKEN_PLAN_PROVIDER;
-  // F-964: o default salvo só vale se a CLI ainda o oferece (listagem viva
+  // F-990: o default salvo só vale se a CLI ainda o oferece (listagem viva
   // autoritativa); senão o pane abre no default resolvido, nunca num fantasma.
   const offer = adapter ? currentModelOffer(adapter) : null;
   const savedDefault =
@@ -1373,7 +1373,7 @@ function quotaScoresFor(
 }
 
 /**
- * F-969: janelas medidas por conta do adapter — a regra de folga compara só
+ * F-995: janelas medidas por conta do adapter — a regra de folga compara só
  * janelas comparáveis. undefined quando não há medição.
  */
 function quotaHeadroomFor(
@@ -1403,7 +1403,7 @@ function quotaEntryFor(
 }
 
 /**
- * A janela que limita a conta (F-969): a medida mais apertada, com reset.
+ * A janela que limita a conta (F-995): a medida mais apertada, com reset.
  * Janela sem leitura não entra — nunca vira "0% usado".
  */
 function headroomFromEntry(entry: ProviderQuotaEntry): AccountHeadroom {
@@ -1441,7 +1441,7 @@ function receiptAccount(account: Account): {
 
 /**
  * As outras contas do adapter e o motivo categórico de cada derrota.
- * F-969: o motivo é verdadeiro — conta fixada/nativa não concorreu
+ * F-995: o motivo é verdadeiro — conta fixada/nativa não concorreu
  * (`not-compared`); sob "ativa mantida" a irmã com MAIS folga em janelas
  * comparáveis aparece como `active-kept`, nunca como "menos folga".
  */
@@ -1513,7 +1513,7 @@ function resolveSpawnAccountChoice(
         source: 'pinned',
         account: receiptAccount(account),
         headroom: headroomFor(adapterId, account.id),
-        // Fixada pelo chamador: as irmãs não concorreram (F-969).
+        // Fixada pelo chamador: as irmãs não concorreram (F-995).
         alternatives: accountChoiceAlternatives(
           adapterId,
           account.id,
@@ -1608,7 +1608,7 @@ function pickUnpinnedAccountWithHeadroom(
   const decidedAt = Date.now();
   const active = getActiveAccount(adapterId);
   const quotaScores = quotaScoresFor(adapterId);
-  // F-969: folga comparada só entre janelas comparáveis.
+  // F-995: folga comparada só entre janelas comparáveis.
   const quotaByAccountId = quotaHeadroomFor(adapterId);
   const pickOptions = {
     ...(excludeIds?.size ? { excludeIds } : {}),
@@ -1888,7 +1888,7 @@ function toInfo(
     adapter.kind !== 'api-provider'
       ? Boolean(userBinOk || resolved)
       : true;
-  // F-964 (PRV-01): a oferta é a listagem viva da CLI (+ custom do operador),
+  // F-990 (PRV-01): a oferta é a listagem viva da CLI (+ custom do operador),
   // não a união estático ∪ catálogo ∪ descoberta. Falha mantém a última boa;
   // listagem vazia com sucesso limpa; o que a CLI não lista vira unverified.
   const offer = currentModelOffer(adapter);
@@ -1937,7 +1937,7 @@ function toInfo(
   const strategy = authDecision(adapterId, defaultModel, {
     statusSnapshot: options.nonBlockingAuth === true,
   }).strategy;
-  // F-966: o aviso de versão aparece aqui ANTES de qualquer spawn — versão já
+  // F-992: o aviso de versão aparece aqui ANTES de qualquer spawn — versão já
   // sondada do binário que o spawn usaria (nunca executa a CLI aqui).
   const spawnBin = userBinOk ? cfg.binPath : resolved;
   const cliCompatibilityWarning = adapter.kind === 'cli-pty' && spawnBin

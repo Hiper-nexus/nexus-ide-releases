@@ -4,7 +4,7 @@ const { promisify } = require('node:util');
 const catalog = require('./catalog.cjs');
 const preload = path.join(__dirname, 'preload.cjs');
 const dispatch = path.join(__dirname, 'dispatch.cjs');
-// F-958: the Main-proved Node launcher of an AI CLI (codex.js -> vendored
+// F-984: the Main-proved Node launcher of an AI CLI (codex.js -> vendored
 // codex, bin/mimo -> .mimocode) re-executes ITS OWN argv in its native payload.
 // That child is the agent itself, not finite work: classifying its command
 // line read the mission brief, so a brief mentioning "typecheck"/"vitest" or

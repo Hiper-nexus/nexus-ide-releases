@@ -335,7 +335,7 @@ enviada pelo alvo de publicação depois dos gates. A release só pode ser criad
 quando:
 
 1. typecheck, testes e `npm run release:security` passarem;
-2. a missão de ponta a ponta (`npm run test:mission-e2e`, [F-971](MISSION-E2E.md)) passar no
+2. a missão de ponta a ponta (`npm run test:mission-e2e`, [F-997](MISSION-E2E.md)) passar no
    código do tag — o `release:candidate` a roda antes de verificar os artefatos e o smoke
    empacotado passar no app do ZIP selado;
 3. assinatura, Gatekeeper, notarização e *staple* forem verificados;

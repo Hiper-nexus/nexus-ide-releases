@@ -365,7 +365,7 @@ function toAdapterInfo(
     ? resolveCliBinary(adapter.bin)?.installationWarning : undefined;
   const loginHint =
     adapter.kind !== 'api-provider' ? adapter.auth.loginHint : undefined;
-  // F-964: a oferta sai do resolvedor (listagem viva autoritativa + custom do
+  // F-990: a oferta sai do resolvedor (listagem viva autoritativa + custom do
   // operador), não da união estático ∪ catálogo ∪ descoberta.
   const offer = currentModelOffer(adapter);
   const modelList = [...offer.offered];
@@ -427,7 +427,7 @@ const WATCH_DEBOUNCE_MS = 100;
 /**
  * Comandos cuja instalação ÚNICA também é sondada no aquecimento: o gate de
  * versão do Codex (`--dangerously-bypass-hook-trust`) lê o mesmo cache, e as
- * faixas de compatibilidade (F-966) avisam antes do spawn com a versão sondada.
+ * faixas de compatibilidade (F-992) avisam antes do spawn com a versão sondada.
  */
 const VERSION_GATED_CLIS = [
   ...new Set(['codex', ...CLI_COMPATIBILITY_POLICIES.map((policy) => policy.bin)]),
@@ -667,7 +667,7 @@ export function initAdapterRegistry(): void {
   // sem versão conhecida fica na ordem do PATH). As sondas rodam fora do Main;
   // quando voltam, o cache de binários é refeito e o renderer avisado.
   stopCliVersionListener ??= onCliVersionLearned(scheduleCliVersionRefresh);
-  // F-964: a listagem viva mudou (ou falhou e caiu na última boa) → o
+  // F-990: a listagem viva mudou (ou falhou e caiu na última boa) → o
   // registro recompõe a oferta para spawn, squad e failover.
   stopDiscoveryListener ??= onDiscoveredModelsChanged(scheduleReloadAndBroadcast);
   void warmAdapterCliVersions();

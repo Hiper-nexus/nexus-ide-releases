@@ -1,5 +1,5 @@
 /**
- * F-958: forma real do briefing que derrubou agy, MiMo, Kimi e três writers
+ * F-984: forma real do briefing que derrubou agy, MiMo, Kimi e três writers
  * Codex na missão de 07/10 — pt-BR com acentos, ~3,5–5 KB, caminho absoluto
  * muito longo de /private/tmp/claude-501/…, crases, aspas e, como nos
  * briefs de writer, "npm run typecheck"/"npx vitest run"/"Node 22" no texto.
@@ -42,5 +42,5 @@ function build(): string {
   return parts.join('\n\n');
 }
 
-export const F958_BRIEF = build();
-export const F958_LONG_UPSTREAM_PATH = LONG_UPSTREAM;
+export const F984_BRIEF = build();
+export const F984_LONG_UPSTREAM_PATH = LONG_UPSTREAM;

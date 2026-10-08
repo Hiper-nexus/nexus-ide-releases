@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 
 /**
- * F-964 (PRV-03): um processo `codex app-server` atende várias RPCs —
+ * F-990 (PRV-03): um processo `codex app-server` atende várias RPCs —
  * `account/read`, `account/rateLimits/read` e `model/list` — em vez de um
  * spawn por pergunta. Nenhuma thread ou turno de modelo é aberto.
  */

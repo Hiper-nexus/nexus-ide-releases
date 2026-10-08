@@ -12,7 +12,7 @@ import {
 
 const FLAG = '--effort';
 
-describe('F-966: esforço do Claude por modelo', () => {
+describe('F-992: esforço do Claude por modelo', () => {
   it('argv de cada modelo do adapter para --effort xhigh e max', () => {
     const snapshot = Object.fromEntries(
       claudeAdapter.models.list.map((model) => [
@@ -68,7 +68,7 @@ describe('F-966: esforço do Claude por modelo', () => {
   });
 });
 
-describe('F-966: janela e versão mínima', () => {
+describe('F-992: janela e versão mínima', () => {
   it('janela do Claude Code: [1m] só onde o perfil aceita', () => {
     expect(claudeModelContextWindow('claude-sonnet-4-6')).toBe(200_000);
     expect(claudeModelContextWindow('claude-sonnet-4-6[1m]')).toBe(1_000_000);

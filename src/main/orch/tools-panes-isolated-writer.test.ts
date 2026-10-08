@@ -732,7 +732,7 @@ describe('1d: vínculo pane→worktree sobrevive ao reinício do app', () => {
   });
 });
 
-describe('F-954/F-955: writers paralelos da aba isolada e cwd em outra worktree', () => {
+describe('F-980/F-981: writers paralelos da aba isolada e cwd em outra worktree', () => {
   beforeEach(() => resetWriterClaimsForTests());
   const tabMission = async () => {
     h.mission = { ...h.mission, intentContract: { ...(h.mission.intentContract as object), workspaceBinding: newMissionWorkspaceBinding() } };
@@ -744,7 +744,7 @@ describe('F-954/F-955: writers paralelos da aba isolada e cwd em outra worktree'
     return { tab, head: git(tab.rootRealPath, 'rev-parse', 'HEAD') };
   };
 
-  it('F-954: isolatedWriter na missão da aba nasce do HEAD da aba, numa branch própria registrada', async () => {
+  it('F-980: isolatedWriter na missão da aba nasce do HEAD da aba, numa branch própria registrada', async () => {
     const { tab, head } = await tabMission();
     expect(head).not.toBe(git(ctx.scope.rootRealPath, 'rev-parse', 'HEAD'));
     const receipt = await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true, prompt: 'Implement feature' }, ctx) as Record<string, any>;
@@ -762,7 +762,7 @@ describe('F-954/F-955: writers paralelos da aba isolada e cwd em outra worktree'
     expect(fs.readFileSync(path.join(tab.rootRealPath, 'base.txt'), 'utf8')).toBe('WIP da aba\n');
   });
 
-  it('F-954: o segundo writer comum da aba é auto-isolado do HEAD da aba em vez de recusado', async () => {
+  it('F-980: o segundo writer comum da aba é auto-isolado do HEAD da aba em vez de recusado', async () => {
     const { tab, head } = await tabMission();
     await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
     expect(h.spawn.mock.calls[0][0]).toMatchObject({ cwd: tab.rootRealPath });
@@ -773,7 +773,7 @@ describe('F-954/F-955: writers paralelos da aba isolada e cwd em outra worktree'
     expect(receipt.isolatedWorktree.reason).toMatch(/auto-isolado/);
   });
 
-  it('F-955: cwd na raiz de outra worktree git roda lá e não serializa contra o writer do checkout', async () => {
+  it('F-981: cwd na raiz de outra worktree git roda lá e não serializa contra o writer do checkout', async () => {
     const root = ctx.scope.rootRealPath;
     await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
     const nested = path.join(root, '.harvest', 'w1');
@@ -790,7 +790,7 @@ describe('F-954/F-955: writers paralelos da aba isolada e cwd em outra worktree'
     expect(h.spawn).toHaveBeenCalledTimes(2);
   });
 
-  it('F-955: o cwd do worker de missão é honrado dentro do checkout e recusado fora — nunca descartado em silêncio', async () => {
+  it('F-981: o cwd do worker de missão é honrado dentro do checkout e recusado fora — nunca descartado em silêncio', async () => {
     const root = ctx.scope.rootRealPath;
     fs.mkdirSync(path.join(root, 'sub'));
     await paneSpawnTool.handler({ agentName: 'Executor', cwd: 'sub' }, ctx);
@@ -800,7 +800,7 @@ describe('F-954/F-955: writers paralelos da aba isolada e cwd em outra worktree'
     expect(h.spawn).toHaveBeenCalledTimes(1);
   });
 
-  it('F-955: writer ainda em spawn (ACK pendente, não espelhado ou sem papel nos snapshots) conta como escritor do checkout', async () => {
+  it('F-981: writer ainda em spawn (ACK pendente, não espelhado ou sem papel nos snapshots) conta como escritor do checkout', async () => {
     const root = ctx.scope.rootRealPath;
     h.spawn.mockImplementationOnce(async () => { throw new Error('pane spawn pending'); });
     h.pending.mockReturnValueOnce({ ok: true, paneId: 'pending-pane', sessionId: null, pending: true });

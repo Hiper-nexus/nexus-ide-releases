@@ -56,7 +56,7 @@ it('RAM-denied native admission does not release an unrelated active compiler an
  state = 'gone'; await native.drain(); expect(pool.snapshot().active).toBe(0); pool.close();
 });
 
-it('F-957/F-971: writers isolados do MESMO checkout testam ao mesmo tempo — a fila é a worktree, não o checkout do token', async () => {
+it('F-983/F-997: writers isolados do MESMO checkout testam ao mesmo tempo — a fila é a worktree, não o checkout do token', async () => {
  const scope = { version: 1 as const, installationId: 'finite', projectId: 'writers', checkoutId: 'main', rootRealPath: '/checkout', identitySource: 'manifest' as const };
  const writer = (id: string) => ({ token: id, sessionId: id, missionId: 'finite', role: 'worker', scope, executionScope: { ...scope, rootRealPath: `/worktrees/${id}` } }) as AgentGateContext;
  const pool = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 64_000, swapUsedMB: 0 }), limits: () => ({ minFreeMB: 512, maxSwapUsedMB: 0 }), refreshMemory: async () => {}, pollMs: 10, waitMs: 200, maxActive: 4 });

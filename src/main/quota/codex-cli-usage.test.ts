@@ -80,7 +80,7 @@ describe('fetchCodexCliUsage', () => {
     expect(mocks.spawn).toHaveBeenCalledWith('/cli/codex', expect.arrayContaining([
       'app-server', 'cli_auth_credentials_store="file"',
     ]), expect.objectContaining({ env: expect.objectContaining({ CODEX_HOME: home }), shell: false }));
-    // F-964 (PRV-03): o mesmo processo também lista os modelos da conta.
+    // F-990 (PRV-03): o mesmo processo também lista os modelos da conta.
     expect(requests.map(r => r.method)).toEqual([
       'initialize', 'initialized', 'account/read', 'account/rateLimits/read', 'model/list',
     ]);
@@ -174,7 +174,7 @@ describe('fetchCodexCliUsage', () => {
   });
 });
 
-describe('F-964 (PRV-03) — model/list no mesmo app-server da cota', () => {
+describe('F-990 (PRV-03) — model/list no mesmo app-server da cota', () => {
   const model = (id: string, extra: Record<string, unknown> = {}) => ({
     id, model: id, displayName: id, description: '', hidden: false, isDefault: false,
     defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: '' }], ...extra,

@@ -2,7 +2,7 @@ import type { PaneModel } from '../../shared/types';
 
 /**
  * Adapters whose unpinned spawn the Main already resolves with the headroom
- * rule (`prepareProviderSpawn` → `pickUnpinnedAccountWithHeadroom`). F-969:
+ * rule (`prepareProviderSpawn` → `pickUnpinnedAccountWithHeadroom`). F-995:
  * the renderer used to pin the ACTIVE Claude account before the spawn, so the
  * Main saw a "pinned" pane, never ran the headroom rule and the receipt
  * listed the free sibling as "menos folga". The Main returns the account it

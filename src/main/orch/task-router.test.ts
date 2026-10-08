@@ -669,7 +669,7 @@ describe('describePreferAdaptersOutcome (bug F — prefer não é silêncio)', (
     ).toContain('claude=não instalado');
   });
 
-  it('F-959: preferido fora por política diz o motivo, não "não instalado"', () => {
+  it('F-985: preferido fora por política diz o motivo, não "não instalado"', () => {
     const reserved = [
       { id: 'codex', installed: true },
       {

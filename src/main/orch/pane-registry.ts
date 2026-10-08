@@ -278,7 +278,7 @@ const pendingSpawns = new Map<string, PendingSpawn>();
 const pendingSpawnResults = new WeakMap<AbortSignal, OrchPaneSpawnResult>();
 
 /**
- * F-955: o pane deste spawn ainda está nascendo — a concessão segue pendente
+ * F-981: o pane deste spawn ainda está nascendo — a concessão segue pendente
  * (ACK do renderer sem resultado final, PTY ainda sem vínculo).
  */
 export function isPaneSpawnPending(paneId: string): boolean {
@@ -2987,7 +2987,7 @@ export function requestPaneSpawn(
       options.missionId &&
       (options.role === "orchestrator" || options.role === "worker")
     ) {
-      // F-971: missão sem janela (headless) também dá incarnação ao worker,
+      // F-997: missão sem janela (headless) também dá incarnação ao worker,
       // como o caminho do renderer e o de escopo trocado (0.62.0). Sem ela o
       // worker nascia sem o shim `nexus_handoff_submit`/`nx-mail` e sem
       // vínculo exato de entrega — achado pelo E2E de missão.

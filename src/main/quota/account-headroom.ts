@@ -1,5 +1,5 @@
 /**
- * F-969: folga entre contas da MESMA CLI, comparada só entre janelas
+ * F-995: folga entre contas da MESMA CLI, comparada só entre janelas
  * comparáveis. Puro.
  *
  * Em 07/10 a escolha pôs lado a lado a janela Semanal de uma conta (19% usado,

@@ -1220,7 +1220,7 @@ export interface FailoverPickOptions {
    */
   excludeIds?: ReadonlySet<string>;
   /**
-   * F-969: janelas medidas por conta. Com elas a folga só se compara entre
+   * F-995: janelas medidas por conta. Com elas a folga só se compara entre
    * janelas comparáveis (`compareAccountHeadroom`), nunca pelo escore escalar.
    */
   quotaByAccountId?: ReadonlyMap<string, HeadroomInput>;

@@ -56,7 +56,7 @@ vi.mock("../adapters/windows-npm-shim", () => ({
   },
 }));
 
-// F-966: versão já sondada por binário (o spawn só lê o cache, nunca executa).
+// F-992: versão já sondada por binário (o spawn só lê o cache, nunca executa).
 const cliVersions = vi.hoisted(() => new Map<string, string | null>());
 
 // Unit tests use a fake PTY host — pin absolute bin paths so spawn never
@@ -6706,7 +6706,7 @@ describe("F-906 AGY native heavy admission readiness", () => {
   });
 });
 
-describe("F-966: perfil por modelo do Claude no argv físico", () => {
+describe("F-992: perfil por modelo do Claude no argv físico", () => {
   async function spawnClaude(
     model: string,
     extraArgs: string[],

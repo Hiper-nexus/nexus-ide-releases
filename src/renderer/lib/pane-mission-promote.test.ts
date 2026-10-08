@@ -670,7 +670,7 @@ describe('pickTabMissionLeader — um pane morto nunca lidera de novo (F-373)', 
     ).toBe('a3');
   });
 
-  it('F-970: orquestrador fora do ar e revisor focado — o worker nunca é escolhido; o pane do operador lidera', async () => {
+  it('F-996: orquestrador fora do ar e revisor focado — o worker nunca é escolhido; o pane do operador lidera', async () => {
     const { pickTabMissionLeader } = await import('./pane-mission-promote');
     const agents = [
       { id: 'operator' },
@@ -686,7 +686,7 @@ describe('pickTabMissionLeader — um pane morto nunca lidera de novo (F-373)', 
     ).toBe('operator');
   });
 
-  it('F-970: só workers vivos na aba → null (a missão fica sem líder vivo e o operador é avisado)', async () => {
+  it('F-996: só workers vivos na aba → null (a missão fica sem líder vivo e o operador é avisado)', async () => {
     const { pickTabMissionLeader } = await import('./pane-mission-promote');
     expect(
       pickTabMissionLeader(

@@ -466,7 +466,7 @@ describe("WorktreeManager", () => {
     expect(gc.get(scope, "operator-hand", dirty.taskId)).not.toBeNull();
   });
 
-  it("F-954: writer de pane nasce do HEAD da aba (sem o WIP dela) e a GC aceita a branch integrada na aba", async () => {
+  it("F-980: writer de pane nasce do HEAD da aba (sem o WIP dela) e a GC aceita a branch integrada na aba", async () => {
     const scope = projectScope();
     const canonical = new WorktreeManager({ runtimeRoot: path.join(fs.realpathSync(tempDir), "runtime"),
       stateStore, gitRunner, now: () => 1_700_000_000_000 });

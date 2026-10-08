@@ -497,7 +497,7 @@ describe("renderer mission authority", () => {
     ).toEqual({ ok: false, error: "pane_mission_mismatch" });
   });
 
-  it("F-970: revisor somente leitura da missão nunca vira orquestrador — nada é gravado", () => {
+  it("F-996: revisor somente leitura da missão nunca vira orquestrador — nada é gravado", () => {
     deps.getMission.mockReturnValue({
       ...approvedMission,
       orchestratorSessionId: "pty-operator",
@@ -556,7 +556,7 @@ describe("renderer mission authority", () => {
     expect(deps.attachOrchMeta).not.toHaveBeenCalled();
   });
 
-  it("F-970: o líder delegate-only (readOnly) da própria missão ainda é reconfirmado", () => {
+  it("F-996: o líder delegate-only (readOnly) da própria missão ainda é reconfirmado", () => {
     deps.getMission.mockReturnValue(approvedMission);
     deps.getOwnedAgentSessionInfo.mockReturnValue({
       ...session,

@@ -9,7 +9,7 @@ import type { AccountChoiceReceipt } from '../../shared/account-choice';
 const receipts = new Map<string, AccountChoiceReceipt>();
 
 /**
- * F-969: o failover de conta religa o MESMO pane numa conta fixada pelo Main.
+ * F-995: o failover de conta religa o MESMO pane numa conta fixada pelo Main.
  * O recibo da sessão nova diria só "fixada"; esta nota (por paneId, de vida
  * curta) diz que foi a troca automática por limite confirmado e de qual conta
  * esgotada ela veio. Só rótulos mascarados — nunca id, token ou e-mail cru.

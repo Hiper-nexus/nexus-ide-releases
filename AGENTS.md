@@ -169,7 +169,7 @@ saber isto antes de mexer:
   da lista (cooldown, sem credencial, excluída pelo hit) ou quando a
   disponibilidade medida é 0. Cota desconhecida mantém a ativa. Sem conta
   ativa, a mais livre vence.
-- **Folga só entre janelas comparáveis (F-969).** Com o snapshot, a regra de
+- **Folga só entre janelas comparáveis (F-995).** Com o snapshot, a regra de
   folga recebe as janelas por conta (`quotaByAccountId`) e decide por
   `compareAccountHeadroom` (`src/main/quota/account-headroom.ts`): esgotada
   perde; janelas medidas nas duas contas decidem pela mais apertada (a que
@@ -179,13 +179,13 @@ saber isto antes de mexer:
   cede à irmã que PROVOU folga na janela que a ativa não leu. Ativa sem
   leitura nenhuma continua (cota fora do ar não é evidência). O escore
   escalar (`quotaAvailabilityScore`) não compara contas entre si.
-- **Recibo diz a verdade (F-969).** `pinned`/`native` não concorreram: as
+- **Recibo diz a verdade (F-995).** `pinned`/`native` não concorreram: as
   irmãs saem como `not-compared`; sob "ativa mantida" a irmã com MAIS folga
   sai como `active-kept`; `less-headroom` só quando ela tinha menos. O pane
   Claude do "+ Pane" não é mais fixado na ativa pelo renderer
   (`shouldAutoPinPaneAccount`): o Main escolhe pela regra de folga e o
   renderer persiste a conta que o Main devolveu.
-- **Limite confirmado troca até conta fixada e o pane do operador (F-969).**
+- **Limite confirmado troca até conta fixada e o pane do operador (F-995).**
   O pin não prende ninguém num pane parado: quando a conta fixada ESGOTA com
   limite confirmado (F-249 intacto), o failover troca para a irmã com folga e
   avisa. O orquestrador de missão que mora num pane do renderer (inclusive o
@@ -376,11 +376,11 @@ saber isto antes de mexer:
   explicitamente na aba; jamais caia em main. Estado e limites
   em `docs/analysis/2026-09-23-abas-feature-worktree.md`. Não crie worktree
   dentro da raiz do projeto.
-- F-954: `isolatedWriter` (e o auto-isolamento do 2º writer) na pasta isolada
+- F-980: `isolatedWriter` (e o auto-isolamento do 2º writer) na pasta isolada
   da aba nasce do HEAD da ABA (`baseRootRealPath` → `baseSha`), sem o WIP dela;
   o registro fica no escopo do checkout (raiz/integrationRef únicas) e a GC
   aceita branch contida no HEAD da aba. Aba sem prova de identidade recusa com
-  a saída escrita. F-955: `cwd` na raiz de outra worktree ligada ao repo vira
+  a saída escrita. F-981: `cwd` na raiz de outra worktree ligada ao repo vira
   `executionScope` próprio (serializa só contra writers dela); o worker de
   missão nunca descarta `cwd` em silêncio; o claim do writer só cai quando o
   pane tem sessão e saiu de `spawning`/`unknown`.
@@ -419,7 +419,7 @@ saber isto antes de mexer:
   `ownGroup: true`: missão separada, sem `tabKey`) ou "Assumir a liderança" (a
   troca de coroa). Missão nova com nome já usado ganha sufixo " 2", " 3"…
   dentro do teto de 120 caracteres do Main.
-- **Revisor nunca vira orquestrador (F-970).** `promoteOrchestratorFromRenderer`
+- **Revisor nunca vira orquestrador (F-996).** `promoteOrchestratorFromRenderer`
   recusa (`pane_read_only`) pane somente leitura — ficha PTY, gate ou
   composição — antes de qualquer escrita; só o líder que já é desta missão
   (Maestro delegate-only nascido readOnly) é reconfirmado. No renderer,

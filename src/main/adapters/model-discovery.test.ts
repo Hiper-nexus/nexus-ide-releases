@@ -78,7 +78,7 @@ describe('model discovery', () => {
     for (const id of live) {
       expect(supportsModelDiscovery(id)).toBe(true);
       expect(usesCliExecForModelDiscovery(id)).toBe(true);
-      // F-964: toda CLI que lista é autoridade da própria oferta.
+      // F-990: toda CLI que lista é autoridade da própria oferta.
       expect(modelListAuthority(id)).toBe('live');
     }
     expect(modelListAuthority('grok')).toBe('version-cache');
@@ -95,7 +95,7 @@ describe('model discovery', () => {
 
   it('documents honest fallbacks instead of pretending discovery', () => {
     expect(MODEL_DISCOVERY_INVENTORY.claude.kind).toBe('cache');
-    // F-964 (PRV-03): o Codex lista pelo `model/list` do app-server.
+    // F-990 (PRV-03): o Codex lista pelo `model/list` do app-server.
     expect(MODEL_DISCOVERY_INVENTORY.codex).toEqual({ kind: 'cli', command: 'codex app-server (model/list)' });
     expect(MODEL_DISCOVERY_INVENTORY.grok.kind).toBe('cache');
     expect(MODEL_DISCOVERY_INVENTORY.grok.reason).toMatch(/models_cache/);
@@ -304,7 +304,7 @@ describe('Grok model cache (never spawn `grok models`)', () => {
   });
 });
 
-describe.skipIf(process.platform === 'win32')('F-964 — última listagem boa (agy falso, nenhuma CLI de IA real)', () => {
+describe.skipIf(process.platform === 'win32')('F-990 — última listagem boa (agy falso, nenhuma CLI de IA real)', () => {
   const AGY_1_3_1 = fs.readFileSync(path.join(__dirname, '__fixtures__', 'agy-models-1.3.1.stdout.txt'), 'utf8');
 
   afterEach(async () => {

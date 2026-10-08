@@ -140,7 +140,7 @@ The user picks from `list` in the agent launcher dialog. The selected value
 replaces `{{MODEL}}` in the spawn args.
 
 `list` is the **bundled fallback**, not the offer, when the CLI can list its own
-models (F-964). For those CLIs the live listing is the truth:
+models (F-990). For those CLIs the live listing is the truth:
 
 | Authority | CLIs | Source of the offered ids |
 |---|---|---|
@@ -275,7 +275,7 @@ availability/cost (`free` | `cheap` | `paid` | `api-only` | `deprecated`, plus
 live listing** (`bundled` authority, e.g. Claude, where the catalog is the
 manifest). For a CLI that lists its models it classifies and moves the default
 to an id the CLI already offers — a catalog id the CLI does not list is
-`unverified` and never reaches the picker or the router (F-964; the
+`unverified` and never reaches the picker or the router (F-990; the
 `gemini-4-argon` offered to an AGY 1.3.1 that does not list it died with "not
 recognized"). Sources, in order:
 

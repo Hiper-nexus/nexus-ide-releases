@@ -276,7 +276,7 @@ export async function assertRepositoryUnchangedAsync(
 }
 
 /**
- * F-954: base de um writer de pane que nasce de outra worktree do MESMO
+ * F-980: base de um writer de pane que nasce de outra worktree do MESMO
  * repositório (a pasta isolada de uma aba). Mesmas provas do checkout
  * (raiz canônica = top-level, config local segura, branch, HEAD) mais o
  * diretório comum do Git idêntico ao do checkout de coordenação.

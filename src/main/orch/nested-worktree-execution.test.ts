@@ -19,7 +19,7 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(temp, { recursive: true, force: true }));
 
-describe('F-955: cwd numa worktree Git aninhada', () => {
+describe('F-981: cwd numa worktree Git aninhada', () => {
   it('a raiz (ou uma pasta) de outra worktree ligada vira escopo de execução próprio', async () => {
     const nested = path.join(root, '.harvest', 'w1');
     git(root, 'worktree', 'add', '-q', '-b', 'harvest/w1', nested);

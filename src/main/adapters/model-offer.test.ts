@@ -29,7 +29,7 @@ const AGY_1_3_1 = fs.readFileSync(
   path.join(__dirname, '__fixtures__', 'agy-models-1.3.1.stdout.txt'),
   'utf8',
 );
-/** Os três ids que o Nexus oferecia e o AGY 1.3.1 não lista (F-964). */
+/** Os três ids que o Nexus oferecia e o AGY 1.3.1 não lista (F-990). */
 const GHOSTS = ['gemini-4-argon', 'claude-opus-4-6-thinking', 'claude-sonnet-4-6'];
 const CATALOG = mergeModelCatalogs(BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG);
 
@@ -38,7 +38,7 @@ function builtin(id: string): Adapter {
   return adapterSchema.parse(raw);
 }
 
-/** O agy como o Nexus o oferecia até o F-964 (lista estática com os fantasmas). */
+/** O agy como o Nexus o oferecia até o F-990 (lista estática com os fantasmas). */
 function legacyAgy(): Adapter {
   const agy = builtin('agy');
   return { ...agy, models: { ...agy.models, list: [...GHOSTS, ...agy.models.list] } };
@@ -50,7 +50,7 @@ afterEach(() => {
   setModelOfferBase(new Map(), new Map());
 });
 
-describe('F-964 — fixture do agy 1.3.1', () => {
+describe('F-990 — fixture do agy 1.3.1', () => {
   it('a listagem viva é a oferta; Argon e os Claude 4-6 viram unverified', () => {
     const listed = parseAgyModelsOutput(AGY_1_3_1);
     expect(listed).toHaveLength(18);

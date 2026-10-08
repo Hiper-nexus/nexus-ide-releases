@@ -61,7 +61,7 @@ describe('Claude-family zero-click settings (system default)', () => {
     // …with the additive emdash status hooks merged alongside, never replacing.
     expect(Object.keys(settings.hooks ?? {}).sort()).toEqual([
       'Notification',
-      // F-965: settings por sessão dos panes do Nexus levam o broker de
+      // F-991: settings por sessão dos panes do Nexus levam o broker de
       // aprovação estruturada; sem respondente o hook sai `{}` na hora e o
       // diálogo da TUI decide, então o zero-click não ganha clique novo.
       'PermissionRequest',
@@ -96,7 +96,7 @@ describe('Claude-family zero-click settings (system default)', () => {
     expect(settings.skipWorkflowUsageWarning).toBe(true);
     expect(Object.keys(settings.hooks ?? {}).sort()).toEqual([
       'Notification',
-      // F-965: settings por sessão dos panes do Nexus levam o broker de
+      // F-991: settings por sessão dos panes do Nexus levam o broker de
       // aprovação estruturada; sem respondente o hook sai `{}` na hora e o
       // diálogo da TUI decide, então o zero-click não ganha clique novo.
       'PermissionRequest',

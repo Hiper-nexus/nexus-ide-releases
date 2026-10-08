@@ -467,7 +467,7 @@ describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
     expect(decision.reason).not.toContain('exclude ignorado');
   });
 
-  // F-959 (missão 07/10): agy saiu antes do 1º turno ("nao-iniciou") e o
+  // F-985 (missão 07/10): agy saiu antes do 1º turno ("nao-iniciou") e o
   // Maestro re-roteou com exclude: ["agy"] — a rota respondeu "exclude
   // ignorado (CLI saudável)" porque 1 falha de 3 deixa o disjuntor fechado.
   it('CLI que falhou ao nascer há pouco (disjuntor ainda fechado): o exclude é honrado', async () => {

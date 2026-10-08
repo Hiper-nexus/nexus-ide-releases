@@ -7,7 +7,7 @@ const AGY_UNKNOWN_MODEL =
   'is not recognized as a known model or custom model in settings\nAvailable models:\n' +
   'Gemini 3.8 Flash (High)\nGemini 3.8 Flash (Medium)';
 
-describe('F-958 — motivo legível do pane que não começou', () => {
+describe('F-984 — motivo legível do pane que não começou', () => {
   it('AGY que não reconhece o modelo: recusa de modelo com o id e o código de saída', () => {
     expect(diagnosePaneBoot(AGY_UNKNOWN_MODEL, 1)).toEqual({
       rejectedModel: 'gemini-4-argon',

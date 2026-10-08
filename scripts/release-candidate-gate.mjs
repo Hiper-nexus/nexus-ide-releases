@@ -419,7 +419,7 @@ async function runReleaseCandidateGateCore(
     ],
   });
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-  // F-971: MISSÃO DE PONTA A PONTA no código do tag, antes de qualquer
+  // F-997: MISSÃO DE PONTA A PONTA no código do tag, antes de qualquer
   // artefato ser selado. O pior do Nexus é não abrir panes e não terminar a
   // missão: release cujo Main não conclui uma missão inteira (5 writers
   // isolados + 1 em worktree aninhada, comando pesado admitido em paralelo,

@@ -26,7 +26,7 @@ vi.mock('../path-resolver', () => ({
   resolveSpawnBinary: () => ({ binPath: '/mock/license-cli', effectivePath: '/mock', source: 'absolute' }),
   revalidateExecutable: () => true,
   realUserHome: () => '/mock/home',
-  // F-966: o spawn lê a versão já sondada só para avisar; um binário que não é
+  // F-992: o spawn lê a versão já sondada só para avisar; um binário que não é
   // CLI conhecida dá null no path-resolver real — mesmo valor aqui.
   cachedCliBinaryVersion: () => null,
 }));

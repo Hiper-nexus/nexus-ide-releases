@@ -7,7 +7,7 @@
  * (erros, testes, prompts, handoffs) e as últimas 30 linhas não-vazias.
  * `mode: 'full'` continua devolvendo o tail inteiro.
  *
- * F-961: uma "linha" de TUI pode ser dezenas de KB de redesenho — o cursor
+ * F-987: uma "linha" de TUI pode ser dezenas de KB de redesenho — o cursor
  * volta, o texto é reescrito e, sem os escapes, tudo fica colado ("✻✶✳✢·",
  * "WWoWorWork…", o mesmo quadro "Working (2m 54s • esc to interrupt)" mil
  * vezes). O digest agora normaliza o redesenho (CR, spinner, prefixos

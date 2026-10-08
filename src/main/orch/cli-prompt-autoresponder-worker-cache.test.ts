@@ -17,7 +17,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('F-958 — snapshot do Worker depois do aceite', () => {
+describe('F-984 — snapshot do Worker depois do aceite', () => {
   it('o defer da resposta/verificação não segura o brief por 180 s', () => {
     vi.useFakeTimers({ now: 1_000_000, toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     const sessionId = 'pty-kimi-trust';
@@ -44,7 +44,7 @@ describe('F-958 — snapshot do Worker depois do aceite', () => {
       t0 + 50,
     );
     vi.setSystemTime(t0 + 1_000);
-    // Antes do F-958 isto ficava true até t0 + 180 s (o gate do composer do
+    // Antes do F-984 isto ficava true até t0 + 180 s (o gate do composer do
     // Kimi esgotava 2 × 30 s e o pane era fechado como "brief-rejected").
     expect(cliPromptAutoResponder.shouldDeferInjection(sessionId)).toBe(false);
     cliPromptAutoResponder.drop(sessionId);

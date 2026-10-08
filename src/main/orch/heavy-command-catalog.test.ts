@@ -6,7 +6,7 @@ const catalog = require('../../../resources/heavy-command/catalog.cjs') as {
   commandKind(command: string): string | null;
 };
 
-// F-956: commands from a real orchestrator session that waited up to 300 s for
+// F-982: commands from a real orchestrator session that waited up to 300 s for
 // the project's build slot and then died with exit 74, although none of them
 // started a build. Each one names a tool without running it.
 describe('commandKind ignores tool names that are not the program being run', () => {
@@ -66,7 +66,7 @@ describe('commandKind still meters programs that do heavy work', () => {
   });
 });
 
-// F-956 review: reading only the command position let heavy work run with
+// F-982 review: reading only the command position let heavy work run with
 // exit 0 and no CPU/RAM reservation. Each of these returned null.
 describe('commandKind follows every way the shell reaches a heavy program', () => {
   it.each([
@@ -153,7 +153,7 @@ describe('commandKind follows every way the shell reaches a heavy program', () =
   });
 });
 
-// F-956 (segunda revisão): wrappers de sistema que rodam o comando seguinte
+// F-982 (segunda revisão): wrappers de sistema que rodam o comando seguinte
 // não estavam na tabela, então o programa era o próprio wrapper (null) e o
 // trabalho pesado saía sem reserva. Cada um tem as próprias opções.
 describe('commandKind lê os wrappers de sistema que faltavam', () => {
@@ -210,7 +210,7 @@ describe('commandKind lê os wrappers de sistema que faltavam', () => {
   });
 });
 
-// F-956 (segunda revisão): pedir só a versão ou a ajuda não é build.
+// F-982 (segunda revisão): pedir só a versão ou a ajuda não é build.
 describe('commandKind deixa leves os pedidos triviais de versão e ajuda', () => {
   it.each([
     'make --version',
@@ -239,7 +239,7 @@ describe('commandKind deixa leves os pedidos triviais de versão e ajuda', () =>
   });
 });
 
-// F-956 (segunda revisão): o argv de spawn/execFile não passa por shell.
+// F-982 (segunda revisão): o argv de spawn/execFile não passa por shell.
 describe('argvKind classifica o argv direto, palavra por palavra', () => {
   const argvKind = (catalog as unknown as { argvKind(argv: string[]): string | null }).argvKind;
   it.each([

@@ -40,7 +40,7 @@ const error = (code: string) => new Error(`heavy_command_${code}`);
 const DEFAULT_WAIT_MS = 300_000;
 
 /**
- * F-957: one physical heavy job per execution root (checkout or worktree),
+ * F-983: one physical heavy job per execution root (checkout or worktree),
  * never one per project. Parallel writers each own a worktree and must be able
  * to test at the same time; the machine RAM reservation and the CPU bound
  * below are what keep that safe. Two jobs in the SAME root still serialize:

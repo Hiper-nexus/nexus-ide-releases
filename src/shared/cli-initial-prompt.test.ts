@@ -9,7 +9,7 @@ import {
 } from './cli-initial-prompt';
 import { BUILTIN_ADAPTERS } from '../adapters/builtin';
 import { assertSafePtyPrompt } from '../main/orch/pty-prompt-safety';
-import { F958_BRIEF, F958_LONG_UPSTREAM_PATH } from '../test/f958-brief';
+import { F984_BRIEF, F984_LONG_UPSTREAM_PATH } from '../test/f984-brief';
 
 describe('initialPromptChannel', () => {
   it('herda o contrato do BINÁRIO, não do nome do adapter', () => {
@@ -168,7 +168,7 @@ describe('brief no argv do Windows (F-669)', () => {
   });
 });
 
-describe('F-958 — brief real de ~3,5 KB chega íntegro a cada adapter afetado', () => {
+describe('F-984 — brief real de ~3,5 KB chega íntegro a cada adapter afetado', () => {
   const builtin = (id: string) => {
     const raw = BUILTIN_ADAPTERS.find((entry) => (entry as { id?: string }).id === id) as {
       spawn: {
@@ -191,24 +191,24 @@ describe('F-958 — brief real de ~3,5 KB chega íntegro a cada adapter afetado'
   };
 
   it('o brief passa pela trava de controle de terminal sem mudar um byte', () => {
-    expect(F958_BRIEF.length).toBeGreaterThan(3_400);
-    expect(assertSafePtyPrompt(F958_BRIEF)).toBe(F958_BRIEF);
-    expect(F958_BRIEF).toContain(F958_LONG_UPSTREAM_PATH);
+    expect(F984_BRIEF.length).toBeGreaterThan(3_400);
+    expect(assertSafePtyPrompt(F984_BRIEF)).toBe(F984_BRIEF);
+    expect(F984_BRIEF).toContain(F984_LONG_UPSTREAM_PATH);
   });
 
   it.each([
     ['agy', ['agy', '--model', 'gemini-3.8-flash-high'], ['--print']],
     ['mimo-code', ['mimo', '--trust', '--model', 'xiaomi/mimo-v2.6-pro'], ['--prompt']],
   ])('%s recebe o brief como UM argumento, depois da flag do canal', (id, base, flag) => {
-    const argv = applyInitialPromptToArgv(base, channelFor(id), F958_BRIEF);
+    const argv = applyInitialPromptToArgv(base, channelFor(id), F984_BRIEF);
     expect(argv.slice(0, base.length)).toEqual(base);
-    expect(argv.slice(base.length)).toEqual([...flag, F958_BRIEF]);
-    expect(nativeArgvPromptFits(F958_BRIEF, 'darwin')).toBe(true);
-    expect(nativeArgvPromptFits(F958_BRIEF, 'win32')).toBe(true);
+    expect(argv.slice(base.length)).toEqual([...flag, F984_BRIEF]);
+    expect(nativeArgvPromptFits(F984_BRIEF, 'darwin')).toBe(true);
+    expect(nativeArgvPromptFits(F984_BRIEF, 'win32')).toBe(true);
   });
 
   it('kimi não tem canal de argv: o brief vai por colagem depois do composer', () => {
     expect(channelFor('kimi')).toEqual({ kind: 'paste' });
-    expect(applyInitialPromptToArgv(['kimi'], channelFor('kimi'), F958_BRIEF)).toEqual(['kimi']);
+    expect(applyInitialPromptToArgv(['kimi'], channelFor('kimi'), F984_BRIEF)).toEqual(['kimi']);
   });
 });

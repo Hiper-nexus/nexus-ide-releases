@@ -77,9 +77,9 @@ vi.mock('../pty/pty-manager', () => ({
   ),
 }));
 
-// F-969: a troca do ORQUESTRADOR num pane do renderer é do Main. Padrão:
+// F-995: a troca do ORQUESTRADOR num pane do renderer é do Main. Padrão:
 // "não é orquestrador selado" (handled:false) — os testes antigos seguem o
-// caminho de sempre; os do F-969 trocam o retorno.
+// caminho de sempre; os do F-995 trocam o retorno.
 const orchestratorSwitch = vi.hoisted(() => ({
   switch: vi.fn(async (_input: {
     missionId: string; paneId: string; sessionId: string; toAccountId: string;
@@ -1751,7 +1751,7 @@ describe('F-764: orçamento da varredura de limite', () => {
   });
 });
 
-describe('F-969: orquestrador / pane do operador bate o limite', () => {
+describe('F-995: orquestrador / pane do operador bate o limite', () => {
   const sessionLimit = {
     kind: 'rate-limit' as const,
     reason: "You've hit your session limit",

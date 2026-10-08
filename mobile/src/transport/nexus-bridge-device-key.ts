@@ -1,4 +1,4 @@
-// Chave do aparelho para a Remote Bridge do Nexus (F-968). Mesmo contrato do
+// Chave do aparelho para a Remote Bridge do Nexus (F-994). Mesmo contrato do
 // PWA "Nexus Remote" (src/main/remote/remote-client-page.ts): ECDSA P-256, chave
 // pública em JWK e assinatura IEEE-P1363 (r||s, 64 bytes) em base64url, que é o
 // que src/main/remote/remote-device-authority.ts verifica.

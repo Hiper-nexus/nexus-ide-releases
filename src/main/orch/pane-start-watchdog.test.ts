@@ -363,7 +363,7 @@ describe('ficha do spawn pendente (F-723)', () => {
       // Encerramento pedido pelo Nexus num one-shot também não é falha.
       { requested: true, oneShot: true, exit: { exitCode: 1, signal: 0 }, now: NOW + 5_000 },
       { requested: false, oneShot: false, now: NOW + START_GRACE_MS + 1 },
-      // F-958: saída LIMPA depois da graça continua sem veredito.
+      // F-984: saída LIMPA depois da graça continua sem veredito.
       { requested: false, oneShot: false, exit: { exitCode: 0, signal: 0 }, now: NOW + START_GRACE_MS + 1 },
     ];
     for (const end of cases) {
@@ -380,7 +380,7 @@ describe('ficha do spawn pendente (F-723)', () => {
     }
   });
 
-  it('F-958: saída com erro DEPOIS da graça, sem início provado, é morte (writers Codex com 74 aos 303 s)', () => {
+  it('F-984: saída com erro DEPOIS da graça, sem início provado, é morte (writers Codex com 74 aos 303 s)', () => {
     for (const end of [
       { oneShot: false, exit: { exitCode: 74, signal: 0 } },
       { oneShot: true, exit: { exitCode: 1, signal: 0 } },

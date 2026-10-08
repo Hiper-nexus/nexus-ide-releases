@@ -11,7 +11,7 @@ import {
 const RESET_5H = 1_791_420_599_886;
 const RESET_WEEK = 1_791_658_799_908;
 
-/** O retrato de 07/10 (F-969): Co•••de só com a Semanal, re•••no só com a de 5 Horas. */
+/** O retrato de 07/10 (F-995): Co•••de só com a Semanal, re•••no só com a de 5 Horas. */
 const coClaude: HeadroomInput = {
   windows: [
     { kind: 'hours', label: '5 Horas', usedRatio: null },
@@ -25,7 +25,7 @@ const reClaude: HeadroomInput = {
   ],
 };
 
-describe('compareAccountHeadroom (F-969)', () => {
+describe('compareAccountHeadroom (F-995)', () => {
   it('caso de 07/10: Semanal de uma conta não se compara com 5 Horas da outra — a de 5 Horas medida vence', () => {
     expect(compareAccountHeadroom(reClaude, coClaude)).toBeGreaterThan(0);
     expect(compareAccountHeadroom(coClaude, reClaude)).toBeLessThan(0);

@@ -308,7 +308,7 @@ describe('builtin adapters', () => {
     const models = agy?.models?.list ?? [];
 
     expect(agy?.models?.default).toBe('gemini-3.8-flash-high');
-    // F-964: a lista bundled (fallback até a CLI responder) é o que o
+    // F-990: a lista bundled (fallback até a CLI responder) é o que o
     // `agy models` do AGY 1.3.1 imprime — sem Argon, sem Claude 4-6 — menos
     // o que o operador tirou da oferta (3.1 Pro, 2026-09-27): esses ids
     // migram em RETIRED_MODEL_MIGRATIONS e não podem ser oferecidos.
@@ -943,7 +943,7 @@ describe('authMethodForAdapter', () => {
 
 describe('F-217 — default do pane sobe para o mais novo da linha descoberto pela CLI', () => {
   const flatCatalog: ModelCatalog = { adapters: {} };
-  // F-964: CLI sem listagem (`bundled`) — a união com o cache vale; para CLI
+  // F-990: CLI sem listagem (`bundled`) — a união com o cache vale; para CLI
   // que lista (codex de verdade) a mesma regra roda no model-offer.test.ts.
   const codexLike = (): Adapter =>
     ({

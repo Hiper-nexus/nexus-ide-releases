@@ -77,9 +77,9 @@ export type PaneStartFailureCause =
   | 'spawn-refused'
   | 'boot-exit'
   | 'brief-rejected'
-  /** F-958: sessão viva sem NENHUM byte no terminal depois da graça. */
+  /** F-984: sessão viva sem NENHUM byte no terminal depois da graça. */
   | 'boot-silent'
-  /** F-958: a CLI instalada recusou o modelo roteado ao nascer. */
+  /** F-984: a CLI instalada recusou o modelo roteado ao nascer. */
   | 'model-rejected'
   | ProviderRejectedCause;
 export type PaneNotStartedCause =
@@ -294,7 +294,7 @@ export function paneStartNoticeSummary(input: {
   readonly cause: PaneNotStartedCause;
   readonly outcome: PaneStartOutcome;
   /**
-   * F-958: motivo legível já categorizado pelo Main (frase fixa, id do modelo,
+   * F-984: motivo legível já categorizado pelo Main (frase fixa, id do modelo,
    * código de saída) — nunca a saída crua do terminal.
    */
   readonly detail?: string | null;
@@ -362,7 +362,7 @@ export interface PaneStartWatch extends PaneStartWatchInit {
   failure: {
     readonly cause: PaneStartFailureCause;
     readonly at: number;
-    /** F-958: código de saída da raiz quando o processo saiu sozinho. */
+    /** F-984: código de saída da raiz quando o processo saiu sozinho. */
     readonly exitCode?: number;
   } | null;
   /** A sessão acabou sem falha provada (pedido de encerramento, one-shot, fora da janela). */
@@ -606,7 +606,7 @@ export function notePaneSessionEnded(
   if (input.started) watch.accepted = true;
   const windowStart =
     watch.redeliveredAt ?? input.spawnedAt ?? watch.sessionSpawnedAt ?? watch.createdAt;
-  // F-958: saída com código de erro (ou sinal) sem nunca ter começado é
+  // F-984: saída com código de erro (ou sinal) sem nunca ter começado é
   // morte provada a QUALQUER momento da ficha — três writers Codex saíram com
   // 74 aos 303 s (fila de pesados) e ninguém foi avisado porque a janela de
   // 90 s já tinha passado. Saída limpa depois da graça continua sem veredito.

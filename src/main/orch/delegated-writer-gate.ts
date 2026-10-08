@@ -64,7 +64,7 @@ export function decideDelegatedWriterSpawn(input: {
  * no MESMO bloco síncrono da decisão (mesmo padrão de pendingWorkerSpawns) e
  * conta como writer ativo até o pane nascido passar da largada.
  *
- * F-955: o ACK pendente chega antes de o renderer espelhar o pane, e um pane
+ * F-981: o ACK pendente chega antes de o renderer espelhar o pane, e um pane
  * em `spawning`/`unknown` pode ainda não ter papel/escopo nos snapshots — o
  * claim caía nessas janelas e 4 writers dividiram o mesmo checkout. Agora ele
  * só sai quando o pane já tem sessão e saiu da largada (os snapshots o contam

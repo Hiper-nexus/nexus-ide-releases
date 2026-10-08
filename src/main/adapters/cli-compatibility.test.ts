@@ -12,7 +12,7 @@ import {
   stableCliVersion,
 } from './cli-compatibility';
 
-describe('F-966: faixas de compatibilidade de versão da CLI', () => {
+describe('F-992: faixas de compatibilidade de versão da CLI', () => {
   it('codex abaixo de 0.149 é quebrado e o aviso traz a faixa recomendada', () => {
     const advisory = resolveCliCompatibility('codex', '0.148.0');
     expect(advisory?.status).toBe('broken');

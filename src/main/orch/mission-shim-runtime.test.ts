@@ -512,7 +512,7 @@ describe("mission shim filesystem transport", () => {
     });
   });
 
-  it("F-971: worker aberto DENTRO da chamada de outro agente entrega pelo shim (o timer não herda a fronteira)", async () => {
+  it("F-997: worker aberto DENTRO da chamada de outro agente entrega pelo shim (o timer não herda a fronteira)", async () => {
     await runtime.dispose();
     const opener = mintToken({
       label: "quem abriu o worker",
@@ -578,7 +578,7 @@ describe("mission shim filesystem transport", () => {
     });
   });
 
-  // ── F-962: worker Muse relatou que `nx-mail --help` e
+  // ── F-988: worker Muse relatou que `nx-mail --help` e
   // `nexus_handoff_submit --help` penduravam até o timeout. ──
   const bin = (name: string) =>
     path.join(runtime.binDir, process.platform === "win32" ? `${name}.cmd` : name);
@@ -591,7 +591,7 @@ describe("mission shim filesystem transport", () => {
     return env;
   };
 
-  it("F-962: --help/-h/help responde localmente, na hora, sem dispatcher", async () => {
+  it("F-988: --help/-h/help responde localmente, na hora, sem dispatcher", async () => {
     const cases: Array<[string, string[], RegExp]> = [
       ["nx-mail", ["--help"], /uso: nx-mail send --status/],
       ["nx-mail", ["send", "--help"], /uso: nx-mail send --status/],
@@ -622,7 +622,7 @@ describe("mission shim filesystem transport", () => {
     expect(fs.readdirSync(path.join(runtime.rootDir, "requests"))).toEqual([]);
   }, 60_000);
 
-  it("F-962: o valor de uma opção não é pedido de ajuda", async () => {
+  it("F-988: o valor de uma opção não é pedido de ajuda", async () => {
     await execFileAsync(
       bin("nx-mail"),
       ["send", "--status", "blocked", "--summary", "-h"],
@@ -635,7 +635,7 @@ describe("mission shim filesystem transport", () => {
   }, 20_000);
 
   it.skipIf(process.platform !== "darwin" || !fs.existsSync("/usr/bin/perl"))(
-    "F-962: a fila de admissão pesada do pane não segura --help nem o handoff",
+    "F-988: a fila de admissão pesada do pane não segura --help nem o handoff",
     async () => {
       // Reproduz o ambiente do pane no macOS: preload de admissão no
       // NODE_OPTIONS e uma base de job pesado que fica 20 s "na fila".
@@ -673,11 +673,11 @@ describe("mission shim filesystem transport", () => {
     15_000,
   );
 
-  // F-962 (segunda revisão): o NODE_OPTIONS do pane parte do herdado do
+  // F-988 (segunda revisão): o NODE_OPTIONS do pane parte do herdado do
   // operador. Com `--require dotenv/config`, `--import tsx` ou um APM, o preload
   // recusava a isenção (há outro pré-carregamento) e o handoff voltava à fila.
   it.skipIf(process.platform !== "darwin" || !fs.existsSync("/usr/bin/perl"))(
-    "F-962: NODE_OPTIONS herdado do operador (--require/--import) não põe o handoff na fila",
+    "F-988: NODE_OPTIONS herdado do operador (--require/--import) não põe o handoff na fila",
     async () => {
       const preload = path.resolve(
         __dirname,
@@ -722,7 +722,7 @@ describe("mission shim filesystem transport", () => {
     30_000,
   );
 
-  it("F-962: sem Main respondendo, o shim termina dentro do prazo (nunca pendura)", async () => {
+  it("F-988: sem Main respondendo, o shim termina dentro do prazo (nunca pendura)", async () => {
     // Canal órfão: ninguém lê os pedidos (Main travado/ausente).
     const orphan = fs.mkdtempSync(path.join(baseDir, "orphan-"));
     for (const dir of ["requests", "responses", "state"]) {
@@ -746,7 +746,7 @@ describe("mission shim filesystem transport", () => {
     expect(Date.now() - started).toBeLessThan(5_000);
   }, 20_000);
 
-  it("F-962: lançador POSIX marca o cliente como auxiliar e repassa o prefixo", () => {
+  it("F-988: lançador POSIX marca o cliente como auxiliar e repassa o prefixo", () => {
     const launcher = missionShimPosixLauncher("/tmp/a b/it's/nx-shim.cjs", "mail");
     expect(launcher.startsWith("#!/bin/sh\n")).toBe(true);
     expect(launcher).toContain("NEXUS_HEAVY_HELPER=1\nexport NEXUS_HEAVY_HELPER\n");

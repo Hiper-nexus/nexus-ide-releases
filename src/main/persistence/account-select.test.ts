@@ -96,7 +96,7 @@ describe('chooseAccount (failover selection)', () => {
   });
 });
 
-describe('chooseAccount com janelas medidas (F-969)', () => {
+describe('chooseAccount com janelas medidas (F-995)', () => {
   const windows = (
     hours: number | null,
     weekly: number | null,

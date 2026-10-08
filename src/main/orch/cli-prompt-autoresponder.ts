@@ -6,7 +6,7 @@ class WorkerCliPromptAutoResponder extends CliPromptAutoResponder {
   readonly cache = new Map<string, { generation: number | null; at: number; value: ReturnType<CliPromptAutoResponder['analysisSnapshot']> }>();
   readonly settling = new Map<string, number>();
   acceptWorker(sessionId: string, value: ReturnType<CliPromptAutoResponder['analysisSnapshot']> & { verified?: boolean }, at: number) {
-    // F-958: depois de responder, o Worker desvincula a assinatura e não manda
+    // F-984: depois de responder, o Worker desvincula a assinatura e não manda
     // mais snapshot; o `defer: true` dos snapshots da resposta/verificação
     // ficava 180 s no cache e o brief do Kimi nunca saía. A espera depois da
     // resposta é do `settling` e do `isVerifying` do próprio Main.

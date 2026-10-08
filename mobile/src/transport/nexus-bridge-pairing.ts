@@ -1,4 +1,4 @@
-// QR do desktop Nexus (F-968): `https://<host>[:porta]/#code=XXXXXXXX`, gerado em
+// QR do desktop Nexus (F-994): `https://<host>[:porta]/#code=XXXXXXXX`, gerado em
 // src/renderer/components/settings/LocalPhoneBridgeCard.tsx. TS puro.
 //
 // Confiança TLS: o WebSocket do React Native só aceita certificado que o sistema

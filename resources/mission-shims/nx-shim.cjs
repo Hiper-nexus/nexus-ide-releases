@@ -85,7 +85,7 @@ function nexusSpoolHandoff(env, transport, payload, requestId) {
   }
 }
 
-// F-962: `--help`/`-h`/`help` responde aqui, na hora, sem tocar o canal do
+// F-988: `--help`/`-h`/`help` responde aqui, na hora, sem tocar o canal do
 // Main. Nenhuma execução pode passar deste teto total (lock + resposta + folga).
 const HARD_DEADLINE_MS = LOCK_TIMEOUT_MS + DEFAULT_RESPONSE_TIMEOUT_MS + 10_000;
 const COMMAND_BY_EXECUTABLE = {

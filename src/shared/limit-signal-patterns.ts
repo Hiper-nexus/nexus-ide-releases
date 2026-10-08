@@ -164,7 +164,7 @@ export const LIMIT_SIGNAL_PATTERNS: readonly LimitSignalPattern[] = [
     re: /model ['"][^'"]{1,64}['"] (?:does not exist|is not found|was not found|is not supported)/i,
   },
   { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /\bnot_found_error:[^\n]{0,60}\bmodel\b/i },
-  // F-966: Claude Code (TUI e -p) com modelo que a CLI/conta não serve — o
+  // F-992: Claude Code (TUI e -p) com modelo que a CLI/conta não serve — o
   // texto do 404 é este nas 2.1.283 e 2.1.293 (strings do binário). Sem ele o
   // modelo recusado nunca entrava na quarentena e o roteador insistia.
   {

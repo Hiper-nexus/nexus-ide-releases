@@ -83,7 +83,7 @@ describe('model catalog overlays', () => {
     expect(modelCatalogInfo(merged, 'example-bundled', 'grok-4.5')?.source).toBe('remote');
   });
 
-  it('F-964: CLI que lista (grok, agy, codex…) — o catálogo classifica, nunca acrescenta id', () => {
+  it('F-990: CLI que lista (grok, agy, codex…) — o catálogo classifica, nunca acrescenta id', () => {
     const merged = mergeModelCatalogs(BUILTIN_MODEL_CATALOG, {
       adapters: { grok: { default: 'grok-4.5', models: [{ id: 'grok-4.5', availability: 'cheap', source: 'remote' }] } },
     });
@@ -161,7 +161,7 @@ describe('published catalog JSON', () => {
     const combined = mergeModelCatalogs(PUBLISHED_MODEL_CATALOG, {
       adapters: { grok: { default: 'grok-4.6', models: [{ id: 'grok-4.6', availability: 'paid' }] } },
     });
-    // F-964: o grok oferece o que lista; o catálogo só move o default entre esses.
+    // F-990: o grok oferece o que lista; o catálogo só move o default entre esses.
     const GROK = { ...ADAPTER, models: { ...ADAPTER.models, list: ['grok-4.7', 'grok-4.6', 'grok-4-fast'] } };
     const adapter = applyModelCatalogToAdapter(GROK, combined);
     expect(adapter.models.list).toContain('grok-4.7');
@@ -686,7 +686,7 @@ describe('refreshRemoteModelCatalog', () => {
     expect(fs.existsSync(file)).toBe(false);
   });
 
-  it('F-964 (PRV-10): default fora da lista ou id duplicado — remoto rejeitado, a última versão boa fica', async () => {
+  it('F-990 (PRV-10): default fora da lista ou id duplicado — remoto rejeitado, a última versão boa fica', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-model-catalog-'));
     tmpDirs.push(dir);
     const file = path.join(dir, 'model-catalog.json');
@@ -708,7 +708,7 @@ describe('refreshRemoteModelCatalog', () => {
       .toEqual(['x-cli: id duplicado "x-a"']);
   });
 
-  it('F-964 (PRV-10): edição remota mais velha que a do disco não substitui', async () => {
+  it('F-990 (PRV-10): edição remota mais velha que a do disco não substitui', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-model-catalog-'));
     tmpDirs.push(dir);
     const file = path.join(dir, 'model-catalog.json');
@@ -721,7 +721,7 @@ describe('refreshRemoteModelCatalog', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe(current);
   });
 
-  it('F-964 (PRV-10): os catálogos que o app traz passam na validação referencial', () => {
+  it('F-990 (PRV-10): os catálogos que o app traz passam na validação referencial', () => {
     expect(modelCatalogReferenceErrors(PUBLISHED_MODEL_CATALOG)).toEqual([]);
     expect(modelCatalogReferenceErrors(BUILTIN_MODEL_CATALOG)).toEqual([]);
   });

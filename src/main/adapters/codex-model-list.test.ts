@@ -32,7 +32,7 @@ function fakeRpc(pages: Record<string, unknown>): CodexAppServerRpc & { calls: u
   };
 }
 
-describe('F-964 (PRV-03) — model/list do app-server do Codex', () => {
+describe('F-990 (PRV-03) — model/list do app-server do Codex', () => {
   it('junta 2 páginas, descarta o hidden e guarda default e esforços por modelo', async () => {
     const rpc = fakeRpc({
       '': { data: [row('x-sol', { isDefault: true }), row('x-secret', { hidden: true })], nextCursor: 'page-2' },

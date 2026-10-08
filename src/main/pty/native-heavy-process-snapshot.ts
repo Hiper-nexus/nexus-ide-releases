@@ -31,7 +31,7 @@ const readWindowsProcesses = createProcessTableSnapshotReader((timeoutMs = 1_500
 });
 
 /**
- * F-971: orçamento da leitura da árvore para ADMITIR comando pesado. 1 s (o da
+ * F-997: orçamento da leitura da árvore para ADMITIR comando pesado. 1 s (o da
  * prova de encerramento) estourava com a CPU ocupada e a admissão recusava
  * processo legítimo ("ownership unproved" → exit 74). Admissão não tem pressa:
  * o comando já espera a vaga.

@@ -5,7 +5,7 @@ import { modelListAuthority, resolveOfferedModels } from './model-availability';
 // acrescentar um modelo de verdade nunca exija mexer neste teste.
 const STATIC = ['x-a', 'x-ghost'];
 
-describe('F-964 resolveOfferedModels — listagem viva autoritativa', () => {
+describe('F-990 resolveOfferedModels — listagem viva autoritativa', () => {
   it('fantasma do estático vira unverified: não é oferecido nem roteado', () => {
     const offer = resolveOfferedModels({
       authority: 'live',
@@ -103,7 +103,7 @@ describe('F-964 resolveOfferedModels — listagem viva autoritativa', () => {
     expect(offer.proof).toEqual({ 'x-a': 'live', 'x-mine': 'custom' });
   });
 
-  it('listagem com rótulos e nenhum id conhecido é parse quebrado, não catálogo (F-958)', () => {
+  it('listagem com rótulos e nenhum id conhecido é parse quebrado, não catálogo (F-984)', () => {
     const offer = resolveOfferedModels({
       authority: 'live',
       staticIds: STATIC,

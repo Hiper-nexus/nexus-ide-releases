@@ -276,11 +276,11 @@ export interface ModelCatalogEntryInfo {
   /** Janela de contexto em tokens, quando documentada (F-912). Ausente = sem fonte. */
   maxContext?: number;
   /**
-   * F-966: níveis de esforço que a CLI aceita para ESTE modelo. Ausente = os
+   * F-992: níveis de esforço que a CLI aceita para ESTE modelo. Ausente = os
    * do adapter; vazio = o modelo não tem esforço (o spawn tira o `--effort`).
    */
   efforts?: string[];
-  /** F-966: primeira versão da CLI que conhece o modelo. Abaixo dela só avisa. */
+  /** F-992: primeira versão da CLI que conhece o modelo. Abaixo dela só avisa. */
   minCliVersion?: string;
 }
 

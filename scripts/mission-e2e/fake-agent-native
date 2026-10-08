@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# F-971: o "binário nativo" da CLI de agente FALSA do E2E de missão.
+# F-997: o "binário nativo" da CLI de agente FALSA do E2E de missão.
 #
 # Não é Node nem shell (como o Mach-O do Codex ou o payload do MiMo): o
 # lançador fake-agent.cjs repassa a ele o PRÓPRIO argv, brief incluído. Ele faz

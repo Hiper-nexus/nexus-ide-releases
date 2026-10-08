@@ -138,7 +138,7 @@ describe('CLI model discovery', () => {
     expect(next.models.list).toEqual(['claude-old', 'claude-new']);
   });
 
-  it('F-964: CLI que lista não ganha união — a oferta sai do resolvedor', () => {
+  it('F-990: CLI que lista não ganha união — a oferta sai do resolvedor', () => {
     for (const id of ['codex', 'agy', 'grok']) {
       const adapter = { id, models: { default: 'x-old', list: ['x-old', 'x-ghost'] } } as Adapter;
       expect(applyDiscoveredModelsToAdapter(adapter, new Map([[id, ['x-old', 'x-new']]]))).toBe(adapter);

@@ -16,7 +16,7 @@ import {
   writeStoredHostProfiles
 } from './host-metadata-store'
 
-describe('host metadata kind (F-968)', () => {
+describe('host metadata kind (F-994)', () => {
   it('keeps a Nexus bridge host a Nexus host across restarts; Orca rows stay unmarked', async () => {
     const base = { name: 'h', deviceToken: 'secret', lastConnected: 1 }
     await writeStoredHostProfiles([

@@ -721,7 +721,7 @@ describe('retomada da missão da aba move o pane do orquestrador (F-664)', () =>
     expect(panes.findByPaneId('pane-operador')?.id).toBe(leader.id);
   });
 
-  it('F-969: troca só a conta selada do orquestrador exato, com CAS na conta esperada', () => {
+  it('F-995: troca só a conta selada do orquestrador exato, com CAS na conta esperada', () => {
     const runtimeManager = manager();
     const scope = testProjectScope();
     const mission = createScopedMissionStore(runtimeManager, scope).create({ title: 'Missão · Meus terminais' });

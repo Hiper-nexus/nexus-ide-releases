@@ -279,7 +279,7 @@ describe('manual release candidate gate', () => {
     const runChecked = vi.fn(() => ({ stdout: '', stderr: '' }));
     const runPackagedSmoke = vi.fn(async () => {});
     const runMissionE2E = vi.fn(async () => {
-      // F-971: a missão roda ANTES de qualquer verificação de artefato.
+      // F-997: a missão roda ANTES de qualquer verificação de artefato.
       expect(runChecked).not.toHaveBeenCalled();
     });
     const result = await runReleaseCandidateGateTestCore({
@@ -403,7 +403,7 @@ describe('manual release candidate gate', () => {
     );
   });
 
-  it('F-971: release cujo Main não conclui a missão de ponta a ponta não verifica, não sela e não publica', async () => {
+  it('F-997: release cujo Main não conclui a missão de ponta a ponta não verifica, não sela e não publica', async () => {
     const root = tempRoot();
     fs.writeFileSync(path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg'), 'dmg');
     fs.writeFileSync(path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip'), 'zip');
@@ -443,7 +443,7 @@ describe('manual release candidate gate', () => {
     expect(fs.existsSync(path.join(root, 'release-artifacts', 'security', 'packaged-smoke-report.json'))).toBe(false);
   });
 
-  it('F-971: o núcleo de teste exige um exercitador explícito da missão E2E', async () => {
+  it('F-997: o núcleo de teste exige um exercitador explícito da missão E2E', async () => {
     await expect(
       runReleaseCandidateGateTestCore({ runPackagedSmoke: vi.fn() }),
     ).rejects.toThrow(/mission E2E exerciser/u);
