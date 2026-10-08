@@ -36,9 +36,10 @@ sequência CSI/OSC, Ctrl-C, CR solto) são **recusadas no Main**, em
 WSS (app e PWA) e relay `/r/<room>` (o mesmo `handleAuthedMessage`). CRLF é só
 fim de linha (vira LF); Tab é aceito mas tira a linha da allowlist (vai ao
 diálogo). O bloqueio no app (`nexus-bridge-rpc-adapter.ts`) é só aviso de UX;
-a autoridade é o desktop (F-1000). Escritas estruturadas (`git.push`, `fs.delete`) usam o mesmo scheduler
-main-owned; `mission.complete` é **sempre negado** no mobile porque a evidência
-fica no desktop.
+a autoridade é o desktop (F-1000). Escritas estruturadas (`git.push`, `fs.delete`,
+`mission.complete`…) não têm comando na bridge: desde F-1022 são recusadas na
+checagem central (`unknown command: <tipo>`) antes de qualquer diálogo no desktop;
+`mission.complete` segue **sempre negado** no mobile porque a evidência fica no desktop.
 
 ## Fluxo de uso
 
@@ -51,6 +52,45 @@ fica no desktop.
    expirar ou consumir não gera outro; para um segundo aparelho, clicar em
    **Girar código de pareamento** no desktop.
 4. Ecrã **Ops**: resumo + missões + panes; tocar pane → output + input.
+
+## Escopos por aparelho (MOB-12, F-1022)
+
+Cada aparelho pareado tem um grant com `scopes` (`src/main/remote/remote-device-token-store.ts`,
+em `~/.nexus/remote-bridge/tokens.json`, junto do token e da chave do aparelho):
+
+| Escopo | Libera |
+|------|------|
+| `read` (Ver) | `mission.list`, `pane.read`, `pane.stream.open/close` (e o push `pane.stream.data`), `git.status`, `git.diff`, `files.list`, `files.read`; panes e missões no `ops.snapshot`/`panes.list` |
+| `input` (Enviar comandos) | `pane.input`, `pane.resize` (e `pane.stream.frame`) |
+| `approve` (Aprovar) | `agentSession.respondToApproval`; os pedidos pendentes aparecem no `ops.snapshot` com `read` **ou** `approve`; só aparelho com `approve` conta como respondente no broker |
+| `close` (Fechar panes) | `pane.close` |
+
+- **Onde é decidido:** um ponto só, no topo de `handleAuthedMessage`
+  (`authorizeRemoteDeviceRequest`, `src/main/remote/device-scopes.ts`), antes de
+  diálogo, autorização de pane ou escrita. Tipo fora da tabela = `unknown command:
+  <tipo>` (fail closed); escopo faltando = `not authorized: scope-missing:<escopo>`.
+  `status`, `ops.snapshot` e `panes.list` respondem a qualquer aparelho autenticado
+  (o status é a sonda de vida do app), mas sem `read` voltam sem panes nem missões.
+  O teste `device-scopes.test.ts` confere que a tabela e os `case` do dispatch são os
+  mesmos — comando novo sem escopo fica vermelho.
+- **Pareamento:** em Configurações › Celular › *Celular na rede local*, o operador
+  escolhe as permissões do próximo aparelho; elas valem para o código gerado em
+  **Iniciar** ou **Novo código** (padrão: todas). O card mostra as permissões do
+  código atual e a lista de aparelhos pareados, cada um com as suas chaves; mudar
+  uma chave vale **no próximo pedido** do aparelho, sem reconectar (o dispatch lê o
+  grant a cada mensagem; o push de saída para no próximo pedaço sem `read`).
+- **Migração:** grant gravado antes do F-1022 (sem `scopes`) recebe todos os
+  escopos de hoje; a próxima gravação do arquivo persiste isso. Grant com `scopes`
+  malformado = nenhum escopo.
+- **Revogação:** igual a antes (**Revogar acessos** apaga todos os grants e fecha
+  as conexões). O `status` que o aparelho lê não traz a lista de aparelhos nem as
+  permissões do código.
+- **App:** a recusa por escopo vira o código `nexus_scope_refused` com frase em
+  pt-BR ("Este aparelho não tem permissão para enviar comandos ao terminal…
+  O operador libera em Configurações › Celular, no desktop."), e continua sendo
+  recusa final (o outbox não reenvia).
+- **Relay do companion** (`/r/<room>`): não tem grant por aparelho; passa pela mesma
+  checagem com todos os escopos e mantém o próprio gate de escrita (`writeToken`).
 
 ## App Expo (`mobile/`, F-994)
 

@@ -41,6 +41,7 @@ describe('Celular na rede local', () => {
       bridgeStart: vi.fn(async () => bridgeInfo),
       bridgeRotatePairing: vi.fn(async () => ({ ...bridgeInfo, pairingCode: '654321' })),
       bridgeRevokeTokens: vi.fn(async () => bridgeInfo),
+      bridgeSetDeviceScopes: vi.fn(async () => bridgeInfo),
       listSshHosts: vi.fn(async () => []),
       connectSshHost: vi.fn(),
       importSshConfig: vi.fn(),
@@ -146,6 +147,63 @@ describe('Celular na rede local', () => {
     expect(toggle.checked).toBe(false);
     expect(toggle.disabled).toBe(true);
     expect(host.textContent).toContain('Tailscale não encontrado neste computador');
+
+    act(() => root.unmount());
+  });
+
+  it('MOB-12: escolhe os escopos do próximo código e edita os de um aparelho pareado', async () => {
+    const device = {
+      id: 'grant-1',
+      keyFingerprint: 'abcdef0123456789'.repeat(4),
+      pairedAt: Date.UTC(2026, 9, 8, 12),
+      expiresAt: Date.UTC(2026, 9, 15, 12),
+      scopes: ['read', 'input', 'approve', 'close'],
+      connected: true,
+    };
+    remote.bridgeStatus.mockResolvedValueOnce({
+      ...bridgeInfo,
+      pairingScopes: ['read', 'input', 'approve', 'close'],
+      devices: [device],
+    });
+    remote.bridgeRotatePairing.mockResolvedValueOnce({
+      ...bridgeInfo,
+      pairingCode: '777777',
+      pairingScopes: ['read', 'approve'],
+      devices: [device],
+    });
+    remote.bridgeSetDeviceScopes.mockResolvedValueOnce({
+      ...bridgeInfo,
+      devices: [{ ...device, scopes: ['read', 'approve', 'close'] }],
+    });
+    const { host, root } = mount(<CompanionRelaySection />);
+    await flush();
+    const card = host.querySelector('[aria-labelledby="remote-bridge-title"]')!;
+    expect(card.textContent).toContain('Ver · Enviar comandos · Aprovar · Fechar panes');
+    expect(card.textContent).toContain('Aparelho abcd ef01 2345');
+    expect(card.textContent).toContain('conectado');
+
+    const input = (label: string) =>
+      host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+    // Próximo código só com Ver + Aprovar.
+    await act(async () => input('Permissões do próximo aparelho: Enviar comandos').click());
+    await act(async () => input('Permissões do próximo aparelho: Fechar panes').click());
+    const newCode = [...card.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Novo código',
+    )!;
+    await act(async () => newCode.click());
+    expect(remote.bridgeRotatePairing).toHaveBeenLastCalledWith({ scopes: ['read', 'approve'] });
+    expect(card.textContent).toContain('777777');
+    expect(card.textContent).toContain('Ver · Aprovar');
+
+    // Aparelho já pareado: tirar "Enviar comandos" vale no próximo pedido dele.
+    const deviceInput = input('Permissões do aparelho abcd ef01 2345: Enviar comandos');
+    expect(deviceInput.checked).toBe(true);
+    await act(async () => deviceInput.click());
+    expect(remote.bridgeSetDeviceScopes).toHaveBeenCalledWith({
+      deviceId: 'grant-1',
+      scopes: ['read', 'approve', 'close'],
+    });
+    expect(input('Permissões do aparelho abcd ef01 2345: Enviar comandos').checked).toBe(false);
 
     act(() => root.unmount());
   });

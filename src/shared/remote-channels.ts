@@ -4,6 +4,7 @@ export const REMOTE_CHANNELS = {
   bridgeStop: 'remote:bridge.stop',
   bridgeRotatePairing: 'remote:bridge.rotatePairing',
   bridgeRevokeTokens: 'remote:bridge.revokeTokens',
+  bridgeSetDeviceScopes: 'remote:bridge.setDeviceScopes', // MOB-12
   remoteSpawnDetect: 'remote:spawn.detect',
   remoteSpawnList: 'remote:spawn.list',
   remoteSpawnCreate: 'remote:spawn.create',

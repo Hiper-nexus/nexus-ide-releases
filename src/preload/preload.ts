@@ -1171,10 +1171,12 @@ const api: NexusApi = {
     bridgeStatus: () => ipcRenderer.invoke(REMOTE_CHANNELS.bridgeStatus),
     bridgeStart: (req) => ipcRenderer.invoke(REMOTE_CHANNELS.bridgeStart, req ?? {}),
     bridgeStop: () => ipcRenderer.invoke(REMOTE_CHANNELS.bridgeStop),
-    bridgeRotatePairing: () =>
-      ipcRenderer.invoke(REMOTE_CHANNELS.bridgeRotatePairing),
+    bridgeRotatePairing: (req) =>
+      ipcRenderer.invoke(REMOTE_CHANNELS.bridgeRotatePairing, req ?? {}),
     bridgeRevokeTokens: () =>
       ipcRenderer.invoke(REMOTE_CHANNELS.bridgeRevokeTokens),
+    bridgeSetDeviceScopes: (req) =>
+      ipcRenderer.invoke(REMOTE_CHANNELS.bridgeSetDeviceScopes, req),
     detectClis: (target) =>
       ipcRenderer.invoke(REMOTE_CHANNELS.remoteSpawnDetect, { target }),
     listTmux: (target) =>

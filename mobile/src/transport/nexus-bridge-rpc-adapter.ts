@@ -41,6 +41,28 @@ import {
 export const NEXUS_HOST_UNSUPPORTED = 'nexus_host_unsupported'
 export const NEXUS_BRIDGE_REFUSED = 'nexus_bridge_refused'
 
+// MOB-12 (F-1022) (início): o desktop recusa por escopo do aparelho com
+// `not authorized: scope-missing:<escopo>`; a tela mostra o que falta e onde mudar.
+export const NEXUS_SCOPE_REFUSED = 'nexus_scope_refused'
+
+const SCOPE_REFUSAL = /^not authorized: scope-missing:(read|input|approve|close)$/
+const SCOPE_WHERE = 'O operador libera em Configurações › Celular, no desktop.'
+const SCOPE_MESSAGES: Record<string, string> = {
+  read: `Este aparelho não tem permissão para ver panes, saída, Git e arquivos (permissão "Ver"). ${SCOPE_WHERE}`,
+  input: `Este aparelho não tem permissão para enviar comandos ao terminal (permissão "Enviar comandos"). ${SCOPE_WHERE}`,
+  approve: `Este aparelho não tem permissão para responder aprovações (permissão "Aprovar"). ${SCOPE_WHERE}`,
+  close: `Este aparelho não tem permissão para fechar panes (permissão "Fechar panes"). ${SCOPE_WHERE}`
+}
+
+/** Recusa por escopo: continua sendo recusa do desktop (final, sem reenvio do outbox). */
+export class NexusScopeRefusedError extends NexusBridgeRemoteError {}
+
+function asScopeRefusal(error: unknown): unknown {
+  const scope = error instanceof NexusBridgeRemoteError ? SCOPE_REFUSAL.exec(error.message)?.[1] : undefined
+  return scope ? new NexusScopeRefusedError(SCOPE_MESSAGES[scope]) : error
+}
+// MOB-12 (fim)
+
 export const NEXUS_RAW_KEYS_MESSAGE =
   'Teclas cruas (Ctrl-C, Esc, "1"…) não disponíveis em host Nexus: a bridge só aceita um ' +
   'comando completo por vez, enviado com Enter. Responda aprovações pelo card.'
@@ -185,7 +207,10 @@ export function createNexusBridgeRpcClient(
     type: string,
     fields: Record<string, unknown> = {},
     requestOptions?: NexusBridgeRequestOptions
-  ) => client.request(type, fields, requestOptions)
+  ) =>
+    client.request(type, fields, requestOptions).catch((error: unknown) => {
+      throw asScopeRefusal(error) // MOB-12
+    })
   // F-1014 (início)
   const workspace = createNexusWorkspaceApi(request)
   // F-1014 (fim)
@@ -458,6 +483,9 @@ export function createNexusBridgeRpcClient(
       } catch (error) {
         if (error instanceof NexusUnsupportedError) {
           return failure(id, NEXUS_HOST_UNSUPPORTED, error.message)
+        }
+        if (error instanceof NexusScopeRefusedError) {
+          return failure(id, NEXUS_SCOPE_REFUSED, error.message) // MOB-12
         }
         if (error instanceof NexusBridgeRemoteError) {
           return failure(id, NEXUS_BRIDGE_REFUSED, error.message)

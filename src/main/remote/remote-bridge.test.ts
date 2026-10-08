@@ -523,7 +523,8 @@ describe('remote bridge', () => {
     const socket = await authenticate(token);
     const res = await rpc(socket, { id: 'mc', type: 'mission.complete' });
     expect(res.ok).toBe(false);
-    expect(String(res.error)).toContain('not authorized');
+    // MOB-12: sem comando na bridge = recusado na checagem central, antes da política.
+    expect(res.error).toBe('unknown command: mission.complete');
     socket.close();
   });
 
@@ -532,7 +533,8 @@ describe('remote bridge', () => {
     const socket = await authenticate(token);
     const res = await rpc(socket, { id: 'gp', type: 'git.push' });
     expect(res.ok).toBe(false);
-    expect(String(res.error)).toContain('not authorized');
+    // MOB-12: recusado antes de abrir qualquer diálogo no desktop (fail closed).
+    expect(res.error).toBe('unknown command: git.push');
     socket.close();
   });
 

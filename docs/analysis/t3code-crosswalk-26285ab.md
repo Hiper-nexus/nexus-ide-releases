@@ -10,9 +10,9 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 
 | Classificação | Nº | IDs |
 |---|---|---|
-| Integrado e acessível | 30 | WEB-01..11; MOB-01 (parcial), MOB-02, MOB-03, MOB-07, MOB-09, MOB-11, MOB-13; ORC-03, ORC-05, ORC-10; DSK-01..06; QLT-01, QLT-05, QLT-11 (parcial) |
+| Integrado e acessível | 31 | WEB-01..11; MOB-01 (parcial), MOB-02, MOB-03, MOB-07, MOB-09, MOB-11, MOB-12, MOB-13; ORC-03, ORC-05, ORC-10; DSK-01..06; QLT-01, QLT-05, QLT-11 (parcial) |
 | Equivalente existente | 1 | MOB-06 |
-| Pendente | 32 | WEB-12..18; MOB-04, MOB-05, MOB-08, MOB-10, MOB-12, MOB-14; ORC-01, ORC-02, ORC-04, ORC-06, ORC-07, ORC-08; DSK-07..11; QLT-02, QLT-03, QLT-04, QLT-06..10 |
+| Pendente | 31 | WEB-12..18; MOB-04, MOB-05, MOB-08, MOB-10, MOB-14; ORC-01, ORC-02, ORC-04, ORC-06, ORC-07, ORC-08; DSK-07..11; QLT-02, QLT-03, QLT-04, QLT-06..10 |
 | Incompatível | 1 | ORC-09 |
 
 ## Tabela
@@ -48,7 +48,7 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 | MOB-09 | Canais Android + política de foreground | integrado | `notifications/agent-notification-channels.ts`; `nexus-host-notifications.ts` (só aprovação) | ampliar com MOB-05 |
 | MOB-10 | Snapshots limitados offline-first | pendente (G) | sem cursor/`hasMore` em `pane.read` | paginação com cursor |
 | MOB-11 | Haptics nos gestos | integrado | `platform/gesture-haptics.ts`; `home/MobileHomeScreen.tsx:13` | — |
-| MOB-12 | Pareamento com escopos estreitos | pendente (M) | `src/main/remote/device-pairing.ts` sem `scopes[]` | escopos no grant + filtro de snapshot |
+| MOB-12 | Pareamento com escopos estreitos | integrado | F-1022: `scopes` no grant (`remote-device-token-store.ts`; legado = todos), checagem central `device-scopes.ts` no `handleAuthedMessage` (tipo desconhecido recusado), snapshot/lista filtrados sem `read`; escolha e edição no card *Celular na rede local*; app mapeia `nexus_scope_refused` | — |
 | MOB-13 | Gate `mobile:doctor` | integrado | `mobile/scripts/mobile-doctor.mjs` | — |
 | MOB-14 | Superfície nativa de diff | pendente (G) | depende de medir MOB-02 | avaliar depois |
 | ORC-01 | Outbox transacional + classes replay-safe | pendente (M) | só `handoff-delivery-outbox.ts` | `orch/effect-outbox*` |

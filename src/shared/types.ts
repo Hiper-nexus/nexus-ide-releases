@@ -178,8 +178,10 @@ import type {
 } from './provider-settings-types';
 import type {
   RemoteBridgeInfo,
+  RemoteBridgeSetDeviceScopesRequest,
   RemoteBridgeStartRequest,
   RemoteCliDetection,
+  RemoteDeviceScope,
   RemoteSpawnRequest,
   RemoteSpawnResult,
   RemoteSshConnectRequest,
@@ -1013,8 +1015,12 @@ export interface NexusApi {
     bridgeStatus(): Promise<RemoteBridgeInfo>;
     bridgeStart(req?: RemoteBridgeStartRequest): Promise<RemoteBridgeInfo>;
     bridgeStop(): Promise<RemoteBridgeInfo>;
-    bridgeRotatePairing(): Promise<RemoteBridgeInfo>;
+    /** MOB-12: `scopes` ausente = o novo código concede todos os escopos. */
+    bridgeRotatePairing(req?: { scopes?: RemoteDeviceScope[] }): Promise<RemoteBridgeInfo>;
     bridgeRevokeTokens(): Promise<RemoteBridgeInfo>;
+    bridgeSetDeviceScopes(
+      req: RemoteBridgeSetDeviceScopesRequest,
+    ): Promise<RemoteBridgeInfo & { error?: string }>;
     detectClis(target: string): Promise<RemoteCliDetection>;
     listTmux(target: string): Promise<RemoteSpawnResult>;
     createTmux(req: RemoteSpawnRequest): Promise<RemoteSpawnResult>;

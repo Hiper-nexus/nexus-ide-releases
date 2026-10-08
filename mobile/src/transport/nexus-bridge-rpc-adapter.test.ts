@@ -9,6 +9,8 @@ import { createNexusBridgeDeviceKey, nexusBridgeDeviceIdentity } from './nexus-b
 import {
   NEXUS_HOST_UNSUPPORTED,
   NEXUS_RAW_KEYS_MESSAGE,
+  NEXUS_SCOPE_REFUSED,
+  NexusScopeRefusedError,
   createNexusBridgeRpcClient,
   type NexusPaneOutput
 } from './nexus-bridge-rpc-adapter'
@@ -410,6 +412,41 @@ describe('Nexus bridge adapter — Orca methods mapped to bridge commands', () =
       ok: false,
       error: { code: 'nexus_bridge_refused', message: 'not authorized: desktop confirmation required or denied' }
     })
+    client.close()
+  })
+
+  it('MOB-12: a refusal by device scope is a clear pt-BR host failure, not a generic one', async () => {
+    const bridge = new FakeBridge()
+    bridge.overrides['pane.input'] = () => ({ error: 'not authorized: scope-missing:input' })
+    bridge.overrides['agentSession.respondToApproval'] = () => ({ error: 'not authorized: scope-missing:approve' })
+    bridge.overrides['pane.close'] = () => ({ error: 'not authorized: scope-missing:close' })
+    bridge.overrides['ops.snapshot'] = () => ({ error: 'not authorized: scope-missing:read' })
+    const { client } = open(bridge)
+    await settle()
+    await expect(
+      client.sendRequest('terminal.send', { terminal: 'p1', text: 'git status', enter: true })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: NEXUS_SCOPE_REFUSED,
+        message: expect.stringMatching(/^Este aparelho não tem permissão para enviar comandos ao terminal \(permissão "Enviar comandos"\)\. .*Configurações › Celular/)
+      }
+    })
+    await expect(
+      client.sendRequest('agentSession.respondToApproval', { itemId: 'r1', expectedRevision: 1, optionId: 'accept' })
+    ).resolves.toMatchObject({ error: { code: NEXUS_SCOPE_REFUSED, message: expect.stringContaining('responder aprovações') } })
+    await expect(client.sendRequest('terminal.close', { terminal: 'p1' })).resolves.toMatchObject({
+      error: { code: NEXUS_SCOPE_REFUSED, message: expect.stringContaining('fechar panes') }
+    })
+    // Chamada direta da tela (fora do sendRequest): mesma mensagem, e ainda é recusa final do desktop.
+    const direct = await client.nexus.snapshot().catch((error: unknown) => error)
+    expect(direct).toBeInstanceOf(NexusScopeRefusedError)
+    expect((direct as Error).message).toContain('ver panes, saída, Git e arquivos')
+    // Outra recusa do desktop segue como antes.
+    bridge.overrides['pane.input'] = () => ({ error: 'not authorized: scope-missing:root' })
+    await expect(
+      client.sendRequest('terminal.send', { terminal: 'p1', text: 'git status', enter: true })
+    ).resolves.toMatchObject({ error: { code: 'nexus_bridge_refused', message: 'not authorized: scope-missing:root' } })
     client.close()
   })
 

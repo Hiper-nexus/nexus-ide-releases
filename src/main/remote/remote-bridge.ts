@@ -23,6 +23,18 @@ import type {
   RemoteBridgeInfo,
   RemoteBridgeStartRequest,
 } from '../../shared/remote-types';
+// MOB-12 (início): escopos por aparelho.
+import {
+  REMOTE_DEVICE_SCOPES,
+  type RemoteDeviceScope,
+} from '../../shared/remote-types';
+import { authorizeRemoteDeviceRequest } from './device-scopes';
+import {
+  listRemoteDeviceTokens,
+  remoteDeviceTokenScopes,
+  setRemoteDeviceTokenScopes,
+} from './remote-device-token-store';
+// MOB-12 (fim)
 import type { ProjectExecutionScope } from '../../shared/types';
 import { writeJsonAtomic } from '../util/atomic-write';
 import {
@@ -265,14 +277,19 @@ function randomCode(): string {
   return out;
 }
 
-function makePairing(): { code: string; expiresAt: number } {
+// MOB-12: o código carrega os escopos que concede ao aparelho que o usar.
+type PairingGrant = { code: string; expiresAt: number; scopes: readonly RemoteDeviceScope[] };
+
+function makePairing(
+  scopes: readonly RemoteDeviceScope[] = REMOTE_DEVICE_SCOPES,
+): PairingGrant {
   pairingFailuresByIp.clear();
-  return { code: randomCode(), expiresAt: Date.now() + PAIRING_TTL_MS };
+  return { code: randomCode(), expiresAt: Date.now() + PAIRING_TTL_MS, scopes: [...scopes] };
 }
 
 function invalidatePairing(): void {
   pairingFailuresByIp.clear();
-  pairing = { code: '', expiresAt: 0 };
+  pairing = { code: '', expiresAt: 0, scopes: [] };
 }
 
 /** Ms remaining on a pairing lockout (IP or proxied connection), or 0. */
@@ -299,7 +316,7 @@ function recordPairingFailure(key: string): void {
   pairingFailuresByIp.set(key, entry);
 }
 
-function pairingCode(): { code: string; expiresAt: number } {
+function pairingCode(): PairingGrant {
   if (pairing.code && pairing.expiresAt <= Date.now()) invalidatePairing();
   return pairing;
 }
@@ -379,6 +396,15 @@ function closeAllAuthenticatedClients(reason: string): void {
   }
 }
 
+// MOB-12 (início): escopo vivo do aparelho deste socket (lido do grant a cada
+// uso — a edição no desktop vale no próximo pedido/push). Pushes com dados de
+// pane (stream, atividade) conferem `read` aqui antes de enviar.
+function clientHasScope(ws: WebSocket, scope: RemoteDeviceScope): boolean {
+  const client = authenticatedClients.get(ws);
+  return client !== undefined && remoteDeviceTokenScopes(client.tokenId).includes(scope);
+}
+// MOB-12 (fim)
+
 // ---------------------------------------------------------------------------
 // pane.stream push — real-time terminal output for subscribed companions.
 // The thin client used to poll pane.read every 2.5 s while the binary stream
@@ -443,7 +469,8 @@ function ensureSessionDataTap(): void {
       if (!subscribers) return;
       // isClientAuthenticated may close/mutate the set — iterate a copy.
       for (const ws of [...subscribers]) {
-        if (!isClientAuthenticated(ws)) {
+        if (!isClientAuthenticated(ws) || !clientHasScope(ws, 'read')) {
+          // MOB-12: sem `read` (escopo editado no desktop) o push para.
           subscribers.delete(ws);
           continue;
         }
@@ -740,6 +767,8 @@ function remoteBridgeCanRespond(sessionId: string): boolean {
     ) {
       continue;
     }
+    // MOB-12: só aparelho com `approve` conta como respondente.
+    if (!remoteDeviceTokenScopes(client.tokenId).includes('approve')) continue;
     if (authorizePaneAccess(remoteCaller(client.scope), pane, 'write').allow) return true;
   }
   return false;
@@ -827,7 +856,17 @@ export async function handleAuthedMessage(
   // request/response contract unchanged.
   pushTarget?: WebSocket,
   confirmationSessionId = `remote:${scope.projectId}:${scope.checkoutId}`,
+  // MOB-12: escopos do aparelho (WS: lidos do grant a cada pedido). O relay do
+  // companion não tem grant por aparelho — o link tem o próprio gate de escrita.
+  deviceScopes: readonly RemoteDeviceScope[] = REMOTE_DEVICE_SCOPES,
 ) {
+  // MOB-12 (início): checagem central — tipo desconhecido é recusado (fail
+  // closed) e cada comando exige o escopo da tabela de device-scopes.ts,
+  // antes de qualquer diálogo, autorização de pane ou escrita.
+  const scopeDecision = authorizeRemoteDeviceRequest(msg.type, deviceScopes);
+  if (!scopeDecision.allowed) throw new Error(scopeDecision.error);
+  const canRead = deviceScopes.includes('read');
+  // MOB-12 (fim)
   // PRV-02: a política da aprovação depende do pane do pedido (grant) e do
   // risco do comando, então ela é aplicada lá dentro, antes do broker.
   if (msg.type === 'agentSession.respondToApproval') {
@@ -863,7 +902,7 @@ export async function handleAuthedMessage(
   }
   switch (msg.type) {
     case 'panes.list':
-      return listVisiblePaneSnapshots(remoteCaller(scope));
+      return canRead ? listVisiblePaneSnapshots(remoteCaller(scope)) : []; // MOB-12
     case 'pane.read': {
       const sessionId = sessionIdOf(msg.paneId, scope, 'read');
       const output = readSessionOutput(sessionId, Number(msg.lines) || 120);
@@ -997,17 +1036,22 @@ export async function handleAuthedMessage(
       return getProjectDomainStores(scope).missions.list();
     case 'ops.snapshot': {
       // Phone home: compact mission DTOs + panes (full detail stays on desktop).
-      const missions = getProjectDomainStores(scope).missions.list().map((m) => ({
-        id: m.id,
-        title: m.title,
-        status: m.status,
-        updatedAt: m.updatedAt,
-      }));
-      const panes = listVisiblePaneSnapshots(remoteCaller(scope));
+      // MOB-12: sem `read`, nada de missões nem panes; pedidos de aprovação
+      // só com `read` ou `approve`.
+      const missions = canRead
+        ? getProjectDomainStores(scope).missions.list().map((m) => ({
+            id: m.id,
+            title: m.title,
+            status: m.status,
+            updatedAt: m.updatedAt,
+          }))
+        : [];
+      const panes = canRead ? listVisiblePaneSnapshots(remoteCaller(scope)) : [];
       return {
         missions,
         panes,
-        approvals: remoteApprovalsFor(scope),
+        approvals:
+          canRead || deviceScopes.includes('approve') ? remoteApprovalsFor(scope) : [],
         summary: {
           missions: missions.length,
           panes: panes.length,
@@ -1167,6 +1211,7 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
           scope,
           identity.deviceId,
           identity.publicKey,
+          current.scopes, // MOB-12
         );
         authenticateClient(ws, issued.record, scope);
         clearTimeout(unauthTimer);
@@ -1252,6 +1297,7 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
         authenticated.scope,
         ws,
         `remote-device:${authenticated.tokenId}`,
+        remoteDeviceTokenScopes(authenticated.tokenId), // MOB-12
       );
       send(ws, { id: msg.id, ok: true, result });
     } catch (err) {
@@ -1277,7 +1323,7 @@ export async function startRemoteBridge(
   activeBridgeScope = Object.freeze({ ...scope });
   // Starting the bridge is the desktop user's explicit issuance/approval of
   // one pairing code. Expiry/consumption never auto-mints another code.
-  pairing = makePairing();
+  pairing = makePairing(req.scopes); // MOB-12
   const tls = await ensureTls();
   // Default seguro: só localhost. Expor na LAN (0.0.0.0/::) exige pedido
   // explícito do usuário — a bridge controla PTYs reais.
@@ -1325,11 +1371,29 @@ export function stopRemoteBridge(scope?: ProjectExecutionScope): RemoteBridgeInf
   return getRemoteBridgeInfo();
 }
 
-export function rotateRemotePairing(scope?: ProjectExecutionScope): RemoteBridgeInfo {
+export function rotateRemotePairing(
+  scope?: ProjectExecutionScope,
+  scopes?: readonly RemoteDeviceScope[], // MOB-12: ausente = todos
+): RemoteBridgeInfo {
   if (scope && activeBridgeScope) assertBridgeScope(scope);
-  pairing = makePairing();
+  pairing = makePairing(scopes);
   return getRemoteBridgeInfo(scope);
 }
+
+// MOB-12 (início): o operador edita os escopos de um aparelho pareado. Vale no
+// próximo pedido dele (o dispatch lê o grant a cada mensagem), sem reconectar.
+export function setRemoteDeviceScopes(
+  scope: ProjectExecutionScope,
+  deviceId: string,
+  scopes: readonly RemoteDeviceScope[],
+): RemoteBridgeInfo {
+  if (activeBridgeScope) assertBridgeScope(scope);
+  if (!setRemoteDeviceTokenScopes({ tokenId: deviceId, scope, scopes })) {
+    throw new Error('device not found');
+  }
+  return getRemoteBridgeInfo(scope);
+}
+// MOB-12 (fim)
 
 export function revokeRemoteTokens(scope?: ProjectExecutionScope): RemoteBridgeInfo {
   if (scope && activeBridgeScope) assertBridgeScope(scope);
@@ -1341,7 +1405,7 @@ export function revokeRemoteTokens(scope?: ProjectExecutionScope): RemoteBridgeI
 
 export type RemoteBridgeRedactedInfo = Omit<
   RemoteBridgeInfo,
-  'pairingCode' | 'pairingExpiresAt'
+  'pairingCode' | 'pairingExpiresAt' | 'pairingScopes' | 'devices'
 >;
 
 export function redactRemoteBridgeSecrets(
@@ -1350,6 +1414,9 @@ export function redactRemoteBridgeSecrets(
   const {
     pairingCode: _pairingCode,
     pairingExpiresAt: _pairingExpiresAt,
+    // MOB-12: um aparelho não enumera os outros nem o que o código concede.
+    pairingScopes: _pairingScopes,
+    devices: _devices,
     ...safeInfo
   } = info;
   return safeInfo;
@@ -1386,6 +1453,17 @@ export function getRemoteBridgeInfo(
     endpoints,
     pairingCode: pairingAvailable ? current.code : undefined,
     pairingExpiresAt: pairingAvailable ? current.expiresAt : undefined,
+    // MOB-12 (início)
+    pairingScopes: pairingAvailable ? [...current.scopes] : undefined,
+    devices: listRemoteDeviceTokens(tokenScope ?? undefined).map((token) => ({
+      id: token.id,
+      keyFingerprint: token.deviceKeyFingerprint,
+      pairedAt: token.createdAt,
+      expiresAt: token.expiresAt,
+      scopes: [...token.scopes],
+      connected: [...authenticatedClients.values()].some((client) => client.tokenId === token.id),
+    })),
+    // MOB-12 (fim)
     tokenCount: countRemoteDeviceTokens(tokenScope ?? undefined),
     clientCount: clients.size,
     certFingerprint: tlsRecord?.fingerprint,
