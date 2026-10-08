@@ -57,9 +57,12 @@ describe('F-958 — catálogo vivo da CLI manda no roteamento', () => {
     expect(decision.alternatives.some((c) => c.model === 'gemini-4-argon')).toBe(false);
   });
 
-  it('com a CLI anunciando o Argon, a 1ª linha do hard volta a valer', () => {
-    const decision = routed([agy({ liveModels: AGY_BUNDLED })]);
-    expect(`${decision.adapterId}:${decision.model}`).toBe('agy:gemini-4-argon');
+  it('com a CLI anunciando o Argon, o assento da lane de julgamento volta a valer', () => {
+    // F-964: a tabela do hard não carrega mais o Argon (o AGY 1.3.1 não o
+    // lista); a lane de julgamento o usa quando a listagem viva o prova.
+    const decision = routeTask('Revisão cruzada crítica do diff de autenticação',
+      [agy({ liveModels: AGY_BUNDLED })], DEFAULT_ROUTING_TABLE, 'hard', false, undefined, ctx());
+    expect(`${decision!.adapterId}:${decision!.model}`).toBe('agy:gemini-4-argon');
   });
 
   it('listagem viva sem nenhum id conhecido é parse quebrado: vale o bundled (menos o Argon)', () => {
@@ -74,8 +77,43 @@ describe('F-958 — catálogo vivo da CLI manda no roteamento', () => {
     expect(all).not.toContain('agy:gemini-3.8-flash-high');
   });
 
-  it('adapter fora da lista autoritativa mantém a união bundled ∪ descoberta', () => {
-    const kimiLive = withLiveRouteCatalog({ ...kimi, liveModels: ['kimi-code/kimi-for-coding'] });
-    expect(kimiLive.models).toEqual(['kimi-code/k3']);
+  it('CLI sem listagem (bundled, ex.: Claude) mantém o contrato do adapter', () => {
+    const claude: AdapterAvailability = { id: 'claude', installed: true, models: ['claude-sonnet-5-5', 'claude-opus-5-5'] };
+    expect(withLiveRouteCatalog({ ...claude, liveModels: ['claude-sonnet-5-5'] }).models).toEqual(claude.models);
+    expect(withLiveRouteCatalog({ ...claude, liveModels: ['claude-sonnet-5-5'], liveModelsAuthoritative: true }).models)
+      .toEqual(claude.models);
+  });
+});
+
+describe('F-964 — prova viva em TODAS as lanes, para toda CLI que lista', () => {
+  it('generaliza o F-958: Kimi com listagem só roteia o que ela anuncia', () => {
+    const kimiLive = withLiveRouteCatalog({
+      ...kimi,
+      models: ['kimi-code/k3', 'kimi-code/kimi-for-coding'],
+      liveModels: ['kimi-code/kimi-for-coding'],
+    });
+    expect(kimiLive.models).toEqual(['kimi-code/kimi-for-coding']);
+  });
+
+  it('listagem autoritativa vazia tira a CLI da rota (nunca "sem lista = confia")', () => {
+    const empty = withLiveRouteCatalog(agy({ liveModels: [], liveModelsAuthoritative: true }));
+    expect(empty.installed).toBe(false);
+    expect(empty.unavailableReason).toMatch(/não anuncia/);
+    const decision = routed([agy({ liveModels: [], liveModelsAuthoritative: true }), kimi]);
+    expect([decision, ...decision.alternatives].every((c) => c.adapterId !== 'agy')).toBe(true);
+  });
+
+  it('id custom/catálogo sem prova não entra em nenhuma lane nem pela menção no texto', () => {
+    const offered = agy({
+      models: [...AGY_LIVE, 'gemini-4-argon', 'gemini-custom-x'],
+      liveModels: AGY_LIVE,
+      liveModelsAuthoritative: true,
+    });
+    for (const task of [TASK, 'Revisão cruzada crítica do diff', 'use o gemini-custom-x nesta tarefa']) {
+      const decision = routeTask(task, [offered, kimi], DEFAULT_ROUTING_TABLE, 'hard', false, undefined, ctx());
+      const all = decision ? [decision, ...decision.alternatives].map((c) => `${c.adapterId}:${c.model}`) : [];
+      expect(all).not.toContain('agy:gemini-4-argon');
+      expect(all).not.toContain('agy:gemini-custom-x');
+    }
   });
 });

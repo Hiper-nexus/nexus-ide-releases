@@ -55,6 +55,7 @@ import {
 } from './route-pipeline';
 import { modelAccessQuarantine } from './model-access-quarantine';
 import { isAstraModel, routingPurpose } from './routing-cost-policy';
+import { modelListAuthority, resolveOfferedModels } from '../adapters/model-availability';
 
 export type TaskTier = 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
 
@@ -265,9 +266,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // (74,1 × 75,2).
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
-    // Gemini 4 Argon (Google, 30/09): geração nova entra sempre; só roda se
-    // a conta tiver acesso (Fairwind→Ultra→API) — sem acesso, quarentena.
-    { adapterId: 'agy', model: 'gemini-4-argon', effort: 'high' },
+    // F-964: o Gemini 4 Argon saiu da tabela — o `agy models` do AGY 1.3.1
+    // não o lista (tabela velha = pane morto com "not recognized"). Ele segue
+    // como assento da lane de julgamento, que só entra com a prova viva.
     { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'high' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'high' },
@@ -695,6 +696,12 @@ export interface AdapterAvailability {
    * assentos da lane de julgamento que a exigem (Argon). Ausente = sem prova.
    */
   liveModels?: readonly string[];
+  /**
+   * F-964 (PRV-01): `liveModels` é a listagem autoritativa da CLI (viva, a
+   * última boa ou o cache oficial) — mesmo vazia. Toda lane automática só
+   * escolhe id que está nela; ausente = sem listagem, vale o contrato bundled.
+   */
+  liveModelsAuthoritative?: boolean;
   /** Live native capabilities; [] = no effort control, absent = bundled contract. */
   efforts?: readonly string[];
   /**
@@ -728,40 +735,45 @@ const BUNDLED_MODELS = new Map(BUILTIN_ADAPTERS.map((raw) => {
 }));
 
 /**
- * F-958 (regra do operador: catálogo atual, nunca tabela velha): CLIs cuja
- * listagem viva é a fonte de verdade dos ids aceitos. Em 07/10 o AGY 1.3.0
- * já não reconhecia `gemini-4-argon` (bundled e 1ª linha do hard) e o pane
- * morreu em 3,8 s com "is not recognized as a known model".
- */
-const LIVE_CATALOG_AUTHORITATIVE_ADAPTERS: ReadonlySet<string> = new Set(['agy']);
-
-/**
- * Modelos roteáveis do adapter segundo o que a CLI instalada anunciou:
- *  - CLI autoritativa com listagem viva → só os ids que ela listou. Listagem
- *    que não contém NENHUM id conhecido do bundled é parse quebrado, não
- *    catálogo: aí vale o contrato bundled (não some a CLI inteira);
- *  - assento de acesso restrito (Argon, F-817) só com a prova da sonda viva,
- *    agora em TODO o roteamento, não só na lane de julgamento.
+ * Modelos roteáveis do adapter segundo o que a CLI instalada anunciou.
+ * F-958 valia só para o AGY; o F-964 (PRV-01) generaliza para toda CLI que
+ * sabe listar (`modelListAuthority` live | version-cache — agy, codex, kimi,
+ * opencode, cursor-agent, mimo, qoder, prime-agent, omp, grok):
+ *  - listagem autoritativa (`liveModelsAuthoritative`) → só os ids dela, em
+ *    TODA lane (tabela, avaliação, lanes de topo, menção no texto). Listagem
+ *    vazia tira a CLI da rota automática (nunca "sem lista = confia");
+ *  - sem a marca, `liveModels` não vazia que contém algum id conhecido do
+ *    bundled também manda; sem nenhum id conhecido é parse quebrado, não
+ *    catálogo, e vale o contrato bundled (não some a CLI inteira);
+ *  - assento de acesso restrito (Argon, F-817) só com a prova da sonda viva.
+ * CLI sem listagem (`bundled`, ex.: Claude) segue o contrato do adapter.
  */
 export function withLiveRouteCatalog(adapter: AdapterAvailability): AdapterAvailability {
   const live = adapter.liveModels ?? [];
+  if (!adapter.models || adapter.models.length === 0) return adapter;
   let models = adapter.models;
-  if (
-    models &&
-    LIVE_CATALOG_AUTHORITATIVE_ADAPTERS.has(adapter.id) &&
-    live.length > 0 &&
-    live.some((model) => (BUNDLED_MODELS.get(adapter.id) ?? []).includes(model))
-  ) {
-    models = models.filter((model) => live.includes(model));
+  const authority = modelListAuthority(adapter.id);
+  if (authority !== 'bundled') {
+    if (adapter.liveModelsAuthoritative) {
+      models = models.filter((model) => live.includes(model));
+    } else if (live.length > 0) {
+      const offer = resolveOfferedModels({
+        authority,
+        staticIds: BUNDLED_MODELS.get(adapter.id) ?? adapter.models,
+        live: { status: 'ok', models: live },
+      });
+      if (offer.source === 'live') models = models.filter((model) => offer.routable.includes(model));
+    }
   }
-  if (models) {
-    models = models.filter(
-      (model) => !judgeSeatNeedsAccessProof({ adapterId: adapter.id, model }) || live.includes(model),
-    );
-  }
-  return models && adapter.models && models.length !== adapter.models.length
-    ? { ...adapter, models }
-    : adapter;
+  models = models.filter(
+    (model) => !judgeSeatNeedsAccessProof({ adapterId: adapter.id, model }) || live.includes(model),
+  );
+  if (models.length === adapter.models.length) return adapter;
+  // Lista vazia no roteador significa "sem lista, confia na tabela" — a CLI
+  // cuja listagem não prova NENHUM modelo sai da rota automática.
+  return models.length === 0
+    ? { ...adapter, models, installed: false, unavailableReason: 'a CLI não anuncia nenhum dos modelos oferecidos' }
+    : { ...adapter, models };
 }
 
 function effortForTier(tier: TaskTier): RouteEffort {
@@ -1392,14 +1404,16 @@ export function routeTask(
     contextRequirement !== null
       ? `; exige contexto ≥ ${contextRequirement.toLocaleString('en-US')} tokens — excluídos os com maxContext documentado menor`
       : '';
+  // F-964: a prova viva vale para TODA lane — inclusive a menção no texto.
+  const provenAdapters = routedAdapters.map((a) => (a.installed ? withLiveRouteCatalog(a) : a));
   const available = new Map(
-    routedAdapters.filter((a) => a.installed).map((a) => [a.id, withLiveRouteCatalog(a)]),
+    provenAdapters.filter((a) => a.installed).map((a) => [a.id, a]),
   );
   if (available.size === 0) return null;
 
   const classification = classifyTask(taskText);
   const tier = tierOverride ?? classification.tier;
-  const mention = mentionedRoute(taskText, routedAdapters);
+  const mention = mentionedRoute(taskText, provenAdapters);
   const requestedEffort = mention.effort ?? context.effortOverride ?? effortForTier(tier);
   const effortFor = (adapterId: string) => nativeRouteEffort(requestedEffort, available.get(adapterId)!);
   const effortNoteFor = (adapterId: string) =>

@@ -4,7 +4,9 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __resetPathResolverForTests, resolveCliBinary, resolveSpawnBinary } from '../path-resolver';
 import {
+  discoveredModelStateFor,
   discoveredModelsFor,
+  onDiscoveredModelsChanged,
   MODEL_DISCOVERY_CAP,
   MODEL_DISCOVERY_INVENTORY,
   MODEL_DISCOVERY_POLL_MS,
@@ -24,6 +26,7 @@ import {
   supportsModelDiscovery,
   usesCliExecForModelDiscovery,
 } from './model-discovery';
+import { modelListAuthority } from './model-availability';
 
 vi.mock('../path-resolver', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../path-resolver')>();
@@ -63,6 +66,7 @@ describe('model discovery', () => {
       .sort();
     expect(live).toEqual([
       'agy',
+      'codex',
       'cursor-agent',
       'kimi',
       'mimo-code',
@@ -74,9 +78,14 @@ describe('model discovery', () => {
     for (const id of live) {
       expect(supportsModelDiscovery(id)).toBe(true);
       expect(usesCliExecForModelDiscovery(id)).toBe(true);
+      // F-964: toda CLI que lista é autoridade da própria oferta.
+      expect(modelListAuthority(id)).toBe('live');
+    }
+    expect(modelListAuthority('grok')).toBe('version-cache');
+    for (const [id, entry] of Object.entries(MODEL_DISCOVERY_INVENTORY)) {
+      if (entry.kind !== 'cli' && id !== 'grok') expect(modelListAuthority(id)).toBe('bundled');
     }
     expect(supportsModelDiscovery('claude')).toBe(false);
-    expect(supportsModelDiscovery('codex')).toBe(false);
     expect(supportsModelDiscovery('glm')).toBe(false);
     expect(supportsModelDiscovery('glm-flash')).toBe(false);
     expect(supportsModelDiscovery('aider')).toBe(false);
@@ -86,7 +95,8 @@ describe('model discovery', () => {
 
   it('documents honest fallbacks instead of pretending discovery', () => {
     expect(MODEL_DISCOVERY_INVENTORY.claude.kind).toBe('cache');
-    expect(MODEL_DISCOVERY_INVENTORY.codex.kind).toBe('cache');
+    // F-964 (PRV-03): o Codex lista pelo `model/list` do app-server.
+    expect(MODEL_DISCOVERY_INVENTORY.codex).toEqual({ kind: 'cli', command: 'codex app-server (model/list)' });
     expect(MODEL_DISCOVERY_INVENTORY.grok.kind).toBe('cache');
     expect(MODEL_DISCOVERY_INVENTORY.grok.reason).toMatch(/models_cache/);
     expect(MODEL_DISCOVERY_INVENTORY.aider.kind).toBe('bundled');
@@ -291,5 +301,59 @@ describe('Grok model cache (never spawn `grok models`)', () => {
     await refreshDiscoveredModels('grok', { force: true, cacheFiles: [missing] });
     expect(discoveredModelsFor('grok')).toEqual([]);
     expect(usesCliExecForModelDiscovery('grok')).toBe(false);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('F-964 — última listagem boa (agy falso, nenhuma CLI de IA real)', () => {
+  const AGY_1_3_1 = fs.readFileSync(path.join(__dirname, '__fixtures__', 'agy-models-1.3.1.stdout.txt'), 'utf8');
+
+  afterEach(async () => {
+    const resolver = await vi.importActual<typeof import('../path-resolver')>('../path-resolver');
+    vi.mocked(resolveCliBinary).mockImplementation(resolver.resolveCliBinary);
+    resetModelDiscoveryForTests();
+  });
+
+  function fakeAgy(): { setMode: (mode: 'ok' | 'fail' | 'empty') => void } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-agy-fake-'));
+    const fixture = path.join(dir, 'models.txt');
+    const modeFile = path.join(dir, 'mode');
+    const script = path.join(dir, 'agy');
+    fs.writeFileSync(fixture, AGY_1_3_1);
+    fs.writeFileSync(script, [
+      '#!/bin/sh',
+      `case "$(cat '${modeFile}')" in`,
+      `  ok) cat '${fixture}'; echo 'Fetching available models...' >&2 ;;`,
+      "  fail) echo 'not signed in' >&2; exit 1 ;;",
+      '  empty) exit 0 ;;',
+      'esac',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    vi.mocked(resolveCliBinary).mockImplementation((command) =>
+      command === 'agy' ? ({ binPath: script } as ReturnType<typeof resolveCliBinary>) : null);
+    return { setMode: (mode) => fs.writeFileSync(modeFile, mode) };
+  }
+
+  it('falha mantém a última boa; listagem vazia com sucesso limpa; cada mudança avisa', async () => {
+    const agy = fakeAgy();
+    const changes: string[] = [];
+    onDiscoveredModelsChanged((id) => changes.push(id));
+    const listed = parseAgyModelsOutput(AGY_1_3_1);
+
+    expect(discoveredModelStateFor('agy')).toEqual({ status: 'absent', models: [] });
+    agy.setMode('ok');
+    await refreshDiscoveredModels('agy', { force: true });
+    expect(discoveredModelStateFor('agy')).toEqual({ status: 'ok', models: listed, lastGood: listed });
+
+    agy.setMode('fail');
+    await refreshDiscoveredModels('agy', { force: true });
+    expect(discoveredModelStateFor('agy')).toEqual({ status: 'failed', models: listed, lastGood: listed });
+    // Duas falhas seguidas não apagam a última boa.
+    await refreshDiscoveredModels('agy', { force: true });
+    expect(discoveredModelStateFor('agy').lastGood).toEqual(listed);
+
+    agy.setMode('empty');
+    await refreshDiscoveredModels('agy', { force: true });
+    expect(discoveredModelStateFor('agy')).toEqual({ status: 'ok', models: [], lastGood: [] });
+    expect(changes).toEqual(['agy', 'agy', 'agy']);
   });
 });

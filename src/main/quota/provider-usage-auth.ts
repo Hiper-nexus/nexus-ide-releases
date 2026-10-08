@@ -16,7 +16,8 @@ import {
   setSecret,
 } from '../persistence/secrets-store';
 import { loadLauncherProviderKey } from '../adapters/launcher-provider-manager';
-import { fileSubscriptionAuthEnv, getAccount } from '../persistence/account-store';
+import { fileSubscriptionAuthEnv, getAccount, getActiveAccount } from '../persistence/account-store';
+import { recordDiscoveredModelListing } from '../adapters/model-discovery';
 import {
   parseCodexAuthJson,
   type CodexChatGptAuth,
@@ -213,6 +214,13 @@ export async function fetchCodexAccountUsage(accountId: string): Promise<LivePro
   const expectedAuthBlob = safeGetSecret(CRED_PREFIX + accountId);
   if (!env?.CODEX_HOME || !expectedAuthBlob) return { windows: null, hint: 'no-credential' };
   const probe = await probeCodexCliUsage({ authFile: path.join(env.CODEX_HOME, 'auth.json'), expectedAuthBlob });
+  // F-964 (PRV-03): o `model/list` veio no mesmo processo da cota. A conta
+  // ativa é a que os panes sem conta fixada usam — a lista dela vira a oferta.
+  if (probe.models && getActiveAccount('codex')?.id === accountId) {
+    recordDiscoveredModelListing('codex', probe.models.ids, {
+      ...(probe.models.defaultModel ? { defaultModel: probe.models.defaultModel } : {}),
+    });
+  }
   return { windows: probe.windows, ...(probe.failure ? { hint: probe.failure } : {}) };
 }
 

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   hasManagedClaudeAuth: vi.fn(() => false),
   readManagedClaudeAuthAsync: vi.fn(async () => null as string | null),
   fileSubscriptionAuthEnv: vi.fn(),
+  getActiveAccount: vi.fn(),
   codexCliUsage: vi.fn(),
   verifiedNativeClaudeToken: vi.fn(async () => null as string | null),
   probeClaudeCredentialIdentity: vi.fn<() => Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'>>(async () => 'match'),
@@ -29,6 +30,7 @@ vi.mock('../persistence/secrets-store', () => ({
 
 vi.mock('../persistence/account-store', () => ({
   getAccount: mocks.getAccount,
+  getActiveAccount: mocks.getActiveAccount,
   fileSubscriptionAuthEnv: mocks.fileSubscriptionAuthEnv,
   // Regression sentinel: the former quota path called this account-store
   // helper, which can synchronously read/synchronise the native Keychain and
@@ -57,6 +59,7 @@ import {
   resolveKimiOauthCreds, resolveGeminiOauthCreds, persistKimiRotatedCreds,
   parseGeminiOauthBlob,
 } from './provider-usage-auth';
+import { discoveredModelStateFor, resetModelDiscoveryForTests } from '../adapters/model-discovery';
 
 const tempHomes: string[] = [];
 
@@ -180,6 +183,25 @@ describe('multi-account credential scoping', () => {
     expect((await fetchCodexAccountUsage('acct-a')).hint).toBe('no-credential');
     mocks.getAccount.mockReturnValue({ adapterId: 'codex', mode: 'api-key' });
     expect((await fetchCodexAccountUsage('acct-a')).hint).toBe('no-credential');
+  });
+  it('F-964 (PRV-03): a listagem do model/list da conta ATIVA vira a oferta do Codex; a de outra conta não', async () => {
+    resetModelDiscoveryForTests();
+    mocks.getAccount.mockReturnValue({ id: 'acct-a', adapterId: 'codex', mode: 'subscription' });
+    mocks.getSecret.mockReturnValue('{"tokens":{"account_id":"a","access_token":"fixture"}}');
+    mocks.fileSubscriptionAuthEnv.mockReturnValue({ CODEX_HOME: '/managed/codex/acct-a/home' });
+    mocks.codexCliUsage.mockResolvedValue({
+      windows: [{ kind: 'weekly', label: 'Semanal', usedRatio: 0.1, source: 'provider-api', confidence: 'high' }],
+      models: { ids: ['x-sol', 'x-luna'], defaultModel: 'x-sol', effortsByModel: {}, hidden: [], upgrades: {} },
+    });
+    mocks.getActiveAccount.mockReturnValue({ id: 'acct-b' });
+    await fetchCodexAccountUsage('acct-a');
+    expect(discoveredModelStateFor('codex').status).toBe('absent');
+    mocks.getActiveAccount.mockReturnValue({ id: 'acct-a' });
+    await fetchCodexAccountUsage('acct-a');
+    expect(discoveredModelStateFor('codex')).toEqual({
+      status: 'ok', models: ['x-sol', 'x-luna'], lastGood: ['x-sol', 'x-luna'], defaultModel: 'x-sol',
+    });
+    resetModelDiscoveryForTests();
   });
   function writeAuth(home: string, relative: string, blob: string): void {
     const file = path.join(home, relative);

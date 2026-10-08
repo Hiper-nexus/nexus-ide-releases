@@ -85,6 +85,7 @@ import { adapterCircuitBreakers, DEFAULT_CIRCUIT_CONFIG } from './circuit-breake
 import { workerMortalityCount } from './worker-mortality';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
 import { discoveredModelsFor } from '../adapters/model-discovery';
+import { currentModelOffer } from '../adapters/model-offer';
 import {
   firstWaveCanSeat,
   peekKimiSeatReadiness,
@@ -1890,6 +1891,11 @@ export async function routeTaskForCaller(
         }
         return undefined;
       })();
+      // F-964 (PRV-01): CLI que sabe listar entra na rota com a listagem
+      // autoritativa (viva, última boa ou cache oficial) — toda lane só
+      // escolhe id provado; custom do operador e ids do catálogo não entram.
+      const offer = cliAdapter ? currentModelOffer(cliAdapter) : null;
+      const provenListing = offer !== null && offer.authority !== 'bundled' && offer.source !== 'bundled';
       return {
         id: a.adapterId,
         installed: unavailableReason === undefined,
@@ -1898,9 +1904,10 @@ export async function routeTaskForCaller(
         // F-817: o que a PRÓPRIA CLI anunciou (`agy models`, cache vivo do
         // Main — leitura de Map, sem I/O) e passou pela auth. É a prova de
         // acesso do assento restrito da lane de julgamento (Argon).
-        liveModels: discoveredModelsFor(a.adapterId).filter((model) =>
+        liveModels: (provenListing ? offer.routable : discoveredModelsFor(a.adapterId)).filter((model) =>
           models.includes(model),
         ),
+        ...(provenListing ? { liveModelsAuthoritative: true } : {}),
         efforts: a.efforts,
         // F-724: o provedor escolhido serve alguns ids com outro modelo.
         ...(a.modelAliases ? { modelAliases: a.modelAliases } : {}),

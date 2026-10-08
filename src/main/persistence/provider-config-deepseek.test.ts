@@ -89,6 +89,7 @@ vi.mock('../adapters/custom-models', () => ({
 
 vi.mock('../adapters/model-discovery', () => ({
   discoveredModelsFor: () => [],
+  discoveredModelStateFor: () => ({ status: 'absent', models: [] }),
   refreshAllDiscoveredModels: vi.fn(),
 }));
 

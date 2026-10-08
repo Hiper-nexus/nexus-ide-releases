@@ -403,7 +403,8 @@ vi.mock('../adapters/launcher-provider-manager', () => ({
   upstreamAllowedForAdapter: () => true,
 }));
 
-vi.mock('../adapters/model-catalog', () => ({
+vi.mock('../adapters/model-catalog', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../adapters/model-catalog')>()),
   loadModelCatalog: () => [],
   modelInfoForAdapter: () => [],
 }));

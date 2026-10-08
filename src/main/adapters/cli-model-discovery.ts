@@ -9,6 +9,7 @@ import { parseKimiConfigModelAliases } from './kimi-runtime-env';
 import { readQwenSettingsSummary, readQwenSettingsSummaryAsync } from './qwen-settings';
 import { cachedCliBinaryVersion, resolveCliBinary } from '../path-resolver';
 import { compareAppVersions, isValidAppVersion } from '../../shared/app-version';
+import { modelListAuthority } from './model-availability';
 
 export interface CliModelCacheReadOptions {
   /** Version of the resolved binary, never a synchronous CLI probe. */
@@ -291,10 +292,16 @@ export function applyDiscoveredEffortsToAdapter(
   };
 }
 
+/**
+ * Cache oficial ∪ lista do adapter — só para CLI SEM listagem (`bundled`).
+ * F-964: CLI que sabe listar não ganha união; a oferta dela sai do
+ * resolvedor (model-availability.ts), que usa este cache como fallback.
+ */
 export function applyDiscoveredModelsToAdapter(
   adapter: Adapter,
   discovered: ReadonlyMap<string, readonly string[]>,
 ): Adapter {
+  if (modelListAuthority(adapter.id) !== 'bundled') return adapter;
   const live = discovered.get(adapter.id) ?? [];
   if (live.length === 0) return adapter;
   const list = [...new Set([...adapter.models.list, ...live])];

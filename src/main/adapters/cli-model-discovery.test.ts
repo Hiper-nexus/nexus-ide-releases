@@ -126,16 +126,23 @@ describe('CLI model discovery', () => {
     expect(readCliModelCache(file)).toEqual(['grok-4.5']);
   });
 
-  it('adds live models without deleting configured models', () => {
+  it('adds live models without deleting configured models (CLI sem listagem)', () => {
     const adapter = {
-      id: 'codex',
-      models: { default: 'gpt-old', list: ['gpt-old'] },
+      id: 'claude',
+      models: { default: 'claude-old', list: ['claude-old'] },
     } as Adapter;
     const next = applyDiscoveredModelsToAdapter(
       adapter,
-      new Map([['codex', ['gpt-old', 'gpt-new']]]),
+      new Map([['claude', ['claude-old', 'claude-new']]]),
     );
-    expect(next.models.list).toEqual(['gpt-old', 'gpt-new']);
+    expect(next.models.list).toEqual(['claude-old', 'claude-new']);
+  });
+
+  it('F-964: CLI que lista não ganha união — a oferta sai do resolvedor', () => {
+    for (const id of ['codex', 'agy', 'grok']) {
+      const adapter = { id, models: { default: 'x-old', list: ['x-old', 'x-ghost'] } } as Adapter;
+      expect(applyDiscoveredModelsToAdapter(adapter, new Map([[id, ['x-old', 'x-new']]]))).toBe(adapter);
+    }
   });
 
   it('discovers every reasoning effort advertised by the CLI', () => {

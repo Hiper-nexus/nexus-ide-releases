@@ -1,16 +1,17 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { identityFromAuthBlob } from '../adapters/managed-credentials';
 import { authBlobIsFreshForSpawn, waitForRotatingAuthSpawnGate } from '../adapters/managed-auth-spawn-gate';
+import { CodexRpcError, withCodexAppServer } from '../adapters/codex-app-server-rpc';
+import { requestAllCodexModels, type CodexModelListing } from '../adapters/codex-model-list';
 import { resolveCliBinary } from '../path-resolver';
 import { parseCodexWhamUsage } from './codex-usage';
 
 const CLI_TIMEOUT_MS = 8_000;
-const MAX_OUTPUT_BYTES = 256 * 1024;
+/** Folga do `model/list` depois que a cota respondeu (PRV-03). */
+const MODEL_LIST_GRACE_MS = 1_500;
 const rateWindow = z.object({
   usedPercent: z.number().finite(),
   windowDurationMins: z.number().finite().nullable().optional(),
@@ -23,7 +24,6 @@ const rateLimits = z.object({
     secondary: rateWindow.nullable().optional(),
   }),
 });
-const rpcResponse = z.object({ id: z.number(), result: z.unknown().optional(), error: z.unknown().optional() });
 const chatgptAccount = z.object({ account: z.object({ type: z.literal('chatgpt') }) });
 const expiredAccount = z.object({ account: z.null(), requiresOpenaiAuth: z.literal(true) });
 
@@ -63,11 +63,17 @@ interface CodexCliUsageOptions {
 export interface CodexCliUsageProbe {
   windows: QuotaWindow[] | null;
   failure?: 'auth-expired' | 'unavailable' | 'cli-missing';
+  /**
+   * F-964 (PRV-03): `model/list` do MESMO processo do app-server (um spawn
+   * por conta e por ciclo). Ausente = a listagem falhou; a cota não depende dela.
+   */
+  models?: CodexModelListing;
 }
 
 interface CliRpcResult {
   body?: unknown;
   failure?: CodexCliUsageProbe['failure'];
+  models?: CodexModelListing;
 }
 
 const UNAVAILABLE: CodexCliUsageProbe = { windows: null, failure: 'unavailable' };
@@ -94,86 +100,48 @@ export async function probeCodexCliUsage(options: CodexCliUsageOptions): Promise
     const parsed = rateLimits.safeParse(result.body);
     if (!parsed.success || (parsed.data.accountId && parsed.data.accountId !== subject)) return UNAVAILABLE;
     const windows = parseCodexCliRateLimits(parsed.data, now);
-    return windows.length ? { windows } : UNAVAILABLE;
+    const models = result.models ? { models: result.models } : {};
+    return windows.length ? { windows, ...models } : { ...UNAVAILABLE, ...models };
   } catch {
     // Provider/CLI failures stay unknown. Never log auth or RPC payloads.
     return UNAVAILABLE;
   }
 }
 
-function accountRpcReader(
-  send: (method: string, params?: unknown, id?: number) => void,
-  finish: (value?: CliRpcResult) => void,
-  refreshToken: boolean,
-): (line: string) => void {
-  let expectedId = 1;
-  return (line) => {
-    let data: unknown;
-    try { data = JSON.parse(line); } catch { finish(); return; }
-    const parsed = rpcResponse.safeParse(data);
-    if (!parsed.success || parsed.data.id !== expectedId) return;
-    if (parsed.data.error !== undefined) {
-      const error = z.object({ message: z.string() }).safeParse(parsed.data.error);
-      const expired = error.success && /\b401\b|token_revoked|refresh_token_(?:reused|expired|invalidated)|invalid_grant/i.test(error.data.message);
-      finish({ failure: expired ? 'auth-expired' : 'unavailable' });
-      return;
-    }
-    if (expectedId === 3) { finish({ body: parsed.data.result }); return; }
-    if (expectedId === 1) {
-      expectedId = 2;
-      send('initialized');
-      send('account/read', { refreshToken }, expectedId);
-      return;
-    }
-    if (!chatgptAccount.safeParse(parsed.data.result).success) {
-      finish({ failure: expiredAccount.safeParse(parsed.data.result).success ? 'auth-expired' : 'unavailable' });
-      return;
-    }
-    expectedId = 3;
-    send('account/rateLimits/read', { excludeResetCreditDetails: true }, expectedId);
-  };
+const EXPIRED_LOGIN = /\b401\b|token_revoked|refresh_token_(?:reused|expired|invalidated)|invalid_grant/i;
+
+function rpcFailure(error: unknown): CodexCliUsageProbe['failure'] {
+  return error instanceof CodexRpcError && error.kind === 'rpc' && EXPIRED_LOGIN.test(error.message)
+    ? 'auth-expired'
+    : 'unavailable';
 }
 
-function readCliRateLimits(binary: string, options: CodexCliUsageOptions, refreshToken: boolean): Promise<CliRpcResult> {
-  return new Promise((resolve) => {
-    const env: NodeJS.ProcessEnv = { ...process.env, CODEX_HOME: path.dirname(options.authFile) };
-    delete env.OPENAI_API_KEY;
-    delete env.CODEX_API_KEY;
-    const child = spawn(binary, ['app-server', '-c', 'cli_auth_credentials_store="file"',
-      '-c', 'analytics.enabled=false', '-c', 'otel.exporter="none"'], {
-      cwd: os.tmpdir(), env, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
-    });
-    let settled = false;
-    let output = '';
-    let bytes = 0;
-    const finish = (value: CliRpcResult = { failure: 'unavailable' }): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      child.kill('SIGKILL');
-      resolve(value);
-    };
-    const timer = setTimeout(() => finish(), options.timeoutMs ?? CLI_TIMEOUT_MS);
-    const send = (method: string, params?: unknown, id?: number): void => {
-      if (settled) return;
-      child.stdin.write(`${JSON.stringify({ method, ...(params === undefined ? {} : { params }), ...(id ? { id } : {}) })}\n`);
-    };
-    const onLine = accountRpcReader(send, finish, refreshToken);
-    child.on('error', () => finish());
-    child.on('close', () => finish());
-    child.stdin.on('error', () => finish());
-    child.stdout.on('error', () => finish());
-    child.stdout.on('data', (chunk: Buffer) => {
-      bytes += chunk.length;
-      if (bytes > MAX_OUTPUT_BYTES) { finish(); return; }
-      output += chunk.toString('utf8');
-      let newline: number;
-      while (!settled && (newline = output.indexOf('\n')) >= 0) {
-        const line = output.slice(0, newline);
-        output = output.slice(newline + 1);
-        if (line.trim()) onLine(line);
-      }
-    });
-    send('initialize', { clientInfo: { name: 'nexus_quota', version: '1.0' }, capabilities: null }, 1);
-  });
+/**
+ * initialize → account/read → (rateLimits/read ∥ model/list) num processo só.
+ * A listagem de modelos é enriquecimento: falha dela nunca custa a cota.
+ */
+async function readCliRateLimits(binary: string, options: CodexCliUsageOptions, refreshToken: boolean): Promise<CliRpcResult> {
+  try {
+    return await withCodexAppServer(
+      { binary, codexHome: path.dirname(options.authFile), timeoutMs: options.timeoutMs ?? CLI_TIMEOUT_MS },
+      async (rpc): Promise<CliRpcResult> => {
+        const account = await rpc.request('account/read', { refreshToken });
+        if (!chatgptAccount.safeParse(account).success) {
+          return { failure: expiredAccount.safeParse(account).success ? 'auth-expired' : 'unavailable' };
+        }
+        const body = rpc.request('account/rateLimits/read', { excludeResetCreditDetails: true });
+        const listing = requestAllCodexModels(rpc).catch(() => undefined);
+        const usage = await body;
+        // A cota já chegou: a listagem ganha só uma folga curta, nunca o prazo todo.
+        let grace: ReturnType<typeof setTimeout> | undefined;
+        const models = await Promise.race([
+          listing,
+          new Promise<undefined>((resolve) => { grace = setTimeout(() => resolve(undefined), MODEL_LIST_GRACE_MS); }),
+        ]).finally(() => clearTimeout(grace));
+        return { body: usage, ...(models ? { models } : {}) };
+      },
+    );
+  } catch (error) {
+    return { failure: rpcFailure(error) };
+  }
 }
