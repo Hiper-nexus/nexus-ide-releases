@@ -14,29 +14,29 @@
 
 import path from 'node:path';
 
-const RAW_METHODS = {
-  ipcMain: new Set([
-    'handle',
-    'handleOnce',
-    'on',
-    'once',
-    'addListener',
-    'prependListener',
-    'prependOnceListener',
-  ]),
-  ipcRenderer: new Set([
-    'invoke',
-    'send',
-    'sendSync',
-    'sendToHost',
-    'postMessage',
-    'on',
-    'once',
-    'addListener',
-    'prependListener',
-    'prependOnceListener',
-  ]),
-};
+// Map, não objeto: `Object.prototype.hasOwnProperty.call(...)` chegava aqui
+// com o nome `hasOwnProperty` e achava o método herdado do objeto.
+const RAW_METHODS = new Map([
+  [
+    'ipcMain',
+    new Set(['handle', 'handleOnce', 'on', 'once', 'addListener', 'prependListener', 'prependOnceListener']),
+  ],
+  [
+    'ipcRenderer',
+    new Set([
+      'invoke',
+      'send',
+      'sendSync',
+      'sendToHost',
+      'postMessage',
+      'on',
+      'once',
+      'addListener',
+      'prependListener',
+      'prependOnceListener',
+    ]),
+  ],
+]);
 
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.[cm]?[jt]sx?$/u;
 
@@ -130,7 +130,7 @@ export function rawIpcCall(node) {
       : target.type === 'MemberExpression' && !target.computed
         ? target.property.name
         : null;
-  return Boolean(name && RAW_METHODS[name]?.has(callee.property.name));
+  return Boolean(name && RAW_METHODS.get(name)?.has(callee.property.name));
 }
 
 export function repoRelative(filename, cwd) {

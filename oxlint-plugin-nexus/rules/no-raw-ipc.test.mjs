@@ -53,6 +53,15 @@ new RuleTester().run('nexus/no-raw-ipc', rule, {
       code: `ipcMain.handle('x', () => 1);`,
     },
     {
+      // A regra quebrava (erro sem mensagem na linha 0) em 10 arquivos com isto.
+      name: 'chamada por nome herdado de Object não quebra a regra',
+      filename: 'src/main/observability/trace.ts',
+      code: `
+        Object.prototype.hasOwnProperty.call(value, key);
+        value.constructor.toString();
+      `,
+    },
+    {
       name: 'arquivo da lista dentro do teto',
       filename: 'src/main/security/trusted-ipc.ts',
       code: `ipcMain.handle(channel, a); ipcMain.on(channel, b);`,
