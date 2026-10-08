@@ -48,6 +48,7 @@
     "pretest": "node scripts/check-node-natives.mjs",
     "test": "vitest run",
     "test:changed": "vitest run --changed",
+    "test:mission-e2e": "node scripts/mission-e2e.mjs",
     "eval:export-ranking": "node --import tsx scripts/export-public-ranking.mjs",
     "eval:benchmark:verify": "node --import tsx scripts/verify-nexus-benchmark.mjs",
     "bench:vector-retrieval": "node scripts/benchmark-vector-retrieval.mjs",

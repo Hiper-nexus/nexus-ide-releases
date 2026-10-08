@@ -1,0 +1,305 @@
+#!/usr/bin/perl
+# F-971: o "binário nativo" da CLI de agente FALSA do E2E de missão.
+#
+# Não é Node nem shell (como o Mach-O do Codex ou o payload do MiMo): o
+# lançador fake-agent.cjs repassa a ele o PRÓPRIO argv, brief incluído. Ele faz
+# o que um agente faz num pane do Nexus, sem nenhum modelo de IA:
+#   worker      — escreve um arquivo na worktree, roda comandos leves e um
+#                 pesado pelo shell (zsh -c, como a tool de shell de uma CLI),
+#                 faz commit e entrega pelo shim real `nexus_handoff_submit`;
+#   orquestrador — abre os writers pelo MCP HTTP real do Nexus (em paralelo),
+#                 recebe as entregas digitadas no PTY, integra as branches e
+#                 conclui a missão por `nexus_mission_set_status`.
+# Tudo o que acontece vira recibo em <E2E_DIR>/agents, lido pelo teste.
+use strict;
+use warnings;
+use POSIX ();
+use Cwd ();
+use Time::HiRes qw(time sleep);
+use JSON::PP ();
+use HTTP::Tiny ();
+use File::Path qw(make_path);
+use Digest::SHA qw(sha256_hex);
+use IO::Select ();
+
+$| = 1;
+binmode(STDOUT, ':raw');
+my $json = JSON::PP->new->utf8->canonical;
+
+# O brief chega no argv (canal posicional); flags que o Nexus acrescenta
+# (--mcp-config, --model…) são ignoradas. O brief é o argumento mais longo.
+my ($brief) = sort { length($b) <=> length($a) } @ARGV;
+$brief //= '';
+my ($dir) = $brief =~ /\[\[E2E_DIR=([^\]\s]+)\]\]/;
+$dir //= $ENV{NEXUS_E2E_DIR};
+die "[nexus-e2e-agent] brief sem [[E2E_DIR=...]]\r\n" unless defined $dir && -d $dir;
+my ($role) = $brief =~ /\[\[E2E_ROLE=([a-z0-9:-]+)\]\]/;
+die "[nexus-e2e-agent] brief sem [[E2E_ROLE=...]]\r\n" unless defined $role;
+my $id = $role eq 'orchestrator' ? 'orchestrator' : ($role =~ /^worker:([a-z0-9-]+)$/)[0];
+die "[nexus-e2e-agent] papel inválido: $role\r\n" unless defined $id;
+my $agents = "$dir/agents";
+make_path($agents);
+
+sub write_file {
+  my ($file, $content) = @_;
+  open(my $fh, '>', "$file.tmp$$") or die "write $file: $!";
+  binmode($fh, ':raw');
+  print $fh $content;
+  close($fh);
+  rename("$file.tmp$$", $file) or die "rename $file: $!";
+}
+sub append_line {
+  my ($file, $line) = @_;
+  open(my $fh, '>>', $file) or die "append $file: $!";
+  binmode($fh, ':raw');
+  print $fh "$line\n";
+  close($fh);
+}
+sub say_pty { print map { "$_\r\n" } @_ }
+
+my $cwd = Cwd::getcwd();
+my %boot = (
+  id => $id, role => $role, pid => $$, ppid => getppid(), cwd => $cwd,
+  startedAt => time(), argvCount => scalar(@ARGV), briefBytes => length($brief),
+  briefSha256 => sha256_hex($brief),
+  leaseAtBoot => ($ENV{NEXUS_HEAVY_LEASE} // ''),
+  heavyAgentEntry => ($ENV{NEXUS_HEAVY_AGENT_ENTRY} // ''),
+  heavyJobBase => (defined $ENV{NEXUS_HEAVY_JOB_BASE} ? JSON::PP::true : JSON::PP::false),
+  heavyUrl => (defined $ENV{NEXUS_HEAVY_COMMAND_URL} ? JSON::PP::true : JSON::PP::false),
+  mcp => (defined $ENV{NEXUS_MCP_URL} && defined $ENV{NEXUS_MCP_TOKEN} ? JSON::PP::true : JSON::PP::false),
+  shim => (defined $ENV{NEXUS_SHIM_ROOT} ? JSON::PP::true : JSON::PP::false),
+);
+write_file("$agents/$id.brief", $brief);
+write_file("$agents/$id.boot.json", $json->encode(\%boot));
+
+my $heartbeat;
+sub start_heartbeat {
+  my ($label) = @_;
+  my $pid = fork();
+  die "fork: $!" unless defined $pid;
+  if (!$pid) {
+    $SIG{TERM} = sub { POSIX::_exit(0) };
+    for (my $n = 1; ; $n++) {
+      print "\r\x1b[2K[$label] trabalhando... passo $n\r\n";
+      sleep(0.15);
+    }
+  }
+  $heartbeat = $pid;
+}
+sub stop_heartbeat {
+  return unless $heartbeat;
+  kill('TERM', $heartbeat);
+  waitpid($heartbeat, 0);
+  undef $heartbeat;
+}
+my $stopping = 0;
+my $current = 'boot';
+sub trace { append_line("$agents/$id.trace.ndjson", $json->encode({ at => time(), event => $_[0], step => $current })) }
+for my $signal (qw(TERM HUP INT)) {
+  # Morte pedida pelo Nexus (teardown) fica registrada: o teste distingue
+  # "terminou o turno e foi encerrado" de "morreu calado no meio do trabalho".
+  $SIG{$signal} = sub { $stopping = 1; trace("signal-$signal"); stop_heartbeat(); POSIX::_exit(0) };
+}
+
+# Uma chamada de "tool de shell": zsh -c novo, com o ambiente que o Nexus deu
+# ao pane (ZDOTDIR/BASH_ENV da admissão de comandos pesados incluídos).
+sub tool {
+  my ($where, $command, $label) = @_;
+  $current = $label;
+  trace('tool-start');
+  pipe(my $reader, my $writer) or die "pipe: $!";
+  my $started = time();
+  my $pid = fork();
+  die "fork: $!" unless defined $pid;
+  if (!$pid) {
+    close($reader);
+    open(STDIN, '<', '/dev/null');
+    open(STDOUT, '>&', $writer);
+    open(STDERR, '>&', $writer);
+    chdir($where) or POSIX::_exit(126);
+    exec('/bin/zsh', '-c', $command) or POSIX::_exit(127);
+  }
+  close($writer);
+  my $output = '';
+  while (my $line = <$reader>) { $output .= $line }
+  close($reader);
+  waitpid($pid, 0);
+  my $status = $?;
+  my $code = ($status & 127) ? 128 + ($status & 127) : ($status >> 8);
+  my ($lease) = $output =~ /LEASE=(\S+)/;
+  my %step = (label => $label, command => $command, code => $code, output => $output,
+    lease => ($lease // 'none'), startedAt => $started, endedAt => time());
+  append_line("$agents/$id.steps.ndjson", $json->encode(\%step));
+  trace('tool-end');
+  $current = "after-$label";
+  return \%step;
+}
+
+sub idle_forever {
+  my ($input_log) = @_;
+  system('/bin/stty', 'raw', '-echo');
+  my $select = IO::Select->new(\*STDIN);
+  while (!$stopping) {
+    next unless $select->can_read(1);
+    my $read = sysread(STDIN, my $chunk, 65536);
+    exit(0) unless $read;
+    append_line($input_log, $json->encode({ at => time(), bytes => length($chunk), text => $chunk }));
+  }
+}
+
+if ($role ne 'orchestrator') {
+  # ---------------------------------------------------------------- worker
+  say_pty("nexus-e2e-agent 1.0 — writer $id pronto em $cwd");
+  # Boot de CLI real: a tela assenta (idle) antes do turno começar.
+  sleep(2.5);
+  start_heartbeat($id);
+  $ENV{NEXUS_E2E_DIR} = $dir;
+  $ENV{NEXUS_E2E_ID} = $id;
+  make_path("$cwd/e2e");
+  write_file("$cwd/e2e/$id.txt", "entrega do writer $id\n");
+  my $light = tool($cwd,
+    'node -v >/dev/null 2>&1; type node >/dev/null 2>&1; ' .
+    'echo "proximo: make build, vitest run e tsc --noEmit (typecheck) no node 22"; ' .
+    'print -r -- "LEASE=${NEXUS_HEAVY_LEASE:-none}"', 'light');
+  write_file("$dir/ready/$id", "$$\n");
+  my $deadline = time() + 240;
+  sleep(0.2) while !-e "$dir/go" && time() < $deadline;
+  my $heavy = tool($cwd,
+    'PATH="$PWD/bin:$PATH" vitest run --reporter=dot; rc=$?; ' .
+    'print -r -- "LEASE=${NEXUS_HEAVY_LEASE:-none} RC=$rc"; exit $rc', 'heavy');
+  my $commit = tool($cwd,
+    'git add -A && git commit -qm "feat(e2e): writer pronto — make, vitest run e tsc verdes no node 22" && ' .
+    'git rev-parse HEAD && git symbolic-ref --short HEAD && print -r -- "LEASE=${NEXUS_HEAVY_LEASE:-none}"', 'commit');
+  my ($sha, $branch) = $commit->{output} =~ /^([0-9a-f]{40})\n(\S+)/m;
+  $sha //= 'sem-commit';
+  $branch //= 'sem-branch';
+  my $summary = "Writer $id entregou e2e/$id.txt na branch $branch (commit $sha). " .
+    "Comando pesado (vitest run) saiu com $heavy->{code}; comandos leves fora da fila.";
+  my $quoted = $summary;
+  $quoted =~ s/'/'\\''/g;
+  # O recibo do turno sai ANTES do handoff: worker de missão nasce com
+  # autoCloseOnHandoff e o Nexus fecha o pane logo depois do sucesso — a
+  # resposta do shim pode nem chegar. A entrega se prova pelo banco do Main.
+  my %result = (id => $id, cwd => $cwd, branch => $branch, sha => $sha,
+    light => $light, heavy => $heavy, commit => $commit, finishedAt => time());
+  write_file("$agents/$id.result.json", $json->encode(\%result));
+  my $handoff = tool($cwd,
+    "nexus_handoff_submit --status success --summary '$quoted' --artifact e2e/$id.txt", 'handoff');
+  stop_heartbeat();
+  write_file("$agents/$id.result.json", $json->encode({ %result, handoff => $handoff }));
+  say_pty("[$id] turno concluído: handoff enviado (exit $handoff->{code})");
+  idle_forever("$agents/$id.input.ndjson");
+  exit(0);
+}
+
+# ------------------------------------------------------------ orquestrador
+say_pty('nexus-e2e-agent 1.0 — orquestrador pronto');
+my $plan_file = "$dir/plan.json";
+my $plan = do { local $/; open(my $fh, '<', $plan_file) or die "plano: $!"; $json->decode(<$fh>) };
+my $http = HTTP::Tiny->new(timeout => 600);
+my $rpc = 0;
+sub mcp {
+  my ($name, $arguments) = @_;
+  my $body = $json->encode({ jsonrpc => '2.0', id => ++$rpc + $$ * 1000, method => 'tools/call',
+    params => { name => $name, arguments => $arguments } });
+  my $response = $http->request('POST', $ENV{NEXUS_MCP_URL}, {
+    headers => { 'content-type' => 'application/json', accept => 'application/json, text/event-stream',
+      authorization => "Bearer $ENV{NEXUS_MCP_TOKEN}" },
+    content => $body,
+  });
+  my %call = (tool => $name, status => $response->{status}, at => time());
+  my $decoded = eval { $json->decode($response->{content}) };
+  if ($decoded) {
+    $call{rpc} = $decoded;
+    my $text = $decoded->{result}{content}[0]{text};
+    $call{isError} = $decoded->{result}{isError} ? JSON::PP::true : JSON::PP::false;
+    # O texto já é string de caracteres: decodifica sem a camada UTF-8.
+    $call{result} = eval { JSON::PP->new->decode($text) } // $text if defined $text;
+    $call{error} = $decoded->{error} if $decoded->{error};
+  } else {
+    $call{raw} = $response->{content};
+  }
+  append_line("$agents/orchestrator.mcp.ndjson", $json->encode(\%call));
+  return \%call;
+}
+
+sleep(2.5);
+start_heartbeat('orquestrador');
+# Como no incidente de 07/10: o Maestro cria a worktree aninhada na pasta da aba.
+my $nested = tool($plan->{tabRoot},
+  "git worktree add -q -b '$plan->{nested}{branch}' '$plan->{nested}{path}' && print -r -- \"LEASE=\${NEXUS_HEAVY_LEASE:-none}\"",
+  'nested-worktree');
+# Writers em paralelo: uma chamada MCP por processo, como as tool calls paralelas de uma CLI.
+my %children;
+for my $writer (@{ $plan->{writers} }) {
+  my $pid = fork();
+  die "fork: $!" unless defined $pid;
+  if (!$pid) {
+    my $call = mcp('nexus_pane_spawn', $writer->{args});
+    write_file("$agents/orchestrator.spawn-$writer->{id}.json", $json->encode($call));
+    POSIX::_exit(0);
+  }
+  $children{$pid} = $writer->{id};
+}
+waitpid($_, 0) for keys %children;
+stop_heartbeat();
+say_pty("[orquestrador] " . scalar(@{ $plan->{writers} }) . " writers abertos; aguardando as entregas");
+
+# Entregas chegam coladas (bracketed paste) + Enter, só com o pane ocioso.
+system('/bin/stty', 'raw', '-echo');
+my $select = IO::Select->new(\*STDIN);
+my ($buffer, @pending, %delivered, %acked) = ('');
+my $expected = $plan->{expectedDeliveries};
+my $finished = 0;
+while (!$stopping) {
+  if (!$finished && scalar(grep { $delivered{$_}{worker} } keys %delivered) >= $expected) {
+    $finished = 1;
+    start_heartbeat('orquestrador');
+    # Integra o que o Nexus devolveu nos recibos do spawn (branch de cada
+    # writer isolado) e a branch da worktree aninhada.
+    my @branches;
+    for my $writer (@{ $plan->{writers} }) {
+      my $call = eval {
+        local $/;
+        open(my $fh, '<', "$agents/orchestrator.spawn-$writer->{id}.json") or die;
+        $json->decode(<$fh>);
+      };
+      my $receipt = $call && ref($call->{result}) eq 'HASH' ? $call->{result}{isolatedWorktree} : undef;
+      push @branches, $receipt->{branch} if $receipt && $receipt->{branch};
+    }
+    push @branches, $plan->{nested}{branch};
+    my @merges;
+    for my $branch (@branches) {
+      push @merges, tool($plan->{tabRoot}, "git merge --no-edit -q '$branch' && print -r -- \"LEASE=\${NEXUS_HEAVY_LEASE:-none}\"", "merge $branch");
+    }
+    my $branches = tool($plan->{tabRoot}, 'git log --format=%H -1', 'tab-head');
+    my $done = mcp('nexus_mission_set_status', { missionId => $plan->{missionId}, status => 'done', note => $plan->{doneNote} });
+    stop_heartbeat();
+    write_file("$agents/orchestrator.result.json", $json->encode({
+      deliveries => \%delivered, merges => \@merges, tabHead => $branches, done => $done, finishedAt => time(),
+    }));
+    say_pty('[orquestrador] missão concluída');
+  }
+  next unless $select->can_read(0.5);
+  my $read = sysread(STDIN, my $chunk, 65536);
+  exit(0) unless $read;
+  append_line("$agents/orchestrator.input.ndjson", $json->encode({ at => time(), bytes => length($chunk), text => $chunk }));
+  $buffer .= $chunk;
+  while ($buffer =~ s/\x1b\[200~(.*?)\x1b\[201~//s) { push @pending, $1 }
+  next unless $buffer =~ s/\r//g;
+  $buffer = '';
+  while (my $text = shift @pending) {
+    my ($handoff) = $text =~ /handoff_id=(\S+)/;
+    my ($from) = $text =~ /from=(\S+)/;
+    my $worker = $text =~ /claim_trust=untrusted/ ? 1 : 0;
+    $handoff //= 'sem-id';
+    say_pty("[orquestrador] recebido $handoff de " . ($from // '?'));
+    $delivered{$handoff} = { from => $from, worker => $worker, text => $text, at => time() };
+    if ($worker && !$acked{$handoff}++) {
+      my $ack = mcp('nexus_handoff_ack', { handoffId => $handoff, verdict => 'accepted' });
+      $delivered{$handoff}{ack} = $ack;
+    }
+    append_line("$agents/orchestrator.deliveries.ndjson", $json->encode({ handoff => $handoff, from => $from, worker => $worker, at => time() }));
+  }
+}
+exit(0);
