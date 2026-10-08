@@ -50,10 +50,17 @@ export const DIGEST_TAIL_LINES = 30;
 export const DIGEST_MAX_LINE_CHARS = 240;
 /** Teto de caracteres do texto de UM pane (`nexus_pane_read`). */
 export const DIGEST_MAX_CHARS = 6_000;
-/** Teto somado dos textos em `nexus_pane_read_many` (dividido entre os panes). */
+/**
+ * Teto da resposta inteira de `nexus_pane_read_many` em digest (JSON
+ * serializado, todos os panes): conferido antes de devolver.
+ */
 export const DIGEST_MANY_MAX_CHARS = 24_000;
-/** Piso por pane quando o teto somado é dividido entre muitos panes. */
-export const DIGEST_MIN_CHARS = 800;
+/** Panes distintos por chamada de `nexus_pane_read_many`. */
+export const PANE_READ_MANY_MAX_PANES = 30;
+/** Piso do texto por pane: marca de corte + uma linha com teto. */
+export const DIGEST_MIN_CHARS = 400;
+/** Reserva por item para chaves, contagens e escapes do JSON. */
+const DIGEST_ENTRY_OVERHEAD_CHARS = 300;
 
 const ELLIPSIS = '…';
 const LINE_HEAD_CHARS = 60;
@@ -84,13 +91,61 @@ export interface DigestOptions {
   readonly maxChars?: number;
 }
 
-/** Teto por pane quando `count` panes dividem DIGEST_MANY_MAX_CHARS. */
+/**
+ * Teto do texto por pane quando `count` panes dividem DIGEST_MANY_MAX_CHARS
+ * (descontada a reserva de JSON de cada item). Com até
+ * PANE_READ_MANY_MAX_PANES o piso nunca empurra a soma além do teto.
+ */
 export function digestBudgetPerPane(count: number): number {
   const panes = Number.isFinite(count) && count > 0 ? Math.floor(count) : 1;
-  return Math.max(
-    DIGEST_MIN_CHARS,
-    Math.min(DIGEST_MAX_CHARS, Math.floor(DIGEST_MANY_MAX_CHARS / panes)),
+  const share = Math.floor(
+    (DIGEST_MANY_MAX_CHARS - panes * DIGEST_ENTRY_OVERHEAD_CHARS) / panes,
   );
+  return Math.max(DIGEST_MIN_CHARS, Math.min(DIGEST_MAX_CHARS, share));
+}
+
+const AGGREGATE_MARKER =
+  '… [digest: início cortado pelo teto total do nexus_pane_read_many]';
+
+function keepTextTail(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  let tail = limit > 0 ? text.slice(-limit) : '';
+  // Linhas inteiras: o pedaço cortado da primeira linha sai junto.
+  const newline = tail.indexOf('\n');
+  if (newline >= 0 && newline < tail.length - 1) tail = tail.slice(newline + 1);
+  return tail ? `${AGGREGATE_MARKER}\n${tail}` : AGGREGATE_MARKER;
+}
+
+/**
+ * Rede final do read_many, conferida no JSON que será devolvido: se passar de
+ * `maxChars`, todo texto acima de um mesmo limite L fica só com as suas
+ * últimas linhas (L é o maior que cabe — busca binária). Não depende de a
+ * divisão por pane ter acertado a reserva de JSON.
+ */
+export function capDigestEntries<T extends Record<string, unknown>>(
+  entries: readonly T[],
+  maxChars: number = DIGEST_MANY_MAX_CHARS,
+): Array<T & { truncated?: boolean }> {
+  const apply = (limit: number): Array<T & { truncated?: boolean }> =>
+    entries.map((entry) =>
+      (typeof entry.text === 'string' && entry.text.length > limit
+        ? { ...entry, text: keepTextTail(entry.text, limit), truncated: true }
+        : { ...entry }) as T & { truncated?: boolean },
+    );
+  const fits = (candidate: readonly T[]) => JSON.stringify(candidate).length <= maxChars;
+  const whole = apply(Number.POSITIVE_INFINITY);
+  if (fits(whole)) return whole;
+  let low = 0;
+  let high = Math.max(
+    0,
+    ...entries.map((entry) => (typeof entry.text === 'string' ? entry.text.length : 0)),
+  );
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fits(apply(middle))) low = middle;
+    else high = middle - 1;
+  }
+  return apply(low);
 }
 
 /**

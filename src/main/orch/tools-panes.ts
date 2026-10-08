@@ -162,9 +162,11 @@ import {
   listIdleHelperCandidates,
 } from './idle-helper-reuse';
 import {
+  capDigestEntries,
   DIGEST_MAX_CHARS,
   digestBudgetPerPane,
   digestPaneTail,
+  PANE_READ_MANY_MAX_PANES,
 } from './pane-output-digest';
 import { classifyPaneTailForDigest } from '../jev/jev-pane-state';
 import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
@@ -2928,8 +2930,10 @@ const paneReadMany: McpToolDef = {
   description:
     'Read the output of several panes at once. Same visibility and ' +
     "mode:'digest'|'full' semantics as nexus_pane_read (orchestrator " +
-    'defaults to digest); errors come back per item. In digest mode the ' +
-    'panes share one total character budget (each item marks truncated). ' +
+    'defaults to digest); errors come back per item. Up to ' +
+    `${PANE_READ_MANY_MAX_PANES} distinct panes per call (repeated ids and ` +
+    'aliases of the same pane are read once). In digest mode the whole ' +
+    'response shares one character cap (items mark truncated). ' +
     'Prefer this over looping nexus_pane_read; prefer handoff_list when ' +
     'you only need structured completion, not the raw PTY.',
   inputSchema: {
@@ -2944,27 +2948,51 @@ const paneReadMany: McpToolDef = {
   handler: async (args, ctx) => {
     const lines = num(args, 'lines') ?? 200;
     const mode = paneReadMode(args, ctx);
-    const paneIds = strArray(args, 'paneIds');
-    // F-961: seis panes × redesenho de TUI estouravam o limite da ferramenta;
-    // o digest divide um teto total entre os panes pedidos.
-    const budget = digestBudgetPerPane(paneIds.length);
-    return Promise.all(
-      paneIds.map(async (paneId) => {
+    // F-961: seis panes × redesenho de TUI estouravam o limite da ferramenta.
+    // Ids repetidos (e apelidos do mesmo pane) são lidos uma vez, a lista tem
+    // teto e o digest divide um teto total que é conferido antes de devolver.
+    const paneIds = [...new Set(strArray(args, 'paneIds'))];
+    if (paneIds.length > PANE_READ_MANY_MAX_PANES) {
+      throw new Error(
+        `nexus_pane_read_many: no máximo ${PANE_READ_MANY_MAX_PANES} panes ` +
+          `distintos por chamada (recebeu ${paneIds.length}); divida em lotes`,
+      );
+    }
+    type Resolved =
+      | { readonly paneId: string; readonly sessionId: string }
+      | { readonly paneId: string; readonly error: string };
+    const resolved = paneIds.map((paneId): Resolved => {
+      try {
+        return { paneId, sessionId: authorizedSessionIdOf(ctx, paneId, 'read') };
+      } catch (err) {
+        return { paneId, error: err instanceof Error ? err.message : String(err) };
+      }
+    });
+    const firstBySession = new Map<string, string>();
+    for (const item of resolved) {
+      if ('sessionId' in item && !firstBySession.has(item.sessionId)) {
+        firstBySession.set(item.sessionId, item.paneId);
+      }
+    }
+    const budget = digestBudgetPerPane(firstBySession.size);
+    const results: Array<Record<string, unknown>> = await Promise.all(
+      resolved.map(async (item) => {
+        if (!('sessionId' in item)) return { paneId: item.paneId, error: item.error };
+        const first = firstBySession.get(item.sessionId);
+        if (first !== item.paneId) return { paneId: item.paneId, sameAs: first };
         try {
-          const tail = readSessionOutput(
-            authorizedSessionIdOf(ctx, paneId, 'read'),
-            lines,
-          );
-          if (mode !== 'digest') return { paneId, output: tail };
-          return { paneId, ...(await paneDigestResult(tail, budget)) };
+          const tail = readSessionOutput(item.sessionId, lines);
+          if (mode !== 'digest') return { paneId: item.paneId, output: tail };
+          return { paneId: item.paneId, ...(await paneDigestResult(tail, budget)) };
         } catch (err) {
           return {
-            paneId,
+            paneId: item.paneId,
             error: err instanceof Error ? err.message : String(err),
           };
         }
       }),
     );
+    return mode === 'digest' ? capDigestEntries(results) : results;
   },
 };
 

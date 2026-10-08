@@ -331,6 +331,61 @@ describe('in-mission pane observation (Overclock parity)', () => {
     }
   });
 
+  it('F-961: read_many lê cada pane uma vez, recusa lista acima do teto e nunca passa do teto total', async () => {
+    const orchestrator = context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null });
+    const useful = (pane: number) => Array.from(
+      { length: 40 },
+      (_, i) => `pane ${pane} resultado ${i}: ` +
+        Array.from({ length: 12 }, (_, j) => `arquivo-${pane}-${i}-${j}.ts`).join(' '),
+    ).join('\n');
+    for (let pane = 0; pane < 31; pane += 1) {
+      registerPane({
+        paneId: `pane-${pane}`,
+        sessionId: `session-${pane}`,
+        kind: 'cli-agent',
+        missionId: 'mission-a',
+        role: 'worker',
+        scope,
+      }, useful(pane));
+    }
+
+    // 100 referências ao mesmo pane: uma leitura só (o revisor viu 75.100 caracteres).
+    const repeated = await tool('nexus_pane_read_many').handler(
+      { paneIds: Array.from({ length: 100 }, () => 'pane-0') },
+      orchestrator,
+    ) as Array<Record<string, unknown>>;
+    expect(repeated).toHaveLength(1);
+    expect(h.readSessionOutput).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(repeated).length).toBeLessThanOrEqual(24_000);
+
+    // Apelido do mesmo pane (sessionId) não é lido de novo.
+    const aliased = await tool('nexus_pane_read_many').handler(
+      { paneIds: ['pane-1', 'session-1'] },
+      orchestrator,
+    ) as Array<Record<string, unknown>>;
+    expect(aliased[1]).toEqual({ paneId: 'session-1', sameAs: 'pane-1' });
+
+    // Acima do teto de panes distintos: erro legível, nada lido.
+    h.readSessionOutput.mockClear();
+    await expect(tool('nexus_pane_read_many').handler(
+      { paneIds: Array.from({ length: 31 }, (_, pane) => `pane-${pane}`) },
+      orchestrator,
+    )).rejects.toThrow(/no máximo 30 panes distintos por chamada \(recebeu 31\)/);
+    expect(h.readSessionOutput).not.toHaveBeenCalled();
+
+    // 30 panes com muito conteúdo útil: a resposta inteira cabe no teto.
+    const full = await tool('nexus_pane_read_many').handler(
+      { paneIds: Array.from({ length: 30 }, (_, pane) => `pane-${pane}`), lines: 40 },
+      orchestrator,
+    ) as Array<Record<string, unknown>>;
+    expect(full).toHaveLength(30);
+    expect(JSON.stringify(full).length).toBeLessThanOrEqual(24_000);
+    for (const [pane, item] of full.entries()) {
+      expect(String(item.text)).toContain(`pane ${pane} resultado 39:`);
+      expect(item.truncated).toBe(true);
+    }
+  });
+
   it('fails closed for an unknown pane', async () => {
     await expect(
       tool('nexus_pane_read').handler({ paneId: 'pane-missing' }, context()),
