@@ -3,6 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { GhosttyRuntime } from './ghostty-runtime';
+import { GhosttyScreen } from './ghostty-screen';
 import {
   clampClusterExtenders,
   createDetectorScreenSource,
@@ -203,35 +204,16 @@ describe('GhosttyScreenBuffer (libghostty-vt grid, DSK-03)', () => {
   });
 });
 
+
+const MiB = 2 ** 20;
+const memoryOf = (buffer: GhosttyScreenBuffer) => buffer.runtime.memory.buffer.byteLength;
+
 describe('GhosttyScreenBuffer — wasm memory budget after attach (revisão DSK-03)', () => {
-  const MiB = 2 ** 20;
   /** One grapheme cluster that never ends, in the 16K-char pieces the core feeds. */
-  const markFlood = '\u0301'.repeat(16_384);
+  const markFlood = '́'.repeat(16_384);
   const flood = (buffer: GhosttyScreenBuffer, id: string) => {
     for (let chunk = 0; chunk < 64 && buffer.hasGrid(id); chunk += 1) buffer.append(id, markFlood);
   };
-
-  it('a resize past the cell ceiling leaves the grid, and a fitting one brings it back', () => {
-    const runtime = freshRuntime();
-    const reasons: Array<[GhosttyFallbackReason, string]> = [];
-    const buffer = new GhosttyScreenBuffer(runtime, { onFallback: (reason, detail) => reasons.push([reason, detail]) });
-    buffer.append('s', 'grid');
-    buffer.resize('s', 500, 200);
-    expect(buffer.hasGrid('s')).toBe(true);
-    const attached = runtime.memory.buffer.byteLength;
-    // 1000×500 grew a grid by +8.5 MiB; 32 of them reached 418 MiB past the 256 MiB ceiling.
-    buffer.resize('s', 1000, 500);
-    expect(buffer.hasGrid('s')).toBe(false);
-    expect(runtime.liveTerminals).toBe(0);
-    expect(runtime.memory.buffer.byteLength).toBe(attached);
-    expect(reasons).toEqual([['grid-too-large', 'cells=500000']]);
-    buffer.append('s', 'text meanwhile');
-    expect(buffer.text('s')).toBe('text meanwhile');
-    buffer.resize('s', 200, 60);
-    buffer.append('s', '\x1b[2J\x1b[Hrepainted');
-    expect(buffer.hasGrid('s')).toBe(true);
-    expect(buffer.text('s')).toBe('repainted');
-  });
 
   it('a session whose output keeps growing wasm memory leaves the grid; its neighbour stays', () => {
     const runtime = freshRuntime();
@@ -254,31 +236,185 @@ describe('GhosttyScreenBuffer — wasm memory budget after attach (revisão DSK-
     expect(buffer.text('calm')).toBe('neighbour');
   }, 60_000);
 
-  it('the global ceiling is enforced after attach, not only before it', () => {
+  // Rewritten (revisão 2, achado 1): this used to assert that once the linear
+  // memory had passed the ceiling no new grid could ever start — a lockout,
+  // since WebAssembly.Memory never shrinks and nothing rebuilt the instance.
+  it('a peak past the ceiling is given back: the instance is rebuilt and new sessions still get a grid', () => {
     const runtime = freshRuntime();
     const reasons: Array<[GhosttyFallbackReason, string]> = [];
-    // The reviewer's setup: a ceiling just above what one attached grid costs.
     const buffer = new GhosttyScreenBuffer(runtime, {
-      maxMemoryBytes: 8 * MiB,
+      maxMemoryBytes: 16 * MiB,
       maxSessionGrowthBytes: Number.POSITIVE_INFINITY,
       maxClusterExtenders: Number.POSITIVE_INFINITY,
       onFallback: (reason, detail) => reasons.push([reason, detail]),
     });
     buffer.append('s', 'e');
-    expect(runtime.memory.buffer.byteLength).toBeLessThan(8 * MiB);
+    expect(runtime.memory.buffer.byteLength).toBeLessThan(16 * MiB);
     flood(buffer, 's');
+    // The grid that grew past the ceiling yields it…
     expect(buffer.hasGrid('s')).toBe(false);
-    expect(runtime.liveTerminals).toBe(0);
-    expect(reasons).toEqual([['memory-budget', expect.stringMatching(/^bytes=\d+$/)]]);
-    // Past the ceiling no new grid starts either.
+    expect(runtime.memory.buffer.byteLength).toBeGreaterThanOrEqual(16 * MiB);
+    // …and the peak no live grid justifies does not outlive it.
+    expect(memoryOf(buffer)).toBeLessThan(4 * MiB);
     buffer.append('late', 'text');
-    expect(buffer.hasGrid('late')).toBe(false);
+    expect(buffer.hasGrid('late')).toBe(true);
+    expect(buffer.text('late')).toBe('text');
+    expect(reasons.map(([reason]) => reason)).toEqual(['memory-budget', 'runtime-recycled']);
+  }, 60_000);
+
+  it('the reviewer scenario at production budget: grids growing together never lock new or rebound sessions out', () => {
+    const buffer = new GhosttyScreenBuffer(freshRuntime(), {
+      // Growth source independent of the clamp: unbounded mark clusters.
+      maxClusterExtenders: Number.POSITIVE_INFINITY,
+    });
+    const ids = Array.from({ length: 32 }, (_, index) => `pane-${index}`);
+    for (const id of ids) buffer.append(id, 'e');
+    const attached = memoryOf(buffer);
+    let peak = attached;
+    // Round-robin so every grid grows a little at a time, as busy panes do.
+    const piece = '́'.repeat(4_096);
+    for (let round = 0; round < 4; round += 1) {
+      for (const id of ids) {
+        buffer.append(id, piece);
+        peak = Math.max(peak, memoryOf(buffer));
+      }
+    }
+    const survivors = ids.filter((id) => buffer.hasGrid(id)).length;
+    for (const id of ids) buffer.drop(id);
+    const settled = memoryOf(buffer);
+    buffer.append('new-pane', 'fresh');
+    buffer.append(ids[0], 'rebound');
+    console.log(
+      `PROOF lockout: attached=${(attached / MiB).toFixed(1)}MiB peak=${(peak / MiB).toFixed(1)}MiB survivors=${survivors} ` +
+        `afterDrop=${(settled / MiB).toFixed(1)}MiB newGrid=${buffer.hasGrid('new-pane')} reboundGrid=${buffer.hasGrid(ids[0])}`,
+    );
+    expect(buffer.hasGrid('new-pane')).toBe(true);
+    expect(buffer.hasGrid(ids[0])).toBe(true);
+    expect(buffer.text('new-pane')).toBe('fresh');
+    expect(settled).toBeLessThan(64 * MiB);
+    expect(peak).toBeLessThan(256 * MiB + 32 * MiB);
+  }, 120_000);
+
+  it('a session past the terminal cap waits on text and gets a grid when one leaves', () => {
+    const buffer = new GhosttyScreenBuffer(freshRuntime(), { maxTerminals: 1 });
+    buffer.append('a', 'grid');
+    buffer.append('b', 'waiting');
+    expect(buffer.hasGrid('b')).toBe(false);
+    buffer.drop('a');
+    buffer.append('b', '\x1b[2J\x1b[Hnow a grid');
+    expect(buffer.hasGrid('b')).toBe(true);
+    expect(buffer.text('b')).toBe('now a grid');
+  });
+
+  it('recycling keeps every live screen: same text, same cursor, the next relative redraw lands in place', () => {
+    const reasons: GhosttyFallbackReason[] = [];
+    const buffer = new GhosttyScreenBuffer(freshRuntime(), {
+      maxMemoryBytes: 32 * MiB,
+      maxSessionGrowthBytes: Number.POSITIVE_INFINITY,
+      maxClusterExtenders: Number.POSITIVE_INFINITY,
+      onFallback: (reason) => reasons.push(reason),
+    });
+    const control = new GhosttyScreenBuffer(freshRuntime());
+    const frames: Record<string, string> = {
+      // Styled lines, a soft-wrapped line, a hyperlink, the cursor mid-screen.
+      tui: `\x1b[1;31mred\x1b[0m line\r\n${'L'.repeat(70)}\r\n\x1b]8;;http://x\x07link\x1b]8;;\x07\r\n> prompt here\x1b[5;12H\x1b[4m`,
+      // A scroll region homes the cursor in the replay; it must still land here.
+      region: 'top\r\n\x1b[2;8rinside\x1b[6;3H',
+      alt: 'primary\r\n\x1b[?1049h\x1b[2J\x1b[Halt screen tui\x1b[3;5H',
+    };
+    for (const [id, frame] of Object.entries(frames)) {
+      buffer.resize(id, 40, 10);
+      control.resize(id, 40, 10);
+      buffer.append(id, frame);
+      control.append(id, frame);
+    }
+    const before = buffer.runtime;
+    const seq = buffer.contentSeq('tui');
+    buffer.append('flood', 'e');
+    for (let chunk = 0; chunk < 8 && buffer.hasGrid('flood'); chunk += 1) buffer.append('flood', '́'.repeat(16_384));
+    expect(buffer.hasGrid('flood')).toBe(false);
+    // Identity only: not.toBe's diff hint deep-reads the old instance, whose memory is gone.
+    expect(buffer.runtime === before).toBe(false);
+    expect(reasons).toContain('runtime-recycled');
+    expect(memoryOf(buffer)).toBeLessThan(32 * MiB);
+    for (const id of Object.keys(frames)) {
+      expect(buffer.hasGrid(id)).toBe(true);
+      expect(buffer.text(id)).toBe(control.text(id));
+    }
+    // Same screen: the detector sees no change from the move itself.
+    expect(buffer.contentSeq('tui')).toBe(seq);
+    const redraw = 'Z\x1b[2A\r\x1b[2Kredrawn\x1b[1Bok';
+    for (const id of Object.keys(frames)) {
+      buffer.append(id, redraw);
+      control.append(id, redraw);
+      expect(buffer.text(id)).toBe(control.text(id));
+    }
+  }, 60_000);
+});
+
+describe('GhosttyScreenBuffer — grid size priced by measured cost (revisão 2, achado 9)', () => {
+  it('large real terminals keep their grid at production defaults', () => {
+    // 4K screens with small fonts, tall splits: all accepted by validAnalysisGrid.
+    for (const [cols, rows] of [[640, 180], [334, 300], [250, 401], [1000, 500]]) {
+      const reasons: GhosttyFallbackReason[] = [];
+      const buffer = new GhosttyScreenBuffer(freshRuntime(), { onFallback: (reason) => reasons.push(reason) });
+      buffer.append('s', 'grid');
+      buffer.resize('s', cols, rows);
+      buffer.append('s', '\x1b[2J\x1b[Hrepainted');
+      expect([cols, rows, buffer.hasGrid('s')]).toEqual([cols, rows, true]);
+      expect(buffer.text('s')).toBe('repainted');
+      const fresh = new GhosttyScreenBuffer(freshRuntime());
+      fresh.resize('s', cols, rows);
+      fresh.append('s', 'born large');
+      expect([cols, rows, fresh.hasGrid('s')]).toEqual([cols, rows, true]);
+      expect(reasons).toEqual([]);
+    }
+  });
+
+  it('32 panes at 640×180 all get a grid under the ceiling', () => {
+    const buffer = new GhosttyScreenBuffer(freshRuntime());
+    for (let index = 0; index < 32; index += 1) {
+      buffer.resize(`p${index}`, 640, 180);
+      buffer.append(`p${index}`, `${'x'.repeat(639)}\r\n`.repeat(180));
+    }
+    const grids = Array.from({ length: 32 }, (_, index) => buffer.hasGrid(`p${index}`)).filter(Boolean).length;
+    console.log(`PROOF 32x640x180 filled: grids=${grids} memory=${(memoryOf(buffer) / MiB).toFixed(1)}MiB`);
+    expect(grids).toBe(32);
+    expect(memoryOf(buffer)).toBeLessThan(256 * MiB);
+  });
+
+  it('1000×500 grids are admitted while their reservation fits; the rest wait on text, not forever', () => {
+    const reasons: Array<[GhosttyFallbackReason, string]> = [];
+    const buffer = new GhosttyScreenBuffer(freshRuntime(), { onFallback: (reason, detail) => reasons.push([reason, detail]) });
+    const ids = Array.from({ length: 32 }, (_, index) => `big-${index}`);
+    for (const id of ids) {
+      buffer.resize(id, 1000, 500);
+      buffer.append(id, `${'y'.repeat(999)}\r\n`.repeat(500));
+    }
+    const withGrid = ids.filter((id) => buffer.hasGrid(id));
+    console.log(`PROOF 32x1000x500 filled: grids=${withGrid.length} memory=${(memoryOf(buffer) / MiB).toFixed(1)}MiB reasons=${JSON.stringify(reasons)}`);
+    expect(withGrid.length).toBe(18);
+    expect(memoryOf(buffer)).toBeLessThanOrEqual(256 * MiB);
+    expect(reasons).toEqual([['memory-budget', expect.stringMatching(/^reserved=\d+$/)]]);
+    const waiting = ids.find((id) => !buffer.hasGrid(id))!;
+    buffer.drop(withGrid[0]);
+    buffer.append(waiting, '\x1b[2J\x1b[Hmy turn');
+    expect(buffer.hasGrid(waiting)).toBe(true);
+    expect(buffer.text(waiting)).toBe('my turn');
+    // A waiting session that shrinks fits too.
+    const other = ids.find((id) => !buffer.hasGrid(id))!;
+    buffer.resize(other, 200, 50);
+    buffer.append(other, 'smaller');
+    expect(buffer.hasGrid(other)).toBe(false);
+    buffer.drop(withGrid[1]);
+    buffer.append(other, 'smaller');
+    expect(buffer.hasGrid(other)).toBe(true);
   }, 60_000);
 });
 
 describe('grapheme cluster clamp (revisão DSK-03)', () => {
-  const ACUTE = '\u0301';
-  const ZWJ = '\u200D';
+  const ACUTE = '́';
+  const ZWJ = '‍';
   const family = `👨${ZWJ}👩${ZWJ}👧${ZWJ}👦`;
 
   it('leaves real text untouched: accents, emoji ZWJ families, plain ASCII', () => {
@@ -315,6 +451,70 @@ describe('grapheme cluster clamp (revisão DSK-03)', () => {
     expect(buffer.hasGrid('s')).toBe(true);
     expect(buffer.text('s')).toBe(`e${ACUTE.repeat(GHOSTTY_MAX_CLUSTER_EXTENDERS)} done`);
     expect(reasons).toEqual([]);
+  });
+
+  it('format and default-ignorable floods (revisão 2, achado 10) keep the grid and the memory flat', () => {
+    const grew: string[] = [];
+    // ZWSP, ZWNJ, LRM, LRE, WJ, BOM, ALM, MVS, tags, musical format, Hangul filler.
+    for (const codePoint of [0x200b, 0x200c, 0x200e, 0x202a, 0x2060, 0xfeff, 0x061c, 0x180e, 0xe0001, 0xe0020, 0xe007f, 0x1d173, 0x3164]) {
+      const runtime = freshRuntime();
+      const buffer = new GhosttyScreenBuffer(runtime);
+      buffer.append('s', 'e');
+      const attached = runtime.memory.buffer.byteLength;
+      const chunk = String.fromCodePoint(codePoint).repeat(16_384);
+      for (let index = 0; index < 4; index += 1) buffer.append('s', chunk);
+      const growth = runtime.memory.buffer.byteLength - attached;
+      if (!buffer.hasGrid('s') || growth >= MiB) grew.push(`U+${codePoint.toString(16).toUpperCase()}:${(growth / MiB).toFixed(1)}MiB`);
+    }
+    expect(grew).toEqual([]);
+  });
+
+  it('every code point Ghostty stores with zero width in the previous cell is clamped', () => {
+    // Swept against the vendored wasm, so a Unicode table drift shows up here.
+    const runtime = freshRuntime();
+    const screen = GhosttyScreen.create(runtime, 200, 4);
+    const terminal = (screen as unknown as { terminal: number }).terminal;
+    const out = runtime.alloc(8);
+    const input = runtime.alloc(32);
+    const encoder = new TextEncoder();
+    const cursorX = (text: string) => {
+      const bytes = encoder.encode(text);
+      runtime.bytes(input, bytes.length).set(bytes);
+      runtime.call('ghostty_terminal_vt_write', terminal, input, bytes.length);
+      runtime.call('ghostty_terminal_get', terminal, 3, out);
+      return runtime.view(out, 2).getUint16(0, true);
+    };
+    const escapes: string[] = [];
+    const cap = GHOSTTY_MAX_CLUSTER_EXTENDERS;
+    for (const [from, to] of [[0xa0, 0x323af], [0xe0000, 0xe0fff]]) {
+      for (let codePoint = from; codePoint <= to; codePoint += 1) {
+        if (codePoint >= 0xd800 && codePoint <= 0xdfff) continue;
+        const char = String.fromCodePoint(codePoint);
+        if (cursorX(`\x1b[H\x1b[2Ke${char}`) !== 1) continue;
+        if (clampClusterExtenders(`e${char.repeat(cap + 8)}`, 0).text !== `e${char.repeat(cap)}`) {
+          escapes.push(codePoint.toString(16));
+        }
+      }
+    }
+    expect(escapes).toEqual([]);
+  }, 30_000);
+
+  it('NFD Hangul, flags, tag flags, keycaps, skin tones and conjuncts pass intact', () => {
+    const hangul = '한국어 텍스트를 분해된 자모로 보냅니다 열세 음절 이상'.normalize('NFD');
+    for (const text of [
+      hangul,
+      hangul.repeat(4),
+      '🇧🇷🇵🇹🇯🇵 flags',
+      '🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F} scotland',
+      '#️⃣ keycap',
+      '👍🏽 ok',
+      'क्षत्रिय नमस्ते',
+      'می‌خواهم',
+      'بِسْمِ اللَّهِ',
+      `${family}${family}`,
+    ]) {
+      expect(clampClusterExtenders(text, 0).text).toBe(text);
+    }
   });
 });
 
