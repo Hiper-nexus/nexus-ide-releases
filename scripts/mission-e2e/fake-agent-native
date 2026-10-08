@@ -9,7 +9,10 @@
 #                 faz commit e entrega pelo shim real `nexus_handoff_submit`;
 #   orquestrador — abre os writers pelo MCP HTTP real do Nexus (em paralelo),
 #                 recebe as entregas digitadas no PTY, integra as branches e
-#                 conclui a missão por `nexus_mission_set_status`.
+#                 conclui a missão por `nexus_mission_set_status`;
+#   revisor     — (F-1007) o revisor independente que o PRÓPRIO Main abre na
+#                 conclusão de código: lê o candidato em leitura, registra
+#                 `nexus_review_verdict` e entrega o relatório por handoff.
 # Tudo o que acontece vira recibo em <E2E_DIR>/agents, lido pelo teste.
 use strict;
 use warnings;
@@ -34,8 +37,10 @@ my ($dir) = $brief =~ /\[\[E2E_DIR=([^\]\s]+)\]\]/;
 $dir //= $ENV{NEXUS_E2E_DIR};
 die "[nexus-e2e-agent] brief sem [[E2E_DIR=...]]\r\n" unless defined $dir && -d $dir;
 my ($role) = $brief =~ /\[\[E2E_ROLE=([a-z0-9:-]+)\]\]/;
+# F-1007: o brief do revisor é o do Main (reviewerPrompt), sem marcador do teste.
+$role //= 'reviewer' if $brief =~ /^Você é o revisor independente da entrega\./;
 die "[nexus-e2e-agent] brief sem [[E2E_ROLE=...]]\r\n" unless defined $role;
-my $id = $role eq 'orchestrator' ? 'orchestrator' : ($role =~ /^worker:([a-z0-9-]+)$/)[0];
+my $id = $role eq 'orchestrator' || $role eq 'reviewer' ? $role : ($role =~ /^worker:([a-z0-9-]+)$/)[0];
 die "[nexus-e2e-agent] papel inválido: $role\r\n" unless defined $id;
 my $agents = "$dir/agents";
 make_path($agents);
@@ -147,6 +152,59 @@ sub idle_forever {
   }
 }
 
+my $http = HTTP::Tiny->new(timeout => 600);
+my $rpc = 0;
+sub mcp {
+  my ($name, $arguments) = @_;
+  my $body = $json->encode({ jsonrpc => '2.0', id => ++$rpc + $$ * 1000, method => 'tools/call',
+    params => { name => $name, arguments => $arguments } });
+  my $response = $http->request('POST', $ENV{NEXUS_MCP_URL}, {
+    headers => { 'content-type' => 'application/json', accept => 'application/json, text/event-stream',
+      authorization => "Bearer $ENV{NEXUS_MCP_TOKEN}" },
+    content => $body,
+  });
+  my %call = (tool => $name, status => $response->{status}, at => time());
+  my $decoded = eval { $json->decode($response->{content}) };
+  if ($decoded) {
+    $call{rpc} = $decoded;
+    my $text = $decoded->{result}{content}[0]{text};
+    $call{isError} = $decoded->{result}{isError} ? JSON::PP::true : JSON::PP::false;
+    # O texto já é string de caracteres: decodifica sem a camada UTF-8.
+    $call{result} = eval { JSON::PP->new->decode($text) } // $text if defined $text;
+    $call{error} = $decoded->{error} if $decoded->{error};
+  } else {
+    $call{raw} = $response->{content};
+  }
+  append_line("$agents/$id.mcp.ndjson", $json->encode(\%call));
+  return \%call;
+}
+
+
+if ($role eq 'reviewer') {
+  # -------------------------------------------------------------- revisor
+  say_pty('nexus-e2e-agent 1.0 — revisor independente pronto');
+  sleep(2.5);
+  start_heartbeat('revisor');
+  # Os literais deste arquivo são bytes UTF-8; o JSON do MCP leva caracteres.
+  my $text = sub { my ($bytes) = @_; utf8::decode($bytes); $bytes };
+  my ($candidate) = $brief =~ /Candidato: (\S+?)\./;
+  my $read = tool($cwd, 'git status --porcelain && git log --oneline -3 && print -r -- "LEASE=${NEXUS_HEAVY_LEASE:-none}"', 'read-candidate');
+  my $verdict = mcp('nexus_review_verdict', { verdict => 'approve',
+    summary => $text->('Revisão independente do candidato atual: entregas dos seis writers conferidas, sem achados.'), findings => [] });
+  my $report = $text->("Revisão independente (somente leitura) do candidato " . ($candidate // '?') . ".\n" .
+    "Resultado: aprovado. Achados: nenhum. Limites: E2E com CLI falsa; leitura por git status/log.");
+  # Como no writer: o recibo sai antes do handoff (o pane fecha logo depois dele).
+  my %result = (cwd => $cwd, candidate => $candidate, read => $read, verdict => $verdict, finishedAt => time());
+  write_file("$agents/reviewer.result.json", $json->encode(\%result));
+  my $handoff = mcp('nexus_handoff_submit', { status => 'success',
+    summary => $text->('Revisão independente: candidato aprovado, sem achados.'), fullText => $report });
+  stop_heartbeat();
+  write_file("$agents/reviewer.result.json", $json->encode({ %result, handoff => $handoff }));
+  say_pty('[revisor] veredito registrado e relatório entregue');
+  idle_forever("$agents/reviewer.input.ndjson");
+  exit(0);
+}
+
 if ($role ne 'orchestrator') {
   # ---------------------------------------------------------------- worker
   say_pty("nexus-e2e-agent 1.0 — writer $id pronto em $cwd");
@@ -196,33 +254,6 @@ if ($role ne 'orchestrator') {
 say_pty('nexus-e2e-agent 1.0 — orquestrador pronto');
 my $plan_file = "$dir/plan.json";
 my $plan = do { local $/; open(my $fh, '<', $plan_file) or die "plano: $!"; $json->decode(<$fh>) };
-my $http = HTTP::Tiny->new(timeout => 600);
-my $rpc = 0;
-sub mcp {
-  my ($name, $arguments) = @_;
-  my $body = $json->encode({ jsonrpc => '2.0', id => ++$rpc + $$ * 1000, method => 'tools/call',
-    params => { name => $name, arguments => $arguments } });
-  my $response = $http->request('POST', $ENV{NEXUS_MCP_URL}, {
-    headers => { 'content-type' => 'application/json', accept => 'application/json, text/event-stream',
-      authorization => "Bearer $ENV{NEXUS_MCP_TOKEN}" },
-    content => $body,
-  });
-  my %call = (tool => $name, status => $response->{status}, at => time());
-  my $decoded = eval { $json->decode($response->{content}) };
-  if ($decoded) {
-    $call{rpc} = $decoded;
-    my $text = $decoded->{result}{content}[0]{text};
-    $call{isError} = $decoded->{result}{isError} ? JSON::PP::true : JSON::PP::false;
-    # O texto já é string de caracteres: decodifica sem a camada UTF-8.
-    $call{result} = eval { JSON::PP->new->decode($text) } // $text if defined $text;
-    $call{error} = $decoded->{error} if $decoded->{error};
-  } else {
-    $call{raw} = $response->{content};
-  }
-  append_line("$agents/orchestrator.mcp.ndjson", $json->encode(\%call));
-  return \%call;
-}
-
 sleep(2.5);
 start_heartbeat('orquestrador');
 # Como no incidente de 07/10: o Maestro cria a worktree aninhada na pasta da aba.
