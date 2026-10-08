@@ -23,6 +23,7 @@ import {
 } from './adapter-registry';
 import { applyDiscoveredModelsToAdapter } from './cli-model-discovery';
 import { parseAgyModelsOutput } from './model-discovery';
+import { migrateModelId } from '../../shared/model-defaults';
 import type { ModelCatalog } from './model-catalog';
 
 // ── Minimal valid cli-pty adapter for reuse across tests ────────────────────
@@ -307,10 +308,13 @@ describe('builtin adapters', () => {
     const models = agy?.models?.list ?? [];
 
     expect(agy?.models?.default).toBe('gemini-3.8-flash-high');
-    // F-964: a lista bundled (fallback até a CLI responder) é exatamente o
-    // que o `agy models` do AGY 1.3.1 imprime — sem Argon, sem Claude 4-6.
+    // F-964: a lista bundled (fallback até a CLI responder) é o que o
+    // `agy models` do AGY 1.3.1 imprime — sem Argon, sem Claude 4-6 — menos
+    // o que o operador tirou da oferta (3.1 Pro, 2026-09-27): esses ids
+    // migram em RETIRED_MODEL_MIGRATIONS e não podem ser oferecidos.
     const fixture = fs.readFileSync(path.join(__dirname, '__fixtures__', 'agy-models-1.3.1.stdout.txt'), 'utf8');
-    expect(models).toEqual(parseAgyModelsOutput(fixture));
+    expect(models).toEqual(parseAgyModelsOutput(fixture).filter((id) => migrateModelId(id) === id));
+    expect(models).not.toContain('gemini-3.1-pro-high');
     for (const ghost of ['gemini-4-argon', 'claude-opus-4-6-thinking', 'claude-sonnet-4-6']) {
       expect(models).not.toContain(ghost);
     }
