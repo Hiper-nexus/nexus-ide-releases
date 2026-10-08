@@ -54,7 +54,9 @@ async function showRemoteDesktopConfirmation(
   const operation =
     request.toolName === 'remote_pane_input'
       ? 'executar um comando de alto impacto no terminal'
-      : `executar ${boundedConfirmationLine(
+      : request.toolName === 'remote_approval'
+        ? 'aprovar um comando de alto impacto pedido por um agente'
+        : `executar ${boundedConfirmationLine(
           request.toolName.replace(DIALOG_CONTROL_CHARS, ' '),
         )}`;
   const safeArgs = safeDialogValue(request.args) as Record<string, unknown>;

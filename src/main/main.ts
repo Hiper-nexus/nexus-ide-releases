@@ -405,6 +405,7 @@ import {
 } from "./orch/token-speed-ipc";
 import { registerBillingIpc } from "./persistence/billing-ipc";
 import { registerAccountChoiceIpc } from "./persistence/account-choice-ipc";
+import { registerApprovalIpc } from "./agent-hooks/approval-ipc";
 import { syncLicenseOnBoot, stopLicenseSync } from "./license-sync";
 import { startProductActivity } from "./product-activity";
 import { registerTeamIpc } from "./team-ipc";
@@ -760,6 +761,7 @@ async function bootstrap(): Promise<void> {
   // Recibo da escolha de conta (somente leitura, já mascarado) para o chip do
   // cabeçalho do pane.
   registerAccountChoiceIpc();
+  registerApprovalIpc();
   registerCostIpc();
   registerTokenSpeedIpc();
   registerMediaIpc(projectRuntimeManager);

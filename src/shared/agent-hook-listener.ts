@@ -651,7 +651,7 @@ function stripHookEnvelopeKeys(record: Record<string, unknown>): Record<string, 
 
 /** Short, single-line description of a tool call for an approval card (the
  *  command for Bash, the path for file tools, else a clipped JSON preview). */
-function summarizeApprovalInput(toolInput: unknown): string {
+export function summarizeApprovalInput(toolInput: unknown): string {
   if (toolInput && typeof toolInput === 'object') {
     const obj = toolInput as Record<string, unknown>
     const direct = obj.command ?? obj.file_path ?? obj.path ?? obj.url ?? obj.pattern

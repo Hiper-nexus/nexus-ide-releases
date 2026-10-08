@@ -24,6 +24,11 @@ import {
   type AgentStatusHookMeta,
 } from './agent-status';
 import { handleTurnEndMechanicalHandoff } from './turn-end-handoff';
+import {
+  approvalBroker,
+  approvalFingerprint,
+  type ApprovalBroker,
+} from '../agent-hooks/approval-broker';
 import { HOOK_JSON_CONTENT_TYPE } from './hook-http';
 import {
   isShellHttpCommand,
@@ -148,6 +153,28 @@ export function extractHookToolLabels(
   return {};
 }
 
+const APPROVAL_TOOL_DONE_EVENTS: ReadonlySet<string> = new Set(['tool-complete', 'tool-use-failure']);
+const APPROVAL_TURN_EVENTS: ReadonlySet<string> = new Set(['stop', 'stop-failure', 'user-submit']);
+
+/**
+ * PRV-02: a sonda provou que a tecla do operador na TUI vence o hook
+ * PermissionRequest, que segue vivo até o prazo. O PostToolUse da MESMA
+ * ferramenta/argumentos, ou o fim do turno / prompt novo, prova que o diálogo
+ * já foi respondido: o pedido some do card em vez de esperar o prazo.
+ */
+export function supersedeApprovalsForHookEvent(
+  sessionId: string,
+  eventType: string,
+  body: Record<string, unknown>,
+  broker: ApprovalBroker = approvalBroker,
+): number {
+  if (APPROVAL_TURN_EVENTS.has(eventType)) return broker.supersede(sessionId);
+  if (!APPROVAL_TOOL_DONE_EVENTS.has(eventType)) return 0;
+  const toolName = extractHookToolName(body);
+  if (!toolName) return 0;
+  return broker.supersede(sessionId, approvalFingerprint(toolName, body.tool_input));
+}
+
 /**
  * Handle one validated hook POST. `applyEvent` is injectable so tests can
  * prove the fail-closed contract (reducer throws → 500, gate unaffected).
@@ -193,6 +220,12 @@ export function handleHookStatusRequest(
         authorizesEvidence: false,
       },
     };
+  }
+
+  try {
+    supersedeApprovalsForHookEvent(ctx.sessionId, eventType, body);
+  } catch {
+    // Aditivo: o broker nunca derruba o canal de status.
   }
 
   try {

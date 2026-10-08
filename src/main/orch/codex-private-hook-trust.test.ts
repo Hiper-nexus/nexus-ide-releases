@@ -84,7 +84,10 @@ it.skipIf(!modernCodex)('Codex hooks/list trusts every Nexus hook, leaves foreig
   const foreign = listing.hooks.find((hook) => hook.command === foreignCommand);
   expect(foreign?.trustStatus).toBe('untrusted');
   const generated = listing.hooks.filter((hook) => hook !== foreign);
-  expect(generated).toHaveLength(9);
+  // 9 hooks de status/portões + o broker de aprovação no PermissionRequest
+  // (PRV-02): a confiança é recalculada dos comandos gerados, sem revisão.
+  expect(generated).toHaveLength(10);
   expect(generated.every((hook) => hook.trustStatus === 'trusted')).toBe(true);
+  expect(generated.some((hook) => hook.command.includes('NEXUS_HOOK_PERMISSION_URL'))).toBe(true);
   expect(fs.existsSync(sentinel)).toBe(false);
 });

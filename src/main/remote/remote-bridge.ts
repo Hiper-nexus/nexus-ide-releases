@@ -6,6 +6,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { generate } from 'selfsigned';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
+import { z } from 'zod';
+import {
+  APPROVAL_DECISIONS,
+  APPROVAL_REQUEST_ID_MAX_CHARS,
+  type ApprovalOption,
+  type ApprovalProvider,
+  type ApprovalResponseCapability,
+} from '../../shared/approval-decision';
+import {
+  approvalBroker,
+  registerRemoteApprovalResponder,
+  type ApprovalRespondResult,
+} from '../agent-hooks/approval-broker';
 import type {
   RemoteBridgeEndpoint,
   RemoteBridgeInfo,
@@ -552,6 +565,126 @@ function sessionIdOf(
 // Reenvio do outbox mobile (mesmo messageId) não digita o prompt de novo.
 const paneInputDedup = createRemoteInputDedup<boolean>({ isDelivered: (ok) => ok });
 
+// ---------------------------------------------------------------------------
+// Aprovação estruturada (PRV-02/MOB-07). O aparelho vê os pedidos pendentes no
+// ops.snapshot (só de panes que o escopo dele pode LER), é avisado por push
+// `approvals.changed` e responde com `agentSession.respondToApproval` — uma
+// DECISÃO entregue ao broker, nunca uma tecla no PTY.
+// ---------------------------------------------------------------------------
+
+export type RemoteApproval = {
+  readonly requestId: string;
+  readonly revision: number;
+  readonly paneId: string;
+  readonly provider: ApprovalProvider;
+  readonly tool: string;
+  readonly summary: string;
+  readonly options: readonly ApprovalOption[];
+  readonly responseCapability: ApprovalResponseCapability;
+  readonly expiresAt: number;
+};
+
+export type RemoteApprovalResult =
+  | ApprovalRespondResult
+  | { readonly status: 'rejected'; readonly reason: string };
+
+const RemoteApprovalParams = z
+  .object({
+    itemId: z.string().min(1).max(APPROVAL_REQUEST_ID_MAX_CHARS),
+    expectedRevision: z.number().int().positive(),
+    optionId: z.enum(APPROVAL_DECISIONS),
+  })
+  .strict();
+
+function remoteApprovalsFor(scope: ProjectExecutionScope): RemoteApproval[] {
+  return approvalBroker.list().flatMap((request) => {
+    const pane = getPaneAuthzInfo(request.sessionId);
+    if (!pane || !authorizePaneAccess(remoteCaller(scope), pane, 'read').allow) return [];
+    return [
+      {
+        requestId: request.requestId,
+        revision: request.revision,
+        paneId: pane.paneId,
+        provider: request.provider,
+        tool: request.tool,
+        summary: request.summary,
+        options: request.options,
+        responseCapability: request.responseCapability,
+        expiresAt: request.expiresAt,
+      },
+    ];
+  });
+}
+
+/** Um cliente autenticado agora, com escrita no pane do pedido, é respondente. */
+function remoteBridgeCanRespond(sessionId: string): boolean {
+  if (authenticatedClients.size === 0) return false;
+  const pane = getPaneAuthzInfo(sessionId);
+  if (!pane) return false;
+  const now = Date.now();
+  for (const client of authenticatedClients.values()) {
+    if (client.expiresAt <= now) continue;
+    if (
+      !remoteDeviceTokenExists({
+        tokenId: client.tokenId,
+        deviceId: client.deviceId,
+        scope: client.scope,
+      })
+    ) {
+      continue;
+    }
+    if (authorizePaneAccess(remoteCaller(client.scope), pane, 'write').allow) return true;
+  }
+  return false;
+}
+
+registerRemoteApprovalResponder(remoteBridgeCanRespond);
+approvalBroker.subscribe(() => {
+  // Sem dados no push: o cliente relê o ops.snapshot, que aplica a autoridade.
+  for (const ws of authenticatedClients.keys()) send(ws, { type: 'approvals.changed' });
+});
+
+async function respondToApprovalFromRemote(
+  msg: AuthedBridgeCommand,
+  scope: ProjectExecutionScope,
+  confirmationSessionId: string,
+): Promise<RemoteApprovalResult> {
+  const parsed = RemoteApprovalParams.safeParse({
+    itemId: msg.itemId,
+    expectedRevision: msg.expectedRevision,
+    optionId: msg.optionId,
+  });
+  if (!parsed.success) return { status: 'rejected', reason: 'invalid-params' };
+  const { itemId, expectedRevision, optionId } = parsed.data;
+  // Pedido desconhecido e pane de outro escopo dão a MESMA recusa: o aparelho
+  // não descobre se o requestId existe.
+  const sessionId = approvalBroker.sessionOf(itemId);
+  const pane = sessionId ? getPaneAuthzInfo(sessionId) : null;
+  const paneWriteGrant =
+    pane !== null && authorizePaneAccess(remoteCaller(scope), pane, 'write').allow;
+  const approving = optionId === 'accept' || optionId === 'acceptForSession';
+  const decision = authorizeMobileRpc({
+    kind: 'approval.respond',
+    deviceActive: true, // a mensagem já passou pela autenticação da bridge
+    desktopConfirmed: false,
+    paneWriteGrant,
+    highImpact: approving && approvalBroker.isHighImpact(itemId),
+  });
+  if (!decision.allowed) return { status: 'rejected', reason: decision.reason };
+  if (decision.requiresConfirmation) {
+    const request = approvalBroker.list().find((entry) => entry.requestId === itemId);
+    const granted = await requestRemoteDesktopConfirmation({
+      confirmationSessionId,
+      scope,
+      toolName: 'remote_approval',
+      reason: 'aprovação remota de um comando destrutivo, remoto, de deploy ou publicação',
+      args: { command: request?.summary ?? '', tool: request?.tool ?? '', paneId: pane?.paneId ?? '' },
+    });
+    if (!granted) return { status: 'rejected', reason: 'desktop-confirmation-denied' };
+  }
+  return approvalBroker.respond({ requestId: itemId, expectedRevision, optionId, source: 'mobile' });
+}
+
 /** Shape das mensagens autenticadas aceitas pelo dispatch da bridge. */
 export type AuthedBridgeCommand = {
   id?: string;
@@ -587,6 +720,11 @@ export async function handleAuthedMessage(
   pushTarget?: WebSocket,
   confirmationSessionId = `remote:${scope.projectId}:${scope.checkoutId}`,
 ) {
+  // PRV-02: a política da aprovação depende do pane do pedido (grant) e do
+  // risco do comando, então ela é aplicada lá dentro, antes do broker.
+  if (msg.type === 'agentSession.respondToApproval') {
+    return respondToApprovalFromRemote(msg, scope, confirmationSessionId);
+  }
   // Defesa em profundidade do companion mobile: RPCs modelados pela política
   // passam pelo gate (destrutivos exigem confirmação do DESKTOP via diálogo
   // nativo — nunca um booleano enviado pelo próprio cliente, que seria
@@ -761,6 +899,7 @@ export async function handleAuthedMessage(
       return {
         missions,
         panes,
+        approvals: remoteApprovalsFor(scope),
         summary: {
           missions: missions.length,
           panes: panes.length,

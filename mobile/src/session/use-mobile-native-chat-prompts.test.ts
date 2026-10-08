@@ -157,3 +157,30 @@ describe('useMobileNativeChatPrompts ask state gate', () => {
     expect(promptsFor({ state: 'done' }, answered).ask).toBeNull()
   })
 })
+
+describe('useMobileNativeChatPrompts structured host approval (PRV-02/MOB-07)', () => {
+  const STRUCTURED = JSON.stringify({
+    approval: {
+      tool: 'Bash',
+      summary: 'pnpm build',
+      requestId: 'req-9',
+      revision: 1,
+      options: [{ optionId: 'accept' }, { optionId: 'decline' }],
+      responseCapability: 'live'
+    }
+  })
+
+  it('a structured envelope outranks the numbered-menu heuristic', () => {
+    const permission = permissionFor({
+      state: 'waiting',
+      interactivePrompt: STRUCTURED,
+      lastAssistantMessage: 'Allow this Bash command?\n1. Yes\n2. No'
+    }) as { structured?: true; options: Array<{ label: string; send: string }> } | null
+    expect(permission?.structured).toBe(true)
+    expect(permission?.options.map((o) => o.label)).toEqual(['Allow', 'Deny'])
+  })
+
+  it('still gates the structured card on a paused agent', () => {
+    expect(permissionFor({ state: 'working', interactivePrompt: STRUCTURED })).toBeNull()
+  })
+})

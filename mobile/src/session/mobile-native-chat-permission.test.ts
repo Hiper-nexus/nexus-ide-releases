@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { detectAgentPermission, parseApprovalFromStatus } from './mobile-native-chat-permission'
+import { decodeApprovalResponseToken } from './mobile-structured-agent-prompts'
 
 describe('detectAgentPermission', () => {
   it('returns null for a working agent even with permission-like text', () => {
@@ -140,5 +141,53 @@ describe('parseApprovalFromStatus', () => {
     expect(parseApprovalFromStatus('{bad')).toBeNull()
     expect(parseApprovalFromStatus(JSON.stringify({ questions: [] }))).toBeNull()
     expect(parseApprovalFromStatus(JSON.stringify({ approval: {} }))).toBeNull()
+  })
+})
+
+describe('parseApprovalFromStatus — structured host approval (PRV-02/MOB-07)', () => {
+  const structured = {
+    tool: 'Bash',
+    summary: 'touch probe.txt',
+    requestId: 'req-1',
+    revision: 1,
+    options: [
+      { optionId: 'accept' },
+      { optionId: 'acceptForSession', degradesTo: 'accept' },
+      { optionId: 'decline' }
+    ],
+    responseCapability: 'live'
+  }
+
+  it('answers with decision tokens, never keystrokes', () => {
+    const card = parseApprovalFromStatus(JSON.stringify({ approval: structured }))
+    expect(card?.structured).toBe(true)
+    expect(card?.options.map((o) => o.label)).toEqual([
+      'Allow',
+      'Allow (this request only)',
+      'Deny'
+    ])
+    for (const option of card!.options) {
+      expect(option.send).not.toBe('1')
+      expect(option.send).not.toBe(String.fromCharCode(27))
+    }
+    expect(decodeApprovalResponseToken(card!.options[2]!.send)).toEqual({
+      itemId: 'req-1',
+      expectedRevision: 1,
+      optionId: 'decline'
+    })
+  })
+
+  it('shows no card for a request nobody is waiting on any more', () => {
+    expect(
+      parseApprovalFromStatus(
+        JSON.stringify({ approval: { ...structured, responseCapability: 'closed' } })
+      )
+    ).toBeNull()
+  })
+
+  it('a broken structured envelope never falls back to the keystroke card', () => {
+    expect(
+      parseApprovalFromStatus(JSON.stringify({ approval: { ...structured, revision: 'x' } }))
+    ).toBeNull()
   })
 })

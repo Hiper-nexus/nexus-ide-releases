@@ -14,6 +14,7 @@ export type MobileRpcKind =
   | 'pane.read'
   | 'pane.stream.subscribe'
   | 'pane.input'
+  | 'approval.respond'
   | 'mission.list'
   | 'ops.snapshot'
   | 'mission.complete'
@@ -46,6 +47,10 @@ export type MobileAuthorizeInput = {
   readonly desktopConfirmed?: boolean;
   /** Device still paired / token not revoked. */
   readonly deviceActive: boolean;
+  /** approval.respond: the device's scope may WRITE the pane that owns the request. */
+  readonly paneWriteGrant?: boolean;
+  /** approval.respond: approving a high-impact command needs the desktop dialog. */
+  readonly highImpact?: boolean;
 };
 
 export type MobileAuthorizeResult =
@@ -66,6 +71,15 @@ export function authorizeMobileRpc(input: MobileAuthorizeInput): MobileAuthorize
   }
   if (READ_ONLY.has(input.kind) || input.kind === 'pane.input') {
     return { allowed: true, requiresConfirmation: false };
+  }
+  // PRV-02: responder a um pedido do broker é uma DECISÃO, nunca tecla no PTY.
+  // Sem autoridade de escrita no pane do pedido (o "grant" do aparelho) a
+  // resposta é recusada — nunca vira input de terminal.
+  if (input.kind === 'approval.respond') {
+    if (input.paneWriteGrant !== true) {
+      return { allowed: false, reason: 'approval-grant-required' };
+    }
+    return { allowed: true, requiresConfirmation: input.highImpact === true };
   }
   if (DESTRUCTIVE.has(input.kind)) {
     if (input.desktopConfirmed !== true) {
@@ -163,6 +177,8 @@ export function mobileRpcKindForBridgeType(type: string): MobileRpcKind | null {
     case 'pane.input':
     case 'pane.stream.frame':
       return 'pane.input';
+    case 'agentSession.respondToApproval':
+      return 'approval.respond';
     case 'mission.complete':
       return 'mission.complete';
     case 'git.push':

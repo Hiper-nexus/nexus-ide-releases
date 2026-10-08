@@ -28,6 +28,8 @@ import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { JEV_CHANNELS } from '../shared/jev-channels';
 import { BUG_REPORT_CHANNELS } from '../shared/bug-report-channels';
 import { ACCOUNT_CHOICE_CHANNELS } from '../shared/account-choice-channels';
+import { APPROVAL_CHANNELS } from '../shared/approval-channels';
+import type { ApprovalRequestView } from '../shared/approval-decision';
 import { DECISION_MODEL_CHANNELS } from '../shared/decision-model-channels';
 import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
@@ -213,6 +215,10 @@ ipcRenderer.on(WINDOW_CHANNELS.deepOpenQuota, () =>
 const bugReportOpenListeners = new Set<() => void>();
 ipcRenderer.on(BUG_REPORT_CHANNELS.open, () =>
   emitToListeners(bugReportOpenListeners, 'bugReportOpenListeners'),
+);
+const approvalsChangedListeners = new Set<(requests: ApprovalRequestView[]) => void>();
+ipcRenderer.on(APPROVAL_CHANNELS.changed, (_event, requests: ApprovalRequestView[]) =>
+  emitToListeners(approvalsChangedListeners, 'approvalsChangedListeners', requests),
 );
 
 // shot-bridge: arquivos entregues pelo Nexus Shot (contrato em
@@ -1479,6 +1485,15 @@ const api: NexusApi = {
   // o id da sessão (nada mais do chamador chega ao canal).
   accountChoice: {
     get: (sessionId) => ipcRenderer.invoke(ACCOUNT_CHOICE_CHANNELS.get, { sessionId }),
+  },
+  // PRV-02: só decisão estruturada e ids — nada do chamador vira tecla no PTY.
+  approvals: {
+    list: () => ipcRenderer.invoke(APPROVAL_CHANNELS.list),
+    respond: ({ requestId, expectedRevision, optionId }) =>
+      ipcRenderer.invoke(APPROVAL_CHANNELS.respond, { requestId, expectedRevision, optionId }),
+    setVisibleSurfaces: (sessionIds) =>
+      ipcRenderer.invoke(APPROVAL_CHANNELS.surfaces, { sessionIds }),
+    onChanged: (cb) => addListener(approvalsChangedListeners, cb),
   },
   // Fase 5 — Jarvis Vision: screen capture + AX tree + OCR
   vision: {

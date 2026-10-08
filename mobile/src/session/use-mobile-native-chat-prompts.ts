@@ -26,14 +26,19 @@ export function useMobileNativeChatPrompts(args: {
   // Both permission paths sit inside the paused gate: an approval envelope can
   // outlive its answer (the host keeps it sticky), so only a waiting/blocked
   // agent may surface it — never a working or done one (STA-3144).
+  // A structured host approval outranks the text heuristic: its options answer
+  // the broker, while a heuristic card would type digits into the PTY.
+  const statusApproval = blocked && status ? parseApprovalFromStatus(status.interactivePrompt) : null
   const permission =
     blocked && status
-      ? (detectAgentPermission({
-          state: status.state,
-          lastAssistantMessage: status.lastAssistantMessage,
-          toolName: status.toolName,
-          toolInput: status.toolInput
-        }) ?? parseApprovalFromStatus(status.interactivePrompt))
+      ? statusApproval?.structured
+        ? statusApproval
+        : (detectAgentPermission({
+            state: status.state,
+            lastAssistantMessage: status.lastAssistantMessage,
+            toolName: status.toolName,
+            toolInput: status.toolInput
+          }) ?? statusApproval)
       : null
   const question =
     blocked && status && !permission ? parseAgentQuestion(status.lastAssistantMessage ?? '') : null
