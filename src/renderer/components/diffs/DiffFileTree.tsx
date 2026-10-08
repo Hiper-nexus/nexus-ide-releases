@@ -18,6 +18,7 @@ import {
   buildDiffFileTreeRows,
   diffFileTreeKeyMove,
   retainCollapsedDirectories,
+  type DiffFileTreeRow,
 } from '../../lib/diff-file-tree';
 import { PixelIcon } from '../PixelIcon';
 
@@ -52,7 +53,7 @@ export function DiffFileTree({
   );
   const rows = useMemo(() => buildDiffFileTreeRows(paths, collapsed), [collapsed, paths]);
   const [focusPath, setFocusPath] = useState<string | null>(null);
-  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const rowRefs = useRef(new Map<string, HTMLLIElement>());
   const focusRequestRef = useRef<string | null>(null);
   const pendingScrollRef = useRef<string | null>(null);
   // Selection driven by `selectedPath` is an echo of a file already on screen when the reader
@@ -115,8 +116,24 @@ export function DiffFileTree({
     onSelectFile(path);
   };
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, path: string) => {
-    const move = diffFileTreeKeyMove(rows, path, event.key);
+  const activate = (row: DiffFileTreeRow) => {
+    if (row.kind === 'file') {
+      selectFile(row.path);
+      return;
+    }
+    setFocusPath(row.path);
+    toggleDirectory(row.path);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLLIElement>, row: DiffFileTreeRow) => {
+    // Keys typed on a row's own action buttons belong to those buttons.
+    if (event.target !== event.currentTarget) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      activate(row);
+      return;
+    }
+    const move = diffFileTreeKeyMove(rows, row.path, event.key);
     if (!move) return;
     event.preventDefault();
     if (move.type === 'toggle') {
@@ -127,37 +144,39 @@ export function DiffFileTree({
     setFocusPath(move.path);
   };
 
-  const bindRow = (path: string) => (node: HTMLButtonElement | null) => {
+  const bindRow = (path: string) => (node: HTMLLIElement | null) => {
     if (node) rowRefs.current.set(path, node);
     else rowRefs.current.delete(path);
   };
 
+  // Each <li> is the treeitem itself (the tree's only children are treeitems). A file's
+  // stage/unstage/discard buttons live inside its treeitem; their clicks stop there so they
+  // never select the row.
   return (
     <ul className="git-scm__files git-scm__tree" role="tree" aria-label={ariaLabel}>
       {rows.map((row) => {
         const indent = { paddingLeft: 6 + row.depth * INDENT_PX };
+        const rowProps = {
+          ref: bindRow(row.path),
+          role: 'treeitem',
+          'aria-level': row.depth + 1,
+          tabIndex: row.path === activePath ? 0 : -1,
+          onClick: () => activate(row),
+          onKeyDown: (event: KeyboardEvent<HTMLLIElement>) => handleKeyDown(event, row),
+        } as const;
         if (row.kind === 'directory') {
           return (
-            <li key={row.path} className="git-scm__tree-dir" role="none">
-              <button
-                ref={bindRow(row.path)}
-                type="button"
-                role="treeitem"
-                aria-level={row.depth + 1}
-                aria-expanded={row.expanded}
-                tabIndex={row.path === activePath ? 0 : -1}
-                className="git-scm__file-main git-scm__tree-dir-main"
-                style={indent}
-                title={row.path.slice(0, -1)}
-                onClick={() => {
-                  setFocusPath(row.path);
-                  toggleDirectory(row.path);
-                }}
-                onKeyDown={(event) => handleKeyDown(event, row.path)}
-              >
+            <li
+              key={row.path}
+              {...rowProps}
+              aria-expanded={row.expanded}
+              className="git-scm__tree-dir"
+              title={row.path.slice(0, -1)}
+            >
+              <span className="git-scm__file-main git-scm__tree-dir-main" style={indent}>
                 <PixelIcon name={row.expanded ? 'chevron-down' : 'chevron'} size={10} />
                 <span className="git-scm__name">{row.name}</span>
-              </button>
+              </span>
             </li>
           );
         }
@@ -167,28 +186,22 @@ export function DiffFileTree({
         return (
           <li
             key={row.path}
+            {...rowProps}
+            aria-selected={selected}
+            // Without a label the name would also read the action buttons' labels.
+            aria-label={`${row.name}, ${file.status}`}
             className={`git-scm__file${selected ? ' is-selected' : ''}`}
-            role="none"
+            title={file.originalPath ? `${file.originalPath} → ${file.path}` : file.path}
           >
-            <button
-              ref={bindRow(row.path)}
-              type="button"
-              role="treeitem"
-              aria-level={row.depth + 1}
-              aria-selected={selected}
-              tabIndex={row.path === activePath ? 0 : -1}
-              className="git-scm__file-main"
-              style={indent}
-              title={file.originalPath ? `${file.originalPath} → ${file.path}` : file.path}
-              onClick={() => selectFile(row.path)}
-              onKeyDown={(event) => handleKeyDown(event, row.path)}
-            >
+            <span className="git-scm__file-main" style={indent}>
               <span className="git-scm__code" data-status={file.status}>
                 {file.status}
               </span>
               <span className="git-scm__name">{row.name}</span>
-            </button>
-            {renderFileActions(file)}
+            </span>
+            <span className="git-scm__tree-actions" onClick={(event) => event.stopPropagation()}>
+              {renderFileActions(file)}
+            </span>
           </li>
         );
       })}

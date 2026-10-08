@@ -250,6 +250,45 @@ describe('GitPanelBody highlighted diff', () => {
     ]);
   });
 
+  it('keeps a range draft on its own file and sends it with that path from another file', async () => {
+    const sendSpy = vi.spyOn(agentAttach, 'sendAnnotationsToAgent').mockResolvedValue(true);
+    useGitScmStore.setState({
+      unstaged: [
+        { path: 'src/app.ts', status: 'M' },
+        { path: 'src/other.ts', status: 'M' },
+      ],
+    });
+    const host = await render();
+    beginComment({ start: 1, side: 'additions', end: 2, endSide: 'additions' });
+    setTextareaValue(
+      host.querySelector<HTMLTextAreaElement>('.git-scm__diff-comment-input')!,
+      'Renomear',
+    );
+    clickButton(host, 'Guardar rascunho');
+
+    act(() =>
+      useGitScmStore.setState({
+        selected: { path: 'src/other.ts', section: 'unstaged' },
+        diffText: PATCH.replaceAll('src/app.ts', 'src/other.ts'),
+      }),
+    );
+    expect(lastProps().items[0].fileDiff.name).toBe('src/other.ts');
+    expect(lastProps().items[0].annotations).toEqual([]);
+    expect(host.textContent).toContain('1 revisão(ões) em rascunho');
+
+    const send = findButton(host, 'Enviar todas ao agente');
+    await act(async () => {
+      send.click();
+    });
+    expect(sendSpy).toHaveBeenCalledWith([
+      {
+        path: 'src/app.ts',
+        line: 1,
+        body: 'Renomear\n\n> const newConst = 2;\n> const keep = 3;',
+      },
+    ]);
+  });
+
   it('keeps the open comment on its line across layout switches and resizes', async () => {
     const host = await render();
     beginComment({ start: 2, side: 'additions', end: 2 });

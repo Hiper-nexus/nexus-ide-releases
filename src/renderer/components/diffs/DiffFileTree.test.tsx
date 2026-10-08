@@ -142,4 +142,37 @@ describe('DiffFileTree', () => {
     expect(onSelectFile).not.toHaveBeenCalled();
     expect(host.querySelectorAll('[aria-label^="Stage "]')).toHaveLength(FILES.length);
   });
+  it('exposes only treeitems under the tree, each file action inside its own row', () => {
+    render(FILES, null);
+    const tree = host.querySelector('[role="tree"]')!;
+    expect(Array.from(tree.children).map((child) => child.getAttribute('role'))).toEqual(
+      Array(7).fill('treeitem'),
+    );
+    const actions = Array.from(tree.querySelectorAll('button'));
+    expect(actions).toHaveLength(FILES.length);
+    for (const action of actions) {
+      expect(action.closest('[role="treeitem"]')?.getAttribute('title')).toBe(
+        action.getAttribute('aria-label')!.replace('Stage ', ''),
+      );
+    }
+    // The row's name is its file, not the labels of the buttons inside it.
+    expect(item('src/a/one.ts').getAttribute('aria-label')).toBe('one.ts, M');
+  });
+
+  it('activates rows with Enter/Space but leaves keys on the row actions alone', () => {
+    render(FILES, null);
+    press(item('src/b/three.ts'), 'Enter');
+    expect(onSelectFile).toHaveBeenCalledWith('src/b/three.ts');
+
+    press(item('src/a'), ' ');
+    expect(item('src/a').getAttribute('aria-expanded')).toBe('false');
+
+    onSelectFile.mockClear();
+    const stage = host.querySelector<HTMLButtonElement>('[aria-label="Stage README.md"]')!;
+    act(() => stage.focus());
+    press(stage, 'Enter');
+    press(stage, 'ArrowUp');
+    expect(onSelectFile).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(stage);
+  });
 });
