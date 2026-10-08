@@ -1688,6 +1688,27 @@ function resolveMainOwnedPanePresentation(
         false,
       );
     }
+    // F-1002: linha do "+ Pane → Nesta missão" gravada sem a conta/esforço
+    // que o Main selou neste PTY. A apresentação abaixo pede a adoção com a
+    // ficha física; sem preencher a linha a cerca do spawn persistido recusa
+    // para sempre. A fonte é o PTY do próprio Main, mesma encarnação.
+    if (
+      !acpSession &&
+      spec.operatorOpened === true &&
+      agent.operatorOpened === true &&
+      agent.workerIncarnationId === spec.workerIncarnationId &&
+      ((spec.accountId === undefined && agent.accountId !== undefined) ||
+        (spec.effort === undefined && agent.effort !== undefined))
+    ) {
+      spec =
+        stores.missionPanes.fillOperatorPaneSealedRuntime({
+          missionId,
+          paneId: entry.paneId,
+          workerIncarnationId: spec.workerIncarnationId,
+          accountId: agent.accountId,
+          effort: agent.effort,
+        }) ?? spec;
+    }
     currentSeal = resolveCurrentMissionSpawnAuthoritySeal(meta.scope, missionId);
   } catch (error) {
     return stalePresentation(

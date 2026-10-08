@@ -760,4 +760,51 @@ describe('retomada da missão da aba move o pane do orquestrador (F-664)', () =>
     expect(reopened).toMatchObject({ accountId: 'acct-re-claude', model: 'claude-opus-5-5', agentName: 'Orquestrador' });
     expect(reviewer.readOnly).toBe(true);
   });
+
+  it('F-1002: preenche só a conta ausente da linha do pane do operador, nunca sobrescreve', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({ title: 'Missão · Meus terminais' });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    // A linha de 07/10: "+ Pane → Nesta missão" sem account_id.
+    const operator = panes.record({
+      missionId: mission.id,
+      adapterId: 'claude',
+      model: 'claude-opus-5-5',
+      title: 'Claude · operador',
+      agentName: 'Claude · operador',
+      role: 'worker',
+      paneId: 'pane-muyuzbjn-1e',
+      workerIncarnationId: 'workerinc-muyuzbil-1c',
+      operatorOpened: true,
+    });
+    const maestroWorker = panes.record({
+      missionId: mission.id,
+      adapterId: 'claude',
+      title: 'Worker do Maestro',
+      role: 'worker',
+      paneId: 'pane-worker',
+      workerIncarnationId: 'workerinc-worker',
+    });
+    const fill = (paneId: string, workerIncarnationId: string, accountId: string) =>
+      panes.fillOperatorPaneSealedRuntime({
+        missionId: mission.id, paneId, workerIncarnationId, accountId, effort: undefined,
+      });
+
+    // Encarnação errada e worker que não é do operador: nada muda.
+    expect(fill('pane-muyuzbjn-1e', 'workerinc-outra', 'acct-mrqvpdwz-1')).toBeNull();
+    expect(fill('pane-worker', 'workerinc-worker', 'acct-mrqvpdwz-1')).toBeNull();
+    expect(panes.findByPaneId('pane-worker')?.accountId).toBeUndefined();
+    expect(maestroWorker.operatorOpened).toBeUndefined();
+
+    expect(fill('pane-muyuzbjn-1e', 'workerinc-muyuzbil-1c', 'acct-mrqvpdwz-1')).toMatchObject({
+      id: operator.id, accountId: 'acct-mrqvpdwz-1', operatorOpened: true,
+    });
+    // Conta já gravada nunca é trocada por este caminho.
+    expect(fill('pane-muyuzbjn-1e', 'workerinc-muyuzbil-1c', 'acct-outra')).toBeNull();
+    runtimeManager.close(scope);
+    expect(
+      createScopedMissionPaneStore(runtimeManager, scope).findByPaneId('pane-muyuzbjn-1e'),
+    ).toMatchObject({ accountId: 'acct-mrqvpdwz-1', model: 'claude-opus-5-5' });
+  });
 });

@@ -54,6 +54,12 @@ import {
   recordPaneSpawnError,
 } from './pane-spawn-errors';
 import {
+  automaticSpawnDecision,
+  automaticSpawnExhaustedNotice,
+  recordAutomaticSpawnFailure,
+  resetAutomaticSpawnBudget,
+} from './automatic-spawn-budget';
+import {
   BLOCKED_RESUME_NOTICE,
   decideDeadPaneReviveRespawn,
   decideExitedPaneKey,
@@ -1163,6 +1169,12 @@ function startSpawn(
         return null;
       }
       if (!res.ok) {
+        // F-1002: toda recusa conta para o orçamento dos spawns automáticos.
+        const failure = recordAutomaticSpawnFailure(
+          pane.id,
+          res.error,
+          Date.now(),
+        );
         if (reportLicenseDenial(res.error)) {
           // Latch the attempt: remount, resize and recovery must not retry a denial.
           recordPaneSpawnError(pane.id, res.error);
@@ -1258,9 +1270,18 @@ function startSpawn(
           useSessionStateStore.getState().setPaneState(pane.id, 'exited');
           return null;
         }
-        host.term.writeln(
-          `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
-        );
+        // F-1002: o motivo aparece uma vez (a mesma recusa repetida não vira
+        // uma parede de linhas) e o esgotamento diz o que fazer, uma vez.
+        if (!failure.repeated) {
+          host.term.writeln(
+            `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
+          );
+        }
+        if (failure.exhaustedNow) {
+          host.term.writeln(
+            `\r\n\x1b[33m${automaticSpawnExhaustedNotice(res.error)}\x1b[0m`,
+          );
+        }
         useSessionStateStore.getState().setPaneState(pane.id, 'exited');
         return null;
       }
@@ -1276,6 +1297,7 @@ function startSpawn(
       propagateHostSize(host);
       if (res.cwd) useLayoutStore.getState().setPaneCwd(pane.id, res.cwd);
       clearPaneSpawnError(pane.id);
+      resetAutomaticSpawnBudget(pane.id);
       // F-721: o aviso "Agente em pausa … NÃO foi reiniciada" ficou acima,
       // escrito quando o pane foi segurado. O pane religou: a última palavra
       // é que ele voltou. Sessão adotada limpa a tela logo abaixo (reset).
@@ -1748,6 +1770,7 @@ function startSpawn(
     } catch (err) {
       if (host.disposed || host.spawnGeneration !== generation) return null;
       const message = err instanceof Error ? err.message : String(err);
+      const failure = recordAutomaticSpawnFailure(pane.id, message, Date.now());
       if (reportLicenseDenial(err)) {
         recordPaneSpawnError(pane.id, message);
         useSessionStateStore.getState().setPaneState(pane.id, 'exited');
@@ -1764,9 +1787,16 @@ function startSpawn(
         useSessionStateStore.getState().setPaneState(pane.id, 'exited');
         return null;
       }
-      host.term.writeln(
-        `\r\n\x1b[31m[nexus] failed to start: ${message}\x1b[0m`,
-      );
+      if (!failure.repeated) {
+        host.term.writeln(
+          `\r\n\x1b[31m[nexus] failed to start: ${message}\x1b[0m`,
+        );
+      }
+      if (failure.exhaustedNow) {
+        host.term.writeln(
+          `\r\n\x1b[33m${automaticSpawnExhaustedNotice(message)}\x1b[0m`,
+        );
+      }
       useSessionStateStore.getState().setPaneState(pane.id, 'exited');
       return null;
     }
@@ -1917,6 +1947,10 @@ function armDeferredSpawnRetry(host: Host, delayMs: number): void {
 
 function beginPaneSpawn(pane: PaneModel, host: Host): void {
   if (host.spawnStarted || host.hibernated || host.disposed) return;
+  // F-1002: remontagem, replay de apresentação e espera headless passam por
+  // aqui. Depois de uma recusa, a próxima tentativa automática espera o
+  // backoff; esgotado o orçamento, só uma ação explícita religa.
+  if (automaticSpawnDecision(pane.id, Date.now()) !== 'allow') return;
   // F-213: a primeira tentativa marca o nascimento do ciclo — a espera de
   // grade mensurável e a pausa held entram no rendererWaitMs do pedido.
   host.spawnCycleStartMs ??= Date.now();
@@ -3019,6 +3053,8 @@ export function consumeFirstSpawnIntent(paneId: string): {
 export function markResumeOnSpawn(paneId: string): void {
   // Intentional resume (reopen mission / user confirmed) always clears a hold.
   heldSpawnPanes.delete(paneId);
+  // F-1002: ação explícita zera o orçamento dos spawns automáticos.
+  resetAutomaticSpawnBudget(paneId);
   markFirstSpawnIntent(paneId, 'resume');
   kickHeldSpawnIfReady(paneId);
 }
@@ -3069,6 +3105,7 @@ export function isSpawnHeld(paneId: string): boolean {
 /** Forget every renderer-local spawn intent before pruning an orphan leaf. */
 export function discardPaneSpawnState(paneId: string): void {
   heldSpawnPanes.delete(paneId);
+  resetAutomaticSpawnBudget(paneId);
   heldSpawnSinceMs.delete(paneId);
   firstSpawnIntent.delete(paneId);
   useSessionStateStore.getState().clearPaneState(paneId);
@@ -3890,6 +3927,8 @@ export function respawnWithResume(
 ): void {
   const host = hosts.get(pane.id);
   if (!host || host.disposed) return;
+  // F-1002: Reiniciar é ação explícita — zera o orçamento automático.
+  resetAutomaticSpawnBudget(pane.id);
   if (!useAccessStore.getState().canUseApp) {
     accessDeferredSpawns.set(pane.id, () => respawnWithResume(pane, note, options));
     return;
@@ -4128,6 +4167,7 @@ export function waitForSession(
               host.hibernated ||
               host.spawnGeneration !== generation ||
               heldSpawnPanes.has(pane.id) ||
+              automaticSpawnDecision(pane.id, Date.now()) !== 'allow' ||
               !listPanes(useLayoutStore.getState().root).some(
                 (candidate) => candidate.id === pane.id,
               )
