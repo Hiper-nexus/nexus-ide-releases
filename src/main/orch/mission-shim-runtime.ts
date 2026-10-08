@@ -276,8 +276,10 @@ function shellQuote(value: string): string {
  * macOS, todo processo Node desconhecido entra na fila única de trabalho
  * pesado do projeto. O cliente nx é IPC leve: com a cópia `#!/usr/bin/env
  * node`, `nx-mail --help` (e o próprio handoff) esperava minutos na fila.
- * O lançador marca o processo como auxiliar do Nexus (o preload não age) e
- * entrega ao cliente compartilhado o prefixo do comando, como o `.cmd`.
+ * O lançador marca o processo como auxiliar do Nexus e entrega ao cliente
+ * compartilhado o prefixo do comando, como o `.cmd`. A flag sozinha não
+ * isenta nada: o preload só a aceita porque o script, pelo caminho real, é
+ * uma cópia byte a byte do cliente nx empacotado e nada mais foi pré-carregado.
  */
 export function missionShimPosixLauncher(client: string, prefix: string): string {
   return [

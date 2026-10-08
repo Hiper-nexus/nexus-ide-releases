@@ -267,3 +267,58 @@ it.runIf(process.platform === 'darwin')('preserves a user zshenv redirect for la
   expect(fs.existsSync(path.join(resources, 'loaded'))).toBe(false);
  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// F-962 (revisão): NEXUS_HEAVY_HELPER=1 era autoisenção genérica — qualquer
+// lançador podia definir a variável e pular a admissão. A flag só isenta um
+// entrypoint exato e confiável, provado pelo caminho real do script.
+function scopedHeavyEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+ const env: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: appendHeavyCommandPreload(undefined, path.join(process.cwd(), 'resources/heavy-command/preload.cjs')),
+   NEXUS_GATE_TOKEN: 'finite', NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1/hook/heavy-command', ...extra };
+ for (const key of ['NEXUS_HEAVY_HELPER', 'NEXUS_HEAVY_LEASE', 'NEXUS_HEAVY_JOB_BASE', 'NEXUS_HEAVY_DISPATCHED', 'NEXUS_HEAVY_AGENT_ENTRY']) if (!(key in extra)) delete env[key];
+ return env;
+}
+
+it('NEXUS_HEAVY_HELPER=1 sozinho não isenta um entrypoint pesado (nem filho que herdou a flag)', () => {
+ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-helper-flag-'));
+ const entry = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc'); fs.mkdirSync(path.dirname(entry), { recursive: true });
+ const marker = path.join(root, 'compiled');
+ fs.writeFileSync(entry, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'x'); console.log('compiled')`);
+ try {
+  const plain = spawnSync(process.execPath, [entry], { env: scopedHeavyEnv(), encoding: 'utf8', timeout: 10_000 });
+  expect(plain.status).toBe(78);
+  const flagged = spawnSync(process.execPath, [entry], { env: scopedHeavyEnv({ NEXUS_HEAVY_HELPER: '1' }), encoding: 'utf8', timeout: 10_000 });
+  expect(flagged.status).toBe(78);
+  expect(flagged.stdout).not.toContain('compiled');
+  expect(fs.existsSync(marker)).toBe(false);
+ } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}, 20_000);
+
+it.skipIf(process.platform !== 'darwin' || !fs.existsSync('/usr/bin/perl'))('a flag isenta só o cliente nx idêntico ao recurso e os helpers do heavy-command', () => {
+ // Base de job que recusa tudo: quem não for isento sai 78 antes de rodar.
+ const jobBase = JSON.stringify({ file: '/usr/bin/perl', args: ['-e', 'exit 78', 'heavy-job'] });
+ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-helper-exact-'));
+ const client = path.join(root, 'bin', 'nx-shim.cjs'); fs.mkdirSync(path.dirname(client), { recursive: true });
+ const source = fs.readFileSync(path.join(process.cwd(), 'resources/mission-shims/nx-shim.cjs'));
+ fs.writeFileSync(client, source);
+ const tampered = path.join(root, 'other', 'nx-shim.cjs'); fs.mkdirSync(path.dirname(tampered), { recursive: true });
+ fs.writeFileSync(tampered, Buffer.concat([source, Buffer.from('\n// alterado\n')]));
+ const extra = path.join(root, 'extra.cjs'); const marker = path.join(root, 'extra-ran');
+ fs.writeFileSync(extra, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'x')`);
+ const run = (args: string[], extraEnv: NodeJS.ProcessEnv) => spawnSync(process.execPath, args, { env: scopedHeavyEnv({ NEXUS_HEAVY_JOB_BASE: jobBase, ...extraEnv }), encoding: 'utf8', timeout: 10_000 });
+ try {
+  const exempt = run([client, 'mail', '--help'], { NEXUS_HEAVY_HELPER: '1' });
+  expect(exempt.status, exempt.stderr).toBe(0);
+  expect(exempt.stdout).toMatch(/uso: nx-mail send/);
+  expect(run([client, 'mail', '--help'], {}).status).toBe(78);
+  expect(run([tampered, 'mail', '--help'], { NEXUS_HEAVY_HELPER: '1' }).status).toBe(78);
+  const withExtra = run([client, 'mail', '--help'], { NEXUS_HEAVY_HELPER: '1',
+    NODE_OPTIONS: `${appendHeavyCommandPreload(undefined, path.join(process.cwd(), 'resources/heavy-command/preload.cjs'))} --require ${JSON.stringify(extra)}` });
+  expect(withExtra.status).toBe(78);
+  expect(fs.existsSync(marker)).toBe(false);
+  const classify = path.join(process.cwd(), 'resources/heavy-command/classify.cjs');
+  const helper = run([classify, 'npx vitest run'], { NEXUS_HEAVY_HELPER: '1' });
+  expect(helper.status, helper.stderr).toBe(0);
+  expect(helper.stdout).toBe('tests');
+  expect(run([classify, 'npx vitest run'], {}).status).toBe(78);
+ } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}, 30_000);

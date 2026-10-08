@@ -1,6 +1,36 @@
 // Installed in Main-owned CLI env only; external shells have no scoped endpoint.
 const { isMainThread } = require('node:worker_threads');
-if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GATE_TOKEN && process.env.NEXUS_HEAVY_HELPER !== '1') {
+// NEXUS_HEAVY_HELPER=1 alone never exempts: any launcher can set it. It only
+// exempts an EXACT trusted entrypoint, proved by the script's real path — this
+// directory's own helpers, or a byte-identical copy of the bundled mission-shim
+// client — and only when nothing else is preloaded into that process. Any other
+// process (including a child that inherited the flag) stays admitted.
+function trustedHelperEntry() {
+  if (process.env.NEXUS_HEAVY_HELPER !== '1') return false;
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const real = (file) => { try { return fs.realpathSync(file); } catch { return null; } };
+  const entry = typeof process.argv[1] === 'string' ? real(process.argv[1]) : null;
+  const self = real(__filename);
+  if (!entry || !self || process.execArgv.length > 0) return false;
+  const options = process.env.NODE_OPTIONS || '';
+  if (/(?:^|\s)(?:--import|--loader|--experimental-loader)(?:[=\s]|$)/.test(options)) return false;
+  for (const match of options.matchAll(/(?:^|\s)(?:-r|--require)(?:=|\s+)("(?:[^"\\]|\\.)*"|\S+)/g)) {
+    let required = match[1];
+    try { if (required.startsWith('"')) required = JSON.parse(required); } catch { return false; }
+    if (real(required) !== self) return false;
+  }
+  const directory = path.dirname(self);
+  if (['request.cjs', 'classify.cjs', 'tool-hook.cjs', 'job-launch.cjs'].some((name) => entry === path.join(directory, name))) return true;
+  const client = real(path.join(directory, '..', 'mission-shims', 'nx-shim.cjs'));
+  if (!client || path.basename(entry) !== 'nx-shim.cjs') return false;
+  if (entry === client) return true;
+  try {
+    const stat = fs.lstatSync(entry);
+    return stat.isFile() && stat.size <= 1024 * 1024 && fs.readFileSync(entry).equals(fs.readFileSync(client));
+  } catch { return false; }
+}
+if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GATE_TOKEN && !trustedHelperEntry()) {
   const path = require('node:path');
   const { execFileSync } = require('node:child_process');
   const catalog = require('./catalog.cjs');

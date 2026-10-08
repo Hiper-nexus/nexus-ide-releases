@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  capDigestEntries,
   digestBudgetPerPane,
   digestPaneTail,
   DIGEST_MANY_MAX_CHARS,
@@ -7,6 +8,7 @@ import {
   DIGEST_MAX_SIGNAL_LINES,
   DIGEST_TAIL_LINES,
   normalizeRedrawLine,
+  PANE_READ_MANY_MAX_PANES,
 } from './pane-output-digest';
 
 const lines = (n: number, prefix = 'linha') =>
@@ -213,11 +215,34 @@ describe('F-961: redesenho de TUI não estoura o digest', () => {
     expect(digest.keptLines + digest.omittedLines).toBe(40);
   });
 
-  it('teto por pane: divide o total, com piso e teto', () => {
+  it('teto por pane: divide o total descontando o JSON, com piso e teto', () => {
     expect(digestBudgetPerPane(1)).toBe(6_000);
-    expect(digestBudgetPerPane(6)).toBe(4_000);
-    expect(digestBudgetPerPane(100)).toBe(800);
+    expect(digestBudgetPerPane(6)).toBe(3_700);
     expect(digestBudgetPerPane(0)).toBe(6_000);
+    // No limite de panes por chamada, piso × quantidade cabe no teto total.
+    expect(
+      digestBudgetPerPane(PANE_READ_MANY_MAX_PANES) * PANE_READ_MANY_MAX_PANES,
+    ).toBeLessThanOrEqual(DIGEST_MANY_MAX_CHARS);
+  });
+
+  it('rede final: a resposta agregada nunca passa do teto e mantém o fim de cada texto', () => {
+    const entries = Array.from({ length: 30 }, (_, pane) => ({
+      paneId: `pane-${pane}`,
+      mode: 'digest',
+      text: Array.from({ length: 40 }, (_, i) => `pane ${pane} linha ${i} ${'x'.repeat(30)}`).join('\n'),
+      keptLines: 40,
+      omittedLines: 0,
+    }));
+    expect(JSON.stringify(entries).length).toBeGreaterThan(DIGEST_MANY_MAX_CHARS);
+    const capped = capDigestEntries(entries);
+    expect(JSON.stringify(capped).length).toBeLessThanOrEqual(DIGEST_MANY_MAX_CHARS);
+    for (const [pane, entry] of capped.entries()) {
+      expect(String(entry.text).endsWith(`pane ${pane} linha 39 ${'x'.repeat(30)}`)).toBe(true);
+      expect(entry.truncated).toBe(true);
+    }
+    // Já dentro do teto: nada muda.
+    const small = [{ paneId: 'a', text: 'ok' }];
+    expect(capDigestEntries(small)).toEqual(small);
   });
 
   it('linha uniforme gigante não trava (orçamento de comparação)', () => {
