@@ -10156,7 +10156,7 @@ export const RELEASE_076202: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076209: AppRelease = {
   version: '0.76.209',
   date: '2026-10-07',
   codename: 'Missões com entrega verificada',
@@ -10183,5 +10183,34 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Menos bloqueios no trabalho', detail: 'Corrige o loop na leitura de saída que podia ocupar o processo principal. Avisos opcionais sobre versões de dependências deixam de impedir a conclusão da missão.' },
     { title: 'Validação de projetos nativos', detail: 'Verificações de Go e Rust usam a configuração do projeto. Dependências de execução ausentes aparecem como não verificadas, sem inventar um resultado aprovado.' },
     { title: 'Experiência do teste e manutenção', detail: 'Inclui a medição mínima de uso real no painel, sem código ou prompts, e a manutenção automática das CLIs compatíveis nos três sistemas, respeitando suas preferências.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.210',
+  date: '2026-10-08',
+  codename: 'O melhor do T3 Code dentro do Nexus',
+  summary: 'Diff, paleta, temas e app do celular vindos do T3 Code (MIT), e missões que abrem panes e terminam, provadas por uma missão de ponta a ponta no gate da release.',
+  highlights: [
+    { title: 'Missões que terminam', detail: 'Writers isolados abrem dentro da missão, comandos leves não caem mais na fila de comandos pesados e cada worktree tem a sua fila. A release só publica se uma missão completa terminar de ponta a ponta.' },
+    { title: 'Troca de conta no limite', detail: 'Ao bater o limite de uso, o pane passa para a outra conta conectada da mesma CLI com folga, preservando a conversa e sem levar segredos no pacote de continuidade.' },
+    { title: 'Diff e Git novos', detail: 'Realce de sintaxe, modo unificado ou lado a lado, comentário num intervalo de linhas e stage/unstage por arquivo, com código do T3 Code.' },
+    { title: 'Paleta com três modos', detail: '⌘K comandos, ⌘P arquivos e ⇧⌘F busca no conteúdo do projeto, com submenus e dicas de teclado.' },
+    { title: 'Seu tema do VS Code', detail: 'Importe o tema da interface e do terminal com contraste garantido, remapeie atalhos com aviso de conflito e veja o uso e as cotas somados por ferramenta.' },
+    { title: 'Nexus no celular', detail: 'O app Expo pareia pela Remote Bridge no tailnet, mostra panes e missões ao vivo, envia comandos e responde aprovações.' },
+  ],
+  fixes: [
+    { title: 'Aprovação por card', detail: 'Pedidos de permissão do Claude e do Codex aparecem como card no desktop e no celular, e o status não fica preso em "bloqueado".' },
+    { title: 'Modelos que a CLI oferece', detail: 'O Nexus só oferece e roteia modelos que a CLI instalada lista; o Gemini 4 Argon entra só quando o AGY o anuncia.' },
+    { title: 'Pane do operador na missão', detail: '"+ Pane → Nesta missão" abre na conta que o Main escolheu, em vez de tentar de novo sem parar.' },
+    { title: 'Quadro de entregas completo', detail: 'Writers isolados aparecem no quadro, e cada entrega chega ao Maestro uma vez, mesmo em rajada.' },
+    { title: 'Timeline fluida', detail: 'A atividade da missão rola leve com milhares de eventos, com carregamento sob demanda e uma rolagem só.' },
+    { title: 'Terminal sem faixa preta', detail: 'O rodapé do terminal usa o fundo do tema em temas claros e importados, e os controles que ficavam tapados voltaram a aparecer.' },
+    { title: 'Detecção com memória contida', detail: 'A grade libghostty-vt devolve picos de memória em vez de deixar panes novos fora dela e resiste a enxurradas de caracteres invisíveis.' },
+    { title: 'Anexos do iPhone', detail: 'Foto HEIC vira JPEG ao anexar, e imagem grande é comprimida em vez de recusada.' },
+    { title: 'Bridge remota mais segura', detail: 'Publicar no tailnet com HTTPS, e entrada remota com teclas de controle escondidas é recusada antes de chegar ao terminal.' },
+    { title: 'Sessões de navegador', detail: 'Importa sessões de 9 navegadores sem fechá-los, e a chave do Chrome não fica acessível a outros processos.' },
+    { title: 'Teste automatizado isolado', detail: 'O modo de teste não lê o Keychain nem executa CLIs de IA no boot.' },
+    { title: 'RAM do pane no Linux', detail: 'O badge de RAM não some mais depois de um ajuste do relógio.' },
   ],
 };

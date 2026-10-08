@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.76.210 — O melhor do T3 Code dentro do Nexus
+
+Esta versão traz código aberto do T3 Code (pingdotgg/t3code, licença MIT, © 2026 T3 Tools Inc.), integrado ao Nexus com a atribuição em `THIRD_PARTY_NOTICES.md` e a proveniência de cada arquivo em `third_party/provenance/t3code-26285ab.json`. Também corrige o que hoje impedia abrir panes e concluir uma missão inteira, e a release só publica se uma missão completa terminar de ponta a ponta.
+
+**Missões que terminam**
+- Writers isolados abrem dentro de uma missão hospedada numa aba com pasta isolada; antes o Nexus recusava `isolatedWriter` e o trabalho caía na pasta do operador (F-980).
+- O `cwd` pedido no spawn é respeitado, e a regra de um escritor por checkout olha a worktree real e os writers que ainda estão nascendo (F-981).
+- Comandos leves que só citam `node`, `make` ou `vitest` (um `grep`, uma mensagem de commit, um heredoc) não entram mais na fila de comandos pesados nem falham com exit 74 depois de 5 minutos. O leitor de shell novo também fecha os escapes de comandos pesados disfarçados por wrappers (`nice`, `env`, `timeout`, `xargs`, `find -exec`, `sh <<EOF`) (F-982).
+- A fila de comandos pesados vale por checkout: worktrees do mesmo projeto rodam em paralelo, dentro de um teto da máquina (F-983).
+- agy, MiMo, Kimi e writers Codex deixam de morrer ao nascer com o briefing da missão: o lançador do agente não entra na fila, o modelo vem da listagem da CLI instalada e o Kimi passa pela confiança da pasta (F-984).
+- A rota da missão respeita a CLI que acabou de falhar ao nascer e não diz mais "claude=não instalado" para um Claude logado (F-985).
+- O vigia de entrega não manda mais matar pane vivo e ocupado (F-986). A leitura de vários panes tem teto total (F-987) e os shims de handoff respondem `--help` na hora (F-988).
+- Ao bater o limite de uso, o pane troca para a outra conta conectada da mesma CLI com folga, preservando a conversa; a comparação de folga só usa janelas comparáveis (5 horas com 5 horas, semanal com semanal) (F-995). O papel de orquestrador nunca vai para um revisor somente leitura (F-996).
+- O pacote de continuidade da troca de conta ou de CLI não leva mais segredos (chaves, tokens, PEM) e um erro citado no texto não vira mais quarentena falsa do modelo (F-999).
+- "+ Pane → Nesta missão" abre o pane na conta que o Main escolheu; antes a cerca recusava a adoção em 1 ms e o renderer tentava de novo sem parar (F-1002).
+- Writers isolados aparecem no quadro de entregas, e uma rajada de entregas chega ao Maestro uma vez cada, sem perder a vez (F-1006).
+- Novo teste de missão de ponta a ponta no gate da release: CLIs falsas, sem gastar conta, abrem writers em paralelo, rodam comando pesado, entregam handoff e concluem a missão. Release que não conclui missão não publica (F-997).
+
+**Desktop**
+- Painel Git com o diff novo: realce de sintaxe, unificado ou lado a lado, comentário num intervalo de linhas e árvore de arquivos com stage/unstage por arquivo.
+- Paleta de comandos com três modos: ⌘K comandos, ⌘P arquivos e ⇧⌘F busca no conteúdo, com submenus e dicas de teclado. A busca no conteúdo agora acha resultados no projeto aberto (F-1003).
+- Configurações: importar tema do VS Code (interface e terminal, com contraste garantido), remapear atalhos com aviso de conflito e a visão de uso e cotas somada por ferramenta.
+- Timeline de atividade da missão fluida com milhares de eventos e carregamento sob demanda; o inspector sai com animação e a lateral desliza ao reordenar.
+- Layout: sem a faixa preta no rodapé do terminal em temas claros e importados, controles que ficavam tapados voltam a aparecer e a timeline tem uma rolagem só (F-1005).
+- Aprovação de ferramenta do Claude e do Codex por um card, no desktop e no celular (F-991).
+- Foto HEIC do iPhone vira JPEG ao anexar, e imagem grande é comprimida em vez de recusada.
+- Importação de sessões de 9 navegadores sem fechá-los; a chave do Chrome não fica mais acessível a outros processos do usuário (F-993).
+- Bridge remota com "Publicar no tailnet (HTTPS)". O desktop recusa entrada remota com teclas de controle escondidas numa linha de rotina (F-1000).
+- Panes não recebem mais `^[[2;1R` no prompt ao reabrir; status de Claude e Codex não fica preso em "bloqueado" depois da aprovação.
+- Checkpoint da árvore de cada writer em ref oculta, com restauração protegida; snapshot do banco antes de migrar.
+- Grade de terminal libghostty-vt para a detecção de estado dos agentes, com orçamento de memória que devolve picos em vez de travar panes novos fora da grade, teto pelo custo medido e proteção contra enxurrada de caracteres invisíveis (F-998).
+- O badge de RAM do pane não some mais no Linux depois de um ajuste do relógio (F-1001).
+- O modo de teste automatizado não lê mais o Keychain nem executa CLIs de IA no boot (F-1004).
+- O Nexus só oferece e roteia modelos que a CLI instalada lista (F-990), com perfis por modelo do Claude e faixas de versão de CLI (F-992).
+
+**Mobile**
+- O app Expo pareia com o desktop Nexus pela Remote Bridge (QR do tailnet), lista panes e missões, mostra a saída ao vivo, envia comandos e responde aprovações (F-994). Precisa do "Publicar no tailnet (HTTPS)" ligado; na rede local sem Tailscale, o PWA Nexus Remote continua sendo o caminho. Listas fluidas, diff com realce, haptics e fila de mensagens offline.
+- Correção: a 0.76.1xx dizia que o app do celular controlava o desktop (F-538/F-540); ele só falava o protocolo do Orca. Agora fala o do Nexus.
+
 ## 0.76.209 — Missões com entrega verificada
 
 - O Nexus abre mesmo quando o terminal nativo demora a responder no boot; antes, um Mac lento ou carregado mostrava "NexusIDE não conseguiu inicializar". Até essa preparação terminar, os agentes não executam comandos pesados; ela é refeita em segundo plano e antes de abrir cada agente. Se o boot falhar, o aviso agora mostra o motivo (F-955).
