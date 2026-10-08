@@ -7,6 +7,13 @@
  * entregam pelo shim real `nexus_handoff_submit` e a missão chega a `done`
  * por `nexus_mission_set_status`.
  *
+ * F-1007 (0.76.209): o done de missão de código exige checks aplicáveis e
+ * revisão independente frontier do candidato. O done do Maestro só PEDE a
+ * verificação; no idle dele o Main roda os checks e abre o revisor (uma
+ * segunda CLI falsa no assento frontier grok-4.7), que aprova pelo MCP real e
+ * entrega o relatório. O pin de CLI do Maestro é preferência suave: com essa
+ * CLI instalada, a rota real também senta os writers nela (mesmo binário falso).
+ *
  * O que é REAL: o Main de orquestração inteiro (`initOrchestration` → servidor
  * MCP HTTP, gancho de spawn, shims, entrega ociosa, supervisor de delegação,
  * coordenador), o pty-manager, o host de PTY (`pty-host-entry.ts`, num fork
@@ -54,6 +61,10 @@ const DELIVERY_LATENCY_CEILING_MS = Number(process.env.NEXUS_MISSION_E2E_DELIVER
 const state = vi.hoisted(() => ({
   adapterId: 'nexus-e2e-agent',
   adapter: null as unknown,
+  /** F-1007: CLI falsa no assento frontier grok-4.7 (lane de julgamento; a rota real também a usa para writers). */
+  reviewerAdapterId: 'grok',
+  reviewerModel: 'grok-4.7',
+  reviewer: null as unknown,
   userData: '',
   appRoot: process.cwd(),
 }));
@@ -109,38 +120,39 @@ vi.mock('./pane-admission', async (original) => ({
   getMemoryAfterAgentReservations: () => ({ freeMB: 64_000, swapUsedMB: 0 }),
   refreshSystemMemorySample: async () => undefined,
 }));
-// A máquina do E2E tem UMA CLI instalada: a falsa, declarada como um adapter
-// de usuário (validado pelo schema real; capacidades calculadas pelas funções
-// reais do registro, com origem 'user'). As CLIs de IA reais da máquina nunca
-// são descobertas nem sondadas (`--version`) — nenhuma roda neste teste.
+// A máquina do E2E tem DUAS CLIs instaladas, ambas falsas e declaradas como
+// adapters de usuário (validados pelo schema real; capacidades calculadas pelas
+// funções reais do registro, com origem 'user'): a do Maestro e a do assento
+// frontier (F-1007: revisor e, pela rota, writers). As CLIs de IA reais nunca são
+// descobertas nem sondadas (`--version`) — nenhuma roda neste teste.
 vi.mock('../adapters/adapter-registry', async (original) => {
   const actual = await original<typeof import('../adapters/adapter-registry')>();
-  const mine = (id: string): boolean => id === state.adapterId && state.adapter !== null;
-  const adapter = () => state.adapter as CliPtyAdapter;
-  const info = () => {
-    const capabilities = actual.adapterCapabilityMatrixForAdapter(adapter(), 'user');
+  const all = (): CliPtyAdapter[] => [state.adapter, state.reviewer].filter(Boolean) as CliPtyAdapter[];
+  const find = (id: string): CliPtyAdapter | null => all().find((adapter) => adapter.id === id) ?? null;
+  const info = (adapter: CliPtyAdapter) => {
+    const capabilities = actual.adapterCapabilityMatrixForAdapter(adapter, 'user');
     return {
-      id: adapter().id, kind: adapter().kind, label: adapter().label, icon: adapter().icon,
-      models: { ...adapter().models, info: {} }, installed: true, resolvedBinPath: adapter().bin,
-      installCommand: '', loginHint: undefined, authMethod: adapter().auth.method, idleTimeoutMs: 800,
-      taskHandoffCapable: actual.taskHandoffCapabilityForAdapter(adapter(), 'user'),
-      missionControlCapable: actual.missionControlCapabilityForAdapter(adapter(), 'user'),
+      id: adapter.id, kind: adapter.kind, label: adapter.label, icon: adapter.icon,
+      models: { ...adapter.models, info: {} }, installed: true, resolvedBinPath: adapter.bin,
+      installCommand: '', loginHint: undefined, authMethod: adapter.auth.method, idleTimeoutMs: 800,
+      taskHandoffCapable: actual.taskHandoffCapabilityForAdapter(adapter, 'user'),
+      missionControlCapable: actual.missionControlCapabilityForAdapter(adapter, 'user'),
       orchestratorCapable: true, autonomousWorkspaceWriteCapable: capabilities.governedWriter,
-      orchestrationEvidence: actual.orchestrationEvidenceForAdapter(adapter(), 'user'), capabilities,
+      orchestrationEvidence: actual.orchestrationEvidenceForAdapter(adapter, 'user'), capabilities,
     };
   };
   return {
     ...actual,
     initAdapterRegistry: () => undefined,
     closeAdapterRegistry: async () => undefined,
-    rescanAdapterBinaries: async () => (state.adapter ? [info()] : []),
-    getAdapter: (id: string) => (mine(id) ? adapter() : null) as ReturnType<typeof actual.getAdapter>,
+    rescanAdapterBinaries: async () => all().map(info),
+    getAdapter: (id: string) => find(id) as ReturnType<typeof actual.getAdapter>,
     isBuiltinAdapter: () => false,
-    isAdapterInstalled: (id: string) => mine(id),
-    getAdapterResolvedBin: (id: string) => (mine(id) ? adapter().bin : null),
-    resolveAdapterBinary: (id: string) => (mine(id) ? adapter().bin : null),
-    listAdapters: () => (state.adapter ? [adapter()] : []),
-    listAdapterInfos: () => (state.adapter ? [info()] : []) as ReturnType<typeof actual.listAdapterInfos>,
+    isAdapterInstalled: (id: string) => find(id) !== null,
+    getAdapterResolvedBin: (id: string) => find(id)?.bin ?? null,
+    resolveAdapterBinary: (id: string) => find(id)?.bin ?? null,
+    listAdapters: () => all(),
+    listAdapterInfos: () => all().map(info) as ReturnType<typeof actual.listAdapterInfos>,
   };
 });
 
@@ -258,6 +270,27 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
       quirks: { mcpAutoload: true, nexusMcp: 'autoload' },
       control: {},
     });
+    // F-1007: a CLI frontier — o mesmo binário falso, no assento grok-4.7 da
+    // lane de julgamento, com o confinamento de leitura declarado como o
+    // builtin (`--sandbox read-only`), que o spawn somente leitura exige.
+    state.reviewer = cliPtyAdapterSchema.parse({
+      kind: 'cli-pty', id: state.reviewerAdapterId, label: 'Nexus E2E Frontier', version: '1.0.0', bin, detect: `${bin} --version`,
+      install: { method: 'manual', command: 'scripts/mission-e2e/fake-agent.cjs' },
+      auth: { method: 'none' },
+      spawn: { interactive: [bin], headless: [bin, '{{PROMPT}}'], ptyRequired: true, initialPrompt: 'positional' },
+      env: { static: { NEXUS_E2E_DIR: e2eDir }, passthrough: [] },
+      models: { flag: '--model', list: [state.reviewerModel], default: state.reviewerModel },
+      promptInjection: { method: 'arg', trailingNewline: false, bracketedPaste: true },
+      stateParsing: { idle: { type: 'timeout', ms: 800 } },
+      quirks: { mcpAutoload: true, nexusMcp: 'autoload' },
+      control: { permission: { arg: '', modes: {}, safe: [], readOnly: ['--sandbox', 'read-only'], default: '' } },
+    });
+    // Sessão SINTÉTICA do assento grok no HOME temporário do teste (o pré-spawn
+    // exige o arquivo de login da CLI): JWT sem assinatura, nenhuma conta real.
+    const jwtPart = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const syntheticKey = `${jwtPart({ alg: 'none' })}.${jwtPart({ sub: 'mission-e2e', exp: Math.floor(Date.now() / 1000) + 365 * 24 * 3600 })}.e2e`;
+    fs.mkdirSync(path.join(home, '.grok'), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(home, '.grok', 'auth.json'), JSON.stringify({ 'mission-e2e': { user_id: 'mission-e2e', key: syntheticKey } }), { mode: 0o600 });
 
     // ---- repositório do projeto (fixture)
     git(repo, 'init', '-q', '-b', 'main');
@@ -437,8 +470,11 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
     let maxPermits = 0;
     let barrierOpenedAt = 0;
     let zeroDeliveryProbe: string[] | null = null;
+    // F-1007: o relatório do revisor que o Main abriu (agente nexus-final-reviewer) não é aviso de vigia.
+    const isReviewerReport = (h: { fromAgent?: string | null; summary: string }) =>
+      h.fromAgent === 'nexus-final-reviewer' && h.summary.startsWith('Revisão independente: candidato aprovado');
     const zeroDeliverySummaries = () => stores.handoffs.list({ missionId: mission.id, includeDelivered: true })
-      .filter((h) => (h.fromAgent ?? '').startsWith('nexus-') || /\[(zero-delivery|nao-iniciou|travado)/.test(h.summary))
+      .filter((h) => !isReviewerReport(h) && ((h.fromAgent ?? '').startsWith('nexus-') || /\[(zero-delivery|nao-iniciou|travado)/.test(h.summary)))
       .map((h) => `${h.fromAgent}: ${h.summary.slice(0, 160)}`);
     while (Date.now() - started < MISSION_DEADLINE_MS) {
       maxPermits = Math.max(maxPermits, heavyCommandPermitSnapshot().active);
@@ -479,6 +515,11 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
     const boots = Object.fromEntries(['orchestrator', ...ALL_WRITERS].map((id) => [id, readJson<BootReceipt>(path.join(e2eDir, 'agents', `${id}.boot.json`))]));
     const results = Object.fromEntries(ALL_WRITERS.map((id) => [id, readJson<WorkerResult>(path.join(e2eDir, 'agents', `${id}.result.json`))]));
     const orchestratorResult = readJson<{ done: McpCall; merges: StepReceipt[] }>(path.join(e2eDir, 'agents', 'orchestrator.result.json'));
+    const reviewerBoot = readJson<BootReceipt>(path.join(e2eDir, 'agents', 'reviewer.boot.json'));
+    const reviewerResult = readJson<{ cwd: string; candidate?: string; read: StepReceipt; verdict: McpCall; handoff?: McpCall }>(
+      path.join(e2eDir, 'agents', 'reviewer.result.json'));
+    const reviewerHandoff = stores.handoffs.list({ missionId: mission.id, includeDelivered: true }).find(isReviewerReport);
+    const reviewerPanes = stores.missionPanes.list(mission.id).filter((pane) => pane.title === 'Revisão independente');
     const deliveries = readNdjson<{ handoff: string; from: string; worker: number; at: number }>(path.join(e2eDir, 'agents', 'orchestrator.deliveries.ndjson'));
     const heavyLog = (() => { try { return fs.readFileSync(path.join(e2eDir, 'heavy.log'), 'utf8'); } catch { return ''; } })();
     const intervals = new Map<string, { start?: number; end?: number }>();
@@ -501,7 +542,7 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
     // handoff — pedida ou sozinha — é o "morreu calado" do incidente.
     const successByWorker = new Map(ALL_WRITERS.map((id) => [id, stores.handoffs.list({ missionId: mission.id, includeDelivered: true })
       .find((h) => h.status === 'success' && h.summary.includes(`Writer ${id} entregou`))]));
-    const handoffAtBySession = new Map([...successByWorker.values()].filter(Boolean).map((h) => [h!.sessionId, h!.createdAt]));
+    const handoffAtBySession = new Map([...successByWorker.values(), reviewerHandoff].filter(Boolean).map((h) => [h!.sessionId, h!.createdAt]));
     // F-1006: o quadro de entregas roda no idle/saída de cada writer (o
     // autoCloseOnHandoff fecha o pane logo depois do sucesso). Dá a ele um
     // prazo curto para registrar a última entrega antes de julgar.
@@ -528,7 +569,7 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
     // F-1006: quadro de entregas, conclusão automática e latência da entrega.
     const boardEvents = events.filter((event) => event.kind === 'worker-delivery-board')
       .map((event) => ({ sessionId: event.sessionId, reason: event.reason }));
-    const boardSeen = boardSawDelivery(events);
+    const boardSeen = new Set([...boardSawDelivery(events)].filter((id) => writerSessionIds.includes(id!)));
     const completionChecks = events.filter((event) => event.kind === 'civilian-delivery-check')
       .map((event) => ({ sessionId: event.sessionId, reason: event.reason, error: event.error }));
     const scopeCollisions = mainConsole.filter((line) => /scope identity collision/.test(line));
@@ -550,6 +591,8 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
       mainConsole: mainConsole.slice(-200),
       mission: finalMission ? { status: finalMission.status, intentState: finalMission.intentState } : null,
       spawnCalls, boots, results, orchestratorDone: orchestratorResult?.done, merges: orchestratorResult?.merges,
+      reviewer: { boot: reviewerBoot, result: reviewerResult, panes: reviewerPanes.map((pane) => ({ adapterId: pane.adapterId, model: pane.model, readOnly: pane.readOnly })),
+        handoff: reviewerHandoff ? { id: reviewerHandoff.id, session: reviewerHandoff.sessionId, status: reviewerHandoff.status } : null },
       deliveries, heavyLog, workerHandoffs: workerHandoffs.map((h) => ({ id: h.id, from: h.fromAgent, status: h.status, session: h.sessionId })),
       systemNotices, zeroDeliveryProbe, liveWorkers: liveWorkers.map((s) => s.sessionId), hostLog: hostLog.slice(-4_000),
     };
@@ -603,7 +646,8 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
     check(spans.length === ALL_WRITERS.length, `[admissão] só ${spans.length} de ${ALL_WRITERS.length} comandos pesados chegaram a rodar`);
     check(spans.length < 2 || maxPermits >= 2, `[F-983] a admissão nunca concedeu dois jobs pesados simultâneos (máximo ${maxPermits})`);
     // Entregas: o Maestro recebeu as 5+1 e o banco tem as 6 dos writers.
-    const workerDeliveries = new Set(deliveries.filter((d) => d.worker).map((d) => d.handoff));
+    const writerHandoffIds = new Set([...successByWorker.values()].map((h) => h?.id).filter(Boolean));
+    const workerDeliveries = new Set(deliveries.filter((d) => d.worker && writerHandoffIds.has(d.handoff)).map((d) => d.handoff));
     check(workerDeliveries.size === ALL_WRITERS.length, `[entrega] o Maestro recebeu ${workerDeliveries.size} de ${ALL_WRITERS.length} entregas de writer no PTY`);
     check(workerSessions.size === ALL_WRITERS.length, `[entrega] ${workerSessions.size} sessões de writer com handoff no banco (esperado ${ALL_WRITERS.length})`);
     // F-1006 (a): writers em worktrees da missão alimentam o quadro e a
@@ -634,6 +678,18 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
     }
     check(killedBeforeDone.length === 0, `[morte calada] o Nexus encerrou ${killedBeforeDone.length} pane(s) de writer sem handoff de sucesso antes: ${JSON.stringify(killedBeforeDone)}`);
     check(diedAlone.length === 0, `[morte calada] ${diedAlone.length} writer(s) saíram sozinhos antes do done: ${JSON.stringify(diedAlone)}`);
+    // F-1007: a conclusão passou pela revisão independente que o Main abriu
+    // (frontier, somente leitura, sessão própria) e o veredito foi aceito.
+    check(reviewerPanes.length >= 1 && reviewerPanes.every((pane) => pane.adapterId === state.reviewerAdapterId && pane.model === state.reviewerModel && pane.readOnly === true),
+      `[F-1007 revisão] o Main não abriu o revisor frontier somente leitura: ${JSON.stringify(reviewerPanes.map((pane) => ({ adapterId: pane.adapterId, model: pane.model, readOnly: pane.readOnly })))}`);
+    check(reviewerBoot && reviewerResult && reviewerResult.cwd === realOrSelf(tab.rootRealPath),
+      `[F-1007 revisão] o revisor não rodou na pasta da aba (cwd ${reviewerResult?.cwd ?? reviewerBoot?.cwd ?? 'nunca nasceu'})`);
+    const verdict = reviewerResult?.verdict?.result as { recorded?: boolean; completionReviewRecorded?: boolean; frontier?: boolean; hint?: string } | undefined;
+    check(verdict?.completionReviewRecorded === true && verdict.frontier === true && !reviewerResult?.verdict?.isError,
+      `[F-1007 revisão] nexus_review_verdict não registrou o veredito do candidato: ${JSON.stringify(reviewerResult?.verdict?.result ?? reviewerResult?.verdict?.error ?? 'sem chamada').slice(0, 400)}`);
+    check(reviewerHandoff?.status === 'success', `[F-1007 revisão] o relatório do revisor não foi entregue por handoff (${reviewerHandoff?.status ?? 'sem handoff'})`);
+    check(reviewerHandoff?.sessionId && reviewerHandoff.sessionId !== orchestratorSession && !writerSessionIds.includes(reviewerHandoff.sessionId),
+      '[F-1007 revisão] o veredito não veio de uma sessão independente do Maestro e dos writers');
     // Missão concluída pelo caminho normal.
     check(orchestratorResult?.done && !orchestratorResult.done.isError && !orchestratorResult.done.error,
       `[done] nexus_mission_set_status(done) recusado: ${JSON.stringify(orchestratorResult?.done?.result ?? orchestratorResult?.done?.error ?? 'o Maestro não chegou a pedir done').slice(0, 500)}`);
@@ -643,7 +699,7 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
     if (failures.length > 0) {
       throw new Error(`E2E de missão VERMELHO (${failures.length} falhas; evidências em ${path.join(e2eDir, 'evidence.json')}):\n- ${failures.join('\n- ')}`);
     }
-    console.info(`[mission-e2e] VERDE em ${Math.round(elapsedMs / 1000)} s: 6 writers, sobreposição pesada ${maxOverlap}, permits simultâneos ${maxPermits}, ` +
+    console.info(`[mission-e2e] VERDE em ${Math.round(elapsedMs / 1000)} s: 6 writers + revisor frontier, sobreposição pesada ${maxOverlap}, permits simultâneos ${maxPermits}, ` +
       `quadro ${boardSeen.size}/${ALL_WRITERS.length}, latência máx. de entrega ${maxDeliveryLatencyMs} ms ${JSON.stringify(deliveryLatency)}`);
   }, MISSION_DEADLINE_MS + 120_000);
 });

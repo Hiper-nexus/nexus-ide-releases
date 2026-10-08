@@ -672,6 +672,9 @@ const missionSetStatusTool: McpToolDef = {
           });
           if (!recorded) throw new Error('mission not found while requesting completion');
           recordOperatorTabCompletionRequest(ctx.scope, recorded);
+        } else {
+          // F-1007: o idle do Maestro reverifica este pedido (sem watcher, nada mais o fazia).
+          recordOperatorTabCompletionRequest(ctx.scope, current);
         }
         const entry = `## Solicitação de conclusão\n${note}`.slice(0, MAX_MISSION_RESULT_CHARS);
         if (note && !current.learnings.includes(entry)) {

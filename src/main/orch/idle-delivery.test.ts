@@ -1178,6 +1178,29 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     delivery.shutdownIdleDelivery();
   });
 
+  it('F-1007: idle do Maestro que pediu done reverifica a conclusão; sem pedido, não', async () => {
+    const delivery = await import('./idle-delivery');
+    const { recordOperatorTabCompletionRequest } = await import('./operator-tab-completion');
+    const scope = testProjectScope();
+    authorizeMainOwnedTarget(scope);
+    delivery.initIdleDelivery();
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    expect(civilianMocks.maybeComplete).not.toHaveBeenCalled();
+
+    const mission = storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)!;
+    recordOperatorTabCompletionRequest(scope, mission as Parameters<typeof recordOperatorTabCompletionRequest>[1]);
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    expect(civilianMocks.maybeComplete).toHaveBeenCalledWith(scope, 'mission-a');
+
+    // Pedido de outro líder não vale para o Maestro corrente.
+    civilianMocks.maybeComplete.mockClear();
+    storeMocks.missions.set(`${scope.projectId}:${scope.checkoutId}:mission-a`, { ...mission, orchestratorSessionId: 'new-leader' });
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    expect(civilianMocks.maybeComplete).not.toHaveBeenCalled();
+    delivery.shutdownIdleDelivery();
+  });
+
   it('recupera todas as filas quando a mesma sessão é rebindada entre missões', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();

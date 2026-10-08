@@ -27,6 +27,7 @@ import {
   type PetStudioCompletionResult,
 } from './pet-studio-completion';
 import { maybeCompleteFastLaneOnDelivery, startCivilianDeliveryCompletion, stopCivilianDeliveryCompletion } from './civilian-delivery-completion';
+import { hasCurrentCompletionRequest } from './operator-tab-completion';
 import {
   HANDOFF_DELIVERY_RETRY_BACKOFF_MS,
   MAX_HANDOFF_DELIVERY_ATTEMPTS,
@@ -1784,6 +1785,21 @@ function drainDurableMailbox(sessionId: string): void {
   }
 }
 
+/**
+ * F-1007: o idle do Maestro só reverifica a conclusão depois de ELE ter pedido
+ * done (o pedido chega com ele ocupado e volta "aguarde"). Sem o pedido, o
+ * idle do Maestro continua sem fechar a missão no meio da delegação.
+ */
+function orchestratorRequestedCompletion(scope: ProjectExecutionScope, missionId: string, sessionId: string): boolean {
+  try {
+    const mission = getProjectDomainStores(scope).missions.get(missionId);
+    return Boolean(mission && mission.status === 'running' && mission.orchestratorSessionId === sessionId &&
+      hasCurrentCompletionRequest(scope, mission));
+  } catch {
+    return false;
+  }
+}
+
 function scheduleFastLaneDeliveryCheck(sessionId: string): void {
   const pane = getPaneRuntimeAuthorityBySession(sessionId);
   const missionId = pane?.missionId;
@@ -1791,7 +1807,8 @@ function scheduleFastLaneDeliveryCheck(sessionId: string): void {
   // deriva a execução da própria missão (missionExecutionScope). Passar a
   // worktree do writer aqui batia na guarda de identidade do registro.
   const deliveryScope = pane?.scope;
-  if (!missionId || !deliveryScope || pane.role === 'orchestrator') return;
+  if (!missionId || !deliveryScope) return;
+  if (pane.role === 'orchestrator' && !orchestratorRequestedCompletion(deliveryScope, missionId, sessionId)) return;
   void maybeCompleteFastLaneOnDelivery(deliveryScope, missionId).then((result) => {
     trace({ kind: 'civilian-delivery-check', sessionId, missionId, reason: result.reason ?? result.action });
   }, (error) => {

@@ -28,7 +28,19 @@ export function awaitsOperatorTabCompletionRequest(scope: ProjectExecutionScope,
 }
 
 /**
- * Only the authorized done handler records intent. Description/handoff text is
+ * F-1007: o Maestro corrente pediu done nesta versão da missão. O idle dele
+ * reverifica a entrega (o pedido chega com ele ocupado e a resposta manda
+ * encerrar o turno); sem isto, missão sem watcher da Via Rápida nunca concluía.
+ */
+export function hasCurrentCompletionRequest(scope: ProjectExecutionScope, mission: CompletionMission): boolean {
+  const request = requests.get(missionLifecycleKey(scope, mission.id));
+  return Boolean(request && request.intentVersion === (mission.intentVersion ?? 0) &&
+    request.sessionId !== undefined && request.sessionId === mission.orchestratorSessionId);
+}
+
+/**
+ * Only the authorized done handler records intent (any automatic-completion
+ * mission; the tab gate above reads it only for an adopted pane). Description/handoff text is
  * never proof of a request. Restart/eviction fails closed: the resumed leader
  * requests done again after checking the delivery, through the same tool.
  */

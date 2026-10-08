@@ -38,6 +38,12 @@ npm run test:mission-e2e          # = node scripts/mission-e2e.mjs
   nativo" (`fake-agent-native`, Perl). Ele escreve na worktree, roda comandos
   pelo shell como uma tool de CLI, faz commit e entrega pelo shim real
   `nexus_handoff_submit`. O orquestrador falso fala com o MCP HTTP real.
+- **Revisor da conclusão (F-1007)**: o mesmo binário falso declarado também no
+  assento frontier `grok:grok-4.7` (sessão de login sintética no HOME
+  temporário). O Main o abre sozinho, somente leitura, quando o Maestro pede
+  done; ele registra `nexus_review_verdict` e entrega o relatório por handoff.
+  Como o pin de CLI do Maestro é preferência suave, a rota real também senta os
+  writers nessa CLI.
 
 Falsos: a CLI de IA, o `vitest` do repositório de fixture (segura 4 s e sai 0,
 mas o catálogo o classifica como `tests`) e a memória livre da máquina (fixa,
@@ -59,7 +65,8 @@ Uma missão numa aba com pasta isolada em que o Maestro abre, **em paralelo**,
 | nenhuma "scope identity collision" no console do Main (writers isolados abrem os stores da missão pelo escopo de coordenação) | F-1006 |
 | rajada de 6 entregas: nenhum "lost delivery-attempt CAS" e handoff → Maestro ≤ 6 s em cada uma (medido 0,77–2,1 s normal, até 4,1 s com a CPU saturada; as regressões dão 8–13 s; `NEXUS_MISSION_E2E_DELIVERY_CEILING_MS`) | F-1006 |
 | vigia de zero entrega "9 min depois" não cutuca writer ocupado; nenhum aviso de sistema | F-986 |
-| a missão chega a `done` por `nexus_mission_set_status` com as branches integradas | caminho normal |
+| o done do Maestro pede a verificação; no idle dele o Main roda os checks, abre o revisor frontier somente leitura numa sessão própria e o veredito aceito conclui a missão | F-1007 |
+| a missão chega a `done` com as branches integradas | caminho normal |
 | nenhum writer some antes do próprio handoff (só o `autoCloseOnHandoff` fecha, depois do sucesso) | mortes caladas |
 
 Na primeira rodada ele achou quatro defeitos que os unitários deixavam passar
@@ -91,5 +98,6 @@ recibo vai para `release-artifacts/mission-e2e.json` (fora de `security/`).
   renderer monta o pane e devolve o ACK não roda aqui.
 - CLIs reais (Claude, Codex, MiMo…): o modelo, o login e o protocolo de TUI de
   cada uma ficam com os smokes opt-in por provider.
-- Missão com squad (revisão automática de conclusão, PREVC) e o app
-  empacotado (assinatura, asar) — esse último segue no `smoke-packaged-app`.
+- Missão com squad (PREVC, Council) e o app empacotado (assinatura, asar) —
+  esse último segue no `smoke-packaged-app`. Revisor que reprova (achados de
+  volta ao Maestro) só nos unitários do portão de conclusão.
