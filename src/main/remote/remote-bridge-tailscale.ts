@@ -6,7 +6,7 @@
 // em ~/.nexus, nunca sobrescrever handler alheio, limpar órfão no boot;
 // Effect → async; diagnósticos em rótulos fechados.
 
-import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
@@ -14,6 +14,7 @@ import type {
   RemoteBridgeTailscaleDiagnostic,
   RemoteBridgeTailscaleInfo,
 } from '../../shared/remote-types';
+import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 import { writeJsonAtomic } from '../util/atomic-write';
 import {
   buildTailscaleHttpsBaseUrl,
@@ -39,6 +40,8 @@ export interface RemoteBridgeTailscaleState {
 }
 
 const DETECT_CACHE_MS = 10_000;
+/** O marcador tem ~200 bytes; qualquer coisa muito maior não foi o Nexus. */
+const MARKER_MAX_BYTES = 4 * 1024;
 
 const ServeMarker = z.object({
   version: z.literal(1),
@@ -49,28 +52,81 @@ const ServeMarker = z.object({
 });
 type ServeMarker = z.infer<typeof ServeMarker>;
 
-function markerFile(): string {
-  return path.join(os.homedir(), '.nexus', 'remote-bridge', 'tailscale-serve.json');
+type MarkerRead =
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'marker'; readonly marker: ServeMarker }
+  /** Existe mas não é confiável (FIFO, symlink, dispositivo, gigante, lixo). */
+  | { readonly kind: 'invalid' };
+
+function markerDir(): string {
+  return path.join(os.homedir(), '.nexus', 'remote-bridge');
 }
 
-function readMarker(): ServeMarker | null {
+function markerFile(): string {
+  return path.join(markerDir(), 'tailscale-serve.json');
+}
+
+/**
+ * O diretório do marcador precisa ser nosso: diretório real (lstat — symlink
+ * não conta), do próprio usuário e sem escrita de grupo/outros.
+ */
+async function markerDirState(): Promise<'missing' | 'trusted' | 'untrusted'> {
+  let stat: Awaited<ReturnType<typeof fsp.lstat>>;
   try {
-    const parsed = ServeMarker.safeParse(JSON.parse(fs.readFileSync(markerFile(), 'utf8')));
-    return parsed.success ? parsed.data : null;
+    stat = await fsp.lstat(markerDir());
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'untrusted';
+  }
+  if (!stat.isDirectory()) return 'untrusted';
+  if (process.platform === 'win32') return 'trusted';
+  const uid = process.getuid?.();
+  if (uid !== undefined && stat.uid !== uid) return 'untrusted';
+  return (stat.mode & 0o022) === 0 ? 'trusted' : 'untrusted';
+}
+
+/**
+ * Lido no boot pelo Main: um FIFO sem escritor penduraria o event loop e um
+ * symlink para /dev/zero leria sem fim. Por isso o helper abre UMA vez com
+ * O_NONBLOCK|O_NOFOLLOW, confere no descritor que é arquivo regular e lê no
+ * máximo MARKER_MAX_BYTES.
+ */
+async function readMarker(): Promise<MarkerRead> {
+  const dir = await markerDirState();
+  if (dir === 'missing') return { kind: 'missing' };
+  if (dir === 'untrusted') return { kind: 'invalid' };
+  const read = await readRegularFileCappedAsync(markerFile(), MARKER_MAX_BYTES, undefined, {
+    noFollow: true,
+  });
+  if (read.kind !== 'text') {
+    return read.kind === 'none' && read.stamp === 'missing'
+      ? { kind: 'missing' }
+      : { kind: 'invalid' };
+  }
+  try {
+    const parsed = ServeMarker.safeParse(JSON.parse(read.text));
+    return parsed.success ? { kind: 'marker', marker: parsed.data } : { kind: 'invalid' };
   } catch {
-    return null;
+    return { kind: 'invalid' };
   }
 }
 
-function writeMarker(marker: ServeMarker): void {
-  writeJsonAtomic(markerFile(), marker);
+async function writeMarker(marker: ServeMarker): Promise<void> {
+  try {
+    await fsp.mkdir(markerDir(), { recursive: true, mode: 0o700 });
+    if ((await markerDirState()) !== 'trusted') return;
+    // Rename atômico: substitui a entrada (mesmo um FIFO/symlink plantado).
+    writeJsonAtomic(markerFile(), marker);
+  } catch {
+    // Sem marcador o stop ainda desliga pelo alvo; só o boot perde a pista.
+  }
 }
 
-function removeMarkerFor(target: string): void {
-  const marker = readMarker();
-  if (marker && marker.target !== target) return;
+/** Remove o marcador só quando ele é legível e aponta exatamente para `target`. */
+async function removeMarkerFor(target: string): Promise<void> {
+  const read = await readMarker();
+  if (read.kind !== 'marker' || read.marker.target !== target) return;
   try {
-    fs.rmSync(markerFile(), { force: true });
+    await fsp.rm(markerFile(), { force: true });
   } catch {
     // Melhor esforço: o boot tenta de novo.
   }
@@ -87,9 +143,10 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /** Alvo que podemos tratar como nosso: o do marcador, se o dono não está vivo. */
-function ownedTargetFromMarker(): string | null {
-  const marker = readMarker();
-  if (!marker) return null;
+async function ownedTargetFromMarker(): Promise<string | null> {
+  const read = await readMarker();
+  if (read.kind !== 'marker') return null;
+  const { marker } = read;
   if (marker.pid !== process.pid && isProcessAlive(marker.pid)) return null;
   return marker.target;
 }
@@ -201,7 +258,7 @@ export async function publishRemoteBridgeOnTailnet(input: {
   const owner = classifyTailscaleServePort(
     serveConfig.config,
     servePort,
-    ownedTargetFromMarker(),
+    await ownedTargetFromMarker(),
   );
   // Outra configuração já publica nesta porta: o Nexus não a substitui nem,
   // depois, a desligaria no stop.
@@ -210,7 +267,7 @@ export async function publishRemoteBridgeOnTailnet(input: {
   const target = buildTailscaleServeTarget(input);
   // Marcador ANTES do serve: um crash entre os dois ainda deixa o boot
   // reconhecer o handler como nosso e removê-lo.
-  writeMarker({ version: 1, servePort, target, pid: process.pid, createdAt: Date.now() });
+  await writeMarker({ version: 1, servePort, target, pid: process.pid, createdAt: Date.now() });
   const ensured = await ensureTailscaleServe(cli, {
     localPort: input.localPort,
     localHost: input.localHost,
@@ -219,7 +276,7 @@ export async function publishRemoteBridgeOnTailnet(input: {
   if (!ensured.ok) {
     // Saída com erro = nada aplicado. Timeout é ambíguo: o marcador fica para
     // o stop/boot conferirem.
-    if (ensured.reason !== 'timeout') removeMarkerFor(target);
+    if (ensured.reason !== 'timeout') await removeMarkerFor(target);
     return {
       ...requiresConfiguration(diagnosticOf(ensured)),
       target: ensured.reason === 'timeout' ? target : null,
@@ -241,29 +298,39 @@ export async function publishRemoteBridgeOnTailnet(input: {
 }
 
 /**
- * Desliga o handler `target` se (e só se) ele ainda for nosso. Quando o
- * status do Serve não pode ser lido, desliga mesmo assim: deixar o tailnet
- * apontando para uma porta efêmera que outro processo pode ocupar é pior.
+ * - `removed`: o handler era nosso e foi desligado.
+ * - `not-ours`: a porta está livre ou é de outra configuração (nada a fazer).
+ * - `unknown`: não deu para saber de quem é; nada foi desligado, o marcador
+ *   fica e o chamador tenta de novo depois.
+ */
+export type RemoteBridgeUnpublishOutcome = 'removed' | 'not-ours' | 'unknown';
+
+/**
+ * Desliga o handler `target` só com classificação POSITIVA de que ainda é
+ * nosso. Consulta que falha ou expira = propriedade desconhecida: `serve off`
+ * desligaria a porta inteira, inclusive um handler alheio.
  */
 export async function unpublishRemoteBridgeFromTailnet(
   target: string,
   servePort: number = DEFAULT_TAILSCALE_SERVE_PORT,
-): Promise<void> {
+): Promise<RemoteBridgeUnpublishOutcome> {
   try {
     const cli = resolveTailscaleCli();
-    if (!cli) return;
+    if (!cli) return 'unknown';
     const serveConfig = await readTailscaleServeConfig(cli);
-    const owner = serveConfig.ok
-      ? classifyTailscaleServePort(serveConfig.config, servePort, target)
-      : 'ours';
+    if (!serveConfig.ok) return 'unknown';
+    const owner = classifyTailscaleServePort(serveConfig.config, servePort, target);
     if (owner !== 'ours') {
-      removeMarkerFor(target);
-      return;
+      await removeMarkerFor(target);
+      return 'not-ours';
     }
     const disabled = await disableTailscaleServe(cli, { servePort });
-    if (disabled.ok) removeMarkerFor(target);
+    if (!disabled.ok) return 'unknown';
+    await removeMarkerFor(target);
+    return 'removed';
   } catch {
     // Nunca derruba stop/quit; o marcador fica para o boot.
+    return 'unknown';
   }
 }
 
@@ -272,8 +339,10 @@ export async function unpublishRemoteBridgeFromTailnet(
  * marcador não há spawn algum; marcador de processo vivo é de outra instância.
  */
 export async function cleanupOrphanRemoteBridgeTailscale(): Promise<void> {
-  const marker = readMarker();
-  if (!marker) return;
+  const read = await readMarker();
+  // Ausente: nunca publicamos. Inválido: não dá para saber o que é — não age.
+  if (read.kind !== 'marker') return;
+  const { marker } = read;
   if (marker.pid === process.pid || isProcessAlive(marker.pid)) return;
   await unpublishRemoteBridgeFromTailnet(marker.target, marker.servePort);
 }

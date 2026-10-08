@@ -29,15 +29,26 @@ export type SafeRead =
   | { kind: 'none'; stamp: string };
 
 const O_NONBLOCK = fsConstants.O_NONBLOCK ?? 0;
+const O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+
+export interface SafeReadOptions {
+  /**
+   * Recusa symlink no componente final (`O_NOFOLLOW` → ELOOP → `unreadable`).
+   * Para arquivos que só o Nexus escreve, onde symlink nunca é legítimo.
+   */
+  readonly noFollow?: boolean;
+}
 
 /** Same bounded descriptor/regular-file policy for periodic Main readers. */
 export async function readRegularFileCappedAsync(
   file: string,
   maxBytes: number,
   knownStamp?: string,
+  options: SafeReadOptions = {},
 ): Promise<SafeRead> {
   let handle: Awaited<ReturnType<typeof fsp.open>>;
-  try { handle = await fsp.open(file, fsConstants.O_RDONLY | O_NONBLOCK); }
+  const flags = fsConstants.O_RDONLY | O_NONBLOCK | (options.noFollow ? O_NOFOLLOW : 0);
+  try { handle = await fsp.open(file, flags); }
   catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     let absent = code === 'ENOENT' || code === 'ENOTDIR';
