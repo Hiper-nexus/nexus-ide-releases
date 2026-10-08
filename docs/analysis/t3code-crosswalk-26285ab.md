@@ -74,7 +74,7 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 | DSK-11 | Backend WSL | pendente (G) | `remote/wsl-detect.ts` é stub | porte |
 | QLT-01 | Gate de orçamento de perf no CI | integrado | `package.json` `test:perf`; `ci.yml` | — |
 | QLT-02 | `KeyedLock` | integrado | `src/main/util/keyed-lock.ts`; 5 consumidores que tinham a fila copiada à mão: `git/hidden-checkpoint.ts`, `orch/isolated-writer-salvage.ts`, `design/design-instrument-ledger.ts`, `design/design-writeback-service.ts` (a cópia não soltava a chave), `context/orientation/orientation-service.ts` (F-1025) | — |
-| QLT-03 | `KeyedCoalescingWorker` | pendente (M) | sem primitiva | só com consumidor real |
+| QLT-03 | `KeyedCoalescingWorker` | integrado | `src/main/util/keyed-coalescing-worker.ts`; consumidores: badges do modo design (`browser/browser-manager.ts`, antes um round-trip por mutação) e GC de worktrees integradas (`orch/isolated-writer-worktree.ts`, antes o mesmo padrão à mão) (F-1026) | — |
 | QLT-04 | knip | pendente (M) | sem config | dep + CI |
 | QLT-05 | `require-suppression-reason` | integrado | `oxlint-plugin-nexus/rules/require-suppression-reason.mjs` | — |
 | QLT-06 | `no-test-in-loop` | integrado | `oxlint-plugin-nexus/rules/no-test-in-loop.mjs` (erro no `.oxlintrc.json`, CI `lint:oxlint --quiet`); 17 laços convertidos em `it.each`/`it.for` (F-1023) | — |
