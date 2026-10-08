@@ -1,3 +1,9 @@
+// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
+// Copyright (c) 2026 T3 Tools Inc. — MIT License
+// See third_party/licenses/t3code-MIT.txt. Nexus changes: só jpegDimensions —
+// o laço de marcadores de readJpeg (packages/shared/src/imageDimensions.ts)
+// sem DataView nem orientação EXIF e com checagem do tamanho do segmento, para
+// conferir o JPEG que o sips devolve. A conversão por /usr/bin/sips é do Nexus.
 import { execFile } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';

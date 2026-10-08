@@ -1,9 +1,9 @@
-// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
-// Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: o contrato de
-// `RuntimeRequestServiceV2.respond` (pedido existe, está vivo e pertence à
-// sessão; repetir devolve o recibo sem responder duas vezes) sem Effect nem
-// projeção: Map em memória com CAS por requestId/revision, recibo com TTL,
+// Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied)
+// Referência (T3 Code, MIT): o contrato de `RuntimeRequestServiceV2.respond`
+// (apps/server/src/orchestration-v2/RuntimeRequestService.ts: pedido existe,
+// está vivo e pertence à sessão; repetir devolve o recibo sem responder duas
+// vezes). Implementação do Nexus, sem Effect nem projeção: Map em memória com
+// CAS por requestId/revision, recibo com TTL,
 // prazo curto que devolve null (o hook responde `{}` e a TUI assume),
 // invalidação quando a TUI respondeu primeiro e registro de quem pode
 // responder (card do desktop visível, aparelho pareado conectado).

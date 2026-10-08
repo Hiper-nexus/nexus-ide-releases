@@ -562,3 +562,141 @@ Copyright (c) 2026 Lovecast Inc.
 
 Provenance ledger: `third_party/provenance/orca-f352b6b-runtime-remote.json`.
 License text: `third_party/licenses/orca-MIT.txt`.
+
+## pingdotgg/t3code (T3 Code) @ 26285ab
+
+Modules copied or adapted from [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code)
+at commit `26285ab80513260d1ff29d2c3fbe18f21990cb62`, licensed under the MIT
+License. Copyright (c) 2026 T3 Tools Inc.
+
+The full MIT license text is included at `third_party/licenses/t3code-MIT.txt`.
+Per-file provenance (upstream URL, original path and SHA-256, Nexus path and
+SHA-256, type and adaptation notes) is recorded in
+`third_party/provenance/t3code-26285ab.json`. Every copied or adapted file
+starts with `Adapted from pingdotgg/t3code @ <commit>`; a file written only
+from upstream behavior, with no upstream code, starts with
+`Inspired by pingdotgg/t3code @ <commit> (no code copied)` and is recorded as
+type `reference`. Effect-TS, Tailwind and Base UI code was rewritten for the
+Nexus stack; no T3 Code package is a dependency.
+
+- Diff viewer and changed-files tree: Pierre diff rendering, worker pool,
+  annotatable code view, line ranges and the tree reveal/keyboard rules
+  (`src/renderer/lib/diff-rendering.ts`, `src/renderer/lib/diff-file-tree.ts`,
+  `src/renderer/components/diffs/`).
+- Command palette: modal focus, IME-safe Enter and the command/file/content
+  mode reducer (`src/renderer/components/CommandPalette.tsx`,
+  `src/renderer/lib/command-palette-logic.ts`).
+- Configurable shortcuts: `when` grammar, last-rule-wins resolver and the
+  shortcut editor (`src/renderer/lib/keybindings.ts`,
+  `src/renderer/components/settings/KeybindingsSettings.tsx`).
+- Activity timeline: scroll policy of the virtualized list
+  (`src/renderer/components/mission/AgentActivityTimeline.tsx`,
+  `src/renderer/lib/activity-timeline-scroll.ts`).
+- Panel motion: scoped panel presence and FLIP list motion
+  (`src/renderer/lib/panel-presence.tsx`, `src/renderer/lib/rail-list-motion.ts`).
+- Quota pool: pooled account columns (`src/renderer/lib/quota-pool.ts`,
+  `src/renderer/components/settings/QuotaPool.tsx`).
+- Structured approval: decision vocabulary and the Claude/ACP decision mapping
+  for `PermissionRequest` hooks (`src/shared/approval-decision.ts`,
+  `src/main/agent-hooks/approval-decision-mapping.ts`).
+- Terminal replay sanitizer (`src/shared/terminal-replay-sanitizer.ts`).
+- Writer checkpoint in a hidden ref (`src/main/git/hidden-checkpoint.ts`),
+  context hand-off budget (`src/main/orch/context-handoff-budget.ts`) and
+  journal replay cap (`src/main/orch/mission-event-replay-budget.ts`).
+- Database snapshot before a schema migration
+  (`src/main/persistence/db-migration-snapshot.ts`).
+- Tailscale Serve for the Remote Bridge (`src/main/remote/tailscale.ts`,
+  `src/main/remote/remote-bridge-tailscale.ts`) and the Linux
+  `--password-store` choice (`src/main/linux-secret-storage.ts`).
+- Browser cookie import: Chromium, Firefox and Safari readers, Chromium key
+  retrieval and the `VACUUM INTO` snapshot (`src/main/browser/browser-import/`).
+- Model profiles and CLI compatibility: Claude per-model profile data, CLI
+  version ranges, `satisfiesSemverRange`, Codex `model/list` paging and
+  catalog reference checks (`src/main/adapters/claude-model-profiles.ts`,
+  `cli-compatibility.ts`, `codex-model-list.ts`, `model-catalog.ts`,
+  `src/shared/semver-range.ts`).
+- Attachments and appearance: image compression pipeline, HEIC metadata
+  parser and JPEG dimension reader (`src/renderer/lib/image-compression.ts`,
+  `src/shared/heic-metadata.ts`, `src/main/persistence/heic-convert.ts`) and
+  VS Code theme import (`src/renderer/styles/vscode-theme-import.ts`).
+- Lint: the `require-suppression-reason` oxlint rule (`oxlint-plugin-nexus/`).
+- Mobile app: LegendList wrapper, review diff model, highlighter and word
+  diff, Android notification channels, gesture haptics, durable chat outbox
+  and the Expo doctor (`mobile/src/`, `mobile/scripts/mobile-doctor.mjs`), plus
+  the `@pierre/diffs` exports patch (`mobile/patches/@pierre__diffs@1.5.1.patch`).
+
+Not imported: the Effect runtime, relay and cloud services, T3 branding, and
+`heic-to` (LGPL-3.0); HEIC/HEIF photos are converted by macOS `/usr/bin/sips`.
+
+## Ghostty libghostty-vt (WebAssembly)
+
+The screen-state detector renders terminal grids with `libghostty-vt` from
+[`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) at commit
+`9f62873bf195e4d8a762d768a1405a5f2f7b1697` (pin in
+`third_party/ghostty-vt/VERSION`). The `wasm32` build is copied byte for byte
+from T3 Code to `resources/ghostty/ghostty-vt.wasm`; the build recipe is
+`scripts/build-libghostty-wasm.sh`.
+
+MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors. The
+license text is included at `third_party/ghostty-vt/LICENSE` and packaged next
+to the wasm as `resources/ghostty/LICENSE`. Provenance (SHA-256 of both
+artifacts): `third_party/provenance/t3code-26285ab.json`.
+
+## Dependencies added with the T3 Code harvest
+
+Licenses as declared by the installed packages:
+
+- `@pierre/diffs@1.5.2` (desktop; the mobile app uses `1.5.1` only as a
+  development test oracle): Apache License 2.0, Pierre Computer. It brings
+  `@pierre/theme@2.0.0` and `@pierre/theming@1.0.1` (Apache-2.0),
+  `shiki@4.5.0` and `@shikijs/*` (MIT), `diff@9.0.0` (BSD-3-Clause,
+  Copyright (c) 2009-2015 Kevin Decker), `hast-util-to-html` and its unified
+  dependencies (MIT; `@ungap/structured-clone` is ISC) and `lru_map@0.4.1`
+  (MIT). The Apache License 2.0 text is
+  included at `third_party/licenses/Apache-2.0.txt`; the NOTICE of
+  `@pierre/theme` is reproduced below.
+- `@legendapp/list@3.3.11` (desktop) and `@legendapp/list@3.3.5` (mobile): MIT,
+  Copyright (c) 2022 Moo.do LLC.
+- `@napi-rs/keyring@1.3.0` and its per-platform binaries: MIT, Copyright (c)
+  2020 N-API for Rust.
+- `@noble/curves@1.9.7` (mobile pairing; also at the desktop root for the
+  bridge tests): MIT, Copyright (c) 2022 Paul Miller.
+- `@shikijs/core`, `@shikijs/engine-javascript` and `@shikijs/langs@4.2.0`
+  (mobile highlighter): MIT. `diff@9.0.0` (mobile word diff): BSD-3-Clause.
+
+`@pierre/trees` was not added. No GPL, LGPL or AGPL package entered with the
+harvest.
+
+NOTICE of `@pierre/theme@2.0.0`:
+
+> This theme was built on top of
+> [GitHub's Visual Studio Code Theme](https://github.com/primer/github-vscode-theme),
+> reusing its technique and build tooling, which we have since iterated on for
+> more specific language tokens.
+>
+> `@pierre/theme` is licensed under Apache-2.0 (see `LICENSE`). The original
+> MIT license for `primer/github-vscode-theme` is included below for
+> attribution.
+
+```
+MIT License
+
+Copyright (c) 2020 Primer
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```

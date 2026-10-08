@@ -1,9 +1,8 @@
-// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
-// Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: o método de
+// Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied)
+// Referência (T3 Code, MIT): só o método de
 // packages/client-runtime/src/operations/commands.performance.test.ts (teto de
-// bytes de wire por mensagem + teto de mensagens, CI falha quando passa)
-// aplicado ao push de saída de PTY do Main para o renderer e aos taps do Main;
+// bytes de wire por mensagem + teto de mensagens, CI falha quando passa), num
+// teste do Nexus para o push de saída de PTY do Main ao renderer e para os taps do Main;
 // harness de sessão copiado de pty-manager-tap-batching.test.ts.
 import { resetLicensedAccessMock } from '../__tests__/licensed-access';
 import fs from 'node:fs';

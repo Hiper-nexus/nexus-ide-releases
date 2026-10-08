@@ -1,8 +1,7 @@
-// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
-// Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: só o método de
+// Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied)
+// Referência (T3 Code, MIT): só o método de
 // packages/client-runtime/src/operations/commands.performance.test.ts (teto
-// numérico com o histórico ao lado, e o CI falha quando passa) — aplicado ao
+// numérico com o histórico ao lado, e o CI falha quando passa) — num teste do Nexus para o
 // agendador de saída de terminal do renderer, contando escritas no xterm e
 // drenos agendados em vez de bytes de RPC.
 
