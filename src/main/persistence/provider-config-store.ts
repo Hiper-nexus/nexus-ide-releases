@@ -1465,7 +1465,8 @@ function accountChoiceAlternatives(
             ? ('not-compared' as const)
             : !quota?.has(a.id)
               ? ('unknown-quota' as const)
-              : compareAccountHeadroom(quota.get(a.id), chosen) > 0
+              : chosenId !== null &&
+                  compareAccountHeadroom(quota.get(a.id), chosen) > 0
                 ? ('active-kept' as const)
                 : ('less-headroom' as const);
       return {
