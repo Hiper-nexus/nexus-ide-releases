@@ -597,6 +597,30 @@ export function assertCurrentMissionOrchestratorSession(
   }
 }
 
+/**
+ * F-1013: recusa de autoridade feita ANTES de qualquer escrita do handler. O
+ * dispatcher reporta `effectMayHaveCommitted` falso e repassa a dica. Só vale
+ * em pontos que comprovadamente precedem toda mutação: a mesma checagem depois
+ * de um efeito (ex.: o push após o done) continua lançando o erro comum.
+ */
+export class PreEffectRefusalError extends Error {
+  constructor(message: string, readonly hint?: string) {
+    super(message);
+    this.name = 'PreEffectRefusalError';
+  }
+}
+
+export function refuseBeforeEffect(check: () => void, hint?: string): void {
+  try {
+    check();
+  } catch (error) {
+    throw new PreEffectRefusalError(
+      error instanceof Error ? error.message : String(error),
+      hint,
+    );
+  }
+}
+
 export function getContext(token: string): AgentGateContext | null {
   return contexts.get(token) ?? null;
 }

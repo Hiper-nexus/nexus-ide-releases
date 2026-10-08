@@ -18,6 +18,7 @@ import {
   assertCurrentMissionOrchestratorSession,
   assertOrchestratorMission,
   executionScopeFor,
+  refuseBeforeEffect,
   returnOperatorHandFromEndedMission,
 } from './gate';
 import { requireMissionLeaderSession } from './mission-leader-gate';
@@ -592,6 +593,20 @@ function pushCompletedMission(
   };
 }
 
+/**
+ * F-1013: nenhuma tool devolve a liderança da missão (a troca é do Main, pelo
+ * “Retomar missão” da interface). A dica nomeia a chamada que o pane faz para
+ * ver quem lidera e o que não fazer: repetir ou demover a missão do líder.
+ */
+function missionLeadershipRefusalHint(missionId: string): string {
+  return (
+    'Esta sessão não lidera a missão agora e nenhuma tool devolve a liderança: ' +
+    `veja quem lidera com nexus_mission_control(${JSON.stringify({ missionId })}). ` +
+    'Não repita o pedido de conclusão nem marque blocked/failed por cima do líder; ' +
+    'só o botão “Retomar missão” da interface religa a liderança, e depois dele o pedido pode ser repetido.'
+  );
+}
+
 const missionSetStatusTool: McpToolDef = {
   name: 'nexus_mission_set_status',
   description:
@@ -639,7 +654,7 @@ const missionSetStatusTool: McpToolDef = {
     const status = missionStatusSchema.parse(args.status);
     const note = str(args, 'note')?.trim() ?? '';
     const push = args.push === undefined ? undefined : missionPushSchema.parse(args.push);
-    assertOrchestratorMission(ctx, missionId);
+    refuseBeforeEffect(() => assertOrchestratorMission(ctx, missionId));
     const stores = getProjectDomainStores(ctx.scope);
     const current = stores.missions.get(missionId);
     if (!current) throw new Error('mission not found');
@@ -666,7 +681,10 @@ const missionSetStatusTool: McpToolDef = {
       const lane = current.intentContract?.lane ?? 'standard';
       if (missionRequiresAutomaticCompletionReview(current, current.squadId ? getSquad(current.squadId) : null)) {
         if (hasOperatorTabHost(current)) {
-          assertCurrentMissionOrchestratorSession(ctx, current);
+          refuseBeforeEffect(
+            () => assertCurrentMissionOrchestratorSession(ctx, current),
+            missionLeadershipRefusalHint(missionId),
+          );
           const recorded = stores.missions.updateContent(missionId, {
             description: stripAwaitingAdjustmentMarker(current.description ?? ''),
           });
