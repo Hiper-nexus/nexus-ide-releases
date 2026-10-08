@@ -7,6 +7,7 @@
 import {
   backoffMsForReason,
   classifyRateLimitText,
+  rateLimitTextPatterns,
   type ClassifiedReason,
 } from '../../vendor/omp/rate-limit/classify';
 import { parseRetryAfterMsFromText } from '../../vendor/omp/rate-limit/retry-after-text';
@@ -391,11 +392,12 @@ function stripFailoverHandoffPack(text: string): string {
   // F-511: packs antigos já persistidos ainda têm o motivo cru. A TUI pode
   // redesenhar só essa linha após um resume, sem header. Reconheça apenas a
   // frase exata produzida pelo Nexus; um erro vivo na linha seguinte fica.
-  return out.replace(
-    /^[ \t]*Account "[^\r\n]*" hit a provider limit \([^\r\n]*\)\.[ \t]*$/gm,
-    '',
-  );
+  return out.replace(NEXUS_ACCOUNT_LIMIT_LINE, '');
 }
+
+/** F-511: a 2ª linha de um pack antigo, exatamente como o Nexus a escreve. */
+const NEXUS_ACCOUNT_LIMIT_LINE =
+  /^[ \t]*Account "[^\r\n]*" hit a provider limit \([^\r\n]*\)\.[ \t]*$/gm;
 
 /**
  * F-718: estrangulamento que a PRÓPRIA CLI administra não é limite da conta.
@@ -710,4 +712,86 @@ export function detectLimit(rawText: string, now: number = Date.now()): LimitHit
     };
   }
   return null;
+}
+
+/* ------------------------------------------------------------------------ *
+ * ORC-05 / F-249: neutralização de texto CITADO (histórico de handoff).
+ *
+ * O recorte de contexto de uma troca já decidida leva texto do terminal
+ * antigo, que o pane novo ecoa no PTY. O reducer reavalia janelas de 4.000
+ * chars que começam e terminam em qualquer ponto do eco; o header do pack sai
+ * da janela e o erro citado viraria sinal vivo (quarentena do modelo atual,
+ * troca de uma sessão sã). A fonte é ÚNICA: os próprios padrões deste
+ * detector (PATTERNS, classify do omp, célula do Codex, estrangulamento de
+ * CLI e a linha F-511), em versão permissiva — sem âncoras, fronteiras de
+ * palavra nem lookaround, `$` opcional — para cobrir qualquer corte de janela.
+ * ------------------------------------------------------------------------ */
+
+/** Quebra visível no sinal citado: não é branco, `_`, `-` nem moldura. */
+const QUOTED_SIGNAL_BREAK = '‧';
+const MAX_NEUTRALIZE_PASSES = 32;
+
+/** Variante que casa o trecho em qualquer janela que corte o texto. */
+function permissiveSignal(re: RegExp): RegExp {
+  const source = re.source
+    .replace(/\(\?<?[=!][^()]*\)/g, '')
+    .replace(/\\b/g, '')
+    .replace(/^\^/, '')
+    .replace(/\|\$\)/g, '|)')
+    .replace(/(?<!\\)\$$/, '');
+  return new RegExp(source, `${re.flags.replace(/[gy]/g, '')}g`);
+}
+
+let quotedSignalPatternsCache: readonly RegExp[] | null = null;
+
+/** Padrões do detector usados na neutralização (exposto para o teste anti-drift). */
+export function quotedLimitSignalPatterns(): readonly RegExp[] {
+  quotedSignalPatternsCache ??= [
+    ...PATTERNS.map((pattern) => pattern.re),
+    ...rateLimitTextPatterns(),
+    ...CLI_SELF_MANAGED_THROTTLE,
+    NEXUS_ACCOUNT_LIMIT_LINE,
+    new RegExp(CODEX_REJECTION_PHRASE.split('').join('\\s*'), 'i'),
+  ].map(permissiveSignal);
+  return quotedSignalPatternsCache;
+}
+
+function breakQuotedSignal(match: string): string {
+  const at = match.search(/[\p{L}\p{N}]/u);
+  return at < 0 ? match : `${match.slice(0, at + 1)}${QUOTED_SIGNAL_BREAK}${match.slice(at + 1)}`;
+}
+
+/**
+ * Torna texto citado inerte para `detectLimit` em qualquer janela: brancos
+ * normalizados (uma TUI que colapse espaços não recompõe a frase), estruturas
+ * que o detector descarta neutralizadas (crase, blockquote, fence, rótulo de
+ * log — descartá-las juntaria linhas vizinhas) e cada sinal reconhecido
+ * quebrado por um caractere visível, até ponto fixo.
+ */
+export function neutralizeLimitSignals(raw: string): string {
+  let text = raw
+    .replace(/\r\n?/g, '\n')
+    .replace(/[^\S\n]+/g, ' ')
+    .replaceAll('`', "'")
+    .replace(/^( {0,3})>/gm, '$1›')
+    .replace(/^( {0,3})~{3,}/gm, '$1- - -')
+    .split('\n')
+    .map((line) => (isLabeledHistoricalOutput(line) ? `${QUOTED_SIGNAL_BREAK} ${line}` : line))
+    .join('\n');
+  for (let pass = 0; pass < MAX_NEUTRALIZE_PASSES; pass += 1) {
+    let changed = false;
+    for (const re of quotedLimitSignalPatterns()) {
+      text = text.replace(re, (match: string) => {
+        const broken = breakQuotedSignal(match);
+        if (broken !== match) changed = true;
+        return broken;
+      });
+    }
+    if (!changed) return text;
+  }
+  // Sem ponto fixo (não deveria acontecer): o trecho inteiro sai.
+  for (const re of quotedLimitSignalPatterns()) {
+    text = text.replace(re, '[sinal de limite citado]');
+  }
+  return text;
 }

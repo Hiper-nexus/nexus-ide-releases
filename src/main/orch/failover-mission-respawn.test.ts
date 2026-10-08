@@ -70,6 +70,47 @@ import { detectLimit } from './limit-detector';
 import { createVisualTaskRequirement, visualTaskAtSpawn } from './visual-handoff-gate';
 import { CONTEXT_HANDOFF_BUDGET_ERROR } from './context-handoff-budget';
 import { forgetPaneTaskReroute, registerPaneTaskReroute } from './pane-task-reroute';
+import { FailoverTextReducer, type FailoverTextProposal } from './failover-text-core';
+
+/** Formatos REAIS que o detector reconhece: cada linha sozinha dispara. */
+const LIVE_LIMIT_LINES = [
+  'Error: model_not_found',
+  'not_found_error: model: claude-x',
+  'models/gemini-9-pro is not found',
+  "The model 'gpt-x' does not exist or you do not have access to it",
+  "The 'gpt-6' model requires a newer version of Codex.",
+  'insufficient_quota',
+  'Your credit balance is too low',
+  'usage limit reached',
+  "You've hit your session limit · resets 8:10pm",
+  'API Error: 429',
+  'HTTP 401 Unauthorized',
+  'rate_limit_exceeded',
+  'RateLimitError',
+  'RESOURCE_EXHAUSTED',
+  'overloaded_error',
+  '503 Service Unavailable',
+  'Your quota will reset after 2h',
+  'usage_limit_reached',
+  'limit_reached: true',
+  'internal_server_error:',
+  "■ unexpected status 400: The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.",
+  'too many requests',
+  'limite de uso atingido',
+  '额度不足',
+  'Upstream request failed: Model access is disabled',
+];
+
+/** Inertes inteiros, mas disparam numa janela que corta o texto ou junta linhas. */
+const WINDOW_LIMIT_TRAPS: ReadonlyArray<readonly [string, string]> = [
+  ['id=xmodel_not_found;', 'model_not_found;'],
+  ['> Error: 429', 'Error: 429'],
+  ['veja `error: 429` aqui', 'error: 429` aqui'],
+  ['Output: rate_limit_exceeded', 'rate_limit_exceeded'],
+  ['codex usage\nOutput: detalhes\nlimit reached', 'codex usage\nOutput: detalhes\nlimit reached'],
+  ['codex usage\nAccount "x" hit a provider limit (kind quota).\nlimit reached', 'codex usage\nAccount "x" hit a provider limit (kind quota).\nlimit reached'],
+  ['error Rate limited… 429', 'error Rate limited… 429'],
+];
 
 const meta = {
   missionId: 'mission-1',
@@ -195,6 +236,71 @@ describe('planMainOwnedFailoverRespawn (failover de conta em pane de missão)', 
     expect(plan.action).toBe('skip');
     if (plan.action !== 'skip') return;
     expect(plan.reason).toContain(CONTEXT_HANDOFF_BUDGET_ERROR);
+  });
+
+  it('ORC-05/F-249: nenhuma janela do prompt inteiro dispara o detector — sem depender do header', () => {
+    for (const line of LIVE_LIMIT_LINES) expect(detectLimit(line), line).not.toBeNull();
+    for (const [, cut] of WINDOW_LIMIT_TRAPS) expect(detectLimit(cut), cut).not.toBeNull();
+    const filler = Array.from({ length: 40 }, (_, i) => `passo ${i}: compilando o módulo ${i} sem erro`).join('\n');
+    const scrollback = [filler, ...LIVE_LIMIT_LINES, ...WINDOW_LIMIT_TRAPS.map(([trap]) => trap), filler].join('\n');
+    const plan = planMainOwnedFailoverRespawn({
+      adapterId: 'codex', meta, fromAccountLabel: 'fixture', reason: 'quota', paneId: 'old-pane',
+      continuityPack: `${FAILOVER_HANDOFF_HEADER}\nContinue a tarefa na CLI nova.\n${FAILOVER_HANDOFF_FOOTER}`,
+      originalRequest: 'Corrigir o erro model_not_found do pane antigo', scrollbackExcerpt: scrollback,
+    });
+    expect(plan.action).toBe('respawn');
+    if (plan.action !== 'respawn') return;
+    const prompt = plan.options.initialPrompt ?? '';
+    expect(prompt).toContain('compilando o módulo 39');
+    // O header nunca protege: some do texto e toda janela é varrida.
+    const bare = prompt.replace(FAILOVER_HANDOFF_HEADER, '');
+    expect(bare.length).toBeGreaterThan(4_000);
+    const window = (start: number, end: number) => {
+      const hit = detectLimit(bare.slice(start, end));
+      if (hit) throw new Error(`janela ${start}-${end} disparou: ${hit.kind} ${hit.reason}`);
+    };
+    for (let start = 0; start < bare.length; start += 1) window(start, start + 4_000);
+    for (let end = 1; end <= bare.length; end += 1) window(Math.max(0, end - 4_000), end);
+    // Reducer real (o mesmo do failover), com cortes de chunk variados.
+    for (const size of [7, 61, 1_999, 2_000, 2_001, 4_000, bare.length]) {
+      const reducer = new FailoverTextReducer();
+      const proposals: FailoverTextProposal[] = [];
+      let at = 0;
+      for (let offset = 0; offset < bare.length; offset += size) {
+        at += 300;
+        proposals.push(...reducer.feed(bare.slice(offset, offset + size), at));
+      }
+      proposals.push(...reducer.feed('', at + 300, true));
+      expect(proposals.filter((proposal) => proposal.hit)).toEqual([]);
+    }
+  }, 300_000);
+
+  it('ORC-05: segredo atravessando a fronteira de 2.000 caracteres não sai em nenhum fragmento', () => {
+    const pemBody = Array.from({ length: 40 }, () => `${'P3m'.repeat(21)}Q`);
+    const promptFor = (scrollbackExcerpt: string) => {
+      const plan = planMainOwnedFailoverRespawn({
+        adapterId: 'claude', meta, toAccountId: 'acct-2', fromAccountLabel: 'fixture', reason: 'quota',
+        paneId: 'old-pane', scrollbackExcerpt,
+      });
+      expect(plan.action).toBe('respawn');
+      return plan.action === 'respawn' ? plan.options.initialPrompt ?? '' : '';
+    };
+    const prompt = promptFor([
+      `${'a'.repeat(1_984)} sk-ant-api03-${'K7'.repeat(15)} fim`,
+      `${'b'.repeat(1_983)} ghp_${'G5'.repeat(14)} fim`,
+      `${'c'.repeat(1_977)} Authorization: Bearer ${'B9'.repeat(16)} fim`,
+      '-----BEGIN RSA PRIVATE KEY-----',
+      ...pemBody,
+      '-----END RSA PRIVATE KEY-----',
+      'depois da chave',
+    ].join('\n'));
+    for (const fragment of ['K7K7', 'G5G5', 'B9B9', 'P3mP3m']) expect(prompt).not.toContain(fragment);
+    expect(prompt).toContain('[REDACTED]');
+    expect(prompt).toContain('depois da chave');
+    // Cauda que começa no meio da chave: END sem BEGIN.
+    const headless = promptFor([...pemBody.slice(10), '-----END RSA PRIVATE KEY-----', 'depois da chave'].join('\n'));
+    expect(headless).not.toContain('P3mP3m');
+    expect(headless).toContain('depois da chave');
   });
 
   it('pula meta ausente (pane main-owned não registrado)', () => {

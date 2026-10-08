@@ -139,6 +139,14 @@ const REASON_PATTERNS: readonly ReasonPattern[] = [
 ];
 
 /**
+ * Nexus: os mesmos padrões, para o limit-detector neutralizar texto citado
+ * (ORC-05) a partir da fonte única — nunca uma lista paralela.
+ */
+export function rateLimitTextPatterns(): readonly RegExp[] {
+  return REASON_PATTERNS.map((pattern) => pattern.re);
+}
+
+/**
  * Classifica texto de erro de provider na taxonomia do omp. Retorna null em
  * vez de UNKNOWN: no Nexus, ausência de match significa "não é sinal de
  * limite" (a janela de PTY quase nunca é um erro).
