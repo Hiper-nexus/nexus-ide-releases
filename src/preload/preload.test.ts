@@ -233,6 +233,38 @@ describe('preload PTY delivery', () => {
     expect(recoverInvokes()).toHaveLength(1);
   });
 
+  it('marks only what the replay pull delivered; a live push during a slow replay stays unmarked (DSK-01)', async () => {
+    const api = await loadPreloadApi();
+    const received: Array<[string, unknown]> = [];
+    api.pty.onData('s-adopted', (data, meta) => received.push([data, meta]));
+    let resolveReplay!: (events: PtyDataEvent[]) => void;
+    electronMock.ipcRenderer.invoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReplay = resolve as (events: PtyDataEvent[]) => void;
+        }),
+    );
+
+    const replaying = api.pty.replay('s-adopted');
+    // The adopted TUI answers the adoption SIGWINCH while the pull is slow:
+    // its chunk is pushed live, and main's window also returns it.
+    emitPtyData({ sessionId: 's-adopted', sequence: 3, data: 'live\x1b[6n' });
+    resolveReplay([
+      { sessionId: 's-adopted', sequence: 1, data: 'old ' },
+      { sessionId: 's-adopted', sequence: 2, data: 'frame' },
+      { sessionId: 's-adopted', sequence: 3, data: 'live\x1b[6n' },
+    ]);
+    await replaying;
+
+    // Only retained output written again is marked; the renderer sanitizes
+    // that and nothing else, so the live query still gets its answer.
+    expect(received).toEqual([
+      ['old ', { replayed: true }],
+      ['frame', { replayed: true }],
+      ['live\x1b[6n', undefined],
+    ]);
+  });
+
   it('single-flights the recover pull while a gap is outstanding', async () => {
     const api = await loadPreloadApi();
     const received: string[] = [];

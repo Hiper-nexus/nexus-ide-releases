@@ -115,6 +115,7 @@ import {
   repaintAdoptedFrame,
 } from './adoption-repaint';
 import {
+  createReplayOutputFilter,
   createReplaySanitizer,
   type TerminalReplaySanitizer,
 } from '../../shared/terminal-replay-sanitizer';
@@ -1320,9 +1321,10 @@ function startSpawn(
       // DSK-01: o replay da adoção reescreve saída ANTIGA do PTY headless
       // (DA1/CPR/OSC 11 do arranque do TUI); o xterm novo responderia pelo
       // mesmo onData da digitação e a resposta chegaria ao PTY como lixo.
-      // Só o replay passa pelo sanitizer — a saída ao vivo segue crua.
-      let adoptionReplay = res.adopted ? createReplaySanitizer() : null;
-      let adoptionReplaySettled = false;
+      // Só o que o preload marca como entregue pelo pull de replay passa
+      // pelo sanitizer; a saída ao vivo segue SEMPRE crua, mesmo durante um
+      // replay lento (o TUI repinta no SIGWINCH e pergunta CPR/DA1 na hora).
+      const replayOutput = createReplayOutputFilter();
 
       if (!host.ghostAssist && pane.kind === 'shell') {
         setupGhostAssist(host, pane.cwd);
@@ -1332,17 +1334,10 @@ function startSpawn(
       // write); hidden panes queue with a bounded backlog so concurrent agent
       // floods cannot pin the renderer. See terminal-output-scheduler.ts.
       host.cleanups.push(
-        window.nexus.pty.onData(res.sessionId, (raw) => {
+        window.nexus.pty.onData(res.sessionId, (raw, meta) => {
           adoptionTape?.retain(raw);
           host.ghostAssist?.ingestPtyData(raw);
-          let data = raw;
-          if (adoptionReplay) {
-            data = adoptionReplay.push(raw);
-            // Sequência que começou no replay termina nele; depois, cru.
-            if (adoptionReplaySettled && !adoptionReplay.pendingControlSequence) {
-              adoptionReplay = null;
-            }
-          }
+          const data = replayOutput(raw, meta?.replayed === true);
           if (host.virtualized) {
             // Pane hibernado: xterm descartado; reter saída no buffer do
             // estado e sair antes do scheduler (o ring do main cobre o resto).
@@ -1505,10 +1500,7 @@ function startSpawn(
         // Listener installation must precede the pull: headless output may
         // already exist and must paint immediately, not wait for the preload
         // recovery backstop.
-        void window.nexus.pty.replay(res.sessionId).finally(() => {
-          adoptionReplaySettled = true;
-          if (!adoptionReplay?.pendingControlSequence) adoptionReplay = null;
-        });
+        void window.nexus.pty.replay(res.sessionId);
         // O replay foi desenhado na grade do spawn headless (120 colunas);
         // reescrito num xterm mais estreito ele vira lixo permanente no
         // scrollback. Depois do replay: zera o terminal e força SIGWINCH

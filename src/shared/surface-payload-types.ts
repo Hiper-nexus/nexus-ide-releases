@@ -628,6 +628,16 @@ export interface PtyDataEvent {
   sequence: number;
 }
 
+/**
+ * Second argument of `pty.onData`, present only for chunks the preload
+ * delivered from an explicit `pty.replay()` pull: retained output being
+ * written AGAIN, not live output (DSK-01 — the renderer strips terminal
+ * queries from these and nothing else).
+ */
+export interface PtyDataMeta {
+  replayed: true;
+}
+
 export interface PtyExitEvent {
   sessionId: string;
   exitCode: number;

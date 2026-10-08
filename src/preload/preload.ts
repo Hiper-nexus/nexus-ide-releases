@@ -107,6 +107,7 @@ import type {
   SpawnResult,
   WorkspaceLayout,
   PtyDataEvent,
+  PtyDataMeta,
   PtyExitEvent,
   PtyStateChangeEvent,
   PaneSessionState,
@@ -173,7 +174,9 @@ function emitToListeners<TArgs extends unknown[]>(
   }
 }
 
-type DataCb = (data: string) => void;
+type DataCb = (data: string, meta?: PtyDataMeta) => void;
+/** DSK-01: marca o que um pull de `pty.replay()` entregou (fita retida). */
+const REPLAYED_PTY_DATA: PtyDataMeta = Object.freeze({ replayed: true });
 type ExitCb = (event: { exitCode: number; signal?: number; terminationOrigin?: string }) => void;
 type StateCb = (state: PaneSessionState) => void;
 type AdapterChangedCb = (adapters: AdapterInfo[]) => void;
@@ -249,8 +252,14 @@ function warnPtyGapThrottled(sessionId: string, detail: string): void {
   console.warn(`[preload] pty output gap accepted for ${sessionId}: ${detail}`);
 }
 
-function emitContiguousPtyData(sessionId: string, sequence: number, data: string): void {
-  emitToListeners(dataSubs.get(sessionId), 'dataSubs', data);
+function emitContiguousPtyData(
+  sessionId: string,
+  sequence: number,
+  data: string,
+  meta?: PtyDataMeta,
+): void {
+  if (meta) emitToListeners(dataSubs.get(sessionId), 'dataSubs', data, meta);
+  else emitToListeners(dataSubs.get(sessionId), 'dataSubs', data);
   ipcRenderer.send(PTY_CHANNELS.acknowledge, { sessionId, sequence });
 }
 
@@ -268,7 +277,11 @@ function requestPtyRecover(sessionId: string): void {
     .finally(() => ptyRecoverFlights.delete(sessionId));
 }
 
-function deliverRecoveredPtyData(sessionId: string, events: PtyDataEvent[]): void {
+function deliverRecoveredPtyData(
+  sessionId: string,
+  events: PtyDataEvent[],
+  meta?: PtyDataMeta,
+): void {
   if (events.length === 0) return;
   const buffer = ptyGapBuffers.get(sessionId);
   if (!buffer) return; // session exited while the pull was in flight
@@ -285,7 +298,7 @@ function deliverRecoveredPtyData(sessionId: string, events: PtyDataEvent[]): voi
       emitContiguousPtyData(sessionId, chunk.sequence, chunk.data);
     }
   }
-  events.forEach(deliverPtyData);
+  for (const event of events) deliverPtyData(event, meta);
 }
 
 /**
@@ -293,7 +306,7 @@ function deliverRecoveredPtyData(sessionId: string, events: PtyDataEvent[]): voi
  * (bounded) and recovered; holes that prove unrecoverable are accepted once
  * so delivery always resumes instead of storming recover invokes.
  */
-function deliverPtyData(payload: PtyDataEvent): void {
+function deliverPtyData(payload: PtyDataEvent, meta?: PtyDataMeta): void {
   const sessionId = payload.sessionId;
   const buffer = ptyGapBuffer(sessionId);
   const result = buffer.push(payload.sequence, payload.data);
@@ -309,7 +322,14 @@ function deliverPtyData(payload: PtyDataEvent): void {
     requestPtyRecover(sessionId);
   }
   for (const chunk of result.chunks) {
-    emitContiguousPtyData(sessionId, chunk.sequence, chunk.data);
+    // Só o chunk que veio DESTE evento leva a marca: sucessores destravados
+    // do buffer chegaram por push ao vivo e seguem crus.
+    emitContiguousPtyData(
+      sessionId,
+      chunk.sequence,
+      chunk.data,
+      chunk.sequence === payload.sequence ? meta : undefined,
+    );
   }
 }
 
@@ -764,13 +784,15 @@ const api: NexusApi = {
       // Buffer criado ANTES do pull: sem ele a entrega descartava a janela
       // retida de uma sessão adotada que ainda não mandou chunk ao vivo, e a
       // fita antiga só chegava no recover de 15 s — depois do reset da
-      // adoção e fora da janela em que o renderer a sanitiza (DSK-01).
+      // adoção e sem a marca de replay (DSK-01).
       const afterSequence = ptyGapBuffer(sessionId).highWater;
       const events = (await ipcRenderer.invoke(PTY_CHANNELS.recover, {
         sessionId,
         afterSequence,
       })) as PtyDataEvent[];
-      deliverRecoveredPtyData(sessionId, events);
+      // Marca o que ESTE pull entregou: o renderer tira as queries só disso;
+      // a saída ao vivo (inclusive a que chega durante o pull) segue crua.
+      deliverRecoveredPtyData(sessionId, events, REPLAYED_PTY_DATA);
     },
     write: (sessionId, data) =>
       ipcRenderer.send(PTY_CHANNELS.write, { sessionId, data }),

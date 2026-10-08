@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { Terminal } from '@xterm/xterm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createReplayOutputFilter } from '../../shared/terminal-replay-sanitizer';
 import {
   createAdoptionRepaintTape,
   repaintAdoptedFrame,
@@ -93,5 +94,19 @@ describe('DSK-01 — repaint de adoção com xterm real', () => {
     expect(ptyWrite).not.toHaveBeenCalled();
     // O quadro visível continua lá: só o tráfego de pergunta/resposta saiu.
     expect(firstLine(term)).toBe('hello');
+  });
+
+  it('query ao vivo passa crua e o xterm responde; a mesma query vinda do replay não', async () => {
+    // Mesmo filtro do onData do terminal-host: só o que o preload marcou como
+    // replay é sanitizado — o TUI que pergunta agora recebe a resposta agora.
+    const { term, ptyWrite } = wiredTerminal();
+    const filter = createReplayOutputFilter();
+
+    await writeParsed(term, filter('old\r\n\x1b[6n\x1b[c', true));
+    expect(ptyWrite).not.toHaveBeenCalled();
+
+    await writeParsed(term, filter('\x1b[6n', false));
+    expect(ptyWrite).toHaveBeenCalledOnce();
+    expect(ptyWrite.mock.calls[0]?.[1]).toMatch(/^\x1b\[\d+;\d+R$/);
   });
 });

@@ -230,6 +230,7 @@ import type {
   PaneFootprintBroadcast,
   PaneSessionState,
   PerfSnapshot,
+  PtyDataMeta,
   RecipeOverlayResult,
   RecipeSuggestion,
   SpawnRequest,
@@ -497,7 +498,10 @@ export interface NexusApi {
       },
     ): void;
     kill(sessionId: string): void;
-    onData(sessionId: string, cb: (data: string) => void): Unsubscribe;
+    onData(
+      sessionId: string,
+      cb: (data: string, meta?: PtyDataMeta) => void,
+    ): Unsubscribe;
     onExit(
       sessionId: string,
       cb: (event: { exitCode: number; signal?: number; terminationOrigin?: string }) => void,
