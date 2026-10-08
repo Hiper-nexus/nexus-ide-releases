@@ -613,6 +613,13 @@
   list-style: none;
 }
 
+/* rail-list-motion mede offsetTop dos filhos e posiciona os clones de saída
+   em absoluto: a própria lista precisa ser a origem dos dois. */
+.workspace-rail__workspace-list,
+.workspace-rail__mission-list {
+  position: relative;
+}
+
 .workspace-rail__workspace-item + .workspace-rail__workspace-item {
   margin-top: var(--space-2);
 }
