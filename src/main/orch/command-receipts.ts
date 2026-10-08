@@ -117,6 +117,21 @@ function resolveAggregate(input: {
   throw new Error('command receipt requires threadId or projectId');
 }
 
+function existingCommandEffect(
+  outbox: EffectOutboxStore,
+  commandId: string,
+  effectId: string,
+): EffectOutboxEntry | null {
+  const byId = outbox.get(effectId);
+  if (byId) {
+    if (byId.commandId !== commandId) {
+      throw new Error('effect outbox id is already bound to another command');
+    }
+    return byId;
+  }
+  return outbox.listByCommandId(commandId)[0] ?? null;
+}
+
 function classForCommandType(commandType: string): EffectClass {
   return (REPLAY_SAFE_EFFECT_TYPES as readonly string[]).includes(commandType)
     ? 'replay_safe'
@@ -139,16 +154,16 @@ export class CommandReceiptStore {
   }
 
   /**
-   * Recibo e efeito na mesma transação. `insertIfAbsent` seguido de
-   * `enqueue` commitava o sequence 0 antes do efeito: um crash no meio
-   * deixava o retry achar o comando aceito e não executá-lo. O id do
-   * efeito, quando omitido, é o `commandId`.
+   * Recibo e efeito na mesma transação. O id do efeito, quando omitido, é
+   * o `commandId`. Se o recibo já existe, não cria outro efeito: a linha
+   * que ainda está no outbox é devolvida; se o prune já a apagou, o
+   * retorno é `effect: null` e o comando não volta a pending.
    */
   acceptCommandEffect(
     outbox: EffectOutboxStore,
     receiptInput: CommandReceiptInsertInput,
     effectInput: EffectOutboxEnqueueInput,
-  ): { readonly inserted: boolean; readonly effect: EffectOutboxEntry } {
+  ): { readonly inserted: boolean; readonly effect: EffectOutboxEntry | null } {
     const receipt = insertSchema.parse(receiptInput);
     if (effectInput.commandId !== receipt.commandId) {
       throw new Error('command receipt and effect commandId must match');
@@ -168,11 +183,18 @@ export class CommandReceiptStore {
     const db = this.#binding.writeDatabase();
     return db.transaction(() => {
       const inserted = this.insertIfAbsent(receipt);
+      const effectId = effectInput.id ?? receipt.commandId;
+      if (!inserted) {
+        return {
+          inserted: false,
+          effect: existingCommandEffect(outbox, receipt.commandId, effectId),
+        };
+      }
       const effect = outbox.enqueue({
         ...effectInput,
-        id: effectInput.id ?? receipt.commandId,
+        id: effectId,
       });
-      return { inserted, effect };
+      return { inserted: true, effect };
     })();
   }
 

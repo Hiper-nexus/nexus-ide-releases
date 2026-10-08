@@ -449,6 +449,93 @@ describe("ORC-04 command receipts (T3 policy)", () => {
     expect(store.get("eff-taken")?.commandId).toBe("cmd-taken");
   });
 
+  it("does not re-enqueue a command after its settled effect is pruned", () => {
+    let now = 5_000_000;
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-effect-prune-"));
+    directories.push(baseDir);
+    const scope = testProjectScope();
+    const manager = runtime(baseDir);
+    const store = createScopedEffectOutboxStore(manager, scope, {
+      now: () => now,
+    });
+    const receipts = createScopedCommandReceiptStore(manager, scope, {
+      now: () => now,
+    });
+    const succeeded = receipts.acceptCommandEffect(
+      store,
+      {
+        commandId: "cmd-pruned-ok",
+        commandType: "turn.start",
+        threadId: "thread-a",
+      },
+      {
+        commandId: "cmd-pruned-ok",
+        threadId: "thread-a",
+        type: "turn.start",
+      },
+    );
+    const claimed = store.claimNext({ workerId: "w", leaseDurationMs: 1_000 });
+    expect(
+      store.succeed(succeeded.effect!.id, "w", claimed!.attemptCount),
+    ).toBe(true);
+    const cancelled = receipts.acceptCommandEffect(
+      store,
+      {
+        commandId: "cmd-pruned-cancel",
+        commandType: "turn.steer",
+        threadId: "thread-b",
+      },
+      {
+        commandId: "cmd-pruned-cancel",
+        threadId: "thread-b",
+        type: "turn.steer",
+      },
+    );
+    expect(cancelled.effect?.status).toBe("pending");
+    store.reconcileAfterProcessLoss();
+    expect(store.get(succeeded.effect!.id)?.status).toBe("succeeded");
+    expect(store.get(cancelled.effect!.id)?.status).toBe("cancelled");
+    expect(store.pruneSettled(0)).toBe(2);
+    expect(store.get(succeeded.effect!.id)).toBeNull();
+    expect(store.get(cancelled.effect!.id)).toBeNull();
+    expect(receipts.getByCommandId("cmd-pruned-ok")).not.toBeNull();
+    expect(receipts.getByCommandId("cmd-pruned-cancel")).not.toBeNull();
+
+    const retrySucceeded = receipts.acceptCommandEffect(
+      store,
+      {
+        commandId: "cmd-pruned-ok",
+        commandType: "turn.start",
+        threadId: "thread-a",
+      },
+      {
+        commandId: "cmd-pruned-ok",
+        threadId: "thread-a",
+        type: "turn.start",
+      },
+    );
+    const retryCancelled = receipts.acceptCommandEffect(
+      store,
+      {
+        commandId: "cmd-pruned-cancel",
+        commandType: "turn.steer",
+        threadId: "thread-b",
+      },
+      {
+        commandId: "cmd-pruned-cancel",
+        threadId: "thread-b",
+        type: "turn.steer",
+      },
+    );
+    expect(retrySucceeded.inserted).toBe(false);
+    expect(retrySucceeded.effect).toBeNull();
+    expect(retryCancelled.inserted).toBe(false);
+    expect(retryCancelled.effect).toBeNull();
+    expect(store.listByCommandId("cmd-pruned-ok")).toHaveLength(0);
+    expect(store.listByCommandId("cmd-pruned-cancel")).toHaveLength(0);
+    expect(store.listByStatus("pending")).toHaveLength(0);
+  });
+
   it("classifies only listed replay-safe commands as replay_safe", () => {
     const { manager, scope } = freshStore();
     const receipts = createScopedCommandReceiptStore(manager, scope);
