@@ -720,4 +720,44 @@ describe('retomada da missão da aba move o pane do orquestrador (F-664)', () =>
     expect(() => panes.moveOrchestratorPane(mission.id, leader.id, 'pane-helper')).toThrow(/already belongs/);
     expect(panes.findByPaneId('pane-operador')?.id).toBe(leader.id);
   });
+
+  it('F-969: troca só a conta selada do orquestrador exato, com CAS na conta esperada', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({ title: 'Missão · Meus terminais' });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    const leader = panes.record({
+      missionId: mission.id,
+      adapterId: 'claude',
+      model: 'claude-opus-5-5',
+      accountId: 'acct-co-claude',
+      title: 'Claude',
+      agentName: 'Orquestrador',
+      role: 'orchestrator',
+      paneId: 'pane-12502a80',
+    });
+    const reviewer = panes.record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      accountId: 'acct-codex',
+      title: 'Revisão sênior',
+      role: 'worker',
+      paneId: 'pane-muys5pen-1a',
+      readOnly: true,
+      workerIncarnationId: 'worker-incarnation-reviewer',
+    });
+
+    // CAS perdido (conta esperada errada) e worker: nada muda.
+    expect(panes.rebindPaneAccount(mission.id, 'pane-12502a80', 'acct-outra', 'acct-re-claude')).toBeNull();
+    expect(panes.rebindPaneAccount(mission.id, 'pane-muys5pen-1a', 'acct-codex', 'acct-x')).toBeNull();
+    expect(panes.findByPaneId('pane-muys5pen-1a')?.accountId).toBe('acct-codex');
+
+    const rebound = panes.rebindPaneAccount(mission.id, 'pane-12502a80', 'acct-co-claude', 'acct-re-claude');
+    expect(rebound).toMatchObject({ id: leader.id, accountId: 'acct-re-claude', role: 'orchestrator' });
+    // Persistido: reabrir o store lê a conta nova; o resto da composição fica.
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionPaneStore(runtimeManager, scope).findByPaneId('pane-12502a80');
+    expect(reopened).toMatchObject({ accountId: 'acct-re-claude', model: 'claude-opus-5-5', agentName: 'Orquestrador' });
+    expect(reviewer.readOnly).toBe(true);
+  });
 });

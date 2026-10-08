@@ -550,6 +550,52 @@ export class ScopedMissionPaneStore {
   }
 
   /**
+   * F-969: o failover de conta do Main troca a conta SELADA do orquestrador
+   * antes de pedir o religamento do pane (a cerca do spawn persistido exige
+   * `accountId` igual ao da linha). Compare-and-swap estreito: só a linha
+   * exata (missão + pane + orquestrador) na conta esperada; o resto da
+   * autoridade (selo, papel, escopo, ferramentas) fica intacto.
+   */
+  rebindPaneAccount(
+    rawMissionId: string,
+    rawPaneId: string,
+    rawExpectedAccountId: string | null,
+    rawAccountId: string,
+  ): ScopedMissionPaneSpec | null {
+    const missionId = entityIdSchema.parse(rawMissionId);
+    const paneId = entityIdSchema.parse(rawPaneId);
+    const accountId = z.string().min(1).max(128).parse(rawAccountId);
+    const expected =
+      rawExpectedAccountId === null
+        ? null
+        : z.string().min(1).max(128).parse(rawExpectedAccountId);
+    const db = this.#binding.writeDatabase();
+    const result = db.transaction(() => {
+      const rows = this.#findRowsByPaneId(db, paneId);
+      if (rows.length !== 1) return { spec: null, changed: false };
+      const existing = rows[0];
+      if (existing.missionId !== missionId || existing.role !== 'orchestrator') {
+        return { spec: null, changed: false };
+      }
+      if (existing.accountId === accountId) {
+        return { spec: cloneSpec(existing), changed: false };
+      }
+      if ((existing.accountId ?? null) !== expected) {
+        return { spec: null, changed: false };
+      }
+      const update = db
+        .prepare('UPDATE mission_panes SET account_id = ? WHERE id = ?')
+        .run(accountId, existing.id);
+      if (update.changes !== 1) {
+        throw new ScopedStoreCorruptionError('mission orchestrator account rebind');
+      }
+      return { spec: cloneSpec({ ...existing, accountId }), changed: true };
+    })();
+    if (result.changed) this.#binding.emitChange();
+    return result.spec ? cloneSpec(result.spec) : null;
+  }
+
+  /**
    * Explicit workflow-authority rotation for the current orchestrator pane.
    * This is a compare-and-swap: legacy/unsealed rows, workers, intent drift,
    * squad drift and a stale caller all fail closed. Workers deliberately keep

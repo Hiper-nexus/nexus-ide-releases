@@ -168,6 +168,34 @@ saber isto antes de mexer:
   da lista (cooldown, sem credencial, excluída pelo hit) ou quando a
   disponibilidade medida é 0. Cota desconhecida mantém a ativa. Sem conta
   ativa, a mais livre vence.
+- **Folga só entre janelas comparáveis (F-969).** Com o snapshot, a regra de
+  folga recebe as janelas por conta (`quotaByAccountId`) e decide por
+  `compareAccountHeadroom` (`src/main/quota/account-headroom.ts`): esgotada
+  perde; janelas medidas nas duas contas decidem pela mais apertada (a que
+  limita de fato, com reset no recibo); janela que só uma conta leu dá a
+  vantagem a quem a leu, da mais curta (5 Horas) para a mais longa. **Sem
+  leitura não é folga**: ativa lida pela metade (Semanal sim, 5 Horas não)
+  cede à irmã que PROVOU folga na janela que a ativa não leu. Ativa sem
+  leitura nenhuma continua (cota fora do ar não é evidência). O escore
+  escalar (`quotaAvailabilityScore`) não compara contas entre si.
+- **Recibo diz a verdade (F-969).** `pinned`/`native` não concorreram: as
+  irmãs saem como `not-compared`; sob "ativa mantida" a irmã com MAIS folga
+  sai como `active-kept`; `less-headroom` só quando ela tinha menos. O pane
+  Claude do "+ Pane" não é mais fixado na ativa pelo renderer
+  (`shouldAutoPinPaneAccount`): o Main escolhe pela regra de folga e o
+  renderer persiste a conta que o Main devolveu.
+- **Limite confirmado troca até conta fixada e o pane do operador (F-969).**
+  O pin não prende ninguém num pane parado: quando a conta fixada ESGOTA com
+  limite confirmado (F-249 intacto), o failover troca para a irmã com folga e
+  avisa. O orquestrador de missão que mora num pane do renderer (inclusive o
+  pane do operador adotado pela missão da aba) é religado PELO MAIN
+  (`switchRendererOrchestratorAccount` → `rebindPaneAccount` + 
+  `requestMissionPaneRecovery`): o renderer não religa pane de missão viva
+  nem mata sessão de missão, e a cerca do spawn persistido exige a conta
+  selada. Mesmo pane, sessão nova com o pacote de continuidade; `switched`
+  e o trace `account-failover` só saem depois do religamento, e o recibo da
+  sessão nova traz a nota "troca automática por limite confirmado". Conversa
+  nativa entre contas continua fora (ids de sessão são da conta).
 - **A conta que É o login nativo não ganha escopo gerenciado (F-645).**
   Refresh token rotaciona: duas cópias dele (o store nativo e um
   `managed-accounts/claude/<id>/auth` semeado do vault) não sobrevivem juntas —
@@ -374,6 +402,14 @@ saber isto antes de mexer:
   `ownGroup: true`: missão separada, sem `tabKey`) ou "Assumir a liderança" (a
   troca de coroa). Missão nova com nome já usado ganha sufixo " 2", " 3"…
   dentro do teto de 120 caracteres do Main.
+- **Revisor nunca vira orquestrador (F-970).** `promoteOrchestratorFromRenderer`
+  recusa (`pane_read_only`) pane somente leitura — ficha PTY, gate ou
+  composição — antes de qualquer escrita; só o líder que já é desta missão
+  (Maestro delegate-only nascido readOnly) é reconfirmado. No renderer,
+  `pickTabMissionLeader` nunca escolhe worker de missão (`role: 'worker'`) no
+  lugar do orquestrador: foco não é designação. Sem orquestrador nem pane do
+  operador vivo, a resposta é `null` e o operador é avisado — a missão fica
+  sem líder vivo em vez de ser re-hospedada num revisor.
 
 ## Portão de regressão: config do runner e falha de carga (F-199)
 

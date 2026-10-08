@@ -223,4 +223,38 @@ describe('failover notifications', () => {
       for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
     }
   });
+
+  it('F-969: troca já aplicada pelo Main no orquestrador — espelha a conta e avisa, sem religar de novo', async () => {
+    let notify!: (event: FailoverEvent) => void;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
+      onFailover: (callback: typeof notify) => { notify = callback; return () => {}; },
+    } } });
+    const originalRoot = useLayoutStore.getState().root;
+    useLayoutStore.setState({ root: { kind: 'leaf', id: 'orch-leaf', pane: {
+      id: 'pane-12502a80', kind: 'cli-agent', title: 'Claude', adapterId: 'claude',
+      accountId: 'acct-co-claude', role: 'orchestrator', missionId: 'mission-23eee6e5',
+    } } });
+    vi.mocked(respawnWithResume).mockClear();
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<Harness />));
+      notify({
+        paneId: 'pane-12502a80', kind: 'rate-limit', switched: true, crossAccount: true,
+        fromAccountLabel: 'Co•••de', toAccountLabel: 're•••no',
+        fromAccountId: 'acct-co-claude', toAccountId: 'acct-re-claude',
+        reason: "You've hit your session limit", missionId: 'mission-23eee6e5',
+        respawnedByMain: true,
+      });
+      expect(respawnWithResume).not.toHaveBeenCalled();
+      const pane = listPanes(useLayoutStore.getState().root).find((entry) => entry.id === 'pane-12502a80');
+      expect(pane?.accountId).toBe('acct-re-claude');
+      const toast = useToastStore.getState().toasts.find((entry) => entry.title === 'Trocado para "re•••no"');
+      expect(toast?.kind).toBe('success');
+    } finally {
+      await act(async () => root.unmount()); container.remove();
+      useLayoutStore.setState({ root: originalRoot });
+      for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+    }
+  });
 });

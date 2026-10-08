@@ -29,6 +29,11 @@ import {
   collectGitTaskState,
   respawnMainOwnedPaneWithAccount,
 } from './failover-mission-respawn';
+import { switchRendererOrchestratorAccount } from './failover-orchestrator-respawn';
+import {
+  forgetAccountFailoverNote,
+  noteAccountFailoverForPane,
+} from '../persistence/account-choice-receipts';
 import {
   getRendererWorkspaceScope,
   onRendererWorkspaceScopeChange,
@@ -81,6 +86,10 @@ import {
   requireQuotaService,
 } from '../quota/quota-service';
 import { quotaAvailabilityScore } from '../quota/quota-policy';
+import {
+  headroomInputsByAccount,
+  type HeadroomInput,
+} from '../quota/account-headroom';
 import { tapObserverFrames } from './observer-bus';
 import type { ObserverFrame } from '../../shared/observer-frame';
 import {
@@ -428,6 +437,25 @@ function emitFailover(
   );
 }
 
+/**
+ * F-969: recibo de uma troca que o Main aplicou no pane do renderer. A sessão
+ * velha já não existe (a autoridade mudou de propósito): o destino é o mesmo
+ * dono, no mesmo escopo, enquanto ele ainda escuta.
+ */
+function emitToPaneOwner(
+  authority: FailoverAuthority,
+  event: FailoverEvent,
+): void {
+  const owner = authority.owner;
+  if (!owner || !listeners.has(owner) || owner.isDestroyed()) return;
+  broadcastToProject([owner], authority.scope, ACCOUNT_CHANNELS.failover, event);
+}
+
+/** Próximo passo do orquestrador religado na conta nova (F-969). */
+const ORCHESTRATOR_SWITCH_NEXT_STEP =
+  'Check nexus_handoff_list and the panes still running (nexus_pane_list), then ' +
+  'continue coordinating the mission from the first pending step. Do not redo delivered work.';
+
 /** Detalhes do pane físico, seja ele renderer-owned ou main-owned/headless. */
 interface FailoverPaneDetails {
   readonly paneId: string;
@@ -575,6 +603,19 @@ function quotaScoresFor(adapterId: string): Map<string, number> | undefined {
       }
     }
     return quotaScores;
+  } catch {
+    /* quota service optional at boot race */
+    return undefined;
+  }
+}
+
+/** F-969: janelas medidas por conta — a troca compara só janelas comparáveis. */
+function quotaHeadroomFor(
+  adapterId: string,
+): ReadonlyMap<string, HeadroomInput> | undefined {
+  try {
+    const snap = requireQuotaService().lastSnapshot();
+    return snap ? headroomInputsByAccount(snap.entries, adapterId) : undefined;
   } catch {
     /* quota service optional at boot race */
     return undefined;
@@ -1074,6 +1115,7 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
   }
 
   const quotaScores = quotaScoresFor(adapterId);
+  const quotaByAccountId = quotaHeadroomFor(adapterId);
 
   if (!next) {
     const selection = pickAvailableForFailover(
@@ -1081,7 +1123,11 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
       req.excludeId,
       now,
       quotaScores,
-      { allowProbe: true, ...(selectionScope ? { scope: selectionScope } : {}) },
+      {
+        allowProbe: true,
+        ...(selectionScope ? { scope: selectionScope } : {}),
+        ...(quotaByAccountId ? { quotaByAccountId } : {}),
+      },
     );
     next = selection.account;
     probe = selection.probe;
@@ -1146,7 +1192,11 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
         req.excludeId,
         now,
         quotaScores,
-        { excludeIds: failedIds, ...(selectionScope ? { scope: selectionScope } : {}) },
+        {
+          excludeIds: failedIds,
+          ...(selectionScope ? { scope: selectionScope } : {}),
+          ...(quotaByAccountId ? { quotaByAccountId } : {}),
+        },
       );
       next = alternate.account;
       probe = false;
@@ -1339,10 +1389,101 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
     return;
   }
 
-  // F-775: o pacote do renderer (troca de conta) leva janela e estado da tarefa.
+  // F-969: orquestrador de missão num pane do renderer (inclusive o pane do
+  // operador adotado pela missão da aba). O renderer não religa pane de
+  // missão viva nem mata sessão de missão, e a cerca do spawn persistido
+  // exige a conta selada — o "switched" de antes não trocava nada e o pane
+  // ficava parado na conta esgotada. O Main troca a conta selada e religa o
+  // MESMO pane pelo caminho de recuperação do orquestrador; o recibo sai só
+  // depois do religamento.
+  // F-775: o pacote (troca de conta) leva janela e estado da tarefa.
   const continuity = crossAccount
     ? await continuityFacts(authority, adapterId, fromAccountId, hit, nextUnblockAtMs)
     : undefined;
+  if (authority.missionId && continuity) {
+    const facts = continuity;
+    // Recibo da sessão nova: foi a troca automática, não um pin qualquer.
+    noteAccountFailoverForPane(
+      paneId,
+      `troca automática por limite confirmado: "${maskAccountLabel(fromLabel)}" ` +
+        `esgotou (${hit.kind}); a conta fixada esgotada não prende o pane`,
+    );
+    const switchedOrchestrator = await switchRendererOrchestratorAccount({
+      scope: authority.scope,
+      missionId: authority.missionId,
+      paneId,
+      sessionId: authority.sessionId,
+      toAccountId: next.id,
+      buildRecap: () => buildContinuityPack({
+        fromAccountLabel: maskAccountLabel(fromLabel),
+        toAccountLabel: maskAccountLabel(next.label),
+        reason: hit.reason,
+        role: 'orchestrator',
+        missionId: authority.missionId,
+        limitKind: hit.kind,
+        limitWindow: facts.limitWindow,
+        limitResetsAt: facts.limitResetsAt,
+        limitCooldownMs: facts.limitCooldownMs,
+        ...(facts.touchedFiles ? { touchedFiles: facts.touchedFiles } : {}),
+        ...(facts.diffStat ? { diffStat: facts.diffStat } : {}),
+        scrollbackExcerpt: readSessionOutput(
+          authority.sessionId,
+          CLI_SWITCH_EXCERPT_LINES,
+        ),
+        nextStep: ORCHESTRATOR_SWITCH_NEXT_STEP,
+      }),
+    });
+    if (!switchedOrchestrator.handled) forgetAccountFailoverNote(paneId);
+    if (switchedOrchestrator.handled) {
+      trace({
+        kind: 'account-failover',
+        outcome: switchedOrchestrator.ok ? 'switched' : 'switch-respawn-failed',
+        paneId,
+        adapterId,
+        fromAccountId: fromAccountId ?? null,
+        toAccountId: next.id,
+        limitKind: hit.kind,
+        reason: `${hit.reason}${req.reasonSuffix}`,
+        crossAccount,
+        coalesced,
+        missionId: authority.missionId,
+        respawn: 'main-orchestrator-recovery',
+      });
+      if (!switchedOrchestrator.ok) {
+        forgetAccountFailoverNote(paneId);
+        emitToPaneOwner(authority, {
+          paneId,
+          fromAccountLabel: fromLabel,
+          toAccountLabel: '',
+          reason:
+            `${hit.reason} — a troca para "${next.label}" não se aplicou ` +
+            `(${switchedOrchestrator.error}); a conta original segue em cooldown`,
+          kind: hit.kind,
+          switched: false,
+          fromAccountId,
+          missionId: authority.missionId,
+        });
+        return;
+      }
+      emitToPaneOwner(authority, {
+        paneId,
+        fromAccountLabel: fromLabel,
+        toAccountLabel: next.label,
+        reason: `${hit.reason}${req.reasonSuffix}`,
+        kind: hit.kind,
+        switched: true,
+        toAccountId: next.id,
+        fromAccountId,
+        crossAccount,
+        coalesced,
+        missionId: authority.missionId,
+        respawnedByMain: true,
+        ...(probe ? { probe } : {}),
+      });
+      return;
+    }
+  }
+
   emitFailover(authority, {
     paneId,
     fromAccountLabel: fromLabel,

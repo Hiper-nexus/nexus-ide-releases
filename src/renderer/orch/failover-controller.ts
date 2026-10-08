@@ -134,6 +134,23 @@ export function useFailoverController(): void {
       const pane = listPanes(useLayoutStore.getState().root).find(
         (p) => p.id === event.paneId,
       );
+      // F-969: o Main já religou este pane (orquestrador de missão, inclusive
+      // o pane do operador adotado) na conta nova — o evento é o recibo. Aqui
+      // só se espelha a conta e se avisa; religar de novo derrubaria a sessão
+      // que acabou de nascer.
+      if (event.respawnedByMain) {
+        if (pane && event.toAccountId) {
+          useLayoutStore.getState().setAccountId(pane.id, event.toAccountId);
+        }
+        push(
+          'success',
+          `Trocado para "${event.toAccountLabel}"`,
+          `"${event.fromAccountLabel}" atingiu o limite (${event.reason}). ` +
+            'O Nexus religou este pane na outra conta conectada, com o pacote de continuidade ' +
+            '(a conta fixada esgotada não prende o pane).',
+        );
+        return;
+      }
       // F-249: o toast de sucesso só pode sair se o pane foi encontrado e
       // religado — antes ele saía mesmo com o pane ausente da árvore (aba
       // fechada/trocada), dizendo "trocou" sem trocar nada.

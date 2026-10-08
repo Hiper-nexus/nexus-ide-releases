@@ -497,6 +497,89 @@ describe("renderer mission authority", () => {
     ).toEqual({ ok: false, error: "pane_mission_mismatch" });
   });
 
+  it("F-970: revisor somente leitura da missão nunca vira orquestrador — nada é gravado", () => {
+    deps.getMission.mockReturnValue({
+      ...approvedMission,
+      orchestratorSessionId: "pty-operator",
+    });
+    deps.findPaneOwnedBy.mockReturnValue({
+      paneId: "pane-reviewer",
+      sessionId: "pty-reviewer",
+      title: "Revisão sênior · núcleo + segurança",
+      kind: "cli-agent",
+      adapterId: "codex",
+    });
+    const reviewer = {
+      ...session,
+      sessionId: "pty-reviewer",
+      paneId: "pane-reviewer",
+      adapterId: "codex",
+      role: "worker" as const,
+      missionId: "mission-a",
+      workerIncarnationId: "worker-incarnation-reviewer",
+      allowedTools: ["nexus_handoff_submit"],
+    };
+    const reviewerGate = {
+      role: "worker",
+      missionId: "mission-a",
+      scope,
+      allowedTools: ["nexus_handoff_submit"],
+      allowedSkills: null,
+    };
+
+    // Cada sinal de somente leitura basta: ficha PTY, gate ou composição.
+    for (const variant of ["pty", "gate", "spec"] as const) {
+      deps.getOwnedAgentSessionInfo.mockReturnValue({
+        ...reviewer,
+        readOnly: variant === "pty",
+      });
+      deps.getContextBySession.mockReturnValue({
+        ...reviewerGate,
+        ...(variant === "gate" ? { readOnly: true } : {}),
+      });
+      deps.findMissionPaneByPaneId.mockReturnValue(
+        variant === "spec"
+          ? { id: "mpane-reviewer", missionId: "mission-a", paneId: "pane-reviewer", role: "worker", readOnly: true }
+          : null,
+      );
+
+      expect(
+        authority.promoteOrchestratorFromRenderer(owner, "mission-a", {
+          paneId: "pane-reviewer",
+        }),
+      ).toEqual({ ok: false, error: "pane_read_only" });
+    }
+    expect(deps.promotePaneToOrchestrator).not.toHaveBeenCalled();
+    expect(deps.rebindMissionOrchestratorSession).not.toHaveBeenCalled();
+    expect(deps.promoteMissionSessionAuthority).not.toHaveBeenCalled();
+    expect(deps.updateOwnedAgentSessionRole).not.toHaveBeenCalled();
+    expect(deps.attachOrchMeta).not.toHaveBeenCalled();
+  });
+
+  it("F-970: o líder delegate-only (readOnly) da própria missão ainda é reconfirmado", () => {
+    deps.getMission.mockReturnValue(approvedMission);
+    deps.getOwnedAgentSessionInfo.mockReturnValue({
+      ...session,
+      missionId: "mission-a",
+      readOnly: true,
+    });
+    deps.getContextBySession.mockReturnValue({
+      role: "orchestrator",
+      missionId: "mission-a",
+      scope,
+      readOnly: true,
+      allowedTools: session.allowedTools,
+      allowedSkills: session.allowedSkills,
+    });
+    deps.rebindMissionOrchestratorSession.mockReturnValue(approvedMission);
+
+    expect(
+      authority.promoteOrchestratorFromRenderer(owner, "mission-a", {
+        paneId: "pane-a",
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
   describe("createPaneMissionFromRenderer (missão leve da aba)", () => {
     function wireLightMissionStore() {
       const created: Record<string, unknown>[] = [];

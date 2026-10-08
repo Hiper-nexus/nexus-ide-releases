@@ -1558,11 +1558,13 @@ describe('G3 — pane sem conta pinada nasce na conta com folga', () => {
 
     // api_key path: keyEnv vem do vault da conta escolhida (accountKey mock).
     expect(result).toMatchObject({ ok: true });
+    // F-969: além do escore, a regra recebe as janelas por conta.
     expect(spawnDeps.pickAvailableForFailover).toHaveBeenCalledWith(
       'kimi',
       null,
       expect.any(Number),
       expect.any(Map),
+      { quotaByAccountId: expect.any(Map) },
     );
     const scores = spawnDeps.pickAvailableForFailover.mock.calls[0]?.[3] as Map<
       string,
@@ -2022,6 +2024,94 @@ describe('Recibo da escolha de conta (overrides.accountChoice)', () => {
     const receipt = (result as { overrides: { accountChoice?: unknown } })
       .overrides.accountChoice as { source: string };
     expect(receipt.source).toBe('legacy');
+  });
+
+  it('F-969: conta fixada não concorreu — a irmã livre aparece como "não comparada", nunca "menos folga"', () => {
+    const pinned = kimiAccount('kimi-co', 'cobrancade@corp.com', 1);
+    spawnDeps.prepareAccount.mockReturnValueOnce({
+      ok: true,
+      account: pinned,
+      apiKey: 'sk-pinned',
+      authEnv: {},
+    });
+    spawnDeps.listAccounts.mockReturnValue([
+      pinned,
+      kimiAccount('kimi-re', 'reno@corp.com', 2),
+    ]);
+    spawnDeps.quotaSnapshot.mockReturnValue(
+      quotaEntries([
+        {
+          adapterId: 'kimi',
+          accountId: 'kimi-co',
+          windows: [
+            { kind: 'hours', label: '5 Horas', usedRatio: null },
+            { kind: 'weekly', label: 'Semanal', usedRatio: 0.19, resetsAt: 1_791_658_799_908 },
+          ],
+        },
+        {
+          adapterId: 'kimi',
+          accountId: 'kimi-re',
+          windows: [
+            { kind: 'hours', label: '5 Horas', usedRatio: 0, resetsAt: 1_791_420_599_886 },
+            { kind: 'weekly', label: 'Semanal', usedRatio: null },
+          ],
+        },
+      ]),
+    );
+
+    const result = prepareProviderSpawn('kimi', { accountId: 'kimi-co' });
+
+    const receipt = (result as { overrides: { accountChoice?: unknown } })
+      .overrides.accountChoice as {
+      source: string;
+      headroom: { usedPct: number; window: string; resetsAt: number };
+      alternatives: Array<{ label: string; skipped: string; window: string | null }>;
+    };
+    expect(receipt.source).toBe('pinned');
+    // A janela que limita é a medida (Semanal), com o reset dela.
+    expect(receipt.headroom).toMatchObject({ usedPct: 19, window: 'Semanal', resetsAt: 1_791_658_799_908 });
+    expect(receipt.alternatives).toEqual([
+      expect.objectContaining({ label: 'r•••@c•••.com', skipped: 'not-compared', window: '5 Horas' }),
+    ]);
+  });
+
+  it('F-969: ativa mantida com irmã MAIS livre em janelas comparáveis — recibo diz "active-kept"', () => {
+    const active = kimiAccount('kimi-a', 'ana@corp.com', 1);
+    const sibling = kimiAccount('kimi-b', 'bia@corp.com', 2);
+    spawnDeps.listAccounts.mockReturnValue([active, sibling]);
+    spawnDeps.getActiveAccount.mockReturnValue(active);
+    spawnDeps.quotaSnapshot.mockReturnValue(
+      quotaEntries([
+        {
+          adapterId: 'kimi',
+          accountId: 'kimi-a',
+          windows: [{ kind: 'hours', label: '5 Horas', usedRatio: 0.6 }],
+        },
+        {
+          adapterId: 'kimi',
+          accountId: 'kimi-b',
+          windows: [{ kind: 'hours', label: '5 Horas', usedRatio: 0.1 }],
+        },
+      ]),
+    );
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account: active });
+
+    const result = prepareProviderSpawn('kimi');
+
+    // A regra de folga recebe as janelas por conta, não só o escore escalar.
+    expect(spawnDeps.pickAvailableForFailover).toHaveBeenCalledWith(
+      'kimi', null, expect.any(Number), expect.any(Map),
+      { quotaByAccountId: expect.any(Map) },
+    );
+    const receipt = (result as { overrides: { accountChoice?: unknown } })
+      .overrides.accountChoice as {
+      source: string;
+      alternatives: Array<{ label: string; skipped: string }>;
+    };
+    expect(receipt.source).toBe('active');
+    expect(receipt.alternatives).toEqual([
+      expect.objectContaining({ label: 'b•••@c•••.com', skipped: 'active-kept' }),
+    ]);
   });
 });
 

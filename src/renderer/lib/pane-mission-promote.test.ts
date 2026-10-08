@@ -670,6 +670,39 @@ describe('pickTabMissionLeader — um pane morto nunca lidera de novo (F-373)', 
     ).toBe('a3');
   });
 
+  it('F-970: orquestrador fora do ar e revisor focado — o worker nunca é escolhido; o pane do operador lidera', async () => {
+    const { pickTabMissionLeader } = await import('./pane-mission-promote');
+    const agents = [
+      { id: 'operator' },
+      { id: 'orchestrator', role: 'orchestrator' as const },
+      { id: 'reviewer', role: 'worker' as const },
+    ];
+    expect(
+      pickTabMissionLeader(agents, {
+        orchestratorPaneId: 'orchestrator',
+        focusedPaneId: 'reviewer',
+        paneStates: states({ operator: 'idle', orchestrator: 'exited', reviewer: 'busy' }),
+      })?.id,
+    ).toBe('operator');
+  });
+
+  it('F-970: só workers vivos na aba → null (a missão fica sem líder vivo e o operador é avisado)', async () => {
+    const { pickTabMissionLeader } = await import('./pane-mission-promote');
+    expect(
+      pickTabMissionLeader(
+        [
+          { id: 'orchestrator', role: 'orchestrator' as const },
+          { id: 'reviewer', role: 'worker' as const },
+        ],
+        {
+          orchestratorPaneId: 'orchestrator',
+          focusedPaneId: 'reviewer',
+          paneStates: states({ orchestrator: 'exited', reviewer: 'idle' }),
+        },
+      ),
+    ).toBeNull();
+  });
+
   it('nenhum agente vivo → null (quem chama pede IA viva na aba)', async () => {
     const { pickTabMissionLeader } = await import('./pane-mission-promote');
     expect(

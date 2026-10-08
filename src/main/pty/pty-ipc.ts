@@ -573,7 +573,11 @@ function spawnCliPtyAgentPane(
     // O recibo só é registrado depois que o spawn se firma no Main — uma
     // sessão rejeitada pelo settlement não pode expor conta.
     if (overrides.accountChoice) {
-      recordAccountChoiceReceipt(sessionId, overrides.accountChoice);
+      recordAccountChoiceReceipt(
+        sessionId,
+        overrides.accountChoice,
+        request.paneId,
+      );
     }
     bindCommandTracking(
       sessionId,

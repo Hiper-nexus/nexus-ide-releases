@@ -153,8 +153,17 @@ export function isLivePaneSessionState(
  * Quem lidera a missão da aba: o orquestrador do escopo se estiver vivo, senão
  * o pane focado vivo, senão o primeiro vivo. `null` quando nenhum pane da aba
  * tem sessão de IA viva — quem chama pede "Abra uma IA nesta aba".
+ *
+ * F-970: worker de missão (revisor readOnly, helper aberto pelo Maestro) nunca
+ * é escolhido no lugar do orquestrador — foco não é designação. Na queda do
+ * líder de 07/10 o revisor Codex focado virou o "orquestrador" da missão e o
+ * pane do operador voltou a `user`. Sem orquestrador nem pane do operador
+ * vivo, a resposta é `null` (a missão fica sem líder vivo e o operador é
+ * avisado), nunca um worker.
  */
-export function pickTabMissionLeader<T extends { readonly id: string }>(
+export function pickTabMissionLeader<
+  T extends { readonly id: string; readonly role?: 'orchestrator' | 'worker' },
+>(
   agents: readonly T[],
   options: {
     readonly orchestratorPaneId?: string | null;
@@ -162,18 +171,16 @@ export function pickTabMissionLeader<T extends { readonly id: string }>(
     readonly paneStates: ReadonlyMap<string, PaneSessionState>;
   },
 ): T | null {
-  const live = (paneId: string | null | undefined) =>
-    agents.find(
-      (agent) =>
-        agent.id === paneId &&
-        isLivePaneSessionState(options.paneStates.get(agent.id)),
-    );
+  const isLive = (agent: T) =>
+    isLivePaneSessionState(options.paneStates.get(agent.id));
+  const canLead = (agent: T) => agent.role !== 'worker' && isLive(agent);
+  const orchestrator = agents.find(
+    (agent) => agent.id === options.orchestratorPaneId && isLive(agent),
+  );
   return (
-    live(options.orchestratorPaneId) ??
-    live(options.focusedPaneId) ??
-    agents.find((agent) =>
-      isLivePaneSessionState(options.paneStates.get(agent.id)),
-    ) ??
+    orchestrator ??
+    agents.find((agent) => agent.id === options.focusedPaneId && canLead(agent)) ??
+    agents.find(canLead) ??
     null
   );
 }
@@ -535,6 +542,9 @@ export function toastPromoteRefused(error?: string): void {
     error === 'pane_mission_mismatch'
       ? 'Este painel ainda pertence a outra missão. Encerre-a pelo Quadro ou ' +
           'use outro painel desta aba.'
+      : error === 'pane_read_only'
+        ? 'Este painel é somente leitura (revisor/auditor) e não pode liderar a ' +
+          'missão. O líder atual continua; para trocar, use um painel seu.'
       : error === 'mission_unavailable'
         ? 'A missão deste painel não está rodando agora. Retome-a pelo Quadro ou ' +
           'use um painel livre para começar outra missão.'

@@ -243,6 +243,26 @@ function paneFromRecovery(req: MissionPaneRecoveryRequest): PaneModel {
   };
 }
 
+/**
+ * F-969: a recuperação do orquestrador vem com a composição SELADA pelo Main
+ * (conta, modelo, esforço, pasta). O pane do layout é só espelho: quando o
+ * Main trocou a conta por limite confirmado, o espelho ainda traz a conta
+ * esgotada e a cerca do spawn persistido recusaria o religamento. A CLI não
+ * muda aqui — divergência de adapter continua sendo conflito real.
+ */
+export function alignPaneToSealedRecovery(
+  pane: PaneModel,
+  sealed: MissionPaneRecoveryRequest['pane'],
+): PaneModel {
+  return {
+    ...pane,
+    model: sealed.model,
+    accountId: sealed.accountId,
+    effort: sealed.effort,
+    ...(sealed.cwd ? { cwd: sealed.cwd } : {}),
+  };
+}
+
 function capturePresentationScope(): PresentationScope {
   return {
     workspacePath: getActiveWorkspacePath(),
@@ -520,8 +540,12 @@ async function recoverMissionPane(
       throw new Error('stable mission pane is not a CLI agent');
     }
     if (pane) {
+      const sealed = alignPaneToSealedRecovery(pane, req.pane);
+      if (sealed.accountId !== pane.accountId) {
+        useLayoutStore.getState().setAccountId(pane.id, sealed.accountId);
+      }
       replacementSessionId = await respawnMissionPaneFresh(
-        pane,
+        sealed,
         req.expectedSessionId,
         RECOVERY_HEALTH_TIMEOUT_MS,
         req.requestId,

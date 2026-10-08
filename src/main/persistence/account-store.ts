@@ -41,6 +41,7 @@ import {
   type FileAuthAdapterId,
 } from '../adapters/managed-credentials';
 import { chooseAccount } from './account-select';
+import type { HeadroomInput } from '../quota/account-headroom';
 import { readAgyWindowsKeyringBlob } from '../adapters/agy-windows-keyring';
 import { accountCredentialCandidates } from '../adapters/account-credential-candidates';
 import {
@@ -1218,6 +1219,11 @@ export interface FailoverPickOptions {
    * pick seguinte passa para a próxima da frota em vez de repetir a mesma.
    */
   excludeIds?: ReadonlySet<string>;
+  /**
+   * F-969: janelas medidas por conta. Com elas a folga só se compara entre
+   * janelas comparáveis (`compareAccountHeadroom`), nunca pelo escore escalar.
+   */
+  quotaByAccountId?: ReadonlyMap<string, HeadroomInput>;
 }
 
 export interface FailoverPick {
@@ -1254,6 +1260,7 @@ export function pickAvailableForFailover(
     excludeId,
     now,
     quotaScoreByAccountId,
+    options?.quotaByAccountId,
   );
   if (chosen) return { account: chosen, probe: false };
 

@@ -77,8 +77,25 @@ vi.mock('../pty/pty-manager', () => ({
   ),
 }));
 
+// F-969: a troca do ORQUESTRADOR num pane do renderer é do Main. Padrão:
+// "não é orquestrador selado" (handled:false) — os testes antigos seguem o
+// caminho de sempre; os do F-969 trocam o retorno.
+const orchestratorSwitch = vi.hoisted(() => ({
+  switch: vi.fn(async (_input: {
+    missionId: string; paneId: string; sessionId: string; toAccountId: string;
+    buildRecap: () => string;
+  }) => ({ handled: false }) as
+    | { handled: false }
+    | { handled: true; ok: true; sessionId: string }
+    | { handled: true; ok: false; error: string }),
+}));
+vi.mock('./failover-orchestrator-respawn', () => ({
+  switchRendererOrchestratorAccount: orchestratorSwitch.switch,
+}));
+
 vi.mock('./pane-registry', () => ({
   stripAnsi: (data: string) => data,
+  readSessionOutput: vi.fn(() => 'Maestro: integrando o harvest T3\nYou\'ve hit your session limit'),
   getOwnedPaneAuthzInfoBySession: vi.fn(
     (ref: string) => paneMocks.authorities.get(ref) ?? null,
   ),
@@ -236,6 +253,8 @@ beforeEach(() => {
   paneMocks.runtimeAuthorities.clear();
   accountMocks.setCooldown.mockClear();
   toolMocks.injectPrompt.mockClear();
+  orchestratorSwitch.switch.mockReset();
+  orchestratorSwitch.switch.mockImplementation(async () => ({ handled: false }));
   accountMocks.verifyClaude.mockReset();
   accountMocks.verifyClaude.mockImplementation(async (_id, onVerified) => {
     onVerified?.('verified-claude-blob');
@@ -1729,5 +1748,185 @@ describe('F-764: orçamento da varredura de limite', () => {
     expect(vi.mocked(detectLimit).mock.calls[1]![0]).toContain('LIMIT');
     await settleFailover();
     expect(accountMocks.setCooldown).toHaveBeenCalled();
+  });
+});
+
+describe('F-969: orquestrador / pane do operador bate o limite', () => {
+  const sessionLimit = {
+    kind: 'rate-limit' as const,
+    reason: "You've hit your session limit",
+    cooldownMs: 77 * 60 * 1000,
+  };
+  const exhaustedEntry = (usedRatio: number) => ({
+    id: 'claude:account-a',
+    adapterId: 'claude',
+    accountId: 'account-a',
+    label: 'Account A',
+    installed: true,
+    onCooldown: false,
+    updatedAt: 100_000,
+    windows: [
+      {
+        kind: 'hours' as const,
+        label: '5 Horas',
+        usedRatio,
+        source: 'provider-api' as const,
+        confidence: 'high' as const,
+      },
+    ],
+  });
+
+  /** Pane do operador adotado como orquestrador da missão da aba. */
+  async function orchestratorLimit(
+    paneNo: number,
+    probe: { usedRatio: number } | null,
+  ) {
+    const { detectLimit } = await import('./limit-detector');
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT') ? sessionLimit : null,
+    );
+    const { requireQuotaService } = await import('../quota/quota-service');
+    let probed = false;
+    const snapshot = probe
+      ? {
+          updatedAt: 100_000,
+          worstUsedRatio: probe.usedRatio,
+          highUsageCount: 1,
+          unknownCount: 0,
+          entries: [exhaustedEntry(probe.usedRatio)],
+        }
+      : undefined;
+    vi.mocked(requireQuotaService).mockImplementation(() => {
+      if (!snapshot) throw new Error('quota indisponível');
+      return {
+        refreshForLimitHit: async () => {
+          probed = true;
+          return snapshot;
+        },
+        lastSnapshot: () => (probed ? snapshot : undefined),
+      } as unknown as ReturnType<typeof requireQuotaService>;
+    });
+    const scope = testProjectScope();
+    const owner = renderer(paneNo);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: 'pane-12502a80',
+      sessionId: `pty-muyltibz-${paneNo}`,
+      missionId: 'mission-23eee6e5',
+      scope,
+    });
+    traceMocks.trace.mockClear();
+    ptyMocks.dataTaps[0](`pty-muyltibz-${paneNo}`, 'LIMIT');
+    await settleFailover();
+    return owner;
+  }
+
+  afterEach(async () => {
+    const { requireQuotaService } = await import('../quota/quota-service');
+    vi.mocked(requireQuotaService).mockImplementation(() => {
+      throw new Error('quota optional in test');
+    });
+  });
+
+  it('limite CONFIRMADO: o Main religa o mesmo pane na outra conta, com pacote de continuidade, e só então emite o recibo', async () => {
+    orchestratorSwitch.switch.mockImplementation(async () => ({
+      handled: true,
+      ok: true,
+      sessionId: 'pty-religado',
+    }));
+    const owner = await orchestratorLimit(9690, { usedRatio: 1 });
+
+    expect(orchestratorSwitch.switch).toHaveBeenCalledOnce();
+    const input = orchestratorSwitch.switch.mock.calls[0]![0];
+    expect(input).toMatchObject({
+      missionId: 'mission-23eee6e5',
+      paneId: 'pane-12502a80',
+      sessionId: 'pty-muyltibz-9690',
+      toAccountId: 'account-b',
+    });
+    const recap = input.buildRecap();
+    expect(recap).toContain('[NEXUS FAILOVER HANDOFF]');
+    expect(recap).toContain('mission-23eee6e5');
+    expect(recap).toContain('integrando o harvest T3');
+    expect(accountMocks.setCooldown).toHaveBeenCalledWith(
+      'account-a',
+      100_000 + 77 * 60 * 1000,
+      "You've hit your session limit",
+      undefined,
+    );
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-12502a80',
+        switched: true,
+        toAccountId: 'account-b',
+        respawnedByMain: true,
+      }),
+    );
+    expect(traceMocks.trace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'account-failover',
+        outcome: 'switched',
+        respawn: 'main-orchestrator-recovery',
+        toAccountId: 'account-b',
+      }),
+    );
+    // Recibo da sessão nova: troca automática, não um pin qualquer.
+    const { recordAccountChoiceReceipt, getAccountChoiceReceipt } = await import(
+      '../persistence/account-choice-receipts'
+    );
+    recordAccountChoiceReceipt('pty-religado', {
+      adapterId: 'claude', source: 'pinned', account: { label: 'r•••no', mode: 'subscription' },
+      headroom: null, alternatives: [], decidedAt: 100_000,
+    }, 'pane-12502a80');
+    expect(getAccountChoiceReceipt('pty-religado')?.note).toContain('troca automática por limite confirmado');
+  });
+
+  it('religamento recusado: nada de "trocou" — o recibo diz que não se aplicou', async () => {
+    orchestratorSwitch.switch.mockImplementation(async () => ({
+      handled: true,
+      ok: false,
+      error: 'mission pane renderer is unavailable',
+    }));
+    const owner = await orchestratorLimit(9691, { usedRatio: 1 });
+
+    expect(owner.send).not.toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ switched: true }),
+    );
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-12502a80',
+        switched: false,
+        reason: expect.stringContaining('não se aplicou'),
+      }),
+    );
+    expect(traceMocks.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'account-failover', outcome: 'switch-respawn-failed' }),
+    );
+  });
+
+  it('F-249 intacto: texto de limite sem confirmação do provider (citado) NÃO troca o orquestrador', async () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    try {
+      orchestratorSwitch.switch.mockImplementation(async () => ({
+        handled: true,
+        ok: true,
+        sessionId: 'pty-nao-deveria',
+      }));
+      const owner = await orchestratorLimit(9692, null);
+
+      expect(orchestratorSwitch.switch).not.toHaveBeenCalled();
+      expect(owner.send).not.toHaveBeenCalledWith(
+        ACCOUNT_CHANNELS.failover,
+        expect.objectContaining({ switched: true }),
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 });
