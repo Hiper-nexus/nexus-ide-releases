@@ -150,7 +150,9 @@ export function initSmokeTest(): void {
           scope, assertCurrent, signal: soakCancellation.signal });
         assertCurrent();
         console.log(`[smoke] main-owned-command ${JSON.stringify(proof)}`);
-      } catch {
+      } catch (error) {
+        // Sem o motivo, o gate da candidata só dizia "main-owned-command".
+        console.error(`[smoke] main-owned-command failed: ${error instanceof Error ? error.message : String(error)}`);
         settle('functional-failed', 'main-owned-command');
         return;
       }

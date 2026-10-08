@@ -54,7 +54,8 @@ export async function proveMainOwnedCommandForSmoke(input: {
     input.assertCurrent();
     if (input.signal.aborted || result.exitCode !== 0 || result.timedOut || result.aborted ||
       result.outputTruncated || result.stdout.trim() !== nonce || profileBytes > 65536) {
-      throw new Error('owned-smoke-command-failed');
+      throw new Error(`owned-smoke-command-failed: exit=${String(result.exitCode)} timedOut=${result.timedOut} ` +
+        `aborted=${result.aborted} truncated=${Boolean(result.outputTruncated)} nonce=${result.stdout.trim() === nonce}`);
     }
     return { status: 'passed', densePathFiles: 768, profileBytes, exitCode: 0, physicalExitProven: true };
   } finally {
