@@ -17,6 +17,7 @@ import {
   getRemoteBridgeStatus,
   revokeRemoteTokens,
   rotateRemotePairing,
+  setRemoteDeviceScopes,
   startRemoteBridge,
   stopRemoteBridge,
 } from './remote-bridge';
@@ -34,11 +35,20 @@ import {
 } from './ssh/ssh-bootstrap';
 import { listSshHostViews } from './ssh/ssh-host-registry';
 
+// MOB-12: escopos por aparelho (lista fechada; vazia = só status).
+const deviceScopesSchema = z
+  .array(z.enum(['read', 'input', 'approve', 'close']))
+  .max(4);
 const startSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   host: z.enum(['0.0.0.0', '127.0.0.1', '::1', '::']).optional(),
   tailscale: z.boolean().optional(),
+  scopes: deviceScopesSchema.optional(),
 });
+const rotateSchema = z.object({ scopes: deviceScopesSchema.optional() }).strict();
+const setDeviceScopesSchema = z
+  .object({ deviceId: z.string().min(1).max(64), scopes: deviceScopesSchema })
+  .strict();
 const targetSchema = z.object({
   target: z.string().min(1).max(63),
 });
@@ -195,9 +205,30 @@ export function registerRemoteIpc(): void {
   ipcMain.handle(REMOTE_CHANNELS.bridgeStop, (event) =>
     stopRemoteBridge(requireLiveRendererWorkspaceScope(event.sender)),
   );
-  ipcMain.handle(REMOTE_CHANNELS.bridgeRotatePairing, (event) =>
-    rotateRemotePairing(requireLiveRendererWorkspaceScope(event.sender)),
-  );
+  ipcMain.handle(REMOTE_CHANNELS.bridgeRotatePairing, (event, raw) => {
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const parsed = rotateSchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      return { ...getRemoteBridgeInfo(scope), error: 'invalid rotate request' };
+    }
+    return rotateRemotePairing(scope, parsed.data.scopes);
+  });
+  // MOB-12: editar os escopos de um aparelho pareado.
+  ipcMain.handle(REMOTE_CHANNELS.bridgeSetDeviceScopes, (event, raw) => {
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const parsed = setDeviceScopesSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { ...getRemoteBridgeInfo(scope), error: 'invalid device scopes request' };
+    }
+    try {
+      return setRemoteDeviceScopes(scope, parsed.data.deviceId, parsed.data.scopes);
+    } catch (error) {
+      return {
+        ...getRemoteBridgeInfo(scope),
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
   ipcMain.handle(REMOTE_CHANNELS.bridgeRevokeTokens, (event) =>
     revokeRemoteTokens(requireLiveRendererWorkspaceScope(event.sender)),
   );

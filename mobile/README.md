@@ -37,6 +37,17 @@ fora da lista de rotina pedem confirmação no desktop); fechar pane; aprovaçõ
 card estruturado (push `approvals.changed` + `agentSession.respondToApproval` — decisão para
 o broker, nunca tecla no PTY).
 
+**Permissões do aparelho (MOB-12, F-1022):** o desktop escolhe, ao gerar o código, o que o
+aparelho pode fazer — **Ver** (panes, saída, missões, Git e arquivos), **Enviar comandos**
+(`pane.input`, `pane.resize`), **Aprovar** (`agentSession.respondToApproval`) e **Fechar
+panes** — e pode mudar depois na lista de aparelhos pareados (vale no próximo pedido, sem
+reconectar). Aparelho pareado antes disso mantém todas. Quando o desktop recusa por falta de
+permissão (`not authorized: scope-missing:<escopo>`), o adaptador responde
+`nexus_scope_refused` com a frase em pt-BR do que falta e onde liberar ("Este aparelho não
+tem permissão para enviar comandos ao terminal (permissão "Enviar comandos"). O operador
+libera em Configurações › Celular, no desktop."); o outbox trata como recusa final. Sem
+**Ver**, a lista de panes chega vazia.
+
 **Git e arquivos do pane, só leitura (F-1014):** no detalhe de um pane, **Alterações** mostra o
 `git status` do checkout DESSE pane (a worktree do worker, quando ele tem uma) e abre o diff de
 cada arquivo com o componente de diff do app; **Arquivos** navega pelas pastas e abre um arquivo

@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
+import {
+  REMOTE_DEVICE_SCOPES,
+  type RemoteDeviceScope,
+} from '../../shared/remote-types';
+import { normalizeRemoteDeviceScopes } from './device-scopes';
 import { writeJsonAtomic } from '../util/atomic-write';
 import {
   parseRemoteDeviceIdentity,
@@ -20,6 +25,8 @@ export interface RemoteDeviceTokenRecord {
   readonly deviceId: string;
   readonly devicePublicKey: RemoteDevicePublicKey;
   readonly deviceKeyFingerprint: string;
+  /** MOB-12: o que este aparelho pode fazer (escolhido no pareamento). */
+  readonly scopes: readonly RemoteDeviceScope[];
 }
 
 interface TokenFile {
@@ -71,7 +78,10 @@ function loadTokens(): RemoteDeviceTokenRecord[] {
           deviceId: token.deviceId,
           publicKey: token.devicePublicKey,
         }) !== null,
-    );
+    )
+      // MOB-12: grant sem `scopes` (pareado antes) = todos os escopos de hoje;
+      // a próxima gravação do arquivo persiste a migração.
+      .map((token) => ({ ...token, scopes: normalizeRemoteDeviceScopes(token.scopes) }));
   } catch {
     tokenCache = [];
   }
@@ -89,6 +99,7 @@ export function issueRemoteDeviceToken(
   scope: ProjectExecutionScope,
   deviceId: string,
   devicePublicKey: RemoteDevicePublicKey,
+  scopes: readonly RemoteDeviceScope[] = REMOTE_DEVICE_SCOPES,
 ): {
   readonly token: string;
   readonly expiresAt: number;
@@ -106,6 +117,7 @@ export function issueRemoteDeviceToken(
     deviceId,
     devicePublicKey,
     deviceKeyFingerprint: remoteDeviceKeyFingerprint(devicePublicKey),
+    scopes: normalizeRemoteDeviceScopes([...scopes]),
   };
   writeTokens([...readLiveTokens(), record]);
   return { token, expiresAt, record };
@@ -169,4 +181,42 @@ export function countRemoteDeviceTokens(
       token.projectId === scope.projectId &&
       token.checkoutId === scope.checkoutId,
   ).length;
+}
+
+// MOB-12 (F-1022): escopos do grant, lidos a cada pedido (a edição no desktop
+// vale no próximo pedido do aparelho, sem reconectar).
+
+/** Escopos vivos de um grant; grant inexistente/expirado = nenhum. */
+export function remoteDeviceTokenScopes(tokenId: string): readonly RemoteDeviceScope[] {
+  return readLiveTokens().find((token) => token.id === tokenId)?.scopes ?? [];
+}
+
+export function listRemoteDeviceTokens(
+  scope?: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+): RemoteDeviceTokenRecord[] {
+  if (!scope) return [];
+  return readLiveTokens().filter(
+    (token) =>
+      token.projectId === scope.projectId &&
+      token.checkoutId === scope.checkoutId,
+  );
+}
+
+export function setRemoteDeviceTokenScopes(input: {
+  readonly tokenId: string;
+  readonly scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>;
+  readonly scopes: readonly RemoteDeviceScope[];
+}): boolean {
+  const tokens = readLiveTokens();
+  const index = tokens.findIndex(
+    (token) =>
+      token.id === input.tokenId &&
+      token.projectId === input.scope.projectId &&
+      token.checkoutId === input.scope.checkoutId,
+  );
+  if (index < 0) return false;
+  const next = [...tokens];
+  next[index] = { ...tokens[index]!, scopes: normalizeRemoteDeviceScopes([...input.scopes]) };
+  writeTokens(next);
+  return true;
 }

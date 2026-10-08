@@ -29,6 +29,37 @@ export interface RemoteBridgeEndpoint {
   label: 'Tailscale HTTPS' | 'Tailscale IP' | 'Rede local' | 'Este computador';
 }
 
+// MOB-12 (F-1022): escopos por aparelho, escolhidos no pareamento.
+//   read    — status, snapshot com panes/missões, leitura e stream do pane, Git/arquivos (F-1014)
+//   input   — pane.input e pane.resize
+//   approve — agentSession.respondToApproval (e ver os pedidos pendentes)
+//   close   — pane.close
+export type RemoteDeviceScope = 'read' | 'input' | 'approve' | 'close';
+
+/** Ordem canônica; aparelho pareado antes do MOB-12 recebe todos. */
+export const REMOTE_DEVICE_SCOPES: readonly RemoteDeviceScope[] = [
+  'read',
+  'input',
+  'approve',
+  'close',
+];
+
+/** Aparelho pareado, como o desktop mostra (nunca o token nem o hash). */
+export interface RemoteBridgeDeviceView {
+  /** Id do grant (registro do token), não o token. */
+  id: string;
+  keyFingerprint: string;
+  pairedAt: number;
+  expiresAt: number;
+  scopes: RemoteDeviceScope[];
+  connected: boolean;
+}
+
+export interface RemoteBridgeSetDeviceScopesRequest {
+  deviceId: string;
+  scopes: RemoteDeviceScope[];
+}
+
 export interface RemoteBridgeInfo {
   running: boolean;
   port?: number;
@@ -37,6 +68,10 @@ export interface RemoteBridgeInfo {
   endpoints?: RemoteBridgeEndpoint[];
   pairingCode?: string;
   pairingExpiresAt?: number;
+  /** MOB-12: escopos que o código atual concede ao próximo aparelho. */
+  pairingScopes?: RemoteDeviceScope[];
+  /** MOB-12: aparelhos pareados neste checkout (só para o desktop). */
+  devices?: RemoteBridgeDeviceView[];
   tokenCount: number;
   clientCount: number;
   certFingerprint?: string;
@@ -52,6 +87,8 @@ export interface RemoteBridgeStartRequest {
    * neste pedido explícito de start; ausente mantém o estado atual.
    */
   tailscale?: boolean;
+  /** MOB-12: escopos do código emitido neste start; ausente = todos. */
+  scopes?: RemoteDeviceScope[];
 }
 
 export interface RemoteCliDetection {
