@@ -173,7 +173,7 @@ function tomlBasicString(value: string): string {
     value
       .replace(/\\/g, '\\\\')
       .replace(/"/g, '\\"')
-      // eslint-disable-next-line no-control-regex
+      // eslint-disable-next-line no-control-regex -- escapa controles como \uXXXX na string TOML: a classe casa controles de propósito
       .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, (c) =>
         `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
       ) +

@@ -75,6 +75,10 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint:main-sync
+      # Só erros: hoje o único erro é a regra nexus/require-suppression-reason
+      # (toda supressão de lint/type diz por quê). Warnings não reprovam aqui.
+      - name: Oxlint (erros, incluindo supressão sem motivo)
+        run: npm run lint:oxlint -- --quiet
       - run: npm run security:renderer-sinks
       - run: npm test
       - name: Prove Linux command namespace lifetime

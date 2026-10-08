@@ -4,7 +4,7 @@ import { sessionAccount } from '../auth/session-service';
 import { asyncHandler } from './errors';
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
+  // eslint-disable-next-line @typescript-eslint/no-namespace -- augmentation global do Express.Request: o TypeScript só aceita via namespace
   namespace Express {
     interface Request {
       accountId?: string;

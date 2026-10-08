@@ -130,7 +130,7 @@ function TerminalPaneLeaf({ pane }: Props) {
     }
     // No teardown here: the host lives beyond this wrapper. Reconciliation in
     // PaneGrid disposes it only when the pane leaves the tree entirely.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só re-anexa quando o id muda: o objeto pane muda a cada rename/troca de papel e re-anexar re-parentaria e re-mediria o xterm à toa
   }, [pane.id]);
 
   useLayoutEffect(() => {

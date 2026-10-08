@@ -34,7 +34,7 @@ const SPINNER_GLYPHS = /[✢✳✶✻✽✺✹✸✷✴✵❋❊❉❈⠀-⣿◐
 /** Escape residual (CSI/OSC/ESC solto) e controle, menos TAB e CR. */
 // eslint-disable-next-line no-control-regex
 const RESIDUAL_ESCAPE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]/g;
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- remove controles residuais (menos TAB, LF e CR) de propósito
 const RESIDUAL_CONTROL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 
 /**

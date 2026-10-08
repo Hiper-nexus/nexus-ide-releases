@@ -67,7 +67,7 @@ export function ensureDefaultInstalledPets(
     let libRoot = libRootOverride ?? '';
     if (!libRoot) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        // eslint-disable-next-line @typescript-eslint/no-var-requires -- Electron só existe no app; nos testes o catch resolve a raiz sem app
         const { app } = require('electron') as typeof import('electron');
         libRoot = resolvePetsLibraryRoot(
           app.getAppPath(),

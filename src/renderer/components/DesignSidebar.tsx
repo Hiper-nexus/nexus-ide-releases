@@ -94,7 +94,7 @@ export function DesignSidebar({ paneId }: Props) {
     setStatus(null);
     setTextDraft('');
     void refreshWriteback();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshWriteback é recriada a cada render; listá-la re-dispararia o efeito em todo render e apagaria o rascunho
   }, [paneId, selection, writebackBinding]);
 
   if (!selection) return null;

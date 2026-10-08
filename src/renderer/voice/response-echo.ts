@@ -7,7 +7,7 @@
  * agent's response. Pure and dependency-free so it can be unit-tested directly.
  */
 
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- ANSI começa com ESC: o regex casa caractere de controle de propósito
 const ECHO_ANSI_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 
 function escapeRegExp(text: string): string {

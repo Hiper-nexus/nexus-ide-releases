@@ -1,5 +1,16 @@
 import type { Terminal } from "@xterm/xterm";
 
+/** O pedaço do `_core` privado do xterm que o overlay lê (tudo opcional: pode sumir numa versão). */
+interface XtermCellDimensionsCore {
+  readonly _core?: {
+    readonly _renderService?: {
+      readonly dimensions?: {
+        readonly css?: { readonly cell?: { readonly width?: number; readonly height?: number } };
+      };
+    };
+  };
+}
+
 export type GhostPhase = "unknown" | "typing" | "executing";
 
 export interface GhostCandidate {
@@ -469,8 +480,10 @@ export class TerminalGhostAssist {
     }
 
     const term = this.#options.terminal;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const renderService = (term as any)._core?._renderService;
+    // xterm não exporta o tipo do _core: só as dimensões de célula do render
+    // service privado dizem onde o cursor está em pixels.
+    const renderService = (term as unknown as XtermCellDimensionsCore)._core
+      ?._renderService;
     const cell = renderService?.dimensions?.css?.cell;
     const cellWidth = cell?.width ?? 9;
     const cellHeight = cell?.height ?? 17;

@@ -93,9 +93,9 @@ function defaultDeps(): AuthDeps {
   // preserva este módulo testável sem electron (padrão do repo).
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const secrets = require('./persistence/secrets-store') as typeof import('./persistence/secrets-store');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires -- license-access chega ao secrets-store, que importa Electron: tardio pelo mesmo motivo de cima
   const access = require('./license-access') as typeof import('./license-access');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires -- Electron só existe no app: tardio mantém o módulo testável em Node
   const { shell } = require('electron') as typeof import('electron');
   return {
     backendUrl: resolveBackendUrl(),

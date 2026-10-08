@@ -562,7 +562,7 @@ function knownCronScopes() {
 let squirrelStartupEvent = false;
 if (process.platform === "win32") {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- sem tipos e só no win32: carregá-lo processa o argv do Squirrel (e pode encerrar o app), por isso é avaliado sob demanda
     if (require("electron-squirrel-startup")) {
       squirrelStartupEvent = true;
       app.quit();

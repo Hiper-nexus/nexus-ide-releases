@@ -677,7 +677,7 @@ function payloadToString(payload: unknown): string {
 }
 
 function defaultWsFactory(url: string, init: RealtimeWsInit): RealtimeWsLike {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires -- ws só carrega no connect real (os testes injetam wsFactory); a anotação tipa só a superfície usada
   const WsCtor = require('ws').WebSocket as new (
     url: string,
     init: RealtimeWsInit,

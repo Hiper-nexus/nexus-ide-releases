@@ -83,7 +83,7 @@ export interface RedlineCliDeps {
 
 /** `--app` vira linha de comando da barra: só caminho absoluto, sem controle, que exista e execute. */
 export function validateAppOption(value: string, deps: Pick<RedlineCliDeps, 'resolvePath' | 'isExecutable'>): string | null {
-  // eslint-disable-next-line no-control-regex
+  // eslint-disable-next-line no-control-regex -- recusa caminho com caracteres de controle de propósito
   if (!value.startsWith('/') || /[\u0000-\u001f\u007f]/.test(value)) {
     return '--app precisa de um caminho absoluto, por exemplo --app /usr/bin/nexus-ide.';
   }

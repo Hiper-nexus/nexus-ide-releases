@@ -41,7 +41,7 @@
     "rebuild": "npm run rebuild:electron",
     "rebuild:electron": "node scripts/rebuild-electron-natives.mjs && node scripts/patch-node-pty-darwin.mjs",
     "rebuild:node": "node scripts/rebuild-node-natives.mjs && node scripts/check-node-natives.mjs",
-    "lint": "npm run lint:main-sync && node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc --noEmit",
+    "lint": "npm run lint:main-sync && npm run lint:oxlint -- --quiet && node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc --noEmit",
     "typecheck": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc --noEmit",
     "lint:oxlint": "oxlint src server scripts",
     "lint:oxlint:ratchet": "oxlint --max-warnings 168 src server scripts",

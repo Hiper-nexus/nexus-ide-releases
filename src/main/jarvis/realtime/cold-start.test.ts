@@ -212,13 +212,13 @@ describe('RealtimeProviderCache — warm-path', () => {
     const { RealtimeProviderCache: WarmCache3 } = await import('./factory');
     const cache = new WarmCache3();
 
+    // `cached` é privado: o teste lê o candidato pelo formato, sem `any`.
+    const cachedOf = (c: object) => (c as { cached?: unknown }).cached;
     cache.prime({ config: warmConfig });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const firstCandidate = (cache as any).cached;
+    const firstCandidate = cachedOf(cache);
 
     cache.prime({ config: warmConfig });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const secondCandidate = (cache as any).cached;
+    const secondCandidate = cachedOf(cache);
 
     // Os dois candidates são objetos distintos: um novo foi criado no segundo prime
     expect(secondCandidate).not.toBe(firstCandidate);

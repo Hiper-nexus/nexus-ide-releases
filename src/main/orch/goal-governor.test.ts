@@ -90,8 +90,7 @@ describe('Goal Governor & Wave Engine', () => {
 
   beforeEach(() => {
     clearGoalsForTesting();
-    // @ts-expect-error test harness helper
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    // @ts-expect-error __clearMock só existe no vi.mock deste arquivo, não no tipo real do pty-manager
     import('../pty/pty-manager').then((m) => m.__clearMock?.());
   });
 
