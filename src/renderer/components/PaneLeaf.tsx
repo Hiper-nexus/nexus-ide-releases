@@ -12,6 +12,7 @@ import {
 import { CoffeeSpillCorner } from '../pet/CoffeeCup';
 import { BrowserPane } from './BrowserPane';
 import { PaneActivityStrip } from './PaneActivityStrip';
+import { PaneApprovalCard } from './PaneApprovalCard';
 import { PaneBirthOverlay } from './PaneBirthOverlay';
 import { PaneDictationOverlay } from './PaneDictationOverlay';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
@@ -150,6 +151,9 @@ function TerminalPaneLeaf({ pane }: Props) {
       {/* Irmão do slot, nunca filho: o nó do terminal é re-parentado para
           dentro de `pane__terminal` por fora do React. */}
       {pane.kind === 'cli-agent' && <PaneBirthOverlay pane={pane} />}
+      {/* PRV-02: aprovação estruturada. Só conta como respondente (e faz o
+          hook esperar) enquanto o pane está visível. */}
+      {pane.kind === 'cli-agent' && <PaneApprovalCard paneId={pane.id} visible={isVisible} />}
       {/* F-371: o ditado injeta no pane focado — o chip pertence a todos os
           panes de terminal (shells também recebem ditado). */}
       <PaneDictationOverlay isFocused={isFocused} />

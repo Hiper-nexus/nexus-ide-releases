@@ -4,6 +4,14 @@
 // native chat can render tappable Allow/Deny buttons instead of forcing the
 // user to type into the composer. Be conservative: only fire when the agent is
 // actually paused (blocked/waiting) AND the text reads like an approval ask.
+//
+// PRV-02/MOB-07: a host with the approval broker adds `requestId`/`revision`/
+// `options` to the envelope. Then each option carries a structured decision
+// token (answered over `agentSession.respondToApproval`, never typed into the
+// PTY); the "1"/Escape keystrokes remain only for older hosts.
+
+import { parseApprovalPrompt, type ApprovalDecision } from '../../../src/shared/approval-decision'
+import { encodeApprovalResponseToken } from './mobile-structured-agent-prompts'
 
 /** A detected permission prompt, rendered as a card with tappable options.
  *  Each option's `send` is the literal string to write back to the agent
@@ -12,6 +20,15 @@ export type MobileChatPermission = {
   title: string
   detail?: string
   options: Array<{ label: string; send: string }>
+  /** Present when every option answers the host broker instead of the PTY. */
+  structured?: true
+}
+
+const STRUCTURED_OPTION_LABELS: Record<ApprovalDecision, string> = {
+  accept: 'Allow',
+  acceptForSession: 'Allow for session',
+  decline: 'Deny',
+  cancel: 'Deny and stop'
 }
 
 const ESCAPE = String.fromCharCode(27)
@@ -26,34 +43,42 @@ const ESCAPE = String.fromCharCode(27)
 export function parseApprovalFromStatus(
   interactivePrompt: string | undefined | null
 ): MobileChatPermission | null {
-  if (!interactivePrompt) {
+  const approval = parseApprovalPrompt(interactivePrompt)
+  if (!approval) {
     return null
   }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(interactivePrompt)
-  } catch {
+  const title = `Allow ${approval.tool}?`
+  const detail = approval.summary
+  const { structured } = approval
+  if (!structured) {
+    // Older host: no request id, so the only answer is the TUI keystroke.
+    return {
+      title,
+      detail,
+      options: [
+        { label: 'Allow', send: '1' },
+        { label: 'Deny', send: ESCAPE }
+      ]
+    }
+  }
+  // T3's card only answers a live request; a closed one has nobody waiting.
+  if (structured.responseCapability !== 'live') {
     return null
   }
-  if (!parsed || typeof parsed !== 'object') {
-    return null
-  }
-  const approval = (parsed as { approval?: unknown }).approval
-  if (!approval || typeof approval !== 'object') {
-    return null
-  }
-  const tool = (approval as { tool?: unknown }).tool
-  if (typeof tool !== 'string' || tool.length === 0) {
-    return null
-  }
-  const summary = (approval as { summary?: unknown }).summary
   return {
-    title: `Allow ${tool}?`,
-    detail: typeof summary === 'string' && summary.length > 0 ? summary : undefined,
-    options: [
-      { label: 'Allow', send: '1' },
-      { label: 'Deny', send: ESCAPE }
-    ]
+    title,
+    detail,
+    structured: true,
+    options: structured.options.map((option) => ({
+      label: option.degradesTo
+        ? 'Allow (this request only)'
+        : STRUCTURED_OPTION_LABELS[option.optionId],
+      send: encodeApprovalResponseToken({
+        itemId: structured.requestId,
+        expectedRevision: structured.revision,
+        optionId: option.optionId
+      })
+    }))
   }
 }
 

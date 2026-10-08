@@ -6,6 +6,7 @@ import type {
   BugReportSubmitResult,
 } from './bug-report';
 import type { AccountChoiceReceipt } from './account-choice';
+import type { ApprovalDecision, ApprovalRequestView } from './approval-decision';
 /**
  * Shared, transport-safe types used across main / preload / renderer.
  * Everything here must be JSON-serializable (it crosses the IPC boundary).
@@ -480,6 +481,22 @@ export interface NexusApi {
    */
   accountChoice: {
     get(sessionId: string): Promise<AccountChoiceReceipt | null>;
+  };
+  /**
+   * Aprovação estruturada (PRV-02): pedidos do hook PermissionRequest que
+   * esperam no Main. A resposta é uma DECISÃO entregue ao hook, nunca tecla no
+   * PTY. `setVisibleSurfaces` diz ao Main quais sessões têm o card visível —
+   * só elas fazem o hook esperar pelo desktop.
+   */
+  approvals: {
+    list(): Promise<ApprovalRequestView[]>;
+    respond(request: {
+      requestId: string;
+      expectedRevision: number;
+      optionId: ApprovalDecision;
+    }): Promise<{ status: 'accepted' | 'rejected'; reason?: string }>;
+    setVisibleSurfaces(sessionIds: string[]): Promise<boolean>;
+    onChanged(cb: (requests: ApprovalRequestView[]) => void): Unsubscribe;
   };
   pty: {
     spawn(req: SpawnRequest): Promise<SpawnResult>;

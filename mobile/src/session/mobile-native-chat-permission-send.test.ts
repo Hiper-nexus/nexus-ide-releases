@@ -10,9 +10,11 @@ import type { RpcClient } from '../transport/rpc-client'
 import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS } from './mobile-native-chat-send'
 import {
+  sendMobileHookApprovalResponse,
   sendMobileNativeChatPermissionResponse,
   useMobileNativeChatPermissionSend
 } from './mobile-native-chat-permission-send'
+import { encodeApprovalResponseToken } from './mobile-structured-agent-prompts'
 import {
   isMobileNativeChatInputStale,
   markMobileNativeChatInputStale,
@@ -149,5 +151,65 @@ describe('useMobileNativeChatPermissionSend', () => {
     // The choice released its own hold on the way out.
     expect(acquireMobileNativeChatTerminalWrite('terminal')).toBe(true)
     releaseMobileNativeChatTerminalWrite('terminal')
+  })
+})
+
+describe('structured host approval (PRV-02/MOB-07)', () => {
+  const target = { itemId: 'req-1', expectedRevision: 1, optionId: 'accept' }
+  let renderer: ReactTestRenderer | null = null
+
+  afterEach(() => {
+    act(() => renderer?.unmount())
+    renderer = null
+  })
+
+  it('answers the broker over RPC with requestId/revision, never terminal.send', async () => {
+    const sendRequest = vi.fn().mockResolvedValue({ ok: true, result: { status: 'accepted' } })
+    await expect(
+      sendMobileHookApprovalResponse({ client: { sendRequest } as unknown as RpcClient, target })
+    ).resolves.toBe('accepted')
+    expect(sendRequest).toHaveBeenCalledWith(
+      'agentSession.respondToApproval',
+      { itemId: 'req-1', expectedRevision: 1, optionId: 'accept' },
+      { timeoutMs: MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS, budgetSpansConnect: true }
+    )
+  })
+
+  it('a host rejection (no grant, closed) is final — no keystroke fallback', async () => {
+    const onSendError = vi.fn()
+    const sendRequest = vi
+      .fn()
+      .mockResolvedValue({ ok: true, result: { status: 'rejected', reason: 'approval-grant-required' } })
+    let respond: ((text: string) => Promise<boolean>) | null = null
+    function Harness(): null {
+      // No input lease and no terminal handle: a decision needs neither.
+      respond = useMobileNativeChatPermissionSend({
+        client: { sendRequest } as unknown as RpcClient,
+        enabled: false,
+        handleRef: { current: null },
+        deviceTokenRef: { current: null },
+        onSendError
+      })
+      return null
+    }
+    act(() => {
+      renderer = create(createElement(Harness))
+    })
+    await act(async () => {
+      await expect(respond?.(encodeApprovalResponseToken(target))).resolves.toBe(false)
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(sendRequest.mock.calls[0]?.[0]).toBe('agentSession.respondToApproval')
+    expect(sendRequest.mock.calls.some(([method]) => method === 'terminal.send')).toBe(false)
+    expect(onSendError).toHaveBeenCalledWith('Response not accepted by the desktop')
+  })
+
+  it('an ambiguous delivery is unknown, not a definite failure', async () => {
+    const sendRequest = vi
+      .fn()
+      .mockRejectedValue(markRpcDeliveryUnknown(new Error('Connection closed')))
+    await expect(
+      sendMobileHookApprovalResponse({ client: { sendRequest } as unknown as RpcClient, target })
+    ).resolves.toBe('unknown')
   })
 })

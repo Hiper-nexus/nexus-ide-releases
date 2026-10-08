@@ -13,7 +13,9 @@ import {
   extractHookToolName,
   handleHookStatusHttp,
   handleHookStatusRequest,
+  supersedeApprovalsForHookEvent,
 } from './hook-status-endpoint';
+import { ApprovalBroker, approvalFingerprint } from '../agent-hooks/approval-broker';
 import {
   __resetAgentStatusForTests,
   getAgentSemanticStatus,
@@ -517,5 +519,42 @@ describe('F-734: StopFailure pelo HTTP real', () => {
       payload: { turnId: 'turn-1', outcome: 'error' },
     });
     expect(JSON.stringify(frames)).not.toContain('WXYZ');
+  });
+});
+
+describe('approval supersede (PRV-02: the TUI answered first)', () => {
+  function openFor(broker: ApprovalBroker, sessionId: string, command: string) {
+    return broker.open({
+      sessionId,
+      provider: 'claude',
+      tool: 'Bash',
+      summary: command,
+      options: [{ optionId: 'accept' }, { optionId: 'decline' }],
+      waitMs: 60_000,
+      fingerprint: approvalFingerprint('Bash', { command }),
+      highImpact: false,
+    })!;
+  }
+
+  it('PostToolUse of the SAME call closes it; a different call stays pending', async () => {
+    const broker = new ApprovalBroker();
+    const ls = openFor(broker, 'pty-1', 'ls');
+    openFor(broker, 'pty-1', 'touch a');
+    const body = { tool_name: 'Bash', tool_input: { command: 'ls' } };
+    expect(supersedeApprovalsForHookEvent('pty-1', 'tool-complete', body, broker)).toBe(1);
+    await expect(ls.decision).resolves.toBeNull();
+    expect(broker.list().map((r) => r.summary)).toEqual(['touch a']);
+    // PreToolUse arrives BEFORE PermissionRequest: it must never supersede.
+    expect(supersedeApprovalsForHookEvent('pty-1', 'tool-use', { tool_name: 'Bash', tool_input: { command: 'touch a' } }, broker)).toBe(0);
+  });
+
+  it('turn end / new prompt closes every pending request of that session only', () => {
+    const broker = new ApprovalBroker();
+    openFor(broker, 'pty-1', 'ls');
+    openFor(broker, 'pty-2', 'ls');
+    expect(supersedeApprovalsForHookEvent('pty-1', 'stop', {}, broker)).toBe(1);
+    expect(broker.list().map((r) => r.sessionId)).toEqual(['pty-2']);
+    expect(supersedeApprovalsForHookEvent('pty-2', 'user-submit', {}, broker)).toBe(1);
+    expect(broker.list()).toEqual([]);
   });
 });

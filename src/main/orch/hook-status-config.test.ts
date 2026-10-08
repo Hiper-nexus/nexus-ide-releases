@@ -8,6 +8,7 @@ import {
   mergeKimiStatusHooks,
 } from './hook-status-config';
 import { REGRESSION_HOOK_TIMEOUT_SECONDS } from './hook-regression-command';
+import { PERMISSION_HOOK_TIMEOUT_SECONDS } from './hook-permission-command';
 import { isNexusHookText } from '../../vendor/emdash/hooks/hook-commands';
 
 const MARKER = 'NEXUS_HOOK_STATUS';
@@ -30,6 +31,7 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
 
     expect(Object.keys(merged).sort()).toEqual([
       'Notification',
+      'PermissionRequest',
       'PostToolUse',
       'PostToolUseFailure',
       'PreToolUse',
@@ -95,12 +97,43 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     // 7 status hooks (claudeHookSpecs, com o StopFailure do F-734) + 1 hook de
     // triagem PostToolUseFailure + 1 hook de delegação UserPromptSubmit (C2)
     // + 1 portão de regressão Stop + 1 portão de integração PreToolUse/Bash
-    // (F-234) + admissão física no Bash em plataformas POSIX.
+    // (F-234) + broker de aprovação PermissionRequest (PRV-02) + admissão
+    // física no Bash em plataformas POSIX.
     const commands = Object.values(twice)
       .flat()
       .flatMap((entry) => (entry as { hooks: Array<{ command: string }> }).hooks)
       .map((hook) => hook.command);
-    expect(commands.filter(isNexusHookText)).toHaveLength(process.platform === 'win32' ? 11 : 12);
+    expect(commands.filter(isNexusHookText)).toHaveLength(process.platform === 'win32' ? 12 : 13);
+  });
+});
+
+describe('mergeClaudeStatusHooks — aprovação estruturada (PRV-02)', () => {
+  const USER_PERMISSION = { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo user-permission' }] };
+
+  it('PermissionRequest posts to the broker with a timeout above the curl transport', () => {
+    const merged = mergeClaudeStatusHooks({ PermissionRequest: [USER_PERMISSION] });
+    const entries = merged.PermissionRequest as Array<{
+      matcher?: string;
+      hooks: Array<{ type: string; command: string; timeout?: number }>;
+    }>;
+    expect(entries[0]).toEqual(USER_PERMISSION);
+    expect(entries).toHaveLength(2);
+    const hook = entries[1]!;
+    expect(hook.matcher).toBe('*');
+    expect(hook.hooks[0]!.command).toContain('$NEXUS_HOOK_PERMISSION_URL');
+    expect(hook.hooks[0]!.command).toContain('X-Nexus-Approval-Provider: claude');
+    expect(hook.hooks[0]!.command).toContain(MARKER);
+    expect(hook.hooks[0]!.command).toContain('|| true');
+    expect(hook.hooks[0]!.command).not.toContain('/dev/null');
+    expect(hook.hooks[0]!.timeout).toBe(PERMISSION_HOOK_TIMEOUT_SECONDS);
+  });
+
+  it('a per-spawn rewrite keeps ONE Nexus PermissionRequest entry', () => {
+    const twice = mergeClaudeStatusHooks(mergeClaudeStatusHooks({ PermissionRequest: [USER_PERMISSION] }));
+    const commands = (twice.PermissionRequest as Array<{ hooks: Array<{ command: string }> }>)
+      .flatMap((entry) => entry.hooks.map((hook) => hook.command));
+    expect(commands.filter((c) => c.includes('NEXUS_HOOK_PERMISSION_URL'))).toHaveLength(1);
+    expect(commands).toContain('echo user-permission');
   });
 });
 
@@ -148,9 +181,15 @@ describe('codexStatusHookArgs (Codex TOML -c overrides)', () => {
       const [event, entries] = Object.entries(parsed.hooks)[0]!;
       expect(entries).toHaveLength(1);
       // UserPromptSubmit also carries the delegate hook, Stop the regression
-      // gate and PreToolUse the integration gate (F-234); status is first.
+      // gate, PreToolUse the integration gate (F-234) and PermissionRequest
+      // the approval broker (PRV-02); status is first.
       expect(entries[0]!.hooks).toHaveLength(
-        event === 'UserPromptSubmit' || event === 'Stop' || event === 'PreToolUse' ? 2 : 1,
+        event === 'UserPromptSubmit' ||
+          event === 'Stop' ||
+          event === 'PreToolUse' ||
+          event === 'PermissionRequest'
+          ? 2
+          : 1,
       );
       const [hook] = entries[0]!.hooks;
       expect(hook!.type).toBe('command');
@@ -206,6 +245,23 @@ describe('codexStatusHookArgs (Codex TOML -c overrides)', () => {
     expect(integration).toContain('$NEXUS_HOOK_INTEGRATION_URL');
     expect(integration).toContain(MARKER);
     expect(integration).toContain('|| true');
+  });
+
+  it('PermissionRequest runs the status notification and the approval broker in ONE array (PRV-02)', () => {
+    const values = codexStatusHookArgs().filter(
+      (arg, index) => index % 2 === 1 && arg.startsWith('hooks.PermissionRequest='),
+    );
+    expect(values).toHaveLength(1);
+    const parsed = parseOverride(values[0]!) as {
+      hooks: { PermissionRequest: Array<{ hooks: Array<{ command: string; timeout?: number }> }> };
+    };
+    const [status, approval] = parsed.hooks.PermissionRequest[0]!.hooks;
+    expect(status!.command).toContain('permission_prompt');
+    expect(approval!.command).toContain('$NEXUS_HOOK_PERMISSION_URL');
+    expect(approval!.command).toContain('X-Nexus-Approval-Provider: codex');
+    expect(approval!.command).toContain(MARKER);
+    // Sem timeout explícito: o padrão do Codex (600 s) cobre a espera.
+    expect(approval!.timeout).toBeUndefined();
   });
 
   it('is deterministic — a second spawn produces identical argv (no accumulation)', () => {

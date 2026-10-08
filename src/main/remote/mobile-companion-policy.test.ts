@@ -97,6 +97,37 @@ describe('mobileRpcKindForBridgeType', () => {
   });
 });
 
+describe('approval.respond (PRV-02)', () => {
+  it('a bridge respondToApproval maps to the approval kind', () => {
+    expect(mobileRpcKindForBridgeType('agentSession.respondToApproval')).toBe('approval.respond');
+  });
+
+  it('no grant on the pane → rejected (never a keystroke fallback)', () => {
+    expect(
+      authorizeMobileRpc({ kind: 'approval.respond', deviceActive: true, paneWriteGrant: false }),
+    ).toEqual({ allowed: false, reason: 'approval-grant-required' });
+    expect(authorizeMobileRpc({ kind: 'approval.respond', deviceActive: true })).toEqual({
+      allowed: false,
+      reason: 'approval-grant-required',
+    });
+  });
+
+  it('revoked device is refused before the grant is even considered', () => {
+    expect(
+      authorizeMobileRpc({ kind: 'approval.respond', deviceActive: false, paneWriteGrant: true }),
+    ).toEqual({ allowed: false, reason: 'device-revoked' });
+  });
+
+  it('approving a high-impact command still asks the desktop', () => {
+    expect(
+      authorizeMobileRpc({ kind: 'approval.respond', deviceActive: true, paneWriteGrant: true }),
+    ).toEqual({ allowed: true, requiresConfirmation: false });
+    expect(
+      authorizeMobileRpc({ kind: 'approval.respond', deviceActive: true, paneWriteGrant: true, highImpact: true }),
+    ).toEqual({ allowed: true, requiresConfirmation: true });
+  });
+});
+
 describe('authorizeRemotePaneInput', () => {
   it.each([
     'npm test',

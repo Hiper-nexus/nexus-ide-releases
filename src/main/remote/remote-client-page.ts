@@ -10,7 +10,17 @@
  * invalida token + chave e volta à tela de pareamento. Terminal em tempo real:
  * consome pushes `pane.stream.data` (terminal-stream-protocol) e usa o poll
  * apenas como reconciliação — um gap de seq dispara pane.read para curar.
+ *
+ * Aprovações (PRV-02/MOB-07): o ops.snapshot traz os pedidos do hook
+ * PermissionRequest que esperam no desktop; o push `approvals.changed` avisa
+ * na hora. Os botões mandam `agentSession.respondToApproval` — uma DECISÃO
+ * com requestId/revision, nunca tecla no terminal.
  */
+
+import {
+  APPROVAL_DEGRADED_NOTE,
+  APPROVAL_OPTION_LABELS,
+} from '../../shared/approval-decision';
 
 export const REMOTE_CLIENT_MANIFEST = JSON.stringify({
   id: '/',
@@ -131,6 +141,14 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
     width: 100%; margin-top: 10px;
   }
   button.ghost { background: transparent; color: var(--dim); border: 1px solid var(--line); }
+  button.danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+  button:disabled { opacity: .55; }
+  .appr { border: 1px solid #e0b341; border-radius: 10px; padding: 12px; margin-bottom: 8px; }
+  .appr .nm { font-weight: 600; margin-bottom: 6px; overflow-wrap: anywhere; }
+  .appr pre { max-height: 22vh; margin: 0 0 4px; }
+  .appr .note { color: var(--dim); font-size: 12px; margin-top: 8px; }
+  .appr .row { flex-wrap: wrap; }
+  .appr .row button { margin-top: 8px; flex: 1 1 30%; }
   .pane { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; }
   .pane .st { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: 0 0 auto; }
   .pane .st.idle { background: var(--accent); } .pane .st.busy { background: #e0b341; }
@@ -154,6 +172,12 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
   <span class="sub" id="sub">desconectado</span>
 </header>
 <main>
+  <section id="approvals" class="card hidden" aria-live="polite">
+    <label>Aprovação pendente — um agente pede permissão</label>
+    <div id="approvalList"></div>
+    <div class="err" id="approvalErr"></div>
+  </section>
+
   <section id="pair" class="card">
     <label>Código de pareamento (mostrado no Mac)</label>
     <input id="code" inputmode="latin" autocapitalize="characters" autocomplete="off" placeholder="ex.: 7K2M9QXR" />
@@ -189,6 +213,9 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
   var opsPoll = null, missionStates = {}, missionSnapshotReady = false;
   var curStreamId = null, lastSeq = 0, streamLive = false;
   var TOKEN_KEY = 'nexusRemoteToken';
+  var APPROVAL_LABELS = ${JSON.stringify(APPROVAL_OPTION_LABELS)};
+  var APPROVAL_DEGRADED = ${JSON.stringify(APPROVAL_DEGRADED_NOTE)};
+  var knownApprovals = {}, approvalsReady = false;
   var DEVICE_DB = 'nexusRemoteDeviceV1', DEVICE_STORE = 'identity', DEVICE_KEY = 'current';
   var $ = function (id) { return document.getElementById(id); };
   function setConn(on, txt) { $('dot').className = 'dot' + (on ? ' on' : ''); $('sub').textContent = txt; }
@@ -376,6 +403,7 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
         var msg; try { msg = JSON.parse(e.data); } catch (_) { return; }
         if (msg.id && pending[msg.id]) { pending[msg.id](msg); delete pending[msg.id]; return; }
         if (msg.type === 'pane.stream.data') handleStreamPush(msg);
+        if (msg.type === 'approvals.changed') refreshApprovals();
       };
     });
   }
@@ -575,9 +603,82 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
     }, 10000);
   }
 
+  function renderApprovals(list) {
+    var box = $('approvals'); var el = $('approvalList'); el.textContent = '';
+    var live = (Array.isArray(list) ? list : []).filter(function (a) {
+      return a && typeof a.requestId === 'string' && a.responseCapability === 'live';
+    });
+    var nextKnown = {};
+    live.forEach(function (a) {
+      nextKnown[a.requestId] = true;
+      if (approvalsReady && !knownApprovals[a.requestId] && document.hidden &&
+          'Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification('Nexus Remote', {
+            body: 'Um agente pede aprovação. Abra o Nexus Remote para responder.',
+            tag: 'nexus-approval-' + a.requestId,
+          });
+        } catch (_) {}
+      }
+    });
+    knownApprovals = nextKnown; approvalsReady = true;
+    if (!live.length) { box.classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+    live.slice(0, 10).forEach(function (a) {
+      var d = document.createElement('div'); d.className = 'appr';
+      var nm = document.createElement('div'); nm.className = 'nm';
+      nm.textContent = (a.tool || 'ferramenta') + ' · pane ' + (a.paneId || '?');
+      var cmd = document.createElement('pre'); cmd.textContent = a.summary || '';
+      var row = document.createElement('div'); row.className = 'row';
+      var options = Array.isArray(a.options) ? a.options : [];
+      options.forEach(function (o) {
+        var b = document.createElement('button');
+        b.textContent = APPROVAL_LABELS[o.optionId] || String(o.optionId);
+        if (o.optionId === 'decline' || o.optionId === 'cancel') b.className = 'danger';
+        else if (o.optionId !== 'accept') b.className = 'ghost';
+        b.onclick = function () { respondApproval(a, o.optionId, row); };
+        row.appendChild(b);
+      });
+      d.appendChild(nm); d.appendChild(cmd); d.appendChild(row);
+      if (options.some(function (o) { return o.degradesTo; })) {
+        var note = document.createElement('div'); note.className = 'note';
+        note.textContent = APPROVAL_DEGRADED;
+        d.appendChild(note);
+      }
+      el.appendChild(d);
+    });
+  }
+  function respondApproval(a, optionId, row) {
+    var buttons = row.querySelectorAll('button');
+    for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
+    $('approvalErr').textContent = '';
+    send('agentSession.respondToApproval', {
+      itemId: a.requestId, expectedRevision: a.revision, optionId: optionId
+    })
+      .then(function (r) {
+        var res = r.result || r;
+        if (!res || res.status !== 'accepted') {
+          $('approvalErr').textContent =
+            'resposta recusada (' + String((res && res.reason) || 'erro') + ') — confira o desktop';
+        }
+        return refreshApprovals();
+      })
+      .catch(function (err) {
+        $('approvalErr').textContent = err.message;
+        return refreshApprovals();
+      });
+  }
+  function refreshApprovals() {
+    if (!token || !ws || ws.readyState !== 1) return Promise.resolve();
+    return send('ops.snapshot')
+      .then(function (r) { var res = r.result || r; renderApprovals(res.approvals); })
+      .catch(function () {});
+  }
+
   function refresh() {
     return send('ops.snapshot').then(function (r) {
       var result = r.result || r;
+      renderApprovals(result.approvals);
       var missions = result.missions || [];
       var panes = result.panes || [];
       var sum = result.summary || {};

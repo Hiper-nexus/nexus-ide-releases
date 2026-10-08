@@ -108,6 +108,25 @@ function decodePromptToken(value: string): PromptTokenPayload | null {
   return null
 }
 
+/** PRV-02/MOB-07: the host's hook approval (`{ approval: { requestId, … } }`) is
+ *  answered with the same approval token, so a card option carries a decision
+ *  target instead of a keystroke. */
+export function encodeApprovalResponseToken(target: StructuredPromptResponseTarget): string {
+  return encodePromptToken({
+    kind: 'approval',
+    itemId: target.itemId,
+    revision: target.expectedRevision,
+    optionId: target.optionId
+  })
+}
+
+export function decodeApprovalResponseToken(value: string): StructuredPromptResponseTarget | null {
+  const token = decodePromptToken(value)
+  return token?.kind === 'approval'
+    ? { itemId: token.itemId, expectedRevision: token.revision, optionId: token.optionId }
+    : null
+}
+
 function decodeQuestionFreeTextAnswer(value: string): {
   payload: Extract<PromptTokenPayload, { kind: 'question-free-text' }>
   answer: string

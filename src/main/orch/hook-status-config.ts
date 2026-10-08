@@ -49,6 +49,10 @@ import {
   INTEGRATION_HOOK_TIMEOUT_SECONDS,
   makeIntegrationHookCommand,
 } from './hook-integration-command';
+import {
+  PERMISSION_HOOK_TIMEOUT_SECONDS,
+  makePermissionHookCommand,
+} from './hook-permission-command';
 
 // ── Claude (family: claude/glm/glm-flash/longcat) ───────────────────────────
 
@@ -120,6 +124,28 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
     matcher: 'Bash',
     hooks: [{ type: 'command', command: claudeNativeHeavyHookCommand(), timeout: 5 }],
   });
+  // PermissionRequest → POST /hook/permission (PRV-02): a resposta do broker
+  // (allow/deny vindos do card do desktop ou do celular) vira a decisão do
+  // hook; sem respondente sai `{}` e o diálogo da TUI decide. Só aqui, nos
+  // settings por sessão dos panes do Nexus — nunca no ~/.claude do operador.
+  // PermissionRequest não é evento de status, então as entradas Nexus antigas
+  // saem por filterUserHooks para a reescrita seguir idempotente.
+  const permission = Array.isArray(next.PermissionRequest)
+    ? filterUserHooks(next.PermissionRequest as Record<string, unknown>[])
+    : [];
+  next.PermissionRequest = [
+    ...permission,
+    {
+      matcher: '*',
+      hooks: [
+        {
+          type: 'command',
+          command: makePermissionHookCommand('claude'),
+          timeout: PERMISSION_HOOK_TIMEOUT_SECONDS,
+        },
+      ],
+    },
+  ];
   // Stop → POST /hook/regression: testes impactados pelo diff no fim do
   // turno; a resposta (`decision: block`) devolve as falhas ao agente.
   const stop = Array.isArray(next.Stop) ? next.Stop : [];
@@ -170,6 +196,10 @@ export function codexStatusHookArgs(): string[] {
     // com o portão de integração (/hook/integration, F-234) — o schema `-c`
     // do Codex não tem matcher, então o endpoint decide pelo payload
     // (só `tool_input.command` de push/merge é avaliado; o resto é `{}`).
+    // PermissionRequest leva o broker de aprovação (PRV-02) depois do status:
+    // o Codex 0.161 só aceita allow/deny e o timeout padrão (600 s) cobre a
+    // espera. A confiança do perfil privado é recalculada destes comandos
+    // (codex-private-hook-trust), sem revisão na TUI.
     const commands =
       spec.hookKey === 'UserPromptSubmit'
         ? [spec.command, makeDelegateHookCommand()]
@@ -177,7 +207,9 @@ export function codexStatusHookArgs(): string[] {
           ? [spec.command, makeRegressionHookCommand()]
           : spec.hookKey === 'PreToolUse'
             ? [spec.command, makeIntegrationHookCommand()]
-            : [spec.command];
+            : spec.hookKey === 'PermissionRequest'
+              ? [spec.command, makePermissionHookCommand('codex')]
+              : [spec.command];
     const hooks = commands
       .map((command) => `{type="command",command=${tomlBasicString(command)}}`)
       .join(',');

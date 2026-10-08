@@ -17,9 +17,22 @@
 import { getPaneAuthzInfo } from '../../orch/pane-registry';
 import { authorizePaneAccess } from '../../orch/pane-authz';
 import { subscribeEncodedSessionOutput } from '../remote-output-bus';
+import { registerRemoteApprovalResponder } from '../../agent-hooks/approval-broker';
 import { getActiveCompanionRelayHost } from './companion-relay-transport';
 
 let untap: (() => void) | null = null;
+
+/**
+ * PRV-02: um guest do relay com link de escrita e autoridade de escrita no
+ * pane do pedido conta como respondente — o hook PermissionRequest espera por
+ * ele. Mesma autoridade de pane do encaminhamento de saída, agora 'write'.
+ */
+function relayCanRespond(sessionId: string): boolean {
+  const host = getActiveCompanionRelayHost();
+  if (!host?.hasWritablePeer()) return false;
+  const pane = getPaneAuthzInfo(sessionId);
+  return pane !== null && authorizePaneAccess({ role: 'user', scope: host.scope }, pane, 'write').allow;
+}
 
 /**
  * Instala o encaminhamento PTY → relay uma única vez. Idempotente: chamadas
@@ -27,7 +40,8 @@ let untap: (() => void) | null = null;
  */
 export function initCompanionRelayPtyBridge(): () => void {
   if (untap) return untap;
-  untap = subscribeEncodedSessionOutput({
+  const unregisterResponder = registerRemoteApprovalResponder(relayCanRespond);
+  const unsubscribe = subscribeEncodedSessionOutput({
     // Sem host ativo não há nada a encaminhar (flag OFF / relay parado) — e o
     // bus nem encoda o chunk quando nenhum consumidor o quer.
     wants: () => getActiveCompanionRelayHost() !== null,
@@ -51,6 +65,10 @@ export function initCompanionRelayPtyBridge(): () => void {
       }
     },
   });
+  untap = () => {
+    unsubscribe();
+    unregisterResponder();
+  };
   return untap;
 }
 

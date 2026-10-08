@@ -1,0 +1,119 @@
+/* Card de aprovação do pane (PRV-02). Receita "card da casa" (DESIGN.md §5):
+   --bg-elevated, --border, --radius-xl, --shadow-1 + inset; sem vidro, sem
+   gradiente, sem hex. Estado "aguardando você" = --state-blocked com glifo e
+   palavra; o CTA primário é o branco neutro, nunca o acento. Fica sobre o
+   terminal, irmão do slot do xterm, e não anima nada no .pane (§4). */
+.pane-approval {
+  position: absolute;
+  inset: auto var(--space-3) var(--space-3) var(--space-3);
+  z-index: var(--z-soft-overlay);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid color-mix(in srgb, var(--state-blocked) 40%, var(--border));
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-1), var(--shadow-inset-hi);
+  font-family: var(--font-ui);
+}
+
+.pane-approval__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.pane-approval__dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--state-blocked);
+}
+
+.pane-approval__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pane-approval__tool {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.pane-approval__summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  padding: var(--space-2);
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.pane-approval__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.pane-approval__btn {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.pane-approval__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.pane-approval__btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.pane-approval__btn--primary {
+  background: var(--btn-primary);
+  border-color: var(--btn-primary);
+  color: var(--btn-primary-ink);
+}
+
+.pane-approval__btn--danger {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  color: var(--danger);
+}
+
+.pane-approval__note,
+.pane-approval__error {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.pane-approval__note {
+  color: var(--text-dim);
+}
+
+.pane-approval__error {
+  color: var(--danger);
+}

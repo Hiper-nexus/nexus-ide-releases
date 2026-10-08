@@ -84,6 +84,14 @@ export class CompanionRelayHost {
     return this.#options.scope;
   }
 
+  /** PRV-02: há um guest com link de escrita agora — candidato a responder aprovações. */
+  hasWritablePeer(): boolean {
+    for (const peer of this.#peers.values()) {
+      if (peer.helloed && peer.canWrite) return true;
+    }
+    return false;
+  }
+
   async start(): Promise<CompanionRelayTransportInfo> {
     if (this.#running) return this.info();
     const normalized = normalizeRelayOrigin(this.#options.relayUrl);

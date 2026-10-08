@@ -120,6 +120,7 @@ import { handleHookStatusHttp } from "./hook-status-endpoint";
 import { handleHookTriageHttp } from "./hook-triage-endpoint";
 import { handleHookRegressionHttp } from "./hook-regression-endpoint";
 import { handleHookIntegrationHttp } from "./hook-integration-endpoint";
+import { handleHookPermissionHttp } from "./hook-permission-endpoint";
 import { handleHookDelegateHttp } from "./hook-delegate-endpoint";
 import { authenticateArmsToken } from "../connectors/arms-token-store";
 import { handleArmsJsonRpc, markArmsBoot } from "../connectors/arms-endpoint";
@@ -435,6 +436,11 @@ function hookRegressionUrl(): string {
 /** PreToolUse/Bash integration gate — same loopback server/bearer. */
 function hookIntegrationUrl(): string {
   return `http://127.0.0.1:${port}/hook/integration`;
+}
+
+/** PermissionRequest structured approval (PRV-02) — same loopback server/bearer. */
+function hookPermissionUrl(): string {
+  return `http://127.0.0.1:${port}/hook/permission`;
 }
 
 const SHA256_HEX = /^[a-f0-9]{64}$/u;
@@ -1166,6 +1172,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           NEXUS_HOOK_REGRESSION_URL: hookRegressionUrl(),
           // PreToolUse/Bash integration review gate — same transport contract.
           NEXUS_HOOK_INTEGRATION_URL: hookIntegrationUrl(),
+          // PermissionRequest → broker de aprovação (card do desktop/celular).
+          NEXUS_HOOK_PERMISSION_URL: hookPermissionUrl(),
           // F-795: com o gate inalcançável, o hook libera só leitura e o
           // handoff (spool). O perfil exato do revisor interno não degrada.
           NEXUS_GATE_OFFLINE_POLICY: internalPrevcReviewerAuthority
@@ -2161,6 +2169,11 @@ export async function startMcpServer(): Promise<void> {
       // PreToolUse/Bash → portão de integração (veredito de ponta por HEAD).
       if (url === "/hook/integration" && req.method === "POST") {
         await handleHookIntegrationHttp(req, res, ctx);
+        return;
+      }
+      // PermissionRequest → aprovação estruturada; só espera com respondente.
+      if (url === "/hook/permission" && req.method === "POST") {
+        await handleHookPermissionHttp(req, res, ctx);
         return;
       }
       sendJson(res, 404, { error: "not found" });
