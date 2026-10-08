@@ -245,6 +245,11 @@ vi.mock("./project-domain-store-registry", () => ({
           ? {
               id: "mission-headless",
               squadId: "squad-headless",
+              // b4ff521f7: spawn de missão exige intent atual aprovado.
+              status: "running",
+              intentState: "executing",
+              intentVersion: 1,
+              intentContract: { goal: "Missão headless", intentVersion: 1, approvedAt: 1 },
             }
           : undefined,
       ),
