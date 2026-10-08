@@ -374,6 +374,14 @@ saber isto antes de mexer:
   `ownGroup: true`: missão separada, sem `tabKey`) ou "Assumir a liderança" (a
   troca de coroa). Missão nova com nome já usado ganha sufixo " 2", " 3"…
   dentro do teto de 120 caracteres do Main.
+- **Revisor nunca vira orquestrador (F-970).** `promoteOrchestratorFromRenderer`
+  recusa (`pane_read_only`) pane somente leitura — ficha PTY, gate ou
+  composição — antes de qualquer escrita; só o líder que já é desta missão
+  (Maestro delegate-only nascido readOnly) é reconfirmado. No renderer,
+  `pickTabMissionLeader` nunca escolhe worker de missão (`role: 'worker'`) no
+  lugar do orquestrador: foco não é designação. Sem orquestrador nem pane do
+  operador vivo, a resposta é `null` e o operador é avisado — a missão fica
+  sem líder vivo em vez de ser re-hospedada num revisor.
 
 ## Portão de regressão: config do runner e falha de carga (F-199)
 
