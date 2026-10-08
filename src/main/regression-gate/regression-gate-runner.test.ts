@@ -6,9 +6,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { setPtyHost } from '../pty/pty-manager';
-import { currentDarwinPtySupervisorRuntime, supervisedJobCommand } from '../pty/darwin-pty-supervisor';
+import { supervisedJobCommand } from '../pty/darwin-pty-supervisor';
+import { buildTestDarwinPtySupervisor } from '../../test/darwin-pty-supervisor-fixture';
 import { processSandboxRuntimeAvailable } from '../runtime/process-sandbox-capability';
 import { ProcessGitRunner } from '../runtime/git-command';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
@@ -61,10 +62,16 @@ function realProject(files: Record<string, string>) {
 }
 
 darwinOnly('runner real no sandbox do writer', () => {
-  beforeAll(() => setPtyHost({
-    spawn: () => { throw new Error('command fixture allocates no PTY'); },
-    prepareCommandSupervisor: async (file, args) => supervisedJobCommand(currentDarwinPtySupervisorRuntime(process.cwd()), file, args),
-  }));
+  let supervisor: ReturnType<typeof buildTestDarwinPtySupervisor> | undefined;
+  beforeAll(() => {
+    const fixture = buildTestDarwinPtySupervisor();
+    supervisor = fixture;
+    setPtyHost({
+      spawn: () => { throw new Error('command fixture allocates no PTY'); },
+      prepareCommandSupervisor: async (file, args) => supervisedJobCommand(fixture.runtime, file, args),
+    });
+  }, 60_000);
+  afterAll(() => supervisor?.dispose());
 
   it('teste excluído pela config do runner não vira aprovação', async () => {
     const { write, scope, trustedDependencyRoot } = realProject({

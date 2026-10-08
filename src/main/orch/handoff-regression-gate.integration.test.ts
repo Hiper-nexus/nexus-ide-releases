@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { compileIntentContract } from "../../shared/mission-intent";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
@@ -17,7 +17,8 @@ import {
 } from "../jarvis/audit-log";
 import { processSandboxRuntimeAvailable } from "../runtime/process-sandbox-capability";
 import { setPtyHost } from "../pty/pty-manager";
-import { currentDarwinPtySupervisorRuntime, supervisedJobCommand } from "../pty/darwin-pty-supervisor";
+import { supervisedJobCommand } from "../pty/darwin-pty-supervisor";
+import { buildTestDarwinPtySupervisor } from "../../test/darwin-pty-supervisor-fixture";
 import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
   configureWorktreeRuntimeRegistry,
@@ -120,10 +121,17 @@ function fixtureRepo(): string {
   return root;
 }
 
+let supervisor: ReturnType<typeof buildTestDarwinPtySupervisor> | undefined;
+beforeAll(() => {
+  if (process.platform === 'darwin') supervisor = buildTestDarwinPtySupervisor();
+}, 60_000);
+afterAll(() => supervisor?.dispose());
+
 beforeEach(() => {
-  if (process.platform === 'darwin') setPtyHost({
+  const fixture = supervisor;
+  if (fixture) setPtyHost({
     spawn: () => { throw new Error('command fixture allocates no PTY'); },
-    prepareCommandSupervisor: async (file, args) => supervisedJobCommand(currentDarwinPtySupervisorRuntime(process.cwd()), file, args),
+    prepareCommandSupervisor: async (file, args) => supervisedJobCommand(fixture.runtime, file, args),
   });
   temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-handoff-gate-")));
   manager = new ProjectRuntimeManager({
