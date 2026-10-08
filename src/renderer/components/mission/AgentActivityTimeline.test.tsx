@@ -549,6 +549,69 @@ describe('AgentActivityTimeline', () => {
     expect(renderedSequences(host)).toContain(1);
   });
 
+  it('expõe a lista virtual à acessibilidade: itens da lista com posição e total reais', async () => {
+    const host = render(<AgentActivityTimeline events={makeEvents('m-1', 10_000)} missionId="m-1" />);
+    await settle();
+    const list = listOf(host);
+    expect(list.getAttribute('role')).toBe('list');
+    await userScrollTo(list, 5_000 * ROW);
+
+    const items = Array.from(host.querySelectorAll<HTMLElement>('.agent-timeline__item'));
+    expect(items.length).toBeGreaterThan(5);
+    for (const item of items) {
+      expect(item.getAttribute('role')).toBe('listitem');
+      const sequence = Number(item.querySelector('.agent-timeline__sequence')?.textContent?.slice(1));
+      expect(item.getAttribute('aria-posinset')).toBe(String(sequence));
+      expect(item.getAttribute('aria-setsize')).toBe('10000');
+      // Nada "genérico" entre o item e a lista: as divs do Legend são apresentação.
+      for (let el = item.parentElement; el && el !== list; el = el.parentElement) {
+        expect(el.getAttribute('role')).toBe('none');
+      }
+    }
+    expect(items.some((item) => item.getAttribute('aria-posinset') === '5001')).toBe(true);
+  });
+
+  it('acompanha a mudança de prefers-reduced-motion com a timeline aberta', () => {
+    const previous = window.matchMedia;
+    const listeners = new Set<() => void>();
+    const query = {
+      matches: false,
+      media: '(prefers-reduced-motion: reduce)',
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    };
+    window.matchMedia = vi.fn().mockReturnValue(query) as unknown as typeof window.matchMedia;
+    try {
+      const { rerender } = renderUpdatable(<AgentActivityTimeline events={sampleEvents} missionId="m-1" />);
+      expect(lastLegendProps().maintainScrollAtEnd).toEqual({ animated: true });
+      expect(listeners.size).toBe(1);
+
+      // O operador liga "reduzir movimento" no sistema: o follow para de animar.
+      act(() => {
+        query.matches = true;
+        for (const listener of listeners) listener();
+      });
+      expect(lastLegendProps().maintainScrollAtEnd).toEqual({ animated: false });
+
+      act(() => {
+        query.matches = false;
+        for (const listener of listeners) listener();
+      });
+      expect(lastLegendProps().maintainScrollAtEnd).toEqual({ animated: true });
+
+      // Desmontar solta a assinatura.
+      rerender(<div />);
+      expect(listeners.size).toBe(0);
+    } finally {
+      if (previous === undefined) {
+        // @ts-expect-error jsdom has no matchMedia by default
+        delete window.matchMedia;
+      } else {
+        window.matchMedia = previous;
+      }
+    }
+  });
+
   it('disables animated follow under prefers-reduced-motion', () => {
     const previous = window.matchMedia;
     window.matchMedia = vi.fn().mockReturnValue({

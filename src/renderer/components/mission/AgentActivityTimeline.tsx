@@ -5,8 +5,10 @@
 // estimatedItemSize, maintainScrollAtEnd suspenso durante a expansão de um
 // detalhe, MVCP); a lista abre no topo como antes (sem initialScrollAtEnd nem
 // memória de posição) e remonta por missão+filtro; parse, filtros, cards e
-// teclado continuam os do Nexus.
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// teclado continuam os do Nexus; acessibilidade da lista virtual (wrappers do
+// Legend como apresentação, aria-posinset/setsize) e movimento reduzido
+// reativo são do Nexus.
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { LegendList } from '@legendapp/list/react';
 import type { MissionEvent } from '../../../shared/mission-events';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
@@ -14,6 +16,7 @@ import {
   ACTIVITY_TIMELINE_FOLLOW_THRESHOLD,
   ACTIVITY_TIMELINE_MAINTAIN_VISIBLE_CONTENT_POSITION,
   createActivityScopeKey,
+  markListWrappersPresentational,
   resolveMaintainScrollAtEnd,
   scheduleDisclosureSettle,
 } from '../../lib/activity-timeline-scroll';
@@ -205,12 +208,29 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
   return items.sort((a, b) => a.sequence - b.sequence);
 }
 
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
+/**
+ * Mesmo padrão do usePrefersReducedMotion de OperatorSprite: lê na montagem e
+ * acompanha a mudança da preferência do sistema enquanto a timeline está aberta.
+ * Sem matchMedia (jsdom, headless), movimento permitido.
+ */
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia(REDUCED_MOTION_QUERY).matches,
   );
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const query = window.matchMedia(REDUCED_MOTION_QUERY);
+    const onChange = () => setReduced(query.matches);
+    onChange();
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+  return reduced;
 }
 
 // Card fechado medido no Chromium: 40 px + 8 px de padding-bottom do item. O
@@ -223,19 +243,32 @@ function timelineKeyExtractor(item: TimelineItemModel): string {
 
 const TimelineRow = memo(function TimelineRow({
   item,
+  position,
+  total,
   expanded,
   onToggle,
 }: {
   readonly item: TimelineItemModel;
+  readonly position: number;
+  readonly total: number;
   readonly expanded: boolean;
   readonly onToggle: (id: string) => void;
 }) {
   const hasDetail = Boolean(item.detail);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+
+  // As divs do Legend entre a lista e o item viram apresentação, para o
+  // Chromium ligar role=list ↔ role=listitem.
+  useLayoutEffect(() => markListWrappersPresentational(rowRef.current), []);
 
   return (
     <div
+      ref={rowRef}
       className={`agent-timeline__item agent-timeline__item--${item.status} agent-timeline__item--${item.kind}`}
       role="listitem"
+      // Só a janela visível existe no DOM: posição e total vêm dos dados.
+      aria-posinset={position}
+      aria-setsize={total}
     >
       <div
         className={`agent-timeline__card${hasDetail ? ' is-clickable' : ''}`}
@@ -339,13 +372,34 @@ export function AgentActivityTimeline({
   }, []);
 
   const renderItem = useCallback(
-    ({ item }: { readonly item: TimelineItemModel }) => (
-      <TimelineRow item={item} expanded={Boolean(expandedIds[item.id])} onToggle={toggleExpanded} />
+    ({
+      item,
+      index,
+      data,
+    }: {
+      readonly item: TimelineItemModel;
+      readonly index: number;
+      readonly data: readonly TimelineItemModel[];
+    }) => (
+      <TimelineRow
+        item={item}
+        position={index + 1}
+        total={data.length}
+        expanded={Boolean(expandedIds[item.id])}
+        onToggle={toggleExpanded}
+      />
     ),
     [expandedIds, toggleExpanded],
   );
 
-  const reducedMotion = useMemo(() => prefersReducedMotion(), []);
+  // Linhas visíveis re-renderizam quando um card abre/fecha ou o total muda
+  // (aria-setsize).
+  const listExtraData = useMemo(
+    () => ({ expandedIds, total: filteredItems.length }),
+    [expandedIds, filteredItems.length],
+  );
+
+  const reducedMotion = usePrefersReducedMotion();
 
   if (allItems.length === 0) {
     return (
@@ -399,8 +453,7 @@ export function AgentActivityTimeline({
       <LegendList<TimelineItemModel>
         key={scopeKey}
         data={filteredItems}
-        // Linhas visíveis re-renderizam quando um card abre/fecha.
-        extraData={expandedIds}
+        extraData={listExtraData}
         keyExtractor={timelineKeyExtractor}
         renderItem={renderItem}
         estimatedItemSize={TIMELINE_ESTIMATED_ITEM_SIZE}

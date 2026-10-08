@@ -1,8 +1,10 @@
+/** @vitest-environment jsdom */
 import { describe, expect, it, vi } from 'vitest';
 import {
   ACTIVITY_TIMELINE_FOLLOW_THRESHOLD,
   ACTIVITY_TIMELINE_MAINTAIN_VISIBLE_CONTENT_POSITION,
   createActivityScopeKey,
+  markListWrappersPresentational,
   resolveMaintainScrollAtEnd,
   scheduleDisclosureSettle,
 } from './activity-timeline-scroll';
@@ -113,5 +115,42 @@ describe('scheduleDisclosureSettle', () => {
     clock.tick();
     expect(onSettled).not.toHaveBeenCalled();
     expect(clock.pendingCount).toBe(0);
+  });
+});
+
+describe('markListWrappersPresentational', () => {
+  function build(markup: string): HTMLElement {
+    const host = document.createElement('div');
+    host.innerHTML = markup; // fixture estática de teste
+    return host;
+  }
+
+  it('marca como apresentação as divs entre o listitem e a lista', () => {
+    const host = build(
+      '<div id="outer"><div role="list" id="list"><div id="content"><div id="layer"><div id="cell"><div role="listitem" id="item"></div></div></div></div></div></div>',
+    );
+    markListWrappersPresentational(host.querySelector('#item'));
+    for (const id of ['content', 'layer', 'cell']) {
+      expect(host.querySelector(`#${id}`)?.getAttribute('role')).toBe('none');
+    }
+    expect(host.querySelector('#list')?.getAttribute('role')).toBe('list');
+    expect(host.querySelector('#outer')?.hasAttribute('role')).toBe(false);
+  });
+
+  it('não sobrescreve role declarado num wrapper', () => {
+    const host = build(
+      '<div role="list"><div role="group" id="group"><div id="cell"><div role="listitem" id="item"></div></div></div></div>',
+    );
+    markListWrappersPresentational(host.querySelector('#item'));
+    expect(host.querySelector('#group')?.getAttribute('role')).toBe('group');
+    expect(host.querySelector('#cell')?.getAttribute('role')).toBe('none');
+  });
+
+  it('fora de uma lista não toca em nada', () => {
+    const host = build('<div id="a"><div id="b"><div role="listitem" id="item"></div></div></div>');
+    markListWrappersPresentational(host.querySelector('#item'));
+    expect(host.querySelector('#a')?.hasAttribute('role')).toBe(false);
+    expect(host.querySelector('#b')?.hasAttribute('role')).toBe(false);
+    expect(() => markListWrappersPresentational(null)).not.toThrow();
   });
 });
