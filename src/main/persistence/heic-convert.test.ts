@@ -98,14 +98,78 @@ afterEach(() => {
   fs.rmSync(scratch, { recursive: true, force: true });
 });
 
-/** Fake `sips` that writes `output` bytes where the real one would. */
-function fakeSips(output: Uint8Array | null) {
+/** Minimal baseline JPEG: SOI + SOF0 (declared size) + EOI, plus `padding` bytes. */
+function jpeg(width: number, height: number, padding = 0): Uint8Array {
+  const sof = [
+    0xff, 0xc0, 0x00, 0x11, 0x08,
+    height >> 8, height & 0xff, width >> 8, width & 0xff,
+    0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+  ];
+  const comment = padding > 0 ? [0xff, 0xfe, (padding + 2) >> 8, (padding + 2) & 0xff] : [];
+  return new Uint8Array([
+    0xff, 0xd8, ...comment, ...new Array<number>(padding).fill(0x20), ...sof, 0xff, 0xd9,
+  ]);
+}
+
+function sipsDimensions(width: number | null, height: number | null): string {
+  return `/tmp/x/input.heic\n  pixelWidth: ${width ?? '<nil>'}\n  pixelHeight: ${height ?? '<nil>'}\n`;
+}
+
+/**
+ * Fake `sips`: answers the `-g pixelWidth -g pixelHeight` probe with `probe`
+ * and writes `output` where the real converter would.
+ */
+function fakeSips(
+  output: Uint8Array | null,
+  probe: { width: number | null; height: number | null } = { width: 64, height: 48 },
+) {
   return vi.fn<HeicExecFile>((_file, args, _options, callback) => {
+    if (args[0] === '-g') {
+      setImmediate(() => callback(null, sipsDimensions(probe.width, probe.height)));
+      return undefined;
+    }
     const outPath = args[args.indexOf('--out') + 1]!;
     if (output) fs.writeFileSync(outPath, output);
-    setImmediate(() => callback(output ? null : new Error('sips failed')));
+    setImmediate(() => callback(output ? null : new Error('sips failed'), ''));
     return undefined;
   });
+}
+
+/** Real `sips`, observed: proves which calls happened (probe vs conversion). */
+function realSips() {
+  return vi.fn<HeicExecFile>((file, args, options, callback) =>
+    execFile(file, [...args], options, (error, stdout) => callback(error, String(stdout))),
+  );
+}
+
+function conversionCalls(spy: ReturnType<typeof fakeSips>): number {
+  return spy.mock.calls.filter(([, args]) => args.includes('--out')).length;
+}
+
+/** Rewrite the `index`-th `ispe` box (0-based) — a lying-metadata fixture. */
+function patchIspe(bytes: Uint8Array, index: number, width: number, height: number): Uint8Array {
+  const copy = new Uint8Array(bytes);
+  const view = new DataView(copy.buffer);
+  let seen = 0;
+  for (let offset = 4; offset + 16 <= copy.length; offset += 1) {
+    if (copy[offset] === 0x69 && copy[offset + 1] === 0x73 && copy[offset + 2] === 0x70 && copy[offset + 3] === 0x65) {
+      if (seen === index) {
+        view.setUint32(offset + 8, width);
+        view.setUint32(offset + 12, height);
+        return copy;
+      }
+      seen += 1;
+    }
+  }
+  throw new Error(`ispe #${index} not found`);
+}
+
+async function sipsHeic(width: number, height: number): Promise<Uint8Array> {
+  const source = path.join(scratch, `source-${width}x${height}.png`);
+  const heic = path.join(scratch, `source-${width}x${height}.heic`);
+  fs.writeFileSync(source, png(width, height));
+  await run(SIPS, ['-s', 'format', 'heic', source, '--out', heic]);
+  return new Uint8Array(fs.readFileSync(heic));
 }
 
 describe('heicConvertPayloadBytes', () => {
@@ -190,8 +254,9 @@ describe('convertHeicToJpeg — guards before any process', () => {
 });
 
 describe('convertHeicToJpeg — child process contract', () => {
-  it('runs sips with a deadline in a private temp dir and cleans it up', async () => {
-    const execFileSpy = fakeSips(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]));
+  it('probes, then runs sips with a deadline in a private temp dir and cleans it up', async () => {
+    const output = jpeg(64, 48);
+    const execFileSpy = fakeSips(output);
 
     const result = await convertHeicToJpeg(heicHeader(), {
       platform: 'darwin',
@@ -201,8 +266,14 @@ describe('convertHeicToJpeg — child process contract', () => {
       timeoutMs: 1234,
     });
 
-    expect(result.ok && [...result.bytes]).toEqual([0xff, 0xd8, 0xff, 0xd9]);
-    const [file, args, options] = execFileSpy.mock.calls[0]!;
+    expect(result.ok && [...result.bytes]).toEqual([...output]);
+    expect(execFileSpy).toHaveBeenCalledTimes(2);
+    const [probeFile, probeArgs, probeOptions] = execFileSpy.mock.calls[0]!;
+    expect(probeFile).toBe('/bin/sh');
+    expect(probeArgs.slice(0, 4)).toEqual(['-g', 'pixelWidth', '-g', 'pixelHeight']);
+    expect(path.basename(probeArgs[4])).toBe('input.heic');
+    expect(probeOptions).toMatchObject({ timeout: 1234, killSignal: 'SIGKILL' });
+    const [file, args, options] = execFileSpy.mock.calls[1]!;
     expect(file).toBe('/bin/sh');
     expect(args.slice(0, 6)).toEqual(['-s', 'format', 'jpeg', '-s', 'formatOptions', '92']);
     expect(path.basename(args[6])).toBe('input.heic');
@@ -210,6 +281,78 @@ describe('convertHeicToJpeg — child process contract', () => {
     expect(path.dirname(args[6])).toBe(path.dirname(args[8]));
     expect(path.dirname(args[6]).startsWith(path.join(tmpDir, 'nexus-heic-'))).toBe(true);
     expect(options).toMatchObject({ timeout: 1234, killSignal: 'SIGKILL' });
+    expect(fs.readdirSync(tmpDir)).toEqual([]);
+  });
+
+  it('refuses before converting when the decoder reports more pixels than the cap', async () => {
+    // ispe do arquivo diz 4000×3000 (passa no parser); o ImageIO diz 9000×8000.
+    const execFileSpy = fakeSips(jpeg(64, 48), { width: 9000, height: 8000 });
+
+    const result = await convertHeicToJpeg(heicHeader(), {
+      platform: 'darwin',
+      sipsPath: '/bin/sh',
+      execFile: execFileSpy,
+      tmpDir,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'too-large',
+      error: 'A foto HEIC tem mais de 64 megapixels.',
+    });
+    expect(conversionCalls(execFileSpy)).toBe(0);
+    expect(fs.readdirSync(tmpDir)).toEqual([]);
+  });
+
+  it('refuses before converting when the decoder cannot tell the size', async () => {
+    const execFileSpy = fakeSips(jpeg(64, 48), { width: null, height: null });
+
+    const result = await convertHeicToJpeg(heicHeader(), {
+      platform: 'darwin',
+      sipsPath: '/bin/sh',
+      execFile: execFileSpy,
+      tmpDir,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'unreadable',
+      error: 'O arquivo não é uma foto HEIC/HEIF válida.',
+    });
+    expect(conversionCalls(execFileSpy)).toBe(0);
+  });
+
+  it('checks the dimensions of the JPEG it got back', async () => {
+    // Sonda diz 64×48, mas o JPEG que saiu declara 9000×8000 no SOF.
+    const result = await convertHeicToJpeg(heicHeader(), {
+      platform: 'darwin',
+      sipsPath: '/bin/sh',
+      execFile: fakeSips(jpeg(9000, 8000)),
+      tmpDir,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'too-large',
+      error: 'O JPEG convertido passou de 64 megapixels.',
+    });
+    expect(fs.readdirSync(tmpDir)).toEqual([]);
+  });
+
+  it('caps the output size before reading it', async () => {
+    const result = await convertHeicToJpeg(heicHeader(), {
+      platform: 'darwin',
+      sipsPath: '/bin/sh',
+      execFile: fakeSips(jpeg(64, 48, 4096)),
+      tmpDir,
+      maxOutputBytes: 1024,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'too-large',
+      error: 'O JPEG convertido ficou grande demais.',
+    });
     expect(fs.readdirSync(tmpDir)).toEqual([]);
   });
 
@@ -232,10 +375,14 @@ describe('convertHeicToJpeg — child process contract', () => {
   it('caps concurrent conversions instead of piling up decoders', async () => {
     const callbacks: Array<() => void> = [];
     const blocking: HeicExecFile = (_file, args, _options, callback) => {
+      if (args[0] === '-g') {
+        setImmediate(() => callback(null, sipsDimensions(64, 48)));
+        return undefined;
+      }
       const outPath = args[args.indexOf('--out') + 1]!;
       callbacks.push(() => {
-        fs.writeFileSync(outPath, new Uint8Array([0xff, 0xd8, 0xff]));
-        callback(null);
+        fs.writeFileSync(outPath, jpeg(64, 48));
+        callback(null, '');
       });
       return undefined;
     };
@@ -257,10 +404,39 @@ describe('convertHeicToJpeg — child process contract', () => {
   });
 
   it.skipIf(process.platform === 'win32')(
+    'kills a size probe that passes the deadline and says so',
+    async () => {
+      const slow = path.join(scratch, 'slow-probe.sh');
+      fs.writeFileSync(slow, '#!/bin/sh\nexec /bin/sleep 10\n', { mode: 0o755 });
+      const started = Date.now();
+
+      const result = await convertHeicToJpeg(heicHeader(), {
+        platform: 'darwin',
+        sipsPath: slow,
+        timeoutMs: 300,
+        tmpDir,
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        reason: 'unreadable',
+        error: 'A conversão HEIC passou do prazo de 300 ms.',
+      });
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(fs.readdirSync(tmpDir)).toEqual([]);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
     'kills a converter that passes the deadline and says so',
     async () => {
+      // A sonda responde na hora; só a conversão trava.
       const slow = path.join(scratch, 'slow-sips.sh');
-      fs.writeFileSync(slow, '#!/bin/sh\nexec /bin/sleep 10\n', { mode: 0o755 });
+      fs.writeFileSync(
+        slow,
+        '#!/bin/sh\nif [ "$1" = "-g" ]; then\n  echo "  pixelWidth: 64"\n  echo "  pixelHeight: 48"\n  exit 0\nfi\nexec /bin/sleep 10\n',
+        { mode: 0o755 },
+      );
       const started = Date.now();
 
       const result = await convertHeicToJpeg(heicHeader(), {
@@ -305,13 +481,61 @@ describe.runIf(hasSips)('convertHeicToJpeg — real macOS sips', () => {
   });
 
   it('a corrupt HEIC with valid-looking metadata fails visibly, not silently', async () => {
-    const result = await convertHeicToJpeg(heicHeader(640, 480), { tmpDir });
+    const execFileSpy = realSips();
+
+    const result = await convertHeicToJpeg(heicHeader(640, 480), { tmpDir, execFile: execFileSpy });
 
     expect(result).toEqual({
       ok: false,
       reason: 'unreadable',
-      error: 'Não foi possível converter a foto HEIC para JPEG.',
+      error: 'O arquivo não é uma foto HEIC/HEIF válida.',
     });
+    expect(conversionCalls(execFileSpy)).toBe(0);
+    expect(fs.readdirSync(tmpDir)).toEqual([]);
+  });
+
+  it('the pixel cap uses what ImageIO will decode for a real grid, before converting', async () => {
+    // 1024×768 vira grade 2×2 de tiles 512×512 no sips. Teto reduzido para
+    // o teste: o parser (teto real de 64 MP) deixa passar; a sonda não.
+    const grid = await sipsHeic(1024, 768);
+    const execFileSpy = realSips();
+
+    const result = await convertHeicToJpeg(grid, {
+      tmpDir,
+      execFile: execFileSpy,
+      maxPixels: 100_000,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'too-large',
+      error: 'A foto HEIC tem mais de 0,1 megapixels.',
+    });
+    expect(execFileSpy).toHaveBeenCalledOnce();
+    expect(execFileSpy.mock.calls[0]![1].slice(0, 4)).toEqual([
+      '-g',
+      'pixelWidth',
+      '-g',
+      'pixelHeight',
+    ]);
+    expect(fs.readdirSync(tmpDir)).toEqual([]);
+  });
+
+  it('a grid whose ispe lies (64×48 over 1024×768 of tiles) never converts', async () => {
+    // O parser lê o ispe mentiroso (64×48) e deixa passar; o ImageIO recusa
+    // a grade inconsistente já na sonda — e, se um dia decodificar, o teto
+    // vale para o tamanho que ele reportar.
+    const lying = patchIspe(await sipsHeic(1024, 768), 1, 64, 48);
+    const execFileSpy = realSips();
+
+    const result = await convertHeicToJpeg(lying, {
+      tmpDir,
+      execFile: execFileSpy,
+      maxPixels: 100_000,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(conversionCalls(execFileSpy)).toBe(0);
     expect(fs.readdirSync(tmpDir)).toEqual([]);
   });
 });
