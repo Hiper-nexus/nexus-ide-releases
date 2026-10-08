@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.211 — Atualização que chega sozinha
+
+A 0.76.210 foi publicada, mas ficou horas como "disponível" no Mac do operador sem ninguém clicar e não chegou. Esta versão faz a próxima atualização chegar sozinha e corrige a recusa que impedia um pane de concluir a missão que o próprio Nexus mandou concluir.
+
+- A checagem de fundo (abertura, relógio e foco da janela) baixa a versão nova sozinha no macOS e deixa tudo pronto: o aviso pede só "Reiniciar agora", e o Squirrel aplica no próximo reinício. A checagem pedida pela interface continua só avisando, e uma falha de download não baixa os mesmos ~240 MB de novo antes de 6 horas (F-1012).
+- `nexus_mission_set_status` recusado a um pane que não lidera a missão diz a chamada que esse pane pode fazer (`nexus_mission_control` para ver quem lidera e `nexus_pane_ask` para pedir a conclusão), em vez de mandar criar outra missão. A recusa feita antes de qualquer escrita não diz mais `effectMayHaveCommitted: true` (F-1013).
+
+Quem está na 0.76.208 ou na 0.76.210 precisa clicar uma vez em "Atualizar agora"; a partir desta, as próximas chegam sozinhas.
+
 ## 0.76.210 — O melhor do T3 Code dentro do Nexus
 
 Esta versão traz código aberto do T3 Code (pingdotgg/t3code, licença MIT, © 2026 T3 Tools Inc.), integrado ao Nexus com a atribuição em `THIRD_PARTY_NOTICES.md` e a proveniência de cada arquivo em `third_party/provenance/t3code-26285ab.json`. Também corrige o que hoje impedia abrir panes e concluir uma missão inteira, e a release só publica se uma missão completa terminar de ponta a ponta.

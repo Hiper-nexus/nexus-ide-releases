@@ -10186,7 +10186,7 @@ export const RELEASE_076209: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076210: AppRelease = {
   version: '0.76.210',
   date: '2026-10-08',
   codename: 'O melhor do T3 Code dentro do Nexus',
@@ -10213,5 +10213,18 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Sessões de navegador', detail: 'Importa sessões de 9 navegadores sem fechá-los, e a chave do Chrome não fica acessível a outros processos.' },
     { title: 'Teste automatizado isolado', detail: 'O modo de teste não lê o Keychain nem executa CLIs de IA no boot.' },
     { title: 'RAM do pane no Linux', detail: 'O badge de RAM não some mais depois de um ajuste do relógio.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.211',
+  date: '2026-10-08',
+  codename: 'Atualização que chega sozinha',
+  summary: 'A versão nova baixa sozinha em segundo plano e só pede para reiniciar; recusas de conclusão de missão dizem a chamada que o pane pode fazer.',
+  highlights: [
+    { title: 'Atualização automática', detail: 'Quando sai uma versão nova, o Nexus baixa em segundo plano e o aviso pede só para reiniciar. Antes, ele esperava um clique em "Atualizar agora" e a versão podia ficar horas parada.' },
+  ],
+  fixes: [
+    { title: 'Concluir missão de outro pane', detail: 'A recusa diz quem lidera a missão e como pedir a conclusão a esse pane, em vez de mandar criar outra missão, e não anuncia mais um efeito que não aconteceu.' },
   ],
 };
