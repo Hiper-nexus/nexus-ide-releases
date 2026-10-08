@@ -182,6 +182,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // (only headless `exec` does), so the model's native default stands.
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
+    // F-966: Haiku 5.5 é o mais novo da linha (Claude Code >= 2.1.293, com
+    // esforço); o 4.5 fica atrás para CLI antiga que recuse o 5.5.
+    { adapterId: 'claude', model: 'claude-haiku-5-5', effort: 'low' },
     { adapterId: 'claude', model: 'claude-haiku-4-5', effort: 'low' },
     // F-696: Muse Spark 1.3 (free, DeepSWE 75,4 / TB2.1 88,8) em todo tier.
     { adapterId: 'muse', model: 'muse-spark-1.3' },

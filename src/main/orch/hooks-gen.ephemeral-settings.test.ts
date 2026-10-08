@@ -61,6 +61,10 @@ describe('Claude-family zero-click settings (system default)', () => {
     // …with the additive emdash status hooks merged alongside, never replacing.
     expect(Object.keys(settings.hooks ?? {}).sort()).toEqual([
       'Notification',
+      // F-965: settings por sessão dos panes do Nexus levam o broker de
+      // aprovação estruturada; sem respondente o hook sai `{}` na hora e o
+      // diálogo da TUI decide, então o zero-click não ganha clique novo.
+      'PermissionRequest',
       'PostToolUse',
       'PostToolUseFailure',
       'PreToolUse',
@@ -71,6 +75,7 @@ describe('Claude-family zero-click settings (system default)', () => {
     ]);
     // skill-gate + status + portão de regressão (/hook/regression).
     expect(settings.hooks?.Stop).toHaveLength(3);
+    expect(JSON.stringify(settings.hooks?.PermissionRequest)).toContain('$NEXUS_HOOK_PERMISSION_URL');
     expect(isNexusHookText(gateCommands)).toBe(true);
     expect(home.dir.startsWith(path.join(os.homedir(), '.nexus', 'ephemeral'))).toBe(
       true,
@@ -91,6 +96,10 @@ describe('Claude-family zero-click settings (system default)', () => {
     expect(settings.skipWorkflowUsageWarning).toBe(true);
     expect(Object.keys(settings.hooks ?? {}).sort()).toEqual([
       'Notification',
+      // F-965: settings por sessão dos panes do Nexus levam o broker de
+      // aprovação estruturada; sem respondente o hook sai `{}` na hora e o
+      // diálogo da TUI decide, então o zero-click não ganha clique novo.
+      'PermissionRequest',
       'PostToolUse',
       'PostToolUseFailure',
       'PreToolUse',

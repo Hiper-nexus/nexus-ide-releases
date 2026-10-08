@@ -2039,7 +2039,9 @@ it.runIf(process.platform === 'darwin')('MCP shutdown retains an unproven child 
     const result = spawnSync('/bin/zsh', ['-s'], { cwd,
       env: { ...decoration.env, PATH: '/usr/bin:/bin', HOME: home, NEXUS_HEAVY_NODE: process.execPath,
         NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1/hook/heavy-command', NODE_OPTIONS: '' },
-      input: '/usr/bin/make --version', encoding: 'utf8', timeout: 10_000 });
+      // `make --version` sozinho é pedido trivial e não vai à fila (F-956,
+      // segunda revisão); `-s` mantém uma invocação real do make, ainda medida.
+      input: '/usr/bin/make -s --version', encoding: 'utf8', timeout: 10_000 });
     expect(result.status, result.stdout + result.stderr).toBe(78);
   } finally { publishExternalSessionExit(sessionId); }
   expect(fs.existsSync(profile)).toBe(false);
