@@ -109,6 +109,10 @@ export const TerminalSend = TerminalHandle.extend({
     })
     .optional(),
   requireAgentStatus: z.enum(['sendable']).optional(),
+  // Why: a phone's durable outbox replays a send whose ack was lost; the host
+  // drops a repeat of this id instead of typing the prompt twice. Older hosts
+  // strip it, so the outbox also checks the transcript before any resend.
+  clientMessageId: z.string().min(1).max(128).optional(),
   // Why: terminal-generated replies are valid input but must not transfer the shared terminal floor.
   inputKind: z.enum(['query-reply']).optional(),
   // Why: identifies the caller for the driver state machine; when absent (older clients) the server falls back to the most recent mobile actor (docs/mobile-presence-lock.md).

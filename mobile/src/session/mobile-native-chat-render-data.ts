@@ -49,6 +49,14 @@ export type MobileNativeChatPendingItem = {
    *  that row, so a send whose row never arrives stays where it was sent instead
    *  of trailing every turn that lands afterwards. */
   baselineTailMessageId?: string | null
+  /** Still in the durable outbox: accepted offline, not yet sent to the desktop. */
+  queued?: boolean
+}
+
+/** Edit/cancel for a bubble that is still queued in the outbox. */
+export type MobileNativeChatQueuedActions = {
+  readonly onEdit: (messageId: string) => void
+  readonly onCancel: (messageId: string) => void
 }
 
 export function foldMobileNativeChatMessages(messages: NativeChatMessage[]): NativeChatMessage[] {
@@ -70,7 +78,7 @@ export function buildMobileNativeChatTransientData({
   folded: NativeChatMessage[]
   /** Streaming bubble text, already gated by `deriveMobileNativeChatStreaming`. */
   streaming: string | null
-  pending: MobileNativeChatPendingItem[]
+  pending: readonly MobileNativeChatPendingItem[]
   imagePreviewsByMessageId?: Record<string, string[]>
 }): { folded: NativeChatMessage[]; streaming: string | null; data: NativeChatMessage[] } {
   const renderedFolded = folded.map((message) => {

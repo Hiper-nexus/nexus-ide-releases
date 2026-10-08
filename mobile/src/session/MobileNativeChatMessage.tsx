@@ -1,6 +1,6 @@
 import { MobileSelectableText as Text } from '../components/MobileSelectableText'
 import { memo } from 'react'
-import { Image, Text as NativeText, View } from 'react-native'
+import { Image, Pressable, Text as NativeText, View } from 'react-native'
 import { splitNativeChatBlocks } from '../../../src/shared/native-chat-tool-fold'
 import { selectActiveToolCall } from '../../../src/shared/native-chat-tool-activity'
 import { isImageRefBlock, isTextBlock } from '../../../src/shared/native-chat-types'
@@ -11,6 +11,7 @@ import { ToolRun } from './MobileNativeChatToolRun'
 import type { NativeChatTurnStatus } from './use-mobile-native-chat-turn-status'
 import { isRenderableImageUri } from './mobile-native-chat-image-preview'
 import { styles, TEXT_SIZE } from './mobile-native-chat-message-styles'
+import type { MobileNativeChatQueuedActions } from './mobile-native-chat-render-data'
 
 function Prose({
   block,
@@ -75,7 +76,8 @@ function MobileNativeChatMessageImpl({
   turnKey,
   onToggleTurn,
   activeTurnIsWorking,
-  structuredActivityUi = false
+  structuredActivityUi = false,
+  queuedActions = null
 }: {
   message: NativeChatMessage
   toolsExpanded?: boolean
@@ -94,6 +96,8 @@ function MobileNativeChatMessageImpl({
   activeTurnIsWorking?: boolean
   /** Structured lane only: live tool progress plus the turn-status disclosure. */
   structuredActivityUi?: boolean
+  /** Set only on a bubble still waiting in the outbox: it can be edited or dropped. */
+  queuedActions?: MobileNativeChatQueuedActions | null
 }): React.JSX.Element {
   const isUser = message.role === 'user'
   const isReasoning = message.role === 'reasoning'
@@ -144,6 +148,27 @@ function MobileNativeChatMessageImpl({
             />
           ) : null}
         </View>
+        {queuedActions && isUser ? (
+          <View style={styles.queuedRow}>
+            <NativeText style={styles.queuedLabel}>Queued</NativeText>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Edit queued message"
+              hitSlop={8}
+              onPress={() => queuedActions.onEdit(message.id)}
+            >
+              <NativeText style={styles.queuedAction}>Edit</NativeText>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Cancel queued message"
+              hitSlop={8}
+              onPress={() => queuedActions.onCancel(message.id)}
+            >
+              <NativeText style={styles.queuedAction}>Cancel</NativeText>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
       {turnStatus ? (
         <MobileNativeChatTurnStatus

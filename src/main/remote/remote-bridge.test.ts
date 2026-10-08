@@ -567,6 +567,30 @@ describe('remote bridge', () => {
     socket.close();
   });
 
+  it('deduplica o reenvio do outbox mobile pelo messageId de pane.input', async () => {
+    // Direto no dispatch autenticado (o mesmo do WS e do relay): o limite de
+    // 60 mensagens/min por IP da suíte fica para os testes de socket.
+    ptyMocks.orchWriteSession.mockClear();
+    const send = (messageId: string) =>
+      bridge.handleAuthedMessage(
+        { type: 'pane.input', paneId: 'pane-stream', data: 'git status', messageId },
+        projectScope,
+      ) as Promise<Record<string, unknown>>;
+
+    const first = await send('msg-outbox-a');
+    expect(first).toMatchObject({ ok: true });
+    expect(first).not.toHaveProperty('deduplicated');
+
+    // Ack perdido → o outbox reenvia o MESMO messageId: nada é digitado de novo.
+    await expect(send('msg-outbox-a')).resolves.toMatchObject({ ok: true, deduplicated: true });
+    expect(ptyMocks.orchWriteSession).toHaveBeenCalledTimes(1);
+    expect(ptyMocks.orchWriteSession).toHaveBeenCalledWith('session-stream-1', 'git status\n');
+
+    // Outra mensagem com o mesmo texto é outra entrega.
+    await send('msg-outbox-b');
+    expect(ptyMocks.orchWriteSession).toHaveBeenCalledTimes(2);
+  });
+
   it('drops oversized frames via maxPayload', async () => {
     const socket = await connect();
     const closed = new Promise<void>((resolve) => {

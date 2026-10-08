@@ -81,6 +81,10 @@ type Overrides = {
   inputLockReason?: 'disconnected' | 'waiting' | null
   onSend?: (text: string) => Promise<boolean>
   pending?: Parameters<typeof MobileNativeChatView>[0]['pending']
+  queuedActions?: Parameters<typeof MobileNativeChatView>[0]['queuedActions']
+  canQueueOffline?: boolean
+  editingQueuedMessage?: boolean
+  onCancelQueuedEdit?: () => void
   structuredActivityUi?: boolean
   turnIndicator?: Parameters<typeof MobileNativeChatView>[0]['turnIndicator']
   agentWorking?: boolean
@@ -605,6 +609,59 @@ describe('MobileNativeChatView', () => {
 
     expect(listIds()).toEqual(['pending-1'])
     expect(renderedRow('pending-1').props).not.toHaveProperty('queued')
+  })
+
+  it('gives edit/cancel only to bubbles still waiting in the outbox', async () => {
+    const queuedActions = { onEdit: vi.fn(), onCancel: vi.fn() }
+    await render({
+      pending: [
+        { id: 'pending-1', text: 'eco aceito' },
+        { id: 'm-2', text: 'na fila', queued: true }
+      ],
+      queuedActions
+    })
+
+    expect(listIds()).toEqual(['pending-1', 'm-2'])
+    expect(renderedRow('m-2').props.queuedActions).toBe(queuedActions)
+    expect(renderedRow('pending-1').props.queuedActions).toBeNull()
+  })
+
+  it('announces a queued edit above the composer with a way back out', async () => {
+    const onCancelQueuedEdit = vi.fn()
+    await render({ editingQueuedMessage: true, onCancelQueuedEdit })
+
+    const cancel = renderer!.root.find(
+      (node) =>
+        node.type === 'Pressable' &&
+        node.props.accessibilityLabel === 'Cancel editing queued message'
+    )
+    act(() => cancel.props.onPress())
+    expect(onCancelQueuedEdit).toHaveBeenCalledTimes(1)
+
+    await update({ editingQueuedMessage: false, onCancelQueuedEdit })
+    expect(
+      renderer!.root.findAll(
+        (node) => node.props.accessibilityLabel === 'Cancel editing queued message'
+      )
+    ).toHaveLength(0)
+  })
+
+  it('keeps the composer sending into the outbox while disconnected', async () => {
+    vi.useFakeTimers()
+    try {
+      await render({ inputLockReason: 'disconnected', canQueueOffline: true })
+      await act(async () => vi.advanceTimersByTime(600))
+
+      expect(composer().props.disabled).toBe(true)
+      expect(composer().props.sendWhileLocked).toBe(true)
+      expect(composer().props.placeholder).toBe('Offline — messages queue until reconnect')
+
+      await update({ inputLockReason: 'disconnected', canQueueOffline: false })
+      expect(composer().props.sendWhileLocked).toBe(false)
+      expect(composer().props.placeholder).toBe('Reconnecting…')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps a visible lock through a subscribed-end lease blip', async () => {

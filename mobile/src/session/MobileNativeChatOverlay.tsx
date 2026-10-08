@@ -96,6 +96,10 @@ export function MobileNativeChatOverlay({
         getSendCompletionGeneration={getSendCompletionGeneration}
         getComposerEditGeneration={controller.getChatComposerEditGeneration}
         pending={controller.chatPending}
+        queuedActions={controller.chatQueuedActions}
+        editingQueuedMessage={controller.chatEditingQueuedMessage}
+        onCancelQueuedEdit={controller.cancelChatQueuedEdit}
+        canQueueOffline={controller.chatCanQueueOffline}
         imagePreviewsByMessageId={controller.chatImagePreviewsByMessageId}
         composerText={controller.chatComposerText}
         onComposerTextChange={controller.setChatComposerText}

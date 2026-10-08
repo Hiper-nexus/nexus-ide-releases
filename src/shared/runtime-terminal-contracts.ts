@@ -216,6 +216,8 @@ export type RuntimeTerminalSend = {
    */
   agentSessionRefusal?: AgentSessionPtyWriteRefusal
   prompt?: RuntimeTerminalPromptDelivery
+  /** True when `clientMessageId` repeated an already-delivered send: nothing was written. */
+  deduplicated?: boolean
 }
 
 export type RuntimeTerminalPromptStage = 'input_accepted' | 'turn_started'

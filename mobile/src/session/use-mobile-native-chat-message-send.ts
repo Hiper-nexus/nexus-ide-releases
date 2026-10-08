@@ -42,6 +42,12 @@ export type MobileNativeChatMessageSend = {
     text: string,
     options?: { delivery?: CatalogCommandDelivery }
   ) => Promise<MobileNativeChatSendOutcome>
+  /** Outbox delivery of a message queued offline: no composer sync, no banner,
+   *  carries the messageId so the host drops a replay and the echo keeps its id. */
+  deliverQueued: (message: {
+    messageId: string
+    text: string
+  }) => Promise<MobileNativeChatSendOutcome>
 }
 
 /** The native-chat send seam: one write path shared by composer sends, image
@@ -62,7 +68,12 @@ export function useMobileNativeChatMessageSend(args: {
   readSeededLaunchDraftSeed: () => MobileNativeChatLaunchDraftSeed | null
   clearDraftForSend: (origin: MobileNativeChatSendOrigin, text: string) => void
   restoreRejectedDraft: (origin: MobileNativeChatSendOrigin, text: string) => void
-  acceptSend: (origin: MobileNativeChatSendOrigin, text: string, images?: string[]) => void
+  acceptSend: (
+    origin: MobileNativeChatSendOrigin,
+    text: string,
+    images?: string[],
+    id?: string
+  ) => void
   holdUnconfirmedSend: (
     origin: MobileNativeChatSendOrigin,
     text: string,
@@ -92,8 +103,12 @@ export function useMobileNativeChatMessageSend(args: {
       images: string[] | undefined,
       syncComposer: boolean,
       recordControlSend: boolean,
-      sharedDeadline?: number
+      sharedDeadline?: number,
+      queued?: { messageId: string }
     ): Promise<MobileNativeChatSendOutcome> => {
+      // An outbox retry fails quietly: the bubble stays queued and the drain
+      // retries, so a banner per attempt would only be noise.
+      const reportError = queued ? () => {} : onSendError
       // The host writes trailing whitespace verbatim onto the agent's input line,
       // where it can glue the next rapid send onto this one (#14262). Only the
       // bytes that go out are trimmed: `draftText` is what the user typed, and a
@@ -107,7 +122,7 @@ export function useMobileNativeChatMessageSend(args: {
       // answer (which reaches this send directly) would otherwise burn the whole
       // 15s heal+send budget waiting on a socket that is already gone.
       if (!client || !handle || !origin || !enabled) {
-        onSendError('Message not sent (disconnected)')
+        reportError('Message not sent (disconnected)')
         return 'rejected'
       }
       // The agent's input may still hold an orphaned image paste from an earlier
@@ -125,7 +140,7 @@ export function useMobileNativeChatMessageSend(args: {
         deadline
       }
       if (!(await healMobileNativeChatStaleInput(healArgs))) {
-        onSendError('Message not sent')
+        reportError('Message not sent')
         return 'rejected'
       }
       // Why: empty the composer at send time, not on the ack — over relay the
@@ -159,7 +174,7 @@ export function useMobileNativeChatMessageSend(args: {
           if (syncComposer) {
             restoreRejectedDraft(origin, draftText)
           }
-          onSendError('Message not sent')
+          reportError('Message not sent')
           return 'rejected'
         }
       }
@@ -170,6 +185,7 @@ export function useMobileNativeChatMessageSend(args: {
         syncComposer && typeof seededLaunchDraft?.createdAt === 'number'
           ? { text: seededLaunchDraft.text, createdAt: seededLaunchDraft.createdAt }
           : undefined
+      let deduplicated = false
       const outcome = typesCodexCommand
         ? await typeMobileNativeChatCommandWithOutcome({
             client,
@@ -185,14 +201,24 @@ export function useMobileNativeChatMessageSend(args: {
             text,
             ...(resolvedLaunchDraft ? { resolvedLaunchDraft } : {}),
             deadline,
-            ...(mobileClient ? { mobileClient } : {})
+            ...(mobileClient ? { mobileClient } : {}),
+            ...(queued
+              ? {
+                  clientMessageId: queued.messageId,
+                  onDeduplicated: () => {
+                    deduplicated = true
+                  }
+                }
+              : {})
           })
       // Why (desktop parity): a slash/skill send dispatches into the agent's own
       // TUI, not the conversation — the transcript never echoes it as a user
       // turn, so an optimistic bubble would never reconcile and the
       // unconfirmed hold could never observe a landing.
       if (outcome === 'unknown') {
-        if (classification === 'chat') {
+        // The outbox keeps an ambiguous delivery queued and checks the transcript
+        // before it retries; holding it here too would raise a second warning.
+        if (classification === 'chat' && !queued) {
           // Why: an ack-lost send usually WAS delivered (issue seen on cellular
           // relay) — verify via the transcript echo instead of a false "not sent".
           holdUnconfirmedSend(origin, text, () =>
@@ -205,13 +231,21 @@ export function useMobileNativeChatMessageSend(args: {
         if (syncComposer) {
           restoreRejectedDraft(origin, draftText)
         }
-        onSendError('Message not sent')
+        reportError('Message not sent')
         return 'rejected'
       }
       if (classification === 'chat') {
-        // `images` are local preview URIs for the optimistic echo only — the actual
-        // image bytes already rode along as a bracketed paste before this text send.
-        acceptSend(origin, text, images)
+        // A repeat the host dropped already echoed (or will) from its first
+        // delivery; a fresh echo would wait for a second row that never comes.
+        if (!deduplicated) {
+          // `images` are local preview URIs for the optimistic echo only — the actual
+          // image bytes already rode along as a bracketed paste before this text send.
+          if (queued) {
+            acceptSend(origin, text, images, queued.messageId)
+          } else {
+            acceptSend(origin, text, images)
+          }
+        }
       } else if (recordControlSend) {
         // The session-option catalog can recognize controls omitted from the
         // autocomplete catalog (for example Claude `/model` and `/fast`).
@@ -272,6 +306,27 @@ export function useMobileNativeChatMessageSend(args: {
     [handleRef, onSendError, sendMessage]
   )
 
+  // Same per-terminal write lock as an answer: a drain can fire while the user
+  // pastes an image, and its bytes must not interleave into that sequence.
+  const deliverQueued = useCallback(
+    async (message: { messageId: string; text: string }): Promise<MobileNativeChatSendOutcome> => {
+      const terminal = handleRef.current
+      if (terminal && !acquireMobileNativeChatTerminalWrite(terminal)) {
+        return 'rejected'
+      }
+      try {
+        return await sendMessage(message.text, undefined, false, false, undefined, {
+          messageId: message.messageId
+        })
+      } finally {
+        if (terminal) {
+          releaseMobileNativeChatTerminalWrite(terminal)
+        }
+      }
+    },
+    [handleRef, sendMessage]
+  )
+
   // A session-option apply writes to the same input line as a send, and the host
   // spaces a send's body and its Enter ~500ms apart — so without this lock an
   // apply lands between them and is submitted as part of the user's prompt.
@@ -321,5 +376,5 @@ export function useMobileNativeChatMessageSend(args: {
     [client, deviceTokenRef, enabled, handleRef, sendMessage]
   )
 
-  return { send, sendWithOutcome, answerQuestion, dispatchCommand }
+  return { send, sendWithOutcome, answerQuestion, dispatchCommand, deliverQueued }
 }

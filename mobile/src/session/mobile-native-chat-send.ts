@@ -2,7 +2,10 @@ import { reportWorkerTerminalUserInput } from '../terminal/worker-terminal-takeo
 import type { RpcClient } from '../transport/rpc-client'
 import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
-import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-response'
+import {
+  isTerminalSendRpcAccepted,
+  isTerminalSendRpcDeduplicated
+} from '../terminal/terminal-send-rpc-response'
 import { typeAgentTuiCommand } from '../../../src/shared/agent-tui-command-typing'
 
 type MobileTerminalClient = {
@@ -21,6 +24,10 @@ type MobileNativeChatSendArgs = {
   /** Shared budget for a whole user action (heal → paste → text, or one selector's
    *  keystroke sequence). Omit to give this write its own full budget. */
   deadline?: number
+  /** Outbox idempotency key: a host that already delivered it writes nothing. */
+  clientMessageId?: string
+  /** Called when the host reports the clientMessageId as an already-delivered repeat. */
+  onDeduplicated?: () => void
 }
 
 /** 'unknown' = the RPC failed without proof the request never reached the
@@ -58,7 +65,8 @@ export async function sendMobileNativeChatMessageWithOutcome(
         text: args.text,
         enter: args.enter ?? true,
         ...(args.resolvedLaunchDraft ? { resolvedLaunchDraft: args.resolvedLaunchDraft } : {}),
-        ...(args.mobileClient ? { client: args.mobileClient } : {})
+        ...(args.mobileClient ? { client: args.mobileClient } : {}),
+        ...(args.clientMessageId ? { clientMessageId: args.clientMessageId } : {})
       },
       // The budget covers this whole write, reconnect wait included — a chat send
       // that spends its ceiling waiting to connect and then starts a fresh clock
@@ -67,6 +75,10 @@ export async function sendMobileNativeChatMessageWithOutcome(
     )
     if (!isTerminalSendRpcAccepted(response)) {
       return 'rejected'
+    }
+    if (isTerminalSendRpcDeduplicated(response)) {
+      args.onDeduplicated?.()
+      return 'accepted'
     }
     reportWorkerTerminalUserInput(args.client, args.terminal)
     return 'accepted'
