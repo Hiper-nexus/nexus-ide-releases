@@ -10,7 +10,10 @@
 // - recusa do desktop (não autorizado, pane fechado, entrada inválida) tira o comando
 //   da fila, mostra a falha e PARA o resto da fila daquele pane — o próximo comando
 //   pode depender do que falhou;
-// - tecla crua / caractere de controle nunca entra na fila (F-1000).
+// - tecla crua / caractere de controle nunca entra na fila (F-1000);
+// - comando mais velho que NEXUS_OUTBOX_AUTO_FLUSH_MAX_AGE_MS não sai sozinho: fica
+//   "antigo — confirmar" e segura os de trás (ordem preservada) até o operador tocar
+//   em Enviar (mesmo messageId) ou Descartar.
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
@@ -32,6 +35,46 @@ const SCOPE_PREFIX = 'nexus-host\0'
 const NO_MESSAGES: readonly MobileQueuedThreadMessage[] = []
 // Igual a use-mobile-thread-outbox.ts: o reenvio de uma entrega ambígua espera.
 const UNKNOWN_DELIVERY_MIN_RETRY_MS = 20_000
+
+/**
+ * Idade máxima para um comando da fila sair sem o operador ver de novo. O desktop
+ * lembra um messageId por 10 min (`DEFAULT_TTL_MS = 10 * 60_000` em
+ * src/main/remote/remote-input-dedup.ts) e esquece ao reiniciar: dentro de 8 min o
+ * reenvio de uma tentativa ambígua ainda cai no dedup; depois disso poderia digitar
+ * o comando duas vezes — ou digitar horas depois algo que o operador já esqueceu.
+ */
+export const NEXUS_OUTBOX_AUTO_FLUSH_MAX_AGE_MS = 8 * 60_000
+const STALE_TICK_MS = 30_000
+
+/** messageId → instante do toque em "Enviar" num item antigo (só nesta execução). */
+export type NexusOutboxConfirmations = Map<string, number>
+const defaultConfirmations: NexusOutboxConfirmations = new Map()
+
+/**
+ * Antigo = criado (ou confirmado pelo operador) há mais que a janela. Data ilegível
+ * conta como antiga: na dúvida, pergunta.
+ */
+export function isNexusQueuedCommandStale(
+  message: Pick<MobileQueuedThreadMessage, 'createdAt'>,
+  now: number,
+  confirmedAt?: number
+): boolean {
+  const createdAt = Date.parse(message.createdAt)
+  const reference = Math.max(Number.isFinite(createdAt) ? createdAt : 0, confirmedAt ?? 0)
+  return now - reference > NEXUS_OUTBOX_AUTO_FLUSH_MAX_AGE_MS
+}
+
+function staleHold(
+  manager: MobileThreadOutboxManager,
+  scopeKey: string,
+  confirmations: NexusOutboxConfirmations,
+  now: () => number
+): (messageId: string) => boolean {
+  return (messageId) => {
+    const message = manager.queued(scopeKey).find((item) => item.messageId === messageId)
+    return message ? isNexusQueuedCommandStale(message, now(), confirmations.get(messageId)) : false
+  }
+}
 
 /** Um escopo por host+pane; 4 partes, nunca colide com `host\0worktree\0aba` do Orca. */
 export function nexusOutboxScopeKey(hostId: string, paneId: string): string {
@@ -247,7 +290,8 @@ function useManagerSnapshot(manager: MobileThreadOutboxManager) {
   return useSyncExternalStore(manager.subscribe, manager.getSnapshot)
 }
 
-export type NexusQueuedCommandStatus = 'pending' | 'sending' | 'held'
+/** `stale` = antigo, espera confirmação; `waiting` = atrás de um antigo. */
+export type NexusQueuedCommandStatus = 'pending' | 'sending' | 'held' | 'stale' | 'waiting'
 
 export type NexusQueuedCommand = {
   readonly messageId: string
@@ -264,6 +308,8 @@ export type NexusPaneOutbox = {
   /** Coloca o comando na fila; sai na hora se houver conexão. Erro legível ou null. */
   readonly submit: (text: string) => Promise<string | null>
   readonly cancel: (messageId: string) => Promise<void>
+  /** Toque em "Enviar" num item antigo: sai com o MESMO messageId. */
+  readonly sendNow: (messageId: string) => void
   /** Libera a retenção (revogação do host ou recusa deste pane). */
   readonly resume: () => Promise<void>
   /** Descarta a fila deste pane (e, na revogação, a do host inteiro). */
@@ -278,10 +324,15 @@ export function useNexusPaneOutbox(args: {
   manager?: MobileThreadOutboxManager
   holds?: NexusOutboxHoldStore
   newMessageId?: () => string
+  confirmations?: NexusOutboxConfirmations
+  now?: () => number
 }): NexusPaneOutbox {
   const { hostId, paneId, nexus, state } = args
   const manager = args.manager ?? mobileThreadOutbox
   const holds = args.holds ?? nexusOutboxHolds
+  const confirmations = args.confirmations ?? defaultConfirmations
+  const nowRef = useRef(args.now ?? Date.now)
+  nowRef.current = args.now ?? Date.now
   const scopeKey = nexusOutboxScopeKey(hostId, paneId)
   const hostHoldKey = nexusHostHoldKey(hostId)
   const scopeHoldKey = nexusScopeHoldKey(scopeKey)
@@ -309,28 +360,107 @@ export function useNexusPaneOutbox(args: {
     [holds, manager]
   )
 
+  const isStale = useMemo(
+    () => staleHold(manager, scopeKey, confirmations, () => nowRef.current()),
+    [confirmations, manager, scopeKey]
+  )
+  const onDelivered = useCallback(
+    (message: MobileQueuedThreadMessage) =>
+      setLastSent({ messageId: message.messageId, text: message.text }),
+    []
+  )
+
   const outbox = useMobileThreadOutbox({
     scopeKey,
     sendable,
     deliver,
     // Sem transcript para conferir eco: o dedup por messageId do desktop cobre o reenvio.
     hasLanded: () => false,
-    onDelivered: (message) => setLastSent({ messageId: message.messageId, text: message.text }),
+    isHeld: isStale,
+    onDelivered,
     manager,
     ...(args.newMessageId ? { newMessageId: args.newMessageId } : {})
   })
 
-  const queued = useMemo(
-    () =>
-      (outbox.queued.length > 0 ? outbox.queued : NO_MESSAGES).map(
-        (message): NexusQueuedCommand => ({
-          messageId: message.messageId,
-          text: message.text,
-          attempts: message.attempts,
-          status: hold ? 'held' : sendable && message.attempts > 0 ? 'sending' : 'pending'
-        })
-      ),
-    [hold, outbox.queued, sendable]
+  // Um item envelhece parado na fila: o relógio refaz o estado na tela.
+  const [clock, setClock] = useState(0)
+  const hasQueue = outbox.queued.length > 0
+  useEffect(() => {
+    if (!hasQueue) {
+      return
+    }
+    const id = setInterval(() => setClock((tick) => tick + 1), STALE_TICK_MS)
+    return () => clearInterval(id)
+  }, [hasQueue])
+
+  const queued = useMemo(() => {
+    let blocked = false
+    return (outbox.queued.length > 0 ? outbox.queued : NO_MESSAGES).map(
+      (message): NexusQueuedCommand => {
+        let status: NexusQueuedCommandStatus
+        if (hold) {
+          status = 'held'
+        } else if (blocked) {
+          status = 'waiting'
+        } else if (isStale(message.messageId)) {
+          blocked = true
+          status = 'stale'
+        } else {
+          status = sendable && message.attempts > 0 ? 'sending' : 'pending'
+        }
+        return { messageId: message.messageId, text: message.text, attempts: message.attempts, status }
+      }
+    )
+    // clock: só para reavaliar a idade a cada tique.
+  }, [clock, hold, isStale, outbox.queued, sendable])
+
+  // "Enviar" num item antigo: confirma (vale uma janela nova a partir do toque) e drena
+  // o pane — o confirmado sai primeiro, os de trás seguem se forem recentes.
+  const sendableRef = useRef(sendable)
+  sendableRef.current = sendable
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current)
+      }
+    },
+    []
+  )
+  const drainNow = useCallback((): void => {
+    if (!sendableRef.current) {
+      return
+    }
+    void manager
+      .drain(scopeKey, { deliver, hasLanded: () => false, isHeld: isStale, onDelivered })
+      .then((result) => {
+        if (result.status !== 'blocked' && result.status !== 'failed') {
+          return
+        }
+        const backoff = threadOutboxRetryDelayMs(
+          result.status === 'blocked' ? result.message.attempts : 1
+        )
+        const delay =
+          result.status === 'blocked' && result.outcome === 'unknown'
+            ? Math.max(backoff, UNKNOWN_DELIVERY_MIN_RETRY_MS)
+            : backoff
+        if (retryTimerRef.current) {
+          clearTimeout(retryTimerRef.current)
+        }
+        retryTimerRef.current = setTimeout(() => {
+          retryTimerRef.current = null
+          drainNow()
+        }, delay)
+      })
+  }, [deliver, isStale, manager, onDelivered, scopeKey])
+
+  const sendNow = useCallback(
+    (messageId: string) => {
+      confirmations.set(messageId, nowRef.current())
+      setClock((tick) => tick + 1)
+      drainNow()
+    },
+    [confirmations, drainNow]
   )
 
   const submit = useCallback(
@@ -369,7 +499,7 @@ export function useNexusPaneOutbox(args: {
     await resume()
   }, [holds, hostHoldKey, hostId, manager, resume, scopeKey])
 
-  return { queued, hold, lastSent, submit, cancel: outbox.cancel, resume, discardAll }
+  return { queued, hold, lastSent, submit, cancel: outbox.cancel, sendNow, resume, discardAll }
 }
 
 /**
@@ -384,10 +514,14 @@ export function useNexusHostOutboxFlush(args: {
   activePaneId: string | null
   manager?: MobileThreadOutboxManager
   holds?: NexusOutboxHoldStore
+  confirmations?: NexusOutboxConfirmations
+  now?: () => number
 }): number {
   const { hostId, nexus, state, activePaneId } = args
   const manager = args.manager ?? mobileThreadOutbox
   const holds = args.holds ?? nexusOutboxHolds
+  const confirmations = args.confirmations ?? defaultConfirmations
+  const now = args.now ?? Date.now
   const holdsVersion = useHoldsVersion(holds)
   const snapshot = useManagerSnapshot(manager)
   const [retryTick, setRetryTick] = useState(0)
@@ -425,7 +559,9 @@ export function useNexusHostOutboxFlush(args: {
         }
         const result = await manager.drain(scopeKey, {
           deliver: (message) => deliverNexusQueuedCommand({ nexus, manager, holds, message }),
-          hasLanded: () => false
+          hasLanded: () => false,
+          // Antigo só sai pelo toque no pane aberto; segura os de trás.
+          isHeld: staleHold(manager, scopeKey, confirmations, now)
         })
         if (result.status === 'blocked' || result.status === 'failed') {
           const backoff = threadOutboxRetryDelayMs(
@@ -449,6 +585,7 @@ export function useNexusHostOutboxFlush(args: {
         clearTimeout(timer)
       }
     }
+    // now/confirmations: lidos na hora da drenagem, não disparam drenagem.
   }, [activePaneId, holds, holdsVersion, hostHoldKey, hostId, loaded, manager, nexus, retryTick, scopesKey, state])
 
   return scopes.length

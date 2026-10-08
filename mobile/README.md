@@ -42,7 +42,9 @@ o broker, nunca tecla no PTY).
   do aparelho (o mesmo outbox do chat nativo, um escopo por host+pane), aparece como "na fila",
   "enviando…" ou "enviado" e sai em ordem depois da reautenticação — também dos panes que não
   estão abertos. Cada item guarda um `messageId` fixo: o reenvio depois de um ack perdido leva o
-  mesmo id e o dedup do desktop não digita duas vezes (janela de 10 min no desktop). Revogação
+  mesmo id e o dedup do desktop não digita duas vezes (janela de 10 min no desktop). Comando
+  com mais de 8 min na fila não sai sozinho: fica "antigo — confirmar" (Enviar/Descartar) e
+  segura os de trás daquele pane. Revogação
   (`auth-failed`) **retém** a fila, visivelmente, mesmo depois de parear de novo, até o operador
   tocar em Retomar ou Descartar. Recusa do desktop tira o comando da fila, mostra "falhou" e para
   os seguintes daquele pane. Tecla crua nunca entra na fila.

@@ -19,6 +19,7 @@ import {
 import { NEXUS_RAW_KEYS_MESSAGE, type NexusHostApi } from '../transport/nexus-bridge-rpc-adapter'
 import type { ConnectionState } from '../transport/types'
 import {
+  NEXUS_OUTBOX_AUTO_FLUSH_MAX_AGE_MS,
   createNexusOutboxHoldStore,
   nexusOutboxScopeKey,
   parseNexusOutboxScopeKey,
@@ -134,6 +135,9 @@ function setup(options: {
     warn: () => {}
   })
   const holds: NexusOutboxHoldStore = createNexusOutboxHoldStore(kv)
+  // Relógio do teste: parte do agora real (o createdAt da fila usa Date.now()).
+  const clock = { now: Date.now() }
+  const confirmations = new Map<string, number>()
   const desktop = fakeDesktop()
   let ids = 0
   const args = (state: ConnectionState): PaneArgs => ({
@@ -143,6 +147,8 @@ function setup(options: {
     state,
     manager,
     holds,
+    confirmations,
+    now: () => clock.now,
     newMessageId: () => (options.paneId && options.paneId !== 'p1' ? `${options.paneId}-cmd-${++ids}` : `cmd-${++ids}`)
   })
   const mount = async (state: ConnectionState) => {
@@ -165,7 +171,10 @@ function setup(options: {
     await settle()
     return refusal
   }
-  return { storage, kv, manager, holds, desktop, mount, setState, submit }
+  const advance = (ms: number) => {
+    clock.now += ms
+  }
+  return { storage, kv, manager, holds, desktop, mount, setState, submit, advance, clock }
 }
 
 describe('fila offline do host Nexus', () => {
@@ -356,5 +365,86 @@ describe('fila offline do host Nexus', () => {
     })
     await settle()
     expect(desktop.pty).toEqual(['p2:npm test', 'p2:git status'])
+  })
+
+  describe('comando antigo não sai sozinho (janela do dedup do desktop)', () => {
+    it('item tentado e antigo fica retido na reconexão e segura os de trás', async () => {
+      const t = setup()
+      await t.mount('connected')
+      t.desktop.setPlan(['lost-ack'])
+      await t.submit('git status')
+      expect(t.desktop.calls).toHaveLength(1)
+      await t.setState('reconnecting')
+      await t.submit('npm test')
+
+      t.advance(NEXUS_OUTBOX_AUTO_FLUSH_MAX_AGE_MS + 60_000)
+      await t.setState('connected')
+
+      expect(t.desktop.calls).toHaveLength(1)
+      expect(outbox!.queued.map((item) => [item.text, item.status])).toEqual([
+        ['git status', 'stale'],
+        ['npm test', 'waiting']
+      ])
+    })
+
+    it('tocar em Enviar entrega o antigo com o MESMO messageId', async () => {
+      const t = setup()
+      await t.mount('connected')
+      t.desktop.setPlan(['lost-ack'])
+      await t.submit('git status')
+      await t.setState('reconnecting')
+      t.advance(NEXUS_OUTBOX_AUTO_FLUSH_MAX_AGE_MS + 60_000)
+      await t.setState('connected')
+      expect(t.desktop.calls).toHaveLength(1)
+
+      await act(async () => {
+        outbox!.sendNow('cmd-1')
+      })
+      await settle()
+
+      expect(t.desktop.calls.map((call) => call.messageId)).toEqual(['cmd-1', 'cmd-1'])
+      expect(t.desktop.pty).toEqual(['p1:git status'])
+      expect(outbox!.queued).toEqual([])
+    })
+
+    it('itens recentes continuam saindo sozinhos, em ordem', async () => {
+      const t = setup()
+      await t.mount('reconnecting')
+      await t.submit('git status')
+      await t.submit('npm test')
+      t.advance(NEXUS_OUTBOX_AUTO_FLUSH_MAX_AGE_MS - 60_000)
+      await t.setState('connected')
+      expect(t.desktop.pty).toEqual(['p1:git status', 'p1:npm test'])
+    })
+
+    it('a drenagem do host também não manda comando antigo de pane fechado', async () => {
+      const storage = memoryStorage()
+      const kv = memoryKv()
+      const p2 = setup({ storage, kv, paneId: 'p2' })
+      await p2.mount('disconnected')
+      await p2.submit('npm test')
+      act(() => renderer?.unmount())
+
+      const desktop = fakeDesktop()
+      await act(async () => {
+        renderer = create(
+          createElement(HostHarness, {
+            args: {
+              hostId: 'host-a',
+              nexus: desktop.nexus,
+              state: 'connected',
+              activePaneId: null,
+              manager: createMobileThreadOutboxManager({ storage, warn: () => {} }),
+              holds: createNexusOutboxHoldStore(kv),
+              confirmations: new Map(),
+              now: () => Date.now() + NEXUS_OUTBOX_AUTO_FLUSH_MAX_AGE_MS + 60_000
+            }
+          })
+        )
+      })
+      await settle()
+      expect(desktop.calls).toEqual([])
+      expect(storage.disk.size).toBe(1)
+    })
   })
 })

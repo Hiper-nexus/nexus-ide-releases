@@ -29,7 +29,9 @@ const MIC_LABEL: Record<NexusMicState, string> = {
 const STATUS_LABEL: Record<NexusQueuedCommand['status'], string> = {
   pending: 'na fila — sai quando reconectar',
   sending: 'enviando…',
-  held: 'retido'
+  held: 'retido',
+  stale: 'antigo — confirmar',
+  waiting: 'espera o anterior'
 }
 
 export function NexusCommandInput({
@@ -137,11 +139,17 @@ export function NexusCommandInput({
         </View>
       ) : null}
 
+      {outbox.queued.some((item) => item.status === 'stale') ? (
+        <Text style={styles.meta} accessibilityLiveRegion="polite">
+          Comando parado há mais de 8 min não sai sozinho: confira e toque em Enviar ou
+          Descartar. Os seguintes deste pane esperam por ele.
+        </Text>
+      ) : null}
       {outbox.queued.map((item) => (
         <View key={item.messageId} style={styles.queueRow} accessibilityLabel={`Comando ${STATUS_LABEL[item.status]}: ${item.text}`}>
           {item.status === 'sending' ? (
             <ActivityIndicator size="small" color={colors.textSecondary} />
-          ) : item.status === 'held' ? (
+          ) : item.status === 'held' || item.status === 'stale' ? (
             <AlertTriangle size={14} color={colors.statusAmber} />
           ) : (
             <Clock size={14} color={colors.textSecondary} />
@@ -152,7 +160,26 @@ export function NexusCommandInput({
           <Text style={styles.meta}>
             {item.status === 'sending' && item.attempts > 1 ? 'tentando de novo…' : STATUS_LABEL[item.status]}
           </Text>
-          {item.status !== 'sending' ? (
+          {item.status === 'stale' ? (
+            <Pressable
+              style={styles.smallButton}
+              onPress={() => outbox.sendNow(item.messageId)}
+              accessibilityRole="button"
+              accessibilityLabel={`Enviar comando antigo: ${item.text}`}
+            >
+              <Text style={styles.smallButtonText}>Enviar</Text>
+            </Pressable>
+          ) : null}
+          {item.status === 'stale' ? (
+            <Pressable
+              style={styles.smallButton}
+              onPress={() => void outbox.cancel(item.messageId)}
+              accessibilityRole="button"
+              accessibilityLabel={`Descartar comando antigo: ${item.text}`}
+            >
+              <Text style={styles.dangerText}>Descartar</Text>
+            </Pressable>
+          ) : item.status !== 'sending' ? (
             <Pressable
               onPress={() => void outbox.cancel(item.messageId)}
               hitSlop={8}

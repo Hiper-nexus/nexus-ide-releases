@@ -53,6 +53,9 @@ export function useMobileThreadOutbox(args: {
   deliver: (message: MobileQueuedThreadMessage) => Promise<MobileThreadOutboxDeliveryOutcome>
   /** Whether an earlier attempt of this message already reached the transcript. */
   hasLanded: (message: MobileQueuedThreadMessage) => boolean
+  /** Extra hold from the caller (F-1015: a queued item too old to auto-send). The
+   *  drain stops at it, so the messages behind it keep their order. */
+  isHeld?: (messageId: string) => boolean
   onDelivered?: (message: MobileQueuedThreadMessage) => void
   manager?: MobileThreadOutboxManager
   newMessageId?: () => string
@@ -105,7 +108,9 @@ export function useMobileThreadOutbox(args: {
       .drain(scopeKey, {
         deliver: (message) => handlersRef.current.deliver(message),
         hasLanded: (message) => handlersRef.current.hasLanded(message),
-        isHeld: (messageId) => editingRef.current?.messageId === messageId,
+        isHeld: (messageId) =>
+          editingRef.current?.messageId === messageId ||
+          handlersRef.current.isHeld?.(messageId) === true,
         onDelivered: (message) => handlersRef.current.onDelivered?.(message)
       })
       .then((result) => {
