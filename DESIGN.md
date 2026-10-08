@@ -235,10 +235,7 @@ já o desliga sozinho e compensa em opacidade.
 - Atalhos: label via `formatShortcut('mod','K')` de
   `src/renderer/lib/platform.ts` (⌘ no mac, Ctrl em win/linux). `⌘` literal em
   JSX/string é dívida — exceto branch mac-only documentado.
-- Handlers globais: pelo resolver de `src/renderer/lib/keybindings.ts`
-  (remapeável em Configurações › Atalhos). Mod é estrito — ⌘ no mac, Ctrl
-  nos demais; IME compondo, AltGr e tecla que o terminal consumiu nunca
-  disparam atalho do app (terminal-first).
+- Handlers: sempre `e.metaKey || e.ctrlKey`.
 - Janela: `hiddenInset` no mac, frame nativo nos demais (`src/main/window.ts`).
 - Fontes bundled (Inter/JetBrains Mono/VT323) — não depender de fonte do OS.
 - Scrollbar própria global (idioma único, sem depender do nativo).

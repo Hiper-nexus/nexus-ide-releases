@@ -21,6 +21,7 @@ import {
   type ShortcutEventLike,
 } from './keybindings';
 import { SHORTCUTS } from './shortcuts';
+import legacyOracle from './__fixtures__/legacy-app-shortcuts.json';
 
 function key(
   value: string,
@@ -66,8 +67,64 @@ function setPlatform(platform: KeyPlatform | undefined): void {
 
 afterEach(() => setPlatform(undefined));
 
+/** Comandos que não existiam: só podem ocupar células que o App deixava vazias. */
+const NEW_COMMANDS = new Set(['file-picker', 'content-search']);
+
+/** O que App.tsx faz com o resultado: o pane do dígito precisa existir. */
+function dispatched(
+  hit: ReturnType<typeof resolveShortcutCommand>,
+  panes: number,
+): string | null {
+  if (!hit) return null;
+  if (hit.command !== 'focus-pane-n') return hit.command;
+  return (hit.index ?? 99) < panes ? `focus-pane-n:${hit.index}` : null;
+}
+
 describe('padrões', () => {
-  it('o mapa efetivo é o mesmo que App.tsx sempre teve (+ Mod+P e Mod+Shift+F)', () => {
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'fazem exatamente o que o onKey de App.tsx @ 53116f0d8 fazia (%s)',
+    (platform) => {
+      const results = legacyOracle.results as Record<string, string>;
+      const divergences: string[] = [];
+      legacyOracle.contexts.forEach((ctx, ctxIndex) => {
+        for (const keyValue of legacyOracle.keys) {
+          for (let mods = 0; mods < 16; mods += 1) {
+            const event = key(keyValue, {
+              metaKey: Boolean(mods & 1),
+              ctrlKey: Boolean(mods & 2),
+              altKey: Boolean(mods & 4),
+              shiftKey: Boolean(mods & 8),
+            });
+            const expected = results[`${ctxIndex}|${mods}|${keyValue}`] ?? null;
+            const actual = dispatched(
+              resolve(event, platform, {
+                ...ctx,
+                terminalFocus: false,
+                editableFocus: false,
+              }),
+              legacyOracle.panes,
+            );
+            const same =
+              expected !== null
+                ? actual === expected
+                : actual === null || NEW_COMMANDS.has(actual);
+            if (!same) {
+              divergences.push(
+                `${JSON.stringify(ctx)} mods=${mods} key=${keyValue}: antes ${expected}, agora ${actual}`,
+              );
+            }
+          }
+        }
+      });
+      expect(legacyOracle.base).toBe('53116f0d8');
+      expect(legacyOracle.cases).toBe(
+        legacyOracle.contexts.length * legacyOracle.keys.length * 16,
+      );
+      expect(divergences.slice(0, 20)).toEqual([]);
+    },
+  );
+
+  it('as combinações exibidas (Mod = ⌘ no mac, Ctrl nos demais)', () => {
     expect(effectiveKeybindingMap({}, 'linux')).toEqual({
       'command-palette': ['Mod+K'],
       'file-picker': ['Mod+P'],
@@ -126,15 +183,30 @@ describe('padrões', () => {
 });
 
 describe('resolver', () => {
-  it('Mod é estrito: ⌘ no mac, Ctrl nos outros', () => {
-    expect(resolve(key('k', { metaKey: true }), 'darwin')?.command).toBe(
-      'command-palette',
+  it('Mod aceita ⌘ e Ctrl nas duas plataformas, como o App sempre aceitou', () => {
+    for (const platform of ['darwin', 'linux', 'win32'] as const) {
+      expect(resolve(key('k', { metaKey: true }), platform)?.command).toBe(
+        'command-palette',
+      );
+      expect(resolve(key('k', { ctrlKey: true }), platform)?.command).toBe(
+        'command-palette',
+      );
+    }
+    // Atalho novo e atalho remapeado: Mod também casa com os dois.
+    expect(resolve(key('p', { ctrlKey: true }), 'darwin')?.command).toBe(
+      'file-picker',
     );
-    expect(resolve(key('k', { ctrlKey: true }), 'darwin')).toBeNull();
-    expect(resolve(key('k', { ctrlKey: true }), 'linux')?.command).toBe(
-      'command-palette',
+    expect(resolve(key('p', { metaKey: true }), 'linux')?.command).toBe(
+      'file-picker',
     );
-    expect(resolve(key('k', { metaKey: true }), 'win32')).toBeNull();
+    expect(
+      resolve(
+        key('m', { ctrlKey: true, altKey: true, code: 'KeyM' }),
+        'darwin',
+        WORKSPACE,
+        { 'mission-new': ['Mod+Alt+M'] },
+      )?.command,
+    ).toBe('mission-new');
   });
 
   it('respeita o `when`: sem projeto, Mod+K não é atalho', () => {
@@ -146,13 +218,13 @@ describe('resolver', () => {
     ).toBe('mission-new');
   });
 
-  it('Mod+Shift+F é palco dentro do terminal e busca no conteúdo fora', () => {
+  it('Mod+Shift+F com terminal selecionado é o palco, como antes; sem ele, busca', () => {
     const chord = key('F', { ctrlKey: true, shiftKey: true });
     expect(
-      resolve(chord, 'linux', { ...WORKSPACE, terminalFocus: true })?.command,
+      resolve(chord, 'linux', { ...WORKSPACE, paneFocused: true })?.command,
     ).toBe('stage-focus');
     expect(
-      resolve(chord, 'linux', { ...WORKSPACE, terminalFocus: false })?.command,
+      resolve(chord, 'linux', { ...WORKSPACE, paneFocused: false })?.command,
     ).toBe('content-search');
   });
 
@@ -317,6 +389,18 @@ describe('gravação e validação', () => {
     expect(keybindingConflicts('mission-new', 'Mod+5', {}, 'linux')).toEqual([
       'focus-pane-n',
     ]);
+    // Mod casa com ⌘ e Ctrl: no mac, Ctrl+K já é da paleta.
+    expect(keybindingConflicts('mission-new', 'Ctrl+K', {}, 'darwin')).toEqual([
+      'command-palette',
+    ]);
+    // Variantes antigas contam: Mod+Shift+W sempre fechou o terminal…
+    expect(keybindingConflicts('mission-new', 'Mod+Shift+W', {}, 'linux')).toEqual([
+      'close-pane',
+    ]);
+    // …até o fechar ser remapeado.
+    expect(
+      keybindingConflicts('mission-new', 'Mod+Shift+W', { 'close-pane': ['Mod+Alt+W'] }, 'linux'),
+    ).toEqual([]);
     // Override conta: Mod+K liberado quando a paleta mudou de tecla.
     expect(
       keybindingConflicts('mission-new', 'Mod+K', { 'command-palette': ['Mod+Alt+K'] }, 'linux'),

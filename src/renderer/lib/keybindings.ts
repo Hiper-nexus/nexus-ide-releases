@@ -14,11 +14,15 @@ import {
 import { formatShortcut } from './platform';
 
 /**
- * Atalhos globais configuráveis. Os padrões são os mesmos que App.tsx sempre
- * teve (o teste trava o mapa); Configurações › Atalhos grava overrides em
+ * Atalhos globais configuráveis. Configurações › Atalhos grava overrides em
  * `ui.keybindings` (settings.json, validado no main).
  *
- * Mod = ⌘ no mac, Ctrl no Windows/Linux — estrito: Ctrl+K no mac não é Mod+K.
+ * Compatibilidade: enquanto não é remapeado, cada atalho que App.tsx já tinha
+ * aceita exatamente as variantes que o handler antigo aceitava (⌘ OU Ctrl nas
+ * duas plataformas e o mesmo Shift/Alt livre de antes) — o teste compara com
+ * o oráculo gerado do onKey de 53116f0d8. "Mod = ⌘ no mac / Ctrl nos demais"
+ * é só a forma exibida e a gravada; ao casar, Mod aceita ⌘ ou Ctrl.
+ *
  * Terminal-first: o xterm vê a tecla antes do listener da janela; o que ele
  * consome (Ctrl+letra vira byte de controle para o TUI) chega com
  * `defaultPrevented` e nunca vira atalho do app.
@@ -58,26 +62,38 @@ export interface KeybindingCommandDefinition {
   readonly when?: string;
   /** Uma linha só para 1–9: a combinação guarda o 1, o dígito apertado escolhe o alvo. */
   readonly digitIndex?: true;
+  /**
+   * Atalho que já existia no App: sem remapeamento casa como o handler
+   * antigo — `event.key` sem caixa, ⌘ ou Ctrl, e Shift/Alt livres quando o
+   * antigo não olhava para eles.
+   */
+  readonly legacy?: LegacyVariants;
+}
+
+export interface LegacyVariants {
+  readonly anyShift?: true;
+  readonly anyAlt?: true;
 }
 
 export const KEYBINDING_COMMANDS: readonly KeybindingCommandDefinition[] = [
-  { id: 'command-palette', label: 'Buscar terminais, missões e ações', defaults: ['Mod+K'], when: 'hasWorkspace' },
+  { id: 'command-palette', label: 'Buscar terminais, missões e ações', defaults: ['Mod+K'], when: 'hasWorkspace', legacy: {} },
   { id: 'file-picker', label: 'Ir para um arquivo do projeto', defaults: ['Mod+P'], when: 'hasWorkspace' },
-  { id: 'content-search', label: 'Buscar texto nos arquivos do projeto', defaults: ['Mod+Shift+F'], when: 'hasWorkspace && !terminalFocus' },
-  { id: 'attention-inbox', label: 'Lista de atenção', defaults: ['Mod+J'], when: 'hasWorkspace' },
-  { id: 'mission-new', label: 'Nova missão', defaults: ['Mod+N'] },
-  { id: 'task-board', label: 'Quadro de tarefas', defaults: ['Mod+B'] },
-  { id: 'project-overview', label: 'Visão geral do projeto', defaults: ['Mod+G'], when: 'hasWorkspace && projectOverview' },
-  { id: 'settings', label: 'Configurações', defaults: ['Mod+Comma'] },
-  { id: 'operator-profile', label: 'Perfil do Operador', defaults: ['Mod+Shift+O'] },
-  { id: 'bug-report', label: 'Reportar um problema', defaults: ['Mod+Shift+B'] },
-  { id: 'cheatsheet', label: 'Lista de atalhos', defaults: ['Mod+Slash'] },
-  { id: 'focus-pane-n', label: 'Selecionar um terminal pelo número', defaults: ['Mod+1'], digitIndex: true },
-  { id: 'split-right', label: 'Dividir o terminal à direita', defaults: ['Mod+D'], when: 'paneFocused' },
-  { id: 'split-down', label: 'Dividir o terminal abaixo', defaults: ['Mod+Shift+D'], when: 'paneFocused' },
-  // Divide Mod+Shift+F com a busca no conteúdo: dentro do terminal é o palco.
-  { id: 'stage-focus', label: 'Palco: só o terminal selecionado', defaults: ['Mod+Shift+F'], when: 'paneFocused && terminalFocus' },
-  { id: 'close-pane', label: 'Fechar o terminal selecionado', defaults: ['Mod+W'], when: 'paneFocused' },
+  // Mod+Shift+F com terminal selecionado sempre foi o palco; a busca só
+  // ocupa o que o atalho antigo deixava vazio (dentro da paleta, sempre).
+  { id: 'content-search', label: 'Buscar texto nos arquivos do projeto', defaults: ['Mod+Shift+F'], when: 'hasWorkspace && !paneFocused' },
+  { id: 'attention-inbox', label: 'Lista de atenção', defaults: ['Mod+J'], when: 'hasWorkspace', legacy: {} },
+  { id: 'mission-new', label: 'Nova missão', defaults: ['Mod+N'], legacy: {} },
+  { id: 'task-board', label: 'Quadro de tarefas', defaults: ['Mod+B'], legacy: {} },
+  { id: 'project-overview', label: 'Visão geral do projeto', defaults: ['Mod+G'], when: 'hasWorkspace && projectOverview', legacy: {} },
+  { id: 'settings', label: 'Configurações', defaults: ['Mod+Comma'], legacy: { anyShift: true, anyAlt: true } },
+  { id: 'operator-profile', label: 'Perfil do Operador', defaults: ['Mod+Shift+O'], legacy: {} },
+  { id: 'bug-report', label: 'Reportar um problema', defaults: ['Mod+Shift+B'], legacy: {} },
+  { id: 'cheatsheet', label: 'Lista de atalhos', defaults: ['Mod+Slash'], legacy: {} },
+  { id: 'focus-pane-n', label: 'Selecionar um terminal pelo número', defaults: ['Mod+1'], digitIndex: true, legacy: {} },
+  { id: 'split-right', label: 'Dividir o terminal à direita', defaults: ['Mod+D'], when: 'paneFocused', legacy: { anyAlt: true } },
+  { id: 'split-down', label: 'Dividir o terminal abaixo', defaults: ['Mod+Shift+D'], when: 'paneFocused', legacy: { anyAlt: true } },
+  { id: 'stage-focus', label: 'Palco: só o terminal selecionado', defaults: ['Mod+Shift+F'], when: 'paneFocused', legacy: { anyAlt: true } },
+  { id: 'close-pane', label: 'Fechar o terminal selecionado', defaults: ['Mod+W'], when: 'paneFocused', legacy: { anyShift: true, anyAlt: true } },
 ];
 
 const DEFINITIONS = new Map(KEYBINDING_COMMANDS.map((def) => [def.id, def]));
@@ -362,9 +378,11 @@ export function validateBinding(
     }
     value = canonicalizeParsedKeybinding({ ...parsed, key: '1' });
   }
-  const identity = getKeybindingConflictIdentity(value, platform);
-  const reserved = RESERVED.find(
-    ([binding]) => getKeybindingConflictIdentity(binding, platform) === identity,
+  const identities = bindingVariants(value).map((variant) =>
+    getKeybindingConflictIdentity(variant, platform),
+  );
+  const reserved = RESERVED.find(([binding]) =>
+    identities.includes(getKeybindingConflictIdentity(binding, platform)),
   );
   if (reserved) {
     return { ok: false, error: `Reservado: ${reserved[1]}.` };
@@ -453,21 +471,60 @@ export function effectiveKeybindingMap(
   ) as Record<KeybindingCommand, string[]>;
 }
 
+/**
+ * Toda combinação física que `binding` aceita: Mod vira ⌘ e Ctrl, e as
+ * variantes livres do atalho antigo (Shift/Alt) entram também.
+ */
+function bindingVariants(binding: string, legacy?: LegacyVariants | null): string[] {
+  const parsed = parseKeybinding(binding);
+  if (!parsed) return [binding];
+  const primaries =
+    parsed.mod && !parsed.meta && !parsed.control
+      ? [
+          { mod: false, meta: true, control: false },
+          { mod: false, meta: false, control: true },
+        ]
+      : [{ mod: parsed.mod, meta: parsed.meta, control: parsed.control }];
+  const shifts = legacy?.anyShift ? [false, true] : [parsed.shift];
+  const alts = legacy?.anyAlt ? [false, true] : [parsed.alt];
+  return primaries.flatMap((primary) =>
+    shifts.flatMap((shift) =>
+      alts.map((alt) =>
+        canonicalizeParsedKeybinding({ ...parsed, ...primary, shift, alt }),
+      ),
+    ),
+  );
+}
+
 function conflictIdentities(
   command: KeybindingCommand,
   binding: string,
   platform: KeyPlatform,
+  legacy?: LegacyVariants | null,
 ): string[] {
-  const parsed = parseKeybinding(binding);
-  if (!parsed || !keybindingDefinition(command).digitIndex) {
-    return [getKeybindingConflictIdentity(binding, platform)];
-  }
-  return Array.from({ length: 9 }, (_, index) =>
-    getKeybindingConflictIdentity(
-      canonicalizeParsedKeybinding({ ...parsed, key: String(index + 1) }),
-      platform,
-    ),
-  );
+  const digits = keybindingDefinition(command).digitIndex
+    ? ['1', '2', '3', '4', '5', '6', '7', '8', '9']
+    : [null];
+  return bindingVariants(binding, legacy).flatMap((variant) => {
+    const parsed = parseKeybinding(variant);
+    return digits.map((digit) =>
+      getKeybindingConflictIdentity(
+        digit && parsed
+          ? canonicalizeParsedKeybinding({ ...parsed, key: digit })
+          : variant,
+        platform,
+      ),
+    );
+  });
+}
+
+/** Variantes antigas valem só enquanto o comando não foi remapeado. */
+function activeLegacy(
+  command: KeybindingCommand,
+  overrides?: KeybindingOverrides,
+): LegacyVariants | null {
+  if (Array.isArray(overrides?.[command])) return null;
+  return keybindingDefinition(command).legacy ?? null;
 }
 
 /** Outros comandos que disparariam com `binding` no mesmo contexto. */
@@ -484,9 +541,12 @@ export function keybindingConflicts(
       other.id !== command &&
       whenClausesOverlap(when, other.when) &&
       effectiveBindings(other.id, overrides, platform).some((candidate) =>
-        conflictIdentities(other.id, candidate, platform).some((identity) =>
-          mine.includes(identity),
-        ),
+        conflictIdentities(
+          other.id,
+          candidate,
+          platform,
+          activeLegacy(other.id, overrides),
+        ).some((identity) => mine.includes(identity)),
       ),
   ).map((other) => other.id);
 }
@@ -539,6 +599,8 @@ export interface ResolvedRule {
   readonly binding: string;
   readonly whenAst: WhenNode | null;
   readonly digitIndex: boolean;
+  /** Casar como o handler antigo de App.tsx (padrão nunca remapeado). */
+  readonly legacy: LegacyVariants | null;
 }
 
 let compiledFor: { overrides: unknown; platform: KeyPlatform; rules: ResolvedRule[] } | null =
@@ -570,6 +632,7 @@ export function compileKeybindingRules(
         binding,
         whenAst: def.when ? parseWhenExpression(def.when) : null,
         digitIndex: def.digitIndex === true,
+        legacy: activeLegacy(def.id, overrides),
       });
     }
   }
@@ -613,21 +676,74 @@ export function resolveShortcutCommand(
   for (let index = rules.length - 1; index >= 0; index -= 1) {
     const rule = rules[index]!;
     if (rule.whenAst && !evaluateWhenNode(rule.whenAst, context)) continue;
+    if (rule.legacy) {
+      const hit = legacyMatch(rule, event);
+      if (hit) return hit;
+      continue;
+    }
     if (rule.digitIndex) {
       const digit = digitFromInput(event, platform);
       const parsed = parseKeybinding(rule.binding);
       if (!digit || !parsed) continue;
       const candidate = canonicalizeParsedKeybinding({ ...parsed, key: digit });
-      if (keybindingMatchesInput(candidate, event, platform)) {
+      if (bindingMatches(candidate, event, platform)) {
         return { command: rule.command, index: Number(digit) - 1 };
       }
       continue;
     }
-    if (keybindingMatchesInput(rule.binding, event, platform)) {
+    if (bindingMatches(rule.binding, event, platform)) {
       return { command: rule.command };
     }
   }
   return null;
+}
+
+/** Tecla do padrão como o handler antigo comparava `event.key`. */
+const LEGACY_KEY_CHARS: Readonly<Record<string, string>> = {
+  Comma: ',',
+  Slash: '/',
+};
+
+/** Reprodução do onKey de App.tsx @ 53116f0d8 para um padrão não remapeado. */
+function legacyMatch(
+  rule: ResolvedRule,
+  event: ShortcutEventLike,
+): ResolvedShortcut | null {
+  const parsed = parseKeybinding(rule.binding);
+  const legacy = rule.legacy;
+  if (!parsed || !legacy || (!event.metaKey && !event.ctrlKey)) return null;
+  if (!legacy.anyShift && event.shiftKey !== parsed.shift) return null;
+  if (!legacy.anyAlt && event.altKey !== parsed.alt) return null;
+  if (rule.digitIndex) {
+    return /^[1-9]$/.test(event.key)
+      ? { command: rule.command, index: Number(event.key) - 1 }
+      : null;
+  }
+  const char = LEGACY_KEY_CHARS[parsed.key] ?? parsed.key.toLowerCase();
+  return event.key.toLowerCase() === char ? { command: rule.command } : null;
+}
+
+/** Mod é a forma exibida/gravada; ao casar aceita ⌘ ou Ctrl, como sempre. */
+function bindingMatches(
+  binding: string,
+  event: ShortcutEventLike,
+  platform: KeyPlatform,
+): boolean {
+  if (keybindingMatchesInput(binding, event, platform)) return true;
+  const parsed = parseKeybinding(binding);
+  if (!parsed?.mod || parsed.meta || parsed.control) return false;
+  return keybindingMatchesInput(
+    binding,
+    {
+      key: event.key,
+      code: event.code,
+      metaKey: event.ctrlKey,
+      ctrlKey: event.metaKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+    },
+    platform,
+  );
 }
 
 /** Contexto de foco a partir do alvo do evento (o resto vem dos stores). */

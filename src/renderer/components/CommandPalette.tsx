@@ -696,9 +696,11 @@ export function CommandPalette() {
       resolveShortcutCommand(
         e.nativeEvent,
         compileKeybindingRules(keybindingOverrides),
+        // O diálogo modal tem o teclado: nenhum terminal é alvo de atalho
+        // aqui, então Mod+Shift+F é a busca no conteúdo, nunca o palco.
         {
           hasWorkspace: true,
-          paneFocused: Boolean(useLayoutStore.getState().focusedPaneId),
+          paneFocused: false,
           terminalFocus: false,
           editableFocus: true,
         },

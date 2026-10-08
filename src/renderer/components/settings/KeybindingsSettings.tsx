@@ -25,10 +25,10 @@ const FLEET_COMMANDS = new Set<KeybindingCommand>([
 /** O `when` de cada comando em linguagem de operador. */
 const WHEN_HINTS: Readonly<Record<string, string>> = {
   hasWorkspace: 'Com um projeto aberto.',
-  'hasWorkspace && !terminalFocus': 'Com um projeto aberto, fora do terminal.',
+  'hasWorkspace && !paneFocused':
+    'Sem terminal selecionado (com um terminal, é o Palco); dentro da paleta, sempre.',
   'hasWorkspace && projectOverview': 'Com um projeto aberto.',
   paneFocused: 'Com um terminal selecionado.',
-  'paneFocused && terminalFocus': 'Dentro do terminal selecionado.',
 };
 
 interface Draft {

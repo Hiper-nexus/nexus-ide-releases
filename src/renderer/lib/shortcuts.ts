@@ -59,7 +59,7 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
   Object.freeze({
     id: 'content-search',
     keys: formatShortcut('mod', 'shift', 'F'),
-    action: 'Buscar texto nos arquivos do projeto (fora do terminal)',
+    action: 'Buscar texto nos arquivos do projeto (na paleta, ou sem terminal selecionado)',
     group: 'command' as const,
   }),
   Object.freeze({

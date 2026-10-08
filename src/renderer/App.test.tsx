@@ -306,6 +306,7 @@ import { useVoiceStore } from './voice/voice-store';
 import { useWorkspaceStore } from './state/workspace-store';
 import { setActiveWorkspacePath } from './state/active-workspace';
 import { useSettingsStore } from './state/settings-store';
+import { requestPaneClose } from './terminal/pane-close-guard';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -333,7 +334,7 @@ function mountApp(): HTMLElement {
   return host;
 }
 
-/** Mod é estrito: ⌘ só vale como Mod no mac (lib/keybindings). */
+/** Plataforma mac para os testes de terminal-first (⌘ não chega ao PTY). */
 function pinMacPlatform(): void {
   Object.assign(window.nexus, { platform: 'darwin' });
 }
@@ -1029,7 +1030,6 @@ describe('App Nexus V2 cutover', () => {
     ['b', { kind: 'task-board' }],
     [',', { kind: 'settings' }],
   ] as const)('routes ⌘%s through product navigation', (key, expected) => {
-    pinMacPlatform();
     openWorkspace();
     useProductNavigationStore.getState().openTerminal();
     mountApp();
@@ -1056,7 +1056,6 @@ describe('App Nexus V2 cutover', () => {
   ] as const)(
     'routes %s from Launcher and prevents host defaults',
     (_label, key, modifier, expected) => {
-      if ('metaKey' in modifier) pinMacPlatform();
       mountApp();
       const event = new KeyboardEvent('keydown', {
         key,
@@ -1082,7 +1081,6 @@ describe('App Nexus V2 cutover', () => {
     ['⌘⇧B', { metaKey: true }],
     ['Ctrl+Shift+B', { ctrlKey: true }],
   ] as const)('opens "Reportar um problema" with %s, from any screen', (_label, modifier) => {
-    if ('metaKey' in modifier) pinMacPlatform();
     useBugReportDialogStore.setState({ isOpen: false });
     mountApp();
     const event = new KeyboardEvent('keydown', {
@@ -1103,7 +1101,6 @@ describe('App Nexus V2 cutover', () => {
   });
 
   it('keeps a pane with a transient mission binding in that mission via ⌘1', () => {
-    pinMacPlatform();
     openWorkspace();
     useLayoutStore.setState({
       root: {
@@ -1145,7 +1142,6 @@ describe('App Nexus V2 cutover', () => {
   });
 
   it('abre a lista de atenção com ⌘J quando há workspace', () => {
-    pinMacPlatform();
     openWorkspace();
     useProductNavigationStore.getState().openTerminal();
     mountApp();
@@ -1422,7 +1418,7 @@ describe('atalhos globais respeitam o terminal (terminal-first)', () => {
     expect(split).toHaveBeenCalledWith('pane-terminal', 'row');
   });
 
-  it('Mod+Shift+F: palco dentro do terminal, busca no conteúdo fora dele', () => {
+  it('Mod+Shift+F com terminal selecionado segue sendo o palco; sem ele, busca', () => {
     pinMacPlatform();
     openWorkspace();
     useProductNavigationStore.getState().openTerminal();
@@ -1430,19 +1426,44 @@ describe('atalhos globais respeitam o terminal (terminal-first)', () => {
     const stage = vi
       .spyOn(useLayoutStore.getState(), 'toggleStageFocus')
       .mockImplementation(() => undefined);
-    focusTerminal(() => false);
 
-    press({ key: 'F', metaKey: true, shiftKey: true });
-    expect(stage).toHaveBeenCalledWith('pane-terminal');
+    // Fora do xterm, com o foco num botão qualquer: como antes, palco.
+    press({ key: 'F', metaKey: true, shiftKey: true }, window);
+    // Ctrl no mac e ⌥ junto também valiam antes.
+    press({ key: 'F', ctrlKey: true, shiftKey: true, altKey: true }, window);
+    expect(stage).toHaveBeenCalledTimes(2);
     expect(useCommandPaletteStore.getState().open).toBe(false);
 
-    act(() => (document.activeElement as HTMLElement).blur());
+    act(() => useLayoutStore.setState({ focusedPaneId: null }));
     press({ key: 'F', metaKey: true, shiftKey: true }, window);
-    expect(stage).toHaveBeenCalledTimes(1);
+    expect(stage).toHaveBeenCalledTimes(2);
     expect(useCommandPaletteStore.getState()).toMatchObject({
       open: true,
       mode: 'content',
     });
+  });
+
+  it('no mac, Ctrl+K, Ctrl+Shift+W e ⌘⌥D fazem o que sempre fizeram', () => {
+    pinMacPlatform();
+    openWorkspace();
+    useProductNavigationStore.getState().openTerminal();
+    mountApp();
+    const split = vi
+      .spyOn(useLayoutStore.getState(), 'split')
+      .mockImplementation(() => undefined);
+
+    press({ key: 'k', ctrlKey: true }, window);
+    expect(useCommandPaletteStore.getState()).toMatchObject({
+      open: true,
+      mode: 'command',
+    });
+    act(() => useCommandPaletteStore.getState().close());
+
+    press({ key: 'W', ctrlKey: true, shiftKey: true }, window);
+    expect(requestPaneClose).toHaveBeenCalledWith('pane-terminal');
+
+    press({ key: 'd', metaKey: true, altKey: true }, window);
+    expect(split).toHaveBeenCalledWith('pane-terminal', 'row');
   });
 
   it('Mod+P abre arquivos e um remapeamento salvo vale na hora', () => {
