@@ -81,6 +81,8 @@ export interface ProviderSettingsInfo {
   detectedBin: string;
   /** Duplicate versions and the selected version, without filesystem paths. */
   cliInstallationWarning?: string;
+  /** F-966: versão quebrada conhecida ou anterior ao modelo padrão; não bloqueia. */
+  cliCompatibilityWarning?: string;
   defaultModel: string;
   models: string[];
   /**

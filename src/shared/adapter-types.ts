@@ -275,6 +275,13 @@ export interface ModelCatalogEntryInfo {
   quality?: ModelQualityEvaluation;
   /** Janela de contexto em tokens, quando documentada (F-912). Ausente = sem fonte. */
   maxContext?: number;
+  /**
+   * F-966: níveis de esforço que a CLI aceita para ESTE modelo. Ausente = os
+   * do adapter; vazio = o modelo não tem esforço (o spawn tira o `--effort`).
+   */
+  efforts?: string[];
+  /** F-966: primeira versão da CLI que conhece o modelo. Abaixo dela só avisa. */
+  minCliVersion?: string;
 }
 
 export type ModelInfoMap = Record<string, ModelCatalogEntryInfo>;

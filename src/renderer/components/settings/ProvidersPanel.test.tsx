@@ -285,6 +285,15 @@ describe('ProvidersPanel hub', () => {
     act(() => root.unmount());
   });
 
+  it('F-966: avisa a versão quebrada da CLI no detalhe, antes de qualquer spawn', () => {
+    const warning = 'Codex 0.148.0 tem incompatibilidade conhecida com o Nexus. Atualize para >=0.159.0; o pane abre assim mesmo.';
+    useProviderStore.setState({ providers: [provider('codex', 'Codex', { cliCompatibilityWarning: warning })] });
+    const { host, root } = mount();
+    const notes = [...host.querySelectorAll('.prov-detail [role="status"]')].map((node) => node.textContent);
+    expect(notes).toContain(warning);
+    act(() => root.unmount());
+  });
+
   it('surfaces account chip on the tile and detail accounts block', () => {
     const { host, root } = mount();
     expect(host.textContent).toContain('1 conta');

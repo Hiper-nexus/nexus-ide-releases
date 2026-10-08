@@ -619,6 +619,8 @@ export type SpawnResult =
       adopted?: boolean;
       /** Current state snapshot for an adopted session (push may predate listeners). */
       state?: PaneSessionState;
+      /** F-966: avisos de versão da CLI (faixa quebrada, modelo novo demais); não bloqueiam. */
+      warnings?: string[];
     }
   | { ok: false; error: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason };
 

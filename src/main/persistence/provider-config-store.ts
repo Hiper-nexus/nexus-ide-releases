@@ -48,7 +48,8 @@ import {
 } from '../adapters/adapter-registry';
 import { resolveCliLoginCommand } from '../../shared/cli-login';
 import { kimiLoginCommand } from '../../shared/kimi-login-command';
-import { revalidateExecutable, resolveCliBinary, realUserHome } from '../path-resolver';
+import { cachedCliBinaryVersion, revalidateExecutable, resolveCliBinary, realUserHome } from '../path-resolver';
+import { cliVersionWarnings } from '../adapters/cli-compatibility';
 import {
   availableEfforts,
   availablePermissionModes,
@@ -1915,6 +1916,16 @@ function toInfo(
   const strategy = authDecision(adapterId, defaultModel, {
     statusSnapshot: options.nonBlockingAuth === true,
   }).strategy;
+  // F-966: o aviso de versão aparece aqui ANTES de qualquer spawn — versão já
+  // sondada do binário que o spawn usaria (nunca executa a CLI aqui).
+  const spawnBin = userBinOk ? cfg.binPath : resolved;
+  const cliCompatibilityWarning = adapter.kind === 'cli-pty' && spawnBin
+    ? cliVersionWarnings({
+        bin: adapter.bin,
+        version: cachedCliBinaryVersion(spawnBin) ?? null,
+        model: defaultModel,
+      }).join(' ')
+    : '';
   return {
     adapterId,
     label: adapter.label,
@@ -1931,6 +1942,7 @@ function toInfo(
     binPath: cfg.binPath,
     detectedBin,
     ...(cliInstallationWarning ? { cliInstallationWarning } : {}),
+    ...(cliCompatibilityWarning ? { cliCompatibilityWarning } : {}),
     defaultModel,
     models,
     authReadyModels,

@@ -9,7 +9,9 @@
  * Pure parse is unit-tested; network is best-effort and never invents %.
  *
  * Fallback print-only (Codenotch, ClaudeUsageCLI.swift): `claude --print
- * --no-session-persistence --strict-mcp-config /usage` responde com as mesmas
+ * --no-session-persistence --strict-mcp-config --settings
+ * '{"disableAllHooks":true}' /usage` (F-966: sem hooks, sem MCP do claude.ai,
+ * sem IDE — ver CLAUDE_CLI_PROBE_ENV) responde com as mesmas
  * janelas usando o login que o CLI já tem — cobre 429/backoff do endpoint e
  * token de keychain rodado. Só --print: sem isso cada chamada grava sessão em
  * ~/.claude/projects e pode levantar diálogo de workspace-trust;
@@ -217,12 +219,43 @@ export async function fetchClaudeOauthUsageWindows(
 // CLI /usage fallback (print-only) — Codenotch ClaudeUsageCLI.swift
 // ---------------------------------------------------------------------------
 
+/**
+ * F-966 (padrão do T3 `buildClaudeCapabilitiesProbeQueryOptions`, MIT): a
+ * sonda roda a cada poucos minutos e não pode disparar os hooks do operador
+ * (SessionStart etc.). `--settings` com JSON inline vale no `--print` desde a
+ * 2.1.283 (strings do binário: `--settings <file-or-json>`, `disableAllHooks`).
+ */
+export const CLAUDE_CLI_PROBE_SETTINGS = JSON.stringify({ disableAllHooks: true });
+
 export const CLAUDE_CLI_USAGE_ARGS = [
   '--print',
   '--no-session-persistence',
   '--strict-mcp-config',
+  '--settings',
+  CLAUDE_CLI_PROBE_SETTINGS,
   '/usage',
 ] as const;
+
+/**
+ * Os MCP do claude.ai não vêm de arquivo (o `--strict-mcp-config` não os
+ * corta) e a descoberta de IDE não acrescenta nada a uma sonda sem terminal.
+ */
+export const CLAUDE_CLI_PROBE_ENV = {
+  ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
+  CLAUDE_CODE_AUTO_CONNECT_IDE: '0',
+  CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: '1',
+} as const;
+
+/** Env do processo da sonda: isolamento por cima da conta; sem forçar terminal de IDE. */
+export function claudeCliProbeEnv(
+  base: NodeJS.ProcessEnv,
+  extra: Record<string, string> | undefined,
+  cwd: string,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, ...extra, ...CLAUDE_CLI_PROBE_ENV, PWD: cwd };
+  delete env.FORCE_CODE_TERMINAL;
+  return env;
+}
 
 /** Frio + Node a arrancar numa máquina ocupada; wedge não segura o probe. */
 export const CLAUDE_CLI_USAGE_TIMEOUT_MS = 20_000;
@@ -459,7 +492,7 @@ async function runClaudeCli(
       // com a tabela de custo quando a sessão está morta — a mensagem de
       // auth («OAuth session expired») sai por aqui.
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, ...env, PWD: cwd },
+      env: claudeCliProbeEnv(process.env, env, cwd),
     });
     let stdout = '';
     let stderr = '';
