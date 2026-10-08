@@ -34,6 +34,20 @@ describe('parseNexusBridgePairingUrl (QR do desktop Nexus)', () => {
     }
   })
 
+  it('keeps refusing 127.0.0.1 outside the web target even with the visual harness flag (F-1035)', () => {
+    const previous = process.env.EXPO_PUBLIC_NEXUS_VISUAL_HARNESS
+    process.env.EXPO_PUBLIC_NEXUS_VISUAL_HARNESS = '1'
+    try {
+      expect(parseNexusBridgePairingUrl('https://127.0.0.1:51234/#code=7K2M9QXR')).toEqual({
+        kind: 'error',
+        message: NEXUS_SELF_SIGNED_MESSAGE
+      })
+    } finally {
+      if (previous === undefined) delete process.env.EXPO_PUBLIC_NEXUS_VISUAL_HARNESS
+      else process.env.EXPO_PUBLIC_NEXUS_VISUAL_HARNESS = previous
+    }
+  })
+
   it('explains an empty/expired code and plain http instead of failing later', () => {
     expect(parseNexusBridgePairingUrl('https://mac.tail.ts.net/#code=')).toEqual({
       kind: 'error',

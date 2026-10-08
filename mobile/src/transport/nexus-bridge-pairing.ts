@@ -7,6 +7,8 @@
 // conectaria — e aceitar sem verificar seria MITM aberto. O caminho suportado é o
 // Tailscale Serve (`https://<máquina>.<tailnet>.ts.net`, certificado público).
 
+import { nexusVisualHarnessAllowsHost } from './nexus-bridge-visual-harness'
+
 export type NexusBridgePairingTarget = {
   readonly kind: 'nexus-bridge'
   /** wss://host[:porta] — o mesmo origin da página, como o PWA faz. */
@@ -60,7 +62,8 @@ export function parseNexusBridgePairingUrl(input: string): NexusBridgePairingPar
     return { kind: 'error', message: NEXUS_EXPIRED_CODE_MESSAGE }
   }
   const host = url.hostname.toLowerCase()
-  if (isLoopbackOrIpLiteral(host)) {
+  // F-1035: a exceção do harness visual só existe no alvo web com flag de build.
+  if (isLoopbackOrIpLiteral(host) && !nexusVisualHarnessAllowsHost(host)) {
     return { kind: 'error', message: NEXUS_SELF_SIGNED_MESSAGE }
   }
   return {
