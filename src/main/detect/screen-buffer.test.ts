@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 
 import { GhosttyRuntime } from './ghostty-runtime';
 import {
+  clampClusterExtenders,
   createDetectorScreenSource,
+  GHOSTTY_MAX_CLUSTER_EXTENDERS,
   GhosttyScreenBuffer,
   SessionScreenBuffer,
   type GhosttyFallbackReason,
@@ -198,6 +200,121 @@ describe('GhosttyScreenBuffer (libghostty-vt grid, DSK-03)', () => {
     buffer.append('c', 'new session');
     expect(buffer.hasGrid('c')).toBe(false);
     expect(reasons).toEqual([['runtime-trap', 'RuntimeError']]);
+  });
+});
+
+describe('GhosttyScreenBuffer — wasm memory budget after attach (revisão DSK-03)', () => {
+  const MiB = 2 ** 20;
+  /** One grapheme cluster that never ends, in the 16K-char pieces the core feeds. */
+  const markFlood = '\u0301'.repeat(16_384);
+  const flood = (buffer: GhosttyScreenBuffer, id: string) => {
+    for (let chunk = 0; chunk < 64 && buffer.hasGrid(id); chunk += 1) buffer.append(id, markFlood);
+  };
+
+  it('a resize past the cell ceiling leaves the grid, and a fitting one brings it back', () => {
+    const runtime = freshRuntime();
+    const reasons: Array<[GhosttyFallbackReason, string]> = [];
+    const buffer = new GhosttyScreenBuffer(runtime, { onFallback: (reason, detail) => reasons.push([reason, detail]) });
+    buffer.append('s', 'grid');
+    buffer.resize('s', 500, 200);
+    expect(buffer.hasGrid('s')).toBe(true);
+    const attached = runtime.memory.buffer.byteLength;
+    // 1000×500 grew a grid by +8.5 MiB; 32 of them reached 418 MiB past the 256 MiB ceiling.
+    buffer.resize('s', 1000, 500);
+    expect(buffer.hasGrid('s')).toBe(false);
+    expect(runtime.liveTerminals).toBe(0);
+    expect(runtime.memory.buffer.byteLength).toBe(attached);
+    expect(reasons).toEqual([['grid-too-large', 'cells=500000']]);
+    buffer.append('s', 'text meanwhile');
+    expect(buffer.text('s')).toBe('text meanwhile');
+    buffer.resize('s', 200, 60);
+    buffer.append('s', '\x1b[2J\x1b[Hrepainted');
+    expect(buffer.hasGrid('s')).toBe(true);
+    expect(buffer.text('s')).toBe('repainted');
+  });
+
+  it('a session whose output keeps growing wasm memory leaves the grid; its neighbour stays', () => {
+    const runtime = freshRuntime();
+    const reasons: Array<[GhosttyFallbackReason, string]> = [];
+    const buffer = new GhosttyScreenBuffer(runtime, {
+      maxSessionGrowthBytes: 4 * MiB,
+      // Generic budget under test: let the flood reach the wasm unclamped.
+      maxClusterExtenders: Number.POSITIVE_INFINITY,
+      onFallback: (reason, detail) => reasons.push([reason, detail]),
+    });
+    buffer.append('calm', 'neighbour');
+    buffer.append('s', 'e');
+    const attached = runtime.memory.buffer.byteLength;
+    flood(buffer, 's');
+    expect(buffer.hasGrid('s')).toBe(false);
+    expect(buffer.hasGrid('calm')).toBe(true);
+    expect(runtime.liveTerminals).toBe(1);
+    expect(reasons).toEqual([['memory-budget', expect.stringMatching(/^session-growth=\d+$/)]]);
+    expect(runtime.memory.buffer.byteLength - attached).toBeLessThan(32 * MiB);
+    expect(buffer.text('calm')).toBe('neighbour');
+  }, 60_000);
+
+  it('the global ceiling is enforced after attach, not only before it', () => {
+    const runtime = freshRuntime();
+    const reasons: Array<[GhosttyFallbackReason, string]> = [];
+    // The reviewer's setup: a ceiling just above what one attached grid costs.
+    const buffer = new GhosttyScreenBuffer(runtime, {
+      maxMemoryBytes: 8 * MiB,
+      maxSessionGrowthBytes: Number.POSITIVE_INFINITY,
+      maxClusterExtenders: Number.POSITIVE_INFINITY,
+      onFallback: (reason, detail) => reasons.push([reason, detail]),
+    });
+    buffer.append('s', 'e');
+    expect(runtime.memory.buffer.byteLength).toBeLessThan(8 * MiB);
+    flood(buffer, 's');
+    expect(buffer.hasGrid('s')).toBe(false);
+    expect(runtime.liveTerminals).toBe(0);
+    expect(reasons).toEqual([['memory-budget', expect.stringMatching(/^bytes=\d+$/)]]);
+    // Past the ceiling no new grid starts either.
+    buffer.append('late', 'text');
+    expect(buffer.hasGrid('late')).toBe(false);
+  }, 60_000);
+});
+
+describe('grapheme cluster clamp (revisão DSK-03)', () => {
+  const ACUTE = '\u0301';
+  const ZWJ = '\u200D';
+  const family = `👨${ZWJ}👩${ZWJ}👧${ZWJ}👦`;
+
+  it('leaves real text untouched: accents, emoji ZWJ families, plain ASCII', () => {
+    for (const text of [`cafe${ACUTE} pronto`, `${family} ok`, 'plain \x1b[1mbold\x1b[0m']) {
+      expect(clampClusterExtenders(text, 0)).toEqual({ text, trailing: 0 });
+    }
+    expect(clampClusterExtenders(`e${ACUTE}`, 0)).toEqual({ text: `e${ACUTE}`, trailing: 1 });
+  });
+
+  it('caps a mark run, counting what the previous chunk left open', () => {
+    const cap = GHOSTTY_MAX_CLUSTER_EXTENDERS;
+    expect(clampClusterExtenders(`e${ACUTE.repeat(cap + 50)}x`, 0).text).toBe(`e${ACUTE.repeat(cap)}x`);
+    const first = clampClusterExtenders(`e${ACUTE.repeat(cap - 2)}`, 0);
+    expect(first.trailing).toBe(cap - 2);
+    const second = clampClusterExtenders(`${ACUTE.repeat(10)} next${ACUTE}`, first.trailing);
+    expect(second.text).toBe(`${ACUTE.repeat(2)} next${ACUTE}`);
+    expect(second.trailing).toBe(1);
+    expect(clampClusterExtenders(ACUTE.repeat(5), cap)).toEqual({ text: '', trailing: cap });
+    expect(clampClusterExtenders(`${ZWJ}👩`.repeat(100), 0).text).toBe(`${ZWJ}👩`.repeat(cap / 2));
+  });
+
+  it('a 1M-mark flood at production defaults keeps the grid, the memory and the clock flat', () => {
+    const runtime = freshRuntime();
+    const reasons: GhosttyFallbackReason[] = [];
+    const buffer = new GhosttyScreenBuffer(runtime, { onFallback: (reason) => reasons.push(reason) });
+    buffer.append('s', 'e');
+    const attached = runtime.memory.buffer.byteLength;
+    const started = performance.now();
+    // 64 × 16K marks: unclamped, this grew ~256 MiB and took ~57 s in the wasm.
+    for (let chunk = 0; chunk < 64; chunk += 1) buffer.append('s', ACUTE.repeat(16_384));
+    buffer.append('s', ' done');
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(runtime.memory.buffer.byteLength - attached).toBeLessThan(1024 * 1024);
+    expect(buffer.hasGrid('s')).toBe(true);
+    expect(buffer.text('s')).toBe(`e${ACUTE.repeat(GHOSTTY_MAX_CLUSTER_EXTENDERS)} done`);
+    expect(reasons).toEqual([]);
   });
 });
 

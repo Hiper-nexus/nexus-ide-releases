@@ -164,15 +164,33 @@ export class SessionScreenBuffer implements ScreenSource {
   }
 }
 
-export type GhosttyFallbackReason = 'unavailable' | 'session-cap' | 'memory-budget' | 'runtime-trap';
+export type GhosttyFallbackReason =
+  | 'unavailable'
+  | 'session-cap'
+  | 'memory-budget'
+  | 'grid-too-large'
+  | 'runtime-trap';
 
 /**
  * Ghostty preheats a page pool per terminal: ~5 MiB each whatever the grid
  * size (measured), so 32 grids cost ~160 MiB of Worker memory at most.
  */
 export const GHOSTTY_MAX_TERMINALS = 32;
-/** Linear memory never shrinks; past this high-water mark no new grid starts. */
+/**
+ * Linear memory never shrinks. Past this high-water mark no new grid starts,
+ * and a write/resize that grows memory beyond it sends its session to text.
+ */
 export const GHOSTTY_MAX_MEMORY_BYTES = 256 * 1024 * 1024;
+/**
+ * Grids above this many cells stay on the text stream. Up to 500×200 fits
+ * the preheated pool (+0.1 MiB measured); 1000×500 grew a grid by +8.5 MiB.
+ */
+export const GHOSTTY_MAX_GRID_CELLS = 100_000;
+/**
+ * Linear memory one session's writes/resizes may add after its grid exists.
+ * Normal TUI output measured ≤0.1 MiB; a combining-mark flood grew 2 GiB.
+ */
+export const GHOSTTY_MAX_SESSION_GROWTH_BYTES = 16 * 1024 * 1024;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const MAX_COLS = 1_000;
@@ -185,6 +203,10 @@ export interface GhosttyScreenBufferOptions {
   onFallback?: (reason: GhosttyFallbackReason, detail: string) => void;
   maxTerminals?: number;
   maxMemoryBytes?: number;
+  maxGridCells?: number;
+  maxSessionGrowthBytes?: number;
+  /** Infinity disables the cluster clamp (tests of the generic memory budget). */
+  maxClusterExtenders?: number;
 }
 
 interface GridState {
@@ -193,6 +215,10 @@ interface GridState {
   screen: GhosttyScreen | null;
   /** A grid was refused (budget/trap): this session stays on the text stream. */
   textOnly: boolean;
+  /** Linear memory this session's grid grew after it was created. */
+  grown: number;
+  /** Cluster-extender run left open by the previous chunk (clamp carry-over). */
+  extenderRun: number;
   seq: number;
   /** Formatted grid, valid until the next write/resize. */
   rendered: string | null;
@@ -202,6 +228,49 @@ interface GridState {
 
 function clampDimension(value: number, max: number, fallback: number): number {
   return Number.isFinite(value) ? Math.max(1, Math.min(max, Math.floor(value))) : fallback;
+}
+
+/**
+ * Longest run of cluster-extending code points one grid cell receives. Real
+ * text needs a handful (accents, emoji ZWJ families); a flood of combining
+ * marks grew one cell's grapheme storage to 2 GiB and cost ~0.9 s per 16K
+ * chunk inside the wasm — past the Worker's 250 ms watchdog.
+ */
+export const GHOSTTY_MAX_CLUSTER_EXTENDERS = 32;
+/** Combining marks (incl. variation selectors), ZWJ(+pictograph), conjoining jamo. */
+const CLUSTER_EXTENDERS = /(?:\p{M}|\u200D\p{Extended_Pictographic}?|[\u1100-\u11FF\uA960-\uA97F\uD7B0-\uD7FF])+/gu;
+const CLUSTER_EXTENDER_HINT = /[\p{M}\u200D\u1100-\u11FF\uA960-\uA97F\uD7B0-\uD7FF]/u;
+
+/**
+ * Trim every extender run to the cap, counting a run carried over from the
+ * previous chunk (`carried`). Returns the text and the run left open at its end.
+ */
+export function clampClusterExtenders(
+  text: string,
+  carried: number,
+  max = GHOSTTY_MAX_CLUSTER_EXTENDERS,
+): { text: string; trailing: number } {
+  if (!Number.isFinite(max) || (carried === 0 && !CLUSTER_EXTENDER_HINT.test(text))) return { text, trailing: 0 };
+  let trailing = 0;
+  const clamped = text.replace(CLUSTER_EXTENDERS, (run: string, offset: number) => {
+    const before = offset === 0 ? carried : 0;
+    const allowed = Math.max(0, max - before);
+    let kept = '';
+    let count = 0;
+    for (const codePoint of run) {
+      if (count === allowed) {
+        count += 1;
+        break;
+      }
+      kept += codePoint;
+      count += 1;
+    }
+    if (offset + run.length === text.length) {
+      trailing = Math.min(max, before + count);
+    }
+    return kept;
+  });
+  return { text: clamped, trailing };
 }
 
 function failureDetail(error: unknown): string {
@@ -233,15 +302,19 @@ export class GhosttyScreenBuffer implements ScreenSource {
     const state = this.#state(sessionId);
     if (!state.screen && !state.textOnly) this.#attach(sessionId, state);
     if (state.screen) {
+      const memoryBefore = this.runtime.memory.buffer.byteLength;
       try {
-        state.screen.write(rawData);
+        const clamped = clampClusterExtenders(rawData, state.extenderRun, this.options.maxClusterExtenders);
+        state.extenderRun = clamped.trailing;
+        state.screen.write(clamped.text);
         state.rendered = null;
-        // Formatting is deferred to contentSeq(); any write may have moved
-        // the screen, so report a value the last scan cannot have seen.
-        return state.seq + 1;
       } catch (error) {
         this.#trap(error);
       }
+      // Formatting is deferred to contentSeq(); any write may have moved the
+      // screen, so report a value the last scan cannot have seen. A grid
+      // evicted by this very write hands the chunk to the text stream below.
+      if (state.screen && !this.#grewPastBudget(state, memoryBefore)) return state.seq + 1;
     }
     const before = this.#fallback.contentSeq(sessionId);
     if (this.#fallback.append(sessionId, rawData) !== before) state.seq += 1;
@@ -285,12 +358,20 @@ export class GhosttyScreenBuffer implements ScreenSource {
     state.cols = nextCols;
     state.rows = nextRows;
     if (!state.screen) return;
+    if (nextCols * nextRows > this.#maxGridCells()) {
+      // Not permanent: a later resize that fits brings a fresh grid back.
+      this.#evict(state, 'grid-too-large', `cells=${nextCols * nextRows}`, false);
+      return;
+    }
+    const memoryBefore = this.runtime.memory.buffer.byteLength;
     try {
       state.screen.resize(nextCols, nextRows);
       state.rendered = null;
     } catch (error) {
       this.#trap(error);
+      return;
     }
+    this.#grewPastBudget(state, memoryBefore);
   }
 
   drop(sessionId: string): void {
@@ -314,6 +395,8 @@ export class GhosttyScreenBuffer implements ScreenSource {
         rows: DEFAULT_ROWS,
         screen: null,
         textOnly: false,
+        grown: 0,
+        extenderRun: 0,
         seq: 0,
         rendered: null,
         seqText: '',
@@ -337,9 +420,14 @@ export class GhosttyScreenBuffer implements ScreenSource {
       return;
     }
     const memoryBytes = this.runtime.memory.buffer.byteLength;
-    if (memoryBytes >= (this.options.maxMemoryBytes ?? GHOSTTY_MAX_MEMORY_BYTES)) {
+    if (memoryBytes >= this.#maxMemoryBytes()) {
       state.textOnly = true;
       this.#report('memory-budget', `bytes=${memoryBytes}`);
+      return;
+    }
+    if (state.cols * state.rows > this.#maxGridCells()) {
+      // Retried on later chunks: a resize that fits brings the grid back.
+      this.#report('grid-too-large', `cells=${state.cols * state.rows}`);
       return;
     }
     try {
@@ -352,9 +440,55 @@ export class GhosttyScreenBuffer implements ScreenSource {
     // A session that became eligible late starts a fresh grid; the TUI's next
     // repaint fills it. The text it streamed so far is no longer the screen.
     this.#fallback.drop(sessionId);
+    state.grown = 0;
+    state.extenderRun = 0;
     state.seq += 1;
     state.seqText = '';
     state.rendered = null;
+  }
+
+  #maxMemoryBytes(): number {
+    return this.options.maxMemoryBytes ?? GHOSTTY_MAX_MEMORY_BYTES;
+  }
+
+  #maxGridCells(): number {
+    return this.options.maxGridCells ?? GHOSTTY_MAX_GRID_CELLS;
+  }
+
+  /**
+   * The ceiling checked before a grid starts is not enough: resizes and
+   * output (styles, hyperlinks, grapheme clusters) grow a live grid too.
+   * After every write/resize, growth of the real linear memory is charged to
+   * that session; past its share or past the global ceiling, it goes to text.
+   */
+  #grewPastBudget(state: GridState, memoryBefore: number): boolean {
+    const memoryAfter = this.runtime.memory.buffer.byteLength;
+    if (memoryAfter <= memoryBefore) return false;
+    state.grown += memoryAfter - memoryBefore;
+    if (memoryAfter >= this.#maxMemoryBytes()) {
+      this.#evict(state, 'memory-budget', `bytes=${memoryAfter}`, true);
+      return true;
+    }
+    if (state.grown > (this.options.maxSessionGrowthBytes ?? GHOSTTY_MAX_SESSION_GROWTH_BYTES)) {
+      this.#evict(state, 'memory-budget', `session-growth=${state.grown}`, true);
+      return true;
+    }
+    return false;
+  }
+
+  /** Session leaves the grid; its pages return to the allocator for reuse. */
+  #evict(state: GridState, reason: GhosttyFallbackReason, detail: string, permanent: boolean): void {
+    const screen = state.screen;
+    state.screen = null;
+    state.rendered = null;
+    state.seq += 1;
+    if (permanent) state.textOnly = true;
+    try {
+      screen?.dispose();
+    } catch (error) {
+      this.#trap(error);
+    }
+    this.#report(reason, detail);
   }
 
   #render(state: GridState): string | null {
