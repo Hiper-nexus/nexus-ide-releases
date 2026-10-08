@@ -37,12 +37,32 @@ fora da lista de rotina pedem confirmação no desktop); fechar pane; aprovaçõ
 card estruturado (push `approvals.changed` + `agentSession.respondToApproval` — decisão para
 o broker, nunca tecla no PTY).
 
+**Também no host Nexus (F-1015):**
+- **Fila offline:** sem conexão (desconectado/reconectando), o comando vai para a fila durável
+  do aparelho (o mesmo outbox do chat nativo, um escopo por host+pane), aparece como "na fila",
+  "enviando…" ou "enviado" e sai em ordem depois da reautenticação — também dos panes que não
+  estão abertos. Cada item guarda um `messageId` fixo: o reenvio depois de um ack perdido leva o
+  mesmo id e o dedup do desktop não digita duas vezes (janela de 10 min no desktop). Revogação
+  (`auth-failed`) **retém** a fila, visivelmente, mesmo depois de parear de novo, até o operador
+  tocar em Retomar ou Descartar. Recusa do desktop tira o comando da fila, mostra "falhou" e para
+  os seguintes daquele pane. Tecla crua nunca entra na fila.
+- **Notificação local de aprovação:** com o consentimento do app ligado e a permissão do sistema
+  concedida (o app não pede permissão daqui), um pedido novo vindo do push `approvals.changed`
+  notifica quando o app está em segundo plano ou um pane está aberto — uma vez por pedido, também
+  depois de reconectar ou reiniciar. O toque abre o host e foca a aprovação (ou o pane, se ela já
+  foi respondida). A bridge não empurra "pane terminou", então só aprovação notifica; e o sistema
+  pode suspender o app em segundo plano, quando o socket cai e nada chega.
+- **Ditado:** o campo de comando tem microfone; o texto ditado só preenche o campo, nunca envia.
+  O ditado do app é transcrito pelo desktop (`speech.dictation.*`), que a bridge Nexus ainda não
+  tem: no host Nexus o botão aparece como indisponível e abre o teclado, cujo microfone (ditado
+  do sistema, no aparelho) funciona.
+
 **Não disponível em host Nexus** (a tela avisa e o adaptador responde
 `nexus_host_unsupported` com "… não disponível em host Nexus"): teclas cruas (Ctrl-C, Esc,
 "1"…) — o desktop recusa entrada parcial e caracteres de controle de propósito
 (`authorizeRemotePaneInput`, no Main, vale para qualquer cliente; o aviso no app é só UX e
 evita a ida à bridge); arquivos, Git, worktrees, abas de sessão,
-contas, voz/ditado, screencast do navegador, Linear/GitHub/GitLab, notificações push e o chat
+contas, ditado pelo app, screencast do navegador, Linear/GitHub/GitLab, push remoto e o chat
 nativo estruturado. O relay do companion (`/r/<roomId>`) ainda não é usado pelo app.
 
 Código: `src/transport/nexus-bridge-{client,device-key,device-store,pairing,pair-host,rpc-adapter}.ts`
