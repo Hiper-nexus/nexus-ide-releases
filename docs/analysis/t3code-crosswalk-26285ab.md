@@ -10,9 +10,9 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 
 | Classificação | Nº | IDs |
 |---|---|---|
-| Integrado e acessível | 31 | WEB-01..12; MOB-01 (parcial), MOB-02, MOB-03, MOB-07, MOB-09, MOB-11, MOB-13; ORC-03, ORC-05, ORC-10; DSK-01..06; QLT-01, QLT-05, QLT-11 (parcial) |
+| Integrado e acessível | 32 | WEB-01..12, WEB-17; MOB-01 (parcial), MOB-02, MOB-03, MOB-07, MOB-09, MOB-11, MOB-13; ORC-03, ORC-05, ORC-10; DSK-01..06; QLT-01, QLT-05, QLT-11 (parcial) |
 | Equivalente existente | 1 | MOB-06 |
-| Pendente | 31 | WEB-13..18; MOB-04, MOB-05, MOB-08, MOB-10, MOB-12, MOB-14; ORC-01, ORC-02, ORC-04, ORC-06, ORC-07, ORC-08; DSK-07..11; QLT-02, QLT-03, QLT-04, QLT-06..10 |
+| Pendente | 30 | WEB-13..16, WEB-18; MOB-04, MOB-05, MOB-08, MOB-10, MOB-12, MOB-14; ORC-01, ORC-02, ORC-04, ORC-06, ORC-07, ORC-08; DSK-07..11; QLT-02, QLT-03, QLT-04, QLT-06..10 |
 | Incompatível | 1 | ORC-09 |
 
 ## Tabela
@@ -35,7 +35,7 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 | WEB-14 | Markdown incremental e Mermaid | pendente (M) | markdown básico existe; sem incremental/Mermaid no desktop | renderer de mensagem |
 | WEB-15 | Referências inline e @menções | pendente (M) | sem referência inline | `lib/inline-references.ts` + composer |
 | WEB-16 | Editor Tiptap | pendente (G) | `tiptap` ausente | decisão de dependência antes |
-| WEB-17 | Citar resposta com origem estável | pendente (M) | sem citação | `lib/quote-reference.ts` + chat |
+| WEB-17 | Citar resposta com origem estável | integrado (F-1031) | `lib/quote-reference.ts`; "Citar" em `mission/AgentActivityTimeline.tsx` → `DirectionComposer` da barra do `MissionBoard.tsx` (código do Nexus, sem cópia do upstream) | Lista simples e aba Conversa sem citação |
 | WEB-18 | Importação guiada de histórico de CLI | pendente (G) | sem importador | módulo + UI |
 | MOB-01 | Virtualização Legend | integrado (parcial) | `MobileLegendList.tsx` nas listas do caminho Orca; o host Nexus ainda usa `FlatList` (`NexusPaneWorkspace.tsx`) | LegendList nas listas do host Nexus |
 | MOB-02 | Diff por chunks com realce | integrado | `source-control/mobile-review-*`; no host Nexus por `NexusPaneWorkspace.tsx` com os dados de `git.diff` da bridge (F-1014) | — |

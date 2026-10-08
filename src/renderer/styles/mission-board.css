@@ -2052,6 +2052,62 @@
   cursor: pointer;
 }
 
+/* WEB-17: "Citar" é irmão do card (nunca botão dentro de role=button). Quieto
+   em repouso; ganha texto ao passar sobre o item ou ao receber foco. */
+.agent-timeline__item--quotable {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1-5);
+}
+
+.agent-timeline__item--quotable > .agent-timeline__card {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.agent-timeline__quote {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  margin-top: 4px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 120ms var(--ease-out-quart), background-color 120ms var(--ease-out-quart),
+    border-color 120ms var(--ease-out-quart);
+}
+
+.agent-timeline__item:hover .agent-timeline__quote {
+  color: var(--text-dim);
+}
+
+.agent-timeline__quote:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.agent-timeline__quote:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-timeline__quote {
+    transition: none;
+  }
+}
+
 .agent-timeline__card.is-clickable:hover {
   background: var(--surface-2, #16151a);
   border-color: var(--border-strong);
@@ -2526,6 +2582,32 @@
   padding: 0 8px;
   color: var(--danger);
   font-size: 12px;
+}
+
+/* WEB-17: citação no rascunho. O campo cresce com o texto até o teto e a
+   barra troca a pílula por um cartão — várias linhas numa pílula cortam. */
+.mission-board__direction-quote {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.mission-board__direct-bar .mission-board__direction-quote {
+  margin: 2px 0 0;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.mission-board__direct-bar .mission-board__direction-draft {
+  field-sizing: content;
+}
+
+.mission-board__direct-bar .mission-board__direction-composer[data-multiline] {
+  align-items: end;
+  border-radius: var(--radius-xl);
 }
 
 /* 0.32.26: fechar o painel de detalhes e deixar só o time visível.

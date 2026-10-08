@@ -65,6 +65,12 @@ import { rebindLiveMaestroOfMission } from '../../terminal/terminal-host';
 import { MissionGraph } from './MissionGraph';
 import { DirectionComposer } from './DirectionComposer';
 import { MissionInspector, type MissionJournalHistory } from './MissionInspector';
+import type { TimelineItemModel } from './AgentActivityTimeline';
+import {
+  formatQuote,
+  type QuoteDraft,
+  type QuoteOrigin,
+} from '../../lib/quote-reference';
 import {
   mergeRecentJournalWindow,
   prependOlderJournalPage,
@@ -879,6 +885,37 @@ export function MissionBoard({
     [missionId],
   );
 
+  // WEB-17: "Citar" na timeline leva trecho + origem estável do evento ao
+  // composer da barra. A origem sai do journal (evento, run, pane), nunca da
+  // posição do item na lista.
+  const [pendingQuote, setPendingQuote] = useState<QuoteDraft | null>(null);
+  const quoteNonceRef = useRef(0);
+  const quoteActivity = useCallback((item: TimelineItemModel) => {
+    const current = snapshotRef.current;
+    if (!current || current.id !== missionIdRef.current) return;
+    const agent = item.paneId
+      ? current.agents.find((candidate) => candidate.paneId === item.paneId)
+      : undefined;
+    const origin: QuoteOrigin = {
+      missionId: current.id,
+      eventId: item.id,
+      sequence: item.sequence,
+      ...(item.runId ? { runId: item.runId } : {}),
+      ...(item.paneId ? { paneId: item.paneId } : {}),
+      ...(agent ? { agentName: agent.agentName } : {}),
+    };
+    const excerpt = [item.subtitle, item.detail].filter(Boolean).join('\n');
+    quoteNonceRef.current += 1;
+    setPendingQuote({
+      origin,
+      text: formatQuote(origin, item.title, excerpt || item.title),
+      nonce: quoteNonceRef.current,
+    });
+  }, []);
+  const consumeQuote = useCallback((nonce: number) => {
+    setPendingQuote((current) => (current?.nonce === nonce ? null : current));
+  }, []);
+
   const runHeaderAction = (
     action: HeaderAction,
     invoker: HTMLButtonElement,
@@ -1505,6 +1542,11 @@ export function MissionBoard({
                 question={question}
                 onOpenTerminals={openMountedMissionTerminals}
                 journal={journal}
+                onQuoteActivity={
+                  currentSnapshot.allowedActions.includes('direct')
+                    ? quoteActivity
+                    : undefined
+                }
               />
             </div>
           </>
@@ -1520,6 +1562,12 @@ export function MissionBoard({
             // incluso) — desabilitar só em completed gerava erro de comando.
             disabled={!currentSnapshot.allowedActions.includes('direct')}
             onCommand={executeCommand}
+            quote={
+              pendingQuote?.origin.missionId === currentSnapshot.id
+                ? pendingQuote
+                : null
+            }
+            onQuoteConsumed={consumeQuote}
           />
         </div>
       )}

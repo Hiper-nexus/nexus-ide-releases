@@ -8,6 +8,7 @@ import type {
   MissionSnapshot,
 } from '../../../shared/mission-engine-contract';
 import { DirectionComposer } from './DirectionComposer';
+import type { QuoteDraft } from '../../lib/quote-reference';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -429,5 +430,110 @@ describe('DirectionComposer', () => {
     }
 
     expect(onCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe('DirectionComposer — citação da atividade (WEB-17)', () => {
+  const QUOTE: QuoteDraft = {
+    origin: {
+      missionId: MISSION_ID,
+      eventId: 'evt-3',
+      sequence: 3,
+      paneId: 'pane-7',
+      agentName: 'Implementar interface',
+    },
+    text: '> Implementar interface · evento #3 · Shell\n> 18 tests passed\n[origem: missao=mission-direction-boundaries evento=evt-3 seq=3 pane=pane-7]',
+    nonce: 1,
+  };
+
+  function mountWithQuote(
+    onCommand: (command: MissionEngineCommand) => Promise<MissionSnapshot>,
+    quote: QuoteDraft | null,
+    onQuoteConsumed = vi.fn(),
+  ) {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    mountedRoots.add(root);
+    const renderWith = (next: QuoteDraft | null) =>
+      act(() => {
+        root.render(
+          <DirectionComposer
+            missionId={MISSION_ID}
+            agents={AGENTS}
+            onCommand={onCommand}
+            quote={next}
+            onQuoteConsumed={onQuoteConsumed}
+          />,
+        );
+      });
+    renderWith(quote);
+    return { host, renderWith, onQuoteConsumed };
+  }
+
+  it('entra no rascunho uma vez, com foco no fim e aviso da origem', () => {
+    const { host, renderWith, onQuoteConsumed } = mountWithQuote(vi.fn(), QUOTE);
+    const { draft } = composerControls(host);
+
+    expect(draft.value).toBe(`${QUOTE.text}\n\n`);
+    expect(document.activeElement).toBe(draft);
+    expect(draft.selectionStart).toBe(draft.value.length);
+    expect(onQuoteConsumed).toHaveBeenCalledWith(1);
+    const notice = host.querySelector('[role="status"]')!;
+    expect(notice.textContent).toContain('Citação de Implementar interface (evento #3) adicionada');
+    expect(draft.getAttribute('aria-describedby')).toContain(notice.id);
+    expect(host.querySelector('form')?.hasAttribute('data-multiline')).toBe(true);
+
+    // Re-render com a mesma citação (o pai ainda não limpou) não duplica.
+    renderWith(QUOTE);
+    expect(draft.value).toBe(`${QUOTE.text}\n\n`);
+  });
+
+  it('preserva o que já foi escrito e envia o texto com a marca de origem', async () => {
+    const onCommand = vi.fn(async () => RETURNED_SNAPSHOT);
+    const { host, renderWith } = mountWithQuote(onCommand, null);
+    const { draft, submit } = composerControls(host);
+    setDraft(draft, 'Corrija o teste abaixo');
+
+    renderWith(QUOTE);
+    expect(draft.value).toBe(`Corrija o teste abaixo\n\n${QUOTE.text}\n\n`);
+
+    await act(async () => {
+      submit.click();
+    });
+    expect(onCommand).toHaveBeenCalledWith({
+      kind: 'direct',
+      missionId: MISSION_ID,
+      targetAgentId: null,
+      text: `Corrija o teste abaixo\n\n${QUOTE.text}`,
+    });
+    expect(draft.value).toBe('');
+    expect(host.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it('citação de outra missão não entra', () => {
+    const other: QuoteDraft = { ...QUOTE, origin: { ...QUOTE.origin, missionId: 'outra' } };
+    const { host, onQuoteConsumed } = mountWithQuote(vi.fn(), other);
+    expect(composerControls(host).draft.value).toBe('');
+    expect(onQuoteConsumed).not.toHaveBeenCalled();
+  });
+
+  it('durante um envio a citação espera; entra quando o envio termina', async () => {
+    const delivery = deferred<MissionSnapshot>();
+    const onCommand = vi.fn(() => delivery.promise);
+    const { host, renderWith, onQuoteConsumed } = mountWithQuote(onCommand, null);
+    const { draft, submit } = composerControls(host);
+    setDraft(draft, 'primeira');
+    act(() => submit.click());
+
+    renderWith(QUOTE);
+    expect(onQuoteConsumed).not.toHaveBeenCalled();
+
+    await act(async () => {
+      delivery.resolve(RETURNED_SNAPSHOT);
+      await delivery.promise;
+    });
+    expect(onQuoteConsumed).toHaveBeenCalledWith(1);
+    expect(draft.value).toBe(`${QUOTE.text}\n\n`);
   });
 });
