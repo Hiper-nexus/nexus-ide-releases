@@ -54,6 +54,8 @@ const parentPort = (process as unknown as { parentPort: ParentPortLike })
 
 interface HostPtyEntry {
   readonly proc: nodePty.IPty;
+  /** QLT-11: metade da identidade do root (PID + início) no footprint. */
+  readonly spawnedAtMs: number;
   readonly outputCredits: PtyOutputCredits;
   readonly exited: Promise<void>;
   readonly resolveExited: () => void;
@@ -71,11 +73,12 @@ interface HostPtyEntry {
 const procs = new Map<string, HostPtyEntry>();
 const commandProcesses = new OwnedCommandProcesses((sessionId) => { const entry = procs.get(sessionId); return entry ? { pid: entry.proc.pid, identity: entry } : null; }, undefined, process.platform === 'darwin' ? (pid) => watchDarwinHeavyCommand(currentDarwinPtySupervisorRuntime(__dirname), pid) : undefined);
 
-/** F-572: uma leitura de `ps`, atribuída por root de sessão. */
+/** F-572: uma leitura de `ps`, atribuída por root de sessão (PID + início). */
 function captureFootprints(): Promise<SessionFootprint[]> {
   const roots = [...procs.entries()].map(([sessionId, entry]) => ({
     sessionId,
     rootPid: entry.proc.pid,
+    spawnedAtMs: entry.spawnedAtMs,
   }));
   if (roots.length === 0 || process.platform === 'win32') {
     return Promise.resolve([]);
@@ -83,7 +86,7 @@ function captureFootprints(): Promise<SessionFootprint[]> {
   return new Promise((resolve) => {
     execFile(
       'ps',
-      ['-axo', 'pid=,ppid=,rss='],
+      ['-axo', 'pid=,ppid=,rss=,lstart='],
       {
         encoding: 'utf8',
         maxBuffer: 8 * 1024 * 1024,
@@ -187,6 +190,8 @@ function handleSpawn(spec: Extract<HostControlMsg, { type: 'spawn' }>): void {
   ) => void;
   const entry: HostPtyEntry = {
     proc,
+    // Logo após o fork (nodePty.spawn já retornou): o `lstart` do root cai aqui.
+    spawnedAtMs: Date.now(),
     outputCredits: new PtyOutputCredits({
       send: (data) => post({ type: 'data', sessionId: spec.sessionId, data }),
       pause: () => { try { proc.pause(); } catch {} },

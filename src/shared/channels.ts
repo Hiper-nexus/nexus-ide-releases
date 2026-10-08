@@ -78,9 +78,12 @@ export const DESIGN_WRITEBACK_CHANNELS = {
 
 export const PERF_CHANNELS = {
   snapshot: 'perf:snapshot',
-  /** event: main → todos os renderers. Push periódico (30s) do footprint por
+  /** event: main → renderers assinantes. Push periódico (30s) do footprint por
    * pane (F-572) — o badge de custo no PaneToolbar não faz poll. */
   paneFootprints: 'perf:paneFootprints',
+  /** send: renderer → main, `true` assina e `false` desassina o push acima
+   * (QLT-11). Sem assinante o main não roda `ps`. */
+  paneFootprintsWatch: 'perf:paneFootprints:watch',
 } as const;
 
 /** Terminal CommandBlock contextual actions (re-run / copy / handoff / …). */

@@ -1440,7 +1440,18 @@ const api: NexusApi = {
   },
   perf: {
     snapshot: () => ipcRenderer.invoke(PERF_CHANNELS.snapshot),
-    onPaneFootprints: (cb) => addListener(paneFootprintsListeners, cb),
+    onPaneFootprints: (cb) => {
+      // QLT-11: o primeiro ouvinte liga a coleta no main; o último a desliga.
+      if (paneFootprintsListeners.size === 0) {
+        ipcRenderer.send(PERF_CHANNELS.paneFootprintsWatch, true);
+      }
+      paneFootprintsListeners.add(cb);
+      return () => {
+        if (paneFootprintsListeners.delete(cb) && paneFootprintsListeners.size === 0) {
+          ipcRenderer.send(PERF_CHANNELS.paneFootprintsWatch, false);
+        }
+      };
+    },
   },
   mcp: {
     invoke: (tool: string, args: Record<string, unknown> = {}) =>
