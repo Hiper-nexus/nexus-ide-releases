@@ -55,7 +55,9 @@ export async function proveMainOwnedCommandForSmoke(input: {
     if (input.signal.aborted || result.exitCode !== 0 || result.timedOut || result.aborted ||
       result.outputTruncated || result.stdout.trim() !== nonce || profileBytes > 65536) {
       throw new Error(`owned-smoke-command-failed: exit=${String(result.exitCode)} timedOut=${result.timedOut} ` +
-        `aborted=${result.aborted} truncated=${Boolean(result.outputTruncated)} nonce=${result.stdout.trim() === nonce}`);
+        `aborted=${result.aborted} truncated=${Boolean(result.outputTruncated)} nonce=${result.stdout.trim() === nonce} ` +
+        // F-1010: o motivo do supervisor (ex.: exit 76 = identidade/autorização) vem no stderr.
+        `stderr=${JSON.stringify(result.stderr.trim().replace(/\s+/g, ' ').slice(-400))}`);
     }
     return { status: 'passed', densePathFiles: 768, profileBytes, exitCode: 0, physicalExitProven: true };
   } finally {
