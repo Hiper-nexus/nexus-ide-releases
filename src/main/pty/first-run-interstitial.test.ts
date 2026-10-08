@@ -306,13 +306,11 @@ describe('never auto-answers anything outside the closed list', () => {
     ['ordinary agent output', 'claude', 'Reading src/main/main.ts (412 lines)'],
   ];
 
-  for (const [label, adapterId, screen] of SAMPLES) {
-    it(`does not answer: ${label}`, () => {
-      expect(
-        decideFirstRunInterstitial(screen, context({ adapterId })),
-      ).toBeNull();
-    });
-  }
+  it.each(SAMPLES)('does not answer: %s', (_label, adapterId, screen) => {
+    expect(
+      decideFirstRunInterstitial(screen, context({ adapterId })),
+    ).toBeNull();
+  });
 });
 
 describe('dismiss-only first-run screens', () => {

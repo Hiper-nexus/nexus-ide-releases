@@ -8,6 +8,7 @@ import {
   type DesignActionSession,
 } from "./design-actions";
 import { findSiblingPosition } from "./design-code-edit";
+import { KeyedLock } from "../util/keyed-lock";
 import {
   createDesignInstrumentation,
   type DesignInstrumentation,
@@ -80,7 +81,8 @@ interface ActiveWriteback {
 const DEFAULT_SESSION_KEY = "default";
 const activeBySession = new Map<string, ActiveWriteback>();
 /** Serialize lifecycle/actions per project-owner session. */
-const lifecycleTails = new Map<string, Promise<void>>();
+// Era um Map de caudas que nunca apagava a chave: uma promessa por sessão para sempre.
+const lifecycleLock = new KeyedLock();
 
 const WATCH_DEBOUNCE_MS = 150;
 
@@ -99,16 +101,7 @@ function serializeLifecycle<T>(
   sessionKey: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const tail = lifecycleTails.get(sessionKey) ?? Promise.resolve();
-  const result = tail.then(operation, operation);
-  lifecycleTails.set(
-    sessionKey,
-    result.then(
-      () => undefined,
-      () => undefined,
-    ),
-  );
-  return result;
+  return lifecycleLock.run(sessionKey, operation);
 }
 
 function isInsideRoot(rootReal: string, candidateReal: string): boolean {

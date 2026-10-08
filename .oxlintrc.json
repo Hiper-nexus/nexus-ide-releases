@@ -12,6 +12,8 @@
   },
   "rules": {
     "nexus/require-suppression-reason": "error",
+    "nexus/no-test-in-loop": "error",
+    "nexus/no-raw-ipc": "error",
     "no-unsafe-optional-chaining": "warn",
     "no-unsafe-finally": "warn",
     "no-misleading-character-class": "warn",

@@ -134,13 +134,11 @@ describe('extractLinuxZip', () => {
     ['executável é link', good().map((entry) => (entry.name === `${ZIP_ROOT}/nexus-ide` ? { name: entry.name, data: Buffer.from('resources/app.asar'), mode: LNK | 0o777 } : entry)), /executável/u],
     ['método desconhecido', good(), /^$/u],
   ];
-  for (const [label, entries, pattern] of attacks.filter(([label]) => label !== 'método desconhecido')) {
-    it(`recusa: ${label}`, async () => {
-      const { zip, out } = archive(entries);
-      await expect(extractLinuxZip(zip, out)).rejects.toThrow(pattern);
-      expect(fs.existsSync(out)).toBe(false);
-    });
-  }
+  it.each(attacks.filter(([label]) => label !== 'método desconhecido'))('recusa: %s', async (_label, entries, pattern) => {
+    const { zip, out } = archive(entries);
+    await expect(extractLinuxZip(zip, out)).rejects.toThrow(pattern);
+    expect(fs.existsSync(out)).toBe(false);
+  });
 
   it('recusa executável que não é ELF x86-64 e limpa o que extraiu', async () => {
     const { zip, out } = archive(good().map((entry) => (entry.name === `${ZIP_ROOT}/nexus-ide` ? { ...entry, data: Buffer.from('#!/bin/sh\necho oi\n'.padEnd(64, ' ')) } : entry)));

@@ -30,8 +30,8 @@ function streamMessage(res: http.ServerResponse, model: string, content: { type:
  event('message_stop', { type: 'message_stop' }); res.end();
 }
 
-for (const { innerSandbox, scheduling, tracedLauncher } of [{ innerSandbox: false, scheduling: true, tracedLauncher: false }, { innerSandbox: true, scheduling: false, tracedLauncher: false }, { innerSandbox: true, scheduling: true, tracedLauncher: false }, { innerSandbox: true, scheduling: true, tracedLauncher: true }]) {
-it.runIf(runNative)(`real Claude native Bash receives scoped native admission with its inner sandbox ${innerSandbox ? 'enabled' : 'disabled'} and scheduling ${scheduling}${tracedLauncher ? ' (original traced launcher denied before target)' : ''}`, async () => {
+const NATIVE_HEAVY_CASES = [{ innerSandbox: false, scheduling: true, tracedLauncher: false }, { innerSandbox: true, scheduling: false, tracedLauncher: false }, { innerSandbox: true, scheduling: true, tracedLauncher: false }, { innerSandbox: true, scheduling: true, tracedLauncher: true }].map((variant) => ({ ...variant, label: `${variant.innerSandbox ? 'enabled' : 'disabled'} and scheduling ${variant.scheduling}${variant.tracedLauncher ? ' (original traced launcher denied before target)' : ''}` }));
+it.runIf(runNative).each(NATIVE_HEAVY_CASES)('real Claude native Bash receives scoped native admission with its inner sandbox $label', async ({ innerSandbox, scheduling, tracedLauncher }) => {
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-real-claude-'));
  fs.writeFileSync(path.join(root, 'Makefile'), 'all:\n\t@printf done > command-ran\n');
  const outside = path.join(os.homedir(), `.nexus-inner-sandbox-fixture-${path.basename(root)}`); fs.writeFileSync(outside, 'protected');
@@ -95,8 +95,6 @@ it.runIf(runNative)(`real Claude native Bash receives scoped native admission wi
   await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(outside, { force: true });
  }
 }, 35_000);
-}
-
 
 it('native input transformation preserves fields and never grants permission or sends a bearer', () => {
  const resources = path.join(process.cwd(), 'resources/heavy-command');

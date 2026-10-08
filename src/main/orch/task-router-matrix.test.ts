@@ -27,10 +27,8 @@ describe('MATRIZ: task-router tiers com tarefas reais', () => {
     { text: 'implemente cobrança com cartão no checkout de produção', tier: 'critical' },
   ];
 
-  for (const caso of cases) {
-    it(`"${caso.text.slice(0, 44)}" → ${caso.tier}${caso.porQue ? ` (${caso.porQue})` : ''}`, () => {
-      const classification = classifyTask(caso.text);
-      expect(classification.tier).toBe(caso.tier);
-    });
-  }
+  it.each(cases)('"$text" → $tier', (caso) => {
+    const classification = classifyTask(caso.text);
+    expect(classification.tier).toBe(caso.tier);
+  });
 });

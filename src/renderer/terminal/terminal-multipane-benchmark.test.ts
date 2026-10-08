@@ -228,73 +228,71 @@ describe('terminal multipane benchmark (4/8/10)', () => {
     setTerminalOutputSchedulerDebug(false);
   });
 
-  for (const paneCount of [4, 8, 10] as const) {
-    it(`paneCount=${paneCount}: order, ANSI, bounded backlog, responsive FG`, () => {
-      const chunksPerPane = 40;
-      const direct = runDirectBaseline(paneCount, chunksPerPane);
-      const scheduled = runScheduled(paneCount, chunksPerPane);
-      const flood = runScheduled(paneCount, 3, { floodHidden: true });
+  it.each([4, 8, 10] as const)('paneCount=%s: order, ANSI, bounded backlog, responsive FG', (paneCount) => {
+    const chunksPerPane = 40;
+    const direct = runDirectBaseline(paneCount, chunksPerPane);
+    const scheduled = runScheduled(paneCount, chunksPerPane);
+    const flood = runScheduled(paneCount, 3, { floodHidden: true });
 
-      multipaneBenchmarkResults.push(direct, scheduled, flood);
-      // Machine-readable row for scratch reports (grep BENCH_JSON).
-      // eslint-disable-next-line no-console
-      console.log(
-        'BENCH_JSON',
-        JSON.stringify({
-          direct: {
-            paneCount: direct.paneCount,
-            orderOk: direct.orderOk,
-            ansiOk: direct.ansiOk,
-            fgInputLatencyMs: direct.fgInputLatencyMs,
-            memoryProxyBytes: direct.memoryProxyBytes,
-            durationMs: direct.durationMs,
-          },
-          scheduled: {
-            paneCount: scheduled.paneCount,
-            orderOk: scheduled.orderOk,
-            ansiOk: scheduled.ansiOk,
-            fgInputLatencyMs: scheduled.fgInputLatencyMs,
-            peakQueuedChars: scheduled.peakQueuedChars,
-            maxQueuedPerHidden: scheduled.maxQueuedPerHidden,
-            memoryProxyBytes: scheduled.memoryProxyBytes,
-            durationMs: scheduled.durationMs,
-          },
-          flood: {
-            paneCount: flood.paneCount,
-            orderOk: flood.orderOk,
-            ansiOk: flood.ansiOk,
-            fgInputLatencyMs: flood.fgInputLatencyMs,
-            peakQueuedChars: flood.peakQueuedChars,
-            maxQueuedPerHidden: flood.maxQueuedPerHidden,
-            memoryProxyBytes: flood.memoryProxyBytes,
-            durationMs: flood.durationMs,
-          },
-        }),
-      );
+    multipaneBenchmarkResults.push(direct, scheduled, flood);
+    // Machine-readable row for scratch reports (grep BENCH_JSON).
+    // eslint-disable-next-line no-console
+    console.log(
+      'BENCH_JSON',
+      JSON.stringify({
+        direct: {
+          paneCount: direct.paneCount,
+          orderOk: direct.orderOk,
+          ansiOk: direct.ansiOk,
+          fgInputLatencyMs: direct.fgInputLatencyMs,
+          memoryProxyBytes: direct.memoryProxyBytes,
+          durationMs: direct.durationMs,
+        },
+        scheduled: {
+          paneCount: scheduled.paneCount,
+          orderOk: scheduled.orderOk,
+          ansiOk: scheduled.ansiOk,
+          fgInputLatencyMs: scheduled.fgInputLatencyMs,
+          peakQueuedChars: scheduled.peakQueuedChars,
+          maxQueuedPerHidden: scheduled.maxQueuedPerHidden,
+          memoryProxyBytes: scheduled.memoryProxyBytes,
+          durationMs: scheduled.durationMs,
+        },
+        flood: {
+          paneCount: flood.paneCount,
+          orderOk: flood.orderOk,
+          ansiOk: flood.ansiOk,
+          fgInputLatencyMs: flood.fgInputLatencyMs,
+          peakQueuedChars: flood.peakQueuedChars,
+          maxQueuedPerHidden: flood.maxQueuedPerHidden,
+          memoryProxyBytes: flood.memoryProxyBytes,
+          durationMs: flood.durationMs,
+        },
+      }),
+    );
 
-      expect(direct.orderOk, 'direct order').toBe(true);
-      expect(direct.ansiOk, 'direct ansi').toBe(true);
+    expect(direct.orderOk, 'direct order').toBe(true);
+    expect(direct.ansiOk, 'direct ansi').toBe(true);
 
-      expect(scheduled.orderOk, 'scheduled order').toBe(true);
-      expect(scheduled.ansiOk, 'scheduled ansi').toBe(true);
-      // Foreground keystroke is synchronous under scheduler (0-ish ms fake clock).
-      expect(scheduled.fgInputLatencyMs).toBeLessThan(5);
+    expect(scheduled.orderOk, 'scheduled order').toBe(true);
+    expect(scheduled.ansiOk, 'scheduled ansi').toBe(true);
+    // Foreground keystroke is synchronous under scheduler (0-ish ms fake clock).
+    expect(scheduled.fgInputLatencyMs).toBeLessThan(5);
 
-      // Flooded hidden panes: backlog bounded, drop path keeps ANSI safe.
-      expect(flood.ansiOk, 'flood ansi').toBe(true);
-      expect(flood.peakQueuedChars).toBeLessThanOrEqual(
-        MAX_BACKGROUND_QUEUE_CHARS * paneCount + 1024 * 1024,
-      );
-      // Per-hidden-pane residual queue after drain must not stay unbounded.
-      expect(flood.maxQueuedPerHidden).toBeLessThanOrEqual(
-        MAX_BACKGROUND_QUEUE_CHARS,
-      );
+    // Flooded hidden panes: backlog bounded, drop path keeps ANSI safe.
+    expect(flood.ansiOk, 'flood ansi').toBe(true);
+    expect(flood.peakQueuedChars).toBeLessThanOrEqual(
+      MAX_BACKGROUND_QUEUE_CHARS * paneCount + 1024 * 1024,
+    );
+    // Per-hidden-pane residual queue after drain must not stay unbounded.
+    expect(flood.maxQueuedPerHidden).toBeLessThanOrEqual(
+      MAX_BACKGROUND_QUEUE_CHARS,
+    );
 
-      // No regression: scheduled FG latency should not exceed direct by a large margin
-      // (both are sync in unit-test sinks; compare memory proxy for hidden flood).
-      expect(flood.memoryProxyBytes).toBeLessThan(
-        MAX_BACKGROUND_QUEUE_CHARS * paneCount * 2,
-      );
-    });
-  }
+    // No regression: scheduled FG latency should not exceed direct by a large margin
+    // (both are sync in unit-test sinks; compare memory proxy for hidden flood).
+    expect(flood.memoryProxyBytes).toBeLessThan(
+      MAX_BACKGROUND_QUEUE_CHARS * paneCount * 2,
+    );
+  });
 });

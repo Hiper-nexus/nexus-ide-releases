@@ -75,8 +75,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint:main-sync
-      # Só erros: hoje o único erro é a regra nexus/require-suppression-reason
-      # (toda supressão de lint/type diz por quê). Warnings não reprovam aqui.
+      # Só erros: as regras do plugin local nexus (oxlint-plugin-nexus) —
+      # supressão sem motivo, teste registrado em laço e IPC cru fora dos
+      # wrappers confiáveis. Warnings não reprovam aqui.
       - name: Oxlint (erros, incluindo supressão sem motivo)
         run: npm run lint:oxlint -- --quiet
       - run: npm run security:renderer-sinks

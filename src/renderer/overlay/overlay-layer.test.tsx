@@ -92,14 +92,14 @@ describe('contrato de tokens H6 (DESIGN.md é a autoridade, base.css a fonte)', 
     '--overlay-scrim': 'rgba(4, 6, 10, 0.55)',
   };
 
-  for (const [token, value] of Object.entries(TOKENS)) {
-    it(`${token} é declarado em :root com ${value}`, () => {
+  describe.each(Object.entries(TOKENS))('%s = %s', (token, value) => {
+    it('é declarado em :root', () => {
       expect(base).toContain(`${token}: ${value};`);
     });
-    it(`${token} é DECLARADO em DESIGN.md (o sensor compara os dois)`, () => {
+    it('é DECLARADO em DESIGN.md (o sensor compara os dois)', () => {
       expect(design).toContain(`| \`${token}\` | \`${value}\` |`);
     });
-  }
+  });
 
   it('o valor alto aparece uma vez só, no token — nunca solto num componente', () => {
     const styleDir = path.join(REPO, 'src/renderer/styles');

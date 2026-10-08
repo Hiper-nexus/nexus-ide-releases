@@ -8,6 +8,7 @@ import { getPaneRuntimeAuthorityBySession, isPaneSpawnPending, listPaneSnapshots
 import { claimSameCheckoutWriter, hasPendingWriterClaim } from './delegated-writer-gate';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { scheduleWorktreeSalvage } from './isolated-writer-salvage';
+import { KeyedCoalescingWorker } from '../util/keyed-coalescing-worker';
 
 /**
  * Chave do registry para writers isolados da mão do operador (sem missão).
@@ -46,50 +47,28 @@ function inUseByPane(worktreePath: string): boolean {
   );
 }
 
-interface PaneWriterGc {
-  scope: ProjectExecutionScope;
-  again: boolean;
-  done: Promise<void>;
-}
-const paneWriterGcByKey = new Map<string, PaneWriterGc>();
-
 /**
  * GC seguro dos writers de pane já integrados (ver registry), da mão do
  * operador ou de uma missão (F-908: chave do próprio registro). Agendado fora
  * do caminho do spawn/fechamento (Git assíncrono, depois do turno atual) e
  * nunca dois na mesma chave do mesmo repo: pedidos durante uma coleta viram
- * uma única rodada extra ao fim dela.
+ * uma única rodada extra ao fim dela, com o escopo mais novo.
  */
+const paneWriterGc = new KeyedCoalescingWorker<string, { scope: ProjectExecutionScope; registryKey: string }>(
+  async (_key, { scope, registryKey }) => {
+    await new Promise((resolve) => setImmediate(resolve));
+    await requireWorktreeRuntimeRegistry().collectIntegratedPaneWorktrees(scope, registryKey, inUseByPane);
+  },
+  (error) => console.warn('[isolated-writer] GC de worktrees integradas adiado', error),
+);
+
 function schedulePaneWriterGc(scope: ProjectExecutionScope, registryKey: string): void {
-  const key = `${scope.rootRealPath}\0${registryKey}`;
-  const running = paneWriterGcByKey.get(key);
-  if (running) {
-    running.scope = scope;
-    running.again = true;
-    return;
-  }
-  const gc: PaneWriterGc = { scope, again: true, done: Promise.resolve() };
-  paneWriterGcByKey.set(key, gc);
-  gc.done = (async () => {
-    while (gc.again) {
-      gc.again = false;
-      await new Promise((resolve) => setImmediate(resolve));
-      try {
-        await requireWorktreeRuntimeRegistry()
-          .collectIntegratedPaneWorktrees(gc.scope, registryKey, inUseByPane);
-      } catch (error) {
-        console.warn('[isolated-writer] GC de worktrees integradas adiado', error);
-      }
-    }
-    paneWriterGcByKey.delete(key);
-  })();
+  paneWriterGc.enqueue(`${scope.rootRealPath}\0${registryKey}`, { scope, registryKey });
 }
 
 /** Testes: espera as coletas agendadas terminarem. */
-export async function operatorHandGcIdle(): Promise<void> {
-  while (paneWriterGcByKey.size > 0) {
-    await Promise.all([...paneWriterGcByKey.values()].map((gc) => gc.done));
-  }
+export function operatorHandGcIdle(): Promise<void> {
+  return paneWriterGc.drain();
 }
 
 function trackAllocation(

@@ -70,19 +70,17 @@ describe('MATRIZ: router com missões reais de operador', () => {
     { objective: 'tem como você criar isso pra mim? quero um site completo de ecommerce com carrinho e painel admin', esperado: null, porQue: 'híbrido: pergunta de cortesia embrulhando pedido de trabalho' },
   ];
 
-  for (const caso of cases) {
-    it(`"${caso.objective.slice(0, 48)}" → ${caso.esperado ?? 'missão'} (${caso.porQue})`, async () => {
-      const route = await routeIntent(caso.objective, {
-        hasKeyFor: () => false,
-        loadKeyFor: () => null,
-      });
-      if (caso.esperado === 'direct-answer') {
-        expect(route?.kind).toBe('direct-answer');
-      } else {
-        expect(route).toBeNull();
-      }
+  it.each(cases.map((caso) => ({ ...caso, rota: caso.esperado ?? 'missão' })))('"$objective" → $rota ($porQue)', async (caso) => {
+    const route = await routeIntent(caso.objective, {
+      hasKeyFor: () => false,
+      loadKeyFor: () => null,
     });
-  }
+    if (caso.esperado === 'direct-answer') {
+      expect(route?.kind).toBe('direct-answer');
+    } else {
+      expect(route).toBeNull();
+    }
+  });
 
   it('meta-de-pane: pergunta aos panes NÃO vira resposta direta (o operador pediu os panes)', async () => {
     const route = await routeIntent('pergunte aos panes quanto é 1+1', {

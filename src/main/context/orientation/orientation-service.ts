@@ -49,6 +49,7 @@ import {
   throwIfOrientationAborted,
   yieldOrientationWork,
 } from './orientation-cooperative';
+import { KeyedLock } from '../../util/keyed-lock';
 
 export type OrientationTreeWalker = (
   scope: ProjectExecutionScope,
@@ -162,7 +163,7 @@ export class ProjectOrientationService {
   readonly #memory = new Map<string, ProjectOrientationMap>();
   readonly #structuralIndexes = new Map<string, OrientationStructuralIndex>();
   readonly #inflight = new Map<string, Promise<ProjectOrientationMap>>();
-  readonly #incrementalTails = new Map<string, Promise<void>>();
+  readonly #incrementalLock = new KeyedLock();
 
   constructor(options: ProjectOrientationServiceOptions) {
     if (!options.cacheRoot.trim()) throw new Error('orientation cacheRoot is required');
@@ -300,20 +301,8 @@ export class ProjectOrientationService {
   ): Promise<ProjectOrientationMap> {
     throwIfAborted(signal);
     const key = scopeKey(scope);
-    const previous = this.#incrementalTails.get(key) ?? Promise.resolve();
-    const operation = previous.then(() =>
+    return this.#incrementalLock.run(key, () =>
       this.#refreshAfterMergeNow(scope, refresh, signal));
-    const tail = operation.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.#incrementalTails.set(key, tail);
-    void tail.then(() => {
-      if (this.#incrementalTails.get(key) === tail) {
-        this.#incrementalTails.delete(key);
-      }
-    });
-    return operation;
   }
 
   toSnapshot(map: ProjectOrientationMap): OrientationSnapshot {

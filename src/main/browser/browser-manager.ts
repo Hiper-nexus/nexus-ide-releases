@@ -161,6 +161,7 @@ import { resolveCwdForScope } from '../orch/workspace-path';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { z } from 'zod';
 import { onIpcGuarded } from '../runtime/git-ipc-guard';
+import { KeyedCoalescingWorker } from '../util/keyed-coalescing-worker';
 
 export interface BrowserEntry {
   paneId: string;
@@ -2760,31 +2761,28 @@ async function syncDesignAnnotationMarkers(
   }
 }
 
-const designMarkerSyncChains = new Map<string, Promise<void>>();
-
 /**
- * Fire-and-forget badge sync, serialized per pane so out-of-order pushes
+ * Fire-and-forget badge sync, one at a time per pane so out-of-order pushes
  * cannot leave stale badges. NEVER awaited by IPC handlers: the automation
  * round-trip can stall up to its 7s timeout on a busy/reloading page, and the
  * badge repaint is cosmetic while the main store already committed.
+ *
+ * QLT-03: o sync relê o store inteiro, então pedidos que chegam durante um
+ * sync viram UM sync extra no fim dele. A corrente antiga enfileirava um
+ * round-trip (até 7 s) por mutação.
  */
+const designMarkerSync = new KeyedCoalescingWorker<string, { paneId: string; scope: ProjectExecutionScope }>(
+  (_key, { paneId, scope }) => syncDesignAnnotationMarkers(paneId, scope),
+  () => {
+    // syncDesignAnnotationMarkers já engole as falhas (badge é cosmético).
+  },
+);
+
 function queueDesignAnnotationMarkerSync(
   paneId: string,
   scope: ProjectExecutionScope,
 ): void {
-  const key = browserKey(scope, paneId);
-  const chain = designMarkerSyncChains.get(key) ?? Promise.resolve();
-  const next = chain
-    .then(() => syncDesignAnnotationMarkers(paneId, scope))
-    .catch(() => {
-      // syncDesignAnnotationMarkers already swallows; keep the chain alive.
-    })
-    .finally(() => {
-      if (designMarkerSyncChains.get(key) === next) {
-        designMarkerSyncChains.delete(key);
-      }
-    });
-  designMarkerSyncChains.set(key, next);
+  designMarkerSync.enqueue(browserKey(scope, paneId), { paneId, scope });
 }
 
 /**

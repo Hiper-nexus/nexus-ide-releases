@@ -62,38 +62,36 @@ describe('multiAccountAddCopy — ordinal rules', () => {
   });
 });
 
-describe('multi-account copy for every builtin LLM adapter', () => {
-  for (const adapterId of ALL_MULTI_ACCOUNT_ADAPTER_IDS) {
-    it(`${adapterId}: ordinal + blurb stable with em uso`, () => {
-      const copy = multiAccountAddCopy({
-        vaultCount: 0,
-        standbyCount: 0,
-        hasEmUso: true,
-      });
-      expect(copy.title).toBe('Adicionar a 2ª conta');
-
-      const label = adapterId;
-      const session = sessionChoiceBlurb({
-        adapterLabel: label,
-        hasEmUso: true,
-        vaultCount: 0,
-      });
-      expect(session).toContain(label);
-      expect(session).toMatch(/2ª conta/);
-
-      const api = apiKeyChoiceBlurb({ hasEmUso: true, vaultCount: 0 });
-      expect(api).toMatch(/2ª conta/);
+describe.each(ALL_MULTI_ACCOUNT_ADAPTER_IDS)('multi-account copy for builtin LLM adapter %s', (adapterId) => {
+  it('ordinal + blurb stable with em uso', () => {
+    const copy = multiAccountAddCopy({
+      vaultCount: 0,
+      standbyCount: 0,
+      hasEmUso: true,
     });
+    expect(copy.title).toBe('Adicionar a 2ª conta');
 
-    it(`${adapterId}: cold start (no auth) is 1ª conta`, () => {
-      const copy = multiAccountAddCopy({
-        vaultCount: 0,
-        standbyCount: 0,
-        hasEmUso: false,
-      });
-      expect(copy.title).toBe('Adicionar a 1ª conta');
+    const label = adapterId;
+    const session = sessionChoiceBlurb({
+      adapterLabel: label,
+      hasEmUso: true,
+      vaultCount: 0,
     });
-  }
+    expect(session).toContain(label);
+    expect(session).toMatch(/2ª conta/);
+
+    const api = apiKeyChoiceBlurb({ hasEmUso: true, vaultCount: 0 });
+    expect(api).toMatch(/2ª conta/);
+  });
+
+  it('cold start (no auth) is 1ª conta', () => {
+    const copy = multiAccountAddCopy({
+      vaultCount: 0,
+      standbyCount: 0,
+      hasEmUso: false,
+    });
+    expect(copy.title).toBe('Adicionar a 1ª conta');
+  });
 });
 
 describe('supportsSessionSnapshot matrix (main vault)', () => {
@@ -116,12 +114,13 @@ describe('supportsSessionSnapshot matrix (main vault)', () => {
     devin: true,
   };
 
-  for (const adapterId of ALL_MULTI_ACCOUNT_ADAPTER_IDS) {
-    it(`${adapterId}: supportsSessionSnapshot=${expectSnapshot[adapterId]}`, () => {
-      expect(supportsSessionSnapshot(adapterId)).toBe(expectSnapshot[adapterId]);
-      if (adapterId !== 'claude' && expectSnapshot[adapterId]) {
+  it.each(ALL_MULTI_ACCOUNT_ADAPTER_IDS.map((adapterId) => [adapterId, expectSnapshot[adapterId]] as const))(
+    '%s: supportsSessionSnapshot=%s',
+    (adapterId, expected) => {
+      expect(supportsSessionSnapshot(adapterId)).toBe(expected);
+      if (adapterId !== 'claude' && expected) {
         expect(isFileAuthAdapter(adapterId)).toBe(true);
       }
-    });
-  }
+    },
+  );
 });

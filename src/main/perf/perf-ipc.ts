@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron';
+import { app } from 'electron';
 import { PERF_CHANNELS } from '../../shared/channels';
 import type { PerfSnapshot } from '../../shared/types';
 import {
@@ -10,7 +10,7 @@ import { getBrowserViewCount } from '../browser/browser-manager';
 import { warmPool } from '../pty/warm-pool';
 import { summarizeFootprints } from '../pty/pane-footprint';
 import { readPaneAdmissionLimits, sampleSystemMemory } from '../orch/pane-admission';
-import { onTrusted } from '../security/trusted-ipc';
+import { handleTrusted, onTrusted } from '../security/trusted-ipc';
 import { setPaneFootprintSubscription } from './pane-footprint-broadcast';
 // Sem import de pane-registry aqui: perf-ipc é importado pelas tools de orch e
 // esse edge fechava um ciclo ESM (squad-store/guided-squad-skills em TDZ).
@@ -97,7 +97,8 @@ export async function collectPerfSnapshotDetailed(): Promise<PerfSnapshot> {
 }
 
 export function registerPerfIpc(): void {
-  ipcMain.handle(PERF_CHANNELS.snapshot, () => collectPerfSnapshotDetailed());
+  // QLT-07: só a janela principal lê o snapshot (o MCP chama a função direto).
+  handleTrusted(PERF_CHANNELS.snapshot, () => collectPerfSnapshotDetailed());
   // QLT-11: o renderer que exibe o badge de custo liga/desliga o `ps` periódico.
   onTrusted(PERF_CHANNELS.paneFootprintsWatch, (event, active) => {
     if (typeof active === 'boolean') setPaneFootprintSubscription(event.sender, active);

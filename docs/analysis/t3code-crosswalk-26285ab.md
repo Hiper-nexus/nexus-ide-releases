@@ -10,9 +10,9 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 
 | Classificação | Nº | IDs |
 |---|---|---|
-| Integrado e acessível | 35 | WEB-01..12, WEB-13 (parcial), WEB-17; MOB-01, MOB-02, MOB-03, MOB-05, MOB-07, MOB-09, MOB-11, MOB-12, MOB-13; ORC-03, ORC-05, ORC-10; DSK-01..06; QLT-01, QLT-05, QLT-11 (parcial) |
-| Equivalente existente | 1 | MOB-06 |
-| Pendente | 27 | WEB-14..16, WEB-18; MOB-04, MOB-08, MOB-10, MOB-14; ORC-01, ORC-02, ORC-04, ORC-06, ORC-07, ORC-08; DSK-07..11; QLT-02, QLT-03, QLT-04, QLT-06..10 |
+| Integrado e acessível | 39 | WEB-01..12, WEB-13 (parcial), WEB-17; MOB-01, MOB-02, MOB-03, MOB-05, MOB-07, MOB-09, MOB-11, MOB-12, MOB-13; ORC-03, ORC-05, ORC-10; DSK-01..06; QLT-01..03, QLT-05..07, QLT-11 |
+| Equivalente existente | 4 | MOB-06; ORC-07, ORC-08, QLT-08 |
+| Pendente | 20 | WEB-14..16, WEB-18; MOB-04, MOB-08, MOB-10, MOB-14; ORC-01, ORC-02, ORC-04, ORC-06; DSK-07..11; QLT-04, QLT-09, QLT-10 |
 | Incompatível | 1 | ORC-09 |
 
 ## Tabela
@@ -57,8 +57,8 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 | ORC-04 | Recibo de comando com `resultSequence` | pendente (M) | sem `command_receipts` | com ORC-01 |
 | ORC-05 | Handoff de contexto orçado | integrado | `orch/context-handoff-budget.ts`; `failover-mission-respawn.ts:30` | — |
 | ORC-06 | Reconcile de boot do provider | pendente (M) | só `pane-start-watchdog.ts` | depende de ORC-01 |
-| ORC-07 | Política steer/fork por capacidade | pendente (P) | sem tabela de política | tabela em `src/shared/` + spawn |
-| ORC-08 | Drenar worker em teste | pendente (P) | testes usam fake timers/`waitFor` | junto de QLT-08 |
+| ORC-07 | Política steer/fork por capacidade | equivalente | não há ponto de decisão steer × interromper: a política é uma só para toda CLI — nada é digitado no meio de uma resposta; entrega e pipe esperam o pane ocioso (`orch/idle-delivery.ts` cabeçalho, `orch/pane-pipe.ts:274,357` via `isSessionInjectableIdle`). Nenhum manifesto em `src/adapters/builtin/*.json` declara steer/interrupção; uma tabela sem chamador seria abstração sem consumidor | só se o Nexus passar a injetar com o pane ocupado (exige provar cada CLI ao vivo) |
+| ORC-08 | Drenar worker em teste | equivalente | a drenagem vive nas primitivas com consumidor: `KeyedLock.idle()` (F-1025) e `KeyedCoalescingWorker.drain()` (F-1026), atrás de `hiddenCheckpointIdle`, `worktreeSalvageIdle` e `operatorHandGcIdle`, que os testes de checkpoint, salvaguarda e writer isolado já aguardam | — |
 | ORC-09 | Arquivar por PR mergeado/inatividade | incompatível | missão Nexus não arquiva sozinha; conflita com `integration-review-gate.ts` e o ciclo done/failed/blocked | não portar |
 | ORC-10 | Teto de replay do stream | integrado | `orch/mission-event-replay-budget.ts`; `mission-event-journal.ts:28` | — |
 | DSK-01 | Sanitizar replay do scrollback | integrado | `shared/terminal-replay-sanitizer.ts`; `renderer/terminal/terminal-host.ts:127` | — |
@@ -73,16 +73,16 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 | DSK-10 | CdpRelay | pendente (M, risco alto) | CDP só em dev | relay loopback com token |
 | DSK-11 | Backend WSL | pendente (G) | `remote/wsl-detect.ts` é stub | porte |
 | QLT-01 | Gate de orçamento de perf no CI | integrado | `package.json` `test:perf`; `ci.yml` | — |
-| QLT-02 | `KeyedLock` | pendente (P) | sem primitiva | só com consumidor real |
-| QLT-03 | `KeyedCoalescingWorker` | pendente (M) | sem primitiva | só com consumidor real |
+| QLT-02 | `KeyedLock` | integrado | `src/main/util/keyed-lock.ts`; 5 consumidores que tinham a fila copiada à mão: `git/hidden-checkpoint.ts`, `orch/isolated-writer-salvage.ts`, `design/design-instrument-ledger.ts`, `design/design-writeback-service.ts` (a cópia não soltava a chave), `context/orientation/orientation-service.ts` (F-1025) | — |
+| QLT-03 | `KeyedCoalescingWorker` | integrado | `src/main/util/keyed-coalescing-worker.ts`; consumidores: badges do modo design (`browser/browser-manager.ts`, antes um round-trip por mutação) e GC de worktrees integradas (`orch/isolated-writer-worktree.ts`, antes o mesmo padrão à mão) (F-1026) | — |
 | QLT-04 | knip | pendente (M) | sem config | dep + CI |
 | QLT-05 | `require-suppression-reason` | integrado | `oxlint-plugin-nexus/rules/require-suppression-reason.mjs` | — |
-| QLT-06 | `no-test-in-loop` | pendente (P) | regra ausente | regra no plugin |
-| QLT-07 | `no-raw-ipc` | pendente (M) | só `check-renderer-sinks.mjs` | regra AST |
-| QLT-08 | `DrainableWorker` | pendente (P) | sem helper | junto de ORC-08 |
+| QLT-06 | `no-test-in-loop` | integrado | `oxlint-plugin-nexus/rules/no-test-in-loop.mjs` (erro no `.oxlintrc.json`, CI `lint:oxlint --quiet`); 17 laços convertidos em `it.each`/`it.for` (F-1023) | — |
+| QLT-07 | `no-raw-ipc` | integrado | `oxlint-plugin-nexus/rules/no-raw-ipc.mjs` (erro no CI): IPC cru só nos wrappers, nas pontes do preload e em 48 arquivos com teto exato e motivo (`RAW_IPC_ALLOWLIST`); `perf:snapshot` e `model:richMetadata` migrados para `handleTrusted` (F-1024) | baixar os tetos do legado canal a canal |
+| QLT-08 | `DrainableWorker` | equivalente | ver ORC-08: `drain()`/`idle()` das primitivas de QLT-02/03; uma classe `DrainableWorker` à parte não teria consumidor | — |
 | QLT-09 | Paginação por cursor | pendente (G) | só gap buffer de terminal | histórico de missão |
-| QLT-10 | Nome de ação = nome acessível | pendente (M) | só `check-palette-contrast.mjs` | check + guideline |
-| QLT-11 | Telemetria só com assinante | integrado (parcial) | `perf/pane-footprint-broadcast.ts:27,91`; traps de PID/geração ausentes | traps em `pane-footprint.ts` |
+| QLT-10 | Nome de ação = nome acessível | pendente (M) | não é barato hoje: sem infra de a11y (sem axe nem testing-library; os testes de renderer leem `aria-label` à mão). Uma regra estática acharia só 2 pares `aria-label` + texto fixo no renderer, ambos glifos (`✕` em `UpdateModal.tsx:517`, `≡` em `BrowserDesignBar.tsx:424`), em que o rótulo substitui o símbolo com razão; o resto dos rótulos é dinâmico | calcular o nome acessível no DOM renderizado (jsdom + axe ou equivalente) |
+| QLT-11 | Telemetria só com assinante | integrado | `perf/pane-footprint-broadcast.ts` (coleta só com assinante, geração por religada, sequência por geração); `pty/pane-footprint.ts` (PID + início; já em `122cf2ec8`, a auditoria errou ao dar como ausente); store do renderer descarta geração anterior (F-1027) | — |
 
 ## Limites desta auditoria
 

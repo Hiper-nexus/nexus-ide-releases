@@ -35,15 +35,13 @@ function sensitiveSubstring(secret: string): string {
 }
 
 describe('redactBugReportText — credentials', () => {
-  for (const [name, secret] of Object.entries(SECRETS)) {
-    it(`masks ${name}`, () => {
-      const text = `antes ${secret} depois`;
-      const out = redactBugReportText(text);
-      expect(out).not.toContain(sensitiveSubstring(secret));
-      expect(out.startsWith('antes ')).toBe(true);
-      expect(out.endsWith(' depois')).toBe(true);
-    });
-  }
+  it.each(Object.entries(SECRETS))('masks %s', (_name, secret) => {
+    const text = `antes ${secret} depois`;
+    const out = redactBugReportText(text);
+    expect(out).not.toContain(sensitiveSubstring(secret));
+    expect(out.startsWith('antes ')).toBe(true);
+    expect(out.endsWith(' depois')).toBe(true);
+  });
 
   it('masks KEY=value and Authorization headers', () => {
     const out = redactBugReportText(
@@ -138,13 +136,11 @@ describe('redactBugReportText — adversarial input stays fast', () => {
     ['digit run', '1'.repeat(4000)],
     ['spaced assignments', 'token = '.repeat(500)],
   ];
-  for (const [label, input] of cases) {
-    it(`finishes quickly on ${label}`, () => {
-      const started = performance.now();
-      redactBugReportText(input);
-      expect(performance.now() - started).toBeLessThan(750);
-    });
-  }
+  it.each(cases)('finishes quickly on %s', (_label, input) => {
+    const started = performance.now();
+    redactBugReportText(input);
+    expect(performance.now() - started).toBeLessThan(750);
+  });
 });
 
 describe('redactBugReportText — personal data', () => {
