@@ -2,6 +2,7 @@ import { periodicCallback, stopPeriodicTask } from '../observability/periodic-ta
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import { showOwnedOpenDialog } from '../dialog/owned-open-dialog';
+import { handleTrusted } from '../security/trusted-ipc';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import {
   PET_CHANNELS,
@@ -1709,7 +1710,7 @@ export function initDesktopPet(): void {
   // o renderer principal lê via invoke, sem canal próprio de estado.
   ipcMain.handle(USAGE_CHANNELS.lifetime, () => getPetStats().stats());
   // WEB-12: rollup diário limitado do mesmo tracker (gráfico de Uso e cotas).
-  ipcMain.handle(USAGE_CHANNELS.history, () => getPetStats().history());
+  handleTrusted(USAGE_CHANNELS.history, () => getPetStats().history());
   // Persistência preguiçosa do piso/panes — JSON pequeno, tmp+rename.
   statsFlushTimer = setInterval(periodicCallback('pet-stats', async (ctx) => {
     try {

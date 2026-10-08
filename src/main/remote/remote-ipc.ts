@@ -2,6 +2,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron';
 import type { WebContents } from 'electron';
 import { z } from 'zod';
 import { REMOTE_CHANNELS } from '../../shared/remote-channels';
+import { handleTrusted } from '../security/trusted-ipc';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { RemoteSpawnRequest } from '../../shared/remote-types';
 import {
@@ -214,7 +215,7 @@ export function registerRemoteIpc(): void {
     return rotateRemotePairing(scope, parsed.data.scopes);
   });
   // MOB-12: editar os escopos de um aparelho pareado.
-  ipcMain.handle(REMOTE_CHANNELS.bridgeSetDeviceScopes, (event, raw) => {
+  handleTrusted(REMOTE_CHANNELS.bridgeSetDeviceScopes, (event, raw) => {
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const parsed = setDeviceScopesSchema.safeParse(raw);
     if (!parsed.success) {
