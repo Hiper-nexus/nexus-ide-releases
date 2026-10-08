@@ -209,6 +209,7 @@ describe('file explorer IPC renderer authority', () => {
     FILES_CHANNELS.importMissionAttachment,
     FILES_CHANNELS.importDroppedUri,
     FILES_CHANNELS.clipboardFileUris,
+    FILES_CHANNELS.convertHeicToJpeg,
   ])(
     'fails closed for an unbound renderer on %s',
     (channel) => {
@@ -218,6 +219,8 @@ describe('file explorer IPC renderer authority', () => {
       const raw =
         channel === FILES_CHANNELS.importDroppedUri
           ? { uri: 'file:///tmp/blocked.txt' }
+          : channel === FILES_CHANNELS.convertHeicToJpeg
+            ? { bytes: new Uint8Array([1, 2, 3]) }
           : channel === FILES_CHANNELS.saveDropped ||
               channel === FILES_CHANNELS.importMissionAttachment
             ? { name: 'drop.txt', base64: 'YmxvY2tlZA==' }
@@ -231,6 +234,24 @@ describe('file explorer IPC renderer authority', () => {
       );
     },
   );
+
+  it('HEIC conversion validates the payload in Main before any decoder', async () => {
+    const root = project('heic', 'content');
+    const window = renderer(302);
+    renderers.push(window);
+    bindResolvedRendererWorkspaceScope(window, scope(root, 'project-h', 'checkout-h'));
+
+    for (const raw of [undefined, { bytes: 'AQI=' }, { bytes: [1, 2, 3] }]) {
+      await expect(
+        Promise.resolve(invoke(FILES_CHANNELS.convertHeicToJpeg, window, raw)),
+      ).resolves.toEqual({ ok: false, reason: 'unreadable', error: 'Conteúdo HEIC inválido.' });
+    }
+    await expect(
+      invoke<Promise<unknown>>(FILES_CHANNELS.convertHeicToJpeg, window, {
+        bytes: new Uint8Array([1, 2, 3]),
+      }),
+    ).resolves.toMatchObject({ ok: false });
+  });
 
   it('rejects a stale scope when its canonical root path is replaced', () => {
     const rootA = project('stale-a', 'content-a');

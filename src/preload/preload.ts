@@ -1243,6 +1243,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(FILES_CHANNELS.importDroppedUri, { uri }),
     clipboardFileUris: () =>
       ipcRenderer.invoke(FILES_CHANNELS.clipboardFileUris),
+    convertHeicToJpeg: (bytes: Uint8Array) =>
+      ipcRenderer.invoke(FILES_CHANNELS.convertHeicToJpeg, { bytes }),
     // webUtils resolves a dragged File to its real filesystem path — the only
     // sandbox-safe way to get it (File.path was removed).
     pathForFile: (file: File): string => {
