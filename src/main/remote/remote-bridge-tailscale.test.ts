@@ -248,6 +248,35 @@ function serveCalls(): string[][] {
   return fake.state.calls.map((call) => call.args).filter((args) => args[0] === 'serve');
 }
 
+function connectAs(url: string, headers: Record<string, string>): Promise<WebSocket> {
+  const socket = new WebSocket(url, { rejectUnauthorized: false, headers });
+  return openSocket(socket).then(() => socket);
+}
+
+async function closeAndWait(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.CLOSED) return;
+  const closed = waitForClose(socket);
+  socket.close();
+  await closed;
+}
+
+/** Microtarefas + I/O real (setImmediate não é falsificado nestes testes). */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Avança até a próxima tentativa e devolve quantos `serve status` ela gastou. */
+async function nextRetry(delay: number): Promise<{ before: number; justBefore: number; after: number }> {
+  const before = serveCalls().length;
+  await vi.advanceTimersByTimeAsync(delay - 1);
+  await flush();
+  const justBefore = serveCalls().length;
+  await vi.advanceTimersByTimeAsync(1);
+  await bridge.settleRemoteBridgeTailscale(5_000);
+  await flush();
+  return { before, justBefore, after: serveCalls().length };
+}
+
 beforeAll(async () => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-ts-'));
   previousHome = process.env.HOME;
@@ -281,6 +310,8 @@ beforeEach(() => {
 afterEach(async () => {
   bridge.stopRemoteBridge();
   await bridge.settleRemoteBridgeTailscale(5_000);
+  // Novas tentativas armadas por um teste não podem disparar dentro de outro.
+  bridge.cancelRemoteBridgeTailscaleRetries?.();
   vi.unstubAllGlobals();
   fs.rmSync(markerPath(), { force: true });
 });
@@ -630,6 +661,199 @@ describe('remote bridge no tailnet (Tailscale Serve)', () => {
   });
 });
 
+describe('F-1000 (Tailscale Serve): limpeza do órfão no boot e no stop não desiste', () => {
+  it('boot antes do Tailscale.app: repete 5 s/30 s/2 min e a cada 10 min até remover o órfão', async () => {
+    writeOrphanMarker(markerPath());
+    fake.state.serveTarget = ORPHAN;
+    fake.state.serveStatusFailure = { code: 1, stderr: 'failed to connect to local tailscaled' };
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await bridge.cleanupRemoteBridgeTailscaleOrphan();
+      await flush();
+      expect(serveCalls()).toEqual([['serve', 'status', '--json']]);
+
+      for (const delay of [5_000, 30_000, 120_000, 600_000, 600_000]) {
+        const round = await nextRetry(delay);
+        expect(round.justBefore).toBe(round.before);
+        expect(round.after).toBe(round.before + 1);
+      }
+      // Dono desconhecido o tempo todo: nada desligado, marcador intacto.
+      expect(serveCalls().some((args) => args.includes('off'))).toBe(false);
+      expect(fake.state.serveTarget).toBe(ORPHAN);
+      expect(fs.existsSync(markerPath())).toBe(true);
+
+      // O Tailscale subiu: a próxima tentativa confirma que é nosso e desliga.
+      fake.state.serveStatusFailure = null;
+      await nextRetry(600_000);
+      expect(serveCalls().slice(-2)).toEqual([
+        ['serve', 'status', '--json'],
+        ['serve', '--https=443', 'off'],
+      ]);
+      expect(fake.state.serveTarget).toBeNull();
+      expect(fs.existsSync(markerPath())).toBe(false);
+
+      // Limpo: nada mais agendado.
+      const done = fake.state.calls.length;
+      await vi.advanceTimersByTimeAsync(3_600_000);
+      await flush();
+      expect(fake.state.calls).toHaveLength(done);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('para quando o marcador some e nunca desliga um Serve que virou alheio', async () => {
+    writeOrphanMarker(markerPath());
+    fake.state.serveTarget = ORPHAN;
+    fake.state.serveStatusFailure = { code: 1, stderr: 'failed to connect to local tailscaled' };
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await bridge.cleanupRemoteBridgeTailscaleOrphan();
+      await flush();
+
+      // Na volta do Tailscale a porta 443 é de outra configuração.
+      fake.state.serveStatusFailure = null;
+      fake.state.foreignProxy = 'http://127.0.0.1:3000';
+      const round = await nextRetry(5_000);
+      expect(round.after).toBe(round.before + 1);
+      expect(serveCalls().some((args) => args.includes('off'))).toBe(false);
+      expect(fake.state.foreignProxy).toBe('http://127.0.0.1:3000');
+      expect(fs.existsSync(markerPath())).toBe(false);
+
+      const done = fake.state.calls.length;
+      await vi.advanceTimersByTimeAsync(3_600_000);
+      await flush();
+      expect(fake.state.calls).toHaveLength(done);
+
+      // Marcador apagado por fora durante o backoff: a tentativa não gasta spawn.
+      writeOrphanMarker(markerPath());
+      fake.state.foreignProxy = null;
+      fake.state.serveStatusFailure = { code: 1, stderr: 'failed to connect to local tailscaled' };
+      await bridge.cleanupRemoteBridgeTailscaleOrphan();
+      await flush();
+      fs.rmSync(markerPath(), { force: true });
+      const quiet = fake.state.calls.length;
+      await vi.advanceTimersByTimeAsync(3_600_000);
+      await flush();
+      expect(fake.state.calls).toHaveLength(quiet);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stop com a consulta falhando continua tentando depois da 3ª vez (a cada 10 min)', async () => {
+    const info = await bridge.startRemoteBridge({ host: '127.0.0.1', tailscale: true }, projectScope);
+    const target = `https+insecure://127.0.0.1:${info.port}`;
+    fake.state.serveStatusFailure = { code: 1, stderr: 'backend timeout' };
+    fake.state.calls.length = 0;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      bridge.stopRemoteBridge(projectScope);
+      await bridge.settleRemoteBridgeTailscale(5_000);
+      await flush();
+      expect(serveCalls()).toEqual([['serve', 'status', '--json']]);
+      for (const delay of [5_000, 30_000, 120_000, 600_000]) {
+        const round = await nextRetry(delay);
+        expect(round.after).toBe(round.before + 1);
+      }
+      expect(fake.state.serveTarget).toBe(target);
+
+      fake.state.serveStatusFailure = null;
+      await nextRetry(600_000);
+      expect(serveCalls().at(-1)).toEqual(['serve', '--https=443', 'off']);
+      expect(fake.state.serveTarget).toBeNull();
+      expect(fs.existsSync(markerPath())).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('diretório do marcador não confiável publica sem marcador, mas avisa', async () => {
+    const root = path.dirname(markerPath());
+    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+    fs.chmodSync(root, 0o777);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const info = await bridge.startRemoteBridge({ host: '127.0.0.1', tailscale: true }, projectScope);
+      expect(info.tailscale?.status).toBe('available');
+      expect(fs.existsSync(markerPath())).toBe(false);
+      const warned = warn.mock.calls.map((args) => args.map(String).join(' '));
+      expect(warned.some((line) => line.includes('sem marcador'))).toBe(true);
+    } finally {
+      warn.mockRestore();
+      fs.chmodSync(root, 0o700);
+    }
+  });
+
+  it('nova tentativa enfileirada atrás de um republish na mesma porta não derruba a bridge viva', async () => {
+    const first = await bridge.startRemoteBridge({ host: '127.0.0.1', tailscale: true }, projectScope);
+    const fixedPort = first.port!;
+    const target = `https+insecure://127.0.0.1:${fixedPort}`;
+    fake.state.serveStatusFailure = { code: 1, stderr: 'backend timeout' };
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      bridge.stopRemoteBridge(projectScope);
+      await bridge.settleRemoteBridgeTailscale(5_000);
+      await flush();
+
+      // Republica na MESMA porta; o probe fica pendurado até a nova tentativa
+      // do unpublish antigo disparar e entrar na fila atrás do publish.
+      fake.state.serveStatusFailure = null;
+      let releaseProbe: () => void = () => undefined;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+          fake.state.fetches.push({ url: String(url), init });
+          await new Promise<void>((resolve) => {
+            releaseProbe = resolve;
+          });
+          return new Response('{}', { status: 200 });
+        }),
+      );
+      fake.state.calls.length = 0;
+      fake.state.fetches.length = 0;
+      let startError: unknown = null;
+      let started: Awaited<ReturnType<Bridge['startRemoteBridge']>> | null = null;
+      const restarted = bridge.startRemoteBridge(
+        { host: '127.0.0.1', port: fixedPort, tailscale: true },
+        projectScope,
+      );
+      restarted.then(
+        (value) => {
+          started = value;
+        },
+        (error: unknown) => {
+          startError = error;
+        },
+      );
+      // Laços com teto (I/O real via setImmediate): um travamento aqui não
+      // pode deixar os timers falsos instalados para os testes seguintes.
+      for (let i = 0; i < 500 && fake.state.fetches.length === 0 && startError === null; i += 1) {
+        await flush();
+      }
+      expect(startError).toBeNull();
+      expect(fake.state.fetches).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await flush();
+      releaseProbe();
+      for (let i = 0; i < 500 && started === null && startError === null; i += 1) await flush();
+      expect(startError).toBeNull();
+      const info = started as Awaited<ReturnType<Bridge['startRemoteBridge']>> | null;
+      expect(info).not.toBeNull();
+      if (!info) return;
+      await bridge.settleRemoteBridgeTailscale(5_000);
+      await flush();
+
+      expect(info.tailscale?.status).toBe('available');
+      expect(serveCalls().some((args) => args.includes('off'))).toBe(false);
+      expect(fake.state.serveTarget).toBe(target);
+      expect(JSON.parse(fs.readFileSync(markerPath(), 'utf8'))).toMatchObject({ target });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('rate limit e pareamento atrás do proxy (todos chegam por loopback)', () => {
   it('rate limit: cliente não pareado do tailnet não esgota o bucket dos aparelhos', async () => {
     const info = await bridge.startRemoteBridge(
@@ -696,5 +920,116 @@ describe('rate limit e pareamento atrás do proxy (todos chegam por loopback)', 
     // 10 tentativas acima + estas: nunca mais que o teto (30/min) passa.
     expect(10 + rateLimitedAt).toBeLessThanOrEqual(30);
     for (const open of [socket, attacker, honest]) open.close();
+  });
+});
+
+describe('F-1000 (Tailscale Serve): partição do pareamento pelo peer que o Serve carimba', () => {
+  const MALLORY = { 'X-Forwarded-For': '100.64.0.9', 'Tailscale-User-Login': 'mallory@example.com' };
+  const OWNER = { 'X-Forwarded-For': '100.101.102.50', 'Tailscale-User-Login': 'owner@example.com' };
+
+  it('um peer do tailnet esgotando o próprio teto não nega o pareamento legítimo', async () => {
+    const info = await bridge.startRemoteBridge({ host: '127.0.0.1', tailscale: true }, projectScope);
+    const url = `wss://127.0.0.1:${info.port}`;
+    const code = info.pairingCode!;
+    const forger = newDevice();
+
+    const attacker = await connectAs(url, MALLORY);
+    const errors: string[] = [];
+    for (let i = 0; i < 30; i += 1) {
+      const res = await rpc(attacker, { ...pairMessage(forger, 'AAAAAAAA', `m${i}`), deviceProof: 'x' });
+      errors.push(String(res.error));
+    }
+    // O teto vale para a partição dele (10/min)...
+    expect(errors.slice(10).every((error) => error === 'rate limited')).toBe(true);
+    await closeAndWait(attacker);
+
+    // ...e o aparelho do dono, outra partição, pareia com o código vigente.
+    const honest = await connectAs(url, OWNER);
+    await expect(rpc(honest, pairMessage(newDevice(), code))).resolves.toMatchObject({ ok: true });
+    await closeAndWait(honest);
+  });
+
+  it('o lockout da partição sobrevive à reconexão (não zera no close)', async () => {
+    const info = await bridge.startRemoteBridge({ host: '127.0.0.1', tailscale: true }, projectScope);
+    const url = `wss://127.0.0.1:${info.port}`;
+    const forger = newDevice();
+    const first = await connectAs(url, MALLORY);
+    for (let i = 0; i < 8; i += 1) {
+      await rpc(first, { ...pairMessage(forger, 'AAAAAAAA', `l${i}`), deviceProof: 'x' });
+    }
+    await closeAndWait(first);
+
+    const again = await connectAs(url, MALLORY);
+    await expect(
+      rpc(again, { ...pairMessage(forger, 'AAAAAAAA', 'again'), deviceProof: 'x' }),
+    ).resolves.toMatchObject({ ok: false, error: 'too many attempts; try again later' });
+    await closeAndWait(again);
+  });
+
+  it('cabeçalhos só particionam com o Serve desta bridge publicado e X-Forwarded-For do tailnet', async () => {
+    // Sem Serve publicado não há proxy: os cabeçalhos só podem ter sido forjados
+    // por um processo local e caem no balde comum do loopback.
+    const info = await bridge.startRemoteBridge({ host: '127.0.0.1' }, projectScope);
+    const url = `wss://127.0.0.1:${info.port}`;
+    const forger = newDevice();
+    const spend = async (headers: Record<string, string>, count: number, tag: string) => {
+      const socket = await connectAs(url, headers);
+      let last: Record<string, unknown> = {};
+      for (let i = 0; i < count; i += 1) {
+        last = await rpc(socket, { ...pairMessage(forger, 'AAAAAAAA', `${tag}${i}`), deviceProof: 'x' });
+      }
+      await closeAndWait(socket);
+      return last;
+    };
+    for (let i = 0; i < 6; i += 1) {
+      await spend({ 'X-Forwarded-For': `100.64.1.${i + 1}`, 'Tailscale-User-Login': `u${i}@x.com` }, 5, `n${i}`);
+    }
+    await expect(spend(OWNER, 1, 'owner')).resolves.toMatchObject({ error: 'rate limited' });
+    bridge.stopRemoteBridge(projectScope);
+    await bridge.settleRemoteBridgeTailscale(5_000);
+
+    // Com Serve, X-Forwarded-For fora do tailnet (ou ausente) também não particiona.
+    const served = await bridge.startRemoteBridge({ host: '127.0.0.1', tailscale: true }, projectScope);
+    const servedUrl = `wss://127.0.0.1:${served.port}`;
+    const spendServed = async (headers: Record<string, string>, count: number, tag: string) => {
+      const socket = await connectAs(servedUrl, headers);
+      let last: Record<string, unknown> = {};
+      for (let i = 0; i < count; i += 1) {
+        last = await rpc(socket, { ...pairMessage(forger, 'AAAAAAAA', `${tag}${i}`), deviceProof: 'x' });
+      }
+      await closeAndWait(socket);
+      return last;
+    };
+    for (let i = 0; i < 6; i += 1) {
+      await spendServed({ 'X-Forwarded-For': `203.0.113.${i + 1}`, 'Tailscale-User-Login': `v${i}@x.com` }, 5, `w${i}`);
+    }
+    await expect(spendServed({ 'X-Forwarded-For': '8.8.8.8' }, 1, 'lan')).resolves.toMatchObject({
+      error: 'rate limited',
+    });
+  });
+
+  it('o teto global segue como rede: muitas partições não passam de 240/min', async () => {
+    const info = await bridge.startRemoteBridge({ host: '127.0.0.1', tailscale: true }, projectScope);
+    const url = `wss://127.0.0.1:${info.port}`;
+    const forger = newDevice();
+    let accepted = 0;
+    let globallyLimited = false;
+    for (let peer = 0; peer < 26 && !globallyLimited; peer += 1) {
+      const socket = await connectAs(url, {
+        'X-Forwarded-For': `100.64.2.${peer + 1}`,
+        'Tailscale-User-Login': `peer${peer}@example.com`,
+      });
+      for (let i = 0; i < 10; i += 1) {
+        const res = await rpc(socket, { ...pairMessage(forger, 'AAAAAAAA', `g${peer}-${i}`), deviceProof: 'x' });
+        if (res.error === 'rate limited') {
+          globallyLimited = true;
+          break;
+        }
+        accepted += 1;
+      }
+      await closeAndWait(socket);
+    }
+    expect(globallyLimited).toBe(true);
+    expect(accepted).toBeLessThanOrEqual(240);
   });
 });

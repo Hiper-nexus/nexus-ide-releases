@@ -113,7 +113,14 @@ async function readMarker(): Promise<MarkerRead> {
 async function writeMarker(marker: ServeMarker): Promise<void> {
   try {
     await fsp.mkdir(markerDir(), { recursive: true, mode: 0o700 });
-    if ((await markerDirState()) !== 'trusted') return;
+    if ((await markerDirState()) !== 'trusted') {
+      // Sem marcador o stop ainda desliga pelo alvo, mas um crash deixaria o
+      // handler sem pista para o boot: avisa (sem caminho nem conteúdo).
+      console.warn(
+        '[remote-bridge] Tailscale Serve publicado sem marcador: o diretório ~/.nexus/remote-bridge não é confiável (dono/permissões); após um crash, remova o handler com `tailscale serve --https=443 off`.',
+      );
+      return;
+    }
     // Rename atômico: substitui a entrada (mesmo um FIFO/symlink plantado).
     writeJsonAtomic(markerFile(), marker);
   } catch {
@@ -337,12 +344,21 @@ export async function unpublishRemoteBridgeFromTailnet(
 /**
  * Boot: remove o handler que uma execução anterior deixou (crash/kill). Sem
  * marcador não há spawn algum; marcador de processo vivo é de outra instância.
+ *
+ * - `none`: nada a limpar (sem marcador, marcador inválido, dono vivo ou o
+ *   alvo é o da bridge viva deste processo, `liveTarget`).
+ * - demais: o resultado do unpublish; `unknown` = marcador de pid morto
+ *   ainda presente, o chamador repete depois.
  */
-export async function cleanupOrphanRemoteBridgeTailscale(): Promise<void> {
+export async function cleanupOrphanRemoteBridgeTailscale(
+  liveTarget: string | null = null,
+): Promise<'none' | RemoteBridgeUnpublishOutcome> {
   const read = await readMarker();
   // Ausente: nunca publicamos. Inválido: não dá para saber o que é — não age.
-  if (read.kind !== 'marker') return;
+  if (read.kind !== 'marker') return 'none';
   const { marker } = read;
-  if (marker.pid === process.pid || isProcessAlive(marker.pid)) return;
-  await unpublishRemoteBridgeFromTailnet(marker.target, marker.servePort);
+  if (marker.pid === process.pid || isProcessAlive(marker.pid)) return 'none';
+  // Porta reaproveitada pela bridge viva: o handler agora é dela.
+  if (liveTarget !== null && marker.target === liveTarget) return 'none';
+  return unpublishRemoteBridgeFromTailnet(marker.target, marker.servePort);
 }

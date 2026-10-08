@@ -30,7 +30,13 @@ do Nexus; comando desconhecido/arbitrário, composto por operadores de shell,
 destrutivo, deploy, publish ou efeito remoto exige confirmação **no desktop**.
 O cliente nunca atesta a própria confirmação. Input binário/parcial é negado,
 pois dividir `rm -rf` em vários frames contornaria qualquer classificador por
-mensagem. Escritas estruturadas (`git.push`, `fs.delete`) usam o mesmo scheduler
+mensagem. Teclas de controle (C0 exceto Tab/LF, DEL, C1 — inclui ESC e toda
+sequência CSI/OSC, Ctrl-C, CR solto) são **recusadas no Main**, em
+`authorizeRemotePaneInput`, para todo caminho remoto que escreve em PTY: bridge
+WSS (app e PWA) e relay `/r/<room>` (o mesmo `handleAuthedMessage`). CRLF é só
+fim de linha (vira LF); Tab é aceito mas tira a linha da allowlist (vai ao
+diálogo). O bloqueio no app (`nexus-bridge-rpc-adapter.ts`) é só aviso de UX;
+a autoridade é o desktop (F-1000). Escritas estruturadas (`git.push`, `fs.delete`) usam o mesmo scheduler
 main-owned; `mission.complete` é **sempre negado** no mobile porque a evidência
 fica no desktop.
 
@@ -66,7 +72,10 @@ equivalente responde "… não disponível em host Nexus").
   `pane.input` com `messageId`, `terminal.updateViewport`→`pane.resize`,
   `terminal.close`→`pane.close`, `mission.list`, `agentSession.respondToApproval`
   (+ push `approvals.changed`). Teclas cruas, arquivos, Git, worktrees, abas, contas,
-  voz, screencast e Linear/GitHub/GitLab ficam desabilitados com aviso.
+  voz, screencast e Linear/GitHub/GitLab ficam desabilitados com aviso. O aviso de
+  teclas cruas no app é só UX: quem barra Ctrl-C/Esc/sequências de controle é o
+  desktop (`authorizeRemotePaneInput`), para qualquer cliente — inclusive um app
+  modificado.
 - **Prova:** `src/main/remote/remote-bridge.mobile-app.test.ts` sobe esta bridge real
   em processo e conecta o cliente do app (importado por caminho) com o certificado
   fixado pela `certFingerprint`: pareia, autentica, lista, abre stream, envia uma
@@ -154,16 +163,37 @@ ninguém. Por isso:
 - aparelho autenticado tem bucket de rate limit próprio, pela identidade
   comprovada no Main (`tokenId` após o desafio assinado) — um cliente não
   pareado não esgota o limite de quem já entrou;
-- a pré-autenticação via loopback conta **por conexão** (60/min), inclusive o
-  bloqueio de pareamento após 8 códigos errados; só as tentativas de
-  pareamento somam num teto global do proxy (30/min), que limita força bruta
-  do código distribuída em várias conexões;
-- conexões diretas da LAN mantêm os limites por IP;
+- a pré-autenticação via loopback conta **por conexão** (60/min);
+- as tentativas de pareamento via Serve contam **por peer do tailnet**
+  (10/min e bloqueio após 8 códigos errados, que sobrevive à reconexão): a
+  chave é `Tailscale-User-Login` (ou, em nó com tag, o IP de
+  `X-Forwarded-For`). Um peer que esgota o próprio teto não nega o pareamento
+  do aparelho do dono. Um teto global do proxy (240/min ≈ 1200 palpites por
+  código de 5 min, em ~1,1e12) segue como rede contra força bruta em muitas
+  partições; loopback sem partição (desktop local) divide um balde de 30/min
+  com bloqueio por conexão;
+- esses cabeçalhos são **só chave de partição**, nunca identidade nem
+  autorização. Só valem com as três condições: socket de loopback (é por onde
+  o Serve entrega), Serve publicado por **esta** bridge (sem ele não há proxy
+  e o cabeçalho só pode vir de um processo local) e `X-Forwarded-For` único
+  num IP do tailnet (100.64.0.0/10 ou fd7a:115c:a1e0::/48). O proxy do Serve
+  (tailscaled, `ipnlocal/serve.go`) descarta o `X-Forwarded-For` de entrada e
+  grava o IP do peer, e apaga `Tailscale-User-*` antes de gravar o login: o
+  peer não os escolhe. Um processo local na porta loopback ainda os forja —
+  por isso o teto global continua valendo (servePeerPartition em
+  `remote-bridge.ts`);
+- conexões diretas da LAN mantêm os limites por IP (nunca leem cabeçalho);
 - o marcador do Serve é lido com `O_NONBLOCK|O_NOFOLLOW`, só como arquivo
   regular de até 4 KiB num diretório real do próprio usuário (FIFO, symlink
-  ou `/dev/zero` plantados são ignorados); se a consulta `serve status` falha,
-  o dono do handler é desconhecido e **nada** é desligado — o marcador fica e
-  a remoção é tentada de novo (5 s, 30 s, 2 min e no próximo boot).
+  ou `/dev/zero` plantados são ignorados; diretório não confiável publica sem
+  marcador e avisa no log); se a consulta `serve status` falha, o dono do
+  handler é desconhecido e **nada** é desligado — o marcador fica e a remoção
+  é tentada de novo em 5 s, 30 s, 2 min e depois a cada 10 min, sem desistir,
+  tanto no stop quanto no boot (o Nexus pode subir antes do Tailscale.app). O
+  boot para quando limpou, quando o marcador sumiu ou quando o dono está vivo;
+  nunca desliga um Serve que deixou de ser o proxy exato do Nexus. A nova
+  tentativa confere na vez da fila se a bridge viva republicou o mesmo alvo
+  (porta fixa) e, nesse caso, não desliga nada.
 
 ## PWA e alertas locais (feito)
 

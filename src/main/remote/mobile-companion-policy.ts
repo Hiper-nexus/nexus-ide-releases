@@ -114,6 +114,16 @@ const REMOTE_ROUTINE_COMMAND_PATTERNS: readonly RegExp[] = [
   /^(?:y|yes|n|no)$/i,
 ];
 
+/**
+ * Teclas de controle (C0 exceto Tab/LF, DEL e C1 — inclui ESC e, com ele,
+ * qualquer sequência CSI/OSC) nunca entram por um caminho remoto: num PTY
+ * elas são Ctrl-C, Esc, Shift-Tab, colagem entre colchetes… — ações que não
+ * aparecem no texto do comando que a política classifica. O CR só vale como
+ * parte de CRLF (normalizado para LF antes desta checagem).
+ */
+// eslint-disable-next-line no-control-regex -- recusa caracteres de controle de propósito
+const REMOTE_CONTROL_CHARACTER = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
+
 function isRoutineRemoteCommand(command: string): boolean {
   // Shell composition/substitution turns an otherwise safe-looking prefix
   // into arbitrary execution. Unknown commands and composed commands require
@@ -133,13 +143,21 @@ function isRoutineRemoteCommand(command: string): boolean {
  * shared Jarvis guardrail remains the single classifier for destructive,
  * publish, deploy and remote effects; each line is checked independently so
  * an embedded newline cannot hide a second high-impact command.
+ *
+ * Control characters are refused HERE, in the Main, for every remote write
+ * path (bridge WSS, PWA and the companion relay all dispatch through
+ * handleAuthedMessage): the app-side block is UX, not authority.
  */
 export function authorizeRemotePaneInput(
-  command: string,
+  input: string,
   submit: boolean,
 ): RemotePaneInputDecision {
   if (!submit) {
     return { allowed: false, reason: 'partial-terminal-input-not-allowed' };
+  }
+  const command = input.replace(/\r\n/g, '\n');
+  if (REMOTE_CONTROL_CHARACTER.test(command)) {
+    return { allowed: false, reason: 'control-characters-not-allowed' };
   }
   const lines = command
     .split(/\r?\n/)
@@ -150,11 +168,16 @@ export function authorizeRemotePaneInput(
   }
   return {
     allowed: true,
-    requiresDesktopConfirmation: lines.some(
-      (line) =>
-        requiresVoiceCommandConfirmation(line) ||
-        !isRoutineRemoteCommand(line),
-    ),
+    // Tab completa/alterna modos na TUI do agente: nunca é "de rotina". Vale
+    // no texto cru — o trim das linhas o apagaria do que é classificado, mas
+    // ele ainda chegaria ao PTY.
+    requiresDesktopConfirmation:
+      command.includes('\t') ||
+      lines.some(
+        (line) =>
+          requiresVoiceCommandConfirmation(line) ||
+          !isRoutineRemoteCommand(line),
+      ),
     command,
   };
 }

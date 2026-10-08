@@ -567,6 +567,36 @@ describe('remote bridge', () => {
     socket.close();
   });
 
+  it('F-1000: cliente autenticado modificado não esconde Ctrl-C/ESC numa linha de rotina', async () => {
+    ptyMocks.orchWriteSession.mockClear();
+    const token = await issueToken();
+    const socket = await authenticate(token);
+
+    // Pelo socket da bridge (o caminho do app e do PWA).
+    const hidden = await rpc(socket, {
+      id: 'hidden-ctrl-c',
+      type: 'pane.input',
+      paneId: 'pane-stream',
+      data: 'git commit -m x\u0003',
+    });
+    expect(hidden).toMatchObject({
+      ok: false,
+      error: 'not authorized: control-characters-not-allowed',
+    });
+    socket.close();
+
+    // Pelo dispatch autenticado direto — o mesmo que o relay /r/<room> usa.
+    for (const data of ['git status\u001b[Z', 'git status\u001b[200~rm -rf /\u001b[201~', 'ls\u009b2J']) {
+      await expect(
+        bridge.handleAuthedMessage(
+          { type: 'pane.input', paneId: 'pane-stream', data, messageId: `ctl-${data.length}` },
+          projectScope,
+        ),
+      ).rejects.toThrow('not authorized: control-characters-not-allowed');
+    }
+    expect(ptyMocks.orchWriteSession).not.toHaveBeenCalled();
+  });
+
   it('deduplica o reenvio do outbox mobile pelo messageId de pane.input', async () => {
     // Direto no dispatch autenticado (o mesmo do WS e do relay): o limite de
     // 60 mensagens/min por IP da suíte fica para os testes de socket.

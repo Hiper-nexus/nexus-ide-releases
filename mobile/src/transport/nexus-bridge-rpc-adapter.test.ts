@@ -1,6 +1,10 @@
 import crypto from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { NexusBridgeSocketFactory, NexusBridgeSocketHandlers } from './nexus-bridge-client'
+import {
+  NexusBridgeClient,
+  type NexusBridgeSocketFactory,
+  type NexusBridgeSocketHandlers
+} from './nexus-bridge-client'
 import { createNexusBridgeDeviceKey, nexusBridgeDeviceIdentity } from './nexus-bridge-device-key'
 import {
   NEXUS_HOST_UNSUPPORTED,
@@ -409,6 +413,98 @@ describe('Nexus bridge transport — reconnection', () => {
     expect(client.getState()).toBe('connected')
     expect(client.getReconnectAttempt()).toBe(0)
     expect(bridge.last.types()).toEqual(['auth.challenge', 'auth', 'pane.stream.open', 'pane.read'])
+    client.close()
+  })
+
+  it('a transient auth refusal (rate limited) retries with backoff instead of discarding the token', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const bridge = new FakeBridge()
+    let refusals = 1
+    bridge.overrides.auth = (frame) => {
+      if (refusals > 0) {
+        refusals -= 1
+        return { error: 'rate limited' }
+      }
+      delete bridge.overrides.auth
+      return bridge.reply(frame)
+    }
+    const { client } = open(bridge, { reconnectBaseMs: 1_000 })
+    await settle()
+    expect(client.getState()).toBe('reconnecting')
+    expect(bridge.last.closed).toBe(true)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await settle()
+    expect(bridge.sockets).toHaveLength(2)
+    expect(client.getState()).toBe('connected')
+    client.close()
+  })
+
+  it('a credential refusal on auth.challenge is still final', async () => {
+    const bridge = new FakeBridge()
+    bridge.overrides['auth.challenge'] = () => ({ error: 'invalid token or device' })
+    const { client } = open(bridge, { reconnectBaseMs: 1 })
+    await settle()
+    expect(client.getState()).toBe('auth-failed')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(bridge.sockets).toHaveLength(1)
+  })
+
+  it('a request during backoff waits for the timer instead of dialing right away', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const bridge = new FakeBridge()
+    const client = new NexusBridgeClient({
+      url: 'wss://mac.tail.ts.net',
+      token: 'tok',
+      identity: async () => identity,
+      createSocket: bridge.factory,
+      random: () => 0.5,
+      reconnectBaseMs: 1_000
+    })
+    client.start()
+    await settle()
+    expect(client.getState()).toBe('connected')
+    bridge.last.handlers.onClose(1006, '')
+    expect(client.getState()).toBe('reconnecting')
+
+    const pending = client.request('status', {}, { timeoutMs: 5_000 })
+    await settle()
+    expect(bridge.sockets).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(999)
+    await settle()
+    expect(bridge.sockets).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await settle()
+    expect(bridge.sockets).toHaveLength(2)
+    await expect(pending).resolves.toMatchObject({ running: true })
+    client.close()
+  })
+
+  it('a second reconnect schedule replaces the first timer (one dial per backoff)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const bridge = new FakeBridge()
+    const client = new NexusBridgeClient({
+      url: 'wss://mac.tail.ts.net',
+      token: 'tok',
+      identity: async () => identity,
+      createSocket: bridge.factory,
+      random: () => 0.5,
+      reconnectBaseMs: 1_000
+    })
+    client.start()
+    await settle()
+    bridge.last.handlers.onClose(1006, '')
+    // Segundo agendamento (attempt 2 → 2 s) enquanto o de 1 s ainda está armado.
+    const internals = client as unknown as { scheduleReconnect: () => void }
+    internals.scheduleReconnect()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await settle()
+    expect(bridge.sockets).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await settle()
+    expect(bridge.sockets).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(60_000)
+    await settle()
+    expect(bridge.sockets).toHaveLength(2)
     client.close()
   })
 
