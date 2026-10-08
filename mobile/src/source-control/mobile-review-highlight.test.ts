@@ -195,6 +195,42 @@ describe('highlightMobileReviewBlock', () => {
     ).toBe(true)
   })
 
+  it('reads deleted rows inside a comment opened on a context row', { retry: 3 }, async () => {
+    const review = reviewOf([
+      { kind: 'context', text: '/* opened before the change', oldLineNumber: 1, newLineNumber: 1 },
+      { kind: 'delete', text: 'removed words inside', oldLineNumber: 2 },
+      { kind: 'add', text: 'added words inside', newLineNumber: 2 },
+      { kind: 'context', text: '*/', oldLineNumber: 3, newLineNumber: 3 },
+      { kind: 'context', text: 'const after = 1', oldLineNumber: 4, newLineNumber: 4 }
+    ])
+    const [, deleted, added] = await highlightAll(review, 'src/comment.ts')
+    const comment = colors.syntaxComment.toLowerCase()
+    const allComment = (tokens: ReadonlyArray<MobileReviewToken> | undefined) =>
+      (tokens ?? []).every(
+        (token) => token.content.trim() === '' || token.color?.toLowerCase() === comment
+      )
+
+    expect(joined(deleted)).toBe('removed words inside')
+    expect(allComment(deleted)).toBe(true)
+    expect(allComment(added)).toBe(true)
+  })
+
+  it('carries the old-file state into deleted rows of the next block', { retry: 3 }, async () => {
+    const size = MOBILE_REVIEW_HIGHLIGHT_BLOCK_SIZE
+    const review = reviewOf([
+      ...contextRows([
+        ...Array.from({ length: size - 1 }, (_, i) => `const a${i} = ${i}`),
+        '/* opened at the end of block 0'
+      ]),
+      { kind: 'delete', text: 'removed at the start of block 1', oldLineNumber: size + 1 },
+      { kind: 'context', text: '*/', oldLineNumber: size + 2, newLineNumber: size + 1 }
+    ])
+    const tokens = await highlightAll(review, 'src/boundary.ts')
+
+    expect(joined(tokens[size])).toBe('removed at the start of block 1')
+    expect(colorOf(tokens[size]!, 'removed')).toBe(colors.syntaxComment.toLowerCase())
+  })
+
   it('adds word-diff emphasis only on the changed span of paired rows', async () => {
     const review = reviewOf([
       { kind: 'delete', text: 'const before = 1;', oldLineNumber: 1 },

@@ -409,21 +409,24 @@ async function tokenizeBlock(
     }
   }
 
-  // Why: context and added rows read as the new file, deleted rows as the old one;
-  // each side keeps its own grammar state, continued from the previous block.
+  // Why: each side is tokenized as a whole file — context + added rows are the new
+  // file, context + deleted rows the old one — so a deleted row inside a comment or
+  // string opened on a context row reads as such. Each side keeps its own grammar
+  // state, continued from the previous block; context rows show the new-file tokens.
   const previous = readBlockCache(blockCacheKey(input, language, input.blockIndex - 1))
-  const additionLikeLines: string[] = []
-  const deletionLines: string[] = []
+  const newFileLines: string[] = []
+  const oldFileLines: string[] = []
   for (const row of blockRows) {
-    if (row.kind === 'delete') {
-      deletionLines.push(row.text)
-    } else {
-      additionLikeLines.push(row.text)
+    if (row.kind !== 'delete') {
+      newFileLines.push(row.text)
+    }
+    if (row.kind !== 'add') {
+      oldFileLines.push(row.text)
     }
   }
   const [additionSide, deletionSide] = await Promise.all([
-    highlightLines(highlighter, additionLikeLines, language, previous?.additionState),
-    highlightLines(highlighter, deletionLines, language, previous?.deletionState)
+    highlightLines(highlighter, newFileLines, language, previous?.additionState),
+    highlightLines(highlighter, oldFileLines, language, previous?.deletionState)
   ])
 
   let additionIndex = 0
@@ -433,6 +436,9 @@ async function tokenizeBlock(
       const lineTokens = deletionSide.lines[deletionIndex] ?? plainLineTokens(row.text)
       deletionIndex += 1
       return lineTokens
+    }
+    if (row.kind === 'context') {
+      deletionIndex += 1
     }
     const lineTokens = additionSide.lines[additionIndex] ?? plainLineTokens(row.text)
     additionIndex += 1
