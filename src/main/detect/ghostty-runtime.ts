@@ -50,7 +50,12 @@ export class GhosttyRuntime {
   private readonly exports: WebAssembly.Exports;
   private memoryView: DataView;
 
-  private constructor(instance: WebAssembly.Instance) {
+  private constructor(
+    instance: WebAssembly.Instance,
+    /** Compiled once; respawn() instantiates it again without recompiling. */
+    readonly module: WebAssembly.Module,
+    private readonly log?: (message: string) => void,
+  ) {
     this.exports = instance.exports;
     const memory = instance.exports.memory;
     if (!(memory instanceof WebAssembly.Memory)) {
@@ -71,6 +76,10 @@ export class GhosttyRuntime {
    * the grid forever. Node has no main-thread size limit on sync compile.
    */
   static fromBytes(bytes: BufferSource, log?: (message: string) => void): GhosttyRuntime {
+    return GhosttyRuntime.fromModule(new WebAssembly.Module(bytes), log);
+  }
+
+  static fromModule(module: WebAssembly.Module, log?: (message: string) => void): GhosttyRuntime {
     let instance: WebAssembly.Instance | undefined;
     const imports = {
       env: {
@@ -82,8 +91,18 @@ export class GhosttyRuntime {
         },
       },
     };
-    instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), imports);
-    return new GhosttyRuntime(instance);
+    instance = new WebAssembly.Instance(module, imports);
+    return new GhosttyRuntime(instance, module, log);
+  }
+
+  /**
+   * A fresh instance of the same module: new linear memory (1.25 MiB), no
+   * terminals. WebAssembly.Memory never shrinks, so this is the only way to
+   * hand back pages a past peak grew; the old instance is freed once nothing
+   * references it.
+   */
+  respawn(): GhosttyRuntime {
+    return GhosttyRuntime.fromModule(this.module, this.log);
   }
 
   call(name: string, ...args: Array<number | bigint>): number {
@@ -236,23 +255,20 @@ export function resolveGhosttyWasmPath(candidates?: {
   return path.resolve(options.find((candidate) => fs.existsSync(candidate)) ?? options[0]);
 }
 
-const runtimes = new Map<string, GhosttyRuntime | Error>();
+const modules = new Map<string, WebAssembly.Module | Error>();
 
 /**
- * One runtime per thread and artifact: every session's terminal shares the
- * instance (and its linear memory). A failed load is remembered, so a missing
- * or foreign artifact costs one attempt, not one per session.
+ * One compiled, revision-checked module per thread and artifact; each call
+ * returns its own instance. The detector's sessions share that instance, and
+ * the detector may replace it (respawn) to give memory back, so the cache must
+ * not pin an old instance's linear memory. A failed load is remembered, so a
+ * missing or foreign artifact costs one attempt, not one per session.
  */
 export function loadGhosttyRuntime(wasmPath = resolveGhosttyWasmPath()): GhosttyRuntime {
   const key = path.resolve(wasmPath);
-  const cached = runtimes.get(key);
+  const cached = modules.get(key);
   if (cached instanceof Error) throw cached;
-  if (cached) {
-    if (cached.broken) {
-      throw Object.assign(new Error('libghostty-vt runtime trapped earlier'), { name: 'GhosttyRuntimeBroken' });
-    }
-    return cached;
-  }
+  if (cached) return GhosttyRuntime.fromModule(cached);
   try {
     const runtime = GhosttyRuntime.fromBytes(new Uint8Array(fs.readFileSync(key)));
     const revision = runtime.buildRevision();
@@ -263,11 +279,11 @@ export function loadGhosttyRuntime(wasmPath = resolveGhosttyWasmPath()): Ghostty
         name: 'GhosttyRevisionMismatch',
       });
     }
-    runtimes.set(key, runtime);
+    modules.set(key, runtime.module);
     return runtime;
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
-    runtimes.set(key, failure);
+    modules.set(key, failure);
     throw failure;
   }
 }
