@@ -516,6 +516,7 @@ export function clearAdaptiveEnterTimers(sessionId?: string): void {
 
 /** A Kimi kickoff already pasted its brief; working echo is not a dialog. */
 function isPromptRetryIdle(sessionId: string, requireInjectableIdle: boolean): boolean {
+  if (getAgentSemanticStatusBySession(sessionId)?.status === 'awaiting-input') return false;
   if (!requireInjectableIdle) return getSessionState(sessionId) === 'idle';
   if (isSessionInjectableIdle(sessionId)) return true;
   return getAgentSessionInfo(sessionId)?.adapterId === 'kimi' &&

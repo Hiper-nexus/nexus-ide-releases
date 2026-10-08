@@ -95,12 +95,13 @@ ZIP (v2) e `SHA256SUMS-linux-x64.txt` na release já publicada da canônica e, e
 do espelho público. Um asset com o mesmo nome só é ignorado quando o digest
 remoto bate; nunca usa `--clobber` e nunca apaga assets.
 
-Linux **não tem auto-update**, mas avisa (F-751): o app consulta o espelho
-público e, havendo uma versão Linux mais nova com os três pacotes, mostra
-"versão nova disponível" e o comando `curl -fsSL https://nexuside.app/install.sh
-| sh` para o usuário rodar. O app nunca baixa nem instala sozinho. Os
-dois pacotes declaram `bubblewrap` como dependência de runtime (sandbox dos
-PTYs); o ZIP também precisa desse provider e das bibliotecas Linux do sistema.
+No Linux, o ZIP portátil instalado em uma pasta gravável pelo usuário usa
+auto-update (`linux-self`, F-940): o app confere a assinatura Ed25519 e o ZIP
+antes de trocar a instalação. DEB/RPM em diretórios do sistema continuam no
+canal manual: o app avisa sobre a atualização e oferece a orientação de
+instalação pelo sistema. Os dois pacotes declaram `bubblewrap` como dependência
+de runtime; o ZIP também precisa desse provider e das bibliotecas Linux.
+Versões portáteis sem assinatura válida não podem ser aplicadas automaticamente.
 
 ### Assinar a versão para o auto-update (F-940)
 
@@ -152,7 +153,8 @@ Um resultado local ou estrutural não substitui esses runs hospedados.
 ### ZIP portátil no Omarchy/Arch
 
 Omarchy usa Arch e Hyprland. O ZIP oferece o aplicativo Linux x64 sem precisar
-instalar um DEB/RPM; não instala dependências nem se atualiza sozinho. No Arch,
+instalar um DEB/RPM. A instalação portátil pode se atualizar após conferir a
+assinatura, mas não instala as dependências do sistema. No Arch,
 instale o provider de sandbox pelo gerenciador de pacotes e execute o binário
 extraído como seu usuário habitual:
 

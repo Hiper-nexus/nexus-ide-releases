@@ -297,7 +297,7 @@ describe('Via Rápida × modelo PULL', () => {
     expect(harness.completeVerified).not.toHaveBeenCalled();
   });
 
-  it('retomada de missão encerrada tira o selo runtime-closed da description', async () => {
+  it.each(['blocked', 'running'] as const)('F-429: explicit resume clears both stop markers from a %s row', async status => {
     harness.resumeTechnical.mockImplementationOnce((_scope, input) => {
       liveMission = {
         ...liveMission,
@@ -308,11 +308,11 @@ describe('Via Rápida × modelo PULL', () => {
     });
     liveMission = {
       ...mission,
-      status: 'blocked',
-      intentState: 'blocked_user',
+      status,
+      intentState: status === 'blocked' ? 'blocked_user' : 'executing',
       description:
         'Leia brief.txt e escreva a primeira frase em resumo.txt.\n\n' +
-        '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador; histórico e receipts preservados.',
+        '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador; histórico e receipts preservados.\n\n<!-- nexus:leftover-parked -->\n[NEXUS_LEFTOVER_PARKED] Encerrada.',
     } as Mission;
 
     await fastLane.resumeFastLaneMission(scope, 'mission-1');

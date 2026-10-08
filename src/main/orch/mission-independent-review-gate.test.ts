@@ -110,15 +110,17 @@ describe('Main-owned completion proof', () => {
     })).toEqual({ ok: true, reviewerHandoffId: 'exempt' });
   });
 
-  it('does not add a new automatic-proof requirement to free ops or missions without a squad', () => {
+  it('preserves free ops while requiring verification for standard missions without a squad', () => {
     for (const current of [
       mission({ intentContract: { lane: 'ops', freeAgentChoice: true } as Mission['intentContract'] }),
-      mission({ squadId: undefined }),
     ]) {
       expect(evaluateIndependentReviewGate({
         mission: current, squad: squad(), handoffs: [], deliveryAttemptsOf: () => [],
       })).toEqual({ ok: true, reviewerHandoffId: 'exempt' });
     }
+    expect(evaluateIndependentReviewGate({
+      mission: mission({ squadId: undefined }), squad: null, handoffs: [], deliveryAttemptsOf: () => [],
+    }).ok).toBe(false);
   });
 
   it('rejects substantial prose and invented evidence IDs without a resolved proof', () => {

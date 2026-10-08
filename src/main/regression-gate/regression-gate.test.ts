@@ -1272,3 +1272,41 @@ describe('comparação com a base do diff (F-246)', () => {
     expect(worktreeCount(root)).toBe(1);
   });
 });
+
+it('completion opt-in runs impacted E2E through the existing runner and cannot reuse the fast-gate cache', async () => {
+  const { root, scope } = project();
+  write(root, 'src/isolated.ts', 'export const isolated = 1;\n');
+  write(root, 'e2e/isolated.test.ts', "import { isolated } from '../src/isolated';\n");
+  const { exec } = fakeVitest();
+  const fast = await runRegressionGate({ scope }, { exec });
+  expect(fast.status).toBe('no-tests'); expect(exec).not.toHaveBeenCalled();
+  expect(fast.coverage).toEqual({ indexComplete: true, skippedTests: ['e2e/isolated.test.ts'] });
+  const completion = await runRegressionGate({ scope, includeE2E: true }, { exec });
+  expect(completion.cached).toBe(false);
+  expect(completion.status).toBe('passed'); expect(completion.testsRun).toContain('e2e/isolated.test.ts');
+  expect(completion.coverage).toEqual({ indexComplete: true, skippedTests: [] });
+});
+
+it('completion reports incomplete graph coverage structurally and does not approve a truncated source index', async () => {
+  const { root, scope } = project();
+  write(root, 'src/a.ts', 'export const a = 2;\n' + ' '.repeat(600000));
+  const { exec } = fakeVitest();
+  const result = await runRegressionGate({ scope, includeE2E: true }, { exec });
+  expect(result.coverage?.indexComplete).toBe(false);
+  expect(result.status).toBe('unavailable');
+});
+
+it('completion cannot approve when the import traversal budget omitted known importers', async () => {
+  const graph = await import('../context/orientation/orientation-import-graph');
+  const original = graph.buildOrientationImportGraphFromFacts;
+  const spy = vi.spyOn(graph, 'buildOrientationImportGraphFromFacts').mockImplementation((...args) => {
+    const built = original(...args);
+    return { ...built, reverse: new Map([['src/a.ts', [...Array.from({ length: 4000 }, (_, index) => `src/importer-${index}.ts`), 'src/b.test.ts']]]) };
+  });
+  try {
+    const { root, scope } = project(); write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeVitest();
+    const result = await runRegressionGate({ scope, includeE2E: true }, { exec });
+    expect(result.coverage?.indexComplete).toBe(false); expect(result.status).toBe('unavailable');
+  } finally { spy.mockRestore(); }
+});

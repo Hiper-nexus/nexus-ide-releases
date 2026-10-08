@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const electron = vi.hoisted(() => {
   const handlers = new Map<
@@ -19,6 +19,7 @@ const electron = vi.hoisted(() => {
       // F-517 registrou rechecagem de update no foco da janela; o mock nunca
       // acompanhou e todos os testes do UpdateManager morriam em app.on.
       on: vi.fn(),
+      removeListener: vi.fn(),
     },
     autoUpdater: {
       setFeedURL: vi.fn(),
@@ -54,6 +55,18 @@ import { UPDATE_CHANNELS } from '../shared/update-ipc';
 import { bindTrustedMainWindow } from './security/trusted-ipc';
 import { UpdateManager } from './updater';
 
+const managers: UpdateManager[] = [];
+function createManager(...args: ConstructorParameters<typeof UpdateManager>): UpdateManager {
+  const manager = new UpdateManager(...args);
+  managers.push(manager);
+  return manager;
+}
+
+beforeEach(() => {
+  vi.stubEnv('NEXUS_UPDATE_FEED', undefined);
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('public network is not configured by this updater fixture'); }));
+});
+
 function trustedSenderEvent() {
   const contents = {
     mainFrame: { id: 1 },
@@ -80,9 +93,11 @@ function apiRelease(version: string) {
   };
 }
 
-afterEach(() => {
+afterEach(async () => {
+  for (const manager of managers.splice(0)) await manager.stop();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   electron.handlers.clear();
   vi.clearAllMocks();
   electron.app.isPackaged = true;
@@ -91,7 +106,7 @@ afterEach(() => {
 
 describe('UpdateManager', () => {
   it('uses the official feed for an installed packaged Windows x64 app', () => {
-    const manager = new UpdateManager(true, {
+    const manager = createManager(true, {
       runtimeArch: 'x64',
       runtimePlatform: 'win32',
       runtimeArgs: [],
@@ -113,7 +128,7 @@ describe('UpdateManager', () => {
 
   it('gates timer, focus and direct checks until the Windows first-run deadline', async () => {
     vi.useFakeTimers();
-    const manager = new UpdateManager(true, {
+    const manager = createManager(true, {
       runtimeArch: 'x64',
       runtimePlatform: 'win32',
       runtimeArgs: ['--squirrel-firstrun'],
@@ -136,7 +151,7 @@ describe('UpdateManager', () => {
   });
 
   it('keeps a packaged smoke test quiet instead of calling it a broken Squirrel install', () => {
-    const manager = new UpdateManager(false, {
+    const manager = createManager(false, {
       runtimeArch: 'x64',
       runtimePlatform: 'win32',
       runtimeArgs: ['nexus-smoke-test'],
@@ -160,7 +175,7 @@ describe('UpdateManager', () => {
     const previousFeed = process.env.NEXUS_UPDATE_FEED;
     process.env.NEXUS_UPDATE_FEED = 'https://api.nexuside.app/feed';
     try {
-      const manager = new UpdateManager(true, {
+      const manager = createManager(true, {
         runtimeArch: 'arm64',
         runtimePlatform: 'darwin',
       });
@@ -171,7 +186,8 @@ describe('UpdateManager', () => {
       vi.advanceTimersByTime(1);
       expect(electron.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
     } finally {
-      process.env.NEXUS_UPDATE_FEED = previousFeed;
+      if (previousFeed === undefined) delete process.env.NEXUS_UPDATE_FEED;
+      else process.env.NEXUS_UPDATE_FEED = previousFeed;
     }
   });
 
@@ -181,7 +197,7 @@ describe('UpdateManager', () => {
     ['Windows development build', false, 'x64', true],
   ])('fails clearly for %s', (_name, isPackaged, runtimeArch, updateExeExists) => {
     electron.app.isPackaged = isPackaged;
-    const manager = new UpdateManager(true, {
+    const manager = createManager(true, {
       runtimeArch,
       runtimePlatform: 'win32',
       runtimeArgs: [],
@@ -199,12 +215,18 @@ describe('UpdateManager', () => {
 
   it('revalida uma oferta antiga e baixa somente o release mais novo', async () => {
     vi.useFakeTimers();
+    let rejectFirstDownload!: (error: Error) => void;
+    const firstDownload = new Promise<never>((_resolve, reject) => { rejectFirstDownload = reject; });
+    const fetchMock = vi.fn()
+      .mockRejectedValue(new Error('public download unavailable in fixture'))
+      .mockImplementationOnce(() => firstDownload);
+    vi.stubGlobal('fetch', fetchMock);
     let releases = [apiRelease('0.16.1')];
     const runGh = vi.fn(async (args: string[], _timeoutMs: number) => {
       if (args[0] === 'api') return JSON.stringify(releases);
       throw new Error('download interrompido pelo teste');
     });
-    const manager = new UpdateManager(true, {
+    const manager = createManager(true, {
       runGh,
       runtimeArch: 'arm64',
       runtimePlatform: 'darwin',
@@ -220,7 +242,19 @@ describe('UpdateManager', () => {
     expect(manager.getState().available?.version).toBe('0.16.1');
 
     releases = [apiRelease('0.16.1'), apiRelease('0.16.4')];
-    await install?.(trustedSenderEvent());
+    let installSettled = false;
+    const installing = Promise.resolve(install?.(trustedSenderEvent())).finally(() => { installSettled = true; });
+    try {
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      expect(fetchMock.mock.calls[0]?.[0]).toContain('/v0.16.4/NexusIDE-darwin-arm64-0.16.4.zip');
+      expect(manager.getState()).toMatchObject({ phase: 'downloading', available: { version: '0.16.4' } });
+      // runGh alone cannot control installation: the public request runs first.
+      expect(installSettled).toBe(false);
+      expect(runGh.mock.calls.some(([args]) => args[0] === 'release')).toBe(false);
+    } finally {
+      rejectFirstDownload(new Error('release the controlled public download'));
+      await installing;
+    }
 
     const downloadArgs = runGh.mock.calls.find(
       ([args]) => args[0] === 'release' && args[1] === 'download',
@@ -238,7 +272,7 @@ describe('UpdateManager', () => {
       if (args[0] === 'api') return JSON.stringify([apiRelease('0.32.16')]);
       throw new Error('download interrompido pelo teste');
     });
-    const manager = new UpdateManager(true, {
+    const manager = createManager(true, {
       runGh,
       runtimeArch: 'arm64',
       runtimePlatform: 'darwin',
@@ -280,7 +314,7 @@ describe('UpdateManager', () => {
       return fetchMock;
     };
     const linuxManager = (runGh = vi.fn()) =>
-      new UpdateManager(true, { runGh, runtimeArch: 'x64', runtimePlatform: 'linux' });
+      createManager(true, { runGh, runtimeArch: 'x64', runtimePlatform: 'linux' });
 
     it('boots as a manual channel instead of an unsupported platform error', () => {
       const manager = linuxManager();
@@ -343,7 +377,7 @@ describe('UpdateManager', () => {
     });
 
     it('keeps other non-updating platforms and Linux arm64 on the unsupported path', () => {
-      const manager = new UpdateManager(true, { runtimeArch: 'arm64', runtimePlatform: 'linux' });
+      const manager = createManager(true, { runtimeArch: 'arm64', runtimePlatform: 'linux' });
       manager.init();
       expect(manager.getState()).toMatchObject({ phase: 'unsupported', source: 'none' });
       expect(manager.getState().manual).toBeUndefined();
@@ -363,7 +397,7 @@ describe('UpdateManager', () => {
       },
     }));
     vi.stubGlobal('fetch', fetchMock);
-    const manager = new UpdateManager(true, {
+    const manager = createManager(true, {
       runGh,
       runtimeArch: 'arm64',
       runtimePlatform: 'darwin',
@@ -397,7 +431,7 @@ describe('UpdateManager', () => {
         text: async () => JSON.stringify([apiRelease('0.32.16')]),
       });
     vi.stubGlobal('fetch', fetchMock);
-    const manager = new UpdateManager(true, {
+    const manager = createManager(true, {
       runGh,
       runtimeArch: 'arm64',
       runtimePlatform: 'darwin',
@@ -421,7 +455,7 @@ describe('UpdateManager', () => {
     const prevFeed = process.env.NEXUS_UPDATE_FEED;
     process.env.NEXUS_UPDATE_FEED = 'https://api.nexuside.app/feed';
     try {
-      const manager = new UpdateManager(true, {
+      const manager = createManager(true, {
         runtimeArch: 'arm64',
         runtimePlatform: 'darwin',
       });
@@ -434,7 +468,8 @@ describe('UpdateManager', () => {
         'O app atual foi aberto fora de /Applications ou a partir de build sem assinatura Developer ID. Instale o .dmg oficial para atualizar.',
       );
     } finally {
-      process.env.NEXUS_UPDATE_FEED = prevFeed;
+      if (prevFeed === undefined) delete process.env.NEXUS_UPDATE_FEED;
+      else process.env.NEXUS_UPDATE_FEED = prevFeed;
     }
   });
 
@@ -447,7 +482,7 @@ describe('UpdateManager', () => {
     const prevFeed = process.env.NEXUS_UPDATE_FEED;
     process.env.NEXUS_UPDATE_FEED = 'https://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/0.15.0';
     try {
-      const manager = new UpdateManager(true, {
+      const manager = createManager(true, {
         runtimeArch: 'x64',
         runtimePlatform: 'win32',
         runtimeArgs: [],
@@ -462,7 +497,8 @@ describe('UpdateManager', () => {
       });
       expect(manager.getState().checkedAt).toEqual(expect.any(Number));
     } finally {
-      process.env.NEXUS_UPDATE_FEED = prevFeed;
+      if (prevFeed === undefined) delete process.env.NEXUS_UPDATE_FEED;
+      else process.env.NEXUS_UPDATE_FEED = prevFeed;
     }
   });
 });
@@ -493,7 +529,7 @@ describe('Linux self-update (pacote portátil)', () => {
     });
     const launch = vi.fn();
     const quit = vi.fn();
-    const manager = new UpdateManager(true, {
+    const manager = createManager(true, {
       runGh: vi.fn(),
       runtimeArch: 'x64',
       runtimePlatform: 'linux',

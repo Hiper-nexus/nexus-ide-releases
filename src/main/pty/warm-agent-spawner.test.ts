@@ -17,6 +17,11 @@ vi.mock('../license-access', () => ({
   requireAccess: () => ({ ok: true }),
 }));
 vi.mock('../orch/codex-cli-version', () => ({ settleCodexCliVersionForSpawn: deps.settle }));
+const heavyBase = vi.hoisted(() => ({ missing: false }));
+vi.mock('../orch/native-heavy-preload', () => ({
+  ensureNativeHeavyJobBase: () => undefined,
+  nativeHeavyJobBaseMissing: () => heavyBase.missing,
+}));
 
 import { registerWarmAgentSpawner } from './warm-agent-spawner';
 
@@ -24,6 +29,7 @@ const adapterFor = (id: string) => ({ id, kind: 'cli-pty', bin: id, quirks: {} }
 const scope = { rootRealPath: '/synthetic/workspace' } as never;
 
 beforeEach(() => {
+  heavyBase.missing = false;
   deps.spawn.mockClear();
   deps.settle.mockReset().mockReturnValue(null);
   deps.creator = undefined;
@@ -51,5 +57,13 @@ describe('F-790: pane ocioso do warm pool e a versão do Codex', () => {
     await expect(deps.creator!('claude')).resolves.toMatchObject({ sessionId: 'warm-session', cli: 'claude' });
     expect(deps.settle).toHaveBeenCalledWith(expect.objectContaining({ id: 'claude' }));
     expect(deps.spawn).toHaveBeenCalledOnce();
+  });
+});
+
+describe('F-955: pane ocioso sem a base do job nativo', () => {
+  it('não nasce enquanto a base falta: seria adotado depois sem comandos pesados', async () => {
+    heavyBase.missing = true;
+    await expect(deps.creator!('claude')).resolves.toBeNull();
+    expect(deps.spawn).not.toHaveBeenCalled();
   });
 });

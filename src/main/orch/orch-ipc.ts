@@ -120,7 +120,7 @@ import {
 import { missionEngineForScope } from "./mission-engine-registry";
 import { resurrectRunningMissionsForScope } from "./mission-fast-lane";
 import { planBoardClear } from "./board-clear-plan";
-import { broadcastToProject } from "./project-scoped-broadcast";
+import { broadcastToProject, sameProjectScope } from "./project-scoped-broadcast";
 import {
   initIdleDelivery,
   redeliverPendingHandoffs,
@@ -195,7 +195,7 @@ import { DesignMdApiClient } from "../design/designmd-api-client";
 import { buildDesignSystemTools } from "./tools-design-system";
 import { DEFAULT_DESIGN_TARGET_PATH } from "./design-system-authority";
 import { importDesignContractWithKeylessFallback } from "./design-system-import-fallback";
-import type { AgentGateContext } from "./gate";
+import { getContextBySession, isCurrentGateContext, type AgentGateContext } from "./gate";
 import { reconcileCompletedPetStudioMissions } from "./pet-studio-completion";
 import { z } from "zod";
 import { answerDirectQuestion, routeIntent } from './intent-router';
@@ -243,6 +243,7 @@ import {
   completeMissionByOperator,
   planOperatorCompleteIpc,
 } from "./mission-operator-complete";
+import { onIpcGuarded } from '../runtime/git-ipc-guard';
 
 /**
  * Renderer-facing IPC for the orchestration domain, plus the domain
@@ -1309,13 +1310,19 @@ export function configureRendererMissionAuthority(
   rendererMissionAuthority = new RendererMissionAuthority(projectDomainStores);
   const authority = rendererMissionAuthority;
   // Missão sob demanda: o 1º helper do pane "+ Pane" cria a missão DELE.
-  setOperatorTabMissionProvider((ctx, task) => {
+  setOperatorTabMissionProvider(async (ctx, task) => {
     if (!ctx.sessionId) return null;
     const sessionId = ctx.sessionId;
-    const result = authority.adoptOperatorHandForSpawn(sessionId, task);
+    const expectedScope = { ...ctx.scope };
+    const result = await authority.adoptOperatorHandForSpawn(sessionId, task);
     if (!result.ok || !result.mission) return null;
     const missionId = result.mission.id;
-    redeliverPendingHandoffs(ctx.scope, missionId);
+    const current = getContextBySession(sessionId);
+    if (!current || !isCurrentGateContext(current) || current.role !== "orchestrator" ||
+      current.missionId !== missionId || !sameProjectScope(current.scope, expectedScope)) {
+      throw new Error("operator_tab_mission_authority_changed");
+    }
+    redeliverPendingHandoffs(current.scope, missionId);
     broadcastProjectStore(ctx.scope, "missions");
     return {
       missionId,
@@ -1843,7 +1850,7 @@ export function registerOrchIpc(): void {
     });
   });
 
-  ipcMain.on(ORCH_CHANNELS.panesSync, (event, raw) => {
+  onIpcGuarded(ORCH_CHANNELS.panesSync, (event, raw) => {
     const envelope = panesSyncEnvelopeSchema.safeParse(raw);
     const legacy = envelope.success ? null : panesSyncSchema.safeParse(raw);
     const entries = envelope.success
@@ -1851,7 +1858,11 @@ export function registerOrchIpc(): void {
       : legacy?.success
         ? legacy.data
         : null;
-    if (entries) {
+    if (!entries) return;
+    // ipcMain.on não tem quem receba a exceção: ela vira o diálogo
+    // "A JavaScript error occurred in the main process" (GitCommandError na
+    // 0.76.198). O espelho dos panes é refeito no próximo sync.
+    try {
       syncPanes(
         entries,
         event.sender,
@@ -1863,24 +1874,26 @@ export function registerOrchIpc(): void {
           pane.paneId,
         );
       }
+    } catch (error) {
+      console.warn("[orch] sync de panes falhou; o próximo sync refaz o espelho", error);
     }
   });
 
-  ipcMain.on(ORCH_CHANNELS.paneSpawnResult, (event, raw) => {
+  onIpcGuarded(ORCH_CHANNELS.paneSpawnResult, (event, raw) => {
     const parsed = orchPaneSpawnResultSchema.safeParse(raw);
     if (parsed.success) {
       resolvePaneSpawn(parsed.data, event.sender);
     }
   });
 
-  ipcMain.on(ORCH_CHANNELS.paneRecoveryResult, (event, raw) => {
+  onIpcGuarded(ORCH_CHANNELS.paneRecoveryResult, (event, raw) => {
     const parsed = missionPaneRecoveryResultSchema.safeParse(raw);
     if (parsed.success) {
       resolveMissionPaneRecovery(parsed.data, event.sender);
     }
   });
 
-  ipcMain.on(ORCH_CHANNELS.browserOpenResult, (event, raw) => {
+  onIpcGuarded(ORCH_CHANNELS.browserOpenResult, (event, raw) => {
     const parsed = browserPaneOpenResultSchema.safeParse(raw);
     if (parsed.success) resolveBrowserOpen(parsed.data, event.sender);
   });
@@ -2209,7 +2222,7 @@ export function registerOrchIpc(): void {
       ownGroup: z.boolean().optional(),
     })
     .strict();
-  ipcMain.handle(ORCH_CHANNELS.missionCreateForPane, (event, raw) => {
+  ipcMain.handle(ORCH_CHANNELS.missionCreateForPane, async (event, raw) => {
     try { assertLicenseAccess(); } catch (error) {
       const failure = licenseFailure(error);
       if (failure) return failure;
@@ -2222,12 +2235,13 @@ export function registerOrchIpc(): void {
     if (!isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)) {
       return { ok: false, error: "hardened" };
     }
-    const result = requireMissionAuthority().createPaneMissionFromRenderer(
+    const requestedScope = requireLiveRendererWorkspaceScope(event.sender);
+    const result = await requireMissionAuthority().createPaneMissionFromRenderer(
       event.sender,
       parsed.data,
     );
     if (result.ok && result.mission) {
-      const scope = requireRendererWorkspaceScope(event.sender);
+      const scope = requireLiveRendererWorkspaceScope(event.sender, requestedScope);
       redeliverPendingHandoffs(scope, result.mission.id);
       broadcastProjectStore(scope, "missions");
       const leader = result.mission.orchestratorSessionId;

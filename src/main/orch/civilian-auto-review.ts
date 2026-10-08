@@ -1,6 +1,8 @@
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { missionExecutionScope, missionExecutionBaseSha } from './mission-execution-scope';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { PeriodicTaskContext } from '../observability/periodic-task';
@@ -17,11 +19,14 @@ import {
   runDependencyFreshnessSensor,
   runTestCoverageSensor,
   runTypecheckSensor,
+  mechanicalProjectRequirements,
   type MechanicalCheckResult,
   type MechanicalFinding,
 } from '../context/mechanical-sensors';
 import type { ReviewCategory, ReviewFindingInput } from '../context/review-council';
+import type { McpToolInvocation } from './mcp-protocol';
 import { deliverAgentPrompt } from './tool-util';
+import { createCompletionCheckExecutors } from './completion-check-executors';
 import {
   isRegressionGateEnabled,
   runRegressionGate,
@@ -63,12 +68,29 @@ export type CivilianAutoReviewOutcome =
       readonly kind: 'approved';
       readonly evidenceId: string;
       readonly note: string;
+      /** Additive Main evidence for strict code completion; legacy callers keep their outcome. */
+      readonly verification?: CivilianMechanicalVerification;
     }
   | { readonly kind: 'repair-dispatched' }
   | { readonly kind: 'blocked'; readonly description: string }
-  | { readonly kind: 'defer-to-roster-review'; readonly reason?: string };
+  | { readonly kind: 'defer-to-roster-review'; readonly reason?: string; readonly retryable?: boolean };
+
+export interface CivilianMechanicalVerification {
+  readonly analysisComplete: boolean;
+  readonly headSha: string | null;
+  /** null means current-state verification, not a claim about authorship. */
+  readonly baseSha: string | null;
+  readonly checks: readonly { readonly kind: MechanicalCheckResult['kind'];
+    readonly status: MechanicalCheckResult['status'] | 'not-applicable'; readonly summary: string }[];
+  readonly regression: RegressionGateResult | null;
+  readonly regressionApplicable: boolean;
+}
 
 export interface CivilianAutoReviewInput {
+  /** Explicit Main baseline for strict completion; null reviews current state. */
+  readonly completionBaseSha?: string | null;
+  /** Main mission/leader authority rechecked after resource waits. */
+  readonly assertCurrentAuthority?: () => void;
   readonly mission: Mission;
   readonly scope: ProjectExecutionScope;
   /** Arquivos entregues pela missão (produto), já filtrados de lixo. */
@@ -97,7 +119,9 @@ export interface CivilianAutoReviewDependencies {
         readonly scope: ProjectExecutionScope;
         readonly declaredFiles: readonly string[];
         readonly baseSha?: string;
+        readonly includeE2E?: boolean;
         readonly trustedDependencyRoot?: string;
+        readonly authority?: McpToolInvocation;
         readonly signal?: AbortSignal;
       }) => Promise<RegressionGateResult>)
     | null;
@@ -281,6 +305,12 @@ function regressionSummary(result: RegressionGateResult | null): string {
   if (!result) return '';
   switch (result.status) {
     case 'passed':
+      if (result.preexistingFailures.length + result.inheritedFailures.length > 0) {
+        return `Testes impactados: ${result.testsRun.length} executados (${result.runner}); falhas pré-existentes/herdadas comprovadas foram excluídas do veredito e não contam contra o diff.`;
+      }
+      if (result.coverage?.indexComplete === false || (result.coverage?.skippedTests.length ?? 0) > 0) {
+        return `Testes impactados: ${result.testsRun.length} executados; cobertura parcial, incluindo ${result.coverage?.skippedTests.length ?? 0} teste(s) não executado(s).`;
+      }
       return `Testes impactados: ✓ ${result.testsRun.length} passaram (${result.runner}).`;
     case 'failed':
       return `Testes impactados: ✗ ${result.failures.length} falharam.`;
@@ -312,7 +342,7 @@ export async function enforceCivilianAutoReview(
   input: CivilianAutoReviewInput,
   dependencies: CivilianAutoReviewDependencies = {},
 ): Promise<CivilianAutoReviewOutcome> {
-  const assertCurrent = () => input.lifetime?.assertCurrent();
+  const assertCurrent = () => { input.lifetime?.assertCurrent(); input.assertCurrentAuthority?.(); };
   const wait = <T>(promise: Promise<T>): Promise<T> => input.lifetime?.wait(promise) ?? promise;
   const launch = <T>(run: () => Promise<T>): Promise<T> => { assertCurrent(); return wait(run()); };
   assertCurrent();
@@ -335,7 +365,8 @@ export async function enforceCivilianAutoReview(
   // precisa revalidar o código e os sensores sobre a entrega atual.
 
   const baseSha = observedHead
-    ? missionExecutionBaseSha(input.scope, input.mission) ?? await launch(() => resolveAutoReviewBaseSha(git, root, input.mission.createdAt)) ?? observedHead
+    ? input.completionBaseSha !== undefined ? input.completionBaseSha ?? observedHead
+      : missionExecutionBaseSha(input.scope, input.mission) ?? await launch(() => resolveAutoReviewBaseSha(git, root, input.mission.createdAt)) ?? observedHead
     : NO_GIT_REVISION;
 
   const changedFiles = [...new Set(input.productFiles)].slice(0, 512);
@@ -378,9 +409,17 @@ export async function enforceCivilianAutoReview(
   // Etapa 2 — sensores mecânicos Nexus-owned: typecheck + auditoria de
   // dependências + cobertura de testes quando o projeto permite. Não dependem
   // de scripts no alvo; falha de infraestrutura é indisponível, não bloqueio.
+  const requirements = await wait(mechanicalProjectRequirements(root, changedFiles));
+  const strictCompletion = input.completionBaseSha !== undefined;
+  const ownedChecks = strictCompletion ? createCompletionCheckExecutors({ scope: input.scope, executionScope,
+    missionId: input.mission.id, signal: input.lifetime?.signal, assertCurrent }) : null;
+  const typecheck = launch(() => dependencies.typecheck ? dependencies.typecheck(root) : ownedChecks ? ownedChecks.typecheck(root) : runTypecheckSensor(root, { signal: input.lifetime?.signal }));
+  const audit = () => launch(() => (dependencies.audit ?? ownedChecks?.audit ?? runDependencyAuditSensor)(root));
+  // One project permit: do not spend the shorter audit deadline waiting for
+  // this same completion's compiler on every retry.
   const mechanical = await wait(Promise.all([
-    launch(() => (dependencies.typecheck ?? runTypecheckSensor)(root)),
-    launch(() => (dependencies.audit ?? runDependencyAuditSensor)(root)),
+    typecheck,
+    strictCompletion ? typecheck.then(audit) : audit(),
     launch(() => dependencies.freshness ? dependencies.freshness(root) : runDependencyFreshnessSensor(root, {
       signal: input.lifetime?.signal,
       assertCurrentAuthority: () => {
@@ -399,18 +438,20 @@ export async function enforceCivilianAutoReview(
   const regressionGate =
     dependencies.regressionGate !== undefined
       ? dependencies.regressionGate
-      : isRegressionGateEnabled()
+      : strictCompletion || isRegressionGateEnabled()
         ? runRegressionGate
         : null;
   let regression: RegressionGateResult | null = null;
-  if (regressionGate && observedHead) {
+  if (regressionGate && (observedHead || strictCompletion)) {
     try {
       regression = await launch(() => regressionGate({
         scope: executionScope,
         projectScope: input.scope,
         declaredFiles: changedFiles,
-        baseSha,
+        ...(observedHead ? { baseSha } : {}),
         trustedDependencyRoot: input.scope.rootRealPath,
+        authority: { signal: input.lifetime?.signal, assertCurrentAuthority: assertCurrent },
+        ...(strictCompletion ? { includeE2E: true } : {}),
         ...(input.lifetime ? { signal: input.lifetime.signal } : {}),
       }));
     } catch (error) {
@@ -418,19 +459,61 @@ export async function enforceCivilianAutoReview(
       console.warn('[civilian-auto-review] portão de regressão falhou (ignorado):', error);
     }
   }
+  // Missing execution or incomplete discovery is never evidence of N/A.
+  if (strictCompletion && regression && (
+    regression.coverage?.indexComplete === false || (regression.coverage?.skippedTests.length ?? 0) > 0 ||
+    ['no-tests', 'clean'].includes(regression.status) && (requirements.tests || regression.coverage?.indexComplete !== true)
+  )) {
+    regression = { ...regression, status: 'unavailable',
+      testsNotRun: [...new Set([...regression.testsNotRun, ...(regression.coverage?.skippedTests ?? [])])],
+      warnings: [...regression.warnings, 'cobertura de testes aplicáveis não comprovada integralmente'],
+    };
+  }
+  if (strictCompletion && (mechanical.some(check => check.retryable) || regression?.retryable)) {
+    return { kind: 'defer-to-roster-review', retryable: true,
+      reason: 'Verificações aguardando recursos ou encerramento de processos anteriores. O Nexus tentará novamente; nenhum reparo de código foi solicitado.' };
+  }
+  const requiredCheck = (kind: MechanicalCheckResult['kind']) => kind === 'typecheck' ? requirements.typecheck
+    : kind === 'dependency-audit' ? requirements.audit
+    : kind === 'dependency-freshness' ? existsSync(join(root, 'package.json')) && existsSync(join(root, 'package-lock.json')) : true;
+  const prerequisites: ReviewFindingInput[] = strictCompletion && input.liveOrchestratorSessionId ? [
+    ...mechanical.filter(check => check.status === 'unavailable' && requiredCheck(check.kind) && check.kind !== 'dependency-freshness')
+      .map(check => ({ severity: 'high' as const, category: 'correctness' as const, file: 'package.json', criterionRefs: [], invariantRefs: ['required-check-executed'],
+        evidence: `Verificação obrigatória não executada: ${check.summary}`,
+        recommendation: 'Restaure o compilador/configuração ou lockfile declarado e execute novamente a verificação.' })),
+    ...(regression?.status === 'unavailable' ? [{ severity: 'high' as const, category: 'correctness' as const, file: regression.testsNotRun[0] ?? 'package.json',
+      criterionRefs: [], invariantRefs: ['required-tests-executed'], evidence: 'Testes aplicáveis não foram verificados integralmente.',
+      recommendation: 'Restaure runner, configuração e pré-requisitos dos testes impactados (inclusive E2E) e solicite nova verificação.' }] : []),
+  ] : [];
   const blocking = [
     ...blockingFindingsOf(analysis),
+    ...prerequisites,
     ...mechanicalBlocking,
     ...regressionToReviewFindings(regression),
   ];
   assertCurrent();
   if (blocking.length === 0) {
+    const has = (file: string) => existsSync(join(root, file));
+    const packagePresent = has('package.json');
+    const applicable = requiredCheck;
     const outcome: CivilianAutoReviewOutcome = {
       kind: 'approved',
       evidenceId: `nexus-auto-review:${analysis.analysisHash}`,
       note: [civilianAutoReviewEvidenceNote(analysis), sensorSummaries(mechanical), regressionSummary(regression),
         !observedHead ? 'Arquivos atuais analisados sem comparação com histórico Git.' : '',
       ].filter(Boolean).join('\n'),
+      verification: {
+        analysisComplete: analysis.complete,
+        headSha: observedHead,
+        baseSha: input.completionBaseSha !== undefined ? input.completionBaseSha : observedHead ? baseSha : null,
+        checks: mechanical.map(check => ({ kind: check.kind, summary: check.summary,
+          status: check.status === 'unavailable' && !applicable(check.kind) ? 'not-applicable' : check.status })),
+        regression,
+        regressionApplicable: regression ? !['no-tests', 'clean'].includes(regression.status) || requirements.tests ||
+          regression.coverage?.indexComplete !== true || (regression.coverage?.skippedTests.length ?? 0) > 0
+          : packagePresent || ['tsconfig.json', 'pyproject.toml', 'pytest.ini', 'Cargo.toml', 'go.mod', 'Makefile'].some(has) ||
+            changedFiles.some(file => /(?:^|[/.])(?:tests?|spec)[/.]|\.(?:test|spec)\./i.test(file)),
+      },
     };
     return outcome;
   }

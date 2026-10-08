@@ -338,3 +338,66 @@ describe('prova de turno após o Enter (compose unstick)', () => {
     }
   });
 });
+
+
+describe('F-266: Kimi uses canonical turn proof, never input busy as acceptance', () => {
+  it.each(['swallowed', 'input-busy', 'dialog'] as const)('%s after first CR', async (scenario) => {
+    vi.useFakeTimers();
+    try {
+      let enters = 0;
+      const writes: string[] = [];
+      const ports = {
+        getSessionId: () => 'session-kimi',
+        schedule: (cb: () => void, ms: number) => setTimeout(cb, ms),
+        write: vi.fn(),
+        writeConfirmed: async (_id: string, data: string) => { writes.push(data); return true; },
+        submitPromptEnter: async () => { writes.push('\r'); enters++; return true; },
+        bracketedPaste: false,
+        probePromptState: async () => ({ turnStartSequence: enters >= 2 ? 1 : 0,
+          state: scenario === 'input-busy' && enters > 0 ? 'busy' as const : 'idle' as const,
+          awaitingInput: scenario === 'dialog' && enters > 0 }),
+      };
+      const pending = submitPromptToPaneConfirmed('pane-kimi', 'new prompt', 'session-kimi', ports);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(await pending).toBe(scenario === 'swallowed');
+      expect(writes[0]).toBe('new prompt');
+      expect(enters).toBe(scenario === 'swallowed' ? 2 : 1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('operator lane observes a turn even when it starts during the CR write', async () => {
+    vi.useFakeTimers();
+    try {
+      let sequence = 4;
+      const write = vi.fn(async (_id: string, data: string) => { if (data === '\r') sequence++; return true; });
+      const pending = submitPromptToPaneOperator('pane-kimi', 'new prompt', 'session-kimi', {
+        getSessionId: () => 'session-kimi', operatorWrite: write,
+        submitPromptEnter: async id => write(id, '\r'),
+        schedule: (cb, ms) => setTimeout(cb, ms),
+        probePromptState: async () => ({ turnStartSequence: sequence, state: 'idle', awaitingInput: false }),
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(pending).resolves.toBe(true);
+      expect(write).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+it('F-266: a dialog appearing after the probe is vetoed by the atomic Main Enter', async () => {
+  vi.useFakeTimers();
+  try {
+    const writes: string[] = [];
+    const ports = {
+      getSessionId: () => 'session-kimi', bracketedPaste: false,
+      schedule: (cb: () => void, ms: number) => setTimeout(cb, ms), write: vi.fn(),
+      writeConfirmed: async (_id: string, data: string) => { writes.push(data); return true; },
+      probePromptState: async () => ({ turnStartSequence: 2, state: 'idle' as const, awaitingInput: false }),
+      submitPromptEnter: vi.fn(async () => false),
+    };
+    const pending = submitPromptToPaneConfirmed('pane-kimi', 'new prompt', 'session-kimi', ports);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await pending).toBe(false);
+    expect(writes).toEqual(['new prompt']);
+    expect(ports.submitPromptEnter).toHaveBeenCalledWith('session-kimi', 2, false);
+  } finally { vi.useRealTimers(); }
+});

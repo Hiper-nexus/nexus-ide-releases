@@ -388,7 +388,7 @@ export function packagedSmokeMarkerPath(userData) {
   );
 }
 
-export function assertPackagedSmokeProof(code, output) {
+export function assertPackagedSmokeProof(code, output, { requireMainOwnedCommand = false } = {}) {
   if (code !== 0) {
     throw new Error(`packaged smoke exited ${String(code)}\n${output}`);
   }
@@ -402,6 +402,16 @@ export function assertPackagedSmokeProof(code, output) {
     );
   }
   assertNoNativeLoadFailure(output);
+  if (requireMainOwnedCommand) {
+    const lines = output.split('\n').filter(line => line.startsWith('[smoke] main-owned-command '));
+    let proof;
+    try { proof = lines.length === 1 ? JSON.parse(lines[0].slice('[smoke] main-owned-command '.length)) : null; } catch { proof = null; }
+    if (proof?.status !== 'passed' || proof.exitCode !== 0 || proof.physicalExitProven !== true ||
+        proof.densePathFiles !== 768 || !Number.isSafeInteger(proof.profileBytes) || proof.profileBytes <= 0 || proof.profileBytes > 65536) {
+      throw new Error('packaged smoke lacks a valid Main-owned command proof');
+    }
+    return { status: 'passed', densePathFiles: 768, profileBytes: proof.profileBytes, exitCode: 0, physicalExitProven: true };
+  }
 }
 
 /**

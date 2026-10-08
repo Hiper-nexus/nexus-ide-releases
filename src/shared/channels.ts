@@ -8,6 +8,8 @@ export const PTY_CHANNELS = {
   spawn: 'pty:spawn',
   write: 'pty:write',
   writeConfirmed: 'pty:write-confirmed',
+  promptState: 'pty:prompt-state',
+  promptEnter: 'pty:prompt-enter',
   resize: 'pty:resize',
   kill: 'pty:kill',
   data: 'pty:data',

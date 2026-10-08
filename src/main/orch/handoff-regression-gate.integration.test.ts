@@ -1,7 +1,7 @@
 /**
  * Portão de regressão na fronteira COMUM do handoff: gate, stores SQLite,
  * registry de worktrees, git e o sandbox do runner são reais. O único dublê é
- * o binário do runner (um script que reprova os testes pedidos), executado de
+ * o binário do runner (um script que detecta a regressão da fixture), executado de
  * verdade no sandbox.
  */
 import fs from "node:fs";
@@ -16,6 +16,8 @@ import {
   disposeAuditLogRuntime,
 } from "../jarvis/audit-log";
 import { processSandboxRuntimeAvailable } from "../runtime/process-sandbox-capability";
+import { setPtyHost } from "../pty/pty-manager";
+import { currentDarwinPtySupervisorRuntime, supervisedJobCommand } from "../pty/darwin-pty-supervisor";
 import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
   configureWorktreeRuntimeRegistry,
@@ -62,10 +64,13 @@ vi.mock("./worker-delivery-board", () => ({
   shutdownWorkerDeliveryBoard: vi.fn(),
 }));
 
-/** "vitest" do projeto alvo: reprova todo arquivo de teste pedido. */
+/** "vitest" do projeto alvo: B passa; mudar a para 2 introduz a regressão. */
 const FAILING_RUNNER = `#!/bin/sh
 out=""
 files=""
+status=failed
+exit_code=1
+if grep -q '^export const a = 1;$' src/a.ts; then status=passed; exit_code=0; fi
 for a in "$@"; do
   case "$a" in
     --outputFile=*) out="\${a#--outputFile=}" ;;
@@ -75,11 +80,11 @@ done
 sep=""
 printf '{"testResults":[' > "$out"
 for f in $files; do
-  printf '%s{"name":"%s/%s","status":"failed","assertionResults":[{"status":"failed","fullName":"soma","failureMessages":["expected 2 to be 3"]}]}' "$sep" "$PWD" "$f" >> "$out"
+  printf '%s{"name":"%s/%s","status":"%s","assertionResults":[{"status":"%s","fullName":"soma","failureMessages":["expected 2 to be 1"]}]}' "$sep" "$PWD" "$f" "$status" "$status" >> "$out"
   sep=","
 done
 printf ']}' >> "$out"
-exit 1
+exit "$exit_code"
 `;
 
 let temp: string;
@@ -116,6 +121,10 @@ function fixtureRepo(): string {
 }
 
 beforeEach(() => {
+  if (process.platform === 'darwin') setPtyHost({
+    spawn: () => { throw new Error('command fixture allocates no PTY'); },
+    prepareCommandSupervisor: async (file, args) => supervisedJobCommand(currentDarwinPtySupervisorRuntime(process.cwd()), file, args),
+  });
   temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-handoff-gate-")));
   manager = new ProjectRuntimeManager({
     baseDir: path.join(temp, "runtime"),

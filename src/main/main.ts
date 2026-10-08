@@ -189,7 +189,7 @@ import {
   configurePtyProjectRuntimeManager,
   registerPtyIpc,
 } from "./pty/pty-ipc";
-import { nativeHeavyJobEnvironment } from "./orch/native-heavy-preload";
+import { proveNativeHeavyJobBaseAtBoot } from "./orch/native-heavy-preload";
 import {
   registerBrowserIpc,
   destroyBrowsersFor,
@@ -521,6 +521,7 @@ import {
   stopEventLoopMonitor,
 } from "./observability/event-loop-monitor";
 import { registerMainHeartbeatIpc } from "./observability/main-heartbeat-ipc";
+import { bootStep, bootStepAsync, describeBootFailure } from './runtime/git-boot-guard';
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 let hookDropBoxWatcher: AgentHookDropBoxWatcher | null = null;
@@ -575,9 +576,9 @@ if (process.platform === "win32") {
 async function bootstrap(): Promise<void> {
   // Persisted overrides live under userData; must be configured before the
   // first getFeatureFlagRegistry() call anywhere in bootstrap.
-  configureFeatureFlagRegistry({
+  bootStep('configureFeatureFlagRegistry', () => configureFeatureFlagRegistry({
     overridesPath: path.join(app.getPath("userData"), "feature-flags.json"),
-  });
+  }));
   // Explicit test-only opt-in. Normal dev and packaged launches retain the
   // fail-closed built-in defaults; kill switches remain authoritative.
   if (process.env.NEXUS_FORCE_ALL_FLAGS === '1') {
@@ -614,39 +615,40 @@ async function bootstrap(): Promise<void> {
     baseDir: path.join(app.getPath("userData"), "project-runtime"),
     appVersion: app.getVersion(),
   });
-  configureAuditLogRuntime(projectRuntimeManager);
-  configurePtyProjectRuntimeManager(projectRuntimeManager);
-  configureRendererMissionAuthority(projectRuntimeManager);
+  const runtimeManager: ProjectRuntimeManager = projectRuntimeManager;
+  bootStep('configureAuditLogRuntime', () => configureAuditLogRuntime(runtimeManager));
+  bootStep('configurePtyProjectRuntimeManager', () => configurePtyProjectRuntimeManager(runtimeManager));
+  bootStep('configureRendererMissionAuthority', () => configureRendererMissionAuthority(runtimeManager));
   // F-773: cada handoff grava a CLI e o modelo da sessão física que o
   // entregou — base da taxa de sucesso da rota. Injetado pelo mesmo motivo do
   // sweep abaixo: o store não pode importar o pty-manager.
-  setHandoffRouteAttributionResolver((sessionId) =>
+  bootStep('setHandoffRouteAttributionResolver', () => setHandoffRouteAttributionResolver((sessionId) =>
     routeAttributionFromSession(getAgentSessionInfo(sessionId)),
-  );
+  ));
   // O enforcement grava "terminou sem entregar" depois do exit, quando a
   // sessão já saiu do registro: o tap de saída guarda quem ela era.
-  tapSessionExit((sessionId, agent) =>
+  bootStep('tapSessionExit', () => tapSessionExit((sessionId, agent) =>
     rememberExitedSessionAttribution(sessionId, routeAttributionFromSession(agent)),
-  );
+  ));
   // Liga a varredura de PTY do teardown de worktree. Injetado aqui, e não
   // importado dentro do registry, porque pty-manager já importa de runtime/ —
   // o import de volta fecharia um ciclo ESM.
-  configureWorktreePtySweep({
+  bootStep('configureWorktreePtySweep', () => configureWorktreePtySweep({
     listSessions: listLiveSessionLocations,
     terminate: (sessionId) =>
       orchTerminateSession(sessionId, { origin: "worktree-teardown-sweep" }),
-  });
-  const worktreeRuntime = configureWorktreeRuntimeRegistry(projectRuntimeManager);
-  configureContextWorkflowRegistry(projectRuntimeManager, {
+  }));
+  const worktreeRuntime = configureWorktreeRuntimeRegistry(runtimeManager);
+  bootStep('configureContextWorkflowRegistry', () => configureContextWorkflowRegistry(runtimeManager, {
     appVersion: app.getVersion(),
     resolveIntegratedMission: (scope, missionId, baseSha) =>
       worktreeRuntime.resolveIntegratedMission(scope, missionId, baseSha),
-  });
-  configureProjectOrientationService({
+  }));
+  bootStep('configureProjectOrientationService', () => configureProjectOrientationService({
     cacheRoot: path.join(app.getPath("userData"), "orientation-maps"),
-  });
+  }));
   const gamificationService = configureGamificationService({
-    runtimeManager: projectRuntimeManager,
+    runtimeManager: runtimeManager,
     domainStores: requireProjectDomainStoreRegistry(),
     broadcast: (scope, channel, payload) => {
       broadcastGamificationToProject(scope, channel, payload);
@@ -660,94 +662,96 @@ async function bootstrap(): Promise<void> {
   });
   // Product authority is fail-closed before any scheduler/orchestration starts.
   // This cached-only evaluation never unlocks the cold Keychain before paint.
-  initializeLicenseAuthority();
+  bootStep('initializeLicenseAuthority', () => initializeLicenseAuthority());
   const cronBackend = createHttpCronBackendFromEnvironment();
   const syncCapability = configureSyncRuntime();
-  configureCronRuntime({
-    runtimeManager: projectRuntimeManager,
+  bootStep('configureCronRuntime', () => configureCronRuntime({
+    runtimeManager: runtimeManager,
     leaseBackend: cronBackend ?? undefined,
     scheduleBackend: cronBackend ?? undefined,
     listScopes: knownCronScopes,
-  });
-  configureNexusDoctorRuntime({
-    runtimeManager: projectRuntimeManager,
+  }));
+  bootStep('configureNexusDoctorRuntime', () => configureNexusDoctorRuntime({
+    runtimeManager: runtimeManager,
     multiPc: buildMultiPcBackendStatus(
       cronBackend !== null,
       syncCapability.backendConfigured,
     ),
-  });
-  setPaneTerminalIdentity({ name: "NexusIDE", version: app.getVersion() });
-  registerPtyIpc();
+  }));
+  bootStep('setPaneTerminalIdentity', () => setPaneTerminalIdentity({ name: "NexusIDE", version: app.getVersion() }));
+  bootStep('registerPtyIpc', () => registerPtyIpc());
   // Authenticate the native job base in the utility host before any agent
-  // receives its synchronous spawn environment.
-  await nativeHeavyJobEnvironment();
+  // receives its synchronous spawn environment. A slow PTY host must not stop
+  // the app from opening: until the base is proved, agents' heavy commands are
+  // refused; the proof retries in the background and before each agent spawn.
+  await bootStepAsync('nativeHeavyJobEnvironment', () => proveNativeHeavyJobBaseAtBoot());
   // Semantic CommandBlock layer (OSC 133). Fail-closed behind feature flag;
   // never mutates the PTY byte stream — lateral tap only.
   // Persist finished blocks into project runtime SQLite when flag + scope ok.
-  setCommandBlockPersistHook(
+  bootStep('setCommandBlockPersistHook', () => setCommandBlockPersistHook(
     createCommandBlockPersister({
-      runtimeManager: projectRuntimeManager,
+      runtimeManager: runtimeManager,
     }),
-  );
-  ensureCommandBlockTracking();
+  ));
+  bootStep('ensureCommandBlockTracking', () => ensureCommandBlockTracking());
   // Fim de sessão de pane: digere os handoffs da sessão em memória trusted
   // (best-effort; sem teto diário — dedupe FTS5 e em voo dentro do módulo).
-  ensureSessionExitMemoryDistiller();
-  configureMissionEventEmit(projectRuntimeManager);
-  installObserverMissionEventProjector();
+  bootStep('ensureSessionExitMemoryDistiller', () => ensureSessionExitMemoryDistiller());
+  bootStep('configureMissionEventEmit', () => configureMissionEventEmit(runtimeManager));
+  bootStep('installObserverMissionEventProjector', () => installObserverMissionEventProjector());
   // Uso geral: input humano do PTY em RAM (nunca persistido) — prova de que o
   // operador digitou o nome de uma CLI antes de um adapterId explícito ser
   // honrado literalmente (pin do agente → preferência de roteamento).
-  installOperatorCliMentionTap();
-  installMissionDiskProjection();
-  registerMissionEventIpc();
+  bootStep('installOperatorCliMentionTap', () => installOperatorCliMentionTap());
+  bootStep('installMissionDiskProjection', () => installMissionDiskProjection());
+  bootStep('registerMissionEventIpc', () => registerMissionEventIpc());
   // Product paths: CommandBlock actions, SearchMixer, full product-wave IPC.
-  registerTerminalBlockActionsIpc(projectRuntimeManager);
-  getSearchMixer(); // ensure ripgrep + multi-source providers on the live mixer
-  registerSearchMixerIpc();
-  registerProductWaveIpc();
+  bootStep('registerTerminalBlockActionsIpc', () => registerTerminalBlockActionsIpc(runtimeManager));
+  bootStep('getSearchMixer', () => getSearchMixer()); // ensure ripgrep + multi-source providers on the live mixer
+  bootStep('registerSearchMixerIpc', () => registerSearchMixerIpc());
+  bootStep('registerProductWaveIpc', () => registerProductWaveIpc());
   // Descoberta universal de configs de ecossistemas de agente (read-only, B4).
-  registerDiscoveryIpc();
+  bootStep('registerDiscoveryIpc', () => registerDiscoveryIpc());
   // Memória agentic por workspace (C2): stats/recall read-only + forget.
   // Mem12: stats leva os handoffs entregues desde a última memória (Main).
-  registerMemoryIpc({
+  bootStep('registerMemoryIpc', () => registerMemoryIpc({
     countHandoffDeliveries: (scope, sinceMs, untilMs) =>
       requireProjectDomainStoreRegistry()
         .forScope(scope)
         .handoffs.countSuccessfulDeliveriesBetween(sinceMs, untilMs),
-  });
+  }));
   // Metadado rico de modelo (A2): preço/janela/capacidades, read-only.
-  registerModelMetadataIpc();
+  bootStep('registerModelMetadataIpc', () => registerModelMetadataIpc());
   // Agent lifecycle: record finished/needs-input; reap finished only (never running).
-  startAgentLifecycleService();
-  registerBrowserIpc(projectRuntimeManager);
-  registerDesignWritebackIpc({ allowSourceMutation: !app.isPackaged });
-  registerPerfIpc();
+  bootStep('startAgentLifecycleService', () => startAgentLifecycleService());
+  bootStep('registerBrowserIpc', () => registerBrowserIpc(runtimeManager));
+  bootStep('registerDesignWritebackIpc', () => registerDesignWritebackIpc({ allowSourceMutation: !app.isPackaged }));
+  bootStep('registerPerfIpc', () => registerPerfIpc());
   // F-764 C.7: eco trivial que o renderer pinga para acusar main ocupado.
-  registerMainHeartbeatIpc();
-  registerLayoutIpc(projectRuntimeManager);
-  registerAdapterIpc();
+  bootStep('registerMainHeartbeatIpc', () => registerMainHeartbeatIpc());
+  bootStep('registerLayoutIpc', () => registerLayoutIpc(runtimeManager));
+  bootStep('registerAdapterIpc', () => registerAdapterIpc());
   traceBootstrap('before voice IPC');
-  registerVoiceIpc(projectRuntimeManager);
+  bootStep('registerVoiceIpc', () => registerVoiceIpc(runtimeManager));
   traceBootstrap('after voice IPC');
-  registerJevIpc();
-  registerMissionPickIpc();
-  registerDecisionModelIpc();
+  bootStep('registerJevIpc', () => registerJevIpc());
+  bootStep('registerMissionPickIpc', () => registerMissionPickIpc());
+  bootStep('registerDecisionModelIpc', () => registerDecisionModelIpc());
   // The window is created by the app-ready handler before bootstrap starts.
   // Keep the rest of registration below it so account/secrets/billing cannot
   // delay the first visible UI.
-  registerVisionIpc();
+  bootStep('registerVisionIpc', () => registerVisionIpc());
   registerOrchIpc();
-  registerAuthProbeIpc();
-  registerWorkspaceIpc();
+  bootStep('registerAuthProbeIpc', () => registerAuthProbeIpc());
+  bootStep('registerWorkspaceIpc', () => registerWorkspaceIpc());
   // Worktree removido por fora com o app aberto: o foco da janela é quando a
   // pessoa volta e precisa saber que a pasta sumiu — antes do pane falhar.
-  app.on("browser-window-focus", () => {
+  bootStep('app.on', () => app.on("browser-window-focus", () => {
     probeCurrentWorkspaceLiveness();
-  });
-  registerOrientationIpc();
-  registerContextDraftIpc();
-  registerProviderIpc();
+  }));
+  bootStep('registerOrientationIpc', () => registerOrientationIpc());
+  bootStep('registerContextDraftIpc', () => registerContextDraftIpc());
+  bootStep('registerProviderIpc', () => registerProviderIpc());
   if (!isAutomatedReleaseTest()) {
     stopCliAutoUpdate = startCliAutoUpdate(app.getPath('userData'), (adapterId) =>
       listLiveSessionLocations().some(({ sessionId }) =>
@@ -755,24 +759,24 @@ async function bootstrap(): Promise<void> {
       ),
     );
   }
-  registerArmsIpc();
-  registerFilesIpc();
-  registerAccountIpc();
+  bootStep('registerArmsIpc', () => registerArmsIpc());
+  bootStep('registerFilesIpc', () => registerFilesIpc());
+  bootStep('registerAccountIpc', () => registerAccountIpc());
   // Recibo da escolha de conta (somente leitura, já mascarado) para o chip do
   // cabeçalho do pane.
-  registerAccountChoiceIpc();
-  registerApprovalIpc();
-  registerCostIpc();
-  registerTokenSpeedIpc();
-  registerMediaIpc(projectRuntimeManager);
-  registerGamificationIpc(gamificationService);
-  registerMcpIpc();
-  registerOpsIpc();
-  registerEvalRankingIpc();
+  bootStep('registerAccountChoiceIpc', () => registerAccountChoiceIpc());
+  bootStep('registerApprovalIpc', () => registerApprovalIpc());
+  bootStep('registerCostIpc', () => registerCostIpc());
+  bootStep('registerTokenSpeedIpc', () => registerTokenSpeedIpc());
+  bootStep('registerMediaIpc', () => registerMediaIpc(runtimeManager));
+  bootStep('registerGamificationIpc', () => registerGamificationIpc(gamificationService));
+  bootStep('registerMcpIpc', () => registerMcpIpc());
+  bootStep('registerOpsIpc', () => registerOpsIpc());
+  bootStep('registerEvalRankingIpc', () => registerEvalRankingIpc());
   traceBootstrap('after secondary IPC registration');
   // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
-  await initUsageTelemetry(projectRuntimeManager);
+  await bootStepAsync('initUsageTelemetry', () => initUsageTelemetry(runtimeManager));
   traceBootstrap('after usage telemetry');
   // Tokens das contas Claude secundárias renovados em background — spawn e
   // failover sempre encontram credencial viva no vault (mata o "401 OAuth
@@ -806,7 +810,7 @@ async function bootstrap(): Promise<void> {
   stopRedlineRefreshWatch = redlineSink.watchRefreshRequests(() => {
     return requireQuotaService().refresh();
   });
-  initRedlineIpc();
+  bootStep('initRedlineIpc', () => initRedlineIpc());
   if (process.platform === "win32" && !isAutomatedReleaseTest()) {
     void syncInstalledRedline(process.resourcesPath).catch((err) =>
       console.warn("[redline] sync da instalação falhou:", err),
@@ -821,7 +825,7 @@ async function bootstrap(): Promise<void> {
   if (process.platform === "linux" && !isAutomatedReleaseTest()) {
     startRedlineLinuxIfEnabled();
   }
-  initQuotaService({
+  bootStep('initQuotaService', () => initQuotaService({
     listProviders: () => listProviderSettings({ nonBlockingAuth: true }),
     listAccounts: () => listAccountInfos(),
     resolveApiQuotaKey: resolveQuotaApiKey,
@@ -903,21 +907,21 @@ async function bootstrap(): Promise<void> {
         resolveGeminiOauthCreds,
         resolveGeminiToken: resolveGeminiAccessToken,
       }),
-  });
+  }));
   traceBootstrap('after quota service');
-  registerBillingIpc();
-  registerTeamIpc();
+  bootStep('registerBillingIpc', () => registerBillingIpc());
+  bootStep('registerTeamIpc', () => registerTeamIpc());
   // Reporte de problema: IPC (prévia/envio com a sessão do Main) + a entrada
   // "Ajuda → Reportar um problema…" no menu da aplicação.
-  registerBugReportIpc();
-  installAppMenu({
+  bootStep('registerBugReportIpc', () => registerBugReportIpc());
+  bootStep('installAppMenu', () => installAppMenu({
     platform: process.platform,
     onReportProblem: () => {
       requestOpenBugReportDialog(
         findTrustedMainWindow(BrowserWindow.getAllWindows()),
       );
     },
-  });
+  }));
   // Packaged smoke must prove the app can boot without touching the user's
   // real Keychain. License sync is useful in normal launches, but it can block
   // inside SecItemCopyMatching — window already open above.
@@ -927,16 +931,16 @@ async function bootstrap(): Promise<void> {
     stopProductActivity = startProductActivity();
     traceBootstrap('after license sync');
   }
-  registerPipeIpc(); // also calls initPanePipes()
-  registerRemoteIpc();
+  bootStep('registerPipeIpc', () => registerPipeIpc()); // also calls initPanePipes()
+  bootStep('registerRemoteIpc', () => registerRemoteIpc());
   // Handler do Tailscale Serve deixado por um crash anterior: sem marcador em
   // ~/.nexus não há spawn algum; com marcador, remove só se ainda for nosso.
-  void cleanupRemoteBridgeTailscaleOrphan();
-  registerIntegrationsIpc();
+  bootStep('cleanupRemoteBridgeTailscaleOrphan', () => void cleanupRemoteBridgeTailscaleOrphan());
+  bootStep('registerIntegrationsIpc', () => registerIntegrationsIpc());
   traceBootstrap('after remaining IPC registration');
   // Desktop pet (opt-in): companion flutuante que reage à frota. Depois da
   // janela principal — o pet só existe enquanto houver uma janela de app.
-  initDesktopPet();
+  bootStep('initDesktopPet', () => initDesktopPet());
   // Orchestration boots async (MCP server binds a localhost port); the window
   // is already open and orchestration attaches when ready.
   // Gamificação SÓ depois: o retro replay precisa dos stores orch hidratados
@@ -948,13 +952,13 @@ async function bootstrap(): Promise<void> {
       gamificationService.start();
     });
   // Cron: squads/agentes agendados (tick 60s, skip-if-stale) — time-driven.
-  startCronLoop();
+  bootStep('startCronLoop', () => startCronLoop());
   // Deep link nexus:// vindo no lançamento a frio (após a janela existir) +
   // auto-updater (opt-in por ambiente; no-op sem servidor configurado).
-  consumeLaunchDeepLink();
-  initAutoUpdater({
+  bootStep('consumeLaunchDeepLink', () => consumeLaunchDeepLink());
+  bootStep('initAutoUpdater', () => initAutoUpdater({
     networkEnabled: !isAutomatedReleaseTest(),
-  });
+  }));
   traceBootstrap('complete');
 }
 
@@ -1082,11 +1086,14 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
       }
     } catch (error) {
       console.error("[main] bootstrap failed before renderer navigation:", error);
+      const bootFailureReason = describeBootFailure(error);
+      trace({ kind: "boot-failed", reason: bootFailureReason });
       try {
         dialog.showErrorBox(
           "NexusIDE não conseguiu inicializar",
           "O núcleo do aplicativo falhou antes de abrir a interface. " +
-            "Reinicie o Nexus; nenhum renderer parcial foi carregado.",
+            "Reinicie o Nexus; nenhum renderer parcial foi carregado." +
+            `\n\nMotivo: ${bootFailureReason}`,
         );
       } catch {
         // The process still exits instead of exposing a renderer with partial IPC.

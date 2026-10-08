@@ -1044,6 +1044,93 @@ describe('F-217 — o mais novo da linha vence mesmo sem catálogo', () => {
     }
   });
 
+  it('Haiku 5.5 é o padrão do trivial; recusado pelo provider, o 4.5 segue como fallback Claude', () => {
+    const claude = (models: string[]): AdapterAvailability[] => [
+      { id: 'claude', installed: true, models },
+    ];
+    resetModelAccessQuarantineForTests();
+    try {
+      const open = routeTask(
+        'renomear uma variável',
+        claude(['claude-haiku-5-5', 'claude-haiku-4-5']),
+        DEFAULT_ROUTING_TABLE,
+        'trivial',
+        false,
+        flat,
+      );
+      expect(open?.model).toBe('claude-haiku-5-5');
+
+      quarantineRejectedModel('claude', 'claude-haiku-5-5', 'Model access is disabled');
+      const refused = routeTask(
+        'renomear uma variável',
+        claude(['claude-haiku-5-5', 'claude-haiku-4-5']),
+        DEFAULT_ROUTING_TABLE,
+        'trivial',
+        false,
+        flat,
+      );
+      expect(refused?.model).toBe('claude-haiku-4-5');
+      expect(refused?.reason).not.toContain('→claude-haiku-5-5');
+    } finally {
+      resetModelAccessQuarantineForTests();
+    }
+  });
+
+  describe('F-957 — Argon no hard só com a prova da sonda viva (`agy models`)', () => {
+    // Missão real de 07/10: a rota do hard abriu o AGY com `--model
+    // gemini-4-argon` e a CLI instalada saiu no boot ("model gemini-4-argon
+    // is not recognized as a known model"). A lista mesclada do adapter
+    // (manifest + catálogo + descoberta) sempre traz o Argon; só o que a
+    // própria CLI anunciou prova que ela o aceita.
+    const agyManifest = adapterSchema.parse(
+      BUILTIN_ADAPTERS.find((raw) => (raw as { id?: string }).id === 'agy'),
+    );
+    // Desde o F-990 o manifest bundled é só o que o `agy models` imprime; o
+    // Argon vem do catálogo (model-catalog.ts), parte da mesma união.
+    const mergedModels = [...agyManifest.models.list, 'gemini-4-argon'];
+    // Ids do "Available models" que a CLI instalada imprimiu (sem o Argon).
+    const announced = [
+      'gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low',
+      'gemini-3.7-flash-high', 'gemini-3.7-flash-medium', 'gemini-3.7-flash-low',
+      'gemini-3.6-flash-high', 'gemini-3.6-flash-medium', 'gemini-3.6-flash-low',
+      'gemini-3.1-pro-high', 'gemini-3.1-pro-low',
+    ];
+    const TASK =
+      'Análise profunda somente leitura: motor de orquestração v2 do T3 Code ' +
+      '(event log, effect worker, checkpoints, settlement)';
+    const route = (agy: Partial<AdapterAvailability>) =>
+      routeTask(
+        TASK,
+        [{ id: 'agy', installed: true, models: mergedModels, ...agy }],
+        DEFAULT_ROUTING_TABLE,
+        'hard',
+        false,
+        flat,
+        { multiScore: false },
+      );
+
+    it('CLI que não anuncia o Argon: o hard cai no gemini-3.8-flash-high e o motivo diz', () => {
+      expect(mergedModels).toContain('gemini-4-argon');
+      const decision = route({ liveModels: announced });
+      expect(decision?.adapterId).toBe('agy');
+      expect(decision?.model).toBe('gemini-3.8-flash-high');
+      expect(decision?.effort).toBe('high');
+      // Desde o F-990 a rota já sai da listagem viva: o Argon cai como "CLI sem
+      // o modelo roteado", e o motivo continua nomeando o assento pulado.
+      expect(decision?.reason).toMatch(/agy:gemini-4-argon/);
+      expect(decision?.alternatives.map((alt) => alt.model)).not.toContain('gemini-4-argon');
+    });
+
+    it('sem descoberta viva (liveModels ausente) o Argon também não entra', () => {
+      expect(route({})?.model).toBe('gemini-3.8-flash-high');
+    });
+
+    it('com a CLI anunciando o Argon, o hard continua indo para ele', () => {
+      const decision = route({ liveModels: ['gemini-4-argon', ...announced] });
+      expect(decision?.model).toBe('gemini-4-argon');
+    });
+  });
+
   it('modelo pedido no texto sobe para o mais novo da linha e continua vencendo (F-218)', () => {
     // Regra do operador 29/09 repetida hoje: "Sol 6.1 saiu; nunca use o Sol
     // normal". A menção ainda decide CLI e linha — mas o id exato pedido é

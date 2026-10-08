@@ -1,6 +1,9 @@
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { newMissionWorkspaceBinding, prepareMissionExecutionScope } from './mission-execution-scope';
+import { missionExecutionScope } from './mission-execution-scope';
+import { captureWorkingTreeCandidate } from '../context/candidate-working-tree-snapshot';
+import { ensureMissionCodeCompletion } from './mission-code-completion';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +17,8 @@ import type { ScopedTaskRecord } from './task-store';
 import { completeVerifiedMission } from './mission-engine-production';
 import { maybeCompleteFastLaneOnDelivery, type CivilianStores } from './civilian-delivery-completion';
 import { __resetCivilianAutoReviewForTests, enforceCivilianAutoReview } from './civilian-auto-review';
-import { getAutomaticCompletionProof } from './automatic-completion-proof';
+import { getAutomaticCompletionProof, withAutomaticCompletionProof } from './automatic-completion-proof';
+import { recordOperatorTabCompletionRequest } from './operator-tab-completion';
 
 /** Real reconciliation, scanner, filesystem/Git, proof and final gates; no Electron app or external CLI. */
 vi.mock('electron', () => ({
@@ -35,7 +39,7 @@ afterEach(() => {
   roots.splice(0).forEach((root) => fs.rmSync(root, { recursive: true, force: true }));
 });
 
-function fixture(options: { git?: boolean; goal?: string; lane?: 'standard' | 'consult' } = {}) {
+function fixture(options: { git?: boolean; goal?: string; lane?: 'standard' | 'consult'; paneMission?: boolean } = {}) {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-autopilot-integration-')));
   roots.push(root);
   const git = new ProcessGitRunner();
@@ -49,6 +53,7 @@ function fixture(options: { git?: boolean; goal?: string; lane?: 'standard' | 'c
     runGit('commit', '-qm', 'Fixture baseline');
     fs.utimesSync(path.join(root, 'README.md'), 1, 1);
   }
+  const baselineSha = options.git ? runGit('rev-parse', 'HEAD') : null;
   const scope: ProjectExecutionScope = {
     version: 1, installationId: 'integration', projectId: path.basename(root),
     checkoutId: 'checkout', rootRealPath: root, identitySource: 'manifest',
@@ -61,12 +66,14 @@ function fixture(options: { git?: boolean; goal?: string; lane?: 'standard' | 'c
   const squad = { id: 'fixture-squad', name: 'Fixture squad', agents } as Squad;
   const goal = options.goal ?? 'Crie um sistema de agendamento simples';
   let mission: Mission = {
-    id: path.basename(root), title: 'Agendamento', description: goal, squadId: squad.id,
+    id: path.basename(root), title: 'Agendamento', description: goal, squadId: options.paneMission ? undefined : squad.id,
+    ...(options.paneMission ? { orchestratorSessionId: 'fixture-orchestrator' } : {}),
     status: 'running', intentState: 'executing', intentVersion: 1,
     createdAt: Date.now() - 1000, updatedAt: 1000, milestones: [], learnings: '',
     intentContract: missionIntentContractSchema.parse({ version: 1, source: 'typed', goal, lane: options.lane ?? 'standard',
       orchestrationMode: 'livre', freeAgentChoice: true, acceptanceCriteria: [],
       risk: 'normal', executionMode: 'autopilot', contextPolicy: 'minimal', intentVersion: 1,
+      ...(options.paneMission ? { workspaceBinding: { version: 1, adoptedPaneId: 'operator-pane' } } : {}),
       budgets: { planningTokens: 1000, executionTokens: 1000, maxWorkers: 3 } }),
   } as Mission;
   const tasks: ScopedTaskRecord[] = [{
@@ -115,6 +122,21 @@ function fixture(options: { git?: boolean; goal?: string; lane?: 'standard' | 'c
   const reconcile = () => maybeCompleteFastLaneOnDelivery(scope, mission.id, {
     getStores: () => stores as CivilianStores, getSquad: () => squad, listPanes: () => [],
     readFrozenReviewContext: () => null, runAutoReviewGate: review,
+    ...(options.paneMission ? { resolveMissionLeader: () => ({ sessionId: 'fixture-orchestrator', paneId: 'operator-pane', source: 'durable' as const, proven: true as const }) } : {}),
+    runCodeCompletionGate: (input) => ensureMissionCodeCompletion({ scope, executionScope: missionExecutionScope(scope, mission),
+      mission, baselineSha, authorSessionIds: ['fixture-writer'], requiredPaths: input.productFiles,
+    }, {
+      captureCandidate: captureWorkingTreeCandidate,
+      assertCurrent: () => input.lifetime?.assertCurrent(),
+      runMechanical: (work) => review({ ...input, productFiles: work.candidate.coveredPaths ?? work.candidate.changedPaths, completionBaseSha: work.baseSha }),
+      // No provider/model call: the production coordinator, scanner, candidate
+      // snapshots and final proof boundary remain real; only the judge is a fixture.
+      ensureIndependentReview: async (work) => ({ kind: 'reviewed', readOnly: true,
+        baseSha: work.baseSha, candidateFingerprint: work.candidate.fingerprint,
+        verdict: { verdictId: 'fixture-frontier-review', missionId: mission.id, headSha: work.candidate.headSha,
+          treeDirty: true, verdict: 'approve', reviewerAdapter: 'codex', reviewerModel: 'gpt-6.1-sol',
+          reviewerSession: 'fixture-independent-judge', frontier: true, findings: [], summary: 'Independent fixture review', createdAt: Date.now() } }),
+    }),
     missionEngine: { completeVerified: complete, blockUser },
   });
   let executionRoot = root;
@@ -138,6 +160,33 @@ function fixture(options: { git?: boolean; goal?: string; lane?: 'standard' | 'c
 }
 
 describe('autopilot completion through the real production boundary', () => {
+  it.each([false, true])('a scanner-only receipt cannot bypass independent code review (pane mission=%s)', (paneMission) => {
+    const state = fixture({ git: true, paneMission });
+    state.writeProduct();
+    const mission = state.mission();
+    expect(() => withAutomaticCompletionProof(state.scope, mission, { status: 'verified', candidateFingerprint: 'unbound-scanner' }, () => {
+      state.complete(state.scope, {
+        missionId: mission.id, expectedStatus: 'running', expectedIntentState: mission.intentState ?? 'legacy',
+        expectedUpdatedAt: mission.updatedAt, expectedIntentVersion: mission.intentVersion ?? 0,
+        learnings: 'Entrega declarada sem revisão independente.',
+        result: { outcome: 'success', summary: 'Código pronto.', artifactRefs: ['src/bookings.ts'], evidenceIds: [] },
+      });
+      return true;
+    })).toThrow(/revisão frontier independente/i);
+    expect(state.mission().status).toBe('running');
+  });
+
+  it('a +Pane mission without squad waits for the operator request and verifies the current code through the same production boundary', async () => {
+    const state = fixture({ git: true, paneMission: true });
+    state.writeProduct();
+    expect(state.mission().squadId).toBeUndefined();
+    expect((await state.reconcile()).completed).toBe(false);
+    expect(state.review).not.toHaveBeenCalled();
+    recordOperatorTabCompletionRequest(state.scope, state.mission());
+    expect((await state.reconcile()).completed).toBe(true);
+    expect(state.mission().status).toBe('done');
+    expect(state.observedProofs[0]?.codeCompletion).toMatchObject({ kind: 'code', reviewerSessionId: 'fixture-independent-judge' });
+  });
   it.each([true, false])('reviews the tab bytes, independent of opposite main content (tab bad=%s)', async (tabBad) => {
     const state = fixture({ git: true });
     const tab = await state.isolate();
@@ -247,13 +296,25 @@ describe('autopilot completion through the real production boundary', () => {
     expect(state.mission().status).toBe('running');
   });
 
-  it('keeps an explicitly requested configuration file as a legitimate deliverable', async () => {
+  it('completes an ordinary requested project configuration after reviewing its actual bytes', async () => {
+    const state = fixture({ goal: 'Crie config/app.json para o projeto' });
+    fs.mkdirSync(path.join(state.root, 'config'));
+    fs.writeFileSync(path.join(state.root, 'config/app.json'), '{"theme":"dark"}');
+    state.handoffs[0]!.artifacts = [{ path: 'config/app.json' }];
+    expect((await state.reconcile()).completed).toBe(true);
+    expect(state.mission().result?.artifactRefs).toContain('config/app.json');
+  });
+
+  it('does not claim a protected configuration artifact was reviewed merely because it was delivered', async () => {
     const state = fixture({ goal: 'Crie o arquivo .claude/settings.json para o projeto' });
     fs.mkdirSync(path.join(state.root, '.claude'));
     fs.writeFileSync(path.join(state.root, '.claude/settings.json'), '{"model":"fixture"}');
     state.handoffs[0]!.artifacts = [{ path: '.claude/settings.json' }];
 
-    expect((await state.reconcile()).completed).toBe(true);
-    expect(state.mission().result?.artifactRefs).toContain('.claude/settings.json');
+    expect((await state.reconcile()).completed).toBe(false);
+    expect(state.mission().status).toBe('running');
+    expect(state.complete).not.toHaveBeenCalled();
+    expect(state.handoffs[0]?.artifacts).toContainEqual({ path: '.claude/settings.json' });
+    expect(fs.readFileSync(path.join(state.root, '.claude/settings.json'), 'utf8')).toBe('{"model":"fixture"}');
   });
 });

@@ -25,6 +25,7 @@ const MISSION_TERMINATING_REASONS = new Set([
   'pane-toolbar-close',
   'mission-rail-close',
   'ops-board-close',
+  'mission-board-close',
   'orch-panel-close',
   'mission-runtime-close',
   'last-pane-closed',
@@ -44,6 +45,26 @@ const OPERATOR_CLOSE_REASONS = new Set(['user', 'user-confirm']);
  * "missão sem nenhum pane" aqui é ruído — o successor já está na tela.
  */
 const PANE_REPLACEMENT_REASONS = new Set(['orchestrator-replaced']);
+
+const pendingRuntimeCloses = new Map<string, number>();
+
+function closeNotificationKey(missionId: string): string {
+  return `${useOrchStore.getState().workspaceEpoch}:${missionId}`;
+}
+
+/** Main can emit pane-close before its shutdown reply and mission broadcast. */
+export function suppressPendingMissionCloseNotice(missionId: string): () => void {
+  const key = closeNotificationKey(missionId);
+  pendingRuntimeCloses.set(key, (pendingRuntimeCloses.get(key) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const remaining = (pendingRuntimeCloses.get(key) ?? 1) - 1;
+    if (remaining > 0) pendingRuntimeCloses.set(key, remaining);
+    else pendingRuntimeCloses.delete(key);
+  };
+}
 
 function missionIdOfPane(
   pane: PaneModel,
@@ -71,6 +92,7 @@ export function notifyIfLastMissionPaneClosed(
   const orch = useOrchStore.getState();
   const missionId = missionIdOfPane(closedPane, orch.paneMissions);
   if (!missionId) return;
+  if (pendingRuntimeCloses.has(closeNotificationKey(missionId))) return;
   const mission = orch.missions.find((entry) => entry.id === missionId);
   if (!mission || mission.status !== 'running') return;
   const stillOpen = remainingPanes.some(

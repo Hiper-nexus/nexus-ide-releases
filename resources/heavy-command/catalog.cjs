@@ -560,4 +560,18 @@ function entryKind(argv) {
   }
   return moduleKind(entry) || commandKind(name);
 }
-module.exports = { moduleKind, entryKind, commandKind, argvKind, isPersistent, isDispatcher };
+// The Node launcher of an agent CLI (e.g. @openai/codex/bin/codex.js) execs its
+// own package's native engine with the whole prompt in argv. That child IS the
+// agent session, not finite work: classifying it by prompt text ("typecheck",
+// "node", >16 KB) held the project's heavy slot for the session's lifetime.
+function isAgentEngine(file, entry, self) {
+  if (typeof file !== 'string' || !path.isAbsolute(file) || !entry || !self || !path.isAbsolute(entry)) return false;
+  try {
+    const realEntry = fs.realpathSync(entry);
+    if (fs.realpathSync(self) !== realEntry) return false;
+    const root = packageInfo(realEntry)?.directory;
+    const target = fs.realpathSync(file);
+    return Boolean(root) && target.startsWith(root + path.sep) && fs.statSync(target).isFile();
+  } catch { return false; }
+}
+module.exports = { moduleKind, entryKind, commandKind, argvKind, isPersistent, isDispatcher, isAgentEngine };

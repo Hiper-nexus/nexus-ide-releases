@@ -47,6 +47,7 @@ import {
 } from './security/trusted-ipc';
 import { resolveWindowsRuntimeIconPath } from './windows-app-identity';
 import { resolveLinuxRuntimeIconPath } from './linux-desktop-entry';
+import { offIpcGuarded, onIpcGuarded } from './runtime/git-ipc-guard';
 
 export { bindTrustedMainWindow } from './security/trusted-ipc';
 
@@ -583,7 +584,7 @@ export function createMainWindow(
       commitRendererBoot();
     }
   };
-  ipcMain.on(WINDOW_CHANNELS.mounted, onMounted);
+  onIpcGuarded(WINDOW_CHANNELS.mounted, onMounted);
   // Capture wc up front: inside 'destroyed' the win.webContents getter can
   // already throw "Object has been destroyed".
   wc.once('destroyed', () => {
@@ -594,7 +595,7 @@ export function createMainWindow(
       loadWatchdog = null;
     }
     stopMountMonitoring();
-    ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
+    offIpcGuarded(WINDOW_CHANNELS.mounted, onMounted);
     killSessionsFor(wc);
   });
 

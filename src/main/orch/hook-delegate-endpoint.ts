@@ -597,14 +597,14 @@ function missionSummaryFromPrompt(prompt: string): string | null {
  * Hardened, confiança menor, máquina no teto seguro e adoção recusada ficam
  * na dica (helper nem chega aqui: F-784).
  */
-function delegationContextFor(
+async function delegationContextFor(
   ctx: HookContext,
   prompt: string,
   advice: DelegationAdvice,
   autopilot: () => boolean,
-  adoptMission: (ctx: HookContext, summary: string | null) => OperatorTabMission | null,
+  adoptMission: (ctx: HookContext, summary: string | null) => OperatorTabMission | null | Promise<OperatorTabMission | null>,
   budget: ParallelHelperBudget | null,
-): string {
+): Promise<string> {
   const hint = formatDelegationContext(advice, budget);
   if (
     advice.confidence < AUTO_ORCHESTRATE_MIN_CONFIDENCE ||
@@ -621,7 +621,7 @@ function delegationContextFor(
   }
   let adopted: OperatorTabMission | null = null;
   try {
-    adopted = adoptMission(ctx, missionSummaryFromPrompt(prompt));
+    adopted = await adoptMission(ctx, missionSummaryFromPrompt(prompt));
   } catch {
     adopted = null;
   }
@@ -655,7 +655,7 @@ export async function handleHookDelegateRequest(
     /** Autopiloto (operator-choice): a auto-orquestração só roda nele. */
     autopilot?: () => boolean;
     /** Adoção pela missão sob demanda da aba (provedor do tools-panes). */
-    adoptMission?: (ctx: HookContext, summary: string | null) => OperatorTabMission | null;
+    adoptMission?: (ctx: HookContext, summary: string | null) => OperatorTabMission | null | Promise<OperatorTabMission | null>;
     /** Doutrina permanente do Maestro da missão (F-701); default lê a missão. */
     maestroDoctrine?: MaestroDoctrineFn;
     /** F-753: skill do Nexus ou do projeto que o Jev/Clef acha útil no pedido. */
@@ -793,7 +793,7 @@ export async function handleHookDelegateRequest(
         ((context: HookContext, summary: string | null) =>
           adoptThroughOperatorTabMission(context as AgentGateContext, summary));
       parts.push(
-        delegationContextFor(
+        await delegationContextFor(
           ctx,
           prompt,
           advice.delegation,

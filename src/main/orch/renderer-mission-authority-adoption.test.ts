@@ -183,6 +183,7 @@ import {
   resolveCurrentMissionSpawnAuthoritySeal,
   syncPanes,
 } from "./pane-registry";
+import { captureMissionCodeBaseline } from './mission-code-baseline-ledger';
 import { RendererMissionAuthority } from "./renderer-mission-authority";
 import * as panes from "./pane-registry";
 import { authorizePaneRef } from "./tool-util";
@@ -308,8 +309,8 @@ afterEach(async () => {
 
 /** O provider de produção (orch-ipc), sem os broadcasts de janela. */
 function useTabMissionProvider(main: RendererMissionAuthority): void {
-  setOperatorTabMissionProvider((ctx, task) => {
-    const result = main.adoptOperatorHandForSpawn(ctx.sessionId!, task);
+  setOperatorTabMissionProvider(async (ctx, task) => {
+    const result = (await main.adoptOperatorHandForSpawn(ctx.sessionId!, task));
     if (!result.ok || !result.mission) return null;
     const missionId = result.mission.id;
     return {
@@ -328,14 +329,14 @@ function authority(
 }
 
 describe("missão leve da aba — adoção da mão do operador", () => {
-  it("promove o pane user: gate, ficha PTY e composição selada concordam, e a retomada passa", () => {
+  it("promove o pane user: gate, ficha PTY e composição selada concordam, e a retomada passa", async () => {
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);
 
-    const result = authority().createPaneMissionFromRenderer(owner, {
+    const result = (await authority().createPaneMissionFromRenderer(owner, {
       paneId: "pane-a",
       title: "Missão · Login",
-    });
+    }));
 
     expect(result).toMatchObject({ ok: true });
     const missionId = result.mission!.id;
@@ -370,23 +371,23 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(resumed.persistedPane).toMatchObject({ missionId, role: "orchestrator" });
   });
 
-  it("falha fechado quando o gate não aceita a adoção: nenhuma missão fica pendurada", () => {
+  it("falha fechado quando o gate não aceita a adoção: nenhuma missão fica pendurada", async () => {
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);
     // Sessão `user` que já é mão de outro fluxo: o gate a deu a outra missão.
     getContextBySession(sessionId)!.role = "worker";
 
-    const result = authority().createPaneMissionFromRenderer(owner, {
+    const result = (await authority().createPaneMissionFromRenderer(owner, {
       paneId: "pane-a",
       title: "Missão · Login",
-    });
+    }));
 
     expect(result).toEqual({ ok: false, error: "promotion_failed" });
     expect(requireProjectDomainStoreRegistry().forScope(scope).missions.list()).toEqual([]);
     expect(getOwnedAgentSessionInfo(owner, sessionId)).toMatchObject({ role: "user" });
   });
 
-  it("duas promoções na mesma aba reusam uma missão só", () => {
+  it("duas promoções na mesma aba reusam uma missão só", async () => {
     const first = operatorPane("pane-a");
     const second = operatorPane("pane-b");
     register([
@@ -395,8 +396,8 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     ]);
     const main = authority();
 
-    const a = main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "space:login" });
-    const b = main.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login", tabKey: "space:login" });
+    const a = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "space:login" }));
+    const b = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login", tabKey: "space:login" }));
 
     expect(a.ok && b.ok).toBe(true);
     expect(b.mission!.id).toBe(a.mission!.id);
@@ -409,11 +410,11 @@ describe("missão leve da aba — adoção da mão do operador", () => {
       { paneId: "pane-b", sessionId: second },
       { paneId: "pane-c", sessionId: third },
     ]);
-    const c = main.createPaneMissionFromRenderer(owner, { paneId: "pane-c", title: "Missão · Pagamento", tabKey: "space:pay" });
+    const c = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-c", title: "Missão · Pagamento", tabKey: "space:pay" }));
     expect(c.mission!.id).not.toBe(a.mission!.id);
   });
 
-  it("ownGroup cria a missão do GRUPO: a coroa da aba não se move e o clique explícito ainda acha a 1ª", () => {
+  it("ownGroup cria a missão do GRUPO: a coroa da aba não se move e o clique explícito ainda acha a 1ª", async () => {
     const first = operatorPane("pane-a");
     const second = operatorPane("pane-b");
     register([
@@ -422,11 +423,11 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     ]);
     const main = authority();
 
-    const a = main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "space:login" });
+    const a = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "space:login" }));
     expect(a.ok).toBe(true);
     const missionId = a.mission!.id;
 
-    const b = main.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Codex B", tabKey: "space:login", ownGroup: true });
+    const b = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Codex B", tabKey: "space:login", ownGroup: true }));
     expect(b.ok).toBe(true);
     expect(b.mission!.id).not.toBe(missionId);
     const suite = requireProjectDomainStoreRegistry().forScope(scope);
@@ -445,18 +446,18 @@ describe("missão leve da aba — adoção da mão do operador", () => {
       { paneId: "pane-b", sessionId: second },
       { paneId: "pane-c", sessionId: third },
     ]);
-    const c = main.createPaneMissionFromRenderer(owner, { paneId: "pane-c", title: "Missão · Login", tabKey: "space:login" });
+    const c = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-c", title: "Missão · Login", tabKey: "space:login" }));
     expect(c).toMatchObject({ ok: true, mission: { id: missionId } });
   });
 
-  it("Astra 7: a associação aba→missão sobrevive ao reinício do Main (store reaberto, mapa em memória vazio)", () => {
+  it("Astra 7: a associação aba→missão sobrevive ao reinício do Main (store reaberto, mapa em memória vazio)", async () => {
     const first = operatorPane("pane-a");
     const second = operatorPane("pane-b");
     register([
       { paneId: "pane-a", sessionId: first },
       { paneId: "pane-b", sessionId: second },
     ]);
-    const a = authority().createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "__loose__" });
+    const a = (await authority().createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "__loose__" }));
     expect(a.ok).toBe(true);
     const suite = requireProjectDomainStoreRegistry().forScope(scope);
     expect(suite.missions.get(a.mission!.id)?.intentContract?.workspaceBinding).toMatchObject({ adoptedPaneId: "pane-a", tabKey: "__loose__" });
@@ -470,7 +471,7 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     const reopened = requireProjectDomainStoreRegistry().forScope(scope);
     expect(reopened.missions.get(a.mission!.id)?.intentContract?.workspaceBinding).toMatchObject({ tabKey: "__loose__" });
     const restarted = authority();
-    const b = restarted.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login", tabKey: "__loose__" });
+    const b = (await restarted.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login", tabKey: "__loose__" }));
 
     expect(b).toMatchObject({ ok: true, mission: { id: a.mission!.id } });
     expect(reopened.missions.list()).toHaveLength(1);
@@ -481,23 +482,23 @@ describe("missão leve da aba — adoção da mão do operador", () => {
       { paneId: "pane-b", sessionId: second },
       { paneId: "pane-c", sessionId: third },
     ]);
-    const c = restarted.createPaneMissionFromRenderer(owner, { paneId: "pane-c", title: "Missão · Pagamento", tabKey: "space:pay" });
+    const c = (await restarted.createPaneMissionFromRenderer(owner, { paneId: "pane-c", title: "Missão · Pagamento", tabKey: "space:pay" }));
     expect(c.ok && c.mission!.id !== a.mission!.id).toBe(true);
     // Missão da aba encerrada: o próximo clique explícito cria outra, sem ressuscitar a antiga.
     reopened.missions.update(a.mission!.id, { status: "failed" });
     expect(returnOperatorHandFromEndedMission(getContextBySession(second)!)).toBe(true);
-    const next = authority().createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login 2", tabKey: "__loose__" });
+    const next = (await authority().createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login 2", tabKey: "__loose__" }));
     expect(next.ok && next.mission!.id !== a.mission!.id).toBe(true);
   });
 
-  it("Astra 1: missão do próprio grupo já em uso (worker gravado) nunca é desfeita pela compensação de um spawn que falhou", () => {
+  it("Astra 1: missão do próprio grupo já em uso (worker gravado) nunca é desfeita pela compensação de um spawn que falhou", async () => {
     const first = operatorPane("pane-a");
     syncPanes(
       [{ paneId: "pane-a", sessionId: first, tabKey: "__loose__", title: "pane-a", kind: "cli-agent" as const, adapterId: "test-cli" }],
       owner,
     );
     const main = authority();
-    const adopted = main.adoptOperatorHandForSpawn(first, "revise o login");
+    const adopted = (await main.adoptOperatorHandForSpawn(first, "revise o login"));
     expect(adopted.ok && adopted.created).toBe(true);
     const missionId = adopted.mission!.id;
     const suite = requireProjectDomainStoreRegistry().forScope(scope);
@@ -517,14 +518,14 @@ describe("missão leve da aba — adoção da mão do operador", () => {
       ],
       owner,
     );
-    const own = main.adoptOperatorHandForSpawn(second, "teste o login");
+    const own = (await main.adoptOperatorHandForSpawn(second, "teste o login"));
     expect(own.ok && own.created && own.mission!.id !== missionId).toBe(true);
     expect(main.discardUnusedTabMission(second, own.mission!.id)).toBe(true);
     expect(suite.missions.get(own.mission!.id)).toBeNull();
     expect(getContextBySession(second)).toMatchObject({ role: "user" });
   });
 
-  it("troca de coroa na aba devolve o líder anterior a `user` com tudo que tinha, nunca worker sem tools", () => {
+  it("troca de coroa na aba devolve o líder anterior a `user` com tudo que tinha, nunca worker sem tools", async () => {
     const first = operatorPane("pane-a");
     const second = operatorPane("pane-b");
     register([
@@ -533,10 +534,10 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     ]);
     getContextBySession(first)!.allowedTools = ["nexus_pane_list"];
     const main = authority();
-    const a = main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "space:login" });
+    const a = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "space:login" }));
     const missionId = a.mission!.id;
 
-    const b = main.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login", tabKey: "space:login" });
+    const b = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login", tabKey: "space:login" }));
 
     expect(b).toMatchObject({ ok: true, mission: { id: missionId } });
     expect(getContextBySession(second)).toMatchObject({ role: "orchestrator", missionId });
@@ -552,7 +553,7 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(requireProjectDomainStoreRegistry().forScope(scope).missionPanes.findByPaneId("pane-a")).toBeNull();
     expect(getPaneAuthzInfo("pane-a")?.missionId).toBeUndefined();
     // E ele pode liderar de novo (a coroa volta sem ficar preso).
-    const again = main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "space:login" });
+    const again = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "space:login" }));
     expect(again).toMatchObject({ ok: true, mission: { id: missionId } });
     expect(getContextBySession(second)).toMatchObject({ role: "user" });
   });
@@ -571,9 +572,9 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     );
     const main = authority();
 
-    const a = main.adoptOperatorHandForSpawn(first, "revise o login");
-    const b = main.adoptOperatorHandForSpawn(second, "teste o login");
-    const c = main.adoptOperatorHandForSpawn(other, "revise o pagamento");
+    const a = (await main.adoptOperatorHandForSpawn(first, "revise o login"));
+    const b = (await main.adoptOperatorHandForSpawn(second, "teste o login"));
+    const c = (await main.adoptOperatorHandForSpawn(other, "revise o pagamento"));
 
     expect(a.ok && b.ok && c.ok).toBe(true);
     expect(new Set([a.mission!.id, b.mission!.id, c.mission!.id]).size).toBe(3);
@@ -591,7 +592,7 @@ describe("missão leve da aba — adoção da mão do operador", () => {
       ].map((entry) => ({ ...entry, title: entry.paneId, kind: "cli-agent" as const, adapterId: "test-cli" })),
       owner,
     );
-    const explicit = main.createPaneMissionFromRenderer(owner, { paneId: "pane-d", title: "Missão · Terminais", tabKey: "__loose__" });
+    const explicit = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-d", title: "Missão · Terminais", tabKey: "__loose__" }));
     expect(explicit).toMatchObject({ ok: true, mission: { id: a.mission!.id } });
     // A aba viaja no espelho, mas não vaza no nexus_pane_list.
     expect(panes.listPaneSnapshots().find((pane) => pane.paneId === "pane-a")).not.toHaveProperty("tabKey");
@@ -694,27 +695,27 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(getPaneAuthzInfo("pane-a")?.missionId).toBeUndefined();
   });
 
-  it("missão encerrada devolve a mão e o pane pode liderar a próxima", () => {
+  it("missão encerrada devolve a mão e o pane pode liderar a próxima", async () => {
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);
     const main = authority();
-    const first = main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login" });
+    const first = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login" }));
     requireProjectDomainStoreRegistry().forScope(scope).missions.update(first.mission!.id, { status: "failed" });
     expect(returnOperatorHandFromEndedMission(getContextBySession(sessionId)!)).toBe(true);
 
-    const next = main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login 2" });
+    const next = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login 2" }));
 
     expect(next).toMatchObject({ ok: true });
     expect(getOwnedAgentSessionInfo(owner, sessionId)).toMatchObject({ missionId: next.mission!.id });
   });
 
-  it("exceção no meio da promoção desfaz a missão e responde promotion_failed", () => {
+  it("exceção no meio da promoção desfaz a missão e responde promotion_failed", async () => {
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);
 
-    const result = authority(() => {
+    const result = (await authority(() => {
       throw new Error("workflow indisponível");
-    }).createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login" });
+    }).createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login" }));
 
     expect(result).toEqual({ ok: false, error: "promotion_failed" });
     const suite = requireProjectDomainStoreRegistry().forScope(scope);
@@ -726,7 +727,7 @@ describe("missão leve da aba — adoção da mão do operador", () => {
   it("trocar de projeto não encerra o pane do operador que lidera a missão", async () => {
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);
-    expect(authority().createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login" }).ok).toBe(true);
+    expect((await authority().createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login" })).ok).toBe(true);
 
     bindResolvedRendererWorkspaceScope(owner, { ...scope, projectId: "outro", checkoutId: "outro", rootRealPath: "/outro" });
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -835,7 +836,7 @@ describe("missão leve da aba — adoção da mão do operador", () => {
   ])("Tornar orquestrador na aba \"%s\": o helper seguinte abre (maxWorkers > 0)", async (title) => {
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);
-    const created = authority().createPaneMissionFromRenderer(owner, { paneId: "pane-a", title });
+    const created = (await authority().createPaneMissionFromRenderer(owner, { paneId: "pane-a", title }));
     expect(created).toMatchObject({ ok: true });
     const missionId = created.mission!.id;
     const ctx = getContextBySession(sessionId)!;
@@ -854,13 +855,13 @@ describe("missão leve da aba — adoção da mão do operador", () => {
 });
 
 describe("missionId órfão do layout — a autoridade selada do Main vence (F: pane reiniciar preso)", () => {
-  it("spec persistido Y + renderer alega missão X inexistente com resume → canonical carrega Y", () => {
+  it("spec persistido Y + renderer alega missão X inexistente com resume → canonical carrega Y", async () => {
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);
-    const missionY = authority().createPaneMissionFromRenderer(owner, {
+    const missionY = (await authority().createPaneMissionFromRenderer(owner, {
       paneId: "pane-a",
       title: "Missão · Persistida",
-    }).mission!.id;
+    })).mission!.id;
 
     const authorized = authorizeMainOwnedAgentSpawn(
       owner,
@@ -885,10 +886,10 @@ describe("missionId órfão do layout — a autoridade selada do Main vence (F: 
   it("spec persistido Y + restorePersistedAuthority com missão X inexistente → fresh selado de Y", async () => {
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);
-    const missionY = authority().createPaneMissionFromRenderer(owner, {
+    const missionY = (await authority().createPaneMissionFromRenderer(owner, {
       paneId: "pane-a",
       title: "Missão · Persistida",
-    }).mission!.id;
+    })).mission!.id;
     // Sessão morta: o fresh explícito só é honrado sem sessão viva.
     await orchTerminateSession(sessionId);
 
@@ -914,7 +915,7 @@ describe("missionId órfão do layout — a autoridade selada do Main vence (F: 
     });
   });
 
-  it("renderer alega missão Z que EXISTE → a fence de divergência continua fechada", () => {
+  it("renderer alega missão Z que EXISTE → a fence de divergência continua fechada", async () => {
     const sessionA = operatorPane("pane-a");
     const sessionB = operatorPane("pane-b");
     register([
@@ -922,8 +923,8 @@ describe("missionId órfão do layout — a autoridade selada do Main vence (F: 
       { paneId: "pane-b", sessionId: sessionB },
     ]);
     const main = authority();
-    main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão A", tabKey: "space:a" });
-    const missionZ = main.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão Z", tabKey: "space:z" }).mission!.id;
+    (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão A", tabKey: "space:a" }));
+    const missionZ = (await main.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão Z", tabKey: "space:z" })).mission!.id;
 
     expect(() =>
       authorizeMainOwnedAgentSpawn(
@@ -965,14 +966,14 @@ describe("missionId órfão do layout — a autoridade selada do Main vence (F: 
     expect(authorized.request.orchRequestId).toBeUndefined();
   });
 
-  it("sem spec persistido + missão alegada que EXISTE → continua 'no longer registered'", () => {
+  it("sem spec persistido + missão alegada que EXISTE → continua 'no longer registered'", async () => {
     const sessionB = operatorPane("pane-b");
     register([{ paneId: "pane-b", sessionId: sessionB }]);
-    const missionZ = authority().createPaneMissionFromRenderer(owner, {
+    const missionZ = (await authority().createPaneMissionFromRenderer(owner, {
       paneId: "pane-b",
       title: "Missão Z",
       tabKey: "space:z",
-    }).mission!.id;
+    })).mission!.id;
 
     expect(() =>
       authorizeMainOwnedAgentSpawn(
@@ -993,19 +994,19 @@ describe("missionId órfão do layout — a autoridade selada do Main vence (F: 
 });
 
 describe("F-231 — '+ Pane' dentro da missão (spawnOperatorPaneFromRenderer)", () => {
-  function liveMission(): string {
+  async function liveMission(): Promise<string> {
     const sessionId = operatorPane("pane-host");
     register([{ paneId: "pane-host", sessionId }]);
-    const created = authority().createPaneMissionFromRenderer(owner, {
+    const created = (await authority().createPaneMissionFromRenderer(owner, {
       paneId: "pane-host",
       title: "Missão · Operador",
-    });
+    }));
     expect(created).toMatchObject({ ok: true });
     return created.mission!.id;
   }
 
   it("spawna worker do operador na missão viva: Main-owned, selado, operatorOpened", async () => {
-    const missionId = liveMission();
+    const missionId = await liveMission();
 
     const result = await authority().spawnOperatorPaneFromRenderer(owner, {
       missionId,
@@ -1043,7 +1044,7 @@ describe("F-231 — '+ Pane' dentro da missão (spawnOperatorPaneFromRenderer)",
     // Campo 07/10: "Claude · operador" nasceu na conta acct-mrqvpdwz-1 (Main
     // escolheu), a linha ficou com account_id NULL e a apresentação — que lê
     // o PTY — pedia a adoção com a conta. A cerca recusava em 1 ms, 49 vezes.
-    const missionId = liveMission();
+    const missionId = await liveMission();
     operatorPhysical.set("pty-op-1", {
       sessionId: "pty-op-1",
       paneId: "pane-op-1",
@@ -1116,7 +1117,7 @@ describe("F-231 — '+ Pane' dentro da missão (spawnOperatorPaneFromRenderer)",
   });
 
   it("recusa missão que não está em execução", async () => {
-    const missionId = liveMission();
+    const missionId = await liveMission();
     const suite = requireProjectDomainStoreRegistry().forScope(scope);
     suite.missions.block(missionId, "technical");
 
@@ -1130,7 +1131,7 @@ describe("F-231 — '+ Pane' dentro da missão (spawnOperatorPaneFromRenderer)",
   });
 
   it("recusa adapter inexistente e adapter api-provider (não abre pane)", async () => {
-    const missionId = liveMission();
+    const missionId = await liveMission();
 
     await expect(
       authority().spawnOperatorPaneFromRenderer(owner, {
@@ -1146,5 +1147,102 @@ describe("F-231 — '+ Pane' dentro da missão (spawnOperatorPaneFromRenderer)",
       }),
     ).resolves.toEqual({ ok: false, error: "adapter_not_spawnable" });
     expect(operatorSpawn.calls).toHaveLength(0);
+  });
+});
+
+
+describe('baseline before renderer mission creation', () => {
+  function delayedAuthority() {
+    const pending: Array<(value: Awaited<ReturnType<typeof captureMissionCodeBaseline>>) => void> = [];
+    const capture = vi.fn(() => new Promise<Awaited<ReturnType<typeof captureMissionCodeBaseline>>>(resolve => pending.push(resolve)));
+    const main = new RendererMissionAuthority(requireProjectDomainStoreRegistry(), () => undefined, undefined, capture);
+    return { main, pending, capture };
+  }
+
+  it('rejects a workspace switch during HEAD capture before creating/adopting anything', async () => {
+    const sessionId = operatorPane('baseline-pane'); register([{ paneId: 'baseline-pane', sessionId }]);
+    const captured = await captureMissionCodeBaseline(dir);
+    const { main, pending } = delayedAuthority();
+    const result = main.createPaneMissionFromRenderer(owner, { paneId: 'baseline-pane', title: 'New mission' });
+    expect(requireProjectDomainStoreRegistry().forScope(scope).missions.list()).toEqual([]);
+    bindResolvedRendererWorkspaceScope(owner, { ...scope, checkoutId: 'other', rootRealPath: '/other' });
+    pending[0]!(captured);
+    expect(await result).toMatchObject({ ok: false });
+    expect(requireProjectDomainStoreRegistry().forScope(scope).missions.list()).toEqual([]);
+    expect(getContextBySession(sessionId)?.role).toBe('user');
+  });
+
+  it('rejects physical pane replacement while HEAD capture waits', async () => {
+    const sessionId = operatorPane('baseline-pane'); register([{ paneId: 'baseline-pane', sessionId }]);
+    const captured = await captureMissionCodeBaseline(dir);
+    const { main, pending } = delayedAuthority();
+    const result = main.createPaneMissionFromRenderer(owner, { paneId: 'baseline-pane', title: 'New mission' });
+    syncPanes([], owner);
+    pending[0]!(captured);
+    expect(await result).toMatchObject({ ok: false });
+    expect(requireProjectDomainStoreRegistry().forScope(scope).missions.list()).toEqual([]);
+  });
+
+  it('concurrent captures for the same pane create once and retain the first baseline', async () => {
+    const sessionId = operatorPane('baseline-pane'); register([{ paneId: 'baseline-pane', sessionId }]);
+    const first = await captureMissionCodeBaseline(dir, { now: () => 100 });
+    const second = await captureMissionCodeBaseline(dir, { now: () => 200 });
+    const { main, pending } = delayedAuthority();
+    const a = main.createPaneMissionFromRenderer(owner, { paneId: 'baseline-pane', title: 'New mission', ownGroup: true });
+    const b = main.createPaneMissionFromRenderer(owner, { paneId: 'baseline-pane', title: 'New mission', ownGroup: true });
+    pending[0]!(first); const created = await a;
+    pending[1]!(second); const reused = await b;
+    expect(created).toMatchObject({ ok: true, created: true });
+    expect(reused).toMatchObject({ ok: true, mission: { id: created.mission!.id } });
+    expect(reused.created).toBeUndefined();
+    const missions = requireProjectDomainStoreRegistry().forScope(scope).missions;
+    expect(missions.list()).toHaveLength(1);
+    expect(missions.codeBaseline.read(created.mission!.id, dir)).toEqual(first);
+  });
+
+  it('two different panes racing in the same tab reuse the first mission and baseline', async () => {
+    const aSession = operatorPane('baseline-a'); const bSession = operatorPane('baseline-b');
+    register([{ paneId: 'baseline-a', sessionId: aSession }, { paneId: 'baseline-b', sessionId: bSession }]);
+    const first = await captureMissionCodeBaseline(dir, { now: () => 100 });
+    const second = await captureMissionCodeBaseline(dir, { now: () => 200 });
+    const { main, pending } = delayedAuthority();
+    const a = main.createPaneMissionFromRenderer(owner, { paneId: 'baseline-a', title: 'New mission', tabKey: 'space:base' });
+    const b = main.createPaneMissionFromRenderer(owner, { paneId: 'baseline-b', title: 'New mission', tabKey: 'space:base' });
+    pending[0]!(first); const created = await a;
+    pending[1]!(second); const reused = await b;
+    expect(reused).toMatchObject({ ok: true, mission: { id: created.mission!.id } });
+    const missions = requireProjectDomainStoreRegistry().forScope(scope).missions;
+    expect(missions.list()).toHaveLength(1);
+    expect(missions.codeBaseline.read(created.mission!.id, dir)).toEqual(first);
+  });
+
+  it('execution scope changing under the same coordination scope vetoes adoption', async () => {
+    const sessionId = operatorPane('baseline-pane'); register([{ paneId: 'baseline-pane', sessionId }]);
+    const captured = await captureMissionCodeBaseline(dir);
+    const { main, pending } = delayedAuthority();
+    const result = main.createPaneMissionFromRenderer(owner, { paneId: 'baseline-pane', title: 'New mission' });
+    const api = await import('../pty/pty-manager');
+    const info = getOwnedAgentSessionInfo(owner, sessionId)!;
+    const other = { ...scope, rootRealPath: path.join(dir, 'new-execution') };
+    getContextBySession(sessionId)!.executionScope = other;
+    const spy = vi.spyOn(api, 'getOwnedAgentSessionInfo').mockReturnValue({ ...info, scope: other });
+    pending[0]!(captured);
+    expect(await result).toMatchObject({ ok: false });
+    expect(requireProjectDomainStoreRegistry().forScope(scope).missions.list()).toEqual([]);
+    spy.mockRestore(); getContextBySession(sessionId)!.executionScope = undefined;
+  });
+
+  it('unknown baseline permits startup and ledger failure rolls creation back atomically', async () => {
+    const sessionId = operatorPane('baseline-pane'); register([{ paneId: 'baseline-pane', sessionId }]);
+    const main = authority();
+    const suite = requireProjectDomainStoreRegistry().forScope(scope);
+    const fail = vi.spyOn(suite.missions.codeBaseline, 'record').mockImplementationOnce(() => { throw new Error('ledger failed'); });
+    await expect(main.createPaneMissionFromRenderer(owner, { paneId: 'baseline-pane', title: 'New mission' })).rejects.toThrow('ledger failed');
+    expect(suite.missions.list()).toEqual([]);
+    expect(getContextBySession(sessionId)?.role).toBe('user');
+    fail.mockRestore();
+    const created = await main.createPaneMissionFromRenderer(owner, { paneId: 'baseline-pane', title: 'New mission' });
+    expect(created.ok).toBe(true);
+    expect(suite.missions.codeBaseline.read(created.mission!.id, dir)).toMatchObject({ status: 'unknown' });
   });
 });

@@ -6,9 +6,11 @@ import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { isAdvisoryNpmSelectorSafe, readAdvisoryNpmMetadata, type AdvisoryRegistryAuthority } from './sensor-broker';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { resolveCliBinary } from '../path-resolver';
 import { z } from 'zod';
+import { parse as parseToml } from 'smol-toml';
 
 /**
  * Sensores mecânicos Nexus-owned (Etapa 2 do plano dev-sênior).
@@ -44,6 +46,8 @@ export type MechanicalCheckKind =
   | 'test-coverage';
 
 export interface MechanicalCheckResult {
+  /** Main admission/cancellation can resume without treating code as defective. */
+  readonly retryable?: boolean;
   readonly kind: MechanicalCheckKind;
   readonly status: 'passed' | 'failed' | 'unavailable';
   /** Frase curta em PT para o laudo da missão. */
@@ -55,6 +59,7 @@ export interface MechanicalExecOptions {
   readonly cwd: string;
   readonly timeout: number;
   readonly windowsHide: boolean;
+  readonly signal?: AbortSignal;
 }
 
 /** Assinatura estrutural mínima — injetável sem herdar o tipo do promisify. */
@@ -68,6 +73,10 @@ export interface MechanicalRunnerDeps {
   readonly exec?: MechanicalExec;
   readonly exists?: (path: string) => boolean;
   readonly now?: () => number;
+  readonly readJson?: (file: string) => Promise<unknown>;
+  readonly signal?: AbortSignal;
+  readonly platform?: NodeJS.Platform;
+  readonly nodeExecutable?: () => string | null;
 }
 
 const execDefault: MechanicalExec = (file, args, options) =>
@@ -84,6 +93,147 @@ function truncate(text: string, max = 240): string {
 /* Typecheck — tsc --noEmit quando existe tsconfig.json                */
 /* ------------------------------------------------------------------ */
 
+/** Applicability comes from project declarations, never tool/lock availability. */
+export async function mechanicalProjectRequirements(root: string, files: readonly string[] = []) {
+  const present = existsSync(join(root, 'package.json'));
+  let pkg: Record<string, unknown> | null = null;
+  try { pkg = dependencyRecord(await readFreshnessJson(join(root, 'package.json'))); } catch { /* unavailable declaration remains required below */ }
+  const scripts = dependencyRecord(pkg?.scripts) ?? {};
+  const dependencies = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']
+    .map(field => dependencyRecord(pkg?.[field]) ?? {});
+  let entries: string[] = [];
+  try { entries = await fsp.readdir(root); } catch { /* known declarations still count */ }
+  let declaredNativeTests = false;
+  for (const [file, declaration] of [
+    ['pyproject.toml', /^\s*\[tool\.pytest\.ini_options\]\s*(?:#.*)?$/m],
+    ['Cargo.toml', /^\s*\[\[test\]\]\s*(?:#.*)?$/m],
+    ['Makefile', /^(?:test|test-[\w-]+)\s*:/m],
+  ] as const) {
+    if (!entries.includes(file)) continue;
+    try { declaredNativeTests ||= declaration.test(await readMechanicalText(join(root, file))); }
+    catch { declaredNativeTests = true; /* unreadable declaration cannot prove no tests */ }
+  }
+  if (!declaredNativeTests && (entries.includes('go.mod') || entries.includes('Cargo.toml'))) {
+    declaredNativeTests = await hasNativeTestsOrUnknown(root, entries.includes('go.mod'), entries.includes('Cargo.toml'));
+  }
+  return {
+    typecheck: entries.some(name => /^tsconfig(?:[.-].*)?\.json$/i.test(name)) ||
+      files.some(file => /\.[cm]?tsx?$/i.test(file)) ||
+      dependencies.some(value => 'typescript' in value || 'vue-tsc' in value) ||
+      Object.entries(scripts).some(([name, command]) => /^(?:type[-_:]?check|check[-_:]?types)(?:$|:)/i.test(name) ||
+        typeof command === 'string' && /(?:^|\s)(?:tsc|vue-tsc)(?:\s|$)/.test(command)) || present && !pkg,
+    audit: ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock'].some(file => existsSync(join(root, file))) ||
+      dependencies.some(value => Object.keys(value).length > 0) || Boolean(pkg?.workspaces) || present && !pkg,
+    tests: declaredNativeTests || entries.some(file => /^(?:pytest\.ini|conftest\.py|(?:vitest|jest|playwright)\.config\.[cm]?[jt]s)$/.test(file)) ||
+      [...entries, ...files].some(file => /(?:^|\/)(?:test_[^/]+\.py|[^/]+_test\.(?:py|go)|[^/]+\.(?:test|spec)\.[cm]?[jt]sx?)$/.test(file)) ||
+      Object.keys(scripts).some(name => /^(?:test|e2e)(?:$|:)/i.test(name)) ||
+      dependencies.some(value => ['vitest', 'jest', '@playwright/test', 'mocha'].some(name => name in value)) || present && !pkg,
+  };
+}
+
+/** Native tests can be unchanged and nested; absence requires a bounded complete scan. */
+/** Without moduleRoots this preserves the mission-wide applicability scan.
+ * A native suite may instead name its Main-proved module/crate roots: other
+ * nested manifests are separate suites, not evidence that this group has tests. */
+export async function hasNativeTestsOrUnknown(root: string, go: boolean, rust: boolean,
+  moduleRoots?: readonly string[],
+): Promise<boolean> {
+  const included = moduleRoots ? new Set([root, ...moduleRoots]) : null;
+  const pending = [...(included ?? [root])].map(directory => ({ directory, depth: 0, moduleRoot: directory }));
+  const seen = new Set<string>();
+  let visited = 0;
+  let inspectedBytes = 0;
+  try {
+    if (await fsp.realpath(root) !== root) return true;
+    while (pending.length) {
+      const { directory, depth, moduleRoot } = pending.pop()!;
+      if (seen.has(directory)) continue;
+      seen.add(directory);
+      if (depth > 12 || await fsp.realpath(directory) !== directory) return true;
+      if (included && !included.has(directory)) {
+        const marker = join(directory, go ? 'go.mod' : 'Cargo.toml');
+        try { await fsp.lstat(marker); continue; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return true; }
+      }
+      for (const entry of await fsp.readdir(directory, { withFileTypes: true })) {
+        if (++visited > 4000) return true;
+        if (['.git', '.nexus', 'node_modules', 'target', 'vendor'].includes(entry.name)) continue;
+        if (entry.isSymbolicLink()) return true;
+        const file = join(directory, entry.name);
+        if (entry.isDirectory()) { pending.push({ directory: file, depth: depth + 1, moduleRoot: included?.has(file) ? file : moduleRoot }); continue; }
+        if (!entry.isFile()) return true;
+        if (included && rust && entry.name === 'Cargo.toml' && included.has(directory)) {
+          const manifest = parseToml(await readMechanicalText(file));
+          if (Array.isArray(manifest.test) && manifest.test.length > 0) return true;
+        }
+        if (go && /_test\.go$/.test(entry.name)) return true;
+        if (rust && entry.name.endsWith('.rs')) {
+          const rel = relative(moduleRoot, file).replaceAll('\\', '/');
+          if (rel.startsWith('tests/')) return true;
+          if (await fsp.realpath(file) !== file) return true;
+          const stat = await fsp.lstat(file);
+          inspectedBytes += stat.size;
+          if (stat.size > 256 * 1024 || inspectedBytes > 4 * 1024 * 1024) return true;
+          if (/#\s*\[\s*(?:(?:[\w]+::)*test|cfg\s*\(\s*test\s*\))\s*\]/.test(await readMechanicalText(file))) return true;
+        }
+      }
+    }
+    return false;
+  } catch { return true; }
+}
+
+/** Only recognized compiler argv; never execute an arbitrary package script. */
+async function declaredTypecheck(root: string, deps: MechanicalRunnerDeps): Promise<{ compiler: 'tsc' | 'vue-tsc'; config?: string; nodeWrapper?: { entry: string; args: string[] } } | null> {
+  let pkg: Record<string, unknown> | null = null;
+  try { pkg = dependencyRecord(await (deps.readJson ?? readFreshnessJson)(join(root, 'package.json'))); } catch { /* default root config can still be checked */ }
+  const scripts = dependencyRecord(pkg?.scripts) ?? {};
+  const primary = Object.entries(scripts).find(([name]) => /^(?:type[-_:]?check|check[-_:]?types)$/i.test(name));
+  const candidates = Object.entries(scripts).filter(([name, value]) => /^(?:type[-_:]?check|check[-_:]?types)(?:$|:)/i.test(name) ||
+    typeof value === 'string' && /^(?:tsc|vue-tsc)(?:\s|$)/.test(value));
+  if (!primary && candidates.length > 1) return null;
+  const selected = primary ?? candidates[0];
+  if (!selected) return { compiler: 'tsc' };
+  const script = selected[1];
+  if (typeof script !== 'string' || script.length > 4096 || /[;&|$`<>\\\r\n]/.test(script)) return null;
+  const words = script.match(/"[^"\r\n]*"|'[^'\r\n]*'|[^\s]+/g)?.map(word => /^(["']).*\1$/.test(word) ? word.slice(1, -1) : word) ?? [];
+  let compiler = words.shift();
+  let nodeWrapper: { entry: string; args: string[] } | undefined;
+  if (compiler === 'node' || compiler === 'node.exe') {
+    const args: string[] = [];
+    const memory = /^--max-old-space-size=(\d+)$/.exec(words[0] ?? '');
+    if (memory) {
+      const mb = Number(memory[1]);
+      if (mb < 128 || mb > 8192) return null;
+      args.push(`--max-old-space-size=${mb}`); words.shift();
+    }
+    const entry = words.shift() ?? '';
+    const match = /^(?:\.\/)?node_modules\/(typescript\/bin\/tsc|vue-tsc\/bin\/vue-tsc\.js)$/.exec(entry);
+    if (!match) return null;
+    compiler = match[1]!.startsWith('typescript/') ? 'tsc' : 'vue-tsc';
+    nodeWrapper = { entry: resolve(root, entry), args };
+  }
+  if (compiler !== 'tsc' && compiler !== 'vue-tsc') return null;
+  let config: string | undefined;
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]!;
+    if (word === '--noEmit' || word === '--pretty=false') continue;
+    if (word === '--pretty' && words[i + 1] === 'false') { i++; continue; }
+    if (word === '-p' || word === '--project') { if (config || !words[i + 1]) return null; config = words[++i]; continue; }
+    if (word.startsWith('--project=') && !config && word.length > '--project='.length) { config = word.slice('--project='.length); continue; }
+    return null;
+  }
+  if (config) {
+    try {
+      const rootReal = await fsp.realpath(root);
+      const file = await fsp.realpath(resolve(rootReal, config));
+      const rel = relative(rootReal, file);
+      if (!rel || rel === '..' || rel.startsWith('../') || rel.startsWith('..\\') || isAbsolute(rel) || !(await fsp.stat(file)).isFile()) return null;
+      config = file;
+    } catch { return null; }
+  }
+  return { compiler, config, nodeWrapper };
+}
+
 const TSC_ERROR_LINE =
   /^\s*([^(\s]+)\((\d+),\d+\):\s*error\s+(TS\d+):\s*(.+)$/u;
 
@@ -93,15 +243,16 @@ export async function runTypecheckSensor(
 ): Promise<MechanicalCheckResult> {
   const exec = deps.exec ?? execDefault;
   const exists = deps.exists ?? existsSync;
-  if (!exists(join(root, 'tsconfig.json'))) {
+  const plan = await declaredTypecheck(root, deps);
+  if (!plan || !plan.config && !exists(join(root, 'tsconfig.json'))) {
     return {
-      kind: 'typecheck',
-      status: 'unavailable',
-      summary: 'Typecheck indisponível (sem tsconfig.json no projeto).',
-      findings: [],
+      kind: 'typecheck', status: 'unavailable', findings: [],
+      summary: plan ? 'Typecheck indisponível (sem tsconfig.json no projeto).' :
+        'Typecheck indisponível: declare tsc ou vue-tsc com --noEmit e config existente dentro do projeto; comando composto/customizado não foi executado.',
     };
   }
-  const bin = join(root, 'node_modules', '.bin', 'tsc');
+  if (deps.signal?.aborted) return { kind: 'typecheck', status: 'unavailable', summary: 'Typecheck cancelado.', findings: [] };
+  const bin = join(root, 'node_modules', '.bin', plan.compiler);
   const useLocal = exists(bin);
   if (!useLocal && !exists(join(root, 'package.json'))) {
     return {
@@ -111,14 +262,37 @@ export async function runTypecheckSensor(
       findings: [],
     };
   }
+  let executable = useLocal ? bin : 'npx';
+  let prefix: string[] = useLocal ? [] : ['--no-install', plan.compiler];
+  const windows = (deps.platform ?? process.platform) === 'win32';
+  if (windows || plan.nodeWrapper) {
+    // npm .cmd launchers are not execFile executables. Use the installed
+    // compiler package's own JS entry with a resolved native Node, no shell.
+    try {
+      const name = plan.compiler === 'tsc' ? 'typescript' : 'vue-tsc';
+      const packageRoot = await fsp.realpath(join(root, 'node_modules', name));
+      const manifest = dependencyRecord(await readFreshnessJson(join(packageRoot, 'package.json')));
+      const bins = dependencyRecord(manifest?.bin);
+      const declared = typeof manifest?.bin === 'string' ? manifest.bin : bins?.[plan.compiler];
+      if (manifest?.name !== name || typeof declared !== 'string') throw new Error('compiler entry unavailable');
+      const entry = await fsp.realpath(resolve(packageRoot, declared));
+      const rel = relative(packageRoot, entry);
+      if (!rel || rel === '..' || rel.startsWith('../') || rel.startsWith('..\\') || isAbsolute(rel) || !(await fsp.stat(entry)).isFile()) throw new Error('compiler entry outside package');
+      if (plan.nodeWrapper && await fsp.realpath(plan.nodeWrapper.entry) !== entry) throw new Error('wrapper does not select compiler entry');
+      const node = (deps.nodeExecutable ?? (() => resolveCliBinary('node')?.binPath ?? null))();
+      if (!node || windows && !/\.exe$/i.test(node)) throw new Error('native Node unavailable');
+      executable = node; prefix = [...(plan.nodeWrapper?.args ?? []), entry];
+    } catch {
+      return { kind: 'typecheck', status: 'unavailable', summary: 'Typecheck indisponível: instale o compilador local e um Node executável; launchers .cmd não são executados por shell.', findings: [] };
+    }
+  }
   try {
     await exec(
-      useLocal ? bin : 'npx',
-      useLocal
-        ? ['--noEmit', '--pretty', 'false']
-        : ['--no-install', 'tsc', '--noEmit', '--pretty', 'false'],
-      { cwd: root, timeout: TYPECHECK_TIMEOUT_MS, windowsHide: true },
+      executable,
+      [...prefix, ...(plan.config ? ['--project', plan.config] : []), '--noEmit', '--pretty', 'false'],
+      { cwd: root, timeout: TYPECHECK_TIMEOUT_MS, windowsHide: true, ...(deps.signal ? { signal: deps.signal } : {}) },
     );
+    if (deps.signal?.aborted) return { kind: 'typecheck', status: 'unavailable', summary: 'Typecheck cancelado.', findings: [] };
     return {
       kind: 'typecheck',
       status: 'passed',
@@ -127,6 +301,7 @@ export async function runTypecheckSensor(
     };
   } catch (error) {
     const err = error as { code?: unknown; stdout?: unknown; killed?: unknown };
+    if (deps.signal?.aborted) return { kind: 'typecheck', status: 'unavailable', summary: 'Typecheck cancelado.', findings: [] };
     if (err.killed === true) {
       return {
         kind: 'typecheck',
@@ -432,6 +607,10 @@ export interface DependencyFreshnessDeps {
 }
 
 async function readFreshnessJson(file: string): Promise<unknown> {
+  return JSON.parse(await readMechanicalText(file));
+}
+
+async function readMechanicalText(file: string): Promise<string> {
   const handle = await fsp.open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0));
   try {
     const stat = await handle.stat();
@@ -450,7 +629,7 @@ async function readFreshnessJson(file: string): Promise<unknown> {
       current.dev === stat.dev && current.ino === stat.ino && current.mode === stat.mode &&
       current.size === stat.size && current.mtimeMs === stat.mtimeMs && current.ctimeMs === stat.ctimeMs;
     if (bytesRead !== stat.size || !same(after) || !same(named)) throw new Error('dependency input changed');
-    return JSON.parse(buffer.subarray(0, bytesRead).toString('utf8'));
+    return buffer.subarray(0, bytesRead).toString('utf8');
   } finally { await handle.close(); }
 }
 

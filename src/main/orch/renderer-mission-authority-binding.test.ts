@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
 import type { Squad } from "../../shared/orch-types";
 import { testProjectScope } from "./__tests__/scope-fixture";
+import { GitCommandError } from "../runtime/git-command";
 
 const deps = vi.hoisted(() => ({
   findPaneOwnedBy: vi.fn(),
@@ -26,6 +27,23 @@ const deps = vi.hoisted(() => ({
   isBuiltinAdapter: vi.fn(),
   orchestrationEvidenceForAdapter: vi.fn(),
 }));
+
+// F-954: o git da aba (worktree do espaço) pode falhar; o resto segue real.
+const tabGit = vi.hoisted(() => ({ fail: false, calls: 0, resolveTo: undefined as unknown }));
+vi.mock("./mission-execution-scope", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./mission-execution-scope")>();
+  return {
+    ...real,
+    missionExecutionScope: (...args: Parameters<typeof real.missionExecutionScope>) => {
+      if (args[1].intentContract?.workspaceBinding?.spaceId) {
+        tabGit.calls += 1;
+        if (tabGit.fail) throw new Error("Git process could not complete");
+        if (tabGit.resolveTo) return tabGit.resolveTo as ReturnType<typeof real.missionExecutionScope>;
+      }
+      return real.missionExecutionScope(...args);
+    },
+  };
+});
 
 vi.mock("./squad-store", () => ({
   getSquad: () => savedSquad,
@@ -72,7 +90,7 @@ import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import { createMissionPaneAuthoritySeal } from "./mission-pane-authority";
 import { beginOperatorTabResumeTransfer } from "./operator-tab-mission-resume";
 
-const owner = { id: 7 } as WebContents;
+const owner = { id: 7, isDestroyed: () => false, isCrashed: () => false } as WebContents;
 const scope = testProjectScope({
   projectId: "project-a",
   checkoutId: "checkout-a",
@@ -344,6 +362,93 @@ describe("renderer mission authority", () => {
     expect(deps.restoreSessionAuthority).toHaveBeenCalledTimes(1);
   });
 
+  // Instância própria: o backoff do F-954 não pode vazar para os outros testes.
+  const isolatedAuthority = () => new RendererMissionAuthority(
+    { forScope: deps.forScope } as never,
+    () => "context-revision-a",
+    deps.resolvePaneActivity,
+  );
+
+  it("a git failure while reading the scope fails closed instead of throwing into IPC", () => {
+    deps.forScope.mockImplementationOnce(() => {
+      throw new GitCommandError("Git process could not complete", ["rev-parse"]);
+    });
+
+    expect(isolatedAuthority().restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+    expect(deps.forScope).toHaveBeenCalledTimes(1);
+    expect(deps.restoreSessionAuthority).not.toHaveBeenCalled();
+  });
+
+  it("F-954: a tab whose git failed waits the backoff instead of re-running git on every sync", () => {
+    vi.useFakeTimers({ now: new Date("2026-10-07T12:00:00Z") });
+    tabGit.fail = true;
+    tabGit.calls = 0;
+    try {
+      const restoring = isolatedAuthority();
+      deps.getMission.mockReturnValue({
+        ...approvedMission,
+        intentContract: { ...approvedMission.intentContract, workspaceBinding: { version: 1, spaceId: "space-tab" } },
+      });
+      deps.getContextBySession.mockReturnValue({ role: "orchestrator", missionId: "mission-a", scope });
+      // Dois panes persistidos da mesma aba.
+      deps.findPaneOwnedBy.mockImplementation((_owner: unknown, paneRef: string) => ({
+        paneId: paneRef, sessionId: `pty-${paneRef}`, kind: "cli-agent",
+      }));
+      deps.getOwnedAgentSessionInfo.mockImplementation((_owner: unknown, sessionId: string) => ({
+        ...session, source: "persisted-pane", missionId: "mission-a", paneId: sessionId.replace("pty-", ""),
+      }));
+      deps.findMissionPaneByPaneId.mockImplementation((paneId: string) => ({
+        id: `mpane-${paneId}`, missionId: "mission-a", paneId,
+      }));
+
+      expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+      expect(tabGit.calls).toBe(1);
+      // Outro pane da mesma aba e os próximos panesSync dentro do backoff: nada de git de novo.
+      expect(restoring.restorePersistedPaneAuthority(owner, "pane-b")).toBe(false);
+      expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+      expect(tabGit.calls).toBe(1);
+      expect(deps.restoreSessionAuthority).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(5 * 60_000 + 1);
+      expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+      expect(tabGit.calls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+      tabGit.fail = false;
+    }
+  });
+
+  it("F-954: the operator's explicit rebind is not held by a stale tab backoff once git answers", () => {
+    vi.useFakeTimers({ now: new Date("2026-10-07T12:00:00Z") });
+    try {
+      const restoring = isolatedAuthority();
+      deps.getMission.mockReturnValue({
+        ...approvedMission,
+        orchestratorSessionId: "pty-old",
+        intentContract: { ...approvedMission.intentContract, workspaceBinding: { version: 1, spaceId: "space-tab" } },
+      });
+      deps.getContextBySession.mockReturnValue({ role: "orchestrator", missionId: "mission-a", scope });
+      deps.getOwnedAgentSessionInfo.mockReturnValue({ ...session, source: "persisted-pane", missionId: "mission-a" });
+      deps.findMissionPaneByPaneId.mockReturnValue({
+        id: "mpane-a", missionId: "mission-a", paneId: "pane-a", adapterId: "codex", model: "gpt-5.4",
+        accountId: "account-a", effort: "high", cwd: session.cwd, title: "Review · orq", role: "orchestrator",
+        scope, createdAt: 1,
+      });
+      tabGit.fail = true;
+      expect(restoring.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+
+      // Um minuto depois o git da aba voltou; o operador religa ainda dentro do backoff.
+      tabGit.fail = false;
+      tabGit.resolveTo = scope;
+      vi.advanceTimersByTime(60_000);
+      expect(restoring.rebindMissionFromRenderer(owner, "mission-a", "pty-a")).toBe(mission);
+    } finally {
+      vi.useRealTimers();
+      tabGit.fail = false;
+      tabGit.resolveTo = undefined;
+    }
+  });
+
   it("rebinds only an owned restored orchestrator session for that mission", () => {
     deps.getMission.mockReturnValue({
       ...approvedMission,
@@ -605,6 +710,8 @@ describe("renderer mission authority", () => {
           create,
           update,
           remove,
+          atomically: <T>(fn: () => T): T => fn(),
+          codeBaseline: { record: vi.fn() },
           rebindOrchestratorSession: deps.rebindMissionOrchestratorSession,
         },
         missionPanes: {
@@ -617,7 +724,7 @@ describe("renderer mission authority", () => {
       return { created, create, update, remove };
     }
 
-    it("cria missão Autopilot livre, sem squad, liderada pelo pane solto", () => {
+    it("cria missão Autopilot livre, sem squad, liderada pelo pane solto", async () => {
       const store = wireLightMissionStore();
       deps.findPaneOwnedBy.mockReturnValue({
         paneId: "pane-b",
@@ -634,10 +741,10 @@ describe("renderer mission authority", () => {
         squadId: undefined,
       });
 
-      const result = authority.createPaneMissionFromRenderer(owner, {
+      const result = (await authority.createPaneMissionFromRenderer(owner, {
         paneId: "pane-b",
         title: "Missão · Checkout",
-      });
+      }));
 
       expect(result.ok).toBe(true);
       expect(result.mission?.id).toBe("mission-light");
@@ -668,7 +775,7 @@ describe("renderer mission authority", () => {
       expect(store.remove).not.toHaveBeenCalled();
     });
 
-    it("não arranca pane de outra missão e não cria nada", () => {
+    it("não arranca pane de outra missão e não cria nada", async () => {
       const store = wireLightMissionStore();
       deps.findPaneOwnedBy.mockReturnValue({
         paneId: "pane-a",
@@ -678,13 +785,13 @@ describe("renderer mission authority", () => {
       deps.getOwnedAgentSessionInfo.mockReturnValue({ ...session, missionId: "mission-a" });
 
       expect(
-        authority.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · A" }),
+        (await authority.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · A" })),
       ).toEqual({ ok: false, error: "pane_mission_mismatch" });
       expect(store.create).not.toHaveBeenCalled();
       expect(deps.updateOwnedAgentSessionRole).not.toHaveBeenCalled();
     });
 
-    it("promoção recusada desfaz a missão recém-criada", () => {
+    it("promoção recusada desfaz a missão recém-criada", async () => {
       const store = wireLightMissionStore();
       deps.findPaneOwnedBy.mockReturnValue({
         paneId: "pane-b",
@@ -703,10 +810,10 @@ describe("renderer mission authority", () => {
       store.create.mockImplementationOnce(() => ({ ...mission, id: "mission-light" }));
       deps.rebindMissionOrchestratorSession.mockReturnValue(null);
 
-      const result = authority.createPaneMissionFromRenderer(owner, {
+      const result = (await authority.createPaneMissionFromRenderer(owner, {
         paneId: "pane-b",
         title: "Missão · B",
-      });
+      }));
       expect(result.ok).toBe(false);
       expect(store.remove).toHaveBeenCalledWith("mission-light");
     });

@@ -1,3 +1,5 @@
+import type { PtyPromptState } from '../../shared/types';
+
 const BRACKETED_PASTE_START = '\x1b[200~';
 const BRACKETED_PASTE_END = '\x1b[201~';
 const MIN_PASTE_SETTLE_MS = 750;
@@ -12,7 +14,16 @@ const SUBMIT_TURN_ACCEPTANCE_MS = 8_000;
 /** Segunda janela, após o ÚNICO CR de destravamento. */
 const SUBMIT_RETRY_ACCEPTANCE_MS = 4_000;
 
-export interface PaneSubmitPorts {
+interface PromptProofPorts {
+  getSessionId(paneId: string): string | null;
+  schedule(callback: () => void, delayMs: number): unknown;
+  probePromptState?(sessionId: string): Promise<PtyPromptState | null>;
+  submitPromptEnter?(sessionId: string, sequence: number, retry: boolean): Promise<boolean>;
+}
+
+export interface PaneSubmitPorts extends PromptProofPorts {
+  /** Kimi consumes plain text; its adapter does not support bracketed paste. */
+  bracketedPaste?: boolean;
   getSessionId(paneId: string): string | null;
   write(sessionId: string, data: string): void;
   writeConfirmed(sessionId: string, data: string): Promise<boolean>;
@@ -83,6 +94,56 @@ function confirmEnterTookEffect(
   );
 }
 
+/** Canonical UserPromptSubmit sequence, independent of paste/input-induced busy. */
+async function submitWithTurnProof(
+  paneId: string,
+  text: string,
+  sessionId: string,
+  ports: PromptProofPorts,
+  write: (sessionId: string, data: string) => Promise<boolean>,
+): Promise<boolean> {
+  const pause = (ms: number) => new Promise<void>(resolve => { ports.schedule(resolve, ms); });
+  const current = () => ports.getSessionId(paneId) === sessionId;
+  const read = async (): Promise<PtyPromptState | null> => {
+    if (!current()) return null;
+    const result = await Promise.race([
+      Promise.resolve().then(() => ports.probePromptState!(sessionId)).catch(() => null),
+      pause(500).then(() => null),
+    ]);
+    return current() && result && Number.isSafeInteger(result.turnStartSequence) && result.turnStartSequence >= 0 ? result : null;
+  };
+  const baseline = await read();
+  if (!baseline || baseline.awaitingInput || baseline.state !== 'idle') return false;
+  if (!await write(sessionId, text) || !current()) return false;
+  await pause(pasteSettleMs(text));
+  const ready = await read();
+  if (!ready || ready.awaitingInput) return false;
+  if (ready.turnStartSequence > baseline.turnStartSequence) return true;
+  // First CR submits our own paste even if its echo made the PTY busy.
+  const enter = (retry: boolean) => current() && (ports.submitPromptEnter
+    ? ports.submitPromptEnter(sessionId, baseline.turnStartSequence, retry)
+    : Promise.resolve(false));
+  if (!await enter(false)) return false;
+  const waitForProof = async (ms: number): Promise<'started' | 'blocked' | 'timeout'> => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      const state = await read();
+      if (!state) return 'blocked';
+      if (state.turnStartSequence > baseline.turnStartSequence) return 'started';
+      if (state.awaitingInput || state.state !== 'idle' && state.state !== 'busy') return 'blocked';
+      await pause(200);
+    }
+    return 'timeout';
+  };
+  const first = await waitForProof(SUBMIT_TURN_ACCEPTANCE_MS);
+  if (first !== 'timeout') return first === 'started';
+  const retry = await read();
+  if (!retry || retry.awaitingInput || retry.state !== 'idle') return false;
+  if (retry.turnStartSequence > baseline.turnStartSequence) return true;
+  if (!await enter(true)) return false;
+  return await waitForProof(SUBMIT_RETRY_ACCEPTANCE_MS) === 'started';
+}
+
 function isSafePrompt(text: string): boolean {
   return text.length > 0 && !/[\x00-\x08\x0b-\x1f\x7f]/u.test(text);
 }
@@ -124,7 +185,7 @@ export function submitPromptToPane(
   return true;
 }
 
-export interface PaneOperatorSubmitPorts {
+export interface PaneOperatorSubmitPorts extends PromptProofPorts {
   getSessionId(paneId: string): string | null;
   /** Escrita pela lane do operador (orch:panes.operatorInput) com recibo real. */
   operatorWrite(sessionId: string, data: string): Promise<boolean>;
@@ -154,6 +215,7 @@ export function submitPromptToPaneOperator(
   if (ports.getSessionId(paneId) !== expectedSessionId) {
     return Promise.resolve(false);
   }
+  if (ports.probePromptState) return submitWithTurnProof(paneId, line, expectedSessionId, ports, ports.operatorWrite);
   return ports.operatorWrite(expectedSessionId, line).then(
     (accepted) => {
       if (!accepted || ports.getSessionId(paneId) !== expectedSessionId) {
@@ -194,6 +256,10 @@ export function submitPromptToPaneConfirmed(
   if (!isSafePrompt(text)) return Promise.resolve(false);
   if (ports.getSessionId(paneId) !== expectedSessionId) {
     return Promise.resolve(false);
+  }
+  if (ports.probePromptState) {
+    const input = ports.bracketedPaste === false ? text : `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}`;
+    return submitWithTurnProof(paneId, input, expectedSessionId, ports, ports.writeConfirmed);
   }
   return ports.writeConfirmed(
     expectedSessionId,

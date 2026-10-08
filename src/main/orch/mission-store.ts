@@ -51,6 +51,7 @@ import {
   type MissionKickoffAcceptance,
   type RecordMissionKickoffAcceptance,
 } from './mission-kickoff-proof-ledger';
+import { MissionCodeBaselineLedger } from './mission-code-baseline-ledger';
 import { MissionReviewVerdictLedger } from './mission-review-verdict-ledger';
 import { RouteDecisionLedger } from './route-decision-ledger';
 import {
@@ -370,6 +371,7 @@ export class ScopedMissionStore {
   readonly #kickoffProofs: MissionKickoffProofLedger;
   readonly #routeReservations: MissionRouteReservationLedger;
   readonly #reviewVerdicts: MissionReviewVerdictLedger;
+  readonly #codeBaseline: MissionCodeBaselineLedger;
   readonly #routeDecisions: RouteDecisionLedger;
 
   constructor(
@@ -382,7 +384,12 @@ export class ScopedMissionStore {
     this.#kickoffProofs = new MissionKickoffProofLedger(this.#binding);
     this.#routeReservations = new MissionRouteReservationLedger(this.#binding);
     this.#reviewVerdicts = new MissionReviewVerdictLedger(this.#binding);
+    this.#codeBaseline = new MissionCodeBaselineLedger(this.#binding);
     this.#routeDecisions = new RouteDecisionLedger(this.#binding);
+  }
+
+  get codeBaseline(): MissionCodeBaselineLedger {
+    return this.#codeBaseline;
   }
 
   /** F-234: vereditos de integração por HEAD exato (gate de push). */

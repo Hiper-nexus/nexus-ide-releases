@@ -3,6 +3,7 @@ import { paneInputLane } from './pane-input-route';
 import {
   getPaneSessionId,
   submitPromptToPane,
+  submitPromptToPaneConfirmed,
   submitPromptToPaneOperatorInput,
 } from './terminal-host';
 
@@ -18,6 +19,7 @@ export function submitLivePanePrompt(
   pane: {
     readonly id: string;
     readonly kind?: string;
+    readonly adapterId?: string;
     readonly missionId?: string | null;
     readonly role?: 'orchestrator' | 'worker';
   },
@@ -32,5 +34,6 @@ export function submitLivePanePrompt(
   if (lane === 'operator') {
     return submitPromptToPaneOperatorInput(pane.id, text, sessionId);
   }
+  if (pane.adapterId === 'kimi') return submitPromptToPaneConfirmed(pane.id, text, sessionId);
   return Promise.resolve(submitPromptToPane(pane.id, text));
 }

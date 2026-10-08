@@ -111,6 +111,8 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
           id: 'claude-sonnet-5-5', availability: 'paid', costTier: 'medium', source: 'bundled',
         },
         { id: 'claude-sonnet-5', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        // Haiku 5.5 (anthropic.com/claude/haiku, 2026-10-07): o barato da linha
+        // 5 e o padrão do rotineiro; o 4.5 segue listado enquanto a CLI o oferece.
         // Manifesto T3 26285ab (07/10): current, Claude Code >= 2.1.293 — e
         // 81 turnos reais na 2.1.293 dos panes. Abaixo disso só avisa (F-992).
         { id: 'claude-haiku-5-5', availability: 'cheap', costTier: 'low', source: 'bundled' },

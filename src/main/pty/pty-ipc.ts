@@ -1,3 +1,4 @@
+import { readOwnedPromptState, submitOwnedPromptEnter } from './pty-prompt-state';
 import { licenseFailure } from '../../shared/license-errors';
 import { ipcMain } from "electron";
 import type { WebContents } from "electron";
@@ -89,6 +90,7 @@ import { getCommandBlockTracker } from "../terminal/command-block-tracker";
 import { registerCommandBlockScope } from "../terminal/command-block-scope-registry";
 import { getProjectDomainStores } from "../orch/project-domain-store-registry";
 import { settleCodexCliVersionForSpawn } from "../orch/codex-cli-version";
+import { ensureNativeHeavyJobBase } from "../orch/native-heavy-preload";
 import {
   type TaskDispatchRecord,
   type TaskDispatchStore,
@@ -99,6 +101,7 @@ import {
   startPhaseTimer,
   type PhaseTimer,
 } from "../observability/phase-timer";
+import { onIpcGuarded } from '../runtime/git-ipc-guard';
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 const RESTARTED_WORKER_LEASE_MS = 10 * 60_000;
@@ -492,6 +495,9 @@ function spawnCliPtyAgentPane(
         async (release) => {
           timer.mark("cli-spawn-permit");
           try {
+            // F-955: env do agente nasce com a base do job nativo quando possível.
+            const proving = ensureNativeHeavyJobBase();
+            if (proving) await proving;
             return await spawnCliPtyAgentPane(
               sender, adapter, spawn, preparation, true, true, timer,
             );
@@ -513,6 +519,7 @@ function spawnCliPtyAgentPane(
     assertNoLivePhysicalPaneProcess(spawn);
     const workerRestart = resolvePersistedWorkerRestart(spawn);
     assertMainOwnedAgentSpawnGrantActive({
+      runtimeManager: projectRuntimeManager,
       owner: sender,
       requestId: request.orchRequestId,
       pending,
@@ -799,12 +806,15 @@ export function registerPtyIpc(): void {
     }
   });
 
-  ipcMain.on(PTY_CHANNELS.write, (event, raw) => {
+  onIpcGuarded(PTY_CHANNELS.write, (event, raw) => {
     const parsed = writeSchema.safeParse(raw);
     if (parsed.success) {
       writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
     }
   });
+
+  ipcMain.handle(PTY_CHANNELS.promptEnter, (event, raw) => submitOwnedPromptEnter(event.sender, raw));
+  ipcMain.handle(PTY_CHANNELS.promptState, (event, raw) => readOwnedPromptState(event.sender, raw));
 
   ipcMain.handle(PTY_CHANNELS.writeConfirmed, (event, raw): boolean => {
     const parsed = writeSchema.safeParse(raw);
@@ -812,7 +822,7 @@ export function registerPtyIpc(): void {
     return writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
   });
 
-  ipcMain.on(PTY_CHANNELS.resize, (event, raw) => {
+  onIpcGuarded(PTY_CHANNELS.resize, (event, raw) => {
     const parsed = resizeSchema.safeParse(raw);
     if (parsed.success) {
       resizeSession(
@@ -825,7 +835,7 @@ export function registerPtyIpc(): void {
     }
   });
 
-  ipcMain.on(PTY_CHANNELS.kill, (event, raw) => {
+  onIpcGuarded(PTY_CHANNELS.kill, (event, raw) => {
     const parsed = killSchema.safeParse(raw);
     if (parsed.success) {
       killSession(event.sender, parsed.data.sessionId, {
@@ -834,7 +844,7 @@ export function registerPtyIpc(): void {
     }
   });
 
-  ipcMain.on(PTY_CHANNELS.acknowledge, (event, raw) => {
+  onIpcGuarded(PTY_CHANNELS.acknowledge, (event, raw) => {
     const parsed = ptyAcknowledgeSchema.safeParse(raw);
     if (parsed.success) {
       acknowledgeSessionOutput(

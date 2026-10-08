@@ -1,3 +1,4 @@
+import { captureMissionCodeBaseline } from './mission-code-baseline-ledger';
 import { createHash } from "node:crypto";
 import type { WebContents } from "electron";
 import { adoptedMissionWorkspaceBinding, missionExecutionScope } from './mission-execution-scope';
@@ -336,8 +337,16 @@ function matchesPersistedRuntime(
   );
 }
 
+const TAB_SCOPE_FAILURE_BACKOFF_MS = 5 * 60_000;
+
+function tabScopeKey(scope: ProjectExecutionScope, mission: Pick<Mission, "intentContract">): string {
+  return `${scope.rootRealPath}\0${mission.intentContract?.workspaceBinding?.spaceId ?? ""}`;
+}
+
 export class RendererMissionAuthority {
   readonly #stores: ProjectDomainStoreRegistry;
+  readonly #tabScopeFailedUntil = new Map<string, number>();
+  readonly #captureBaseline: typeof captureMissionCodeBaseline;
   readonly #resolveContextRevision: (
     scope: ProjectExecutionScope,
     missionId: string,
@@ -357,8 +366,10 @@ export class RendererMissionAuthority {
     resolvePaneActivity: (
       input: MissionPaneActivityInput,
     ) => PaneActivitySummary = resolveMissionPaneActivity,
+    captureBaseline: typeof captureMissionCodeBaseline = captureMissionCodeBaseline,
   ) {
     this.#stores = stores;
+    this.#captureBaseline = captureBaseline;
     this.#resolveContextRevision = resolveContextRevision;
     this.#resolvePaneActivity = resolvePaneActivity;
   }
@@ -640,6 +651,40 @@ export class RendererMissionAuthority {
 
 
     restorePersistedPaneAuthority(owner: WebContents, paneId: string): boolean {
+    // Fail-closed: se o git falhar ou estourar o prazo, a autoridade não é
+    // restaurada — a exceção não pode subir até o handler de IPC, que
+    // derrubaria o processo principal.
+    try {
+      return this.#restorePersistedPaneAuthority(owner, paneId);
+    } catch (error) {
+      console.warn("[mission-authority] restauração de autoridade do pane pulada", error);
+      return false;
+    }
+  }
+
+  /**
+   * F-954: a aba resolve a worktree com git síncrono (prazo de 30 s) e o
+   * panesSync passa por todos os panes dela a cada sync. Uma falha põe a aba
+   * (raiz + espaço) em backoff: nenhum pane dela refaz o git até lá.
+   */
+  #tabExecutionScope(
+    scope: ProjectExecutionScope,
+    mission: Pick<Mission, "intentContract">,
+  ): ProjectExecutionScope | null {
+    if (!mission.intentContract?.workspaceBinding?.spaceId) return missionExecutionScope(scope, mission);
+    const key = tabScopeKey(scope, mission);
+    if ((this.#tabScopeFailedUntil.get(key) ?? 0) > Date.now()) return null;
+    try {
+      const resolved = missionExecutionScope(scope, mission);
+      this.#tabScopeFailedUntil.delete(key);
+      return resolved;
+    } catch (error) {
+      this.#tabScopeFailedUntil.set(key, Date.now() + TAB_SCOPE_FAILURE_BACKOFF_MS);
+      throw error;
+    }
+  }
+
+    #restorePersistedPaneAuthority(owner: WebContents, paneId: string): boolean {
     let owned: ReturnType<typeof ownedPaneSession>;
     try {
       owned = ownedPaneSession(owner, paneId);
@@ -650,11 +695,15 @@ export class RendererMissionAuthority {
     const paneStore = suite.missionPanes;
     const spec = paneStore.findByPaneId(owned.paneId);
     const mission = spec ? suite.missions.get(spec.missionId) : null;
+    if (!spec || !mission || !hasCurrentDispatchAuthority(mission)) {
+      return false;
+    }
+    const tabScope = mission.intentContract?.workspaceBinding !== undefined
+      ? this.#tabExecutionScope(owned.scope, mission)
+      : undefined;
     if (
-      !spec ||
-      !mission ||
-      !hasCurrentDispatchAuthority(mission) ||
-      (mission.intentContract?.workspaceBinding !== undefined && !sameScope(owned.info.scope, missionExecutionScope(owned.scope, mission))) ||
+      tabScope === null ||
+      (tabScope !== undefined && !sameScope(owned.info.scope, tabScope)) ||
       !matchesPersistedRuntime(owned.info, spec) ||
       !hasMatchingGateContext(owned.sessionId, owned.info, spec.missionId)
     ) {
@@ -717,7 +766,11 @@ export class RendererMissionAuthority {
     } catch {
       return null;
     }
-    if (!sameScope(owned.info.scope, missionExecutionScope(rendererScope, mission))) return null;
+    const executionScope = missionExecutionScope(rendererScope, mission);
+    // O git da aba acabou de responder: um backoff de panesSync antigo não
+    // segura o religar explícito do operador.
+    this.#tabScopeFailedUntil.delete(tabScopeKey(rendererScope, mission));
+    if (!sameScope(owned.info.scope, executionScope)) return null;
     if (
       mission.orchestratorSessionId === sessionId &&
       owned.info.missionId === missionId &&
@@ -773,7 +826,7 @@ export class RendererMissionAuthority {
    * orquestradores de outras abas não são tocados. A aba (worktree isolada,
    * quando houver) vem da proveniência main-owned da sessão, nunca do renderer.
    */
-  createPaneMissionFromRenderer(
+  async createPaneMissionFromRenderer(
     owner: WebContents,
     input: {
       readonly paneId: string;
@@ -787,7 +840,7 @@ export class RendererMissionAuthority {
        */
       readonly ownGroup?: boolean;
     },
-  ): PromoteMissionOrchestratorResult {
+  ): Promise<PromoteMissionOrchestratorResult> {
     let owned: ReturnType<typeof ownedPaneSession>;
     try {
       owned = ownedPaneSession(owner, input.paneId);
@@ -812,7 +865,30 @@ export class RendererMissionAuthority {
     } catch {
       return { ok: false, error: "pane_unavailable" };
     }
+    const beforeCapture = owned;
+    const baseline = await this.#captureBaseline(owned.info.scope.rootRealPath);
+    try {
+      if (owner.isDestroyed() || owner.isCrashed()) return { ok: false, error: "pane_unavailable" };
+      owned = ownedPaneSession(owner, input.paneId);
+      if (owned.sessionId !== beforeCapture.sessionId || owned.paneId !== beforeCapture.paneId ||
+        !sameScope(owned.scope, beforeCapture.scope) || !sameScope(owned.info.scope, beforeCapture.info.scope)) {
+        return { ok: false, error: "pane_unavailable" };
+      }
+      const currentBinding = adoptedMissionWorkspaceBinding(owned.scope, owned.info.scope, owned.paneId);
+      if (JSON.stringify(currentBinding) !== JSON.stringify(workspaceBinding)) return { ok: false, error: "pane_unavailable" };
+    } catch { return { ok: false, error: "pane_unavailable" }; }
     const suite = this.#stores.forScope(owned.scope);
+    // Another same-pane call may have created/adopted while Git was awaited.
+    // Reuse that exact live leader instead of manufacturing a second mission.
+    if (owned.info.missionId) {
+      const concurrent = suite.missions.get(owned.info.missionId);
+      if (concurrent && concurrent.orchestratorSessionId === owned.sessionId &&
+        hasCurrentDispatchAuthority(concurrent) && owned.info.role === "orchestrator" &&
+        hasMatchingGateContext(owned.sessionId, owned.info, concurrent.id)) {
+        return { ok: true, mission: concurrent };
+      }
+      return { ok: false, error: "pane_mission_mismatch" };
+    }
     // Uma missão por aba: a segunda promoção (ou o segundo clique antes da
     // primeira resposta) reusa a que já nasceu. Tudo aqui é síncrono no Main,
     // então procurar e criar é atômico. A aba fica gravada no vínculo da
@@ -825,18 +901,22 @@ export class RendererMissionAuthority {
     }
     // A 1ª missão da aba segue sendo "a da aba" para o clique explícito.
     const tabKey = input.tabKey && !existing ? input.tabKey : undefined;
-    const created = suite.missions.create({
-      title: input.title,
-      milestones: [],
-      orchestratorSessionId: owned.sessionId,
-      intentState: "dispatched",
-      intentVersion: 1,
-      intentContract: {
-        ...operatorHandMissionContract(input.title, undefined, []),
-        workspaceBinding: tabKey ? { ...workspaceBinding, tabKey } : workspaceBinding,
-      },
+    const created = suite.missions.atomically(() => {
+      const mission = suite.missions.create({
+        title: input.title,
+        milestones: [],
+        orchestratorSessionId: owned.sessionId,
+        intentState: "dispatched",
+        intentVersion: 1,
+        intentContract: {
+          ...operatorHandMissionContract(input.title, undefined, []),
+          workspaceBinding: tabKey ? { ...workspaceBinding, tabKey } : workspaceBinding,
+        },
+      });
+      suite.missions.codeBaseline.record(mission.id, baseline);
+      suite.missions.update(mission.id, { status: "running" });
+      return mission;
     });
-    suite.missions.update(created.id, { status: "running" });
     let result: PromoteMissionOrchestratorResult;
     try {
       result = this.promoteOrchestratorFromRenderer(owner, created.id, {
@@ -881,10 +961,10 @@ export class RendererMissionAuthority {
    * Outro pane da mesma aba que delega ganha a sua: a aba pode ter várias
    * missões, uma por grupo, e ninguém perde a coroa (nem as entregas).
    */
-  adoptOperatorHandForSpawn(
+  async adoptOperatorHandForSpawn(
     sessionId: string,
     task: string | null,
-  ): PromoteMissionOrchestratorResult {
+  ): Promise<PromoteMissionOrchestratorResult> {
     const runtime = getPaneRuntimeAuthorityBySession(sessionId);
     if (!runtime?.owner || runtime.kind !== "cli-agent") {
       return { ok: false, error: "pane_unavailable" };

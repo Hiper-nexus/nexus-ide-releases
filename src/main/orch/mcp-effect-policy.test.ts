@@ -15,6 +15,12 @@ import {
 } from './mcp-effect-policy';
 
 describe('MCP effect policy', () => {
+  it('lets a read-only reviewer submit a bounded verdict without allowing workspace writes', () => {
+    expect(isToolAllowedForReadOnlyContext('nexus_review_verdict')).toBe(true);
+    expect(effectPolicyForTool('nexus_review_verdict')).toBe('workflow-authority');
+    expect(isToolAllowedForReadOnlyContext('nexus_file_write')).toBe(false);
+    expect(isToolAllowedForReadOnlyContext('nexus_git_push')).toBe(false);
+  });
   it('keeps observations available before a mission exists', () => {
     expect(effectPolicyForTool('file_read')).toBe('read-only');
     expect(effectPolicyForTool('nexus_code_map_get')).toBe('read-only');

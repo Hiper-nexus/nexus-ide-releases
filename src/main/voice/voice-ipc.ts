@@ -90,6 +90,7 @@ import { requiresVoiceCommandConfirmation } from "../jarvis/guardrails";
 import { isCurrentProcessSmokeTest } from "../smoke-core";
 import { shouldAllowVoiceCapture } from "./voice-capture-policy";
 import { privateCaptureProbeAllowed } from './private-capture-probe';
+import { onIpcGuarded } from '../runtime/git-ipc-guard';
 
 /**
  * Wires the voice pipeline into IPC. Every renderer payload is zod-validated
@@ -854,7 +855,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
 
   // Wake word "Hey Jarvis" (openWakeWord/onnx, sem conta): o renderer faz
   // stream dos frames PCM; a detecção volta somente ao owner capturado.
-  ipcMain.on(VOICE_CHANNELS.wakeAudio, (event, raw: unknown) => {
+  onIpcGuarded(VOICE_CHANNELS.wakeAudio, (event, raw: unknown) => {
     if (!voiceCaptureAllowed(event.sender, event.senderFrame)) {
       const ownership = wakeOwnership;
       if (ownership?.owner === event.sender) {
@@ -961,7 +962,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     }
     wakeEngine.feed(frame);
   });
-  ipcMain.on(VOICE_CHANNELS.wakeStop, (event) => {
+  onIpcGuarded(VOICE_CHANNELS.wakeStop, (event) => {
     const ownership = wakeOwnership;
     // Never let an unrelated renderer disarm another project's detector.
     if (ownership && ownership.owner !== event.sender) return;
@@ -973,7 +974,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
 
   // Eventos do pipeline vindos do renderer (mic do wake morreu/reconstruiu,
   // etc.) → log persistente. Observabilidade da morte silenciosa do mic.
-  ipcMain.on(VOICE_CHANNELS.logEvent, (_event, raw: unknown) => {
+  onIpcGuarded(VOICE_CHANNELS.logEvent, (_event, raw: unknown) => {
     const parsed = voiceLogSchema.safeParse(raw);
     if (parsed.success) {
       logVoice(
@@ -987,13 +988,13 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
 
   // Deep-links pra Ajustes do macOS: o renderer pede quando a JARVIS detecta
   // que tá sem permissão de mic (Privacy → Microfone) ou com input mudo (Som).
-  ipcMain.on(VOICE_CHANNELS.openMicSettings, () => {
+  onIpcGuarded(VOICE_CHANNELS.openMicSettings, () => {
     spawn("open", [
       "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
     ]);
     logVoice("info", "mic.openMicSettings", "abriu Ajustes → Microfone");
   });
-  ipcMain.on(VOICE_CHANNELS.openSoundSettings, () => {
+  onIpcGuarded(VOICE_CHANNELS.openSoundSettings, () => {
     spawn("open", ["x-apple.systempreferences:com.apple.preference.sound"]);
     logVoice("info", "mic.openSoundSettings", "abriu Ajustes → Som");
   });
@@ -1305,7 +1306,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     liveTransport.endTurn();
     return liveSession.getState();
   });
-  ipcMain.on(VOICE_CHANNELS.liveTurnBegin, (event, raw: unknown) => {
+  onIpcGuarded(VOICE_CHANNELS.liveTurnBegin, (event, raw: unknown) => {
     if (!acceptLiveEvent(event.sender)) return;
     if (typeof raw !== "string" || raw.length === 0 || raw.length > 128) return;
     liveTransport.beginTurn(raw);
@@ -1345,7 +1346,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
   });
 
   // Mic PCM 16 kHz base64 do renderer → transporte realtime (no-op no Classic).
-  ipcMain.on(VOICE_CHANNELS.liveMicIn, (event, raw: unknown) => {
+  onIpcGuarded(VOICE_CHANNELS.liveMicIn, (event, raw: unknown) => {
     if (!acceptLiveEvent(event.sender)) return;
     if (typeof raw === "string" && raw.length > 0 && raw.length <= 256 * 1024) {
       liveTransport.micIn(raw);
@@ -1360,11 +1361,11 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
       turnId: parsed.data.turnId,
     };
   });
-  ipcMain.on(VOICE_CHANNELS.liveContextIn, (event, raw: unknown) => {
+  onIpcGuarded(VOICE_CHANNELS.liveContextIn, (event, raw: unknown) => {
     if (!acceptLiveEvent(event.sender)) return;
     if (typeof raw === "string" && raw.trim()) liveTransport.contextIn(raw);
   });
-  ipcMain.on(VOICE_CHANNELS.liveAudioPlayback, (event, raw: unknown) => {
+  onIpcGuarded(VOICE_CHANNELS.liveAudioPlayback, (event, raw: unknown) => {
     if (!acceptLiveEvent(event.sender)) return;
     const parsed = jarvisLiveAudioPlaybackEventSchema.safeParse(raw);
     if (!parsed.success) return;
@@ -1378,14 +1379,14 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     return liveSession.patchStatus(parsed.data);
   });
 
-  ipcMain.on(VOICE_CHANNELS.liveTranscriptIn, (event, raw) => {
+  onIpcGuarded(VOICE_CHANNELS.liveTranscriptIn, (event, raw) => {
     if (!acceptLiveEvent(event.sender)) return;
     const parsed = jarvisLiveTranscriptInputSchema.safeParse(raw);
     if (!parsed.success) return;
     liveSession.transcript(parsed.data);
   });
 
-  ipcMain.on(VOICE_CHANNELS.liveToolResultIn, (event, raw) => {
+  onIpcGuarded(VOICE_CHANNELS.liveToolResultIn, (event, raw) => {
     if (!acceptLiveEvent(event.sender)) return;
     const parsed = jarvisLiveToolResultInputSchema.safeParse(raw);
     if (!parsed.success) return;

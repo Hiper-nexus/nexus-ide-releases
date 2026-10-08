@@ -2,6 +2,7 @@ import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import type { HandoffEvidenceBinding, Mission, SquadAgent } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { isAutomaticCompletionProof } from './automatic-completion-proof';
+import { isMissionCodeCompletionProof } from './mission-code-completion';
 import { isFrozenMissionReviewProof } from './mission-review-proof';
 import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
 import { getMissionLeadership } from './mission-leadership-runtime';
@@ -137,7 +138,7 @@ export function missionRequiresAutomaticCompletionReview(
   mission: Pick<Mission, 'squadId' | 'intentContract'>,
   squad: ReviewGateSquadView | null | undefined,
 ): boolean {
-  return Boolean(mission.squadId) && laneOf(mission) === 'standard' &&
+  return laneOf(mission) === 'standard' &&
     !isReviewContentExempt(mission, squad);
 }
 
@@ -234,6 +235,8 @@ export function reviewerHandoffHasEvidence(handoff: ReviewGateHandoff): boolean 
 }
 
 export interface IndependentReviewGateInput {
+  /** Main's final completion policy; never copied from an agent/renderer argument. */
+  readonly codeCompletionRequired?: boolean;
   readonly mission: Pick<
     Mission,
     'id' | 'squadId' | 'intentContract' | 'intentState' | 'intentVersion' | 'updatedAt'
@@ -280,6 +283,14 @@ function mainOwnedReviewDecision(input: IndependentReviewGateInput): Independent
 
 /** Current Main-owned evidence decides; handoff history only explains a missing check. */
 export function evaluateIndependentReviewGate(input: IndependentReviewGateInput): IndependentReviewGateResult {
+  if (input.codeCompletionRequired) {
+    if (input.scope && isAutomaticCompletionProof(input.automaticProof, input.scope, input.mission) &&
+        isMissionCodeCompletionProof(input.automaticProof, input.scope, input.mission)) {
+      return { ok: true, reviewerHandoffId: input.automaticProof.codeCompletion?.reviewerSessionId ?? 'main-non-code-verification' };
+    }
+    return { ok: false, code: 'review_without_evidence',
+      reason: `A conclusão de código exige revisão frontier independente e checks aplicáveis do candidato atual. Solicite nova verificação com nexus_mission_set_status(${JSON.stringify({ missionId: input.mission.id, status: 'done', note: 'Solicito novamente a verificação da entrega atual.' })}).` };
+  }
   if (input.textOnly === true || (
     !missionRequiresIndependentReview(input.mission, input.squad) &&
     !missionRequiresAutomaticCompletionReview(input.mission, input.squad)

@@ -34,6 +34,14 @@ const harness = vi.hoisted(() => ({
   handoffsOfSession: undefined as string | undefined,
   deliver: vi.fn(async (_sessionId: string, _prompt: string) => true),
   missionPaneSpecs: [] as Array<Record<string, unknown>>,
+  recordedPaneSpecs: [] as Array<Record<string, unknown>>,
+  realPaneStore: null as ReturnType<typeof import('./mission-pane-store').createScopedMissionPaneStore> | null,
+  acpSessions: new Map<string, { agent: import('../pty/pty-manager').OwnedAgentSessionInfo; shutdown: () => Promise<void> }>(),
+  acpShutdown: vi.fn(async () => {}),
+  runtimeScopeMismatch: false,
+  afterSpawn: undefined as undefined | ((session: import('../pty/pty-manager').OwnedAgentSessionInfo) => void),
+  currentSeal: undefined as import('../../shared/orch-types').MissionPaneAuthoritySeal | undefined,
+  physicalSessions: new Map<string, import('../pty/pty-manager').OwnedAgentSessionInfo>(),
   movePane: vi.fn(),
   registeredOrchestrators: [] as Array<{
     missionId: string;
@@ -49,7 +57,7 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock('../pty/pty-manager', () => ({
-  getAgentSessionInfo: vi.fn(() => null),
+  getAgentSessionInfo: (sessionId: string) => harness.acpSessions.has(sessionId) ? null : harness.physicalSessions.get(sessionId) ?? null,
   getSessionState: (sessionId: string) =>
     harness.sessionStates.get(sessionId) ?? null,
   getSessionCwd: () => null,
@@ -63,6 +71,12 @@ vi.mock('../pty/pty-manager', () => ({
   listAgentSessions: () => [],
   orchTerminateSession: (sessionId: string, options?: unknown) =>
     harness.terminate(sessionId, options),
+}));
+
+vi.mock('../acp/acp-harness-driver', async importOriginal => ({
+  ...await importOriginal<typeof import('../acp/acp-harness-driver')>(),
+  getAcpDriverSession: (sessionId: string) => harness.acpSessions.get(sessionId) ?? null,
+  listAcpDriverAgentSessions: () => [...harness.acpSessions.values()].map(session => session.agent),
 }));
 
 vi.mock('../observability/main-trace', () => ({ trace: harness.trace }));
@@ -85,6 +99,10 @@ vi.mock('../adapters/adapter-registry', async importOriginal => ({
 // This fixture owns respawn/retry/mortality, not installed CLI credentials.
 // First-wave warming must never probe the operator's Keychain/Kimi process.
 vi.mock('./squad-runtime-inventory', () => ({ warmSquadRuntimeSubscriptionAuth: async () => undefined }));
+vi.mock('../pty/pre-spawn-probe', async importOriginal => ({
+  ...await importOriginal<typeof import('../pty/pre-spawn-probe')>(),
+  assertPreSpawnProbe: async () => undefined,
+}));
 vi.mock('../adapters/subscription-auth', async importOriginal => ({
   ...await importOriginal<typeof import('../adapters/subscription-auth')>(),
   detectSubscriptionAuthReadiness: () => 'missing',
@@ -110,6 +128,13 @@ const toolUtilMock = vi.hoisted(
 vi.mock('./tool-util', toolUtilMock);
 
 vi.mock('./pane-registry', () => ({
+  resolveCurrentMissionSpawnAuthoritySeal: () => harness.currentSeal,
+  getPaneRuntimeAuthorityBySession: (sessionId: string) => {
+    const physical = harness.physicalSessions.get(sessionId);
+    const coordinationScope = harness.spawnOptions[Number(sessionId.split('-').at(-1)) - 1]?.scope ?? scope;
+    return physical ? { sessionId, paneId: physical.paneId, kind: 'cli-agent', missionId: physical.missionId,
+      role: physical.role, scope: harness.runtimeScopeMismatch ? { ...scope, checkoutId: 'foreign-coordination' } : coordinationScope, owner: null } : null;
+  },
   isMissionPaneOperatorDismissed: () => false,
   readSessionOutput: () => '',
   wasOrchestratorOperatorDismissed: () => false,
@@ -125,6 +150,21 @@ vi.mock('./pane-registry', () => ({
     harness.spawnCount += 1;
     const sessionId = `session-${harness.spawnCount}`;
     const paneId = `pane-${harness.spawnCount}`;
+    const request = options as typeof options & { adapterId: string; model?: string; effort?: string; accountId?: string; agentName?: string; missionId?: string; allowedTools?: string[] | null; allowedSkills?: string[] | null };
+    const { createMissionPaneAuthoritySeal, hashMissionIntentAuthority } = await import('./mission-pane-authority');
+    const seal = createMissionPaneAuthoritySeal({ mission: liveMission, squad: reviewedSquad ?? null });
+    harness.currentSeal = seal ?? (liveMission.intentContract ? {
+      intentVersion: liveMission.intentVersion!, intentContractHash: hashMissionIntentAuthority(liveMission.intentContract),
+      contextRevision: 'fixture', contractHash: 'b'.repeat(64), squadRevisionHash: 'c'.repeat(64),
+    } : undefined);
+    harness.physicalSessions.set(sessionId, {
+      sessionId, paneId, adapterId: request.adapterId, model: request.model, requestedModel: request.model,
+      effort: request.effort, accountId: request.accountId, cwd: options.cwd,
+      scope: options.executionScope ?? options.scope, source: 'pending', role: 'orchestrator',
+      missionId: request.missionId, agentName: request.agentName, readOnly: false, nativeReadOnly: false,
+      allowedTools: request.allowedTools ?? null, allowedSkills: request.allowedSkills ?? null, authoritySeal: harness.currentSeal,
+    });
+    harness.afterSpawn?.(harness.physicalSessions.get(sessionId)!);
     harness.sessionStates.set(sessionId, 'idle');
     harness.snapshots.push({
       missionId: 'mission-1',
@@ -177,8 +217,8 @@ vi.mock('./project-domain-store-registry', async (importOriginal) => ({
       recordKickoffAcceptance: () => {},
       hasCurrentKickoffAcceptance: () => false,
     },
-    missionPanes: {
-      record: () => {},
+    missionPanes: harness.realPaneStore ?? {
+      record: (spec: Record<string, unknown>) => { harness.recordedPaneSpecs.push(spec); },
       list: () => harness.missionPaneSpecs,
       findByPaneId: () => null,
       moveOrchestratorPane: harness.movePane,
@@ -242,7 +282,8 @@ vi.mock('./squad-store', () => ({
   getSquad: () => reviewedSquad ?? ({ id: 'squad-1', agents: squadAgents }),
 }));
 
-vi.mock('./mission-engine-registry', () => ({
+vi.mock('./mission-engine-registry', async importOriginal => ({
+  ...await importOriginal<typeof import('./mission-engine-registry')>(),
   missionEngineForScope: () => ({
     completeVerified: vi.fn(),
     blockTechnical: (_scope: unknown, input: { description: string }) => {
@@ -298,6 +339,14 @@ beforeEach(async () => {
   harness.deliver.mockClear();
   harness.handoffsOfSession = undefined;
   harness.missionPaneSpecs = [];
+  harness.recordedPaneSpecs = [];
+  harness.realPaneStore = null;
+  harness.physicalSessions.clear();
+  harness.currentSeal = undefined;
+  harness.afterSpawn = undefined;
+  harness.runtimeScopeMismatch = false;
+  harness.acpSessions.clear();
+  harness.acpShutdown.mockReset().mockImplementation(async () => { harness.acpSessions.clear(); });
   harness.registeredOrchestrators.length = 0;
   harness.terminate.mockClear();
   harness.trace.mockClear();
@@ -319,6 +368,119 @@ afterEach(() => {
 });
 
 describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
+  it.each([
+    { oldModel: undefined, fault: undefined }, { oldModel: 'approved-model', fault: undefined },
+    ...['missing-seal', 'wrong-seal', 'wrong-session', 'wrong-scope', 'wrong-coordination', 'native-readonly', 'live-old', 'stale-spec', 'acp-stale-spec', 'stale-intent', 'explicit-model', 'explicit-effort'].map(fault => ({ oldModel: 'approved-model', fault })),
+  ])('CAS binds the complete new Maestro runtime (oldModel=$oldModel, fault=$fault, F-428)', async ({ oldModel, fault }) => {
+    const { ProjectRuntimeManager } = await import('../runtime/project-runtime-manager');
+    const { createScopedMissionStore } = await import('./mission-store');
+    const { createScopedMissionPaneStore } = await import('./mission-pane-store');
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-orchestrator-rebind-')));
+    const manager = new ProjectRuntimeManager({ baseDir: root, appVersion: 'test' });
+    try {
+      createScopedMissionStore(manager, scope, { idFactory: () => mission.id }).create({ title: mission.title });
+      const panes = createScopedMissionPaneStore(manager, scope);
+      harness.realPaneStore = panes;
+      const previous = panes.record({ missionId: mission.id, paneId: 'old-pane', adapterId: 'codex',
+        model: fault === 'explicit-model' ? 'other-model' : oldModel, effort: fault === 'explicit-effort' ? 'high' : undefined, cwd: scope.rootRealPath, role: 'orchestrator', title: 'Coordenar e revisar',
+        agentName: 'Coordenar e revisar', allowedTools: null, allowedSkills: null });
+      const { compileIntentContract } = await import('../../shared/mission-intent');
+      const { snapshotSquadAuthority } = await import('./squad-authority-snapshot');
+      reviewedSquad = { id: 'squad-1', name: 'Fixture', createdAt: '1', builtin: false, orchestratorInstructions: '', agents: squadAgents.map(agent => ({ ...agent, allowedTools: ['nexus_pane_spawn'], allowedSkills: [] })) };
+      liveMission = { ...mission, orchestratorSessionId: 'old-session', intentContract: {
+        ...compileIntentContract({ goal: 'Prove persisted runtime compatibility', acceptanceCriteria: ['Same authority after resume'], intentVersion: 1 }),
+        approvedAt: 10, dispatchedAt: 11, squadRevisionHash: snapshotSquadAuthority(reviewedSquad).hash,
+        orchestratorRuntime: { adapterId: 'codex', model: 'approved-model', effort: 'medium', readOnly: false, nativeReadOnly: false },
+      } } as Mission;
+      harness.afterSpawn = physical => {
+        if (fault === 'missing-seal') physical.authoritySeal = undefined;
+        if (fault === 'wrong-seal') physical.authoritySeal = { ...physical.authoritySeal!, contextRevision: 'tampered' };
+        if (fault === 'wrong-session') physical.sessionId = 'foreign-session';
+        if (fault === 'wrong-coordination') harness.runtimeScopeMismatch = true;
+        if (fault === 'wrong-scope') physical.scope = { ...scope, checkoutId: 'foreign-checkout' };
+        if (fault === 'native-readonly') physical.nativeReadOnly = true;
+        if (fault === 'live-old') harness.registeredOrchestrators.push({ missionId: mission.id, sessionId: 'old-session', adapterId: 'codex', state: 'busy' });
+        if (fault === 'acp-stale-spec') { harness.acpSessions.set(physical.sessionId, { agent: physical, shutdown: harness.acpShutdown }); }
+        if (fault === 'stale-spec' || fault === 'acp-stale-spec') panes.moveOrchestratorPane(mission.id, previous.id, 'concurrent-pane');
+        if (fault === 'stale-intent') liveMission = { ...liveMission, intentVersion: 2 };
+      };
+      if (fault) {
+        if (fault === 'acp-stale-spec') {
+          let release!: () => void;
+          const physicalExit = new Promise<void>(resolve => { release = resolve; });
+          harness.acpShutdown.mockImplementationOnce(async () => { await physicalExit; harness.acpSessions.clear(); });
+          let settled = false;
+          const attempt = fastLane.fastLaneBootstrap(scope, mission.id);
+          void attempt.then(() => { settled = true; }, () => { settled = true; });
+          try {
+            await vi.waitFor(() => expect(harness.acpShutdown).toHaveBeenCalledOnce());
+            expect(settled).toBe(false);
+            expect(harness.acpSessions.size).toBe(1);
+          } finally { release(); }
+          await expect(attempt).rejects.toThrow(/changed/);
+        } else await expect(fastLane.fastLaneBootstrap(scope, mission.id)).rejects.toThrow(/authority|runtime|changed/);
+        expect(panes.list(mission.id)).toEqual([{ ...previous, ...(['stale-spec', 'acp-stale-spec'].includes(fault) ? { paneId: 'concurrent-pane' } : {}) }]);
+        expect(harness.terminate).not.toHaveBeenCalledWith('old-session', expect.anything());
+        if (fault === 'acp-stale-spec') { expect(harness.acpShutdown).toHaveBeenCalledOnce(); expect(harness.acpSessions.size).toBe(0); expect(harness.terminate).not.toHaveBeenCalled(); }
+        else if (!fault.startsWith('explicit-')) expect(harness.terminate).toHaveBeenCalledWith('session-1', expect.objectContaining({ origin: 'fast-lane:spawn-binding-failed' }));
+        else expect(harness.spawnCount).toBe(0);
+        return;
+      }
+      await fastLane.fastLaneBootstrap(scope, mission.id);
+      expect(harness.physicalSessions.get('session-1')).toMatchObject({ paneId: 'pane-1', requestedModel: 'approved-model', effort: 'medium' });
+      expect(panes.list(mission.id)).toHaveLength(1);
+      expect(panes.findByPaneId('old-pane')).toBeNull();
+      expect(panes.findByPaneId('pane-1')).toMatchObject({ id: previous.id, model: 'approved-model', effort: 'medium' });
+      const { runtimeAuthorityMismatches } = await import('./mission-engine-production');
+      const { createMissionPaneAuthoritySeal } = await import('./mission-pane-authority');
+      const physical = harness.physicalSessions.get('session-1')!;
+      const persisted = panes.findByPaneId('pane-1')!;
+      expect(physical.authoritySeal).toEqual(createMissionPaneAuthoritySeal({ mission: liveMission, squad: reviewedSquad }));
+      expect(physical.authoritySeal).toBeDefined();
+      const authority = { sessionId: physical.sessionId, paneId: physical.paneId!, kind: 'cli-agent' as const,
+        missionId: mission.id, role: 'orchestrator' as const, scope, owner: null };
+      const mismatch = (pane = persisted, agent = physical) => runtimeAuthorityMismatches(scope, liveMission, pane, agent, authority, liveMission.intentContract!.orchestratorRuntime!);
+      expect(mismatch()).toEqual([]);
+      expect(mismatch({ ...persisted, authoritySeal: undefined })).toContain('agent.authoritySeal×pane');
+      expect(mismatch({ ...persisted, authoritySeal: undefined }, { ...physical, authoritySeal: undefined })).toContain('agent.authoritySeal×pane');
+      expect(mismatch(persisted, { ...physical, nativeReadOnly: true })).toContain('agent.nativeReadOnly×runtime[true != false]');
+      expect(mismatch({ ...persisted, allowedSkills: null })).toContain('agent.allowedSkills×pane');
+      expect(mismatch({ ...persisted, allowedTools: null })).toContain('agent.allowedTools×pane');
+      expect(mismatch(persisted, { ...physical, readOnly: true })).toContain('agent.readOnly×pane[true != false]');
+
+      manager.close(scope);
+      expect(createScopedMissionPaneStore(manager, scope).list(mission.id)).toMatchObject([{ id: previous.id, paneId: 'pane-1', model: 'approved-model', effort: 'medium' }]);
+    } finally { harness.realPaneStore = null; manager.closeAll(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it.each(['pending', 'running'] as const)('materializes approved defaults in a %s Maestro, persisted pane and later remount (F-428)', async status => {
+    liveMission = { ...mission, status, intentState: status === 'pending' ? 'ready_to_start' : 'executing', intentContract: {
+      orchestratorRuntime: { adapterId: 'codex', model: 'approved-model', effort: 'medium', readOnly: false, nativeReadOnly: false },
+    } } as Mission;
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    expect(harness.spawnOptions[0]).toMatchObject({ model: 'approved-model', effort: 'medium' });
+    expect(harness.recordedPaneSpecs[0]).toMatchObject({ model: 'approved-model', effort: 'medium' });
+    expect(squadAgents[0].model).toBeUndefined();
+    expect(squadAgents[0].effort).toBeUndefined();
+    for (const session of harness.sessionStates.keys()) harness.sessionStates.set(session, 'exited');
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(harness.spawnOptions.length).toBeGreaterThan(1);
+    expect(harness.spawnOptions.at(-1)).toMatchObject({ model: 'approved-model', effort: 'medium' });
+    expect(harness.recordedPaneSpecs.at(-1)).toMatchObject({ model: 'approved-model', effort: 'medium' });
+  });
+
+  it('preserves explicit reviewed roster model and effort (F-428)', async () => {
+    reviewedSquad = { id: 'squad-1', name: 'Fixture', createdAt: '1', builtin: false, orchestratorInstructions: '',
+      agents: squadAgents.map(agent => agent.category === 'orchestrator' ? { ...agent, model: 'explicit-model', effort: 'high' } : agent),
+    };
+    liveMission = { ...mission, intentContract: {
+      orchestratorRuntime: { adapterId: 'codex', model: 'explicit-model', effort: 'high', readOnly: false, nativeReadOnly: false },
+    } } as Mission;
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    expect(harness.spawnOptions[0]).toMatchObject({ model: 'explicit-model', effort: 'high' });
+    expect(harness.recordedPaneSpecs[0]).toMatchObject({ model: 'explicit-model', effort: 'high' });
+  });
+
   it('keeps a new mission in its durable tab on bootstrap and Retomar; deleted tab never falls back to main', async () => {
     const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-resume-tab-')));
     const repository = path.join(root, 'repo'); fs.mkdirSync(repository);

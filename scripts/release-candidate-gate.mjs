@@ -22,6 +22,7 @@ import {
   openPrivateArtifactSnapshot,
   verifyPrivateArtifactSnapshot,
 } from './private-artifact-snapshot.mjs';
+import { assertPackagedSmokeProof } from './smoke-packaged-app.mjs';
 
 export { assertReleaseRepositoryState } from './release-authority.mjs';
 
@@ -519,23 +520,28 @@ async function runReleaseCandidateGateCore(
   // sha do ZIP e identidade de assinatura e entra selado nos assets.
   const smokeReportPath = path.join(securityDir, PACKAGED_SMOKE_REPORT_ASSET);
   const defaultPackagedSmoke = async (appPath) => {
-    runChecked(process.execPath, [
+    const result = runChecked(process.execPath, [
       path.join(scriptDir, 'smoke-packaged-app.mjs'),
       '--app',
       appPath,
     ], { cwd: root, env: environment, timeout: 10 * 60_000 });
+    return { code: 0, output: result.stdout };
   };
+  let mainOwnedCommandProof;
   await extractE2EApp(
     artifacts.zip,
     artifactSeal.zip.sha256,
     async (appPath) => {
-      await (authoritative ? defaultPackagedSmoke : runPackagedSmoke)(appPath);
+      const smoke = await (authoritative ? defaultPackagedSmoke : runPackagedSmoke)(appPath);
+      mainOwnedCommandProof = assertPackagedSmokeProof(smoke?.code, smoke?.output ?? '', { requireMainOwnedCommand: true });
     },
   );
+  if (!mainOwnedCommandProof) throw new Error('packaged smoke lacks a valid Main-owned command proof');
   const smokeReport = {
     schemaVersion: 1,
     status: 'pass',
     smoke: 'packaged-app',
+    mainOwnedCommandProof,
     appVersion: version,
     commitSha: state.commitSha,
     artifact: {

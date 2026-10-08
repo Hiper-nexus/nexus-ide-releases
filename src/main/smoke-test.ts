@@ -23,6 +23,10 @@ import { isSoakSmokeRequested, proveSoakForSmoke } from './soak-smoke';
 import { SOAK_POLICY } from '../shared/soak-smoke';
 import { runtimeGateConfiguration } from './runtime-gate-mode';
 import { RUNTIME_TIMEOUT_MS } from '../shared/runtime-gates';
+import { proveMainOwnedCommandForSmoke } from './smoke-owned-command';
+import { requireLiveRendererWorkspaceScope } from './persistence/renderer-workspace-scope';
+import { sameProjectScope } from './orch/project-scoped-broadcast';
+import { offIpcGuarded, onIpcGuarded } from './runtime/git-ipc-guard';
 
 
 
@@ -61,7 +65,7 @@ export function initSmokeTest(): void {
     (line, isError) => (isError ? console.error(line) : console.log(line)),
   );
   const settle: SmokeSettler = (event, detail) => {
-    if (soakFlight && event !== 'functional-ready') {
+    if (event !== 'functional-ready') {
       soakCancellation.abort();
       // FAIL enters the existing sealed physical shutdown immediately, even
       // if the soak is still awaiting setup IO or a wedged renderer callback.
@@ -108,13 +112,13 @@ export function initSmokeTest(): void {
         settle("functional-failed", smokeErrorMessage(error));
       });
     const removeListeners = () => {
-      ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
-      ipcMain.removeListener(
+      offIpcGuarded(WINDOW_CHANNELS.mounted, onMounted);
+      offIpcGuarded(
         WINDOW_CHANNELS.functionalSmokeResult,
         onFunctionalResult,
       );
     };
-    const onFunctionalResult = (event: Electron.IpcMainEvent, raw: unknown) => {
+    const onFunctionalResult = async (event: Electron.IpcMainEvent, raw: unknown) => {
       if (event.sender !== wc || event.senderFrame !== wc.mainFrame) return;
       const result = parseFunctionalSmokeResult(raw);
       if (!result) {
@@ -133,6 +137,25 @@ export function initSmokeTest(): void {
         return;
       }
       removeListeners();
+      try {
+        const frame = wc.mainFrame;
+        const scope = requireLiveRendererWorkspaceScope(wc);
+        const assertCurrent = () => {
+          if (soakCancellation.signal.aborted || wc.isDestroyed() || wc.mainFrame !== frame ||
+            scope.rootRealPath !== smokeWorkspacePath ||
+            !sameProjectScope(requireLiveRendererWorkspaceScope(wc), scope)) throw new Error('owned-smoke-authority');
+        };
+        assertCurrent();
+        const proof = await proveMainOwnedCommandForSmoke({ userData: app.getPath('userData'),
+          scope, assertCurrent, signal: soakCancellation.signal });
+        assertCurrent();
+        console.log(`[smoke] main-owned-command ${JSON.stringify(proof)}`);
+      } catch (error) {
+        // Sem o motivo, o gate da candidata só dizia "main-owned-command".
+        console.error(`[smoke] main-owned-command failed: ${error instanceof Error ? error.message : String(error)}`);
+        settle('functional-failed', 'main-owned-command');
+        return;
+      }
       if (runtime) {
         if (soak || busyBannerProbe) { settle('functional-failed', 'runtime verifier cannot combine acceptance modes'); return; }
         console.log('[smoke] runtime-start: initial functional probes passed');
@@ -162,9 +185,9 @@ export function initSmokeTest(): void {
       report?: { ok?: unknown; error?: unknown },
     ) => {
       if (event.sender !== wc || event.senderFrame !== wc.mainFrame) return;
-      ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
+      offIpcGuarded(WINDOW_CHANNELS.mounted, onMounted);
       if (report?.ok === false) {
-        ipcMain.removeListener(
+        offIpcGuarded(
           WINDOW_CHANNELS.functionalSmokeResult,
           onFunctionalResult,
         );
@@ -211,15 +234,15 @@ export function initSmokeTest(): void {
           console.error(
             `[smoke] workspace setup error: ${smokeErrorMessage(error)}`,
           );
-          ipcMain.removeListener(
+          offIpcGuarded(
             WINDOW_CHANNELS.functionalSmokeResult,
             onFunctionalResult,
           );
           settle("functional-failed", "workspace-open");
         });
     };
-    ipcMain.on(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
-    ipcMain.on(WINDOW_CHANNELS.mounted, onMounted);
+    onIpcGuarded(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
+    onIpcGuarded(WINDOW_CHANNELS.mounted, onMounted);
     win.once("closed", () => {
       removeListeners();
     });

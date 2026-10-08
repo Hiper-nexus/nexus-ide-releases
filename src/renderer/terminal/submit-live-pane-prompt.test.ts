@@ -4,11 +4,13 @@ import { useOrchStore } from '../state/orch-store';
 const {
   getPaneSessionId,
   submitPromptToPane,
+  submitPromptToPaneConfirmed,
   submitPromptToPaneOperatorInput,
 } = vi.hoisted(() => ({
   getPaneSessionId: vi.fn<(paneId: string) => string | null>(
     () => 'session-worker',
   ),
+  submitPromptToPaneConfirmed: vi.fn(async (_pane: string, _text: string, _session: string) => true),
   submitPromptToPane: vi.fn<(paneId: string, text: string) => boolean>(
     () => true,
   ),
@@ -20,6 +22,7 @@ const {
 vi.mock('./terminal-host', () => ({
   getPaneSessionId,
   submitPromptToPane,
+  submitPromptToPaneConfirmed,
   submitPromptToPaneOperatorInput,
 }));
 
@@ -44,6 +47,13 @@ describe('submitLivePanePrompt — mesma lane do teclado', () => {
       'Consolide agora com nexus_handoff_submit',
       'session-worker',
     );
+    expect(submitPromptToPane).not.toHaveBeenCalled();
+  });
+
+  it('F-266: Kimi fora de missão devolve a prova de aceite, não somente o envio', async () => {
+    submitPromptToPaneConfirmed.mockResolvedValueOnce(false);
+    expect(await submitLivePanePrompt({ id: 'kimi', kind: 'cli-agent', adapterId: 'kimi' }, 'tarefa')).toBe(false);
+    expect(submitPromptToPaneConfirmed).toHaveBeenCalledWith('kimi', 'tarefa', 'session-worker');
     expect(submitPromptToPane).not.toHaveBeenCalled();
   });
 

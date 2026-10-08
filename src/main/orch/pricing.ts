@@ -55,6 +55,11 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'claude-sonnet': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 3.75 },
 
   // Claude Haiku family
+  // Haiku 5.5: $0.10/$0.50 até 100K tokens de prompt; acima de 100K sobe para
+  // $0.50/$2.50 (anthropic.com/claude/haiku, 2026-10-07). Aqui fica a faixa
+  // base — prompts longos saem subestimados. O cache ($0.01 leitura, $0.125
+  // escrita) veio de cobertura de imprensa, não da página oficial: confirmar.
+  'claude-haiku-5-5': { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.125 },
   'claude-3-5-haiku': { inputPerM: 0.8, outputPerM: 4.0, cacheReadPerM: 0.08, cacheWritePerM: 1.0 },
   'claude-haiku-4-5': { inputPerM: 1.0, outputPerM: 5.0, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
   'claude-3-haiku': { inputPerM: 0.25, outputPerM: 1.25, cacheReadPerM: 0.03, cacheWritePerM: 0.3 },

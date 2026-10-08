@@ -807,4 +807,29 @@ describe('retomada da missão da aba move o pane do orquestrador (F-664)', () =>
       createScopedMissionPaneStore(runtimeManager, scope).findByPaneId('pane-muyuzbjn-1e'),
     ).toMatchObject({ accountId: 'acct-mrqvpdwz-1', model: 'claude-opus-5-5' });
   });
+
+  it('fills omitted runtime values only while CAS-moving the expected orchestrator row (F-428)', () => {
+    const { mission, panes, leader } = setup();
+    const moved = panes.moveOrchestratorPane(mission.id, leader.id, 'pane-new', {
+      expected: leader, model: leader.model, effort: 'medium',
+    });
+    expect(moved).toMatchObject({ id: leader.id, paneId: 'pane-new', effort: 'medium' });
+    expect(panes.findByPaneId('pane-operador')).toBeNull();
+    expect(panes.list(mission.id)).toMatchObject([{ paneId: 'pane-new', effort: 'medium' }]);
+    expect(() => panes.moveOrchestratorPane(mission.id, leader.id, 'pane-stale', {
+      expected: leader, model: leader.model, effort: 'medium',
+    })).toThrow(/changed/);
+    expect(panes.findByPaneId('pane-new')?.effort).toBe('medium');
+  });
+
+  it('does not change an explicit model or fill defaults on the same pane identity (F-428)', () => {
+    const { mission, panes, leader } = setup();
+    expect(() => panes.moveOrchestratorPane(mission.id, leader.id, 'pane-new', {
+      expected: leader, model: 'different-model', effort: 'medium',
+    })).toThrow(/model/);
+    expect(() => panes.moveOrchestratorPane(mission.id, leader.id, leader.paneId!, {
+      expected: leader, model: leader.model, effort: 'medium',
+    })).toThrow(/new pane/);
+    expect(panes.findByPaneId(leader.paneId!)?.effort).toBeUndefined();
+  });
 });

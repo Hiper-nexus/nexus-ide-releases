@@ -143,7 +143,8 @@ describe('automated PREVC reviewer route release boundary', () => {
 
     expect(deps.routeTask).toHaveBeenCalledWith(
       expect.any(String),
-      [{ id: 'codex', installed: true, models: ['gpt-5.6-sol'] }],
+      // F-957: a prova viva da CLI segue junto (sem cache de descoberta no teste).
+      [{ id: 'codex', installed: true, models: ['gpt-5.6-sol'], liveModels: [] }],
       undefined,
       'medium',
       false,
@@ -175,7 +176,7 @@ describe('automated PREVC reviewer route release boundary', () => {
 
     expect(deps.routeTask).toHaveBeenCalledWith(
       expect.any(String),
-      [{ id: 'codex', installed: true, models: ['gpt-5.6-sol'] }],
+      [{ id: 'codex', installed: true, models: ['gpt-5.6-sol'], liveModels: [] }],
       undefined,
       'hard',
       false,

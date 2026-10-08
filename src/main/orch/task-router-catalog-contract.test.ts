@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_ROUTING_TABLE, FRONTIER_ORDER, routeTask } from './task-router';
+import { DEFAULT_ROUTING_TABLE, FRONTIER_ORDER, judgeSeatNeedsAccessProof, routeTask } from './task-router';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
 import {
@@ -54,7 +54,11 @@ describe('contrato: tabela de roteamento × catálogos', () => {
     expect(adapter, `adapter ${row.adapterId} não é builtin`).toBeDefined();
     expect(row.model, 'candidato sem modelo explícito').toBeTruthy();
     expect(retired(row.model), `${row.model} está em RETIRED_MODEL_MIGRATIONS`).toBe(false);
-    expect(adapter!.models.list, `${row.adapterId} não lista ${row.model}`).toContain(row.model);
+    // Assento com prova de acesso (F-817/F-957) não está no manifest bundled
+    // desde o F-990: vem do catálogo e só roteia com a CLI o anunciando.
+    if (!judgeSeatNeedsAccessProof({ adapterId: row.adapterId, model: row.model ?? '' })) {
+      expect(adapter!.models.list, `${row.adapterId} não lista ${row.model}`).toContain(row.model);
+    }
     // F-774: a tabela DEFAULT também não pode carregar id que o roteador pula
     // por padrão — api-only/deprecated gera "evitou" no reason e, quando a CLI
     // não expõe o id, "CLI sem o modelo roteado" em toda decisão (o

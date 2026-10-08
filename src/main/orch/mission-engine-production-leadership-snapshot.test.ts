@@ -8,7 +8,7 @@
  * (docs/analysis/2026-09-16-plano-religacao-lideranca.md).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Mission, MissionPaneSpec } from '../../shared/orch-types';
+import type { Handoff, Mission, MissionPaneSpec } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { testProjectScope } from './__tests__/scope-fixture';
 import type { MissionLeader } from './mission-leadership';
@@ -88,6 +88,7 @@ function pane(overrides: Partial<MissionPaneSpec> = {}): MissionPaneSpec {
 function stores(input: {
   mission: Mission;
   panes: readonly MissionPaneSpec[];
+  handoffs?: readonly Handoff[];
 }): ProjectDomainStoreSuite {
   return {
     missions: {
@@ -97,7 +98,7 @@ function stores(input: {
     missionPanes: { list: () => input.panes },
     tasks: { list: () => [], listPlannedTasks: () => [] },
     taskDispatches: { list: () => [] },
-    handoffs: { list: () => [] },
+    handoffs: { list: () => input.handoffs ?? [] },
   } as unknown as ProjectDomainStoreSuite;
 }
 
@@ -111,6 +112,32 @@ beforeEach(() => {
 });
 
 describe('projectMissionEngineSnapshotView — pane/sessão do orquestrador vêm do mesmo par provado', () => {
+  it('keeps closed custom-role sessions separate and shows their persisted tool identity', () => {
+    const handoffs = ['session-a', 'session-b'].map((sessionId) => ({
+      id: `handoff-${sessionId}`, missionId, sessionId, fromAgent: 'implementar utilitário de texto',
+      status: 'success', createdAt: 1, routeAttribution: { adapterId: 'kimi', model: 'kimi-code/k3' },
+    } as unknown as Handoff));
+    const snapshot = projectMissionSnapshot(projectMissionEngineSnapshotView(scope,
+      stores({ mission: mission(), panes: [], handoffs }), missionId));
+    expect(snapshot.agents).toHaveLength(2);
+    for (const [index, agent] of snapshot.agents.entries()) {
+      expect(agent).toMatchObject({
+        id: `session:${index === 0 ? 'session-a' : 'session-b'}`,
+        agentName: 'implementar utilitário de texto', cli: 'kimi', model: 'kimi-code/k3', state: 'done',
+      });
+      expect(agent).not.toHaveProperty('paneId');
+    }
+  });
+
+  it.each(['implementar resumo de durações', 'kimi'])('does not turn unproved role %s into a historical provider', (fromAgent) => {
+    const handoff = { id: 'handoff-old', missionId, sessionId: 'old-session', fromAgent,
+      status: 'success', createdAt: 1 } as Handoff;
+    const snapshot = projectMissionSnapshot(projectMissionEngineSnapshotView(scope,
+      stores({ mission: mission(), panes: [], handoffs: [handoff] }), missionId));
+    expect(snapshot.agents[0]).toMatchObject({ agentName: fromAgent, cli: 'ferramenta não identificada', state: 'done' });
+    expect(snapshot.agents[0]).not.toHaveProperty('model');
+  });
+
   it('A e C concordam: pane e sessão do resolver aparecem juntos no snapshot', () => {
     harness.sessionStates.set('session-1', 'busy');
     harness.resolveMissionLeader.mockReturnValue({

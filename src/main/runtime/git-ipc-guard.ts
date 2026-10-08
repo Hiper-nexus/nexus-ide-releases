@@ -1,0 +1,78 @@
+import { ipcMain, type IpcMainEvent } from 'electron';
+import { trace } from '../observability/main-trace';
+// Só o tipo: este guard é importado por dezenas de módulos que carregam cedo,
+// e a aresta de runtime até git-command deixou o init dele pendurado no bundle
+// (`init_git_command is not defined` no app empacotado da 0.76.209, F-960).
+import type { GitCommandError } from './git-command';
+
+/**
+ * Falha operacional do git (o processo não sobe, estoura o prazo, morre por
+ * sinal ou lota o buffer) não é bug do app. Se ela escapa de um listener de IPC,
+ * o Electron mostra o diálogo fatal "A JavaScript error occurred in the main
+ * process" e a janela fica de luto. Aqui a falha é registrada e o listener
+ * termina; qualquer outro erro é relançado, para bugs de programação continuarem
+ * aparecendo como antes.
+ */
+export function isGitOperationalFailure(error: unknown): error is GitCommandError {
+  // GitCommandError fixa `name` e carrega o argv do git (git-command.ts).
+  return error instanceof Error && error.name === 'GitCommandError' &&
+    Array.isArray((error as Partial<GitCommandError>).args);
+}
+
+/** Registra no trace e no console uma falha de git que o chamador contornou. */
+export function reportGitFailure(where: string, error: GitCommandError): void {
+  // O motivo real fica em `cause` (ETIMEDOUT, ENOENT, ENOBUFS...). Sinal sem
+  // erro de spawn é morte por sinal.
+  const cause = error.cause as NodeJS.ErrnoException | undefined;
+  const reason = cause?.code ?? 'signal-or-exit';
+  const subcommand = error.args[0] ?? 'unknown';
+  trace({
+    kind: 'git-ipc-failure',
+    where,
+    subcommand,
+    reason,
+    status: error.status,
+  });
+  console.warn(
+    `[git-ipc] ${where}: git ${subcommand} não completou (${reason}); o passo seguiu sem esse resultado`,
+  );
+}
+
+/** Envolve um listener: falha de git vira registro; o resto segue propagando. */
+export function guardGitFailures<A extends unknown[]>(
+  where: string,
+  listener: (...args: A) => void,
+): (...args: A) => void {
+  return (...args: A) => {
+    try {
+      listener(...args);
+    } catch (error) {
+      if (!isGitOperationalFailure(error)) throw error;
+      reportGitFailure(where, error);
+    }
+  };
+}
+
+type IpcListener = (event: IpcMainEvent, ...args: any[]) => void;
+
+// O ipcMain só conhece o wrapper: sem este vínculo, removeListener com o
+// listener original não remove nada e o listener dispara de novo a cada evento.
+const guardedListeners = new Map<string, WeakMap<IpcListener, IpcListener>>();
+
+/** `ipcMain.on` com a proteção contra falha de git já aplicada. */
+export function onIpcGuarded(channel: string, listener: IpcListener): void {
+  const wrapped = guardGitFailures(channel, listener);
+  let byListener = guardedListeners.get(channel);
+  if (!byListener) guardedListeners.set(channel, (byListener = new WeakMap()));
+  byListener.set(listener, wrapped);
+  ipcMain.on(channel, wrapped);
+}
+
+/** Remove um listener registrado com `onIpcGuarded`. */
+export function offIpcGuarded(channel: string, listener: IpcListener): void {
+  const byListener = guardedListeners.get(channel);
+  const wrapped = byListener?.get(listener);
+  if (!wrapped) return;
+  byListener!.delete(listener);
+  ipcMain.removeListener(channel, wrapped);
+}
