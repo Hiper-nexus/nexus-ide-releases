@@ -23,12 +23,15 @@ export function DecisionModeControls({ settings, busy, onChange }: {
     </div>
     <p className="settings-field__note">No Automático, a rota inicial usa Clef para escolher ferramentas e Jev nas demais decisões de texto.
       {' '}As rotas baseadas em benchmarks públicos ainda precisam de comparação no Nexus.</p>
-    {(settings.mode === 'auto' || settings.mode === 'clef') && <p className="settings-field__note">No Automático e em Somente Clef, o texto de estados de panes, saídas de terminal, pedidos e candidatos de ferramentas pode ser enviado à Cloudflare.
+    {settings.mode === 'auto' && <p className="settings-field__note">No Automático, o texto de estados de panes, saídas de terminal, pedidos e candidatos de ferramentas pode ser enviado à Cloudflare.
       {' '}A guarda de despacho, a revisão de handoff, a memória e os pilotos de navegador e desktop continuam só no Jev.</p>}
+    {settings.mode === 'clef' && <p className="settings-field__note">Em Somente Clef, o texto de estados de panes, saídas de terminal, pedidos e candidatos de ferramentas pode ser enviado à Cloudflare.
+      {' '}A guarda de despacho, a revisão de handoff, a memória e os pilotos de navegador e desktop ficam sem rota e sem julgamento do Jev.</p>}
     {(settings.mode === 'auto' || settings.mode === 'luna') && <p className="settings-field__note">A Luna (beta) é a Decisions API da OpenAI, modelo gpt-6-luna. No Automático ela só entra quando falta o provedor preferido.
       {' '}Em Somente Luna, o texto redigido vai à OpenAI, inclusive a guarda de despacho, a revisão de handoff, a memória e os pilotos. Sem a chave OpenAI nada disso cai no Jev.</p>}
-    {settings.mode === 'together' && <p className="settings-field__note">Juntos é opt-in e faz mais de uma chamada. No texto, Jev e Luna respondem a mesma pergunta; na imagem mascarada, Clef e Luna. Os rótulos do desktop e do navegador ficam no Jev. Concordância segue pela confiança maior.
-      {' '}Divergência em efeito irreversível, deny ou confirmação fica com o veredito mais restritivo. Na guarda, no handoff e na memória, o Jev não afrouxa quando está na jogada. Quem não tiver chave fica de fora: Luna e Clef sem o Jev continuam conjunto. Um provedor sozinho não é chamado no lugar.</p>}
+    {settings.mode === 'together' && <p className="settings-field__note">Antes de ligar Juntos: com as três credenciais, o texto de segurança de dispatchGuard, handoffReview e memoryDistill também vai para o Clef.
+      {' '}Juntos é opt-in e faz mais de uma chamada. No texto comum, Jev e Luna respondem a mesma pergunta; na imagem mascarada, Clef e Luna. A regra de duas credenciais vale para o conjunto: os rótulos de computerTool e browserTool continuam uma chamada só do Jev. Concordância segue pela confiança maior.
+      {' '}Divergência em efeito irreversível, deny ou confirmação fica com o veredito mais restritivo. Na guarda, no handoff e na memória, o Jev não afrouxa quando está na jogada. Quem não tiver chave fica de fora: Luna e Clef sem o Jev continuam conjunto.</p>}
     <VisionConsentToggle enabled={settings.visionEnabled} disabled={busy || settings.mode === 'jev'}
       audience={settings.mode === 'luna' ? 'luna' : settings.mode === 'together' ? 'together' : settings.mode === 'auto' ? 'auto' : 'clef'}
       onChange={visionEnabled => onChange({ visionEnabled })} />

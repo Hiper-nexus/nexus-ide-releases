@@ -21,7 +21,7 @@ export function decisionNotices(status: DecisionModelStatus): DecisionNotice[] {
     notices.push({ id: 'clef-not-ready', tone: 'warn', text: `Somente Clef está escolhido, mas falta ${missingClef(status)} da Cloudflare. As ferramentas de decisão ficam ocultas e as triagens seguem as regras locais até a configuração terminar.` });
   }
   if (mode === 'clef') {
-    notices.push({ id: 'clef-only-scope', tone: 'warn', text: `Em Somente Clef, ${SAFEGUARDS} ficam desligados: eles só rodam no Jev.` });
+    notices.push({ id: 'clef-only-scope', tone: 'warn', text: `Em Somente Clef, ${SAFEGUARDS} ficam sem rota e sem julgamento do Jev.` });
   }
   if (mode === 'luna' && !lunaReady) {
     notices.push({ id: 'luna-not-ready', tone: 'warn', text: 'Somente Luna (beta) está escolhido, mas não há chave OpenAI. As ferramentas de decisão ficam ocultas. Configure a chave em Chaves de API → OpenAI.' });

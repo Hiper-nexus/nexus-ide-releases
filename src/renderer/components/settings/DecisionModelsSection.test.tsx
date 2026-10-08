@@ -163,6 +163,26 @@ describe('complementary decision model settings', () => {
     expect(host.querySelector('[aria-label="Confirmar envio de imagens"]')).toBeNull();
   });
 
+  it('says Somente Clef leaves the safeguards without a Jev judgment, and Juntos sends that security text to Clef', async () => {
+    status = { ...status, settings: { ...status.settings, mode: 'clef' }, isReady: true, hasStoredKey: true };
+    await mount();
+    const clef = host.textContent ?? '';
+    expect(clef).toContain('sem rota');
+    expect(clef).toContain('sem julgamento do Jev');
+    expect(clef).not.toContain('continuam só no Jev');
+    act(() => root.unmount()); host.remove();
+    status = { ...status, settings: { ...status.settings, mode: 'together' }, lunaReady: true };
+    await mount();
+    const together = host.textContent ?? '';
+    expect(together.indexOf('também vai para o Clef')).toBeLessThan(together.indexOf('Juntos é opt-in'));
+    expect(together).toContain('dispatchGuard');
+    expect(together).toContain('handoffReview');
+    expect(together).toContain('memoryDistill');
+    expect(together).toContain('computerTool');
+    expect(together).toContain('browserTool');
+    expect(together).toContain('Luna e Clef sem o Jev');
+  });
+
   it('tells the operator what leaves the machine and that the pixel mask is only partial', async () => {
     status = { ...status, settings: { ...status.settings, mode: 'auto' } };
     await mount();

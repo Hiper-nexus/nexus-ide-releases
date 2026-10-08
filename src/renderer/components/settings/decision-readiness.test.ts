@@ -40,6 +40,9 @@ describe('decision model readiness notices', () => {
     const notice = decisionNotices(status({ settings: { mode: 'clef' } })).find(entry => entry.id === 'clef-only-scope');
     expect(notice?.tone).toBe('warn');
     expect(notice?.text).toMatch(/guarda de despacho/i);
+    expect(notice?.text).toContain('sem rota');
+    expect(notice?.text).toContain('sem julgamento do Jev');
+    expect(notice?.text).not.toContain('só rodam no Jev');
   });
 
   it('warns when Automatic would silently send Jev tasks to Cloudflare for lack of a Jev key', () => {

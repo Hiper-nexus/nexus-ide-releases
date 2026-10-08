@@ -13,7 +13,22 @@ export interface DecisionAccountBook {
   byAccount: Record<string, DecisionSettings>;
 }
 
-export const EMPTY_DECISION_ACCOUNT_BOOK: DecisionAccountBook = { formatVersion: 1, byAccount: {} };
+function accountMap(): Record<string, DecisionSettings> {
+  return Object.create(null);
+}
+
+/** Só a linha própria. Nome herdado (`toString`, `__proto__`) não é conta. */
+function ownAccountSettings(byAccount: Record<string, DecisionSettings>, accountId: string): DecisionSettings | undefined {
+  return Object.hasOwn(byAccount, accountId) ? byAccount[accountId] : undefined;
+}
+
+function copyAccountMap(source: Record<string, DecisionSettings>): Record<string, DecisionSettings> {
+  const map = accountMap();
+  for (const id of Object.keys(source)) map[id] = source[id];
+  return map;
+}
+
+export const EMPTY_DECISION_ACCOUNT_BOOK: DecisionAccountBook = { formatVersion: 1, byAccount: accountMap() };
 
 const ACCOUNT_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -33,7 +48,7 @@ function parseSettings(raw: unknown): DecisionSettings | null {
 
 export function parseDecisionAccountBook(raw: unknown): DecisionAccountBook {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return EMPTY_DECISION_ACCOUNT_BOOK;
-  const byAccount: Record<string, DecisionSettings> = {};
+  const byAccount = accountMap();
   const source = (raw as { byAccount?: unknown }).byAccount;
   if (source && typeof source === 'object' && !Array.isArray(source)) {
     for (const [id, value] of Object.entries(source)) {
@@ -56,7 +71,7 @@ export function resolveAccountSettings(
   accountId: string,
   projection: DecisionSettings,
 ): DecisionSettings {
-  const own = book.byAccount[accountId];
+  const own = ownAccountSettings(book.byAccount, accountId);
   if (own) return own;
   if (Object.keys(book.byAccount).length === 0) return projection;
   return decisionSettingsSchema.parse({});
@@ -67,7 +82,9 @@ export function withAccountSettings(
   accountId: string,
   settings: DecisionSettings,
 ): DecisionAccountBook {
-  return { formatVersion: 1, byAccount: { ...book.byAccount, [accountId]: settings } };
+  const byAccount = copyAccountMap(book.byAccount);
+  byAccount[accountId] = settings;
+  return { formatVersion: 1, byAccount };
 }
 
 /**
@@ -82,7 +99,7 @@ export function accountSwitchProjection(
 ): { settings: DecisionSettings; book: DecisionAccountBook } {
   const id = acceptDecisionAccountId(accountId);
   if (!id) return { settings: decisionSettingsSchema.parse({}), book };
-  const own = book.byAccount[id];
+  const own = ownAccountSettings(book.byAccount, id);
   if (own) return { settings: own, book };
   if (Object.keys(book.byAccount).length === 0) {
     return { settings: projection, book: withAccountSettings(book, id, projection) };

@@ -29,9 +29,10 @@ All external input validated with Zod at process boundaries.
 
 Decision routing lives in `decision-models/decision-judge.ts`: fixed modes never
 silently change provider. Somente Luna without an OpenAI key does not fall
-back to Jev or Clef, including on effect-bearing surfaces. Juntos only runs
-when at least two selected providers have a key; a single provider is not
-called in their place. Visual inputs require explicit opt-in. They go to Clef
+back to Jev or Clef, including on effect-bearing surfaces. Juntos runs as an
+ensemble only when at least two selected providers have a key; a single
+provider is not called in place of that ensemble. Jev can still be called
+alone on `computerTool` and `browserTool` labels. Visual inputs require explicit opt-in. They go to Clef
 when that route is selected, to Luna (inline data URL only) when the operator
 chose Luna or Automatic has no Clef credential but does have the OpenAI key,
 and to both when the operator chose Juntos. Desktop pixels never leave.
