@@ -217,9 +217,8 @@ export function NexusCommandInput({
           style={styles.input}
           value={input}
           onChangeText={setInput}
-          placeholder={
-            connected ? 'comando completo (Enter é enviado junto)' : 'sem conexão: o comando vai para a fila'
-          }
+          // F-1035: cabe na largura do campo em 390 pt (o texto longo era cortado no meio).
+          placeholder={connected ? 'comando + Enter' : 'sem conexão: vai à fila'}
           placeholderTextColor={colors.textMuted}
           autoCapitalize="none"
           autoCorrect={false}

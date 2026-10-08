@@ -1,0 +1,246 @@
+{
+  "note": "Alvo web (React Native Web) no Chrome headless contra a Remote Bridge real; não é teste em aparelho.",
+  "viewport": {
+    "width": 390,
+    "height": 844,
+    "deviceScaleFactor": 3,
+    "mobile": true
+  },
+  "ok": true,
+  "failure": null,
+  "steps": [
+    {
+      "name": "01-inicio-sem-host",
+      "file": "01-inicio-sem-host.png",
+      "ok": true,
+      "detail": "app recém-aberto, nenhum host salvo",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "02-parear",
+      "file": "02-parear.png",
+      "ok": true,
+      "detail": "pair-scan no alvo web (sem câmera)",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "03-colar-link",
+      "file": "03-colar-link.png",
+      "ok": true,
+      "detail": "link colado: https://127.0.0.1:50505/#code=…",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "codigo-gasto",
+      "ok": true,
+      "detail": "a bridge consumiu o código de uso único"
+    },
+    {
+      "name": "04-apos-parear",
+      "file": "04-apos-parear.png",
+      "ok": true,
+      "detail": "rota após parear: /mobile-onboarding?steps=session-view%2Cnotifications&hostId=nexus-mv01igpw",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": [
+          "Enable notifications [468..702]",
+          "Get notified when an agent finishes a task or needs your inp [414..756]",
+          "By default, notifications arrive after your desktop has been [414..756]",
+          "Delivered through Orca’s push service. Change this anytime i [414..756]",
+          "Enable notifications [518..652]",
+          "Not now [558..612]"
+        ]
+      }
+    },
+    {
+      "name": "05-inicio-com-host",
+      "file": "05-inicio-com-host.png",
+      "ok": true,
+      "detail": "host Nexus salvo aparece na lista",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "06-host-conectado",
+      "file": "06-host-conectado.png",
+      "ok": true,
+      "detail": "missões + panes, sem aprovação ainda",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "07-host-aprovacao",
+      "file": "07-host-aprovacao.png",
+      "ok": true,
+      "detail": "push approvals.changed → card de aprovação",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "08-pane-saida",
+      "file": "08-pane-saida.png",
+      "ok": true,
+      "detail": "pane.read inicial pelo stream",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "09-pane-digitando",
+      "file": "09-pane-digitando.png",
+      "ok": true,
+      "detail": "comando digitado antes de enviar",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "comando-chegou-ao-pty",
+      "ok": true,
+      "detail": "writes no PTY simulado: [[\"sess-app\",\"git status\\n\"]]"
+    },
+    {
+      "name": "sem-confirmacao-no-desktop",
+      "ok": true,
+      "detail": "git status é rotina: nenhum diálogo"
+    },
+    {
+      "name": "10-pane-apos-comando",
+      "file": "10-pane-apos-comando.png",
+      "ok": true,
+      "detail": "saída empurrada pelo pane.stream.data",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "broker-recebeu-accept",
+      "ok": true,
+      "detail": "decisão no broker: accept"
+    },
+    {
+      "name": "aprovacao-sem-tecla-no-pty",
+      "ok": true,
+      "detail": "nenhuma escrita extra no PTY"
+    },
+    {
+      "name": "11-host-aprovacao-respondida",
+      "file": "11-host-aprovacao-respondida.png",
+      "ok": true,
+      "detail": "card sumiu após o accept",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "12-alteracoes",
+      "file": "12-alteracoes.png",
+      "ok": true,
+      "detail": "git status do checkout do pane",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "13-diff",
+      "file": "13-diff.png",
+      "ok": true,
+      "detail": "diff de README.md",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "14-diff-codigo",
+      "file": "14-diff-codigo.png",
+      "ok": true,
+      "detail": "diff de código com linhas longas",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "15-arquivos",
+      "file": "15-arquivos.png",
+      "ok": true,
+      "detail": "raiz do checkout (sem .git e sem .env)",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "segredo-fora-da-lista",
+      "ok": true,
+      "detail": ".env não aparece em Arquivos"
+    },
+    {
+      "name": "16-arquivo",
+      "file": "16-arquivo.png",
+      "ok": true,
+      "detail": "leitura de README.md",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "17-revogado",
+      "file": "17-revogado.png",
+      "ok": true,
+      "detail": "credencial revogada ao vivo pelo desktop",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    },
+    {
+      "name": "18-parear-de-novo",
+      "file": "18-parear-de-novo.png",
+      "ok": true,
+      "detail": "volta ao pareamento",
+      "layout": {
+        "horizontalOverflow": false,
+        "offscreen": []
+      }
+    }
+  ],
+  "desktop": {
+    "writes": [
+      [
+        "sess-app",
+        "git status\n"
+      ]
+    ],
+    "resizes": [],
+    "confirmations": []
+  },
+  "consoleErrors": [
+    "warning: [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.",
+    "warning: [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.",
+    "warning: Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md",
+    "warning: [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect."
+  ]
+}

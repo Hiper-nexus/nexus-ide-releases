@@ -362,7 +362,10 @@ function NexusApprovals({
         return (
           <View
             key={`${approval.requestId}:${approval.revision}`}
-            style={approval.requestId === highlightedRequestId ? styles.approvalFocused : undefined}
+            style={[
+              styles.approvalItem,
+              approval.requestId === highlightedRequestId && styles.approvalFocused
+            ]}
           >
             <Text style={styles.approvalPane}>pane {paneTitle ?? approval.paneId}</Text>
             <MobileNativeChatPermission permission={permission} onRespond={onRespond} />
@@ -534,6 +537,9 @@ const styles = StyleSheet.create({
     fontSize: typography.metaSize,
     lineHeight: 17
   },
+  // F-1035: o card compartilhado do chat já tem margem lateral própria; sem compensar o
+  // padding da lista, ele ficava recuado em relação às linhas de missões e panes.
+  approvalItem: { marginHorizontal: -spacing.lg },
   approvalFocused: {
     borderLeftWidth: 2,
     borderLeftColor: colors.accentBlue
