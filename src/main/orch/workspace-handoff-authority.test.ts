@@ -18,6 +18,11 @@ vi.mock("./project-domain-store-registry", async (importOriginal) => ({
     },
   }),
 }));
+// Primeiro import: o mock acima carrega o registro original, que fecha o ciclo
+// handoff-store → … → mcp-dispatch → este módulo. Se outro import (o
+// main-owned-pane-runtime importa o registro desde b4ff521f7) disparar a
+// fábrica antes, este módulo nasce dentro dela preso ao registro real.
+import { resolveWorkspaceHandoffParent } from "./workspace-handoff-authority";
 import {
   bindTokenToSession,
   mintToken,
@@ -28,7 +33,6 @@ import {
   deleteMainOwnedPane,
   setMainOwnedPane,
 } from "./main-owned-pane-runtime";
-import { resolveWorkspaceHandoffParent } from "./workspace-handoff-authority";
 
 const scope = testProjectScope();
 function context(sessionId: string) {

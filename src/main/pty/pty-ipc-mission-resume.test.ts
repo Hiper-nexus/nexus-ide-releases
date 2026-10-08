@@ -51,7 +51,7 @@ const authorityDeps = vi.hoisted(() => {
   };
   return {
     scope,
-    requireRendererWorkspaceScope: vi.fn(() => scope),
+    requireRendererWorkspaceScope: vi.fn((_owner?: unknown) => scope),
     resolveCwdForScope: vi.fn(() => "/workspace/a"),
     claimPendingSpawnMeta: vi.fn(
       (_requestId: string, _owner: unknown): unknown => null,
@@ -149,6 +149,9 @@ vi.mock("./pty-host-client", () => ({
 
 vi.mock("../persistence/renderer-workspace-scope", () => ({
   requireRendererWorkspaceScope: authorityDeps.requireRendererWorkspaceScope,
+  // b4ff521f7: a retomada persistida revalida a aba viva antes do PTY.
+  requireLiveRendererWorkspaceScope: (owner: unknown) =>
+    authorityDeps.requireRendererWorkspaceScope(owner),
 }));
 
 vi.mock("../orch/workspace-path", () => ({
@@ -423,7 +426,7 @@ describe("registerPtyIpc account fail-fast", () => {
         authoritySeal: authoritySealFor(),
         createdAt: 1,
       };
-      authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+      authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
       authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
       authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
       const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
@@ -518,10 +521,12 @@ describe("registerPtyIpc account fail-fast", () => {
         contractHash,
       );
       workflowDeps.contract = { contextRevision, contractHash };
-      authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
-      authorityDeps.rebindOrchestratorAuthority.mockReturnValueOnce({
-        ...persisted,
-        authoritySeal,
+      authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
+      // A releitura do store (b4ff521f7) passa a ver a linha resselada.
+      const rebound = { ...persisted, authoritySeal };
+      authorityDeps.rebindOrchestratorAuthority.mockImplementationOnce(() => {
+        authorityDeps.findMissionPaneByPaneId.mockReturnValue(rebound);
+        return rebound;
       });
       authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
       const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
@@ -585,7 +590,7 @@ describe("registerPtyIpc account fail-fast", () => {
         authoritySeal: authoritySealFor(),
         createdAt: 1,
       };
-      authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+      authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
       authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
       const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
       const exact = {
@@ -630,7 +635,7 @@ describe("registerPtyIpc account fail-fast", () => {
       scope: authorityDeps.scope,
       createdAt: 1,
     };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
     const sender = { id: 7 };
@@ -674,7 +679,7 @@ describe("registerPtyIpc account fail-fast", () => {
       authoritySeal: authoritySealFor(),
       createdAt: 1,
     };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
     dispatchDeps.list.mockReturnValueOnce([
@@ -746,7 +751,7 @@ describe("registerPtyIpc account fail-fast", () => {
       authoritySeal: authoritySealFor(),
       createdAt: 1,
     };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
@@ -790,7 +795,7 @@ describe("registerPtyIpc account fail-fast", () => {
       authoritySeal: authoritySealFor(),
       createdAt: 1,
     };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
     dispatchDeps.list.mockReturnValueOnce([
@@ -856,7 +861,7 @@ describe("registerPtyIpc account fail-fast", () => {
       authoritySeal: authoritySealFor(),
       createdAt: 1,
     };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
     dispatchDeps.list.mockReturnValueOnce([
@@ -924,7 +929,7 @@ describe("registerPtyIpc account fail-fast", () => {
       createdAt: 1,
     };
     authorityDeps.hasLivePaneSession.mockReturnValueOnce(false);
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.rebindOrchestratorAuthority.mockReturnValueOnce(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
@@ -975,7 +980,7 @@ describe("registerPtyIpc account fail-fast", () => {
       authoritySeal: authoritySealFor(),
       createdAt: 1,
     };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     // Physical death of the provider session: main resolves the fresh-context
     // fallback inside spawnAgentSession instead of failing into a dead pane.
@@ -1043,7 +1048,7 @@ describe("registerPtyIpc account fail-fast", () => {
       createdAt: 1,
     };
     authorityDeps.hasLivePaneSession.mockReturnValueOnce(true);
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     ptyDeps.adoptMainOwnedAgentSession.mockReturnValueOnce({
       sessionId: "pty-adopted",
@@ -1101,7 +1106,7 @@ describe("registerPtyIpc account fail-fast", () => {
       authoritySeal: authoritySealFor(),
       createdAt: 1,
     };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
@@ -1153,7 +1158,7 @@ describe("registerPtyIpc account fail-fast", () => {
       authoritySeal: authoritySealFor(),
       createdAt: 1,
     };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
     ptyDeps.adoptMainOwnedAgentSession.mockReturnValueOnce({
@@ -1215,7 +1220,7 @@ describe("registerPtyIpc account fail-fast", () => {
       authoritySeal: authoritySealFor(),
       createdAt: 1,
     };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.hasLivePaneSession.mockReturnValueOnce(true);
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
@@ -1272,7 +1277,7 @@ describe("registerPtyIpc account fail-fast", () => {
       authoritySeal: authoritySealFor(),
       createdAt: 1,
     };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
     ptyDeps.adoptMainOwnedAgentSession.mockReturnValueOnce({
@@ -1342,7 +1347,7 @@ describe("registerPtyIpc account fail-fast", () => {
 
   it("rejects persisted pane restore after the mission intent version changes", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce({
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue({
       id: "mpane-worker",
       missionId: "mission-a",
       adapterId: "claude",
@@ -1385,7 +1390,7 @@ describe("registerPtyIpc account fail-fast", () => {
       ok: true,
       overrides: {},
     });
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce({
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue({
       id: "mpane-a",
       missionId: "mission-a",
       adapterId: "codex",
