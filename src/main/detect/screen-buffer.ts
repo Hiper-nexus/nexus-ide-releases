@@ -575,9 +575,10 @@ export class GhosttyScreenBuffer implements ScreenSource {
 
   /**
    * After a grid leaves: linear memory the live grids do not justify — at the
-   * high-water mark, a quarter of the budget above what they reserve, or any
-   * peak once no grid is left (nothing to replay, so the rebuild is free) —
-   * is rebuilt away instead of being held by the Worker until it restarts.
+   * high-water mark, a quarter of the budget above what they reserve, or a
+   * sixteenth once no grid is left (nothing to replay, so the rebuild is
+   * cheap; one closed pane's ~5 MiB pool is not worth a rebuild) — is rebuilt
+   * away instead of being held by the Worker until it restarts.
    */
   #reclaim(): void {
     if (this.#runtime.broken) return;
@@ -586,7 +587,7 @@ export class GhosttyScreenBuffer implements ScreenSource {
     const reserved = this.#reserved();
     const idle = memory - reserved;
     const noGrids = reserved === GHOSTTY_RUNTIME_BASE_BYTES;
-    if (reserved <= max && (memory >= max || idle >= max / 4 || (noGrids && idle > reserved))) this.#recycle();
+    if (reserved <= max && (memory >= max || idle >= max / 4 || (noGrids && idle >= max / 16))) this.#recycle();
   }
 
   /**
