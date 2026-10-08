@@ -21,6 +21,7 @@ import {
   type AuthReadiness,
 } from './seat-auth-readiness';
 import { kimiCredentialFilesIn, kimiNativeCredentialFiles } from './kimi-credential-files';
+import { isCurrentProcessSmokeTest } from '../smoke-core';
 
 export { kimiCredentialFilesIn };
 
@@ -639,6 +640,10 @@ export function agyKeychainCredentialIsUsableAsync(
   options: AgyKeychainProbeOptions = {},
 ): Promise<boolean> {
   if (process.platform !== 'darwin') return Promise.resolve(false);
+  // F-1004 (backstop): a packaged smoke never reads the operator's Keychain.
+  if (isCurrentProcessSmokeTest()) {
+    return Promise.reject(new AgyKeychainProbeUnavailableError());
+  }
   const nativeHome = resolveAgyNativeHome(
     options.nativeHome ?? realUserHome(),
   );

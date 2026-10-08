@@ -179,6 +179,7 @@ import {
   type HeadroomInput,
 } from '../quota/account-headroom';
 import { requireQuotaService } from '../quota/quota-service';
+import { isCurrentProcessSmokeTest } from '../smoke-core';
 import type { ApiQuotaKeyRequest } from '../quota/provider-live-usage';
 import { activateAgyAccountForSpawn } from './agy-keyring-activation';
 import { prepareMinimaxNodeRuntime } from '../adapters/minimax-node-runtime';
@@ -3127,6 +3128,9 @@ export function registerProviderIpc(): void {
   });
 
   ipcMain.handle(PROVIDER_CHANNELS.list, () => {
+    // F-1004: o smoke do gate de release não lê o Keychain do operador nem
+    // executa CLIs; a lista sai só dos metadados/cache.
+    if (isCurrentProcessSmokeTest()) return listProviderSettingsForRenderer();
     // Descoberta viva em background: quando terminar, o broadcast de
     // providers empurra a lista atualizada (o "Atualizar modelos" chama list,
     // e o changed subsequente entrega os modelos novos sem segundo clique).

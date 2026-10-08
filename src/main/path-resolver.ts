@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
+import { isCurrentProcessSmokeTest } from './smoke-core';
 import { BUILTIN_ADAPTERS } from '../adapters/builtin';
 import { windowsNpmShimSpawn, windowsNpmShimTarget } from './adapters/windows-npm-shim';
 import { compareAppVersions, isValidAppVersion } from '../shared/app-version';
@@ -548,6 +549,9 @@ export function probeCliBinaryVersion(
   adapterId = aiAdapterIdFor(binPath),
 ): Promise<string | null> {
   if (!adapterId) return Promise.resolve(null);
+  // F-1004: o smoke do gate de release roda sem sandbox no HOME real — nunca
+  // executa CLI de IA (nem `--version`) no boot.
+  if (isCurrentProcessSmokeTest()) return Promise.resolve(null);
   const key = cliVersionKey(binPath, adapterId);
   if (!key) return Promise.resolve(null);
   const cached = cliVersionCache.get(key.realPath);

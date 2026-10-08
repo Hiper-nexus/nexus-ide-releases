@@ -41,6 +41,7 @@ import {
 } from './provider-usage-auth';
 import { fetchGrokAccountUsage } from './grok-account-usage';
 import { PLAN_CAPABLE_ADAPTERS } from './account-plan';
+import { isCurrentProcessSmokeTest } from '../smoke-core';
 import type { CodexChatGptAuth } from './codex-usage';
 import {
   fetchLiveProviderWindows,
@@ -648,6 +649,9 @@ export class QuotaService {
     generation: number,
   ): Promise<Map<string, CachedApiWindows>> {
     const observations = new Map<string, CachedApiWindows>();
+    // F-1004: sem sondas vivas de cota no smoke — elas leem o Keychain
+    // (`security find-generic-password -w`) e executam claude/agy/cursor-agent.
+    if (isCurrentProcessSmokeTest()) return observations;
     const rows =
       LIVE_PROBE_ADAPTERS === 'all'
         ? [...draft]
