@@ -10,7 +10,8 @@ import {
 import { testProjectScope } from './scope-fixture';
 import { processSandboxRuntimeAvailable } from '../../runtime/process-sandbox-capability';
 import { setPtyHost } from '../../pty/pty-manager';
-import { currentDarwinPtySupervisorRuntime, supervisedJobCommand } from '../../pty/darwin-pty-supervisor';
+import { supervisedJobCommand } from '../../pty/darwin-pty-supervisor';
+import { buildTestDarwinPtySupervisor } from '../../../test/darwin-pty-supervisor-fixture';
 
 const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-terminal');
 /** Real exec through Seatbelt/bwrap — skip when host userns is blocked (GHA Linux). */
@@ -18,15 +19,20 @@ const sandboxAvailable = processSandboxRuntimeAvailable();
 const itSandboxed = it.runIf(sandboxAvailable);
 
 describe('tools-terminal', () => {
+  let supervisor: ReturnType<typeof buildTestDarwinPtySupervisor> | undefined;
   beforeAll(() => {
     fs.mkdirSync(testDir, { recursive: true });
-    if (process.platform === 'darwin') setPtyHost({
+    if (process.platform !== 'darwin') return;
+    const fixture = buildTestDarwinPtySupervisor();
+    supervisor = fixture;
+    setPtyHost({
       spawn: () => { throw new Error('native command fixture allocates no PTY'); },
-      prepareCommandSupervisor: async (file, args) => supervisedJobCommand(currentDarwinPtySupervisorRuntime(process.cwd()), file, args),
+      prepareCommandSupervisor: async (file, args) => supervisedJobCommand(fixture.runtime, file, args),
     });
-  });
+  }, 60_000);
 
   afterAll(() => {
+    supervisor?.dispose();
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
