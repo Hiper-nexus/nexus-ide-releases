@@ -415,6 +415,22 @@ describe('packaged legal notices', () => {
       existsSync(path.resolve('third_party/licenses/orca-MIT.txt')),
     ).toBe(true);
   });
+
+  it('attributes the T3 Code harvest and Ghostty libghostty-vt in the packaged notice', () => {
+    const notice = readFileSync(
+      path.resolve('THIRD_PARTY_NOTICES.md'),
+      'utf8',
+    );
+    expect(notice).toContain('pingdotgg/t3code');
+    expect(notice).toContain('Copyright (c) 2026 T3 Tools Inc.');
+    expect(notice).toContain('third_party/licenses/t3code-MIT.txt');
+    expect(notice).toContain('Mitchell Hashimoto, Ghostty contributors');
+    expect(shouldPackageFile('/third_party/licenses/t3code-MIT.txt')).toBe(true);
+    expect(
+      existsSync(path.resolve('third_party/licenses/t3code-MIT.txt')),
+    ).toBe(true);
+    expect(existsSync(path.resolve('resources/ghostty/LICENSE'))).toBe(true);
+  });
 });
 
 describe('createMacNotarizeCredentials — ambiente de dev não é release', () => {

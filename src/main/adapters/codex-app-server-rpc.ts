@@ -1,6 +1,6 @@
-// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
-// Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: withCodexAppServerClient (CodexProvider.ts:366-414: spawn curto do `codex app-server`, handshake initialize/initialized e um cliente por processo) reescrito sem Effect sobre o leitor NDJSON que o Nexus já tinha em quota/codex-cli-usage.ts — correlação por id, prazo único para a sessão, teto de bytes do stdout não confiável, CODEX_HOME explícito sem chaves de API do ambiente e kill garantido no fim.
+// Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied)
+// Referência (T3 Code, MIT): withCodexAppServerClient (apps/server/src/provider/CodexProvider.ts:366-414: spawn curto do `codex app-server`, handshake initialize/initialized e várias RPCs no mesmo processo).
+// Implementação do Nexus sobre o leitor NDJSON que já existia em quota/codex-cli-usage.ts — correlação por id, prazo único para a sessão, teto de bytes do stdout não confiável, CODEX_HOME explícito sem chaves de API do ambiente e kill garantido no fim.
 
 import os from 'node:os';
 import { spawn } from 'node:child_process';

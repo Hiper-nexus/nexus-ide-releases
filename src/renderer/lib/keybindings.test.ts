@@ -1,6 +1,6 @@
-// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
-// Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: casos de `when` e "última regra vence" (apps/web/src/keybindings.test.ts) reescritos para os comandos do Nexus; padrões congelados contra App.tsx/catálogo; IME, AltGraph, campo editável, terminal-first, reservadas e conflito por literal oposto são casos do Nexus.
+// Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied)
+// Referência: os casos de `when` e "última regra vence" de apps/web/src/keybindings.test.ts (T3 Code, MIT).
+// Suíte do Nexus escrita para os comandos do Nexus; padrões congelados contra App.tsx/catálogo; IME, AltGraph, campo editável, terminal-first, reservadas e conflito por literal oposto são casos do Nexus.
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 import {

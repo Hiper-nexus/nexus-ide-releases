@@ -1,9 +1,8 @@
 /** @vitest-environment jsdom */
-// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
-// Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: o método de
+// Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied)
+// Referência (T3 Code, MIT): só o método de
 // packages/client-runtime/src/operations/commands.performance.test.ts (teto
-// numérico pinado, CI falha quando passa) aplicado ao trabalho de render da
+// numérico pinado, CI falha quando passa), num teste do Nexus para o trabalho de render da
 // grade de panes por broadcast do motor de missão — renders e assinaturas do
 // store contados, nunca cronometrados.
 

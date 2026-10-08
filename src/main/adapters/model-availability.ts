@@ -1,6 +1,6 @@
-// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
-// Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: a regra "a listagem da CLI é a verdade; o manifesto só classifica e escolhe o default, nunca acrescenta id" (ModelManifest.ts:214-330, applyManifestDefault/classifyModels; AntigravityProvider.ts:45-79, 308-316; docs/internals/providers.md "an authoritative empty catalog must clear the old list") virou uma função pura em TS sem Effect, com as três autoridades do Nexus (live | version-cache | bundled), a última listagem boa no lugar do snapshot do provider, ids custom do operador e o guarda de parse quebrado do F-958.
+// Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied)
+// Referência (T3 Code, MIT): a regra "a listagem da CLI é a verdade; o manifesto só classifica e escolhe o default, nunca acrescenta id" (apps/server/src/provider/ModelManifest.ts:214-330, applyManifestDefault/classifyModels; AntigravityProvider.ts:45-79, 308-316; docs/internals/providers.md "an authoritative empty catalog must clear the old list").
+// Implementação do Nexus: função pura em TS, com as três autoridades do Nexus (live | version-cache | bundled), a última listagem boa no lugar do snapshot do provider, ids custom do operador e o guarda de parse quebrado do F-958.
 
 /**
  * F-964 (PRV-01): quais modelos o Nexus OFERECE e quais ROTEIA por CLI.

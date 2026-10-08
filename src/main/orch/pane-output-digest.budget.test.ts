@@ -1,8 +1,7 @@
-// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
-// Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: o método de
+// Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied)
+// Referência (T3 Code, MIT): só o método de
 // packages/client-runtime/src/operations/commands.performance.test.ts (teto de
-// bytes pinado e CI que falha) aplicado ao digest de `nexus_pane_read`: o
+// bytes pinado e CI que falha), num teste do Nexus para o digest de `nexus_pane_read`: o
 // "wire" aqui é o texto que vai para o contexto do orquestrador (tokens).
 
 /**
