@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ComponentPropsWithoutRef } from 'react';
 import type {
   MissionLifecycleState,
   MissionStateReason,
@@ -40,6 +40,7 @@ import {
   loadCollapsedWorkspacePaths,
   saveCollapsedWorkspacePaths,
 } from '../../lib/mission-rail-prefs';
+import { useRailListMotion } from '../../lib/rail-list-motion';
 
 export interface WorkspaceRailMission {
   id: string;
@@ -247,6 +248,18 @@ interface WorkspaceGroupProps {
  */
 const RAIL_MISSION_PAGE_SIZE = 10;
 
+/**
+ * Lista da rail com continuidade: projetos e missões que entram, saem ou
+ * trocam de lugar deslizam em vez de pular (`rail-list-motion`).
+ */
+function RailMotionList({
+  layoutKey,
+  ...props
+}: ComponentPropsWithoutRef<'ul'> & { layoutKey: string }) {
+  const ref = useRailListMotion<HTMLUListElement>(layoutKey);
+  return <ul ref={ref} {...props} />;
+}
+
 function WorkspaceGroup({
   currentWorkspaceId,
   currentWorkspaceMissing = false,
@@ -310,6 +323,39 @@ function WorkspaceGroup({
       prev[selectedMissionId] ? prev : { ...prev, [selectedMissionId]: true },
     );
   }, [selectedMissionId]);
+  // Tudo que muda ordem, conjunto ou altura das linhas: quando muda, as
+  // listas medem e animam; renders de status/idade não mexem em nada.
+  const railLayoutKey = useMemo(() => {
+    const paneCount = new Map<string, number>();
+    for (const pane of allPanes) {
+      const missionId = pane.missionId ?? paneMissions[pane.id];
+      if (missionId) paneCount.set(missionId, (paneCount.get(missionId) ?? 0) + 1);
+    }
+    const workspaceKeys = workspaces.map((workspace) =>
+      [
+        workspace.id,
+        collapsedWorkspaces.has(workspace.id) ? 'c' : 'o',
+        missionListLimits[workspace.id] ?? '',
+        workspace.missions
+          .map(
+            (mission) =>
+              `${mission.id}/${mission.worktrees?.map((w) => `${w.branch}=${w.status}`).join(';') ?? ''}/${
+                expandedMissions[mission.id] ? 'x' : ''
+              }/${paneCount.get(mission.id) ?? 0}`,
+          )
+          .join(','),
+      ].join(':'),
+    );
+    return `${selectedMissionId ?? ''}#${workspaceKeys.join('|')}`;
+  }, [
+    allPanes,
+    paneMissions,
+    workspaces,
+    collapsedWorkspaces,
+    missionListLimits,
+    expandedMissions,
+    selectedMissionId,
+  ]);
 
   if (workspaces.length === 0) return null;
 
@@ -327,7 +373,10 @@ function WorkspaceGroup({
           <span className="workspace-rail__group-pill">{groupCount}</span>
         ) : null}
       </div>
-      <ul className="workspace-rail__workspace-list">
+      <RailMotionList
+        className="workspace-rail__workspace-list"
+        layoutKey={railLayoutKey}
+      >
         {workspaces.map((workspace) => {
           const workspaceSelected =
             selection?.kind === 'workspace' &&
@@ -468,9 +517,10 @@ function WorkspaceGroup({
               </div>
 
               {workspace.missions.length > 0 && !isCollapsed ? (
-                <ul
+                <RailMotionList
                   className="workspace-rail__mission-list"
                   aria-label={`Missões em ${workspace.name}`}
+                  layoutKey={railLayoutKey}
                 >
                   {missionRows.map((row) => {
                     if (row.kind === 'branch') {
@@ -667,7 +717,7 @@ function WorkspaceGroup({
                       </li>
                     );
                   })}
-                </ul>
+                </RailMotionList>
               ) : null}
               {workspace.missions.length > 0 &&
                 hiddenMissionCount > 0 ? (
@@ -705,7 +755,7 @@ function WorkspaceGroup({
             </li>
           );
         })}
-      </ul>
+      </RailMotionList>
     </section>
   );
 }

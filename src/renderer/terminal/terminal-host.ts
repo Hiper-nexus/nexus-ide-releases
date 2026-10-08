@@ -1,6 +1,6 @@
 import { useAccessStore } from '../state/access-store';
 import { reportLicenseDenial } from '../state/access-guard';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { SearchAddon } from '@xterm/addon-search';
@@ -534,6 +534,8 @@ const DEFAULT_FONT_STACK =
 // New terminals read them at build time; applyTerminalSettings restyles the
 // already-open ones.
 let currentSettings: TerminalSettings = DEFAULT_TERMINAL_SETTINGS;
+// Paleta xterm de um tema importado do VS Code; null = a de settings.themeId.
+let importedTheme: ITheme | null = null;
 
 function fontFamilyOf(settings: TerminalSettings): string {
   return settings.fontFamily.trim() !== ''
@@ -541,16 +543,23 @@ function fontFamilyOf(settings: TerminalSettings): string {
     : DEFAULT_FONT_STACK;
 }
 
-function themeOf(settings: TerminalSettings) {
+function themeOf(settings: TerminalSettings): ITheme {
   return (
-    TERMINAL_THEMES[settings.themeId] ??
-    TERMINAL_THEMES[DEFAULT_TERMINAL_SETTINGS.themeId]
-  ).theme;
+    importedTheme ??
+    (
+      TERMINAL_THEMES[settings.themeId] ??
+      TERMINAL_THEMES[DEFAULT_TERMINAL_SETTINGS.themeId]
+    ).theme
+  );
 }
 
 /** Apply user settings: restyle every live terminal, remember for new ones. */
-export function applyTerminalSettings(settings: TerminalSettings): void {
+export function applyTerminalSettings(
+  settings: TerminalSettings,
+  imported: ITheme | null = null,
+): void {
   currentSettings = settings;
+  importedTheme = imported;
   for (const [paneId, host] of hosts) {
     if (host.disposed || host.virtualized) continue;
     host.term.options.theme = themeOf(settings);

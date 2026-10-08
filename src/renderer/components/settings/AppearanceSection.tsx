@@ -1,9 +1,15 @@
+import { useRef, useState } from 'react';
 import {
   TERMINAL_THEME_IDS,
   type TerminalThemeId,
 } from '../../../shared/settings-types';
 import { TERMINAL_THEMES } from '../../styles/terminal-theme';
-import { PALETTES } from '../../styles/ui-theme';
+import { PALETTES, type UiPalette } from '../../styles/ui-theme';
+import {
+  MAX_VSCODE_THEME_CHARS,
+  parseVsCodeThemeText,
+  upsertImportedTheme,
+} from '../../styles/vscode-theme-import';
 import { useSettingsStore } from '../../state/settings-store';
 import { OperatorSprite } from '../OperatorSprite';
 import { PixelIcon } from '../PixelIcon';
@@ -13,14 +19,123 @@ import { SettingsSectionTitle } from './SettingsSectionTitle';
 /**
  * Aparência global: paleta do app (tema), modo pixel (identidade retrô) e
  * atalho para o mascote de mesa. O tema restyla toda a UI via applyUiTheme —
- * fonte/shell do xterm ficam em Terminal.
+ * fonte/shell do xterm ficam em Terminal. Temas do VS Code importados entram
+ * na mesma grade, persistidos em `ui.importedThemes`.
  */
+
+function ThemeCard({
+  label,
+  ariaLabel,
+  palette,
+  active,
+  onSelect,
+}: {
+  label: string;
+  ariaLabel: string;
+  palette: UiPalette;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`settings-theme ${active ? 'settings-theme--active' : ''}`}
+      role="radio"
+      aria-checked={active}
+      aria-label={ariaLabel}
+      onClick={onSelect}
+    >
+      <span
+        className="settings-theme__preview"
+        style={{
+          background: palette.bg,
+          borderColor: palette.borderStrong,
+        }}
+        aria-hidden
+      >
+        <span
+          className="settings-theme__chrome"
+          style={{
+            background: palette.bgBar,
+            borderBottomColor: palette.border,
+          }}
+        >
+          <i style={{ background: palette.textFaint }} />
+          <i style={{ background: palette.textFaint }} />
+          <i style={{ background: palette.accent }} />
+        </span>
+        <span className="settings-theme__lines">
+          <i
+            className="settings-theme__line"
+            style={{ background: palette.text }}
+          />
+          <i
+            className="settings-theme__line settings-theme__line--dim"
+            style={{ background: palette.textDim }}
+          />
+          <i
+            className="settings-theme__cta"
+            style={{ background: palette.btnPrimary }}
+          />
+        </span>
+      </span>
+      <span className="settings-theme__foot">
+        <span className="settings-theme__name">{label}</span>
+        {active && (
+          <span className="settings-theme__current">
+            <PixelIcon name="check" size={9} />
+            em uso
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
 
 export function AppearanceSection() {
   const terminal = useSettingsStore((s) => s.terminal);
   const ui = useSettingsStore((s) => s.ui);
   const updateTerminal = useSettingsStore((s) => s.update);
   const updateUi = useSettingsStore((s) => s.updateUi);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const activeImported = ui.importedThemes.find(
+    (theme) => theme.id === ui.activeImportedThemeId,
+  );
+
+  const selectBuiltIn = (id: TerminalThemeId) => {
+    void updateTerminal({ themeId: id });
+    if (activeImported) void updateUi({ activeImportedThemeId: '' });
+  };
+
+  const importThemeFile = async (file: File | undefined) => {
+    if (!file) return;
+    setImportError(null);
+    try {
+      if (file.size > MAX_VSCODE_THEME_CHARS) {
+        throw new Error('Arquivo grande demais para um tema de cores (máximo de 2 MB).');
+      }
+      const theme = parseVsCodeThemeText(await file.text());
+      await updateUi({
+        importedThemes: upsertImportedTheme(ui.importedThemes, theme),
+        activeImportedThemeId: theme.id,
+      });
+    } catch (error) {
+      setImportError(
+        error instanceof Error ? error.message : 'Não foi possível importar esse tema.',
+      );
+    }
+  };
+
+  const removeActiveImported = () => {
+    if (!activeImported) return;
+    void updateUi({
+      importedThemes: ui.importedThemes.filter(
+        (theme) => theme.id !== activeImported.id,
+      ),
+      activeImportedThemeId: '',
+    });
+  };
 
   return (
     <section className="settings-appearance">
@@ -40,67 +155,65 @@ export function AppearanceSection() {
           role="radiogroup"
           aria-label="Tema de cores"
         >
-          {TERMINAL_THEME_IDS.map((id: TerminalThemeId) => {
-            const entry = TERMINAL_THEMES[id];
-            const palette = PALETTES[id];
-            const active = terminal.themeId === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                className={`settings-theme ${active ? 'settings-theme--active' : ''}`}
-                role="radio"
-                aria-checked={active}
-                aria-label={`Paleta ${entry.label}`}
-                onClick={() => void updateTerminal({ themeId: id })}
-              >
-                <span
-                  className="settings-theme__preview"
-                  style={{
-                    background: palette.bg,
-                    borderColor: palette.borderStrong,
-                  }}
-                  aria-hidden
-                >
-                  <span
-                    className="settings-theme__chrome"
-                    style={{
-                      background: palette.bgBar,
-                      borderBottomColor: palette.border,
-                    }}
-                  >
-                    <i style={{ background: palette.textFaint }} />
-                    <i style={{ background: palette.textFaint }} />
-                    <i style={{ background: palette.accent }} />
-                  </span>
-                  <span className="settings-theme__lines">
-                    <i
-                      className="settings-theme__line"
-                      style={{ background: palette.text }}
-                    />
-                    <i
-                      className="settings-theme__line settings-theme__line--dim"
-                      style={{ background: palette.textDim }}
-                    />
-                    <i
-                      className="settings-theme__cta"
-                      style={{ background: palette.btnPrimary }}
-                    />
-                  </span>
-                </span>
-                <span className="settings-theme__foot">
-                  <span className="settings-theme__name">{entry.label}</span>
-                  {active && (
-                    <span className="settings-theme__current">
-                      <PixelIcon name="check" size={9} />
-                      em uso
-                    </span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
+          {TERMINAL_THEME_IDS.map((id: TerminalThemeId) => (
+            <ThemeCard
+              key={id}
+              label={TERMINAL_THEMES[id].label}
+              ariaLabel={`Paleta ${TERMINAL_THEMES[id].label}`}
+              palette={PALETTES[id]}
+              active={!activeImported && terminal.themeId === id}
+              onSelect={() => selectBuiltIn(id)}
+            />
+          ))}
+          {ui.importedThemes.map((theme) => (
+            <ThemeCard
+              key={theme.id}
+              label={theme.label}
+              ariaLabel={`Paleta ${theme.label}, importada do VS Code`}
+              palette={theme.ui}
+              active={activeImported?.id === theme.id}
+              onSelect={() => void updateUi({ activeImportedThemeId: theme.id })}
+            />
+          ))}
         </div>
+        <div className="settings-appearance__import">
+          <button
+            type="button"
+            className="settings-btn"
+            onClick={() => fileRef.current?.click()}
+          >
+            Importar tema do VS Code
+          </button>
+          {activeImported ? (
+            <button
+              type="button"
+              className="settings-btn"
+              onClick={removeActiveImported}
+            >
+              Remover {activeImported.label}
+            </button>
+          ) : null}
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,.jsonc,application/json"
+            hidden
+            aria-label="Arquivo de tema do VS Code"
+            onChange={(event) => {
+              void importThemeFile(event.target.files?.[0]);
+              event.target.value = '';
+            }}
+          />
+        </div>
+        <p className="settings-field__note settings-appearance__note">
+          Use o arquivo <code>*-color-theme.json</code> da extensão. O Nexus
+          ajusta o contraste para leitura e mantém o botão principal neutro.
+        </p>
+        {importError ? (
+          <p className="settings-error" role="alert">
+            {importError}
+          </p>
+        ) : null}
       </div>
 
       <div className="settings-appearance__block">

@@ -1,7 +1,17 @@
 import {
   DEFAULT_TERMINAL_SETTINGS,
+  importedThemeSchema,
+  type ImportedTheme,
   type TerminalThemeId,
+  type UiSettings,
 } from "../../shared/settings-types";
+import {
+  DARK_SURFACE_STEPS,
+  LIGHT_SURFACE_STEPS,
+  generateSurfaceRamp,
+  hexToOklch,
+  oklchToHex,
+} from "./palette-gen";
 
 /**
  * App-wide UI palettes, one per terminal theme. Selecting a theme in
@@ -206,10 +216,62 @@ const VAR_MAP: Array<[keyof UiPalette, string]> = [
 /** Vars que versões antigas setavam inline e hoje pertencem ao base.css. */
 const LEGACY_INLINE_VARS = ["--accent-soft", "--accent-glow"];
 
-/** Restyle the whole app to the palette matching the selected theme. */
-export function applyUiTheme(themeId: TerminalThemeId): void {
+/** Tokens da rampa de superfícies (base.css :root / [data-theme]). */
+const SURFACE_VARS = DARK_SURFACE_STEPS.map((step) => step.token);
+
+/**
+ * Tema importado do VS Code ativo, ou null para o embutido. Revalida o
+ * formato aqui também: só hex chega ao `style.setProperty`, mesmo que o
+ * estado tenha vindo de um caminho que pulou o main.
+ */
+export function resolveImportedTheme(
+  ui: Pick<UiSettings, "importedThemes" | "activeImportedThemeId">,
+): ImportedTheme | null {
+  if (!ui.activeImportedThemeId) return null;
+  const theme = ui.importedThemes.find(
+    (entry) => entry.id === ui.activeImportedThemeId,
+  );
+  return theme && importedThemeSchema.safeParse(theme).success ? theme : null;
+}
+
+/**
+ * Rampa `--surface-*` do próprio fundo do tema importado (mesma regra que
+ * gerou a do nexus-light). Fundo e barra com a mesma luminosidade não dão
+ * inclinação de croma: a rampa fica no matiz/croma do fundo.
+ */
+function importedSurfaceRamp(
+  theme: ImportedTheme,
+): ReadonlyArray<{ readonly token: string; readonly value: string }> {
+  const steps =
+    theme.appearance === "light" ? LIGHT_SURFACE_STEPS : DARK_SURFACE_STEPS;
+  try {
+    return generateSurfaceRamp(
+      { background: theme.ui.bg, bar: theme.ui.bgBar },
+      steps,
+    );
+  } catch {
+    const bg = hexToOklch(theme.ui.bg);
+    return steps.map((step) => ({
+      token: step.token,
+      value: oklchToHex({ l: bg.l + step.lightnessDelta, c: bg.c, h: bg.h }),
+    }));
+  }
+}
+
+/**
+ * Restyle the whole app to the palette matching the selected theme. With an
+ * imported VS Code theme, its palette and surface ramp win; `data-theme`
+ * points at the built-in of the same side (dark/light) so the static
+ * fallbacks, light status band and diff highlighter follow.
+ */
+export function applyUiTheme(
+  themeId: TerminalThemeId,
+  imported: ImportedTheme | null = null,
+): void {
   const palette =
-    PALETTES[themeId] ?? PALETTES[DEFAULT_TERMINAL_SETTINGS.themeId];
+    imported?.ui ??
+    PALETTES[themeId] ??
+    PALETTES[DEFAULT_TERMINAL_SETTINGS.themeId];
   const root = document.documentElement;
   for (const [key, cssVar] of VAR_MAP) {
     root.style.setProperty(cssVar, palette[key]);
@@ -219,7 +281,18 @@ export function applyUiTheme(themeId: TerminalThemeId): void {
   for (const cssVar of LEGACY_INLINE_VARS) {
     root.style.removeProperty(cssVar);
   }
-  root.dataset.theme = themeId;
+  if (imported) {
+    for (const { token, value } of importedSurfaceRamp(imported)) {
+      root.style.setProperty(token, value);
+    }
+  } else {
+    for (const token of SURFACE_VARS) root.style.removeProperty(token);
+  }
+  root.dataset.theme = imported
+    ? imported.appearance === "light"
+      ? "nexus-light"
+      : "nexus-pink-city"
+    : themeId;
   // Plataforma exposta ao CSS: padding dos traffic lights só faz sentido no
   // mac (hiddenInset); win/linux têm titlebar nativa (default) e o espaço é
   // desperdiçado. Barato setar aqui — applyUiTheme roda no boot e no reload.

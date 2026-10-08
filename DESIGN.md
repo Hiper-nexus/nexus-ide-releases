@@ -253,6 +253,14 @@ ajusta sinais (`--ok` etc.) para segurar AA. Modo pixel
 (`data-theme-pixel='on'`) zera raios e promove VT323 a `--font-ui` — opt-in,
 ortogonal ao tema.
 
+Temas do VS Code importados (`styles/vscode-theme-import.ts`, persistidos em
+`ui.importedThemes`) viram as mesmas 14 vars + paleta xterm, só hex opaco:
+alpha composto sobre a superfície, texto/acento/perigo ≥4,5:1 sobre `--bg`,
+`--bg-elevated` e `--bg-bar` (luminosidade OKLCH ajustada, matiz mantido),
+CTA neutro de Nexus Dark/Light — nunca `button.background` nem o acento. A
+rampa `--surface-*` sai do próprio fundo (`generateSurfaceRamp`) e
+`data-theme` aponta para `nexus-pink-city`/`nexus-light` conforme o fundo.
+
 ## 9. Do / Don't rápido
 
 - **Do**: sinal operacional sempre visível; empty state com ação; linguagem
