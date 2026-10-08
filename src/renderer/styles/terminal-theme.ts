@@ -131,7 +131,10 @@ const NEXUS_GRAY: ITheme = {
   brightRed: '#ef8c8c',
   brightGreen: '#98d3a6',
   brightYellow: '#dcc287',
-  brightBlue: '#9aafcfd',
+  // Era '#9aafcfd' (7 dígitos, cor inválida desde c2ec961bf). Derivado pela
+  // regra dos outros 5 pares normal→bright deste tema, medida em OKLCH:
+  // ΔL ≈ +0.07, croma ×0.85, matiz do `blue` (#7d95c9 → L .741 C .070 H 265).
+  brightBlue: '#96abd9',
   brightMagenta: '#c6a7de',
   brightCyan: '#9ccfdd',
   brightWhite: '#f5f6f8',
