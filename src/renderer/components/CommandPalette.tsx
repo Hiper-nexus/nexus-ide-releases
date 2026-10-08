@@ -701,6 +701,7 @@ export function CommandPalette() {
         {
           hasWorkspace: true,
           paneFocused: false,
+          terminalInUse: false,
           terminalFocus: false,
           editableFocus: true,
         },

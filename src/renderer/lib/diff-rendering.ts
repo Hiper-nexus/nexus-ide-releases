@@ -544,6 +544,32 @@ export function diffSelectionTarget(
   };
 }
 
+const PT_BR_PLURAL = new Intl.PluralRules('pt-BR');
+
+/**
+ * O @pierre/diffs 1.5 escreve o separador de trechos em inglês, sem opção de
+ * texto/locale (`getModifiedLinesString` fixo; o `hunkSeparators: 'custom'`
+ * que permitiria trocar é recusado pelo CodeView). O `onPostRender` é a API
+ * pública que entrega o contêiner a cada render: aqui o texto vira PT-BR.
+ * Idempotente — um texto já traduzido não casa de novo.
+ */
+export function translateDiffSeparators(container: Element): void {
+  const root: ParentNode = container.shadowRoot ?? container;
+  for (const node of root.querySelectorAll('[data-unmodified-lines]')) {
+    const text = node.textContent ?? '';
+    const count = /^(\d+) unmodified lines?$/.exec(text);
+    if (count) {
+      const n = Number(count[1]);
+      node.textContent = `${n} ${PT_BR_PLURAL.select(n) === 'one' ? 'linha' : 'linhas'} sem alteração`;
+    } else if (text === 'More unchanged context may be available') {
+      node.textContent = 'Pode haver mais contexto sem alteração';
+    }
+  }
+  for (const node of root.querySelectorAll('[data-expand-all-button]')) {
+    if (node.textContent === 'Expand all') node.textContent = 'Expandir tudo';
+  }
+}
+
 /**
  * Maps every diff surface the @pierre/diffs renderer paints onto Nexus tokens
  * (DESIGN.md: --surface-0, --text, --diff-addition, --diff-deletion, --font-ui,

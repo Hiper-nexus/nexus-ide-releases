@@ -39,6 +39,7 @@ import { CoffeeCup } from '../pet/CoffeeCup';
 import { gitErrorCopy } from '../lib/git-error-copy';
 import { setVisibleInterval } from '../lib/visible-interval';
 import { DiffFileTree } from './diffs/DiffFileTree';
+import { PixelIcon } from './PixelIcon';
 import type { DiffCommentAnchor, DiffCommentTarget } from './diffs/AnnotatableCodeView';
 
 // Pierre + Shiki ficam num chunk à parte: só carregam quando um diff realçado aparece.
@@ -470,7 +471,8 @@ function GitDiffAnnotator({
       {drafts.length > 0 && (
         <div className="git-scm__diff-review-bar">
           <span className="git-scm__diff-review-counter">
-            📝 {drafts.length} revisão(ões) em rascunho
+            <PixelIcon name="file" size={12} />
+            {drafts.length} {drafts.length === 1 ? 'revisão' : 'revisões'} em rascunho
             {draftFileCount > 1 ? ` em ${draftFileCount} arquivos` : ''}
           </span>
           <div className="git-scm__diff-inline-actions">

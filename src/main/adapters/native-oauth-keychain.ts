@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { isCurrentProcessSmokeTest } from '../smoke-core';
 import { slimClaudeCredentialBlob } from './claude-credential';
 
 const NATIVE_OAUTH_READ_TTL_MS = 15_000;
@@ -68,6 +69,11 @@ export function readNativeOAuthCredential(
   execImpl: typeof execFile = execFile,
   options: NativeOAuthReadOptions = {},
 ): Promise<string | null> {
+  // F-1004 (backstop): a packaged smoke never reads the operator's Keychain.
+  // "Unavailable" (not "absent") so no caller falls back to a CLI login probe.
+  if (isCurrentProcessSmokeTest()) {
+    return Promise.reject(new Error('Keychain unavailable'));
+  }
   // Custom exec implementations are test seams. Cache only the real process;
   // otherwise one fixture can poison the next with a different fake result.
   const shouldCache = execImpl === execFile;

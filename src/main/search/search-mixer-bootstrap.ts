@@ -169,10 +169,18 @@ function createShallowFilenameProvider(): SearchSourceProvider {
   };
 }
 
-function createMixer(): SearchMixer {
+function createMixer(projectRoot: string): SearchMixer {
   const mixer = new SearchMixer({ debounceMs: 80, defaultLimit: 30 });
   // Order: ripgrep owns `files`; shallow walk is `workspaces` (never same key).
-  mixer.register(createRipgrepSearchProvider());
+  // The mixer key IS the authority: both IPC callers bind it from
+  // requireScopedRoot(sender), never from the renderer. The ripgrep fallback
+  // denies without allowedRoots (464dbcf00), so the root-less warm-up mixer
+  // stays fail-closed and each workspace mixer may search only its own root.
+  mixer.register(
+    createRipgrepSearchProvider(
+      projectRoot ? { allowedRoots: [projectRoot] } : {},
+    ),
+  );
   mixer.register(createMissionsProvider());
   mixer.register(createSkillsProvider());
   mixer.register(createShallowFilenameProvider());
@@ -184,7 +192,7 @@ export function getSearchMixer(projectRoot?: string): SearchMixer {
   const key = projectRoot ?? '';
   let mixer = mixers.get(key);
   if (!mixer) {
-    mixer = createMixer();
+    mixer = createMixer(key);
     mixers.set(key, mixer);
   }
   return mixer;

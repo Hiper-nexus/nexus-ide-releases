@@ -14,6 +14,7 @@ import {
   keybindingConflicts,
   parseWhenExpression,
   resolveShortcutCommand,
+  terminalInUse,
   validateBinding,
   type KeyPlatform,
   type KeybindingOverrides,
@@ -80,47 +81,97 @@ function dispatched(
   return (hit.index ?? 99) < panes ? `focus-pane-n:${hit.index}` : null;
 }
 
+/**
+ * Compara cada célula do oráculo com o resolver atual. `terminalInUse` diz se
+ * o terminal selecionado está em uso (à vista ou com o foco do teclado);
+ * `expectedNow` nomeia a mudança deliberada de uma célula.
+ */
+function oracleDivergences(
+  platform: KeyPlatform,
+  terminalInUse: (ctx: (typeof legacyOracle.contexts)[number]) => boolean,
+  /** O que a célula passa a fazer de propósito (padrão: o mesmo que antes). */
+  expectedNow: (
+    expected: string | null,
+    ctx: (typeof legacyOracle.contexts)[number],
+    mods: number,
+  ) => string | null = (expected) => expected,
+): string[] {
+  const results = legacyOracle.results as Record<string, string>;
+  const divergences: string[] = [];
+  legacyOracle.contexts.forEach((ctx, ctxIndex) => {
+    for (const keyValue of legacyOracle.keys) {
+      for (let mods = 0; mods < 16; mods += 1) {
+        const event = key(keyValue, {
+          metaKey: Boolean(mods & 1),
+          ctrlKey: Boolean(mods & 2),
+          altKey: Boolean(mods & 4),
+          shiftKey: Boolean(mods & 8),
+        });
+        const expected = expectedNow(
+          results[`${ctxIndex}|${mods}|${keyValue}`] ?? null,
+          ctx,
+          mods,
+        );
+        const actual = dispatched(
+          resolve(event, platform, {
+            ...ctx,
+            terminalInUse: terminalInUse(ctx),
+            terminalFocus: false,
+            editableFocus: false,
+          }),
+          legacyOracle.panes,
+        );
+        const same =
+          expected !== null
+            ? actual === expected
+            : actual === null || NEW_COMMANDS.has(actual);
+        if (!same) {
+          divergences.push(
+            `${JSON.stringify(ctx)} mods=${mods} key=${keyValue}: antes ${expected}, agora ${actual}`,
+          );
+        }
+      }
+    }
+  });
+  return divergences;
+}
+
 describe('padrões', () => {
   it.each(['darwin', 'linux', 'win32'] as const)(
     'fazem exatamente o que o onKey de App.tsx @ 53116f0d8 fazia (%s)',
     (platform) => {
-      const results = legacyOracle.results as Record<string, string>;
-      const divergences: string[] = [];
-      legacyOracle.contexts.forEach((ctx, ctxIndex) => {
-        for (const keyValue of legacyOracle.keys) {
-          for (let mods = 0; mods < 16; mods += 1) {
-            const event = key(keyValue, {
-              metaKey: Boolean(mods & 1),
-              ctrlKey: Boolean(mods & 2),
-              altKey: Boolean(mods & 4),
-              shiftKey: Boolean(mods & 8),
-            });
-            const expected = results[`${ctxIndex}|${mods}|${keyValue}`] ?? null;
-            const actual = dispatched(
-              resolve(event, platform, {
-                ...ctx,
-                terminalFocus: false,
-                editableFocus: false,
-              }),
-              legacyOracle.panes,
-            );
-            const same =
-              expected !== null
-                ? actual === expected
-                : actual === null || NEW_COMMANDS.has(actual);
-            if (!same) {
-              divergences.push(
-                `${JSON.stringify(ctx)} mods=${mods} key=${keyValue}: antes ${expected}, agora ${actual}`,
-              );
-            }
-          }
-        }
-      });
       expect(legacyOracle.base).toBe('53116f0d8');
       expect(legacyOracle.cases).toBe(
         legacyOracle.contexts.length * legacyOracle.keys.length * 16,
       );
-      expect(divergences.slice(0, 20)).toEqual([]);
+      // Com o terminal selecionado em uso (Terminais à vista ou foco no xterm),
+      // nenhuma célula muda — o palco continua no ⇧⌘F.
+      expect(
+        oracleDivergences(platform, (ctx) => ctx.paneFocused).slice(0, 20),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'fora dos terminais só o palco cede o ⇧⌘F à busca no conteúdo (%s)',
+    (platform) => {
+      // F-1003: no Início/Projeto/Quadro o terminal selecionado não está à
+      // vista; o atalho abria o palco e arrastava o operador para Terminais.
+      // As outras ~10 mil células seguem idênticas ao App antigo.
+      expect(
+        oracleDivergences(
+          platform,
+          () => false,
+          // A busca é atalho novo e estrito (⌘⇧F ou Ctrl+⇧F, bits 9/10); as
+          // variantes antigas só do palco (com ⌥, ou ⌘+Ctrl) ficam sem ação.
+          (expected, ctx, mods) =>
+            expected === 'stage-focus'
+              ? ctx.hasWorkspace && (mods === 9 || mods === 10)
+                ? 'content-search'
+                : null
+              : expected,
+        ).slice(0, 20),
+      ).toEqual([]);
     },
   );
 
@@ -218,14 +269,27 @@ describe('resolver', () => {
     ).toBe('mission-new');
   });
 
-  it('Mod+Shift+F com terminal selecionado é o palco, como antes; sem ele, busca', () => {
+  it('Mod+Shift+F com o terminal selecionado em uso é o palco; fora dele, busca', () => {
     const chord = key('F', { ctrlKey: true, shiftKey: true });
     expect(
-      resolve(chord, 'linux', { ...WORKSPACE, paneFocused: true })?.command,
+      resolve(chord, 'linux', { ...WORKSPACE, paneFocused: true, terminalInUse: true })
+        ?.command,
     ).toBe('stage-focus');
+    // Terminal selecionado mas fora de vista (Início): busca, não palco.
+    expect(
+      resolve(chord, 'linux', { ...WORKSPACE, paneFocused: true, terminalInUse: false })
+        ?.command,
+    ).toBe('content-search');
     expect(
       resolve(chord, 'linux', { ...WORKSPACE, paneFocused: false })?.command,
     ).toBe('content-search');
+  });
+
+  it('terminalInUse: selecionado E (Terminais à vista OU foco no xterm)', () => {
+    expect(terminalInUse({ paneFocused: true, terminalView: true, terminalFocus: false })).toBe(true);
+    expect(terminalInUse({ paneFocused: true, terminalView: false, terminalFocus: true })).toBe(true);
+    expect(terminalInUse({ paneFocused: true, terminalView: false, terminalFocus: false })).toBe(false);
+    expect(terminalInUse({ paneFocused: false, terminalView: true, terminalFocus: true })).toBe(false);
   });
 
   it('a linha de dígito devolve o índice da tecla apertada', () => {

@@ -81,7 +81,7 @@ describe('GitPanelBody', () => {
 
     // Review bar should appear with 1 draft
     expect(host.querySelector('.git-scm__diff-review-bar')).not.toBeNull();
-    expect(host.textContent).toContain('1 revisão(ões) em rascunho');
+    expect(host.textContent).toContain('1 revisão em rascunho');
     expect(host.querySelector('.git-scm__diff-inline-comment')).not.toBeNull();
   });
 
@@ -153,7 +153,7 @@ describe('GitPanelBody', () => {
 
     select('src/other.ts', DIFF_OTHER);
     expect(host.querySelector('.git-scm__diff-inline-comment')).toBeNull();
-    expect(host.textContent).toContain('1 revisão(ões) em rascunho');
+    expect(host.textContent).toContain('1 revisão em rascunho');
 
     await act(async () => {
       button(host, 'Enviar todas ao agente').click();
@@ -177,7 +177,7 @@ describe('GitPanelBody', () => {
     // A refresh can drop the selection (the file moved section); the draft must not go with it.
     act(() => useGitScmStore.setState({ selected: null, diffText: '' }));
     select('src/other.ts', DIFF_OTHER);
-    expect(host.textContent).toContain('1 revisão(ões) em rascunho');
+    expect(host.textContent).toContain('1 revisão em rascunho');
 
     act(() => host.querySelector<HTMLDivElement>('.git-scm__diff-line.is-clickable')!.click());
     setTextareaValue(host.querySelector<HTMLTextAreaElement>('.git-scm__diff-comment-input')!, 'Ajustar B');
@@ -187,7 +187,7 @@ describe('GitPanelBody', () => {
     expect(sendSpy).toHaveBeenLastCalledWith([
       { path: 'src/other.ts', line: 1, body: 'Ajustar B\n\n> let a = 1;' },
     ]);
-    expect(host.textContent).toContain('1 revisão(ões) em rascunho');
+    expect(host.textContent).toContain('1 revisão em rascunho');
 
     select('src/app.ts', DIFF_APP);
     expect(host.querySelector('.git-scm__diff-inline-comment')?.textContent).toContain(

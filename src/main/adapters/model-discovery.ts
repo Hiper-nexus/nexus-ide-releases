@@ -10,6 +10,7 @@ import {
   type CliModelCacheReadOptions,
 } from './cli-model-discovery';
 import { discoverCodexModelsViaAppServer } from './codex-model-list';
+import { isCurrentProcessSmokeTest } from '../smoke-core';
 import type { LiveModelListing } from './model-availability';
 
 /**
@@ -526,6 +527,9 @@ export function refreshDiscoveredModels(
     cacheFiles?: readonly string[];
   } = {},
 ): Promise<void> {
+  // F-1004: smoke/teste automatizado não roda `agy models`, `opencode models`
+  // nem `codex app-server` (boot e IPC providers:list passam por aqui).
+  if (isCurrentProcessSmokeTest()) return Promise.resolve();
   const running = inFlight.get(adapterId);
   if (running) return running;
   if (CACHE_HYDRATE_ADAPTERS.has(adapterId)) {

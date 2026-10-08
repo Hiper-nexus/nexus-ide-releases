@@ -1,10 +1,13 @@
 /** @vitest-environment jsdom */
+import fs from 'node:fs';
+import path from 'node:path';
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitPanelBody } from './GitPanelBody';
 import { useGitScmStore } from '../state/git-scm-store';
 import * as agentAttach from '../lib/agent-attach';
+import { computedCssValue, installStyleContract } from './style-contract.test-utils';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -178,6 +181,9 @@ beforeEach(() => {
 afterEach(() => {
   for (const root of mountedRoots.splice(0)) act(() => root.unmount());
   document.body.replaceChildren();
+  document.head
+    .querySelectorAll('style[data-v2-style-contract]')
+    .forEach((style) => style.remove());
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -213,7 +219,7 @@ describe('GitPanelBody highlighted diff', () => {
       'Renomear e manter',
     );
     clickButton(host, 'Guardar rascunho');
-    expect(host.textContent).toContain('1 revisão(ões) em rascunho');
+    expect(host.textContent).toContain('1 revisão em rascunho');
     expect(host.querySelector('[data-annotation="additions:2"]')?.textContent).toContain(
       'Linhas 1 a 2: Renomear e manter',
     );
@@ -274,7 +280,7 @@ describe('GitPanelBody highlighted diff', () => {
     );
     expect(lastProps().items[0].fileDiff.name).toBe('src/other.ts');
     expect(lastProps().items[0].annotations).toEqual([]);
-    expect(host.textContent).toContain('1 revisão(ões) em rascunho');
+    expect(host.textContent).toContain('1 revisão em rascunho');
 
     const send = findButton(host, 'Enviar todas ao agente');
     await act(async () => {
@@ -346,5 +352,81 @@ describe('GitPanelBody highlighted diff', () => {
     expect(unstage).toHaveBeenCalledWith(['src/lib/x.ts']);
     expect(discard).toHaveBeenCalledWith(['src/app.ts']);
     expect(host.querySelector('[role="tree"][aria-label="Arquivos em Staged"]')).not.toBeNull();
+  });
+
+  // F-1003 (mesma verificação): ícone do sistema, nunca emoji, e plural de verdade.
+  it('the review bar uses the PixelIcon set and a real plural', async () => {
+    const host = await render();
+    for (const line of [1, 2]) {
+      beginComment({ start: line, side: 'additions', end: line });
+      setTextareaValue(
+        host.querySelector<HTMLTextAreaElement>('.git-scm__diff-comment-input')!,
+        `nota ${line}`,
+      );
+      clickButton(host, 'Guardar rascunho');
+    }
+    const counter = host.querySelector('.git-scm__diff-review-counter')!;
+    expect(counter.textContent).toBe('2 revisões em rascunho');
+    expect(counter.textContent).not.toMatch(/\p{Extended_Pictographic}/u);
+    expect(counter.querySelector('svg.pixel-icon')).not.toBeNull();
+  });
+
+  // F-1003 (mesma verificação): o separador do Pierre vinha em inglês.
+  it('translates the Pierre hunk separator to pt-BR after each render', async () => {
+    await render();
+    const onPostRender = lastProps().options.onPostRender as
+      | ((node: HTMLElement, instance: unknown, phase: string) => void)
+      | undefined;
+    expect(onPostRender).toBeTypeOf('function');
+
+    const container = document.createElement('div');
+    const shadow = container.attachShadow({ mode: 'open' });
+    shadow.innerHTML = [
+      '<div data-separator="line-info"><span data-unmodified-lines>12 unmodified lines</span></div>',
+      '<div data-separator="line-info"><span data-unmodified-lines>1 unmodified line</span></div>',
+      '<div data-separator="line-info"><span data-unmodified-lines>More unchanged context may be available</span></div>',
+      '<div role="button" data-expand-all-button>Expand all</div>',
+    ].join('');
+    onPostRender!(container, {}, 'mount');
+
+    expect(
+      Array.from(shadow.querySelectorAll('[data-unmodified-lines]')).map((n) => n.textContent),
+    ).toEqual([
+      '12 linhas sem alteração',
+      '1 linha sem alteração',
+      'Pode haver mais contexto sem alteração',
+    ]);
+    expect(shadow.querySelector('[data-expand-all-button]')?.textContent).toBe('Expandir tudo');
+    // Idempotente: um segundo render não traduz de novo nem estraga o texto.
+    onPostRender!(container, {}, 'update');
+    expect(shadow.querySelector('[data-unmodified-lines]')?.textContent).toBe(
+      '12 linhas sem alteração',
+    );
+  });
+
+  // F-1003 (mesma verificação): no Lado a lado a coluna é estreita e a linha
+  // de ações, alinhada à direita sem quebra, empurrava "Cancelar" para fora.
+  it('the comment editor actions wrap inside the box instead of overflowing', async () => {
+    const css = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/renderer/styles/git-scm.css'),
+      'utf8',
+    );
+    installStyleContract([css], { width: 1_440 });
+    const host = await render();
+    clickButton(host, 'Lado a lado');
+    beginComment({ start: 2, side: 'additions', end: 2 });
+    const actions = host.querySelector('.git-scm__diff-annotation .git-scm__diff-inline-actions');
+    expect(actions).not.toBeNull();
+    expect(computedCssValue(actions!, 'flex-wrap')).toBe('wrap');
+    expect(findButton(host, 'Cancelar').closest('.git-scm__diff-inline-editor')).not.toBeNull();
+    const editor = host.querySelector('.git-scm__diff-annotation .git-scm__diff-inline-editor')!;
+    expect(computedCssValue(editor, 'min-width')).toBe('0px');
+    expect(computedCssValue(editor, 'box-sizing')).toBe('border-box');
+    // Coluna de ~100px: o rótulo quebra dentro do botão, que nunca passa da caixa.
+    for (const label of ['Cancelar', 'Guardar rascunho', 'Enviar agora']) {
+      const button = findButton(editor as HTMLElement, label);
+      expect(computedCssValue(button, 'max-width')).toBe('100%');
+      expect(computedCssValue(button, 'white-space')).toBe('normal');
+    }
   });
 });

@@ -592,6 +592,10 @@
 .git-scm__diff-inline-editor {
   display: flex;
   flex-direction: column;
+  /* Na coluna estreita do "Lado a lado" a caixa encolhe com a coluna, nunca
+     além dela (F-1003: "Cancelar" ficava fora da caixa). */
+  box-sizing: border-box;
+  min-width: 0;
   gap: 6px;
   padding: 8px 12px;
   margin: 2px 8px 6px 48px;
@@ -636,6 +640,9 @@
 
 .git-scm__diff-inline-actions {
   display: flex;
+  /* Sem quebra, a linha alinhada à direita transbordava pela ESQUERDA da
+     caixa quando faltava largura e o primeiro botão sumia. */
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   justify-content: flex-end;
@@ -643,6 +650,7 @@
 
 .git-scm__diff-review-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -947,4 +955,19 @@
 .git-scm__diff-annotation .git-scm__diff-inline-editor,
 .git-scm__diff-annotation .git-scm__diff-inline-comment {
   margin: 4px 8px;
+}
+
+/* O slot herda a fonte de código do Pierre; o editor é UI (DESIGN.md §3). */
+.git-scm__diff-annotation {
+  font-family: var(--font-ui);
+}
+
+/* No "Lado a lado" a anotação mora numa só coluna, que pode ter ~100px: o
+   rótulo quebra DENTRO do botão em vez de o botão vazar da caixa (F-1003). */
+.git-scm__diff-inline-actions > .product-pane__btn {
+  min-width: 0;
+  max-width: 100%;
+  padding-inline: var(--space-2);
+  white-space: normal;
+  overflow-wrap: break-word;
 }

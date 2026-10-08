@@ -78,9 +78,10 @@ export interface LegacyVariants {
 export const KEYBINDING_COMMANDS: readonly KeybindingCommandDefinition[] = [
   { id: 'command-palette', label: 'Buscar terminais, missões e ações', defaults: ['Mod+K'], when: 'hasWorkspace', legacy: {} },
   { id: 'file-picker', label: 'Ir para um arquivo do projeto', defaults: ['Mod+P'], when: 'hasWorkspace' },
-  // Mod+Shift+F com terminal selecionado sempre foi o palco; a busca só
-  // ocupa o que o atalho antigo deixava vazio (dentro da paleta, sempre).
-  { id: 'content-search', label: 'Buscar texto nos arquivos do projeto', defaults: ['Mod+Shift+F'], when: 'hasWorkspace && !paneFocused' },
+  // Mod+Shift+F com o terminal selecionado EM USO (Terminais à vista ou foco
+  // no xterm) é o palco, como sempre; fora dele — Início, Projeto, Quadro —
+  // é a busca no conteúdo (dentro da paleta, sempre). F-1003.
+  { id: 'content-search', label: 'Buscar texto nos arquivos do projeto', defaults: ['Mod+Shift+F'], when: 'hasWorkspace && !terminalInUse' },
   { id: 'attention-inbox', label: 'Lista de atenção', defaults: ['Mod+J'], when: 'hasWorkspace', legacy: {} },
   { id: 'mission-new', label: 'Nova missão', defaults: ['Mod+N'], legacy: {} },
   { id: 'task-board', label: 'Quadro de tarefas', defaults: ['Mod+B'], legacy: {} },
@@ -92,7 +93,7 @@ export const KEYBINDING_COMMANDS: readonly KeybindingCommandDefinition[] = [
   { id: 'focus-pane-n', label: 'Selecionar um terminal pelo número', defaults: ['Mod+1'], digitIndex: true, legacy: {} },
   { id: 'split-right', label: 'Dividir o terminal à direita', defaults: ['Mod+D'], when: 'paneFocused', legacy: { anyAlt: true } },
   { id: 'split-down', label: 'Dividir o terminal abaixo', defaults: ['Mod+Shift+D'], when: 'paneFocused', legacy: { anyAlt: true } },
-  { id: 'stage-focus', label: 'Palco: só o terminal selecionado', defaults: ['Mod+Shift+F'], when: 'paneFocused', legacy: { anyAlt: true } },
+  { id: 'stage-focus', label: 'Palco: só o terminal selecionado', defaults: ['Mod+Shift+F'], when: 'paneFocused && terminalInUse', legacy: { anyAlt: true } },
   { id: 'close-pane', label: 'Fechar o terminal selecionado', defaults: ['Mod+W'], when: 'paneFocused', legacy: { anyShift: true, anyAlt: true } },
 ];
 
@@ -119,6 +120,11 @@ export interface ShortcutContext {
   terminalFocus: boolean;
   /** Campo de texto do app (fora do xterm) tem o foco. */
   editableFocus: boolean;
+  /**
+   * O terminal selecionado está em uso: há um selecionado E (a tela mostra
+   * terminais OU o foco do teclado está num xterm). Ver `terminalInUse()`.
+   */
+  terminalInUse: boolean;
   projectOverview: boolean;
   [key: string]: boolean;
 }
@@ -744,6 +750,19 @@ function bindingMatches(
     },
     platform,
   );
+}
+
+/**
+ * Terminal selecionado em uso: no Início com um terminal aberto em segundo
+ * plano o operador não está "no terminal", então ⇧⌘F é busca, não palco.
+ */
+export function terminalInUse(input: {
+  paneFocused: boolean;
+  /** A tela atual mostra a grade de terminais (Terminais ou os da missão). */
+  terminalView: boolean;
+  terminalFocus: boolean;
+}): boolean {
+  return input.paneFocused && (input.terminalView || input.terminalFocus);
 }
 
 /** Contexto de foco a partir do alvo do evento (o resto vem dos stores). */
