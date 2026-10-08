@@ -108,6 +108,40 @@ describe('MissionEventJournal', () => {
     expect(same.lastSequence).toBe(2);
   });
 
+  it('F-1005: pagina o histórico para trás com total verdadeiro, sem trazer tudo', () => {
+    const manager = new ProjectRuntimeManager({ baseDir, appVersion: '0.15.5' });
+    managers.push(manager);
+    seedMission(manager, 'mission-fixture');
+    const journal = new MissionEventJournal(manager, testProjectScope(), {
+      now: () => 4000,
+    });
+    for (let index = 1; index <= 5; index += 1) {
+      journal.append(
+        createMissionEventFixture({ idempotencyKey: `idem-page-${index}-xxxx` }),
+      );
+    }
+
+    const newest = journal.projectRecentPage('mission-fixture', { limit: 2 });
+    expect(newest.events.map((e) => e.sequence)).toEqual([4, 5]);
+    expect(newest.total).toBe(5);
+    expect(newest.hasMore).toBe(true);
+
+    const middle = journal.projectRecentPage('mission-fixture', {
+      limit: 2,
+      beforeSequence: 4,
+    });
+    expect(middle.events.map((e) => e.sequence)).toEqual([2, 3]);
+    expect(middle.total).toBe(5);
+    expect(middle.hasMore).toBe(true);
+
+    const oldest = journal.projectRecentPage('mission-fixture', {
+      limit: 2,
+      beforeSequence: 2,
+    });
+    expect(oldest.events.map((e) => e.sequence)).toEqual([1]);
+    expect(oldest.hasMore).toBe(false);
+  });
+
   it('rejects an ack beyond the last persisted sequence', () => {
     const manager = new ProjectRuntimeManager({ baseDir, appVersion: '0.15.5' });
     managers.push(manager);

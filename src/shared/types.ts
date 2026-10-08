@@ -853,11 +853,22 @@ export interface NexusApi {
     resumeMissionBootstrap(input: {
       missionId: string;
     }): Promise<MissionOrchestratorBootstrapResult>;
-    /** Mission event journal — recent projection (flag feature.mission.eventJournal). */
+    /**
+     * Mission event journal — recent projection (flag feature.mission.eventJournal).
+     * F-1005: `beforeSequence` pede a página anterior; `total` é o tamanho do
+     * journal da missão e `hasMore` diz se há eventos antes desta página.
+     */
     missionEventsRecent(input: {
       missionId: string;
       limit?: number;
-    }): Promise<{ events: unknown[]; enabled?: boolean; error?: string }>;
+      beforeSequence?: number;
+    }): Promise<{
+      events: unknown[];
+      enabled?: boolean;
+      error?: string;
+      total?: number;
+      hasMore?: boolean;
+    }>;
     /**
      * ORC-10: acima de 128 eventos ou 1 MiB depois do cursor (ou cursor além
      * da maior sequência) vem `snapshot`: `events` são os mais recentes e o

@@ -457,6 +457,10 @@
 
 .settings-detail__content {
   padding: var(--space-4) var(--space-5) var(--space-5);
+  /* F-1005: a coluna encosta na borda direita; o respiro da direita cresce
+     até a largura do orbe da Jarvis para nenhum "Alterar"/ação rolar por
+     baixo dele (o respiro que já existia conta — não soma). */
+  padding-inline-end: max(var(--space-5), var(--nexus-orb-safe-inline, 0px));
   width: 100%;
   min-width: 0;
   max-width: 1120px;
@@ -1746,6 +1750,10 @@
   .settings-detail__content {
     padding-left: var(--space-4);
     padding-right: var(--space-4);
+  }
+
+  .settings-detail__content {
+    padding-right: max(var(--space-4), var(--nexus-orb-safe-inline, 0px));
   }
 
   .settings-detail__return kbd {

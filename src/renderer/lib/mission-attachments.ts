@@ -11,6 +11,23 @@ export function isMissionContextAttachmentPath(value: string): boolean {
   return value.replaceAll('\\', '/').startsWith(MISSION_CONTEXT_ATTACHMENT_PREFIX);
 }
 
+/**
+ * Prefixo que o Main põe no nome copiado para a missão (`droppedFileName`:
+ * `<Date.now() base36>-<8 bytes hex>-<nome saneado>`). É detalhe interno.
+ */
+const STAGED_ATTACHMENT_TOKEN = /^[0-9a-z]{6,12}-[0-9a-f]{16}-(?=.)/;
+
+/**
+ * F-1005: nome do anexo para a tela, sem o token interno do Main. Para um
+ * anexo restaurado de rascunho (sem o `File` original na memória) é o melhor
+ * nome disponível; com o arquivo na mão o picker mostra o nome que o operador
+ * escolheu, com acento e espaço.
+ */
+export function missionAttachmentDisplayName(path: string): string {
+  const base = path.replaceAll('\\', '/').split('/').at(-1) ?? path;
+  return base.replace(STAGED_ATTACHMENT_TOKEN, '');
+}
+
 export type MissionAttachmentKind = 'image' | 'audio' | 'file' | 'document';
 
 export type MissionAttachment = {

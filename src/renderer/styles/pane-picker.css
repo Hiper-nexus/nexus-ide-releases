@@ -9,9 +9,18 @@
   position: relative;
 }
 
+/* F-1005: o "+ Pane" divide a faixa do canto com o orbe da Jarvis — fica à
+   esquerda dele (`--nexus-orb-safe-inline`, publicado pelo VoiceHud) em vez
+   de os dois se empilharem por cima do conteúdo. `--pane-picker-safe-block` é
+   a altura que a faixa ocupa (borda + gatilho + respiro): o card de aprovação
+   sobe acima dela. */
+.grid {
+  --pane-picker-safe-block: calc(var(--space-3) + 32px + var(--space-2));
+}
+
 .pane-picker {
   position: absolute;
-  right: var(--space-3);
+  right: calc(var(--space-3) + var(--nexus-orb-safe-inline, 0px));
   bottom: var(--space-3);
   z-index: var(--z-soft-panel);
 }

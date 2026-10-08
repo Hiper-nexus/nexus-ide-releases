@@ -33,6 +33,11 @@ import { buildPulseMarkers, buildPulseTicks } from '../../lib/quota-pulse';
 // que o scorer do main e o app de menu bar; nenhuma implementação paralela.
 import { scoreFleet } from '../../../main/quota/smart-pick';
 
+/** F-1005: "1 conexão", "2 conexões" — nunca "1 conexões" nem "(ões)". */
+function pluralWord(count: number, one: string, many: string): string {
+  return count === 1 ? one : many;
+}
+
 /**
  * Linha do Nexus Redline (menu bar no macOS, bandeja no Windows): instala
  * na primeira vez, abre quando já instalado (/Applications ou %LocalAppData%).
@@ -482,8 +487,8 @@ function QuotaPulseBand({
         role="img"
         aria-label={
           nextIn
-            ? `Eixo de renovação em 7 dias; próxima em ${nextIn} (${next.windowLabel}), ${markers.length} contas com reset conhecido`
-            : `Eixo de renovação em 7 dias; ${markers.length} contas com reset conhecido`
+            ? `Eixo de renovação em 7 dias; próxima em ${nextIn} (${next.windowLabel}), ${markers.length} ${pluralWord(markers.length, 'conta', 'contas')} com reset conhecido`
+            : `Eixo de renovação em 7 dias; ${markers.length} ${pluralWord(markers.length, 'conta', 'contas')} com reset conhecido`
         }
       >
         <line
@@ -611,7 +616,8 @@ export function UsageQuotaSection() {
         {status !== 'error' && entries.length > 0 && (
           <>
             <span>
-              <strong>{entries.length}</strong> conexões e contas
+              <strong>{entries.length}</strong>{' '}
+              {pluralWord(entries.length, 'conexão ou conta', 'conexões e contas')}
             </span>
             <span>
               <strong>{highUsageCount}</strong> com uso elevado
@@ -624,7 +630,11 @@ export function UsageQuotaSection() {
                 className="quota-panel__plans"
                 title={
                   snapshot.plans.undetected > 0
-                    ? `Assinaturas detectadas pelos próprios serviços. ${snapshot.plans.undetected} conexão(ões) elegível(eis) sem plano identificado não entram na soma.`
+                    ? `Assinaturas detectadas pelos próprios serviços. ${snapshot.plans.undetected} ${pluralWord(
+                        snapshot.plans.undetected,
+                        'conexão elegível sem plano identificado não entra',
+                        'conexões elegíveis sem plano identificado não entram',
+                      )} na soma.`
                     : 'Assinaturas detectadas pelos próprios serviços — some ao remover uma conta, cresce ao conectar outra.'
                 }
               >
@@ -632,7 +642,11 @@ export function UsageQuotaSection() {
                 {snapshot.plans.priced}{' '}
                 {snapshot.plans.priced === 1 ? 'plano com preço' : 'planos com preço'}
                 {snapshot.plans.connected > snapshot.plans.priced &&
-                  ` · ${snapshot.plans.connected - snapshot.plans.priced} contas fora da soma`}
+                  ` · ${snapshot.plans.connected - snapshot.plans.priced} ${pluralWord(
+                    snapshot.plans.connected - snapshot.plans.priced,
+                    'conta fora da soma',
+                    'contas fora da soma',
+                  )}`}
               </span>
             )}
           </>
@@ -660,16 +674,19 @@ export function UsageQuotaSection() {
             Consumo real acumulado
           </span>
           <span className="quota-panel__consumption-item">
-            ⚡ <strong>{fmtTokens(lifetime.tokensBurned)}</strong> tokens
+            ⚡ <strong>{fmtTokens(lifetime.tokensBurned)}</strong>{' '}
+            {pluralWord(Math.floor(lifetime.tokensBurned), 'token', 'tokens')}
           </span>
           <span className="quota-panel__consumption-item">
             💵 <strong>{fmtUsd(lifetime.usdEquivalent)}</strong> em API
           </span>
           <span className="quota-panel__consumption-item">
-            🪟 <strong>{lifetime.panesServed}</strong> panes
+            🪟 <strong>{lifetime.panesServed}</strong>{' '}
+            {pluralWord(lifetime.panesServed, 'pane', 'panes')}
           </span>
           <span className="quota-panel__consumption-item">
-            🔁 <strong>{lifetime.turns}</strong> turnos
+            🔁 <strong>{lifetime.turns}</strong>{' '}
+            {pluralWord(lifetime.turns, 'turno', 'turnos')}
           </span>
         </div>
       )}

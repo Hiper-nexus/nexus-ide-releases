@@ -559,6 +559,17 @@
   font-size: var(--text-xs);
 }
 
+/* F-1005: miniatura da imagem anexada no lugar do rótulo "Imagem". */
+.mission-attachment-picker__thumb {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+}
+
 .mission-attachment-picker__file {
   display: grid;
   flex: 1;

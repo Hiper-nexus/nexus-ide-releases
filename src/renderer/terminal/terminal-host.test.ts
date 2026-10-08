@@ -114,7 +114,10 @@ import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 import { buildGridTree, listPanes } from '../lib/split-tree';
 import * as terminalOutputScheduler from './terminal-output-scheduler';
+import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
+import { TERMINAL_THEMES } from '../styles/terminal-theme';
 import {
+  applyTerminalSettings,
   attachHost,
   cancelPaneRecovery,
   consumeFirstSpawnIntent,
@@ -460,6 +463,31 @@ describe('F-603 — pane não some ao voltar dos Ajustes', () => {
     revealTerminalHostsAfterWorkspaceShow();
 
     expect(host.isVisible).toBe(true);
+  });
+});
+
+describe('F-1005 — rodapé do terminal segue o tema (sem faixa preta)', () => {
+  afterEach(() => applyTerminalSettings(DEFAULT_TERMINAL_SETTINGS));
+
+  it('o host publica o fundo do tema ao nascer e acompanha a troca de tema', () => {
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    setHostSize(slot, 1200, 800);
+    attachHost(pane, slot);
+    const host = getOrCreateHost(pane);
+    const defaultBg =
+      TERMINAL_THEMES[DEFAULT_TERMINAL_SETTINGS.themeId].theme.background;
+
+    expect(host.element.style.getPropertyValue('--term-bg')).toBe(defaultBg);
+
+    applyTerminalSettings({ ...DEFAULT_TERMINAL_SETTINGS, themeId: 'solarized-dark' });
+    expect(host.element.style.getPropertyValue('--term-bg')).toBe(
+      TERMINAL_THEMES['solarized-dark'].theme.background,
+    );
+
+    // Tema importado do VS Code (fundo colorido): o rodapé acompanha também.
+    applyTerminalSettings(DEFAULT_TERMINAL_SETTINGS, { background: '#0b2b26' });
+    expect(host.element.style.getPropertyValue('--term-bg')).toBe('#0b2b26');
   });
 });
 

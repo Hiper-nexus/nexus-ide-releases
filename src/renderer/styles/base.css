@@ -2494,6 +2494,14 @@ body {
   height: 100% !important;
 }
 
+/* F-1005: o viewport estica até o fim do host (regra acima), mas o xterm só
+   pinta o fundo do tema nas linhas da grade. A sobra (< 1 linha) mostrava o
+   #000 do xterm.css como faixa preta em todo tema não preto. `--term-bg` é o
+   fundo do tema do terminal, publicado pelo terminal-host em cada host. */
+.term-host .xterm .xterm-viewport {
+  background-color: var(--term-bg, var(--bg));
+}
+
 /* xterm herda a scrollbar pixel global (thumb quadrado --border-strong,
    accent no hover) — o override local ficou redundante e foi removido. */
 

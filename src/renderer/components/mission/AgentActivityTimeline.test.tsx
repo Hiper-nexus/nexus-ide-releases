@@ -416,6 +416,23 @@ describe('AgentActivityTimeline', () => {
     expect(pre?.textContent).toBe('18 tests passed');
   });
 
+  it('F-1005: "Todas" diz quantos de quantos quando o Main tem mais histórico', () => {
+    const allLabel = (host: HTMLElement) =>
+      Array.from(host.querySelectorAll('button')).find((b) =>
+        b.textContent?.startsWith('Todas'),
+      )?.textContent;
+
+    const partial = render(
+      <AgentActivityTimeline events={makeEvents('m-1', 40)} missionId="m-1" totalCount={90} />,
+    );
+    expect(allLabel(partial)).toBe('Todas (40 de 90)');
+
+    const complete = render(
+      <AgentActivityTimeline events={makeEvents('m-2', 40)} missionId="m-2" totalCount={40} />,
+    );
+    expect(allLabel(complete)).toBe('Todas (40)');
+  });
+
   it('virtualiza 10 mil eventos com DOM limitado e abre no topo, como antes', async () => {
     const host = render(<AgentActivityTimeline events={makeEvents('m-1', 10_000)} missionId="m-1" />);
     await settle();

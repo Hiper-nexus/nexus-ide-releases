@@ -6,6 +6,13 @@
 .pane-approval {
   position: absolute;
   inset: auto var(--space-3) var(--space-3) var(--space-3);
+  /* F-1005: o card sobe acima da faixa do canto onde flutuam o "+ Pane" e o
+     orbe da Jarvis — antes os dois cobriam a borda e o texto final dele. */
+  bottom: max(
+    var(--space-3),
+    var(--nexus-orb-safe-block, 0px),
+    var(--pane-picker-safe-block, 0px)
+  );
   z-index: var(--z-soft-overlay);
   display: grid;
   gap: var(--space-2);

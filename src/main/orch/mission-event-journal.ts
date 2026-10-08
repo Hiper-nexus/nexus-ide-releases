@@ -377,6 +377,55 @@ export class MissionEventJournal {
       .all(missionId, capped);
     return rows.map((row) => rowToEvent(row)).reverse();
   }
+
+  /**
+   * F-1005: página da projeção para a UI. Sem `beforeSequence` são os `limit`
+   * mais recentes; com ele, os `limit` imediatamente anteriores a essa
+   * sequência — o renderer pede o histórico aos pedaços, nunca tudo de uma vez.
+   * `total` é o tamanho real do journal da missão (rótulo verdadeiro) e
+   * `hasMore` diz se há eventos antes do mais antigo desta página.
+   */
+  projectRecentPage(
+    missionId: string,
+    page: { readonly limit?: number; readonly beforeSequence?: number } = {},
+  ): {
+    readonly events: readonly MissionEvent[];
+    readonly total: number;
+    readonly hasMore: boolean;
+  } {
+    const capped = Math.min(Math.max(1, page.limit ?? 50), 200);
+    const before = page.beforeSequence;
+    const db = this.#binding.readDatabase();
+    const rows =
+      before === undefined
+        ? db
+            .prepare(
+              `SELECT * FROM mission_events
+               WHERE mission_id = ?
+               ORDER BY sequence DESC LIMIT ?`,
+            )
+            .all(missionId, capped)
+        : db
+            .prepare(
+              `SELECT * FROM mission_events
+               WHERE mission_id = ? AND sequence < ?
+               ORDER BY sequence DESC LIMIT ?`,
+            )
+            .all(missionId, before, capped);
+    const events = rows.map((row) => rowToEvent(row)).reverse();
+    const { total } = db
+      .prepare(`SELECT COUNT(*) AS total FROM mission_events WHERE mission_id = ?`)
+      .get(missionId) as { total: number };
+    const oldest = events[0]?.sequence;
+    const hasMore =
+      oldest !== undefined &&
+      db
+        .prepare(
+          `SELECT 1 FROM mission_events WHERE mission_id = ? AND sequence < ? LIMIT 1`,
+        )
+        .get(missionId, oldest) !== undefined;
+    return { events, total, hasMore };
+  }
 }
 
 function rowToEvent(raw: unknown): MissionEvent {

@@ -34,13 +34,59 @@ export const DEFAULT_HUD_PREFS: HudPrefs = {
   // Jarvis state and expands with one click; saved user preferences win.
   mode: 'mini',
   corner: 'br',
-  dx: 20,
-  // 96px livra a barra de orientação da missão (input + botão Enviar vivem
-  // no rodapé direito do board — o orb em dy:20 cobria o botão). O orb
-  // continua arrastável; preferência salva do usuário vence.
-  dy: 96,
+  // F-1005: o orbe mora na faixa do canto, a mesma do "+ Pane" (12px da
+  // borda). Em dy:96 ele flutuava no meio do conteúdo e cobria o card de
+  // aprovação, o "Alterar" dos Atalhos e a caixa de commit. Agora quem tem
+  // controle no canto reserva o espaço real dele (`floatingSafeArea` →
+  // `--nexus-orb-safe-*`), inclusive a barra de direção da missão — o motivo
+  // do antigo dy:96. Continua arrastável; preferência salva vence.
+  dx: 12,
+  dy: 12,
   width: 300,
 };
+
+/** Respiro entre o orbe e o controle que reserva espaço para ele. */
+export const FLOATING_SAFE_GAP = 8;
+
+export interface FloatingSafeArea {
+  /** Largura (px) a reservar a partir da borda direita da janela. */
+  inline: number;
+  /** Altura (px) a reservar a partir da borda de baixo da janela. */
+  block: number;
+}
+
+/**
+ * F-1005: espaço que o HUD ocupa de verdade no canto inferior direito, medido
+ * pelo retângulo renderizado. Em outro canto ele não disputa a faixa onde
+ * moram "+ Pane", commit, barra de direção e listas de Configurações.
+ */
+export function floatingSafeArea(
+  rect: { left: number; top: number; width: number; height: number },
+  viewport: { width: number; height: number },
+  corner: HudCorner,
+): FloatingSafeArea {
+  if (corner !== 'br' || rect.width <= 0 || rect.height <= 0) {
+    return { inline: 0, block: 0 };
+  }
+  return {
+    inline: Math.max(0, Math.round(viewport.width - rect.left + FLOATING_SAFE_GAP)),
+    block: Math.max(0, Math.round(viewport.height - rect.top + FLOATING_SAFE_GAP)),
+  };
+}
+
+/** Publica (ou limpa, com `null`) a reserva como variáveis CSS na raiz. */
+export function publishFloatingSafeArea(
+  root: HTMLElement,
+  area: FloatingSafeArea | null,
+): void {
+  if (!area || (area.inline === 0 && area.block === 0)) {
+    root.style.removeProperty('--nexus-orb-safe-inline');
+    root.style.removeProperty('--nexus-orb-safe-block');
+    return;
+  }
+  root.style.setProperty('--nexus-orb-safe-inline', `${area.inline}px`);
+  root.style.setProperty('--nexus-orb-safe-block', `${area.block}px`);
+}
 
 /** The selected HUD mode is authoritative, including while Jarvis is idle. */
 export function isHudMini(mode: HudMode): boolean {

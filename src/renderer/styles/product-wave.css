@@ -204,6 +204,9 @@
   overflow-x: hidden;
   overflow-y: auto;
   padding: var(--space-4);
+  /* F-1005: painel encostado na borda direita (Git, Busca…): a caixa de
+     commit e as ações não passam por baixo do orbe da Jarvis. */
+  padding-inline-end: max(var(--space-4), var(--nexus-orb-safe-inline, 0px));
 }
 
 .ctx-panel__empty h3 {
