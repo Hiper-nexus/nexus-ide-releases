@@ -280,6 +280,12 @@ function shellQuote(value: string): string {
  * compartilhado o prefixo do comando, como o `.cmd`. A flag sozinha não
  * isenta nada: o preload só a aceita porque o script, pelo caminho real, é
  * uma cópia byte a byte do cliente nx empacotado e nada mais foi pré-carregado.
+ *
+ * Segunda revisão: o NODE_OPTIONS do pane parte do herdado do operador
+ * (`--require dotenv/config`, `--import tsx`, APM). Com outro pré-carregamento
+ * o preload recusa a isenção (de propósito) e o handoff voltava à fila. O
+ * cliente nx é do Nexus e não precisa de nada disso: roda sem NODE_OPTIONS,
+ * como os helpers do heavy-command (`tool-hook.cjs`, `child-process.cjs`).
  */
 export function missionShimPosixLauncher(client: string, prefix: string): string {
   return [
@@ -287,6 +293,7 @@ export function missionShimPosixLauncher(client: string, prefix: string): string
     "# Nexus mission shim: gerado pelo Nexus, não edite.",
     "NEXUS_HEAVY_HELPER=1",
     "export NEXUS_HEAVY_HELPER",
+    "unset NODE_OPTIONS",
     `exec /usr/bin/env node ${shellQuote(client)}${prefix ? ` ${prefix}` : ""} "$@"`,
     "",
   ].join("\n");

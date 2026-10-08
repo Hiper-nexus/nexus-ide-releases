@@ -637,6 +637,55 @@ describe("mission shim filesystem transport", () => {
     15_000,
   );
 
+  // F-962 (segunda revisão): o NODE_OPTIONS do pane parte do herdado do
+  // operador. Com `--require dotenv/config`, `--import tsx` ou um APM, o preload
+  // recusava a isenção (há outro pré-carregamento) e o handoff voltava à fila.
+  it.skipIf(process.platform !== "darwin" || !fs.existsSync("/usr/bin/perl"))(
+    "F-962: NODE_OPTIONS herdado do operador (--require/--import) não põe o handoff na fila",
+    async () => {
+      const preload = path.resolve(
+        __dirname,
+        "../../../resources/heavy-command/preload.cjs",
+      );
+      const userRequire = path.join(baseDir, "dotenv-config.cjs");
+      fs.writeFileSync(userRequire, "globalThis.__operatorPreload = true;\n");
+      const userImport = path.join(baseDir, "tsx-loader.mjs");
+      fs.writeFileSync(userImport, "globalThis.__operatorImport = true;\n");
+      const inherited = [
+        `--require ${JSON.stringify(userRequire)}`,
+        `--import ${JSON.stringify(userImport)}`,
+      ];
+      for (const operator of inherited) {
+        const heavyEnv = {
+          ...offlineEnv(),
+          NODE_OPTIONS: `${operator} --require ${JSON.stringify(preload)}`,
+          NEXUS_HEAVY_COMMAND_URL: "http://127.0.0.1:9/hook/heavy-command",
+          NEXUS_GATE_TOKEN: "f962-token",
+          NEXUS_HEAVY_JOB_BASE: JSON.stringify({
+            file: "/usr/bin/perl",
+            args: ["-e", "sleep 20", "heavy-job"],
+          }),
+        };
+        const help = await execFileAsync(bin("nexus_handoff_submit"), ["--help"], {
+          env: heavyEnv,
+          timeout: 5_000,
+        });
+        expect(help.stdout, operator).toMatch(/uso: nexus_handoff_submit --status/);
+        const sent = await execFileAsync(
+          bin("nx-mail"),
+          ["send", "--status", "success", "--summary", `Sem fila com ${operator}.`],
+          { env: { ...heavyEnv, ...runtime.env }, timeout: 5_000 },
+        );
+        expect(JSON.parse(sent.stdout), operator).toMatchObject({ ok: true });
+        expect(invocations.at(-1)).toMatchObject({
+          toolName: "nexus_handoff_submit",
+          args: { status: "success", summary: `Sem fila com ${operator}.` },
+        });
+      }
+    },
+    30_000,
+  );
+
   it("F-962: sem Main respondendo, o shim termina dentro do prazo (nunca pendura)", async () => {
     // Canal órfão: ninguém lê os pedidos (Main travado/ausente).
     const orphan = fs.mkdtempSync(path.join(baseDir, "orphan-"));
@@ -665,6 +714,9 @@ describe("mission shim filesystem transport", () => {
     const launcher = missionShimPosixLauncher("/tmp/a b/it's/nx-shim.cjs", "mail");
     expect(launcher.startsWith("#!/bin/sh\n")).toBe(true);
     expect(launcher).toContain("NEXUS_HEAVY_HELPER=1\nexport NEXUS_HEAVY_HELPER\n");
+    // Segunda revisão: o cliente roda sem o NODE_OPTIONS herdado do pane.
+    expect(launcher).toContain("\nunset NODE_OPTIONS\n");
+    expect(launcher.indexOf("unset NODE_OPTIONS")).toBeLessThan(launcher.indexOf("exec "));
     expect(launcher).toContain(`'/tmp/a b/it'\\''s/nx-shim.cjs' mail "$@"`);
     expect(missionShimPosixLauncher("/x/nx-shim.cjs", "")).toContain(
       `'/x/nx-shim.cjs' "$@"`,

@@ -322,3 +322,25 @@ it.skipIf(process.platform !== 'darwin' || !fs.existsSync('/usr/bin/perl'))('a f
   expect(run([classify, 'npx vitest run'], {}).status).toBe(78);
  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
+
+// F-962 (segunda revisão): a isenção lia o NODE_OPTIONS com regex, não como o
+// Node. `"--require" /x/evil.cjs` (aspas que o Node remove) passava pela regex,
+// a isenção valia e o módulo extra rodava sem admissão.
+it.skipIf(process.platform === 'win32' || !fs.existsSync('/usr/bin/perl'))('a isenção tokeniza o NODE_OPTIONS como o Node: pré-carregamento extra entre aspas não passa', () => {
+ const jobBase = JSON.stringify({ file: '/usr/bin/perl', args: ['-e', 'exit 78', 'heavy-job'] });
+ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-helper-tokens-'));
+ const client = path.join(root, 'bin', 'nx-shim.cjs'); fs.mkdirSync(path.dirname(client), { recursive: true });
+ fs.writeFileSync(client, fs.readFileSync(path.join(process.cwd(), 'resources/mission-shims/nx-shim.cjs')));
+ const extra = path.join(root, 'extra.cjs'); const marker = path.join(root, 'extra-ran');
+ fs.writeFileSync(extra, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'x')`);
+ const own = appendHeavyCommandPreload(undefined, path.join(process.cwd(), 'resources/heavy-command/preload.cjs'));
+ const run = (nodeOptions: string) => spawnSync(process.execPath, [client, 'mail', '--help'], { env: scopedHeavyEnv({ NEXUS_HEAVY_JOB_BASE: jobBase, NEXUS_HEAVY_HELPER: '1', NODE_OPTIONS: nodeOptions }), encoding: 'utf8', timeout: 10_000 });
+ try {
+  expect(run(own).status).toBe(0);
+  for (const sneaky of [`"--require" ${extra}`, `--re"quire" ${extra}`, `"-r" "${extra}"`, `--re"quire=${extra}"`, `--im"port" ${extra}`]) {
+   const result = run(`${own} ${sneaky}`);
+   expect(result.status, sneaky).toBe(78);
+   expect(fs.existsSync(marker), sneaky).toBe(false);
+  }
+ } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}, 30_000);
