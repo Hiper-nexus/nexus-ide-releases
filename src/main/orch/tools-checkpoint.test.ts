@@ -8,6 +8,20 @@ import type { ProjectExecutionScope } from '../../shared/types';
 const h = vi.hoisted(() => ({
   executionRoot: '',
   records: [] as Array<{ worktreePath: string }>,
+  sessions: [] as Array<Record<string, unknown>>,
+  idle: (_sessionId: string): boolean => true,
+}));
+vi.mock('../pty/pty-manager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../pty/pty-manager')>()),
+  listAgentSessions: () => h.sessions,
+}));
+vi.mock('./agent-status', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./agent-status')>()),
+  isSessionInjectableIdle: (sessionId: string) => h.idle(sessionId),
+}));
+vi.mock('../context/context-workflow-registry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../context/context-workflow-registry')>()),
+  getContextWorkflowService: () => ({ getMissionWorkflow: () => ({ contract: null, workflow: null }) }),
 }));
 vi.mock('./project-domain-store-registry', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./project-domain-store-registry')>()),
@@ -86,6 +100,8 @@ beforeEach(async () => {
   fs.writeFileSync(path.join(worktree, 'feito.txt'), 'turno 1\n');
   h.executionRoot = repo;
   h.records = [{ worktreePath: worktree }];
+  h.sessions = [];
+  h.idle = () => true;
   await captureWriterHandoffCheckpoint(ctx());
   fs.writeFileSync(path.join(worktree, 'feito.txt'), 'quebrado\n');
 });
@@ -151,17 +167,105 @@ describe('nexus_checkpoint_list / nexus_checkpoint_restore', () => {
     expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
   });
 
-  it('lista é leitura; restauração é efeito de missão com confirmação e fora de read-only', () => {
+  it('lista é leitura; restauração é execution-effect com confirmação e fora de read-only', () => {
     expect(buildToolset().map((candidate) => candidate.name)).toEqual(
       expect.arrayContaining(['nexus_checkpoint_list', 'nexus_checkpoint_restore']),
     );
     expect(effectPolicyForTool('nexus_checkpoint_list')).toBe('read-only');
-    expect(effectPolicyForTool('nexus_checkpoint_restore')).toBe('mission-effect');
+    expect(effectPolicyForTool('nexus_checkpoint_restore')).toBe('execution-effect');
     expect(requiresHumanConfirmationForTool('nexus_checkpoint_restore')).toBe(true);
     expect(isToolAllowedForReadOnlyContext('nexus_checkpoint_list')).toBe(true);
     expect(isToolAllowedForReadOnlyContext('nexus_checkpoint_restore')).toBe(false);
     expect(() => validateToolArgs('nexus_checkpoint_restore', { ref: 'refs/heads/main' })).toThrow();
     expect(() => validateToolArgs('nexus_checkpoint_restore', { ref: firstRef(), cwd: '/tmp' })).toThrow();
     expect(validateToolArgs('nexus_checkpoint_list', {})).toEqual({});
+  });
+
+  it('raiz do writer trocada por symlink para a coordenação: recusa e não escreve na coordenação', async () => {
+    fs.renameSync(worktree, `${worktree}-movido`);
+    fs.symlinkSync(repo, worktree);
+
+    await expect(tool('nexus_checkpoint_restore').handler({ ref: firstRef() }, ctx()))
+      .rejects.toThrow(/identity changed|selad|coordenação/);
+    await expect(tool('nexus_checkpoint_restore').handler({ ref: firstRef() }, orchestrator()))
+      .rejects.toThrow(/identity changed|selad|coordenação/);
+    expect(fs.existsSync(path.join(repo, 'feito.txt'))).toBe(false);
+    expect(fs.readFileSync(path.join(`${worktree}-movido`, 'feito.txt'), 'utf8')).toBe('quebrado\n');
+  });
+
+  async function checkpointWith(file: string): Promise<string> {
+    fs.mkdirSync(path.dirname(path.join(worktree, file)), { recursive: true });
+    fs.writeFileSync(path.join(worktree, file), 'v1\n');
+    const artifact = await captureWriterHandoffCheckpoint(ctx());
+    fs.writeFileSync(path.join(worktree, file), 'v2\n');
+    return String(artifact?.payload.ref);
+  }
+
+  it('destinos em .context passam pela guarda de contexto versionado e nada é escrito', async () => {
+    const ref = await checkpointWith('.context/notas.md');
+
+    await expect(tool('nexus_checkpoint_restore').handler({ ref }, ctx()))
+      .rejects.toThrow('versioned context authority is read-only to executors');
+    expect(fs.readFileSync(path.join(worktree, '.context/notas.md'), 'utf8')).toBe('v2\n');
+    expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
+  });
+
+  it('destinos em .agents/.codex são namespace protegido e nada é escrito', async () => {
+    const ref = await checkpointWith('.agents/skills/x/SKILL.md');
+
+    await expect(tool('nexus_checkpoint_restore').handler({ ref }, orchestrator()))
+      .rejects.toThrow(/namespace protegido/);
+    expect(fs.readFileSync(path.join(worktree, '.agents/skills/x/SKILL.md'), 'utf8')).toBe('v2\n');
+  });
+
+  it('revoga entre o backup e a escrita: a autoridade é conferida de novo e nada é escrito', async () => {
+    let calls = 0;
+    const invocation = {
+      assertCurrentAuthority: () => {
+        calls += 1;
+        if (calls === 2) throw new Error('session_authority_revoked');
+      },
+    } as McpToolInvocation;
+
+    await expect(tool('nexus_checkpoint_restore').handler({ ref: firstRef() }, ctx(), invocation))
+      .rejects.toThrow('session_authority_revoked');
+    expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
+  });
+
+  it('writer ocupado na árvore recusa a restauração com mensagem clara', async () => {
+    h.sessions = [{ sessionId: 'session-b', cwd: worktree, scope: testProjectScope({ rootRealPath: worktree }),
+      role: 'worker', readOnly: false, agentName: 'writer-b' }];
+    h.idle = () => false;
+
+    await expect(tool('nexus_checkpoint_restore').handler({ ref: firstRef() }, orchestrator()))
+      .rejects.toThrow(/writer ocupado.*writer-b/);
+    expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
+  });
+
+  it('writer que volta a trabalhar depois da checagem inicial também recusa, antes de qualquer escrita', async () => {
+    h.sessions = [{ sessionId: 'session-b', cwd: worktree, scope: testProjectScope({ rootRealPath: worktree }),
+      role: 'worker', readOnly: false, agentName: 'writer-b' }];
+    let checks = 0;
+    h.idle = () => {
+      checks += 1;
+      return checks === 1;
+    };
+
+    await expect(tool('nexus_checkpoint_restore').handler({ ref: firstRef() }, orchestrator()))
+      .rejects.toThrow(/writer ocupado/);
+    expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
+    expect(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/nexus-checkpoint')).toBe(firstRef());
+  });
+
+  it('o próprio writer chamando (em tool call) e sessões read-only não contam como ocupados', async () => {
+    h.sessions = [
+      { sessionId: 'session-a', cwd: worktree, scope: testProjectScope({ rootRealPath: worktree }), role: 'worker', readOnly: false },
+      { sessionId: 'session-r', cwd: worktree, scope: testProjectScope({ rootRealPath: worktree }), role: 'worker', readOnly: true },
+    ];
+    h.idle = () => false;
+
+    await expect(tool('nexus_checkpoint_restore').handler({ ref: firstRef() }, ctx()))
+      .resolves.toMatchObject({ applied: true });
+    expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('turno 1\n');
   });
 });

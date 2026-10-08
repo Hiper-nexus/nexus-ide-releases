@@ -907,9 +907,17 @@ saber isto antes de mexer:
   o mesmo artifact). Sparse checkout é recusado com erro visível no artifact.
 - Ref de 0 byte (rename sem fsync) é ignorada e apagada na captura e na listagem.
 - Restaurar é só explícito: `nexus_checkpoint_list` (leitura; com `ref`, prévia
-  do que sobrescreve/cria) e `nexus_checkpoint_restore` (efeito de missão). A
+  do que sobrescreve/cria) e `nexus_checkpoint_restore` (execution-effect). A
   restauração guarda o estado atual como checkpoint novo, escreve só arquivos do
   checkpoint, nunca apaga nada e recusa ref fora das raízes da missão.
+- Restauração: raiz SELADA (caminho real = autorizado, nunca a coordenação por
+  caminho, inode ou git-dir), todos os destinos pelas guardas de `.context`
+  (autoridade de workflow), `.agents`/`.codex` e plano ANTES de escrever, e
+  autoridade + raiz + writer ocioso conferidos antes do backup, depois dele e
+  antes de cada `checkout-index`. Writer ocupado na árvore recusa com mensagem.
+- A captura no handoff tem prazo global de 10 s (`HANDOFF_CHECKPOINT_DEADLINE_MS`):
+  estourou, o artifact diz `{ ok: false, reason: 'timeout' }`, nada é publicado
+  depois e o trace `handoff-checkpoint` registra `elapsedMs`.
 
 ## Grok: não spawna `grok models` (ciclo 5)
 

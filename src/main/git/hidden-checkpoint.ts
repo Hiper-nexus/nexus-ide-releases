@@ -84,6 +84,10 @@ export interface CheckpointCaptureInput {
   readonly ordinal?: number;
   /** Linhas extras da mensagem do commit (metadado, nunca autoridade). */
   readonly note?: readonly string[];
+  /** Raiz que nunca é fotografada nem escrita (a de coordenação). */
+  readonly forbiddenRoot?: string;
+  /** Prazo global (epoch ms): estourado, para e devolve `timeout` sem publicar ref. */
+  readonly deadlineAt?: number;
 }
 
 export interface CheckpointEntry {
@@ -131,8 +135,18 @@ export interface CheckpointRestoreInput {
   readonly ref: string;
   /** false = só a prévia do que seria sobrescrito/criado. */
   readonly apply: boolean;
-  /** Revalida a autoridade do chamador logo antes da primeira escrita. */
-  readonly beforeWrite?: () => void;
+  /** Raiz que nunca é escrita (a de coordenação), comparada por identidade no disco. */
+  readonly forbiddenRoot?: string;
+  /**
+   * Recebe TODOS os destinos (relativos à raiz) antes de qualquer escrita e
+   * lança para recusar (guardas de .context, .agents/.codex e workspace).
+   */
+  readonly assertTargets?: (targets: readonly string[]) => void;
+  /**
+   * Revalida a autoridade do chamador antes do backup, depois dele e logo
+   * antes de cada checkout-index; lançar cancela a restauração.
+   */
+  readonly assertCanWrite?: () => void;
 }
 
 export interface HiddenCheckpointDeps {
@@ -162,6 +176,36 @@ export function parseCheckpointRef(ref: string): { readonly scopeKey: string; re
   return match ? { scopeKey: match[1], ordinal: Number(match[2]) } : null;
 }
 
+/** Recusa do chamador (guardas/autoridade): propaga como exceção, nunca vira `{ ok: false }`. */
+class CallerRefusal extends Error {
+  constructor(readonly original: unknown) {
+    super(original instanceof Error ? original.message : String(original));
+  }
+}
+
+class CheckpointTimeout extends Error {
+  constructor() {
+    super('timeout');
+  }
+}
+
+/**
+ * Prazo global da captura: cada chamada Git herda só o tempo que resta. Um
+ * `update-ref` já iniciado não é morto no meio (deixaria `.lock` na ref): o
+ * prazo é conferido antes dele.
+ */
+function withDeadline(git: AsyncGitRunner, deadlineAt: number | undefined): AsyncGitRunner {
+  if (deadlineAt === undefined) return git;
+  return {
+    run: (cwd, args, options = {}) => {
+      const remaining = deadlineAt - Date.now();
+      if (remaining <= 0) return Promise.reject(new CheckpointTimeout());
+      if (args.includes('update-ref')) return git.run(cwd, args, options);
+      return git.run(cwd, args, { ...options, timeoutMs: Math.min(options.timeoutMs ?? 30_000, remaining) });
+    },
+  };
+}
+
 function describeError(error: unknown): string {
   if (error instanceof GitCommandError) {
     const detail = error.stderr.trim().split('\n').find(Boolean);
@@ -184,26 +228,60 @@ function serialized<T>(key: string, run: () => Promise<T>): Promise<T> {
   return next;
 }
 
+interface DiskIdentity {
+  readonly dev: number;
+  readonly ino: number;
+}
+
 interface Repo {
   readonly ok: true;
   readonly root: string;
   readonly commonDir: string;
+  /** Identidade no disco da raiz selada, conferida de novo antes de cada mutação. */
+  readonly identity: DiskIdentity;
+  readonly forbidden: DiskIdentity | null;
 }
 
+async function diskIdentity(target: string): Promise<DiskIdentity | null> {
+  const stat = await fs.promises.stat(target).catch(() => null);
+  return stat ? { dev: stat.dev, ino: stat.ino } : null;
+}
+
+function sameIdentity(left: DiskIdentity | null, right: DiskIdentity | null): boolean {
+  return Boolean(left && right && left.dev === right.dev && left.ino === right.ino);
+}
+
+/**
+ * Raiz selada: o caminho autorizado precisa SER o caminho real (nenhum
+ * componente trocado por symlink), um diretório, e nunca a raiz proibida —
+ * nem pelo inode nem pela identidade Git (mesmo git-dir).
+ */
 async function resolveRepo(
   git: AsyncGitRunner,
   cwd: string,
-  options: { readonly refuseSparse: boolean },
+  options: { readonly refuseSparse: boolean; readonly forbiddenRoot?: string },
 ): Promise<Repo | CheckpointFailure> {
+  const sealed = path.resolve(cwd);
   let root: string;
   try {
-    root = await fs.promises.realpath(cwd);
+    root = await fs.promises.realpath(sealed);
   } catch {
     return fail('checkpoint-cwd-missing');
+  }
+  if (root !== sealed) {
+    return fail(`checkpoint-root-not-sealed: ${sealed} resolve para ${root} (symlink no caminho); nada foi feito`);
+  }
+  const rootStat = await fs.promises.lstat(root).catch(() => null);
+  if (!rootStat?.isDirectory()) return fail('checkpoint-root-not-sealed: a raiz não é um diretório real');
+  const identity = { dev: rootStat.dev, ino: rootStat.ino };
+  const forbidden = options.forbiddenRoot ? await diskIdentity(options.forbiddenRoot) : null;
+  if (sameIdentity(identity, forbidden)) {
+    return fail('checkpoint-forbidden-root: esta é a raiz de coordenação; checkpoint nunca a escreve');
   }
   try {
     await assertSafeLocalGitConfigAsync(git, root);
   } catch (error) {
+    if (error instanceof CheckpointTimeout) throw error;
     return fail(describeError(error));
   }
   const top = await git.run(root, ['rev-parse', '--show-toplevel'], { allowFailure: true });
@@ -219,9 +297,31 @@ async function resolveRepo(
       );
     }
   }
+  if (options.forbiddenRoot) {
+    const gitDir = (await git.run(root, ['rev-parse', '--absolute-git-dir'])).stdout.trim();
+    const forbiddenGitDir = await git.run(options.forbiddenRoot, ['rev-parse', '--absolute-git-dir'], {
+      allowFailure: true,
+    });
+    if (forbiddenGitDir.status === 0 && forbiddenGitDir.stdout.trim() === gitDir) {
+      return fail('checkpoint-forbidden-root: mesma identidade Git da raiz de coordenação');
+    }
+  }
   const common = (await git.run(root, ['rev-parse', '--git-common-dir'])).stdout.trim();
   const commonDir = await fs.promises.realpath(path.resolve(root, common));
-  return { ok: true, root, commonDir };
+  return { ok: true, root, commonDir, identity, forbidden };
+}
+
+/** Revalidação imediatamente antes de cada mutação: a raiz ainda é a selada. */
+async function assertRootStable(repo: Repo): Promise<void> {
+  const real = await fs.promises.realpath(repo.root).catch(() => null);
+  const stat = await fs.promises.lstat(repo.root).catch(() => null);
+  const current = stat ? { dev: stat.dev, ino: stat.ino } : null;
+  if (real !== repo.root || !stat?.isDirectory() || !sameIdentity(current, repo.identity) ||
+      sameIdentity(current, repo.forbidden)) {
+    throw new Error(
+      `checkpoint-root-identity-changed: ${repo.root} mudou no disco durante a restauração; nada mais foi escrito`,
+    );
+  }
 }
 
 /**
@@ -438,10 +538,13 @@ export function captureHiddenCheckpoint(
   deps: HiddenCheckpointDeps = {},
 ): Promise<CheckpointCaptureResult> {
   return serialized(path.resolve(input.cwd), async () => {
-    const git = deps.git ?? new AsyncProcessGitRunner();
+    const git = withDeadline(deps.git ?? new AsyncProcessGitRunner(), input.deadlineAt);
     if (input.ordinal !== undefined && !isOrdinal(input.ordinal)) return fail('invalid-checkpoint-ordinal');
     try {
-      const repo = await resolveRepo(git, input.cwd, { refuseSparse: true });
+      const repo = await resolveRepo(git, input.cwd, {
+        refuseSparse: true,
+        ...(input.forbiddenRoot ? { forbiddenRoot: input.forbiddenRoot } : {}),
+      });
       if (!repo.ok) return repo;
       const scopeKey = checkpointScopeKey(input.scopeId);
       await sweepEmptyScopeRefs(repo.commonDir, scopeKey);
@@ -455,6 +558,11 @@ export function captureHiddenCheckpoint(
         ...(input.note ? { note: input.note } : {}),
       });
     } catch (error) {
+      // Git morto pelo prazo (SIGKILL) chega como falha genérica: o relógio decide.
+      if (error instanceof CheckpointTimeout ||
+          (input.deadlineAt !== undefined && Date.now() >= input.deadlineAt)) {
+        return fail('timeout');
+      }
       return fail(describeError(error));
     }
   });
@@ -523,21 +631,37 @@ async function existsNoFollow(file: string): Promise<boolean> {
   return (await fs.promises.lstat(file).catch(() => null)) !== null;
 }
 
+/**
+ * Escreve por índice privado + `checkout-index`. Antes de CADA lote: confere
+ * de novo que nenhum caminho ficou bloqueado e chama `beforeChunk` (raiz
+ * selada + autoridade do chamador). Devolve quantos arquivos escreveu.
+ */
 async function writeCheckpointFiles(
   git: AsyncGitRunner,
   root: string,
   commit: string,
   files: readonly string[],
+  beforeChunk: () => Promise<void>,
+  progress: { written: number },
 ): Promise<void> {
   const index = await createPrivateIndex();
   try {
     await git.run(root, [...INDEX_CONFIG, 'read-tree', commit], { privateIndexFile: index.path });
     for (let start = 0; start < files.length; start += CHECKOUT_CHUNK) {
-      await git.run(
-        root,
-        [...INDEX_CONFIG, 'checkout-index', '-f', '--', ...files.slice(start, start + CHECKOUT_CHUNK)],
-        { privateIndexFile: index.path, timeoutMs: STAGE_TIMEOUT_MS },
-      );
+      const chunk = files.slice(start, start + CHECKOUT_CHUNK);
+      for (const file of chunk) {
+        if (await blockedPath(root, file)) {
+          throw new CallerRefusal(new Error(
+            `checkpoint-tree-changed: ${file} ganhou diretório/symlink no caminho durante a restauração`,
+          ));
+        }
+      }
+      await beforeChunk();
+      await git.run(root, [...INDEX_CONFIG, 'checkout-index', '-f', '--', ...chunk], {
+        privateIndexFile: index.path,
+        timeoutMs: STAGE_TIMEOUT_MS,
+      });
+      progress.written += chunk.length;
     }
   } finally {
     await index.dispose().catch(() => undefined);
@@ -560,7 +684,10 @@ export function restoreHiddenCheckpoint(
     const scopeKey = checkpointScopeKey(input.scopeId);
     if (parsed.scopeKey !== scopeKey) return fail('checkpoint-outside-scope');
     try {
-      const repo = await resolveRepo(git, input.cwd, { refuseSparse: true });
+      const repo = await resolveRepo(git, input.cwd, {
+        refuseSparse: true,
+        ...(input.forbiddenRoot ? { forbiddenRoot: input.forbiddenRoot } : {}),
+      });
       if (!repo.ok) return repo;
       const removed = await sweepEmptyScopeRefs(repo.commonDir, scopeKey);
       if (removed.includes(input.ref)) {
@@ -598,7 +725,21 @@ export function restoreHiddenCheckpoint(
       if (!input.apply || writable.length === 0) {
         return { ok: true, ref: input.ref, commit, applied: false, backup: null, ...plan };
       }
-      input.beforeWrite?.();
+      // Todos os destinos passam pelas guardas do chamador antes de qualquer escrita.
+      try {
+        input.assertTargets?.(writable);
+      } catch (error) {
+        throw new CallerRefusal(error);
+      }
+      const assertCanWrite = async (): Promise<void> => {
+        try {
+          await assertRootStable(repo);
+          input.assertCanWrite?.();
+        } catch (error) {
+          throw new CallerRefusal(error);
+        }
+      };
+      await assertCanWrite();
       const backup = await publishCheckpoint(git, repo.root, {
         scopeKey,
         tree: currentTree,
@@ -606,15 +747,25 @@ export function restoreHiddenCheckpoint(
         note: [`Cópia de segurança antes de restaurar ${input.ref}`],
       });
       if (!backup.ok) return fail(`checkpoint-backup-failed: ${backup.reason}; nada restaurado`);
+      const progress = { written: 0 };
       try {
-        await writeCheckpointFiles(git, repo.root, commit, writable);
+        await assertCanWrite();
+        await writeCheckpointFiles(git, repo.root, commit, writable, assertCanWrite, progress);
       } catch (error) {
-        return fail(
-          `checkpoint-restore-partial: ${describeError(error)}; o estado anterior está em ${backup.ref}`,
-        );
+        const detail = describeError(error instanceof CallerRefusal ? error.original : error);
+        if (progress.written === 0) {
+          if (error instanceof CallerRefusal) throw error;
+          return fail(`checkpoint-restore-failed: ${detail}; nada escrito, estado anterior em ${backup.ref}`);
+        }
+        const partial = `${detail}; restauração interrompida depois de ${progress.written} arquivo(s); ` +
+          `o estado anterior está em ${backup.ref}`;
+        if (error instanceof CallerRefusal) throw new CallerRefusal(new Error(partial, { cause: error.original }));
+        return fail(`checkpoint-restore-partial: ${partial}`);
       }
       return { ok: true, ref: input.ref, commit, applied: true, backup, ...plan };
     } catch (error) {
+      // Recusa/cancelamento do chamador propaga como o erro original.
+      if (error instanceof CallerRefusal) throw error.original;
       return fail(describeError(error));
     }
   });

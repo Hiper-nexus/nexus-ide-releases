@@ -161,7 +161,11 @@ export function operatorHandMissionExitHint(
   return undefined;
 }
 
-function resolveProductionWorkflowAuthority(
+/**
+ * Exportado também para handlers cujos destinos só existem depois de calculados
+ * (nexus_checkpoint_restore): cada destino passa por esta MESMA guarda.
+ */
+export function resolveProductionWorkflowAuthority(
   scope: ProjectExecutionScope,
   missionId: string,
 ): WorkflowEffectAuthority {
