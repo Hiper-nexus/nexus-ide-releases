@@ -28,7 +28,7 @@ export function DecisionModeControls({ settings, busy, onChange }: {
     {(settings.mode === 'auto' || settings.mode === 'luna') && <p className="settings-field__note">A Luna (beta) é a Decisions API da OpenAI, modelo gpt-6-luna. No Automático ela só entra quando falta o provedor preferido.
       {' '}Em Somente Luna, o texto redigido vai à OpenAI, inclusive a guarda de despacho, a revisão de handoff, a memória e os pilotos. Sem a chave OpenAI nada disso cai no Jev.</p>}
     {settings.mode === 'together' && <p className="settings-field__note">Juntos é opt-in e faz mais de uma chamada. No texto, Jev e Luna respondem a mesma pergunta; na imagem mascarada, Clef e Luna. Os rótulos do desktop e do navegador ficam no Jev. Concordância segue pela confiança maior.
-      {' '}Divergência em efeito irreversível, deny ou confirmação fica com o veredito mais restritivo. Na guarda, no handoff e na memória, o Jev não afrouxa. Quem não tiver chave fica de fora, e um provedor sozinho não é chamado no lugar.</p>}
+      {' '}Divergência em efeito irreversível, deny ou confirmação fica com o veredito mais restritivo. Na guarda, no handoff e na memória, o Jev não afrouxa quando está na jogada. Quem não tiver chave fica de fora: Luna e Clef sem o Jev continuam conjunto. Um provedor sozinho não é chamado no lugar.</p>}
     <VisionConsentToggle enabled={settings.visionEnabled} disabled={busy || settings.mode === 'jev'}
       audience={settings.mode === 'luna' ? 'luna' : settings.mode === 'together' ? 'together' : settings.mode === 'auto' ? 'auto' : 'clef'}
       onChange={visionEnabled => onChange({ visionEnabled })} />

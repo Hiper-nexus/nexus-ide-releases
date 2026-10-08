@@ -28,7 +28,7 @@ export const CLEF_PREFERRED_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<
   'rankTool',
 ]);
 
-/** Juntos: o Jev fica na jogada e os outros só podem apertar o limiar. */
+/** Juntos: quem tem chave entra. Sem o Jev, Luna e Clef continuam o conjunto e só apertam entre si. */
 export const SECURITY_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
   'dispatchGuard', 'handoffReview', 'memoryDistill',
 ]);
@@ -77,9 +77,11 @@ export function canRouteBrowserVisual(settings: DecisionSettings, available: Dec
 /**
  * Juntos, só com a escolha do operador. Quem não tem chave fica de fora.
  * Menos de dois membros devolve null: um sozinho não é conjunto.
- * Texto comum: Jev e Luna, a mesma pergunta. Clef não entra nesse texto.
- * Segurança: Jev, e Luna e/ou Clef para apertar. Rótulos de desktop e
- * navegador não são conjunto (o Jev responde sozinho). Imagem mascarada:
+ * Texto comum: Jev e Luna, a mesma pergunta. Sem o Jev, Luna e Clef formam
+ * o conjunto; o Clef não entra nesse texto quando o par Jev+Luna já existe.
+ * Segurança: quem tiver chave, no mínimo dois — Luna+Clef sem Jev é válido.
+ * Rótulos de desktop e navegador não são conjunto (o Jev responde sozinho).
+ * Imagem mascarada:
  * Clef e Luna; o Jev não vê imagem. Pixels de desktop não têm saída mascarada.
  * O modelo pedido pelo chamador não entra.
  */
@@ -96,15 +98,14 @@ export function ensembleMembers(input: RouteInput, settings: DecisionSettings, a
     return [luna, clef];
   }
   if (input.surface && LABEL_SURFACES.has(input.surface)) return null;
-  if (input.surface && SECURITY_ENSEMBLE_SURFACES.has(input.surface)) {
-    const members: DecisionRoute[] = [];
-    if (available.jev) members.push(jev);
-    if (lunaReady(available)) members.push(luna);
-    if (available.clef) members.push(clef);
-    return members.length >= 2 ? members : null;
-  }
-  if (!available.jev || !lunaReady(available)) return null;
-  return [jev, luna];
+  const security = Boolean(input.surface && SECURITY_ENSEMBLE_SURFACES.has(input.surface));
+  const members: DecisionRoute[] = [];
+  if (available.jev) members.push(jev);
+  if (lunaReady(available)) members.push(luna);
+  // Segurança: o Clef entra sempre que há chave. Texto comum: só completa a
+  // Luna quando o Jev está de fora. Falta de Jev não zera o conjunto.
+  if (available.clef && (security || (!available.jev && lunaReady(available)))) members.push(clef);
+  return members.length >= 2 ? members : null;
 }
 
 function operatorLuna(input: RouteInput, available: DecisionAvailability, evidence: DecisionRoute['evidence']): DecisionRoute | null {
@@ -147,6 +148,9 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
       return route('clef', settings.clefModel, 'capability', 'vision');
     }
     if (available.clef) return route('clef', explicitClef ?? 'clef', 'capability', 'vision');
+    // Clef explícito sem credencial não vira Luna. A imagem da Luna fica no
+    // Automático sem esse pedido, em Somente Luna e em Juntos.
+    if (explicitClef) return null;
     if (lunaReady(available)) return route('luna', LUNA_DECISION_MODEL, 'capability', 'credential-fallback');
     return null;
   }

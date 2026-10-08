@@ -61,9 +61,10 @@ function mostConfidentIndex(scores: number[]): number {
 
 /**
  * Concordância segue, com a confiança maior. Na segurança, o número nunca
- * fica mais frouxo que o conjunto (com o Jev na jogada, Luna e Clef só
- * apertam). Fora dela, a divergência fica com a confiança maior. Escolha
- * sem ordem restritiva, na segurança, não elege vencedor.
+ * fica mais frouxo que quem respondeu: se o Jev está na jogada, Luna e Clef
+ * só apertam; se não está, o par restante não é procurado como se ele existisse.
+ * Fora dela, a divergência fica com a confiança maior. Escolha sem ordem
+ * restritiva, na segurança, não elege vencedor.
  */
 export function combineEnsembleAnswers(
   members: readonly EnsembleMember[],

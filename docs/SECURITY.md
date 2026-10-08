@@ -81,10 +81,13 @@ What can leave the machine for Cloudflare, by mode:
   key there is no route and no silent Jev fallback. The published input price
   is US$0.10 per 1M tokens; output tokens are not billed. If `usage.input_tokens`
   is absent the diary stores a null cost.
-- **Juntos (opt-in):** redacted text of the same question goes to Jev and Luna.
-  On `dispatchGuard`, `handoffReview` and `memoryDistill`, Jev stays in the
-  call when its key exists; Luna and Clef may only tighten that measured
-  threshold. Reversible disagreement (`taskRouting`, including the skill
+- **Juntos (opt-in):** redacted text of the same question goes to Jev and Luna
+  when both keys exist. On `dispatchGuard`, `handoffReview` and `memoryDistill`,
+  Jev stays in the call when its key exists; Luna and Clef may only tighten
+  that measured threshold. Luna and Clef without a Jev key are still an
+  ensemble on those surfaces and, for ordinary text, with each other. The
+  call is not dropped only because Jev is absent. When Jev and Luna are both
+  ready, ordinary text still does not include Clef. Reversible disagreement (`taskRouting`, including the skill
   suggestion, `missionPick`, `catalogPick`) keeps the higher confidence, and
   the journal line stores both numbers with no input text. Agreement follows.
   Irreversible disagreement keeps the more restrictive verdict. `computerTool`
@@ -102,6 +105,9 @@ What can leave the machine for Cloudflare, by mode:
 - **Images:** only `nexus_browser_judge_visual`, with the operator's explicit
   opt-in (a fresh confirmation each time it is switched on). Somente Luna names
   OpenAI in that confirmation; Automatic names Cloudflare and, as fallback, OpenAI.
+  That fallback does not run when the caller asked for Clef and Clef has no
+  credential: the image route is empty. Luna still judges images in Automatic
+  without an explicit Clef request, in Somente Luna, and in Juntos.
 
 `nexus_browser_judge_visual` is scoped, read-only and rate limited. Panes bound
 to the operator's personal browser profile (real logins) are refused before any

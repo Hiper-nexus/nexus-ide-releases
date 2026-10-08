@@ -97,6 +97,12 @@ describe('complementary decision routing', () => {
     expect(resolveDecisionRoute({ images }, { ...settings, visionEnabled: true }, both)).toMatchObject({ provider: 'clef', evidence: 'capability' });
     expect(resolveDecisionRoute({ images }, { ...settings, mode: 'jev', visionEnabled: true }, both)).toBeNull();
     expect(resolveDecisionRoute({ images }, { ...settings, visionEnabled: true }, { jev: true, clef: false })).toBeNull();
+    const lunaOnly = { jev: false, clef: false, luna: true };
+    const vision = { ...settings, visionEnabled: true };
+    expect(resolveDecisionRoute({ images, model: 'clef' }, vision, lunaOnly)).toBeNull();
+    expect(resolveDecisionRoute({ images, model: 'clef-flash' }, vision, lunaOnly)).toBeNull();
+    expect(resolveDecisionRoute({ surface: 'browserTool', images, model: 'clef' }, vision, lunaOnly)).toBeNull();
+    expect(resolveDecisionRoute({ images, model: 'clef' }, vision, { jev: false, clef: true, luna: true })).toMatchObject({ provider: 'clef', model: 'clef' });
     // Imagem não contorna a fixação: só o julgamento visual do navegador pode levar imagem ao Clef.
     for (const surface of ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool'] as const) {
       expect(resolveDecisionRoute({ surface, images }, { ...settings, visionEnabled: true }, both)).toBeNull();
@@ -144,8 +150,11 @@ describe('complementary decision routing', () => {
     expect(ensembleMembers({ surface: 'dispatchGuard' }, together, { jev: true, clef: false, luna: true })?.map(member => member.provider)).toEqual(['jev', 'luna']);
     expect(ensembleMembers({ surface: 'dispatchGuard' }, together, { jev: true, clef: true, luna: false })?.map(member => member.provider)).toEqual(['jev', 'clef']);
     expect(ensembleMembers({ surface: 'dispatchGuard' }, together, { jev: false, clef: false, luna: true })).toBeNull();
+    expect(ensembleMembers({ surface: 'dispatchGuard' }, together, { jev: false, clef: true, luna: true })?.map(member => member.provider)).toEqual(['luna', 'clef']);
     expect(ensembleMembers({ surface: 'taskRouting' }, together, lunaOn)?.map(member => member.provider)).toEqual(['jev', 'luna']);
-    expect(ensembleMembers({ surface: 'catalogPick' }, together, { jev: false, clef: true, luna: true })).toBeNull();
+    expect(ensembleMembers({ surface: 'catalogPick' }, together, { jev: false, clef: true, luna: true })?.map(member => member.provider)).toEqual(['luna', 'clef']);
+    expect(ensembleMembers({ surface: 'taskRouting' }, together, { jev: false, clef: false, luna: true })).toBeNull();
+    expect(resolveDecisionRoute({ surface: 'dispatchGuard' }, together, { jev: false, clef: true, luna: true })?.provider).toBe('luna');
     expect(resolveDecisionRoute({ surface: 'computerTool' }, together, lunaOn)).toMatchObject({ provider: 'jev', reason: 'labels' });
     expect(resolveDecisionRoute({ surface: 'browserTool' }, together, lunaOn)).toMatchObject({ provider: 'jev', reason: 'labels' });
     expect(resolveDecisionRoute({ surface: 'computerTool' }, together, { jev: false, clef: true, luna: true })).toBeNull();

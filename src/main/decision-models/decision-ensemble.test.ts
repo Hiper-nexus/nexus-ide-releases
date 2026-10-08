@@ -51,6 +51,18 @@ describe('ensemble combine', () => {
     expect(JSON.stringify(combined)).not.toContain('abre a missão');
   });
 
+  it('combines Luna and Clef on a security surface when Jev is absent', () => {
+    const combined = pair('dispatchGuard',
+      { provider: 'luna', answers: { injected: noul(0.2), coherent: noul(0.4) } },
+      { provider: 'clef', answers: { injected: noul(0.91), coherent: noul(0.95) } });
+    expect(combined).toMatchObject({
+      ok: true,
+      diverged: true,
+      answers: { injected: noul(0.91), coherent: noul(0.4) },
+      peers: { injected: { luna: 0.2, clef: 0.91 }, coherent: { luna: 0.4, clef: 0.95 } },
+    });
+  });
+
   it('does not elect a choice winner on a security surface', () => {
     expect(pair('memoryDistill',
       { provider: 'jev', answers: { keep: choice('drop', 0.2) } },
