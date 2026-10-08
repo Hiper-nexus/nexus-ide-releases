@@ -20,20 +20,18 @@ interface ManifestShape {
  */
 describe('manifestos embutidos montam o modelo com a flag declarada (F-722)', () => {
   const probe = 'probe-model';
-  for (const adapter of BUILTIN_ADAPTERS as ManifestShape[]) {
-    for (const mode of ['interactive', 'headless'] as const) {
-      const template = adapter.spawn[mode] ?? [];
-      if (!template.some((arg) => arg.includes('{{MODEL}}'))) continue;
-      it(`${adapter.id} (${mode})`, () => {
-        const flag = adapter.models?.flag;
-        const argv = template.map((arg) => arg.replace('{{MODEL}}', probe));
-        expect(argvHonorsModel(argv, flag, probe)).toBe(true);
-        const withoutModel = interactiveTemplateForModel(template, flag, '');
-        expect(withoutModel.some((arg) => arg.includes('{{MODEL}}'))).toBe(false);
-        if (flag && !flag.endsWith('=')) expect(withoutModel).not.toContain(flag);
-      });
-    }
-  }
+  const cases = (BUILTIN_ADAPTERS as ManifestShape[]).flatMap((adapter) =>
+    (['interactive', 'headless'] as const)
+      .map((mode) => ({ id: adapter.id, mode, flag: adapter.models?.flag, template: adapter.spawn[mode] ?? [] }))
+      .filter(({ template }) => template.some((arg) => arg.includes('{{MODEL}}'))),
+  );
+  it.each(cases)('$id ($mode)', ({ flag, template }) => {
+    const argv = template.map((arg) => arg.replace('{{MODEL}}', probe));
+    expect(argvHonorsModel(argv, flag, probe)).toBe(true);
+    const withoutModel = interactiveTemplateForModel(template, flag, '');
+    expect(withoutModel.some((arg) => arg.includes('{{MODEL}}'))).toBe(false);
+    if (flag && !flag.endsWith('=')) expect(withoutModel).not.toContain(flag);
+  });
 });
 
 describe('firstDeclaredModel', () => {

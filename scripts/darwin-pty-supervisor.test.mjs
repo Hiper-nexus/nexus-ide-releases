@@ -1142,8 +1142,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
     );
   }, 60_000);
 
-  for (const completion of ['natural', 'killed-helper', 'killed-authority', 'killed-owner']) {
-  it(`native heavy-job waits for authenticated watch/grant and retains an unseen setsid descendant under the original offline sandbox (${completion})`, async ({ skip }) => {
+  it.for(['natural', 'killed-helper', 'killed-authority', 'killed-owner'])('native heavy-job waits for authenticated watch/grant and retains an unseen setsid descendant under the original offline sandbox (%s)', async (completion, { skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
     const runtime = { platform: 'darwin', packaged: false, cwd: fixtureRoot, moduleDir: fixtureRoot };
     const rootIdentity = {}; const proof = new OwnedCommandProcesses(() => ({ pid: process.pid, identity: rootIdentity }), undefined, (pid) => watchDarwinHeavyCommand(runtime, pid));
@@ -1198,7 +1197,6 @@ suite("Darwin PTY native responsibility supervisor", () => {
       server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); rmSync(forbidden, { force: true });
     }
   }, 30_000);
-  }
 
   it('native heavy fork preserves advanced Node IPC, target argv and nonzero target exit while borrowing one physical job', async ({ skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
@@ -1280,8 +1278,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
     } finally { if (job.exitCode === null && job.signalCode === null) job.kill('SIGTERM'); await done; server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
   }, 30_000);
 
-  for (const mode of ['natural', 'terminate']) {
-  it(`supervise-job holds a detached setsid daemon after primary exit until ${mode} completion`, async ({ skip }) => {
+  it.for(['natural', 'terminate'])('supervise-job holds a detached setsid daemon after primary exit until %s completion', async (mode, { skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
     const tag = `job-${Math.random().toString(16).slice(2)}`;
     const daemonFile = path.join(fixtureRoot, `${tag}.daemon`), primaryFile = path.join(fixtureRoot, `${tag}.primary`);
@@ -1329,7 +1326,6 @@ suite("Darwin PTY native responsibility supervisor", () => {
       await exit;
     }
   }, 30_000);
-  }
 
   it('supervise-job tears down its detached cohort when the exact Main owner dies through Apple stage zero', async ({ skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);

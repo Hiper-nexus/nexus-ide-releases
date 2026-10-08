@@ -7,11 +7,13 @@
 // Carregado pelo `.oxlintrc.json` (`jsPlugins`); as regras rodam com
 // `npm run lint:oxlint` no CI e no `npm run lint`.
 
+import noTestInLoop from './rules/no-test-in-loop.mjs';
 import requireSuppressionReason from './rules/require-suppression-reason.mjs';
 
 export default {
   meta: { name: 'nexus' },
   rules: {
+    'no-test-in-loop': noTestInLoop,
     'require-suppression-reason': requireSuppressionReason,
   },
 };

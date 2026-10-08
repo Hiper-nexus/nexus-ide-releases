@@ -506,74 +506,72 @@ describe('mission pane authority vs. workspace layout restore', () => {
     );
   }
 
-  for (const order of permutations(STEPS)) {
-    it(`ordering matrix — ${order.join(' → ')}`, async () => {
-      const root = mount();
-      let zoomedPaneId: string | null = null;
-      await act(async () => {
-        await switchWorkspaceLayout(WORKSPACE);
-      });
-
-      const run: Record<Step, () => Promise<void>> = {
-        // A workspace layout re-read landing at an arbitrary moment.
-        restore: async () => {
-          abandonWorkspaceLayoutAfterMainSwitch();
-          await act(async () => {
-            await switchWorkspaceLayout(WORKSPACE);
-          });
-        },
-        // Main presents the mission's orchestrator pane.
-        present: async () => {
-          await present('live');
-        },
-        // The operator zooms whatever is on screen at that moment.
-        zoom: async () => {
-          const target = paneIds()[0];
-          if (target) {
-            zoomedPaneId = target;
-            act(() => {
-              useLayoutStore.getState().toggleMaximizePane(target);
-            });
-          }
-        },
-        // A worker joins the mission through the spawn channel.
-        worker: async () => {
-          act(() => {
-            useLayoutStore.getState().spawnOrchPane({
-              paneId: 'pane-worker',
-              adapterId: 'codex',
-              orchRequestId: 'grant-worker',
-              missionId: 'mission-live',
-              role: 'worker',
-            });
-          });
-        },
-      };
-
-      for (const step of order) await run[step]();
-
-      // The mission pane may only be absent if it was never presented.
-      if (order.includes('present')) {
-        expect(paneIds()).toContain('pane-live');
-      }
-      expect(paneIds()).toContain('pane-worker');
-      expectLayoutInvariants();
-      // F-521 (2026-09-14): o zoom é a escolha explícita do operador e
-      // SOBREVIVE a workers montados depois — o worker entra atrás do
-      // orquestrador em modo foco, não rouba o zoom. Apresentação (I4) e
-      // restore posteriores têm autoridade própria de foco/layout e podem
-      // legitimamente encerrar o zoom; nesses casos só o invariante genérico
-      // (zoom → pane vivo) continua valendo, já verificado por
-      // expectLayoutInvariants.
-      const stepsAfterZoom = order.slice(order.indexOf('zoom') + 1);
-      const onlyWorkerAfterZoom =
-        stepsAfterZoom.includes('worker') &&
-        !stepsAfterZoom.includes('present') &&
-        !stepsAfterZoom.includes('restore');
-      if (onlyWorkerAfterZoom && zoomedPaneId) {
-        expect(useLayoutStore.getState().maximizedPaneId).toBe(zoomedPaneId);
-      }
-      act(() => root.unmount());
+  it.each(permutations(STEPS).map((order) => ({ order, label: order.join(' → ') })))('ordering matrix — $label', async ({ order }) => {
+    const root = mount();
+    let zoomedPaneId: string | null = null;
+    await act(async () => {
+      await switchWorkspaceLayout(WORKSPACE);
     });
-  }
+
+    const run: Record<Step, () => Promise<void>> = {
+      // A workspace layout re-read landing at an arbitrary moment.
+      restore: async () => {
+        abandonWorkspaceLayoutAfterMainSwitch();
+        await act(async () => {
+          await switchWorkspaceLayout(WORKSPACE);
+        });
+      },
+      // Main presents the mission's orchestrator pane.
+      present: async () => {
+        await present('live');
+      },
+      // The operator zooms whatever is on screen at that moment.
+      zoom: async () => {
+        const target = paneIds()[0];
+        if (target) {
+          zoomedPaneId = target;
+          act(() => {
+            useLayoutStore.getState().toggleMaximizePane(target);
+          });
+        }
+      },
+      // A worker joins the mission through the spawn channel.
+      worker: async () => {
+        act(() => {
+          useLayoutStore.getState().spawnOrchPane({
+            paneId: 'pane-worker',
+            adapterId: 'codex',
+            orchRequestId: 'grant-worker',
+            missionId: 'mission-live',
+            role: 'worker',
+          });
+        });
+      },
+    };
+
+    for (const step of order) await run[step]();
+
+    // The mission pane may only be absent if it was never presented.
+    if (order.includes('present')) {
+      expect(paneIds()).toContain('pane-live');
+    }
+    expect(paneIds()).toContain('pane-worker');
+    expectLayoutInvariants();
+    // F-521 (2026-09-14): o zoom é a escolha explícita do operador e
+    // SOBREVIVE a workers montados depois — o worker entra atrás do
+    // orquestrador em modo foco, não rouba o zoom. Apresentação (I4) e
+    // restore posteriores têm autoridade própria de foco/layout e podem
+    // legitimamente encerrar o zoom; nesses casos só o invariante genérico
+    // (zoom → pane vivo) continua valendo, já verificado por
+    // expectLayoutInvariants.
+    const stepsAfterZoom = order.slice(order.indexOf('zoom') + 1);
+    const onlyWorkerAfterZoom =
+      stepsAfterZoom.includes('worker') &&
+      !stepsAfterZoom.includes('present') &&
+      !stepsAfterZoom.includes('restore');
+    if (onlyWorkerAfterZoom && zoomedPaneId) {
+      expect(useLayoutStore.getState().maximizedPaneId).toBe(zoomedPaneId);
+    }
+    act(() => root.unmount());
+  });
 });

@@ -77,7 +77,7 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 | QLT-03 | `KeyedCoalescingWorker` | pendente (M) | sem primitiva | só com consumidor real |
 | QLT-04 | knip | pendente (M) | sem config | dep + CI |
 | QLT-05 | `require-suppression-reason` | integrado | `oxlint-plugin-nexus/rules/require-suppression-reason.mjs` | — |
-| QLT-06 | `no-test-in-loop` | pendente (P) | regra ausente | regra no plugin |
+| QLT-06 | `no-test-in-loop` | integrado | `oxlint-plugin-nexus/rules/no-test-in-loop.mjs` (erro no `.oxlintrc.json`, CI `lint:oxlint --quiet`); 17 laços convertidos em `it.each`/`it.for` (F-1023) | — |
 | QLT-07 | `no-raw-ipc` | pendente (M) | só `check-renderer-sinks.mjs` | regra AST |
 | QLT-08 | `DrainableWorker` | pendente (P) | sem helper | junto de ORC-08 |
 | QLT-09 | Paginação por cursor | pendente (G) | só gap buffer de terminal | histórico de missão |
