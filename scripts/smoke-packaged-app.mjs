@@ -719,6 +719,16 @@ export function requiredNativeArtifactGlobs({ platform, arch }) {
         `node_modules/onnxruntime-node/bin/napi-v3/${platform}/${arch}/onnxruntime_binding.node`,
       ],
     },
+    {
+      // In-process Keychain/Secret Service for the browser cookie import
+      // (optional per-platform package of @napi-rs/keyring, N-API: no rebuild).
+      id: 'napi-keyring',
+      anyOf: [],
+      scan: {
+        under: 'node_modules/@napi-rs',
+        fileName: new RegExp(`^keyring\\.${platform}-${arch}(?:-gnu|-msvc)?\\.node$`, 'u'),
+      },
+    },
   ];
   if (platform === 'linux') {
     artifacts.push({

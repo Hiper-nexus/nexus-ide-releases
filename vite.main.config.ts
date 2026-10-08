@@ -114,6 +114,9 @@ export default defineConfig({
         'original-fs',
         '@lydell/node-pty',
         'better-sqlite3',
+        // N-API Keychain binding (browser cookie import): the loader requires
+        // the per-platform `.node` beside it, so it stays out of the bundle.
+        '@napi-rs/keyring',
         'uiohook-napi',
         'onnxruntime-node',
         // Emscripten resolves its sibling .wasm from the module __dirname.

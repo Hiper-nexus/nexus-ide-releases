@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { BrowserProfileChange, BrowserProfileStatus, ChromeImportResult, ChromeProfileSummary, ChromeSiteSummary } from '../../shared/browser-profile';
+import type { BrowserImportProfile, BrowserImportResult, BrowserImportSite, BrowserProfileChange, BrowserProfileStatus } from '../../shared/browser-profile';
 import '../styles/browser-profile.css';
 
 const friendlyError = (reason: unknown, fallback: string): string =>
@@ -24,22 +24,22 @@ export function siteSignInUrl(raw: string): string | null {
 
 export function BrowserProfilePanel({ paneId, onClose }: { paneId: string; onClose(): void }) {
   const [status, setStatus] = useState<BrowserProfileStatus | null>(null);
-  const [profiles, setProfiles] = useState<ChromeProfileSummary[]>([]);
+  const [profiles, setProfiles] = useState<BrowserImportProfile[]>([]);
   const [profileId, setProfileId] = useState('');
-  const [sites, setSites] = useState<ChromeSiteSummary[]>([]);
+  const [sites, setSites] = useState<BrowserImportSite[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState(false);
   const [loadingSites, setLoadingSites] = useState(false);
   const [error, setError] = useState('');
-  const [result, setResult] = useState<ChromeImportResult | null>(null);
+  const [result, setResult] = useState<BrowserImportResult | null>(null);
   const [siteAddress, setSiteAddress] = useState('');
   const resultRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => { resultRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [result, error]);
 
   useEffect(() => {
     let current = true;
-    void Promise.all([window.nexus.browser.profileStatus(paneId), window.nexus.browser.chromeProfiles(paneId)])
+    void Promise.all([window.nexus.browser.profileStatus(paneId), window.nexus.browser.importProfiles(paneId)])
       .then(([next, available]) => {
         if (!current) return;
         setStatus(next); setProfiles(available); setProfileId(available[0]?.id ?? '');
@@ -52,7 +52,7 @@ export function BrowserProfilePanel({ paneId, onClose }: { paneId: string; onClo
     setSites([]); setSelected(new Set()); setResult(null);
     if (!profileId) return () => { current = false; };
     setLoadingSites(true);
-    void window.nexus.browser.chromeSites(paneId, profileId)
+    void window.nexus.browser.importSites(paneId, profileId)
       .then((next) => { if (current) setSites(next); })
       .catch((reason: unknown) => { if (current) setError(friendlyError(reason, 'Não foi possível listar os sites.')); })
       .finally(() => { if (current) setLoadingSites(false); });
@@ -69,15 +69,15 @@ export function BrowserProfilePanel({ paneId, onClose }: { paneId: string; onClo
   async function importSites(): Promise<void> {
     setBusy(true); setError(''); setResult(null);
     try {
-      const imported = await window.nexus.browser.chromeImport(paneId, profileId, [...selected]);
+      const imported = await window.nexus.browser.importCookies(paneId, profileId, [...selected]);
       setResult(imported);
       setStatus(await window.nexus.browser.profileStatus(paneId));
     } catch (reason) { setError(friendlyError(reason, 'Não foi possível importar as sessões.')); }
     finally { setBusy(false); }
   }
   /**
-   * Sem importação (Windows/Linux): a aba passa ao Perfil Nexus e abre o site
-   * para o operador entrar uma vez; o login fica no Perfil Nexus.
+   * Entrar uma vez no site: a aba passa ao Perfil Nexus e abre o endereço; o
+   * login fica no Perfil Nexus. Cobre sites que nenhum navegador importável tem.
    */
   async function openForSignIn(): Promise<void> {
     const url = siteSignInUrl(siteAddress);
@@ -111,37 +111,36 @@ export function BrowserProfilePanel({ paneId, onClose }: { paneId: string; onClo
       </label>
       <p>Quando ativado, os agentes poderão acessar os sites em que você já entrou.</p>
       {status.notice && <p role="status">{status.notice}</p>}
-      {!status.importSupported ? <div className="browser-profile__import">
+      {profiles.length > 0 && <div className="browser-profile__import">
+        <strong>Importar de outro navegador</strong>
+        <p>Escolha o navegador, o perfil e os sites. O navegador de origem permanece intacto e pode continuar aberto; alguns sites podem pedir novo login. Senhas e extensões não são importadas.</p>
+        <label className="browser-profile__field">Navegador e perfil
+          <select value={profileId} disabled={busy} onChange={(event) => { setError(''); setProfileId(event.currentTarget.value); }}>
+            {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.browser} — {profile.name}</option>)}
+          </select>
+        </label>
+        <input className="browser-profile__search" aria-label="Filtrar sites" placeholder="Filtrar sites" value={filter} onChange={(event) => setFilter(event.currentTarget.value)} />
+        <div className="browser-profile__sites" aria-label="Sites disponíveis">
+          {loadingSites ? <p role="status">Lendo sites…</p> : !visibleSites.length ? <p>Nenhum site encontrado.</p> : visibleSites.map((site) => <label key={site.domain} className="browser-profile__check">
+            <input type="checkbox" aria-label={`Importar ${site.domain}`} checked={selected.has(site.domain)} disabled={busy || (!selected.has(site.domain) && selected.size >= 200)} onChange={(event) => {
+              const checked = event.currentTarget.checked;
+              setSelected((previous) => { const next = new Set(previous); if (checked) next.add(site.domain); else next.delete(site.domain); return next; });
+            }} />{site.domain}
+          </label>)}
+        </div>
+        <div className="browser-profile__actions">
+          <span>{selected.size} selecionado{selected.size === 1 ? '' : 's'}</span>
+          <button type="button" className="browser-profile__button browser-profile__button--primary" disabled={busy || loadingSites || !selected.size} onClick={() => void importSites()}>{busy ? 'Aguarde…' : 'Importar sites selecionados'}</button>
+        </div>
+      </div>}
+      <div className="browser-profile__import">
         <strong>Entrar nos seus sites</strong>
-        <p>Neste sistema o Chrome protege os logins dele contra leitura por outros programas, então eles não são importados. Entre uma vez em cada site pelo Perfil Nexus: o login fica salvo{status.shareWithAgents ? ' e os agentes passam a usá-lo' : ''}.</p>
+        <p>{profiles.length > 0 ? 'Ou entre uma vez no site pelo Perfil Nexus' : 'Nenhum navegador com sessões para importar foi encontrado neste computador. Entre uma vez em cada site pelo Perfil Nexus'}: o login fica salvo{status.shareWithAgents ? ' e os agentes passam a usá-lo' : ''}.</p>
         <form className="browser-profile__signin" onSubmit={(event) => { event.preventDefault(); void openForSignIn(); }}>
           <input className="browser-profile__search" aria-label="Site para entrar" placeholder="ex.: github.com" value={siteAddress} disabled={busy} onChange={(event) => { setError(''); setSiteAddress(event.currentTarget.value); }} />
-          <button type="submit" className="browser-profile__button browser-profile__button--primary" disabled={busy || !siteAddress.trim()}>{status.mode === 'personal' ? 'Abrir para entrar' : 'Usar o Perfil Nexus e abrir'}</button>
+          <button type="submit" className={`browser-profile__button${profiles.length ? '' : ' browser-profile__button--primary'}`} disabled={busy || !siteAddress.trim()}>{status.mode === 'personal' ? 'Abrir para entrar' : 'Usar o Perfil Nexus e abrir'}</button>
         </form>
-      </div> : <div className="browser-profile__import">
-        <strong>Importar do Chrome</strong>
-        <p>Escolha o perfil e os sites. O Chrome permanece intacto; alguns sites podem pedir novo login. Senhas e extensões não são importadas.</p>
-        {!profiles.length ? <p>Nenhum perfil do Chrome encontrado. Use o Perfil Nexus para entrar nos sites.</p> : <>
-          <label className="browser-profile__field">Perfil do Chrome
-            <select value={profileId} disabled={busy} onChange={(event) => { setError(''); setProfileId(event.currentTarget.value); }}>
-              {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-            </select>
-          </label>
-          <input className="browser-profile__search" aria-label="Filtrar sites do Chrome" placeholder="Filtrar sites" value={filter} onChange={(event) => setFilter(event.currentTarget.value)} />
-          <div className="browser-profile__sites" aria-label="Sites disponíveis">
-            {loadingSites ? <p role="status">Lendo sites…</p> : !visibleSites.length ? <p>Nenhum site encontrado.</p> : visibleSites.map((site) => <label key={site.domain} className="browser-profile__check">
-              <input type="checkbox" aria-label={`Importar ${site.domain}`} checked={selected.has(site.domain)} disabled={busy || (!selected.has(site.domain) && selected.size >= 200)} onChange={(event) => {
-                const checked = event.currentTarget.checked;
-                setSelected((previous) => { const next = new Set(previous); if (checked) next.add(site.domain); else next.delete(site.domain); return next; });
-              }} />{site.domain}
-            </label>)}
-          </div>
-          <div className="browser-profile__actions">
-            <span>{selected.size} selecionado{selected.size === 1 ? '' : 's'}</span>
-            <button type="button" className="browser-profile__button browser-profile__button--primary" disabled={busy || loadingSites || !selected.size} onClick={() => void importSites()}>{busy ? 'Aguarde…' : 'Importar sites selecionados'}</button>
-          </div>
-        </>}
-      </div>}
+      </div>
     </>}
     {result && <p ref={resultRef} role="status">Dados de sessão de {result.importedSites} site{result.importedSites === 1 ? '' : 's'} importados. {skipped > 0 ? `${skipped} ${skipped === 1 ? 'item expirado ou incompatível não foi importado' : 'itens expirados ou incompatíveis não foram importados'}. ` : ''}Abra o site para conferir o login.</p>}
     {error && <p className="browser-profile__error" role="alert">{error}</p>}

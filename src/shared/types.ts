@@ -510,9 +510,9 @@ export interface NexusApi {
   browser: {
     profileStatus(paneId: string): Promise<import('./browser-profile').BrowserProfileStatus>;
     profileChange(paneId: string, change: import('./browser-profile').BrowserProfileChange): Promise<import('./browser-profile').BrowserProfileStatus>;
-    chromeProfiles(paneId: string): Promise<import('./browser-profile').ChromeProfileSummary[]>;
-    chromeSites(paneId: string, profileId: string): Promise<import('./browser-profile').ChromeSiteSummary[]>;
-    chromeImport(paneId: string, profileId: string, domains: string[]): Promise<import('./browser-profile').ChromeImportResult>;
+    importProfiles(paneId: string): Promise<import('./browser-profile').BrowserImportProfile[]>;
+    importSites(paneId: string, profileId: string): Promise<import('./browser-profile').BrowserImportSite[]>;
+    importCookies(paneId: string, profileId: string, domains: string[]): Promise<import('./browser-profile').BrowserImportResult>;
     create(paneId: string, url?: string): Promise<BrowserPaneState>;
     destroy(paneId: string): void;
     setBounds(paneId: string, bounds: BrowserPaneBounds): void;

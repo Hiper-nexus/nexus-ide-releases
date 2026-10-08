@@ -67,6 +67,7 @@
     "@babel/types": "^7.28.0",
     "@ennuicastr/webrtcaec3.js": "^0.3.0",
     "@lydell/node-pty": "^1.2.0-beta.12",
+    "@napi-rs/keyring": "1.3.0",
     "@pierre/diffs": "1.5.2",
     "@tesseract.js-data/eng": "1.0.0",
     "@tesseract.js-data/por": "1.0.0",

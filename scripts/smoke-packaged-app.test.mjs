@@ -104,6 +104,13 @@ async function createFinishedPackage(source, destination) {
   await finished(archive);
 }
 
+
+/** The per-platform package npm installs for @napi-rs/keyring on a release runner. */
+const keyringFixture = (platform, arch) => {
+  const target = `${platform}-${arch}${{ linux: '-gnu', win32: '-msvc' }[platform] ?? ''}`;
+  return `node_modules/@napi-rs/keyring-${target}/keyring.${target}.node`;
+};
+
 describe('resolveAppArgument / default targets', () => {
   it('uses an explicit --app path', () => {
     expect(resolveAppArgument(['--app', '/tmp/release/NexusIDE.app'])).toBe(
@@ -626,6 +633,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
         'better-sqlite3',
         'node-pty',
         'onnxruntime-node',
+        'napi-keyring',
       ]),
     );
     expect(linux).not.toContain('node-pty-spawn-helper');
@@ -651,6 +659,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
         'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
         `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/pty.node`,
         `node_modules/onnxruntime-node/bin/napi-v3/${platform}/${arch}/onnxruntime_binding.node`,
+        keyringFixture(platform, arch),
       ];
       if (platform === 'linux') {
         files.push(
@@ -666,6 +675,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
       expect(found['webrtc-aec3-wasm']).toMatch(/webrtcaec3-0\.3\.0\.wasm$/);
       expect(found['node-pty']).toMatch(/pty\.node$/);
       expect(found['onnxruntime-node']).toMatch(/onnxruntime_binding\.node$/);
+      expect(found['napi-keyring']).toMatch(/keyring\.[\w-]+\.node$/);
     }
   });
 
@@ -727,6 +737,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
       'node_modules/better-sqlite3/bin/darwin-arm64-148/better-sqlite3.node',
       'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/pty.node',
       'node_modules/onnxruntime-node/bin/napi-v3/darwin/arm64/onnxruntime_binding.node',
+      'node_modules/@napi-rs/keyring-darwin-arm64/keyring.darwin-arm64.node',
     ]);
     const found = await assertNativeArtifactsPresent(unpacked, {
       platform: 'darwin',
@@ -1103,6 +1114,7 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
       'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
       `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/pty.node`,
       `node_modules/onnxruntime-node/bin/napi-v3/${platform}/${arch}/onnxruntime_binding.node`,
+      keyringFixture(platform, arch),
     ];
     if (platform === 'linux') {
       files.push(

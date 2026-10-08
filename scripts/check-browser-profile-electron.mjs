@@ -22,6 +22,8 @@ app.setPath('userData', ${JSON.stringify(path.join(dir,'data'))});
 app.disableHardwareAcceleration();
 const deadline=setTimeout(()=>{console.error('profile smoke timed out');app.exit(1);},20000);
 app.whenReady().then(async()=>{
+ // The Keychain binding is N-API: it must load in Electron's own runtime with no rebuild. Only the class is inspected; no entry is read.
+ assert.equal(typeof require('@napi-rs/keyring').AsyncEntry,'function','@napi-rs/keyring must load in Electron');
  const windows=['a','b'].map(id=>new BrowserWindow({show:false,webPreferences:{partition:'profile-smoke-'+id,contextIsolation:true,nodeIntegration:false,sandbox:true}}));
  for(const w of windows) await w.loadURL('about:blank');
  let saved=[];
@@ -50,10 +52,10 @@ app.whenReady().then(async()=>{
  assert.equal((await session.defaultSession.cookies.get({})).length,0,'default session must remain untouched');
  for(const stop of disconnect) await stop();
  for(const w of windows) w.destroy();
- console.log('PASS native Electron: host-only, partitioned cookies, propagation and logout');
+ console.log('PASS native Electron: keyring binding loads; host-only, partitioned cookies, propagation and logout');
  clearTimeout(deadline);app.quit();
 }).catch(e=>{console.error(e.message);clearTimeout(deadline);app.exit(1);});`;
-await build({stdin:{contents:source,resolveDir:repoRoot},outfile,bundle:true,platform:'node',format:'cjs',external:['electron','better-sqlite3'],logLevel:'warning'});
+await build({stdin:{contents:source,resolveDir:repoRoot},outfile,bundle:true,platform:'node',format:'cjs',external:['electron','better-sqlite3','@napi-rs/keyring'],logLevel:'warning'});
 const env={...process.env}; delete env.ELECTRON_RUN_AS_NODE;
 const child=spawn(electron,[outfile],{env,stdio:'inherit'});
 const timeout = setTimeout(() => { console.error('Electron profile check timed out'); child.kill('SIGTERM'); }, 30_000);

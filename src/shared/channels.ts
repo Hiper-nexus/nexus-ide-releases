@@ -20,9 +20,9 @@ export const PTY_CHANNELS = {
 export const BROWSER_CHANNELS = {
   profileStatus: 'browser:profileStatus',
   profileChange: 'browser:profileChange',
-  chromeProfiles: 'browser:chromeProfiles',
-  chromeSites: 'browser:chromeSites',
-  chromeImport: 'browser:chromeImport',
+  importProfiles: 'browser:importProfiles',
+  importSites: 'browser:importSites',
+  importCookies: 'browser:importCookies',
   create: 'browser:create',
   destroy: 'browser:destroy',
   bounds: 'browser:bounds',
