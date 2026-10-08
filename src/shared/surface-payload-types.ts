@@ -352,12 +352,16 @@ export interface PerfSnapshot {
 }
 
 /**
- * 0.76.45: broadcast periódico main → todos os renderers (perf:paneFootprints).
+ * 0.76.45: broadcast periódico main → renderers assinantes (perf:paneFootprints).
  * Mesmo dado do panes.footprints do PerfSnapshot (probePaneFootprints +
  * getCachedSystemMemory), mas empurrado a cada 30s e indexado por sessionId
  * para lookup O(1) no badge de custo do PaneToolbar, em vez de poll.
  */
 export interface PaneFootprintBroadcast {
+  /** QLT-11: sobe a cada vez que o coletor liga; `sequence` recomeça em 1 e só
+   * se compara dentro da mesma geração. */
+  generation: number;
+  sequence: number;
   capturedAt: number;
   bySessionId: Record<string, { rssBytes: number | null; processCount: number }>;
   systemMemory: { freeMB: number | null; swapUsedMB: number | null } | null;

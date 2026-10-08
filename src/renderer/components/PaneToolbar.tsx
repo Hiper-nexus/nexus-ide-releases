@@ -18,7 +18,7 @@ import { useAccountChoiceReceipt } from '../lib/use-account-choice-receipt';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { usePaneParkedStore } from '../state/pane-parked-store';
-import { usePaneFootprintStore } from '../state/pane-footprint-store';
+import { usePaneFootprintFeed, usePaneFootprintStore } from '../state/pane-footprint-store';
 import { useJevHintStore } from '../state/jev-hint-store';
 import {
   hibernateHost,
@@ -318,6 +318,8 @@ export function formatFootprintLabel(rssBytes: number): string {
 
 /** Badge discreto de RSS por pane (0.76.45) — null = nada, nunca "0 MB" inventado. */
 function FootprintBadge({ paneId }: { paneId: string }) {
+  // QLT-11: o badge montado é o assinante; sem badge, o main não mede.
+  usePaneFootprintFeed();
   const sessionId = usePaneLiveSessionId(paneId);
   const entry = usePaneFootprintStore((s) =>
     sessionId ? s.bySessionId[sessionId] : undefined,

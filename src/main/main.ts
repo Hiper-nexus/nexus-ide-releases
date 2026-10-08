@@ -1110,8 +1110,8 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     // Primeira amostra de memória para o gate de admissão de panes (F-572);
     // o gate é síncrono e lê o cache — sem isso o primeiro spawn nasce cego.
     void refreshSystemMemorySample();
-    // Badge de custo por pane no cabeçalho (0.76.45): push periódico do
-    // footprint por sessão para todos os renderers.
+    // Badge de custo por pane no cabeçalho (0.76.45): libera o push do
+    // footprint por sessão — só mede enquanto algum renderer assina (QLT-11).
     startPaneFootprintBroadcast();
 
     // Gap A: register Claude+Codex managed hook installers. Installing edits the

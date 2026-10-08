@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PTY_CHANNELS } from '../shared/channels';
+import { PERF_CHANNELS, PTY_CHANNELS } from '../shared/channels';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
 import { FILES_CHANNELS } from '../shared/files-types';
 import type { NexusApi, PtyDataEvent } from '../shared/types';
@@ -552,5 +552,40 @@ describe('files.clipboardFileUris (F-582)', () => {
       reason: 'unsupported',
       error: 'HEIC não suportado neste sistema.',
     });
+  });
+});
+
+describe('perf.onPaneFootprints (QLT-11: o main só mede com assinante)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    electronMock.handlers.clear();
+    electronMock.ipcRenderer.send.mockClear();
+    electronMock.contextBridge.exposeInMainWorld.mockClear();
+  });
+
+  function watchSends(): unknown[] {
+    return electronMock.ipcRenderer.send.mock.calls
+      .filter(([channel]) => channel === PERF_CHANNELS.paneFootprintsWatch)
+      .map(([, active]) => active);
+  }
+
+  it('assina no primeiro ouvinte e desassina só quando o último sai', async () => {
+    const api = await loadPreloadApi();
+    const a = vi.fn();
+    const b = vi.fn();
+
+    const offA = api.perf.onPaneFootprints(a);
+    const offB = api.perf.onPaneFootprints(b);
+    expect(watchSends()).toEqual([true]);
+
+    emitIpc(PERF_CHANNELS.paneFootprints, { generation: 1, sequence: 1 });
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
+
+    offA();
+    offA(); // idempotente: não desassina o renderer por engano
+    expect(watchSends()).toEqual([true]);
+    offB();
+    expect(watchSends()).toEqual([true, false]);
   });
 });

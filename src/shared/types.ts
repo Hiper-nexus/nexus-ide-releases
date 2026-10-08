@@ -1276,7 +1276,8 @@ export interface NexusApi {
   };
   perf: {
     snapshot(): Promise<PerfSnapshot>;
-    /** Push periódico (30s) do footprint por pane — ver PERF_CHANNELS.paneFootprints. */
+    /** Push periódico (30s) do footprint por pane — ver PERF_CHANNELS.paneFootprints.
+     * O primeiro ouvinte assina a coleta no main; o último a desliga (QLT-11). */
     onPaneFootprints(cb: (event: PaneFootprintBroadcast) => void): Unsubscribe;
   };
   mcp: {

@@ -101,6 +101,23 @@ describe('PaneToolbar — badge de custo por pane (0.76.45)', () => {
     expect(host.querySelector('.toolbar__footprint')).toBeNull();
   });
 
+  it('o badge montado assina o footprint e desassina ao desmontar (QLT-11)', () => {
+    const unsubscribe = vi.fn();
+    const onPaneFootprints = vi.fn(() => unsubscribe);
+    const host = window as unknown as { nexus?: unknown };
+    host.nexus = { perf: { onPaneFootprints } };
+    try {
+      const { root } = mount();
+      expect(onPaneFootprints).toHaveBeenCalledTimes(1);
+      expect(unsubscribe).not.toHaveBeenCalled();
+
+      act(() => root.unmount());
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+    } finally {
+      delete host.nexus;
+    }
+  });
+
   it('não renderiza nada antes do primeiro broadcast chegar', () => {
     const { host } = mount();
     expect(host.querySelector('.toolbar__footprint')).toBeNull();

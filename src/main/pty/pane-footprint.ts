@@ -10,6 +10,12 @@
  *
  * Regras herdadas de pty-descendant-termination: PID duplicado invalida a
  * tabela; root ausente (PID reciclado) vira null — nunca chutar.
+ *
+ * QLT-11: o PID sozinho não identifica o root — o sistema recicla PIDs. A
+ * identidade é PID + início: um processo estranho que herdou o número do
+ * root nasceu depois do spawn da sessão e vira null, não "a sessão de
+ * antes" (mesma armadilha descrita em pingdotgg/t3code
+ * docs/internals/resource-telemetry.md).
  */
 
 export interface RssProcessRow {
@@ -17,12 +23,25 @@ export interface RssProcessRow {
   readonly ppid: number;
   /** Resident set size em KB, como o `ps` imprime. */
   readonly rssKB: number;
+  /** Início do processo em epoch ms (`lstart`, precisão de 1 s). */
+  readonly startedAtMs: number;
 }
 
 export interface SessionRoot {
   readonly sessionId: string;
   readonly rootPid: number;
+  /** Date.now() do host logo após o spawn do root. */
+  readonly spawnedAtMs: number;
 }
+
+/**
+ * `lstart` trunca para o segundo e, no Linux, sai do btime (que oscila 1 s
+ * entre leituras); o spawn é medido em ms. Um PID reciclado nasce depois que
+ * o root original morreu — não dentro desta janela.
+ */
+const ROOT_START_TOLERANCE_MS = 2_000;
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export interface SessionFootprint {
   readonly sessionId: string;
@@ -39,16 +58,30 @@ export interface FootprintSummary {
   readonly largest: SessionFootprint | null;
 }
 
-/** `ps -axo pid=,ppid=,rss=` → linhas; qualquer linha fora do padrão é ignorada. */
+/**
+ * `ps -axo pid=,ppid=,rss=,lstart=` com LANG=C → linhas; qualquer linha fora
+ * do padrão é ignorada. `lstart` = "Wed Oct  7 10:00:00 2026", hora local.
+ */
 export function parseRssProcessTable(output: string): RssProcessRow[] {
   const rows: RssProcessRow[] = [];
   for (const line of output.split('\n')) {
-    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s*$/);
-    if (!match) continue;
+    const match = line.match(
+      /^\s*(\d+)\s+(\d+)\s+(\d+)\s+[A-Z][a-z]{2}\s+([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s+(\d{4})\s*$/,
+    );
+    const month = match ? MONTHS.indexOf(match[4]!) : -1;
+    if (!match || month < 0) continue;
     rows.push({
       pid: Number(match[1]),
       ppid: Number(match[2]),
       rssKB: Number(match[3]),
+      startedAtMs: new Date(
+        Number(match[9]),
+        month,
+        Number(match[5]),
+        Number(match[6]),
+        Number(match[7]),
+        Number(match[8]),
+      ).getTime(),
     });
   }
   return rows;
@@ -73,7 +106,8 @@ export function attributeSessionFootprints(
   }
   return roots.map((root) => {
     const rootRow = consistent ? byPid.get(root.rootPid) : undefined;
-    if (!rootRow) {
+    // Mesmo PID, outro início: o root morreu e o número foi reciclado.
+    if (!rootRow || Math.abs(rootRow.startedAtMs - root.spawnedAtMs) > ROOT_START_TOLERANCE_MS) {
       return { sessionId: root.sessionId, rootPid: root.rootPid, processCount: 0, rssBytes: null };
     }
     let rssKB = rootRow.rssKB;
