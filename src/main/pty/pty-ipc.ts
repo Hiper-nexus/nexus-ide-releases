@@ -524,7 +524,7 @@ function spawnCliPtyAgentPane(
         authority.scope.rootRealPath !== authority.coordinationScope.rootRealPath) {
       requireLiveRendererWorkspaceScope(sender, authority.coordinationScope);
     }
-    const { sessionId, resumeMode } = spawnAgentSession(
+    const { sessionId, resumeMode, warnings } = spawnAgentSession(
       sender,
       authorizedRequest,
       adapter,
@@ -592,6 +592,7 @@ function spawnCliPtyAgentPane(
       sessionId,
       ...(preparation.overrides.selectedAccountId ? { accountId: selectedAccountId } : {}),
       ...(request.resume && resumeMode ? { resumeMode } : {}),
+      ...(warnings?.length ? { warnings } : {}),
     };
   } catch (err) {
     const message =

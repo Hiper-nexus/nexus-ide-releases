@@ -17,6 +17,7 @@ import { MIMO_CODE_DEFAULT_MODEL, MIMO_CODE_MODEL_IDS } from '../../shared/mimo-
 import { CODEX_FRONTIER_MODEL, GROK_FRONTIER_MODEL, migrateModelId } from '../../shared/model-defaults';
 import { bareModelId } from '../../vendor/omp/catalog/identity';
 import { modelListAuthority } from './model-availability';
+import { withClaudeModelProfile } from './claude-model-profiles';
 import {
   RICH_MODEL_CATALOG,
   findRichModelInProvider,
@@ -110,6 +111,9 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
           id: 'claude-sonnet-5-5', availability: 'paid', costTier: 'medium', source: 'bundled',
         },
         { id: 'claude-sonnet-5', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        // Manifesto T3 26285ab (07/10): current, Claude Code >= 2.1.293 — e
+        // 81 turnos reais na 2.1.293 dos panes. Abaixo disso só avisa (F-966).
+        { id: 'claude-haiku-5-5', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'claude-haiku-4-5', availability: 'cheap', costTier: 'low', source: 'bundled' },
       ],
     },
@@ -449,13 +453,18 @@ function composeModelCatalog(user: ModelCatalog): ModelCatalog {
  * (valor explícito de BUILTIN/PUBLISHED/USER vence) e modelo sem fonte fica
  * SEM o campo — nenhum número é inventado. O roteador trata ausência como
  * "não filtrar", nunca como janela zero.
+ *
+ * F-966: no Claude o perfil do modelo (manifesto do T3) vem antes — esforços
+ * aceitos, versão mínima da CLI e a janela do Claude Code (o id sem `[1m]`
+ * do sonnet-4-6 abre 200k, não o 1M da API).
  */
 function enrichMaxContext(catalog: ModelCatalog): ModelCatalog {
   const adapters: Record<string, AdapterModelCatalog> = {};
   for (const [adapterId, adapterCatalog] of Object.entries(catalog.adapters ?? {})) {
     adapters[adapterId] = {
       ...adapterCatalog,
-      models: (adapterCatalog.models ?? []).map((entry) => {
+      models: (adapterCatalog.models ?? []).map((raw) => {
+        const entry = adapterId === 'claude' ? withClaudeModelProfile(raw) : raw;
         if (entry.maxContext !== undefined) return entry;
         const contextWindow = getRichModelMetadata(adapterId, entry.id)?.contextWindow;
         return typeof contextWindow === 'number' && contextWindow > 0

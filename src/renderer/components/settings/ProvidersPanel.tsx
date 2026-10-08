@@ -635,6 +635,9 @@ function ProviderDetail({
           {provider.cliInstallationWarning && (
             <p className="prov-detail__sub" role="status">{provider.cliInstallationWarning}</p>
           )}
+          {provider.cliCompatibilityWarning && (
+            <p className="prov-detail__sub" role="status">{provider.cliCompatibilityWarning}</p>
+          )}
           {stateChips.length > 0 && (
             <div
               className="prov-state-chips"

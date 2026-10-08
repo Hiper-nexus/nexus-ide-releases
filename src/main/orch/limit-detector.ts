@@ -228,6 +228,14 @@ const PATTERNS: Pattern[] = [
     re: /model ['"][^'"]{1,64}['"] (?:does not exist|is not found|was not found|is not supported)/i,
   },
   { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /\bnot_found_error:[^\n]{0,60}\bmodel\b/i },
+  // F-966: Claude Code (TUI e -p) com modelo que a CLI/conta não serve — o
+  // texto do 404 é este nas 2.1.283 e 2.1.293 (strings do binário). Sem ele o
+  // modelo recusado nunca entrava na quarentena e o roteador insistia.
+  {
+    kind: 'model',
+    cooldownMs: 5 * 60 * 1000,
+    re: /There's an issue with the selected model \([^)\n]{1,80}\)\. It may not exist or you may not have access to it/i,
+  },
   { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /\bmodels\/[a-z0-9][a-z0-9.-]{0,80}\s+is not found\b/i },
   { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /\b(?:model_not_found|model_not_supported)\b/i },
   // F-683: OpenCode Zen com o modelo desligado para a conta (29/09):

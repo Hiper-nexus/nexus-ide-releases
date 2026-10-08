@@ -351,6 +351,7 @@ vi.mock('../adapters/adapter-registry', () => ({
 
 // Unit tests use synthetic absolute paths that do not exist on disk.
 vi.mock('../path-resolver', () => ({
+  cachedCliBinaryVersion: () => undefined,
   realUserHome: () => '/fixture-quota-home',
   revalidateExecutable: (binPath: string) =>
     typeof binPath === 'string' &&

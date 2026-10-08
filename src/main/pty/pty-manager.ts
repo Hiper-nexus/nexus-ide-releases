@@ -87,6 +87,7 @@ import {
 } from "../adapters/managed-credentials";
 import { forgetAccountChoiceReceipt } from "../persistence/account-choice-receipts";
 import {
+  cachedCliBinaryVersion,
   realUserHome,
   resolveCliBinary,
   resolveSpawnBinary,
@@ -95,6 +96,8 @@ import {
 import { windowsNpmShimSpawn } from "../adapters/windows-npm-shim";
 import { windowsCodexShimWithinMaxPath } from "../adapters/codex-windows-prefix";
 import { agyModelForEffort, withoutEffortArg } from "../adapters/agy-effort-model";
+import { claudeEffortArgsForModel } from "../adapters/claude-model-profiles";
+import { cliVersionWarnings } from "../adapters/cli-compatibility";
 import { windowsMuseLauncherSpawn } from "../adapters/muse-windows-launcher";
 import { codexNoDaemonArgs } from "../orch/codex-cli-version";
 import { ensureMinimaxFullAccess } from "../orch/cli-mcp-session-minimax";
@@ -1417,6 +1420,8 @@ export interface SpawnedSession {
   sessionId: string;
   startKey?: string;
   resumeMode?: "exact" | "latest" | "unsupported" | "fresh-context";
+  /** F-966: avisos de versão da CLI calculados antes do spawn (nunca bloqueiam). */
+  warnings?: string[];
 }
 
 export function operatorShellLoginArgs(
@@ -1816,6 +1821,15 @@ export function spawnAgentSession(
   if (process.platform === "win32" && adapter.id === "codex") {
     bin = windowsCodexShimWithinMaxPath(bin, { home: realUserHome() });
   }
+  // F-966: versão quebrada conhecida ou abaixo do mínimo do modelo vira aviso
+  // legível ANTES do processo nascer — nunca bloqueia. Só lê a versão já
+  // sondada (cache do boot, F-764); desconhecida não avisa.
+  const spawnWarnings = cliVersionWarnings({
+    bin: adapter.bin,
+    version: cachedCliBinaryVersion(bin) ?? null,
+    model,
+  });
+  for (const warning of spawnWarnings) console.warn(`[cli-compat] ${adapter.id}: ${warning}`);
   let args = argv.slice(1);
   // Adapters whose interactive argv has no {{MODEL}} placeholder would
   // silently DROP the resolved model (Codex boots on CLI 5.5, Grok on its
@@ -1947,11 +1961,18 @@ export function spawnAgentSession(
     trustedSessionArgs = [adapter.spawn.sessionIdArg, dictatedSessionId];
   }
   if (overrides.extraArgs && overrides.extraArgs.length > 0) {
-    args.push(
-      ...(agyEffort?.dropEffort && adapter.control?.effort?.arg
-        ? withoutEffortArg(overrides.extraArgs, adapter.control.effort.arg.trim())
-        : overrides.extraArgs),
-    );
+    const effortFlag = adapter.control?.effort?.arg.trim();
+    let extraArgs = overrides.extraArgs;
+    if (agyEffort?.dropEffort && effortFlag) {
+      extraArgs = withoutEffortArg(extraArgs, effortFlag);
+    }
+    // F-966: o Claude aceita esforço por modelo — haiku-4-5 nenhum (sai do
+    // argv), opus-4-7 recebe `max` no lugar de `xhigh`, sonnet-4-6 `high` no
+    // de `max`; nível que o modelo não tem vira o padrão dele.
+    if (adapter.bin === "claude" && effortFlag) {
+      extraArgs = claudeEffortArgsForModel(extraArgs, effortFlag, model);
+    }
+    args.push(...extraArgs);
   }
   const promptChannel = initialPromptChannel({
     declared: adapter.spawn.initialPrompt,
@@ -3190,7 +3211,12 @@ export function spawnAgentSession(
       console.warn("[pty-manager] session dictation hook threw:", err);
     }
   }
-  return { sessionId, startKey: lease.startKey, ...(resumeMode ? { resumeMode } : {}) };
+  return {
+    sessionId,
+    startKey: lease.startKey,
+    ...(resumeMode ? { resumeMode } : {}),
+    ...(spawnWarnings.length > 0 ? { warnings: spawnWarnings } : {}),
+  };
   } catch (error) {
     if (!licenseChildSpawned && museProfileToken) cleanupCliMcpSession(museProfileToken);
     if (!licenseChildSpawned) releaseLicenseAgent();

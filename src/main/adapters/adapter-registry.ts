@@ -27,6 +27,7 @@ import {
   warmCliBinaryVersions,
   type CliBinaryResolution,
 } from '../path-resolver';
+import { CLI_COMPATIBILITY_POLICIES } from './cli-compatibility';
 import {
   applyDiscoveredEffortsToAdapter,
   applyDiscoveredModelsToAdapter,
@@ -425,9 +426,12 @@ let stopCliVersionListener: (() => void) | null = null;
 const WATCH_DEBOUNCE_MS = 100;
 /**
  * Comandos cuja instalação ÚNICA também é sondada no aquecimento: o gate de
- * versão do Codex (`--dangerously-bypass-hook-trust`) lê o mesmo cache.
+ * versão do Codex (`--dangerously-bypass-hook-trust`) lê o mesmo cache, e as
+ * faixas de compatibilidade (F-966) avisam antes do spawn com a versão sondada.
  */
-const VERSION_GATED_CLIS = ['codex'] as const;
+const VERSION_GATED_CLIS = [
+  ...new Set(['codex', ...CLI_COMPATIBILITY_POLICIES.map((policy) => policy.bin)]),
+];
 
 function resolveAdapterBin(adapter: Adapter): AdapterBinResolution {
   if (adapter.kind === 'api-provider') {

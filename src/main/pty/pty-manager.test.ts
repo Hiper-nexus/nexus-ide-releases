@@ -56,9 +56,13 @@ vi.mock("../adapters/windows-npm-shim", () => ({
   },
 }));
 
+// F-966: versão já sondada por binário (o spawn só lê o cache, nunca executa).
+const cliVersions = vi.hoisted(() => new Map<string, string | null>());
+
 // Unit tests use a fake PTY host — pin absolute bin paths so spawn never
 // depends on the machine PATH (same contract as production discovery).
 vi.mock("../path-resolver", () => ({
+  cachedCliBinaryVersion: (binPath: string) => cliVersions.get(binPath),
   resolveSpawnBinary: (command: string, preferred?: string | null) => {
     const binPath =
       preferred && preferred.startsWith("/")
@@ -6673,5 +6677,66 @@ describe("F-906 AGY native heavy admission readiness", () => {
       expect(run.spawns[0].readiness).toBeUndefined();
       expect(agyHeavy.ensure).not.toHaveBeenCalled();
     } finally { await finish(run); }
+  });
+});
+
+describe("F-966: perfil por modelo do Claude no argv físico", () => {
+  async function spawnClaude(
+    model: string,
+    extraArgs: string[],
+    version?: string,
+  ): Promise<{ args: string[]; warnings: string[] | undefined }> {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-claude-effort-"));
+    const worktree = path.join(root, "worktree");
+    fs.mkdirSync(worktree);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    if (version) cliVersions.set("/mock/bin/claude", version);
+    let sessionId: string | null = null;
+    try {
+      const spawned = spawnMainOwnedAgentSession(
+        { kind: "cli-agent", paneId: `claude-effort-${model}`, model, cols: 100, rows: 30 },
+        builtinCliPtyAdapter("claude"),
+        { extraArgs },
+        revisionBoundWorker(fs.realpathSync.native(worktree)),
+      );
+      sessionId = spawned.sessionId;
+      return { args: host.specFor(sessionId).args, warnings: spawned.warnings };
+    } finally {
+      cliVersions.clear();
+      if (sessionId) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  const effortOf = (args: readonly string[]): string | null => {
+    const index = args.indexOf("--effort");
+    return index < 0 ? null : args[index + 1]!;
+  };
+
+  it.each([
+    ["claude-haiku-4-5", "low", null],
+    ["claude-opus-4-7", "xhigh", "max"],
+    ["claude-sonnet-4-6", "max", "high"],
+    ["claude-sonnet-4-6", "xhigh", "high"],
+    ["claude-opus-5-5", "max", "max"],
+    ["claude-sonnet-5-5", "xhigh", "xhigh"],
+    ["claude-haiku-5-5", "xhigh", "xhigh"],
+  ])("%s com --effort %s chega à CLI como %s", async (model, requested, expected) => {
+    const { args } = await spawnClaude(model, ["--effort", requested]);
+    expect(args.slice(args.indexOf("--model"), args.indexOf("--model") + 2)).toEqual(["--model", model]);
+    expect(effortOf(args)).toBe(expected);
+  });
+
+  it("CLI abaixo do minVersion avisa e mantém o default no argv", async () => {
+    const { args, warnings } = await spawnClaude("claude-sonnet-5-5", [], "2.1.283");
+    expect(args).toContain("claude-sonnet-5-5");
+    expect(warnings).toEqual([expect.stringContaining("v2.1.284")]);
+  });
+
+  it("CLI na versão mínima ou acima não avisa", async () => {
+    const { warnings } = await spawnClaude("claude-sonnet-5-5", [], "2.1.293");
+    expect(warnings).toBeUndefined();
   });
 });

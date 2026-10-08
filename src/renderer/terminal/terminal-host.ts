@@ -1302,6 +1302,13 @@ function startSpawn(
         if (!quietSpawn) host.term.writeln(SESSION_BOUNDARY_NOTICE);
       }
       host.hasVisibleContent = true;
+      // F-966: versão da CLI com incompatibilidade conhecida ou anterior ao
+      // modelo — o Main já abriu o pane; a linha explica uma falha provável.
+      if (!res.adopted && !quietSpawn) {
+        for (const warning of res.warnings ?? []) {
+          host.term.writeln(`\x1b[33m[nexus] ${warning}\x1b[0m`);
+        }
+      }
       if (resume && !res.adopted && !quietSpawn) {
         // Teste do silêncio (0.62): só fala no pane o que explica um estado
         // SURPREENDENTE (histórico sumiu / conversa aproximada). Sucesso

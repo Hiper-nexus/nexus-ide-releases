@@ -68,6 +68,7 @@ vi.mock('../adapters/adapter-registry', () => ({
 }));
 
 vi.mock('../path-resolver', () => ({
+  cachedCliBinaryVersion: () => undefined,
   realUserHome: () => fx.home,
   revalidateExecutable: (binPath: string) => typeof binPath === 'string' && binPath.startsWith('/'),
   resolveCliBinary: () => null,

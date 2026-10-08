@@ -78,6 +78,18 @@ describe('detectLimit', () => {
     expect(detectLimit('O modelo requer uma versão mais nova? melhor atualizar.')).toBeNull();
   });
 
+  it('F-966: recusa de modelo do Claude Code entra na quarentena de modelo', () => {
+    // Texto do 404 nas CLIs 2.1.283 e 2.1.293 (strings do binário).
+    const hit = detectLimit(
+      "  ⎿  API Error: There's an issue with the selected model (claude-haiku-5-5). It may not exist or you may not have access to it. Run /model to pick a different model.",
+    );
+    expect(hit?.kind).toBe('model');
+    expect(hit?.reason).toContain('(claude-haiku-5-5)');
+    // Prosa citando o problema sem a frase canônica não dispara.
+    expect(detectLimit('Acho que há um problema com o modelo selecionado; vou trocar.')).toBeNull();
+    expect(detectLimit('There is an issue with the selected model, maybe.')).toBeNull();
+  });
+
   it.each([
     "Error: The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account",
     'Error: The gpt-6.1-sol model is not supported when using Codex with a ChatGPT account',
