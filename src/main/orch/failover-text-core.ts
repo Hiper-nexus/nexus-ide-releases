@@ -1,8 +1,20 @@
 import { detectLimit, type LimitHit } from './limit-detector';
+import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
 const WINDOW = 4_000;
+/**
+ * F-999: depois do eco de um pack de continuidade o worker novo lê e cita o
+ * motivo da troca ("model_not_found") — texto que o detector reconhece, e a
+ * recusa de modelo não tem sonda de provider que a refute. Nesse intervalo um
+ * sinal de MODELO lido no terminal só vale na 2ª ocorrência em saída nova (a
+ * CLI repetindo ou redesenhando o erro); o relato da própria CLI (observer)
+ * vale na hora, e cota/taxa/auth não esperam — a sonda decide (F-249).
+ */
+export const CONTINUITY_ECHO_CONFIRM_MS = 120_000;
 const NOISE = /retrying\s+in\s+\d|attempt\s+\d+\s*\/\s*\d+|api\s*error|overloaded_error|service unavailable|status[\s:(]*5\d\d\b|\bhttp\s*5\d\d\b/i;
 export interface FailoverTextProposal {
   readonly hit?: LimitHit;
+  /** F-999: sinal de modelo citado logo depois do pack, à espera da 2ª ocorrência. */
+  readonly held?: LimitHit;
   readonly scanned?: boolean;
   readonly slowScanMs?: number;
   readonly unavailable?: boolean;
@@ -19,14 +31,16 @@ function signature(line: string): string | null { const match = NOISE.exec(line)
 export class FailoverTextReducer {
   #buffer = ''; #pending = 0; #lastScan = 0; #firedAt = -Infinity;
   slowUntil = 0; #held: Array<{ text: string; at: number }> = []; #heldChars = 0; #unavailable = false;
-  #episode = 0; #transient = false; #progress = 0;
+  #episode = 0; #transient = false; #progress = 0; #packAt = -Infinity; #heldModelAt = -Infinity;
   #seen = new Set<string>(); #errors = new Set<string>();
   #remember(line: string) { if (this.#seen.size >= 2_000) this.#seen.clear(); this.#seen.add(line); }
   control(value: { firedAt?: number; endTransient?: boolean; rejectTransient?: boolean }) {
     if (value.firedAt !== undefined) { this.#firedAt = value.firedAt; this.#buffer = ''; }
     if (value.endTransient || value.rejectTransient || value.firedAt !== undefined) { this.#transient = false; this.#progress = 0; this.#seen.clear(); this.#errors.clear(); }
   }
-  observer(hit: LimitHit, at: number): FailoverTextProposal[] { return this.#hit(hit, hit.reason, '', at); }
+  observer(hit: LimitHit, at: number): FailoverTextProposal[] { return this.#hit(hit, hit.reason, '', at, true); }
+  /** F-999: o pack colado/digitado nesta sessão (a TUI pode mostrar só "[Pasted text …]"). */
+  input(data: string, at: number): void { if (data.includes(FAILOVER_HANDOFF_HEADER)) this.#packAt = at; }
   feed(text: string, at: number, flush = false): FailoverTextProposal[] {
     const out: FailoverTextProposal[] = [];
     if (this.#unavailable) return [{ episode: this.#episode, progressChars: this.#progress, freshError: false, unavailable: true, at }];
@@ -47,6 +61,8 @@ export class FailoverTextReducer {
       if (at < this.slowUntil) { out.push(...this.feed(text.slice(offset), at, flush)); break; }
       if (at - this.#firedAt < 30_000) { this.#noteProgress(part); continue; }
       this.#buffer = (this.#buffer + part).slice(-WINDOW); this.#pending += part.length;
+      // O header termina em "]": só a parte que o completa paga a busca (inclusive partido entre passadas).
+      if (part.includes(']') && this.#buffer.slice(-(part.length + FAILOVER_HANDOFF_HEADER.length - 1)).includes(FAILOVER_HANDOFF_HEADER)) this.#packAt = at;
       if (this.#transient || at - this.#lastScan >= 250 || this.#pending >= WINDOW / 2 || flush) out.push(...this.#scan(part, at));
     }
     if (this.#transient) out.push({ episode: this.#episode, progressChars: this.#progress, freshError: false, at });
@@ -61,8 +77,13 @@ export class FailoverTextReducer {
     if (hit) { const window = this.#buffer; this.#buffer = ''; return this.#hit(hit, window, text, at).map((proposal) => ({ ...proposal, ...(scanMs > 25 ? { slowScanMs: scanMs } : {}) })); }
     this.#noteProgress(text); return [{ episode: this.#episode, progressChars: this.#progress, freshError: false, scanned: true, ...(scanMs > 25 ? { slowScanMs: scanMs } : {}), at }];
   }
-  #hit(hit: LimitHit, detected: string, text: string, at: number): FailoverTextProposal[] {
+  #hit(hit: LimitHit, detected: string, text: string, at: number, observed = false): FailoverTextProposal[] {
     if (at - this.#firedAt < 30_000) return [];
+    if (hit.kind === 'model' && !observed && at - this.#packAt < CONTINUITY_ECHO_CONFIRM_MS && at - this.#heldModelAt >= CONTINUITY_ECHO_CONFIRM_MS) {
+      // Sem rearm: a varredura segue, e o buffer já foi zerado — só texto NOVO confirma.
+      this.#heldModelAt = at;
+      return [{ held: hit, scanned: true, episode: this.#episode, progressChars: this.#progress, freshError: false, at }];
+    }
     let freshError = false;
     if (hit.kind === 'transient') {
       const detectedLines = lines(detected);

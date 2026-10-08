@@ -123,6 +123,7 @@ export class PtyAnalysisCore {
         break;
       }
       case 'input': {
+        s.failover.input(record.data, record.observedAt);
         if (s.consumers.has('token')) {
           const result = splitSubmittedInput(s.draft, record.data); s.draft = result.draft;
           if (result.submitted !== null && hasSubmittedPrompt(result.submitted)) { s.token.submit(result.submitted); this.#emit(s, 'token', { submit: true, at: record.observedAt }); }

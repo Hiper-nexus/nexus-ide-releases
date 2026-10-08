@@ -75,6 +75,18 @@ describe('production analysis reducers', () => {
     expect(results.flatMap((r) => r.events).some((e) => e.consumer === 'failover' && (e.value as { hit?: { kind: string } }).hit?.kind === 'rate-limit')).toBe(true);
     core.close();
   });
+  it('F-999: pack de continuidade colado na sessão segura o 1º sinal de modelo da saída', () => {
+    const { core, feed, results } = fixture();
+    feed({ kind: 'arm', consumer: 'failover', registration: 1 });
+    // O renderer cola o pack (bracketed paste); a TUI mostra só o resumo da colagem.
+    feed({ kind: 'input', data: '\x1b[200~[NEXUS FAILOVER HANDOFF]\nAccount "x" hit a provider limit (kind model).\nExecute the next concrete step now.\x1b[201~' });
+    feed({ kind: 'data', data: '> [Pasted text #1 +3 lines]\nRetomando: a sessão anterior caiu com model_not_found, sigo daqui.\n' });
+    feed({ kind: 'flush' });
+    const failover = results.flatMap((r) => r.events).filter((e) => e.consumer === 'failover').map((e) => e.value as { hit?: unknown; held?: { kind: string } });
+    expect(failover.some((value) => value.hit)).toBe(false);
+    expect(failover.some((value) => value.held?.kind === 'model')).toBe(true);
+    core.close();
+  });
   it('seals PRONTO immediately before exit and excludes registered prompt echo', () => {
     const { core, feed, results } = fixture();
     feed({ kind: 'arm', consumer: 'completion', registration: 1, config: { prompt: 'Escreva PRONTO: <resumo>' } });

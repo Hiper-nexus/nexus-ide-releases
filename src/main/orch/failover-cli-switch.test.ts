@@ -12,6 +12,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import { ACCOUNT_CHANNELS, type FailoverEvent } from '../../shared/account-types';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
 import { testProjectScope } from './__tests__/scope-fixture';
+import { dotenvDump, expectNoSecretFragment, hardWrap } from '../../shared/__tests__/synthetic-secrets';
 
 const h = vi.hoisted(() => ({
   dataTaps: [] as Array<(sessionId: string, data: string) => void>,
@@ -27,6 +28,7 @@ const h = vi.hoisted(() => ({
   trace: vi.fn(),
   available: new Set<string>(),
   longNeedsApi: false,
+  sessionOutput: '$ npm test\n✓ 12 passed\nYou exceeded your current quota',
 }));
 
 vi.mock('../pty/pty-analysis-runtime', async () => {
@@ -51,7 +53,7 @@ vi.mock('./pane-registry', () => ({
   getOwnedPaneAuthzInfoBySession: vi.fn((ref: string) => h.authorities.get(ref) ?? null),
   getPaneRuntimeAuthorityBySession: vi.fn((ref: string) => h.runtime.get(ref) ?? null),
   findPaneBySessionOwnedBy: vi.fn((_owner: WebContents, ref: string) => h.panes.get(ref) ?? null),
-  readSessionOutput: vi.fn(() => '$ npm test\n✓ 12 passed\nYou exceeded your current quota'),
+  readSessionOutput: vi.fn(() => h.sessionOutput),
   requestPaneClose: h.requestPaneClose,
 }));
 vi.mock('./tool-util', () => ({ injectPrompt: vi.fn() }));
@@ -65,6 +67,8 @@ const HITS: Record<string, { kind: 'quota' | 'rate-limit' | 'auth'; reason: stri
   AUTH: { kind: 'auth', reason: '401 OAuth access token has expired', cooldownMs: 15 * 60_000 },
   LONG: { kind: 'rate-limit', reason: "You've hit your session limit", cooldownMs: 5 * 60 * 60_000 },
   HOUR: { kind: 'rate-limit', reason: 'Error: 429 Too Many Requests', cooldownMs: 60 * 60_000 },
+  // F-999: formato que as máscaras antigas não cobriam (o motivo vai na 2ª linha do pack).
+  INSQ: { kind: 'quota', reason: 'insufficient_quota', cooldownMs: 12 * 60 * 60_000 },
 };
 vi.mock('./limit-detector', () => ({
   detectLimit: vi.fn((buffer: string) => {
@@ -222,6 +226,7 @@ beforeEach(() => {
   for (const map of [h.sessions, h.states, h.authorities, h.panes, h.runtime]) map.clear();
   h.available.clear();
   h.longNeedsApi = false;
+  h.sessionOutput = '$ npm test\n✓ 12 passed\nYou exceeded your current quota';
   h.requestPaneClose.mockClear().mockResolvedValue(true);
   h.respawnMainOwned.mockClear().mockResolvedValue(true);
   h.submit.mockClear();
@@ -481,5 +486,43 @@ describe('F-775: anti-laço — teto por tarefa e sem pingue-pongue', () => {
     h.dataTaps[0]('session-3', 'QUOTA');
     await settle();
     expect(vi.mocked(third.reroute).mock.calls[0]![0].excludeAdapterIds).toEqual(['kimi', 'codex']);
+  });
+});
+
+describe('F-999: o pacote da troca de CLI sai redigido e neutralizado em todo caminho do Main', () => {
+  it('pane do operador trocando no lugar: a cauda do terminal sai sem segredo', async () => {
+    h.sessionOutput = `${hardWrap(dotenvDump(), 80)}\nYou exceeded your current quota`;
+    rendererPane({ paneId: 'pane-op', sessionId: 'session-op' });
+    h.dataTaps[0]('session-op', 'QUOTA');
+    await settle();
+    const pack = events()[0]?.continuityPack ?? '';
+    expect(pack.startsWith(FAILOVER_HANDOFF_HEADER)).toBe(true);
+    expect(pack).toContain('[REDACTED]');
+    expectNoSecretFragment(pack);
+  });
+
+  it('tarefa de missão reaberta pela rota: o pedido anexado sai sem segredo', async () => {
+    h.sessionOutput = hardWrap(dotenvDump(), 80);
+    rendererPane({ paneId: 'pane-claude', sessionId: 'session-claude', missionId: 'mission-1' });
+    const task = handle();
+    registerPaneTaskReroute(task);
+    h.dataTaps[0]('session-claude', 'QUOTA');
+    await settle();
+    const appended = vi.mocked(task.reroute).mock.calls[0]![0].appendPrompt ?? '';
+    expect(appended).toContain(FAILOVER_HANDOFF_HEADER);
+    expectNoSecretFragment(appended);
+  });
+
+  it('motivo insufficient_quota na 2ª linha: nenhuma janela que começa depois do header dispara', async () => {
+    rendererPane({ paneId: 'pane-op', sessionId: 'session-op' });
+    h.dataTaps[0]('session-op', 'INSQ');
+    await settle();
+    const pack = events()[0]?.continuityPack ?? '';
+    expect(pack).toContain('No Claude account can take more work right now');
+    const { detectLimit } = await vi.importActual<typeof import('./limit-detector')>('./limit-detector');
+    for (let start = 1; start < pack.length; start += 1) {
+      const hit = detectLimit(pack.slice(start, start + 4_000));
+      if (hit) throw new Error(`janela em ${start} disparou ${hit.kind} (${hit.reason})`);
+    }
   });
 });

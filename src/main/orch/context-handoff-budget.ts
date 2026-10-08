@@ -3,9 +3,9 @@
 // See third_party/licenses/t3code-MIT.txt. Nexus changes: ContextHandoffBudget.ts e o corte de
 // orçamento de ContextHandoffDelivery.ts viram funções puras (sem Effect nem contratos v2);
 // entrega só em texto (initialPrompt do pane novo), sem anexos; histórico com segredos
-// redigidos no texto inteiro (antes de fragmentar) e sinais de limite neutralizados pela fonte
-// única do limit-detector (F-249/F-511) antes de selecionar; estouro devolve resultado de erro
-// em vez de exceção Effect.
+// redigidos no texto inteiro (antes de fragmentar, inclusive chave partida pela quebra da TUI)
+// e sinais de limite neutralizados pela fonte única do limit-detector (F-249/F-511/F-999)
+// antes de selecionar; estouro devolve resultado de erro em vez de exceção Effect.
 
 /**
  * ORC-05 — recorte de contexto com orçamento para quando a troca de conta ou
@@ -30,14 +30,17 @@
  * PEM) entre itens, e nenhum pedaço casava com o redator.
  */
 
-import { redactSecretText } from '../terminal/command-redaction';
-import {
-  FAILOVER_HANDOFF_FOOTER,
-  FAILOVER_HANDOFF_HEADER,
-  sanitizeHandoffExcerptForDetector,
-  stripNestedHandoffPacks,
-} from '../../shared/failover-handoff';
-import { neutralizeLimitSignals } from './limit-detector';
+import { sanitizeHandoffHistoryText } from '../../shared/failover-handoff';
+
+/**
+ * Texto histórico pronto para o prompt, SEMPRE sobre o texto inteiro antes de
+ * fragmentar: segredos redigidos (inclusive a chave partida pela quebra de
+ * linha da TUI), frases de login mascaradas e todo sinal que o limit-detector
+ * reconhece neutralizado em qualquer janela; marcas de pack antigo trocadas
+ * para a faixa header→footer do pack novo seguir contígua. Idempotente. Mora
+ * em `shared/failover-handoff.ts`: o builder do pack usa o mesmo (F-999).
+ */
+export { sanitizeHandoffHistoryText };
 
 /** Teto inicial do histórico importado (tokens = bytes UTF-8). */
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
@@ -112,51 +115,17 @@ export function handoffBudget(input: {
   );
 }
 
-const PEM_BEGIN_RE = /-----BEGIN (?:[A-Z0-9 ]*)?PRIVATE KEY-----/;
-const PEM_END_RE = /-----END (?:[A-Z0-9 ]*)?PRIVATE KEY-----/;
-
-/**
- * Redator do Nexus sobre o texto inteiro, com o estado de bloco PEM: uma
- * cauda de terminal que começa no meio de uma chave (END sem BEGIN antes) tem
- * o corpo inteiro até o END redigido — o redator de linha não reconhece base64.
- */
-function redactWholeText(raw: string): string {
-  let text = raw;
-  const end = PEM_END_RE.exec(text);
-  if (end) {
-    const begin = PEM_BEGIN_RE.exec(text);
-    if (!begin || begin.index > end.index) {
-      text = `[REDACTED]${text.slice(end.index + end[0].length)}`;
-    }
-  }
-  return redactSecretText(text).text;
-}
-
-/**
- * Texto histórico pronto para o prompt, SEMPRE sobre o texto inteiro antes de
- * fragmentar: segredos redigidos, frases de limite mascaradas (F-511) e todo
- * sinal que o limit-detector reconhece neutralizado em qualquer janela; marcas
- * de pack antigo trocadas para a faixa header→footer do pack novo seguir
- * contígua. Idempotente.
- */
-export function sanitizeHandoffHistoryText(raw: string): string {
-  return neutralizeLimitSignals(
-    sanitizeHandoffExcerptForDetector(redactWholeText(raw))
-      .replaceAll(FAILOVER_HANDOFF_HEADER, '[handoff anterior]')
-      .replaceAll(FAILOVER_HANDOFF_FOOTER, '[fim do handoff anterior]'),
-  );
-}
-
 /** Granularidade dos itens do terminal: inteiros no recorte, sem corte. */
 const TERMINAL_ITEM_CHARS = 2_000;
 
 /**
- * Cauda do terminal em itens cronológicos. Packs aninhados saem, a cauda
- * INTEIRA é sanitizada e só então vira itens — nenhum fragmento carrega um
- * pedaço de segredo ou de sinal de limite que o texto inteiro não tinha.
+ * Cauda do terminal em itens cronológicos. A cauda INTEIRA é sanitizada (é
+ * cauda: a 1ª linha pode começar no meio de um token; packs aninhados saem) e
+ * só então vira itens — nenhum fragmento carrega um pedaço de segredo ou de
+ * sinal de limite que o texto inteiro não tinha.
  */
 export function terminalHistoryItems(scrollback: string): HandoffHistoricalMessage[] {
-  const text = sanitizeHandoffHistoryText(stripNestedHandoffPacks(scrollback));
+  const text = sanitizeHandoffHistoryText(scrollback, { tail: true });
   const chunks: string[] = [];
   let chunk = '';
   for (const raw of text.split('\n')) {

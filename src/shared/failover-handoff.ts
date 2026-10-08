@@ -12,9 +12,21 @@
  * Shared between the renderer builder (`failover-continuity.ts`), the
  * main-owned respawn (`failover-mission-respawn.ts`) and the detector
  * (`limit-detector.ts`) so the three never drift apart.
+ *
+ * F-999: o pack é seguro POR CONSTRUÇÃO — todo texto citado que entra nele
+ * (motivo, tarefa, arquivos, diff, próximo passo, cauda do terminal) passa
+ * pelo redator de segredos e pela neutralização de sinais de limite aqui
+ * dentro, seja qual for o chamador (Main ou renderer).
  */
 
 import { maskAccountLabel } from './account-choice';
+import {
+  CODEX_CHATGPT_MODEL_REJECTION,
+  neutralizeLimitSignals,
+} from './limit-signal-patterns';
+import { redactTerminalText } from './secret-redaction';
+
+export { CODEX_CHATGPT_MODEL_REJECTION };
 
 /** First line of every continuity pack. */
 export const FAILOVER_HANDOFF_HEADER = '[NEXUS FAILOVER HANDOFF]';
@@ -30,89 +42,61 @@ export const FAILOVER_HANDOFF_FOOTER = 'Execute the next concrete step now.';
 export const MAX_CONTINUITY_PACK_CHARS = 6_000;
 
 /**
- * F-765: frase com que o Codex logado em conta ChatGPT recusa um modelo. O
- * detector a compara sem espaços nem quebras (a TUI do Codex quebra a célula
- * de erro em qualquer ponto), e a máscara abaixo segue a mesma regra.
+ * Frases de login/sessão que o portão de continuidade do renderer
+ * (`cliAcceptsContinuityPrompt`) procura na tela: citadas no eco de um pack,
+ * fariam um pane sadio parecer parado no login. Sinais de LIMITE não entram
+ * aqui: a neutralização usa a fonte única do detector
+ * (`neutralizeLimitSignals`). As máscaras paralelas antigas mutilavam
+ * identificadores em prosa (RateLimitError → "rate cap [citado]") e deixavam
+ * passar formatos como model_not_found (F-999).
  */
-export const CODEX_CHATGPT_MODEL_REJECTION =
-  'model is not supported when using Codex with a ChatGPT account';
-
-/** A frase com qualquer branco (inclusive quebra de linha) entre as letras. */
-const CODEX_CHATGPT_MODEL_REJECTION_ANY_WRAP = new RegExp(
-  CODEX_CHATGPT_MODEL_REJECTION.replace(/\s+/g, '').split('').join('\\s*'),
-  'gi',
-);
-
-/**
- * Espelho de citação dos gatilhos de `limit-detector.ts` (F-511).
- *
- * O detector varre uma janela rolante de 4000 chars: quando o header do pack
- * sai da janela mas o excerpt ainda está nela, o 401 CITADO da sessão morta
- * casa como sinal vivo e o failover re-dispara sozinho — ping-pong entre
- * contas saudáveis com toasts falsos de "limite atingido". A faixa
- * header→footer só protege DURANTE o streaming; depois disso, só o texto
- * neutro salva.
- *
- * Por isso o excerpt é sanitizado NO BUILD: as formas de erro viram citação
- * marcada, ilegíveis para o detector mas legíveis para o agente. O motivo
- * na 2ª linha também precisa das máscaras quando o header sai da tela. Se um
- * padrão novo entrar no detector, a máscara correspondente entra aqui — o
- * teste anti-drift (`failover-phantom` no lado main) quebra se divergirem.
- */
-const EXCERPT_TRIGGER_MASKS: ReadonlyArray<readonly [RegExp, string]> = [
-  // Códigos emoldurados (o detector exige framing http/status/error).
-  // Grupo nomeado: '$<framing>4xx' preserva o framing sem a ambiguidade de '$14xx'.
-  [
-    /(?<framing>http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?)40[12]\b/gi,
-    '$<framing>4xx',
-  ],
-  [
-    /(?<framing>http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?)429\b/gi,
-    '$<framing>4xx',
-  ],
-  [/401\s+unauthorized/gi, '4xx Unauthorized'],
-  [/authentication[_\s]?error/gi, 'authentication_issue'],
-  // Par combinado antes das formas isoladas: `rate limit … try again`
-  // (ponte de até 24 chars no detector) recasaria mesmo mascarado em partes.
-  // `rate cap` proposital: o detector casa `rate[-_\s]?limit` (o vendorado omp
-  // INCLUI hífen), então a reposição precisa quebrar o token — hífen ou
-  // colchete sozinhos rearmam uma das duas taxonomias.
-  [
-    /rate[_\s]?limit[_\s]+(?:exceeded|reached|hit)\b.{0,30}\btry again\b/gi,
-    'rate cap [citado — ver motivo]',
-  ],
-  [
-    /rate[-_\s]?limit(?:ed|_error)\b|rate[-_\s]?limit[-_\s]+(?:exceeded|reached|hit)\b|ratelimiterror/gi,
-    'rate cap [citado]',
-  ],
-  [/too many requests/gi, '[muitas requisições — citado]'],
-  [/resource[_\s]?exhausted/gi, 'resource [esgotado — citado]'],
-  [/oauth access token has expired/gi, 'oauth access token [expirado — citado]'],
-  [/oauth token (?:expired|revoked)/gi, 'oauth token [expirado — citado]'],
-  [/refresh token (?:expired|invalid|revoked)/gi, 'refresh token [inválido — citado]'],
-  [/stored token for (["'])[^"']+\1 was rejected/gi, 'stored token [rejeitado — citado]'],
-  // F-765: o excerpt envelhecido continua sendo citação após sair o header —
-  // inclusive com a frase partida pela quebra de linha da TUI.
-  [CODEX_CHATGPT_MODEL_REJECTION_ANY_WRAP, 'model [rejeitado para esta conta — citado]'],
+const CONTINUITY_GATE_MASKS: ReadonlyArray<readonly [RegExp, string]> = [
   [/please run \/login/gi, 'run /login [citado]'],
   [/not logged in/gi, 'not-logged-in [citado]'],
-  [/session expired/gi, 'session [expirada — citada]'],
-  [/invalid[_\s]?(?:api[_\s]?key|x-api-key)/gi, 'invalid [api-key citada]'],
-  [/(usage|5-hour|daily|token) limit (?:reached|exceeded|hit)/gi, '$1 limit [citado]'],
-  [/quota (?:exceeded|exhausted)/gi, 'quota [esgotada — citada]'],
-  // Ordem inversa (OpenAI): o detector casa "exceeded your current quota".
-  [/exceeded your (?:current |monthly |plan )?quota/gi, '[estouro de cota — citado]'],
-  [/payment required/gi, '[pagamento — citado]'],
-  [/(n[aã]o autenticado|sess[aã]o expirada|token inv[aá]lido)/gi, '[$1 — citado]'],
-  [/limite de (?:uso|utiliza[cç][aã]o) (?:atingido|excedido|alcan[cç]ado)/gi, '[limite de uso — citado]'],
+  [/oauth access token has expired/gi, 'oauth access token [expirado — citado]'],
+  [/re-authenticate to continue/gi, 're-authenticate [citado]'],
 ];
 
+/**
+ * Espelho de citação dos gatilhos de `limit-detector.ts` (F-511/F-999).
+ *
+ * O detector varre uma janela rolante de 4000 chars: quando o header do pack
+ * sai da janela mas o texto citado ainda está nela, o erro CITADO da sessão
+ * morta casaria como sinal vivo e o failover re-dispararia sozinho —
+ * ping-pong entre contas saudáveis, ou a quarentena do modelo ATUAL. A faixa
+ * header→footer só protege DURANTE o streaming; depois disso, só o texto
+ * neutro salva. Aqui: frases do portão de login mascaradas, marcas de pack
+ * antigo trocadas (a faixa do pack novo segue contígua) e todo sinal que o
+ * detector reconhece quebrado por um caractere visível, em qualquer janela —
+ * legível para o agente, inerte para o detector. Não redige segredos (ver
+ * `sanitizeHandoffHistoryText`). Idempotente.
+ */
 export function sanitizeHandoffExcerptForDetector(raw: string): string {
   let out = raw;
-  for (const [pattern, replacement] of EXCERPT_TRIGGER_MASKS) {
+  for (const [pattern, replacement] of CONTINUITY_GATE_MASKS) {
     out = out.replace(pattern, replacement);
   }
-  return out;
+  return neutralizeLimitSignals(
+    out
+      .replaceAll(FAILOVER_HANDOFF_HEADER, '[handoff anterior]')
+      .replaceAll(FAILOVER_HANDOFF_FOOTER, '[fim do handoff anterior]'),
+  );
+}
+
+/**
+ * Histórico citado pronto para um prompt (pack, recorte ORC-05): segredos
+ * redigidos com o texto ainda em linhas — a chave partida pela quebra da TUI
+ * só é reconhecida assim — e depois neutralizado. `tail`: cauda de terminal —
+ * a 1ª linha pode começar no meio de um token e packs aninhados saem.
+ */
+export function sanitizeHandoffHistoryText(
+  raw: string,
+  options: { readonly tail?: boolean } = {},
+): string {
+  const redacted = redactTerminalText(raw, { partialHead: options.tail === true });
+  return sanitizeHandoffExcerptForDetector(
+    options.tail ? stripNestedHandoffPacks(redacted) : redacted,
+  );
 }
 
 /* ------------------------------------------------------------------------ *
@@ -191,13 +175,24 @@ function clipTail(s: string, max: number): string {
   return `…${t.slice(-(max - 1))}`;
 }
 
+/**
+ * Campo de texto livre do pack (F-999): redigido com as linhas ainda inteiras,
+ * achatado e cortado, e só então neutralizado — neutralizar antes de achatar
+ * deixava "quota⏎exceeded" virar "quota exceeded" depois.
+ */
+function quoted(raw: string, max: number): string {
+  return sanitizeHandoffExcerptForDetector(clip(redactTerminalText(raw), max));
+}
+
 function formatLimitLine(input: ContinuityPackInput, fromMasked: string): string {
   const parts: string[] = [];
-  if (input.limitKind) parts.push(`kind ${clip(input.limitKind, 24)}`);
-  const reason = sanitizeHandoffExcerptForDetector(clip(input.reason, 160));
-  parts.push(reason);
+  if (input.limitKind) parts.push(`kind ${quoted(input.limitKind, 24)}`);
+  // F-999: o motivo cru (model_not_found, insufficient_quota…) disparava numa
+  // janela que começa no meio desta linha — a remoção da linha F-511 inteira
+  // no detector não cobre isso. Neutralizado aqui, vale para todo chamador.
+  parts.push(quoted(input.reason, 160));
   if (input.limitWindow) {
-    parts.push(`window ${clip(input.limitWindow, 32)}`);
+    parts.push(`window ${quoted(input.limitWindow, 32)}`);
   }
   if (input.limitResetsAt != null && Number.isFinite(input.limitResetsAt)) {
     parts.push(`resets ${new Date(input.limitResetsAt).toISOString()}`);
@@ -222,7 +217,8 @@ function clampPack(pack: string): string {
  *
  * Rótulos de conta SEMPRE mascarados (`maskAccountLabel`) — o pack é digitado
  * no PTY e o scrollback pode ser capturado/logado; o recibo de escolha de
- * conta já opera sob a mesma regra (AGENTS.md multi-conta).
+ * conta já opera sob a mesma regra (AGENTS.md multi-conta). Todo outro texto
+ * vindo do chamador passa por `quoted` (segredo redigido, sinal neutralizado).
  */
 export function buildContinuityPack(input: ContinuityPackInput): string {
   const role = input.role === 'orchestrator' ? 'orchestrator' : 'agent';
@@ -234,7 +230,7 @@ export function buildContinuityPack(input: ContinuityPackInput): string {
     ...(input.fromAdapterLabel
       ? [
           // F-775: troca de CLI — o destino é escolhido pela rota depois.
-          `No ${clip(input.fromAdapterLabel, 40)} account can take more work right now, so this task moved to another CLI in a NEW session.`,
+          `No ${quoted(input.fromAdapterLabel, 40)} account can take more work right now, so this task moved to another CLI in a NEW session.`,
           `The previous conversation is NOT transferable — the touched files and the diff below are the real state of the work.`,
         ]
       : [
@@ -244,20 +240,16 @@ export function buildContinuityPack(input: ContinuityPackInput): string {
     `Continue as the ${role} from the next pending step. Do not re-do completed work. Prefer files/MCP mission state over guessing.`,
   ];
   if (input.missionId) {
-    lines.push(`Mission id: ${clip(input.missionId, 80)}.`);
+    lines.push(`Mission id: ${quoted(input.missionId, 80)}.`);
   }
   if (input.taskBrief) {
-    lines.push(
-      `Task: ${sanitizeHandoffExcerptForDetector(clip(input.taskBrief, MAX_TASK_BRIEF))}`,
-    );
+    lines.push(`Task: ${quoted(input.taskBrief, MAX_TASK_BRIEF)}`);
   }
   if (input.openWorkHint) {
-    lines.push(
-      `Open work: ${sanitizeHandoffExcerptForDetector(clip(input.openWorkHint, MAX_HINT))}`,
-    );
+    lines.push(`Open work: ${quoted(input.openWorkHint, MAX_HINT)}`);
   }
   if (input.touchedFiles && input.touchedFiles.length > 0) {
-    const files = input.touchedFiles.slice(0, MAX_FILES_LISTED).map((f) => `- ${clip(f, 120)}`);
+    const files = input.touchedFiles.slice(0, MAX_FILES_LISTED).map((f) => `- ${quoted(f, 120)}`);
     const more =
       input.touchedFiles.length > MAX_FILES_LISTED
         ? `\n- (+${input.touchedFiles.length - MAX_FILES_LISTED} more)`
@@ -265,24 +257,22 @@ export function buildContinuityPack(input: ContinuityPackInput): string {
     lines.push(`Touched files:\n${files.join('\n')}${more}`);
   }
   if (input.diffStat) {
-    lines.push(
-      `Diff (stat):\n${sanitizeHandoffExcerptForDetector(clip(input.diffStat, MAX_DIFF_STAT))}`,
-    );
+    lines.push(`Diff (stat):\n${quoted(input.diffStat, MAX_DIFF_STAT)}`);
   }
   if (input.nextStep) {
-    lines.push(
-      `Next step: ${sanitizeHandoffExcerptForDetector(clip(input.nextStep, MAX_NEXT_STEP))}`,
-    );
+    lines.push(`Next step: ${quoted(input.nextStep, MAX_NEXT_STEP)}`);
   }
   if (input.scrollbackExcerpt) {
-    // Sanitizado contra o limit-detector (F-511): o excerpt cita a tela da
-    // morte da sessão anterior — 401/429/quota verbatim. Sem as máscaras, o
-    // detector recasa esse texto citado como sinal vivo assim que o header
-    // do pack sai da janela rolante (4000 chars) e o failover entra em
-    // ping-pong entre contas saudáveis. O motivo na 2ª linha recebe o mesmo
-    // tratamento: a TUI pode redesenhá-la sem o header.
+    // F-511/F-999: o excerpt cita a tela da morte da sessão anterior —
+    // 401/429/quota/model_not_found verbatim e, num `cat .env`, chaves. A
+    // cauda é redigida AINDA em linhas (chave partida pela TUI, cauda cortada
+    // no meio de um token), packs aninhados saem, e só então ela é cortada e
+    // neutralizada: o texto citado não re-arma o detector quando o header sai
+    // da janela rolante (4000 chars) e nenhum segredo sai no pack, venha o
+    // excerpt do xterm (renderer) ou do PTY (Main).
+    const redacted = redactTerminalText(input.scrollbackExcerpt, { partialHead: true });
     const excerpt = sanitizeHandoffExcerptForDetector(
-      clipTail(stripNestedHandoffPacks(input.scrollbackExcerpt), MAX_EXCERPT),
+      clipTail(stripNestedHandoffPacks(redacted), MAX_EXCERPT),
     );
     lines.push(`Recent terminal excerpt (may be partial):\n"""\n${excerpt}\n"""`);
   }

@@ -13,6 +13,7 @@ import type { WebContents } from 'electron';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { ACCOUNT_CHANNELS, type FailoverEvent } from '../../shared/account-types';
 import { testProjectScope } from './__tests__/scope-fixture';
+import { FAILOVER_HANDOFF_FOOTER, FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
 
 const h = vi.hoisted(() => ({
   dataTaps: [] as Array<(sessionId: string, data: string) => void>,
@@ -462,5 +463,29 @@ describe('F-765: incompatibilidade pertence à instalação', () => {
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe('F-999: sinal de modelo citado logo depois do pack de continuidade', () => {
+  const PACK = `${FAILOVER_HANDOFF_HEADER}\nAccount "x" hit a provider limit (kind model).\nContinue as the agent from the next pending step.\n${FAILOVER_HANDOFF_FOOTER}\n`;
+
+  it('a 1ª citação não quarentena nem religa; a 2ª ocorrência em saída nova confirma', async () => {
+    codexPane();
+    h.dataTaps[0]('session-codex', PACK);
+    await settle();
+    await vi.advanceTimersByTimeAsync(1_000);
+    h.dataTaps[0]('session-codex', 'Retomando: a sessão anterior parou em MODEL_REFUSED, sigo daqui.\n');
+    await settle();
+    expect(events()).toEqual([]);
+    expect(modelAccessQuarantine('codex', 'gpt-6.1-sol', Date.now(), { accountId: 'codex-a' })).toBeNull();
+    expect(h.trace).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'suppressed', suppressed: 'model-signal-after-continuity-pack-unconfirmed', limitKind: 'model',
+    }));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    h.dataTaps[0]('session-codex', 'MODEL_REFUSED\n');
+    await settle();
+    expect(modelAccessQuarantine('codex', 'gpt-6.1-sol', Date.now(), { accountId: 'codex-a' })).not.toBeNull();
+    expect(events()[0]).toMatchObject({ kind: 'model', modelRotationPhase: 'requested' });
   });
 });

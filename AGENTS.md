@@ -232,6 +232,16 @@ saber isto antes de mexer:
   frases exatas (`CLI_SELF_MANAGED_THROTTLE`) antes dos padrões. CLI nova com
   rótulo de fila/backoff próprio entra ali com a string exata do bundle, nunca
   afrouxando o padrão de "rate limit" para todo mundo.
+- **O pacote de continuidade é seguro por construção (F-999).**
+  `buildContinuityPack` (shared, Main e renderer) redige segredos
+  (`redactTerminalText`: chave partida pela quebra da TUI, cauda cortada no
+  meio de um token, PEM) e neutraliza sinais de limite em TODO campo do
+  chamador; não monte pack à mão nem dependa do chamador para limpar. A tabela
+  de sinais do detector, a linha F-511 e `CLI_SELF_MANAGED_THROTTLE` moram em
+  `src/shared/limit-signal-patterns.ts`: padrão novo entra lá, detector e
+  neutralização seguem juntos. Sinal de MODELO lido no terminal até 120 s
+  depois do pack (eco ou colagem) só vale na 2ª ocorrência; o observer da CLI
+  vale na hora.
 
 ## Conventions
 
