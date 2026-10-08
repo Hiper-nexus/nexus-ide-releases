@@ -58,6 +58,54 @@ describe('search mixer bootstrap', () => {
     expect(on.generation).toBeGreaterThan(0);
   });
 
+  // F-1003: o mixer da raiz autorizada registrava o ripgrep sem allowedRoots
+  // e o "Missing = deny" do 464dbcf00 zerava toda busca no conteúdo (⇧⌘F).
+  it('finds file content inside the authorized workspace root (⇧⌘F)', async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-search-content-'));
+    roots.push(projectRoot);
+    fs.mkdirSync(path.join(projectRoot, 'src'));
+    fs.writeFileSync(
+      path.join(projectRoot, 'src', 'cart.ts'),
+      'export function useCoupon() {\n  return "coupon-aplicado";\n}\n',
+    );
+    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.searchMixer, true);
+
+    const result = await runSearchMixerQuery({
+      text: 'coupon-aplicado',
+      sources: ['files'],
+      limit: 10,
+      projectRoot,
+    });
+
+    expect(result.hits).toEqual([
+      expect.objectContaining({
+        source: 'files',
+        title: 'cart.ts',
+        meta: expect.objectContaining({ line: 2 }),
+      }),
+    ]);
+    expect(fs.realpathSync(result.hits[0]!.path!)).toBe(
+      fs.realpathSync(path.join(projectRoot, 'src', 'cart.ts')),
+    );
+  });
+
+  it('keeps the fail-closed default: the root-less mixer never searches files', async () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-search-rootless-'));
+    roots.push(projectRoot);
+    fs.writeFileSync(path.join(projectRoot, 'a.txt'), 'segredo-fora-da-raiz\n');
+    const hits = await getSearchMixer()
+      .searchNow({ text: 'segredo-fora-da-raiz', sources: ['files'], limit: 5, projectRoot })
+      .then((r) => r.hits);
+    expect(hits).toEqual([]);
+    // O mixer de uma raiz não autoriza outra (irmã fora dela).
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-search-other-'));
+    roots.push(other);
+    const crossed = await getSearchMixer(other)
+      .searchNow({ text: 'segredo-fora-da-raiz', sources: ['files'], limit: 5, projectRoot })
+      .then((r) => r.hits);
+    expect(crossed).toEqual([]);
+  });
+
   it('searches mission notes from the external canonical projection', async () => {
     const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-search-memory-db-'));
     const projectRoot = fs.mkdtempSync(

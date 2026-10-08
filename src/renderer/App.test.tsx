@@ -1443,6 +1443,35 @@ describe('atalhos globais respeitam o terminal (terminal-first)', () => {
     });
   });
 
+  // F-1003: no Início o terminal selecionado não está à vista; ⇧⌘F era o
+  // palco e arrastava o operador para Terminais em vez de abrir a busca.
+  it('⇧⌘F fora dos terminais abre a busca no conteúdo, mesmo com terminal selecionado', () => {
+    pinMacPlatform();
+    openWorkspace();
+    useProductNavigationStore.getState().openLauncher();
+    mountApp();
+    const stage = vi
+      .spyOn(useLayoutStore.getState(), 'toggleStageFocus')
+      .mockImplementation(() => undefined);
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-terminal');
+
+    press({ key: 'F', metaKey: true, shiftKey: true }, window);
+
+    expect(stage).not.toHaveBeenCalled();
+    expect(useProductNavigationStore.getState().destination.kind).toBe('launcher');
+    expect(useCommandPaletteStore.getState()).toMatchObject({
+      open: true,
+      mode: 'content',
+    });
+    act(() => useCommandPaletteStore.getState().close());
+
+    // Com o foco do teclado dentro do terminal, ⇧⌘F segue sendo o palco.
+    focusTerminal(() => false);
+    press({ key: 'F', metaKey: true, shiftKey: true });
+    expect(stage).toHaveBeenCalledWith('pane-terminal');
+    expect(useCommandPaletteStore.getState().open).toBe(false);
+  });
+
   it('no mac, Ctrl+K, Ctrl+Shift+W e ⌘⌥D fazem o que sempre fizeram', () => {
     pinMacPlatform();
     openWorkspace();

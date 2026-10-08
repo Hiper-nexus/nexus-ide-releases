@@ -46,6 +46,7 @@ import {
   compileKeybindingRules,
   focusContext,
   resolveShortcutCommand,
+  terminalInUse,
 } from './lib/keybindings';
 import { overlayModeForCommand } from './lib/command-palette-logic';
 import { useWorkspaceController, useWorkspaceStore } from './state/workspace-store';
@@ -493,15 +494,26 @@ export function App() {
       if (useConfirmStore.getState().pending) return;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       const layout = useLayoutStore.getState();
+      const focus = focusContext(event.target);
+      const shownDestination = useProductNavigationStore.getState().destination;
+      const paneFocused = Boolean(layout.focusedPaneId);
       const hit = resolveShortcutCommand(
         event,
         compileKeybindingRules(useSettingsStore.getState().ui.keybindings),
         {
           hasWorkspace: Boolean(useWorkspaceStore.getState().current),
-          paneFocused: Boolean(layout.focusedPaneId),
+          paneFocused,
           projectOverview:
             productFlags[FEATURE_FLAG_IDS.uiProjectOverview] !== false,
-          ...focusContext(event.target),
+          terminalInUse: terminalInUse({
+            paneFocused,
+            terminalView:
+              shownDestination.kind === 'terminal' ||
+              (shownDestination.kind === 'mission' &&
+                shownDestination.surface === 'terminals'),
+            terminalFocus: focus.terminalFocus,
+          }),
+          ...focus,
         },
       );
       if (!hit) return;

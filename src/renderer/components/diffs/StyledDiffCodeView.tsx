@@ -3,7 +3,8 @@
 // See third_party/licenses/t3code-MIT.txt. Nexus changes: Tailwind classes → .diff-render-surface
 // (git-scm.css), shadow-root CSS on Nexus tokens (--font-ui, --accent), theme/themeType and
 // color-scheme from the app theme; drops viewerRef/unsafeCSSExtra, the hunk-expansion and
-// title-link rules (this viewer never loads full files, so it has neither).
+// title-link rules (this viewer never loads full files, so it has neither); translates
+// Pierre's English hunk separator to PT-BR in onPostRender.
 import {
   CodeView,
   type CodeViewProps,
@@ -14,6 +15,7 @@ import {
   DIFF_PREFERRED_HIGHLIGHTER,
   DIFF_SURFACE_THEME_UNSAFE_CSS,
   resolveDiffThemeName,
+  translateDiffSeparators,
 } from '../../lib/diff-rendering';
 import { DiffWorkerPoolProvider, useDiffColorScheme } from './DiffWorkerPoolProvider';
 
@@ -185,8 +187,19 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 
 export type StyledDiffCodeViewOptions<LAnnotation> = Omit<
   NonNullable<CodeViewProps<LAnnotation, undefined>['options']>,
-  'unsafeCSS' | 'itemMetrics' | 'layout' | 'theme' | 'themeType' | 'preferredHighlighter'
+  | 'unsafeCSS'
+  | 'itemMetrics'
+  | 'layout'
+  | 'theme'
+  | 'themeType'
+  | 'preferredHighlighter'
+  | 'onPostRender'
 >;
+
+/** Estável: o CodeView reaplica as opções quando um callback muda de identidade. */
+function translateAfterRender(node: HTMLElement): void {
+  translateDiffSeparators(node);
+}
 
 type StyledDiffCodeViewProps<LAnnotation> = Omit<
   ControlledCodeViewProps<LAnnotation, undefined>,
@@ -216,6 +229,8 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
           themeType: colorScheme,
           preferredHighlighter: DIFF_PREFERRED_HIGHLIGHTER,
           unsafeCSS: DIFF_VIEW_UNSAFE_CSS,
+          // Separador de trechos em PT-BR ("12 linhas sem alteração").
+          onPostRender: translateAfterRender,
           itemMetrics: {
             diffHeaderHeight: 32,
             hunkSeparatorHeight: 24,
