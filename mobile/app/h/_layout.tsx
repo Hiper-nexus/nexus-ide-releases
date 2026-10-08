@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { View, StyleSheet, PanResponder } from 'react-native'
+import { ActivityIndicator, View, StyleSheet, PanResponder } from 'react-native'
 import { Stack, useGlobalSearchParams, usePathname } from 'expo-router'
 import { colors } from '../../src/theme/mobile-theme'
 import { useResponsiveLayout } from '../../src/layout/responsive-layout'
@@ -12,6 +12,7 @@ import {
 } from '../../src/storage/preferences'
 import { HostProtocolGate } from '../../src/components/HostProtocolGate'
 import { HostScreen } from './[hostId]/index'
+import { NexusHostScreen, useIsNexusBridgeHost } from '../../src/nexus-host/NexusHostScreen'
 
 // Keep at least this much room for the detail pane when resizing the sidebar.
 const MIN_DETAIL_WIDTH = 320
@@ -63,6 +64,8 @@ export default function HostGroupLayout() {
   const { isWideLayout, width: windowWidth } = useResponsiveLayout()
   const { hostId, action } = useGlobalSearchParams<{ hostId?: string; action?: string }>()
   const pathname = usePathname()
+  // F-968: desktop Nexus não fala o protocolo Orca — nem o portão de versão nem as telas de worktree se aplicam.
+  const nexusHost = useIsNexusBridgeHost(hostId)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useState(HOST_SIDEBAR_DEFAULT_WIDTH)
 
@@ -135,6 +138,17 @@ export default function HostGroupLayout() {
     })
   ).current
 
+  if (hostId && nexusHost === 'loading') {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator color={colors.textSecondary} />
+      </View>
+    )
+  }
+  if (hostId && nexusHost === true) {
+    return <NexusHostScreen hostId={hostId} />
+  }
+
   // The detail Stack stays at a stable position in the tree across width
   // changes so a fold/rotation doesn't remount the navigator and reset the
   // navigation stack — only the sidebar pane toggles in and out.
@@ -162,6 +176,12 @@ export default function HostGroupLayout() {
 }
 
 const styles = StyleSheet.create({
+  loading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.bgBase
+  },
   row: {
     flex: 1,
     flexDirection: 'row',

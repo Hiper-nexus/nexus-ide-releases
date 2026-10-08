@@ -26,6 +26,8 @@ export const UNVALIDATED_RPC_REQUEST_PORT_OWNERS: readonly UnvalidatedRpcRequest
   { file: 'src/transport/mobile-endpoint-supervisor-test-fakes.ts', references: 2 },
   // Implements the port over a relay channel.
   { file: 'src/transport/mobile-relay-physical-client.ts', references: 2 },
+  // Implements the port over the Nexus desktop's Remote Bridge (F-968).
+  { file: 'src/transport/nexus-bridge-rpc-adapter.ts', references: 2 },
   // Supplies the port for one relay session.
   { file: 'src/transport/mobile-relay-rpc-session.ts', references: 1 },
   // A second raw sender: string method in, unread envelope out. Its callers are fenced too.

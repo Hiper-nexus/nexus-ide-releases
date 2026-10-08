@@ -1,0 +1,427 @@
+import crypto from 'node:crypto'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { NexusBridgeSocketFactory, NexusBridgeSocketHandlers } from './nexus-bridge-client'
+import { createNexusBridgeDeviceKey, nexusBridgeDeviceIdentity } from './nexus-bridge-device-key'
+import {
+  NEXUS_HOST_UNSUPPORTED,
+  NEXUS_RAW_KEYS_MESSAGE,
+  createNexusBridgeRpcClient,
+  type NexusPaneOutput
+} from './nexus-bridge-rpc-adapter'
+import { isRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
+import { TerminalStreamOpcode, encodeTerminalStreamFrame } from './terminal-stream-protocol'
+
+type Frame = { id: string; type: string; [key: string]: unknown }
+type Reply = { result: unknown } | { error: string } | 'hold'
+
+const identity = nexusBridgeDeviceIdentity(
+  createNexusBridgeDeviceKey((length) => new Uint8Array(crypto.randomBytes(length)))
+)
+
+// O desktop real verifica assim (remote-device-authority.ts): JWK P-256 + IEEE-P1363.
+function verifiesLikeDesktop(challenge: string, signature: unknown): boolean {
+  return (
+    typeof signature === 'string' &&
+    crypto.verify(
+      'sha256',
+      Buffer.from(challenge),
+      {
+        key: crypto.createPublicKey({ key: { ...identity.publicKey }, format: 'jwk' }),
+        dsaEncoding: 'ieee-p1363'
+      },
+      Buffer.from(signature, 'base64url')
+    )
+  )
+}
+
+class FakeSocket {
+  readonly sent: Frame[] = []
+  closed = false
+  constructor(
+    readonly handlers: NexusBridgeSocketHandlers,
+    private readonly bridge: FakeBridge
+  ) {}
+  send(data: string): void {
+    const frame = JSON.parse(data) as Frame
+    this.sent.push(frame)
+    const reply = this.bridge.reply(frame)
+    if (reply === 'hold') {
+      return
+    }
+    queueMicrotask(() =>
+      this.handlers.onMessage(
+        JSON.stringify(
+          'error' in reply
+            ? { id: frame.id, ok: false, error: reply.error }
+            : { id: frame.id, ok: true, result: reply.result }
+        )
+      )
+    )
+  }
+  close(): void {
+    this.closed = true
+  }
+  push(message: Record<string, unknown>): void {
+    this.handlers.onMessage(JSON.stringify(message))
+  }
+  types(): string[] {
+    return this.sent.map((frame) => frame.type)
+  }
+}
+
+class FakeBridge {
+  readonly sockets: FakeSocket[] = []
+  overrides: Partial<Record<string, (frame: Frame) => Reply>> = {}
+  /** Quantos sockets seguintes falham antes de abrir (rede fora, TLS recusado). */
+  failOpens = 0
+  readonly factory: NexusBridgeSocketFactory = (_url, handlers) => {
+    const socket = new FakeSocket(handlers, this)
+    this.sockets.push(socket)
+    const fails = this.failOpens > 0
+    this.failOpens -= fails ? 1 : 0
+    queueMicrotask(() => (fails ? handlers.onClose(1006, '') : handlers.onOpen()))
+    return socket
+  }
+  get last(): FakeSocket {
+    return this.sockets[this.sockets.length - 1]!
+  }
+  reply(frame: Frame): Reply {
+    const override = this.overrides[frame.type]
+    if (override) {
+      return override(frame)
+    }
+    switch (frame.type) {
+      case 'auth.challenge':
+        return { result: { challengeId: 'c1', challenge: 'nexus-remote-auth-v1:abc' } }
+      case 'auth':
+        return frame.token === 'tok' && verifiesLikeDesktop('nexus-remote-auth-v1:abc', frame.signature)
+          ? { result: { ok: true } }
+          : { error: 'invalid device authentication' }
+      case 'status':
+        return { result: { running: true, port: 4443, tokenCount: 1 } }
+      case 'ops.snapshot':
+        return {
+          result: {
+            panes: [{ paneId: 'p1', title: 'Claude', state: 'busy', kind: 'cli-agent', paneNumber: 3 }, { bogus: true }],
+            missions: [{ id: 'm1', title: 'Missão', status: 'running' }],
+            approvals: [
+              {
+                requestId: 'r1',
+                revision: 1,
+                paneId: 'p1',
+                tool: 'Bash',
+                summary: 'ls',
+                options: [{ optionId: 'accept' }, { optionId: 'decline' }],
+                responseCapability: 'live',
+                expiresAt: 99
+              },
+              { requestId: 'r2', revision: 1, paneId: 'p1', tool: 'Bash', options: [{ optionId: 'acceptAlways' }] }
+            ]
+          }
+        }
+      case 'pane.stream.open':
+        return { result: { streamId: 7, pushAvailable: true, pushSeq: 3 } }
+      case 'pane.read':
+        return { result: { output: '\u001b[32mhello\u001b[0m\n', stream: { pushSeq: 3 } } }
+      case 'pane.input':
+      case 'pane.close':
+      case 'pane.resize':
+      case 'pane.stream.close':
+        return { result: { ok: true } }
+      case 'agentSession.respondToApproval':
+        return { result: { status: 'accepted' } }
+      default:
+        return { error: `unknown command: ${frame.type}` }
+    }
+  }
+}
+
+function frameBase64(text: string, seq: number): string {
+  return Buffer.from(
+    encodeTerminalStreamFrame({
+      opcode: TerminalStreamOpcode.Output,
+      streamId: 7,
+      seq,
+      payload: new TextEncoder().encode(text)
+    })
+  ).toString('base64')
+}
+
+async function settle(): Promise<void> {
+  for (let index = 0; index < 8; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+}
+
+function open(bridge: FakeBridge, extra: { reconnectBaseMs?: number } = {}) {
+  const logs: string[] = []
+  const client = createNexusBridgeRpcClient({
+    url: 'wss://mac.tail.ts.net',
+    token: 'tok',
+    identity: async () => identity,
+    createSocket: bridge.factory,
+    random: () => 0.5,
+    onLog: (_level, message) => logs.push(message),
+    ...extra
+  })
+  return { client, logs }
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+describe('Nexus bridge transport — handshake', () => {
+  it('authenticates a saved token with a challenge signature the desktop verifier accepts', async () => {
+    const bridge = new FakeBridge()
+    const { client } = open(bridge)
+    await settle()
+    expect(bridge.last.types()).toEqual(['auth.challenge', 'auth'])
+    expect(bridge.last.sent[0]).toMatchObject({ token: 'tok', deviceId: identity.deviceId })
+    expect(client.getState()).toBe('connected')
+    client.close()
+  })
+
+  it('a rejected credential is final: auth-failed, no reconnect loop, requests refuse', async () => {
+    const bridge = new FakeBridge()
+    bridge.overrides.auth = () => ({ error: 'invalid device authentication' })
+    const { client } = open(bridge, { reconnectBaseMs: 1 })
+    await settle()
+    expect(client.getState()).toBe('auth-failed')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(bridge.sockets).toHaveLength(1)
+    await expect(client.sendRequest('status.get')).rejects.toThrow(/pareie de novo/)
+  })
+
+  it('a live revocation close goes to auth-failed instead of reconnecting', async () => {
+    const bridge = new FakeBridge()
+    const { client } = open(bridge, { reconnectBaseMs: 1 })
+    await settle()
+    bridge.last.handlers.onClose(1008, 'tokens revoked')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(client.getState()).toBe('auth-failed')
+    expect(bridge.sockets).toHaveLength(1)
+  })
+})
+
+describe('Nexus bridge adapter — Orca methods mapped to bridge commands', () => {
+  it('maps status, terminal list, send line, close, viewport, missions and approvals', async () => {
+    const bridge = new FakeBridge()
+    const { client } = open(bridge)
+    await settle()
+
+    await expect(client.sendRequest('status.get')).resolves.toMatchObject({
+      ok: true,
+      result: { running: true, nexusBridge: true }
+    })
+    await expect(client.sendRequest('terminal.list')).resolves.toMatchObject({
+      ok: true,
+      result: { terminals: [{ handle: 'p1', title: 'Claude', state: 'busy', kind: 'cli-agent' }] }
+    })
+    await expect(
+      client.sendRequest('terminal.send', {
+        terminal: 'p1',
+        text: 'git status',
+        enter: true,
+        clientMessageId: 'msg-1'
+      })
+    ).resolves.toMatchObject({ ok: true })
+    expect(bridge.last.sent.find((frame) => frame.type === 'pane.input')).toMatchObject({
+      paneId: 'p1',
+      data: 'git status',
+      messageId: 'msg-1'
+    })
+    await client.sendRequest('terminal.close', { terminal: 'p1' })
+    await client.sendRequest('terminal.updateViewport', {
+      terminal: 'p1',
+      viewport: { cols: 80, rows: 24 }
+    })
+    await client.sendRequest('mission.list')
+    await expect(
+      client.sendRequest('agentSession.respondToApproval', {
+        itemId: 'r1',
+        expectedRevision: 1,
+        optionId: 'decline',
+        extra: 'dropped'
+      })
+    ).resolves.toMatchObject({ ok: true, result: { status: 'accepted' } })
+    const sent = bridge.last.sent
+    expect(sent.find((frame) => frame.type === 'pane.close')).toMatchObject({ paneId: 'p1' })
+    expect(sent.find((frame) => frame.type === 'pane.resize')).toMatchObject({
+      paneId: 'p1',
+      cols: 80,
+      rows: 24
+    })
+    expect(sent.some((frame) => frame.type === 'mission.list')).toBe(true)
+    const approval = sent.find((frame) => frame.type === 'agentSession.respondToApproval')
+    expect(approval).toMatchObject({ itemId: 'r1', expectedRevision: 1, optionId: 'decline' })
+    expect(approval).not.toHaveProperty('extra')
+    client.close()
+  })
+
+  it('refuses raw keys and unmapped areas explicitly, without touching the bridge', async () => {
+    const bridge = new FakeBridge()
+    const { client, logs } = open(bridge)
+    await settle()
+    const before = bridge.last.sent.length
+
+    const escape = await client.sendRequest('terminal.send', {
+      terminal: 'p1',
+      text: '\u001b',
+      enter: false
+    })
+    expect(escape).toMatchObject({ ok: false, error: { code: NEXUS_HOST_UNSUPPORTED, message: NEXUS_RAW_KEYS_MESSAGE } })
+    const ctrlC = await client.sendRequest('terminal.send', { terminal: 'p1', text: '\u0003', enter: true })
+    expect(ctrlC).toMatchObject({ ok: false, error: { code: NEXUS_HOST_UNSUPPORTED } })
+    // "1" sem Enter (escolha de menu da TUI) é tecla crua: virar "1\n" mudaria o que o agente recebe.
+    const menuKey = await client.sendRequest('terminal.send', { terminal: 'p1', text: '1', enter: false })
+    expect(menuKey).toMatchObject({ ok: false, error: { code: NEXUS_HOST_UNSUPPORTED, message: NEXUS_RAW_KEYS_MESSAGE } })
+
+    for (const method of ['git.status', 'files.list', 'worktree.ps', 'session.tabs.list', 'speech.models.list', 'linear.listIssues']) {
+      const response = await client.sendRequest(method)
+      expect(response).toMatchObject({ ok: false, error: { code: NEXUS_HOST_UNSUPPORTED } })
+      expect(!response.ok && response.error.message).toMatch(/não disponível em host Nexus$/)
+    }
+    const unsubscribe = client.subscribe('accounts.subscribe', null, () => {
+      throw new Error('never delivered')
+    })
+    unsubscribe()
+    expect(bridge.last.sent.length).toBe(before)
+    expect(logs).toContain('Git (git.status) não disponível em host Nexus')
+    expect(logs).toContain('Contas (accounts.subscribe) não disponível em host Nexus')
+    client.close()
+  })
+
+  it('surfaces a desktop refusal as a host failure, not a transport error', async () => {
+    const bridge = new FakeBridge()
+    bridge.overrides['pane.input'] = () => ({ error: 'not authorized: desktop confirmation required or denied' })
+    const { client } = open(bridge)
+    await settle()
+    await expect(
+      client.sendRequest('terminal.send', { terminal: 'p1', text: 'rm -rf build', enter: true })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'nexus_bridge_refused', message: 'not authorized: desktop confirmation required or denied' }
+    })
+    client.close()
+  })
+
+  it('marks a request that reached the wire as delivery-unknown when the socket drops', async () => {
+    const bridge = new FakeBridge()
+    bridge.overrides['pane.input'] = () => 'hold'
+    const { client } = open(bridge, { reconnectBaseMs: 60_000 })
+    await settle()
+    const sending = client.sendRequest('terminal.send', { terminal: 'p1', text: 'git status', enter: true })
+    await settle()
+    bridge.last.handlers.onClose(1006, '')
+    const error = await sending.catch((caught: unknown) => caught)
+    expect(isRpcDeliveryUnknown(error)).toBe(true)
+    client.close()
+  })
+
+  it('validates the ops snapshot: drops malformed panes and approvals', async () => {
+    const bridge = new FakeBridge()
+    const { client } = open(bridge)
+    await settle()
+    const snapshot = await client.nexus.snapshot()
+    expect(snapshot.panes).toEqual([
+      { paneId: 'p1', title: 'Claude', state: 'busy', kind: 'cli-agent', paneNumber: 3 }
+    ])
+    expect(snapshot.missions).toEqual([{ id: 'm1', title: 'Missão', status: 'running' }])
+    expect(snapshot.approvals.map((approval) => approval.requestId)).toEqual(['r1'])
+    expect(snapshot.approvals[0]).toMatchObject({ paneId: 'p1', revision: 1, responseCapability: 'live' })
+    client.close()
+  })
+})
+
+describe('Nexus bridge adapter — live pane output', () => {
+  it('opens push before reading, applies pushes in order and resyncs on a gap', async () => {
+    const bridge = new FakeBridge()
+    const { client } = open(bridge)
+    await settle()
+    const outputs: NexusPaneOutput[] = []
+    const unsubscribe = client.subscribe('terminal.subscribe', { terminal: 'p1' }, (output) =>
+      outputs.push(output as NexusPaneOutput)
+    )
+    await settle()
+    const types = bridge.last.types()
+    expect(types.indexOf('pane.stream.open')).toBeLessThan(types.indexOf('pane.read'))
+    expect(outputs).toEqual([{ type: 'nexus.output', text: 'hello\n', reset: true }])
+
+    bridge.last.push({ type: 'pane.stream.data', streamId: 7, seq: 3, frameBase64: frameBase64('old', 3) })
+    bridge.last.push({ type: 'pane.stream.data', streamId: 99, seq: 4, frameBase64: frameBase64('other', 4) })
+    bridge.last.push({ type: 'pane.stream.data', streamId: 7, seq: 4, frameBase64: frameBase64('$ ls\r\n', 4) })
+    expect(outputs.slice(1)).toEqual([{ type: 'nexus.output', text: '$ ls\n', reset: false }])
+
+    const readsBefore = bridge.last.types().filter((type) => type === 'pane.read').length
+    bridge.last.push({ type: 'pane.stream.data', streamId: 7, seq: 9, frameBase64: frameBase64('lost', 9) })
+    await settle()
+    expect(bridge.last.types().filter((type) => type === 'pane.read').length).toBe(readsBefore + 1)
+    expect(outputs.at(-1)).toMatchObject({ reset: true })
+
+    unsubscribe()
+    await settle()
+    expect(bridge.last.sent.at(-1)).toMatchObject({ type: 'pane.stream.close', paneId: 'p1' })
+    client.close()
+  })
+
+  it('forwards approvals.changed pushes to the screen', async () => {
+    const bridge = new FakeBridge()
+    const { client } = open(bridge)
+    await settle()
+    const changed = vi.fn()
+    const off = client.nexus.onApprovalsChanged(changed)
+    bridge.last.push({ type: 'approvals.changed' })
+    expect(changed).toHaveBeenCalledTimes(1)
+    off()
+    bridge.last.push({ type: 'approvals.changed' })
+    expect(changed).toHaveBeenCalledTimes(1)
+    client.close()
+  })
+})
+
+describe('Nexus bridge transport — reconnection', () => {
+  it('backs off exponentially, re-authenticates and re-opens the live pane on the new socket', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const bridge = new FakeBridge()
+    const { client } = open(bridge, { reconnectBaseMs: 1_000 })
+    await settle()
+    client.subscribe('terminal.subscribe', { terminal: 'p1' }, () => undefined)
+    await settle()
+
+    // Primeira queda: 1 s (com jitter neutro). Ainda sem socket novo antes disso.
+    bridge.failOpens = 1
+    bridge.last.handlers.onClose(1006, '')
+    expect(client.getState()).toBe('reconnecting')
+    await vi.advanceTimersByTimeAsync(999)
+    expect(bridge.sockets).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await settle()
+    expect(bridge.sockets).toHaveLength(2)
+
+    // O socket novo não abre (rede ainda fora): a próxima espera dobra.
+    expect(client.getState()).toBe('reconnecting')
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(bridge.sockets).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(1)
+    await settle()
+    expect(bridge.sockets).toHaveLength(3)
+    expect(client.getState()).toBe('connected')
+    expect(client.getReconnectAttempt()).toBe(0)
+    expect(bridge.last.types()).toEqual(['auth.challenge', 'auth', 'pane.stream.open', 'pane.read'])
+    client.close()
+  })
+
+  it('a foreground nudge skips the remaining backoff', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const bridge = new FakeBridge()
+    const { client } = open(bridge, { reconnectBaseMs: 30_000 })
+    await settle()
+    bridge.last.handlers.onClose(1006, '')
+    client.notifyForeground('app-resume')
+    await settle()
+    expect(bridge.sockets).toHaveLength(2)
+    expect(client.getState()).toBe('connected')
+    client.close()
+  })
+})
