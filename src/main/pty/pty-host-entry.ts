@@ -18,6 +18,8 @@ import * as nodePty from '@lydell/node-pty';
 import { execFile } from 'node:child_process';
 import {
   attributeSessionFootprints,
+  FOOTPRINT_PS_ARGS,
+  footprintPsEnv,
   parseRssProcessTable,
   type SessionFootprint,
 } from './pane-footprint';
@@ -84,22 +86,26 @@ function captureFootprints(): Promise<SessionFootprint[]> {
     return Promise.resolve([]);
   }
   return new Promise((resolve) => {
-    execFile(
+    const sample = execFile(
       'ps',
-      ['-axo', 'pid=,ppid=,rss=,lstart='],
+      [...FOOTPRINT_PS_ARGS],
       {
         encoding: 'utf8',
         maxBuffer: 8 * 1024 * 1024,
         timeout: 3_000,
         killSignal: 'SIGKILL',
-        env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
+        env: footprintPsEnv(process.env),
       },
       (error, stdout) => {
         if (error) {
           resolve([]);
           return;
         }
-        resolve(attributeSessionFootprints(parseRssProcessTable(stdout), roots));
+        // F-1001: o root é filho direto deste host (o `ps` da amostra também).
+        resolve(attributeSessionFootprints(parseRssProcessTable(stdout), roots, {
+          pid: process.pid,
+          transientPids: sample.pid === undefined ? [] : [sample.pid],
+        }));
       },
     );
   });
