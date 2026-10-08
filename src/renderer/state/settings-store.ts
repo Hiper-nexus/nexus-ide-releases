@@ -14,16 +14,26 @@ import {
   DEFAULT_UI_SETTINGS,
 } from '../../shared/settings-types';
 import { applyTerminalSettings } from '../terminal/terminal-host';
-import { applyPixelMode, applyUiTheme } from '../styles/ui-theme';
+import {
+  applyPixelMode,
+  applyUiTheme,
+  resolveImportedTheme,
+} from '../styles/ui-theme';
 import { setAudioDevicePreferences } from '../voice/audio-device-preferences';
 
-/** One entry point: restyle terminals AND the whole app UI. */
-function applyEverywhere(settings: TerminalSettings): void {
-  applyTerminalSettings(settings);
-  applyUiTheme(settings.themeId);
+/**
+ * One entry point: restyle terminals AND the whole app UI. The theme lives in
+ * two halves — built-in id in `terminal`, imported VS Code theme in `ui` — so
+ * either half changing re-resolves the pair.
+ */
+function applyEverywhere(settings: TerminalSettings, ui: UiSettings): void {
+  const imported = resolveImportedTheme(ui);
+  applyTerminalSettings(settings, imported?.terminal ?? null);
+  applyUiTheme(settings.themeId, imported);
 }
 
-function applyUiEverywhere(ui: UiSettings): void {
+function applyUiEverywhere(settings: TerminalSettings, ui: UiSettings): void {
+  applyEverywhere(settings, ui);
   applyPixelMode(ui.pixelMode);
 }
 
@@ -74,8 +84,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         api.uiGet ? api.uiGet() : Promise.resolve(DEFAULT_UI_SETTINGS),
         api.audioGet(),
       ]);
-      applyEverywhere(settings);
-      applyUiEverywhere(ui);
+      applyUiEverywhere(settings, ui);
       applyAudioEverywhere(audio);
       set({ terminal: settings, ui, audio, hydrated: true });
     } catch (err) {
@@ -86,7 +95,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   update: async (patch) => {
     const settings = await window.nexus.settings.set(patch);
-    applyEverywhere(settings);
+    applyEverywhere(settings, useSettingsStore.getState().ui);
     set({ terminal: settings });
   },
 
@@ -95,7 +104,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     const ui = api.uiSet
       ? await api.uiSet(patch)
       : { ...useSettingsStore.getState().ui, ...patch };
-    applyUiEverywhere(ui);
+    applyUiEverywhere(useSettingsStore.getState().terminal, ui);
     set({ ui });
   },
 
@@ -106,12 +115,12 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   },
 
   receive: (settings) => {
-    applyEverywhere(settings);
+    applyEverywhere(settings, useSettingsStore.getState().ui);
     set({ terminal: settings });
   },
 
   receiveUi: (ui) => {
-    applyUiEverywhere(ui);
+    applyUiEverywhere(useSettingsStore.getState().terminal, ui);
     set({ ui });
   },
 

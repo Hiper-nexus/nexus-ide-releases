@@ -413,18 +413,111 @@ export const DEFAULT_VISION_SETTINGS: VisionSettings =
   visionSettingsSchema.parse({});
 
 /**
- * Aparência global do app (não do xterm): modo pixel, etc.
+ * Tema importado do VS Code (Settings → Aparência). Toda cor é hex opaco
+ * `#rrggbb`: o valor vai para `style.setProperty` e para o xterm, então nada
+ * além de hex passa — nenhum CSS arbitrário entra pelo arquivo importado.
+ */
+const themeHexSchema = z.string().regex(/^#[0-9a-f]{6}$/);
+
+/** Mesmas chaves de `UiPalette` (src/renderer/styles/ui-theme.ts). */
+export const IMPORTED_UI_PALETTE_KEYS = [
+  'bg',
+  'bgElevated',
+  'bgBar',
+  'border',
+  'borderStrong',
+  'text',
+  'textDim',
+  'textFaint',
+  'accent',
+  'accentInk',
+  'btnPrimary',
+  'btnPrimaryInk',
+  'btnPrimaryHover',
+  'danger',
+] as const;
+
+/** Subconjunto de cores do `ITheme` do xterm que o tema importado define. */
+export const IMPORTED_TERMINAL_KEYS = [
+  'background',
+  'foreground',
+  'cursor',
+  'cursorAccent',
+  'selectionBackground',
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+  'brightBlack',
+  'brightRed',
+  'brightGreen',
+  'brightYellow',
+  'brightBlue',
+  'brightMagenta',
+  'brightCyan',
+  'brightWhite',
+] as const;
+
+function hexRecordSchema<K extends string>(keys: readonly K[]) {
+  return z.object(
+    Object.fromEntries(keys.map((key) => [key, themeHexSchema])) as Record<
+      K,
+      typeof themeHexSchema
+    >,
+  );
+}
+
+export const MAX_IMPORTED_THEMES = 24;
+
+export const importedThemeSchema = z.object({
+  /** `vscode-` + slug estável do nome: reimportar substitui, não duplica. */
+  id: z.string().regex(/^vscode-[a-z0-9][a-z0-9-]{0,47}$/),
+  label: z.string().trim().min(1).max(48),
+  appearance: z.enum(['dark', 'light']),
+  ui: hexRecordSchema(IMPORTED_UI_PALETTE_KEYS),
+  terminal: hexRecordSchema(IMPORTED_TERMINAL_KEYS),
+});
+export type ImportedTheme = z.infer<typeof importedThemeSchema>;
+
+/**
+ * Aparência global do app (não do xterm): modo pixel, temas importados.
  * Persistido em ~/.nexus/settings.json → `ui`.
  */
 export const uiSettingsSchema = z.object({
   /** Cantos retos, VT323 como --font-ui, antialias desligado (data-theme-pixel). */
   pixelMode: z.boolean().default(false),
+  /**
+   * Leitura tolerante: um tema corrompido no arquivo cai sozinho, sem levar
+   * junto o modo pixel nem os demais temas.
+   */
+  importedThemes: z
+    .array(z.unknown())
+    .catch([])
+    .transform((items) =>
+      items
+        .flatMap((item) => {
+          const parsed = importedThemeSchema.safeParse(item);
+          return parsed.success ? [parsed.data] : [];
+        })
+        .slice(0, MAX_IMPORTED_THEMES),
+    ),
+  /** '' = vale o tema embutido de `terminal.themeId`. */
+  activeImportedThemeId: z.string().max(64).catch(''),
 });
 export type UiSettings = z.infer<typeof uiSettingsSchema>;
 export const DEFAULT_UI_SETTINGS: UiSettings = uiSettingsSchema.parse({});
 
 export const uiSettingsPatchSchema = z.object({
   pixelMode: z.boolean().optional(),
+  importedThemes: z
+    .array(importedThemeSchema)
+    .max(MAX_IMPORTED_THEMES)
+    .optional(),
+  activeImportedThemeId: z.string().max(64).optional(),
 });
 export type UiSettingsPatch = z.infer<typeof uiSettingsPatchSchema>;
 
