@@ -148,11 +148,15 @@ describe('DiffWorkerPoolProvider', () => {
       document.documentElement.dataset.theme = 'nexus-light';
       await Promise.resolve();
     });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(pool.setRenderOptions).toHaveBeenCalledWith(
-      expect.objectContaining({ theme: 'pierre-light' }),
+    // The MutationObserver delivers on a microtask; wait for the effect it causes, not ticks.
+    await vi.waitFor(
+      async () => {
+        await act(async () => {});
+        expect(pool.setRenderOptions).toHaveBeenCalledWith(
+          expect.objectContaining({ theme: 'pierre-light' }),
+        );
+      },
+      { timeout: 10_000, interval: 5 },
     );
   });
 });
