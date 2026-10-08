@@ -6,7 +6,8 @@ import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { preparePaneSpaceWorktree } from '../pty/pane-space-worktree';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentGateContext } from './gate';
+import { PreEffectRefusalError, type AgentGateContext } from './gate';
+import { registerMissionLeaderSessionCheck } from './mission-leader-session-check';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { ProcessGitRunner } from '../runtime/git-command';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
@@ -1244,6 +1245,40 @@ describe('mission creation authority', () => {
     } });
     await expect(missionSetStatusTool().handler({ missionId: 'mission-existing', status: 'done' }, context('orchestrator'))).rejects.toThrow('orchestrator_session_stale');
     expect(updateContent).not.toHaveBeenCalled();
+    expect(mocks.reconcile).not.toHaveBeenCalled();
+  });
+
+  it('F-1013: split-brain na aba recusa antes de escrever, sem efeito e com a chamada que o pane faz', async () => {
+    const updateContent = vi.fn();
+    const appendLearning = vi.fn();
+    mocks.getProjectDomainStores.mockReturnValue({ missions: {
+      get: () => ({
+        id: 'mission-existing', status: 'running', squadId: 'standard-team', learnings: '',
+        orchestratorSessionId: 'orchestrator-session',
+        intentContract: { lane: 'standard', workspaceBinding: { adoptedPaneId: 'operator-pane' } },
+      }),
+      updateContent,
+      appendLearning,
+    } });
+    registerMissionLeaderSessionCheck(() => ({
+      ok: false, code: 'split-brain',
+      hint: 'duas sessões físicas reivindicam a mesma missão ao mesmo tempo',
+    }));
+    try {
+      const refusal = await missionSetStatusTool().handler({
+        missionId: 'mission-existing', status: 'done',
+        note: 'Entrega validada com testes e typecheck verdes no candidato atual.',
+      }, context('orchestrator')).catch((error: unknown) => error);
+      expect(refusal).toBeInstanceOf(PreEffectRefusalError);
+      expect((refusal as Error).message).toContain('orchestrator_session_stale (split-brain)');
+      expect((refusal as PreEffectRefusalError).hint).toContain(
+        'nexus_mission_control({"missionId":"mission-existing"})',
+      );
+    } finally {
+      registerMissionLeaderSessionCheck(null);
+    }
+    expect(updateContent).not.toHaveBeenCalled();
+    expect(appendLearning).not.toHaveBeenCalled();
     expect(mocks.reconcile).not.toHaveBeenCalled();
   });
 

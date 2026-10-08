@@ -19,7 +19,7 @@ import {
   readAuditLog,
 } from "../jarvis/audit-log";
 import { clearAll as clearAllPermissions } from "../jarvis/permissions";
-import { bindTokenToSession, mintToken, releaseSessionByToken, resetGateForTests } from "./gate";
+import { bindTokenToSession, mintToken, PreEffectRefusalError, releaseSessionByToken, resetGateForTests } from "./gate";
 import { DENIAL_HINTS, dispatchToolCall } from "./mcp-dispatch";
 import { guardToolCall } from "./jev-dispatch-guard";
 import type { McpDispatchOptions } from "./mcp-dispatch";
@@ -2975,6 +2975,38 @@ describe("MCP dispatch effect safety", () => {
     expect(entries[1].invocation_id).toBe(entries[0].invocation_id);
   });
 
+  it("F-1013: recusa de autoridade anterior a toda escrita não reporta efeito e repassa a dica", async () => {
+    const registry = registryWith({
+      name: "nexus_terminal_run",
+      description: "terminal",
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => {
+        throw new PreEffectRefusalError(
+          "orchestrator_session_stale (split-brain): recusado por segurança",
+          'veja quem lidera com nexus_mission_control({"missionId":"m"})',
+        );
+      },
+    });
+
+    const result = await dispatchToolCall(
+      "http-mcp",
+      registry,
+      "nexus_terminal_run",
+      { command: "deploy" },
+      missionContext(),
+      opsWorkflowOptions({ confirm: async () => true }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "orchestrator_session_stale (split-brain): recusado por segurança",
+      hint: 'veja quem lidera com nexus_mission_control({"missionId":"m"})',
+    });
+    expect(result.effectMayHaveCommitted).toBeUndefined();
+    const entries = readAuditLog(auditContext);
+    expect(entries.map((entry) => entry.result)).toEqual(["intent", "error"]);
+  });
+
   it("closes the correlated audit intent when caller authority disappears after the effect", async () => {
     const caller = new AbortController();
     const registry = registryWith({
@@ -3451,6 +3483,35 @@ describe("MCP dispatch effect safety", () => {
       expect(result).toMatchObject({ ok: false, denied: true });
       // Nothing is actually reachable for this pane: no false lead offered.
       expect(result.hint).toBeUndefined();
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    // F-1013 (campo 08/10): a conversa guardou a instrução de fecho de quando
+    // liderava; num pane sem missão a dica genérica mandava criar OUTRA missão.
+    it("F-1013: set_status de missão num pane sem missão aponta quem lidera, não nexus_mission_create", async () => {
+      const handler = vi.fn(async () => ({ shouldNotRun: true }));
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_mission_set_status",
+          description: "status",
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        "nexus_mission_set_status",
+        {
+          missionId: "mission-23eee6e5",
+          status: "done",
+          note: "Entrega validada com testes e typecheck verdes no candidato atual.",
+        },
+        userContext(),
+      );
+
+      expect(result).toMatchObject({ ok: false, denied: true });
+      expect(result.hint).toContain("não está vinculado à missão mission-23eee6e5");
+      expect(result.hint).toContain('nexus_mission_control({"missionId":"mission-23eee6e5"})');
+      expect(result.hint).toContain("nexus_pane_ask");
+      expect(result.hint).not.toContain("crie uma missão com nexus_mission_create");
       expect(handler).not.toHaveBeenCalled();
     });
   });

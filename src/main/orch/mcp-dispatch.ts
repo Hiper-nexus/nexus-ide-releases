@@ -26,6 +26,7 @@ import {
   isInternalPrevcReviewerToolAllowed,
   isCurrentGateContext,
   isToolAllowedForRole,
+  PreEffectRefusalError,
   returnOperatorHandFromEndedMission,
   type AgentGateContext,
 } from "./gate";
@@ -159,6 +160,26 @@ export function operatorHandMissionExitHint(
     );
   }
   return undefined;
+}
+
+/**
+ * F-1013: pane sem missão chamando nexus_mission_set_status de uma missão.
+ * Só a sessão líder muda o status e nenhuma tool devolve a liderança; a dica
+ * nomeia apenas chamadas que este pane alcança.
+ */
+function unboundMissionStatusHint(
+  missionId: string,
+  reach: { readonly canInspect: boolean; readonly canPaneAsk: boolean },
+): string {
+  const inspect = reach.canInspect
+    ? `; veja quem lidera com nexus_mission_control(${JSON.stringify({ missionId })})` +
+      (reach.canPaneAsk ? " e peça a conclusão a esse pane com nexus_pane_ask" : "")
+    : "";
+  return (
+    `nexus_mission_set_status: este pane não está vinculado à missão ${missionId}; ` +
+    "só a sessão líder dela muda o status, e nexus_mission_create abriria outra missão sem concluir esta" +
+    `${inspect}. Nenhuma tool devolve a liderança a este pane: ela volta pelo botão “Retomar missão” da interface.`
+  );
 }
 
 /**
@@ -812,8 +833,19 @@ export async function dispatchToolCall(
     const missionCreateReason = canCreateMission
       ? "crie uma missão com nexus_mission_create"
       : "nexus_mission_create não está disponível neste pane (somente-leitura ou fora do allowlist)";
-    const hint =
-      canonical === "handoff_submit"
+    // F-1013: set_status de uma missão que este pane não lidera (a conversa
+    // guardou a instrução de fecho de quando liderava). Criar outra missão não
+    // conclui esta: a dica diz quem pode e a chamada que este pane faz.
+    const unboundStatusMissionId =
+      canonical === "mission_set_status" && typeof args.missionId === "string"
+        ? args.missionId.trim().slice(0, 128)
+        : "";
+    const hint = unboundStatusMissionId
+      ? unboundMissionStatusHint(unboundStatusMissionId, {
+          canInspect: reachable("mission_control"),
+          canPaneAsk,
+        })
+      : canonical === "handoff_submit"
         ? (() => {
             const talkPart =
               canPaneWrite && canPaneAsk
@@ -1669,7 +1701,10 @@ export async function dispatchToolCall(
         : err instanceof Error
           ? err.message
           : String(err);
-    const effectMayHaveCommitted = effectful && handlerStarted;
+    // F-1013: recusa determinística anterior a toda escrita não "pode ter
+    // efetivado" nada; o agente que lê o contrário repete ou anuncia efeito.
+    const preEffectRefusal = err instanceof PreEffectRefusalError ? err : undefined;
+    const effectMayHaveCommitted = effectful && handlerStarted && !preEffectRefusal;
     const auditFailure = writeOutcomeAudit(
       "error",
       errorMsg,
@@ -1683,6 +1718,7 @@ export async function dispatchToolCall(
       denied: authorityRevoked || undefined,
       userAuthorized,
       effectMayHaveCommitted: effectMayHaveCommitted || undefined,
+      ...(preEffectRefusal?.hint ? { hint: preEffectRefusal.hint } : {}),
     };
   }
 }
