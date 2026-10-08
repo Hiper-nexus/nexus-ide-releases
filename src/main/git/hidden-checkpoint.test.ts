@@ -308,3 +308,126 @@ describe('restoreHiddenCheckpoint', () => {
     expect(result).toEqual({ ok: false, reason: 'checkpoint-outside-scope' });
   });
 });
+
+describe('raiz selada e autoridade por mutação (revisão a368b0ace)', () => {
+  let worktree: string;
+
+  /** Worktree do writer com um checkpoint (feito.txt = bom) e a árvore quebrada depois. */
+  async function brokenWriter(): Promise<string> {
+    worktree = path.join(temp, 'writer');
+    git(repo, 'worktree', 'add', '-q', '-b', 'nexus/writer', worktree);
+    write(worktree, 'feito.txt', 'bom\n');
+    const saved = await captureHiddenCheckpoint({ cwd: worktree, scopeId: SCOPE });
+    if (!saved.ok) throw new Error(saved.reason);
+    write(worktree, 'feito.txt', 'quebrado\n');
+    return saved.ref;
+  }
+
+  it('recusa raiz trocada por symlink para a coordenação e não escreve nela', async () => {
+    const ref = await brokenWriter();
+    fs.renameSync(worktree, `${worktree}-movido`);
+    fs.symlinkSync(repo, worktree);
+
+    const result = await restoreHiddenCheckpoint({ cwd: worktree, scopeId: SCOPE, ref, apply: true });
+
+    expect(!result.ok && result.reason).toMatch(/^checkpoint-root-not-sealed/);
+    expect(fs.existsSync(path.join(repo, 'feito.txt'))).toBe(false);
+  });
+
+  it('recusa a raiz proibida (coordenação) mesmo pelo caminho real', async () => {
+    write(repo, 'novo.txt', 'v1\n');
+    const saved = await captureHiddenCheckpoint({ cwd: repo, scopeId: SCOPE });
+    if (!saved.ok) throw new Error(saved.reason);
+    write(repo, 'novo.txt', 'v2\n');
+
+    const result = await restoreHiddenCheckpoint({
+      cwd: repo, scopeId: SCOPE, ref: saved.ref, apply: true, forbiddenRoot: repo,
+    });
+
+    expect(!result.ok && result.reason).toMatch(/^checkpoint-forbidden-root/);
+    expect(read(repo, 'novo.txt')).toBe('v2\n');
+  });
+
+  it('revalida a identidade da raiz logo antes de escrever (troca no meio da restauração)', async () => {
+    const ref = await brokenWriter();
+
+    const result = restoreHiddenCheckpoint({
+      cwd: worktree, scopeId: SCOPE, ref, apply: true, forbiddenRoot: repo,
+      assertTargets: () => {
+        fs.renameSync(worktree, `${worktree}-movido`);
+        fs.symlinkSync(repo, worktree);
+      },
+    });
+
+    await expect(result).rejects.toThrow(/checkpoint-root-identity-changed/);
+    expect(fs.existsSync(path.join(repo, 'feito.txt'))).toBe(false);
+    expect(read(`${worktree}-movido`, 'feito.txt')).toBe('quebrado\n');
+  });
+
+  it('revalida a autoridade depois de publicar o backup: revogação ali não escreve nada', async () => {
+    const ref = await brokenWriter();
+    let calls = 0;
+
+    const result = restoreHiddenCheckpoint({
+      cwd: worktree, scopeId: SCOPE, ref, apply: true,
+      assertCanWrite: () => {
+        calls += 1;
+        if (calls === 2) throw new Error('session_authority_revoked');
+      },
+    });
+
+    await expect(result).rejects.toThrow('session_authority_revoked');
+    expect(calls).toBe(2);
+    expect(read(worktree, 'feito.txt')).toBe('quebrado\n');
+  });
+
+  it('autoridade é conferida antes do backup, depois dele e antes de cada checkout-index', async () => {
+    const ref = await brokenWriter();
+    let calls = 0;
+
+    const result = await restoreHiddenCheckpoint({
+      cwd: worktree, scopeId: SCOPE, ref, apply: true, assertCanWrite: () => { calls += 1; },
+    });
+
+    expect(result).toMatchObject({ ok: true, applied: true });
+    expect(calls).toBe(3);
+    expect(read(worktree, 'feito.txt')).toBe('bom\n');
+  });
+
+  it('destinos passam pela checagem do chamador antes de qualquer escrita', async () => {
+    const ref = await brokenWriter();
+    const seen: string[][] = [];
+
+    const result = restoreHiddenCheckpoint({
+      cwd: worktree, scopeId: SCOPE, ref, apply: true,
+      assertTargets: (targets) => {
+        seen.push([...targets]);
+        throw new Error('namespace protegido');
+      },
+    });
+
+    await expect(result).rejects.toThrow('namespace protegido');
+    expect(seen).toEqual([['feito.txt']]);
+    expect(read(worktree, 'feito.txt')).toBe('quebrado\n');
+    expect(checkpointRefs(repo)).toHaveLength(1);
+  });
+
+  it('captura respeita prazo global: estoura em timeout e não publica ref', async () => {
+    write(repo, 'novo.txt', 'x\n');
+    const real = new AsyncProcessGitRunner();
+    const slow: AsyncGitRunner = {
+      run: async (cwd, args, options) => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return real.run(cwd, args, options);
+      },
+    };
+
+    const result = await captureHiddenCheckpoint(
+      { cwd: repo, scopeId: SCOPE, deadlineAt: Date.now() + 400 },
+      { git: slow },
+    );
+
+    expect(result).toEqual({ ok: false, reason: 'timeout' });
+    expect(checkpointRefs(repo)).toEqual([]);
+  });
+});

@@ -41,8 +41,8 @@ const READ_ONLY_TOOLS = new Set([
   'git_status',
   // ORC-03: lista/prévia dos checkpoints ocultos. Não toca workspace, HEAD,
   // branch nem índice real; só grava objetos Git (prévia) e apaga ref de 0
-  // byte do próprio namespace. A restauração (checkpoint_restore) fica no
-  // default mission-effect: confirmação e nunca em read-only.
+  // byte do próprio namespace. A restauração (checkpoint_restore) é
+  // execution-effect: confirmação, estágio de execução e nunca em read-only.
   'checkpoint_list',
   // Julgamento tipado (TypeSafe Jev): sem mutação de workspace nem efeito
   // externo; o único egress é para a conta TypeSafe configurada pelo usuário,
@@ -333,6 +333,9 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'file_write',
   'plan_write',
   'git_add',
+  // ORC-03: escreve arquivos calculados pelo Git na worktree do writer; os
+  // destinos passam pela guarda de workflow no handler (tools-checkpoint).
+  'checkpoint_restore',
   'git_branch_create',
   'git_branch_switch',
   'git_commit',
