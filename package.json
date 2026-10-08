@@ -48,6 +48,7 @@
     "pretest": "node scripts/check-node-natives.mjs",
     "test": "vitest run",
     "test:changed": "vitest run --changed",
+    "test:perf": "vitest run src/renderer/terminal/terminal-output-scheduler.budget.test.ts src/main/pty/pty-output-wire.budget.test.ts src/renderer/components/PaneGrid.render.budget.test.tsx src/main/orch/pane-output-digest.budget.test.ts",
     "eval:export-ranking": "node --import tsx scripts/export-public-ranking.mjs",
     "eval:benchmark:verify": "node --import tsx scripts/verify-nexus-benchmark.mjs",
     "bench:vector-retrieval": "node scripts/benchmark-vector-retrieval.mjs",
