@@ -24,6 +24,33 @@ import {
 // Issue row: two-line title + meta line; section headers are shorter and measured.
 const ESTIMATED_LINEAR_ROW_HEIGHT = 64
 
+type LinearRowExtraData = {
+  readonly effectiveLinearDisplayProperties: ConnectionPresentationModel['effectiveLinearDisplayProperties']
+  readonly mutatingStatus: boolean
+}
+
+// Why: LegendList re-renders every visible row when extraData changes identity, and this
+// render helper cannot hold hooks. The display-property set is memoized upstream, so one
+// object per (set, mutatingStatus) keeps unrelated screen renders from touching the rows.
+const linearRowExtraDataCache = new WeakMap<
+  object,
+  { idle?: LinearRowExtraData; mutating?: LinearRowExtraData }
+>()
+
+export function linearRowExtraData(
+  effectiveLinearDisplayProperties: LinearRowExtraData['effectiveLinearDisplayProperties'],
+  mutatingStatus: boolean
+): LinearRowExtraData {
+  let entry = linearRowExtraDataCache.get(effectiveLinearDisplayProperties)
+  if (!entry) {
+    entry = {}
+    linearRowExtraDataCache.set(effectiveLinearDisplayProperties, entry)
+  }
+  const slot = mutatingStatus ? 'mutating' : 'idle'
+  entry[slot] ??= { effectiveLinearDisplayProperties, mutatingStatus }
+  return entry[slot]
+}
+
 export function renderMobileTasksLinearList(model: ConnectionPresentationModel) {
   const {
     effectiveLinearDisplayProperties,
@@ -122,7 +149,7 @@ export function renderMobileTasksLinearList(model: ConnectionPresentationModel) 
       getItemType={(entry) => entry.type}
       estimatedItemSize={ESTIMATED_LINEAR_ROW_HEIGHT}
       // Why: rows only re-render when extraData changes; these are what they read.
-      extraData={{ effectiveLinearDisplayProperties, mutatingStatus }}
+      extraData={linearRowExtraData(effectiveLinearDisplayProperties, mutatingStatus)}
       ItemSeparatorComponent={TaskEntrySeparator}
       contentContainerStyle={[styles.list, { paddingBottom: spacing.lg + insets.bottom }]}
       refreshing={refreshing}

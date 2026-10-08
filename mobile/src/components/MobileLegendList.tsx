@@ -1,6 +1,6 @@
 // Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
 // Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: wrapper único sobre o LegendList usado em HomeScreen/ThreadFeed/ArchivedThreadsScreen — listRef tipado, refreshNonce→refreshing e separador com trailingItem como o FlatList.
+// See third_party/licenses/t3code-MIT.txt. Nexus changes: wrapper único sobre o LegendList usado em HomeScreen/ThreadFeed/ArchivedThreadsScreen — listRef tipado, refreshNonce→refreshing e separador por índice com trailingItem como o FlatList.
 import {
   useEffect,
   useMemo,
@@ -66,25 +66,42 @@ export function useRefreshNonceRefreshing(refreshNonce: number | undefined, data
   return bump !== null && bump.data === data
 }
 
-function useTrailingItemSeparator<ItemT>(
+type RenderItem<ItemT> = (info: LegendListRenderItemProps<ItemT>) => ReactNode
+
+/**
+ * Separators are rendered inside each row from the row's index, not looked up by item:
+ * equal primitives (or a repeated object) would collide in an item-keyed lookup. The
+ * row only re-renders on extraData changes, so the list's data rides along in the
+ * extraData handed to LegendList — a neighbour change then refreshes the hairlines —
+ * while renderItem still receives the caller's own extraData.
+ */
+function useSeparatedRows<ItemT>(
   data: readonly ItemT[],
+  renderItem: RenderItem<ItemT>,
+  extraData: unknown,
   Separator: ComponentType<MobileLegendListSeparatorProps<ItemT>> | undefined
-): ComponentType<{ leadingItem: ItemT }> | undefined {
-  const trailingByLeading = useMemo(() => {
-    const next = new Map<ItemT, ItemT>()
-    for (let index = 0; index < data.length - 1; index += 1) {
-      next.set(data[index], data[index + 1])
-    }
-    return next
-  }, [data])
-  return useMemo(() => {
+): { renderItem: RenderItem<ItemT>; extraData: unknown } {
+  const listExtraData = useMemo(
+    () => (Separator ? [extraData, data] : extraData),
+    [Separator, data, extraData]
+  )
+  const separatedRenderItem = useMemo<RenderItem<ItemT>>(() => {
     if (!Separator) {
-      return undefined
+      return renderItem
     }
-    return function MobileLegendListSeparator({ leadingItem }: { leadingItem: ItemT }) {
-      return <Separator leadingItem={leadingItem} trailingItem={trailingByLeading.get(leadingItem)} />
+    return function renderSeparatedItem(info) {
+      const trailingIndex = info.index + 1
+      return (
+        <>
+          {renderItem({ ...info, extraData })}
+          {trailingIndex < info.data.length ? (
+            <Separator leadingItem={info.item} trailingItem={info.data[trailingIndex]} />
+          ) : null}
+        </>
+      )
     }
-  }, [Separator, trailingByLeading])
+  }, [Separator, extraData, renderItem])
+  return { renderItem: separatedRenderItem, extraData: listExtraData }
 }
 
 /**
@@ -95,6 +112,8 @@ function useTrailingItemSeparator<ItemT>(
  */
 export function MobileLegendList<ItemT>({
   data,
+  renderItem,
+  extraData,
   listRef,
   refreshNonce,
   refreshing,
@@ -105,14 +124,15 @@ export function MobileLegendList<ItemT>({
   ...props
 }: MobileLegendListProps<ItemT>): ReactElement {
   const nonceRefreshing = useRefreshNonceRefreshing(refreshNonce, data)
-  const Separator = useTrailingItemSeparator(data, ItemSeparatorComponent)
+  const rows = useSeparatedRows(data, renderItem, extraData, ItemSeparatorComponent)
   return (
     <LegendList<ItemT>
       {...props}
       ref={listRef}
       data={data}
+      renderItem={rows.renderItem}
+      extraData={rows.extraData}
       recycleItems={recycleItems}
-      ItemSeparatorComponent={Separator}
       refreshing={Boolean(refreshing) || nonceRefreshing}
     />
   )
