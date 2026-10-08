@@ -18,7 +18,9 @@ export type JevUnavailableReason =
   /** A Decisions API recusou a consulta. Não é predicado negativo. */
   | 'refusal'
   /** A distribuição parseou, mas não serve o contrato. */
-  | 'ambiguous';
+  | 'ambiguous'
+  /** Os modelos do modo Juntos não concordaram. */
+  | 'divergent';
 
 export type SpawnRouteSource = 'jev' | 'mixed' | 'heuristic';
 
@@ -167,6 +169,7 @@ export const JEV_UNAVAILABLE_LABEL: Readonly<Record<JevUnavailableReason, string
   'internal-error': 'erro interno do Nexus',
   refusal: 'recusa do modelo',
   ambiguous: 'resposta ambígua',
+  divergent: 'sem acordo entre os modelos',
 };
 
 export function isJevUnavailableReason(value: unknown): value is JevUnavailableReason {

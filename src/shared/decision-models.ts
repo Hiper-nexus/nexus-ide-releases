@@ -14,7 +14,7 @@ export const CLEF_SECRET_NAME = 'clef-env:CLOUDFLARE_API_TOKEN';
 export const LUNA_DECISION_MODEL = 'gpt-6-luna';
 
 export const decisionSettingsSchema = z.object({
-  mode: z.enum(['auto', 'jev', 'clef', 'luna']).default('jev'),
+  mode: z.enum(['auto', 'jev', 'clef', 'luna', 'together']).default('jev'),
   clefModel: z.enum(['clef', 'clef-flash']).default('clef'),
   cloudflareAccountId: z.string().trim().regex(/^(?:[a-fA-F0-9]{32})?$/).default(''),
   visionEnabled: z.boolean().default(false),

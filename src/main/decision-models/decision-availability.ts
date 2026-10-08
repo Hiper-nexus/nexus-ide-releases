@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { decisionSettingsSchema, type DecisionSettings } from '../../shared/decision-models';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
 import { getOrchSettings } from '../persistence/settings-store';
+import { currentDecisionAccountId, decisionAccountBookFile, readDecisionAccountBook, resolveAccountSettings } from './decision-accounts';
 import { hasJevCredential } from '../jev/jev-secrets';
 import { hasClefCredential, resolveCloudflareAccountId, resolveClefApiToken } from './clef-secrets';
 import { hasLunaCredential } from './luna-credentials';
@@ -10,14 +11,22 @@ import { decisionCredentialRevision } from './decision-revision';
 import type { ClefConnection } from './clef-client';
 
 export function getDecisionSettings(): DecisionSettings {
-  return decisionSettingsSchema.parse(getOrchSettings().decisionModels ?? {});
+  const projection = decisionSettingsSchema.parse(getOrchSettings().decisionModels ?? {});
+  const accountId = currentDecisionAccountId();
+  if (!accountId) return projection;
+  try {
+    const { resolveSettingsFile } = require('../persistence/settings-store') as typeof import('../persistence/settings-store');
+    return resolveAccountSettings(readDecisionAccountBook(decisionAccountBookFile(resolveSettingsFile())), accountId, projection);
+  } catch {
+    return projection;
+  }
 }
 
 export function getDecisionAvailability(settings = getDecisionSettings()): DecisionAvailability {
-  // Modo fixo não lê cofre de provedor que não pode servir. Somente Luna ainda lê o Jev: as superfícies com efeito continuam lá.
+  // Modo fixo não lê cofre de provedor que não pode servir. Somente Luna não lê o Jev: sem chave OpenAI a rota é nula.
   const mode = settings.mode;
   return {
-    jev: mode === 'clef' ? false : hasJevCredential(),
+    jev: mode === 'clef' || mode === 'luna' ? false : hasJevCredential(),
     clef: mode === 'jev' || mode === 'luna' ? false : hasClefCredential() && Boolean(resolveCloudflareAccountId(settings.cloudflareAccountId)),
     luna: mode === 'jev' || mode === 'clef' ? false : hasLunaCredential(),
   };

@@ -238,4 +238,8 @@ export function clearAccess(): void {
   (require('./auth-client') as typeof import('./auth-client')).resetPendingLogin();
   invalidateLicenseAccountBinding(secrets());
   authority.clearAccess();
+  try {
+    const { notifyDecisionAccount } = require('./decision-models/decision-accounts') as typeof import('./decision-models/decision-accounts');
+    notifyDecisionAccount(null);
+  } catch { /* sair da conta não depende do livro de decisão */ }
 }

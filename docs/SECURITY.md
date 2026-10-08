@@ -17,8 +17,8 @@ All external input validated with Zod at process boundaries.
 | Browser | `browser/url-policy.ts` |
 | Egress Clef (Cloudflare Workers AI): texto | `decision-models/*` — `decision-routing.ts` (rota em código; superfícies com efeito fixas no Jev), `decision-judge.ts` (nunca troca de provedor depois da chamada), `clef-client.ts` (endpoint HTTPS fixo, sem redirect, lotes ≤ 64, limites de corpo/resposta), `decision-redaction.ts`, `decision-response.ts`, `clef-secrets.ts` + `decision-model-ipc.ts` (token só no cofre; variáveis de ambiente próprias `NEXUS_CLEF_API_TOKEN` / `NEXUS_CLEF_ACCOUNT_ID`) |
 | Egress Clef (Cloudflare): imagens mascaradas do navegador | `browser/browser-visual-judgment.ts`, `browser/browser-capture-redaction.ts`, `browser/browser-visual-inspection.ts`, `browser/browser-visual-refusal.ts`, `preload/browser-visual-redaction.ts`, `preload/browser-visual-mask-rules.ts`, `orch/tools-browser-visual.ts`, `decision-models/decision-images.ts` — só com a visão ligada pelo operador; nunca em aba com perfil pessoal |
-| Egress Luna (OpenAI Decisions API, beta): texto | `decision-models/luna-client.ts` (POST fixo `https://api.openai.com/v1/decisions`, `redirect: 'error'`, modelo só `gpt-6-luna`, lotes ≤ 64, limites de corpo/resposta; recusa não vira predicado 0), `luna-map.ts`, `decision-redaction.ts`, `decision-routing.ts` (modo `luna` não cai no Jev nem no Clef; superfícies com efeito continuam no Jev), `luna-credentials.ts` + `voice/voice-secrets.ts` (chave já existente `voice-env:OPENAI_API_KEY`; presença por `hasSecret`, sem segundo cofre). O diário não grava o input. Custo só com `usage.input_tokens`, tarifa publicada de US$ 0,10/1M de entrada; prêmios regionais não vêm na resposta e não são inventados |
-| Egress Luna: imagens mascaradas do navegador | A mesma máscara do Clef (`decision-images.ts` e a cadeia do navegador). Só com a visão ligada. Em Somente Luna a captura vai à OpenAI como data URL (`input_image`); no Automático, só se a Cloudflare não for a rota. Pixels de desktop não saem. Sem URL remota |
+| Egress Luna (OpenAI Decisions API, beta): texto | `decision-models/luna-client.ts` (POST fixo `https://api.openai.com/v1/decisions`, `redirect: 'error'`, modelo só `gpt-6-luna`, lotes ≤ 64, limites de corpo/resposta; recusa não vira predicado 0), `luna-map.ts`, `decision-redaction.ts`, `decision-routing.ts` (Somente Luna cobre também as superfícies com efeito e, sem chave OpenAI, não cai no Jev; Juntos manda o mesmo texto redigido a cada membro pronto), `decision-accounts.ts` (preferência por conta autenticada, em `decision-accounts.json`), `luna-credentials.ts` + `voice/voice-secrets.ts` (chave já existente `voice-env:OPENAI_API_KEY`; presença por `hasSecret`, sem segundo cofre). O diário não grava o input; a linha de divergência leva só números. Custo só com `usage.input_tokens`, tarifa publicada de US$ 0,10/1M de entrada; prêmios regionais não vêm na resposta e não são inventados |
+| Egress Luna: imagens mascaradas do navegador | A mesma máscara do Clef (`decision-images.ts` e a cadeia do navegador). Só com a visão ligada. Em Somente Luna a captura vai à OpenAI como data URL (`input_image`); no Automático, só se a Cloudflare não for a rota; em Juntos, a mesma captura mascarada vai à Cloudflare e à OpenAI. Pixels de desktop não saem. Sem URL remota |
 | Egress Jev (TypeSafe) | `jev/jev-client.ts` (redactState, fail-open), `orch/jev-handoff-review.ts`, `orch/tools-judge.ts`, `orch/tools-browser-autopilot.ts`, `orch/tools-computer-autopilot.ts`, `vision/desktop-control.ts`, `orch/jev-dispatch-guard.ts`, `orch/tools-tool-pick.ts`, `orch/jev-task-routing.ts`, `orch/hook-triage-endpoint.ts`, `orch/tools-handoff-workspace.ts`, `browser/browser-manager.ts` + `browser/browser-extract.ts` (julgamento de página e estado de extração redigidos e limitados; Jev só escolhe entre candidatos reais) |
 | Egress Jev/Clef: título de missão falado | `jev/jev-mission-pick.ts` (superfície `missionPick`, dois casos: "abre a missão X" casa com 2–5 títulos parecidos (desempate) ou NADA casa e há de 1 a 8 missões (a fala pode ser um nome mal reconhecido: aí o Jev vê a fala contra os títulos de TODAS as missões, até 8; com 9 ou mais não consulta); o que sai é o que a pessoa disse e os títulos candidatos, que ela mesma digitou, redigidos por `redactSecrets` ANTES de cortar (só formatos de segredo conhecidos: um dado pessoal no título sai como foi digitado) e limitados a 2 KB; candidatos por posição `m1…m5`, nunca id real, caminho nem conversa; uma pergunta `choice`, timeout 3 s, sem retry de timeout, 30/min; fail-open total — sem chave, desligado, limite ou erro viram "sem decisão" e a voz pergunta; aceita só com confiança ≥ 0,7 e margem ≥ 0,15 sobre a 2ª opção no desempate, e ≥ 0,90 e ≥ 0,30 no caso "nada casou" (a fala pode ser ruído); o diário grava só ids de pergunta, probabilidades e `pick:mN`/`ask:motivo` (com prefixo `noMatch:` no segundo caso), nunca texto), `jev/jev-mission-pick-ipc.ts` (`handleTrusted` + schema estrito de `shared/mission-pick.ts`: chave a mais, id ou caminho são recusados; resposta sempre tipada, inclusive em erro), `renderer/voice/restore-mission-target.ts` (timeout de 5 s no renderer; não consulta com fala de uma letra só). Rota de texto comum, NÃO fixa no Jev: em "Somente Clef" (ou sem chave Jev no Automático) o mesmo estado redigido vai à Cloudflare; em "Somente Luna" vai à OpenAI; no Automático a Luna só recebe se faltarem Jev e Clef. A regra de aceitação é a mesma |
 | Egress Reporte de problema | Reporte de problema: título/descrição/passos digitados + diagnóstico opt-in redigido → `api.nexuside.app` (`POST /v1/bug-reports`), por ação explícita do usuário. `bug-report/bug-report-ipc.ts` (`handleTrusted` + schema estrito; payload inválido é recusado), `bug-report/bug-report-service.ts` (prévia fiel: o envio usa o corpo exato que a prévia mostrou e recusa se o corpo mudou — digest sha-256; no máximo 10 tentativas por 10 min; timeout curto, `redirect: 'error'`, resposta validada, erros em pt-BR, nada em log), `bug-report/bug-report-diagnostics.ts` (lista de permissão: só `kind`, código curto e instante dos últimos eventos do trace, agente/modelo ativo, nº de panes e se há missão — nunca argumentos, caminhos, prompts, saída de terminal nem ambiente; só com `consent.diagnostics`, desligado por padrão), `bug-report/bug-report-redaction.ts` (chaves/JWT/Bearer, e-mails, HOME). A sessão fica no Main (`api-client.ts`) e nunca chega ao renderer. |
@@ -29,10 +29,12 @@ All external input validated with Zod at process boundaries.
 
 Decision routing lives in `decision-models/decision-judge.ts`: fixed modes never
 silently change provider. Somente Luna without an OpenAI key does not fall
-back to Jev or Clef. Visual inputs require explicit opt-in. They go to Clef
-when that route is selected, and to Luna (inline data URL only) when the
-operator chose Luna or Automatic has no Clef credential but does have the
-OpenAI key. Desktop pixels never leave.
+back to Jev or Clef, including on effect-bearing surfaces. Juntos only runs
+when at least two selected providers have a key; a single provider is not
+called in their place. Visual inputs require explicit opt-in. They go to Clef
+when that route is selected, to Luna (inline data URL only) when the operator
+chose Luna or Automatic has no Clef credential but does have the OpenAI key,
+and to both when the operator chose Juntos. Desktop pixels never leave.
 Cloudflare credentials use only `clef-env:CLOUDFLARE_API_TOKEN` in Main's
 encrypted vault (a vault label, not an environment variable). The environment
 fallback is `NEXUS_CLEF_API_TOKEN` / `NEXUS_CLEF_ACCOUNT_ID`; the wrangler
@@ -71,17 +73,31 @@ What can leave the machine for Cloudflare, by mode:
   for everything except `toolPick`; it only falls back to Cloudflare when no Jev
   key exists, and the settings screen says so (`credential-fallback`).
 - **Somente Luna (text):** the same redacted text, sent to `api.openai.com/v1/decisions`
-  (`gpt-6-luna` only). Automatic uses Luna only after the preferred provider
-  (Clef for tool selection, research, and rank; Jev otherwise) is missing.
-  The published input price is US$0.10 per 1M tokens; output tokens are not
-  billed. If `usage.input_tokens` is absent the diary stores a null cost.
-- **Pinned to Jev, including in Somente Luna:** `dispatchGuard`, `handoffReview`,
-  `memoryDistill`, `computerTool`, `browserTool` (text). Their thresholds are
-  calibrated for Jev and have no Clef or Luna evaluation. Without a Jev key they
-  have no route and fail open (guard `skipped`). They are not sent to Luna.
-  The agent cannot move those surfaces either: an explicit `gpt-6-luna` on a
-  pinned surface yields no route. `nexus_judge` (surface `judgeTool`, not
-  pinned) still rejects `model=clef`; in Somente Luna that tool uses the
+  (`gpt-6-luna` only), including `dispatchGuard`, `handoffReview`,
+  `memoryDistill`, `computerTool` and `browserTool` (text). Automatic uses Luna
+  only after the preferred provider (Clef for tool selection, research, and
+  rank; Jev otherwise) is missing, and an explicit `gpt-6-luna` on a pinned
+  surface in Automatic or Somente Jev still yields no route. Without the OpenAI
+  key there is no route and no silent Jev fallback. The published input price
+  is US$0.10 per 1M tokens; output tokens are not billed. If `usage.input_tokens`
+  is absent the diary stores a null cost.
+- **Juntos (opt-in):** redacted text of the same question goes to Jev and Luna.
+  On `dispatchGuard`, `handoffReview` and `memoryDistill`, Jev stays in the
+  call when its key exists; Luna and Clef may only tighten that measured
+  threshold. Reversible disagreement (`taskRouting`, including the skill
+  suggestion, `missionPick`, `catalogPick`) keeps the higher confidence, and
+  the journal line stores both numbers with no input text. Agreement follows.
+  Irreversible disagreement keeps the more restrictive verdict. `computerTool`
+  and `browserTool` labels stay on Jev. Masked browser images, with vision
+  already on, go to Clef and Luna; Jev does not see images. Fewer than two
+  ready members is not an ensemble. This mode is the only one that spends more
+  than one call per judgment. The preference is the signed-in account's, not a
+  value written into a worker prompt.
+- **Pinned to Jev in Automatic, Somente Jev, and Somente Clef:** `dispatchGuard`,
+  `handoffReview`, `memoryDistill`, `computerTool`, `browserTool` (text).
+  Without a Jev key they have no route and fail open (guard `skipped`).
+  Somente Clef does not send them anywhere. `nexus_judge` (surface `judgeTool`,
+  not pinned) still rejects `model=clef`; in Somente Luna that tool uses the
   Decisions API.
 - **Images:** only `nexus_browser_judge_visual`, with the operator's explicit
   opt-in (a fresh confirmation each time it is switched on). Somente Luna names
@@ -335,9 +351,14 @@ explícita e exige a mesma prova de saída física de antes.
 
 ## Preferências de decisão duráveis (F-421)
 
-`~/.nexus/decision-models.json` é a autoridade de modo, modelo Clef, Account ID
-e consentimento visual. Não contém token: este permanece no cofre. O schema
-continua desligando visão em Somente Jev; Somente Luna pode manter o
+`~/.nexus/decision-models.json` é a projeção legada de modo, modelo Clef, Account ID
+e consentimento visual. Não contém token: este permanece no cofre. Com uma conta
+autenticada, a autoridade é `~/.nexus/decision-accounts.json`: uma linha por id
+de conta. Conta sem linha própria não recebe a escolha de outra. Livro vazio
+reivindica a projeção uma vez, para o primeiro login. Logout volta a projeção
+ao padrão Jev e não apaga as outras linhas. Sem conta (antes do login) a
+projeção legada continua valendo para o operador desta máquina. O schema
+continua desligando visão em Somente Jev; Somente Luna e Juntos podem manter o
 consentimento. Carregar uma cópia antiga de settings.json não reativa
 consentimento. Migração só cria o arquivo ausente
 com uma seção legada validada; arquivo próprio válido prevalece sobre a cópia

@@ -25,6 +25,7 @@ describe('decision model configuration', () => {
     // Coming back to automatic never resurrects the old consent: it is not stored anywhere.
     expect(orchSettingsSchema.parse({ decisionModels: { ...jev.decisionModels, mode: 'auto' } }).decisionModels.visionEnabled).toBe(false);
     expect(orchSettingsSchema.parse({ decisionModels: { mode: 'luna', visionEnabled: true } }).decisionModels.visionEnabled).toBe(true);
+    expect(orchSettingsSchema.parse({ decisionModels: { mode: 'together', visionEnabled: true } }).decisionModels.visionEnabled).toBe(true);
   });
 
   it.each([

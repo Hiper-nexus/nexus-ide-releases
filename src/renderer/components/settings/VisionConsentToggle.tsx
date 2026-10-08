@@ -19,6 +19,9 @@ const VISION_COPY = {
   luna: { label: 'Analisar imagens com a Luna', aria: 'Analisar imagens com a Luna',
     hint: 'Envia capturas autorizadas à OpenAI quando a tarefa precisa de visão. A chave da OpenAI não ativa esse envio.',
     sentences: [LUNA_LEAD, ...MASK_SENTENCES] },
+  together: { label: 'Analisar imagens com Clef e Luna', aria: 'Analisar imagens com Clef e Luna',
+    hint: 'Envia capturas autorizadas à Cloudflare e à OpenAI. Juntos faz mais de uma chamada. A chave não ativa esse envio.',
+    sentences: ['Ao ligar, capturas mascaradas da aba do navegador são enviadas à Cloudflare (Clef) e à OpenAI (Luna, beta). O Jev não vê imagem. Juntos faz mais de uma chamada.', ...MASK_SENTENCES] },
 } as const;
 
 interface VisionConsentToggleProps {

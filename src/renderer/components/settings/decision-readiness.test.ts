@@ -58,8 +58,18 @@ describe('decision model readiness notices', () => {
     expect(missing[0]).toMatchObject({ id: 'luna-not-ready', tone: 'warn' });
     expect(missing[0].text).toContain('Chaves de API');
     const pins = decisionNotices(status({ settings: { mode: 'luna' }, lunaReady: true, jevReady: false }));
-    expect(pins.find(entry => entry.id === 'luna-pins')?.text).toContain('TypeSafe');
+    expect(pins.find(entry => entry.id === 'luna-pins')?.text).toContain('não volta para o Jev');
     expect(ids(status({ jevReady: false, isReady: false, hasStoredKey: false, lunaReady: true }))).toEqual(['luna-fallback']);
+  });
+
+  it('says together costs more than one call and names who is missing', () => {
+    const ready = decisionNotices(status({ settings: { mode: 'together' }, lunaReady: true }));
+    expect(ready.find(entry => entry.id === 'together-cost')?.text).toContain('mais de uma chamada');
+    const partial = decisionNotices(status({ settings: { mode: 'together' }, lunaReady: true, isReady: false, hasStoredKey: false }));
+    expect(partial.find(entry => entry.id === 'together-partial')?.text).toContain('Cloudflare');
+    expect(partial.find(entry => entry.id === 'together-partial')?.text).toContain('mais de uma chamada');
+    const alone = decisionNotices(status({ settings: { mode: 'together' }, lunaReady: true, jevReady: false, isReady: false, hasStoredKey: false }));
+    expect(alone.find(entry => entry.id === 'together-short')?.tone).toBe('warn');
   });
 
   it('warns that image analysis is on while Cloudflare is not ready', () => {

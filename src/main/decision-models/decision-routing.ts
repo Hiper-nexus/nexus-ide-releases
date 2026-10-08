@@ -8,10 +8,10 @@ type RouteInput = Pick<JudgeInput, 'surface' | 'model' | 'images'>;
 /**
  * Surfaces that gate or feed an effect (dispatch guard, handoff acceptance,
  * persistent memory, desktop and browser automation). Their thresholds were
- * calibrated against Jev. Neither the Clef public benchmarks nor the Luna
- * Decisions beta cover them, so they stay on Jev in every mode — including
- * explicit Luna. Without a Jev key they have no route (the guard becomes
- * `skipped`, fail-open as before). They must not go to Luna.
+ * calibrated against Jev, so Automático, Somente Jev and Somente Clef keep
+ * them on Jev (or with no route). Somente Luna and Juntos são escolha do
+ * operador e incluem estas superfícies: um pino não ignora essa escolha.
+ * Sem a chave da Luna a rota é nula — não volta ao Jev em silêncio.
  */
 export const JEV_PINNED_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
   'dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool',
@@ -26,6 +26,24 @@ export const CLEF_PREFERRED_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<
   'researchTriage',
   'rank',
   'rankTool',
+]);
+
+/** Juntos: o Jev fica na jogada e os outros só podem apertar o limiar. */
+export const SECURITY_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
+  'dispatchGuard', 'handoffReview', 'memoryDistill',
+]);
+
+/**
+ * Juntos: divergência reversível fica com a confiança maior. A skill sugerida
+ * viaja na superfície taskRouting; não há superfície própria.
+ */
+export const REVERSIBLE_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
+  'taskRouting', 'missionPick', 'catalogPick',
+]);
+
+/** Juntos: rótulos ficam no Jev. A imagem do navegador é outra chamada. */
+const LABEL_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
+  'computerTool', 'browserTool',
 ]);
 
 export function clefModel(model?: string): ClefModel | undefined {
@@ -51,8 +69,48 @@ function route(provider: DecisionProvider, model: string, evidence: DecisionRout
 export function canRouteBrowserVisual(settings: DecisionSettings, available: DecisionAvailability): boolean {
   if (!settings.visionEnabled || settings.mode === 'jev') return false;
   if (settings.mode === 'luna') return lunaReady(available);
+  if (settings.mode === 'together') return available.clef && lunaReady(available);
   if (settings.mode === 'clef') return available.clef;
   return available.clef || lunaReady(available);
+}
+
+/**
+ * Juntos, só com a escolha do operador. Quem não tem chave fica de fora.
+ * Menos de dois membros devolve null: um sozinho não é conjunto.
+ * Texto comum: Jev e Luna, a mesma pergunta. Clef não entra nesse texto.
+ * Segurança: Jev, e Luna e/ou Clef para apertar. Rótulos de desktop e
+ * navegador não são conjunto (o Jev responde sozinho). Imagem mascarada:
+ * Clef e Luna; o Jev não vê imagem. Pixels de desktop não têm saída mascarada.
+ * O modelo pedido pelo chamador não entra.
+ */
+export function ensembleMembers(input: RouteInput, settings: DecisionSettings, available: DecisionAvailability): DecisionRoute[] | null {
+  if (settings.mode !== 'together') return null;
+  const jevModel = process.env.NEXUS_JEV_MODEL ?? 'jev-latest';
+  const jev = route('jev', jevModel, 'manual', 'ensemble');
+  const luna = route('luna', LUNA_DECISION_MODEL, input.images?.length ? 'capability' : 'manual', 'ensemble');
+  const clef = route('clef', settings.clefModel, input.images?.length ? 'capability' : 'manual', 'ensemble');
+  if (input.images?.length) {
+    if (!settings.visionEnabled || !lunaReady(available) || !available.clef) return null;
+    if (input.surface === 'computerTool') return null;
+    if (input.surface && input.surface !== 'browserTool' && JEV_PINNED_SURFACES.has(input.surface)) return null;
+    return [luna, clef];
+  }
+  if (input.surface && LABEL_SURFACES.has(input.surface)) return null;
+  if (input.surface && SECURITY_ENSEMBLE_SURFACES.has(input.surface)) {
+    const members: DecisionRoute[] = [];
+    if (available.jev) members.push(jev);
+    if (lunaReady(available)) members.push(luna);
+    if (available.clef) members.push(clef);
+    return members.length >= 2 ? members : null;
+  }
+  if (!available.jev || !lunaReady(available)) return null;
+  return [jev, luna];
+}
+
+function operatorLuna(input: RouteInput, available: DecisionAvailability, evidence: DecisionRoute['evidence']): DecisionRoute | null {
+  if (!lunaReady(available)) return null;
+  const pinned = Boolean(input.surface && JEV_PINNED_SURFACES.has(input.surface));
+  return route('luna', LUNA_DECISION_MODEL, evidence, pinned ? 'operator-override' : 'manual');
 }
 
 /** The policy is deterministic; public benchmark evidence is not a local evaluation. */
@@ -60,14 +118,29 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
   const explicitClef = clefModel(input.model);
   const pinned = explicitProvider(input.model);
   const jevModel = input.model ?? process.env.NEXUS_JEV_MODEL ?? 'jev-latest';
+  if (settings.mode === 'together') {
+    if (!input.images?.length && input.surface && LABEL_SURFACES.has(input.surface)) {
+      if (!available.jev) return null;
+      return route('jev', process.env.NEXUS_JEV_MODEL ?? 'jev-latest', 'manual', 'labels');
+    }
+    return ensembleMembers(input, settings, available)?.[0] ?? null;
+  }
+  if (settings.mode === 'luna') {
+    if (input.images?.length) {
+      if (input.surface && input.surface !== 'browserTool' && JEV_PINNED_SURFACES.has(input.surface)) return null;
+      if (!settings.visionEnabled) return null;
+      return lunaReady(available) ? route('luna', LUNA_DECISION_MODEL, 'capability', 'vision') : null;
+    }
+    return operatorLuna(input, available, 'manual');
+  }
   if (settings.mode !== 'auto' && pinned && pinned !== settings.mode) return null;
   if (input.images?.length) {
     // Imagem não contorna a fixação no Jev: só o julgamento visual do navegador sai da máquina.
     if (input.surface && input.surface !== 'browserTool' && JEV_PINNED_SURFACES.has(input.surface)) return null;
     if (!settings.visionEnabled || settings.mode === 'jev' || pinned === 'jev') return null;
-    if (settings.mode === 'luna' || pinned === 'luna') {
+    if (pinned === 'luna') {
       if (!lunaReady(available)) return null;
-      return route('luna', LUNA_DECISION_MODEL, 'capability', pinned === 'luna' && settings.mode === 'auto' ? 'explicit-model' : 'vision');
+      return route('luna', LUNA_DECISION_MODEL, 'capability', settings.mode === 'auto' ? 'explicit-model' : 'vision');
     }
     if (settings.mode === 'clef') {
       if (!available.clef || (explicitClef && explicitClef !== settings.clefModel)) return null;
@@ -88,7 +161,6 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
     if (!available.clef || (explicitClef && explicitClef !== settings.clefModel)) return null;
     return route('clef', settings.clefModel, 'manual', 'manual');
   }
-  if (settings.mode === 'luna') return lunaReady(available) ? route('luna', LUNA_DECISION_MODEL, 'manual', 'manual') : null;
   if (pinned) {
     const ready = pinned === 'luna' ? lunaReady(available) : available[pinned];
     if (!ready) return null;

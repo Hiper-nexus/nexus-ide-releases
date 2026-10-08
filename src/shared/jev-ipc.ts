@@ -60,7 +60,8 @@ export interface JevDecisionRow {
     | 'aborted'
     | 'internal-error'
     | 'refusal'
-    | 'ambiguous';
+    | 'ambiguous'
+    | 'divergent';
   surface: string;
   sessionId?: string;
   missionId?: string;

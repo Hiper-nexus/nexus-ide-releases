@@ -45,7 +45,14 @@ export function getAuthenticatedAccountId(store: IdentityStore = secretStore()):
 }
 
 export function bindAuthenticatedAccount(id: string, session: string, store: IdentityStore = secretStore(), previousSession?: string): { ok: boolean; error?: string } {
-  return bindLicenseAccount(id, session, store, previousSession);
+  const result = bindLicenseAccount(id, session, store, previousSession);
+  if (result.ok) {
+    try {
+      const { notifyDecisionAccount } = require('./decision-models/decision-accounts') as typeof import('./decision-models/decision-accounts');
+      notifyDecisionAccount(id);
+    } catch { /* o login não depende do livro de decisão */ }
+  }
+  return result;
 }
 
 /** Only call after first paint or an explicit login gesture. Older installs need /me online once. */

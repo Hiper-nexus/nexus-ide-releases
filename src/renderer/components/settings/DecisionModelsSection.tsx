@@ -17,7 +17,7 @@ export function DecisionModelsSection({ showCredentials = true }: { showCredenti
   const notices = status ? decisionNotices(status) : [];
   return <section className="settings-section decision-models" aria-label="Modelos de decisão" aria-busy={busy}>
     <header className="decision-models__head"><h3 className="settings-section-heading">Modelos de decisão</h3>
-      <p className="settings-detail__hint">Jev, Clef e Luna (beta) se complementam. Escolha um provedor ou deixe o Nexus selecionar por tarefa.</p>
+      <p className="settings-detail__hint">Jev, Clef e Luna (beta) se complementam. Escolha um provedor, os três juntos, ou deixe o Nexus selecionar por tarefa. A escolha é desta conta.</p>
     </header>
     {!supported && <p className="settings-field__note">Para configurar Clef, atualize o Nexus.</p>}
     {supported && !status && !error && <div className="decision-models__loading" role="status">Carregando configuração…</div>}

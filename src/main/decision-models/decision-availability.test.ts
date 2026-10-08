@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const state = vi.hoisted(() => ({ tokens: new Map<string, string>(), mode: 'auto' as 'auto' | 'jev' | 'clef' | 'luna', vaultReads: [] as string[] }));
+const state = vi.hoisted(() => ({ tokens: new Map<string, string>(), mode: 'auto' as 'auto' | 'jev' | 'clef' | 'luna' | 'together', vaultReads: [] as string[] }));
 vi.mock('../persistence/settings-store', () => ({ getOrchSettings: () => ({ decisionModels: {
   mode: state.mode, clefModel: 'clef', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: false,
 } }) }));
@@ -30,8 +30,11 @@ describe('configured decision availability', () => {
     expect(state.vaultReads.some(name => name.startsWith('jev-env:') || name.startsWith('voice-env:'))).toBe(false);
     state.vaultReads.length = 0; state.mode = 'luna';
     getDecisionAvailability();
-    expect(state.vaultReads.some(name => name.startsWith('clef-env:'))).toBe(false);
-    expect(new Set(state.vaultReads.map(name => name.split(':')[0]))).toEqual(new Set(['jev-env', 'voice-env']));
+    expect(state.vaultReads.some(name => name.startsWith('clef-env:') || name.startsWith('jev-env:'))).toBe(false);
+    expect(new Set(state.vaultReads.map(name => name.split(':')[0]))).toEqual(new Set(['voice-env']));
+    state.vaultReads.length = 0; state.mode = 'together';
+    getDecisionAvailability();
+    expect(new Set(state.vaultReads.map(name => name.split(':')[0]))).toEqual(new Set(['jev-env', 'clef-env', 'voice-env']));
     state.vaultReads.length = 0; state.mode = 'auto';
     getDecisionAvailability();
     expect(new Set(state.vaultReads.map(name => name.split(':')[0]))).toEqual(new Set(['jev-env', 'clef-env', 'voice-env']));

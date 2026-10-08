@@ -26,6 +26,8 @@ const rowSchema = z.looseObject({
   requestCount: optionalFinite,
   feedbackAt: optionalFinite,
   usageIncomplete: z.boolean().optional().catch(undefined),
+  diverged: z.boolean().optional().catch(undefined),
+  ensemblePeers: z.record(z.string(), z.record(z.string(), z.number().finite())).optional().catch(undefined),
   feedback: z.enum(['right', 'wrong']).optional().catch(undefined),
 });
 

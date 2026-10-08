@@ -10,6 +10,12 @@ describe('safe decision usage receipts', () => {
     expect(decisionResultUsage(result)).not.toHaveProperty('images');
   });
 
+  it('keeps a summed ensemble cost instead of repricing every token as one provider', () => {
+    const result = { model: 'ensemble', answers: {}, usage: { input_tokens: 2_000_000, output_tokens: 0 }, estimatedUsd: 0.142,
+      route: { provider: 'luna' as const, model: 'ensemble', policyVersion: 'jev-clef-luna-v1' as const, evidence: 'manual' as const, reason: 'ensemble' } };
+    expect(decisionResultUsage(result).usd).toBeCloseTo(0.142, 10);
+  });
+
   it('keeps tokens and cost unknown (never zero) when the provider omitted usage', () => {
     const result = { model: 'jev-1.13.0', answers: {}, usage: { input_tokens: 0, output_tokens: 0 }, usageMissing: true as const };
     expect(decisionResultUsage(result)).toMatchObject({ provider: 'jev', inputTokens: null, usd: null, usageIncomplete: true });

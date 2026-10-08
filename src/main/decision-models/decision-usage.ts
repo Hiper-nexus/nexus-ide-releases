@@ -11,7 +11,9 @@ export function decisionResultUsage(result: JevResult): Pick<JevDecisionInput,
     provider: result.route?.provider ?? (result.model === 'gpt-6-luna' ? 'luna'
       : result.model.replace('@cf/cloudflare/', '').startsWith('clef') ? 'clef' : 'jev'),
     route: result.route, durationMs: result.durationMs, requestCount: result.requestCount,
-    inputTokens: measured ? tokens : null, usd: measured ? decisionResultCostUsd(result) : null,
+    inputTokens: measured ? tokens : null,
+    usd: measured ? (typeof result.estimatedUsd === 'number' && Number.isFinite(result.estimatedUsd) && result.estimatedUsd >= 0
+      ? result.estimatedUsd : decisionResultCostUsd(result)) : null,
   };
 }
 

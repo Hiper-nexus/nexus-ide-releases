@@ -27,9 +27,18 @@ export function decisionNotices(status: DecisionModelStatus): DecisionNotice[] {
     notices.push({ id: 'luna-not-ready', tone: 'warn', text: 'Somente Luna (beta) está escolhido, mas não há chave OpenAI. As ferramentas de decisão ficam ocultas. Configure a chave em Chaves de API → OpenAI.' });
   }
   if (mode === 'luna' && lunaReady) {
-    notices.push({ id: 'luna-pins', tone: jevReady ? 'info' : 'warn', text: jevReady
-      ? `Somente Luna (beta) julga as decisões de texto sem limiar medido no Jev. ${SAFEGUARDS} continuam no Jev.`
-      : `Somente Luna (beta) julga as decisões de texto. Sem chave TypeSafe, ${SAFEGUARDS} ficam desligados: eles não vão para a Luna.` });
+    notices.push({ id: 'luna-pins', tone: 'info', text: `Somente Luna (beta) cobre também ${SAFEGUARDS}. Sem a chave OpenAI isso não volta para o Jev.` });
+  }
+  if (mode === 'together') {
+    const missing = [lunaReady ? '' : 'OpenAI (Luna)', jevReady ? '' : 'TypeSafe (Jev)', clefReady ? '' : 'Cloudflare (Clef)'].filter(Boolean);
+    const partners = [jevReady, clefReady, lunaReady].filter(Boolean).length;
+    if (partners < 2) {
+      notices.push({ id: 'together-short', tone: 'warn', text: `Juntos precisa de pelo menos dois provedores e não chama um sozinho. Falta ${missing.join(', ')}.` });
+    } else {
+      notices.push({ id: missing.length ? 'together-partial' : 'together-cost', tone: 'info', text: missing.length
+        ? `Juntos segue sem ${missing.join(', ')} e faz mais de uma chamada por julgamento.`
+        : 'Juntos faz mais de uma chamada por julgamento. Concordância usa a confiança maior; efeito irreversível fica com o veredito mais restritivo.' });
+    }
   }
   if (mode === 'auto' && !jevReady && !clefReady && !lunaReady) {
     notices.push({ id: 'no-provider', tone: 'warn', text: 'O Automático está escolhido, mas nenhum provedor está configurado. Configure o Jev, a Cloudflare ou a OpenAI em Chaves de API.' });
@@ -40,7 +49,7 @@ export function decisionNotices(status: DecisionModelStatus): DecisionNotice[] {
   } else if (mode === 'auto' && !clefReady) {
     notices.push({ id: 'auto-jev-only', tone: 'info', text: `Enquanto falta ${missingClef(status)} da Cloudflare, o Automático decide tudo pelo Jev.` });
   }
-  const visionReady = mode === 'luna' ? lunaReady : mode === 'auto' ? clefReady || lunaReady : clefReady;
+  const visionReady = mode === 'luna' ? lunaReady : mode === 'together' ? clefReady && lunaReady : mode === 'auto' ? clefReady || lunaReady : clefReady;
   if (visionEnabled && !visionReady) {
     notices.push({ id: 'vision-not-ready', tone: 'warn', text: 'A análise de imagens está ligada, mas nenhum provedor de visão está pronto: nenhuma captura é enviada.' });
   }

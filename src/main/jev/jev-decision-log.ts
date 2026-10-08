@@ -38,7 +38,9 @@ export type JevNoAnswerReason =
   /** A Decisions API recusou a consulta. Não é um predicado negativo. */
   | 'refusal'
   /** A resposta parseou, mas a distribuição não serve o contrato. */
-  | 'ambiguous';
+  | 'ambiguous'
+  /** Juntos não teve respostas comparáveis, ou uma escolha de segurança divergiu. */
+  | 'divergent';
 
 export interface JevDecisionEntry {
   id: string;
@@ -65,6 +67,10 @@ export interface JevDecisionEntry {
   feedback?: 'right' | 'wrong';
   feedbackAt?: number;
   optimization?: JevOptimizationEvidence;
+  /** Juntos discordou. A linha não leva o texto da consulta. */
+  diverged?: boolean;
+  /** Números por pergunta e provedor. Sem texto. */
+  ensemblePeers?: Record<string, Record<string, number>>;
 }
 
 export type JevDecisionInput = Omit<JevDecisionEntry, 'id' | 'at'>;
@@ -150,7 +156,7 @@ export function recordJevDecision(
       model: entry.model, questions: entry.questions, probabilities: entry.probabilities,
       confidence: entry.confidence, decision: entry.decision, inputTokens: entry.inputTokens, usd: entry.usd,
       provider: entry.provider, route: entry.route, durationMs: entry.durationMs, requestCount: entry.requestCount,
-      usageIncomplete: entry.usageIncomplete,
+      usageIncomplete: entry.usageIncomplete, diverged: entry.diverged, ensemblePeers: entry.ensemblePeers,
       feedback: entry.feedback, feedbackAt: entry.feedbackAt, optimization: entry.optimization };
     fs.appendFileSync(file, JSON.stringify(line) + '\n');
   } catch (error) {

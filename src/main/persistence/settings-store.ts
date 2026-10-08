@@ -43,6 +43,15 @@ import {
 import { applyPinkCityDefaultTheme } from './pink-city-default-migration';
 import { bumpDecisionCredentialRevision } from '../decision-models/decision-revision';
 import { decisionSettingsSchema, type DecisionSettings } from '../../shared/decision-models';
+import {
+  accountSwitchProjection,
+  currentDecisionAccountId,
+  decisionAccountBookFile,
+  onDecisionAccountChanged,
+  readDecisionAccountBook,
+  withAccountSettings,
+  writeDecisionAccountBook,
+} from '../decision-models/decision-accounts';
 
 /**
  * Terminal settings store: ~/.nexus/settings.json (same user-dir convention
@@ -225,6 +234,11 @@ function persist(next = snapshot(), saveDecisionPreferences = false): void {
     writeJsonFileAtomic(SETTINGS_FILE, next);
     if (saveDecisionPreferences) {
       writeJsonFileAtomic(DECISION_SETTINGS_FILE, next.orch.decisionModels);
+      const accountId = currentDecisionAccountId();
+      if (accountId) {
+        const bookFile = decisionAccountBookFile(SETTINGS_FILE);
+        writeDecisionAccountBook(bookFile, withAccountSettings(readDecisionAccountBook(bookFile), accountId, next.orch.decisionModels));
+      }
     }
     if (next.productMigrations) {
       productMigrations = next.productMigrations;
@@ -377,8 +391,33 @@ export function unregisterSettingsListener(wc: WebContents): void {
   uiListeners.delete(wc);
 }
 
+/** A preferência de julgamento segue a conta logada. Logout não apaga as outras linhas. */
+export function applyDecisionAccount(accountId: string | null): void {
+  const bookFile = decisionAccountBookFile(SETTINGS_FILE);
+  const book = readDecisionAccountBook(bookFile);
+  const projection = decisionSettingsSchema.parse(orchSettings.decisionModels ?? {});
+  const next = accountSwitchProjection(book, accountId, projection);
+  if (next.book !== book) {
+    try { writeDecisionAccountBook(bookFile, next.book); }
+    catch { console.warn('[settings] could not claim decision preferences'); }
+  }
+  const changed = JSON.stringify(orchSettings.decisionModels) !== JSON.stringify(next.settings);
+  if (changed || accountId === null) {
+    orchSettings = { ...orchSettings, decisionModels: next.settings };
+    try { writeJsonFileAtomic(DECISION_SETTINGS_FILE, next.settings); }
+    catch { console.warn('[settings] could not project decision preferences'); }
+  }
+  if (changed) bumpDecisionCredentialRevision();
+}
+
 export function registerSettingsIpc(): void {
   load();
+  onDecisionAccountChanged(applyDecisionAccount);
+  try {
+    const { getAuthenticatedAccountId } = require('../auth-client') as typeof import('../auth-client');
+    const id = getAuthenticatedAccountId();
+    if (id) applyDecisionAccount(id);
+  } catch { /* sem sessão, a projeção legada continua valendo */ }
 
   ipcMain.handle(SETTINGS_CHANNELS.get, () => current);
 

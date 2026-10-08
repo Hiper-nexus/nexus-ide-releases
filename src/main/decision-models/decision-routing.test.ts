@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canRouteBrowserVisual, resolveDecisionRoute } from './decision-routing';
+import { canRouteBrowserVisual, ensembleMembers, resolveDecisionRoute } from './decision-routing';
 import type { DecisionSettings } from '../../shared/decision-models';
 
 const settings: DecisionSettings = { mode: 'auto', clefModel: 'clef', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: false };
@@ -129,12 +129,29 @@ describe('complementary decision routing', () => {
     expect(resolveDecisionRoute({}, { ...settings, mode: 'luna' }, { jev: true, clef: true, luna: false })).toBeNull();
   });
 
-  it('keeps effect-bearing surfaces on Jev in Luna-only mode', () => {
+  it('sends pinned surfaces to Luna when the operator chose Luna, and does not fall back to Jev', () => {
     for (const surface of ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool'] as const) {
-      expect(resolveDecisionRoute({ surface }, lunaMode, lunaOn)).toMatchObject({ provider: 'jev', reason: 'jev-pinned' });
-      expect(resolveDecisionRoute({ surface }, lunaMode, { jev: false, clef: false, luna: true })).toBeNull();
+      expect(resolveDecisionRoute({ surface }, lunaMode, lunaOn)).toMatchObject({ provider: 'luna', model: 'gpt-6-luna', reason: 'operator-override' });
+      expect(resolveDecisionRoute({ surface }, lunaMode, { jev: true, clef: true, luna: false })).toBeNull();
       expect(resolveDecisionRoute({ surface, model: 'gpt-6-luna' }, settings, lunaOn)).toBeNull();
     }
+  });
+
+  it('runs the three together only as a real ensemble, and keeps labels on Jev', () => {
+    const together = { ...settings, mode: 'together' as const };
+    const images = [{ content_type: 'image/png' as const, base64: 'synthetic' }];
+    expect(ensembleMembers({ surface: 'dispatchGuard' }, together, lunaOn)?.map(member => member.provider)).toEqual(['jev', 'luna', 'clef']);
+    expect(ensembleMembers({ surface: 'dispatchGuard' }, together, { jev: true, clef: false, luna: true })?.map(member => member.provider)).toEqual(['jev', 'luna']);
+    expect(ensembleMembers({ surface: 'dispatchGuard' }, together, { jev: true, clef: true, luna: false })?.map(member => member.provider)).toEqual(['jev', 'clef']);
+    expect(ensembleMembers({ surface: 'dispatchGuard' }, together, { jev: false, clef: false, luna: true })).toBeNull();
+    expect(ensembleMembers({ surface: 'taskRouting' }, together, lunaOn)?.map(member => member.provider)).toEqual(['jev', 'luna']);
+    expect(ensembleMembers({ surface: 'catalogPick' }, together, { jev: false, clef: true, luna: true })).toBeNull();
+    expect(resolveDecisionRoute({ surface: 'computerTool' }, together, lunaOn)).toMatchObject({ provider: 'jev', reason: 'labels' });
+    expect(resolveDecisionRoute({ surface: 'browserTool' }, together, lunaOn)).toMatchObject({ provider: 'jev', reason: 'labels' });
+    expect(resolveDecisionRoute({ surface: 'computerTool' }, together, { jev: false, clef: true, luna: true })).toBeNull();
+    expect(ensembleMembers({ surface: 'browserTool', images }, { ...together, visionEnabled: true }, lunaOn)?.map(member => member.provider)).toEqual(['luna', 'clef']);
+    expect(ensembleMembers({ surface: 'computerTool', images }, { ...together, visionEnabled: true }, lunaOn)).toBeNull();
+    expect(resolveDecisionRoute({ surface: 'dispatchGuard', model: 'gpt-6-luna' }, together, lunaOn)?.provider).toBe('jev');
   });
 
   it('uses Luna in automatic mode only when the preferred providers are missing', () => {
@@ -144,7 +161,7 @@ describe('complementary decision routing', () => {
     expect(resolveDecisionRoute({ surface: 'toolPick' }, settings, { jev: false, clef: false, luna: true })).toMatchObject({ provider: 'luna', reason: 'credential-fallback' });
     expect(resolveDecisionRoute({ model: 'gpt-6-luna' }, settings, lunaOn)).toMatchObject({ provider: 'luna', reason: 'explicit-model' });
     expect(resolveDecisionRoute({ model: 'gpt-6-luna' }, { ...settings, mode: 'jev' }, lunaOn)).toBeNull();
-    expect(resolveDecisionRoute({ model: 'jev-latest' }, lunaMode, lunaOn)).toBeNull();
+    expect(resolveDecisionRoute({ model: 'jev-latest' }, lunaMode, lunaOn)).toMatchObject({ provider: 'luna', reason: 'manual' });
   });
 
   it('sends browser images to Luna when that is the vision route, and never desktop pixels', () => {

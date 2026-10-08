@@ -38,6 +38,7 @@ const NO_ANSWER_REASONS: Record<string, string> = {
   'internal-error': 'erro interno',
   refusal: 'recusa do modelo',
   ambiguous: 'resposta ambígua',
+  divergent: 'sem acordo',
 };
 
 function surfaceLabel(surface: string): string {

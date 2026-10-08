@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../persistence/settings-store', () => ({ getOrchSettings: () => ({}) }));
 vi.mock('../persistence/secrets-store', () => ({ getSecret: () => null, hasSecret: () => false, setSecret: () => ({ ok: true }), isSecureStorageAvailable: () => true }));
-vi.mock('../jev/jev-decision-log', () => ({ recordJevNoAnswer: vi.fn(() => 'id') }));
-import { recordJevNoAnswer } from '../jev/jev-decision-log';
+vi.mock('../jev/jev-decision-log', () => ({ recordJevNoAnswer: vi.fn(() => 'id'), recordJevDecision: vi.fn(() => 'id') }));
+import { recordJevDecision, recordJevNoAnswer } from '../jev/jev-decision-log';
 
 import { judgeDecision } from './decision-judge';
 import { bumpDecisionCredentialRevision } from './decision-revision';
@@ -152,5 +152,67 @@ describe('common decision service', () => {
       }) as typeof fetch,
     });
     expect(result).toBeNull(); expect(requests).toBe(1);
+  });
+
+  it('sends a pinned surface to Luna when the operator chose Luna, and does not call Jev', async () => {
+    let nativeCalls = 0; let endpoint = '';
+    const result = await judgeDecision({ ...input, surface: 'dispatchGuard', questions: { injected: input.questions.q } }, {
+      nativeJudge: async () => { nativeCalls++; return nativeResult; },
+      getSettings: () => ({ ...settings, mode: 'luna' }), getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      getConfigurationKey: () => 'stable', resolveLunaKey: () => 'sk-luna-secret',
+      fetch: (async (url) => {
+        endpoint = String(url);
+        return Response.json({ usage: { input_tokens: 10 }, answers: [{ type: 'predicate', name: 'q0', probability: 0.2 }] });
+      }) as typeof fetch,
+    });
+    expect(endpoint).toBe('https://api.openai.com/v1/decisions');
+    expect(nativeCalls).toBe(0);
+    expect(result?.route).toMatchObject({ provider: 'luna', reason: 'operator-override' });
+    expect(result?.answers.injected).toEqual({ type: 'noul', noul: 0.2 });
+  });
+
+  it('does not call Jev when together has only Luna', async () => {
+    let nativeCalls = 0;
+    const result = await judgeDecision({ ...input, surface: 'dispatchGuard' }, {
+      nativeJudge: async () => { nativeCalls++; return nativeResult; },
+      getSettings: () => ({ ...settings, mode: 'together' }), getAvailability: () => ({ jev: false, clef: false, luna: true }),
+      getConfigurationKey: () => 'stable', resolveLunaKey: () => 'sk-luna-secret', fetch: (async () => Response.json({})) as typeof fetch,
+    });
+    expect(result).toBeNull();
+    expect(nativeCalls).toBe(0);
+    expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'client-error' }));
+  });
+
+  it('keeps the tighter security verdict and records the divergence without the input', async () => {
+    const result = await judgeDecision({ ...input, surface: 'dispatchGuard', state: 'private brief', questions: { injected: input.questions.q } }, {
+      nativeJudge: async () => ({ ...nativeResult, answers: { injected: { type: 'noul' as const, noul: 0.1 } } }),
+      getSettings: () => ({ ...settings, mode: 'together' }), getAvailability: () => ({ jev: true, clef: false, luna: true }),
+      getConfigurationKey: () => 'stable', resolveLunaKey: () => 'sk-luna-secret',
+      fetch: (async () => Response.json({ usage: { input_tokens: 1_000_000 }, answers: [{ type: 'predicate', name: 'q0', probability: 0.91 }] })) as typeof fetch,
+    });
+    expect(result?.answers.injected).toEqual({ type: 'noul', noul: 0.91 });
+    expect(result?.diverged).toBe(true);
+    expect(result?.estimatedUsd).toBeCloseTo(0.10 + 100 * 0.042 / 1_000_000, 8);
+    const recorded = vi.mocked(recordJevDecision).mock.calls.at(-1)?.[0];
+    expect(recorded).toMatchObject({ decision: 'diverged', diverged: true, ensemblePeers: { injected: { jev: 0.1, luna: 0.91 } } });
+    expect(JSON.stringify(recorded)).not.toContain('private brief');
+  });
+
+  it('uses the higher confidence on a reversible disagreement and keeps both numbers', async () => {
+    const jevChoice = { type: 'choice' as const, choice: 'm1', confidence: 0.4, probabilities: { m1: 0.4 } };
+    const result = await judgeDecision({ ...input, surface: 'missionPick', state: 'private brief', questions: { pick: { type: 'choice', instructions: 'qual', criteria: { m1: null, m2: null } } } }, {
+      nativeJudge: async () => ({ ...nativeResult, answers: { pick: jevChoice } }),
+      getSettings: () => ({ ...settings, mode: 'together' }), getAvailability: () => ({ jev: true, clef: false, luna: true }),
+      getConfigurationKey: () => 'stable', resolveLunaKey: () => 'sk-luna-secret',
+      fetch: (async () => Response.json({ usage: { input_tokens: 20 }, answers: [{ type: 'choice', name: 'q0', choice: 'm2', confidence: 0.91, probabilities: [
+        { value: 'm1', probability: 0.09 }, { value: 'm2', probability: 0.91 },
+      ] }] })) as typeof fetch,
+    });
+    expect(result?.answers.pick).toMatchObject({ type: 'choice', choice: 'm2' });
+    expect(result?.ensemblePeers).toEqual({ pick: { jev: 0.4, luna: expect.any(Number) } });
+    const recorded = vi.mocked(recordJevDecision).mock.calls.at(-1)?.[0];
+    expect(JSON.stringify(recorded)).not.toContain('private brief');
+    expect(recorded?.ensemblePeers?.pick.jev).toBe(0.4);
+    expect(recorded?.ensemblePeers?.pick.luna).toBeGreaterThan(0.4);
   });
 });

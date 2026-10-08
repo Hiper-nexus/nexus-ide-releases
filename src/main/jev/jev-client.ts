@@ -86,6 +86,9 @@ export interface JevResult {
   usage: { input_tokens: number; output_tokens: number };
   /** O provedor não informou `usage`: `usage` vale zero só para satisfazer o tipo; tokens e custo seguem desconhecidos. */
   usageMissing?: true;
+  /** Juntos discordou. Os números por pergunta e provedor não carregam texto. */
+  diverged?: boolean;
+  ensemblePeers?: Record<string, Record<string, number>>;
 }
 
 interface JevStats {
