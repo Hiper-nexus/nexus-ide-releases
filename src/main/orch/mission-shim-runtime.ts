@@ -15,7 +15,7 @@ import {
   isCurrentGateContext,
   type AgentGateContext,
 } from "./gate";
-import { runInsideMissionShimTransport } from "./http-mcp-boundary";
+import { outsideAgentTransport, runInsideMissionShimTransport } from "./http-mcp-boundary";
 import type { ToolDispatchResult } from "./mcp-dispatch-contract";
 
 const REQUEST_SCHEMA = "nexus.mission-shim-request/v1";
@@ -600,7 +600,10 @@ export function createMissionShimRuntime(
       }
       sessionId = boundSessionId;
       if (!timer) {
-        timer = setInterval(() => void scan(), pollIntervalMs);
+        // F-971: o bind acontece no spawn, muitas vezes DENTRO da chamada MCP
+        // do orquestrador que abriu este worker; o timer não pode herdar a
+        // fronteira de transporte dele (handoff do worker seria "nested").
+        timer = outsideAgentTransport(() => setInterval(() => void scan(), pollIntervalMs));
         timer.unref();
       }
     },

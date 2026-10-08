@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +13,7 @@ import {
   resetGateForTests,
   type AgentGateContext,
 } from "./gate";
+import { runInsideMissionShimTransport } from "./http-mcp-boundary";
 import {
   createMissionShimRuntime,
   isMissionShimSandboxSupported,
@@ -508,6 +510,40 @@ describe("mission shim filesystem transport", () => {
       toolName: "nexus_handoff_submit",
       args: { status: "success", summary: "Entrega da story com evidência." },
     });
+  });
+
+  it("F-971: worker aberto DENTRO da chamada de outro agente entrega pelo shim (o timer não herda a fronteira)", async () => {
+    await runtime.dispose();
+    const opener = mintToken({
+      label: "quem abriu o worker",
+      role: "worker",
+      missionId: "mission-shim",
+      workerIncarnationId: "incarnation-opener",
+      scope: testProjectScope(),
+      allowedTools: [],
+    });
+    bindTokenToSession(opener.token, "session-opener");
+    runtime = createMissionShimRuntime({
+      ctx,
+      baseDir,
+      pollIntervalMs: 5,
+      invoke: async (invocation) => {
+        invocations.push(invocation);
+        return { ok: true, tool: invocation.toolName, result: { accepted: true } };
+      },
+    });
+    // O spawn (e o bind do shim) roda dentro do transporte físico de quem
+    // abriu o worker — no app, a chamada MCP do orquestrador.
+    runInsideMissionShimTransport("session-opener", randomUUID(), opener, () =>
+      runtime.bindSession(SESSION_ID),
+    );
+    const result = await execFileAsync(
+      path.join(runtime.binDir, "nexus_handoff_submit"),
+      ["--status", "success", "--summary", "Entrega do worker aberto por outro agente."],
+      { env: { ...process.env, ...runtime.env } },
+    );
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, tool: "nexus_handoff_submit" });
+    expect(invocations.at(-1)).toMatchObject({ toolName: "nexus_handoff_submit", sessionId: SESSION_ID });
   });
 
   it("nexus_handoff_submit aceita um único argumento JSON (estilo tool-call)", async () => {

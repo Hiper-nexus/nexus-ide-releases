@@ -1,7 +1,7 @@
 import type http from 'node:http';
 import { z } from 'zod';
 import type { AgentGateContext } from './gate';
-import { isCurrentGateContext, gateContextAbortSignal } from './gate';
+import { executionScopeFor, isCurrentGateContext, gateContextAbortSignal } from './gate';
 import { handleHookJsonPost } from './hook-http';
 import { acquireHeavyCommandPermit, type HeavyCommandPermit, type HeavyCommandRequest } from './heavy-command-permit';
 import { claimSessionCommandProcess, probeSessionCommandProcess, borrowSessionCommandProcess, stopSessionCommandProcess } from '../pty/pty-manager';
@@ -45,7 +45,10 @@ export class NativeHeavyCommands {
     try { claim = await this.ports.claim(ctx.sessionId, body.data.pid, body.data.proof); } catch { /* ownership unavailable */ }
     if (!claim || !this.#accepting || !this.#current(ctx) || signal?.aborted) { if (claim) this.#reap(ctx, claim); return { allow: false, reason: 'heavy_command_process_ownership_unproved' }; }
     let permit: HeavyCommandPermit;
-    try { permit = await this.ports.acquire({ scope: ctx.scope, missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting }); }
+    // F-957/F-971: a fila é por raiz de EXECUÇÃO (a worktree do writer), não
+    // pelo checkout de coordenação do token — senão writers isolados voltam à
+    // fila única do projeto.
+    try { permit = await this.ports.acquire({ scope: executionScopeFor(ctx), missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting }); }
     catch { this.#reap(ctx, claim); return { allow: false, reason: 'heavy_command_admission_denied' }; }
     const flight: Flight = { ctx, claim, permit, done: Promise.resolve() }; this.#flights.add(flight);
     flight.done = this.#observe(flight); void flight.done.catch(() => {});

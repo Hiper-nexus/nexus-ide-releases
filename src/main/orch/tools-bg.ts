@@ -194,7 +194,7 @@ const bgRun: McpToolDef = {
     let ownedCommand: OwnedCommandLaunch | undefined;
     try {
       const kind = classifyHeavyCommand(command);
-      if (kind) heavyPermit = await acquireHeavyCommandPermit({ scope: ctx.scope, missionId: ctx.missionId,
+      if (kind) heavyPermit = await acquireHeavyCommandPermit({ scope: executionScopeFor(ctx), missionId: ctx.missionId,
         sessionId: ctx.sessionId, kind, signal: invocation?.signal,
         isCurrent: () => { assertMcpInvocationCurrent(invocation); return true; } });
       // Linearization point after all path/sandbox preparation.

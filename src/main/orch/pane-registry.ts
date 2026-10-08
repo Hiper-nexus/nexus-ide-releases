@@ -2966,10 +2966,15 @@ export function requestPaneSpawn(
       options.missionId &&
       (options.role === "orchestrator" || options.role === "worker")
     ) {
+      // F-971: missão sem janela (headless) também dá incarnação ao worker,
+      // como o caminho do renderer e o de escopo trocado (0.62.0). Sem ela o
+      // worker nascia sem o shim `nexus_handoff_submit`/`nx-mail` e sem
+      // vínculo exato de entrega — achado pelo E2E de missão.
       return spawnMainOwnedMissionPaneAsync({
           ...options,
           missionId: options.missionId,
           role: options.role,
+          workerIncarnationId: mintedWorkerIncarnationId(options),
         });
     }
     return Promise.resolve({
