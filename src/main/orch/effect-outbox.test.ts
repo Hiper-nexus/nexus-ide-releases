@@ -112,8 +112,12 @@ describe("ORC-01 effect outbox", () => {
       leaseDurationMs: 30_000,
     });
     expect(claimed).not.toBeNull();
-    expect(store.succeed(claimed!.id, "worker-other")).toBe(false);
-    expect(store.succeed(claimed!.id, "worker-1")).toBe(true);
+    expect(store.succeed(claimed!.id, "worker-other", claimed!.attemptCount)).toBe(
+      false,
+    );
+    expect(store.succeed(claimed!.id, "worker-1", claimed!.attemptCount)).toBe(
+      true,
+    );
     expect(store.get(claimed!.id)?.status).toBe("succeeded");
   });
 
@@ -218,6 +222,92 @@ describe("ORC-01 effect outbox", () => {
     expect(safeAfter?.lastError).toContain("lease expired");
   });
 
+  it("skips excluded ids before the candidate limit", () => {
+    const { store } = freshStore();
+    const early = 1_000;
+    const excluded = new Set<string>();
+    for (let index = 0; index < 32; index += 1) {
+      const id = `eff-early-${String(index).padStart(2, "0")}`;
+      excluded.add(id);
+      store.enqueue({
+        id,
+        commandId: `cmd-early-${index}`,
+        threadId: `thread-early-${index}`,
+        type: "checkpoint.capture",
+        availableAt: early,
+      });
+    }
+    const behind = store.enqueue({
+      id: "eff-behind",
+      commandId: "cmd-behind",
+      threadId: "thread-behind",
+      type: "terminal.cleanup",
+      availableAt: early + 1,
+    });
+    const claimed = store.claimNext({
+      workerId: "worker-1",
+      leaseDurationMs: 30_000,
+      excludeIds: excluded,
+    });
+    expect(claimed?.id).toBe(behind.id);
+    expect(claimed?.status).toBe("running");
+  });
+
+  it("stale attempt cannot settle a reclaimed lease of the same worker", () => {
+    let now = 1_000_000;
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-effect-attempt-"));
+    directories.push(baseDir);
+    const scope = testProjectScope();
+    const manager = runtime(baseDir);
+    const store = createScopedEffectOutboxStore(manager, scope, {
+      now: () => now,
+    });
+    const effect = store.enqueue({
+      commandId: "cmd-stale-attempt",
+      threadId: "thread-a",
+      type: "checkpoint.capture",
+    });
+    const first = store.claimNext({
+      workerId: "worker-1",
+      leaseDurationMs: 1_000,
+    });
+    expect(first?.attemptCount).toBe(1);
+    expect(first?.leaseExpiresAt).toBe(now + 1_000);
+    now += 400;
+    expect(
+      store.renewLease(effect.id, "worker-1", first!.attemptCount, 1_000),
+    ).toBe(true);
+    const renewedExpiry = now + 1_000;
+    expect(store.get(effect.id)?.leaseExpiresAt).toBe(renewedExpiry);
+    now = renewedExpiry + 1;
+    const reclaimed = store.claimNext({
+      workerId: "worker-1",
+      leaseDurationMs: 1_000,
+    });
+    expect(reclaimed?.id).toBe(effect.id);
+    expect(reclaimed?.attemptCount).toBe(2);
+    expect(reclaimed?.status).toBe("running");
+    expect(store.succeed(effect.id, "worker-1", first!.attemptCount)).toBe(false);
+    expect(store.retry(effect.id, "worker-1", "stale", 0, first!.attemptCount)).toBe(
+      false,
+    );
+    expect(store.fail(effect.id, "worker-1", "stale", first!.attemptCount)).toBe(
+      false,
+    );
+    expect(
+      store.renewLease(effect.id, "worker-1", first!.attemptCount, 1_000),
+    ).toBe(false);
+    const current = store.get(effect.id);
+    expect(current?.status).toBe("running");
+    expect(current?.attemptCount).toBe(2);
+    expect(current?.leaseOwner).toBe("worker-1");
+    expect(current?.leaseExpiresAt).toBe(reclaimed?.leaseExpiresAt);
+    expect(store.succeed(effect.id, "worker-1", reclaimed!.attemptCount)).toBe(
+      true,
+    );
+    expect(store.get(effect.id)?.status).toBe("succeeded");
+  });
+
   it("pruneSettled keeps failed rows and drops old succeeded/cancelled", () => {
     const { store } = freshStore();
     const done = store.enqueue({
@@ -225,8 +315,8 @@ describe("ORC-01 effect outbox", () => {
       threadId: "thread-a",
       type: "terminal.cleanup",
     });
-    store.claimNext({ workerId: "w", leaseDurationMs: 1000 });
-    store.succeed(done.id, "w");
+    const claimed = store.claimNext({ workerId: "w", leaseDurationMs: 1000 });
+    store.succeed(done.id, "w", claimed!.attemptCount);
     // Retention 0 prunes immediately.
     expect(store.pruneSettled(0)).toBe(1);
     expect(store.get(done.id)).toBeNull();
@@ -483,8 +573,11 @@ describe("ORC-06 provider runtime boot reconciliation", () => {
       threadId: "thread-a",
       type: "terminal.cleanup",
     });
-    store.claimNext({ workerId: "worker-1", leaseDurationMs: 30_000 });
-    store.succeed(done.id, "worker-1");
+    const claimed = store.claimNext({
+      workerId: "worker-1",
+      leaseDurationMs: 30_000,
+    });
+    store.succeed(done.id, "worker-1", claimed!.attemptCount);
     const result = reconcileProviderRuntimeAtBoot({
       scope,
       runtimeManager: manager,

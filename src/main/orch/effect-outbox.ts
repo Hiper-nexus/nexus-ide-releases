@@ -142,6 +142,21 @@ const enqueueSchema = z
 
 const MAX_PAYLOAD_BYTES = 32 * 1024;
 
+function isClaimAttempt(attemptCount: number): boolean {
+  return Number.isInteger(attemptCount) && attemptCount >= 1;
+}
+
+function excludedEffectIds(ids: ReadonlySet<string> | undefined): string[] {
+  if (!ids || ids.size === 0) return [];
+  const excluded: string[] = [];
+  for (const id of ids) {
+    if (typeof id === 'string' && id.length > 0 && id.length <= 128) {
+      excluded.push(id);
+    }
+  }
+  return excluded;
+}
+
 function rowToEntry(row: unknown): EffectOutboxEntry {
   const parsed = rowSchema.safeParse(row);
   if (!parsed.success) {
@@ -305,13 +320,21 @@ export class EffectOutboxStore {
         now,
         ...REPLAY_SAFE_EFFECT_TYPES,
       );
-      // Varre candidatos em ordem e pula os já tentados neste passe.
+      // A exclusão entra no SQL, antes do LIMIT. Filtrar os 32 primeiros
+      // em memória escondia o próximo efeito quando o passe já tinha
+      // tentado justamente esses 32 (retry sem espera).
+      const excluded = excludedEffectIds(excludeIds);
+      const excludeClause =
+        excluded.length > 0
+          ? `AND candidate.effect_id NOT IN (${excluded.map(() => '?').join(',')})`
+          : '';
       const candidates = db
         .prepare(
           `SELECT candidate.* FROM effect_outbox AS candidate
            WHERE candidate.status = 'pending'
              AND candidate.available_at <= ?
              AND (? = 0 OR candidate.effect_type != 'runtime.continue')
+             ${excludeClause}
              AND NOT EXISTS (
                SELECT 1 FROM effect_outbox AS active
                WHERE active.thread_id = candidate.thread_id
@@ -335,10 +358,13 @@ export class EffectOutboxStore {
                     candidate.effect_id ASC
            LIMIT 32`,
         )
-        .all(now, excludeContinuations ? 1 : 0, excludeContinuations ? 1 : 0) as unknown[];
-      const candidate = candidates
-        .map(rowToEntry)
-        .find((entry) => !excludeIds?.has(entry.id));
+        .all(
+          now,
+          excludeContinuations ? 1 : 0,
+          ...excluded,
+          excludeContinuations ? 1 : 0,
+        ) as unknown[];
+      const candidate = candidates.map(rowToEntry)[0];
       if (!candidate) return null;
       const updated = db
         .prepare(
@@ -357,7 +383,8 @@ export class EffectOutboxStore {
     })();
   }
 
-  succeed(id: string, workerId: string): boolean {
+  succeed(id: string, workerId: string, attemptCount: number): boolean {
+    if (!isClaimAttempt(attemptCount)) return false;
     const db = this.#binding.writeDatabase();
     const now = this.#binding.now();
     return db.transaction((): boolean => {
@@ -366,23 +393,26 @@ export class EffectOutboxStore {
           `UPDATE effect_outbox
            SET status = 'succeeded', lease_owner = NULL, lease_expires_at = NULL,
                completed_at = ?, updated_at = ?, last_error = NULL
-           WHERE effect_id = ? AND status = 'running' AND lease_owner = ?`,
+           WHERE effect_id = ? AND status = 'running' AND lease_owner = ?
+             AND attempt_count = ?`,
         )
-        .run(now, now, id, workerId);
+        .run(now, now, id, workerId, attemptCount);
       return updated.changes === 1;
     })();
   }
 
   /**
    * Volta a `pending` com `availableAt` atrasado (backoff do worker).
-   * Só o dono do lease assenta.
+   * Só a tentativa claimada, do dono do lease, assenta.
    */
   retry(
     id: string,
     workerId: string,
     error: string,
     delayMs: number,
+    attemptCount: number,
   ): boolean {
+    if (!isClaimAttempt(attemptCount)) return false;
     const db = this.#binding.writeDatabase();
     const now = this.#binding.now();
     const availableAt = now + Math.max(0, delayMs);
@@ -392,14 +422,16 @@ export class EffectOutboxStore {
           `UPDATE effect_outbox
            SET status = 'pending', available_at = ?, lease_owner = NULL,
                lease_expires_at = NULL, updated_at = ?, last_error = ?
-           WHERE effect_id = ? AND status = 'running' AND lease_owner = ?`,
+           WHERE effect_id = ? AND status = 'running' AND lease_owner = ?
+             AND attempt_count = ?`,
         )
-        .run(availableAt, now, error.slice(0, 512), id, workerId);
+        .run(availableAt, now, error.slice(0, 512), id, workerId, attemptCount);
       return updated.changes === 1;
     })();
   }
 
-  fail(id: string, workerId: string, error: string): boolean {
+  fail(id: string, workerId: string, error: string, attemptCount: number): boolean {
+    if (!isClaimAttempt(attemptCount)) return false;
     const db = this.#binding.writeDatabase();
     const now = this.#binding.now();
     return db.transaction((): boolean => {
@@ -408,9 +440,37 @@ export class EffectOutboxStore {
           `UPDATE effect_outbox
            SET status = 'failed', lease_owner = NULL, lease_expires_at = NULL,
                completed_at = ?, updated_at = ?, last_error = ?
-           WHERE effect_id = ? AND status = 'running' AND lease_owner = ?`,
+           WHERE effect_id = ? AND status = 'running' AND lease_owner = ?
+             AND attempt_count = ?`,
         )
-        .run(now, now, error.slice(0, 512), id, workerId);
+        .run(now, now, error.slice(0, 512), id, workerId, attemptCount);
+      return updated.changes === 1;
+    })();
+  }
+
+  /**
+   * Estende o lease só da tentativa que ainda está running. Não renova
+   * attempt_count: um handler atrasado não alonga o claim seguinte.
+   */
+  renewLease(
+    id: string,
+    workerId: string,
+    attemptCount: number,
+    leaseDurationMs: number,
+  ): boolean {
+    if (!isClaimAttempt(attemptCount)) return false;
+    const leaseMs = Math.max(1, leaseDurationMs);
+    const db = this.#binding.writeDatabase();
+    const now = this.#binding.now();
+    return db.transaction((): boolean => {
+      const updated = db
+        .prepare(
+          `UPDATE effect_outbox
+           SET lease_expires_at = ?, updated_at = ?
+           WHERE effect_id = ? AND status = 'running' AND lease_owner = ?
+             AND attempt_count = ?`,
+        )
+        .run(now + leaseMs, now, id, workerId, attemptCount);
       return updated.changes === 1;
     })();
   }
