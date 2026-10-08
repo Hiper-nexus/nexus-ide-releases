@@ -1,5 +1,6 @@
 import { shouldPresentNotificationOptIn } from '../notifications/notification-opt-in-gate'
 import { shouldPresentSessionViewOptIn } from '../session/session-view-opt-in-gate'
+import { NEXUS_BRIDGE_HOST_KIND } from '../transport/types'
 
 export const MOBILE_ONBOARDING_STEPS = ['session-view', 'notifications'] as const
 export type MobileOnboardingStep = (typeof MOBILE_ONBOARDING_STEPS)[number]
@@ -24,6 +25,19 @@ export async function loadMobileOnboardingSteps(): Promise<MobileOnboardingStep[
       (step === 'session-view' && showSessionView) ||
       (step === 'notifications' && showNotifications)
   )
+}
+
+/**
+ * F-1037: o desktop Nexus não tem a UI de chat, então "como as sessões abrem" não se
+ * aplica quando todos os hosts em jogo são Nexus. Sem host (lista vazia), nada muda.
+ */
+export function mobileOnboardingStepsForHosts(
+  steps: readonly MobileOnboardingStep[],
+  hostKinds: readonly (string | undefined)[]
+): MobileOnboardingStep[] {
+  const nexusOnly =
+    hostKinds.length > 0 && hostKinds.every((kind) => kind === NEXUS_BRIDGE_HOST_KIND)
+  return nexusOnly ? steps.filter((step) => step !== 'session-view') : [...steps]
 }
 
 /** Preserves a paired host while routing through outstanding decisions. */

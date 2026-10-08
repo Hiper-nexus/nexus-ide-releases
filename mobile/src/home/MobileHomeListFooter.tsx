@@ -14,6 +14,8 @@ export function MobileHomeListFooter(props: {
   connectedHosts: HostProfile[]
   primaryHost: HostProfile | null
   primaryTaskProviders: TaskProvider[]
+  /** F-1037: Tarefas e "Novo workspace" só para desktop Orca (host Nexus não tem). */
+  showOrcaShortcuts: boolean
   resumeCard: HomeResumeCard | null
   onCreateWorkspace: (hostId: string) => void
   onOpenAccounts: (hostId: string) => void
@@ -25,18 +27,23 @@ export function MobileHomeListFooter(props: {
     <View>
       {props.resumeCard ? (
         <>
-          <Text style={styles.sectionHeading}>Resume</Text>
+          <Text style={styles.sectionHeading}>Continuar</Text>
           <MobileHomeResumeCard card={props.resumeCard} onOpen={props.onOpenResume} />
         </>
       ) : null}
-      <Text style={styles.sectionHeading}>Tasks</Text>
-      <MobileHomeTasksCard
-        enabled={props.primaryHost != null}
-        providers={props.primaryTaskProviders}
-        onOpen={props.onOpenTasks}
-      />
+      {props.showOrcaShortcuts ? (
+        <>
+          <Text style={styles.sectionHeading}>Tarefas</Text>
+          <MobileHomeTasksCard
+            enabled={props.primaryHost != null}
+            providers={props.primaryTaskProviders}
+            onOpen={props.onOpenTasks}
+          />
+        </>
+      ) : null}
       <MobileHomeQuickActions
         connectedHosts={props.connectedHosts}
+        showCreateWorkspace={props.showOrcaShortcuts}
         onPairDesktop={props.onPairDesktop}
         onCreateWorkspace={props.onCreateWorkspace}
       />

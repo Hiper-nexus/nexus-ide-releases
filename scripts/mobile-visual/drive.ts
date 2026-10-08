@@ -187,30 +187,44 @@ async function flow(d: Driver, fixture: BridgeFixture): Promise<void> {
 
   // 2) Tela de pareamento (no web não há câmera: só "colar código").
   await d.goto(`${fixture.appUrl}pair-scan`)
-  await d.waitForText(/paste/i, 20_000)
+  await d.waitForText(/colar/i, 20_000)
   await d.shot('02-parear', 'pair-scan no alvo web (sem câmera)')
-  await d.click({ text: /^(Paste code instead|Or paste pairing code)$/ })
+  await d.click({ text: /^(Colar código|Colar código de pareamento)$/ })
   await d.waitFor('document.querySelector("input")', 'campo do código')
   const pairingUrl = fixture.pairingUrl()
   await d.click({ selector: 'input' })
   await d.type(pairingUrl)
   await d.shot('03-colar-link', `link colado: ${pairingUrl.replace(/code=.*/, 'code=…')}`)
-  await d.click({ text: 'Save' })
+  await d.click({ text: 'Parear desktop' })
 
   // 3) Pareado: o app salva o host e sai do pair-scan (onboarding ou host).
   await d.waitFor('!location.pathname.includes("pair-scan")', 'sair do pair-scan após parear', 30_000)
   await sleep(1_000)
   d.check('codigo-gasto', !fixture.pairingCodeOutstanding(), 'a bridge consumiu o código de uso único')
   await d.shot('04-apos-parear', `rota após parear: ${await d.path()}`)
-  // Onboarding do primeiro pareamento (modo de sessão + notificações): pula os dois.
+  // Onboarding do primeiro pareamento: host Nexus não tem UI de chat (F-1037), então
+  // só a pergunta de notificações aparece; pula.
   if ((await d.path()).includes('mobile-onboarding')) {
-    await d.click({ text: 'Keep terminal' })
-    await d.click({ label: 'Skip notifications for now' })
+    const onboarding = await d.bodyText()
+    d.check('onboarding-sem-chat-ui', !/UI de chat|Chat UI/.test(onboarding), 'host Nexus: sem "Usar UI de chat"')
+    await d.click({ label: 'Pular notificações por enquanto' })
     await d.waitFor('!location.pathname.includes("mobile-onboarding")', 'fim do onboarding', 15_000)
   }
   await d.goto(fixture.appUrl)
   await d.waitForText('Nexus · 127', 20_000)
+  await d.waitForText('Conectado · Desktop Nexus', 20_000)
   await d.shot('05-inicio-com-host', 'host Nexus salvo aparece na lista')
+  const home = await d.bodyText()
+  d.check(
+    'inicio-host-nexus-em-pt-br',
+    !/Worktree|Direct|LAN|Welcome|Orca/.test(home),
+    'card do host Nexus sem worktree/caminho e Início sem "Orca" ou inglês'
+  )
+  d.check(
+    'inicio-sem-atalhos-do-orca',
+    !/Tarefas|Novo workspace|GitHub/.test(home),
+    'só host Nexus: sem Tarefas nem Novo workspace'
+  )
 
   // 4) Host: missões e panes pelo snapshot; aprovação chega pelo push ao vivo.
   await d.click({ text: /^Nexus · 127/ })
@@ -242,7 +256,7 @@ async function flow(d: Driver, fixture: BridgeFixture): Promise<void> {
   await d.click({ label: 'Voltar para a lista' })
   await d.waitForText(/aprovação pendente/i, 10_000)
   const writesBefore = desk.writes.length
-  await d.click({ text: 'Allow' })
+  await d.click({ text: 'Permitir' })
   const decision = await withTimeout(approval.decision, 15_000, 'decisão no broker')
   d.check('broker-recebeu-accept', decision === 'accept', `decisão no broker: ${decision}`)
   d.check('aprovacao-sem-tecla-no-pty', desk.writes.length === writesBefore, 'nenhuma escrita extra no PTY')
@@ -274,9 +288,15 @@ async function flow(d: Driver, fixture: BridgeFixture): Promise<void> {
   // 8) Revogação no desktop: o app vai para "Parear de novo", sem loop.
   fixture.revoke()
   await d.waitForText('Parear de novo', 20_000)
+  await sleep(500)
   await d.shot('17-revogado', 'credencial revogada ao vivo pelo desktop')
+  d.check(
+    'revogado-sem-conteudo-antigo',
+    !(await d.bodyText()).includes('linha dois'),
+    'arquivo/diff do pane some no auth-failed (F-1037)'
+  )
   await d.click({ text: 'Parear de novo' })
-  await d.waitForText(/paste/i, 20_000)
+  await d.waitForText(/colar/i, 20_000)
   await d.shot('18-parear-de-novo', 'volta ao pareamento')
 }
 

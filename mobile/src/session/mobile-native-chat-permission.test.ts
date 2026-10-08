@@ -37,10 +37,10 @@ describe('detectAgentPermission', () => {
       lastAssistantMessage: 'Allow running `rm -rf build`? (y/n)'
     })
     expect(result).not.toBeNull()
-    expect(result?.title).toBe('Permission requested')
+    expect(result?.title).toBe('Permissão solicitada')
     expect(result?.options).toEqual([
-      { label: 'Allow', send: 'y' },
-      { label: 'Deny', send: 'n' }
+      { label: 'Permitir', send: 'y' },
+      { label: 'Negar', send: 'n' }
     ])
     expect(result?.detail).toContain('Allow running')
   })
@@ -84,7 +84,7 @@ describe('detectAgentPermission', () => {
       lastAssistantMessage:
         'Do you want to allow this? You can allow always for this session. (y/n)'
     })
-    expect(result?.options.map((o) => o.label)).toEqual(['Allow', 'Allow always', 'Deny'])
+    expect(result?.options.map((o) => o.label)).toEqual(['Permitir', 'Permitir sempre', 'Negar'])
     expect(result?.options.map((o) => o.send)).toEqual(['y', 'a', 'n'])
   })
 
@@ -130,9 +130,9 @@ describe('parseApprovalFromStatus', () => {
     const card = parseApprovalFromStatus(
       JSON.stringify({ approval: { tool: 'Bash', summary: 'rm -rf build' } })
     )
-    expect(card?.title).toBe('Allow Bash?')
+    expect(card?.title).toBe('Permitir Bash?')
     expect(card?.detail).toBe('rm -rf build')
-    expect(card?.options.map((o) => o.label)).toEqual(['Allow', 'Deny'])
+    expect(card?.options.map((o) => o.label)).toEqual(['Permitir', 'Negar'])
     expect(card?.options[0]!.send).toBe('1')
   })
 
@@ -162,9 +162,9 @@ describe('parseApprovalFromStatus — structured host approval (PRV-02/MOB-07)',
     const card = parseApprovalFromStatus(JSON.stringify({ approval: structured }))
     expect(card?.structured).toBe(true)
     expect(card?.options.map((o) => o.label)).toEqual([
-      'Allow',
-      'Allow (this request only)',
-      'Deny'
+      'Permitir',
+      'Permitir (só este pedido)',
+      'Negar'
     ])
     for (const option of card!.options) {
       expect(option.send).not.toBe('1')

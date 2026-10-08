@@ -53,14 +53,14 @@ describe('useMobileNativeChatPrompts approval-envelope state gate', () => {
 
   it('renders the approval card while the agent is waiting', () => {
     expect(permissionFor({ state: 'waiting', interactivePrompt: APPROVAL })).toMatchObject({
-      title: 'Allow Bash?',
+      title: 'Permitir Bash?',
       detail: 'pnpm build > build.log 2>&1'
     })
   })
 
   it('renders the approval card while the agent is blocked', () => {
     expect(permissionFor({ state: 'blocked', interactivePrompt: APPROVAL })).toMatchObject({
-      title: 'Allow Bash?'
+      title: 'Permitir Bash?'
     })
   })
 
@@ -70,7 +70,7 @@ describe('useMobileNativeChatPrompts approval-envelope state gate', () => {
       interactivePrompt: APPROVAL,
       lastAssistantMessage: 'Allow this Bash command?\n1. Yes\n2. No'
     }) as { options: Array<{ label: string }> } | null
-    expect(permission).toMatchObject({ title: 'Permission requested' })
+    expect(permission).toMatchObject({ title: 'Permissão solicitada' })
     expect(permission?.options.map((o) => o.label)).toEqual(['Yes', 'No'])
   })
 })
@@ -177,7 +177,7 @@ describe('useMobileNativeChatPrompts structured host approval (PRV-02/MOB-07)', 
       lastAssistantMessage: 'Allow this Bash command?\n1. Yes\n2. No'
     }) as { structured?: true; options: Array<{ label: string; send: string }> } | null
     expect(permission?.structured).toBe(true)
-    expect(permission?.options.map((o) => o.label)).toEqual(['Allow', 'Deny'])
+    expect(permission?.options.map((o) => o.label)).toEqual(['Permitir', 'Negar'])
   })
 
   it('still gates the structured card on a paused agent', () => {

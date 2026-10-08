@@ -18,21 +18,21 @@ export function MobileHomeListHeader({ stats }: { stats: HomeStatsSummary | null
   return (
     <View>
       <View style={styles.hero}>
-        <Text style={styles.heroTitle}>Welcome back</Text>
+        <Text style={styles.heroTitle}>Bem-vindo de volta</Text>
       </View>
       {stats ? (
         <View style={styles.statsRow}>
           <View style={styles.statCard}>
             <Text style={styles.statValue}>{stats.totalAgentsSpawned.toLocaleString()}</Text>
-            <Text style={styles.statLabel}>Agents spawned</Text>
+            <Text style={styles.statLabel}>Agentes iniciados</Text>
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statValue}>{formatDuration(stats.totalAgentTimeMs)}</Text>
-            <Text style={styles.statLabel}>Agent time</Text>
+            <Text style={styles.statLabel}>Tempo de agente</Text>
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statValue}>{stats.totalPRsCreated.toLocaleString()}</Text>
-            <Text style={styles.statLabel}>PRs created</Text>
+            <Text style={styles.statLabel}>PRs criados</Text>
           </View>
         </View>
       ) : null}

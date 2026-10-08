@@ -40,7 +40,7 @@ describe('resolvePairConfirmRouteState', () => {
     expect(resolvePairConfirmRouteState(undefined)).toEqual({
       kind: 'error',
       offer: null,
-      errorMessage: 'Missing pairing code'
+      errorMessage: 'Falta o código de pareamento'
     })
   })
 

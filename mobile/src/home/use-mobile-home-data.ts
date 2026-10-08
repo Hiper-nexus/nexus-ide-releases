@@ -7,7 +7,8 @@ import { loadHomeSnapshot, saveHomeSnapshot } from '../cache/home-snapshot-cache
 import { getCachedWorktrees, setCachedWorktrees } from '../cache/worktree-cache'
 import {
   loadMobileOnboardingSteps,
-  mobileOnboardingDestination
+  mobileOnboardingDestination,
+  mobileOnboardingStepsForHosts
 } from '../onboarding/mobile-onboarding-plan'
 import { totalHomeStats, type HomeStatsSummary } from '../stats/home-stats-total'
 import type { TaskProvider } from '../tasks/mobile-task-providers'
@@ -30,6 +31,7 @@ import {
   fetchMobileHomeTaskProviders
 } from './mobile-home-host-requests'
 import { projectHomeHostConnections } from './home-host-connection-projection'
+import { selectHomeOrcaShortcuts } from './home-orca-shortcuts'
 import { useMobileHomeHostConnections } from './use-mobile-home-host-connections'
 
 export function useMobileHomeData() {
@@ -102,7 +104,10 @@ export function useMobileHomeData() {
           return
         }
         onboardingCheckedRef.current = true
-        const steps = await loadMobileOnboardingSteps()
+        const steps = mobileOnboardingStepsForHosts(
+          await loadMobileOnboardingSteps(),
+          catalog.map((entry) => entry.kind)
+        )
         if (!stale && steps.length > 0) {
           router.replace(mobileOnboardingDestination(steps))
         }
@@ -164,7 +169,12 @@ export function useMobileHomeData() {
     () => sortedHosts.filter((host) => connections.hostStates[host.id] === 'connected'),
     [sortedHosts, connections.hostStates]
   )
-  const primaryHost = connectedHosts[0] ?? null
+  const orcaShortcuts = useMemo(
+    () => selectHomeOrcaShortcuts(hostCatalog, connectedHosts),
+    [hostCatalog, connectedHosts]
+  )
+  // Tarefas é do Orca: o host primário dela nunca é um desktop Nexus (F-1037).
+  const primaryHost = orcaShortcuts.connectedHosts[0] ?? null
   const primaryTaskProviders = primaryHost
     ? (taskProvidersByHost[primaryHost.id] ?? ['github'])
     : []
@@ -178,6 +188,7 @@ export function useMobileHomeData() {
     accountsHosts,
     connectedHosts,
     hostCatalog,
+    orcaShortcuts,
     hostPairingRejected: hostConnectionProjection.hostPairingRejected,
     hostSignedOut: hostConnectionProjection.hostSignedOut,
     hostPaths: hostConnectionProjection.hostPaths,

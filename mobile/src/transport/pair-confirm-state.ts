@@ -7,7 +7,7 @@ export type PairConfirmRouteState =
 
 export function resolvePairConfirmRouteState(code: string | undefined): PairConfirmRouteState {
   if (!code) {
-    return { kind: 'error', offer: null, errorMessage: 'Missing pairing code' }
+    return { kind: 'error', offer: null, errorMessage: 'Falta o código de pareamento' }
   }
 
   const offer = parsePairingCode(code)

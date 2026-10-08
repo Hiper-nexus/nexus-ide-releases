@@ -1,7 +1,11 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MobileLegendList, type MobileLegendListSeparatorProps } from './MobileLegendList'
+import {
+  expandPaddingShorthands,
+  MobileLegendList,
+  type MobileLegendListSeparatorProps
+} from './MobileLegendList'
 
 // Real LegendList native build (vitest.config.ts alias) over the shared RN mock.
 vi.mock('react-native', async () => {
@@ -62,5 +66,50 @@ describe('MobileLegendList separators', () => {
       renderer?.update(list([first, { id: 'inserted' }, last]))
     })
     expect(separatorLabels().sort()).toEqual(['first->inserted', 'inserted->last'])
+  })
+})
+
+// F-1037: no web o contentContainerStyle vira o style de um <div>; atalho do RN some.
+describe('expandPaddingShorthands', () => {
+  it('turns paddingHorizontal/paddingVertical into the four CSS sides', () => {
+    expect(expandPaddingShorthands([{ paddingHorizontal: 16 }, { paddingBottom: 40 }])).toEqual({
+      paddingRight: 16,
+      paddingBottom: 40,
+      paddingLeft: 16
+    })
+  })
+
+  it('keeps the RN precedence: side over axis over padding', () => {
+    expect(
+      expandPaddingShorthands({ padding: 4, paddingVertical: 8, paddingLeft: 2, gap: 6 })
+    ).toEqual({ paddingTop: 8, paddingRight: 4, paddingBottom: 8, paddingLeft: 2, gap: 6 })
+  })
+
+  it('leaves a style without shorthands untouched', () => {
+    const style = { padding: 16 }
+    expect(expandPaddingShorthands(style)).toBe(style)
+    expect(expandPaddingShorthands(undefined)).toBeUndefined()
+  })
+
+  it('hands the expanded style to LegendList', async () => {
+    let renderer: ReactTestRenderer | null = null
+    await act(async () => {
+      renderer = create(
+        createElement(MobileLegendList<string>, {
+          data: ['a'],
+          keyExtractor: (item: string) => item,
+          renderItem: ({ item }: { item: string }) => createElement('Row', { label: item }),
+          contentContainerStyle: { paddingHorizontal: 16 }
+        })
+      )
+    })
+    const styled = (renderer as ReactTestRenderer | null)?.root.findAll((node) => {
+      const flat = [node.props.contentContainerStyle].flat(4)
+      return flat.some(
+        (entry) => entry && typeof entry === 'object' && (entry as { paddingLeft?: number }).paddingLeft === 16
+      )
+    })
+    expect(styled?.length).toBeGreaterThan(0)
+    act(() => (renderer as ReactTestRenderer | null)?.unmount())
   })
 })

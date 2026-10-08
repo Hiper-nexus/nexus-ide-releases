@@ -14,7 +14,7 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
-import { ChevronLeft } from 'lucide-react-native'
+import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react-native'
 import { encodeApprovalPrompt } from '../../../src/shared/approval-decision'
 import { useHostClient } from '../transport/client-context'
 import { loadHostCatalog } from '../transport/host-store'
@@ -48,6 +48,12 @@ import {
   type NexusPaneActivityView
 } from './nexus-pane-activity'
 import { useNexusHostOutboxFlush } from './use-nexus-host-outbox'
+// F-1037: estados do desktop em pt-BR.
+import {
+  nexusHostBody,
+  nexusMissionStatusLabel,
+  nexusPaneStateLabel
+} from './nexus-host-presentation'
 // F-1014 (início)
 import {
   NexusPaneWorkspace,
@@ -64,6 +70,8 @@ export const NEXUS_HOST_UNSUPPORTED_NOTE =
   'Não disponível em host Nexus: teclas cruas (Ctrl-C, Esc, "1"), stage/commit e edição de ' +
   'arquivos (Git e arquivos são só leitura), worktrees, abas de sessão, contas, voz pelo app ' +
   '(use o ditado do teclado), screencast e Linear/GitHub/GitLab. Use o desktop para isso.'
+
+const noop = () => undefined
 
 const STATE_LABEL: Record<ConnectionState, string> = {
   connecting: 'conectando…',
@@ -109,6 +117,17 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
     view: NexusWorkspaceView
   } | null>(null)
   const openWorkspace = pane && workspaceView?.paneId === pane.paneId ? workspaceView.view : null
+  const revoked = state === 'auth-failed'
+  const body = nexusHostBody(state, pane !== null && nexus !== null, openWorkspace !== null)
+
+  // F-1037: revogado = descarta o que o desktop mostrou (snapshot, aprovações, arquivo/diff).
+  useEffect(() => {
+    if (revoked) {
+      setSnapshot(null)
+      setWorkspaceView(null)
+      setError('')
+    }
+  }, [revoked])
 
   useEffect(() => {
     void loadHostCatalog()
@@ -279,7 +298,12 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      {pane && nexus && openWorkspace ? (
+      {body === 'revoked' ? null : body === 'revoked-pane' ? (
+        // F-1037: sem credencial, as abas ficam visíveis mas não abrem nada.
+        <View style={styles.detail}>
+          <NexusWorkspaceOpeners onOpen={noop} disabled />
+        </View>
+      ) : body === 'workspace' && pane && nexus && openWorkspace ? (
         // F-1014 (início)
         <View style={styles.detail}>
           <NexusPaneWorkspace
@@ -290,7 +314,7 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
           />
         </View>
       ) : // F-1014 (fim)
-      pane && nexus ? (
+      body === 'pane' && pane && nexus ? (
         <NexusPaneDetail
           key={pane.paneId}
           hostId={hostId}
@@ -324,7 +348,7 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
               onRespond={respondApproval}
             />
           }
-          ListFooterComponent={<Text style={styles.note}>{NEXUS_HOST_UNSUPPORTED_NOTE}</Text>}
+          ListFooterComponent={<NexusUnsupportedNote />}
           renderItem={({ item: entry }) => (
             <NexusHostListRow entry={entry} activity={activity} onOpenPane={setPane} />
           )}
@@ -403,7 +427,7 @@ function NexusHostListRow({
           <Text style={styles.rowText} numberOfLines={1}>
             {entry.mission.title}
           </Text>
-          <Text style={styles.muted}>{entry.mission.status}</Text>
+          <Text style={styles.muted}>{nexusMissionStatusLabel(entry.mission.status)}</Text>
         </View>
       )
     case 'pane': {
@@ -422,11 +446,32 @@ function NexusHostListRow({
             {item.title}
           </Text>
           {/* MOB-05: atividade (ponto + palavra) no lugar do estado cru. */}
-          <NexusPaneActivityBadge view={view} fallback={item.state} />
+          <NexusPaneActivityBadge view={view} fallback={nexusPaneStateLabel(item.state)} />
         </Pressable>
       )
     }
   }
+}
+
+/** F-1037: a nota de limitações só na lista do host, recolhida atrás de um toque. */
+function NexusUnsupportedNote() {
+  const [open, setOpen] = useState(false)
+  const Chevron = open ? ChevronDown : ChevronRight
+  return (
+    <View style={styles.noteBlock}>
+      <Pressable
+        style={({ pressed }) => [styles.noteToggle, pressed && styles.rowPressed]}
+        onPress={() => setOpen((value) => !value)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={open ? 'Recolher o que não funciona aqui' : 'Ver o que não funciona aqui'}
+      >
+        <Text style={styles.noteToggleText}>O que não funciona aqui</Text>
+        <Chevron size={16} color={colors.textMuted} />
+      </Pressable>
+      {open ? <Text style={styles.noteBody}>{NEXUS_HOST_UNSUPPORTED_NOTE}</Text> : null}
+    </View>
+  )
 }
 
 function NexusApprovals({
@@ -545,8 +590,7 @@ function NexusPaneDetail({
         state={state}
       />
       <Text style={styles.note}>
-        Comandos fora da lista de rotina (git status, npm test…) pedem confirmação no desktop.{' '}
-        {NEXUS_HOST_UNSUPPORTED_NOTE}
+        Comandos fora da lista de rotina (git status, npm test…) pedem confirmação no desktop.
       </Text>
       <Pressable style={styles.secondaryButton} onPress={confirmClose} disabled={!connected}>
         <Text style={styles.dangerText}>Fechar pane</Text>
@@ -617,6 +661,24 @@ const styles = StyleSheet.create({
     fontSize: typography.metaSize,
     lineHeight: 17,
     marginTop: spacing.lg
+  },
+  noteBlock: { marginTop: spacing.lg },
+  noteToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.row,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderSubtle
+  },
+  noteToggleText: { color: colors.textSecondary, fontSize: typography.metaSize, fontWeight: '600' },
+  noteBody: {
+    color: colors.textMuted,
+    fontSize: typography.metaSize,
+    lineHeight: 17,
+    marginTop: spacing.sm
   },
   approvalPane: {
     color: colors.textSecondary,

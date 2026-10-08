@@ -4,16 +4,16 @@ import { colors, radii, spacing } from '../theme/mobile-theme'
 
 const ONBOARDING_STEPS = [
   {
-    title: 'Open Orca desktop',
-    desc: 'Go to Settings → Mobile and generate a pairing QR code.'
+    title: 'Abra o Nexus no computador',
+    desc: 'Em Configurações › Celular na rede local, ligue Publicar no tailnet (HTTPS) e gere o QR de pareamento.'
   },
   {
-    title: 'Scan the code',
-    desc: 'Tap the button above to open the scanner. Point at the QR code on your screen.'
+    title: 'Leia o código',
+    desc: 'Toque no botão acima para abrir o leitor e aponte para o QR na tela do computador.'
   },
   {
-    title: "You're connected",
-    desc: 'Your desktop will appear here. Everything is encrypted end-to-end.'
+    title: 'Pronto, conectado',
+    desc: 'Seu desktop aparece aqui, numa conexão criptografada.'
   }
 ]
 
@@ -36,18 +36,18 @@ export function MobileHomeEmptyState(props: {
       ]}
     >
       <View style={styles.emptyHero}>
-        <Text style={styles.emptyTitle}>Connect your desktop</Text>
+        <Text style={styles.emptyTitle}>Conecte seu desktop</Text>
         <Text style={styles.emptyBody}>
-          Pair with Orca on your computer to check on your agents, jump into any terminal, and drive
-          work from your phone.
+          Pareie com o Nexus no computador para acompanhar seus agentes, aprovar pedidos e mandar
+          comandos pelo celular.
         </Text>
         <Pressable style={styles.primaryButton} onPress={props.onPairDesktop}>
           <QrCode size={17} color={colors.bgBase} />
-          <Text style={styles.primaryButtonText}>Pair Desktop</Text>
+          <Text style={styles.primaryButtonText}>Parear desktop</Text>
         </Pressable>
       </View>
       <View style={styles.stepsSection}>
-        <Text style={styles.sectionHeading}>How it works</Text>
+        <Text style={styles.sectionHeading}>Como funciona</Text>
         {ONBOARDING_STEPS.map((step, index) => (
           <View key={step.title} style={[styles.stepRow, index > 0 && styles.stepRowBorder]}>
             <View style={styles.stepNum}>

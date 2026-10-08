@@ -33,7 +33,7 @@
       "name": "03-colar-link",
       "file": "03-colar-link.png",
       "ok": true,
-      "detail": "link colado: https://127.0.0.1:50505/#code=…",
+      "detail": "link colado: https://127.0.0.1:55312/#code=…",
       "layout": {
         "horizontalOverflow": false,
         "offscreen": []
@@ -48,18 +48,16 @@
       "name": "04-apos-parear",
       "file": "04-apos-parear.png",
       "ok": true,
-      "detail": "rota após parear: /mobile-onboarding?steps=session-view%2Cnotifications&hostId=nexus-mv01igpw",
+      "detail": "rota após parear: /mobile-onboarding?steps=notifications&hostId=nexus-mv02k50c",
       "layout": {
         "horizontalOverflow": false,
-        "offscreen": [
-          "Enable notifications [468..702]",
-          "Get notified when an agent finishes a task or needs your inp [414..756]",
-          "By default, notifications arrive after your desktop has been [414..756]",
-          "Delivered through Orca’s push service. Change this anytime i [414..756]",
-          "Enable notifications [518..652]",
-          "Not now [558..612]"
-        ]
+        "offscreen": []
       }
+    },
+    {
+      "name": "onboarding-sem-chat-ui",
+      "ok": true,
+      "detail": "host Nexus: sem \"Usar UI de chat\""
     },
     {
       "name": "05-inicio-com-host",
@@ -70,6 +68,16 @@
         "horizontalOverflow": false,
         "offscreen": []
       }
+    },
+    {
+      "name": "inicio-host-nexus-em-pt-br",
+      "ok": true,
+      "detail": "card do host Nexus sem worktree/caminho e Início sem \"Orca\" ou inglês"
+    },
+    {
+      "name": "inicio-sem-atalhos-do-orca",
+      "ok": true,
+      "detail": "só host Nexus: sem Tarefas nem Novo workspace"
     },
     {
       "name": "06-host-conectado",
@@ -217,6 +225,11 @@
       }
     },
     {
+      "name": "revogado-sem-conteudo-antigo",
+      "ok": true,
+      "detail": "arquivo/diff do pane some no auth-failed (F-1037)"
+    },
+    {
       "name": "18-parear-de-novo",
       "file": "18-parear-de-novo.png",
       "ok": true,
@@ -240,7 +253,6 @@
   "consoleErrors": [
     "warning: [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.",
     "warning: [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.",
-    "warning: Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md",
     "warning: [expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect."
   ]
 }
