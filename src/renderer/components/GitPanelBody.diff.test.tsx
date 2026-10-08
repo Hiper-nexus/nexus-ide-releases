@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitPanelBody } from './GitPanelBody';
 import { useGitScmStore } from '../state/git-scm-store';
 import * as agentAttach from '../lib/agent-attach';
@@ -87,17 +87,25 @@ const PATCH = [
 
 const mountedRoots: Root[] = [];
 
-async function render(): Promise<HTMLElement> {
+/**
+ * Mounts the panel. With `viewer`, waits for the observable condition — the lazy viewer
+ * committed — instead of a fixed number of ticks: a fixed budget raced the first import of the
+ * viewer chunk and lost under a loaded full-suite run.
+ */
+async function render({ viewer: expectViewer = true } = {}): Promise<HTMLElement> {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
   mountedRoots.push(root);
   act(() => root.render(<GitPanelBody />));
-  // React.lazy resolves the viewer chunk over a few ticks.
-  for (let attempt = 0; attempt < 50 && viewer.props.length === 0; attempt += 1) {
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+  if (expectViewer) {
+    await vi.waitFor(
+      async () => {
+        await act(async () => {});
+        if (viewer.props.length === 0) throw new Error('highlighted viewer not mounted yet');
+      },
+      { timeout: 10_000, interval: 5 },
+    );
   }
   return host;
 }
@@ -133,6 +141,13 @@ function beginComment(range: Record<string, unknown>) {
   const props = lastProps();
   act(() => props.options.onGutterUtilityClick(range, { item: props.items[0] }));
 }
+
+beforeAll(async () => {
+  // The viewer is a React.lazy chunk (Pierre + Shiki + the worker provider). Loading its module
+  // graph once here keeps transform time out of every test; React.lazy then resolves from the
+  // module cache in microtasks.
+  await import('./diffs/AnnotatableCodeView');
+}, 120_000);
 
 beforeEach(() => {
   viewer.props.length = 0;
@@ -235,6 +250,45 @@ describe('GitPanelBody highlighted diff', () => {
     ]);
   });
 
+  it('keeps a range draft on its own file and sends it with that path from another file', async () => {
+    const sendSpy = vi.spyOn(agentAttach, 'sendAnnotationsToAgent').mockResolvedValue(true);
+    useGitScmStore.setState({
+      unstaged: [
+        { path: 'src/app.ts', status: 'M' },
+        { path: 'src/other.ts', status: 'M' },
+      ],
+    });
+    const host = await render();
+    beginComment({ start: 1, side: 'additions', end: 2, endSide: 'additions' });
+    setTextareaValue(
+      host.querySelector<HTMLTextAreaElement>('.git-scm__diff-comment-input')!,
+      'Renomear',
+    );
+    clickButton(host, 'Guardar rascunho');
+
+    act(() =>
+      useGitScmStore.setState({
+        selected: { path: 'src/other.ts', section: 'unstaged' },
+        diffText: PATCH.replaceAll('src/app.ts', 'src/other.ts'),
+      }),
+    );
+    expect(lastProps().items[0].fileDiff.name).toBe('src/other.ts');
+    expect(lastProps().items[0].annotations).toEqual([]);
+    expect(host.textContent).toContain('1 revisão(ões) em rascunho');
+
+    const send = findButton(host, 'Enviar todas ao agente');
+    await act(async () => {
+      send.click();
+    });
+    expect(sendSpy).toHaveBeenCalledWith([
+      {
+        path: 'src/app.ts',
+        line: 1,
+        body: 'Renomear\n\n> const newConst = 2;\n> const keep = 3;',
+      },
+    ]);
+  });
+
   it('keeps the open comment on its line across layout switches and resizes', async () => {
     const host = await render();
     beginComment({ start: 2, side: 'additions', end: 2 });
@@ -264,7 +318,9 @@ describe('GitPanelBody highlighted diff', () => {
       diffText:
         'diff --git a/logo.png b/logo.png\nindex 1111111..2222222 100644\nBinary files a/logo.png and b/logo.png differ\n',
     });
-    const host = await render();
+    const host = await render({ viewer: false });
+    // The fallback never mounts the lazy viewer; flush anything pending before asserting so.
+    await act(async () => {});
     expect(viewer.props).toHaveLength(0);
     expect(host.querySelector('.git-scm__diff-notice')?.textContent).toContain('binário');
     expect(host.querySelector('.git-scm__diff-lines')).not.toBeNull();

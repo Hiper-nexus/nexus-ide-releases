@@ -4,7 +4,16 @@
  * Primary action button adapted from stablyai/orca @ 93334dc53fccdb7348d09fc28067ba6d3dec36ea
  * (source-control-primary-action-decision). See third_party/licenses/orca-MIT.txt.
  */
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import type { GitFileChange } from '../../shared/git-scm';
 import type { ExternalIssue } from '../../shared/integrations-types';
 import { presentGitHubPRMergeState } from '../../shared/github-pr-merge-state';
@@ -165,6 +174,8 @@ type DiffStyle = 'unified' | 'split';
 /** Onde um comentário mira: uma linha do diff em texto, ou um intervalo do viewer realçado. */
 interface CommentTarget {
   id: string;
+  /** Arquivo do comentário: o envio usa este, não o arquivo aberto agora. */
+  path: string;
   line: number;
   snippet: string;
   rangeLabel?: string;
@@ -197,14 +208,22 @@ function quoteSnippet(snippet: string): string {
     .join('\n');
 }
 
+/**
+ * Rascunhos são por arquivo e vivem no painel: trocar de arquivo (ou perder a seleção num
+ * refresh) não os descarta; cada arquivo mostra só os seus, e o envio leva o caminho de cada um.
+ */
 function GitDiffAnnotator({
   diffText,
   path,
   diffStyle,
+  drafts,
+  setDrafts,
 }: {
   diffText: string;
   path: string;
   diffStyle: DiffStyle;
+  drafts: DraftComment[];
+  setDrafts: Dispatch<SetStateAction<DraftComment[]>>;
 }) {
   const highlight = supportsHighlightedDiff();
   const renderable = useMemo(
@@ -228,26 +247,28 @@ function GitDiffAnnotator({
   const rows = useMemo(() => parseDiffViewLines(diffText), [diffText]);
   const [active, setActive] = useState<{ target: CommentTarget; row?: number } | null>(null);
   const [activeNote, setActiveNote] = useState('');
-  const [drafts, setDrafts] = useState<DraftComment[]>([]);
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  const activeTarget = active?.target ?? null;
+  // Um editor aberto em outro arquivo não pertence a este diff.
+  const activeTarget = active?.target.path === path ? active.target : null;
   const draftAnchor = useMemo<DiffCommentAnchor | null>(
     () =>
-      active?.target.anchor ? { id: active.target.id, ...active.target.anchor } : null,
-    [active],
+      activeTarget?.anchor ? { id: activeTarget.id, ...activeTarget.anchor } : null,
+    [activeTarget],
   );
+  const fileDrafts = useMemo(() => drafts.filter((draft) => draft.path === path), [drafts, path]);
   const commentAnchors = useMemo(
     () =>
-      drafts.flatMap((draft) => (draft.anchor ? [{ id: draft.id, ...draft.anchor }] : [])),
-    [drafts],
+      fileDrafts.flatMap((draft) => (draft.anchor ? [{ id: draft.id, ...draft.anchor }] : [])),
+    [fileDrafts],
   );
+  const draftFileCount = useMemo(() => new Set(drafts.map((draft) => draft.path)).size, [drafts]);
 
   function handleOpenEditor(index: number) {
     const target = diffLineCommentTarget(rows[index] ?? { kind: 'meta', text: '' });
     if (!target) return;
-    setActive({ target: { id: `line:${target.line}`, ...target }, row: index });
+    setActive({ target: { id: `${path}:line:${target.line}`, path, ...target }, row: index });
     setStatus(null);
   }
 
@@ -255,7 +276,8 @@ function GitDiffAnnotator({
   const beginComment = useCallback((target: DiffCommentTarget) => {
     setActive({
       target: {
-        id: `${target.fileKey}:${target.anchor.side}:${target.line}-${target.anchor.lineNumber}`,
+        id: `${path}:${target.fileKey}:${target.anchor.side}:${target.line}-${target.anchor.lineNumber}`,
+        path,
         line: target.line,
         snippet: target.snippet,
         rangeLabel: target.rangeLabel,
@@ -263,7 +285,7 @@ function GitDiffAnnotator({
       },
     });
     setStatus(null);
-  }, []);
+  }, [path]);
 
   function handleAddDraft() {
     if (!activeTarget || !activeNote.trim()) return;
@@ -290,7 +312,7 @@ function GitDiffAnnotator({
 
     try {
       const annotations = toSend.map((item) => ({
-        path,
+        path: item.path,
         line: item.line,
         body: `${item.text}\n\n${quoteSnippet(item.snippet)}`.trim(),
       }));
@@ -302,7 +324,9 @@ function GitDiffAnnotator({
           : 'Não achei um agente ativo para receber as revisões.',
       );
       if (ok) {
-        setDrafts([]);
+        // Só sai o que foi enviado: "Enviar agora" não leva os rascunhos de outros arquivos.
+        const sent = new Set(toSend.map((item) => item.id));
+        setDrafts((prev) => prev.filter((d) => !sent.has(d.id)));
         setActiveNote('');
         setActive(null);
       }
@@ -404,7 +428,7 @@ function GitDiffAnnotator({
               onBeginComment={beginComment}
               renderDraft={() => (activeTarget ? renderEditor(activeTarget) : null)}
               renderComment={(id) => {
-                const draft = drafts.find((d) => d.id === id);
+                const draft = fileDrafts.find((d) => d.id === id);
                 return draft ? renderDraft(draft) : null;
               }}
             />
@@ -421,9 +445,9 @@ function GitDiffAnnotator({
             {rows.map((row, index) => {
               const target = diffLineCommentTarget(row);
               const lineDrafts = target
-                ? drafts.filter((d) => !d.anchor && d.line === target.line)
+                ? fileDrafts.filter((d) => !d.anchor && d.line === target.line)
                 : [];
-              const isEditorOpen = active?.row === index;
+              const isEditorOpen = activeTarget !== null && active?.row === index;
 
               return (
                 <div key={`${index}:${row.kind}:${row.text.slice(0, 24)}`} className="git-scm__diff-row">
@@ -447,6 +471,7 @@ function GitDiffAnnotator({
         <div className="git-scm__diff-review-bar">
           <span className="git-scm__diff-review-counter">
             📝 {drafts.length} revisão(ões) em rascunho
+            {draftFileCount > 1 ? ` em ${draftFileCount} arquivos` : ''}
           </span>
           <div className="git-scm__diff-inline-actions">
             <button
@@ -622,6 +647,7 @@ export function GitPanelBody() {
   const [branchFilter, setBranchFilter] = useState('');
   const [branchError, setBranchError] = useState<string | null>(null);
   const [diffStyle, setDiffStyle] = useState<DiffStyle>('unified');
+  const [diffDrafts, setDiffDrafts] = useState<DraftComment[]>([]);
 
   const decision = decideGitPrimaryAction({
     stagedCount: staged.length,
@@ -646,6 +672,8 @@ export function GitPanelBody() {
 
   useEffect(() => {
     reset();
+    // Outro workspace: os caminhos dos rascunhos não valem mais.
+    setDiffDrafts([]);
     void refresh();
     const onFocus = () => void refresh();
     window.addEventListener('focus', onFocus);
@@ -1067,7 +1095,13 @@ export function GitPanelBody() {
               )}
             </header>
             {selected ? (
-              <GitDiffAnnotator diffText={diffText} path={selected.path} diffStyle={diffStyle} />
+              <GitDiffAnnotator
+                diffText={diffText}
+                path={selected.path}
+                diffStyle={diffStyle}
+                drafts={diffDrafts}
+                setDrafts={setDiffDrafts}
+              />
             ) : (
               <p className="git-scm__diff-placeholder">
                 Selecione um arquivo para ver as mudanças
