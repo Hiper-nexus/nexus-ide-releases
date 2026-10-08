@@ -10,16 +10,22 @@ let container: HTMLDivElement | undefined;
 afterEach(async () => { await act(async () => root?.unmount()); container?.remove(); });
 
 describe('Perfil e logins', () => {
-  it('imports only explicitly selected Chrome sites and shows a partial result', async () => {
+  it('imports only explicitly selected sites of the chosen browser profile and shows a partial result', async () => {
     const imported = vi.fn(async () => ({ importedCookies: 3, importedSites: 1, skipped: { partitioned: 1, encrypted: 0, expired: 0, invalid: 0 } }));
+    const importSites = vi.fn(async () => [{ domain: 'example.com', cookies: 3 }, { domain: 'other.example', cookies: 2 }]);
     Object.defineProperty(window, 'nexus', { configurable: true, value: { browser: {
-      profileStatus: vi.fn(async () => ({ mode: 'isolated', enabled: false, shareWithAgents: false, storedCookies: 0, importSupported: true })),
-      chromeProfiles: vi.fn(async () => [{ id: 'chrome-profile', name: 'Pessoal' }]),
-      chromeSites: vi.fn(async () => [{ domain: 'example.com', cookies: 3 }, { domain: 'other.example', cookies: 2 }]),
-      chromeImport: imported,
+      profileStatus: vi.fn(async () => ({ mode: 'isolated', enabled: false, shareWithAgents: false, storedCookies: 0 })),
+      importProfiles: vi.fn(async () => [{ id: 'chrome-profile', name: 'Pessoal', browser: 'Chrome' }, { id: 'firefox-profile', name: 'default-release', browser: 'Firefox' }]),
+      importSites,
+      importCookies: imported,
     } } });
     container = document.createElement('div'); document.body.append(container); root = createRoot(container);
     await act(async () => root!.render(<BrowserProfilePanel paneId="browser-test" onClose={() => {}} />));
+    expect(container.textContent).toContain('Importar de outro navegador');
+    expect([...container.querySelectorAll('option')].map((option) => option.textContent)).toEqual(['Chrome — Pessoal', 'Firefox — default-release']);
+    expect(importSites).toHaveBeenCalledWith('browser-test', 'chrome-profile');
+    // Signing in stays available for sites no browser has.
+    expect(container.querySelector('input[aria-label="Site para entrar"]')).not.toBeNull();
     const site = container.querySelector<HTMLInputElement>('input[aria-label="Importar example.com"]');
     expect(site?.checked).toBe(false);
     const importButton = [...container.querySelectorAll('button')].find((button) => button.textContent === 'Importar sites selecionados')!;
@@ -31,16 +37,16 @@ describe('Perfil e logins', () => {
     expect(container.textContent).toContain('1 item');
   });
 
-  describe('sem importação (Windows/Linux)', () => {
+  describe('sem navegador importável', () => {
     function mountWithoutImport(mode: 'isolated' | 'personal') {
-      const profileChange = vi.fn(async () => ({ mode: 'personal', enabled: true, shareWithAgents: true, storedCookies: 0, importSupported: false }));
+      const profileChange = vi.fn(async () => ({ mode: 'personal', enabled: true, shareWithAgents: true, storedCookies: 0 }));
       const load = vi.fn(async () => undefined);
       const onClose = vi.fn();
       Object.defineProperty(window, 'nexus', { configurable: true, value: { browser: {
-        profileStatus: vi.fn(async () => ({ mode, enabled: true, shareWithAgents: true, storedCookies: 0, importSupported: false })),
-        chromeProfiles: vi.fn(async () => []),
-        chromeSites: vi.fn(async () => []),
-        chromeImport: vi.fn(),
+        profileStatus: vi.fn(async () => ({ mode, enabled: true, shareWithAgents: true, storedCookies: 0 })),
+        importProfiles: vi.fn(async () => []),
+        importSites: vi.fn(async () => []),
+        importCookies: vi.fn(),
         profileChange,
         load,
       } } });
@@ -61,7 +67,7 @@ describe('Perfil e logins', () => {
       const { profileChange, load, onClose } = mountWithoutImport('isolated');
       await act(async () => root!.render(<BrowserProfilePanel paneId="browser-win" onClose={onClose} />));
       expect(container!.textContent).toContain('Entrar nos seus sites');
-      expect(container!.textContent).not.toContain('Importar do Chrome');
+      expect(container!.textContent).not.toContain('Importar de outro navegador');
       typeAddress('github.com');
       const submit = [...container!.querySelectorAll('button')].find((button) => button.textContent === 'Usar o Perfil Nexus e abrir')!;
       await act(async () => submit.click());

@@ -9,7 +9,7 @@ import {
 } from 'electron';
 import type { BrowserProfileStatus } from '../../shared/browser-profile';
 import { browserProfileMode, changeBrowserProfile, connectPersonalProfile, getBrowserProfilePreferences, personalCookieProfile, rememberAgentBrowser } from './browser-personal-profile';
-import { listChromeProfiles, listChromeSites, readChromeImport } from './chrome-cookie-import';
+import { listImportProfiles, listImportSites, readBrowserImport } from './browser-import/browser-import';
 import { isAgentRequestedBrowser } from '../orch/pane-registry';
 import type { IpcMainInvokeEvent, Session, WebContents } from 'electron';
 import { createHash, randomUUID } from 'node:crypto';
@@ -3240,8 +3240,8 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
     mode: z.enum(['personal', 'isolated']).optional(),
     shareWithAgents: z.boolean().optional(),
   }).strict();
-  const chromeProfileSchema = z.object({ paneId: paneIdSchema, profileId: z.string().regex(/^[a-f0-9]{24}$/) }).strict();
-  const chromeImportSchema = chromeProfileSchema.extend({ domains: z.array(z.string().min(1).max(253)).min(1).max(200) });
+  const importProfileSchema = z.object({ paneId: paneIdSchema, profileId: z.string().regex(/^[a-f0-9]{24}$/) }).strict();
+  const importCookiesSchema = importProfileSchema.extend({ domains: z.array(z.string().min(1).max(253)).min(1).max(200) });
   const profileStatus = (entry: BrowserEntry): BrowserProfileStatus => {
     const settings = getBrowserProfilePreferences();
     let storedCookies: number | null = null;
@@ -3249,7 +3249,7 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
     try { storedCookies = personalCookieProfile().size; }
     catch { notice = 'O cofre do perfil está indisponível. Seus dados continuam guardados.'; }
     return { mode: entry.profileMode, enabled: settings.enabled, shareWithAgents: settings.shareWithAgents,
-      storedCookies, importSupported: process.platform === 'darwin', ...(notice ? { notice } : {}) };
+      storedCookies, ...(notice ? { notice } : {}) };
   };
   const switchProfile = async (entry: BrowserEntry, mode: 'personal' | 'isolated'): Promise<BrowserEntry> => {
     const { owner, scope, paneId } = entry;
@@ -3312,27 +3312,25 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
     if (shareWithAgents !== undefined) changeBrowserProfile(browserKey(scope, paneId), { shareWithAgents });
     return profileStatus(entry);
   });
-  ipcMain.handle(BROWSER_CHANNELS.chromeProfiles, (event, raw) => {
+  ipcMain.handle(BROWSER_CHANNELS.importProfiles, (event, raw) => {
     const { paneId } = paneSchema.strict().parse(raw);
     withOwnedEntry(event.sender, requireLiveRendererWorkspaceScope(event.sender), paneId);
-    return process.platform === 'darwin' ? listChromeProfiles() : [];
+    return listImportProfiles();
   });
-  ipcMain.handle(BROWSER_CHANNELS.chromeSites, (event, raw) => {
-    const { paneId, profileId } = chromeProfileSchema.parse(raw);
+  ipcMain.handle(BROWSER_CHANNELS.importSites, (event, raw) => {
+    const { paneId, profileId } = importProfileSchema.parse(raw);
     withOwnedEntry(event.sender, requireLiveRendererWorkspaceScope(event.sender), paneId);
-    if (process.platform !== 'darwin') throw new Error('A importação do Chrome está disponível no macOS. Você pode entrar nos sites pelo Perfil Nexus.');
-    return listChromeSites(profileId);
+    return listImportSites(profileId);
   });
-  ipcMain.handle(BROWSER_CHANNELS.chromeImport, async (event, raw) => {
-    const { paneId, profileId, domains } = chromeImportSchema.parse(raw);
+  ipcMain.handle(BROWSER_CHANNELS.importCookies, async (event, raw) => {
+    const { paneId, profileId, domains } = importCookiesSchema.parse(raw);
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const entry = withOwnedEntry(event.sender, scope, paneId);
-    if (process.platform !== 'darwin') throw new Error('A importação do Chrome está disponível no macOS.');
     const assertCurrent = () => {
       requireLiveRendererWorkspaceScope(event.sender, scope);
       if (withOwnedEntry(event.sender, scope, paneId) !== entry) throw new Error('A aba mudou durante a importação.');
     };
-    const imported = await readChromeImport(profileId, domains, assertCurrent);
+    const imported = await readBrowserImport(profileId, domains, assertCurrent);
     await personalCookieProfile().importCookies(imported.cookies, assertCurrent);
     assertCurrent();
     if (imported.result.importedCookies > 0) {
