@@ -585,6 +585,76 @@
   text-align: center;
 }
 
+/* Modos arquivo/conteúdo e submenu: rótulo + linha de pasta/trecho. */
+.palette__item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.palette__item-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* Onde a paleta está (submenu ou modo): clicar volta, como Backspace no vazio. */
+.palette__back {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-height: 26px;
+  padding: 0 var(--space-2-5);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-round);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.palette__back:hover {
+  background: var(--surface-2);
+}
+
+.palette__back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.palette__status {
+  padding: var(--space-4) var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.palette__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.palette__foot kbd {
+  margin-right: var(--space-1);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .palette__panel {
     animation: none;

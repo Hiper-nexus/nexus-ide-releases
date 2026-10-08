@@ -344,3 +344,222 @@ describe('CommandPalette modal focus', () => {
     expect(document.activeElement).not.toBe(invoker);
   });
 });
+
+describe('CommandPalette modos de arquivo, conteúdo e submenu', () => {
+  const originalNexus = Object.getOwnPropertyDescriptor(window, 'nexus');
+  let api: {
+    files: { search: ReturnType<typeof vi.fn>; read: ReturnType<typeof vi.fn> };
+    searchMixer: { search: ReturnType<typeof vi.fn> };
+  };
+
+  beforeEach(() => {
+    api = {
+      files: {
+        search: vi.fn(async () => ({ ok: true, files: ['src/app.ts'] })),
+        read: vi.fn(async () => ({ ok: true, content: 'export {}' })),
+      },
+      searchMixer: { search: vi.fn(async () => ({ hits: [] })) },
+    };
+    // Sem `platform`: Linux/Windows — Mod é Ctrl.
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      writable: true,
+      value: api,
+    });
+    setActiveWorkspacePath('/projects/a');
+    useCommandPaletteStore.setState({ open: true, mode: 'command' });
+  });
+
+  afterEach(() => {
+    setActiveWorkspacePath(null);
+    if (originalNexus) Object.defineProperty(window, 'nexus', originalNexus);
+    else Reflect.deleteProperty(window, 'nexus');
+  });
+
+  function press(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', {
+      key,
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    act(() => {
+      (document.activeElement ?? document.body).dispatchEvent(event);
+    });
+    return event;
+  }
+
+  function type(host: HTMLElement, text: string): void {
+    const input = host.querySelector<HTMLInputElement>('.palette__input')!;
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value',
+    )!.set!;
+    act(() => {
+      setter.call(input, text);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  async function settleSearch(ms = 160): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    });
+  }
+
+  it('Mod+P, Mod+Shift+F e Mod+K trocam de modo no mesmo diálogo; repetir fecha', () => {
+    const host = render(<CommandPalette />);
+
+    press('p', { ctrlKey: true });
+    expect(useCommandPaletteStore.getState()).toMatchObject({
+      open: true,
+      mode: 'files',
+    });
+    expect(host.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    expect(
+      host.querySelector('[role="dialog"]')?.getAttribute('data-palette-mode'),
+    ).toBe('files');
+
+    press('F', { ctrlKey: true, shiftKey: true });
+    expect(useCommandPaletteStore.getState().mode).toBe('content');
+
+    press('k', { ctrlKey: true });
+    expect(useCommandPaletteStore.getState()).toMatchObject({
+      open: true,
+      mode: 'command',
+    });
+
+    press('k', { ctrlKey: true });
+    expect(useCommandPaletteStore.getState().open).toBe(false);
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('Backspace no vazio volta: submenu → raiz, arquivos → paleta', () => {
+    const host = render(<CommandPalette />);
+
+    act(() => actionButton(host, 'Ir para uma seção das configurações').click());
+    expect(useCommandPaletteStore.getState().open).toBe(true);
+    expect(actionButton(host, 'Atalhos')).toBeDefined();
+    expect(host.querySelector('[aria-label="Voltar de Configurações"]')).not.toBeNull();
+
+    expect(press('Backspace').defaultPrevented).toBe(true);
+    expect(actionButton(host, 'Nova missão')).toBeDefined();
+    expect(host.querySelector('.palette__back')).toBeNull();
+
+    press('p', { ctrlKey: true });
+    type(host, 'ab');
+    // Com texto, Backspace é edição: continua no modo de arquivos.
+    expect(press('Backspace').defaultPrevented).toBe(false);
+    expect(useCommandPaletteStore.getState().mode).toBe('files');
+
+    type(host, '');
+    press('Backspace');
+    expect(useCommandPaletteStore.getState()).toMatchObject({
+      open: true,
+      mode: 'command',
+    });
+  });
+
+  it('o submenu leva à seção escolhida das configurações', () => {
+    const host = render(<CommandPalette />);
+    act(() => actionButton(host, 'Ir para uma seção das configurações').click());
+    act(() => actionButton(host, 'Atalhos').click());
+    expect(useProductNavigationStore.getState().destination).toMatchObject({
+      kind: 'settings',
+      section: 'shortcuts',
+    });
+    expect(useCommandPaletteStore.getState().open).toBe(false);
+  });
+
+  it('abre o arquivo no editor quando o projeto não mudou', async () => {
+    const host = render(<CommandPalette />);
+    press('p', { ctrlKey: true });
+    type(host, 'app');
+    await settleSearch();
+    expect(api.files.search).toHaveBeenCalledWith('app');
+
+    act(() => actionButton(host, 'app.ts').click());
+    await settleSearch(0);
+
+    expect(api.files.read).toHaveBeenCalledWith('src/app.ts');
+    expect(useCommandPaletteStore.getState().open).toBe(false);
+    expect(useContextualPanelNavStore.getState().requestedTab).toBe('editor');
+  });
+
+  it('revalida o workspace depois do await: troca de projeto não puxa o editor', async () => {
+    let finishRead: (value: unknown) => void = () => undefined;
+    api.files.read.mockImplementation(
+      () => new Promise((resolve) => (finishRead = resolve)),
+    );
+    const host = render(<CommandPalette />);
+    press('p', { ctrlKey: true });
+    type(host, 'app');
+    await settleSearch();
+
+    act(() => actionButton(host, 'app.ts').click());
+    expect(api.files.read).toHaveBeenCalledWith('src/app.ts');
+
+    setActiveWorkspacePath('/projects/b');
+    finishRead({ ok: true, content: 'export {}' });
+    await settleSearch(0);
+
+    expect(useContextualPanelNavStore.getState().requestedTab).toBeNull();
+  });
+
+  it('descarta resultado que chega depois de trocar de projeto', async () => {
+    const host = render(<CommandPalette />);
+    press('p', { ctrlKey: true });
+    type(host, 'app');
+    setActiveWorkspacePath('/projects/b');
+    await settleSearch();
+    expect(host.querySelector('button[role="option"]')).toBeNull();
+  });
+
+  it('conteúdo: hit absoluto vira caminho relativo com a linha', async () => {
+    api.searchMixer.search.mockResolvedValue({
+      hits: [
+        {
+          id: 'rg:/projects/a/src/app.ts:12',
+          source: 'files',
+          title: 'app.ts',
+          path: '/projects/a/src/app.ts',
+          snippet: 'const answer = 42',
+          meta: { line: 12 },
+        },
+      ],
+    });
+    const host = render(<CommandPalette />);
+    press('F', { ctrlKey: true, shiftKey: true });
+    type(host, 'answer');
+    await settleSearch();
+
+    expect(api.searchMixer.search).toHaveBeenCalledWith({
+      text: 'answer',
+      sources: ['files'],
+      limit: 60,
+    });
+    const hit = actionButton(host, 'src/app.ts:12');
+    expect(hit.textContent).toContain('const answer = 42');
+    act(() => hit.click());
+    await settleSearch(0);
+    expect(api.files.read).toHaveBeenCalledWith('src/app.ts');
+  });
+
+  it('sem arquivo com esse nome, oferece buscar no conteúdo levando o texto', async () => {
+    api.files.search.mockResolvedValue({ ok: true, files: [] });
+    const host = render(<CommandPalette />);
+    press('p', { ctrlKey: true });
+    type(host, 'answer');
+    await settleSearch();
+
+    const fallback = Array.from(host.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Buscar no conteúdo'),
+    );
+    expect(fallback).toBeDefined();
+    act(() => fallback!.click());
+    expect(useCommandPaletteStore.getState().mode).toBe('content');
+    expect(host.querySelector<HTMLInputElement>('.palette__input')?.value).toBe(
+      'answer',
+    );
+  });
+});

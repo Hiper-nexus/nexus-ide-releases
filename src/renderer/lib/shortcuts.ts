@@ -1,4 +1,9 @@
 import { formatShortcut } from './platform';
+import {
+  commandShortcutLabel,
+  isKeybindingCommand,
+  type KeybindingOverrides,
+} from './keybindings';
 
 /**
  * Catálogo ÚNICO de atalhos. Antes existiam três listas independentes —
@@ -44,6 +49,18 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
     group: 'command' as const,
     primary: true,
     short: 'comandos',
+  }),
+  Object.freeze({
+    id: 'file-picker',
+    keys: formatShortcut('mod', 'P'),
+    action: 'Ir para um arquivo do projeto',
+    group: 'command' as const,
+  }),
+  Object.freeze({
+    id: 'content-search',
+    keys: formatShortcut('mod', 'shift', 'F'),
+    action: 'Buscar texto nos arquivos do projeto (fora do terminal)',
+    group: 'command' as const,
   }),
   Object.freeze({
     id: 'mission-new',
@@ -180,6 +197,18 @@ export function shortcutsInGroup(
   return SHORTCUTS.filter((entry) => entry.group === group);
 }
 
+/**
+ * Chord exibido de uma entrada: o efetivo quando o atalho é remapeável em
+ * Configurações › Atalhos (`keys` guarda só o padrão), o fixo nos demais.
+ */
+export function effectiveShortcutKeys(
+  entry: ShortcutEntry,
+  overrides?: KeybindingOverrides,
+): string {
+  if (!isKeybindingCommand(entry.id)) return entry.keys;
+  return commandShortcutLabel(entry.id, overrides) ?? 'sem atalho';
+}
+
 /** Subconjunto do rodapé do Home: os atalhos `primary` do catálogo. */
 export function primaryShortcuts(): readonly ShortcutEntry[] {
   return SHORTCUTS.filter((entry) => entry.primary === true);
@@ -192,6 +221,8 @@ export const GLOBAL_HANDLER_SHORTCUT_IDS: readonly string[] = Object.freeze([
   'bug-report',
   'task-board',
   'command-palette',
+  'file-picker',
+  'content-search',
   'cheatsheet',
   'mission-new',
   'attention-inbox',

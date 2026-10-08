@@ -130,6 +130,7 @@ import type {
 import type {
   FileTreeResult,
   ReadFileResult,
+  SearchFilesResult,
 } from './files-types';
 import type {
   AccountActivatedEvent,
@@ -1070,6 +1071,8 @@ export interface NexusApi {
   files: {
     list(relPath: string): Promise<FileTreeResult>;
     read(relPath: string): Promise<ReadFileResult>;
+    /** Arquivos do workspace por nome (paleta, Mod+P); main fixa a raiz. */
+    search(query: string): Promise<SearchFilesResult>;
     write(relPath: string, content: string): Promise<{ ok: boolean; error?: string }>;
     saveDropped(name: string, base64: string): Promise<{ ok: boolean; path?: string; error?: string }>;
     /**

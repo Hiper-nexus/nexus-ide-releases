@@ -413,18 +413,31 @@ export const DEFAULT_VISION_SETTINGS: VisionSettings =
   visionSettingsSchema.parse({});
 
 /**
+ * Atalhos remapeados em Configurações › Atalhos: id do comando
+ * (`src/renderer/lib/keybindings.ts`) → combinações canônicas. `[]` tira o
+ * atalho; id ausente usa o padrão. Combinação inválida é ignorada no
+ * renderer, então aqui só se limita tamanho.
+ */
+const keybindingOverridesSchema = z
+  .record(z.string().min(1).max(64), z.array(z.string().min(1).max(64)).max(4))
+  .refine((value) => Object.keys(value).length <= 64);
+
+/**
  * Aparência global do app (não do xterm): modo pixel, etc.
  * Persistido em ~/.nexus/settings.json → `ui`.
  */
 export const uiSettingsSchema = z.object({
   /** Cantos retos, VT323 como --font-ui, antialias desligado (data-theme-pixel). */
   pixelMode: z.boolean().default(false),
+  // Um mapa corrompido no settings.json volta ao padrão sem derrubar o resto do `ui`.
+  keybindings: keybindingOverridesSchema.catch({}),
 });
 export type UiSettings = z.infer<typeof uiSettingsSchema>;
 export const DEFAULT_UI_SETTINGS: UiSettings = uiSettingsSchema.parse({});
 
 export const uiSettingsPatchSchema = z.object({
   pixelMode: z.boolean().optional(),
+  keybindings: keybindingOverridesSchema.optional(),
 });
 export type UiSettingsPatch = z.infer<typeof uiSettingsPatchSchema>;
 

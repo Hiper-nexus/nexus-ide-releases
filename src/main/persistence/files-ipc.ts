@@ -6,10 +6,12 @@ import {
   importDroppedUriSchema,
   listDirSchema,
   readFileSchema,
+  searchFilesSchema,
   writeFileSchema,
   type FileNode,
   type FileTreeResult,
   type ReadFileResult,
+  type SearchFilesResult,
 } from '../../shared/files-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
@@ -20,6 +22,7 @@ import {
 import { importDroppedUri } from './dropped-uri-import';
 import { readClipboardFileUris } from './clipboard-file-uris';
 import { requireRendererWorkspaceScope } from './renderer-workspace-scope';
+import { searchWorkspaceFiles } from '../orch/workspace-file-search';
 
 /**
  * File explorer backend — sandboxed to the invoking renderer's main-owned
@@ -373,6 +376,35 @@ function writeFile(
   }
 }
 
+/**
+ * Mod+P da paleta: o mesmo motor do `nexus_file_search`, preso à raiz canônica
+ * do workspace de quem chamou (nunca a um caminho vindo do renderer). Todo
+ * termo, sem caixa, precisa aparecer no caminho relativo.
+ */
+async function searchFiles(
+  scope: ProjectExecutionScope,
+  query: string,
+): Promise<SearchFilesResult> {
+  const root = canonicalScopeRoot(scope);
+  if (!root) return { ok: false, error: 'unsafe workspace' };
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const result = await searchWorkspaceFiles(
+    root.abs,
+    query,
+    { maxResults: 200, maxFiles: 20_000, maxDirectories: 2_000, timeoutMs: 1_500 },
+    (relativePath) => {
+      const lower = relativePath.toLowerCase();
+      // ponytail: o walk ainda desce em dist/out (custa orçamento); só o
+      // resultado é filtrado. Subir o filtro para o walk se virar gargalo.
+      return (
+        !relativePath.split('/').some((segment) => IGNORED.has(segment)) &&
+        terms.every((term) => lower.includes(term))
+      );
+    },
+  );
+  return { ok: true, files: result.files, truncated: result.truncated };
+}
+
 export function registerFilesIpc(hooks: FilesIpcTestHooks = {}): void {
   ipcMain.handle(FILES_CHANNELS.saveDropped, (event, raw) => {
     requireRendererWorkspaceScope(event.sender);
@@ -454,6 +486,16 @@ export function registerFilesIpc(hooks: FilesIpcTestHooks = {}): void {
     const parsed = readFileSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid path' };
     return readFile(scope, parsed.data.relPath, hooks);
+  });
+
+  ipcMain.handle(FILES_CHANNELS.search, (event, raw) => {
+    const scope = requireRendererWorkspaceScope(event.sender);
+    const parsed = searchFilesSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: 'invalid query' };
+    return searchFiles(scope, parsed.data.query).catch(() => ({
+      ok: false,
+      error: 'search failed',
+    }));
   });
 
   ipcMain.handle(FILES_CHANNELS.write, (event, raw) => {

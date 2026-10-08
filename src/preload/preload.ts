@@ -1230,6 +1230,7 @@ const api: NexusApi = {
   files: {
     list: (relPath: string) => ipcRenderer.invoke(FILES_CHANNELS.list, { relPath }),
     read: (relPath: string) => ipcRenderer.invoke(FILES_CHANNELS.read, { relPath }),
+    search: (query: string) => ipcRenderer.invoke(FILES_CHANNELS.search, { query }),
     write: (relPath: string, content: string) =>
       ipcRenderer.invoke(FILES_CHANNELS.write, { relPath, content }),
     saveDropped: (name: string, base64: string) =>

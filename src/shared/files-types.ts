@@ -33,6 +33,20 @@ export const listDirSchema = z.object({
   relPath: z.string().max(4096).default(''),
 });
 export const readFileSchema = z.object({ relPath: z.string().min(1).max(4096) });
+/** Busca de arquivo por nome (Mod+P da paleta): termos sem caixa, todos no caminho. */
+export const searchFilesSchema = z.object({
+  query: z.string().trim().min(1).max(256),
+});
+
+export interface SearchFilesResult {
+  ok: boolean;
+  /** Caminhos relativos à raiz do workspace (posix). */
+  files?: string[];
+  /** A caminhada parou num orçamento (resultados, arquivos, pastas ou tempo). */
+  truncated?: boolean;
+  error?: string;
+}
+
 export const writeFileSchema = z.object({
   relPath: z.string().min(1).max(4096),
   content: z.string().max(5_000_000),
@@ -53,4 +67,5 @@ export const FILES_CHANNELS = {
   importMissionAttachment: 'files:importMissionAttachment',
   importDroppedUri: 'files:importDroppedUri',
   clipboardFileUris: 'files:clipboardFileUris',
+  search: 'files:search',
 } as const;
