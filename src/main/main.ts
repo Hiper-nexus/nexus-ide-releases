@@ -462,6 +462,8 @@ import {
   settleRemoteBridgeTailscale,
   stopRemoteBridge,
 } from "./remote/remote-bridge";
+// MOB-05 (F-1021): atividade dos panes para o app do celular.
+import { startRemotePaneActivitySources } from "./remote/remote-pane-activity-sources";
 import { initSmokeTest } from "./smoke-test";
 import {
   disposeAgentAwakeService,
@@ -933,6 +935,7 @@ async function bootstrap(): Promise<void> {
   }
   bootStep('registerPipeIpc', () => registerPipeIpc()); // also calls initPanePipes()
   bootStep('registerRemoteIpc', () => registerRemoteIpc());
+  bootStep('startRemotePaneActivitySources', () => void startRemotePaneActivitySources());
   // Handler do Tailscale Serve deixado por um crash anterior: sem marcador em
   // ~/.nexus não há spawn algum; com marcador, remove só se ainda for nosso.
   bootStep('cleanupRemoteBridgeTailscaleOrphan', () => void cleanupRemoteBridgeTailscaleOrphan());

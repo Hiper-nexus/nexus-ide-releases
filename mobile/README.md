@@ -74,12 +74,27 @@ stage, commit, checkout nem escrita.
   concedida (o app não pede permissão daqui), um pedido novo vindo do push `approvals.changed`
   notifica quando o app está em segundo plano ou um pane está aberto — uma vez por pedido, também
   depois de reconectar ou reiniciar. O toque abre o host e foca a aprovação (ou o pane, se ela já
-  foi respondida). A bridge não empurra "pane terminou", então só aprovação notifica; e o sistema
-  pode suspender o app em segundo plano, quando o socket cai e nada chega.
+  foi respondida). O sistema pode suspender o app em segundo plano, quando o socket cai e nada
+  chega.
 - **Ditado:** o campo de comando tem microfone; o texto ditado só preenche o campo, nunca envia.
   O ditado do app é transcrito pelo desktop (`speech.dictation.*`), que a bridge Nexus ainda não
   tem: no host Nexus o botão aparece como indisponível e abre o teclado, cujo microfone (ditado
   do sistema, no aparelho) funciona.
+
+**Atividade dos panes (F-1021, MOB-05/MOB-09):** cada pane mostra o que o agente está fazendo —
+**Trabalhando**, **Esperando você**, **Terminou** (parou depois de trabalhar), **Parado** ou
+**Encerrado** — num selo na lista de panes e num cartão "Atividade" no detalhe do pane. O estado
+vem dos sinais que o desktop já tem (o estado do PTY do toolbar e os dois planos de "pede você"
+da caixa ⌘J); a bridge empurra `pane.activity {paneId, activity, at}` (sem nada da saída) só
+para aparelhos com a permissão "Ver" (escopo `read`) que podem LER o pane, agrupado (1,5 s) e limitado a 12 pushes por pane por
+minuto, sem perder o estado final; `pane.activity.list` reconstrói os cartões ao conectar.
+"Esperando você" e "Terminou" viram notificação local com as regras da aprovação (consentimento
+\+ permissão, sem aviso quando o operador está olhando a lista ou o próprio pane), uma vez por
+pane e transição, também depois de reconectar ou reiniciar; um aviso por pane na bandeja, e o
+toque abre o pane. Desktop antigo, sem `pane.activity.list`: o selo usa o estado do snapshot.
+
+**Listas virtualizadas (MOB-01):** missões, panes, alterações, pastas, diff e leitura de arquivo
+do host Nexus usam `src/components/MobileLegendList.tsx`, a mesma lista do caminho Orca.
 
 **Não disponível em host Nexus** (a tela avisa e o adaptador responde
 `nexus_host_unsupported` com "… não disponível em host Nexus"): teclas cruas (Ctrl-C, Esc,
@@ -90,8 +105,9 @@ contas, ditado pelo app, screencast do navegador, Linear/GitHub/GitLab, push rem
 nativo estruturado. O relay do companion (`/r/<roomId>`) ainda não é usado pelo app.
 
 Código: `src/transport/nexus-bridge-{client,device-key,device-store,pairing,pair-host,rpc-adapter,git-files}.ts`,
-`src/nexus-host/NexusHostScreen.tsx` e `src/nexus-host/NexusPaneWorkspace.tsx`; no desktop,
-`src/main/remote/remote-workspace-rpc.ts`. Prova de ponta a ponta contra a bridge real:
+`src/nexus-host/NexusHostScreen.tsx`, `src/nexus-host/NexusPaneWorkspace.tsx` e
+`src/nexus-host/{nexus-pane-activity.ts,NexusPaneActivityCard.tsx}`; no desktop,
+`src/main/remote/remote-workspace-rpc.ts` e `src/main/remote/remote-pane-activity{,-sources}.ts`. Prova de ponta a ponta contra a bridge real:
 `src/main/remote/remote-bridge.mobile-app.test.ts` (raiz do repositório).
 
 ## Desktop Orca (protocolo legado)

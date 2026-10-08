@@ -11,8 +11,10 @@
 // - O toque abre o host Nexus (rota /h/<host>, pelo roteamento de toque que já
 //   existe) e foca a aprovação; se ela já foi respondida, abre o pane dela.
 //
-// Lacuna conhecida: a bridge não empurra "pane terminou / precisa de atenção"
-// (só `approvals.changed` e `pane.stream.data`), então só aprovação notifica.
+// MOB-05 (F-1021): a bridge agora empurra a atividade dos panes (`pane.activity`).
+// "Esperando você" e "Terminou" (trabalhando → parado) também viram notificação
+// local, com as mesmas regras: consentimento + permissão, um aviso por pane e
+// transição (livro-razão próprio no AsyncStorage) e o toque abre o pane.
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as Notifications from 'expo-notifications'
 import { useEffect, useRef, useState } from 'react'
@@ -27,8 +29,10 @@ import type {
   NexusOpsSnapshot,
   NexusPane
 } from '../transport/nexus-bridge-rpc-adapter'
+import type { NexusPaneActivityTransition } from './nexus-pane-activity'
 
 const LEDGER_KEY_PREFIX = 'nexus-host:notified-approvals:v1:'
+const ACTIVITY_LEDGER_KEY_PREFIX = 'nexus-host:notified-activity:v1:' // MOB-05
 const LEDGER_CAP = 200
 const BODY_MAX = 160
 
@@ -44,7 +48,8 @@ export type NexusApprovalNotificationRequest = {
 
 export type NexusApprovalNotificationData = {
   readonly hostId: string
-  readonly nexusHost: { readonly paneId: string; readonly requestId: string }
+  /** Sem `requestId`: aviso de atividade (MOB-05), o toque abre o pane. */
+  readonly nexusHost: { readonly paneId: string; readonly requestId?: string }
 }
 
 type LedgerStorage = {
@@ -87,6 +92,43 @@ export function buildNexusApprovalNotification(input: {
   }
 }
 
+// ─── MOB-05: atividade dos panes ───
+
+/** Um aviso por pane na bandeja: a transição nova substitui a anterior. */
+export function nexusActivityNotificationId(hostId: string, paneId: string): string {
+  return `nexus-activity:${hostId}:${paneId}`
+}
+
+/** Só o que pede o operador: "esperando você" e "terminou" (trabalhando → parado). */
+export function shouldNotifyNexusActivity(transition: NexusPaneActivityTransition): boolean {
+  return transition.to === 'waiting' || (transition.to === 'idle' && transition.from === 'working')
+}
+
+export function buildNexusActivityNotification(input: {
+  hostId: string
+  hostName: string
+  transition: NexusPaneActivityTransition
+  paneTitle: string
+  sound: boolean
+}): NexusApprovalNotificationRequest {
+  const { transition } = input
+  const waiting = transition.to === 'waiting'
+  return {
+    identifier: nexusActivityNotificationId(input.hostId, transition.paneId),
+    title: `${waiting ? 'Esperando você' : 'Terminou'} · ${input.hostName}`,
+    body: truncate(
+      `${input.paneTitle}: ${waiting ? 'o agente parou numa pergunta ou permissão.' : 'o agente terminou o turno.'}`,
+      BODY_MAX
+    ),
+    data: { hostId: input.hostId, nexusHost: { paneId: transition.paneId } },
+    sound: input.sound
+  }
+}
+
+function nexusActivityLedgerKey(transition: NexusPaneActivityTransition): string {
+  return `${transition.paneId}\u0000${transition.to}\u0000${transition.at}`
+}
+
 export type NexusApprovalNotifier = ReturnType<typeof createNexusApprovalNotifier>
 
 export function createNexusApprovalNotifier(deps: {
@@ -102,17 +144,17 @@ export function createNexusApprovalNotifier(deps: {
   const presented = new Map<string, Set<string>>()
   const chains = new Map<string, Promise<unknown>>()
 
-  const ledgerFor = (hostId: string): Promise<string[]> => {
-    let ledger = ledgers.get(hostId)
+  const ledgerFor = (hostId: string, prefix = LEDGER_KEY_PREFIX): Promise<string[]> => {
+    let ledger = ledgers.get(`${prefix}${hostId}`)
     if (!ledger) {
       ledger = deps.storage
-        .getItem(`${LEDGER_KEY_PREFIX}${hostId}`)
+        .getItem(`${prefix}${hostId}`)
         .then((raw) => {
           const parsed = raw ? (JSON.parse(raw) as unknown) : []
           return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
         })
         .catch(() => [])
-      ledgers.set(hostId, ledger)
+      ledgers.set(`${prefix}${hostId}`, ledger)
     }
     return ledger
   }
@@ -188,7 +230,52 @@ export function createNexusApprovalNotifier(deps: {
       return notified
     })
 
-  return { onApprovals }
+  /**
+   * MOB-05: uma transição de atividade. Avisa uma vez por pane+transição — o
+   * mesmo push repetido, a releitura depois de reconectar e o reinício do app
+   * não avisam de novo. Devolve true quando agendou.
+   */
+  const onActivity = (input: {
+    hostId: string
+    hostName: string
+    transition: NexusPaneActivityTransition
+    paneTitle: string
+    attention: NexusApprovalAttention
+  }): Promise<boolean> =>
+    serialize(input.hostId, async () => {
+      if (!shouldNotifyNexusActivity(input.transition)) {
+        return false
+      }
+      const ledger = await ledgerFor(input.hostId, ACTIVITY_LEDGER_KEY_PREFIX)
+      const key = nexusActivityLedgerKey(input.transition)
+      if (ledger.includes(key)) {
+        return false
+      }
+      ledger.push(key)
+      ledger.splice(0, Math.max(0, ledger.length - LEDGER_CAP))
+      await deps.storage
+        .setItem(`${ACTIVITY_LEDGER_KEY_PREFIX}${input.hostId}`, JSON.stringify(ledger))
+        .catch(() => undefined)
+      if (input.attention === 'watching' || !(await deps.canNotify().catch(() => false))) {
+        return false
+      }
+      try {
+        await deps.schedule(
+          buildNexusActivityNotification({
+            hostId: input.hostId,
+            hostName: input.hostName,
+            transition: input.transition,
+            paneTitle: input.paneTitle,
+            sound: await deps.sound().catch(() => true)
+          })
+        )
+        return true
+      } catch {
+        return false
+      }
+    })
+
+  return { onApprovals, onActivity }
 }
 
 async function canPresentNexusNotification(): Promise<boolean> {
@@ -252,12 +339,51 @@ export function useNexusApprovalNotifications(args: {
   }, [appState, approvalsOnScreen, hostId, hostName, notifier, snapshot])
 }
 
+/**
+ * MOB-05: devolve o `onTransition` para `useNexusPaneActivity`. O operador está
+ * olhando (sem aviso) com o app em primeiro plano na lista do host ou no próprio
+ * pane; em segundo plano ou em outro pane, avisa.
+ */
+export function useNexusActivityNotifications(args: {
+  hostId: string
+  hostName: string
+  snapshot: NexusOpsSnapshot | null
+  openPaneId: string | null
+  notifier?: NexusApprovalNotifier
+}): (transition: NexusPaneActivityTransition) => void {
+  const latest = useRef(args)
+  latest.current = args
+  const appState = useRef(AppState.currentState)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      appState.current = next
+    })
+    return () => sub.remove()
+  }, [])
+  const [onTransition] = useState(() => (transition: NexusPaneActivityTransition) => {
+    const { hostId, hostName, snapshot, openPaneId } = latest.current
+    const notifier = latest.current.notifier ?? nexusApprovalNotifier
+    const watching =
+      appState.current === 'active' && (openPaneId === null || openPaneId === transition.paneId)
+    void notifier.onActivity({
+      hostId,
+      hostName,
+      transition,
+      paneTitle:
+        snapshot?.panes.find((pane) => pane.paneId === transition.paneId)?.title ?? transition.paneId,
+      attention: watching ? 'watching' : 'away'
+    })
+  })
+  return onTransition
+}
+
 // ─── Toque na notificação → foco no host ───
 
 export type NexusNotificationFocus = {
   readonly hostId: string
   readonly paneId: string
-  readonly requestId: string
+  /** null = aviso de atividade (MOB-05): abre o pane. */
+  readonly requestId: string | null
 }
 
 export function readNexusNotificationFocus(data: unknown): NexusNotificationFocus | null {
@@ -270,7 +396,13 @@ export function readNexusNotificationFocus(data: unknown): NexusNotificationFocu
     return null
   }
   const { paneId, requestId } = nexus as Record<string, unknown>
-  return typeof paneId === 'string' && paneId && typeof requestId === 'string' && requestId
+  if (typeof paneId !== 'string' || !paneId) {
+    return null
+  }
+  if (requestId === undefined) {
+    return { hostId: record.hostId, paneId, requestId: null }
+  }
+  return typeof requestId === 'string' && requestId
     ? { hostId: record.hostId, paneId, requestId }
     : null
 }
@@ -355,7 +487,7 @@ export function resolveNexusNotificationFocus(
   focus: NexusNotificationFocus,
   snapshot: NexusOpsSnapshot
 ): { kind: 'approval' } | { kind: 'pane'; pane: NexusPane } | { kind: 'host' } {
-  if (snapshot.approvals.some((approval) => approval.requestId === focus.requestId)) {
+  if (focus.requestId && snapshot.approvals.some((approval) => approval.requestId === focus.requestId)) {
     return { kind: 'approval' }
   }
   const pane = snapshot.panes.find((item) => item.paneId === focus.paneId)

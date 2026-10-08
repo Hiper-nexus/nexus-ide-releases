@@ -21,9 +21,11 @@ import { loadHostCatalog } from '../transport/host-store'
 import {
   nexusHostApiOf,
   type NexusApproval,
+  type NexusMission,
   type NexusOpsSnapshot,
   type NexusPane
 } from '../transport/nexus-bridge-rpc-adapter'
+import { MobileLegendList } from '../components/MobileLegendList'
 import { NEXUS_BRIDGE_HOST_KIND, type ConnectionState } from '../transport/types'
 import { decodeApprovalResponseToken } from '../session/mobile-structured-agent-prompts'
 import { parseApprovalFromStatus } from '../session/mobile-native-chat-permission'
@@ -33,9 +35,18 @@ import { colors, radii, spacing, typography } from '../theme/mobile-theme'
 // F-1015: ditado, notificações e fila offline do host Nexus.
 import { NexusCommandInput } from './NexusCommandInput'
 import {
+  useNexusActivityNotifications,
   useNexusApprovalNotifications,
   useNexusHostNotificationFocus
 } from './nexus-host-notifications'
+// MOB-05 (F-1021): atividade dos panes.
+import { NexusPaneActivityBadge, NexusPaneActivityCard } from './NexusPaneActivityCard'
+import {
+  nexusActivityFromPaneState,
+  useNexusPaneActivity,
+  type NexusPaneActivityMap,
+  type NexusPaneActivityView
+} from './nexus-pane-activity'
 import { useNexusHostOutboxFlush } from './use-nexus-host-outbox'
 // F-1014 (início)
 import {
@@ -166,6 +177,15 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
     activePaneId: pane?.paneId ?? null
   })
   // ─── fim F-1015 ───
+  // ─── MOB-05 (F-1021) ───
+  const notifyActivity = useNexusActivityNotifications({
+    hostId,
+    hostName,
+    snapshot,
+    openPaneId: pane?.paneId ?? null
+  })
+  const activity = useNexusPaneActivity({ nexus, state, onTransition: notifyActivity })
+  // ─── fim MOB-05 ───
 
   const respondApproval = useCallback(
     async (send: string): Promise<boolean> => {
@@ -278,6 +298,7 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
           nexus={nexus}
           client={client}
           state={state}
+          activity={activity.get(pane.paneId) ?? nexusActivityFromPaneState(pane.state)}
           onOpenWorkspace={(view) => setWorkspaceView({ paneId: pane.paneId, view })}
           onClosed={() => {
             setPane(null)
@@ -285,53 +306,127 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
           }}
         />
       ) : (
-        <ScrollView contentContainerStyle={styles.scroll}>
-          <NexusApprovals
-            approvals={snapshot?.approvals ?? []}
-            panes={snapshot?.panes ?? []}
-            highlightedRequestId={highlightedApproval}
-            onRespond={respondApproval}
-          />
-          <Text style={styles.section}>Missões</Text>
-          {snapshot === null && state === 'connected' ? (
-            <ActivityIndicator color={colors.textSecondary} />
-          ) : (snapshot?.missions.length ?? 0) === 0 ? (
-            <Text style={styles.muted}>nenhuma missão</Text>
-          ) : (
-            snapshot?.missions.slice(0, 40).map((mission) => (
-              <View key={mission.id} style={styles.row}>
-                <Text style={styles.rowText} numberOfLines={1}>
-                  {mission.title}
-                </Text>
-                <Text style={styles.muted}>{mission.status}</Text>
-              </View>
-            ))
+        // MOB-01: missões e panes numa lista virtualizada (a mesma do caminho Orca).
+        <MobileLegendList
+          data={nexusHostListEntries(snapshot, state === 'connected')}
+          keyExtractor={nexusHostListKey}
+          getItemType={(entry) => entry.type}
+          estimatedItemSize={48}
+          // Linhas só re-renderizam quando extraData muda: é o que elas leem.
+          extraData={activity}
+          style={styles.list}
+          contentContainerStyle={styles.scroll}
+          ListHeaderComponent={
+            <NexusApprovals
+              approvals={snapshot?.approvals ?? []}
+              panes={snapshot?.panes ?? []}
+              highlightedRequestId={highlightedApproval}
+              onRespond={respondApproval}
+            />
+          }
+          ListFooterComponent={<Text style={styles.note}>{NEXUS_HOST_UNSUPPORTED_NOTE}</Text>}
+          renderItem={({ item: entry }) => (
+            <NexusHostListRow entry={entry} activity={activity} onOpenPane={setPane} />
           )}
-          <Text style={styles.section}>Panes</Text>
-          {(snapshot?.panes ?? []).map((item) => (
-            <Pressable
-              key={item.paneId}
-              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-              onPress={() => setPane(item)}
-              accessibilityRole="button"
-              accessibilityLabel={`Abrir pane ${item.title}`}
-            >
-              <View style={[styles.dot, item.state === 'busy' ? styles.dotBusy : styles.dotOn]} />
-              <Text style={styles.rowText} numberOfLines={1}>
-                {item.paneNumber ? `${item.paneNumber} · ` : ''}
-                {item.title}
-              </Text>
-              <Text style={styles.muted}>{item.state}</Text>
-            </Pressable>
-          ))}
-          {snapshot && snapshot.panes.length === 0 ? (
-            <Text style={styles.muted}>nenhum pane visível para este aparelho</Text>
-          ) : null}
-          <Text style={styles.note}>{NEXUS_HOST_UNSUPPORTED_NOTE}</Text>
-        </ScrollView>
+        />
       )}
     </View>
   )
+}
+
+// ─── MOB-01: entradas da lista do host (seções, missões, panes) ───
+
+export type NexusHostListEntry =
+  | { readonly type: 'section'; readonly key: string; readonly title: string }
+  | { readonly type: 'note'; readonly key: string; readonly text: string }
+  | { readonly type: 'loading' }
+  | { readonly type: 'mission'; readonly mission: NexusMission }
+  | { readonly type: 'pane'; readonly pane: NexusPane }
+
+export function nexusHostListEntries(
+  snapshot: NexusOpsSnapshot | null,
+  connected: boolean
+): NexusHostListEntry[] {
+  const entries: NexusHostListEntry[] = [{ type: 'section', key: 'missions', title: 'Missões' }]
+  if (snapshot === null && connected) {
+    entries.push({ type: 'loading' })
+  } else if ((snapshot?.missions.length ?? 0) === 0) {
+    entries.push({ type: 'note', key: 'no-missions', text: 'nenhuma missão' })
+  } else {
+    for (const mission of snapshot?.missions.slice(0, 40) ?? []) {
+      entries.push({ type: 'mission', mission })
+    }
+  }
+  entries.push({ type: 'section', key: 'panes', title: 'Panes' })
+  for (const pane of snapshot?.panes ?? []) {
+    entries.push({ type: 'pane', pane })
+  }
+  if (snapshot && snapshot.panes.length === 0) {
+    entries.push({ type: 'note', key: 'no-panes', text: 'nenhum pane visível para este aparelho' })
+  }
+  return entries
+}
+
+function nexusHostListKey(entry: NexusHostListEntry): string {
+  switch (entry.type) {
+    case 'section':
+    case 'note':
+      return `${entry.type}:${entry.key}`
+    case 'loading':
+      return 'loading'
+    case 'mission':
+      return `mission:${entry.mission.id}`
+    case 'pane':
+      return `pane:${entry.pane.paneId}`
+  }
+}
+
+function NexusHostListRow({
+  entry,
+  activity,
+  onOpenPane
+}: {
+  entry: NexusHostListEntry
+  activity: NexusPaneActivityMap
+  onOpenPane: (pane: NexusPane) => void
+}) {
+  switch (entry.type) {
+    case 'section':
+      return <Text style={styles.section}>{entry.title}</Text>
+    case 'note':
+      return <Text style={styles.muted}>{entry.text}</Text>
+    case 'loading':
+      return <ActivityIndicator color={colors.textSecondary} />
+    case 'mission':
+      return (
+        <View style={styles.row}>
+          <Text style={styles.rowText} numberOfLines={1}>
+            {entry.mission.title}
+          </Text>
+          <Text style={styles.muted}>{entry.mission.status}</Text>
+        </View>
+      )
+    case 'pane': {
+      const item = entry.pane
+      const view: NexusPaneActivityView | null =
+        activity.get(item.paneId) ?? nexusActivityFromPaneState(item.state)
+      return (
+        <Pressable
+          style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+          onPress={() => onOpenPane(item)}
+          accessibilityRole="button"
+          accessibilityLabel={`Abrir pane ${item.title}`}
+        >
+          <Text style={styles.rowText} numberOfLines={1}>
+            {item.paneNumber ? `${item.paneNumber} · ` : ''}
+            {item.title}
+          </Text>
+          {/* MOB-05: atividade (ponto + palavra) no lugar do estado cru. */}
+          <NexusPaneActivityBadge view={view} fallback={item.state} />
+        </Pressable>
+      )
+    }
+  }
 }
 
 function NexusApprovals({
@@ -379,6 +474,7 @@ function NexusPaneDetail({
   nexus,
   client,
   state,
+  activity,
   onOpenWorkspace,
   onClosed
 }: {
@@ -387,6 +483,7 @@ function NexusPaneDetail({
   nexus: NonNullable<ReturnType<typeof nexusHostApiOf>>
   client: ReturnType<typeof useHostClient>['client']
   state: ConnectionState
+  activity: NexusPaneActivityView | null
   onOpenWorkspace: (view: NexusWorkspaceView) => void
   onClosed: () => void
 }) {
@@ -423,6 +520,8 @@ function NexusPaneDetail({
 
   return (
     <View style={styles.detail}>
+      {/* MOB-05 (F-1021): o que o agente deste pane está fazendo agora. */}
+      <NexusPaneActivityCard view={activity} />
       {/* F-1014: Git e arquivos do checkout deste pane, só leitura. */}
       <NexusWorkspaceOpeners onOpen={onOpenWorkspace} disabled={!connected} />
       <ScrollView
@@ -470,7 +569,6 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4 },
   dotOn: { backgroundColor: colors.statusGreen },
   dotOff: { backgroundColor: colors.textMuted },
-  dotBusy: { backgroundColor: colors.statusAmber },
   card: {
     margin: spacing.lg,
     padding: spacing.md,
@@ -487,7 +585,8 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.lg,
     marginTop: spacing.sm
   },
-  scroll: { padding: spacing.lg, gap: spacing.xs },
+  list: { flex: 1 },
+  scroll: { padding: spacing.lg },
   section: {
     color: colors.textSecondary,
     fontSize: typography.metaSize,
@@ -504,7 +603,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     borderRadius: radii.row,
     backgroundColor: colors.bgPanel,
-    minHeight: 44
+    minHeight: 44,
+    marginBottom: spacing.xs
   },
   rowPressed: { backgroundColor: colors.bgRaised },
   rowText: { flex: 1, color: colors.textPrimary, fontSize: typography.bodySize },

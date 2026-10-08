@@ -74,6 +74,8 @@ import {
   resolveRemotePaneWorkspace,
 } from './remote-workspace-rpc';
 import { createRemoteInputDedup, remoteInputMessageId } from './remote-input-dedup';
+// MOB-05 (F-1021)
+import { registerRemotePaneActivitySink, remotePaneActivity } from './remote-pane-activity';
 import {
   parseRemoteDeviceIdentity,
   verifyRemoteDeviceSignature,
@@ -780,6 +782,41 @@ approvalBroker.subscribe(() => {
   for (const ws of authenticatedClients.keys()) send(ws, { type: 'approvals.changed' });
 });
 
+// ---------------------------------------------------------------------------
+// MOB-05 (F-1021) — início. Atividade dos panes (trabalhando / pede você /
+// parado / encerrado) a partir dos sinais que o desktop já tem
+// (remote-pane-activity.ts). Push `pane.activity {paneId, activity, at}`, sem
+// nada da saída, só para aparelhos com escopo `read` (MOB-12) que podem LER o
+// pane (a regra de pane.read);
+// `pane.activity.list` devolve o estado atual dos panes legíveis, para o app
+// reconstruir o cartão depois de conectar.
+// ---------------------------------------------------------------------------
+
+registerRemotePaneActivitySink({
+  hasListeners: () => authenticatedClients.size > 0,
+  deliver: ({ sessionId, activity, at }) => {
+    const pane = getPaneAuthzInfo(sessionId);
+    if (!pane) return;
+    // isClientAuthenticated pode fechar/remover o cliente — itera uma cópia.
+    for (const ws of [...authenticatedClients.keys()]) {
+      // Escopo `read` do aparelho (MOB-12) E leitura do pane, como pane.read.
+      if (!isClientAuthenticated(ws) || !clientHasScope(ws, 'read')) continue;
+      const client = authenticatedClients.get(ws);
+      if (!client || !authorizePaneAccess(remoteCaller(client.scope), pane, 'read').allow) continue;
+      send(ws, { type: 'pane.activity', paneId: pane.paneId, activity, at });
+    }
+  },
+});
+
+function remotePaneActivityFor(scope: ProjectExecutionScope) {
+  return remotePaneActivity.list().flatMap(({ sessionId, activity, at }) => {
+    const pane = getPaneAuthzInfo(sessionId);
+    if (!pane || !authorizePaneAccess(remoteCaller(scope), pane, 'read').allow) return [];
+    return [{ paneId: pane.paneId, activity, at }];
+  });
+}
+// MOB-05 (F-1021) — fim.
+
 async function respondToApprovalFromRemote(
   msg: AuthedBridgeCommand,
   scope: ProjectExecutionScope,
@@ -1077,6 +1114,9 @@ export async function handleAuthedMessage(
       return remoteFilesList(resolveRemotePaneWorkspace(msg.paneId, scope), msg.path);
     case 'files.read':
       return remoteFilesRead(resolveRemotePaneWorkspace(msg.paneId, scope), msg.path);
+    // MOB-05 (F-1021): atividade atual dos panes que este aparelho lê.
+    case 'pane.activity.list':
+      return { panes: remotePaneActivityFor(scope) };
     default:
       throw new Error(`unknown command: ${msg.type}`);
   }
