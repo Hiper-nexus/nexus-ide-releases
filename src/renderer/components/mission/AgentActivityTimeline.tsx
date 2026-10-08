@@ -36,6 +36,9 @@ export interface TimelineItemModel {
   readonly status: 'running' | 'completed' | 'failed';
   readonly detail?: string;
   readonly icon: PixelIconName;
+  /** Origem estável do evento (WEB-17): run do journal e pane, quando houver. */
+  readonly runId?: string;
+  readonly paneId?: string;
 }
 
 function classifyToolKind(toolName: string): { kind: ToolKind; label: string; icon: PixelIconName } {
@@ -203,6 +206,16 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
         });
         break;
     }
+
+    // Todo evento vira exatamente um item: a origem vai junto (WEB-17).
+    const last = items[items.length - 1];
+    if (last && last.id === event.id) {
+      items[items.length - 1] = {
+        ...last,
+        runId: event.runId,
+        ...(typeof p.paneId === 'string' && p.paneId ? { paneId: p.paneId } : {}),
+      };
+    }
   }
 
   return items.sort((a, b) => a.sequence - b.sequence);
@@ -247,12 +260,14 @@ const TimelineRow = memo(function TimelineRow({
   total,
   expanded,
   onToggle,
+  onQuote,
 }: {
   readonly item: TimelineItemModel;
   readonly position: number;
   readonly total: number;
   readonly expanded: boolean;
   readonly onToggle: (id: string) => void;
+  readonly onQuote?: (item: TimelineItemModel) => void;
 }) {
   const hasDetail = Boolean(item.detail);
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -264,7 +279,7 @@ const TimelineRow = memo(function TimelineRow({
   return (
     <div
       ref={rowRef}
-      className={`agent-timeline__item agent-timeline__item--${item.status} agent-timeline__item--${item.kind}`}
+      className={`agent-timeline__item agent-timeline__item--${item.status} agent-timeline__item--${item.kind}${onQuote ? ' agent-timeline__item--quotable' : ''}`}
       role="listitem"
       // Só a janela visível existe no DOM: posição e total vêm dos dados.
       aria-posinset={position}
@@ -318,6 +333,21 @@ const TimelineRow = memo(function TimelineRow({
           </div>
         )}
       </div>
+
+      {/* Irmão do card, nunca dentro dele: botão dentro de role=button não
+          tem nome nem foco confiáveis. */}
+      {onQuote && (
+        <button
+          type="button"
+          className="agent-timeline__quote"
+          aria-label={`Citar ${item.title} #${item.sequence} na orientação`}
+          title="Citar na orientação, com a origem do evento"
+          onClick={() => onQuote(item)}
+        >
+          <PixelIcon name="link" size={10} />
+          <span>Citar</span>
+        </button>
+      )}
     </div>
   );
 });
@@ -326,11 +356,17 @@ export function AgentActivityTimeline({
   events,
   missionId,
   totalCount,
+  onQuote,
 }: {
   readonly events: readonly MissionEvent[];
   readonly missionId: string;
   /** F-1005: total do journal no Main; maior que o carregado vira "N de total". */
   readonly totalCount?: number;
+  /**
+   * WEB-17: presente só quando a missão aceita orientação — cada item ganha
+   * "Citar", que leva o trecho e a origem do evento ao composer.
+   */
+  readonly onQuote?: (item: TimelineItemModel) => void;
 }) {
   const [filter, setFilter] = useState<ActivityCategory>('all');
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
@@ -390,16 +426,17 @@ export function AgentActivityTimeline({
         total={data.length}
         expanded={Boolean(expandedIds[item.id])}
         onToggle={toggleExpanded}
+        onQuote={onQuote}
       />
     ),
-    [expandedIds, toggleExpanded],
+    [expandedIds, toggleExpanded, onQuote],
   );
 
-  // Linhas visíveis re-renderizam quando um card abre/fecha ou o total muda
-  // (aria-setsize).
+  // Linhas visíveis re-renderizam quando um card abre/fecha, o total muda
+  // (aria-setsize) ou a citação liga/desliga.
   const listExtraData = useMemo(
-    () => ({ expandedIds, total: filteredItems.length }),
-    [expandedIds, filteredItems.length],
+    () => ({ expandedIds, total: filteredItems.length, quotable: Boolean(onQuote) }),
+    [expandedIds, filteredItems.length, onQuote],
   );
 
   const reducedMotion = usePrefersReducedMotion();

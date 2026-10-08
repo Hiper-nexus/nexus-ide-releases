@@ -20,6 +20,8 @@ import {
   type PaneScopeEntry,
 } from '../../lib/pane-spaces';
 import { usePaneScopeStore } from '../../state/pane-scope-store';
+import { useTabOrderStore } from '../../state/tab-order-store';
+import { applyTabOrder, mergeTabOrder, moveTabKey } from '../../lib/tab-drag';
 import { useSessionStateStore } from '../../state/session-state-store';
 import { useToastStore } from '../../state/toast-store';
 import {
@@ -180,21 +182,39 @@ export function TerminalWorkspace({
     () => paneScopeResolver(panes, paneMissions),
     [panes, paneMissions],
   );
+  // WEB-13: a ordem escolhida pelo operador vale para a barra, o ⌘/Ctrl+Alt+←/→
+  // e o "primeiro escopo" de fallback — uma ordem só na vista.
+  const tabOrder = useTabOrderStore((state) => state.order);
   const scopes = useMemo(
     () =>
-      listPaneScopes({
-        panes,
-        paneMissions,
-        missions: missionSummaries.map((summary) => ({
-          id: summary.id,
-          title: summary.title,
-          state: summary.state,
-          ...(summary.stateReason?.code
-            ? { stateReasonCode: summary.stateReason.code }
-            : {}),
-        })),
-      }),
-    [panes, paneMissions, missionSummaries],
+      applyTabOrder(
+        listPaneScopes({
+          panes,
+          paneMissions,
+          missions: missionSummaries.map((summary) => ({
+            id: summary.id,
+            title: summary.title,
+            state: summary.state,
+            ...(summary.stateReason?.code
+              ? { stateReasonCode: summary.stateReason.code }
+              : {}),
+          })),
+        }),
+        tabOrder,
+      ),
+    [panes, paneMissions, missionSummaries, tabOrder],
+  );
+  const moveTab = useCallback(
+    (scopeKey: string, toIndex: number) => {
+      const store = useTabOrderStore.getState();
+      const visible = moveTabKey(
+        scopes.map((scope) => scope.key),
+        scopeKey,
+        toIndex,
+      );
+      store.setOrder(mergeTabOrder(store.order, visible));
+    },
+    [scopes],
   );
 
   // Escopo desenhado agora. Dentro da missão é a própria missão, sempre. Na
@@ -605,6 +625,7 @@ export function TerminalWorkspace({
           onTabPaneCreated={handleTabPaneCreated}
           onNewMission={() => useProductNavigationStore.getState().openNewMission()}
           onStartTabMission={(scope) => void startTabMission(scope)}
+          onMoveTab={moveTab}
         />
       )}
 

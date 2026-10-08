@@ -9,7 +9,30 @@ export const USAGE_CHANNELS = {
   changed: 'usage:changed',
   /** Totais de VIDA ÚTIL (todos os escopos) — alimenta o perfil do operador. */
   lifetime: 'usage:lifetime',
+  /** Rollup diário limitado (todos os escopos) — gráfico de Uso e cotas. */
+  history: 'usage:history',
 } as const;
+
+/** Teto do rollup diário persistido: o gráfico nunca pede mais que isso. */
+export const USAGE_HISTORY_MAX_DAYS = 90;
+
+/** Consumo de UM dia local (YYYY-MM-DD), somado em todos os escopos. */
+export interface UsageDailyBucket {
+  readonly day: string;
+  /** input + output, a mesma conta de `tokensBurned` do perfil. */
+  readonly tokens: number;
+  /** Equivalente de API pública — não é fatura nem débito do plano. */
+  readonly usdEquivalent: number;
+  readonly turns: number;
+}
+
+export interface UsageHistory {
+  /** Dias com consumo, do mais antigo ao mais novo; no máximo 90. */
+  readonly days: readonly UsageDailyBucket[];
+  /** Quando o rollup começou a contar (instalação ou atualização). */
+  readonly since: number;
+  readonly updatedAt: number;
+}
 
 export interface PaneUsage {
   paneId: string;

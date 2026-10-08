@@ -10,9 +10,9 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 
 | Classificação | Nº | IDs |
 |---|---|---|
-| Integrado e acessível | 32 | WEB-01..11; MOB-01, MOB-02, MOB-03, MOB-05, MOB-07, MOB-09, MOB-11, MOB-12, MOB-13; ORC-03, ORC-05, ORC-10; DSK-01..06; QLT-01, QLT-05, QLT-11 (parcial) |
+| Integrado e acessível | 35 | WEB-01..12, WEB-13 (parcial), WEB-17; MOB-01, MOB-02, MOB-03, MOB-05, MOB-07, MOB-09, MOB-11, MOB-12, MOB-13; ORC-03, ORC-05, ORC-10; DSK-01..06; QLT-01, QLT-05, QLT-11 (parcial) |
 | Equivalente existente | 1 | MOB-06 |
-| Pendente | 30 | WEB-12..18; MOB-04, MOB-08, MOB-10, MOB-14; ORC-01, ORC-02, ORC-04, ORC-06, ORC-07, ORC-08; DSK-07..11; QLT-02, QLT-03, QLT-04, QLT-06..10 |
+| Pendente | 27 | WEB-14..16, WEB-18; MOB-04, MOB-08, MOB-10, MOB-14; ORC-01, ORC-02, ORC-04, ORC-06, ORC-07, ORC-08; DSK-07..11; QLT-02, QLT-03, QLT-04, QLT-06..10 |
 | Incompatível | 1 | ORC-09 |
 
 ## Tabela
@@ -30,12 +30,12 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 | WEB-09 | Paleta de comandos/arquivos/conteúdo | integrado | `lib/command-palette-logic.ts`; `App.tsx:51` | — |
 | WEB-10 | Importar tema do VS Code | integrado | `styles/vscode-theme-import.ts`; `settings/AppearanceSection.tsx:12` | — |
 | WEB-11 | Atalhos configuráveis | integrado | `lib/keybindings.ts`; `settings/CatalogSectionsOps.tsx:35` | — |
-| WEB-12 | Uso histórico em SVG | pendente (M) | sem gráfico de histórico | `settings/UsageHistoryChart.tsx` + `UsageQuotaSection.tsx` |
-| WEB-13 | Rearranjo de abas/grupos | pendente (M) | sem drag de abas | `lib/tab-drag.ts` + hosts de aba |
+| WEB-12 | Uso histórico em SVG | integrado (F-1030) | rollup diário de 90 dias em `main/pet/pet-stats.ts` → `usage:history`; `settings/UsageHistoryChart.tsx` em `UsageQuotaSection.tsx` (código do Nexus, sem cópia do upstream) | — |
+| WEB-13 | Rearranjo de abas/grupos | integrado (F-1032, parcial) | `lib/tab-drag.ts` + `state/tab-order-store.ts`; arraste, Alt+Shift+←/→ e menu em `product/WorkspaceTabs.tsx`, ordem aplicada em `TerminalWorkspace.tsx` (código do Nexus, sem cópia do upstream) | só dentro da barra única; o Nexus não tem grupos de abas entre os quais mover |
 | WEB-14 | Markdown incremental e Mermaid | pendente (M) | markdown básico existe; sem incremental/Mermaid no desktop | renderer de mensagem |
 | WEB-15 | Referências inline e @menções | pendente (M) | sem referência inline | `lib/inline-references.ts` + composer |
 | WEB-16 | Editor Tiptap | pendente (G) | `tiptap` ausente | decisão de dependência antes |
-| WEB-17 | Citar resposta com origem estável | pendente (M) | sem citação | `lib/quote-reference.ts` + chat |
+| WEB-17 | Citar resposta com origem estável | integrado (F-1031) | `lib/quote-reference.ts`; "Citar" em `mission/AgentActivityTimeline.tsx` → `DirectionComposer` da barra do `MissionBoard.tsx` (código do Nexus, sem cópia do upstream) | Lista simples e aba Conversa sem citação |
 | WEB-18 | Importação guiada de histórico de CLI | pendente (G) | sem importador | módulo + UI |
 | MOB-01 | Virtualização Legend | integrado | `MobileLegendList.tsx` nas listas do caminho Orca e do host Nexus: missões/panes (`NexusHostScreen.tsx`), alterações, pastas, diff e leitura (`NexusPaneWorkspace.tsx`) (F-1021) | — |
 | MOB-02 | Diff por chunks com realce | integrado | `source-control/mobile-review-*`; no host Nexus por `NexusPaneWorkspace.tsx` com os dados de `git.diff` da bridge (F-1014) | — |

@@ -9,7 +9,7 @@ import { useFilesStore } from '../../state/files-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useContextualPanelNavStore } from '../../state/contextual-panel-nav-store';
 import { DirectionComposer } from './DirectionComposer';
-import { AgentActivityTimeline } from './AgentActivityTimeline';
+import { AgentActivityTimeline, type TimelineItemModel } from './AgentActivityTimeline';
 
 /**
  * F-1005: o renderer só tem a janela que o Main paginou. `total` é o tamanho
@@ -30,6 +30,8 @@ interface MissionInspectorProps {
   readonly question: ReactNode;
   readonly onOpenTerminals?: () => void;
   readonly journal?: MissionJournalHistory;
+  /** WEB-17: "Citar" na timeline; ausente quando a missão não aceita orientação. */
+  readonly onQuoteActivity?: (item: TimelineItemModel) => void;
 }
 
 const TABS = [
@@ -822,10 +824,12 @@ function ActivityProjection({
   snapshot,
   events,
   journal,
+  onQuoteActivity,
 }: {
   readonly snapshot: MissionSnapshot;
   readonly events: readonly MissionEvent[];
   readonly journal?: MissionJournalHistory;
+  readonly onQuoteActivity?: (item: TimelineItemModel) => void;
 }) {
   const [viewMode, setViewMode] = useState<'timeline' | 'canonical'>('canonical');
   const items = normalizedActivity(events, snapshot.id);
@@ -895,6 +899,7 @@ function ActivityProjection({
               events={events}
               missionId={snapshot.id}
               totalCount={journal?.total ?? undefined}
+              onQuote={onQuoteActivity}
             />
           ) : (
             <ol className="mission-inspector__activity-list">
@@ -1091,6 +1096,7 @@ function InspectorPanelContent({
   onCommand,
   question,
   journal,
+  onQuoteActivity,
 }: MissionInspectorProps & {
   readonly tab: InspectorTab;
   readonly selectedAgentId: string | null;
@@ -1110,7 +1116,14 @@ function InspectorPanelContent({
         />
       );
     case 'activity':
-      return <ActivityProjection snapshot={snapshot} events={events} journal={journal} />;
+      return (
+        <ActivityProjection
+          snapshot={snapshot}
+          events={events}
+          journal={journal}
+          onQuoteActivity={onQuoteActivity}
+        />
+      );
     case 'team':
       return <TeamProjection snapshot={snapshot} />;
     case 'result':
@@ -1125,6 +1138,7 @@ export function MissionInspector({
   question,
   onOpenTerminals,
   journal,
+  onQuoteActivity,
 }: MissionInspectorProps) {
   const activeTab = useMissionInspectorStore((state) => state.tab);
   const selectedAgentId = useMissionInspectorStore(
@@ -1224,6 +1238,7 @@ export function MissionInspector({
               onCommand={onCommand}
               question={question}
               journal={journal}
+              onQuoteActivity={onQuoteActivity}
             />
           </div>
         );

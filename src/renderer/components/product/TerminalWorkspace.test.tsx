@@ -8,6 +8,7 @@ import { buildGridTree, listPanes } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
 import { useOrchStore } from '../../state/orch-store';
 import { usePaneScopeStore } from '../../state/pane-scope-store';
+import { TAB_ORDER_STORAGE_KEY, useTabOrderStore } from '../../state/tab-order-store';
 import {
   ALL_SCOPES_KEY,
   LOOSE_SCOPE_KEY,
@@ -744,6 +745,35 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
       ),
     ).toEqual(['1', '2']);
     expect(activeChipLabel(host)).toBe('Meus terminais 2');
+  });
+
+  it('WEB-13: Alt+Shift+← reordena as abas, guarda a ordem e mantém o foco na aba movida', () => {
+    seedMissionPlusSpace();
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('space-novo'));
+    try {
+      const { host } = mount(<TerminalWorkspace />);
+      const spaceTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')!;
+      spaceTab.focus();
+      act(() => {
+        spaceTab.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, shiftKey: true, bubbles: true }),
+        );
+      });
+
+      expect(chipLabels(host)).toEqual(['Meus terminais 2', 'Missão A']);
+      expect(document.activeElement?.getAttribute('data-scope-key')).toBe(spaceScopeKey('space-novo'));
+      expect(useTabOrderStore.getState().order.slice(0, 2)).toEqual([
+        spaceScopeKey('space-novo'),
+        missionScopeKey('mission-a'),
+      ]);
+      expect(JSON.parse(window.localStorage.getItem(TAB_ORDER_STORAGE_KEY) ?? '[]')).toEqual(
+        useTabOrderStore.getState().order,
+      );
+      // A aba ativa não muda por mover: só a posição.
+      expect(activeChipLabel(host)).toBe('Meus terminais 2');
+    } finally {
+      useTabOrderStore.getState().setOrder([]);
+    }
   });
 
   it('exibe o botão Nova missão na barra de abas e aciona openNewMission', () => {

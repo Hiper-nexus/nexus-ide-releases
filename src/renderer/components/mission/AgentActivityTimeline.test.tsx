@@ -649,3 +649,39 @@ describe('AgentActivityTimeline', () => {
     }
   });
 });
+
+describe('AgentActivityTimeline — citar resposta (WEB-17)', () => {
+  const paneEvents: MissionEvent[] = [
+    ...sampleEvents.slice(0, 2),
+    { ...sampleEvents[2]!, payload: { ...sampleEvents[2]!.payload, paneId: 'pane-7' } },
+  ];
+
+  it('cada item traz a origem do journal: run e pane, quando houver', () => {
+    const items = parseTimelineItems(paneEvents, 'm-1');
+    expect(items[0]).toMatchObject({ id: 'evt-1', runId: 'r-1' });
+    expect(items[0]).not.toHaveProperty('paneId');
+    expect(items[2]).toMatchObject({ id: 'evt-3', sequence: 3, runId: 'r-1', paneId: 'pane-7' });
+  });
+
+  it('sem onQuote não há botão; com onQuote, "Citar" entrega o item clicado', async () => {
+    const plain = render(<AgentActivityTimeline events={paneEvents} missionId="m-1" />);
+    await settle();
+    expect(plain.querySelector('.agent-timeline__quote')).toBeNull();
+
+    const onQuote = vi.fn();
+    const host = render(<AgentActivityTimeline events={paneEvents} missionId="m-1" onQuote={onQuote} />);
+    await settle();
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('.agent-timeline__quote')];
+    expect(buttons).toHaveLength(3);
+    expect(buttons[2]!.getAttribute('aria-label')).toBe('Citar Shell #3 na orientação');
+    // O botão é irmão do card, nunca descendente de role=button.
+    expect(buttons[2]!.closest('[role="button"]')).toBeNull();
+
+    act(() => buttons[2]!.click());
+    expect(onQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'evt-3', paneId: 'pane-7', detail: '18 tests passed' }),
+    );
+    // Citar não abre nem fecha o detalhe do card.
+    expect(host.querySelector('.agent-timeline__pre')).toBeNull();
+  });
+});

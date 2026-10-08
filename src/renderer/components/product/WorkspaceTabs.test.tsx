@@ -401,6 +401,122 @@ describe('WorkspaceTabs — estado com motivo (F-198/F-373)', () => {
   });
 });
 
+describe('WorkspaceTabs — reordenar (WEB-13)', () => {
+  function fakeDataTransfer() {
+    const data = new Map<string, string>();
+    return {
+      data,
+      dropEffect: 'none',
+      effectAllowed: 'all',
+      get types() {
+        return [...data.keys()];
+      },
+      setData: (type: string, value: string) => data.set(type, value),
+      getData: (type: string) => data.get(type) ?? '',
+    };
+  }
+
+  function drag(target: Element, type: string, transfer: ReturnType<typeof fakeDataTransfer>, clientX = 0) {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX });
+    Object.defineProperty(event, 'dataTransfer', { value: transfer });
+    act(() => {
+      target.dispatchEvent(event);
+    });
+    return event;
+  }
+
+  it('sem onMoveTab a barra não arrasta nem oferece mover', () => {
+    const { host } = render();
+    const tab = host.querySelector('.workspace-tab')!;
+    expect(tab.getAttribute('draggable')).toBe('false');
+    act(() => {
+      tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    });
+    const labels = [...document.querySelectorAll('[role="menuitem"] strong')].map((item) => item.textContent);
+    expect(labels).not.toContain('Mover para a direita');
+  });
+
+  it('Alt+Shift+→ move a aba focada e anuncia a nova posição', () => {
+    const onMoveTab = vi.fn();
+    const { host } = render({ onMoveTab });
+    const first = host.querySelector<HTMLButtonElement>('[role="tab"]')!;
+    expect(first.getAttribute('aria-keyshortcuts')).toBe('Alt+Shift+ArrowLeft Alt+Shift+ArrowRight');
+    expect(first.getAttribute('title')).toContain('Arraste para mudar a ordem');
+    first.focus();
+
+    act(() => {
+      first.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, shiftKey: true, bubbles: true }),
+      );
+    });
+    expect(onMoveTab).toHaveBeenCalledWith('space:a', 1);
+    expect(host.querySelector('.workspace-tabs__live')?.textContent).toBe(
+      'Aba Checkout movida para a posição 2 de 3.',
+    );
+
+    // Na ponta esquerda, ← não faz nada.
+    act(() => {
+      first.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, shiftKey: true, bubbles: true }),
+      );
+    });
+    expect(onMoveTab).toHaveBeenCalledTimes(1);
+  });
+
+  it('o menu da aba oferece mover só para os lados que existem', () => {
+    const onMoveTab = vi.fn();
+    const { host } = render({ onMoveTab });
+    const labelsFor = (kind: string) => {
+      act(() => {
+        host
+          .querySelector(`.workspace-tab[data-scope-kind="${kind}"]`)!
+          .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+      });
+      return [...document.querySelectorAll('[role="menuitem"] strong')].map((item) => item.textContent);
+    };
+
+    expect(labelsFor('space')).toEqual(['Mover para a direita', 'Renomear', 'Fechar a aba']);
+    expect(labelsFor('loose')).toEqual(['Ver ao lado', 'Mover para a esquerda', 'Renomear', 'Fechar a aba']);
+    act(() => {
+      [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+        .find((item) => item.textContent?.includes('Mover para a esquerda'))!
+        .click();
+    });
+    expect(onMoveTab).toHaveBeenCalledWith('__loose__', 1);
+  });
+
+  it('arrastar e soltar depois de outra aba move para a posição dela', () => {
+    const onMoveTab = vi.fn();
+    const { host } = render({ onMoveTab });
+    const [first, , last] = [...host.querySelectorAll('.workspace-tab')];
+    const transfer = fakeDataTransfer();
+
+    drag(first!, 'dragstart', transfer);
+    expect(transfer.getData('application/x-nexus-workspace-tab')).toBe('space:a');
+    expect(first!.hasAttribute('data-dragging')).toBe(true);
+
+    const over = drag(last!, 'dragover', transfer, 10);
+    expect(over.defaultPrevented).toBe(true);
+    expect(last!.getAttribute('data-drop')).toBe('after');
+
+    drag(last!, 'drop', transfer, 10);
+    expect(onMoveTab).toHaveBeenCalledWith('space:a', 2);
+    expect(first!.hasAttribute('data-dragging')).toBe(false);
+    expect(last!.hasAttribute('data-drop')).toBe(false);
+  });
+
+  it('arraste que não é de aba (arquivo) passa direto pela barra', () => {
+    const onMoveTab = vi.fn();
+    const { host } = render({ onMoveTab });
+    const transfer = fakeDataTransfer();
+    transfer.setData('Files', '');
+    const over = drag(host.querySelector('.workspace-tab')!, 'dragover', transfer, 10);
+    expect(over.defaultPrevented).toBe(false);
+    drag(host.querySelector('.workspace-tab')!, 'drop', transfer, 10);
+    expect(onMoveTab).not.toHaveBeenCalled();
+  });
+});
+
 describe('workspaceTabIsClosable / workspaceTabTone', () => {
   it('aba só de terminais fecha; com missão viva ou desconhecida, não', () => {
     expect(workspaceTabIsClosable(SCOPES[0]!)).toBe(true);

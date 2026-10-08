@@ -2,7 +2,12 @@ import { promises as asyncFs } from 'node:fs';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { PetLifetimeStats, PetTier } from '../../shared/pet-types';
-import type { UsageSnapshot } from '../../shared/usage-types';
+import {
+  USAGE_HISTORY_MAX_DAYS,
+  type UsageDailyBucket,
+  type UsageHistory,
+  type UsageSnapshot,
+} from '../../shared/usage-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 
 /**
@@ -39,8 +44,29 @@ interface PetStatsFile {
    * apagado, o total global não regride no HUD.
    */
   peakCounters: Record<string, number>;
+  /** Rollup diário limitado (WEB-12); ausente em arquivos anteriores. */
+  history?: HistoryFile;
   updatedAt: number;
 }
+
+interface HistoryTotals {
+  tokens: number;
+  usd: number;
+  turns: number;
+}
+
+interface HistoryFile {
+  /**
+   * Marca d'água por escopo: o maior total cumulativo já atribuído a algum
+   * dia. Só o que passa dela é consumo novo daquele escopo.
+   */
+  scopeMarks: Record<string, HistoryTotals>;
+  days: UsageDailyBucket[];
+  since: number;
+}
+
+/** Teto de escopos com marca persistida (os mais antigos saem primeiro). */
+const HISTORY_SCOPE_CAP = 256;
 
 interface ScopeTotals {
   tokens: number;
@@ -80,6 +106,7 @@ export function loadPetStatsFile(userDataDir: string): PetStatsFile {
     const parsed = JSON.parse(raw) as Partial<PetStatsFile>;
     const base = emptyFile();
     const peak = parsed.peak ?? base.peak;
+    const history = sanitizeHistory(parsed.history);
     return {
       peak: {
         tokensBurned: isFiniteNonNegative(peak.tokensBurned)
@@ -103,11 +130,63 @@ export function loadPetStatsFile(userDataDir: string): PetStatsFile {
         ? parsed.missionsDone
         : 0,
       peakCounters: sanitizeCounters(parsed.peakCounters),
+      ...(history ? { history } : {}),
       updatedAt: isFiniteNonNegative(parsed.updatedAt) ? parsed.updatedAt : 0,
     };
   } catch {
     return emptyFile();
   }
+}
+
+const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/u;
+
+/** Dia LOCAL do operador (o gráfico fala no "hoje" do relógio dele). */
+export function usageDayKey(at: number): string {
+  const date = new Date(at);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function sanitizeHistory(raw: unknown): HistoryFile | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as Partial<HistoryFile>;
+  if (!isFiniteNonNegative(value.since)) return null;
+  const scopeMarks: Record<string, HistoryTotals> = {};
+  const rawMarks =
+    value.scopeMarks && typeof value.scopeMarks === 'object' ? value.scopeMarks : {};
+  for (const [key, raw] of Object.entries(rawMarks).slice(-HISTORY_SCOPE_CAP)) {
+    const mark = (raw ?? {}) as Partial<HistoryTotals>;
+    scopeMarks[key] = {
+      tokens: isFiniteNonNegative(mark.tokens) ? mark.tokens : 0,
+      usd: isFiniteNonNegative(mark.usd) ? mark.usd : 0,
+      turns: isFiniteNonNegative(mark.turns) ? mark.turns : 0,
+    };
+  }
+  const byDay = new Map<string, UsageDailyBucket>();
+  for (const entry of Array.isArray(value.days) ? value.days : []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const bucket = entry as Partial<UsageDailyBucket>;
+    if (typeof bucket.day !== 'string' || !DAY_KEY_RE.test(bucket.day)) continue;
+    byDay.set(bucket.day, {
+      day: bucket.day,
+      tokens: isFiniteNonNegative(bucket.tokens) ? bucket.tokens : 0,
+      usdEquivalent: isFiniteNonNegative(bucket.usdEquivalent) ? bucket.usdEquivalent : 0,
+      turns: isFiniteNonNegative(bucket.turns) ? bucket.turns : 0,
+    });
+  }
+  return {
+    scopeMarks,
+    days: boundDays([...byDay.values()]),
+    since: value.since,
+  };
+}
+
+/** Ordena por dia e guarda só os últimos 90 — o arquivo nunca cresce sem teto. */
+function boundDays(days: readonly UsageDailyBucket[]): UsageDailyBucket[] {
+  return [...days]
+    .sort((a, b) => a.day.localeCompare(b.day))
+    .slice(-USAGE_HISTORY_MAX_DAYS);
 }
 
 function sanitizeCounters(raw: unknown): Record<string, number> {
@@ -168,17 +247,30 @@ export function petTierForLevel(level: number): PetTier {
   return 'RECRUTA';
 }
 
+export interface PetLifetimeTrackerOptions {
+  /** Relógio injetável (testes); o dia do rollup sai dele. */
+  readonly now?: () => number;
+}
+
 export class PetLifetimeTracker {
   readonly #userDataDir: string;
+  readonly #now: () => number;
   #file: PetStatsFile;
+  #history: HistoryFile;
   readonly #scopes = new Map<string, ScopeTotals>();
   /** Último mapa de entregas por escopo — mesmo padrão last-snapshot-per-scope. */
   readonly #xpScopes = new Map<string, Record<string, number>>();
   #dirty = false;
 
-  constructor(userDataDir: string) {
+  constructor(userDataDir: string, options: PetLifetimeTrackerOptions = {}) {
     this.#userDataDir = userDataDir;
+    this.#now = options.now ?? Date.now;
     this.#file = loadPetStatsFile(userDataDir);
+    this.#history = this.#file.history ?? {
+      scopeMarks: {},
+      days: [],
+      since: this.#now(),
+    };
   }
 
   /** Chave estável do escopo — espelha scopeKey() da gamificação. */
@@ -196,14 +288,81 @@ export class PetLifetimeTracker {
         (paneId) => `${PetLifetimeTracker.scopeKey(scope)}::${paneId}`,
       ),
     );
-    this.#scopes.set(PetLifetimeTracker.scopeKey(scope), {
+    const key = PetLifetimeTracker.scopeKey(scope);
+    const totals = {
       tokens: snap.global.inputTokens + snap.global.outputTokens,
       usd: snap.global.costUsd,
-      mediaUsd: snap.media.costUsd,
       turns: snap.global.turns,
+    };
+    this.#scopes.set(key, {
+      ...totals,
+      mediaUsd: snap.media.costUsd,
       paneIds,
     });
+    this.#rollupDay(key, totals);
     this.#dirty = true;
+  }
+
+  /**
+   * Atribui ao dia de hoje só o que o total cumulativo do escopo passou da
+   * marca d'água dele. Depois de um restart o escopo volta com o mesmo total
+   * e reencontra a marca: nada é contado duas vezes. Escopo visto pela
+   * primeira vez vira linha de base (o histórico de transcripts importado
+   * num boot não cai de uma vez no dia de hoje); escopo apagado não trava a
+   * contagem dos outros.
+   */
+  #rollupDay(key: string, totals: HistoryTotals): void {
+    const mark = this.#history.scopeMarks[key];
+    // Banco do escopo recriado (total encolheu): nova linha de base, senão o
+    // consumo dele só voltaria a contar depois de passar o total antigo.
+    const shrank =
+      mark !== undefined && (totals.tokens < mark.tokens || totals.turns < mark.turns);
+    if (!mark || shrank) {
+      const scopeMarks = { ...this.#history.scopeMarks, [key]: totals };
+      const keys = Object.keys(scopeMarks);
+      for (const stale of keys.slice(0, Math.max(0, keys.length - HISTORY_SCOPE_CAP))) {
+        delete scopeMarks[stale];
+      }
+      this.#history = { ...this.#history, scopeMarks };
+      return;
+    }
+    const delta = {
+      tokens: Math.max(0, totals.tokens - mark.tokens),
+      usd: Math.max(0, totals.usd - mark.usd),
+      turns: Math.max(0, totals.turns - mark.turns),
+    };
+    if (delta.tokens === 0 && delta.usd === 0 && delta.turns === 0) return;
+    const day = usageDayKey(this.#now());
+    const today = this.#history.days.find((bucket) => bucket.day === day);
+    this.#history = {
+      scopeMarks: {
+        ...this.#history.scopeMarks,
+        [key]: {
+          tokens: Math.max(totals.tokens, mark.tokens),
+          usd: Math.max(totals.usd, mark.usd),
+          turns: Math.max(totals.turns, mark.turns),
+        },
+      },
+      days: boundDays([
+        ...this.#history.days.filter((bucket) => bucket.day !== day),
+        {
+          day,
+          tokens: (today?.tokens ?? 0) + delta.tokens,
+          usdEquivalent: (today?.usdEquivalent ?? 0) + delta.usd,
+          turns: (today?.turns ?? 0) + delta.turns,
+        },
+      ]),
+      since: this.#history.since,
+    };
+  }
+
+  /** Rollup diário para o gráfico de Uso e cotas (cópia, nunca o estado vivo). */
+  history(): UsageHistory {
+    return {
+      days: this.#history.days.map((bucket) => ({ ...bucket })),
+      since: this.#history.since,
+      updatedAt: this.#now(),
+    };
   }
 
   /**
@@ -348,6 +507,7 @@ export class PetLifetimeTracker {
           ),
         ]),
       ),
+      history: this.#history,
       updatedAt: Date.now(),
     };
   }
