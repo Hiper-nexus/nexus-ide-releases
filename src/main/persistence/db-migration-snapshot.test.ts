@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -244,5 +245,103 @@ describe('retenção dos snapshots', () => {
     );
     pruneDbMigrationSnapshots(file);
     expect(snapshotFiles(file).sort()).toEqual(names.slice(-MAX_DB_SNAPSHOTS).sort());
+  });
+});
+
+describe('estado de migração hostil no disco (lido antes de abrir o banco)', () => {
+  const snapshotNames = [1, 2, 3, 4, 5].map(
+    (i) => `nexus-schema-20-to-22-app-1.0.${i}-${1_000 + i}.db`,
+  );
+
+  function validState(phase: string, snapshot = snapshotNames[0]): string {
+    return JSON.stringify({
+      version: 1,
+      phase,
+      snapshot,
+      appVersion: '1.0.1',
+      fromSchema: 20,
+      toSchema: 22,
+      createdAt: 1_001,
+    });
+  }
+
+  function seedSnapshots(dir: string): void {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const name of snapshotNames) fs.writeFileSync(path.join(dir, name), 'x');
+  }
+
+  it.skipIf(process.platform === 'win32')(
+    'FIFO sem escritor no lugar do estado: o boot não pendura e os dados seguem intactos',
+    async () => {
+      const file = tempNexusDb();
+      seedLegacyDb(file);
+      fs.mkdirSync(dbSnapshotDir(file));
+      execFileSync('mkfifo', [path.join(dbSnapshotDir(file), 'migration-state.json')]);
+      const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      expect(readDbMigrationState(file)).toBeNull();
+      expect(warnings.mock.calls.flat().join('\n')).toContain('ignorado');
+
+      const mod = await boot();
+      const db = mod.getDb();
+      expect(db).not.toBeNull();
+      expect(db!.prepare('SELECT id, name FROM squads ORDER BY id').all()).toEqual(OPERATOR_ROWS);
+      mod.closeDb();
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'symlink para /dev/zero no lugar do estado é recusado sem ler',
+    () => {
+      const file = tempNexusDb();
+      fs.mkdirSync(dbSnapshotDir(file));
+      fs.symlinkSync('/dev/zero', path.join(dbSnapshotDir(file), 'migration-state.json'));
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      expect(readDbMigrationState(file)).toBeNull();
+    },
+  );
+
+  it('symlink para um estado válido não é seguido e a retenção não apaga nada', () => {
+    const file = tempNexusDb();
+    const dir = dbSnapshotDir(file);
+    seedSnapshots(dir);
+    const outside = path.join(path.dirname(file), 'estado-plantado.json');
+    fs.writeFileSync(outside, validState('confirmed'));
+    fs.symlinkSync(outside, path.join(dir, 'migration-state.json'));
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(readDbMigrationState(file)).toBeNull();
+    expect(pruneDbMigrationSnapshots(file)).toEqual([]);
+    expect(snapshotFiles(file).sort()).toEqual([...snapshotNames].sort());
+    expect(warnings.mock.calls.flat().join('\n')).toContain('retenção suspensa');
+  });
+
+  it('estado acima do teto de bytes é recusado sem ser lido inteiro', () => {
+    const file = tempNexusDb();
+    fs.mkdirSync(dbSnapshotDir(file));
+    // JSON válido, só que inchado: o teto vale antes do parse.
+    fs.writeFileSync(
+      path.join(dbSnapshotDir(file), 'migration-state.json'),
+      validState('migrating') + ' '.repeat(128 * 1024),
+    );
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(readDbMigrationState(file)).toBeNull();
+  });
+
+  it('diretório de snapshots trocado por symlink: nada é lido nem apagado do alvo', () => {
+    const file = tempNexusDb();
+    const elsewhere = path.join(path.dirname(file), 'outro-lugar');
+    seedSnapshots(elsewhere);
+    fs.writeFileSync(path.join(elsewhere, 'migration-state.json'), validState('confirmed'));
+    fs.symlinkSync(elsewhere, dbSnapshotDir(file));
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(readDbMigrationState(file)).toBeNull();
+    expect(pruneDbMigrationSnapshots(file)).toEqual([]);
+    expect(fs.readdirSync(elsewhere).filter((name) => name.endsWith('.db'))).toHaveLength(
+      snapshotNames.length,
+    );
   });
 });

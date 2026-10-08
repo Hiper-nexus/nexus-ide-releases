@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { writeJsonAtomic } from '../util/atomic-write';
+import { readRegularFileCapped } from '../redline/redline-safe-read';
 import { sqliteFilePath } from '../runtime/project-runtime-migrations';
 
 /**
@@ -30,6 +31,8 @@ export const DB_SNAPSHOT_DIRNAME = 'db-snapshots';
 /** Poucos snapshots: proteção de disco, não racionamento (cada um é uma cópia cheia). */
 export const MAX_DB_SNAPSHOTS = 3;
 const STATE_FILE = 'migration-state.json';
+/** O estado tem ~300 bytes; o teto só impede leitura sem fim. */
+const STATE_MAX_BYTES = 64 * 1024;
 /** SQLite persists across the main file plus its WAL and shared-memory sidecars. */
 const DB_SIDECAR_SUFFIXES = ['-wal', '-shm'] as const;
 const SNAPSHOT_NAME = /^nexus-schema-(\d+)-to-(\d+)-app-([A-Za-z0-9._-]+)-(\d+)\.db$/;
@@ -60,10 +63,10 @@ function statePath(dbFile: string): string {
   return path.join(dbSnapshotDir(dbFile), STATE_FILE);
 }
 
-function pathExists(target: string): boolean {
+/** Snapshot restaurável: arquivo regular de verdade (symlink/FIFO não). */
+function isRegularFile(target: string): boolean {
   try {
-    fs.lstatSync(target);
-    return true;
+    return fs.lstatSync(target).isFile();
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw cause;
@@ -131,22 +134,57 @@ function isState(value: unknown): value is DbMigrationState {
   );
 }
 
-export function readDbMigrationState(dbFile: string): DbMigrationState | null {
-  let raw: string;
+type StateLoad =
+  | { kind: 'absent' }
+  | { kind: 'invalid'; reason: string }
+  | { kind: 'ok'; state: DbMigrationState };
+
+/**
+ * Lido no boot, ANTES de abrir o banco: nada aqui pode pendurar o Main. O
+ * diretório precisa ser real (não symlink) e o estado é lido por descritor
+ * (O_NONBLOCK | O_NOFOLLOW, fstat de arquivo regular, teto de bytes): um FIFO
+ * sem escritor ou um symlink para /dev/zero viram "estado inválido".
+ */
+function loadDbMigrationState(dbFile: string): StateLoad {
+  const dir = dbSnapshotDir(dbFile);
   try {
-    raw = fs.readFileSync(statePath(dbFile), 'utf8');
+    const stat = fs.lstatSync(dir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      return { kind: 'invalid', reason: `${dir} não é um diretório real` };
+    }
   } catch (cause) {
     const code = (cause as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
-    throw cause;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'absent' };
+    return { kind: 'invalid', reason: `${dir} inacessível (${code ?? 'erro'})` };
+  }
+  const read = readRegularFileCapped(statePath(dbFile), STATE_MAX_BYTES, undefined, {
+    noFollow: true,
+  });
+  if (read.kind === 'none' && read.stamp === 'missing') return { kind: 'absent' };
+  if (read.kind !== 'text') {
+    const why = read.kind === 'none' ? read.stamp : read.kind;
+    return { kind: 'invalid', reason: `não é um arquivo regular legível até ${STATE_MAX_BYTES} bytes (${why})` };
   }
   try {
-    const parsed: unknown = JSON.parse(raw);
-    if (isState(parsed)) return parsed;
+    const parsed: unknown = JSON.parse(read.text);
+    if (isState(parsed)) return { kind: 'ok', state: parsed };
   } catch {
     // Fall through: an unreadable marker is reported, never trusted.
   }
-  console.warn(`[nexus] ${statePath(dbFile)} inválido — ignorado (snapshots preservados).`);
+  return { kind: 'invalid', reason: 'conteúdo inválido' };
+}
+
+function warnInvalidState(dbFile: string, reason: string, consequence: string): void {
+  console.warn(`[nexus] estado de migração ${statePath(dbFile)} ignorado: ${reason} — ${consequence}.`);
+}
+
+/** Estado ilegível conta como ausente (com aviso): o boot nunca trava nele. */
+export function readDbMigrationState(dbFile: string): DbMigrationState | null {
+  const load = loadDbMigrationState(dbFile);
+  if (load.kind === 'ok') return load.state;
+  if (load.kind === 'invalid') {
+    warnInvalidState(dbFile, load.reason, 'tratado como ausente, snapshots preservados');
+  }
   return null;
 }
 
@@ -221,8 +259,8 @@ export function confirmDbMigrationBoot(dbFile: string, now: () => number = Date.
  */
 export function restoreDbMigrationSnapshot(dbFile: string, state: DbMigrationState): void {
   const source = path.join(dbSnapshotDir(dbFile), state.snapshot);
-  if (!pathExists(source)) {
-    throw new Error(`snapshot ${state.snapshot} não existe mais`);
+  if (!isRegularFile(source)) {
+    throw new Error(`snapshot ${state.snapshot} não existe mais ou não é um arquivo regular`);
   }
   if (state.phase !== 'restoring') writeState(dbFile, { ...state, phase: 'restoring' });
   for (const suffix of DB_SIDECAR_SUFFIXES) fs.rmSync(`${dbFile}${suffix}`, { force: true });
@@ -243,10 +281,10 @@ export function restoreDbMigrationSnapshot(dbFile: string, state: DbMigrationSta
 export function recoverInterruptedDbMigration(dbFile: string): DbMigrationState | null {
   const state = readDbMigrationState(dbFile);
   if (!state || (state.phase !== 'migrating' && state.phase !== 'restoring')) return null;
-  if (!pathExists(path.join(dbSnapshotDir(dbFile), state.snapshot))) {
+  if (!isRegularFile(path.join(dbSnapshotDir(dbFile), state.snapshot))) {
     console.error(
       `[nexus] migração do nexus.db interrompida, mas o snapshot ${state.snapshot} ` +
-        'sumiu — abrindo o banco como está.',
+        'sumiu ou não é um arquivo regular — abrindo o banco como está.',
     );
     clearState(dbFile);
     return null;
@@ -258,6 +296,13 @@ export function recoverInterruptedDbMigration(dbFile: string): DbMigrationState 
 /** Mantém os `keep` snapshots mais novos e nunca o rollback ainda aberto. */
 export function pruneDbMigrationSnapshots(dbFile: string, keep = MAX_DB_SNAPSHOTS): string[] {
   const dir = dbSnapshotDir(dbFile);
+  // Sem saber qual é o rollback aberto (ou com o diretório trocado por um
+  // symlink), apagar qualquer coisa seria chute: a retenção espera.
+  const load = loadDbMigrationState(dbFile);
+  if (load.kind === 'invalid') {
+    warnInvalidState(dbFile, load.reason, 'retenção suspensa');
+    return [];
+  }
   let names: string[];
   try {
     names = fs.readdirSync(dir);
@@ -265,7 +310,7 @@ export function pruneDbMigrationSnapshots(dbFile: string, keep = MAX_DB_SNAPSHOT
     if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw cause;
   }
-  const state = readDbMigrationState(dbFile);
+  const state = load.kind === 'ok' ? load.state : null;
   const protectedName = state && state.phase !== 'confirmed' ? state.snapshot : null;
   const removed: string[] = [];
   for (const name of names) {

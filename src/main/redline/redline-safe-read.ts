@@ -7,7 +7,8 @@
  * pendura o Main para sempre. Aqui o arquivo é aberto UMA vez com
  * `O_NONBLOCK`, conferido no próprio descritor (arquivo regular, dentro do
  * teto) e lido em no máximo `teto + 1` bytes: não há janela entre o stat e o
- * read. Symlink para arquivo regular é seguido de propósito (dotfiles).
+ * read. Symlink para arquivo regular é seguido de propósito (dotfiles), salvo
+ * com `noFollow` (arquivos que o próprio Nexus grava: symlink ali é plantado).
  */
 
 import {
@@ -78,10 +79,14 @@ export function readRegularFileCapped(
   file: string,
   maxBytes: number,
   knownStamp?: string,
+  options: SafeReadOptions = {},
 ): SafeRead {
   let fd: number;
   try {
-    fd = openSync(file, fsConstants.O_RDONLY | O_NONBLOCK);
+    fd = openSync(
+      file,
+      fsConstants.O_RDONLY | O_NONBLOCK | (options.noFollow ? O_NOFOLLOW : 0),
+    );
   } catch (error) {
     // SÓ "não existe" é `missing` (e `missing` liga a bandeja por padrão, F-739).
     // EACCES, ELOOP (symlink pendurado ou em laço), EMFILE… são um arquivo que
