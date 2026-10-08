@@ -44,18 +44,18 @@ const renderer = {
 const foreignRenderer = { ...renderer, id: 812, send: vi.fn() } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
 
 function stores() { return getProjectDomainStores(scope); }
-function addSession(id: string, state: PaneSessionState = 'idle', role: 'worker' | 'orchestrator' = 'worker') {
+function addSession(id: string, state: PaneSessionState = 'idle', role: 'worker' | 'orchestrator' = 'worker', readOnly = true) {
   const info: OwnedAgentSessionInfo = {
     sessionId: id, paneId: `pane-${id}`, adapterId: 'codex', role,
     scope, missionId, cwd: scope.rootRealPath, source: 'persisted-pane',
-    allowedTools: ['pane_read'], allowedSkills: ['review'], readOnly: true,
+    allowedTools: ['pane_read'], allowedSkills: ['review'], readOnly,
     ...(role === 'worker' ? { workerIncarnationId: `incarnation-${id}` } : {}),
   };
   physical.sessions.set(id, info);
   physical.owners.set(id, renderer);
   physical.states.set(id, state);
   const ctx = gate.mintToken({
-    label: id, scope, missionId, role, readOnly: true,
+    label: id, scope, missionId, role, readOnly,
     allowedTools: ['pane_read'], allowedSkills: ['review'],
     workerIncarnationId: info.workerIncarnationId,
   });
@@ -110,7 +110,7 @@ describe('real mission leadership runtime ports', () => {
   it('only the owned renderer entry can takeover a live leader, demoting real C+D without killing', () => {
     const old = addSession('old', 'busy');
     apply('old');
-    const next = addSession('new');
+    const next = addSession('new', 'idle', 'worker', false);
     const states = [...physical.states];
     const input = { sessionId: 'new', paneId: 'pane-new', reason: 'Operador escolheu este painel' };
     expect(() => getMissionLeadership().applyLeadership(scope, missionId, { ...input, origin: 'takeover' }))
@@ -137,7 +137,7 @@ describe('real mission leadership runtime ports', () => {
   });
 
   it('takeover requires a reason and exact renderer ownership even in the same scope', () => {
-    addSession('new');
+    addSession('new', 'idle', 'worker', false);
     const input = { sessionId: 'new', paneId: 'pane-new', reason: 'Trocar líder' };
     for (const reason of ['', ' \n ']) {
       expect(() => takeoverMissionLeadershipFromRenderer(renderer, missionId, { ...input, reason }))
@@ -164,7 +164,7 @@ describe('real mission leadership runtime ports', () => {
   it('failed takeover compensates C+D, preserves the old leader and revokes the operator grant', () => {
     const old = addSession('old');
     apply('old');
-    const next = addSession('new');
+    const next = addSession('new', 'idle', 'worker', false);
     const before = { old: structuredClone(old), next: structuredClone(next), panes: stores().missionPanes.list(missionId) };
     const promote = gate.promoteMissionSessionAuthority;
     vi.spyOn(gate, 'promoteMissionSessionAuthority').mockImplementation((input) => {
@@ -180,6 +180,38 @@ describe('real mission leadership runtime ports', () => {
     expect(renderer.send).toHaveBeenCalledTimes(1);
     expect(() => getMissionLeadership().applyLeadership(scope, missionId, { ...input, origin: 'takeover' }))
       .toThrow(expect.objectContaining({ code: 'scope_mismatch' }));
+  });
+
+  it('F-1017: takeover para pane somente leitura (ficha, gate ou mission_panes) é recusado antes de qualquer escrita', () => {
+    const old = addSession('old');
+    apply('old');
+    const sent = renderer.send.mock.calls.length;
+    const arrange: Record<string, () => ReturnType<typeof addSession>> = {
+      'ro-ficha': () => addSession('ro-ficha'),
+      'ro-gate': () => Object.assign(addSession('ro-gate', 'idle', 'worker', false), { readOnly: true }),
+      'ro-panes': () => {
+        const ctx = addSession('ro-panes', 'idle', 'worker', false);
+        stores().missionPanes.record({
+          missionId, paneId: 'pane-ro-panes', adapterId: 'codex', role: 'worker', cwd: scope.rootRealPath,
+          workerIncarnationId: 'incarnation-ro-panes', readOnly: true,
+        });
+        return ctx;
+      },
+    };
+    for (const [id, setup] of Object.entries(arrange)) {
+      const next = setup();
+      const before = { old: structuredClone(old), next: structuredClone(next), panes: stores().missionPanes.list(missionId) };
+      expect(() => takeoverMissionLeadershipFromRenderer(renderer, missionId, {
+        sessionId: id, paneId: `pane-${id}`, reason: 'Operador escolheu o revisor',
+      }), id).toThrow(expect.objectContaining({
+        code: 'scope_mismatch', payload: expect.objectContaining({ reason: 'takeover_target_read_only' }),
+      }));
+      expect(old, id).toEqual(before.old);
+      expect(next, id).toEqual(before.next);
+      expect(stores().missions.get(missionId)?.orchestratorSessionId, id).toBe('old');
+      expect(stores().missionPanes.list(missionId), id).toEqual(before.panes);
+    }
+    expect(renderer.send).toHaveBeenCalledTimes(sent);
   });
 
   it('creates leadership for a pending mission already bound to its user creator', () => {
