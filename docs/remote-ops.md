@@ -119,9 +119,24 @@ quando você clica em **Iniciar** (ação explícita). Com ele:
 O pareamento por aparelho continua obrigatório: o tailnet é transporte, não
 autenticação. A checagem de Origin continua same-origin pelo `Host` (o Serve o
 preserva); `X-Forwarded-*` e `Tailscale-User-*` **não** são aceitos como prova de
-origem nem de identidade — qualquer processo local poderia forjá-los. Atrás do
-Serve todo cliente chega como loopback, então o rate limit e o bloqueio de
-pareamento por IP passam a ser compartilhados pelos aparelhos do tailnet.
+origem nem de identidade — qualquer processo local poderia forjá-los.
+
+Atrás do Serve todo cliente chega como loopback, então o IP não distingue
+ninguém. Por isso:
+
+- aparelho autenticado tem bucket de rate limit próprio, pela identidade
+  comprovada no Main (`tokenId` após o desafio assinado) — um cliente não
+  pareado não esgota o limite de quem já entrou;
+- a pré-autenticação via loopback conta **por conexão** (60/min), inclusive o
+  bloqueio de pareamento após 8 códigos errados; só as tentativas de
+  pareamento somam num teto global do proxy (30/min), que limita força bruta
+  do código distribuída em várias conexões;
+- conexões diretas da LAN mantêm os limites por IP;
+- o marcador do Serve é lido com `O_NONBLOCK|O_NOFOLLOW`, só como arquivo
+  regular de até 4 KiB num diretório real do próprio usuário (FIFO, symlink
+  ou `/dev/zero` plantados são ignorados); se a consulta `serve status` falha,
+  o dono do handler é desconhecido e **nada** é desligado — o marcador fica e
+  a remoção é tentada de novo (5 s, 30 s, 2 min e no próximo boot).
 
 ## PWA e alertas locais (feito)
 

@@ -5,6 +5,8 @@
 // probe) rodam contra a Remote Bridge real com um tailscaled falso; somam-se
 // stop/off, órfão no boot, handler alheio, tskey fora de log/IPC e Origin.
 
+import { execFileSync } from 'node:child_process';
+import crypto, { type KeyObject } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,6 +16,8 @@ import type { TailscaleCli, TailscaleExecOptions } from './tailscale';
 
 const SECRET = 'tskey-auth-secret-token-value';
 const MAGIC_DNS = 'box.tail1234.ts.net';
+const ORPHAN = 'https+insecure://127.0.0.1:45555';
+const DEAD_PID = 2_147_483_000;
 
 type FakeResult = { code?: number; stdout?: string; stderr?: string };
 
@@ -26,6 +30,7 @@ const fake = vi.hoisted(() => {
     serveTarget: null as string | null,
     foreignProxy: null as string | null,
     serveFailure: null as FakeResult | null,
+    serveStatusFailure: null as FakeResult | null,
   };
   const serveStatus = (): string => {
     const proxy = state.foreignProxy ?? state.serveTarget;
@@ -38,7 +43,9 @@ const fake = vi.hoisted(() => {
   const respond = (args: string[]): FakeResult => {
     const command = args.join(' ');
     if (command === 'status --json') return { stdout: state.statusJson };
-    if (command === 'serve status --json') return { stdout: serveStatus() };
+    if (command === 'serve status --json') {
+      return state.serveStatusFailure ?? { stdout: serveStatus() };
+    }
     if (args[0] === 'serve' && args[1] === '--bg') {
       if (state.serveFailure) return state.serveFailure;
       state.serveTarget = args[3] ?? null;
@@ -148,6 +155,95 @@ function ping(socket: WebSocket): Promise<Record<string, unknown>> {
   });
 }
 
+interface DeviceCredential {
+  token: string;
+  deviceId: string;
+  publicKey: { kty: 'EC'; crv: 'P-256'; x: string; y: string };
+  privateKey: KeyObject;
+}
+
+function connectTo(url: string): Promise<WebSocket> {
+  const socket = new WebSocket(url, { rejectUnauthorized: false });
+  return openSocket(socket).then(() => socket);
+}
+
+function rpc(socket: WebSocket, payload: unknown): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('rpc timeout')), 10_000);
+    socket.once('message', (data) => {
+      clearTimeout(timer);
+      resolve(JSON.parse(data.toString()) as Record<string, unknown>);
+    });
+    socket.send(JSON.stringify(payload));
+  });
+}
+
+function newDevice(): Omit<DeviceCredential, 'token'> {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = publicKey.export({ format: 'jwk' });
+  return {
+    deviceId: crypto.randomBytes(24).toString('base64url'),
+    publicKey: { kty: 'EC', crv: 'P-256', x: String(jwk.x), y: String(jwk.y) },
+    privateKey,
+  };
+}
+
+function sign(privateKey: KeyObject, challenge: string): string {
+  return crypto
+    .sign('sha256', Buffer.from(challenge), { key: privateKey, dsaEncoding: 'ieee-p1363' })
+    .toString('base64url');
+}
+
+function pairMessage(device: Omit<DeviceCredential, 'token'>, code: string, id = 'pair') {
+  return {
+    id,
+    type: 'pair',
+    code,
+    deviceId: device.deviceId,
+    devicePublicKey: device.publicKey,
+    deviceProof: sign(device.privateKey, `nexus-remote-pair-v1:${code}`),
+  };
+}
+
+async function pairDevice(url: string): Promise<DeviceCredential> {
+  const code = bridge.rotateRemotePairing(projectScope).pairingCode!;
+  const device = newDevice();
+  const socket = await connectTo(url);
+  const paired = await rpc(socket, pairMessage(device, code));
+  socket.close();
+  return { ...device, token: (paired.result as { token: string }).token };
+}
+
+async function authenticate(url: string, device: DeviceCredential): Promise<WebSocket> {
+  const socket = await connectTo(url);
+  const requested = await rpc(socket, {
+    id: 'challenge',
+    type: 'auth.challenge',
+    token: device.token,
+    deviceId: device.deviceId,
+  });
+  const challenge = requested.result as { challenge: string; challengeId: string };
+  const done = await rpc(socket, {
+    id: 'auth',
+    type: 'auth',
+    token: device.token,
+    deviceId: device.deviceId,
+    challengeId: challenge.challengeId,
+    signature: sign(device.privateKey, challenge.challenge),
+  });
+  expect(done).toMatchObject({ ok: true });
+  return socket;
+}
+
+function writeOrphanMarker(file: string, pid = DEAD_PID, padding = 0): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ version: 1, servePort: 443, target: ORPHAN, pid, createdAt: 1 }) +
+      ' '.repeat(padding),
+  );
+}
+
 function serveCalls(): string[][] {
   return fake.state.calls.map((call) => call.args).filter((args) => args[0] === 'serve');
 }
@@ -171,6 +267,7 @@ beforeEach(() => {
   fake.state.serveTarget = null;
   fake.state.foreignProxy = null;
   fake.state.serveFailure = null;
+  fake.state.serveStatusFailure = null;
   resetDetection();
   vi.stubGlobal(
     'fetch',
@@ -383,6 +480,114 @@ describe('remote bridge no tailnet (Tailscale Serve)', () => {
     });
   });
 
+  it('marcador por symlink de arquivo não é seguido (O_NOFOLLOW)', async () => {
+    const elsewhere = path.join(home, 'elsewhere', 'marker.json');
+    writeOrphanMarker(elsewhere);
+    fs.mkdirSync(path.dirname(markerPath()), { recursive: true, mode: 0o700 });
+    fs.symlinkSync(elsewhere, markerPath());
+    fake.state.serveTarget = ORPHAN;
+
+    await bridge.cleanupRemoteBridgeTailscaleOrphan();
+
+    expect(fake.state.calls).toEqual([]);
+    expect(fake.state.serveTarget).toBe(ORPHAN);
+  });
+
+  it('marcador FIFO sem escritor não pendura o Main e o publish o substitui', async () => {
+    fs.mkdirSync(path.dirname(markerPath()), { recursive: true, mode: 0o700 });
+    execFileSync('mkfifo', [markerPath()]);
+
+    await bridge.cleanupRemoteBridgeTailscaleOrphan();
+    expect(fake.state.calls).toEqual([]);
+
+    const info = await bridge.startRemoteBridge(
+      { host: '127.0.0.1', tailscale: true },
+      projectScope,
+    );
+    expect(info.tailscale?.status).toBe('available');
+    expect(fs.lstatSync(markerPath()).isFile()).toBe(true);
+  });
+
+  it('marcador gigante acima do teto é ignorado', async () => {
+    writeOrphanMarker(markerPath(), DEAD_PID, 64 * 1024);
+    fake.state.serveTarget = ORPHAN;
+
+    await bridge.cleanupRemoteBridgeTailscaleOrphan();
+
+    expect(fake.state.calls).toEqual([]);
+    expect(fake.state.serveTarget).toBe(ORPHAN);
+  });
+
+  it('diretório do marcador trocado por symlink é recusado', async () => {
+    const root = path.dirname(markerPath());
+    const hijacked = path.join(home, 'hijacked-root');
+    writeOrphanMarker(path.join(hijacked, 'tailscale-serve.json'));
+    const saved = path.join(home, 'saved-root');
+    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+    fs.renameSync(root, saved);
+    fs.symlinkSync(hijacked, root);
+    fake.state.serveTarget = ORPHAN;
+    try {
+      await bridge.cleanupRemoteBridgeTailscaleOrphan();
+      expect(fake.state.calls).toEqual([]);
+      expect(fake.state.serveTarget).toBe(ORPHAN);
+    } finally {
+      fs.rmSync(root, { force: true });
+      fs.renameSync(saved, root);
+    }
+  });
+
+  it('marcador por symlink para /dev/zero é recusado sem ler nada', async () => {
+    fs.mkdirSync(path.dirname(markerPath()), { recursive: true, mode: 0o700 });
+    fs.symlinkSync('/dev/zero', markerPath());
+
+    await bridge.cleanupRemoteBridgeTailscaleOrphan();
+
+    expect(fake.state.calls).toEqual([]);
+  });
+
+  it('falha de consulta do Serve não desliga nada: preserva o marcador e tenta de novo', async () => {
+    const info = await bridge.startRemoteBridge(
+      { host: '127.0.0.1', tailscale: true },
+      projectScope,
+    );
+    const target = `https+insecure://127.0.0.1:${info.port}`;
+    fake.state.serveStatusFailure = { code: 1, stderr: 'backend timeout' };
+    fake.state.calls.length = 0;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      bridge.stopRemoteBridge(projectScope);
+      await bridge.settleRemoteBridgeTailscale(5_000);
+
+      // Propriedade desconhecida: nenhum `off`, marcador intacto.
+      expect(serveCalls()).toEqual([['serve', 'status', '--json']]);
+      expect(fake.state.serveTarget).toBe(target);
+      expect(JSON.parse(fs.readFileSync(markerPath(), 'utf8'))).toMatchObject({ target });
+
+      // A consulta volta: a nova tentativa confirma que é nosso e desliga.
+      fake.state.serveStatusFailure = null;
+      await vi.advanceTimersByTimeAsync(5_000);
+      await bridge.settleRemoteBridgeTailscale(5_000);
+      expect(serveCalls().at(-1)).toEqual(['serve', '--https=443', 'off']);
+      expect(fake.state.serveTarget).toBeNull();
+      expect(fs.existsSync(markerPath())).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('boot com consulta falha mantém o marcador órfão para o próximo boot', async () => {
+    writeOrphanMarker(markerPath());
+    fake.state.serveTarget = ORPHAN;
+    fake.state.serveStatusFailure = { code: 1, stderr: 'backend timeout' };
+
+    await bridge.cleanupRemoteBridgeTailscaleOrphan();
+
+    expect(serveCalls()).toEqual([['serve', 'status', '--json']]);
+    expect(fake.state.serveTarget).toBe(ORPHAN);
+    expect(fs.existsSync(markerPath())).toBe(true);
+  });
+
   it('boot remove o handler órfão nosso — e só o nosso', async () => {
     const orphan = 'https+insecure://127.0.0.1:45555';
     const writeMarker = (pid: number) =>
@@ -422,5 +627,74 @@ describe('remote bridge no tailnet (Tailscale Serve)', () => {
     fake.state.calls.length = 0;
     await bridge.cleanupRemoteBridgeTailscaleOrphan();
     expect(fake.state.calls).toEqual([]);
+  });
+});
+
+describe('rate limit e pareamento atrás do proxy (todos chegam por loopback)', () => {
+  it('rate limit: cliente não pareado do tailnet não esgota o bucket dos aparelhos', async () => {
+    const info = await bridge.startRemoteBridge(
+      { host: '127.0.0.1', tailscale: true },
+      projectScope,
+    );
+    const url = `wss://127.0.0.1:${info.port}`;
+    const device = await pairDevice(url);
+    const authed = await authenticate(url, device);
+
+    const intruder = await connectTo(url);
+    let last: Record<string, unknown> = {};
+    for (let i = 0; i < 61; i += 1) last = await rpc(intruder, { id: `p${i}`, type: 'ping' });
+    expect(last).toMatchObject({ ok: false, error: 'rate limited' });
+
+    await expect(rpc(authed, { id: 'a', type: 'panes.list' })).resolves.toMatchObject({
+      ok: true,
+    });
+    // Reconexão do aparelho legítimo (pré-auth com token válido) também passa.
+    const again = await authenticate(url, device);
+    await expect(rpc(again, { id: 'b', type: 'panes.list' })).resolves.toMatchObject({
+      ok: true,
+    });
+    for (const socket of [authed, again, intruder]) socket.close();
+  });
+
+  it('pareamento: lockout atrás do proxy é por conexão e há teto global de tentativas', async () => {
+    const info = await bridge.startRemoteBridge(
+      { host: '127.0.0.1', tailscale: true },
+      projectScope,
+    );
+    const url = `wss://127.0.0.1:${info.port}`;
+    const code = info.pairingCode!;
+    const attacker = await connectTo(url);
+    const forger = newDevice();
+    for (let i = 0; i < 8; i += 1) {
+      await rpc(attacker, { ...pairMessage(forger, 'AAAAAAAA', `f${i}`), deviceProof: 'x' });
+    }
+    await expect(
+      rpc(attacker, { ...pairMessage(forger, 'AAAAAAAA', 'locked'), deviceProof: 'x' }),
+    ).resolves.toMatchObject({ ok: false, error: 'too many attempts; try again later' });
+
+    // Outro aparelho (outra conexão pelo mesmo proxy) pareia com o código vigente.
+    const honest = await connectTo(url);
+    await expect(rpc(honest, pairMessage(newDevice(), code))).resolves.toMatchObject({
+      ok: true,
+    });
+
+    // Força bruta distribuída em conexões novas esbarra no teto global do proxy.
+    let rateLimitedAt = -1;
+    let socket = await connectTo(url);
+    for (let attempt = 0; attempt < 40 && rateLimitedAt < 0; attempt += 1) {
+      if (attempt % 5 === 0) {
+        socket.close();
+        socket = await connectTo(url);
+      }
+      const res = await rpc(socket, {
+        ...pairMessage(forger, 'BBBBBBBB', `g${attempt}`),
+        deviceProof: 'x',
+      });
+      if (res.error === 'rate limited') rateLimitedAt = attempt;
+    }
+    expect(rateLimitedAt).toBeGreaterThanOrEqual(0);
+    // 10 tentativas acima + estas: nunca mais que o teto (30/min) passa.
+    expect(10 + rateLimitedAt).toBeLessThanOrEqual(30);
+    for (const open of [socket, attacker, honest]) open.close();
   });
 });

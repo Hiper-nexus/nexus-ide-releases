@@ -113,6 +113,13 @@ const UNAUTH_TIMEOUT_MS = 15_000;
 // must never be able to invalidate the code a legitimate user is scanning.
 const MAX_PAIRING_FAILURES = 8;
 const PAIRING_LOCKOUT_MS = 60_000;
+const RATE_LIMIT_PER_MINUTE = 60;
+// Atrás do Tailscale Serve todo cliente chega por loopback, então o IP não
+// distingue ninguém: a pré-autenticação dessas conexões conta por conexão, e
+// só as tentativas de pareamento somam num teto global (força bruta do código
+// de 8 caracteres: ≤ 30/min × 5 min de validade ≈ 150 palpites em ~1e12).
+const PROXY_PAIR_ATTEMPTS_PER_MINUTE = 30;
+const PROXY_PAIR_RATE_KEY = 'pre:proxy:pair';
 // Unambiguous alphabet (no 0/O/1/I/L) over 8 chars ≈ 32^8 ≈ 1.1e12 keyspace.
 const PAIRING_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 const PAIRING_LEN = 8;
@@ -123,6 +130,7 @@ let wss: WebSocketServer | null = null;
 let port: number | null = null;
 let boundHost: string | null = null;
 let tlsRecord: TlsRecord | null = null;
+// Chave: IP direto (LAN) ou `pre:conn:<n>` para conexões via loopback/proxy.
 const pairingFailuresByIp = new Map<
   string,
   { count: number; lockedUntil: number }
@@ -139,6 +147,10 @@ const rate = new Map<string, { count: number; resetAt: number }>();
 let bridgeTailscale: RemoteBridgeTailscaleState | null = null;
 let bridgeGeneration = 0;
 let tailscaleQueue: Promise<unknown> = Promise.resolve();
+let connectionSeq = 0;
+// Consulta do Serve que falhou = dono desconhecido: nada é desligado e a
+// tentativa se repete (o boot também repete, pelo marcador).
+const UNPUBLISH_RETRY_MS = [5_000, 30_000, 120_000] as const;
 
 function enqueueTailscale<T>(task: () => Promise<T>): Promise<T> {
   const run = tailscaleQueue.then(task, task);
@@ -146,14 +158,27 @@ function enqueueTailscale<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
+function scheduleUnpublish(target: string, servePort: number, attempt = 0): void {
+  void enqueueTailscale(() => unpublishRemoteBridgeFromTailnet(target, servePort)).then(
+    (outcome) => {
+      const delay = UNPUBLISH_RETRY_MS[attempt];
+      if (outcome !== 'unknown' || delay === undefined) return;
+      const timer = setTimeout(() => {
+        // Republicado no mesmo alvo neste meio-tempo: o handler é da bridge viva.
+        if (bridgeTailscale?.target === target) return;
+        scheduleUnpublish(target, servePort, attempt + 1);
+      }, delay);
+      timer.unref?.();
+    },
+    () => undefined,
+  );
+}
+
 function releaseBridgeTailscale(): void {
   const current = bridgeTailscale;
   bridgeTailscale = null;
   if (!current?.target) return;
-  const { target, servePort } = current;
-  void enqueueTailscale(() => unpublishRemoteBridgeFromTailnet(target, servePort)).catch(
-    () => undefined,
-  );
+  scheduleUnpublish(current.target, current.servePort);
 }
 
 /** Aplica o pedido explícito de start: publica (ou despublica) no tailnet. */
@@ -173,12 +198,7 @@ async function applyBridgeTailscale(enabled: boolean): Promise<void> {
   );
   if (generation !== bridgeGeneration || port !== localPort) {
     // A bridge parou enquanto o Serve era configurado: desfaz o que entrou.
-    const { target, servePort } = published;
-    if (target) {
-      void enqueueTailscale(() => unpublishRemoteBridgeFromTailnet(target, servePort)).catch(
-        () => undefined,
-      );
-    }
+    if (published.target) scheduleUnpublish(published.target, published.servePort);
     return;
   }
   bridgeTailscale = published;
@@ -206,21 +226,21 @@ function invalidatePairing(): void {
   pairing = { code: '', expiresAt: 0 };
 }
 
-/** Ms remaining on an IP's pairing lockout, or 0 if not locked. */
-function pairingLockRemaining(ip: string): number {
-  const entry = pairingFailuresByIp.get(ip);
+/** Ms remaining on a pairing lockout (IP or proxied connection), or 0. */
+function pairingLockRemaining(key: string): number {
+  const entry = pairingFailuresByIp.get(key);
   if (!entry) return 0;
   return Math.max(0, entry.lockedUntil - Date.now());
 }
 
-/** Record a failed pairing attempt for an IP and lock it out past the cap. */
-function recordPairingFailure(ip: string): void {
-  const entry = pairingFailuresByIp.get(ip) ?? { count: 0, lockedUntil: 0 };
+/** Record a failed pairing attempt for a key and lock it out past the cap. */
+function recordPairingFailure(key: string): void {
+  const entry = pairingFailuresByIp.get(key) ?? { count: 0, lockedUntil: 0 };
   entry.count += 1;
   if (entry.count >= MAX_PAIRING_FAILURES) {
     entry.lockedUntil = Date.now() + PAIRING_LOCKOUT_MS;
   }
-  pairingFailuresByIp.set(ip, entry);
+  pairingFailuresByIp.set(key, entry);
 }
 
 function pairingCode(): { code: string; expiresAt: number } {
@@ -500,7 +520,11 @@ function clientIp(req: { socket: { remoteAddress?: string } }): string {
   return req.socket.remoteAddress ?? 'unknown';
 }
 
-function rateOk(ip: string): boolean {
+function isLoopbackAddress(address: string): boolean {
+  return address === '::1' || address.startsWith('127.') || address.startsWith('::ffff:127.');
+}
+
+function rateOk(key: string, limit = RATE_LIMIT_PER_MINUTE): boolean {
   const now = Date.now();
   // Opportunistically drop stale buckets so the map cannot grow unbounded.
   if (rate.size > 4096) {
@@ -508,13 +532,13 @@ function rateOk(ip: string): boolean {
       if (bucket.resetAt < now) rate.delete(key);
     }
   }
-  const bucket = rate.get(ip);
+  const bucket = rate.get(key);
   if (!bucket || bucket.resetAt < now) {
-    rate.set(ip, { count: 1, resetAt: now + 60_000 });
+    rate.set(key, { count: 1, resetAt: now + 60_000 });
     return true;
   }
   bucket.count += 1;
-  return bucket.count <= 60;
+  return bucket.count <= limit;
 }
 
 function send(ws: WebSocket, payload: unknown): void {
@@ -940,6 +964,13 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
   }
   clients.add(ws);
   const ip = clientIp(req);
+  // Loopback = desktop local ou qualquer aparelho do tailnet via Serve: o IP
+  // não distingue ninguém e X-Forwarded-* nunca vira identidade. A
+  // pré-autenticação conta por conexão; depois do auth, pela identidade
+  // comprovada no Main (tokenId), em bucket próprio.
+  const proxied = isLoopbackAddress(ip);
+  const preAuthKey = proxied ? `pre:conn:${(connectionSeq += 1)}` : `pre:ip:${ip}`;
+  const pairingKey = proxied ? preAuthKey : ip;
   // Reap sockets that connect but never authenticate — they otherwise pin a
   // slot and file descriptors indefinitely.
   const unauthTimer = setTimeout(() => {
@@ -947,6 +978,10 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
   }, UNAUTH_TIMEOUT_MS);
   ws.on('close', () => {
     clearTimeout(unauthTimer);
+    if (proxied) {
+      rate.delete(preAuthKey);
+      pairingFailuresByIp.delete(pairingKey);
+    }
     clearAuthenticatedClient(ws);
     dropStreamSubscriber(ws);
     clients.delete(ws);
@@ -974,8 +1009,18 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
         ? (parsed as { id: string }).id
         : undefined;
     try {
-      if (!rateOk(ip)) throw new Error('rate limited');
+      const authenticatedKey = authenticatedClients.get(ws)?.tokenId;
+      if (!rateOk(authenticatedKey ? `device:${authenticatedKey}` : preAuthKey)) {
+        throw new Error('rate limited');
+      }
       const msg = command(parsed);
+      if (
+        proxied &&
+        msg.type === 'pair' &&
+        !rateOk(PROXY_PAIR_RATE_KEY, PROXY_PAIR_ATTEMPTS_PER_MINUTE)
+      ) {
+        throw new Error('rate limited');
+      }
       if (msg.type === 'ping') {
         send(ws, { id: msg.id, ok: true, result: { pong: true } });
         return;
@@ -988,7 +1033,7 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
           publicKey: msg.devicePublicKey,
         });
         if (!identity) throw new Error('device identity required');
-        if (pairingLockRemaining(ip) > 0) {
+        if (pairingLockRemaining(pairingKey) > 0) {
           throw new Error('too many attempts; try again later');
         }
         const code = typeof msg.code === 'string' ? msg.code.trim().toUpperCase() : '';
@@ -1000,9 +1045,9 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
           crypto.timingSafeEqual(supplied, expected) &&
           Date.now() <= current.expiresAt;
         if (!match) {
-          // Per-IP lockout — never rotate the shared code an honest user is
-          // actively scanning (L16).
-          recordPairingFailure(ip);
+          // Per-IP (per-connection behind the proxy) lockout — never rotate
+          // the shared code an honest user is actively scanning (L16).
+          recordPairingFailure(pairingKey);
           throw new Error('invalid pairing code');
         }
         if (
@@ -1014,7 +1059,7 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
         ) {
           throw new Error('invalid device proof');
         }
-        pairingFailuresByIp.delete(ip);
+        pairingFailuresByIp.delete(pairingKey);
         const issued = issueRemoteDeviceToken(
           scope,
           identity.deviceId,
