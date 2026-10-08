@@ -278,6 +278,10 @@ describe('manual release candidate gate', () => {
     fs.writeFileSync(zip, 'zip');
     const runChecked = vi.fn(() => ({ stdout: '', stderr: '' }));
     const runPackagedSmoke = vi.fn(async () => {});
+    const runMissionE2E = vi.fn(async () => {
+      // F-971: a missão roda ANTES de qualquer verificação de artefato.
+      expect(runChecked).not.toHaveBeenCalled();
+    });
     const result = await runReleaseCandidateGateTestCore({
       root,
       environment: {
@@ -296,10 +300,14 @@ describe('manual release candidate gate', () => {
       buildSecurityArtifacts: buildTestSecurityArtifacts,
       runChecked,
       runPackagedSmoke,
+      runMissionE2E,
       extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
         callback(app),
       now: () => new Date('2026-07-23T01:00:00.000Z'),
     });
+
+    expect(runMissionE2E).toHaveBeenCalledOnce();
+    expect(runMissionE2E).toHaveBeenCalledWith({ root, commitSha: 'a'.repeat(40) });
 
     expect(runChecked).toHaveBeenCalledWith(
       process.execPath,
@@ -351,6 +359,7 @@ describe('manual release candidate gate', () => {
       verification: {
         signedNotarized: true,
         packagedSmoke: true,
+        missionE2E: true,
         sameCommitAndArtifacts: true,
         tagSignatureVerified: true,
       },
@@ -394,6 +403,52 @@ describe('manual release candidate gate', () => {
     );
   });
 
+  it('F-971: release cujo Main não conclui a missão de ponta a ponta não verifica, não sela e não publica', async () => {
+    const root = tempRoot();
+    fs.writeFileSync(path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg'), 'dmg');
+    fs.writeFileSync(path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip'), 'zip');
+    const runChecked = vi.fn(() => ({ stdout: '', stderr: '' }));
+    const runPackagedSmoke = vi.fn(async () => {});
+    const buildSecurityArtifacts = vi.fn(buildTestSecurityArtifacts);
+    const runMissionE2E = vi.fn(async () => {
+      throw new Error('mission-e2e.mjs failed with exit 1: E2E de missão VERMELHO');
+    });
+    await expect(
+      runReleaseCandidateGateTestCore({
+        root,
+        environment: {
+          NEXUS_MAC_PUBLISH_RELEASE: '1',
+          APPLE_TEAM_ID: '35P5XL3JN6',
+          APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+        },
+        generatedAfterMs: Date.now() - 1_000,
+        authority: RELEASE_AUTHORITY,
+        repository: {
+          statusPorcelain: '',
+          headSha: 'a'.repeat(40),
+          tagCommitSha: 'a'.repeat(40),
+          ...TAG_AUTHORITY,
+        },
+        buildSecurityArtifacts,
+        runChecked,
+        runPackagedSmoke,
+        runMissionE2E,
+        extractE2EApp: async (_zipPath, _expectedSha256, callback) => callback(root),
+      }),
+    ).rejects.toThrow(/E2E de missão VERMELHO/u);
+    expect(runMissionE2E).toHaveBeenCalledOnce();
+    expect(buildSecurityArtifacts).not.toHaveBeenCalled();
+    expect(runChecked).not.toHaveBeenCalled();
+    expect(runPackagedSmoke).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(root, 'release-artifacts', 'security', 'packaged-smoke-report.json'))).toBe(false);
+  });
+
+  it('F-971: o núcleo de teste exige um exercitador explícito da missão E2E', async () => {
+    await expect(
+      runReleaseCandidateGateTestCore({ runPackagedSmoke: vi.fn() }),
+    ).rejects.toThrow(/mission E2E exerciser/u);
+  });
+
   it.runIf(process.platform === 'darwin' && process.arch === 'arm64')('fails closed when the packaged smoke fails against the sealed ZIP app', async () => {
     const root = tempRoot();
     const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
@@ -429,6 +484,7 @@ describe('manual release candidate gate', () => {
         buildSecurityArtifacts: buildTestSecurityArtifacts,
         runChecked: vi.fn(() => ({ stdout: '', stderr: '' })),
         runPackagedSmoke,
+        runMissionE2E: vi.fn(async () => {}),
         extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
           callback(app),
       }),

@@ -30,9 +30,17 @@ const readWindowsProcesses = createProcessTableSnapshotReader((timeoutMs = 1_500
     (error, output) => { if (error) { reject(error); return; } try { resolve({ rows: parseWindowsCommandProcesses(output.replace(/^\uFEFF/, '')), capturedAtMs }); } catch (failure) { reject(failure); } }));
 });
 
-export async function captureNativeHeavyProcessSnapshot(pid: number): Promise<DescendantSnapshot | null> {
-  if (process.platform !== 'win32') return captureDescendantSnapshot(pid);
+/**
+ * F-971: orçamento da leitura da árvore para ADMITIR comando pesado. 1 s (o da
+ * prova de encerramento) estourava com a CPU ocupada e a admissão recusava
+ * processo legítimo ("ownership unproved" → exit 74). Admissão não tem pressa:
+ * o comando já espera a vaga.
+ */
+export const NATIVE_HEAVY_SNAPSHOT_TIMEOUT_MS = 5_000;
+
+export async function captureNativeHeavyProcessSnapshot(pid: number, timeoutMs = NATIVE_HEAVY_SNAPSHOT_TIMEOUT_MS): Promise<DescendantSnapshot | null> {
+  if (process.platform !== 'win32') return captureDescendantSnapshot(pid, { timeoutMs });
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-  try { const table = await readWindowsProcesses(1_500); return collectDescendantRows(pid, table.rows, table.capturedAtMs); }
+  try { const table = await readWindowsProcesses(timeoutMs); return collectDescendantRows(pid, table.rows, table.capturedAtMs); }
   catch { return null; }
 }

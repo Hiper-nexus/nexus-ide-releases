@@ -375,6 +375,7 @@ async function runReleaseCandidateGateCore(
   const runPackagedSmoke = authoritative
     ? null
     : options.runPackagedSmoke;
+  const runMissionE2E = authoritative ? null : options.runMissionE2E;
   const extractE2EApp =
     options.extractE2EApp ??
     ((zipPath, expectedSha256, callback) =>
@@ -388,6 +389,11 @@ async function runReleaseCandidateGateCore(
   if (!authoritative && typeof runPackagedSmoke !== 'function') {
     throw new Error(
       'test core requires an explicit non-authoritative smoke exerciser',
+    );
+  }
+  if (!authoritative && typeof runMissionE2E !== 'function') {
+    throw new Error(
+      'test core requires an explicit non-authoritative mission E2E exerciser',
     );
   }
   assertPublishEnvironment(environment);
@@ -411,6 +417,24 @@ async function runReleaseCandidateGateCore(
       'out',
       'release-artifacts',
     ],
+  });
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  // F-971: MISSÃO DE PONTA A PONTA no código do tag, antes de qualquer
+  // artefato ser selado. O pior do Nexus é não abrir panes e não terminar a
+  // missão: release cujo Main não conclui uma missão inteira (5 writers
+  // isolados + 1 em worktree aninhada, comando pesado admitido em paralelo,
+  // handoff pelo shim, done) NÃO publica. Recibo fora de security/ (o
+  // conjunto selado dos assets não muda).
+  const defaultMissionE2E = async () => {
+    runChecked(process.execPath, [
+      path.join(scriptDir, 'mission-e2e.mjs'),
+      '--receipt',
+      path.join(root, 'release-artifacts', 'mission-e2e.json'),
+    ], { cwd: root, env: environment, timeout: 20 * 60_000 });
+  };
+  await (authoritative ? defaultMissionE2E : runMissionE2E)({
+    root,
+    commitSha: state.commitSha,
   });
   const artifactsRoot = path.join(root, 'out', 'make');
   const expectedArch = process.arch === 'x64' ? 'x86_64' : process.arch;
@@ -472,7 +496,6 @@ async function runReleaseCandidateGateCore(
     tagSignerFingerprint: state.tagSignerFingerprint,
     tagSignatureVerified: state.tagSignatureVerified,
   });
-  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   runChecked(process.execPath, [
     path.join(scriptDir, 'verify-macos-release.mjs'),
     '--artifacts',
@@ -571,6 +594,7 @@ async function runReleaseCandidateGateCore(
     verification: {
       signedNotarized: true,
       packagedSmoke: true,
+      missionE2E: true,
       sameCommitAndArtifacts: true,
       tagSignatureVerified: state.tagSignatureVerified,
     },

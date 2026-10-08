@@ -49,6 +49,7 @@
     "test": "vitest run",
     "test:changed": "vitest run --changed",
     "test:perf": "vitest run src/renderer/terminal/terminal-output-scheduler.budget.test.ts src/main/pty/pty-output-wire.budget.test.ts src/renderer/components/PaneGrid.render.budget.test.tsx src/main/orch/pane-output-digest.budget.test.ts",
+    "test:mission-e2e": "node scripts/mission-e2e.mjs",
     "eval:export-ranking": "node --import tsx scripts/export-public-ranking.mjs",
     "eval:benchmark:verify": "node --import tsx scripts/verify-nexus-benchmark.mjs",
     "bench:vector-retrieval": "node scripts/benchmark-vector-retrieval.mjs",

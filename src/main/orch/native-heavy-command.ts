@@ -1,11 +1,12 @@
 import type http from 'node:http';
 import { z } from 'zod';
 import type { AgentGateContext } from './gate';
-import { isCurrentGateContext, gateContextAbortSignal } from './gate';
+import { executionScopeFor, isCurrentGateContext, gateContextAbortSignal } from './gate';
 import { handleHookJsonPost } from './hook-http';
 import { acquireHeavyCommandPermit, type HeavyCommandPermit, type HeavyCommandRequest } from './heavy-command-permit';
 import { claimSessionCommandProcess, probeSessionCommandProcess, borrowSessionCommandProcess, stopSessionCommandProcess } from '../pty/pty-manager';
 import type { CommandProcessState } from '../pty/owned-command-process';
+import { trace } from '../observability/main-trace';
 const schema = z.object({ pid: z.number().int().positive(), kind: z.enum(['typescript', 'tests', 'build', 'install']), leaseId: z.string().min(1).max(128).optional(), proof: z.literal('darwin-job').optional() }).strict();
 export interface NativeHeavyCommandPorts {
   current(ctx: AgentGateContext): boolean;
@@ -27,8 +28,13 @@ export class NativeHeavyCommands {
   readonly #pending = new Map<Promise<{ allow: boolean; reason?: string; leaseId?: string }>, AgentGateContext>();
   constructor(private readonly ports: NativeHeavyCommandPorts) {}
   admit(ctx: AgentGateContext, raw: unknown, signal?: AbortSignal): Promise<{ allow: boolean; reason?: string; leaseId?: string }> {
+    const started = Date.now();
     const pending = this.#admit(ctx, raw, signal); this.#pending.set(pending, ctx);
-    void pending.then(() => this.#pending.delete(pending), () => this.#pending.delete(pending)); return pending;
+    void pending.then((result) => {
+      this.#pending.delete(pending);
+      // F-971: o "exit 74/78" do pane ganha causa no trace do Main.
+      if (!result.allow) trace({ kind: 'heavy-command-denied', sessionId: ctx.sessionId ?? '', reason: result.reason ?? 'unknown', elapsedMs: Date.now() - started });
+    }, () => this.#pending.delete(pending)); return pending;
   }
   async #admit(ctx: AgentGateContext, raw: unknown, signal?: AbortSignal): Promise<{ allow: boolean; reason?: string; leaseId?: string }> {
     const body = schema.safeParse(raw);
@@ -45,7 +51,10 @@ export class NativeHeavyCommands {
     try { claim = await this.ports.claim(ctx.sessionId, body.data.pid, body.data.proof); } catch { /* ownership unavailable */ }
     if (!claim || !this.#accepting || !this.#current(ctx) || signal?.aborted) { if (claim) this.#reap(ctx, claim); return { allow: false, reason: 'heavy_command_process_ownership_unproved' }; }
     let permit: HeavyCommandPermit;
-    try { permit = await this.ports.acquire({ scope: ctx.scope, missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting }); }
+    // F-957/F-971: a fila é por raiz de EXECUÇÃO (a worktree do writer), não
+    // pelo checkout de coordenação do token — senão writers isolados voltam à
+    // fila única do projeto.
+    try { permit = await this.ports.acquire({ scope: executionScopeFor(ctx), missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting }); }
     catch { this.#reap(ctx, claim); return { allow: false, reason: 'heavy_command_admission_denied' }; }
     const flight: Flight = { ctx, claim, permit, done: Promise.resolve() }; this.#flights.add(flight);
     flight.done = this.#observe(flight); void flight.done.catch(() => {});

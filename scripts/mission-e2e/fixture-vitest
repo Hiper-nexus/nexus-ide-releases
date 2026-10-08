@@ -1,0 +1,23 @@
+#!/usr/bin/perl
+# F-971: `vitest` FALSO do repositório de fixture do E2E de missão. Barato
+# (segura alguns segundos e sai 0), mas o catálogo de comandos pesados o vê
+# pelo nome e o classifica como "tests" — então ele passa pela admissão REAL
+# de CPU/RAM do Nexus. Grava início/fim para o teste medir paralelismo.
+use strict;
+use warnings;
+use Time::HiRes qw(time sleep);
+$| = 1;
+my $dir = $ENV{NEXUS_E2E_DIR} or die "NEXUS_E2E_DIR ausente\n";
+my $id = $ENV{NEXUS_E2E_ID} // 'desconhecido';
+my $hold = $ENV{NEXUS_E2E_HEAVY_MS} // 4000;
+sub mark {
+  open(my $fh, '>>', "$dir/heavy.log") or die "heavy.log: $!";
+  printf $fh "%s %s %.3f %d %s\n", $_[0], $id, time(), $$, ($ENV{NEXUS_HEAVY_LEASE} // 'none');
+  close($fh);
+}
+mark('start');
+print " RUN  e2e/$id.test.ts\n";
+sleep($hold / 1000);
+print " ok e2e/$id.test.ts (1 test)\n Test Files  1 passed (1)\n";
+mark('end');
+exit(0);

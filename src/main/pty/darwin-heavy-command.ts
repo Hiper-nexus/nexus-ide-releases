@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { heavyJobWatchCommand, resolveDarwinPtySupervisor, type DarwinPtySupervisorRuntime } from './darwin-pty-supervisor';
 import type { CommandProcessState } from './owned-command-process';
+export const DARWIN_HEAVY_WATCH_READY_MS = 5_000;
 export interface PhysicalCommandClaim {
   state(): CommandProcessState;
   borrow(pid: number): Promise<boolean>;
@@ -15,7 +16,9 @@ export async function watchDarwinHeavyCommand(runtime: DarwinPtySupervisorRuntim
   let settle!: (value: PhysicalCommandClaim | null) => void;
   let closed!: () => void; const completion = new Promise<void>((resolve) => closed = resolve);
   const ready = new Promise<PhysicalCommandClaim | null>((resolve) => settle = resolve);
-  const timer = setTimeout(() => { settle(null); watcher.kill('SIGTERM'); }, 1_500); timer.unref?.();
+  // F-971: o vigia nasce pelo estágio zero (perl -T + validação da imagem); sob
+  // carga passa de 1,5 s. Estourou o prazo, a admissão recusa (fail-closed).
+  const timer = setTimeout(() => { settle(null); watcher.kill('SIGTERM'); }, DARWIN_HEAVY_WATCH_READY_MS); timer.unref?.();
   const claim: PhysicalCommandClaim = {
     state: () => state,
     async stop() {
@@ -29,7 +32,7 @@ export async function watchDarwinHeavyCommand(runtime: DarwinPtySupervisorRuntim
       const expected = identity.split(' ');
       const inventory = await new Promise<string | null>((resolve) => execFile(resolveDarwinPtySupervisor(runtime),
         ['inventory', '--responsible-pid', expected[0], '--responsible-unique-id', expected[1]],
-        { env: { PATH: '/usr/bin:/bin', LANG: 'C' }, encoding: 'utf8', timeout: 1_500, maxBuffer: 8 * 1024 * 1024 }, (error, output) => resolve(error ? null : output)));
+        { env: { PATH: '/usr/bin:/bin', LANG: 'C' }, encoding: 'utf8', timeout: DARWIN_HEAVY_WATCH_READY_MS, maxBuffer: 8 * 1024 * 1024 }, (error, output) => resolve(error ? null : output)));
       if (state !== 'live' || !inventory) return false;
       try {
         const value = JSON.parse(inventory) as { complete: boolean; processes: Array<{ pid: number; processUniqueId: string; processIdVersion: number; responsiblePid: number; responsibleUniqueId: string; status: { name: string } }> };

@@ -67,6 +67,7 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
 | `npm run typecheck` | TypeScript typecheck (`tsc --noEmit`) |
 | `npm test` | Full vitest suite |
 | `npm run test:changed` | Only tests affected by changed files (git-based) |
+| `npm run test:mission-e2e` | Missão inteira de ponta a ponta (Main real, PTY real, CLI falsa); fora de pane; roda no `release:candidate` — [docs/MISSION-E2E.md](docs/MISSION-E2E.md) |
 | `npm run security:renderer-sinks` | Static check for unsafe renderer IPC sinks |
 | `npm run lint` | Alias for `tsc --noEmit` |
 | `npm run start` | Dev server (hot reload) |

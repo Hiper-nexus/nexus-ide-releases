@@ -311,6 +311,16 @@ export function runInsidePtyStreamAgentTransport<T>(
 }
 
 /**
+ * F-971: trabalho AGENDADO de dentro do transporte de um agente (o timer de
+ * leitura do shim que um worker ganha quando o orquestrador o abre por MCP)
+ * não herda a fronteira física desse agente. Sem isto todo handoff do worker
+ * pelo shim morria com "mission shim boundary cannot be nested".
+ */
+export function outsideAgentTransport<T>(operation: () => T): T {
+  return activeAgentTransports.exit(operation);
+}
+
+/**
  * Filesystem-shim boundary for one Main-authenticated intent. Authentication,
  * anti-replay and operation narrowing happen in mission-shim-runtime before
  * this seam; here we bind that exact request to the live physical PTY owner so
