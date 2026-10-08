@@ -78,7 +78,7 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 | QLT-04 | knip | pendente (M) | sem config | dep + CI |
 | QLT-05 | `require-suppression-reason` | integrado | `oxlint-plugin-nexus/rules/require-suppression-reason.mjs` | — |
 | QLT-06 | `no-test-in-loop` | integrado | `oxlint-plugin-nexus/rules/no-test-in-loop.mjs` (erro no `.oxlintrc.json`, CI `lint:oxlint --quiet`); 17 laços convertidos em `it.each`/`it.for` (F-1023) | — |
-| QLT-07 | `no-raw-ipc` | pendente (M) | só `check-renderer-sinks.mjs` | regra AST |
+| QLT-07 | `no-raw-ipc` | integrado | `oxlint-plugin-nexus/rules/no-raw-ipc.mjs` (erro no CI): IPC cru só nos wrappers, nas pontes do preload e em 48 arquivos com teto exato e motivo (`RAW_IPC_ALLOWLIST`); `perf:snapshot` e `model:richMetadata` migrados para `handleTrusted` (F-1024) | baixar os tetos do legado canal a canal |
 | QLT-08 | `DrainableWorker` | pendente (P) | sem helper | junto de ORC-08 |
 | QLT-09 | Paginação por cursor | pendente (G) | só gap buffer de terminal | histórico de missão |
 | QLT-10 | Nome de ação = nome acessível | pendente (M) | só `check-palette-contrast.mjs` | check + guideline |

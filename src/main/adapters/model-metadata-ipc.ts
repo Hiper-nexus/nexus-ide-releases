@@ -11,10 +11,10 @@
  * (RichModelMetadata) é estruturalmente atribuível a RichModelMetadataView,
  * o contrato compartilhado que cruza o preload.
  */
-import { ipcMain } from 'electron';
 import { z } from 'zod';
 import type { RichModelMetadataView } from '../../shared/model-metadata-types';
 import { getRichModelMetadata } from './model-catalog';
+import { handleTrusted } from '../security/trusted-ipc';
 
 /**
  * Espelha `MODEL_CHANNELS.richMetadata` (ver WIRING → src/shared/channels.ts).
@@ -31,7 +31,8 @@ const richMetadataRequestSchema = z
   .strict();
 
 export function registerModelMetadataIpc(): void {
-  ipcMain.handle(
+  // QLT-07: canal só da janela principal (hoje nenhum preload o chama).
+  handleTrusted(
     MODEL_RICH_METADATA_CHANNEL,
     (_event, raw): RichModelMetadataView | null => {
       const { adapterId, modelId } = richMetadataRequestSchema.parse(raw);

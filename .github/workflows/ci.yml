@@ -76,7 +76,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint:main-sync
       # Só erros: as regras do plugin local nexus (oxlint-plugin-nexus) —
-      # supressão sem motivo e teste registrado em laço. Warnings não reprovam aqui.
+      # supressão sem motivo, teste registrado em laço e IPC cru fora dos
+      # wrappers confiáveis. Warnings não reprovam aqui.
       - name: Oxlint (erros, incluindo supressão sem motivo)
         run: npm run lint:oxlint -- --quiet
       - run: npm run security:renderer-sinks
