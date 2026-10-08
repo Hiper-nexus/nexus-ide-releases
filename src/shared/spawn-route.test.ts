@@ -13,6 +13,8 @@ describe('spawn-route', () => {
     expect(isJevUnavailableReason('no-key')).toBe(true);
     expect(isJevUnavailableReason('timeout')).toBe(true);
     expect(isJevUnavailableReason('internal-error')).toBe(true);
+    expect(isJevUnavailableReason('refusal')).toBe(true);
+    expect(isJevUnavailableReason('ambiguous')).toBe(true);
     expect(isJevUnavailableReason('whatever')).toBe(false);
     expect(isJevUnavailableReason(undefined)).toBe(false);
   });

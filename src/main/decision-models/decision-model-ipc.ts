@@ -4,6 +4,8 @@ import { getOrchSettings } from '../persistence/settings-store';
 import { handleTrusted } from '../security/trusted-ipc';
 import { hasClefEnvToken, hasStoredClefApiToken, isClefSecretStorageAvailable, maskedClefApiToken, resolveCloudflareAccountId, resolveClefApiToken, setClefApiToken } from './clef-secrets';
 import { testClefConnection } from './clef-client';
+import { testLunaConnection } from './luna-client';
+import { hasLunaCredential, resolveLunaApiKey } from './luna-credentials';
 import { hasJevCredential } from '../jev/jev-secrets';
 
 interface DecisionModelIpcDeps {
@@ -13,9 +15,12 @@ interface DecisionModelIpcDeps {
   keyMasked: () => string | null;
   secureStorageAvailable: () => boolean;
   hasJev: () => boolean;
+  hasLuna: () => boolean;
   setKey: typeof setClefApiToken;
   resolveToken: typeof resolveClefApiToken;
+  resolveLunaKey: typeof resolveLunaApiKey;
   testConnection: typeof testClefConnection;
+  testLuna: typeof testLunaConnection;
 }
 
 const defaultDeps: DecisionModelIpcDeps = {
@@ -25,15 +30,23 @@ const defaultDeps: DecisionModelIpcDeps = {
   keyMasked: maskedClefApiToken,
   secureStorageAvailable: isClefSecretStorageAvailable,
   hasJev: hasJevCredential,
+  hasLuna: hasLunaCredential,
   setKey: setClefApiToken,
   resolveToken: resolveClefApiToken,
+  resolveLunaKey: resolveLunaApiKey,
   testConnection: testClefConnection,
+  testLuna: testLunaConnection,
 };
 
 function registerConnectionTest(deps: DecisionModelIpcDeps): void {
   handleTrusted(DECISION_MODEL_CHANNELS.test, async (_event, raw) => {
     const parsed = testDecisionModelRequestSchema.safeParse(raw ?? {});
-    if (!parsed.success) return { ok: false, detail: 'Modelo Clef inválido.' };
+    if (!parsed.success) return { ok: false, detail: 'Modelo de decisão inválido.' };
+    if (parsed.data.provider === 'luna') {
+      const token = deps.resolveLunaKey();
+      if (!token) return { ok: false, detail: 'Configure a chave OpenAI em Chaves de API. A Luna (beta) usa essa chave na Decisions API.' };
+      return deps.testLuna(token);
+    }
     const settings = deps.getSettings();
     const accountId = resolveCloudflareAccountId(settings.cloudflareAccountId);
     const token = deps.resolveToken();
@@ -54,6 +67,7 @@ export function registerDecisionModelIpc(overrides: Partial<DecisionModelIpcDeps
       accountIdSource: !accountId ? 'missing' : settings.cloudflareAccountId ? 'settings' : 'env',
       isReady: Boolean(accountId && (hasStoredKey || hasEnv)),
       jevReady: deps.hasJev(),
+      lunaReady: deps.hasLuna(),
     };
   });
   handleTrusted(DECISION_MODEL_CHANNELS.setKey, (_event, raw) => {

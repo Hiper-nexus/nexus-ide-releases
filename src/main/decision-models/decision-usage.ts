@@ -8,7 +8,8 @@ export function decisionResultUsage(result: JevResult): Pick<JevDecisionInput,
   const measured = !result.usageMissing && typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0;
   return {
     ...(measured ? {} : { usageIncomplete: true }),
-    provider: result.route?.provider ?? (result.model.replace('@cf/cloudflare/', '').startsWith('clef') ? 'clef' : 'jev'),
+    provider: result.route?.provider ?? (result.model === 'gpt-6-luna' ? 'luna'
+      : result.model.replace('@cf/cloudflare/', '').startsWith('clef') ? 'clef' : 'jev'),
     route: result.route, durationMs: result.durationMs, requestCount: result.requestCount,
     inputTokens: measured ? tokens : null, usd: measured ? decisionResultCostUsd(result) : null,
   };

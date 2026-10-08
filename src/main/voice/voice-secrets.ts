@@ -1,3 +1,4 @@
+import { bumpDecisionCredentialRevision } from '../decision-models/decision-revision';
 import {
   getSecret,
   hasSecret,
@@ -58,7 +59,9 @@ export function setVoiceApiKey(
   envVar: string,
   key: string,
 ): { ok: boolean; error?: string } {
-  return setSecret(voiceSecretKey(envVar), key);
+  const result = setSecret(voiceSecretKey(envVar), key);
+  if (result.ok && envVar === 'OPENAI_API_KEY') bumpDecisionCredentialRevision();
+  return result;
 }
 
 export function isVoiceSecretStorageAvailable(): boolean {

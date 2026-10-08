@@ -67,6 +67,17 @@ describe('trusted Clef configuration IPC', () => {
     expect(JSON.stringify(result)).not.toContain('synthetic-private-token');
   });
 
+  it('reports the OpenAI key as Luna readiness and tests it without a Cloudflare account', async () => {
+    const testLuna = vi.fn(async () => ({ ok: true, detail: 'Conectado — gpt-6-luna (beta)' }));
+    registerDecisionModelIpc({ hasLuna: () => true, resolveLunaKey: () => 'sk-test-secret', testLuna,
+      getSettings: () => ({ mode: 'luna', clefModel: 'clef', cloudflareAccountId: '', visionEnabled: false }) });
+    expect(handlers.get('decisionModels:status')!(trustedEvent()).lunaReady).toBe(true);
+    const result = await handlers.get('decisionModels:test')!(trustedEvent(), { provider: 'luna' });
+    expect(result).toEqual({ ok: true, detail: 'Conectado — gpt-6-luna (beta)' });
+    expect(JSON.stringify(result)).not.toContain('sk-test-secret');
+    expect(testLuna).toHaveBeenCalledWith('sk-test-secret');
+  });
+
   it('does not run an inference test when account or token is absent', async () => {
     registerDecisionModelIpc({ resolveToken: () => undefined });
     expect(await handlers.get('decisionModels:test')!(trustedEvent(), {})).toMatchObject({ ok: false });

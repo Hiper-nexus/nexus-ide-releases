@@ -9,7 +9,7 @@ function status(overrides: StatusOverrides = {}): DecisionModelStatus {
   return {
     settings: { mode: 'auto', clefModel: 'clef', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: false, ...settings },
     accountId: '0123456789abcdef0123456789abcdef', accountIdSource: 'settings', hasStoredKey: true, hasEnv: false,
-    keyMasked: 'clo…3456', secureStorageAvailable: true, isReady: true, jevReady: true, ...rest,
+    keyMasked: 'clo…3456', secureStorageAvailable: true, isReady: true, jevReady: true, lunaReady: false, ...rest,
   };
 }
 const ids = (value: DecisionModelStatus) => decisionNotices(value).map(notice => notice.id);
@@ -51,6 +51,15 @@ describe('decision model readiness notices', () => {
 
   it('says Automatic decides only through Jev while Cloudflare is not ready', () => {
     expect(ids(status({ isReady: false, hasStoredKey: false }))).toEqual(['auto-jev-only']);
+  });
+
+  it('treats Luna as a real provider: missing key hides tools, and automatic does not call that no provider', () => {
+    const missing = decisionNotices(status({ settings: { mode: 'luna' }, lunaReady: false }));
+    expect(missing[0]).toMatchObject({ id: 'luna-not-ready', tone: 'warn' });
+    expect(missing[0].text).toContain('Chaves de API');
+    const pins = decisionNotices(status({ settings: { mode: 'luna' }, lunaReady: true, jevReady: false }));
+    expect(pins.find(entry => entry.id === 'luna-pins')?.text).toContain('TypeSafe');
+    expect(ids(status({ jevReady: false, isReady: false, hasStoredKey: false, lunaReady: true }))).toEqual(['luna-fallback']);
   });
 
   it('warns that image analysis is on while Cloudflare is not ready', () => {

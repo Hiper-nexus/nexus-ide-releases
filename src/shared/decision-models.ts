@@ -10,8 +10,11 @@ export const CLEF_ACCOUNT_ENV = 'NEXUS_CLEF_ACCOUNT_ID';
 /** Rótulo do cofre (já gravado em instalações e bundles exportados): não renomear. */
 export const CLEF_SECRET_NAME = 'clef-env:CLOUDFLARE_API_TOKEN';
 
+/** Decisions API. Não é o modelo de geração do pane: a rota de texto não usa este id. */
+export const LUNA_DECISION_MODEL = 'gpt-6-luna';
+
 export const decisionSettingsSchema = z.object({
-  mode: z.enum(['auto', 'jev', 'clef']).default('jev'),
+  mode: z.enum(['auto', 'jev', 'clef', 'luna']).default('jev'),
   clefModel: z.enum(['clef', 'clef-flash']).default('clef'),
   cloudflareAccountId: z.string().trim().regex(/^(?:[a-fA-F0-9]{32})?$/).default(''),
   visionEnabled: z.boolean().default(false),
@@ -23,6 +26,7 @@ export const setDecisionKeyRequestSchema = z.object({
 
 export const testDecisionModelRequestSchema = z.object({
   model: z.enum(['clef', 'clef-flash']).optional(),
+  provider: z.enum(['clef', 'luna']).optional(),
 }).strict();
 
 export type DecisionSettings = z.infer<typeof decisionSettingsSchema>;
@@ -31,14 +35,14 @@ export interface DecisionUsageReceipt {
   inputTokens: number | null; usd: number | null; requestCount: number; durationMs: number; usageIncomplete: boolean;
 }
 export type ClefModel = DecisionSettings['clefModel'];
-export type DecisionProvider = 'jev' | 'clef';
+export type DecisionProvider = 'jev' | 'clef' | 'luna';
 export type SetDecisionKeyRequest = z.infer<typeof setDecisionKeyRequestSchema>;
 export type TestDecisionModelRequest = z.infer<typeof testDecisionModelRequestSchema>;
 
 export interface DecisionRoute {
   provider: DecisionProvider;
   model: string;
-  policyVersion: 'jev-clef-v1';
+  policyVersion: 'jev-clef-v1' | 'jev-clef-luna-v1';
   evidence: 'public-benchmark' | 'legacy' | 'manual' | 'capability';
   reason: string;
 }
@@ -58,5 +62,7 @@ export interface DecisionModelStatus {
   isReady: boolean;
   /** A chave Jev existe (presença apenas): a UI avisa quando o Automático cairia na Cloudflare. */
   jevReady: boolean;
+  /** A chave OpenAI existe (presença apenas): é a credencial da Decisions API (Luna, beta). */
+  lunaReady: boolean;
   settings: DecisionSettings;
 }

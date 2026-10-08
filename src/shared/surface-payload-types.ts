@@ -1,3 +1,4 @@
+import type { DecisionProvider } from './decision-models';
 import type { LicenseErrorCode, LicenseDenialReason } from './license-errors';
 import type { SpawnRouteInfo } from './spawn-route';
 /**
@@ -87,7 +88,7 @@ export interface CatalogRecommendationsResult {
   areas?: CatalogProjectArea[];
   recommendations?: CatalogRecommendation[];
   /** Quem decidiu. */
-  provider?: 'jev' | 'clef';
+  provider?: DecisionProvider;
   decidedAt?: number;
 }
 

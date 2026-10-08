@@ -34,7 +34,11 @@ export type JevNoAnswerReason =
   | 'malformed'
   | 'aborted'
   /** Bug ou configuração quebrada dentro do Nexus (não do provedor): nunca o texto do erro. */
-  | 'internal-error';
+  | 'internal-error'
+  /** A Decisions API recusou a consulta. Não é um predicado negativo. */
+  | 'refusal'
+  /** A resposta parseou, mas a distribuição não serve o contrato. */
+  | 'ambiguous';
 
 export interface JevDecisionEntry {
   id: string;

@@ -72,7 +72,7 @@ export const SYSTEM_API_KEYS: readonly SystemApiKeyDef[] = [
     envVar: 'OPENAI_API_KEY',
     title: 'OpenAI',
     description:
-      'Jarvis Realtime (conversa contínua via WebSocket), Codex CLI, modelos GPT-4o/o1/o3, Whisper STT e DALL-E 3.',
+      'Jarvis Realtime (conversa contínua via WebSocket), Codex CLI, modelos GPT-4o/o1/o3, Whisper STT e DALL-E 3. Esta chave também é a da Decisions API (Luna, beta) em Modelos de decisão.',
     category: 'core',
     docLink: 'https://platform.openai.com/api-keys',
     docLabel: 'OpenAI Platform',

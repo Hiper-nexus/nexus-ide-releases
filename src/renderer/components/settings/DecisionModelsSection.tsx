@@ -17,7 +17,7 @@ export function DecisionModelsSection({ showCredentials = true }: { showCredenti
   const notices = status ? decisionNotices(status) : [];
   return <section className="settings-section decision-models" aria-label="Modelos de decisão" aria-busy={busy}>
     <header className="decision-models__head"><h3 className="settings-section-heading">Modelos de decisão</h3>
-      <p className="settings-detail__hint">Jev e Clef se complementam. Escolha um provedor ou deixe o Nexus selecionar por tarefa.</p>
+      <p className="settings-detail__hint">Jev, Clef e Luna (beta) se complementam. Escolha um provedor ou deixe o Nexus selecionar por tarefa.</p>
     </header>
     {!supported && <p className="settings-field__note">Para configurar Clef, atualize o Nexus.</p>}
     {supported && !status && !error && <div className="decision-models__loading" role="status">Carregando configuração…</div>}
@@ -26,6 +26,13 @@ export function DecisionModelsSection({ showCredentials = true }: { showCredenti
         {notices.map(entry => <li key={entry.id} className={`decision-models__notice decision-models__notice--${entry.tone}`}>{entry.text}</li>)}
       </ul>}
       <DecisionModeControls settings={status.settings} busy={busy} onChange={change} />
+      {status.settings.mode === 'luna' && <div className="settings-row decision-models__actions">
+        <button className="settings-btn settings-btn--sm" type="button" disabled={busy || !status.lunaReady} onClick={() => void run(async () => {
+          const result = await window.nexus.decisionModels.test({ provider: 'luna' });
+          if (!result.ok) throw new Error(result.detail);
+        }, 'Conexão com a Luna confirmada.')}>Testar a Luna</button>
+      </div>}
+      {status.settings.mode === 'luna' && <p className="settings-field__note">A chave é a da OpenAI, em Chaves de API. O teste faz uma consulta pequena na Decisions API (beta).</p>}
       {showCredentials ? <ClefCredentials status={status} busy={busy} run={run} onError={setError} errorId={error ? ERROR_ID : undefined} />
         : <p className="settings-field__note">Configure Account ID e API Token Cloudflare em Chaves de API.</p>}
     </>}

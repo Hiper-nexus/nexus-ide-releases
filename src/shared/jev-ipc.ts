@@ -58,7 +58,9 @@ export interface JevDecisionRow {
     | 'network'
     | 'malformed'
     | 'aborted'
-    | 'internal-error';
+    | 'internal-error'
+    | 'refusal'
+    | 'ambiguous';
   surface: string;
   sessionId?: string;
   missionId?: string;

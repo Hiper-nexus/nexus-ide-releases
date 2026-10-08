@@ -16,7 +16,7 @@ const rowSchema = z.looseObject({
   surface: z.string().min(1),
   model: z.string().min(1),
   kind: z.enum(['decision', 'no-answer', 'optimization']).optional().catch(undefined),
-  provider: z.enum(['jev', 'clef']).optional().catch(undefined),
+  provider: z.enum(['jev', 'clef', 'luna']).optional().catch(undefined),
   questions: z.array(z.string()).catch([]),
   probabilities: z.record(z.string(), z.number().finite()).catch({}),
   decision: z.string().catch(''),

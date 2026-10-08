@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const state = vi.hoisted(() => ({ tokens: new Map<string, string>(), mode: 'auto' as 'auto' | 'jev' | 'clef', vaultReads: [] as string[] }));
+const state = vi.hoisted(() => ({ tokens: new Map<string, string>(), mode: 'auto' as 'auto' | 'jev' | 'clef' | 'luna', vaultReads: [] as string[] }));
 vi.mock('../persistence/settings-store', () => ({ getOrchSettings: () => ({ decisionModels: {
   mode: state.mode, clefModel: 'clef', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: false,
 } }) }));
@@ -12,7 +12,7 @@ import { decisionConfigurationKey, getDecisionAvailability, hasDecisionCredentia
 import { setClefApiToken } from './clef-secrets';
 
 describe('configured decision availability', () => {
-  beforeEach(() => { state.tokens.clear(); state.vaultReads.length = 0; state.mode = 'auto'; delete process.env.TYPESAFE_API_KEY; delete process.env.NEXUS_CLEF_API_TOKEN; });
+  beforeEach(() => { state.tokens.clear(); state.vaultReads.length = 0; state.mode = 'auto'; delete process.env.TYPESAFE_API_KEY; delete process.env.NEXUS_CLEF_API_TOKEN; delete process.env.OPENAI_API_KEY; });
 
   it('makes Clef usable without a TypeSafe key and respects Jev-only selection', () => {
     setClefApiToken('synthetic-token');
@@ -23,14 +23,18 @@ describe('configured decision availability', () => {
 
   it('does not read the vault for the provider the selected mode can never use', () => {
     state.mode = 'jev';
-    expect(getDecisionAvailability()).toEqual({ jev: false, clef: false });
-    expect(state.vaultReads.some(name => name.startsWith('clef-env:'))).toBe(false);
+    expect(getDecisionAvailability()).toEqual({ jev: false, clef: false, luna: false });
+    expect(state.vaultReads.some(name => name.startsWith('clef-env:') || name.startsWith('voice-env:'))).toBe(false);
     state.vaultReads.length = 0; state.mode = 'clef';
     getDecisionAvailability();
-    expect(state.vaultReads.some(name => name.startsWith('jev-env:'))).toBe(false);
+    expect(state.vaultReads.some(name => name.startsWith('jev-env:') || name.startsWith('voice-env:'))).toBe(false);
+    state.vaultReads.length = 0; state.mode = 'luna';
+    getDecisionAvailability();
+    expect(state.vaultReads.some(name => name.startsWith('clef-env:'))).toBe(false);
+    expect(new Set(state.vaultReads.map(name => name.split(':')[0]))).toEqual(new Set(['jev-env', 'voice-env']));
     state.vaultReads.length = 0; state.mode = 'auto';
     getDecisionAvailability();
-    expect(new Set(state.vaultReads.map(name => name.split(':')[0]))).toEqual(new Set(['jev-env', 'clef-env']));
+    expect(new Set(state.vaultReads.map(name => name.split(':')[0]))).toEqual(new Set(['jev-env', 'clef-env', 'voice-env']));
   });
 
   it('invalidates in-flight/cache identity when a present token is rotated', () => {

@@ -38,7 +38,7 @@ describe('complementary decision model settings', () => {
     storedToken = ''; rejectedSave = false; statusFails = false;
     status = { settings: { mode: 'jev', clefModel: 'clef', cloudflareAccountId: ACCOUNT, visionEnabled: false },
       accountId: ACCOUNT, accountIdSource: 'settings', hasStoredKey: false,
-      hasEnv: false, keyMasked: null, secureStorageAvailable: true, isReady: false, jevReady: true };
+      hasEnv: false, keyMasked: null, secureStorageAvailable: true, isReady: false, jevReady: true, lunaReady: false };
     Object.defineProperty(window, 'nexus', { configurable: true, value: {
       settings: { orchSet: vi.fn(async (patch) => { status = { ...status, settings: patch.decisionModels, accountId: patch.decisionModels.cloudflareAccountId }; return { decisionModels: status.settings }; }) },
       decisionModels: {
@@ -186,6 +186,14 @@ describe('complementary decision model settings', () => {
     status = { ...status, settings: { ...status.settings, mode: 'auto' }, jevReady: false, hasStoredKey: true, isReady: true };
     await mount();
     expect(notices()).toContain('Sem chave Jev');
+  });
+
+  it('tests Luna through the OpenAI key without a Cloudflare account', async () => {
+    status = { ...status, settings: { ...status.settings, mode: 'luna' }, lunaReady: true };
+    await mount();
+    expect(host.textContent).toContain('Somente Luna (beta)');
+    await act(async () => { button('Testar a Luna').click(); });
+    expect(bridge().test).toHaveBeenCalledWith({ provider: 'luna' });
   });
 
   it('shows failed connection tests inline', async () => {

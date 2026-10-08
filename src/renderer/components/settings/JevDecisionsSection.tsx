@@ -36,6 +36,8 @@ const NO_ANSWER_REASONS: Record<string, string> = {
   aborted: 'cancelada',
   'client-error': 'configuração ou credencial',
   'internal-error': 'erro interno',
+  refusal: 'recusa do modelo',
+  ambiguous: 'resposta ambígua',
 };
 
 function surfaceLabel(surface: string): string {
@@ -133,7 +135,7 @@ export function JevDecisionsSection() {
         )}
       </div>
       <p className="settings-detail__hint">
-        Cada vez que o piloto automático consulta Jev ou Clef, o
+        Cada vez que o piloto automático consulta Jev, Clef ou Luna, o
         Nexus registra a decisão aqui — sem nunca guardar o texto analisado.
         Marque certo ou errado para o app aprender onde ele acerta e onde
         precisa de ajuste.
@@ -200,7 +202,7 @@ export function JevDecisionsSection() {
           </div>
           <p className="settings-detail__hint">
             Custo estimado pelas tarifas públicas de cada modelo: Jev US$ 0,042,
-            Clef US$ 0,24 e Flash US$ 0,09 por milhão de tokens de entrada.
+            Clef US$ 0,24, Flash US$ 0,09 e Luna US$ 0,10 por milhão de tokens de entrada.
             Consultas sem resposta podem ter custo não medido. "Pela regra" = o modelo foi
             consultado e não respondeu (timeout, erro, limite) — a superfície
             decidiu pelo caminho determinístico. Chamada direta ao provedor,
@@ -345,7 +347,7 @@ export function JevDecisionsSection() {
                         </span>
                       </div>
                       <p className="jev-log__meta">
-                        {formatTime(row.at)} · {row.provider === 'clef' || row.model.startsWith('clef') ? 'Cloudflare' : 'TypeSafe'} · {row.model} ·{' '}
+                        {formatTime(row.at)} · {row.provider === 'luna' || row.model === 'gpt-6-luna' ? 'OpenAI' : row.provider === 'clef' || row.model.startsWith('clef') ? 'Cloudflare' : 'TypeSafe'} · {row.model} ·{' '}
                         {topProbabilities(row)}
                         {row.route?.reason === 'credential-fallback' ? ' · alternativa disponível' : row.route?.evidence === 'public-benchmark' ? ' · regra inicial' : ''}
                       </p>

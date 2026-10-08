@@ -101,6 +101,43 @@ describe('common decision service', () => {
     expect(result).toBeNull(); expect(nativeCalls).toBe(0);
   });
 
+  it('calls the Decisions API in Luna-only mode and does not fall back to Jev', async () => {
+    let endpoint = ''; let nativeCalls = 0;
+    const result = await judgeDecision({ ...input, surface: 'intake', state: 'sk-abcdefghijklmnopqrstuvwxyz' }, {
+      nativeJudge: async () => { nativeCalls++; return nativeResult; },
+      getSettings: () => ({ ...settings, mode: 'luna' }), getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      getConfigurationKey: () => 'stable', resolveLunaKey: () => 'sk-luna-secret',
+      fetch: (async (url, options) => {
+        endpoint = String(url);
+        const body = JSON.parse(String(options?.body));
+        expect(body.input).not.toContain('sk-abcdefghijklmnopqrstuvwxyz');
+        expect(String(options?.body)).not.toContain('sk-luna-secret');
+        return Response.json({ usage: { input_tokens: 1_000_000 }, answers: body.questions.map((question: { name: string }) => (
+          { type: 'predicate', name: question.name, probability: 0.4 })) });
+      }) as typeof fetch,
+    });
+    expect(endpoint).toBe('https://api.openai.com/v1/decisions');
+    expect(nativeCalls).toBe(0);
+    expect(result?.route).toMatchObject({ provider: 'luna', model: 'gpt-6-luna' });
+    expect(result?.estimatedUsd).toBeCloseTo(0.10, 10);
+    expect(result?.answers.q).toEqual({ type: 'noul', noul: 0.4 });
+  });
+
+  it('records a Luna refusal without turning it into a negative predicate or keeping the input', async () => {
+    const onNoAnswer = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'intake', state: 'private brief', onNoAnswer }, {
+      nativeJudge: async () => nativeResult,
+      getSettings: () => ({ ...settings, mode: 'luna' }), getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      getConfigurationKey: () => 'stable', resolveLunaKey: () => 'sk-luna-secret',
+      fetch: (async () => Response.json({ answers: [{ type: 'refusal', name: 'q0' }] })) as typeof fetch,
+    });
+    expect(result).toBeNull();
+    expect(onNoAnswer).toHaveBeenCalledWith('refusal');
+    expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'refusal', provider: 'luna' }));
+    const recorded = vi.mocked(recordJevNoAnswer).mock.calls.at(-1)?.[0];
+    expect(JSON.stringify(recorded)).not.toContain('private brief');
+  });
+
   it('does not start another batch after credentials rotate during the first request', async () => {
     let requests = 0;
     const questions = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`q${index}`, input.questions.q]));

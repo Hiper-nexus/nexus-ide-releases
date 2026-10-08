@@ -2,6 +2,8 @@ import type { DecisionSettings, DecisionRoute, DecisionUsageReceipt } from '../.
 import type { JudgeInput, JevResult } from '../jev/jev-client';
 import { recordJevNoAnswer, type JevNoAnswerReason } from '../jev/jev-decision-log';
 import { judgeClef, type ClefConnection } from './clef-client';
+import { judgeLuna } from './luna-client';
+import { resolveLunaApiKey } from './luna-credentials';
 import { resolveDecisionRoute, type DecisionAvailability } from './decision-routing';
 import { decisionConfigurationKey, getClefConnection, getDecisionAvailability, getDecisionSettings } from './decision-availability';
 import { decisionResultCostUsd } from './decision-pricing';
@@ -13,6 +15,7 @@ export interface DecisionJudgeDeps {
   getAvailability?: () => DecisionAvailability;
   getConfigurationKey?: () => string;
   getClefConnection?: () => ClefConnection | undefined;
+  resolveLunaKey?: () => string | undefined;
   fetch?: typeof fetch;
   now?: () => number;
 }
@@ -63,13 +66,17 @@ async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Prom
   let failureUsage: DecisionUsageReceipt | undefined;
   try {
     if (currentInput.signal.aborted) return noAnswer(input, route, 'aborted', NO_REQUEST_USAGE);
+    const watched = { ...currentInput, onUsage: (receipt: DecisionUsageReceipt) => { failureUsage = receipt; input.onUsage?.(receipt); },
+      onNoAnswer: (reason: JevNoAnswerReason) => { noAnswer(input, route, reason, failureUsage); } };
     const connection = route.provider === 'clef' ? (deps.getClefConnection ?? (() => getClefConnection(settings)))() : undefined;
+    const lunaKey = route.provider === 'luna' ? (deps.resolveLunaKey ?? resolveLunaApiKey)()?.trim() : undefined;
     const result = route.provider === 'jev'
       ? await deps.nativeJudge({ ...currentInput, model: route.model })
-      : connection ? await judgeClef({ ...currentInput, onUsage: receipt => { failureUsage = receipt; input.onUsage?.(receipt); },
-          onNoAnswer: reason => { noAnswer(input, route, reason, failureUsage); } },
-          { ...connection, model: route.model as ClefConnection['model'] }, { fetch: deps.fetch, now: deps.now })
-        : noAnswer(input, route, 'client-error', NO_REQUEST_USAGE);
+      : route.provider === 'luna'
+        ? lunaKey ? await judgeLuna(watched, lunaKey, { fetch: deps.fetch, now: deps.now })
+          : noAnswer(input, route, 'client-error', NO_REQUEST_USAGE)
+        : connection ? await judgeClef(watched, { ...connection, model: route.model as ClefConnection['model'] }, { fetch: deps.fetch, now: deps.now })
+          : noAnswer(input, route, 'client-error', NO_REQUEST_USAGE);
     if (!result) return null;
     const elapsed = (): number => result.durationMs ?? (deps.now ?? (() => performance.now()))() - started;
     if (currentInput.signal.aborted || configuration() !== before) return noAnswer(input, route, 'aborted', {

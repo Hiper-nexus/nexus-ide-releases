@@ -1,6 +1,7 @@
 import type { DecisionImage } from '../../shared/decision-models';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { decisionConfigurationKey, getDecisionAvailability, getDecisionSettings } from '../decision-models/decision-availability';
+import { canRouteBrowserVisual } from '../decision-models/decision-routing';
 import { judge, type JevQuestion, type JevResult } from '../jev/jev-client';
 import { recordJevDecision, jevAnswerProbabilities, jevAnswerConfidences } from '../jev/jev-decision-log';
 import { decisionResultUsage } from '../decision-models/decision-usage';
@@ -24,7 +25,7 @@ export interface BrowserVisualDeps {
 }
 export function canJudgeBrowserVisual(): boolean {
   const settings = getDecisionSettings();
-  return settings.visionEnabled && settings.mode !== 'jev' && getDecisionAvailability(settings).clef;
+  return canRouteBrowserVisual(settings, getDecisionAvailability(settings));
 }
 const defaults: BrowserVisualDeps = { available: canJudgeBrowserVisual, configurationKey: decisionConfigurationKey,
   capture: captureRedactedBrowserVisual, judge, record: recordJevDecision };

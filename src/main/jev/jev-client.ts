@@ -127,7 +127,7 @@ function warnRateLimited(message: string, now: () => number): void {
 
 export interface JudgeInput {
   onUsage?: (receipt: import('../../shared/decision-models').DecisionUsageReceipt) => void;
-  /** Embedded, validated images are supported only by Clef. */
+  /** Imagens validadas: Clef, ou a Luna quando a rota de visão aponta para a Decisions API. */
   images?: readonly DecisionImage[];
   state: unknown;
   questions: Record<string, JevQuestion>;

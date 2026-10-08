@@ -4,6 +4,7 @@ import type { JevDecisionSurface } from '../jev/jev-decision-log';
 import { getOrchSettings } from '../persistence/settings-store';
 import { hasJevCredential } from '../jev/jev-secrets';
 import { hasClefCredential, resolveCloudflareAccountId, resolveClefApiToken } from './clef-secrets';
+import { hasLunaCredential } from './luna-credentials';
 import { resolveDecisionRoute, type DecisionAvailability } from './decision-routing';
 import { decisionCredentialRevision } from './decision-revision';
 import type { ClefConnection } from './clef-client';
@@ -13,10 +14,12 @@ export function getDecisionSettings(): DecisionSettings {
 }
 
 export function getDecisionAvailability(settings = getDecisionSettings()): DecisionAvailability {
-  // O modo fixo nunca usa o outro provedor: não consulte o cofre à toa a cada avaliação.
+  // Modo fixo não lê cofre de provedor que não pode servir. Somente Luna ainda lê o Jev: as superfícies com efeito continuam lá.
+  const mode = settings.mode;
   return {
-    jev: settings.mode === 'clef' ? false : hasJevCredential(),
-    clef: settings.mode === 'jev' ? false : hasClefCredential() && Boolean(resolveCloudflareAccountId(settings.cloudflareAccountId)),
+    jev: mode === 'clef' ? false : hasJevCredential(),
+    clef: mode === 'jev' || mode === 'luna' ? false : hasClefCredential() && Boolean(resolveCloudflareAccountId(settings.cloudflareAccountId)),
+    luna: mode === 'jev' || mode === 'clef' ? false : hasLunaCredential(),
   };
 }
 

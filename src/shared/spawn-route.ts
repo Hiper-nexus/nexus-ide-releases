@@ -14,7 +14,11 @@ export type JevUnavailableReason =
   | 'network'
   | 'malformed'
   | 'aborted'
-  | 'internal-error';
+  | 'internal-error'
+  /** A Decisions API recusou a consulta. Não é predicado negativo. */
+  | 'refusal'
+  /** A distribuição parseou, mas não serve o contrato. */
+  | 'ambiguous';
 
 export type SpawnRouteSource = 'jev' | 'mixed' | 'heuristic';
 
@@ -161,6 +165,8 @@ export const JEV_UNAVAILABLE_LABEL: Readonly<Record<JevUnavailableReason, string
   malformed: 'resposta malformada',
   aborted: 'cancelado',
   'internal-error': 'erro interno do Nexus',
+  refusal: 'recusa do modelo',
+  ambiguous: 'resposta ambígua',
 };
 
 export function isJevUnavailableReason(value: unknown): value is JevUnavailableReason {
