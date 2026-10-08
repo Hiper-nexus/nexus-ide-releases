@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
 import { useDictationMode } from '../voice/use-dictation-mode';
 import {
   anchorFromDrag,
   clampHudDragPosition,
+  floatingSafeArea,
   hudPositionStyle,
   isHudMini,
+  publishFloatingSafeArea,
 } from '../voice/hud-prefs';
 import { requestJarvisWake } from '../voice/manual-wake';
 import { canAttemptRealtime } from '../voice/voice-realtime-gates';
@@ -122,6 +124,47 @@ export function VoiceHud() {
     });
   }, []);
   useEffect(() => () => dragCleanupRef.current?.(), []);
+
+  // F-1005: publica o espaço que o HUD ocupa no canto inferior direito; quem
+  // tem controle ali ("+ Pane", card de aprovação, commit, Configurações,
+  // barra de direção) reserva esse espaço em vez de ficar por baixo do orbe.
+  // Durante o arrasto a reserva fica parada (o layout não dança com o ponteiro).
+  useLayoutEffect(() => {
+    if (dragPos) return;
+    const shell = shellRef.current;
+    if (!shell) {
+      publishFloatingSafeArea(document.documentElement, null);
+      return;
+    }
+    const rect = shell.getBoundingClientRect();
+    publishFloatingSafeArea(
+      document.documentElement,
+      floatingSafeArea(
+        rect,
+        { width: window.innerWidth, height: window.innerHeight },
+        hud.corner,
+      ),
+    );
+  });
+  useEffect(() => {
+    const onResize = () => {
+      const shell = shellRef.current;
+      if (!shell || dragRef.current) return;
+      publishFloatingSafeArea(
+        document.documentElement,
+        floatingSafeArea(
+          shell.getBoundingClientRect(),
+          { width: window.innerWidth, height: window.innerHeight },
+          useVoiceStore.getState().hud.corner,
+        ),
+      );
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      publishFloatingSafeArea(document.documentElement, null);
+    };
+  }, []);
 
   if (hud.mode === 'hidden') return null; // só-áudio: zero visual
   if (

@@ -325,9 +325,12 @@ const TimelineRow = memo(function TimelineRow({
 export function AgentActivityTimeline({
   events,
   missionId,
+  totalCount,
 }: {
   readonly events: readonly MissionEvent[];
   readonly missionId: string;
+  /** F-1005: total do journal no Main; maior que o carregado vira "N de total". */
+  readonly totalCount?: number;
 }) {
   const [filter, setFilter] = useState<ActivityCategory>('all');
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
@@ -419,7 +422,9 @@ export function AgentActivityTimeline({
           className={`agent-timeline__filter-btn${filter === 'all' ? ' is-active' : ''}`}
           onClick={() => setFilter('all')}
         >
-          Todas ({allItems.length})
+          {totalCount !== undefined && totalCount > allItems.length
+            ? `Todas (${allItems.length} de ${totalCount})`
+            : `Todas (${allItems.length})`}
         </button>
         <button
           type="button"

@@ -181,6 +181,54 @@ describe('UsageQuotaSection', () => {
     act(() => root.unmount());
   });
 
+  it('F-1005: singular e plural certos na faixa de resumo (1 conexão, 1 conta fora da soma)', async () => {
+    const single: QuotaFleetSnapshot = {
+      ...sampleSnapshot,
+      entries: [sampleEntries[0]],
+      highUsageCount: 0,
+      unknownCount: 0,
+      plans: { monthlyUsd: 20, detected: 1, priced: 1, connected: 2, undetected: 1 },
+    };
+    vi.mocked(window.nexus.quota.snapshot).mockResolvedValue(single);
+    vi.mocked(window.nexus.quota.refresh).mockResolvedValue(single);
+    Object.assign(window.nexus, {
+      usage: {
+        lifetime: vi.fn(async () => ({
+          tokensBurned: 1000,
+          usdEquivalent: 1,
+          panesServed: 1,
+          turns: 1,
+        })),
+        onChanged: () => () => {},
+      },
+    });
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const text = (host.textContent ?? '').replace(/\s+/g, ' ');
+
+    expect(text).toContain('1 conexão ou conta');
+    expect(text).not.toContain('1 conexões');
+    expect(text).toContain('1 conta fora da soma');
+    expect(text).not.toContain('1 contas');
+    expect(text).toContain('1 pane');
+    expect(text).not.toContain('1 panes');
+    expect(text).toContain('1 turno');
+    expect(text).not.toContain('1 turnos');
+    const plansTitle =
+      host.querySelector('.quota-panel__plans')?.getAttribute('title') ?? '';
+    expect(plansTitle).toContain('1 conexão elegível sem plano');
+    expect(plansTitle).not.toContain('(ões)');
+    expect(
+      host.querySelector('.quota-pulse__axis')?.getAttribute('aria-label') ?? '',
+    ).not.toMatch(/\b1 contas\b/);
+
+    act(() => root.unmount());
+  });
+
   it('renders provider entries with labels, email, cooldown, and badges', async () => {
     const { host, root } = mount();
     await act(async () => {

@@ -11,12 +11,25 @@ import { useContextualPanelNavStore } from '../../state/contextual-panel-nav-sto
 import { DirectionComposer } from './DirectionComposer';
 import { AgentActivityTimeline } from './AgentActivityTimeline';
 
+/**
+ * F-1005: o renderer só tem a janela que o Main paginou. `total` é o tamanho
+ * real do journal (null = Main antigo sem contagem); `hasMore` diz se há
+ * eventos antes do mais antigo carregado; `onLoadMore` pede a página anterior.
+ */
+export interface MissionJournalHistory {
+  readonly total: number | null;
+  readonly hasMore: boolean;
+  readonly loading: boolean;
+  readonly onLoadMore: () => void;
+}
+
 interface MissionInspectorProps {
   readonly snapshot: MissionSnapshot;
   readonly events: readonly MissionEvent[];
   readonly onCommand: (command: MissionEngineCommand) => Promise<MissionSnapshot>;
   readonly question: ReactNode;
   readonly onOpenTerminals?: () => void;
+  readonly journal?: MissionJournalHistory;
 }
 
 const TABS = [
@@ -772,15 +785,51 @@ function FinalScreenDetails({
   );
 }
 
+/**
+ * F-1005: quanto da história está na tela e o caminho para o resto. Só aparece
+ * quando o Main diz que há eventos antes do mais antigo carregado.
+ */
+function JournalHistoryBar({
+  loaded,
+  journal,
+}: {
+  readonly loaded: number;
+  readonly journal: MissionJournalHistory | undefined;
+}) {
+  if (!journal?.hasMore) return null;
+  const total = journal.total !== null && journal.total > loaded ? journal.total : null;
+  return (
+    <div className="mission-inspector__journal-history" role="status">
+      <span>
+        {total !== null
+          ? `Mostrando os ${loaded} eventos mais recentes de ${total}.`
+          : `Mostrando os ${loaded} eventos mais recentes.`}
+      </span>
+      <button
+        type="button"
+        className="product-pane__btn product-pane__btn--ghost"
+        style={{ fontSize: 10, padding: '2px 8px' }}
+        disabled={journal.loading}
+        onClick={journal.onLoadMore}
+      >
+        {journal.loading ? 'Carregando…' : 'Carregar eventos anteriores'}
+      </button>
+    </div>
+  );
+}
+
 function ActivityProjection({
   snapshot,
   events,
+  journal,
 }: {
   readonly snapshot: MissionSnapshot;
   readonly events: readonly MissionEvent[];
+  readonly journal?: MissionJournalHistory;
 }) {
   const [viewMode, setViewMode] = useState<'timeline' | 'canonical'>('canonical');
   const items = normalizedActivity(events, snapshot.id);
+  const loadedCount = events.filter((event) => event.missionId === snapshot.id).length;
   // F-244: missão parada explica o reparo e mostra a última tela de cada pane.
   const stopScreens =
     snapshot.state === 'blocked_technical'
@@ -788,9 +837,15 @@ function ActivityProjection({
       : [];
   const stopReason =
     snapshot.state === 'blocked_technical' ? snapshot.stateReason : undefined;
+  // F-1005: na timeline a lista virtual é a ÚNICA rolagem do painel.
+  const timelineMode = items.length > 0 && viewMode === 'timeline';
 
   return (
-    <div className="mission-inspector__activity-wrap">
+    <div
+      className={`mission-inspector__activity-wrap${
+        timelineMode ? ' mission-inspector__activity-wrap--timeline' : ''
+      }`}
+    >
       {snapshot.state === 'blocked_technical' && (
         <section
           className="mission-inspector__stop-reason"
@@ -821,7 +876,11 @@ function ActivityProjection({
         </p>
       ) : (
         <>
-          <div className="mission-inspector__activity-view-switcher" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+          {/* F-1005: histórico e troca de vista numa linha só — no painel
+              empilhado (~212px a 1280×820) cada linha a menos é uma linha a
+              mais da lista. */}
+          <div className="mission-inspector__activity-view-switcher">
+            <JournalHistoryBar loaded={loadedCount} journal={journal} />
             <button
               type="button"
               className="product-pane__btn product-pane__btn--ghost"
@@ -832,7 +891,11 @@ function ActivityProjection({
             </button>
           </div>
           {viewMode === 'timeline' ? (
-            <AgentActivityTimeline events={events} missionId={snapshot.id} />
+            <AgentActivityTimeline
+              events={events}
+              missionId={snapshot.id}
+              totalCount={journal?.total ?? undefined}
+            />
           ) : (
             <ol className="mission-inspector__activity-list">
               {items.map((item) => (
@@ -1027,6 +1090,7 @@ function InspectorPanelContent({
   events,
   onCommand,
   question,
+  journal,
 }: MissionInspectorProps & {
   readonly tab: InspectorTab;
   readonly selectedAgentId: string | null;
@@ -1046,7 +1110,7 @@ function InspectorPanelContent({
         />
       );
     case 'activity':
-      return <ActivityProjection snapshot={snapshot} events={events} />;
+      return <ActivityProjection snapshot={snapshot} events={events} journal={journal} />;
     case 'team':
       return <TeamProjection snapshot={snapshot} />;
     case 'result':
@@ -1060,6 +1124,7 @@ export function MissionInspector({
   onCommand,
   question,
   onOpenTerminals,
+  journal,
 }: MissionInspectorProps) {
   const activeTab = useMissionInspectorStore((state) => state.tab);
   const selectedAgentId = useMissionInspectorStore(
@@ -1158,6 +1223,7 @@ export function MissionInspector({
               events={events}
               onCommand={onCommand}
               question={question}
+              journal={journal}
             />
           </div>
         );

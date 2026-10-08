@@ -64,13 +64,30 @@ import {
 import { rebindLiveMaestroOfMission } from '../../terminal/terminal-host';
 import { MissionGraph } from './MissionGraph';
 import { DirectionComposer } from './DirectionComposer';
-import { MissionInspector } from './MissionInspector';
+import { MissionInspector, type MissionJournalHistory } from './MissionInspector';
+import {
+  mergeRecentJournalWindow,
+  prependOlderJournalPage,
+} from '../../lib/mission-journal-window';
 import {
   MissionQuestion,
   type MissionQuestionState,
 } from './MissionQuestion';
 
+/** Tamanho da janela recente E de cada página anterior pedida ao Main. */
 const RECENT_EVENT_LIMIT = 40;
+
+interface JournalHistoryState {
+  readonly total: number | null;
+  readonly hasMore: boolean;
+  readonly loading: boolean;
+}
+
+const EMPTY_JOURNAL_HISTORY: JournalHistoryState = {
+  total: null,
+  hasMore: false,
+  loading: false,
+};
 const WORKSPACE_STACK_BREAKPOINT = 1099;
 const MISSION_INSPECTOR_COLLAPSED_KEY = 'nexus.mission.inspector-collapsed';
 /**
@@ -246,6 +263,10 @@ export function MissionBoard({
   const actionPendingRef = useRef(false);
   const refreshSnapshotRef = useRef<(() => void) | null>(null);
   const refreshJournalRef = useRef<(() => void) | null>(null);
+  // F-1005: páginas anteriores do journal, pedidas ao Main sob demanda.
+  const loadOlderJournalRef = useRef<(() => void) | null>(null);
+  const olderPagesLoadedRef = useRef(false);
+  const eventsRef = useRef<MissionEvent[]>([]);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const dragCleanupRef = useRef<(() => void) | null>(null);
 
@@ -254,6 +275,8 @@ export function MissionBoard({
   const [snapshot, setSnapshot] = useState<MissionSnapshot | null>(null);
   snapshotRef.current = snapshot;
   const [events, setEvents] = useState<MissionEvent[]>([]);
+  eventsRef.current = events;
+  const [journalHistory, setJournalHistory] = useState(EMPTY_JOURNAL_HISTORY);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -350,6 +373,9 @@ export function MissionBoard({
 
     setSnapshot(null);
     setEvents([]);
+    eventsRef.current = [];
+    olderPagesLoadedRef.current = false;
+    setJournalHistory(EMPTY_JOURNAL_HISTORY);
     setLoading(true);
     setLoadError(null);
     setCommandError(null);
@@ -425,11 +451,23 @@ export function MissionBoard({
               )
             : null,
         );
-        setEvents(
+        const recentEvents =
           recent.enabled === false
             ? []
-            : parseJournalEvents(recent.events, missionId),
-        );
+            : parseJournalEvents(recent.events, missionId);
+        // F-1005: páginas antigas pedidas pelo operador sobrevivem à
+        // atualização enquanto encostam na janela recente.
+        const merged = olderPagesLoadedRef.current
+          ? mergeRecentJournalWindow(eventsRef.current, recentEvents)
+          : { events: recentEvents, keptOlder: false };
+        olderPagesLoadedRef.current = merged.keptOlder;
+        eventsRef.current = merged.events;
+        setEvents(merged.events);
+        setJournalHistory((current) => ({
+          total: typeof recent.total === 'number' ? recent.total : null,
+          hasMore: merged.keptOlder ? current.hasMore : recent.hasMore === true,
+          loading: current.loading,
+        }));
       } catch (reason) {
         if (
           isCurrentSession() &&
@@ -446,8 +484,64 @@ export function MissionBoard({
       }
     };
 
+    // F-1005: "carregar mais" pede ao Main só a página anterior à sequência
+    // mais antiga na tela — o histórico nunca vem inteiro para o renderer.
+    let olderPending = false;
+    const loadOlderJournal = async (): Promise<void> => {
+      const before = eventsRef.current[0]?.sequence;
+      if (olderPending || before === undefined) return;
+      olderPending = true;
+      setJournalHistory((current) => ({ ...current, loading: true }));
+      try {
+        const page = await window.nexus.orch.missionEventsRecent({
+          missionId,
+          limit: RECENT_EVENT_LIMIT,
+          beforeSequence: before,
+        });
+        // A janela mudou no meio (troca de missão ou atualização com buraco):
+        // a página não encosta mais em nada — descarta.
+        if (!isCurrentSession() || eventsRef.current[0]?.sequence !== before) {
+          return;
+        }
+        if (page.error) {
+          setJournalError(
+            toUserFacingMissionRecovery(
+              page.error,
+              'Não foi possível carregar a atividade anterior. Tente novamente.',
+            ),
+          );
+          return;
+        }
+        const older = parseJournalEvents(page.events, missionId);
+        const next = prependOlderJournalPage(eventsRef.current, older);
+        olderPagesLoadedRef.current = true;
+        eventsRef.current = next;
+        setEvents(next);
+        setJournalHistory((current) => ({
+          total: typeof page.total === 'number' ? page.total : current.total,
+          hasMore: page.hasMore === true,
+          loading: current.loading,
+        }));
+      } catch (reason) {
+        if (isCurrentSession()) {
+          setJournalError(
+            toUserFacingMissionRecovery(
+              reason,
+              'Não foi possível carregar a atividade anterior. Tente novamente.',
+            ),
+          );
+        }
+      } finally {
+        olderPending = false;
+        if (isCurrentSession()) {
+          setJournalHistory((current) => ({ ...current, loading: false }));
+        }
+      }
+    };
+
     refreshSnapshotRef.current = () => void refreshSnapshot();
     refreshJournalRef.current = () => void refreshJournal();
+    loadOlderJournalRef.current = () => void loadOlderJournal();
 
     const unsubscribe = window.nexus.mission.onChanged((items) => {
       if (
@@ -474,8 +568,17 @@ export function MissionBoard({
       actionPendingRef.current = false;
       if (refreshSnapshotRef.current) refreshSnapshotRef.current = null;
       if (refreshJournalRef.current) refreshJournalRef.current = null;
+      loadOlderJournalRef.current = null;
     };
   }, [missionId]);
+
+  const journal = useMemo<MissionJournalHistory>(
+    () => ({
+      ...journalHistory,
+      onLoadMore: () => loadOlderJournalRef.current?.(),
+    }),
+    [journalHistory],
+  );
 
   const currentSnapshot = snapshot?.id === missionId ? snapshot : null;
   const questionKey = currentSnapshot?.question
@@ -1401,6 +1504,7 @@ export function MissionBoard({
                 onCommand={executeCommand}
                 question={question}
                 onOpenTerminals={openMountedMissionTerminals}
+                journal={journal}
               />
             </div>
           </>

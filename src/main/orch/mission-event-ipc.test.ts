@@ -25,6 +25,12 @@ const projectRecent = vi.fn(() => [
     deliveryStatus: 'pending',
   },
 ]);
+// F-1005: a página carrega o total e se há histórico antes dela.
+const projectRecentPage = vi.fn(() => ({
+  events: projectRecent(),
+  total: 90,
+  hasMore: true,
+}));
 const replay = vi.fn(() => []);
 const replayBounded = vi.fn((): unknown => ({ mode: 'replay', events: [] }));
 const ack = vi.fn(() => ({
@@ -43,6 +49,7 @@ const getCursor = vi.fn(() => ({
 vi.mock('./mission-event-journal', () => ({
   MissionEventJournal: class {
     projectRecent = projectRecent;
+    projectRecentPage = projectRecentPage;
     replay = replay;
     replayBounded = replayBounded;
     ack = ack;
@@ -89,9 +96,16 @@ describe('registerMissionEventIpc', () => {
     )?.[1] as (e: { sender: unknown }, raw: unknown) => unknown;
 
     const result = recentHandler({ sender: {} }, { missionId: 'm1', limit: 10 });
-    expect(projectRecent).toHaveBeenCalledWith('m1', 10);
-    expect(result).toMatchObject({ enabled: true });
+    expect(projectRecentPage).toHaveBeenCalledWith('m1', { limit: 10 });
+    expect(result).toMatchObject({ enabled: true, total: 90, hasMore: true });
     expect((result as { events: unknown[] }).events).toHaveLength(1);
+
+    // F-1005: "carregar mais" pede a página ANTES da sequência mais antiga.
+    recentHandler({ sender: {} }, { missionId: 'm1', limit: 40, beforeSequence: 51 });
+    expect(projectRecentPage).toHaveBeenLastCalledWith('m1', {
+      limit: 40,
+      beforeSequence: 51,
+    });
 
     const ackHandler = handle.mock.calls.find(
       (c) => c[0] === ORCH_CHANNELS.missionEventsAck,

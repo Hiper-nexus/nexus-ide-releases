@@ -16,6 +16,8 @@ const recentSchema = z
   .object({
     missionId: z.string().min(1).max(128),
     limit: z.number().int().min(1).max(200).optional(),
+    // F-1005: "carregar mais" — página anterior a esta sequência.
+    beforeSequence: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -52,9 +54,17 @@ export function registerMissionEventIpc(): void {
       const input = recentSchema.parse(raw ?? {});
       const journal = journalFor(event.sender);
       if (!journal) return { events: [], enabled: false };
+      const page = journal.projectRecentPage(input.missionId, {
+        limit: input.limit ?? 50,
+        ...(input.beforeSequence !== undefined
+          ? { beforeSequence: input.beforeSequence }
+          : {}),
+      });
       return {
         enabled: true,
-        events: journal.projectRecent(input.missionId, input.limit ?? 50),
+        events: page.events,
+        total: page.total,
+        hasMore: page.hasMore,
       };
     } catch (err) {
       return {

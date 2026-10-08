@@ -1647,6 +1647,9 @@
   min-width: 0;
   min-height: 0;
   padding: var(--space-4);
+  /* F-1005: o inspetor encosta na borda direita (lado a lado ou empilhado):
+     o "#seq" e o chevron das linhas não rolam por baixo do orbe da Jarvis. */
+  padding-inline-end: max(var(--space-4), var(--nexus-orb-safe-inline, 0px));
   overflow: auto;
   scrollbar-gutter: stable;
 }
@@ -1966,6 +1969,68 @@
   overflow-y: auto;
   overscroll-behavior-y: contain;
   scrollbar-gutter: stable;
+}
+
+/* F-1005: na timeline detalhada o painel do inspetor deixa de rolar e a lista
+   virtual ocupa a altura que sobra — uma rolagem só. Antes o teto de 480px da
+   lista morava dentro de um painel de ~212px a 1280×820: duas rolagens e só ~3
+   linhas à vista. `:not([hidden])`: o painel escondido segue `display: none`. */
+.mission-inspector__panel:not([hidden]):has(> .mission-inspector__activity-wrap--timeline) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-block: var(--space-2-5);
+}
+
+.mission-inspector__activity-wrap--timeline {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.mission-inspector__activity-wrap--timeline > .mission-inspector__stop-reason {
+  flex: 0 1 auto;
+  max-height: 40%;
+  overflow: auto;
+}
+
+.mission-inspector__activity-wrap--timeline .agent-timeline {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.mission-inspector__activity-wrap--timeline .agent-timeline__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+/* F-1005: troca de vista + quanto do journal está na tela, numa linha só.
+   Cabeçalho e filtros não encolhem: quem cede altura é a lista. */
+.mission-inspector__activity-view-switcher {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1-5);
+}
+
+.mission-inspector__journal-history {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.mission-inspector__activity-wrap--timeline .agent-timeline__filters {
+  flex: 0 0 auto;
 }
 
 .agent-timeline__item {
@@ -2336,6 +2401,8 @@
 .mission-board__direct-bar {
   flex: 0 0 auto;
   padding: 10px 16px 14px;
+  /* F-1005: o botão Enviar fica à esquerda do orbe da Jarvis no canto. */
+  padding-inline-end: max(16px, var(--nexus-orb-safe-inline, 0px));
   border-top: 1px solid var(--border);
   /* Barra fixa é opaca: vidro só na camada de overlay (§4). */
   background: var(--bg);
@@ -2461,12 +2528,28 @@
   font-size: 12px;
 }
 
-/* 0.32.26: fechar o painel de detalhes e deixar só o time visível. */
+/* 0.32.26: fechar o painel de detalhes e deixar só o time visível.
+   F-1005: o botão flutua sobre a barra do grafo; a largura dele é fixa e a
+   barra reserva essa faixa à direita — a 1280px ele cobria o "100%" e o "+"
+   do zoom. */
+.mission-board__graph-region {
+  --mission-inspector-toggle-width: 6.5rem;
+}
+
+.mission-board__graph-region .mission-graph:not(.mission-graph--presentation) .mission-graph__toolbar {
+  padding-inline-end: calc(var(--mission-inspector-toggle-width) + var(--space-3) * 2);
+}
+
 .mission-board__inspector-toggle {
   position: absolute;
   top: var(--space-3);
   inset-inline-end: var(--space-3);
   z-index: 2;
+  inline-size: var(--mission-inspector-toggle-width);
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-round);

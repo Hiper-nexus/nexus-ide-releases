@@ -303,3 +303,75 @@ describe('MissionAttachmentPicker — HEIC/HEIF e compressão (WEB-03)', () => {
     expect(close).toHaveBeenCalled();
   });
 });
+
+describe('F-1005 — anexo mostra o nome que o operador escolheu e miniatura', () => {
+  const INTERNAL_TOKEN = 'muyypjkx-b9f44569f53195a9';
+
+  function stubImageDecoder(): void {
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => ({ width: 4000, height: 3000, close: vi.fn() })),
+    );
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        getContext() {
+          return { fillStyle: '', fillRect: vi.fn(), drawImage: vi.fn() };
+        }
+        async convertToBlob({ type }: { type: string }) {
+          return new Blob([new Uint8Array([1, 2, 3])], { type });
+        }
+      },
+    );
+  }
+
+  it('lista o nome original (com a extensão final), sem o token interno, e a miniatura da imagem', async () => {
+    stubImageDecoder();
+    api.importMissionAttachment.mockImplementation(async (name) => ({
+      ok: true,
+      // Mesmo formato do Main: <token>-<nome saneado>.
+      path: `.nexus/attachments/mission-context/${INTERNAL_TOKEN}-${name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+    }));
+    const { host, onChange } = render();
+    const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 7])], 'foto ruído.png', {
+      type: 'image/png',
+    });
+
+    act(() => paste(host, [png]));
+    await until(() => expect(onChange).toHaveBeenCalled());
+    await until(() =>
+      expect(
+        host.querySelector('.mission-attachment-picker__list img')?.getAttribute('src') ?? '',
+      ).toMatch(/^data:image\/(webp|jpeg);base64,/),
+    );
+
+    const item = host.querySelector('.mission-attachment-picker__list li')!;
+    expect(item.querySelector('strong')?.textContent).toBe('foto ruído.png');
+    expect(item.textContent).not.toContain(INTERNAL_TOKEN);
+    expect(item.querySelector('button')?.getAttribute('aria-label')).toBe('Remover foto ruído.png');
+    // Miniatura é decorativa: o nome já está escrito ao lado.
+    expect(item.querySelector('img')?.getAttribute('alt')).toBe('');
+  });
+
+  it('anexo restaurado de um rascunho (sem o arquivo em memória) também esconde o token', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.add(root);
+    act(() =>
+      root.render(
+        <MissionAttachmentPicker
+          contextPaths={[
+            `.nexus/attachments/mission-context/${INTERNAL_TOKEN}-foto-ruido-19MB.webp`,
+          ]}
+          disabled={false}
+          onContextPathsChange={vi.fn()}
+        />,
+      ),
+    );
+
+    const item = host.querySelector('.mission-attachment-picker__list li')!;
+    expect(item.querySelector('strong')?.textContent).toBe('foto-ruido-19MB.webp');
+    expect(item.textContent).not.toContain(INTERNAL_TOKEN);
+  });
+});

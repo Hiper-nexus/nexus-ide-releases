@@ -165,11 +165,18 @@ vi.mock('./MissionInspector', () => ({
     events,
     onCommand,
     question,
+    journal,
   }: {
     snapshot: MissionSnapshot;
     events: MissionEvent[];
     onCommand: (command: MissionEngineCommand) => Promise<MissionSnapshot>;
     question: ReactNode;
+    journal?: {
+      total: number | null;
+      hasMore: boolean;
+      loading: boolean;
+      onLoadMore: () => void;
+    };
   }) => (
     <aside aria-label="Inspetor da missão">
       <div data-testid="journal-events">
@@ -179,6 +186,14 @@ vi.mock('./MissionInspector', () => ({
             : event.type,
         )}
       </div>
+      <div data-testid="journal-history">
+        {journal ? `${journal.total ?? '?'}|${journal.hasMore}` : 'sem-histórico'}
+      </div>
+      {journal?.hasMore ? (
+        <button type="button" onClick={journal.onLoadMore}>
+          Carregar anteriores (teste)
+        </button>
+      ) : null}
       <section data-testid="conversation-question">{question}</section>
       <button
         type="button"
@@ -1721,6 +1736,81 @@ describe('MissionBoard canonical controller', () => {
       host.querySelector('[data-testid="journal-events"]')?.textContent,
     ).toContain('mudança observada');
     expect(api.missionEventsAck).not.toHaveBeenCalled();
+  });
+});
+
+describe('F-1005 — histórico da atividade paginado pelo Main', () => {
+  it('carregar mais pede a página anterior à mais antiga e junta sem perder a janela recente', async () => {
+    const recent = [4, 5, 6].map((sequence) =>
+      canonicalEvent('mission-alpha', `recente-${sequence} `, sequence),
+    );
+    const older = [1, 2, 3].map((sequence) =>
+      canonicalEvent('mission-alpha', `antigo-${sequence} `, sequence),
+    );
+    api.missionEventsRecent
+      .mockResolvedValueOnce({ events: recent, total: 6, hasMore: true } as never)
+      .mockResolvedValueOnce({ events: older, total: 6, hasMore: false } as never);
+
+    const { host } = mount();
+    await flush();
+    const history = () =>
+      host.querySelector('[data-testid="journal-history"]')?.textContent;
+    const journalText = () =>
+      host.querySelector('[data-testid="journal-events"]')?.textContent ?? '';
+    expect(history()).toBe('6|true');
+    expect(api.missionEventsRecent).toHaveBeenNthCalledWith(1, {
+      missionId: 'mission-alpha',
+      limit: 40,
+    });
+
+    await click(buttonByName(host, 'Carregar anteriores (teste)'));
+    await flush();
+
+    expect(api.missionEventsRecent).toHaveBeenNthCalledWith(2, {
+      missionId: 'mission-alpha',
+      limit: 40,
+      beforeSequence: 4,
+    });
+    expect(journalText()).toBe(
+      'antigo-1 antigo-2 antigo-3 recente-4 recente-5 recente-6 ',
+    );
+    expect(history()).toBe('6|false');
+  });
+
+  it('uma atualização depois de carregar mais mantém as páginas antigas contíguas', async () => {
+    api.missionEventsRecent
+      .mockResolvedValueOnce({
+        events: [canonicalEvent('mission-alpha', 'b ', 2)],
+        total: 2,
+        hasMore: true,
+      } as never)
+      .mockResolvedValueOnce({
+        events: [canonicalEvent('mission-alpha', 'a ', 1)],
+        total: 2,
+        hasMore: false,
+      } as never)
+      .mockResolvedValueOnce({
+        events: [
+          canonicalEvent('mission-alpha', 'b ', 2),
+          canonicalEvent('mission-alpha', 'c ', 3),
+        ],
+        total: 3,
+        hasMore: true,
+      } as never);
+
+    const { host } = mount();
+    await flush();
+    await click(buttonByName(host, 'Carregar anteriores (teste)'));
+    await flush();
+    emitChanged([canonicalSummary({ title: 'mudou' })]);
+    await flush();
+
+    expect(
+      host.querySelector('[data-testid="journal-events"]')?.textContent,
+    ).toBe('a b c ');
+    expect(
+      host.querySelector('[data-testid="journal-history"]')?.textContent,
+    ).toBe('3|false');
   });
 });
 

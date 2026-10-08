@@ -554,6 +554,17 @@ function themeOf(settings: TerminalSettings): ITheme {
   );
 }
 
+/**
+ * F-1005: o xterm só pinta o fundo do tema nas linhas da grade; a sobra abaixo
+ * da última linha é o `.xterm-viewport`, que o xterm.css pinta de #000. O host
+ * publica o fundo do tema em `--term-bg` e o base.css pinta o viewport com ele.
+ */
+function paintHostBackground(element: HTMLElement): void {
+  const background = themeOf(currentSettings).background;
+  if (background) element.style.setProperty('--term-bg', background);
+  else element.style.removeProperty('--term-bg');
+}
+
 /** Apply user settings: restyle every live terminal, remember for new ones. */
 export function applyTerminalSettings(
   settings: TerminalSettings,
@@ -562,7 +573,9 @@ export function applyTerminalSettings(
   currentSettings = settings;
   importedTheme = imported;
   for (const [paneId, host] of hosts) {
-    if (host.disposed || host.virtualized) continue;
+    if (host.disposed) continue;
+    paintHostBackground(host.element);
+    if (host.virtualized) continue;
     host.term.options.theme = themeOf(settings);
     host.term.options.fontFamily = fontFamilyOf(settings);
     host.term.options.fontSize = settings.fontSize;
@@ -2362,6 +2375,7 @@ function wireHostTerminalListeners(host: Host): void {
 function createShellHost(pane: PaneModel): Host {
   const element = document.createElement('div');
   element.className = 'term-host';
+  paintHostBackground(element);
 
   const { term, fit, search, serialize } = buildTerminal('shell');
   const inputVisibility = new TerminalInputVisibilityController({
@@ -2421,6 +2435,7 @@ function createShellHost(pane: PaneModel): Host {
 function createCliAgentHost(pane: PaneModel): Host {
   const element = document.createElement('div');
   element.className = 'term-host term-host--agent';
+  paintHostBackground(element);
 
   const { term, fit, search, serialize } = buildTerminal('cli-agent');
   const inputVisibility = new TerminalInputVisibilityController({

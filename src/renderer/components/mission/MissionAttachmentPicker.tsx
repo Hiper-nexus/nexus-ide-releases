@@ -10,9 +10,11 @@ import {
   validateMissionAttachment,
   filesFromClipboardData,
   missionAttachmentContentKey,
+  missionAttachmentDisplayName,
   type MissionAttachment,
 } from '../../lib/mission-attachments';
 import {
+  createImageThumbnailDataUrl,
   imageNeedsPreparation,
   isHeicImageFile,
   prepareImageForAttachment,
@@ -76,8 +78,42 @@ function importedPaths(contextPaths: readonly string[]): string[] {
   return contextPaths.filter(isMissionContextAttachmentPath);
 }
 
+/**
+ * F-1005: o que a tela sabe de cada anexo copiado nesta sessão — o nome que o
+ * operador escolheu (com a extensão final, se a imagem foi convertida) e a
+ * miniatura. Chave = caminho na missão (único por token). Fica no módulo para
+ * sobreviver ao picker remontar (recolher/abrir "detalhes"); teto pequeno.
+ */
+interface AttachmentPresentation {
+  readonly name: string;
+  readonly thumbnail?: string;
+}
+const ATTACHMENT_PRESENTATION_LIMIT = 48;
+const attachmentPresentation = new Map<string, AttachmentPresentation>();
+
+function rememberAttachment(path: string, presentation: AttachmentPresentation): void {
+  attachmentPresentation.delete(path);
+  attachmentPresentation.set(path, presentation);
+  while (attachmentPresentation.size > ATTACHMENT_PRESENTATION_LIMIT) {
+    const oldest = attachmentPresentation.keys().next().value;
+    if (oldest === undefined) break;
+    attachmentPresentation.delete(oldest);
+  }
+}
+
 function displayName(path: string): string {
-  return path.split('/').at(-1) ?? path;
+  return attachmentPresentation.get(path)?.name ?? missionAttachmentDisplayName(path);
+}
+
+/** Nome escolhido pelo operador com a extensão do arquivo que foi anexado. */
+function chosenName(original: File, attached: File): string {
+  if (!original.name) return attached.name;
+  if (original === attached || original.name === attached.name) return original.name;
+  const dot = attached.name.lastIndexOf('.');
+  const extension = dot > 0 ? attached.name.slice(dot) : '';
+  const originalDot = original.name.lastIndexOf('.');
+  const base = originalDot > 0 ? original.name.slice(0, originalDot) : original.name;
+  return `${base}${extension}`;
 }
 
 function kindLabel(path: string): string {
@@ -109,6 +145,8 @@ export function MissionAttachmentPicker({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dropActive, setDropActive] = useState(false);
+  // Miniatura chega depois da cópia: só força a lista a redesenhar.
+  const [, setPresentationVersion] = useState(0);
   const dropRef = useRef<HTMLDivElement>(null);
   const importingFileKeysRef = useRef(new Set<string>());
   const importedContentKeysRef = useRef(new Map<string, string>());
@@ -208,6 +246,18 @@ export function MissionAttachmentPicker({
           currentAttachments.push(staged);
           importedContentKeysRef.current.set(contentKey, staged.path);
           importedSizesRef.current.set(staged.path, staged.size);
+          // F-1005: a lista mostra o nome que o operador escolheu (não o
+          // token interno do Main) e, para imagem, uma miniatura.
+          rememberAttachment(staged.path, { name: chosenName(original, file) });
+          if (staged.kind === 'image') {
+            const stagedPath = staged.path;
+            void createImageThumbnailDataUrl(file).then((thumbnail) => {
+              const known = attachmentPresentation.get(stagedPath);
+              if (!thumbnail || !known) return;
+              rememberAttachment(stagedPath, { ...known, thumbnail });
+              setPresentationVersion((version) => version + 1);
+            });
+          }
           if (!nextPathSet.has(staged.path)) {
             nextPathSet.add(staged.path);
             next.push(staged.path);
@@ -402,9 +452,19 @@ export function MissionAttachmentPicker({
         <ul className="mission-attachment-picker__list" aria-label="Anexos importados">
           {currentImported.map((path) => (
             <li key={path}>
-              <span className="mission-attachment-picker__kind">
-                {kindLabel(path)}
-              </span>
+              {attachmentPresentation.get(path)?.thumbnail ? (
+                <img
+                  className="mission-attachment-picker__thumb"
+                  src={attachmentPresentation.get(path)?.thumbnail}
+                  alt=""
+                  width={48}
+                  height={48}
+                />
+              ) : (
+                <span className="mission-attachment-picker__kind">
+                  {kindLabel(path)}
+                </span>
+              )}
               <span className="mission-attachment-picker__file">
                 <strong>{displayName(path)}</strong>
                 <small>Copiado para a missão</small>

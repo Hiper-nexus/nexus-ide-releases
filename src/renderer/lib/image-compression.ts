@@ -4,7 +4,9 @@
 // o HEIC/HEIF vai para o conversor do Main (sips no macOS) por IPC, injetável
 // nos testes; motivo novo `unsupported` com a mensagem legível do Main; o
 // parser de metadados HEIC mora em src/shared/heic-metadata.ts; caminhos de
-// stash/thumbnail/dataUrl do composer do T3 ficaram de fora (sem consumidor).
+// stash/dataUrl do composer do T3 ficaram de fora (sem consumidor); a
+// miniatura do anexo (`createImageThumbnailDataUrl`, F-1005) é do Nexus e
+// reusa o mesmo codificador.
 
 /**
  * Downscale + re-encode for image attachments that are too big for where
@@ -351,4 +353,43 @@ export async function prepareImageForAttachment(
   });
 
   return result.ok ? { ...result, recompressed: true } : result;
+}
+
+/** F-1005: aresta da miniatura (2× os 48px exibidos, para tela retina). */
+const THUMBNAIL_DIMENSION = 96;
+/** Teto do data URL da miniatura: pequeno o bastante para morar na memória. */
+const THUMBNAIL_BUDGET_CHARS = 24 * 1024;
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(binary);
+}
+
+/**
+ * F-1005: miniatura (data URL WebP/JPEG, ≤ 96px) de uma imagem já preparada
+ * para anexo. A CSP do renderer só aceita `data:` em `img-src`; o arquivo
+ * copiado para a missão não é lido de volta. `null` quando o sistema não
+ * decodifica a imagem — a linha do anexo segue só com o nome.
+ */
+export async function createImageThumbnailDataUrl(file: Blob): Promise<string | null> {
+  if (!canRecompress()) return null;
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    return null;
+  }
+  try {
+    const encoded = await encodeWithinBudget(bitmap, THUMBNAIL_DIMENSION, THUMBNAIL_BUDGET_CHARS);
+    if (!encoded) return null;
+    return `data:${encoded.mimeType};base64,${await blobToBase64(encoded.blob)}`;
+  } catch {
+    return null;
+  } finally {
+    bitmap.close();
+  }
 }

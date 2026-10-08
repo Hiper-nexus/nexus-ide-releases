@@ -970,3 +970,51 @@ describe('MissionInspector', () => {
     );
   });
 });
+
+describe('F-1005 — atividade diz quanto falta e carrega mais pelo Main', () => {
+  function mountWithJournal(journal: {
+    total: number | null;
+    hasMore: boolean;
+    loading: boolean;
+    onLoadMore: () => void;
+  }): HTMLElement {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    mountedRoots.add(root);
+    act(() => {
+      root.render(
+        <MissionInspector
+          snapshot={SNAPSHOT}
+          events={ACTIVITY_EVENTS}
+          onCommand={vi.fn(async () => SNAPSHOT)}
+          question={null}
+          journal={journal}
+        />,
+      );
+    });
+    return host;
+  }
+
+  it('mostra "N de total" e o botão chama a paginação', () => {
+    const onLoadMore = vi.fn();
+    const host = mountWithJournal({ total: 90, hasMore: true, loading: false, onLoadMore });
+    const panel = selectTab(host, 'Atividade');
+
+    expect(panel.textContent).toContain('Mostrando os 3 eventos mais recentes de 90');
+    const button = Array.from(panel.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent === 'Carregar eventos anteriores',
+    );
+    expect(button).toBeDefined();
+    act(() => button!.click());
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it('sem histórico anterior não oferece o botão', () => {
+    const host = mountWithJournal({ total: 3, hasMore: false, loading: false, onLoadMore: vi.fn() });
+    const panel = selectTab(host, 'Atividade');
+
+    expect(panel.textContent).not.toContain('Carregar eventos anteriores');
+    expect(panel.textContent).not.toContain('mais recentes de');
+  });
+});

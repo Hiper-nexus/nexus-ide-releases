@@ -164,8 +164,10 @@ function PoolWindowCard({ pool, now }: { pool: QuotaPoolWindow; now: number }) {
         </span>
         <span className="quota-pool__coverage">
           {partial
-            ? `${pool.members.length} de ${pool.columns.length} contas com leitura`
-            : `${pool.columns.length} contas somadas`}
+            ? `${pool.members.length} de ${pool.columns.length} ${pool.columns.length === 1 ? 'conta' : 'contas'} com leitura`
+            : pool.columns.length === 1
+              ? '1 conta somada'
+              : `${pool.columns.length} contas somadas`}
         </span>
         {refill && refillIn && pool.columns.length > 1 && (
           <span className="quota-pool__refill">
