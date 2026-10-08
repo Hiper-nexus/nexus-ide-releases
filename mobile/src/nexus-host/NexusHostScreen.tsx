@@ -1,6 +1,7 @@
 // Tela de um host "nexus-bridge" (F-994): o mesmo escopo do PWA Nexus Remote —
-// aprovações, missões, panes, saída ao vivo e envio de um comando completo. As
-// telas do Orca (worktrees, abas, arquivos, Git…) não têm equivalente na bridge.
+// aprovações, missões, panes, saída ao vivo e envio de um comando completo. Git e
+// arquivos do pane, só leitura (F-1014), ficam em NexusPaneWorkspace.tsx; as demais
+// telas do Orca (worktrees, abas…) não têm equivalente na bridge.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
@@ -36,15 +37,22 @@ import {
   useNexusHostNotificationFocus
 } from './nexus-host-notifications'
 import { useNexusHostOutboxFlush } from './use-nexus-host-outbox'
+// F-1014 (início)
+import {
+  NexusPaneWorkspace,
+  NexusWorkspaceOpeners,
+  type NexusWorkspaceView
+} from './NexusPaneWorkspace'
+// F-1014 (fim)
 
 const SNAPSHOT_POLL_MS = 15_000
 const OUTPUT_MAX_CHARS = 200_000
 const OUTPUT_KEEP_CHARS = 160_000
 
 export const NEXUS_HOST_UNSUPPORTED_NOTE =
-  'Não disponível em host Nexus: teclas cruas (Ctrl-C, Esc, "1"), arquivos, Git, worktrees, ' +
-  'abas de sessão, contas, voz pelo app (use o ditado do teclado), screencast e ' +
-  'Linear/GitHub/GitLab. Use o desktop para isso.'
+  'Não disponível em host Nexus: teclas cruas (Ctrl-C, Esc, "1"), stage/commit e edição de ' +
+  'arquivos (Git e arquivos são só leitura), worktrees, abas de sessão, contas, voz pelo app ' +
+  '(use o ditado do teclado), screencast e Linear/GitHub/GitLab. Use o desktop para isso.'
 
 const STATE_LABEL: Record<ConnectionState, string> = {
   connecting: 'conectando…',
@@ -84,6 +92,12 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
   const [snapshot, setSnapshot] = useState<NexusOpsSnapshot | null>(null)
   const [error, setError] = useState('')
   const [pane, setPane] = useState<NexusPane | null>(null)
+  // F-1014: "Alterações"/"Arquivos" do pane aberto (null = terminal).
+  const [workspaceView, setWorkspaceView] = useState<{
+    paneId: string
+    view: NexusWorkspaceView
+  } | null>(null)
+  const openWorkspace = pane && workspaceView?.paneId === pane.paneId ? workspaceView.view : null
 
   useEffect(() => {
     void loadHostCatalog()
@@ -175,6 +189,10 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
   )
 
   const back = () => {
+    if (openWorkspace) {
+      setWorkspaceView(null) // F-1014: volta ao terminal do pane
+      return
+    }
     if (pane) {
       setPane(null)
       return
@@ -193,7 +211,9 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
           onPress={back}
           hitSlop={8}
           accessibilityRole="button"
-          accessibilityLabel={pane ? 'Voltar para a lista' : 'Voltar'}
+          accessibilityLabel={
+            openWorkspace ? 'Voltar para o terminal' : pane ? 'Voltar para a lista' : 'Voltar'
+          }
         >
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
@@ -239,7 +259,18 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      {pane && nexus ? (
+      {pane && nexus && openWorkspace ? (
+        // F-1014 (início)
+        <View style={styles.detail}>
+          <NexusPaneWorkspace
+            paneId={pane.paneId}
+            workspace={nexus.workspace}
+            view={openWorkspace}
+            onViewChange={(view) => setWorkspaceView({ paneId: pane.paneId, view })}
+          />
+        </View>
+      ) : // F-1014 (fim)
+      pane && nexus ? (
         <NexusPaneDetail
           key={pane.paneId}
           hostId={hostId}
@@ -247,6 +278,7 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
           nexus={nexus}
           client={client}
           state={state}
+          onOpenWorkspace={(view) => setWorkspaceView({ paneId: pane.paneId, view })}
           onClosed={() => {
             setPane(null)
             void refresh()
@@ -347,6 +379,7 @@ function NexusPaneDetail({
   nexus,
   client,
   state,
+  onOpenWorkspace,
   onClosed
 }: {
   hostId: string
@@ -354,6 +387,7 @@ function NexusPaneDetail({
   nexus: NonNullable<ReturnType<typeof nexusHostApiOf>>
   client: ReturnType<typeof useHostClient>['client']
   state: ConnectionState
+  onOpenWorkspace: (view: NexusWorkspaceView) => void
   onClosed: () => void
 }) {
   const connected = state === 'connected'
@@ -389,6 +423,8 @@ function NexusPaneDetail({
 
   return (
     <View style={styles.detail}>
+      {/* F-1014: Git e arquivos do checkout deste pane, só leitura. */}
+      <NexusWorkspaceOpeners onOpen={onOpenWorkspace} disabled={!connected} />
       <ScrollView
         ref={scrollRef}
         style={styles.output}

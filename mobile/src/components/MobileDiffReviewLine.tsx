@@ -15,6 +15,8 @@ type Props = {
   active: boolean
   onAddNote: (lineNumber: number) => void
   onEditNote: (comment: DiffComment) => void
+  /** Só leitura (host Nexus, F-1014): a linha não vira botão de nota. */
+  readOnly?: boolean
 }
 
 function accessibilityLabelForLine(line: MobileDiffLine): string {
@@ -79,10 +81,11 @@ export function MobileDiffReviewLine({
   staleCommentIds,
   active,
   onAddNote,
-  onEditNote
+  onEditNote,
+  readOnly = false
 }: Props) {
   const lineNumber = mobileDiffLineNumber(line)
-  const canComment = canCommentOnLine(line)
+  const canComment = !readOnly && canCommentOnLine(line)
 
   return (
     <View

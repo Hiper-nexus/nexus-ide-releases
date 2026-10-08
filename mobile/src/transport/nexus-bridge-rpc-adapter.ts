@@ -13,7 +13,15 @@
 //   mission.list                    → mission.list
 //   agentSession.respondToApproval  → agentSession.respondToApproval
 //   aprovações pendentes            → ops.snapshot.approvals + push approvals.changed
+//   git.status/git.diff, files.list/files.read (só leitura, F-1014) → nexus-bridge-git-files.ts
 import { parseApprovalPrompt, type PendingApprovalEnvelope } from '../../../src/shared/approval-decision'
+// F-1014 (início)
+import {
+  createNexusWorkspaceApi,
+  routeNexusGitFiles,
+  type NexusWorkspaceApi
+} from './nexus-bridge-git-files'
+// F-1014 (fim)
 import {
   NexusBridgeClient,
   NexusBridgeDeliveryUnknownError,
@@ -38,8 +46,10 @@ export const NEXUS_RAW_KEYS_MESSAGE =
   'comando completo por vez, enviado com Enter. Responda aprovações pelo card.'
 
 const UNSUPPORTED_AREAS: ReadonlyArray<readonly [prefix: string, label: string]> = [
-  ['files.', 'Arquivos'],
-  ['git.', 'Git'],
+  // F-1014: git.status/git.diff e files.list/files.read são atendidos; o resto
+  // dessas áreas (stage, commit, escrita…) segue recusado com este rótulo.
+  ['files.', 'Escrita e busca de arquivos'],
+  ['git.', 'Escrita no Git'],
   ['worktree.', 'Worktrees'],
   ['repo.', 'Repositórios'],
   ['session.tabs.', 'Abas de sessão'],
@@ -98,6 +108,8 @@ export type NexusHostApi = {
   closePane: (paneId: string) => Promise<void>
   subscribePane: (paneId: string, listener: (output: NexusPaneOutput) => void) => () => void
   onApprovalsChanged: (listener: () => void) => () => void
+  /** F-1014: Git e arquivos do checkout de um pane, só leitura. */
+  workspace: NexusWorkspaceApi
 }
 
 type ForegroundNudge = 'focus' | 'app-resume' | 'network-change'
@@ -174,6 +186,9 @@ export function createNexusBridgeRpcClient(
     fields: Record<string, unknown> = {},
     requestOptions?: NexusBridgeRequestOptions
   ) => client.request(type, fields, requestOptions)
+  // F-1014 (início)
+  const workspace = createNexusWorkspaceApi(request)
+  // F-1014 (fim)
 
   const unsupported = (method: string): NexusUnsupportedError => {
     const message = nexusUnsupportedMessage(method)
@@ -405,8 +420,15 @@ export function createNexusBridgeRpcClient(
           { itemId: p.itemId, expectedRevision: p.expectedRevision, optionId: p.optionId },
           requestOptions
         )
-      default:
+      default: {
+        // F-1014 (início): Git e arquivos só leitura (nomes de método do Orca).
+        const gitFiles = await routeNexusGitFiles(method, p, workspace)
+        if (gitFiles.handled) {
+          return gitFiles.result
+        }
+        // F-1014 (fim)
         throw unsupported(method)
+      }
     }
   }
 
@@ -418,7 +440,8 @@ export function createNexusBridgeRpcClient(
     onApprovalsChanged: (listener) => {
       approvalListeners.add(listener)
       return () => approvalListeners.delete(listener)
-    }
+    },
+    workspace // F-1014
   }
 
   client.start()
