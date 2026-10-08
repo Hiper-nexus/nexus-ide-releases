@@ -229,6 +229,51 @@ describe('UsageQuotaSection', () => {
     act(() => root.unmount());
   });
 
+  it('WEB-12: mostra o histórico diário lido de usage:history', async () => {
+    const today = new Date();
+    const day = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const history = vi.fn(async () => ({
+      since: 1,
+      updatedAt: Date.now(),
+      days: [{ day, tokens: 42_000, usdEquivalent: 0.75, turns: 3 }],
+    }));
+    Object.assign(window.nexus, { usage: { history, onChanged: () => () => {} } });
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(history).toHaveBeenCalled();
+    expect(host.querySelector('.usage-history__chart')).not.toBeNull();
+    expect(host.querySelector('.usage-history__summary')?.textContent).toContain('42.0k tokens');
+    act(() => root.unmount());
+  });
+
+  it('WEB-12: falha ao ler o histórico mostra o erro e "Tentar de novo" relê', async () => {
+    const history = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('ipc'))
+      .mockResolvedValue({ since: 1, updatedAt: Date.now(), days: [] });
+    Object.assign(window.nexus, { usage: { history, onChanged: () => () => {} } });
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const section = host.querySelector('.usage-history')!;
+    expect(section.textContent).toContain('Não foi possível carregar o histórico.');
+
+    await act(async () => {
+      [...section.querySelectorAll('button')].find((button) => button.textContent === 'Tentar de novo')!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(history).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('.usage-history')?.textContent).toContain('Sem consumo nos últimos 30 dias');
+    act(() => root.unmount());
+  });
+
   it('renders provider entries with labels, email, cooldown, and badges', async () => {
     const { host, root } = mount();
     await act(async () => {

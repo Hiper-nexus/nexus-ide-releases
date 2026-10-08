@@ -3,6 +3,8 @@ import type { AccountInfo } from '../../../shared/account-types';
 import { accountLoginCommandFor } from '../../../shared/account-login-commands';
 import { useQuotaStore } from '../../state/quota-store';
 import { useLifetimeUsage } from '../../state/lifetime-usage';
+import { useUsageHistory } from '../../state/usage-history';
+import { UsageHistoryChart } from './UsageHistoryChart';
 import { fmtTokens, fmtUsd } from '../../lib/lifetime-format';
 import { useAccountStore } from '../../state/account-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
@@ -551,6 +553,7 @@ export function UsageQuotaSection() {
   const openSettings = useProductNavigationStore((state) => state.openSettings);
   const now = useMinuteTick();
   const lifetime = useLifetimeUsage();
+  const usageHistory = useUsageHistory();
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
@@ -674,21 +677,29 @@ export function UsageQuotaSection() {
             Consumo real acumulado
           </span>
           <span className="quota-panel__consumption-item">
-            ⚡ <strong>{fmtTokens(lifetime.tokensBurned)}</strong>{' '}
+            <strong>{fmtTokens(lifetime.tokensBurned)}</strong>{' '}
             {pluralWord(Math.floor(lifetime.tokensBurned), 'token', 'tokens')}
           </span>
           <span className="quota-panel__consumption-item">
-            💵 <strong>{fmtUsd(lifetime.usdEquivalent)}</strong> em API
+            <strong>{fmtUsd(lifetime.usdEquivalent)}</strong> em API
           </span>
           <span className="quota-panel__consumption-item">
-            🪟 <strong>{lifetime.panesServed}</strong>{' '}
+            <strong>{lifetime.panesServed}</strong>{' '}
             {pluralWord(lifetime.panesServed, 'pane', 'panes')}
           </span>
           <span className="quota-panel__consumption-item">
-            🔁 <strong>{lifetime.turns}</strong>{' '}
+            <strong>{lifetime.turns}</strong>{' '}
             {pluralWord(lifetime.turns, 'turno', 'turnos')}
           </span>
         </div>
+      )}
+      {usageHistory.status !== 'unavailable' && (
+        <UsageHistoryChart
+          status={usageHistory.status}
+          history={usageHistory.history}
+          now={now}
+          onRetry={usageHistory.reload}
+        />
       )}
       <RedlineMenuBarRow />
       {status === 'error' ? (

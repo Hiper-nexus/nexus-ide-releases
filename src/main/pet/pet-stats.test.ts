@@ -266,3 +266,102 @@ describe('nível/tier', () => {
     expect(petTierForLevel(11)).toBe('LENDA');
   });
 });
+
+describe('rollup diário de uso (WEB-12)', () => {
+  const at = (day: number, hour = 12) => new Date(2026, 9, day, hour).getTime();
+  const usage = (tokens: number, costUsd: number, turns: number) =>
+    snap({ global: { costUsd, inputTokens: tokens, outputTokens: 0, turns } });
+
+  it('primeira leitura de um escopo é linha de base; o que cresce depois entra no dia', () => {
+    let now = at(7);
+    const t = new PetLifetimeTracker(dir, { now: () => now });
+    t.ingestSnapshot(SCOPE, usage(5_000_000, 40, 900)); // histórico importado no boot
+    expect(t.history().days).toEqual([]);
+    t.ingestSnapshot(SCOPE, usage(5_001_000, 40.5, 902));
+    now = at(8, 9);
+    t.ingestSnapshot(SCOPE, usage(5_004_000, 41, 905));
+    expect(t.history().days).toEqual([
+      { day: '2026-10-07', tokens: 1_000, usdEquivalent: 0.5, turns: 2 },
+      { day: '2026-10-08', tokens: 3_000, usdEquivalent: 0.5, turns: 3 },
+    ]);
+  });
+
+  it('restart não conta duas vezes: o escopo volta com o mesmo total e reencontra a marca', () => {
+    let now = at(8);
+    const first = new PetLifetimeTracker(dir, { now: () => now });
+    first.ingestSnapshot(SCOPE, usage(100, 1, 1));
+    first.ingestSnapshot(SCOPE, usage(400, 2, 3));
+    first.flush();
+
+    now = at(8, 18);
+    const second = new PetLifetimeTracker(dir, { now: () => now });
+    second.ingestSnapshot(SCOPE, usage(400, 2, 3));
+    expect(second.history().days).toEqual([
+      { day: '2026-10-08', tokens: 300, usdEquivalent: 1, turns: 2 },
+    ]);
+    second.ingestSnapshot(SCOPE, usage(500, 2.5, 4));
+    expect(second.history().days[0]).toEqual({
+      day: '2026-10-08',
+      tokens: 400,
+      usdEquivalent: 1.5,
+      turns: 3,
+    });
+  });
+
+  it('escopos somam no mesmo dia, cada um contra a própria marca', () => {
+    const t = new PetLifetimeTracker(dir, { now: () => at(8) });
+    t.ingestSnapshot(SCOPE, usage(1_000, 1, 1));
+    t.ingestSnapshot(SCOPE_B, usage(50, 0.5, 1));
+    t.ingestSnapshot(SCOPE, usage(1_200, 1.25, 2));
+    t.ingestSnapshot(SCOPE_B, usage(80, 0.75, 3));
+    expect(t.history().days).toEqual([
+      { day: '2026-10-08', tokens: 230, usdEquivalent: 0.5, turns: 3 },
+    ]);
+  });
+
+  it('banco de escopo recriado vira nova base e não trava a contagem', () => {
+    const t = new PetLifetimeTracker(dir, { now: () => at(8) });
+    t.ingestSnapshot(SCOPE, usage(1_000, 1, 10));
+    t.ingestSnapshot(SCOPE, usage(10, 0.25, 1)); // checkout recriado
+    t.ingestSnapshot(SCOPE, usage(60, 0.5, 2));
+    expect(t.history().days).toEqual([
+      { day: '2026-10-08', tokens: 50, usdEquivalent: 0.25, turns: 1 },
+    ]);
+  });
+
+  it('guarda no máximo 90 dias, do mais antigo ao mais novo, também no arquivo', () => {
+    let now = new Date(2026, 5, 30, 12).getTime();
+    const t = new PetLifetimeTracker(dir, { now: () => now });
+    t.ingestSnapshot(SCOPE, usage(0, 0, 0));
+    for (let day = 0; day < 100; day += 1) {
+      now = new Date(2026, 6, 1 + day, 12).getTime();
+      t.ingestSnapshot(SCOPE, usage((day + 1) * 10, 0, day + 1));
+    }
+    const days = t.history().days;
+    expect(days).toHaveLength(90);
+    expect(days[0]!.day < days[89]!.day).toBe(true);
+    expect(days[89]).toEqual({ day: '2026-10-08', tokens: 10, usdEquivalent: 0, turns: 1 });
+    t.flush();
+    const persisted = JSON.parse(readFileSync(petStatsPath(dir), 'utf8'));
+    expect(persisted.history.days).toHaveLength(90);
+  });
+
+  it('arquivo adulterado não derruba o tracker: entradas inválidas caem fora', () => {
+    writeFileSync(
+      petStatsPath(dir),
+      JSON.stringify({
+        peak: { tokensBurned: 10 },
+        history: {
+          since: 5,
+          scopeMarks: { x: { tokens: 'muito' } },
+          days: [{ day: 'ontem', tokens: 1 }, { day: '2026-10-01', tokens: -3, turns: 2 }],
+        },
+      }),
+    );
+    const t = new PetLifetimeTracker(dir, { now: () => at(8) });
+    expect(t.history()).toMatchObject({
+      since: 5,
+      days: [{ day: '2026-10-01', tokens: 0, usdEquivalent: 0, turns: 2 }],
+    });
+  });
+});

@@ -1259,6 +1259,11 @@ export interface NexusApi {
      * USD de API pública, panes e turnos — alimenta o Perfil de Operador.
      */
     lifetime(): Promise<import('./pet-types').PetLifetimeStats>;
+    /**
+     * Rollup diário limitado (90 dias) dos mesmos totais — gráfico de uso.
+     * Opcional: pontes antigas e embeds não o têm, e a tela some com o gráfico.
+     */
+    history?(): Promise<import('./usage-types').UsageHistory>;
     onChanged(cb: (snapshot: UsageSnapshot) => void): Unsubscribe;
   };
   /**

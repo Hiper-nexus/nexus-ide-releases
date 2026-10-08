@@ -1407,6 +1407,10 @@ const api: NexusApi = {
       ipcRenderer.invoke(USAGE_CHANNELS.lifetime) as Promise<
         import('../shared/pet-types').PetLifetimeStats
       >,
+    history: () =>
+      ipcRenderer.invoke(USAGE_CHANNELS.history) as Promise<
+        import('../shared/usage-types').UsageHistory
+      >,
     onChanged: (cb: (snapshot: UsageSnapshot) => void) =>
       addListener(usageChangedListeners, cb),
   },

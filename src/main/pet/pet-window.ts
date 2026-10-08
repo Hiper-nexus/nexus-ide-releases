@@ -1708,6 +1708,8 @@ export function initDesktopPet(): void {
   // torrados + equivalente USD de API). Autoridade: o tracker acima —
   // o renderer principal lê via invoke, sem canal próprio de estado.
   ipcMain.handle(USAGE_CHANNELS.lifetime, () => getPetStats().stats());
+  // WEB-12: rollup diário limitado do mesmo tracker (gráfico de Uso e cotas).
+  ipcMain.handle(USAGE_CHANNELS.history, () => getPetStats().history());
   // Persistência preguiçosa do piso/panes — JSON pequeno, tmp+rename.
   statsFlushTimer = setInterval(periodicCallback('pet-stats', async (ctx) => {
     try {

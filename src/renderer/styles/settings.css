@@ -1962,6 +1962,218 @@
     transform: translateY(0);
   }
 }
+/* Histórico de uso (WEB-12): um dia, uma barra. Mesmo registro do Fleet
+   Pulse — hairlines, barra neutra em --text-dim, acento só no dia lido agora
+   (foco/hover = vivo). Sem gradiente, vidro ou sombra. */
+.usage-history {
+  display: grid;
+  gap: var(--space-2);
+  margin-block: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+.usage-history__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+.usage-history__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.usage-history__hint {
+  margin: var(--space-1) 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+.usage-history__metric {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-round);
+  background: var(--surface-0);
+}
+.usage-history__metric-btn {
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-round);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: color 150ms var(--ease-out-quart), background-color 150ms var(--ease-out-quart);
+}
+.usage-history__metric-btn:hover {
+  color: var(--text);
+}
+.usage-history__metric-btn[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.usage-history__metric-btn:focus-visible,
+.usage-history__chart:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.usage-history__readout {
+  min-height: 1.4em;
+  margin: 0;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.usage-history__readout strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.usage-history__chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+.usage-history__grid line,
+.usage-history__baseline {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.usage-history__baseline {
+  stroke: var(--border-strong);
+}
+.usage-history__grid text,
+.usage-history__tick {
+  fill: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+.usage-history__hit {
+  fill: transparent;
+}
+.usage-history__bar {
+  fill: var(--text-dim);
+  transition: fill 120ms var(--ease-out-quart);
+}
+.usage-history__zero {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.usage-history__day.is-active .usage-history__hit {
+  fill: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.usage-history__day.is-active .usage-history__bar {
+  fill: var(--accent);
+}
+.usage-history__day.is-active .usage-history__tick {
+  fill: var(--text);
+}
+.usage-history__day.is-untracked .usage-history__zero {
+  stroke-dasharray: 2 2;
+}
+.usage-history__summary,
+.usage-history__table-note {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+.usage-history__table-wrap > summary {
+  width: fit-content;
+  min-height: 28px;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.usage-history__table-wrap > summary:hover {
+  color: var(--text);
+}
+.usage-history__table-wrap > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+.usage-history__table {
+  width: 100%;
+  margin-block: var(--space-2);
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.usage-history__table th,
+.usage-history__table td {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+.usage-history__table th[scope='row'],
+.usage-history__table thead th:first-child {
+  text-align: left;
+  font-weight: 500;
+}
+.usage-history__table thead th {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+.usage-history__state {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+.usage-history__skeleton {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 96px;
+  padding-inline: var(--space-2);
+  border-bottom: 1px solid var(--border-strong);
+}
+.usage-history__skeleton span {
+  flex: 1;
+  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+  background: var(--border);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .usage-history__skeleton span {
+    animation: usage-history-wait 1.4s var(--ease-overlay-smooth) infinite alternate;
+  }
+}
+@keyframes usage-history-wait {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .usage-history__bar,
+  .usage-history__metric-btn {
+    transition: none;
+  }
+}
+.usage-history__error {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+  border-radius: var(--radius-md);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+.usage-history__error strong {
+  color: var(--text);
+}
+.usage-history__error p {
+  margin: 0;
+}
+.usage-history__empty {
+  margin: 0;
+}
 /* Folga conjunta por ferramenta (adaptado do T3 Code, MIT): uma linha por
    janela, um segmento de mesma largura por conta. Mesmo registro do Fleet
    Pulse — tokens de status, hachura só onde a renovação devolve cota, sem
