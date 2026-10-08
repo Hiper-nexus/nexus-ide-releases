@@ -1,6 +1,22 @@
-import { useMemo, useState } from 'react';
+// Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
+// Copyright (c) 2026 T3 Tools Inc. — MIT License
+// See third_party/licenses/t3code-MIT.txt. Nexus changes: só o uso do
+// LegendList de MessagesTimeline.tsx (data/extraData/keyExtractor/renderItem,
+// estimatedItemSize, maintainScrollAtEnd suspenso durante a expansão de um
+// detalhe, MVCP); a lista abre no topo como antes (sem initialScrollAtEnd nem
+// memória de posição) e remonta por missão+filtro; parse, filtros, cards e
+// teclado continuam os do Nexus.
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LegendList } from '@legendapp/list/react';
 import type { MissionEvent } from '../../../shared/mission-events';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
+import {
+  ACTIVITY_TIMELINE_FOLLOW_THRESHOLD,
+  ACTIVITY_TIMELINE_MAINTAIN_VISIBLE_CONTENT_POSITION,
+  createActivityScopeKey,
+  resolveMaintainScrollAtEnd,
+  scheduleDisclosureSettle,
+} from '../../lib/activity-timeline-scroll';
 
 export type ActivityCategory = 'all' | 'tools' | 'turns' | 'decisions';
 
@@ -189,6 +205,90 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
   return items.sort((a, b) => a.sequence - b.sequence);
 }
 
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
+// Card fechado medido no Chromium: 40 px + 8 px de padding-bottom do item. O
+// Legend troca pela média medida assim que as primeiras linhas montam.
+const TIMELINE_ESTIMATED_ITEM_SIZE = 48;
+
+function timelineKeyExtractor(item: TimelineItemModel): string {
+  return item.id;
+}
+
+const TimelineRow = memo(function TimelineRow({
+  item,
+  expanded,
+  onToggle,
+}: {
+  readonly item: TimelineItemModel;
+  readonly expanded: boolean;
+  readonly onToggle: (id: string) => void;
+}) {
+  const hasDetail = Boolean(item.detail);
+
+  return (
+    <div
+      className={`agent-timeline__item agent-timeline__item--${item.status} agent-timeline__item--${item.kind}`}
+      role="listitem"
+    >
+      <div
+        className={`agent-timeline__card${hasDetail ? ' is-clickable' : ''}`}
+        onClick={hasDetail ? () => onToggle(item.id) : undefined}
+        onKeyDown={
+          hasDetail
+            ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onToggle(item.id);
+                }
+              }
+            : undefined
+        }
+        role={hasDetail ? 'button' : undefined}
+        tabIndex={hasDetail ? 0 : undefined}
+        aria-expanded={hasDetail ? expanded : undefined}
+      >
+        <div className="agent-timeline__header">
+          <span className={`agent-timeline__indicator agent-timeline__indicator--${item.status}`}>
+            <PixelIcon name={item.icon} size={12} />
+          </span>
+
+          <div className="agent-timeline__meta">
+            <div className="agent-timeline__title-row">
+              <span className="agent-timeline__kind-badge">{item.title}</span>
+              {item.subtitle && (
+                <span className="agent-timeline__subtitle" title={item.subtitle}>
+                  {item.subtitle}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <span className="agent-timeline__sequence">#{item.sequence}</span>
+
+          {hasDetail && (
+            <span className={`agent-timeline__chevron${expanded ? ' is-open' : ''}`}>
+              <PixelIcon name="chevron-down" size={10} />
+            </span>
+          )}
+        </div>
+
+        {hasDetail && expanded && (
+          <div className="agent-timeline__detail">
+            <pre className="agent-timeline__pre">{item.detail}</pre>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
 export function AgentActivityTimeline({
   events,
   missionId,
@@ -198,11 +298,11 @@ export function AgentActivityTimeline({
 }) {
   const [filter, setFilter] = useState<ActivityCategory>('all');
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+  // Enquanto um detalhe abre/fecha, o follow do fim fica suspenso (2 frames).
+  const [disclosureSettling, setDisclosureSettling] = useState(false);
+  const cancelDisclosureSettleRef = useRef<(() => void) | null>(null);
 
-  const allItems = useMemo(
-    () => parseTimelineItems(events, missionId),
-    [events, missionId],
-  );
+  const allItems = useMemo(() => parseTimelineItems(events, missionId), [events, missionId]);
 
   const filteredItems = useMemo(() => {
     if (filter === 'all') return allItems;
@@ -212,9 +312,40 @@ export function AgentActivityTimeline({
     return allItems;
   }, [allItems, filter]);
 
-  function toggleExpanded(id: string) {
+  const counts = useMemo(
+    () => ({
+      tools: allItems.filter((i) => i.category === 'tool').length,
+      turns: allItems.filter((i) => i.category === 'turn').length,
+      decisions: allItems.filter((i) => i.category === 'decision').length,
+    }),
+    [allItems],
+  );
+
+  // A key da lista: trocar de missão ou filtro remonta o Legend sem herdar
+  // âncora, offset ou follow do escopo anterior. A expansão dos cards é estado
+  // deste componente e sobrevive à troca de filtro, como antes da virtualização.
+  const scopeKey = createActivityScopeKey(missionId, filter);
+
+  useEffect(() => () => cancelDisclosureSettleRef.current?.(), []);
+
+  const toggleExpanded = useCallback((id: string) => {
+    cancelDisclosureSettleRef.current?.();
+    setDisclosureSettling(true);
+    cancelDisclosureSettleRef.current = scheduleDisclosureSettle(() => {
+      cancelDisclosureSettleRef.current = null;
+      setDisclosureSettling(false);
+    });
     setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
-  }
+  }, []);
+
+  const renderItem = useCallback(
+    ({ item }: { readonly item: TimelineItemModel }) => (
+      <TimelineRow item={item} expanded={Boolean(expandedIds[item.id])} onToggle={toggleExpanded} />
+    ),
+    [expandedIds, toggleExpanded],
+  );
+
+  const reducedMotion = useMemo(() => prefersReducedMotion(), []);
 
   if (allItems.length === 0) {
     return (
@@ -243,7 +374,7 @@ export function AgentActivityTimeline({
           className={`agent-timeline__filter-btn${filter === 'tools' ? ' is-active' : ''}`}
           onClick={() => setFilter('tools')}
         >
-          Ferramentas ({allItems.filter((i) => i.category === 'tool').length})
+          Ferramentas ({counts.tools})
         </button>
         <button
           type="button"
@@ -252,7 +383,7 @@ export function AgentActivityTimeline({
           className={`agent-timeline__filter-btn${filter === 'turns' ? ' is-active' : ''}`}
           onClick={() => setFilter('turns')}
         >
-          Etapas ({allItems.filter((i) => i.category === 'turn').length})
+          Etapas ({counts.turns})
         </button>
         <button
           type="button"
@@ -261,72 +392,29 @@ export function AgentActivityTimeline({
           className={`agent-timeline__filter-btn${filter === 'decisions' ? ' is-active' : ''}`}
           onClick={() => setFilter('decisions')}
         >
-          Decisões ({allItems.filter((i) => i.category === 'decision').length})
+          Decisões ({counts.decisions})
         </button>
       </div>
 
-      <ol className="agent-timeline__list">
-        {filteredItems.map((item) => {
-          const isExpanded = Boolean(expandedIds[item.id]);
-          const hasDetail = Boolean(item.detail);
-
-          return (
-            <li
-              key={item.id}
-              className={`agent-timeline__item agent-timeline__item--${item.status} agent-timeline__item--${item.kind}`}
-            >
-              <div
-                className={`agent-timeline__card${hasDetail ? ' is-clickable' : ''}`}
-                onClick={hasDetail ? () => toggleExpanded(item.id) : undefined}
-                onKeyDown={
-                  hasDetail
-                    ? (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          toggleExpanded(item.id);
-                        }
-                      }
-                    : undefined
-                }
-                role={hasDetail ? 'button' : undefined}
-                tabIndex={hasDetail ? 0 : undefined}
-                aria-expanded={hasDetail ? isExpanded : undefined}
-              >
-                <div className="agent-timeline__header">
-                  <span className={`agent-timeline__indicator agent-timeline__indicator--${item.status}`}>
-                    <PixelIcon name={item.icon} size={12} />
-                  </span>
-
-                  <div className="agent-timeline__meta">
-                    <div className="agent-timeline__title-row">
-                      <span className="agent-timeline__kind-badge">{item.title}</span>
-                      {item.subtitle && (
-                        <span className="agent-timeline__subtitle" title={item.subtitle}>
-                          {item.subtitle}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <span className="agent-timeline__sequence">#{item.sequence}</span>
-
-                  {hasDetail && (
-                    <span className={`agent-timeline__chevron${isExpanded ? ' is-open' : ''}`}>
-                      <PixelIcon name="chevron-down" size={10} />
-                    </span>
-                  )}
-                </div>
-
-                {hasDetail && isExpanded && (
-                  <div className="agent-timeline__detail">
-                    <pre className="agent-timeline__pre">{item.detail}</pre>
-                  </div>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
+      <LegendList<TimelineItemModel>
+        key={scopeKey}
+        data={filteredItems}
+        // Linhas visíveis re-renderizam quando um card abre/fecha.
+        extraData={expandedIds}
+        keyExtractor={timelineKeyExtractor}
+        renderItem={renderItem}
+        estimatedItemSize={TIMELINE_ESTIMATED_ITEM_SIZE}
+        // Contêiner reaproveitado remonta a linha: o card focado nunca passa a
+        // mostrar outro evento.
+        recycleItems={false}
+        // Sem initialScrollIndex/initialScrollAtEnd: abre no topo, como antes.
+        // O stream só puxa a lista se ela já estava no fim (banda do Legend).
+        maintainScrollAtEnd={resolveMaintainScrollAtEnd({ disclosureSettling, reducedMotion })}
+        maintainScrollAtEndThreshold={ACTIVITY_TIMELINE_FOLLOW_THRESHOLD}
+        maintainVisibleContentPosition={ACTIVITY_TIMELINE_MAINTAIN_VISIBLE_CONTENT_POSITION}
+        className="agent-timeline__list"
+        role="list"
+      />
     </div>
   );
 }
