@@ -6,8 +6,9 @@
  * failover é montado no Main e no renderer pelo mesmo builder
  * (`failover-handoff.ts`), que neutraliza todo texto citado por construção, e
  * `shared/` não importa de `main/`. O detector importa a tabela daqui: padrão
- * novo entra AQUI, e detector e neutralização seguem juntos (teste anti-drift
- * em `context-handoff-budget.test.ts`).
+ * novo entra AQUI, e detector e neutralização seguem juntos (anti-drift: forma
+ * em `context-handoff-budget.test.ts`; regex de sinal fora daqui, F-1019, em
+ * `limit-detector.test.ts`).
  */
 
 import { rateLimitTextPatterns } from '../vendor/omp/rate-limit/classify';
