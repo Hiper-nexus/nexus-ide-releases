@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -56,6 +56,19 @@ describe('falha de git num listener de IPC', () => {
         reason: 'ETIMEDOUT',
       }),
     );
+  });
+
+  it('F-960: os guards não têm aresta de runtime até git-command (init pendurado no bundle)', () => {
+    for (const file of ['git-ipc-guard.ts', 'git-boot-guard.ts']) {
+      const source = readFileSync(path.resolve('src/main/runtime', file), 'utf8');
+      expect(source.match(/^import\s+(?!type\b)[^;]*from\s+['"]\.\/git-command['"]/gmu) ?? []).toEqual([]);
+    }
+  });
+
+  it('F-960: reconhece GitCommandError pelo nome e argv, sem instanceof', () => {
+    expect(isGitOperationalFailure(gitFailure('ETIMEDOUT'))).toBe(true);
+    expect(isGitOperationalFailure(Object.assign(new Error('x'), { name: 'GitCommandError' }))).toBe(false);
+    expect(isGitOperationalFailure(new Error('Git process could not complete'))).toBe(false);
   });
 
   it('offIpcGuarded remove o wrapper que o ipcMain conhece, não o listener original', () => {

@@ -1,6 +1,9 @@
 import { ipcMain, type IpcMainEvent } from 'electron';
 import { trace } from '../observability/main-trace';
-import { GitCommandError } from './git-command';
+// Só o tipo: este guard é importado por dezenas de módulos que carregam cedo,
+// e a aresta de runtime até git-command deixou o init dele pendurado no bundle
+// (`init_git_command is not defined` no app empacotado da 0.76.209, F-960).
+import type { GitCommandError } from './git-command';
 
 /**
  * Falha operacional do git (o processo não sobe, estoura o prazo, morre por
@@ -11,7 +14,9 @@ import { GitCommandError } from './git-command';
  * aparecendo como antes.
  */
 export function isGitOperationalFailure(error: unknown): error is GitCommandError {
-  return error instanceof GitCommandError;
+  // GitCommandError fixa `name` e carrega o argv do git (git-command.ts).
+  return error instanceof Error && error.name === 'GitCommandError' &&
+    Array.isArray((error as Partial<GitCommandError>).args);
 }
 
 /** Registra no trace e no console uma falha de git que o chamador contornou. */
