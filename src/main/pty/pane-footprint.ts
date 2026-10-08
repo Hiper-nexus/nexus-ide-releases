@@ -41,6 +41,30 @@ export interface SessionRoot {
  */
 const ROOT_START_TOLERANCE_MS = 2_000;
 
+/**
+ * F-1001: o PTY host. No Linux o `lstart` é btime + starttime/HZ, e o btime
+ * segue o relógio de parede: um ajuste do relógio (resume do suspend, passo
+ * do NTP) desloca o início de TODOS os processos e o root saía da janela de
+ * 2 s para sempre. O root da sessão é filho direto do host, então ele também
+ * é aceito por isso — salvo um PID que o próprio host acabou de criar
+ * (`transientPids`: o `ps` da amostra) ou que dois roots disputam.
+ */
+export interface FootprintHost {
+  readonly pid: number;
+  readonly transientPids?: readonly number[];
+}
+
+/** Argumentos do `ps` da amostra (o host executa; o teste roda o real). */
+export const FOOTPRINT_PS_ARGS: readonly string[] = ['-axo', 'pid=,ppid=,rss=,lstart='];
+
+/**
+ * Env do `ps`: C sempre. Em pt-BR o `lstart` sai "qui  8 out 00:14:49 2026"
+ * e o parse não lê nenhuma linha. LC_ALL vence LC_TIME/LANG do operador.
+ */
+export function footprintPsEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...base, LANG: 'C', LC_ALL: 'C', LC_TIME: 'C' };
+}
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export interface SessionFootprint {
@@ -59,7 +83,7 @@ export interface FootprintSummary {
 }
 
 /**
- * `ps -axo pid=,ppid=,rss=,lstart=` com LANG=C → linhas; qualquer linha fora
+ * `ps -axo pid=,ppid=,rss=,lstart=` com footprintPsEnv → linhas; qualquer linha fora
  * do padrão é ignorada. `lstart` = "Wed Oct  7 10:00:00 2026", hora local.
  */
 export function parseRssProcessTable(output: string): RssProcessRow[] {
@@ -90,7 +114,15 @@ export function parseRssProcessTable(output: string): RssProcessRow[] {
 export function attributeSessionFootprints(
   table: readonly RssProcessRow[],
   roots: readonly SessionRoot[],
+  host?: FootprintHost,
 ): SessionFootprint[] {
+  const claims = new Map<number, number>();
+  for (const root of roots) claims.set(root.rootPid, (claims.get(root.rootPid) ?? 0) + 1);
+  const hostChild = (row: RssProcessRow) =>
+    host !== undefined &&
+    row.ppid === host.pid &&
+    claims.get(row.pid) === 1 &&
+    !(host.transientPids ?? []).includes(row.pid);
   const byPid = new Map<number, RssProcessRow>();
   const childrenByPpid = new Map<number, RssProcessRow[]>();
   let consistent = true;
@@ -106,8 +138,12 @@ export function attributeSessionFootprints(
   }
   return roots.map((root) => {
     const rootRow = consistent ? byPid.get(root.rootPid) : undefined;
-    // Mesmo PID, outro início: o root morreu e o número foi reciclado.
-    if (!rootRow || Math.abs(rootRow.startedAtMs - root.spawnedAtMs) > ROOT_START_TOLERANCE_MS) {
+    // Mesmo PID, outro início e outro pai: o root morreu e o número foi
+    // reciclado. Filho direto do host é o root mesmo com o relógio deslocado.
+    if (
+      !rootRow ||
+      (Math.abs(rootRow.startedAtMs - root.spawnedAtMs) > ROOT_START_TOLERANCE_MS && !hostChild(rootRow))
+    ) {
       return { sessionId: root.sessionId, rootPid: root.rootPid, processCount: 0, rssBytes: null };
     }
     let rssKB = rootRow.rssKB;

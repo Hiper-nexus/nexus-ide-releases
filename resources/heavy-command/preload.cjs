@@ -5,6 +5,21 @@ const { isMainThread } = require('node:worker_threads');
 // directory's own helpers, or a byte-identical copy of the bundled mission-shim
 // client — and only when nothing else is preloaded into that process. Any other
 // process (including a child that inherited the flag) stays admitted.
+// NODE_OPTIONS split exactly as Node does (ParseNodeOptionsEnvVar): only a
+// space outside "…" separates, `"` toggles quoting anywhere in a word and is
+// removed, `\` escapes inside quotes. null when Node itself would reject it.
+function nodeOptionsTokens(value) {
+  const tokens = [];
+  let quoted = false, fresh = true;
+  for (let i = 0; i < value.length; i++) {
+    let c = value[i];
+    if (c === '\\' && quoted) { if (i + 1 === value.length) return null; c = value[++i]; }
+    else if (c === ' ' && !quoted) { fresh = true; continue; }
+    else if (c === '"') { quoted = !quoted; continue; }
+    if (fresh) { tokens.push(c); fresh = false; } else tokens[tokens.length - 1] += c;
+  }
+  return quoted ? null : tokens;
+}
 function trustedHelperEntry() {
   if (process.env.NEXUS_HEAVY_HELPER !== '1') return false;
   const fs = require('node:fs');
@@ -13,12 +28,14 @@ function trustedHelperEntry() {
   const entry = typeof process.argv[1] === 'string' ? real(process.argv[1]) : null;
   const self = real(__filename);
   if (!entry || !self || process.execArgv.length > 0) return false;
-  const options = process.env.NODE_OPTIONS || '';
-  if (/(?:^|\s)(?:--import|--loader|--experimental-loader)(?:[=\s]|$)/.test(options)) return false;
-  for (const match of options.matchAll(/(?:^|\s)(?:-r|--require)(?:=|\s+)("(?:[^"\\]|\\.)*"|\S+)/g)) {
-    let required = match[1];
-    try { if (required.startsWith('"')) required = JSON.parse(required); } catch { return false; }
-    if (real(required) !== self) return false;
+  const tokens = nodeOptionsTokens(process.env.NODE_OPTIONS || '');
+  if (!tokens) return false;
+  for (let i = 0; i < tokens.length; i++) {
+    const option = /^(--require|-r|--import|--loader|--experimental-loader)(?:=([\s\S]*))?$/.exec(tokens[i]);
+    if (!option) continue;
+    if (option[1] !== '--require' && option[1] !== '-r') return false;
+    const required = option[2] !== undefined ? option[2] : tokens[++i];
+    if (required === undefined || real(required) !== self) return false;
   }
   const directory = path.dirname(self);
   if (['request.cjs', 'classify.cjs', 'tool-hook.cjs', 'job-launch.cjs'].some((name) => entry === path.join(directory, name))) return true;

@@ -169,6 +169,7 @@ import {
   digestBudgetPerPane,
   digestPaneTail,
   PANE_READ_MANY_MAX_PANES,
+  PANE_READ_MANY_MAX_REFS,
 } from './pane-output-digest';
 import { classifyPaneTailForDigest } from '../jev/jev-pane-state';
 import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
@@ -2978,7 +2979,8 @@ const paneReadMany: McpToolDef = {
     "mode:'digest'|'full' semantics as nexus_pane_read (orchestrator " +
     'defaults to digest); errors come back per item. Up to ' +
     `${PANE_READ_MANY_MAX_PANES} distinct panes per call (repeated ids and ` +
-    'aliases of the same pane are read once). In digest mode the whole ' +
+    `aliases of the same pane are read once; at most ${PANE_READ_MANY_MAX_REFS} ` +
+    'references). In digest mode the whole ' +
     'response shares one character cap (items mark truncated). ' +
     'Prefer this over looping nexus_pane_read; prefer handoff_list when ' +
     'you only need structured completion, not the raw PTY.',
@@ -2997,11 +2999,14 @@ const paneReadMany: McpToolDef = {
     // F-961: seis panes × redesenho de TUI estouravam o limite da ferramenta.
     // Ids repetidos (e apelidos do mesmo pane) são lidos uma vez, a lista tem
     // teto e o digest divide um teto total que é conferido antes de devolver.
+    // Segunda revisão: o teto vale para panes distintos RESOLVIDOS — 8 panes
+    // em 4 grafias (id, sessão, "3", "pane 3") são 8, não 32. As grafias têm
+    // um teto próprio, mais largo, que limita a resolução.
     const paneIds = [...new Set(strArray(args, 'paneIds'))];
-    if (paneIds.length > PANE_READ_MANY_MAX_PANES) {
+    if (paneIds.length > PANE_READ_MANY_MAX_REFS) {
       throw new Error(
-        `nexus_pane_read_many: no máximo ${PANE_READ_MANY_MAX_PANES} panes ` +
-          `distintos por chamada (recebeu ${paneIds.length}); divida em lotes`,
+        `nexus_pane_read_many: no máximo ${PANE_READ_MANY_MAX_REFS} referências ` +
+          `por chamada (recebeu ${paneIds.length}); divida em lotes`,
       );
     }
     type Resolved =
@@ -3019,6 +3024,12 @@ const paneReadMany: McpToolDef = {
       if ('sessionId' in item && !firstBySession.has(item.sessionId)) {
         firstBySession.set(item.sessionId, item.paneId);
       }
+    }
+    if (firstBySession.size > PANE_READ_MANY_MAX_PANES) {
+      throw new Error(
+        `nexus_pane_read_many: no máximo ${PANE_READ_MANY_MAX_PANES} panes ` +
+          `distintos por chamada (recebeu ${firstBySession.size}); divida em lotes`,
+      );
     }
     const budget = digestBudgetPerPane(firstBySession.size);
     const results: Array<Record<string, unknown>> = await Promise.all(

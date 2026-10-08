@@ -38,7 +38,9 @@ module.exports = function install(installOptions = {}) {
     if (process.env.NEXUS_HEAVY_DIR) env.ZDOTDIR = process.env.NEXUS_HEAVY_ZDOTDIR || process.env.NEXUS_HEAVY_DIR;
     if (isAgentLauncherHandoff(agentRoot, file, args, options)) return { file, args, options: { ...options, env } };
     const node = file === process.execPath || /^node(?:\.exe)?$/i.test(path.basename(file));
-    const kind = node ? catalog.entryKind([process.execPath, ...args]) || (process.env.NEXUS_HEAVY_JOB_BASE && !catalog.isPersistent([process.execPath, ...args]) ? 'build' : null) : catalog.commandKind([file, ...args].join(' '));
+    const kind = node ? catalog.entryKind([process.execPath, ...args]) || (process.env.NEXUS_HEAVY_JOB_BASE && !catalog.isPersistent([process.execPath, ...args]) ? 'build' : null)
+      // Only a shell reads text; a direct argv is classified word by word.
+      : options.shell ? catalog.commandKind([file, ...args].join(' ')) : catalog.argvKind([file, ...args]);
     if (kind && env.NEXUS_HEAVY_JOB_BASE && !env.NEXUS_HEAVY_LEASE) {
       const fs = require('node:fs');
       const resolve = (value) => { if (path.isAbsolute(value)) return value; return (env.PATH || '').split(path.delimiter).map((part) => path.join(part, value)).find((candidate) => { try { fs.accessSync(candidate, fs.constants.X_OK); return fs.statSync(candidate).isFile(); } catch { return false; } }); };

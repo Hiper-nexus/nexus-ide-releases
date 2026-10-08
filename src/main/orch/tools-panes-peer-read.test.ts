@@ -386,6 +386,46 @@ describe('in-mission pane observation (Overclock parity)', () => {
     }
   });
 
+  it('F-961 (segunda revisão): o teto conta panes distintos resolvidos, não grafias', async () => {
+    const orchestrator = context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null });
+    for (let pane = 0; pane < 8; pane += 1) {
+      const info: PaneAuthzInfo = {
+        paneId: `pane-${pane}`,
+        sessionId: `session-${pane}`,
+        kind: 'cli-agent',
+        missionId: 'mission-a',
+        role: 'worker',
+        scope,
+      };
+      registerPane(info, `saída do pane ${pane}`);
+      // Número curto do cabeçalho: "3" e "pane 3".
+      h.panes.set(String(pane + 1), info);
+      h.panes.set(`pane ${pane + 1}`, info);
+    }
+    // 8 panes em 4 grafias = 32 referências: antes virava erro de teto (30).
+    const refs = Array.from({ length: 8 }, (_, pane) => [
+      `pane-${pane}`, `session-${pane}`, String(pane + 1), `pane ${pane + 1}`,
+    ]).flat();
+    h.readSessionOutput.mockClear();
+    const out = await tool('nexus_pane_read_many').handler(
+      { paneIds: refs, mode: 'full' },
+      orchestrator,
+    ) as Array<Record<string, unknown>>;
+    expect(out).toHaveLength(32);
+    expect(h.readSessionOutput).toHaveBeenCalledTimes(8);
+    expect(out.filter((item) => 'output' in item)).toHaveLength(8);
+    expect(out.filter((item) => 'sameAs' in item)).toHaveLength(24);
+    expect(out[3]).toEqual({ paneId: 'pane 1', sameAs: 'pane-0' });
+
+    // Referências demais (mesmo de poucos panes) continuam barradas antes de resolver.
+    h.getPaneAuthzInfo.mockClear();
+    await expect(tool('nexus_pane_read_many').handler(
+      { paneIds: Array.from({ length: 121 }, (_, i) => `ref-${i}`) },
+      orchestrator,
+    )).rejects.toThrow(/no máximo 120 referências por chamada \(recebeu 121\)/);
+    expect(h.getPaneAuthzInfo).not.toHaveBeenCalled();
+  });
+
   it('fails closed for an unknown pane', async () => {
     await expect(
       tool('nexus_pane_read').handler({ paneId: 'pane-missing' }, context()),

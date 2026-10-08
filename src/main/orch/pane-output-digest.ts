@@ -57,6 +57,8 @@ export const DIGEST_MAX_CHARS = 6_000;
 export const DIGEST_MANY_MAX_CHARS = 24_000;
 /** Panes distintos por chamada de `nexus_pane_read_many`. */
 export const PANE_READ_MANY_MAX_PANES = 30;
+/** Referências (grafias) por chamada antes de resolver: 4 por pane. */
+export const PANE_READ_MANY_MAX_REFS = PANE_READ_MANY_MAX_PANES * 4;
 /** Piso do texto por pane: marca de corte + uma linha com teto. */
 export const DIGEST_MIN_CHARS = 400;
 /** Reserva por item para chaves, contagens e escapes do JSON. */
