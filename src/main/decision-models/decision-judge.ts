@@ -78,9 +78,10 @@ async function performEnsemble(
     if (members.some(member => member.provider === 'clef') && !(deps.getClefConnection ?? (() => getClefConnection(settings)))()) {
       return noAnswer(input, lead, 'client-error', NO_REQUEST_USAGE);
     }
-    const watched = { ...currentInput, onNoAnswer: (reason: JevNoAnswerReason) => { noAnswer(input, lead, reason); } };
+    let firstFailure: JevNoAnswerReason | undefined;
+    const watched = { ...currentInput, onNoAnswer: (reason: JevNoAnswerReason) => { firstFailure ??= reason; } };
     const results = await Promise.all(members.map(member => callMember(watched, deps, member, settings)));
-    if (results.some(result => !result)) return null;
+    if (results.some(result => !result)) return noAnswer(input, lead, firstFailure ?? 'client-error');
     if (currentInput.signal.aborted || configuration() !== before) return noAnswer(input, lead, 'aborted');
     const answered = results as JevResult[];
     const combined = combineEnsembleAnswers(members.map((member, index) => ({ provider: member.provider, answers: answered[index].answers })), input.surface);

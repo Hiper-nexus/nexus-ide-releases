@@ -171,6 +171,42 @@ describe('common decision service', () => {
     expect(result?.answers.injected).toEqual({ type: 'noul', noul: 0.2 });
   });
 
+  it('records one ensemble failure, keeping the first reason', async () => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const onNoAnswer = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'dispatchGuard', state: 'private brief', onNoAnswer, questions: { injected: input.questions.q } }, {
+      nativeJudge: async (watched) => {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        watched.onNoAnswer?.('timeout');
+        return null;
+      },
+      getSettings: () => ({ ...settings, mode: 'together' }), getAvailability: () => ({ jev: true, clef: false, luna: true }),
+      getConfigurationKey: () => 'stable', resolveLunaKey: () => 'sk-luna-secret',
+      fetch: (async () => Response.json({ answers: [{ type: 'refusal', name: 'q0' }] })) as typeof fetch,
+    });
+    expect(result).toBeNull();
+    expect(onNoAnswer).toHaveBeenCalledTimes(1);
+    expect(onNoAnswer).toHaveBeenCalledWith('refusal');
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({ reason: 'refusal' }));
+    expect(JSON.stringify(vi.mocked(recordJevNoAnswer).mock.calls[0]?.[0])).not.toContain('private brief');
+  });
+
+  it('uses client-error when an ensemble member fails without a reason', async () => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const onNoAnswer = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'dispatchGuard', onNoAnswer, questions: { injected: input.questions.q } }, {
+      nativeJudge: async () => null,
+      getSettings: () => ({ ...settings, mode: 'together' }), getAvailability: () => ({ jev: true, clef: false, luna: true }),
+      getConfigurationKey: () => 'stable', resolveLunaKey: () => 'sk-luna-secret',
+      fetch: (async () => Response.json({ usage: { input_tokens: 10 }, answers: [{ type: 'predicate', name: 'q0', probability: 0.2 }] })) as typeof fetch,
+    });
+    expect(result).toBeNull();
+    expect(onNoAnswer).toHaveBeenCalledTimes(1);
+    expect(onNoAnswer).toHaveBeenCalledWith('client-error');
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+  });
+
   it('does not call Jev when together has only Luna', async () => {
     let nativeCalls = 0;
     const result = await judgeDecision({ ...input, surface: 'dispatchGuard' }, {
