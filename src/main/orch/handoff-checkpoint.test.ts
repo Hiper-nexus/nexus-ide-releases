@@ -131,6 +131,31 @@ describe('captureWriterHandoffCheckpoint', () => {
     expect(traced).toEqual([expect.objectContaining({ kind: 'handoff-checkpoint', status: 'timeout' })]);
   });
 
+  it('F-1018: update-ref já em curso que termina depois do timeout não deixa ref publicada', async () => {
+    const real = new AsyncProcessGitRunner();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let publishStarted = false;
+    const lateUpdateRef: AsyncGitRunner = {
+      run: async (cwd, args, options) => {
+        // Só a publicação fica presa (o update-ref é isento do prazo); o desfazer passa.
+        if (args.includes('update-ref') && !args.includes('-d')) {
+          publishStarted = true;
+          await held;
+        }
+        return real.run(cwd, args, options);
+      },
+    };
+
+    const artifact = await captureWriterHandoffCheckpoint(ctx(), { git: lateUpdateRef, deadlineMs: 1_500 });
+
+    expect(publishStarted).toBe(true);
+    expect(artifact?.payload).toEqual({ ok: false, reason: 'timeout' });
+    release();
+    await hiddenCheckpointIdle();
+    expect(checkpointRefs()).toEqual([]);
+  });
+
   it('mede a captura real: registra elapsedMs e fica abaixo do prazo do handoff', async () => {
     expect(HANDOFF_CHECKPOINT_DEADLINE_MS).toBeLessThanOrEqual(15_000);
     const artifact = await captureWriterHandoffCheckpoint(ctx());

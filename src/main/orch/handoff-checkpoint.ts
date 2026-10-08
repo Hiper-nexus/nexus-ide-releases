@@ -52,12 +52,16 @@ export async function captureWriterHandoffCheckpoint(
   const startedAt = Date.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let result: CheckpointCaptureResult;
+  // F-1018: o prazo daqui também desiste da captura — uma ref publicada depois
+  // do `timeout` (update-ref já em curso) é desfeita, não fica sem artifact.
+  const abandon = new AbortController();
   try {
     const capture = captureHiddenCheckpoint({
       cwd: root,
       scopeId: missionCheckpointScopeId(ctx.missionId, root),
       forbiddenRoot: ctx.scope.rootRealPath,
       deadlineAt: startedAt + deadlineMs,
+      signal: abandon.signal,
       note: [
         `Fim do turno do writer ${ctx.agentName ?? ctx.label}`,
         `Missão: ${ctx.missionId}`,
@@ -67,7 +71,10 @@ export async function captureWriterHandoffCheckpoint(
     }, deps.git ? { git: deps.git } : {});
     // Garante a resposta no prazo mesmo com a raiz presa na fila (restauração em curso).
     const expired = new Promise<CheckpointCaptureResult>((resolve) => {
-      timer = setTimeout(() => resolve({ ok: false, reason: 'timeout' }), deadlineMs + DEADLINE_GRACE_MS);
+      timer = setTimeout(() => {
+        abandon.abort();
+        resolve({ ok: false, reason: 'timeout' });
+      }, deadlineMs + DEADLINE_GRACE_MS);
     });
     result = await Promise.race([capture, expired]);
   } catch (error) {

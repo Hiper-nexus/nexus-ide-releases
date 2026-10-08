@@ -418,6 +418,23 @@ export function takeoverMissionLeadershipFromRenderer(
       (session.missionId !== undefined && session.missionId !== missionId)) {
     throw new MissionLeadershipError('scope_mismatch', { missionId, reason: 'takeover_requires_owned_pane' });
   }
+  // F-1017 (espelho do F-996 em renderer-mission-authority): pane somente
+  // leitura (revisor, auditor) nunca recebe a coroa — ficha PTY, gate ou
+  // mission_panes. Só o líder que já é desta missão é reconfirmado. Recusado
+  // ANTES de qualquer escrita; sem o store do escopo, falha fechada.
+  const gateCtx = getContextBySession(input.sessionId);
+  const alreadyLeader = gateCtx?.role === 'orchestrator' && gateCtx.missionId === missionId;
+  if (!alreadyLeader) {
+    let paneReadOnly: boolean;
+    try {
+      paneReadOnly = getProjectDomainStores(scope).missionPanes.findByPaneId(input.paneId)?.readOnly === true;
+    } catch {
+      throw new MissionLeadershipError('unavailable', { missionId, reason: 'store_suite_unavailable' });
+    }
+    if (session.readOnly === true || gateCtx?.readOnly === true || paneReadOnly) {
+      throw new MissionLeadershipError('scope_mismatch', { missionId, reason: 'takeover_target_read_only' });
+    }
+  }
   const takeover: LeadershipTakeoverInput = Object.freeze({
     origin: 'takeover', sessionId: input.sessionId, paneId: input.paneId, reason: input.reason,
   });

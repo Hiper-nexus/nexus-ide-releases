@@ -88,6 +88,11 @@ export interface CheckpointCaptureInput {
   readonly forbiddenRoot?: string;
   /** Prazo global (epoch ms): estourado, para e devolve `timeout` sem publicar ref. */
   readonly deadlineAt?: number;
+  /**
+   * Quem pediu desistiu (F-1018): o `update-ref` em curso não é morto, mas a
+   * ref que ele publicar depois disso é desfeita e a resposta é `timeout`.
+   */
+  readonly signal?: AbortSignal;
 }
 
 export interface CheckpointEntry {
@@ -482,6 +487,8 @@ async function publishCheckpoint(
     readonly baseSha: string | null;
     readonly ordinal?: number;
     readonly note?: readonly string[];
+    /** Sinal de desistência + Git sem prazo (o desfazer roda já fora dele). */
+    readonly abandon?: { readonly signal: AbortSignal; readonly git: AsyncGitRunner };
   },
 ): Promise<CheckpointCaptureResult> {
   const existing = await readScopeRefs(git, root, input.scopeKey);
@@ -529,6 +536,16 @@ async function publishCheckpoint(
     return fail('empty-commit-oid: git commit-tree não devolveu um commit; nenhuma ref foi publicada');
   }
   await git.run(root, [...DURABLE_WRITE, 'update-ref', '-m', 'nexus: checkpoint', ref, commit, expectedOld]);
+  // F-1018: quem pediu desistiu enquanto o `update-ref` rodava (já respondeu
+  // `timeout`): a publicação tardia é desfeita por CAS — só se a ref ainda
+  // aponta para este commit — e nenhuma ref fica órfã do artifact.
+  if (input.abandon?.signal.aborted) {
+    await input.abandon.git.run(root, [
+      ...DURABLE_WRITE, 'update-ref', '-m', 'nexus: checkpoint abandonado',
+      ...(expectedOld ? [ref, expectedOld, commit] : ['-d', ref, commit]),
+    ]);
+    throw new CheckpointTimeout();
+  }
   return { ok: true, ref, commit, tree: input.tree, ordinal, baseSha: input.baseSha, reused: false };
 }
 
@@ -538,7 +555,8 @@ export function captureHiddenCheckpoint(
   deps: HiddenCheckpointDeps = {},
 ): Promise<CheckpointCaptureResult> {
   return serialized(path.resolve(input.cwd), async () => {
-    const git = withDeadline(deps.git ?? new AsyncProcessGitRunner(), input.deadlineAt);
+    const rawGit = deps.git ?? new AsyncProcessGitRunner();
+    const git = withDeadline(rawGit, input.deadlineAt);
     if (input.ordinal !== undefined && !isOrdinal(input.ordinal)) return fail('invalid-checkpoint-ordinal');
     try {
       const repo = await resolveRepo(git, input.cwd, {
@@ -556,6 +574,7 @@ export function captureHiddenCheckpoint(
         baseSha,
         ...(input.ordinal !== undefined ? { ordinal: input.ordinal } : {}),
         ...(input.note ? { note: input.note } : {}),
+        ...(input.signal ? { abandon: { signal: input.signal, git: rawGit } } : {}),
       });
     } catch (error) {
       // Git morto pelo prazo (SIGKILL) chega como falha genérica: o relógio decide.

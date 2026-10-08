@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { detectLimit, tierScopeFromModelId } from './limit-detector';
 import { sanitizeHandoffExcerptForDetector } from '../../shared/failover-handoff';
@@ -563,6 +566,61 @@ describe('detectLimit — escopo de tier (cooldown escopado do oh-my-pi)', () =>
     const hit = detectLimit(`Error: 429 Too Many Requests ${filler} sonnet`);
     expect(hit?.kind).toBe('rate-limit');
     expect(hit?.scope).toBeUndefined();
+  });
+});
+
+describe('F-1019: sinal de limite só nasce da fonte compartilhada (anti-drift)', () => {
+  /**
+   * `quotedLimitSignalPatterns` neutraliza o texto citado com as fontes que o
+   * detector importa (tabela de `shared/limit-signal-patterns`, classify do
+   * omp, frase do Codex). Uma regex de sinal escrita AQUI dispararia no eco do
+   * pack sem nunca ser neutralizada. Cada regex deste arquivo é auxiliar
+   * (reset, escopo, Markdown, célula do Codex) e está listada com o lugar
+   * onde mora; regex nova = padrão de limite vai para a tabela compartilhada,
+   * auxiliar entra nesta lista.
+   */
+  const AUXILIARY = [
+    'BARE_ANTHROPIC_FAMILY /\\b(opus|sonnet|haiku|fable|mythos)\\b/i',
+    'CLAUDE_MODEL_ID /\\bclaude-[a-z0-9][a-z0-9.-]*/i',
+    'CLIENT_RETRY_TICKER /\\bretrying\\s+in\\s+\\d+(?:\\.\\d+)?\\s*(?:ms|milliseconds?|secs?|seconds?|s)\\s*[·|•\\-]\\s*attempt\\s+\\d+\\s*\\/\\s*\\d+/gi',
+    'mins /try again in (\\d+)\\s*(?:minute|min)/i',
+    'secs /try again in (\\d+)\\s*(?:second|sec)/i',
+    'hrs /(?:resets?|available again) in (\\d+)\\s*hour/i',
+    'm /\\bresets?\\s+(?:at\\s+)?(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)\\b(?:\\s*\\(([^)]{1,64})\\))?/i',
+    'BLOCKQUOTE_LINE /^[ \\t]{0,3}(?:>[ \\t]?)+/',
+    'FENCE_LINE /^[ \\t]{0,3}(`{3,}|~{3,})(.*)$/',
+    'match /^[ \\t]{0,3}(`{3,}|~{3,})[ \\t]*$/',
+    'lines /\\r?\\n/',
+    'CODEX_REJECTION_PHRASE /\\s+/g',
+    'CODEX_REJECTION_PHRASE_RE new RegExp',
+    'CODEX_ERROR_CELL_START /[ \\t⎿│]*(?:■|(?:api[ \\t]+)?error:|http[ \\t]*400:|unexpected[ \\t]+status[ \\t]+400\\b|\\{[ \\t]*"(?:type|error)"[ \\t]*:)/iy',
+    'CODEX_REJECTION_CELL new RegExp',
+    'compact /\\s+/g',
+    'codexChatGptModelRejection /\\s/',
+    'cell /\\s+/g',
+    'detectLimit /^[\\s⎿│]+/u',
+    'detectLimit /^\\s*[:=]\\s*(?:false|null|0\\b)/i',
+  ].sort();
+
+  it('nenhuma regex de sinal mora no detector fora da tabela compartilhada', () => {
+    const file = fileURLToPath(new URL('./limit-detector.ts', import.meta.url));
+    const tree = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+    const owner = (node: ts.Node): string => {
+      for (let at = node.parent; at; at = at.parent) {
+        if ((ts.isVariableDeclaration(at) || ts.isFunctionDeclaration(at)) && at.name && ts.isIdentifier(at.name)) {
+          return at.name.text;
+        }
+      }
+      return '<módulo>';
+    };
+    const found: string[] = [];
+    const visit = (node: ts.Node): void => {
+      if (node.kind === ts.SyntaxKind.RegularExpressionLiteral) found.push(`${owner(node)} ${node.getText(tree)}`);
+      if (ts.isNewExpression(node) && node.expression.getText(tree) === 'RegExp') found.push(`${owner(node)} new RegExp`);
+      ts.forEachChild(node, visit);
+    };
+    visit(tree);
+    expect(found.sort()).toEqual(AUXILIARY);
   });
 });
 
