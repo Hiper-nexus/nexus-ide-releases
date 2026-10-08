@@ -1,6 +1,6 @@
 // Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
 // Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: só o contrato modal da paleta (CommandPalette.tsx:630–640, 668–670; CommandPaletteContent.tsx:42–47) — aria-modal, foco preso pelo useFocusTrap do Nexus e devolução ao invocador no lugar de finalFocus/focusAtEnd; ações e layout da paleta são do Nexus.
+// See third_party/licenses/t3code-MIT.txt. Nexus changes: contrato modal da paleta (CommandPalette.tsx:630–640, 668–670; CommandPaletteContent.tsx:42–47) — aria-modal, foco preso pelo useFocusTrap do Nexus e devolução ao invocador no lugar de finalFocus/focusAtEnd; modos arquivo/conteúdo num diálogo só (CommandPalette.tsx:474–483, 572–580, 2015–2041) com o reducer de lib/command-palette-logic; submenu com pilha de views e Backspace no vazio voltando (CommandPalette.tsx:841–842, 1517–1531, 3133–3137); seta de submenu e linha de descrição dos resultados (CommandPaletteResults.tsx) e dicas de teclado no rodapé (CommandPaletteContent.tsx:67–96) no CSS do Nexus. Ações, layout e as buscas (files:search e SearchMixer) são do Nexus.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCommandPaletteStore } from '../state/command-palette-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
@@ -8,9 +8,12 @@ import { useFocusTrap } from '../lib/use-focus-trap';
 import { useAttentionInboxStore } from '../state/attention-inbox-store';
 import { useCheatsheetStore } from '../state/cheatsheet-store';
 import { useBugReportDialogStore } from '../state/bug-report-dialog-store';
+import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
+import { useFilesStore } from '../state/files-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { useSettingsStore } from '../state/settings-store';
 import { useMissionSetupStore } from '../state/mission-setup-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { usePaneScopeStore } from '../state/pane-scope-store';
@@ -24,9 +27,24 @@ import { missionChromeTitle } from '../../shared/mission-identity';
 import { listPanes } from '../lib/split-tree';
 import { attentionMissionIdForPane } from '../lib/mission-attention-route';
 import { filterPaletteActions } from '../lib/command-palette-filter';
+import {
+  overlayModeForCommand,
+  paletteBackStep,
+  paletteInputPlaceholder,
+  workspaceRelativePath,
+  type SearchOverlayMode,
+} from '../lib/command-palette-logic';
+import {
+  commandShortcutLabel,
+  compileKeybindingRules,
+  effectiveBindings,
+  formatBinding,
+  resolveShortcutCommand,
+  type KeybindingOverrides,
+} from '../lib/keybindings';
 import { reportLicenseDenial } from '../state/access-guard';
 import { formatShortcut } from '../lib/platform';
-import { shortcutKeys } from '../lib/shortcuts';
+import { SETTINGS_GROUPS } from './settings/settings-nav';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
 
@@ -43,7 +61,198 @@ interface PaletteAction {
   icon: PixelIconName;
   hint?: string;
   keywords?: string;
+  /** Segunda linha: pasta do arquivo, trecho do conteúdo. */
+  detail?: string;
+  /** Troca de modo/submenu: a paleta continua aberta. */
+  keepOpen?: boolean;
+  submenu?: boolean;
   run(): void;
+}
+
+/** Uma tela empilhada dentro da paleta (submenu). */
+interface PaletteView {
+  title: string;
+  actions: PaletteAction[];
+}
+
+const MODE_TITLES: Record<Exclude<SearchOverlayMode, 'command'>, string> = {
+  files: 'Arquivos',
+  content: 'Conteúdo',
+};
+
+const MODE_LABELS: Record<SearchOverlayMode, string> = {
+  command: 'Command palette',
+  files: 'Ir para arquivo',
+  content: 'Buscar no conteúdo dos arquivos',
+};
+
+function isTerminalBearing(): boolean {
+  const destination = useProductNavigationStore.getState().destination;
+  return (
+    destination.kind === 'terminal' ||
+    (destination.kind === 'mission' && destination.surface === 'terminals')
+  );
+}
+
+/**
+ * Abre um resultado de arquivo/conteúdo no editor do painel de contexto.
+ * Revalida o workspace antes e DEPOIS do await: o resultado é do projeto que
+ * fez a busca, e a leitura atravessa o IPC — trocar de projeto no meio não
+ * pode puxar o editor do projeto novo com o arquivo do anterior.
+ */
+export async function openWorkspaceFile(
+  relPath: string,
+  workspace: string | null,
+): Promise<boolean> {
+  if (!workspace || getActiveWorkspacePath() !== workspace) return false;
+  await useFilesStore.getState().selectFile(relPath);
+  if (getActiveWorkspacePath() !== workspace) return false;
+  if (!isTerminalBearing()) {
+    useProductNavigationStore.getState().openTerminal();
+  }
+  useContextualPanelNavStore.getState().openTab('editor', { focus: true });
+  return true;
+}
+
+interface ContentHit {
+  id: string;
+  source?: string;
+  path?: string;
+  snippet?: string;
+  meta?: { line?: unknown };
+}
+
+async function searchWorkspace(
+  mode: Exclude<SearchOverlayMode, 'command'>,
+  text: string,
+  workspace: string,
+): Promise<{ actions: PaletteAction[]; truncated: boolean; error?: string }> {
+  if (mode === 'files') {
+    const result = await window.nexus.files.search(text);
+    const files = result.ok ? (result.files ?? []) : [];
+    return {
+      truncated: result.truncated === true,
+      error: result.ok ? undefined : 'Não consegui listar os arquivos deste projeto.',
+      actions: files.map((relPath) => {
+        const slash = relPath.lastIndexOf('/');
+        return {
+          id: `file:${relPath}`,
+          group: 'Arquivos',
+          label: relPath.slice(slash + 1),
+          detail: slash > 0 ? relPath.slice(0, slash) : undefined,
+          icon: 'files' as const,
+          run: () => void openWorkspaceFile(relPath, workspace),
+        };
+      }),
+    };
+  }
+  // Busca no conteúdo = provedor `files` (ripgrep) do SearchMixer; o main
+  // fixa a raiz no workspace de quem chamou.
+  const result = await window.nexus.searchMixer.search({
+    text,
+    sources: ['files'],
+    limit: 60,
+  });
+  const hits = (result.hits as ContentHit[]).filter(
+    (hit) => hit.source === 'files' && typeof hit.path === 'string',
+  );
+  return {
+    truncated: false,
+    error: result.error ? 'A busca no conteúdo falhou.' : undefined,
+    actions: hits.map((hit) => {
+      const relPath = workspaceRelativePath(hit.path!, workspace);
+      const line = typeof hit.meta?.line === 'number' ? hit.meta.line : null;
+      return {
+        id: `content:${hit.id}`,
+        group: 'Conteúdo',
+        label: line ? `${relPath}:${line}` : relPath,
+        detail: hit.snippet?.trim() || undefined,
+        icon: 'files' as const,
+        run: () => void openWorkspaceFile(relPath, workspace),
+      };
+    }),
+  };
+}
+
+interface WorkspaceSearchState {
+  busy: boolean;
+  error: string | null;
+  truncated: boolean;
+  actions: PaletteAction[];
+}
+
+const IDLE_SEARCH: WorkspaceSearchState = {
+  busy: false,
+  error: null,
+  truncated: false,
+  actions: [],
+};
+
+/** Busca com debounce; resposta atrasada ou de outro projeto é descartada. */
+function useWorkspaceSearch(
+  mode: SearchOverlayMode | null,
+  query: string,
+): WorkspaceSearchState {
+  const [state, setState] = useState<WorkspaceSearchState>(IDLE_SEARCH);
+  // Resultado anterior fica na tela enquanto digita — mas só no mesmo modo.
+  const resultModeRef = useRef<SearchOverlayMode | null>(null);
+  useEffect(() => {
+    const text = query.trim();
+    if ((mode !== 'files' && mode !== 'content') || !text) {
+      setState(IDLE_SEARCH);
+      return;
+    }
+    const workspace = getActiveWorkspacePath();
+    if (!workspace) {
+      setState({ ...IDLE_SEARCH, error: 'Abra um projeto para buscar arquivos.' });
+      return;
+    }
+    let cancelled = false;
+    const sameMode = resultModeRef.current === mode;
+    setState((previous) => ({
+      ...previous,
+      actions: sameMode ? previous.actions : [],
+      busy: true,
+      error: null,
+    }));
+    const timer = setTimeout(() => {
+      searchWorkspace(mode, text, workspace)
+        .then((result) => {
+          if (cancelled) return;
+          // Resposta de outro projeto: nada dela pode ser aberto aqui.
+          if (getActiveWorkspacePath() !== workspace) {
+            setState(IDLE_SEARCH);
+            return;
+          }
+          resultModeRef.current = mode;
+          setState({
+            busy: false,
+            error: result.error ?? null,
+            truncated: result.truncated,
+            actions: result.actions,
+          });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setState({ ...IDLE_SEARCH, error: 'A busca falhou. Tente de novo.' });
+        });
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [mode, query]);
+  return state;
+}
+
+/** Dica do pane N: a combinação efetiva de focus-pane-n com o dígito dele. */
+function paneHint(
+  index: number,
+  overrides: KeybindingOverrides,
+): string | undefined {
+  if (index >= 9) return undefined;
+  const binding = effectiveBindings('focus-pane-n', overrides)[0];
+  return binding ? formatBinding(binding, 'focus-pane-n', index + 1) : undefined;
 }
 
 /** Workspace/checkout + destino: devolver o foco só faz sentido no mesmo lugar. */
@@ -55,7 +264,10 @@ function focusScope(): string {
 
 export function CommandPalette() {
   const open = useCommandPaletteStore((state) => state.open);
+  const mode = useCommandPaletteStore((state) => state.mode);
   const close = useCommandPaletteStore((state) => state.close);
+  const toggleMode = useCommandPaletteStore((state) => state.toggleMode);
+  const keybindingOverrides = useSettingsStore((state) => state.ui.keybindings);
   const root = useLayoutStore((state) => state.root);
   const missionSummaries = useOrchStore(
     (state) => state.missionSummaries,
@@ -64,11 +276,15 @@ export function CommandPalette() {
 
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
+  const [viewStack, setViewStack] = useState<PaletteView[]>([]);
+  const currentView = viewStack[viewStack.length - 1] ?? null;
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   /** Uma ação escolheu o próximo foco; só a dispensa devolve ao invocador. */
   const actionRanRef = useRef(false);
+  /** Texto levado de um modo de busca para o outro pelo atalho do vazio. */
+  const carriedQueryRef = useRef<string | null>(null);
 
   useFocusTrap(dialogRef, open);
 
@@ -90,10 +306,7 @@ export function CommandPalette() {
             ? `Focar pane ${pane.paneNumber}: ${pane.title || pane.kind}`
             : `Focar: ${pane.title || pane.kind}`,
         icon: pane.kind === 'browser' ? 'browser' : 'terminal',
-        hint:
-          index < 9
-            ? formatShortcut('mod', String(index + 1))
-            : undefined,
+        hint: paneHint(index, keybindingOverrides),
         keywords: `pane foco ${pane.paneNumber ?? ''} ${pane.adapterId ?? ''} ${state ?? ''}`,
         run: () => {
           const navigation = useProductNavigationStore.getState();
@@ -128,6 +341,7 @@ export function CommandPalette() {
       run: () => void,
       hint?: string,
       keywords?: string,
+      extra?: Pick<PaletteAction, 'keepOpen' | 'submenu'>,
     ) =>
       out.push({
         id: `tool:${id}`,
@@ -137,14 +351,19 @@ export function CommandPalette() {
         run,
         hint,
         keywords,
+        ...extra,
       });
+    const shortcut = (
+      command: Parameters<typeof commandShortcutLabel>[0],
+    ): string | undefined =>
+      commandShortcutLabel(command, keybindingOverrides) ?? undefined;
 
     tool(
       'mission-new',
       'Nova missão',
       'mission',
       () => useProductNavigationStore.getState().openNewMission(),
-      shortcutKeys('mission-new'),
+      shortcut('mission-new'),
       'missão objetivo equipe',
     );
     // Saída do operador: o + Novo e o Launcher levam ao Caminho Expresso; o
@@ -170,7 +389,7 @@ export function CommandPalette() {
         close();
         useAttentionInboxStore.getState().setOpen(true);
       },
-      shortcutKeys('attention-inbox'),
+      shortcut('attention-inbox'),
       'atenção enter pr fila missão login',
     );
     const missionDestination = useProductNavigationStore.getState().destination;
@@ -299,7 +518,7 @@ export function CommandPalette() {
       'Quadro de tarefas',
       'board',
       () => useProductNavigationStore.getState().openTaskBoard(),
-      shortcutKeys('task-board'),
+      shortcut('task-board'),
       'quadro tarefas pipeline kanban',
     );
     tool(
@@ -315,7 +534,7 @@ export function CommandPalette() {
       'Configurações',
       'config',
       () => useProductNavigationStore.getState().openSettings(),
-      shortcutKeys('settings'),
+      shortcut('settings'),
       'settings preferências',
     );
     tool(
@@ -323,8 +542,52 @@ export function CommandPalette() {
       'Ajuda e atalhos do teclado',
       'key',
       () => useCheatsheetStore.getState().toggle(),
-      shortcutKeys('cheatsheet'),
+      shortcut('cheatsheet'),
       'ajuda help teclas shortcuts atalhos comandos dúvida como',
+    );
+    tool(
+      'file-picker',
+      'Ir para arquivo…',
+      'files',
+      () => toggleMode('files'),
+      shortcut('file-picker'),
+      'arquivo abrir ir para file picker quick open',
+      { keepOpen: true },
+    );
+    tool(
+      'content-search',
+      'Buscar texto nos arquivos…',
+      'search',
+      () => toggleMode('content'),
+      shortcut('content-search'),
+      'buscar procurar texto conteúdo grep find in files',
+      { keepOpen: true },
+    );
+    tool(
+      'settings-sections',
+      'Ir para uma seção das configurações…',
+      'config',
+      () =>
+        setViewStack((views) => [
+          ...views,
+          {
+            title: 'Configurações',
+            actions: SETTINGS_GROUPS.flatMap((group) =>
+              group.items.map((item) => ({
+                id: `settings:${item.id}`,
+                group: group.label,
+                label: item.title,
+                icon: item.pixelIcon ?? 'config',
+                keywords: `${item.subtitle} ${(item.aliases ?? []).join(' ')}`,
+                run: () =>
+                  useProductNavigationStore.getState().openSettings(item.id),
+              })),
+            ),
+          },
+        ]),
+      undefined,
+      'seção configurações preferências atalhos conta terminal',
+      { keepOpen: true, submenu: true },
     );
     tool(
       'bug-report',
@@ -337,11 +600,15 @@ export function CommandPalette() {
     );
 
     return out;
-  }, [open, root, missionSummaries, paneStates]);
+  }, [open, root, missionSummaries, paneStates, keybindingOverrides, toggleMode]);
 
+  const search = useWorkspaceSearch(open ? mode : null, query);
   const filtered = useMemo(
-    () => filterPaletteActions(actions, query),
-    [actions, query],
+    () =>
+      mode === 'command'
+        ? filterPaletteActions(currentView?.actions ?? actions, query)
+        : search.actions,
+    [actions, currentView, mode, query, search.actions],
   );
 
   // Reset ao abrir; cursor sempre dentro dos limites do filtro corrente.
@@ -357,6 +624,7 @@ export function CommandPalette() {
     actionRanRef.current = false;
     setQuery('');
     setCursor(0);
+    setViewStack([]);
     // O input só existe após o paint deste render.
     const frame = requestAnimationFrame(() => inputRef.current?.focus());
     return () => {
@@ -373,6 +641,15 @@ export function CommandPalette() {
     };
   }, [open]);
 
+  // Trocar de modo (Mod+K/P/Shift+F ou Backspace) recomeça a busca no mesmo
+  // input — o diálogo não remonta, então o foco fica onde está.
+  useEffect(() => {
+    setQuery(carriedQueryRef.current ?? '');
+    carriedQueryRef.current = null;
+    setCursor(0);
+    setViewStack([]);
+  }, [mode]);
+
   useEffect(() => {
     setCursor((c) => Math.min(c, Math.max(0, filtered.length - 1)));
   }, [filtered.length]);
@@ -385,16 +662,61 @@ export function CommandPalette() {
 
   if (!open) return null;
 
-  const runAction = (run: () => void) => {
+  const runAction = (action: PaletteAction) => {
+    if (action.keepOpen) {
+      action.run();
+      setQuery('');
+      setCursor(0);
+      inputRef.current?.focus();
+      return;
+    }
     actionRanRef.current = true;
     close();
-    run();
+    action.run();
+  };
+  const runNavigation = (run: () => void) =>
+    runAction({ id: 'nav', group: '', label: '', icon: 'mission', run });
+
+  const back = paletteBackStep({ query, mode, viewDepth: viewStack.length });
+  const goBack = (step: ReturnType<typeof paletteBackStep>) => {
+    if (step === 'pop-view') {
+      setViewStack((views) => views.slice(0, -1));
+      setCursor(0);
+    } else if (step === 'command-mode') {
+      toggleMode('command');
+    }
+    inputRef.current?.focus();
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // IME compondo: Enter/Backspace/setas pertencem à composição.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    // Mod+K/P/Shift+F aqui dentro trocam de modo; o mesmo atalho fecha.
+    const nextMode = overlayModeForCommand(
+      resolveShortcutCommand(
+        e.nativeEvent,
+        compileKeybindingRules(keybindingOverrides),
+        // O diálogo modal tem o teclado: nenhum terminal é alvo de atalho
+        // aqui, então Mod+Shift+F é a busca no conteúdo, nunca o palco.
+        {
+          hasWorkspace: true,
+          paneFocused: false,
+          terminalFocus: false,
+          editableFocus: true,
+        },
+      )?.command ?? null,
+    );
+    if (nextMode) {
+      e.preventDefault();
+      toggleMode(nextMode);
+      return;
+    }
     if (e.key === 'Escape') {
       e.preventDefault();
       close();
+    } else if (e.key === 'Backspace' && back) {
+      e.preventDefault();
+      goBack(back);
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setCursor((c) => Math.min(c + 1, filtered.length - 1));
@@ -404,11 +726,20 @@ export function CommandPalette() {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const action = filtered[cursor];
-      if (action) runAction(action.run);
+      if (action) runAction(action);
     }
   };
 
   let lastGroup: string | null = null;
+  const crumb =
+    currentView?.title ?? (mode === 'command' ? null : MODE_TITLES[mode]);
+  const searchMode = mode !== 'command';
+  const trimmed = query.trim();
+  const fileShortcut = commandShortcutLabel('file-picker', keybindingOverrides);
+  const contentShortcut = commandShortcutLabel(
+    'content-search',
+    keybindingOverrides,
+  );
 
   return (
     <div
@@ -416,7 +747,8 @@ export function CommandPalette() {
       className="palette"
       role="dialog"
       aria-modal="true"
-      aria-label="Command palette"
+      aria-label={MODE_LABELS[mode]}
+      data-palette-mode={mode}
     >
       <div
         className="palette__overlay overlay-scrim-glass overlay-scrim-enter"
@@ -424,20 +756,89 @@ export function CommandPalette() {
       />
       <div className="palette__panel" onKeyDown={onKeyDown}>
         <div className="palette__head">
-          <PixelIcon name="search" size={14} />
+          {crumb ? (
+            <button
+              type="button"
+              className="palette__back"
+              aria-label={`Voltar de ${crumb}`}
+              onClick={() =>
+                goBack(viewStack.length > 0 ? 'pop-view' : 'command-mode')
+              }
+            >
+              <PixelIcon name="arrow-left" size={10} />
+              {crumb}
+            </button>
+          ) : (
+            <PixelIcon name="search" size={14} />
+          )}
           <input
             ref={inputRef}
             className="palette__input"
             type="text"
             value={query}
-            placeholder="Pane, missão ou ação…"
-            aria-label="Buscar comando"
-            onChange={(e) => setQuery(e.target.value)}
+            placeholder={paletteInputPlaceholder(mode, viewStack.length > 0)}
+            aria-label={searchMode ? MODE_LABELS[mode] : 'Buscar comando'}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setCursor(0);
+            }}
           />
           <kbd className="palette__esc">esc</kbd>
         </div>
         <ul className="palette__list" ref={listRef} role="listbox">
-          {filtered.length === 0 && (
+          {searchMode && (!trimmed || search.busy || search.error) && (
+            <li className="palette__status" role="status">
+              {search.error ??
+                (search.busy
+                  ? 'Buscando…'
+                  : mode === 'files'
+                    ? 'Digite parte do nome ou do caminho do arquivo.'
+                    : 'Digite o texto que você procura nos arquivos.')}
+            </li>
+          )}
+          {searchMode &&
+            trimmed &&
+            !search.busy &&
+            !search.error &&
+            filtered.length === 0 && (
+              <li className="palette__empty">
+                <EmptyState
+                  className="palette__empty-state"
+                  icon="search"
+                  title={
+                    mode === 'files'
+                      ? 'Nenhum arquivo com esse nome'
+                      : 'Nenhum arquivo contém esse texto'
+                  }
+                  body={
+                    <p>
+                      {mode === 'files'
+                        ? 'O texto pode estar dentro de um arquivo.'
+                        : 'Talvez seja o nome de um arquivo.'}
+                    </p>
+                  }
+                  action={
+                    <ActionCard
+                      icon={mode === 'files' ? 'search' : 'files'}
+                      title={
+                        mode === 'files'
+                          ? 'Buscar no conteúdo'
+                          : 'Procurar pelo nome'
+                      }
+                      variant="primary"
+                      size="sm"
+                      onClick={() => {
+                        // O texto atravessa a troca de modo.
+                        carriedQueryRef.current = query;
+                        toggleMode(mode === 'files' ? 'content' : 'files');
+                        inputRef.current?.focus();
+                      }}
+                    />
+                  }
+                />
+              </li>
+            )}
+          {!searchMode && filtered.length === 0 && (
             <li className="palette__empty">
               <EmptyState
                 className="palette__empty-state"
@@ -452,7 +853,7 @@ export function CommandPalette() {
                       variant="primary"
                       size="sm"
                       onClick={() =>
-                        runAction(() =>
+                        runNavigation(() =>
                           useProductNavigationStore
                             .getState()
                             .openNewMission(),
@@ -464,7 +865,7 @@ export function CommandPalette() {
                       title="Contas de IA"
                       size="sm"
                       onClick={() =>
-                        runAction(() =>
+                        runNavigation(() =>
                           useProductNavigationStore
                             .getState()
                             .openSettings('providers'),
@@ -476,7 +877,9 @@ export function CommandPalette() {
                       title="Ajuda e atalhos"
                       size="sm"
                       onClick={() =>
-                        runAction(() => useCheatsheetStore.getState().toggle())
+                        runNavigation(() =>
+                          useCheatsheetStore.getState().toggle(),
+                        )
                       }
                     />
                   </>
@@ -501,18 +904,56 @@ export function CommandPalette() {
                   data-active={index === cursor}
                   className="palette__item"
                   onMouseEnter={() => setCursor(index)}
-                  onClick={() => runAction(action.run)}
+                  onClick={() => runAction(action)}
                 >
                   <PixelIcon name={action.icon} size={12} />
-                  <span className="palette__item-label">{action.label}</span>
+                  <span className="palette__item-text">
+                    <span className="palette__item-label">{action.label}</span>
+                    {action.detail && (
+                      <span className="palette__item-detail">
+                        {action.detail}
+                      </span>
+                    )}
+                  </span>
                   {action.hint && (
                     <kbd className="palette__item-hint">{action.hint}</kbd>
+                  )}
+                  {action.submenu && (
+                    <PixelIcon name="arrow-right" size={10} />
                   )}
                 </button>
               </li>
             );
           })}
+          {searchMode && search.truncated && filtered.length > 0 && (
+            <li className="palette__status">
+              Mostrando os primeiros resultados — refine a busca.
+            </li>
+          )}
         </ul>
+        <div className="palette__foot" aria-hidden="true">
+          <span>
+            <kbd>↑↓</kbd> navegar
+          </span>
+          <span>
+            <kbd>{formatShortcut('enter')}</kbd> abrir
+          </span>
+          {back && (
+            <span>
+              <kbd>{formatShortcut('backspace')}</kbd> voltar
+            </span>
+          )}
+          {mode !== 'files' && fileShortcut && (
+            <span>
+              <kbd>{fileShortcut}</kbd> arquivos
+            </span>
+          )}
+          {mode !== 'content' && contentShortcut && (
+            <span>
+              <kbd>{contentShortcut}</kbd> conteúdo
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

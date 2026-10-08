@@ -30,11 +30,9 @@ const RECIPE_ISSUE_KIND_LABEL: Readonly<Record<RecipeIssueKind, string>> = {
   'unrestricted-tools': 'sem lista de ferramentas',
   'invalid-gap': 'anotação incompleta',
 };
-import {
-  SHORTCUT_GROUP_LABELS,
-  shortcutsInGroup,
-  type ShortcutGroupId,
-} from '../../lib/shortcuts';
+import { SHORTCUTS } from '../../lib/shortcuts';
+import { KEYBINDING_COMMANDS } from '../../lib/keybindings';
+import { KeybindingsEditor } from './KeybindingsSettings';
 
 /**
  * Seções "operacionais" do catálogo — Recipes (lint/overlay), Atalhos e
@@ -372,11 +370,11 @@ const GESTURES: Array<{ keys: string; action: string }> = [
   },
 ];
 
-const SHORTCUT_GROUP_ORDER: ShortcutGroupId[] = [
-  'command',
-  'fleet',
-  'surfaces',
-];
+/** Teclas do catálogo que não são comandos remapeáveis (Esc, Ctrl+Tab, voz…). */
+const CONFIGURABLE_IDS = new Set<string>(KEYBINDING_COMMANDS.map((def) => def.id));
+const FIXED_SHORTCUTS = SHORTCUTS.filter(
+  (entry) => !CONFIGURABLE_IDS.has(entry.id),
+);
 
 /**
  * Teclas físicas ganham cap kbd; alternativas separadas por " / " viram duas
@@ -406,32 +404,28 @@ export function ShortcutsSection() {
     <section className="catalog-settings catalog-settings--shortcuts">
       <SettingsSectionTitle>Atalhos</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Atalhos de teclado e mouse. Abra esta lista com{' '}
+        Atalhos de teclado e mouse. Clique em Alterar e pressione a nova
+        combinação. Dentro do terminal, combinações que o programa usa
+        continuam indo para ele. Abra a lista rápida com{' '}
         <kbd className="catalog-kbd">{formatShortcut('mod', '/')}</kbd>.
       </p>
-      {SHORTCUT_GROUP_ORDER.map((groupId) => {
-        const shortcuts = shortcutsInGroup(groupId);
-        return (
-          <div key={groupId} className="arsenal-band">
-            <h3 className="arsenal-band__label">
-              {SHORTCUT_GROUP_LABELS[groupId]}
-              <span className="arsenal-band__count">{shortcuts.length}</span>
-            </h3>
-            <ul className="settings-list">
-              {shortcuts.map((shortcut) => (
-                <li key={shortcut.id} className="settings-list__item">
-                  <div className="settings-list__head">
-                    <KeyCombo keys={shortcut.keys} />
-                    <span className="settings-list__detail">
-                      {shortcut.action}
-                    </span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        );
-      })}
+      <KeybindingsEditor />
+      <div className="arsenal-band">
+        <h3 className="arsenal-band__label">
+          Fixos
+          <span className="arsenal-band__count">{FIXED_SHORTCUTS.length}</span>
+        </h3>
+        <ul className="settings-list">
+          {FIXED_SHORTCUTS.map((shortcut) => (
+            <li key={shortcut.id} className="settings-list__item">
+              <div className="settings-list__head">
+                <KeyCombo keys={shortcut.keys} />
+                <span className="settings-list__detail">{shortcut.action}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
       <div className="arsenal-band">
         <h3 className="arsenal-band__label">
           Mouse

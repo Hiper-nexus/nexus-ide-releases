@@ -102,10 +102,28 @@
 .catalog-settings--shortcuts .settings-list__head { display: grid; grid-template-columns: minmax(8rem, 0.7fr) minmax(0, 1.4fr); align-items: start; gap: var(--space-4); }
 .catalog-settings--shortcuts .settings-list__item { padding: var(--space-2) 0; }
 .catalog-settings--shortcuts .settings-list__head .settings-list__detail { margin-top: 0; }
+/* Atalho remapeável: o que faz | a combinação | Alterar/Restaurar. */
+.catalog-settings--shortcuts .keybinding-row .settings-list__head { grid-template-columns: minmax(0, 1.4fr) minmax(7rem, auto) auto; align-items: center; }
+.keybinding-row__label { display: grid; gap: 2px; min-inline-size: 0; }
+.keybinding-row__when { color: var(--text-faint); font-size: var(--text-xs); }
+.keybinding-row__keys { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); min-inline-size: 0; }
+.keybinding-row__none { color: var(--text-faint); font-size: var(--text-sm); }
+.keybinding-row__actions { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1-5); }
+.keybinding-row__actions .settings-btn { min-block-size: 32px; }
+/* Gravando: o foco do teclado é a própria cap — borda de acento = vivo. */
+.keybinding-row__capture { min-block-size: 32px; padding: 0 var(--space-2-5); border: 1px dashed var(--accent); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text); font: 500 var(--text-sm)/1.45 var(--font-mono); cursor: default; }
+.keybinding-row__capture:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.keybinding-row__error,
+.keybinding-row__warn { margin: var(--space-1-5) 0 0; font-size: var(--text-sm); }
+.keybinding-row__error { color: var(--danger); }
+.keybinding-row__warn { color: var(--warn); }
+.keybindings-editor__reset-all { margin-block-start: var(--space-3); }
 
 @container catalog-settings (max-width: 650px) {
   .catalog-settings__resource,
-  .catalog-settings--shortcuts .settings-list__head { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+  .catalog-settings--shortcuts .settings-list__head,
+  .catalog-settings--shortcuts .keybinding-row .settings-list__head { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+  .keybinding-row__actions { justify-content: flex-start; }
   .catalog-settings__header > button { flex: 0 0 auto; }
 }
 

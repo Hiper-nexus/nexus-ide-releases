@@ -556,3 +556,64 @@ describe('paste sem File: clipboardFileUris via IPC (F-582)', () => {
     expect(result.uris.every((uri) => uri.startsWith('file:'))).toBe(true);
   });
 });
+
+describe('busca de arquivo por nome (Mod+P da paleta)', () => {
+  it('procura só no workspace de quem chamou, sem caixa, todos os termos', async () => {
+    const rootA = project('search-a', 'a');
+    const rootB = project('search-b', 'b');
+    fs.mkdirSync(path.join(rootA, 'src', 'palette'), { recursive: true });
+    fs.writeFileSync(path.join(rootA, 'src', 'palette', 'CommandPalette.tsx'), '');
+    fs.writeFileSync(path.join(rootA, 'src', 'other.ts'), '');
+    fs.mkdirSync(path.join(rootA, 'node_modules', 'pkg'), { recursive: true });
+    fs.writeFileSync(path.join(rootA, 'node_modules', 'pkg', 'palette.js'), '');
+    fs.mkdirSync(path.join(rootA, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(rootA, 'dist', 'palette.js'), '');
+    fs.writeFileSync(path.join(rootB, 'palette-b.ts'), '');
+    const windowA = renderer(961);
+    const windowB = renderer(962);
+    renderers.push(windowA, windowB);
+    bindResolvedRendererWorkspaceScope(windowA, scope(rootA, 'project-a', 'checkout-a'));
+    bindResolvedRendererWorkspaceScope(windowB, scope(rootB, 'project-b', 'checkout-b'));
+
+    const resultA = await invoke<Promise<{ ok: boolean; files?: string[] }>>(
+      FILES_CHANNELS.search,
+      windowA,
+      { query: 'PALETTE src' },
+    );
+    expect(resultA).toMatchObject({
+      ok: true,
+      files: ['src/palette/CommandPalette.tsx'],
+    });
+    // dist/ e node_modules/ nunca aparecem, mesmo casando o termo.
+    const onlySource = await invoke<Promise<{ ok: boolean; files?: string[] }>>(
+      FILES_CHANNELS.search,
+      windowA,
+      { query: 'palette' },
+    );
+    expect(onlySource).toMatchObject({
+      ok: true,
+      files: ['src/palette/CommandPalette.tsx'],
+    });
+
+    const resultB = await invoke<Promise<{ ok: boolean; files?: string[] }>>(
+      FILES_CHANNELS.search,
+      windowB,
+      { query: 'palette' },
+    );
+    expect(resultB).toMatchObject({ ok: true, files: ['palette-b.ts'] });
+  });
+
+  it('recusa busca vazia ou sem escopo de workspace', async () => {
+    const root = project('search-empty', 'x');
+    const bound = renderer(963);
+    renderers.push(bound);
+    bindResolvedRendererWorkspaceScope(bound, scope(root, 'project-a', 'checkout-a'));
+
+    expect(
+      await invoke<Promise<unknown>>(FILES_CHANNELS.search, bound, { query: '   ' }),
+    ).toEqual({ ok: false, error: 'invalid query' });
+    expect(() =>
+      invoke(FILES_CHANNELS.search, renderer(964), { query: 'x' }),
+    ).toThrow();
+  });
+});

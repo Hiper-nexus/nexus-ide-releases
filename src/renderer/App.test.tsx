@@ -305,6 +305,8 @@ import { useToastStore } from './state/toast-store';
 import { useVoiceStore } from './voice/voice-store';
 import { useWorkspaceStore } from './state/workspace-store';
 import { setActiveWorkspacePath } from './state/active-workspace';
+import { useSettingsStore } from './state/settings-store';
+import { requestPaneClose } from './terminal/pane-close-guard';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -330,6 +332,11 @@ function mountApp(): HTMLElement {
   mountedRoots.push(root);
   act(() => root.render(<App />));
   return host;
+}
+
+/** Plataforma mac para os testes de terminal-first (⌘ não chega ao PTY). */
+function pinMacPlatform(): void {
+  Object.assign(window.nexus, { platform: 'darwin' });
 }
 
 function openWorkspace(): void {
@@ -1344,4 +1351,150 @@ it('blocks pane shortcuts and preserves the workspace tree across access revocat
   act(() => useAccessStore.setState({ canUseApp: true }));
   expect(host.querySelector('.access-workspace')?.hasAttribute('inert')).toBe(false);
   expect(useLayoutStore.getState().root).toBe(tree);
+});
+
+describe('atalhos globais respeitam o terminal (terminal-first)', () => {
+  /** Um textarea dentro de `.xterm`, que cancela o que o xterm mandaria ao PTY. */
+  function focusTerminal(consume: (event: KeyboardEvent) => boolean): string[] {
+    const xterm = document.createElement('div');
+    xterm.className = 'xterm';
+    const helper = document.createElement('textarea');
+    xterm.append(helper);
+    document.body.append(xterm);
+    const received: string[] = [];
+    helper.addEventListener('keydown', (event) => {
+      received.push(event.key);
+      if (consume(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    });
+    helper.focus();
+    return received;
+  }
+
+  function press(init: KeyboardEventInit, target?: EventTarget): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    act(() => {
+      (target ?? document.activeElement ?? window).dispatchEvent(event);
+    });
+    return event;
+  }
+
+  // xterm: Ctrl+letra vira byte de controle (^D = EOF) e é cancelado ali.
+  const xtermConsumesCtrlLetter = (event: KeyboardEvent) =>
+    event.ctrlKey && !event.metaKey && !event.shiftKey && /^[a-z]$/i.test(event.key);
+
+  it('Ctrl+D no terminal vai para o TUI (Linux): o app não divide o pane', () => {
+    openWorkspace();
+    useProductNavigationStore.getState().openTerminal();
+    mountApp();
+    const split = vi.spyOn(useLayoutStore.getState(), 'split');
+    const received = focusTerminal(xtermConsumesCtrlLetter);
+
+    press({ key: 'd', ctrlKey: true });
+
+    expect(received).toEqual(['d']);
+    expect(split).not.toHaveBeenCalled();
+  });
+
+  it('⌘D no terminal (mac) continua dividindo — o xterm não consome ⌘', () => {
+    pinMacPlatform();
+    openWorkspace();
+    useProductNavigationStore.getState().openTerminal();
+    mountApp();
+    const split = vi
+      .spyOn(useLayoutStore.getState(), 'split')
+      .mockImplementation(() => undefined);
+    focusTerminal(xtermConsumesCtrlLetter);
+
+    const event = press({ key: 'd', metaKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(split).toHaveBeenCalledWith('pane-terminal', 'row');
+  });
+
+  it('Mod+Shift+F com terminal selecionado segue sendo o palco; sem ele, busca', () => {
+    pinMacPlatform();
+    openWorkspace();
+    useProductNavigationStore.getState().openTerminal();
+    mountApp();
+    const stage = vi
+      .spyOn(useLayoutStore.getState(), 'toggleStageFocus')
+      .mockImplementation(() => undefined);
+
+    // Fora do xterm, com o foco num botão qualquer: como antes, palco.
+    press({ key: 'F', metaKey: true, shiftKey: true }, window);
+    // Ctrl no mac e ⌥ junto também valiam antes.
+    press({ key: 'F', ctrlKey: true, shiftKey: true, altKey: true }, window);
+    expect(stage).toHaveBeenCalledTimes(2);
+    expect(useCommandPaletteStore.getState().open).toBe(false);
+
+    act(() => useLayoutStore.setState({ focusedPaneId: null }));
+    press({ key: 'F', metaKey: true, shiftKey: true }, window);
+    expect(stage).toHaveBeenCalledTimes(2);
+    expect(useCommandPaletteStore.getState()).toMatchObject({
+      open: true,
+      mode: 'content',
+    });
+  });
+
+  it('no mac, Ctrl+K, Ctrl+Shift+W e ⌘⌥D fazem o que sempre fizeram', () => {
+    pinMacPlatform();
+    openWorkspace();
+    useProductNavigationStore.getState().openTerminal();
+    mountApp();
+    const split = vi
+      .spyOn(useLayoutStore.getState(), 'split')
+      .mockImplementation(() => undefined);
+
+    press({ key: 'k', ctrlKey: true }, window);
+    expect(useCommandPaletteStore.getState()).toMatchObject({
+      open: true,
+      mode: 'command',
+    });
+    act(() => useCommandPaletteStore.getState().close());
+
+    press({ key: 'W', ctrlKey: true, shiftKey: true }, window);
+    expect(requestPaneClose).toHaveBeenCalledWith('pane-terminal');
+
+    press({ key: 'd', metaKey: true, altKey: true }, window);
+    expect(split).toHaveBeenCalledWith('pane-terminal', 'row');
+  });
+
+  it('Mod+P abre arquivos e um remapeamento salvo vale na hora', () => {
+    const previousUi = useSettingsStore.getState().ui;
+    openWorkspace();
+    useProductNavigationStore.getState().openTerminal();
+    mountApp();
+
+    press({ key: 'p', ctrlKey: true }, window);
+    expect(useCommandPaletteStore.getState()).toMatchObject({
+      open: true,
+      mode: 'files',
+    });
+    act(() => useCommandPaletteStore.getState().close());
+
+    act(() =>
+      useSettingsStore.setState({
+        ui: { ...previousUi, keybindings: { 'task-board': ['Mod+Alt+B'] } },
+      }),
+    );
+    try {
+      press({ key: 'b', ctrlKey: true }, window);
+      expect(useProductNavigationStore.getState().destination).not.toEqual({
+        kind: 'task-board',
+      });
+      press({ key: 'b', ctrlKey: true, altKey: true, code: 'KeyB' }, window);
+      expect(useProductNavigationStore.getState().destination).toEqual({
+        kind: 'task-board',
+      });
+    } finally {
+      useSettingsStore.setState({ ui: previousUi });
+    }
+  });
 });

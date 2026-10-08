@@ -484,7 +484,17 @@ export const importedThemeSchema = z.object({
 export type ImportedTheme = z.infer<typeof importedThemeSchema>;
 
 /**
- * Aparência global do app (não do xterm): modo pixel, temas importados.
+ * Atalhos remapeados em Configurações › Atalhos: id do comando
+ * (`src/renderer/lib/keybindings.ts`) → combinações canônicas. `[]` tira o
+ * atalho; id ausente usa o padrão. Combinação inválida é ignorada no
+ * renderer, então aqui só se limita tamanho.
+ */
+const keybindingOverridesSchema = z
+  .record(z.string().min(1).max(64), z.array(z.string().min(1).max(64)).max(4))
+  .refine((value) => Object.keys(value).length <= 64);
+
+/**
+ * Aparência global do app (não do xterm): modo pixel, temas importados, atalhos.
  * Persistido em ~/.nexus/settings.json → `ui`.
  */
 export const uiSettingsSchema = z.object({
@@ -507,6 +517,8 @@ export const uiSettingsSchema = z.object({
     ),
   /** '' = vale o tema embutido de `terminal.themeId`. */
   activeImportedThemeId: z.string().max(64).catch(''),
+  // Um mapa corrompido no settings.json volta ao padrão sem derrubar o resto do `ui`.
+  keybindings: keybindingOverridesSchema.catch({}),
 });
 export type UiSettings = z.infer<typeof uiSettingsSchema>;
 export const DEFAULT_UI_SETTINGS: UiSettings = uiSettingsSchema.parse({});
@@ -518,6 +530,7 @@ export const uiSettingsPatchSchema = z.object({
     .max(MAX_IMPORTED_THEMES)
     .optional(),
   activeImportedThemeId: z.string().max(64).optional(),
+  keybindings: keybindingOverridesSchema.optional(),
 });
 export type UiSettingsPatch = z.infer<typeof uiSettingsPatchSchema>;
 

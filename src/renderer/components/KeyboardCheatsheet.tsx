@@ -3,9 +3,11 @@ import { useCheatsheetStore } from '../state/cheatsheet-store';
 import { PixelIcon } from './PixelIcon';
 import {
   SHORTCUT_GROUP_LABELS,
+  effectiveShortcutKeys,
   shortcutsInGroup,
   type ShortcutGroupId,
 } from '../lib/shortcuts';
+import { useSettingsStore } from '../state/settings-store';
 
 /**
  * Cheatsheet de atalhos (⌘/): a resposta da heurística "ajuda no contexto" —
@@ -21,6 +23,7 @@ const GROUP_ORDER: ShortcutGroupId[] = ['command', 'fleet', 'surfaces'];
 export function KeyboardCheatsheet() {
   const open = useCheatsheetStore((s) => s.open);
   const close = useCheatsheetStore((s) => s.close);
+  const keybindingOverrides = useSettingsStore((s) => s.ui.keybindings);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -66,7 +69,7 @@ export function KeyboardCheatsheet() {
                 {shortcutsInGroup(groupId).map((entry) => (
                   <div key={entry.id} className="cheatsheet__row">
                     <dt>
-                      <kbd>{entry.keys}</kbd>
+                      <kbd>{effectiveShortcutKeys(entry, keybindingOverrides)}</kbd>
                     </dt>
                     <dd>{entry.action}</dd>
                   </div>

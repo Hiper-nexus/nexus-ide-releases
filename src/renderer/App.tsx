@@ -38,7 +38,16 @@ import { initDevServerStore } from './state/dev-server-store';
 import { initShotIngestToasts } from './state/shot-ingest';
 import { initDesignSelectionStore } from './state/design-selection-store';
 import { useOrchStore } from './state/orch-store';
-import { useSettingsController } from './state/settings-store';
+import {
+  useSettingsController,
+  useSettingsStore,
+} from './state/settings-store';
+import {
+  compileKeybindingRules,
+  focusContext,
+  resolveShortcutCommand,
+} from './lib/keybindings';
+import { overlayModeForCommand } from './lib/command-palette-logic';
 import { useWorkspaceController, useWorkspaceStore } from './state/workspace-store';
 import { useProviderController } from './state/provider-store';
 import { useAdapterController } from './state/adapter-store';
@@ -476,109 +485,79 @@ export function App() {
   ]);
 
   useEffect(() => {
+    // Listener de bolha na janela: o xterm vê a tecla antes e o que ele
+    // consome (Ctrl+letra para o TUI) chega `defaultPrevented` — o resolver
+    // devolve null e o terminal fica com a tecla (terminal-first).
     const onKey = (event: KeyboardEvent) => {
       if (!useAccessStore.getState().canUseApp) return;
       if (useConfirmStore.getState().pending) return;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
-      const mod = event.metaKey || event.ctrlKey;
-      if (!mod) return;
+      const layout = useLayoutStore.getState();
+      const hit = resolveShortcutCommand(
+        event,
+        compileKeybindingRules(useSettingsStore.getState().ui.keybindings),
+        {
+          hasWorkspace: Boolean(useWorkspaceStore.getState().current),
+          paneFocused: Boolean(layout.focusedPaneId),
+          projectOverview:
+            productFlags[FEATURE_FLAG_IDS.uiProjectOverview] !== false,
+          ...focusContext(event.target),
+        },
+      );
+      if (!hit) return;
+      const navigation = useProductNavigationStore.getState();
+      const focusedPaneId = layout.focusedPaneId;
 
-      if (event.key === ',') {
-        event.preventDefault();
-        useProductNavigationStore.getState().openSettings();
-        return;
-      }
-      if (
-        event.key.toLowerCase() === 'o' &&
-        event.shiftKey &&
-        !event.altKey
-      ) {
-        event.preventDefault();
-        useProductNavigationStore.getState().openSettings('account');
-        return;
-      }
-      if (
-        event.key.toLowerCase() === 'b' &&
-        event.shiftKey &&
-        !event.altKey
-      ) {
-        // Reportar um problema vale em qualquer tela, com ou sem projeto.
-        event.preventDefault();
-        useBugReportDialogStore.getState().open();
-        return;
-      }
-      if (
-        event.key.toLowerCase() === 'b' &&
-        !event.shiftKey &&
-        !event.altKey
-      ) {
-        // Launcher exposes the same canonical empty Task Board destination.
-        event.preventDefault();
-        useProductNavigationStore.getState().openTaskBoard();
-        return;
-      }
-      if (
-        event.key.toLowerCase() === 'g' &&
-        !event.shiftKey &&
-        !event.altKey
-      ) {
-        if (!useWorkspaceStore.getState().current) return;
-        if (
-          productFlags[FEATURE_FLAG_IDS.uiProjectOverview] === false
-        ) {
-          return;
-        }
-        event.preventDefault();
-        useProductNavigationStore.getState().openProject();
-        return;
-      }
-      if (
-        event.key.toLowerCase() === 'k' &&
-        !event.shiftKey &&
-        !event.altKey
-      ) {
-        if (!useWorkspaceStore.getState().current) return;
-        event.preventDefault();
-        useAttentionInboxStore.getState().setOpen(false);
-        useCommandPaletteStore.getState().toggle();
-        return;
-      }
-      if (
-        event.key.toLowerCase() === 'j' &&
-        !event.shiftKey &&
-        !event.altKey
-      ) {
-        if (!useWorkspaceStore.getState().current) return;
-        event.preventDefault();
-        useCommandPaletteStore.getState().close();
-        useAttentionInboxStore.getState().toggle();
-        return;
-      }
-      if (event.key === '/' && !event.shiftKey && !event.altKey) {
-        event.preventDefault();
-        useCheatsheetStore.getState().toggle();
-        return;
-      }
-      if (
-        event.key.toLowerCase() === 'n' &&
-        !event.shiftKey &&
-        !event.altKey
-      ) {
-        event.preventDefault();
-        useProductNavigationStore.getState().openNewMission();
-        return;
-      }
-      if (
-        !event.shiftKey &&
-        !event.altKey &&
-        event.key >= '1' &&
-        event.key <= '9'
-      ) {
-        const layout = useLayoutStore.getState();
-        const pane = listPanes(layout.root)[Number(event.key) - 1];
-        if (pane) {
+      switch (hit.command) {
+        case 'settings':
           event.preventDefault();
-          const navigation = useProductNavigationStore.getState();
+          navigation.openSettings();
+          return;
+        case 'operator-profile':
+          event.preventDefault();
+          navigation.openSettings('account');
+          return;
+        case 'bug-report':
+          // Reportar um problema vale em qualquer tela, com ou sem projeto.
+          event.preventDefault();
+          useBugReportDialogStore.getState().open();
+          return;
+        case 'task-board':
+          // Launcher exposes the same canonical empty Task Board destination.
+          event.preventDefault();
+          navigation.openTaskBoard();
+          return;
+        case 'project-overview':
+          event.preventDefault();
+          navigation.openProject();
+          return;
+        case 'command-palette':
+        case 'file-picker':
+        case 'content-search':
+          // Um reducer só: Mod+K/P/Shift+F trocam de modo, nunca empilham.
+          event.preventDefault();
+          useAttentionInboxStore.getState().setOpen(false);
+          useCommandPaletteStore
+            .getState()
+            .toggleMode(overlayModeForCommand(hit.command) ?? 'command');
+          return;
+        case 'attention-inbox':
+          event.preventDefault();
+          useCommandPaletteStore.getState().close();
+          useAttentionInboxStore.getState().toggle();
+          return;
+        case 'cheatsheet':
+          event.preventDefault();
+          useCheatsheetStore.getState().toggle();
+          return;
+        case 'mission-new':
+          event.preventDefault();
+          navigation.openNewMission();
+          return;
+        case 'focus-pane-n': {
+          const pane = listPanes(layout.root)[hit.index ?? -1];
+          if (!pane) return;
+          event.preventDefault();
           const missionId = attentionMissionIdForPane(pane);
           if (missionId) {
             navigation.openMission(missionId);
@@ -587,27 +566,29 @@ export function App() {
             navigation.openTerminal();
           }
           layout.focus(pane.id);
+          return;
         }
-        return;
-      }
-
-      const layout = useLayoutStore.getState();
-      if (!layout.focusedPaneId) return;
-      const key = event.key.toLowerCase();
-      if (key === 'd') {
-        event.preventDefault();
-        useProductNavigationStore.getState().openTerminal();
-        layout.split(
-          layout.focusedPaneId,
-          event.shiftKey ? 'column' : 'row',
-        );
-      } else if (key === 'f' && event.shiftKey) {
-        event.preventDefault();
-        useProductNavigationStore.getState().openTerminal();
-        layout.toggleStageFocus(layout.focusedPaneId);
-      } else if (key === 'w') {
-        event.preventDefault();
-        requestPaneClose(layout.focusedPaneId);
+        case 'split-right':
+        case 'split-down':
+          if (!focusedPaneId) return;
+          event.preventDefault();
+          navigation.openTerminal();
+          layout.split(
+            focusedPaneId,
+            hit.command === 'split-down' ? 'column' : 'row',
+          );
+          return;
+        case 'stage-focus':
+          if (!focusedPaneId) return;
+          event.preventDefault();
+          navigation.openTerminal();
+          layout.toggleStageFocus(focusedPaneId);
+          return;
+        case 'close-pane':
+          if (!focusedPaneId) return;
+          event.preventDefault();
+          requestPaneClose(focusedPaneId);
+          return;
       }
     };
     window.addEventListener('keydown', onKey);
