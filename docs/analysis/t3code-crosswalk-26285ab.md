@@ -73,7 +73,7 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 | DSK-10 | CdpRelay | pendente (M, risco alto) | CDP só em dev | relay loopback com token |
 | DSK-11 | Backend WSL | pendente (G) | `remote/wsl-detect.ts` é stub | porte |
 | QLT-01 | Gate de orçamento de perf no CI | integrado | `package.json` `test:perf`; `ci.yml` | — |
-| QLT-02 | `KeyedLock` | pendente (P) | sem primitiva | só com consumidor real |
+| QLT-02 | `KeyedLock` | integrado | `src/main/util/keyed-lock.ts`; 5 consumidores que tinham a fila copiada à mão: `git/hidden-checkpoint.ts`, `orch/isolated-writer-salvage.ts`, `design/design-instrument-ledger.ts`, `design/design-writeback-service.ts` (a cópia não soltava a chave), `context/orientation/orientation-service.ts` (F-1025) | — |
 | QLT-03 | `KeyedCoalescingWorker` | pendente (M) | sem primitiva | só com consumidor real |
 | QLT-04 | knip | pendente (M) | sem config | dep + CI |
 | QLT-05 | `require-suppression-reason` | integrado | `oxlint-plugin-nexus/rules/require-suppression-reason.mjs` | — |

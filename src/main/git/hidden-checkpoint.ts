@@ -32,6 +32,7 @@ import {
   type AsyncGitRunner,
   type GitRunOptions,
 } from '../runtime/git-command';
+import { KeyedLock } from '../util/keyed-lock';
 
 export const CHECKPOINT_REF_PREFIX = 'refs/nexus-checkpoint';
 export const CHECKPOINT_REF_PATTERN = /^refs\/nexus-checkpoint\/([0-9a-f]{32})\/ordinal\/(0|[1-9][0-9]{0,8})$/;
@@ -219,19 +220,8 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-const serialByRoot = new Map<string, Promise<unknown>>();
-
 /** Captura e restauração da mesma árvore não se cruzam (handoffs simultâneos). */
-function serialized<T>(key: string, run: () => Promise<T>): Promise<T> {
-  const previous = serialByRoot.get(key) ?? Promise.resolve();
-  const next = previous.then(run, run);
-  const settled = next.then(() => undefined, () => undefined);
-  serialByRoot.set(key, settled);
-  void settled.then(() => {
-    if (serialByRoot.get(key) === settled) serialByRoot.delete(key);
-  });
-  return next;
-}
+const rootLock = new KeyedLock();
 
 interface DiskIdentity {
   readonly dev: number;
@@ -554,7 +544,7 @@ export function captureHiddenCheckpoint(
   input: CheckpointCaptureInput,
   deps: HiddenCheckpointDeps = {},
 ): Promise<CheckpointCaptureResult> {
-  return serialized(path.resolve(input.cwd), async () => {
+  return rootLock.run(path.resolve(input.cwd), async () => {
     const rawGit = deps.git ?? new AsyncProcessGitRunner();
     const git = withDeadline(rawGit, input.deadlineAt);
     if (input.ordinal !== undefined && !isOrdinal(input.ordinal)) return fail('invalid-checkpoint-ordinal');
@@ -696,7 +686,7 @@ export function restoreHiddenCheckpoint(
   input: CheckpointRestoreInput,
   deps: HiddenCheckpointDeps = {},
 ): Promise<CheckpointRestoreResult> {
-  return serialized(path.resolve(input.cwd), async () => {
+  return rootLock.run(path.resolve(input.cwd), async () => {
     const git = deps.git ?? new AsyncProcessGitRunner();
     const parsed = parseCheckpointRef(input.ref);
     if (!parsed) return fail('invalid-checkpoint-ref');
@@ -791,6 +781,6 @@ export function restoreHiddenCheckpoint(
 }
 
 /** Testes: espera capturas/restaurações em curso terminarem. */
-export async function hiddenCheckpointIdle(): Promise<void> {
-  while (serialByRoot.size > 0) await Promise.all([...serialByRoot.values()]);
+export function hiddenCheckpointIdle(): Promise<void> {
+  return rootLock.idle();
 }

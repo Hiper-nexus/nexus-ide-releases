@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { KeyedLock } from "../util/keyed-lock";
 
 const LEDGER_SCHEMA_VERSION = 1;
 const MAX_LEDGER_BYTES = 256 * 1024;
@@ -18,26 +19,14 @@ export interface InstrumentationOwnershipLedger {
   files: Record<string, string[]>;
 }
 
-const rootOperationTails = new Map<string, Promise<void>>();
+const rootOperationLock = new KeyedLock();
 const liveSessionsByRoot = new Map<string, Set<string>>();
 
 export function serializeInstrumentationRoot<T>(
   rootReal: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const tail = rootOperationTails.get(rootReal) ?? Promise.resolve();
-  const result = tail.then(operation, operation);
-  const nextTail = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  rootOperationTails.set(rootReal, nextTail);
-  void nextTail.finally(() => {
-    if (rootOperationTails.get(rootReal) === nextTail) {
-      rootOperationTails.delete(rootReal);
-    }
-  });
-  return result;
+  return rootOperationLock.run(rootReal, operation);
 }
 
 export function hasLiveInstrumentation(rootReal: string): boolean {

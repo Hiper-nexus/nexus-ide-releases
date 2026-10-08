@@ -35,6 +35,7 @@ import {
 } from '../runtime/git-command';
 import { trace } from '../observability/main-trace';
 import { ISOLATED_WRITER_BRANCH_PREFIX } from './isolated-writer-policy';
+import { KeyedLock } from '../util/keyed-lock';
 
 export const WORKTREE_SALVAGE_REF_PREFIX = 'refs/nexus-salvage';
 /** Autor (sintético, prefixo `nexus-`) do aviso ao orquestrador. */
@@ -194,22 +195,8 @@ function commitMessage(
   return lines.join('\n');
 }
 
-const serialByWorktree = new Map<string, Promise<unknown>>();
-
 /** Uma salvaguarda por worktree de cada vez: handoff e saída podem coincidir. */
-function serialized<T>(key: string, run: () => Promise<T>): Promise<T> {
-  const previous = serialByWorktree.get(key) ?? Promise.resolve();
-  const next = previous.then(run, run);
-  const settled = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  serialByWorktree.set(key, settled);
-  void settled.then(() => {
-    if (serialByWorktree.get(key) === settled) serialByWorktree.delete(key);
-  });
-  return next;
-}
+const worktreeLock = new KeyedLock();
 
 /**
  * Guarda as alterações não commitadas da worktree do writer num commit sob
@@ -220,7 +207,7 @@ export function salvageIsolatedWriterWorktree(
   target: WorktreeSalvageTarget,
   deps: WorktreeSalvageDeps = {},
 ): Promise<WorktreeSalvageResult> {
-  return serialized(target.worktreePath, () => runSalvage(target, deps));
+  return worktreeLock.run(target.worktreePath, () => runSalvage(target, deps));
 }
 
 async function runSalvage(
@@ -433,7 +420,7 @@ export function scheduleWorktreeSalvage(
 
 /** Testes: espera as salvaguardas agendadas e em curso terminarem. */
 export async function worktreeSalvageIdle(): Promise<void> {
-  while (scheduled.size > 0 || serialByWorktree.size > 0) {
-    await Promise.all([...scheduled, ...serialByWorktree.values()]);
+  while (scheduled.size > 0 || worktreeLock.size > 0) {
+    await Promise.all([...scheduled, worktreeLock.idle()]);
   }
 }
