@@ -28,6 +28,7 @@ import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import {
   adoptUserAgentSessionAsMissionOrchestrator,
+  getAgentSessionInfo,
   getOwnedAgentSessionInfo,
   returnAdoptedAgentSessionToUser,
   updateOwnedAgentSessionRole,
@@ -1389,6 +1390,18 @@ export class RendererMissionAuthority {
         error: spawned.error ?? "pane spawn failed",
       };
     }
+    // F-1002: a linha durável leva a seleção FÍSICA do Main — a conta e o
+    // esforço selados no PTY, como recordSpawnedMissionPane faz para os
+    // workers do Maestro. Sem a conta, a apresentação do pane (que lê o PTY)
+    // pedia a adoção com `accountId` e a cerca do spawn persistido recusava
+    // em 1 ms, para sempre (07/10: "Claude · operador", 53 recusas).
+    const physical = getAgentSessionInfo(spawned.sessionId);
+    const sealedRuntime =
+      physical?.paneId === spawned.paneId &&
+      physical.missionId === mission.id &&
+      physical.adapterId === adapter.id
+        ? physical
+        : null;
     try {
       suite.missionPanes.record({
         missionId: mission.id,
@@ -1396,6 +1409,8 @@ export class RendererMissionAuthority {
         adapterId: adapter.id,
         role: "worker",
         model: input.model,
+        accountId: sealedRuntime?.accountId,
+        effort: sealedRuntime?.effort,
         cwd: executionScope.rootRealPath,
         title,
         agentName: title,

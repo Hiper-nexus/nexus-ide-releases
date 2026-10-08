@@ -43,6 +43,13 @@ const missionAuthority = vi.hoisted(() => {
   };
 });
 
+// F-1002: linha do "+ Pane → Nesta missão" sem a conta selada no PTY.
+const operatorHeal = vi.hoisted(() => ({
+  active: false,
+  accountId: undefined as string | undefined,
+  fill: vi.fn(),
+}));
+
 const pty = vi.hoisted(() => ({
   paneId: "",
   authority: null as unknown,
@@ -132,6 +139,9 @@ vi.mock("../pty/pty-manager", () => ({
             sessionId === "pty-claimed"
               ? pty.claimedAuthoritySeal
               : missionAuthority.seal,
+          ...(operatorHeal.active
+            ? { operatorOpened: true, accountId: operatorHeal.accountId }
+            : {}),
         }
       : null,
   ),
@@ -259,9 +269,11 @@ vi.mock("./project-domain-store-registry", () => ({
               )?.context?.scope,
               authoritySeal: missionAuthority.paneSpecSeal,
               createdAt: 1,
+              ...(operatorHeal.active ? { operatorOpened: true } : {}),
             }
           : undefined,
       ),
+      fillOperatorPaneSealedRuntime: operatorHeal.fill,
     },
   })),
 }));
@@ -750,6 +762,61 @@ describe("main-owned mission pane spawn", () => {
     syncPanes([], owner, "renderer-generation-b");
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
+  });
+
+  it("F-1002: preenche a conta selada ausente da linha do operador antes de apresentar", async () => {
+    operatorHeal.active = true;
+    operatorHeal.accountId = "acct-mrqvpdwz-1";
+    operatorHeal.fill.mockReset();
+    // A linha preenchida mantém o resto da autoridade (selo incluído).
+    operatorHeal.fill.mockImplementation(() => null);
+    const owner = {
+      id: 931,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    const result = await requestPaneSpawn({
+      adapterId: "codex",
+      model: "gpt-5.6-sol",
+      cwd: executionScope.rootRealPath,
+      missionId: "mission-headless",
+      agentName: "Worker Headless",
+      workerIncarnationId: "worker-incarnation-main",
+      role: "worker",
+      allowedTools: [],
+      allowedSkills: null,
+      scope,
+      executionScope,
+    });
+    try {
+      bindResolvedRendererWorkspaceScope(owner, scope);
+      registerOrchRenderer(owner);
+
+      syncPanes([], owner, "renderer-generation-f1002");
+
+      expect(operatorHeal.fill).toHaveBeenCalledWith({
+        missionId: "mission-headless",
+        paneId: result.paneId,
+        workerIncarnationId: "worker-incarnation-main",
+        accountId: "acct-mrqvpdwz-1",
+        effort: undefined,
+      });
+      expect(owner.send).toHaveBeenCalledWith(
+        ORCH_CHANNELS.panePresentationRequest,
+        expect.objectContaining({
+          paneId: result.paneId,
+          pane: expect.objectContaining({ accountId: "acct-mrqvpdwz-1" }),
+        }),
+      );
+    } finally {
+      operatorHeal.active = false;
+      operatorHeal.accountId = undefined;
+      if (result.paneId) await requestPaneClose(result.paneId);
+      syncPanes([], owner, "renderer-generation-f1002");
+      unregisterOrchRenderer(owner);
+      clearRendererWorkspaceScope(owner);
+    }
   });
 
   it("hands a detached session back when the renderer returns holding its exact id", async () => {

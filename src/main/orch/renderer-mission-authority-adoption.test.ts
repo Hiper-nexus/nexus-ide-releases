@@ -97,6 +97,22 @@ vi.mock("./pane-registry", async (importOriginal) => {
     ),
   };
 });
+// F-1002: o PTY físico do pane do operador é falso aqui (a borda do spawn é
+// substituída acima). A conta/esforço que o Main SELOU nele é o que a
+// apresentação do pane lê; o teste injeta essa ficha física por sessionId.
+const operatorPhysical = vi.hoisted(
+  () => new Map<string, Record<string, unknown>>(),
+);
+vi.mock("../pty/pty-manager", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../pty/pty-manager")>();
+  return {
+    ...actual,
+    getAgentSessionInfo: (sessionId: string) =>
+      (operatorPhysical.get(sessionId) as unknown as ReturnType<
+        typeof actual.getAgentSessionInfo
+      >) ?? actual.getAgentSessionInfo(sessionId),
+  };
+});
 // F-231: o registry só é povoado por initAdapterRegistry (boot); nos testes
 // servimos direto o cli-pty de teste e um api-provider para a recusa "só API".
 const testAdapter = vi.hoisted(() => ({
@@ -277,6 +293,7 @@ afterEach(async () => {
   setOperatorTabMissionProvider(null);
   physical.spawned.length = 0;
   operatorSpawn.calls.length = 0;
+  operatorPhysical.clear();
   vi.restoreAllMocks();
   for (const sessionId of sessions.splice(0)) await orchTerminateSession(sessionId);
   syncPanes([], owner);
@@ -1019,6 +1036,65 @@ describe("F-231 — '+ Pane' dentro da missão (spawnOperatorPaneFromRenderer)",
       role: "worker",
       operatorOpened: true,
       adapterId: "test-cli",
+    });
+  });
+
+  it("F-1002: a linha durável sela a conta do PTY e a adoção pelo renderer passa na cerca", async () => {
+    // Campo 07/10: "Claude · operador" nasceu na conta acct-mrqvpdwz-1 (Main
+    // escolheu), a linha ficou com account_id NULL e a apresentação — que lê
+    // o PTY — pedia a adoção com a conta. A cerca recusava em 1 ms, 49 vezes.
+    const missionId = liveMission();
+    operatorPhysical.set("pty-op-1", {
+      sessionId: "pty-op-1",
+      paneId: "pane-op-1",
+      missionId,
+      adapterId: "test-cli",
+      role: "worker",
+      accountId: "acct-sealed-1",
+      effort: "high",
+      cwd: scope.rootRealPath,
+    });
+
+    const result = await authority().spawnOperatorPaneFromRenderer(owner, {
+      missionId,
+      adapterId: "test-cli",
+      model: "default",
+    });
+    expect(result).toMatchObject({ ok: true, paneId: "pane-op-1" });
+
+    const spec = requireProjectDomainStoreRegistry()
+      .forScope(scope)
+      .missionPanes.findByPaneId("pane-op-1");
+
+    // O pedido que a apresentação Main-owned produz (pane = ficha do PTY).
+    // Antes: "renderer payload does not match main-sealed persisted pane
+    // request — divergências: accountId[acct-sealed-1 != undefined]".
+    const authorized = authorizeMainOwnedAgentSpawn(
+      owner,
+      {
+        kind: "cli-agent",
+        cols: 80,
+        rows: 24,
+        paneId: "pane-op-1",
+        adapterId: "test-cli",
+        model: "default",
+        accountId: "acct-sealed-1",
+        effort: "high",
+        cwd: spec!.cwd,
+        missionId,
+        restorePersistedAuthority: true,
+      },
+      manager,
+    );
+    expect(authorized.persistedPane).toMatchObject({
+      paneId: "pane-op-1",
+      accountId: "acct-sealed-1",
+    });
+    expect(authorized.request.accountId).toBe("acct-sealed-1");
+    expect(spec).toMatchObject({
+      accountId: "acct-sealed-1",
+      effort: "high",
+      operatorOpened: true,
     });
   });
 

@@ -282,6 +282,78 @@ describe('spawn adiado sem ninguém esperando a sessão', () => {
   });
 });
 
+describe('F-1002 — recusa determinística do spawn não vira laço', () => {
+  it('replays de apresentação respeitam backoff e teto; o motivo e a ação aparecem uma vez', async () => {
+    // Campo 07/10: "Claude · operador" recusado pela cerca do spawn
+    // persistido 49 vezes em ~1 ms cada — cada replay da apresentação
+    // Main-owned destravava o host e nascia de novo, sem limite.
+    const fence =
+      'renderer payload does not match main-sealed persisted pane request ' +
+      '— divergências: accountId[acct-mrqvpdwz-1 != undefined]';
+    const operator: PaneModel = {
+      id: 'f1002-operator',
+      kind: 'cli-agent',
+      adapterId: 'claude',
+      model: 'claude-opus-5-5',
+      title: 'Claude · operador',
+      missionId: 'mission-f1002',
+      role: 'worker',
+      accountId: 'acct-mrqvpdwz-1',
+    };
+    useLayoutStore.setState({ root: buildGridTree([operator]), focusedPaneId: operator.id });
+    spawn.mockResolvedValue({ ok: false, error: fence });
+    const host = getOrCreateHost(operator);
+    setHostSize(host.element, 1200, 800);
+    const writeln = vi.spyOn(host.term, 'writeln');
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(operator, slot);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spawn).toHaveBeenCalledTimes(1);
+
+    // Replay logo em seguida: ainda no backoff, não nasce.
+    await vi.advanceTimersByTimeAsync(1_000);
+    markPersistedAuthorityOnSpawn(operator.id);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spawn).toHaveBeenCalledTimes(1);
+
+    // Passado o backoff, a 2ª tentativa automática acontece.
+    await vi.advanceTimersByTimeAsync(5_000);
+    markPersistedAuthorityOnSpawn(operator.id);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spawn).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(31_000);
+    markPersistedAuthorityOnSpawn(operator.id);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spawn).toHaveBeenCalledTimes(3);
+
+    // Esgotado: replays (a cada sync), remontagens e a espera headless da
+    // apresentação (waitForSession e o fallback dela) não religam mais.
+    for (let replay = 0; replay < 10; replay += 1) {
+      await vi.advanceTimersByTimeAsync(80_000);
+      markPersistedAuthorityOnSpawn(operator.id);
+      attachHost(operator, slot);
+      void waitForSession(operator.id, 5_000);
+      await vi.advanceTimersByTimeAsync(6_000);
+    }
+    expect(spawn).toHaveBeenCalledTimes(3);
+
+    const lines = writeln.mock.calls.map(([line]) => String(line));
+    expect(lines.filter((line) => line.includes('failed to start'))).toHaveLength(1);
+    const exhausted = lines.filter((line) => line.includes('parou de tentar sozinho'));
+    expect(exhausted).toHaveLength(1);
+    expect(exhausted[0]).toContain('accountId[acct-mrqvpdwz-1 != undefined]');
+    expect(exhausted[0]).toContain('Reiniciar');
+
+    // Ação explícita do operador volta a tentar.
+    markResumeOnSpawn(operator.id);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spawn).toHaveBeenCalledTimes(4);
+    discardPaneSpawnState(operator.id);
+  });
+});
+
 describe('F-721 — aviso de pausa não fica como estado do pane que religou', () => {
   it('o pane segurado e depois solto diz que voltou, depois do aviso de pausa', async () => {
     // Campo 02/10: o Maestro religou no mesmo pane e a tela seguia dizendo
