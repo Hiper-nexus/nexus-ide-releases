@@ -14,6 +14,7 @@ import { OrcaLogo } from '../src/components/OrcaLogo'
 import { RpcClientProvider } from '../src/transport/client-context'
 import { getNotificationNavigationTarget } from '../src/notifications/notification-routing'
 import { useOpenNotificationRoute } from '../src/notifications/use-open-notification-route'
+import { noteNexusHostNotificationTap } from '../src/nexus-host/nexus-host-notifications'
 import {
   isRemotePushTrigger,
   pushNotificationRouteData,
@@ -156,6 +157,10 @@ export default function RootLayout() {
         }
       }
 
+      // F-1015: aprovação do host Nexus — a tela do host foca o pedido ao abrir.
+      noteNexusHostNotificationTap(readNativeNotificationData(response.notification.request), {
+        remote: isRemotePushTrigger(response.notification.request.trigger)
+      })
       const target = await getNavigationTarget(response.notification)
       clearLastNotificationResponse()
       if (disposed) {

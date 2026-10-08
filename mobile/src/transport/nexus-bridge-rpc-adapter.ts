@@ -150,6 +150,11 @@ const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u000
 // oxlint-disable-next-line no-control-regex -- detectando tecla crua de propósito
 const RAW_KEY_PATTERN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/
 
+// F-1015: a fila offline do host Nexus recusa tecla crua antes de guardar o comando.
+export function isNexusRawKeyInput(text: string): boolean {
+  return RAW_KEY_PATTERN.test(text)
+}
+
 export function stripTerminalControl(text: string): string {
   return text.replace(ANSI_PATTERN, '')
 }

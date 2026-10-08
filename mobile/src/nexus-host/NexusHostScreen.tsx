@@ -9,7 +9,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -30,6 +29,13 @@ import { parseApprovalFromStatus } from '../session/mobile-native-chat-permissio
 import { sendMobileHookApprovalResponse } from '../session/mobile-native-chat-permission-send'
 import { MobileNativeChatPermission } from '../session/MobileNativeChatPermission'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
+// F-1015: ditado, notificações e fila offline do host Nexus.
+import { NexusCommandInput } from './NexusCommandInput'
+import {
+  useNexusApprovalNotifications,
+  useNexusHostNotificationFocus
+} from './nexus-host-notifications'
+import { useNexusHostOutboxFlush } from './use-nexus-host-outbox'
 
 const SNAPSHOT_POLL_MS = 15_000
 const OUTPUT_MAX_CHARS = 200_000
@@ -37,7 +43,8 @@ const OUTPUT_KEEP_CHARS = 160_000
 
 export const NEXUS_HOST_UNSUPPORTED_NOTE =
   'Não disponível em host Nexus: teclas cruas (Ctrl-C, Esc, "1"), arquivos, Git, worktrees, ' +
-  'abas de sessão, contas, voz, screencast e Linear/GitHub/GitLab. Use o desktop para isso.'
+  'abas de sessão, contas, voz pelo app (use o ditado do teclado), screencast e ' +
+  'Linear/GitHub/GitLab. Use o desktop para isso.'
 
 const STATE_LABEL: Record<ConnectionState, string> = {
   connecting: 'conectando…',
@@ -66,10 +73,6 @@ export function useIsNexusBridgeHost(hostId: string | undefined): boolean | 'loa
     }
   }, [hostId])
   return kind && kind.hostId === hostId ? kind.nexus : 'loading'
-}
-
-function newMessageId(): string {
-  return `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
 }
 
 export function NexusHostScreen({ hostId }: { hostId: string }) {
@@ -127,6 +130,28 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
       unsubscribe()
     }
   }, [nexus, refresh, state])
+
+  // ─── F-1015 ───
+  useNexusApprovalNotifications({
+    hostId,
+    hostName,
+    nexus,
+    snapshot,
+    approvalsOnScreen: pane === null
+  })
+  const highlightedApproval = useNexusHostNotificationFocus({
+    hostId,
+    snapshot,
+    showApprovals: () => setPane(null),
+    openPane: setPane
+  })
+  const queuedPanes = useNexusHostOutboxFlush({
+    hostId,
+    nexus,
+    state,
+    activePaneId: pane?.paneId ?? null
+  })
+  // ─── fim F-1015 ───
 
   const respondApproval = useCallback(
     async (send: string): Promise<boolean> => {
@@ -200,6 +225,12 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
             {STATE_LABEL[state]} — o app só conecta por HTTPS válido (Tailscale Serve). Se não
             passar daqui, confira se o celular está no tailnet e se a bridge está ligada no desktop.
           </Text>
+          {queuedPanes > 0 ? (
+            <Text style={styles.muted}>
+              Comandos na fila em {queuedPanes} {queuedPanes === 1 ? 'pane' : 'panes'}: saem em
+              ordem quando reconectar.
+            </Text>
+          ) : null}
           <Pressable style={styles.secondaryButton} onPress={() => client?.notifyForeground()}>
             <Text style={styles.secondaryButtonText}>Tentar agora</Text>
           </Pressable>
@@ -211,9 +242,11 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
       {pane && nexus ? (
         <NexusPaneDetail
           key={pane.paneId}
+          hostId={hostId}
           pane={pane}
           nexus={nexus}
-          connected={state === 'connected'}
+          client={client}
+          state={state}
           onClosed={() => {
             setPane(null)
             void refresh()
@@ -224,6 +257,7 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
           <NexusApprovals
             approvals={snapshot?.approvals ?? []}
             panes={snapshot?.panes ?? []}
+            highlightedRequestId={highlightedApproval}
             onRespond={respondApproval}
           />
           <Text style={styles.section}>Missões</Text>
@@ -271,10 +305,12 @@ export function NexusHostScreen({ hostId }: { hostId: string }) {
 function NexusApprovals({
   approvals,
   panes,
+  highlightedRequestId,
   onRespond
 }: {
   approvals: readonly NexusApproval[]
   panes: readonly NexusPane[]
+  highlightedRequestId: string | null
   onRespond: (send: string) => Promise<boolean>
 }) {
   const live = approvals.filter((approval) => approval.responseCapability === 'live')
@@ -292,7 +328,10 @@ function NexusApprovals({
         }
         const paneTitle = panes.find((item) => item.paneId === approval.paneId)?.title
         return (
-          <View key={`${approval.requestId}:${approval.revision}`}>
+          <View
+            key={`${approval.requestId}:${approval.revision}`}
+            style={approval.requestId === highlightedRequestId ? styles.approvalFocused : undefined}
+          >
             <Text style={styles.approvalPane}>pane {paneTitle ?? approval.paneId}</Text>
             <MobileNativeChatPermission permission={permission} onRespond={onRespond} />
           </View>
@@ -303,19 +342,22 @@ function NexusApprovals({
 }
 
 function NexusPaneDetail({
+  hostId,
   pane,
   nexus,
-  connected,
+  client,
+  state,
   onClosed
 }: {
+  hostId: string
   pane: NexusPane
   nexus: NonNullable<ReturnType<typeof nexusHostApiOf>>
-  connected: boolean
+  client: ReturnType<typeof useHostClient>['client']
+  state: ConnectionState
   onClosed: () => void
 }) {
+  const connected = state === 'connected'
   const [output, setOutput] = useState('')
-  const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
   const [detailError, setDetailError] = useState('')
   const scrollRef = useRef<ScrollView | null>(null)
 
@@ -329,23 +371,6 @@ function NexusPaneDetail({
       }),
     [nexus, pane.paneId]
   )
-
-  const send = async () => {
-    const text = input
-    if (!text.trim() || sending) {
-      return
-    }
-    setSending(true)
-    setDetailError('')
-    try {
-      await nexus.sendLine(pane.paneId, text, newMessageId())
-      setInput('')
-    } catch (err) {
-      setDetailError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setSending(false)
-    }
-  }
 
   const confirmClose = () => {
     Alert.alert('Fechar pane?', `${pane.title} será fechado no desktop.`, [
@@ -374,29 +399,13 @@ function NexusPaneDetail({
         </Text>
       </ScrollView>
       {detailError ? <Text style={styles.error}>{detailError}</Text> : null}
-      <View style={styles.inputRow}>
-        <TextInput
-          style={styles.input}
-          value={input}
-          onChangeText={setInput}
-          placeholder="comando completo (Enter é enviado junto)"
-          placeholderTextColor={colors.textMuted}
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="send"
-          onSubmitEditing={() => void send()}
-          editable={connected}
-          accessibilityLabel="Comando para o pane"
-        />
-        <Pressable
-          style={[styles.primaryButton, (!connected || sending) && styles.buttonDisabled]}
-          onPress={() => void send()}
-          disabled={!connected || sending}
-          accessibilityRole="button"
-        >
-          <Text style={styles.primaryButtonText}>Enviar</Text>
-        </Pressable>
-      </View>
+      <NexusCommandInput
+        hostId={hostId}
+        pane={pane}
+        nexus={nexus}
+        client={client}
+        state={state}
+      />
       <Text style={styles.note}>
         Comandos fora da lista de rotina (git status, npm test…) pedem confirmação no desktop.{' '}
         {NEXUS_HOST_UNSUPPORTED_NOTE}
@@ -489,17 +498,9 @@ const styles = StyleSheet.create({
     fontSize: typography.metaSize,
     lineHeight: 17
   },
-  inputRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
-  input: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: radii.input,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderSubtle,
-    backgroundColor: colors.bgPanel,
-    color: colors.textPrimary,
-    fontFamily: typography.monoFamily,
-    paddingHorizontal: spacing.md
+  approvalFocused: {
+    borderLeftWidth: 2,
+    borderLeftColor: colors.accentBlue
   },
   primaryButton: {
     minHeight: 44,
