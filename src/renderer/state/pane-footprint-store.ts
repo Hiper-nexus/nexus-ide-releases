@@ -35,7 +35,9 @@ export function receivePaneFootprintBroadcast(
   const current = usePaneFootprintStore.getState();
   // A sequência só se compara dentro da mesma geração: coletor religado
   // recomeça em 1 e substitui a série anterior inteira. Também absorve a
-  // mesma amostra entregue a cada badge montado.
+  // mesma amostra entregue a cada badge montado. Geração mais velha que a
+  // atual é amostra de um coletor já desligado: nunca volta a valer.
+  if (event.generation < current.generation) return;
   if (event.generation === current.generation && event.sequence <= current.sequence) return;
   usePaneFootprintStore.setState({
     capturedAt: event.capturedAt,

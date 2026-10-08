@@ -82,7 +82,7 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 | QLT-08 | `DrainableWorker` | pendente (P) | sem helper | junto de ORC-08 |
 | QLT-09 | Paginação por cursor | pendente (G) | só gap buffer de terminal | histórico de missão |
 | QLT-10 | Nome de ação = nome acessível | pendente (M) | só `check-palette-contrast.mjs` | check + guideline |
-| QLT-11 | Telemetria só com assinante | integrado (parcial) | `perf/pane-footprint-broadcast.ts:27,91`; traps de PID/geração ausentes | traps em `pane-footprint.ts` |
+| QLT-11 | Telemetria só com assinante | integrado | `perf/pane-footprint-broadcast.ts` (coleta só com assinante, geração por religada, sequência por geração); `pty/pane-footprint.ts` (PID + início; já em `122cf2ec8`, a auditoria errou ao dar como ausente); store do renderer descarta geração anterior (F-1027) | — |
 
 ## Limites desta auditoria
 

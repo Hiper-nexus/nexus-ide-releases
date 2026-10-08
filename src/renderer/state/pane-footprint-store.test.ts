@@ -95,4 +95,28 @@ describe('pane-footprint-store', () => {
       bySessionId: { s1: { rssBytes: 9, processCount: 4 } },
     });
   });
+
+  it('amostra de geração anterior chegando depois da nova é descartada, mesmo com sequência maior', () => {
+    receivePaneFootprintBroadcast({
+      generation: 2,
+      sequence: 1,
+      capturedAt: 2000,
+      bySessionId: { s1: { rssBytes: 9, processCount: 4 } },
+      systemMemory: null,
+    });
+    receivePaneFootprintBroadcast({
+      generation: 1,
+      sequence: 7,
+      capturedAt: 1500,
+      bySessionId: { s1: { rssBytes: 1, processCount: 1 } },
+      systemMemory: null,
+    });
+
+    expect(usePaneFootprintStore.getState()).toMatchObject({
+      generation: 2,
+      sequence: 1,
+      capturedAt: 2000,
+      bySessionId: { s1: { rssBytes: 9, processCount: 4 } },
+    });
+  });
 });
