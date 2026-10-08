@@ -285,7 +285,13 @@ while (!$stopping) {
   exit(0) unless $read;
   append_line("$agents/orchestrator.input.ndjson", $json->encode({ at => time(), bytes => length($chunk), text => $chunk }));
   $buffer .= $chunk;
-  while ($buffer =~ s/\x1b\[200~(.*?)\x1b\[201~//s) { push @pending, $1 }
+  # Uma colagem pode trazer uma RAJADA de entregas (F-1006): cada segmento
+  # começa pelo marcador de entrega e é um handoff — como o Maestro real lê.
+  while ($buffer =~ s/\x1b\[200~(.*?)\x1b\[201~//s) {
+    my $paste = $1;
+    my @segments = grep { length } split(/(?=\[nexus handoff delivery_metadata\])/, $paste);
+    push @pending, @segments ? @segments : ($paste);
+  }
   next unless $buffer =~ s/\r//g;
   $buffer = '';
   while (my $text = shift @pending) {

@@ -55,6 +55,9 @@ Uma missão numa aba com pasta isolada em que o Maestro abre, **em paralelo**,
 | comando leve com node/make/vitest/tsc no texto não entra na fila | F-956 |
 | comando pesado sai 0 (nunca 74/78) e writers de worktrees diferentes testam ao mesmo tempo | F-956, F-957 |
 | handoff pelo shim chega ao Maestro (6 entregas, ACK) | F-962 |
+| o quadro de entregas registra as 6 entregas (trace `worker-delivery-board` com o recibo de cada sessão) e a verificação de conclusão roda no idle/saída de cada writer sem erro | F-1006 |
+| nenhuma "scope identity collision" no console do Main (writers isolados abrem os stores da missão pelo escopo de coordenação) | F-1006 |
+| rajada de 6 entregas: nenhum "lost delivery-attempt CAS" e handoff → Maestro ≤ 6 s em cada uma (medido 0,77–2,1 s normal, até 4,1 s com a CPU saturada; as regressões dão 8–13 s; `NEXUS_MISSION_E2E_DELIVERY_CEILING_MS`) | F-1006 |
 | vigia de zero entrega "9 min depois" não cutuca writer ocupado; nenhum aviso de sistema | F-960 |
 | a missão chega a `done` por `nexus_mission_set_status` com as branches integradas | caminho normal |
 | nenhum writer some antes do próprio handoff (só o `autoCloseOnHandoff` fecha, depois do sucesso) | mortes caladas |
@@ -66,6 +69,14 @@ fronteira do orquestrador (todo handoff "nested") e o exit 74 na hora com a
 máquina ocupada (prova de dono com prazo de 1–2 s). Toda recusa de comando
 pesado agora vai para o trace do Main como `heavy-command-denied` com o motivo,
 e o `evidence.json` do E2E a traz.
+
+Depois ele passou a ler também o console do Main (avisos e erros) e o trace do
+quadro: assim achou o F-1006 — o quadro de entregas e a conclusão automática
+abriam os stores pela worktree do writer (colisão de identidade, 0 de 6
+entregas no quadro) e a rajada de entregas ia uma por borda ociosa (até 9 s
+para a 6ª; com o ACK do Maestro antes da borda busy, CAS perdido e ~13 s). O
+`evidence.json` traz `deliveryLatency`, `boardEvents`, `completionChecks`,
+`scopeCollisions`, `casLost` e o fim do console.
 
 ## Gate de release
 

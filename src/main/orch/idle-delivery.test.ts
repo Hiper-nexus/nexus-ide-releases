@@ -92,7 +92,24 @@ const storeMocks = vi.hoisted(() => ({
     released?: boolean;
   }>(),
   nextAttemptId: 1,
+  /**
+   * F-1006: espelha o store real — tentativa colada cujo handoff já saiu de
+   * `queued` (ACK do Maestro chegou antes da borda busy) lança o CAS perdido.
+   */
+  strictAcceptCas: false,
 }));
+
+const civilianMocks = vi.hoisted(() => ({
+  maybeComplete: vi.fn(),
+}));
+vi.mock('./civilian-delivery-completion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./civilian-delivery-completion')>();
+  civilianMocks.maybeComplete.mockImplementation(
+    (...args: Parameters<typeof actual.maybeCompleteFastLaneOnDelivery>) =>
+      actual.maybeCompleteFastLaneOnDelivery(...args),
+  );
+  return { ...actual, maybeCompleteFastLaneOnDelivery: civilianMocks.maybeComplete };
+});
 
 const missionLeaderGateMocks = vi.hoisted(() => ({
   requireMissionLeaderSession: vi.fn(
@@ -359,6 +376,13 @@ vi.mock('./project-domain-store-registry', () => ({
       }: { attemptId: string; handoffId: string }) => {
         const attempt = storeMocks.deliveryAttempts.get(attemptId);
         if (!attempt || attempt.state !== 'pasted') return false;
+        if (
+          storeMocks.strictAcceptCas &&
+          (storeMocks.handoffs.get(handoffId)?.deliveryState ?? 'queued') !== 'queued'
+        ) {
+          // A transação real faz rollback: a tentativa continua `pasted`.
+          throw new Error('handoff submission lost delivery-attempt CAS');
+        }
         attempt.state = 'accepted';
         storeMocks.delivered.push({ scope, id: handoffId });
         const current = storeMocks.handoffs.get(handoffId);
@@ -545,6 +569,8 @@ beforeEach(() => {
   storeMocks.consumed.length = 0;
   storeMocks.deliveryAttempts.clear();
   storeMocks.nextAttemptId = 1;
+  storeMocks.strictAcceptCas = false;
+  civilianMocks.maybeComplete.mockClear();
   missionEventMocks.emitMissionEvent.mockClear();
 });
 
@@ -1003,7 +1029,7 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     delivery.shutdownIdleDelivery();
   });
 
-  it('serializa dois handoffs no mesmo idle e exige uma borda busy para cada um', async () => {
+  it('F-1006: dois handoffs no mesmo idle saem numa colagem só; o CR único é aceito por uma borda busy', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
     authorizeTarget(scope);
@@ -1018,25 +1044,137 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     delivery.onHandoffSubmitted(second, scope);
     await advanceUntilSubmitted(delivery);
 
-    expect(ptyMocks.writes.mock.calls.filter((call) =>
+    const pastes = ptyMocks.writes.mock.calls.filter((call) =>
       String(call[1]).includes('handoff_id=handoff-'),
-    )).toHaveLength(1);
-    ptyMocks.state = 'busy';
-    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
-    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-first' }]);
-
-    ptyMocks.state = 'idle';
-    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
-    await advanceUntilSubmitted(delivery);
-    expect(ptyMocks.writes.mock.calls.filter((call) =>
-      String(call[1]).includes('handoff_id=handoff-'),
-    )).toHaveLength(2);
+    );
+    expect(pastes).toHaveLength(1);
+    expect(String(pastes[0]![1])).toContain('handoff_id=handoff-first');
+    expect(String(pastes[0]![1])).toContain('handoff_id=handoff-second');
+    // Uma linha só: nenhum LF dentro da colagem vira Enter num TUI.
+    expect(String(pastes[0]![1])).not.toMatch(/[\r\n]/);
+    expect(ptyMocks.writes.mock.calls.filter((call) => call[1] === '\r')).toHaveLength(1);
+    // Antes da borda busy nada é entregue.
+    expect(storeMocks.delivered).toEqual([]);
     ptyMocks.state = 'busy';
     ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
     expect(storeMocks.delivered).toEqual([
       { scope, id: 'handoff-first' },
       { scope, id: 'handoff-second' },
     ]);
+    // Exatamente-uma-vez: uma tentativa aceita por handoff.
+    expect([...storeMocks.deliveryAttempts.values()].map((attempt) => [attempt.handoffId, attempt.state]))
+      .toEqual([['handoff-first', 'accepted'], ['handoff-second', 'accepted']]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('F-1006: rajada que chega com o Maestro ocupado sai inteira na próxima borda ociosa', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+    const pastesWith = (id: string) => ptyMocks.writes.mock.calls.filter((call) =>
+      String(call[1]).includes(`handoff_id=${id} `),
+    ).length;
+
+    const lead = handoff({ id: 'handoff-lead', summary: 'primeira' });
+    storeMocks.handoffs.set(lead.id, lead);
+    delivery.onHandoffSubmitted(lead, scope);
+    await advanceUntilSubmitted(delivery);
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+
+    const burst = ['handoff-b1', 'handoff-b2', 'handoff-b3', 'handoff-b4', 'handoff-b5']
+      .map((id) => handoff({ id, summary: `payload ${id}` }));
+    for (const item of burst) {
+      storeMocks.handoffs.set(item.id, item);
+      delivery.onHandoffSubmitted(item, scope);
+    }
+    // Ocupado: nada cola por cima do turno.
+    expect(burst.map((item) => pastesWith(item.id))).toEqual([0, 0, 0, 0, 0]);
+
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await advanceUntilSubmitted(delivery);
+    const deliveryPastes = ptyMocks.writes.mock.calls.filter((call) =>
+      String(call[1]).includes('[nexus handoff delivery_metadata]'),
+    );
+    expect(deliveryPastes).toHaveLength(2);
+    expect(burst.map((item) => pastesWith(item.id))).toEqual([1, 1, 1, 1, 1]);
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered.map((entry) => entry.id)).toEqual([
+      'handoff-lead', ...burst.map((item) => item.id),
+    ]);
+    const attempts = [...storeMocks.deliveryAttempts.values()];
+    expect(attempts).toHaveLength(6);
+    expect(attempts.every((attempt) => attempt.state === 'accepted')).toBe(true);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('F-1006: ACK do Maestro antes da borda busy (CAS perdido) não lança no tap nem prende a fila', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    storeMocks.strictAcceptCas = true;
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const first = handoff({ id: 'handoff-first', summary: 'primeira' });
+    storeMocks.handoffs.set(first.id, first);
+    delivery.onHandoffSubmitted(first, scope);
+    await advanceUntilSubmitted(delivery);
+    // O Maestro leu a colagem e deu nexus_handoff_ack (pull) antes de o TUI
+    // pintar busy: o ledger já saiu de `queued`.
+    storeMocks.handoffs.set(first.id, { ...first, delivered: true, deliveryState: 'consumed' });
+    ptyMocks.state = 'busy';
+    const second = handoff({ id: 'handoff-second', summary: 'segunda' });
+    storeMocks.handoffs.set(second.id, second);
+    delivery.onHandoffSubmitted(second, scope);
+
+    expect(() => ptyMocks.stateTaps[0]('orchestrator-session', 'busy')).not.toThrow();
+    // A tentativa colada foi resolvida pelo ledger (sem segunda colagem).
+    expect([...storeMocks.deliveryAttempts.values()]
+      .filter((attempt) => attempt.handoffId === first.id)
+      .map((attempt) => attempt.state)).toEqual(['failed']);
+
+    // A fila anda na próxima borda ociosa, sem esperar o prazo de aceite (12 s).
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await advanceUntilSubmitted(delivery);
+    expect(ptyMocks.writes.mock.calls.filter((call) =>
+      String(call[1]).includes('handoff_id=handoff-second'),
+    )).toHaveLength(1);
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered.map((entry) => entry.id)).toEqual(['handoff-second']);
+    expect(ptyMocks.writes.mock.calls.filter((call) =>
+      String(call[1]).includes('handoff_id=handoff-first'),
+    )).toHaveLength(1);
+    warn.mockRestore();
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('F-1006: idle de writer em worktree verifica a conclusão no escopo de COORDENAÇÃO', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    const executionScope = testProjectScope({ rootRealPath: '/workspace/.nexus-worktrees/writer-1' });
+    paneMocks.authorities.set('writer-session', {
+      owner: null,
+      paneId: 'writer-pane',
+      sessionId: 'writer-session',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+      executionScope,
+    });
+    delivery.initIdleDelivery();
+    ptyMocks.stateTaps[0]('writer-session', 'idle');
+    expect(civilianMocks.maybeComplete).toHaveBeenCalledWith(scope, 'mission-a');
+    expect(civilianMocks.maybeComplete.mock.calls.every(([requested]) =>
+      (requested as ProjectExecutionScope).rootRealPath === scope.rootRealPath)).toBe(true);
     delivery.shutdownIdleDelivery();
   });
 

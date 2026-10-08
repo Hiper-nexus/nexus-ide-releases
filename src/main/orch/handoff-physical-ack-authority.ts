@@ -49,6 +49,78 @@ function acceptedAttempt(
 }
 
 /**
+ * F-1006: o Maestro confirmou (`nexus_handoff_ack`) um handoff que a entrega
+ * ociosa JÁ colou no terminal dele, antes de a borda busy do TUI aceitar a
+ * tentativa. O ACK físico é a prova de recebimento DESSA colagem: a tentativa
+ * `pasted` desta sessão vira `accepted` aqui, na mesma transação do consumo.
+ *
+ * Antes, o ACK caía no caminho de pull e gravava uma SEGUNDA tentativa
+ * aceita; a borda busy que chegava depois aceitava a colada, achava o handoff
+ * fora de `queued` e lançava "handoff submission lost delivery-attempt CAS"
+ * dentro do tap do PTY. A entrega em memória ficava presa até o prazo de
+ * aceite (12 s) e a rajada inteira atrás dela atrasava ~13 s.
+ *
+ * Só adota colagem anterior ao ACK (`started_at <= issuedAt`) da mesma sessão
+ * e missão; `reserveDeliveryAttempt` garante no máximo uma tentativa ativa
+ * por handoff. Exatamente-uma-vez: um único `queued → submitted` e uma única
+ * tentativa aceita, a que de fato entregou.
+ */
+function adoptPastedDeliveryAttempt(
+  db: Database.Database,
+  input: PhysicalAckInput,
+  issuedAt: number,
+  now: number,
+): AcceptedAttempt | null {
+  const handoff = db
+    .prepare(`SELECT mission_id, delivery_state FROM handoffs WHERE id = ?`)
+    .get(input.handoffId) as
+    | { readonly mission_id: string | null; readonly delivery_state: string }
+    | undefined;
+  if (
+    !handoff ||
+    handoff.mission_id !== input.missionId ||
+    handoff.delivery_state !== "queued"
+  ) {
+    return null;
+  }
+  const pasted = db
+    .prepare(
+      `SELECT id FROM handoff_delivery_attempts
+       WHERE handoff_id = ? AND mission_id = ? AND orchestrator_session_id = ?
+         AND state = 'pasted' AND started_at <= ?
+       ORDER BY attempt_no DESC
+       LIMIT 2`,
+    )
+    .all(
+      input.handoffId,
+      input.missionId,
+      input.orchestratorSessionId,
+      issuedAt,
+    ) as Array<{ readonly id: string }>;
+  if (pasted.length !== 1) return null;
+  const attemptId = pasted[0]!.id;
+  const accepted = db
+    .prepare(
+      `UPDATE handoff_delivery_attempts
+       SET state = 'accepted', accepted_at = ?
+       WHERE id = ? AND state = 'pasted'`,
+    )
+    .run(issuedAt, attemptId);
+  if (accepted.changes !== 1) return null;
+  const submitted = db
+    .prepare(
+      `UPDATE handoffs
+       SET delivered = 1, delivery_state = 'submitted', submitted_at = ?
+       WHERE id = ? AND delivery_state = 'queued'`,
+    )
+    .run(now, input.handoffId);
+  if (submitted.changes !== 1) {
+    throw new Error("handoff ack adoption lost delivery-state CAS");
+  }
+  return { id: attemptId, accepted_at: issuedAt };
+}
+
+/**
  * Pull delivery: the orchestrator acknowledges a handoff it read through
  * `nexus_handoff_list` instead of one pasted into its terminal.
  *
@@ -261,6 +333,7 @@ function commitPhysicalAck(
   }
   const attempt =
     acceptedAttempt(db, input) ??
+    adoptPastedDeliveryAttempt(db, input, inspected.issuedAt, now) ??
     pullDeliveryAttempt(db, binding, input, inspected.issuedAt, now);
   if (!attempt || attempt.accepted_at > inspected.issuedAt) return null;
   const replay = existingAckMatches(db, input, attempt.id);

@@ -1093,6 +1093,32 @@ describe('automatic worker resource admission at physical spawn', () => {
     }
   });
 
+  it('F-1006: writer em worktree própria guarda o escopo de coordenação (stores) além do de execução', async () => {
+    vi.stubEnv('NEXUS_PANE_GUARD', '');
+    vi.stubEnv('NEXUS_PANE_CAP', '4');
+    primeSystemMemoryCacheForTest({ freeMB: 64_000, swapUsedMB: 0 });
+    const h = fakeHost(); setPtyHost(h.host);
+    const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false });
+    const req = { kind: 'cli-agent' as const, cols: 80, rows: 24 };
+    const authority = legacyManualWorker();
+    const children: string[] = [];
+    try {
+      const worker = spawnAgentSession(null, req, adapter, {}, authority);
+      children.push(worker.sessionId);
+      const user = spawnAgentSession(fakeWc(), req, adapter, {}, trustedSpawn());
+      children.push(user.sessionId);
+      expect(authority.coordinationScope!.rootRealPath).not.toBe(authority.scope.rootRealPath);
+      expect(getAgentSessionInfo(worker.sessionId)).toMatchObject({
+        scope: authority.scope,
+        coordinationScope: authority.coordinationScope,
+      });
+      // Mesmo checkout na execução e na coordenação: nada a acrescentar.
+      expect(getAgentSessionInfo(user.sessionId)?.coordinationScope).toBeUndefined();
+    } finally {
+      for (const id of children) await orchTerminateSession(id);
+    }
+  });
+
   it.each([16, 32])('requires room for one child on %i GB but preserves explicit human choices', async (gb) => {
     const totalmem = vi.spyOn(os, 'totalmem').mockReturnValue(gb * 1024 ** 3);
     vi.stubEnv('NEXUS_PANE_GUARD', '');

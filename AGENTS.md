@@ -364,6 +364,12 @@ saber isto antes de mexer:
   conserva a pasta do pane escolhido. `mission-execution-scope.ts` resolve
   a pasta física; bancos/eventos/hub MCP continuam no scope de coordenação.
   Retomada não recria worktree perdida; fechar aba não remove WIP/branch.
+- F-1006: `OwnedAgentSessionInfo.scope` é a EXECUÇÃO (worktree do writer/aba);
+  quando difere, `coordinationScope` traz o checkout dos stores. Quadro de
+  entregas, conclusão da missão e qualquer `getProjectDomainStores` de uma
+  sessão usam a coordenação (`agent.coordinationScope ?? ctx.scope`, ou
+  `PaneRuntimeAuthority.scope`) — nunca `executionScope`. A guarda
+  "project store scope identity collision" fica como está: ela é o alarme.
 - Primeira onda, retomada, sensores mecânicos, revisão, artefatos e push usam
   a execução da missão. Mtime do checkout novo não prova entrega: use o
   SHA-base da aba. PREVC mutável/sensores congelados ainda são recusados
@@ -1612,6 +1618,11 @@ saber isto antes de mexer:
   `injectWithBusyProof`. Caminho novo que cola e aperta Enter num pane passa
   pelo mesmo plano (`pasteIngestPlanForSession`).
 - O `UserPromptSubmit` nativo prova o aceite também fora da família Claude.
+- F-1006: rajada de handoffs ao mesmo Maestro sai numa colagem só (uma linha,
+  um CR; até `MAX_DELIVERY_BATCH`/`MAX_DELIVERY_BATCH_CHARS`), cada handoff
+  com a própria tentativa e o próprio CAS. `nexus_handoff_ack` que chega antes
+  da borda busy adota a tentativa colada (não abre outra pelo pull), e CAS
+  perdido no aceite é resolvido pelo ledger — nunca lança de dentro do tap.
 
 ## Remoção recursiva nunca segue link (F-663)
 
