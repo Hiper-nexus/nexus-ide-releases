@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { normalizeSubject } from './memory-links';
-import { redactSecretText } from '../terminal/command-redaction';
+import { redactSecretText } from '../../shared/secret-redaction';
 import { clampUtf8TextPrefix } from '../../shared/utf8-byte-limits';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';

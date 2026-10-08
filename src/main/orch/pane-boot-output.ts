@@ -15,7 +15,7 @@ import {
   TERMINAL_CONTROL_CHARACTER_PATTERN,
 } from '../../shared/ansi-escape-sequences';
 import { redactVisibleSecrets } from '../../shared/vision-ipc';
-import { redactCommandLine } from '../terminal/command-redaction';
+import { redactCommandLine } from '../../shared/secret-redaction';
 import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
 
 export const PANE_BOOT_OUTPUT_MAX_LINES = 40;

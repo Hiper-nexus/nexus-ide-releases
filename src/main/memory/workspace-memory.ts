@@ -21,7 +21,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { redactSecretText } from '../terminal/command-redaction';
+import { redactSecretText } from '../../shared/secret-redaction';
 import { memoryCoordinationScope } from './memory-coordination-authority';
 import { stopPeriodicTask } from '../observability/periodic-task';
 import {

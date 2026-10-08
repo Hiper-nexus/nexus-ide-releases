@@ -9,7 +9,7 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { tapSessionExit } from '../pty/pty-manager';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { computeCommandBlockIdempotencyKey } from './command-block-id';
-import { redactCommandLine } from './command-redaction';
+import { redactCommandLine } from '../../shared/secret-redaction';
 import { clearCommandBlockScope } from './command-block-scope-registry';
 import {
   isSafeOscCwd,

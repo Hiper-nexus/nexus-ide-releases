@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SearchHit, SearchQuery } from '../../shared/search-mixer-types';
-import { redactCommandLine } from '../terminal/command-redaction';
+import { redactCommandLine } from '../../shared/secret-redaction';
 
 /**
  * Local ripgrep (or grep) fallback for SearchMixer file content hits.

@@ -24,7 +24,7 @@ import {
   permissionHookOutput,
 } from '../agent-hooks/approval-decision-mapping';
 import { requiresVoiceCommandConfirmation } from '../jarvis/guardrails';
-import { redactSecretText } from '../terminal/command-redaction';
+import { redactSecretText } from '../../shared/secret-redaction';
 import type { AgentGateContext } from './gate';
 import { handleHookJsonPost } from './hook-http';
 import {

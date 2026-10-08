@@ -13,7 +13,7 @@ import {
   type ScopedStoreOptions,
 } from '../orch/scoped-store';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import { redactCommandLine } from './command-redaction';
+import { redactCommandLine } from '../../shared/secret-redaction';
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const DECAY_PERIOD_MS = 30 * DAY_MS;

@@ -13,7 +13,7 @@ import {
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { computeCommandBlockIdempotencyKey } from './command-block-id';
-import { redactCommandLine } from './command-redaction';
+import { redactCommandLine } from '../../shared/secret-redaction';
 
 /**
  * Persist semantic command blocks (history). Stream remains visual SoT.

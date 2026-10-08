@@ -26,7 +26,7 @@ const files = [
  'src/main/orch/mission-completion-marker-core.ts', 'src/main/orch/cli-prompt-autoresponder-core.ts',
  'src/main/pty/first-run-interstitial.ts', 'src/main/usage/token-speed-meter.ts',
  'src/main/usage/token-speed-input.ts', 'src/main/terminal/shell-integration-osc133.ts',
- 'src/main/terminal/command-redaction.ts', 'src/main/orch/pane-pipe-core.ts',
+ 'src/shared/secret-redaction.ts', 'src/main/orch/pane-pipe-core.ts',
 ];
 const literals: { id: string; regex: RegExp; cap: number }[] = [];
 for (const file of files) {

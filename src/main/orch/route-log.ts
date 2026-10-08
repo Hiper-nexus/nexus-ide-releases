@@ -21,7 +21,7 @@ import {
   type SpawnRouteConfidence,
   type SpawnRuleChoiceReceipt,
 } from '../../shared/spawn-route';
-import { redactSecretText } from '../terminal/command-redaction';
+import { redactSecretText } from '../../shared/secret-redaction';
 
 export interface RouteLogEntry {
   /** Monotonic ordinal (no Date in pure logic); higher = newer. */

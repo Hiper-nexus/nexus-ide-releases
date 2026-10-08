@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { ProjectExecutionScope } from '../../../shared/types';
 import { openWorkspaceFileForRead } from '../../orch/workspace-file';
-import { redactSecretText } from '../../terminal/command-redaction';
+import { redactSecretText } from '../../../shared/secret-redaction';
 import { getWorkspaceMemoryStore } from '../../memory/workspace-memory';
 import { workspaceMemoryInjectionEnabled } from '../../memory/workspace-memory-context';
 

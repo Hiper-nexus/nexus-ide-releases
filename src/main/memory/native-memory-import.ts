@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { redactSecretText } from '../terminal/command-redaction';
+import { redactSecretText } from '../../shared/secret-redaction';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getWorkspaceMemoryStore, MAX_MEMORY_CONTENT_BYTES, type RetainResult } from './workspace-memory';
 

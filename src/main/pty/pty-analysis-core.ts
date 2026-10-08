@@ -12,7 +12,7 @@ import { FailoverTextReducer } from '../orch/failover-text-core';
 import { LegacyHandoffParser } from '../orch/legacy-handoff';
 import { MissionMarkerObserver } from '../orch/mission-completion-marker-core';
 import { Osc133Scanner } from '../terminal/shell-integration-osc133';
-import { redactCommandLine } from '../terminal/command-redaction';
+import { redactCommandLine } from '../../shared/secret-redaction';
 import { ANALYSIS_EVENT_CAP, validAnalysisGrid, type AnalysisBinding, type AnalysisConsumer, type AnalysisEvent, type AnalysisInput, type AnalysisResult, type AnalysisWorkerTrace } from './pty-analysis-protocol';
 
 interface Consumer { registration: number; config?: unknown }
