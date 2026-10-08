@@ -5,7 +5,8 @@
 // a pure module; sanitizeTerminalHistoryChunk exported as
 // sanitizeTerminalReplayChunk plus a stateful createReplaySanitizer() wrapper
 // with a cap on the held sequence; OSC 4 palette queries stripped too (xterm.js
-// answers them); plain-text runs copied in one slice instead of per character.
+// answers them); plain-text runs copied in one slice instead of per character;
+// createReplayOutputFilter() sanitizes only replayed chunks of a live stream.
 
 /**
  * Replay sanitizer (DSK-01).
@@ -294,5 +295,26 @@ export function createReplaySanitizer(): TerminalReplaySanitizer {
     get pendingControlSequence() {
       return pendingControlSequence;
     },
+  };
+}
+
+/**
+ * Filter for ONE PTY subscription where replayed and live chunks interleave
+ * (adoption: the replay pull and live pushes share `pty.onData`). Only chunks
+ * flagged as replayed are sanitized; live output always passes raw, so a TUI
+ * that asks now gets its answer now. A sequence left open by the last
+ * replayed chunk goes in front of the next live chunk, which completes it.
+ */
+export function createReplayOutputFilter(): (
+  data: string,
+  replayed: boolean,
+) => string {
+  let sanitizer = createReplaySanitizer();
+  return (data, replayed) => {
+    if (replayed) return sanitizer.push(data);
+    const open = sanitizer.pendingControlSequence;
+    if (!open) return data;
+    sanitizer = createReplaySanitizer();
+    return open + data;
   };
 }

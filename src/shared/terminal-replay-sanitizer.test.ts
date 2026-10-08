@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_PENDING_CONTROL_SEQUENCE_CHARS,
+  createReplayOutputFilter,
   createReplaySanitizer,
   sanitizeTerminalReplayChunk,
 } from './terminal-replay-sanitizer';
@@ -141,5 +142,22 @@ describe('createReplaySanitizer — Nexus additions', () => {
   it('passes plain text and ordinary escape sequences through untouched', () => {
     const tui = 'é😀 \x1b[?1049h\x1b[2;5H\x1b[1;38;5;208mtext\x1b(B\x1b7\x1b8\x1b]8;;https://x\x1b\\link\x1b]8;;\x1b\\';
     expect(replay(tui)).toBe(tui);
+  });
+});
+
+describe('createReplayOutputFilter — replayed and live chunks on one subscription', () => {
+  it('sanitizes only replayed chunks; live output passes raw', () => {
+    const filter = createReplayOutputFilter();
+    expect(filter('a\x1b[6n', true)).toBe('a');
+    // A TUI asking NOW needs the answer now.
+    expect(filter('\x1b[6n\x1b[c\x1b[?u', false)).toBe('\x1b[6n\x1b[c\x1b[?u');
+    expect(filter('b\x1b]11;?\x07', true)).toBe('b');
+  });
+
+  it('hands a sequence left open by the replay to the live chunk that completes it', () => {
+    const filter = createReplayOutputFilter();
+    expect(filter('x\x1b[3', true)).toBe('x');
+    expect(filter('1mred', false)).toBe('\x1b[31mred');
+    expect(filter('plain', false)).toBe('plain');
   });
 });

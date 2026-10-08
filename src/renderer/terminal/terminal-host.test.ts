@@ -148,7 +148,11 @@ const spawn = vi.fn();
 const kill = vi.fn();
 const ptyWrite = vi.fn();
 const ptyExitListeners = new Map<string, (event: { exitCode: number; terminationOrigin?: string }) => void>();
-const ptyDataListeners = new Map<string, (data: string) => void>();
+/** `meta.replayed` imita o preload: chunk entregue pelo pull de pty.replay(). */
+const ptyDataListeners = new Map<
+  string,
+  (data: string, meta?: { replayed: true }) => void
+>();
 const originalNexus = Object.getOwnPropertyDescriptor(window, 'nexus');
 
 function setHostSize(element: HTMLElement, width: number, height: number): void {
@@ -1983,8 +1987,8 @@ describe('DSK-01 — saída antiga regravada não responde queries de terminal',
     vi.mocked(window.nexus.pty.replay).mockImplementation(async (sessionId) => {
       await Promise.resolve(); // a fita volta por IPC, depois do pull
       const emit = ptyDataListeners.get(sessionId)!;
-      emit('hello\r\n\x1b[c\x1b[');
-      emit('6n\x1b[>c\x1b[?2004$p\x1b]11;?\x07');
+      emit('hello\r\n\x1b[c\x1b[', { replayed: true });
+      emit('6n\x1b[>c\x1b[?2004$p\x1b]11;?\x07', { replayed: true });
     });
     const output = vi.spyOn(terminalOutputScheduler, 'writeTerminalOutput');
     const host = openAgent();
@@ -2003,6 +2007,41 @@ describe('DSK-01 — saída antiga regravada não responde queries de terminal',
     // inclusive a do chunk ao vivo que ela também guardou.
     await vi.advanceTimersByTimeAsync(2_000);
     expect(termWrite).toHaveBeenCalledWith('hello\r\n');
+    output.mockRestore();
+  });
+
+  it('replay lento: query ao vivo depois do reset segue crua; a do replay continua removida', async () => {
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-adopted', adopted: true });
+    let finishReplay!: () => void;
+    vi.mocked(window.nexus.pty.replay).mockImplementation(
+      (sessionId) =>
+        new Promise<void>((resolve) => {
+          finishReplay = () => {
+            const emit = ptyDataListeners.get(sessionId)!;
+            emit('old\r\n\x1b[c\x1b[', { replayed: true });
+            emit('6n\x1b]11;?\x07', { replayed: true });
+            resolve();
+          };
+        }),
+    );
+    const output = vi.spyOn(terminalOutputScheduler, 'writeTerminalOutput');
+    openAgent();
+    expect(await waitForSession(agent.id, 1000)).toBe('pty-adopted');
+
+    // O IPC do replay demora: o reset + SIGWINCH duplo (350 ms) já saiu e o
+    // TUI adotado repinta perguntando CPR/DA1/kitty — a resposta tem de sair.
+    await vi.advanceTimersByTimeAsync(400);
+    ptyDataListeners.get('pty-adopted')!('\x1b[6n\x1b[c\x1b[?u');
+    expect(output.mock.calls.at(-1)?.[1]).toBe('\x1b[6n\x1b[c\x1b[?u');
+
+    finishReplay();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      output.mock.calls
+        .slice(-2)
+        .map(([, data]) => data)
+        .join(''),
+    ).toBe('old\r\n');
     output.mockRestore();
   });
 });
