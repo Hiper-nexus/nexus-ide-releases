@@ -10,6 +10,7 @@ import {
   type ReactNode,
   type Ref
 } from 'react'
+import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native'
 import {
   LegendList,
   type LegendListProps,
@@ -66,6 +67,39 @@ export function useRefreshNonceRefreshing(refreshNonce: number | undefined, data
   return bump !== null && bump.data === data
 }
 
+type PaddingSide = 'paddingTop' | 'paddingRight' | 'paddingBottom' | 'paddingLeft'
+const PADDING_SIDES: readonly [PaddingSide, 'paddingVertical' | 'paddingHorizontal'][] = [
+  ['paddingTop', 'paddingVertical'],
+  ['paddingRight', 'paddingHorizontal'],
+  ['paddingBottom', 'paddingVertical'],
+  ['paddingLeft', 'paddingHorizontal']
+]
+
+/**
+ * F-1037: no web o LegendList espalha o contentContainerStyle direto no `style` de um
+ * <div>, e `paddingHorizontal`/`paddingVertical` não são CSS — o recuo lateral sumia e
+ * os cards da Home encostavam na borda. Os quatro lados explícitos valem igual no
+ * Yoga e no DOM, com a mesma precedência do RN (lado > eixo > padding).
+ */
+export function expandPaddingShorthands(
+  style: StyleProp<ViewStyle>
+): StyleProp<ViewStyle> {
+  const flat = StyleSheet.flatten(style) as ViewStyle | undefined
+  if (!flat || (flat.paddingHorizontal === undefined && flat.paddingVertical === undefined)) {
+    return style
+  }
+  const { padding, paddingHorizontal, paddingVertical, ...rest } = flat
+  const axis = { paddingHorizontal, paddingVertical }
+  const expanded: ViewStyle = { ...rest }
+  for (const [side, axisKey] of PADDING_SIDES) {
+    const value = rest[side] ?? axis[axisKey] ?? padding
+    if (value !== undefined) {
+      expanded[side] = value
+    }
+  }
+  return expanded
+}
+
 type RenderItem<ItemT> = (info: LegendListRenderItemProps<ItemT>) => ReactNode
 
 /**
@@ -117,6 +151,7 @@ export function MobileLegendList<ItemT>({
   listRef,
   refreshNonce,
   refreshing,
+  contentContainerStyle,
   ItemSeparatorComponent,
   // Rows here hold hooks keyed to their item (host cards, picker rows), so a reused
   // container must remount rather than inherit another item's state.
@@ -125,10 +160,15 @@ export function MobileLegendList<ItemT>({
 }: MobileLegendListProps<ItemT>): ReactElement {
   const nonceRefreshing = useRefreshNonceRefreshing(refreshNonce, data)
   const rows = useSeparatedRows(data, renderItem, extraData, ItemSeparatorComponent)
+  const containerStyle = useMemo(
+    () => expandPaddingShorthands(contentContainerStyle),
+    [contentContainerStyle]
+  )
   return (
     <LegendList<ItemT>
       {...props}
       ref={listRef}
+      contentContainerStyle={containerStyle}
       data={data}
       renderItem={rows.renderItem}
       extraData={rows.extraData}

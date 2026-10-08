@@ -4,6 +4,7 @@ import { shouldPresentSessionViewOptIn } from '../session/session-view-opt-in-ga
 import {
   loadMobileOnboardingSteps,
   mobileOnboardingDestination,
+  mobileOnboardingStepsForHosts,
   parseMobileOnboardingSteps
 } from './mobile-onboarding-plan'
 
@@ -66,6 +67,18 @@ describe('mobile onboarding plan', () => {
       'notifications'
     ])
     expect(parseMobileOnboardingSteps('notifications')).toEqual(['notifications'])
+  })
+
+  // F-1037: host Nexus não tem a UI de chat; o onboarding não pergunta o modo de sessão.
+  it('drops the Chat UI question only when every host is Nexus', () => {
+    const all = ['session-view', 'notifications'] as const
+    expect(mobileOnboardingStepsForHosts(all, ['nexus-bridge'])).toEqual(['notifications'])
+    expect(mobileOnboardingStepsForHosts(all, ['nexus-bridge', 'nexus-bridge'])).toEqual([
+      'notifications'
+    ])
+    expect(mobileOnboardingStepsForHosts(all, ['nexus-bridge', undefined])).toEqual([...all])
+    expect(mobileOnboardingStepsForHosts(all, [undefined])).toEqual([...all])
+    expect(mobileOnboardingStepsForHosts(all, [])).toEqual([...all])
   })
 
   it('defaults missing or invalid route state to the complete wizard', () => {

@@ -4,7 +4,13 @@ import type { ConnectionVerdict } from '../transport/connection-health'
 import { verdictDisplayLabel } from '../transport/connection-health'
 import { mobileConnectionPathLabel } from '../transport/mobile-connection-path-label'
 import type { MobileConnectionPath } from '../transport/stable-logical-rpc-client'
-import type { ConnectionState, HostCatalogEntry, HostProfile } from '../transport/types'
+import {
+  NEXUS_BRIDGE_HOST_KIND,
+  type ConnectionState,
+  type HostCatalogEntry,
+  type HostProfile
+} from '../transport/types'
+import { NEXUS_HOST_CARD_STATUS } from '../nexus-host/nexus-host-presentation'
 import { colors, radii, spacing } from '../theme/mobile-theme'
 import { homeHostWorktreeSummary, type HostWorktreeInfo } from '../worktree/home-worktree-info'
 import { StatusDot } from './StatusDot'
@@ -22,37 +28,51 @@ export function MobileHostCard(props: {
   onLongPress: () => void
   onOpenActions: () => void
 }) {
+  // F-1037: host do desktop Nexus — estado em pt-BR, sem caminho LAN/relay nem worktrees.
+  const nexus = props.host.kind === NEXUS_BRIDGE_HOST_KIND
   const credentialUnavailable = props.credentialStatus === 'temporarily-unavailable'
   const credentialMissing = props.credentialStatus === 'missing'
   const connected = props.state === 'connected' && !credentialUnavailable && !credentialMissing
   const isError =
     credentialMissing || ['warning', 'unreachable', 'auth-failed'].includes(props.verdict.kind)
-  const statusLabel = credentialMissing
-    ? 'Pairing invalid'
-    : credentialUnavailable
-      ? 'Pairing temporarily unavailable'
-      : verdictDisplayLabel(props.verdict)
+  const statusLabel = nexus
+    ? credentialMissing
+      ? 'Pareamento inválido'
+      : credentialUnavailable
+        ? 'Pareamento indisponível no momento'
+        : NEXUS_HOST_CARD_STATUS[props.state]
+    : credentialMissing
+      ? 'Pairing invalid'
+      : credentialUnavailable
+        ? 'Pairing temporarily unavailable'
+        : verdictDisplayLabel(props.verdict)
   const statusVerdict: ConnectionVerdict = credentialMissing
     ? { kind: 'auth-failed', label: statusLabel }
     : credentialUnavailable
       ? { kind: 'warning', label: statusLabel }
       : props.verdict
-  const worktreeSummary = homeHostWorktreeSummary(props.worktreeInfo)
+  const worktreeSummary = nexus ? null : homeHostWorktreeSummary(props.worktreeInfo)
   const connectionPathLabel =
-    !credentialMissing && !credentialUnavailable && connected
+    !nexus && !credentialMissing && !credentialUnavailable && connected
       ? mobileConnectionPathLabel(props.path)
       : null
   const discoveryHint =
     props.verdict.kind === 'unreachable' && !props.host.relay
-      ? 'Update desktop Orca and sign in to connect from anywhere'
+      ? nexus
+        ? 'Confira se o celular está no tailnet e se a bridge está ligada no desktop'
+        : 'Update desktop Orca and sign in to connect from anywhere'
       : null
   const credentialHint = credentialMissing
-    ? 'Tap to re-pair with your desktop'
+    ? nexus
+      ? 'Toque para parear de novo com o desktop'
+      : 'Tap to re-pair with your desktop'
     : credentialUnavailable
-      ? 'Unlock your phone, then tap to retry'
+      ? nexus
+        ? 'Desbloqueie o celular e toque para tentar de novo'
+        : 'Unlock your phone, then tap to retry'
       : null
   const accessibilityLabel = [
-    `Open ${props.host.name}`,
+    nexus ? `Abrir ${props.host.name}` : `Open ${props.host.name}`,
     statusLabel,
     connectionPathLabel?.replace(' · ', ' via '),
     connected ? worktreeSummary?.replace(' · ', ', ') : null,
@@ -114,7 +134,9 @@ export function MobileHostCard(props: {
       </Pressable>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Actions for ${props.host.name}`}
+        accessibilityLabel={
+          nexus ? `Ações de ${props.host.name}` : `Actions for ${props.host.name}`
+        }
         hitSlop={8}
         style={({ pressed }) => [styles.actionButton, pressed && styles.actionButtonPressed]}
         onPress={props.onOpenActions}

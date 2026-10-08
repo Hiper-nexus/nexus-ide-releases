@@ -8,6 +8,8 @@ import { PickerModal } from './PickerModal'
 
 type Props = {
   connectedHosts: HostProfile[]
+  /** F-1037: falso quando só há host Nexus, que não cria workspace. */
+  showCreateWorkspace?: boolean
   onPairDesktop: () => void
   onCreateWorkspace: (hostId: string) => void
 }
@@ -68,7 +70,7 @@ export function MobileHomeQuickActions(props: Props) {
 
   return (
     <>
-      <Text style={styles.sectionHeading}>Quick Actions</Text>
+      <Text style={styles.sectionHeading}>Ações rápidas</Text>
       <View style={styles.quickActions}>
         <Pressable
           accessibilityRole="button"
@@ -78,28 +80,30 @@ export function MobileHomeQuickActions(props: Props) {
           <View style={styles.quickActionIcon}>
             <QrCode size={16} color={colors.textSecondary} />
           </View>
-          <Text style={styles.quickActionLabel}>Pair Desktop</Text>
+          <Text style={styles.quickActionLabel}>Parear desktop</Text>
         </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: !canCreateWorkspace }}
-          disabled={!canCreateWorkspace}
-          style={({ pressed }) => [
-            styles.quickAction,
-            !canCreateWorkspace && styles.quickActionDisabled,
-            pressed && styles.quickActionPressed
-          ]}
-          onPress={handleCreateWorkspace}
-        >
-          <View style={styles.quickActionIcon}>
-            <Plus size={16} color={colors.textSecondary} />
-          </View>
-          <Text style={styles.quickActionLabel}>New Workspace</Text>
-        </Pressable>
+        {props.showCreateWorkspace === false ? null : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !canCreateWorkspace }}
+            disabled={!canCreateWorkspace}
+            style={({ pressed }) => [
+              styles.quickAction,
+              !canCreateWorkspace && styles.quickActionDisabled,
+              pressed && styles.quickActionPressed
+            ]}
+            onPress={handleCreateWorkspace}
+          >
+            <View style={styles.quickActionIcon}>
+              <Plus size={16} color={colors.textSecondary} />
+            </View>
+            <Text style={styles.quickActionLabel}>Novo workspace</Text>
+          </Pressable>
+        )}
       </View>
       <PickerModal
         visible={hostPickerVisible}
-        title="Create Workspace On"
+        title="Criar workspace em"
         options={hostPickerOptions(props.connectedHosts)}
         selected=""
         onSelect={handleHostSelect}

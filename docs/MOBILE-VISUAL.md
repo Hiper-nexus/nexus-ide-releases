@@ -63,13 +63,13 @@ erros/avisos do console). Código de saída 1 se qualquer passo falhar (e um
 | # | Estado | Verifica |
 |---|--------|----------|
 | 01–03 | início sem host → pair-scan → colar o link `https://127.0.0.1:<porta>/#code=…` | — |
-| 04–05 | onboarding do 1º pareamento → host na lista | o pareamento real gastou o código e salvou o host |
+| 04–05 | onboarding do 1º pareamento → host na lista | o pareamento real gastou o código e salvou o host; o onboarding não oferece "Usar UI de chat" para host Nexus; a Início está em pt-BR, o card diz "Conectado · Desktop Nexus" (sem worktree/caminho) e não há Tarefas nem "Novo workspace" (F-1037) |
 | 06–07 | host conectado → aprovação aberta no desktop | snapshot (missões + panes); o card chega pelo push `approvals.changed` |
 | 08–10 | pane: saída inicial, digitar `git status`, enviar | a linha chegou ao PTY simulado com Enter; nenhum diálogo no desktop (comando de rotina); a saída volta pelo stream |
-| 11 | responder **Allow** | o broker recebeu `accept`; nenhuma tecla no PTY |
+| 11 | responder **Permitir** | o broker recebeu `accept`; nenhuma tecla no PTY |
 | 12–14 | Alterações → diff do README → diff de código | git status/diff do checkout do pane |
 | 15–16 | Arquivos → leitura do README | `.env` fora da listagem |
-| 17–18 | desktop revoga os aparelhos → "Parear de novo" → pair-scan | `auth-failed` ao vivo, sem loop |
+| 17–18 | desktop revoga os aparelhos → "Parear de novo" → pair-scan | `auth-failed` ao vivo, sem loop; o arquivo/diff aberto some e as abas ficam desabilitadas (F-1037) |
 
 ## A exceção de host 127.0.0.1 (só no harness)
 

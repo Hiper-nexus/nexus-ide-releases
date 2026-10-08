@@ -43,12 +43,16 @@ describe('MobileHomeQuickActions', () => {
     vi.restoreAllMocks()
   })
 
-  async function renderQuickActions(connectedHosts: HostProfile[]) {
+  async function renderQuickActions(
+    connectedHosts: HostProfile[],
+    options: { showCreateWorkspace?: boolean } = {}
+  ) {
     const onPairDesktop = vi.fn()
     const onCreateWorkspace = vi.fn()
     const quickActions = (hosts: HostProfile[]) =>
       createElement(MobileHomeQuickActions, {
         connectedHosts: hosts,
+        showCreateWorkspace: options.showCreateWorkspace,
         onPairDesktop,
         onCreateWorkspace
       })
@@ -76,6 +80,19 @@ describe('MobileHomeQuickActions', () => {
   function picker() {
     return renderer!.root.findByType('PickerModal')
   }
+
+  // F-1037: só host Nexus conectado — criar workspace não existe lá, nem aparece.
+  it('does not offer New Workspace when the shortcut is hidden for a Nexus-only Home', async () => {
+    await renderQuickActions([], { showCreateWorkspace: false })
+
+    const buttons = renderer!.root.findAllByType('Pressable')
+    expect(buttons).toHaveLength(1)
+    const labels = renderer!.root
+      .findAllByType('Text')
+      .flatMap((node) => node.children.filter((child) => typeof child === 'string'))
+    expect(labels).toContain('Parear desktop')
+    expect(labels).not.toContain('Novo workspace')
+  })
 
   it('disables workspace creation without a connected host', async () => {
     await renderQuickActions([])
@@ -105,7 +122,7 @@ describe('MobileHomeQuickActions', () => {
 
     expect(callbacks.onCreateWorkspace).not.toHaveBeenCalled()
     expect(picker().props.visible).toBe(true)
-    expect(picker().props.title).toBe('Create Workspace On')
+    expect(picker().props.title).toBe('Criar workspace em')
     expect(picker().props.options).toEqual([
       { value: 'desk', label: 'Desk', subtitle: '192.168.1.2:6768' },
       { value: 'laptop', label: 'Laptop', subtitle: 'relay.example.com' }

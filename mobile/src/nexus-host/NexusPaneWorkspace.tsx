@@ -39,7 +39,12 @@ const AREA_TITLE: Record<NexusGitStatusEntry['area'], string> = {
   unstaged: 'Alteradas',
   untracked: 'Novas (fora do Git)'
 }
-const AREA_ORDER: readonly NexusGitStatusEntry['area'][] = ['unstaged', 'untracked', 'staged']
+// F-1037: a mesma ordem do painel Git do desktop — Preparadas, Alteradas, Novas.
+export const NEXUS_GIT_AREA_ORDER: readonly NexusGitStatusEntry['area'][] = [
+  'staged',
+  'unstaged',
+  'untracked'
+]
 
 /** Carrega `load()` e recarrega quando a chave muda ou em `reload()`. */
 function useLoad<T>(key: string, load: () => Promise<T>): [Load<T>, () => void] {
@@ -151,7 +156,7 @@ function NexusChanges({ paneId, workspace }: { paneId: string; workspace: NexusW
   const { entries, branch, upstreamStatus, truncated } = status.value
   return (
     <MobileLegendList
-      data={AREA_ORDER.flatMap((area) => {
+      data={NEXUS_GIT_AREA_ORDER.flatMap((area) => {
         const rows = entries.filter((entry) => entry.area === area)
         return rows.length > 0 ? [{ area, rows }] : []
       })}

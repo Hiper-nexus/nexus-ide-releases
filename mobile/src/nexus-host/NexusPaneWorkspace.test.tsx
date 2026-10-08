@@ -111,3 +111,48 @@ describe('arquivos do pane no host Nexus: lista virtualizada (MOB-01)', () => {
     expect(lineNumbers[0]!.props.children).toBe(1)
   })
 })
+
+// F-1037: a ordem das seções segue o painel Git do desktop.
+describe('alterações do pane no host Nexus: ordem das seções', () => {
+  let renderer: ReactTestRenderer | null = null
+  afterEach(() => {
+    act(() => renderer?.unmount())
+    renderer = null
+  })
+
+  it('mostra Preparadas, depois Alteradas, depois Novas', async () => {
+    const base = workspace()
+    const status: Awaited<ReturnType<NexusWorkspaceApi['gitStatus']>> = {
+      entries: [
+        { path: 'novo.ts', status: 'untracked', area: 'untracked', letter: '?', restricted: false },
+        { path: 'README.md', status: 'modified', area: 'unstaged', letter: 'M', restricted: false },
+        { path: 'src/app.ts', status: 'modified', area: 'staged', letter: 'M', restricted: false }
+      ],
+      branch: 'main',
+      upstreamStatus: { hasUpstream: false, ahead: 0, behind: 0 },
+      conflictOperation: 'unknown',
+      clean: false,
+      truncated: false
+    }
+    await act(async () => {
+      renderer = create(
+        createElement(NexusPaneWorkspace, {
+          paneId: 'pane-app',
+          workspace: { ...base, gitStatus: async () => status },
+          view: 'changes',
+          onViewChange: () => {}
+        })
+      )
+    })
+    await flush()
+    const sections = renderer!.root
+      .findAll((node) => (node.type as unknown) === 'Text')
+      .map((node) => [node.props.children].flat().join(''))
+      .filter((text) => / · \d+$/.test(text))
+    expect(sections).toEqual([
+      'Preparadas para commit · 1',
+      'Alteradas · 1',
+      'Novas (fora do Git) · 1'
+    ])
+  })
+})

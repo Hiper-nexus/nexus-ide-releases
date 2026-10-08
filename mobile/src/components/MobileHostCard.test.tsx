@@ -51,12 +51,13 @@ describe('MobileHostCard', () => {
       verdict?: ConnectionVerdict
       path?: MobileConnectionPath
       credentialStatus?: HostCredentialStatus
+      host?: HostProfile
     }
   ): Promise<string[]> {
     await act(async () => {
       renderer = create(
         createElement(MobileHostCard, {
-          host,
+          host: overrides?.host ?? host,
           state: overrides?.state ?? 'connected',
           verdict: overrides?.verdict ?? verdict,
           path: overrides?.path ?? 'lan',
@@ -72,6 +73,30 @@ describe('MobileHostCard', () => {
       .findAllByType('Text')
       .flatMap((node) => node.children.filter((child) => typeof child === 'string'))
   }
+
+  // F-1037: o host do desktop Nexus não tem caminho LAN/relay nem lista de worktrees.
+  it('shows a truthful pt-BR status for a Nexus host, without path or worktree line', async () => {
+    const nexusHost: HostProfile = {
+      ...host,
+      name: 'Nexus · 127',
+      endpoint: 'https://mac.tailnet.ts.net',
+      kind: 'nexus-bridge'
+    }
+    const lines = await renderCard(markHomeWorktreeCatalogUnavailable(undefined, 'host-1'), {
+      host: nexusHost,
+      verdict: { kind: 'normal', label: 'Connected' },
+      path: 'lan'
+    })
+    expect(lines).toContain('Conectado · Desktop Nexus')
+    expect(lines.join('\n')).not.toMatch(/Worktree|LAN|Direct|Connected/)
+    expect(
+      await renderCard(undefined, {
+        host: nexusHost,
+        state: 'auth-failed',
+        verdict: { kind: 'auth-failed', label: 'Auth failed' }
+      })
+    ).toContain('Sessão encerrada: pareie de novo')
+  })
 
   it('renders the counts the host proved', async () => {
     expect(await renderCard(loaded)).toContain('12 worktrees · 2 active')

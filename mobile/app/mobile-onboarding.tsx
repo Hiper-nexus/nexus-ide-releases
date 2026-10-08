@@ -17,6 +17,7 @@ import {
   type NotificationOnboardingChoice
 } from '../src/onboarding/MobileOnboardingPage'
 import { parseMobileOnboardingSteps } from '../src/onboarding/mobile-onboarding-plan'
+import { useOnboardingNexusHost } from '../src/onboarding/use-onboarding-nexus-host'
 import { mobileOnboardingStyles as styles } from '../src/onboarding/mobile-onboarding-styles'
 import {
   saveDefaultSessionView,
@@ -59,6 +60,7 @@ function MobileOnboardingFlow({
   const choiceInFlightRef = useRef(false)
   const slideProgress = useRef(new Animated.Value(0)).current
   const reducedMotionEnabled = useReducedMotionEnabled()
+  const nexusHost = useOnboardingNexusHost(hostId)
 
   // Why: onboarding requires an explicit choice for every planned step; disabling
   // stack gestures alone still leaves Android hardware Back able to skip the flow.
@@ -109,7 +111,7 @@ function MobileOnboardingFlow({
         await saveDefaultSessionView(view)
         advanceOrContinue()
       } catch {
-        setError('Your choice could not be saved. Try again.')
+        setError('Não foi possível salvar a escolha. Tente de novo.')
         setBusyChoice(null)
         choiceInFlightRef.current = false
       }
@@ -130,7 +132,7 @@ function MobileOnboardingFlow({
         await setRemotePushEnabled(enabled)
         advanceOrContinue()
       } catch {
-        setError('Notification settings could not be updated. Try again.')
+        setError('Não foi possível atualizar as notificações. Tente de novo.')
         setBusyChoice(null)
         choiceInFlightRef.current = false
       }
@@ -144,13 +146,13 @@ function MobileOnboardingFlow({
     <SafeAreaView style={styles.container}>
       <View style={styles.brandRow}>
         <OrcaLogo size={22} />
-        <Text style={styles.brandName}>Orca</Text>
+        <Text style={styles.brandName}>Nexus</Text>
         {steps.length > 1 ? (
           <View
             accessible
             accessibilityRole="progressbar"
-            accessibilityLabel="Onboarding progress"
-            accessibilityValue={{ text: `Step ${activeIndex + 1} of ${steps.length}` }}
+            accessibilityLabel="Progresso da configuração inicial"
+            accessibilityValue={{ text: `Passo ${activeIndex + 1} de ${steps.length}` }}
             style={styles.progress}
           >
             {steps.map((step, index) => (
@@ -178,6 +180,7 @@ function MobileOnboardingFlow({
               active={index === activeIndex}
               busyChoice={busyChoice}
               error={error}
+              nexusHost={nexusHost}
               onSessionChoice={(view) => void chooseSessionView(view)}
               onNotificationChoice={(choice) => void chooseNotifications(choice)}
             />

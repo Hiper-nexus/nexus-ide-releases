@@ -83,7 +83,7 @@ export function MobileHomeScreen() {
     } else if (host.credentialStatus === 'temporarily-unavailable') {
       void loadHostCatalog()
         .then(data.setHostCatalog)
-        .catch(() => Alert.alert('Could not check pairing', 'Please try again.'))
+        .catch(() => Alert.alert('Não foi possível conferir o pareamento', 'Tente de novo.'))
     } else {
       data.router.push(`/h/${host.id}`)
     }
@@ -109,7 +109,7 @@ export function MobileHomeScreen() {
       data.setHostCatalog(await loadHostCatalog())
     } catch {
       setConfirmRemove(host)
-      Alert.alert('Could not remove host', 'Please try again.')
+      Alert.alert('Não foi possível remover o host', 'Tente de novo.')
     }
   }
 
@@ -131,7 +131,8 @@ export function MobileHomeScreen() {
           footer={
             <MobileHomeListFooter
               accountsHosts={data.accountsHosts}
-              connectedHosts={data.connectedHosts}
+              connectedHosts={data.orcaShortcuts.connectedHosts}
+              showOrcaShortcuts={data.orcaShortcuts.visible}
               primaryHost={data.primaryHost}
               primaryTaskProviders={data.primaryTaskProviders}
               resumeCard={data.resumeCard}
@@ -189,9 +190,10 @@ export function MobileHomeScreen() {
       />
       <ConfirmModal
         visible={confirmRemove != null}
-        title="Remove Host"
-        message={`Remove "${confirmRemove?.name}"? You can re-pair later.`}
-        confirmLabel="Remove"
+        title="Remover host"
+        message={`Remover "${confirmRemove?.name}"? Você pode parear de novo depois.`}
+        confirmLabel="Remover host"
+        cancelLabel="Cancelar"
         destructive
         onConfirm={() => void handleRemove()}
         onCancel={() => setConfirmRemove(null)}

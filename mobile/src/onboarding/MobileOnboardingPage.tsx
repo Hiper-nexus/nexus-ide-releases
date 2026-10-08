@@ -14,6 +14,8 @@ type Props = {
   active: boolean
   busyChoice: MobileOnboardingBusyChoice
   error: string | null
+  /** F-1037: desktop Nexus — avisos locais do app, sem o serviço de push do Orca. */
+  nexusHost?: boolean
   onSessionChoice: (view: MobileSessionView) => void
   onNotificationChoice: (choice: NotificationOnboardingChoice) => void
 }
@@ -24,6 +26,7 @@ export function MobileOnboardingPage({
   active,
   busyChoice,
   error,
+  nexusHost = false,
   onSessionChoice,
   onNotificationChoice
 }: Props) {
@@ -47,16 +50,20 @@ export function MobileOnboardingPage({
           )}
         </View>
         <Text style={styles.title}>
-          {isSessionView ? 'How should sessions open?' : 'Enable notifications'}
+          {isSessionView ? 'Como as sessões devem abrir?' : 'Ativar notificações'}
         </Text>
         <Text style={styles.body}>
           {isSessionView
-            ? 'Choose whether supported agent sessions open in the terminal or Chat UI on this device. Press and hold a session tab to switch its view, or change the default later in Settings.'
-            : 'Get notified when an agent finishes a task or needs your input.'}
+            ? 'Escolha se as sessões de agente compatíveis abrem no terminal ou na UI de chat neste aparelho. Toque e segure a aba de uma sessão para trocar a visualização, ou mude o padrão depois nas Configurações.'
+            : nexusHost
+              ? 'Receba um aviso quando um agente pedir aprovação, esperar por você ou terminar.'
+              : 'Receba um aviso quando um agente terminar uma tarefa ou precisar de você.'}
         </Text>
         {!isSessionView ? (
           <Text style={styles.body}>
-            By default, notifications arrive after your desktop has been idle for 3 minutes.
+            {nexusHost
+              ? 'Os avisos são locais deste aparelho, enquanto o app está conectado ao desktop Nexus.'
+              : 'Por padrão, os avisos chegam depois de 3 minutos sem uso do desktop.'}
           </Text>
         ) : null}
       </View>
@@ -64,7 +71,9 @@ export function MobileOnboardingPage({
       <View style={styles.footer}>
         {!isSessionView ? (
           <Text style={styles.disclosure}>
-            Delivered through Orca’s push service. Change this anytime in Settings.
+            {nexusHost
+              ? 'Sem servidor de push no meio. Mude quando quiser nas Configurações.'
+              : 'Entregues pelo serviço de push do Orca. Mude quando quiser nas Configurações.'}
           </Text>
         ) : null}
         {error ? (
@@ -98,16 +107,16 @@ function SessionViewChoices({
   return (
     <>
       <ChoiceButton
-        label="Use Chat UI"
-        accessibilityLabel="Open sessions in Chat UI"
+        label="Usar UI de chat"
+        accessibilityLabel="Abrir sessões na UI de chat"
         primary
         busy={busyChoice === 'chat'}
         disabled={disabled}
         onPress={() => onChoice('chat')}
       />
       <ChoiceButton
-        label="Keep terminal"
-        accessibilityLabel="Open sessions in the terminal"
+        label="Manter terminal"
+        accessibilityLabel="Abrir sessões no terminal"
         busy={busyChoice === 'terminal'}
         disabled={disabled}
         onPress={() => onChoice('terminal')}
@@ -128,16 +137,16 @@ function NotificationChoices({
   return (
     <>
       <ChoiceButton
-        label="Enable notifications"
-        accessibilityLabel="Enable agent notifications"
+        label="Ativar notificações"
+        accessibilityLabel="Ativar avisos dos agentes"
         primary
         busy={busyChoice === 'enable'}
         disabled={disabled}
         onPress={() => onChoice('enable')}
       />
       <ChoiceButton
-        label="Not now"
-        accessibilityLabel="Skip notifications for now"
+        label="Agora não"
+        accessibilityLabel="Pular notificações por enquanto"
         busy={busyChoice === 'skip'}
         disabled={disabled}
         onPress={() => onChoice('skip')}

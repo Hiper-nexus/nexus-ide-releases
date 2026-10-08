@@ -41,6 +41,7 @@ vi.mock('expo-router', () => ({
 
 vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: 'SafeAreaView' }))
 vi.mock('../components/OrcaLogo', () => ({ OrcaLogo: 'OrcaLogo' }))
+vi.mock('./use-onboarding-nexus-host', () => ({ useOnboardingNexusHost: () => false }))
 vi.mock('./MobileOnboardingPage', () => ({ MobileOnboardingPage: 'MobileOnboardingPage' }))
 vi.mock('../notifications/mobile-notifications', () => ({
   ensureNotificationPermissions: mocks.ensureNotificationPermissions
@@ -121,7 +122,7 @@ describe('MobileOnboardingScreen', () => {
     mocks.setRemotePushEnabled.mockRejectedValueOnce(new Error('disk full'))
     await renderScreen()
     await act(async () => pages()[0].props.onNotificationChoice('enable'))
-    expect(pages()[0].props.error).toBe('Notification settings could not be updated. Try again.')
+    expect(pages()[0].props.error).toBe('Não foi possível atualizar as notificações. Tente de novo.')
     expect(mocks.replace).not.toHaveBeenCalled()
     await act(async () => pages()[0].props.onNotificationChoice('enable'))
     expect(mocks.setRemotePushEnabled).toHaveBeenCalledTimes(2)
@@ -145,7 +146,7 @@ describe('MobileOnboardingScreen', () => {
     await renderScreen()
 
     await act(async () => pages()[0].props.onSessionChoice('chat'))
-    expect(pages()[0].props.error).toBe('Your choice could not be saved. Try again.')
+    expect(pages()[0].props.error).toBe('Não foi possível salvar a escolha. Tente de novo.')
 
     await act(async () => pages()[0].props.onSessionChoice('chat'))
     expect(mocks.saveDefaultSessionView).toHaveBeenCalledTimes(2)

@@ -28,9 +28,11 @@ import { TextInputModal } from '../src/components/TextInputModal'
 import { ConnectionLog } from '../src/components/ConnectionLog'
 import {
   loadMobileOnboardingSteps,
-  mobileOnboardingDestination
+  mobileOnboardingDestination,
+  mobileOnboardingStepsForHosts
 } from '../src/onboarding/mobile-onboarding-plan'
 import { pairScanStyles as styles } from '../src/pair-scan-styles'
+import { NEXUS_BRIDGE_HOST_KIND } from '../src/transport/types'
 
 // Why: see pair-confirm.tsx — cap initial-pair "Connecting…" so a broken
 // route surfaces as a real error with the log visible instead of a
@@ -94,7 +96,7 @@ export default function PairScanScreen() {
       const offer = decodePairingUrl(data)
       if (!offer) {
         setStatus('error')
-        setErrorMessage('Not a valid Orca or Nexus QR code')
+        setErrorMessage('Este QR não é um código de pareamento válido')
         processingRef.current = false
         return
       }
@@ -120,7 +122,7 @@ export default function PairScanScreen() {
     const offer = parsePairingCode(input)
     if (!offer) {
       setStatus('error')
-      setErrorMessage('Not a valid pairing code — copy it from your computer and paste again')
+      setErrorMessage('Código de pareamento inválido. Copie de novo no computador e cole aqui.')
       processingRef.current = false
       return
     }
@@ -177,7 +179,10 @@ export default function PairScanScreen() {
         return
       }
       refreshHostClient(hostId)
-      const onboardingSteps = await loadMobileOnboardingSteps()
+      // F-1037: host Nexus não tem a UI de chat; o onboarding não oferece "Usar chat".
+      const onboardingSteps = mobileOnboardingStepsForHosts(await loadMobileOnboardingSteps(), [
+        NEXUS_BRIDGE_HOST_KIND
+      ])
       if (!mountedRef.current) {
         return
       }
@@ -248,8 +253,8 @@ export default function PairScanScreen() {
       setStatus('error')
       setErrorMessage(
         timedOut
-          ? `Couldn't connect within ${PAIRING_OVERALL_TIMEOUT_MS / 1000}s — see log below for where it stalled`
-          : `Pairing failed: ${err instanceof Error ? err.message : String(err)}`
+          ? `Não conectou em ${PAIRING_OVERALL_TIMEOUT_MS / 1000} s. Veja no registro abaixo onde parou.`
+          : `Pareamento falhou: ${err instanceof Error ? err.message : String(err)}`
       )
       processingRef.current = false
     }
@@ -294,12 +299,12 @@ export default function PairScanScreen() {
         </Pressable>
         <View style={styles.centered}>
           <Text style={styles.title}>
-            {canAskAgain ? 'Pair with desktop' : 'Camera Access Disabled'}
+            {canAskAgain ? 'Parear com o desktop' : 'Câmera bloqueada'}
           </Text>
           <Text style={styles.subtitle}>
             {canAskAgain
-              ? 'Scan the QR code from Orca or Nexus on your desktop, or paste the pairing code instead.'
-              : 'Enable camera access in Settings, or paste the pairing code instead.'}
+              ? 'Leia o QR do Nexus no computador ou cole o código de pareamento.'
+              : 'Libere a câmera nos ajustes do sistema ou cole o código de pareamento.'}
           </Text>
           <Pressable
             style={styles.primaryButton}
@@ -307,7 +312,7 @@ export default function PairScanScreen() {
           >
             {canAskAgain && <QrCode size={16} color={colors.bgBase} />}
             <Text style={styles.primaryButtonText}>
-              {canAskAgain ? 'Continue' : 'Open Settings'}
+              {canAskAgain ? 'Abrir câmera' : 'Abrir ajustes'}
             </Text>
           </Pressable>
           <Pressable
@@ -315,14 +320,16 @@ export default function PairScanScreen() {
             onPress={() => setPasteVisible(true)}
           >
             <ClipboardIcon size={16} color={colors.textSecondary} />
-            <Text style={styles.pasteButtonText}>Paste code instead</Text>
+            <Text style={styles.pasteButtonText}>Colar código</Text>
           </Pressable>
         </View>
         <TextInputModal
           visible={pasteVisible}
-          title="Paste pairing code"
-          message="Copy the code shown under the QR on your computer."
-          placeholder="orca://pair?code=…, https://<mac>.<tailnet>.ts.net/#code=… or the code"
+          title="Colar código de pareamento"
+          message="Copie o código que aparece abaixo do QR no computador."
+          placeholder="https://<mac>.<tailnet>.ts.net/#code=… ou o código"
+          submitLabel="Parear desktop"
+          cancelLabel="Cancelar"
           onSubmit={handlePasteSubmit}
           onCancel={() => setPasteVisible(false)}
         />
@@ -337,12 +344,12 @@ export default function PairScanScreen() {
       </Pressable>
 
       <View style={styles.steps}>
-        <Step number={1} text="Open Orca or Nexus on your computer" />
+        <Step number={1} text="Abra o Nexus no computador" />
         <Step
           number={2}
-          text="Orca: Settings → Mobile · Nexus: Configurações › Celular na rede local, com Publicar no tailnet (HTTPS)"
+          text="Em Configurações › Celular na rede local, ligue Publicar no tailnet (HTTPS)"
         />
-        <Step number={3} text="Scan the QR code" />
+        <Step number={3} text="Leia o QR" />
       </View>
 
       {status === 'scanning' && (
@@ -376,7 +383,7 @@ export default function PairScanScreen() {
             onPress={() => setPasteVisible(true)}
           >
             <ClipboardIcon size={16} color={colors.textSecondary} />
-            <Text style={styles.pasteButtonText}>Or paste pairing code</Text>
+            <Text style={styles.pasteButtonText}>Colar código de pareamento</Text>
           </Pressable>
         </>
       )}
@@ -384,9 +391,9 @@ export default function PairScanScreen() {
       {status === 'connecting' && (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={colors.textSecondary} />
-          <Text style={styles.connectingText}>Connecting…</Text>
+          <Text style={styles.connectingText}>Conectando…</Text>
           <View style={styles.logSlot}>
-            <ConnectionLog entries={logs} title="Pairing log" />
+            <ConnectionLog entries={logs} title="Registro do pareamento" />
           </View>
         </View>
       )}
@@ -396,12 +403,12 @@ export default function PairScanScreen() {
           <Text style={styles.errorText}>{errorMessage}</Text>
           {logs.length > 0 && (
             <View style={styles.logSlot}>
-              <ConnectionLog entries={logs} title="Pairing log" />
+              <ConnectionLog entries={logs} title="Registro do pareamento" />
             </View>
           )}
           <View style={styles.errorActions}>
             <Pressable style={styles.primaryButton} onPress={retry}>
-              <Text style={styles.primaryButtonText}>Try Again</Text>
+              <Text style={styles.primaryButtonText}>Tentar de novo</Text>
             </Pressable>
             <Pressable
               style={({ pressed }) => [
@@ -413,7 +420,7 @@ export default function PairScanScreen() {
                 setPasteVisible(true)
               }}
             >
-              <Text style={styles.secondaryButtonText}>Paste code instead</Text>
+              <Text style={styles.secondaryButtonText}>Colar código</Text>
             </Pressable>
           </View>
         </View>
@@ -421,9 +428,11 @@ export default function PairScanScreen() {
 
       <TextInputModal
         visible={pasteVisible}
-        title="Paste pairing code"
-        message="Copy the code shown under the QR on your computer."
-        placeholder="orca://pair?code=…, https://<mac>.<tailnet>.ts.net/#code=… or the code"
+        title="Colar código de pareamento"
+        message="Copie o código que aparece abaixo do QR no computador."
+        placeholder="https://<mac>.<tailnet>.ts.net/#code=… ou o código"
+        submitLabel="Parear desktop"
+        cancelLabel="Cancelar"
         onSubmit={handlePasteSubmit}
         onCancel={() => setPasteVisible(false)}
       />

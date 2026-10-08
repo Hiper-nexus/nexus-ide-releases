@@ -25,10 +25,10 @@ export type MobileChatPermission = {
 }
 
 const STRUCTURED_OPTION_LABELS: Record<ApprovalDecision, string> = {
-  accept: 'Allow',
-  acceptForSession: 'Allow for session',
-  decline: 'Deny',
-  cancel: 'Deny and stop'
+  accept: 'Permitir',
+  acceptForSession: 'Permitir nesta sessão',
+  decline: 'Negar',
+  cancel: 'Negar e parar'
 }
 
 const ESCAPE = String.fromCharCode(27)
@@ -47,7 +47,7 @@ export function parseApprovalFromStatus(
   if (!approval) {
     return null
   }
-  const title = `Allow ${approval.tool}?`
+  const title = `Permitir ${approval.tool}?`
   const detail = approval.summary
   const { structured } = approval
   if (!structured) {
@@ -56,8 +56,8 @@ export function parseApprovalFromStatus(
       title,
       detail,
       options: [
-        { label: 'Allow', send: '1' },
-        { label: 'Deny', send: ESCAPE }
+        { label: 'Permitir', send: '1' },
+        { label: 'Negar', send: ESCAPE }
       ]
     }
   }
@@ -71,7 +71,7 @@ export function parseApprovalFromStatus(
     structured: true,
     options: structured.options.map((option) => ({
       label: option.degradesTo
-        ? 'Allow (this request only)'
+        ? 'Permitir (só este pedido)'
         : STRUCTURED_OPTION_LABELS[option.optionId],
       send: encodeApprovalResponseToken({
         itemId: structured.requestId,
@@ -150,7 +150,7 @@ function buildNumberedPermission(
   detail: string | undefined
 ): MobileChatPermission {
   return {
-    title: 'Permission requested',
+    title: 'Permissão solicitada',
     detail,
     options: options.map((opt) => ({ label: shortLabel(opt.text), send: opt.num }))
   }
@@ -193,12 +193,12 @@ export function detectAgentPermission(input: PermissionInput): MobileChatPermiss
   // text actually offers a persistent option, to avoid sending a token the agent
   // doesn't understand.
   const options: MobileChatPermission['options'] = [
-    { label: 'Allow', send: 'y' },
-    { label: 'Deny', send: 'n' }
+    { label: 'Permitir', send: 'y' },
+    { label: 'Negar', send: 'n' }
   ]
   if (isAlwaysLabel(text)) {
-    options.splice(1, 0, { label: 'Allow always', send: 'a' })
+    options.splice(1, 0, { label: 'Permitir sempre', send: 'a' })
   }
 
-  return { title: 'Permission requested', detail, options }
+  return { title: 'Permissão solicitada', detail, options }
 }

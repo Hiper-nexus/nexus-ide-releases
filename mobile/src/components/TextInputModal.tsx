@@ -18,6 +18,7 @@ type Props = {
   defaultValue?: string
   placeholder?: string
   submitLabel?: string
+  cancelLabel?: string
   selectTextOnFocus?: boolean
   allowEmpty?: boolean
   keyboardType?: KeyboardTypeOptions
@@ -32,6 +33,7 @@ export function TextInputModal({
   defaultValue = '',
   placeholder,
   submitLabel = 'Save',
+  cancelLabel = 'Cancel',
   selectTextOnFocus = false,
   allowEmpty = false,
   keyboardType,
@@ -90,7 +92,7 @@ export function TextInputModal({
           style={({ pressed }) => [styles.cancelButton, pressed && styles.buttonPressed]}
           onPress={onCancel}
         >
-          <Text style={styles.cancelText}>Cancel</Text>
+          <Text style={styles.cancelText}>{cancelLabel}</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [
