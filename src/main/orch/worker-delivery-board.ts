@@ -12,6 +12,7 @@
  * avançam o fallback — 060/061 ficam leftover. Não inventa stories.
  */
 import type { ProjectExecutionScope } from '../../shared/types';
+import { trace } from '../observability/main-trace';
 import { getContextBySession } from './gate';
 import {
   getAgentSessionInfo,
@@ -258,7 +259,11 @@ export async function handleWorkerPaneDone(
   const agent = input.agent ?? deps.getAgent(sessionId);
   const role = agent?.role ?? ctx?.role;
   const missionId = agent?.missionId ?? ctx?.missionId;
-  const scope = agent?.scope ?? ctx?.scope;
+  // F-1006: missão, tasks e handoffs moram no banco do checkout de
+  // COORDENAÇÃO. `agent.scope` é a worktree de execução (writer isolado, aba
+  // com worktree): abrir os stores por ela batia na guarda de identidade e o
+  // quadro nunca via a entrega. O cwd segue vindo da execução (resolveCwd).
+  const scope = agent?.coordinationScope ?? ctx?.scope ?? agent?.scope;
   if (role !== 'worker' || !missionId || !scope) {
     return {
       advancedTaskId: null,
@@ -594,6 +599,27 @@ export async function recordWorkerDeliveryIfDelivered(input: {
   }
 }
 
+/**
+ * F-1006: o desfecho do quadro por worker de missão vai para o trace do Main.
+ * Antes, "stores indisponíveis" (colisão de escopo) só aparecia como aviso
+ * solto e o E2E de missão não tinha como afirmar que o quadro viu a entrega.
+ */
+function traceBoardOutcome(
+  sessionId: string,
+  source: WorkerDeliverySource,
+  result: WorkerDeliveryResult,
+): void {
+  if (result.reason === 'não é worker de missão' || result.reason === 'sem sessionId') return;
+  trace({
+    kind: 'worker-delivery-board',
+    sessionId,
+    origin: source,
+    reason: result.reason,
+    count: result.filesModified.length,
+    ...(result.advancedTaskId ? { taskId: result.advancedTaskId } : {}),
+  });
+}
+
 export function initWorkerDeliveryBoard(
   deps: WorkerDeliveryBoardDeps = productionDeps(),
 ): void {
@@ -607,10 +633,12 @@ export function initWorkerDeliveryBoard(
   untapStatus = tapAgentSemanticStatus((entry) => {
     if (entry.status !== 'idle' && entry.status !== 'completed') return;
     void ownDelivery(handleWorkerPaneDone({ sessionId: entry.sessionId, source: 'idle' }, deps))
+      .then((result) => traceBoardOutcome(entry.sessionId, 'idle', result))
       .catch((error) => console.warn('[worker-delivery] idle falhou:', error));
   });
   untapExit = tapSessionExit((sessionId, agent) => {
     void ownDelivery(handleWorkerPaneDone({ sessionId, agent, source: 'pty-exit' }, deps))
+      .then((result) => traceBoardOutcome(sessionId, 'pty-exit', result))
       .catch((error) => console.warn('[worker-delivery] pty-exit falhou:', error))
       .finally(() => baselines.delete(sessionId));
   });

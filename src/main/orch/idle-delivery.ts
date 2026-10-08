@@ -33,6 +33,7 @@ import {
 } from './handoff-delivery-policy';
 import { emitAppEvent } from '../connectors/app-events';
 import { emitMissionEvent } from './mission-event-emit';
+import { trace } from '../observability/main-trace';
 import {
   PASTE_INGEST_GRACE_MS,
   pasteIngestPlanForSession,
@@ -85,11 +86,20 @@ export type HandoffDeliveryRuntimeRecovery = (
   request: HandoffDeliveryRuntimeRecoveryRequest,
 ) => boolean | Promise<boolean>;
 
-interface PendingEnter {
-  readonly authority: DeliveryAuthority;
+interface PendingItem {
   readonly handoffId: string;
   readonly attemptId: string;
   readonly attemptNo: number;
+}
+
+interface PendingEnter extends PendingItem {
+  readonly authority: DeliveryAuthority;
+  /**
+   * F-1006: todos os handoffs colados na MESMA transação de editor (o
+   * primeiro é o próprio PendingEnter). Um CR submete todos; a prova de
+   * aceite desse CR aceita cada tentativa pelo seu próprio CAS.
+   */
+  readonly batch: readonly PendingItem[];
   settleTimer?: ReturnType<typeof setTimeout>;
   retryTimer?: ReturnType<typeof setTimeout>;
   acceptanceTimer?: ReturnType<typeof setTimeout>;
@@ -102,7 +112,8 @@ interface PendingEnter {
 
 interface PendingDeliveryStart {
   readonly authority: DeliveryAuthority;
-  readonly handoff: Handoff;
+  /** F-1006: a rajada que chega na janela de estabilidade entra na mesma colagem. */
+  readonly handoffs: Handoff[];
   readonly timer: ReturnType<typeof setTimeout>;
 }
 
@@ -145,6 +156,15 @@ export const DELIVERY_IDLE_STABILITY_MS = 150;
 export const HANDOFF_PROMPT_SETTLE_MS = 500;
 /** Second CR if the session is still injectable-idle after the first submit. */
 export const HANDOFF_ENTER_RETRY_MS = 400;
+/**
+ * F-1006: rajada de entregas ao MESMO Maestro vai numa colagem só (um CR,
+ * um turno). Uma por borda ociosa custava ~1,6 s por handoff no E2E e um
+ * turno inteiro de modelo por handoff na vida real: a 6ª entrega de uma
+ * rajada chegava 9 s depois. O teto de caracteres mantém a colagem num
+ * tamanho que os TUIs ingerem sem picotar.
+ */
+export const MAX_DELIVERY_BATCH = 8;
+export const MAX_DELIVERY_BATCH_CHARS = 16_000;
 const MAX_DELIVERY_ATTEMPTS = MAX_HANDOFF_DELIVERY_ATTEMPTS;
 const RUNTIME_RECOVERY_RETRY_BASE_MS = 5_000;
 const RUNTIME_RECOVERY_RETRY_MAX_MS = 60_000;
@@ -719,12 +739,12 @@ function enqueueHandoff(authority: DeliveryAuthority, handoff: Handoff): void {
     // duplicada colava por cima da própria espera quando a fila andasse.
     retryBackoffPending.has(`${key}::${handoff.id}`) ||
     [...pendingEnters].some((pending) =>
-      pending.handoffId === handoff.id &&
+      pending.batch.some((item) => item.handoffId === handoff.id) &&
       authorityKey(pending.authority) === key,
     ) ||
     [...pendingDeliveryStarts].some(
       (pending) =>
-        pending.handoff.id === handoff.id &&
+        pending.handoffs.some((item) => item.id === handoff.id) &&
         authorityKey(pending.authority) === key,
     )
   ) return;
@@ -742,15 +762,45 @@ function routeOrEnqueue(
   authority: DeliveryAuthority,
   handoff: Handoff,
 ): void {
+  if (joinPendingDeliveryStart(authority, handoff)) return;
   if (
     canPasteHandoff(authority.sessionId) &&
     !hasPendingDelivery(authority, handoff.id) &&
     sessionPasteGateOpen(authority.sessionId)
   ) {
-    scheduleStableDelivery(authority, handoff);
+    scheduleStableDelivery(authority, [handoff]);
     return;
   }
   enqueueHandoff(authority, handoff);
+}
+
+function batchChars(handoffs: readonly Handoff[]): number {
+  return handoffs.reduce((total, item) => total + formatDelivery(item).length + 1, 0);
+}
+
+/**
+ * F-1006: handoff que chega enquanto a colagem deste Maestro ainda espera a
+ * janela de estabilidade entra NELA (mesmo CR), em vez de esperar a próxima
+ * borda ociosa. Handoff em espera represada (F-112/F-925) não pega carona:
+ * o re-drive dele é o único caminho.
+ */
+function joinPendingDeliveryStart(
+  authority: DeliveryAuthority,
+  handoff: Handoff,
+): boolean {
+  const key = authorityKey(authority);
+  if (retryBackoffPending.has(`${key}::${handoff.id}`)) return false;
+  for (const pending of pendingDeliveryStarts) {
+    if (authorityKey(pending.authority) !== key) continue;
+    if (pending.handoffs.some((item) => item.id === handoff.id)) return true;
+    if (
+      pending.handoffs.length >= MAX_DELIVERY_BATCH ||
+      batchChars([...pending.handoffs, handoff]) > MAX_DELIVERY_BATCH_CHARS
+    ) return false;
+    pending.handoffs.push(handoff);
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -776,7 +826,7 @@ function requeuePendingDeliveryStarts(sessionId: string): void {
     if (pending.authority.sessionId !== sessionId) continue;
     clearPendingDeliveryStart(pending);
     if (isCurrentAuthority(pending.authority)) {
-      enqueueHandoff(pending.authority, pending.handoff);
+      for (const handoff of pending.handoffs) enqueueHandoff(pending.authority, handoff);
     }
   }
 }
@@ -791,15 +841,15 @@ function acceptPendingEnters(sessionId: string): void {
       clearPendingEnter(pending);
       continue;
     }
-    const accepted = getProjectDomainStores(
-      pending.authority.scope,
-    ).handoffs.acceptDeliveryAttempt({
-      attemptId: pending.attemptId,
-      handoffId: pending.handoffId,
-    });
-    if (accepted) clearPendingEnter(pending);
-    else handleSubmitNotAccepted(pending, 'acceptance_cas_lost');
-    // One busy edge is authority for one head-of-line delivery only.
+    // F-1006: a borda prova o CR — que submeteu a colagem inteira. Cada
+    // tentativa é aceita pelo próprio CAS; a que perdeu (o Maestro já deu
+    // ACK, ou outro caminho entregou) é resolvida pelo ledger, nunca lança
+    // de dentro do tap do PTY.
+    const stores = getProjectDomainStores(pending.authority.scope);
+    const rejected = pending.batch.filter((item) => !tryAcceptAttempt(stores, item));
+    if (rejected.length === 0) clearPendingEnter(pending);
+    else handleSubmitNotAccepted(pending, 'acceptance_cas_lost', rejected);
+    // One busy edge is authority for one head-of-line submit only.
     break;
   }
 }
@@ -1014,79 +1064,80 @@ function blockDeliveryFailure(
 
 const blockedDeliveryWarned = new Set<string>();
 
+function tryAcceptAttempt(
+  stores: ProjectDomainStoreSuite,
+  item: PendingItem,
+): boolean {
+  try {
+    return stores.handoffs.acceptDeliveryAttempt({
+      attemptId: item.attemptId,
+      handoffId: item.handoffId,
+    });
+  } catch (error) {
+    // CAS perdido (o handoff saiu de `queued` por outro caminho): quem decide
+    // é o ledger, em settleUnacceptedItem. Lançar daqui matava o tap do PTY e
+    // prendia a entrega em memória até o prazo de aceite.
+    console.warn(
+      '[idle-delivery] aceite da tentativa perdeu o CAS; o ledger decide ' +
+        `(handoff=${item.handoffId}):`,
+      error instanceof Error ? error.message : error,
+    );
+    return false;
+  }
+}
+
 function handleSubmitNotAccepted(
   pending: PendingEnter,
   failureCode = 'accept_timeout',
+  items: readonly PendingItem[] = pending.batch,
 ): void {
   const stores = getProjectDomainStores(pending.authority.scope);
-  // O busy edge do TUI não é a ÚNICA prova de aceite. Se o handoff já saiu de
-  // `queued` — list-ack de `nexus_handoff_list`, `nexus_handoff_ack` ou
-  // consumo — o Maestro comprovadamente recebeu, e o único registro possível
-  // é sucesso. Campo 20/08: a única tentativa de entrega da história do banco
-  // morreu de `accept_timeout` porque o heurístico de busy não pintou dentro
-  // dos 12 s, apesar do texto ter sido colado e submetido.
+  // F-113: Prova de aceite alternativa — se o observador de turnos registrou
+  // novo turn-start após a submissão, OU se o status semântico passou a 'working'
+  // após o submitStartedAt, o Maestro comprovadamente ingeriu o prompt.
+  let hasTurnProgress = false;
   if (failureCode === 'accept_timeout') {
-    const current = stores.handoffs.get(pending.handoffId);
-    if (current && current.deliveryState !== 'queued') {
-      let accepted = false;
-      try {
-        accepted = stores.handoffs.acceptDeliveryAttempt({
-          attemptId: pending.attemptId,
-          handoffId: pending.handoffId,
-        });
-      } catch {
-        accepted = false;
-      }
-      if (!accepted) {
-        stores.handoffs.failDeliveryAttempt({
-          attemptId: pending.attemptId,
-          handoffId: pending.handoffId,
-          failureCode: 'accept_superseded',
-        });
-      }
-      // Entregue de qualquer forma: nunca redigitar o que ele já leu.
-      clearPendingEnter(pending);
-      return;
-    }
-
-    // F-113: Prova de aceite alternativa — se o observador de turnos registrou
-    // novo turn-start após a submissão, OU se o status semântico passou a 'working'
-    // após o submitStartedAt, o Maestro comprovadamente ingeriu o prompt.
     const currentSeq = getAgentTurnStartSequence(pending.authority.sessionId);
     const semantic = getAgentSemanticStatusBySession(pending.authority.sessionId);
-    const hasTurnProgress =
+    hasTurnProgress =
       (pending.submitTurnSequence !== undefined && currentSeq > pending.submitTurnSequence) ||
       (semantic?.status === 'working' &&
         pending.submitStartedAt !== undefined &&
         semantic.updatedAt >= pending.submitStartedAt);
-
-    if (hasTurnProgress) {
-      let accepted = false;
-      try {
-        accepted = stores.handoffs.acceptDeliveryAttempt({
-          attemptId: pending.attemptId,
-          handoffId: pending.handoffId,
-        });
-      } catch {
-        accepted = false;
-      }
-      if (accepted) {
-        clearPendingEnter(pending);
-        return;
-      }
-    }
   }
-  stores.handoffs.failDeliveryAttempt({
-    attemptId: pending.attemptId,
-    handoffId: pending.handoffId,
-    failureCode,
-  });
+  const retry: PendingItem[] = [];
+  for (const item of items) {
+    // O busy edge do TUI não é a ÚNICA prova de aceite. Se o handoff já saiu
+    // de `queued` — list-ack de `nexus_handoff_list`, `nexus_handoff_ack` ou
+    // consumo — o Maestro comprovadamente recebeu, e o único registro possível
+    // é sucesso. Campo 20/08: a única tentativa de entrega da história do
+    // banco morreu de `accept_timeout` porque o heurístico de busy não pintou
+    // dentro dos 12 s, apesar do texto ter sido colado e submetido. F-1006:
+    // vale para qualquer causa (CAS perdido incluído), não só o prazo.
+    const current = stores.handoffs.get(item.handoffId);
+    if (current && current.deliveryState !== 'queued') {
+      if (!tryAcceptAttempt(stores, item)) {
+        stores.handoffs.failDeliveryAttempt({
+          attemptId: item.attemptId,
+          handoffId: item.handoffId,
+          failureCode: 'accept_superseded',
+        });
+      }
+      // Entregue de qualquer forma: nunca redigitar o que ele já leu.
+      continue;
+    }
+    if (hasTurnProgress && tryAcceptAttempt(stores, item)) continue;
+    stores.handoffs.failDeliveryAttempt({
+      attemptId: item.attemptId,
+      handoffId: item.handoffId,
+      failureCode,
+    });
+    retry.push(item);
+  }
   clearPendingEnter(pending);
-  retryOrBlockDelivery(
-    pending.authority,
-    pending.handoffId,
-    pending.attemptNo,
-  );
+  for (const item of retry) {
+    retryOrBlockDelivery(pending.authority, item.handoffId, item.attemptNo);
+  }
 }
 
 function retryOrBlockDelivery(
@@ -1180,7 +1231,7 @@ function submitDelivery(
   scheduleDeliveryRetry();
 }
 
-function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
+function deliverNow(authority: DeliveryAuthority, handoffs: readonly Handoff[]): boolean {
   if (
     !isCurrentAuthority(authority) ||
     !canPasteHandoff(authority.sessionId)
@@ -1190,31 +1241,54 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
   // depois do agendamento. Fechado, o handoff volta para a fila e o wake
   // ocioso o reoferece quando a janela abrir.
   if (!sessionPasteGateOpen(authority.sessionId)) {
-    enqueueHandoff(authority, handoff);
+    for (const handoff of handoffs) enqueueHandoff(authority, handoff);
     return true;
   }
   const stores = getProjectDomainStores(authority.scope);
-  const current = stores.handoffs.get(handoff.id);
-  if (!current) return false;
-  // List-ack (0.64): o Maestro pode ter LISTADO este handoff enquanto a
-  // entrega esperava na fila — digitar de novo o que ele já leu era o
-  // "mesmo handoff antigo sendo redelivered" do gate. Só 'queued' digita.
-  if (current.deliveryState !== 'queued') return true;
-  let attempt: HandoffDeliveryAttempt;
-  try {
-    attempt = stores.handoffs.reserveDeliveryAttempt({
-      handoffId: current.id,
-      missionId: authority.missionId,
-      orchestratorSessionId: authority.sessionId,
-      maxAttempts: MAX_DELIVERY_ATTEMPTS,
-    });
-  } catch (error) {
-    if (error instanceof Error && /budget exhausted/i.test(error.message)) {
-      blockDeliveryFailure(authority, current.id, MAX_DELIVERY_ATTEMPTS);
+  // F-1006: cada handoff da colagem tem a PRÓPRIA tentativa durável
+  // (reservada, colada e aceita pelo seu CAS) — juntar não muda o
+  // exatamente-uma-vez de nenhum deles.
+  const reserved: Array<{ readonly handoff: Handoff; readonly attempt: HandoffDeliveryAttempt }> = [];
+  for (const handoff of handoffs) {
+    const current = stores.handoffs.get(handoff.id);
+    if (!current) continue;
+    // List-ack (0.64): o Maestro pode ter LISTADO este handoff enquanto a
+    // entrega esperava na fila — digitar de novo o que ele já leu era o
+    // "mesmo handoff antigo sendo redelivered" do gate. Só 'queued' digita.
+    if (current.deliveryState !== 'queued') continue;
+    try {
+      reserved.push({
+        handoff: current,
+        attempt: stores.handoffs.reserveDeliveryAttempt({
+          handoffId: current.id,
+          missionId: authority.missionId,
+          orchestratorSessionId: authority.sessionId,
+          maxAttempts: MAX_DELIVERY_ATTEMPTS,
+        }),
+      });
+    } catch (error) {
+      if (error instanceof Error && /budget exhausted/i.test(error.message)) {
+        blockDeliveryFailure(authority, current.id, MAX_DELIVERY_ATTEMPTS);
+      }
     }
-    return false;
   }
-  const payload = formatDelivery(current);
+  if (reserved.length === 0) return false;
+  const failReserved = (failureCode: string) => {
+    for (const { handoff, attempt } of reserved) {
+      stores.handoffs.failDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: handoff.id,
+        failureCode,
+      });
+    }
+    for (const { handoff, attempt } of reserved) {
+      retryOrBlockDelivery(authority, handoff.id, attempt.attemptNo);
+    }
+  };
+  // Uma linha, segmentos começando pelo marcador de entrega: os TUIs
+  // recebem um único texto sem quebra (nenhum LF vira Enter fora do
+  // bracketed paste) e o Maestro lê cada handoff_id.
+  const payload = reserved.map(({ handoff }) => formatDelivery(handoff)).join(' ');
   // F-735: o Codex no Windows leva segundos para ingerir a colagem; o CR só
   // sai depois do marcador `[Pasted Content N chars]`. Armado antes da escrita.
   const ingestPlan = pasteIngestPlanForSession(authority.sessionId, payload);
@@ -1231,39 +1305,35 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
   );
   if (!ok) {
     ingest?.cancel();
-    stores.handoffs.failDeliveryAttempt({
-      attemptId: attempt.id,
-      handoffId: current.id,
-      failureCode: 'paste_write_failed',
-    });
-    retryOrBlockDelivery(authority, current.id, attempt.attemptNo);
+    failReserved('paste_write_failed');
     return true;
   }
   const pastedAt = Date.now();
   lastSessionPasteAt.set(authority.sessionId, pastedAt);
   try {
-    stores.handoffs.markDeliveryAttemptPasted({
-      attemptId: attempt.id,
-      handoffId: current.id,
-      // A janela de aceite conta a partir do CR, que espera a ingestão.
-      acceptDeadlineAt:
-        pastedAt + (ingestPlan?.capMs ?? 0) + SUBMIT_ACCEPTANCE_WINDOW_MS,
-    });
+    for (const { handoff, attempt } of reserved) {
+      stores.handoffs.markDeliveryAttemptPasted({
+        attemptId: attempt.id,
+        handoffId: handoff.id,
+        // A janela de aceite conta a partir do CR, que espera a ingestão.
+        acceptDeadlineAt:
+          pastedAt + (ingestPlan?.capMs ?? 0) + SUBMIT_ACCEPTANCE_WINDOW_MS,
+      });
+    }
   } catch {
     ingest?.cancel();
-    stores.handoffs.failDeliveryAttempt({
-      attemptId: attempt.id,
-      handoffId: current.id,
-      failureCode: 'mark_pasted_failed',
-    });
-    retryOrBlockDelivery(authority, current.id, attempt.attemptNo);
+    failReserved('mark_pasted_failed');
     return true;
   }
-  const pending: PendingEnter = {
-    authority,
-    handoffId: current.id,
+  const batch = reserved.map(({ handoff, attempt }) => Object.freeze({
+    handoffId: handoff.id,
     attemptId: attempt.id,
     attemptNo: attempt.attemptNo,
+  }));
+  const pending: PendingEnter = {
+    authority,
+    ...batch[0]!,
+    batch,
     submitStarted: false,
   };
   pendingEnters.add(pending);
@@ -1299,7 +1369,7 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
 
 function scheduleStableDelivery(
   authority: DeliveryAuthority,
-  handoff: Handoff,
+  handoffs: readonly Handoff[],
 ): boolean {
   if (
     !isCurrentAuthority(authority) ||
@@ -1309,7 +1379,7 @@ function scheduleStableDelivery(
   // sessão a colagem só entra depois da janela base desde a última. A fila
   // em memória segura o handoff e o wake ocioso o reoferece.
   if (!sessionPasteGateOpen(authority.sessionId)) {
-    enqueueHandoff(authority, handoff);
+    for (const handoff of handoffs) enqueueHandoff(authority, handoff);
     return true;
   }
   let pending: PendingDeliveryStart;
@@ -1317,12 +1387,12 @@ function scheduleStableDelivery(
     clearPendingDeliveryStart(pending);
     if (!isCurrentAuthority(authority)) return;
     if (!canPasteHandoff(authority.sessionId)) {
-      enqueueHandoff(authority, handoff);
+      for (const handoff of pending.handoffs) enqueueHandoff(authority, handoff);
       return;
     }
-    deliverNow(authority, handoff);
+    deliverNow(authority, pending.handoffs);
   }, DELIVERY_IDLE_STABILITY_MS);
-  pending = { authority, handoff, timer };
+  pending = { authority, handoffs: [...handoffs], timer };
   pendingDeliveryStarts.add(pending);
   return true;
 }
@@ -1382,15 +1452,24 @@ function flushQueue(sessionId: string): void {
   // handoff — a fila anda para o primeiro que não está esperando (B entra
   // enquanto A aguarda a escada). A colagem EM VOO de outro handoff da
   // mesma autoridade ainda segura tudo: o composer do PTY é um só.
-  const nextIndex = queue.findIndex(
-    (item) => !hasPendingDelivery(item.authority, item.handoff.id),
-  );
-  if (nextIndex < 0) return;
-  // One handoff per idle transition: after delivery the orchestrator goes
-  // busy processing it; remaining handoffs flush on subsequent idles.
-  const next = queue.splice(nextIndex, 1)[0]!;
+  // F-1006: uma COLAGEM por borda ociosa — com todos os handoffs prontos
+  // da fila (até o teto), não um por borda. O Maestro processa a rajada num
+  // turno; a entrega seguinte só sai na próxima borda, como antes.
+  const picked: QueuedHandoff[] = [];
+  for (let index = 0; index < queue.length && picked.length < MAX_DELIVERY_BATCH;) {
+    const item = queue[index]!;
+    if (
+      hasPendingDelivery(item.authority, item.handoff.id) ||
+      (picked.length > 0 && batchChars([...picked.map((entry) => entry.handoff), item.handoff]) > MAX_DELIVERY_BATCH_CHARS)
+    ) {
+      index++;
+      continue;
+    }
+    picked.push(queue.splice(index, 1)[0]!);
+  }
+  if (picked.length === 0) return;
   if (queue.length === 0) queues.delete(key);
-  if (!scheduleStableDelivery(next.authority, next.handoff)) {
+  if (!scheduleStableDelivery(picked[0]!.authority, picked.map((entry) => entry.handoff))) {
     // Session died — drop the rest of its queue.
     queues.delete(key);
   }
@@ -1460,10 +1539,10 @@ export function initIdleDelivery(): void {
     for (const pending of pendingDeliveryStarts) {
       if (pending.authority.sessionId !== sessionId) continue;
       const key = runtimeRecoveryKey(pending.authority);
-      if (!recoveryTargets.has(key)) {
+      if (!recoveryTargets.has(key) && pending.handoffs[0]) {
         recoveryTargets.set(key, {
           ...pending.authority,
-          handoffId: pending.handoff.id,
+          handoffId: pending.handoffs[0].id,
         });
       }
     }
@@ -1472,11 +1551,13 @@ export function initIdleDelivery(): void {
     }
     for (const pending of [...pendingEnters]) {
       if (pending.authority.sessionId !== sessionId) continue;
-      getProjectDomainStores(pending.authority.scope).handoffs.failDeliveryAttempt({
-        attemptId: pending.attemptId,
-        handoffId: pending.handoffId,
-        failureCode: 'orchestrator_session_exited',
-      });
+      for (const item of pending.batch) {
+        getProjectDomainStores(pending.authority.scope).handoffs.failDeliveryAttempt({
+          attemptId: item.attemptId,
+          handoffId: item.handoffId,
+          failureCode: 'orchestrator_session_exited',
+        });
+      }
       clearPendingEnter(pending);
       const recoveryKey = runtimeRecoveryKey(pending.authority);
       if (!recoveryTargets.has(recoveryKey)) {
@@ -1514,11 +1595,13 @@ export function initIdleDelivery(): void {
         ) {
           continue;
         }
-        getProjectDomainStores(pending.authority.scope).handoffs.failDeliveryAttempt({
-          attemptId: pending.attemptId,
-          handoffId: pending.handoffId,
-          failureCode: 'renderer_scope_changed',
-        });
+        for (const item of pending.batch) {
+          getProjectDomainStores(pending.authority.scope).handoffs.failDeliveryAttempt({
+            attemptId: item.attemptId,
+            handoffId: item.handoffId,
+            failureCode: 'renderer_scope_changed',
+          });
+        }
         clearPendingEnter(pending);
       }
       for (const pending of [...pendingDeliveryStarts]) {
@@ -1704,13 +1787,17 @@ function drainDurableMailbox(sessionId: string): void {
 function scheduleFastLaneDeliveryCheck(sessionId: string): void {
   const pane = getPaneRuntimeAuthorityBySession(sessionId);
   const missionId = pane?.missionId;
-  const deliveryScope = pane?.executionScope ?? pane?.scope;
+  // F-1006: a conclusão da missão lê os stores do escopo de COORDENAÇÃO e
+  // deriva a execução da própria missão (missionExecutionScope). Passar a
+  // worktree do writer aqui batia na guarda de identidade do registro.
+  const deliveryScope = pane?.scope;
   if (!missionId || !deliveryScope || pane.role === 'orchestrator') return;
-  void maybeCompleteFastLaneOnDelivery(deliveryScope, missionId).catch((error) => {
-    console.warn(
-      '[civilian-delivery] reconcile após pane idle/exit falhou:',
-      error instanceof Error ? error.message : error,
-    );
+  void maybeCompleteFastLaneOnDelivery(deliveryScope, missionId).then((result) => {
+    trace({ kind: 'civilian-delivery-check', sessionId, missionId, reason: result.reason ?? result.action });
+  }, (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    trace({ kind: 'civilian-delivery-check', sessionId, missionId, reason: 'error', error: message });
+    console.warn('[civilian-delivery] reconcile após pane idle/exit falhou:', message);
   });
 }
 

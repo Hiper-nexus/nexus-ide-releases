@@ -24,6 +24,7 @@ import type { Squad } from '../../shared/orch-types';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { createScopedMissionStore } from './mission-store';
+import { ProjectDomainStoreRegistry } from './project-domain-store-registry';
 import {
   boardProgressFromSealedTasks,
   sealFastLaneListedStoryPlan,
@@ -324,6 +325,53 @@ describe('handleWorkerPaneDone → board selado', () => {
       completed: 0,
       total: 20,
     });
+  });
+});
+
+describe('F-1006: writer em worktree isolada e o quadro da missão', () => {
+  it('abre os stores pelo escopo de COORDENAÇÃO (o quadro avança) sem afrouxar a guarda de identidade', async () => {
+    const { mission, tasks, scope } = sealBoard();
+    // O registro real (mesma guarda de produção), no mesmo banco do quadro.
+    const registry = new ProjectDomainStoreRegistry(managers[managers.length - 1]!);
+    registry.forScope(scope);
+    const worktree = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-delivery-wt-')));
+    try {
+      execSync('git init -b writer && git -c user.email=t@nexus.dev -c user.name=T commit -q --allow-empty -m base', {
+        cwd: worktree, stdio: 'pipe', shell: '/bin/sh',
+      });
+      const executionScope = testProjectScope({ rootRealPath: worktree });
+      // A guarda continua de pé: a worktree NÃO é outro dono do mesmo banco.
+      expect(() => registry.forScope(executionScope)).toThrow(/identity collision/);
+      const agent = {
+        ...workerAgent(mission.id),
+        cwd: worktree,
+        scope: executionScope,
+        coordinationScope: scope,
+      };
+      const deps: WorkerDeliveryBoardDeps = {
+        getAgent: () => null,
+        getCwd: () => worktree,
+        getStores: (requested) => registry.forScope(requested),
+        snapshotBaseline: (cwd) => snapshotWorkerDeliveryBaseline(cwd),
+        collectFilesModified: (cwd, baseline) => collectFilesModifiedSince(cwd, baseline),
+      };
+      await noteWorkerDeliveryBaseline('pty-writer-1', worktree, deps);
+      fs.mkdirSync(path.join(worktree, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(worktree, 'src', 'waitlist.ts'), 'export const ok = true;\n');
+
+      const result = await handleWorkerPaneDone(
+        { sessionId: 'pty-writer-1', agent, source: 'pty-exit', summary: 'Writer 1 entregou.' },
+        deps,
+      );
+
+      expect(result.reason).not.toBe('stores indisponíveis');
+      expect(result.filesModified).toEqual(['src/waitlist.ts']);
+      expect(result.advancedTaskId).toBeTruthy();
+      expect(boardProgressFromSealedTasks(tasks.list(mission.id))).toEqual({ completed: 1, total: 20 });
+    } finally {
+      registry.dispose();
+      fs.rmSync(worktree, { recursive: true, force: true });
+    }
   });
 });
 

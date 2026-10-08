@@ -268,7 +268,15 @@ export interface OwnedAgentSessionInfo {
   accountId?: string;
   effort?: string;
   cwd: string;
+  /** Escopo de EXECUÇÃO: a worktree onde o processo roda. */
   scope: BoundSpawnAuthority["scope"];
+  /**
+   * F-1006: escopo de COORDENAÇÃO (checkout que guarda banco, missão, quadro
+   * e handoffs), presente só quando difere do de execução — writer isolado,
+   * aba com worktree. Abrir os stores do projeto por `scope` nesse caso bate
+   * na guarda de identidade (mesmo projectId/checkoutId, outra raiz).
+   */
+  coordinationScope?: BoundSpawnAuthority["scope"];
   source: BoundSpawnAuthority["source"];
   role: "orchestrator" | "worker" | "user";
   missionId?: string;
@@ -3083,6 +3091,10 @@ export function spawnAgentSession(
       effort: req.effort,
       cwd,
       scope: Object.freeze({ ...authority.scope }),
+      ...(authority.coordinationScope &&
+      !sameCoordinationIdentity(authority.coordinationScope, authority.scope)
+        ? { coordinationScope: Object.freeze({ ...authority.coordinationScope }) }
+        : {}),
       source: authority.source,
       role: authority.context?.role ?? "user",
       missionId: authority.context?.missionId,
@@ -3411,10 +3423,30 @@ function ownedSession(wc: WebContents, sessionId: string): Session | null {
   return session;
 }
 
+/** Mesmos campos de identidade que a guarda do registro de stores compara. */
+function sameCoordinationIdentity(
+  left: BoundSpawnAuthority["scope"],
+  right: BoundSpawnAuthority["scope"],
+): boolean {
+  return (
+    left.version === right.version &&
+    left.installationId === right.installationId &&
+    left.projectId === right.projectId &&
+    left.checkoutId === right.checkoutId &&
+    left.rootRealPath === right.rootRealPath &&
+    left.workspaceRootDevice === right.workspaceRootDevice &&
+    left.workspaceRootInode === right.workspaceRootInode &&
+    left.identitySource === right.identitySource
+  );
+}
+
 function cloneAgentInfo(info: OwnedAgentSessionInfo): OwnedAgentSessionInfo {
   return {
     ...info,
     scope: Object.freeze({ ...info.scope }),
+    ...(info.coordinationScope
+      ? { coordinationScope: Object.freeze({ ...info.coordinationScope }) }
+      : {}),
     allowedTools: info.allowedTools === null ? null : [...info.allowedTools],
     allowedSkills: info.allowedSkills === null ? null : [...info.allowedSkills],
     authoritySeal: info.authoritySeal

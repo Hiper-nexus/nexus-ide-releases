@@ -39,6 +39,17 @@ const NESTED_WRITER = 'w6';
 const ALL_WRITERS = [...WRITERS, NESTED_WRITER] as const;
 /** Missão inteira (com folga para máquina carregada). Regressão estoura aqui, não no vitest. */
 const MISSION_DEADLINE_MS = Number(process.env.NEXUS_MISSION_E2E_DEADLINE_MS ?? 300_000);
+/**
+ * F-1006: teto da latência handoff → chegada ao Maestro (inclui o ACK dele),
+ * por entrega, com a rajada de 6. Medido com a máquina normal: 0,6–0,8 s, e
+ * 2,1 s para o retardatário que chega no meio do turno anterior do Maestro;
+ * até 4,1 s com os 10 núcleos saturados por laços de CPU (o ciclo ocioso do
+ * Maestro entre duas colagens estica sob carga). As regressões que ele pega:
+ * uma entrega por borda ociosa (8,3–9 s para a última da rajada, máquina
+ * normal) e a entrega presa no CAS perdido da tentativa (~13 s). 6 s separa
+ * os dois mundos sem vermelho falso no gate com a máquina carregada.
+ */
+const DELIVERY_LATENCY_CEILING_MS = Number(process.env.NEXUS_MISSION_E2E_DELIVERY_CEILING_MS ?? 6_000);
 
 const state = vi.hoisted(() => ({
   adapterId: 'nexus-e2e-agent',
@@ -141,6 +152,10 @@ interface BootReceipt { id: string; role: string; pid: number; cwd: string; brie
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
+/** A worktree isolada pode já ter sido recolhida depois do done: o caminho do recibo vale. */
+function realOrSelf(file: string): string {
+  try { return fs.realpathSync(file); } catch { return file; }
+}
 function readJson<T>(file: string): T | null {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')) as T; } catch { return null; }
 }
@@ -191,8 +206,20 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
   /** Trace do Main: encerramentos pedidos (origem), saídas de PTY e recusas de comando pesado (causa). */
   const traceEvents = async () => {
     await traceFlush().catch(() => undefined);
-    return readNdjson<{ kind?: string; sessionId?: string; origin?: string; reason?: string; elapsedMs?: number; at?: number; t?: number }>(
+    return readNdjson<{ kind?: string; sessionId?: string; origin?: string; reason?: string; error?: string; elapsedMs?: number; at?: number; t?: number }>(
       path.join(state.userData, 'logs', 'main.trace.ndjson'));
+  };
+  /**
+   * F-1006: o console do Main (este processo) vira evidência. Colisão de
+   * identidade de escopo e CAS perdido da entrega só apareciam aqui — o E2E
+   * passava verde com eles.
+   */
+  const mainConsole: string[] = [];
+  const restoreConsole: Array<() => void> = [];
+  const consoleText = (value: unknown): string => {
+    if (value instanceof Error) return value.message;
+    if (typeof value === 'string') return value;
+    try { return JSON.stringify(value); } catch { return String(value); }
   };
 
   beforeAll(async () => {
@@ -264,6 +291,14 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
     host.on('exit', () => bridge.handleHostDown());
 
     // ---- boot do Main (o mesmo subconjunto e a mesma ordem de main.ts)
+    for (const level of ['warn', 'error'] as const) {
+      const original = console[level];
+      console[level] = (...args: unknown[]) => {
+        mainConsole.push(`${level}: ${args.map(consoleText).join(' ')}`);
+        original.apply(console, args);
+      };
+      restoreConsole.push(() => { console[level] = original; });
+    }
     // O trace do Main (quem pediu para encerrar cada pane, e por quê) vira evidência.
     const { setTraceDirectory, flushMainTrace } = await import('../observability/main-trace');
     setTraceDirectory(state.userData);
@@ -324,6 +359,7 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
     }
     if (host && host.connected) host.disconnect();
     host?.kill('SIGTERM');
+    for (const restore of restoreConsole) restore();
     if (process.env.NEXUS_MISSION_E2E_KEEP === '1' || !root) return;
     fs.rmSync(root, { recursive: true, force: true });
   }, 180_000);
@@ -443,7 +479,7 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
     const boots = Object.fromEntries(['orchestrator', ...ALL_WRITERS].map((id) => [id, readJson<BootReceipt>(path.join(e2eDir, 'agents', `${id}.boot.json`))]));
     const results = Object.fromEntries(ALL_WRITERS.map((id) => [id, readJson<WorkerResult>(path.join(e2eDir, 'agents', `${id}.result.json`))]));
     const orchestratorResult = readJson<{ done: McpCall; merges: StepReceipt[] }>(path.join(e2eDir, 'agents', 'orchestrator.result.json'));
-    const deliveries = readNdjson<{ handoff: string; from: string; worker: number }>(path.join(e2eDir, 'agents', 'orchestrator.deliveries.ndjson'));
+    const deliveries = readNdjson<{ handoff: string; from: string; worker: number; at: number }>(path.join(e2eDir, 'agents', 'orchestrator.deliveries.ndjson'));
     const heavyLog = (() => { try { return fs.readFileSync(path.join(e2eDir, 'heavy.log'), 'utf8'); } catch { return ''; } })();
     const intervals = new Map<string, { start?: number; end?: number }>();
     for (const line of heavyLog.split('\n').filter(Boolean)) {
@@ -466,6 +502,18 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
     const successByWorker = new Map(ALL_WRITERS.map((id) => [id, stores.handoffs.list({ missionId: mission.id, includeDelivered: true })
       .find((h) => h.status === 'success' && h.summary.includes(`Writer ${id} entregou`))]));
     const handoffAtBySession = new Map([...successByWorker.values()].filter(Boolean).map((h) => [h!.sessionId, h!.createdAt]));
+    // F-1006: o quadro de entregas roda no idle/saída de cada writer (o
+    // autoCloseOnHandoff fecha o pane logo depois do sucesso). Dá a ele um
+    // prazo curto para registrar a última entrega antes de julgar.
+    const writerSessionIds = [...successByWorker.values()].map((h) => h?.sessionId).filter((id): id is string => Boolean(id));
+    const boardSawDelivery = (all: Awaited<ReturnType<typeof traceEvents>>) => new Set(all
+      .filter((event) => event.kind === 'worker-delivery-board' && event.reason === 'sessão já tem recibo SUCCESS')
+      .map((event) => event.sessionId));
+    for (let wait = 0; wait < 50; wait++) {
+      const seen = boardSawDelivery(await traceEvents());
+      if (writerSessionIds.every((id) => seen.has(id))) break;
+      await sleep(200);
+    }
     const events = await traceEvents();
     const heavyDenied = events.filter((event) => event.kind === 'heavy-command-denied')
       .map((event) => ({ sessionId: event.sessionId, reason: event.reason, elapsedMs: event.elapsedMs }));
@@ -477,8 +525,29 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
       !(event.origin === 'pane-close' && handoffAtBySession.has(event.sessionId) && event.at >= handoffAtBySession.get(event.sessionId)!));
     const diedAlone = lifecycle.filter((event) => event.kind === 'agent-pty-exit' && event.sessionId !== orchestratorSession &&
       !requested.has(event.sessionId) && event.at < doneAt);
+    // F-1006: quadro de entregas, conclusão automática e latência da entrega.
+    const boardEvents = events.filter((event) => event.kind === 'worker-delivery-board')
+      .map((event) => ({ sessionId: event.sessionId, reason: event.reason }));
+    const boardSeen = boardSawDelivery(events);
+    const completionChecks = events.filter((event) => event.kind === 'civilian-delivery-check')
+      .map((event) => ({ sessionId: event.sessionId, reason: event.reason, error: event.error }));
+    const scopeCollisions = mainConsole.filter((line) => /scope identity collision/.test(line));
+    const casLost = mainConsole.filter((line) => /lost delivery-attempt CAS|lost delivery-state CAS/.test(line));
+    const arrivedAt = new Map<string, number>();
+    for (const delivery of deliveries) {
+      if (delivery.worker && !arrivedAt.has(delivery.handoff)) arrivedAt.set(delivery.handoff, Math.round(delivery.at * 1000));
+    }
+    const deliveryLatency = Object.fromEntries(ALL_WRITERS.map((id) => {
+      const handoff = successByWorker.get(id);
+      const at = handoff ? arrivedAt.get(handoff.id) : undefined;
+      return [id, handoff && at !== undefined ? at - handoff.createdAt : null];
+    })) as Record<string, number | null>;
+    const latencies = Object.values(deliveryLatency).filter((ms): ms is number => ms !== null);
+    const maxDeliveryLatencyMs = latencies.length > 0 ? Math.max(...latencies) : null;
     const evidence = {
       elapsedMs, lifecycle, heavyDenied, barrierOpenedAt: barrierOpenedAt ? barrierOpenedAt - started : null, maxPermits, maxOverlap,
+      deliveryLatency, maxDeliveryLatencyMs, boardEvents, completionChecks, scopeCollisions, casLost,
+      mainConsole: mainConsole.slice(-200),
       mission: finalMission ? { status: finalMission.status, intentState: finalMission.intentState } : null,
       spawnCalls, boots, results, orchestratorDone: orchestratorResult?.done, merges: orchestratorResult?.merges,
       deliveries, heavyLog, workerHandoffs: workerHandoffs.map((h) => ({ id: h.id, from: h.fromAgent, status: h.status, session: h.sessionId })),
@@ -494,12 +563,12 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
       const receipt = (call?.result as { isolatedWorktree?: { branch?: string; baseSha?: string; worktreePath?: string } } | undefined)?.isolatedWorktree;
       check(call && !call.isError && !call.error && Number(call.status) === 200, `[F-954] ${id}: nexus_pane_spawn isolatedWriter recusado/falhou na aba: ${JSON.stringify(call?.result ?? call?.error ?? call?.raw ?? 'sem resposta').slice(0, 400)}`);
       check(receipt?.baseSha === tabHead, `[F-954] ${id}: a worktree isolada não nasceu do HEAD da aba (${receipt?.baseSha} ≠ ${tabHead})`);
-      check(boots[id] && receipt?.worktreePath && boots[id]!.cwd === fs.realpathSync(receipt.worktreePath), `[F-954] ${id}: o writer não nasceu na própria worktree (cwd ${boots[id]?.cwd}, worktree ${receipt?.worktreePath})`);
+      check(boots[id] && receipt?.worktreePath && boots[id]!.cwd === realOrSelf(receipt.worktreePath), `[F-954] ${id}: o writer não nasceu na própria worktree (cwd ${boots[id]?.cwd}, worktree ${receipt?.worktreePath})`);
     }
     {
       const call = spawnCalls[NESTED_WRITER];
       check(call && !call.isError && !call.error && Number(call.status) === 200, `[F-955] ${NESTED_WRITER}: spawn com cwd na worktree aninhada falhou: ${JSON.stringify(call?.result ?? call?.error ?? call?.raw ?? 'sem resposta').slice(0, 400)}`);
-      check(boots[NESTED_WRITER] && boots[NESTED_WRITER]!.cwd === (fs.existsSync(nestedPath) ? fs.realpathSync(nestedPath) : nestedPath),
+      check(boots[NESTED_WRITER] && boots[NESTED_WRITER]!.cwd === realOrSelf(nestedPath),
         `[F-955] ${NESTED_WRITER}: o cwd pedido (${nestedPath}) foi descartado — o writer nasceu em ${boots[NESTED_WRITER]?.cwd}`);
       check(results[NESTED_WRITER]?.branch === 'e2e/nested', `[F-955] ${NESTED_WRITER}: o commit não foi para a branch da worktree aninhada (${results[NESTED_WRITER]?.branch})`);
     }
@@ -537,6 +606,24 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
     const workerDeliveries = new Set(deliveries.filter((d) => d.worker).map((d) => d.handoff));
     check(workerDeliveries.size === ALL_WRITERS.length, `[entrega] o Maestro recebeu ${workerDeliveries.size} de ${ALL_WRITERS.length} entregas de writer no PTY`);
     check(workerSessions.size === ALL_WRITERS.length, `[entrega] ${workerSessions.size} sessões de writer com handoff no banco (esperado ${ALL_WRITERS.length})`);
+    // F-1006 (a): writers em worktrees da missão alimentam o quadro e a
+    // conclusão automática da MISSÃO (stores do escopo de coordenação), sem
+    // abrir o store do projeto pela worktree (colisão de identidade).
+    check(scopeCollisions.length === 0, `[F-1006 escopo] ${scopeCollisions.length} colisão(ões) de identidade de escopo no Main: ${JSON.stringify(scopeCollisions.slice(0, 4)).slice(0, 600)}`);
+    for (const id of ALL_WRITERS) {
+      const sessionId = successByWorker.get(id)?.sessionId;
+      if (!sessionId) continue;
+      check(boardSeen.has(sessionId), `[F-1006 quadro] ${id}: o quadro de entregas não registrou a entrega da sessão ${sessionId} (${JSON.stringify(boardEvents.filter((event) => event.sessionId === sessionId).map((event) => event.reason))})`);
+    }
+    check(boardSeen.size === ALL_WRITERS.length, `[F-1006 quadro] o quadro de entregas registrou ${boardSeen.size} de ${ALL_WRITERS.length} entregas`);
+    const writerChecks = completionChecks.filter((event) => event.sessionId && writerSessionIds.includes(event.sessionId));
+    check(writerChecks.length > 0, '[F-1006 conclusão] a verificação de conclusão da missão nunca rodou no idle/saída de um writer');
+    check(writerChecks.every((event) => event.reason !== 'error'), `[F-1006 conclusão] a verificação de conclusão falhou: ${JSON.stringify(writerChecks.filter((event) => event.reason === 'error')).slice(0, 600)}`);
+    // F-1006 (b): rajada de 6 entregas sem CAS perdido e sem atraso.
+    check(casLost.length === 0, `[F-1006 CAS] entrega perdeu a vez no CAS da tentativa: ${JSON.stringify(casLost.slice(0, 4)).slice(0, 600)}`);
+    check(latencies.length === ALL_WRITERS.length, `[F-1006 latência] só ${latencies.length} de ${ALL_WRITERS.length} entregas com latência medida: ${JSON.stringify(deliveryLatency)}`);
+    check(maxDeliveryLatencyMs === null || maxDeliveryLatencyMs <= DELIVERY_LATENCY_CEILING_MS,
+      `[F-1006 latência] handoff → Maestro levou até ${maxDeliveryLatencyMs} ms (teto ${DELIVERY_LATENCY_CEILING_MS} ms): ${JSON.stringify(deliveryLatency)}`);
     // F-960 e mortes caladas: nenhum aviso falso, nenhum worker morto antes do done.
     check(zeroDeliveryProbe !== null, '[F-960] o vigia de zero entrega não foi provado: os 6 writers nunca chegaram vivos à barreira');
     check(zeroDeliveryProbe === null || zeroDeliveryProbe.length === 0, `[F-960] aviso de zero entrega/"não iniciou" para writers ocupados: ${JSON.stringify(zeroDeliveryProbe)}`);
@@ -556,6 +643,7 @@ describe.runIf(ENABLED)('F-971 — missão inteira de ponta a ponta (Main real, 
     if (failures.length > 0) {
       throw new Error(`E2E de missão VERMELHO (${failures.length} falhas; evidências em ${path.join(e2eDir, 'evidence.json')}):\n- ${failures.join('\n- ')}`);
     }
-    console.info(`[mission-e2e] VERDE em ${Math.round(elapsedMs / 1000)} s: 6 writers, sobreposição pesada ${maxOverlap}, permits simultâneos ${maxPermits}`);
+    console.info(`[mission-e2e] VERDE em ${Math.round(elapsedMs / 1000)} s: 6 writers, sobreposição pesada ${maxOverlap}, permits simultâneos ${maxPermits}, ` +
+      `quadro ${boardSeen.size}/${ALL_WRITERS.length}, latência máx. de entrega ${maxDeliveryLatencyMs} ms ${JSON.stringify(deliveryLatency)}`);
   }, MISSION_DEADLINE_MS + 120_000);
 });
