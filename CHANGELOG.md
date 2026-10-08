@@ -16,7 +16,8 @@ Esta versão traz código aberto do T3 Code (pingdotgg/t3code, licença MIT, © 
 - O pacote de continuidade da troca de conta ou de CLI não leva mais segredos (chaves, tokens, PEM) e um erro citado no texto não vira mais quarentena falsa do modelo (F-999).
 - "+ Pane → Nesta missão" abre o pane na conta que o Main escolheu; antes a cerca recusava a adoção em 1 ms e o renderer tentava de novo sem parar (F-1002).
 - Writers isolados aparecem no quadro de entregas, e uma rajada de entregas chega ao Maestro uma vez cada, sem perder a vez (F-1006).
-- Novo teste de missão de ponta a ponta no gate da release: CLIs falsas, sem gastar conta, abrem writers em paralelo, rodam comando pesado, entregam handoff e concluem a missão. Release que não conclui missão não publica (F-997).
+- Missão de código sem squad (a do "+ Pane") conclui: o done do Maestro passa pela verificação e pela revisão independente da 0.76.209 e é reverificado quando o Maestro fica ocioso; antes ela ficava em andamento para sempre depois que os writers fechavam (F-1007).
+- Novo teste de missão de ponta a ponta no gate da release: CLIs falsas, sem gastar conta, abrem writers em paralelo, rodam comando pesado, entregam handoff, passam pela revisão independente e concluem a missão. Release que não conclui missão não publica (F-997).
 
 **Desktop**
 - Painel Git com o diff novo: realce de sintaxe, unificado ou lado a lado, comentário num intervalo de linhas e árvore de arquivos com stage/unstage por arquivo.

@@ -10203,6 +10203,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Aprovação por card', detail: 'Pedidos de permissão do Claude e do Codex aparecem como card no desktop e no celular, e o status não fica preso em "bloqueado".' },
     { title: 'Modelos que a CLI oferece', detail: 'O Nexus só oferece e roteia modelos que a CLI instalada lista; o Gemini 4 Argon entra só quando o AGY o anuncia.' },
     { title: 'Pane do operador na missão', detail: '"+ Pane → Nesta missão" abre na conta que o Main escolheu, em vez de tentar de novo sem parar.' },
+    { title: 'Missão do + Pane conclui', detail: 'O done do Maestro passa pela verificação e pela revisão independente e é reverificado quando ele fica ocioso, em vez de deixar a missão em andamento para sempre.' },
     { title: 'Quadro de entregas completo', detail: 'Writers isolados aparecem no quadro, e cada entrega chega ao Maestro uma vez, mesmo em rajada.' },
     { title: 'Timeline fluida', detail: 'A atividade da missão rola leve com milhares de eventos, com carregamento sob demanda e uma rolagem só.' },
     { title: 'Terminal sem faixa preta', detail: 'O rodapé do terminal usa o fundo do tema em temas claros e importados, e os controles que ficavam tapados voltaram a aparecer.' },
