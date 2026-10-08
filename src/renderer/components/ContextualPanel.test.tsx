@@ -1,9 +1,18 @@
 /** @vitest-environment jsdom */
-import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { act, useCallback, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  DEFAULT_CONTEXTUAL_PANEL,
+  type ContextualPanelState,
+} from "../../shared/contextual-panel";
+import type { KeyValueStorage } from "../../shared/contextual-panel-persist";
 import { useContextualPanelNavStore } from "../state/contextual-panel-nav-store";
-import { ContextualPanel } from "./ContextualPanel";
+import {
+  ContextualPanel,
+  type ContextualPanelFocusTarget,
+} from "./ContextualPanel";
+import { AppShell } from "./product/AppShell";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -230,5 +239,188 @@ describe("ContextualPanel renderer navigation", () => {
     expect(panel?.style.width).toBe("624px");
     expect(splitter?.getAttribute("aria-valuemax")).toBe("624");
     act(() => root.unmount());
+  });
+});
+
+describe("ContextualPanel leaving the AppShell inspector", () => {
+  const WORKSPACE = "/tmp/nexus";
+  let frames: FrameRequestCallback[] = [];
+  let root: Root | null = null;
+  /** Listeners vivos na janela, por tipo — o que o operador sente ao teclar. */
+  let windowListeners: Map<string, Set<EventListenerOrEventListenerObject>>;
+
+  function memoryStorage(): KeyValueStorage & { setItem: ReturnType<typeof vi.fn> } {
+    const values = new Map<string, string>();
+    return {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: vi.fn((key: string, value: string) => {
+        values.set(key, value);
+      }),
+      removeItem: (key) => {
+        values.delete(key);
+      },
+    };
+  }
+
+  /** Mesmo reparenting do App: cabeçalho quando oculto, inspector quando visível. */
+  function ReparentingShell({
+    storage,
+    onStateChange,
+  }: {
+    storage: KeyValueStorage;
+    onStateChange: (state: ContextualPanelState) => void;
+  }) {
+    const [panelState, setPanelState] = useState<ContextualPanelState>({
+      ...DEFAULT_CONTEXTUAL_PANEL,
+      workspaceId: WORKSPACE,
+      visible: true,
+    });
+    const [focusTarget, setFocusTarget] =
+      useState<ContextualPanelFocusTarget | null>(null);
+    const handleStateChange = useCallback(
+      (next: ContextualPanelState) => {
+        onStateChange(next);
+        setPanelState(next);
+      },
+      [onStateChange],
+    );
+    const panel = (
+      <ContextualPanel
+        key={WORKSPACE}
+        workspaceId={WORKSPACE}
+        storage={storage}
+        initial={panelState}
+        placement={panelState.visible ? "inspector" : "header"}
+        focusTarget={focusTarget}
+        onFocusTargetChange={setFocusTarget}
+        onStateChange={handleStateChange}
+        relevantTabs={["mission", "git"]}
+        children={{ mission: <span>Missão</span> }}
+      />
+    );
+    return (
+      <AppShell
+        rail={<span>Rail</span>}
+        header={!panelState.visible ? panel : null}
+        content={<p>Terminal</p>}
+        inspector={panelState.visible ? panel : undefined}
+        inspectorScopeKey={`${WORKSPACE}\nterminal\ncontextual-panel`}
+      />
+    );
+  }
+
+  function activeListeners(type: string): number {
+    return windowListeners.get(type)?.size ?? 0;
+  }
+
+  beforeEach(() => {
+    frames = [];
+    windowListeners = new Map();
+    useContextualPanelNavStore.setState({ requestedTab: null, requestId: 0 });
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1600,
+      writable: true,
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn((callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      }),
+    );
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const add = window.addEventListener.bind(window);
+    const remove = window.removeEventListener.bind(window);
+    vi.spyOn(window, "addEventListener").mockImplementation(
+      (type, listener, options) => {
+        if (listener) {
+          const set = windowListeners.get(type) ?? new Set();
+          set.add(listener);
+          windowListeners.set(type, set);
+        }
+        add(type, listener, options);
+      },
+    );
+    vi.spyOn(window, "removeEventListener").mockImplementation(
+      (type, listener, options) => {
+        if (listener) windowListeners.get(type)?.delete(listener);
+        remove(type, listener, options);
+      },
+    );
+  });
+
+  afterEach(() => {
+    act(() => root?.unmount());
+    root = null;
+    document.body.replaceChildren();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("keeps the exiting copy as a drawing: one live listener, one panel id, one write per Alt+]", () => {
+    const storage = memoryStorage();
+    const onStateChange = vi.fn();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() =>
+      root?.render(
+        <ReparentingShell storage={storage} onStateChange={onStateChange} />,
+      ),
+    );
+    // Dois quadros pintados: a partir daqui fechar anima a saída.
+    for (let frame = 0; frame < 2; frame += 1) {
+      act(() => {
+        for (const callback of frames.splice(0)) callback(0);
+      });
+    }
+
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Ocultar painel"]')
+        ?.click();
+    });
+
+    const exiting = host.querySelector<HTMLElement>("aside.product-inspector");
+    expect(exiting?.dataset.state).toBe("closing");
+    // Ainda desenhado durante a saída, mas sem a identidade do painel vivo.
+    expect(exiting?.querySelector(".ctx-panel")).not.toBeNull();
+    expect(
+      host.querySelectorAll('[data-testid="contextual-panel"]'),
+    ).toHaveLength(0);
+    expect(exiting?.querySelector('[data-testid^="ctx-tab-"]')).toBeNull();
+    expect(
+      host.querySelector('header [aria-label="Abrir painel de contexto"]'),
+    ).not.toBeNull();
+    expect(activeListeners("keydown")).toBe(1);
+    expect(activeListeners("resize")).toBe(1);
+
+    storage.setItem.mockClear();
+    onStateChange.mockClear();
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "]",
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    expect(storage.setItem).toHaveBeenCalledTimes(1);
+    expect(onStateChange).toHaveBeenCalledWith(
+      expect.objectContaining({ visible: true }),
+    );
+    expect(
+      host.querySelectorAll('[data-testid="contextual-panel"]'),
+    ).toHaveLength(1);
+    expect(
+      host.querySelector<HTMLElement>("aside.product-inspector")?.dataset.state,
+    ).toBe("open");
+    expect(activeListeners("keydown")).toBe(1);
   });
 });

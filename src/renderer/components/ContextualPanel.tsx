@@ -21,6 +21,7 @@ import {
   type KeyValueStorage,
 } from '../../shared/contextual-panel-persist';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
+import { usePanelExiting } from '../lib/panel-presence';
 import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
 import { useRailWidthStore } from '../state/rail-width-store';
 import { PixelIcon } from './PixelIcon';
@@ -129,6 +130,9 @@ export function ContextualPanel({
 }: ContextualPanelProps) {
   const storage =
     storageProp === undefined ? browserLocalStorage() : storageProp;
+  // Cópia que o AppShell mantém durante a saída: só desenho. O painel vivo já
+  // montou no cabeçalho e é o único que escuta, reporta e persiste.
+  const exiting = usePanelExiting();
 
   const [state, setState] = useState<ContextualPanelState>(() =>
     initialState(
@@ -178,10 +182,11 @@ export function ContextualPanel({
   );
 
   useEffect(() => {
+    if (exiting) return;
     const onResize = () => setViewportWidth(window.innerWidth);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, []);
+  }, [exiting]);
 
   // Rehydrate when workspace changes (real product path).
   useEffect(() => {
@@ -197,11 +202,13 @@ export function ContextualPanel({
   }, [workspaceId]);
 
   useEffect(() => {
+    if (exiting) return;
     onStateChange?.(state);
-  }, [onStateChange, state]);
+  }, [exiting, onStateChange, state]);
 
   const update = useCallback(
     (patch: Partial<ContextualPanelState>) => {
+      if (exiting) return;
       setState((prev) => {
         const next = contextualPanelStateSchema.parse({
           ...prev,
@@ -218,7 +225,7 @@ export function ContextualPanel({
         return next;
       });
     },
-    [workspaceId, storage, relevantTabs],
+    [exiting, workspaceId, storage, relevantTabs],
   );
 
   useEffect(() => {
@@ -229,7 +236,9 @@ export function ContextualPanel({
   }, [controlledTab]);
 
   useEffect(() => {
-    if (requestId <= handledRequestId.current || !requestedTab) return;
+    if (exiting || requestId <= handledRequestId.current || !requestedTab) {
+      return;
+    }
     handledRequestId.current = requestId;
     if (focusRequested) {
       onFocusTargetChange?.('active-tab');
@@ -238,6 +247,7 @@ export function ContextualPanel({
     acknowledgeRequest(requestId);
   }, [
     acknowledgeRequest,
+    exiting,
     focusRequested,
     onFocusTargetChange,
     requestId,
@@ -253,7 +263,7 @@ export function ContextualPanel({
   }, [relevantTabs, state.activeTab, update]);
 
   useLayoutEffect(() => {
-    if (!focusTarget) return;
+    if (!focusTarget || exiting) return;
     let target: HTMLButtonElement | null | undefined;
     if (focusTarget === 'show-control') {
       if (
@@ -276,6 +286,7 @@ export function ContextualPanel({
     target.focus();
     onFocusTargetChange?.(null);
   }, [
+    exiting,
     focusTarget,
     onFocusTargetChange,
     placement,
@@ -284,6 +295,7 @@ export function ContextualPanel({
   ]);
 
   useEffect(() => {
+    if (exiting) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey && e.key === ']') {
         e.preventDefault();
@@ -292,7 +304,7 @@ export function ContextualPanel({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.visible, update]);
+  }, [exiting, state.visible, update]);
 
   // The tab strip is intentionally single-line so narrow panels do not turn
   // into a two-row toolbar. Keep the active context reachable after keyboard
@@ -397,7 +409,7 @@ export function ContextualPanel({
     <aside
       id={panelDomId}
       className="ctx-panel"
-      data-testid="contextual-panel"
+      data-testid={exiting ? undefined : 'contextual-panel'}
       data-presentation={compactPresentation ? 'drawer' : 'sidebar'}
       style={{ width: renderedWidth }}
       aria-label="Painel contextual"
@@ -450,7 +462,7 @@ export function ContextualPanel({
         className="ctx-panel__body"
         role="tabpanel"
         aria-labelledby={`${panelDomId}-tab-${state.activeTab}`}
-        data-testid={`ctx-tab-${state.activeTab}`}
+        data-testid={exiting ? undefined : `ctx-tab-${state.activeTab}`}
       >
         {body ?? (
           <div className="ctx-panel__empty">

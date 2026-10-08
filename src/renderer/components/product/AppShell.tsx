@@ -8,6 +8,7 @@ import {
 } from 'react';
 import {
   PanelAnimationSuppressionProvider,
+  PanelExitingProvider,
   usePanelAnimationSettings,
   usePanelNavigationSuppression,
   usePanelPresence,
@@ -223,7 +224,7 @@ function InspectorFrame({
       data-enter={enter ? 'animated' : undefined}
       style={{ '--panel-motion-duration': `${durationMs}ms` } as CSSProperties}
     >
-      {children}
+      <PanelExitingProvider value={closing}>{children}</PanelExitingProvider>
     </aside>
   );
 }

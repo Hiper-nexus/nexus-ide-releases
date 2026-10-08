@@ -1,6 +1,6 @@
 // Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
 // Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: duração fixa do DESIGN.md no lugar da configuração do cliente, matchMedia local no lugar de useMediaQuery, tipo de duração local, comentários em PT-BR.
+// See third_party/licenses/t3code-MIT.txt. Nexus changes: duração fixa do DESIGN.md no lugar da configuração do cliente, matchMedia local no lugar de useMediaQuery, tipo de duração local, contexto de saída (usePanelExiting) próprio do Nexus, comentários em PT-BR.
 import {
   createContext,
   useContext,
@@ -24,6 +24,23 @@ const PanelAnimationSuppressionContext = createContext(false);
 
 export const PanelAnimationSuppressionProvider =
   PanelAnimationSuppressionContext.Provider;
+
+const PanelExitingContext = createContext(false);
+
+/**
+ * Marca o conteúdo que está saindo. As props dele ficam congeladas (é o
+ * elemento retido por usePanelPresence), então o sinal chega por contexto.
+ */
+export const PanelExitingProvider = PanelExitingContext.Provider;
+
+/**
+ * Verdadeiro dentro de um painel que está saindo: ele é só desenho — sem
+ * listeners globais, sem reportar estado, sem persistir e sem identidade de
+ * automação. O painel vivo é o que acabou de montar em outro slot.
+ */
+export function usePanelExiting(): boolean {
+  return useContext(PanelExitingContext);
+}
 
 /**
  * Suprime o motion do painel no primeiro quadro pintado de uma navegação
