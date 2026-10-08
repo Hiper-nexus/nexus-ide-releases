@@ -264,6 +264,33 @@ describe('UpdateManager', () => {
     expect(downloadArgs).not.toContain('v0.16.1');
   });
 
+  it('F-1012: a checagem de fundo baixa sozinha a versão nova; a checagem pedida pela UI só avisa', async () => {
+    vi.useFakeTimers();
+    const zipUrls = () => fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.endsWith('.zip'));
+    const fetchMock = vi.fn(async (_url: unknown) => { throw new Error('public download unavailable in fixture'); });
+    vi.stubGlobal('fetch', fetchMock);
+    const runGh = vi.fn(async (args: string[]) => {
+      if (args[0] === 'api') return JSON.stringify([apiRelease('0.16.4')]);
+      throw new Error('download interrompido pelo teste');
+    });
+    const manager = createManager(true, { runGh, runtimeArch: 'arm64', runtimePlatform: 'darwin' });
+    manager.init();
+
+    await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+    expect(manager.getState()).toMatchObject({ phase: 'available', available: { version: '0.16.4' } });
+    expect(zipUrls()).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.waitFor(() => expect(manager.getState().phase).toBe('error'));
+    expect(zipUrls().length).toBeGreaterThan(0);
+    expect(zipUrls().every((url) => url.includes('/v0.16.4/NexusIDE-darwin-arm64-0.16.4.zip'))).toBe(true);
+    const downloads = zipUrls().length;
+
+    // A mesma versão que falhou não rebaixa a cada checagem de fundo seguinte.
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000 - 3_000);
+    expect(zipUrls().length).toBe(downloads);
+  });
+
   it('cai no slug legado quando o gh da org nova falha', async () => {
     const runGh = vi.fn(async (args: string[]) => {
       if (args.join(' ').includes('Hiper-nexus/nexus-ide')) {

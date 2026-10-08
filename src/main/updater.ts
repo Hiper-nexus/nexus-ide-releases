@@ -56,6 +56,7 @@ import {
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const BOOT_CHECK_DELAY_MS = 3_000;
+const AUTO_INSTALL_RETRY_MS = 6 * 60 * 60 * 1000;
 const WINDOWS_SQUIRREL_FIRST_RUN_DELAY_MS = 10_000;
 const GH_CHECK_TIMEOUT_MS = 15_000;
 const GH_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
@@ -333,6 +334,7 @@ export class UpdateManager {
   private server: http.Server | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private squirrelWired = false;
+  private autoInstallAttempt: { version: string; at: number } | null = null;
   private readonly runGh: GhExecutor;
   private readonly runtimeArch: string;
   private readonly runtimePlatform: string;
@@ -524,7 +526,7 @@ export class UpdateManager {
       if (this.stopped) return;
       // Checagem de fundo: só quando não há nada em andamento/pronto.
       if (['idle', 'uptodate', 'error', 'available'].includes(this.state.phase)) {
-        void this.check();
+        void this.backgroundCheck();
       }
     };
     if (!this.deferUntilWindowsFirstRunDeadline()) {
@@ -586,6 +588,25 @@ export class UpdateManager {
       );
     }
     broadcast(UPDATE_CHANNELS.state, this.getState());
+  }
+
+  /**
+   * F-1012: a 0.76.208 viu a 0.76.210 às 08:32 e ficou 7 h em `available`
+   * esperando um clique que o operador não deu. A checagem de fundo (boot,
+   * relógio e foco) já baixa a versão nova sozinha; o Squirrel aplica no
+   * próximo reinício e o banner passa a pedir só "Reiniciar". A checagem pedida
+   * pela UI continua só avisando. Uma falha não rebaixa os mesmos 240 MB a cada
+   * foco: a mesma versão só tenta de novo depois de AUTO_INSTALL_RETRY_MS.
+   */
+  private async backgroundCheck(): Promise<void> {
+    await this.check();
+    const version = this.state.available?.version;
+    if (this.mode !== 'gh' || this.state.phase !== 'available' || !this.state.canInstall || !version) return;
+    const last = this.autoInstallAttempt;
+    if (last?.version === version && Date.now() - last.at < AUTO_INSTALL_RETRY_MS) return;
+    this.autoInstallAttempt = { version, at: Date.now() };
+    writeUpdateLog('info', 'install:auto', { version });
+    await this.install();
   }
 
   private check(): Promise<void> {
