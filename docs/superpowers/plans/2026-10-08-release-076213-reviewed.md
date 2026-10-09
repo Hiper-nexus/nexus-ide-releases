@@ -292,3 +292,35 @@ independente, todos os gates, nova tag/build/sign/notary, soak/runtime/PNG e
 publicação permanecem pendentes até evidência real. Não reutilizar o pacote
 214 como 215, retagar 214 ou apagar falhas. A versão pública 212 e sua descrição
 continuam intactas; a fronteira incluída permanece ad517bfb + reparos locais.
+
+
+## Sucessora 0.76.216 da candidata privada 215 (09/10)
+
+A fonte 6d7022978, árvore e51552a7, recebeu revisão global e oito gates
+verdes: app 24.708/60 skips, servidor 157 e Main/PTY 1. A tag local 215
+868f16ef permanece imutável. Build assinada/notarizada, candidata base e
+soak fixo de cinco minutos (43 amostras) passaram. Runtime avançou ao líder,
+mas falhou na execução OPS sem workers: a orientação enfileirada não teve
+aceitação comprovada. Resume/PNG/publicação não foram concluídos.
+
+Duas observações do mesmo ZIP 215, sem alterar comportamento do gateway,
+permissões ou prazos, registraram somente GET /runtime-hello 200 e zero pedidos
+de modelo. Root CUA capturou a instância privada PID 9799/perfil TXYBOS exibindo
+a confirmação da chave de API sintética, com No(recommended) selecionado.
+Nenhuma aprovação ou entrada de CLI foi enviada. A imagem existe INLINE
+ONLY na conversa Root; não inventar arquivo PNG ou aprovação visual.
+Artefatos, recibos, provas e REDs estão em histórico privado por FD/SHA-256.
+
+A sucessora 216 corrige somente consentimento da credencial sintética no
+perfil de teste privado, usando o mecanismo normal de chave aprovada, e o
+resultado honesto de orientação enfileirada não comprovada, sem replay.
+Não confirmar chaves, trust ou permissões globalmente; não aumentar timeout,
+fabricar busy/aceitação nem tocar credenciais do operador. Revalidar a
+redação contra implementação e revisão final antes de aplicar metadados.
+
+Sete paths acoplados terão 216 após handoff exclusivo. Fonte limpa, revisão
+independente, oito gates, nova tag/build/sign/notary e soak/runtime/resume/PNG
+continuam pendentes até prova real; publicação é uma única transação guardada.
+A pública 212, archives 213/214/215 e cutoff ad517 mais reparos são preservados.
+Sem novas dependências, features, deploy de site/API, outra plataforma ou
+claims de upgrade, full T3, microfone real e provedor pago.
