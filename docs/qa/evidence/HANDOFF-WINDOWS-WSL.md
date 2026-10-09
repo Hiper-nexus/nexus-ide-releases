@@ -68,10 +68,10 @@ Esperado: **5/5 verdes** (argv `-d`/`--cd`/`--`/`exec bash -lc`, slot `wsl:<dist
    wsl.exe -d Ubuntu -- exec bash -lc "ls /mnt/c"
    ```
 
-   E no Node (REPL ou teste ad-hoc):
+   E no Node via tsx (`npx tsx`; o `require` do Node não carrega `.ts`):
 
    ```js
-   const { parseWslUncPath, toLinuxPath, toWindowsWslUncPath } = require('./src/shared/wsl-paths.ts');
+   const { parseWslUncPath, toLinuxPath, toWindowsWslUncPath } = await import('./src/shared/wsl-paths.ts');
    parseWslUncPath('\\\\wsl.localhost\\Ubuntu\\home\\me\\app');
    // → { distro: 'Ubuntu', linuxPath: '/home/me/app' }
    toWindowsWslUncPath('/home/me/app', 'Ubuntu');
