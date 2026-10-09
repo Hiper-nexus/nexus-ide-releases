@@ -17,6 +17,8 @@
  *    account-wide reading.
  *  - a provider-api window of the MATCHING kind must exist, be fresh, and read
  *    clearly below the limit to refute a hit.
+ *  - an exhausted account window (100% measured) overrides healthy readings
+ *    in the alleged kind; the terminal can misidentify the limiting window.
  *  - independently, a textual hit is never authoritative enough to create a
  *    long usage cooldown without a fresh matching provider-api window. Short
  *    backoff plus auth/transient recovery remain available without quota APIs.
@@ -106,6 +108,38 @@ export function hasFreshProviderApiWindowForLimit(
   );
 }
 
+/** Known account usage windows; local token estimates cannot prove a limit. */
+const MEASURED_USAGE_KINDS: ReadonlySet<QuotaWindowKind> = new Set([
+  ...QUOTA_WINDOW_KINDS,
+  ...RATE_WINDOW_KINDS,
+]);
+
+/**
+ * A live unscoped usage hit can misidentify the provider's window. An account
+ * window measured at 100% confirms exhaustion regardless of the alleged kind.
+ * High usage (0.8) retains its existing matching-kind policy but cannot prove
+ * cross-window exhaustion. Tier/model claims and non-authoritative data cannot
+ * gain account-wide authority here.
+ */
+export function providerApiExhaustsAccount(
+  entry: ProviderQuotaEntry | undefined,
+  hit: Pick<LimitHit, 'kind' | 'scope'>,
+  now: number,
+): boolean {
+  if (!entry || (hit.kind !== 'quota' && hit.kind !== 'rate-limit') || hit.scope) {
+    return false;
+  }
+  const age = now - entry.updatedAt;
+  if (!Number.isFinite(age) || age < 0 || age > REFUTE_FRESH_MS) return false;
+  return entry.windows.some((window) =>
+    window.source === 'provider-api' &&
+    window.usedRatio !== null &&
+    Number.isFinite(window.usedRatio) &&
+    window.usedRatio >= 1 &&
+    MEASURED_USAGE_KINDS.has(window.kind),
+  );
+}
+
 /**
  * Refuta um COOLDOWN já persistido (pós-hoc, sem saber o kind do hit que o
  * criou): leitura provider-api fresca em que TODA janela com ratio conhecido
@@ -151,6 +185,10 @@ export function providerApiRefutesLimit(
   if (!Number.isFinite(entry.updatedAt) || now - entry.updatedAt > REFUTE_FRESH_MS) {
     return false;
   }
+
+  // A healthy alleged window does not disprove another measured exhausted
+  // account window. Keep all callers on the same conservative policy.
+  if (providerApiExhaustsAccount(entry, hit, now)) return false;
 
   const relevant = relevantWindowKinds(hit.kind);
   if (!relevant) return false;

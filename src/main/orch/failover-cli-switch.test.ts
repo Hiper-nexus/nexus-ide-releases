@@ -8,6 +8,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebContents } from 'electron';
+import type { ProviderQuotaEntry } from '../../shared/quota-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { ACCOUNT_CHANNELS, type FailoverEvent } from '../../shared/account-types';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
@@ -28,6 +29,10 @@ const h = vi.hoisted(() => ({
   trace: vi.fn(),
   available: new Set<string>(),
   longNeedsApi: false,
+  realQuota: false,
+  quotaEntry: undefined as ProviderQuotaEntry | undefined,
+  probeEntry: undefined as ProviderQuotaEntry | undefined,
+  refreshQuota: vi.fn(),
   sessionOutput: '$ npm test\n✓ 12 passed\nYou exceeded your current quota',
 }));
 
@@ -77,11 +82,18 @@ vi.mock('./limit-detector', () => ({
   }),
   tierScopeFromModelId: vi.fn(() => undefined),
 }));
-vi.mock('./limit-refutation', () => ({
-  providerApiRefutesLimit: vi.fn(() => false),
-  hasFreshProviderApiWindowForLimit: vi.fn(() => false),
-  longCooldownNeedsFreshProviderApi: vi.fn(() => h.longNeedsApi),
-}));
+vi.mock('./limit-refutation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./limit-refutation')>();
+  return {
+    ...actual,
+    providerApiRefutesLimit: vi.fn((...args: Parameters<typeof actual.providerApiRefutesLimit>) =>
+      h.realQuota ? actual.providerApiRefutesLimit(...args) : false),
+    hasFreshProviderApiWindowForLimit: vi.fn((...args: Parameters<typeof actual.hasFreshProviderApiWindowForLimit>) =>
+      h.realQuota ? actual.hasFreshProviderApiWindowForLimit(...args) : false),
+    longCooldownNeedsFreshProviderApi: vi.fn((...args: Parameters<typeof actual.longCooldownNeedsFreshProviderApi>) =>
+      h.realQuota ? actual.longCooldownNeedsFreshProviderApi(...args) : h.longNeedsApi),
+  };
+});
 const ACCOUNTS: Record<string, { id: string; adapterId: string; label: string; mode: 'subscription'; upstream: string; createdAt: number }> = {
   'claude-a': { id: 'claude-a', adapterId: 'claude', label: 'gustavo@example.com', mode: 'subscription', upstream: 'anthropic', createdAt: 0 },
   'codex-a': { id: 'codex-a', adapterId: 'codex', label: 'ana@example.org', mode: 'subscription', upstream: 'openai', createdAt: 0 },
@@ -105,7 +117,11 @@ vi.mock('../persistence/account-store', () => ({
 vi.mock('../quota/quota-service', () => ({
   noteQuotaLimitHit: vi.fn(),
   requireQuotaService: vi.fn(() => {
-    throw new Error('quota optional in test');
+    if (!h.realQuota) throw new Error('quota optional in test');
+    return {
+      lastSnapshot: () => h.quotaEntry ? { entries: [h.quotaEntry] } : undefined,
+      refreshForLimitHit: async () => { h.refreshQuota(); h.quotaEntry = h.probeEntry; },
+    };
   }),
 }));
 vi.mock('./failover-mission-respawn', () => ({
@@ -226,6 +242,10 @@ beforeEach(() => {
   for (const map of [h.sessions, h.states, h.authorities, h.panes, h.runtime]) map.clear();
   h.available.clear();
   h.longNeedsApi = false;
+  h.realQuota = false;
+  h.quotaEntry = undefined;
+  h.probeEntry = undefined;
+  h.refreshQuota.mockClear();
   h.sessionOutput = '$ npm test\n✓ 12 passed\nYou exceeded your current quota';
   h.requestPaneClose.mockClear().mockResolvedValue(true);
   h.respawnMainOwned.mockClear().mockResolvedValue(true);
@@ -524,5 +544,86 @@ describe('F-999: o pacote da troca de CLI sai redigido e neutralizado em todo ca
       const hit = detectLimit(pack.slice(start, start + 4_000));
       if (hit) throw new Error(`janela em ${start} disparou ${hit.kind} (${hit.reason})`);
     }
+  });
+});
+
+
+describe('fresh cross-window account exhaustion uses the real quota policy', () => {
+  function measured(kind: 'hours' | 'weekly', usedRatio: number, healthyAlleged = false): ProviderQuotaEntry {
+    return {
+      id: 'claude:claude-a', adapterId: 'claude', accountId: 'claude-a', label: 'Account A',
+      installed: true, onCooldown: false, updatedAt: Date.now(),
+      windows: [
+        { kind, label: kind, usedRatio, source: 'provider-api', confidence: 'high' },
+        ...(healthyAlleged ? [{ kind: kind === 'hours' ? 'weekly' as const : 'hours' as const,
+          label: 'healthy alleged window', usedRatio: 0.1, source: 'provider-api' as const, confidence: 'high' as const }] : []),
+      ],
+    };
+  }
+
+  it.each([
+    ['LONG', 'weekly', 0.79, false], ['LONG', 'weekly', 0.8, false],
+    ['LONG', 'weekly', 0.99, false], ['LONG', 'weekly', 1, true],
+    ['QUOTA', 'hours', 0.79, false], ['QUOTA', 'hours', 0.8, false],
+    ['QUOTA', 'hours', 0.99, false], ['QUOTA', 'hours', 1, true],
+  ] as const)('live %s opposite %s at %s confirms only exhaustion (%s)', async (marker, kind, ratio, confirmed) => {
+    h.realQuota = true;
+    h.quotaEntry = measured(kind, ratio);
+    h.probeEntry = h.quotaEntry;
+    rendererPane({ paneId: 'pane-op', sessionId: 'session-op' });
+    h.dataTaps[0]('session-op', marker);
+    await settle();
+    expect(resolver).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+    expect(h.refreshQuota).toHaveBeenCalledTimes(confirmed ? 0 : 1);
+    expect(events().at(-1)).toMatchObject(confirmed
+      ? { cliSwitchPhase: 'requested', switched: false }
+      : { switched: false, scheduledRetryAtMs: expect.any(Number) });
+  });
+
+  it.each(['live', 'probe', 'retry'] as const)('%s: exhausted opposite window overrides healthy alleged window', async (phase) => {
+    h.realQuota = true;
+    if (phase === 'live') h.quotaEntry = measured('weekly', 1, true);
+    if (phase === 'probe') h.probeEntry = measured('weekly', 1, true);
+    rendererPane({ paneId: 'pane-op', sessionId: 'session-op' });
+    h.dataTaps[0]('session-op', 'LONG');
+    await settle();
+    if (phase === 'retry') {
+      expect(resolver).not.toHaveBeenCalled();
+      h.probeEntry = { ...measured('weekly', 1, true), updatedAt: Date.now() + 15 * 60_000 + 1_000 };
+      await vi.advanceTimersByTimeAsync(15 * 60_000 + 1_000);
+      await settle();
+    }
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(events().at(-1)).toMatchObject({ cliSwitchPhase: 'requested', switched: false });
+    // O recibo de sucesso exige sessão física nova, no mesmo pane.
+    expect(events().some(event => event.switched)).toBe(false);
+    h.sessions.set('session-op-2', { sessionId: 'session-op-2', paneId: 'pane-op', adapterId: 'codex' });
+    h.states.set('session-op-2', 'busy');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    expect(events().at(-1)).toMatchObject({ cliSwitchPhase: 'applied', switched: true });
+  });
+
+  it.each([0.79, 0.8, 0.99])('probe at opposite %s preserves the live account and capped retry', async (ratio) => {
+    h.realQuota = true;
+    h.probeEntry = measured('weekly', ratio);
+    rendererPane({ paneId: 'pane-op', sessionId: 'session-op' });
+    h.dataTaps[0]('session-op', 'LONG');
+    await settle();
+    expect(resolver).not.toHaveBeenCalled();
+    expect(events().at(-1)).toMatchObject({ switched: false, scheduledRetryAtMs: expect.any(Number) });
+  });
+
+  it.each([0.79, 0.8, 0.99])('retry at opposite %s preserves matching-window healthy refutation', async (ratio) => {
+    h.realQuota = true;
+    rendererPane({ paneId: 'pane-op', sessionId: 'session-op' });
+    h.dataTaps[0]('session-op', 'LONG');
+    await settle();
+    h.probeEntry = { ...measured('weekly', ratio, true), updatedAt: Date.now() + 15 * 60_000 + 1_000 };
+    await vi.advanceTimersByTimeAsync(15 * 60_000 + 1_000);
+    await settle();
+    expect(resolver).not.toHaveBeenCalled();
+    expect(events().some(event => event.switched)).toBe(false);
+    expect(h.trace).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'unconfirmed-refuted' }));
   });
 });

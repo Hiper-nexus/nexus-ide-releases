@@ -65,6 +65,7 @@ import {
   hasFreshProviderApiWindowForLimit,
   longCooldownNeedsFreshProviderApi,
   providerApiRefutesLimit,
+  providerApiExhaustsAccount,
 } from './limit-refutation';
 import type { ProviderQuotaEntry } from '../../shared/quota-types';
 import {
@@ -1651,7 +1652,8 @@ async function fireUnconfirmedLimitRetry(
   // a troca acontece AGORA, no fim da pausa capada. Quando a sonda CONFIRMOU,
   // a conta sai da disputa de vez (evita respawnar na conta ainda limitada);
   // sem dados ela pode voltar a ser escolhida (falso positivo provável).
-  const confirmed = hasFreshProviderApiWindowForLimit(fresh, hit, probedAt);
+  const confirmed = hasFreshProviderApiWindowForLimit(fresh, hit, probedAt) ||
+    providerApiExhaustsAccount(fresh, hit, probedAt);
   void performSwitch({
     key,
     authority,
@@ -2515,14 +2517,13 @@ function handleLimitHit(
   // (cascata fantasma: um `cat erro.log` com a frase certa não é limite). Sem
   // leitura provider-api fresca, CONFIRMA com uma sonda ao vivo antes de
   // quarentenar/trocar: leitura sadia refuta; leitura no limite aplica a
-  // janela inteira; sonda sem resposta troca com backoff CURTO — a conta
-  // pode estar esgotada de verdade (2026-09-27, "hit your session limit" de
-  // um `claude -p` filho: nenhum failover, duas rodadas perdidas) e suprimir
-  // deixava o pane preso nela. Provider errors (transient) never reach this
-  // function — they are an episode of their own.
+  // janela inteira. Outra janela da conta só confirma com 100% MEDIDO.
+  // Sonda sem resposta preserva F-249: pausa curta na mesma conta e retry.
+  // Provider errors (transient) never reach this function.
   if (
     longCooldownNeedsFreshProviderApi(hit) &&
-    !hasFreshProviderApiWindowForLimit(quotaEntry, hit, now)
+    !hasFreshProviderApiWindowForLimit(quotaEntry, hit, now) &&
+    !providerApiExhaustsAccount(quotaEntry, hit, now)
   ) {
     void confirmLimitByProbe(authority, pane, key, hit, now, source, current, adapterId);
     return;
@@ -2556,7 +2557,8 @@ async function confirmLimitByProbe(
     logSuppressedFailover(pane, current, hit, 'provider-api-healthy-after-probe', source);
     return;
   }
-  if (hasFreshProviderApiWindowForLimit(fresh, hit, probedAt)) {
+  if (hasFreshProviderApiWindowForLimit(fresh, hit, probedAt) ||
+      providerApiExhaustsAccount(fresh, hit, probedAt)) {
     commitLimitHit(authority, pane, key, hit, now, source, current, adapterId);
     return;
   }

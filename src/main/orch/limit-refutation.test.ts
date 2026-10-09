@@ -5,6 +5,7 @@ import type {
 } from '../../shared/quota-types';
 import {
   hasFreshProviderApiWindowForLimit,
+  providerApiExhaustsAccount,
   longCooldownNeedsFreshProviderApi,
   providerApiRefutesCooldown,
   providerApiRefutesLimit,
@@ -270,5 +271,58 @@ describe('providerApiRefutesCooldown', () => {
         NOW,
       ),
     ).toBe(false);
+  });
+});
+
+
+describe('providerApiExhaustsAccount — cross-window measured exhaustion', () => {
+  it.each(['quota', 'rate-limit'] as const)('requires 100% in the opposite window for %s', (kind) => {
+    const opposite = kind === 'quota' ? 'hours' : 'weekly';
+    for (const [usedRatio, exhausted] of [[0.79, false], [0.8, false], [0.99, false], [1, true]] as const) {
+      expect(providerApiExhaustsAccount(entry({ windows: [win({ kind: opposite, usedRatio })] }), { kind }, NOW))
+        .toBe(exhausted);
+    }
+  });
+
+  it.each(['weekly', 'monthly', 'credits', 'hours', 'session'] as const)('accepts measured account window %s', (kind) => {
+    expect(providerApiExhaustsAccount(entry({ windows: [win({ kind, usedRatio: 1 })] }), { kind: 'quota' }, NOW)).toBe(true);
+  });
+
+  it('exhaustion overrides a healthy alleged-kind reading', () => {
+    const e = entry({ windows: [win({ kind: 'hours', usedRatio: 0.1 }), win({ kind: 'weekly', usedRatio: 1 })] });
+    expect(providerApiRefutesLimit(e, { kind: 'rate-limit' }, NOW)).toBe(false);
+    expect(providerApiExhaustsAccount(e, { kind: 'rate-limit' }, NOW)).toBe(true);
+  });
+
+  it.each([0.79, 0.8, 0.99])('opposite %s alone does not refute or confirm', (usedRatio) => {
+    const e = entry({ windows: [win({ kind: 'weekly', usedRatio })] });
+    expect(providerApiRefutesLimit(e, { kind: 'rate-limit' }, NOW)).toBe(false);
+    expect(providerApiExhaustsAccount(e, { kind: 'rate-limit' }, NOW)).toBe(false);
+  });
+
+  it.each(['auth', 'model', 'transient'] as const)('does not confirm %s', (kind) => {
+    expect(providerApiExhaustsAccount(entry({ windows: [win({ usedRatio: 1 })] }), { kind }, NOW)).toBe(false);
+  });
+
+  it.each(['tier:opus', 'model:gpt-6'])('does not confirm scoped hit %s', (scope) => {
+    expect(providerApiExhaustsAccount(entry({ windows: [win({ usedRatio: 1 })] }), { kind: 'quota', scope }, NOW)).toBe(false);
+  });
+
+  it('ignores missing/stale/future data, local windows, non-api sources and non-finite ratios', () => {
+    for (const e of [undefined, entry({ updatedAt: NOW - REFUTE_FRESH_MS - 1, windows: [win({ usedRatio: 1 })] }),
+      entry({ updatedAt: NOW + 1, windows: [win({ usedRatio: 1 })] }),
+      entry({ updatedAt: NaN, windows: [win({ usedRatio: 1 })] }),
+      ...[null, NaN, Infinity].map(usedRatio => entry({ windows: [win({ usedRatio })] })),
+      entry({ windows: [win({ kind: 'local', usedRatio: 1 })] }),
+      ...(['transcript-inferred', 'limit-hit', 'local-tokens', 'cooldown', 'unknown'] as const).map(source =>
+        entry({ windows: [win({ source, usedRatio: 1 })] })),
+    ]) expect(providerApiExhaustsAccount(e, { kind: 'quota' }, NOW)).toBe(false);
+  });
+
+  it('keeps matching-kind 0.8 policy without calling it measured exhaustion', () => {
+    const e = entry({ windows: [win({ kind: 'hours', usedRatio: 0.8 })] });
+    expect(providerApiRefutesLimit(e, { kind: 'rate-limit' }, NOW)).toBe(false);
+    expect(hasFreshProviderApiWindowForLimit(e, { kind: 'rate-limit' }, NOW)).toBe(true);
+    expect(providerApiExhaustsAccount(e, { kind: 'rate-limit' }, NOW)).toBe(false);
   });
 });
