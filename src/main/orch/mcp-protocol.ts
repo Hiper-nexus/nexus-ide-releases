@@ -173,15 +173,12 @@ export function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
 }
 
 /**
- * Correlação da conexão. Não é a chave do recibo: o despacho ainda mistura
- * sessão, ferramenta e argumentos, porque este id volta a ser "1".
+ * Id de operação que o chamador escolheu. O id JSON-RPC não entra aqui:
+ * ele volta a ser "1" depois da resposta e no reconnect do mesmo pane.
  */
-function logicalOperationIdFromRpcId(
-  id: JsonRpcRequest["id"],
-): string | undefined {
-  if (typeof id === "string") return id;
-  if (typeof id === "number" && Number.isFinite(id)) return String(id);
-  return undefined;
+function explicitOperationId(message: JsonRpcRequest): string | undefined {
+  const raw = message.params?.operationId;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw : undefined;
 }
 
 /**
@@ -262,8 +259,7 @@ export async function handleMcpMessage(
       }
       const args = (message.params?.arguments as Record<string, unknown>) ?? {};
       const logicalOperationId =
-        dispatchOptions.logicalOperationId ??
-        logicalOperationIdFromRpcId(message.id);
+        dispatchOptions.logicalOperationId ?? explicitOperationId(message);
       const result = await dispatchToolCall(
         dispatchOptions.source ?? "http-mcp",
         registry,

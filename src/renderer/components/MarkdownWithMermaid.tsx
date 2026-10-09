@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useId, useMemo, useRef } from 'react';
 import { splitMarkdownMermaid } from '../../shared/mermaid-fences';
 
 /**
@@ -48,13 +48,20 @@ function mountMermaidSvg(host: HTMLElement, svg: string): boolean {
   return true;
 }
 
+function mermaidRenderId(instanceId: string, index: number): string {
+  const safe = instanceId.replace(/[^A-Za-z0-9]/g, '') || 'diagram';
+  return `nexus-mermaid-${safe}-${index}`;
+}
+
 function MermaidBlock({
   source,
   index,
+  instanceId,
   onReady,
 }: {
   source: string;
   index: number;
+  instanceId: string;
   onReady?: (el: HTMLElement, source: string) => void;
 }) {
   const ref = useRef<HTMLElement | null>(null);
@@ -65,7 +72,10 @@ function MermaidBlock({
     void loadMermaid()
       .then(async (api) => {
         if (!api || cancelled || !ref.current) return;
-        const { svg } = await api.render(`nexus-mermaid-${index}`, source);
+        const { svg } = await api.render(
+          mermaidRenderId(instanceId, index),
+          source,
+        );
         if (cancelled || !ref.current) return;
         if (!mountMermaidSvg(ref.current, svg)) return;
         onReady?.(ref.current, source);
@@ -76,7 +86,7 @@ function MermaidBlock({
     return () => {
       cancelled = true;
     };
-  }, [source, index, onReady]);
+  }, [source, index, instanceId, onReady]);
 
   return (
     <figure
@@ -95,6 +105,7 @@ function MermaidBlock({
 }
 
 export function MarkdownWithMermaid({ source, onMermaidReady }: MarkdownWithMermaidProps) {
+  const instanceId = useId();
   const parts = useMemo(() => splitMarkdownMermaid(source), [source]);
   return (
     <div className="markdown-with-mermaid">
@@ -108,6 +119,7 @@ export function MarkdownWithMermaid({ source, onMermaidReady }: MarkdownWithMerm
             key={`m${part.index}`}
             source={part.source}
             index={part.index}
+            instanceId={instanceId}
             onReady={onMermaidReady}
           />
         ),

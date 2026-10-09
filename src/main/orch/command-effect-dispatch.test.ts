@@ -326,7 +326,7 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
     ).listUnsettledBlocking(MISSION_ID);
     expect(effects.rows).toHaveLength(1);
     expect(effects.rows[0]?.type).toBe('checkpoint.capture');
-    expect(effects.rows[0]?.commandId).not.toBe('logical-op-1');
+    expect(effects.rows[0]?.commandId).toBe('logical-op-1');
   });
 
   it('charges the mission once when two in-flight dispatches share a logical operation id', async () => {
@@ -383,52 +383,75 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
     ).toHaveLength(1);
   });
 
-  it('runs a reused JSON-RPC id when the arguments change', async () => {
-    const commands: string[] = [];
-    const booted = bootDispatch(async (args) => {
-      const command = typeof args.command === 'string' ? args.command : '';
-      commands.push(command);
-      return { command };
+  it('runs a new call that only reuses JSON-RPC id 1, even with the same arguments', async () => {
+    let runs = 0;
+    const booted = bootDispatch(async () => {
+      runs += 1;
+      return { marker: runs };
     });
+    const message = {
+      jsonrpc: '2.0' as const,
+      id: '1',
+      method: 'tools/call',
+      params: {
+        name: 'nexus_terminal_run',
+        arguments: { command: 'same' },
+      },
+    };
     const first = await handleMcpMessage(
       booted.registry,
       booted.ctx,
-      {
-        jsonrpc: '2.0',
-        id: '1',
-        method: 'tools/call',
-        params: {
-          name: 'nexus_terminal_run',
-          arguments: { command: 'one' },
-        },
-      },
+      message,
       booted.options,
     );
-    const receipts = createScopedCommandReceiptStore(booted.manager, booted.scope);
-    expect(receipts.listUnsettled()).toHaveLength(1);
+    expect(
+      createScopedCommandReceiptStore(booted.manager, booted.scope).listUnsettled(),
+    ).toHaveLength(1);
     const second = await handleMcpMessage(
       booted.registry,
       booted.ctx,
-      {
-        jsonrpc: '2.0',
-        id: '1',
-        method: 'tools/call',
-        params: {
-          name: 'nexus_terminal_run',
-          arguments: { command: 'two' },
-        },
-      },
+      message,
       booted.options,
     );
-    expect(commands).toEqual(['one', 'two']);
+    expect(runs).toBe(2);
     expect(first?.error).toBeUndefined();
     expect(second?.error).toBeUndefined();
-    const blocking = createScopedEffectOutboxStore(
-      booted.manager,
-      booted.scope,
-    ).listUnsettledBlocking(MISSION_ID);
-    expect(blocking.rows).toHaveLength(2);
-    expect(new Set(blocking.rows.map((row) => row.commandId)).size).toBe(2);
+    expect(
+      createScopedEffectOutboxStore(booted.manager, booted.scope)
+        .listUnsettledBlocking(MISSION_ID).rows,
+    ).toHaveLength(2);
+  });
+
+  it('returns the stored outcome when the caller resends the same operation id', async () => {
+    let runs = 0;
+    const booted = bootDispatch(async () => {
+      runs += 1;
+      return { marker: 'stored' };
+    });
+    const call = (rpcId: string) =>
+      handleMcpMessage(
+        booted.registry,
+        booted.ctx,
+        {
+          jsonrpc: '2.0',
+          id: rpcId,
+          method: 'tools/call',
+          params: {
+            name: 'nexus_terminal_run',
+            arguments: { command: 'same' },
+            operationId: 'op-lost-response',
+          },
+        },
+        booted.options,
+      );
+    const first = await call('1');
+    expect(
+      createScopedCommandReceiptStore(booted.manager, booted.scope).listUnsettled(),
+    ).toHaveLength(1);
+    const second = await call('1');
+    expect(runs).toBe(1);
+    expect(second).toEqual(first);
+    expect(second?.error).toBeUndefined();
   });
 
   it('keeps the checkpoint blocking when the handler is still in flight across one drain', async () => {

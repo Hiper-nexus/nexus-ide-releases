@@ -66,16 +66,24 @@ function spansToTiptapContent(spans: readonly RichTextSpan[]) {
   };
 }
 
-/** doc JSON → spans → markdown canônico. Enter vira quebra entre parágrafos. */
+/** doc JSON → spans → markdown canônico. Enter separa parágrafos; Shift+Enter é hardBreak. */
 export function tiptapJsonToMarkdown(doc: {
   content?: Array<{
-    content?: Array<{ text?: string; marks?: Array<{ type: string }> }>;
+    content?: Array<{
+      type?: string;
+      text?: string;
+      marks?: Array<{ type: string }>;
+    }>;
   }>;
 }): string {
   const blocks: string[] = [];
   for (const paragraph of doc.content ?? []) {
     const spans: RichTextSpan[] = [];
     for (const node of paragraph.content ?? []) {
+      if (node.type === 'hardBreak') {
+        spans.push({ text: '\n', marks: [] });
+        continue;
+      }
       if (typeof node.text !== 'string') continue;
       const marks = (node.marks ?? [])
         .map((m) => m.type)

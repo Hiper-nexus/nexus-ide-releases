@@ -13,6 +13,22 @@ describe('ComposerTiptapEditor serialization', () => {
     ).toBe('hello\nworld');
   });
 
+  it('emits a newline for a hardBreak inside the paragraph', () => {
+    expect(
+      tiptapJsonToMarkdown({
+        content: [
+          {
+            content: [
+              { type: 'text', text: 'foo' },
+              { type: 'hardBreak' },
+              { type: 'text', text: 'bar' },
+            ],
+          },
+        ],
+      }),
+    ).toBe('foo\nbar');
+  });
+
   it('keeps an empty paragraph as a blank line and marks inside the block', () => {
     expect(
       tiptapJsonToMarkdown({

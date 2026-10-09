@@ -554,46 +554,6 @@ function normalizeLogicalOperationId(
   return createHash("sha256").update(value).digest("hex");
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === undefined) return "null";
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null";
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
-  }
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record)
-    .filter((key) => record[key] !== undefined)
-    .sort();
-  return `{${keys
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-    .join(",")}}`;
-}
-
-/**
- * O id do JSON-RPC é só correlação da conexão (muitas vezes "1" de novo).
- * A chave do recibo mistura sessão, ferramenta, argumentos e esse id, para
- * o retry da mesma operação bater e uma chamada nova com outros argumentos
- * executar.
- */
-function namespacedReceiptCommandId(input: {
-  readonly sessionId: string;
-  readonly workerIncarnationId: string | undefined;
-  readonly toolName: string;
-  readonly args: Record<string, unknown>;
-  readonly callerId: string;
-}): string {
-  const material = [
-    input.sessionId,
-    input.workerIncarnationId?.trim() ?? "",
-    canonicalToolName(input.toolName),
-    input.callerId,
-    canonicalJson(input.args),
-  ].join("\0");
-  return createHash("sha256").update(material).digest("hex");
-}
-
 function logicalFlightKey(
   scope: Pick<AgentGateContext["scope"], "projectId" | "checkoutId">,
   commandId: string,
@@ -1305,22 +1265,33 @@ export async function dispatchToolCall(
   }
 
   const effectful = isEffectfulTool(tool.name);
-  const callerCommandId = effectful
+  // Só um id de operação explícito é recibo. O id JSON-RPC não entra.
+  const receiptCommandId = effectful
     ? normalizeLogicalOperationId(options.logicalOperationId)
     : undefined;
-  const receiptCommandId = callerCommandId
-    ? namespacedReceiptCommandId({
-        sessionId,
-        workerIncarnationId: ctx.workerIncarnationId,
-        toolName: tool.name,
-        args,
-        callerId: callerCommandId,
-      })
-    : undefined;
+  const invocationId = effectful ? randomUUID() : undefined;
+  const commandId = effectful ? (receiptCommandId ?? invocationId) : undefined;
+  let commandAccepted = false;
+  let releaseCheckpoint: (() => void) | undefined;
+  let resolveOwnedFlight: ((result: ToolDispatchResult) => void) | undefined;
+  let ownedFlightKey: string | undefined;
+  const releaseOwnedFlight = (
+    result: ToolDispatchResult,
+  ): ToolDispatchResult => {
+    if (commandAccepted && commandId) {
+      rememberDispatchOutcome(ctx, commandId, result);
+    }
+    resolveOwnedFlight?.(result);
+    resolveOwnedFlight = undefined;
+    if (ownedFlightKey) {
+      logicalDispatchFlights.delete(ownedFlightKey);
+      ownedFlightKey = undefined;
+    }
+    return result;
+  };
   if (receiptCommandId) {
-    const inflight = logicalDispatchFlights.get(
-      logicalFlightKey(ctx.scope, receiptCommandId),
-    );
+    const flightKey = logicalFlightKey(ctx.scope, receiptCommandId);
+    const inflight = logicalDispatchFlights.get(flightKey);
     if (inflight) return inflight;
     const replay = readReplayableCommandDispatch(
       ctx,
@@ -1328,6 +1299,13 @@ export async function dispatchToolCall(
       tool.name,
     );
     if (replay) return replay;
+    // Antes de Jev, confirmação, fila e orçamento. O retry sobreposto
+    // encontra o voo aqui e não debita de novo.
+    ownedFlightKey = flightKey;
+    const flight = new Promise<ToolDispatchResult>((resolve) => {
+      resolveOwnedFlight = resolve;
+    });
+    logicalDispatchFlights.set(flightKey, flight);
   }
   // Guarda Jev (piloto automático): coerência com o objetivo, sinais de
   // injeção e efeito destrutivo, só para chamada com efeito dentro de missão e
@@ -1352,12 +1330,12 @@ export async function dispatchToolCall(
     // Autoridade revalidada depois do await de rede — mesma regra dos handlers;
     // um chamador nativo que sumiu no meio (callerSignal) também não segue.
     if (!hasCurrentBearerAuthority() || options.callerSignal?.aborted) {
-      return {
+      return releaseOwnedFlight({
         ok: false,
         tool: tool.name,
         denied: true,
         error: "session_authority_revoked",
-      };
+      });
     }
   }
   rememberDispatchedTool(sessionId, tool.name);
@@ -1376,7 +1354,7 @@ export async function dispatchToolCall(
         ),
       tool.name,
     );
-    return (
+    return releaseOwnedFlight(
       auditFailure ?? {
         ok: false,
         tool: tool.name,
@@ -1386,7 +1364,7 @@ export async function dispatchToolCall(
           "A guarda Jev viu sinais de instrução injetada. Se a chamada é legítima, " +
           "descreva no summary do próximo handoff por que ela serve ao objetivo e " +
           "refaça com argumentos escritos por você.",
-      }
+      },
     );
   }
   const guardConfirm = jevGuard.kind === "confirm";
@@ -1473,15 +1451,15 @@ export async function dispatchToolCall(
               ),
             tool.name,
           );
-          if (auditFailure) return auditFailure;
-          return {
+          if (auditFailure) return releaseOwnedFlight(auditFailure);
+          return releaseOwnedFlight({
             ok: false,
             tool: tool.name,
             denied: true,
             requiredConfirmation: true,
             confirmationReason: reason,
             error,
-          };
+          });
         }
 
         if (approved) {
@@ -1501,15 +1479,15 @@ export async function dispatchToolCall(
               ),
             tool.name,
           );
-          if (auditFailure) return auditFailure;
-          return {
+          if (auditFailure) return releaseOwnedFlight(auditFailure);
+          return releaseOwnedFlight({
             ok: false,
             tool: tool.name,
             denied: true,
             requiredConfirmation: true,
             confirmationReason: reason,
             error,
-          };
+          });
         }
       }
 
@@ -1531,15 +1509,15 @@ export async function dispatchToolCall(
             ),
           tool.name,
         );
-        if (auditFailure) return auditFailure;
-        return {
+        if (auditFailure) return releaseOwnedFlight(auditFailure);
+        return releaseOwnedFlight({
           ok: false,
           tool: tool.name,
           denied: true,
           requiredConfirmation: true,
           confirmationReason: reason,
           error,
-        };
+        });
       }
     }
   }
@@ -1565,16 +1543,14 @@ export async function dispatchToolCall(
     boundWorkflowRevision = boundAuthority.contextRevision;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    return denyIntentCheck(reason);
+    return releaseOwnedFlight(denyIntentCheck(reason));
   }
 
   const finalIntent = checkMissionIntent();
   if (!finalIntent.ok) {
-    return denyIntentCheck(finalIntent.error, finalIntent.hint);
+    return releaseOwnedFlight(denyIntentCheck(finalIntent.error, finalIntent.hint));
   }
 
-  const invocationId = effectful ? randomUUID() : undefined;
-  const commandId = effectful ? (receiptCommandId ?? invocationId) : undefined;
   if (invocationId) {
     const auditFailure = writeAudit(
       () =>
@@ -1590,7 +1566,7 @@ export async function dispatchToolCall(
         ),
       tool.name,
     );
-    if (auditFailure) return auditFailure;
+    if (auditFailure) return releaseOwnedFlight(auditFailure);
   }
 
   // Once an effect intent exists, every exit path must append exactly one
@@ -1639,13 +1615,13 @@ export async function dispatchToolCall(
 
   const denyAfterIntent = (error: string): ToolDispatchResult => {
     const auditFailure = writeOutcomeAudit("error", error, false);
-    return (
+    return releaseOwnedFlight(
       auditFailure ?? {
         ok: false,
         tool: tool.name,
         denied: true,
         error,
-      }
+      },
     );
   };
 
@@ -1746,20 +1722,6 @@ export async function dispatchToolCall(
   }
 
   let handlerStarted = false;
-  let commandAccepted = false;
-  let releaseCheckpoint: (() => void) | undefined;
-  let resolveOwnedFlight: ((result: ToolDispatchResult) => void) | undefined;
-  let ownedFlightKey: string | undefined;
-  const releaseOwnedFlight = (
-    result: ToolDispatchResult,
-  ): ToolDispatchResult => {
-    if (commandAccepted && commandId) {
-      rememberDispatchOutcome(ctx, commandId, result);
-    }
-    resolveOwnedFlight?.(result);
-    resolveOwnedFlight = undefined;
-    return result;
-  };
   try {
     // If preempted after start (race with user submit), abort before handler.
     if (queuePromptId && ctx.missionId) {
@@ -1893,23 +1855,10 @@ export async function dispatchToolCall(
       if (checkpoint.status === "accepted" && checkpoint.inserted) {
         commandAccepted = true;
         releaseCheckpoint = retainDispatchCheckpoint(ctx.scope, commandId);
-        if (receiptCommandId) {
-          ownedFlightKey = logicalFlightKey(ctx.scope, receiptCommandId);
-          let resolveFlight!: (result: ToolDispatchResult) => void;
-          const flight = new Promise<ToolDispatchResult>((resolve) => {
-            resolveFlight = resolve;
-          });
-          resolveOwnedFlight = resolveFlight;
-          logicalDispatchFlights.set(ownedFlightKey, flight);
-        }
       }
     }
     const budgetFailure = reserveEffectBudget();
-    if (budgetFailure) {
-      return commandAccepted
-        ? releaseOwnedFlight(budgetFailure)
-        : budgetFailure;
-    }
+    if (budgetFailure) return budgetFailure;
     const exactUserConsent =
       // Recibo, não modal: mintado sempre que o store exige prova de mutação
       // única — inclusive quando a autorização veio da aprovação da missão.

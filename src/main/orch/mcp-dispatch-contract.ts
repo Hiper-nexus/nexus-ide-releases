@@ -154,9 +154,9 @@ export interface McpDispatchOptions {
   /** Internal seam; production reserves synchronously in the scoped store. */
   reserveMissionBudget?: MissionBudgetReserver;
   /**
-   * Stable caller identity for one logical operation. A lost-response retry
-   * passes the same id; the receipt key is this id, and the handler does not
-   * run again.
+   * Caller-supplied operation id. This is the receipt key. A lost-response
+   * retry resends the same id and does not run the handler. A JSON-RPC id is
+   * not an operation id: reusing "1" starts a new call.
    */
   logicalOperationId?: string;
 }

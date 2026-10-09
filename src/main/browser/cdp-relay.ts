@@ -203,7 +203,9 @@ export function createCdpRelayConnection(
               ? (value as { [ANNOUNCE]: Record<string, unknown> })[ANNOUNCE]
               : undefined;
           send({ id: command.id, result: announce ? {} : (value ?? {}), ...route });
-          if (announce) send(announce);
+          // Playwright escuta attachedToTarget na sessão do browser que pediu
+          // setAutoAttach. Sem o sessionId da rota, o evento cai na raiz.
+          if (announce) send({ ...announce, ...route });
         },
         (cause: unknown) =>
           send({

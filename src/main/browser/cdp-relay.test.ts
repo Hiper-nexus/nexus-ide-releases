@@ -33,6 +33,35 @@ describe('CdpRelay (T3 port)', () => {
     });
   });
 
+  it('announces attachedToTarget on the browser session that called setAutoAttach', async () => {
+    const { relay, written } = collectWrites();
+    relay.receive(JSON.stringify({ id: 1, method: 'Target.attachToBrowserTarget' }));
+    await Promise.resolve();
+    await Promise.resolve();
+    const browserSession = (
+      written.find((message) => message.id === 1)?.result as { sessionId?: string } | undefined
+    )?.sessionId;
+    expect(browserSession).toEqual(expect.any(String));
+    relay.receive(
+      JSON.stringify({
+        id: 2,
+        method: 'Target.setAutoAttach',
+        sessionId: browserSession,
+        params: { autoAttach: true, waitForDebuggerOnStart: true, flatten: true },
+      }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    const reply = written.find((message) => message.id === 2);
+    const announce = written.find((message) => message.method === 'Target.attachedToTarget');
+    expect(reply).toMatchObject({ sessionId: browserSession });
+    expect(announce).toMatchObject({
+      sessionId: browserSession,
+      params: expect.objectContaining({ sessionId: 'nexus-preview-page' }),
+    });
+  });
+
   it('Target.setAutoAttach announces the page session after the reply', async () => {
     const { relay, written } = collectWrites();
     relay.receive(JSON.stringify({ id: 2, method: 'Target.setAutoAttach' }));

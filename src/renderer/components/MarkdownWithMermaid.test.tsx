@@ -6,15 +6,18 @@ import { MarkdownWithMermaid } from './MarkdownWithMermaid';
 
 const mermaidPending = vi.hoisted(() => ({
   resolvers: [] as Array<(value: { svg: string }) => void>,
+  ids: [] as string[],
 }));
 
 vi.mock('mermaid', () => ({
   default: {
     initialize: () => undefined,
-    render: () =>
-      new Promise<{ svg: string }>((resolve) => {
+    render: (id: string) => {
+      mermaidPending.ids.push(id);
+      return new Promise<{ svg: string }>((resolve) => {
         mermaidPending.resolvers.push(resolve);
-      }),
+      });
+    },
   },
 }));
 
@@ -33,6 +36,7 @@ function render(node: ReactNode): { host: HTMLElement; root: Root } {
 }
 afterEach(() => {
   for (const root of roots.splice(0)) act(() => root.unmount());
+  mermaidPending.ids.length = 0;
   for (const resolve of mermaidPending.resolvers.splice(0)) {
     resolve({ svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>' });
   }
@@ -70,6 +74,24 @@ describe('MarkdownWithMermaid', () => {
       await Promise.resolve();
     });
   }
+
+  it('uses a different render id for each mounted component', async () => {
+    render(
+      <>
+        <MarkdownWithMermaid source={SOURCE} />
+        <MarkdownWithMermaid source={SOURCE} />
+      </>,
+    );
+    for (let attempt = 0; attempt < 20 && mermaidPending.ids.length < 2; attempt += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    expect(mermaidPending.ids).toHaveLength(2);
+    expect(mermaidPending.ids[0]).not.toBe(mermaidPending.ids[1]);
+    expect(mermaidPending.ids[0]).toMatch(/^nexus-mermaid-.+-0$/);
+    expect(mermaidPending.ids[1]).toMatch(/^nexus-mermaid-.+-0$/);
+  });
 
   it('calls onMermaidReady once per source, not on every parent render', async () => {
     const onMermaidReady = vi.fn();
