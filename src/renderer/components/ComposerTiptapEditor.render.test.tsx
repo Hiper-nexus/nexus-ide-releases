@@ -124,3 +124,37 @@ describe('ComposerTiptapEditor actual rendered document', () => {
   });
 
 });
+
+describe('F-1079: real editor persistence of paths and literal delimiter text', () => {
+  const literals = ['x`y', 'x``y', '`edge', 'edge`', '``runs``', ' x ', '   ', 'x*y', 'x**y', 'x~~y', String.raw`C:\Users\Alice\repo`, String.raw`\\server\share\folder`, String.raw`\n\d+\s`, String.raw`{"path":"C:\\Users"}`, 'trailing\\', 'repeated\\\\slashes'];
+  for (const mark of ['Negrito', 'Código inline'] as const) {
+    it.each(literals)(`${mark}: format, save and fresh mount preserve %s`, async (text) => {
+      const {host,editor,onChange} = await setup('');
+      act(() => editor.view.dispatch(editor.state.tr.insertText(text)));
+      expect(editor.state.doc.textContent).toBe(text);
+      act(() => { editor.commands.setTextSelection({from:1,to:editor.state.doc.content.size-1});host.querySelector<HTMLButtonElement>(`[aria-label="${mark}"]`)!.click(); });
+      const saved = onChange.mock.calls.at(-1)?.[0] as string;
+      const fresh = await setup(saved);
+      expect(fresh.editor.state.doc.textContent).toBe(text);
+      if (text.trim()) expect(fresh.editor.state.doc.child(0).content.content.some(node=>node.marks.some(m=>m.type.name===(mark==='Negrito'?'bold':'code')))).toBe(true);
+    });
+  }
+  it('external Windows/UNC value and subsequent actual update retain all path separators', async () => {
+    const {root,editor,onChange}=await setup('old');
+    const value=String.raw`C:\Users\Alice`+'\n'+String.raw`\\server\share`;
+    await act(async()=>root.render(<ComposerTiptapEditor value={value} onChange={onChange}/>));
+    expect(Array.from({length:editor.state.doc.childCount},(_,i)=>editor.state.doc.child(i).textContent)).toEqual(value.split('\n'));
+    act(()=>editor.view.dispatch(editor.state.tr.insertText('!')));
+    const saved=onChange.mock.calls.at(-1)?.[0] as string;
+    const fresh=await setup(saved);
+    expect(fresh.editor.state.doc.child(1).textContent).toContain(String.raw`\\server\share`);
+  });
+});
+
+it.each(['trailing\\','trailing\\\\',String.raw`\\server\share`,String.raw`x\*y`])('F-1079: actual unmarked update/save/fresh mount preserves %s',async(text)=>{
+  const {editor,onChange}=await setup('');
+  act(()=>editor.view.dispatch(editor.state.tr.insertText(text)));
+  const saved=onChange.mock.calls.at(-1)?.[0] as string;
+  const fresh=await setup(saved);
+  expect(fresh.editor.state.doc.textContent).toBe(text);
+});

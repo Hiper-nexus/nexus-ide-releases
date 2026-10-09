@@ -63,20 +63,25 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
   while (index < text.length) {
     const char = text[index]!;
     if (char === '\\') {
-      const next = text[index + 1];
-      if (next === undefined || next === '\n') {
-        pushSpan(current(), '\\', []);
-        index += 1;
+      let end = index;
+      while (text[end] === '\\') end += 1;
+      const next = text[end];
+      if (next !== undefined && /[*`_~]/u.test(next)) {
+        const count = end - index;
+        pushSpan(current(), '\\'.repeat(Math.floor(count / 2)), []);
+        if (count % 2) {
+          pushSpan(current(), next, []);
+          index = end + 1;
+        } else index = end;
       } else {
-        pushSpan(current(), next, []);
-        index += 2;
+        pushSpan(current(), text.slice(index, end), []);
+        index = end;
       }
       continue;
     }
     if (char === '`') {
-      // Multi-backtick code stays literal; a single-backtick span owns its contents.
       const run = text.slice(index).match(/^`+/)![0];
-      const code = run.length === 1 ? readSingleCodeSpan(text, index) : null;
+      const code = readCodeSpan(text, index, run.length);
       if (code) {
         pushSpan(current(), code.content, ['code']);
         index = code.next;
@@ -156,58 +161,76 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
   return root;
 }
 
-/**
- * A single-backtick span. Escaped backticks stay inside the span; a longer
- * run is not a closer. Empty or unclosed spans stay literal.
+/** Code contents are literal, including backslashes. Match an exact tick run.
+ * One padding space at both edges is removed only for non-space-only content,
+ * matching Markdown code-span padding so edge ticks/spaces remain lossless.
  */
-function readSingleCodeSpan(
-  text: string,
-  open: number,
-): { content: string; next: number } | null {
-  let index = open + 1;
-  let content = '';
-  while (index < text.length) {
-    const char = text[index]!;
-    if (char === '\n') return null;
-    if (char === '\\' && index + 1 < text.length && text[index + 1] !== '\n') {
-      content += text[index + 1];
-      index += 2;
-      continue;
+function readCodeSpan(text: string, open: number, width: number): {content: string; next: number} | null {
+  let index = open + width;
+  while (index < text.length && text[index] !== '\n') {
+    if (text[index] !== '`') { index += 1; continue; }
+    const run = text.slice(index).match(/^`+/)![0];
+    if (run.length === width) {
+      let content = text.slice(open + width, index);
+      if (!content) return null;
+      if (content.startsWith(' ') && content.endsWith(' ') && !/^ +$/u.test(content)) content = content.slice(1, -1);
+      return {content, next:index + width};
     }
-    if (char === '`') {
-      if (text[index + 1] === '`') return null;
-      if (content.length === 0) return null;
-      return { content, next: index + 1 };
-    }
-    content += char;
-    index += 1;
+    index += run.length;
   }
   return null;
 }
 
-function escapeDelimitedText(
-  text: string,
-  marks: readonly RichTextMark[],
-): string {
-  const pattern = marks.includes('code') ? /[\\`]/gu : /[\\*`_~]/gu;
-  return text.replace(pattern, (char) => `\\${char}`);
+function escapeDelimitedText(text: string): string {
+  // Slash runs are escapes only immediately before supported markers;
+  // elsewhere they remain literal (Windows/UNC/regex/JSON paths).
+  return text.replace(/([\\]*)([*`_~])/gu, (_match, slashes: string, mark: string) => '\\'.repeat(slashes.length * 2 + 1) + mark);
+}
+
+function codeDelimitedText(text: string): string {
+  const width = (text.match(/`+/gu) ?? []).reduce((max, run) => Math.max(max, run.length), 0) + 1;
+  const ticks = '`'.repeat(width);
+  const pad = text.startsWith('`') || text.endsWith('`') || (text.startsWith(' ') && text.endsWith(' ') && !/^ +$/u.test(text));
+  return ticks + (pad ? ' ' : '') + text + (pad ? ' ' : '') + ticks;
 }
 
 /** Serialize marked spans back to markdown. Nesting: strike > bold > italic > code. */
 export function serializeInlineMarkdown(spans: readonly RichTextSpan[]): string {
   const order: RichTextMark[] = ['strike', 'bold', 'italic', 'code'];
-  let out = '';
-  for (const span of spans) {
-    let body = escapeDelimitedText(span.text, span.marks);
+  const merged: RichTextSpan[] = [];
+  for (const span of spans) pushSpan(merged, span.text, span.marks);
+  const fragments: string[] = [];
+  for (const span of merged) {
+    if (!span.text) continue;
+    // Marks do not cross native line breaks. Emphasis applies to the core,
+    // leaving edge whitespace literal because its delimiters cannot flank it.
+    if (span.text.includes('\n')) {
+      fragments.push(span.text.split('\n').map(text => serializeInlineMarkdown([{text,marks:span.marks}])).join('\n'));
+      continue;
+    }
+    const emphasisOnly = !span.marks.includes('code') && span.marks.length > 0;
+    const leading = emphasisOnly ? (span.text.match(/^\s*/u)?.[0] ?? '') : '';
+    const trailing = emphasisOnly ? (span.text.slice(leading.length).match(/\s*$/u)?.[0] ?? '') : '';
+    const core = span.text.slice(leading.length, span.text.length - trailing.length);
+    if (!core) { fragments.push(span.text); continue; }
+    let body = span.marks.includes('code') ? core : escapeDelimitedText(core);
+    if (emphasisOnly) body = body.replace(/\\+$/u, slashes => slashes + slashes);
     // Close innermost first: apply delimiters from innermost mark outward.
     for (const mark of [...order].reverse()) {
       if (!span.marks.includes(mark)) continue;
+      if (mark === 'code') { body = codeDelimitedText(body); continue; }
       const delim = RICH_TEXT_DELIMITERS[mark];
       body = `${delim}${body}${delim}`;
     }
-    out += body;
+    fragments.push(leading + body + trailing);
   }
-  return out;
+  return fragments.map((fragment, index) => {
+    // A literal slash at a span boundary must not escape the next span's
+    // generated opening marker. At EOF/newline it stays completely literal.
+    return /^[*`_~]/u.test(fragments[index + 1] ?? '')
+      ? fragment.replace(/\\+$/u, slashes => slashes + slashes)
+      : fragment;
+  }).join('');
 }
 
 export function spanText(spans: readonly RichTextSpan[]): string {

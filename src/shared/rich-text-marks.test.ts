@@ -40,8 +40,8 @@ describe('rich text marks (T3 composer core)', () => {
     expect(spans[0]?.marks).toContain('italic');
   });
 
-  it('multi-backtick code stays literal', () => {
-    expect(spanText(parseInlineMarkdown('``a``'))).toBe('``a``');
+  it('matching multiple-backtick code preserves its literal body', () => {
+    expect(parseInlineMarkdown('``a``')).toEqual([{text:'a',marks:['code']}]);
   });
 
   it('serializes marks back to markdown', () => {
@@ -71,4 +71,37 @@ describe('rich text marks (T3 composer core)', () => {
       expect(parseInlineMarkdown(serializeInlineMarkdown(spans))).toEqual(spans);
     }
   });
+});
+
+describe('F-1079: lossless stored Markdown and literal marks', () => {
+  const literals = [String.raw`C:\Users\Alice\repo`, String.raw`\\server\share\folder`, String.raw`\n \d+\s regex`, String.raw`{"path":"C:\\Users","line":"\n"}`, 'trailing\\', 'repeated\\\\slashes'];
+  it.each(literals)('retains non-delimiter backslashes from stored input: %s', (source) => {
+    expect(spanText(parseInlineMarkdown(source))).toBe(source);
+    expect(spanText(parseInlineMarkdown('`' + source + '`'))).toBe(source);
+  });
+  const code = ['x`y', 'x``y', '`edge', 'edge`', '``runs``', ' x ', '   ', String.raw`C:\Users\Alice`, String.raw`\\server\share`, 'trailing\\', String.raw`\n\d`, '***literal***'];
+  it.each(code)('serializes code text without losing slash/tick content: %s', (text) => {
+    const parsed = parseInlineMarkdown(serializeInlineMarkdown([{ text, marks: ['code'] }]));
+    expect(spanText(parsed)).toBe(text);
+    expect(parsed.every(span => span.marks.includes('code'))).toBe(true);
+  });
+  it.each(['x*y','x**y','x~~y','x`y','x\\*y','x\\\\*y'])('serializes literal delimiters under bold: %s', (text) => {
+    const parsed = parseInlineMarkdown(serializeInlineMarkdown([{ text, marks: ['bold'] }]));
+    expect(spanText(parsed)).toBe(text);
+    expect(parsed.every(span => span.marks.includes('bold'))).toBe(true);
+  });
+  it('keeps multiline code text as separately delimited lines', () => {
+    expect(spanText(parseInlineMarkdown(serializeInlineMarkdown([{text:'one\ntwo',marks:['code']}])))).toBe('one\ntwo');
+  });
+});
+
+it('F-1079: unmarked trailing slashes and adjacent code spans preserve literal text', () => {
+  for (const text of ['trailing\\','trailing\\\\',String.raw`\\server\share`,String.raw`x\*y`]) {
+    expect(spanText(parseInlineMarkdown(serializeInlineMarkdown([{text,marks:[]}])))).toBe(text);
+  }
+  expect(spanText(parseInlineMarkdown(serializeInlineMarkdown([{text:'a',marks:['code']},{text:'b',marks:['code']}])))).toBe('ab');
+  for (const marks of [['bold'],['code']] as const) {
+    expect(spanText(parseInlineMarkdown(serializeInlineMarkdown([{text:'a\\',marks:[]},{text:'b',marks:[...marks]}])))).toBe('a\\b');
+    expect(spanText(parseInlineMarkdown(serializeInlineMarkdown([{text:'a\\',marks:[]},{text:' *',marks:[...marks]}])))).toBe('a\\ *');
+  }
 });
