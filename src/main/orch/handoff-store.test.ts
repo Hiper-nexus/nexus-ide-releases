@@ -283,6 +283,80 @@ describe("scoped handoff store", () => {
     expect(handoffs.get(queued.id)?.deliveryState).toBe("acknowledged");
   });
 
+
+  it("F-1049: acknowledges selected submitted ids within the mission only", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    let id = 0;
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => `mission-${++id}`,
+    });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      idFactory: () => `handoff-${++id}`,
+    });
+    const own = missions.create({ title: "Own" });
+    const other = missions.create({ title: "Other" });
+    const seed = (missionId: string) => handoffs.submit({
+      missionId, sessionId: "worker", fromAgent: "worker", status: "success", summary: "Result",
+    });
+    const selected = seed(own.id);
+    const unseen = seed(own.id);
+    const queued = seed(own.id);
+    const foreign = seed(other.id);
+    for (const row of [selected, unseen, foreign]) handoffs.markDelivered(row.id);
+    expect(handoffs.acknowledgeSeenByOrchestratorList(own.id, [])).toBe(0);
+    expect(handoffs.get(selected.id)?.deliveryState).toBe("submitted");
+    expect(handoffs.acknowledgeSeenByOrchestratorList(
+      own.id, [selected.id, selected.id, queued.id, foreign.id, "missing"],
+    )).toBe(1);
+    expect(handoffs.get(selected.id)?.deliveryState).toBe("acknowledged");
+    expect(handoffs.get(unseen.id)?.deliveryState).toBe("submitted");
+    expect(handoffs.get(queued.id)?.deliveryState).toBe("queued");
+    expect(handoffs.get(foreign.id)?.deliveryState).toBe("submitted");
+    expect(handoffs.acknowledgeSeenByOrchestratorList(own.id, [selected.id])).toBe(0);
+    // Existing callers without ids retain whole-mission acknowledgement.
+    expect(handoffs.acknowledgeSeenByOrchestratorList(own.id)).toBe(1);
+    expect(handoffs.get(unseen.id)?.deliveryState).toBe("acknowledged");
+    expect(handoffs.get(foreign.id)?.deliveryState).toBe("submitted");
+  });
+
+  it("F-1049: validates every selected id before any write", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope, { idFactory: () => "mission-validation" });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, { idFactory: () => "handoff-valid" });
+    missions.create({ title: "Validation" });
+    const row = handoffs.submit({
+      missionId: "mission-validation", sessionId: "worker", fromAgent: "worker", status: "success", summary: "Result",
+    });
+    handoffs.markDelivered(row.id);
+    expect(() => handoffs.acknowledgeSeenByOrchestratorList(
+      "mission-validation", [row.id, "invalid'id"],
+    )).toThrow();
+    expect(handoffs.get(row.id)?.deliveryState).toBe("submitted");
+  });
+
+  it("F-1049: selected lists larger than a SQLite bind chunk remain complete", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    let id = 0;
+    const missions = createScopedMissionStore(runtimeManager, scope, { idFactory: () => "mission-many" });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, { idFactory: () => `handoff-${++id}` });
+    missions.create({ title: "Many" });
+    const rows = Array.from({ length: 1_001 }, () => {
+      const row = handoffs.submit({
+        missionId: "mission-many", sessionId: "worker", fromAgent: "worker", status: "success", summary: "Result",
+      });
+      handoffs.markDelivered(row.id);
+      return row;
+    });
+    const unseen = rows.pop()!;
+    expect(handoffs.acknowledgeSeenByOrchestratorList("mission-many", rows.map((row) => row.id))).toBe(1_000);
+    expect(handoffs.get(rows[0]!.id)?.deliveryState).toBe("acknowledged");
+    expect(handoffs.get(rows[999]!.id)?.deliveryState).toBe("acknowledged");
+    expect(handoffs.get(unseen.id)?.deliveryState).toBe("submitted");
+  });
+
   it("persists bounded delivery attempts and accepts the exact attempt atomically", () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Handoff } from "../../shared/orch-types";
 import type { AgentGateContext } from "./gate";
+import type { ScopedHandoff } from "./handoff-store";
 import type { McpToolInvocation } from "./mcp-protocol";
 import { testProjectScope } from "./__tests__/scope-fixture";
 
@@ -17,7 +18,7 @@ const mocks = vi.hoisted(() => ({
   orchWriteSession: vi.fn(() => true),
   getStores: vi.fn(),
   listHandoffs: vi.fn(
-    (): Array<{ id: string; delivered?: boolean }> => [],
+    (): Array<Pick<ScopedHandoff, "id"> & Partial<ScopedHandoff>> => [],
   ),
   heartbeat: vi.fn(),
   acceptHandoff: vi.fn(),
@@ -1625,4 +1626,75 @@ describe("handoff MCP stop receipt", () => {
     await listTool().handler({}, orchestratorContext());
     expect(ackSpy).not.toHaveBeenCalled();
   });
+
+  it.each(["invalid-json", ""])("F-1049: invalid cursor %j must not acknowledge any handoff", async (cursor) => {
+    const stores = mocks.getStores();
+    const ack = vi.fn(() => 2);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: { ...stores.handoffs, acknowledgeSeenByOrchestratorList: ack },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      { id: "h-a", createdAt: 1, deliveryState: "submitted", delivered: true },
+      { id: "h-b", createdAt: 2, deliveryState: "submitted", delivered: true },
+    ]);
+    await expect(
+      listTool().handler({ limit: 1, cursor }, orchestratorContext()),
+    ).rejects.toThrow(/cursor inválido/);
+    expect(ack).not.toHaveBeenCalled();
+  });
+
+  it("F-1049: first and subsequent pages acknowledge only their returned ids", async () => {
+    const stores = mocks.getStores();
+    const ack = vi.fn(() => 1);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: { ...stores.handoffs, acknowledgeSeenByOrchestratorList: ack },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      { id: "h-a", createdAt: 1, deliveryState: "submitted", delivered: true },
+      { id: "h-b", createdAt: 2, deliveryState: "submitted", delivered: true },
+    ]);
+    const first = await listTool().handler({ limit: 1 }, orchestratorContext()) as {
+      items: Array<{ id: string }>; nextCursor: string; hasMoreHistory: boolean;
+    };
+    expect(first.items.map((row) => row.id)).toEqual(["h-a"]);
+    expect(first.hasMoreHistory).toBe(true);
+    expect(ack).toHaveBeenNthCalledWith(1, "mission-a", ["h-a"]);
+    const second = await listTool().handler(
+      { limit: 1, cursor: first.nextCursor }, orchestratorContext(),
+    ) as typeof first;
+    expect(second.items.map((row) => row.id)).toEqual(["h-b"]);
+    expect(second).toMatchObject({ nextCursor: null, hasMoreHistory: false });
+    expect(ack).toHaveBeenNthCalledWith(2, "mission-a", ["h-b"]);
+  });
+
+  it("F-1049: filtered legacy lists still return arrays and acknowledge only returned ids", async () => {
+    const stores = mocks.getStores();
+    const ack = vi.fn(() => 1);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: { ...stores.handoffs, acknowledgeSeenByOrchestratorList: ack },
+    });
+    mocks.listHandoffs.mockReturnValue([{ id: "h-b", delivered: true }]);
+    const result = await listTool().handler({ ids: ["h-b"] }, orchestratorContext());
+    expect(Array.isArray(result)).toBe(true);
+    expect(ack).toHaveBeenCalledWith("mission-a", ["h-b"]);
+  });
+
+  it("F-1049: a paged cross-mission read never acknowledges rows", async () => {
+    const stores = mocks.getStores();
+    const ack = vi.fn();
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: { ...stores.handoffs, acknowledgeSeenByOrchestratorList: ack },
+    });
+    mocks.listHandoffs.mockReturnValue([{ id: "h-other", createdAt: 1 }]);
+    const result = await listTool().handler(
+      { missionId: "mission-other", limit: 1 }, orchestratorContext(),
+    );
+    expect(result).toMatchObject({ items: [{ id: "h-other" }], nextCursor: null });
+    expect(ack).not.toHaveBeenCalled();
+  });
+
 });

@@ -32,6 +32,10 @@ describe('cursor pagination (T3 policy)', () => {
     expect(() => decodeCursor('!!!not-base64!!!')).toThrow(InvalidCursorError);
   });
 
+  it('rejects an explicitly empty cursor instead of restarting the first page', () => {
+    expect(() => selectCursorPage(rows, { cursor: '', keyOf, idOf })).toThrow(InvalidCursorError);
+  });
+
   it('rejects a cursor from another slice instead of skipping silently', () => {
     expect(() =>
       selectCursorPage(rows, {

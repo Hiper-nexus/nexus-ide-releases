@@ -2107,22 +2107,40 @@ export class ScopedHandoffStore {
    * O loop 0.62/0.63 era re-paste de `submitted`; esse continua coberto.
    * `consumed` continua exclusivo do nexus_handoff_ack.
    */
-  acknowledgeSeenByOrchestratorList(rawMissionId: string): number {
+  acknowledgeSeenByOrchestratorList(
+    rawMissionId: string,
+    rawSeenIds?: readonly string[],
+  ): number {
     const missionId = identifierSchema.parse(rawMissionId);
+    // Validate the entire selection before writing, even across SQL chunks.
+    // Omitted ids preserve legacy whole-mission callers; [] means nothing seen.
+    const seenIds = rawSeenIds === undefined
+      ? undefined
+      : [...new Set(z.array(identifierSchema).parse(rawSeenIds))];
+    if (seenIds?.length === 0) return 0;
     const now = this.#binding.now();
-    const result = this.#binding
-      .writeDatabase()
-      .prepare(
-        `UPDATE handoffs
+    const db = this.#binding.writeDatabase();
+    const sql = `UPDATE handoffs
        SET delivery_state = 'acknowledged',
            delivered = 1,
            acknowledged_at = ?,
            submitted_at = COALESCE(submitted_at, ?)
-       WHERE mission_id = ? AND delivery_state = 'submitted'`,
-      )
-      .run(now, now, missionId);
-    if (result.changes > 0) this.#binding.emitChange();
-    return result.changes;
+       WHERE mission_id = ? AND delivery_state = 'submitted'`;
+    const changed = seenIds === undefined
+      ? db.prepare(sql).run(now, now, missionId).changes
+      : db.transaction(() => {
+          let total = 0;
+          // Stay below SQLite's legacy 999-variable limit (3 fixed bindings).
+          for (let offset = 0; offset < seenIds.length; offset += 500) {
+            const chunk = seenIds.slice(offset, offset + 500);
+            const placeholders = chunk.map(() => "?").join(",");
+            total += db.prepare(`${sql} AND id IN (${placeholders})`)
+              .run(now, now, missionId, ...chunk).changes;
+          }
+          return total;
+        }).immediate();
+    if (changed > 0) this.#binding.emitChange();
+    return changed;
   }
 
   acknowledgeMission(rawMissionId: string): number {

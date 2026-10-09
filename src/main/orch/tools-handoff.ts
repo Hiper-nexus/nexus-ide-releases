@@ -870,39 +870,13 @@ const handoffListTool: McpToolDef = {
         : {}),
       ...(rawIds.length > 0 ? { ids: rawIds } : {}),
     });
-    // List = recibo só de `submitted` (já colado no PTY). `queued` segue
-    // para o idle-delivery: o Maestro que lista um queued ainda não recebeu
-    // o paste — ack prematuro comia a fila (campo 24/08, 2x2).
-    // Leitura cross-mission é auditoria: nunca reconhece nada.
-    if (
-      isProvenCurrentOrchestrator &&
-      missionId === ctx.missionId &&
-      rows.length > 0
-    ) {
-      try {
-        const acked = getProjectDomainStores(
-          ctx.scope,
-        ).handoffs.acknowledgeSeenByOrchestratorList(ctx.missionId);
-        if (acked > 0) {
-          console.info(
-            `[handoff] list-ack: ${acked} handoff(s) reconhecido(s) pela ` +
-              `leitura do Maestro (mission=${ctx.missionId})`,
-          );
-        }
-      } catch (error) {
-        console.warn(
-          "[handoff] list-ack falhou (segue sem recibo):",
-          error instanceof Error ? error.message : error,
-        );
-      }
-    }
     // Modo cursor (item T3 "paginação por cursor"): janela keyset estável
     // sobre as linhas já ordenadas do ledger. Sem `limit`/`cursor`, o
     // comportamento antigo (trilha completa) continua intacto.
     const wantCursorMode =
       args.cursor !== undefined || args.limit !== undefined;
+    let paged;
     if (wantCursorMode) {
-      let paged;
       try {
         paged = selectCursorPage(rows, {
           limit: args.limit as number | undefined,
@@ -919,17 +893,47 @@ const handoffListTool: McpToolDef = {
         }
         throw error;
       }
-      return {
-        items: compactHandoffListRows(
-          [...paged.items],
-          rawIds,
-          str(args, "detail") === "full",
-        ),
-        nextCursor: paged.nextCursor,
-        hasMoreHistory: paged.hasMoreHistory,
-      };
     }
-    return compactHandoffListRows(rows, rawIds, str(args, "detail") === "full");
+    const returnedRows = paged ? [...paged.items] : rows;
+    const items = compactHandoffListRows(
+      returnedRows, rawIds, str(args, "detail") === "full",
+    );
+    // List = recibo só de `submitted` (já colado no PTY). `queued` segue
+    // para o idle-delivery: o Maestro que lista um queued ainda não recebeu
+    // o paste — ack prematuro comia a fila (campo 24/08, 2x2).
+    // Leitura cross-mission é auditoria: nunca reconhece nada.
+    if (
+      isProvenCurrentOrchestrator &&
+      missionId === ctx.missionId &&
+      returnedRows.length > 0
+    ) {
+      try {
+        const acked = getProjectDomainStores(
+          ctx.scope,
+        ).handoffs.acknowledgeSeenByOrchestratorList(
+          ctx.missionId,
+          returnedRows.map((row) => row.id),
+        );
+        if (acked > 0) {
+          console.info(
+            `[handoff] list-ack: ${acked} handoff(s) reconhecido(s) pela ` +
+              `leitura do Maestro (mission=${ctx.missionId})`,
+          );
+        }
+      } catch (error) {
+        console.warn(
+          "[handoff] list-ack falhou (segue sem recibo):",
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    return paged
+      ? {
+          items,
+          nextCursor: paged.nextCursor,
+          hasMoreHistory: paged.hasMoreHistory,
+        }
+      : items;
   },
 };
 

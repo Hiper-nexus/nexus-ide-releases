@@ -1,4 +1,12 @@
 /**
+ * Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
+ * Copyright (c) 2026 T3 Tools Inc. — MIT License.
+ * See third_party/licenses/t3code-MIT.txt.
+ * Source: apps/server/src/orchestration-v2/threadHistoryPaging.ts.
+ * Nexus changes: generic timestamp/id cursor, item-only page limits, slice validation;
+ * no thread projection, byte budget or Effect dependency.
+ */
+/**
  * Paginação por cursor (porte da política T3 `threadHistoryPaging.ts` @
  * 26285ab; casca pura, sem Effect).
  *
@@ -92,7 +100,7 @@ export function selectCursorPage<T>(
 ): CursorPage<T> {
   const limit = clampPageSize(options.limit);
   let start = 0;
-  if (options.cursor) {
+  if (options.cursor !== undefined && options.cursor !== null) {
     const decoded = decodeCursor(options.cursor);
     const index = sorted.findIndex(
       (item) =>
