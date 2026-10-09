@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -227,6 +227,11 @@ function cdpTicketMatches(presented: string, expected: string): boolean {
   return timingSafeEqual(left, right);
 }
 
+/** O segredo do preview não vai na URL. O ticket só abre este pane. */
+export function boundPreviewCdpTicket(secret: string, paneId: string): string {
+  return createHmac('sha256', secret).update(`pane\0${paneId}`).digest('base64url');
+}
+
 function previewStartResult(entry: RunningPreview): PreviewStartResult {
   return {
     id: entry.id,
@@ -268,7 +273,8 @@ export function authorizedPreviewCdpUrl(
     : candidates;
   if (allowed.length !== 1) return null;
   const paneId = allowed[0]!;
-  return `ws://127.0.0.1:${preview.port}/cdp/${encodeURIComponent(paneId)}?ticket=${encodeURIComponent(preview.cdpTicket)}`;
+  const ticket = boundPreviewCdpTicket(preview.cdpTicket, paneId);
+  return `ws://127.0.0.1:${preview.port}/cdp/${encodeURIComponent(paneId)}?ticket=${encodeURIComponent(ticket)}`;
 }
 
 function attachPreviewCdp(
@@ -307,11 +313,13 @@ function attachPreviewCdp(
     const paneId = cdpPaneId(req.url);
     const port = portOf();
     const presented = presentedCdpTicket(req.url);
+    const expected = paneId ? boundPreviewCdpTicket(ticket, paneId) : '';
     if (
       !paneId ||
       port === 0 ||
       !presented ||
-      !cdpTicketMatches(presented, ticket)
+      !expected ||
+      !cdpTicketMatches(presented, expected)
     ) {
       socket.destroy();
       return;

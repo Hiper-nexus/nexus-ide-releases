@@ -1821,7 +1821,9 @@ export async function dispatchToolCall(
         const inflight = receiptCommandId
           ? logicalDispatchFlights.get(logicalFlightKey(ctx.scope, receiptCommandId))
           : undefined;
-        if (inflight) {
+        // Voo de outra chamada. O promise que este retry acabou de instalar
+        // não tem quem resolva se devolvermos ele mesmo.
+        if (inflight && !ownedFlightKey) {
           const auditFailure = writeOutcomeAudit(
             "error",
             "command_effect_joined",
@@ -1839,21 +1841,26 @@ export async function dispatchToolCall(
             replay.ok ? undefined : replay.error,
             false,
           );
-          if (auditFailure) return auditFailure;
-          return replay;
+          if (auditFailure) {
+            return ownedFlightKey ? releaseOwnedFlight(auditFailure) : auditFailure;
+          }
+          return ownedFlightKey ? releaseOwnedFlight(replay) : replay;
         }
-        const auditFailure = writeOutcomeAudit(
-          "error",
-          DISPATCH_OUTCOME_UNSETTLED,
-          false,
-        );
-        if (auditFailure) return auditFailure;
-        return {
+        const unsettled: ToolDispatchResult = {
           ok: false,
           tool: tool.name,
           error: DISPATCH_OUTCOME_UNSETTLED,
           effectMayHaveCommitted: true,
         };
+        const auditFailure = writeOutcomeAudit(
+          "error",
+          DISPATCH_OUTCOME_UNSETTLED,
+          false,
+        );
+        if (auditFailure) {
+          return ownedFlightKey ? releaseOwnedFlight(auditFailure) : auditFailure;
+        }
+        return ownedFlightKey ? releaseOwnedFlight(unsettled) : unsettled;
       }
       if (checkpoint.status === "accepted" && checkpoint.inserted) {
         commandAccepted = true;

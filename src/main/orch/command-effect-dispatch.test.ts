@@ -8,7 +8,7 @@ import {
 } from '../jarvis/audit-log';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { assertCompletionEffectsSettled } from './automatic-completion-proof';
-import { createScopedCommandReceiptStore } from './command-receipts';
+import { acceptDispatchCheckpointEffect, createScopedCommandReceiptStore } from './command-receipts';
 import { createScopedEffectOutboxStore } from './effect-outbox';
 import {
   drainEffectOutbox,
@@ -452,6 +452,61 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
     expect(runs).toBe(1);
     expect(second).toEqual(first);
     expect(second?.error).toBeUndefined();
+  });
+
+  it('returns effectMayHaveCommitted when a fresh process finds a receipt without an outcome', async () => {
+    let runs = 0;
+    const booted = bootDispatch(async () => {
+      runs += 1;
+      return { marker: 'ran' };
+    });
+    acceptDispatchCheckpointEffect(booted.manager, booted.scope, {
+      commandId: 'op-restart',
+      threadId: MISSION_ID,
+      toolName: 'terminal_run',
+      missionBound: true,
+    });
+    const pending = dispatchToolCall(
+      'http-mcp',
+      booted.registry,
+      'nexus_terminal_run',
+      { command: 'true' },
+      booted.ctx,
+      { ...booted.options, logicalOperationId: 'op-restart' },
+    );
+    const result = await Promise.race([
+      pending,
+      new Promise((resolve) => setTimeout(() => resolve('hung'), 500)),
+    ]);
+    expect(result).toMatchObject({
+      ok: false,
+      effectMayHaveCommitted: true,
+    });
+    expect(runs).toBe(0);
+
+    const live = dispatchToolCall(
+      'http-mcp',
+      booted.registry,
+      'nexus_terminal_run',
+      { command: 'true' },
+      booted.ctx,
+      { ...booted.options, logicalOperationId: 'op-live' },
+    );
+    acceptDispatchCheckpointEffect(booted.manager, booted.scope, {
+      commandId: 'op-live',
+      threadId: MISSION_ID,
+      toolName: 'terminal_run',
+      missionBound: true,
+    });
+    const raced = await Promise.race([
+      live,
+      new Promise((resolve) => setTimeout(() => resolve('hung'), 500)),
+    ]);
+    expect(raced).toMatchObject({
+      ok: false,
+      effectMayHaveCommitted: true,
+    });
+    expect(runs).toBe(0);
   });
 
   it('keeps the checkpoint blocking when the handler is still in flight across one drain', async () => {

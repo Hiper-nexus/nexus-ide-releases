@@ -8,6 +8,7 @@ import { authorizePaneAccess, type PaneAuthzInfo } from './pane-authz';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
   authorizedPreviewCdpUrl,
+  boundPreviewCdpTicket,
   isRunningPreviewUrl,
   isRunningPreviewUrlForScope,
   listPreviews,
@@ -227,7 +228,7 @@ describe('preview-server', () => {
     );
 
     const ws = new WebSocket(
-      `ws://127.0.0.1:${preview.port}/cdp/pane-preview?ticket=${encodeURIComponent(preview.cdpTicket)}&projectId=other`,
+      `ws://127.0.0.1:${preview.port}/cdp/pane-preview?ticket=${encodeURIComponent(boundPreviewCdpTicket(preview.cdpTicket, 'pane-preview'))}&projectId=other`,
     );
     await new Promise<void>((resolve, reject) => {
       ws.once('open', () => resolve());
@@ -268,7 +269,7 @@ describe('preview-server', () => {
     const preview = await startPreview(dir, scopeA);
     expect((await fetch(new URL('/json/version', preview.url))).status).toBe(404);
     const ws = new WebSocket(
-      `ws://127.0.0.1:${preview.port}/cdp/pane-preview?ticket=${encodeURIComponent(preview.cdpTicket)}`,
+      `ws://127.0.0.1:${preview.port}/cdp/pane-preview?ticket=${encodeURIComponent(boundPreviewCdpTicket(preview.cdpTicket, 'pane-preview'))}`,
     );
     await new Promise<void>((resolve, reject) => {
       ws.once('open', () => resolve());
@@ -286,7 +287,7 @@ describe('preview-server', () => {
     });
     const preview = await startPreview(dir, scopeA);
     const ws = new WebSocket(
-      `ws://127.0.0.1:${preview.port}/cdp/missing?ticket=${encodeURIComponent(preview.cdpTicket)}`,
+      `ws://127.0.0.1:${preview.port}/cdp/missing?ticket=${encodeURIComponent(boundPreviewCdpTicket(preview.cdpTicket, 'missing'))}`,
     );
     const code = await new Promise<number>((resolve, reject) => {
       ws.once('close', (next) => resolve(next));
@@ -333,7 +334,7 @@ describe('preview-server', () => {
     expect(opened).toBe(0);
 
     const privileged = new WebSocket(
-      `${advertised}?ticket=${encodeURIComponent(preview.cdpTicket)}`,
+      `${advertised}?ticket=${encodeURIComponent(boundPreviewCdpTicket(preview.cdpTicket, 'pane-preview'))}`,
     );
     await new Promise<void>((resolve, reject) => {
       privileged.once('open', () => resolve());
@@ -358,8 +359,9 @@ describe('preview-server', () => {
     const preview = await startPreview(dir, scopeA);
     const authorized = authorizedPreviewCdpUrl(scopeA, preview);
     expect(authorized).toBe(
-      `ws://127.0.0.1:${preview.port}/cdp/pane-preview?ticket=${encodeURIComponent(preview.cdpTicket)}`,
+      `ws://127.0.0.1:${preview.port}/cdp/pane-preview?ticket=${encodeURIComponent(boundPreviewCdpTicket(preview.cdpTicket, 'pane-preview'))}`,
     );
+    expect(authorized).not.toContain(preview.cdpTicket);
 
     const discovery = await fetch(new URL('/json/version', preview.url));
     const body = (await discovery.json()) as { webSocketDebuggerUrl: string };
@@ -444,5 +446,45 @@ describe('preview-server', () => {
       paneIdsOnOrigin: () => ['pane-mission-1'],
     });
     expect(authorizedPreviewCdpUrl(scopeA, preview, allow('mission-2'))).toBeNull();
+  });
+
+  it('does not attach when a ticket minted for one pane is pointed at another', async () => {
+    let opened = '';
+    registerPreviewCdpBridge({
+      open: (_scope, paneId) => {
+        opened = paneId;
+        return {
+          connection: { receive: () => undefined },
+          detach: () => undefined,
+        };
+      },
+      solePaneId: () => null,
+      paneIdsOnOrigin: () => ['pane-a', 'pane-b'],
+    });
+    const preview = await startPreview(dir, scopeA);
+    const authorized = authorizedPreviewCdpUrl(
+      scopeA,
+      preview,
+      (paneId) => paneId === 'pane-a',
+    );
+    expect(authorized).toContain('/cdp/pane-a?ticket=');
+    expect(authorized).not.toContain(preview.cdpTicket);
+    const swapped = authorized!.replace('/cdp/pane-a?', '/cdp/pane-b?');
+    const stolen = new WebSocket(swapped);
+    await new Promise<void>((resolve) => {
+      stolen.once('error', () => resolve());
+      stolen.once('close', () => resolve());
+      stolen.once('open', () => resolve());
+    });
+    expect(opened).toBe('');
+    expect(stolen.readyState).not.toBe(WebSocket.OPEN);
+
+    const owner = new WebSocket(authorized!);
+    await new Promise<void>((resolve, reject) => {
+      owner.once('open', () => resolve());
+      owner.once('error', reject);
+    });
+    expect(opened).toBe('pane-a');
+    owner.close();
   });
 });
