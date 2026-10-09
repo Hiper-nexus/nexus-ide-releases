@@ -2113,6 +2113,53 @@ describe("handoff MCP stop receipt", () => {
     expect(result.every((row) => row.stuckDiagnosis?.reason !== "accepted-not-consumed")).toBe(true);
   });
 
+  it("compacts an acknowledged row that was stored with delivered false", async () => {
+    const stores = mocks.getStores();
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: (_mission: string, ids: readonly string[]) =>
+          ids.length,
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-old",
+        delivered: false,
+        deliveryState: "submitted",
+        artifacts: [{ file: "old" }],
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+      ...Array.from({ length: 5 }, (_, index) => ({
+        id: `h-new-${index}`,
+        delivered: true,
+        deliveryState: "consumed",
+        artifacts: [{ file: `n${index}` }],
+        createdAt: index + 2,
+        missionId: "mission-a",
+      })),
+    ]);
+
+    const result = (await listTool().handler(
+      {},
+      orchestratorContext(),
+    )) as Array<{
+      id: string;
+      deliveryState?: string;
+      delivered?: boolean;
+      artifacts: unknown[];
+      artifactsOmitted?: number;
+    }>;
+    expect(result[0]?.id).toBe("h-old");
+    expect(result[0]?.deliveryState).toBe("acknowledged");
+    expect(result[0]?.artifacts).toEqual([]);
+    expect(result[0]?.artifactsOmitted).toBe(1);
+  });
+
   it("keeps accepted-not-consumed when list-ack fails", async () => {
     const stores = mocks.getStores();
     mocks.getStores.mockReturnValue({

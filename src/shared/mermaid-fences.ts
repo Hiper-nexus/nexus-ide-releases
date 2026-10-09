@@ -12,10 +12,21 @@ export type MarkdownPart =
 
 const FENCE = /^([ \t]*)(`{3,}|~{3,})[ \t]*([A-Za-z0-9_-]*)[ \t]*$/;
 
+function closingFence(line: string, opener: string): boolean {
+  const close = FENCE.exec(line);
+  if (!close) return false;
+  const marker = close[2] ?? '';
+  return (
+    marker[0] === opener[0] &&
+    marker.length >= opener.length &&
+    (close[3] ?? '') === ''
+  );
+}
+
 /**
  * Divide o markdown em prosa e blocos mermaid. Fences ```mermaid (ou
- * ```mmd) viram `kind: 'mermaid'`; outros fences permanecem em `text`
- * intactos — este parser só extrai Mermaid.
+ * ```mmd) viram `kind: 'mermaid'`. Dentro de outra cerca, um exemplo
+ * ```mermaid fica texto: a cerca de fora não é partida.
  */
 export function splitMarkdownMermaid(markdown: string): MarkdownPart[] {
   const lines = (markdown ?? '').split(/\r?\n/);
@@ -57,6 +68,18 @@ export function splitMarkdownMermaid(markdown: string): MarkdownPart[] {
         index: mermaidIndex,
       });
       mermaidIndex += 1;
+      continue;
+    }
+    if (open) {
+      const opener = open[2] ?? '';
+      buffer.push(lines[i] ?? '');
+      i += 1;
+      while (i < lines.length) {
+        const inner = lines[i] ?? '';
+        buffer.push(inner);
+        i += 1;
+        if (closingFence(inner, opener)) break;
+      }
       continue;
     }
     buffer.push(lines[i] ?? '');
