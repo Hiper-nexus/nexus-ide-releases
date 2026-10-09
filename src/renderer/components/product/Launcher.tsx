@@ -1,4 +1,11 @@
+import { useCallback, type KeyboardEvent } from 'react';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
+import {
+  LAUNCHER_ACTIONS,
+  launcherActionIdForKey,
+  launcherShortcutHint,
+  requireAccessibleName,
+} from '../../lib/action-names';
 
 export interface LauncherProps {
   onOpenWorkspace: () => void;
@@ -30,13 +37,20 @@ function LauncherAction({
   onClick,
 }: LauncherActionProps) {
   const descriptionId = `launcher-action-${id}-description`;
+  const shortcut = launcherShortcutHint(id);
+  // T3 a11y: nome acessível completo, nunca só ícone.
+  const name = requireAccessibleName({
+    id,
+    accessibleName: accessibleLabel,
+    label,
+  });
 
   return (
     <button
       type="button"
       className={`launcher-action${primary ? ' launcher-action--primary' : ''}`}
       data-launcher-action={id}
-      aria-label={accessibleLabel}
+      aria-label={name}
       aria-describedby={descriptionId}
       onClick={onClick}
     >
@@ -49,6 +63,11 @@ function LauncherAction({
           {description}
         </span>
       </span>
+      {shortcut ? (
+        <kbd className="launcher-action__shortcut" aria-hidden="true">
+          {shortcut}
+        </kbd>
+      ) : null}
       <span className="launcher-action__direction" aria-hidden="true">
         <PixelIcon name="arrow-right" size={12} />
       </span>
@@ -171,8 +190,45 @@ export function Launcher({
   onOpenMemory,
   onOpenProviders,
 }: LauncherProps) {
+  const actions: Record<string, () => void> = {
+    pane: onOpenPane,
+    mission: onStartMission,
+    workspace: onOpenWorkspace,
+    shell: onOpenShellTerminal,
+    tasks: onOpenTaskBoard,
+    memory: onOpenMemory,
+  };
+
+  // Atalhos do launcher (item T3): 1–6 abrem a ação, a menos que o foco
+  // esteja num campo editável.
+  const onKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLElement>) => {
+      const target = event.target as HTMLElement | null;
+      const editable =
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable === true;
+      const id = launcherActionIdForKey(event.key, {
+        targetIsEditable: editable,
+      });
+      if (!id) return;
+      const run = actions[id];
+      if (!run) return;
+      event.preventDefault();
+      run();
+    },
+    [onOpenPane, onStartMission, onOpenWorkspace, onOpenShellTerminal, onOpenTaskBoard, onOpenMemory],
+  );
+
   return (
-    <section className="launcher" aria-labelledby="launcher-title">
+    <section
+      className="launcher"
+      aria-labelledby="launcher-title"
+      onKeyDown={onKeyDown}
+    >
+      <p id="launcher-shortcuts" className="visually-hidden">
+        Atalhos: {LAUNCHER_ACTIONS.map((a) => `${a.shortcut} ${a.label}`).join('; ')}
+      </p>
       <div className="launcher__content">
         <header className="launcher__header">
           <h1 id="launcher-title" className="launcher__title">
