@@ -1,0 +1,89 @@
+F-1047 / Node v22.23.2 / integration HEAD 22253844c
+
+RED (before source fix): node node_modules/vitest/vitest.mjs run src/main/decision-models/decision-ensemble.test.ts --maxWorkers=2
+Exit 1
+
+ RUN  v5.0.0 /Users/cleofaspereirarocha/.nexus-worktrees/release-076213-reviewed.noindex
+
+ ❯ src/main/decision-models/decision-ensemble.test.ts (14 tests | 9 failed) 8ms
+   ❯ ensemble combine (14)
+     × keeps code verification and changed-file bounces for [ 'jev', 'luna' ] when jev sees edits 3ms
+     × keeps code verification and changed-file bounces for [ 'jev', 'luna' ] when luna sees edits 0ms
+     × keeps code verification and changed-file bounces for [ 'jev', 'clef' ] when jev sees edits 0ms
+     × keeps code verification and changed-file bounces for [ 'jev', 'clef' ] when clef sees edits 0ms
+     × keeps code verification and changed-file bounces for [ 'luna', 'clef' ] when luna sees edits 0ms
+     × keeps code verification and changed-file bounces for [ 'luna', 'clef' ] when clef sees edits 0ms
+     × keeps code verification and changed-file bounces for [ 'jev', 'luna', 'clef' ] when jev sees edits 0ms
+     × keeps code verification and changed-file bounces for [ 'jev', 'luna', 'clef' ] when luna sees edits 0ms
+     × keeps code verification and changed-file bounces for [ 'jev', 'luna', 'clef' ] when clef sees edits 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/main/decision-models/decision-ensemble.test.ts > ensemble combine > keeps code verification and changed-file bounces for [ 'jev', 'luna' ] when jev sees edits
+ FAIL  src/main/decision-models/decision-ensemble.test.ts > ensemble combine > keeps code verification and changed-file bounces for [ 'jev', 'luna' ] when luna sees edits
+ FAIL  src/main/decision-models/decision-ensemble.test.ts > ensemble combine > keeps code verification and changed-file bounces for [ 'jev', 'clef' ] when jev sees edits
+ FAIL  src/main/decision-models/decision-ensemble.test.ts > ensemble combine > keeps code verification and changed-file bounces for [ 'jev', 'clef' ] when clef sees edits
+ FAIL  src/main/decision-models/decision-ensemble.test.ts > ensemble combine > keeps code verification and changed-file bounces for [ 'luna', 'clef' ] when luna sees edits
+ FAIL  src/main/decision-models/decision-ensemble.test.ts > ensemble combine > keeps code verification and changed-file bounces for [ 'luna', 'clef' ] when clef sees edits
+ FAIL  src/main/decision-models/decision-ensemble.test.ts > ensemble combine > keeps code verification and changed-file bounces for [ 'jev', 'luna', 'clef' ] when jev sees edits
+ FAIL  src/main/decision-models/decision-ensemble.test.ts > ensemble combine > keeps code verification and changed-file bounces for [ 'jev', 'luna', 'clef' ] when luna sees edits
+ FAIL  src/main/decision-models/decision-ensemble.test.ts > ensemble combine > keeps code verification and changed-file bounces for [ 'jev', 'luna', 'clef' ] when clef sees edits
+AssertionError: expected [] to deeply equal [ …(2) ]
+
+- Expected
++ Received
+
+- [
+-   "sem evidência de verificação: cole a saída de testes/typecheck/build ou a referência do commit",
+-   "não lista arquivos/componentes alterados: informe filesModified",
+- ]
++ []
+
+ ❯ src/main/decision-models/decision-ensemble.test.ts:76:59
+     74|     expect(combined.ok).toBe(true);
+     75|     if (!combined.ok) return;
+     76|     expect(handoffBounceSignals(combined.answers, facts)).toEqual(expe…
+       |                                                           ^
+     77|     expect(combined.answers.changed_code).toEqual(noul(0.9));
+     78|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  9 failed | 5 passed (14)
+   Start at  22:15:42
+   Duration  343ms (transform 64%, import 31%, tests 3%, setup 1%, worker 1%)
+
+
+GREEN (after removing changed_code from LOWER_IS_RESTRICTIVE): node node_modules/vitest/vitest.mjs run src/main/decision-models/decision-ensemble.test.ts src/main/orch/jev-handoff-review.test.ts --maxWorkers=2
+Exit 0
+
+ RUN  v5.0.0 /Users/cleofaspereirarocha/.nexus-worktrees/release-076213-reviewed.noindex
+
+
+ Test Files  2 passed (2)
+      Tests  49 passed (49)
+   Start at  22:15:53
+   Duration  294ms (transform 61%, import 30%, tests 6%, setup 2%, worker 1%)
+
+
+Focused affected/covering tests, maxWorkers=2 / exit 0
+
+ RUN  v5.0.0 /Users/cleofaspereirarocha/.nexus-worktrees/release-076213-reviewed.noindex
+
+
+ Test Files  29 passed (29)
+      Tests  386 passed (386)
+   Start at  22:16:08
+   Duration  7.78s (tests 40%, transform 33%, import 15%, environment 11%, setup 1%, worker 1%)
+
+  Transform  transforming modules took 3.26s · 33% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
+
+node node_modules/typescript/bin/tsc --noEmit / exit 0 / no output
+
+node scripts/check-renderer-sinks.mjs / exit 0
+renderer sink audit: 0 executable DOM sinks

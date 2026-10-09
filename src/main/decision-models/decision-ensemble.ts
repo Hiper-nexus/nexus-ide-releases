@@ -9,14 +9,13 @@ const AGREEMENT = 0.02;
 /**
  * Nestas perguntas, probabilidade menor é o veredito mais restritivo
  * (menos coerência, menos evidência). Nas demais, maior é mais restritivo
- * (injeção, efeito destrutivo, pendência admitida).
+ * (injeção, efeito destrutivo, pendência admitida, código que exige verificação).
  */
 const LOWER_IS_RESTRICTIVE = new Set([
   'coherent',
   'is_specific',
   'has_verification',
   'names_changes',
-  'changed_code',
 ]);
 
 export interface EnsembleMember {

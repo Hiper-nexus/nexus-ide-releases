@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { DecisionProvider } from '../../shared/decision-models';
 import type { JevAnswer } from '../jev/jev-client';
 import { combineEnsembleAnswers, type EnsembleMember } from './decision-ensemble';
+
+// The real handoff policy imports Jev's credential/autopilot boundary (Electron).
+vi.mock('../jev/jev-secrets', () => ({ hasJevCredential: () => true }));
+vi.mock('../jev/jev-autopilot', () => ({
+  isJevAutopilotEnabled: () => true, isJevSurfaceEnabled: () => true,
+}));
+import { handoffBounceSignals } from '../orch/jev-handoff-review';
 
 const noul = (value: number): JevAnswer => ({ type: 'noul', noul: value });
 const choice = (value: string, confidence: number): JevAnswer => ({
@@ -36,6 +44,37 @@ describe('ensemble combine', () => {
       { provider: 'jev', answers: { is_specific: noul(0.2) } },
       { provider: 'luna', answers: { is_specific: noul(0.95) } });
     expect(looser).toMatchObject({ ok: true, diverged: true, answers: { is_specific: noul(0.2) } });
+  });
+
+  it.each<{ providers: DecisionProvider[]; changedBy: DecisionProvider }>([
+    { providers: ['jev', 'luna'], changedBy: 'jev' },
+    { providers: ['jev', 'luna'], changedBy: 'luna' },
+    { providers: ['jev', 'clef'], changedBy: 'jev' },
+    { providers: ['jev', 'clef'], changedBy: 'clef' },
+    { providers: ['luna', 'clef'], changedBy: 'luna' },
+    { providers: ['luna', 'clef'], changedBy: 'clef' },
+    { providers: ['jev', 'luna', 'clef'], changedBy: 'jev' },
+    { providers: ['jev', 'luna', 'clef'], changedBy: 'luna' },
+    { providers: ['jev', 'luna', 'clef'], changedBy: 'clef' },
+  ])('keeps code verification and changed-file bounces for $providers when $changedBy sees edits', ({ providers, changedBy }) => {
+    const facts = { declaredFiles: [], hasObservedCommit: false, evidenceIdsCount: 0 };
+    const codeAnswers = {
+      changed_code: noul(0.9), has_verification: noul(0.1),
+      is_specific: noul(0.9), names_changes: noul(0.1),
+    };
+    const expectedBounces = [
+      'sem evidência de verificação: cole a saída de testes/typecheck/build ou a referência do commit',
+      'não lista arquivos/componentes alterados: informe filesModified',
+    ];
+    expect(handoffBounceSignals(codeAnswers, facts)).toEqual(expectedBounces);
+    const combined = combineEnsembleAnswers(providers.map(provider => ({
+      provider,
+      answers: { ...codeAnswers, changed_code: noul(provider === changedBy ? 0.9 : 0.1) },
+    })), 'handoffReview');
+    expect(combined.ok).toBe(true);
+    if (!combined.ok) return;
+    expect(handoffBounceSignals(combined.answers, facts)).toEqual(expectedBounces);
+    expect(combined.answers.changed_code).toEqual(noul(0.9));
   });
 
   it('picks the higher confidence on a reversible disagreement and keeps both numbers', () => {

@@ -1,0 +1,19 @@
+--- /dev/null
++++ b/src/main/decision-models/review-ensemble-evidence.test.ts
+@@ -0,0 +1,16 @@
++import {describe,it,expect,vi} from 'vitest';
++vi.mock('../jev/jev-secrets',()=>({hasJevCredential:()=>true}));
++vi.mock('../jev/jev-autopilot',()=>({isJevAutopilotEnabled:()=>true,isJevSurfaceEnabled:()=>true}));
++import {combineEnsembleAnswers} from './decision-ensemble';
++import {handoffBounceSignals} from '../orch/jev-handoff-review';
++const noul=(noul:number)=>({type:'noul' as const,noul});
++it('review: Juntos must not remove the Jev requirement for code verification',()=>{
++ const facts={declaredFiles:[],hasObservedCommit:false,evidenceIdsCount:0};
++ const jev={changed_code:noul(.9),has_verification:noul(.1),is_specific:noul(.9),names_changes:noul(.1)};
++ const luna={...jev,changed_code:noul(.1)};
++ expect(handoffBounceSignals(jev,facts)).not.toHaveLength(0);
++ const result=combineEnsembleAnswers([{provider:'jev',answers:jev},{provider:'luna',answers:luna}],'handoffReview');
++ expect(result.ok).toBe(true);
++ if (!result.ok) return;
++ expect(handoffBounceSignals(result.answers,facts)).not.toHaveLength(0);
++});
