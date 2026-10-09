@@ -98,9 +98,13 @@ export function createCdpRelayConnection(
     try { assertCurrent(); write(JSON.stringify(message)); } catch { /* Revoked or closed consumer. */ }
   };
   const nativeSend = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
-    assertCurrent();
+    const child = sessionId ? children.get(sessionId) : undefined;
+    const assertChild = () => {
+      if (sessionId && (!child || children.get(sessionId) !== child)) throw new Error('Child session revoked.');
+    };
+    assertCurrent(); assertChild();
     const result = await target.send(method, params, sessionId);
-    assertCurrent();
+    assertCurrent(); assertChild();
     return result;
   };
   let attached = false;
@@ -112,8 +116,9 @@ export function createCdpRelayConnection(
     sessions.set(sessionId, kind);
     return sessionId;
   };
+  const selectedOrigin = (() => { try { return new URL(target.url()).origin; } catch { return null; } })();
   const sameOrigin = (url: string) => {
-    try { return new URL(url).origin === new URL(target.url()).origin && /^(http|https):$/u.test(new URL(url).protocol); }
+    try { return new URL(url).origin === selectedOrigin && /^(http|https):$/u.test(new URL(url).protocol); }
     catch { return false; }
   };
   const removeChild = (id: string) => {
@@ -184,31 +189,51 @@ export function createCdpRelayConnection(
       const request = command;
       const route = request.sessionId === undefined ? {} : {sessionId:request.sessionId};
       // Async dispatch also catches a synchronous native/authority failure.
+      let childAtStart: {parent?: string; targetId: string} | undefined;
+      const childStillCurrent = () => !childAtStart || children.get(request.sessionId!) === childAtStart;
       void Promise.resolve().then(async () => {
         assertCurrent();
         if (request.sessionId !== undefined && !sessions.has(request.sessionId) && !children.has(request.sessionId)) throw new Error('Unknown session.');
+        childAtStart = request.sessionId ? children.get(request.sessionId) : undefined;
         if (/^(Browser|Target)\./u.test(request.method)) return browserCommand(request);
         if (!request.sessionId || sessions.get(request.sessionId) === 'browser') throw new Error('A proved page session is required.');
         return pageCommand(request);
       }).then(value => {
+        if (!childStillCurrent()) return;
         const announce = typeof value === 'object' && value !== null && ANNOUNCE in value ? (value as {[ANNOUNCE]:Record<string,unknown>})[ANNOUNCE] : undefined;
         send({id:request.id,result:announce ? {} : (value ?? {}),...route});
         if (announce) send(announce);
-      }, cause => send({id:request.id,error:{code:-32000,message:cause instanceof Error ? cause.message : 'CDP command refused'},...route}));
+      }, cause => {
+        if (childStillCurrent()) send({id:request.id,error:{code:-32000,message:cause instanceof Error ? cause.message : 'CDP command refused'},...route});
+      });
     },
     event: (method, params, sessionId) => {
       try { assertCurrent(); } catch { return; }
       if (!attached || (sessionId !== undefined && !children.has(sessionId))) return;
+      // An attachment proves a selected-origin child lease, not later foreign origins.
+      if (sessionId && (method === 'Page.frameNavigated' || method === 'Runtime.executionContextCreated')) {
+        const document = plainObject(params) ? (method === 'Page.frameNavigated' ? params.frame : params.context) : undefined;
+        const url = plainObject(document) ? (method === 'Page.frameNavigated' ? document.url : document.origin) : undefined;
+        if (typeof url !== 'string' || !sameOrigin(url)) { removeChild(sessionId); return; }
+      }
       if (method === 'Target.attachedToTarget') {
         if (!plainObject(params) || !validSession(params.sessionId) || sessions.has(params.sessionId) || children.has(params.sessionId) || !plainObject(params.targetInfo)) return;
         const info = params.targetInfo;
         if ((info.type !== 'iframe' && info.type !== 'worker') || typeof info.url !== 'string' || !sameOrigin(info.url) || typeof info.targetId !== 'string' || !validSession(info.targetId)) return;
         children.set(params.sessionId,{parent:sessionId,targetId:info.targetId});
       } else if (method === 'Target.detachedFromTarget' && plainObject(params) && validSession(params.sessionId)) {
+        if (!children.has(params.sessionId)) return;
         removeChild(params.sessionId);
       } else if (method === 'Target.targetDestroyed' && plainObject(params)) {
-        for (const [id, info] of children) if (info.targetId === params.targetId) removeChild(id);
-      }
+        const ids = [...children].filter(([,info]) => info.targetId === params.targetId).map(([id]) => id);
+        if (!ids.length) return;
+        for (const id of ids) removeChild(id);
+      } else if (method === 'Target.targetInfoChanged' && plainObject(params) && plainObject(params.targetInfo)) {
+        const info = params.targetInfo;
+        const ids = [...children].filter(([,child]) => child.targetId === info.targetId).map(([id]) => id);
+        if (!ids.length) return;
+        if (typeof info.url !== 'string' || !sameOrigin(info.url)) { for (const id of ids) removeChild(id); return; }
+      } else if (method.startsWith('Target.')) return; // No global discovery from a shared debugger.
       if (method.startsWith('Browser.download')) { send({method,params}); return; }
       if (sessionId) { send({method,params,sessionId}); return; }
       for (const [id,kind] of sessions) if (kind === 'page') send({method,params,sessionId:id});

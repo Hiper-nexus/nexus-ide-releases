@@ -195,3 +195,43 @@ describe('F-1077: per-page CDP envelope and channel confinement', () => {
     await vi.waitFor(()=>expect(written[0]).toMatchObject({id:1,error:{message:'native synchronous failure'}}));
   });
 });
+
+describe('F-1077: child proof expires with the selected-origin document',()=>{
+  async function setup(target=fakeTarget()) {
+    const written:Record<string,unknown>[]=[];
+    const relay=createCdpRelayConnection(target,raw=>written.push(JSON.parse(raw)));
+    relay.receive(JSON.stringify({id:0,method:'Target.setAutoAttach'}));
+    await vi.waitFor(()=>expect(written).toHaveLength(2));
+    relay.event('Target.attachedToTarget',{sessionId:'child',targetInfo:{targetId:'frame-child',type:'iframe',url:'https://app.local/frame'}},undefined);
+    relay.event('Target.attachedToTarget',{sessionId:'nested',targetInfo:{targetId:'nested-worker',type:'worker',url:'https://app.local/worker.js'}},'child');
+    written.length=0;return {relay,target,written};
+  }
+  it.each([
+    ['Page.frameNavigated',{frame:{url:'https://foreign.test/secret'}}],
+    ['Runtime.executionContextCreated',{context:{origin:'https://foreign.test',name:'secret-context'}}],
+    ['Target.targetInfoChanged',{targetInfo:{targetId:'frame-child',url:'https://foreign.test/secret'}}],
+  ] as const)('revokes child/descendants before forwarding off-origin %s data',async(method,params)=>{
+    const {relay,target,written}=await setup();
+    relay.event(method,params,method==='Target.targetInfoChanged'?undefined:'child');
+    relay.receive(JSON.stringify({id:1,method:'Runtime.evaluate',sessionId:'child',params:{expression:'document.title'}}));
+    relay.receive(JSON.stringify({id:2,method:'Runtime.evaluate',sessionId:'nested',params:{expression:'document.title'}}));
+    await vi.waitFor(()=>expect(written).toHaveLength(2));
+    expect(written.every(message=>'error' in message)).toBe(true);expect(target.send).not.toHaveBeenCalled();
+    expect(JSON.stringify(written)).not.toContain('foreign.test');
+  });
+  it('suppresses a late native child response after detach',async()=>{
+    let complete!:(value:unknown)=>void;
+    const target=fakeTarget({send:vi.fn(()=>new Promise(resolve=>{complete=resolve;}))});
+    const {relay,written}=await setup(target);
+    relay.receive(JSON.stringify({id:1,method:'Runtime.evaluate',sessionId:'child',params:{expression:'document.title'}}));
+    await vi.waitFor(()=>expect(complete).toBeDefined());
+    relay.event('Target.detachedFromTarget',{sessionId:'child'},undefined);written.length=0;
+    complete({secret:'later-document-data'});await new Promise(resolve=>setTimeout(resolve,0));
+    expect(written).toEqual([]);
+  });
+  it('does not leak global target discovery from another Main debugger consumer',async()=>{
+    const {relay,written}=await setup();
+    relay.event('Target.targetCreated',{targetInfo:{targetId:'foreign-tab',type:'page',url:'https://operator-private.test/'}},undefined);
+    expect(written).toEqual([]);
+  });
+});
