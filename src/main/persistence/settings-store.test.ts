@@ -128,3 +128,34 @@ it('does not restore stale Cloudflare egress consent if the authoritative prefer
   store.registerSettingsIpc();
   expect(store.getOrchSettings().decisionModels).toMatchObject({ mode: 'jev', visionEnabled: false, cloudflareAccountId: wanted.cloudflareAccountId });
 });
+
+it('legacy saved vision consent still serves Clef but never authorizes OpenAI on upgrade', async () => {
+  const file = resolveSettingsFile();
+  const legacy = { mode: 'auto', clefModel: 'clef', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: true };
+  fs.writeFileSync(path.join(path.dirname(file), 'decision-models.json'), JSON.stringify(legacy));
+  vi.resetModules();
+  const store = await import('./settings-store'); store.registerSettingsIpc();
+  const { resolveDecisionRoute } = await import('../decision-models/decision-routing');
+  const loaded = store.getOrchSettings().decisionModels;
+  const input = { surface: 'browserTool' as const, images: [{ content_type: 'image/png' as const, base64: 'synthetic' }] };
+  expect(resolveDecisionRoute(input, loaded, { jev: true, clef: true, luna: true })?.provider).toBe('clef');
+  expect(resolveDecisionRoute(input, loaded, { jev: true, clef: false, luna: true })).toBeNull();
+  const set = handlers.get(SETTINGS_CHANNELS.orchSet)!;
+  set(null, { decisionModels: { ...loaded, mode: 'luna' } });
+  expect(resolveDecisionRoute(input, store.getOrchSettings().decisionModels, { jev: true, clef: true, luna: true })).toBeNull();
+});
+
+it('keeps the versioned OpenAI grant through IPC save and authoritative reload', async () => {
+  const store = await import('./settings-store'); store.registerSettingsIpc();
+  handlers.get(SETTINGS_CHANNELS.orchSet)!(null, { decisionModels: {
+    mode: 'luna', clefModel: 'clef', cloudflareAccountId: '', visionEnabled: true,
+    visionConsent: { version: 1, recipients: ['luna'] },
+  } });
+  vi.resetModules();
+  const reloaded = await import('./settings-store'); reloaded.registerSettingsIpc();
+  const { resolveDecisionRoute } = await import('../decision-models/decision-routing');
+  const loaded = reloaded.getOrchSettings().decisionModels;
+  expect(loaded.visionConsent).toEqual({ version: 1, recipients: ['luna'] });
+  expect(resolveDecisionRoute({ surface: 'browserTool', images: [{ content_type: 'image/png', base64: 'synthetic' }] }, loaded,
+    { jev: false, clef: false, luna: true })?.provider).toBe('luna');
+});

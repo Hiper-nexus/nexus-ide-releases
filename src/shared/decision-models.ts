@@ -18,7 +18,11 @@ export const decisionSettingsSchema = z.object({
   clefModel: z.enum(['clef', 'clef-flash']).default('clef'),
   cloudflareAccountId: z.string().trim().regex(/^(?:[a-fA-F0-9]{32})?$/).default(''),
   visionEnabled: z.boolean().default(false),
-}).transform(settings => settings.mode === 'jev' ? { ...settings, visionEnabled: false } : settings);
+  /** Absent = legacy Cloudflare-only consent; a new recipient always needs an explicit grant. */
+  visionConsent: z.object({ version: z.literal(1), recipients: z.array(z.enum(['clef', 'luna'])).max(2) }).strict().optional(),
+}).transform(settings => settings.mode === 'jev' || !settings.visionEnabled ? { ...settings, visionEnabled: false,
+  ...(settings.visionConsent ? { visionConsent: { version: 1 as const, recipients: [] } } : {}),
+} : settings);
 
 export const setDecisionKeyRequestSchema = z.object({
   token: z.string().trim().max(512).refine(value => !/[\r\n]/.test(value)),
@@ -31,6 +35,19 @@ export const testDecisionModelRequestSchema = z.object({
 
 export type DecisionSettings = z.infer<typeof decisionSettingsSchema>;
 export type DecisionMode = DecisionSettings['mode'];
+export type VisionRecipient = 'clef' | 'luna';
+
+/** Legacy consent authorizes Cloudflare only, regardless of a later mode/key change. */
+export function hasVisionRecipientConsent(settings: DecisionSettings, recipient: VisionRecipient): boolean {
+  if (!settings.visionEnabled || settings.mode === 'jev') return false;
+  return settings.visionConsent
+    ? settings.visionConsent.version === 1 && settings.visionConsent.recipients.includes(recipient) : recipient === 'clef';
+}
+
+export function visionRecipientsForMode(mode: DecisionMode): VisionRecipient[] {
+  return mode === 'jev' ? [] : mode === 'clef' ? ['clef'] : mode === 'luna' ? ['luna'] : ['clef', 'luna'];
+}
+
 export interface DecisionUsageReceipt {
   inputTokens: number | null; usd: number | null; requestCount: number; durationMs: number; usageIncomplete: boolean;
 }

@@ -1,4 +1,4 @@
-import { LUNA_DECISION_MODEL, type DecisionProvider, type DecisionRoute, type DecisionSettings, type ClefModel } from '../../shared/decision-models';
+import { hasVisionRecipientConsent, LUNA_DECISION_MODEL, type DecisionProvider, type DecisionRoute, type DecisionSettings, type ClefModel } from '../../shared/decision-models';
 import type { JudgeInput } from '../jev/jev-client';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
 
@@ -68,10 +68,10 @@ function route(provider: DecisionProvider, model: string, evidence: DecisionRout
 /** Vision can leave the machine only for browserTool, and only to a provider that accepts images. */
 export function canRouteBrowserVisual(settings: DecisionSettings, available: DecisionAvailability): boolean {
   if (!settings.visionEnabled || settings.mode === 'jev') return false;
-  if (settings.mode === 'luna') return lunaReady(available);
-  if (settings.mode === 'together') return available.clef && lunaReady(available);
-  if (settings.mode === 'clef') return available.clef;
-  return available.clef || lunaReady(available);
+  if (settings.mode === 'luna') return hasVisionRecipientConsent(settings, 'luna') && lunaReady(available);
+  if (settings.mode === 'together') return hasVisionRecipientConsent(settings, 'clef') && hasVisionRecipientConsent(settings, 'luna') && available.clef && lunaReady(available);
+  if (settings.mode === 'clef') return hasVisionRecipientConsent(settings, 'clef') && available.clef;
+  return (hasVisionRecipientConsent(settings, 'clef') && available.clef) || (hasVisionRecipientConsent(settings, 'luna') && lunaReady(available));
 }
 
 /**
@@ -92,7 +92,7 @@ export function ensembleMembers(input: RouteInput, settings: DecisionSettings, a
   const luna = route('luna', LUNA_DECISION_MODEL, input.images?.length ? 'capability' : 'manual', 'ensemble');
   const clef = route('clef', settings.clefModel, input.images?.length ? 'capability' : 'manual', 'ensemble');
   if (input.images?.length) {
-    if (!settings.visionEnabled || !lunaReady(available) || !available.clef) return null;
+    if (!hasVisionRecipientConsent(settings, 'luna') || !hasVisionRecipientConsent(settings, 'clef') || !lunaReady(available) || !available.clef) return null;
     if (input.surface === 'computerTool') return null;
     if (input.surface && input.surface !== 'browserTool' && JEV_PINNED_SURFACES.has(input.surface)) return null;
     return [luna, clef];
@@ -129,7 +129,7 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
   if (settings.mode === 'luna') {
     if (input.images?.length) {
       if (input.surface && input.surface !== 'browserTool' && JEV_PINNED_SURFACES.has(input.surface)) return null;
-      if (!settings.visionEnabled) return null;
+      if (!hasVisionRecipientConsent(settings, 'luna')) return null;
       return lunaReady(available) ? route('luna', LUNA_DECISION_MODEL, 'capability', 'vision') : null;
     }
     return operatorLuna(input, available, 'manual');
@@ -140,18 +140,18 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
     if (input.surface && input.surface !== 'browserTool' && JEV_PINNED_SURFACES.has(input.surface)) return null;
     if (!settings.visionEnabled || settings.mode === 'jev' || pinned === 'jev') return null;
     if (pinned === 'luna') {
-      if (!lunaReady(available)) return null;
+      if (!hasVisionRecipientConsent(settings, 'luna') || !lunaReady(available)) return null;
       return route('luna', LUNA_DECISION_MODEL, 'capability', settings.mode === 'auto' ? 'explicit-model' : 'vision');
     }
     if (settings.mode === 'clef') {
-      if (!available.clef || (explicitClef && explicitClef !== settings.clefModel)) return null;
+      if (!hasVisionRecipientConsent(settings, 'clef') || !available.clef || (explicitClef && explicitClef !== settings.clefModel)) return null;
       return route('clef', settings.clefModel, 'capability', 'vision');
     }
-    if (available.clef) return route('clef', explicitClef ?? 'clef', 'capability', 'vision');
+    if (hasVisionRecipientConsent(settings, 'clef') && available.clef) return route('clef', explicitClef ?? 'clef', 'capability', 'vision');
     // Clef explícito sem credencial não vira Luna. A imagem da Luna fica no
     // Automático sem esse pedido, em Somente Luna e em Juntos.
     if (explicitClef) return null;
-    if (lunaReady(available)) return route('luna', LUNA_DECISION_MODEL, 'capability', 'credential-fallback');
+    if (hasVisionRecipientConsent(settings, 'luna') && lunaReady(available)) return route('luna', LUNA_DECISION_MODEL, 'capability', 'credential-fallback');
     return null;
   }
   if (input.surface && JEV_PINNED_SURFACES.has(input.surface)) {

@@ -1,4 +1,4 @@
-import type { DecisionModelStatus } from '../../../shared/decision-models';
+import { hasVisionRecipientConsent, type DecisionModelStatus } from '../../../shared/decision-models';
 
 export interface DecisionNotice { id: string; tone: 'warn' | 'info'; text: string }
 
@@ -49,9 +49,11 @@ export function decisionNotices(status: DecisionModelStatus): DecisionNotice[] {
   } else if (mode === 'auto' && !clefReady) {
     notices.push({ id: 'auto-jev-only', tone: 'info', text: `Enquanto falta ${missingClef(status)} da Cloudflare, o Automático decide tudo pelo Jev.` });
   }
-  const visionReady = mode === 'luna' ? lunaReady : mode === 'together' ? clefReady && lunaReady : mode === 'auto' ? clefReady || lunaReady : clefReady;
+  const clefVision = clefReady && hasVisionRecipientConsent(status.settings, 'clef');
+  const lunaVision = lunaReady && hasVisionRecipientConsent(status.settings, 'luna');
+  const visionReady = mode === 'luna' ? lunaVision : mode === 'together' ? clefVision && lunaVision : mode === 'auto' ? clefVision || lunaVision : clefVision;
   if (visionEnabled && !visionReady) {
-    notices.push({ id: 'vision-not-ready', tone: 'warn', text: 'A análise de imagens está ligada, mas nenhum provedor de visão está pronto: nenhuma captura é enviada.' });
+    notices.push({ id: 'vision-not-ready', tone: 'warn', text: 'A análise de imagens está ligada, mas falta um provedor de visão autorizado e pronto: nenhuma captura é enviada.' });
   }
   return notices;
 }

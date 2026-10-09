@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { canRouteBrowserVisual, ensembleMembers, resolveDecisionRoute } from './decision-routing';
-import type { DecisionSettings } from '../../shared/decision-models';
+import { decisionSettingsSchema, type DecisionSettings } from '../../shared/decision-models';
 
 const settings: DecisionSettings = { mode: 'auto', clefModel: 'clef', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: false };
+const visionConsent: NonNullable<DecisionSettings['visionConsent']> = { version: 1, recipients: ['clef', 'luna'] };
 const both = { jev: true, clef: true };
 describe('complementary decision routing', () => {
   it('uses Clef for tool selection, researchTriage, and rank in auto mode (F-783)', () => {
@@ -158,8 +159,8 @@ describe('complementary decision routing', () => {
     expect(resolveDecisionRoute({ surface: 'computerTool' }, together, lunaOn)).toMatchObject({ provider: 'jev', reason: 'labels' });
     expect(resolveDecisionRoute({ surface: 'browserTool' }, together, lunaOn)).toMatchObject({ provider: 'jev', reason: 'labels' });
     expect(resolveDecisionRoute({ surface: 'computerTool' }, together, { jev: false, clef: true, luna: true })).toBeNull();
-    expect(ensembleMembers({ surface: 'browserTool', images }, { ...together, visionEnabled: true }, lunaOn)?.map(member => member.provider)).toEqual(['luna', 'clef']);
-    expect(ensembleMembers({ surface: 'computerTool', images }, { ...together, visionEnabled: true }, lunaOn)).toBeNull();
+    expect(ensembleMembers({ surface: 'browserTool', images }, { ...together, visionEnabled: true, visionConsent }, lunaOn)?.map(member => member.provider)).toEqual(['luna', 'clef']);
+    expect(ensembleMembers({ surface: 'computerTool', images }, { ...together, visionEnabled: true, visionConsent }, lunaOn)).toBeNull();
     expect(resolveDecisionRoute({ surface: 'dispatchGuard', model: 'gpt-6-luna' }, together, lunaOn)?.provider).toBe('jev');
   });
 
@@ -173,17 +174,35 @@ describe('complementary decision routing', () => {
     expect(resolveDecisionRoute({ model: 'jev-latest' }, lunaMode, lunaOn)).toMatchObject({ provider: 'luna', reason: 'manual' });
   });
 
+  it('keeps pre-Luna visual consent limited to Cloudflare on upgrade and credential fallback', () => {
+    const legacy = decisionSettingsSchema.parse({ ...settings, visionEnabled: true });
+    const images = [{ content_type: 'image/png' as const, base64: 'synthetic' }];
+    expect(resolveDecisionRoute({ surface: 'browserTool', images }, legacy, lunaOn)?.provider).toBe('clef');
+    expect(resolveDecisionRoute({ surface: 'browserTool', images }, legacy, { jev: true, clef: false, luna: true })).toBeNull();
+    expect(canRouteBrowserVisual(legacy, { jev: true, clef: false, luna: true })).toBe(false);
+    expect(resolveDecisionRoute({ surface: 'browserTool', images, model: 'gpt-6-luna' }, legacy, lunaOn)).toBeNull();
+  });
+
+  it.each(['luna', 'together'] as const)('mode switch to %s cannot expand old Cloudflare consent', mode => {
+    const legacy = decisionSettingsSchema.parse({ ...settings, mode: 'clef', visionEnabled: true });
+    const switched = decisionSettingsSchema.parse({ ...legacy, mode });
+    const images = [{ content_type: 'image/png' as const, base64: 'synthetic' }];
+    expect(resolveDecisionRoute({ surface: 'browserTool', images }, switched, lunaOn)).toBeNull();
+    expect(canRouteBrowserVisual(switched, lunaOn)).toBe(false);
+    expect(resolveDecisionRoute({ surface: 'intake' }, switched, lunaOn)).not.toBeNull();
+  });
+
   it('sends browser images to Luna when that is the vision route, and never desktop pixels', () => {
     const images = [{ content_type: 'image/png' as const, base64: 'synthetic' }];
-    expect(resolveDecisionRoute({ surface: 'browserTool', images }, { ...lunaMode, visionEnabled: true }, lunaOn)).toMatchObject({ provider: 'luna', evidence: 'capability' });
-    expect(resolveDecisionRoute({ images }, { ...settings, visionEnabled: true }, { jev: false, clef: false, luna: true })).toMatchObject({ provider: 'luna', reason: 'credential-fallback' });
-    expect(resolveDecisionRoute({ images }, { ...lunaMode, visionEnabled: true }, { jev: true, clef: true })).toBeNull();
-    expect(resolveDecisionRoute({ surface: 'computerTool', images }, { ...lunaMode, visionEnabled: true }, lunaOn)).toBeNull();
+    expect(resolveDecisionRoute({ surface: 'browserTool', images }, { ...lunaMode, visionEnabled: true, visionConsent }, lunaOn)).toMatchObject({ provider: 'luna', evidence: 'capability' });
+    expect(resolveDecisionRoute({ images }, { ...settings, visionEnabled: true, visionConsent }, { jev: false, clef: false, luna: true })).toMatchObject({ provider: 'luna', reason: 'credential-fallback' });
+    expect(resolveDecisionRoute({ images }, { ...lunaMode, visionEnabled: true, visionConsent }, { jev: true, clef: true })).toBeNull();
+    expect(resolveDecisionRoute({ surface: 'computerTool', images }, { ...lunaMode, visionEnabled: true, visionConsent }, lunaOn)).toBeNull();
     expect(resolveDecisionRoute({ surface: 'intake' }, settings, both)?.policyVersion).toBe('jev-clef-luna-v1');
-    expect(canRouteBrowserVisual({ ...settings, visionEnabled: true }, both)).toBe(true);
-    expect(canRouteBrowserVisual({ ...settings, visionEnabled: true }, { jev: true, clef: false, luna: true })).toBe(true);
-    expect(canRouteBrowserVisual({ ...lunaMode, visionEnabled: true }, lunaOn)).toBe(true);
-    expect(canRouteBrowserVisual({ ...settings, mode: 'clef', visionEnabled: true }, { jev: false, clef: false, luna: true })).toBe(false);
-    expect(canRouteBrowserVisual({ ...settings, mode: 'jev', visionEnabled: true }, lunaOn)).toBe(false);
+    expect(canRouteBrowserVisual({ ...settings, visionEnabled: true, visionConsent }, both)).toBe(true);
+    expect(canRouteBrowserVisual({ ...settings, visionEnabled: true, visionConsent }, { jev: true, clef: false, luna: true })).toBe(true);
+    expect(canRouteBrowserVisual({ ...lunaMode, visionEnabled: true, visionConsent }, lunaOn)).toBe(true);
+    expect(canRouteBrowserVisual({ ...settings, mode: 'clef', visionEnabled: true, visionConsent }, { jev: false, clef: false, luna: true })).toBe(false);
+    expect(canRouteBrowserVisual({ ...settings, mode: 'jev', visionEnabled: true, visionConsent }, lunaOn)).toBe(false);
   });
 });

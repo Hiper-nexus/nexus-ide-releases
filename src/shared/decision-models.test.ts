@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { decisionSettingsSchema, hasVisionRecipientConsent } from './decision-models';
 import { orchSettingsSchema } from './settings-types';
 
 describe('decision model configuration', () => {
@@ -28,7 +29,23 @@ describe('decision model configuration', () => {
     expect(orchSettingsSchema.parse({ decisionModels: { mode: 'together', visionEnabled: true } }).decisionModels.visionEnabled).toBe(true);
   });
 
+  it('requires explicit recipient-specific consent and clears it when Jev is selected', () => {
+    const old = decisionSettingsSchema.parse({ mode: 'auto', visionEnabled: true });
+    expect(hasVisionRecipientConsent(old, 'clef')).toBe(true);
+    expect(hasVisionRecipientConsent(old, 'luna')).toBe(false);
+    const saved = decisionSettingsSchema.parse({ ...old, visionConsent: { version: 1, recipients: ['luna'] } });
+    expect(hasVisionRecipientConsent(saved, 'luna')).toBe(true);
+    expect(hasVisionRecipientConsent(saved, 'clef')).toBe(false);
+    const optedOut = decisionSettingsSchema.parse({ ...saved, mode: 'jev' });
+    expect(hasVisionRecipientConsent({ ...optedOut, mode: 'auto', visionEnabled: true }, 'luna')).toBe(false);
+    const disabled = decisionSettingsSchema.parse({ ...saved, visionEnabled: false });
+    expect(hasVisionRecipientConsent({ ...disabled, visionEnabled: true }, 'luna')).toBe(false);
+  });
+
   it.each([
+    { visionConsent: { version: 2, recipients: ['luna'] } },
+    { visionConsent: { version: 1, recipients: ['other-host'] } },
+    { visionConsent: { version: 1, recipients: ['luna'], redirect: 'https://other-host' } },
     { mode: 'unknown' }, { clefModel: 'other/model' },
     { cloudflareAccountId: '../../another-account' }, { cloudflareAccountId: 'not-an-account' },
     { visionEnabled: 'true' },

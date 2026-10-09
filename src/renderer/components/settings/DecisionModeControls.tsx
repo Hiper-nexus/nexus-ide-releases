@@ -1,14 +1,23 @@
-import type { DecisionSettings } from '../../../shared/decision-models';
+import { hasVisionRecipientConsent, visionRecipientsForMode, type VisionRecipient, type DecisionSettings } from '../../../shared/decision-models';
 import { VisionConsentToggle } from './VisionConsentToggle';
 
 export function DecisionModeControls({ settings, busy, onChange }: {
   settings: DecisionSettings; busy: boolean; onChange: (patch: Partial<DecisionSettings>) => void;
 }) {
+  const recipients = visionRecipientsForMode(settings.mode);
+  const authorized = (['clef', 'luna'] as VisionRecipient[]).filter(recipient => hasVisionRecipientConsent(settings, recipient));
+  const missing = recipients.filter(recipient => !authorized.includes(recipient));
+  const visualEnabled = settings.mode === 'auto' ? authorized.length > 0 : recipients.length > 0 && missing.length === 0;
+  const additionalConsent = settings.mode === 'auto' && visualEnabled && missing.length
+    ? `Autorizar também a ${missing[0] === 'luna' ? 'OpenAI' : 'Cloudflare'}` : undefined;
   return <>
     <div className="settings-form-grid">
       <label className="settings-field">Escolha do modelo
         <select className="settings-input" aria-label="Escolha do modelo" value={settings.mode} disabled={busy}
-          onChange={event => onChange({ mode: event.target.value as DecisionSettings['mode'] })}>
+          onChange={event => {
+            const mode = event.target.value as DecisionSettings['mode'];
+            onChange({ mode, ...(mode === 'jev' ? { visionEnabled: false, visionConsent: { version: 1, recipients: [] } } : {}) });
+          }}>
           <option value="auto">Automático</option><option value="jev">Somente Jev</option><option value="clef">Somente Clef</option>
           <option value="luna">Somente Luna (beta)</option>
           <option value="together">Luna junto com Jev e Clef</option>
@@ -32,8 +41,14 @@ export function DecisionModeControls({ settings, busy, onChange }: {
     {settings.mode === 'together' && <p className="settings-field__note">Antes de ligar Juntos: com as três credenciais, o texto de segurança de dispatchGuard, handoffReview e memoryDistill também vai para o Clef.
       {' '}Juntos é opt-in e faz mais de uma chamada. No texto comum, Jev e Luna respondem a mesma pergunta; na imagem mascarada, Clef e Luna. A regra de duas credenciais vale para o conjunto: os rótulos de computerTool e browserTool continuam uma chamada só do Jev. Concordância segue pela confiança maior.
       {' '}Divergência em efeito irreversível, deny ou confirmação fica com o veredito mais restritivo. Na guarda, no handoff e na memória, o Jev não afrouxa quando está na jogada. Quem não tiver chave fica de fora: Luna e Clef sem o Jev continuam conjunto.</p>}
-    <VisionConsentToggle enabled={settings.visionEnabled} disabled={busy || settings.mode === 'jev'}
+    {settings.visionEnabled && authorized.length > 0 && <p className="settings-field__note">
+      Envio de imagens autorizado para {authorized.map(recipient => recipient === 'clef' ? 'Cloudflare' : 'OpenAI').join(' e ')}.
+      {!visualEnabled && ' O modo escolhido precisa de uma nova autorização antes de enviar capturas.'}
+    </p>}
+    <VisionConsentToggle enabled={visualEnabled} additionalConsent={additionalConsent} disabled={busy || settings.mode === 'jev'}
       audience={settings.mode === 'luna' ? 'luna' : settings.mode === 'together' ? 'together' : settings.mode === 'auto' ? 'auto' : 'clef'}
-      onChange={visionEnabled => onChange({ visionEnabled })} />
+      onChange={visionEnabled => onChange({ visionEnabled, visionConsent: { version: 1,
+        recipients: visionEnabled ? [...new Set([...authorized, ...recipients])] : [],
+      } })} />
   </>;
 }

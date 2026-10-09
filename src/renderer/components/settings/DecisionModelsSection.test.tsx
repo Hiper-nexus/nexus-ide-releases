@@ -208,6 +208,47 @@ describe('complementary decision model settings', () => {
     expect(notices()).toContain('Sem chave Jev');
   });
 
+  it.each(['luna', 'together'] as const)('requires new recipient confirmation when switching existing Clef vision to %s', async mode => {
+    status = { ...status, settings: { ...status.settings, mode: 'clef', visionEnabled: true }, isReady: true, lunaReady: true };
+    await mount();
+    await act(async () => { choose('Escolha do modelo', mode); });
+    const checkbox = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(checkbox.checked).toBe(false);
+    expect(status.settings).not.toHaveProperty('visionConsent');
+    orchSet().mockClear();
+    await act(async () => { checkbox.click(); });
+    expect(orchSet()).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-label="Confirmar envio de imagens"]')?.textContent).toContain('OpenAI');
+    await act(async () => { button('Ativar análise de imagens').click(); });
+    expect(status.settings).toMatchObject({ visionEnabled: true, visionConsent: { version: 1, recipients: ['clef', 'luna'] } });
+  });
+
+  it('keeps old Automatic Clef consent active and explicitly confirms adding OpenAI', async () => {
+    status = { ...status, settings: { ...status.settings, mode: 'auto', visionEnabled: true }, isReady: true, lunaReady: true };
+    await mount();
+    expect(host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(true);
+    expect(orchSet()).not.toHaveBeenCalled();
+    await act(async () => { button('Autorizar também a OpenAI').click(); });
+    expect(orchSet()).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-label="Confirmar envio de imagens"]')?.textContent).toContain('OpenAI');
+    await act(async () => { button('Cancelar').click(); });
+    expect(status.settings).not.toHaveProperty('visionConsent');
+    await act(async () => { button('Autorizar também a OpenAI').click(); });
+    await act(async () => { button('Ativar análise de imagens').click(); });
+    expect(status.settings).toMatchObject({ visionConsent: { version: 1, recipients: ['clef', 'luna'] } });
+    expect(host.textContent).not.toContain('Autorizar também a OpenAI');
+  });
+
+  it('dismisses a pending Cloudflare confirmation when the selected recipient changes', async () => {
+    status = { ...status, settings: { ...status.settings, mode: 'clef' }, isReady: true, lunaReady: true };
+    await mount();
+    await act(async () => { host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click(); });
+    expect(host.querySelector('[aria-label="Confirmar envio de imagens"]')).not.toBeNull();
+    await act(async () => { choose('Escolha do modelo', 'luna'); });
+    expect(host.querySelector('[aria-label="Confirmar envio de imagens"]')).toBeNull();
+    expect(status.settings.visionEnabled).toBe(false);
+  });
+
   it('tests Luna through the OpenAI key without a Cloudflare account', async () => {
     status = { ...status, settings: { ...status.settings, mode: 'luna' }, lunaReady: true };
     await mount();

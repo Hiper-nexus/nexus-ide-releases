@@ -103,6 +103,12 @@ What can leave the machine for Cloudflare, by mode:
   Somente Clef does not send them anywhere. `nexus_judge` (surface `judgeTool`,
   not pinned) still rejects `model=clef`; in Somente Luna that tool uses the
   Decisions API.
+- **Recipient consent:** `visionConsent` version 1 records `clef` (Cloudflare)
+  and/or `luna` (OpenAI). An absent field is legacy Cloudflare-only consent;
+  `visionEnabled: true` alone never grants OpenAI pixels. Upgrade, credential
+  fallback and mode changes do not add a recipient. The settings UI asks for
+  explicit confirmation to add one; turning vision off or selecting Jev
+  clears recipient grants. Text decisions do not use pixel consent.
 - **Images:** only `nexus_browser_judge_visual`, with the operator's explicit
   opt-in (a fresh confirmation each time it is switched on). Somente Luna names
   OpenAI in that confirmation; Automatic names Cloudflare and, as fallback, OpenAI.

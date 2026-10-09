@@ -25,14 +25,15 @@ const VISION_COPY = {
 } as const;
 
 interface VisionConsentToggleProps {
-  enabled: boolean; disabled: boolean; audience?: keyof typeof VISION_COPY; onChange: (enabled: boolean) => void;
+  enabled: boolean; disabled: boolean; additionalConsent?: string; audience?: keyof typeof VISION_COPY; onChange: (enabled: boolean) => void;
 }
 
 /** Turning the send ON always passes through an explicit confirmation; turning it off is immediate. */
-export function VisionConsentToggle({ enabled, disabled, audience = 'clef', onChange }: VisionConsentToggleProps) {
+export function VisionConsentToggle({ enabled, disabled, additionalConsent, audience = 'clef', onChange }: VisionConsentToggleProps) {
   const copy = VISION_COPY[audience];
   const [confirming, setConfirming] = useState(false);
   useEffect(() => { if (disabled || enabled) setConfirming(false); }, [disabled, enabled]);
+  useEffect(() => { setConfirming(false); }, [audience]);
   return <>
     <label className="settings-toggle-row">
       <span className="settings-toggle-row__copy"><strong>{copy.label}</strong>
@@ -41,6 +42,10 @@ export function VisionConsentToggle({ enabled, disabled, audience = 'clef', onCh
         onChange={event => { if (event.target.checked) setConfirming(true); else onChange(false); }} />
       <span className="settings-toggle-row__control" aria-hidden="true" />
     </label>
+    {additionalConsent && <div className="settings-row decision-models__actions">
+      <button className="settings-btn settings-btn--sm" type="button" disabled={disabled}
+        onClick={() => setConfirming(true)}>{additionalConsent}</button>
+    </div>}
     {confirming && <div className="decision-models__confirm" role="group" aria-label="Confirmar envio de imagens">
       {copy.sentences.map(sentence => <p key={sentence} className="settings-field__note">{sentence}</p>)}
       <div className="settings-row decision-models__actions">
