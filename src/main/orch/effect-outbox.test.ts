@@ -16,7 +16,11 @@ import {
   PROCESS_BOUND_EFFECT_TYPES,
   type EffectOutboxStore,
 } from "./effect-outbox";
-import { drainEffectOutbox } from "./effect-outbox-worker";
+import {
+  drainEffectOutbox,
+  registerEffectOutboxHandler,
+  registeredEffectHandler,
+} from "./effect-outbox-worker";
 import {
   createScopedCommandReceiptStore,
   type CommandEffectAcceptanceInput,
@@ -880,6 +884,41 @@ describe("ORC-01 worker drain", () => {
     expect(result.succeeded).toBe(0);
     expect(result.failed).toBe(1);
     expect(result.retried).toBe(1);
+  });
+
+  it("fails a replay-safe effect with no handler instead of retrying forever", async () => {
+    const previous = registeredEffectHandler("checkpoint.capture");
+    const clear = registerEffectOutboxHandler("checkpoint.capture", () => undefined);
+    clear();
+    try {
+      const { store, scope } = freshStore();
+      const effect = store.enqueue({
+        commandId: "cmd-no-handler",
+        threadId: "thread-a",
+        type: "checkpoint.capture",
+      });
+      const first = await drainEffectOutbox({
+        store,
+        scope,
+        workerId: "worker-1",
+      });
+      expect(first).toMatchObject({
+        claimed: 1,
+        succeeded: 0,
+        failed: 1,
+        retried: 0,
+      });
+      expect(store.get(effect.id)?.status).toBe("failed");
+      const second = await drainEffectOutbox({
+        store,
+        scope,
+        workerId: "worker-1",
+      });
+      expect(second.claimed).toBe(0);
+      expect(store.get(effect.id)?.status).toBe("failed");
+    } finally {
+      if (previous) registerEffectOutboxHandler("checkpoint.capture", previous);
+    }
   });
 
   it("drain is safe to repeat after success", async () => {

@@ -19,16 +19,57 @@ import {
  * `pending → running → settled` enquanto o processo vive e é o dono do lease.
  */
 
+export type EffectOutboxHandlerResult = void | { readonly defer: true };
+
 export type EffectOutboxHandler = (
   entry: EffectOutboxEntry,
   scope: ProjectExecutionScope,
-) => Promise<void> | void;
+) => Promise<EffectOutboxHandlerResult> | EffectOutboxHandlerResult;
+
+const dispatchCheckpointFlights = new Set<string>();
+
+function dispatchCheckpointKey(
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  commandId: string,
+): string {
+  return `${scope.projectId}\0${scope.checkoutId}\0${commandId}`;
+}
+
+/** Segura o checkpoint até o handler real terminar. O dreno não assenta antes. */
+export function retainDispatchCheckpoint(
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  commandId: string,
+): () => void {
+  const key = dispatchCheckpointKey(scope, commandId);
+  dispatchCheckpointFlights.add(key);
+  return () => {
+    dispatchCheckpointFlights.delete(key);
+  };
+}
+
+export function dispatchCheckpointInFlight(
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  commandId: string,
+): boolean {
+  return dispatchCheckpointFlights.has(dispatchCheckpointKey(scope, commandId));
+}
+
+function isDeferredEffectSettlement(
+  value: unknown,
+): value is { readonly defer: true } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { defer?: unknown }).defer === true
+  );
+}
 
 /**
  * Registro de handlers por `type`. O coordenador drena pelo registro; quem
  * implementa um tipo de efeito (checkpoint.capture, turn.start…) registra
- * aqui no boot. Tipo sem handler é tratado como falha process_bound /
- * retry replay_safe — nunca silencioso.
+ * aqui no boot. Tipo sem handler falha de vez (não retenta): um efeito
+ * enfileirado à mão sem handler não pode girar para sempre. Handler que
+ * lança continua assentando pela classe.
  */
 const effectHandlers = new Map<string, EffectOutboxHandler>();
 
@@ -46,6 +87,22 @@ export function registeredEffectHandler(
   type: string,
 ): EffectOutboxHandler | null {
   return effectHandlers.get(type) ?? null;
+}
+
+/**
+ * Handler de produção do `checkpoint.capture`. O despacho já gravou o
+ * recibo e o efeito juntos; o dreno assenta a obrigação que o gate espera.
+ * A captura git do fim de turno continua em `captureWriterHandoffCheckpoint`.
+ */
+export function registerCheckpointCaptureHandler(): () => void {
+  return registerEffectOutboxHandler('checkpoint.capture', (entry, scope) => {
+    // A linha nasce antes do handler. Enquanto ele corre, voltar a pending
+    // sem assentar: sucesso aqui fecharia a missão no meio da mutação.
+    if (dispatchCheckpointInFlight(scope, entry.commandId)) {
+      return { defer: true };
+    }
+    return undefined;
+  });
 }
 
 export interface EffectOutboxWorkerDeps {
@@ -128,11 +185,44 @@ export async function drainEffectOutbox(
       try {
         const handler = deps.handler ?? registeredEffectHandler(entry.type);
         if (!handler) {
-          throw new Error(`effect outbox has no handler for ${entry.type}`);
+          const reason = `effect outbox has no handler for ${entry.type}`;
+          const released = deps.store.fail(
+            entry.id,
+            deps.workerId,
+            reason,
+            entry.attemptCount,
+          );
+          if (released) failed += 1;
+          else {
+            console.warn(
+              `[effect-outbox] dropped settle (${entry.class} ${entry.type} ${entry.id} attempt ${entry.attemptCount})`,
+            );
+          }
+          console.warn(
+            `[effect-outbox] ${reason} (${entry.class} ${entry.id})`,
+          );
+          continue;
         }
-        const outcome = handler(entry, deps.scope);
-        if (context) await context.wait(Promise.resolve(outcome));
-        else await outcome;
+        const pending = handler(entry, deps.scope);
+        const settled = context
+          ? await context.wait(Promise.resolve(pending))
+          : await pending;
+        if (isDeferredEffectSettlement(settled)) {
+          const released = deps.store.retry(
+            entry.id,
+            deps.workerId,
+            'effect still in flight',
+            0,
+            entry.attemptCount,
+          );
+          if (released) retried += 1;
+          else {
+            console.warn(
+              `[effect-outbox] dropped defer (${entry.class} ${entry.type} ${entry.id} attempt ${entry.attemptCount})`,
+            );
+          }
+          continue;
+        }
         if (deps.store.succeed(entry.id, deps.workerId, entry.attemptCount)) {
           succeeded += 1;
         } else {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { resolveCwdForScope } from './workspace-path';
 import { resolveWorkspaceHandoffParent } from "./workspace-handoff-authority";
 import { emitDestructiveReversalEvent } from "./mission-event-emit";
@@ -9,6 +9,7 @@ import {
 } from "../../shared/mission-intent";
 import type { Mission } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
+import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import { confirmationReason } from "../jarvis/guardrails";
 import {
   auditDenied,
@@ -57,7 +58,13 @@ import {
   peekMissionPromptQueue,
   startMissionPrompt,
 } from "./mission-prompt-queue-registry";
-import { getProjectDomainStores } from "./project-domain-store-registry";
+import { getProjectDomainStores, requireProjectDomainStoreRegistry } from "./project-domain-store-registry";
+import {
+  acceptDispatchCheckpointEffect,
+  createScopedCommandReceiptStore,
+} from "./command-receipts";
+import { createScopedEffectOutboxStore } from "./effect-outbox";
+import { retainDispatchCheckpoint } from "./effect-outbox-worker";
 import {
   normalizeDispatchSessionId,
   permissionScopeForTool,
@@ -527,6 +534,171 @@ function bindEffectAuthority(
     contextRevision: authority.contextRevision,
     workflowAuthority: authority,
   };
+}
+
+/**
+ * Recibo + checkpoint.capture na mesma transação, antes do handler.
+ * Sem registry (testes de gate) o comando segue; com registry, falha
+ * fechada se o aceite não gravar.
+ */
+const DISPATCH_OUTCOME_UNSETTLED = "command_effect_may_have_committed";
+const logicalDispatchFlights = new Map<string, Promise<ToolDispatchResult>>();
+
+function normalizeLogicalOperationId(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.length <= 128 && !trimmed.includes("\0")) return trimmed;
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function logicalFlightKey(
+  scope: Pick<AgentGateContext["scope"], "projectId" | "checkoutId">,
+  commandId: string,
+): string {
+  return `${scope.projectId}\0${scope.checkoutId}\0${commandId}`;
+}
+
+function parseStoredDispatchOutcome(value: unknown): ToolDispatchResult | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.ok !== "boolean" || typeof record.tool !== "string") {
+    return null;
+  }
+  return record as unknown as ToolDispatchResult;
+}
+
+function toolNameFromEffectPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const toolName = (payload as { toolName?: unknown }).toolName;
+  return typeof toolName === "string" && toolName.length > 0 ? toolName : null;
+}
+
+/**
+ * Recibo já aceito para este id lógico: devolve o resultado gravado, ou
+ * um terminal sem handler quando o processo morreu antes de gravá-lo.
+ * Sem registry (testes de gate) segue o despacho novo.
+ */
+function readReplayableCommandDispatch(
+  ctx: AgentGateContext,
+  commandId: string,
+  toolName: string,
+): ToolDispatchResult | null {
+  let runtimeManager: ProjectRuntimeManager;
+  try {
+    runtimeManager = requireProjectDomainStoreRegistry().runtimeManager();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("not initialized")) return null;
+    console.warn("[mcp-dispatch] command effect registry unavailable:", error);
+    return {
+      ok: false,
+      tool: toolName,
+      denied: true,
+      error: "command_effect_unavailable",
+    };
+  }
+  try {
+    const receipts = createScopedCommandReceiptStore(runtimeManager, ctx.scope);
+    const receipt = receipts.getByCommandId(commandId);
+    if (!receipt) return null;
+    const effect = createScopedEffectOutboxStore(
+      runtimeManager,
+      ctx.scope,
+    ).listByCommandId(commandId)[0];
+    const storedTool = toolNameFromEffectPayload(effect?.payload);
+    if (storedTool && storedTool !== canonicalToolName(toolName)) {
+      return {
+        ok: false,
+        tool: toolName,
+        denied: true,
+        error: "command_effect_conflict",
+      };
+    }
+    if (receipt.outcomeJson) {
+      try {
+        const parsed = parseStoredDispatchOutcome(JSON.parse(receipt.outcomeJson));
+        if (parsed) return parsed;
+      } catch {
+        // JSON corrompido não autoriza repetir o efeito.
+      }
+    }
+    return {
+      ok: false,
+      tool: toolName,
+      error: DISPATCH_OUTCOME_UNSETTLED,
+      effectMayHaveCommitted: true,
+    };
+  } catch (error) {
+    console.warn("[mcp-dispatch] command effect replay failed:", error);
+    return {
+      ok: false,
+      tool: toolName,
+      denied: true,
+      error: "command_effect_unavailable",
+    };
+  }
+}
+
+function rememberDispatchOutcome(
+  ctx: AgentGateContext,
+  commandId: string,
+  outcome: ToolDispatchResult,
+): void {
+  try {
+    const runtimeManager = requireProjectDomainStoreRegistry().runtimeManager();
+    createScopedCommandReceiptStore(
+      runtimeManager,
+      ctx.scope,
+    ).rememberDispatchOutcome(commandId, outcome);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("not initialized")) return;
+    console.warn("[mcp-dispatch] command effect outcome was not stored:", error);
+  }
+}
+
+type CheckpointAcceptance =
+  | { readonly status: "skipped" }
+  | { readonly status: "denied" }
+  | { readonly status: "accepted"; readonly inserted: boolean };
+
+/**
+ * Recibo + checkpoint.capture na mesma transação, antes do handler.
+ * Sem registry (testes de gate) o comando segue; com registry, falha
+ * fechada se o aceite não gravar. O mesmo commandId não enfileira de novo.
+ */
+function acceptProductionCommandCheckpoint(
+  ctx: AgentGateContext,
+  commandId: string,
+  toolName: string,
+): CheckpointAcceptance {
+  let runtimeManager: ProjectRuntimeManager;
+  try {
+    runtimeManager = requireProjectDomainStoreRegistry().runtimeManager();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("not initialized")) return { status: "skipped" };
+    console.warn("[mcp-dispatch] command effect registry unavailable:", error);
+    return { status: "denied" };
+  }
+  try {
+    const missionId = ctx.missionId?.trim() ?? "";
+    const accepted = acceptDispatchCheckpointEffect(runtimeManager, ctx.scope, {
+      commandId,
+      threadId: missionId || ctx.scope.projectId,
+      toolName: canonicalToolName(toolName),
+      missionBound: missionId.length > 0,
+    });
+    return { status: "accepted", inserted: accepted.inserted };
+  } catch (error) {
+    console.warn("[mcp-dispatch] command effect acceptance failed:", error);
+    return { status: "denied" };
+  }
 }
 
 export async function dispatchToolCall(
@@ -1093,6 +1265,21 @@ export async function dispatchToolCall(
   }
 
   const effectful = isEffectfulTool(tool.name);
+  const callerCommandId = effectful
+    ? normalizeLogicalOperationId(options.logicalOperationId)
+    : undefined;
+  if (callerCommandId) {
+    const inflight = logicalDispatchFlights.get(
+      logicalFlightKey(ctx.scope, callerCommandId),
+    );
+    if (inflight) return inflight;
+    const replay = readReplayableCommandDispatch(
+      ctx,
+      callerCommandId,
+      tool.name,
+    );
+    if (replay) return replay;
+  }
   // Guarda Jev (piloto automático): coerência com o objetivo, sinais de
   // injeção e efeito destrutivo, só para chamada com efeito dentro de missão e
   // fora da mão do operador. Fail-open: exceção ou serviço fora = `skipped`.
@@ -1338,6 +1525,7 @@ export async function dispatchToolCall(
   }
 
   const invocationId = effectful ? randomUUID() : undefined;
+  const commandId = effectful ? (callerCommandId ?? invocationId) : undefined;
   if (invocationId) {
     const auditFailure = writeAudit(
       () =>
@@ -1512,6 +1700,20 @@ export async function dispatchToolCall(
   }
 
   let handlerStarted = false;
+  let commandAccepted = false;
+  let releaseCheckpoint: (() => void) | undefined;
+  let resolveOwnedFlight: ((result: ToolDispatchResult) => void) | undefined;
+  let ownedFlightKey: string | undefined;
+  const releaseOwnedFlight = (
+    result: ToolDispatchResult,
+  ): ToolDispatchResult => {
+    if (commandAccepted && commandId) {
+      rememberDispatchOutcome(ctx, commandId, result);
+    }
+    resolveOwnedFlight?.(result);
+    resolveOwnedFlight = undefined;
+    return result;
+  };
   try {
     // If preempted after start (race with user submit), abort before handler.
     if (queuePromptId && ctx.missionId) {
@@ -1591,6 +1793,45 @@ export async function dispatchToolCall(
       assertCurrentAuthorityState(true);
     };
     assertCurrentAuthority();
+    if (commandId) {
+      const checkpoint = acceptProductionCommandCheckpoint(
+        ctx,
+        commandId,
+        tool.name,
+      );
+      if (checkpoint.status === "denied") {
+        return denyAfterIntent("command_effect_unavailable");
+      }
+      if (checkpoint.status === "accepted" && !checkpoint.inserted) {
+        const inflight = callerCommandId
+          ? logicalDispatchFlights.get(logicalFlightKey(ctx.scope, callerCommandId))
+          : undefined;
+        if (inflight) return inflight;
+        const replay = callerCommandId
+          ? readReplayableCommandDispatch(ctx, callerCommandId, tool.name)
+          : null;
+        if (replay) return replay;
+        return {
+          ok: false,
+          tool: tool.name,
+          error: DISPATCH_OUTCOME_UNSETTLED,
+          effectMayHaveCommitted: true,
+        };
+      }
+      if (checkpoint.status === "accepted" && checkpoint.inserted) {
+        commandAccepted = true;
+        releaseCheckpoint = retainDispatchCheckpoint(ctx.scope, commandId);
+        if (callerCommandId) {
+          ownedFlightKey = logicalFlightKey(ctx.scope, callerCommandId);
+          let resolveFlight!: (result: ToolDispatchResult) => void;
+          const flight = new Promise<ToolDispatchResult>((resolve) => {
+            resolveFlight = resolve;
+          });
+          resolveOwnedFlight = resolveFlight;
+          logicalDispatchFlights.set(ownedFlightKey, flight);
+        }
+      }
+    }
     const exactUserConsent =
       // Recibo, não modal: mintado sempre que o store exige prova de mutação
       // única — inclusive quando a autorização veio da aprovação da missão.
@@ -1682,13 +1923,13 @@ export async function dispatchToolCall(
       completeMissionPrompt(ctx.scope, ctx.missionId, queuePromptId, true);
     }
     const auditFailure = writeOutcomeAudit("success", undefined, effectful);
-    if (auditFailure) return auditFailure;
-    return {
+    if (auditFailure) return releaseOwnedFlight(auditFailure);
+    return releaseOwnedFlight({
       ok: true,
       tool: tool.name,
       result,
       userAuthorized,
-    };
+    });
   } catch (err) {
     if (queuePromptId && ctx.missionId) {
       completeMissionPrompt(ctx.scope, ctx.missionId, queuePromptId, false);
@@ -1713,8 +1954,8 @@ export async function dispatchToolCall(
       errorMsg,
       effectMayHaveCommitted,
     );
-    if (auditFailure) return auditFailure;
-    return {
+    if (auditFailure) return releaseOwnedFlight(auditFailure);
+    return releaseOwnedFlight({
       ok: false,
       tool: tool.name,
       error: errorMsg,
@@ -1722,6 +1963,17 @@ export async function dispatchToolCall(
       userAuthorized,
       effectMayHaveCommitted: effectMayHaveCommitted || undefined,
       ...(preEffectRefusal?.hint ? { hint: preEffectRefusal.hint } : {}),
-    };
+    });
+  } finally {
+    if (resolveOwnedFlight) {
+      releaseOwnedFlight({
+        ok: false,
+        tool: tool.name,
+        error: DISPATCH_OUTCOME_UNSETTLED,
+        effectMayHaveCommitted: true,
+      });
+    }
+    if (ownedFlightKey) logicalDispatchFlights.delete(ownedFlightKey);
+    releaseCheckpoint?.();
   }
 }

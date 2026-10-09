@@ -22,7 +22,10 @@ import {
   HANDOFF_DELIVERY_OUTBOX_RECONCILE_MS,
   reconcilePendingHandoffDeliveryOutbox,
 } from './handoff-delivery-outbox';
-import { drainEffectOutbox } from './effect-outbox-worker';
+import {
+  drainEffectOutbox,
+  registerCheckpointCaptureHandler,
+} from './effect-outbox-worker';
 import { EffectOutboxStore, isUnreconciledEffectOutbox } from './effect-outbox';
 import { reconcileProviderRuntimesAtBoot } from './provider-runtime-recovery';
 import { configureHandoffDeliveryRuntimeRecovery } from './idle-delivery';
@@ -47,6 +50,7 @@ let coordinator: OrchestrationReconciler | null = null;
 let disposeLoginWatchdog: (() => Promise<void>) | null = null;
 let disposeBootPromptWatchdog: (() => void) | null = null;
 let coordinatorStopFlight: Promise<void> | null = null;
+let unregisterCheckpointHandler: (() => void) | null = null;
 const MISSION_RUNTIME_AUTHORITY_RECONCILE_MS = 1_000;
 /** ORC-01: dreno do outbox de efeitos no mesmo relógio do coordinator. */
 const EFFECT_OUTBOX_DRAIN_MS = 1_000;
@@ -82,6 +86,9 @@ export function startOrchestrationCoordinator(): void {
   configureHandoffDeliveryRuntimeRecovery(recoverHandoffDeliveryRuntime);
   disposeLoginWatchdog = installLoginStuckWatchdog({ autoTick: false });
   disposeBootPromptWatchdog = installBootPromptWatchdog();
+  if (!unregisterCheckpointHandler) {
+    unregisterCheckpointHandler = registerCheckpointCaptureHandler();
+  }
   // ORC-06: reconcilia efeitos órfãos do processo anterior antes do primeiro
   // passe de trabalho (delegation, handoff, goal).
   recoverEffectOutboxesAtBoot();
@@ -131,8 +138,7 @@ export function startOrchestrationCoordinator(): void {
     },
     {
       // ORC-01: drena o outbox transacional de efeitos (handlers por tipo via
-      // registerEffectOutboxHandler). Sem handler registrado, o efeito assenta
-      // pela classe — nunca fica preso em silêncio.
+      // registerEffectOutboxHandler). Sem handler, o efeito falha de vez.
       id: 'effect-outbox',
       cadenceMs: EFFECT_OUTBOX_DRAIN_MS,
       run: async (_now, _signal, context) => {
@@ -207,6 +213,8 @@ export async function stopOrchestrationCoordinator(): Promise<void> {
     await shutdownDelegationSupervisor();
     configureHandoffDeliveryRuntimeRecovery(null);
     await shutdownGoalGovernor();
+    unregisterCheckpointHandler?.();
+    unregisterCheckpointHandler = null;
     coordinator = null;
   })();
   coordinatorStopFlight = stop;
