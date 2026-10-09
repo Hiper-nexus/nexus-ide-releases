@@ -1177,6 +1177,8 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
 
 
 describe('F-1069: CDP relay factory for a real Main-owned browser entry', () => {
+  const debuggerListeners = new Set<unknown>();
+
   beforeEach(() => {
     destroyBrowser(PANE, scope);
     vi.clearAllMocks();
@@ -1185,6 +1187,17 @@ describe('F-1069: CDP relay factory for a real Main-owned browser entry', () => 
     state.owner.isDestroyed.mockReturnValue(false);
     state.win.isDestroyed.mockReturnValue(false);
     state.guest.getURL.mockReturnValue('https://example.test/owned');
+    let attached = false;
+    vi.spyOn(state.guest.debugger, 'isAttached').mockImplementation(() => attached);
+    state.guest.debugger.attach.mockImplementation(() => { attached = true; });
+    state.guest.debugger.detach.mockImplementation(() => { attached = false; });
+    debuggerListeners.clear();
+    state.guest.debugger.on.mockImplementation((event, listener) => {
+      if (event === 'message') debuggerListeners.add(listener);
+    });
+    state.guest.debugger.removeListener.mockImplementation((event, listener) => {
+      if (event === 'message') debuggerListeners.delete(listener);
+    });
   });
 
   afterEach(() => {
@@ -1193,6 +1206,10 @@ describe('F-1069: CDP relay factory for a real Main-owned browser entry', () => 
     state.win.isDestroyed.mockReturnValue(false);
     destroyBrowser(PANE, scope);
     vi.restoreAllMocks();
+    state.guest.debugger.attach.mockReset();
+    state.guest.debugger.detach.mockReset();
+    state.guest.debugger.on.mockReset();
+    state.guest.debugger.removeListener.mockReset();
   });
 
   it('resolves the scoped entry created by ensureBrowser and passes CDP through its debugger', async () => {
@@ -1213,6 +1230,67 @@ describe('F-1069: CDP relay factory for a real Main-owned browser entry', () => 
     } finally {
       relay?.detach();
     }
+  });
+
+  it('refuses a failed debugger attach and releases its listener without detaching an unowned debugger', async () => {
+    await boot();
+    state.guest.debugger.attach.mockImplementationOnce(() => {
+      throw new Error('debugger attach unavailable');
+    });
+    const relay = openCdpRelayForPane(PANE, scope, { write: () => undefined });
+    try {
+      expect(relay).toBeNull();
+      expect(debuggerListeners.size).toBe(0);
+      expect(state.guest.debugger.detach).not.toHaveBeenCalled();
+    } finally {
+      relay?.detach();
+    }
+  });
+
+  it('retries a failed factory attach with a fresh lease and working CDP connection', async () => {
+    await boot();
+    state.guest.debugger.attach.mockImplementationOnce(() => {
+      throw new Error('debugger attach unavailable');
+    });
+    const messages: unknown[] = [];
+    const options = { write: (raw: string) => messages.push(JSON.parse(raw)) };
+    const failed = openCdpRelayForPane(PANE, scope, options);
+    const retry = openCdpRelayForPane(PANE, scope, options);
+    try {
+      expect(state.guest.debugger.attach).toHaveBeenCalledTimes(2);
+      expect(failed).toBeNull();
+      expect(retry).not.toBeNull();
+      expect(debuggerListeners.size).toBe(1);
+      retry!.connection.receive(JSON.stringify({
+        id: 2, method: 'Page.getFrameTree', sessionId: 'nexus-preview-page',
+      }));
+      await vi.waitFor(() => expect(messages).toEqual([
+        { id: 2, sessionId: 'nexus-preview-page', result: { root: {} } },
+      ]));
+      retry!.detach();
+      expect(debuggerListeners.size).toBe(0);
+      expect(state.guest.debugger.detach).toHaveBeenCalledTimes(1);
+    } finally {
+      failed?.detach();
+      retry?.detach();
+    }
+  });
+
+  it('shares a debugger acquired by another consumer during attach without detaching it', async () => {
+    await boot();
+    state.guest.debugger.attach.mockImplementationOnce(() => {
+      vi.mocked(state.guest.debugger.isAttached).mockReturnValue(true);
+      throw new Error('another debugger consumer attached');
+    });
+    const relay = openCdpRelayForPane(PANE, scope, { write: () => undefined });
+    try {
+      expect(relay).not.toBeNull();
+      expect(debuggerListeners.size).toBe(1);
+    } finally {
+      relay?.detach();
+    }
+    expect(debuggerListeners.size).toBe(0);
+    expect(state.guest.debugger.detach).not.toHaveBeenCalled();
   });
 
   it('does not borrow an entry by raw pane id, foreign checkout, or forged scope identity', async () => {

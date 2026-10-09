@@ -3146,6 +3146,10 @@ export function openCdpRelayForPane(
   }
   if (!liveOwnerWindow(entry.owner) || !canSend(entry.view.webContents)) return null;
   const attach = attachCdpRelay(entry.view.webContents, options);
+  if (!attach.attached) {
+    attach.detach();
+    return null;
+  }
   return { connection: attach.connection, detach: attach.detach };
 }
 
