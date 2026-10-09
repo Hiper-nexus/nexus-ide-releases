@@ -37,8 +37,8 @@ describe('resource monitor (T3 first cut)', () => {
     window.push({ ...sample, usedMemRatio: 0.4, loadAvg1: 2 });
     window.push({ ...sample, usedMemRatio: 0.1, loadAvg1: 0 });
     expect(window.size).toBe(3);
-    // 0.8 saiu da janela; pico da janela atual é 0.4
-    expect(window.peakUsedMemRatio()).toBe(0.4);
+    // Janela = últimos 3: 0.8, 0.4, 0.1 (o 0.2 saiu).
+    expect(window.peakUsedMemRatio()).toBe(0.8);
     expect(window.averageLoad1()).toBeCloseTo((3 + 2 + 0) / 3, 5);
     expect(window.latest()?.usedMemRatio).toBe(0.1);
   });
