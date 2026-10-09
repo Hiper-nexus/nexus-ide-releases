@@ -53,6 +53,16 @@ describe('WSL runtime backend (first cut)', () => {
     ).toThrow(/Ubuntu does not match selected distro Debian/);
   });
 
+  it('accepts Ubuntu and a lowercase ubuntu UNC as the same distro', () => {
+    const plan = planWslRuntime({
+      distro: 'Ubuntu',
+      hostCwd: '\\\\wsl.localhost\\ubuntu\\home\\me\\app',
+      command: ['git', 'status'],
+    });
+    expect(plan.distro).toBe('Ubuntu');
+    expect(plan.linuxCwd).toBe('/home/me/app');
+  });
+
   it('maps WSL UNC host cwd to a Linux path inside the distro', () => {
     const plan = planWslRuntime({
       distro: 'Debian',
