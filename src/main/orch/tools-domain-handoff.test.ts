@@ -1920,6 +1920,38 @@ describe("handoff MCP stop receipt", () => {
     expect(ackSpy).not.toHaveBeenCalled();
   });
 
+  it.each(['respawn','closed'] as const)("F-1089: old pane session cursor rejects %s before list or ACK", async (change) => {
+    const stores=mocks.getStores();
+    const ack=vi.fn((_mission:string,ids:readonly string[])=>ids.length);
+    const query=vi.fn(stores.handoffs.listCursorPage);
+    mocks.getStores.mockReturnValue({...stores,handoffs:{...stores.handoffs,listCursorPage:query,acknowledgeSeenByOrchestratorList:ack}});
+    mocks.listHandoffs.mockReturnValue([
+      {id:'h-page',delivered:true,deliveryState:'submitted',createdAt:1,missionId:'mission-a'},
+      {id:'h-next',delivered:true,deliveryState:'submitted',createdAt:2,missionId:'mission-a'},
+    ]);
+    paneMocks.listPaneSnapshots.mockReturnValue([{paneId:'pane-live',sessionId:'session-a',paneNumber:1}]);
+    try {
+      const first=await listTool().handler({panes:['pane-live'],limit:1},orchestratorContext()) as {items:Array<{id:string}>;nextCursor:string};
+      expect(first.items.map(row=>row.id)).toEqual(['h-page']);expect(first.nextCursor).toEqual(expect.any(String));
+      const continued=await listTool().handler({panes:['pane-live'],limit:1,cursor:first.nextCursor},orchestratorContext()) as typeof first;
+      expect(continued.items.map(row=>row.id)).toEqual(['h-next']);
+      expect(query).toHaveBeenLastCalledWith(expect.objectContaining({sessionIds:['session-a']}));
+      paneMocks.listPaneSnapshots.mockReturnValue(change==='closed'?[]:[{paneId:'pane-live',sessionId:'session-b',paneNumber:1}]);
+      query.mockClear();ack.mockClear();mocks.listHandoffs.mockClear();
+      await expect(listTool().handler({panes:['pane-live'],limit:1,cursor:first.nextCursor},orchestratorContext())).rejects.toThrow(/cursor inválido/);
+      expect(query).not.toHaveBeenCalled();expect(mocks.listHandoffs).not.toHaveBeenCalled();expect(ack).not.toHaveBeenCalled();
+    } finally {
+      paneMocks.listPaneSnapshots.mockImplementation(()=>[{paneId:'pane-live',sessionId:'session-live',paneNumber:1}]);
+    }
+  });
+
+  it('F-1089: cursor session identity is sorted and preserves the unfiltered optional shape',()=>{
+    const base={missionId:'mission-a',includeDelivered:true,ids:[],panes:['pane-live']};
+    expect(handoffListCursorSlice({...base,paneSessionIds:['session-a']})).not.toBe(handoffListCursorSlice({...base,paneSessionIds:['session-b']}));
+    expect(handoffListCursorSlice({...base,paneSessionIds:['a','b']})).toBe(handoffListCursorSlice({...base,paneSessionIds:['b','a']}));
+    expect(handoffListCursorSlice({...base,panes:[]})).toBe(handoffListCursorSlice({...base,panes:[],paneSessionIds:[]}));
+  });
+
   it("returns a cursor envelope when the pane filter matches nothing", async () => {
     const stores = mocks.getStores();
     const ackSpy = vi.fn(() => 1);
