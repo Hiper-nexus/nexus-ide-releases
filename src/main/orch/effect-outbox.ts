@@ -1,3 +1,10 @@
+/**
+ * Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62.
+ * Copyright (c) 2026 T3 Tools Inc. — MIT License.
+ * See third_party/licenses/t3code-MIT.txt.
+ * Upstream reference: apps/server/src/orchestration-v2/EffectOutbox.ts.
+ * Nexus changes: Effect-type lists, status and lease vocabulary, claim/recovery SQL adapted to scoped better-sqlite3/Zod. No production effect producer or handler registration is added.
+ */
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import {

@@ -1,3 +1,10 @@
+/**
+ * Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62.
+ * Copyright (c) 2026 T3 Tools Inc. — MIT License.
+ * See third_party/licenses/t3code-MIT.txt.
+ * Upstream references: apps/server/src/orchestration-v2/EffectOutbox.ts, apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts.
+ * Nexus changes: Uses upstream process-loss classification/error detail policy through Nexus scoped stores; coordinates recovery fail-closed and keeps unsettled receipts. No provider runtime/session reconstruction is ported.
+ */
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {

@@ -1,3 +1,8 @@
+/**
+ * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
+ * Upstream reference: apps/server/src/orchestration-v2/EffectWorker.ts.
+ * Nexus changes: Nexus async/await drainer implements lease/settlement policy with a local handler registry. No upstream implementation code or provider handlers copied.
+ */
 import type { PeriodicTaskContext } from '../observability/periodic-task';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {

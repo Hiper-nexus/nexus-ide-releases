@@ -1,3 +1,8 @@
+/**
+ * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
+ * Upstream reference: apps/desktop/src/wsl/DesktopWslBackend.ts.
+ * Nexus changes: Nexus pure argv/path/env planner with validated Bash exports and distro credential-slot label. No upstream Electron bridge, PTY execution, Windows run, or credential-isolation proof is copied.
+ */
 import {
   parseWslUncPath,
   toLinuxPath,

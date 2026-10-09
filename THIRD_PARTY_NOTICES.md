@@ -586,6 +586,25 @@ Nexus stack; no T3 Code package is a dependency.
   the editable-focus context in `apps/web/src/keybindings.ts`, with no code
   copied (`src/renderer/lib/action-names.ts`,
   `src/renderer/components/product/Launcher.tsx`).
+- PR126 orchestration: effect-type/lease/recovery and receipt schemas adapted
+  from `EffectOutbox.ts` / `CommandReceiptStore.ts`; Nexus drainer and settlement
+  gate reference `EffectWorker.ts` / `RunFinalizationService.ts`. Boot/drainer
+  and completion consumers exist; production effect producers/handlers and
+  command-receipt callers are not provided by this harvest.
+- CDP relay: per-tab protocol adapted from desktop `CdpRelay.ts`; Nexus scoped
+  Electron attachment/factory references that design. Contract tests establish
+  authority and attach truth; this factory does not establish a transport or
+  authenticate a CDP endpoint.
+- Composer: inline-markdown parser and narrow Tiptap code-mark policy adapted;
+  preview is Nexus React. Mermaid queue/configuration/sanitizer policy adapted
+  from `MermaidDiagram.tsx`, mounted as sanitized DOM in an isolated ShadowRoot.
+  These standalone components have no product caller in this snapshot.
+- WSL runtime planning references `DesktopWslBackend.ts`; history parser/sweep
+  reference `claudeHistoryWorker.ts`; resource snapshots reference
+  `ProcessResourceMonitor.ts`. These are Nexus implementations, not copied
+  execution backends/SDK workers/native telemetry. No WSL execution, credential
+  isolation, persisted history pipeline or Main resource-monitor caller is
+  certified by their unit contracts.
 - Diff viewer and changed-files tree: Pierre diff rendering, worker pool,
   annotatable code view, line ranges and the tree reveal/keyboard rules
   (`src/renderer/lib/diff-rendering.ts`, `src/renderer/lib/diff-file-tree.ts`,

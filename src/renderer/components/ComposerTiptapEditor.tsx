@@ -1,3 +1,10 @@
+/**
+ * Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62.
+ * Copyright (c) 2026 T3 Tools Inc. — MIT License.
+ * See third_party/licenses/t3code-MIT.txt.
+ * Upstream reference: apps/web/src/components/ComposerPromptEditorTiptap.tsx.
+ * Nexus changes: Narrow ComposerCodeExtension excludes-code policy adapted. Nexus reduced Tiptap wrapper implements canonical multiline/hardBreak serialization, external-value synchronization, toolbar accessibility and readonly guards; no upstream full composer/upload/mention UI port or product caller.
+ */
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';

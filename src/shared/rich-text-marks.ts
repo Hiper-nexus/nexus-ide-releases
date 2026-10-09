@@ -1,4 +1,11 @@
 /**
+ * Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62.
+ * Copyright (c) 2026 T3 Tools Inc. — MIT License.
+ * See third_party/licenses/t3code-MIT.txt.
+ * Upstream reference: apps/web/src/composer-rich-text.ts.
+ * Nexus changes: Inline markdown parser, mark/delimiter vocabulary and span coalescing adapted; serializer and Nexus representation preserve supported marks/literal unmatched markers.
+ */
+/**
  * Editor rich-text (item T3 "editor Tiptap" / `composer-rich-text.ts` @ 26285ab).
  *
  * O prompt armazenado continua markdown (`**bold**`); a superfície rich-text

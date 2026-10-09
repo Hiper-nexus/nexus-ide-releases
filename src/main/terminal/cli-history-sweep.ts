@@ -1,3 +1,8 @@
+/**
+ * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
+ * Upstream reference: apps/server/src/claudeHistoryWorker.ts.
+ * Nexus changes: Nexus bounded filesystem traversal/parser composition, no SDK worker copying and no production boot caller/persistence wiring.
+ */
 import fs from 'node:fs';
 import path from 'node:path';
 import {

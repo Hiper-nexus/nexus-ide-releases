@@ -1,3 +1,10 @@
+/**
+ * Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62.
+ * Copyright (c) 2026 T3 Tools Inc. — MIT License.
+ * See third_party/licenses/t3code-MIT.txt.
+ * Upstream reference: apps/server/src/orchestration-v2/CommandReceiptStore.ts.
+ * Nexus changes: Receipt fields/status and insert/update semantics adapted to scoped SQLite; Nexus acceptance transaction refuses stores from distinct runtime managers. No product command caller is added.
+ */
 import { z } from 'zod';
 import {
   ScopedStoreBinding,

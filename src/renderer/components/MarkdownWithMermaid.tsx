@@ -1,3 +1,10 @@
+/**
+ * Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62.
+ * Copyright (c) 2026 T3 Tools Inc. — MIT License.
+ * See third_party/licenses/t3code-MIT.txt.
+ * Upstream reference: apps/web/src/components/chat/MermaidDiagram.tsx.
+ * Nexus changes: Lazy render queue, unique ids, protected Mermaid configuration and SVG DOMPurify/CSS/link policy adapted. Nexus uses sanitized DOM nodes in ShadowRoot, post-commit readiness, stale/unmount cleanup and literal React plaintext fallback; no innerHTML sink or product caller.
+ */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { splitMarkdownMermaid } from '../../shared/mermaid-fences';

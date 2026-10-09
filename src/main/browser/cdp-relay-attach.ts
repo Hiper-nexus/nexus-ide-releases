@@ -1,3 +1,8 @@
+/**
+ * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
+ * Upstream reference: apps/desktop/src/preview/CdpRelay.ts.
+ * Nexus changes: Nexus Electron debugger wrapper with actual attached result, owned/borrowed debugger lease cleanup and listeners. Protocol implementation lives in cdp-relay; wrapper does not establish an endpoint.
+ */
 import type { WebContents } from 'electron';
 import {
   createCdpRelayConnection,

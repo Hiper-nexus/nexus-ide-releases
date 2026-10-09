@@ -1,4 +1,11 @@
 /**
+ * Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62.
+ * Copyright (c) 2026 T3 Tools Inc. — MIT License.
+ * See third_party/licenses/t3code-MIT.txt.
+ * Upstream reference: apps/desktop/src/preview/CdpRelay.ts.
+ * Nexus changes: Minimal per-tab CDP protocol/Target handling adapted to injected pure target/send/write callbacks; upstream Electron/transport construction is not copied.
+ */
+/**
  * CdpRelay (item T3 `apps/desktop/src/preview/CdpRelay.ts` @ 26285ab).
  *
  * Apresenta o debugger de UM preview tab como endpoint CDP mínimo, para que o

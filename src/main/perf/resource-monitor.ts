@@ -1,3 +1,8 @@
+/**
+ * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
+ * Upstream reference: apps/server/src/diagnostics/ProcessResourceMonitor.ts.
+ * Nexus changes: Conceptual diagnostics reference only: Nexus node:os/process snapshot and local sampler have no native telemetry history/CPU/process-tree implementation or Main product caller.
+ */
 import os from 'node:os';
 
 /**

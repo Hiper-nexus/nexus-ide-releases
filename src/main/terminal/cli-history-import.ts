@@ -1,4 +1,9 @@
 /**
+ * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
+ * Upstream reference: apps/server/src/claudeHistoryWorker.ts.
+ * Nexus changes: Nexus JSONL command parser for Claude/Codex input shapes; no SDK history worker/getSessionMessages implementation copied, no persistence caller introduced.
+ */
+/**
  * Importação de histórico de CLI (item T3 `claudeHistoryWorker`).
  *
  * Lê o transcript JSONL de uma CLI (Claude Code / Codex style) e extrai os

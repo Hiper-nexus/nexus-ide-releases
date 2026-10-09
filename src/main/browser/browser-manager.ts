@@ -1,3 +1,8 @@
+/**
+ * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
+ * Upstream reference: apps/desktop/src/preview/CdpRelay.ts.
+ * Nexus changes: Only createPaneCdpRelay factory is inspired by upstream preview CDP access; resolves exact scoped live pane authority and refuses failed attach. Existing Nexus browser manager remains locally authored; no transport/endpoint added by this factory.
+ */
 import { decisionResultUsage } from '../decision-models/decision-usage';
 import {
   BrowserWindow,

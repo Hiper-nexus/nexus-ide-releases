@@ -1,3 +1,8 @@
+/**
+ * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
+ * Upstream reference: apps/web/src/keybindings.ts.
+ * Nexus changes: Nexus window shortcut listener checks actual focused/target editable contexts, composition and modifiers; callbacks/action names and product behavior are local, no upstream resolver code copied.
+ */
 import { useEffect, useRef } from 'react';
 import { launcherActionIdForKey } from '../../lib/action-names';
 

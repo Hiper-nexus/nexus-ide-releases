@@ -1,4 +1,9 @@
 /**
+ * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
+ * Upstream reference: apps/web/src/components/chat/MermaidDiagram.tsx.
+ * Nexus changes: Nexus pure fenced-markdown splitter respects outer fences and preserves canonical diagram source. No upstream component/parser code copied.
+ */
+/**
  * Markdown com Mermaid (item T3 `ChatMarkdown` / `MermaidDiagram`).
  *
  * Cerca pura: encontra fences ```mermaid e devolve as partes (prosa ×
