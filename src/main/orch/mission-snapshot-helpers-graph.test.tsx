@@ -125,6 +125,7 @@ function stores(input: {
   mission: Mission;
   panes: readonly MissionPaneSpec[];
   handoffs?: readonly Partial<Handoff>[];
+  dispatches?: readonly { paneId: string; sessionId: string; agentRef?: string }[];
 }): ProjectDomainStoreSuite {
   return {
     missions: {
@@ -133,7 +134,7 @@ function stores(input: {
     },
     missionPanes: { list: () => input.panes },
     tasks: { list: () => [], listPlannedTasks: () => [] },
-    taskDispatches: { list: () => [] },
+    taskDispatches: { list: () => input.dispatches ?? [] },
     handoffs: { list: () => input.handoffs ?? [] },
   } as unknown as ProjectDomainStoreSuite;
 }
@@ -356,8 +357,8 @@ describe('F-777: o grafo da missão desenha o orquestrador, todos os helpers e o
     harness.sessionStates.set('s-orch', 'busy');
     harness.sessionStates.set('s-extra', 'busy');
     harness.paneSnapshots = [
-      { paneId: 'pane-orch', sessionId: 's-orch', kind: 'cli-agent', title: 'Maestro' },
-      { paneId: 'pane-extra', sessionId: 's-extra', kind: 'cli-agent', title: 'Ajudante GLM' },
+      { paneId: 'pane-orch', sessionId: 's-orch', kind: 'cli-agent', missionId, title: 'Maestro' },
+      { paneId: 'pane-extra', sessionId: 's-extra', kind: 'cli-agent', missionId, title: 'Ajudante GLM' },
     ];
     const view = projectMissionEngineSnapshotView(
       scope,
@@ -492,6 +493,108 @@ describe('F-777: o grafo da missão desenha o orquestrador, todos os helpers e o
     expect(ids).not.toContain('pane:pane-other-mission');
     expect(ids).not.toContain('pane:pane-loose');
     expect(snapshot.agents).toHaveLength(2);
+  });
+});
+
+describe('F-1059: durable sessions do not prove current board membership', () => {
+  const rejected = [
+    ['foreign-checkout', { scope: { ...scope, checkoutId: 'foreign-checkout' } }],
+    ['foreign-mission', { missionId: 'foreign-mission' }],
+    ['shell', { kind: 'shell' }],
+    ['browser', { kind: 'browser' }],
+    ['loose', { missionId: undefined }],
+    ['absent', null],
+    ['no-current-session', { sessionId: undefined }],
+  ] as const;
+
+  for (const squadId of [undefined, 'membership-squad']) {
+    describe(squadId ? 'squad' : 'squadless', () => {
+      beforeEach(() => {
+        harness.squads.set('membership-squad', {
+          id: 'membership-squad', agents: [
+            { id: 'maestro', agentName: 'Orquestrador', category: 'orchestrator', cli: 'claude' },
+            { id: 'worker', agentName: 'Worker', category: 'executor', cli: 'codex' },
+          ],
+        });
+      });
+
+      it.each(rejected)('recorded worker + busy historical dispatch excludes %s snapshot', (_, override) => {
+        liveTeam(0);
+        harness.sessionStates.set('historical-worker', 'busy');
+        if (override) harness.paneSnapshots.push({
+          paneId: 'recorded-worker', sessionId: 'historical-worker', kind: 'cli-agent',
+          missionId, role: 'worker', adapterId: 'codex', scope, ...override,
+        });
+        const view = projectMissionEngineSnapshotView(scope, stores({
+          mission: mission({ squadId }), panes: [orchestratorRow, {
+            id: 'row-worker', missionId, paneId: 'recorded-worker', role: 'worker',
+            adapterId: 'codex', agentName: 'Worker', createdAt: 2,
+          } as MissionPaneSpec],
+          dispatches: [{ paneId: 'recorded-worker', sessionId: 'historical-worker', agentRef: 'worker' }],
+        }), missionId);
+        expect(view.roster.map(agent => agent.id)).toEqual([squadId ? 'maestro' : 'orchestrator']);
+        const snapshot = projectMissionSnapshot(view);
+        expect(snapshot.agents.some(agent => agent.paneId === 'recorded-worker')).toBe(false);
+        expect(renderSnapshot(snapshot).querySelectorAll('.mission-agent-card')).toHaveLength(1);
+      });
+
+      it.each(rejected)('persisted leader + physically idle session excludes %s board snapshot', (_, override) => {
+        liveTeam(0);
+        harness.sessionStates.set('s-orch', 'idle');
+        harness.paneSnapshots = override ? [{
+          paneId: 'pane-orch', sessionId: 's-orch', kind: 'cli-agent', missionId,
+          role: 'orchestrator', adapterId: 'claude', scope, ...override,
+        }] : [];
+        const view = projectMissionEngineSnapshotView(scope, stores({
+          mission: mission({ squadId }), panes: [orchestratorRow],
+        }), missionId);
+        expect(view.roster).toEqual([]);
+        expect(projectMissionSnapshot(view).agents).toEqual([]);
+        // Board proof does not rewrite physical mission leadership/liveness.
+        expect(view.orchestratorLive).toBe(true);
+        expect(view.orchestratorIdle).toBe(true);
+      });
+    });
+  }
+
+  it.each(['spawning', 'busy', 'idle'])('pending-ACK helper with a current %s session remains a member without a durable row', (sessionState) => {
+    liveTeam(1);
+    harness.sessionStates.set('s-helper-0', sessionState);
+    harness.paneSnapshots[1] = {
+      ...harness.paneSnapshots[1], scope,
+      executionScope: { ...scope, rootRealPath: '/pending-ack-writer' },
+    };
+    const view = projectMissionEngineSnapshotView(scope, stores({
+      mission: mission(), panes: [orchestratorRow],
+    }), missionId);
+    expect(projectMissionSnapshot(view).agents.find(agent => agent.id === 'pane:pane-helper-0')).toMatchObject({
+      paneId: 'pane-helper-0', terminalLive: true,
+    });
+  });
+
+  it('a rejected newer historical dispatch cannot claim the live older squad worker identity', () => {
+    liveTeam(0);
+    harness.squads.set('identity-squad', { id: 'identity-squad', agents: [
+      { id: 'maestro', agentName: 'Orquestrador', category: 'orchestrator', cli: 'claude' },
+      { id: 'worker', agentName: 'Worker', category: 'executor', cli: 'codex' },
+    ] });
+    harness.sessionStates.set('live-worker', 'idle');
+    harness.sessionStates.set('historical-worker', 'busy');
+    harness.paneSnapshots.push({
+      paneId: 'older-worker', sessionId: 'live-worker', kind: 'cli-agent',
+      missionId, role: 'worker', adapterId: 'codex', scope,
+      executionScope: { ...scope, rootRealPath: '/isolated-writer' },
+    });
+    const view = projectMissionEngineSnapshotView(scope, stores({
+      mission: mission({ squadId: 'identity-squad' }),
+      panes: [orchestratorRow, ...['older-worker', 'newer-worker'].map((paneId, i) => ({
+        id: `row-${paneId}`, paneId, missionId, role: 'worker', adapterId: 'codex', agentName: 'Worker', createdAt: i + 2,
+      } as MissionPaneSpec))],
+      dispatches: [{ paneId: 'newer-worker', sessionId: 'historical-worker', agentRef: 'worker' }],
+    }), missionId);
+    expect(projectMissionSnapshot(view).agents.find(agent => agent.id === 'worker')).toMatchObject({
+      paneId: 'older-worker', terminalLive: true,
+    });
   });
 });
 

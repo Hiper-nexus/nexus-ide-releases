@@ -209,7 +209,7 @@ function coordinationScopeMatches(
 /**
  * Snapshot que pode reanimar um pane DESTA missão. Outro projeto, outra
  * missão, shell/browser e pane solto (sem missionId e sem linha gravada)
- * ficam de fora. Sem missionId, só o pane já gravado nesta missão passa.
+ * ficam de fora. Fixtures legadas sem kind/missionId exigem linha gravada.
  */
 function paneSnapshotBelongsToMission(
   snapshot: PaneSnapshot,
@@ -222,7 +222,12 @@ function paneSnapshotBelongsToMission(
     return false;
   }
   if (snapshot.missionId && snapshot.missionId !== missionId) return false;
-  if (!snapshot.missionId && !recordedPaneIds.has(snapshot.paneId)) return false;
+  // Runtime snapshots sempre têm kind. Uma linha antiga não transforma um
+  // pane solto atual em membro; só fixtures legadas sem kind usam a linha.
+  if (
+    !snapshot.missionId &&
+    (snapshot.kind != null || !recordedPaneIds.has(snapshot.paneId))
+  ) return false;
   return true;
 }
 
@@ -1329,7 +1334,9 @@ export function projectMissionEngineSnapshotView(
   const panes: ProjectMissionSnapshotView["panes"] = [];
   const claimedAgentIds = new Set<string>();
   const paneSessionIsLive = (paneId: string | undefined): boolean => {
-    if (!paneId) return false;
+    // F-1059: o fallback durável pode provar uma sessão física antiga, mas
+    // só o snapshot atual validado prova que este pane ainda é da missão.
+    if (!paneId || !liveOpenPaneIds.has(paneId)) return false;
     const paneSessionId = sessionByPaneId.get(paneId) ?? null;
     const liveSessionState = paneSessionId
       ? runtimeSessionState(paneSessionId)
@@ -1467,7 +1474,9 @@ export function projectMissionEngineSnapshotView(
   // pane de outro projeto ficam de fora. Idle do Maestro no prompt é vivo.
   const liveAgentIds = new Set(
     panes
-      .filter((pane) => pane.terminalLive === true)
+      .filter((pane) =>
+        pane.terminalLive === true && liveOpenPaneIds.has(pane.paneId),
+      )
       .map((pane) => pane.agentId),
   );
   const boardRoster = roster.filter((agent) => liveAgentIds.has(agent.id));

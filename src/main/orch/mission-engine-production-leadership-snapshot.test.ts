@@ -198,6 +198,7 @@ describe('Quadro fiel ao terminal (campo 23/09)', () => {
 
   function liveOrchestrator(paneId: string, sessionId: string, overrides: Record<string, unknown> = {}) {
     harness.sessionStates.set(sessionId, 'busy');
+    harness.paneSnapshots.push({ paneId, sessionId, kind: 'cli-agent', missionId, scope, ...overrides });
     harness.agentSessionsByPane.set(paneId, [
       {
         sessionId,
@@ -218,6 +219,7 @@ describe('Quadro fiel ao terminal (campo 23/09)', () => {
       sessionId: 'session-1', paneId: 'pane-orq', source: 'durable', proven: true,
     });
     harness.sessionStates.set('session-1', 'busy');
+    harness.paneSnapshots = [{ paneId: 'pane-orq', sessionId: 'session-1', kind: 'cli-agent', missionId, scope }];
     const view = projectMissionEngineSnapshotView(
       scope,
       stores({
@@ -438,6 +440,7 @@ describe('missão da aba (sem squad): o quadro desenha os panes que a missão gr
 
   function liveOrchestrator(paneId: string, sessionId: string, overrides: Record<string, unknown> = {}) {
     harness.sessionStates.set(sessionId, 'busy');
+    harness.paneSnapshots.push({ paneId, sessionId, kind: 'cli-agent', missionId, scope, ...overrides });
     harness.agentSessionsByPane.set(paneId, [
       {
         sessionId,
