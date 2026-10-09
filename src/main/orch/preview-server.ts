@@ -243,6 +243,7 @@ function previewStartResult(entry: RunningPreview): PreviewStartResult {
 export function authorizedPreviewCdpUrl(
   scope: PreviewCdpScope,
   preview: Pick<PreviewStartResult, 'url' | 'port' | 'cdpTicket'>,
+  allowPane?: (paneId: string) => boolean,
 ): string | null {
   if (!preview.cdpTicket || preview.cdpTicket.length > 128) return null;
   let origin: string;
@@ -251,8 +252,22 @@ export function authorizedPreviewCdpUrl(
   } catch {
     return null;
   }
-  const paneId = previewCdpBridge()?.solePaneId(scope, origin) ?? null;
-  if (!paneId) return null;
+  const bridge = previewCdpBridge();
+  if (!bridge) return null;
+  const listed = bridge.paneIdsOnOrigin?.(scope, origin);
+  const sole = bridge.solePaneId(scope, origin);
+  const candidates = listed ?? (sole ? [sole] : []);
+  const allowed = allowPane
+    ? candidates.filter((paneId) => {
+        try {
+          return allowPane(paneId);
+        } catch {
+          return false;
+        }
+      })
+    : candidates;
+  if (allowed.length !== 1) return null;
+  const paneId = allowed[0]!;
   return `ws://127.0.0.1:${preview.port}/cdp/${encodeURIComponent(paneId)}?ticket=${encodeURIComponent(preview.cdpTicket)}`;
 }
 

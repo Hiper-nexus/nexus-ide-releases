@@ -25,6 +25,8 @@ export interface PreviewCdpBridge {
     write: (message: string) => void,
   ): PreviewCdpSession | null;
   solePaneId(scope: PreviewCdpScope, previewOrigin: string): string | null;
+  /** Todos os panes nessa origem. O ticket escolhe pela autoridade do chamador. */
+  paneIdsOnOrigin?(scope: PreviewCdpScope, previewOrigin: string): readonly string[];
 }
 
 let bridge: PreviewCdpBridge | null = null;

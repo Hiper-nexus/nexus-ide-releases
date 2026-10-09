@@ -4,6 +4,8 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerPreviewCdpBridge } from './preview-cdp-bridge';
+import { authorizePaneAccess, type PaneAuthzInfo } from './pane-authz';
+import { testProjectScope } from './__tests__/scope-fixture';
 import {
   authorizedPreviewCdpUrl,
   isRunningPreviewUrl,
@@ -383,5 +385,64 @@ describe('preview-server', () => {
     });
     expect(opened).toBe(1);
     caller.close();
+  });
+
+  it('does not give a second mission a CDP url for the first mission pane', async () => {
+    const executionScope = testProjectScope({
+      projectId: scopeA.projectId,
+      checkoutId: scopeA.checkoutId,
+      rootRealPath: dir,
+    });
+    const panes: Record<string, PaneAuthzInfo> = {
+      'pane-mission-1': {
+        paneId: 'pane-mission-1',
+        sessionId: null,
+        kind: 'browser',
+        missionId: 'mission-1',
+        role: 'worker',
+        scope: executionScope,
+        ownerWebContentsId: 7,
+      },
+      'pane-mission-2': {
+        paneId: 'pane-mission-2',
+        sessionId: null,
+        kind: 'browser',
+        missionId: 'mission-2',
+        role: 'worker',
+        scope: executionScope,
+        ownerWebContentsId: 7,
+      },
+    };
+    const allow = (missionId: string) => (paneId: string) =>
+      authorizePaneAccess(
+        {
+          role: 'worker',
+          missionId,
+          sessionId: `worker-${missionId}`,
+          scope: executionScope,
+          ownerWebContentsId: 7,
+        },
+        panes[paneId]!,
+        'write',
+      ).allow;
+    registerPreviewCdpBridge({
+      open: () => null,
+      solePaneId: () => null,
+      paneIdsOnOrigin: () => ['pane-mission-1', 'pane-mission-2'],
+    });
+    const preview = await startPreview(dir, scopeA);
+    const first = authorizedPreviewCdpUrl(scopeA, preview, allow('mission-1'));
+    const second = authorizedPreviewCdpUrl(scopeA, preview, allow('mission-2'));
+    expect(first).toContain('/cdp/pane-mission-1?ticket=');
+    expect(first).not.toContain('pane-mission-2');
+    expect(second).toContain('/cdp/pane-mission-2?ticket=');
+    expect(second).not.toContain('pane-mission-1');
+
+    registerPreviewCdpBridge({
+      open: () => null,
+      solePaneId: () => 'pane-mission-1',
+      paneIdsOnOrigin: () => ['pane-mission-1'],
+    });
+    expect(authorizedPreviewCdpUrl(scopeA, preview, allow('mission-2'))).toBeNull();
   });
 });

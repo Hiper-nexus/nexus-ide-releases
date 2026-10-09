@@ -67,4 +67,31 @@ describe('launcher shortcuts', () => {
     expect(run.workspace).toHaveBeenCalledTimes(1);
     expect(run.pane).not.toHaveBeenCalled();
   });
+
+  it('does not run a number shortcut while a modal dialog is open', () => {
+    const run = actions();
+    function Probe({ open }: { open: boolean }) {
+      useLauncherShortcuts(true, run);
+      return open ? (
+        <div role="dialog" aria-modal="true">
+          <button type="button">Confirmar</button>
+        </div>
+      ) : null;
+    }
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.push(root);
+    act(() => root.render(<Probe open />));
+    document.querySelector('button')?.focus();
+    act(() => {
+      keydown('4', false);
+      keydown('1', false);
+    });
+    expect(run.shell).not.toHaveBeenCalled();
+    expect(run.pane).not.toHaveBeenCalled();
+    act(() => root.render(<Probe open={false} />));
+    act(() => keydown('4', false));
+    expect(run.shell).toHaveBeenCalledTimes(1);
+  });
 });

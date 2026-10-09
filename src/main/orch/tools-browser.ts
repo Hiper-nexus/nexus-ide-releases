@@ -112,7 +112,18 @@ const previewStartTool: McpToolDef = {
     const workspaceDir = resolveCwdForScope(executionScope, dir);
     try {
       const started = await startPreview(workspaceDir, executionScope, invocation);
-      const cdpWebSocketUrl = authorizedPreviewCdpUrl(executionScope, started);
+      const cdpWebSocketUrl = authorizedPreviewCdpUrl(
+        executionScope,
+        started,
+        (paneId) => {
+          try {
+            authorizeBrowserPane(ctx, paneId, 'write');
+            return true;
+          } catch {
+            return false;
+          }
+        },
+      );
       return {
         id: started.id,
         url: started.url,

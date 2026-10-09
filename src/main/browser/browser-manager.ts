@@ -3138,10 +3138,10 @@ function browserShowsOrigin(entry: BrowserEntry, previewOrigin: string): boolean
   }
 }
 
-function soleBrowserPaneOnOrigin(
+function browserPaneIdsOnOrigin(
   scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
   previewOrigin: string,
-): string | null {
+): string[] {
   const matches: string[] = [];
   for (const entry of browsers.values()) {
     if (
@@ -3154,7 +3154,15 @@ function soleBrowserPaneOnOrigin(
     if (!browserShowsOrigin(entry, previewOrigin)) continue;
     matches.push(entry.paneId);
   }
-  return matches.length === 1 ? matches[0] : null;
+  return matches;
+}
+
+function soleBrowserPaneOnOrigin(
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  previewOrigin: string,
+): string | null {
+  const matches = browserPaneIdsOnOrigin(scope, previewOrigin);
+  return matches.length === 1 ? matches[0]! : null;
 }
 
 /**
@@ -3186,6 +3194,7 @@ registerPreviewCdpBridge({
   open: (scope, paneId, previewOrigin, write) =>
     openCdpRelayForPane(scope, paneId, { write }, previewOrigin),
   solePaneId: soleBrowserPaneOnOrigin,
+  paneIdsOnOrigin: browserPaneIdsOnOrigin,
 });
 
 function browserEntryForWebContents(

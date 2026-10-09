@@ -43,6 +43,11 @@ function pushSpan(
   }
 }
 
+/** Pontuação ASCII do CommonMark. Letra, dígito e espaço não são escape. */
+function isEscapableMarkdownPunctuation(char: string): boolean {
+  return /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/.test(char);
+}
+
 /** Parse the supported inline styles, leaving unmatched and escaped markers literal. */
 export function parseInlineMarkdown(text: string): RichTextSpan[] {
   const root: RichTextSpan[] = [];
@@ -57,12 +62,14 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
     const char = text[index]!;
     if (char === '\\') {
       const next = text[index + 1];
-      if (next === undefined || next === '\n') {
-        pushSpan(current(), '\\', []);
-        index += 1;
-      } else {
+      // CommonMark só consome a barra antes de pontuação ASCII. `C:\Users`
+      // não é escape: a barra fica.
+      if (next !== undefined && isEscapableMarkdownPunctuation(next)) {
         pushSpan(current(), next, []);
         index += 2;
+      } else {
+        pushSpan(current(), '\\', []);
+        index += 1;
       }
       continue;
     }

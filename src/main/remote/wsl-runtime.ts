@@ -55,7 +55,8 @@ export function planWslRuntime(input: WslRuntimePlanInput): WslRuntimePlan {
   if (distro.length === 0) throw new Error('wsl distro is required');
   if (input.command.length === 0) throw new Error('wsl command is required');
   const unc = parseWslUncPath(input.hostCwd);
-  if (unc && unc.distro !== distro) {
+  // O componente da distro no UNC já é case-insensitive em wsl-paths.
+  if (unc && unc.distro.toLowerCase() !== distro.toLowerCase()) {
     throw new Error(
       `wsl unc distro ${unc.distro} does not match selected distro ${distro}`,
     );

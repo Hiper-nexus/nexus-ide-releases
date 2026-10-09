@@ -12,7 +12,13 @@ const stubs = vi.hoisted(() => ({
     port: 1234,
     cdpTicket: 'ticket-not-for-http',
   })),
-  authorizedPreviewCdpUrl: vi.fn(() => null as string | null),
+  authorizedPreviewCdpUrl: vi.fn(
+    (
+      _scope?: unknown,
+      _preview?: unknown,
+      _allowPane?: (paneId: string) => boolean,
+    ) => null as string | null,
+  ),
   stopPreview: vi.fn(() => true),
   listPreviews: vi.fn(
     (): Array<{ id: string; dir: string; url: string }> => [],
@@ -239,6 +245,37 @@ describe('preview tool workspace confinement', () => {
         port: 1234,
         cdpTicket: 'ticket-not-for-http',
       }),
+      expect.any(Function),
+    );
+  });
+
+  it('does not hand a worker a CDP url for a pane outside its mission', async () => {
+    stubs.authorizedPreviewCdpUrl.mockImplementationOnce(
+      (_scope, _preview, allowPane) => {
+        const allow = allowPane as (paneId: string) => boolean;
+        return allow('pane-mission-1')
+          ? 'ws://127.0.0.1:1234/cdp/pane-mission-1?ticket=secret'
+          : null;
+      },
+    );
+    vi.mocked(authorizePaneRef).mockImplementationOnce(() => {
+      throw new Error('not authorized: pane belongs to another mission');
+    });
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_preview_start')!;
+    const worker = {
+      role: 'worker' as const,
+      missionId: 'mission-2',
+      scope,
+    };
+    await expect(tool.handler({ dir: 'dist' }, worker as never)).resolves.toEqual({
+      id: 'preview-opaque',
+      url: 'http://127.0.0.1:1234/',
+      port: 1234,
+    });
+    expect(authorizePaneRef).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'worker', missionId: 'mission-2' }),
+      'pane-mission-1',
+      'write',
     );
   });
 

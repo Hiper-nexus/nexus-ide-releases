@@ -19,6 +19,11 @@ export function launcherShortcutTargetIsEditable(event: KeyboardEvent): boolean 
   );
 }
 
+/** Grade, confirmação ou outro modal: o dígito é do diálogo, não do launcher. */
+export function launcherShortcutBlockedByModal(): boolean {
+  return document.querySelector('[aria-modal="true"], [role="dialog"]') !== null;
+}
+
 export type LauncherShortcutId =
   | 'pane'
   | 'mission'
@@ -45,6 +50,7 @@ export function useLauncherShortcuts(
     if (!enabled) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (launcherShortcutBlockedByModal()) return;
       const id = launcherActionIdForKey(event.key, {
         targetIsEditable: launcherShortcutTargetIsEditable(event),
       });

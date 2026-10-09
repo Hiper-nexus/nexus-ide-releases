@@ -33,6 +33,14 @@ describe('rich text marks (T3 composer core)', () => {
     ]);
   });
 
+  it('round-trips a Windows path', () => {
+    const source = 'C:\\Users\\me';
+    const spans = parseInlineMarkdown(source);
+    expect(spanText(spans)).toBe(source);
+    expect(serializeInlineMarkdown(spans)).toBe('C:\\\\Users\\\\me');
+    expect(parseInlineMarkdown(serializeInlineMarkdown(spans))).toEqual(spans);
+  });
+
   it('nests bold inside italic', () => {
     const spans = parseInlineMarkdown('***both***');
     expect(spanText(spans)).toBe('both');
