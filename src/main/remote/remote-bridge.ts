@@ -45,6 +45,8 @@ import {
 } from '../orch/pane-registry';
 import { authorizePaneAccess } from '../orch/pane-authz';
 import { getProjectDomainStores } from '../orch/project-domain-store-registry';
+import { isWslRuntimeUsable } from './wsl-runtime';
+import { execFile } from 'node:child_process';
 import {
   orchResizeSession,
   orchWriteSession,
@@ -859,6 +861,28 @@ async function respondToApprovalFromRemote(
   return approvalBroker.respond({ requestId: itemId, expectedRevision, optionId, source: 'mobile' });
 }
 
+/**
+ * F-1168 B6: lista as distros WSL do host (`wsl.exe -l -q`). Fora de Windows
+ * devolve `[]` sem lançar — o chamador decide o que fazer com a lista vazia.
+ * Usa `execFile` assíncrono (o ratchet F-764 recusa `execFileSync`).
+ */
+async function listWslDistros(): Promise<string[]> {
+  if (process.platform !== 'win32') return [];
+  return new Promise((resolve) => {
+    execFile('wsl.exe', ['-l', '-q'], { timeout: 10_000 }, (error, stdout) => {
+      if (error) {
+        resolve([]);
+        return;
+      }
+      const distros = String(stdout)
+        .split(/\r?\n/)
+        .map((line) => line.replace(/\0/g, '').trim())
+        .filter((line) => line.length > 0);
+      resolve(distros);
+    });
+  });
+}
+
 /** Shape das mensagens autenticadas aceitas pelo dispatch da bridge. */
 export type AuthedBridgeCommand = {
   id?: string;
@@ -1117,6 +1141,22 @@ export async function handleAuthedMessage(
     // MOB-05 (F-1021): atividade atual dos panes que este aparelho lê.
     case 'pane.activity.list':
       return { panes: remotePaneActivityFor(scope) };
+    // F-1168 B6: superfícies WSL para o thin-client/aparelho. Nada de
+    // segredo; a lista de distros vem do `wsl.exe` do próprio host.
+    case 'host.wsl.isAvailable': {
+      const rawDistro = msg.distro;
+      const distro = typeof rawDistro === 'string' ? rawDistro : null;
+      const presence = isWslRuntimeUsable(distro);
+      return {
+        available: presence.available,
+        reason: presence.reason,
+        distroSlot: presence.distroSlot,
+      };
+    }
+    case 'host.wsl.listDistros': {
+      const distros = await listWslDistros();
+      return { distros };
+    }
     default:
       throw new Error(`unknown command: ${msg.type}`);
   }

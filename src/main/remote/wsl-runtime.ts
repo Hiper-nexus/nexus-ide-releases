@@ -162,3 +162,35 @@ export function isWslRuntimeUsable(
     distroSlot,
   };
 }
+
+/**
+ * F-1168 B5: embrulha um spawn `{file, args}` para rodar DENTRO de uma
+ * distro WSL. O binário original vira o comando POSIX do `wsl.exe`.
+ * `env.NEXUS_WSL_DISTRO` (setado pelo runtime da sessão) dispara o embrulho;
+ * sem distro o spawn passa intacto.
+ */
+export function wrapSpawnForWsl(input: {
+  readonly file: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly distro: string | null | undefined;
+}): { readonly file: string; readonly args: readonly string[] } {
+  const distro = input.distro?.trim();
+  if (!distro) {
+    return { file: input.file, args: [...input.args] };
+  }
+  const plan = planWslRuntime({
+    distro,
+    hostCwd: input.cwd,
+    command: [input.file, ...input.args],
+  });
+  return { file: 'wsl.exe', args: [...plan.argv] };
+}
+
+/** Distro da sessão atual, quando o runtime é `wsl`. */
+export function wslDistroFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const value = env.NEXUS_WSL_DISTRO?.trim();
+  return value && value.length > 0 ? value : null;
+}

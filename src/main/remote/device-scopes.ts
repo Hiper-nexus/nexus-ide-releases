@@ -37,6 +37,8 @@ const REQUIRED_SCOPE = new Map<string, RemoteDeviceScope | null>([
   ['files.list', 'read'],
   ['files.read', 'read'],
   ['pane.activity.list', 'read'], // MOB-05 (F-1021)
+  ['host.wsl.isAvailable', 'read'], // F-1168 B6: presença do runtime WSL, sem segredo
+  ['host.wsl.listDistros', 'read'],
   ['pane.input', 'input'],
   ['pane.resize', 'input'],
   ['pane.stream.frame', 'input'],

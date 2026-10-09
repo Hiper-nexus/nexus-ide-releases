@@ -70,6 +70,7 @@ import {
   secureAutonomousCliArgs,
   supportsEnforceableWorkspaceWriteNativeAuthority,
 } from "./autonomous-cli-policy";
+import { wslDistroFromEnv, wrapSpawnForWsl } from "../remote/wsl-runtime";
 import type {
   PtyHost,
   PtyProcHandle,
@@ -2907,6 +2908,22 @@ export function spawnAgentSession(
     if (npmShimLaunch) {
       spawnFile = npmShimLaunch.file;
       spawnArgs = [...npmShimLaunch.argsPrefix, ...spawnArgs];
+    }
+  }
+
+  // F-1168 B5: runtime WSL — embrulha o spawn como `wsl.exe -d <distro> …`.
+  // `NEXUS_WSL_DISTRO` vem do runtime da sessão; sem ele o spawn passa intacto.
+  {
+    const wslDistro = wslDistroFromEnv(spawnEnv);
+    if (wslDistro) {
+      const wrapped = wrapSpawnForWsl({
+        file: spawnFile,
+        args: spawnArgs,
+        cwd: spawnCwd,
+        distro: wslDistro,
+      });
+      spawnFile = wrapped.file;
+      spawnArgs = [...wrapped.args];
     }
   }
 

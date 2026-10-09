@@ -3,6 +3,8 @@ import {
   isWslRuntimeUsable,
   planWslRuntime,
   wslCredentialSlot,
+  wrapSpawnForWsl,
+  wslDistroFromEnv,
 } from './wsl-runtime';
 
 describe('WSL runtime backend (first cut)', () => {
@@ -123,5 +125,37 @@ describe('WSL runtime backend (first cut)', () => {
       reason: 'wsl-distro-name-unsafe',
       distroSlot: null,
     });
+  });
+});
+
+describe('wrapSpawnForWsl (F-1168 B5)', () => {
+  it('wraps the spawn as wsl.exe when a distro is set', () => {
+    const wrapped = wrapSpawnForWsl({
+      file: '/bin/bash',
+      args: ['-lc', 'npm test'],
+      cwd: 'C:\\work\\app',
+      distro: 'Ubuntu',
+    });
+    expect(wrapped.file).toBe('wsl.exe');
+    expect(wrapped.args[0]).toBe('-d');
+    expect(wrapped.args[1]).toBe('Ubuntu');
+    expect(wrapped.args).toContain('--exec');
+  });
+
+  it('leaves the spawn intact when no distro is set', () => {
+    const wrapped = wrapSpawnForWsl({
+      file: '/bin/bash',
+      args: ['-lc', 'ls'],
+      cwd: '/tmp',
+      distro: null,
+    });
+    expect(wrapped.file).toBe('/bin/bash');
+    expect(wrapped.args).toEqual(['-lc', 'ls']);
+  });
+
+  it('wslDistroFromEnv reads NEXUS_WSL_DISTRO', () => {
+    expect(wslDistroFromEnv({ NEXUS_WSL_DISTRO: 'Debian' })).toBe('Debian');
+    expect(wslDistroFromEnv({ NEXUS_WSL_DISTRO: '  ' })).toBeNull();
+    expect(wslDistroFromEnv({})).toBeNull();
   });
 });
