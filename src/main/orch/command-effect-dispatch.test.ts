@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { configureAuditLogRuntime, disposeAuditLogRuntime } from '../jarvis/audit-log';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { CommandReceiptStore } from './command-receipts';
@@ -47,4 +47,14 @@ it('F-1082: fresh standalone scope recovers prior pending physical proof before 
   let stateAtHandler:string|undefined;
   expect((await dispatchToolCall('http-mcp',tools(async()=>{stateAtHandler=receipts.getByCommandId('previous-owned')?.physicalState;return {}; }),'nexus_file_write',args,ctx)).ok).toBe(true);
   expect(stateAtHandler).toBe('unknown');expect(outbox.listUnsettledBlocking(scope.projectId).rows).toHaveLength(1);
+});
+
+it('F-1082: initialized registry publication failure cannot masquerade as absent test registry',async()=>{
+  const registry=requireProjectDomainStoreRegistry();let runs=0;
+  const publication=vi.spyOn(registry,'forScope').mockImplementation(()=>{throw new Error('controlled workspace listener not initialized');});
+  try{
+    expect(await dispatchToolCall('http-mcp',tools(async()=>{runs++;return {}; }),'nexus_file_write',args,ctx)).toMatchObject({ok:false,denied:true,error:'command_effect_unavailable'});
+    expect(runs).toBe(0);expect(new CommandReceiptStore(manager,scope).countUnsettled()).toBe(0);
+    expect(manager.open(scope).db.prepare('SELECT COUNT(*) AS n FROM effect_outbox').get()).toEqual({n:0});
+  }finally{publication.mockRestore();}
 });

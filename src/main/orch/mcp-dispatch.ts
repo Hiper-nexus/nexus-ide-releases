@@ -681,19 +681,20 @@ function acceptProductionCommandObservation(
   bindingDigest: string,
   generated: boolean,
 ): CheckpointAcceptance {
-  let runtimeManager: ProjectRuntimeManager;
+  let registry: ReturnType<typeof requireProjectDomainStoreRegistry>;
   try {
-    const registry = requireProjectDomainStoreRegistry();
-    registry.forScope(ctx.scope); // Reconcile and publish before any receipt or process.
-    if(isUnreconciledEffectOutbox(ctx.scope)) return {status:"denied"};
-    runtimeManager = registry.runtimeManager();
+    registry = requireProjectDomainStoreRegistry();
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    if (message.includes("not initialized")) return { status: "skipped" };
+    if (message === "project-scoped domain stores are not initialized") return { status: "skipped" };
     console.warn("[mcp-dispatch] command effect registry unavailable:", error);
     return { status: "denied" };
   }
   try {
+    // An initialized registry failure is never the absent-registry test seam.
+    registry.forScope(ctx.scope);
+    if(isUnreconciledEffectOutbox(ctx.scope)) return {status:"denied"};
+    const runtimeManager = registry.runtimeManager();
     const missionId = ctx.missionId?.trim() ?? "";
     const accepted = createScopedCommandReceiptStore(runtimeManager, ctx.scope).acceptDispatchObservation({
       commandId, toolName: canonicalToolName(toolName), bindingDigest, generated,
@@ -702,7 +703,7 @@ function acceptProductionCommandObservation(
     return { status: "accepted", inserted: accepted.inserted, runtimeManager };
   } catch (error) {
     if (error instanceof Error && error.message === 'command_effect_identity_conflict') return {status:'conflict'};
-    console.warn("[mcp-dispatch] command effect acceptance failed:", error);
+    console.warn("[mcp-dispatch] command effect acceptance failed");
     return { status: "denied" };
   }
 }
