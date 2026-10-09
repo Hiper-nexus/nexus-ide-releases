@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { Handoff, Mission, MissionPaneSpec, Squad } from '../../shared/orch-types';
 import { maybeApplyCivilianPronto } from './civilian-pronto';
 import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
@@ -7,9 +10,29 @@ import { hashMissionIntentAuthority } from './mission-pane-authority';
 import { completeVerifiedMission } from './mission-engine-production';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { testProjectScope } from './__tests__/scope-fixture';
-import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
+import { configureProjectDomainStoreRegistry, disposeProjectDomainStoreRegistry, type ProjectDomainStoreSuite } from './project-domain-store-registry';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { createScopedEffectOutboxStore } from './effect-outbox';
 
-const scope = testProjectScope();
+let scope: ReturnType<typeof testProjectScope>;
+let root: string;
+let runtimeRoot: string;
+let manager: ProjectRuntimeManager;
+beforeEach(() => {
+  root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-team-completion-')));
+  runtimeRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-team-completion-runtime-')));
+  const stat = fs.statSync(root);
+  scope = testProjectScope({ rootRealPath: root, projectId: path.basename(root), checkoutId: path.basename(root),
+    workspaceRootDevice: String(stat.dev), workspaceRootInode: String(stat.ino) });
+  manager = new ProjectRuntimeManager({ baseDir: runtimeRoot, appVersion: 'team-completion-test' });
+  configureProjectDomainStoreRegistry(manager).forScope(scope);
+});
+afterEach(async () => {
+  await disposeProjectDomainStoreRegistry();
+  manager.closeAll();
+  fs.rmSync(runtimeRoot, { recursive: true, force: true });
+  fs.rmSync(root, { recursive: true, force: true });
+});
 const squad = {
   id: 'team', name: 'Team', builtin: false, createdAt: '1', orchestratorInstructions: '',
   agents: ['Maestro', 'Codex', 'Cursor', 'DeepSeek'].map((agentName, index) => ({
@@ -147,6 +170,20 @@ describe('team-question automatic completion', () => {
     expect(outcome.result.reason).toBe('all-workers-delivered (3/3)');
     expect(outcome.current.result?.artifactRefs).toEqual([]);
     expect(outcome.current.result?.summary).toBe('Respostas da equipe:\n- Codex: 4\n- Cursor: 4\n- DeepSeek: 4');
+  });
+
+  it('keeps all delivered responses running while a real physical obligation remains pending', async () => {
+    const state = harness(targetNames.map(name => handoff(name)));
+    const outbox = createScopedEffectOutboxStore(manager, scope);
+    outbox.enqueue({ commandId: 'owned-process-still-alive', threadId: state.current.id, type: 'dispatch.physical-settlement' });
+    const result = await maybeCompleteFastLaneOnDelivery(scope, state.current.id, state.deps);
+    expect(result.completed).toBe(false);
+    expect(state.current.status).toBe('running');
+    expect(state.completeVerified).not.toHaveBeenCalled();
+    expect(state.transitionLifecycle).not.toHaveBeenCalled();
+    expect(outbox.listUnsettledBlocking(state.current.id).rows).toEqual([
+      expect.objectContaining({ type: 'dispatch.physical-settlement', status: 'pending' }),
+    ]);
   });
 
   it.each([

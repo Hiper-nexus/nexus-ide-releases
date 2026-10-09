@@ -12,7 +12,8 @@ import type { Handoff, Mission, Squad, SquadAgent } from '../../shared/orch-type
 import type { ProjectExecutionScope } from '../../shared/types';
 import { missionIntentContractSchema } from '../../shared/mission-intent';
 import { ProcessGitRunner } from '../runtime/git-command';
-import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
+import { configureProjectDomainStoreRegistry, disposeProjectDomainStoreRegistry, type ProjectDomainStoreSuite } from './project-domain-store-registry';
+import { createScopedEffectOutboxStore } from './effect-outbox';
 import type { ScopedTaskRecord } from './task-store';
 import { completeVerifiedMission } from './mission-engine-production';
 import { maybeCompleteFastLaneOnDelivery, type CivilianStores } from './civilian-delivery-completion';
@@ -33,7 +34,8 @@ const GOOD_SOURCE = 'export function bookingLabel() {\n  return "Agendamento";\n
 const BAD_SOURCE = 'export function bookingLabel() {\n  return "Agendamento";\n  console.log("unreachable");\n}\n';
 
 beforeEach(() => __resetCivilianAutoReviewForTests());
-afterEach(() => {
+afterEach(async () => {
+  await disposeProjectDomainStoreRegistry();
   disposeWorktreeRuntimeRegistry();
   managers.splice(0).forEach(manager => manager.closeAll());
   roots.splice(0).forEach((root) => fs.rmSync(root, { recursive: true, force: true }));
@@ -54,10 +56,17 @@ function fixture(options: { git?: boolean; goal?: string; lane?: 'standard' | 'c
     fs.utimesSync(path.join(root, 'README.md'), 1, 1);
   }
   const baselineSha = options.git ? runGit('rev-parse', 'HEAD') : null;
+  const stat = fs.statSync(root);
   const scope: ProjectExecutionScope = {
     version: 1, installationId: 'integration', projectId: path.basename(root),
-    checkoutId: 'checkout', rootRealPath: root, identitySource: 'manifest',
+    checkoutId: path.basename(root), rootRealPath: root, identitySource: 'manifest',
+    workspaceRootDevice: String(stat.dev), workspaceRootInode: String(stat.ino),
   };
+  const domainRuntime = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-completion-domain-runtime-')));
+  roots.push(domainRuntime);
+  const domainManager = new ProjectRuntimeManager({ baseDir: domainRuntime, appVersion: 'completion-test' });
+  managers.push(domainManager);
+  configureProjectDomainStoreRegistry(domainManager).forScope(scope);
   const agents: SquadAgent[] = [
     { id: 'orchestrator', agentName: 'Orchestrator', category: 'orchestrator', cli: 'codex' },
     { id: 'builder', agentName: 'Builder', category: 'executor', cli: 'codex' },
@@ -155,11 +164,27 @@ function fixture(options: { git?: boolean; goal?: string; lane?: 'standard' | 'c
     mission.intentContract!.dispatchedAt = Date.now();
     return executionRoot;
   };
-  return { root, scope, squad, handoffs, isolate, runGit, writeProduct, reconcile, complete, review, deliverRepair,
+  return { root, scope, domainManager, squad, handoffs, isolate, runGit, writeProduct, reconcile, complete, review, deliverRepair,
     observedProofs, transition, mission: () => mission, advanceClock: () => { clock += 100000; } };
 }
 
 describe('autopilot completion through the real production boundary', () => {
+  it('cannot complete reviewed code while the coordination DB has a pending physical obligation', async () => {
+    const state = fixture({ git: true });
+    await state.isolate();
+    state.writeProduct();
+    const outbox = createScopedEffectOutboxStore(state.domainManager, state.scope);
+    outbox.enqueue({ commandId: 'owned-process-still-alive', threadId: state.mission().id, type: 'dispatch.physical-settlement' });
+    const result = await state.reconcile();
+    expect(result.completed).toBe(false);
+    expect(state.mission().status).toBe('running');
+    expect(state.complete).not.toHaveBeenCalled();
+    expect(state.transition).not.toHaveBeenCalled();
+    expect(outbox.listUnsettledBlocking(state.mission().id).rows).toEqual([
+      expect.objectContaining({ type: 'dispatch.physical-settlement', status: 'pending' }),
+    ]);
+  });
+
   it.each([false, true])('a scanner-only receipt cannot bypass independent code review (pane mission=%s)', (paneMission) => {
     const state = fixture({ git: true, paneMission });
     state.writeProduct();
