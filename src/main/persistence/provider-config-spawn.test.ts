@@ -798,6 +798,30 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     });
   });
 
+  it.each([false, true])('real Claude status provenance keeps API fallback and native subscription precedence (native=%s)', async native => {
+    const actual = await vi.importActual<typeof import('../adapters/subscription-auth')>('../adapters/subscription-auth');
+    spawnDeps.runtimeKey.mockReturnValue(null); // This fixture is API-env-only, not the unrelated vault key.
+    vi.stubEnv('ANTHROPIC_API_KEY', 'fixture-api-key'); vi.stubEnv('ANTHROPIC_BASE_URL', 'http://127.0.0.1:34567');
+    const status = native ? { loggedIn: true, authMethod: 'claude.ai', apiKeySource: null } :
+      { loggedIn: true, authMethod: 'oauth_token', apiKeySource: 'env-api-key' };
+    spawnDeps.resolveAuthStrategy.mockImplementation(actual.resolveAuthStrategy);
+    spawnDeps.subscriptionAuthed.mockImplementation(() => actual.claudeCliAuthStatusLoggedInSync(
+      (() => JSON.stringify(status)) as unknown as typeof import('node:child_process').execFileSync, '/fixture/claude'));
+    const result = prepareProviderSpawn('claude');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('fixture preparation refused');
+    if (native) {
+      expect(result.overrides.suppressEnv).toContain('ANTHROPIC_API_KEY');
+      expect(result.overrides.suppressEnv).toContain('ANTHROPIC_BASE_URL');
+      expect(result.overrides.keyEnv).toEqual({}); // Native store stays in place (F-645).
+    } else {
+      expect(result.overrides.suppressEnv).toEqual([]);
+      expect(result.overrides.keyEnv).toEqual({ ANTHROPIC_API_KEY: 'fixture-api-key' });
+    }
+    expect(process.env.ANTHROPIC_API_KEY).toBe('fixture-api-key');
+    expect(process.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:34567');
+  });
+
   it('spawns auth.method none without login, key injection or env suppression', () => {
     spawnDeps.subscriptionAuthed.mockReturnValue(false);
     spawnDeps.runtimeKey.mockReturnValue(null);

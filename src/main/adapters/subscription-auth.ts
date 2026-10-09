@@ -263,13 +263,24 @@ function resolveClaudeBinary(): string | null {
   }
 }
 
+/** Identity probes must ask the native store, not an inherited API route.
+ * Copy only: the real spawn environment and native HOME/config stay intact. */
+function nativeClaudeProbeEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_API_KEY', 'CLAUDE_CODE_API_KEY',
+    'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'CLAUDE_CODE_OAUTH_SCOPES']) delete env[name];
+  for (const name of Object.keys(env)) if (/^(?:ANTHROPIC|CLAUDE).*_BASE_URL$/.test(name)) delete env[name];
+  return env;
+}
 function parseClaudeAuthStatusLoggedIn(stdout: unknown): boolean {
   try {
-    const parsed = JSON.parse(String(stdout)) as { loggedIn?: unknown };
-    return parsed?.loggedIn === true;
-  } catch {
-    return false;
-  }
+    const parsed = JSON.parse(String(stdout)) as { loggedIn?: unknown; authMethod?: unknown; apiKeySource?: unknown };
+    if (parsed?.loggedIn !== true || parsed.apiKeySource != null && parsed.apiKeySource !== '') return false;
+    // Older CLI native attestations omit authMethod. A declared external or
+    // unknown method is never evidence of subscription/OAuth store identity.
+    return parsed.authMethod == null || typeof parsed.authMethod === 'string' &&
+      ['claude.ai', 'claude_ai', 'oauth', 'oauth_token'].includes(parsed.authMethod);
+  } catch { return false; }
 }
 
 /**
@@ -291,6 +302,7 @@ export function claudeCliAuthStatusLoggedInSync(
   try {
     const out = execImpl(bin, ['auth', 'status'], {
       encoding: 'utf8',
+      env: nativeClaudeProbeEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: timeoutMs,
       killSignal: 'SIGKILL',
@@ -315,6 +327,7 @@ export function claudeCliAuthStatusLoggedInAsync(
         ['auth', 'status'],
         {
           timeout: timeoutMs,
+          env: nativeClaudeProbeEnv(),
           killSignal: 'SIGKILL',
           windowsHide: true,
           encoding: 'utf8',

@@ -95,7 +95,7 @@
       "file": "src/main/adapters/subscription-auth.ts",
       "method": "execFileSync",
       "kind": "call",
-      "fingerprint": "8364765f108be1b48027d88a6fe4c054ca1e103650d105f99c91db45c852cb3c",
+      "fingerprint": "67653f930cabc9a0ba8f72f00bec5f12df0fb959a6f417dd9f614264e36d94de",
       "count": 1,
       "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
     },

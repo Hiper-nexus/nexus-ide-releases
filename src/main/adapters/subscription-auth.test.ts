@@ -1299,6 +1299,38 @@ describe('claude CLI auth-status attestation', () => {
     ).toBe(false);
   });
 
+  it.each([
+    { loggedIn: true, authMethod: 'oauth_token', apiKeySource: 'env-api-key' },
+    { loggedIn: true, authMethod: 'api_key' },
+    { loggedIn: true, authMethod: 'bedrock' },
+    { loggedIn: true, authMethod: 'unknown' },
+    { loggedIn: true, authMethod: ['claude.ai'] },
+    { loggedIn: true, authMethod: 'claude.ai', apiKeySource: 'apiKeyHelper' },
+  ])('never calls external API provenance %j a native subscription', async status => {
+    expect(claudeCliAuthStatusLoggedInSync(syncOk(JSON.stringify(status)), BIN)).toBe(false);
+    const exec = vi.fn((_file: string, _args: readonly string[], _options: unknown, done: (error: null, stdout: string) => void) => { done(null, JSON.stringify(status)); return {}; });
+    await expect(claudeCliAuthStatusLoggedInAsync(exec as unknown as AsyncExec, BIN)).resolves.toBe(false);
+  });
+  it.each(['sync', 'async'])('the %s native identity probe copies and sanitizes transport credentials without changing caller env', async mode => {
+    const external = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_API_KEY',
+      'CLAUDE_CODE_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'CLAUDE_CODE_OAUTH_SCOPES', 'CLAUDE_API_BASE_URL'];
+    for (const key of external) vi.stubEnv(key, 'fixture-external');
+    for (const [key, value] of Object.entries({ HOME: '/fixture/native-home', CLAUDE_CONFIG_DIR: '/fixture/native-config',
+      CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/native-storage', LANG: 'fixture-locale' })) vi.stubEnv(key, value);
+    let received: NodeJS.ProcessEnv | undefined;
+    const exec = vi.fn((_file: string, _args: readonly string[], options: { env?: NodeJS.ProcessEnv }, done?: (error: null, stdout: string) => void) => {
+      received = options.env;
+      if (done) { done(null, JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiKeySource: null })); return {}; }
+      return JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiKeySource: null });
+    });
+    if (mode === 'sync') expect(claudeCliAuthStatusLoggedInSync(exec as unknown as SyncExec, BIN)).toBe(true);
+    else await expect(claudeCliAuthStatusLoggedInAsync(exec as unknown as AsyncExec, BIN)).resolves.toBe(true);
+    expect(received !== undefined && received !== process.env).toBe(true);
+    for (const key of external) { expect(received?.[key]).toBeUndefined(); expect(process.env[key]).toBe('fixture-external'); }
+    expect(received?.HOME).toBe('/fixture/native-home'); expect(received?.CLAUDE_CONFIG_DIR).toBe('/fixture/native-config');
+    expect(received?.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('/fixture/native-storage'); expect(received?.LANG).toBe('fixture-locale');
+  });
+
   it('never spawns when no claude binary resolves', () => {
     const execImpl = vi.fn(() => '{"loggedIn":true}');
     expect(
