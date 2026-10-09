@@ -21,6 +21,7 @@ import {
 import { markHandoffSubmitted, executionScopeFor, type GateRole } from "./gate";
 import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { onHandoffSubmitted } from "./idle-delivery";
+import { diagnoseHandoffStuck } from "./handoff-stuck-diagnosis";
 import {
   scheduleAutoCloseAfterHandoff,
   assertAutoCloseReportPreserved,
@@ -909,11 +910,34 @@ function compactHandoffListRows(
   rawIds: readonly string[],
   detailFull: boolean,
 ): Array<ScopedHandoff | Record<string, unknown>> {
-  if (detailFull) return rows;
+  const attachStuck = (row: ScopedHandoff): ScopedHandoff | Record<string, unknown> => {
+    // F-1040: diagnóstico de entrega presa — não força nada, nomeia o escape.
+    if (row.delivered && (row.deliveryState === 'consumed' || row.deliveryState === 'acknowledged')) {
+      return row;
+    }
+    try {
+      const diagnosis = diagnoseHandoffStuck({
+        id: row.id,
+        deliveryState: row.deliveryState,
+        delivered: row.delivered,
+        consumedAt: (row as { consumedAt?: number | null }).consumedAt ?? null,
+        submittedAt: (row as { submittedAt?: number | null }).submittedAt ?? null,
+        createdAt: (row as { createdAt?: number }).createdAt,
+        sessionId: row.sessionId ?? null,
+        parked: (row as { parked?: boolean }).parked === true,
+        retryRound: (row as { retryRound?: number | null }).retryRound ?? null,
+      });
+      if (!diagnosis.stuck) return row;
+      return { ...row, stuckDiagnosis: diagnosis };
+    } catch {
+      return row;
+    }
+  };
+  if (detailFull) return rows.map(attachStuck);
   const recentFrom = Math.max(0, rows.length - 5);
   return rows.map((row, index) => {
     if (!row.delivered || index >= recentFrom || rawIds.includes(row.id)) {
-      return row;
+      return attachStuck(row);
     }
     return {
       ...row,

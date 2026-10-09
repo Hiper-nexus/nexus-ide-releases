@@ -2,6 +2,10 @@ import type { Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { missionLifecycleKey } from './mission-lifecycle-lock';
 import type { CodeCompletionCertification } from './mission-code-completion';
+import {
+  canMarkTurnSettled,
+  type SettlementEffectView,
+} from './effect-settlement-gate';
 
 export interface AutomaticCompletionProof {
   /** Opaque Main-issued certification; serialized/cloned claims do not verify. */
@@ -10,6 +14,17 @@ export interface AutomaticCompletionProof {
   readonly candidateFingerprint?: string;
   readonly deletedArtifactPaths?: readonly string[];
   readonly note?: string;
+}
+
+/**
+ * ORC-02: a prova de conclusão só vale se o turno estiver assentado —
+ * nenhum `checkpoint.capture`/`handoff.deliver` pending/running.
+ */
+export function automaticCompletionEffectsSettled(
+  effects: readonly SettlementEffectView[],
+  threadId?: string,
+): boolean {
+  return canMarkTurnSettled(effects, threadId).settled;
 }
 
 type CompletionMission = Pick<Mission, 'id' | 'intentVersion' | 'updatedAt' | 'intentState'>;

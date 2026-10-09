@@ -163,9 +163,9 @@ export function operatorHandMissionExitHint(
 }
 
 /**
- * F-1013: pane sem missão chamando nexus_mission_set_status de uma missão.
- * Só a sessão líder muda o status e nenhuma tool devolve a liderança; a dica
- * nomeia apenas chamadas que este pane alcança.
+ * F-1013 + F-1040: pane sem missão chamando nexus_mission_set_status de uma
+ * missão. Só a sessão líder muda o status e nenhuma tool devolve a liderança
+ * à sessão chamadora; a retomada é pedida com nexus_mission_request_resume.
  */
 function unboundMissionStatusHint(
   missionId: string,
@@ -178,7 +178,9 @@ function unboundMissionStatusHint(
   return (
     `nexus_mission_set_status: este pane não está vinculado à missão ${missionId}; ` +
     "só a sessão líder dela muda o status, e nexus_mission_create abriria outra missão sem concluir esta" +
-    `${inspect}. Nenhuma tool devolve a liderança a este pane: ela volta pelo botão “Retomar missão” da interface.`
+    `${inspect}. Nenhuma tool devolve a liderança a este pane: ` +
+    `peça a retomada com nexus_mission_request_resume(${JSON.stringify({ missionId })}) ` +
+    '(mesmo caminho do botão “Retomar missão”).'
   );
 }
 

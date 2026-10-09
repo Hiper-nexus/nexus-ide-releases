@@ -243,6 +243,9 @@ const MISSION_CONTROL_TOOLS = new Set([
   'file_open',
   'terminal_kill',
   'bg_kill',
+  // Resto F-1040: pede a retomada Main-owned (mesmo caminho do botão
+  // “Retomar missão”). Não devolve liderança à sessão chamadora.
+  'mission_request_resume',
 ]);
 
 /**
