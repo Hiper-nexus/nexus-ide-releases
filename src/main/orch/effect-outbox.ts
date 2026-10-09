@@ -154,6 +154,17 @@ const enqueueSchema = z
 
 const MAX_PAYLOAD_BYTES = 32 * 1024;
 
+const handlerFlights = new WeakMap<Database.Database, Set<string>>();
+
+function flightsFor(db: Database.Database): Set<string> {
+  let flights = handlerFlights.get(db);
+  if (!flights) {
+    flights = new Set();
+    handlerFlights.set(db, flights);
+  }
+  return flights;
+}
+
 function cancelUnknownEffects(db: Database.Database, now: number): number {
   const updated = db
     .prepare(
@@ -324,6 +335,13 @@ export class EffectOutboxStore {
     return db.transaction((): EffectOutboxEntry | null => {
       cancelUnknownEffects(db, now);
       const replaySafePlaceholders = REPLAY_SAFE_EFFECT_TYPES.map(() => '?').join(',');
+      const held = [...flightsFor(db)].filter(
+        (id) => id.length > 0 && id.length <= 128,
+      );
+      const holdClause =
+        held.length > 0
+          ? `AND effect_id NOT IN (${held.map(() => '?').join(',')})`
+          : '';
       // Lease vencido não pode continuar 'running': process_bound falha
       // (não reexecuta) e replay_safe volta a pending. Tipo fora da lista
       // replay-safe falha fechado, senão a linha bloqueia o thread para sempre.
@@ -334,13 +352,15 @@ export class EffectOutboxStore {
          WHERE status = 'running'
            AND lease_expires_at IS NOT NULL
            AND lease_expires_at <= ?
-           AND effect_type NOT IN (${replaySafePlaceholders})`,
+           AND effect_type NOT IN (${replaySafePlaceholders})
+           ${holdClause}`,
       ).run(
         now,
         now,
         LEASE_EXPIRED_FAILED_ERROR,
         now,
         ...REPLAY_SAFE_EFFECT_TYPES,
+        ...held,
       );
       db.prepare(
         `UPDATE effect_outbox
@@ -349,13 +369,15 @@ export class EffectOutboxStore {
          WHERE status = 'running'
            AND lease_expires_at IS NOT NULL
            AND lease_expires_at <= ?
-           AND effect_type IN (${replaySafePlaceholders})`,
+           AND effect_type IN (${replaySafePlaceholders})
+           ${holdClause}`,
       ).run(
         now,
         now,
         LEASE_EXPIRED_REQUEUED_ERROR,
         now,
         ...REPLAY_SAFE_EFFECT_TYPES,
+        ...held,
       );
       // A exclusão entra no SQL, antes do LIMIT. Filtrar os 32 primeiros
       // em memória escondia o próximo efeito quando o passe já tinha
@@ -491,6 +513,20 @@ export class EffectOutboxStore {
    * Estende o lease só da tentativa que ainda está running. Não renova
    * attempt_count: um handler atrasado não alonga o claim seguinte.
    */
+  /**
+   * Enquanto o handler deste processo ainda não assentou, outro drain não
+   * pode expirar o lease. O conjunto é por conexão: morre com o processo.
+   */
+  retainHandlerFlight(id: string): void {
+    if (typeof id !== 'string' || id.length === 0 || id.length > 128) return;
+    flightsFor(this.#binding.writeDatabase()).add(id);
+  }
+
+  releaseHandlerFlight(id: string): void {
+    if (typeof id !== 'string' || id.length === 0) return;
+    flightsFor(this.#binding.writeDatabase()).delete(id);
+  }
+
   renewLease(
     id: string,
     workerId: string,

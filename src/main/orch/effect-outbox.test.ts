@@ -891,6 +891,109 @@ describe("ORC-01 worker drain", () => {
       process.off("uncaughtException", onUncaught);
     }
   });
+
+  it("retries renewal and blocks lease expiry while the handler is in flight", async () => {
+    const { manager, store, scope } = freshStore();
+    const other = createScopedEffectOutboxStore(manager, scope);
+    const now = Date.now();
+    const bound = store.enqueue({
+      commandId: "cmd-flight-bound",
+      threadId: "thread-a",
+      type: "turn.start",
+      availableAt: now,
+    });
+    const next = store.enqueue({
+      commandId: "cmd-flight-next",
+      threadId: "thread-a",
+      type: "terminal.cleanup",
+      availableAt: now + 1,
+    });
+    let renewals = 0;
+    const crashing = new Proxy(store, {
+      get(target, prop, receiver) {
+        if (prop === "renewLease") {
+          return () => {
+            renewals += 1;
+            throw new Error("sqlite unavailable");
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const result = await drainEffectOutbox({
+      store: crashing,
+      scope,
+      workerId: "worker-1",
+      leaseDurationMs: 30,
+      batchSize: 1,
+      handler: () =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            expect(renewals).toBeGreaterThan(1);
+            expect(
+              other.claimNext({ workerId: "worker-2", leaseDurationMs: 1_000 }),
+            ).toBeNull();
+            expect(store.get(bound.id)?.status).toBe("running");
+            expect(store.get(bound.id)?.leaseOwner).toBe("worker-1");
+            expect(store.get(next.id)?.status).toBe("pending");
+            resolve();
+          }, 90);
+        }),
+    });
+    expect(result.succeeded).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(store.get(bound.id)?.status).toBe("succeeded");
+    expect(store.get(next.id)?.status).toBe("pending");
+
+    const replay = freshStore();
+    const replayOther = createScopedEffectOutboxStore(
+      replay.manager,
+      replay.scope,
+    );
+    const safe = replay.store.enqueue({
+      commandId: "cmd-flight-safe",
+      threadId: "thread-b",
+      type: "checkpoint.capture",
+    });
+    let replayRenewals = 0;
+    const replayCrashing = new Proxy(replay.store, {
+      get(target, prop, receiver) {
+        if (prop === "renewLease") {
+          return () => {
+            replayRenewals += 1;
+            throw new Error("sqlite unavailable");
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const safeResult = await drainEffectOutbox({
+      store: replayCrashing,
+      scope: replay.scope,
+      workerId: "worker-1",
+      leaseDurationMs: 30,
+      batchSize: 1,
+      handler: () =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            expect(replayRenewals).toBeGreaterThan(1);
+            expect(
+              replayOther.claimNext({
+                workerId: "worker-2",
+                leaseDurationMs: 1_000,
+              }),
+            ).toBeNull();
+            expect(replay.store.get(safe.id)?.status).toBe("running");
+            resolve();
+          }, 90);
+        }),
+    });
+    expect(safeResult.succeeded).toBe(1);
+    expect(safeResult.retried).toBe(0);
+    expect(replay.store.get(safe.id)?.status).toBe("succeeded");
+  });
 });
 
 describe("ORC-06 provider runtime boot reconciliation", () => {

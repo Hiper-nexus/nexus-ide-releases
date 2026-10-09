@@ -68,7 +68,9 @@ export async function drainEffectOutbox(
     if (!entry) break;
     attempted.add(entry.id);
     claimed += 1;
+    deps.store.retainHandlerFlight(entry.id);
     const heartbeatMs = Math.max(1, Math.floor(leaseDurationMs / 3));
+    let renewalWarned = false;
     const heartbeat = setInterval(() => {
       try {
         const renewed = deps.store.renewLease(
@@ -78,15 +80,17 @@ export async function drainEffectOutbox(
           leaseDurationMs,
         );
         if (!renewed) clearInterval(heartbeat);
+        else renewalWarned = false;
       } catch (error) {
-        // Falha do heartbeat não assenta a linha. O claim segue
-        // indeterminado até o handler físico terminar; soltá-lo aqui
-        // abriria o thread enquanto o efeito ainda pode commitar.
-        clearInterval(heartbeat);
-        console.warn(
-          `[effect-outbox] lease renewal failed (${entry.class} ${entry.type} ${entry.id} attempt ${entry.attemptCount})`,
-          error,
-        );
+        // Uma falha transitória não para o timer: o lease precisa
+        // continuar sendo renovado enquanto o handler não assentou.
+        if (!renewalWarned) {
+          renewalWarned = true;
+          console.warn(
+            `[effect-outbox] lease renewal failed (${entry.class} ${entry.type} ${entry.id} attempt ${entry.attemptCount})`,
+            error,
+          );
+        }
       }
     }, heartbeatMs);
     heartbeat.unref?.();
@@ -142,6 +146,7 @@ export async function drainEffectOutbox(
       }
     } finally {
       clearInterval(heartbeat);
+      deps.store.releaseHandlerFlight(entry.id);
     }
   }
   return { claimed, succeeded, failed, retried };
