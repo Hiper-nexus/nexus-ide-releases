@@ -594,7 +594,11 @@ Nexus stack; no T3 Code package is a dependency.
   commands add original owned-tree exit obligations before launch preparation;
   their production consumer verifies durable exit proof without re-executing
   mutations. Logical response/launch acknowledgment is not physical completion
-  or Git checkpoint capture; unknown/restarted obligations remain blocking.\n  Production maintenance bounds each scoped pass to 500 old settled effects\n  and 100 known generated receipts, preserves explicit/unknown bindings and\n  continues healthy scopes without hiding global cancellation. Private Main\n  PTY channel identities use the same stronger Nexus caller/argument binding.
+  or Git checkpoint capture; unknown/restarted obligations remain blocking.
+  Production maintenance bounds each scoped pass to 500 old settled effects
+  and 100 known generated receipts, preserves explicit/unknown bindings and
+  continues healthy scopes without hiding global cancellation. Private Main
+  PTY channel identities use the same stronger Nexus caller/argument binding.
   Provider session reconstruction and generic task-completion parity are not
   supplied by these modules.
 - CDP relay: per-tab protocol adapted from desktop `CdpRelay.ts`; Nexus scoped
