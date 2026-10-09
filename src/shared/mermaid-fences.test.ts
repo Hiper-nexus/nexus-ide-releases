@@ -29,6 +29,28 @@ describe('mermaid fences (T3 markdown)', () => {
     expect(parts[0]?.kind === 'mermaid' && parts[0].source).not.toContain('  ```');
   });
 
+  it('does not extract a mermaid example inside a longer non-mermaid fence', () => {
+    const md = [
+      'Antes',
+      '````md',
+      '```mermaid',
+      'graph TD; A-->B',
+      '```',
+      '````',
+      'Depois',
+      '```mermaid',
+      'graph LR; C-->D',
+      '```',
+    ].join('\n');
+    const parts = splitMarkdownMermaid(md);
+    expect(parts.map((part) => part.kind)).toEqual(['text', 'mermaid']);
+    const diagram = parts[1];
+    expect(diagram?.kind === 'mermaid' && diagram.source).toBe('graph LR; C-->D');
+    expect(parts[0]?.kind === 'text' && parts[0].text).toContain('```mermaid');
+    expect(parts[0]?.kind === 'text' && parts[0].text).toContain('````md');
+    expect(hasMermaidBlock(md)).toBe(true);
+  });
+
   it('leaves non-mermaid fences intact in text', () => {
     const md = ['```ts', 'const a = 1;', '```'].join('\n');
     const parts = splitMarkdownMermaid(md);

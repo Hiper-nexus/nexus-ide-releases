@@ -149,10 +149,11 @@ describe('assertCompletionEffectsSettled reads the handoff ledger', () => {
     const outbox = createScopedEffectOutboxStore(runtime, projectScope);
     for (let index = 0; index < 200; index += 1) {
       outbox.enqueue({
-        commandId: `cmd-noise-${index}`,
+        commandId: `cmd-older-${index}`,
         threadId: 'other-thread',
-        type: 'thread-title.generate',
+        type: 'checkpoint.capture',
       });
+      outbox.claimNext({ workerId: 'older-main', leaseDurationMs: 60_000 });
     }
     outbox.enqueue({
       commandId: 'cmd-checkpoint-hidden',
