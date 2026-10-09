@@ -9,7 +9,8 @@ import {
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { assertCompletionEffectsSettled } from './automatic-completion-proof';
 import { acceptDispatchCheckpointEffect, createScopedCommandReceiptStore } from './command-receipts';
-import { createScopedEffectOutboxStore } from './effect-outbox';
+import { SETTLED_EFFECT_RETENTION_MS, createScopedEffectOutboxStore } from './effect-outbox';
+import { maintainEffectOutboxes } from './effect-outbox-maintenance';
 import {
   drainEffectOutbox,
   registerCheckpointCaptureHandler,
@@ -18,12 +19,15 @@ import {
 } from './effect-outbox-worker';
 import { mintToken, resetGateForTests, type AgentGateContext } from './gate';
 import { dispatchToolCall } from './mcp-dispatch';
+import { dispatchPtyStreamMissionAction } from './pty-stream-dispatch';
+import { PtyStreamMissionControl } from './pty-stream-mission-control';
 import { handleMcpMessage } from './mcp-protocol';
 import { reconcileProviderRuntimeAtBoot } from './provider-runtime-recovery';
 import type { McpRegistry } from './mcp-protocol';
 import {
   configureProjectDomainStoreRegistry,
   disposeProjectDomainStoreRegistry,
+  getProjectDomainStores,
 } from './project-domain-store-registry';
 import { testProjectScope } from './__tests__/scope-fixture';
 
@@ -755,6 +759,155 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
       );
       expect(runs).toBe(2);
       expect(replay).toEqual(kept);
+    } finally {
+      unregister();
+      if (previous) registerEffectOutboxHandler('checkpoint.capture', previous);
+    }
+  });
+
+  it('runs call-1 from two panes and replays it only on the same live channel', async () => {
+    let runs = 0;
+    const booted = bootDispatch(async () => {
+      runs += 1;
+      return { marker: runs };
+    });
+    const request = {
+      id: 'call-1',
+      tool: 'nexus_terminal_run',
+      args: { command: 'true' },
+    };
+    const outcomes = new Map<string, Awaited<ReturnType<typeof dispatchPtyStreamMissionAction>>>();
+    const control = new PtyStreamMissionControl({
+      invoke: async (sessionId, action, channelId) => {
+        const result = await dispatchPtyStreamMissionAction({
+          sessionId,
+          channelId,
+          request: action,
+          registry: booted.registry,
+          ctx: booted.ctx,
+          options: booted.options,
+        });
+        outcomes.set(`${sessionId}\0${channelId}`, result);
+        return result;
+      },
+      isAuthorized: () => true,
+      isInjectableIdle: () => false,
+      write: () => true,
+    });
+    const channelA = control.ensureChannel('pane-a');
+    const channelB = control.ensureChannel('pane-b');
+    expect(channelA).not.toBe(channelB);
+    control.acceptObservedAction('pane-a', request);
+    control.acceptObservedAction('pane-b', request);
+    const started = Date.now();
+    while (runs < 2) {
+      if (Date.now() - started > 2000) {
+        throw new Error(`expected both panes to run, saw ${runs}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const receipts = createScopedCommandReceiptStore(booted.manager, booted.scope);
+    const storedIds = booted.manager
+      .open(booted.scope)
+      .db.prepare(`SELECT command_id FROM command_receipts`)
+      .all() as Array<{ command_id: string }>;
+    expect(storedIds.map((row) => row.command_id)).not.toContain('call-1');
+    expect(storedIds).toHaveLength(2);
+
+    const replay = await dispatchPtyStreamMissionAction({
+      sessionId: 'pane-a',
+      channelId: channelA,
+      request,
+      registry: booted.registry,
+      ctx: booted.ctx,
+      options: booted.options,
+    });
+    expect(runs).toBe(2);
+    expect(replay).toEqual(outcomes.get(`pane-a\0${channelA}`));
+
+    control.dropSession('pane-a');
+    const restarted = control.ensureChannel('pane-a');
+    expect(restarted).not.toBe(channelA);
+    control.acceptObservedAction('pane-a', request);
+    const restartedAt = Date.now();
+    while (runs < 3) {
+      if (Date.now() - restartedAt > 2000) {
+        throw new Error(`expected the new channel to run, saw ${runs}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(receipts.getByCommandId('call-1')).toBeNull();
+  });
+
+  it('prunes settled effects from the production maintenance path', async () => {
+    let runs = 0;
+    const booted = bootDispatch(async () => {
+      runs += 1;
+      return { marker: runs };
+    });
+    getProjectDomainStores(booted.scope);
+    const receipts = createScopedCommandReceiptStore(booted.manager, booted.scope);
+    const previous = registeredEffectHandler('checkpoint.capture');
+    const unregister = registerCheckpointCaptureHandler();
+    try {
+      await dispatchToolCall(
+        'http-mcp',
+        booted.registry,
+        'nexus_terminal_run',
+        { command: 'true' },
+        booted.ctx,
+        booted.options,
+      );
+      await dispatchToolCall(
+        'http-mcp',
+        booted.registry,
+        'nexus_terminal_run',
+        { command: 'true' },
+        booted.ctx,
+        { ...booted.options, logicalOperationId: 'op-keep' },
+      );
+      await maintainEffectOutboxes();
+      expect(receipts.listUnsettled()).toEqual([]);
+      expect(receipts.getByCommandId('op-keep')?.resultSequence).toBeGreaterThan(0);
+      const generatedRow = booted.manager
+        .open(booted.scope)
+        .db.prepare(
+          `SELECT command_id FROM command_receipts WHERE command_id <> ?`,
+        )
+        .get('op-keep') as { command_id: string } | undefined;
+      expect(generatedRow?.command_id).toBeTruthy();
+      const aged = Date.now() - SETTLED_EFFECT_RETENTION_MS - 1_000;
+      booted.manager.open(booted.scope).db.prepare(
+        `UPDATE effect_outbox SET completed_at = ? WHERE status = 'succeeded'`,
+      ).run(aged);
+      await dispatchToolCall(
+        'http-mcp',
+        booted.registry,
+        'nexus_terminal_run',
+        { command: 'recent' },
+        booted.ctx,
+        booted.options,
+      );
+      await maintainEffectOutboxes();
+      expect(receipts.getByCommandId(generatedRow!.command_id)).toBeNull();
+      expect(receipts.getByCommandId('op-keep')?.resultSequence).toBeGreaterThan(0);
+      const surviving = booted.manager
+        .open(booted.scope)
+        .db.prepare(
+          `SELECT COUNT(*) AS n FROM effect_outbox WHERE status = 'succeeded'`,
+        )
+        .get() as { n: number };
+      expect(surviving.n).toBe(1);
+      const replay = await dispatchToolCall(
+        'http-mcp',
+        booted.registry,
+        'nexus_terminal_run',
+        { command: 'true' },
+        booted.ctx,
+        { ...booted.options, logicalOperationId: 'op-keep' },
+      );
+      expect(runs).toBe(3);
+      expect(replay).toMatchObject({ ok: true, result: { marker: 2 } });
     } finally {
       unregister();
       if (previous) registerEffectOutboxHandler('checkpoint.capture', previous);

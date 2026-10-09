@@ -22,11 +22,8 @@ import {
   HANDOFF_DELIVERY_OUTBOX_RECONCILE_MS,
   reconcilePendingHandoffDeliveryOutbox,
 } from './handoff-delivery-outbox';
-import {
-  drainEffectOutbox,
-  registerCheckpointCaptureHandler,
-} from './effect-outbox-worker';
-import { EffectOutboxStore, isUnreconciledEffectOutbox } from './effect-outbox';
+import { registerCheckpointCaptureHandler } from './effect-outbox-worker';
+import { maintainEffectOutboxes } from './effect-outbox-maintenance';
 import { reconcileProviderRuntimesAtBoot } from './provider-runtime-recovery';
 import { configureHandoffDeliveryRuntimeRecovery } from './idle-delivery';
 import { recoverHandoffDeliveryRuntime } from './handoff-delivery-runtime-recovery';
@@ -141,23 +138,7 @@ export function startOrchestrationCoordinator(): void {
       // registerEffectOutboxHandler). Sem handler, o efeito falha de vez.
       id: 'effect-outbox',
       cadenceMs: EFFECT_OUTBOX_DRAIN_MS,
-      run: async (_now, _signal, context) => {
-        const registry = requireProjectDomainStoreRegistry();
-        const runtimeManager = registry.runtimeManager();
-        for (const suite of registry.listSuites()) {
-          await context?.checkpoint();
-          if (isUnreconciledEffectOutbox(suite.scope)) continue;
-          const store = new EffectOutboxStore(runtimeManager, suite.scope);
-          await drainEffectOutbox(
-            {
-              store,
-              scope: suite.scope,
-              workerId: 'orchestration-coordinator',
-            },
-            context,
-          );
-        }
-      },
+      run: (_now, _signal, context) => maintainEffectOutboxes(context),
     },
     {
       id: 'goal-governor',

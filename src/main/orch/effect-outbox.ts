@@ -710,13 +710,18 @@ export class EffectOutboxStore {
    * Poda succeeded/cancelled com `completed_at <= now - retentionMs`.
    * `retentionMs = 0` poda todo assentado. Failed fica (limpeza de thread
    * mantém a worktree enquanto houver falha) — política T3.
+   * `maxBatches` limita o tick: cada lote tem no máximo 500 linhas.
    */
-  pruneSettled(retentionMs = SETTLED_EFFECT_RETENTION_MS): number {
+  pruneSettled(
+    retentionMs = SETTLED_EFFECT_RETENTION_MS,
+    maxBatches = Number.POSITIVE_INFINITY,
+  ): number {
     const db = this.#binding.writeDatabase();
     const cutoff = this.#binding.now() - Math.max(0, retentionMs);
+    const batches = Math.max(0, maxBatches);
     return db.transaction((): number => {
       let deleted = 0;
-      for (;;) {
+      for (let batchIndex = 0; batchIndex < batches; batchIndex += 1) {
         const batch = db
           .prepare(
             `SELECT effect_id, command_id FROM effect_outbox
