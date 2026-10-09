@@ -2329,3 +2329,15 @@
   opacity: 0.6;
   cursor: default;
 }
+
+/* Editor rich-text (item T3): marks do composer. */
+.composer-rich-text .rt-bold { font-weight: 700; }
+.composer-rich-text .rt-italic { font-style: italic; }
+.composer-rich-text .rt-strike { text-decoration: line-through; }
+.composer-rich-text .rt-code,
+.composer-rich-text code.rt-code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  background: rgba(127, 127, 127, 0.12);
+  border-radius: 3px;
+  padding: 0 4px;
+}
