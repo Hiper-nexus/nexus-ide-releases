@@ -108,6 +108,8 @@ import { sameProjectScope } from '../orch/project-scoped-broadcast';
 import { createScopedBrowserArtifactStore } from './browser-artifact-store';
 import { browserVisualMasksSchema, maskBrowserBitmap } from './browser-capture-redaction';
 import { assertInspectableBrowserDom } from './browser-visual-inspection';
+import { attachCdpRelay } from './cdp-relay-attach';
+import type { CdpRelayConnection } from './cdp-relay';
 import { BrowserVisualRefusal } from './browser-visual-refusal';
 import { validateDecisionImages } from '../decision-models/decision-images';
 import {
@@ -3122,6 +3124,25 @@ function destroyParkedBrowsersOfWorkspace(
 
 export function getBrowserViewCount(): number {
   return browsers.size;
+}
+
+/**
+ * CdpRelay plug (item T3): abre o endpoint CDP de UM tab para o servidor de
+ * ambiente (Playwright). Retorna o relay attachado ao `webContents` do tab;
+ * `write` recebe as mensagens CDP para o caller (WebSocket do preview-server).
+ * Fechar com `detach()` — só desfaz o attach se este relay o criou.
+ */
+export function openCdpRelayForPane(
+  paneId: string,
+  options: {
+    readonly write: (message: string) => void;
+    readonly onDownloadDirectory?: (directory: string | null) => void;
+  },
+): { readonly connection: CdpRelayConnection; readonly detach: () => void } | null {
+  const entry = browsers.get(paneId);
+  if (!entry || entry.view.webContents.isDestroyed()) return null;
+  const attach = attachCdpRelay(entry.view.webContents, options);
+  return { connection: attach.connection, detach: attach.detach };
 }
 
 function browserEntryForWebContents(
