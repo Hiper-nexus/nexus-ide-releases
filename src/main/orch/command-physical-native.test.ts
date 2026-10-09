@@ -42,3 +42,12 @@ native('F-1082: actual background launch acknowledgment remains blocking until n
   const unregister=registerDispatchPhysicalSettlementHandler(()=>manager);
   try{expect((await drainEffectOutbox({store:new EffectOutboxStore(manager,scope),scope,workerId:'native-bg-verifier'})).succeeded).toBe(1);expect(receipts.countUnsettled()).toBe(0);}finally{unregister();}
 },15000);
+native('F-1088: actual dispatcher accepts advertised workspace-only profile and rejects an unknown enum before effect',async()=>{
+  const registry={serverName:'native-profile',serverVersion:'0',tools:buildTerminalTools()};
+  expect(await dispatchToolCall('http-mcp',registry,'nexus_terminal_run',{command:'printf native-profile-contract',sandboxProfile:'unrestricted'},ctx)).toMatchObject({ok:false,error:expect.stringContaining('invalid arguments')});
+  expect(manager.open(scope).db.prepare('SELECT COUNT(*) AS n FROM command_receipts').get()).toEqual({n:0});
+  const result=await dispatchToolCall('http-mcp',registry,'nexus_terminal_run',{command:'printf native-profile-contract',sandboxProfile:'workspace-only'},ctx,{confirm:async()=>true});
+  expect(result,JSON.stringify(result)).toMatchObject({ok:true,result:{exitCode:0,stdout:'native-profile-contract'}});
+  const unregister=registerDispatchPhysicalSettlementHandler(()=>manager);
+  try{expect((await drainEffectOutbox({store:new EffectOutboxStore(manager,scope),scope,workerId:'profile-verifier'})).succeeded).toBe(1);}finally{unregister();}
+},15000);

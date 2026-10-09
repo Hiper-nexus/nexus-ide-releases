@@ -229,6 +229,7 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
       cwd: optionalPathText,
       timeoutMs,
       env: envSchema,
+      sandboxProfile: z.enum(['workspace-only', 'workspace-net', 'yolo']).optional(),
     }).strict(),
   ],
   [

@@ -268,3 +268,12 @@ describe('BridgeMind audit MCP argument validation', () => {
     ).toThrow(/exactly one/);
   });
 });
+
+describe('F-1088: advertised terminal sandbox profile contract',()=>{
+  it.each(['workspace-only','workspace-net','yolo'])('accepts the existing advertised %s profile',sandboxProfile=>{
+    expect(validateToolArgs('nexus_terminal_run',{command:'true',sandboxProfile})).toEqual({command:'true',sandboxProfile});
+  });
+  it.each(['unrestricted','',false,{},null])('rejects invalid profile %j',sandboxProfile=>{
+    expect(()=>validateToolArgs('nexus_terminal_run',{command:'true',sandboxProfile})).toThrow();
+  });
+});
