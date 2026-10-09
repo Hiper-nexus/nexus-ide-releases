@@ -355,13 +355,13 @@ export class CommandReceiptStore {
    */
   rememberDispatchOutcome(commandId: string, outcome: unknown): void {
     const id = z.string().min(1).max(128).parse(commandId);
-    let json: string;
+    let json: string | undefined;
     try {
       json = JSON.stringify(outcome);
     } catch {
       return;
     }
-    if (json.length === 0 || json.length > 32_768) return;
+    if (typeof json !== 'string' || json.length === 0 || json.length > 32_768) return;
     this.#binding
       .writeDatabase()
       .prepare(

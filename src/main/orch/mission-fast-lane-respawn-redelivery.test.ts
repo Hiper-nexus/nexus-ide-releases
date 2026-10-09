@@ -51,6 +51,7 @@ const harness = vi.hoisted(() => ({
   }>,
   terminate: vi.fn(async (_sessionId: string, _options?: unknown) => true),
   onProbe: undefined as undefined | (() => void | Promise<void>),
+  onContextBlocks: undefined as undefined | (() => void | Promise<void>),
   trace: vi.fn(),
   /** F-721: roda dentro do spawn, antes do pane novo existir. */
   onSpawn: undefined as undefined | (() => void),
@@ -123,10 +124,19 @@ vi.mock('../persistence/provider-config-store', async importOriginal => ({
 // store de atestação de outra instância — o P2-8 passava sozinho e falhava no
 // arquivo inteiro.
 const toolUtilMock = vi.hoisted(
-  () => async (importOriginal: () => Promise<typeof import('./tool-util')>) => ({
-    ...(await importOriginal()),
-    deliverAgentPrompt: harness.deliver,
-  }),
+  () => async (importOriginal: () => Promise<typeof import('./tool-util')>) => {
+    const actual = await importOriginal();
+    return {
+      ...actual,
+      deliverAgentPrompt: harness.deliver,
+      withProjectContextBlocksAsync: async (
+        ...args: Parameters<typeof actual.withProjectContextBlocksAsync>
+      ) => {
+        await harness.onContextBlocks?.();
+        return actual.withProjectContextBlocksAsync(...args);
+      },
+    };
+  },
 );
 vi.mock('./tool-util', toolUtilMock);
 
@@ -353,6 +363,7 @@ beforeEach(async () => {
   harness.registeredOrchestrators.length = 0;
   harness.terminate.mockClear();
   harness.onProbe = undefined;
+  harness.onContextBlocks = undefined;
   harness.trace.mockClear();
   harness.onSpawn = undefined;
   harness.plannedTasks.length = 0;
@@ -1048,5 +1059,36 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     expect(harness.terminate).not.toHaveBeenCalled();
     expect(liveMission.status).toBe('pending');
     expect(liveMission.intentState).toBe('ready_to_start');
+  });
+
+  it('revogação depois da transição não deixa a missão running nem dispara a first-wave', async () => {
+    vi.useRealTimers();
+    const now = Date.now();
+    liveMission = {
+      ...mission,
+      status: 'pending',
+      intentState: 'ready_to_start',
+      createdAt: now,
+      updatedAt: now,
+    } as Mission;
+    let revoked = false;
+    harness.onContextBlocks = () => {
+      revoked = true;
+    };
+
+    await expect(
+      fastLane.resumeFastLaneMission(scope, 'mission-1', {
+        remountKind: 'automatic',
+        authority: {
+          assertCurrent() {
+            if (revoked) throw new Error('session_authority_revoked');
+          },
+        },
+      }),
+    ).rejects.toThrow('session_authority_revoked');
+
+    expect(harness.spawnCount).toBe(0);
+    expect(liveMission.status).toBe('blocked');
+    expect(liveMission.intentState).toBe('blocked_technical');
   });
 });

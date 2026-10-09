@@ -2763,11 +2763,16 @@ export async function fastLaneBootstrap(
 
   const finishFirstPane = async (): Promise<void> => {
     revalidateResumeAuthority(options?.authority);
-    const wave = dispatchFastLaneFirstWave(scope, missionId);
+    // A first-wave só começa com o Maestro no lugar. Um throw de revogação
+    // depois da transição não pode deixar writers subindo sem orquestrador.
+    const startWave = (): Promise<number> =>
+      dispatchFastLaneFirstWave(scope, missionId);
+    try {
     // Adoção primeiro: se o operador indicou um painel para liderar, ele vira o
     // Maestro e nenhum pane novo nasce. Recusa não derruba a missão — ela cai
     // no arranque normal com o aviso registrado.
     const adoption = await adoptOrchestratorPane(scope, live, prompt);
+    revalidateResumeAuthority(options?.authority);
     if (adoption.adopted) {
       orchPanes.set(missionId, {
         paneId: adoption.paneId,
@@ -2802,7 +2807,7 @@ export async function fastLaneBootstrap(
         return;
       }
       startWatcher(scope, missionId, adoption.sessionId);
-      void wave.catch((error) => {
+      void startWave().catch((error) => {
         console.warn(
           '[fast-lane] first-wave após adoção falhou:',
           error instanceof Error ? error.message : error,
@@ -2868,7 +2873,7 @@ export async function fastLaneBootstrap(
     }
 
     startWatcher(scope, missionId, spawned.sessionId);
-    void wave.then((n) => {
+    void startWave().then((n) => {
       if (n > 0) {
         console.info(
           `[fast-lane] first-wave auto-dispatch ${n} writers for ${sealedPlanTitles.length} sealed stories`,
@@ -2880,6 +2885,33 @@ export async function fastLaneBootstrap(
         error instanceof Error ? error.message : error,
       );
     });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'session_authority_revoked'
+      ) {
+        await releaseMissionLiveRuntime(scope, missionId);
+        const current = stores.missions.get(missionId);
+        if (current && current.status === 'running' && current.intentState) {
+          try {
+            missionEngineForScope(scope).blockTechnical(scope, {
+              missionId,
+              expectedStatus: current.status,
+              expectedIntentState: current.intentState,
+              expectedUpdatedAt: current.updatedAt,
+              expectedIntentVersion: current.intentVersion ?? 0,
+              description: 'Retomada revogada antes do orquestrador abrir.',
+            });
+          } catch (blockError) {
+            console.warn(
+              '[fast-lane] bloqueio após retomada revogada falhou:',
+              blockError instanceof Error ? blockError.message : blockError,
+            );
+          }
+        }
+      }
+      throw error;
+    }
   };
 
   // Via Rápida start IPC must return once the mission is running (rail

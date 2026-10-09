@@ -463,6 +463,22 @@ describe("ORC-04 command receipts (T3 policy)", () => {
     expect(receipt?.status).toBe("accepted");
   });
 
+  it("ignores an outcome that JSON.stringify does not turn into text", () => {
+    const { manager, scope } = freshStore();
+    const receipts = createScopedCommandReceiptStore(manager, scope);
+    expect(
+      receipts.insertIfAbsent({
+        commandId: "cmd-void",
+        commandType: "turn.start",
+        threadId: "thread-a",
+      }),
+    ).toBe(true);
+    expect(() => receipts.rememberDispatchOutcome("cmd-void", undefined)).not.toThrow();
+    expect(receipts.getByCommandId("cmd-void")?.outcomeJson ?? null).toBeNull();
+    receipts.rememberDispatchOutcome("cmd-void", { ok: true });
+    expect(receipts.getByCommandId("cmd-void")?.outcomeJson).toBe('{"ok":true}');
+  });
+
   it("commits the receipt and the effect in one transaction", () => {
     const { manager, store, scope } = freshStore();
     const receipts = createScopedCommandReceiptStore(manager, scope);
