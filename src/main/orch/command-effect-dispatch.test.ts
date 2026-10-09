@@ -312,7 +312,8 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
       tool: 'nexus_terminal_run',
       result: { marker: 'once' },
     });
-    expect(second).toEqual(first);
+    expect(second).toMatchObject({ok:false,error:'command_result_unavailable',effectMayHaveCommitted:true});
+    expect(second).not.toHaveProperty('result');
     const effects = createScopedEffectOutboxStore(
       booted.manager,
       booted.scope,

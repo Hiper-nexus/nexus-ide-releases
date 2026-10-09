@@ -348,28 +348,29 @@ export class CommandReceiptStore {
     })();
   }
 
-  /**
-   * Grava o resultado do primeiro despacho. O retry lê isto e não roda o
-   * handler de novo. Não mexe em `result_sequence`: o efeito pode continuar
-   * pending enquanto o resultado da tool já é conhecido.
+  /** Record a bounded response observation, never a handler result or raw error.
+   * This is logical observation only; it is not physical/capture settlement.
    */
   rememberDispatchOutcome(commandId: string, outcome: unknown): void {
     const id = z.string().min(1).max(128).parse(commandId);
-    let json: string;
-    try {
-      json = JSON.stringify(outcome);
-    } catch {
-      return;
-    }
-    if (json.length === 0 || json.length > 32_768) return;
-    this.#binding
-      .writeDatabase()
-      .prepare(
-        `UPDATE command_receipts
-         SET outcome_json = ?
-         WHERE command_id = ? AND outcome_json IS NULL`,
-      )
-      .run(json, id);
+    if (!outcome || typeof outcome !== 'object' || Array.isArray(outcome)) return;
+    const value = outcome as Record<string, unknown>;
+    if (typeof value.ok !== 'boolean' || typeof value.tool !== 'string' ||
+        !/^nexus_[a-z0-9_]{1,120}$/u.test(value.tool)) return;
+    const response = value.ok ? 'observed-success' :
+      value.effectMayHaveCommitted === true ? 'unknown' : 'observed-rejection';
+    const projection = {
+      schema: 'nexus.command-response/v1',
+      tool: value.tool,
+      response,
+      originalResultAvailable: false,
+      effectMayHaveCommitted: value.ok || value.effectMayHaveCommitted === true,
+      denied: value.denied === true,
+    };
+    this.#binding.writeDatabase().prepare(
+      `UPDATE command_receipts SET outcome_json = ?
+       WHERE command_id = ? AND outcome_json IS NULL`,
+    ).run(JSON.stringify(projection), id);
   }
 
   getByCommandId(commandId: string): CommandReceipt | null {

@@ -562,12 +562,22 @@ function logicalFlightKey(
 }
 
 function parseStoredDispatchOutcome(value: unknown): ToolDispatchResult | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  if (typeof record.ok !== "boolean" || typeof record.tool !== "string") {
-    return null;
-  }
-  return record as unknown as ToolDispatchResult;
+  const keys = ['schema', 'tool', 'response', 'originalResultAvailable', 'effectMayHaveCommitted', 'denied'];
+  if (Object.keys(record).some(key => !keys.includes(key)) ||
+      record.schema !== 'nexus.command-response/v1' ||
+      typeof record.tool !== 'string' || !/^nexus_[a-z0-9_]{1,120}$/u.test(record.tool) ||
+      !['observed-success', 'observed-rejection', 'unknown'].includes(String(record.response)) ||
+      record.originalResultAvailable !== false || typeof record.effectMayHaveCommitted !== 'boolean' ||
+      typeof record.denied !== 'boolean') return null;
+  return {
+    ok: false,
+    tool: record.tool,
+    error: 'command_result_unavailable',
+    effectMayHaveCommitted: record.effectMayHaveCommitted || undefined,
+    denied: record.denied || undefined,
+  };
 }
 
 function toolNameFromEffectPayload(payload: unknown): string | null {
@@ -622,7 +632,7 @@ function readReplayableCommandDispatch(
     if (receipt.outcomeJson) {
       try {
         const parsed = parseStoredDispatchOutcome(JSON.parse(receipt.outcomeJson));
-        if (parsed) return parsed;
+        if (parsed && parsed.tool === toolName) return parsed;
       } catch {
         // JSON corrompido não autoriza repetir o efeito.
       }

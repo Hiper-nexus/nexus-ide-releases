@@ -1176,4 +1176,12 @@ END;`,
       sql: `ALTER TABLE command_receipts ADD COLUMN outcome_json TEXT
         CHECK (outcome_json IS NULL OR length(outcome_json) <= 32768);`,
     }),
+    // Invalidate legacy raw result replay without loading any result bodies.
+    createProjectMigration({
+      id: '050-safe-command-response-projection',
+      schemaVersion: 50,
+      appVersion: '0.76.213',
+      sql: `UPDATE command_receipts SET outcome_json = NULL
+        WHERE outcome_json IS NOT NULL;`,
+    }),
   ]);
