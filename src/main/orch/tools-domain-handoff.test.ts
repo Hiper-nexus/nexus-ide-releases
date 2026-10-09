@@ -2007,6 +2007,25 @@ describe("handoff MCP stop receipt", () => {
     }
   });
 
+  it.each(["reserved", "pasted"] as const)(
+    "F-1064: current %s attempt does not expire by reservation age", async (state) => {
+      const stores = mocks.getStores();
+      const now = Date.now();
+      mocks.getSessionState.mockReturnValue("idle");
+      mocks.getStores.mockReturnValue({ ...stores, handoffs: { ...stores.handoffs,
+        listDeliveryAttempts: () => [{ orchestratorSessionId: "orchestrator-session",
+          startedAt: now - 13_000, state, attemptNo: 1,
+          ...(state === "pasted" ? { acceptDeadlineAt: now + 20_000 } : {}),
+        }],
+      } });
+      mocks.listHandoffs.mockReturnValue([{ id: "h-still-ingesting", delivered: false,
+        deliveryState: "queued", createdAt: now - 60_000, missionId: "mission-a" }]);
+      const rows = await listTool().handler({ detail: "full" }, orchestratorContext()) as
+        Array<{ stuckDiagnosis?: unknown }>;
+      expect(rows[0]?.stuckDiagnosis).toBeUndefined();
+    },
+  );
+
   it("passes real delivery attempts and proven Maestro liveness into stuck diagnosis", async () => {
     const stores = mocks.getStores();
     const attempts = [

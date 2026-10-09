@@ -13,6 +13,7 @@ export type HandoffStuckReason =
   | 'retry-backoff'
   | 'session-dead'
   | 'waiting-acceptance-window'
+  | 'waiting-paste-start'
   | 'not-stuck';
 
 export interface HandoffStuckView {
@@ -24,6 +25,10 @@ export interface HandoffStuckView {
   readonly createdAt?: number;
   /** Início da última tentativa real de entrega, quando houver. */
   readonly attemptedAt?: number | null;
+  /** Estado da tentativa da sessão atual; reserved ainda não prova colagem. */
+  readonly deliveryAttemptState?: string | null;
+  /** Prazo persistido pelo transporte após a colagem/ingestão. */
+  readonly acceptDeadlineAt?: number | null;
   readonly sessionId?: string | null;
   readonly sessionAlive?: boolean;
   readonly parked?: boolean;
@@ -109,8 +114,18 @@ export function diagnoseHandoffStuck(
   if (view.deliveryState === 'queued') {
     // F-1046: handoff real que nunca foi enviado tem só `createdAt` —
     // queuedAnchor cobre submittedAt ?? attemptedAt ?? createdAt.
+    if (view.deliveryAttemptState === 'reserved') {
+      return {
+        reason: 'waiting-paste-start', stuck: false,
+        summary: 'Tentativa reservada; a colagem ainda não abriu a janela de aceite.',
+        escape: 'Aguarde o transporte atual; não force uma segunda colagem.',
+      };
+    }
+    const deadline = view.deliveryAttemptState === 'pasted' &&
+      view.acceptDeadlineAt != null && Number.isFinite(view.acceptDeadlineAt)
+      ? view.acceptDeadlineAt : null;
     const anchor = queuedAnchor(view);
-    if (anchor == null) {
+    if (anchor == null && deadline == null) {
       return {
         reason: 'not-stuck',
         stuck: false,
@@ -118,13 +133,15 @@ export function diagnoseHandoffStuck(
         escape: 'Nada a fazer.',
       };
     }
-    const waitingMs = now - anchor;
-    if (waitingMs < ACCEPTANCE_WINDOW_MS) {
+    const waitingMs = anchor == null ? Infinity : now - anchor;
+    if (deadline != null ? now <= deadline : waitingMs < ACCEPTANCE_WINDOW_MS) {
       return {
         reason: 'waiting-acceptance-window',
         stuck: false,
         summary:
-          `Dentro da janela de aceite (${ACCEPTANCE_WINDOW_MS}ms) — ainda não é preso.`,
+          deadline != null
+            ? `Dentro do prazo de aceite persistido (${Math.max(0, deadline - now)}ms restantes).`
+            : `Dentro da janela de aceite (${ACCEPTANCE_WINDOW_MS}ms) — ainda não é preso.`,
         escape: 'Aguarde a borda ociosa do Maestro.',
       };
     }

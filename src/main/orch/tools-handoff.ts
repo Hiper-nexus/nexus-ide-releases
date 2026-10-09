@@ -1143,6 +1143,8 @@ function compactHandoffListRows(
         submittedAt: row.submittedAt ?? null,
         createdAt: row.createdAt,
         attemptedAt: latest?.startedAt ?? null,
+        deliveryAttemptState: attemptInFlight ? latest?.state : null,
+        acceptDeadlineAt: attemptInFlight ? latest?.acceptDeadlineAt ?? null : null,
         sessionId: maestroSessionId ?? null,
         sessionAlive: maestroSessionAlive(maestroSessionId),
         parked:

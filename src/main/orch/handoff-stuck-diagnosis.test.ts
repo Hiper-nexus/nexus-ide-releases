@@ -102,4 +102,18 @@ describe('handoff stuck diagnosis (resto F-1040)', () => {
     expect(d.summary).toContain('rodada 3');
     expect(d.escape).toMatch(/busy→idle/);
   });
+  it('F-1064: a persisted paste deadline overrides the reservation-age heuristic', () => {
+    const view = { id: 'h-deadline', deliveryState: 'queued', attemptedAt: NOW - 13_000,
+      deliveryAttemptState: 'pasted', acceptDeadlineAt: NOW + 20_000 };
+    expect(diagnoseHandoffStuck(view, NOW)).toMatchObject({ stuck: false, reason: 'waiting-acceptance-window' });
+    expect(diagnoseHandoffStuck({ ...view, attemptedAt: NOW, acceptDeadlineAt: NOW - 1 }, NOW))
+      .toMatchObject({ stuck: true, reason: 'queued-awaiting-idle' });
+  });
+
+  it('F-1064: a reservation does not pretend the paste acceptance clock has started', () => {
+    expect(diagnoseHandoffStuck({ id: 'h-reserved', deliveryState: 'queued',
+      attemptedAt: NOW - 30_000, deliveryAttemptState: 'reserved' }, NOW))
+      .toMatchObject({ stuck: false, reason: 'waiting-paste-start' });
+  });
+
 });
