@@ -1163,7 +1163,7 @@ function compactHandoffListRows(
     const diagnosed = attachStuck(view);
     const keepFull =
       detailFull ||
-      !row.delivered ||
+      !view.delivered ||
       recentIds.has(row.id) ||
       rawIds.includes(row.id);
     if (keepFull) return diagnosed;
