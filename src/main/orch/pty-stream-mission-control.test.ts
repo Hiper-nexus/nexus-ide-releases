@@ -96,11 +96,15 @@ describe("provider-independent PTY Maestro mission control", () => {
     await settle();
 
     expect(invoke).toHaveBeenCalledOnce();
-    expect(invoke).toHaveBeenCalledWith(SESSION_ID, {
-      id: "call-1",
-      tool: "nexus_task",
-      args: { action: "list" },
-    });
+    expect(invoke).toHaveBeenCalledWith(
+      SESSION_ID,
+      {
+        id: "call-1",
+        tool: "nexus_task",
+        args: { action: "list" },
+      },
+      CHANNEL_ID,
+    );
     expect(writes).toEqual([]);
 
     setIdle(true);

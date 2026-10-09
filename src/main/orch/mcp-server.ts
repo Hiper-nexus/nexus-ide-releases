@@ -73,6 +73,7 @@ import {
   dispatchToolCall,
   type ToolDispatchResult,
 } from "./mcp-dispatch";
+import { dispatchPtyStreamMissionAction } from "./pty-stream-dispatch";
 import type {
   McpConfirmationHandler,
   McpConfirmationRequest,
@@ -1879,7 +1880,7 @@ function createPtyMissionControl(): PtyStreamMissionControl {
       getSessionState(sessionId) === "idle" &&
       isSessionInjectableIdle(sessionId),
     write: orchWriteSession,
-    invoke: async (sessionId, request): Promise<ToolDispatchResult> => {
+    invoke: async (sessionId, request, channelId): Promise<ToolDispatchResult> => {
       const ctx = currentPtyMaestroContext(sessionId);
       if (!ctx || !registry) {
         throw new Error(
@@ -1887,17 +1888,17 @@ function createPtyMissionControl(): PtyStreamMissionControl {
         );
       }
       return await runInsidePtyStreamAgentTransport(sessionId, ctx, () =>
-        dispatchToolCall(
-          "pty-stream",
-          registry!,
-          request.tool,
-          request.args,
+        dispatchPtyStreamMissionAction({
+          sessionId,
+          channelId,
+          request,
+          registry: registry!,
           ctx,
-          {
+          options: {
             confirm: confirmHttpMcpTool,
             prepareDestructiveReversibility: destructiveReversibilityPreparer,
           },
-        ),
+        }),
       );
     },
   });

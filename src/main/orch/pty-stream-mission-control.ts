@@ -48,6 +48,7 @@ export interface PtyStreamMissionControlPorts {
   readonly invoke: (
     sessionId: string,
     request: PtyStreamMissionAction,
+    channelId: string,
   ) => Promise<PtyStreamMissionActionOutcome>;
   readonly isAuthorized: (sessionId: string) => boolean;
   readonly isInjectableIdle: (sessionId: string) => boolean;
@@ -320,7 +321,7 @@ export class PtyStreamMissionControl {
     }
     let outcome: PtyStreamMissionActionOutcome;
     try {
-      outcome = await this.ports.invoke(sessionId, request);
+      outcome = await this.ports.invoke(sessionId, request, channel.id);
     } catch (error) {
       outcome = invalidInvocationOutcome(request, error);
     }
