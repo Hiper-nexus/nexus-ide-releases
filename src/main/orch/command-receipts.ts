@@ -7,6 +7,7 @@ import {
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
+  createScopedEffectOutboxStore,
   EffectOutboxStore,
   REPLAY_SAFE_EFFECT_TYPES,
   type EffectClass,
@@ -356,6 +357,46 @@ export class CommandReceiptStore {
       .all();
     return rows.map(rowToReceipt);
   }
+}
+
+/**
+ * Aceite de um `nexus_*` com efeito: recibo e `checkpoint.capture` na mesma
+ * transação. O gate de conclusão observa esse tipo enquanto estiver
+ * pending/running. `commandType` é o tipo do efeito, não o nome da tool.
+ */
+export function acceptDispatchCheckpointEffect(
+  runtimeManager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  command: {
+    readonly commandId: string;
+    readonly threadId: string;
+    readonly toolName: string;
+    readonly missionBound: boolean;
+  },
+): { readonly inserted: boolean; readonly effect: EffectOutboxEntry | null } {
+  const receipts = createScopedCommandReceiptStore(runtimeManager, scope);
+  const outbox = createScopedEffectOutboxStore(runtimeManager, scope);
+  return receipts.acceptCommandEffect(
+    outbox,
+    command.missionBound
+      ? {
+          commandId: command.commandId,
+          commandType: 'checkpoint.capture',
+          threadId: command.threadId,
+        }
+      : {
+          commandId: command.commandId,
+          commandType: 'checkpoint.capture',
+          projectId: scope.projectId,
+        },
+    {
+      id: command.commandId,
+      commandId: command.commandId,
+      threadId: command.threadId,
+      type: 'checkpoint.capture',
+      payload: { toolName: command.toolName },
+    },
+  );
 }
 
 export function createScopedCommandReceiptStore(

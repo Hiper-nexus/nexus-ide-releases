@@ -65,6 +65,7 @@ describe('preview-server', () => {
     const second = await startPreview(dir, scopeA);
     expect(second.id).toBe(first.id);
     expect(second.port).toBe(first.port);
+    expect(second.cdpTicket).toBe(first.cdpTicket);
 
     const res = await fetch(first.url);
     expect(res.status).toBe(200);
@@ -223,7 +224,7 @@ describe('preview-server', () => {
     );
 
     const ws = new WebSocket(
-      `ws://127.0.0.1:${preview.port}/cdp/pane-preview?projectId=other`,
+      `ws://127.0.0.1:${preview.port}/cdp/pane-preview?ticket=${encodeURIComponent(preview.cdpTicket)}&projectId=other`,
     );
     await new Promise<void>((resolve, reject) => {
       ws.once('open', () => resolve());
@@ -263,7 +264,9 @@ describe('preview-server', () => {
     });
     const preview = await startPreview(dir, scopeA);
     expect((await fetch(new URL('/json/version', preview.url))).status).toBe(404);
-    const ws = new WebSocket(`ws://127.0.0.1:${preview.port}/cdp/pane-preview`);
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${preview.port}/cdp/pane-preview?ticket=${encodeURIComponent(preview.cdpTicket)}`,
+    );
     await new Promise<void>((resolve, reject) => {
       ws.once('open', () => resolve());
       ws.once('error', reject);
@@ -279,11 +282,61 @@ describe('preview-server', () => {
       solePaneId: () => null,
     });
     const preview = await startPreview(dir, scopeA);
-    const ws = new WebSocket(`ws://127.0.0.1:${preview.port}/cdp/missing`);
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${preview.port}/cdp/missing?ticket=${encodeURIComponent(preview.cdpTicket)}`,
+    );
     const code = await new Promise<number>((resolve, reject) => {
       ws.once('close', (next) => resolve(next));
       ws.once('error', reject);
     });
     expect(code).toBe(1008);
+  });
+
+  it('does not attach the debugger when a same-origin page upgrades without the CDP capability', async () => {
+    let opened = 0;
+    registerPreviewCdpBridge({
+      open: () => {
+        opened += 1;
+        return {
+          connection: { receive: () => undefined },
+          detach: () => undefined,
+        };
+      },
+      solePaneId: () => 'pane-preview',
+    });
+    const preview = await startPreview(dir, scopeA);
+    const discovery = await fetch(new URL('/json/version', preview.url));
+    expect(discovery.status).toBe(200);
+    const body = (await discovery.json()) as { webSocketDebuggerUrl: string };
+    expect(JSON.stringify(body)).not.toContain(preview.cdpTicket);
+    expect(discovery.headers.get('set-cookie')).toBeNull();
+    const advertised = body.webSocketDebuggerUrl;
+    expect(advertised).toBe(`ws://127.0.0.1:${preview.port}/cdp/pane-preview`);
+
+    const pageSocket = new WebSocket(advertised, {
+      headers: { Origin: new URL(preview.url).origin },
+    });
+    await new Promise<void>((resolve) => {
+      pageSocket.once('error', () => resolve());
+      pageSocket.once('close', () => resolve());
+    });
+    const headerForgery = new WebSocket(advertised, {
+      headers: { 'x-nexus-cdp-ticket': preview.cdpTicket },
+    });
+    await new Promise<void>((resolve) => {
+      headerForgery.once('error', () => resolve());
+      headerForgery.once('close', () => resolve());
+    });
+    expect(opened).toBe(0);
+
+    const privileged = new WebSocket(
+      `${advertised}?ticket=${encodeURIComponent(preview.cdpTicket)}`,
+    );
+    await new Promise<void>((resolve, reject) => {
+      privileged.once('open', () => resolve());
+      privileged.once('error', reject);
+    });
+    expect(opened).toBe(1);
+    privileged.close();
   });
 });

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -53,6 +53,8 @@ interface RunningPreview {
   projectId: string;
   checkoutId: string;
   cdp: PreviewCdpTransport;
+  /** Capacidade do CDP. Não sai em nenhuma resposta HTTP do preview. */
+  cdpTicket: string;
 }
 
 type PreviewScope = Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>;
@@ -67,6 +69,11 @@ interface PreviewStartResult {
   id: string;
   url: string;
   port: number;
+  /**
+   * Segredo do debugger. Só quem chamou `startPreview` no processo principal
+   * o recebe. `/json/version` não o inclui: a página servida não tem como obtê-lo.
+   */
+  cdpTicket: string;
 }
 
 interface OpenedPreviewFile {
@@ -205,10 +212,35 @@ function isLoopbackRemote(address: string | undefined): boolean {
   );
 }
 
+function presentedCdpTicket(url: string | undefined): string | null {
+  const query = url?.split('?')[1];
+  if (!query) return null;
+  const ticket = new URLSearchParams(query).get('ticket');
+  if (!ticket || ticket.length > 128) return null;
+  return ticket;
+}
+
+function cdpTicketMatches(presented: string, expected: string): boolean {
+  const left = Buffer.from(presented);
+  const right = Buffer.from(expected);
+  if (left.length === 0 || left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
+function previewStartResult(entry: RunningPreview): PreviewStartResult {
+  return {
+    id: entry.id,
+    url: `http://127.0.0.1:${entry.port}/`,
+    port: entry.port,
+    cdpTicket: entry.cdpTicket,
+  };
+}
+
 function attachPreviewCdp(
   server: http.Server,
   scope: PreviewCdpScope,
   portOf: () => number,
+  ticket: string,
 ): PreviewCdpTransport {
   const sockets = new WebSocketServer({
     noServer: true,
@@ -230,9 +262,22 @@ function attachPreviewCdp(
       socket.destroy();
       return;
     }
+    // Upgrade vindo de página manda Origin. A página não consegue omitir esse
+    // header, mas omitir ou forjar um header também não autentica: o ticket
+    // abaixo não está em nenhuma resposta que o preview serve.
+    if (req.headers.origin !== undefined) {
+      socket.destroy();
+      return;
+    }
     const paneId = cdpPaneId(req.url);
     const port = portOf();
-    if (!paneId || port === 0) {
+    const presented = presentedCdpTicket(req.url);
+    if (
+      !paneId ||
+      port === 0 ||
+      !presented ||
+      !cdpTicketMatches(presented, ticket)
+    ) {
       socket.destroy();
       return;
     }
@@ -320,11 +365,7 @@ export async function startPreview(
   const existing = existingId ? runningById.get(existingId) : undefined;
   if (existing) {
     assertMcpInvocationCurrent(invocation);
-    return {
-      id: existing.id,
-      url: `http://127.0.0.1:${existing.port}/`,
-      port: existing.port,
-    };
+    return previewStartResult(existing);
   }
   if (existingId) previewIdByKey.delete(key);
 
@@ -347,6 +388,7 @@ async function createPreview(
   invocation?: McpToolInvocation,
 ): Promise<PreviewStartResult> {
   let port = 0;
+  const cdpTicket = randomBytes(32).toString('base64url');
   const server = http.createServer((req, res) => {
     if (isCdpDiscovery(req.url)) {
       writeCdpDiscovery(res, req.method, scope, port);
@@ -354,7 +396,7 @@ async function createPreview(
     }
     serve(root, req, res);
   });
-  const cdp = attachPreviewCdp(server, scope, () => port);
+  const cdp = attachPreviewCdp(server, scope, () => port, cdpTicket);
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
@@ -413,11 +455,12 @@ async function createPreview(
     projectId: scope.projectId,
     checkoutId: scope.checkoutId,
     cdp,
+    cdpTicket,
   };
   runningById.set(id, entry);
   previewIdByKey.set(key, id);
   console.log(`[preview] ${id} servindo ${root} em http://127.0.0.1:${port}/`);
-  return { id, url: `http://127.0.0.1:${port}/`, port };
+  return previewStartResult(entry);
 }
 
 export function stopPreview(id: string, scope: PreviewScope): boolean {

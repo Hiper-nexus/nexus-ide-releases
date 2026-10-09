@@ -105,7 +105,8 @@ const previewStartTool: McpToolDef = {
     const executionScope = executionScopeFor(ctx);
     const workspaceDir = resolveCwdForScope(executionScope, dir);
     try {
-      return await startPreview(workspaceDir, executionScope, invocation);
+      const started = await startPreview(workspaceDir, executionScope, invocation);
+      return { id: started.id, url: started.url, port: started.port };
     } catch (err) {
       throw new Error(
         `preview falhou para ${workspaceDir}: ${err instanceof Error ? err.message : String(err)}`,

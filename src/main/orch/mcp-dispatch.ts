@@ -9,6 +9,7 @@ import {
 } from "../../shared/mission-intent";
 import type { Mission } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
+import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import { confirmationReason } from "../jarvis/guardrails";
 import {
   auditDenied,
@@ -57,7 +58,8 @@ import {
   peekMissionPromptQueue,
   startMissionPrompt,
 } from "./mission-prompt-queue-registry";
-import { getProjectDomainStores } from "./project-domain-store-registry";
+import { getProjectDomainStores, requireProjectDomainStoreRegistry } from "./project-domain-store-registry";
+import { acceptDispatchCheckpointEffect } from "./command-receipts";
 import {
   normalizeDispatchSessionId,
   permissionScopeForTool,
@@ -527,6 +529,40 @@ function bindEffectAuthority(
     contextRevision: authority.contextRevision,
     workflowAuthority: authority,
   };
+}
+
+/**
+ * Recibo + checkpoint.capture na mesma transação, antes do handler.
+ * Sem registry (testes de gate) o comando segue; com registry, falha
+ * fechada se o aceite não gravar.
+ */
+function acceptProductionCommandCheckpoint(
+  ctx: AgentGateContext,
+  commandId: string,
+  toolName: string,
+): "accepted" | "skipped" | "denied" {
+  let runtimeManager: ProjectRuntimeManager;
+  try {
+    runtimeManager = requireProjectDomainStoreRegistry().runtimeManager();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("not initialized")) return "skipped";
+    console.warn("[mcp-dispatch] command effect registry unavailable:", error);
+    return "denied";
+  }
+  try {
+    const missionId = ctx.missionId?.trim() ?? "";
+    acceptDispatchCheckpointEffect(runtimeManager, ctx.scope, {
+      commandId,
+      threadId: missionId || ctx.scope.projectId,
+      toolName: canonicalToolName(toolName),
+      missionBound: missionId.length > 0,
+    });
+    return "accepted";
+  } catch (error) {
+    console.warn("[mcp-dispatch] command effect acceptance failed:", error);
+    return "denied";
+  }
 }
 
 export async function dispatchToolCall(
@@ -1591,6 +1627,16 @@ export async function dispatchToolCall(
       assertCurrentAuthorityState(true);
     };
     assertCurrentAuthority();
+    if (invocationId) {
+      const checkpoint = acceptProductionCommandCheckpoint(
+        ctx,
+        invocationId,
+        tool.name,
+      );
+      if (checkpoint === "denied") {
+        return denyAfterIntent("command_effect_unavailable");
+      }
+    }
     const exactUserConsent =
       // Recibo, não modal: mintado sempre que o store exige prova de mutação
       // única — inclusive quando a autorização veio da aprovação da missão.

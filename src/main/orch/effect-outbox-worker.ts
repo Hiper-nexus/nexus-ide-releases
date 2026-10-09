@@ -22,8 +22,9 @@ export type EffectOutboxHandler = (
 /**
  * Registro de handlers por `type`. O coordenador drena pelo registro; quem
  * implementa um tipo de efeito (checkpoint.capture, turn.start…) registra
- * aqui no boot. Tipo sem handler é tratado como falha process_bound /
- * retry replay_safe — nunca silencioso.
+ * aqui no boot. Tipo sem handler falha de vez (não retenta): um efeito
+ * enfileirado à mão sem handler não pode girar para sempre. Handler que
+ * lança continua assentando pela classe.
  */
 const effectHandlers = new Map<string, EffectOutboxHandler>();
 
@@ -41,6 +42,15 @@ export function registeredEffectHandler(
   type: string,
 ): EffectOutboxHandler | null {
   return effectHandlers.get(type) ?? null;
+}
+
+/**
+ * Handler de produção do `checkpoint.capture`. O despacho já gravou o
+ * recibo e o efeito juntos; o dreno assenta a obrigação que o gate espera.
+ * A captura git do fim de turno continua em `captureWriterHandoffCheckpoint`.
+ */
+export function registerCheckpointCaptureHandler(): () => void {
+  return registerEffectOutboxHandler('checkpoint.capture', () => undefined);
 }
 
 export interface EffectOutboxWorkerDeps {
@@ -123,7 +133,23 @@ export async function drainEffectOutbox(
       try {
         const handler = deps.handler ?? registeredEffectHandler(entry.type);
         if (!handler) {
-          throw new Error(`effect outbox has no handler for ${entry.type}`);
+          const reason = `effect outbox has no handler for ${entry.type}`;
+          const released = deps.store.fail(
+            entry.id,
+            deps.workerId,
+            reason,
+            entry.attemptCount,
+          );
+          if (released) failed += 1;
+          else {
+            console.warn(
+              `[effect-outbox] dropped settle (${entry.class} ${entry.type} ${entry.id} attempt ${entry.attemptCount})`,
+            );
+          }
+          console.warn(
+            `[effect-outbox] ${reason} (${entry.class} ${entry.id})`,
+          );
+          continue;
         }
         const outcome = handler(entry, deps.scope);
         if (context) await context.wait(Promise.resolve(outcome));
