@@ -1635,7 +1635,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     try {
       missionShim = createMissionShimRuntime({
         ctx,
-        invoke: async ({ toolName, args, requestId }) => {
+        invoke: async ({ toolName, args }) => {
           if (!registry) {
             return {
               ok: false,
@@ -1653,7 +1653,6 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
             {
               confirm: confirmHttpMcpTool,
               prepareDestructiveReversibility: destructiveReversibilityPreparer,
-              logicalOperationId: requestId,
             },
           );
         },
@@ -1897,7 +1896,6 @@ function createPtyMissionControl(): PtyStreamMissionControl {
           {
             confirm: confirmHttpMcpTool,
             prepareDestructiveReversibility: destructiveReversibilityPreparer,
-            logicalOperationId: request.id,
           },
         ),
       );

@@ -52,9 +52,11 @@ export interface CommandReceipt {
   readonly effectClass: EffectClass;
   /** Resultado JSON do despacho, quando o handler já terminou. */
   readonly outcomeJson: string | null;
+  readonly bindingDigest: string | null;
 }
 
 export interface CommandReceiptInsertInput {
+  readonly bindingDigest?: string;
   readonly commandId: string;
   readonly commandType: string;
   readonly acceptedAt?: number;
@@ -84,12 +86,14 @@ const rowSchema = z
     error: z.string().max(512).nullable(),
     effect_class: z.enum(['process_bound', 'replay_safe']),
     outcome_json: z.string().max(32768).nullable(),
+    binding_digest: z.string().regex(/^[a-f0-9]{64}$/u).nullable().optional(),
   })
   .strict();
 
 const insertSchema = z
   .object({
     commandId: z.string().min(1).max(128),
+    bindingDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
     commandType: z.string().min(1).max(128),
     acceptedAt: z.number().int().nonnegative().optional(),
     resultSequence: z.number().int().nonnegative().optional(),
@@ -104,6 +108,7 @@ const insertSchema = z
 const acceptanceSchema = z
   .object({
     commandId: z.string().min(1).max(128),
+    bindingDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
     commandType: z.string().min(1).max(128),
     acceptedAt: z.number().int().nonnegative().optional(),
     resultSequence: z.literal(0).optional(),
@@ -114,6 +119,7 @@ const acceptanceSchema = z
   .strict();
 
 export interface CommandEffectAcceptanceInput {
+  readonly bindingDigest?: string;
   readonly commandId: string;
   readonly commandType: string;
   readonly acceptedAt?: number;
@@ -140,6 +146,7 @@ function rowToReceipt(row: unknown): CommandReceipt {
     error: value.error,
     effectClass: value.effect_class,
     outcomeJson: value.outcome_json,
+    bindingDigest: value.binding_digest ?? null,
   };
 }
 
@@ -227,6 +234,7 @@ export class CommandReceiptStore {
         // devolve o efeito antigo em silêncio. Identidade do recibo E do efeito.
         const stored = this.getByCommandId(receipt.commandId);
         const aggregate = resolveAggregate(receipt);
+        if (receipt.bindingDigest !== undefined && stored?.bindingDigest !== receipt.bindingDigest) throw new Error('command_effect_identity_conflict');
         if (
           !stored ||
           stored.commandType !== receipt.commandType ||
@@ -271,8 +279,8 @@ export class CommandReceiptStore {
       db.prepare(
         `INSERT INTO command_receipts (
            command_id, aggregate_kind, aggregate_id, command_type,
-           accepted_at, result_sequence, status, error, effect_class
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           accepted_at, result_sequence, status, error, effect_class, binding_digest
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         input.commandId,
         aggregate.kind,
@@ -283,6 +291,7 @@ export class CommandReceiptStore {
         input.status ?? 'accepted',
         input.error ?? null,
         classForCommandType(input.commandType),
+        input.bindingDigest ?? null,
       );
       return true;
     })();
@@ -306,6 +315,7 @@ export class CommandReceiptStore {
         .get(input.commandId);
       if (existing) {
         const stored = rowToReceipt(existing);
+        if (input.bindingDigest !== undefined && stored.bindingDigest !== input.bindingDigest) throw new Error('command_effect_identity_conflict');
         if (
           stored.commandType !== input.commandType ||
           stored.aggregateKind !== aggregate.kind ||
@@ -327,8 +337,8 @@ export class CommandReceiptStore {
         db.prepare(
           `INSERT INTO command_receipts (
              command_id, aggregate_kind, aggregate_id, command_type,
-             accepted_at, result_sequence, status, error, effect_class
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             accepted_at, result_sequence, status, error, effect_class, binding_digest
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           input.commandId,
           aggregate.kind,
@@ -339,6 +349,7 @@ export class CommandReceiptStore {
           input.status,
           input.error ?? null,
           classForCommandType(input.commandType),
+          input.bindingDigest ?? null,
         );
       }
       const row = db
@@ -411,6 +422,7 @@ export function acceptDispatchCheckpointEffect(
     readonly threadId: string;
     readonly toolName: string;
     readonly missionBound: boolean;
+    readonly bindingDigest?: string;
   },
 ): { readonly inserted: boolean; readonly effect: EffectOutboxEntry | null } {
   const receipts = createScopedCommandReceiptStore(runtimeManager, scope);
@@ -421,11 +433,13 @@ export function acceptDispatchCheckpointEffect(
       ? {
           commandId: command.commandId,
           commandType: 'checkpoint.capture',
+          bindingDigest: command.bindingDigest,
           threadId: command.threadId,
         }
       : {
           commandId: command.commandId,
           commandType: 'checkpoint.capture',
+          bindingDigest: command.bindingDigest,
           projectId: scope.projectId,
         },
     {

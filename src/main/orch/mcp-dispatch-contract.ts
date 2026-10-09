@@ -153,10 +153,10 @@ export interface McpDispatchOptions {
   resolveCommittedPhysicalHandoffReplayCandidate?: CommittedPhysicalHandoffReplayCandidateResolver;
   /** Internal seam; production reserves synchronously in the scoped store. */
   reserveMissionBudget?: MissionBudgetReserver;
-  /**
-   * Stable caller identity for one logical operation. A lost-response retry
-   * passes the same id; the receipt key is this id, and the handler does not
-   * run again.
+  /** Main-only explicit dedupe id for a physically bound session/context.
+   * Normal RPC/shim/PTY counters never supply this; default is a fresh UUID.
+   * The key is caller-scoped, with a separate immutable args/tool/authority
+   * binding; a changed binding refuses rather than executing a new mutation.
    */
   logicalOperationId?: string;
 }

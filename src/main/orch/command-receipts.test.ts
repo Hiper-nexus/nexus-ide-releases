@@ -43,9 +43,15 @@ describe('F-1081: nonsensitive persisted dispatch observation',()=>{
   it('clears historical unsafe outcomes by migration without interpreting their bodies',()=>{
     manager.closeAll();
     const legacy=new ProjectRuntimeManager({baseDir:root,appVersion:'legacy-receipt-test',migrations:INITIAL_PROJECT_MIGRATIONS.filter(m=>m.schemaVersion<=49)});
-    const store=new CommandReceiptStore(legacy,scope);
-    store.insertIfAbsent({commandId:'old',commandType:'checkpoint.capture',projectId:scope.projectId});
+    legacy.open(scope).db.prepare(`INSERT INTO command_receipts(command_id,aggregate_kind,aggregate_id,command_type,accepted_at,result_sequence,status,error,effect_class) VALUES('old','project',?,'checkpoint.capture',1,0,'accepted',NULL,'replay_safe')`).run(scope.projectId);
     legacy.open(scope).db.prepare('UPDATE command_receipts SET outcome_json=? WHERE command_id=?').run('{"privateBody":"legacy-secret"}','old');legacy.closeAll();
     expect(new CommandReceiptStore(manager,scope).getByCommandId('old')?.outcomeJson).toBeNull();
   });
+});
+
+it('F-1080: a new upsert preserves its actual binding and refuses replacement',()=>{
+  const store=new CommandReceiptStore(manager,scope);const binding='a'.repeat(64);
+  const stored=store.upsert({commandId:'bound-upsert',commandType:'checkpoint.capture',projectId:scope.projectId,status:'accepted',resultSequence:4,bindingDigest:binding});
+  expect(stored.bindingDigest).toBe(binding);
+  expect(()=>store.upsert({commandId:'bound-upsert',commandType:'checkpoint.capture',projectId:scope.projectId,status:'accepted',resultSequence:5,bindingDigest:'b'.repeat(64)})).toThrow('command_effect_identity_conflict');
 });

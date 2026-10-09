@@ -1184,4 +1184,9 @@ END;`,
       sql: `UPDATE command_receipts SET outcome_json = NULL
         WHERE outcome_json IS NOT NULL;`,
     }),
+    createProjectMigration({
+      id: '051-command-dispatch-identity', schemaVersion: 51, appVersion: '0.76.213',
+      sql: `ALTER TABLE command_receipts ADD COLUMN binding_digest TEXT
+        CHECK (binding_digest IS NULL OR length(binding_digest) = 64);`,
+    }),
   ]);

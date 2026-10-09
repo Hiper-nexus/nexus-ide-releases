@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { captureCommandDispatchIdentity } from './command-dispatch-identity';
+import { randomUUID } from "node:crypto";
 import { resolveCwdForScope } from './workspace-path';
 import { resolveWorkspaceHandoffParent } from "./workspace-handoff-authority";
 import { emitDestructiveReversalEvent } from "./mission-event-emit";
@@ -542,17 +543,7 @@ function bindEffectAuthority(
  * fechada se o aceite não gravar.
  */
 const DISPATCH_OUTCOME_UNSETTLED = "command_effect_may_have_committed";
-const logicalDispatchFlights = new Map<string, Promise<ToolDispatchResult>>();
-
-function normalizeLogicalOperationId(
-  value: string | undefined,
-): string | undefined {
-  if (value === undefined) return undefined;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return undefined;
-  if (trimmed.length <= 128 && !trimmed.includes("\0")) return trimmed;
-  return createHash("sha256").update(value).digest("hex");
-}
+const logicalDispatchFlights = new Map<string, {bindingDigest:string; promise:Promise<ToolDispatchResult>}>();
 
 function logicalFlightKey(
   scope: Pick<AgentGateContext["scope"], "projectId" | "checkoutId">,
@@ -597,6 +588,7 @@ function readReplayableCommandDispatch(
   ctx: AgentGateContext,
   commandId: string,
   toolName: string,
+  bindingDigest: string,
 ): ToolDispatchResult | null {
   let runtimeManager: ProjectRuntimeManager;
   try {
@@ -616,6 +608,7 @@ function readReplayableCommandDispatch(
     const receipts = createScopedCommandReceiptStore(runtimeManager, ctx.scope);
     const receipt = receipts.getByCommandId(commandId);
     if (!receipt) return null;
+    if (receipt.bindingDigest !== bindingDigest) return {ok:false,tool:toolName,denied:true,error:'command_effect_identity_conflict'};
     const effect = createScopedEffectOutboxStore(
       runtimeManager,
       ctx.scope,
@@ -674,7 +667,7 @@ function rememberDispatchOutcome(
 
 type CheckpointAcceptance =
   | { readonly status: "skipped" }
-  | { readonly status: "denied" }
+  | { readonly status: "denied" | "conflict" }
   | { readonly status: "accepted"; readonly inserted: boolean };
 
 /**
@@ -686,6 +679,7 @@ function acceptProductionCommandCheckpoint(
   ctx: AgentGateContext,
   commandId: string,
   toolName: string,
+  bindingDigest: string,
 ): CheckpointAcceptance {
   let runtimeManager: ProjectRuntimeManager;
   try {
@@ -703,9 +697,11 @@ function acceptProductionCommandCheckpoint(
       threadId: missionId || ctx.scope.projectId,
       toolName: canonicalToolName(toolName),
       missionBound: missionId.length > 0,
+      bindingDigest,
     });
     return { status: "accepted", inserted: accepted.inserted };
   } catch (error) {
+    if (error instanceof Error && error.message === 'command_effect_identity_conflict') return {status:'conflict'};
     console.warn("[mcp-dispatch] command effect acceptance failed:", error);
     return { status: "denied" };
   }
@@ -1275,21 +1271,17 @@ export async function dispatchToolCall(
   }
 
   const effectful = isEffectfulTool(tool.name);
-  const callerCommandId = effectful
-    ? normalizeLogicalOperationId(options.logicalOperationId)
-    : undefined;
-  if (callerCommandId) {
-    const inflight = logicalDispatchFlights.get(
-      logicalFlightKey(ctx.scope, callerCommandId),
-    );
-    if (inflight) return inflight;
-    const replay = readReplayableCommandDispatch(
-      ctx,
-      callerCommandId,
-      tool.name,
-    );
-    if (replay) return replay;
+  let operationIdentity: ReturnType<typeof captureCommandDispatchIdentity> | undefined;
+  if (effectful) {
+    try {
+      operationIdentity = captureCommandDispatchIdentity(source, ctx, canonical, args,
+        options.logicalOperationId, initialIntent.resolved?.mission.intentVersion);
+      args = operationIdentity.args;
+    } catch (error) {
+      return denyIntentCheck(error instanceof Error ? error.message : 'command_operation_identity_invalid');
+    }
   }
+  const callerCommandId = operationIdentity?.commandId;
   // Guarda Jev (piloto automático): coerência com o objetivo, sinais de
   // injeção e efeito destrutivo, só para chamada com efeito dentro de missão e
   // fora da mão do operador. Fail-open: exceção ou serviço fora = `skipped`.
@@ -1720,7 +1712,7 @@ export async function dispatchToolCall(
     if (commandAccepted && commandId) {
       rememberDispatchOutcome(ctx, commandId, result);
     }
-    resolveOwnedFlight?.(result);
+    resolveOwnedFlight?.({ok:false,tool:result.tool,error:'command_result_unavailable',effectMayHaveCommitted:result.ok || result.effectMayHaveCommitted || undefined,denied:result.denied});
     resolveOwnedFlight = undefined;
     return result;
   };
@@ -1808,7 +1800,9 @@ export async function dispatchToolCall(
         ctx,
         commandId,
         tool.name,
+        operationIdentity!.bindingDigest,
       );
+      if (checkpoint.status === 'conflict') return denyAfterIntent('command_effect_identity_conflict');
       if (checkpoint.status === "denied") {
         return denyAfterIntent("command_effect_unavailable");
       }
@@ -1816,11 +1810,21 @@ export async function dispatchToolCall(
         const inflight = callerCommandId
           ? logicalDispatchFlights.get(logicalFlightKey(ctx.scope, callerCommandId))
           : undefined;
-        if (inflight) return inflight;
+        if (inflight) {
+          if (inflight.bindingDigest !== operationIdentity!.bindingDigest) return denyAfterIntent('command_effect_identity_conflict');
+          const joined = await inflight.promise;
+          assertCurrentAuthority();
+          const currentIntent = checkMissionIntent();
+          if (!currentIntent.ok) throw new Error(currentIntent.error);
+          const current = captureCommandDispatchIdentity(source, ctx, canonical, args, options.logicalOperationId, currentIntent.resolved?.mission.intentVersion);
+          if (current.bindingDigest !== operationIdentity!.bindingDigest) throw new Error('session_authority_revoked');
+          const auditFailure = writeOutcomeAudit(joined.ok ? 'success' : 'error', joined.error, false);
+          return auditFailure ?? joined;
+        }
         const replay = callerCommandId
-          ? readReplayableCommandDispatch(ctx, callerCommandId, tool.name)
+          ? readReplayableCommandDispatch(ctx, callerCommandId, tool.name, operationIdentity!.bindingDigest)
           : null;
-        if (replay) return replay;
+        if (replay) { assertCurrentAuthority(); const auditFailure = writeOutcomeAudit(replay.ok ? 'success' : 'error', replay.error, false); return auditFailure ?? replay; }
         return {
           ok: false,
           tool: tool.name,
@@ -1838,7 +1842,7 @@ export async function dispatchToolCall(
             resolveFlight = resolve;
           });
           resolveOwnedFlight = resolveFlight;
-          logicalDispatchFlights.set(ownedFlightKey, flight);
+          logicalDispatchFlights.set(ownedFlightKey, {bindingDigest:operationIdentity!.bindingDigest,promise:flight});
         }
       }
     }
