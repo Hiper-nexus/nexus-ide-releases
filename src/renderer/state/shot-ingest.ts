@@ -2,6 +2,8 @@ import type {
   ShotFileKind,
   ShotFilesReceivedPayload,
 } from '../../shared/shot-bridge';
+import { shotTargetIdSchema } from '../../shared/shot-bridge';
+import { usePaneParkedStore } from './pane-parked-store';
 import type { NexusApi } from '../../shared/types';
 import { useToastStore } from './toast-store';
 import { useLayoutStore } from './layout-store';
@@ -31,7 +33,8 @@ export type ShotIngestAppApi = Pick<
 > & {
   files?: Pick<NexusApi['files'], 'importDroppedUri'>;
   writeToPane?: (paneId: string, data: string) => boolean;
-  resolveTargetPaneId?: () => string | null;
+  resolveTargetPaneId?: (requestedPaneId?: string) => string | null;
+  getPaneSessionId?: (paneId: string) => string | null;
   getActiveWorkspacePath?: () => string | null;
 };
 
@@ -108,18 +111,20 @@ export function selectShotFilesToInject(
  * 2. Primeiro agente CLI vivo no grid;
  * 3. Qualquer outro terminal vivo.
  */
-export function resolveShotTargetPaneId(): string | null {
+export function resolveShotTargetPaneId(requestedPaneId?: string): string | null {
   const { focusedPaneId, root } = useLayoutStore.getState();
   const panes = listPanes(root);
-  if (focusedPaneId && getPaneSessionId(focusedPaneId)) {
+  const live = (id: string) => panes.some(p => p.id === id && (p.kind === 'cli-agent' || p.kind === 'shell')) &&
+    !usePaneParkedStore.getState().parked.has(id) && Boolean(getPaneSessionId(id));
+  if (requestedPaneId !== undefined) return shotTargetIdSchema.safeParse(requestedPaneId).success && live(requestedPaneId) ? requestedPaneId : null;
+  if (focusedPaneId && live(focusedPaneId)) {
     return focusedPaneId;
   }
   const liveAgent = panes.find(
-    (p) => p.kind === 'cli-agent' && Boolean(getPaneSessionId(p.id)),
+    (p) => p.kind === 'cli-agent' && live(p.id),
   );
   if (liveAgent) return liveAgent.id;
-  const live = panes.find((p) => Boolean(getPaneSessionId(p.id)));
-  return live?.id ?? null;
+  return panes.find(p => live(p.id))?.id ?? null;
 }
 
 async function stageFile(
@@ -175,22 +180,36 @@ export function initShotIngestToasts(
     const workspaceGetter =
       api.getActiveWorkspacePath ?? getActiveWorkspacePath;
 
-    const targetPaneId = targetPaneResolver();
+    const explicit = payload.targetPaneId !== undefined;
+    const targetPaneId = explicit && !shotTargetIdSchema.safeParse(payload.targetPaneId).success
+      ? null : targetPaneResolver(payload.targetPaneId);
+    const sessionGetter = api.getPaneSessionId ?? getPaneSessionId;
+    const targetSessionId = targetPaneId ? sessionGetter(targetPaneId) : null;
+    const workspacePath = workspaceGetter();
+    const destinationCurrent = () => targetPaneId !== null && workspaceGetter() === workspacePath &&
+      targetPaneResolver(targetPaneId) === targetPaneId && sessionGetter(targetPaneId) === targetSessionId;
     let injectedCount = 0;
 
     if (targetPaneId) {
       const toInject = selectShotFilesToInject(files);
       const stagedPaths: string[] = [];
-      const workspacePath = workspaceGetter();
       for (const file of toInject) {
+        if (!destinationCurrent()) break;
         const staged = await stageFile(file, filesApi, workspacePath);
         stagedPaths.push(staged);
       }
-      if (stagedPaths.length > 0) {
+      if (stagedPaths.length === toInject.length && destinationCurrent()) {
         const line = stagedPaths.map(shellQuote).join(' ') + ' ';
         const ok = paneWriter(targetPaneId, line);
         if (ok) injectedCount = stagedPaths.length;
       }
+    }
+
+    if (explicit && injectedCount === 0) {
+      push('error', 'Não deu para colar a captura no pane escolhido', {
+        detail: 'O pane ou o workspace mudou. Escolha um destino vivo no Nexus Shot e envie novamente.',
+        dedupeKey: `${dedupeKey}:destination`,
+      });
     }
 
     if (files.length === 1) {

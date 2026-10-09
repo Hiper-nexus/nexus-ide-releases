@@ -485,9 +485,12 @@ import {
 } from './agent-hooks/hook-http-server';
 import { AgentHookDropBoxWatcher } from './agent-hooks/hook-drop-box';
 import {
+  buildShotTargets,
   startShotBridgeServer,
   stopShotBridgeServer,
 } from './shot-bridge/shot-bridge-server';
+import { listPaneSnapshots } from './orch/pane-registry';
+import { getRendererWorkspaceScope } from './persistence/renderer-workspace-scope';
 import { SHOT_BRIDGE_CHANNELS } from '../shared/shot-bridge';
 import {
   readActiveGpuFallbackMarker,
@@ -1185,7 +1188,18 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
             pictures: app.getPath("pictures"),
             videos: app.getPath("videos"),
           },
-          onFiles: (files) => {
+          listTargets: () => {
+            const win = BrowserWindow.getAllWindows().find(w => !isPetWindow(w));
+            return buildShotTargets(
+              listPaneSnapshots().map(pane => ({
+                ...pane,
+                immediateMissionTitle: pane.sessionId ? getAgentSessionInfo(pane.sessionId)?.immediateMissionTitle : undefined,
+              })),
+              win ? getRendererWorkspaceScope(win.webContents) : null,
+              new Set(listLiveSessionLocations().map(session => session.sessionId)),
+            );
+          },
+          onFiles: (files, targetPaneId) => {
             // Janela principal = qualquer janela que não seja o pet (mesmo
             // filtro do activate; getAllWindows()[0] poderia ser o pet).
             const win = BrowserWindow.getAllWindows().filter(
@@ -1198,6 +1212,7 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
                 files,
                 source: 'nexus-shot',
                 receivedAt: Date.now(),
+                ...(targetPaneId ? { targetPaneId } : {}),
               });
             }
             try {

@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ShotFilesReceivedPayload } from '../../shared/shot-bridge';
-import { initShotIngestToasts, parentDirOf, type ShotIngestAppApi } from './shot-ingest';
+import { initShotIngestToasts, parentDirOf, resolveShotTargetPaneId, type ShotIngestAppApi } from './shot-ingest';
 import { useToastStore } from './toast-store';
+import { useLayoutStore } from './layout-store';
+import { usePaneParkedStore } from './pane-parked-store';
+import * as terminalHost from '../terminal/terminal-host';
+import { buildGridTree, createPane } from '../lib/split-tree';
 
 function clearToasts(): void {
   for (const toast of useToastStore.getState().toasts) {
@@ -260,5 +264,108 @@ describe('parentDirOf', () => {
       'C:\\Users\\op\\Videos\\Nexus Shot',
     );
     expect(parentDirOf('take.mp4')).toBe('');
+  });
+});
+
+
+describe('explicit destination and staging races (F-1054)', () => {
+  function destinationApi() {
+    const fixture = makeApi();
+    let workspace = '/workspace-a';
+    let session = 'session-a';
+    let available = true;
+    const write = vi.fn((_paneId: string, _data: string) => true);
+    const resolve = vi.fn((requested?: string) => requested ? (available && requested === 'pane-selected' ? requested : null) : 'pane-focused');
+    fixture.api.resolveTargetPaneId = resolve;
+    fixture.api.getPaneSessionId = () => session;
+    fixture.api.getActiveWorkspacePath = () => workspace;
+    fixture.api.writeToPane = write;
+    return { ...fixture, write, resolve, switchWorkspace: () => { workspace = '/workspace-b'; },
+      replaceSession: () => { session = 'session-b'; }, removeTarget: () => { available = false; } };
+  }
+
+  it('explicit target wins over focus; quotes paths with trailing space and no Enter', async () => {
+    const f = destinationApi();
+    initShotIngestToasts(f.api);
+    f.emit({ ...payloadOf([PNG]), targetPaneId: 'pane-selected' });
+    await vi.waitFor(() => expect(f.write).toHaveBeenCalledWith('pane-selected', "'/Users/op/Pictures/Nexus Shot/clip.png' "));
+    expect(f.write.mock.calls[0][1]).not.toMatch(/[\r\n]/);
+  });
+
+  it.each(['pane-dead', 'pane-foreign', 'pane-parked', 'pane-missing', ''])('refuses explicit %s without fallback or staging', async (targetPaneId) => {
+    const f = destinationApi();
+    const stage = vi.fn(async () => ({ ok: true, path: 'capture.png' }));
+    f.api.files = { importDroppedUri: stage };
+    initShotIngestToasts(f.api);
+    f.emit({ ...payloadOf([PNG]), targetPaneId });
+    await vi.waitFor(() => expect(useToastStore.getState().toasts.length).toBeGreaterThan(0));
+    expect(f.resolve.mock.calls.every(([requested]) => requested !== undefined)).toBe(true);
+    expect(f.write).not.toHaveBeenCalled();
+    expect(stage).not.toHaveBeenCalled();
+    expect(useToastStore.getState().toasts.some(t => t.kind === 'error')).toBe(true);
+  });
+
+  it.each(['workspace', 'target', 'session'])('refuses when %s changes during async staging', async (change) => {
+    const f = destinationApi();
+    let finish!: (result: { ok: boolean; path: string }) => void;
+    const stage = vi.fn(() => new Promise<{ ok: boolean; path: string }>(resolve => { finish = resolve; }));
+    f.api.files = { importDroppedUri: stage };
+    initShotIngestToasts(f.api);
+    f.emit({ ...payloadOf([PNG]), targetPaneId: 'pane-selected' });
+    await vi.waitFor(() => expect(stage).toHaveBeenCalledTimes(1));
+    if (change === 'workspace') f.switchWorkspace();
+    else if (change === 'target') f.removeTarget();
+    else f.replaceSession();
+    finish({ ok: true, path: '.nexus/attachments/mission-context/capture.png' });
+    await vi.waitFor(() => expect(useToastStore.getState().toasts.length).toBeGreaterThan(0));
+    expect(f.write).not.toHaveBeenCalled();
+    expect(useToastStore.getState().toasts.some(t => t.kind === 'error')).toBe(true);
+  });
+});
+
+
+describe('real renderer target selection', () => {
+  it('selects explicit live grid panes and refuses dead/foreign/parked/missing panes', () => {
+    const layout = useLayoutStore.getState();
+    const parked = usePaneParkedStore.getState().parked;
+    const focused = { ...createPane('cli-agent'), id: 'pane-focused' };
+    const selected = { ...createPane('cli-agent'), id: 'pane-selected' };
+    const dead = { ...createPane('cli-agent'), id: 'pane-dead' };
+    const hidden = { ...createPane('cli-agent'), id: 'pane-parked' };
+    const session = vi.spyOn(terminalHost, 'getPaneSessionId').mockImplementation(id => id === 'pane-dead' ? null : `session-${id}`);
+    try {
+      useLayoutStore.setState({ root: buildGridTree([focused, selected, dead, hidden]), focusedPaneId: focused.id });
+      usePaneParkedStore.setState({ parked: new Map([[hidden.id, { sessionId: 'old', parkedAt: 1, reason: 'idle' }]]) });
+      expect(resolveShotTargetPaneId()).toBe(focused.id);
+      expect(resolveShotTargetPaneId(selected.id)).toBe(selected.id);
+      for (const id of [dead.id, hidden.id, 'pane-foreign', 'pane-missing', '']) expect(resolveShotTargetPaneId(id)).toBeNull();
+    } finally {
+      session.mockRestore();
+      useLayoutStore.setState({ root: layout.root, focusedPaneId: layout.focusedPaneId });
+      usePaneParkedStore.setState({ parked });
+    }
+  });
+});
+
+
+describe('default destination batch race', () => {
+  it('stops staging later files and never writes when the workspace switches mid-batch', async () => {
+    const { api, emit } = makeApi();
+    let workspace = '/a';
+    let finish!: (value: { ok: boolean; path: string }) => void;
+    const stage = vi.fn(() => new Promise<{ ok: boolean; path: string }>(resolve => { finish = resolve; }));
+    const write = vi.fn((_paneId: string, _data: string) => true);
+    api.files = { importDroppedUri: stage };
+    api.getActiveWorkspacePath = () => workspace;
+    api.resolveTargetPaneId = () => 'pane-default';
+    api.writeToPane = write;
+    initShotIngestToasts(api);
+    emit(payloadOf([PNG, { ...PNG, path: '/Users/op/Pictures/Nexus Shot/second.png', name: 'second.png' }]));
+    await vi.waitFor(() => expect(stage).toHaveBeenCalledTimes(1));
+    workspace = '/b';
+    finish({ ok: true, path: '.nexus/attachments/mission-context/capture.png' });
+    await vi.waitFor(() => expect(useToastStore.getState().toasts).toHaveLength(1));
+    expect(stage).toHaveBeenCalledTimes(1);
+    expect(write).not.toHaveBeenCalled();
   });
 });

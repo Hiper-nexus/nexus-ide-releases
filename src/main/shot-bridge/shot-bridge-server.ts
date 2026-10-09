@@ -19,10 +19,18 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, posix, win32 } from 'node:path';
 import { homedir } from 'node:os';
+import type { ProjectExecutionScope } from '../../shared/types';
 import {
   SHOT_FILE_MAX_BYTES,
   SHOT_INGEST_MAX_FILES,
   SHOT_REQUEST_MAX_BYTES,
+  SHOT_TARGETS_MAX_MISSIONS,
+  SHOT_TARGETS_MAX_PANES_PER_MISSION,
+  SHOT_TARGETS_MAX_TITLE_CHARS,
+  shotTargetIdSchema,
+  shotDestinationSchema,
+  type ShotTargetsData,
+  type ShotPaneTarget,
   type ShotFileKind,
   type ShotFileMeta,
   type ShotIngestRejectReason,
@@ -186,15 +194,71 @@ function writeEndpointFile(path: string, port: number, token: string): void {
   writeFileSync(path, JSON.stringify({ port, token }) + '\n', { mode: 0o600 });
 }
 
+/** Listagem mínima: só autoridade física no escopo atual de coordenação. */
+export function buildShotTargets(
+  sessions: readonly {
+    paneId?: string; sessionId?: string | null; kind: string; state?: string;
+    title?: string; adapterId?: string; agentName?: string;
+    missionId?: string; immediateMissionTitle?: string;
+    scope?: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId' | 'rootRealPath'>;
+    coordinationScope?: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId' | 'rootRealPath'>;
+  }[],
+  currentScope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId' | 'rootRealPath'> | null,
+  liveSessionIds: ReadonlySet<string>,
+): ShotTargetsData {
+  if (!currentScope) return { missions: [] };
+  const groups = new Map<string, ShotTargetsData['missions'][number]>();
+  const counts = new Map<string, number>();
+  for (const s of sessions) if (s.paneId) counts.set(s.paneId, (counts.get(s.paneId) ?? 0) + 1);
+  for (const s of sessions) {
+    const scope = s.coordinationScope ?? s.scope;
+    if (!s.paneId || !scope || !s.sessionId || !liveSessionIds.has(s.sessionId) ||
+        (s.kind !== 'cli-agent' && s.kind !== 'shell') || ['parked', 'exited', 'hibernated'].includes(s.state ?? '') || counts.get(s.paneId) !== 1 ||
+        scope.projectId !== currentScope.projectId || scope.checkoutId !== currentScope.checkoutId ||
+        scope.rootRealPath !== currentScope.rootRealPath) continue;
+    const id = s.missionId ?? 'operator';
+    let group = groups.get(id);
+    if (!group) {
+      group = { id, title: s.immediateMissionTitle || (s.missionId ? id : 'Panes'), panes: [] };
+      groups.set(id, group);
+    }
+    group.panes.push({ id: s.paneId, title: s.agentName || s.adapterId || s.title || s.paneId, focused: false });
+  }
+  return sanitizeShotTargets({ missions: [...groups.values()] });
+}
+
+/** Resposta com lista de permissão e limites, sem campos privados do provider. */
+export function sanitizeShotTargets(data: unknown): ShotTargetsData {
+  const result: ShotTargetsData = { missions: [] };
+  if (!data || typeof data !== 'object' || !('missions' in data) || !Array.isArray(data.missions)) return result;
+  const titleOf = (title: unknown, fallback: string) =>
+    (typeof title === 'string' ? title.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '').trim() : '')
+      .slice(0, SHOT_TARGETS_MAX_TITLE_CHARS) || fallback.slice(0, SHOT_TARGETS_MAX_TITLE_CHARS);
+  const seen = new Set<string>();
+  for (const raw of data.missions.slice(0, SHOT_TARGETS_MAX_MISSIONS)) {
+    if (!raw || typeof raw !== 'object' || !shotTargetIdSchema.safeParse(raw.id).success || !Array.isArray(raw.panes)) continue;
+    const panes: ShotPaneTarget[] = [];
+    for (const p of raw.panes.slice(0, SHOT_TARGETS_MAX_PANES_PER_MISSION)) {
+      if (!p || typeof p !== 'object' || !shotTargetIdSchema.safeParse(p.id).success || seen.has(p.id)) continue;
+      seen.add(p.id);
+      panes.push({ id: p.id, title: titleOf(p.title, p.id), focused: false });
+    }
+    if (panes.length) result.missions.push({ id: raw.id, title: titleOf(raw.title, raw.id), panes });
+  }
+  return result;
+}
+
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   expectedToken: string,
-  onFiles: (files: ShotFileMeta[]) => void,
+  onFiles: (files: ShotFileMeta[], targetPaneId?: string) => void,
   homeDir?: string,
   knownFolders?: ShotKnownFolders,
+  listTargets?: () => unknown,
 ): Promise<void> {
-  if (req.method !== 'POST' || req.url?.split('?')[0] !== '/shot/ingest') {
+  const path = req.url?.split('?')[0];
+  if (!((req.method === 'POST' && path === '/shot/ingest') || (req.method === 'GET' && path === '/shot/targets'))) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: false, reason: 'not-found' }));
     return;
@@ -203,6 +267,14 @@ async function handleRequest(
   if (typeof headerToken !== 'string' || !tokenMatches(headerToken, expectedToken)) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: false, reason: 'unauthorized' }));
+    return;
+  }
+
+  const targets = (): ShotTargetsData => sanitizeShotTargets(listTargets?.());
+  if (req.method === 'GET') {
+    const data = targets();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ ok: true, data }));
     return;
   }
 
@@ -230,6 +302,18 @@ async function handleRequest(
     return;
   }
 
+  const destination = shotDestinationSchema.safeParse(payload);
+  if (!destination.success) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, reason: 'invalid-shape' }));
+    return;
+  }
+  const targetPaneId = destination.data.targetPaneId ?? destination.data.target?.paneId;
+  if (targetPaneId && !targets().missions.some(m => m.panes.some(p => p.id === targetPaneId))) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, reason: 'target-unavailable' }));
+    return;
+  }
   const outcome = validateShotIngestFiles(shape.files, { homeDir, knownFolders });
   if (!outcome.ok) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -237,7 +321,7 @@ async function handleRequest(
     return;
   }
 
-  onFiles(outcome.files);
+  onFiles(outcome.files, targetPaneId);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, received: outcome.files.length }));
 }
@@ -253,7 +337,9 @@ export async function startShotBridgeServer(options: {
   homeDir?: string;
   /** app.getPath('pictures'|'videos') — pastas conhecidas redirecionadas. */
   knownFolders?: ShotKnownFolders;
-  onFiles: (files: ShotFileMeta[]) => void;
+  onFiles: (files: ShotFileMeta[], targetPaneId?: string) => void;
+  /** Sessões físicas do workspace exibido na janela principal. */
+  listTargets?: () => unknown;
 }): Promise<ShotBridgeServerHandle> {
   if (active) return active;
 
@@ -262,7 +348,7 @@ export async function startShotBridgeServer(options: {
 
   const server: Server = createServer(async (req, res) => {
     try {
-      await handleRequest(req, res, token, options.onFiles, options.homeDir, options.knownFolders);
+      await handleRequest(req, res, token, options.onFiles, options.homeDir, options.knownFolders, options.listTargets);
     } catch {
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });

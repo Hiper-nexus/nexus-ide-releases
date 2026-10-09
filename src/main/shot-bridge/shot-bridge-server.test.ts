@@ -4,7 +4,7 @@
  * exatamente como o cliente Rust do Nexus Shot e verifica ack + evento).
  */
 
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -269,4 +269,163 @@ describe('servidor HTTP (handshake ponta a ponta)', () => {
       reason: 'invalid-json',
     });
   });
+});
+
+
+describe('explicit Shot destination (F-1054)', () => {
+  it('protects targets with the token and roundtrips a selected target through real HTTP', async () => {
+    const received: Array<{ files: ShotFileMeta[]; targetPaneId?: string }> = [];
+    handle = await startShotBridgeServer({
+      userDataPath: userData, homeDir: home,
+      listTargets: () => ({ missions: [{ id: 'operator', title: 'Panes', panes: [
+        { id: 'pane-selected', title: 'Codex', focused: false },
+      ] }] }),
+      onFiles: (files, targetPaneId) => received.push({ files, targetPaneId }),
+    });
+    const url = `http://127.0.0.1:${handle.port}`;
+    for (const token of [undefined, 'deadbeef']) {
+      expect((await fetch(`${url}/shot/targets`, { headers: token ? { 'x-nexus-shot-token': token } : {} })).status).toBe(401);
+    }
+    const headers = { 'x-nexus-shot-token': handle.token, 'content-type': 'application/json' };
+    const query = await fetch(`${url}/shot/targets`, { headers });
+    expect(query.status).toBe(200);
+    const targets = await query.json();
+    expect(targets).toEqual({ ok: true, data: { missions: [{ id: 'operator', title: 'Panes', panes: [
+      { id: 'pane-selected', title: 'Codex', focused: false },
+    ] }] } });
+    const png = makeFile(picturesDir, 'capture.png');
+    for (const destination of [{ targetPaneId: targets.data.missions[0].panes[0].id }, { target: { paneId: 'pane-selected' } }]) {
+      const sent = await fetch(`${url}/shot/ingest`, { method: 'POST', headers,
+        body: JSON.stringify({ type: 'ingest', source: 'nexus-shot', files: [png], ...destination }) });
+      expect(sent.status).toBe(200);
+      expect(await sent.json()).toEqual({ ok: true, received: 1 });
+    }
+    expect(received).toHaveLength(2);
+    expect(received[0].targetPaneId).toBe('pane-selected');
+    expect(received[1].targetPaneId).toBe('pane-selected');
+    expect(received[0].files[0].path).toBe(realpathSync(png));
+    for (const destination of [
+      { targetPaneId: '' }, { targetPaneId: null }, { targetPaneId: 4 },
+      { targetPaneId: 'a'.repeat(129) }, { targetPaneId: 'pane\nother' },
+      { target: {} }, { target: 'pane-selected' },
+      { targetPaneId: 'pane-selected', target: { paneId: 'pane-other' } },
+    ]) {
+      const sent = await fetch(`${url}/shot/ingest`, { method: 'POST', headers,
+        body: JSON.stringify({ type: 'ingest', source: 'nexus-shot', files: [png], ...destination }) });
+      expect(sent.status).toBe(400);
+      expect(await sent.json()).toEqual({ ok: false, reason: 'invalid-shape' });
+    }
+    const stale = await fetch(`${url}/shot/ingest`, { method: 'POST', headers,
+      body: JSON.stringify({ type: 'ingest', source: 'nexus-shot', files: [png], targetPaneId: 'pane-gone' }) });
+    expect(stale.status).toBe(400);
+    expect(await stale.json()).toEqual({ ok: false, reason: 'target-unavailable' });
+    expect(received).toHaveLength(2);
+  });
+
+  it('bounds and sanitizes target IDs/titles/counts without exposing extra fields', async () => {
+    handle = await startShotBridgeServer({ userDataPath: userData, homeDir: home, onFiles: () => {},
+      listTargets: () => ({ missions: Array.from({ length: 30 }, (_, i) => ({
+        id: `mission-${i}`, title: 'M\n'.repeat(100), token: 'private',
+        panes: [ { id: 'invalid\u0000', title: 'bad' }, { id: 'x'.repeat(129) },
+          ...Array.from({ length: 60 }, (_, j) => ({ id: `pane-${i}-${j}`, title: 'P\u001b'.repeat(100), focused: true, token: 'private' })) ],
+      })) }),
+    });
+    const response = await fetch(`http://127.0.0.1:${handle.port}/shot/targets`, { headers: { 'x-nexus-shot-token': handle.token } });
+    const result = await response.json();
+    expect(result.data.missions.length).toBeLessThanOrEqual(25);
+    for (const mission of result.data.missions) {
+      expect(mission.title.length).toBeLessThanOrEqual(80);
+      expect(mission.title).not.toMatch(/[\u0000-\u001f\u007f]/);
+      expect(mission.panes.length).toBeLessThanOrEqual(50);
+      for (const pane of mission.panes) {
+        expect(pane.id.length).toBeLessThanOrEqual(128);
+        expect(pane.id).not.toMatch(/[\u0000-\u001f\u007f]/);
+        expect(pane.title.length).toBeLessThanOrEqual(80);
+        expect(pane.title).not.toMatch(/[\u0000-\u001f\u007f]/);
+        expect(pane.focused).toBe(false);
+      }
+    }
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+});
+
+
+describe('Main physical Shot target inventory', () => {
+  it('includes only the current coordination scope, groups missions, omits ambiguous panes', async () => {
+    const { buildShotTargets } = await import('./shot-bridge-server');
+    const scope = { projectId: 'project', checkoutId: 'checkout', rootRealPath: '/a' };
+    const agent = { paneId: 'pane-a', sessionId: 'session-a', kind: 'cli-agent', adapterId: 'codex', scope };
+    expect(buildShotTargets([
+      agent,
+      { ...agent, paneId: 'pane-worktree', scope: { ...scope, rootRealPath: '/worktree' }, coordinationScope: scope, missionId: 'mission-1', immediateMissionTitle: 'Mission' },
+      { ...agent, paneId: 'pane-foreign', scope: { ...scope, checkoutId: 'other' } },
+      { ...agent, paneId: undefined },
+      { ...agent, paneId: 'pane-ambiguous' }, { ...agent, paneId: 'pane-ambiguous' },
+      { paneId: 'pane-shell', sessionId: 'session-shell', kind: 'shell', title: 'Shell', scope },
+      { ...agent, paneId: 'pane-dead', sessionId: 'session-dead' },
+      { ...agent, paneId: 'pane-parked', state: 'parked' },
+      { ...agent, paneId: 'pane-exited', state: 'exited' },
+      { ...agent, paneId: 'pane-hibernated', state: 'hibernated' },
+      { ...agent, paneId: 'pane-browser', kind: 'browser' },
+    ], scope, new Set(['session-a', 'session-shell']))).toEqual({ missions: [
+      { id: 'operator', title: 'Panes', panes: [{ id: 'pane-a', title: 'codex', focused: false }, { id: 'pane-shell', title: 'Shell', focused: false }] },
+      { id: 'mission-1', title: 'Mission', panes: [{ id: 'pane-worktree', title: 'codex', focused: false }] },
+    ] });
+    expect(buildShotTargets([agent], null, new Set(['session-a']))).toEqual({ missions: [] });
+  });
+});
+
+
+it('local HTTP query → selected capture → Main event → staged renderer batch stays on that target', async () => {
+  const { initShotIngestToasts } = await import('../../renderer/state/shot-ingest');
+  const { useToastStore } = await import('../../renderer/state/toast-store');
+  let emit: ((payload: import('../../shared/shot-bridge').ShotFilesReceivedPayload) => void) | undefined;
+  const writes: Array<[string, string]> = [];
+  const imports: string[] = [];
+  const off = initShotIngestToasts({
+    onShotFilesReceived: callback => { emit = callback; return () => { emit = undefined; }; },
+    openTerminalPath: async () => ({ ok: true }),
+    resolveTargetPaneId: requested => requested === 'pane-selected' ? requested : 'pane-focused',
+    getPaneSessionId: () => 'session-selected',
+    getActiveWorkspacePath: () => '/fixture-workspace',
+    writeToPane: (paneId, data) => { writes.push([paneId, data]); return true; },
+    files: { importDroppedUri: async uri => { imports.push(uri); return { ok: true, path: `.nexus/attachments/mission-context/capture-${imports.length}.png` }; } },
+  });
+  try {
+    handle = await startShotBridgeServer({ userDataPath: userData, homeDir: home,
+      listTargets: () => ({ missions: [{ id: 'operator', title: 'Panes', panes: [{ id: 'pane-selected', title: 'Codex', focused: false }] }] }),
+      onFiles: (files, targetPaneId) => emit?.({ files, source: 'nexus-shot', receivedAt: Date.now(), ...(targetPaneId ? { targetPaneId } : {}) }),
+    });
+    const headers = { 'x-nexus-shot-token': handle.token, 'content-type': 'application/json' };
+    const url = `http://127.0.0.1:${handle.port}`;
+    const query = await (await fetch(`${url}/shot/targets`, { headers })).json();
+    const files = [makeFile(moviesDir, 'recording.mp4'), makeFile(picturesDir, 'contact-sheet.png'),
+      ...Array.from({ length: 5 }, (_, i) => makeFile(picturesDir, `frame-${i}.png`))];
+    const response = await fetch(`${url}/shot/ingest`, { method: 'POST', headers,
+      body: JSON.stringify({ type: 'ingest', source: 'nexus-shot', files, target: { paneId: query.data.missions[0].panes[0].id } }) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, received: 7 });
+    expect(writes).toHaveLength(1);
+    expect(writes[0][0]).toBe('pane-selected');
+    expect(writes[0][1]).toBe('/fixture-workspace/.nexus/attachments/mission-context/capture-1.png /fixture-workspace/.nexus/attachments/mission-context/capture-2.png /fixture-workspace/.nexus/attachments/mission-context/capture-3.png ');
+    expect(writes[0][1]).not.toMatch(/[\r\n]/);
+    expect(imports).toHaveLength(3);
+    expect(imports[0]).toContain('contact-sheet.png');
+    expect(imports[1]).toContain('recording.mp4');
+    expect(imports[2]).toContain('frame-0.png');
+  } finally {
+    off();
+    for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+  }
+});
+
+
+it('a failed targets provider responds with a generic bounded error', async () => {
+  handle = await startShotBridgeServer({ userDataPath: userData, homeDir: home, onFiles: () => {},
+    listTargets: () => { throw new Error('private-provider-title'); } });
+  const response = await fetch(`http://127.0.0.1:${handle.port}/shot/targets`, {
+    headers: { 'x-nexus-shot-token': handle.token }, signal: AbortSignal.timeout(500),
+  });
+  expect(response.status).toBe(500);
+  expect(await response.json()).toEqual({ ok: false, reason: 'internal' });
 });

@@ -7,6 +7,9 @@
  *   POST http://127.0.0.1:{port}/shot/ingest
  *   header: x-nexus-shot-token: <token aleatório por sessão>
  *   body:   { "type": "ingest", "files": ["<abs path>", ...], "source": "nexus-shot" }
+ *   destino opcional: { "targetPaneId": "pane-..." } ou { "target": { "paneId": "pane-..." } }
+ *   GET /shot/targets (mesmo token): { "ok": true, "data": { "missions": [...] } }
+ *   Alvo explícito indisponível é recusado; sem alvo conserva o foco padrão.
  *   ack:    200 { "ok": true, "received": N }
  *   erro:   4xx { "ok": false, "reason": "<slug>" }
  *
@@ -22,6 +25,28 @@
  * arquivo NÃO é copiado: já vive num diretório permitido; entregamos apenas
  * os metadados ao renderer ("shot:files-received").
  */
+
+import { z } from 'zod';
+
+/** IDs opacos: jamais caminhos, texto de terminal ou caracteres de controle. */
+export const shotTargetIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+
+export const shotDestinationSchema = z.object({
+  targetPaneId: shotTargetIdSchema.optional(),
+  // Compatibilidade com o seletor do Shot do PR106.
+  target: z.object({ paneId: shotTargetIdSchema }).strict().optional(),
+}).passthrough().refine(
+  value => !value.targetPaneId || !value.target || value.targetPaneId === value.target.paneId,
+);
+
+export const SHOT_TARGETS_MAX_MISSIONS = 25;
+export const SHOT_TARGETS_MAX_PANES_PER_MISSION = 50;
+export const SHOT_TARGETS_MAX_TITLE_CHARS = 80;
+
+export interface ShotPaneTarget { id: string; title: string; focused: boolean }
+export interface ShotTargetsData {
+  missions: { id: string; title: string; panes: ShotPaneTarget[] }[];
+}
 
 export const SHOT_BRIDGE_CHANNELS = {
   /** event: main → renderer. Arquivos recebidos do Nexus Shot. */
@@ -52,6 +77,8 @@ export interface ShotFilesReceivedPayload {
   files: ShotFileMeta[];
   source: 'nexus-shot';
   receivedAt: number;
+  /** Destino explícito: indisponível nunca cai no pane padrão. */
+  targetPaneId?: string;
 }
 
 /** Slugs de erro estáveis do ack (o cliente mapeia para i18n). */
@@ -59,6 +86,7 @@ export type ShotIngestRejectReason =
   | 'unauthorized'
   | 'invalid-json'
   | 'invalid-shape'
+  | 'target-unavailable'
   | 'too-many-files'
   | 'path-not-absolute'
   | 'path-outside-allowed'

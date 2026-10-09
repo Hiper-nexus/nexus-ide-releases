@@ -88,3 +88,17 @@ describe("main Squirrel install/update events", () => {
     expect(ready).toBeGreaterThan(gate);
   });
 });
+
+
+describe('Main Shot destination wiring (F-1054)', () => {
+  it('uses bound renderer scope plus live Main inventory and forwards the target in the event', () => {
+    const shot = mainSource.slice(mainSource.indexOf('await startShotBridgeServer({'), mainSource.indexOf('[main] shot-bridge bootstrap failed:'));
+    expect(shot).toContain('listPaneSnapshots()');
+    expect(shot).toContain('getRendererWorkspaceScope(win.webContents)');
+    expect(shot).toContain('listLiveSessionLocations()');
+    expect(shot).toContain('onFiles: (files, targetPaneId)');
+    expect(shot).toContain('...(targetPaneId ? { targetPaneId } : {})');
+    expect(shot).toContain('app.getPath("pictures")');
+    expect(shot).toContain('app.getPath("videos")');
+  });
+});
