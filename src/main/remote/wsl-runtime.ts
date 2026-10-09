@@ -47,7 +47,8 @@ export function wslCredentialSlot(distro: string): string {
 
 /**
  * Monta o argv do `wsl.exe` para rodar `command` em `distro` com cwd.
- * Ordem (estável, testada): `-d`, `--cd`, `--`, `exec`, shell `-lc`, comando.
+ * Ordem (estável, testada): `-d`, `--cd`, `--exec`, shell `-lc`, comando.
+ * `--exec` entrega o argv ao binário, sem o shell padrão da distro.
  */
 export function planWslRuntime(input: WslRuntimePlanInput): WslRuntimePlan {
   const distro = input.distro.trim();
@@ -62,8 +63,7 @@ export function planWslRuntime(input: WslRuntimePlanInput): WslRuntimePlan {
     distro,
     '--cd',
     linuxCwd,
-    '--',
-    'exec',
+    '--exec',
     'bash',
     '-lc',
     quoted,

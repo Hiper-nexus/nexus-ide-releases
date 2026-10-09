@@ -13,10 +13,9 @@ describe('WSL runtime backend (first cut)', () => {
       command: ['npm', 'test', '--', 'file name.ts'],
     });
     expect(plan.argv.slice(0, 4)).toEqual(['-d', 'Ubuntu', '--cd', '/mnt/c/Users/me/project']);
-    expect(plan.argv[4]).toBe('--');
-    expect(plan.argv.slice(5, 7)).toEqual(['exec', 'bash']);
-    expect(plan.argv[7]).toBe('-lc');
-    expect(plan.argv[8]).toBe("npm test -- 'file name.ts'");
+    expect(plan.argv[4]).toBe('--exec');
+    expect(plan.argv.slice(5, 7)).toEqual(['bash', '-lc']);
+    expect(plan.argv[7]).toBe("npm test -- 'file name.ts'");
     expect(plan.credentialSlot).toBe('wsl:Ubuntu');
     expect(plan.windowsUncCwd).toContain('wsl.localhost\\Ubuntu');
   });

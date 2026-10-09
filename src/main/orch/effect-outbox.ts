@@ -352,6 +352,40 @@ export class EffectOutboxStore {
     return rows.map(rowToEntry);
   }
 
+  /**
+   * Efeitos bloqueadores ainda abertos. Com `threadId`, o filtro entra no
+   * SQL (índice por thread) antes do limite: linhas de outra missão não
+   * escondem o checkpoint desta. `truncated` é fail-closed — a janela
+   * encheu e o gate não pode dizer que está tudo assentado.
+   */
+  listUnsettledBlocking(
+    threadId?: string,
+  ): { readonly rows: EffectOutboxEntry[]; readonly truncated: boolean } {
+    const cap = 200;
+    const blocking = ['checkpoint.capture', 'handoff.deliver'];
+    const thread =
+      threadId === undefined ? undefined : z.string().min(1).max(128).parse(threadId);
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT * FROM effect_outbox
+         WHERE status IN ('pending', 'running')
+           AND effect_type IN (?, ?)
+           ${thread === undefined ? '' : 'AND thread_id = ?'}
+         ORDER BY created_at ASC, effect_id ASC
+         LIMIT ?`,
+      )
+      .all(
+        ...blocking,
+        ...(thread === undefined ? [] : [thread]),
+        cap + 1,
+      );
+    return {
+      rows: rows.slice(0, cap).map(rowToEntry),
+      truncated: rows.length > cap,
+    };
+  }
+
   listByStatus(status: EffectOutboxStatus, limit = 100): EffectOutboxEntry[] {
     const rows = this.#binding
       .readDatabase()

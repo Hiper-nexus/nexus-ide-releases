@@ -135,6 +135,38 @@ describe('assertCompletionEffectsSettled reads the handoff ledger', () => {
     )).toThrow(/completion_effects_pending:.*checkpoint\.capture=pending/);
   });
 
+  it('sees this mission checkpoint when other threads fill the status window', () => {
+    const { runtime, projectScope, missions, handoffs } = openScope();
+    const missionRow = missions.create({ title: 'Board done' });
+    const delivered = handoffs.submit({
+      missionId: missionRow.id,
+      sessionId: 'worker-session',
+      fromAgent: 'worker',
+      status: 'success',
+      summary: 'Handoff final já saiu da fila.',
+    });
+    expect(handoffs.markSubmitted(delivered.id)).toBe(true);
+    const outbox = createScopedEffectOutboxStore(runtime, projectScope);
+    for (let index = 0; index < 200; index += 1) {
+      outbox.enqueue({
+        commandId: `cmd-noise-${index}`,
+        threadId: 'other-thread',
+        type: 'thread-title.generate',
+      });
+    }
+    outbox.enqueue({
+      commandId: 'cmd-checkpoint-hidden',
+      threadId: missionRow.id,
+      type: 'checkpoint.capture',
+    });
+
+    expect(() => assertCompletionEffectsSettled(
+      runtime,
+      projectScope,
+      missionRow.id,
+    )).toThrow(/completion_effects_pending:.*checkpoint\.capture=pending/);
+  });
+
   it('ignores the orchestrator session queued handoff and still blocks a worker queue', () => {
     const { runtime, projectScope, missions, handoffs } = openScope();
     const missionRow = missions.create({ title: 'Board done' });

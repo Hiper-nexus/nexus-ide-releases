@@ -44,10 +44,13 @@ export function assertCompletionEffectsSettled(
   options?: { readonly excludeSessionId?: string },
 ): void {
   const outbox = new EffectOutboxStore(runtimeManager, scope);
-  const open = [
-    ...outbox.listByStatus('pending', 200),
-    ...outbox.listByStatus('running', 200),
-  ];
+  const blocking = outbox.listUnsettledBlocking(threadId);
+  if (blocking.truncated) {
+    throw new Error(
+      'completion_effects_pending: effect_outbox backlog exceeds the gate window',
+    );
+  }
+  const open = blocking.rows;
   const excludeSessionId = options?.excludeSessionId?.trim() ?? '';
   const queuedDeliveries = createScopedHandoffStore(
     runtimeManager,
