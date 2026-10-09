@@ -74,6 +74,57 @@ describe('cli history import (T3)', () => {
     expect(blocks[0]?.cwd).toBe('/w');
   });
 
+  it('reads Codex rollout function_call shell and exec_command', () => {
+    const blocks = importCliHistoryBlocks(
+      [
+        JSON.stringify({
+          timestamp: '2026-10-08T12:00:00.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            name: 'shell',
+            arguments: JSON.stringify({
+              command: ['/bin/zsh', '-lc', 'npm test'],
+              workdir: '/workspace/app',
+            }),
+            call_id: 'call_1',
+          },
+        }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            name: 'exec_command',
+            arguments: JSON.stringify({ cmd: 'git status', workdir: '/repo' }),
+          },
+        }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'ok' }],
+          },
+        }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            name: 'Read',
+            arguments: JSON.stringify({ path: 'a.ts' }),
+          },
+        }),
+      ].join('\n'),
+      { sessionId: 'codex-1', cwd: '/fallback' },
+    );
+    expect(blocks.map((block) => [block.command, block.cwd])).toEqual([
+      ['npm test', '/workspace/app'],
+      ['git status', '/repo'],
+    ]);
+    expect(blocks[0]?.startedAt).toBe(Date.parse('2026-10-08T12:00:00.000Z'));
+    expect(blocks[0]?.status).toBe('unknown');
+  });
+
   it('imports several files keyed by their own sessionId', () => {
     const blocks = importCliHistoryFiles([
       {

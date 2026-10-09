@@ -3317,6 +3317,49 @@ describe("MCP dispatch effect safety", () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
+    it("lets a read-only Maestro request resume and still denies other mission controls", async () => {
+      const resume = vi.fn(async () => ({ resumed: true }));
+      const resumed = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_mission_request_resume",
+          description: "resume",
+          inputSchema: { type: "object", properties: {} },
+          handler: resume,
+        }),
+        "nexus_mission_request_resume",
+        { missionId: TEST_MISSION_ID },
+        readOnlyContext(),
+        workflowOptions(),
+      );
+      expect(resumed).toMatchObject({
+        ok: true,
+        result: { resumed: true },
+      });
+      expect(resume).toHaveBeenCalledOnce();
+
+      const focus = vi.fn(async () => ({ shouldNotRun: true }));
+      const focused = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_editor_focus",
+          description: "focus",
+          inputSchema: { type: "object", properties: {} },
+          handler: focus,
+        }),
+        "nexus_editor_focus",
+        { path: "README.md" },
+        readOnlyContext(),
+        workflowOptions(),
+      );
+      expect(focused).toMatchObject({
+        ok: false,
+        denied: true,
+        error: expect.stringContaining("read-only authority denied tool"),
+      });
+      expect(focus).not.toHaveBeenCalled();
+    });
+
     it("F-794: writer isolado com allowlist vazia commita na própria worktree; push segue negado", async () => {
       const context = missionContext(TEST_CONTEXT_REVISION, []);
       context.executionScope = {

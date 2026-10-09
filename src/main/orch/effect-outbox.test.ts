@@ -1,8 +1,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
+import {
+  ProjectRuntimeCapacityError,
+  ProjectRuntimeManager,
+} from "../runtime/project-runtime-manager";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
   createScopedEffectOutboxStore,
@@ -16,7 +20,11 @@ import {
   createScopedCommandReceiptStore,
   type CommandEffectAcceptanceInput,
 } from "./command-receipts";
-import { reconcileProviderRuntimeAtBoot } from "./provider-runtime-recovery";
+import {
+  ProviderRuntimeRecoveryError,
+  reconcileProviderRuntimeAtBoot,
+  reconcileProviderRuntimesAtBoot,
+} from "./provider-runtime-recovery";
 
 const directories: string[] = [];
 const managers: ProjectRuntimeManager[] = [];
@@ -486,6 +494,41 @@ describe("ORC-04 command receipts (T3 policy)", () => {
     expect(again.inserted).toBe(false);
     expect(again.effect?.id).toBe(accepted.effect?.id);
     expect(store.listByCommandId("cmd-atomic")).toHaveLength(1);
+    expect(() =>
+      receipts.acceptCommandEffect(
+        store,
+        {
+          commandId: "cmd-atomic",
+          commandType: "turn.start",
+          threadId: "thread-b",
+        },
+        {
+          commandId: "cmd-atomic",
+          threadId: "thread-b",
+          type: "turn.start",
+        },
+      ),
+    ).toThrow(/already bound/);
+    expect(() =>
+      receipts.acceptCommandEffect(
+        store,
+        {
+          commandId: "cmd-atomic",
+          commandType: "checkpoint.capture",
+          threadId: "thread-a",
+        },
+        {
+          commandId: "cmd-atomic",
+          threadId: "thread-a",
+          type: "checkpoint.capture",
+        },
+      ),
+    ).toThrow(/already bound/);
+    expect(store.listByCommandId("cmd-atomic")).toHaveLength(1);
+    expect(store.get("cmd-atomic")?.threadId).toBe("thread-a");
+    expect(store.get("cmd-atomic")?.type).toBe("turn.start");
+    expect(receipts.getByCommandId("cmd-atomic")?.aggregateId).toBe("thread-a");
+    expect(receipts.getByCommandId("cmd-atomic")?.commandType).toBe("turn.start");
 
     store.enqueue({
       id: "eff-taken",
@@ -537,7 +580,7 @@ describe("ORC-04 command receipts (T3 policy)", () => {
           type: "turn.interrupt",
         },
       ),
-    ).toThrow(/identity conflict/);
+    ).toThrow(/already bound to another command/);
     // O recibo original permanece o único.
     expect(receipts.getByCommandId("cmd-reused")?.aggregateId).toBe("mission-a");
     expect(store.listByCommandId("cmd-reused")).toHaveLength(1);
@@ -751,6 +794,51 @@ describe("ORC-04 command receipts (T3 policy)", () => {
     expect(again.resultSequence).toBe(8);
     expect(again.status).toBe("rejected");
     expect(again.error).toBe("boom");
+  });
+
+  it("upsert rejects a reused commandId bound to another aggregate or type", () => {
+    const { manager, scope } = freshStore();
+    const receipts = createScopedCommandReceiptStore(manager, scope);
+    receipts.insertIfAbsent({
+      commandId: "cmd-identity",
+      commandType: "turn.start",
+      threadId: "thread-a",
+    });
+    expect(() =>
+      receipts.upsert({
+        commandId: "cmd-identity",
+        commandType: "checkpoint.capture",
+        threadId: "thread-a",
+        resultSequence: 3,
+        status: "accepted",
+      }),
+    ).toThrow(/already bound/);
+    expect(() =>
+      receipts.upsert({
+        commandId: "cmd-identity",
+        commandType: "turn.start",
+        threadId: "thread-b",
+        resultSequence: 4,
+        status: "rejected",
+        error: "other settlement",
+      }),
+    ).toThrow(/already bound/);
+    expect(() =>
+      receipts.upsert({
+        commandId: "cmd-identity",
+        commandType: "turn.start",
+        projectId: "project-a",
+        resultSequence: 5,
+        status: "accepted",
+      }),
+    ).toThrow(/already bound/);
+    const stored = receipts.getByCommandId("cmd-identity");
+    expect(stored?.commandType).toBe("turn.start");
+    expect(stored?.aggregateKind).toBe("thread");
+    expect(stored?.aggregateId).toBe("thread-a");
+    expect(stored?.resultSequence).toBe(0);
+    expect(stored?.status).toBe("accepted");
+    expect(stored?.error).toBeNull();
   });
 
   it("unsettled receipts keep the honest sequence-0 mark", () => {
@@ -1023,6 +1111,95 @@ describe("ORC-01 worker drain", () => {
     expect(safeResult.retried).toBe(0);
     expect(replay.store.get(safe.id)?.status).toBe("succeeded");
   });
+
+  it("pins the runtime for an in-flight handler so LRU cannot evict it", () => {
+    const baseDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nexus-effect-flight-pin-"),
+    );
+    directories.push(baseDir);
+    const manager = new ProjectRuntimeManager({
+      baseDir,
+      appVersion: "effect-outbox-test",
+      maxOpen: 1,
+    });
+    managers.push(manager);
+    const scope = testProjectScope({ projectId: "project-flight-pin" });
+    const store = createScopedEffectOutboxStore(manager, scope);
+    const effect = store.enqueue({
+      commandId: "cmd-flight-pin",
+      threadId: "thread-a",
+      type: "runtime.continue",
+    });
+    store.retainHandlerFlight(effect.id);
+    const other = testProjectScope({
+      projectId: "project-flight-other",
+      checkoutId: "checkout-other",
+    });
+    expect(() => manager.open(other)).toThrow(ProjectRuntimeCapacityError);
+    store.releaseHandlerFlight(effect.id);
+    expect(manager.open(other).closed).toBe(false);
+  });
+
+  it("keeps the in-flight guard after the database handle is replaced", () => {
+    let now = 1_700_000_000_000;
+    const baseDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nexus-effect-flight-scope-"),
+    );
+    directories.push(baseDir);
+    const manager = new ProjectRuntimeManager({
+      baseDir,
+      appVersion: "effect-outbox-test",
+      maxOpen: 1,
+      now: () => now,
+    });
+    managers.push(manager);
+    const scope = testProjectScope({ projectId: "project-flight-scope" });
+    const store = createScopedEffectOutboxStore(manager, scope, {
+      now: () => now,
+    });
+    const bound = store.enqueue({
+      id: "eff-a-bound",
+      commandId: "cmd-scope-bound",
+      threadId: "thread-a",
+      type: "turn.start",
+      availableAt: now,
+    });
+    const safe = store.enqueue({
+      id: "eff-b-safe",
+      commandId: "cmd-scope-safe",
+      threadId: "thread-b",
+      type: "checkpoint.capture",
+      availableAt: now,
+    });
+    expect(
+      store.claimNext({ workerId: "worker-1", leaseDurationMs: 1_000 })?.id,
+    ).toBe(bound.id);
+    expect(
+      store.claimNext({ workerId: "worker-1", leaseDurationMs: 1_000 })?.id,
+    ).toBe(safe.id);
+    store.retainHandlerFlight(bound.id);
+    store.retainHandlerFlight(safe.id);
+    manager.closeAll();
+    now += 60_000;
+    const reopened = createScopedEffectOutboxStore(manager, scope, {
+      now: () => now,
+    });
+    expect(
+      reopened.claimNext({ workerId: "worker-2", leaseDurationMs: 1_000 }),
+    ).toBeNull();
+    expect(reopened.get(bound.id)?.status).toBe("running");
+    expect(reopened.get(bound.id)?.leaseOwner).toBe("worker-1");
+    expect(reopened.get(safe.id)?.status).toBe("running");
+    reopened.releaseHandlerFlight(bound.id);
+    reopened.releaseHandlerFlight(safe.id);
+    const reclaimed = reopened.claimNext({
+      workerId: "worker-2",
+      leaseDurationMs: 1_000,
+    });
+    expect(reopened.get(bound.id)?.status).toBe("failed");
+    expect(reclaimed?.id).toBe(safe.id);
+    expect(reclaimed?.status).toBe("running");
+  });
 });
 
 describe("ORC-06 provider runtime boot reconciliation", () => {
@@ -1098,5 +1275,81 @@ describe("ORC-06 provider runtime boot reconciliation", () => {
     expect(result.cancelledEffects).toBe(0);
     expect(result.requeuedEffects).toBe(0);
     expect(store.get(done.id)?.status).toBe("succeeded");
+  });
+
+  it("reconciles the scopes it can and blocks claim on the one that failed", () => {
+    const baseDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nexus-provider-recovery-partial-"),
+    );
+    directories.push(baseDir);
+    let blockedPath: string | null = null;
+    const manager = new ProjectRuntimeManager({
+      baseDir,
+      appVersion: "effect-outbox-test",
+      databaseFactory: (filename, options) => {
+        if (blockedPath === filename && options?.readonly !== true) {
+          throw new Error("sqlite temporarily unavailable");
+        }
+        return new Database(filename, options);
+      },
+    });
+    managers.push(manager);
+    const scopeA = testProjectScope({
+      projectId: "project-recovery-a",
+      checkoutId: "checkout-a",
+    });
+    const scopeB = testProjectScope({
+      projectId: "project-recovery-b",
+      checkoutId: "checkout-b",
+    });
+    const storeA = createScopedEffectOutboxStore(manager, scopeA);
+    const storeB = createScopedEffectOutboxStore(manager, scopeB);
+    storeA.enqueue({
+      commandId: "cmd-a-bound",
+      threadId: "thread-a",
+      type: "turn.start",
+    });
+    const live = storeA.enqueue({
+      commandId: "cmd-a-live",
+      threadId: "thread-live",
+      type: "checkpoint.capture",
+    });
+    const stranded = storeB.enqueue({
+      commandId: "cmd-b-bound",
+      threadId: "thread-b",
+      type: "turn.start",
+    });
+    manager.close(scopeB);
+    blockedPath = manager.locationFor(scopeB).databasePath;
+
+    expect(() =>
+      reconcileProviderRuntimesAtBoot(manager, [scopeB, scopeA]),
+    ).toThrow(ProviderRuntimeRecoveryError);
+    let caught: ProviderRuntimeRecoveryError | null = null;
+    try {
+      reconcileProviderRuntimesAtBoot(manager, [scopeB, scopeA]);
+    } catch (error) {
+      caught = error as ProviderRuntimeRecoveryError;
+    }
+    expect(caught?.failedScopes).toEqual([
+      { projectId: scopeB.projectId, checkoutId: scopeB.checkoutId },
+    ]);
+    expect(storeA.listByCommandId("cmd-a-bound")[0]?.status).toBe("cancelled");
+    expect(storeA.get(live.id)?.status).toBe("pending");
+    expect(
+      storeA.claimNext({ workerId: "worker-a", leaseDurationMs: 1_000 })?.id,
+    ).toBe(live.id);
+    expect(storeB.get(stranded.id)?.status).toBe("pending");
+    expect(() =>
+      storeB.claimNext({ workerId: "worker-b", leaseDurationMs: 1_000 }),
+    ).toThrow(/not reconciled/);
+
+    blockedPath = null;
+    manager.close(scopeB);
+    reconcileProviderRuntimeAtBoot({ scope: scopeB, runtimeManager: manager });
+    expect(storeB.get(stranded.id)?.status).toBe("cancelled");
+    expect(
+      storeB.claimNext({ workerId: "worker-b", leaseDurationMs: 1_000 }),
+    ).toBeNull();
   });
 });

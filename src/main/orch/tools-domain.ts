@@ -639,23 +639,25 @@ const missionRequestResumeTool: McpToolDef = {
     required: ['missionId'],
   },
   handler: async (args, ctx) => {
-    const missionId = requireStr(args, 'missionId');
+    const requestedMissionId = requireStr(args, 'missionId');
     const note = str(args, 'note')?.trim().slice(0, 200) ?? '';
+    // O argumento não escolhe a missão. Só o vínculo que o Main gravou no
+    // token (ctx.missionId) autoriza o pedido — pane solto e orquestrador de
+    // outra missão não remontam o alvo.
+    if (!ctx.missionId || ctx.missionId !== requestedMissionId) {
+      throw new Error(
+        'nexus_mission_request_resume: a retomada só vale para a missão vinculada a esta sessão.',
+      );
+    }
+    const missionId = ctx.missionId;
     const stores = getProjectDomainStores(ctx.scope);
     const mission = stores.missions.get(missionId);
     if (!mission) throw new Error(`nexus_mission_request_resume: missão ${missionId} não existe.`);
-    // F-1043: só a missão VINCULADA ao chamador (ou a mão do operador, que
-    // não tem missionId). Um orquestrador da A não alcança a B.
-    const isOperatorHand =
-      ctx.promotedFromUserSession === true || (ctx.role === 'orchestrator' && !ctx.missionId);
-    if (!isOperatorHand && ctx.missionId !== missionId) {
-      throw new Error(
-        `nexus_mission_request_resume: este pane só pede retomada da própria missão (${ctx.missionId ?? 'sem vínculo'}).`,
-      );
-    }
     // F-1042: encerramento explícito do operador NUNCA sai por chamada de
     // agente. O selo runtime-closed é verificado ANTES do resume — o caminho
     // `operator` do resumeFastLaneMission o removeria via resumeTechnical.
+    // O remountKind `automatic` abaixo preserva o veredito; este check devolve
+    // o recibo limpo sem tocar na missão.
     if (hasCurrentMissionRuntimeCloseVerdict(mission)) {
       return {
         ok: false,
@@ -666,8 +668,10 @@ const missionRequestResumeTool: McpToolDef = {
       };
     }
     try {
+      // Chamada de agente não é o botão Retomar: remount automático preserva
+      // o veredito de encerramento do operador.
       await resumeFastLaneMission(ctx.scope, missionId, {
-        remountKind: 'operator',
+        remountKind: 'automatic',
         note: note || 'Retomada pedida por nexus_mission_request_resume',
       });
     } catch (error) {

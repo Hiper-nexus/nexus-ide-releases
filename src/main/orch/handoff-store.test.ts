@@ -283,6 +283,44 @@ describe("scoped handoff store", () => {
     expect(handoffs.get(queued.id)?.deliveryState).toBe("acknowledged");
   });
 
+  it("list-ack with ids leaves submitted rows the caller did not receive", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-list-page",
+    });
+    let seq = 0;
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      idFactory: () => `handoff-page-${++seq}`,
+    });
+    missions.create({ title: "Paged ack" });
+    const seen = handoffs.submit({
+      missionId: "mission-list-page",
+      sessionId: "worker-session",
+      fromAgent: "worker",
+      status: "success",
+      summary: "primeira página",
+    });
+    const unseen = handoffs.submit({
+      missionId: "mission-list-page",
+      sessionId: "worker-session",
+      fromAgent: "worker",
+      status: "success",
+      summary: "fora da página",
+    });
+    expect(handoffs.markDelivered(seen.id)).toBe(true);
+    expect(handoffs.markDelivered(unseen.id)).toBe(true);
+    expect(
+      handoffs.acknowledgeSeenByOrchestratorList("mission-list-page", [seen.id]),
+    ).toBe(1);
+    expect(handoffs.get(seen.id)?.deliveryState).toBe("acknowledged");
+    expect(handoffs.get(unseen.id)?.deliveryState).toBe("submitted");
+    expect(
+      handoffs.acknowledgeSeenByOrchestratorList("mission-list-page", []),
+    ).toBe(0);
+    expect(handoffs.get(unseen.id)?.deliveryState).toBe("submitted");
+  });
+
   it("persists bounded delivery attempts and accepts the exact attempt atomically", () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

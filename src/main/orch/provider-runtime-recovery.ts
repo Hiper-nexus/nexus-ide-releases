@@ -1,6 +1,10 @@
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import { EffectOutboxStore } from './effect-outbox';
+import {
+  blockUnreconciledEffectOutbox,
+  clearUnreconciledEffectOutbox,
+  EffectOutboxStore,
+} from './effect-outbox';
 import { CommandReceiptStore } from './command-receipts';
 
 /**
@@ -38,26 +42,54 @@ export interface ProviderRuntimeRecoveryResult {
   readonly unsettledReceipts: number;
 }
 
+export class ProviderRuntimeRecoveryError extends Error {
+  readonly failedScopes: readonly {
+    projectId: string;
+    checkoutId: string;
+  }[];
+
+  constructor(
+    failedScopes: readonly Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>[],
+  ) {
+    super(
+      `provider runtime reconcile failed for ${failedScopes.length} scope(s)`,
+    );
+    this.name = 'ProviderRuntimeRecoveryError';
+    this.failedScopes = failedScopes.map((scope) => ({
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+    }));
+  }
+}
+
 export function reconcileProviderRuntimeAtBoot(
   deps: ProviderRuntimeRecoveryDeps,
 ): ProviderRuntimeRecoveryResult {
-  const outbox = new EffectOutboxStore(deps.runtimeManager, deps.scope, {
-    now: deps.now,
-  });
-  const receipts = new CommandReceiptStore(deps.runtimeManager, deps.scope, {
-    now: deps.now,
-  });
-  const settled = outbox.reconcileAfterProcessLoss();
-  const unsettledReceipts = receipts.listUnsettled().length;
-  return {
-    cancelledEffects: settled.cancelled,
-    requeuedEffects: settled.requeued,
-    unsettledReceipts,
-  };
+  try {
+    const outbox = new EffectOutboxStore(deps.runtimeManager, deps.scope, {
+      now: deps.now,
+    });
+    const receipts = new CommandReceiptStore(deps.runtimeManager, deps.scope, {
+      now: deps.now,
+    });
+    const settled = outbox.reconcileAfterProcessLoss();
+    const unsettledReceipts = receipts.listUnsettled().length;
+    clearUnreconciledEffectOutbox(deps.scope);
+    return {
+      cancelledEffects: settled.cancelled,
+      requeuedEffects: settled.requeued,
+      unsettledReceipts,
+    };
+  } catch (error) {
+    blockUnreconciledEffectOutbox(deps.scope);
+    throw error;
+  }
 }
 
 /**
- * Passe multi-escopo. Um escopo que lança não silencia os demais.
+ * Passe multi-escopo. Um escopo que lança não interrompe os demais, mas o
+ * agregado não volta como sucesso: o escopo que não reconciliou fica
+ * bloqueado para `claimNext` e o erro lista quais falharam.
  */
 export function reconcileProviderRuntimesAtBoot(
   runtimeManager: ProjectRuntimeManager,
@@ -66,6 +98,7 @@ export function reconcileProviderRuntimesAtBoot(
   let cancelledEffects = 0;
   let requeuedEffects = 0;
   let unsettledReceipts = 0;
+  const failedScopes: { projectId: string; checkoutId: string }[] = [];
   for (const scope of scopes) {
     try {
       const result = reconcileProviderRuntimeAtBoot({
@@ -76,12 +109,19 @@ export function reconcileProviderRuntimesAtBoot(
       requeuedEffects += result.requeuedEffects;
       unsettledReceipts += result.unsettledReceipts;
     } catch (error) {
+      failedScopes.push({
+        projectId: scope.projectId,
+        checkoutId: scope.checkoutId,
+      });
       console.warn(
         `[provider-runtime-recovery] scope reconcile failed ` +
           `(project=${scope.projectId}, checkout=${scope.checkoutId}):`,
         error,
       );
     }
+  }
+  if (failedScopes.length > 0) {
+    throw new ProviderRuntimeRecoveryError(failedScopes);
   }
   return { cancelledEffects, requeuedEffects, unsettledReceipts };
 }

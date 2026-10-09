@@ -6,7 +6,10 @@ import {
   type ScopedStoreOptions,
 } from './scoped-store';
 import type { ProjectExecutionScope } from '../../shared/types';
-import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import type {
+  ProjectRuntimeLease,
+  ProjectRuntimeManager,
+} from '../runtime/project-runtime-manager';
 
 /**
  * ORC-01 — outbox transacional de efeitos (porte da política T3
@@ -154,15 +157,49 @@ const enqueueSchema = z
 
 const MAX_PAYLOAD_BYTES = 32 * 1024;
 
-const handlerFlights = new WeakMap<Database.Database, Set<string>>();
+const handlerFlights = new Map<string, Set<string>>();
+const handlerLeases = new Map<string, Map<string, ProjectRuntimeLease>>();
+const unreconciledScopes = new Set<string>();
 
-function flightsFor(db: Database.Database): Set<string> {
-  let flights = handlerFlights.get(db);
+function scopeFlightKey(
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+): string {
+  return `${scope.projectId}\0${scope.checkoutId}`;
+}
+
+function flightsFor(scopeKey: string): Set<string> {
+  let flights = handlerFlights.get(scopeKey);
   if (!flights) {
     flights = new Set();
-    handlerFlights.set(db, flights);
+    handlerFlights.set(scopeKey, flights);
   }
   return flights;
+}
+
+function leasesFor(scopeKey: string): Map<string, ProjectRuntimeLease> {
+  let leases = handlerLeases.get(scopeKey);
+  if (!leases) {
+    leases = new Map();
+    handlerLeases.set(scopeKey, leases);
+  }
+  return leases;
+}
+
+/**
+ * Escopo cujo reconcile de boot falhou. `claimNext` recusa o dreno até um
+ * passe posterior conseguir escrever. A chave é a identidade do escopo, não
+ * o handle SQLite que o LRU pode trocar.
+ */
+export function blockUnreconciledEffectOutbox(
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+): void {
+  unreconciledScopes.add(scopeFlightKey(scope));
+}
+
+export function clearUnreconciledEffectOutbox(
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+): void {
+  unreconciledScopes.delete(scopeFlightKey(scope));
 }
 
 function cancelUnknownEffects(db: Database.Database, now: number): number {
@@ -326,6 +363,9 @@ export class EffectOutboxStore {
    * (`thread-title.generate`) tem faixa própria e não bloqueia lifecycle.
    */
   claimNext(input: ClaimNextInput): EffectOutboxEntry | null {
+    if (unreconciledScopes.has(scopeFlightKey(this.scope))) {
+      throw new Error('effect outbox scope was not reconciled');
+    }
     const leaseMs = Math.max(1, input.leaseDurationMs);
     const excludeContinuations = input.excludeRestartContinuations === true;
     const excludeIds = input.excludeIds;
@@ -335,7 +375,7 @@ export class EffectOutboxStore {
     return db.transaction((): EffectOutboxEntry | null => {
       cancelUnknownEffects(db, now);
       const replaySafePlaceholders = REPLAY_SAFE_EFFECT_TYPES.map(() => '?').join(',');
-      const held = [...flightsFor(db)].filter(
+      const held = [...(handlerFlights.get(scopeFlightKey(this.scope)) ?? [])].filter(
         (id) => id.length > 0 && id.length <= 128,
       );
       const holdClause =
@@ -515,16 +555,31 @@ export class EffectOutboxStore {
    */
   /**
    * Enquanto o handler deste processo ainda não assentou, outro drain não
-   * pode expirar o lease. O conjunto é por conexão: morre com o processo.
+   * pode expirar o lease. A marca fica na identidade do escopo e o runtime
+   * permanece pinado: o LRU não troca o handle no meio do efeito.
    */
   retainHandlerFlight(id: string): void {
     if (typeof id !== 'string' || id.length === 0 || id.length > 128) return;
-    flightsFor(this.#binding.writeDatabase()).add(id);
+    const key = scopeFlightKey(this.scope);
+    const flights = flightsFor(key);
+    if (flights.has(id)) return;
+    const lease = this.#binding.acquireLease();
+    flights.add(id);
+    leasesFor(key).set(id, lease);
   }
 
   releaseHandlerFlight(id: string): void {
     if (typeof id !== 'string' || id.length === 0) return;
-    flightsFor(this.#binding.writeDatabase()).delete(id);
+    const key = scopeFlightKey(this.scope);
+    const flights = handlerFlights.get(key);
+    flights?.delete(id);
+    if (flights && flights.size === 0) handlerFlights.delete(key);
+    const leases = handlerLeases.get(key);
+    const lease = leases?.get(id);
+    if (!lease || !leases) return;
+    leases.delete(id);
+    if (leases.size === 0) handlerLeases.delete(key);
+    lease.release();
   }
 
   renewLease(

@@ -78,7 +78,7 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
     expect(mocks.resumeFastLaneMission).toHaveBeenCalledWith(
       scope,
       'mission-existing',
-      expect.objectContaining({ remountKind: 'operator' }),
+      expect.objectContaining({ remountKind: 'automatic' }),
     );
     expect(result).toMatchObject({
       ok: true,
@@ -92,8 +92,42 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
       missions: { get: () => null },
     });
     await expect(
-      requestResumeTool().handler({ missionId: 'mission-missing' }, context()),
+      requestResumeTool().handler(
+        { missionId: 'mission-missing' },
+        context({ missionId: 'mission-missing' }),
+      ),
     ).rejects.toThrow(/não existe/);
+    expect(mocks.resumeFastLaneMission).not.toHaveBeenCalled();
+  });
+
+  it('an unbound user pane cannot remount a mission by argument', async () => {
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({ id: 'mission-existing', status: 'running' }),
+      },
+    });
+    await expect(
+      requestResumeTool().handler(
+        { missionId: 'mission-existing' },
+        context({ role: 'user', missionId: undefined }),
+      ),
+    ).rejects.toThrow(/vinculada a esta sessão/);
+    expect(mocks.resumeFastLaneMission).not.toHaveBeenCalled();
+  });
+
+  it('an orchestrator bound to mission A cannot remount mission B', async () => {
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: (id: string) =>
+          id === 'mission-b' ? { id, status: 'running' } : null,
+      },
+    });
+    await expect(
+      requestResumeTool().handler(
+        { missionId: 'mission-b' },
+        context({ role: 'orchestrator', missionId: 'mission-a' }),
+      ),
+    ).rejects.toThrow(/vinculada a esta sessão/);
     expect(mocks.resumeFastLaneMission).not.toHaveBeenCalled();
   });
 
@@ -108,7 +142,7 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
         { missionId: 'mission-existing' },
         context({ role: 'worker', missionId: 'mission-other' }),
       ),
-    ).rejects.toThrow(/própria missão/);
+    ).rejects.toThrow(/vinculada a esta sessão/);
     expect(mocks.resumeFastLaneMission).not.toHaveBeenCalled();
   });
 
@@ -123,7 +157,7 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
         { missionId: 'mission-b' },
         context({ role: 'orchestrator', missionId: 'mission-a' }),
       ),
-    ).rejects.toThrow(/própria missão/);
+    ).rejects.toThrow(/vinculada a esta sessão/);
     expect(mocks.resumeFastLaneMission).not.toHaveBeenCalled();
   });
 
@@ -149,18 +183,19 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
     expect(mocks.resumeFastLaneMission).not.toHaveBeenCalled();
   });
 
-  it('operator hand (no missionId) may request resume of a live mission', async () => {
+  it('operator hand without a bound mission is refused (policy: only the linked mission)', async () => {
     mocks.getProjectDomainStores.mockReturnValue({
       missions: {
         get: () => ({ id: 'mission-existing', status: 'running' }),
       },
     });
-    const result = await requestResumeTool().handler(
-      { missionId: 'mission-existing' },
-      context({ role: 'orchestrator', missionId: undefined }),
-    );
-    expect(result).toMatchObject({ ok: true, resumed: true });
-    expect(mocks.resumeFastLaneMission).toHaveBeenCalled();
+    await expect(
+      requestResumeTool().handler(
+        { missionId: 'mission-existing' },
+        context({ role: 'orchestrator', missionId: undefined }),
+      ),
+    ).rejects.toThrow(/vinculada a esta sessão/);
+    expect(mocks.resumeFastLaneMission).not.toHaveBeenCalled();
   });
 
   it('operator-closed mission reports the verdict from resume as well', async () => {
@@ -175,6 +210,11 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
     const result = await requestResumeTool().handler(
       { missionId: 'mission-existing' },
       context(),
+    );
+    expect(mocks.resumeFastLaneMission).toHaveBeenCalledWith(
+      scope,
+      'mission-existing',
+      expect.objectContaining({ remountKind: 'automatic' }),
     );
     expect(result).toMatchObject({
       ok: false,

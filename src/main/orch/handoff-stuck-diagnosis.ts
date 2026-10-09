@@ -22,6 +22,8 @@ export interface HandoffStuckView {
   readonly consumedAt?: number | null;
   readonly submittedAt?: number | null;
   readonly createdAt?: number;
+  /** Início da última tentativa real de entrega, quando houver. */
+  readonly attemptedAt?: number | null;
   readonly sessionId?: string | null;
   readonly sessionAlive?: boolean;
   readonly parked?: boolean;
@@ -39,6 +41,13 @@ export interface HandoffStuckDiagnosis {
 
 const ACCEPTANCE_WINDOW_MS = 12_000;
 
+/** F-925: a sexta rodada sem aceite estaciona a entrega. */
+export const HANDOFF_STUCK_PARK_ROUND = 6;
+
+function queuedAnchor(view: HandoffStuckView): number | null {
+  return view.submittedAt ?? view.attemptedAt ?? view.createdAt ?? null;
+}
+
 export function diagnoseHandoffStuck(
   view: HandoffStuckView,
   now: number = Date.now(),
@@ -51,7 +60,10 @@ export function diagnoseHandoffStuck(
       escape: 'Nada a fazer.',
     };
   }
-  if (view.parked === true || (view.retryRound != null && view.retryRound >= 6)) {
+  if (
+    view.parked === true ||
+    (view.retryRound != null && view.retryRound >= HANDOFF_STUCK_PARK_ROUND)
+  ) {
     return {
       reason: 'parked-needs-operator',
       stuck: true,
@@ -85,21 +97,28 @@ export function diagnoseHandoffStuck(
         'ou list-ack do operador se o Maestro não puder.',
     };
   }
+  if (view.retryRound != null && view.retryRound > 0) {
+    return {
+      reason: 'retry-backoff',
+      stuck: true,
+      summary:
+        `Em backoff de retentativa (rodada ${view.retryRound}; escada até 15 min, F-925).`,
+      escape: 'A borda busy→idle real dispara a rodada; nada de forçar recolagem em loop.',
+    };
+  }
   if (view.deliveryState === 'queued') {
-    // F-1046: handoff real que nunca foi enviado tem só `createdAt` — a
-    // primeira entrega ainda não existe. Usa o nascimento como referência.
-    const referenceAt = view.submittedAt ?? view.createdAt;
-    if (referenceAt == null) {
+    // F-1046: handoff real que nunca foi enviado tem só `createdAt` —
+    // queuedAnchor cobre submittedAt ?? attemptedAt ?? createdAt.
+    const anchor = queuedAnchor(view);
+    if (anchor == null) {
       return {
-        reason: 'queued-awaiting-idle',
-        stuck: true,
-        summary: 'Handoff enfileirado sem primeira tentativa física registrada.',
-        escape:
-          'A borda busy→idle do Maestro dispara a entrega; nexus_mission_request_resume ' +
-          'religa se a coordenação estiver muda.',
+        reason: 'not-stuck',
+        stuck: false,
+        summary: 'Sem sinal de travamento no estado atual.',
+        escape: 'Nada a fazer.',
       };
     }
-    const waitingMs = now - referenceAt;
+    const waitingMs = now - anchor;
     if (waitingMs < ACCEPTANCE_WINDOW_MS) {
       return {
         reason: 'waiting-acceptance-window',
@@ -118,15 +137,6 @@ export function diagnoseHandoffStuck(
       escape:
         'A borda busy→idle do Maestro dispara a entrega. Se a sessão estiver muda, ' +
         'nexus_mission_request_resume religa; o operador também pode list-ack.',
-    };
-  }
-  if (view.retryRound != null && view.retryRound > 0) {
-    return {
-      reason: 'retry-backoff',
-      stuck: true,
-      summary:
-        `Em backoff de retentativa (rodada ${view.retryRound}; escada até 15 min, F-925).`,
-      escape: 'A borda busy→idle real dispara a rodada; nada de forçar recolagem em loop.',
     };
   }
   return {

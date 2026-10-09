@@ -2107,9 +2107,18 @@ export class ScopedHandoffStore {
    * O loop 0.62/0.63 era re-paste de `submitted`; esse continua coberto.
    * `consumed` continua exclusivo do nexus_handoff_ack.
    */
-  acknowledgeSeenByOrchestratorList(rawMissionId: string): number {
+  acknowledgeSeenByOrchestratorList(
+    rawMissionId: string,
+    rawIds?: readonly string[],
+  ): number {
     const missionId = identifierSchema.parse(rawMissionId);
+    const ids = rawIds?.map((id) => identifierSchema.parse(id));
+    if (ids && ids.length === 0) return 0;
     const now = this.#binding.now();
+    const idClause =
+      ids && ids.length > 0
+        ? ` AND id IN (${ids.map(() => "?").join(",")})`
+        : "";
     const result = this.#binding
       .writeDatabase()
       .prepare(
@@ -2118,9 +2127,9 @@ export class ScopedHandoffStore {
            delivered = 1,
            acknowledged_at = ?,
            submitted_at = COALESCE(submitted_at, ?)
-       WHERE mission_id = ? AND delivery_state = 'submitted'`,
+       WHERE mission_id = ? AND delivery_state = 'submitted'${idClause}`,
       )
-      .run(now, now, missionId);
+      .run(now, now, missionId, ...(ids ?? []));
     if (result.changes > 0) this.#binding.emitChange();
     return result.changes;
   }

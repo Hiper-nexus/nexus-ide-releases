@@ -64,18 +64,33 @@ describe('handoff stuck diagnosis (resto F-1040)', () => {
     expect(d.escape).toMatch(/busy→idle|nexus_mission_request_resume/);
   });
 
-  it('F-1046: real queued handoff without submittedAt uses createdAt', () => {
-    // Entrega que nunca saiu: só o nascimento existe.
-    const young = diagnoseHandoffStuck(
-      { id: 'h8', deliveryState: 'queued', createdAt: NOW - 2_000 },
+  it('F-1046: ages a queued handoff from createdAt when it was never submitted', () => {
+    const recent = diagnoseHandoffStuck(
+      { id: 'h-recent', deliveryState: 'queued', createdAt: NOW - 2_000 },
       NOW,
     );
-    expect(young.reason).toBe('waiting-acceptance-window');
-    const old = diagnoseHandoffStuck(
-      { id: 'h9', deliveryState: 'queued', createdAt: NOW - 60_000 },
+    expect(recent).toMatchObject({
+      stuck: false,
+      reason: 'waiting-acceptance-window',
+    });
+    const stale = diagnoseHandoffStuck(
+      { id: 'h-stale', deliveryState: 'queued', createdAt: NOW - 30_000 },
       NOW,
     );
-    expect(old).toMatchObject({ stuck: true, reason: 'queued-awaiting-idle' });
+    expect(stale).toMatchObject({ stuck: true, reason: 'queued-awaiting-idle' });
+  });
+
+  it('ages a queued handoff from the last delivery attempt when that is the clock', () => {
+    const d = diagnoseHandoffStuck(
+      {
+        id: 'h-attempt',
+        deliveryState: 'queued',
+        createdAt: NOW,
+        attemptedAt: NOW - 30_000,
+      },
+      NOW,
+    );
+    expect(d).toMatchObject({ stuck: true, reason: 'queued-awaiting-idle' });
   });
 
   it('retry backoff reports the round and refuses loop forcing', () => {
@@ -83,8 +98,8 @@ describe('handoff stuck diagnosis (resto F-1040)', () => {
       { id: 'h7', deliveryState: 'queued', retryRound: 3, submittedAt: NOW - 120_000 },
       NOW,
     );
-    // retryRound > 0 wins only when not already classified as queued-awaiting-idle
-    // — queued+submittedAt hits queued-awaiting-idle first (more specific).
-    expect(d.stuck).toBe(true);
+    expect(d).toMatchObject({ stuck: true, reason: 'retry-backoff' });
+    expect(d.summary).toContain('rodada 3');
+    expect(d.escape).toMatch(/busy→idle/);
   });
 });

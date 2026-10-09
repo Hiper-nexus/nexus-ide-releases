@@ -155,26 +155,6 @@ function existingCommandEffect(
   return outbox.listByCommandId(commandId)[0] ?? null;
 }
 
-/** F-1045: identidade do recibo já assentado deve casar com o pedido. */
-function assertReceiptIdentityMatches(
-  existing: CommandReceipt,
-  receipt: CommandEffectAcceptanceInput,
-): void {
-  if (existing.commandType !== receipt.commandType) {
-    throw new Error(
-      `command receipt identity conflict: ${receipt.commandId} is ` +
-        `${existing.commandType}/${existing.aggregateId}, not ${receipt.commandType}`,
-    );
-  }
-  const requestedAggregate = receipt.threadId ?? receipt.projectId;
-  if (requestedAggregate && existing.aggregateId !== requestedAggregate) {
-    throw new Error(
-      `command receipt identity conflict: ${receipt.commandId} is bound to ` +
-        `${existing.aggregateKind}/${existing.aggregateId}, not ${requestedAggregate}`,
-    );
-  }
-}
-
 function classForCommandType(commandType: string): EffectClass {
   return (REPLAY_SAFE_EFFECT_TYPES as readonly string[]).includes(commandType)
     ? 'replay_safe'
@@ -229,13 +209,27 @@ export class CommandReceiptStore {
       const effectId = effectInput.id ?? receipt.commandId;
       if (!inserted) {
         // F-1045: commandId reusado com outra identidade é conflito — nunca
-        // devolve o efeito antigo em silêncio.
-        const prior = this.getByCommandId(receipt.commandId);
-        if (prior) assertReceiptIdentityMatches(prior, receipt);
-        return {
-          inserted: false,
-          effect: existingCommandEffect(outbox, receipt.commandId, effectId),
-        };
+        // devolve o efeito antigo em silêncio. Identidade do recibo E do efeito.
+        const stored = this.getByCommandId(receipt.commandId);
+        const aggregate = resolveAggregate(receipt);
+        if (
+          !stored ||
+          stored.commandType !== receipt.commandType ||
+          stored.aggregateKind !== aggregate.kind ||
+          stored.aggregateId !== aggregate.id
+        ) {
+          throw new Error('command receipt is already bound to another command');
+        }
+        const effect = existingCommandEffect(outbox, receipt.commandId, effectId);
+        if (
+          effect &&
+          (effect.commandId !== receipt.commandId ||
+            effect.type !== effectInput.type ||
+            effect.threadId !== effectInput.threadId)
+        ) {
+          throw new Error('effect outbox command is already bound to another effect');
+        }
+        return { inserted: false, effect };
       }
       const effect = outbox.enqueue({
         ...effectInput,
@@ -292,26 +286,46 @@ export class CommandReceiptStore {
     const db = this.#binding.writeDatabase();
     const now = this.#binding.now();
     return db.transaction((): CommandReceipt => {
-      db.prepare(
-        `INSERT INTO command_receipts (
-           command_id, aggregate_kind, aggregate_id, command_type,
-           accepted_at, result_sequence, status, error, effect_class
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(command_id) DO UPDATE SET
-           result_sequence = excluded.result_sequence,
-           status = excluded.status,
-           error = excluded.error`,
-      ).run(
-        input.commandId,
-        aggregate.kind,
-        aggregate.id,
-        input.commandType,
-        input.acceptedAt ?? now,
-        input.resultSequence,
-        input.status,
-        input.error ?? null,
-        classForCommandType(input.commandType),
-      );
+      const existing = db
+        .prepare(`SELECT * FROM command_receipts WHERE command_id = ?`)
+        .get(input.commandId);
+      if (existing) {
+        const stored = rowToReceipt(existing);
+        if (
+          stored.commandType !== input.commandType ||
+          stored.aggregateKind !== aggregate.kind ||
+          stored.aggregateId !== aggregate.id
+        ) {
+          throw new Error('command receipt is already bound to another command');
+        }
+        db.prepare(
+          `UPDATE command_receipts
+           SET result_sequence = ?, status = ?, error = ?
+           WHERE command_id = ?`,
+        ).run(
+          input.resultSequence,
+          input.status,
+          input.error ?? null,
+          input.commandId,
+        );
+      } else {
+        db.prepare(
+          `INSERT INTO command_receipts (
+             command_id, aggregate_kind, aggregate_id, command_type,
+             accepted_at, result_sequence, status, error, effect_class
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          input.commandId,
+          aggregate.kind,
+          aggregate.id,
+          input.commandType,
+          input.acceptedAt ?? now,
+          input.resultSequence,
+          input.status,
+          input.error ?? null,
+          classForCommandType(input.commandType),
+        );
+      }
       const row = db
         .prepare(`SELECT * FROM command_receipts WHERE command_id = ?`)
         .get(input.commandId);

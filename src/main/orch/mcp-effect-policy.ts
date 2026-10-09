@@ -235,6 +235,14 @@ const READ_ONLY_BASIC_TOOLS = new Set([
   'pane_ask',
 ]);
 
+/**
+ * A stale read-only Maestro must still be able to ask Main to resume the
+ * mission the token is bound to. This is one name, not the mission-control
+ * class: the handler refuses any other mission and does not clear an
+ * operator close.
+ */
+const READ_ONLY_MISSION_RESUME_TOOLS = new Set(['mission_request_resume']);
+
 /** Bounded local controls that do not change workspace or external data. */
 const MISSION_CONTROL_TOOLS = new Set([
   'editor_focus',
@@ -395,7 +403,8 @@ export function isToolAllowedForReadOnlyContext(toolName: string): boolean {
   return (
     effectPolicyForTool(canonical) === 'read-only' ||
     READ_ONLY_CONTEXT_METADATA_TOOLS.has(canonical) ||
-    READ_ONLY_BASIC_TOOLS.has(canonical)
+    READ_ONLY_BASIC_TOOLS.has(canonical) ||
+    READ_ONLY_MISSION_RESUME_TOOLS.has(canonical)
   );
 }
 
