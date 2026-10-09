@@ -21,6 +21,7 @@ import {
 import { markHandoffSubmitted, executionScopeFor, type GateRole } from "./gate";
 import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { onHandoffSubmitted } from "./idle-delivery";
+import { selectCursorPage, InvalidCursorError } from "../../shared/cursor-pagination";
 import {
   scheduleAutoCloseAfterHandoff,
   assertAutoCloseReportPreserved,
@@ -812,6 +813,8 @@ const handoffListTool: McpToolDef = {
       detail: { type: "string", enum: ["full"], description: "'full' returns every artifact instead of compacting older delivered rows." },
       panes: { type: "array", items: { type: "string" }, description: "Optional pane ids/sessions to limit results (Overclock parity)." },
       ids: { type: "array", items: { type: "string" }, description: "Optional exact handoff ids to fetch (Overclock parity); rows fetched this way are never compacted." },
+      limit: { type: "number", description: "Page size for cursor mode (default 50, max 200)." },
+      cursor: { type: "string", description: "Opaque cursor from a previous page (cursor mode). Omit for the first page." },
     },
   },
   handler: async (args, ctx) => {
@@ -892,6 +895,39 @@ const handoffListTool: McpToolDef = {
           error instanceof Error ? error.message : error,
         );
       }
+    }
+    // Modo cursor (item T3 "paginação por cursor"): janela keyset estável
+    // sobre as linhas já ordenadas do ledger. Sem `limit`/`cursor`, o
+    // comportamento antigo (trilha completa) continua intacto.
+    const wantCursorMode =
+      args.cursor !== undefined || args.limit !== undefined;
+    if (wantCursorMode) {
+      let paged;
+      try {
+        paged = selectCursorPage(rows, {
+          limit: args.limit as number | undefined,
+          cursor: (args.cursor as string | undefined) ?? null,
+          keyOf: (row) => row.createdAt ?? 0,
+          idOf: (row) => row.id,
+        });
+      } catch (error) {
+        if (error instanceof InvalidCursorError) {
+          throw new Error(
+            `nexus_handoff_list: cursor inválido (${error.message}). ` +
+              'Comece a primeira página sem cursor.',
+          );
+        }
+        throw error;
+      }
+      return {
+        items: compactHandoffListRows(
+          [...paged.items],
+          rawIds,
+          str(args, "detail") === "full",
+        ),
+        nextCursor: paged.nextCursor,
+        hasMoreHistory: paged.hasMoreHistory,
+      };
     }
     return compactHandoffListRows(rows, rawIds, str(args, "detail") === "full");
   },
