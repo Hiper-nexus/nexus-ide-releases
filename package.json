@@ -45,6 +45,9 @@
     "typecheck": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc --noEmit",
     "lint:oxlint": "oxlint src server scripts",
     "lint:oxlint:ratchet": "oxlint --max-warnings 168 src server scripts",
+    "knip": "knip --no-config-hints",
+    "knip:check": "knip --include files,dependencies --no-config-hints",
+    "knip:production": "knip --production --no-config-hints",
     "pretest": "node scripts/check-node-natives.mjs && node scripts/build-darwin-pty-supervisor.mjs",
     "test": "vitest run",
     "test:changed": "vitest run --changed",
@@ -123,6 +126,7 @@
     "drizzle-orm": "^0.45.2",
     "electron": "^43.7.4",
     "jsdom": "^29.1.1",
+    "knip": "^6.34.0",
     "oxlint": "^1.82.0",
     "vite": "^8.1.3",
     "vitest": "^5.0.0"
