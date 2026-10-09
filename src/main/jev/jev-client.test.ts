@@ -336,6 +336,26 @@ describe('judge — registro central de consultas sem resposta', () => {
     expect(onNoAnswer).toHaveBeenCalledWith('server-error');
   });
 
+  it('retains native retry receipt incompleteness when configuration revokes its parsed response', async () => {
+    let requests = 0; let revision = 'before';
+    const result = await judge({ state: 'x', questions: { q: question }, surface: 'intake' }, {
+      resolveKey: () => 'synthetic-jev', getConfigurationKey: () => revision, now: () => 100,
+      getSettings: () => ({ mode: 'jev', clefModel: 'clef', cloudflareAccountId: '', visionEnabled: false }),
+      getAvailability: () => ({ jev: true, clef: false, luna: false }),
+      fetch: (async () => {
+        requests += 1;
+        if (requests === 1) return jsonResponse(429, {}, { 'retry-after': '0' });
+        revision = 'after'; return jsonResponse(200, { ...okBody, usage: { input_tokens: 500, output_tokens: 0 } });
+      }) as typeof fetch,
+    });
+    expect(result).toBeNull(); expect(requests).toBe(2);
+    const rows = listJevDecisions({ includeNoAnswer: true });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ reason: 'aborted', inputTokens: 500,
+      requestCount: 2, durationMs: 0, usageIncomplete: true });
+    expect(rows[0]?.usd).toBeCloseTo(0.000021, 10);
+  });
+
   it('onNoAnswer não é chamado no sucesso nem sem chave', async () => {
     const onNoAnswer = vi.fn();
     const ok = vi.fn(async () => jsonResponse(200, okBody));

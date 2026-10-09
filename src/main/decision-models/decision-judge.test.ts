@@ -90,6 +90,30 @@ describe('common decision service', () => {
     expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ usage: expect.objectContaining({ inputTokens: 100, usageIncomplete: false }) }));
   });
 
+  it('keeps the real Luna partial measurement when configuration revokes a two-batch response', async () => {
+    let revision = 'before'; let requests = 0;
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const onNoAnswer = vi.fn();
+    const questions = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`q${index}`, input.questions.q]));
+    const result = await judgeDecision({ ...input, surface: 'intake', questions, onNoAnswer }, {
+      nativeJudge: async () => { throw new Error('Luna-only must not call the native transport'); },
+      getSettings: () => ({ ...settings, mode: 'luna' }), getAvailability: () => ({ jev: false, clef: false, luna: true }),
+      getConfigurationKey: () => revision, resolveLunaKey: () => 'synthetic-luna', now: () => 100,
+      fetch: (async (_url, options) => {
+        requests += 1;
+        const body = JSON.parse(String(options?.body)) as { questions: { name: string }[] };
+        if (requests === 2) revision = 'after';
+        return Response.json({ model: 'gpt-6-luna', ...(requests === 1 ? { usage: { input_tokens: 1_000 } } : {}),
+          answers: body.questions.map(question => ({ type: 'predicate', name: question.name, probability: 0.9 })) });
+      }) as typeof fetch,
+    });
+    expect(requests).toBe(2); expect(result).toBeNull();
+    expect(onNoAnswer).toHaveBeenCalledOnce(); expect(onNoAnswer).toHaveBeenCalledWith('aborted');
+    expect(recordJevNoAnswer).toHaveBeenCalledOnce();
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({ reason: 'aborted',
+      usage: { inputTokens: 1_000, usd: 0.0001, requestCount: 2, durationMs: 0, usageIncomplete: true } }));
+  });
+
   it('does not fall back to Jev after a Clef request is revoked', async () => {
     const controller = new AbortController(); let nativeCalls = 0;
     const result = await judgeDecision({ ...input, signal: controller.signal }, {
