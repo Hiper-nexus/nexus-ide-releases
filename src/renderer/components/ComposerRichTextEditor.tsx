@@ -1,9 +1,12 @@
 import {
+  memo,
   useCallback,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  type RefObject,
 } from 'react';
 import {
   parseInlineMarkdown,
@@ -40,29 +43,56 @@ const MARK_TOOLS: ReadonlyArray<{
   { mark: 'code', label: '<>', title: 'Código (`texto`)' },
 ];
 
-function spansToHtml(spans: readonly RichTextSpan[]): string {
-  const escape = (s: string) =>
-    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return spans
-    .map((span) => {
-      let html = escape(span.text);
-      if (span.marks.includes('code')) html = `<code>${html}</code>`;
-      if (span.marks.includes('bold')) html = `<strong>${html}</strong>`;
-      if (span.marks.includes('strike')) html = `<s>${html}</s>`;
-      if (span.marks.includes('italic')) html = `<em>${html}</em>`;
-      return html;
-    })
-    .join('');
+function MarkedText({ span }: { span: RichTextSpan }): ReactNode {
+  let node: ReactNode = span.text;
+  if (span.marks.includes('code')) node = <code>{node}</code>;
+  if (span.marks.includes('bold')) node = <strong>{node}</strong>;
+  if (span.marks.includes('strike')) node = <s>{node}</s>;
+  if (span.marks.includes('italic')) node = <em>{node}</em>;
+  return node;
 }
 
-/** Markdown do editor: re-serializa a seleção atual a partir do texto puro. */
-function htmlToMarkdown(html: string): string {
-  // Leitura simples: o editor mantém o texto puro e re-aplica marks pela
-  // seleção; aqui só extraímos o texto para o onChange.
-  const el = document.createElement('div');
-  el.innerHTML = html;
-  return el.textContent ?? '';
-}
+/**
+ * A superfície não re-renderiza. O texto digitado vive no DOM; um render do
+ * React por cima apagaria a edição.
+ */
+const FrozenSurface = memo(
+  function FrozenSurface({
+    spans,
+    editorRef,
+    onInput,
+    onKeyDown,
+    ariaLabel,
+    placeholder,
+  }: {
+    spans: readonly RichTextSpan[];
+    editorRef: RefObject<HTMLDivElement | null>;
+    onInput: () => void;
+    onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
+    ariaLabel: string;
+    placeholder?: string;
+  }) {
+    return (
+      <div
+        ref={editorRef}
+        className="composer-rich-text-editor__surface composer-rich-text"
+        contentEditable
+        role="textbox"
+        aria-multiline="true"
+        aria-label={ariaLabel}
+        data-placeholder={placeholder}
+        suppressContentEditableWarning
+        onInput={onInput}
+        onKeyDown={onKeyDown}
+      >
+        {spans.map((span, index) => (
+          <MarkedText key={index} span={span} />
+        ))}
+      </div>
+    );
+  },
+  () => true,
+);
 
 export function ComposerRichTextEditor({
   value,
@@ -74,17 +104,20 @@ export function ComposerRichTextEditor({
   const [activeMarks, setActiveMarks] = useState<ReadonlySet<RichTextMark>>(
     new Set(),
   );
-  const initialHtml = useMemo(
-    () => spansToHtml(parseInlineMarkdown(value)),
-    // Só o valor inicial monta o HTML; edições vivem no contenteditable.
+  const initialSpans = useMemo(
+    () => parseInlineMarkdown(value),
+    // Só o valor inicial monta os spans; edições vivem no contenteditable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   const emit = useCallback(() => {
-    if (!editorRef.current || !onChange) return;
-    onChange(htmlToMarkdown(editorRef.current.innerHTML));
-  }, [onChange]);
+    const publish = onChangeRef.current;
+    if (!editorRef.current || !publish) return;
+    publish(editorRef.current.textContent ?? '');
+  }, []);
 
   const toggleMark = useCallback((mark: RichTextMark) => {
     const sel = window.getSelection();
@@ -104,6 +137,8 @@ export function ComposerRichTextEditor({
     emit();
   }, [activeMarks, emit]);
 
+  const toggleRef = useRef(toggleMark);
+  toggleRef.current = toggleMark;
   const onKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       const mod = event.metaKey || event.ctrlKey;
@@ -113,9 +148,9 @@ export function ComposerRichTextEditor({
         key === 'b' ? 'bold' : key === 'i' ? 'italic' : key === 'e' ? 'code' : null;
       if (!mark) return;
       event.preventDefault();
-      toggleMark(mark);
+      toggleRef.current(mark);
     },
-    [toggleMark],
+    [],
   );
 
   return (
@@ -144,18 +179,13 @@ export function ComposerRichTextEditor({
           </button>
         ))}
       </div>
-      <div
-        ref={editorRef}
-        className="composer-rich-text-editor__surface composer-rich-text"
-        contentEditable
-        role="textbox"
-        aria-multiline="true"
-        aria-label={ariaLabel}
-        data-placeholder={placeholder}
-        suppressContentEditableWarning
-        dangerouslySetInnerHTML={{ __html: initialHtml }}
+      <FrozenSurface
+        spans={initialSpans}
+        editorRef={editorRef}
         onInput={emit}
         onKeyDown={onKeyDown}
+        ariaLabel={ariaLabel}
+        placeholder={placeholder}
       />
     </div>
   );

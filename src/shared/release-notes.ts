@@ -10217,14 +10217,21 @@ export const RELEASE_076210: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.211',
+  version: '0.76.212',
   date: '2026-10-08',
-  codename: 'Atualização que chega sozinha',
-  summary: 'A versão nova baixa sozinha em segundo plano e só pede para reiniciar; recusas de conclusão de missão dizem a chamada que o pane pode fazer.',
+  codename: 'Nexus no celular de verdade',
+  summary: 'O app do celular vira cliente completo do desktop Nexus: Git e arquivos, fila offline, notificações, atividade dos panes e permissões por aparelho.',
   highlights: [
-    { title: 'Atualização automática', detail: 'Quando sai uma versão nova, o Nexus baixa em segundo plano e o aviso pede só para reiniciar. Antes, ele esperava um clique em "Atualizar agora" e a versão podia ficar horas parada.' },
+    { title: 'Git e arquivos no celular', detail: 'Veja as alterações e o diff de cada arquivo do pane e navegue pelos arquivos, só leitura, presos ao checkout real do pane.' },
+    { title: 'Fila offline e notificações', detail: 'Sem conexão, o comando espera e sai em ordem ao voltar, sem digitar duas vezes. Aprovações, "esperando você" e "terminou" avisam no celular.' },
+    { title: 'Permissões por aparelho', detail: 'Ao parear, escolha se o celular pode ver, enviar comandos, aprovar ou fechar panes. O desktop confere cada pedido.' },
+    { title: 'Histórico de uso', detail: 'Uso e cotas mostra os últimos 30 dias em tokens ou custo de API, com leitura dia a dia pelo teclado.' },
   ],
   fixes: [
-    { title: 'Concluir missão de outro pane', detail: 'A recusa diz quem lidera a missão e como pedir a conclusão a esse pane, em vez de mandar criar outra missão, e não anuncia mais um efeito que não aconteceu.' },
+    { title: 'Citar na timeline', detail: 'Leve um trecho da atividade da missão para a orientação, com a origem do evento.' },
+    { title: 'Abas reordenáveis', detail: 'Arraste, use Alt+Shift+setas ou o menu da aba para mudar a ordem dos Terminais.' },
+    { title: 'Mais segredos redigidos', detail: 'Chaves da Stripe, do age e valores secretos em variáveis *_KEY saem como [REDACTED].' },
+    { title: 'Missões mais seguras', detail: 'A troca de líder recusa pane somente leitura e um checkpoint atrasado não deixa ref órfã.' },
+    { title: 'App em português', detail: 'O app do celular fala pt-BR, usa a marca Nexus e não oferece atalhos que não funcionam no desktop Nexus.' },
   ],
 };

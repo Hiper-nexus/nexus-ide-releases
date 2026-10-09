@@ -5,7 +5,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 const mocks = vi.hoisted(() => ({
   getProjectDomainStores: vi.fn(),
   resumeFastLaneMission: vi.fn(),
-  wasOrchestratorOperatorDismissed: vi.fn(() => false),
+  wasOrchestratorOperatorDismissed: vi.fn((_missionId: string) => false),
 }));
 
 vi.mock('./project-domain-store-registry', () => ({

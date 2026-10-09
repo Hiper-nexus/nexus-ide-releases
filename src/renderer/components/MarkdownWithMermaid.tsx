@@ -34,6 +34,20 @@ async function loadMermaid(): Promise<MermaidApi | null> {
   return mermaidLoading;
 }
 
+function mountMermaidSvg(host: HTMLElement, svg: string): boolean {
+  const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
+  const root = parsed.documentElement;
+  if (
+    root.namespaceURI !== 'http://www.w3.org/2000/svg' ||
+    root.localName !== 'svg' ||
+    parsed.querySelector('parsererror')
+  ) {
+    return false;
+  }
+  host.replaceChildren(host.ownerDocument.importNode(root, true));
+  return true;
+}
+
 function MermaidBlock({
   source,
   index,
@@ -53,7 +67,7 @@ function MermaidBlock({
         if (!api || cancelled || !ref.current) return;
         const { svg } = await api.render(`nexus-mermaid-${index}`, source);
         if (cancelled || !ref.current) return;
-        ref.current.innerHTML = svg;
+        if (!mountMermaidSvg(ref.current, svg)) return;
         onReady?.(ref.current, source);
       })
       .catch(() => {

@@ -49,9 +49,12 @@ export function useLauncherShortcuts(
         targetIsEditable: launcherShortcutTargetIsEditable(event),
       });
       if (!id) return;
+      event.preventDefault();
+      // Segurar a tecla repete keydown. Uma ativação por toque: o 4 não
+      // abre um terminal a cada repeat, e o 3 não abre vários seletores.
+      if (event.repeat) return;
       const run = actionsRef.current[id as LauncherShortcutId];
       if (!run) return;
-      event.preventDefault();
       run();
     };
     window.addEventListener('keydown', onKeyDown);

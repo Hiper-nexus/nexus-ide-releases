@@ -7,6 +7,7 @@ import {
   ProjectRuntimeCapacityError,
   ProjectRuntimeManager,
 } from "../runtime/project-runtime-manager";
+import { sqliteFilePath } from "../runtime/project-runtime-migrations";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
   createScopedEffectOutboxStore,
@@ -1320,7 +1321,7 @@ describe("ORC-06 provider runtime boot reconciliation", () => {
       type: "turn.start",
     });
     manager.close(scopeB);
-    blockedPath = manager.locationFor(scopeB).databasePath;
+    blockedPath = sqliteFilePath(manager.locationFor(scopeB).databasePath);
 
     expect(() =>
       reconcileProviderRuntimesAtBoot(manager, [scopeB, scopeA]),

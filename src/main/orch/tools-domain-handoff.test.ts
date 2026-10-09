@@ -2307,7 +2307,7 @@ describe("handoff MCP stop receipt", () => {
     const list = vi.fn(() => {
       throw new Error("full list");
     });
-    const listCursorPage = vi.fn(() => [
+    const listCursorPage = vi.fn((_query: { limit?: number }) => [
       {
         id: "h-1",
         delivered: true,
