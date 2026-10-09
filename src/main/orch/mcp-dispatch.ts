@@ -554,6 +554,46 @@ function normalizeLogicalOperationId(
   return createHash("sha256").update(value).digest("hex");
 }
 
+function canonicalJson(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort();
+  return `{${keys
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
+}
+
+/**
+ * O id do JSON-RPC é só correlação da conexão (muitas vezes "1" de novo).
+ * A chave do recibo mistura sessão, ferramenta, argumentos e esse id, para
+ * o retry da mesma operação bater e uma chamada nova com outros argumentos
+ * executar.
+ */
+function namespacedReceiptCommandId(input: {
+  readonly sessionId: string;
+  readonly workerIncarnationId: string | undefined;
+  readonly toolName: string;
+  readonly args: Record<string, unknown>;
+  readonly callerId: string;
+}): string {
+  const material = [
+    input.sessionId,
+    input.workerIncarnationId?.trim() ?? "",
+    canonicalToolName(input.toolName),
+    input.callerId,
+    canonicalJson(input.args),
+  ].join("\0");
+  return createHash("sha256").update(material).digest("hex");
+}
+
 function logicalFlightKey(
   scope: Pick<AgentGateContext["scope"], "projectId" | "checkoutId">,
   commandId: string,
@@ -1268,14 +1308,23 @@ export async function dispatchToolCall(
   const callerCommandId = effectful
     ? normalizeLogicalOperationId(options.logicalOperationId)
     : undefined;
-  if (callerCommandId) {
+  const receiptCommandId = callerCommandId
+    ? namespacedReceiptCommandId({
+        sessionId,
+        workerIncarnationId: ctx.workerIncarnationId,
+        toolName: tool.name,
+        args,
+        callerId: callerCommandId,
+      })
+    : undefined;
+  if (receiptCommandId) {
     const inflight = logicalDispatchFlights.get(
-      logicalFlightKey(ctx.scope, callerCommandId),
+      logicalFlightKey(ctx.scope, receiptCommandId),
     );
     if (inflight) return inflight;
     const replay = readReplayableCommandDispatch(
       ctx,
-      callerCommandId,
+      receiptCommandId,
       tool.name,
     );
     if (replay) return replay;
@@ -1525,7 +1574,7 @@ export async function dispatchToolCall(
   }
 
   const invocationId = effectful ? randomUUID() : undefined;
-  const commandId = effectful ? (callerCommandId ?? invocationId) : undefined;
+  const commandId = effectful ? (receiptCommandId ?? invocationId) : undefined;
   if (invocationId) {
     const auditFailure = writeAudit(
       () =>
@@ -1803,12 +1852,12 @@ export async function dispatchToolCall(
         return denyAfterIntent("command_effect_unavailable");
       }
       if (checkpoint.status === "accepted" && !checkpoint.inserted) {
-        const inflight = callerCommandId
-          ? logicalDispatchFlights.get(logicalFlightKey(ctx.scope, callerCommandId))
+        const inflight = receiptCommandId
+          ? logicalDispatchFlights.get(logicalFlightKey(ctx.scope, receiptCommandId))
           : undefined;
         if (inflight) return inflight;
-        const replay = callerCommandId
-          ? readReplayableCommandDispatch(ctx, callerCommandId, tool.name)
+        const replay = receiptCommandId
+          ? readReplayableCommandDispatch(ctx, receiptCommandId, tool.name)
           : null;
         if (replay) return replay;
         return {
@@ -1821,8 +1870,8 @@ export async function dispatchToolCall(
       if (checkpoint.status === "accepted" && checkpoint.inserted) {
         commandAccepted = true;
         releaseCheckpoint = retainDispatchCheckpoint(ctx.scope, commandId);
-        if (callerCommandId) {
-          ownedFlightKey = logicalFlightKey(ctx.scope, callerCommandId);
+        if (receiptCommandId) {
+          ownedFlightKey = logicalFlightKey(ctx.scope, receiptCommandId);
           let resolveFlight!: (result: ToolDispatchResult) => void;
           const flight = new Promise<ToolDispatchResult>((resolve) => {
             resolveFlight = resolve;

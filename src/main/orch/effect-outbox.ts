@@ -538,7 +538,22 @@ export class EffectOutboxStore {
              AND attempt_count = ?`,
         )
         .run(now, now, id, workerId, attemptCount);
-      return updated.changes === 1;
+      if (updated.changes !== 1) return false;
+      const row = db
+        .prepare(
+          `SELECT command_id, effect_type FROM effect_outbox WHERE effect_id = ?`,
+        )
+        .get(id) as { command_id: string; effect_type: string } | undefined;
+      if (row?.effect_type === 'checkpoint.capture') {
+        // Sequence 0 é o conjunto que o boot trata como comando no meio.
+        // Checkpoint assentado sai desse conjunto na mesma transação.
+        db.prepare(
+          `UPDATE command_receipts
+           SET result_sequence = 1, status = 'accepted', error = NULL
+           WHERE command_id = ? AND result_sequence = 0`,
+        ).run(row.command_id);
+      }
+      return true;
     })();
   }
 

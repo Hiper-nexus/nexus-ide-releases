@@ -16,8 +16,10 @@ import {
   registerEffectOutboxHandler,
   registeredEffectHandler,
 } from './effect-outbox-worker';
-import { mintToken, resetGateForTests } from './gate';
+import { mintToken, resetGateForTests, type AgentGateContext } from './gate';
 import { dispatchToolCall } from './mcp-dispatch';
+import { handleMcpMessage } from './mcp-protocol';
+import { reconcileProviderRuntimeAtBoot } from './provider-runtime-recovery';
 import type { McpRegistry } from './mcp-protocol';
 import {
   configureProjectDomainStoreRegistry,
@@ -189,7 +191,12 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
     }
   });
 
-  function bootDispatch(handler: () => Promise<unknown>) {
+  function bootDispatch(
+    handler: (
+      args: Record<string, unknown>,
+      ctx: AgentGateContext,
+    ) => Promise<unknown>,
+  ) {
     const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-command-effect-'));
     directories.push(baseDir);
     const manager = new ProjectRuntimeManager({
@@ -316,9 +323,58 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
     const effects = createScopedEffectOutboxStore(
       booted.manager,
       booted.scope,
-    ).listByCommandId('logical-op-1');
-    expect(effects).toHaveLength(1);
-    expect(effects[0]?.type).toBe('checkpoint.capture');
+    ).listUnsettledBlocking(MISSION_ID);
+    expect(effects.rows).toHaveLength(1);
+    expect(effects.rows[0]?.type).toBe('checkpoint.capture');
+    expect(effects.rows[0]?.commandId).not.toBe('logical-op-1');
+  });
+
+  it('runs a reused JSON-RPC id when the arguments change', async () => {
+    const commands: string[] = [];
+    const booted = bootDispatch(async (args) => {
+      const command = typeof args.command === 'string' ? args.command : '';
+      commands.push(command);
+      return { command };
+    });
+    const first = await handleMcpMessage(
+      booted.registry,
+      booted.ctx,
+      {
+        jsonrpc: '2.0',
+        id: '1',
+        method: 'tools/call',
+        params: {
+          name: 'nexus_terminal_run',
+          arguments: { command: 'one' },
+        },
+      },
+      booted.options,
+    );
+    const receipts = createScopedCommandReceiptStore(booted.manager, booted.scope);
+    expect(receipts.listUnsettled()).toHaveLength(1);
+    const second = await handleMcpMessage(
+      booted.registry,
+      booted.ctx,
+      {
+        jsonrpc: '2.0',
+        id: '1',
+        method: 'tools/call',
+        params: {
+          name: 'nexus_terminal_run',
+          arguments: { command: 'two' },
+        },
+      },
+      booted.options,
+    );
+    expect(commands).toEqual(['one', 'two']);
+    expect(first?.error).toBeUndefined();
+    expect(second?.error).toBeUndefined();
+    const blocking = createScopedEffectOutboxStore(
+      booted.manager,
+      booted.scope,
+    ).listUnsettledBlocking(MISSION_ID);
+    expect(blocking.rows).toHaveLength(2);
+    expect(new Set(blocking.rows.map((row) => row.commandId)).size).toBe(2);
   });
 
   it('keeps the checkpoint blocking when the handler is still in flight across one drain', async () => {
@@ -374,5 +430,45 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
       if (previous) registerEffectOutboxHandler('checkpoint.capture', previous);
     }
     await expect(pending).resolves.toMatchObject({ ok: true });
+  });
+
+  it('drops a settled checkpoint receipt from the boot-unsettled set', async () => {
+    const booted = bootDispatch(async () => ({ ok: true }));
+    const dispatched = await dispatchToolCall(
+      'http-mcp',
+      booted.registry,
+      'nexus_terminal_run',
+      { command: 'true' },
+      booted.ctx,
+      booted.options,
+    );
+    expect(dispatched.ok).toBe(true);
+    const receipts = createScopedCommandReceiptStore(booted.manager, booted.scope);
+    const pending = receipts.listUnsettled();
+    expect(pending).toHaveLength(1);
+    const commandId = pending[0]!.commandId;
+    expect(pending[0]!.resultSequence).toBe(0);
+    const previous = registeredEffectHandler('checkpoint.capture');
+    const unregister = registerCheckpointCaptureHandler();
+    try {
+      const drained = await drainEffectOutbox({
+        store: createScopedEffectOutboxStore(booted.manager, booted.scope),
+        scope: booted.scope,
+        workerId: 'orchestration-coordinator',
+      });
+      expect(drained).toMatchObject({ succeeded: 1, failed: 0 });
+    } finally {
+      unregister();
+      if (previous) registerEffectOutboxHandler('checkpoint.capture', previous);
+    }
+    const settled = receipts.getByCommandId(commandId);
+    expect(settled?.resultSequence).toBeGreaterThan(0);
+    expect(settled?.status).toBe('accepted');
+    expect(receipts.listUnsettled()).toEqual([]);
+    const boot = reconcileProviderRuntimeAtBoot({
+      scope: booted.scope,
+      runtimeManager: booted.manager,
+    });
+    expect(boot.unsettledReceipts).toBe(0);
   });
 });

@@ -173,9 +173,8 @@ export function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
 }
 
 /**
- * Handle one JSON-RPC message. Returns null for notifications (no response).
- * Tool-level failures come back as `isError` results; gate refusals are
- * explicit so agents can adjust instead of retrying blindly.
+ * Correlação da conexão. Não é a chave do recibo: o despacho ainda mistura
+ * sessão, ferramenta e argumentos, porque este id volta a ser "1".
  */
 function logicalOperationIdFromRpcId(
   id: JsonRpcRequest["id"],
@@ -185,6 +184,11 @@ function logicalOperationIdFromRpcId(
   return undefined;
 }
 
+/**
+ * Handle one JSON-RPC message. Returns null for notifications (no response).
+ * Tool-level failures come back as `isError` results; gate refusals are
+ * explicit so agents can adjust instead of retrying blindly.
+ */
 export async function handleMcpMessage(
   registry: McpRegistry,
   ctx: AgentGateContext,
