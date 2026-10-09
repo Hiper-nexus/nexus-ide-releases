@@ -12,6 +12,8 @@ import type { PtyStreamMissionAction } from "./pty-stream-mission-control";
  * O id do bloco PTY (`call-1`) é local ao canal. O recibo usa sessão + canal
  * + id, então outro pane ou um canal novo não reaproveita o resultado. O
  * mesmo canal vivo, no retry da resposta perdida, continua no mesmo recibo.
+ * Main fornece sessão/canal; o binding completo e a resposta unavailable de
+ * retry vêm do dispatcher, sem expor operationId público ou guardar output.
  */
 export function ptyStreamLogicalOperationId(
   sessionId: string,
@@ -44,6 +46,14 @@ export function dispatchPtyStreamMissionAction(input: {
   readonly ctx: AgentGateContext;
   readonly options?: Omit<McpDispatchOptions, "logicalOperationId">;
 }): Promise<ToolDispatchResult> {
+  if (input.ctx.sessionId !== input.sessionId) {
+    return Promise.resolve({
+      ok: false,
+      tool: input.request.tool,
+      denied: true,
+      error: 'pty_stream_session_identity_conflict',
+    });
+  }
   return dispatchToolCall(
     "pty-stream",
     input.registry,

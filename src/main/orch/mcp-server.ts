@@ -1880,7 +1880,7 @@ function createPtyMissionControl(): PtyStreamMissionControl {
       getSessionState(sessionId) === "idle" &&
       isSessionInjectableIdle(sessionId),
     write: orchWriteSession,
-    invoke: async (sessionId, request, channelId): Promise<ToolDispatchResult> => {
+    invoke: async (sessionId, request, channelId, callerSignal): Promise<ToolDispatchResult> => {
       const ctx = currentPtyMaestroContext(sessionId);
       if (!ctx || !registry) {
         throw new Error(
@@ -1895,6 +1895,7 @@ function createPtyMissionControl(): PtyStreamMissionControl {
           registry: registry!,
           ctx,
           options: {
+            callerSignal,
             confirm: confirmHttpMcpTool,
             prepareDestructiveReversibility: destructiveReversibilityPreparer,
           },

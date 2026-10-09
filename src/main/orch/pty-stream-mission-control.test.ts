@@ -104,6 +104,7 @@ describe("provider-independent PTY Maestro mission control", () => {
         args: { action: "list" },
       },
       CHANNEL_ID,
+      expect.any(AbortSignal),
     );
     expect(writes).toEqual([]);
 

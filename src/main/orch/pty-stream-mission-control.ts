@@ -49,6 +49,8 @@ export interface PtyStreamMissionControlPorts {
     sessionId: string,
     request: PtyStreamMissionAction,
     channelId: string,
+    /** Private Main channel lifetime; not a terminal/JSON argument. */
+    callerSignal: AbortSignal,
   ) => Promise<PtyStreamMissionActionOutcome>;
   readonly isAuthorized: (sessionId: string) => boolean;
   readonly isInjectableIdle: (sessionId: string) => boolean;
@@ -71,6 +73,7 @@ interface PendingResult {
 
 interface MissionControlChannel {
   readonly id: string;
+  readonly admission: AbortController;
   pendingText: string;
   collectingText: string | null;
   readonly callSignatures: Map<string, string>;
@@ -173,6 +176,7 @@ export class PtyStreamMissionControl {
       id:
         this.ports.createChannelId?.() ??
         randomBytes(18).toString("base64url"),
+      admission: new AbortController(),
       pendingText: "",
       collectingText: null,
       callSignatures: new Map(),
@@ -256,6 +260,7 @@ export class PtyStreamMissionControl {
   dropSession(sessionId: string): void {
     const channel = this.channels.get(sessionId);
     if (!channel) return;
+    channel.admission.abort(new Error("pty_stream_channel_revoked"));
     for (const pending of channel.results) this.clearResultTimers(pending);
     this.channels.delete(sessionId);
   }
@@ -321,7 +326,9 @@ export class PtyStreamMissionControl {
     }
     let outcome: PtyStreamMissionActionOutcome;
     try {
-      outcome = await this.ports.invoke(sessionId, request, channel.id);
+      outcome = await this.ports.invoke(
+        sessionId, request, channel.id, channel.admission.signal,
+      );
     } catch (error) {
       outcome = invalidInvocationOutcome(request, error);
     }
