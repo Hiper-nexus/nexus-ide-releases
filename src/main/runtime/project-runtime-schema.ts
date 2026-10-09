@@ -1204,4 +1204,13 @@ END;`,
           UNIQUE(command_id,event_kind));
         CREATE INDEX command_receipts_unsettled ON command_receipts(result_sequence,accepted_at,command_id);`,
     }),
+    createProjectMigration({
+      id: '053-unproven-legacy-dispatch-obligations', schemaVersion: 53, appVersion: '0.76.213',
+      sql: `UPDATE effect_outbox SET effect_type='dispatch.physical-settlement',status='pending',
+          lease_owner=NULL,lease_expires_at=NULL,completed_at=NULL,last_error='Legacy dispatch exit proof unavailable'
+        WHERE effect_type='checkpoint.capture' AND command_id IN
+          (SELECT command_id FROM command_receipts WHERE command_type='checkpoint.capture');
+        UPDATE command_receipts SET command_type='dispatch.observation',physical_state='unknown',dispatch_state='unknown',result_sequence=0
+        WHERE command_type='checkpoint.capture';`,
+    }),
   ]);

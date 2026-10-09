@@ -4,6 +4,8 @@
  * Nexus changes: Nexus async/await drainer implements lease/settlement policy with a local handler registry. No upstream implementation code or provider handlers copied.
  */
 import type { PeriodicTaskContext } from '../observability/periodic-task';
+import { CommandReceiptStore } from './command-receipts';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   EffectOutboxStore,
@@ -19,40 +21,12 @@ import {
  * `pending → running → settled` enquanto o processo vive e é o dono do lease.
  */
 
-export type EffectOutboxHandlerResult = void | { readonly defer: true };
+export type EffectOutboxHandlerResult = void | { readonly defer: true } | { readonly settled: true };
 
 export type EffectOutboxHandler = (
   entry: EffectOutboxEntry,
   scope: ProjectExecutionScope,
 ) => Promise<EffectOutboxHandlerResult> | EffectOutboxHandlerResult;
-
-const dispatchCheckpointFlights = new Set<string>();
-
-function dispatchCheckpointKey(
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
-  commandId: string,
-): string {
-  return `${scope.projectId}\0${scope.checkoutId}\0${commandId}`;
-}
-
-/** Segura o checkpoint até o handler real terminar. O dreno não assenta antes. */
-export function retainDispatchCheckpoint(
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
-  commandId: string,
-): () => void {
-  const key = dispatchCheckpointKey(scope, commandId);
-  dispatchCheckpointFlights.add(key);
-  return () => {
-    dispatchCheckpointFlights.delete(key);
-  };
-}
-
-export function dispatchCheckpointInFlight(
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
-  commandId: string,
-): boolean {
-  return dispatchCheckpointFlights.has(dispatchCheckpointKey(scope, commandId));
-}
 
 function isDeferredEffectSettlement(
   value: unknown,
@@ -89,19 +63,17 @@ export function registeredEffectHandler(
   return effectHandlers.get(type) ?? null;
 }
 
-/**
- * Handler de produção do `checkpoint.capture`. O despacho já gravou o
- * recibo e o efeito juntos; o dreno assenta a obrigação que o gate espera.
- * A captura git do fim de turno continua em `captureWriterHandoffCheckpoint`.
- */
-export function registerCheckpointCaptureHandler(): () => void {
-  return registerEffectOutboxHandler('checkpoint.capture', (entry, scope) => {
-    // A linha nasce antes do handler. Enquanto ele corre, voltar a pending
-    // sem assentar: sucesso aqui fecharia a missão no meio da mutação.
-    if (dispatchCheckpointInFlight(scope, entry.commandId)) {
-      return { defer: true };
-    }
-    return undefined;
+/** A legacy fake checkpoint has no native capture proof. Never manufacture it. */
+export function registerUnprovenCheckpointHandler(): () => void {
+  return registerEffectOutboxHandler('checkpoint.capture', () => ({defer:true}));
+}
+
+/** Production verifier only. No mutation replay and no absence-of-flight proof. */
+export function registerDispatchPhysicalSettlementHandler(manager: () => ProjectRuntimeManager): () => void {
+  return registerEffectOutboxHandler('dispatch.physical-settlement', (entry,scope) => {
+    const runtime=manager();
+    const receipts=new CommandReceiptStore(runtime,scope);
+    return receipts.settlePhysicalDispatch(new EffectOutboxStore(runtime,scope),entry) ? {settled:true} : {defer:true};
   });
 }
 
@@ -184,6 +156,10 @@ export async function drainEffectOutbox(
     try {
       try {
         const handler = deps.handler ?? registeredEffectHandler(entry.type);
+        if (!handler && entry.type==='dispatch.physical-settlement') {
+          if(deps.store.retry(entry.id,deps.workerId,'physical proof verifier unavailable',retryDelayMs,entry.attemptCount))retried+=1;
+          continue;
+        }
         if (!handler) {
           const reason = `effect outbox has no handler for ${entry.type}`;
           const released = deps.store.fail(
@@ -207,12 +183,13 @@ export async function drainEffectOutbox(
         const settled = context
           ? await context.wait(Promise.resolve(pending))
           : await pending;
-        if (isDeferredEffectSettlement(settled)) {
+        if(entry.type==='dispatch.physical-settlement' && deps.store.get(entry.id)?.status==='succeeded'){succeeded+=1;continue;}
+        if (isDeferredEffectSettlement(settled) || entry.type==='dispatch.physical-settlement') {
           const released = deps.store.retry(
             entry.id,
             deps.workerId,
-            'effect still in flight',
-            0,
+            'effect proof still unavailable',
+            retryDelayMs,
             entry.attemptCount,
           );
           if (released) retried += 1;

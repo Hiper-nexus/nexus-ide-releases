@@ -51,6 +51,8 @@ export interface McpToolDef {
   inputSchema: Record<string, unknown>;
   /** Forces native/user confirmation even if the generic guardrail changes. */
   requiresConfirm?: boolean;
+  /** Explicit Main terminal/bg lifetime producer; response alone is not exit. */
+  ownedProcessLifetime?: boolean;
   /**
    * Runtime availability predicate (presence of a credential, feature flag).
    * When it returns false the tool is hidden from tools/list and dispatch
@@ -65,6 +67,11 @@ export interface McpToolDef {
 }
 
 export interface McpToolInvocation {
+  /** Main-only owned process proof registration; never accepted from tool args. */
+  readonly beginOwnedProcess?: () => {
+    observeExit(exit: Promise<void>): void;
+    preparationFailed(): void;
+  };
   /** Aborted when a newer mission intent preempts bootstrap/preflight work. */
   readonly signal?: AbortSignal;
   /**

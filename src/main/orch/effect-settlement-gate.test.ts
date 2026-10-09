@@ -8,10 +8,11 @@ import {
 import { automaticCompletionEffectsSettled } from './automatic-completion-proof';
 
 describe('ORC-02 effect settlement gate', () => {
-  it('blocking types are exactly checkpoint.capture and handoff.deliver (T3)', () => {
+  it('blocking types include owned physical obligations alongside checkpoint/handoff', () => {
     expect([...BLOCKING_SETTLEMENT_EFFECT_TYPES]).toEqual([
       'checkpoint.capture',
       'handoff.deliver',
+      'dispatch.physical-settlement',
     ]);
   });
 

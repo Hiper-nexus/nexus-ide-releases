@@ -223,6 +223,54 @@ export class CommandReceiptStore {
     })();
   }
 
+  /** Main-owned marker BEFORE any preparation capable of creating external work. */
+  beginPhysicalDispatch(outbox: EffectOutboxStore, commandId: string, bindingDigest: string, toolName: string): void {
+    if (!['nexus_terminal_run','nexus_bg_run'].includes(toolName)) throw new Error('unsupported physical producer');
+    if (!outbox.sharesTransactionWith(this.#binding)) throw new Error('physical effect must share the same transaction database');
+    const db=this.#binding.writeDatabase();
+    db.transaction(()=>{
+      const receipt=this.getByCommandId(commandId);
+      if (!receipt || receipt.commandType!=='dispatch.observation' || receipt.bindingDigest!==bindingDigest || receipt.physicalState!=='none' || receipt.outcomeJson!==null || receipt.resultSequence!==0) throw new Error('physical dispatch identity conflict');
+      outbox.enqueue({id:commandId,commandId,threadId:receipt.aggregateId,type:'dispatch.physical-settlement',payload:{toolName}});
+      db.prepare("UPDATE command_receipts SET physical_state='pending' WHERE command_id=?").run(commandId);
+      this.#appendDispatchEvent(db,commandId,'physical-start',null,'pending');
+    })();
+  }
+
+  /** A captured Main lifetime may record an exit fact after caller revocation. */
+  recordPhysicalDispatchProof(commandId: string, bindingDigest: string, proof: 'proven'|'unknown'): void {
+    const db=this.#binding.writeDatabase();
+    db.transaction(()=>{
+      const receipt=this.getByCommandId(commandId);
+      if (!receipt || receipt.bindingDigest!==bindingDigest || !['pending','unknown'].includes(receipt.physicalState)) throw new Error('physical dispatch identity conflict');
+      db.prepare('UPDATE command_receipts SET physical_state=? WHERE command_id=?').run(proof,commandId);
+      this.#appendDispatchEvent(db,commandId,proof==='proven'?'physical-proven':'physical-unknown',null,proof);
+    })();
+  }
+
+  /** Verify persisted exit proof; never re-execute a mutation or infer flight absence. */
+  settlePhysicalDispatch(outbox: EffectOutboxStore, entry: EffectOutboxEntry): boolean {
+    if (!outbox.sharesTransactionWith(this.#binding)) throw new Error('physical effect must share the same transaction database');
+    if(entry.type!=='dispatch.physical-settlement' || entry.status!=='running' || !entry.leaseOwner)return false;
+    const db=this.#binding.writeDatabase();
+    return db.transaction(()=>{
+      const receipt=this.getByCommandId(entry.commandId);
+      if(!receipt || receipt.physicalState!=='proven' || receipt.outcomeJson===null)return false;
+      const now=this.#binding.now();
+      const changed=db.prepare("UPDATE effect_outbox SET status='succeeded',lease_owner=NULL,lease_expires_at=NULL,completed_at=?,updated_at=?,last_error=NULL WHERE effect_id=? AND command_id=? AND effect_type='dispatch.physical-settlement' AND status='running' AND lease_owner=? AND attempt_count=?")
+        .run(now,now,entry.id,entry.commandId,entry.leaseOwner,entry.attemptCount);
+      if(changed.changes!==1)return false;
+      const sequence=this.#appendDispatchEvent(db,entry.commandId,'settled',receipt.dispatchState,'proven');
+      db.prepare("UPDATE command_receipts SET result_sequence=?,dispatch_state='settled' WHERE command_id=?").run(sequence,entry.commandId);
+      return true;
+    })();
+  }
+
+  /** Process loss cannot reconstruct supervisor/OCI authority from a command ID. */
+  markPhysicalDispatchesUnknownAfterProcessLoss(): number {
+    return this.#binding.writeDatabase().prepare("UPDATE command_receipts SET physical_state='unknown' WHERE physical_state='pending' AND result_sequence=0").run().changes;
+  }
+
   get scope(): ProjectExecutionScope {
     return this.#binding.scope;
   }

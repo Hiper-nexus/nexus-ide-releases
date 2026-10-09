@@ -39,6 +39,7 @@ export const REPLAY_SAFE_EFFECT_TYPES = [
   'session.detach',
   'thread.rollback',
   'checkpoint.capture',
+  'dispatch.physical-settlement',
   'terminal.cleanup',
   'attachment.cleanup',
   'thread-title.generate',
@@ -374,7 +375,7 @@ export class EffectOutboxStore {
     threadId?: string,
   ): { readonly rows: EffectOutboxEntry[]; readonly truncated: boolean } {
     const cap = 200;
-    const blocking = ['checkpoint.capture', 'handoff.deliver'];
+    const blocking = ['checkpoint.capture', 'handoff.deliver', 'dispatch.physical-settlement'];
     const thread =
       threadId === undefined ? undefined : z.string().min(1).max(128).parse(threadId);
     const rows = this.#binding
@@ -382,7 +383,7 @@ export class EffectOutboxStore {
       .prepare(
         `SELECT * FROM effect_outbox
          WHERE status IN ('pending', 'running')
-           AND effect_type IN (?, ?)
+           AND effect_type IN (?, ?, ?)
            ${thread === undefined ? '' : 'AND thread_id = ?'}
          ORDER BY created_at ASC, effect_id ASC
          LIMIT ?`,
@@ -547,7 +548,7 @@ export class EffectOutboxStore {
            SET status = 'succeeded', lease_owner = NULL, lease_expires_at = NULL,
                completed_at = ?, updated_at = ?, last_error = NULL
            WHERE effect_id = ? AND status = 'running' AND lease_owner = ?
-             AND attempt_count = ?`,
+             AND attempt_count = ? AND effect_type != 'dispatch.physical-settlement'`,
         )
         .run(now, now, id, workerId, attemptCount);
       return updated.changes === 1;

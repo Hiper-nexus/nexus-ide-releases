@@ -24,7 +24,8 @@ import {
 } from './handoff-delivery-outbox';
 import {
   drainEffectOutbox,
-  registerCheckpointCaptureHandler,
+  registerUnprovenCheckpointHandler,
+  registerDispatchPhysicalSettlementHandler,
 } from './effect-outbox-worker';
 import { EffectOutboxStore, isUnreconciledEffectOutbox } from './effect-outbox';
 import { CommandReceiptStore } from './command-receipts';
@@ -51,6 +52,7 @@ let coordinator: OrchestrationReconciler | null = null;
 let disposeLoginWatchdog: (() => Promise<void>) | null = null;
 let disposeBootPromptWatchdog: (() => void) | null = null;
 let coordinatorStopFlight: Promise<void> | null = null;
+let unregisterPhysicalHandler: (() => void) | null = null;
 let unregisterCheckpointHandler: (() => void) | null = null;
 const MISSION_RUNTIME_AUTHORITY_RECONCILE_MS = 1_000;
 /** ORC-01: dreno do outbox de efeitos no mesmo relógio do coordinator. */
@@ -88,8 +90,9 @@ export function startOrchestrationCoordinator(): void {
   disposeLoginWatchdog = installLoginStuckWatchdog({ autoTick: false });
   disposeBootPromptWatchdog = installBootPromptWatchdog();
   if (!unregisterCheckpointHandler) {
-    unregisterCheckpointHandler = registerCheckpointCaptureHandler();
+    unregisterCheckpointHandler = registerUnprovenCheckpointHandler();
   }
+  if (!unregisterPhysicalHandler) unregisterPhysicalHandler = registerDispatchPhysicalSettlementHandler(()=>requireProjectDomainStoreRegistry().runtimeManager());
   // ORC-06: reconcilia efeitos órfãos do processo anterior antes do primeiro
   // passe de trabalho (delegation, handoff, goal).
   recoverEffectOutboxesAtBoot();
@@ -217,6 +220,8 @@ export async function stopOrchestrationCoordinator(): Promise<void> {
     await shutdownDelegationSupervisor();
     configureHandoffDeliveryRuntimeRecovery(null);
     await shutdownGoalGovernor();
+    unregisterPhysicalHandler?.();
+    unregisterPhysicalHandler = null;
     unregisterCheckpointHandler?.();
     unregisterCheckpointHandler = null;
     coordinator = null;

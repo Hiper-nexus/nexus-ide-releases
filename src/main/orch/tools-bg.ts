@@ -137,9 +137,11 @@ async function waitForTaskTeardown(task: BgTask): Promise<void> {
 
 const bgRun: McpToolDef = {
   name: 'nexus_bg_run',
+  ownedProcessLifetime: true,
   description:
     'Start a shell command in the background (dev servers, long tests, builds). ' +
     'Heavy mission commands wait for admission; returns taskId after the process starts. ' +
+    'This is a launch acknowledgment, not process exit: mission completion waits for the owned tree to exit. ' +
     'Poll with nexus_bg_wait / kill with nexus_bg_kill. ' +
     'Sandboxed to the workspace like nexus_terminal_run.',
   inputSchema: {
@@ -192,6 +194,7 @@ const bgRun: McpToolDef = {
     let proc: ChildProcess;
     let heavyPermit: HeavyCommandPermit | undefined;
     let ownedCommand: OwnedCommandLaunch | undefined;
+    let physical: ReturnType<NonNullable<import('./mcp-protocol').McpToolInvocation['beginOwnedProcess']>> | undefined;
     try {
       const kind = classifyHeavyCommand(command);
       if (kind) heavyPermit = await acquireHeavyCommandPermit({ scope: executionScopeFor(ctx), missionId: ctx.missionId,
@@ -199,6 +202,8 @@ const bgRun: McpToolDef = {
         isCurrent: () => { assertMcpInvocationCurrent(invocation); return true; } });
       // Linearization point after all path/sandbox preparation.
       assertMcpInvocationCurrent(invocation);
+      // Preparation can create an OCI container even before child spawn.
+      physical = invocation?.beginOwnedProcess?.();
       ownedCommand = await prepareOwnedCommandLaunch(plan);
       assertMcpInvocationCurrent(invocation);
       plan = ownedCommand.plan;
@@ -209,13 +214,17 @@ const bgRun: McpToolDef = {
         stdio: ownedCommand.stdio ?? ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
+      physical?.preparationFailed();
       await ownedCommand?.dispose();
-      heavyPermit?.release(); // No physical process was spawned.
+      heavyPermit?.release(); // No child handle exists; physical uncertainty remains durable.
       await removeTree(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
     const ownedExit = ownedCommand!.waitForExit(proc);
     void ownedExit.catch(() => {});
+    let disposal: Promise<void> | undefined;
+    const disposeOwned = () => disposal ??= ownedCommand!.dispose();
+    physical?.observeExit(ownedExit.then(disposeOwned));
     if (heavyPermit) retainHeavyCommandPermitForProcess(heavyPermit, proc, { detached: plan.detached, physicalExit: ownedExit });
     const id = `bg-${++bgCounter}`;
     let resolvePhysicalExit!: () => void;
@@ -273,7 +282,7 @@ const bgRun: McpToolDef = {
       if (finalizing) return;
       if (task.finalized) return;
       finalizing = true;
-      try { await ownedExit; await ownedCommand!.dispose(); }
+      try { await ownedExit; await disposeOwned(); }
       catch { requestTaskTermination(task, false); finalizing = false; return; }
       task.finalized = true;
       // The complete job/namespace/container proof has already settled.

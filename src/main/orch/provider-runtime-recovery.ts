@@ -92,6 +92,7 @@ export function reconcileProviderRuntimeAtBoot(
     const receipts = new CommandReceiptStore(deps.runtimeManager, deps.scope, {
       now: deps.now,
     });
+    receipts.markPhysicalDispatchesUnknownAfterProcessLoss();
     const settled = outbox.reconcileAfterProcessLoss();
     const unsettledReceipts = receipts.countUnsettled();
     clearUnreconciledEffectOutbox(deps.scope);

@@ -1,3 +1,4 @@
+import { createOwnedProcessLifetimeRegistration } from './command-physical-lifetime';
 import { captureCommandDispatchIdentity } from './command-dispatch-identity';
 import { randomUUID } from "node:crypto";
 import { resolveCwdForScope } from './workspace-path';
@@ -612,7 +613,7 @@ function readReplayableCommandDispatch(
       ctx.scope,
     ).listByCommandId(commandId)[0];
     const storedTool = toolNameFromEffectPayload(effect?.payload);
-    if (storedTool && storedTool !== canonicalToolName(toolName)) {
+    if (storedTool && canonicalToolName(storedTool) !== canonicalToolName(toolName)) {
       return {
         ok: false,
         tool: toolName,
@@ -646,7 +647,7 @@ function readReplayableCommandDispatch(
 }
 
 function rememberDispatchOutcome(
-  ctx: AgentGateContext,
+  scope: ProjectExecutionScope,
   commandId: string,
   outcome: ToolDispatchResult,
 ): void {
@@ -654,7 +655,7 @@ function rememberDispatchOutcome(
     const runtimeManager = requireProjectDomainStoreRegistry().runtimeManager();
     createScopedCommandReceiptStore(
       runtimeManager,
-      ctx.scope,
+      scope,
     ).rememberDispatchOutcome(commandId, outcome);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
@@ -712,6 +713,7 @@ export async function dispatchToolCall(
   options: McpDispatchOptions = {},
 ): Promise<ToolDispatchResult> {
   const startMs = Date.now();
+  const commandReceiptScope = Object.freeze({...ctx.scope});
   const sessionId = normalizeDispatchSessionId(source, ctx);
   const physicalAgentTransport =
     source === "http-mcp" ||
@@ -1567,7 +1569,7 @@ export async function dispatchToolCall(
     result: ToolDispatchResult,
   ): ToolDispatchResult => {
     if (commandAccepted && commandId) {
-      rememberDispatchOutcome(ctx, commandId, result);
+      rememberDispatchOutcome(commandReceiptScope, commandId, result);
     }
     resolveOwnedFlight?.({ok:false,tool:result.tool,error:'command_result_unavailable',effectMayHaveCommitted:result.ok || result.effectMayHaveCommitted || undefined,denied:result.denied});
     resolveOwnedFlight = undefined;
@@ -1923,6 +1925,8 @@ export async function dispatchToolCall(
     const result = await tool.handler(args, ctx, {
       signal: invocationSignal,
       assertCurrentAuthority,
+      ...(commandAccepted && commandId && tool.ownedProcessLifetime === true && ["terminal_run","bg_run"].includes(canonical)
+        ? {beginOwnedProcess:createOwnedProcessLifetimeRegistration(requireProjectDomainStoreRegistry().runtimeManager(),ctx.scope,commandId,operationIdentity!.bindingDigest,tool.name,assertCurrentAuthority)} : {}),
       ...(invocationId
         ? {
             effectIntent: Object.freeze({

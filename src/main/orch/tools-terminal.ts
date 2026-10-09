@@ -160,6 +160,7 @@ function removeInvocationAbortListener(
 
 const terminalRun: McpToolDef = {
   name: 'nexus_terminal_run',
+  ownedProcessLifetime: true,
   description:
     'Run a shell command in the workspace directory. Returns stdout and stderr. ' +
     'The command runs to completion or until the timeout (default 30s). ' +
@@ -243,6 +244,7 @@ const terminalRun: McpToolDef = {
     let proc: ChildProcess;
     let heavyPermit: HeavyCommandPermit | undefined;
     let ownedCommand: OwnedCommandLaunch | undefined;
+    let physical: ReturnType<NonNullable<import('./mcp-protocol').McpToolInvocation['beginOwnedProcess']>> | undefined;
     try {
       const kind = classifyHeavyCommand(command);
       if (kind) heavyPermit = await acquireHeavyCommandPermit({ scope: executionScopeFor(ctx), missionId: ctx.missionId,
@@ -251,6 +253,8 @@ const terminalRun: McpToolDef = {
       // Linearization point: no process may exist unless the exact MCP
       // session/intent is still current after all preparation.
       assertMcpInvocationCurrent(invocation);
+      // Preparation can create an OCI container even before child spawn.
+      physical = invocation?.beginOwnedProcess?.();
       ownedCommand = await prepareOwnedCommandLaunch(plan);
       assertMcpInvocationCurrent(invocation);
       plan = ownedCommand.plan;
@@ -261,13 +265,17 @@ const terminalRun: McpToolDef = {
         stdio: ownedCommand.stdio ?? ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
+      physical?.preparationFailed();
       await ownedCommand?.dispose();
-      heavyPermit?.release(); // No physical process was spawned.
+      heavyPermit?.release(); // No child handle exists; physical uncertainty remains durable.
       await removeTree(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
     const physicalExit = ownedCommand!.waitForExit(proc);
     void physicalExit.catch(() => {});
+    let disposal: Promise<void> | undefined;
+    const disposeOwned = () => disposal ??= ownedCommand!.dispose();
+    physical?.observeExit(physicalExit.then(disposeOwned));
     if (heavyPermit) retainHeavyCommandPermitForProcess(heavyPermit, proc, { detached: plan.detached, physicalExit });
 
     const result = await new Promise<{
@@ -351,7 +359,7 @@ const terminalRun: McpToolDef = {
         if (finalizing) return;
         if (finalized) return;
         finalizing = true;
-        try { await physicalExit; await ownedCommand!.dispose(); }
+        try { await physicalExit; await disposeOwned(); }
         catch {
           requestTermination(false);
           if (!settled) { settled = true; reject(new Error('command_descendant_exit_unproven')); }

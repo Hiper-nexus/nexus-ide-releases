@@ -21,6 +21,7 @@ export type SettlementEffectStatus = 'pending' | 'running';
 export const BLOCKING_SETTLEMENT_EFFECT_TYPES = [
   'checkpoint.capture',
   'handoff.deliver',
+  'dispatch.physical-settlement',
 ] as const;
 
 export type BlockingSettlementEffectType =
