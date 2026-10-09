@@ -246,7 +246,7 @@ function mockedListCursorPage(filter: {
   return rows.slice(from, from + filter.limit);
 }
 
-function mockedListRecentIds(limit = 5): string[] {
+function mockedListRecentIds(_filter: unknown, limit = 5): string[] {
   const rows = mocks.listHandoffs() as Array<{ id: string; createdAt?: number }>;
   const count = typeof limit === "number" ? limit : 5;
   return rows.slice(Math.max(0, rows.length - count)).map((row) => row.id);
@@ -2298,7 +2298,7 @@ describe("handoff MCP stop receipt", () => {
     const list = vi.fn(() => {
       throw new Error("full list");
     });
-    const listCursorPage = vi.fn(() => [
+    const listCursorPage = vi.fn((_filter: { limit: number }) => [
       {
         id: "h-1",
         delivered: true,
