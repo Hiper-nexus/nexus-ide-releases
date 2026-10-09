@@ -274,6 +274,7 @@ describe('pty-manager: taps de dados em lote (F-764 C.1)', () => {
       );
       await finish(shell);
     } finally {
+      await flushMainTrace();
       setTraceDirectory(null);
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -308,6 +309,7 @@ describe('pty-manager: taps de dados em lote (F-764 C.1)', () => {
       );
       await finish(shell, false);
     } finally {
+      await flushMainTrace();
       setTraceDirectory(null);
       fs.rmSync(dir, { recursive: true, force: true });
     }
