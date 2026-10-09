@@ -2191,6 +2191,76 @@ describe('Caminho Expresso', () => {
     );
   });
 
+  it('atalhos 1–6 disparam na tela real de início, não só no Launcher órfão', async () => {
+    const host = render(<MissionSetup home />);
+    await flush();
+
+    expect(
+      host.querySelector('[data-launcher-action="pane"] kbd')?.textContent,
+    ).toBe('1');
+    expect(
+      host.querySelector('[data-launcher-action="tasks"] kbd')?.textContent,
+    ).toBe('5');
+    expect(
+      host.querySelector('[data-launcher-action="mission"]')?.textContent,
+    ).toBe('2');
+    expect(
+      host.querySelector('[data-launcher-action="workspace"] kbd')?.textContent,
+    ).toBe('3');
+
+    const objective = fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido');
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '2', bubbles: true }),
+      );
+    });
+    expect(document.activeElement).toBe(objective);
+
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '5', bubbles: true }),
+      );
+    });
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'task-board',
+    });
+
+    useProductNavigationStore.setState({
+      destination: { kind: 'mission-setup' },
+    });
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '5', bubbles: true, metaKey: true }),
+      );
+    });
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+
+    act(() => {
+      objective.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '5', bubbles: true }),
+      );
+    });
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+  });
+
+  it('atalhos do início não disparam no assistente avançado', async () => {
+    const host = render(<MissionSetup />);
+    await flush();
+    expect(host.querySelector('[data-launcher-action="tasks"]')).toBeNull();
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '5', bubbles: true }),
+      );
+    });
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+  });
+
   it('abrir e recolher opções preserva o rascunho e inicia a equipe selecionada', async () => {
     const host = await renderAtExpress();
     enterText(

@@ -78,6 +78,22 @@ describe('ExpressTerminalOptions', () => {
     );
   });
 
+  it('mostra o atalho e abre o quadro a partir do cartão de tarefas', () => {
+    const host = mount();
+    expect(
+      host.querySelector('[data-launcher-action="pane"] kbd')?.textContent,
+    ).toBe('1');
+    expect(
+      host.querySelector('[data-launcher-action="shell"] kbd')?.textContent,
+    ).toBe('4');
+    const openTaskBoard = vi.spyOn(
+      useProductNavigationStore.getState(),
+      'openTaskBoard',
+    );
+    act(() => buttonWith(host, 'Quadro de tarefas').click());
+    expect(openTaskBoard).toHaveBeenCalledTimes(1);
+  });
+
   it('os cartões são alvos secundários confortáveis (≥32px) com nome acessível', () => {
     const host = mount();
     for (const label of ['Montar meus terminais', 'Terminal sem IA']) {

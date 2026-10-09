@@ -1,11 +1,10 @@
-import { useEffect } from 'react';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 import {
   LAUNCHER_ACTIONS,
-  launcherActionIdForKey,
   launcherShortcutHint,
   requireAccessibleName,
 } from '../../lib/action-names';
+import { useLauncherShortcuts } from './use-launcher-shortcuts';
 
 export interface LauncherProps {
   onOpenWorkspace: () => void;
@@ -190,44 +189,14 @@ export function Launcher({
   onOpenMemory,
   onOpenProviders,
 }: LauncherProps) {
-  // Atalhos 1–6 valem com o launcher montado, mesmo se o foco ainda
-  // estiver no body. Cmd/Ctrl/Alt continuam atalhos do app. Campo
-  // editável não dispara.
-  useEffect(() => {
-    const runById: Record<string, () => void> = {
-      pane: onOpenPane,
-      mission: onStartMission,
-      workspace: onOpenWorkspace,
-      shell: onOpenShellTerminal,
-      tasks: onOpenTaskBoard,
-      memory: onOpenMemory,
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      const editable =
-        target?.tagName === 'INPUT' ||
-        target?.tagName === 'TEXTAREA' ||
-        target?.isContentEditable === true;
-      const id = launcherActionIdForKey(event.key, {
-        targetIsEditable: editable,
-      });
-      if (!id) return;
-      const run = runById[id];
-      if (!run) return;
-      event.preventDefault();
-      run();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [
-    onOpenPane,
-    onStartMission,
-    onOpenWorkspace,
-    onOpenShellTerminal,
-    onOpenTaskBoard,
-    onOpenMemory,
-  ]);
+  useLauncherShortcuts(true, {
+    pane: onOpenPane,
+    mission: onStartMission,
+    workspace: onOpenWorkspace,
+    shell: onOpenShellTerminal,
+    tasks: onOpenTaskBoard,
+    memory: onOpenMemory,
+  });
 
   return (
     <section

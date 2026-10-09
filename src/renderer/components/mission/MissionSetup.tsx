@@ -36,6 +36,11 @@ import { reflectAdoptedOrchestratorWithToast } from '../../orch/adopted-orchestr
 import { useProviderStore } from '../../state/provider-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { ExpressMissionStart } from './ExpressMissionStart';
+import {
+  openExpressBareShell,
+  openExpressTerminalGrid,
+} from './ExpressTerminalOptions';
+import { useLauncherShortcuts } from '../product/use-launcher-shortcuts';
 import { MissionStep } from './MissionStep';
 import {
   ReviewStep,
@@ -1042,6 +1047,23 @@ export function MissionSetup({
       }
     }
   };
+
+  useLauncherShortcuts(home || draft.step === 'express', {
+    pane: openExpressTerminalGrid,
+    mission: () => {
+      document.getElementById('express-objective')?.focus();
+    },
+    workspace: () => {
+      void pickProjectFolder();
+    },
+    shell: openExpressBareShell,
+    tasks: () => {
+      useProductNavigationStore.getState().openTaskBoard();
+    },
+    memory: () => {
+      useProductNavigationStore.getState().openMemory();
+    },
+  });
 
   if (workspacePath !== canonicalWorkspacePath) {
     return (

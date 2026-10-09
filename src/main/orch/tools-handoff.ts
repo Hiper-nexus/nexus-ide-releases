@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { checkVisualHandoff } from './visual-handoff-gate';
 import { submitWorkspaceHandoff } from "./tools-handoff-workspace";
@@ -190,6 +191,26 @@ export function resolveHandoffListIncludeDelivered(
   if (args.includeDelivered === false) return false;
   if (args.includeDelivered === true || args.full === true) return true;
   return role === "orchestrator";
+}
+
+/**
+ * Digest do recorte de `nexus_handoff_list`. Entra no cursor para que um
+ * cursor de outra missão, outro filtro ou outra lista seja recusado.
+ */
+export function handoffListCursorSlice(input: {
+  readonly missionId: string | null;
+  readonly includeDelivered: boolean;
+  readonly ids: readonly string[];
+  readonly panes: readonly string[];
+}): string {
+  const canonical = JSON.stringify({
+    list: "handoff",
+    missionId: input.missionId,
+    includeDelivered: input.includeDelivered,
+    ids: [...input.ids].sort(),
+    panes: [...input.panes].sort(),
+  });
+  return createHash("sha256").update(canonical).digest("base64url").slice(0, 22);
 }
 
 const handoffSubmitTool: McpToolDef = {
@@ -868,11 +889,18 @@ const handoffListTool: McpToolDef = {
     const rawIds = Array.isArray(args.ids)
       ? args.ids.filter((i) => typeof i === "string")
       : [];
+    const includeDelivered = resolveHandoffListIncludeDelivered(
+      args, !ctx.missionId ? "orchestrator" : ctx.role,
+    );
+    const cursorSlice = handoffListCursorSlice({
+      missionId,
+      includeDelivered,
+      ids: rawIds,
+      panes: rawPanes,
+    });
     const rows = getProjectDomainStores(ctx.scope).handoffs.list({
       missionId,
-      includeDelivered: resolveHandoffListIncludeDelivered(
-        args, !ctx.missionId ? "orchestrator" : ctx.role,
-      ),
+      includeDelivered,
       ...(paneSessionIds !== undefined && paneSessionIds.length > 0
         ? { sessionIds: paneSessionIds }
         : {}),
@@ -895,6 +923,7 @@ const handoffListTool: McpToolDef = {
           // A trilha é created_at ASC, id ASC. A página filtrada pode ter
           // uma linha só — a direção não pode ser inferida dela.
           order: "asc",
+          slice: cursorSlice,
         });
         returned = [...cursorPage.items];
       } catch (error) {
@@ -1012,18 +1041,33 @@ function compactHandoffListRows(
     }
     try {
       const attempts = deliveryAttemptsFor(scope, row.id);
-      const latest = attempts.length > 0 ? attempts[attempts.length - 1] : undefined;
+      // A sessão vigente da missão ganha de uma tentativa antiga. Depois
+      // de um rebind, o Maestro novo está vivo e elegível; contar a sessão
+      // morta estaciona ou marca session-dead à toa.
+      const missionSessionId = row.missionId
+        ? getProjectDomainStores(scope).missions.get(row.missionId)
+            ?.orchestratorSessionId
+        : undefined;
+      const fallbackSessionId =
+        attempts.length > 0
+          ? attempts[attempts.length - 1]?.orchestratorSessionId
+          : undefined;
       const maestroSessionId =
-        latest?.orchestratorSessionId ??
-        (row.missionId
-          ? getProjectDomainStores(scope).missions.get(row.missionId)
-              ?.orchestratorSessionId
+        (typeof missionSessionId === "string" && missionSessionId.length > 0
+          ? missionSessionId
+          : undefined) ??
+        (typeof fallbackSessionId === "string" && fallbackSessionId.length > 0
+          ? fallbackSessionId
           : undefined);
       const sessionAttempts = maestroSessionId
         ? attempts.filter(
             (attempt) => attempt.orchestratorSessionId === maestroSessionId,
           )
         : attempts;
+      const latest =
+        sessionAttempts.length > 0
+          ? sessionAttempts[sessionAttempts.length - 1]
+          : undefined;
       // F-925 conta rodadas, não tentativas cruas. Cada rodada gasta
       // MAX_HANDOFF_DELIVERY_ATTEMPTS colagens; linhas `released:` entram
       // na conta, como no idle-delivery — elas provam que a rodada

@@ -18,7 +18,14 @@ export interface CursorPayload {
   readonly k: string | number;
   /** Tie-break: id do último item (evita pular empate de keyset). */
   readonly i: string;
+  /**
+   * Digest do recorte da consulta (missão, filtros, ids, painéis).
+   * Um cursor de outro recorte é recusado em vez de pular linhas.
+   */
+  readonly s: string;
 }
+
+const CURSOR_SLICE_MAX_LENGTH = 128;
 
 export interface CursorPage<T> {
   readonly items: readonly T[];
@@ -37,8 +44,20 @@ export class InvalidCursorError extends Error {
 export function encodeCursor(input: {
   readonly key: string | number;
   readonly id: string;
+  readonly slice: string;
 }): string {
-  const payload: CursorPayload = { v: 1, k: input.key, i: input.id };
+  if (
+    input.slice.length === 0 ||
+    input.slice.length > CURSOR_SLICE_MAX_LENGTH
+  ) {
+    throw new InvalidCursorError('cursor slice is missing');
+  }
+  const payload: CursorPayload = {
+    v: 1,
+    k: input.key,
+    i: input.id,
+    s: input.slice,
+  };
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 }
 
@@ -62,7 +81,11 @@ export function decodeCursor(cursor: string): CursorPayload {
     (typeof (parsed as { k: unknown }).k !== 'string' &&
       typeof (parsed as { k: unknown }).k !== 'number') ||
     !('i' in parsed) ||
-    typeof (parsed as { i: unknown }).i !== 'string'
+    typeof (parsed as { i: unknown }).i !== 'string' ||
+    !('s' in parsed) ||
+    typeof (parsed as { s: unknown }).s !== 'string' ||
+    (parsed as { s: string }).s.length === 0 ||
+    (parsed as { s: string }).s.length > CURSOR_SLICE_MAX_LENGTH
   ) {
     throw new InvalidCursorError();
   }
@@ -147,8 +170,9 @@ function isAfterCursor<T>(
  * quando a lista filtrada não deixa a direção óbvia). `cursor` aponta para
  * o último item devolvido na página anterior; a página seguinte começa na
  * primeira linha DEPOIS de `(k, i)`, mesmo se aquela linha já saiu do
- * filtro. Cursor ilegível (vazio, longo demais, base64/JSON/versão errados)
- * é `InvalidCursorError`. `+1` linha extra prova `hasMoreHistory`.
+ * filtro. Cursor ilegível (vazio, longo demais, base64/JSON/versão errados,
+ * sem digest, ou digest de outro recorte) é `InvalidCursorError`. `+1`
+ * linha extra prova `hasMoreHistory`.
  */
 export function selectCursorPage<T>(
   sorted: readonly T[],
@@ -158,12 +182,23 @@ export function selectCursorPage<T>(
     readonly keyOf: (item: T) => string | number;
     readonly idOf: (item: T) => string;
     readonly order?: CursorSortOrder;
+    /** Digest do recorte desta consulta. Obrigatório. */
+    readonly slice: string;
   },
 ): CursorPage<T> {
+  if (
+    options.slice.length === 0 ||
+    options.slice.length > CURSOR_SLICE_MAX_LENGTH
+  ) {
+    throw new InvalidCursorError('cursor slice is missing');
+  }
   const limit = clampPageSize(options.limit);
   let start = 0;
   if (options.cursor) {
     const decoded = decodeCursor(options.cursor);
+    if (decoded.s !== options.slice) {
+      throw new InvalidCursorError('cursor does not match this slice');
+    }
     const keyOrder = options.order ?? inferKeyOrder(sorted, options.keyOf);
     const idOrder =
       options.order ??
@@ -186,7 +221,11 @@ export function selectCursorPage<T>(
   const last = items[items.length - 1];
   const nextCursor =
     hasMoreHistory && last
-      ? encodeCursor({ key: options.keyOf(last), id: options.idOf(last) })
+      ? encodeCursor({
+          key: options.keyOf(last),
+          id: options.idOf(last),
+          slice: options.slice,
+        })
       : null;
   return { items, nextCursor, hasMoreHistory };
 }

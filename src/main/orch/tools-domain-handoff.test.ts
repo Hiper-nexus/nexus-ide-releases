@@ -7,6 +7,7 @@ import type { Handoff } from "../../shared/orch-types";
 import type { AgentGateContext } from "./gate";
 import type { McpToolInvocation } from "./mcp-protocol";
 import { encodeCursor } from "../../shared/cursor-pagination";
+import { handoffListCursorSlice } from "./tools-handoff";
 import { testProjectScope } from "./__tests__/scope-fixture";
 
 const mocks = vi.hoisted(() => ({
@@ -1736,13 +1737,134 @@ describe("handoff MCP stop receipt", () => {
     ]);
 
     const page = (await listTool().handler(
-      { limit: 1, cursor: encodeCursor({ key: 1, id: "h-gone" }) },
+      {
+        limit: 1,
+        cursor: encodeCursor({
+          key: 1,
+          id: "h-gone",
+          slice: handoffListCursorSlice({
+            missionId: "mission-a",
+            includeDelivered: true,
+            ids: [],
+            panes: [],
+          }),
+        }),
+      },
       orchestratorContext(),
     )) as { items: Array<{ id: string; stuckDiagnosis?: { reason: string } }> };
     expect(page.items.map((row) => row.id)).toEqual(["h-next"]);
     expect(page.items[0]?.stuckDiagnosis?.reason).not.toBe("accepted-not-consumed");
     expect(ackSpy).toHaveBeenCalledTimes(1);
     expect(ackSpy).toHaveBeenCalledWith("mission-a", ["h-next"]);
+  });
+
+  it("refuses a cursor from another list slice and acknowledges nothing", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn((_mission: string, ids: readonly string[]) => ids.length);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-page",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+      {
+        id: "h-next",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 2,
+        missionId: "mission-a",
+      },
+    ]);
+
+    await expect(
+      listTool().handler(
+        {
+          limit: 1,
+          cursor: encodeCursor({
+            key: 1,
+            id: "h-page",
+            slice: handoffListCursorSlice({
+              missionId: "mission-b",
+              includeDelivered: true,
+              ids: [],
+              panes: [],
+            }),
+          }),
+        },
+        orchestratorContext(),
+      ),
+    ).rejects.toThrow(/cursor inválido/);
+    expect(ackSpy).not.toHaveBeenCalled();
+  });
+
+  it("counts delivery attempts for the mission's current Maestro after a rebind", async () => {
+    const stores = mocks.getStores();
+    const oldOnly = Array.from({ length: 9 }, (_, index) => ({
+      orchestratorSessionId: "old-maestro",
+      startedAt: index + 1,
+      attemptNo: index + 1,
+    }));
+    mocks.getSessionState.mockImplementation((id: string) =>
+      id === "orchestrator-session" ? "idle" : "exited",
+    );
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => oldOnly,
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-rebound",
+        delivered: false,
+        deliveryState: "queued",
+        createdAt: Date.now(),
+        missionId: "mission-a",
+      },
+    ]);
+
+    const rebound = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+    expect(rebound[0]?.stuckDiagnosis?.reason).not.toBe("session-dead");
+    expect(rebound[0]?.stuckDiagnosis?.reason).not.toBe("parked-needs-operator");
+    expect(rebound[0]?.stuckDiagnosis?.reason).not.toBe("retry-backoff");
+
+    const mixed = [
+      ...Array.from({ length: 2 }, (_, index) => ({
+        orchestratorSessionId: "orchestrator-session",
+        startedAt: 100 + index,
+        attemptNo: index + 1,
+      })),
+      ...oldOnly,
+    ];
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => mixed,
+      },
+    });
+    const currentRound = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string; summary: string } }>;
+    expect(currentRound[0]?.stuckDiagnosis?.reason).toBe("retry-backoff");
+    expect(currentRound[0]?.stuckDiagnosis?.summary).toContain("rodada 1");
   });
 
   it("passes real delivery attempts and proven Maestro liveness into stuck diagnosis", async () => {
