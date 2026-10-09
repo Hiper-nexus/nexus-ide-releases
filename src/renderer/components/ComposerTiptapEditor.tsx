@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Code } from '@tiptap/extension-code';
@@ -150,6 +150,15 @@ export function ComposerTiptapEditor({
       onChange(tiptapJsonToMarkdown(e.getJSON() as never));
     },
   });
+
+  useEffect(() => {
+    if (!editor) return;
+    const current = tiptapJsonToMarkdown(editor.getJSON() as never);
+    if (current === value) return;
+    editor.commands.setContent(markdownToTiptapContent(value), {
+      emitUpdate: false,
+    });
+  }, [editor, value]);
 
   const toggle = useCallback(
     (mark: RichTextMark) => {
