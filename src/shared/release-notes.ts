@@ -10251,20 +10251,23 @@ export const RELEASE_076212: AppRelease = {
 
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.213',
-  date: '2026-10-08',
-  codename: 'Decisões OpenAI e melhorias revisadas',
-  summary: 'A Decisions API da OpenAI chega como Luna (beta), com escolha por conta, decisões em conjunto e correções no Quadro, nas contas e nas capturas.',
+  date: '2026-10-09',
+  codename: 'Decisões OpenAI e missões revisadas',
+  summary: 'Luna (beta) e decisões em conjunto, com escolha por conta, Quadro vivo, capturas no destino escolhido e correções de retomada e entrega de missões.',
   highlights: [
     { title: 'Luna, Decisions API da OpenAI', detail: 'Em Configurações → Modelos de decisão, escolha Somente Luna (beta) ou Luna junto com Jev e Clef. A chave é a da OpenAI em Chaves de API; a preferência fica nesta conta Nexus.' },
     { title: 'Imagens com autorização por provedor', detail: 'O envio de imagens à OpenAI exige autorização própria. Trocar o modelo ou cadastrar uma chave não concede essa autorização.' },
     { title: 'Quadro com participantes vivos', detail: 'O Quadro acompanha os participantes atuais da missão, mantém o Maestro ocioso visível e oferece controles de zoom sem sobrepor o inspetor.' },
     { title: 'Captura no pane escolhido', detail: 'A bridge do Shot lista destinos vivos e aceita um destino explícito. Se ele sair ou pertencer a outro projeto, a captura não é digitada em outro pane.' },
-    { title: 'Launcher pelo teclado', detail: 'As ações do Launcher respondem aos atalhos de 1 a 6; campos de texto preservam a digitação.' },
+    { title: 'Launcher pelo teclado', detail: 'As ações do Launcher respondem aos atalhos de 1 a 6, uma vez por toque; campos de texto preservam a digitação.' },
   ],
   fixes: [
-    { title: 'Decisões conservadoras e custo registrado', detail: 'O conjunto preserva as exigências de verificação e memória; o uso conhecido continua registrado mesmo em recusa, falha parcial ou alteração de configuração.' },
+    { title: 'Retomada com resultado real', detail: 'O Nexus distingue um pedido de retomada do religamento confirmado, revalida a autoridade após esperas e encaminha a conclusão ao líder atual da missão.' },
+    { title: 'Entrega assentada antes de concluir', detail: 'Uma entrega ainda na fila impede a conclusão da missão, mesmo após muitas mensagens do Maestro. O diagnóstico usa o prazo real da tentativa.' },
+    { title: 'Decisões conservadoras e custo registrado', detail: 'Juntos preserva as exigências de verificação e memória; o uso conhecido continua registrado em recusa, falha parcial ou alteração de configuração, com o nome do conjunto no histórico.' },
     { title: 'Conta escolhida na missão', detail: 'O pane aberto na missão recebe a conta selecionada, e o Main confere a identidade da sessão antes de confirmar a escolha.' },
     { title: 'Limite confirmado por cota medida', detail: 'Uma janela recente com cota esgotada pode confirmar o limite da conta. Texto de terminal e cota sem resposta continuam sem provocar troca imediata.' },
     { title: 'Handoffs paginados', detail: 'A listagem com cursor só marca como vistos os itens devolvidos; cursor inválido não consome entregas.' },
+    { title: 'Preview com as proteções do Nexus', detail: 'O preview local preserva os comandos de navegador governados e fecha o acesso experimental de depuração que contornava suas proteções.' },
   ],
 };

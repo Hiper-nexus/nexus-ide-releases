@@ -4,7 +4,7 @@
 
 **Goal:** Publish the next macOS ARM64 release with the production-ready improvements from the reviewed PRs, preserving current 0.76.212 behavior and fixing regressions in included changes.
 
-**Architecture:** Start from upstream/main eab826a5d in an external .noindex worktree. Integrate ready feature commits rather than importing the unused ORC foundation or introducing new subsystems. Keep existing Main authority, account failover and packaged smoke implementations when they supersede older PR implementations.
+**Architecture:** Start from upstream/main eab826a5d in an external .noindex worktree. Preserve ready product changes and, under the user’s later explicit instruction, merge the full immutable PR126 ancestry after independent review and repairs. Keep existing Main authority, account failover and packaged smoke implementations when they supersede older PR implementations. Source foundations are not advertised as connected product features without actual callers and operational proof.
 
 **Tech Stack:** Electron, TypeScript, React, better-sqlite3; Node 22.23.2; repository-pinned npm 12.0.0; existing Developer ID/notarization pipeline.
 
@@ -21,7 +21,7 @@
 - No automatic GPT-6 Astra selection. Implementers do not spawn further agents.
 - Release source, local annotated tag, package/server/lock/CURRENT_RELEASE/CHANGELOG, built artifacts and receipts must agree. No force push, tag replacement, manual publication bypass, or weakened gate.
 - User authorized a new release and necessary integration/publication. Do not request approval again for the same authorized action. Platform question is optional; use current macOS ARM64 channel if unanswered.
-- Do not advertise the unused effect outbox/receipts/boot gate, Mermaid component without renderer/product wiring, CLI history parser without import UI/store, native resource monitor, Tiptap, WSL or CDP relay as delivered functionality.
+- Describe actual production consumers and proof: substrate, definitions-only helpers and platform plans are not a delivered product feature. The user later explicitly authorized merging the entire updated PR126; its safe foundations are included after review, but claims stay factual.
 
 ## Task 1 — Ready T3 launcher and pagination
 
@@ -97,7 +97,7 @@ Files: shot-bridge-server.ts/test, shared/shot-bridge.ts, main.ts callback wirin
 
 ## Rulings and execution ledger
 
-- User's 'melhorias já prontas' means release ready, connected product changes. Unused foundations remain in their PR for a separate implementation; no speculative engine rewrite is part of this release.
+- The initial selected-only PR126 scope was superseded by the user’s explicit whole-PR merge instruction. Safe foundations are included after review; readiness claims remain limited to connected product behavior and tested operations.
 - GitHub Actions was previously budget-blocked. macOS uses the existing local launchd release pipeline; no dependence on unavailable hosted jobs.
 - Bundled SDD workspace/review-package scripts are absent. Use the documented manual git diff package fallback and the plan-owned ignored ledger .superpowers/sdd/release-076213-reviewed/progress.md.
 
@@ -116,3 +116,82 @@ independent gates. Canonical/public latest verified v0.76.212 before choosing213
 Final regression uses a fully owned npm12 install in the isolated release worktree;
 coordination dependencies were not rebuilt. Public notes list only connected
 features and disclose beta/live-provider test limits.
+
+## Task 6 — User-expanded entire PR126 integration and safe monitor (09/10)
+
+The user explicitly requested merging the other session's entire updated PR126
+before release, collecting additional incoming corrections, fixing all defects
+found, then publishing safely. The user confirmed the sending batch finished;
+normal ancestry through `64a8d16a2d57dbc934b6b07c27719ebd7726a6b5` is already included. A fresh remote check detected later correction `8e46134d5177440f24e828c67723320c1d50e230`; its review, integration and repairs must finish before source freeze. This supersedes the earlier selected-only PR126 exclusion.
+The user also requested a persistent incoming-source monitor and invoked
+/GOAL: stop only after public release and senior operational review.
+
+- [x] Re-check all open PRs; latest source is PR126; demais PRs do inventário anterior sem novo conteúdo neste lote.
+- [x] Independently review immutable7dc/7f/4ef/c747 deltas; retain observed RED
+  renderer sinks and actual consumer failures; no remote CI code coverage was
+  available because Actions budget prevented jobs starting.
+- [x] Preserve normal merge ancestry of ece/4ef and existing release/Main guards,
+  including batched/deduped page ACK, consent, cost receipts, quota/CAS/pins,
+  live board and explicit Shot target.
+- [x] Merge ece/4ef/c747/64a normal ancestry and repair real resume outcomes/authority, safe Mermaid/obsolete editor, Tiptap newline/controlled lifecycle, scoped CDP factory and failed attach cleanup, cross-manager transaction identity, audit caption and canonical Tiptap style/contrast findings.
+- [ ] Independently review and integrate later8e correction without reverting local repairs or version213. Repair any newly exposed transport authorization/command confinement/navigation lifetime and lossless path/markdown behavior before declaring readiness.
+- [ ] Review adapted/reference code against pinned raw T3 sources and update
+  every applicable header, provenance hash/notice. Correct overstated docs.
+- [ ] Senior independent review of the FINAL combined source, with no known
+  relevant integration defect left. Run full regression, focused consumers and
+  real Main/PTY mission E2E anew; old61014 test results are baseline evidence only.
+- [ ] Actual compiled/browser UI evidence for safe Mermaid/Tiptap and new decision
+  modes; actual signed packaged runtime/soak/gates before one guarded publication.
+- [x] Configure/verify independent local monitor of new PR heads AND main commits,
+  own .noindex worktree per batch, no active-coordinator/worker/build overlap,
+  exact private/public publication proof, auditable dispositions, ownership locks,
+  bounded retries and quiet operator inbox. Existing tool automation_update was
+  absent; self-Codex UI access refused. Use documented public CLI/launchd, without
+  private app APIs, raw automation directives or weaker permissions.
+
+The monitor is operational configuration outside the app checkout in
+`~/.nexus-monitors/incoming-review-watch`. It is an independent writer domain;
+its small Node policy tests may run while the single app writer works. It cannot
+launch a model or source/build worker while the current coordinator is active.
+The app's heavy-validation lane remains one at a time.
+
+Fresh owned pinned npm12 install of final Tiptap/Mermaid dependencies found a
+KaTeX trust-bypass advisory (GHSA-238p-pmpm-9mq7). Patched KaTeX0.18.2 was
+verified/nondeprecated and pinned by override; DOMPurify3.4.16 promoted to an
+exact runtime dependency for safe DOM fragments. Fresh npm audit reports zero
+vulnerabilities. No forced package update or weakened sink gate was used.
+
+## Latest incoming correction review (09/10)
+
+The live monitor and fresh GitHub query both observed PR126 head8e46134d.
+The incremental review found concrete authorization and page-session command
+confinement defects in its newly reachable preview CDP transport, plus loss
+of Windows path backslashes in the markdown parser. These are release blockers,
+not waived findings. Source and candidate gates remain pending their repair.
+The independently reviewed local monitor is loaded in launchd at a10-minute
+interval, performing read-only ticks under an active coordinator; it cannot
+start a model/build writer until the verified publication handoff.
+
+The incremental raw-CDP transport cannot generically enforce existing sensitive-field redaction and visual consent while forwarding arbitrary Runtime JavaScript. The coordinator therefore rules fail closed for that newly exposed production transport, preserving its merge ancestry but disabling the HTTP/WebSocket registration. Existing governed browser tools and ordinary static preview remain the supported operations. Internal relay defects and text persistence are still repaired; public notes do not promise an exposed CDP endpoint or full T3 parity. A future raw-execution capability needs a separate trust contract rather than inferred release approval.
+
+## Pre-freeze frontier refresh (09/10, f8)
+
+The8e integration repairs are independently approved through80433ad02 and
+legal-only refresh01ee04cc6. Actual231focused tests, TSC0, unchanged sinks0
+and provenance/hash checks are recorded in task8e-report.md. Root metadata
+co-located tests and release-authority checks pass7tests/version213/Node22/npm12.
+No source freeze/tag/build/publication has occurred.
+
+A fresh remote query before freeze detected PR126 head
+`f8f871a92bc9b2c886c0f927f315384aae0249b5`, comprising0b784/f8f after8e.
+Its blanket command producer is now a real product caller, so fresh senior
+review found blockers in caller/RPC identity, plaintext result persistence,
+false physical/checkpoint settlement, concurrent retry budget/audit, and
+receipt lifecycle. Its ticket transport also reopens the rejected rawCDP
+surface. These findings are not waived; sourcewriter is investigating a
+minimal truthful producer repair before merging this immutable delta.
+The existing CDP closure and all prior guards remain mandatory.
+
+The monitor configuration is armed and verified at600seconds under the active
+coordinator. Explicit first-publication handoff is still pending; it cannot
+launch a second writer during this integration or candidate validation.

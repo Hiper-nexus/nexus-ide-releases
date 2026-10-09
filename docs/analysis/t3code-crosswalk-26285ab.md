@@ -6,7 +6,7 @@ Os 64 candidatos vêm de cinco estudos somente leitura da missão `mission-23eee
 
 Critério: **integrado e acessível** exige código presente E ponto de uso que o usuário alcança no Nexus. Código só no caminho Orca do app móvel não conta: o host Nexus do celular é `mobile/src/nexus-host/NexusHostScreen.tsx` + `mobile/src/transport/nexus-bridge-rpc-adapter.ts`. "Integrado" aqui prova existência e ponto de uso por leitura de código, não comportamento em aparelho.
 
-## Contagem
+## Contagem da auditoria histórica (0.76.211)
 
 | Classificação | Nº | IDs |
 |---|---|---|
@@ -15,7 +15,7 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 | Pendente | 20 | WEB-14..16, WEB-18; MOB-04, MOB-08, MOB-10, MOB-14; ORC-01, ORC-02, ORC-04, ORC-06; DSK-07..11; QLT-04, QLT-09, QLT-10 |
 | Incompatível | 1 | ORC-09 |
 
-## Tabela
+## Tabela da auditoria histórica
 
 | ID | Candidato | Classificação | Evidência | Próximo passo |
 |---|---|---|---|---|
@@ -89,3 +89,32 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 - Os estudos foram lidos do banco do projeto, porque a tool não lê handoffs de outra missão. As linhas do T3 citadas vêm dos estudos, não de releitura do upstream.
 - Nada foi exercitado em aparelho, simulador ou navegador nesta auditoria.
 - Licenças de `@pierre/diffs`, `@legendapp/list`, `nitro-markdown`, `@react-native-ai/apple`, `@napi-rs/keyring` e `@crowecawcaw/xa11y` vêm dos estudos e não foram reverificadas sem rede.
+
+## Atualização de escopo para 0.76.213 (09/10)
+
+A contagem39/4/20/1 acima pertence ao snapshot descrito no início; não é uma
+contagem refeita de recursos da0.76.213. A PR126 completa foi integrada por
+ancestralidade, com revisão e correções, preservando a diferença entre código
+presente, consumidor de produção e prova operacional. Os pontos abaixo
+atualizam as descrições antigas sem anunciar paridade de todos os64 itens.
+
+| Item | Estado observado no lote213 | Limite/ponto restante |
+|---|---|---|
+| WEB-14 | Mermaid, configuração protegida, fila serial e DOMPurify estão instalados; `MarkdownWithMermaid` monta SVG saneado em ShadowRoot, exercitado com o motor real em Chromium. | Componente ainda sem consumidor de mensagem no produto; markdown incremental não foi entregue por esta PR. |
+| WEB-16 | Dependências Tiptap presentes; `ComposerTiptapEditor` usa o SDK real, com testes de linhas, ciclo controlado, seleção, readonly e persistência de marcas/texto. | O composer de produto não foi substituído; a existência do componente não prova integração da superfície. |
+| WEB-18 | `cli-history-import` e `cli-history-sweep` existem como helpers de JSONL. | Falta o comando/serviço/UI que importa e grava no store; não equivalem ao worker SDK do T3. |
+| ORC-01/04 | Tabelas, stores de recibo/outbox e identidade de transação estão presentes; aceitação exige a mesma conexão/escopo. O coordenador tem drainer/recovery. | `acceptCommandEffect` e registro de handlers não têm produtor/handler de produção; não anunciar despacho transacional completo. |
+| ORC-02 | Consumidor civil chama a guarda de assentamento; entrega de worker ainda na fila impede concluir, excluindo o Maestro antes do limiteSQL. | Prova do consumidor e de missão fica nos gates da release; não implica produtores do outbox. |
+| ORC-06 | Recovery do outbox está chamado no boot; `provider-runtime-recovery` é helper revisado. | Helper de provider não tem chamador; não anunciar reconciliação de todas as CLIs. |
+| DSK-08 | Amostrador TS `resource-monitor` existe. | Sem binário nativo/consumidor produtivo; não equivale ao monitor Rust do T3. |
+| DSK-10 | Relay puro e adapter Electron de escopo/ciclo de vida revisados. Exposição HTTP/WebSocket experimental fechada por violar proteção de dados e visão. | Endpoint rawCDP/Playwright precisa de contrato de confiança próprio. Preview estático e ferramentas tipadas do Nexus são as operações suportadas. |
+| DSK-11 | `wsl-runtime` planeja argv/ambiente/slots por distro, com referência atribuída. | Sem executor PTY/credenciais/validação Windows real. |
+| QLT-04 | `knip.jsonc` e scripts `knip`, `knip:check`, `knip:production` presentes e acessíveis. | Achados de uso/dependências são relatório de qualidade; não afirmar gateCI verde por existir configuração. |
+| QLT-09 | `nexus_handoff_list` tem cursor keysetSQL; só os ids devolvidos são marcados vistos, com validação/dedupe/lotes. | Não substitui todo histórico de missão, stream do terminal ou snapshots offline do celular. |
+| QLT-10 | Registry de nomes acessíveis e Launcher conectado, com atalhos1–6 e bloqueio de repeat/editáveis testados. | Não equivale a uma regra global que computa nomes acessíveis em todas as superfícies. |
+
+Proveniência: `third_party/provenance/t3code-26285ab.json` e
+`THIRD_PARTY_NOTICES.md`; revisão por achado em `docs/qa/items/F-1049.md`,
+F-1062–1069 e F-1071–1079. Evidências de componente/fundação não substituem o
+full regression, Main/PTY/missão, pacote assinado, runtime/soak e publicação
+verificada. WSL/aparelho/provedor pago mantêm seus limites de prova.

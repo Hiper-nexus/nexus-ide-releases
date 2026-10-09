@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.76.213 — Decisões OpenAI e melhorias revisadas
+## 0.76.213 — Decisões OpenAI e missões revisadas
 
-2026-10-08
+2026-10-09
 
 - **Luna (beta), Decisions API da OpenAI:** `Configurações → Modelos de decisão` oferece
   `Somente Luna (beta)` e `Luna junto com Jev e Clef`. Usa a chave OpenAI de
@@ -20,8 +20,20 @@
 - **Shot:** consulta autenticada lista destinos vivos; destino explícito é validado
   novamente após preparar os anexos. Destino encerrado ou de outro projeto recusa
   a entrega. Mantém lote de gravação, caminhos entre aspas e digitação sem Enter.
-- **Launcher e handoffs:** atalhos de 1 a 6 nas ações, sem capturar campos de texto;
-  paginação marca como vistos somente os handoffs da página devolvida.
+- **Launcher e handoffs:** atalhos de 1 a 6 nas ações, uma vez por toque, sem capturar
+  campos de texto; paginação marca como vistos somente os handoffs da página devolvida.
+- **Retomada e conclusão:** resultados distinguem pedido encaminhado, líder mantido
+  e religamento confirmado. Autoridade é conferida novamente após esperas; a
+  orientação de conclusão aponta ao líder atual. Entregas de workers na fila
+  continuam impedindo a conclusão, mesmo após muitas mensagens do Maestro.
+- **Preview protegido:** o acesso experimental CDP foi fechado por contornar as
+  proteções de dados e imagens. O preview estático e os comandos governados de
+  navegador continuam disponíveis.
+- **Base T3 revisada:** editor Tiptap, Mermaid e os adaptadores auxiliares receberam
+  correções de persistência, ciclo de vida, sanitização e identidade de escopo.
+  A proveniência MIT registra os arquivos adaptados e as referências. Esses
+  módulos ainda dependem de seus pontos de uso no produto; não representam
+  paridade completa de editor, diagramas, CDP, importação de histórico ou WSL.
 
 Canal inicial: macOS Apple Silicon. Windows e Linux seguem seus gates quando os
 runners estiverem disponíveis. Luna é beta: acesso real à API depende da conta
