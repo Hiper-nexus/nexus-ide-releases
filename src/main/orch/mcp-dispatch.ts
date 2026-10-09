@@ -1282,6 +1282,17 @@ export async function dispatchToolCall(
     }
   }
   const callerCommandId = operationIdentity?.commandId;
+  const isOperationIdentityCurrent = (): boolean => {
+    if (!operationIdentity) return true;
+    try {
+      const intent = checkMissionIntent();
+      if (!intent.ok) return false;
+      const current = captureCommandDispatchIdentity(source, ctx, canonical, args,
+        options.logicalOperationId, intent.resolved?.mission.intentVersion);
+      return current.bindingDigest === operationIdentity.bindingDigest;
+    } catch { return false; }
+  };
+
   // Guarda Jev (piloto automático): coerência com o objetivo, sinais de
   // injeção e efeito destrutivo, só para chamada com efeito dentro de missão e
   // fora da mão do operador. Fail-open: exceção ou serviço fora = `skipped`.
@@ -1304,7 +1315,7 @@ export async function dispatchToolCall(
     }
     // Autoridade revalidada depois do await de rede — mesma regra dos handlers;
     // um chamador nativo que sumiu no meio (callerSignal) também não segue.
-    if (!hasCurrentBearerAuthority() || options.callerSignal?.aborted) {
+    if (!hasCurrentBearerAuthority() || options.callerSignal?.aborted || !isOperationIdentityCurrent()) {
       return {
         ok: false,
         tool: tool.name,
@@ -1526,6 +1537,7 @@ export async function dispatchToolCall(
     return denyIntentCheck(finalIntent.error, finalIntent.hint);
   }
 
+  if (!isOperationIdentityCurrent()) return denyIntentCheck('session_authority_revoked');
   const invocationId = effectful ? randomUUID() : undefined;
   const commandId = effectful ? (callerCommandId ?? invocationId) : undefined;
   if (invocationId) {
@@ -1754,7 +1766,7 @@ export async function dispatchToolCall(
       invocationSignals.length > 1
         ? AbortSignal.any(invocationSignals)
         : invocationSignals[0];
-    const assertCurrentAuthorityState = (recheckIntent: boolean): void => {
+    const assertCurrentAuthorityState = (recheckIntent: boolean, recheckBinding = true): void => {
       if (
         !hasCurrentBearerAuthority() ||
         gateSignal?.aborted ||
@@ -1767,6 +1779,7 @@ export async function dispatchToolCall(
           "intent_preempted: bootstrap cancelled by newer user intent",
         );
       }
+      if (recheckBinding && !isOperationIdentityCurrent()) throw new Error('session_authority_revoked');
       if (recheckIntent) {
         const currentIntent = checkMissionIntent();
         if (!currentIntent.ok) throw new Error(currentIntent.error);
@@ -1894,6 +1907,7 @@ export async function dispatchToolCall(
         command,
         cwd,
       });
+      assertCurrentAuthority();
       if (ctx.missionId) {
         emitDestructiveReversalEvent(ctx.missionId, {
           toolName: tool.name,
@@ -1932,7 +1946,7 @@ export async function dispatchToolCall(
     // guided and workflow checks here without requiring the former intent.
     const recheckIntent =
       canonical !== "handoff_submit" && canonical !== "mission_set_status";
-    assertCurrentAuthorityState(recheckIntent);
+    assertCurrentAuthorityState(recheckIntent, false);
     if (queuePromptId && ctx.missionId) {
       completeMissionPrompt(ctx.scope, ctx.missionId, queuePromptId, true);
     }

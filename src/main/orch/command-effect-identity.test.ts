@@ -14,9 +14,10 @@ let root:string;
 let manager:ProjectRuntimeManager;
 let scope:ReturnType<typeof testProjectScope>;
 beforeEach(()=>{
-  root=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-command-identity-'));
+  root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'nexus-command-identity-')));
   manager=new ProjectRuntimeManager({baseDir:root,appVersion:'command-identity-test'});
-  scope=testProjectScope({projectId:'command-identity',checkoutId:'command-checkout',rootRealPath:root});
+  const stat=fs.statSync(root);
+  scope=testProjectScope({projectId:'command-identity',checkoutId:'command-checkout',rootRealPath:root,workspaceRootDevice:String(stat.dev),workspaceRootInode:String(stat.ino)});
   configureAuditLogRuntime(manager);configureProjectDomainStoreRegistry(manager);resetGateForTests();
 });
 afterEach(async()=>{
@@ -108,4 +109,35 @@ it('F-1080: changed execution authority under the same physical context refuses 
   ctx.executionScope=testProjectScope({...scope,rootRealPath:path.join(root,'new-execution')});
   const changed=await dispatchToolCall('http-mcp',tools,'nexus_file_write',args('one'),ctx,{logicalOperationId:'scope-explicit'});
   expect(changed).toMatchObject({ok:false,error:'command_effect_identity_conflict'});expect(runs).toBe(1);
+});
+
+it.each(['execution','policy'] as const)('F-1080: owning call refuses %s authority changed during actual async destructive preparation',async(change)=>{
+  let runs=0;const tools:McpRegistry={serverName:'owner-boundary-test',serverVersion:'0',tools:[{name:'nexus_terminal_run',description:'controlled command sink',inputSchema:{type:'object'},handler:async()=>{runs+=1;return {};}}]};
+  const ctx=caller('physical-preparation');let prepared=false;
+  const result=await dispatchToolCall('http-mcp',tools,'nexus_terminal_run',{command:'rm -rf generated-output'},ctx,{
+    prepareDestructiveReversibility:async()=>{
+      prepared=true;await Promise.resolve();
+      if(change==='execution')ctx.executionScope=testProjectScope({...scope,rootRealPath:path.join(root,'changed-preparation')});
+      else ctx.isolatedWriter=true;
+      return {revertPath:'fixture-recovery',reversible:true};
+    },
+  });
+  expect(prepared,result.error).toBe(true);expect(result).toMatchObject({ok:false,error:'session_authority_revoked'});expect(runs).toBe(0);
+});
+
+it('F-1080: join refuses an attenuated Main policy even when the Gate object stays current',async()=>{
+  let release!:()=>void;let entered!:()=>void;
+  const hold=new Promise<void>(resolve=>{release=resolve;});const started=new Promise<void>(resolve=>{entered=resolve;});
+  const tools=registry(async()=>{entered();await hold;return {};});const ctx=caller('physical-policy-join');
+  const first=dispatchToolCall('http-mcp',tools,'nexus_file_write',args('one'),ctx,{logicalOperationId:'policy-join'});
+  await started;const second=dispatchToolCall('http-mcp',tools,'nexus_file_write',args('one'),ctx,{logicalOperationId:'policy-join'});
+  await new Promise(resolve=>setTimeout(resolve,0));ctx.sharedTabWorktree=true;release();await first;
+  expect(await second).toMatchObject({ok:false,error:'session_authority_revoked'});
+});
+
+it('F-1080: owning call refuses a Main parent-policy change at its first guard await',async()=>{
+  let runs=0;const tools=registry(async()=>{runs+=1;return {};});const ctx=caller('physical-guard-parent');
+  const pending=dispatchToolCall('http-mcp',tools,'nexus_file_write',args('one'),ctx);
+  ctx.operatorParentSessionId='different-main-parent';
+  expect(await pending).toMatchObject({ok:false,error:'session_authority_revoked'});expect(runs).toBe(0);
 });
