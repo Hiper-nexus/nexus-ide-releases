@@ -719,16 +719,30 @@ export class EffectOutboxStore {
       for (;;) {
         const batch = db
           .prepare(
-            `DELETE FROM effect_outbox
-             WHERE effect_id IN (
-               SELECT effect_id FROM effect_outbox
-               WHERE status IN ('succeeded', 'cancelled') AND completed_at <= ?
-               LIMIT 500
-             )`,
+            `SELECT effect_id, command_id FROM effect_outbox
+             WHERE status IN ('succeeded', 'cancelled') AND completed_at <= ?
+             LIMIT 500`,
           )
-          .run(cutoff);
-        deleted += batch.changes;
-        if (batch.changes < 500) break;
+          .all(cutoff) as Array<{ effect_id: string; command_id: string }>;
+        if (batch.length === 0) break;
+        const effectIds = batch.map((row) => row.effect_id);
+        const commandIds = batch.map((row) => row.command_id);
+        const effectPlaceholders = effectIds.map(() => '?').join(', ');
+        const removed = db
+          .prepare(
+            `DELETE FROM effect_outbox WHERE effect_id IN (${effectPlaceholders})`,
+          )
+          .run(...effectIds);
+        deleted += removed.changes;
+        // UUID inventado pelo despacho não é reapresentável. operationId
+        // do chamador (generated_invocation = 0) continua o replay.
+        const commandPlaceholders = commandIds.map(() => '?').join(', ');
+        db.prepare(
+          `DELETE FROM command_receipts
+           WHERE generated_invocation = 1
+             AND command_id IN (${commandPlaceholders})`,
+        ).run(...commandIds);
+        if (batch.length < 500) break;
       }
       return deleted;
     })();

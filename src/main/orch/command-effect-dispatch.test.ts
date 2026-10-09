@@ -548,4 +548,69 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
     });
     expect(boot.unsettledReceipts).toBe(0);
   });
+
+  it('prunes a settled generated receipt and still replays a caller operation id', async () => {
+    let runs = 0;
+    const booted = bootDispatch(async () => {
+      runs += 1;
+      return { marker: runs };
+    });
+    const receipts = createScopedCommandReceiptStore(booted.manager, booted.scope);
+    const outbox = createScopedEffectOutboxStore(booted.manager, booted.scope);
+    const previous = registeredEffectHandler('checkpoint.capture');
+    const unregister = registerCheckpointCaptureHandler();
+    const drain = () =>
+      drainEffectOutbox({
+        store: outbox,
+        scope: booted.scope,
+        workerId: 'orchestration-coordinator',
+      });
+    try {
+      const generated = await dispatchToolCall(
+        'http-mcp',
+        booted.registry,
+        'nexus_terminal_run',
+        { command: 'true' },
+        booted.ctx,
+        booted.options,
+      );
+      expect(generated).toMatchObject({ ok: true, result: { marker: 1 } });
+      const pending = receipts.listUnsettled();
+      expect(pending).toHaveLength(1);
+      const generatedId = pending[0]!.commandId;
+      expect(generatedId).not.toBe('op-keep');
+      await drain();
+      expect(receipts.getByCommandId(generatedId)?.resultSequence).toBeGreaterThan(0);
+
+      const kept = await dispatchToolCall(
+        'http-mcp',
+        booted.registry,
+        'nexus_terminal_run',
+        { command: 'true' },
+        booted.ctx,
+        { ...booted.options, logicalOperationId: 'op-keep' },
+      );
+      expect(runs).toBe(2);
+      expect(kept).toMatchObject({ ok: true, result: { marker: 2 } });
+      await drain();
+      expect(receipts.getByCommandId('op-keep')?.resultSequence).toBeGreaterThan(0);
+      expect(outbox.pruneSettled(0)).toBeGreaterThan(0);
+
+      expect(receipts.getByCommandId(generatedId)).toBeNull();
+      expect(receipts.getByCommandId('op-keep')?.resultSequence).toBeGreaterThan(0);
+      const replay = await dispatchToolCall(
+        'http-mcp',
+        booted.registry,
+        'nexus_terminal_run',
+        { command: 'true' },
+        booted.ctx,
+        { ...booted.options, logicalOperationId: 'op-keep' },
+      );
+      expect(runs).toBe(2);
+      expect(replay).toEqual(kept);
+    } finally {
+      unregister();
+      if (previous) registerEffectOutboxHandler('checkpoint.capture', previous);
+    }
+  });
 });

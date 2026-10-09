@@ -676,6 +676,7 @@ function acceptProductionCommandCheckpoint(
   ctx: AgentGateContext,
   commandId: string,
   toolName: string,
+  generatedInvocation: boolean,
 ): CheckpointAcceptance {
   let runtimeManager: ProjectRuntimeManager;
   try {
@@ -693,6 +694,7 @@ function acceptProductionCommandCheckpoint(
       threadId: missionId || ctx.scope.projectId,
       toolName: canonicalToolName(toolName),
       missionBound: missionId.length > 0,
+      generatedInvocation,
     });
     return { status: "accepted", inserted: accepted.inserted };
   } catch (error) {
@@ -1806,6 +1808,7 @@ export async function dispatchToolCall(
         ctx,
         commandId,
         tool.name,
+        receiptCommandId === undefined,
       );
       if (checkpoint.status === "denied") {
         return denyAfterIntent("command_effect_unavailable");

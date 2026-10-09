@@ -57,6 +57,7 @@ export interface CommandReceiptInsertInput {
   /** Identidade do aggregate: thread (missão/pane) ou projeto. */
   readonly threadId?: string;
   readonly projectId?: string;
+  readonly generatedInvocation?: boolean;
 }
 
 export interface CommandReceiptUpsertInput extends CommandReceiptInsertInput {
@@ -77,6 +78,7 @@ const rowSchema = z
     error: z.string().max(512).nullable(),
     effect_class: z.enum(['process_bound', 'replay_safe']),
     outcome_json: z.string().max(32768).nullable(),
+    generated_invocation: z.number().int().min(0).max(1),
   })
   .strict();
 
@@ -90,6 +92,8 @@ const insertSchema = z
     error: z.string().max(512).nullish(),
     threadId: z.string().min(1).max(128).optional(),
     projectId: z.string().min(1).max(128).optional(),
+    /** True quando o commandId foi um UUID do despacho, não um operationId. */
+    generatedInvocation: z.boolean().optional(),
   })
   .strict();
 
@@ -103,6 +107,7 @@ const acceptanceSchema = z
     status: z.literal('accepted').optional(),
     threadId: z.string().min(1).max(128).optional(),
     projectId: z.string().min(1).max(128).optional(),
+    generatedInvocation: z.boolean().optional(),
   })
   .strict();
 
@@ -114,6 +119,7 @@ export interface CommandEffectAcceptanceInput {
   readonly status?: 'accepted';
   readonly threadId?: string;
   readonly projectId?: string;
+  readonly generatedInvocation?: boolean;
 }
 
 function rowToReceipt(row: unknown): CommandReceipt {
@@ -261,8 +267,9 @@ export class CommandReceiptStore {
       db.prepare(
         `INSERT INTO command_receipts (
            command_id, aggregate_kind, aggregate_id, command_type,
-           accepted_at, result_sequence, status, error, effect_class
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           accepted_at, result_sequence, status, error, effect_class,
+           generated_invocation
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         input.commandId,
         aggregate.kind,
@@ -273,6 +280,7 @@ export class CommandReceiptStore {
         input.status ?? 'accepted',
         input.error ?? null,
         classForCommandType(input.commandType),
+        input.generatedInvocation ? 1 : 0,
       );
       return true;
     })();
@@ -317,8 +325,9 @@ export class CommandReceiptStore {
         db.prepare(
           `INSERT INTO command_receipts (
              command_id, aggregate_kind, aggregate_id, command_type,
-             accepted_at, result_sequence, status, error, effect_class
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             accepted_at, result_sequence, status, error, effect_class,
+             generated_invocation
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           input.commandId,
           aggregate.kind,
@@ -329,6 +338,7 @@ export class CommandReceiptStore {
           input.status,
           input.error ?? null,
           classForCommandType(input.commandType),
+          input.generatedInvocation ? 1 : 0,
         );
       }
       const row = db
@@ -400,6 +410,8 @@ export function acceptDispatchCheckpointEffect(
     readonly threadId: string;
     readonly toolName: string;
     readonly missionBound: boolean;
+    /** UUID do despacho. Some no prune. operationId do chamador não leva isto. */
+    readonly generatedInvocation?: boolean;
   },
 ): { readonly inserted: boolean; readonly effect: EffectOutboxEntry | null } {
   const receipts = createScopedCommandReceiptStore(runtimeManager, scope);
@@ -411,11 +423,13 @@ export function acceptDispatchCheckpointEffect(
           commandId: command.commandId,
           commandType: 'checkpoint.capture',
           threadId: command.threadId,
+          generatedInvocation: command.generatedInvocation,
         }
       : {
           commandId: command.commandId,
           commandType: 'checkpoint.capture',
           projectId: scope.projectId,
+          generatedInvocation: command.generatedInvocation,
         },
     {
       id: command.commandId,

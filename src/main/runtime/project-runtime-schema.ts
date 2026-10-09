@@ -1176,4 +1176,13 @@ END;`,
       sql: `ALTER TABLE command_receipts ADD COLUMN outcome_json TEXT
         CHECK (outcome_json IS NULL OR length(outcome_json) <= 32768);`,
     }),
+    // Id inventado pelo despacho não volta numa retry. O prune do efeito
+    // assentado também apaga esse recibo. operationId do chamador fica.
+    createProjectMigration({
+      id: '050-generated-invocation-receipt',
+      schemaVersion: 50,
+      appVersion: '0.76.212',
+      sql: `ALTER TABLE command_receipts ADD COLUMN generated_invocation INTEGER NOT NULL DEFAULT 0
+        CHECK (generated_invocation IN (0, 1));`,
+    }),
   ]);
