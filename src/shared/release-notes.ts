@@ -10250,7 +10250,7 @@ export const RELEASE_076212: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.214',
+  version: '0.76.215',
   date: '2026-10-09',
   codename: 'Decisões OpenAI e missões revisadas',
   summary: 'Luna (beta) e decisões em conjunto, com escolha por conta, Quadro vivo, capturas no destino escolhido e correções de retomada e entrega de missões.',
@@ -10262,6 +10262,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Launcher pelo teclado', detail: 'As ações do Launcher respondem aos atalhos de 1 a 6, uma vez por toque; campos de texto preservam a digitação.' },
   ],
   fixes: [
+    { title: 'API e sessão nativa distintas', detail: 'Uma credencial de API ou transporte não é tratada como login nativo do Claude. A sessão nativa comprovada continua com prioridade sobre a chave de API.' },
     { title: 'Retomada com resultado real', detail: 'O Nexus distingue um pedido de retomada do religamento confirmado, revalida a autoridade após esperas e encaminha a conclusão ao líder atual da missão.' },
     { title: 'Entrega assentada antes de concluir', detail: 'Uma entrega ainda na fila impede a conclusão da missão, mesmo após muitas mensagens do Maestro. O diagnóstico usa o prazo real da tentativa.' },
     { title: 'Comandos pendentes seguram a conclusão', detail: 'As ferramentas de terminal e segundo plano mantêm a pendência até a saída comprovada do comando e seus subprocessos. Reiniciar o app sem essa prova mantém a pendência.' },

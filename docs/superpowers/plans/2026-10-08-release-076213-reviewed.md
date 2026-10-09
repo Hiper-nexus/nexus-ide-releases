@@ -271,3 +271,24 @@ posteriores continuam na próxima batch já autorizada do monitor; as triagens
 metadados, revisão global, todos os gates e nova tag devem concordar no SHA
 214. A descrição da release pública 212 continua intacta; ela permanece a
 versão pública até publicação guardada e verificação de bytes e digests.
+
+
+## Sucessora 0.76.215 da candidata privada 214 (09/10)
+
+A fonte ca8270ed5, árvore 460978939, recebeu revisão global e oito gates
+completos verdes: app 24.683/60 skips, servidor157 e Main/PTY 1. A tag local
+v0.76.214 (objeto c6620ede...) permanece imutável. A candidata assinada e
+notarizada passou no gate base e no soak fixo de cinco minutos (43 amostras),
+mas a etapa adicional de runtime falhou ao observar o líder da missão.
+Resume e inspeção de PNG não foram concluídos; nenhuma 214 foi publicada.
+O histórico privado preserva artefatos, recibos e RED por snapshot FD/SHA-256.
+
+O reparo distingue autenticação nativa de credenciais de API/transporte e
+corrige a coordenação das observações de runtime para agentes em worktrees.
+A identidade de escopo, prioridade da sessão nativa, isolamento, permissões
+e limites continuam obrigatórios. A sucessora usa 215 nos sete paths
+acoplados; root checkout, branch e scratch não mudam. Fonte final, revisão
+independente, todos os gates, nova tag/build/sign/notary, soak/runtime/PNG e
+publicação permanecem pendentes até evidência real. Não reutilizar o pacote
+214 como 215, retagar 214 ou apagar falhas. A versão pública 212 e sua descrição
+continuam intactas; a fronteira incluída permanece ad517bfb + reparos locais.
