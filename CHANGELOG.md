@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.76.213 — Decisões OpenAI e melhorias revisadas
+
+2026-10-08
+
+- **Luna (beta), Decisions API da OpenAI:** `Configurações → Modelos de decisão` oferece
+  `Somente Luna (beta)` e `Luna junto com Jev e Clef`. Usa a chave OpenAI de
+  `Chaves de API`; modo e consentimento ficam por conta Nexus.
+- **Consentimento de imagens por provedor:** autorização antiga da Cloudflare não
+  autoriza envio à OpenAI; mudar o modo ou cadastrar uma chave não libera pixels.
+- **Decisões e custo:** o conjunto preserva exigências de verificação e memória,
+  e mantém uso conhecido em recusas, falhas parciais e revogação de configuração.
+- **Quadro vivo e zoom:** participantes vêm das sessões atuais da missão; histórico
+  não reanima workers encerrados, e Maestro ocioso continua visível. Os controles
+  respeitam o espaço do inspetor em larguras normal e estreita.
+- **Contas:** escolha explícita de conta chega ao spawn de pane da missão e é
+  conferida contra a identidade física. Cota recente medida como esgotada confirma
+  limites entre janelas; sem confirmação, o pane continua na mesma conta.
+- **Shot:** consulta autenticada lista destinos vivos; destino explícito é validado
+  novamente após preparar os anexos. Destino encerrado ou de outro projeto recusa
+  a entrega. Mantém lote de gravação, caminhos entre aspas e digitação sem Enter.
+- **Launcher e handoffs:** atalhos de 1 a 6 nas ações, sem capturar campos de texto;
+  paginação marca como vistos somente os handoffs da página devolvida.
+
+Canal inicial: macOS Apple Silicon. Windows e Linux seguem seus gates quando os
+runners estiverem disponíveis. Luna é beta: acesso real à API depende da conta
+OpenAI e não foi comprovado com chamada paga nesta revisão.
+
 ## 0.76.212 — Nexus no celular de verdade
 
 Continua a integração do T3 Code (pingdotgg/t3code @ 26285ab, MIT): o app do celular passa a ser um cliente completo do desktop Nexus, e o cruzamento dos 64 candidatos do T3 está em `docs/analysis/t3code-crosswalk-26285ab.md` (39 integrados, 4 equivalentes, 20 pendentes, 1 incompatível).
