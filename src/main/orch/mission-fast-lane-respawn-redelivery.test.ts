@@ -36,6 +36,7 @@ const harness = vi.hoisted(() => ({
   deliver: vi.fn(async (_sessionId: string, _prompt: string) => true),
   missionPaneSpecs: [] as Array<Record<string, unknown>>,
   recordedPaneSpecs: [] as Array<Record<string, unknown>>,
+  kickoff: new Map<string,{orchestratorSessionId:string;intentVersion:number}>(),
   realPaneStore: null as ReturnType<typeof import('./mission-pane-store').createScopedMissionPaneStore> | null,
   acpSessions: new Map<string, { agent: import('../pty/pty-manager').OwnedAgentSessionInfo; shutdown: () => Promise<void> }>(),
   acpShutdown: vi.fn(async () => {}),
@@ -215,8 +216,8 @@ vi.mock('./project-domain-store-registry', async (importOriginal) => ({
       setOrchestratorSession: (_missionId: string, sessionId: string) => {
         liveMission = { ...liveMission, orchestratorSessionId: sessionId };
       },
-      recordKickoffAcceptance: () => {},
-      hasCurrentKickoffAcceptance: () => false,
+      recordKickoffAcceptance: (input: {missionId:string;orchestratorSessionId:string;intentVersion:number}) => { harness.kickoff.set(input.missionId,input); },
+      hasCurrentKickoffAcceptance: (id:string) => {const accepted=harness.kickoff.get(id);return accepted?.orchestratorSessionId===liveMission.orchestratorSessionId && accepted?.intentVersion===liveMission.intentVersion;},
     },
     missionPanes: harness.realPaneStore ?? {
       record: (spec: Record<string, unknown>) => { harness.recordedPaneSpecs.push(spec); },
@@ -327,6 +328,7 @@ vi.mock('./worker-file-walk', async importOriginal => {
 type FastLaneModule = typeof import('./mission-fast-lane');
 
 let fastLane: FastLaneModule;
+let leadershipRuntime: {manager:import('../runtime/project-runtime-manager').ProjectRuntimeManager;root:string}|undefined;
 
 const scope = testProjectScope();
 
@@ -342,6 +344,7 @@ beforeEach(async () => {
   harness.handoffsOfSession = undefined;
   harness.missionPaneSpecs = [];
   harness.recordedPaneSpecs = [];
+  harness.kickoff.clear();
   harness.realPaneStore = null;
   harness.physicalSessions.clear();
   harness.currentSeal = undefined;
@@ -365,7 +368,8 @@ beforeEach(async () => {
   fastLane = await import('./mission-fast-lane');
 });
 
-afterEach(() => {
+afterEach(async () => {
+  if(leadershipRuntime){await (await import('./project-domain-store-registry')).disposeProjectDomainStoreRegistry();leadershipRuntime.manager.closeAll();fs.rmSync(leadershipRuntime.root,{recursive:true,force:true});leadershipRuntime=undefined;}
   vi.useRealTimers();
 });
 
@@ -456,7 +460,14 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
   });
 
   it.each(['pending', 'running'] as const)('materializes approved defaults in a %s Maestro, persisted pane and later remount (F-428)', async status => {
+    const { ProjectRuntimeManager } = await import('../runtime/project-runtime-manager');
+    const registry = await import('./project-domain-store-registry');
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-default-runtime-leader-'));
+    const manager=new ProjectRuntimeManager({baseDir:root,appVersion:'test'});leadershipRuntime={manager,root};
+    registry.configureProjectDomainStoreRegistry(manager).forScope(scope);
+    const { compileIntentContract } = await import('../../shared/mission-intent');
     liveMission = { ...mission, status, intentState: status === 'pending' ? 'ready_to_start' : 'executing', intentContract: {
+      ...compileIntentContract({goal:'Prove approved runtime defaults',acceptanceCriteria:['same model/effort'],intentVersion:1}),approvedAt:Date.now(),dispatchedAt:Date.now(),
       orchestratorRuntime: { adapterId: 'codex', model: 'approved-model', effort: 'medium', readOnly: false, nativeReadOnly: false },
     } } as Mission;
     await fastLane.fastLaneBootstrap(scope, 'mission-1');

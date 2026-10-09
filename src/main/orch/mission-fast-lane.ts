@@ -78,6 +78,7 @@ import {
 } from './project-domain-store-registry';
 import { getSquad, listSquads } from './squad-store';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
+import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
 import { missionEngineForScope } from './mission-engine-registry';
 import { redeliverPendingHandoffs } from './idle-delivery';
 import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
@@ -1153,6 +1154,13 @@ async function pasteBriefAfterBoot(
   return failure;
 }
 
+interface BootstrapRuntime {
+  readonly sessionId: string;
+  readonly paneId: string;
+  readonly kind: 'spawned' | 'adopted';
+  readonly phase: 'created' | 'bound' | 'cleanup-handled';
+}
+
 async function spawnAgentPane(
   scope: ProjectExecutionScope,
   mission: Mission,
@@ -1168,6 +1176,7 @@ async function spawnAgentPane(
     readonly resumeFromPaneId?: string;
     readonly accountId?: string;
     readonly invocation?: McpToolInvocation;
+    readonly onBootstrapRuntime?: (runtime: BootstrapRuntime) => void;
   },
 ): Promise<SpawnedAgent | { error: string }> {
   assertMcpInvocationCurrent(spawnOpts?.invocation);
@@ -1281,6 +1290,7 @@ async function spawnAgentPane(
   }
 
   try {
+    spawnOpts?.onBootstrapRuntime?.({sessionId:spawn.sessionId,paneId:spawn.paneId,kind:'spawned',phase:'created'});
     assertMcpInvocationCurrent(spawnOpts?.invocation);
     bindSpawnedMissionPane(stores, scope, mission, runtimeAgent, role, {
       paneId: spawn.paneId, sessionId: spawn.sessionId, title, readOnly,
@@ -1289,10 +1299,12 @@ async function spawnAgentPane(
     const acp = getAcpDriverSession(spawn.sessionId);
     if (acp) await acp.shutdown();
     else await orchTerminateSession(spawn.sessionId, { origin: 'fast-lane:spawn-binding-failed' });
+    spawnOpts?.onBootstrapRuntime?.({sessionId:spawn.sessionId,paneId:spawn.paneId,kind:'spawned',phase:'cleanup-handled'});
     return { error: error instanceof Error ? error.message : String(error) };
   }
   if (role === 'orchestrator') {
     stores.missions.setOrchestratorSession(mission.id, spawn.sessionId);
+    spawnOpts?.onBootstrapRuntime?.({sessionId:spawn.sessionId,paneId:spawn.paneId,kind:'spawned',phase:'bound'});
     rememberKickoffBrief({
       missionId: mission.id,
       orchestratorSessionId: spawn.sessionId,
@@ -2488,6 +2500,7 @@ async function adoptOrchestratorPane(
   mission: Mission,
   briefPrompt: string,
   invocation?: McpToolInvocation,
+  onBootstrapRuntime?: (runtime: BootstrapRuntime) => void,
 ): Promise<OrchestratorAdoptionOutcome> {
   assertMcpInvocationCurrent(invocation);
   const reservation = takeOrchestratorAdoption(mission.id);
@@ -2517,12 +2530,15 @@ async function adoptOrchestratorPane(
     );
     granted = false;
   }
-  assertMcpInvocationCurrent(invocation);
   const stores = getProjectDomainStores(scope);
   // Prova, não promessa: o store tem que apontar para a sessão adotada. Se a
   // concessão disse ok mas o vínculo não mudou, isto NÃO é uma adoção.
   const bound =
     stores.missions.get(mission.id)?.orchestratorSessionId ?? null;
+  if (granted && bound === adopted.sessionId) {
+    onBootstrapRuntime?.({sessionId:adopted.sessionId,paneId:adopted.paneId,kind:'adopted',phase:'bound'});
+  }
+  assertMcpInvocationCurrent(invocation);
   if (!granted || bound !== adopted.sessionId) {
     return { adopted: false, refusal: 'authority-refused' };
   }
@@ -2697,175 +2713,139 @@ export async function fastLaneBootstrap(
   }
 
   assertMcpInvocationCurrent(options?.invocation);
-  let live = mission;
-  {
-    const dispatched = stores.missions.transitionLifecycle(
-      missionId,
-      { updatedAt: mission.updatedAt, intentVersion: mission.intentVersion ?? 0 },
-      { status: 'running', intentState: 'dispatched' },
-    );
-    if (!dispatched) {
-      throw new Error('a missão mudou durante o início — tente de novo');
-    }
-
-    const executing = stores.missions.transitionLifecycle(
-      missionId,
-      {
-        updatedAt: dispatched.updatedAt,
-        intentVersion: dispatched.intentVersion ?? 0,
-      },
-      { status: 'running', intentState: 'executing' },
-    );
-    live = executing ?? dispatched;
-  }
-
-  const teamNames = roster.map((agent) => agent.agentName);
-  const designContext = missionDesignContext(
-    missionExecutionScope(scope, live).rootRealPath,
-    undefined,
-    mission.description ?? '',
-  );
-  const sealedPlanTitles = sealFastLanePlanTitles(stores, live, squad);
-
-  const prompt = agentPrompt(
-    orchestrator,
-    live,
-    teamNames,
-    false,
-    designContext,
-    squad,
-    sealedPlanTitles,
-  );
-
-  const finishFirstPane = async (): Promise<void> => {
+  let owned: Mission | undefined;
+  let runtime: BootstrapRuntime | undefined;
+  let physical: ReturnType<typeof getAgentSessionInfo> | undefined;
+  let cleanupHandled = false;
+  let committed = false;
+  // transitionLifecycle returns a clone with optional undefined members;
+  // compare the same durable JSON contract representation as normal reads.
+  const intentHash = (row: Mission): string | null => row.intentContract
+    ? hashMissionIntentAuthority(JSON.parse(JSON.stringify(row.intentContract))) : null;
+  const captureTransition = (row: Mission): Mission => ({
+    ...row,
+    ...(row.intentContract ? {intentContract:JSON.parse(JSON.stringify(row.intentContract))} : {}),
+  });
+  const sameSemanticOwner = (row: Mission, expected: Mission): boolean =>
+    row.status === expected.status && row.intentState === expected.intentState &&
+    row.intentVersion === expected.intentVersion && intentHash(row) === intentHash(expected) &&
+    row.description === expected.description && !wasMissionRuntimeClosedByOperator(row);
+  const stillOwned = (): boolean => {
+    const current = stores.missions.get(missionId);
+    return Boolean(owned && current && sameSemanticOwner(current,owned) &&
+      current.updatedAt === owned.updatedAt && current.orchestratorSessionId === owned.orchestratorSessionId);
+  };
+  const current = (): void => {
     assertMcpInvocationCurrent(options?.invocation);
-    const wave = dispatchFastLaneFirstWave(scope, missionId);
-    // Adoção primeiro: se o operador indicou um painel para liderar, ele vira o
-    // Maestro e nenhum pane novo nasce. Recusa não derruba a missão — ela cai
-    // no arranque normal com o aviso registrado.
-    const adoption = await adoptOrchestratorPane(scope, live, prompt, options?.invocation);
-    assertMcpInvocationCurrent(options?.invocation);
-    if (adoption.adopted) {
-      orchPanes.set(missionId, {
-        paneId: adoption.paneId,
-        sessionId: adoption.sessionId,
-        adapterId:
-          getAgentSessionInfo(adoption.sessionId)?.adapterId ?? orchestrator.cli,
-        cwd: missionExecutionScope(scope, live).rootRealPath,
-        title: orchestrator.agentName,
-        agentName: orchestrator.agentName,
-      });
-      // Briefing não entregue num pane JÁ adotado: mesmo desfecho do caminho
-      // spawnado — bloqueio técnico com a causa, pane preservado. O que não
-      // pode acontecer é a missão ficar running sem ninguém e sem explicação.
-      if (adoption.briefingError) {
-        const current = stores.missions.get(missionId);
-        if (current && current.status === 'running' && current.intentState) {
-          missionEngineForScope(scope).blockTechnical(scope, {
-            missionId,
-            expectedStatus: current.status,
-            expectedIntentState: current.intentState,
-            expectedUpdatedAt: current.updatedAt,
-            expectedIntentVersion: current.intentVersion ?? 0,
-            description: `Briefing não chegou ao painel adotado: ${adoption.briefingError}`,
-          });
-        }
-        throw new Error(
-          `briefing não chegou ao painel adotado: ${adoption.briefingError}`,
-        );
-      }
-      if (stores.missions.get(missionId)?.status !== 'running') {
-        await releaseMissionLiveRuntime(scope, missionId);
-        return;
-      }
-      startWatcher(scope, missionId, adoption.sessionId);
-      void wave.catch((error) => {
-        console.warn(
-          '[fast-lane] first-wave após adoção falhou:',
-          error instanceof Error ? error.message : error,
-        );
-      });
+    if (owned && !stillOwned()) throw new Error('bootstrap_attempt_authority_changed');
+  };
+  const invocation: McpToolInvocation = {...options?.invocation,assertCurrentAuthority:current};
+  const captureRuntime = (value: BootstrapRuntime): void => {
+    if (value.phase === 'cleanup-handled') {cleanupHandled=true;return;}
+    runtime=value;
+    if (value.kind === 'spawned' && value.phase === 'created') {
+      physical=getAgentSessionInfo(value.sessionId) ?? getAcpDriverSession(value.sessionId)?.agent ?? undefined;
+      if (physical) physical=structuredClone(physical);
       return;
     }
-    if (adoption.refusal !== 'no-reservation') {
-      console.warn(
-        `[fast-lane] adoção recusada (${adoption.refusal}) para ${missionId}: ` +
-          orchestratorAdoptionRefusalMessage(adoption.refusal),
-      );
-      emitMissionEvent(scope, {
-        missionId,
-        runId: `bootstrap:${missionId}`,
-        type: 'custom',
-        origin: 'system',
-        payload: {
-          kind: 'orchestrator-adoption-refused',
-          refusal: adoption.refusal,
-          detail: orchestratorAdoptionRefusalMessage(adoption.refusal),
-        },
-        idempotencyKey: `adoption-refused:${missionId}`,
-        occurredAt: Date.now(),
-      });
+    const bound=stores.missions.get(missionId);
+    if (!owned || !bound || !sameSemanticOwner(bound,owned) || bound.orchestratorSessionId!==value.sessionId) {
+      throw new Error('bootstrap_attempt_authority_changed');
     }
-    assertMcpInvocationCurrent(options?.invocation);
-    const spawned = await spawnAgentPane(scope, live, orchestrator, prompt, undefined, { invocation: options?.invocation });
-    assertMcpInvocationCurrent(options?.invocation);
-    if ('error' in spawned) {
-      const current = stores.missions.get(missionId);
-      if (current && current.status === 'running' && current.intentState) {
-        missionEngineForScope(scope).blockTechnical(scope, {
-          missionId,
-          expectedStatus: current.status,
-          expectedIntentState: current.intentState,
-          expectedUpdatedAt: current.updatedAt,
-          expectedIntentVersion: current.intentVersion ?? 0,
-          description: `Orquestrador não abriu: ${spawned.error}`,
-        });
-      }
-      throw new Error(`orquestrador não abriu: ${spawned.error}`);
-    }
-
-    orchPanes.set(missionId, {
-      paneId: spawned.paneId,
-      sessionId: spawned.sessionId,
-      adapterId: spawned.adapterId,
-      cwd: missionExecutionScope(scope, live).rootRealPath,
-      title: orchestrator.agentName,
-      agentName: orchestrator.agentName,
+    // This exact binding belongs to the attempted grant/spawn; capture before
+    // context or boot awaits. Never borrow a later row in failure cleanup.
+    owned=bound;
+  };
+  const blockOwnedFailure = async (): Promise<void> => {
+    if (committed || !owned || !stillOwned() || !owned.intentState) return;
+    const captured=owned;
+    const capturedIntentState=captured.intentState;
+    if (!capturedIntentState) return;
+    missionEngineForScope(scope).blockTechnical(scope,{
+      missionId,expectedStatus:captured.status,expectedIntentState:capturedIntentState,
+      expectedUpdatedAt:captured.updatedAt,expectedIntentVersion:captured.intentVersion ?? 0,
+      description:'O coordenador não concluiu a preparação inicial. Use Retomar para tentar novamente.',
     });
-
-    if (stores.missions.get(missionId)?.status !== 'running') {
-      await releaseMissionLiveRuntime(scope, missionId);
-      return;
+    // An adopted operator pane is never killed/demoted. Only the exact fresh
+    // process whose immutable physical binding still matches can be retired.
+    if (runtime?.kind!=='spawned' || cleanupHandled || !physical) return;
+    const actual=getAgentSessionInfo(runtime.sessionId) ?? getAcpDriverSession(runtime.sessionId)?.agent;
+    const blocked=stores.missions.get(missionId);
+    if (!blocked || blocked.status!=='blocked' || blocked.intentState!=='blocked_technical' ||
+        blocked.intentVersion!==captured.intentVersion || intentHash(blocked)!==intentHash(captured) ||
+        blocked.orchestratorSessionId!==captured.orchestratorSessionId ||
+        !actual || actual.sessionId!==physical.sessionId || actual.paneId!==physical.paneId ||
+        actual.missionId!==missionId || actual.role!=='orchestrator' ||
+        !isDeepStrictEqual(actual.scope,physical.scope) || !isDeepStrictEqual(actual.coordinationScope,physical.coordinationScope) ||
+        !isDeepStrictEqual(actual.authoritySeal,physical.authoritySeal)) return;
+    const acp=getAcpDriverSession(runtime.sessionId);
+    if (acp) await acp.shutdown();
+    else await orchTerminateSession(runtime.sessionId,{origin:'fast-lane:owned-bootstrap-failed'});
+    // Unknown death is not a clean exit, and no mission-wide cache/leader
+    // deletion is performed here. Exact native exit bookkeeping owns it.
+  };
+  const commitSetup = (value: BootstrapRuntime): void => {
+    if (!stillOwned() || !owned || !hasCurrentDispatchAuthority(owned)) throw new Error('bootstrap_attempt_authority_changed');
+    const leader=getMissionLeadership().resolveMissionLeader(scope,missionId);
+    if (!leader?.proven || leader.sessionId!==value.sessionId || leader.paneId!==value.paneId ||
+        !stores.missions.hasCurrentKickoffAcceptance(missionId)) {
+      throw new Error('bootstrap_coordinator_setup_unproven');
     }
-
-    startWatcher(scope, missionId, spawned.sessionId);
-    void wave.then((n) => {
-      if (n > 0) {
-        console.info(
-          `[fast-lane] first-wave auto-dispatch ${n} writers for ${sealedPlanTitles.length} sealed stories`,
-        );
-      }
-    }).catch((error) => {
-      console.warn(
-        '[fast-lane] first-wave auto-dispatch falhou:',
-        error instanceof Error ? error.message : error,
-      );
+    // Verified current leader+accepted briefing is the commit boundary.
+    // Legitimate original-caller self-revocation cannot roll this back.
+    committed=true;
+    orchPanes.set(missionId,{
+      paneId:value.paneId,sessionId:value.sessionId,
+      adapterId:getAgentSessionInfo(value.sessionId)?.adapterId ?? orchestrator.cli,
+      cwd:missionExecutionScope(scope,owned).rootRealPath,title:orchestrator.agentName,agentName:orchestrator.agentName,
+    });
+    startWatcher(scope,missionId,value.sessionId);
+    void dispatchFastLaneFirstWave(scope,missionId).catch(()=>{
+      console.warn('[fast-lane] first-wave after verified coordinator did not complete');
     });
   };
-
-  // Via Rápida start IPC must return once the mission is running (rail
-  // item exists). Waiting for Maestro boot/idle can hang 60s+ and leaves
-  // the civilian on "Iniciando…" with the dialog stuck open.
-  if (options?.waitForFirstPane === false) {
-    void finishFirstPane().catch((error) => {
-      console.warn(
-        '[fast-lane] first pane after start (mission already running):',
-        error instanceof Error ? error.message : error,
-      );
-    });
+  const finishFirstPane = async (): Promise<void> => {
+    try {
+      current();
+      const dispatched=stores.missions.transitionLifecycle(missionId,
+        {updatedAt:mission.updatedAt,intentVersion:mission.intentVersion ?? 0},
+        {status:'running',intentState:'dispatched'});
+      if (!dispatched) throw new Error('a missão mudou durante o início — tente de novo');
+      owned=captureTransition(dispatched);
+      current();
+      const executing=stores.missions.transitionLifecycle(missionId,
+        {updatedAt:dispatched.updatedAt,intentVersion:dispatched.intentVersion ?? 0},
+        {status:'running',intentState:'executing'});
+      owned=captureTransition(executing ?? dispatched);
+      current();
+      const designContext=missionDesignContext(missionExecutionScope(scope,owned).rootRealPath,undefined,mission.description ?? '');
+      const sealedPlanTitles=sealFastLanePlanTitles(stores,owned,squad);
+      const prompt=agentPrompt(orchestrator,owned,roster.map(agent=>agent.agentName),false,designContext,squad,sealedPlanTitles);
+      const adoption=await adoptOrchestratorPane(scope,owned,prompt,invocation,captureRuntime);
+      if (adoption.adopted) {
+        if (adoption.briefingError) throw new Error('bootstrap_adopted_briefing_unaccepted');
+        commitSetup({sessionId:adoption.sessionId,paneId:adoption.paneId,kind:'adopted',phase:'bound'});
+        return;
+      }
+      current();
+      if (adoption.refusal!=='no-reservation') {
+        emitMissionEvent(scope,{missionId,runId:'bootstrap:'+missionId,type:'custom',origin:'system',
+          payload:{kind:'orchestrator-adoption-refused',refusal:adoption.refusal,detail:orchestratorAdoptionRefusalMessage(adoption.refusal)},
+          idempotencyKey:'adoption-refused:'+missionId,occurredAt:Date.now()});
+      }
+      const spawned=await spawnAgentPane(scope,owned,orchestrator,prompt,undefined,{invocation,onBootstrapRuntime:captureRuntime});
+      if ('error' in spawned) throw new Error(spawned.error);
+      commitSetup({sessionId:spawned.sessionId,paneId:spawned.paneId,kind:'spawned',phase:'bound'});
+    } catch (error) {
+      try { await blockOwnedFailure(); }
+      catch { console.warn('[fast-lane] owned bootstrap terminalization unavailable'); }
+      throw error;
+    }
+  };
+  if (options?.waitForFirstPane===false) {
+    void finishFirstPane().catch(()=>console.warn('[fast-lane] owned coordinator setup did not complete'));
     return;
   }
-
   await finishFirstPane();
 }
 
