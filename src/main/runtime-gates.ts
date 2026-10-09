@@ -87,6 +87,26 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
   }
   await new Promise<void>((resolve, reject) => {
     const current = (): void => { check(); if (stopped || wc.mainFrame !== frame || !sameProjectScope(requireLiveRendererWorkspaceScope(wc), scope)) throw new Error('runtime authority revoked'); };
+    const captureAgentBinding = (info: ReturnType<typeof listAgentSessions>[number]) => {
+      const authority = getContextBySession(info.sessionId);
+      const binding = authority && { sessionId: authority.sessionId, missionId: authority.missionId, role: authority.role,
+        coordination: { ...authority.scope }, execution: { ...executionScopeFor(authority) } };
+      const assertCurrent = (): void => {
+        current();
+        const live = listAgentSessions().find(v => v.sessionId === info.sessionId);
+        if (!live || !authority || !binding || live.sessionId !== info.sessionId || live.paneId !== info.paneId ||
+          live.adapterId !== info.adapterId || live.accountId !== info.accountId || live.missionId !== info.missionId ||
+          live.role !== info.role || !sameProjectScope(live.scope, info.scope) ||
+          !sameProjectScope(live.coordinationScope ?? binding.coordination, info.coordinationScope ?? binding.coordination) ||
+          getContextBySession(live.sessionId) !== authority || !verifiedAgent(live) ||
+          authority.sessionId !== binding.sessionId || authority.missionId !== binding.missionId || authority.role !== binding.role ||
+          !sameProjectScope(authority.scope, binding.coordination) || !sameProjectScope(executionScopeFor(authority), binding.execution)) {
+          throw new Error('runtime agent binding changed');
+        }
+      };
+      assertCurrent();
+      return { authority, assertCurrent };
+    };
     const addHistory = (value: unknown): void => { if (history.length >= 1200) throw new Error('runtime observation budget exceeded'); history.push(value); };
     const revokeVoice = (): void => { releaseVoice?.(); releaseVoice = null;
       // This is a disposable acceptance session. Revocation remains deny-all,
@@ -159,24 +179,29 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
           if (!mission || !mission.title.includes(config.gatewayNonce)) throw new Error('private mission absent');
           const snapshot = await missionEngineForScope(scope).snapshot(scope, req.missionId); current();
           const footprints = await probePaneFootprints(); current();
+          const bindings: Array<() => void> = [], stagedCaptures: Array<{ path: string; sha256: string; assignmentId: string; artifactId: string }> = [];
           const agents = await Promise.all(listAgentSessions().filter(v => v.missionId === req.missionId && verifiedAgent(v)).map(async v => {
-            const ctx = getContextBySession(v.sessionId); let visual;
-            if (ctx?.visualTask) {
-              const verdict = await checkVisualHandoff(ctx, { assertCurrent: current }); current();
+            const { authority: ctx, assertCurrent } = captureAgentBinding(v); bindings.push(assertCurrent);
+            const assignmentId = ctx?.visualTask?.id; let visual;
+            if (ctx?.visualTask && assignmentId) {
+              const verdict = await checkVisualHandoff(ctx, { assertCurrent }); assertCurrent();
               if (verdict.required && verdict.verified) {
                 const manager = getMissionEventRuntimeManager();
-                const artifact = manager && await createScopedBrowserArtifactStore(manager, scope).verifiedScreenshot(verdict.artifactId, current); current();
+                const artifact = manager && await createScopedBrowserArtifactStore(manager, scope).verifiedScreenshot(verdict.artifactId, assertCurrent); assertCurrent();
                 if (!artifact || artifact.missionId !== mission.id || artifact.url !== `${config.gateway}/runtime-page`) throw new Error('visual artifact provenance differs');
-                visual = { assignmentId: ctx.visualTask.id, artifactId: artifact.id, sha256: artifact.sha256 };
-                captures.set(artifact.id, { ...visual, path: artifact.path });
+                visual = { assignmentId, artifactId: artifact.id, sha256: artifact.sha256 };
+                stagedCaptures.push({ ...visual, path: artifact.path });
               }
             }
+            assertCurrent();
             return {
             paneId: v.paneId, sessionId: v.sessionId, role: v.role, adapterId: v.adapterId, agentName: v.agentName,
             pid: footprints?.find(f => f.sessionId === v.sessionId)?.rootPid ?? null,
             conversation: v.paneId ? getProviderPaneSession(scope, v.paneId, v.adapterId, v.accountId) : null,
             ...(visual ? { visual } : {}),
           }; })); current();
+          bindings.forEach(assertCurrent => assertCurrent());
+          stagedCaptures.forEach(capture => captures.set(capture.artifactId, capture));
           const result = { missionId: mission.id, lane: mission.intentContract?.lane, status: mission.status, snapshot, agents,
             handoffs: stores.handoffs.list({ missionId: mission.id, includeDelivered: true }),
             acknowledgements: getMissionEventRuntimeManager()?.open(scope).db.prepare(`SELECT handoff_id AS handoffId, orchestrator_session_id AS sessionId,
@@ -193,23 +218,14 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
         }
         const info = listAgentSessions().find(v => v.sessionId === req.sessionId);
         const agent = info && verifiedAgent(info);
-        const authority = info ? getContextBySession(info.sessionId) : null;
-        const binding = authority && { sessionId: authority.sessionId, missionId: authority.missionId, role: authority.role,
-          coordination: { ...authority.scope }, execution: { ...executionScopeFor(authority) } };
+        const captured = agent ? captureAgentBinding(info) : null;
         const own = !info && isSessionOwnedBy(wc, req.sessionId) && getSessionCwd(req.sessionId) === input.workspacePath;
         if (!own && !agent) throw new Error('foreign runtime session');
         if (req.operation === 'terminate') { const closed = await orchTerminateSession(req.sessionId, { origin: 'private-runtime-gate' }); current(); if (!closed) throw new Error('runtime physical termination unproved'); terminated.add(req.sessionId); return { closed }; }
         const footprints = await probePaneFootprints(); current();
-        const liveInfo = listAgentSessions().find(v => v.sessionId === req.sessionId);
-        const sameAgent = info && liveInfo && authority && binding &&
-          liveInfo.sessionId === info.sessionId && liveInfo.paneId === info.paneId && liveInfo.adapterId === info.adapterId &&
-          liveInfo.missionId === info.missionId && liveInfo.role === info.role && sameProjectScope(liveInfo.scope, info.scope) &&
-          sameProjectScope(liveInfo.coordinationScope ?? binding.coordination, info.coordinationScope ?? binding.coordination) &&
-          getContextBySession(liveInfo.sessionId) === authority && verifiedAgent(liveInfo) &&
-          authority.sessionId === binding.sessionId && authority.missionId === binding.missionId && authority.role === binding.role &&
-          sameProjectScope(authority.scope, binding.coordination) && sameProjectScope(executionScopeFor(authority), binding.execution);
-        const sameShell = !info && !liveInfo && isSessionOwnedBy(wc, req.sessionId) && getSessionCwd(req.sessionId) === input.workspacePath;
-        if (!(info ? sameAgent : sameShell)) throw new Error('runtime session binding changed during lookup');
+        if (captured) captured.assertCurrent();
+        else if (listAgentSessions().some(v => v.sessionId === req.sessionId) || !isSessionOwnedBy(wc, req.sessionId) ||
+          getSessionCwd(req.sessionId) !== input.workspacePath) throw new Error('runtime session binding changed during lookup');
         const pid = footprints?.find(v => v.sessionId === req.sessionId)?.rootPid;
         if (!pid) throw new Error('runtime session PID unavailable'); armedShells.add(req.sessionId);
         const result = { sessionId: req.sessionId, pid }; addHistory(result); return { ...result, echoed: echoSessions.has(req.sessionId) };
