@@ -1,3 +1,4 @@
+import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import {
   ScopedStoreBinding,
@@ -54,10 +55,19 @@ export type EffectOutboxStatus =
   | 'failed'
   | 'cancelled';
 
+const KNOWN_EFFECT_TYPES = [
+  ...REPLAY_SAFE_EFFECT_TYPES,
+  ...PROCESS_BOUND_EFFECT_TYPES,
+] as const;
+
 export function effectClassFor(type: EffectType): EffectClass {
-  return (PROCESS_BOUND_EFFECT_TYPES as readonly string[]).includes(type)
-    ? 'process_bound'
-    : 'replay_safe';
+  if ((PROCESS_BOUND_EFFECT_TYPES as readonly string[]).includes(type)) {
+    return 'process_bound';
+  }
+  if ((REPLAY_SAFE_EFFECT_TYPES as readonly string[]).includes(type)) {
+    return 'replay_safe';
+  }
+  throw new Error('unknown effect type');
 }
 
 export interface EffectOutboxEntry {
@@ -106,13 +116,15 @@ const LEASE_EXPIRED_FAILED_ERROR =
   'Failed because the running lease expired before the effect completed.';
 const LEASE_EXPIRED_REQUEUED_ERROR =
   'Requeued because the running lease expired before the effect completed.';
+const UNKNOWN_EFFECT_CANCELLED_ERROR =
+  'Cancelled because the effect type is not known to this binary.';
 
 const rowSchema = z
   .object({
     effect_id: z.string().min(1).max(128),
     command_id: z.string().min(1).max(128),
     thread_id: z.string().min(1).max(128),
-    effect_type: z.string().min(1).max(64),
+    effect_type: z.enum(KNOWN_EFFECT_TYPES),
     payload_json: z.string(),
     status: z.enum(['pending', 'running', 'succeeded', 'failed', 'cancelled']),
     attempt_count: z.number().int().nonnegative(),
@@ -141,6 +153,19 @@ const enqueueSchema = z
   .strict();
 
 const MAX_PAYLOAD_BYTES = 32 * 1024;
+
+function cancelUnknownEffects(db: Database.Database, now: number): number {
+  const updated = db
+    .prepare(
+      `UPDATE effect_outbox
+       SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL,
+           completed_at = ?, updated_at = ?, last_error = ?
+       WHERE status IN ('pending', 'running')
+         AND effect_type NOT IN (${KNOWN_EFFECT_TYPES.map(() => '?').join(',')})`,
+    )
+    .run(now, now, UNKNOWN_EFFECT_CANCELLED_ERROR, ...KNOWN_EFFECT_TYPES);
+  return updated.changes;
+}
 
 function isClaimAttempt(attemptCount: number): boolean {
   return Number.isInteger(attemptCount) && attemptCount >= 1;
@@ -173,8 +198,8 @@ function rowToEntry(row: unknown): EffectOutboxEntry {
     id: value.effect_id,
     commandId: value.command_id,
     threadId: value.thread_id,
-    type: value.effect_type as EffectType,
-    class: effectClassFor(value.effect_type as EffectType),
+    type: value.effect_type,
+    class: effectClassFor(value.effect_type),
     payload,
     status: value.status,
     attemptCount: value.attempt_count,
@@ -297,6 +322,7 @@ export class EffectOutboxStore {
     const now = this.#binding.now();
     const leaseExpiresAt = now + leaseMs;
     return db.transaction((): EffectOutboxEntry | null => {
+      cancelUnknownEffects(db, now);
       const replaySafePlaceholders = REPLAY_SAFE_EFFECT_TYPES.map(() => '?').join(',');
       // Lease vencido não pode continuar 'running': process_bound falha
       // (não reexecuta) e replay_safe volta a pending. Tipo fora da lista
@@ -344,6 +370,7 @@ export class EffectOutboxStore {
           `SELECT candidate.* FROM effect_outbox AS candidate
            WHERE candidate.status = 'pending'
              AND candidate.available_at <= ?
+             AND candidate.effect_type IN (${KNOWN_EFFECT_TYPES.map(() => '?').join(',')})
              AND (? = 0 OR candidate.effect_type != 'runtime.continue')
              ${excludeClause}
              AND NOT EXISTS (
@@ -371,6 +398,7 @@ export class EffectOutboxStore {
         )
         .all(
           now,
+          ...KNOWN_EFFECT_TYPES,
           excludeContinuations ? 1 : 0,
           ...excluded,
           excludeContinuations ? 1 : 0,
@@ -496,6 +524,7 @@ export class EffectOutboxStore {
     const db = this.#binding.writeDatabase();
     const now = this.#binding.now();
     return db.transaction(() => {
+      const unknownCancelled = cancelUnknownEffects(db, now);
       const cancelled = db
         .prepare(
           `UPDATE effect_outbox
@@ -524,7 +553,10 @@ export class EffectOutboxStore {
           PROCESS_LOSS_REQUEUED_ERROR,
           ...REPLAY_SAFE_EFFECT_TYPES,
         );
-      return { requeued: requeued.changes, cancelled: cancelled.changes };
+      return {
+        requeued: requeued.changes,
+        cancelled: cancelled.changes + unknownCancelled,
+      };
     })();
   }
 

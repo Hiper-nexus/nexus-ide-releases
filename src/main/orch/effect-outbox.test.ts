@@ -58,10 +58,72 @@ describe("ORC-01 effect class policy (T3)", () => {
     for (const type of REPLAY_SAFE_EFFECT_TYPES) {
       expect(effectClassFor(type)).toBe("replay_safe");
     }
+    expect(() => effectClassFor("future.process-bound" as never)).toThrow(
+      /unknown effect type/,
+    );
   });
 });
 
 describe("ORC-01 effect outbox", () => {
+  it("fails closed on an effect type this binary does not know", () => {
+    const { manager, store, scope } = freshStore();
+    const db = manager.open(scope).db;
+    const now = Date.now();
+    const insert = db.prepare(
+      `INSERT INTO effect_outbox (
+         effect_id, command_id, thread_id, effect_type, payload_json,
+         status, attempt_count, available_at, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, '{}', 'pending', 0, ?, ?, ?)`,
+    );
+    insert.run(
+      "eff-unknown",
+      "cmd-unknown",
+      "thread-a",
+      "future.process-bound",
+      now,
+      now,
+      now,
+    );
+    const known = store.enqueue({
+      commandId: "cmd-known",
+      threadId: "thread-a",
+      type: "terminal.cleanup",
+    });
+    expect(() => store.get("eff-unknown")).toThrow(/effect_outbox/);
+    const claimed = store.claimNext({
+      workerId: "worker-1",
+      leaseDurationMs: 1_000,
+    });
+    expect(claimed?.id).toBe(known.id);
+    expect(claimed?.class).toBe("replay_safe");
+    const blocked = db
+      .prepare(
+        `SELECT status, last_error FROM effect_outbox WHERE effect_id = ?`,
+      )
+      .get("eff-unknown") as { status: string; last_error: string };
+    expect(blocked.status).toBe("cancelled");
+    expect(blocked.last_error).toContain("not known");
+
+    insert.run(
+      "eff-unknown-boot",
+      "cmd-unknown-boot",
+      "thread-b",
+      "future.process-bound",
+      now,
+      now,
+      now,
+    );
+    expect(store.reconcileAfterProcessLoss().cancelled).toBe(1);
+    const reconciled = db
+      .prepare(`SELECT status, last_error FROM effect_outbox WHERE effect_id = ?`)
+      .get("eff-unknown-boot") as { status: string; last_error: string };
+    expect(reconciled.status).toBe("cancelled");
+    expect(reconciled.last_error).toContain("not known");
+    expect(store.listByStatus("pending").map((entry) => entry.id)).not.toContain(
+      "eff-unknown-boot",
+    );
+  });
+
   it("enqueue ignores an existing deterministic id (T3 policy)", () => {
     const { store } = freshStore();
     const first = store.enqueue({
