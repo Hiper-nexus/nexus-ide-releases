@@ -284,26 +284,46 @@ export class CommandReceiptStore {
     const db = this.#binding.writeDatabase();
     const now = this.#binding.now();
     return db.transaction((): CommandReceipt => {
-      db.prepare(
-        `INSERT INTO command_receipts (
-           command_id, aggregate_kind, aggregate_id, command_type,
-           accepted_at, result_sequence, status, error, effect_class
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(command_id) DO UPDATE SET
-           result_sequence = excluded.result_sequence,
-           status = excluded.status,
-           error = excluded.error`,
-      ).run(
-        input.commandId,
-        aggregate.kind,
-        aggregate.id,
-        input.commandType,
-        input.acceptedAt ?? now,
-        input.resultSequence,
-        input.status,
-        input.error ?? null,
-        classForCommandType(input.commandType),
-      );
+      const existing = db
+        .prepare(`SELECT * FROM command_receipts WHERE command_id = ?`)
+        .get(input.commandId);
+      if (existing) {
+        const stored = rowToReceipt(existing);
+        if (
+          stored.commandType !== input.commandType ||
+          stored.aggregateKind !== aggregate.kind ||
+          stored.aggregateId !== aggregate.id
+        ) {
+          throw new Error('command receipt is already bound to another command');
+        }
+        db.prepare(
+          `UPDATE command_receipts
+           SET result_sequence = ?, status = ?, error = ?
+           WHERE command_id = ?`,
+        ).run(
+          input.resultSequence,
+          input.status,
+          input.error ?? null,
+          input.commandId,
+        );
+      } else {
+        db.prepare(
+          `INSERT INTO command_receipts (
+             command_id, aggregate_kind, aggregate_id, command_type,
+             accepted_at, result_sequence, status, error, effect_class
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          input.commandId,
+          aggregate.kind,
+          aggregate.id,
+          input.commandType,
+          input.acceptedAt ?? now,
+          input.resultSequence,
+          input.status,
+          input.error ?? null,
+          classForCommandType(input.commandType),
+        );
+      }
       const row = db
         .prepare(`SELECT * FROM command_receipts WHERE command_id = ?`)
         .get(input.commandId);

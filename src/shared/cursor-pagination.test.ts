@@ -32,15 +32,48 @@ describe('cursor pagination (T3 policy)', () => {
     expect(() => decodeCursor('!!!not-base64!!!')).toThrow(InvalidCursorError);
   });
 
-  it('rejects a cursor from another slice instead of skipping silently', () => {
+  it('rejects only an undecodable cursor', () => {
     expect(() =>
       selectCursorPage(rows, {
         limit: 3,
-        cursor: encodeCursor({ key: 99, id: 'ghost' }),
+        cursor: '!!!not-base64!!!',
         keyOf,
         idOf,
       }),
-    ).toThrow(/does not match any row/);
+    ).toThrow(InvalidCursorError);
+  });
+
+  it('continues after a cursor whose row was filtered out', () => {
+    const filtered = rows.filter((row) => row.id !== 'r8');
+    const page = selectCursorPage(filtered, {
+      limit: 2,
+      cursor: encodeCursor({ key: 8, id: 'r8' }),
+      keyOf,
+      idOf,
+    });
+    expect(page.items.map((row) => row.id)).toEqual(['r7', 'r6']);
+  });
+
+  it('continues after a missing row when the list is oldest-first', () => {
+    const ascending = [...rows].reverse();
+    const filtered = ascending.filter((row) => row.id !== 'r3');
+    const page = selectCursorPage(filtered, {
+      limit: 2,
+      cursor: encodeCursor({ key: 3, id: 'r3' }),
+      keyOf,
+      idOf,
+      order: 'asc',
+    });
+    expect(page.items.map((row) => row.id)).toEqual(['r4', 'r5']);
+    const pastEnd = selectCursorPage(ascending, {
+      limit: 2,
+      cursor: encodeCursor({ key: 99, id: 'ghost' }),
+      keyOf,
+      idOf,
+      order: 'asc',
+    });
+    expect(pastEnd.items).toEqual([]);
+    expect(pastEnd.hasMoreHistory).toBe(false);
   });
 
   it('pages through the whole list with nextCursor and hasMoreHistory', () => {

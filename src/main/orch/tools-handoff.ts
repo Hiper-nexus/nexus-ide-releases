@@ -892,6 +892,9 @@ const handoffListTool: McpToolDef = {
           cursor: (args.cursor as string | undefined) ?? null,
           keyOf: (row) => row.createdAt ?? 0,
           idOf: (row) => row.id,
+          // A trilha é created_at ASC, id ASC. A página filtrada pode ter
+          // uma linha só — a direção não pode ser inferida dela.
+          order: "asc",
         });
         returned = [...cursorPage.items];
       } catch (error) {
@@ -904,15 +907,17 @@ const handoffListTool: McpToolDef = {
         throw error;
       }
     }
-    const visible = compactHandoffListRows(
-      returned,
-      rawIds,
-      str(args, "detail") === "full",
-      ctx.scope,
+    // Recência é da trilha inteira, não da página. Com limit <= 5, tratar
+    // as últimas linhas da página como "as 5 mais novas" devolveria artifact
+    // completo de histórico.
+    const recentIds = new Set(
+      rows.slice(Math.max(0, rows.length - 5)).map((row) => row.id),
     );
     // List = recibo só de `submitted` (já colado no PTY) que esta resposta
-    // devolve. `queued` segue para o idle-delivery. Leitura cross-mission
-    // é auditoria: nunca reconhece nada.
+    // devolve. O diagnóstico sai DEPOIS: uma linha reconhecida nesta chamada
+    // não pode voltar como accepted-not-consumed. `queued` segue para o
+    // idle-delivery. Leitura cross-mission é auditoria: nunca reconhece nada.
+    const acknowledgedIds = new Set<string>();
     if (isProvenCurrentOrchestrator && missionId === ctx.missionId) {
       const seenIds = returned
         .filter((row) => row.deliveryState === "submitted")
@@ -922,6 +927,9 @@ const handoffListTool: McpToolDef = {
           const acked = getProjectDomainStores(
             ctx.scope,
           ).handoffs.acknowledgeSeenByOrchestratorList(ctx.missionId, seenIds);
+          if (acked === seenIds.length) {
+            for (const id of seenIds) acknowledgedIds.add(id);
+          }
           if (acked > 0) {
             console.info(
               `[handoff] list-ack: ${acked} handoff(s) reconhecido(s) pela ` +
@@ -936,6 +944,14 @@ const handoffListTool: McpToolDef = {
         }
       }
     }
+    const visible = compactHandoffListRows(
+      returned,
+      rawIds,
+      str(args, "detail") === "full",
+      ctx.scope,
+      recentIds,
+      acknowledgedIds,
+    );
     if (cursorPage) {
       return {
         items: visible,
@@ -948,11 +964,11 @@ const handoffListTool: McpToolDef = {
 };
 
 /**
- * Linhas antigas já entregues não carregam decisão nenhuma — o Maestro lê a
- * trilha para saber o que FALTA, e os artifacts de um handoff consumido são
- * a parte pesada. As 5 linhas mais recentes, qualquer linha não entregue e
- * as pedidas por `ids` saem inteiras; o resto leva `artifacts: []` +
- * `artifactsOmitted` + `detailHint` apontando o caminho de volta.
+ * As 5 linhas mais recentes da trilha inteira, qualquer linha não entregue
+ * e as pedidas por `ids` saem inteiras. O resto perde `artifacts` (a parte
+ * pesada) mas NÃO perde o diagnóstico: um `submitted` antigo ainda precisa
+ * dizer accepted-not-consumed. `acknowledgedIds` são as linhas que esta
+ * resposta acabou de reconhecer — o veredito tem de concordar com o recibo.
  */
 function deliveryAttemptsFor(
   scope: ProjectExecutionScope,
@@ -986,6 +1002,8 @@ function compactHandoffListRows(
   rawIds: readonly string[],
   detailFull: boolean,
   scope: ProjectExecutionScope,
+  recentIds: ReadonlySet<string>,
+  acknowledgedIds: ReadonlySet<string>,
 ): Array<ScopedHandoff | Record<string, unknown>> {
   const attachStuck = (row: ScopedHandoff): ScopedHandoff | Record<string, unknown> => {
     // F-1040: diagnóstico de entrega presa — não força nada, nomeia o escape.
@@ -1006,7 +1024,16 @@ function compactHandoffListRows(
             (attempt) => attempt.orchestratorSessionId === maestroSessionId,
           )
         : attempts;
-      const retryRound = sessionAttempts.length > 0 ? sessionAttempts.length : null;
+      // F-925 conta rodadas, não tentativas cruas. Cada rodada gasta
+      // MAX_HANDOFF_DELIVERY_ATTEMPTS colagens; linhas `released:` entram
+      // na conta, como no idle-delivery — elas provam que a rodada
+      // aconteceu. Estacionar continua no sinal `parked` (tentativas >=
+      // orçamento + HANDOFF_STUCK_PARK_ROUND). Passar o total cru faria
+      // `retryRound >= 6` estacionar na 6ª tentativa, antes da 9ª.
+      const retryRound =
+        sessionAttempts.length > 0
+          ? Math.ceil(sessionAttempts.length / MAX_HANDOFF_DELIVERY_ATTEMPTS)
+          : null;
       const diagnosis = diagnoseHandoffStuck({
         id: row.id,
         deliveryState: row.deliveryState,
@@ -1028,14 +1055,19 @@ function compactHandoffListRows(
       return row;
     }
   };
-  if (detailFull) return rows.map(attachStuck);
-  const recentFrom = Math.max(0, rows.length - 5);
-  return rows.map((row, index) => {
-    if (!row.delivered || index >= recentFrom || rawIds.includes(row.id)) {
-      return attachStuck(row);
-    }
+  return rows.map((row) => {
+    const view = acknowledgedIds.has(row.id)
+      ? { ...row, delivered: true, deliveryState: "acknowledged" as const }
+      : row;
+    const diagnosed = attachStuck(view);
+    const keepFull =
+      detailFull ||
+      !row.delivered ||
+      recentIds.has(row.id) ||
+      rawIds.includes(row.id);
+    if (keepFull) return diagnosed;
     return {
-      ...row,
+      ...diagnosed,
       artifacts: [],
       artifactsOmitted: Array.isArray(row.artifacts) ? row.artifacts.length : 0,
       detailHint: `passe ids:["${row.id}"] para o conteúdo completo`,

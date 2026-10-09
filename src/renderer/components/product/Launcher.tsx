@@ -1,4 +1,4 @@
-import { useCallback, type KeyboardEvent } from 'react';
+import { useEffect } from 'react';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 import {
   LAUNCHER_ACTIONS,
@@ -159,7 +159,7 @@ function LauncherTools({
         <summary>Organizar tarefas e consultar notas</summary>
         <div className="launcher__terminal-actions">
           <LauncherAction
-            id="task-board"
+            id="tasks"
             label="Quadro de tarefas"
             accessibleLabel="Abrir Quadro de tarefas"
             description="Organize o que vem a seguir no projeto."
@@ -190,20 +190,21 @@ export function Launcher({
   onOpenMemory,
   onOpenProviders,
 }: LauncherProps) {
-  const actions: Record<string, () => void> = {
-    pane: onOpenPane,
-    mission: onStartMission,
-    workspace: onOpenWorkspace,
-    shell: onOpenShellTerminal,
-    tasks: onOpenTaskBoard,
-    memory: onOpenMemory,
-  };
-
-  // Atalhos do launcher (item T3): 1–6 abrem a ação, a menos que o foco
-  // esteja num campo editável.
-  const onKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLElement>) => {
-      const target = event.target as HTMLElement | null;
+  // Atalhos 1–6 valem com o launcher montado, mesmo se o foco ainda
+  // estiver no body. Cmd/Ctrl/Alt continuam atalhos do app. Campo
+  // editável não dispara.
+  useEffect(() => {
+    const runById: Record<string, () => void> = {
+      pane: onOpenPane,
+      mission: onStartMission,
+      workspace: onOpenWorkspace,
+      shell: onOpenShellTerminal,
+      tasks: onOpenTaskBoard,
+      memory: onOpenMemory,
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
       const editable =
         target?.tagName === 'INPUT' ||
         target?.tagName === 'TEXTAREA' ||
@@ -212,19 +213,26 @@ export function Launcher({
         targetIsEditable: editable,
       });
       if (!id) return;
-      const run = actions[id];
+      const run = runById[id];
       if (!run) return;
       event.preventDefault();
       run();
-    },
-    [onOpenPane, onStartMission, onOpenWorkspace, onOpenShellTerminal, onOpenTaskBoard, onOpenMemory],
-  );
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    onOpenPane,
+    onStartMission,
+    onOpenWorkspace,
+    onOpenShellTerminal,
+    onOpenTaskBoard,
+    onOpenMemory,
+  ]);
 
   return (
     <section
       className="launcher"
       aria-labelledby="launcher-title"
-      onKeyDown={onKeyDown}
     >
       <p id="launcher-shortcuts" className="visually-hidden">
         Atalhos: {LAUNCHER_ACTIONS.map((a) => `${a.shortcut} ${a.label}`).join('; ')}

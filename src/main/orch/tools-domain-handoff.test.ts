@@ -1675,7 +1675,7 @@ describe("handoff MCP stop receipt", () => {
     expect(ackSpy).toHaveBeenCalledWith("mission-a", ["h-page"]);
   });
 
-  it("does not acknowledge anything when the cursor is invalid", async () => {
+  it("does not acknowledge anything when the cursor cannot be decoded", async () => {
     const stores = mocks.getStores();
     const ackSpy = vi.fn(() => 1);
     mocks.getStores.mockReturnValue({
@@ -1698,11 +1698,51 @@ describe("handoff MCP stop receipt", () => {
 
     await expect(
       listTool().handler(
-        { limit: 1, cursor: encodeCursor({ key: 99, id: "missing" }) },
+        { limit: 1, cursor: "!!!not-a-cursor!!!" },
         orchestratorContext(),
       ),
     ).rejects.toThrow(/cursor inválido/);
     expect(ackSpy).not.toHaveBeenCalled();
+  });
+
+  it("resumes after a cursor whose row is gone and acknowledges only that page", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn((_mission: string, ids: readonly string[]) => ids.length);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-next",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 2,
+        missionId: "mission-a",
+        artifacts: [{ file: "kept-off-page" }],
+      },
+      {
+        id: "h-later",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 3,
+        missionId: "mission-a",
+      },
+    ]);
+
+    const page = (await listTool().handler(
+      { limit: 1, cursor: encodeCursor({ key: 1, id: "h-gone" }) },
+      orchestratorContext(),
+    )) as { items: Array<{ id: string; stuckDiagnosis?: { reason: string } }> };
+    expect(page.items.map((row) => row.id)).toEqual(["h-next"]);
+    expect(page.items[0]?.stuckDiagnosis?.reason).not.toBe("accepted-not-consumed");
+    expect(ackSpy).toHaveBeenCalledTimes(1);
+    expect(ackSpy).toHaveBeenCalledWith("mission-a", ["h-next"]);
   });
 
   it("passes real delivery attempts and proven Maestro liveness into stuck diagnosis", async () => {
@@ -1733,8 +1773,30 @@ describe("handoff MCP stop receipt", () => {
     const retry = (await listTool().handler(
       { detail: "full" },
       orchestratorContext(),
-    )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+    )) as Array<{ stuckDiagnosis?: { reason: string; summary: string } }>;
     expect(retry[0]?.stuckDiagnosis?.reason).toBe("retry-backoff");
+    expect(retry[0]?.stuckDiagnosis?.summary).toContain("rodada 1");
+
+    const sixRounds = Array.from({ length: 6 }, (_, index) => ({
+      orchestratorSessionId: "orchestrator-session",
+      startedAt: index + 1,
+      attemptNo: index + 1,
+      failureCode: index < 3 ? "released:accept_timeout" : "accept_timeout",
+    }));
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => sixRounds,
+      },
+    });
+    const stillRetrying = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string; summary: string } }>;
+    expect(stillRetrying[0]?.stuckDiagnosis?.reason).toBe("retry-backoff");
+    expect(stillRetrying[0]?.stuckDiagnosis?.summary).toContain("rodada 2");
 
     const parked = Array.from({ length: 9 }, (_, index) => ({
       orchestratorSessionId: "orchestrator-session",
@@ -1778,5 +1840,133 @@ describe("handoff MCP stop receipt", () => {
       orchestratorContext(),
     )) as Array<{ stuckDiagnosis?: { reason: string } }>;
     expect(dead[0]?.stuckDiagnosis?.reason).toBe("session-dead");
+  });
+
+  it("reports accepted-not-consumed for an old submitted row without detail:full", async () => {
+    const rows = Array.from({ length: 8 }, (_, index) => ({
+      id: `h-${index + 1}`,
+      delivered: true,
+      deliveryState: index === 0 ? "submitted" : "consumed",
+      artifacts: [{ file: `f${index + 1}` }],
+      createdAt: index + 1,
+      missionId: "mission-a",
+    }));
+    mocks.listHandoffs.mockReturnValue(rows);
+
+    const result = (await listTool().handler(
+      {},
+      context(),
+    )) as Array<{
+      stuckDiagnosis?: { reason: string };
+      artifacts: unknown[];
+      artifactsOmitted?: number;
+    }>;
+    expect(result[0]?.stuckDiagnosis?.reason).toBe("accepted-not-consumed");
+    expect(result[0]?.artifacts).toEqual([]);
+    expect(result[0]?.artifactsOmitted).toBe(1);
+    expect(result[7]?.stuckDiagnosis).toBeUndefined();
+    expect(result[7]?.artifacts).toEqual([{ file: "f8" }]);
+  });
+
+  it("does not call an acked submitted row accepted-not-consumed", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn((_mission: string, ids: readonly string[]) => ids.length);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.listHandoffs.mockReturnValue(
+      Array.from({ length: 8 }, (_, index) => ({
+        id: `h-${index + 1}`,
+        delivered: true,
+        deliveryState: "submitted",
+        artifacts: [{ file: `f${index + 1}` }],
+        createdAt: index + 1,
+        missionId: "mission-a",
+      })),
+    );
+
+    const result = (await listTool().handler(
+      {},
+      orchestratorContext(),
+    )) as Array<{
+      id: string;
+      deliveryState?: string;
+      stuckDiagnosis?: { reason: string };
+      artifactsOmitted?: number;
+    }>;
+    expect(ackSpy).toHaveBeenCalledTimes(1);
+    expect(result[0]?.deliveryState).toBe("acknowledged");
+    expect(result[0]?.stuckDiagnosis?.reason).not.toBe("accepted-not-consumed");
+    expect(result[0]?.artifactsOmitted).toBe(1);
+    expect(result.every((row) => row.stuckDiagnosis?.reason !== "accepted-not-consumed")).toBe(true);
+  });
+
+  it("keeps accepted-not-consumed when list-ack fails", async () => {
+    const stores = mocks.getStores();
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: () => {
+          throw new Error("sqlite busy");
+        },
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-old",
+        delivered: true,
+        deliveryState: "submitted",
+        artifacts: [{ file: "old" }],
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+      ...Array.from({ length: 5 }, (_, index) => ({
+        id: `h-new-${index}`,
+        delivered: true,
+        deliveryState: "consumed",
+        artifacts: [],
+        createdAt: index + 2,
+        missionId: "mission-a",
+      })),
+    ]);
+
+    const result = (await listTool().handler(
+      {},
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+    expect(result[0]?.stuckDiagnosis?.reason).toBe("accepted-not-consumed");
+  });
+
+  it("compacts a cursor page using global recency, not the page length", async () => {
+    mocks.listHandoffs.mockReturnValue(
+      Array.from({ length: 8 }, (_, index) => ({
+        id: `h-${index + 1}`,
+        delivered: true,
+        deliveryState: "consumed",
+        artifacts: [{ file: `f${index + 1}` }],
+        createdAt: index + 1,
+        missionId: "mission-a",
+      })),
+    );
+
+    const page = (await listTool().handler(
+      { limit: 2 },
+      orchestratorContext(),
+    )) as {
+      items: Array<{ id: string; artifacts: unknown[]; artifactsOmitted?: number }>;
+    };
+    expect(page.items.map((row) => row.id)).toEqual(["h-1", "h-2"]);
+    expect(page.items[0]?.artifacts).toEqual([]);
+    expect(page.items[0]?.artifactsOmitted).toBe(1);
+    expect(page.items[1]?.artifactsOmitted).toBe(1);
   });
 });

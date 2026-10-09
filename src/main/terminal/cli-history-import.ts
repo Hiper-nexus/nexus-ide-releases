@@ -6,8 +6,11 @@
  * `command-block-store` persiste. Parser PURO: nenhum I/O, nenhum banco —
  * quem chama decide onde gravar.
  *
- * Fonte típica: `provider-state/<cli>/<checkout>/…/*.jsonl` com entradas
- * `{ type: 'assistant'|'user', message: { content: [{ type: 'tool_use'|… }] } }`.
+ * Fonte típica Claude: `{ type, message: { content: [{ type: 'tool_use' }] } }`.
+ * Fonte típica Codex (rollout JSONL): registro de topo
+ * `{ type: 'response_item', payload: { type: 'function_call', name, arguments } }`.
+ * `arguments` pode ser objeto ou JSON; `command` string ou `[shell, -lc, script]`;
+ * `exec_command` usa `cmd`.
  */
 
 export interface ImportedCommandBlock {
@@ -50,7 +53,15 @@ interface TranscriptLine {
     content?: unknown;
   };
   cwd?: string;
+  payload?: {
+    type?: string;
+    name?: string;
+    arguments?: unknown;
+  };
 }
+
+const SHELL_TOOL_NAME =
+  /(?:^|[./])(?:bash|shell|local_shell|exec|exec_command|shell_command)$/i;
 
 function asArray(content: unknown): unknown[] {
   return Array.isArray(content) ? content : [];
@@ -62,6 +73,47 @@ function extractCommand(input: unknown): string | null {
   if (typeof command !== 'string') return null;
   const trimmed = command.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function parseArguments(raw: unknown): Record<string, unknown> | null {
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  return null;
+}
+
+/** Codex shell manda `[shell, -lc, script]`; exec_command manda `cmd`. */
+function commandFromToolArgs(args: Record<string, unknown>): string | null {
+  if (typeof args.cmd === 'string') {
+    const cmd = args.cmd.trim();
+    if (cmd.length > 0) return cmd;
+  }
+  const command = args.command;
+  if (typeof command === 'string') {
+    const trimmed = command.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (!Array.isArray(command)) return null;
+  const parts = command.filter((part): part is string => typeof part === 'string');
+  if (parts.length === 0) return null;
+  const flag = parts.length >= 3 ? parts[1] : undefined;
+  if (flag === '-c' || flag === '-lc') {
+    const script = parts.slice(2).join(' ').trim();
+    return script.length > 0 ? script : null;
+  }
+  const joined = parts.join(' ').trim();
+  return joined.length > 0 ? joined : null;
 }
 
 function parseTimestamp(value: unknown, fallback: number): number {
@@ -89,6 +141,29 @@ export function importCliHistoryBlocks(
   const blocks: ImportedCommandBlock[] = [];
   const lines = (jsonl ?? '').split(/\r?\n/);
   let index = 0;
+  const push = (
+    parsed: TranscriptLine,
+    command: string,
+    workdir: string | undefined,
+  ) => {
+    const startedAt = parseTimestamp(parsed.timestamp, index);
+    const lineCwd =
+      workdir ??
+      (typeof parsed.cwd === 'string' && parsed.cwd.length > 0 ? parsed.cwd : cwd);
+    blocks.push({
+      sessionId: options.sessionId,
+      paneId: options.paneId ?? 'imported',
+      workspaceId: options.workspaceId ?? 'imported',
+      ...(options.missionId ? { missionId: options.missionId } : {}),
+      command,
+      cwd: lineCwd,
+      ...(options.projectRoot ? { projectRoot: options.projectRoot } : {}),
+      shell,
+      startedAt,
+      // Histórico importado não tem saída/exit provados: status honesto.
+      status: 'unknown',
+    });
+  };
   for (const line of lines) {
     index += 1;
     const trimmed = line.trim();
@@ -105,25 +180,26 @@ export function importCliHistoryBlocks(
       const isShellTool =
         block?.type === 'tool_use' &&
         typeof block.name === 'string' &&
-        /^(Bash|bash|Shell|shell|exec)$/i.test(block.name);
+        SHELL_TOOL_NAME.test(block.name);
       if (!isShellTool) continue;
       const command = extractCommand(block.input);
       if (!command) continue;
-      const startedAt = parseTimestamp(parsed.timestamp, index);
-      blocks.push({
-        sessionId: options.sessionId,
-        paneId: options.paneId ?? 'imported',
-        workspaceId: options.workspaceId ?? 'imported',
-        ...(options.missionId ? { missionId: options.missionId } : {}),
-        command,
-        cwd: typeof parsed.cwd === 'string' && parsed.cwd.length > 0 ? parsed.cwd : cwd,
-        ...(options.projectRoot ? { projectRoot: options.projectRoot } : {}),
-        shell,
-        startedAt,
-        // Histórico importado não tem saída/exit provados: status honesto.
-        status: 'unknown',
-      });
+      push(parsed, command, undefined);
     }
+    if (parsed.type !== 'response_item' || parsed.payload?.type !== 'function_call') {
+      continue;
+    }
+    const name = parsed.payload.name;
+    if (typeof name !== 'string' || !SHELL_TOOL_NAME.test(name)) continue;
+    const args = parseArguments(parsed.payload.arguments);
+    if (!args) continue;
+    const command = commandFromToolArgs(args);
+    if (!command) continue;
+    const workdir =
+      typeof args.workdir === 'string' && args.workdir.length > 0
+        ? args.workdir
+        : undefined;
+    push(parsed, command, workdir);
   }
   return blocks;
 }

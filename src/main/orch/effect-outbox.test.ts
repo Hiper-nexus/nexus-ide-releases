@@ -767,6 +767,51 @@ describe("ORC-04 command receipts (T3 policy)", () => {
     expect(again.error).toBe("boom");
   });
 
+  it("upsert rejects a reused commandId bound to another aggregate or type", () => {
+    const { manager, scope } = freshStore();
+    const receipts = createScopedCommandReceiptStore(manager, scope);
+    receipts.insertIfAbsent({
+      commandId: "cmd-identity",
+      commandType: "turn.start",
+      threadId: "thread-a",
+    });
+    expect(() =>
+      receipts.upsert({
+        commandId: "cmd-identity",
+        commandType: "checkpoint.capture",
+        threadId: "thread-a",
+        resultSequence: 3,
+        status: "accepted",
+      }),
+    ).toThrow(/already bound/);
+    expect(() =>
+      receipts.upsert({
+        commandId: "cmd-identity",
+        commandType: "turn.start",
+        threadId: "thread-b",
+        resultSequence: 4,
+        status: "rejected",
+        error: "other settlement",
+      }),
+    ).toThrow(/already bound/);
+    expect(() =>
+      receipts.upsert({
+        commandId: "cmd-identity",
+        commandType: "turn.start",
+        projectId: "project-a",
+        resultSequence: 5,
+        status: "accepted",
+      }),
+    ).toThrow(/already bound/);
+    const stored = receipts.getByCommandId("cmd-identity");
+    expect(stored?.commandType).toBe("turn.start");
+    expect(stored?.aggregateKind).toBe("thread");
+    expect(stored?.aggregateId).toBe("thread-a");
+    expect(stored?.resultSequence).toBe(0);
+    expect(stored?.status).toBe("accepted");
+    expect(stored?.error).toBeNull();
+  });
+
   it("unsettled receipts keep the honest sequence-0 mark", () => {
     const { manager, scope } = freshStore();
     const receipts = createScopedCommandReceiptStore(manager, scope);

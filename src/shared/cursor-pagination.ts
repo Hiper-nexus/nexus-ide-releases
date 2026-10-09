@@ -75,11 +75,80 @@ export function clampPageSize(limit: unknown): number {
   return Math.min(n, CURSOR_PAGE_MAX_ITEMS);
 }
 
+function compareCursorValue(left: string | number, right: string | number): number {
+  if (typeof left === 'number' && typeof right === 'number') {
+    return left === right ? 0 : left < right ? -1 : 1;
+  }
+  const a = String(left);
+  const b = String(right);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+export type CursorSortOrder = 'asc' | 'desc';
+
+function inferKeyOrder<T>(
+  sorted: readonly T[],
+  keyOf: (item: T) => string | number,
+): CursorSortOrder {
+  for (let index = 1; index < sorted.length; index += 1) {
+    const cmp = compareCursorValue(
+      keyOf(sorted[index - 1]!),
+      keyOf(sorted[index]!),
+    );
+    if (cmp < 0) return 'asc';
+    if (cmp > 0) return 'desc';
+  }
+  return 'asc';
+}
+
+function inferIdOrder<T>(
+  sorted: readonly T[],
+  keyOf: (item: T) => string | number,
+  idOf: (item: T) => string,
+  keyOrder: CursorSortOrder,
+): CursorSortOrder {
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (
+      compareCursorValue(keyOf(sorted[index - 1]!), keyOf(sorted[index]!)) !==
+      0
+    ) {
+      continue;
+    }
+    const cmp = compareCursorValue(
+      idOf(sorted[index - 1]!),
+      idOf(sorted[index]!),
+    );
+    if (cmp < 0) return 'asc';
+    if (cmp > 0) return 'desc';
+  }
+  return keyOrder;
+}
+
+function isAfterCursor<T>(
+  item: T,
+  decoded: CursorPayload,
+  keyOf: (item: T) => string | number,
+  idOf: (item: T) => string,
+  keyOrder: CursorSortOrder,
+  idOrder: CursorSortOrder,
+): boolean {
+  const keyCmp = compareCursorValue(keyOf(item), decoded.k);
+  if (keyCmp !== 0) {
+    return keyOrder === 'asc' ? keyCmp > 0 : keyCmp < 0;
+  }
+  const idCmp = compareCursorValue(idOf(item), decoded.i);
+  if (idCmp === 0) return false;
+  return idOrder === 'asc' ? idCmp > 0 : idCmp < 0;
+}
+
 /**
  * Recorta uma página keyset a partir de uma lista já ordenada (mais novo
- * primeiro OU mais velho primeiro — a ordem é a do `sorted`). `cursor` aponta
- * para o último item devolvido na página anterior; a página seguinte começa
- * DEPOIS dele. `+2` linhas extras provam `hasMoreHistory` sem segunda query.
+ * primeiro OU mais velho primeiro — a ordem é a do `sorted`, ou `order`
+ * quando a lista filtrada não deixa a direção óbvia). `cursor` aponta para
+ * o último item devolvido na página anterior; a página seguinte começa na
+ * primeira linha DEPOIS de `(k, i)`, mesmo se aquela linha já saiu do
+ * filtro. Cursor ilegível (vazio, longo demais, base64/JSON/versão errados)
+ * é `InvalidCursorError`. `+1` linha extra prova `hasMoreHistory`.
  */
 export function selectCursorPage<T>(
   sorted: readonly T[],
@@ -88,22 +157,28 @@ export function selectCursorPage<T>(
     readonly cursor?: string | null;
     readonly keyOf: (item: T) => string | number;
     readonly idOf: (item: T) => string;
+    readonly order?: CursorSortOrder;
   },
 ): CursorPage<T> {
   const limit = clampPageSize(options.limit);
   let start = 0;
   if (options.cursor) {
     const decoded = decodeCursor(options.cursor);
-    const index = sorted.findIndex(
-      (item) =>
-        options.keyOf(item) === decoded.k &&
-        options.idOf(item) === decoded.i,
+    const keyOrder = options.order ?? inferKeyOrder(sorted, options.keyOf);
+    const idOrder =
+      options.order ??
+      inferIdOrder(sorted, options.keyOf, options.idOf, keyOrder);
+    const found = sorted.findIndex((item) =>
+      isAfterCursor(
+        item,
+        decoded,
+        options.keyOf,
+        options.idOf,
+        keyOrder,
+        idOrder,
+      ),
     );
-    if (index >= 0) start = index + 1;
-    else {
-      // Cursor de outra fatia: rejeita em vez de pular linhas em silêncio.
-      throw new InvalidCursorError('cursor does not match any row in this slice');
-    }
+    start = found < 0 ? sorted.length : found;
   }
   const window = sorted.slice(start, start + limit + 1);
   const hasMoreHistory = window.length > limit;
