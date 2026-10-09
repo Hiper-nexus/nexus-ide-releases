@@ -709,12 +709,16 @@ export class EffectOutboxStore {
    * `retentionMs = 0` poda todo assentado. Failed fica (limpeza de thread
    * mantém a worktree enquanto houver falha) — política T3.
    */
-  pruneSettled(retentionMs = SETTLED_EFFECT_RETENTION_MS): number {
+  pruneSettled(retentionMs = SETTLED_EFFECT_RETENTION_MS, maxBatches?: number): number {
+    // Production passes one finite 500-row batch; omission retains the legacy
+    // administrative full-prune API. Explicit malformed/unbounded limits deny.
+    const retention = z.number().finite().nonnegative().parse(retentionMs);
+    const batches = maxBatches === undefined ? Infinity : z.number().int().min(0).max(1).parse(maxBatches);
     const db = this.#binding.writeDatabase();
-    const cutoff = this.#binding.now() - Math.max(0, retentionMs);
+    const cutoff = this.#binding.now() - retention;
     return db.transaction((): number => {
       let deleted = 0;
-      for (;;) {
+      for (let batchIndex=0; batchIndex<batches; batchIndex+=1) {
         const batch = db
           .prepare(
             `DELETE FROM effect_outbox

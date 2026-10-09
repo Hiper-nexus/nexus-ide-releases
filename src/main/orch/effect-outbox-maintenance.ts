@@ -4,6 +4,7 @@ import {
   SETTLED_EFFECT_RETENTION_MS,
   isUnreconciledEffectOutbox,
 } from './effect-outbox';
+import { CommandReceiptStore } from './command-receipts';
 import { drainEffectOutbox } from './effect-outbox-worker';
 import { requireProjectDomainStoreRegistry } from './project-domain-store-registry';
 
@@ -12,8 +13,9 @@ const EFFECT_OUTBOX_PRUNE_BATCHES_PER_TICK = 1;
 
 /**
  * Dreno de produção e poda dos efeitos já assentados. O coordinator chama
- * isto no relógio periódico. Recibos com operationId do chamador ficam;
- * só some o id gerado pelo despacho.
+ * isto no relógio periódico. Efeito físico só assenta pelo verifier registrado;
+ * receipt retention separada preserva bindings explícitos/unknown e exige
+ * sequência real e estado conhecido. Nenhum corpo de resultado é lido.
  */
 export async function maintainEffectOutboxes(
   context?: PeriodicTaskContext,
@@ -32,9 +34,12 @@ export async function maintainEffectOutboxes(
       },
       context,
     );
+    // A participant revoked during the awaited drain cannot write retention.
+    await context?.checkpoint();
     store.pruneSettled(
       SETTLED_EFFECT_RETENTION_MS,
       EFFECT_OUTBOX_PRUNE_BATCHES_PER_TICK,
     );
+    new CommandReceiptStore(runtimeManager,suite.scope).pruneGeneratedSettled({limit:100});
   }
 }
