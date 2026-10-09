@@ -16,6 +16,10 @@ const LOWER_IS_RESTRICTIVE = new Set([
   'is_specific',
   'has_verification',
   'names_changes',
+  // memoryDistill only retains positives >= 0.6; any member can veto.
+  'instruction_free',
+  'worth_retaining',
+  'is_preference',
 ]);
 
 export interface EnsembleMember {

@@ -9,6 +9,11 @@ vi.mock('../jev/jev-autopilot', () => ({
   isJevAutopilotEnabled: () => true, isJevSurfaceEnabled: () => true,
 }));
 import { handoffBounceSignals } from '../orch/jev-handoff-review';
+import { confirmOperatorPreference, distillHandoffSummary } from '../jev/jev-memory-distill';
+// Memory consumers journal their verdict; keep persistence outside this policy test.
+vi.mock('../jev/jev-decision-log', async importOriginal => ({
+  ...await importOriginal<typeof import('../jev/jev-decision-log')>(), recordJevDecision: () => undefined,
+}));
 
 const noul = (value: number): JevAnswer => ({ type: 'noul', noul: value });
 const choice = (value: string, confidence: number): JevAnswer => ({
@@ -75,6 +80,41 @@ describe('ensemble combine', () => {
     if (!combined.ok) return;
     expect(handoffBounceSignals(combined.answers, facts)).toEqual(expectedBounces);
     expect(combined.answers.changed_code).toEqual(noul(0.9));
+  });
+
+  describe.each(['instruction_free', 'worth_retaining', 'is_preference'])('memory %s', predicate => {
+    it.each<{ providers: DecisionProvider[]; rejectedBy: DecisionProvider }>([
+      { providers: ['jev', 'luna'], rejectedBy: 'jev' },
+      { providers: ['jev', 'luna'], rejectedBy: 'luna' },
+      { providers: ['jev', 'clef'], rejectedBy: 'jev' },
+      { providers: ['jev', 'clef'], rejectedBy: 'clef' },
+      { providers: ['luna', 'clef'], rejectedBy: 'luna' },
+      { providers: ['luna', 'clef'], rejectedBy: 'clef' },
+      { providers: ['jev', 'luna', 'clef'], rejectedBy: 'jev' },
+      { providers: ['jev', 'luna', 'clef'], rejectedBy: 'luna' },
+      { providers: ['jev', 'luna', 'clef'], rejectedBy: 'clef' },
+    ])('cannot retain rejected memory for $providers when $rejectedBy rejects it', async ({ providers, rejectedBy }) => {
+      const summary = 'Token refresh uses the native credential store.';
+      const good = {
+        instruction_free: noul(0.9), worth_retaining: noul(0.9), is_preference: noul(0.9),
+        distilled_summary: choice('excerpt_0', 0.9),
+      };
+      const rejected = { ...good, [predicate]: noul(0.1) };
+      const consume = async (answers: Record<string, JevAnswer>) => {
+        const deps = { enabled: () => true, hasKey: () => true,
+          judge: async () => ({ model: 'ensemble', answers, usage: { input_tokens: 0, output_tokens: 0 } }) };
+        return predicate === 'is_preference'
+          ? confirmOperatorPreference({ candidate: 'Always use the native credential store.' }, deps)
+          : distillHandoffSummary({ summary }, deps);
+      };
+      expect(await consume(rejected)).toBe(predicate === 'is_preference' ? false : null);
+      const combined = combineEnsembleAnswers(providers.map(provider => ({
+        provider, answers: provider === rejectedBy ? rejected : good,
+      })), 'memoryDistill');
+      expect(combined.ok).toBe(true);
+      if (!combined.ok) return;
+      expect(await consume(combined.answers)).toBe(predicate === 'is_preference' ? false : null);
+    });
   });
 
   it('picks the higher confidence on a reversible disagreement and keeps both numbers', () => {
