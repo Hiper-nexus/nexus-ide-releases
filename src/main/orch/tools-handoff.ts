@@ -21,7 +21,14 @@ import {
 import { markHandoffSubmitted, executionScopeFor, type GateRole } from "./gate";
 import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { onHandoffSubmitted } from "./idle-delivery";
-import { diagnoseHandoffStuck } from "./handoff-stuck-diagnosis";
+import {
+  diagnoseHandoffStuck,
+  HANDOFF_STUCK_PARK_ROUND,
+} from "./handoff-stuck-diagnosis";
+import { MAX_HANDOFF_DELIVERY_ATTEMPTS } from "./handoff-delivery-policy";
+import { classifySessionLiveness } from "../pty/session-liveness";
+import { getSessionState } from "../pty/pty-manager";
+import type { ProjectExecutionScope } from "../../shared/project-identity-types";
 import { selectCursorPage, InvalidCursorError } from "../../shared/cursor-pagination";
 import {
   scheduleAutoCloseAfterHandoff,
@@ -46,7 +53,7 @@ import {
   capHandoffFullText,
   condenseHandoffSummary,
 } from "./handoff-summary-rule";
-import type { ScopedHandoff } from "./handoff-store";
+import type { HandoffDeliveryAttempt, ScopedHandoff } from "./handoff-store";
 
 /** Lease de heartbeat herdado do dispatch cerimonial (linhas legadas). */
 const TASK_DISPATCH_HEARTBEAT_LEASE_MS = 10 * 60_000;
@@ -871,46 +878,22 @@ const handoffListTool: McpToolDef = {
         : {}),
       ...(rawIds.length > 0 ? { ids: rawIds } : {}),
     });
-    // List = recibo só de `submitted` (já colado no PTY). `queued` segue
-    // para o idle-delivery: o Maestro que lista um queued ainda não recebeu
-    // o paste — ack prematuro comia a fila (campo 24/08, 2x2).
-    // Leitura cross-mission é auditoria: nunca reconhece nada.
-    if (
-      isProvenCurrentOrchestrator &&
-      missionId === ctx.missionId &&
-      rows.length > 0
-    ) {
-      try {
-        const acked = getProjectDomainStores(
-          ctx.scope,
-        ).handoffs.acknowledgeSeenByOrchestratorList(ctx.missionId);
-        if (acked > 0) {
-          console.info(
-            `[handoff] list-ack: ${acked} handoff(s) reconhecido(s) pela ` +
-              `leitura do Maestro (mission=${ctx.missionId})`,
-          );
-        }
-      } catch (error) {
-        console.warn(
-          "[handoff] list-ack falhou (segue sem recibo):",
-          error instanceof Error ? error.message : error,
-        );
-      }
-    }
-    // Modo cursor (item T3 "paginação por cursor"): janela keyset estável
-    // sobre as linhas já ordenadas do ledger. Sem `limit`/`cursor`, o
-    // comportamento antigo (trilha completa) continua intacto.
+    // A página é escolhida ANTES do recibo. Cursor inválido não reconhece
+    // nada; um limit menor que a trilha só reconhece as linhas devolvidas.
+    let returned = rows;
+    let cursorPage: ReturnType<typeof selectCursorPage<ScopedHandoff>> | null =
+      null;
     const wantCursorMode =
       args.cursor !== undefined || args.limit !== undefined;
     if (wantCursorMode) {
-      let paged;
       try {
-        paged = selectCursorPage(rows, {
+        cursorPage = selectCursorPage(rows, {
           limit: args.limit as number | undefined,
           cursor: (args.cursor as string | undefined) ?? null,
           keyOf: (row) => row.createdAt ?? 0,
           idOf: (row) => row.id,
         });
+        returned = [...cursorPage.items];
       } catch (error) {
         if (error instanceof InvalidCursorError) {
           throw new Error(
@@ -920,17 +903,47 @@ const handoffListTool: McpToolDef = {
         }
         throw error;
       }
+    }
+    const visible = compactHandoffListRows(
+      returned,
+      rawIds,
+      str(args, "detail") === "full",
+      ctx.scope,
+    );
+    // List = recibo só de `submitted` (já colado no PTY) que esta resposta
+    // devolve. `queued` segue para o idle-delivery. Leitura cross-mission
+    // é auditoria: nunca reconhece nada.
+    if (isProvenCurrentOrchestrator && missionId === ctx.missionId) {
+      const seenIds = returned
+        .filter((row) => row.deliveryState === "submitted")
+        .map((row) => row.id);
+      if (seenIds.length > 0) {
+        try {
+          const acked = getProjectDomainStores(
+            ctx.scope,
+          ).handoffs.acknowledgeSeenByOrchestratorList(ctx.missionId, seenIds);
+          if (acked > 0) {
+            console.info(
+              `[handoff] list-ack: ${acked} handoff(s) reconhecido(s) pela ` +
+                `leitura do Maestro (mission=${ctx.missionId})`,
+            );
+          }
+        } catch (error) {
+          console.warn(
+            "[handoff] list-ack falhou (segue sem recibo):",
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
+    }
+    if (cursorPage) {
       return {
-        items: compactHandoffListRows(
-          [...paged.items],
-          rawIds,
-          str(args, "detail") === "full",
-        ),
-        nextCursor: paged.nextCursor,
-        hasMoreHistory: paged.hasMoreHistory,
+        items: visible,
+        nextCursor: cursorPage.nextCursor,
+        hasMoreHistory: cursorPage.hasMoreHistory,
       };
     }
-    return compactHandoffListRows(rows, rawIds, str(args, "detail") === "full");
+    return visible;
   },
 };
 
@@ -941,10 +954,38 @@ const handoffListTool: McpToolDef = {
  * as pedidas por `ids` saem inteiras; o resto leva `artifacts: []` +
  * `artifactsOmitted` + `detailHint` apontando o caminho de volta.
  */
+function deliveryAttemptsFor(
+  scope: ProjectExecutionScope,
+  handoffId: string,
+): HandoffDeliveryAttempt[] {
+  try {
+    const list = getProjectDomainStores(scope).handoffs.listDeliveryAttempts;
+    if (typeof list !== "function") return [];
+    return list.call(getProjectDomainStores(scope).handoffs, handoffId);
+  } catch {
+    return [];
+  }
+}
+
+function maestroSessionAlive(
+  sessionId: string | undefined,
+): boolean | undefined {
+  if (!sessionId) return undefined;
+  try {
+    const liveness = classifySessionLiveness(getSessionState(sessionId));
+    if (liveness === "live") return true;
+    if (liveness === "exited") return false;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function compactHandoffListRows(
   rows: ScopedHandoff[],
   rawIds: readonly string[],
   detailFull: boolean,
+  scope: ProjectExecutionScope,
 ): Array<ScopedHandoff | Record<string, unknown>> {
   const attachStuck = (row: ScopedHandoff): ScopedHandoff | Record<string, unknown> => {
     // F-1040: diagnóstico de entrega presa — não força nada, nomeia o escape.
@@ -952,16 +993,34 @@ function compactHandoffListRows(
       return row;
     }
     try {
+      const attempts = deliveryAttemptsFor(scope, row.id);
+      const latest = attempts.length > 0 ? attempts[attempts.length - 1] : undefined;
+      const maestroSessionId =
+        latest?.orchestratorSessionId ??
+        (row.missionId
+          ? getProjectDomainStores(scope).missions.get(row.missionId)
+              ?.orchestratorSessionId
+          : undefined);
+      const sessionAttempts = maestroSessionId
+        ? attempts.filter(
+            (attempt) => attempt.orchestratorSessionId === maestroSessionId,
+          )
+        : attempts;
+      const retryRound = sessionAttempts.length > 0 ? sessionAttempts.length : null;
       const diagnosis = diagnoseHandoffStuck({
         id: row.id,
         deliveryState: row.deliveryState,
         delivered: row.delivered,
-        consumedAt: (row as { consumedAt?: number | null }).consumedAt ?? null,
-        submittedAt: (row as { submittedAt?: number | null }).submittedAt ?? null,
-        createdAt: (row as { createdAt?: number }).createdAt,
-        sessionId: row.sessionId ?? null,
-        parked: (row as { parked?: boolean }).parked === true,
-        retryRound: (row as { retryRound?: number | null }).retryRound ?? null,
+        consumedAt: row.consumedAt ?? null,
+        submittedAt: row.submittedAt ?? null,
+        createdAt: row.createdAt,
+        attemptedAt: latest?.startedAt ?? null,
+        sessionId: maestroSessionId ?? null,
+        sessionAlive: maestroSessionAlive(maestroSessionId),
+        parked:
+          sessionAttempts.length >=
+          MAX_HANDOFF_DELIVERY_ATTEMPTS + HANDOFF_STUCK_PARK_ROUND,
+        retryRound,
       });
       if (!diagnosis.stuck) return row;
       return { ...row, stuckDiagnosis: diagnosis };

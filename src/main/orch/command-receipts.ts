@@ -208,10 +208,26 @@ export class CommandReceiptStore {
       const inserted = this.insertIfAbsent(receipt);
       const effectId = effectInput.id ?? receipt.commandId;
       if (!inserted) {
-        return {
-          inserted: false,
-          effect: existingCommandEffect(outbox, receipt.commandId, effectId),
-        };
+        const stored = this.getByCommandId(receipt.commandId);
+        const aggregate = resolveAggregate(receipt);
+        if (
+          !stored ||
+          stored.commandType !== receipt.commandType ||
+          stored.aggregateKind !== aggregate.kind ||
+          stored.aggregateId !== aggregate.id
+        ) {
+          throw new Error('command receipt is already bound to another command');
+        }
+        const effect = existingCommandEffect(outbox, receipt.commandId, effectId);
+        if (
+          effect &&
+          (effect.commandId !== receipt.commandId ||
+            effect.type !== effectInput.type ||
+            effect.threadId !== effectInput.threadId)
+        ) {
+          throw new Error('effect outbox command is already bound to another effect');
+        }
+        return { inserted: false, effect };
       }
       const effect = outbox.enqueue({
         ...effectInput,

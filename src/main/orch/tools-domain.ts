@@ -638,22 +638,25 @@ const missionRequestResumeTool: McpToolDef = {
     required: ['missionId'],
   },
   handler: async (args, ctx) => {
-    const missionId = requireStr(args, 'missionId');
+    const requestedMissionId = requireStr(args, 'missionId');
     const note = str(args, 'note')?.trim().slice(0, 200) ?? '';
+    // O argumento não escolhe a missão. Só o vínculo que o Main gravou no
+    // token (ctx.missionId) autoriza o pedido — pane solto e orquestrador de
+    // outra missão não remontam o alvo.
+    if (!ctx.missionId || ctx.missionId !== requestedMissionId) {
+      throw new Error(
+        'nexus_mission_request_resume: a retomada só vale para a missão vinculada a esta sessão.',
+      );
+    }
+    const missionId = ctx.missionId;
     const stores = getProjectDomainStores(ctx.scope);
     const mission = stores.missions.get(missionId);
     if (!mission) throw new Error(`nexus_mission_request_resume: missão ${missionId} não existe.`);
-    // Qualquer sessão VINCULADA à missão (líder atual, líder velho ou mão do
-    // operador) pode pedir a retomada. Worker sem missão não.
-    if (ctx.missionId && ctx.missionId !== missionId && ctx.role === 'worker') {
-      throw new Error('nexus_mission_request_resume: um worker só pede retomada da própria missão.');
-    }
-    if (ctx.role === 'worker' && ctx.missionId !== missionId) {
-      throw new Error('nexus_mission_request_resume: um worker só pede retomada da própria missão.');
-    }
     try {
+      // Chamada de agente não é o botão Retomar: remount automático preserva
+      // o veredito de encerramento do operador.
       await resumeFastLaneMission(ctx.scope, missionId, {
-        remountKind: 'operator',
+        remountKind: 'automatic',
         note: note || 'Retomada pedida por nexus_mission_request_resume',
       });
     } catch (error) {

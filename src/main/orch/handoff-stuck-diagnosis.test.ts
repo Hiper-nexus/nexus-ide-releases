@@ -64,13 +64,42 @@ describe('handoff stuck diagnosis (resto F-1040)', () => {
     expect(d.escape).toMatch(/busy→idle|nexus_mission_request_resume/);
   });
 
+  it('ages a queued handoff from createdAt when it was never submitted', () => {
+    const recent = diagnoseHandoffStuck(
+      { id: 'h-recent', deliveryState: 'queued', createdAt: NOW - 2_000 },
+      NOW,
+    );
+    expect(recent).toMatchObject({
+      stuck: false,
+      reason: 'waiting-acceptance-window',
+    });
+    const stale = diagnoseHandoffStuck(
+      { id: 'h-stale', deliveryState: 'queued', createdAt: NOW - 30_000 },
+      NOW,
+    );
+    expect(stale).toMatchObject({ stuck: true, reason: 'queued-awaiting-idle' });
+  });
+
+  it('ages a queued handoff from the last delivery attempt when that is the clock', () => {
+    const d = diagnoseHandoffStuck(
+      {
+        id: 'h-attempt',
+        deliveryState: 'queued',
+        createdAt: NOW,
+        attemptedAt: NOW - 30_000,
+      },
+      NOW,
+    );
+    expect(d).toMatchObject({ stuck: true, reason: 'queued-awaiting-idle' });
+  });
+
   it('retry backoff reports the round and refuses loop forcing', () => {
     const d = diagnoseHandoffStuck(
       { id: 'h7', deliveryState: 'queued', retryRound: 3, submittedAt: NOW - 120_000 },
       NOW,
     );
-    // retryRound > 0 wins only when not already classified as queued-awaiting-idle
-    // — queued+submittedAt hits queued-awaiting-idle first (more specific).
-    expect(d.stuck).toBe(true);
+    expect(d).toMatchObject({ stuck: true, reason: 'retry-backoff' });
+    expect(d.summary).toContain('rodada 3');
+    expect(d.escape).toMatch(/busy→idle/);
   });
 });

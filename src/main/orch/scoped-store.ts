@@ -4,7 +4,10 @@ import {
   projectExecutionScopeSchema,
   type ProjectExecutionScope,
 } from '../../shared/types';
-import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import type {
+  ProjectRuntimeLease,
+  ProjectRuntimeManager,
+} from '../runtime/project-runtime-manager';
 
 export interface ScopeCoordinates {
   readonly projectId: string;
@@ -94,6 +97,14 @@ export class ScopedStoreBinding {
     const runtime = this.#runtimeManager.open(this.scope);
     runtime.assertWritable();
     return runtime.db;
+  }
+
+  /**
+   * Pin para trabalho que atravessa outros `open()`. O LRU não fecha o
+   * runtime enquanto o lease não for solto.
+   */
+  acquireLease(): ProjectRuntimeLease {
+    return this.#runtimeManager.acquire(this.scope);
   }
 
   now(): number {

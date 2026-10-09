@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Handoff } from "../../shared/orch-types";
 import type { AgentGateContext } from "./gate";
 import type { McpToolInvocation } from "./mcp-protocol";
+import { encodeCursor } from "../../shared/cursor-pagination";
 import { testProjectScope } from "./__tests__/scope-fixture";
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   markHandoffSubmitted: vi.fn(),
   onHandoffSubmitted: vi.fn(),
   orchWriteSession: vi.fn(() => true),
+  getSessionState: vi.fn(() => null),
   getStores: vi.fn(),
   listHandoffs: vi.fn(
     (): Array<{ id: string; delivered?: boolean }> => [],
@@ -54,6 +56,7 @@ vi.mock("./idle-delivery", () => ({
 vi.mock("../pty/pty-manager", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../pty/pty-manager")>()),
   orchWriteSession: mocks.orchWriteSession,
+  getSessionState: mocks.getSessionState,
 }));
 
 vi.mock("./project-domain-store-registry", () => ({
@@ -231,6 +234,7 @@ function acknowledgeTool() {
 describe("handoff MCP stop receipt", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getSessionState.mockReturnValue(null);
     resetDeliveryContractsForTesting();
     mocks.getStores.mockReturnValue({
       missions: {
@@ -1624,5 +1628,155 @@ describe("handoff MCP stop receipt", () => {
 
     await listTool().handler({}, orchestratorContext());
     expect(ackSpy).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges only the submitted rows on the returned cursor page", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn(() => 1);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-page",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+      {
+        id: "h-next",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 2,
+        missionId: "mission-a",
+      },
+      {
+        id: "h-queued",
+        delivered: false,
+        deliveryState: "queued",
+        createdAt: 3,
+        missionId: "mission-a",
+      },
+    ]);
+
+    const page = (await listTool().handler(
+      { limit: 1 },
+      orchestratorContext(),
+    )) as { items: Array<{ id: string }> };
+    expect(page.items.map((row) => row.id)).toEqual(["h-page"]);
+    expect(ackSpy).toHaveBeenCalledTimes(1);
+    expect(ackSpy).toHaveBeenCalledWith("mission-a", ["h-page"]);
+  });
+
+  it("does not acknowledge anything when the cursor is invalid", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn(() => 1);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-page",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+    ]);
+
+    await expect(
+      listTool().handler(
+        { limit: 1, cursor: encodeCursor({ key: 99, id: "missing" }) },
+        orchestratorContext(),
+      ),
+    ).rejects.toThrow(/cursor inválido/);
+    expect(ackSpy).not.toHaveBeenCalled();
+  });
+
+  it("passes real delivery attempts and proven Maestro liveness into stuck diagnosis", async () => {
+    const stores = mocks.getStores();
+    const attempts = [
+      { orchestratorSessionId: "orchestrator-session", startedAt: 1, attemptNo: 1 },
+      { orchestratorSessionId: "orchestrator-session", startedAt: 2, attemptNo: 2 },
+    ];
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => attempts,
+      },
+    });
+    mocks.getSessionState.mockReturnValue("idle");
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-retry",
+        delivered: false,
+        deliveryState: "queued",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+    ]);
+
+    const retry = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+    expect(retry[0]?.stuckDiagnosis?.reason).toBe("retry-backoff");
+
+    const parked = Array.from({ length: 9 }, (_, index) => ({
+      orchestratorSessionId: "orchestrator-session",
+      startedAt: index + 1,
+      attemptNo: index + 1,
+    }));
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => parked,
+      },
+    });
+    const parkedRows = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+    expect(parkedRows[0]?.stuckDiagnosis?.reason).toBe("parked-needs-operator");
+
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.getSessionState.mockReturnValue("exited");
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-dead",
+        delivered: false,
+        deliveryState: "queued",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+    ]);
+    const dead = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+    expect(dead[0]?.stuckDiagnosis?.reason).toBe("session-dead");
   });
 });
