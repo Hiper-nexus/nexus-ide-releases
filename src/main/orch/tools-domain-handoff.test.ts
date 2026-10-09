@@ -1848,6 +1848,8 @@ describe("handoff MCP stop receipt", () => {
         orchestratorSessionId: "orchestrator-session",
         startedAt: 100 + index,
         attemptNo: index + 1,
+        state: "failed" as const,
+        failureCode: "accept_timeout",
       })),
       ...oldOnly,
     ];
@@ -1867,11 +1869,61 @@ describe("handoff MCP stop receipt", () => {
     expect(currentRound[0]?.stuckDiagnosis?.summary).toContain("rodada 1");
   });
 
+  it("keeps an in-flight delivery inside the acceptance window", async () => {
+    const stores = mocks.getStores();
+    const now = Date.now();
+    mocks.getSessionState.mockReturnValue("idle");
+    for (const state of ["reserved", "pasted"] as const) {
+      mocks.getStores.mockReturnValue({
+        ...stores,
+        handoffs: {
+          ...stores.handoffs,
+          list: mocks.listHandoffs,
+          listDeliveryAttempts: () => [
+            {
+              orchestratorSessionId: "orchestrator-session",
+              startedAt: now,
+              attemptNo: 1,
+              state,
+            },
+          ],
+        },
+      });
+      mocks.listHandoffs.mockReturnValue([
+        {
+          id: "h-inflight",
+          delivered: false,
+          deliveryState: "queued",
+          createdAt: now - 30_000,
+          missionId: "mission-a",
+        },
+      ]);
+      const rows = (await listTool().handler(
+        { detail: "full" },
+        orchestratorContext(),
+      )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+      expect(rows[0]?.stuckDiagnosis?.reason).not.toBe("retry-backoff");
+      expect(rows[0]?.stuckDiagnosis).toBeUndefined();
+    }
+  });
+
   it("passes real delivery attempts and proven Maestro liveness into stuck diagnosis", async () => {
     const stores = mocks.getStores();
     const attempts = [
-      { orchestratorSessionId: "orchestrator-session", startedAt: 1, attemptNo: 1 },
-      { orchestratorSessionId: "orchestrator-session", startedAt: 2, attemptNo: 2 },
+      {
+        orchestratorSessionId: "orchestrator-session",
+        startedAt: 1,
+        attemptNo: 1,
+        state: "failed" as const,
+        failureCode: "accept_timeout",
+      },
+      {
+        orchestratorSessionId: "orchestrator-session",
+        startedAt: 2,
+        attemptNo: 2,
+        state: "failed" as const,
+        failureCode: "accept_timeout",
+      },
     ];
     mocks.getStores.mockReturnValue({
       ...stores,
@@ -1924,6 +1976,8 @@ describe("handoff MCP stop receipt", () => {
       orchestratorSessionId: "orchestrator-session",
       startedAt: index + 1,
       attemptNo: index + 1,
+      state: "failed" as const,
+      failureCode: "accept_timeout",
     }));
     mocks.getStores.mockReturnValue({
       ...stores,

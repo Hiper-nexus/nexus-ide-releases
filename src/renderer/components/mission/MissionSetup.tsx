@@ -1054,6 +1054,10 @@ export function MissionSetup({
       document.getElementById('express-objective')?.focus();
     },
     workspace: () => {
+      // O botão "Trocar pasta" fica disabled com pickingWorkspace || busy.
+      // O atalho tem de obedecer o mesmo estado: trocar a pasta no meio do
+      // prepare/start deixa a missão já gravada na pasta anterior.
+      if (pickingWorkspace || expressStatus === 'loading') return;
       void pickProjectFolder();
     },
     shell: openExpressBareShell,

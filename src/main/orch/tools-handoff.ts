@@ -1012,6 +1012,21 @@ function deliveryAttemptsFor(
   }
 }
 
+/** Falha encerrada ou rodada `released:`. Reserva, colagem e aceite não gastam rodada. */
+function deliveryAttemptIsSpent(attempt: HandoffDeliveryAttempt): boolean {
+  if (
+    attempt.state === "reserved" ||
+    attempt.state === "pasted" ||
+    attempt.state === "accepted"
+  ) {
+    return false;
+  }
+  if (attempt.state === "failed") return true;
+  return (
+    typeof attempt.failureCode === "string" && attempt.failureCode.length > 0
+  );
+}
+
 function maestroSessionAlive(
   sessionId: string | undefined,
 ): boolean | undefined {
@@ -1068,6 +1083,15 @@ function compactHandoffListRows(
         sessionAttempts.length > 0
           ? sessionAttempts[sessionAttempts.length - 1]
           : undefined;
+      // Reserva ou colagem ainda dentro da janela não é rodada gasta.
+      // Contá-la faz retryRound 1 e o diagnóstico diz retry-backoff antes
+      // do aceite normal. Só falha e `released:` entram na conta; uma
+      // tentativa ativa permanece na janela de aceite.
+      const attemptInFlight =
+        latest?.state === "reserved" || latest?.state === "pasted";
+      const spentAttempts = attemptInFlight
+        ? []
+        : sessionAttempts.filter(deliveryAttemptIsSpent);
       // F-925 conta rodadas, não tentativas cruas. Cada rodada gasta
       // MAX_HANDOFF_DELIVERY_ATTEMPTS colagens; linhas `released:` entram
       // na conta, como no idle-delivery — elas provam que a rodada
@@ -1075,8 +1099,8 @@ function compactHandoffListRows(
       // orçamento + HANDOFF_STUCK_PARK_ROUND). Passar o total cru faria
       // `retryRound >= 6` estacionar na 6ª tentativa, antes da 9ª.
       const retryRound =
-        sessionAttempts.length > 0
-          ? Math.ceil(sessionAttempts.length / MAX_HANDOFF_DELIVERY_ATTEMPTS)
+        spentAttempts.length > 0
+          ? Math.ceil(spentAttempts.length / MAX_HANDOFF_DELIVERY_ATTEMPTS)
           : null;
       const diagnosis = diagnoseHandoffStuck({
         id: row.id,
@@ -1089,7 +1113,7 @@ function compactHandoffListRows(
         sessionId: maestroSessionId ?? null,
         sessionAlive: maestroSessionAlive(maestroSessionId),
         parked:
-          sessionAttempts.length >=
+          spentAttempts.length >=
           MAX_HANDOFF_DELIVERY_ATTEMPTS + HANDOFF_STUCK_PARK_ROUND,
         retryRound,
       });

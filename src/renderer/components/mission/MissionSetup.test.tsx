@@ -2264,6 +2264,43 @@ describe('Caminho Expresso', () => {
     });
   });
 
+  it('atalho 3 não troca a pasta enquanto a criação está em andamento', async () => {
+    const pick = vi.fn(async () => undefined);
+    useWorkspaceStore.setState({ pick });
+    useProductNavigationStore.setState({ destination: { kind: 'launcher' } });
+    const host = render(<MissionSetup home />);
+    await flush();
+    await flush();
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido'),
+      'Crie uma página de contato',
+    );
+
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '3', bubbles: true }),
+      );
+    });
+    expect(pick).toHaveBeenCalledTimes(1);
+
+    pick.mockClear();
+    const pendingReview = deferred<MissionReview>();
+    api.prepare.mockReturnValueOnce(pendingReview.promise);
+    act(() => button(host, 'Iniciar criação').click());
+    await flush();
+    await flush();
+    expect(api.prepare).toHaveBeenCalledTimes(1);
+    expect(button(host, 'Trocar pasta').disabled).toBe(true);
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '3', bubbles: true }),
+      );
+    });
+    expect(pick).not.toHaveBeenCalled();
+    pendingReview.resolve(REVIEW);
+    await flush();
+  });
+
   it('atalhos do início não disparam no assistente avançado', async () => {
     const host = render(<MissionSetup />);
     await flush();
