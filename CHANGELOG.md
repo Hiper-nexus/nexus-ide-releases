@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.76.216 — Decisões OpenAI e missões revisadas
+## 0.76.217 — Decisões OpenAI e missões revisadas
 
 - **API e sessão nativa distintas.** Credenciais de transporte não provam uma assinatura nativa do Claude; a seleção preserva a prioridade da sessão nativa comprovada.
 - **Verificação de runtime entre worktrees.** O verificador usa a identidade de coordenação dos agentes e conserva a execução isolada, sem afrouxar as guardas de escopo.

@@ -90,10 +90,10 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 - Nada foi exercitado em aparelho, simulador ou navegador nesta auditoria.
 - Licenças de `@pierre/diffs`, `@legendapp/list`, `nitro-markdown`, `@react-native-ai/apple`, `@napi-rs/keyring` e `@crowecawcaw/xa11y` vêm dos estudos e não foram reverificadas sem rede.
 
-## Atualização de escopo para 0.76.216 (09/10)
+## Atualização de escopo para 0.76.217 (09/10)
 
 A contagem 39/4/20/1 acima pertence ao snapshot descrito no início; não é uma
-contagem refeita de recursos da 0.76.216. A PR126 até a fronteira `ad517bfb`
+contagem refeita de recursos da 0.76.217. A PR126 até a fronteira `ad517bfb`
 foi integrada por ancestralidade; commits posteriores ficam no próximo lote
 monitorado. A revisão e as correções preservam a diferença entre código
 presente, consumidor de produção e prova operacional. Os pontos abaixo

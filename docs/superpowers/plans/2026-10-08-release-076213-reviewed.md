@@ -324,3 +324,32 @@ continuam pendentes até prova real; publicação é uma única transação guar
 A pública 212, archives 213/214/215 e cutoff ad517 mais reparos são preservados.
 Sem novas dependências, features, deploy de site/API, outra plataforma ou
 claims de upgrade, full T3, microfone real e provedor pago.
+
+
+## Sucessora 0.76.217 da candidata privada 216 (09/10)
+
+Fonte 07f986283, árvore e2040daba, aprovada globalmente com oito gates
+verdes: app 24.756/60 skips, servidor 157 e Main/PTY 1. Tag 216 4dac1640
+permanece imutável. Build/notary/base/Node restore e soak fixo de cinco
+minutos (42 amostras) passaram. Runtime executou OPS e nexus_clarify reais,
+mas falhou no verificador da pergunta registrada; resume/PNG/publicação
+não foram concluídos. A versão pública conhecida permanece 212.
+
+O ledger privado reteve a pergunta RT_QUESTION, enquanto a missão estava
+running/executing. MissionEngine normaliza a view openQuestion para o campo
+canônico snapshot.question; as leituras privadas desse campo estão corretas.
+A pergunta aparece após o fluxo normal: chamada real da CLI ao status enum
+blocked, com nota válida, que mapeia executing para intent blocked_user.
+O reparo adiciona somente essa transição da própria missão, usando o ID do
+resultado real de clarify e a allowlist declarada da fixture; não renomeia
+campos nem altera o contrato canônico. Não simular
+pergunta, status, aceitação ou busy, alterar o produto clarify, permissões,
+prazos ou respostas do gateway para encobrir o contrato.
+
+217 é apenas a candidata sucessora planejada: revalidar disponibilidade
+remota/local e estes sete metadados após handoff limpo e revisão. Fonte,
+oito gates e revisão global, nova tag/build/sign/notary, soak/runtime/resume/
+PNG e publicação guardada permanecem pendentes até evidência real. Nenhuma
+feature ou dependência nova; sem site/API deploy, outra plataforma ou claims
+de upgrade/full T3/provedor pago/microfone real. Archives 213–216 e suas
+falhas, pública 212 e cutoff ad517 mais reparos são preservados.
