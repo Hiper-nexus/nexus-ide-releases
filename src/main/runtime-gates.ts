@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { systemPreferences, type BrowserWindow, type IpcMain } from 'electron';
 import { RUNTIME_CHANNELS, RUNTIME_TIMEOUT_MS, parseRuntimeRequest, assertRuntimeProof } from '../shared/runtime-gates';
 import { deriveRuntimeChecks, sameRuntimeConversation } from '../shared/runtime-gate-proof';
-import { runtimeGateConfiguration } from './runtime-gate-mode';
+import { runtimeGateConfiguration, armPrivateRuntimeClaudeConsent } from './runtime-gate-mode';
 import { requireLiveRendererWorkspaceScope } from './persistence/renderer-workspace-scope';
 import { getProjectDomainStores } from './orch/project-domain-store-registry';
 import { missionEngineForScope } from './orch/mission-engine-registry';
@@ -85,7 +85,11 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
       check(); prior = JSON.parse(bytes.toString('utf8')); }
     finally { await fd.close(); } check();
   }
-  await new Promise<void>((resolve, reject) => {
+  const releaseConsent = armPrivateRuntimeClaudeConsent({ userData: input.userData, gateway: config.gateway,
+    gatewayNonce: config.gatewayNonce, scope, signal: input.signal,
+    isCurrent: () => !wc.isDestroyed() && wc.mainFrame === frame && !stopped &&
+      sameProjectScope(requireLiveRendererWorkspaceScope(wc), scope) });
+  try { await new Promise<void>((resolve, reject) => {
     const current = (): void => { check(); if (stopped || wc.mainFrame !== frame || !sameProjectScope(requireLiveRendererWorkspaceScope(wc), scope)) throw new Error('runtime authority revoked'); };
     const captureAgentBinding = (info: ReturnType<typeof listAgentSessions>[number]) => {
       const authority = getContextBySession(info.sessionId);
@@ -127,9 +131,9 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
       snapshot: async id => { current(); const snapshot = await missionEngineForScope(scope).snapshot(scope, id); current(); return snapshot; },
       record: value => { current(); if (questionCommands.length >= 8) throw new Error('private command observation budget'); questionCommands.push(value); },
       failed: () => { commandProbeFailed = true; } });
-    const cleanup = (): void => { clearTimeout(timer); revokeVoice(); removeTap(); releaseCommands(); outputWindows.clear(); input.ipc.removeHandler(RUNTIME_CHANNELS.request);
+    const cleanup = (): void => { clearTimeout(timer); releaseConsent(); revokeVoice(); removeTap(); releaseCommands(); outputWindows.clear(); input.ipc.removeHandler(RUNTIME_CHANNELS.request);
       input.ipc.removeListener(RUNTIME_CHANNELS.result, onResult); input.signal.removeEventListener('abort', onAbort); wc.removeListener('render-process-gone', onGone); win.removeListener('closed', onGone); };
-    const fail = (reason = 'runtime proof incomplete'): void => { if (stopped) return; stopped = true; revokeVoice();
+    const fail = (reason = 'runtime proof incomplete'): void => { if (stopped) return; stopped = true; releaseConsent(); revokeVoice();
       console.error(`[smoke] runtime failed: ${reason.replace(/[\r\n]/gu, ' ').slice(0, 256)}`);
       try { wc.send(RUNTIME_CHANNELS.stop, { nonce }); } catch { /* Main owns physical quit. */ }
       input.requestPhysicalShutdown();
@@ -264,5 +268,5 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
     const timer = setTimeout(fail, RUNTIME_TIMEOUT_MS);
     input.ipc.on(RUNTIME_CHANNELS.result, onResult); input.signal.addEventListener('abort', onAbort, { once: true }); wc.once('render-process-gone', onGone); win.once('closed', onGone);
     check(); wc.send(RUNTIME_CHANNELS.run, { nonce, phase: config.phase, workspacePath: input.workspacePath, gatewayNonce: config.gatewayNonce, prior });
-  });
+  }); } finally { releaseConsent(); }
 }

@@ -10,8 +10,13 @@ const deps = vi.hoisted(() => ({ grant: 'denied', scope: { version: 1 as const, 
   agents: [] as OwnedAgentSessionInfo[], tap: null as null | ((id: string, text: string) => void),
   probe: vi.fn(async (): Promise<unknown[]> => []), tapRemoved: vi.fn() }));
 vi.mock('electron', () => ({ systemPreferences: { getMediaAccessStatus: () => deps.grant } }));
-vi.mock('node:child_process', () => ({ execFile: Object.assign(vi.fn(), { [Symbol.for('nodejs.util.promisify.custom')]: async () => ({ stdout: 'Claude unit fixture only', stderr: '' }) }) }));
-vi.mock('./persistence/renderer-workspace-scope', () => ({ requireLiveRendererWorkspaceScope: () => deps.scope, getRendererWorkspaceScope: () => deps.scope }));
+vi.mock('node:child_process', () => {
+  const refused = () => { throw new Error('subprocess forbidden in private runtime unit fixture'); };
+  return { spawn: refused, spawnSync: refused, execSync: refused, execFileSync: refused,
+    execFile: Object.assign(vi.fn(), { [Symbol.for('nodejs.util.promisify.custom')]: async () => ({ stdout: 'Claude unit fixture only', stderr: '' }) }) };
+});
+vi.mock('./persistence/renderer-workspace-scope', () => ({ requireLiveRendererWorkspaceScope: () => deps.scope, getRendererWorkspaceScope: () => deps.scope,
+  onRendererWorkspaceScopeChange: () => () => undefined }));
 vi.mock('./orch/project-domain-store-registry', () => ({ getProjectDomainStores: () => ({ missions: { get: () => ({ id: 'm', title: 'Runtime 11111111-1111-4111-8111-111111111111' }) }, handoffs: { list: () => [] } }) }));
 vi.mock('./orch/mission-engine-registry', () => ({ missionEngineForScope: () => ({ snapshot: async () => ({}) }) }));
 vi.mock('./pty/pty-manager', () => ({ listAgentSessions: () => deps.agents.map(agent => ({ ...agent, scope: { ...agent.scope },
@@ -26,18 +31,20 @@ vi.mock('./browser/browser-artifact-store', () => ({ createScopedBrowserArtifact
 vi.mock('./orch/mission-event-emit', () => ({ getMissionEventRuntimeManager: () => deps.manager }));
 import { proveRuntimeGates } from './runtime-gates';
 import { RUNTIME_CHANNELS } from '../shared/runtime-gates';
+import { prepareEphemeralHome } from './orch/hooks-gen';
 const roots: string[] = [];
 const savedEnv = new Map<string, string | undefined>();
 afterEach(async () => { resetGateForTests(); deps.agents = []; deps.tap = null; vi.unstubAllGlobals(); vi.unstubAllEnvs(); for (const [key, value] of savedEnv) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } savedEnv.clear();
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true }); });
-async function fixture() {
+async function fixture(options: { helloNonce?: string; helloPid?: number; homeMode?: number; startupRefused?: boolean } = {}) {
   for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'CLAUDE_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR']) savedEnv.set(key, process.env[key]);
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-runtime-main-unit-'))); roots.push(root);
   await fs.mkdir(path.join(root, 'home'), { mode: 0o700 }); await fs.writeFile(path.join(root, 'unit-binary'), 'unit-only CLI bytes');
+  if (options.homeMode !== undefined) await fs.chmod(path.join(root, 'home'), options.homeMode);
   const env = { NEXUS_PACKAGED_SMOKE: '1', NEXUS_SMOKE_RUNTIME_GATES: '1', NEXUS_USER_DATA_DIR: root, HOME: path.join(root, 'home'),
     NEXUS_SMOKE_RUNTIME_GATEWAY: 'http://127.0.0.1:45678', NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE: '11111111-1111-4111-8111-111111111111', NEXUS_SMOKE_RUNTIME_PHASE: 'exercise', RUNTIME_TEST_BINARY: path.join(root, 'unit-binary') };
   for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
-  vi.stubGlobal('fetch', async () => ({ json: async () => ({ nonce: env.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE, pid: process.ppid }) }));
+  vi.stubGlobal('fetch', async () => ({ json: async () => ({ nonce: options.helloNonce ?? env.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE, pid: options.helloPid ?? process.ppid }) }));
   deps.scope.rootRealPath = path.join(root, 'workspace'); await fs.mkdir(deps.scope.rootRealPath);
   resetGateForTests(); deps.agents = []; deps.tap = null; deps.manager = null; deps.visual.mockReset(); deps.screenshot.mockReset(); deps.conversation.mockClear(); deps.probe.mockResolvedValue([]); deps.tapRemoved.mockClear();
   const url = 'nexus-app://bundle/index.html?nexusRuntimeGates=1', frame = { url }, session = { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() };
@@ -48,10 +55,72 @@ async function fixture() {
   const flight = proveRuntimeGates(win as never, { ipc: ipc as never, userData: root, workspacePath: deps.scope.rootRealPath, appVersion: '0.76.192', smokeTest: true,
     packaged: true, signal: controller.signal, requestPhysicalShutdown: physical });
   const rejected = flight.catch(error => error);
-  await vi.waitFor(() => expect(wc.send).toHaveBeenCalledWith(RUNTIME_CHANNELS.run, expect.any(Object)));
-  const nonce = wc.send.mock.calls.find(c => c[0] === RUNTIME_CHANNELS.run)![1].nonce;
+  if (options.startupRefused) await rejected;
+  else await vi.waitFor(() => expect(wc.send).toHaveBeenCalledWith(RUNTIME_CHANNELS.run, expect.any(Object)));
+  const nonce = wc.send.mock.calls.find(c => c[0] === RUNTIME_CHANNELS.run)?.[1].nonce;
   return { root, frame, wc, ipc, controller, physical, flight, rejected, request: (event: object, raw: object) => handlers.get(RUNTIME_CHANNELS.request)!(event, { nonce, ...raw }), nonce };
 }
+
+async function consentProfile(f: Awaited<ReturnType<typeof fixture>>, token: string, overrides: Record<string, unknown> = {}) {
+  const home = prepareEphemeralHome(token, {}, { adapterId: 'claude', userDataPath: f.root,
+    coordinationScope: { ...deps.scope }, effectiveEnv: { ...process.env }, ...overrides });
+  return JSON.parse(await fs.readFile(path.join(home.dir, '.claude.json'), 'utf8'));
+}
+
+it('F-1104: the activated owned fixture seeds normal key consent in each disposable leader/worker/recovery overlay', async () => {
+  const f = await fixture();
+  const nativePath = path.join(f.root, 'home', '.claude.json');
+  const nativeBytes = JSON.stringify({ customApiKeyResponses: { approved: ['native-approved'], rejected: ['native-rejected'] } });
+  await fs.writeFile(nativePath, nativeBytes);
+  try {
+    for (const token of ['owned-leader-one', 'owned-worker-one', 'owned-recovery-one']) {
+      const profile = await consentProfile(f, token, { inheritNativeProfile: true });
+      expect(profile.customApiKeyResponses).toEqual({ approved: ['11-8111-111111111111'], rejected: [] });
+      expect(JSON.stringify(profile)).not.toContain('rt-11111111-1111-4111-8111-111111111111');
+    }
+    expect(await fs.readFile(nativePath, 'utf8')).toBe(nativeBytes);
+  } finally { f.controller.abort(); await f.rejected; }
+});
+
+it.each(['foreign-key', 'same-tail-key', 'foreign-token', 'foreign-gateway', 'foreign-nonce', 'foreign-scope', 'foreign-profile', 'unsafe-profile', 'foreign-home', 'missing-spawn-env', 'replaced-frame'] as const)(
+  'F-1104: active runtime never approves a %s overlay', async changed => {
+    const f = await fixture();
+    const effectiveEnv = { ...process.env };
+    const overrides: Record<string, unknown> = { effectiveEnv };
+    let restoreHome: (() => void) | undefined;
+    try {
+      if (changed === 'foreign-key') effectiveEnv.ANTHROPIC_API_KEY = 'sk-ant-api03-unrelated-fixture';
+      if (changed === 'same-tail-key') effectiveEnv.ANTHROPIC_API_KEY = 'foreign-11111111-1111-4111-8111-111111111111';
+      if (changed === 'foreign-token') effectiveEnv.ANTHROPIC_AUTH_TOKEN = 'sk-ant-api03-unrelated-fixture';
+      if (changed === 'foreign-gateway') effectiveEnv.ANTHROPIC_BASE_URL = 'http://127.0.0.1:45679';
+      if (changed === 'foreign-nonce') effectiveEnv.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE = '22222222-2222-4222-8222-222222222222';
+      if (changed === 'foreign-scope') overrides.coordinationScope = { ...deps.scope, checkoutId: 'other' };
+      if (changed === 'foreign-profile') overrides.userDataPath = path.join(f.root, 'other-profile');
+      if (changed === 'unsafe-profile') await fs.chmod(path.join(f.root, 'home'), 0o755);
+      if (changed === 'foreign-home') {
+        const foreignHome = path.join(f.root, 'foreign-home'); await fs.mkdir(foreignHome, { mode: 0o700 });
+        const spy = vi.spyOn(os, 'homedir').mockReturnValue(foreignHome); restoreHome = () => spy.mockRestore();
+      }
+      if (changed === 'missing-spawn-env') overrides.effectiveEnv = undefined;
+      if (changed === 'replaced-frame') f.wc.mainFrame = { ...f.frame };
+      expect((await consentProfile(f, 'foreign-home-one', overrides)).customApiKeyResponses).toBeUndefined();
+    } finally { restoreHome?.(); f.controller.abort(); await f.rejected; }
+  });
+
+it('F-1104: env spoofing after runtime revocation cannot approve another bootstrap', async () => {
+  const f = await fixture(); f.controller.abort();
+  expect((await consentProfile(f, 'revoked-home-one')).customApiKeyResponses).toBeUndefined();
+  await f.rejected;
+  expect((await consentProfile(f, 'unarmed-home-one')).customApiKeyResponses).toBeUndefined();
+});
+
+it.each([{ helloNonce: '22222222-2222-4222-8222-222222222222' }, { helloPid: process.ppid + 1 }, { homeMode: 0o755 }])(
+  'F-1104: refused private startup never arms consent (%j)', async refused => {
+    const f = await fixture({ ...refused, startupRefused: true });
+    expect(await f.rejected).toBeInstanceOf(Error);
+    expect(f.wc.send).not.toHaveBeenCalled();
+    expect((await consentProfile(f, 'refused-home-one')).customApiKeyResponses).toBeUndefined();
+  });
 it('rejects foreign frame/nonce and a missing OS grant without prompting or arming capture', async () => {
   const f = await fixture(); const event = { sender: f.wc, senderFrame: f.frame };
   try {

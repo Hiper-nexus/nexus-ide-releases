@@ -1287,6 +1287,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           adapterId: adapter.id,
           userDataPath: app.getPath("userData"),
           checkoutId: authority.scope.checkoutId,
+          coordinationScope: authority.coordinationScope ?? authority.scope,
+          effectiveEnv: preparedEnv,
           inheritNativeProfile,
           // OVKA-713/747: filtro declarado de skill → skillOverrides off no
           // overlay (pessoais/projeto fora do conjunto não invocam).

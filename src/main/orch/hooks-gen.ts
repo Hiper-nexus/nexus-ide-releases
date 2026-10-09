@@ -28,6 +28,8 @@ import {
 } from '../pty/private-home-operator';
 import { removeTreeSync } from '../util/remove-tree';
 import { HANDOFF_SPOOL_WRITER_JS } from './handoff-spool-entry';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { privateRuntimeClaudeKeyResponse } from '../runtime-gate-mode';
 
 export { DEVELOPER_IDENTITY_HOME_ENTRIES, linkDeveloperIdentity };
 
@@ -369,6 +371,9 @@ export interface EphemeralHomeOptions {
   readonly adapterId?: string;
   readonly userDataPath?: string;
   readonly checkoutId?: string;
+  /** Main's actual spawn identity; env alone never grants private fixture consent. */
+  readonly coordinationScope?: ProjectExecutionScope;
+  readonly effectiveEnv?: Readonly<NodeJS.ProcessEnv>;
   /** Preserve the existing direct/operator-choice profile without sharing conversations. */
   readonly inheritNativeProfile?: boolean;
   /** False keeps direct panes on their existing flag-settings channel. */
@@ -840,6 +845,7 @@ export function prepareEphemeralHome(
       officialMarketplaceAutoInstallAttempted: true,
       officialMarketplaceAutoInstalled: false,
       officialMarketplaceAutoInstallFailReason: 'policy_blocked',
+      ...privateRuntimeClaudeKeyResponse(dir, options),
     }),
     { mode: 0o600 },
   );

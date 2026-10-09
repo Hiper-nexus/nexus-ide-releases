@@ -12,12 +12,15 @@ import { assertIsolatedWriterGitTool, isIsolatedWriterContext } from './isolated
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { resetHandoffSpoolForTests, startHandoffSpool } from './handoff-spool';
 import { NEXUS_BROWSER_WORKER_TOOLS } from './nexus-browser-policy';
+import { armPrivateRuntimeClaudeConsent } from '../runtime-gate-mode';
+
+const privateRuntimePaths = vi.hoisted(() => ({ userData: undefined as string | undefined }));
 
 vi.mock('electron', () => ({
   app: {
     getVersion: () => 'test',
     getAppPath: () => process.cwd(),
-    getPath: () => path.join(os.homedir(), '.nexus-test-user-data'),
+    getPath: () => privateRuntimePaths.userData ?? path.join(os.homedir(), '.nexus-test-user-data'),
   },
   dialog: { showMessageBox: vi.fn() },
 }));
@@ -272,6 +275,7 @@ function petAuthority(
 }
 
 afterEach(() => {
+  privateRuntimePaths.userData = undefined;
   vi.unstubAllEnvs();
   cliRegistration.agy.mockClear();
   cliRegistration.devin.mockClear();
@@ -286,6 +290,29 @@ afterEach(() => {
 });
 
 describe('mcp-server governed CLI profile wiring', () => {
+  it('F-1104: the actual spawn decoration passes its final key env and coordination identity into private consent', () => {
+    const root = fs.realpathSync(tempRoot()), home = path.join(root, 'home'), cwd = path.join(root, 'workspace');
+    fs.chmodSync(root, 0o700); fs.chmodSync(home, 0o700); fs.mkdirSync(cwd);
+    privateRuntimePaths.userData = root;
+    const launchEnv = { HOME: home, NEXUS_USER_DATA_DIR: root, NEXUS_PACKAGED_SMOKE: '1', NEXUS_SMOKE_RUNTIME_GATES: '1',
+      NEXUS_SMOKE_RUNTIME_GATEWAY: 'http://127.0.0.1:45678', NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE: '11111111-1111-4111-8111-111111111111',
+      NEXUS_SMOKE_RUNTIME_PHASE: 'exercise', ANTHROPIC_API_KEY: 'rt-11111111-1111-4111-8111-111111111111',
+      ANTHROPIC_AUTH_TOKEN: 'rt-11111111-1111-4111-8111-111111111111', ANTHROPIC_BASE_URL: 'http://127.0.0.1:45678' };
+    for (const [key, value] of Object.entries(launchEnv)) vi.stubEnv(key, value);
+    const spawnAuthority = authority(cwd, true, true), signal = new AbortController();
+    const release = armPrivateRuntimeClaudeConsent({ userData: root, gateway: launchEnv.ANTHROPIC_BASE_URL,
+      gatewayNonce: launchEnv.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE, scope: spawnAuthority.coordinationScope!,
+      signal: signal.signal, isCurrent: () => true });
+    let decoration: AgentSpawnDecoration | null = null;
+    try {
+      // Only provider passthrough reaches this snapshot; runtime flags do not.
+      decoration = prepareAgentSpawnDecoration(adapter('claude'), { kind: 'cli-agent', cols: 80, rows: 24 }, spawnAuthority,
+        { ANTHROPIC_API_KEY: launchEnv.ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN: launchEnv.ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL: launchEnv.ANTHROPIC_BASE_URL });
+      expect(decoration).not.toBeNull();
+      const profile = JSON.parse(fs.readFileSync(path.join(decoration!.env.HOME, '.claude.json'), 'utf8'));
+      expect(profile.customApiKeyResponses).toEqual({ approved: ['11-8111-111111111111'], rejected: [] });
+    } finally { release(); decoration?.onSpawnFailed?.(); }
+  });
   it.each([
     { squadCliPolicy: 'operator-choice' as const, readOnly: false, denied: false },
     { squadCliPolicy: 'governed' as const, readOnly: false, denied: true },
