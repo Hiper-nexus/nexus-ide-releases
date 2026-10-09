@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.76.213 — Decisões OpenAI e missões revisadas
+## 0.76.214 — Decisões OpenAI e missões revisadas
 
 2026-10-09
 

@@ -90,15 +90,16 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 - Nada foi exercitado em aparelho, simulador ou navegador nesta auditoria.
 - Licenças de `@pierre/diffs`, `@legendapp/list`, `nitro-markdown`, `@react-native-ai/apple`, `@napi-rs/keyring` e `@crowecawcaw/xa11y` vêm dos estudos e não foram reverificadas sem rede.
 
-## Atualização de escopo para 0.76.213 (09/10)
+## Atualização de escopo para 0.76.214 (09/10)
 
-A contagem39/4/20/1 acima pertence ao snapshot descrito no início; não é uma
-contagem refeita de recursos da0.76.213. A PR126 completa foi integrada por
-ancestralidade, com revisão e correções, preservando a diferença entre código
+A contagem 39/4/20/1 acima pertence ao snapshot descrito no início; não é uma
+contagem refeita de recursos da 0.76.214. A PR126 até a fronteira `ad517bfb`
+foi integrada por ancestralidade; commits posteriores ficam no próximo lote
+monitorado. A revisão e as correções preservam a diferença entre código
 presente, consumidor de produção e prova operacional. Os pontos abaixo
-atualizam as descrições antigas sem anunciar paridade de todos os64 itens.
+atualizam as descrições antigas sem anunciar paridade de todos os 64 itens.
 
-| Item | Estado observado no lote213 | Limite/ponto restante |
+| Item | Estado observado no lote 214 | Limite/ponto restante |
 |---|---|---|
 | WEB-14 | Mermaid, configuração protegida, fila serial e DOMPurify estão instalados; `MarkdownWithMermaid` monta SVG saneado em ShadowRoot, exercitado com o motor real em Chromium. | Componente ainda sem consumidor de mensagem no produto; markdown incremental não foi entregue por esta PR. |
 | WEB-16 | Dependências Tiptap presentes; `ComposerTiptapEditor` usa o SDK real, com testes de linhas, ciclo controlado, seleção, readonly e persistência de marcas/texto. | O composer de produto não foi substituído; a existência do componente não prova integração da superfície. |

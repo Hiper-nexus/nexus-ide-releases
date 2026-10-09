@@ -243,3 +243,31 @@ candidate, additional signed5minute soak/runtime and actual PNG inspection.
 The monitor stays coordinator.active=true until Root's verified-public/no-owned-
 writer closeout. No Windows/Linux artifact, paid Luna call, real microphone,
 installed upgrade or full T3 parity proof is inferred.
+
+## Sucessora 0.76.214 da candidata privada 213 (09/10)
+
+A fonte 5a2df06d1 e seus gates de app, servidor e Main/PTY receberam aprovação
+global. A tag local anotada v0.76.213 (objeto 0813eb33...) permanece imutável.
+Sua build ARM64 assinada, notarizada e stapled e o gate base passaram; o soak
+adicional falhou antes da primeira amostra. Nenhuma 213 foi publicada.
+Artefatos, recibos, manifests originais e o RED extra estão preservados por
+cópia de snapshot FD + SHA-256 em histórico privado ignorado; não são a
+candidata publicável 214.
+
+O diagnóstico nativo controlado com bootstrap real demonstrou 0/3 execuções
+do comando de 1.899 bytes enviado imediatamente e 3/3 do equivalente de 153
+bytes, com os mesmos 97 LF, marcador ausente do comando digitado e janela de
+5.000 ms inalterada. Isso fundamenta o reparo compacto, mas não substitui a
+prova no novo pacote assinado. F-1099 (f4c94a0ab) e F-1100 (9dcfcbbcc)
+receberam aprovação independente de fonte; os gates completos e a aceitação
+assinada da 214 permanecem pendentes. Não aumentar o prazo, diminuir a política
+de memória, fabricar amostras ou retagar 213.
+
+A candidata sucessora usa versão nova 214 em root, server, lock,
+CURRENT_RELEASE e CHANGELOG, no mesmo checkout, branch e scratch autorizados.
+A fronteira incluída é ad517bfb e os reparos locais. Novas funcionalidades
+posteriores continuam na próxima batch já autorizada do monitor; as triagens
+383, f649 e c8f3 não estabeleceram bug material nesta fronteira. Fonte,
+metadados, revisão global, todos os gates e nova tag devem concordar no SHA
+214. A descrição da release pública 212 continua intacta; ela permanece a
+versão pública até publicação guardada e verificação de bytes e digests.

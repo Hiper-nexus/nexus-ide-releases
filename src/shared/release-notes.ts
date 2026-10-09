@@ -10250,7 +10250,7 @@ export const RELEASE_076212: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.213',
+  version: '0.76.214',
   date: '2026-10-09',
   codename: 'Decisões OpenAI e missões revisadas',
   summary: 'Luna (beta) e decisões em conjunto, com escolha por conta, Quadro vivo, capturas no destino escolhido e correções de retomada e entrega de missões.',
