@@ -732,13 +732,18 @@
 }
 
 .mission-graph__surface {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
+  inset-inline-start: 0;
   isolation: isolate;
   width: var(--mission-graph-width);
   height: var(--mission-graph-height);
   min-width: var(--mission-graph-width);
   min-height: var(--mission-graph-height);
-  margin-inline: auto;
+  margin: 0;
+  margin-inline: 0;
+  transform-origin: top left;
 }
 
 .mission-graph__surface::before,
@@ -2808,12 +2813,27 @@
   color: var(--btn-primary-ink);
 }
 .mission-graph__toolbar button.mission-graph__fullscreen:hover:not(:disabled) { background: var(--btn-primary-hover); }
-.mission-graph__orientation,
-.mission-graph__zoom-controls { display: flex; align-items: center; gap: var(--space-1); }
-.mission-graph__zoom-controls { margin-left: auto; }
+.mission-graph__orientation { display: flex; align-items: center; gap: var(--space-1); }
+.mission-graph__zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  min-width: max-content;
+  margin-inline-start: auto;
+}
+.mission-graph__zoom-controls > button,
+.mission-graph__zoom {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .mission-graph__zoom { min-width: 5ch; text-align: center; color: var(--text-dim); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 
 .mission-graph__viewport {
+  display: flex;
+  justify-content: safe center;
+  align-items: safe center;
   flex: 1 1 auto;
   min-height: 160px;
   min-width: 0;
@@ -2821,8 +2841,13 @@
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
 }
-.mission-graph__scaled { position: relative; margin-inline: auto; }
-.mission-graph__surface { margin: 0; transform-origin: top left; }
+.mission-graph__scaled {
+  position: relative;
+  flex: 0 0 auto;
+  margin: 0;
+  margin-inline: 0;
+}
+.mission-graph__surface { margin: 0; margin-inline: 0; transform-origin: top left; }
 .mission-graph__relationships { flex: 0 0 auto; max-height: 96px; overflow: auto; }
 .mission-graph__legend { flex: 0 0 auto; }
 .mission-graph__fit-note { margin: 0; padding: var(--space-1) var(--space-3); color: var(--text-dim); font-size: var(--text-xs); }
@@ -2838,4 +2863,18 @@
   padding: var(--space-3);
 }
 .mission-graph--presentation .mission-graph__relationships { display: none; }
-.mission-graph--presentation .mission-graph__toolbar { padding-block: var(--space-3); }
+.mission-graph--presentation .mission-graph__toolbar,
+.mission-graph:fullscreen .mission-graph__toolbar {
+  padding-block: var(--space-3);
+  /* Em tela inteira o botão "detalhes" não cobre o grafo. */
+  padding-inline-end: var(--space-3);
+}
+
+/* Tela estreita: o zoom desce para a própria linha, longe do "detalhes". */
+@container mission-board (max-width: 720px) {
+  .mission-graph__zoom-controls {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+    margin-inline-start: 0;
+  }
+}

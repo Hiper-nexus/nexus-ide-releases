@@ -308,8 +308,12 @@ describe('MissionGraph', () => {
     const fit = [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Ajustar à tela')!;
     act(() => fit.click());
     const scaled = host.querySelector<HTMLElement>('.mission-graph__scaled')!;
+    const surface = host.querySelector<HTMLElement>('.mission-graph__surface')!;
     expect(parseFloat(scaled.style.width)).toBeLessThanOrEqual(468);
     expect(parseFloat(scaled.style.height)).toBeLessThanOrEqual(268);
+    expect(surface.style.position).toBe('absolute');
+    expect(surface.style.left).toBe('0px');
+    expect(surface.style.marginInline).toBe('0px');
     expect(host.querySelectorAll('.mission-agent-card')).toHaveLength(21);
     expect(host.querySelector('.mission-graph__fit-note')?.textContent).toContain('Amplie o zoom');
   });

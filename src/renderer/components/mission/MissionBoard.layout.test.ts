@@ -107,4 +107,27 @@ describe("MissionBoard layout system invariants (RED test)", () => {
       expect(match[0]).not.toContain("white-space: nowrap");
     }
   });
+
+  it("reserves toolbar space so zoom does not sit under the details toggle", () => {
+    const toolbar = cssRule(
+      missionCss,
+      ".mission-board__graph-region .mission-graph:not(.mission-graph--presentation) .mission-graph__toolbar",
+    );
+    expect(toolbar).toContain(
+      "padding-inline-end: calc(var(--mission-inspector-toggle-width) + var(--space-3) * 2)",
+    );
+    const toggle = cssRule(missionCss, ".mission-board__inspector-toggle");
+    expect(toggle).toContain("inline-size: var(--mission-inspector-toggle-width)");
+    expect(toggle).toContain("inset-inline-end: var(--space-3)");
+    const zoom = cssRule(missionCss, ".mission-graph__zoom-controls");
+    expect(zoom).toMatch(/flex-wrap:\s*nowrap/);
+    expect(zoom).toMatch(/min-width:\s*max-content/);
+    expect(missionCss).toMatch(
+      /@container mission-board \(max-width: 720px\)[\s\S]*?\.mission-graph__zoom-controls\s*\{[^}]*flex:\s*1 1 100%/,
+    );
+    expect(missionCss).not.toMatch(/@media\s*\(max-width:\s*720px\)/);
+    expect(missionCss).toMatch(/justify-content:\s*safe center/);
+    expect(missionCss).toMatch(/\.mission-graph__surface\s*\{[^}]*position:\s*absolute/);
+    expect(missionCss).toMatch(/\.mission-graph__surface\s*\{[^}]*margin-inline:\s*0/);
+  });
 });

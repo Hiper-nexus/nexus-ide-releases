@@ -4,7 +4,8 @@
  * ACK pendente, sem linha em missionPanes) e o grafo animado desenhava só o
  * Orquestrador. Aqui a cadeia inteira — view de produção → snapshot → grafo
  * renderizado — prova que cada helper vira card, com cabo de Delegação, e
- * que quem já entregou e fechou o pane continua no grafo como Concluído.
+ * que quem já entregou e fechou o pane sai do grafo. O helper ainda aberto
+ * que já entregou continua, como Concluído.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -61,6 +62,7 @@ vi.mock('./mission-leadership-runtime', () => ({
 
 import { projectMissionEngineSnapshotView } from './mission-engine-production';
 import { projectMissionSnapshot } from './mission-snapshot';
+import { qualitativeProgress } from '../../renderer/lib/mission-progress-line';
 import {
   layoutMissionGraph,
   MissionGraph,
@@ -303,7 +305,7 @@ describe('F-777: o grafo da missão desenha o orquestrador, todos os helpers e o
     expect(byName.get('Revisão independente')?.category).toBe('reviewer');
   });
 
-  it('helper que entregou e fechou o pane continua no grafo como Concluído, com cabo de Entrega', () => {
+  it('helper que entregou e fechou o pane sai do grafo; o que ficou aberto continua Concluído', () => {
     liveTeam();
     const view = projectMissionEngineSnapshotView(
       scope,
@@ -325,21 +327,19 @@ describe('F-777: o grafo da missão desenha o orquestrador, todos os helpers e o
     const host = renderSnapshot(snapshot);
     dumpForScreenshot('graph-entregas', host);
 
-    expect(snapshot.agents).toHaveLength(10);
-    expect(snapshot.agents).toContainEqual(
-      expect.objectContaining({ id: 'session:s-closed', agentName: 'Antigravity (agy)', state: 'done' }),
-    );
+    expect(snapshot.agents).toHaveLength(9);
+    expect(snapshot.agents.find((agent) => agent.id === 'session:s-closed')).toBeUndefined();
     expect(snapshot.agents.find((agent) => agent.id === 'pane:pane-helper-2')?.state).toBe('done');
     expect(snapshot.agents.some((agent) => agent.id === 'session:s-stalled')).toBe(false);
     expect(
       host.querySelectorAll('.mission-agent-card[data-state="done"]'),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(
       host.querySelectorAll('.mission-graph__edges .mission-graph__edge[data-edge-kind="handoff"]'),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(
       host.querySelectorAll('.mission-graph__edges .mission-graph__edge[data-edge-kind="delegation"]'),
-    ).toHaveLength(9);
+    ).toHaveLength(8);
   });
 
   it('missão com squad: helper aberto fora do roster ganha card próprio em vez de sumir', () => {
@@ -377,6 +377,121 @@ describe('F-777: o grafo da missão desenha o orquestrador, todos os helpers e o
     expect(snapshot.edges).toEqual([
       expect.objectContaining({ kind: 'delegation', sourceAgentId: 'maestro', targetAgentId: 'pane:pane-extra' }),
     ]);
+  });
+
+  it('histórico morto não conta: a equipe e os cards são só os panes abertos agora', () => {
+    harness.resolveMissionLeader.mockReturnValue({
+      sessionId: 's-orch', paneId: 'pane-orch', source: 'durable', proven: true,
+    });
+    harness.sessionStates.set('s-orch', 'idle');
+    harness.sessionStates.set('s-live-a', 'busy');
+    harness.sessionStates.set('s-live-b', 'idle');
+    const dead = Array.from({ length: 70 }, (_, index) => ({
+      id: `row-dead-${index}`,
+      missionId,
+      paneId: `pane-dead-${index}`,
+      role: 'worker' as const,
+      adapterId: 'codex',
+      title: `Morto ${index}`,
+      agentName: `Morto ${index}`,
+      createdAt: 100 + index,
+    }));
+    for (const row of dead) harness.sessionStates.set(`s-${row.paneId}`, 'exited');
+    harness.paneSnapshots = [
+      { paneId: 'pane-orch', sessionId: 's-orch', kind: 'cli-agent', missionId, role: 'orchestrator', state: 'idle', adapterId: 'claude' },
+      { paneId: 'pane-live-a', sessionId: 's-live-a', kind: 'cli-agent', missionId, role: 'worker', state: 'busy', adapterId: 'glm', title: 'Vivo A' },
+      { paneId: 'pane-live-b', sessionId: 's-live-b', kind: 'cli-agent', missionId, role: 'worker', state: 'idle', adapterId: 'kimi', title: 'Vivo B' },
+      ...dead.map((row) => ({
+        paneId: row.paneId,
+        sessionId: `s-${row.paneId}`,
+        kind: 'cli-agent',
+        missionId,
+        role: 'worker',
+        state: 'exited',
+        adapterId: 'codex',
+      })),
+    ];
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission(),
+        panes: [
+          orchestratorRow,
+          { id: 'row-a', missionId, paneId: 'pane-live-a', role: 'worker', adapterId: 'glm', title: 'Vivo A', agentName: 'Vivo A', createdAt: 2 } as MissionPaneSpec,
+          { id: 'row-b', missionId, paneId: 'pane-live-b', role: 'worker', adapterId: 'kimi', title: 'Vivo B', agentName: 'Vivo B', createdAt: 3 } as MissionPaneSpec,
+          ...dead,
+        ] as MissionPaneSpec[],
+      }),
+      missionId,
+    );
+    const snapshot = projectMissionSnapshot(view);
+    expect(snapshot.agents.map((agent) => agent.id).sort()).toEqual([
+      'orchestrator',
+      'pane:pane-live-a',
+      'pane:pane-live-b',
+    ]);
+    expect(snapshot.agents.find((agent) => agent.id === 'orchestrator')).toMatchObject({
+      paneId: 'pane-orch',
+      terminalLive: true,
+    });
+    const host = renderSnapshot(snapshot);
+    expect(host.querySelectorAll('.mission-agent-card')).toHaveLength(3);
+    const progress = qualitativeProgress(snapshot.agents);
+    expect(progress?.total).toBe(2);
+    expect(progress?.line).not.toContain('(20)');
+    expect(progress?.line).not.toContain('(70)');
+  });
+
+  it('pane de outro projeto, de outra missão e solto sem missão não entram na equipe', () => {
+    liveTeam(1);
+    harness.sessionStates.set('s-foreign', 'busy');
+    harness.sessionStates.set('s-other', 'busy');
+    harness.sessionStates.set('s-loose', 'busy');
+    harness.paneSnapshots.push(
+      {
+        paneId: 'pane-foreign',
+        sessionId: 's-foreign',
+        kind: 'cli-agent',
+        missionId,
+        role: 'worker',
+        state: 'busy',
+        adapterId: 'codex',
+        title: 'Outro projeto',
+        scope: { ...scope, projectId: 'outro-projeto', checkoutId: 'outro-checkout' },
+      },
+      {
+        paneId: 'pane-other-mission',
+        sessionId: 's-other',
+        kind: 'cli-agent',
+        missionId: 'mission-outra-aba',
+        role: 'worker',
+        state: 'busy',
+        adapterId: 'glm',
+        title: 'Outra aba',
+      },
+      {
+        paneId: 'pane-loose',
+        sessionId: 's-loose',
+        kind: 'cli-agent',
+        role: 'worker',
+        state: 'busy',
+        adapterId: 'kimi',
+        title: 'Solto',
+      },
+    );
+    const snapshot = projectMissionSnapshot(
+      projectMissionEngineSnapshotView(
+        scope,
+        stores({ mission: mission(), panes: [orchestratorRow] }),
+        missionId,
+      ),
+    );
+    const ids = snapshot.agents.map((agent) => agent.id);
+    expect(ids).toEqual(expect.arrayContaining(['orchestrator', 'pane:pane-helper-0']));
+    expect(ids).not.toContain('pane:pane-foreign');
+    expect(ids).not.toContain('pane:pane-other-mission');
+    expect(ids).not.toContain('pane:pane-loose');
+    expect(snapshot.agents).toHaveLength(2);
   });
 });
 

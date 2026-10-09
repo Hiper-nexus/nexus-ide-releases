@@ -584,9 +584,9 @@ function fallbackAgentState(
 
 /**
  * F-777: sem arestas gravadas, o grafo nasce da equipe do quadro — Delegação
- * do orquestrador para cada agente (o roster já é só quem tem pane, entrega
- * ou papel no plano) e Entrega de volta de cada um que submeteu handoff. Os
- * pacotes no cabo seguem o estado de quem trabalha na ponta.
+ * do orquestrador para cada agente aberto agora e Entrega de volta de cada
+ * um que submeteu handoff. Os pacotes no cabo seguem o estado de quem
+ * trabalha na ponta.
  */
 function missionTeamEdges(
   view: ParsedView,

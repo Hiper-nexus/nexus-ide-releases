@@ -334,7 +334,19 @@ export function MissionGraph({
       <MissionGraphToolbar view={view} zoom={zoom} />
       <div className="mission-graph__viewport" ref={view.viewportRef} tabIndex={0} aria-label="Área do grafo" >
       <div className="mission-graph__scaled" style={{ width: width * zoom, height: height * zoom }}>
-      <div className="mission-graph__surface" style={{ ...surfaceStyle, transform: `scale(${zoom})` }}>
+      <div
+        className="mission-graph__surface"
+        style={{
+          ...surfaceStyle,
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          margin: 0,
+          marginInline: 0,
+          transformOrigin: 'top left',
+          transform: `scale(${zoom})`,
+        }}
+      >
         <svg
           className="mission-graph__edges"
           viewBox={`0 0 ${width} ${height}`}

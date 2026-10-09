@@ -112,30 +112,22 @@ beforeEach(() => {
 });
 
 describe('projectMissionEngineSnapshotView — pane/sessão do orquestrador vêm do mesmo par provado', () => {
-  it('keeps closed custom-role sessions separate and shows their persisted tool identity', () => {
+  it('entrega sem pane aberto não vira membro, mesmo com a ferramenta persistida no handoff', () => {
     const handoffs = ['session-a', 'session-b'].map((sessionId) => ({
       id: `handoff-${sessionId}`, missionId, sessionId, fromAgent: 'implementar utilitário de texto',
       status: 'success', createdAt: 1, routeAttribution: { adapterId: 'kimi', model: 'kimi-code/k3' },
     } as unknown as Handoff));
     const snapshot = projectMissionSnapshot(projectMissionEngineSnapshotView(scope,
       stores({ mission: mission(), panes: [], handoffs }), missionId));
-    expect(snapshot.agents).toHaveLength(2);
-    for (const [index, agent] of snapshot.agents.entries()) {
-      expect(agent).toMatchObject({
-        id: `session:${index === 0 ? 'session-a' : 'session-b'}`,
-        agentName: 'implementar utilitário de texto', cli: 'kimi', model: 'kimi-code/k3', state: 'done',
-      });
-      expect(agent).not.toHaveProperty('paneId');
-    }
+    expect(snapshot.agents).toEqual([]);
   });
 
-  it.each(['implementar resumo de durações', 'kimi'])('does not turn unproved role %s into a historical provider', (fromAgent) => {
+  it.each(['implementar resumo de durações', 'kimi'])('entrega sem pane não transforma o papel %s em provedor histórico', (fromAgent) => {
     const handoff = { id: 'handoff-old', missionId, sessionId: 'old-session', fromAgent,
       status: 'success', createdAt: 1 } as Handoff;
     const snapshot = projectMissionSnapshot(projectMissionEngineSnapshotView(scope,
       stores({ mission: mission(), panes: [], handoffs: [handoff] }), missionId));
-    expect(snapshot.agents[0]).toMatchObject({ agentName: fromAgent, cli: 'ferramenta não identificada', state: 'done' });
-    expect(snapshot.agents[0]).not.toHaveProperty('model');
+    expect(snapshot.agents).toEqual([]);
   });
 
   it('A e C concordam: pane e sessão do resolver aparecem juntos no snapshot', () => {
@@ -239,7 +231,7 @@ describe('Quadro fiel ao terminal (campo 23/09)', () => {
     expect(view.roster.map((agent) => agent.id)).toEqual(['maestro']);
   });
 
-  it('missão com plano continua mostrando a equipe planejada', () => {
+  it('missão com plano sem pane aberto não inventa a equipe planejada', () => {
     harness.squads.set(fullstack.id, fullstack);
     harness.resolveMissionLeader.mockReturnValue(null);
     const view = projectMissionEngineSnapshotView(
@@ -254,7 +246,7 @@ describe('Quadro fiel ao terminal (campo 23/09)', () => {
       missionId,
     );
 
-    expect(view.roster.map((agent) => agent.id)).toEqual(['maestro', 'frontend', 'qa']);
+    expect(view.roster.map((agent) => agent.id)).toEqual([]);
   });
 
   it('orquestrador reiniciado em outra CLI: o card mostra o pane vivo e o cabeçalho explica — sem fingir liderança', () => {
@@ -329,6 +321,71 @@ describe('Quadro fiel ao terminal (campo 23/09)', () => {
     expect(view.panes.map((entry) => entry.paneId)).toEqual(['pane-1']);
     expect(projectMissionSnapshot(view).stateReason?.code).not.toBe('leader-drift');
   });
+
+  it('pane aberto antigo do squad não perde o agentId para um pane fechado mais novo', () => {
+    harness.squads.set(fullstack.id, fullstack);
+    harness.resolveMissionLeader.mockReturnValue(null);
+    harness.sessionStates.set('s-old', 'busy');
+    harness.sessionStates.set('s-new', 'exited');
+    harness.paneSnapshots = [
+      { paneId: 'pane-old', sessionId: 's-old' },
+      { paneId: 'pane-new', sessionId: 's-new' },
+    ];
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({
+          squadId: fullstack.id,
+          intentContract: { goal: 'Entregar', intentVersion: 1 } as Mission['intentContract'],
+        }),
+        panes: [
+          pane({ paneId: 'pane-old', role: 'worker', agentName: 'Frontend', adapterId: 'codex' }),
+          pane({ paneId: 'pane-new', role: 'worker', agentName: 'Frontend', adapterId: 'codex' }),
+        ],
+      }),
+      missionId,
+    );
+
+    expect(view.roster.map((agent) => agent.id)).toEqual(['frontend']);
+    expect(view.panes.find((entry) => entry.agentId === 'frontend')).toMatchObject({
+      paneId: 'pane-old',
+      terminalLive: true,
+    });
+    expect(view.panes.some((entry) => entry.paneId === 'pane-new')).toBe(false);
+    expect(projectMissionSnapshot(view).agents).toEqual([
+      expect.objectContaining({ id: 'frontend', paneId: 'pane-old', terminalLive: true }),
+    ]);
+  });
+
+  it('dois panes vivos do mesmo agente: o mais novo continua no card', () => {
+    harness.squads.set(fullstack.id, fullstack);
+    harness.resolveMissionLeader.mockReturnValue(null);
+    harness.sessionStates.set('s-old', 'idle');
+    harness.sessionStates.set('s-new', 'busy');
+    harness.paneSnapshots = [
+      { paneId: 'pane-old', sessionId: 's-old' },
+      { paneId: 'pane-new', sessionId: 's-new' },
+    ];
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({ squadId: fullstack.id }),
+        panes: [
+          pane({ paneId: 'pane-old', role: 'worker', agentName: 'Frontend', adapterId: 'codex' }),
+          pane({ paneId: 'pane-new', role: 'worker', agentName: 'Frontend', adapterId: 'codex' }),
+        ],
+      }),
+      missionId,
+    );
+
+    expect(view.panes.find((entry) => entry.agentId === 'frontend')).toMatchObject({
+      paneId: 'pane-new',
+      terminalLive: true,
+    });
+    expect(projectMissionSnapshot(view).agents).toEqual([
+      expect.objectContaining({ id: 'frontend', paneId: 'pane-new', terminalLive: true }),
+    ]);
+  });
 });
 
 describe('missão da aba (sem squad): o quadro desenha os panes que a missão gravou', () => {
@@ -345,9 +402,7 @@ describe('missão da aba (sem squad): o quadro desenha os panes que a missão gr
       mission: mission(), panes: [pane({ paneId: 'pane-worker', role: 'worker', adapterId: 'codex' })],
     }), missionId);
     expect(view.panes[0]).toMatchObject({ terminalLive: false, state: 'queued' });
-    const agent = projectMissionSnapshot(view).agents[0]!;
-    expect(agent).toMatchObject({ terminalLive: false, state: 'queued' });
-    expect(agent).not.toHaveProperty('paneId');
+    expect(projectMissionSnapshot(view).agents).toEqual([]);
   });
 
   it('F-952: current semantic working survives a live idle transport', () => {
@@ -372,10 +427,13 @@ describe('missão da aba (sem squad): o quadro desenha os panes que a missão gr
     }), missionId);
     const live = ['busy', 'spawning', 'idle'].includes(sessionState ?? '');
     expect(view.panes[0]).toHaveProperty('terminalLive', live);
-    const agent = projectMissionSnapshot(view).agents[0]!;
-    expect(agent).toHaveProperty('terminalLive', live);
-    if (live) expect(agent.paneId).toBe('pane-worker');
-    else expect(agent).not.toHaveProperty('paneId');
+    const agents = projectMissionSnapshot(view).agents;
+    if (live) {
+      expect(agents[0]).toHaveProperty('terminalLive', true);
+      expect(agents[0]!.paneId).toBe('pane-worker');
+    } else {
+      expect(agents).toEqual([]);
+    }
   });
 
   function liveOrchestrator(paneId: string, sessionId: string, overrides: Record<string, unknown> = {}) {

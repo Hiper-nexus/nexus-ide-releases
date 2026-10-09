@@ -190,6 +190,42 @@ function sameScope(
   );
 }
 
+/**
+ * Membership do quadro compara o checkout de coordenação. A worktree de
+ * execução (root/device/inode) pode diferir sem o pane deixar de ser desta
+ * missão. Scope ausente é fixture legado e continua aceito.
+ */
+function coordinationScopeMatches(
+  paneScope: Readonly<ProjectExecutionScope>,
+  missionScope: Readonly<ProjectExecutionScope>,
+): boolean {
+  return (
+    paneScope.installationId === missionScope.installationId &&
+    paneScope.projectId === missionScope.projectId &&
+    paneScope.checkoutId === missionScope.checkoutId
+  );
+}
+
+/**
+ * Snapshot que pode reanimar um pane DESTA missão. Outro projeto, outra
+ * missão, shell/browser e pane solto (sem missionId e sem linha gravada)
+ * ficam de fora. Sem missionId, só o pane já gravado nesta missão passa.
+ */
+function paneSnapshotBelongsToMission(
+  snapshot: PaneSnapshot,
+  missionId: string,
+  missionScope: Readonly<ProjectExecutionScope>,
+  recordedPaneIds: ReadonlySet<string>,
+): boolean {
+  if (snapshot.kind && snapshot.kind !== "cli-agent") return false;
+  if (snapshot.scope && !coordinationScopeMatches(snapshot.scope, missionScope)) {
+    return false;
+  }
+  if (snapshot.missionId && snapshot.missionId !== missionId) return false;
+  if (!snapshot.missionId && !recordedPaneIds.has(snapshot.paneId)) return false;
+  return true;
+}
+
 /** Bounded printable value for mismatch diagnostics (ids/models/paths only). */
 function mismatchValue(value: unknown): string {
   if (value === undefined) return "undefined";
@@ -1102,14 +1138,33 @@ export function projectMissionEngineSnapshotView(
 ): ProjectMissionSnapshotView {
   const mission = stores.missions.get(missionId);
   if (!mission) throw new Error("mission not found");
-  const livePaneSnapshots = listPaneSnapshots();
+  const recordedPanes = stores.missionPanes.list(missionId);
+  const recordedPaneIds = new Set(
+    recordedPanes.flatMap((pane) => (pane.paneId ? [pane.paneId] : [])),
+  );
+  // Só o registry desta missão e deste checkout. Um snapshot estrangeiro no
+  // mesmo paneId não reanima linha morta, e pane de outro projeto não entra.
+  const livePaneSnapshots = listPaneSnapshots().filter((snapshot) =>
+    paneSnapshotBelongsToMission(snapshot, missionId, scope, recordedPaneIds),
+  );
+  const liveOpenPaneIds = new Set(
+    livePaneSnapshots.flatMap((snapshot) => {
+      const state = snapshot.sessionId
+        ? runtimeSessionState(snapshot.sessionId)
+        : null;
+      return state === "spawning" || state === "busy" || state === "idle"
+        ? [snapshot.paneId]
+        : [];
+    }),
+  );
   // F-777: o helper aberto por nexus_pane_spawn com ACK pendente nasce sem
   // linha em missionPanes — o quadro desenhava só o orquestrador numa missão
   // com dez helpers vivos. O pane vivo da missão conta como membro.
   const missionPanes = withUnrecordedLiveHelperPanes(
-    stores.missionPanes.list(missionId),
+    recordedPanes,
     livePaneSnapshots,
     missionId,
+    scope,
   );
   const worktrees = missionWorktreeViews(scope, mission.id);
   // Pane e sessão do orquestrador vêm do MESMO par (sessionId,paneId)
@@ -1183,7 +1238,12 @@ export function projectMissionEngineSnapshotView(
           ? [...agent.allowedSkills]
           : agent.allowedSkills,
       }))
-    : squadlessMissionPaneRoster(missionPanes, orchestratorPane, leaderDrift);
+    : squadlessMissionPaneRoster(
+        missionPanes,
+        orchestratorPane,
+        leaderDrift,
+        liveOpenPaneIds,
+      );
   const rosterById = new Map(roster.map((agent) => [agent.id, agent] as const));
   const rosterByName = new Map(
     roster.map((agent) => [agent.agentName, agent] as const),
@@ -1268,10 +1328,29 @@ export function projectMissionEngineSnapshotView(
   const deliveryByAgentId = new Map<string, MissionHandoffDelivery>();
   const panes: ProjectMissionSnapshotView["panes"] = [];
   const claimedAgentIds = new Set<string>();
-  // Mais NOVO primeiro: após uma retomada existem linhas antigas de panes
-  // mortos para o mesmo agente, e o primeiro claim vence — iterar do mais
-  // velho fazia o cartão do grafo mostrar "stopped" com o processo novo vivo.
-  for (const pane of [...missionPanes].reverse()) {
+  const paneSessionIsLive = (paneId: string | undefined): boolean => {
+    if (!paneId) return false;
+    const paneSessionId = sessionByPaneId.get(paneId) ?? null;
+    const liveSessionState = paneSessionId
+      ? runtimeSessionState(paneSessionId)
+      : null;
+    return (
+      liveSessionState === "busy" ||
+      liveSessionState === "spawning" ||
+      liveSessionState === "idle"
+    );
+  };
+  // Mais novo primeiro dentro do mesmo sinal de vida: uma retomada deixa
+  // linha morta do mesmo agente, e o processo novo precisa vencer. Um pane
+  // fechado mais novo não reserva o agentId do squad na frente de um pane
+  // aberto mais antigo — senão o filtro do quadro apaga quem ainda está lá.
+  const panesNewestFirst = [...missionPanes].reverse();
+  panesNewestFirst.sort((left, right) => {
+    const leftLive = paneSessionIsLive(left.paneId) ? 0 : 1;
+    const rightLive = paneSessionIsLive(right.paneId) ? 0 : 1;
+    return leftLive - rightLive;
+  });
+  for (const pane of panesNewestFirst) {
     if (!pane.paneId) continue;
     let agentId: string | undefined;
     if (!squad) {
@@ -1360,9 +1439,8 @@ export function projectMissionEngineSnapshotView(
     });
   }
 
-  // F-777: helper que entregou e já fechou o pane continua no grafo, com o
-  // estado da entrega. A sessão é atribuída antes ao agente planejado que a
-  // despachou; só a que sobra vira card próprio.
+  // Entrega cujo pane já fechou não volta como membro. Se a sessão ainda
+  // está num agente com pane aberto, o estado da entrega fica nesse card.
   for (const delivery of deliveries.unclaimed()) {
     const dispatch = dispatches.find(
       (candidate) =>
@@ -1372,14 +1450,8 @@ export function projectMissionEngineSnapshotView(
           (delivery.workerIncarnationId !== undefined &&
             candidate.workerIncarnationId === delivery.workerIncarnationId)),
     );
-    let agentId = dispatch?.agentRef;
-    if (!agentId) {
-      if (roster.length >= 64) continue;
-      agentId = `session:${delivery.sessionId}`;
-      const helper = closedHelperAgent(agentId, delivery.fromAgent, delivery.routeAttribution);
-      roster.push(helper);
-      rosterById.set(agentId, helper);
-    }
+    const agentId = dispatch?.agentRef;
+    if (!agentId) continue;
     claimedAgentIds.add(agentId);
     if (!deliveryByAgentId.has(agentId)) deliveryByAgentId.set(agentId, delivery);
   }
@@ -1390,18 +1462,15 @@ export function projectMissionEngineSnapshotView(
     sessionId,
   );
 
-  // Missão sem plano (aberta pelo pane do operador via nexus_mission_create)
-  // herda o squad padrão só para achar agentes por nome — não é equipe
-  // planejada. Desenhar os oito papéis "Na fila" prometia panes que ninguém
-  // vai abrir. O quadro mostra o orquestrador e quem de fato tem pane.
-  const unplanned =
-    !mission.intentContract && taskAgentById.size === 0 && dispatches.length === 0;
-  const boardRoster = unplanned
-    ? roster.filter(
-        (agent) =>
-          agent.category === "orchestrator" || claimedAgentIds.has(agent.id),
-      )
-    : roster;
+  // O quadro é quem está aberto agora: sessão spawning|busy|idle nesta
+  // missão. Quem fechou, entrega sem pane, assento de plano sem pane e
+  // pane de outro projeto ficam de fora. Idle do Maestro no prompt é vivo.
+  const liveAgentIds = new Set(
+    panes
+      .filter((pane) => pane.terminalLive === true)
+      .map((pane) => pane.agentId),
+  );
+  const boardRoster = roster.filter((agent) => liveAgentIds.has(agent.id));
 
   return {
     mission: {
@@ -1483,12 +1552,14 @@ function driftedOrchestratorSession(
  * com os dados do pane do líder provado (ou do líder à deriva, senão o spec
  * de orquestrador mais novo) e um executor por spec de worker, dedupado por
  * paneId — helpers dividem agentName, então a identidade do card é o pane.
- * Mais novo primeiro, máximo 64 (teto do schema do snapshot).
+ * Panes com sessão aberta entram antes do teto de 64: histórico morto mais
+ * novo não expulsa quem está no terminal agora.
  */
 function squadlessMissionPaneRoster(
   missionPanes: readonly MissionPaneSpec[],
   orchestratorPane: MissionPaneSpec | null,
   leaderDrift: { paneId: string } | null,
+  livePaneIds: ReadonlySet<string> = new Set(),
 ): SquadAgent[] {
   const driftSpec = leaderDrift
     ? (missionPanes.find((pane) => pane.paneId === leaderDrift.paneId) ?? null)
@@ -1509,12 +1580,21 @@ function squadlessMissionPaneRoster(
     });
   }
   const seenPaneIds = new Set<string>();
+  const workers: MissionPaneSpec[] = [];
   for (const spec of [...missionPanes].reverse()) {
     if (!spec.paneId || seenPaneIds.has(spec.paneId)) continue;
     seenPaneIds.add(spec.paneId);
     if (spec.role !== "worker" || spec.paneId === orchestratorSpec?.paneId) {
       continue;
     }
+    workers.push(spec);
+  }
+  workers.sort((left, right) => {
+    const leftLive = left.paneId && livePaneIds.has(left.paneId) ? 0 : 1;
+    const rightLive = right.paneId && livePaneIds.has(right.paneId) ? 0 : 1;
+    return leftLive - rightLive;
+  });
+  for (const spec of workers) {
     agents.push(missionHelperAgent(spec, `pane:${spec.paneId}`));
     if (agents.length >= 64) break;
   }
@@ -1555,33 +1635,17 @@ function missionHelperAgent(
   };
 }
 
-/** Closed helper identity comes only from Main's persisted handoff attribution. */
-function closedHelperAgent(
-  id: string,
-  fromAgent: string | undefined,
-  attribution: Handoff["routeAttribution"],
-): SquadAgent {
-  const label = helperLabel(fromAgent);
-  const adapterId = helperLabel(attribution?.adapterId, 64);
-  const model = adapterId ? helperLabel(attribution?.model, 128) : "";
-  return {
-    id,
-    agentName: label || "Helper",
-    category: missionHelperCategory({ agentName: label }),
-    cli: adapterId || "Ferramenta não identificada",
-    ...(model ? { model } : {}),
-  };
-}
-
 /**
  * F-777: pane vivo da missão que não tem linha em missionPanes (spawn com ACK
  * pendente não chega a `missionPanes.record`) entra como membro sintético —
- * só leitura, nunca persistido nem usado como autoridade.
+ * só leitura, nunca persistido nem usado como autoridade. Outro checkout,
+ * outra missão ou pane solto sem missionId não entra.
  */
 function withUnrecordedLiveHelperPanes(
   recorded: readonly MissionPaneSpec[],
   snapshots: readonly PaneSnapshot[],
   missionId: string,
+  missionScope: Readonly<ProjectExecutionScope>,
 ): MissionPaneSpec[] {
   const recordedPaneIds = new Set(recorded.map((pane) => pane.paneId));
   const unrecorded = snapshots
@@ -1591,7 +1655,9 @@ function withUnrecordedLiveHelperPanes(
         snapshot.kind === "cli-agent" &&
         snapshot.role === "worker" &&
         Boolean(snapshot.adapterId) &&
-        !recordedPaneIds.has(snapshot.paneId),
+        !recordedPaneIds.has(snapshot.paneId) &&
+        (snapshot.scope == null ||
+          coordinationScopeMatches(snapshot.scope, missionScope)),
     )
     .map(
       (snapshot): MissionPaneSpec => ({
@@ -1617,8 +1683,6 @@ function withUnrecordedLiveHelperPanes(
 interface MissionHandoffDelivery {
   readonly sessionId: string;
   readonly workerIncarnationId?: string;
-  readonly fromAgent?: string;
-  readonly routeAttribution?: Handoff["routeAttribution"];
   readonly state: "done" | "failed" | "blocked";
 }
 
@@ -1657,8 +1721,6 @@ function missionHandoffDeliveries(
       ...(handoff.workerIncarnationId
         ? { workerIncarnationId: handoff.workerIncarnationId }
         : {}),
-      ...(handoff.fromAgent ? { fromAgent: handoff.fromAgent } : {}),
-      ...(handoff.routeAttribution ? { routeAttribution: handoff.routeAttribution } : {}),
       state,
     });
   }
