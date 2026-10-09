@@ -338,16 +338,19 @@ optional bounded hold duration, cancellation and document replacement. Hosted
 Xvfb smoke uses an isolated temporary fixture and an explicit test-only sandbox
 opt-in; production packaging never installs a no-sandbox launcher.
 
-## Donos externos do reporte de problemas
+## Donos do reporte de problemas no monorepo
 
 O endpoint de produção `api.nexuside.app/v1/bug-reports` pertence ao Worker
-`nexus-cloud-api` (repositório separado): `src/bugs/routes.ts`, `schemas.ts`,
-`build-report.ts` e `store.ts`. Ele exige a sessão nativa, limita o corpo a
-64 KB e aplica cota atômica por conta. O `server/` Express deste monorepo
-não é o dono desse endpoint. O site/admin é do repositório `nexus-site`.
-A revisão final confirmou os contratos locais e o GET protegido `/mine`
+`nexus-cloud-api`, no projeto `cloud-api/` deste monorepo:
+`cloud-api/src/bugs/routes.ts`, `schemas.ts`, `build-report.ts` e `store.ts`.
+Ele exige a sessão nativa, limita o corpo a 64 KB e aplica cota atômica por conta.
+O `server/` Express não é o dono desse endpoint. O site/admin vive em `site/`
+(Worker `nexus-community-site`). Desde 02/10/2026, ambos estão neste repositório,
+com histórico preservado, mas continuam projetos npm independentes, com testes,
+dependências e deploy próprios; não são workspaces npm nem entram no pacote do app.
+A revisão original confirmou os contratos locais e o GET protegido `/mine`
 retornou 401 sem credencial; isso não constitui envio de relato nem teste
-de administração em produção. Nenhuma dessas árvores externas foi alterada.
+de administração em produção. Esta atualização documental não executa deploy.
 
 ## Bloqueio de missão preserva o coordenador (F-253)
 

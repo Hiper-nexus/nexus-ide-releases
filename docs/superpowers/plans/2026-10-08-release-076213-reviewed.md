@@ -134,9 +134,11 @@ The user also requested a persistent incoming-source monitor and invoked
   including batched/deduped page ACK, consent, cost receipts, quota/CAS/pins,
   live board and explicit Shot target.
 - [x] Merge ece/4ef/c747/64a normal ancestry and repair real resume outcomes/authority, safe Mermaid/obsolete editor, Tiptap newline/controlled lifecycle, scoped CDP factory and failed attach cleanup, cross-manager transaction identity, audit caption and canonical Tiptap style/contrast findings.
-- [ ] Independently review and integrate later8e correction without reverting local repairs or version213. Repair any newly exposed transport authorization/command confinement/navigation lifetime and lossless path/markdown behavior before declaring readiness.
-- [ ] Review adapted/reference code against pinned raw T3 sources and update
-  every applicable header, provenance hash/notice. Correct overstated docs.
+- [x] Independently review and integrate later8e correction without reverting local repairs or version213. Repair newly exposed transport authorization/command confinement/navigation lifetime and lossless path/markdown behavior; scoped approvals and proof limits are preserved below.
+- [x] Review adapted/reference code against pinned raw T3 sources and update
+  applicable headers, provenance hashes/notices. Final sourcewriter snapshot2ee2
+  records149entries/124unique paths with valid JSON and matching current hashes;
+  original upstream pins/history remain intact.
 - [ ] Senior independent review of the FINAL combined source, with no known
   relevant integration defect left. Run full regression, focused consumers and
   real Main/PTY mission E2E anew; old61014 test results are baseline evidence only.
@@ -195,3 +197,49 @@ The existing CDP closure and all prior guards remain mandatory.
 The monitor configuration is armed and verified at600seconds under the active
 coordinator. Explicit first-publication handoff is still pending; it cannot
 launch a second writer during this integration or candidate validation.
+
+## Final repaired source handoff and metadata (09/10)
+
+The included PR126 frontier is immutable
+`ad517bfb633313af9b34cd9ab69c4ae946d14222`, preserved through normal ancestry
+and locally repaired. Sourcewriter handed back clean
+`2ee2cad832bc890a49ed9bfc46df4a45fa4c9004`, no owned process/service/source/index
+writer active. Its fresh23files/494focused tests, TSC0/sinks0/diff0 and legal
+149records/124paths are scoped evidence, not the final combined release gate.
+
+Independent scoped closeouts now cover F1080–84/88 at the repairedf8 frontier,
+F1089 cursor-session binding, F1090 sticky shutdown admission, F1091 private
+Main PTY channel/session identity and lifetime, F1092 bounded production
+retention, F1094 local failure isolation with global cancellation preserved,
+and F1093 owned bootstrap/first-wave ordering at
+`fead91eeafb6cd6017df6bfa81482ce64d59082e`. These close known source findings;
+full app/server/Main-PTY, whole-source approval, signed candidate/runtime/soak,
+visual inspection and publication are still pending.
+
+Production scope is now logical safe dispatch receipts with actual durable event
+sequence, plus instrumented terminal_run/bg_run owned-tree physical obligations.
+Logical ACK never certifies physical exit; unknown work blocks completion, no
+raw output cache or automatic uncertain-mutation replay. Maintenance is bounded
+per scope/pass (500 eligible settled effect rows,100 guarded generated receipts),
+keeps explicit/unknown bindings and stops on global cancellation/registry loss.
+First-wave work follows confirmed setup/kickoff and failed bootstrap CAS only
+terminalizes its captured owned attempt; the operator/newer leader remain safe.
+Raw CDP stays closed; Tiptap/Mermaid/history/resource/WSL remain accurately
+scoped foundations rather than announced connected product parity.
+
+Fresh all39openPR/main/private/public inventory at10:19UTC found main still
+protected at eab826a5, latest private/publicv0.76.212 and plannedv0.76.213 absent
+locally and remotely. PR126 has a later38321a81 head. Under Root's
+incoming-lot-policy.json, later feature additions are queued for the already
+requested monitor's next batch; Root inspects later material bugs in this
+candidate before publication. The binary will claim only its reviewed selected
+frontier and repairs, never unbuilt incoming commits. No tag/source freeze yet.
+
+The final executor now owns metadata/index and the single heavy lane. Source
+checks run against the exact clean metadata commit with immutable SHA/tree
+checks. Tag/build await both independent whole-source approval and all combined
+checks. Public macOS publication remains one guarded transaction after all
+candidate, additional signed5minute soak/runtime and actual PNG inspection.
+The monitor stays coordinator.active=true until Root's verified-public/no-owned-
+writer closeout. No Windows/Linux artifact, paid Luna call, real microphone,
+installed upgrade or full T3 parity proof is inferred.

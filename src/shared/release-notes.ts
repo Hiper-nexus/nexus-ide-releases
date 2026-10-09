@@ -10264,6 +10264,10 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Retomada com resultado real', detail: 'O Nexus distingue um pedido de retomada do religamento confirmado, revalida a autoridade após esperas e encaminha a conclusão ao líder atual da missão.' },
     { title: 'Entrega assentada antes de concluir', detail: 'Uma entrega ainda na fila impede a conclusão da missão, mesmo após muitas mensagens do Maestro. O diagnóstico usa o prazo real da tentativa.' },
+    { title: 'Comandos pendentes seguram a conclusão', detail: 'As ferramentas de terminal e segundo plano mantêm a pendência até a saída comprovada do comando e seus subprocessos. Reiniciar o app sem essa prova mantém a pendência.' },
+    { title: 'Fechamento recusa novas ferramentas', detail: 'Ao iniciar o fechamento, o Nexus recusa novas ferramentas. Pedidos que aguardam confirmação não recebem autorização depois desse ponto.' },
+    { title: 'Reenvios ligados ao canal do terminal', detail: 'Reenviar a mesma chamada na mesma sessão e canal do terminal não repete seu efeito. Encerrar o canal impede chamadas que ainda aguardam despacho.' },
+    { title: 'Helpers após a preparação do coordenador', detail: 'Os helpers só começam após a preparação confirmada do coordenador. Uma falha não encerra o pane do operador nem substitui uma liderança mais recente.' },
     { title: 'Decisões conservadoras e custo registrado', detail: 'Juntos preserva as exigências de verificação e memória; o uso conhecido continua registrado em recusa, falha parcial ou alteração de configuração, com o nome do conjunto no histórico.' },
     { title: 'Conta escolhida na missão', detail: 'O pane aberto na missão recebe a conta selecionada, e o Main confere a identidade da sessão antes de confirmar a escolha.' },
     { title: 'Limite confirmado por cota medida', detail: 'Uma janela recente com cota esgotada pode confirmar o limite da conta. Texto de terminal e cota sem resposta continuam sem provocar troca imediata.' },

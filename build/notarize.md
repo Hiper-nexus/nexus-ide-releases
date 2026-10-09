@@ -312,22 +312,20 @@ Decisão operacional (0.20.4):
   `hooks=` da recusa (se recusar) e provar o elo quebrado. Só então remover o
   skip.
 
-## Assinatura e prontidão Windows
+## Prontidão Windows — canal independente
 
-CodeSignTool/eSigner 1.3.3 continua fora do fluxo autorizado: senha e TOTP em
-argumentos expõem segredos na lista de processos. A alternativa implementada é
-CKA pré-configurado no Windows Certificate Store, selecionado apenas pelo
-thumbprint público. Consulte [o fluxo Windows](../docs/WINDOWS-PREVIEW-AND-SIGNING.md)
-e [a publicação conjunta](../docs/RELEASE.md).
+Desde 05/10/2026, `windows-release.yml` gera a candidata Windows x64 sem
+Authenticode em `windows-latest`. O recibo schemaVersion 2 declara
+`signing: none` e vincula o hash de cada executável. Não religue SSL.com
+CodeSignTool/eSigner, CKA, `NEXUS_WINDOWS_RELEASE_SIGNING` nem
+`WINDOWS_CERTIFICATE_SHA1`: o fluxo anterior foi removido por decisão do
+operador. A versão assinada é a da Microsoft Store (MSIX).
 
-O worker protegido, a autenticação CKA e a proteção de main ainda precisam ser
-provisionados; nenhuma credencial foi instalada por essa implementação. O
-candidato privado pode ser construído e validado com assinatura e smoke. Para
-publicação, o recibo autenticado também precisa conter prova real de instalação
-e upgrade assinado N→N+1, vinculada à versão, commit, run e hashes dos três
-artefatos. O coletor atual registra `installedUpgradeVerified=false`, portanto
-**não autoriza publicação pública**, mesmo quando assinatura e smoke passarem.
-Não transforme esse campo em true sem implementar e executar o teste real.
+O canal Windows tem seus próprios gates e publicador; não depende da candidata
+macOS. Consulte [o canal Windows independente](../docs/RELEASE.md#canal-windows-independente)
+para o contrato de publicação e a prova de instalação/upgrade N→N+1.
+`installedUpgradeVerified` só pode ser true após o teste real vinculado à versão,
+commit, run e hashes dos artefatos. Smoke do pacote não substitui essa prova.
 
 ## Canal de atualização
 

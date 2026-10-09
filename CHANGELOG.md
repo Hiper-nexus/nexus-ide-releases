@@ -26,6 +26,33 @@
   e religamento confirmado. Autoridade é conferida novamente após esperas; a
   orientação de conclusão aponta ao líder atual. Entregas de workers na fila
   continuam impedindo a conclusão, mesmo após muitas mensagens do Maestro.
+- **Recibos e saída dos comandos:** o Main registra metadados lógicos saneados,
+  sem guardar stdout, stderr ou resultados arbitrários para replay. As ferramentas
+  `terminal_run` e `bg_run` mantêm obrigação física até a saída comprovada da
+  árvore de processos; timeout, ACK de background e reinício sem prova não
+  autorizam concluir nem repetir uma mutação incerta. Recibo e outbox assentam
+  na mesma conexão e escopo, com sequência durável real.
+- **Cursor ligado à sessão:** uma listagem de handoffs filtrada por pane só
+  continua com a mesma sessão viva; fechamento ou respawn recusam o cursor
+  antes da consulta e da marcação como visto.
+- **Fechamento sela a admissão:** o selo existente do Main recusa novas
+  ferramentas e invalida chamadas na fila ou aguardando confirmação, antes de
+  conceder autorização ou iniciar um novo efeito. Isso não reverte efeitos já
+  iniciados; a prova de saída dos comandos continua sendo registrada.
+- **Canal PTY privado:** sessão e canal vêm do Main; reenvio com a mesma
+  identidade e argumentos executa uma vez e informa resultado indisponível,
+  sem recuperar saída antiga. Fechar o canal cancela chamadas ainda aguardando
+  despacho; sessão, argumentos ou autoridade alterados não reutilizam o recibo.
+- **Manutenção limitada por escopo:** cada passagem remove até 500 efeitos antigos
+  já assentados e até 100 recibos gerados elegíveis. Operações pendentes,
+  desconhecidas e vínculos explícitos ficam preservados. Falha local conserva o
+  escopo e permite continuar nos saudáveis; cancelamento, substituição ou descarte
+  do registry interrompem a passagem em vez de serem absorvidos como falha local.
+- **Preparação do coordenador:** a primeira onda só começa após setup e kickoff
+  confirmados. Falha de bootstrap terminaliza por CAS apenas a tentativa que
+  ainda possui o estado, intenção e sessão capturados. Liderança sucessora,
+  encerramento pelo operador e pane adotado ficam preservados; cleanup de pane
+  novo exige a sessão física exata e não inventa prova de saída.
 - **Preview protegido:** o acesso experimental CDP foi fechado por contornar as
   proteções de dados e imagens. O preview estático e os comandos governados de
   navegador continuam disponíveis.
