@@ -38,31 +38,36 @@ const MARK_TOOLS: ReadonlyArray<{
   { mark: 'code', label: '<>', title: 'Código inline', shortcut: 'Mod-e' },
 ];
 
-/** spans → texto simples + marcas para o doc JSON do ProseMirror. */
-function spansToTiptapContent(spans: readonly RichTextSpan[]) {
+function spanToTiptapText(span: RichTextSpan) {
+  return {
+    type: 'text' as const,
+    text: span.text,
+    ...(span.marks.length > 0
+      ? {
+          marks: span.marks.map((mark) => ({
+            type:
+              mark === 'strike' ? 'strike' : mark === 'code' ? 'code' : mark,
+          })),
+        }
+      : {}),
+  };
+}
+
+/**
+ * Uma linha vira um parágrafo. `\n` no texto do ProseMirror some no mount,
+ * então a quebra tem de ser bloco, inclusive a linha em branco.
+ */
+export function markdownToTiptapContent(markdown: string) {
   return {
     type: 'doc' as const,
-    content: [
-      {
-        type: 'paragraph' as const,
-        content: spans.map((span) => ({
-          type: 'text' as const,
-          text: span.text,
-          ...(span.marks.length > 0
-            ? {
-                marks: span.marks.map((mark) => ({
-                  type:
-                    mark === 'strike'
-                      ? 'strike'
-                      : mark === 'code'
-                        ? 'code'
-                        : mark,
-                })),
-              }
-            : {}),
-        })),
-      },
-    ],
+    content: markdown.split('\n').map((line) => {
+      const content = parseInlineMarkdown(line)
+        .filter((span) => span.text.length > 0)
+        .map(spanToTiptapText);
+      return content.length > 0
+        ? { type: 'paragraph' as const, content }
+        : { type: 'paragraph' as const };
+    }),
   };
 }
 
@@ -105,7 +110,7 @@ export function ComposerTiptapEditor({
   editable = true,
 }: ComposerTiptapEditorProps) {
   const initialContent = useMemo(
-    () => spansToTiptapContent(parseInlineMarkdown(value)),
+    () => markdownToTiptapContent(value),
     // Só o valor inicial monta o doc.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
