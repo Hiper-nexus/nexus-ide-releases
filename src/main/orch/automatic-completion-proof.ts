@@ -7,6 +7,7 @@ import {
   type SettlementEffectView,
 } from './effect-settlement-gate';
 import { EffectOutboxStore } from './effect-outbox';
+import { createScopedHandoffStore } from './handoff-store';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 
 export interface AutomaticCompletionProof {
@@ -30,8 +31,10 @@ export function automaticCompletionEffectsSettled(
 }
 
 /**
- * ORC-02 no estado durável: lê o outbox do escopo e decide se a conclusão
- * pode ser marcada settled. Usado pelo caminho de conclusão antes de fechar.
+ * ORC-02 no estado durável: lê o outbox do escopo e o ledger de handoff.
+ * `handoff.deliver` não entra em effect_outbox (o enum não aceita o tipo);
+ * a entrega real fica na fila do handoff. Usado pelo caminho de conclusão
+ * antes de fechar.
  */
 export function assertCompletionEffectsSettled(
   runtimeManager: ProjectRuntimeManager,
@@ -43,12 +46,23 @@ export function assertCompletionEffectsSettled(
     ...outbox.listByStatus('pending', 200),
     ...outbox.listByStatus('running', 200),
   ];
+  const queuedDeliveries = createScopedHandoffStore(
+    runtimeManager,
+    scope,
+  ).listQueuedDeliveries(threadId);
   const gate = canMarkTurnSettled(
-    open.map((entry) => ({
-      type: entry.type,
-      status: entry.status,
-      threadId: entry.threadId,
-    })),
+    [
+      ...open.map((entry) => ({
+        type: entry.type,
+        status: entry.status,
+        threadId: entry.threadId,
+      })),
+      ...queuedDeliveries.map((delivery) => ({
+        type: 'handoff.deliver',
+        status: 'pending' as const,
+        threadId: delivery.missionId,
+      })),
+    ],
     threadId,
   );
   if (!gate.settled) {

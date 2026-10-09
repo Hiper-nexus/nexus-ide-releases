@@ -19,6 +19,8 @@ import {
   type TaskDispatchStore,
 } from "./task-dispatch-store";
 import { createScopedTodoStore, type ScopedTodoStore } from "./todo-store";
+import { isUnreconciledEffectOutbox } from "./effect-outbox";
+import { reconcileProviderRuntimeAtBoot } from "./provider-runtime-recovery";
 
 export type ProjectDomainStoreName =
   | "missions"
@@ -98,8 +100,15 @@ export class ProjectDomainStoreRegistry {
       if (!sameProjectExecutionScope(existing.suite.scope, scope)) {
         throw new Error("project store scope identity collision");
       }
+      if (isUnreconciledEffectOutbox(scope)) {
+        this.#reconcileEffectOutboxBeforeDrain(scope);
+      }
       return existing.suite;
     }
+    // ORC-06: o cache nasce vazio. Um escopo que abre depois do boot não
+    // passou por recoverEffectOutboxesAtBoot. Reconcilia ANTES de publicar
+    // o suite — o dreno só enxerga listSuites().
+    this.#reconcileEffectOutboxBeforeDrain(scope);
     const immutableScope = Object.freeze({ ...scope });
     const suite: ProjectDomainStoreSuite = Object.freeze({
       scope: immutableScope,
@@ -182,6 +191,21 @@ export class ProjectDomainStoreRegistry {
 
   #emit(scope: ProjectExecutionScope, store: ProjectDomainStoreName): void {
     for (const listener of [...this.#listeners]) listener(scope, store);
+  }
+
+  #reconcileEffectOutboxBeforeDrain(scope: ProjectExecutionScope): void {
+    try {
+      reconcileProviderRuntimeAtBoot({
+        scope,
+        runtimeManager: this.#runtimeManager,
+      });
+    } catch (error) {
+      console.warn(
+        `[effect-outbox] scope reconcile failed on registration ` +
+          `(project=${scope.projectId}, checkout=${scope.checkoutId}):`,
+        error,
+      );
+    }
   }
 }
 

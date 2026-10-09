@@ -30,7 +30,12 @@ import { MAX_HANDOFF_DELIVERY_ATTEMPTS } from "./handoff-delivery-policy";
 import { classifySessionLiveness } from "../pty/session-liveness";
 import { getSessionState } from "../pty/pty-manager";
 import type { ProjectExecutionScope } from "../../shared/project-identity-types";
-import { selectCursorPage, InvalidCursorError } from "../../shared/cursor-pagination";
+import {
+  clampPageSize,
+  decodeCursor,
+  encodeCursor,
+  InvalidCursorError,
+} from "../../shared/cursor-pagination";
 import {
   scheduleAutoCloseAfterHandoff,
   assertAutoCloseReportPreserved,
@@ -898,34 +903,58 @@ const handoffListTool: McpToolDef = {
       ids: rawIds,
       panes: rawPanes,
     });
-    const rows = getProjectDomainStores(ctx.scope).handoffs.list({
+    const listFilter = {
       missionId,
       includeDelivered,
       ...(paneSessionIds !== undefined && paneSessionIds.length > 0
         ? { sessionIds: paneSessionIds }
         : {}),
       ...(rawIds.length > 0 ? { ids: rawIds } : {}),
-    });
+    };
+    const handoffStore = getProjectDomainStores(ctx.scope).handoffs;
     // A página é escolhida ANTES do recibo. Cursor inválido não reconhece
     // nada; um limit menor que a trilha só reconhece as linhas devolvidas.
-    let returned = rows;
-    let cursorPage: ReturnType<typeof selectCursorPage<ScopedHandoff>> | null =
-      null;
+    // Com limit/cursor o predicado e o LIMIT ficam no SQL: a trilha inteira,
+    // artifacts inclusos, não é materializada.
+    let returned: ScopedHandoff[];
+    let nextCursor: string | null = null;
+    let hasMoreHistory = false;
     const wantCursorMode =
       args.cursor !== undefined || args.limit !== undefined;
     if (wantCursorMode) {
       try {
-        cursorPage = selectCursorPage(rows, {
-          limit: args.limit as number | undefined,
-          cursor: (args.cursor as string | undefined) ?? null,
-          keyOf: (row) => row.createdAt ?? 0,
-          idOf: (row) => row.id,
-          // A trilha é created_at ASC, id ASC. A página filtrada pode ter
-          // uma linha só — a direção não pode ser inferida dela.
-          order: "asc",
-          slice: cursorSlice,
+        let after: { createdAt: number; id: string } | undefined;
+        if (typeof args.cursor === "string") {
+          const decoded = decodeCursor(args.cursor);
+          if (decoded.s !== cursorSlice) {
+            throw new InvalidCursorError("cursor does not match this slice");
+          }
+          if (
+            typeof decoded.k !== "number" ||
+            !Number.isInteger(decoded.k) ||
+            decoded.k < 0
+          ) {
+            throw new InvalidCursorError("cursor key is not a handoff timestamp");
+          }
+          after = { createdAt: decoded.k, id: decoded.i };
+        }
+        const pageLimit = clampPageSize(args.limit);
+        const window = handoffStore.listCursorPage({
+          ...listFilter,
+          ...(after ? { after } : {}),
+          limit: pageLimit + 1,
         });
-        returned = [...cursorPage.items];
+        hasMoreHistory = window.length > pageLimit;
+        returned = hasMoreHistory ? window.slice(0, pageLimit) : [...window];
+        const last = returned[returned.length - 1];
+        nextCursor =
+          hasMoreHistory && last
+            ? encodeCursor({
+                key: last.createdAt ?? 0,
+                id: last.id,
+                slice: cursorSlice,
+              })
+            : null;
       } catch (error) {
         if (error instanceof InvalidCursorError) {
           throw new Error(
@@ -935,12 +964,16 @@ const handoffListTool: McpToolDef = {
         }
         throw error;
       }
+    } else {
+      returned = handoffStore.list(listFilter);
     }
     // Recência é da trilha inteira, não da página. Com limit <= 5, tratar
     // as últimas linhas da página como "as 5 mais novas" devolveria artifact
-    // completo de histórico.
+    // completo de histórico. No modo cursor isso é um SELECT de ids, sem artifacts.
     const recentIds = new Set(
-      rows.slice(Math.max(0, rows.length - 5)).map((row) => row.id),
+      wantCursorMode
+        ? handoffStore.listRecentIds(listFilter, 5)
+        : returned.slice(Math.max(0, returned.length - 5)).map((row) => row.id),
     );
     // List = recibo só de `submitted` (já colado no PTY) que esta resposta
     // devolve. O diagnóstico sai DEPOIS: uma linha reconhecida nesta chamada
@@ -981,11 +1014,11 @@ const handoffListTool: McpToolDef = {
       recentIds,
       acknowledgedIds,
     );
-    if (cursorPage) {
+    if (wantCursorMode) {
       return {
         items: visible,
-        nextCursor: cursorPage.nextCursor,
-        hasMoreHistory: cursorPage.hasMoreHistory,
+        nextCursor,
+        hasMoreHistory,
       };
     }
     return visible;

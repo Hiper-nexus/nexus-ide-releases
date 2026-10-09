@@ -223,6 +223,35 @@ function listTool() {
   return tool;
 }
 
+function mockedHandoffRows(): Array<{ id: string; createdAt?: number }> {
+  return mocks.listHandoffs() as Array<{ id: string; createdAt?: number }>;
+}
+
+function mockedListCursorPage(filter: {
+  after?: { createdAt: number; id: string };
+  limit: number;
+}) {
+  const rows = mockedHandoffRows();
+  const after = filter.after;
+  const start = after
+    ? rows.findIndex((row) => {
+        const createdAt = row.createdAt ?? 0;
+        return (
+          createdAt > after.createdAt ||
+          (createdAt === after.createdAt && row.id > after.id)
+        );
+      })
+    : 0;
+  const from = start < 0 ? rows.length : start;
+  return rows.slice(from, from + filter.limit);
+}
+
+function mockedListRecentIds(limit = 5): string[] {
+  const rows = mocks.listHandoffs() as Array<{ id: string; createdAt?: number }>;
+  const count = typeof limit === "number" ? limit : 5;
+  return rows.slice(Math.max(0, rows.length - count)).map((row) => row.id);
+}
+
 function acknowledgeTool() {
   const tool = buildDomainTools().find(
     (candidate) => candidate.name === "nexus_handoff_ack",
@@ -277,6 +306,8 @@ describe("handoff MCP stop receipt", () => {
         submitFromPhysicalAgentBoundaryAndTransitionDispatch:
           mocks.submitAndTransition,
         list: mocks.listHandoffs,
+        listCursorPage: mockedListCursorPage,
+        listRecentIds: mockedListRecentIds,
         markConsumedFromPhysicalAck: mocks.markConsumedFromPhysicalAck,
       },
       taskDispatches: {
@@ -2143,5 +2174,55 @@ describe("handoff MCP stop receipt", () => {
     expect(page.items[0]?.artifacts).toEqual([]);
     expect(page.items[0]?.artifactsOmitted).toBe(1);
     expect(page.items[1]?.artifactsOmitted).toBe(1);
+  });
+
+  it("cursor mode pages in the store and does not materialize the whole trail", async () => {
+    const stores = mocks.getStores();
+    const list = vi.fn(() => {
+      throw new Error("full list");
+    });
+    const listCursorPage = vi.fn(() => [
+      {
+        id: "h-1",
+        delivered: true,
+        deliveryState: "consumed",
+        artifacts: [],
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+      {
+        id: "h-2",
+        delivered: true,
+        deliveryState: "consumed",
+        artifacts: [],
+        createdAt: 2,
+        missionId: "mission-a",
+      },
+    ]);
+    const listRecentIds = vi.fn(() => ["h-8", "h-7", "h-6", "h-5", "h-4"]);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list,
+        listCursorPage,
+        listRecentIds,
+        listDeliveryAttempts: () => [],
+      },
+    });
+
+    const page = (await listTool().handler(
+      { limit: 1 },
+      orchestratorContext(),
+    )) as { items: Array<{ id: string }>; hasMoreHistory: boolean };
+    expect(list).not.toHaveBeenCalled();
+    expect(listCursorPage).toHaveBeenCalledTimes(1);
+    expect(listCursorPage.mock.calls[0]?.[0]).toMatchObject({ limit: 2 });
+    expect(listRecentIds).toHaveBeenCalledWith(
+      expect.objectContaining({ missionId: "mission-a" }),
+      5,
+    );
+    expect(page.items.map((row) => row.id)).toEqual(["h-1"]);
+    expect(page.hasMoreHistory).toBe(true);
   });
 });

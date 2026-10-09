@@ -202,6 +202,12 @@ export function clearUnreconciledEffectOutbox(
   unreconciledScopes.delete(scopeFlightKey(scope));
 }
 
+export function isUnreconciledEffectOutbox(
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+): boolean {
+  return unreconciledScopes.has(scopeFlightKey(scope));
+}
+
 function cancelUnknownEffects(db: Database.Database, now: number): number {
   const updated = db
     .prepare(

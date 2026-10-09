@@ -57,6 +57,29 @@ describe('WSL runtime backend (first cut)', () => {
     });
     expect(isWslRuntimeUsable('Ubuntu', {} as NodeJS.ProcessEnv)).toMatchObject({
       available: false,
+      reason: 'not-windows',
+    });
+  });
+
+  it('treats a validated distro as proof on a Windows host without WSL env', () => {
+    const env = {
+      SystemRoot: 'C:\\Windows',
+      OS: 'Windows_NT',
+    } as NodeJS.ProcessEnv;
+    expect(isWslRuntimeUsable('Ubuntu', env)).toMatchObject({
+      available: true,
+      reason: 'windows-host-listed-distro',
+      distroSlot: 'wsl:Ubuntu',
+    });
+    expect(isWslRuntimeUsable(null, env)).toMatchObject({
+      available: false,
+      reason: 'windows-host-wsl-unverified',
+      distroSlot: null,
+    });
+    expect(isWslRuntimeUsable('bad/name', env)).toMatchObject({
+      available: false,
+      reason: 'wsl-distro-name-unsafe',
+      distroSlot: null,
     });
   });
 });
