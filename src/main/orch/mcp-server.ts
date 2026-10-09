@@ -1055,6 +1055,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
   _req,
   authority,
   preparedEnv,
+  transportEnv,
 ) => {
     const meta = authority.context;
     const gated = requiresSpawnGate(meta);
@@ -1288,7 +1289,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           userDataPath: app.getPath("userData"),
           checkoutId: authority.scope.checkoutId,
           coordinationScope: authority.coordinationScope ?? authority.scope,
-          effectiveEnv: preparedEnv,
+          effectiveEnv: transportEnv,
           inheritNativeProfile,
           // OVKA-713/747: filtro declarado de skill → skillOverrides off no
           // overlay (pessoais/projeto fora do conjunto não invocam).

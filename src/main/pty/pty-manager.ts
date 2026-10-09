@@ -700,6 +700,8 @@ export type AgentSpawnHook = (
   authority: BoundSpawnAuthority,
   /** Env already prepared for this spawn (API keys, managed CODEX_HOME/…). */
   preparedEnv?: Readonly<Record<string, string>>,
+  /** Main-owned actual transport snapshot after gateway routing; never use it as provider identity. */
+  transportEnv?: Readonly<Record<string, string>>,
 ) => AgentSpawnDecoration | null;
 
 let agentSpawnHook: AgentSpawnHook | null = null;
@@ -2121,7 +2123,7 @@ export function spawnAgentSession(
   // Pass prepared env so MCP overlays (Grok/Kimi) can source managed-account homes.
   const preparedEnvSnapshot = cleanEnv(identityEnv);
   const decoration = agentSpawnHook
-    ? agentSpawnHook(adapter, req, authority, preparedEnvSnapshot)
+    ? agentSpawnHook(adapter, req, authority, preparedEnvSnapshot, Object.freeze(cleanEnv(env)))
     : null;
   const trustedWorkspaceConfigOverrides =
     adapter.id === "codex" && decoration

@@ -850,6 +850,26 @@ describe("gateway de IA local (OmniRoute-like)", () => {
     expect(env.OPENAI_API_KEY).toBeUndefined();
   });
 
+  it.each(['owned', 'foreign-key', 'foreign-route'] as const)('F-1104: passes the actual %s gateway transport separately from provider identity', async changed => {
+    const synthetic = 'rt-11111111-1111-4111-8111-111111111111', ownBase = 'http://127.0.0.1:45678';
+    const actualKey = changed === 'foreign-key' ? 'foreign-11111111-1111-4111-8111-111111111111' : synthetic;
+    const actualBase = changed === 'foreign-route' ? 'http://127.0.0.1:45679' : ownBase;
+    vi.stubEnv('ANTHROPIC_API_KEY', synthetic); vi.stubEnv('ANTHROPIC_BASE_URL', ownBase);
+    vi.stubEnv('NEXUS_AI_GATEWAY_BASE_URL', actualBase); vi.stubEnv('NEXUS_AI_GATEWAY_API_KEY', actualKey);
+    const host = fakeHost(); setPtyHost(host.host);
+    let identity: Readonly<Record<string, string>> | undefined, transport: Readonly<Record<string, string>> | undefined;
+    setAgentSpawnHook((_adapter, _req, _authority, prepared, actual) => { identity = prepared; transport = actual; return null; });
+    let sessionId: string | undefined;
+    try {
+      sessionId = spawnAgentSession(fakeWc(), { kind: 'cli-agent', cols: 80, rows: 24 }, claudeLike(), {}, trustedSpawn()).sessionId;
+      const child = host.specFor(sessionId).env;
+      expect(identity?.ANTHROPIC_API_KEY).toBe(synthetic); expect(identity?.ANTHROPIC_BASE_URL).toBe(ownBase);
+      expect(transport?.ANTHROPIC_API_KEY).toBe(actualKey); expect(transport?.ANTHROPIC_BASE_URL).toBe(actualBase);
+      expect(transport?.ANTHROPIC_API_KEY).toBe(child.ANTHROPIC_API_KEY); expect(transport?.ANTHROPIC_BASE_URL).toBe(child.ANTHROPIC_BASE_URL);
+      expect(Object.isFrozen(transport)).toBe(true);
+    } finally { if (sessionId) await orchTerminateSession(sessionId); setAgentSpawnHook(null); vi.unstubAllEnvs(); }
+  });
+
   it("sem chave de gateway, avisa que a credencial do provider vai junto", () => {
     expect(
       gatewayForwardsProviderCredential(claudeLike(), GATEWAY, null),
