@@ -1,12 +1,12 @@
-import type Database from 'better-sqlite3';
-import { decodeCursor, encodeCursor, InvalidCursorError } from '../../shared/cursor-pagination';
 /**
  * Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62.
  * Copyright (c) 2026 T3 Tools Inc. — MIT License.
  * See third_party/licenses/t3code-MIT.txt.
  * Upstream reference: apps/server/src/orchestration-v2/CommandReceiptStore.ts.
- * Nexus changes: Receipt fields/status and insert/update semantics adapted to scoped SQLite; Nexus acceptance transaction refuses stores from distinct runtime managers. No product command caller is added.
+ * Nexus changes: Scoped SQLite receipt vocabulary and insertion adapted; Main dispatch adds original caller-bound safe response observations and event sequences. Original owned-process lifetime/verifier transactions refuse distinct managers/scopes and never reconstruct results or native capabilities.
  */
+import type Database from 'better-sqlite3';
+import { decodeCursor, encodeCursor, InvalidCursorError } from '../../shared/cursor-pagination';
 import { z } from 'zod';
 import {
   ScopedStoreBinding,
@@ -47,12 +47,12 @@ export interface CommandReceipt {
   readonly aggregateId: string;
   readonly commandType: string;
   readonly acceptedAt: number;
-  /** 0 enquanto não assentado; a sequence final só no upsert. */
+  /** 0 while unresolved; dispatch settlement points to a real journal event. */
   readonly resultSequence: number;
   readonly status: CommandReceiptStatus;
   readonly error: string | null;
   readonly effectClass: EffectClass;
-  /** Resultado JSON do despacho, quando o handler já terminou. */
+  /** Fixed safe response projection; never original handler output or error. */
   readonly outcomeJson: string | null;
   readonly bindingDigest: string | null;
   readonly dispatchState: 'admitted'|'observed-success'|'observed-rejection'|'unknown'|'settled';
@@ -514,11 +514,8 @@ export class CommandReceiptStore {
 
 }
 
-/**
- * Aceite de um `nexus_*` com efeito: recibo e `checkpoint.capture` na mesma
- * transação. O gate de conclusão observa esse tipo enquanto estiver
- * pending/running. `commandType` é o tipo do efeito, não o nome da tool.
- */
+/** Isolated legacy/schema acceptance helper. No production dispatch calls it;
+ * it does not prove Git capture or owned exit. Unproven capture stays deferred. */
 export function acceptDispatchCheckpointEffect(
   runtimeManager: ProjectRuntimeManager,
   scope: ProjectExecutionScope,

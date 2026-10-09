@@ -1,7 +1,7 @@
 /**
  * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
  * Upstream reference: apps/server/src/orchestration-v2/EffectWorker.ts.
- * Nexus changes: Nexus async/await drainer implements lease/settlement policy with a local handler registry. No upstream implementation code or provider handlers copied.
+ * Nexus changes: Nexus async/await drainer implements lease policy with a local registry; original Main physical verifier requires owned exit proof and atomically settles receipt/event/claim. Unproven legacy checkpoint only defers. No upstream implementation code or provider handlers copied.
  */
 import type { PeriodicTaskContext } from '../observability/periodic-task';
 import { CommandReceiptStore } from './command-receipts';

@@ -3,7 +3,7 @@
  * Copyright (c) 2026 T3 Tools Inc. — MIT License.
  * See third_party/licenses/t3code-MIT.txt.
  * Upstream reference: apps/server/src/orchestration-v2/EffectOutbox.ts.
- * Nexus changes: Effect-type lists, status and lease vocabulary, claim/recovery SQL adapted to scoped better-sqlite3/Zod. No production effect producer or handler registration is added.
+ * Nexus changes: Effect-type lists, status/lease vocabulary and claim/recovery SQL adapted to scoped better-sqlite3/Zod. Nexus Main adds original owned-process physical proof obligations and a verification-only consumer; logical dispatch acknowledgment does not imply physical completion.
  */
 import type Database from 'better-sqlite3';
 import { z } from 'zod';

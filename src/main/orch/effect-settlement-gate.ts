@@ -1,7 +1,7 @@
 /**
  * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
  * Upstream reference: apps/server/src/orchestration-v2/RunFinalizationService.ts.
- * Nexus changes: Pure Nexus blocking-effect predicate used by completion consumers; checkpoint/handoff names and synchronous views are Nexus contracts, not an upstream run-finalizer port.
+ * Nexus changes: Pure Nexus blocking-effect predicate used by completion consumers; checkpoint/handoff and owned-process blocking names and synchronous views are Nexus contracts, not an upstream run-finalizer port.
  */
 /**
  * ORC-02 — turno terminal ≠ efeitos assentados (política T3

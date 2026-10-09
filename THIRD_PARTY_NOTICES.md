@@ -588,9 +588,15 @@ Nexus stack; no T3 Code package is a dependency.
   `src/renderer/components/product/Launcher.tsx`).
 - PR126 orchestration: effect-type/lease/recovery and receipt schemas adapted
   from `EffectOutbox.ts` / `CommandReceiptStore.ts`; Nexus drainer and settlement
-  gate reference `EffectWorker.ts` / `RunFinalizationService.ts`. Boot/drainer
-  and completion consumers exist; production effect producers/handlers and
-  command-receipt callers are not provided by this harvest.
+  gate reference `EffectWorker.ts` / `RunFinalizationService.ts`. Nexus Main
+  dispatch now records original caller-bound safe logical observations with
+  real SQLite settlement event sequences. Instrumented terminal/background
+  commands add original owned-tree exit obligations before launch preparation;
+  their production consumer verifies durable exit proof without re-executing
+  mutations. Logical response/launch acknowledgment is not physical completion
+  or Git checkpoint capture; unknown/restarted obligations remain blocking.
+  Provider session reconstruction and generic task-completion parity are not
+  supplied by these modules.
 - CDP relay: per-tab protocol adapted from desktop `CdpRelay.ts`; Nexus scoped
   Electron adapter/factory references that design. The experimental anonymous
   preview HTTP/WebSocket bridge is removed. There is no product CDP endpoint,
