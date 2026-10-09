@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/tmp', isReady: () => true },
@@ -23,6 +23,7 @@ vi.mock('./pane-registry', () => ({
 }));
 
 vi.mock('./project-domain-store-registry', () => ({
+  requireProjectDomainStoreRegistry: () => ({ runtimeManager: completionRuntime }),
   getProjectDomainStores: () => {
     throw new Error('getProjectDomainStores deve ser injetado no teste');
   },
@@ -75,6 +76,29 @@ import { getAutomaticCompletionProof } from './automatic-completion-proof';
 import type { ScopedTaskRecord } from './task-store';
 import { MissionLeadershipError } from './mission-leadership';
 import { recordOperatorTabCompletionRequest } from './operator-tab-completion';
+
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { createScopedEffectOutboxStore } from './effect-outbox';
+import { createScopedMissionStore } from './mission-store';
+import { createScopedHandoffStore } from './handoff-store';
+
+let completionManager: ProjectRuntimeManager | undefined;
+let completionRuntimeDir: string | undefined;
+function completionRuntime(): ProjectRuntimeManager {
+  if (!completionManager) {
+    completionRuntimeDir = mkdtempSync(join(tmpdir(), 'nexus-civilian-settlement-'));
+    completionManager = new ProjectRuntimeManager({
+      baseDir: completionRuntimeDir, appVersion: 'civilian-settlement-test',
+    });
+  }
+  return completionManager;
+}
+afterEach(() => {
+  completionManager?.closeAll();
+  completionManager = undefined;
+  if (completionRuntimeDir) rmSync(completionRuntimeDir, { recursive: true, force: true });
+  completionRuntimeDir = undefined;
+});
 
 const scope = testProjectScope({ rootRealPath: '/workspace/waitlist' });
 
@@ -1136,6 +1160,39 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(result.action).toBe('refuse-empty');
     expect(completeVerified).not.toHaveBeenCalled();
   });
+
+  it.each(['checkpoint', 'queued-handoff'] as const)(
+    'F-1062: real durable %s blocks the actual civilian completion consumer', async (kind) => {
+      completeVerified.mockClear();
+      const planned = storyPlan(1);
+      const state = harness({
+        files: ['server.js'], handoffs: [], planned,
+        tasks: planned.map((row) => task({ id: row.taskId, title: row.agent.agentName, status: 'done' })),
+      });
+      const runtime = completionRuntime();
+      const missionId = state.liveMission.id;
+      let settle: () => void;
+      if (kind === 'checkpoint') {
+        const outbox = createScopedEffectOutboxStore(runtime, scope);
+        outbox.enqueue({ commandId: 'civilian-checkpoint', threadId: missionId, type: 'checkpoint.capture' });
+        settle = () => {
+          const claimed = outbox.claimNext({ workerId: 'consumer-test', leaseDurationMs: 60_000 });
+          if (!claimed) throw new Error('checkpoint not claimed');
+          expect(outbox.succeed(claimed.id, 'consumer-test', claimed.attemptCount)).toBe(true);
+        };
+      } else {
+        createScopedMissionStore(runtime, scope, { idFactory: () => missionId }).create({ title: 'Board done' });
+        const handoffs = createScopedHandoffStore(runtime, scope);
+        const queued = handoffs.submit({ missionId, sessionId: 'worker-durable', fromAgent: 'Worker', status: 'success', summary: 'Final delivery still queued' });
+        settle = () => { expect(handoffs.markSubmitted(queued.id)).toBe(true); };
+      }
+      expect((await state.reconcile()).completed).toBe(false);
+      expect(completeVerified).not.toHaveBeenCalled();
+      settle();
+      expect((await state.reconcile()).completed).toBe(true);
+      expect(completeVerified).toHaveBeenCalledOnce();
+    },
+  );
 
   it('board all-done → Pronto', async () => {
     completeVerified.mockClear();
