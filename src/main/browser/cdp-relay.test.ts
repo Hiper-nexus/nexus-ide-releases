@@ -235,3 +235,14 @@ describe('F-1077: child proof expires with the selected-origin document',()=>{
     expect(written).toEqual([]);
   });
 });
+
+it('F-1085: synthetic attached announcement follows its proved browser session route',async()=>{
+  const {relay,written}=collectWrites();
+  relay.receive(JSON.stringify({id:1,method:'Target.attachToBrowserTarget'}));
+  await vi.waitFor(()=>expect(written.find(row=>row.id===1)).toBeDefined());
+  const browserSession=(written.find(row=>row.id===1)?.result as {sessionId:string}).sessionId;
+  relay.receive(JSON.stringify({id:2,method:'Target.setAutoAttach',sessionId:browserSession,params:{autoAttach:true,waitForDebuggerOnStart:true,flatten:true}}));
+  await vi.waitFor(()=>expect(written.find(row=>row.method==='Target.attachedToTarget')).toBeDefined());
+  expect(written.find(row=>row.id===2)).toMatchObject({sessionId:browserSession});
+  expect(written.find(row=>row.method==='Target.attachedToTarget')).toMatchObject({sessionId:browserSession,params:{sessionId:'nexus-preview-page'}});
+});

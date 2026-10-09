@@ -202,7 +202,7 @@ export function createCdpRelayConnection(
         if (!childStillCurrent()) return;
         const announce = typeof value === 'object' && value !== null && ANNOUNCE in value ? (value as {[ANNOUNCE]:Record<string,unknown>})[ANNOUNCE] : undefined;
         send({id:request.id,result:announce ? {} : (value ?? {}),...route});
-        if (announce) send(announce);
+        if (announce) send({ ...announce, ...route });
       }, cause => {
         if (childStillCurrent()) send({id:request.id,error:{code:-32000,message:cause instanceof Error ? cause.message : 'CDP command refused'},...route});
       });
