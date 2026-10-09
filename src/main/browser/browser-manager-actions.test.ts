@@ -51,6 +51,7 @@ const state = vi.hoisted(() => {
     isDestroyed: vi.fn(() => false),
     isCrashed: vi.fn(() => false),
     debugger: { isAttached: () => false, attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn(async () => ({ root: {} })), on: vi.fn(), removeListener: vi.fn() },
+
     setWebRTCIPHandlingPolicy: vi.fn(),
     loadURL: vi.fn(async () => {}),
     stop: vi.fn(),
@@ -245,6 +246,7 @@ import {
   registerBrowserIpc,
   captureRedactedBrowserVisual,
 } from './browser-manager';
+import { previewCdpBridge } from '../orch/preview-cdp-bridge';
 import { BROWSER_CHANNELS } from '../../shared/channels';
 import { bindResolvedRendererWorkspaceScope, clearRendererWorkspaceScope, forgetRendererWorkspace } from '../persistence/renderer-workspace-scope';
 import { isAgentRequestedBrowser } from '../orch/pane-registry';
@@ -1171,6 +1173,29 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
     await boot();
     state.guest.getURL.mockReturnValue('about:blank');
     await expect(analyzeBrowserResponsive(PANE, scope)).rejects.toThrow(/no page open/);
+    destroyBrowser(PANE, scope);
+  });
+
+  it('attaches the preview CDP relay with the scoped browser key', async () => {
+    await boot();
+    state.guest.getURL.mockReturnValue('http://127.0.0.1:43123/');
+    const origin = 'http://127.0.0.1:43123';
+    const other = { ...scope, projectId: 'other-project' };
+    const opened = openCdpRelayForPane(PANE, scope, { write: () => undefined }, origin);
+    const viaPreview = previewCdpBridge()?.open(
+      scope,
+      PANE,
+      origin,
+      () => undefined,
+    );
+    expect(opened).not.toBeNull();
+    expect(viaPreview).not.toBeNull();
+    expect(previewCdpBridge()?.solePaneId(scope, origin)).toBe(PANE);
+    expect(openCdpRelayForPane(PANE, other, { write: () => undefined }, origin)).toBeNull();
+    expect(previewCdpBridge()?.solePaneId(other, origin)).toBeNull();
+    expect(openCdpRelayForPane(PANE, scope, { write: () => undefined }, 'http://127.0.0.1:9')).toBeNull();
+    opened?.detach();
+    viaPreview?.detach();
     destroyBrowser(PANE, scope);
   });
 });

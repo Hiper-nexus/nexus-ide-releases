@@ -63,22 +63,23 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
   while (index < text.length) {
     const char = text[index]!;
     if (char === '\\') {
-      pushSpan(current(), text.slice(index, index + 2), []);
-      index += 2;
+      const next = text[index + 1];
+      if (next === undefined || next === '\n') {
+        pushSpan(current(), '\\', []);
+        index += 1;
+      } else {
+        pushSpan(current(), next, []);
+        index += 2;
+      }
       continue;
     }
     if (char === '`') {
       // Multi-backtick code stays literal; a single-backtick span owns its contents.
       const run = text.slice(index).match(/^`+/)![0];
-      const close = text.indexOf(run, index + run.length);
-      if (
-        run.length === 1 &&
-        close > index + 1 &&
-        !text.slice(index, close).includes('\n') &&
-        text[close + 1] !== '`'
-      ) {
-        pushSpan(current(), text.slice(index + 1, close), ['code']);
-        index = close + 1;
+      const code = run.length === 1 ? readSingleCodeSpan(text, index) : null;
+      if (code) {
+        pushSpan(current(), code.content, ['code']);
+        index = code.next;
       } else {
         pushSpan(current(), run, []);
         index += run.length;
@@ -155,12 +156,49 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
   return root;
 }
 
+/**
+ * A single-backtick span. Escaped backticks stay inside the span; a longer
+ * run is not a closer. Empty or unclosed spans stay literal.
+ */
+function readSingleCodeSpan(
+  text: string,
+  open: number,
+): { content: string; next: number } | null {
+  let index = open + 1;
+  let content = '';
+  while (index < text.length) {
+    const char = text[index]!;
+    if (char === '\n') return null;
+    if (char === '\\' && index + 1 < text.length && text[index + 1] !== '\n') {
+      content += text[index + 1];
+      index += 2;
+      continue;
+    }
+    if (char === '`') {
+      if (text[index + 1] === '`') return null;
+      if (content.length === 0) return null;
+      return { content, next: index + 1 };
+    }
+    content += char;
+    index += 1;
+  }
+  return null;
+}
+
+function escapeDelimitedText(
+  text: string,
+  marks: readonly RichTextMark[],
+): string {
+  const pattern = marks.includes('code') ? /[\\`]/gu : /[\\*`_~]/gu;
+  return text.replace(pattern, (char) => `\\${char}`);
+}
+
 /** Serialize marked spans back to markdown. Nesting: strike > bold > italic > code. */
 export function serializeInlineMarkdown(spans: readonly RichTextSpan[]): string {
   const order: RichTextMark[] = ['strike', 'bold', 'italic', 'code'];
   let out = '';
   for (const span of spans) {
-    let body = span.text;
+    let body = escapeDelimitedText(span.text, span.marks);
     // Close innermost first: apply delimiters from innermost mark outward.
     for (const mark of [...order].reverse()) {
       if (!span.marks.includes(mark)) continue;

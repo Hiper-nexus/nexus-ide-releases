@@ -63,6 +63,12 @@ export interface ProjectRuntimeManagerOptions {
   databaseFactory?: ProjectDatabaseFactory;
   databaseModuleLoader?: ProjectDatabaseModuleLoader;
   now?: () => number;
+  /**
+   * Platform used only for the SQLite open path (`sqliteFilePath`). Journal,
+   * WAL and shared-memory sidecars inherit that namespace. The stored
+   * `databasePath` stays the human path.
+   */
+  platform?: NodeJS.Platform;
 }
 
 interface CacheEntry {
@@ -401,6 +407,7 @@ export class ProjectRuntimeManager {
   readonly migrations: readonly ProjectMigration[];
 
   readonly #databaseFactory: ProjectDatabaseFactory;
+  readonly #sqlitePlatform: NodeJS.Platform;
   readonly #now: () => number;
   readonly #cache = new Map<string, CacheEntry>();
   readonly #health = new Map<string, ProjectRuntimeHealth>();
@@ -437,6 +444,7 @@ export class ProjectRuntimeManager {
     this.#databaseFactory =
       options.databaseFactory ??
       createLazyProjectDatabaseFactory(options.databaseModuleLoader);
+    this.#sqlitePlatform = options.platform ?? process.platform;
     this.#now = options.now ?? Date.now;
   }
 
@@ -538,7 +546,7 @@ export class ProjectRuntimeManager {
       if (databaseExisted) {
         assertDatabaseFile(location.databasePath, location.directory);
       }
-      db = this.#databaseFactory(location.databasePath, {
+      db = this.#databaseFactory(this.#sqliteOpenPath(location.databasePath), {
         fileMustExist: databaseExisted,
         timeout: 5_000,
       });
@@ -589,11 +597,14 @@ export class ProjectRuntimeManager {
     if (pathEntryExists(location.databasePath)) {
       try {
         assertDatabaseFile(location.databasePath, location.directory);
-        readOnlyDb = this.#databaseFactory(location.databasePath, {
-          readonly: true,
-          fileMustExist: true,
-          timeout: 5_000,
-        });
+        readOnlyDb = this.#databaseFactory(
+          this.#sqliteOpenPath(location.databasePath),
+          {
+            readonly: true,
+            fileMustExist: true,
+            timeout: 5_000,
+          },
+        );
         configureSafeReadOnlyDatabase(readOnlyDb);
         const health = freezeHealth({
           status: 'safe-read-only',
@@ -633,6 +644,10 @@ export class ProjectRuntimeManager {
     });
     this.#health.set(location.key, health);
     throw new ProjectRuntimeUnavailableError(health, failure);
+  }
+
+  #sqliteOpenPath(databasePath: string): string {
+    return sqliteFilePath(databasePath, this.#sqlitePlatform);
   }
 
   #release(key: string, runtime: ProjectRuntime): void {

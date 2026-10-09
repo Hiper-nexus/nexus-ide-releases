@@ -115,6 +115,7 @@ import { browserVisualMasksSchema, maskBrowserBitmap } from './browser-capture-r
 import { assertInspectableBrowserDom } from './browser-visual-inspection';
 import { attachCdpRelay } from './cdp-relay-attach';
 import type { CdpRelayConnection } from './cdp-relay';
+import { registerPreviewCdpBridge } from '../orch/preview-cdp-bridge';
 import { BrowserVisualRefusal } from './browser-visual-refusal';
 import { validateDecisionImages } from '../decision-models/decision-images';
 import {
@@ -386,7 +387,10 @@ const designAnnotationsSendSchema = z
   })
   .strict();
 
-function browserKey(scope: ProjectExecutionScope, paneId: string): string {
+function browserKey(
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  paneId: string,
+): string {
   return `${scope.projectId}\0${scope.checkoutId}\0${paneId}`;
 }
 
@@ -3129,11 +3133,39 @@ export function getBrowserViewCount(): number {
   return browsers.size;
 }
 
+function browserShowsOrigin(entry: BrowserEntry, previewOrigin: string): boolean {
+  try {
+    return loopbackOrigin(entry.view.webContents.getURL()) === previewOrigin;
+  } catch {
+    return false;
+  }
+}
+
+function soleBrowserPaneOnOrigin(
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  previewOrigin: string,
+): string | null {
+  const matches: string[] = [];
+  for (const entry of browsers.values()) {
+    if (
+      entry.scope.projectId !== scope.projectId ||
+      entry.scope.checkoutId !== scope.checkoutId
+    ) {
+      continue;
+    }
+    if (entry.view.webContents.isDestroyed()) continue;
+    if (!browserShowsOrigin(entry, previewOrigin)) continue;
+    matches.push(entry.paneId);
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
 /**
  * CdpRelay plug (item T3): abre o endpoint CDP de UM tab para o servidor de
- * ambiente (Playwright). Retorna o relay attachado ao `webContents` do tab;
- * `write` recebe as mensagens CDP para o caller (WebSocket do preview-server).
- * Fechar com `detach()` — só desfaz o attach se este relay o criou.
+ * ambiente (Playwright). A entrada vive em `browserKey(scope, paneId)`.
+ * `write` devolve as mensagens CDP ao WebSocket do preview. `previewOrigin`
+ * recusa um pane que não está nessa origem loopback. `detach()` só solta o
+ * debugger se este relay o criou.
  */
 export function openCdpRelayForPane(
   paneId: string,
@@ -3142,6 +3174,7 @@ export function openCdpRelayForPane(
     readonly write: (message: string) => void;
     readonly onDownloadDirectory?: (directory: string | null) => void;
   },
+  previewOrigin?: string,
 ): { readonly connection: CdpRelayConnection; readonly detach: () => void } | null {
   let entry: BrowserEntry;
   try {
@@ -3150,6 +3183,8 @@ export function openCdpRelayForPane(
     return null;
   }
   if (!liveOwnerWindow(entry.owner) || !canSend(entry.view.webContents)) return null;
+  if (previewOrigin !== undefined && !browserShowsOrigin(entry, previewOrigin)) return null;
+
   const attach = attachCdpRelay(entry.view.webContents, options);
   if (!attach.attached) {
     attach.detach();
@@ -3157,6 +3192,12 @@ export function openCdpRelayForPane(
   }
   return { connection: attach.connection, detach: attach.detach };
 }
+
+registerPreviewCdpBridge({
+  open: (scope, paneId, previewOrigin, write) =>
+    openCdpRelayForPane(paneId, scope as ProjectExecutionScope, { write }, previewOrigin),
+  solePaneId: soleBrowserPaneOnOrigin,
+});
 
 function browserEntryForWebContents(
   sender: WebContents,

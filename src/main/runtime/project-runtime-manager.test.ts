@@ -457,6 +457,31 @@ describe('ProjectRuntimeManager migrations and health', () => {
     expect(opened).toEqual([path.win32.toNamespacedPath(humanPath)]);
   });
 
+  it('opens a custom factory on the namespaced sqlite path', () => {
+    const opened: string[] = [];
+    const runtimeManager = new ProjectRuntimeManager({
+      baseDir,
+      appVersion: '9.4.1-test',
+      platform: 'win32',
+      databaseFactory: (filename) => {
+        opened.push(filename);
+        throw new Error('native open refused in test');
+      },
+    });
+    managers.push(runtimeManager);
+    const target = scope(PROJECT_A, 'checkout-namespaced-open');
+
+    expect(() => runtimeManager.open(target)).toThrow(
+      ProjectRuntimeUnavailableError,
+    );
+
+    const human = runtimeManager.locationFor(target).databasePath;
+    const namespaced = sqliteFilePath(human, 'win32');
+    expect(namespaced).not.toBe(human);
+    expect(human).not.toMatch(/^\\\\\?\\/u);
+    expect(opened).toEqual([namespaced]);
+  });
+
   it('opens an actual SQLite runtime while retaining a long canonical path', () => {
     const longBaseDir = path.join(
       baseDir,
