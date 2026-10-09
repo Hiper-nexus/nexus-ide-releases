@@ -64,6 +64,20 @@ describe('handoff stuck diagnosis (resto F-1040)', () => {
     expect(d.escape).toMatch(/busy→idle|nexus_mission_request_resume/);
   });
 
+  it('F-1046: real queued handoff without submittedAt uses createdAt', () => {
+    // Entrega que nunca saiu: só o nascimento existe.
+    const young = diagnoseHandoffStuck(
+      { id: 'h8', deliveryState: 'queued', createdAt: NOW - 2_000 },
+      NOW,
+    );
+    expect(young.reason).toBe('waiting-acceptance-window');
+    const old = diagnoseHandoffStuck(
+      { id: 'h9', deliveryState: 'queued', createdAt: NOW - 60_000 },
+      NOW,
+    );
+    expect(old).toMatchObject({ stuck: true, reason: 'queued-awaiting-idle' });
+  });
+
   it('retry backoff reports the round and refuses loop forcing', () => {
     const d = diagnoseHandoffStuck(
       { id: 'h7', deliveryState: 'queued', retryRound: 3, submittedAt: NOW - 120_000 },

@@ -112,7 +112,58 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
     expect(mocks.resumeFastLaneMission).not.toHaveBeenCalled();
   });
 
-  it('operator-closed mission reports the verdict instead of throwing', async () => {
+  it('F-1043: orchestrator of mission A cannot resume mission B', async () => {
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: (id: string) => ({ id, status: 'running' }),
+      },
+    });
+    await expect(
+      requestResumeTool().handler(
+        { missionId: 'mission-b' },
+        context({ role: 'orchestrator', missionId: 'mission-a' }),
+      ),
+    ).rejects.toThrow(/própria missão/);
+    expect(mocks.resumeFastLaneMission).not.toHaveBeenCalled();
+  });
+
+  it('F-1042: operator-closed mission is refused BEFORE resume (seal preserved)', async () => {
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({
+          id: 'mission-existing',
+          status: 'blocked',
+          description:
+            '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Encerrada pelo operador.',
+        }),
+      },
+    });
+    const result = await requestResumeTool().handler(
+      { missionId: 'mission-existing' },
+      context(),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'mission_closed_by_operator',
+    });
+    expect(mocks.resumeFastLaneMission).not.toHaveBeenCalled();
+  });
+
+  it('operator hand (no missionId) may request resume of a live mission', async () => {
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({ id: 'mission-existing', status: 'running' }),
+      },
+    });
+    const result = await requestResumeTool().handler(
+      { missionId: 'mission-existing' },
+      context({ role: 'orchestrator', missionId: undefined }),
+    );
+    expect(result).toMatchObject({ ok: true, resumed: true });
+    expect(mocks.resumeFastLaneMission).toHaveBeenCalled();
+  });
+
+  it('operator-closed mission reports the verdict from resume as well', async () => {
     mocks.getProjectDomainStores.mockReturnValue({
       missions: {
         get: () => ({ id: 'mission-existing', status: 'blocked' }),

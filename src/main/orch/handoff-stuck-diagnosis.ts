@@ -85,8 +85,21 @@ export function diagnoseHandoffStuck(
         'ou list-ack do operador se o Maestro não puder.',
     };
   }
-  if (view.deliveryState === 'queued' && view.submittedAt != null) {
-    const waitingMs = now - view.submittedAt;
+  if (view.deliveryState === 'queued') {
+    // F-1046: handoff real que nunca foi enviado tem só `createdAt` — a
+    // primeira entrega ainda não existe. Usa o nascimento como referência.
+    const referenceAt = view.submittedAt ?? view.createdAt;
+    if (referenceAt == null) {
+      return {
+        reason: 'queued-awaiting-idle',
+        stuck: true,
+        summary: 'Handoff enfileirado sem primeira tentativa física registrada.',
+        escape:
+          'A borda busy→idle do Maestro dispara a entrega; nexus_mission_request_resume ' +
+          'religa se a coordenação estiver muda.',
+      };
+    }
+    const waitingMs = now - referenceAt;
     if (waitingMs < ACCEPTANCE_WINDOW_MS) {
       return {
         reason: 'waiting-acceptance-window',

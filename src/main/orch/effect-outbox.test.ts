@@ -467,8 +467,8 @@ describe("ORC-04 command receipts (T3 policy)", () => {
       },
     );
     expect(accepted.inserted).toBe(true);
-    expect(accepted.effect.id).toBe("cmd-atomic");
-    expect(accepted.effect.status).toBe("pending");
+    expect(accepted.effect?.id).toBe("cmd-atomic");
+    expect(accepted.effect?.status).toBe("pending");
     expect(receipts.getByCommandId("cmd-atomic")?.resultSequence).toBe(0);
     const again = receipts.acceptCommandEffect(
       store,
@@ -484,7 +484,7 @@ describe("ORC-04 command receipts (T3 policy)", () => {
       },
     );
     expect(again.inserted).toBe(false);
-    expect(again.effect.id).toBe(accepted.effect.id);
+    expect(again.effect?.id).toBe(accepted.effect?.id);
     expect(store.listByCommandId("cmd-atomic")).toHaveLength(1);
 
     store.enqueue({
@@ -512,6 +512,35 @@ describe("ORC-04 command receipts (T3 policy)", () => {
     expect(receipts.getByCommandId("cmd-rollback")).toBeNull();
     expect(store.listByCommandId("cmd-rollback")).toHaveLength(0);
     expect(store.get("eff-taken")?.commandId).toBe("cmd-taken");
+  });
+
+  it("F-1045: reused commandId with another identity is a conflict, not a silent old effect", () => {
+    const { manager, store, scope } = freshStore();
+    const receipts = createScopedCommandReceiptStore(manager, scope);
+    const first = receipts.acceptCommandEffect(
+      store,
+      { commandId: "cmd-reused", commandType: "turn.start", threadId: "mission-a" },
+      { commandId: "cmd-reused", threadId: "mission-a", type: "turn.start" },
+    );
+    expect(first.inserted).toBe(true);
+    expect(() =>
+      receipts.acceptCommandEffect(
+        store,
+        {
+          commandId: "cmd-reused",
+          commandType: "turn.interrupt",
+          threadId: "mission-b",
+        },
+        {
+          commandId: "cmd-reused",
+          threadId: "mission-b",
+          type: "turn.interrupt",
+        },
+      ),
+    ).toThrow(/identity conflict/);
+    // O recibo original permanece o único.
+    expect(receipts.getByCommandId("cmd-reused")?.aggregateId).toBe("mission-a");
+    expect(store.listByCommandId("cmd-reused")).toHaveLength(1);
   });
 
   it("does not re-enqueue a command after its settled effect is pruned", () => {
@@ -612,7 +641,7 @@ describe("ORC-04 command receipts (T3 policy)", () => {
           commandType: "turn.start",
           threadId: "thread-a",
           status: "rejected",
-        } as CommandEffectAcceptanceInput,
+        } as unknown as CommandEffectAcceptanceInput,
         {
           commandId: "cmd-rejected",
           threadId: "thread-a",
@@ -628,7 +657,7 @@ describe("ORC-04 command receipts (T3 policy)", () => {
           commandType: "turn.start",
           threadId: "thread-a",
           resultSequence: 4,
-        } as CommandEffectAcceptanceInput,
+        } as unknown as CommandEffectAcceptanceInput,
         {
           commandId: "cmd-settled",
           threadId: "thread-a",

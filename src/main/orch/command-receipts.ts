@@ -155,6 +155,26 @@ function existingCommandEffect(
   return outbox.listByCommandId(commandId)[0] ?? null;
 }
 
+/** F-1045: identidade do recibo já assentado deve casar com o pedido. */
+function assertReceiptIdentityMatches(
+  existing: CommandReceipt,
+  receipt: CommandEffectAcceptanceInput,
+): void {
+  if (existing.commandType !== receipt.commandType) {
+    throw new Error(
+      `command receipt identity conflict: ${receipt.commandId} is ` +
+        `${existing.commandType}/${existing.aggregateId}, not ${receipt.commandType}`,
+    );
+  }
+  const requestedAggregate = receipt.threadId ?? receipt.projectId;
+  if (requestedAggregate && existing.aggregateId !== requestedAggregate) {
+    throw new Error(
+      `command receipt identity conflict: ${receipt.commandId} is bound to ` +
+        `${existing.aggregateKind}/${existing.aggregateId}, not ${requestedAggregate}`,
+    );
+  }
+}
+
 function classForCommandType(commandType: string): EffectClass {
   return (REPLAY_SAFE_EFFECT_TYPES as readonly string[]).includes(commandType)
     ? 'replay_safe'
@@ -208,6 +228,10 @@ export class CommandReceiptStore {
       const inserted = this.insertIfAbsent(receipt);
       const effectId = effectInput.id ?? receipt.commandId;
       if (!inserted) {
+        // F-1045: commandId reusado com outra identidade é conflito — nunca
+        // devolve o efeito antigo em silêncio.
+        const prior = this.getByCommandId(receipt.commandId);
+        if (prior) assertReceiptIdentityMatches(prior, receipt);
         return {
           inserted: false,
           effect: existingCommandEffect(outbox, receipt.commandId, effectId),

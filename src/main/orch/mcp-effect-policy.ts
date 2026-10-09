@@ -388,6 +388,10 @@ export function effectPolicyForTool(toolName: string): McpEffectPolicy {
  */
 export function isToolAllowedForReadOnlyContext(toolName: string): boolean {
   const canonical = canonicalToolName(toolName);
+  // F-1044: o Maestro read-only preso precisa ALCANÇAR a retomada anunciada.
+  // É o único efeito de missão que a lane read-only pode pedir — e ainda assim
+  // o handler recusa encerramento pelo operador e missão alheia (F-1042/43).
+  if (canonical === 'mission_request_resume') return true;
   return (
     effectPolicyForTool(canonical) === 'read-only' ||
     READ_ONLY_CONTEXT_METADATA_TOOLS.has(canonical) ||

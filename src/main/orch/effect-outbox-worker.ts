@@ -19,10 +19,35 @@ export type EffectOutboxHandler = (
   scope: ProjectExecutionScope,
 ) => Promise<void> | void;
 
+/**
+ * Registro de handlers por `type`. O coordenador drena pelo registro; quem
+ * implementa um tipo de efeito (checkpoint.capture, turn.start…) registra
+ * aqui no boot. Tipo sem handler é tratado como falha process_bound /
+ * retry replay_safe — nunca silencioso.
+ */
+const effectHandlers = new Map<string, EffectOutboxHandler>();
+
+export function registerEffectOutboxHandler(
+  type: string,
+  handler: EffectOutboxHandler,
+): () => void {
+  effectHandlers.set(type, handler);
+  return () => {
+    if (effectHandlers.get(type) === handler) effectHandlers.delete(type);
+  };
+}
+
+export function registeredEffectHandler(
+  type: string,
+): EffectOutboxHandler | null {
+  return effectHandlers.get(type) ?? null;
+}
+
 export interface EffectOutboxWorkerDeps {
   readonly store: EffectOutboxStore;
   readonly scope: ProjectExecutionScope;
-  readonly handler: EffectOutboxHandler;
+  /** Handler único; se omitido, usa `registerEffectOutboxHandler` por tipo. */
+  readonly handler?: EffectOutboxHandler;
   readonly workerId: string;
   readonly leaseDurationMs?: number;
   readonly batchSize?: number;
@@ -96,7 +121,11 @@ export async function drainEffectOutbox(
     heartbeat.unref?.();
     try {
       try {
-        const outcome = deps.handler(entry, deps.scope);
+        const handler = deps.handler ?? registeredEffectHandler(entry.type);
+        if (!handler) {
+          throw new Error(`effect outbox has no handler for ${entry.type}`);
+        }
+        const outcome = handler(entry, deps.scope);
         if (context) await context.wait(Promise.resolve(outcome));
         else await outcome;
         if (deps.store.succeed(entry.id, deps.workerId, entry.attemptCount)) {

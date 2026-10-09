@@ -86,6 +86,11 @@ export class ProjectDomainStoreRegistry {
     this.#runtimeManager = runtimeManager;
   }
 
+  /** ORC-01/06: stores de efeito/recibo precisam do mesmo ProjectRuntimeManager. */
+  runtimeManager(): ProjectRuntimeManager {
+    return this.#runtimeManager;
+  }
+
   forScope(scope: ProjectExecutionScope): ProjectDomainStoreSuite {
     const key = projectExecutionScopeKey(scope);
     const existing = this.#entries.get(key);

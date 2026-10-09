@@ -6,6 +6,8 @@ import {
   canMarkTurnSettled,
   type SettlementEffectView,
 } from './effect-settlement-gate';
+import { EffectOutboxStore } from './effect-outbox';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 
 export interface AutomaticCompletionProof {
   /** Opaque Main-issued certification; serialized/cloned claims do not verify. */
@@ -25,6 +27,35 @@ export function automaticCompletionEffectsSettled(
   threadId?: string,
 ): boolean {
   return canMarkTurnSettled(effects, threadId).settled;
+}
+
+/**
+ * ORC-02 no estado durável: lê o outbox do escopo e decide se a conclusão
+ * pode ser marcada settled. Usado pelo caminho de conclusão antes de fechar.
+ */
+export function assertCompletionEffectsSettled(
+  runtimeManager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  threadId?: string,
+): void {
+  const outbox = new EffectOutboxStore(runtimeManager, scope);
+  const open = [
+    ...outbox.listByStatus('pending', 200),
+    ...outbox.listByStatus('running', 200),
+  ];
+  const gate = canMarkTurnSettled(
+    open.map((entry) => ({
+      type: entry.type,
+      status: entry.status,
+      threadId: entry.threadId,
+    })),
+    threadId,
+  );
+  if (!gate.settled) {
+    throw new Error(
+      `completion_effects_pending: turno terminal com efeitos não assentados — ${gate.reason ?? ''}`,
+    );
+  }
 }
 
 type CompletionMission = Pick<Mission, 'id' | 'intentVersion' | 'updatedAt' | 'intentState'>;

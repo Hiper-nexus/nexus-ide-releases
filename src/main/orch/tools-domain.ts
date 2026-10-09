@@ -5,6 +5,7 @@ import { runMissionCodeCompletion, recordMissionCodeCompletionReview,
   isCurrentCodeCompletionFindingFix } from './mission-code-completion-production';
 import { missionExecutionScope } from './mission-execution-scope';
 import { resumeFastLaneMission } from './mission-fast-lane';
+import { hasCurrentMissionRuntimeCloseVerdict } from '../../shared/mission-recovery-policy';
 import { sharedPaneSpaceId } from '../pty/pane-space-worktree';
 import {
   describeCronReversal,
@@ -643,13 +644,26 @@ const missionRequestResumeTool: McpToolDef = {
     const stores = getProjectDomainStores(ctx.scope);
     const mission = stores.missions.get(missionId);
     if (!mission) throw new Error(`nexus_mission_request_resume: missão ${missionId} não existe.`);
-    // Qualquer sessão VINCULADA à missão (líder atual, líder velho ou mão do
-    // operador) pode pedir a retomada. Worker sem missão não.
-    if (ctx.missionId && ctx.missionId !== missionId && ctx.role === 'worker') {
-      throw new Error('nexus_mission_request_resume: um worker só pede retomada da própria missão.');
+    // F-1043: só a missão VINCULADA ao chamador (ou a mão do operador, que
+    // não tem missionId). Um orquestrador da A não alcança a B.
+    const isOperatorHand =
+      ctx.promotedFromUserSession === true || (ctx.role === 'orchestrator' && !ctx.missionId);
+    if (!isOperatorHand && ctx.missionId !== missionId) {
+      throw new Error(
+        `nexus_mission_request_resume: este pane só pede retomada da própria missão (${ctx.missionId ?? 'sem vínculo'}).`,
+      );
     }
-    if (ctx.role === 'worker' && ctx.missionId !== missionId) {
-      throw new Error('nexus_mission_request_resume: um worker só pede retomada da própria missão.');
+    // F-1042: encerramento explícito do operador NUNCA sai por chamada de
+    // agente. O selo runtime-closed é verificado ANTES do resume — o caminho
+    // `operator` do resumeFastLaneMission o removeria via resumeTechnical.
+    if (hasCurrentMissionRuntimeCloseVerdict(mission)) {
+      return {
+        ok: false,
+        missionId,
+        reason: 'mission_closed_by_operator',
+        error: 'A missão foi encerrada pelo operador.',
+        hint: 'Só o botão “Retomar missão” da interface reabre uma missão encerrada pelo operador.',
+      };
     }
     try {
       await resumeFastLaneMission(ctx.scope, missionId, {
