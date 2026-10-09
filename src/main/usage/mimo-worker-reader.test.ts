@@ -61,7 +61,7 @@ it.each(['timeout', 'stop'] as const)('physically stops a pathological SQLite vi
   const before = fs.readFileSync(databasePath);
   let exited = false;
   // The 100 ms deadline targets sqlite3_step; host Node boot alone can exceed it.
-  const adopt = await bootMimoFixtureProcess();
+  const adopt = await bootMimoFixtureProcess(nativeEntry);
   const reader = new MimoWorkerReader({ workerPath: nativeEntry, timeoutMs: 100,
     processFactory: (entry, privateRoot) => { const child = adopt(entry, privateRoot);
       child.on('exit', () => { exited = true; }); return child; } }); readers.push(reader);
@@ -86,7 +86,7 @@ it('retains physical proof when signalling fails and retries the same owned chil
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0); });`);
   let attempts = 0; let exited = false;
   const reader = new MimoWorkerReader({ workerPath: entry, processFactory: (file, privateRoot) => {
-    const child = forkMimoFixtureProcess(file, privateRoot); child.on('exit', () => { exited = true; });
+    const child = forkMimoFixtureProcess(file, privateRoot, nativeEntry); child.on('exit', () => { exited = true; });
     return { ...child, terminate: () => ++attempts === 1 ? false : child.terminate() };
   } }); readers.push(reader);
   let settled = false; const running = reader.read(input).then(value => { settled = true; return value; });
