@@ -1796,6 +1796,7 @@ async function reconcileCivilianCompletionAttempt(
         requireProjectDomainStoreRegistry().runtimeManager(),
         scope,
         mission.id,
+        { excludeSessionId: provenOrchestratorSessionId },
       );
       return completeMission(
         scope,

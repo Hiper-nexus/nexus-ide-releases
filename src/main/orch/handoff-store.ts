@@ -1725,7 +1725,7 @@ export class ScopedHandoffStore {
    */
   listQueuedDeliveries(
     missionId?: string,
-  ): Array<{ id: string; missionId: string }> {
+  ): Array<{ id: string; missionId: string; sessionId: string | null }> {
     const mission =
       missionId === undefined ? undefined : identifierSchema.parse(missionId);
     const db = this.#binding.readDatabase();
@@ -1733,7 +1733,7 @@ export class ScopedHandoffStore {
       mission === undefined
         ? db
             .prepare(
-              `SELECT id, mission_id FROM handoffs
+              `SELECT id, mission_id, session_id FROM handoffs
                WHERE delivery_state = 'queued' AND mission_id IS NOT NULL
                ORDER BY created_at ASC, id ASC
                LIMIT 50`,
@@ -1741,14 +1741,18 @@ export class ScopedHandoffStore {
             .all()
         : db
             .prepare(
-              `SELECT id, mission_id FROM handoffs
+              `SELECT id, mission_id, session_id FROM handoffs
                WHERE delivery_state = 'queued' AND mission_id = ?
                ORDER BY created_at ASC, id ASC
                LIMIT 50`,
             )
             .all(mission)
-    ) as Array<{ id: string; mission_id: string }>;
-    return rows.map((row) => ({ id: row.id, missionId: row.mission_id }));
+    ) as Array<{ id: string; mission_id: string; session_id: string | null }>;
+    return rows.map((row) => ({
+      id: row.id,
+      missionId: row.mission_id,
+      sessionId: row.session_id,
+    }));
   }
 
   /**

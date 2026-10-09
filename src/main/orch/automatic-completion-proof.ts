@@ -33,23 +33,31 @@ export function automaticCompletionEffectsSettled(
 /**
  * ORC-02 no estado durável: lê o outbox do escopo e o ledger de handoff.
  * `handoff.deliver` não entra em effect_outbox (o enum não aceita o tipo);
- * a entrega real fica na fila do handoff. Usado pelo caminho de conclusão
- * antes de fechar.
+ * a entrega real fica na fila do handoff. A sessão provada do Maestro fica
+ * de fora: o resumo dela não é entregue de volta para ela. Usado pelo
+ * caminho de conclusão antes de fechar.
  */
 export function assertCompletionEffectsSettled(
   runtimeManager: ProjectRuntimeManager,
   scope: ProjectExecutionScope,
   threadId?: string,
+  options?: { readonly excludeSessionId?: string },
 ): void {
   const outbox = new EffectOutboxStore(runtimeManager, scope);
   const open = [
     ...outbox.listByStatus('pending', 200),
     ...outbox.listByStatus('running', 200),
   ];
+  const excludeSessionId = options?.excludeSessionId?.trim() ?? '';
   const queuedDeliveries = createScopedHandoffStore(
     runtimeManager,
     scope,
-  ).listQueuedDeliveries(threadId);
+  )
+    .listQueuedDeliveries(threadId)
+    .filter(
+      (delivery) =>
+        !(excludeSessionId && delivery.sessionId === excludeSessionId),
+    );
   const gate = canMarkTurnSettled(
     [
       ...open.map((entry) => ({

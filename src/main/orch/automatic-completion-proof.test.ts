@@ -134,4 +134,44 @@ describe('assertCompletionEffectsSettled reads the handoff ledger', () => {
       missionRow.id,
     )).toThrow(/completion_effects_pending:.*checkpoint\.capture=pending/);
   });
+
+  it('ignores the orchestrator session queued handoff and still blocks a worker queue', () => {
+    const { runtime, projectScope, missions, handoffs } = openScope();
+    const missionRow = missions.create({ title: 'Board done' });
+    handoffs.submit({
+      missionId: missionRow.id,
+      sessionId: 'maestro-session',
+      fromAgent: 'maestro',
+      status: 'success',
+      summary: 'Resumo do Maestro, que não volta para ele mesmo.',
+    });
+    const worker = handoffs.submit({
+      missionId: missionRow.id,
+      sessionId: 'worker-session',
+      fromAgent: 'worker',
+      status: 'success',
+      summary: 'Handoff do worker ainda na fila.',
+    });
+    const exclude = { excludeSessionId: 'maestro-session' };
+
+    expect(() => assertCompletionEffectsSettled(
+      runtime,
+      projectScope,
+      missionRow.id,
+      exclude,
+    )).toThrow(/completion_effects_pending:.*handoff\.deliver=pending/);
+
+    expect(handoffs.markSubmitted(worker.id)).toBe(true);
+    expect(() => assertCompletionEffectsSettled(
+      runtime,
+      projectScope,
+      missionRow.id,
+      exclude,
+    )).not.toThrow();
+    expect(() => assertCompletionEffectsSettled(
+      runtime,
+      projectScope,
+      missionRow.id,
+    )).toThrow(/completion_effects_pending:.*handoff\.deliver=pending/);
+  });
 });
