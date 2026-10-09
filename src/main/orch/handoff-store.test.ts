@@ -395,6 +395,24 @@ describe("scoped handoff store", () => {
     expect(handoffs.get(unseen.id)?.deliveryState).toBe("submitted");
   });
 
+  it("F-1065: queued session exclusion is mission-scoped and retains unknown senders", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    let sequence = 0;
+    const missions = createScopedMissionStore(runtimeManager, scope, { idFactory: () => `mission-${++sequence}` });
+    const own = missions.create({ title: "Own" });
+    const other = missions.create({ title: "Other" });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope);
+    const maestro = handoffs.submit({ missionId: own.id, sessionId: "maestro-session", fromAgent: "Maestro", status: "success", summary: "Own" });
+    const unknown = handoffs.submit({ missionId: own.id, fromAgent: "Worker", status: "success", summary: "Unknown sender" });
+    const foreign = handoffs.submit({ missionId: other.id, sessionId: "worker-session", fromAgent: "Worker", status: "success", summary: "Other" });
+    expect(handoffs.listQueuedDeliveries(own.id, { excludeSessionId: "maestro-session" }))
+      .toEqual([{ id: unknown.id, missionId: own.id, sessionId: null }]);
+    expect(handoffs.listQueuedDeliveries(own.id).map((row) => row.id)).toContain(maestro.id);
+    expect(handoffs.listQueuedDeliveries(other.id).map((row) => row.id)).toEqual([foreign.id]);
+    expect(() => handoffs.listQueuedDeliveries(own.id, { excludeSessionId: "invalid'id" })).toThrow();
+  });
+
   it("persists bounded delivery attempts and accepts the exact attempt atomically", () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

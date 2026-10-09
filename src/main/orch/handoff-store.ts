@@ -1725,29 +1725,26 @@ export class ScopedHandoffStore {
    */
   listQueuedDeliveries(
     missionId?: string,
+    options?: { readonly excludeSessionId?: string },
   ): Array<{ id: string; missionId: string; sessionId: string | null }> {
     const mission =
       missionId === undefined ? undefined : identifierSchema.parse(missionId);
+    const excluded = options?.excludeSessionId === undefined
+      ? undefined : identifierSchema.parse(options.excludeSessionId);
+    const predicates = ["delivery_state = 'queued'",
+      mission === undefined ? "mission_id IS NOT NULL" : "mission_id = ?"];
+    const parameters = mission === undefined ? [] : [mission];
+    // Filter before the bounded scan: Maestro history must not hide a worker.
+    if (excluded !== undefined) {
+      predicates.push("(session_id IS NULL OR session_id != ?)");
+      parameters.push(excluded);
+    }
     const db = this.#binding.readDatabase();
-    const rows = (
-      mission === undefined
-        ? db
-            .prepare(
-              `SELECT id, mission_id, session_id FROM handoffs
-               WHERE delivery_state = 'queued' AND mission_id IS NOT NULL
-               ORDER BY created_at ASC, id ASC
-               LIMIT 50`,
-            )
-            .all()
-        : db
-            .prepare(
-              `SELECT id, mission_id, session_id FROM handoffs
-               WHERE delivery_state = 'queued' AND mission_id = ?
-               ORDER BY created_at ASC, id ASC
-               LIMIT 50`,
-            )
-            .all(mission)
-    ) as Array<{ id: string; mission_id: string; session_id: string | null }>;
+    const rows = db.prepare(
+      `SELECT id, mission_id, session_id FROM handoffs
+       WHERE ${predicates.join(" AND ")}
+       ORDER BY created_at ASC, id ASC LIMIT 50`,
+    ).all(...parameters) as Array<{ id: string; mission_id: string; session_id: string | null }>;
     return rows.map((row) => ({
       id: row.id,
       missionId: row.mission_id,

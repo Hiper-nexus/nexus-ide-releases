@@ -207,4 +207,24 @@ describe('assertCompletionEffectsSettled reads the handoff ledger', () => {
       missionRow.id,
     )).toThrow(/completion_effects_pending:.*handoff\.deliver=pending/);
   });
+  it('F-1065: fifty excluded Maestro rows cannot hide a later queued worker', () => {
+    const { runtime, projectScope, missions } = openScope();
+    const missionRow = missions.create({ title: 'Hidden worker' });
+    let sequence = 0;
+    const handoffs = createScopedHandoffStore(runtime, projectScope, { now: () => ++sequence });
+    for (let index = 0; index < 50; index += 1) {
+      handoffs.submit({ missionId: missionRow.id, sessionId: 'maestro-session', fromAgent: 'Maestro',
+        status: 'success', summary: 'Own summary' });
+    }
+    const worker = handoffs.submit({ missionId: missionRow.id, sessionId: 'worker-session', fromAgent: 'Worker',
+      status: 'success', summary: 'Pending worker delivery' });
+    expect(() => assertCompletionEffectsSettled(runtime, projectScope, missionRow.id,
+      { excludeSessionId: 'maestro-session' })).toThrow(/completion_effects_pending:.*handoff\.deliver=pending/);
+    expect(handoffs.listQueuedDeliveries(missionRow.id, { excludeSessionId: 'maestro-session' }))
+      .toEqual([{ id: worker.id, missionId: missionRow.id, sessionId: 'worker-session' }]);
+    expect(handoffs.markSubmitted(worker.id)).toBe(true);
+    expect(() => assertCompletionEffectsSettled(runtime, projectScope, missionRow.id,
+      { excludeSessionId: 'maestro-session' })).not.toThrow();
+  });
+
 });
