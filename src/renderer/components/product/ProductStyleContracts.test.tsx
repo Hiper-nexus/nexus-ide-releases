@@ -17,6 +17,9 @@ import { AppShell } from './AppShell';
 import { Launcher } from './Launcher';
 import { MemoryWorkspace } from './MemoryWorkspace';
 import { WorkspaceRail } from './WorkspaceRail';
+import { ComposerTiptapEditor } from '../ComposerTiptapEditor';
+import { ComposerRichTextView } from '../ComposerRichTextView';
+import { applyUiTheme, PALETTES } from '../../styles/ui-theme';
 
 const rendererStylesPath = path.resolve(
   process.cwd(),
@@ -103,10 +106,81 @@ afterEach(() => {
   delete document.documentElement.dataset.themePixel;
   document.documentElement.style.removeProperty('--text-faint');
   document.documentElement.style.removeProperty('--text-xs');
+  document.documentElement.removeAttribute('style');
+  delete document.documentElement.dataset.theme;
   vi.restoreAllMocks();
 });
 
 describe('Nexus V2 shell and product workspace style contracts', () => {
+  it.each([
+    { theme: 'nexus-pink-city', pixel: 'off', radius: 6 },
+    { theme: 'nexus-light', pixel: 'off', radius: 6 },
+    { theme: 'nexus-pink-city', pixel: 'on', radius: 0 },
+    { theme: 'nexus-light', pixel: 'on', radius: 0 },
+  ] as const)('styles the actual Tiptap surface and code in $theme / pixel=$pixel', async ({ theme, pixel, radius }) => {
+    applyUiTheme(theme);
+    document.documentElement.dataset.themePixel = pixel;
+    const style = installStyleContract(productStyles, { width: 1_400 });
+    const host = render(<>
+      <ComposerTiptapEditor value="Mensagem `codigo`" />
+      <ComposerRichTextView markdown="`codigo`" />
+    </>);
+    await settleEffects();
+    const surface = host.querySelector<HTMLElement>('.composer-tiptap__surface');
+    if (!surface) throw new Error('The actual Tiptap surface did not render');
+
+    expect(styleLengthPx(surface, 'min-height')).toBeGreaterThanOrEqual(72);
+    expect(styleLengthPx(surface, 'border-radius')).toBe(radius);
+    expect(computedCssValue(surface, 'color')).toBe(PALETTES[theme].text);
+    expect(computedCssValue(surface, 'caret-color')).toBe(PALETTES[theme].accent);
+    expect(computedCssValue(surface, 'font-family')).toContain(pixel === 'on' ? 'VT323' : 'Inter');
+    // JSDOM discards var() in border shorthands; Chrome separately verifies the resolved theme color.
+    expect(activeCssomDeclaration(style, '.composer-tiptap__surface', 'border')).toBe('1px solid var(--border)');
+    const codes = [...host.querySelectorAll<HTMLElement>('.composer-rich-text code')];
+    expect(codes).toHaveLength(2);
+    document.documentElement.style.setProperty('--surface-3', '#456789');
+    for (const code of codes) {
+      expect(computedCssValue(code, 'background')).toBe('#456789');
+      expect(computedCssValue(code, 'font-family')).toContain('JetBrains Mono');
+      expect(styleLengthPx(code, 'border-radius')).toBe(pixel === 'on' ? 0 : 2);
+    }
+  });
+
+  it('lets the toolbar border follow the current theme instead of an undefined-token fallback', async () => {
+    const style = installStyleContract(productStyles, { width: 1_400 });
+    const host = render(<ComposerTiptapEditor value="Mensagem" />);
+    await settleEffects();
+    const tool = host.querySelector<HTMLButtonElement>('.composer-rich-text-editor__tool');
+    if (!tool) throw new Error('The Tiptap toolbar did not render');
+    expect(activeCssomDeclaration(style, '.composer-rich-text-editor__tool', 'border')).toBe('1px solid var(--border)');
+  });
+
+  it('keeps Tiptap tools large enough and distinguishes selected, disabled, and keyboard focus states', async () => {
+    const style = installStyleContract(productStyles, { width: 1_400 });
+    const host = render(<ComposerTiptapEditor value="Mensagem" />);
+    await settleEffects();
+    const tool = host.querySelector<HTMLButtonElement>('.composer-rich-text-editor__tool');
+    const surface = host.querySelector<HTMLElement>('.composer-tiptap__surface');
+    if (!tool || !surface) throw new Error('The Tiptap editor and its toolbar did not render');
+
+    expect(styleLengthPx(tool, 'min-width')).toBeGreaterThanOrEqual(32);
+    expect(styleLengthPx(tool, 'min-height')).toBeGreaterThanOrEqual(32);
+    const normalBackground = computedCssValue(tool, 'background');
+    // These are CSS state contracts; the editor's command/editability wiring has its own suite.
+    tool.classList.add('is-active');
+    expect(computedCssValue(tool, 'background')).not.toBe(normalBackground);
+    expect(activeCssomDeclaration(style, '.composer-rich-text-editor__tool.is-active', 'border-color')).toBe('var(--accent)');
+    tool.disabled = true;
+    expect(Number(computedCssValue(tool, 'opacity'))).toBeLessThan(1);
+    expect(computedCssValue(tool, 'cursor')).not.toBe('pointer');
+    tool.disabled = false;
+    markFocusVisible(tool);
+    expect(styleLengthPx(tool, 'outline')).toBeGreaterThanOrEqual(2);
+    expect(computedCssValue(tool, 'outline')).toContain('#ff4f8b');
+    // Native editor focus scrolls a DOM Range, which JSDOM cannot lay out; Chrome exercises it.
+    expect(activeCssomDeclaration(style, '.composer-tiptap__surface[data-style-contract-focus-visible]', 'outline')).toBe('2px solid var(--accent)');
+  });
+
   it.each([
     { pixel: 'off', radius: 4 },
     { pixel: 'on', radius: 0 },
