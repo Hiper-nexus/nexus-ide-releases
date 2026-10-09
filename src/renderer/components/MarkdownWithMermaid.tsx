@@ -1,32 +1,72 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { splitMarkdownMermaid } from '../../shared/mermaid-fences';
+import {
+  escapeMermaidSource,
+  splitMarkdownMermaid,
+} from '../../shared/mermaid-fences';
 
 /**
- * Markdown + Mermaid (item T3). Renderiza prosa como texto pré-formatado e
- * cada bloco ```mermaid como `<figure data-mermaid>` com a fonte canônica —
- * pronta para o renderizador Mermaid (lazy) ou inspeção. Nenhum HTML cru do
- * markdown é injetado. O texto do diagrama vai como filho React: o runtime
- * já escapa, e escapar de novo mostraria `&gt;` na tela.
+ * Markdown + Mermaid renderizado de verdade (item T3).
+ * Cada bloco ```mermaid vira SVG via `mermaid.render`; falha cai no source.
  */
 export interface MarkdownWithMermaidProps {
   readonly source: string;
   readonly onMermaidReady?: (el: HTMLElement, source: string) => void;
 }
 
+type MermaidApi = {
+  initialize: (config: Record<string, unknown>) => void;
+  render: (id: string, code: string) => Promise<{ svg: string }>;
+};
+
+let mermaidApi: MermaidApi | null = null;
+let mermaidLoading: Promise<MermaidApi | null> | null = null;
+
+async function loadMermaid(): Promise<MermaidApi | null> {
+  if (mermaidApi) return mermaidApi;
+  if (!mermaidLoading) {
+    mermaidLoading = import('mermaid').then((mod) => {
+      const api = (mod.default ?? mod) as unknown as MermaidApi;
+      if (api && typeof api.render === 'function') {
+        api.initialize?.({ startOnLoad: false, securityLevel: 'strict' });
+        mermaidApi = api;
+        return api;
+      }
+      return null;
+    });
+  }
+  return mermaidLoading;
+}
+
 function MermaidBlock({
   source,
   index,
-  onMermaidReady,
+  onReady,
 }: {
-  readonly source: string;
-  readonly index: number;
-  readonly onMermaidReady?: (el: HTMLElement, source: string) => void;
+  source: string;
+  index: number;
+  onReady?: (el: HTMLElement, source: string) => void;
 }) {
-  const ref = useRef<HTMLElement>(null);
+  const ref = useRef<HTMLElement | null>(null);
   useEffect(() => {
+    let cancelled = false;
     const el = ref.current;
-    if (el && onMermaidReady) onMermaidReady(el, source);
-  }, [source, onMermaidReady]);
+    if (!el) return;
+    void loadMermaid()
+      .then(async (api) => {
+        if (!api || cancelled || !ref.current) return;
+        const { svg } = await api.render(`nexus-mermaid-${index}`, source);
+        if (cancelled || !ref.current) return;
+        ref.current.innerHTML = svg;
+        onReady?.(ref.current, source);
+      })
+      .catch(() => {
+        // Render falhou: o <pre> com a fonte continua como fallback.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [source, index, onReady]);
+
   return (
     <figure
       ref={ref}
@@ -37,7 +77,7 @@ function MermaidBlock({
         Diagrama Mermaid
       </figcaption>
       <pre className="markdown-with-mermaid__source">
-        <code>{source}</code>
+        <code>{escapeMermaidSource(source)}</code>
       </pre>
     </figure>
   );
@@ -57,7 +97,7 @@ export function MarkdownWithMermaid({ source, onMermaidReady }: MarkdownWithMerm
             key={`m${part.index}`}
             source={part.source}
             index={part.index}
-            onMermaidReady={onMermaidReady}
+            onReady={onMermaidReady}
           />
         ),
       )}

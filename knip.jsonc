@@ -5,7 +5,23 @@
   // Executáveis fornecidos pelo OS ou instalados fora do npm.
   "ignoreBinaries": ["file", "mkfifo", "pkill", "pkg-config", "plutil", "sips"],
   // Vendor: nunca é nosso para remover.
-  "ignore": ["src/vendor/**"],
+  "ignore": [
+    "src/vendor/**",
+    // Triagem 08/10: mantidos à espera do consumidor (não são lixo acidental).
+    "mobile/src/api.ts",
+    "mobile/src/types.ts",
+    "mobile/src/session/MobileDiffCommentLineRow.tsx",
+    "mobile/src/transport/rpc-operation-compile-fence.ts",
+    "server/src/relay/server.ts",
+    "src/main/context/candidate-quality-review.ts",
+    "src/main/context/orientation/graphify-enricher.ts",
+    "src/renderer/components/AgentDropZone.tsx",
+    "src/renderer/components/model/ModelMetaBadge.tsx",
+    "src/renderer/components/OperatorHud.tsx",
+    "src/renderer/state/pipe-store.ts",
+    "src/shared/agent-hook-endpoint-file.ts",
+    "src/shared/mission-result-format.ts"
+  ],
   "workspaces": {
     ".": {
       "project": [
@@ -24,6 +40,10 @@
         "src/preload/pet-preload.ts!",
         "src/renderer/pet/pet-main.tsx!",
         "src/renderer/pet/PetApp.tsx!",
+        "src/renderer/components/ComposerTiptapEditor.tsx!",
+        "src/renderer/components/ComposerRichTextEditor.tsx!",
+        "src/renderer/components/ComposerRichTextView.tsx!",
+        "src/renderer/components/MarkdownWithMermaid.tsx!",
         "src/main/usage/mimo-usage-worker-entry.ts!",
         "vite.*.config.ts!",
         "scripts/**/*.{mjs,cjs,js,ts}!",
