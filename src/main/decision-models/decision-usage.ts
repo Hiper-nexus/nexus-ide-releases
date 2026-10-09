@@ -1,3 +1,4 @@
+import type { DecisionUsageReceipt } from '../../shared/decision-models';
 import type { JevResult } from '../jev/jev-client';
 import type { JevDecisionInput } from '../jev/jev-decision-log';
 import { decisionResultCostUsd } from './decision-pricing';
@@ -14,6 +15,11 @@ export function decisionResultUsage(result: JevResult): Pick<JevDecisionInput,
     inputTokens: measured ? tokens : null,
     usd: measured ? (typeof result.estimatedUsd === 'number' && Number.isFinite(result.estimatedUsd) && result.estimatedUsd >= 0
       ? result.estimatedUsd : decisionResultCostUsd(result)) : null,
+    ...(result.usageReceipt ? {
+      inputTokens: result.usageReceipt.inputTokens, usd: result.usageReceipt.usd,
+      requestCount: result.usageReceipt.requestCount, durationMs: result.usageReceipt.durationMs,
+      usageIncomplete: result.usageReceipt.usageIncomplete,
+    } : {}),
   };
 }
 
@@ -30,5 +36,18 @@ export function aggregateDecisionUsage(results: readonly JevResult[], incomplete
       ? receipts.reduce((total, receipt) => total + receipt.requestCount!, 0) : undefined,
     durationMs: receipts.length && receipts.every(receipt => receipt.durationMs !== undefined)
       ? Math.max(...receipts.map(receipt => receipt.durationMs!)) : undefined,
+  };
+}
+
+/** A logical ensemble owns one receipt; incomplete measurements keep their known lower bounds. */
+export function aggregateUsageReceipts(receipts: readonly DecisionUsageReceipt[]): DecisionUsageReceipt {
+  const sum = (field: 'inputTokens' | 'usd'): number | null => {
+    const known = receipts.flatMap(receipt => receipt[field] === null ? [] : [receipt[field]!]);
+    return known.length ? known.reduce((total, value) => total + value, 0) : null;
+  };
+  return { inputTokens: sum('inputTokens'), usd: sum('usd'),
+    requestCount: receipts.reduce((total, receipt) => total + receipt.requestCount, 0),
+    durationMs: Math.max(0, ...receipts.map(receipt => receipt.durationMs)),
+    usageIncomplete: !receipts.length || receipts.some(receipt => receipt.usageIncomplete),
   };
 }

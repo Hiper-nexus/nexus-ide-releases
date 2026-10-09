@@ -147,6 +147,9 @@ export async function judgeLuna(input: JudgeInput, token: string, deps: LunaDeps
     const result: JevResult = { model: LUNA_DECISION_MODEL, answers: Object.fromEntries(answers),
       usage: { input_tokens: inputTokens, output_tokens: outputTokens }, requestCount, durationMs: now() - started,
       ...(usageMissing || measuredBatches !== requestCount ? { usageMissing: true as const } : {}) };
+    result.usageReceipt = { inputTokens: measuredBatches ? inputTokens : null,
+      usd: measuredBatches ? decisionResultCostUsd(result) : null, requestCount, durationMs: result.durationMs!,
+      usageIncomplete: measuredBatches !== requestCount };
     return usageMissing || measuredBatches !== requestCount ? result : { ...result, estimatedUsd: decisionResultCostUsd(result) };
   } catch (error) {
     if (requestCount) {

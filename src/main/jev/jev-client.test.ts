@@ -15,6 +15,8 @@ import {
   configureJevDecisionLog,
   listJevDecisions,
 } from './jev-decision-log';
+import { decisionResultUsage } from '../decision-models/decision-usage';
+import type { DecisionSettings } from '../../shared/decision-models';
 import { JEV_REAL_QUESTIONS, jevRealResponse } from '../decision-models/jev-real-response.fixture';
 
 function jsonResponse(status: number, body: unknown, headers?: Record<string, string>) {
@@ -346,6 +348,134 @@ describe('judge — registro central de consultas sem resposta', () => {
       { fetch: ok as unknown as typeof fetch, resolveKey: () => undefined },
     );
     expect(onNoAnswer).not.toHaveBeenCalled();
+  });
+});
+
+describe('ensemble accounting through real native transport and journal', () => {
+  let logDir: string;
+  const together: DecisionSettings = { mode: 'together', clefModel: 'clef', cloudflareAccountId: '', visionEnabled: false };
+  const ask = { state: 'private brief', surface: 'dispatchGuard' as const, questions: { q: question } };
+  const baseDeps = {
+    resolveKey: () => 'synthetic-jev', resolveLunaKey: () => 'synthetic-luna',
+    getSettings: () => together, getAvailability: () => ({ jev: true, luna: true, clef: false }),
+    getConfigurationKey: () => 'stable',
+  };
+  const lunaResponse = (measured = true) => jsonResponse(200, {
+    model: 'gpt-6-luna', ...(measured ? { usage: { input_tokens: 1_000 } } : {}),
+    answers: [{ type: 'predicate', name: 'q0', probability: 0.9 }],
+  });
+  beforeEach(() => {
+    logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ensemble-accounting-'));
+    configureJevDecisionLog(logDir);
+  });
+  afterEach(() => { configureJevDecisionLog(); fs.rmSync(logDir, { recursive: true, force: true }); });
+
+  it('owns one failure row and retains a successful Luna receipt when the real Jev transport fails', async () => {
+    const usage = vi.fn(); const reason = vi.fn();
+    const result = await judge({ ...ask, onUsage: usage, onNoAnswer: reason }, { ...baseDeps,
+      fetch: (async url => String(url).includes('typesafe.ai')
+        ? jsonResponse(401, { message: 'synthetic failure' }) : lunaResponse()) as typeof fetch,
+    });
+    expect(result).toBeNull(); expect(reason).toHaveBeenCalledOnce();
+    const rows = listJevDecisions({ includeNoAnswer: true });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ model: 'ensemble', reason: 'client-error', inputTokens: 1_000,
+      usd: 0.0001, requestCount: 2, usageIncomplete: true });
+    expect(usage).toHaveBeenCalledOnce();
+    expect(usage).toHaveBeenCalledWith(expect.objectContaining({ inputTokens: 1_000, usd: 0.0001, requestCount: 2 }));
+    expect(JSON.stringify(rows)).not.toContain('private brief');
+  });
+
+  it.each(['refusal', 'ambiguous'])('includes a failed Luna member measurement for %s', async reason => {
+    const result = await judge(ask, { ...baseDeps,
+      fetch: (async url => String(url).includes('typesafe.ai')
+        ? jsonResponse(200, { ...okBody, usage: { input_tokens: 500, output_tokens: 0 } })
+        : jsonResponse(200, { model: 'gpt-6-luna', usage: { input_tokens: 1_000 },
+          answers: [{ type: reason === 'refusal' ? 'refusal' : 'predicate', name: 'q0' }] })) as typeof fetch,
+    });
+    expect(result).toBeNull();
+    const rows = listJevDecisions({ includeNoAnswer: true });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ reason, inputTokens: 1_500, requestCount: 2, usageIncomplete: false });
+    expect(rows[0]?.usd).toBeCloseTo(0.000121, 10);
+  });
+
+  it.each([false, true])('includes a failed Clef member receipt in a triple (measured=%s)', async measured => {
+    const result = await judge(ask, { ...baseDeps,
+      getAvailability: () => ({ jev: true, luna: true, clef: true }),
+      getClefConnection: () => ({ accountId: '0123456789abcdef0123456789abcdef', token: 'synthetic-clef', model: 'clef' as const }),
+      fetch: (async url => {
+        if (String(url).includes('typesafe.ai')) return jsonResponse(200, { ...okBody, usage: { input_tokens: 500, output_tokens: 0 } });
+        if (String(url).includes('openai.com')) return lunaResponse();
+        return measured ? jsonResponse(200, { success: true, result: { model: 'clef', answers: {},
+          usage: { input_tokens: 2_000, output_tokens: 0 } } }) : jsonResponse(401, {});
+      }) as typeof fetch,
+    });
+    expect(result).toBeNull();
+    const rows = listJevDecisions({ includeNoAnswer: true });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ inputTokens: measured ? 3_500 : 1_500,
+      requestCount: 3, usageIncomplete: !measured });
+    expect(rows[0]?.usd).toBeCloseTo(measured ? 0.000601 : 0.000121, 10);
+  });
+
+  it.each(['cancel', 'configuration'])('retains both parsed responses after %s revocation', async action => {
+    const controller = new AbortController(); let revision = 'stable';
+    let lunaFinished!: () => void;
+    const finished = new Promise<void>(resolve => { lunaFinished = resolve; });
+    const result = await judge({ ...ask, signal: controller.signal }, { ...baseDeps,
+      getConfigurationKey: () => revision,
+      fetch: (async url => {
+        if (String(url).includes('typesafe.ai')) {
+          const response = jsonResponse(200, { ...okBody, usage: { input_tokens: 500, output_tokens: 0 } });
+          const text = response.text.bind(response);
+          response.text = async () => {
+            await finished;
+            await new Promise(resolve => setTimeout(resolve, 0));
+            if (action === 'cancel') controller.abort(); else revision = 'changed';
+            return text();
+          };
+          return response;
+        }
+        const response = lunaResponse(); const reader = response.body!.getReader();
+        const release = reader.releaseLock.bind(reader);
+        reader.releaseLock = () => { release(); lunaFinished(); };
+        Object.defineProperty(response.body, 'getReader', { value: () => reader });
+        return response;
+      }) as typeof fetch,
+    });
+    expect(result).toBeNull();
+    const rows = listJevDecisions({ includeNoAnswer: true });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ model: 'ensemble', reason: 'aborted', inputTokens: 1_500,
+      requestCount: 2, usageIncomplete: false });
+    expect(rows[0]?.usd).toBeCloseTo(0.000121, 10);
+  });
+
+  it('retains both measurements when a security choice is divergent', async () => {
+    const result = await judge({ ...ask, surface: 'memoryDistill', questions: {
+      q: { type: 'choice', instructions: 'Which fact?', criteria: { a: 'first', b: 'second' } },
+    } }, { ...baseDeps, fetch: (async url => String(url).includes('typesafe.ai')
+      ? jsonResponse(200, { model: 'jev-1.13.0', usage: { input_tokens: 500, output_tokens: 0 },
+        answers: { q: { type: 'choice', choice: 'a', confidence: 1, probabilities: { a: 1, b: 0 } } } })
+      : jsonResponse(200, { model: 'gpt-6-luna', usage: { input_tokens: 1_000 }, answers: [
+        { type: 'choice', name: 'q0', choice: 'b', confidence: 1, probabilities: [{ value: 'a', probability: 0 }, { value: 'b', probability: 1 }] },
+      ] })) as typeof fetch });
+    expect(result).toBeNull();
+    const rows = listJevDecisions({ includeNoAnswer: true });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ reason: 'divergent', inputTokens: 1_500, requestCount: 2, usageIncomplete: false });
+    expect(rows[0]?.usd).toBeCloseTo(0.000121, 10);
+  });
+
+  it.each([true, false])('keeps mixed/unknown usage through the real success consumer (Luna measured=%s)', async measured => {
+    const { usage: _usage, ...unmeasuredJev } = okBody;
+    const result = await judge(ask, { ...baseDeps,
+      fetch: (async url => String(url).includes('typesafe.ai') ? jsonResponse(200, unmeasuredJev) : lunaResponse(measured)) as typeof fetch,
+    });
+    expect(result).not.toBeNull();
+    expect(decisionResultUsage(result!)).toMatchObject({ inputTokens: measured ? 1_000 : null,
+      usd: measured ? 0.0001 : null, requestCount: 2, usageIncomplete: true });
   });
 });
 

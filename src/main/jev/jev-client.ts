@@ -1,4 +1,4 @@
-import type { DecisionImage, DecisionRoute } from '../../shared/decision-models';
+import type { DecisionImage, DecisionRoute, DecisionUsageReceipt } from '../../shared/decision-models';
 import { redactState, redactQuestions } from '../decision-models/decision-redaction';
 import { judgeDecision, type DecisionJudgeDeps } from '../decision-models/decision-judge';
 import { getDecisionAvailability } from '../decision-models/decision-availability';
@@ -77,6 +77,8 @@ export type JevAnswer =
     };
 
 export interface JevResult {
+  /** Explicit known lower bounds survive partial/missing member measurements. */
+  usageReceipt?: DecisionUsageReceipt;
   route?: DecisionRoute;
   durationMs?: number;
   requestCount?: number;
@@ -166,6 +168,7 @@ export interface JudgeDeps {
   getConfigurationKey?: DecisionJudgeDeps['getConfigurationKey'];
   getAvailability?: DecisionJudgeDeps['getAvailability'];
   getClefConnection?: DecisionJudgeDeps['getClefConnection'];
+  resolveLunaKey?: DecisionJudgeDeps['resolveLunaKey'];
 }
 
 function errorMessage(body: unknown, status: number): string {
@@ -205,6 +208,7 @@ export async function judgeJevTransport(
     questions: redactQuestions(input.questions),
   });
 
+  const started = now();
   let lastFailure = 'unknown error';
   let lastReason: JevNoAnswerReason = 'network';
   let requestCount = 0;
@@ -246,7 +250,12 @@ export async function judgeJevTransport(
         const inputTokens = validated.usage.input_tokens;
         stats.inputTokens += inputTokens;
         stats.estimatedUsd += inputTokens * USD_PER_INPUT_TOKEN;
-        return { ...validated, requestCount };
+        return { ...validated, requestCount, usageReceipt: {
+          inputTokens: validated.usageMissing ? null : inputTokens,
+          usd: validated.usageMissing ? null : inputTokens * USD_PER_INPUT_TOKEN,
+          requestCount, durationMs: now() - started,
+          usageIncomplete: Boolean(validated.usageMissing || requestCount > 1),
+        } };
       }
       const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
       lastFailure = `HTTP ${res.status}: ${errorMessage(data, res.status)}`;
@@ -287,6 +296,9 @@ export async function judgeJevTransport(
     }
   }
   stats.failures += 1;
+  const usage: DecisionUsageReceipt = { inputTokens: requestCount ? null : 0, usd: requestCount ? null : 0,
+    requestCount, durationMs: now() - started, usageIncomplete: requestCount > 0 };
+  try { input.onUsage?.(usage); } catch { /* optional accounting callback */ }
   try {
     input.onNoAnswer?.(lastReason);
   } catch {
@@ -300,6 +312,7 @@ export async function judgeJevTransport(
       reason: lastReason,
       model,
       provider: 'jev',
+      usage,
       requestCount,
       sessionId: input.sessionId,
       missionId: input.missionId,

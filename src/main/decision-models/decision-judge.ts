@@ -8,7 +8,7 @@ import { combineEnsembleAnswers } from './decision-ensemble';
 import { ensembleMembers, resolveDecisionRoute, type DecisionAvailability } from './decision-routing';
 import { decisionConfigurationKey, getClefConnection, getDecisionAvailability, getDecisionSettings } from './decision-availability';
 import { decisionResultCostUsd } from './decision-pricing';
-import { aggregateDecisionUsage } from './decision-usage';
+import { aggregateUsageReceipts, decisionResultUsage } from './decision-usage';
 import { onDecisionConfigurationChanged } from './decision-revision';
 
 export interface DecisionJudgeDeps {
@@ -70,23 +70,48 @@ async function performEnsemble(
   const revoked = new AbortController();
   const unsubscribe = onDecisionConfigurationChanged(() => revoked.abort());
   const currentInput = { ...input, signal: input.signal ? AbortSignal.any([input.signal, revoked.signal]) : revoked.signal };
+  const receipts: DecisionUsageReceipt[] = members.map(() => ({ ...NO_REQUEST_USAGE }));
+  const finishNoAnswer = (reason: JevNoAnswerReason): null => {
+    const usage = aggregateUsageReceipts(receipts);
+    try { input.onUsage?.(usage); } catch { console.warn('[decision-models] usage callback failed'); }
+    return noAnswer(input, lead, reason, usage);
+  };
   try {
-    if (currentInput.signal.aborted) return noAnswer(input, lead, 'aborted', NO_REQUEST_USAGE);
+    if (currentInput.signal.aborted) return finishNoAnswer('aborted');
     if (members.some(member => member.provider === 'luna') && !(deps.resolveLunaKey ?? resolveLunaApiKey)()?.trim()) {
-      return noAnswer(input, lead, 'client-error', NO_REQUEST_USAGE);
+      return finishNoAnswer('client-error');
     }
     if (members.some(member => member.provider === 'clef') && !(deps.getClefConnection ?? (() => getClefConnection(settings)))()) {
-      return noAnswer(input, lead, 'client-error', NO_REQUEST_USAGE);
+      return finishNoAnswer('client-error');
     }
     let firstFailure: JevNoAnswerReason | undefined;
-    const watched = { ...currentInput, onNoAnswer: (reason: JevNoAnswerReason) => { firstFailure ??= reason; } };
-    const results = await Promise.all(members.map(member => callMember(watched, deps, member, settings)));
-    if (results.some(result => !result)) return noAnswer(input, lead, firstFailure ?? 'client-error');
-    if (currentInput.signal.aborted || configuration() !== before) return noAnswer(input, lead, 'aborted');
+    // Each member settles before the owner journals; one rejected member must not lose its peers' spend.
+    const results = await Promise.all(members.map(async (member, index) => {
+      let reported: DecisionUsageReceipt | undefined;
+      receipts[index] = { inputTokens: null, usd: null, requestCount: 0, durationMs: 0, usageIncomplete: true };
+      try {
+        const result = await callMember({ ...currentInput, surface: undefined,
+          onUsage: receipt => { reported = receipt; receipts[index] = receipt; },
+          onNoAnswer: reason => { firstFailure ??= reason; },
+        }, deps, member, settings);
+        if (result) {
+          const receipt = decisionResultUsage({ ...result, route: member });
+          receipts[index] = reported ?? { inputTokens: receipt.inputTokens, usd: receipt.usd,
+            requestCount: receipt.requestCount ?? 1, durationMs: receipt.durationMs ?? (deps.now ?? (() => performance.now()))() - started,
+            usageIncomplete: Boolean(receipt.usageIncomplete) };
+        }
+        return result;
+      } catch (error) {
+        firstFailure ??= failureReason(error, currentInput, deps.now ?? Date.now);
+        return null;
+      }
+    }));
+    const usage = aggregateUsageReceipts(receipts);
+    if (results.some(result => !result)) return finishNoAnswer(firstFailure ?? 'client-error');
+    if (currentInput.signal.aborted || configuration() !== before) return finishNoAnswer('aborted');
     const answered = results as JevResult[];
     const combined = combineEnsembleAnswers(members.map((member, index) => ({ provider: member.provider, answers: answered[index].answers })), input.surface);
-    if (!combined.ok) return noAnswer(input, lead, 'divergent');
-    const usage = aggregateDecisionUsage(answered.map((result, index) => ({ ...result, route: members[index] })));
+    if (!combined.ok) return finishNoAnswer('divergent');
     if (combined.diverged && input.surface) {
       recordJevDecision({
         surface: input.surface, sessionId: input.sessionId, missionId: input.missionId, model: 'ensemble',
@@ -98,10 +123,11 @@ async function performEnsemble(
     return {
       model: 'ensemble', answers: combined.answers, route: lead, diverged: combined.diverged, ensemblePeers: combined.peers,
       requestCount: usage.requestCount, durationMs: usage.durationMs ?? elapsed,
-      usage: { input_tokens: usage.inputTokens ?? 0, output_tokens: 0 },
-      ...(usage.usageIncomplete || usage.usd === null ? { usageMissing: true as const } : { estimatedUsd: usage.usd }),
+      usage: { input_tokens: usage.inputTokens ?? 0, output_tokens: 0 }, usageReceipt: usage,
+      ...(usage.usageIncomplete ? { usageMissing: true as const } : {}),
+      ...(usage.usd === null ? {} : { estimatedUsd: usage.usd }),
     };
-  } catch (error) { return noAnswer(input, lead, failureReason(error, currentInput, deps.now ?? Date.now)); }
+  } catch (error) { return finishNoAnswer(failureReason(error, currentInput, deps.now ?? Date.now)); }
   finally { unsubscribe(); }
 }
 

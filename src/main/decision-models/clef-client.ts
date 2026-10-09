@@ -143,6 +143,9 @@ export async function judgeClef(input: JudgeInput, connection: ClefConnection, d
     }
     const result: JevResult = { model: connection.model, answers: Object.fromEntries(answers),
       usage: { input_tokens: inputTokens, output_tokens: outputTokens }, requestCount, durationMs: now() - started };
+    result.usageReceipt = { inputTokens: measuredBatches ? inputTokens : null,
+      usd: measuredBatches ? decisionResultCostUsd(result) : null, requestCount, durationMs: result.durationMs!,
+      usageIncomplete: measuredBatches !== requestCount };
     return { ...result, estimatedUsd: decisionResultCostUsd(result) };
   } catch (error) {
     if (requestCount) {
