@@ -1,7 +1,7 @@
 /**
  * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
  * Upstream reference: apps/desktop/src/preview/CdpRelay.ts.
- * Nexus changes: Only createPaneCdpRelay factory is inspired by upstream preview CDP access; resolves exact scoped live pane authority and refuses failed attach. Existing Nexus browser manager remains locally authored; no transport/endpoint added by this factory.
+ * Nexus changes: Only the scoped internal CDP factory is inspired by upstream preview CDP access; resolves exact scoped live pane authority and refuses failed attach. Existing Nexus browser manager remains locally authored; no transport/endpoint added by this factory.
  */
 import { decisionResultUsage } from '../decision-models/decision-usage';
 import {
@@ -195,6 +195,8 @@ export interface BrowserEntry {
   /** Exact main-owned URL fence for an automated read-only design review. */
   exactNavigationLock?: string;
   restoringExactNavigation: boolean;
+  /** Isolated internal relay leases; no production CDP transport is registered. */
+  cdpReleases?: Set<() => void>;
   allowedPrivateTargets: Map<string, Set<string>>;
   resolveHostname: BrowserAddressResolver;
   networkProxy: PinnedBrowserProxy;
@@ -1303,6 +1305,7 @@ export function lockBrowserToExactUrl(
     );
   }
   entry.exactNavigationLock = exactUrl;
+  for (const release of [...(entry.cdpReleases ?? [])]) release();
 }
 
 export function assertBrowserAtExactUrl(
@@ -2942,6 +2945,7 @@ function detachBrowserEntry(
     return null;
   }
   assertEntryScope(entry, scope);
+  for (const release of [...(entry.cdpReleases ?? [])]) release();
   browsers.delete(key);
   pendingBoundsByKey.delete(key);
   forgetParkedBrowserPane(entry.owner, paneId, scope);
@@ -3137,12 +3141,10 @@ function browserShowsOrigin(entry: BrowserEntry, previewOrigin: string): boolean
   }
 }
 
-/**
- * CdpRelay plug (item T3): abre o endpoint CDP de UM tab para o servidor de
- * ambiente (Playwright). A entrada vive em `browserKey(scope, paneId)`.
- * `write` devolve as mensagens CDP ao WebSocket do preview. `previewOrigin`
- * recusa um pane que não está nessa origem loopback. `detach()` só solta o
- * debugger se este relay o criou.
+/** Isolated internal factory, without a registered endpoint/product caller.
+ * A future raw connection requires a separate governed data/visual contract.
+ * Each handle is bound to one document, full scope, owner, session and profile;
+ * navigation invalidates it (including reload), requiring a fresh factory call.
  */
 export function openCdpRelayForPane(
   paneId: string,
@@ -3150,24 +3152,64 @@ export function openCdpRelayForPane(
   options: {
     readonly write: (message: string) => void;
     readonly onDownloadDirectory?: (directory: string | null) => void;
+    readonly signal?: AbortSignal;
+    readonly assertCurrentAuthority?: () => void;
   },
   previewOrigin?: string,
 ): { readonly connection: CdpRelayConnection; readonly detach: () => void } | null {
+  const frozenScope = Object.freeze({ ...scope });
   let entry: BrowserEntry;
-  try {
-    entry = withEntry(paneId, scope);
-  } catch {
-    return null;
-  }
-  if (!liveOwnerWindow(entry.owner) || !canSend(entry.view.webContents)) return null;
+  try { entry = withEntry(paneId, frozenScope); } catch { return null; }
+  const owner = entry.owner;
+  const window = liveOwnerWindow(owner);
+  const wc = entry.view.webContents;
+  if (!window || !canSend(wc) || entry.profileMode !== 'isolated' || entry.exactNavigationLock) return null;
   if (previewOrigin !== undefined && !browserShowsOrigin(entry, previewOrigin)) return null;
-
-  const attach = attachCdpRelay(entry.view.webContents, options);
-  if (!attach.attached) {
-    attach.detach();
-    return null;
-  }
-  return { connection: attach.connection, detach: attach.detach };
+  const navSeq = entry.navSeq;
+  const generation = entry.loadGeneration;
+  const session = wc.session;
+  const url = wc.getURL();
+  let attach: ReturnType<typeof attachCdpRelay> | undefined;
+  let revoked = false;
+  const revoke = (): void => {
+    if (revoked) return;
+    revoked = true;
+    entry.cdpReleases?.delete(revoke);
+    options.signal?.removeEventListener('abort', revoke);
+    try {
+      wc.removeListener('did-start-navigation', onNavigation);
+      wc.removeListener('destroyed', revoke);
+      owner.removeListener('destroyed', revoke);
+    } catch { /* Destroyed/mock emitter. */ }
+    attach?.detach();
+  };
+  const assertCurrent = (): void => {
+    try {
+      options.assertCurrentAuthority?.();
+      if (revoked || options.signal?.aborted || withEntry(paneId, frozenScope) !== entry ||
+          entry.owner !== owner || liveOwnerWindow(owner) !== window || !canSend(wc) ||
+          entry.profileMode !== 'isolated' || entry.exactNavigationLock || wc.session !== session ||
+          entry.navSeq !== navSeq || entry.loadGeneration !== generation || wc.getURL() !== url) {
+        throw new Error('browser relay authority revoked');
+      }
+    } catch (error) { revoke(); throw error; }
+  };
+  const onNavigation = (_event: unknown, _url: string, _inPlace: boolean, mainFrame: boolean): void => {
+    if (mainFrame) revoke();
+  };
+  try {
+    assertCurrent();
+    attach = attachCdpRelay(wc, { ...options, assertCurrentAuthority: assertCurrent });
+    if (!attach.attached) { revoke(); return null; }
+    assertCurrent();
+    (entry.cdpReleases ??= new Set()).add(revoke);
+    wc.on('did-start-navigation', onNavigation);
+    wc.once('destroyed', revoke);
+    owner.once('destroyed', revoke);
+    options.signal?.addEventListener('abort', revoke, { once: true });
+    assertCurrent();
+    return { connection: attach.connection, detach: revoke };
+  } catch { revoke(); return null; }
 }
 
 function browserEntryForWebContents(

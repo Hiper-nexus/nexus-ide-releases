@@ -10,21 +10,17 @@ import {
   type CdpRelayTarget,
 } from './cdp-relay';
 
-/**
- * Plug do CdpRelay no Electron (próxima onda após o protocolo puro).
- *
- * Liga `webContents.debugger` ao `createCdpRelayConnection`: o servidor de
- * ambiente (Playwright) fala CDP com este relay e ele encaminha para o
- * debugger do tab. Electron permite UM cliente de debugger por webContents —
- * este relay compartilha o attach que o preview manager já tem.
- *
- * Protocolo: `Target.createCdpRelay` / `Target.attachCdpRelay` (chamados pelo
- * preview-server); mensagem vai por `write`.
+/** Internal Electron adapter for the retained per-page protocol.
+ * No preview-server, WebSocket, or product endpoint calls this adapter.
+ * It shares Main debugger leases; a future governed transport must enforce
+ * the separate sensitive-field/visual authority contract before using it.
  */
 
 export interface CdpRelayAttachOptions {
   readonly write: (message: string) => void;
-  /** Teto de download que o servidor pediu; `null` restaura o padrão. */
+  readonly signal?: AbortSignal;
+  readonly assertCurrentAuthority?: () => void;
+  /** Legacy callback only; this relay never changes native download policy. */
   readonly onDownloadDirectory?: (directory: string | null) => void;
 }
 
@@ -137,17 +133,23 @@ function targetFromWebContents(
 /**
  * Attach do relay ao `webContents`. Se já houver um debugger attachado,
  * compartilha (Electron permite um cliente). O `write` recebe as mensagens
- * CDP para o servidor de ambiente.
+ * CDP do adapter interno, sem um transporte produtivo registrado.
  */
 export function attachCdpRelay(
   webContents: WebContents,
   options: CdpRelayAttachOptions,
 ): CdpRelayAttach {
+  let released = false;
+  const assertCurrent = (): void => {
+    if (released || options.signal?.aborted) throw new Error('browser relay authority revoked');
+    options.assertCurrentAuthority?.();
+  };
+  assertCurrent();
   const target = targetFromWebContents(
     webContents,
     options.onDownloadDirectory,
   );
-  const connection = createCdpRelayConnection(target, options.write);
+  const connection = createCdpRelayConnection(target, options.write, { assertCurrentAuthority: assertCurrent });
   const debuggerApi = webContents.debugger;
   const lease = retainDebugger(webContents, debuggerApi);
   const onMessage = (
@@ -159,7 +161,6 @@ export function attachCdpRelay(
     connection.event(method, params, sessionId);
   };
   debuggerApi.on('message', onMessage);
-  let released = false;
   return {
     connection,
     attached: debuggerApi.isAttached(),

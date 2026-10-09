@@ -243,6 +243,7 @@ import {
   destroyBrowser,
   ensureBrowser,
   loadBrowser,
+  lockBrowserToExactUrl,
   openCdpRelayForPane,
   pressBrowserKey,
   readBrowserPage,
@@ -1432,5 +1433,75 @@ describe('F-1076: static preview never grants raw CDP access', () => {
     expect(state.guest.debugger.attach).not.toHaveBeenCalled();
     expect(state.guest.debugger.on).not.toHaveBeenCalled();
     expect(state.guest.debugger.sendCommand).not.toHaveBeenCalledWith('Runtime.evaluate', expect.anything(), expect.anything());
+  });
+});
+
+describe('F-1078: retained isolated CDP factory lease boundaries', () => {
+  const relays:NonNullable<ReturnType<typeof openCdpRelayForPane>>[]=[];
+  const openLease=(options:{write:(raw:string)=>void;signal?:AbortSignal;assertCurrentAuthority?:()=>void})=>{const relay=openCdpRelayForPane(PANE,scope,options);if(relay)relays.push(relay);return relay;};
+  beforeEach(async()=>{
+    destroyBrowser(PANE,scope);vi.clearAllMocks();state.guestHandlers.clear();state.profileMode='isolated';
+    state.guest.isDestroyed.mockReturnValue(false);state.owner.isDestroyed.mockReturnValue(false);state.win.isDestroyed.mockReturnValue(false);
+    state.guest.getURL.mockReturnValue('https://example.test/owned');
+    vi.spyOn(state.guest.debugger,'isAttached').mockReturnValue(true);
+    bindResolvedRendererWorkspaceScope(state.owner,scope);
+    await boot();
+  });
+  afterEach(()=>{
+    for(const relay of relays.splice(0))relay.detach();
+    state.guest.isDestroyed.mockReturnValue(false);state.owner.isDestroyed.mockReturnValue(false);state.win.isDestroyed.mockReturnValue(false);
+    destroyBrowser(PANE,scope);clearRendererWorkspaceScope(state.owner);vi.restoreAllMocks();
+  });
+  it('drops commands and releases listeners after main-frame navigation',async()=>{
+    const write=vi.fn();const relay=openLease({write})!;
+    expect(relay).not.toBeNull();
+    for(const handler of state.guestHandlers.get('did-start-navigation')??[])handler({},'https://foreign.test/',false,true);
+    state.guest.getURL.mockReturnValue('https://foreign.test/');
+    relay.connection.receive(JSON.stringify({id:1,method:'Runtime.evaluate',sessionId:'nexus-preview-page',params:{expression:'document.title'}}));
+    await new Promise(resolve=>setTimeout(resolve,0));
+    expect(state.guest.debugger.sendCommand).not.toHaveBeenCalledWith('Runtime.evaluate',expect.anything(),expect.anything());
+    expect(write).not.toHaveBeenCalled();expect(state.guest.debugger.removeListener).toHaveBeenCalledWith('message',expect.any(Function));
+  });
+  it('aborts retained authority and suppresses late native responses',async()=>{
+    const controller=new AbortController();const write=vi.fn();let resolveSend!:(value:unknown)=>void;
+    state.guest.debugger.sendCommand.mockImplementationOnce(()=>new Promise(resolve=>{resolveSend=resolve;}));
+    const options={write,signal:controller.signal,assertCurrentAuthority:()=>{if(controller.signal.aborted)throw Error('revoked');}};
+    const relay=openLease(options)!;
+    relay.connection.receive(JSON.stringify({id:1,method:'Page.getFrameTree',sessionId:'nexus-preview-page'}));
+    await vi.waitFor(()=>expect(resolveSend).toBeDefined());controller.abort();resolveSend({secret:'new-document'});
+    await new Promise(resolve=>setTimeout(resolve,0));expect(write).not.toHaveBeenCalled();
+    expect(state.guest.debugger.removeListener).toHaveBeenCalledWith('message',expect.any(Function));
+  });
+  it('rejects destroyed owner/current entry on every native command',async()=>{
+    const write=vi.fn();const relay=openLease({write})!;
+    state.owner.isDestroyed.mockReturnValue(true);
+    relay.connection.receive(JSON.stringify({id:1,method:'Page.getFrameTree',sessionId:'nexus-preview-page'}));
+    await new Promise(resolve=>setTimeout(resolve,0));
+    expect(state.guest.debugger.sendCommand).not.toHaveBeenCalledWith('Page.getFrameTree',{},undefined);expect(write).not.toHaveBeenCalled();
+  });
+  it('refuses fresh raw factory access to an automated exact-surface browser',async()=>{
+    lockBrowserToExactUrl(PANE,scope,'https://example.test/owned');
+    expect(openLease({write:()=>undefined})).toBeNull();
+  });
+  it('refuses personal-profile entries before debugger attach',async()=>{
+    destroyBrowser(PANE,scope);state.profileMode='personal';await boot();
+    expect(openLease({write:()=>undefined})).toBeNull();
+  });
+  it('invalidates an old entry when the same pane is destroyed and recreated',async()=>{
+    const write=vi.fn();const relay=openLease({write})!;
+    destroyBrowser(PANE,scope);await boot();
+    relay.connection.receive(JSON.stringify({id:1,method:'Page.getFrameTree',sessionId:'nexus-preview-page'}));
+    await new Promise(resolve=>setTimeout(resolve,0));expect(write).not.toHaveBeenCalled();
+    expect(state.guest.debugger.sendCommand).not.toHaveBeenCalledWith('Page.getFrameTree',{},undefined);
+  });
+  it('suppresses an already-queued native event after detach',async()=>{
+    const write=vi.fn();const relay=openLease({write})!;
+    relay.connection.receive(JSON.stringify({id:1,method:'Target.setAutoAttach'}));
+    await vi.waitFor(()=>expect(write).toHaveBeenCalledTimes(2));
+    const listener=state.guest.debugger.on.mock.calls.find(call=>call[0]==='message')?.[1] as (...args:unknown[])=>void;
+    expect(listener).toBeTypeOf('function');write.mockClear();relay.detach();
+    listener({},'Page.loadEventFired',{},undefined);
+    relay.connection.event('Page.loadEventFired',{},undefined);
+    expect(write).not.toHaveBeenCalled();
   });
 });
