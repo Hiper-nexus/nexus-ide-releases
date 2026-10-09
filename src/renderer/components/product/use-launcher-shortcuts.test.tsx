@@ -13,12 +13,13 @@ import {
 
 const roots: Root[] = [];
 
-function render(node: ReactNode): void {
+function render(node: ReactNode): Root {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
   roots.push(root);
   act(() => root.render(node));
+  return root;
 }
 
 afterEach(() => {
@@ -66,5 +67,36 @@ describe('launcher shortcuts', () => {
     expect(run.shell).toHaveBeenCalledTimes(1);
     expect(run.workspace).toHaveBeenCalledTimes(1);
     expect(run.pane).not.toHaveBeenCalled();
+  });
+});
+
+describe('F-1086: only active visible modal owns number keys',()=>{
+  function Probe({children}:{children?:ReactNode}){const run=active;useLauncherShortcuts(true,run);return <>{children}</>;}
+  let active:LauncherShortcutActions;
+  it('blocks an active modal and resumes immediately after closing it',()=>{
+    active=actions();const modalRoot=render(<Probe><div role="dialog" aria-modal="true"><button>Confirmar</button></div></Probe>);
+    act(()=>keydown('4',false));expect(active.shell).not.toHaveBeenCalled();
+    act(()=>modalRoot.render(<Probe/>));act(()=>keydown('4',false));expect(active.shell).toHaveBeenCalledTimes(1);
+  });
+  it.each(['hidden','aria-hidden','inert','display','visibility','ancestor'] as const)('allows shortcuts past %s inactive modal',kind=>{
+    active=actions();render(<Probe><section><div role="dialog" aria-modal="true">Inactive</div></section></Probe>);
+    const dialog=document.querySelector<HTMLElement>('[aria-modal]')!;
+    if(kind==='hidden')dialog.hidden=true;
+    else if(kind==='aria-hidden')dialog.setAttribute('aria-hidden','true');
+    else if(kind==='inert')dialog.setAttribute('inert','');
+    else if(kind==='display')dialog.style.display='none';
+    else if(kind==='visibility')dialog.style.visibility='hidden';
+    else dialog.parentElement!.setAttribute('aria-hidden','true');
+    act(()=>keydown('4',false));expect(active.shell).toHaveBeenCalledTimes(1);
+  });
+  it('does not infer modality from a visible nonmodal dialog',()=>{
+    active=actions();render(<Probe><div role="dialog">History</div></Probe>);
+    act(()=>keydown('4',false));expect(active.shell).toHaveBeenCalledTimes(1);
+  });
+  it('keeps consumed/composing keys with their current input owner',()=>{
+    active=actions();render(<Probe/>);
+    const consumed=new KeyboardEvent('keydown',{key:'4',bubbles:true,cancelable:true});consumed.preventDefault();
+    act(()=>{window.dispatchEvent(consumed);window.dispatchEvent(new KeyboardEvent('keydown',{key:'4',isComposing:true,bubbles:true,cancelable:true}));});
+    expect(active.shell).not.toHaveBeenCalled();
   });
 });

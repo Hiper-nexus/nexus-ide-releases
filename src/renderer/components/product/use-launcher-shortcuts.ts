@@ -26,6 +26,26 @@ export function launcherShortcutTargetIsEditable(event: KeyboardEvent): boolean 
   );
 }
 
+/** Presence/role alone is not modality: hidden history/attention panels may
+ * remain mounted. Native modal state or aria-modal owns the current key scope.
+ */
+function hasActiveVisibleModal(): boolean {
+  return [...document.querySelectorAll<HTMLElement>('[aria-modal="true"], dialog')].some(element => {
+    if (element instanceof HTMLDialogElement && !element.open) return false;
+    let modal = element.getAttribute('aria-modal') === 'true';
+    if (!modal && element instanceof HTMLDialogElement) {
+      try { modal = element.matches(':modal'); } catch { modal = false; }
+    }
+    if (!modal) return false;
+    for (let ancestor: HTMLElement | null = element; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor.hidden || ancestor.hasAttribute('inert') || ancestor.getAttribute('aria-hidden') === 'true') return false;
+      const style = getComputedStyle(ancestor);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+    }
+    return true;
+  });
+}
+
 export type LauncherShortcutId =
   | 'pane'
   | 'mission'
@@ -51,7 +71,7 @@ export function useLauncherShortcuts(
   useEffect(() => {
     if (!enabled) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || hasActiveVisibleModal()) return;
       const id = launcherActionIdForKey(event.key, {
         targetIsEditable: launcherShortcutTargetIsEditable(event),
       });
