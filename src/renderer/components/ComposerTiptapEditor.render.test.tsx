@@ -158,3 +158,15 @@ it.each(['trailing\\','trailing\\\\',String.raw`\\server\share`,String.raw`x\*y`
   const fresh=await setup(saved);
   expect(fresh.editor.state.doc.textContent).toBe(text);
 });
+
+it.each(['Negrito','Código inline'] as const)('F-1079: actual partial %s formatting preserves adjacent unmarked slash and text marks on remount',async(mark)=>{
+  const {host,editor,onChange}=await setup('a\\b');
+  act(()=>{editor.commands.setTextSelection({from:3,to:4});host.querySelector<HTMLButtonElement>(`[aria-label="${mark}"]`)!.click();});
+  const saved=onChange.mock.calls.at(-1)?.[0] as string;
+  const fresh=await setup(saved);
+  expect(fresh.editor.state.doc.textContent).toBe('a\\b');
+  expect(fresh.editor.getJSON().content?.[0]?.content).toEqual([
+    {type:'text',text:'a\\'},
+    {type:'text',text:'b',marks:[{type:mark==='Negrito'?'bold':'code'}]},
+  ]);
+});
