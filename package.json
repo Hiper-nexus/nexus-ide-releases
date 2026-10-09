@@ -89,6 +89,7 @@
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "^12.11.1",
+    "dompurify": "3.4.16",
     "electron-squirrel-startup": "^1.0.1",
     "mermaid": "^11.17.2",
     "onnxruntime-node": "^1.19.2",
@@ -163,7 +164,8 @@
     },
     "node-gyp": {
       "undici": "6.28.1"
-    }
+    },
+    "katex": "0.18.2"
   },
   "allowScripts": {
     "esbuild@0.18.20": true,
