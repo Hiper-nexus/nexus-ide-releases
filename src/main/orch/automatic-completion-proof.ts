@@ -7,6 +7,7 @@ import {
   type SettlementEffectView,
 } from './effect-settlement-gate';
 import { EffectOutboxStore } from './effect-outbox';
+import { createScopedHandoffStore } from './handoff-store';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 
 export interface AutomaticCompletionProof {
@@ -30,25 +31,49 @@ export function automaticCompletionEffectsSettled(
 }
 
 /**
- * ORC-02 no estado durável: lê o outbox do escopo e decide se a conclusão
- * pode ser marcada settled. Usado pelo caminho de conclusão antes de fechar.
+ * ORC-02 no estado durável: lê o outbox do escopo e o ledger de handoff.
+ * `handoff.deliver` não entra em effect_outbox (o enum não aceita o tipo);
+ * a entrega real fica na fila do handoff. A sessão provada do Maestro fica
+ * de fora: o resumo dela não é entregue de volta para ela. Usado pelo
+ * caminho de conclusão antes de fechar.
  */
 export function assertCompletionEffectsSettled(
   runtimeManager: ProjectRuntimeManager,
   scope: ProjectExecutionScope,
   threadId?: string,
+  options?: { readonly excludeSessionId?: string },
 ): void {
   const outbox = new EffectOutboxStore(runtimeManager, scope);
-  const open = [
-    ...outbox.listByStatus('pending', 200),
-    ...outbox.listByStatus('running', 200),
-  ];
+  const blocking = outbox.listUnsettledBlocking(threadId);
+  if (blocking.truncated) {
+    throw new Error(
+      'completion_effects_pending: effect_outbox backlog exceeds the gate window',
+    );
+  }
+  const open = blocking.rows;
+  const excludeSessionId = options?.excludeSessionId?.trim() ?? '';
+  const queuedDeliveries = createScopedHandoffStore(
+    runtimeManager,
+    scope,
+  )
+    .listQueuedDeliveries(threadId)
+    .filter(
+      (delivery) =>
+        !(excludeSessionId && delivery.sessionId === excludeSessionId),
+    );
   const gate = canMarkTurnSettled(
-    open.map((entry) => ({
-      type: entry.type,
-      status: entry.status,
-      threadId: entry.threadId,
-    })),
+    [
+      ...open.map((entry) => ({
+        type: entry.type,
+        status: entry.status,
+        threadId: entry.threadId,
+      })),
+      ...queuedDeliveries.map((delivery) => ({
+        type: 'handoff.deliver',
+        status: 'pending' as const,
+        threadId: delivery.missionId,
+      })),
+    ],
     threadId,
   );
   if (!gate.settled) {

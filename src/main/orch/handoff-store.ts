@@ -1579,7 +1579,10 @@ export class ScopedHandoffStore {
     }
   }
 
-  list(rawFilter: ListHandoffsFilter = {}): ScopedHandoff[] {
+  #handoffFilter(rawFilter: ListHandoffsFilter): {
+    where: string;
+    params: unknown[];
+  } {
     const filter = z
       .object({
         missionId: identifierSchema.nullable().optional(),
@@ -1609,6 +1612,11 @@ export class ScopedHandoffStore {
     }
     if (!filter.includeDelivered) clauses.push("delivered = 0");
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    return { where, params };
+  }
+
+  list(rawFilter: ListHandoffsFilter = {}): ScopedHandoff[] {
+    const { where, params } = this.#handoffFilter(rawFilter);
     const db = this.#binding.readDatabase();
     const rows = db
       .prepare(
@@ -1617,6 +1625,69 @@ export class ScopedHandoffStore {
       )
       .all(...params);
     return rows.map((row) => this.#fromRow(row, db));
+  }
+
+  /**
+   * Página keyset da trilha (`created_at ASC, id ASC`). `limit` já é o
+   * teto SQL (a tool pede `página + 1`). A linha do cursor não precisa
+   * existir: o predicado continua depois de `(createdAt, id)`.
+   */
+  listCursorPage(
+    raw: ListHandoffsFilter & {
+      readonly after?: { readonly createdAt: number; readonly id: string };
+      readonly limit: number;
+    },
+  ): ScopedHandoff[] {
+    const page = z
+      .object({
+        after: z
+          .object({
+            createdAt: z.number().int().nonnegative(),
+            id: identifierSchema,
+          })
+          .strict()
+          .optional(),
+        limit: z.number().int().min(1).max(201),
+      })
+      .strict()
+      .parse({ after: raw.after, limit: raw.limit });
+    const { where, params } = this.#handoffFilter({
+      missionId: raw.missionId,
+      includeDelivered: raw.includeDelivered,
+      ids: raw.ids,
+      sessionIds: raw.sessionIds,
+    });
+    const keyset = page.after
+      ? `${where.length > 0 ? " AND " : "WHERE "}(created_at > ? OR (created_at = ? AND id > ?))`
+      : "";
+    const db = this.#binding.readDatabase();
+    const rows = db
+      .prepare(
+        `${HANDOFF_SELECT} ${where}${keyset}
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?`,
+      )
+      .all(
+        ...params,
+        ...(page.after ? [page.after.createdAt, page.after.createdAt, page.after.id] : []),
+        page.limit,
+      );
+    return rows.map((row) => this.#fromRow(row, db));
+  }
+
+  /** Ids das N linhas mais novas, sem artifacts. A recência da trilha inteira. */
+  listRecentIds(rawFilter: ListHandoffsFilter = {}, limit = 5): string[] {
+    const count = z.number().int().min(1).max(20).parse(limit);
+    const { where, params } = this.#handoffFilter(rawFilter);
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT id FROM handoffs ${where}
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`,
+      )
+      .all(...params, count) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
   }
 
   /** Main-owned bounded replay: rowid keyset never materializes the whole ledger. */
@@ -1646,6 +1717,42 @@ export class ScopedHandoffStore {
       else if (handoff.delivered || !handoff.missionId) items.push({ handoff });
     }
     return { scope: this.#binding.scope, cursor: rows.at(-1)?.cursor ?? 0, scanned: rows.length, items };
+  }
+
+  /**
+   * Handoffs ainda na fila (`delivery_state = queued`). Não parseia artifacts:
+   * a prova de conclusão só precisa saber que o Maestro ainda não recebeu.
+   */
+  listQueuedDeliveries(
+    missionId?: string,
+  ): Array<{ id: string; missionId: string; sessionId: string | null }> {
+    const mission =
+      missionId === undefined ? undefined : identifierSchema.parse(missionId);
+    const db = this.#binding.readDatabase();
+    const rows = (
+      mission === undefined
+        ? db
+            .prepare(
+              `SELECT id, mission_id, session_id FROM handoffs
+               WHERE delivery_state = 'queued' AND mission_id IS NOT NULL
+               ORDER BY created_at ASC, id ASC
+               LIMIT 50`,
+            )
+            .all()
+        : db
+            .prepare(
+              `SELECT id, mission_id, session_id FROM handoffs
+               WHERE delivery_state = 'queued' AND mission_id = ?
+               ORDER BY created_at ASC, id ASC
+               LIMIT 50`,
+            )
+            .all(mission)
+    ) as Array<{ id: string; mission_id: string; session_id: string | null }>;
+    return rows.map((row) => ({
+      id: row.id,
+      missionId: row.mission_id,
+      sessionId: row.session_id,
+    }));
   }
 
   /**

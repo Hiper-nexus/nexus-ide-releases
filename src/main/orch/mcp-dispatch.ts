@@ -163,24 +163,25 @@ export function operatorHandMissionExitHint(
 }
 
 /**
- * F-1013 + F-1040: pane sem missão chamando nexus_mission_set_status de uma
- * missão. Só a sessão líder muda o status e nenhuma tool devolve a liderança
- * à sessão chamadora; a retomada é pedida com nexus_mission_request_resume.
+ * F-1013: pane sem missão chamando nexus_mission_set_status. Este pane não
+ * tem ctx.missionId, e nexus_mission_request_resume recusa exatamente esse
+ * caso. A dica só aponta o que ele alcança (inspecionar, pedir ao líder) e
+ * o botão do operador na sessão que lidera.
  */
 function unboundMissionStatusHint(
   missionId: string,
   reach: { readonly canInspect: boolean; readonly canPaneAsk: boolean },
 ): string {
   const inspect = reach.canInspect
-    ? `; veja quem lidera com nexus_mission_control(${JSON.stringify({ missionId })})` +
-      (reach.canPaneAsk ? " e peça a conclusão a esse pane com nexus_pane_ask" : "")
-    : "";
+    ? ` Veja quem lidera com nexus_mission_control(${JSON.stringify({ missionId })})` +
+      (reach.canPaneAsk ? " e peça a conclusão a esse pane com nexus_pane_ask." : ".")
+    : reach.canPaneAsk
+      ? " Peça a conclusão ao pane líder com nexus_pane_ask."
+      : "";
   return (
     `nexus_mission_set_status: este pane não está vinculado à missão ${missionId}; ` +
-    "só a sessão líder dela muda o status, e nexus_mission_create abriria outra missão sem concluir esta" +
-    `${inspect}. Nenhuma tool devolve a liderança a este pane: ` +
-    `peça a retomada com nexus_mission_request_resume(${JSON.stringify({ missionId })}) ` +
-    '(mesmo caminho do botão “Retomar missão”).'
+    "só a sessão líder dela muda o status, e nexus_mission_create abriria outra missão sem concluir esta." +
+    `${inspect} Este pane não retoma a missão: o operador usa o botão “Retomar missão” na sessão que lidera.`
   );
 }
 

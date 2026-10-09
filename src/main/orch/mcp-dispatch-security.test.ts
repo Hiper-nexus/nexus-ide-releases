@@ -3554,6 +3554,8 @@ describe("MCP dispatch effect safety", () => {
       expect(result.hint).toContain("não está vinculado à missão mission-23eee6e5");
       expect(result.hint).toContain('nexus_mission_control({"missionId":"mission-23eee6e5"})');
       expect(result.hint).toContain("nexus_pane_ask");
+      expect(result.hint).toContain("Retomar missão");
+      expect(result.hint).not.toContain("nexus_mission_request_resume");
       expect(result.hint).not.toContain("crie uma missão com nexus_mission_create");
       expect(handler).not.toHaveBeenCalled();
     });

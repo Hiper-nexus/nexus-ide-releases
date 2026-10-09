@@ -23,7 +23,7 @@ import {
   reconcilePendingHandoffDeliveryOutbox,
 } from './handoff-delivery-outbox';
 import { drainEffectOutbox } from './effect-outbox-worker';
-import { EffectOutboxStore } from './effect-outbox';
+import { EffectOutboxStore, isUnreconciledEffectOutbox } from './effect-outbox';
 import { reconcileProviderRuntimesAtBoot } from './provider-runtime-recovery';
 import { configureHandoffDeliveryRuntimeRecovery } from './idle-delivery';
 import { recoverHandoffDeliveryRuntime } from './handoff-delivery-runtime-recovery';
@@ -140,6 +140,7 @@ export function startOrchestrationCoordinator(): void {
         const runtimeManager = registry.runtimeManager();
         for (const suite of registry.listSuites()) {
           await context?.checkpoint();
+          if (isUnreconciledEffectOutbox(suite.scope)) continue;
           const store = new EffectOutboxStore(runtimeManager, suite.scope);
           await drainEffectOutbox(
             {

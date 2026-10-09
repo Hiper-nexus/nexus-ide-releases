@@ -47,7 +47,8 @@ export function wslCredentialSlot(distro: string): string {
 
 /**
  * Monta o argv do `wsl.exe` para rodar `command` em `distro` com cwd.
- * Ordem (estável, testada): `-d`, `--cd`, `--`, `exec`, shell `-lc`, comando.
+ * Ordem (estável, testada): `-d`, `--cd`, `--exec`, shell `-lc`, comando.
+ * `--exec` entrega o argv ao binário, sem o shell padrão da distro.
  */
 export function planWslRuntime(input: WslRuntimePlanInput): WslRuntimePlan {
   const distro = input.distro.trim();
@@ -62,8 +63,7 @@ export function planWslRuntime(input: WslRuntimePlanInput): WslRuntimePlan {
     distro,
     '--cd',
     linuxCwd,
-    '--',
-    'exec',
+    '--exec',
     'bash',
     '-lc',
     quoted,
@@ -87,25 +87,32 @@ function quotePosix(arg: string): string {
  * utilizável. Não spawna `wsl.exe` — a lista de distros vem do IPC
  * `host.wsl.listDistros` quando o host é Windows.
  */
+function isWindowsHostEnv(env: NodeJS.ProcessEnv): boolean {
+  return (env.OS ?? '').toLowerCase().includes('windows') || Boolean(env.SystemRoot);
+}
+
 export function isWslRuntimeUsable(
   distro: string | null | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): WslPresence & { readonly distroSlot: string | null } {
   const presence = detectWslFromEnv(env);
-  if (!presence.available) return { ...presence, distroSlot: null };
-  if (!distro || distro.trim().length === 0) {
-    return {
-      available: false,
-      reason: 'wsl-present-distro-missing',
-      distroSlot: null,
-    };
+  const windowsHost = isWindowsHostEnv(env);
+  if (!presence.available && !windowsHost) {
+    return { ...presence, distroSlot: null };
   }
+  if (!distro || distro.trim().length === 0) {
+    if (presence.available) {
+      return {
+        available: false,
+        reason: 'wsl-present-distro-missing',
+        distroSlot: null,
+      };
+    }
+    return { ...presence, distroSlot: null };
+  }
+  let distroSlot: string;
   try {
-    return {
-      available: true,
-      reason: presence.reason,
-      distroSlot: wslCredentialSlot(distro),
-    };
+    distroSlot = wslCredentialSlot(distro);
   } catch {
     return {
       available: false,
@@ -113,4 +120,14 @@ export function isWslRuntimeUsable(
       distroSlot: null,
     };
   }
+  if (presence.available) {
+    return { available: true, reason: presence.reason, distroSlot };
+  }
+  // Electron no Windows não tem WSL_DISTRO_NAME. A distro já validada veio
+  // de host.wsl.listDistros — essa lista é a prova de disponibilidade.
+  return {
+    available: true,
+    reason: 'windows-host-listed-distro',
+    distroSlot,
+  };
 }

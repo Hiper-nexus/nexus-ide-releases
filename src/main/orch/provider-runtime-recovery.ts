@@ -62,9 +62,22 @@ export class ProviderRuntimeRecoveryError extends Error {
   }
 }
 
+const reconciledThisProcess = new Set<string>();
+
+function reconciledScopeKey(
+  runtimeManager: ProjectRuntimeManager,
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+): string {
+  return `${runtimeManager.baseDirectory}\0${scope.projectId}\0${scope.checkoutId}`;
+}
+
 export function reconcileProviderRuntimeAtBoot(
   deps: ProviderRuntimeRecoveryDeps,
 ): ProviderRuntimeRecoveryResult {
+  const key = reconciledScopeKey(deps.runtimeManager, deps.scope);
+  if (reconciledThisProcess.has(key)) {
+    return { cancelledEffects: 0, requeuedEffects: 0, unsettledReceipts: 0 };
+  }
   try {
     const outbox = new EffectOutboxStore(deps.runtimeManager, deps.scope, {
       now: deps.now,
@@ -75,6 +88,7 @@ export function reconcileProviderRuntimeAtBoot(
     const settled = outbox.reconcileAfterProcessLoss();
     const unsettledReceipts = receipts.listUnsettled().length;
     clearUnreconciledEffectOutbox(deps.scope);
+    reconciledThisProcess.add(key);
     return {
       cancelledEffects: settled.cancelled,
       requeuedEffects: settled.requeued,

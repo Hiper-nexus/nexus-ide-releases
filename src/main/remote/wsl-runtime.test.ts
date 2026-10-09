@@ -13,10 +13,9 @@ describe('WSL runtime backend (first cut)', () => {
       command: ['npm', 'test', '--', 'file name.ts'],
     });
     expect(plan.argv.slice(0, 4)).toEqual(['-d', 'Ubuntu', '--cd', '/mnt/c/Users/me/project']);
-    expect(plan.argv[4]).toBe('--');
-    expect(plan.argv.slice(5, 7)).toEqual(['exec', 'bash']);
-    expect(plan.argv[7]).toBe('-lc');
-    expect(plan.argv[8]).toBe("npm test -- 'file name.ts'");
+    expect(plan.argv[4]).toBe('--exec');
+    expect(plan.argv.slice(5, 7)).toEqual(['bash', '-lc']);
+    expect(plan.argv[7]).toBe("npm test -- 'file name.ts'");
     expect(plan.credentialSlot).toBe('wsl:Ubuntu');
     expect(plan.windowsUncCwd).toContain('wsl.localhost\\Ubuntu');
   });
@@ -57,6 +56,29 @@ describe('WSL runtime backend (first cut)', () => {
     });
     expect(isWslRuntimeUsable('Ubuntu', {} as NodeJS.ProcessEnv)).toMatchObject({
       available: false,
+      reason: 'not-windows',
+    });
+  });
+
+  it('treats a validated distro as proof on a Windows host without WSL env', () => {
+    const env = {
+      SystemRoot: 'C:\\Windows',
+      OS: 'Windows_NT',
+    } as NodeJS.ProcessEnv;
+    expect(isWslRuntimeUsable('Ubuntu', env)).toMatchObject({
+      available: true,
+      reason: 'windows-host-listed-distro',
+      distroSlot: 'wsl:Ubuntu',
+    });
+    expect(isWslRuntimeUsable(null, env)).toMatchObject({
+      available: false,
+      reason: 'windows-host-wsl-unverified',
+      distroSlot: null,
+    });
+    expect(isWslRuntimeUsable('bad/name', env)).toMatchObject({
+      available: false,
+      reason: 'wsl-distro-name-unsafe',
+      distroSlot: null,
     });
   });
 });
