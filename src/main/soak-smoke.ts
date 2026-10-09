@@ -5,7 +5,7 @@ import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron';
 import type { PerfSnapshot } from '../shared/types';
 import { parseFunctionalSmokeResult } from '../shared/smoke-types';
 import { SOAK_CHANNELS, SOAK_ENV, SOAK_FILE, SOAK_POLICY, SOAK_HEAP_SOURCE, SOAK_ELECTRON,
-  parseSoakCycle, parseSoakSample, assertSoakSamples, type SoakSample } from '../shared/soak-smoke';
+  parseSoakCycle, parseSoakSample, parseSoakFailureStage, assertSoakSamples, type SoakSample } from '../shared/soak-smoke';
 
 export function isSoakSmokeRequested(input: { smokeTest: boolean; packaged: boolean; env: NodeJS.ProcessEnv; userData: string }): boolean {
   return input.smokeTest && input.packaged && input.env[SOAK_ENV] === '1' && input.env.NEXUS_PACKAGED_SMOKE === '1' &&
@@ -90,11 +90,13 @@ export async function proveSoakForSmoke(win: BrowserWindow, input: {
     };
     const onStopped = (event: IpcMainEvent, raw: unknown): void => {
       if (!authorized(event) || !raw || typeof raw !== 'object') return;
-      const value = raw as { nonce?: unknown; sessionIds?: unknown };
+      const value = raw as { nonce?: unknown; sessionIds?: unknown; stage?: unknown };
       if (value.nonce !== nonce || !Array.isArray(value.sessionIds) || value.sessionIds.length > 3 || !value.sessionIds.every(id =>
         typeof id === 'string' && id.length <= 256 && (seen.has(id) || deps.owned(wc, id) && deps.cwd(id) === input.workspacePath))) return;
       for (const id of value.sessionIds) held.add(id as string);
-      stopAcknowledged(); if (!stopped) fail('soak activity stopped before completion');
+      const stage = parseSoakFailureStage(value.stage);
+      stopAcknowledged();
+      if (!stopped) fail(stage === 'unknown' ? 'soak activity stopped before completion' : `soak activity failed at ${stage}`);
     };
     const onDone = (event: IpcMainEvent, raw: unknown): void => {
       if (!authorized(event) || stopped) return;
@@ -113,7 +115,7 @@ export async function proveSoakForSmoke(win: BrowserWindow, input: {
         if (stopped) return;
         console.log('[smoke] soak-ready: sustained activity, memory bounds and final functionality proven');
         stopped = true; cleanup(); resolve();
-      })().catch(error => { failure = error instanceof Error ? error : new Error('soak receipt failed'); }).finally(() => {
+      })().catch(error => { failure ??= error instanceof Error ? error : new Error('soak receipt failed'); }).finally(() => {
         flight = null; if (failure && !stopped) fail(failure.message);
       });
     };
@@ -162,7 +164,7 @@ export async function proveSoakForSmoke(win: BrowserWindow, input: {
             if (await deps.terminate(value.sessionId)) held.delete(value.sessionId);
           }
         }
-      })().catch(error => { failure = error instanceof Error ? error : new Error('soak sample failed'); }).finally(() => {
+      })().catch(error => { failure ??= error instanceof Error ? error : new Error('soak sample failed'); }).finally(() => {
         flight = null;
         if (failure && !stopped) fail(failure.message);
       });

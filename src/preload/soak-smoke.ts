@@ -1,6 +1,6 @@
 import type { NexusApi } from '../shared/types';
 import type { FunctionalSmokeResult } from '../shared/smoke-types';
-import { SOAK_CHANNELS, SOAK_DOM_REQUEST, SOAK_DOM_REPLY, SOAK_POLICY, soakNonce, parseSoakCycle, type SoakCycle } from '../shared/soak-smoke';
+import { SOAK_CHANNELS, SOAK_DOM_REQUEST, SOAK_DOM_REPLY, SOAK_POLICY, soakNonce, parseSoakCycle, type SoakCycle, type SoakFailureStage } from '../shared/soak-smoke';
 import { runFunctionalSmokeProbes } from './functional-smoke';
 
 export interface SoakUi {
@@ -69,7 +69,7 @@ export function installSoakPreload(ipc: SmokeIpc, api: NexusApi, processInfo: {
         if (ackPending || controller.signal.aborted) { reject(new Error('soak cycle cancelled/overlapping')); return; }
         ackPending = { sequence: value.sequence, resolve, reject }; ipc.send(SOAK_CHANNELS.cycle, value);
       }),
-      stopped: async sessionIds => { ipc.send(SOAK_CHANNELS.stopped, { nonce, sessionIds }); },
+      stopped: async (sessionIds, stage) => { ipc.send(SOAK_CHANNELS.stopped, { nonce, sessionIds, stage }); },
       finalFunctional: () => runFunctionalSmokeProbes(api, workspacePath),
       done: async result => { ipc.send(SOAK_CHANNELS.done, { nonce, result }); },
     }).catch(() => ipc.send(SOAK_CHANNELS.failed, { nonce })).finally(() => {
@@ -81,29 +81,40 @@ export function installSoakPreload(ipc: SmokeIpc, api: NexusApi, processInfo: {
 export async function runSoakActivity(api: Pick<NexusApi, 'workspace' | 'files' | 'product' | 'pty'>,
   input: { nonce: string; workspacePath: string }, deps: {
     ui: SoakUi; signal: AbortSignal; sendCycle(cycle: SoakCycle): Promise<boolean>;
-    stopped(sessionIds: string[]): Promise<void>; heap(): number; rendererPid: number; electronVersion: string;
+    stopped(sessionIds: string[], stage?: SoakFailureStage): Promise<void>; heap(): number; rendererPid: number; electronVersion: string;
     finalFunctional(): Promise<FunctionalSmokeResult>; done(result: FunctionalSmokeResult): Promise<void>;
     delay?(ms: number): Promise<void>;
   }): Promise<void> {
   const held = new Set<string>();
-  const check = (): void => { if (deps.signal.aborted) throw new Error('soak activity cancelled'); };
+  let stage: SoakFailureStage = 'unknown';
+  let failureStage: SoakFailureStage | null = null;
+  const check = (): void => {
+    if (deps.signal.aborted) { stage = 'cancelled'; throw new Error('soak activity cancelled'); }
+  };
   const delay = deps.delay ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)));
   let completed = false;
   try {
     for (let sequence = 0; sequence < SOAK_POLICY.maxSamples; sequence++) {
       check();
+      stage = 'workspace';
       const workspace = await api.workspace.get(); check();
       if (workspace.current?.path !== input.workspacePath) throw new Error('soak workspace changed');
+      stage = 'read';
       const file = await api.files.read('smoke.txt'); check();
       if (!file.ok || file.content !== 'nexus-functional-smoke\n') throw new Error('soak workspace read failed');
+      stage = 'search';
       const search = await api.product.searchQuery({ text: 'smoke', limit: 5 }); check();
       if (!search || typeof search !== 'object') throw new Error('soak local search failed');
+      stage = 'open';
       const pane = await deps.ui.open(); held.add(pane.sessionId);
       let unsubscribe: (() => void) | null = null;
+      let activityFailed = false;
+      let activityError: unknown;
       try {
         check();
         const left = `SOAK_${input.nonce}_${sequence}`, marker = `${left}_DONE`;
         let output = '';
+        stage = 'write';
         unsubscribe = api.pty.onData(pane.sessionId, data => { output = (output + data).slice(-128 * 1024); });
         api.pty.resize(pane.sessionId, 88 + sequence % 2 * 8, 24, { assert: true });
         // The joined marker is absent from the typed command: terminal echo
@@ -113,27 +124,46 @@ export async function runSoakActivity(api: Pick<NexusApi, 'workspace' | 'files' 
         const command = `i=0; while [ "$i" -lt 96 ]; do printf 'soak-output-${sequence}-%s\\n' "$i"; i=$((i+1)); done; printf '%s%s\\n' '${left}' '_DONE'\r`;
         if (!await api.pty.writeConfirmed(pane.sessionId, command)) throw new Error('soak write refused');
         check();
+        stage = 'marker';
         for (let waited = 0; !output.includes(marker) && waited < 5000; waited += 50) { await delay(50); check(); }
         if (!output.includes(marker)) throw new Error('soak executed marker missing');
+        stage = 'view';
         const view = await deps.ui.view(pane.paneId, marker, sequence); check();
+        stage = 'metrics';
         const value = parseSoakCycle({ nonce: input.nonce, sequence, ...pane, rendererPid: deps.rendererPid,
           electronVersion: deps.electronVersion, heapUsedKiB: deps.heap(), rendererHosts: view.rendererHosts,
           activity: { writeConfirmed: true, executedMarker: true, renderedMarker: view.renderedMarker,
             frames: view.frames, scroll: view.scroll, resize: view.resize, workspaceRead: true, search: true } });
         if (!value) throw new Error('soak renderer metrics/activity unavailable');
+        stage = 'ack';
         const done = await deps.sendCycle(value); check();
         held.delete(pane.sessionId); // ACK exists only after Main physical proof.
-        if (done) { completed = true; break; }
-      } finally { unsubscribe?.(); await deps.ui.close(pane.paneId); }
+        if (done) completed = true;
+      } catch (error) {
+        // Freeze the operation's primary failure before cleanup runs.
+        failureStage ??= stage;
+        activityFailed = true; activityError = error;
+      }
+      try { unsubscribe?.(); await deps.ui.close(pane.paneId); }
+      catch (error) {
+        if (!activityFailed) {
+          failureStage = 'close'; activityFailed = true; activityError = error;
+        }
+        // Main still receives held sessions and proves their physical stop.
+        // A cleanup error must not replace the primary operation failure.
+      }
+      if (activityFailed) throw activityError;
+      if (completed) break;
       await delay(SOAK_POLICY.intervalMs); check();
     }
     if (!completed) throw new Error('soak activity count exhausted');
     check();
+    stage = 'final';
     const result = await deps.finalFunctional(); check();
     if (!result.ok) throw new Error('soak final functional probes failed');
     await deps.done(result);
   } catch (error) {
-    await deps.stopped([...held]); // Includes a spawn that finished after cancellation.
+    await deps.stopped([...held], failureStage ?? stage); // Includes a spawn that finished after cancellation.
     throw error;
   }
 }

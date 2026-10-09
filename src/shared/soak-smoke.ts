@@ -4,6 +4,15 @@ import { z } from 'zod';
 export const SOAK_ENV = 'NEXUS_SMOKE_SOAK';
 export const SOAK_FILE = 'soak-smoke.json';
 export const SOAK_CHANNELS = { run: 'smoke:soak:run', cycle: 'smoke:soak:cycle', ack: 'smoke:soak:ack', failed: 'smoke:soak:failed', done: 'smoke:soak:done', stop: 'smoke:soak:stop', stopped: 'smoke:soak:stopped' } as const;
+/** Diagnostic only: never accept terminal content or thrown error bodies. */
+const soakFailureStage = z.enum(['workspace', 'read', 'search', 'open', 'write', 'marker', 'view',
+  'metrics', 'ack', 'final', 'close', 'cancelled', 'unknown']);
+export type SoakFailureStage = z.infer<typeof soakFailureStage>;
+export function parseSoakFailureStage(raw: unknown): SoakFailureStage {
+  const parsed = soakFailureStage.safeParse(raw);
+  return parsed.success ? parsed.data : 'unknown';
+}
+
 export const SOAK_DOM_REQUEST = 'nexus:soak:request';
 export const SOAK_DOM_REPLY = 'nexus:soak:reply';
 export const SOAK_URL_MARKER = 'nexusSmokeSoak';

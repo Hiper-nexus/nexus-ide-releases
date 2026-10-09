@@ -8,7 +8,7 @@ import { SOAK_CHANNELS, SOAK_ENV } from '../shared/soak-smoke';
 import { soakCycle as cycle } from '../shared/__tests__/soak-fixture';
 import { FUNCTIONAL_SMOKE_REQUIRED_PROBES, FUNCTIONAL_SMOKE_MIN_ADAPTERS, FUNCTIONAL_SMOKE_MIN_TOOLS } from '../shared/smoke-types';
 const directories: string[] = [];
-afterEach(async () => { vi.useRealTimers(); await Promise.all(directories.splice(0).map(p => fs.rm(p, { recursive: true, force: true }))); });
+afterEach(async () => { vi.restoreAllMocks(); vi.useRealTimers(); await Promise.all(directories.splice(0).map(p => fs.rm(p, { recursive: true, force: true }))); });
 const profile = '/tmp/soak-fixture';
 const env = { NEXUS_PACKAGED_SMOKE: '1', NEXUS_USER_DATA_DIR: profile, HOME: `${profile}/home`, [SOAK_ENV]: '1' };
 it('only allows explicit packaged smoke in its exact private HOME/userData', () => {
@@ -48,7 +48,7 @@ it('cancellation drains the sole pending collector and owned PTY before settling
   // collector/physical drain rather than declaring a fabricated successful close.
   wc.emit('render-process-gone');
   release(); ipc.emit(SOAK_CHANNELS.stopped, { sender: wc, senderFrame: frame }, { nonce: run.nonce, sessionIds: ['pty-fixture'] });
-  expect(await outcome).toBeInstanceOf(Error);
+  expect((await outcome).message).toBe('soak cancelled');
   expect(stop).toHaveBeenCalledExactlyOnceWith('pty-fixture');
   expect(ipc.listenerCount(SOAK_CHANNELS.cycle)).toBe(0);
   await expect(fs.stat(path.join(userData, 'logs', 'soak-smoke.json'))).rejects.toThrow();
@@ -85,4 +85,66 @@ it('Main measures monotonic activity and writes acceptance only after all physic
   expect(receipt.samples[0].memoryBytes.rendererHeap).toBe(32000 * 1024);
   expect(receipt.samples[0].memoryBytes.rendererRss).toBe(180000 * 1024);
   expect(receipt.finalFunctional.ok).toBe(true);
+});
+
+async function stoppedFixture() {
+  const userData = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-soak-stopped-unit-')));
+  directories.push(userData);
+  await fs.mkdir(path.join(userData, 'home'), { mode: 0o700 });
+  const ipc = new EventEmitter(), win = new EventEmitter(), frame = {};
+  const sent: Array<[string, { nonce: string }]> = [];
+  const wc = Object.assign(new EventEmitter(), { mainFrame: frame, getOSProcessId: () => 1234,
+    send: (channel: string, data: { nonce: string }) => { sent.push([channel, data]); } });
+  Object.assign(win, { webContents: wc });
+  const terminate = vi.fn(async () => true), shutdown = vi.fn();
+  const controller = new AbortController();
+  const outcome = proveSoakForSmoke(win as never, { ipc: ipc as never, userData, appVersion: '0.76.213', packaged: true,
+    smokeTest: true, workspacePath: `${userData}/functional-smoke-workspace`,
+    env: { ...env, NEXUS_USER_DATA_DIR: userData, HOME: `${userData}/home` }, signal: controller.signal,
+    requestPhysicalShutdown: shutdown }, { collect: vi.fn(), terminate,
+    owned: (_wc, id) => id === 'pty-fixture', cwd: () => `${userData}/functional-smoke-workspace` }).catch(error => error);
+  await vi.waitFor(() => expect(sent[0]?.[0]).toBe(SOAK_CHANNELS.run));
+  const nonce = sent[0]![1].nonce;
+  const event = { sender: wc, senderFrame: frame };
+  return { ipc, wc, frame, event, nonce, outcome, controller, terminate, shutdown, userData };
+}
+it('keeps an authorized stopped marker stage even when failed arrives afterward, draining the owned PTY', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const f = await stoppedFixture();
+  f.ipc.emit(SOAK_CHANNELS.stopped, f.event, { nonce: f.nonce, sessionIds: ['pty-fixture'], stage: 'marker' });
+  f.ipc.emit(SOAK_CHANNELS.failed, f.event, { nonce: f.nonce, error: 'private-error-body' });
+  expect((await f.outcome).message).toBe('soak activity failed at marker');
+  expect(log).toHaveBeenCalledExactlyOnceWith('[smoke] soak-failed: soak activity failed at marker');
+  expect(f.terminate).toHaveBeenCalledExactlyOnceWith('pty-fixture');
+  expect(f.shutdown).toHaveBeenCalledOnce();
+  await expect(fs.stat(path.join(f.userData, 'logs', 'soak-smoke.json'))).rejects.toThrow();
+});
+it.each([undefined, 'unknown', 'sk-secret-not-a-stage', { message: 'private-error-body' }])('uses the generic failure for unknown/malformed stage %j without losing stop ACK', async stage => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const f = await stoppedFixture();
+  f.ipc.emit(SOAK_CHANNELS.stopped, f.event, { nonce: f.nonce, sessionIds: ['pty-fixture'], stage, error: 'private-error-body' });
+  expect((await f.outcome).message).toBe('soak activity stopped before completion');
+  expect(log).toHaveBeenCalledExactlyOnceWith('[smoke] soak-failed: soak activity stopped before completion');
+  expect(f.terminate).toHaveBeenCalledExactlyOnceWith('pty-fixture');
+});
+it('cannot select a failure stage or stop ACK using foreign frame, nonce, or session', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const f = await stoppedFixture();
+  f.ipc.emit(SOAK_CHANNELS.stopped, { sender: {}, senderFrame: f.frame }, { nonce: f.nonce, sessionIds: ['pty-fixture'], stage: 'marker' });
+  f.ipc.emit(SOAK_CHANNELS.stopped, { sender: f.wc, senderFrame: {} }, { nonce: f.nonce, sessionIds: ['pty-fixture'], stage: 'marker' });
+  f.ipc.emit(SOAK_CHANNELS.stopped, f.event, { nonce: 'foreign', sessionIds: ['pty-fixture'], stage: 'marker' });
+  f.ipc.emit(SOAK_CHANNELS.stopped, f.event, { nonce: f.nonce, sessionIds: ['foreign-pty'], stage: 'marker' });
+  expect(log).not.toHaveBeenCalled(); expect(f.terminate).not.toHaveBeenCalled(); expect(f.shutdown).not.toHaveBeenCalled();
+  f.ipc.emit(SOAK_CHANNELS.stopped, f.event, { nonce: f.nonce, sessionIds: ['pty-fixture'], stage: 'write' });
+  expect((await f.outcome).message).toBe('soak activity failed at write');
+  expect(f.terminate).toHaveBeenCalledExactlyOnceWith('pty-fixture');
+});
+it('does not overwrite prior Main cancellation with a later renderer stage', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const f = await stoppedFixture();
+  f.controller.abort();
+  f.ipc.emit(SOAK_CHANNELS.stopped, f.event, { nonce: f.nonce, sessionIds: ['pty-fixture'], stage: 'marker' });
+  expect((await f.outcome).message).toBe('soak cancelled');
+  expect(log).toHaveBeenCalledExactlyOnceWith('[smoke] soak-failed: soak cancelled');
+  expect(f.terminate).toHaveBeenCalledExactlyOnceWith('pty-fixture');
 });

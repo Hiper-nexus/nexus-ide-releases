@@ -30,7 +30,7 @@ function fixture(shell = '/bin/sh') {
       }), resize: vi.fn() } };
   const ui = { open: vi.fn(async () => ({ paneId: 'pane-fixture', sessionId: 'pty-fixture' })),
     view: vi.fn(async () => ({ frames: 2, renderedMarker: true, scroll: true, resize: true, rendererHosts: 1 })), close: vi.fn(async () => {}) };
-  const controller = new AbortController(), sendCycle = vi.fn(async () => true), stopped = vi.fn(async () => {});
+  const controller = new AbortController(), sendCycle = vi.fn(async () => true), stopped = vi.fn(async (_ids: string[], _stage?: unknown) => {});
   const options = { ui, signal: controller.signal, sendCycle, stopped, heap: () => 32000, rendererPid: 1234, electronVersion: '43.7.4',
     finalFunctional: vi.fn(async () => ({ ok: true as const })), done: vi.fn(async () => {}) };
   return { api, ui, controller, options, unsubscribe, emit: (text: string) => data(text) };
@@ -49,7 +49,7 @@ it('refused write cleans its pane and retains its session for Main physical stop
   await expect(runSoakActivity(f.api as never, { nonce, workspacePath: '/private/workspace' }, f.options as never)).rejects.toThrow();
   expect(f.options.sendCycle).not.toHaveBeenCalled();
   expect(f.ui.close).toHaveBeenCalledOnce();
-  expect(f.options.stopped).toHaveBeenCalledWith(['pty-fixture']);
+  expect(f.options.stopped).toHaveBeenCalledWith(['pty-fixture'], 'write');
 });
 it('cancel while UI spawn awaits drains that same flight without late writes or success', async () => {
   const f = fixture(); let release!: () => void;
@@ -60,7 +60,7 @@ it('cancel while UI spawn awaits drains that same flight without late writes or 
   await vi.waitFor(() => expect(f.ui.open).toHaveBeenCalled()); f.controller.abort();
   await Promise.resolve(); expect(finished).toBe(false); release(); expect(await result).toBeInstanceOf(Error);
   expect(f.api.pty.writeConfirmed).not.toHaveBeenCalled(); expect(f.ui.close).toHaveBeenCalledOnce();
-  expect(f.options.stopped).toHaveBeenCalledWith(['pty-fixture']); expect(f.options.done).not.toHaveBeenCalled();
+  expect(f.options.stopped).toHaveBeenCalledWith(['pty-fixture'], 'cancelled'); expect(f.options.done).not.toHaveBeenCalled();
 });
 it('rejects unavailable renderer heap instead of manufacturing a zero sample', async () => {
   const f = fixture(); f.options.heap = () => 0;
@@ -106,7 +106,7 @@ it.each(['echo-only', 'foreign-nonce', 'foreign-sequence'])('rejects %s without 
   expect(delay.mock.calls.every(args => args[0] === 50)).toBe(true);
   expect(f.unsubscribe).toHaveBeenCalledOnce();
   expect(f.ui.close).toHaveBeenCalledOnce();
-  expect(f.options.stopped).toHaveBeenCalledWith(['pty-fixture']);
+  expect(f.options.stopped).toHaveBeenCalledWith(['pty-fixture'], 'marker');
   expect(f.options.sendCycle).not.toHaveBeenCalled();
   expect(f.options.done).not.toHaveBeenCalled();
 });
@@ -119,6 +119,40 @@ it('cancels a marker wait and still closes UI/retains the physical session', asy
   expect(delay).toHaveBeenCalledOnce();
   expect(f.unsubscribe).toHaveBeenCalledOnce();
   expect(f.ui.close).toHaveBeenCalledOnce();
-  expect(f.options.stopped).toHaveBeenCalledWith(['pty-fixture']);
+  expect(f.options.stopped).toHaveBeenCalledWith(['pty-fixture'], 'cancelled');
   expect(f.options.sendCycle).not.toHaveBeenCalled();
+});
+
+it('reports marker as the primary stage and preserves its error if UI close also fails', async () => {
+  const f = fixture();
+  f.api.pty.writeConfirmed.mockImplementationOnce(async (_id, text) => { f.emit(text); return true; });
+  f.ui.close.mockRejectedValueOnce(new Error('private-cleanup-body'));
+  await expect(runSoakActivity(f.api as never, { nonce, workspacePath: '/private/workspace' },
+    { ...f.options, delay: async () => {} } as never)).rejects.toThrow('soak executed marker missing');
+  expect(f.options.stopped).toHaveBeenCalledWith(['pty-fixture'], 'marker');
+  expect(f.options.stopped.mock.calls.flat()).not.toContain('private-cleanup-body');
+  expect(f.options.sendCycle).not.toHaveBeenCalled();
+  expect(f.options.done).not.toHaveBeenCalled();
+});
+it.each(['view', 'metrics', 'close', 'final'] as const)('reports a fixed %s stage without carrying thrown content', async stage => {
+  const f = fixture();
+  if (stage === 'view') f.ui.view.mockRejectedValueOnce(new Error('private-renderer-body'));
+  if (stage === 'metrics') f.options.heap = () => 0;
+  if (stage === 'close') f.ui.close.mockRejectedValueOnce(new Error('private-cleanup-body'));
+  if (stage === 'final') f.options.finalFunctional.mockRejectedValueOnce(new Error('private-functional-body'));
+  await expect(runSoakActivity(f.api as never, { nonce, workspacePath: '/private/workspace' }, f.options as never)).rejects.toThrow();
+  expect(f.options.stopped).toHaveBeenCalledWith(stage === 'close' || stage === 'final' ? [] : ['pty-fixture'], stage);
+  expect(JSON.stringify(f.options.stopped.mock.calls)).not.toContain('private-');
+  expect(f.options.done).not.toHaveBeenCalled();
+});
+it.each([undefined, null])('never turns a falsy thrown value %j into completed activity', async thrown => {
+  const f = fixture();
+  f.ui.view.mockImplementationOnce(async () => { throw thrown; });
+  await expect(runSoakActivity(f.api as never, { nonce, workspacePath: '/private/workspace' }, f.options as never)).rejects.toBe(thrown);
+  expect(f.unsubscribe).toHaveBeenCalledOnce();
+  expect(f.ui.close).toHaveBeenCalledOnce();
+  expect(f.options.stopped).toHaveBeenCalledWith(['pty-fixture'], 'view');
+  expect(f.options.sendCycle).not.toHaveBeenCalled();
+  expect(f.options.finalFunctional).not.toHaveBeenCalled();
+  expect(f.options.done).not.toHaveBeenCalled();
 });
