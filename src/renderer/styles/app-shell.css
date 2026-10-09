@@ -2332,3 +2332,53 @@
   opacity: 0.6;
   cursor: default;
 }
+
+/* Editor rich-text (item T3): marks do composer. */
+.composer-rich-text .rt-bold { font-weight: 700; }
+.composer-rich-text .rt-italic { font-style: italic; }
+.composer-rich-text .rt-strike { text-decoration: line-through; }
+.composer-rich-text .rt-code,
+.composer-rich-text code.rt-code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  background: rgba(127, 127, 127, 0.12);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+/* Editor rich-text (próxima onda Tiptap): toolbar + superfície. */
+.composer-rich-text-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.composer-rich-text-editor__toolbar {
+  display: flex;
+  gap: 4px;
+}
+.composer-rich-text-editor__tool {
+  min-width: 28px;
+  height: 28px;
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.12));
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font: 600 12px/1 var(--font-mono, ui-monospace, monospace);
+  color: inherit;
+}
+.composer-rich-text-editor__tool.is-active {
+  background: rgba(127, 127, 127, 0.18);
+}
+.composer-rich-text-editor__surface {
+  min-height: 72px;
+  padding: 8px 10px;
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.12));
+  border-radius: 6px;
+  outline: none;
+}
+.composer-rich-text-editor__surface:focus {
+  border-color: var(--accent, #3b82f6);
+}
+.composer-rich-text-editor__surface:empty::before {
+  content: attr(data-placeholder);
+  color: var(--ink-muted, #6b7280);
+}

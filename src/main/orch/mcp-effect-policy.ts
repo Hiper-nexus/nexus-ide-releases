@@ -235,6 +235,14 @@ const READ_ONLY_BASIC_TOOLS = new Set([
   'pane_ask',
 ]);
 
+/**
+ * A stale read-only Maestro must still be able to ask Main to resume the
+ * mission the token is bound to. This is one name, not the mission-control
+ * class: the handler refuses any other mission and does not clear an
+ * operator close.
+ */
+const READ_ONLY_MISSION_RESUME_TOOLS = new Set(['mission_request_resume']);
+
 /** Bounded local controls that do not change workspace or external data. */
 const MISSION_CONTROL_TOOLS = new Set([
   'editor_focus',
@@ -243,6 +251,9 @@ const MISSION_CONTROL_TOOLS = new Set([
   'file_open',
   'terminal_kill',
   'bg_kill',
+  // Resto F-1040: pede a retomada Main-owned (mesmo caminho do botão
+  // “Retomar missão”). Não devolve liderança à sessão chamadora.
+  'mission_request_resume',
 ]);
 
 /**
@@ -385,10 +396,15 @@ export function effectPolicyForTool(toolName: string): McpEffectPolicy {
  */
 export function isToolAllowedForReadOnlyContext(toolName: string): boolean {
   const canonical = canonicalToolName(toolName);
+  // F-1044: o Maestro read-only preso precisa ALCANÇAR a retomada anunciada.
+  // É o único efeito de missão que a lane read-only pode pedir — e ainda assim
+  // o handler recusa encerramento pelo operador e missão alheia (F-1042/43).
+  if (canonical === 'mission_request_resume') return true;
   return (
     effectPolicyForTool(canonical) === 'read-only' ||
     READ_ONLY_CONTEXT_METADATA_TOOLS.has(canonical) ||
-    READ_ONLY_BASIC_TOOLS.has(canonical)
+    READ_ONLY_BASIC_TOOLS.has(canonical) ||
+    READ_ONLY_MISSION_RESUME_TOOLS.has(canonical)
   );
 }
 

@@ -5,8 +5,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Handoff } from "../../shared/orch-types";
 import type { AgentGateContext } from "./gate";
-import type { ScopedHandoff } from "./handoff-store";
 import type { McpToolInvocation } from "./mcp-protocol";
+import { encodeCursor } from "../../shared/cursor-pagination";
+import { handoffListCursorSlice } from "./tools-handoff";
 import { testProjectScope } from "./__tests__/scope-fixture";
 
 const mocks = vi.hoisted(() => ({
@@ -16,10 +17,10 @@ const mocks = vi.hoisted(() => ({
   markHandoffSubmitted: vi.fn(),
   onHandoffSubmitted: vi.fn(),
   orchWriteSession: vi.fn(() => true),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock flexibility for per-test implementations
+  getSessionState: vi.fn((): any => null),
   getStores: vi.fn(),
-  listHandoffs: vi.fn(
-    (): Array<Pick<ScopedHandoff, "id"> & Partial<ScopedHandoff>> => [],
-  ),
+  listHandoffs: vi.fn((): Array<Record<string, unknown> & { id: string }> => []),
   heartbeat: vi.fn(),
   acceptHandoff: vi.fn(),
   markConsumedFromPhysicalAck: vi.fn(),
@@ -55,6 +56,7 @@ vi.mock("./idle-delivery", () => ({
 vi.mock("../pty/pty-manager", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../pty/pty-manager")>()),
   orchWriteSession: mocks.orchWriteSession,
+  getSessionState: mocks.getSessionState,
 }));
 
 vi.mock("./project-domain-store-registry", () => ({
@@ -221,6 +223,35 @@ function listTool() {
   return tool;
 }
 
+function mockedHandoffRows(): Array<{ id: string; createdAt?: number }> {
+  return mocks.listHandoffs() as Array<{ id: string; createdAt?: number }>;
+}
+
+function mockedListCursorPage(filter: {
+  after?: { createdAt: number; id: string };
+  limit: number;
+}) {
+  const rows = mockedHandoffRows();
+  const after = filter.after;
+  const start = after
+    ? rows.findIndex((row) => {
+        const createdAt = row.createdAt ?? 0;
+        return (
+          createdAt > after.createdAt ||
+          (createdAt === after.createdAt && row.id > after.id)
+        );
+      })
+    : 0;
+  const from = start < 0 ? rows.length : start;
+  return rows.slice(from, from + filter.limit);
+}
+
+function mockedListRecentIds(limit = 5): string[] {
+  const rows = mocks.listHandoffs() as Array<{ id: string; createdAt?: number }>;
+  const count = typeof limit === "number" ? limit : 5;
+  return rows.slice(Math.max(0, rows.length - count)).map((row) => row.id);
+}
+
 function acknowledgeTool() {
   const tool = buildDomainTools().find(
     (candidate) => candidate.name === "nexus_handoff_ack",
@@ -232,6 +263,7 @@ function acknowledgeTool() {
 describe("handoff MCP stop receipt", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getSessionState.mockReturnValue(null);
     resetDeliveryContractsForTesting();
     mocks.getStores.mockReturnValue({
       missions: {
@@ -274,6 +306,8 @@ describe("handoff MCP stop receipt", () => {
         submitFromPhysicalAgentBoundaryAndTransitionDispatch:
           mocks.submitAndTransition,
         list: mocks.listHandoffs,
+        listCursorPage: mockedListCursorPage,
+        listRecentIds: mockedListRecentIds,
         markConsumedFromPhysicalAck: mocks.markConsumedFromPhysicalAck,
       },
       taskDispatches: {
@@ -1676,7 +1710,7 @@ describe("handoff MCP stop receipt", () => {
       ...stores,
       handoffs: { ...stores.handoffs, acknowledgeSeenByOrchestratorList: ack },
     });
-    mocks.listHandoffs.mockReturnValue([{ id: "h-b", delivered: true }]);
+    mocks.listHandoffs.mockReturnValue([{ id: "h-b", delivered: true, deliveryState: "submitted" }]);
     const result = await listTool().handler({ ids: ["h-b"] }, orchestratorContext());
     expect(Array.isArray(result)).toBe(true);
     expect(ack).toHaveBeenCalledWith("mission-a", ["h-b"]);
@@ -1697,4 +1731,615 @@ describe("handoff MCP stop receipt", () => {
     expect(ack).not.toHaveBeenCalled();
   });
 
+  it("acknowledges only the submitted rows on the returned cursor page", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn(() => 1);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-page",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+      {
+        id: "h-next",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 2,
+        missionId: "mission-a",
+      },
+      {
+        id: "h-queued",
+        delivered: false,
+        deliveryState: "queued",
+        createdAt: 3,
+        missionId: "mission-a",
+      },
+    ]);
+
+    const page = (await listTool().handler(
+      { limit: 1 },
+      orchestratorContext(),
+    )) as { items: Array<{ id: string }> };
+    expect(page.items.map((row) => row.id)).toEqual(["h-page"]);
+    expect(ackSpy).toHaveBeenCalledTimes(1);
+    expect(ackSpy).toHaveBeenCalledWith("mission-a", ["h-page"]);
+  });
+
+  it("does not acknowledge anything when the cursor cannot be decoded", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn(() => 1);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-page",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+    ]);
+
+    await expect(
+      listTool().handler(
+        { limit: 1, cursor: "!!!not-a-cursor!!!" },
+        orchestratorContext(),
+      ),
+    ).rejects.toThrow(/cursor inválido/);
+    expect(ackSpy).not.toHaveBeenCalled();
+  });
+
+  it("resumes after a cursor whose row is gone and acknowledges only that page", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn((_mission: string, ids: readonly string[]) => ids.length);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-next",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 2,
+        missionId: "mission-a",
+        artifacts: [{ file: "kept-off-page" }],
+      },
+      {
+        id: "h-later",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 3,
+        missionId: "mission-a",
+      },
+    ]);
+
+    const page = (await listTool().handler(
+      {
+        limit: 1,
+        cursor: encodeCursor({
+          key: 1,
+          id: "h-gone",
+          slice: handoffListCursorSlice({
+            missionId: "mission-a",
+            includeDelivered: true,
+            ids: [],
+            panes: [],
+          }),
+        }),
+      },
+      orchestratorContext(),
+    )) as { items: Array<{ id: string; stuckDiagnosis?: { reason: string } }> };
+    expect(page.items.map((row) => row.id)).toEqual(["h-next"]);
+    expect(page.items[0]?.stuckDiagnosis?.reason).not.toBe("accepted-not-consumed");
+    expect(ackSpy).toHaveBeenCalledTimes(1);
+    expect(ackSpy).toHaveBeenCalledWith("mission-a", ["h-next"]);
+  });
+
+  it("refuses a cursor from another list slice and acknowledges nothing", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn((_mission: string, ids: readonly string[]) => ids.length);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-page",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+      {
+        id: "h-next",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 2,
+        missionId: "mission-a",
+      },
+    ]);
+
+    await expect(
+      listTool().handler(
+        {
+          limit: 1,
+          cursor: encodeCursor({
+            key: 1,
+            id: "h-page",
+            slice: handoffListCursorSlice({
+              missionId: "mission-b",
+              includeDelivered: true,
+              ids: [],
+              panes: [],
+            }),
+          }),
+        },
+        orchestratorContext(),
+      ),
+    ).rejects.toThrow(/cursor inválido/);
+    expect(ackSpy).not.toHaveBeenCalled();
+  });
+
+  it("counts delivery attempts for the mission's current Maestro after a rebind", async () => {
+    const stores = mocks.getStores();
+    const oldOnly = Array.from({ length: 9 }, (_, index) => ({
+      orchestratorSessionId: "old-maestro",
+      startedAt: index + 1,
+      attemptNo: index + 1,
+    }));
+    mocks.getSessionState.mockImplementation((id?: string) =>
+      id === "orchestrator-session" ? "idle" : "exited",
+    );
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => oldOnly,
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-rebound",
+        delivered: false,
+        deliveryState: "queued",
+        createdAt: Date.now(),
+        missionId: "mission-a",
+      },
+    ]);
+
+    const rebound = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+    expect(rebound[0]?.stuckDiagnosis?.reason).not.toBe("session-dead");
+    expect(rebound[0]?.stuckDiagnosis?.reason).not.toBe("parked-needs-operator");
+    expect(rebound[0]?.stuckDiagnosis?.reason).not.toBe("retry-backoff");
+
+    const mixed = [
+      ...Array.from({ length: 2 }, (_, index) => ({
+        orchestratorSessionId: "orchestrator-session",
+        startedAt: 100 + index,
+        attemptNo: index + 1,
+        state: "failed" as const,
+        failureCode: "accept_timeout",
+      })),
+      ...oldOnly,
+    ];
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => mixed,
+      },
+    });
+    const currentRound = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string; summary: string } }>;
+    expect(currentRound[0]?.stuckDiagnosis?.reason).toBe("retry-backoff");
+    expect(currentRound[0]?.stuckDiagnosis?.summary).toContain("rodada 1");
+  });
+
+  it("keeps an in-flight delivery inside the acceptance window", async () => {
+    const stores = mocks.getStores();
+    const now = Date.now();
+    mocks.getSessionState.mockReturnValue("idle");
+    for (const state of ["reserved", "pasted"] as const) {
+      mocks.getStores.mockReturnValue({
+        ...stores,
+        handoffs: {
+          ...stores.handoffs,
+          list: mocks.listHandoffs,
+          listDeliveryAttempts: () => [
+            {
+              orchestratorSessionId: "orchestrator-session",
+              startedAt: now,
+              attemptNo: 1,
+              state,
+            },
+          ],
+        },
+      });
+      mocks.listHandoffs.mockReturnValue([
+        {
+          id: "h-inflight",
+          delivered: false,
+          deliveryState: "queued",
+          createdAt: now - 30_000,
+          missionId: "mission-a",
+        },
+      ]);
+      const rows = (await listTool().handler(
+        { detail: "full" },
+        orchestratorContext(),
+      )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+      expect(rows[0]?.stuckDiagnosis?.reason).not.toBe("retry-backoff");
+      expect(rows[0]?.stuckDiagnosis).toBeUndefined();
+    }
+  });
+
+  it("passes real delivery attempts and proven Maestro liveness into stuck diagnosis", async () => {
+    const stores = mocks.getStores();
+    const attempts = [
+      {
+        orchestratorSessionId: "orchestrator-session",
+        startedAt: 1,
+        attemptNo: 1,
+        state: "failed" as const,
+        failureCode: "accept_timeout",
+      },
+      {
+        orchestratorSessionId: "orchestrator-session",
+        startedAt: 2,
+        attemptNo: 2,
+        state: "failed" as const,
+        failureCode: "accept_timeout",
+      },
+    ];
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => attempts,
+      },
+    });
+    mocks.getSessionState.mockReturnValue("idle");
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-retry",
+        delivered: false,
+        deliveryState: "queued",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+    ]);
+
+    const retry = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string; summary: string } }>;
+    expect(retry[0]?.stuckDiagnosis?.reason).toBe("retry-backoff");
+    expect(retry[0]?.stuckDiagnosis?.summary).toContain("rodada 1");
+
+    const sixRounds = Array.from({ length: 6 }, (_, index) => ({
+      orchestratorSessionId: "orchestrator-session",
+      startedAt: index + 1,
+      attemptNo: index + 1,
+      failureCode: index < 3 ? "released:accept_timeout" : "accept_timeout",
+    }));
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => sixRounds,
+      },
+    });
+    const stillRetrying = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string; summary: string } }>;
+    expect(stillRetrying[0]?.stuckDiagnosis?.reason).toBe("retry-backoff");
+    expect(stillRetrying[0]?.stuckDiagnosis?.summary).toContain("rodada 2");
+
+    const parked = Array.from({ length: 9 }, (_, index) => ({
+      orchestratorSessionId: "orchestrator-session",
+      startedAt: index + 1,
+      attemptNo: index + 1,
+      state: "failed" as const,
+      failureCode: "accept_timeout",
+    }));
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => parked,
+      },
+    });
+    const parkedRows = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+    expect(parkedRows[0]?.stuckDiagnosis?.reason).toBe("parked-needs-operator");
+
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.getSessionState.mockReturnValue("exited");
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-dead",
+        delivered: false,
+        deliveryState: "queued",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+    ]);
+    const dead = (await listTool().handler(
+      { detail: "full" },
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+    expect(dead[0]?.stuckDiagnosis?.reason).toBe("session-dead");
+  });
+
+  it("reports accepted-not-consumed for an old submitted row without detail:full", async () => {
+    const rows = Array.from({ length: 8 }, (_, index) => ({
+      id: `h-${index + 1}`,
+      delivered: true,
+      deliveryState: index === 0 ? "submitted" : "consumed",
+      artifacts: [{ file: `f${index + 1}` }],
+      createdAt: index + 1,
+      missionId: "mission-a",
+    }));
+    mocks.listHandoffs.mockReturnValue(rows);
+
+    const result = (await listTool().handler(
+      {},
+      context(),
+    )) as Array<{
+      stuckDiagnosis?: { reason: string };
+      artifacts: unknown[];
+      artifactsOmitted?: number;
+    }>;
+    expect(result[0]?.stuckDiagnosis?.reason).toBe("accepted-not-consumed");
+    expect(result[0]?.artifacts).toEqual([]);
+    expect(result[0]?.artifactsOmitted).toBe(1);
+    expect(result[7]?.stuckDiagnosis).toBeUndefined();
+    expect(result[7]?.artifacts).toEqual([{ file: "f8" }]);
+  });
+
+  it("does not call an acked submitted row accepted-not-consumed", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn((_mission: string, ids: readonly string[]) => ids.length);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.listHandoffs.mockReturnValue(
+      Array.from({ length: 8 }, (_, index) => ({
+        id: `h-${index + 1}`,
+        delivered: true,
+        deliveryState: "submitted",
+        artifacts: [{ file: `f${index + 1}` }],
+        createdAt: index + 1,
+        missionId: "mission-a",
+      })),
+    );
+
+    const result = (await listTool().handler(
+      {},
+      orchestratorContext(),
+    )) as Array<{
+      id: string;
+      deliveryState?: string;
+      stuckDiagnosis?: { reason: string };
+      artifactsOmitted?: number;
+    }>;
+    expect(ackSpy).toHaveBeenCalledTimes(1);
+    expect(result[0]?.deliveryState).toBe("acknowledged");
+    expect(result[0]?.stuckDiagnosis?.reason).not.toBe("accepted-not-consumed");
+    expect(result[0]?.artifactsOmitted).toBe(1);
+    expect(result.every((row) => row.stuckDiagnosis?.reason !== "accepted-not-consumed")).toBe(true);
+  });
+
+  it("compacts an acknowledged row that was stored with delivered false", async () => {
+    const stores = mocks.getStores();
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: (_mission: string, ids: readonly string[]) =>
+          ids.length,
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-old",
+        delivered: false,
+        deliveryState: "submitted",
+        artifacts: [{ file: "old" }],
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+      ...Array.from({ length: 5 }, (_, index) => ({
+        id: `h-new-${index}`,
+        delivered: true,
+        deliveryState: "consumed",
+        artifacts: [{ file: `n${index}` }],
+        createdAt: index + 2,
+        missionId: "mission-a",
+      })),
+    ]);
+
+    const result = (await listTool().handler(
+      {},
+      orchestratorContext(),
+    )) as Array<{
+      id: string;
+      deliveryState?: string;
+      delivered?: boolean;
+      artifacts: unknown[];
+      artifactsOmitted?: number;
+    }>;
+    expect(result[0]?.id).toBe("h-old");
+    expect(result[0]?.deliveryState).toBe("acknowledged");
+    expect(result[0]?.artifacts).toEqual([]);
+    expect(result[0]?.artifactsOmitted).toBe(1);
+  });
+
+  it("keeps accepted-not-consumed when list-ack fails", async () => {
+    const stores = mocks.getStores();
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: () => {
+          throw new Error("sqlite busy");
+        },
+        listDeliveryAttempts: () => [],
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-old",
+        delivered: true,
+        deliveryState: "submitted",
+        artifacts: [{ file: "old" }],
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+      ...Array.from({ length: 5 }, (_, index) => ({
+        id: `h-new-${index}`,
+        delivered: true,
+        deliveryState: "consumed",
+        artifacts: [],
+        createdAt: index + 2,
+        missionId: "mission-a",
+      })),
+    ]);
+
+    const result = (await listTool().handler(
+      {},
+      orchestratorContext(),
+    )) as Array<{ stuckDiagnosis?: { reason: string } }>;
+    expect(result[0]?.stuckDiagnosis?.reason).toBe("accepted-not-consumed");
+  });
+
+  it("compacts a cursor page using global recency, not the page length", async () => {
+    mocks.listHandoffs.mockReturnValue(
+      Array.from({ length: 8 }, (_, index) => ({
+        id: `h-${index + 1}`,
+        delivered: true,
+        deliveryState: "consumed",
+        artifacts: [{ file: `f${index + 1}` }],
+        createdAt: index + 1,
+        missionId: "mission-a",
+      })),
+    );
+
+    const page = (await listTool().handler(
+      { limit: 2 },
+      orchestratorContext(),
+    )) as {
+      items: Array<{ id: string; artifacts: unknown[]; artifactsOmitted?: number }>;
+    };
+    expect(page.items.map((row) => row.id)).toEqual(["h-1", "h-2"]);
+    expect(page.items[0]?.artifacts).toEqual([]);
+    expect(page.items[0]?.artifactsOmitted).toBe(1);
+    expect(page.items[1]?.artifactsOmitted).toBe(1);
+  });
+
+  it("cursor mode pages in the store and does not materialize the whole trail", async () => {
+    const stores = mocks.getStores();
+    const list = vi.fn(() => {
+      throw new Error("full list");
+    });
+    const listCursorPage = vi.fn(() => [
+      {
+        id: "h-1",
+        delivered: true,
+        deliveryState: "consumed",
+        artifacts: [],
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+      {
+        id: "h-2",
+        delivered: true,
+        deliveryState: "consumed",
+        artifacts: [],
+        createdAt: 2,
+        missionId: "mission-a",
+      },
+    ]);
+    const listRecentIds = vi.fn(() => ["h-8", "h-7", "h-6", "h-5", "h-4"]);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list,
+        listCursorPage,
+        listRecentIds,
+        listDeliveryAttempts: () => [],
+      },
+    });
+
+    const page = (await listTool().handler(
+      { limit: 1 },
+      orchestratorContext(),
+    )) as { items: Array<{ id: string }>; hasMoreHistory: boolean };
+    expect(list).not.toHaveBeenCalled();
+    expect(listCursorPage).toHaveBeenCalledTimes(1);
+    expect(listCursorPage.mock.calls[0]?.[0]).toMatchObject({ limit: 2 });
+    expect(listRecentIds).toHaveBeenCalledWith(
+      expect.objectContaining({ missionId: "mission-a" }),
+      5,
+    );
+    expect(page.items.map((row) => row.id)).toEqual(["h-1"]);
+    expect(page.hasMoreHistory).toBe(true);
+  });
 });

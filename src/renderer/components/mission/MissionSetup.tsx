@@ -36,6 +36,11 @@ import { reflectAdoptedOrchestratorWithToast } from '../../orch/adopted-orchestr
 import { useProviderStore } from '../../state/provider-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { ExpressMissionStart } from './ExpressMissionStart';
+import {
+  openExpressBareShell,
+  openExpressTerminalGrid,
+} from './ExpressTerminalOptions';
+import { useLauncherShortcuts } from '../product/use-launcher-shortcuts';
 import { MissionStep } from './MissionStep';
 import {
   ReviewStep,
@@ -1042,6 +1047,27 @@ export function MissionSetup({
       }
     }
   };
+
+  useLauncherShortcuts(home || draft.step === 'express', {
+    pane: openExpressTerminalGrid,
+    mission: () => {
+      document.getElementById('express-objective')?.focus();
+    },
+    workspace: () => {
+      // O botão "Trocar pasta" fica disabled com pickingWorkspace || busy.
+      // O atalho tem de obedecer o mesmo estado: trocar a pasta no meio do
+      // prepare/start deixa a missão já gravada na pasta anterior.
+      if (pickingWorkspace || expressStatus === 'loading') return;
+      void pickProjectFolder();
+    },
+    shell: openExpressBareShell,
+    tasks: () => {
+      useProductNavigationStore.getState().openTaskBoard();
+    },
+    memory: () => {
+      useProductNavigationStore.getState().openMemory();
+    },
+  });
 
   if (workspacePath !== canonicalWorkspacePath) {
     return (

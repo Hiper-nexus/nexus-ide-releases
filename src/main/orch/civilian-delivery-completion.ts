@@ -22,6 +22,7 @@ import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
 import { isAgentAwaitingOperator } from './agent-status';
 import {
   getProjectDomainStores,
+  requireProjectDomainStoreRegistry,
   type ProjectDomainStoreSuite,
 } from './project-domain-store-registry';
 import { missionEngineForScope } from './mission-engine-registry';
@@ -44,7 +45,7 @@ import {
 import type { ScopedTaskRecord } from './task-store';
 import { missionLifecycleKey } from './mission-lifecycle-lock';
 import { captureWorkingTreeCandidate } from '../context/candidate-working-tree-snapshot';
-import { withAutomaticCompletionProof, type AutomaticCompletionProof } from './automatic-completion-proof';
+import { withAutomaticCompletionProof, assertCompletionEffectsSettled, type AutomaticCompletionProof } from './automatic-completion-proof';
 import type { MissionCodeCompletionOutcome } from './mission-code-completion';
 import { SKIP_DIRECTORIES } from '../context/orientation/orientation-types';
 import { readFrozenMissionReviewContext } from './mission-review-proof';
@@ -1788,18 +1789,28 @@ async function reconcileCivilianCompletionAttempt(
       ...autoReview.extras,
       note: [autoReview.extras?.note, limitation].filter(Boolean).join('\n'),
     };
-    const complete = () => completeMission(
-      scope,
-      stores,
-      mission,
-      productFiles,
-      inspection.remaining,
-      engine,
-      path ?? 'evidence',
-      teamQuestion.applicable ? teamQuestion.responses.map(({ handoff }) => handoff) : handoffs,
-      extras,
-      teamQuestion.applicable ? teamQuestionResponseSummary(teamQuestion) : undefined,
-    );
+    const complete = () => {
+      // ORC-02: a prova de conclusão só assenta com os efeitos assentados
+      // (checkpoint.capture / handoff.deliver). Estado durável, não memória.
+      assertCompletionEffectsSettled(
+        requireProjectDomainStoreRegistry().runtimeManager(),
+        scope,
+        mission.id,
+        { excludeSessionId: provenOrchestratorSessionId },
+      );
+      return completeMission(
+        scope,
+        stores,
+        mission,
+        productFiles,
+        inspection.remaining,
+        engine,
+        path ?? 'evidence',
+        teamQuestion.applicable ? teamQuestion.responses.map(({ handoff }) => handoff) : handoffs,
+        extras,
+        teamQuestion.applicable ? teamQuestionResponseSummary(teamQuestion) : undefined,
+      );
+    };
     completed = autoReview.proof
       ? withAutomaticCompletionProof(scope, mission, {
           ...autoReview.proof,

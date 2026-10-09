@@ -169,6 +169,7 @@ describe('MCP effect policy', () => {
       'nexus_review_submit',
       // F-769: shared long-term memory is retainable from a read-only pane.
       'nexus_memory_retain',
+      'nexus_mission_request_resume',
     ]) {
       expect(isToolAllowedForReadOnlyContext(tool), tool).toBe(true);
     }
@@ -186,6 +187,9 @@ describe('MCP effect policy', () => {
       'terminal_run',
       'terminal_input',
       'nexus_future_unknown_tool',
+      'nexus_editor_focus',
+      'nexus_terminal_kill',
+      'nexus_file_open',
     ]) {
       expect(isToolAllowedForReadOnlyContext(tool), tool).toBe(false);
     }

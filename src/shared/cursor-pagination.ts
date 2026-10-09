@@ -26,7 +26,14 @@ export interface CursorPayload {
   readonly k: string | number;
   /** Tie-break: id do último item (evita pular empate de keyset). */
   readonly i: string;
+  /**
+   * Digest do recorte da consulta (missão, filtros, ids, painéis).
+   * Um cursor de outro recorte é recusado em vez de pular linhas.
+   */
+  readonly s: string;
 }
+
+const CURSOR_SLICE_MAX_LENGTH = 128;
 
 export interface CursorPage<T> {
   readonly items: readonly T[];
@@ -45,8 +52,20 @@ export class InvalidCursorError extends Error {
 export function encodeCursor(input: {
   readonly key: string | number;
   readonly id: string;
+  readonly slice: string;
 }): string {
-  const payload: CursorPayload = { v: 1, k: input.key, i: input.id };
+  if (
+    input.slice.length === 0 ||
+    input.slice.length > CURSOR_SLICE_MAX_LENGTH
+  ) {
+    throw new InvalidCursorError('cursor slice is missing');
+  }
+  const payload: CursorPayload = {
+    v: 1,
+    k: input.key,
+    i: input.id,
+    s: input.slice,
+  };
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 }
 
@@ -70,7 +89,11 @@ export function decodeCursor(cursor: string): CursorPayload {
     (typeof (parsed as { k: unknown }).k !== 'string' &&
       typeof (parsed as { k: unknown }).k !== 'number') ||
     !('i' in parsed) ||
-    typeof (parsed as { i: unknown }).i !== 'string'
+    typeof (parsed as { i: unknown }).i !== 'string' ||
+    !('s' in parsed) ||
+    typeof (parsed as { s: unknown }).s !== 'string' ||
+    (parsed as { s: string }).s.length === 0 ||
+    (parsed as { s: string }).s.length > CURSOR_SLICE_MAX_LENGTH
   ) {
     throw new InvalidCursorError();
   }
@@ -83,11 +106,81 @@ export function clampPageSize(limit: unknown): number {
   return Math.min(n, CURSOR_PAGE_MAX_ITEMS);
 }
 
+function compareCursorValue(left: string | number, right: string | number): number {
+  if (typeof left === 'number' && typeof right === 'number') {
+    return left === right ? 0 : left < right ? -1 : 1;
+  }
+  const a = String(left);
+  const b = String(right);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+export type CursorSortOrder = 'asc' | 'desc';
+
+function inferKeyOrder<T>(
+  sorted: readonly T[],
+  keyOf: (item: T) => string | number,
+): CursorSortOrder {
+  for (let index = 1; index < sorted.length; index += 1) {
+    const cmp = compareCursorValue(
+      keyOf(sorted[index - 1]!),
+      keyOf(sorted[index]!),
+    );
+    if (cmp < 0) return 'asc';
+    if (cmp > 0) return 'desc';
+  }
+  return 'asc';
+}
+
+function inferIdOrder<T>(
+  sorted: readonly T[],
+  keyOf: (item: T) => string | number,
+  idOf: (item: T) => string,
+  keyOrder: CursorSortOrder,
+): CursorSortOrder {
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (
+      compareCursorValue(keyOf(sorted[index - 1]!), keyOf(sorted[index]!)) !==
+      0
+    ) {
+      continue;
+    }
+    const cmp = compareCursorValue(
+      idOf(sorted[index - 1]!),
+      idOf(sorted[index]!),
+    );
+    if (cmp < 0) return 'asc';
+    if (cmp > 0) return 'desc';
+  }
+  return keyOrder;
+}
+
+function isAfterCursor<T>(
+  item: T,
+  decoded: CursorPayload,
+  keyOf: (item: T) => string | number,
+  idOf: (item: T) => string,
+  keyOrder: CursorSortOrder,
+  idOrder: CursorSortOrder,
+): boolean {
+  const keyCmp = compareCursorValue(keyOf(item), decoded.k);
+  if (keyCmp !== 0) {
+    return keyOrder === 'asc' ? keyCmp > 0 : keyCmp < 0;
+  }
+  const idCmp = compareCursorValue(idOf(item), decoded.i);
+  if (idCmp === 0) return false;
+  return idOrder === 'asc' ? idCmp > 0 : idCmp < 0;
+}
+
 /**
  * Recorta uma página keyset a partir de uma lista já ordenada (mais novo
- * primeiro OU mais velho primeiro — a ordem é a do `sorted`). `cursor` aponta
- * para o último item devolvido na página anterior; a página seguinte começa
- * DEPOIS dele. `+2` linhas extras provam `hasMoreHistory` sem segunda query.
+ * primeiro OU mais velho primeiro — a ordem é a do `sorted`, ou `order`
+ * quando a lista filtrada não deixa a direção óbvia). `cursor` aponta para
+ * o último item devolvido na página anterior; a página seguinte começa na
+ * primeira linha DEPOIS de `(k, i)`, mesmo se aquela linha já saiu do
+ * filtro. Cursor ilegível (vazio, longo demais, base64/JSON/versão errados,
+ * sem digest, ou digest de outro recorte) é `InvalidCursorError`. `+1`
+ * linha extra prova `hasMoreHistory`.
  */
 export function selectCursorPage<T>(
   sorted: readonly T[],
@@ -96,22 +189,39 @@ export function selectCursorPage<T>(
     readonly cursor?: string | null;
     readonly keyOf: (item: T) => string | number;
     readonly idOf: (item: T) => string;
+    readonly order?: CursorSortOrder;
+    /** Digest do recorte desta consulta. Obrigatório. */
+    readonly slice: string;
   },
 ): CursorPage<T> {
+  if (
+    options.slice.length === 0 ||
+    options.slice.length > CURSOR_SLICE_MAX_LENGTH
+  ) {
+    throw new InvalidCursorError('cursor slice is missing');
+  }
   const limit = clampPageSize(options.limit);
   let start = 0;
   if (options.cursor !== undefined && options.cursor !== null) {
     const decoded = decodeCursor(options.cursor);
-    const index = sorted.findIndex(
-      (item) =>
-        options.keyOf(item) === decoded.k &&
-        options.idOf(item) === decoded.i,
-    );
-    if (index >= 0) start = index + 1;
-    else {
-      // Cursor de outra fatia: rejeita em vez de pular linhas em silêncio.
-      throw new InvalidCursorError('cursor does not match any row in this slice');
+    if (decoded.s !== options.slice) {
+      throw new InvalidCursorError('cursor does not match this slice');
     }
+    const keyOrder = options.order ?? inferKeyOrder(sorted, options.keyOf);
+    const idOrder =
+      options.order ??
+      inferIdOrder(sorted, options.keyOf, options.idOf, keyOrder);
+    const found = sorted.findIndex((item) =>
+      isAfterCursor(
+        item,
+        decoded,
+        options.keyOf,
+        options.idOf,
+        keyOrder,
+        idOrder,
+      ),
+    );
+    start = found < 0 ? sorted.length : found;
   }
   const window = sorted.slice(start, start + limit + 1);
   const hasMoreHistory = window.length > limit;
@@ -119,7 +229,11 @@ export function selectCursorPage<T>(
   const last = items[items.length - 1];
   const nextCursor =
     hasMoreHistory && last
-      ? encodeCursor({ key: options.keyOf(last), id: options.idOf(last) })
+      ? encodeCursor({
+          key: options.keyOf(last),
+          id: options.idOf(last),
+          slice: options.slice,
+        })
       : null;
   return { items, nextCursor, hasMoreHistory };
 }

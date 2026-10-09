@@ -2191,6 +2191,130 @@ describe('Caminho Expresso', () => {
     );
   });
 
+  it('atalhos 1–6 disparam na tela real de início, não só no Launcher órfão', async () => {
+    const host = render(<MissionSetup home />);
+    await flush();
+
+    expect(
+      host.querySelector('[data-launcher-action="pane"] kbd')?.textContent,
+    ).toBe('1');
+    expect(
+      host.querySelector('[data-launcher-action="tasks"] kbd')?.textContent,
+    ).toBe('5');
+    expect(
+      host.querySelector('[data-launcher-action="mission"]')?.textContent,
+    ).toBe('2');
+    expect(
+      host.querySelector('[data-launcher-action="workspace"] kbd')?.textContent,
+    ).toBe('3');
+
+    const objective = fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido');
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '2', bubbles: true }),
+      );
+    });
+    expect(document.activeElement).toBe(objective);
+    act(() => objective.blur());
+
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '5', bubbles: true }),
+      );
+    });
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'task-board',
+    });
+
+    useProductNavigationStore.setState({
+      destination: { kind: 'mission-setup' },
+    });
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '5', bubbles: true, metaKey: true }),
+      );
+    });
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+
+    act(() => {
+      objective.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '5', bubbles: true }),
+      );
+    });
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+
+    await flush();
+    await flush();
+    const tool = host.querySelector<HTMLSelectElement>(
+      'select[aria-label^="Ferramenta de IA"]',
+    );
+    expect(tool).not.toBeNull();
+    act(() => {
+      tool!.focus();
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '5', bubbles: true }),
+      );
+    });
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+  });
+
+  it('atalho 3 não troca a pasta enquanto a criação está em andamento', async () => {
+    const pick = vi.fn(async () => undefined);
+    useWorkspaceStore.setState({ pick });
+    useProductNavigationStore.setState({ destination: { kind: 'launcher' } });
+    const host = render(<MissionSetup home />);
+    await flush();
+    await flush();
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido'),
+      'Crie uma página de contato',
+    );
+
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '3', bubbles: true }),
+      );
+    });
+    expect(pick).toHaveBeenCalledTimes(1);
+
+    pick.mockClear();
+    const pendingReview = deferred<MissionReview>();
+    api.prepare.mockReturnValueOnce(pendingReview.promise);
+    act(() => button(host, 'Iniciar criação').click());
+    await flush();
+    await flush();
+    expect(api.prepare).toHaveBeenCalledTimes(1);
+    expect(button(host, 'Trocar pasta').disabled).toBe(true);
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '3', bubbles: true }),
+      );
+    });
+    expect(pick).not.toHaveBeenCalled();
+    pendingReview.resolve(REVIEW);
+    await flush();
+  });
+
+  it('atalhos do início não disparam no assistente avançado', async () => {
+    const host = render(<MissionSetup />);
+    await flush();
+    expect(host.querySelector('[data-launcher-action="tasks"]')).toBeNull();
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '5', bubbles: true }),
+      );
+    });
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+  });
+
   it('abrir e recolher opções preserva o rascunho e inicia a equipe selecionada', async () => {
     const host = await renderAtExpress();
     enterText(

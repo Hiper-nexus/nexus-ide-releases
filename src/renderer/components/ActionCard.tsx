@@ -16,6 +16,8 @@ export interface ActionCardProps
   variant?: ActionCardVariant;
   /** Compact toolbar row (still ≥44px). */
   size?: 'md' | 'sm';
+  /** Atalho visível (kbd). Não entra no nome acessível. */
+  shortcut?: string;
 }
 
 export function ActionCard({
@@ -24,6 +26,7 @@ export function ActionCard({
   subtitle,
   variant = 'default',
   size = 'md',
+  shortcut,
   className = '',
   type = 'button',
   ...rest
@@ -50,6 +53,11 @@ export function ActionCard({
         <strong className="action-card__title">{title}</strong>
         {subtitle ? <small className="action-card__sub">{subtitle}</small> : null}
       </span>
+      {shortcut ? (
+        <kbd className="launcher-action__shortcut" aria-hidden="true">
+          {shortcut}
+        </kbd>
+      ) : null}
     </button>
   );
 }

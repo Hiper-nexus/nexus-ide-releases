@@ -1,0 +1,95 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Tipos exportados fazem parte dos contratos mesmo antes de terem consumidores.
+  "rules": { "types": "off", "nsTypes": "off" },
+  // Executáveis fornecidos pelo OS ou instalados fora do npm.
+  "ignoreBinaries": ["file", "mkfifo", "pkill", "pkg-config", "plutil", "sips"],
+  // Vendor: nunca é nosso para remover.
+  "ignore": ["src/vendor/**"],
+  "workspaces": {
+    ".": {
+      "project": [
+        "src/**/*.{ts,tsx,mts,cts}",
+        "scripts/**/*.{mjs,cjs,js,ts}",
+        "shared/**/*.{ts,tsx}",
+        "native/**/*.{mjs,js}",
+        "*.{js,mjs,cjs,ts,mts,cts}"
+      ],
+      "entry": [
+        // Electron Forge / Vite carregam por nome de arquivo, não por import.
+        "src/main/main.ts!",
+        "src/main/main-bootstrap.ts!",
+        "src/preload/preload.ts!",
+        "src/preload/browser-preload.ts!",
+        "src/preload/pet-preload.ts!",
+        "src/renderer/pet/pet-main.tsx!",
+        "src/renderer/pet/PetApp.tsx!",
+        "src/main/usage/mimo-usage-worker-entry.ts!",
+        "vite.*.config.ts!",
+        "scripts/**/*.{mjs,cjs,js,ts}!",
+        // Testes são entrypoints do vitest.
+        "src/**/*.test.{ts,tsx}!",
+        "src/**/__tests__/**/*.{ts,tsx}!"
+      ],
+      "ignoreDependencies": [
+        // Carregados em runtime (não há import estático):
+        // - electron/typescript: toolchain do build/rebuild
+        // - @napi-rs/keyring: cofre nativo via require dinâmico
+        // - @tesseract.js-data/*: packs de OCR carregados por caminho
+        // - @electron-forge/plugin-auto-unpack-natives, @electron/rebuild:
+        //   forjados pelo Electron Forge
+        // - @noble/curves, @noble/holes: usados por webauthn/tweetnacl nos
+        //   pontos de pareamento (import por string em alguns caminhos)
+        // - drizzle-orm: schema do cloud-api carregado pelo wrangler
+        "electron",
+        "typescript",
+        "@napi-rs/keyring",
+        "@tesseract.js-data/eng",
+        "@tesseract.js-data/por",
+        "@electron-forge/plugin-auto-unpack-natives",
+        "@electron/rebuild",
+        "@noble/curves",
+        "@noble/hashes",
+        "drizzle-orm"
+      ],
+      "ignoreIssues": {
+        // Assets e geradores viajam pelo bundle sem import estático.
+        "src/renderer/assets/**": ["exports", "nsExports"],
+        "resources/**": ["exports", "nsExports", "files"],
+        // Código de terceiros vendorado: não é nosso para apagar exports.
+        "src/vendor/**": ["exports", "nsExports", "types", "nsTypes", "duplicates"]
+      }
+    },
+    "server": {
+      "project": ["**/*.{ts,tsx,mts,cts}"],
+      "entry": ["**/*.test.{ts,tsx}!", "src/**/index.ts!"],
+      "ignoreDependencies": ["body-parser", "pino", "pino-http"]
+    },
+    "mobile": {
+      "project": ["src/**/*.{ts,tsx}"],
+      "entry": [
+        "index.ts!",
+        "App.tsx!",
+        "src/**/*.test.{ts,tsx}!"
+      ],
+      "ignoreDependencies": [
+        // Expo autolink, fonts por caminho e shims de terminal no WebView.
+        "expo-*",
+        "@expo-google-fonts/*",
+        "@xterm/addon-unicode11",
+        "@xterm/addon-webgl",
+        "buffer",
+        "zustand",
+        "@types/react-native"
+      ]
+    },
+    "site": {
+      "project": ["**/*.{js,mjs,cjs,ts,mts}"],
+      "entry": ["src/**/*.{js,ts}!", "public/**!"]
+    },
+    "cloud-api": {
+      "project": ["src/**/*.{ts,tsx}"],
+      "entry": ["src/index.ts!", "test/**/*.{ts,tsx}!"]
+    }
+  }
+}

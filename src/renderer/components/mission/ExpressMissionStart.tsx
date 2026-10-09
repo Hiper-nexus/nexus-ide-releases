@@ -10,6 +10,7 @@ import { MissionSetupRosterRow } from './MissionSetupRosterRow';
 import { issueForAgent, type MissionTeamInventory } from './TeamStep';
 import { useObjectiveDictation } from './use-objective-dictation';
 import { PixelIcon } from '../PixelIcon';
+import { launcherShortcutHint } from '../../lib/action-names';
 import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
 
 interface ExpressMissionStartProps {
@@ -183,6 +184,13 @@ export function ExpressMissionStart({
         <div className="mission-setup__field mission-setup__objective-field">
           <div className="mission-setup__objective-label-row">
             <label htmlFor="express-objective">Seu pedido</label>
+            <kbd
+              className="launcher-action__shortcut"
+              data-launcher-action="mission"
+              aria-hidden="true"
+            >
+              {launcherShortcutHint('mission')}
+            </kbd>
             <button
               type="button"
               className={`mission-setup__button mission-setup__button--secondary mission-setup__dictation-button${
@@ -285,6 +293,7 @@ export function ExpressMissionStart({
             <button
               type="button"
               className="mission-setup__button mission-setup__button--secondary"
+              data-launcher-action="workspace"
               onClick={onPickWorkspace}
               disabled={pickingWorkspace || busy}
               aria-describedby={
@@ -296,6 +305,9 @@ export function ExpressMissionStart({
                 : workspace
                   ? 'Trocar pasta'
                   : 'Escolher pasta'}
+              <kbd className="launcher-action__shortcut" aria-hidden="true">
+                {launcherShortcutHint('workspace')}
+              </kbd>
             </button>
           </div>
           {workspaceActionError && (

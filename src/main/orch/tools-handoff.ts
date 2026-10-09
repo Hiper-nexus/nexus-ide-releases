@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { checkVisualHandoff } from './visual-handoff-gate';
 import { submitWorkspaceHandoff } from "./tools-handoff-workspace";
@@ -21,7 +22,20 @@ import {
 import { markHandoffSubmitted, executionScopeFor, type GateRole } from "./gate";
 import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { onHandoffSubmitted } from "./idle-delivery";
-import { selectCursorPage, InvalidCursorError } from "../../shared/cursor-pagination";
+import {
+  diagnoseHandoffStuck,
+  HANDOFF_STUCK_PARK_ROUND,
+} from "./handoff-stuck-diagnosis";
+import { MAX_HANDOFF_DELIVERY_ATTEMPTS } from "./handoff-delivery-policy";
+import { classifySessionLiveness } from "../pty/session-liveness";
+import { getSessionState } from "../pty/pty-manager";
+import type { ProjectExecutionScope } from "../../shared/project-identity-types";
+import {
+  clampPageSize,
+  decodeCursor,
+  encodeCursor,
+  InvalidCursorError,
+} from "../../shared/cursor-pagination";
 import {
   scheduleAutoCloseAfterHandoff,
   assertAutoCloseReportPreserved,
@@ -45,7 +59,7 @@ import {
   capHandoffFullText,
   condenseHandoffSummary,
 } from "./handoff-summary-rule";
-import type { ScopedHandoff } from "./handoff-store";
+import type { HandoffDeliveryAttempt, ScopedHandoff } from "./handoff-store";
 
 /** Lease de heartbeat herdado do dispatch cerimonial (linhas legadas). */
 const TASK_DISPATCH_HEARTBEAT_LEASE_MS = 10 * 60_000;
@@ -182,6 +196,26 @@ export function resolveHandoffListIncludeDelivered(
   if (args.includeDelivered === false) return false;
   if (args.includeDelivered === true || args.full === true) return true;
   return role === "orchestrator";
+}
+
+/**
+ * Digest do recorte de `nexus_handoff_list`. Entra no cursor para que um
+ * cursor de outra missão, outro filtro ou outra lista seja recusado.
+ */
+export function handoffListCursorSlice(input: {
+  readonly missionId: string | null;
+  readonly includeDelivered: boolean;
+  readonly ids: readonly string[];
+  readonly panes: readonly string[];
+}): string {
+  const canonical = JSON.stringify({
+    list: "handoff",
+    missionId: input.missionId,
+    includeDelivered: input.includeDelivered,
+    ids: [...input.ids].sort(),
+    panes: [...input.panes].sort(),
+  });
+  return createHash("sha256").update(canonical).digest("base64url").slice(0, 22);
 }
 
 const handoffSubmitTool: McpToolDef = {
@@ -860,30 +894,67 @@ const handoffListTool: McpToolDef = {
     const rawIds = Array.isArray(args.ids)
       ? args.ids.filter((i) => typeof i === "string")
       : [];
-    const rows = getProjectDomainStores(ctx.scope).handoffs.list({
+    const includeDelivered = resolveHandoffListIncludeDelivered(
+      args, !ctx.missionId ? "orchestrator" : ctx.role,
+    );
+    const cursorSlice = handoffListCursorSlice({
       missionId,
-      includeDelivered: resolveHandoffListIncludeDelivered(
-        args, !ctx.missionId ? "orchestrator" : ctx.role,
-      ),
+      includeDelivered,
+      ids: rawIds,
+      panes: rawPanes,
+    });
+    const listFilter = {
+      missionId,
+      includeDelivered,
       ...(paneSessionIds !== undefined && paneSessionIds.length > 0
         ? { sessionIds: paneSessionIds }
         : {}),
       ...(rawIds.length > 0 ? { ids: rawIds } : {}),
-    });
-    // Modo cursor (item T3 "paginação por cursor"): janela keyset estável
-    // sobre as linhas já ordenadas do ledger. Sem `limit`/`cursor`, o
-    // comportamento antigo (trilha completa) continua intacto.
+    };
+    const handoffStore = getProjectDomainStores(ctx.scope).handoffs;
+    // A página é escolhida ANTES do recibo. Cursor inválido não reconhece
+    // nada; um limit menor que a trilha só reconhece as linhas devolvidas.
+    // Com limit/cursor o predicado e o LIMIT ficam no SQL: a trilha inteira,
+    // artifacts inclusos, não é materializada.
+    let returned: ScopedHandoff[];
+    let nextCursor: string | null = null;
+    let hasMoreHistory = false;
     const wantCursorMode =
       args.cursor !== undefined || args.limit !== undefined;
-    let paged;
     if (wantCursorMode) {
       try {
-        paged = selectCursorPage(rows, {
-          limit: args.limit as number | undefined,
-          cursor: (args.cursor as string | undefined) ?? null,
-          keyOf: (row) => row.createdAt ?? 0,
-          idOf: (row) => row.id,
+        let after: { createdAt: number; id: string } | undefined;
+        if (typeof args.cursor === "string") {
+          const decoded = decodeCursor(args.cursor);
+          if (decoded.s !== cursorSlice) {
+            throw new InvalidCursorError("cursor does not match this slice");
+          }
+          if (
+            typeof decoded.k !== "number" ||
+            !Number.isInteger(decoded.k) ||
+            decoded.k < 0
+          ) {
+            throw new InvalidCursorError("cursor key is not a handoff timestamp");
+          }
+          after = { createdAt: decoded.k, id: decoded.i };
+        }
+        const pageLimit = clampPageSize(args.limit);
+        const window = handoffStore.listCursorPage({
+          ...listFilter,
+          ...(after ? { after } : {}),
+          limit: pageLimit + 1,
         });
+        hasMoreHistory = window.length > pageLimit;
+        returned = hasMoreHistory ? window.slice(0, pageLimit) : [...window];
+        const last = returned[returned.length - 1];
+        nextCursor =
+          hasMoreHistory && last
+            ? encodeCursor({
+                key: last.createdAt ?? 0,
+                id: last.id,
+                slice: cursorSlice,
+              })
+            : null;
       } catch (error) {
         if (error instanceof InvalidCursorError) {
           throw new Error(
@@ -893,70 +964,211 @@ const handoffListTool: McpToolDef = {
         }
         throw error;
       }
+    } else {
+      returned = handoffStore.list(listFilter);
     }
-    const returnedRows = paged ? [...paged.items] : rows;
-    const items = compactHandoffListRows(
-      returnedRows, rawIds, str(args, "detail") === "full",
+    // Recência é da trilha inteira, não da página. Com limit <= 5, tratar
+    // as últimas linhas da página como "as 5 mais novas" devolveria artifact
+    // completo de histórico. No modo cursor isso é um SELECT de ids, sem artifacts.
+    const recentIds = new Set(
+      wantCursorMode
+        ? handoffStore.listRecentIds(listFilter, 5)
+        : returned.slice(Math.max(0, returned.length - 5)).map((row) => row.id),
     );
-    // List = recibo só de `submitted` (já colado no PTY). `queued` segue
-    // para o idle-delivery: o Maestro que lista um queued ainda não recebeu
-    // o paste — ack prematuro comia a fila (campo 24/08, 2x2).
-    // Leitura cross-mission é auditoria: nunca reconhece nada.
-    if (
-      isProvenCurrentOrchestrator &&
-      missionId === ctx.missionId &&
-      returnedRows.length > 0
-    ) {
-      try {
-        const acked = getProjectDomainStores(
-          ctx.scope,
-        ).handoffs.acknowledgeSeenByOrchestratorList(
-          ctx.missionId,
-          returnedRows.map((row) => row.id),
-        );
-        if (acked > 0) {
-          console.info(
-            `[handoff] list-ack: ${acked} handoff(s) reconhecido(s) pela ` +
-              `leitura do Maestro (mission=${ctx.missionId})`,
+    // List = recibo só de `submitted` (já colado no PTY) que esta resposta
+    // devolve. O diagnóstico sai DEPOIS: uma linha reconhecida nesta chamada
+    // não pode voltar como accepted-not-consumed. `queued` segue para o
+    // idle-delivery. Leitura cross-mission é auditoria: nunca reconhece nada.
+    const acknowledgedIds = new Set<string>();
+    if (isProvenCurrentOrchestrator && missionId === ctx.missionId) {
+      const seenIds = returned
+        .filter((row) => row.deliveryState === "submitted")
+        .map((row) => row.id);
+      if (seenIds.length > 0) {
+        try {
+          const acked = getProjectDomainStores(
+            ctx.scope,
+          ).handoffs.acknowledgeSeenByOrchestratorList(ctx.missionId, seenIds);
+          if (acked === seenIds.length) {
+            for (const id of seenIds) acknowledgedIds.add(id);
+          }
+          if (acked > 0) {
+            console.info(
+              `[handoff] list-ack: ${acked} handoff(s) reconhecido(s) pela ` +
+                `leitura do Maestro (mission=${ctx.missionId})`,
+            );
+          }
+        } catch (error) {
+          console.warn(
+            "[handoff] list-ack falhou (segue sem recibo):",
+            error instanceof Error ? error.message : error,
           );
         }
-      } catch (error) {
-        console.warn(
-          "[handoff] list-ack falhou (segue sem recibo):",
-          error instanceof Error ? error.message : error,
-        );
       }
     }
-    return paged
-      ? {
-          items,
-          nextCursor: paged.nextCursor,
-          hasMoreHistory: paged.hasMoreHistory,
-        }
-      : items;
+    const visible = compactHandoffListRows(
+      returned,
+      rawIds,
+      str(args, "detail") === "full",
+      ctx.scope,
+      recentIds,
+      acknowledgedIds,
+    );
+    if (wantCursorMode) {
+      return {
+        items: visible,
+        nextCursor,
+        hasMoreHistory,
+      };
+    }
+    return visible;
   },
 };
 
 /**
- * Linhas antigas já entregues não carregam decisão nenhuma — o Maestro lê a
- * trilha para saber o que FALTA, e os artifacts de um handoff consumido são
- * a parte pesada. As 5 linhas mais recentes, qualquer linha não entregue e
- * as pedidas por `ids` saem inteiras; o resto leva `artifacts: []` +
- * `artifactsOmitted` + `detailHint` apontando o caminho de volta.
+ * As 5 linhas mais recentes da trilha inteira, qualquer linha não entregue
+ * e as pedidas por `ids` saem inteiras. O resto perde `artifacts` (a parte
+ * pesada) mas NÃO perde o diagnóstico: um `submitted` antigo ainda precisa
+ * dizer accepted-not-consumed. `acknowledgedIds` são as linhas que esta
+ * resposta acabou de reconhecer — o veredito tem de concordar com o recibo.
  */
+function deliveryAttemptsFor(
+  scope: ProjectExecutionScope,
+  handoffId: string,
+): HandoffDeliveryAttempt[] {
+  try {
+    const list = getProjectDomainStores(scope).handoffs.listDeliveryAttempts;
+    if (typeof list !== "function") return [];
+    return list.call(getProjectDomainStores(scope).handoffs, handoffId);
+  } catch {
+    return [];
+  }
+}
+
+/** Falha encerrada ou rodada `released:`. Reserva, colagem e aceite não gastam rodada. */
+function deliveryAttemptIsSpent(attempt: HandoffDeliveryAttempt): boolean {
+  if (
+    attempt.state === "reserved" ||
+    attempt.state === "pasted" ||
+    attempt.state === "accepted"
+  ) {
+    return false;
+  }
+  if (attempt.state === "failed") return true;
+  return (
+    typeof attempt.failureCode === "string" && attempt.failureCode.length > 0
+  );
+}
+
+function maestroSessionAlive(
+  sessionId: string | undefined,
+): boolean | undefined {
+  if (!sessionId) return undefined;
+  try {
+    const liveness = classifySessionLiveness(getSessionState(sessionId));
+    if (liveness === "live") return true;
+    if (liveness === "exited") return false;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function compactHandoffListRows(
   rows: ScopedHandoff[],
   rawIds: readonly string[],
   detailFull: boolean,
+  scope: ProjectExecutionScope,
+  recentIds: ReadonlySet<string>,
+  acknowledgedIds: ReadonlySet<string>,
 ): Array<ScopedHandoff | Record<string, unknown>> {
-  if (detailFull) return rows;
-  const recentFrom = Math.max(0, rows.length - 5);
-  return rows.map((row, index) => {
-    if (!row.delivered || index >= recentFrom || rawIds.includes(row.id)) {
+  const attachStuck = (row: ScopedHandoff): ScopedHandoff | Record<string, unknown> => {
+    // F-1040: diagnóstico de entrega presa — não força nada, nomeia o escape.
+    if (row.delivered && (row.deliveryState === 'consumed' || row.deliveryState === 'acknowledged')) {
       return row;
     }
+    try {
+      const attempts = deliveryAttemptsFor(scope, row.id);
+      // A sessão vigente da missão ganha de uma tentativa antiga. Depois
+      // de um rebind, o Maestro novo está vivo e elegível; contar a sessão
+      // morta estaciona ou marca session-dead à toa.
+      const missionSessionId = row.missionId
+        ? getProjectDomainStores(scope).missions.get(row.missionId)
+            ?.orchestratorSessionId
+        : undefined;
+      const fallbackSessionId =
+        attempts.length > 0
+          ? attempts[attempts.length - 1]?.orchestratorSessionId
+          : undefined;
+      const maestroSessionId =
+        (typeof missionSessionId === "string" && missionSessionId.length > 0
+          ? missionSessionId
+          : undefined) ??
+        (typeof fallbackSessionId === "string" && fallbackSessionId.length > 0
+          ? fallbackSessionId
+          : undefined);
+      const sessionAttempts = maestroSessionId
+        ? attempts.filter(
+            (attempt) => attempt.orchestratorSessionId === maestroSessionId,
+          )
+        : attempts;
+      const latest =
+        sessionAttempts.length > 0
+          ? sessionAttempts[sessionAttempts.length - 1]
+          : undefined;
+      // Reserva ou colagem ainda dentro da janela não é rodada gasta.
+      // Contá-la faz retryRound 1 e o diagnóstico diz retry-backoff antes
+      // do aceite normal. Só falha e `released:` entram na conta; uma
+      // tentativa ativa permanece na janela de aceite.
+      const attemptInFlight =
+        latest?.state === "reserved" || latest?.state === "pasted";
+      const spentAttempts = attemptInFlight
+        ? []
+        : sessionAttempts.filter(deliveryAttemptIsSpent);
+      // F-925 conta rodadas, não tentativas cruas. Cada rodada gasta
+      // MAX_HANDOFF_DELIVERY_ATTEMPTS colagens; linhas `released:` entram
+      // na conta, como no idle-delivery — elas provam que a rodada
+      // aconteceu. Estacionar continua no sinal `parked` (tentativas >=
+      // orçamento + HANDOFF_STUCK_PARK_ROUND). Passar o total cru faria
+      // `retryRound >= 6` estacionar na 6ª tentativa, antes da 9ª.
+      const retryRound =
+        spentAttempts.length > 0
+          ? Math.ceil(spentAttempts.length / MAX_HANDOFF_DELIVERY_ATTEMPTS)
+          : null;
+      const diagnosis = diagnoseHandoffStuck({
+        id: row.id,
+        deliveryState: row.deliveryState,
+        delivered: row.delivered,
+        consumedAt: row.consumedAt ?? null,
+        submittedAt: row.submittedAt ?? null,
+        createdAt: row.createdAt,
+        attemptedAt: latest?.startedAt ?? null,
+        sessionId: maestroSessionId ?? null,
+        sessionAlive: maestroSessionAlive(maestroSessionId),
+        parked:
+          spentAttempts.length >=
+          MAX_HANDOFF_DELIVERY_ATTEMPTS + HANDOFF_STUCK_PARK_ROUND,
+        retryRound,
+      });
+      if (!diagnosis.stuck) return row;
+      return { ...row, stuckDiagnosis: diagnosis };
+    } catch {
+      return row;
+    }
+  };
+  return rows.map((row) => {
+    const view = acknowledgedIds.has(row.id)
+      ? { ...row, delivered: true, deliveryState: "acknowledged" as const }
+      : row;
+    const diagnosed = attachStuck(view);
+    const keepFull =
+      detailFull ||
+      !view.delivered ||
+      recentIds.has(row.id) ||
+      rawIds.includes(row.id);
+    if (keepFull) return diagnosed;
     return {
-      ...row,
+      ...diagnosed,
       artifacts: [],
       artifactsOmitted: Array.isArray(row.artifacts) ? row.artifacts.length : 0,
       detailHint: `passe ids:["${row.id}"] para o conteúdo completo`,

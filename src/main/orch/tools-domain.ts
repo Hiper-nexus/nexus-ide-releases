@@ -4,6 +4,8 @@ import { configureCivilianCodeCompletionGate } from './civilian-delivery-complet
 import { runMissionCodeCompletion, recordMissionCodeCompletionReview,
   isCurrentCodeCompletionFindingFix } from './mission-code-completion-production';
 import { missionExecutionScope } from './mission-execution-scope';
+import { resumeFastLaneMission } from './mission-fast-lane';
+import { hasCurrentMissionRuntimeCloseVerdict } from '../../shared/mission-recovery-policy';
 import { sharedPaneSpaceId } from '../pty/pane-space-worktree';
 import {
   describeCronReversal,
@@ -594,18 +596,108 @@ function pushCompletedMission(
 }
 
 /**
- * F-1013: nenhuma tool devolve a liderança da missão (a troca é do Main, pelo
- * “Retomar missão” da interface). A dica nomeia a chamada que o pane faz para
- * ver quem lidera e o que não fazer: repetir ou demover a missão do líder.
+ * F-1013 + resto da missão antiga: a troca de liderança é do Main. O pane
+ * preso (Codex promovido indevidamente como Maestro somente leitura) não
+ * devolve a liderança a si mesmo — ele PEDE a retomada. A dica nomeia a
+ * chamada exata (`nexus_mission_request_resume`), que religa pelo mesmo
+ * caminho do botão “Retomar missão”.
  */
 function missionLeadershipRefusalHint(missionId: string): string {
   return (
-    'Esta sessão não lidera a missão agora e nenhuma tool devolve a liderança: ' +
-    `veja quem lidera com nexus_mission_control(${JSON.stringify({ missionId })}). ` +
+    'Esta sessão não lidera a missão agora e nenhuma tool devolve a liderança a si mesma: ' +
+    `veja quem lidera com nexus_mission_control(${JSON.stringify({ missionId })}) e ` +
+    `peça a retomada com nexus_mission_request_resume(${JSON.stringify({ missionId })}). ` +
     'Não repita o pedido de conclusão nem marque blocked/failed por cima do líder; ' +
-    'só o botão “Retomar missão” da interface religa a liderança, e depois dele o pedido pode ser repetido.'
+    'a retomada religa a liderança pelo mesmo caminho do botão “Retomar missão”, e depois dela o pedido pode ser repetido.'
   );
 }
+
+/**
+ * Resto da missão antiga (F-1040): o Codex promovido indevidamente ficava
+ * como Maestro somente leitura e só o botão “Retomar missão” resolvia — o
+ * Nexus não oferecia chamada. Esta tool é a chamada: o pane pede a retomada,
+ * o Main executa o mesmo `resumeFastLaneMission` do botão. Não devolve
+ * liderança à sessão que chama (a sessão pode estar velha); religa a
+ * coordenação e devolve o recibo.
+ */
+const missionRequestResumeTool: McpToolDef = {
+  name: 'nexus_mission_request_resume',
+  description:
+    'Request the Main-owned mission resume (same path as the “Retomar missão” button). ' +
+    'Use when this session lost or never held leadership (stale/read-only Maestro) and the ' +
+    'mission needs the coordinator rebound. Does not grant leadership to the calling session; ' +
+    'it rebinds coordination and returns a receipt. After resume, retry your original call.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      missionId: { type: 'string' },
+      note: {
+        type: 'string',
+        description: 'Why resume is needed (kept in the receipt; no secrets).',
+      },
+    },
+    required: ['missionId'],
+  },
+  handler: async (args, ctx) => {
+    const requestedMissionId = requireStr(args, 'missionId');
+    const note = str(args, 'note')?.trim().slice(0, 200) ?? '';
+    // O argumento não escolhe a missão. Só o vínculo que o Main gravou no
+    // token (ctx.missionId) autoriza o pedido — pane solto e orquestrador de
+    // outra missão não remontam o alvo.
+    if (!ctx.missionId || ctx.missionId !== requestedMissionId) {
+      throw new Error(
+        'nexus_mission_request_resume: a retomada só vale para a missão vinculada a esta sessão.',
+      );
+    }
+    const missionId = ctx.missionId;
+    const stores = getProjectDomainStores(ctx.scope);
+    const mission = stores.missions.get(missionId);
+    if (!mission) throw new Error(`nexus_mission_request_resume: missão ${missionId} não existe.`);
+    // F-1042: encerramento explícito do operador NUNCA sai por chamada de
+    // agente. O selo runtime-closed é verificado ANTES do resume — o caminho
+    // `operator` do resumeFastLaneMission o removeria via resumeTechnical.
+    // O remountKind `automatic` abaixo preserva o veredito; este check devolve
+    // o recibo limpo sem tocar na missão.
+    if (hasCurrentMissionRuntimeCloseVerdict(mission)) {
+      return {
+        ok: false,
+        missionId,
+        reason: 'mission_closed_by_operator',
+        error: 'A missão foi encerrada pelo operador.',
+        hint: 'Só o botão “Retomar missão” da interface reabre uma missão encerrada pelo operador.',
+      };
+    }
+    try {
+      // Chamada de agente não é o botão Retomar: remount automático preserva
+      // o veredito de encerramento do operador.
+      await resumeFastLaneMission(ctx.scope, missionId, {
+        remountKind: 'automatic',
+        note: note || 'Retomada pedida por nexus_mission_request_resume',
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Encerrada pelo operador não é falha da chamada: é o veredito.
+      if (message.includes('mission_closed_by_operator')) {
+        return {
+          ok: false,
+          missionId,
+          reason: 'mission_closed_by_operator',
+          error: message,
+          hint: 'A missão foi encerrada pelo operador; “Retomar missão” reabre se for o caso.',
+        };
+      }
+      throw error;
+    }
+    const after = stores.missions.get(missionId);
+    return {
+      ok: true,
+      missionId,
+      resumed: true,
+      status: after?.status ?? mission.status,
+      note: 'Liderança religada pelo Main (mesmo caminho do botão “Retomar missão”). Repita o pedido original.',
+    };
+  },
+};
 
 const missionSetStatusTool: McpToolDef = {
   name: 'nexus_mission_set_status',
@@ -2821,6 +2913,7 @@ export function buildDomainTools(): McpToolDef[] {
     missionGetTool,
     missionListTool,
     missionSetStatusTool,
+    missionRequestResumeTool,
     reviewVerdictTool,
     missionSpawnPaneTool,
     squadSaveTool,

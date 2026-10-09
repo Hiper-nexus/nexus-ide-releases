@@ -3,14 +3,13 @@
  * Reference: apps/web/src/keybindings.ts, editableFocus shortcut context.
  * Nexus-specific action names, number keys and existing launcher callbacks.
  */
-import { useCallback, type KeyboardEvent } from 'react';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 import {
   LAUNCHER_ACTIONS,
-  launcherActionIdForKey,
   launcherShortcutHint,
   requireAccessibleName,
 } from '../../lib/action-names';
+import { useLauncherShortcuts } from './use-launcher-shortcuts';
 
 export interface LauncherProps {
   onOpenWorkspace: () => void;
@@ -195,41 +194,19 @@ export function Launcher({
   onOpenMemory,
   onOpenProviders,
 }: LauncherProps) {
-  const actions: Record<string, () => void> = {
+  useLauncherShortcuts(true, {
     pane: onOpenPane,
     mission: onStartMission,
     workspace: onOpenWorkspace,
     shell: onOpenShellTerminal,
     tasks: onOpenTaskBoard,
     memory: onOpenMemory,
-  };
-
-  // Atalhos do launcher (item T3): 1–6 abrem a ação, a menos que o foco
-  // esteja num campo editável.
-  const onKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLElement>) => {
-      const target = event.target as HTMLElement | null;
-      const editable =
-        target?.tagName === 'INPUT' ||
-        target?.tagName === 'TEXTAREA' ||
-        target?.isContentEditable === true;
-      const id = launcherActionIdForKey(event.key, {
-        targetIsEditable: editable,
-      });
-      if (!id) return;
-      const run = actions[id];
-      if (!run) return;
-      event.preventDefault();
-      run();
-    },
-    [onOpenPane, onStartMission, onOpenWorkspace, onOpenShellTerminal, onOpenTaskBoard, onOpenMemory],
-  );
+  });
 
   return (
     <section
       className="launcher"
       aria-labelledby="launcher-title"
-      onKeyDown={onKeyDown}
     >
       <p id="launcher-shortcuts" className="visually-hidden">
         Atalhos: {LAUNCHER_ACTIONS.map((a) => `${a.shortcut} ${a.label}`).join('; ')}

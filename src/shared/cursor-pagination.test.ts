@@ -17,11 +17,12 @@ const rows: Row[] = Array.from({ length: 10 }, (_, i) => ({
 
 const keyOf = (r: Row) => r.seq;
 const idOf = (r: Row) => r.id;
+const slice = 'rows';
 
 describe('cursor pagination (T3 policy)', () => {
   it('encode/decode is stable and versioned', () => {
-    const cursor = encodeCursor({ key: 7, id: 'r7' });
-    expect(decodeCursor(cursor)).toEqual({ v: 1, k: 7, i: 'r7' });
+    const cursor = encodeCursor({ key: 7, id: 'r7', slice });
+    expect(decodeCursor(cursor)).toEqual({ v: 1, k: 7, i: 'r7', s: 'rows' });
   });
 
   it('rejects absurd cursors before base64/JSON', () => {
@@ -33,22 +34,59 @@ describe('cursor pagination (T3 policy)', () => {
   });
 
   it('rejects an explicitly empty cursor instead of restarting the first page', () => {
-    expect(() => selectCursorPage(rows, { cursor: '', keyOf, idOf })).toThrow(InvalidCursorError);
+    expect(() => selectCursorPage(rows, { cursor: '', keyOf, idOf, slice })).toThrow(InvalidCursorError);
   });
 
-  it('rejects a cursor from another slice instead of skipping silently', () => {
+  it('rejects only an undecodable cursor', () => {
     expect(() =>
       selectCursorPage(rows, {
         limit: 3,
-        cursor: encodeCursor({ key: 99, id: 'ghost' }),
+        cursor: '!!!not-base64!!!',
         keyOf,
         idOf,
+        slice,
       }),
-    ).toThrow(/does not match any row/);
+    ).toThrow(InvalidCursorError);
+  });
+
+  it('continues after a cursor whose row was filtered out', () => {
+    const filtered = rows.filter((row) => row.id !== 'r8');
+    const page = selectCursorPage(filtered, {
+      limit: 2,
+      cursor: encodeCursor({ key: 8, id: 'r8', slice }),
+      keyOf,
+      idOf,
+      slice,
+    });
+    expect(page.items.map((row) => row.id)).toEqual(['r7', 'r6']);
+  });
+
+  it('continues after a missing row when the list is oldest-first', () => {
+    const ascending = [...rows].reverse();
+    const filtered = ascending.filter((row) => row.id !== 'r3');
+    const page = selectCursorPage(filtered, {
+      limit: 2,
+      cursor: encodeCursor({ key: 3, id: 'r3', slice }),
+      keyOf,
+      idOf,
+      order: 'asc',
+      slice,
+    });
+    expect(page.items.map((row) => row.id)).toEqual(['r4', 'r5']);
+    const pastEnd = selectCursorPage(ascending, {
+      limit: 2,
+      cursor: encodeCursor({ key: 99, id: 'ghost', slice }),
+      keyOf,
+      idOf,
+      order: 'asc',
+      slice,
+    });
+    expect(pastEnd.items).toEqual([]);
+    expect(pastEnd.hasMoreHistory).toBe(false);
   });
 
   it('pages through the whole list with nextCursor and hasMoreHistory', () => {
-    const first = selectCursorPage(rows, { limit: 4, keyOf, idOf });
+    const first = selectCursorPage(rows, { limit: 4, keyOf, idOf, slice });
     expect(first.items.map((r) => r.id)).toEqual(['r10', 'r9', 'r8', 'r7']);
     expect(first.hasMoreHistory).toBe(true);
     expect(first.nextCursor).not.toBeNull();
@@ -58,6 +96,7 @@ describe('cursor pagination (T3 policy)', () => {
       cursor: first.nextCursor,
       keyOf,
       idOf,
+      slice,
     });
     expect(second.items.map((r) => r.id)).toEqual(['r6', 'r5', 'r4', 'r3']);
     expect(second.hasMoreHistory).toBe(true);
@@ -67,6 +106,7 @@ describe('cursor pagination (T3 policy)', () => {
       cursor: second.nextCursor,
       keyOf,
       idOf,
+      slice,
     });
     expect(third.items.map((r) => r.id)).toEqual(['r2', 'r1']);
     expect(third.hasMoreHistory).toBe(false);
@@ -74,13 +114,14 @@ describe('cursor pagination (T3 policy)', () => {
   });
 
   it('exact multiple of page size ends cleanly', () => {
-    const first = selectCursorPage(rows, { limit: 5, keyOf, idOf });
+    const first = selectCursorPage(rows, { limit: 5, keyOf, idOf, slice });
     expect(first.hasMoreHistory).toBe(true);
     const second = selectCursorPage(rows, {
       limit: 5,
       cursor: first.nextCursor,
       keyOf,
       idOf,
+      slice,
     });
     expect(second.items).toHaveLength(5);
     expect(second.hasMoreHistory).toBe(false);
@@ -104,6 +145,7 @@ describe('cursor pagination (T3 policy)', () => {
       limit: 1,
       keyOf,
       idOf,
+      slice,
     });
     expect(first.items[0]?.id).toBe('b');
     const second = selectCursorPage(tied, {
@@ -111,7 +153,38 @@ describe('cursor pagination (T3 policy)', () => {
       cursor: first.nextCursor,
       keyOf,
       idOf,
+      slice,
     });
     expect(second.items[0]?.id).toBe('a');
+  });
+
+  it('refuses a cursor minted for another slice', () => {
+    const foreign = encodeCursor({ key: 7, id: 'r7', slice: 'other-list' });
+    expect(() =>
+      selectCursorPage(rows, {
+        limit: 3,
+        cursor: foreign,
+        keyOf,
+        idOf,
+        slice,
+      }),
+    ).toThrow(/does not match this slice/);
+  });
+
+  it('refuses a versioned cursor that has no slice digest', () => {
+    const legacy = Buffer.from(
+      JSON.stringify({ v: 1, k: 7, i: 'r7' }),
+      'utf8',
+    ).toString('base64url');
+    expect(() => decodeCursor(legacy)).toThrow(InvalidCursorError);
+    expect(() =>
+      selectCursorPage(rows, {
+        limit: 3,
+        cursor: legacy,
+        keyOf,
+        idOf,
+        slice,
+      }),
+    ).toThrow(InvalidCursorError);
   });
 });

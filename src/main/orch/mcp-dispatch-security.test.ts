@@ -3317,6 +3317,49 @@ describe("MCP dispatch effect safety", () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
+    it("lets a read-only Maestro request resume and still denies other mission controls", async () => {
+      const resume = vi.fn(async () => ({ resumed: true }));
+      const resumed = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_mission_request_resume",
+          description: "resume",
+          inputSchema: { type: "object", properties: {} },
+          handler: resume,
+        }),
+        "nexus_mission_request_resume",
+        { missionId: TEST_MISSION_ID },
+        readOnlyContext(),
+        workflowOptions(),
+      );
+      expect(resumed).toMatchObject({
+        ok: true,
+        result: { resumed: true },
+      });
+      expect(resume).toHaveBeenCalledOnce();
+
+      const focus = vi.fn(async () => ({ shouldNotRun: true }));
+      const focused = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_editor_focus",
+          description: "focus",
+          inputSchema: { type: "object", properties: {} },
+          handler: focus,
+        }),
+        "nexus_editor_focus",
+        { path: "README.md" },
+        readOnlyContext(),
+        workflowOptions(),
+      );
+      expect(focused).toMatchObject({
+        ok: false,
+        denied: true,
+        error: expect.stringContaining("read-only authority denied tool"),
+      });
+      expect(focus).not.toHaveBeenCalled();
+    });
+
     it("F-794: writer isolado com allowlist vazia commita na própria worktree; push segue negado", async () => {
       const context = missionContext(TEST_CONTEXT_REVISION, []);
       context.executionScope = {
@@ -3511,6 +3554,8 @@ describe("MCP dispatch effect safety", () => {
       expect(result.hint).toContain("não está vinculado à missão mission-23eee6e5");
       expect(result.hint).toContain('nexus_mission_control({"missionId":"mission-23eee6e5"})');
       expect(result.hint).toContain("nexus_pane_ask");
+      expect(result.hint).toContain("Retomar missão");
+      expect(result.hint).not.toContain("nexus_mission_request_resume");
       expect(result.hint).not.toContain("crie uma missão com nexus_mission_create");
       expect(handler).not.toHaveBeenCalled();
     });

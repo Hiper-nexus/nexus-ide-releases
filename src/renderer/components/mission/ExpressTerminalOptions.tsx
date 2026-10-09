@@ -4,7 +4,25 @@ import { useProductNavigationStore } from '../../state/product-navigation-store'
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
 import { usePaneScopeStore } from '../../state/pane-scope-store';
 import { LOOSE_SCOPE_KEY } from '../../lib/pane-spaces';
+import { launcherShortcutHint } from '../../lib/action-names';
 import { reportLicenseDenial } from '../../state/access-guard';
+
+/** Grade de terminais do início (atalho 1 e o cartão da tela Expresso). */
+export function openExpressTerminalGrid(): void {
+  useTerminalGridDialogStore.getState().open({ initialCount: 2 });
+}
+
+/** Terminal só com shell (atalho 4). Navegar e criar, nesta ordem. */
+export function openExpressBareShell(): void {
+  useProductNavigationStore.getState().openTerminal();
+  try {
+    useLayoutStore.getState().addShellPane();
+  } catch (error) {
+    if (!reportLicenseDenial(error)) throw error;
+    return;
+  }
+  usePaneScopeStore.getState().focusScope(LOOSE_SCOPE_KEY);
+}
 
 /**
  * O caminho manual da tela de criação: abrir os próprios painéis em vez de
@@ -23,30 +41,6 @@ import { reportLicenseDenial } from '../../state/access-guard';
  * fixa de props) continua válido.
  */
 export function ExpressTerminalOptions(): React.JSX.Element {
-  const openGridDialog = () => {
-    // O assistente já cuida de pasta, quantidade, uma IA por painel, limite de
-    // panes, revalidação de disponibilidade e a navegação no fim.
-    useTerminalGridDialogStore.getState().open({ initialCount: 2 });
-  };
-
-  const openBareShell = () => {
-    // Navegar sozinho só revela a superfície (os panes ficam montados mas
-    // ocultos); criar sozinho faz o pane nascer invisível. Os dois, na ordem —
-    // é exatamente o que a ferramenta "Abrir terminal" do ⌘K faz.
-    useProductNavigationStore.getState().openTerminal();
-    try {
-      useLayoutStore.getState().addShellPane();
-    } catch (error) {
-      // F-228: acesso negado lança LicenseError — toast padrão, sem pane.
-      if (!reportLicenseDenial(error)) throw error;
-      return;
-    }
-    // Sem esta linha o terminal novo nasce na aba dos soltos e o operador fica
-    // olhando o mosaico do escopo ANTERIOR — o mesmo "abre e não aparece" que
-    // F-560 corrige no assistente ao lado.
-    usePaneScopeStore.getState().focusScope(LOOSE_SCOPE_KEY);
-  };
-
   return (
     <section
       className="mission-setup__terminal-options"
@@ -69,7 +63,9 @@ export function ExpressTerminalOptions(): React.JSX.Element {
           variant="ghost"
           title="Montar meus terminais"
           subtitle="Escolha a pasta, a quantidade de painéis e as IAs."
-          onClick={openGridDialog}
+          data-launcher-action="pane"
+          shortcut={launcherShortcutHint('pane') ?? undefined}
+          onClick={openExpressTerminalGrid}
         />
         <ActionCard
           icon="terminal"
@@ -77,7 +73,29 @@ export function ExpressTerminalOptions(): React.JSX.Element {
           variant="ghost"
           title="Terminal sem IA"
           subtitle="Use comandos diretamente, sem assistente."
-          onClick={openBareShell}
+          data-launcher-action="shell"
+          shortcut={launcherShortcutHint('shell') ?? undefined}
+          onClick={openExpressBareShell}
+        />
+        <ActionCard
+          icon="board"
+          size="sm"
+          variant="ghost"
+          title="Quadro de tarefas"
+          subtitle="Veja o que falta e o que já foi entregue."
+          data-launcher-action="tasks"
+          shortcut={launcherShortcutHint('tasks') ?? undefined}
+          onClick={() => useProductNavigationStore.getState().openTaskBoard()}
+        />
+        <ActionCard
+          icon="files"
+          size="sm"
+          variant="ghost"
+          title="Memória do projeto"
+          subtitle="Preferências e notas que atravessam sessões."
+          data-launcher-action="memory"
+          shortcut={launcherShortcutHint('memory') ?? undefined}
+          onClick={() => useProductNavigationStore.getState().openMemory()}
         />
       </div>
     </section>

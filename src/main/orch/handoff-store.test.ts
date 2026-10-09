@@ -357,6 +357,44 @@ describe("scoped handoff store", () => {
     expect(handoffs.get(unseen.id)?.deliveryState).toBe("submitted");
   });
 
+  it("list-ack with ids leaves submitted rows the caller did not receive", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-list-page",
+    });
+    let seq = 0;
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      idFactory: () => `handoff-page-${++seq}`,
+    });
+    missions.create({ title: "Paged ack" });
+    const seen = handoffs.submit({
+      missionId: "mission-list-page",
+      sessionId: "worker-session",
+      fromAgent: "worker",
+      status: "success",
+      summary: "primeira página",
+    });
+    const unseen = handoffs.submit({
+      missionId: "mission-list-page",
+      sessionId: "worker-session",
+      fromAgent: "worker",
+      status: "success",
+      summary: "fora da página",
+    });
+    expect(handoffs.markDelivered(seen.id)).toBe(true);
+    expect(handoffs.markDelivered(unseen.id)).toBe(true);
+    expect(
+      handoffs.acknowledgeSeenByOrchestratorList("mission-list-page", [seen.id]),
+    ).toBe(1);
+    expect(handoffs.get(seen.id)?.deliveryState).toBe("acknowledged");
+    expect(handoffs.get(unseen.id)?.deliveryState).toBe("submitted");
+    expect(
+      handoffs.acknowledgeSeenByOrchestratorList("mission-list-page", []),
+    ).toBe(0);
+    expect(handoffs.get(unseen.id)?.deliveryState).toBe("submitted");
+  });
+
   it("persists bounded delivery attempts and accepts the exact attempt atomically", () => {
     const runtimeManager = manager();
     const scope = testProjectScope();
@@ -1097,5 +1135,72 @@ describe("scoped handoff store", () => {
       closedBy: "turn-end-attach",
       fullText: "output delta anexado no mesmo turno",
     });
+  });
+});
+
+describe("handoff list cursor page", () => {
+  it("applies the keyset and limit in SQL and does not parse artifacts outside the page", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-page",
+    });
+    let clock = 10;
+    let seq = 0;
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      now: () => ++clock,
+      idFactory: () => `handoff-page-${++seq}`,
+    });
+    missions.create({ title: "Paged trail" });
+    const ids: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const row = handoffs.submit({
+        missionId: "mission-page",
+        sessionId: "session-page",
+        fromAgent: "worker",
+        status: "success",
+        summary: `Turno ${index + 1} com trilha longa.`,
+        artifacts: [{ blob: "x".repeat(8_000), index }],
+      });
+      ids.push(row.id);
+    }
+    const db = runtimeManager.open(scope).db;
+    // O trigger bloqueia UPDATE de artifacts. A linha ruim entra por INSERT,
+    // como um registro já gravado, para provar que a página não a parseia.
+    db.prepare(
+      `INSERT INTO handoffs (
+         id, mission_id, session_id, worker_incarnation_id, from_agent,
+         authority_origin, status, summary,
+         artifacts_json, evidence_ids_json, evidence_trusted,
+         context_revision, contract_hash, base_sha, head_sha, diff_hash,
+         workflow_revision, delivered, delivery_state, created_at,
+         adapter_id, model, author_read_only
+       )
+       SELECT
+         'handoff-page-bad', mission_id, session_id, worker_incarnation_id, from_agent,
+         authority_origin, status, summary,
+         '{', evidence_ids_json, evidence_trusted,
+         context_revision, contract_hash, base_sha, head_sha, diff_hash,
+         workflow_revision, delivered, delivery_state, created_at + 10,
+         adapter_id, model, author_read_only
+       FROM handoffs WHERE id = ?`,
+    ).run(ids[3]);
+    ids.push("handoff-page-bad");
+
+    expect(() => handoffs.list()).toThrow(/handoff artifacts/);
+    const first = handoffs.listCursorPage({ limit: 2 });
+    expect(first.map((row) => row.id)).toEqual([ids[0], ids[1]]);
+    expect(first[0]?.artifacts).toEqual([{ blob: "x".repeat(8_000), index: 0 }]);
+
+    db.prepare("DELETE FROM handoffs WHERE id = ?").run(ids[1]);
+    const continued = handoffs.listCursorPage({
+      after: { createdAt: first[0]!.createdAt ?? 0, id: ids[0]! },
+      limit: 1,
+    });
+    expect(continued.map((row) => row.id)).toEqual([ids[2]]);
+
+    const recent = handoffs.listRecentIds({}, 5);
+    expect(recent).toContain("handoff-page-bad");
+    expect(recent).not.toContain(ids[1]);
   });
 });

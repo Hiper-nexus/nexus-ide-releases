@@ -73,6 +73,47 @@ describe('Launcher onboarding', () => {
       expect(handler).toHaveBeenCalledOnce();
     }
   });
+  it('shows the task-board shortcut and runs it from the window', () => {
+    const { host, handlers } = setup();
+    const board = host.querySelector<HTMLButtonElement>(
+      '[data-launcher-action="tasks"]',
+    );
+    expect(board?.querySelector('kbd')?.textContent).toBe('5');
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '5', bubbles: true }));
+    });
+    expect(handlers.onOpenTaskBoard).toHaveBeenCalledOnce();
+  });
+  it('ignores launcher digits when a modifier is held or the target is editable', () => {
+    const { host, handlers } = setup();
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '1', metaKey: true, bubbles: true }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '1', ctrlKey: true, bubbles: true }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '1', altKey: true, bubbles: true }),
+      );
+    });
+    expect(handlers.onOpenPane).not.toHaveBeenCalled();
+    const input = document.createElement('input');
+    host.appendChild(input);
+    const select = document.createElement('select');
+    host.appendChild(select);
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
+      select.focus();
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
+    });
+    expect(handlers.onOpenPane).not.toHaveBeenCalled();
+    act(() => {
+      select.blur();
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
+    });
+    expect(handlers.onOpenPane).toHaveBeenCalledOnce();
+  });
   it('keeps organization tools under an optional disclosure and preserves their routes', () => {
     const { host, handlers } = setup();
     const details = host.querySelector('details');

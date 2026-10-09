@@ -898,6 +898,64 @@ CREATE INDEX idx_route_decisions_created
   ON route_decisions(created_at);
 `;
 
+/**
+ * ORC-01 + ORC-04 (um corte, política T3 @ 26285ab): outbox transacional de
+ * efeitos com classe derivada do tipo (replay-safe × process-bound) e recibo
+ * de comando com resultSequence. A decisão e a linha do outbox nascem na
+ * MESMA transação; o worker assenta depois, sob lease.
+ *
+ * Reconcile de perda do processo (ORC-06):
+ * - PROCESS_BOUND em pending/running → cancelled (não reexecuta).
+ * - REPLAY_SAFE em running → pending (reentra).
+ * Mesmo commandId não enfileira de novo — o segundo lê o recibo e a sequence
+ * final. Primeiro corte: NÃO substitui handoff-delivery-outbox.
+ */
+const EFFECT_OUTBOX_COMMAND_RECEIPTS_SCHEMA = `
+CREATE TABLE effect_outbox (
+  effect_id         TEXT PRIMARY KEY,
+  command_id        TEXT NOT NULL,
+  thread_id         TEXT NOT NULL,
+  effect_type       TEXT NOT NULL CHECK (length(effect_type) BETWEEN 1 AND 64),
+  payload_json      TEXT NOT NULL DEFAULT '{}',
+  status            TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')),
+  attempt_count     INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  available_at      INTEGER NOT NULL CHECK (available_at >= 0),
+  lease_owner       TEXT CHECK (lease_owner IS NULL OR length(lease_owner) BETWEEN 1 AND 128),
+  lease_expires_at  INTEGER CHECK (lease_expires_at IS NULL OR lease_expires_at >= 0),
+  created_at        INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at        INTEGER NOT NULL CHECK (updated_at >= 0),
+  completed_at      INTEGER CHECK (completed_at IS NULL OR completed_at >= 0),
+  last_error        TEXT CHECK (last_error IS NULL OR length(last_error) <= 512)
+);
+
+CREATE INDEX idx_effect_outbox_claimable
+  ON effect_outbox(status, available_at, created_at);
+CREATE INDEX idx_effect_outbox_thread
+  ON effect_outbox(thread_id, status, created_at);
+CREATE INDEX idx_effect_outbox_command
+  ON effect_outbox(command_id);
+
+CREATE TABLE command_receipts (
+  command_id        TEXT PRIMARY KEY,
+  aggregate_kind    TEXT NOT NULL CHECK (aggregate_kind IN ('thread', 'project')),
+  aggregate_id      TEXT NOT NULL,
+  command_type      TEXT NOT NULL CHECK (length(command_type) BETWEEN 1 AND 128),
+  accepted_at       INTEGER NOT NULL CHECK (accepted_at >= 0),
+  result_sequence   INTEGER NOT NULL DEFAULT 0 CHECK (result_sequence >= 0),
+  status            TEXT NOT NULL DEFAULT 'accepted'
+    CHECK (status IN ('accepted', 'rejected')),
+  error             TEXT CHECK (error IS NULL OR length(error) <= 512),
+  effect_class      TEXT NOT NULL
+    CHECK (effect_class IN ('process_bound', 'replay_safe'))
+);
+
+CREATE INDEX idx_command_receipts_aggregate
+  ON command_receipts(aggregate_kind, aggregate_id, accepted_at);
+CREATE INDEX idx_command_receipts_unsettled
+  ON command_receipts(result_sequence) WHERE result_sequence = 0;
+`;
+
 export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
   validateProjectMigrations([
     createProjectMigration({
@@ -1099,5 +1157,14 @@ END;`,
       id: '047-handoff-author-read-only', schemaVersion: 47, appVersion: '0.76.192',
       sql: `ALTER TABLE handoffs ADD COLUMN author_read_only INTEGER
         CHECK (author_read_only IS NULL OR author_read_only IN (0, 1));`,
+    }),
+    // ORC-01+ORC-04 (corte T3): outbox transacional de efeitos com classe
+    // replay-safe × process-bound + recibo de comando com resultSequence.
+    // Não substitui handoff-delivery-outbox neste corte.
+    createProjectMigration({
+      id: '048-effect-outbox-command-receipts',
+      schemaVersion: 48,
+      appVersion: '0.76.212',
+      sql: EFFECT_OUTBOX_COMMAND_RECEIPTS_SCHEMA,
     }),
   ]);

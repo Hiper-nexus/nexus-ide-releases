@@ -2,6 +2,13 @@ import type { Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { missionLifecycleKey } from './mission-lifecycle-lock';
 import type { CodeCompletionCertification } from './mission-code-completion';
+import {
+  canMarkTurnSettled,
+  type SettlementEffectView,
+} from './effect-settlement-gate';
+import { EffectOutboxStore } from './effect-outbox';
+import { createScopedHandoffStore } from './handoff-store';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 
 export interface AutomaticCompletionProof {
   /** Opaque Main-issued certification; serialized/cloned claims do not verify. */
@@ -10,6 +17,70 @@ export interface AutomaticCompletionProof {
   readonly candidateFingerprint?: string;
   readonly deletedArtifactPaths?: readonly string[];
   readonly note?: string;
+}
+
+/**
+ * ORC-02: a prova de conclusão só vale se o turno estiver assentado —
+ * nenhum `checkpoint.capture`/`handoff.deliver` pending/running.
+ */
+export function automaticCompletionEffectsSettled(
+  effects: readonly SettlementEffectView[],
+  threadId?: string,
+): boolean {
+  return canMarkTurnSettled(effects, threadId).settled;
+}
+
+/**
+ * ORC-02 no estado durável: lê o outbox do escopo e o ledger de handoff.
+ * `handoff.deliver` não entra em effect_outbox (o enum não aceita o tipo);
+ * a entrega real fica na fila do handoff. A sessão provada do Maestro fica
+ * de fora: o resumo dela não é entregue de volta para ela. Usado pelo
+ * caminho de conclusão antes de fechar.
+ */
+export function assertCompletionEffectsSettled(
+  runtimeManager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  threadId?: string,
+  options?: { readonly excludeSessionId?: string },
+): void {
+  const outbox = new EffectOutboxStore(runtimeManager, scope);
+  const blocking = outbox.listUnsettledBlocking(threadId);
+  if (blocking.truncated) {
+    throw new Error(
+      'completion_effects_pending: effect_outbox backlog exceeds the gate window',
+    );
+  }
+  const open = blocking.rows;
+  const excludeSessionId = options?.excludeSessionId?.trim() ?? '';
+  const queuedDeliveries = createScopedHandoffStore(
+    runtimeManager,
+    scope,
+  )
+    .listQueuedDeliveries(threadId)
+    .filter(
+      (delivery) =>
+        !(excludeSessionId && delivery.sessionId === excludeSessionId),
+    );
+  const gate = canMarkTurnSettled(
+    [
+      ...open.map((entry) => ({
+        type: entry.type,
+        status: entry.status,
+        threadId: entry.threadId,
+      })),
+      ...queuedDeliveries.map((delivery) => ({
+        type: 'handoff.deliver',
+        status: 'pending' as const,
+        threadId: delivery.missionId,
+      })),
+    ],
+    threadId,
+  );
+  if (!gate.settled) {
+    throw new Error(
+      `completion_effects_pending: turno terminal com efeitos não assentados — ${gate.reason ?? ''}`,
+    );
+  }
 }
 
 type CompletionMission = Pick<Mission, 'id' | 'intentVersion' | 'updatedAt' | 'intentState'>;
