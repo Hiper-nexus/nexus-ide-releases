@@ -1,6 +1,8 @@
 import {
   liveSessionSummary,
   sealPtySessionAdmissionForShutdown,
+  isPtySessionAdmissionSealedForShutdown,
+  ptySessionAdmissionAbortSignal,
 } from "./pty/pty-manager";
 
 export interface LiveRuntimeProcessSummary {
@@ -24,4 +26,13 @@ export function liveRuntimeProcessSummary(): LiveRuntimeProcessSummary {
  */
 export function sealRuntimeProcessAdmissionForShutdown(): void {
   sealPtySessionAdmissionForShutdown();
+}
+
+/** The same sticky Main shutdown fence used by native process admission. */
+export function isRuntimeProcessAdmissionSealedForShutdown(): boolean {
+  return isPtySessionAdmissionSealedForShutdown();
+}
+
+export function runtimeProcessAdmissionAbortSignal(): AbortSignal {
+  return ptySessionAdmissionAbortSignal();
 }

@@ -350,6 +350,7 @@ export function getRequestedTerminationOrigin(sessionId: string): string | null 
 let allSessionsTerminationFlight: Promise<TerminateAllSessionsResult> | null =
   null;
 let allSessionsTerminationInProgress = false;
+let sessionAdmissionAbort = new AbortController();
 let allSessionsTerminationSealed = false;
 let counter = 0;
 const MISSION_ORCHESTRATOR_GRANT_TTL_MS = 120_000;
@@ -4213,9 +4214,20 @@ export function sessionAdapterId(sessionId: string): string | null {
   return session.agent?.adapterId ?? session.agentSpawn?.adapterId ?? null;
 }
 
+/** Read-only Main lifetime fence; renderer/JSON cannot reopen admission. */
+export function isPtySessionAdmissionSealedForShutdown(): boolean {
+  return allSessionsTerminationInProgress;
+}
+
+/** Remains aborted for the sealed epoch, including queued non-PTY IPC work. */
+export function ptySessionAdmissionAbortSignal(): AbortSignal {
+  return sessionAdmissionAbort.signal;
+}
+
 /** Close PTY admission synchronously before any asynchronous shutdown work. */
 export function sealPtySessionAdmissionForShutdown(): void {
   allSessionsTerminationInProgress = true;
+  sessionAdmissionAbort.abort(new Error('app_shutdown'));
   // App quit: detach only — leave tmux agent sessions alive for reopen attach.
   for (const session of sessions.values()) {
     if (session.persistentTmuxName) {
@@ -4317,6 +4329,7 @@ export function __resetPtyShutdownLifecycleForTests(): void {
   }
   allSessionsTerminationFlight = null;
   allSessionsTerminationInProgress = false;
+  sessionAdmissionAbort = new AbortController();
   allSessionsTerminationSealed = false;
 }
 

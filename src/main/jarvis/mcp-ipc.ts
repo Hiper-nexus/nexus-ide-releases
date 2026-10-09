@@ -36,6 +36,7 @@ import {
 } from '../orch/mcp-dispatch';
 import { validateToolArgs } from '../orch/mcp-args-validation';
 import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import { isRuntimeProcessAdmissionSealedForShutdown, runtimeProcessAdmissionAbortSignal } from '../runtime-process-inventory';
 import { sameProjectScope } from '../orch/project-scoped-broadcast';
 
 let registry: McpRegistry | null = null;
@@ -79,6 +80,7 @@ export async function invokeMcpTool(
   > = {},
 ): Promise<McpInvokeResult> {
   const toolName = raw?.tool;
+  if(isRuntimeProcessAdmissionSealedForShutdown()) return {ok:false,tool:typeof toolName==='string'?toolName:'',denied:true,error:'app_shutdown'};
 
   if (!toolName || typeof toolName !== 'string') {
     return { ok: false, tool: '', error: 'invalid tool name' };
@@ -90,7 +92,13 @@ export async function invokeMcpTool(
     toolName,
     raw?.args ?? {},
     rendererToolContext(projectScope),
-    dispatchOptions,
+    {
+      ...dispatchOptions,
+      callerSignal: dispatchOptions.callerSignal
+        ? AbortSignal.any([dispatchOptions.callerSignal,runtimeProcessAdmissionAbortSignal()])
+        : runtimeProcessAdmissionAbortSignal(),
+      assertCurrentCaller: () => !isRuntimeProcessAdmissionSealedForShutdown() && (dispatchOptions.assertCurrentCaller?.() ?? true),
+    },
   );
 }
 
@@ -122,6 +130,7 @@ export async function confirmMcpTool(
   projectScope: ProjectExecutionScope,
 ): Promise<McpConfirmResult> {
   const toolName = raw?.tool;
+  if(isRuntimeProcessAdmissionSealedForShutdown()) return {ok:false,error:'app_shutdown'};
   if (!toolName || typeof toolName !== 'string') {
     return { ok: false, error: 'invalid tool name' };
   }
@@ -164,6 +173,7 @@ export async function confirmMcpTool(
     reason,
     projectScope.rootRealPath,
   );
+  if(isRuntimeProcessAdmissionSealedForShutdown()) return {ok:false,error:'app_shutdown'};
   if (!approved) return { ok: false, error: 'user_denied' };
 
   const token = createConfirmationToken(scope);
