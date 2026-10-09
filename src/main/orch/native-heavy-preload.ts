@@ -17,7 +17,7 @@ export function appendHeavyCommandPreload(existing: string | undefined, file: st
 export function heavyCommandShellEnvironment(prepared: NodeJS.ProcessEnv, preload = heavyCommandPreloadPath(), token?: string): Record<string, string> {
   const directory = path.dirname(fs.realpathSync(preload));
   const bash = path.join(directory, 'shell.bash');
-  for (const name of ['shell.bash', 'shell.zsh', '.zshenv', 'request.cjs', 'classify.cjs', 'job-launch.cjs', 'tool-hook.cjs', 'catalog.cjs', 'child-process.cjs', 'local-channel.cjs']) {
+  for (const name of ['grok-transport.cjs', 'shell.bash', 'shell.zsh', '.zshenv', 'request.cjs', 'classify.cjs', 'job-launch.cjs', 'tool-hook.cjs', 'catalog.cjs', 'child-process.cjs', 'local-channel.cjs']) {
     const file = path.join(directory, name);
     if (fs.realpathSync(file) !== file || !fs.statSync(file).isFile()) throw new Error('heavy_command_resource_identity_invalid');
   }

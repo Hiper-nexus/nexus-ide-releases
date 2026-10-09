@@ -1,3 +1,12 @@
+# Only the observed Grok FD5 reader is mediated, before user startup/snapshot.
+# Replay skips this branch only; original BASH_ENV and DEBUG remain active.
+if [[ "$NEXUS_HEAVY_GROK_REPLAY" == 1 ]]; then
+  unset NEXUS_HEAVY_GROK_REPLAY
+elif [[ -n "$NEXUS_HEAVY_JOB_BASE" && "$BASH_EXECUTION_STRING" == *'__grok_user_cmd'* && "$BASH_EXECUTION_STRING" == *'<&5'* ]]; then
+  builtin shopt -q extglob || exit 78
+  [[ "$BASH" == /bin/bash && "$#" == 0 && ( -p /dev/fd/3 || -S /dev/fd/3 ) && ( -p /dev/fd/5 || -S /dev/fd/5 ) && ! -e /dev/fd/4 ]] || exit 78
+  NEXUS_HEAVY_GROK_OPTIONS_SET="${NODE_OPTIONS+x}" NEXUS_HEAVY_GROK_OPTIONS="${NODE_OPTIONS-}" NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 NEXUS_HEAVY_GROK_CHANNELS=3,5 NEXUS_HEAVY_GROK_WRAPPER="$BASH_EXECUTION_STRING" exec "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/grok-transport.cjs"
+fi
 # Scoped noninteractive Bash admission. Never installed in a user's profile.
 if [[ -n "$NEXUS_HEAVY_ORIG_BASH_ENV" && "$NEXUS_HEAVY_ORIG_BASH_ENV" != "$BASH_ENV" && -r "$NEXUS_HEAVY_ORIG_BASH_ENV" ]]; then
   . "$NEXUS_HEAVY_ORIG_BASH_ENV"

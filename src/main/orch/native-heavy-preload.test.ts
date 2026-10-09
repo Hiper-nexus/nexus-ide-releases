@@ -344,3 +344,17 @@ it.skipIf(process.platform === 'win32' || !fs.existsSync('/usr/bin/perl'))('a is
   }
  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
+
+it('Main refuses a missing or substituted bundled Grok transport resource', () => {
+ const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-grok-resource-')));
+ const directory = path.join(root, 'heavy-command');
+ fs.cpSync(path.join(process.cwd(), 'resources/heavy-command'), directory, { recursive: true });
+ const bridge = path.join(directory, 'grok-transport.cjs');
+ try {
+  expect(heavyCommandShellEnvironment({ PATH: path.dirname(process.execPath), HOME: root }, path.join(directory, 'preload.cjs')).NEXUS_HEAVY_DIR).toBe(directory);
+  fs.unlinkSync(bridge);
+  expect(() => heavyCommandShellEnvironment({ PATH: path.dirname(process.execPath), HOME: root }, path.join(directory, 'preload.cjs'))).toThrow();
+  fs.symlinkSync(path.join(process.cwd(), 'resources/heavy-command/grok-transport.cjs'), bridge);
+  expect(() => heavyCommandShellEnvironment({ PATH: path.dirname(process.execPath), HOME: root }, path.join(directory, 'preload.cjs'))).toThrow('heavy_command_resource_identity_invalid');
+ } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

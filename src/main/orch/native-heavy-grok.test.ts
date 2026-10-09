@@ -29,8 +29,8 @@ function streamMessage(res: http.ServerResponse, model: string, content: { type:
 
 it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash is admitted by inherited scoped shell env before absolute sh/make', async () => {
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-real-grok-'));
- fs.writeFileSync(path.join(root, 'Makefile'), 'all:\n\t@printf done > command-ran\n');
- fs.writeFileSync(path.join(root, '.bashrc'), `finite_snapshot() { printf preserved > ${JSON.stringify(path.join(root, 'snapshot-preserved'))}; }\n`);
+ fs.writeFileSync(path.join(root, 'Makefile'), 'all:\n\t@printf done > command-ran\n\t@printf x >> command-count\n');
+ fs.writeFileSync(path.join(root, '.bashrc'), `finite_snapshot() { printf x >> snapshot-count; printf preserved > ${JSON.stringify(path.join(root, 'snapshot-preserved'))}; }\n`);
  const helper = path.join(root, 'resources/native/darwin/nexus-pty-supervisor');
  execFileSync(process.execPath, [path.join(process.cwd(), 'scripts/build-darwin-pty-supervisor.mjs'), '--output', helper], { stdio: 'ignore' });
  const runtime = { platform: 'darwin' as const, packaged: false, cwd: root, moduleDir: root };
@@ -40,6 +40,7 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
  const proof = new OwnedCommandProcesses((id) => id === ctx.sessionId && cliPid && cliAlive ? { pid: cliPid, identity } : null, undefined, (pid) => watchDarwinHeavyCommand(runtime, pid));
  const pool = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 16384, swapUsedMB: 0 }), limits: () => ({ minFreeMB: 512, maxSwapUsedMB: 0 }), refreshMemory: async () => {}, pollMs: 10 });
  const transitions: string[] = []; const admissions: unknown[] = [];
+ const admittedLeases: string[] = [];
  const native = new NativeHeavyCommands({ current: () => cliAlive, claim: (id, pid, proofKind) => proofKind === 'darwin-job' ? proof.claim(id, pid, proofKind) : Promise.resolve(null), probe: (id, claim) => proof.probe(id, claim), borrow: (id, claim, pid) => proof.borrow(id, claim, pid), stop: (id, claim) => proof.stop(id, claim),
    acquire: async (request) => { const permit = await pool.acquire(request); transitions.push('grant'); return { id: permit.id, release: () => { transitions.push('release'); permit.release(); } }; } });
  let modelCalls = 0; let toolSent = false; const shapes: unknown[] = [];
@@ -49,7 +50,7 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
    if (req.url === '/hook/heavy-command') {
     admissions.push(JSON.parse(raw));
     if (req.headers.authorization !== `Bearer ${ctx.token}`) { res.writeHead(401); res.end(); return; }
-    void native.admit(ctx, JSON.parse(raw)).then((result) => res.end(JSON.stringify(result))); return;
+    void native.admit(ctx, JSON.parse(raw)).then((result) => { if (result.allow && result.leaseId) admittedLeases.push(result.leaseId); res.end(JSON.stringify(result)); }); return;
    }
    if (req.url?.includes('count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
    if (req.url?.startsWith('/v1/messages')) {
@@ -82,6 +83,10 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
   expect(fs.readFileSync(path.join(root, 'command-ran'), 'utf8')).toBe('done');
   expect(fs.readFileSync(path.join(root, 'snapshot-preserved'), 'utf8')).toBe('preserved');
   expect((admissions[0] as { proof?: string }).proof).toBe('darwin-job');
+  expect(fs.readFileSync(path.join(root, 'command-count'), 'utf8')).toBe('x');
+  expect(fs.readFileSync(path.join(root, 'snapshot-count'), 'utf8')).toBe('x');
+  expect(admittedLeases.length).toBeGreaterThan(0);
+  expect(new Set(admittedLeases).size).toBe(1);
   await native.drain(); expect(transitions).toEqual(['grant', 'release']); expect(stdout).toContain('finite fixture done');
  } finally {
   clearTimeout(timer); child.kill('SIGTERM'); await exit; pool.close();
