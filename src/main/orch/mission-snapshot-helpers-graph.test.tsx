@@ -507,55 +507,56 @@ describe('F-1059: durable sessions do not prove current board membership', () =>
     ['no-current-session', { sessionId: undefined }],
   ] as const;
 
-  for (const squadId of [undefined, 'membership-squad']) {
-    describe(squadId ? 'squad' : 'squadless', () => {
-      beforeEach(() => {
-        harness.squads.set('membership-squad', {
-          id: 'membership-squad', agents: [
-            { id: 'maestro', agentName: 'Orquestrador', category: 'orchestrator', cli: 'claude' },
-            { id: 'worker', agentName: 'Worker', category: 'executor', cli: 'codex' },
-          ],
-        });
-      });
-
-      it.each(rejected)('recorded worker + busy historical dispatch excludes %s snapshot', (_, override) => {
-        liveTeam(0);
-        harness.sessionStates.set('historical-worker', 'busy');
-        if (override) harness.paneSnapshots.push({
-          paneId: 'recorded-worker', sessionId: 'historical-worker', kind: 'cli-agent',
-          missionId, role: 'worker', adapterId: 'codex', scope, ...override,
-        });
-        const view = projectMissionEngineSnapshotView(scope, stores({
-          mission: mission({ squadId }), panes: [orchestratorRow, {
-            id: 'row-worker', missionId, paneId: 'recorded-worker', role: 'worker',
-            adapterId: 'codex', agentName: 'Worker', createdAt: 2,
-          } as MissionPaneSpec],
-          dispatches: [{ paneId: 'recorded-worker', sessionId: 'historical-worker', agentRef: 'worker' }],
-        }), missionId);
-        expect(view.roster.map(agent => agent.id)).toEqual([squadId ? 'maestro' : 'orchestrator']);
-        const snapshot = projectMissionSnapshot(view);
-        expect(snapshot.agents.some(agent => agent.paneId === 'recorded-worker')).toBe(false);
-        expect(renderSnapshot(snapshot).querySelectorAll('.mission-agent-card')).toHaveLength(1);
-      });
-
-      it.each(rejected)('persisted leader + physically idle session excludes %s board snapshot', (_, override) => {
-        liveTeam(0);
-        harness.sessionStates.set('s-orch', 'idle');
-        harness.paneSnapshots = override ? [{
-          paneId: 'pane-orch', sessionId: 's-orch', kind: 'cli-agent', missionId,
-          role: 'orchestrator', adapterId: 'claude', scope, ...override,
-        }] : [];
-        const view = projectMissionEngineSnapshotView(scope, stores({
-          mission: mission({ squadId }), panes: [orchestratorRow],
-        }), missionId);
-        expect(view.roster).toEqual([]);
-        expect(projectMissionSnapshot(view).agents).toEqual([]);
-        // Board proof does not rewrite physical mission leadership/liveness.
-        expect(view.orchestratorLive).toBe(true);
-        expect(view.orchestratorIdle).toBe(true);
+  describe.each([
+    ['squadless', undefined],
+    ['squad', 'membership-squad'],
+  ] as const)('%s', (_name, squadId) => {
+    beforeEach(() => {
+      harness.squads.set('membership-squad', {
+        id: 'membership-squad', agents: [
+          { id: 'maestro', agentName: 'Orquestrador', category: 'orchestrator', cli: 'claude' },
+          { id: 'worker', agentName: 'Worker', category: 'executor', cli: 'codex' },
+        ],
       });
     });
-  }
+
+    it.each(rejected)('recorded worker + busy historical dispatch excludes %s snapshot', (_, override) => {
+      liveTeam(0);
+      harness.sessionStates.set('historical-worker', 'busy');
+      if (override) harness.paneSnapshots.push({
+        paneId: 'recorded-worker', sessionId: 'historical-worker', kind: 'cli-agent',
+        missionId, role: 'worker', adapterId: 'codex', scope, ...override,
+      });
+      const view = projectMissionEngineSnapshotView(scope, stores({
+        mission: mission({ squadId }), panes: [orchestratorRow, {
+          id: 'row-worker', missionId, paneId: 'recorded-worker', role: 'worker',
+          adapterId: 'codex', agentName: 'Worker', createdAt: 2,
+        } as MissionPaneSpec],
+        dispatches: [{ paneId: 'recorded-worker', sessionId: 'historical-worker', agentRef: 'worker' }],
+      }), missionId);
+      expect(view.roster.map(agent => agent.id)).toEqual([squadId ? 'maestro' : 'orchestrator']);
+      const snapshot = projectMissionSnapshot(view);
+      expect(snapshot.agents.some(agent => agent.paneId === 'recorded-worker')).toBe(false);
+      expect(renderSnapshot(snapshot).querySelectorAll('.mission-agent-card')).toHaveLength(1);
+    });
+
+    it.each(rejected)('persisted leader + physically idle session excludes %s board snapshot', (_, override) => {
+      liveTeam(0);
+      harness.sessionStates.set('s-orch', 'idle');
+      harness.paneSnapshots = override ? [{
+        paneId: 'pane-orch', sessionId: 's-orch', kind: 'cli-agent', missionId,
+        role: 'orchestrator', adapterId: 'claude', scope, ...override,
+      }] : [];
+      const view = projectMissionEngineSnapshotView(scope, stores({
+        mission: mission({ squadId }), panes: [orchestratorRow],
+      }), missionId);
+      expect(view.roster).toEqual([]);
+      expect(projectMissionSnapshot(view).agents).toEqual([]);
+      // Board proof does not rewrite physical mission leadership/liveness.
+      expect(view.orchestratorLive).toBe(true);
+      expect(view.orchestratorIdle).toBe(true);
+    });
+  });
 
   it.each(['spawning', 'busy', 'idle'])('pending-ACK helper with a current %s session remains a member without a durable row', (sessionState) => {
     liveTeam(1);
