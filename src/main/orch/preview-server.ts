@@ -2,13 +2,11 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   assertMcpInvocationCurrent,
   type McpToolInvocation,
 } from './mcp-protocol';
-import { previewCdpBridge, type PreviewCdpScope } from './preview-cdp-bridge';
 
 /**
  * Preview server local (benchmark §7): serve um diretório estático (build de
@@ -40,10 +38,6 @@ const MIME: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
-interface PreviewCdpTransport {
-  close: () => void;
-}
-
 interface RunningPreview {
   id: string;
   key: string;
@@ -52,7 +46,6 @@ interface RunningPreview {
   root: string;
   projectId: string;
   checkoutId: string;
-  cdp: PreviewCdpTransport;
 }
 
 type PreviewScope = Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>;
@@ -137,142 +130,6 @@ function openPreviewFile(root: string, candidate: string): OpenedPreviewFile {
   }
 }
 
-const CDP_MAX_FRAME_BYTES = 16 * 1024 * 1024;
-
-function cdpPaneId(url: string | undefined): string | null {
-  const pathname = (url ?? '/').split('?')[0] ?? '/';
-  if (!pathname.startsWith('/cdp/')) return null;
-  const raw = pathname.slice('/cdp/'.length);
-  if (raw.length === 0 || raw.includes('/')) return null;
-  let paneId: string;
-  try {
-    paneId = decodeURIComponent(raw);
-  } catch {
-    return null;
-  }
-  if (paneId.length < 1 || paneId.length > 128) return null;
-  if (/[/\0\\]/u.test(paneId)) return null;
-  return paneId;
-}
-
-function cdpMessageText(data: RawData): string {
-  if (typeof data === 'string') return data;
-  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  if (Buffer.isBuffer(data)) return data.toString('utf8');
-  return Buffer.from(new Uint8Array(data)).toString('utf8');
-}
-
-function isCdpDiscovery(url: string | undefined): boolean {
-  const pathname = (url ?? '/').split('?')[0];
-  return pathname === '/json/version' || pathname === '/json/version/';
-}
-
-function writeCdpDiscovery(
-  res: http.ServerResponse,
-  method: string | undefined,
-  scope: PreviewCdpScope,
-  port: number,
-): void {
-  const origin = `http://127.0.0.1:${port}`;
-  const paneId = previewCdpBridge()?.solePaneId(scope, origin) ?? null;
-  if (!paneId) {
-    res.writeHead(404, {
-      'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-store',
-    });
-    res.end('not found');
-    return;
-  }
-  const body = JSON.stringify({
-    Browser: 'NexusIDE',
-    'Protocol-Version': '1.3',
-    webSocketDebuggerUrl: `ws://127.0.0.1:${port}/cdp/${encodeURIComponent(paneId)}`,
-  });
-  res.writeHead(200, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body),
-    'Cache-Control': 'no-store',
-  });
-  if (method === 'HEAD') res.end();
-  else res.end(body);
-}
-
-function isLoopbackRemote(address: string | undefined): boolean {
-  return (
-    address === '127.0.0.1' ||
-    address === '::1' ||
-    address === '::ffff:127.0.0.1'
-  );
-}
-
-function attachPreviewCdp(
-  server: http.Server,
-  scope: PreviewCdpScope,
-  portOf: () => number,
-): PreviewCdpTransport {
-  const sockets = new WebSocketServer({
-    noServer: true,
-    maxPayload: CDP_MAX_FRAME_BYTES,
-  });
-  const releases = new Set<() => void>();
-  let closed = false;
-
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    for (const release of [...releases]) release();
-    for (const client of sockets.clients) client.close();
-    sockets.close();
-  };
-
-  server.on('upgrade', (req, socket, head) => {
-    if (closed || !isLoopbackRemote(req.socket.remoteAddress)) {
-      socket.destroy();
-      return;
-    }
-    const paneId = cdpPaneId(req.url);
-    const port = portOf();
-    if (!paneId || port === 0) {
-      socket.destroy();
-      return;
-    }
-    const origin = `http://127.0.0.1:${port}`;
-    sockets.handleUpgrade(req, socket, head, (ws: WebSocket) => {
-      const opened = previewCdpBridge()?.open(
-        scope,
-        paneId,
-        origin,
-        (message) => {
-          if (ws.readyState === ws.OPEN) ws.send(message);
-        },
-      );
-      if (!opened) {
-        ws.close(1008, 'preview cdp unavailable');
-        return;
-      }
-      let released = false;
-      const release = () => {
-        if (released) return;
-        released = true;
-        releases.delete(release);
-        opened.detach();
-      };
-      releases.add(release);
-      ws.on('message', (data, isBinary) => {
-        if (isBinary || released) return;
-        opened.connection.receive(cdpMessageText(data));
-      });
-      ws.once('close', release);
-      ws.once('error', () => {
-        release();
-        if (ws.readyState === ws.OPEN) ws.close();
-      });
-    });
-  });
-
-  return { close };
-}
-
 function serve(root: string, req: http.IncomingMessage, res: http.ServerResponse): void {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405).end();
@@ -346,15 +203,7 @@ async function createPreview(
   scope: PreviewScope,
   invocation?: McpToolInvocation,
 ): Promise<PreviewStartResult> {
-  let port = 0;
-  const server = http.createServer((req, res) => {
-    if (isCdpDiscovery(req.url)) {
-      writeCdpDiscovery(res, req.method, scope, port);
-      return;
-    }
-    serve(root, req, res);
-  });
-  const cdp = attachPreviewCdp(server, scope, () => port);
+  const server = http.createServer((req, res) => serve(root, req, res));
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
@@ -366,7 +215,6 @@ async function createPreview(
       settled = true;
       cleanup();
       try {
-        cdp.close();
         server.close();
       } catch {
         // A listener revoked before bind has no physical server to close.
@@ -383,8 +231,6 @@ async function createPreview(
         try {
           assertMcpInvocationCurrent(invocation);
           if (settled) return;
-          const address = server.address();
-          port = typeof address === 'object' && address ? address.port : 0;
           settled = true;
           cleanup();
           resolve();
@@ -399,10 +245,11 @@ async function createPreview(
   try {
     assertMcpInvocationCurrent(invocation);
   } catch (error) {
-    cdp.close();
     server.close();
     throw error;
   }
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
   const id = `preview-${randomUUID()}`;
   const entry: RunningPreview = {
     id,
@@ -412,7 +259,6 @@ async function createPreview(
     root,
     projectId: scope.projectId,
     checkoutId: scope.checkoutId,
-    cdp,
   };
   runningById.set(id, entry);
   previewIdByKey.set(key, id);
@@ -425,7 +271,6 @@ export function stopPreview(id: string, scope: PreviewScope): boolean {
   if (!entry || !isOwnedBy(entry, scope) || stoppingById.has(id)) return false;
   runningById.delete(id);
   if (previewIdByKey.get(entry.key) === id) previewIdByKey.delete(entry.key);
-  entry.cdp.close();
   entry.server.close();
   return true;
 }
@@ -444,7 +289,6 @@ export async function stopPreviewWithProof(
   const pending = stoppingById.get(id);
   if (pending) return pending;
   const stopping = (async () => {
-    entry.cdp.close();
     await new Promise<void>((resolve, reject) => {
       try {
         entry.server.close((error) => {
@@ -472,10 +316,7 @@ export async function stopPreviewWithProof(
 }
 
 export function stopAllPreviews(): void {
-  for (const entry of runningById.values()) {
-    entry.cdp.close();
-    entry.server.close();
-  }
+  for (const entry of runningById.values()) entry.server.close();
   runningById.clear();
   previewIdByKey.clear();
   startingByKey.clear();

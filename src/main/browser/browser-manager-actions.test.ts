@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 
@@ -50,7 +54,7 @@ const state = vi.hoisted(() => {
     isLoading: vi.fn(() => false),
     isDestroyed: vi.fn(() => false),
     isCrashed: vi.fn(() => false),
-    debugger: { isAttached: () => false, attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn(async () => ({ root: {} })), on: vi.fn(), removeListener: vi.fn() },
+    debugger: { isAttached: () => false, attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn(async ():Promise<unknown> => ({ root: {} })), on: vi.fn(), removeListener: vi.fn() },
 
     setWebRTCIPHandlingPolicy: vi.fn(),
     loadURL: vi.fn(async () => {}),
@@ -246,7 +250,6 @@ import {
   registerBrowserIpc,
   captureRedactedBrowserVisual,
 } from './browser-manager';
-import { previewCdpBridge } from '../orch/preview-cdp-bridge';
 import { BROWSER_CHANNELS } from '../../shared/channels';
 import { bindResolvedRendererWorkspaceScope, clearRendererWorkspaceScope, forgetRendererWorkspace } from '../persistence/renderer-workspace-scope';
 import { isAgentRequestedBrowser } from '../orch/pane-registry';
@@ -1181,21 +1184,13 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
     state.guest.getURL.mockReturnValue('http://127.0.0.1:43123/');
     const origin = 'http://127.0.0.1:43123';
     const other = { ...scope, projectId: 'other-project' };
+    const attachState = vi.spyOn(state.guest.debugger, 'isAttached').mockReturnValue(true);
     const opened = openCdpRelayForPane(PANE, scope, { write: () => undefined }, origin);
-    const viaPreview = previewCdpBridge()?.open(
-      scope,
-      PANE,
-      origin,
-      () => undefined,
-    );
     expect(opened).not.toBeNull();
-    expect(viaPreview).not.toBeNull();
-    expect(previewCdpBridge()?.solePaneId(scope, origin)).toBe(PANE);
     expect(openCdpRelayForPane(PANE, other, { write: () => undefined }, origin)).toBeNull();
-    expect(previewCdpBridge()?.solePaneId(other, origin)).toBeNull();
     expect(openCdpRelayForPane(PANE, scope, { write: () => undefined }, 'http://127.0.0.1:9')).toBeNull();
     opened?.detach();
-    viaPreview?.detach();
+    attachState.mockRestore();
     destroyBrowser(PANE, scope);
   });
 });
@@ -1393,5 +1388,49 @@ describe('F-1069: CDP relay factory for a real Main-owned browser entry', () => 
     relay!.detach();
     expect(state.guest.debugger.attach).not.toHaveBeenCalled();
     expect(state.guest.debugger.detach).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('F-1076: static preview never grants raw CDP access', () => {
+  let fixture: string;
+  let previewApi: typeof import('../orch/preview-server');
+  beforeEach(async () => {
+    previewApi = await vi.importActual<typeof import('../orch/preview-server')>('../orch/preview-server');
+    fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-static-cdp-'));
+    fs.writeFileSync(path.join(fixture, 'index.html'), '<h1>static preview remains usable</h1>');
+    await boot();
+    vi.spyOn(state.guest.debugger, 'isAttached').mockReturnValue(true);
+    state.guest.debugger.attach.mockClear();state.guest.debugger.on.mockClear();
+  });
+  afterEach(() => {
+    previewApi.stopAllPreviews();
+    destroyBrowser(PANE, scope);
+    vi.restoreAllMocks();
+    fs.rmSync(fixture, {recursive:true,force:true});
+  });
+  it('does not advertise a Main-owned browser through discovery, even on its preview origin', async () => {
+    const preview = await previewApi.startPreview(fixture, scope);
+    state.guest.getURL.mockReturnValue(preview.url);
+    const staticPage = await fetch(preview.url);
+    expect(staticPage.status).toBe(200);
+    expect(await staticPage.text()).toContain('static preview remains usable');
+    const discovery = await fetch(new URL('/json/version', preview.url));
+    expect(discovery.status).toBe(404);
+    expect(await discovery.text()).not.toContain('webSocketDebuggerUrl');
+  });
+  it('refuses actual WebSocket upgrades with arbitrary local credentials', async () => {
+    const preview = await previewApi.startPreview(fixture, scope);
+    state.guest.getURL.mockReturnValue(preview.url);
+    const ws = new WebSocket(`ws://127.0.0.1:${preview.port}/cdp/${PANE}`, {headers:{Authorization:'Bearer arbitrary-local-token'}});
+    const outcome = await new Promise<string>(resolve => {
+      ws.once('open', () => { ws.close(); resolve('opened'); });
+      ws.once('unexpected-response', (_req,res) => { res.resume(); ws.terminate(); resolve(`http-${res.statusCode}`); });
+      ws.once('error', () => resolve('refused'));
+    });
+    expect(outcome).not.toBe('opened');
+    expect(state.guest.debugger.attach).not.toHaveBeenCalled();
+    expect(state.guest.debugger.on).not.toHaveBeenCalled();
+    expect(state.guest.debugger.sendCommand).not.toHaveBeenCalledWith('Runtime.evaluate', expect.anything(), expect.anything());
   });
 });

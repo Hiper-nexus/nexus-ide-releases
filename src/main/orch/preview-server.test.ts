@@ -2,8 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { registerPreviewCdpBridge } from './preview-cdp-bridge';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   isRunningPreviewUrl,
   isRunningPreviewUrlForScope,
@@ -28,7 +27,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  registerPreviewCdpBridge(null);
   stopAllPreviews();
   fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(outsideDir, { recursive: true, force: true });
@@ -182,108 +180,20 @@ describe('preview-server', () => {
     ).rejects.toThrow();
   });
 
-  it('feeds the preview socket into the pane relay and detaches on close', async () => {
-    const received: string[] = [];
-    const writers: Array<(message: string) => void> = [];
-    const opened: Array<{
-      projectId: string;
-      checkoutId: string;
-      paneId: string;
-      origin: string;
-    }> = [];
-    let detached = 0;
-    registerPreviewCdpBridge({
-      open: (scope, paneId, origin, write) => {
-        opened.push({
-          projectId: scope.projectId,
-          checkoutId: scope.checkoutId,
-          paneId,
-          origin,
-        });
-        writers.push(write);
-        return {
-          connection: {
-            receive: (raw) => {
-              received.push(raw);
-            },
-          },
-          detach: () => {
-            detached += 1;
-          },
-        };
-      },
-      solePaneId: () => 'pane-preview',
-    });
+  it('F-1076: retains static HTTP while raw CDP discovery/upgrade is absent', async () => {
     const preview = await startPreview(dir, scopeA);
-    const discovery = await fetch(new URL('/json/version', preview.url));
-    expect(discovery.status).toBe(200);
-    const advertised = (await discovery.json()) as { webSocketDebuggerUrl: string };
-    expect(advertised.webSocketDebuggerUrl).toBe(
-      `ws://127.0.0.1:${preview.port}/cdp/pane-preview`,
-    );
-
-    const ws = new WebSocket(
-      `ws://127.0.0.1:${preview.port}/cdp/pane-preview?projectId=other`,
-    );
-    await new Promise<void>((resolve, reject) => {
-      ws.once('open', () => resolve());
-      ws.once('error', reject);
-    });
-    expect(opened).toEqual([
-      {
-        projectId: scopeA.projectId,
-        checkoutId: scopeA.checkoutId,
-        paneId: 'pane-preview',
-        origin: `http://127.0.0.1:${preview.port}`,
-      },
-    ]);
-    ws.send('{"id":1,"method":"Browser.getVersion"}');
-    await vi.waitFor(() => {
-      expect(received).toEqual(['{"id":1,"method":"Browser.getVersion"}']);
-    });
-    const reply = new Promise<string>((resolve) => {
-      ws.once('message', (data) => resolve(String(data)));
-    });
-    writers[0]?.('{"id":1,"result":{}}');
-    expect(await reply).toBe('{"id":1,"result":{}}');
-    ws.close();
-    await vi.waitFor(() => expect(detached).toBe(1));
-  });
-
-  it('detaches the CDP relay when the preview stops', async () => {
-    let detached = 0;
-    registerPreviewCdpBridge({
-      open: () => ({
-        connection: { receive: () => undefined },
-        detach: () => {
-          detached += 1;
-        },
-      }),
-      solePaneId: () => null,
-    });
-    const preview = await startPreview(dir, scopeA);
-    expect((await fetch(new URL('/json/version', preview.url))).status).toBe(404);
+    expect((await fetch(preview.url)).status).toBe(200);
+    for (const pathname of ['/json/version','/json/list','/cdp/pane-preview']) {
+      const response = await fetch(new URL(pathname,preview.url));
+      expect(response.status).toBe(404);
+      expect(await response.text()).not.toContain('webSocketDebuggerUrl');
+    }
     const ws = new WebSocket(`ws://127.0.0.1:${preview.port}/cdp/pane-preview`);
-    await new Promise<void>((resolve, reject) => {
-      ws.once('open', () => resolve());
-      ws.once('error', reject);
+    const outcome = await new Promise<string>(resolve => {
+      ws.once('open',()=>{ws.close();resolve('opened');});
+      ws.once('unexpected-response',(_req,res)=>{res.resume();ws.terminate();resolve(`http-${res.statusCode}`);});
+      ws.once('error',()=>resolve('refused'));
     });
-    expect(stopPreview(preview.id, scopeA)).toBe(true);
-    await vi.waitFor(() => expect(detached).toBe(1));
-    if (ws.readyState === ws.OPEN) ws.close();
-  });
-
-  it('does not keep a CDP socket when the pane relay refuses', async () => {
-    registerPreviewCdpBridge({
-      open: () => null,
-      solePaneId: () => null,
-    });
-    const preview = await startPreview(dir, scopeA);
-    const ws = new WebSocket(`ws://127.0.0.1:${preview.port}/cdp/missing`);
-    const code = await new Promise<number>((resolve, reject) => {
-      ws.once('close', (next) => resolve(next));
-      ws.once('error', reject);
-    });
-    expect(code).toBe(1008);
+    expect(outcome).not.toBe('opened');
   });
 });
