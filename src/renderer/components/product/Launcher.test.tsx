@@ -94,3 +94,53 @@ describe('Launcher onboarding', () => {
     );
   });
 });
+
+
+describe('Launcher rendered shortcuts', () => {
+  it.each([
+    ['1', 'onOpenPane'], ['2', 'onStartMission'], ['3', 'onOpenWorkspace'],
+    ['4', 'onOpenShellTerminal'], ['5', 'onOpenTaskBoard'], ['6', 'onOpenMemory'],
+  ] as const)('routes key %s to %s from a focused launcher button', (key, handler) => {
+    const { host, handlers } = setup();
+    const focused = button(host, 'Criar com IA');
+    focused.focus();
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+    act(() => focused.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    expect(handlers[handler]).toHaveBeenCalledOnce();
+    for (const [name, callback] of Object.entries(handlers)) {
+      if (name !== handler) expect(callback).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(['input', 'textarea', 'contenteditable'] as const)(
+    'leaves number keys in an editable %s untouched', (kind) => {
+      const { host, handlers } = setup();
+      const editor = document.createElement(kind === 'contenteditable' ? 'div' : kind);
+      if (kind === 'contenteditable') {
+        editor.setAttribute('contenteditable', 'true');
+        // jsdom does not implement the browser's inherited isContentEditable property.
+        Object.defineProperty(editor, 'isContentEditable', { value: true });
+      }
+      host.querySelector('.launcher')!.appendChild(editor);
+      editor.focus();
+      for (const key of ['1', '2', '3', '4', '5', '6']) {
+        const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+        act(() => editor.dispatchEvent(event));
+        expect(event.defaultPrevented).toBe(false);
+      }
+      for (const callback of Object.values(handlers)) expect(callback).not.toHaveBeenCalled();
+    },
+  );
+
+  it('shows a shortcut hint on every rendered launcher action', () => {
+    const { host } = setup();
+    for (const [id, shortcut] of [
+      ['pane', '1'], ['mission', '2'], ['workspace', '3'],
+      ['shell', '4'], ['tasks', '5'], ['memory', '6'],
+    ]) {
+      const action = host.querySelector(`[data-launcher-action="${id}"]`);
+      expect(action?.querySelector('kbd')?.textContent, id).toBe(shortcut);
+    }
+  });
+});

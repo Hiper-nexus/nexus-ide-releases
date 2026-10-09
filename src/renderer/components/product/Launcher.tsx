@@ -1,3 +1,8 @@
+/**
+ * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
+ * Reference: apps/web/src/keybindings.ts, editableFocus shortcut context.
+ * Nexus-specific action names, number keys and existing launcher callbacks.
+ */
 import { useCallback, type KeyboardEvent } from 'react';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 import {
@@ -159,7 +164,7 @@ function LauncherTools({
         <summary>Organizar tarefas e consultar notas</summary>
         <div className="launcher__terminal-actions">
           <LauncherAction
-            id="task-board"
+            id="tasks"
             label="Quadro de tarefas"
             accessibleLabel="Abrir Quadro de tarefas"
             description="Organize o que vem a seguir no projeto."
