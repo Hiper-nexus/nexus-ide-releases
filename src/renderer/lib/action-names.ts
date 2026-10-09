@@ -1,4 +1,9 @@
 /**
+ * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
+ * Reference: apps/web/src/keybindings.ts, editableFocus shortcut context.
+ * Nexus-specific action names, number keys and existing launcher callbacks.
+ */
+/**
  * Nomes de ação acessíveis + atalhos (itens T3 "acessibilidade de nomes de
  * ação" e "atalhos do launcher").
  *

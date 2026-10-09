@@ -579,6 +579,13 @@ from upstream behavior, with no upstream code, starts with
 type `reference`. Effect-TS, Tailwind and Base UI code was rewritten for the
 Nexus stack; no T3 Code package is a dependency.
 
+- Paged handoff lists: bounded/versioned cursor decoding and page envelope from
+  `apps/server/src/orchestration-v2/threadHistoryPaging.ts`, adapted to Nexus
+  timestamp/id rows (`src/shared/cursor-pagination.ts`).
+- Launcher number shortcuts and action names: Nexus implementation inspired by
+  the editable-focus context in `apps/web/src/keybindings.ts`, with no code
+  copied (`src/renderer/lib/action-names.ts`,
+  `src/renderer/components/product/Launcher.tsx`).
 - Diff viewer and changed-files tree: Pierre diff rendering, worker pool,
   annotatable code view, line ranges and the tree reveal/keyboard rules
   (`src/renderer/lib/diff-rendering.ts`, `src/renderer/lib/diff-file-tree.ts`,

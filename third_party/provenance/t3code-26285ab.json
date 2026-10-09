@@ -2049,6 +2049,54 @@
       "secondaryProvenance": [],
       "importDate": "2026-10-07",
       "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/pingdotgg/t3code/blob/26285ab80513260d1ff29d2c3fbe18f21990cb62/apps/server/src/orchestration-v2/threadHistoryPaging.ts",
+      "upstreamCommit": "26285ab80513260d1ff29d2c3fbe18f21990cb62",
+      "originalSha256": "ba082def6b6a5ff15ada5569942b7f404852120116fc48d9338e9d546aa1111d",
+      "originalPath": "apps/server/src/orchestration-v2/threadHistoryPaging.ts",
+      "nexusPath": "src/shared/cursor-pagination.ts",
+      "nexusSha256": "b9bafed59c7b9a8fd9778d5f2c020cbdaa723050120c25baa8127ace66acba0e",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 T3 Tools Inc.",
+      "type": "adapted",
+      "feature": "T3 paginação de handoffs e atalhos do launcher",
+      "changeSummary": "Decoder base64url versionado, teto de cursor e envelope de página adaptados à lista de handoffs; timestamp/id genéricos e limite de itens, sem projeção de conversa/Effect. Testes próprios do Nexus.",
+      "secondaryProvenance": [],
+      "importDate": "2026-10-08",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/pingdotgg/t3code/blob/26285ab80513260d1ff29d2c3fbe18f21990cb62/apps/web/src/keybindings.ts",
+      "upstreamCommit": "26285ab80513260d1ff29d2c3fbe18f21990cb62",
+      "originalSha256": "5b54026f2de75a9fd8db849fd6403b1c037644a65b8564f7e6729be540668bf0",
+      "originalPath": "apps/web/src/keybindings.ts",
+      "nexusPath": "src/renderer/lib/action-names.ts",
+      "nexusSha256": "541aefb3989d02554f3086bd4e401ad94ab9416df4cffc04821cb0721acee139",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 T3 Tools Inc.",
+      "type": "reference",
+      "feature": "T3 paginação de handoffs e atalhos do launcher",
+      "changeSummary": "Sem código do upstream: contexto editableFocus inspira a supressão de atalhos em campos editáveis. Registro de nomes e teclas 1–6 próprio do Nexus.",
+      "secondaryProvenance": [],
+      "importDate": "2026-10-08",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/pingdotgg/t3code/blob/26285ab80513260d1ff29d2c3fbe18f21990cb62/apps/web/src/keybindings.ts",
+      "upstreamCommit": "26285ab80513260d1ff29d2c3fbe18f21990cb62",
+      "originalSha256": "5b54026f2de75a9fd8db849fd6403b1c037644a65b8564f7e6729be540668bf0",
+      "originalPath": "apps/web/src/keybindings.ts",
+      "nexusPath": "src/renderer/components/product/Launcher.tsx",
+      "nexusSha256": "995a8f9b287ccf2f1c9944c9fd8d74e82e364fbb0515a6eb22e5a68d892f5a40",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 T3 Tools Inc.",
+      "type": "reference",
+      "feature": "T3 paginação de handoffs e atalhos do launcher",
+      "changeSummary": "Sem código do upstream: aplica a regra de foco editável aos callbacks existentes do Launcher do Nexus; nomes acessíveis e dicas de teclas mantêm o desenho local.",
+      "secondaryProvenance": [],
+      "importDate": "2026-10-08",
+      "status": "imported"
     }
   ]
 }

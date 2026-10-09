@@ -1,0 +1,14 @@
+--- a/src/main/orch/tools-domain-handoff.test.ts
++++ b/src/main/orch/tools-domain-handoff.test.ts
+@@ -1626,3 +1626,11 @@
+     expect(ackSpy).not.toHaveBeenCalled();
+   });
+ });
++
++it('review: an invalid pagination cursor must not acknowledge any handoff',async()=>{
++ const stores=mocks.getStores();const ack=vi.fn(()=>2);
++ mocks.getStores.mockReturnValue({...stores,handoffs:{...stores.handoffs,acknowledgeSeenByOrchestratorList:ack}});
++ mocks.listHandoffs.mockReturnValue([{id:'h-a',createdAt:1,deliveryState:'submitted',delivered:true},{id:'h-b',createdAt:2,deliveryState:'submitted',delivered:true}]);
++ await expect(listTool().handler({limit:1,cursor:'invalid-json'},orchestratorContext())).rejects.toThrow(/cursor inválido/);
++ expect(ack).not.toHaveBeenCalled();
++});
