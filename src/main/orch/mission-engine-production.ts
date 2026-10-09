@@ -94,6 +94,11 @@ import {
   enqueueKickoffDirect,
   isKickoffInProgressError,
   rememberedKickoffBrief,
+  pendingKickoffBriefDelivery,
+  provedKickoffBriefDelivery,
+  kickoffDeliveryMatchesMission,
+  kickoffIntentAuthorityHash,
+  type PendingKickoffBriefDelivery,
   takeKickoffDirects,
   tryRecordIdleKickoffAcceptance,
 } from "./mission-kickoff-direct-queue";
@@ -998,17 +1003,29 @@ export async function deliverMissionDirectInstruction(
   const command = parsed;
   assertSafePtyPrompt(command.text);
   const storedForKickoff = stores.missions.get(command.missionId);
-  if (storedForKickoff) {
-    tryAcceptIdleKickoffForDirect(stores, storedForKickoff, deps);
-  }
+  let pending = pendingKickoffBriefDelivery(scope, command.missionId);
   let initial: MissionDirectAuthority;
   try {
+    if (storedForKickoff && hasCurrentDispatchAuthority(storedForKickoff) && pending && kickoffDeliveryMatchesMission(pending, storedForKickoff)) {
+      // A transport hold grants no lifecycle, target, or physical authority.
+      missionDirectAuthority(scope, stores, command, deps);
+      throw new Error('mission direct requires the current kickoff receipt: briefing transport is pending');
+    }
+    if (storedForKickoff) tryAcceptIdleKickoffForDirect(stores, storedForKickoff, deps);
     initial = await resolveMissionDirectAuthority(
       scope,
       stores,
       command,
       deps,
     );
+    pending = pendingKickoffBriefDelivery(scope, command.missionId);
+    const current = missionDirectAuthority(scope, stores, command, deps);
+    if (current.sessionId !== initial.sessionId || current.authorityFingerprint !== initial.authorityFingerprint) {
+      throw new Error('mission direct authority changed before delivery');
+    }
+    if (pending && kickoffDeliveryMatchesMission(pending, current.mission)) {
+      throw new Error('mission direct requires the current kickoff receipt: briefing transport is pending');
+    }
   } catch (error) {
     const mission = stores.missions.get(command.missionId);
     const hasReceipt = mission
@@ -1035,6 +1052,9 @@ export async function deliverMissionDirectInstruction(
         missionId: command.missionId,
         targetAgentId: command.targetAgentId,
         text: command.text,
+        intentVersion: mission.intentVersion ?? 0,
+        intentAuthorityHash: kickoffIntentAuthorityHash(mission),
+        ...(pending && kickoffDeliveryMatchesMission(pending, mission) ? { kickoffAttemptId: pending.attemptId } : {}),
       });
       if (!options.conversationAlreadyAccepted) {
         emitOperatorDirectionAccepted(
@@ -1106,11 +1126,19 @@ export async function flushQueuedKickoffDirectsForMission(
   stores: ProjectDomainStoreSuite,
   missionId: string,
   deps: MissionDirectDeliveryDeps = productionMissionDirectDeliveryDeps,
+  options: { readonly failedKickoffAttempt?: PendingKickoffBriefDelivery } = {},
 ): Promise<void> {
-  const queued = takeKickoffDirects(missionId, scope);
+  const pending = pendingKickoffBriefDelivery(scope, missionId), proved = provedKickoffBriefDelivery(scope, missionId);
+  if (!options.failedKickoffAttempt && pending) return;
+  const queued = takeKickoffDirects(missionId, scope, options.failedKickoffAttempt?.attemptId);
   for (const item of queued) {
     let deliveryState: 'delivered' | 'unproven' = 'unproven';
     try {
+      const current = stores.missions.get(missionId);
+      if (options.failedKickoffAttempt || !current || item.intentVersion !== (current.intentVersion ?? 0) ||
+          item.intentAuthorityHash !== kickoffIntentAuthorityHash(current)) throw new Error('kickoff direction transport unavailable');
+      if (item.kickoffAttemptId && (!proved || proved.attemptId !== item.kickoffAttemptId ||
+          !kickoffDeliveryMatchesMission(proved, current))) throw new Error('kickoff direction belongs to an obsolete attempt');
       await deliverMissionDirectInstruction(
         item.scope,
         stores,
@@ -1120,7 +1148,7 @@ export async function flushQueuedKickoffDirectsForMission(
           targetAgentId: item.targetAgentId,
           text: item.text,
         },
-        deps,
+        item.kickoffAttemptId ? { ...deps, resumeOrchestrator: undefined } : deps,
         { conversationAlreadyAccepted: true },
       );
       if (!sameScope(scope, item.scope)) throw new Error('mission direct coordination changed during delivery');

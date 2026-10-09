@@ -155,6 +155,12 @@ import {
   peekKickoffDirects,
   rememberKickoffBrief,
   tryRecordIdleKickoffAcceptance,
+  beginKickoffBriefDelivery,
+  endKickoffBriefDelivery,
+  updateKickoffBriefDeliveryHash,
+  kickoffDeliveryMatchesMission,
+  kickoffIntentAuthorityHash,
+  type PendingKickoffBriefDelivery,
 } from './mission-kickoff-direct-queue';
 import { reconcileSealedBoardFromDisk } from './worker-delivery-board';
 import { classifySeatAuth } from '../adapters/seat-auth-readiness';
@@ -330,12 +336,28 @@ async function flushQueuedKickoffDirects(
   scope: ProjectExecutionScope,
   stores: ProjectDomainStoreSuite,
   missionId: string,
+  failedKickoffAttempt?: PendingKickoffBriefDelivery,
 ): Promise<void> {
   if (peekKickoffDirects(missionId, scope).length === 0) return;
   const { flushQueuedKickoffDirectsForMission } = await import(
     './mission-engine-production'
   );
-  await flushQueuedKickoffDirectsForMission(scope, stores, missionId);
+  await flushQueuedKickoffDirectsForMission(scope, stores, missionId, undefined,
+    failedKickoffAttempt ? { failedKickoffAttempt } : {});
+}
+
+function assertKickoffDeliveryCurrent(stores: ProjectDomainStoreSuite, pending: PendingKickoffBriefDelivery,
+  invocation?: McpToolInvocation): void {
+  assertMcpInvocationCurrent(invocation);
+  const current = stores.missions.get(pending.missionId);
+  const physical = getAgentSessionInfo(pending.orchestratorSessionId) ?? getAcpDriverSession(pending.orchestratorSessionId)?.agent;
+  if (!current || !hasCurrentDispatchAuthority(current) || !kickoffDeliveryMatchesMission(pending, current)) {
+    throw new Error('kickoff_delivery_authority_changed');
+  }
+  if (!physical || physical.sessionId !== pending.orchestratorSessionId || physical.role !== 'orchestrator' ||
+      physical.missionId !== pending.missionId || !isDeepStrictEqual(physical.coordinationScope ?? physical.scope, pending.scope)) {
+    throw new Error('bootstrap_coordinator_setup_unproven');
+  }
 }
 
 function tryAcceptIdleOrchestratorKickoff(
@@ -1289,9 +1311,16 @@ async function spawnAgentPane(
     };
   }
 
+  let kickoffDelivery: PendingKickoffBriefDelivery | undefined;
+  let kickoffDeliveryProved = false;
+  try {
   try {
     spawnOpts?.onBootstrapRuntime?.({sessionId:spawn.sessionId,paneId:spawn.paneId,kind:'spawned',phase:'created'});
     assertMcpInvocationCurrent(spawnOpts?.invocation);
+    if (role === 'orchestrator' && initialPrompt) {
+      kickoffDelivery = beginKickoffBriefDelivery(scope, { missionId: mission.id, orchestratorSessionId: spawn.sessionId,
+        intentVersion: mission.intentVersion ?? 0, promptHash: kickoffPromptHash(initialPrompt), intentAuthorityHash: kickoffIntentAuthorityHash(mission) });
+    }
     bindSpawnedMissionPane(stores, scope, mission, runtimeAgent, role, {
       paneId: spawn.paneId, sessionId: spawn.sessionId, title, readOnly,
     }, previous);
@@ -1442,6 +1471,11 @@ async function spawnAgentPane(
     // encarnação — exigido por missionDirectAuthority e pelo retry do
     // orientar-missão. Vale para bootstrap E respawn (continuidade).
     // Idle + briefing já injetado (e sem auth) pode ter gravado antes da prova.
+    if (kickoffDelivery) {
+      assertKickoffDeliveryCurrent(stores, kickoffDelivery, spawnOpts?.invocation);
+      if (!endKickoffBriefDelivery(kickoffDelivery, true)) throw new Error('kickoff_delivery_attempt_changed');
+      kickoffDeliveryProved = true;
+    }
     const live = stores.missions.get(mission.id) ?? mission;
     if (!stores.missions.hasCurrentKickoffAcceptance(live.id)) {
       try {
@@ -1469,6 +1503,12 @@ async function spawnAgentPane(
     paneId: spawn.paneId,
     sessionId: spawn.sessionId,
   };
+  } finally {
+    if (kickoffDelivery && !kickoffDeliveryProved) {
+      endKickoffBriefDelivery(kickoffDelivery);
+      await flushQueuedKickoffDirects(kickoffDelivery.scope, stores, mission.id, kickoffDelivery);
+    }
+  }
 }
 
 // ── Orquestrador registry (para consulta externa) ──────────────────────
@@ -2545,6 +2585,10 @@ async function adoptOrchestratorPane(
 
   const live = stores.missions.get(mission.id) ?? mission;
   // Adotado vira pane de missão: o canal do "+ Pane" deixa de valer para ele.
+  let kickoffDelivery = beginKickoffBriefDelivery(scope, { missionId: live.id, orchestratorSessionId: adopted.sessionId,
+    intentVersion: live.intentVersion ?? 0, promptHash: kickoffPromptHash(briefPrompt), intentAuthorityHash: kickoffIntentAuthorityHash(live) });
+  let kickoffDeliveryProved = false;
+  try {
   const initialPrompt = (await withProjectContextBlocksAsync({
     prompt: briefPrompt,
     scope,
@@ -2553,6 +2597,8 @@ async function adoptOrchestratorPane(
     role: 'orchestrator',
   })) ?? briefPrompt;
   assertMcpInvocationCurrent(invocation);
+  assertKickoffDeliveryCurrent(stores, kickoffDelivery, invocation);
+  kickoffDelivery = updateKickoffBriefDeliveryHash(kickoffDelivery, kickoffPromptHash(initialPrompt));
   rememberKickoffBrief({
     missionId: live.id,
     orchestratorSessionId: adopted.sessionId,
@@ -2599,6 +2645,9 @@ async function adoptOrchestratorPane(
     };
   }
   assertMcpInvocationCurrent(invocation);
+  assertKickoffDeliveryCurrent(stores, kickoffDelivery, invocation);
+  if (!endKickoffBriefDelivery(kickoffDelivery, true)) throw new Error('kickoff_delivery_attempt_changed');
+  kickoffDeliveryProved = true;
   tryAcceptIdleOrchestratorKickoff(stores, live, adopted.sessionId, initialPrompt);
   if (!stores.missions.hasCurrentKickoffAcceptance(live.id)) {
     try {
@@ -2616,6 +2665,12 @@ async function adoptOrchestratorPane(
     }
   }
   return { adopted: true, sessionId: adopted.sessionId, paneId: adopted.paneId };
+  } finally {
+    if (!kickoffDeliveryProved) {
+      endKickoffBriefDelivery(kickoffDelivery);
+      await flushQueuedKickoffDirects(kickoffDelivery.scope, stores, mission.id, kickoffDelivery);
+    }
+  }
 }
 
 export async function fastLaneBootstrap(

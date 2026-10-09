@@ -2,6 +2,8 @@ import { maestroKickoffBlockReason } from './maestro-boot-gate';
 import { randomBytes } from 'node:crypto';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { sameProjectScope } from './project-scoped-broadcast';
+import type { Mission } from '../../shared/orch-types';
+import { hashMissionIntentAuthority } from './mission-pane-authority';
 
 /**
  * Poke do operador durante o kickoff do Maestro.
@@ -27,6 +29,15 @@ export interface QueuedKickoffDirect {
   readonly targetAgentId: string | null;
   readonly text: string;
   readonly queuedAt: number;
+  readonly intentVersion: number;
+  readonly intentAuthorityHash: string | null;
+  readonly kickoffAttemptId?: string;
+}
+
+export interface PendingKickoffBriefDelivery extends RememberedKickoffBrief {
+  readonly scope: ProjectExecutionScope;
+  readonly intentAuthorityHash: string | null;
+  readonly attemptId: string;
 }
 
 export interface RecordIdleKickoffInput {
@@ -47,6 +58,61 @@ export interface RecordIdleKickoffInput {
 
 const rememberedBriefByMission = new Map<string, RememberedKickoffBrief>();
 const queuedDirectsByMission = new Map<string, QueuedKickoffDirect[]>();
+const pendingBriefByMission = new Map<string, PendingKickoffBriefDelivery>();
+const provedBriefByScope = new Map<string, PendingKickoffBriefDelivery>();
+
+function pendingBriefKey(scope: ProjectExecutionScope, missionId: string): string {
+  return JSON.stringify([missionId, scope.version, scope.identitySource, scope.installationId, scope.projectId,
+    scope.checkoutId, scope.rootRealPath, scope.workspaceRootDevice, scope.workspaceRootInode]);
+}
+
+export function kickoffIntentAuthorityHash(mission: Pick<Mission, 'intentContract'>): string | null {
+  return mission.intentContract
+    ? hashMissionIntentAuthority(JSON.parse(JSON.stringify(mission.intentContract))) : null;
+}
+
+export function pendingKickoffBriefDelivery(scope: ProjectExecutionScope, missionId: string): PendingKickoffBriefDelivery | null {
+  const pending = pendingBriefByMission.get(pendingBriefKey(scope, missionId));
+  return pending && sameQueuedScope(pending.scope, scope) ? pending : null;
+}
+
+export function provedKickoffBriefDelivery(scope: ProjectExecutionScope, missionId: string): PendingKickoffBriefDelivery | null {
+  return provedBriefByScope.get(pendingBriefKey(scope, missionId)) ?? null;
+}
+
+export function kickoffDeliveryMatchesMission(pending: PendingKickoffBriefDelivery, mission: Mission): boolean {
+  return pending.orchestratorSessionId === mission.orchestratorSessionId &&
+    pending.intentVersion === (mission.intentVersion ?? 0) && pending.intentAuthorityHash === kickoffIntentAuthorityHash(mission);
+}
+
+/** The caller has revalidated its Main-owned bootstrap before publishing this hold. */
+export function beginKickoffBriefDelivery(scope: ProjectExecutionScope,
+  brief: RememberedKickoffBrief & { readonly intentAuthorityHash: string | null }): PendingKickoffBriefDelivery {
+  const pending = Object.freeze({ ...brief, scope: Object.freeze({ ...scope }), attemptId: randomBytes(32).toString('hex') });
+  pendingBriefByMission.set(pendingBriefKey(pending.scope, brief.missionId), pending);
+  provedBriefByScope.delete(pendingBriefKey(pending.scope, brief.missionId));
+  queuedDirectsByMission.set(brief.missionId, (queuedDirectsByMission.get(brief.missionId) ?? []).map(item =>
+    !item.kickoffAttemptId && sameQueuedScope(item.scope, scope) && item.intentVersion === brief.intentVersion &&
+      item.intentAuthorityHash === brief.intentAuthorityHash ? { ...item, kickoffAttemptId: pending.attemptId } : item));
+  return pending;
+}
+
+/** Adoption composes context while held; only its exact current handle can publish the final hash. */
+export function updateKickoffBriefDeliveryHash(expected: PendingKickoffBriefDelivery, promptHash: string): PendingKickoffBriefDelivery {
+  const key = pendingBriefKey(expected.scope, expected.missionId);
+  if (pendingBriefByMission.get(key) !== expected) throw new Error('kickoff_delivery_attempt_changed');
+  const updated = Object.freeze({ ...expected, promptHash });
+  pendingBriefByMission.set(key, updated);
+  return updated;
+}
+
+export function endKickoffBriefDelivery(expected: PendingKickoffBriefDelivery, accepted = false): boolean {
+  const key = pendingBriefKey(expected.scope, expected.missionId);
+  if (pendingBriefByMission.get(key) !== expected) return false;
+  pendingBriefByMission.delete(key);
+  if (accepted) provedBriefByScope.set(key, expected);
+  return true;
+}
 
 export function rememberKickoffBrief(brief: RememberedKickoffBrief): void {
   rememberedBriefByMission.set(brief.missionId, brief);
@@ -72,6 +138,9 @@ export function enqueueKickoffDirect(
     targetAgentId: command.targetAgentId,
     text: command.text,
     queuedAt: command.queuedAt ?? Date.now(),
+    intentVersion: command.intentVersion,
+    intentAuthorityHash: command.intentAuthorityHash,
+    ...(command.kickoffAttemptId ? { kickoffAttemptId: command.kickoffAttemptId } : {}),
   };
   const existing = queuedDirectsByMission.get(command.missionId) ?? [];
   queuedDirectsByMission.set(command.missionId, [...existing, item]);
@@ -79,15 +148,18 @@ export function enqueueKickoffDirect(
 }
 
 function sameQueuedScope(left: ProjectExecutionScope, right: ProjectExecutionScope): boolean {
-  return sameProjectScope(left, right) && left.workspaceRootDevice === right.workspaceRootDevice && left.workspaceRootInode === right.workspaceRootInode;
+  return left.version === right.version && left.identitySource === right.identitySource && sameProjectScope(left, right) &&
+    left.workspaceRootDevice === right.workspaceRootDevice && left.workspaceRootInode === right.workspaceRootInode;
 }
 
-export function takeKickoffDirects(missionId: string, scope: ProjectExecutionScope): QueuedKickoffDirect[] {
+export function takeKickoffDirects(missionId: string, scope: ProjectExecutionScope, kickoffAttemptId?: string): QueuedKickoffDirect[] {
   const queued = queuedDirectsByMission.get(missionId) ?? [];
-  const remaining = queued.filter(item => !sameQueuedScope(item.scope, scope));
+  const selected = (item: QueuedKickoffDirect) => sameQueuedScope(item.scope, scope) &&
+    (kickoffAttemptId === undefined || item.kickoffAttemptId === kickoffAttemptId);
+  const remaining = queued.filter(item => !selected(item));
   if (remaining.length) queuedDirectsByMission.set(missionId, remaining);
   else queuedDirectsByMission.delete(missionId);
-  return queued.filter(item => sameQueuedScope(item.scope, scope));
+  return queued.filter(selected);
 }
 
 export function peekKickoffDirects(missionId: string, scope: ProjectExecutionScope): readonly QueuedKickoffDirect[] {
@@ -97,6 +169,8 @@ export function peekKickoffDirects(missionId: string, scope: ProjectExecutionSco
 export function resetKickoffDirectQueueForTests(): void {
   rememberedBriefByMission.clear();
   queuedDirectsByMission.clear();
+  pendingBriefByMission.clear();
+  provedBriefByScope.clear();
 }
 
 export function isKickoffReceiptMessage(message: string): boolean {

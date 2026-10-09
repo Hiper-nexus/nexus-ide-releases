@@ -1,0 +1,106 @@
+#!/usr/bin/perl
+# F-1109 controlled native CLI. Main, physical PTY, native hook HTTP and MCP
+# are real; this executable substitutes only the provider's conversation.
+# It deliberately consumes its cold argv brief before reading a new composer.
+use strict;
+use warnings;
+use POSIX ();
+use JSON::PP ();
+use HTTP::Tiny ();
+use IO::Select ();
+use Digest::SHA qw(sha256_hex);
+use Time::HiRes qw(time);
+
+$| = 1;
+my $json = JSON::PP->new->canonical;
+my $dir = $ENV{NEXUS_CONTROLLED_CLI_DIR} // die 'controlled receipt directory missing';
+die 'native hook authority missing' unless $ENV{NEXUS_HOOK_URL} && $ENV{NEXUS_GATE_TOKEN};
+die 'MCP authority missing' unless $ENV{NEXUS_MCP_URL} && $ENV{NEXUS_MCP_TOKEN};
+my $http = HTTP::Tiny->new(timeout => 15);
+my ($brief) = sort { length($b) <=> length($a) } @ARGV;
+$brief //= '';
+my $chief = $brief =~ /Papel: você é Runtime chief/;
+my $native_id = 'controlled-' . $$;
+my $rpc = 0;
+my $select = IO::Select->new(\*STDIN);
+system('/bin/stty', 'raw', '-echo') == 0 or die 'controlled raw PTY unavailable';
+sub record {
+  my ($name, $value) = @_;
+  open(my $file, '>>', "$dir/$name.ndjson") or die "controlled receipt write: $!";
+  print $file $json->encode($value) . "\n";
+  close($file);
+}
+sub hook {
+  my ($event, $text) = @_;
+  my $out = $http->request('POST', $ENV{NEXUS_HOOK_URL}, {
+    headers => { 'content-type' => 'application/json', authorization => 'Bearer ' . $ENV{NEXUS_GATE_TOKEN},
+      'x-nexus-hook-event' => $event, 'x-nexus-hook-flavor' => 'claude' },
+    content => $json->encode({ hook_event_name => $event eq 'user-submit' ? 'UserPromptSubmit' : 'Stop',
+      session_id => $native_id, prompt => $text }) });
+  die "native hook refused: $out->{status}" unless $out->{success};
+}
+sub rpc {
+  my ($method, $params) = @_;
+  my $started = time();
+  record('rpc', { pid => $$, method => $method, phase => 'started', at => $started });
+  print "Controlled real MCP $method request started.\r\n";
+  my $response = $http->request('POST', $ENV{NEXUS_MCP_URL}, {
+    headers => { 'content-type' => 'application/json', accept => 'application/json, text/event-stream',
+      authorization => 'Bearer ' . $ENV{NEXUS_MCP_TOKEN} },
+    content => $json->encode({ jsonrpc => '2.0', id => ++$rpc, method => $method, params => $params }) });
+  my $body = eval { $json->decode($response->{content}) };
+  record('rpc', { pid => $$, method => $method, phase => 'returned', startedAt => $started, endedAt => time(),
+    status => 0 + $response->{status}, hasResult => $body && $body->{result} ? JSON::PP::true : JSON::PP::false });
+  die "MCP refused: $response->{status}" unless $response->{success} && $body && !$body->{error} && !$body->{result}{isError};
+  print "Controlled real MCP $method response validated.\r\n";
+  return { status => 0 + $response->{status}, body => $body };
+}
+sub mcp {
+  my ($tool, $arguments) = @_;
+  my $reply = rpc('tools/call', { name => $tool, arguments => $arguments });
+  record('mcp', { pid => $$, tool => $tool, %$reply });
+}
+record('accepted', { pid => $$, kind => 'argv', bytes => length($brief), sha256 => sha256_hex($brief),
+  hasDirection => $brief =~ /RT_GATE SPAWN/ ? JSON::PP::true : JSON::PP::false });
+print "Controlled native argv composer is pending.\r\n";
+hook('user-submit', $brief);
+# Bytes entered while the CLI's cold argv transaction was pending belong to
+# that boot editor, not to a new accepted user message. Retain metadata only.
+my $cold_bytes = 0;
+while ($select->can_read(0)) { my $n = sysread(STDIN, my $discarded, 65536); last unless $n; $cold_bytes += $n; }
+record('cold-input', { pid => $$, bytes => $cold_bytes });
+print "Controlled native argv turn accepted.\r\n";
+my $initialized = rpc('initialize', { protocolVersion => '2024-11-05', capabilities => {}, clientInfo => { name => 'controlled-physical-cli', version => '1' } });
+die 'actual initialize capabilities absent' unless $initialized->{body}{result}{capabilities};
+my $catalog = rpc('tools/list', {});
+die 'actual tool catalog absent' unless ref($catalog->{body}{result}{tools}) eq 'ARRAY' && @{$catalog->{body}{result}{tools}};
+mcp('nexus_handoff_list', { full => JSON::PP::true });
+print "Controlled native argv turn completed.\r\n";
+hook('stop', '');
+my $buffer = '';
+while (1) {
+  my $n = sysread(STDIN, my $chunk, 65536);
+  last unless $n;
+  $buffer .= $chunk;
+  next unless $buffer =~ /\r/;
+  my ($text, $rest) = split(/\r/, $buffer, 2); $buffer = $rest // '';
+  next unless length($text);
+  my $envelope;
+  for my $line (split(/\n/, $text)) {
+    my $parsed = eval { $json->decode($line) };
+    if ($parsed && ref($parsed) eq 'HASH' && ($parsed->{kind} // '') eq 'operator_direction') { $envelope = $parsed; last; }
+  }
+  record('accepted', { pid => $$, kind => 'composer', bytes => length($text), sha256 => sha256_hex($text), envelope => $envelope });
+  hook('user-submit', $text);
+  print "Controlled native composer turn accepted.\r\n";
+  if ($chief && $envelope && $envelope->{text} =~ /RT_GATE SPAWN ([a-f0-9-]{36})/) {
+    my $nonce = $1;
+    for my $name ('Runtime writer', 'Runtime reviewer') {
+      mcp('nexus_pane_spawn', { adapterId => 'claude', agentName => $name, role => 'worker',
+        task => $name eq 'Runtime writer' ? 'Fix the UI visual fixture inspection report' : 'Review runtime report',
+        prompt => "RT_GATE IDLE $nonce. Wait for the private scoped follow-up." });
+    }
+  }
+  print "Controlled native composer turn completed.\r\n";
+  hook('stop', '');
+}

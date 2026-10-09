@@ -24,7 +24,8 @@ import {
   runtimeAuthorityMismatches,
   type MissionDirectDeliveryDeps,
 } from './mission-engine-production';
-import { takeKickoffDirects, resetKickoffDirectQueueForTests } from './mission-kickoff-direct-queue';
+import { takeKickoffDirects, resetKickoffDirectQueueForTests, beginKickoffBriefDelivery, endKickoffBriefDelivery,
+  pendingKickoffBriefDelivery, kickoffIntentAuthorityHash, peekKickoffDirects } from './mission-kickoff-direct-queue';
 
 afterEach(resetKickoffDirectQueueForTests);
 
@@ -274,6 +275,112 @@ it('keeps the approved Maestro model and effort strict after default materializa
 });
 
 describe('mission direct — operador como orquestrador', () => {
+  it('F-1109: a queued proved owner that lost its physical runtime never resumes into a different delivery target', async () => {
+    const scope = makeScope(), squad = makeSquad([makeAgent(), makeAgent({ id: 'ag-orch', agentName: 'Orquestrador', category: 'orchestrator' })]);
+    const mission = makeApprovedMission(squad, { orchestratorSessionId: 'sess-orch-live' });
+    let alive = true, resumed = 0, submitted = 0;
+    const h = makeHarness({ mission, squad, workers: [], panes: [makeOrchPane()], kickoffReceipt: true,
+      getRuntimeAgentSessionInfo: id => alive ? makeOrchSession({ sessionId: id }) : null,
+      resumeOrchestrator: async () => { resumed++; alive = true; mission.orchestratorSessionId = 'replacement'; } });
+    h.deliverSpy.mockImplementation(async () => { submitted++; return true; });
+    const current = beginKickoffBriefDelivery(scope, { missionId: mission.id, orchestratorSessionId: mission.orchestratorSessionId!, intentVersion: 1,
+      intentAuthorityHash: kickoffIntentAuthorityHash(mission), promptHash: 'a'.repeat(64) });
+    await deliverMissionDirectInstruction(scope, h.stores, directCommand(), h.deps);
+    endKickoffBriefDelivery(current, true); alive = false;
+    await flushQueuedKickoffDirectsForMission(scope, h.stores, mission.id, h.deps);
+    expect(submitted).toBe(0); expect(resumed).toBe(0);
+    expect(h.emitSpy.mock.calls.map(call => call[1]).at(-1)?.payload.deliveryState).toBe('unproven');
+  });
+  it.each(['blocked_user', 'blocked_technical', 'done', 'operator-closed'] as const)(
+    'F-1109: a pending transport grants no direction authority to %s', async state => {
+      const scope = makeScope(), squad = makeSquad([makeAgent(), makeAgent({ id: 'ag-orch', category: 'orchestrator' })]);
+      const mission = makeApprovedMission(squad, { orchestratorSessionId: 'sess-orch-live' });
+      const h = makeHarness({ mission, squad, workers: [], panes: [makeOrchPane()], kickoffReceipt: true,
+        getRuntimeAgentSessionInfo: id => makeOrchSession({ sessionId: id }) });
+      beginKickoffBriefDelivery(scope, { missionId: mission.id, orchestratorSessionId: mission.orchestratorSessionId!, intentVersion: 1,
+        intentAuthorityHash: kickoffIntentAuthorityHash(mission), promptHash: 'a'.repeat(64) });
+      mission.status = state === 'done' ? 'done' : 'blocked';
+      mission.intentState = state === 'operator-closed' ? 'blocked_technical' : state;
+      if (state === 'operator-closed') mission.description = '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador.';
+      h.deliverSpy.mockImplementation(async () => { throw new Error('forbidden lifecycle transport'); });
+      await expect(deliverMissionDirectInstruction(scope, h.stores, directCommand(), h.deps)).rejects.toThrow(/dispatch authority/);
+      expect(peekKickoffDirects(mission.id, scope)).toEqual([]); expect(h.emitSpy.mock.calls).toEqual([]);
+    });
+  it.each(['new-session', 'sess-orch-live'])(
+    'F-1109: proving a later attempt on %s never delivers an older attempt before its delayed failure', async nextSession => {
+      const scope = makeScope(), squad = makeSquad([makeAgent(), makeAgent({ id: 'ag-orch', agentName: 'Orquestrador', category: 'orchestrator' })]);
+      const mission = makeApprovedMission(squad, { orchestratorSessionId: 'sess-orch-live' });
+      const h = makeHarness({ mission, squad, workers: [], panes: [makeOrchPane()], kickoffReceipt: true,
+        getRuntimeAgentSessionInfo: id => makeOrchSession({ sessionId: id }) });
+      const texts: string[] = [];
+      h.deliverSpy.mockImplementation(async (_session: string, prompt: string) => { texts.push(prompt); return true; });
+      const old = beginKickoffBriefDelivery(scope, { missionId: mission.id, orchestratorSessionId: mission.orchestratorSessionId!, intentVersion: 1,
+        intentAuthorityHash: kickoffIntentAuthorityHash(mission), promptHash: 'a'.repeat(64) });
+      await deliverMissionDirectInstruction(scope, h.stores, directCommand({ text: 'old-attempt-only' }), h.deps);
+      const oldId = peekKickoffDirects(mission.id, scope)[0]!.directionId;
+      mission.orchestratorSessionId = nextSession;
+      const current = beginKickoffBriefDelivery(scope, { missionId: mission.id, orchestratorSessionId: nextSession, intentVersion: 1,
+        intentAuthorityHash: kickoffIntentAuthorityHash(mission), promptHash: 'b'.repeat(64) });
+      await deliverMissionDirectInstruction(scope, h.stores, directCommand({ text: 'current-attempt-only' }), h.deps);
+      const newId = peekKickoffDirects(mission.id, scope).find(item => item.text === 'current-attempt-only')!.directionId;
+      expect(endKickoffBriefDelivery(current, true)).toBe(true);
+      await flushQueuedKickoffDirectsForMission(scope, h.stores, mission.id, h.deps);
+      expect(texts).toHaveLength(1); expect(texts[0]).toContain('current-attempt-only'); expect(texts[0]).not.toContain('old-attempt-only');
+      await flushQueuedKickoffDirectsForMission(scope, h.stores, mission.id, h.deps, { failedKickoffAttempt: old });
+      const outcomes = h.emitSpy.mock.calls.map(call => call[1]).filter(event => event.payload.kind === 'operator_direction_delivery').map(event => event.payload);
+      expect(outcomes).toEqual([
+        { kind: 'operator_direction_delivery', directionId: oldId, deliveryState: 'unproven', reason: 'delivery_unavailable' },
+        { kind: 'operator_direction_delivery', directionId: newId, deliveryState: 'delivered', reason: 'acceptance_proved' },
+      ]);
+    });
+  it('F-1109: a pending transport queues despite the early receipt; old failure preserves new SID/intent directions', async () => {
+    const scope = makeScope(), squad = makeSquad([makeAgent(), makeAgent({ id: 'ag-orch', agentName: 'Orquestrador', category: 'orchestrator' })]);
+    const mission = makeApprovedMission(squad, { orchestratorSessionId: 'sess-orch-live' });
+    let submitted = 0, resumed = 0;
+    const h = makeHarness({ mission, squad, workers: [], panes: [makeOrchPane()], kickoffReceipt: true,
+      getRuntimeAgentSessionInfo: id => makeOrchSession({ sessionId: id }), resumeOrchestrator: async () => { resumed++; } });
+    h.deliverSpy.mockImplementation(async () => { submitted++; return true; });
+    const old = beginKickoffBriefDelivery(scope, { missionId: mission.id, orchestratorSessionId: mission.orchestratorSessionId!,
+      intentVersion: 1, intentAuthorityHash: kickoffIntentAuthorityHash(mission), promptHash: 'a'.repeat(64) });
+    await deliverMissionDirectInstruction(scope, h.stores, directCommand({ text: 'old direction' }), h.deps);
+    await flushQueuedKickoffDirectsForMission(scope, h.stores, mission.id, h.deps);
+    expect(submitted).toBe(0); expect(resumed).toBe(0);
+    const oldId = peekKickoffDirects(mission.id, scope)[0]!.directionId;
+    mission.orchestratorSessionId = 'new-session'; mission.intentVersion = 2;
+    mission.intentContract = { ...mission.intentContract!, intentVersion: 2, goal: 'A new authorized goal' };
+    const current = beginKickoffBriefDelivery(scope, { missionId: mission.id, orchestratorSessionId: 'new-session', intentVersion: 2,
+      intentAuthorityHash: kickoffIntentAuthorityHash(mission), promptHash: 'b'.repeat(64) });
+    await deliverMissionDirectInstruction(scope, h.stores, directCommand({ text: 'new direction' }), h.deps);
+    const newId = peekKickoffDirects(mission.id, scope).find(item => item.text === 'new direction')!.directionId;
+    expect(endKickoffBriefDelivery(old)).toBe(false);
+    await flushQueuedKickoffDirectsForMission(scope, h.stores, mission.id, h.deps, { failedKickoffAttempt: old });
+    await flushQueuedKickoffDirectsForMission(scope, h.stores, mission.id, h.deps, { failedKickoffAttempt: old });
+    const events = h.emitSpy.mock.calls.map(call => call[1]);
+    expect(events.filter(event => event.payload.kind === 'operator_direction_delivery').map(event => event.payload)).toEqual([
+      { kind: 'operator_direction_delivery', directionId: oldId, deliveryState: 'unproven', reason: 'delivery_unavailable' },
+    ]);
+    expect(peekKickoffDirects(mission.id, scope).map(item => item.directionId)).toEqual([newId]);
+    expect(pendingKickoffBriefDelivery(scope, mission.id)).toBe(current); expect(submitted).toBe(0); expect(resumed).toBe(0);
+  });
+  it('F-1109: a queued row from a prior intent settles unproven without reaching the new transport', async () => {
+    const scope = makeScope(), squad = makeSquad([makeAgent(), makeAgent({ id: 'ag-orch', category: 'orchestrator' })]);
+    const mission = makeApprovedMission(squad, { orchestratorSessionId: 'sess-orch-live' });
+    const options = { mission, squad, workers: [], panes: [makeOrchPane()], kickoffReceipt: false,
+      getRuntimeAgentSessionInfo: (id: string) => makeOrchSession({ sessionId: id }) };
+    const h = makeHarness(options); let submitted = 0;
+    h.deliverSpy.mockImplementation(async () => { submitted++; return true; });
+    await deliverMissionDirectInstruction(scope, h.stores, directCommand(), h.deps);
+    const id = peekKickoffDirects(mission.id, scope)[0]!.directionId;
+    mission.intentContract = { ...mission.intentContract!, goal: 'Changed authorized goal' }; options.kickoffReceipt = true;
+    const current = beginKickoffBriefDelivery(scope, { missionId: mission.id, orchestratorSessionId: 'sess-orch-live', intentVersion: 1,
+      intentAuthorityHash: kickoffIntentAuthorityHash(mission), promptHash: 'a'.repeat(64) });
+    expect(takeKickoffDirects(mission.id, scope, current.attemptId)).toEqual([]);
+    endKickoffBriefDelivery(current);
+    await flushQueuedKickoffDirectsForMission(scope, h.stores, mission.id, h.deps);
+    expect(submitted).toBe(0);
+    expect(h.emitSpy.mock.calls.map(call => call[1]).at(-1)?.payload).toEqual({ kind: 'operator_direction_delivery',
+      directionId: id, deliveryState: 'unproven', reason: 'delivery_unavailable' });
+  });
   it.each(['proved', 'false-proof', 'timeout-after-submit', 'throw-after-submit', 'revoked-after-submit', 'rebound-after-submit', 'scope-mutated-after-submit', 'still-kicking-off'] as const)(
     'F-1105: %s settles the exact queued journal row once and refreshes the existing scoped listeners', async changed => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-direction-outcome-'));
