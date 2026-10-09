@@ -1,7 +1,8 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Code } from '@tiptap/extension-code';
+import type { JSONContent } from '@tiptap/core';
 import {
   parseInlineMarkdown,
   serializeInlineMarkdown,
@@ -19,6 +20,7 @@ import {
  */
 
 export interface ComposerTiptapEditorProps {
+  /** Canonical markdown; external changes replace the document without an onChange echo. */
   readonly value: string;
   readonly onChange?: (markdown: string) => void;
   readonly placeholder?: string;
@@ -39,43 +41,32 @@ const MARK_TOOLS: ReadonlyArray<{
 ];
 
 /** spans → texto simples + marcas para o doc JSON do ProseMirror. */
-function spansToTiptapContent(spans: readonly RichTextSpan[]) {
-  return {
-    type: 'doc' as const,
-    content: [
-      {
-        type: 'paragraph' as const,
-        content: spans.map((span) => ({
-          type: 'text' as const,
-          text: span.text,
-          ...(span.marks.length > 0
-            ? {
-                marks: span.marks.map((mark) => ({
-                  type:
-                    mark === 'strike'
-                      ? 'strike'
-                      : mark === 'code'
-                        ? 'code'
-                        : mark,
-                })),
-              }
-            : {}),
-        })),
-      },
-    ],
-  };
+function spansToTiptapContent(spans: readonly RichTextSpan[]): JSONContent {
+  const paragraphs: JSONContent[] = [{ type: 'paragraph', content: [] }];
+  for (const span of spans) {
+    const lines = span.text.split('\n');
+    for (let index = 0; index < lines.length; index += 1) {
+      const text = lines[index]!;
+      if (text) paragraphs[paragraphs.length - 1]!.content!.push({
+        type: 'text', text,
+        ...(span.marks.length ? { marks: span.marks.map((type) => ({ type })) } : {}),
+      });
+      if (index < lines.length - 1) paragraphs.push({ type: 'paragraph', content: [] });
+    }
+  }
+  return { type: 'doc', content: paragraphs };
 }
 
 /** doc JSON → spans → markdown canônico. Enter vira quebra entre parágrafos. */
-export function tiptapJsonToMarkdown(doc: {
-  content?: Array<{
-    content?: Array<{ text?: string; marks?: Array<{ type: string }> }>;
-  }>;
-}): string {
+export function tiptapJsonToMarkdown(doc: JSONContent): string {
   const blocks: string[] = [];
   for (const paragraph of doc.content ?? []) {
     const spans: RichTextSpan[] = [];
     for (const node of paragraph.content ?? []) {
+      if (node.type === 'hardBreak') {
+        spans.push({ text: '\n', marks: [] });
+        continue;
+      }
       if (typeof node.text !== 'string') continue;
       const marks = (node.marks ?? [])
         .map((m) => m.type)
@@ -96,6 +87,7 @@ export function ComposerTiptapEditor({
   ariaLabel = 'Editor rich-text',
   editable = true,
 }: ComposerTiptapEditorProps) {
+  const lastExternalValue = useRef(value);
   const initialContent = useMemo(
     () => spansToTiptapContent(parseInlineMarkdown(value)),
     // Só o valor inicial monta o doc.
@@ -114,6 +106,7 @@ export function ComposerTiptapEditor({
         listItem: false,
         orderedList: false,
         underline: false,
+        link: false,
         dropcursor: false,
         gapcursor: false,
         code: false,
@@ -122,6 +115,7 @@ export function ComposerTiptapEditor({
       Code.extend({ excludes: 'code' }),
     ],
     content: initialContent,
+    shouldRerenderOnTransaction: true,
     editable,
     editorProps: {
       attributes: {
@@ -133,20 +127,34 @@ export function ComposerTiptapEditor({
       },
     },
     onUpdate: ({ editor: e }) => {
-      if (!onChange) return;
-      onChange(tiptapJsonToMarkdown(e.getJSON() as never));
+      const markdown = tiptapJsonToMarkdown(e.getJSON());
+      onChange?.(markdown);
     },
   });
 
+  useEffect(() => {
+    if (!editor || value === lastExternalValue.current) return;
+    lastExternalValue.current = value;
+    // Equal canonical content is an acknowledgement, not a document reset.
+    const next = spansToTiptapContent(parseInlineMarkdown(value));
+    if (tiptapJsonToMarkdown(editor.getJSON()) !== tiptapJsonToMarkdown(next)) {
+      editor.commands.setContent(next, { emitUpdate: false });
+    }
+  }, [editor, value]);
+
+  useEffect(() => {
+    if (editor && editor.isEditable !== editable) editor.setEditable(editable, false);
+  }, [editor, editable]);
+
   const toggle = useCallback(
     (mark: RichTextMark) => {
-      if (!editor) return;
+      if (!editable || !editor || !editor.isEditable) return;
       if (mark === 'bold') editor.chain().focus().toggleBold().run();
       else if (mark === 'italic') editor.chain().focus().toggleItalic().run();
       else if (mark === 'strike') editor.chain().focus().toggleStrike().run();
       else if (mark === 'code') editor.chain().focus().toggleCode().run();
     },
-    [editor],
+    [editor, editable],
   );
 
   if (!editor) return null;
@@ -170,10 +178,9 @@ export function ComposerTiptapEditor({
             aria-label={title}
             aria-pressed={editor.isActive(mark === 'strike' ? 'strike' : mark)}
             title={title}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              toggle(mark);
-            }}
+            disabled={!editable}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => toggle(mark)}
           >
             {label}
           </button>
