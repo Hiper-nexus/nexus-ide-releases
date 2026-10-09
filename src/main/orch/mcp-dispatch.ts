@@ -1563,6 +1563,23 @@ export async function dispatchToolCall(
   // revocation happen after auditIntent but before/after the handler and used
   // to leave an orphan `intent` record behind.
   let outcomeAuditWritten = false;
+  let handlerStarted = false;
+  let commandAccepted = false;
+  let releaseCheckpoint: (() => void) | undefined;
+  let resolveOwnedFlight: ((result: ToolDispatchResult) => void) | undefined;
+  let ownedFlightKey: string | undefined;
+  const releaseOwnedFlight = (
+    result: ToolDispatchResult,
+  ): ToolDispatchResult => {
+    if (commandAccepted && commandId) {
+      rememberDispatchOutcome(ctx, commandId, result);
+    }
+    resolveOwnedFlight?.({ok:false,tool:result.tool,error:'command_result_unavailable',effectMayHaveCommitted:result.ok || result.effectMayHaveCommitted || undefined,denied:result.denied});
+    resolveOwnedFlight = undefined;
+    if (ownedFlightKey) { logicalDispatchFlights.delete(ownedFlightKey); ownedFlightKey = undefined; }
+    releaseCheckpoint?.(); releaseCheckpoint = undefined;
+    return result;
+  };
   const writeOutcomeAudit = (
     outcome: "success" | "error",
     error: string | undefined,
@@ -1604,15 +1621,72 @@ export async function dispatchToolCall(
 
   const denyAfterIntent = (error: string): ToolDispatchResult => {
     const auditFailure = writeOutcomeAudit("error", error, false);
-    return (
-      auditFailure ?? {
-        ok: false,
-        tool: tool.name,
-        denied: true,
-        error,
-      }
-    );
+    return releaseOwnedFlight(auditFailure ?? {
+      ok: false, tool: tool.name, denied: true, error,
+    });
   };
+
+  const assertAdmissionCurrent = (): void => {
+    if (!hasCurrentBearerAuthority() || options.callerSignal?.aborted || !isOperationIdentityCurrent()) throw new Error('session_authority_revoked');
+  };
+  // Logical ownership is elected synchronously after audit/admission and before
+  // one real spend. Losers terminate their own audit without charging a step.
+  try {
+    assertAdmissionCurrent();
+    if (commandId) {
+      const checkpoint = acceptProductionCommandCheckpoint(
+        ctx,
+        commandId,
+        tool.name,
+        operationIdentity!.bindingDigest,
+      );
+      if (checkpoint.status === 'conflict') return denyAfterIntent('command_effect_identity_conflict');
+      if (checkpoint.status === "denied") {
+        return denyAfterIntent("command_effect_unavailable");
+      }
+      if (checkpoint.status === "accepted" && !checkpoint.inserted) {
+        const inflight = callerCommandId
+          ? logicalDispatchFlights.get(logicalFlightKey(ctx.scope, callerCommandId))
+          : undefined;
+        if (inflight) {
+          if (inflight.bindingDigest !== operationIdentity!.bindingDigest) return denyAfterIntent('command_effect_identity_conflict');
+          const joined = await inflight.promise;
+          assertAdmissionCurrent();
+          const currentIntent = checkMissionIntent();
+          if (!currentIntent.ok) throw new Error(currentIntent.error);
+          const current = captureCommandDispatchIdentity(source, ctx, canonical, args, options.logicalOperationId, currentIntent.resolved?.mission.intentVersion);
+          if (current.bindingDigest !== operationIdentity!.bindingDigest) throw new Error('session_authority_revoked');
+          const auditFailure = writeOutcomeAudit(joined.ok ? 'success' : 'error', joined.error, false);
+          return auditFailure ?? joined;
+        }
+        const replay = callerCommandId
+          ? readReplayableCommandDispatch(ctx, callerCommandId, tool.name, operationIdentity!.bindingDigest)
+          : null;
+        if (replay) { assertAdmissionCurrent(); const auditFailure = writeOutcomeAudit(replay.ok ? 'success' : 'error', replay.error, false); return auditFailure ?? replay; }
+        return {
+          ok: false,
+          tool: tool.name,
+          error: DISPATCH_OUTCOME_UNSETTLED,
+          effectMayHaveCommitted: true,
+        };
+      }
+      if (checkpoint.status === "accepted" && checkpoint.inserted) {
+        commandAccepted = true;
+        releaseCheckpoint = retainDispatchCheckpoint(ctx.scope, commandId);
+        if (callerCommandId) {
+          ownedFlightKey = logicalFlightKey(ctx.scope, callerCommandId);
+          let resolveFlight!: (result: ToolDispatchResult) => void;
+          const flight = new Promise<ToolDispatchResult>((resolve) => {
+            resolveFlight = resolve;
+          });
+          resolveOwnedFlight = resolveFlight;
+          logicalDispatchFlights.set(ownedFlightKey, {bindingDigest:operationIdentity!.bindingDigest,promise:flight});
+        }
+      }
+    }
+  } catch (error) {
+    return denyAfterIntent(error instanceof Error ? error.message : 'command_effect_unavailable');
+  }
 
   // Persist the correlated effect intent before charging mission budget. If
   // the audit INSERT fails, the reservation callback is never reached, so a
@@ -1713,21 +1787,7 @@ export async function dispatchToolCall(
     }
   }
 
-  let handlerStarted = false;
-  let commandAccepted = false;
-  let releaseCheckpoint: (() => void) | undefined;
-  let resolveOwnedFlight: ((result: ToolDispatchResult) => void) | undefined;
-  let ownedFlightKey: string | undefined;
-  const releaseOwnedFlight = (
-    result: ToolDispatchResult,
-  ): ToolDispatchResult => {
-    if (commandAccepted && commandId) {
-      rememberDispatchOutcome(ctx, commandId, result);
-    }
-    resolveOwnedFlight?.({ok:false,tool:result.tool,error:'command_result_unavailable',effectMayHaveCommitted:result.ok || result.effectMayHaveCommitted || undefined,denied:result.denied});
-    resolveOwnedFlight = undefined;
-    return result;
-  };
+
   try {
     // If preempted after start (race with user submit), abort before handler.
     if (queuePromptId && ctx.missionId) {
@@ -1808,57 +1868,6 @@ export async function dispatchToolCall(
       assertCurrentAuthorityState(true);
     };
     assertCurrentAuthority();
-    if (commandId) {
-      const checkpoint = acceptProductionCommandCheckpoint(
-        ctx,
-        commandId,
-        tool.name,
-        operationIdentity!.bindingDigest,
-      );
-      if (checkpoint.status === 'conflict') return denyAfterIntent('command_effect_identity_conflict');
-      if (checkpoint.status === "denied") {
-        return denyAfterIntent("command_effect_unavailable");
-      }
-      if (checkpoint.status === "accepted" && !checkpoint.inserted) {
-        const inflight = callerCommandId
-          ? logicalDispatchFlights.get(logicalFlightKey(ctx.scope, callerCommandId))
-          : undefined;
-        if (inflight) {
-          if (inflight.bindingDigest !== operationIdentity!.bindingDigest) return denyAfterIntent('command_effect_identity_conflict');
-          const joined = await inflight.promise;
-          assertCurrentAuthority();
-          const currentIntent = checkMissionIntent();
-          if (!currentIntent.ok) throw new Error(currentIntent.error);
-          const current = captureCommandDispatchIdentity(source, ctx, canonical, args, options.logicalOperationId, currentIntent.resolved?.mission.intentVersion);
-          if (current.bindingDigest !== operationIdentity!.bindingDigest) throw new Error('session_authority_revoked');
-          const auditFailure = writeOutcomeAudit(joined.ok ? 'success' : 'error', joined.error, false);
-          return auditFailure ?? joined;
-        }
-        const replay = callerCommandId
-          ? readReplayableCommandDispatch(ctx, callerCommandId, tool.name, operationIdentity!.bindingDigest)
-          : null;
-        if (replay) { assertCurrentAuthority(); const auditFailure = writeOutcomeAudit(replay.ok ? 'success' : 'error', replay.error, false); return auditFailure ?? replay; }
-        return {
-          ok: false,
-          tool: tool.name,
-          error: DISPATCH_OUTCOME_UNSETTLED,
-          effectMayHaveCommitted: true,
-        };
-      }
-      if (checkpoint.status === "accepted" && checkpoint.inserted) {
-        commandAccepted = true;
-        releaseCheckpoint = retainDispatchCheckpoint(ctx.scope, commandId);
-        if (callerCommandId) {
-          ownedFlightKey = logicalFlightKey(ctx.scope, callerCommandId);
-          let resolveFlight!: (result: ToolDispatchResult) => void;
-          const flight = new Promise<ToolDispatchResult>((resolve) => {
-            resolveFlight = resolve;
-          });
-          resolveOwnedFlight = resolveFlight;
-          logicalDispatchFlights.set(ownedFlightKey, {bindingDigest:operationIdentity!.bindingDigest,promise:flight});
-        }
-      }
-    }
     const exactUserConsent =
       // Recibo, não modal: mintado sempre que o store exige prova de mutação
       // única — inclusive quando a autorização veio da aprovação da missão.
