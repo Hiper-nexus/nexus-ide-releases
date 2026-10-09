@@ -27,6 +27,7 @@ import {
   registerCheckpointCaptureHandler,
 } from './effect-outbox-worker';
 import { EffectOutboxStore, isUnreconciledEffectOutbox } from './effect-outbox';
+import { CommandReceiptStore } from './command-receipts';
 import { reconcileProviderRuntimesAtBoot } from './provider-runtime-recovery';
 import { configureHandoffDeliveryRuntimeRecovery } from './idle-delivery';
 import { recoverHandoffDeliveryRuntime } from './handoff-delivery-runtime-recovery';
@@ -156,6 +157,9 @@ export function startOrchestrationCoordinator(): void {
             },
             context,
           );
+          // Bounded retention of generated, truthfully settled observations.
+          // Explicit retry bindings and unresolved obligations are never pruned.
+          new CommandReceiptStore(runtimeManager, suite.scope).pruneGeneratedSettled({limit:100});
         }
       },
     },

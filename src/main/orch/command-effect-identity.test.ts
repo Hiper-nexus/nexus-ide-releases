@@ -141,3 +141,13 @@ it('F-1080: owning call refuses a Main parent-policy change at its first guard a
   ctx.operatorParentSessionId='different-main-parent';
   expect(await pending).toMatchObject({ok:false,error:'session_authority_revoked'});expect(runs).toBe(0);
 });
+
+it('F-1084: actual bounded handler acknowledgment records a real sequence and no fake checkpoint self-fence',async()=>{
+  const tools=registry(async()=>({observed:true}));const ctx=caller('physical-logical-ack');
+  expect(await dispatchToolCall('http-mcp',tools,'nexus_file_write',args('one'),ctx)).toMatchObject({ok:true});
+  const db=manager.open(scope).db;
+  const row=db.prepare('SELECT command_id,result_sequence,command_type FROM command_receipts').get() as {command_id:string;result_sequence:number;command_type:string};
+  expect(row.command_type).toBe('dispatch.observation');expect(row.result_sequence).toBeGreaterThan(0);
+  expect(db.prepare('SELECT command_id,event_kind FROM command_dispatch_events WHERE sequence=?').get(row.result_sequence)).toEqual({command_id:row.command_id,event_kind:'settled'});
+  expect(db.prepare('SELECT COUNT(*) AS n FROM effect_outbox').get()).toEqual({n:0});
+});

@@ -93,7 +93,7 @@ export function reconcileProviderRuntimeAtBoot(
       now: deps.now,
     });
     const settled = outbox.reconcileAfterProcessLoss();
-    const unsettledReceipts = receipts.listUnsettled().length;
+    const unsettledReceipts = receipts.countUnsettled();
     clearUnreconciledEffectOutbox(deps.scope);
     reconciledThisProcess.add(key);
     return {

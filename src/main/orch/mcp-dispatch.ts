@@ -61,11 +61,9 @@ import {
 } from "./mission-prompt-queue-registry";
 import { getProjectDomainStores, requireProjectDomainStoreRegistry } from "./project-domain-store-registry";
 import {
-  acceptDispatchCheckpointEffect,
   createScopedCommandReceiptStore,
 } from "./command-receipts";
 import { createScopedEffectOutboxStore } from "./effect-outbox";
-import { retainDispatchCheckpoint } from "./effect-outbox-worker";
 import {
   normalizeDispatchSessionId,
   permissionScopeForTool,
@@ -538,7 +536,7 @@ function bindEffectAuthority(
 }
 
 /**
- * Recibo + checkpoint.capture na mesma transação, antes do handler.
+ * Recibo da observação lógica, sem inferir checkpoint ou saída física.
  * Sem registry (testes de gate) o comando segue; com registry, falha
  * fechada se o aceite não gravar.
  */
@@ -671,15 +669,16 @@ type CheckpointAcceptance =
   | { readonly status: "accepted"; readonly inserted: boolean };
 
 /**
- * Recibo + checkpoint.capture na mesma transação, antes do handler.
+ * Recibo da observação lógica, sem inferir checkpoint ou saída física.
  * Sem registry (testes de gate) o comando segue; com registry, falha
  * fechada se o aceite não gravar. O mesmo commandId não enfileira de novo.
  */
-function acceptProductionCommandCheckpoint(
+function acceptProductionCommandObservation(
   ctx: AgentGateContext,
   commandId: string,
   toolName: string,
   bindingDigest: string,
+  generated: boolean,
 ): CheckpointAcceptance {
   let runtimeManager: ProjectRuntimeManager;
   try {
@@ -692,12 +691,9 @@ function acceptProductionCommandCheckpoint(
   }
   try {
     const missionId = ctx.missionId?.trim() ?? "";
-    const accepted = acceptDispatchCheckpointEffect(runtimeManager, ctx.scope, {
-      commandId,
-      threadId: missionId || ctx.scope.projectId,
-      toolName: canonicalToolName(toolName),
-      missionBound: missionId.length > 0,
-      bindingDigest,
+    const accepted = createScopedCommandReceiptStore(runtimeManager, ctx.scope).acceptDispatchObservation({
+      commandId, toolName: canonicalToolName(toolName), bindingDigest, generated,
+      ...(missionId ? {threadId:missionId} : {projectId:ctx.scope.projectId}),
     });
     return { status: "accepted", inserted: accepted.inserted };
   } catch (error) {
@@ -1565,7 +1561,6 @@ export async function dispatchToolCall(
   let outcomeAuditWritten = false;
   let handlerStarted = false;
   let commandAccepted = false;
-  let releaseCheckpoint: (() => void) | undefined;
   let resolveOwnedFlight: ((result: ToolDispatchResult) => void) | undefined;
   let ownedFlightKey: string | undefined;
   const releaseOwnedFlight = (
@@ -1577,7 +1572,6 @@ export async function dispatchToolCall(
     resolveOwnedFlight?.({ok:false,tool:result.tool,error:'command_result_unavailable',effectMayHaveCommitted:result.ok || result.effectMayHaveCommitted || undefined,denied:result.denied});
     resolveOwnedFlight = undefined;
     if (ownedFlightKey) { logicalDispatchFlights.delete(ownedFlightKey); ownedFlightKey = undefined; }
-    releaseCheckpoint?.(); releaseCheckpoint = undefined;
     return result;
   };
   const writeOutcomeAudit = (
@@ -1634,11 +1628,12 @@ export async function dispatchToolCall(
   try {
     assertAdmissionCurrent();
     if (commandId) {
-      const checkpoint = acceptProductionCommandCheckpoint(
+      const checkpoint = acceptProductionCommandObservation(
         ctx,
         commandId,
         tool.name,
         operationIdentity!.bindingDigest,
+        !callerCommandId,
       );
       if (checkpoint.status === 'conflict') return denyAfterIntent('command_effect_identity_conflict');
       if (checkpoint.status === "denied") {
@@ -1672,7 +1667,6 @@ export async function dispatchToolCall(
       }
       if (checkpoint.status === "accepted" && checkpoint.inserted) {
         commandAccepted = true;
-        releaseCheckpoint = retainDispatchCheckpoint(ctx.scope, commandId);
         if (callerCommandId) {
           ownedFlightKey = logicalFlightKey(ctx.scope, callerCommandId);
           let resolveFlight!: (result: ToolDispatchResult) => void;
@@ -2011,6 +2005,5 @@ export async function dispatchToolCall(
       });
     }
     if (ownedFlightKey) logicalDispatchFlights.delete(ownedFlightKey);
-    releaseCheckpoint?.();
   }
 }

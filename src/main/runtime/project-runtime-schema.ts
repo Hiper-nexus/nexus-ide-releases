@@ -1189,4 +1189,19 @@ END;`,
       sql: `ALTER TABLE command_receipts ADD COLUMN binding_digest TEXT
         CHECK (binding_digest IS NULL OR length(binding_digest) = 64);`,
     }),
+    createProjectMigration({
+      id: '052-command-dispatch-settlement-events', schemaVersion: 52, appVersion: '0.76.213',
+      sql: `ALTER TABLE command_receipts ADD COLUMN dispatch_state TEXT NOT NULL DEFAULT 'unknown'
+          CHECK(dispatch_state IN ('admitted','observed-success','observed-rejection','unknown','settled'));
+        ALTER TABLE command_receipts ADD COLUMN physical_state TEXT NOT NULL DEFAULT 'none'
+          CHECK(physical_state IN ('none','pending','proven','unknown'));
+        ALTER TABLE command_receipts ADD COLUMN generated_invocation INTEGER NOT NULL DEFAULT 0 CHECK(generated_invocation IN(0,1));
+        CREATE TABLE command_dispatch_events(
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          command_id TEXT NOT NULL REFERENCES command_receipts(command_id) ON DELETE CASCADE,
+          event_kind TEXT NOT NULL CHECK(event_kind IN('admitted','response','physical-start','physical-proven','physical-unknown','settled')),
+          occurred_at INTEGER NOT NULL, response_kind TEXT, physical_state TEXT NOT NULL,
+          UNIQUE(command_id,event_kind));
+        CREATE INDEX command_receipts_unsettled ON command_receipts(result_sequence,accepted_at,command_id);`,
+    }),
   ]);

@@ -1,3 +1,5 @@
+import type Database from 'better-sqlite3';
+import { decodeCursor, encodeCursor, InvalidCursorError } from '../../shared/cursor-pagination';
 /**
  * Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62.
  * Copyright (c) 2026 T3 Tools Inc. — MIT License.
@@ -53,6 +55,8 @@ export interface CommandReceipt {
   /** Resultado JSON do despacho, quando o handler já terminou. */
   readonly outcomeJson: string | null;
   readonly bindingDigest: string | null;
+  readonly dispatchState: 'admitted'|'observed-success'|'observed-rejection'|'unknown'|'settled';
+  readonly physicalState: 'none'|'pending'|'proven'|'unknown';
 }
 
 export interface CommandReceiptInsertInput {
@@ -87,6 +91,9 @@ const rowSchema = z
     effect_class: z.enum(['process_bound', 'replay_safe']),
     outcome_json: z.string().max(32768).nullable(),
     binding_digest: z.string().regex(/^[a-f0-9]{64}$/u).nullable().optional(),
+    dispatch_state: z.enum(['admitted','observed-success','observed-rejection','unknown','settled']).optional(),
+    physical_state: z.enum(['none','pending','proven','unknown']).optional(),
+    generated_invocation: z.union([z.literal(0),z.literal(1)]).optional(),
   })
   .strict();
 
@@ -147,6 +154,8 @@ function rowToReceipt(row: unknown): CommandReceipt {
     effectClass: value.effect_class,
     outcomeJson: value.outcome_json,
     bindingDigest: value.binding_digest ?? null,
+    dispatchState: value.dispatch_state ?? 'unknown',
+    physicalState: value.physical_state ?? 'none',
   };
 }
 
@@ -189,6 +198,29 @@ export class CommandReceiptStore {
     options: ScopedStoreOptions = {},
   ) {
     this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
+  }
+
+  #appendDispatchEvent(db: Database.Database, commandId: string, kind: string, response: string | null, physical: string): number {
+    db.prepare(`INSERT OR IGNORE INTO command_dispatch_events(command_id,event_kind,occurred_at,response_kind,physical_state) VALUES(?,?,?,?,?)`)
+      .run(commandId,kind,this.#binding.now(),response,physical);
+    const event=db.prepare('SELECT sequence FROM command_dispatch_events WHERE command_id=? AND event_kind=?').get(commandId,kind) as {sequence:number};
+    return event.sequence;
+  }
+
+  /** Logical response observation only. No checkpoint/physical obligation is implied. */
+  acceptDispatchObservation(input: {commandId:string;toolName:string;bindingDigest:string;generated:boolean;threadId?:string;projectId?:string}): {inserted:boolean} {
+    const db=this.#binding.writeDatabase();
+    return db.transaction(()=>{
+      const inserted=this.insertIfAbsent({commandId:input.commandId,commandType:'dispatch.observation',bindingDigest:input.bindingDigest,threadId:input.threadId,projectId:input.projectId});
+      const receipt=this.getByCommandId(input.commandId)!;
+      const aggregate=resolveAggregate(input);
+      if(receipt.bindingDigest!==input.bindingDigest || receipt.commandType!=='dispatch.observation' || receipt.aggregateKind!==aggregate.kind || receipt.aggregateId!==aggregate.id) throw new Error('command_effect_identity_conflict');
+      if(inserted){
+        db.prepare("UPDATE command_receipts SET dispatch_state='admitted',generated_invocation=? WHERE command_id=?").run(input.generated?1:0,input.commandId);
+        this.#appendDispatchEvent(db,input.commandId,'admitted',null,'none');
+      }
+      return {inserted};
+    })();
   }
 
   get scope(): ProjectExecutionScope {
@@ -378,10 +410,20 @@ export class CommandReceiptStore {
       effectMayHaveCommitted: value.ok || value.effectMayHaveCommitted === true,
       denied: value.denied === true,
     };
-    this.#binding.writeDatabase().prepare(
-      `UPDATE command_receipts SET outcome_json = ?
-       WHERE command_id = ? AND outcome_json IS NULL`,
-    ).run(JSON.stringify(projection), id);
+    const db=this.#binding.writeDatabase();
+    db.transaction(()=>{
+      const stored=this.getByCommandId(id);
+      if(!stored || stored.outcomeJson!==null)return;
+      db.prepare('UPDATE command_receipts SET outcome_json=? WHERE command_id=? AND outcome_json IS NULL').run(JSON.stringify(projection),id);
+      if(stored.commandType!=='dispatch.observation')return;
+      db.prepare('UPDATE command_receipts SET dispatch_state=? WHERE command_id=?').run(response,id);
+      this.#appendDispatchEvent(db,id,'response',response,stored.physicalState);
+      if(stored.physicalState==='none' && response!=='unknown'){
+        const sequence=this.#appendDispatchEvent(db,id,'settled',response,'none');
+        db.prepare("UPDATE command_receipts SET result_sequence=?,dispatch_state='settled',status=? WHERE command_id=?")
+          .run(sequence,response==='observed-rejection'?'rejected':'accepted',id);
+      }
+    })();
   }
 
   getByCommandId(commandId: string): CommandReceipt | null {
@@ -392,21 +434,36 @@ export class CommandReceiptStore {
     return row ? rowToReceipt(row) : null;
   }
 
-  /**
-   * Recibo com sequence 0 = não assentado (processo morreu no meio).
-   * O T3 mantém a marca de propósito; não a inventa depois.
-   */
-  listUnsettled(): CommandReceipt[] {
-    const rows = this.#binding
-      .readDatabase()
-      .prepare(
-        `SELECT * FROM command_receipts
-         WHERE result_sequence = 0
-         ORDER BY accepted_at ASC`,
-      )
-      .all();
-    return rows.map(rowToReceipt);
+  countUnsettled(): number {
+    const row=this.#binding.readDatabase().prepare('SELECT COUNT(*) AS n FROM command_receipts WHERE result_sequence=0').get() as {n:number};
+    return row.n;
   }
+
+  listUnsettledMetadata(query: {limit?:number;cursor?:string|null} = {}): {rows:Array<Omit<CommandReceipt,'outcomeJson'|'error'>>;nextCursor:string|null} {
+    const limit=z.number().int().min(1).max(100).parse(query.limit??100);
+    const slice=`receipts:${this.scope.projectId}:${this.scope.checkoutId}`;
+    let key:number|undefined;let id:string|undefined;
+    if(query.cursor!==undefined && query.cursor!==null){const cursor=decodeCursor(query.cursor);if(cursor.s!==slice || typeof cursor.k!=='number' || !Number.isSafeInteger(cursor.k) || cursor.k<0 || !cursor.i)throw new InvalidCursorError();key=cursor.k;id=cursor.i;}
+    const columns='command_id,aggregate_kind,aggregate_id,command_type,accepted_at,result_sequence,status,effect_class,binding_digest,dispatch_state,physical_state,generated_invocation';
+    const rows=this.#binding.readDatabase().prepare(`SELECT ${columns} FROM command_receipts WHERE result_sequence=0 ${key===undefined?'':'AND (accepted_at>? OR (accepted_at=? AND command_id>?))'} ORDER BY accepted_at,command_id LIMIT ?`)
+      .all(...(key===undefined?[limit+1]:[key,key,id,limit+1])) as Array<Record<string,unknown>>;
+    const page=rows.slice(0,limit).map(row=>{const {outcomeJson:_out,error:_error,...metadata}=rowToReceipt({...row,outcome_json:null,error:null});return metadata;});
+    const last=page.at(-1);return {rows:page,nextCursor:rows.length>limit&&last?encodeCursor({key:last.acceptedAt,id:last.commandId,slice}):null};
+  }
+
+  /** Compatibility view is bounded and deliberately excludes outcome bodies. */
+  listUnsettled(): CommandReceipt[] {
+    return this.listUnsettledMetadata().rows.map(row=>({...row,outcomeJson:null,error:null}));
+  }
+
+  pruneGeneratedSettled(input: {retentionMs?:number;limit?:number} = {}): number {
+    const limit=z.number().int().min(1).max(500).parse(input.limit??100);
+    const cutoff=this.#binding.now()-z.number().finite().min(0).parse(input.retentionMs??7*24*60*60*1000);
+    return this.#binding.writeDatabase().prepare(`DELETE FROM command_receipts WHERE command_id IN(
+      SELECT command_id FROM command_receipts WHERE generated_invocation=1 AND result_sequence>0 AND dispatch_state='settled' AND physical_state IN('none','proven') AND accepted_at<=? ORDER BY accepted_at,command_id LIMIT ?)`)
+      .run(cutoff,limit).changes;
+  }
+
 }
 
 /**
