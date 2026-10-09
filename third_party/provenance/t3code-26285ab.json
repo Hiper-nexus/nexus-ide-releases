@@ -2114,16 +2114,16 @@
       "originalSha256": "35715cfe16ba8433386fc51b2256c365845f544d669faeb969933f386724a1e7",
       "originalPath": "apps/server/src/orchestration-v2/EffectOutbox.ts",
       "nexusPath": "src/main/orch/effect-outbox.ts",
-      "nexusSha256": "e7e136344c3f3d36973701104bf503c7cf8631d25580899d941bb5d9c740b9f3",
+      "nexusSha256": "a3e53e350b3432e057ed309aca57fb097009fa77cc7496d5c2beda853c1298e1",
       "license": "MIT",
       "copyright": "Copyright (c) 2026 T3 Tools Inc.",
       "type": "adapted",
       "feature": "PR126 reviewed integration",
-      "changeSummary": "Effect-type lists, status/lease vocabulary and claim/recovery SQL adapted to scoped better-sqlite3/Zod. Nexus Main adds original owned-process physical proof obligations and a verification-only consumer; logical dispatch acknowledgment does not imply physical completion.",
+      "changeSummary": "Scoped SQLite effect/lease vocabulary adapted; original Nexus physical proof verification and bounded 500-row production maintenance per scope. Logical acknowledgment is separate from physical completion; guarded receipt retention and unknown blocking remain Nexus contracts.",
       "secondaryProvenance": [],
       "importDate": "2026-10-09",
       "status": "imported",
-      "verificationNote": "Local integrated bytes rehashed 2026-10-09; upstream pin/original digest unchanged. Includes reviewed Nexus release repairs, not additional upstream copied code."
+      "verificationNote": "Local bytes rehashed after reviewed F1092 bounded maintenance; upstream original path/digest/pin unchanged."
     },
     {
       "upstreamUrl": "https://github.com/pingdotgg/t3code/blob/26285ab80513260d1ff29d2c3fbe18f21990cb62/apps/server/src/orchestration-v2/CommandReceiptStore.ts",
@@ -2422,4 +2422,4 @@
       "verificationNote": "Local integrated bytes rehashed 2026-10-09; upstream pin/original digest unchanged. Includes reviewed Nexus release repairs, not additional upstream copied code."
     }
   ]
-}
+}\n
