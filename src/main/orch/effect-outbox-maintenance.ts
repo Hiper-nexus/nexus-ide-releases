@@ -23,18 +23,31 @@ export async function maintainEffectOutboxes(
   for (const suite of registry.listSuites()) {
     await context?.checkpoint();
     if (isUnreconciledEffectOutbox(suite.scope)) continue;
-    const store = new EffectOutboxStore(runtimeManager, suite.scope);
-    await drainEffectOutbox(
-      {
-        store,
-        scope: suite.scope,
-        workerId: 'orchestration-coordinator',
-      },
-      context,
-    );
-    store.pruneSettled(
-      SETTLED_EFFECT_RETENTION_MS,
-      EFFECT_OUTBOX_PRUNE_BATCHES_PER_TICK,
-    );
+    try {
+      const store = new EffectOutboxStore(runtimeManager, suite.scope);
+      await drainEffectOutbox(
+        {
+          store,
+          scope: suite.scope,
+          workerId: 'orchestration-coordinator',
+        },
+        context,
+      );
+      store.pruneSettled(
+        SETTLED_EFFECT_RETENTION_MS,
+        EFFECT_OUTBOX_PRUNE_BATCHES_PER_TICK,
+      );
+    } catch (error) {
+      if (context?.signal.aborted) throw error;
+      try {
+        context?.assertCurrent();
+      } catch (cancellation) {
+        throw cancellation;
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[effect-outbox] manutenção do escopo ${suite.scope.projectId}/${suite.scope.checkoutId} falhou: ${detail}`,
+      );
+    }
   }
 }

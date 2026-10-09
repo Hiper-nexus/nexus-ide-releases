@@ -1150,6 +1150,22 @@ async function pasteBriefAfterBoot(
   return failure;
 }
 
+/** Checkpoint da sessão que pediu a retomada. Ausente no botão e no watcher. */
+export interface ResumeAuthorityCheckpoint {
+  readonly assertCurrent?: () => void;
+  readonly signal?: AbortSignal;
+}
+
+function revalidateResumeAuthority(
+  checkpoint?: ResumeAuthorityCheckpoint,
+): void {
+  if (!checkpoint) return;
+  checkpoint.assertCurrent?.();
+  if (checkpoint.signal?.aborted) {
+    throw new Error('session_authority_revoked');
+  }
+}
+
 async function spawnAgentPane(
   scope: ProjectExecutionScope,
   mission: Mission,
@@ -1164,6 +1180,7 @@ async function spawnAgentPane(
      */
     readonly resumeFromPaneId?: string;
     readonly accountId?: string;
+    readonly authority?: ResumeAuthorityCheckpoint;
   },
 ): Promise<SpawnedAgent | { error: string }> {
   const executionScope = missionExecutionScope(scope, mission);
@@ -1243,6 +1260,7 @@ async function spawnAgentPane(
     warmPool.take(agent.cli);
   }
 
+  revalidateResumeAuthority(spawnOpts?.authority);
   const spawn = await requestPaneSpawn({
     adapterId: agent.cli,
     model: runtimeAgent.model || undefined,
@@ -1264,6 +1282,9 @@ async function spawnAgentPane(
     ...(resumeFromPaneId ? { resumeFromPaneId } : {}),
     ...(spawnOpts?.accountId ? { accountId: spawnOpts.accountId } : {}),
     ...(initialPrompt ? { initialPrompt } : {}),
+    ...(spawnOpts?.authority?.signal
+      ? { abortSignal: spawnOpts.authority.signal }
+      : {}),
   });
 
   if (!spawn.ok || !spawn.paneId || !spawn.sessionId) {
@@ -2100,7 +2121,10 @@ function resolveFastLaneSquad(squadId?: string): import('../../shared/orch-types
 async function respawnFastLaneOrchestrator(
   scope: ProjectExecutionScope,
   mission: Mission,
-  options: { readonly note?: string } = {},
+  options: {
+    readonly note?: string;
+    readonly authority?: ResumeAuthorityCheckpoint;
+  } = {},
 ): Promise<void> {
   const stores = getProjectDomainStores(scope);
 
@@ -2120,6 +2144,7 @@ async function respawnFastLaneOrchestrator(
     current.intentState === 'blocked_technical' ||
     current.intentState === 'blocked_user'
   ) {
+    revalidateResumeAuthority(options.authority);
     live = stores.missions.update(mission.id, { status: 'running' }) ?? current;
   }
 
@@ -2211,12 +2236,24 @@ async function respawnFastLaneOrchestrator(
       }
     }
 
+    revalidateResumeAuthority(options.authority);
+    const spawnOpts = {
+      ...(options.authority ? { authority: options.authority } : {}),
+    };
     const result = operatorResume
       ? await spawnAgentPane(scope, live, orchestrator, prompt, operatorResume.title, {
           resumeFromPaneId: operatorResume.paneId,
           ...(operatorResume.accountId ? { accountId: operatorResume.accountId } : {}),
+          ...spawnOpts,
         })
-      : await spawnAgentPane(scope, live, orchestrator, prompt);
+      : await spawnAgentPane(
+          scope,
+          live,
+          orchestrator,
+          prompt,
+          undefined,
+          spawnOpts,
+        );
     if ('error' in result) {
       throw new Error(`orquestrador não reabriu: ${result.error}`);
     }
@@ -2578,7 +2615,10 @@ async function adoptOrchestratorPane(
 export async function fastLaneBootstrap(
   scope: ProjectExecutionScope,
   missionId: string,
-  options?: { readonly waitForFirstPane?: boolean },
+  options?: {
+    readonly waitForFirstPane?: boolean;
+    readonly authority?: ResumeAuthorityCheckpoint;
+  },
 ): Promise<void> {
   const stores = getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
@@ -2620,7 +2660,9 @@ export async function fastLaneBootstrap(
       return;
     }
     if (action === 'respawn') {
-      await respawnFastLaneOrchestrator(scope, mission);
+      await respawnFastLaneOrchestrator(scope, mission, {
+        authority: options?.authority,
+      });
       return;
     }
     return;
@@ -2657,6 +2699,12 @@ export async function fastLaneBootstrap(
       failClosed: true,
     });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'session_authority_revoked'
+    ) {
+      throw error;
+    }
     const hint =
       error instanceof PreSpawnProbeError
         ? error.hint
@@ -2667,6 +2715,8 @@ export async function fastLaneBootstrap(
       `Maestro \`${orchestrator.cli}\` não está autenticado para missões: ${hint}`,
     );
   }
+
+  revalidateResumeAuthority(options?.authority);
 
   let live = mission;
   {
@@ -2709,6 +2759,7 @@ export async function fastLaneBootstrap(
   );
 
   const finishFirstPane = async (): Promise<void> => {
+    revalidateResumeAuthority(options?.authority);
     const wave = dispatchFastLaneFirstWave(scope, missionId);
     // Adoção primeiro: se o operador indicou um painel para liderar, ele vira o
     // Maestro e nenhum pane novo nasce. Recusa não derruba a missão — ela cai
@@ -2775,7 +2826,15 @@ export async function fastLaneBootstrap(
         occurredAt: Date.now(),
       });
     }
-    const spawned = await spawnAgentPane(scope, live, orchestrator, prompt);
+    revalidateResumeAuthority(options?.authority);
+    const spawned = await spawnAgentPane(
+      scope,
+      live,
+      orchestrator,
+      prompt,
+      undefined,
+      options?.authority ? { authority: options.authority } : undefined,
+    );
     if ('error' in spawned) {
       const current = stores.missions.get(missionId);
       if (current && current.status === 'running' && current.intentState) {
@@ -3076,6 +3135,7 @@ export async function resumeFastLaneMission(
   options: {
     readonly remountKind?: LeftoverRemountKind;
     readonly note?: string;
+    readonly authority?: ResumeAuthorityCheckpoint;
   } = {},
 ): Promise<void> {
   const stores = getProjectDomainStores(scope);
@@ -3131,6 +3191,7 @@ export async function resumeFastLaneMission(
       isFreshKickoff: freshKickoff,
     })
   ) {
+    revalidateResumeAuthority(options.authority);
     persistLeftoverIsolation(stores.missions, mission.id, 'leftover');
     return;
   }
@@ -3146,6 +3207,7 @@ export async function resumeFastLaneMission(
   if (action === 'respawn') {
     await respawnFastLaneOrchestrator(scope, mission, {
       note: options.note,
+      authority: options.authority,
     });
     return;
   }
@@ -3191,6 +3253,7 @@ export async function resumeFastLaneMission(
       ? [NEXUS_LEFTOVER_PARKED_MARKER]
       : [MISSION_RUNTIME_CLOSED_MARKER, AGENT_STATUS_BLOCK_MARKER, NEXUS_LEFTOVER_PARKED_MARKER];
     try {
+      revalidateResumeAuthority(options.authority);
       missionEngineForScope(scope).resumeTechnical(scope, {
         missionId,
         expectedStatus: mission.status,
@@ -3205,6 +3268,12 @@ export async function resumeFastLaneMission(
           ) || 'Missão reaberta pelo operador.',
       });
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'session_authority_revoked'
+      ) {
+        throw error;
+      }
       console.warn(
         '[fast-lane] resumeTechnical falhou:',
         error instanceof Error ? error.message : error,
@@ -3212,12 +3281,16 @@ export async function resumeFastLaneMission(
       // Falhou o resumeTechnical, mas o bootstrap ainda pode funcionar
       // se a missão já estiver em running.
     }
-    await fastLaneBootstrap(scope, missionId);
+    await fastLaneBootstrap(scope, missionId, {
+      authority: options.authority,
+    });
     return;
   }
 
   // Outros estados: re-spawna do zero.
-  await fastLaneBootstrap(scope, missionId);
+  await fastLaneBootstrap(scope, missionId, {
+    authority: options.authority,
+  });
 }
 
 // ── UI helpers ───────────────────────────────────────────────────────────

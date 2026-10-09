@@ -50,6 +50,7 @@ const harness = vi.hoisted(() => ({
     adapterId: string;
   }>,
   terminate: vi.fn(async (_sessionId: string, _options?: unknown) => true),
+  onProbe: undefined as undefined | (() => void | Promise<void>),
   trace: vi.fn(),
   /** F-721: roda dentro do spawn, antes do pane novo existir. */
   onSpawn: undefined as undefined | (() => void),
@@ -101,7 +102,9 @@ vi.mock('../adapters/adapter-registry', async importOriginal => ({
 vi.mock('./squad-runtime-inventory', () => ({ warmSquadRuntimeSubscriptionAuth: async () => undefined }));
 vi.mock('../pty/pre-spawn-probe', async importOriginal => ({
   ...await importOriginal<typeof import('../pty/pre-spawn-probe')>(),
-  assertPreSpawnProbe: async () => undefined,
+  assertPreSpawnProbe: async () => {
+    await harness.onProbe?.();
+  },
 }));
 vi.mock('../adapters/subscription-auth', async importOriginal => ({
   ...await importOriginal<typeof import('../adapters/subscription-auth')>(),
@@ -349,6 +352,7 @@ beforeEach(async () => {
   harness.acpShutdown.mockReset().mockImplementation(async () => { harness.acpSessions.clear(); });
   harness.registeredOrchestrators.length = 0;
   harness.terminate.mockClear();
+  harness.onProbe = undefined;
   harness.trace.mockClear();
   harness.onSpawn = undefined;
   harness.plannedTasks.length = 0;
@@ -963,5 +967,37 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
         }),
       }),
     );
+  });
+
+  it('sessão revogada durante a sonda de auth não grava a missão nem spawna', async () => {
+    vi.useRealTimers();
+    const now = Date.now();
+    liveMission = {
+      ...mission,
+      status: 'pending',
+      intentState: 'ready_to_start',
+      createdAt: now,
+      updatedAt: now,
+    } as Mission;
+    let revoked = false;
+    harness.onProbe = () => {
+      revoked = true;
+    };
+
+    await expect(
+      fastLane.resumeFastLaneMission(scope, 'mission-1', {
+        remountKind: 'automatic',
+        authority: {
+          assertCurrent() {
+            if (revoked) throw new Error('session_authority_revoked');
+          },
+        },
+      }),
+    ).rejects.toThrow('session_authority_revoked');
+
+    expect(harness.spawnCount).toBe(0);
+    expect(harness.terminate).not.toHaveBeenCalled();
+    expect(liveMission.status).toBe('pending');
+    expect(liveMission.intentState).toBe('ready_to_start');
   });
 });

@@ -272,4 +272,32 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
       resumed: false,
     });
   });
+
+  it('revalida a autoridade da sessão no resume e propaga a revogação', async () => {
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({ id: 'mission-existing', status: 'running' }),
+      },
+    });
+    const assertCurrentAuthority = vi.fn();
+    mocks.resumeFastLaneMission.mockImplementation(async (_scope, _missionId, options) => {
+      options.authority.assertCurrent();
+    });
+    await expect(
+      requestResumeTool().handler(
+        { missionId: 'mission-existing' },
+        context(),
+        {
+          assertCurrentAuthority,
+          signal: AbortSignal.abort(),
+        },
+      ),
+    ).rejects.toThrow('session_authority_revoked');
+    expect(assertCurrentAuthority).toHaveBeenCalledTimes(1);
+    expect(mocks.resumeFastLaneMission).toHaveBeenCalledWith(
+      scope,
+      'mission-existing',
+      expect.objectContaining({ remountKind: 'automatic' }),
+    );
+  });
 });

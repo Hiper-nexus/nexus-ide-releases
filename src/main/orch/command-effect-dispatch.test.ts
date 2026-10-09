@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   configureAuditLogRuntime,
   disposeAuditLogRuntime,
@@ -9,7 +9,11 @@ import {
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { assertCompletionEffectsSettled } from './automatic-completion-proof';
 import { acceptDispatchCheckpointEffect, createScopedCommandReceiptStore } from './command-receipts';
-import { SETTLED_EFFECT_RETENTION_MS, createScopedEffectOutboxStore } from './effect-outbox';
+import {
+  EffectOutboxStore,
+  SETTLED_EFFECT_RETENTION_MS,
+  createScopedEffectOutboxStore,
+} from './effect-outbox';
 import { maintainEffectOutboxes } from './effect-outbox-maintenance';
 import {
   drainEffectOutbox,
@@ -911,6 +915,96 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
     } finally {
       unregister();
       if (previous) registerEffectOutboxHandler('checkpoint.capture', previous);
+    }
+  });
+
+  it('uma suite que estoura não impede a outra de drenar e podar', async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-outbox-maintain-'));
+    directories.push(baseDir);
+    const manager = new ProjectRuntimeManager({
+      baseDir,
+      appVersion: 'command-effect-test',
+    });
+    managers.push(manager);
+    configureAuditLogRuntime(manager);
+    configureProjectDomainStoreRegistry(manager);
+    configured = true;
+    const bad = testProjectScope({
+      projectId: 'project-bad',
+      checkoutId: 'checkout-bad',
+      rootRealPath: baseDir,
+    });
+    const ok = testProjectScope({
+      projectId: 'project-ok',
+      checkoutId: 'checkout-ok',
+      rootRealPath: baseDir,
+    });
+    getProjectDomainStores(bad);
+    getProjectDomainStores(ok);
+    const now = Date.now();
+    const aged = now - SETTLED_EFFECT_RETENTION_MS - 1_000;
+    const seed = (
+      scope: typeof bad,
+      prefix: string,
+    ) => {
+      const db = manager.open(scope).db;
+      db.prepare(
+        `INSERT INTO effect_outbox (
+           effect_id, command_id, thread_id, effect_type, payload_json,
+           status, attempt_count, available_at, created_at, updated_at
+         ) VALUES (?, ?, 'thread-a', 'terminal.cleanup', '{}', 'pending', 0, ?, ?, ?)`,
+      ).run(`${prefix}-pending`, `${prefix}-pending-cmd`, now, now, now);
+      db.prepare(
+        `INSERT INTO effect_outbox (
+           effect_id, command_id, thread_id, effect_type, payload_json,
+           status, attempt_count, available_at, created_at, updated_at, completed_at
+         ) VALUES (?, ?, 'thread-a', 'terminal.cleanup', '{}', 'succeeded', 1, ?, ?, ?, ?)`,
+      ).run(`${prefix}-aged`, `${prefix}-aged-cmd`, aged, aged, aged, aged);
+      const receipt = db.prepare(
+        `INSERT INTO command_receipts (
+           command_id, aggregate_kind, aggregate_id, command_type,
+           accepted_at, result_sequence, status, effect_class, generated_invocation
+         ) VALUES (?, 'thread', 'thread-a', 'terminal.cleanup', ?, 1, 'accepted', 'replay_safe', ?)`,
+      );
+      receipt.run(`${prefix}-aged-cmd`, aged, 1);
+      receipt.run(`${prefix}-caller`, now, 0);
+    };
+    seed(bad, 'bad');
+    seed(ok, 'ok');
+    const claimNext = EffectOutboxStore.prototype.claimNext;
+    const spy = vi.spyOn(EffectOutboxStore.prototype, 'claimNext').mockImplementation(
+      function (this: EffectOutboxStore, input) {
+        if (this.scope.projectId === 'project-bad') {
+          throw new Error('drain exploded');
+        }
+        return claimNext.call(this, input);
+      },
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await maintainEffectOutboxes();
+      const badDb = manager.open(bad).db;
+      const okDb = manager.open(ok).db;
+      const statusOf = (db: ReturnType<typeof manager.open>['db'], id: string) =>
+        db.prepare(`SELECT status FROM effect_outbox WHERE effect_id = ?`).get(id) as
+          | { status: string }
+          | undefined;
+      const receiptOf = (db: ReturnType<typeof manager.open>['db'], id: string) =>
+        db.prepare(`SELECT command_id FROM command_receipts WHERE command_id = ?`).get(id);
+      expect(statusOf(badDb, 'bad-pending')?.status).toBe('pending');
+      expect(statusOf(badDb, 'bad-aged')?.status).toBe('succeeded');
+      expect(receiptOf(badDb, 'bad-aged-cmd')).toBeTruthy();
+      expect(receiptOf(badDb, 'bad-caller')).toBeTruthy();
+      expect(statusOf(okDb, 'ok-pending')?.status).toBe('failed');
+      expect(statusOf(okDb, 'ok-aged')).toBeUndefined();
+      expect(receiptOf(okDb, 'ok-aged-cmd')).toBeUndefined();
+      expect(receiptOf(okDb, 'ok-caller')).toBeTruthy();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('project-bad/checkout-bad'),
+      );
+    } finally {
+      spy.mockRestore();
+      warn.mockRestore();
     }
   });
 });

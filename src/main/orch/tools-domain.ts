@@ -653,7 +653,7 @@ const missionRequestResumeTool: McpToolDef = {
     },
     required: ['missionId'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const requestedMissionId = requireStr(args, 'missionId');
     const note = str(args, 'note')?.trim().slice(0, 200) ?? '';
     // O argumento não escolhe a missão. Só o vínculo que o Main gravou no
@@ -694,6 +694,10 @@ const missionRequestResumeTool: McpToolDef = {
       await resumeFastLaneMission(ctx.scope, missionId, {
         remountKind: 'automatic',
         note: note || 'Retomada pedida por nexus_mission_request_resume',
+        authority: {
+          assertCurrent: () => assertMcpInvocationCurrent(invocation),
+          signal: invocation?.signal,
+        },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
