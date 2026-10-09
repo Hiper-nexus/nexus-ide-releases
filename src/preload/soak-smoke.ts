@@ -108,8 +108,9 @@ export async function runSoakActivity(api: Pick<NexusApi, 'workspace' | 'files' 
         api.pty.resize(pane.sessionId, 88 + sequence % 2 * 8, 24, { assert: true });
         // The joined marker is absent from the typed command: terminal echo
         // cannot stand in for actual shell execution. Produce scrollback too.
-        const lines = Array.from({ length: 96 }, (_, i) => `'soak-output-${sequence}-${i}'`).join(' ');
-        const command = `printf '%s\\n' ${lines}; printf '%s%s\\n' '${left}' '_DONE'\r`;
+        // Keep startup input below the canonical tty line limit, while the
+        // same 96 executed lines still prove real rendered scrollback.
+        const command = `i=0; while [ "$i" -lt 96 ]; do printf 'soak-output-${sequence}-%s\\n' "$i"; i=$((i+1)); done; printf '%s%s\\n' '${left}' '_DONE'\r`;
         if (!await api.pty.writeConfirmed(pane.sessionId, command)) throw new Error('soak write refused');
         check();
         for (let waited = 0; !output.includes(marker) && waited < 5000; waited += 50) { await delay(50); check(); }
