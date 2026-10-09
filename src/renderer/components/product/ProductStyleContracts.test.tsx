@@ -14,6 +14,7 @@ import {
   styleTracks,
 } from '../style-contract.test-utils';
 import { AppShell } from './AppShell';
+import { Launcher } from './Launcher';
 import { MemoryWorkspace } from './MemoryWorkspace';
 import { WorkspaceRail } from './WorkspaceRail';
 
@@ -99,10 +100,40 @@ afterEach(() => {
     .forEach((style) => style.remove());
   Reflect.deleteProperty(window, 'nexus');
   delete document.documentElement.dataset.platform;
+  delete document.documentElement.dataset.themePixel;
+  document.documentElement.style.removeProperty('--text-faint');
+  document.documentElement.style.removeProperty('--text-xs');
   vi.restoreAllMocks();
 });
 
 describe('Nexus V2 shell and product workspace style contracts', () => {
+  it.each([
+    { pixel: 'off', radius: 4 },
+    { pixel: 'on', radius: 0 },
+  ])('lets launcher shortcut hints follow theme tokens in pixel=$pixel', ({ pixel, radius }) => {
+    document.documentElement.dataset.themePixel = pixel;
+    const style = installStyleContract(productStyles, { width: 1_400 });
+    const host = render(<Launcher
+      onOpenWorkspace={vi.fn()} onStartMission={vi.fn()} onOpenPane={vi.fn()}
+      onOpenShellTerminal={vi.fn()} onOpenTaskBoard={vi.fn()} onOpenMemory={vi.fn()}
+      onOpenProviders={vi.fn()}
+    />);
+    const hint = host.querySelector<HTMLElement>(
+      '[data-launcher-action="mission"] .launcher-action__shortcut',
+    );
+    if (!hint) throw new Error('Launcher did not render its secondary shortcut hint');
+
+    expect(styleLengthPx(hint, 'border-radius')).toBe(radius);
+    document.documentElement.style.setProperty('--text-xs', '15px');
+    expect(styleLengthPx(hint, 'font-size')).toBe(15);
+    expect(activeCssomDeclaration(style, '.launcher-action__shortcut', 'border')).toBe(
+      '1px solid var(--border)',
+    );
+    // A palette change must reach the badge instead of a fixed fallback color.
+    document.documentElement.style.setProperty('--text-faint', '#abcdef');
+    expect(computedCssValue(hint, 'color')).toBe('#abcdef');
+  });
+
   it.each(requiredViewports)(
     'keeps the persistent rail compact at $width×$height',
     ({ width, height }) => {
