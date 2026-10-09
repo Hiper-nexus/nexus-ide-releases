@@ -151,4 +151,24 @@ describe('cli history import (T3)', () => {
       ['b', 'git diff'],
     ]);
   });
+
+  it('F-1050: a null JSONL line does not abort the import of valid lines', () => {
+    const blocks = importCliHistoryBlocks(
+      [
+        'null',
+        '123',
+        '"just-a-string"',
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: '2026-10-08T12:00:00.000Z',
+          message: {
+            content: [{ type: 'tool_use', name: 'Bash', input: { command: 'npm test' } }],
+          },
+        }),
+      ].join('\n'),
+      { sessionId: 'sess-null', cwd: '/w' },
+    );
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.command).toBe('npm test');
+  });
 });

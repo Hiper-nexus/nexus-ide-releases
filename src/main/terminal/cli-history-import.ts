@@ -170,7 +170,13 @@ export function importCliHistoryBlocks(
     if (trimmed.length === 0) continue;
     let parsed: TranscriptLine;
     try {
-      parsed = JSON.parse(trimmed) as TranscriptLine;
+      const value: unknown = JSON.parse(trimmed);
+      // F-1050: `null` e não-objetos passam no JSON.parse e quebram no
+      // acesso a `.message`. Ignora a linha incompatível e continua.
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        continue;
+      }
+      parsed = value as TranscriptLine;
     } catch {
       continue;
     }
