@@ -331,7 +331,7 @@ async function flushQueuedKickoffDirects(
   stores: ProjectDomainStoreSuite,
   missionId: string,
 ): Promise<void> {
-  if (peekKickoffDirects(missionId).length === 0) return;
+  if (peekKickoffDirects(missionId, scope).length === 0) return;
   const { flushQueuedKickoffDirectsForMission } = await import(
     './mission-engine-production'
   );

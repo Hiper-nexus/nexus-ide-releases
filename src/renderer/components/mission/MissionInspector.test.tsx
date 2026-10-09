@@ -587,6 +587,56 @@ describe('MissionInspector', () => {
     expect(composer?.querySelector('button[type="submit"]')).not.toBeNull();
   });
 
+  it.each(['queued', 'unproven', 'delivered'] as const)('F-1105: shows %s delivery on the same queued direction independently of journal ACK', state => {
+    const accepted = event({ ...ACCEPTED_DIRECTION_EVENTS[0], payload: { ...ACCEPTED_DIRECTION_EVENTS[0].payload, deliveryState: 'queued', directionId: 'a'.repeat(64) } });
+    const outcome = event({ sequence: 8, id: 'direction-delivery', runId: 'operator-direction', type: 'custom',
+      idempotencyKey: `operator_direction_delivery:${'a'.repeat(64)}:${state}`,
+      payload: { kind: 'operator_direction_delivery', directionId: 'a'.repeat(64), deliveryState: state,
+        reason: state === 'delivered' ? 'acceptance_proved' : 'delivery_unavailable' } });
+    const panel = selectTab(mount({ events: state === 'queued' ? [accepted] : [outcome, accepted] }), 'Conversa');
+    const rows = panel.querySelectorAll('.mission-inspector__direction-list li');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain(accepted.payload.text);
+    expect(rows[0].textContent).toContain(state === 'queued' ? 'Na fila de início da coordenação.' :
+      state === 'delivered' ? 'Entrega confirmada.' : 'Entrega não confirmada. A orientação pode ter sido recebida.');
+  });
+
+  it.each([null, undefined])('F-1105: unrelated malformed payload %s cannot crash or change a queued direction', payload => {
+    const accepted = event({ ...ACCEPTED_DIRECTION_EVENTS[0], payload: { ...ACCEPTED_DIRECTION_EVENTS[0].payload, deliveryState: 'queued', directionId: 'a'.repeat(64) } });
+    const malformed = { ...event({ id: 'malformed-unrelated', sequence: 9, type: 'mission.status_changed' }), payload } as unknown as MissionEvent;
+    const rows = selectTab(mount({ events: [accepted, malformed] }), 'Conversa').querySelectorAll('.mission-inspector__direction-list li');
+    expect(rows).toHaveLength(1); expect(rows[0].textContent).toContain('Na fila de início da coordenação.');
+  });
+
+  it.each(['foreign-mission', 'foreign-direction', 'foreign-origin', 'foreign-run', 'wrong-key', 'stale', 'bad-reason', 'extra-body'] as const)(
+    'F-1105: a %s outcome cannot settle a queued direction', changed => {
+      const accepted = event({ ...ACCEPTED_DIRECTION_EVENTS[0], payload: { ...ACCEPTED_DIRECTION_EVENTS[0].payload, deliveryState: 'queued', directionId: 'a'.repeat(64) } });
+      const payload: Record<string, unknown> = { kind: 'operator_direction_delivery', directionId: 'a'.repeat(64), deliveryState: 'delivered', reason: 'acceptance_proved' };
+      if (changed === 'foreign-direction') payload.directionId = 'b'.repeat(64);
+      if (changed === 'bad-reason') payload.reason = 'delivery_unavailable';
+      if (changed === 'extra-body') payload.text = 'untrusted raw error/body';
+      const outcome = event({ sequence: changed === 'stale' ? 2 : 8, id: 'wrong-delivery', runId: changed === 'foreign-run' ? 'foreign' : 'operator-direction', type: 'custom',
+        missionId: changed === 'foreign-mission' ? 'other-mission' : SNAPSHOT.id,
+        origin: changed === 'foreign-origin' ? 'renderer' : 'main',
+        idempotencyKey: changed === 'wrong-key' ? 'operator-direction-invalid' : `operator_direction_delivery:${'a'.repeat(64)}:delivered`, payload });
+      const panel = selectTab(mount({ events: [accepted, outcome] }), 'Conversa');
+      expect(panel.querySelector('.mission-inspector__direction-list')?.textContent).toContain('Na fila de início da coordenação.');
+      expect(panel.querySelector('.mission-inspector__direction-list')?.textContent).not.toContain('Entrega confirmada.');
+    });
+
+  it('F-1105: a later proved outcome settles only its own unproven direction, and stale uncertainty cannot overwrite proof', () => {
+    const first = event({ ...ACCEPTED_DIRECTION_EVENTS[0], payload: { ...ACCEPTED_DIRECTION_EVENTS[0].payload, deliveryState: 'queued', directionId: 'a'.repeat(64) } });
+    const second = event({ ...ACCEPTED_DIRECTION_EVENTS[1], payload: { ...ACCEPTED_DIRECTION_EVENTS[1].payload, deliveryState: 'queued', directionId: 'b'.repeat(64) } });
+    const unproven = event({ sequence: 8, id: 'unproven-delivery', runId: 'operator-direction', type: 'custom', idempotencyKey: `operator_direction_delivery:${'a'.repeat(64)}:unproven`,
+      payload: { kind: 'operator_direction_delivery', directionId: 'a'.repeat(64), deliveryState: 'unproven', reason: 'delivery_unavailable' } });
+    const proved = event({ ...unproven, sequence: 9, id: 'proved-delivery', idempotencyKey: `operator_direction_delivery:${'a'.repeat(64)}:delivered`,
+      payload: { ...unproven.payload, deliveryState: 'delivered', reason: 'acceptance_proved' } });
+    const lateUncertainty = event({ ...unproven, sequence: 10, id: 'late-unproven' });
+    const rows = selectTab(mount({ events: [lateUncertainty, proved, second, unproven, first] }), 'Conversa').querySelectorAll('.mission-inspector__direction-list li');
+    expect(rows).toHaveLength(2); expect(rows[0].textContent).toContain('Entrega confirmada.');
+    expect(rows[0].textContent).not.toContain('Entrega não confirmada.'); expect(rows[1].textContent).toContain('Na fila de início da coordenação.');
+  });
+
   it('states explicitly when Conversation has no accepted operator direction', () => {
     const host = mount({
       events: [

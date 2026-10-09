@@ -1,4 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { MissionEventJournal } from './mission-event-journal';
+import { createScopedMissionStore } from './mission-store';
+import type { MissionEventAppendInput } from '../../shared/mission-events';
 import type {
   Mission,
   MissionPaneSpec,
@@ -13,10 +20,13 @@ import type { OwnedAgentSessionInfo } from '../pty/pty-manager';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import {
   deliverMissionDirectInstruction,
+  flushQueuedKickoffDirectsForMission,
   runtimeAuthorityMismatches,
   type MissionDirectDeliveryDeps,
 } from './mission-engine-production';
-import { takeKickoffDirects } from './mission-kickoff-direct-queue';
+import { takeKickoffDirects, resetKickoffDirectQueueForTests } from './mission-kickoff-direct-queue';
+
+afterEach(resetKickoffDirectQueueForTests);
 
 /**
  * Caminho operador-como-orquestrador (P0-2, dossiê 2026-08-11): numa squad SEM
@@ -264,6 +274,69 @@ it('keeps the approved Maestro model and effort strict after default materializa
 });
 
 describe('mission direct — operador como orquestrador', () => {
+  it.each(['proved', 'false-proof', 'timeout-after-submit', 'throw-after-submit', 'revoked-after-submit', 'rebound-after-submit', 'scope-mutated-after-submit', 'still-kicking-off'] as const)(
+    'F-1105: %s settles the exact queued journal row once and refreshes the existing scoped listeners', async changed => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-direction-outcome-'));
+      const manager = new ProjectRuntimeManager({ baseDir: root, appVersion: 'unit-only' });
+      const scope = { ...makeScope() }, ownerScope = { ...scope }, journal = new MissionEventJournal(manager, ownerScope);
+      manager.open(ownerScope).db.prepare(`INSERT INTO missions (id, title, description, status, squad_id, milestones_json, orch_session_id, created_at, updated_at)
+        VALUES ('mission-1', 'fixture', '', 'pending', NULL, '[]', NULL, 1, 1)`).run();
+      const passiveStore = createScopedMissionStore(manager, ownerScope);
+      const before = passiveStore.get('mission-1'); let refreshedOutcomes = 0;
+      const unsubscribe = passiveStore.onChange(() => {
+        if (journal.replay({ missionId: 'mission-1', afterSequence: 0, limit: 20 }).some(event => event.payload.kind === 'operator_direction_delivery')) refreshedOutcomes++;
+      });
+      const squad = makeSquad([makeAgent(), makeAgent({ id: 'ag-orch', agentName: 'Orquestrador', category: 'orchestrator' })]);
+      const mission = makeApprovedMission(squad, { orchestratorSessionId: 'sess-orch-live' });
+      const options = { mission, squad, workers: [], panes: [makeOrchPane()], kickoffReceipt: false,
+        getRuntimeAgentSessionInfo: (id: string) => makeOrchSession({ sessionId: id }) };
+      const h = makeHarness(options);
+      h.stores.missions.notifyDeliveryObservation = id => passiveStore.notifyDeliveryObservation(id);
+      const deps = { ...h.deps, emitMissionEvent: (owner: ProjectExecutionScope, input: MissionEventAppendInput) => {
+        expect(owner).toEqual(ownerScope); journal.append(input); return true;
+      } };
+      let submitted = 0;
+      h.deliverSpy.mockImplementation(async () => {
+        submitted++;
+        if (changed === 'timeout-after-submit' || changed === 'throw-after-submit') throw new Error('raw-private-error-and-body-must-not-be-journaled');
+        if (changed === 'revoked-after-submit') mission.intentState = 'blocked_technical';
+        if (changed === 'rebound-after-submit') mission.orchestratorSessionId = 'replacement-session';
+        if (changed === 'scope-mutated-after-submit') scope.checkoutId = 'replacement-checkout';
+        return changed !== 'false-proof';
+      });
+      try {
+        await deliverMissionDirectInstruction(scope, h.stores, directCommand(), deps);
+        const admitted = journal.replay({ missionId: mission.id, afterSequence: 0, limit: 20 });
+        expect(admitted).toHaveLength(1); expect(admitted[0].payload.deliveryState).toBe('queued');
+        await flushQueuedKickoffDirectsForMission({ ...scope, checkoutId: 'foreign' }, h.stores, mission.id, deps);
+        expect(submitted).toBe(0); expect(journal.replay({ missionId: mission.id, afterSequence: 0, limit: 20 })).toHaveLength(1);
+        options.kickoffReceipt = changed !== 'still-kicking-off';
+        await flushQueuedKickoffDirectsForMission(scope, h.stores, mission.id, deps);
+        await flushQueuedKickoffDirectsForMission(scope, h.stores, mission.id, deps);
+        const recorded = journal.replay({ missionId: mission.id, afterSequence: 0, limit: 20 });
+        expect(recorded).toHaveLength(2);
+        expect(recorded[1].payload).toEqual({ kind: 'operator_direction_delivery', directionId: admitted[0].payload.directionId,
+          deliveryState: changed === 'proved' ? 'delivered' : 'unproven', reason: changed === 'proved' ? 'acceptance_proved' : 'delivery_unavailable' });
+        expect(JSON.stringify(recorded[1])).not.toContain('raw-private-error');
+        expect(submitted).toBe(changed === 'still-kicking-off' ? 0 : 1);
+        expect(takeKickoffDirects(mission.id, scope)).toEqual([]);
+        expect(refreshedOutcomes).toBe(1); expect(passiveStore.get('mission-1')).toEqual(before);
+      } finally { unsubscribe(); manager.closeAll(); fs.rmSync(root, { recursive: true, force: true }); }
+    });
+  it('F-1105: admission records queued truth with a unique Main correlation for each identical direction', async () => {
+    const squad = makeSquad([makeAgent(), makeAgent({ id: 'ag-orch', agentName: 'Orquestrador', category: 'orchestrator' })]);
+    const mission = makeApprovedMission(squad, { orchestratorSessionId: 'sess-orch-live' });
+    const { stores, deps, emitSpy, deliverSpy } = makeHarness({ mission, squad, workers: [], panes: [makeOrchPane()], kickoffReceipt: false });
+    await deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps);
+    await deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps);
+    const accepted = emitSpy.mock.calls.map(call => call[1]);
+    expect(accepted).toHaveLength(2);
+    expect(accepted[0].payload.deliveryState).toBe('queued');
+    expect(accepted[0].payload.directionId).toMatch(/^[a-f0-9]{64}$/u);
+    expect(accepted[1].idempotencyKey).not.toBe(accepted[0].idempotencyKey);
+    expect(takeKickoffDirects(mission.id, makeScope()).map(item => item.directionId)).toEqual(accepted.map(item => item.payload.directionId));
+    expect(deliverSpy).not.toHaveBeenCalled();
+  });
   it('squad sem orquestrador + worker vivo → direção aceita contra o worker', async () => {
     const squad = makeSquad();
     const mission = makeApprovedMission(squad);
@@ -657,7 +730,7 @@ describe('mission direct — missão da aba (sem squad, orquestrador = pane do o
     // O recibo ausente NÃO é falha recuperável para a missão da aba: nada de
     // respawnar o orquestrador à toa.
     expect(resume).not.toHaveBeenCalled();
-    expect(takeKickoffDirects('mission-1')).toEqual([]);
+    expect(takeKickoffDirects('mission-1', makeScope())).toEqual([]);
   });
 
   it('Maestro da aba com sessão morta → mesma falha fechada de sempre', async () => {
@@ -807,7 +880,7 @@ describe('mission direct — missão da aba (sem squad, orquestrador = pane do o
 
     expect(deliverSpy).not.toHaveBeenCalled();
     expect(emitSpy).toHaveBeenCalledTimes(1);
-    const queued = takeKickoffDirects('mission-1');
+    const queued = takeKickoffDirects('mission-1', makeScope());
     expect(queued).toHaveLength(1);
     expect(queued[0].text).toBe('Adicione uma seção hero.');
   });

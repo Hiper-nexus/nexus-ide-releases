@@ -1,4 +1,7 @@
 import { maestroKickoffBlockReason } from './maestro-boot-gate';
+import { randomBytes } from 'node:crypto';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { sameProjectScope } from './project-scoped-broadcast';
 
 /**
  * Poke do operador durante o kickoff do Maestro.
@@ -18,6 +21,8 @@ export interface RememberedKickoffBrief {
 }
 
 export interface QueuedKickoffDirect {
+  readonly scope: ProjectExecutionScope;
+  readonly directionId: string;
   readonly missionId: string;
   readonly targetAgentId: string | null;
   readonly text: string;
@@ -58,9 +63,11 @@ export function clearKickoffBrief(missionId: string): void {
 }
 
 export function enqueueKickoffDirect(
-  command: Omit<QueuedKickoffDirect, 'queuedAt'> & { readonly queuedAt?: number },
+  command: Omit<QueuedKickoffDirect, 'queuedAt' | 'directionId'> & { readonly queuedAt?: number },
 ): QueuedKickoffDirect {
   const item: QueuedKickoffDirect = {
+    scope: Object.freeze({ ...command.scope }),
+    directionId: randomBytes(32).toString('hex'),
     missionId: command.missionId,
     targetAgentId: command.targetAgentId,
     text: command.text,
@@ -71,14 +78,20 @@ export function enqueueKickoffDirect(
   return item;
 }
 
-export function takeKickoffDirects(missionId: string): QueuedKickoffDirect[] {
-  const queued = queuedDirectsByMission.get(missionId) ?? [];
-  queuedDirectsByMission.delete(missionId);
-  return queued;
+function sameQueuedScope(left: ProjectExecutionScope, right: ProjectExecutionScope): boolean {
+  return sameProjectScope(left, right) && left.workspaceRootDevice === right.workspaceRootDevice && left.workspaceRootInode === right.workspaceRootInode;
 }
 
-export function peekKickoffDirects(missionId: string): readonly QueuedKickoffDirect[] {
-  return queuedDirectsByMission.get(missionId) ?? [];
+export function takeKickoffDirects(missionId: string, scope: ProjectExecutionScope): QueuedKickoffDirect[] {
+  const queued = queuedDirectsByMission.get(missionId) ?? [];
+  const remaining = queued.filter(item => !sameQueuedScope(item.scope, scope));
+  if (remaining.length) queuedDirectsByMission.set(missionId, remaining);
+  else queuedDirectsByMission.delete(missionId);
+  return queued.filter(item => sameQueuedScope(item.scope, scope));
+}
+
+export function peekKickoffDirects(missionId: string, scope: ProjectExecutionScope): readonly QueuedKickoffDirect[] {
+  return (queuedDirectsByMission.get(missionId) ?? []).filter(item => sameQueuedScope(item.scope, scope));
 }
 
 export function resetKickoffDirectQueueForTests(): void {

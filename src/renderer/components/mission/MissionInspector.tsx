@@ -396,6 +396,8 @@ interface OperatorDirection {
   readonly sequence: number;
   readonly targetAgentId: string | null;
   readonly text: string;
+  readonly directionId: string | null;
+  deliveryState: 'queued' | 'delivered' | 'unproven' | null;
 }
 
 function acceptedOperatorDirections(
@@ -415,7 +417,7 @@ function acceptedOperatorDirections(
       continue;
     }
 
-    const { kind, targetAgentId, text } = event.payload;
+    const { kind, targetAgentId, text, directionId, deliveryState } = event.payload;
     if (
       kind !== 'operator_direction' ||
       (targetAgentId !== null &&
@@ -431,7 +433,23 @@ function acceptedOperatorDirections(
       sequence: event.sequence,
       targetAgentId,
       text,
+      directionId: deliveryState === 'queued' && typeof directionId === 'string' &&
+        event.idempotencyKey === `operator_direction:${directionId}` ? directionId : null,
+      deliveryState: deliveryState === 'queued' ? 'queued' : null,
     });
+  }
+
+  const queuedById = new Map(directions.filter(direction => direction.directionId).map(direction => [direction.directionId!, direction]));
+  for (const event of [...events].sort((left, right) => left.sequence - right.sequence)) {
+    if (!event.payload || typeof event.payload !== 'object' || Array.isArray(event.payload)) continue;
+    const { kind, directionId, deliveryState, reason } = event.payload;
+    if (event.missionId !== missionId || event.type !== 'custom' || event.origin !== 'main' || event.runId !== 'operator-direction' ||
+      kind !== 'operator_direction_delivery' || typeof directionId !== 'string' || !/^[a-f0-9]{64}$/u.test(directionId) ||
+      !['kind', 'directionId', 'deliveryState', 'reason'].every(key => Object.hasOwn(event.payload, key)) || Object.keys(event.payload).length !== 4 ||
+      !(deliveryState === 'delivered' && reason === 'acceptance_proved' || deliveryState === 'unproven' && reason === 'delivery_unavailable') ||
+      event.idempotencyKey !== `operator_direction_delivery:${directionId}:${deliveryState}`) continue;
+    const direction = queuedById.get(directionId);
+    if (direction && event.sequence > direction.sequence && direction.deliveryState !== 'delivered') direction.deliveryState = deliveryState;
   }
 
   return directions.sort((left, right) => left.sequence - right.sequence);
@@ -477,6 +495,10 @@ function ConversationProjection({
                       snapshot.agents,
                     )}
                   </p>
+                  {direction.deliveryState && <p className="mission-inspector__direction-target" role="status">
+                    {direction.deliveryState === 'queued' ? 'Na fila de início da coordenação.' : direction.deliveryState === 'delivered'
+                      ? 'Entrega confirmada.' : 'Entrega não confirmada. A orientação pode ter sido recebida.'}
+                  </p>}
                 </article>
               </li>
             ))}

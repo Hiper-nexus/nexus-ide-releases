@@ -956,6 +956,7 @@ function emitOperatorDirectionAccepted(
   command: MissionDirectCommand,
   deps: MissionDirectDeliveryDeps,
   fingerprint: string,
+  queued?: { directionId: string; deliveryState: 'queued' },
 ): void {
   deps.emitMissionEvent(scope, {
     missionId: command.missionId,
@@ -967,6 +968,7 @@ function emitOperatorDirectionAccepted(
       kind: "operator_direction" as const,
       targetAgentId: command.targetAgentId,
       text: command.text,
+      ...queued,
     },
   });
 }
@@ -1013,7 +1015,7 @@ export async function deliverMissionDirectInstruction(
       ? stores.missions.hasCurrentKickoffAcceptance(mission.id)
       : false;
     if (
-      mission &&
+      !options.conversationAlreadyAccepted && mission &&
       isKickoffInProgressError(error, hasReceipt) &&
       sealedSquadHasOrchestrator(mission, deps)
     ) {
@@ -1028,17 +1030,8 @@ export async function deliverMissionDirectInstruction(
           "A coordenação ainda está no login. Conclua a autenticação e envie de novo.",
         );
       }
-      const queuedFingerprint = createHash("sha256")
-        .update(
-          JSON.stringify({
-            missionId: command.missionId,
-            targetAgentId: command.targetAgentId,
-            text: command.text,
-            phase: "kickoff-queue",
-          }),
-        )
-        .digest("hex");
-      enqueueKickoffDirect({
+      const queued = enqueueKickoffDirect({
+        scope,
         missionId: command.missionId,
         targetAgentId: command.targetAgentId,
         text: command.text,
@@ -1048,7 +1041,8 @@ export async function deliverMissionDirectInstruction(
           scope,
           command,
           deps,
-          queuedFingerprint,
+          queued.directionId,
+          { directionId: queued.directionId, deliveryState: 'queued' },
         );
       }
       return;
@@ -1111,12 +1105,14 @@ export async function flushQueuedKickoffDirectsForMission(
   scope: ProjectExecutionScope,
   stores: ProjectDomainStoreSuite,
   missionId: string,
+  deps: MissionDirectDeliveryDeps = productionMissionDirectDeliveryDeps,
 ): Promise<void> {
-  const queued = takeKickoffDirects(missionId);
+  const queued = takeKickoffDirects(missionId, scope);
   for (const item of queued) {
+    let deliveryState: 'delivered' | 'unproven' = 'unproven';
     try {
       await deliverMissionDirectInstruction(
-        scope,
+        item.scope,
         stores,
         {
           kind: "direct",
@@ -1124,15 +1120,20 @@ export async function flushQueuedKickoffDirectsForMission(
           targetAgentId: item.targetAgentId,
           text: item.text,
         },
-        productionMissionDirectDeliveryDeps,
+        deps,
         { conversationAlreadyAccepted: true },
       );
-    } catch (error) {
-      console.warn(
-        "[mission-direct] orientação enfileirada no kickoff não entregue:",
-        error instanceof Error ? error.message : error,
-      );
-    }
+      if (!sameScope(scope, item.scope)) throw new Error('mission direct coordination changed during delivery');
+      deliveryState = 'delivered';
+    } catch { /* Enter may have committed; consume once without replay or a no-effect claim. */ }
+    const recorded = deps.emitMissionEvent(item.scope, {
+      missionId: item.missionId, runId: 'operator-direction', type: 'custom', origin: 'main',
+      idempotencyKey: `operator_direction_delivery:${item.directionId}:${deliveryState}`,
+      payload: { kind: 'operator_direction_delivery', directionId: item.directionId, deliveryState,
+        reason: deliveryState === 'delivered' ? 'acceptance_proved' : 'delivery_unavailable' },
+    });
+    if (recorded) stores.missions.notifyDeliveryObservation?.(item.missionId);
+    else console.warn('[mission-direct] queued delivery observation unavailable');
   }
 }
 

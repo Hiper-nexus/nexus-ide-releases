@@ -49,6 +49,15 @@ afterEach(() => {
 });
 
 describe('scoped mission store', () => {
+  it('F-1105: a delivery observation notifies the existing scoped UI listeners without mutating the mission', () => {
+    const store = createScopedMissionStore(manager(), testProjectScope());
+    const mission = store.create({ title: 'Observed direction' }), before = store.get(mission.id);
+    let notices = 0; const unsubscribe = store.onChange(() => { notices++; });
+    store.notifyDeliveryObservation(mission.id);
+    expect(notices).toBe(1); expect(store.get(mission.id)).toEqual(before);
+    store.notifyDeliveryObservation('foreign-missing-mission');
+    expect(notices).toBe(1); unsubscribe();
+  });
   it('pages periodic candidate IDs without materializing full mission history', () => {
     let nextId = 0;
     const store = createScopedMissionStore(manager(), testProjectScope(), {

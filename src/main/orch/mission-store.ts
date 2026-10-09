@@ -410,6 +410,11 @@ export class ScopedMissionStore {
     return this.#binding.onChange(listener);
   }
 
+  /** Refresh the existing scoped mission/journal UI after a passive delivery observation, without changing authority or timestamps. */
+  notifyDeliveryObservation(missionId: string): void {
+    if (this.get(missionId)) this.#binding.emitChange();
+  }
+
   recordKickoffAcceptance(
     rawInput: RecordMissionKickoffAcceptance,
   ): MissionKickoffAcceptance {

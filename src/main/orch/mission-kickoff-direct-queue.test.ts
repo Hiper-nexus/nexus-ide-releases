@@ -12,25 +12,41 @@ import {
 afterEach(() => {
   resetKickoffDirectQueueForTests();
 });
+const scope = { version: 1 as const, identitySource: 'manifest' as const, installationId: 'i', projectId: 'p', checkoutId: 'c', rootRealPath: '/tmp/owned' };
 
 describe('mission-kickoff-direct-queue', () => {
+  it('F-1105: consumes only the originating checkout and gives repeated identical directions distinct correlations', () => {
+    const scope = { version: 1 as const, identitySource: 'manifest' as const, installationId: 'i', projectId: 'p', checkoutId: 'c', rootRealPath: '/tmp/owned', workspaceRootDevice: '1', workspaceRootInode: '2' };
+    const foreign = { ...scope, rootRealPath: '/tmp/foreign', workspaceRootInode: '3' };
+    const first = enqueueKickoffDirect({ scope, missionId: 'm1', targetAgentId: null, text: 'same direction' });
+    const second = enqueueKickoffDirect({ scope, missionId: 'm1', targetAgentId: null, text: 'same direction' });
+    enqueueKickoffDirect({ scope: foreign, missionId: 'm1', targetAgentId: null, text: 'foreign direction' });
+    expect(first.directionId).toMatch(/^[a-f0-9]{64}$/u);
+    expect(second.directionId).not.toBe(first.directionId);
+    scope.workspaceRootInode = '9';
+    expect(takeKickoffDirects('m1', { ...scope, workspaceRootInode: '2' }).map(item => item.text)).toEqual(['same direction', 'same direction']);
+    expect(takeKickoffDirects('m1', { ...scope, workspaceRootInode: '2' })).toEqual([]);
+    expect(takeKickoffDirects('m1', foreign).map(item => item.text)).toEqual(['foreign direction']);
+  });
   it('enfileira e devolve a orientação na ordem', () => {
     enqueueKickoffDirect({
+      scope,
       missionId: 'm1',
       targetAgentId: null,
       text: 'decida e entregue saas-waitlist/ sem perguntar',
     });
     enqueueKickoffDirect({
+      scope,
       missionId: 'm1',
       targetAgentId: 'ag-ux',
       text: 'foque no formulário',
     });
 
-    expect(takeKickoffDirects('m1').map((item) => item.text)).toEqual([
+    expect(takeKickoffDirects('m1', scope).map((item) => item.text)).toEqual([
       'decida e entregue saas-waitlist/ sem perguntar',
       'foque no formulário',
     ]);
-    expect(takeKickoffDirects('m1')).toEqual([]);
+    expect(takeKickoffDirects('m1', scope)).toEqual([]);
   });
 
   it('grava o recibo quando o pane está idle com briefing e sem auth', () => {
