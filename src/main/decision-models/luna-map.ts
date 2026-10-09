@@ -36,6 +36,12 @@ function readUsage(value: unknown): { input_tokens: number; output_tokens: numbe
   return { input_tokens: value.input_tokens, output_tokens: outputTokens };
 }
 
+/** Measurement has its own authority: the fixed requested model, not the answer verdict. */
+export function readLunaUsage(data: unknown): { input_tokens: number; output_tokens: number } | null {
+  if (!isRecord(data) || (data.model !== undefined && data.model !== LUNA_DECISION_MODEL)) return null;
+  return readUsage(data.usage);
+}
+
 function probabilityList(value: unknown): Record<string, unknown>[] | null {
   if (!Array.isArray(value)) return null;
   return value.every(isRecord) ? value : null;
@@ -93,7 +99,7 @@ export function mapLunaResponse(data: unknown, questions: Record<string, JevQues
     if (!mapped) return { ok: false, reason: 'ambiguous' };
     answers[original!] = mapped;
   }
-  const usage = readUsage(data.usage);
+  const usage = readLunaUsage(data);
   const validated = validateDecisionResponse(usage
     ? { model: LUNA_DECISION_MODEL, answers, usage }
     : { model: LUNA_DECISION_MODEL, answers }, questions, JEV_RESPONSE_POLICY);

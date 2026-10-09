@@ -5,7 +5,7 @@ import type { JevNoAnswerReason } from '../jev/jev-decision-log';
 import { validateDecisionImages } from './decision-images';
 import { decisionResultCostUsd } from './decision-pricing';
 import { redactQuestions, redactState } from './decision-redaction';
-import { mapLunaResponse, toLunaQuestion } from './luna-map';
+import { mapLunaResponse, readLunaUsage, toLunaQuestion } from './luna-map';
 
 const DECISIONS_URL = 'https://api.openai.com/v1/decisions';
 const MAX_QUESTIONS_PER_REQUEST = 64;
@@ -135,11 +135,13 @@ export async function judgeLuna(input: JudgeInput, token: string, deps: LunaDeps
       const body = JSON.stringify({ model: LUNA_DECISION_MODEL, input: decisionInput(input.state, input.images), questions: batch.wire });
       if (Buffer.byteLength(body, 'utf8') > MAX_BODY_BYTES) throw new LunaFailure('client-error');
       const envelope = await requestDecision(body, token, signal, deps.fetch ?? fetch, () => { requestCount++; });
+      // A paid response can be refused, unusable or revoked; its valid measurement survives.
+      const measurement = readLunaUsage(envelope);
+      if (measurement) { inputTokens += measurement.input_tokens; outputTokens += measurement.output_tokens; measuredBatches++; }
+      else usageMissing = true;
       signal.throwIfAborted();
       const mapped = mapLunaResponse(envelope, batch.questions, batch.ids);
       if (!mapped.ok) throw new LunaFailure(mapped.reason);
-      if (mapped.usage) { inputTokens += mapped.usage.input_tokens; outputTokens += mapped.usage.output_tokens; measuredBatches++; }
-      else usageMissing = true;
       for (const [id, answer] of Object.entries(mapped.result.answers)) answers.set(id, answer);
     }
     const result: JevResult = { model: LUNA_DECISION_MODEL, answers: Object.fromEntries(answers),
@@ -149,7 +151,7 @@ export async function judgeLuna(input: JudgeInput, token: string, deps: LunaDeps
   } catch (error) {
     if (requestCount) {
       try { input.onUsage?.({ inputTokens: measuredBatches ? inputTokens : null, requestCount, durationMs: now() - started,
-        usd: measuredBatches && measuredBatches === requestCount ? decisionResultCostUsd({ model: LUNA_DECISION_MODEL, answers: {},
+        usd: measuredBatches ? decisionResultCostUsd({ model: LUNA_DECISION_MODEL, answers: {},
           usage: { input_tokens: inputTokens, output_tokens: outputTokens } }) : null,
         usageIncomplete: requestCount > measuredBatches }); }
       catch { console.warn('[decision-models] usage callback failed'); }

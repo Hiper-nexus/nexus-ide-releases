@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { DecisionUsageReceipt } from '../../shared/decision-models';
 import type { JevQuestion } from '../jev/jev-client';
 import { judgeLuna } from './luna-client';
 
@@ -70,6 +71,57 @@ describe('OpenAI Decisions client', () => {
     await judgeLuna({ state: 'x', questions: noul, onNoAnswer: wrongModel }, TOKEN, {
       fetch: (async () => json({ model: 'gpt-4o', answers: [{ type: 'predicate', name: 'q0', probability: 0.2 }] })) as typeof fetch });
     expect(wrongModel).toHaveBeenCalledWith('malformed');
+  });
+
+  it.each([
+    { reason: 'refusal', answers: [{ type: 'refusal', name: 'q0' }] },
+    { reason: 'ambiguous', answers: [{ type: 'predicate', name: 'q0' }] },
+    { reason: 'malformed', answers: null },
+  ])('retains independently measured usage on a 200 $reason verdict', async ({ reason, answers }) => {
+    const receipts: DecisionUsageReceipt[] = [];
+    const reasons: string[] = [];
+    const result = await judgeLuna({ state: 'x', questions: noul,
+      onUsage: receipt => receipts.push(receipt), onNoAnswer: value => reasons.push(value) }, TOKEN, {
+      fetch: (async () => json({ model: 'gpt-6-luna', usage: { input_tokens: 1_000_000 }, answers })) as typeof fetch,
+    });
+    expect(result).toBeNull();
+    expect(reasons).toEqual([reason]);
+    expect(receipts).toEqual([expect.objectContaining({
+      inputTokens: 1_000_000, usd: 0.10, requestCount: 1, usageIncomplete: false,
+    })]);
+  });
+
+  it('retains usage when cancelled after the envelope has been parsed', async () => {
+    const controller = new AbortController();
+    const receipts: DecisionUsageReceipt[] = [];
+    const reasons: string[] = [];
+    const result = await judgeLuna({ state: 'x', questions: noul, signal: controller.signal,
+      onUsage: receipt => receipts.push(receipt), onNoAnswer: reason => reasons.push(reason) }, TOKEN, {
+      fetch: (async () => {
+        const response = json({ model: 'gpt-6-luna', usage: { input_tokens: 1_000_000 },
+          answers: [{ type: 'predicate', name: 'q0', probability: 0.8 }] });
+        const reader = response.body!.getReader();
+        const release = reader.releaseLock.bind(reader);
+        reader.releaseLock = () => { release(); controller.abort(); };
+        Object.defineProperty(response.body, 'getReader', { value: () => reader });
+        return response;
+      }) as typeof fetch,
+    });
+    expect(result).toBeNull(); expect(reasons).toEqual(['aborted']);
+    expect(receipts).toEqual([expect.objectContaining({
+      inputTokens: 1_000_000, usd: 0.10, requestCount: 1, usageIncomplete: false,
+    })]);
+  });
+
+  it.each([
+    { model: 'gpt-4o', usage: { input_tokens: 1_000_000 } },
+    { model: 'gpt-6-luna', usage: { input_tokens: -1 } },
+  ])('does not trust a mismatched model or invalid measurement %j', async envelope => {
+    const receipts: DecisionUsageReceipt[] = [];
+    expect(await judgeLuna({ state: 'x', questions: noul, onUsage: receipt => receipts.push(receipt) }, TOKEN, {
+      fetch: (async () => json({ ...envelope, answers: [{ type: 'refusal', name: 'q0' }] })) as typeof fetch,
+    })).toBeNull();
+    expect(receipts).toEqual([expect.objectContaining({ inputTokens: null, usd: null, requestCount: 1, usageIncomplete: true })]);
   });
 
   it('redacts secrets, sends images only as data URLs, and does not log the token', async () => {
