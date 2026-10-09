@@ -126,7 +126,7 @@ export function createCdpRelayConnection(
           },
         };
       case 'Target.getBrowserContexts':
-        return { browserContextIds: [] };
+        return { browserContextIds: [BROWSER_CONTEXT_ID] };
       case 'Target.getTargets':
         return { targetInfos: [await targetInfo()] };
       case 'Target.attachToBrowserTarget':

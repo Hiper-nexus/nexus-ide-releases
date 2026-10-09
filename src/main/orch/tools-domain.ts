@@ -37,6 +37,7 @@ import {
   listPaneSnapshots,
   readSessionOutput,
   waitForIdle,
+  wasOrchestratorOperatorDismissed,
 } from './pane-registry';
 import {
   adapterIdsWithoutNexusMcp,
@@ -612,6 +613,20 @@ function missionLeadershipRefusalHint(missionId: string): string {
   );
 }
 
+function operatorDismissedResumeResult(
+  missionId: string,
+  error = 'orchestrator_operator_dismissed: o pane do coordenador foi fechado — use Retomar para reabrir a missão',
+) {
+  return {
+    ok: false as const,
+    missionId,
+    reason: 'orchestrator_operator_dismissed' as const,
+    resumed: false as const,
+    error,
+    hint: 'O pane do coordenador foi fechado. Use Retomar para reabrir a missão.',
+  };
+}
+
 /**
  * Resto da missão antiga (F-1040): o Codex promovido indevidamente ficava
  * como Maestro somente leitura e só o botão “Retomar missão” resolvia — o
@@ -667,6 +682,12 @@ const missionRequestResumeTool: McpToolDef = {
         hint: 'Só o botão “Retomar missão” da interface reabre uma missão encerrada pelo operador.',
       };
     }
+    // F-245: remount automático com Maestro dispensado volta sem lançar e sem
+    // religar. Tratar isso como sucesso mandava o pane velho repetir o pedido
+    // com a liderança ainda ausente.
+    if (wasOrchestratorOperatorDismissed(missionId)) {
+      return operatorDismissedResumeResult(missionId);
+    }
     try {
       // Chamada de agente não é o botão Retomar: remount automático preserva
       // o veredito de encerramento do operador.
@@ -676,6 +697,9 @@ const missionRequestResumeTool: McpToolDef = {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('orchestrator_operator_dismissed')) {
+        return operatorDismissedResumeResult(missionId, message);
+      }
       // Encerrada pelo operador não é falha da chamada: é o veredito.
       if (message.includes('mission_closed_by_operator')) {
         return {

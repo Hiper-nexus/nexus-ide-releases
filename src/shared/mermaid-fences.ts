@@ -44,14 +44,13 @@ export function splitMarkdownMermaid(markdown: string): MarkdownPart[] {
     const lang = (open?.[3] ?? '').toLowerCase();
     const isMermaid = lang === 'mermaid' || lang === 'mmd';
     if (open && isMermaid) {
-      const fence = open[2];
+      const fence = open[2] ?? '';
       const indent = open[1];
       flushText();
       const sourceLines: string[] = [];
       i += 1;
       while (i < lines.length) {
-        const close = FENCE.exec(lines[i] ?? '');
-        if (close && close[2][0] === fence[0] && (close[3] ?? '') === '') {
+        if (closingFence(lines[i] ?? '', fence)) {
           i += 1;
           break;
         }

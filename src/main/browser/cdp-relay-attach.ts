@@ -30,6 +30,56 @@ export interface CdpRelayAttach {
   readonly attached: boolean;
 }
 
+interface DebuggerLease {
+  count: number;
+  /** Este processo chamou `attach`. O preview manager que já estava ligado não solta. */
+  ownedByRelay: boolean;
+}
+
+const debuggerLeases = new WeakMap<object, DebuggerLease>();
+
+function retainDebugger(
+  webContents: object,
+  debuggerApi: {
+    isAttached: () => boolean;
+    attach: (protocolVersion: string) => void;
+  },
+): DebuggerLease {
+  const existing = debuggerLeases.get(webContents);
+  if (existing) {
+    existing.count += 1;
+    return existing;
+  }
+  let ownedByRelay = false;
+  if (!debuggerApi.isAttached()) {
+    try {
+      debuggerApi.attach('1.3');
+      ownedByRelay = true;
+    } catch {
+      // Já attachado por outra origem: o relay compartilha o attach.
+    }
+  }
+  const lease: DebuggerLease = { count: 1, ownedByRelay };
+  debuggerLeases.set(webContents, lease);
+  return lease;
+}
+
+function releaseDebugger(
+  webContents: object,
+  debuggerApi: { detach: () => void },
+  lease: DebuggerLease,
+): void {
+  lease.count -= 1;
+  if (lease.count > 0) return;
+  debuggerLeases.delete(webContents);
+  if (!lease.ownedByRelay) return;
+  try {
+    debuggerApi.detach();
+  } catch {
+    // Já detachado pelo preview manager.
+  }
+}
+
 /** Converte o `debugger` do Electron no `CdpRelayTarget`. */
 function targetFromWebContents(
   webContents: WebContents,
@@ -93,16 +143,8 @@ export function attachCdpRelay(
     options.onDownloadDirectory,
   );
   const connection = createCdpRelayConnection(target, options.write);
-  let attachedHere = false;
   const debuggerApi = webContents.debugger;
-  if (!debuggerApi.isAttached()) {
-    try {
-      debuggerApi.attach('1.3');
-      attachedHere = true;
-    } catch {
-      // Já attachado por outra origem: o relay compartilha o attach.
-    }
-  }
+  const lease = retainDebugger(webContents, debuggerApi);
   const onMessage = (
     _event: unknown,
     method: string,
@@ -112,22 +154,19 @@ export function attachCdpRelay(
     connection.event(method, params, sessionId);
   };
   debuggerApi.on('message', onMessage);
+  let released = false;
   return {
     connection,
     attached: debuggerApi.isAttached(),
     detach: () => {
+      if (released) return;
+      released = true;
       try {
         debuggerApi.removeListener('message', onMessage);
       } catch {
         // Debugger já destruído.
       }
-      if (attachedHere) {
-        try {
-          debuggerApi.detach();
-        } catch {
-          // Já detachado pelo preview manager.
-        }
-      }
+      releaseDebugger(webContents, debuggerApi, lease);
     },
   };
 }

@@ -20,6 +20,39 @@ describe('WSL runtime backend (first cut)', () => {
     expect(plan.windowsUncCwd).toContain('wsl.localhost\\Ubuntu');
   });
 
+  it('encodes requested env into the bash command', () => {
+    const plan = planWslRuntime({
+      distro: 'Ubuntu',
+      hostCwd: '/tmp',
+      command: ['git', 'status'],
+      env: { TOKEN: "a'b;rm", PATH_EXTRA: '/opt/bin' },
+    });
+    expect(plan.argv.at(-1)).toBe(
+      "export TOKEN='a'\\''b;rm'; export PATH_EXTRA=/opt/bin; git status",
+    );
+  });
+
+  it('rejects an unsafe env name instead of ignoring it', () => {
+    expect(() =>
+      planWslRuntime({
+        distro: 'Ubuntu',
+        hostCwd: '/tmp',
+        command: ['ls'],
+        env: { 'BAD NAME': 'x' },
+      }),
+    ).toThrow(/env name is not safe/);
+  });
+
+  it('rejects a UNC path whose distro is not the selected one', () => {
+    expect(() =>
+      planWslRuntime({
+        distro: 'Debian',
+        hostCwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\app',
+        command: ['git', 'status'],
+      }),
+    ).toThrow(/Ubuntu does not match selected distro Debian/);
+  });
+
   it('maps WSL UNC host cwd to a Linux path inside the distro', () => {
     const plan = planWslRuntime({
       distro: 'Debian',

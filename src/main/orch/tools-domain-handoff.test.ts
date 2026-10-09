@@ -75,6 +75,19 @@ const jevReview = vi.hoisted(() => ({
 
 vi.mock("./jev-handoff-review", () => jevReview);
 
+const paneMocks = vi.hoisted(() => ({
+  listPaneSnapshots: vi.fn(
+    (): Array<{ paneId: string; sessionId: string | null; paneNumber?: number }> => [
+      { paneId: "pane-live", sessionId: "session-live", paneNumber: 1 },
+    ],
+  ),
+}));
+
+vi.mock("./pane-registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./pane-registry")>()),
+  listPaneSnapshots: () => paneMocks.listPaneSnapshots(),
+}));
+
 const regressionGate = vi.hoisted(() => ({
   evaluateHandoffRegressionGate: vi.fn<
     () => Promise<
@@ -1831,6 +1844,72 @@ describe("handoff MCP stop receipt", () => {
             }),
           }),
         },
+        orchestratorContext(),
+      ),
+    ).rejects.toThrow(/cursor inválido/);
+    expect(ackSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns a cursor envelope when the pane filter matches nothing", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn(() => 1);
+    const listCursorPage = vi.fn(() => []);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        listCursorPage,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-hidden",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+    ]);
+
+    const page = await listTool().handler(
+      { panes: ["missing-pane"], limit: 10 },
+      orchestratorContext(),
+    );
+    expect(page).toEqual({
+      items: [],
+      nextCursor: null,
+      hasMoreHistory: false,
+    });
+    expect(listCursorPage).not.toHaveBeenCalled();
+    expect(ackSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a bad cursor when the pane filter matches nothing and acks nothing", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn(() => 1);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-hidden",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+    ]);
+
+    await expect(
+      listTool().handler(
+        { panes: ["missing-pane"], limit: 10, cursor: "!!!not-a-cursor!!!" },
         orchestratorContext(),
       ),
     ).rejects.toThrow(/cursor inválido/);

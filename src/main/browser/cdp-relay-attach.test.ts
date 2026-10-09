@@ -61,6 +61,34 @@ describe('CdpRelay attach (Electron plug)', () => {
     expect(wc.debugger.removeListener).toHaveBeenCalled();
   });
 
+  it('keeps the debugger attached while another relay still holds it', async () => {
+    const wc = fakeWebContents();
+    const first = attachCdpRelay(wc as never, { write: () => undefined });
+    const second = attachCdpRelay(wc as never, { write: () => undefined });
+    expect(wc.debugger.attach).toHaveBeenCalledTimes(1);
+    first.detach();
+    expect(wc.debugger.detach).not.toHaveBeenCalled();
+    expect(wc.debugger.isAttached()).toBe(true);
+    second.connection.receive(
+      JSON.stringify({
+        id: 3,
+        method: 'Page.navigate',
+        params: { url: 'https://still-held' },
+        sessionId: 'nexus-preview-page',
+      }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(wc.debugger.sendCommand).toHaveBeenCalledWith(
+      'Page.navigate',
+      { url: 'https://still-held' },
+      undefined,
+    );
+    second.detach();
+    expect(wc.debugger.detach).toHaveBeenCalledTimes(1);
+    expect(wc.debugger.isAttached()).toBe(false);
+  });
+
   it('shares an already-attached debugger without re-attaching', () => {
     const wc = fakeWebContents();
     wc.debugger.isAttached.mockReturnValue(true);
