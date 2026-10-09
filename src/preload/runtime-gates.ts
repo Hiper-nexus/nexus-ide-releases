@@ -34,7 +34,7 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
     const observe = (missionId: string) => request('observe', { missionId });
     const direct = async (missionId: string, text: string, targetAgentId: string | null = null) => { check(); await api.mission.command({ kind: 'direct', missionId, targetAgentId, text }); check(); };
     const prepare = async (lane: 'ops' | 'standard') => {
-      const tools = ['nexus_pane_spawn', 'nexus_handoff_submit', 'nexus_handoff_list', 'nexus_handoff_ack', 'nexus_clarify', 'nexus_mission_set_status', 'nexus_terminal_run', 'nexus_file_read', 'nexus_file_write', 'nexus_browser_open', 'nexus_browser_screenshot'];
+      const tools = ['nexus_pane_spawn', 'nexus_handoff_submit', 'nexus_handoff_list', 'nexus_handoff_ack', 'nexus_clarify', 'nexus_mission_set_status', 'nexus_terminal_run', 'nexus_file_read', 'nexus_file_write', 'nexus_preview_start', 'nexus_browser_open', 'nexus_browser_screenshot'];
       const review = await api.mission.prepare({ title: `Runtime ${lane} ${marker}`, objective: lane === 'ops' ?
         'Perform a finite operational echo in this private workspace without delegating or editing code.' : 'Write runtime-report.txt and review the private runtime UI and report using at most two workers.',
         contextPaths: [], advanced: { lane }, roster: [

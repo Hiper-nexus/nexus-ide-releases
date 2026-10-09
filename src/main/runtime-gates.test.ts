@@ -32,9 +32,12 @@ vi.mock('./orch/mission-event-emit', () => ({ getMissionEventRuntimeManager: () 
 import { proveRuntimeGates } from './runtime-gates';
 import { RUNTIME_CHANNELS } from '../shared/runtime-gates';
 import { prepareEphemeralHome } from './orch/hooks-gen';
+import { startPreview, stopPreviewWithProof } from './orch/preview-server';
 const roots: string[] = [];
+const previews: Array<{ id: string; scope: OwnedAgentSessionInfo['scope'] }> = [];
 const savedEnv = new Map<string, string | undefined>();
 afterEach(async () => { resetGateForTests(); deps.agents = []; deps.tap = null; vi.unstubAllGlobals(); vi.unstubAllEnvs(); for (const [key, value] of savedEnv) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } savedEnv.clear();
+  for (const preview of previews.splice(0)) await stopPreviewWithProof(preview.id, preview.scope);
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true }); });
 async function fixture(options: { helloNonce?: string; helloPid?: number; homeMode?: number; startupRefused?: boolean } = {}) {
   for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'CLAUDE_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR']) savedEnv.set(key, process.env[key]);
@@ -226,12 +229,45 @@ const visualArtifact = { id: 'artifact-one', missionId: 'm', url: 'http://127.0.
   path: '/private/unit-artifact.png', sha256: 'a'.repeat(64) };
 async function visualAgent(f: Awaited<ReturnType<typeof fixture>>) {
   const result = await scopedAgent(f);
+  const dir = path.join(result.agent.scope.rootRealPath, 'runtime-visual-11111111-1111-4111-8111-111111111111');
+  await fs.mkdir(dir); await fs.writeFile(path.join(dir, 'index.html'), 'RT_VISUAL_11111111-1111-4111-8111-111111111111');
+  const preview = await startPreview(dir, result.agent.scope);
+  previews.push({ id: preview.id, scope: result.agent.scope });
+  visualArtifact.url = preview.url;
   result.ctx.visualTask = { id: 'assignment-one' } as NonNullable<typeof result.ctx.visualTask>;
   deps.manager = { open: () => ({ db: { prepare: () => ({ all: () => [] }) } }) };
   deps.visual.mockResolvedValue({ required: true, verified: true, artifactId: visualArtifact.id });
   deps.screenshot.mockResolvedValue(visualArtifact);
   return result;
 }
+it('F-1110: verifies the current execution registered preview URL rather than the inference gateway', async () => {
+  const f = await fixture(); const { ctx, agent } = await visualAgent(f); const event = { sender: f.wc, senderFrame: f.frame };
+  const dir = path.join(agent.scope.rootRealPath, 'runtime-visual-11111111-1111-4111-8111-111111111111');
+  await fs.mkdir(dir, { recursive: true }); await fs.writeFile(path.join(dir, 'index.html'), 'RT_VISUAL_11111111-1111-4111-8111-111111111111');
+  const preview = await startPreview(dir, agent.scope);
+  deps.screenshot.mockResolvedValue({ ...visualArtifact, url: preview.url });
+  try {
+    expect((await f.request(event, { operation: 'observe', missionId: 'm' })).agents[0].visual).toEqual({ assignmentId: ctx.visualTask!.id, artifactId: visualArtifact.id, sha256: visualArtifact.sha256 });
+    deps.screenshot.mockResolvedValue({ ...visualArtifact, url: 'http://127.0.0.1:45678/runtime-page' });
+    await expect(f.request(event, { operation: 'observe', missionId: 'm' })).rejects.toThrow('visual artifact provenance differs');
+  } finally { await stopPreviewWithProof(preview.id, agent.scope); f.controller.abort(); await f.rejected; }
+});
+it.each(['wrong-mission', 'wrong-directory', 'wrong-root', 'wrong-checkout', 'wrong-assignment', 'stopped-preview'] as const)('F-1110: refuses a %s capture even with a valid native artifact', async variant => {
+  const f = await fixture(); const { agent, ctx } = await visualAgent(f); const event = { sender: f.wc, senderFrame: f.frame };
+  const root = variant === 'wrong-root' ? f.root : agent.scope.rootRealPath;
+  const dir = path.join(root, variant === 'wrong-directory' ? 'foreign-visual' : 'runtime-visual-11111111-1111-4111-8111-111111111111');
+  await fs.mkdir(dir, { recursive: true }); await fs.writeFile(path.join(dir, 'index.html'), 'unit');
+  const previewScope = variant === 'wrong-checkout' ? { ...agent.scope, checkoutId: 'foreign' } : agent.scope;
+  const preview = await startPreview(dir, previewScope);
+  deps.screenshot.mockResolvedValue({ ...visualArtifact, missionId: variant === 'wrong-mission' ? 'foreign' : 'm', url: preview.url });
+  if (variant === 'wrong-assignment') deps.screenshot.mockImplementationOnce(async () => {
+    ctx.visualTask = { id: 'substituted-assignment' } as NonNullable<typeof ctx.visualTask>;
+    return { ...visualArtifact, url: preview.url };
+  });
+  if (variant === 'stopped-preview') await stopPreviewWithProof(preview.id, previewScope);
+  try { await expect(f.request(event, { operation: 'observe', missionId: 'm' })).rejects.toThrow('visual artifact provenance differs'); }
+  finally { if (variant !== 'stopped-preview') await stopPreviewWithProof(preview.id, previewScope); f.controller.abort(); await f.rejected; }
+});
 it.each(['verification', 'screenshot'] as const)('revocation during visual %s never returns stale agent/PID/conversation', async stage => {
   const f = await fixture(); const { ctx } = await visualAgent(f); const event = { sender: f.wc, senderFrame: f.frame };
   let release!: () => void;

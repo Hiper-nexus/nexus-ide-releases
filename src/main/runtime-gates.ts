@@ -25,6 +25,7 @@ import { getMissionEventRuntimeManager } from './orch/mission-event-emit';
 import { parseFunctionalSmokeResult } from '../shared/smoke-types';
 import { armPrivateMissionCommandProbe } from './private-mission-command-probe';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
+import { listPreviews, isRunningPreviewDescriptorForScope } from './orch/preview-server';
 const execute = promisify(execFile);
 
 export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMain; userData: string; workspacePath: string;
@@ -192,7 +193,10 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
               if (verdict.required && verdict.verified) {
                 const manager = getMissionEventRuntimeManager();
                 const artifact = manager && await createScopedBrowserArtifactStore(manager, scope).verifiedScreenshot(verdict.artifactId, assertCurrent); assertCurrent();
-                if (!artifact || artifact.missionId !== mission.id || artifact.url !== `${config.gateway}/runtime-page`) throw new Error('visual artifact provenance differs');
+                const execution = executionScopeFor(ctx);
+                const preview = listPreviews(execution).find(p => p.dir === path.join(execution.rootRealPath, `runtime-visual-${config.gatewayNonce}`) && p.url === artifact?.url);
+                if (!artifact || artifact.missionId !== mission.id || ctx.visualTask?.id !== assignmentId || !preview ||
+                  !isRunningPreviewDescriptorForScope(preview.id, artifact.url, execution)) throw new Error('visual artifact provenance differs');
                 visual = { assignmentId, artifactId: artifact.id, sha256: artifact.sha256 };
                 stagedCaptures.push({ ...visual, path: artifact.path });
               }

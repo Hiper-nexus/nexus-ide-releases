@@ -23,30 +23,50 @@ function objects(value, output = []) {
   else if (value && typeof value === 'object') { output.push(value); Object.values(value).forEach(v => objects(v, output)); }
   return output;
 }
-function questionToolResult(messages, call) {
+function toolResult(messages, call, kind = 'QUESTION') {
   const results = messages.filter(message => message.role === 'user' && Array.isArray(message.content))
     .flatMap(message => message.content).filter(block => block.type === 'tool_result' && block.tool_use_id === call.id);
-  if (results.length !== 1 || (results[0].is_error !== undefined && results[0].is_error !== false)) throw new Error('real QUESTION tool result absent, ambiguous or failed');
+  if (results.length !== 1 || (results[0].is_error !== undefined && results[0].is_error !== false)) throw new Error(`real ${kind} tool result absent, ambiguous or failed`);
   const content = results[0].content;
   const text = typeof content === 'string' ? content : Array.isArray(content) && content.length === 1 && content[0].type === 'text' ? content[0].text : null;
-  if (typeof text !== 'string') throw new Error('real QUESTION tool result content invalid');
+  if (typeof text !== 'string') throw new Error(`real ${kind} tool result content invalid`);
   const value = JSON.parse(text);
-  if (!value || typeof value !== 'object' || Array.isArray(value) || value.ok === false || value.isError === true) throw new Error('real QUESTION tool result invalid');
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.ok === false || value.isError === true) throw new Error(`real ${kind} tool result invalid`);
   return value;
+}
+function writeReply(messages, step, tool, calls, nonce) {
+  const dir = `runtime-visual-${nonce}`, file = `${dir}/index.html`;
+  if (step === 0) return tool('nexus_file_write', { path: file,
+    content: `<!doctype html><html><head><meta charset="utf-8"><title>Private runtime visual fixture</title></head><body style="background:#f4f4f4;color:#161616;padding:40px"><h1>Runtime visual fixture</h1><p>RT_VISUAL_${nonce}</p><p>This local page is the complete declared visual assignment.</p></body></html>` });
+  if (toolResult(messages, calls[0], 'WRITE').path !== file) throw new Error('real visual file write result differs');
+  if (step === 1) return tool('nexus_preview_start', { dir });
+  const preview = toolResult(messages, calls[1], 'WRITE'), url = new URL(preview.url);
+  if (!/^preview-[A-Za-z0-9-]+$/u.test(preview.id ?? '') || !Number.isInteger(preview.port) || preview.port < 1 || preview.port > 65535 ||
+    url.href !== `http://127.0.0.1:${preview.port}/`) throw new Error('real preview result invalid');
+  if (step === 2) return tool('nexus_browser_open', { url: preview.url });
+  const opened = toolResult(messages, calls[2], 'WRITE');
+  if (opened.ok !== true || typeof opened.paneId !== 'string' || !opened.paneId || opened.state?.url !== preview.url) throw new Error('real browser open result differs');
+  if (step === 3) return tool('nexus_browser_screenshot', { paneId: opened.paneId });
+  const capture = toolResult(messages, calls[3], 'WRITE');
+  if (typeof capture.artifactId !== 'string' || !/^[a-f0-9]{64}$/u.test(capture.sha256 ?? '') || typeof capture.path !== 'string' ||
+    capture.width <= 0 || capture.height <= 0 || capture.url !== preview.url) throw new Error('real native capture result differs');
+  if (step === 4) return tool('nexus_file_write', { path: 'runtime-report.txt', content: `RT_REPORT_${nonce}\nPrivate acceptance report created by the real CLI through its authorized Nexus tool.\n` });
+  if (toolResult(messages, calls[4], 'WRITE').path !== 'runtime-report.txt') throw new Error('real report write result differs');
+  if (step === 5) return tool('nexus_handoff_submit', { status: 'success',
+    summary: `RT_WRITE_${nonce}: Private runtime acceptance report was written through scoped Nexus tools. This durable full report preserves the actual result and deliberately contains no operator credentials or external data.`,
+    fullText: `RT_WRITE_${nonce}\nThe real CLI wrote the nonce page in its execution workspace, started an ordinary Nexus preview, opened the exact returned URL ${preview.url}, captured its native PNG and wrote runtime-report.txt. Capture artifact: ${capture.artifactId}; SHA256: ${capture.sha256}; dimensions: ${capture.width}x${capture.height}. Pixel inspection remains pending with the external verifier; capture is not an assertion of image contents.\nNo operator credentials, external pages, login, or model inference service were used by this fixture. The handoff and its ACK still require their physical authenticated Nexus receipts and normal Main gates.`,
+    filesModified: [file, 'runtime-report.txt'], artifacts: [{ kind: 'nexus.browser.screenshot', payload: capture }] });
+  return undefined;
 }
 /** Only inference is simulated. Every Nexus tool result must come from the real installed CLI. */
 export async function startRuntimeGateway(nonce) {
   if (!/^[a-f0-9-]{36}$/u.test(nonce)) throw new Error('runtime gateway nonce invalid');
   let requests = 0, stopped = false, closeFlight = null;
-  const sockets = new Set(), observations = [], questionCalls = [];
+  const sockets = new Set(), observations = [], questionCalls = [], writeCalls = [];
   const server = http.createServer((req, res) => {
     req.setTimeout(5000, () => req.destroy());
     if (stopped) { res.writeHead(503); res.end(); return; }
     if (req.url === '/runtime-hello' && req.method === 'GET') { res.end(JSON.stringify({ nonce, pid: process.pid })); return; }
-    if (req.url === '/runtime-page' && req.method === 'GET') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" });
-      res.end(`<html><head><title>Private runtime visual fixture</title></head><body style="background:#f4f4f4;color:#161616;padding:40px"><h1>Runtime visual fixture</h1><p>RT_VISUAL_${nonce}</p><p>This local page is the complete declared visual assignment.</p></body></html>`); return;
-    }
     const requestPath = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
     if (req.method !== 'POST' || !['/v1/messages', '/v1/messages/count_tokens'].includes(requestPath)) { res.writeHead(404); res.end('{}'); return; }
     if (req.headers['x-api-key'] !== `rt-${nonce}` && req.headers.authorization !== `Bearer rt-${nonce}`) { res.writeHead(401); res.end('{}'); return; }
@@ -62,7 +82,7 @@ export async function startRuntimeGateway(nonce) {
         const markers = [...text.matchAll(/RT_GATE (OPS|SPAWN|WRITE|REVIEW|ACK|QUESTION|RESUME|IDLE)/gu)];
         const kind = markers.at(-1)?.[1];
         const assistantBlocks = (body.messages ?? []).filter(message => message.role === 'assistant' && Array.isArray(message.content)).flatMap(message => message.content);
-        const used = (kind === 'QUESTION' ? assistantBlocks : all).filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
+        const used = (kind === 'QUESTION' || kind === 'WRITE' ? assistantBlocks : all).filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
         const step = used.length;
         if (kind === 'QUESTION' && (!text.includes(`RT_GATE QUESTION ${nonce}`) || step > 2)) throw new Error('QUESTION instruction scope or step invalid');
         const tool = (suffix, input) => {
@@ -71,6 +91,7 @@ export async function startRuntimeGateway(nonce) {
           observations.push({ kind, step, tool: suffix });
           const call = { type: 'tool_use', id: `toolu_rt_${kind}_${step}`, name: choices[0].name, input };
           if (kind === 'QUESTION') questionCalls[step] = call;
+          if (kind === 'WRITE') writeCalls[step] = call;
           return call;
         };
         let content = { type: 'text', text: 'Runtime fixture ready; waiting for scoped verifier instruction.' };
@@ -78,24 +99,22 @@ export async function startRuntimeGateway(nonce) {
         else if (kind === 'SPAWN' && step < 2) content = tool('nexus_pane_spawn', { adapterId: 'claude', agentName: step ? 'Runtime reviewer' : 'Runtime writer',
           role: 'worker', task: step ? 'Review runtime report' : 'Fix the UI visual fixture inspection report',
           prompt: `RT_GATE IDLE ${nonce}. ${step ? 'Review the report when instructed.' : 'Fix the UI visual fixture inspection report: capture the local page with the Nexus browser and write runtime-report.txt when instructed.'} Wait for the scoped follow-up; use only Nexus tools within the approved private workspace.` });
-        else if (kind === 'WRITE' && step === 0) content = tool('nexus_browser_open', { url: `http://127.0.0.1:${server.address().port}/runtime-page` });
-        else if (kind === 'WRITE' && step === 1) {
-          const opened = [...all].reverse().find(v => v.ok === true && typeof v.paneId === 'string');
-          if (!opened) throw new Error('real browser open result absent'); content = tool('nexus_browser_screenshot', { paneId: opened.paneId });
+        else if (kind === 'WRITE') {
+          if (!text.includes(`RT_GATE WRITE ${nonce}`) || step > 6 || !used.every((call, index) => {
+            const issued = writeCalls[index];
+            return issued && call.id === issued.id && call.name === issued.name && call.input &&
+              Object.keys(call.input).length === Object.keys(issued.input).length &&
+              Object.keys(issued.input).every(key => JSON.stringify(call.input[key]) === JSON.stringify(issued.input[key]));
+          })) throw new Error('real WRITE instruction or tool call binding invalid');
+          content = writeReply(body.messages, step, tool, writeCalls, nonce) ?? content;
         }
-        else if (kind === 'WRITE' && step === 2) content = tool('nexus_file_write', { path: 'runtime-report.txt', content: `RT_REPORT_${nonce}\nPrivate acceptance report created by the real CLI through its authorized Nexus tool.\n` });
         else if (kind === 'REVIEW' && step === 0) content = tool('nexus_file_read', { path: 'runtime-report.txt' });
-        else if ((kind === 'WRITE' && step === 3 || kind === 'REVIEW' && step === 1)) {
-          const capture = [...all].reverse().find(v => typeof v.artifactId === 'string' && /^[a-f0-9]{64}$/u.test(v.sha256 ?? '') && typeof v.path === 'string' && v.width > 0 && v.height > 0);
-          if (kind === 'WRITE' && !capture) throw new Error('real native capture result absent');
-          if (kind === 'REVIEW' && !all.some(v => typeof v.content === 'string' && v.content.includes(`RT_REPORT_${nonce}`))) throw new Error('real file read result absent');
+        else if (kind === 'REVIEW' && step === 1) {
+          if (!all.some(v => typeof v.content === 'string' && v.content.includes(`RT_REPORT_${nonce}`))) throw new Error('real file read result absent');
           content = tool('nexus_handoff_submit', { status: 'success',
           summary: `RT_${kind}_${nonce}: Private runtime acceptance report was ${kind === 'WRITE' ? 'written' : 'read and reviewed'} through scoped Nexus tools. This durable full report preserves the actual result and deliberately contains no operator credentials or external data.`,
-          fullText: `RT_${kind}_${nonce}\nThe real CLI executed the advertised scoped Nexus tools for the approved private runtime fixture. ${kind === 'WRITE' ?
-            `The writer opened the loopback runtime-page in the Nexus browser, captured its native PNG and wrote runtime-report.txt. Capture artifact: ${capture.artifactId}; SHA256: ${capture.sha256}; dimensions: ${capture.width}x${capture.height}. Pixel inspection remains pending with the external verifier; capture is not an assertion of image contents.` :
-            'The reviewer read runtime-report.txt using the real file read tool and observed the RT_REPORT marker for this fixture.'}\nNo operator credentials, external pages, login, or model inference service were used by this fixture. The handoff and its ACK still require their physical authenticated Nexus receipts and normal Main gates.`,
-          filesModified: kind === 'WRITE' ? ['runtime-report.txt'] : [],
-          artifacts: kind === 'WRITE' ? [{ kind: 'nexus.browser.screenshot', payload: capture }] : [] });
+          fullText: `RT_REVIEW_${nonce}\nThe real CLI executed the advertised scoped Nexus tools for the approved private runtime fixture. The reviewer read runtime-report.txt using the real file read tool and observed the RT_REPORT marker for this fixture.\nNo operator credentials, external pages, login, or model inference service were used by this fixture. The handoff and its ACK still require their physical authenticated Nexus receipts and normal Main gates.`,
+          filesModified: [], artifacts: [] });
         }
         else if (kind === 'QUESTION' && step === 0) content = tool('nexus_clarify', { question: `RT_QUESTION_${nonce}: select the private fixture route.`, options: ['Proceed', 'Wait'], allowFreeform: false });
         else if (kind === 'QUESTION') {
@@ -105,7 +124,7 @@ export async function startRuntimeGateway(nonce) {
               Object.keys(call.input).length === Object.keys(issued.input).length &&
               Object.keys(issued.input).every(key => JSON.stringify(call.input[key]) === JSON.stringify(issued.input[key]));
           })) throw new Error('real QUESTION tool call binding invalid');
-          const result = questionToolResult(body.messages, questionCalls[0]);
+          const result = toolResult(body.messages, questionCalls[0]);
           const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value);
           if (!identifier(result.missionId) || !identifier(result.questionId) || result.question !== questionCalls[0].input.question || result.allowFreeform !== false ||
             !Array.isArray(result.chips) || result.chips.length !== 2 || result.chips.some((chip, index) => !chip || !identifier(chip.id) || chip.label !== questionCalls[0].input.options[index]) ||
@@ -113,7 +132,7 @@ export async function startRuntimeGateway(nonce) {
           if (step === 1) content = tool('nexus_mission_set_status', { missionId: result.missionId, status: 'blocked',
             note: `RT_QUESTION_${nonce}: awaiting the operator's registered private fixture route answer.` });
           else {
-            const status = questionToolResult(body.messages, questionCalls[1]);
+            const status = toolResult(body.messages, questionCalls[1]);
             if (status.id !== result.missionId || status.status !== 'blocked' || status.intentState !== 'blocked_user' ||
               typeof status.learnings !== 'string' || !status.learnings.includes(questionCalls[1].input.note)) throw new Error('real QUESTION blocked status result invalid or foreign');
           }

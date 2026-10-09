@@ -6,11 +6,13 @@ import { RUNTIME_CHANNELS } from '../shared/runtime-gates';
 import { isToolAllowedForRole } from '../main/orch/gate';
 it('the private frozen chief can register a question and declare its normal blocked status', async () => {
   const ipc = Object.assign(new EventEmitter(), { invoke: vi.fn(), send: (channel: string, value: unknown) => ipc.emit(channel, value) });
-  let statusAllowed = false;
+  let statusAllowed = false, previewAllowed = false;
   const api = { mission: { prepare: async (review: { roster: { category: string; allowedTools: string[] }[] }) => {
     const chief = review.roster.find(agent => agent.category === 'orchestrator')!;
     statusAllowed = isToolAllowedForRole('orchestrator', chief.allowedTools, 'nexus_mission_set_status');
     expect(isToolAllowedForRole('orchestrator', chief.allowedTools, 'nexus_clarify')).toBe(true);
+    const writer = review.roster.find(agent => agent.category === 'executor')!;
+    previewAllowed = isToolAllowedForRole('worker', writer.allowedTools, 'nexus_preview_start');
     expect(isToolAllowedForRole('orchestrator', chief.allowedTools, 'nexus_catalog_install')).toBe(false);
     throw new Error('private test preparation ended');
   } } };
@@ -19,6 +21,7 @@ it('the private frozen chief can register a question and declare its normal bloc
   ipc.emit(RUNTIME_CHANNELS.run, null, { nonce: '11111111-1111-4111-8111-111111111111', gatewayNonce: '22222222-2222-4222-8222-222222222222', phase: 'exercise', workspacePath: '/private/runtime-fixture' });
   await ended;
   expect(statusAllowed).toBe(true);
+  expect(previewAllowed).toBe(true);
 });
 it('does not execute product APIs for incomplete/foreign private instructions', () => {
   const api = { mission: { prepare: vi.fn() } }, ipc = Object.assign(new EventEmitter(), { invoke: vi.fn(), send: vi.fn() });

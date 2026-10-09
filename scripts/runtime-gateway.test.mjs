@@ -4,6 +4,11 @@ import net from 'node:net';
 import { buildToolset } from '../src/main/orch/tools';
 import { validateToolArgs } from '../src/main/orch/mcp-args-validation';
 import { visualTaskRequirement } from '../src/main/orch/visual-handoff-gate';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { stopPreviewWithProof, isRunningPreviewUrl } from '../src/main/orch/preview-server';
+import { assessBrowserUrl } from '../src/main/browser/url-policy';
 it('serves only bounded loopback Anthropic protocol, choosing real advertised Nexus tools', async () => {
   const server = await startRuntimeGateway('11111111-1111-4111-8111-111111111111');
   try {
@@ -148,4 +153,86 @@ it('physically drains excess/idle loopback sockets and caps an unfinished body b
     await new Promise(resolve => setTimeout(resolve, 50)); expect(sockets.every(s => s.destroyed)).toBe(true);
     expect(server.observations).toHaveLength(0);
   } finally { sockets.forEach(s => s.destroy()); await server.close(); }
+});
+
+describe('F-1110 ordinary registered preview capture', () => {
+  const nonce = '11111111-1111-4111-8111-111111111111';
+  const tools = buildToolset();
+  const callMessage = call => ({ role: 'assistant', content: [call] });
+  const resultMessage = (call, value, extra = {}) => ({ role: 'user', content: [
+    { type: 'tool_result', tool_use_id: call.id, content: [{ type: 'text', text: JSON.stringify(value) }], ...extra },
+  ] });
+  async function post(server, messages) {
+    const response = await fetch(`${server.url}/v1/messages`, { method: 'POST', headers: { 'x-api-key': `rt-${nonce}` },
+      body: JSON.stringify({ tools: tools.map(t => ({ name: `mcp__nexus__${t.name}`, input_schema: t.inputSchema })), messages }) });
+    const text = await response.text();
+    const events = response.ok ? text.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6))) : [];
+    const block = events.find(event => event.type === 'content_block_start')?.content_block;
+    const input = events.find(event => event.delta?.type === 'input_json_delta');
+    return { status: response.status, text, call: block?.type === 'tool_use' ? { ...block, input: JSON.parse(input.delta.partial_json) } : null };
+  }
+  const initial = [{ role: 'user', content: `RT_GATE WRITE ${nonce}` }];
+  it('writes in the execution root, starts a normal preview and captures its exact returned URL', async () => {
+    const server = await startRuntimeGateway(nonce), root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-runtime-preview-unit-')));
+    const scope = { version: 1, identitySource: 'manifest', installationId: 'unit', projectId: 'unit-project', checkoutId: 'unit-checkout', rootRealPath: root };
+    const ctx = { role: 'user', scope, readOnly: false, allowedTools: null, allowedSkills: null, label: 'private unit' };
+    const messages = [...initial]; let preview;
+    try {
+      const written = await post(server, messages);
+      expect(written.call.name).toBe('mcp__nexus__nexus_file_write');
+      expect(written.call.input.path).toBe(`runtime-visual-${nonce}/index.html`);
+      expect(written.call.input.content).toContain(`RT_VISUAL_${nonce}`);
+      const write = await tools.find(t => t.name === 'nexus_file_write').handler(written.call.input, ctx);
+      messages.push(callMessage(written.call), resultMessage(written.call, write));
+      const started = await post(server, messages);
+      expect(started.call.name).toBe('mcp__nexus__nexus_preview_start');
+      expect(started.call.input).toEqual({ dir: `runtime-visual-${nonce}` });
+      preview = await tools.find(t => t.name === 'nexus_preview_start').handler(started.call.input, ctx);
+      expect(await (await fetch(preview.url)).text()).toContain(`RT_VISUAL_${nonce}`);
+      expect((await assessBrowserUrl(preview.url, { allowPrivateNetwork: false, isTrustedPrivateUrl: isRunningPreviewUrl })).allowed).toBe(true);
+      expect(await assessBrowserUrl(server.url, { allowPrivateNetwork: false, isTrustedPrivateUrl: isRunningPreviewUrl })).toMatchObject({ allowed: false, kind: 'private-network' });
+      messages.push(callMessage(started.call), resultMessage(started.call, preview));
+      const opened = await post(server, messages);
+      expect(opened.call).toMatchObject({ name: 'mcp__nexus__nexus_browser_open', input: { url: preview.url } });
+      messages.push(callMessage(opened.call), resultMessage(opened.call, { ok: true, paneId: 'browser-unit', state: { url: preview.url } }));
+      const capture = await post(server, messages);
+      expect(capture.call).toMatchObject({ name: 'mcp__nexus__nexus_browser_screenshot', input: { paneId: 'browser-unit' } });
+      const captured = { artifactId: 'artifact-unit', sha256: 'a'.repeat(64), path: path.join(root, 'native-unit.png'), width: 320, height: 240, url: preview.url };
+      messages.push(callMessage(capture.call), resultMessage(capture.call, captured));
+      const report = await post(server, messages);
+      expect(report.call).toMatchObject({ name: 'mcp__nexus__nexus_file_write', input: { path: 'runtime-report.txt' } });
+      const reportResult = await tools.find(t => t.name === 'nexus_file_write').handler(report.call.input, ctx);
+      messages.push(callMessage(report.call), resultMessage(report.call, reportResult));
+      const handoff = await post(server, messages);
+      expect(handoff.call).toMatchObject({ name: 'mcp__nexus__nexus_handoff_submit', input: {
+        artifacts: [{ kind: 'nexus.browser.screenshot', payload: captured }], filesModified: [`runtime-visual-${nonce}/index.html`, 'runtime-report.txt'] } });
+      expect((await fetch(`${server.url}/runtime-page`)).status).toBe(404);
+    } finally { if (preview) await stopPreviewWithProof(preview.id, scope); await server.close(); await fs.rm(root, { recursive: true, force: true }); }
+  });
+  it.each(['missing', 'wrong-id', 'failed', 'duplicate', 'foreign-path'])('does not start a preview after a %s file write result', async variant => {
+    const server = await startRuntimeGateway(nonce);
+    try {
+      const first = await post(server, initial);
+      expect(first.call.name).toBe('mcp__nexus__nexus_file_write');
+      const result = resultMessage(variant === 'wrong-id' ? { id: 'foreign-write' } : first.call,
+        { path: variant === 'foreign-path' ? 'outside/index.html' : first.call.input.path }, variant === 'failed' ? { is_error: true } : {});
+      const callbacks = variant === 'missing' ? [] : variant === 'duplicate' ? [result, result] : [result];
+      const next = await post(server, [...initial, callMessage(first.call), ...callbacks]);
+      expect(next.status).toBe(422); expect(server.observations).toHaveLength(1);
+    } finally { await server.close(); }
+  });
+  it.each(['missing', 'wrong-id', 'failed', 'duplicate', 'foreign-url', 'wrong-port'])('never opens a browser from a %s preview result', async variant => {
+    const server = await startRuntimeGateway(nonce);
+    try {
+      const first = await post(server, initial);
+      expect(first.call.name).toBe('mcp__nexus__nexus_file_write');
+      const messages = [...initial, callMessage(first.call), resultMessage(first.call, { path: first.call.input.path })];
+      const second = await post(server, messages);
+      const value = { id: 'preview-unit', url: variant === 'foreign-url' ? 'https://foreign.invalid/' : 'http://127.0.0.1:43123/', port: variant === 'wrong-port' ? 43124 : 43123 };
+      const result = resultMessage(variant === 'wrong-id' ? { id: 'foreign-preview' } : second.call, value, variant === 'failed' ? { is_error: true } : {});
+      const callbacks = variant === 'missing' ? [] : variant === 'duplicate' ? [result, result] : [result];
+      const next = await post(server, [...messages, callMessage(second.call), ...callbacks]);
+      expect(next.status).toBe(422); expect(server.observations).toHaveLength(2);
+    } finally { await server.close(); }
+  });
 });
