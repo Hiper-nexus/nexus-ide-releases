@@ -23,11 +23,22 @@ function objects(value, output = []) {
   else if (value && typeof value === 'object') { output.push(value); Object.values(value).forEach(v => objects(v, output)); }
   return output;
 }
+function questionToolResult(messages, call) {
+  const results = messages.filter(message => message.role === 'user' && Array.isArray(message.content))
+    .flatMap(message => message.content).filter(block => block.type === 'tool_result' && block.tool_use_id === call.id);
+  if (results.length !== 1 || (results[0].is_error !== undefined && results[0].is_error !== false)) throw new Error('real QUESTION tool result absent, ambiguous or failed');
+  const content = results[0].content;
+  const text = typeof content === 'string' ? content : Array.isArray(content) && content.length === 1 && content[0].type === 'text' ? content[0].text : null;
+  if (typeof text !== 'string') throw new Error('real QUESTION tool result content invalid');
+  const value = JSON.parse(text);
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.ok === false || value.isError === true) throw new Error('real QUESTION tool result invalid');
+  return value;
+}
 /** Only inference is simulated. Every Nexus tool result must come from the real installed CLI. */
 export async function startRuntimeGateway(nonce) {
   if (!/^[a-f0-9-]{36}$/u.test(nonce)) throw new Error('runtime gateway nonce invalid');
   let requests = 0, stopped = false, closeFlight = null;
-  const sockets = new Set(), observations = [];
+  const sockets = new Set(), observations = [], questionCalls = [];
   const server = http.createServer((req, res) => {
     req.setTimeout(5000, () => req.destroy());
     if (stopped) { res.writeHead(503); res.end(); return; }
@@ -50,13 +61,17 @@ export async function startRuntimeGateway(nonce) {
           (body.messages ?? []).flatMap(v => typeof v.content === 'string' ? [v.content] : [])).join('\n');
         const markers = [...text.matchAll(/RT_GATE (OPS|SPAWN|WRITE|REVIEW|ACK|QUESTION|RESUME|IDLE)/gu)];
         const kind = markers.at(-1)?.[1];
-        const used = all.filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
+        const assistantBlocks = (body.messages ?? []).filter(message => message.role === 'assistant' && Array.isArray(message.content)).flatMap(message => message.content);
+        const used = (kind === 'QUESTION' ? assistantBlocks : all).filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
         const step = used.length;
+        if (kind === 'QUESTION' && (!text.includes(`RT_GATE QUESTION ${nonce}`) || step > 2)) throw new Error('QUESTION instruction scope or step invalid');
         const tool = (suffix, input) => {
           const choices = (body.tools ?? []).filter(v => v.name === suffix || v.name?.endsWith(`__${suffix}`));
           if (choices.length !== 1) throw new Error(`real CLI did not advertise required tool: ${suffix}`);
           observations.push({ kind, step, tool: suffix });
-          return { type: 'tool_use', id: `toolu_rt_${kind}_${step}`, name: choices[0].name, input };
+          const call = { type: 'tool_use', id: `toolu_rt_${kind}_${step}`, name: choices[0].name, input };
+          if (kind === 'QUESTION') questionCalls[step] = call;
+          return call;
         };
         let content = { type: 'text', text: 'Runtime fixture ready; waiting for scoped verifier instruction.' };
         if (kind === 'OPS' && step === 0) content = tool('nexus_terminal_run', { command: `printf RT_OPS_${nonce}` });
@@ -83,6 +98,26 @@ export async function startRuntimeGateway(nonce) {
           artifacts: kind === 'WRITE' ? [{ kind: 'nexus.browser.screenshot', payload: capture }] : [] });
         }
         else if (kind === 'QUESTION' && step === 0) content = tool('nexus_clarify', { question: `RT_QUESTION_${nonce}: select the private fixture route.`, options: ['Proceed', 'Wait'], allowFreeform: false });
+        else if (kind === 'QUESTION') {
+          if (!used.every((call, index) => {
+            const issued = questionCalls[index];
+            return issued && call.id === issued.id && call.name === issued.name && call.input &&
+              Object.keys(call.input).length === Object.keys(issued.input).length &&
+              Object.keys(issued.input).every(key => JSON.stringify(call.input[key]) === JSON.stringify(issued.input[key]));
+          })) throw new Error('real QUESTION tool call binding invalid');
+          const result = questionToolResult(body.messages, questionCalls[0]);
+          const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value);
+          if (!identifier(result.missionId) || !identifier(result.questionId) || result.question !== questionCalls[0].input.question || result.allowFreeform !== false ||
+            !Array.isArray(result.chips) || result.chips.length !== 2 || result.chips.some((chip, index) => !chip || !identifier(chip.id) || chip.label !== questionCalls[0].input.options[index]) ||
+            new Set(result.chips.map(chip => chip.id)).size !== 2) throw new Error('real clarify result invalid or foreign');
+          if (step === 1) content = tool('nexus_mission_set_status', { missionId: result.missionId, status: 'blocked',
+            note: `RT_QUESTION_${nonce}: awaiting the operator's registered private fixture route answer.` });
+          else {
+            const status = questionToolResult(body.messages, questionCalls[1]);
+            if (status.id !== result.missionId || status.status !== 'blocked' || status.intentState !== 'blocked_user' ||
+              typeof status.learnings !== 'string' || !status.learnings.includes(questionCalls[1].input.note)) throw new Error('real QUESTION blocked status result invalid or foreign');
+          }
+        }
         else if (kind === 'ACK') {
           if (step === 0) content = tool('nexus_handoff_list', { full: true });
           else {

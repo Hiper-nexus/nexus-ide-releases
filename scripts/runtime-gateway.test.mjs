@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { startRuntimeGateway } from './runtime-gateway.mjs';
 import net from 'node:net';
 import { buildToolset } from '../src/main/orch/tools';
@@ -23,7 +23,7 @@ it('uses actual closed Main ToolDefs and argument validators for controlled infe
   try {
     for (const kind of ['OPS', 'SPAWN', 'WRITE', 'REVIEW', 'ACK', 'QUESTION']) {
       const response = await fetch(`${server.url}/v1/messages`, { method: 'POST', headers: { 'x-api-key': `rt-${server.nonce}` }, body: JSON.stringify({
-        model: 'unit-fixture', tools: closedToolDefs.map(t => ({ name: t.name, input_schema: t.inputSchema })), messages: [{ role: 'user', content: `RT_GATE ${kind}` }] }) });
+        model: 'unit-fixture', tools: closedToolDefs.map(t => ({ name: t.name, input_schema: t.inputSchema })), messages: [{ role: 'user', content: `RT_GATE ${kind} ${server.nonce}` }] }) });
       expect(response.status).toBe(200); const events = (await response.text()).split('\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6)));
       const content = events.find(e => e.type === 'content_block_start').content_block;
       const args = JSON.parse(events.find(e => e.delta?.type === 'input_json_delta').delta.partial_json);
@@ -33,6 +33,105 @@ it('uses actual closed Main ToolDefs and argument validators for controlled infe
       if (kind === 'SPAWN') expect(visualTaskRequirement(args.prompt)?.id).toMatch(/^[a-f0-9-]{36}$/u);
     }
   } finally { await server.close(); }
+});
+
+describe('QUESTION waits for the exact clarify and blocked-status results', () => {
+  const nonce = '11111111-1111-4111-8111-111111111111';
+  const prompt = `RT_QUESTION_${nonce}: select the private fixture route.`;
+  const tools = buildToolset().map(t => ({ name: `mcp__nexus__${t.name}`, input_schema: t.inputSchema }));
+  const clarify = { missionId: 'mission-real-result', questionId: 'handoff-real-question', question: prompt,
+    chips: [{ id: 'opt-1', label: 'Proceed' }, { id: 'opt-2', label: 'Wait' }], allowFreeform: false };
+  const callMessage = call => ({ role: 'assistant', content: [call] });
+  const resultMessage = (call, value, extra = {}) => ({ role: 'user', content: [
+    { type: 'tool_result', tool_use_id: call.id, content: [{ type: 'text', text: JSON.stringify(value) }], ...extra },
+  ] });
+  const initial = [{ role: 'user', content: `RT_GATE QUESTION ${nonce}` }];
+  async function post(server, messages, advertised = tools) {
+    const response = await fetch(`${server.url}/v1/messages`, { method: 'POST', headers: { 'x-api-key': `rt-${nonce}` },
+      body: JSON.stringify({ tools: advertised, messages }) });
+    const text = await response.text();
+    if (response.status !== 200) return { status: response.status, text };
+    const events = text.split('\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6)));
+    const content = events.find(e => e.type === 'content_block_start').content_block;
+    if (content.type === 'tool_use') content.input = JSON.parse(events.find(e => e.delta?.type === 'input_json_delta').delta.partial_json);
+    return { status: response.status, text, content };
+  }
+  async function withClarify(run) {
+    const server = await startRuntimeGateway(nonce);
+    try {
+      const first = await post(server, initial);
+      expect(first.content).toMatchObject({ type: 'tool_use', name: 'mcp__nexus__nexus_clarify', input: {
+        question: prompt, options: ['Proceed', 'Wait'], allowFreeform: false,
+      } });
+      await run(server, first.content);
+    } finally { await server.close(); }
+  }
+  it('calls the normal advertised status tool with the returned mission, and completes only after its successful callback', async () => {
+    await withClarify(async (server, call) => {
+      const messages = [...initial, callMessage(call), resultMessage(call, clarify)];
+      // An unrelated JSON result must never supply the mission identity.
+      messages.push(resultMessage({ id: 'other-tool' }, { ...clarify, missionId: 'foreign-mission' }));
+      const second = await post(server, messages);
+      expect(second.content).toMatchObject({ type: 'tool_use', name: 'mcp__nexus__nexus_mission_set_status', input: {
+        missionId: 'mission-real-result', status: 'blocked', note: expect.stringContaining(`RT_QUESTION_${nonce}`),
+      } });
+      expect(Object.keys(second.content.input).sort()).toEqual(['missionId', 'note', 'status']);
+      expect(second.content.input.note.length).toBeGreaterThanOrEqual(8);
+      expect(() => validateToolArgs('nexus_mission_set_status', second.content.input)).not.toThrow();
+      expect(second.text).not.toContain('RT_DONE_QUESTION');
+      const done = await post(server, [...messages, callMessage(second.content), resultMessage(second.content, {
+        id: clarify.missionId, status: 'blocked', intentState: 'blocked_user', learnings: second.content.input.note,
+      })]);
+      expect(done.status).toBe(200); expect(done.text).toContain(`RT_DONE_QUESTION_${nonce}`);
+      expect(server.observations.map(v => v.tool)).toEqual(['nexus_clarify', 'nexus_mission_set_status']);
+    });
+  });
+  it.each([
+    ['missing result', () => []],
+    ['wrong result id', () => [resultMessage({ id: 'foreign-tool' }, clarify)]],
+    ['ambiguous results', (call) => [resultMessage(call, clarify), resultMessage(call, clarify)]],
+    ['failed result', (call) => [resultMessage(call, clarify, { is_error: true })]],
+    ['malformed JSON', (call) => [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: '{bad' }] }]],
+    ['other JSON', (call) => [resultMessage(call, { ok: true, missionId: clarify.missionId })]],
+    ['failed success-shaped JSON', (call) => [resultMessage(call, { ...clarify, ok: false })]],
+    ['foreign nonce', (call) => [resultMessage(call, { ...clarify, question: 'RT_QUESTION_foreign: select a route.' })]],
+    ['invalid chips', (call) => [resultMessage(call, { ...clarify, chips: [{ id: 'same', label: 'Proceed' }, { id: 'same', label: 'Wait' }] })]],
+    ['ambiguous JSON content', (call) => [resultMessage(call, clarify, { content: [
+      { type: 'text', text: JSON.stringify(clarify) }, { type: 'text', text: JSON.stringify(clarify) },
+    ] })]],
+  ])('refuses %s without emitting status or completion', async (_label, results) => {
+    await withClarify(async (server, call) => {
+      const response = await post(server, [...initial, callMessage(call), ...results(call)]);
+      expect(response.status).toBe(422); expect(response.text).not.toContain('RT_DONE_QUESTION');
+      expect(server.observations.map(v => v.tool)).toEqual(['nexus_clarify']);
+    });
+  });
+  it('refuses a substituted clarify call or an unadvertised status tool', async () => {
+    await withClarify(async (server, call) => {
+      const substituted = { ...call, name: 'mcp__nexus__nexus_file_read' };
+      const wrong = await post(server, [...initial, callMessage(substituted), resultMessage(substituted, clarify)]);
+      expect(wrong.status).toBe(422);
+      const missing = await post(server, [...initial, callMessage(call), resultMessage(call, clarify)], tools.filter(t => !t.name.endsWith('__nexus_mission_set_status')));
+      expect(missing.status).toBe(422); expect(server.observations.map(v => v.tool)).toEqual(['nexus_clarify']);
+    });
+  });
+  it.each(['missing', 'wrong-id', 'failed', 'wrong-mission', 'running', 'no-intent', 'foreign-note'])('does not finish a pending status with %s callback', async (variant) => {
+    await withClarify(async (server, call) => {
+      const messages = [...initial, callMessage(call), resultMessage(call, clarify)];
+      const second = await post(server, messages);
+      expect(second.content.type).toBe('tool_use');
+      const result = { id: clarify.missionId, status: 'blocked', intentState: 'blocked_user', learnings: second.content.input.note };
+      if (variant === 'wrong-mission') result.id = 'foreign-mission';
+      if (variant === 'running') result.status = 'running';
+      if (variant === 'no-intent') delete result.intentState;
+      if (variant === 'foreign-note') result.learnings = 'RT_QUESTION_foreign';
+      const callback = variant === 'missing' ? [] : [resultMessage(variant === 'wrong-id' ? { id: 'other-status' } : second.content, result,
+        variant === 'failed' ? { is_error: true } : {})];
+      const response = await post(server, [...messages, callMessage(second.content), ...callback]);
+      expect(response.status).toBe(422); expect(response.text).not.toContain('RT_DONE_QUESTION');
+      expect(server.observations).toHaveLength(2);
+    });
+  });
 });
 it('physically drains excess/idle loopback sockets and caps an unfinished body before JSON parsing', async () => {
   const server = await startRuntimeGateway('11111111-1111-4111-8111-111111111111');
