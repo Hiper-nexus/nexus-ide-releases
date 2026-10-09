@@ -43,6 +43,70 @@ const MARK_TOOLS: ReadonlyArray<{
   { mark: 'code', label: '<>', title: 'Código (`texto`)' },
 ];
 
+const MARK_ELEMENT: Record<RichTextMark, string> = {
+  bold: 'STRONG',
+  italic: 'EM',
+  strike: 'S',
+  code: 'CODE',
+};
+
+function markFromElement(element: HTMLElement): RichTextMark | null {
+  switch (element.tagName) {
+    case 'STRONG':
+    case 'B':
+      return 'bold';
+    case 'EM':
+    case 'I':
+      return 'italic';
+    case 'S':
+    case 'STRIKE':
+    case 'DEL':
+      return 'strike';
+    case 'CODE':
+      return 'code';
+    default:
+      return null;
+  }
+}
+
+/** Reconstrói os spans a partir das tags. `textContent` perderia o markdown. */
+function spansFromEditable(root: HTMLElement): RichTextSpan[] {
+  const spans: RichTextSpan[] = [];
+  const visit = (node: Node, marks: readonly RichTextMark[]): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent ?? '';
+      if (text.length > 0) spans.push({ text, marks: [...marks] });
+      return;
+    }
+    if (!(node instanceof HTMLElement)) return;
+    if (node.tagName === 'BR') {
+      spans.push({ text: '\n', marks: [...marks] });
+      return;
+    }
+    const mark = markFromElement(node);
+    const next =
+      mark && !marks.includes(mark) ? [...marks, mark] : marks;
+    for (const child of node.childNodes) visit(child, next);
+  };
+  for (const child of root.childNodes) visit(child, []);
+  return spans;
+}
+
+function closestMark(
+  node: Node | null,
+  mark: RichTextMark,
+  root: HTMLElement,
+): HTMLElement | null {
+  let current: Node | null = node;
+  while (current && current !== root) {
+    if (current instanceof HTMLElement && markFromElement(current) === mark) {
+      return current;
+    }
+    current = current.parentNode;
+  }
+  return null;
+}
+
 function MarkedText({ span }: { span: RichTextSpan }): ReactNode {
   let node: ReactNode = span.text;
   if (span.marks.includes('code')) node = <code>{node}</code>;
@@ -116,26 +180,39 @@ export function ComposerRichTextEditor({
   const emit = useCallback(() => {
     const publish = onChangeRef.current;
     if (!editorRef.current || !publish) return;
-    publish(editorRef.current.textContent ?? '');
+    publish(serializeInlineMarkdown(spansFromEditable(editorRef.current)));
   }, []);
 
   const toggleMark = useCallback((mark: RichTextMark) => {
+    const editor = editorRef.current;
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || !editorRef.current) return;
+    if (!sel || sel.rangeCount === 0 || !editor) return;
     const range = sel.getRangeAt(0);
-    if (range.collapsed) return;
-    const selected = range.toString();
-    const next = activeMarks.has(mark)
-      ? [...activeMarks].filter((m) => m !== mark)
-      : [...activeMarks, mark];
-    // Re-insere o texto com as marks ativas em markdown; o serialize devolve
-    // o markdown canônico e o render refaz os spans.
-    const markdown = serializeInlineMarkdown([{ text: selected, marks: next }]);
-    range.deleteContents();
-    range.insertNode(document.createTextNode(markdown));
-    setActiveMarks(new Set(next));
+    if (range.collapsed || !editor.contains(range.commonAncestorContainer)) return;
+    const existing = closestMark(range.commonAncestorContainer, mark, editor);
+    if (existing) {
+      const parent = existing.parentNode;
+      if (!parent) return;
+      while (existing.firstChild) parent.insertBefore(existing.firstChild, existing);
+      parent.removeChild(existing);
+      setActiveMarks((current) => {
+        const next = new Set(current);
+        next.delete(mark);
+        return next;
+      });
+      emit();
+      return;
+    }
+    const wrapper = document.createElement(MARK_ELEMENT[mark].toLowerCase());
+    try {
+      range.surroundContents(wrapper);
+    } catch {
+      wrapper.appendChild(range.extractContents());
+      range.insertNode(wrapper);
+    }
+    setActiveMarks((current) => new Set([...current, mark]));
     emit();
-  }, [activeMarks, emit]);
+  }, [emit]);
 
   const toggleRef = useRef(toggleMark);
   toggleRef.current = toggleMark;

@@ -329,6 +329,60 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
     expect(effects.rows[0]?.commandId).not.toBe('logical-op-1');
   });
 
+  it('charges the mission once when two in-flight dispatches share a logical operation id', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let runs = 0;
+    let charges = 0;
+    const booted = bootDispatch(async () => {
+      runs += 1;
+      await hold;
+      return { marker: 'once' };
+    });
+    const options = {
+      ...booted.options,
+      logicalOperationId: 'logical-op-race',
+      reserveMissionBudget: () => {
+        charges += 1;
+      },
+    };
+    const first = dispatchToolCall(
+      'http-mcp',
+      booted.registry,
+      'nexus_terminal_run',
+      { command: 'true' },
+      booted.ctx,
+      options,
+    );
+    const second = dispatchToolCall(
+      'http-mcp',
+      booted.registry,
+      'nexus_terminal_run',
+      { command: 'true' },
+      booted.ctx,
+      options,
+    );
+    const started = Date.now();
+    while (runs < 1) {
+      if (Date.now() - started > 2000) {
+        throw new Error('handler did not start');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(charges).toBe(1);
+    release();
+    const [left, right] = await Promise.all([first, second]);
+    expect(runs).toBe(1);
+    expect(charges).toBe(1);
+    expect(right).toEqual(left);
+    expect(
+      createScopedEffectOutboxStore(booted.manager, booted.scope)
+        .listUnsettledBlocking(MISSION_ID).rows,
+    ).toHaveLength(1);
+  });
+
   it('runs a reused JSON-RPC id when the arguments change', async () => {
     const commands: string[] = [];
     const booted = bootDispatch(async (args) => {

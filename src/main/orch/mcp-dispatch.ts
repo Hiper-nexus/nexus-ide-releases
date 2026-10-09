@@ -1649,19 +1649,19 @@ export async function dispatchToolCall(
     );
   };
 
-  // Persist the correlated effect intent before charging mission budget. If
-  // the audit INSERT fails, the reservation callback is never reached, so a
-  // consumed step can never become invisible. Physical handoff spend is the
-  // sole exception: its store reserves inside the same IMMEDIATE transaction
-  // as receipt + payload + dispatch, avoiding both double charge and a charge
-  // that survives a later dispatch CAS rollback.
-  if (
-    effectful &&
-    canonical !== "handoff_submit" &&
-    ctx.missionId &&
-    finalIntent.resolved &&
-    hasCurrentDispatchAuthority(finalIntent.resolved.mission)
-  ) {
+  // A cobrança fica depois do insert do recibo. Duas chamadas concorrentes
+  // com o mesmo id passam do replay cedo; só quem inseriu reserva. Se o
+  // INSERT da intenção falha, este callback nem é alcançado.
+  const reserveEffectBudget = (): ToolDispatchResult | null => {
+    if (
+      !effectful ||
+      canonical === "handoff_submit" ||
+      !ctx.missionId ||
+      !finalIntent.resolved ||
+      !hasCurrentDispatchAuthority(finalIntent.resolved.mission)
+    ) {
+      return null;
+    }
     try {
       (options.reserveMissionBudget ?? reserveProductionMissionBudget)(
         ctx.scope,
@@ -1669,6 +1669,7 @@ export async function dispatchToolCall(
         tool.name,
         finalIntent.resolved.mission.intentVersion ?? 0,
       );
+      return null;
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       console.warn(
@@ -1680,11 +1681,7 @@ export async function dispatchToolCall(
         : "budget_reservation_unavailable";
       return denyAfterIntent(error);
     }
-  }
-  // Physical handoff spend is admitted and persisted by the handoff store in
-  // the same IMMEDIATE transaction as the first receipt/handoff/dispatch
-  // commit. An exact replay returns before that CAS, so concurrent retries can
-  // never charge the logical operation twice.
+  };
 
   // Track only warm/bootstrap tools on the prompt queue (not mission_create /
   // set_status). Newer intentVersion preempts in-flight doctor/map work.
@@ -1852,14 +1849,40 @@ export async function dispatchToolCall(
         return denyAfterIntent("command_effect_unavailable");
       }
       if (checkpoint.status === "accepted" && !checkpoint.inserted) {
+        if (queuePromptId && ctx.missionId) {
+          completeMissionPrompt(ctx.scope, ctx.missionId, queuePromptId, false);
+          queuePromptId = null;
+        }
         const inflight = receiptCommandId
           ? logicalDispatchFlights.get(logicalFlightKey(ctx.scope, receiptCommandId))
           : undefined;
-        if (inflight) return inflight;
+        if (inflight) {
+          const auditFailure = writeOutcomeAudit(
+            "error",
+            "command_effect_joined",
+            false,
+          );
+          if (auditFailure) return auditFailure;
+          return inflight;
+        }
         const replay = receiptCommandId
           ? readReplayableCommandDispatch(ctx, receiptCommandId, tool.name)
           : null;
-        if (replay) return replay;
+        if (replay) {
+          const auditFailure = writeOutcomeAudit(
+            replay.ok ? "success" : "error",
+            replay.ok ? undefined : replay.error,
+            false,
+          );
+          if (auditFailure) return auditFailure;
+          return replay;
+        }
+        const auditFailure = writeOutcomeAudit(
+          "error",
+          DISPATCH_OUTCOME_UNSETTLED,
+          false,
+        );
+        if (auditFailure) return auditFailure;
         return {
           ok: false,
           tool: tool.name,
@@ -1880,6 +1903,12 @@ export async function dispatchToolCall(
           logicalDispatchFlights.set(ownedFlightKey, flight);
         }
       }
+    }
+    const budgetFailure = reserveEffectBudget();
+    if (budgetFailure) {
+      return commandAccepted
+        ? releaseOwnedFlight(budgetFailure)
+        : budgetFailure;
     }
     const exactUserConsent =
       // Recibo, não modal: mintado sempre que o store exige prova de mutação
