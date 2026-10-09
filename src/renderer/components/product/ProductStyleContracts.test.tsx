@@ -20,6 +20,7 @@ import { WorkspaceRail } from './WorkspaceRail';
 import { ComposerTiptapEditor } from '../ComposerTiptapEditor';
 import { ComposerRichTextView } from '../ComposerRichTextView';
 import { applyUiTheme, PALETTES } from '../../styles/ui-theme';
+import { contrastRatio, hexToSrgb, srgbToHex } from '../../styles/palette-gen';
 
 const rendererStylesPath = path.resolve(
   process.cwd(),
@@ -112,6 +113,35 @@ afterEach(() => {
 });
 
 describe('Nexus V2 shell and product workspace style contracts', () => {
+  it.each([
+    { theme: 'nexus-pink-city', pixel: 'off' },
+    { theme: 'nexus-light', pixel: 'off' },
+    { theme: 'nexus-pink-city', pixel: 'on' },
+    { theme: 'nexus-light', pixel: 'on' },
+  ] as const)('keeps readable readonly text above AA contrast in $theme / pixel=$pixel', async ({ theme, pixel }) => {
+    applyUiTheme(theme);
+    document.documentElement.dataset.themePixel = pixel;
+    installStyleContract(productStyles, { width: 1_400 });
+    const host = render(<ComposerTiptapEditor value="Texto somente leitura" editable={false} />);
+    await settleEffects();
+    const surface = host.querySelector<HTMLElement>('.composer-tiptap__surface[contenteditable="false"]');
+    if (!surface) throw new Error('The readonly Tiptap surface did not render');
+
+    const declaredOpacity = computedCssValue(surface, 'opacity');
+    const opacity = declaredOpacity === '' ? 1 : Number(declaredOpacity);
+    const backdrop = hexToSrgb(PALETTES[theme].bg);
+    // Group opacity composites both the content and its surface over the outer canvas.
+    const composite = (color: string): string => {
+      const channels = hexToSrgb(color);
+      return srgbToHex([0, 1, 2].map((index) =>
+        channels[index]! * opacity + backdrop[index]! * (1 - opacity),
+      ) as [number, number, number]);
+    };
+    const foreground = composite(computedCssValue(surface, 'color'));
+    const background = composite(computedCssValue(surface, 'background'));
+    expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
+  });
+
   it.each([
     { theme: 'nexus-pink-city', pixel: 'off', radius: 6 },
     { theme: 'nexus-light', pixel: 'off', radius: 6 },
