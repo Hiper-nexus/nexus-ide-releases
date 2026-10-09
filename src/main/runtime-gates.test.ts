@@ -5,10 +5,12 @@ import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { OwnedAgentSessionInfo } from './pty/pty-manager';
 import { mintToken, bindTokenToSession, resetGateForTests, releaseSessionByToken } from './orch/gate';
+import type { AuditEntry } from './jarvis/audit-log';
 const deps = vi.hoisted(() => ({ grant: 'denied', scope: { version: 1 as const, identitySource: 'manifest' as const, installationId: 'i', projectId: 'p', checkoutId: 'c', rootRealPath: '' },
-  manager: null as object | null, visual: vi.fn(), screenshot: vi.fn(), conversation: vi.fn(() => null),
+  manager: null as object | null, visual: vi.fn(), screenshot: vi.fn(), conversation: vi.fn((): { key: 'session_id'; id: string } | null => null),
   agents: [] as OwnedAgentSessionInfo[], tap: null as null | ((id: string, text: string) => void),
-  probe: vi.fn(async (): Promise<unknown[]> => []), tapRemoved: vi.fn() }));
+  probe: vi.fn(async (): Promise<unknown[]> => []), tapRemoved: vi.fn(), terminate: vi.fn(async () => true),
+  audit: [] as AuditEntry[], recovery: null as Record<string, unknown> | null }));
 vi.mock('electron', () => ({ systemPreferences: { getMediaAccessStatus: () => deps.grant } }));
 vi.mock('node:child_process', () => {
   const refused = () => { throw new Error('subprocess forbidden in private runtime unit fixture'); };
@@ -17,14 +19,14 @@ vi.mock('node:child_process', () => {
 });
 vi.mock('./persistence/renderer-workspace-scope', () => ({ requireLiveRendererWorkspaceScope: () => deps.scope, getRendererWorkspaceScope: () => deps.scope,
   onRendererWorkspaceScopeChange: () => () => undefined }));
-vi.mock('./orch/project-domain-store-registry', () => ({ getProjectDomainStores: () => ({ missions: { get: () => ({ id: 'm', title: 'Runtime 11111111-1111-4111-8111-111111111111' }) }, handoffs: { list: () => [] } }) }));
+vi.mock('./orch/project-domain-store-registry', () => ({ getProjectDomainStores: () => ({ missions: { get: () => ({ id: 'm', title: 'Runtime 11111111-1111-4111-8111-111111111111', intentContract: { lane: 'standard' } }) }, handoffs: { list: () => [] } }) }));
 vi.mock('./orch/mission-engine-registry', () => ({ missionEngineForScope: () => ({ snapshot: async () => ({}) }) }));
 vi.mock('./pty/pty-manager', () => ({ listAgentSessions: () => deps.agents.map(agent => ({ ...agent, scope: { ...agent.scope },
-  ...(agent.coordinationScope ? { coordinationScope: { ...agent.coordinationScope } } : {}) })), probePaneFootprints: () => deps.probe(), orchTerminateSession: vi.fn(),
+  ...(agent.coordinationScope ? { coordinationScope: { ...agent.coordinationScope } } : {}) })), probePaneFootprints: () => deps.probe(), orchTerminateSession: () => deps.terminate(),
   isSessionOwnedBy: () => false, getSessionCwd: () => null, tapSessionData: (tap: (id: string, text: string) => void) => { deps.tap = tap; return deps.tapRemoved; } }));
 vi.mock('./persistence/provider-session-store', () => ({ getProviderPaneSession: deps.conversation }));
 vi.mock('./adapters/adapter-registry', () => ({ getAdapter: () => ({ kind: 'cli-pty' }), isAdapterInstalled: () => true, resolveAdapterBinary: () => process.env.RUNTIME_TEST_BINARY }));
-vi.mock('./jarvis/audit-log', () => ({ readAuditLog: () => [] }));
+vi.mock('./jarvis/audit-log', () => ({ readAuditLog: () => deps.audit }));
 vi.mock('./memory/workspace-memory', () => ({ getWorkspaceMemoryStore: () => ({ recall: () => [] }) }));
 vi.mock('./orch/visual-handoff-gate', () => ({ checkVisualHandoff: deps.visual }));
 vi.mock('./browser/browser-artifact-store', () => ({ createScopedBrowserArtifactStore: () => ({ verifiedScreenshot: deps.screenshot }) }));
@@ -47,9 +49,12 @@ async function fixture(options: { helloNonce?: string; helloPid?: number; homeMo
   const env = { NEXUS_PACKAGED_SMOKE: '1', NEXUS_SMOKE_RUNTIME_GATES: '1', NEXUS_USER_DATA_DIR: root, HOME: path.join(root, 'home'),
     NEXUS_SMOKE_RUNTIME_GATEWAY: 'http://127.0.0.1:45678', NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE: '11111111-1111-4111-8111-111111111111', NEXUS_SMOKE_RUNTIME_PHASE: 'exercise', RUNTIME_TEST_BINARY: path.join(root, 'unit-binary') };
   for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
-  vi.stubGlobal('fetch', async () => ({ json: async () => ({ nonce: options.helloNonce ?? env.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE, pid: options.helloPid ?? process.ppid }) }));
+  vi.stubGlobal('fetch', async (url: string) => ({ ok: true, json: async () => url.endsWith('/runtime-recovery') ?
+    { nonce: env.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE, pid: process.ppid, recovery: deps.recovery } :
+    { nonce: options.helloNonce ?? env.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE, pid: options.helloPid ?? process.ppid } }));
   deps.scope.rootRealPath = path.join(root, 'workspace'); await fs.mkdir(deps.scope.rootRealPath);
   resetGateForTests(); deps.agents = []; deps.tap = null; deps.manager = null; deps.visual.mockReset(); deps.screenshot.mockReset(); deps.conversation.mockClear(); deps.probe.mockResolvedValue([]); deps.tapRemoved.mockClear();
+  deps.audit = []; deps.recovery = null; deps.terminate.mockResolvedValue(true); deps.conversation.mockReturnValue(null);
   const url = 'nexus-app://bundle/index.html?nexusRuntimeGates=1', frame = { url }, session = { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() };
   const wc = Object.assign(new EventEmitter(), { mainFrame: frame, session, getURL: () => url, isDestroyed: () => false, getOSProcessId: () => 9999, send: vi.fn() });
   const win = Object.assign(new EventEmitter(), { webContents: wc }), handlers = new Map<string, (...args: any[]) => any>();
@@ -265,7 +270,7 @@ it.each(['wrong-mission', 'wrong-directory', 'wrong-root', 'wrong-checkout', 'wr
     return { ...visualArtifact, url: preview.url };
   });
   if (variant === 'stopped-preview') await stopPreviewWithProof(preview.id, previewScope);
-  try { await expect(f.request(event, { operation: 'observe', missionId: 'm' })).rejects.toThrow('visual artifact provenance differs'); }
+  try { await expect(f.request(event, { operation: 'observe', missionId: 'm' })).rejects.toThrow(variant === 'wrong-assignment' ? 'runtime agent binding changed' : 'visual artifact provenance differs'); }
   finally { if (variant !== 'stopped-preview') await stopPreviewWithProof(preview.id, previewScope); f.controller.abort(); await f.rejected; }
 });
 it.each(['verification', 'screenshot'] as const)('revocation during visual %s never returns stale agent/PID/conversation', async stage => {
@@ -312,4 +317,69 @@ it('final observation rechecks an already-collected agent while another visual r
     releaseSessionByToken(ctx.token); release();
     expect(await outcome).toMatchObject({ message: 'runtime agent binding changed' });
   } finally { f.controller.abort(); await f.rejected; }
+});
+
+async function recoveredWorkerFixture(priorAudit = false) {
+  const f = await fixture(), { ctx, agent } = await scopedAgent(f), event = { sender: f.wc, senderFrame: f.frame };
+  ctx.role = 'worker'; agent.role = 'worker'; agent.model = 'sealed-model'; agent.accountId = 'account-a'; agent.effort = 'high';
+  ctx.visualTask = { id: 'original-assignment', since: 1 };
+  deps.visual.mockResolvedValue({ required: true, verified: false, reason: 'unit native capture pending' });
+  deps.conversation.mockReturnValue({ key: 'session_id', id: 'exact-native-conversation' });
+  const chief = mintToken({ label: 'Runtime chief', role: 'orchestrator', missionId: 'm', scope: { ...deps.scope },
+    executionScope: { ...agent.scope }, readOnly: false, allowedTools: null, allowedSkills: null });
+  bindTokenToSession(chief.token, 'chief-session');
+  const chiefAgent: OwnedAgentSessionInfo = { ...agent, sessionId: 'chief-session', paneId: 'chief-pane', role: 'orchestrator' };
+  deps.agents.push(chiefAgent); deps.probe.mockResolvedValue([{ sessionId: agent.sessionId, rootPid: 1234 }, { sessionId: chief.sessionId, rootPid: 3333 }]);
+  const audit = { timestamp: new Date().toISOString(), project_id: 'p', checkout_id: 'c', mission_id: 'm', duration_ms: 1, user_authorized: false,
+    session: 'chief-session', source: 'http-mcp' as const, tool: 'nexus_pane_spawn', args: { resume: 'owned-pane' }, result: 'ok' as const, invocation_id: 'resume-invocation' };
+  if (priorAudit) deps.audit.push(audit);
+  await f.request(event, { operation: 'observe', missionId: 'm' });
+  await f.request(event, { operation: 'terminate', sessionId: agent.sessionId });
+  releaseSessionByToken(ctx.token);
+  const next = mintToken({ label: 'Runtime writer', role: 'worker', missionId: 'm', scope: { ...deps.scope },
+    executionScope: { ...agent.scope }, readOnly: false, allowedTools: null, allowedSkills: null });
+  bindTokenToSession(next.token, 'new-session'); next.visualTask = ctx.visualTask;
+  const worker: OwnedAgentSessionInfo = { ...agent, paneId: 'new-pane', sessionId: 'new-session' };
+  deps.agents = [chiefAgent, worker]; deps.probe.mockResolvedValue([{ sessionId: 'new-session', rootPid: 2345 }, { sessionId: 'chief-session', rootPid: 3333 }]);
+  if (!priorAudit) deps.audit.push(audit);
+  deps.recovery = { fromPaneId: 'owned-pane', fromSessionId: 'owned-session', paneId: 'new-pane', sessionId: 'new-session', requestId: 'normal-spawn-result' };
+  return { f, event, next, worker };
+}
+it('F-1111: accepts the actual new result identity only with the exact prior worker, native context and own fresh chief audit', async () => {
+  const { f, event } = await recoveredWorkerFixture();
+  try { expect((await f.request(event, { operation: 'observe', missionId: 'm' })).recovery).toEqual({
+    fromPaneId: 'owned-pane', fromSessionId: 'owned-session', paneId: 'new-pane', sessionId: 'new-session', requestId: 'normal-spawn-result',
+    chiefSessionId: 'chief-session', invocationId: 'resume-invocation' }); }
+  finally { f.controller.abort(); await f.rejected; }
+});
+it.each(['foreign-result', 'no-audit', 'prior-audit', 'foreign-chief', 'foreign-resume', 'account', 'model', 'effort', 'assignment', 'full-root', 'ambiguous', 'native-context'] as const)(
+  'F-1111: rejects %s recovery provenance', async variant => {
+    const { f, event, next, worker } = await recoveredWorkerFixture(variant === 'prior-audit');
+    try {
+      if (variant === 'foreign-result') deps.recovery!.sessionId = 'unrelated-session';
+      if (variant === 'no-audit') deps.audit = [];
+      if (variant === 'foreign-chief') deps.audit[0] = { ...deps.audit[0], session: 'unrelated-chief' };
+      if (variant === 'foreign-resume') deps.audit[0].args.resume = 'another-pane';
+      if (variant === 'account') worker.accountId = 'account-b';
+      if (variant === 'model') worker.model = 'another-model';
+      if (variant === 'effort') worker.effort = 'low';
+      if (variant === 'assignment') next.visualTask = { id: 'foreign-assignment', since: 1 };
+      if (variant === 'full-root') { worker.scope = { ...worker.scope, rootRealPath: path.join(f.root, 'another-execution') }; next.executionScope = worker.scope; }
+      if (variant === 'native-context') deps.conversation.mockReturnValue({ key: 'session_id', id: 'foreign-native-conversation' });
+      if (variant === 'ambiguous') {
+        const competing = mintToken({ label: 'competing writer', role: 'worker', missionId: 'm', scope: { ...deps.scope }, executionScope: { ...worker.scope },
+          readOnly: false, allowedTools: null, allowedSkills: null });
+        bindTokenToSession(competing.token, 'competing-session'); competing.visualTask = next.visualTask;
+        deps.agents.push({ ...worker, paneId: 'competing-pane', sessionId: 'competing-session' });
+        deps.probe.mockResolvedValue([{ sessionId: 'new-session', rootPid: 2345 }, { sessionId: 'competing-session', rootPid: 3456 }, { sessionId: 'chief-session', rootPid: 3333 }]);
+      }
+      await expect(f.request(event, { operation: 'observe', missionId: 'm' })).rejects.toThrow(/recovery/);
+    } finally { f.controller.abort(); await f.rejected; }
+  });
+it.each(['nonce', 'parent-pid'] as const)('F-1111: rejects a recovery result from another %s', async changed => {
+  const { f, event } = await recoveredWorkerFixture();
+  vi.stubGlobal('fetch', async () => ({ ok: true, json: async () => ({ nonce: changed === 'nonce' ? '22222222-2222-4222-8222-222222222222' : '11111111-1111-4111-8111-111111111111',
+    pid: changed === 'parent-pid' ? process.ppid + 1 : process.ppid, recovery: deps.recovery }) }));
+  try { await expect(f.request(event, { operation: 'observe', missionId: 'm' })).rejects.toThrow('recovery gateway ownership differs'); }
+  finally { f.controller.abort(); await f.rejected; }
 });

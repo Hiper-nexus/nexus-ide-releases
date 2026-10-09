@@ -61,12 +61,16 @@ function writeReply(messages, step, tool, calls, nonce) {
 /** Only inference is simulated. Every Nexus tool result must come from the real installed CLI. */
 export async function startRuntimeGateway(nonce) {
   if (!/^[a-f0-9-]{36}$/u.test(nonce)) throw new Error('runtime gateway nonce invalid');
-  let requests = 0, stopped = false, closeFlight = null;
-  const sockets = new Set(), observations = [], questionCalls = [], writeCalls = [];
+  let requests = 0, stopped = false, closeFlight = null, recovery = null;
+  const sockets = new Set(), observations = [], questionCalls = [], writeCalls = [], recoveryCalls = [];
   const server = http.createServer((req, res) => {
     req.setTimeout(5000, () => req.destroy());
     if (stopped) { res.writeHead(503); res.end(); return; }
     if (req.url === '/runtime-hello' && req.method === 'GET') { res.end(JSON.stringify({ nonce, pid: process.pid })); return; }
+    if (req.url === '/runtime-recovery' && req.method === 'GET') {
+      if (req.headers['x-api-key'] !== `rt-${nonce}`) { res.writeHead(401); res.end('{}'); return; }
+      res.end(JSON.stringify({ nonce, pid: process.pid, recovery })); return;
+    }
     const requestPath = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
     if (req.method !== 'POST' || !['/v1/messages', '/v1/messages/count_tokens'].includes(requestPath)) { res.writeHead(404); res.end('{}'); return; }
     if (req.headers['x-api-key'] !== `rt-${nonce}` && req.headers.authorization !== `Bearer rt-${nonce}`) { res.writeHead(401); res.end('{}'); return; }
@@ -79,10 +83,10 @@ export async function startRuntimeGateway(nonce) {
         if (req.url.includes('count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
         const all = objects(body.messages), text = all.flatMap(v => typeof v.text === 'string' ? [v.text] : []).concat(
           (body.messages ?? []).flatMap(v => typeof v.content === 'string' ? [v.content] : [])).join('\n');
-        const markers = [...text.matchAll(/RT_GATE (OPS|SPAWN|WRITE|REVIEW|ACK|QUESTION|RESUME|IDLE)/gu)];
+        const markers = [...text.matchAll(/RT_GATE (OPS|SPAWN|WRITE|REVIEW|ACK|QUESTION|RECOVER|RESUME|IDLE)/gu)];
         const kind = markers.at(-1)?.[1];
         const assistantBlocks = (body.messages ?? []).filter(message => message.role === 'assistant' && Array.isArray(message.content)).flatMap(message => message.content);
-        const used = (kind === 'QUESTION' || kind === 'WRITE' ? assistantBlocks : all).filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
+        const used = (['QUESTION', 'WRITE', 'RECOVER'].includes(kind) ? assistantBlocks : all).filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
         const step = used.length;
         if (kind === 'QUESTION' && (!text.includes(`RT_GATE QUESTION ${nonce}`) || step > 2)) throw new Error('QUESTION instruction scope or step invalid');
         const tool = (suffix, input) => {
@@ -92,6 +96,7 @@ export async function startRuntimeGateway(nonce) {
           const call = { type: 'tool_use', id: `toolu_rt_${kind}_${step}`, name: choices[0].name, input };
           if (kind === 'QUESTION') questionCalls[step] = call;
           if (kind === 'WRITE') writeCalls[step] = call;
+          if (kind === 'RECOVER') recoveryCalls[step] = call;
           return call;
         };
         let content = { type: 'text', text: 'Runtime fixture ready; waiting for scoped verifier instruction.' };
@@ -115,6 +120,21 @@ export async function startRuntimeGateway(nonce) {
           summary: `RT_${kind}_${nonce}: Private runtime acceptance report was ${kind === 'WRITE' ? 'written' : 'read and reviewed'} through scoped Nexus tools. This durable full report preserves the actual result and deliberately contains no operator credentials or external data.`,
           fullText: `RT_REVIEW_${nonce}\nThe real CLI executed the advertised scoped Nexus tools for the approved private runtime fixture. The reviewer read runtime-report.txt using the real file read tool and observed the RT_REPORT marker for this fixture.\nNo operator credentials, external pages, login, or model inference service were used by this fixture. The handoff and its ACK still require their physical authenticated Nexus receipts and normal Main gates.`,
           filesModified: [], artifacts: [] });
+        }
+        else if (kind === 'RECOVER') {
+          const target = [...text.matchAll(/RT_GATE RECOVER ([a-f0-9-]{36}) ([A-Za-z0-9][A-Za-z0-9._:-]{0,255}) ([A-Za-z0-9][A-Za-z0-9._:-]{0,255})(?=\s|$)/gu)].at(-1);
+          if (!target || target[1] !== nonce || step > 1) throw new Error('real recovery instruction scope invalid');
+          if (step === 0) content = tool('nexus_pane_spawn', { resume: target[2], agentName: 'Runtime writer', role: 'worker', autoCloseOnHandoff: false,
+            prompt: `RT_GATE IDLE ${nonce}. Continue the same approved private visual assignment; wait for the scoped WRITE follow-up.` });
+          else {
+            const call = used[0], issued = recoveryCalls[0];
+            if (!issued || call.id !== issued.id || call.name !== issued.name || JSON.stringify(call.input) !== JSON.stringify(issued.input)) throw new Error('real recovery tool call binding invalid');
+            const result = toolResult(body.messages, issued, 'RECOVER');
+            const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value);
+            if (result.ok !== true || !identifier(result.paneId) || !identifier(result.sessionId) || !identifier(result.requestId) ||
+              result.paneId === target[2] || result.sessionId === target[3]) throw new Error('real recovery result identity invalid');
+            recovery = { fromPaneId: target[2], fromSessionId: target[3], paneId: result.paneId, sessionId: result.sessionId, requestId: result.requestId };
+          }
         }
         else if (kind === 'QUESTION' && step === 0) content = tool('nexus_clarify', { question: `RT_QUESTION_${nonce}: select the private fixture route.`, options: ['Proceed', 'Wait'], allowFreeform: false });
         else if (kind === 'QUESTION') {

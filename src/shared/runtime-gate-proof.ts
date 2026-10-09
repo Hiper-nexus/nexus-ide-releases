@@ -3,12 +3,16 @@ import { z } from 'zod';
 import { RUNTIME_REQUIRED, RUNTIME_RESUME_REQUIRED } from './runtime-gates.ts';
 const conversation = z.object({ key: z.enum(['session_id', 'conversation_id']), id: z.string().min(1) }).passthrough();
 const agent = z.object({ paneId: z.string(), sessionId: z.string(), role: z.string(), adapterId: z.string(), pid: z.number().int().positive().nullable(),
-  conversation: conversation.nullable(), visual: z.object({ assignmentId: z.string(), artifactId: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).optional() }).passthrough();
+  conversation: conversation.nullable(), bindingSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  visual: z.object({ assignmentId: z.string(), artifactId: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).optional() }).passthrough();
+const recovery = z.object({ fromPaneId: z.string(), fromSessionId: z.string(), paneId: z.string(), sessionId: z.string(), requestId: z.string(),
+  chiefSessionId: z.string(), invocationId: z.string() });
 const observation = z.object({ missionId: z.string(), lane: z.string().optional(), agents: z.array(agent), snapshot: z.object({
   question: z.object({ id: z.string() }).passthrough().optional() }).passthrough(), handoffs: z.array(z.object({ id: z.string(), status: z.string(), summary: z.string(),
     deliveryState: z.string(), consumedBySession: z.string().optional(), consumedDeliveryAttemptId: z.string().optional() }).passthrough()),
   acknowledgements: z.array(z.object({ handoffId: z.string(), sessionId: z.string(), deliveryAttemptId: z.string(), invocationId: z.string(), source: z.literal('http-mcp') })),
-  audit: z.array(z.object({ tool: z.string(), result: z.string(), source: z.string(), session: z.string(), invocation: z.string().optional(), handoffId: z.string().optional() })) }).passthrough();
+  recovery: recovery.optional(),
+  audit: z.array(z.object({ tool: z.string(), result: z.string(), source: z.string(), session: z.string(), invocation: z.string().optional(), handoffId: z.string().optional(), resume: z.string().optional() })) }).passthrough();
 export function sameRuntimeConversation(a: unknown, b: unknown): boolean {
   const left = conversation.safeParse(a), right = conversation.safeParse(b);
   return left.success && right.success && left.data.key === right.data.key && left.data.id === right.data.id;
@@ -46,8 +50,18 @@ export function deriveRuntimeChecks(input: {
   const workers = standard.flatMap(v => v.agents.filter(a => a.role === 'worker'));
   const workerInventory = workers.some(a => a.pid && a.adapterId === 'claude') && standard.every(v => v.agents.filter(a => a.role === 'worker').length <= 2 &&
     v.agents.every(a => a.adapterId === 'claude' && (a.pid === null || a.pid > 0)));
-  const recovered = workers.some((before, index) => before.pid && input.terminated.includes(before.sessionId) && workers.slice(index + 1).some(after =>
-    after.paneId === before.paneId && after.sessionId !== before.sessionId && after.pid && after.pid !== before.pid && sameRuntimeConversation(before.conversation, after.conversation)));
+  const recovered = standard.some((value, index) => {
+    const relation = value.recovery;
+    if (!relation) return false;
+    const before = standard.slice(0, index).flatMap(v => v.agents).find(a => a.role === 'worker' && a.paneId === relation.fromPaneId && a.sessionId === relation.fromSessionId && a.pid && a.conversation);
+    if (!before?.bindingSha256 || !input.terminated.includes(before.sessionId)) return false;
+    const candidates = value.agents.filter(a => a.role === 'worker' && a.bindingSha256 === before.bindingSha256 && sameRuntimeConversation(a.conversation, before.conversation));
+    const after = candidates[0];
+    return candidates.length === 1 && after?.paneId === relation.paneId && after.paneId !== before.paneId && after.sessionId === relation.sessionId && after.sessionId !== before.sessionId &&
+      !!after.pid && after.pid !== before.pid && value.agents.some(a => a.role === 'orchestrator' && a.sessionId === relation.chiefSessionId && a.pid) &&
+      value.audit.some(a => a.tool === 'nexus_pane_spawn' && a.result === 'ok' && a.source === 'http-mcp' && a.session === relation.chiefSessionId &&
+        a.invocation === relation.invocationId && a.resume === relation.fromPaneId);
+  });
   const handoff = standard.some(v => v.handoffs.some(h => h.status === 'success' && h.summary.includes(input.marker) && h.deliveryState === 'consumed' &&
     v.acknowledgements.some(r => r.handoffId === h.id && r.sessionId === h.consumedBySession && r.deliveryAttemptId === h.consumedDeliveryAttemptId &&
       chiefs.some(c => c.sessionId === r.sessionId) && v.audit.some(a => a.tool === 'nexus_handoff_ack' && a.result === 'ok' && a.source === 'http-mcp' &&

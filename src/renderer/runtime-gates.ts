@@ -58,13 +58,6 @@ export function installRuntimeGateRenderer(): void {
         if (!pane || pane.kind !== 'shell' || !shells.has(pane.id)) throw new Error('runtime close requires its loose shell');
         useLayoutStore.getState().close(pane.id, 'private-runtime-acceptance'); shells.delete(pane.id); await frame(); reply(true); return;
       }
-      if (value.operation === 'recover') {
-        const pane = listPanes(useLayoutStore.getState().root).find(p => p.id === value.paneId);
-        if (!pane) throw new Error('runtime recovery pane absent');
-        terminal.respawnWithResume(pane, '[nexus] private runtime verifier retoma a conversa anterior');
-        const sessionId = await terminal.waitForHealthyPaneSession(pane.id, value.previousSessionId, 20000);
-        if (!sessionId) throw new Error('runtime recovery refused'); reply(true, { sessionId }); return;
-      }
       if (value.operation === 'question') {
         if (typeof value.missionId !== 'string' || typeof value.marker !== 'string' || value.marker.length > 256) throw new Error('runtime question invalid');
         useProductNavigationStore.getState().openMission(value.missionId); await frame(); await frame();

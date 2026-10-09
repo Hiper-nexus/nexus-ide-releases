@@ -68,6 +68,9 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
       (!agent.coordinationScope || sameProjectScope(agent.coordinationScope, scope));
   };
   const history: unknown[] = [], terminated = new Set<string>();
+  type WorkerBaseline = { missionId: string; paneId: string; sessionId: string; pid: number; conversation: unknown; bindingSha256: string };
+  const observedWorkers = new Map<string, WorkerBaseline>();
+  const terminatedWorkers = new Map<string, WorkerBaseline & { priorInvocations: Set<string | undefined> }>();
   let stopped = false, flight: Promise<unknown> | null = null, releaseVoice: (() => void) | null = null;
   const echoSessions = new Set<string>(), armedShells = new Set<string>(), resumedOutput = new Set<string>(), visibleQuestions = new Set<string>();
   const visibleMoves = new Set<string>();
@@ -92,8 +95,16 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
       sameProjectScope(requireLiveRendererWorkspaceScope(wc), scope) });
   try { await new Promise<void>((resolve, reject) => {
     const current = (): void => { check(); if (stopped || wc.mainFrame !== frame || !sameProjectScope(requireLiveRendererWorkspaceScope(wc), scope)) throw new Error('runtime authority revoked'); };
+    const agentBindingHash = (info: ReturnType<typeof listAgentSessions>[number], ctx: NonNullable<ReturnType<typeof getContextBySession>>): string => {
+      const canonicalScope = (value: typeof scope) => Object.entries(value).filter(([, entry]) => entry !== undefined).sort(([a], [b]) => a.localeCompare(b));
+      const grants = (value: readonly string[] | null | undefined) => value == null ? null : [...value].sort();
+      return createHash('sha256').update(JSON.stringify([info.adapterId, info.model ?? null, info.accountId ?? null, info.effort ?? null, info.cwd,
+        info.role, info.readOnly, info.nativeReadOnly ?? null, grants(info.allowedTools), grants(info.allowedSkills), grants(ctx.allowedTools), grants(ctx.allowedSkills),
+        canonicalScope(ctx.scope), canonicalScope(executionScopeFor(ctx)), ctx.visualTask ? [ctx.visualTask.id, ctx.visualTask.since] : null])).digest('hex');
+    };
     const captureAgentBinding = (info: ReturnType<typeof listAgentSessions>[number]) => {
       const authority = getContextBySession(info.sessionId);
+      const seal = authority && agentBindingHash(info, authority);
       const binding = authority && { sessionId: authority.sessionId, missionId: authority.missionId, role: authority.role,
         coordination: { ...authority.scope }, execution: { ...executionScopeFor(authority) } };
       const assertCurrent = (): void => {
@@ -105,12 +116,12 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
           !sameProjectScope(live.coordinationScope ?? binding.coordination, info.coordinationScope ?? binding.coordination) ||
           getContextBySession(live.sessionId) !== authority || !verifiedAgent(live) ||
           authority.sessionId !== binding.sessionId || authority.missionId !== binding.missionId || authority.role !== binding.role ||
-          !sameProjectScope(authority.scope, binding.coordination) || !sameProjectScope(executionScopeFor(authority), binding.execution)) {
+          !sameProjectScope(authority.scope, binding.coordination) || !sameProjectScope(executionScopeFor(authority), binding.execution) || agentBindingHash(live, authority) !== seal) {
           throw new Error('runtime agent binding changed');
         }
       };
       assertCurrent();
-      return { authority, assertCurrent };
+      return { authority, assertCurrent, seal };
     };
     const addHistory = (value: unknown): void => { if (history.length >= 1200) throw new Error('runtime observation budget exceeded'); history.push(value); };
     const revokeVoice = (): void => { releaseVoice?.(); releaseVoice = null;
@@ -186,7 +197,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
           const footprints = await probePaneFootprints(); current();
           const bindings: Array<() => void> = [], stagedCaptures: Array<{ path: string; sha256: string; assignmentId: string; artifactId: string }> = [];
           const agents = await Promise.all(listAgentSessions().filter(v => v.missionId === req.missionId && verifiedAgent(v)).map(async v => {
-            const { authority: ctx, assertCurrent } = captureAgentBinding(v); bindings.push(assertCurrent);
+            const { authority: ctx, assertCurrent, seal } = captureAgentBinding(v); bindings.push(assertCurrent);
             const assignmentId = ctx?.visualTask?.id; let visual;
             if (ctx?.visualTask && assignmentId) {
               const verdict = await checkVisualHandoff(ctx, { assertCurrent }); assertCurrent();
@@ -203,25 +214,52 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
             }
             assertCurrent();
             return {
-            paneId: v.paneId, sessionId: v.sessionId, role: v.role, adapterId: v.adapterId, agentName: v.agentName,
+            paneId: v.paneId, sessionId: v.sessionId, role: v.role, adapterId: v.adapterId, agentName: v.agentName, model: v.model, bindingSha256: seal,
             pid: footprints?.find(f => f.sessionId === v.sessionId)?.rootPid ?? null,
             conversation: v.paneId ? getProviderPaneSession(scope, v.paneId, v.adapterId, v.accountId) : null,
             ...(visual ? { visual } : {}),
           }; })); current();
+          const audit = readAuditLog({ scope }, 200).filter(v => v.mission_id === mission.id);
+          let recovery;
+          if (terminatedWorkers.size && agents.length) {
+            const response = await fetch(`${config.gateway}/runtime-recovery`, { headers: { 'x-api-key': `rt-${config.gatewayNonce}` },
+              signal: AbortSignal.any([input.signal, AbortSignal.timeout(5000)]) }); current();
+            if (!response.ok) throw new Error('recovery gateway result unavailable');
+            const hint = await response.json(); current();
+            if (hint.nonce !== config.gatewayNonce || hint.pid !== process.ppid) throw new Error('recovery gateway ownership differs');
+            if (hint.recovery !== null) {
+              const result = hint.recovery as Record<string, unknown>;
+              const baseline = terminatedWorkers.get(String(result.fromSessionId));
+              if (!baseline || baseline.missionId !== mission.id || baseline.paneId !== result.fromPaneId ||
+                typeof result.paneId !== 'string' || typeof result.sessionId !== 'string' || typeof result.requestId !== 'string') throw new Error('recovery result baseline differs');
+              const candidates = agents.filter(a => a.role === 'worker' && a.bindingSha256 === baseline.bindingSha256 && sameRuntimeConversation(a.conversation, baseline.conversation));
+              const next = candidates[0], chiefs = agents.filter(a => a.role === 'orchestrator' && a.pid);
+              const calls = audit.filter(a => a.tool === 'nexus_pane_spawn' && a.result === 'ok' && a.source === 'http-mcp' && a.args.resume === baseline.paneId &&
+                a.invocation_id && !baseline.priorInvocations.has(a.invocation_id) && chiefs.some(c => c.sessionId === a.session));
+              if (candidates.length !== 1 || !next?.pid || next.pid === baseline.pid || next.paneId !== result.paneId || next.sessionId !== result.sessionId ||
+                next.paneId === baseline.paneId || next.sessionId === baseline.sessionId || chiefs.length !== 1 || calls.length !== 1) throw new Error('recovery native result or authenticated provenance differs');
+              recovery = { fromPaneId: baseline.paneId, fromSessionId: baseline.sessionId, paneId: next.paneId, sessionId: next.sessionId,
+                requestId: result.requestId, chiefSessionId: calls[0].session, invocationId: calls[0].invocation_id };
+            }
+          }
           bindings.forEach(assertCurrent => assertCurrent());
+          for (const a of agents) if (a.role === 'worker' && a.paneId && a.pid && a.conversation && a.bindingSha256) observedWorkers.set(a.sessionId,
+            { missionId: mission.id, paneId: a.paneId, sessionId: a.sessionId, pid: a.pid, conversation: { ...a.conversation }, bindingSha256: a.bindingSha256 });
           stagedCaptures.forEach(capture => captures.set(capture.artifactId, capture));
           const result = { missionId: mission.id, lane: mission.intentContract?.lane, status: mission.status, snapshot, agents,
+            ...(recovery ? { recovery } : {}),
             handoffs: stores.handoffs.list({ missionId: mission.id, includeDelivered: true }),
             acknowledgements: getMissionEventRuntimeManager()?.open(scope).db.prepare(`SELECT handoff_id AS handoffId, orchestrator_session_id AS sessionId,
               delivery_attempt_id AS deliveryAttemptId, tool_call_id AS invocationId, source FROM handoff_ack_receipts WHERE mission_id = ? AND source = 'http-mcp' LIMIT 16`).all(mission.id) ?? [],
-            audit: readAuditLog({ scope }, 200).filter(v => v.mission_id === mission.id).map(v => ({ tool: v.tool, result: v.result, source: v.source,
-              session: v.session, invocation: v.invocation_id, handoffId: typeof v.args.handoffId === 'string' ? v.args.handoffId : undefined })) };
+            audit: audit.map(v => ({ tool: v.tool, result: v.result, source: v.source,
+              session: v.session, invocation: v.invocation_id, handoffId: typeof v.args.handoffId === 'string' ? v.args.handoffId : undefined,
+              resume: typeof v.args.resume === 'string' ? v.args.resume : undefined })) };
           // Keep the canonical response for the driver, but persist only the
           // bounded Main facts needed by the gate, not repeated full briefs.
           addHistory({ ...result, snapshot: { question: snapshot.question },
             handoffs: result.handoffs.map(h => ({ id: h.id, status: h.status, summary: h.summary.slice(0, 512), deliveryState: h.deliveryState,
               consumedBySession: h.consumedBySession, consumedDeliveryAttemptId: h.consumedDeliveryAttemptId })),
-            audit: result.audit.filter(a => a.result === 'ok' && ['nexus_terminal_run', 'nexus_handoff_ack'].includes(a.tool)) });
+            audit: result.audit.filter(a => a.result === 'ok' && ['nexus_terminal_run', 'nexus_handoff_ack', 'nexus_pane_spawn'].includes(a.tool)) });
           return { ...result, resumedOutput: [...resumedOutput] };
         }
         const info = listAgentSessions().find(v => v.sessionId === req.sessionId);
@@ -229,7 +267,16 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
         const captured = agent ? captureAgentBinding(info) : null;
         const own = !info && isSessionOwnedBy(wc, req.sessionId) && getSessionCwd(req.sessionId) === input.workspacePath;
         if (!own && !agent) throw new Error('foreign runtime session');
-        if (req.operation === 'terminate') { const closed = await orchTerminateSession(req.sessionId, { origin: 'private-runtime-gate' }); current(); if (!closed) throw new Error('runtime physical termination unproved'); terminated.add(req.sessionId); return { closed }; }
+        if (req.operation === 'terminate') {
+          const baseline = observedWorkers.get(req.sessionId);
+          if (baseline && (!info || !captured?.authority || captured.seal !== baseline.bindingSha256 ||
+            !sameRuntimeConversation(baseline.conversation, getProviderPaneSession(scope, baseline.paneId, info.adapterId, info.accountId)))) throw new Error('recovery termination baseline changed');
+          const priorInvocations = new Set(readAuditLog({ scope }, 200).map(a => a.invocation_id));
+          const closed = await orchTerminateSession(req.sessionId, { origin: 'private-runtime-gate' }); current();
+          if (!closed) throw new Error('runtime physical termination unproved'); terminated.add(req.sessionId);
+          if (baseline) terminatedWorkers.set(req.sessionId, { ...baseline, priorInvocations });
+          return { closed };
+        }
         const footprints = await probePaneFootprints(); current();
         if (captured) captured.assertCurrent();
         else if (listAgentSessions().some(v => v.sessionId === req.sessionId) || !isSessionOwnedBy(wc, req.sessionId) ||

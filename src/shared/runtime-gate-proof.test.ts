@@ -33,3 +33,17 @@ it('matches actual provider identity and requires the resumed CLI reply in that 
   const f = runtimeFactFixture('resume'); f.resumedOutput = ['other-sid']; expect(() => deriveRuntimeChecks(f)).toThrow();
   f.resumedOutput = ['chief-sid']; f.state.conversation = { key: 'session_id', id: 'fresh-conversation' }; expect(() => deriveRuntimeChecks(f)).toThrow();
 });
+it('F-1111: requires the exact returned new worker identity, fresh chief audit and full Main binding', () => {
+  expect(deriveRuntimeChecks(runtimeFactFixture())['worker-recovery']).toBe(true);
+  for (const mutate of [(f: ReturnType<typeof runtimeFactFixture>) => { delete f.history[6].recovery; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].recovery.paneId = 'unrelated-pane'; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].recovery.sessionId = 'unrelated-session'; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].recovery.invocationId = 'unrelated-call'; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].recovery.chiefSessionId = 'unrelated-chief'; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].audit[1].resume = 'another-original'; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].audit[1].source = 'ipc-renderer'; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].agents[1].bindingSha256 = 'c'.repeat(64); },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].agents.push({ ...f.history[6].agents[1], paneId: 'competing-pane', sessionId: 'competing-session' }); }]) {
+    const f = runtimeFactFixture(); mutate(f); expect(() => deriveRuntimeChecks(f)).toThrow(/worker-recovery/);
+  }
+});

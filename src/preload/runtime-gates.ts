@@ -80,9 +80,10 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         observed = await poll(() => observe(standardId), v => v.agents.some((a: any) => a.paneId === writer.paneId && a.conversation), 'native conversation recorded');
         const original = observed.agents.find((a: any) => a.paneId === writer.paneId);
         await request('terminate', { sessionId: original.sessionId });
-        await ui('recover', { paneId: original.paneId, previousSessionId: original.sessionId });
-        observed = await poll(() => observe(standardId), v => v.agents.some((a: any) => a.paneId === original.paneId && a.sessionId !== original.sessionId && a.pid > 0), 'worker recovery');
-        const recovered = observed.agents.find((a: any) => a.paneId === original.paneId);
+        await direct(standardId, `RT_GATE RECOVER ${marker} ${original.paneId} ${original.sessionId}`);
+        observed = await poll(() => observe(standardId), v => v.recovery?.fromPaneId === original.paneId && v.recovery.fromSessionId === original.sessionId &&
+          v.agents.some((a: any) => a.paneId === v.recovery.paneId && a.sessionId === v.recovery.sessionId && a.pid > 0), 'worker recovery');
+        const recovered = observed.agents.find((a: any) => a.paneId === observed.recovery.paneId && a.sessionId === observed.recovery.sessionId);
         if (!sameRuntimeConversation(recovered.conversation, original.conversation)) throw new Error('worker recovery lost exact conversation'); checks['worker-recovery'] = true;
         await direct(standardId, `RT_GATE WRITE ${marker}`, agentFor(observed, recovered.paneId));
         if (workers[1]) await direct(standardId, `RT_GATE REVIEW ${marker}`, agentFor(observed, workers[1].paneId));

@@ -236,3 +236,34 @@ describe('F-1110 ordinary registered preview capture', () => {
     } finally { await server.close(); }
   });
 });
+describe('F-1111 normal worker recovery exchange', () => {
+  const nonce = '11111111-1111-4111-8111-111111111111';
+  const initial = [{ role: 'user', content: `RT_GATE RECOVER ${nonce} pane-old session-old` }];
+  async function post(server, messages) {
+    const response = await fetch(`${server.url}/v1/messages`, { method: 'POST', headers: { 'x-api-key': `rt-${nonce}` },
+      body: JSON.stringify({ tools: buildToolset().map(t => ({ name: `mcp__nexus__${t.name}` })), messages }) });
+    const text = await response.text(), events = response.ok ? text.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6))) : [];
+    const call = events.find(event => event.type === 'content_block_start')?.content_block;
+    if (call?.type === 'tool_use') call.input = JSON.parse(events.find(event => event.delta?.type === 'input_json_delta').delta.partial_json);
+    return { status: response.status, call };
+  }
+  it.each(['valid', 'missing', 'wrong-id', 'failed', 'duplicate', 'old-pane', 'old-session'])(
+    'binds only the successful actual new spawn result (%s)', async variant => {
+      const server = await startRuntimeGateway(nonce);
+      try {
+        const first = await post(server, initial);
+        expect(first.call).toMatchObject({ name: 'mcp__nexus__nexus_pane_spawn', input: {
+          resume: 'pane-old', agentName: 'Runtime writer', role: 'worker', autoCloseOnHandoff: false } });
+        const result = { role: 'user', content: [{ type: 'tool_result', tool_use_id: variant === 'wrong-id' ? 'foreign-call' : first.call.id,
+          is_error: variant === 'failed', content: JSON.stringify({ ok: true, requestId: 'actual-spawn',
+            paneId: variant === 'old-pane' ? 'pane-old' : 'pane-new', sessionId: variant === 'old-session' ? 'session-old' : 'session-new' }) }] };
+        const callbacks = variant === 'missing' ? [] : variant === 'duplicate' ? [result, result] : [result];
+        const next = await post(server, [...initial, { role: 'assistant', content: [first.call] }, ...callbacks]);
+        expect(next.status).toBe(variant === 'valid' ? 200 : 422);
+        expect((await fetch(`${server.url}/runtime-recovery`)).status).toBe(401);
+        const hint = await (await fetch(`${server.url}/runtime-recovery`, { headers: { 'x-api-key': `rt-${nonce}` } })).json();
+        expect(hint).toEqual({ nonce, pid: process.pid, recovery: variant === 'valid' ? {
+          fromPaneId: 'pane-old', fromSessionId: 'session-old', paneId: 'pane-new', sessionId: 'session-new', requestId: 'actual-spawn' } : null });
+      } finally { await server.close(); }
+    });
+});
