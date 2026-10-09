@@ -201,19 +201,24 @@ export function resolveHandoffListIncludeDelivered(
 /**
  * Digest do recorte de `nexus_handoff_list`. Entra no cursor para que um
  * cursor de outra missão, outro filtro ou outra lista seja recusado.
+ * Com filtro de panes, os session ids resolvidos entram no digest: se o
+ * pane renasce entre páginas, o cursor antigo não continua a trilha.
  */
 export function handoffListCursorSlice(input: {
   readonly missionId: string | null;
   readonly includeDelivered: boolean;
   readonly ids: readonly string[];
   readonly panes: readonly string[];
+  readonly paneSessionIds?: readonly string[];
 }): string {
+  const paneSessionIds = [...(input.paneSessionIds ?? [])].sort();
   const canonical = JSON.stringify({
     list: "handoff",
     missionId: input.missionId,
     includeDelivered: input.includeDelivered,
     ids: [...input.ids].sort(),
     panes: [...input.panes].sort(),
+    ...(paneSessionIds.length > 0 ? { paneSessionIds } : {}),
   });
   return createHash("sha256").update(canonical).digest("base64url").slice(0, 22);
 }
@@ -901,6 +906,9 @@ const handoffListTool: McpToolDef = {
       includeDelivered,
       ids: rawIds,
       panes: rawPanes,
+      ...(paneSessionIds && paneSessionIds.length > 0
+        ? { paneSessionIds }
+        : {}),
     });
     // Cursor antes do filtro vazio: página vazia ainda usa o envelope, e
     // cursor inválido não pode voltar [] nem reconhecer linha nenhuma.

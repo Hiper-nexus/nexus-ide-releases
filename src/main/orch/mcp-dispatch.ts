@@ -570,6 +570,42 @@ function parseStoredDispatchOutcome(value: unknown): ToolDispatchResult | null {
   return record as unknown as ToolDispatchResult;
 }
 
+function isDurableCapabilityField(key: string): boolean {
+  return key === "cdpWebSocketUrl" || key.toLowerCase() === "ticket";
+}
+
+/** Tira `ticket=` de uma URL sem apagar o resto da query. */
+function stripTicketQuery(value: string): string {
+  if (!value.toLowerCase().includes("ticket=")) return value;
+  return value
+    .replace(/([?&])ticket=[^&#\s"'<>]*/gi, "$1")
+    .replace(/\?&/g, "?")
+    .replace(/[?&](?=$|#)/g, "");
+}
+
+/**
+ * O retorno ao vivo pode levar `cdpWebSocketUrl` com o ticket do pane.
+ * O recibo fica até sete dias, ou para sempre quando o chamador fixou o
+ * operationId. Quem lê o banco, ou um backup, não pode reabrir o debugger.
+ */
+function redactDurableDispatchOutcome(
+  outcome: ToolDispatchResult,
+): ToolDispatchResult {
+  return redactCapabilityValue(outcome) as ToolDispatchResult;
+}
+
+function redactCapabilityValue(value: unknown): unknown {
+  if (typeof value === "string") return stripTicketQuery(value);
+  if (Array.isArray(value)) return value.map(redactCapabilityValue);
+  if (!value || typeof value !== "object") return value;
+  const redacted: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (isDurableCapabilityField(key)) continue;
+    redacted[key] = redactCapabilityValue(child);
+  }
+  return redacted;
+}
+
 function toolNameFromEffectPayload(payload: unknown): string | null {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return null;
@@ -622,7 +658,7 @@ function readReplayableCommandDispatch(
     if (receipt.outcomeJson) {
       try {
         const parsed = parseStoredDispatchOutcome(JSON.parse(receipt.outcomeJson));
-        if (parsed) return parsed;
+        if (parsed) return redactDurableDispatchOutcome(parsed);
       } catch {
         // JSON corrompido não autoriza repetir o efeito.
       }
@@ -654,7 +690,10 @@ function rememberDispatchOutcome(
     createScopedCommandReceiptStore(
       runtimeManager,
       ctx.scope,
-    ).rememberDispatchOutcome(commandId, outcome);
+    ).rememberDispatchOutcome(
+      commandId,
+      redactDurableDispatchOutcome(outcome),
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (message.includes("not initialized")) return;

@@ -1850,6 +1850,68 @@ describe("handoff MCP stop receipt", () => {
     expect(ackSpy).not.toHaveBeenCalled();
   });
 
+  it("rejects a panes cursor after the pane session changes and acks nothing", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn((_mission: string, ids: readonly string[]) => ids.length);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+      },
+    });
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-page",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 1,
+        missionId: "mission-a",
+      },
+      {
+        id: "h-next",
+        delivered: true,
+        deliveryState: "submitted",
+        createdAt: 2,
+        missionId: "mission-a",
+      },
+    ]);
+    paneMocks.listPaneSnapshots.mockReturnValue([
+      { paneId: "pane-live", sessionId: "session-a", paneNumber: 1 },
+    ]);
+    try {
+      const first = (await listTool().handler(
+        { panes: ["pane-live"], limit: 1 },
+        orchestratorContext(),
+      )) as { items: Array<{ id: string }>; nextCursor: string | null };
+      expect(first.items.map((row) => row.id)).toEqual(["h-page"]);
+      expect(first.nextCursor).toEqual(expect.any(String));
+
+      const continued = (await listTool().handler(
+        { panes: ["pane-live"], limit: 1, cursor: first.nextCursor },
+        orchestratorContext(),
+      )) as { items: Array<{ id: string }> };
+      expect(continued.items.map((row) => row.id)).toEqual(["h-next"]);
+
+      paneMocks.listPaneSnapshots.mockReturnValue([
+        { paneId: "pane-live", sessionId: "session-b", paneNumber: 1 },
+      ]);
+      ackSpy.mockClear();
+      await expect(
+        listTool().handler(
+          { panes: ["pane-live"], limit: 1, cursor: first.nextCursor },
+          orchestratorContext(),
+        ),
+      ).rejects.toThrow(/cursor inválido/);
+      expect(ackSpy).not.toHaveBeenCalled();
+    } finally {
+      paneMocks.listPaneSnapshots.mockImplementation(() => [
+        { paneId: "pane-live", sessionId: "session-live", paneNumber: 1 },
+      ]);
+    }
+  });
+
   it("returns a cursor envelope when the pane filter matches nothing", async () => {
     const stores = mocks.getStores();
     const ackSpy = vi.fn(() => 1);

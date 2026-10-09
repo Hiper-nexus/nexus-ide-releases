@@ -454,6 +454,98 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
     expect(second?.error).toBeUndefined();
   });
 
+  it('stores a preview outcome without the CDP url or its ticket', async () => {
+    const ticket = 'bearer-secret-ticket';
+    const cdpWebSocketUrl = `ws://127.0.0.1:9/cdp/pane-a?ticket=${ticket}`;
+    let runs = 0;
+    const booted = bootDispatch(async () => {
+      runs += 1;
+      return {
+        id: 'preview-1',
+        url: 'http://127.0.0.1:9/',
+        port: 9,
+        cdpWebSocketUrl,
+        note: `debug ${cdpWebSocketUrl}`,
+        nested: { ticket },
+      };
+    });
+    const call = () =>
+      dispatchToolCall(
+        'http-mcp',
+        booted.registry,
+        'nexus_terminal_run',
+        { command: 'true' },
+        booted.ctx,
+        { ...booted.options, logicalOperationId: 'op-preview' },
+      );
+    const live = await call();
+    expect(live).toMatchObject({
+      ok: true,
+      result: { id: 'preview-1', url: 'http://127.0.0.1:9/', cdpWebSocketUrl },
+    });
+    const stored = createScopedCommandReceiptStore(
+      booted.manager,
+      booted.scope,
+    ).getByCommandId('op-preview');
+    expect(stored?.outcomeJson ?? '').not.toContain('cdpWebSocketUrl');
+    expect(stored?.outcomeJson ?? '').not.toContain(ticket);
+    expect(stored?.outcomeJson ?? '').not.toContain('ticket=');
+    const replay = await call();
+    expect(runs).toBe(1);
+    const replayJson = JSON.stringify(replay);
+    expect(replayJson).not.toContain('cdpWebSocketUrl');
+    expect(replayJson).not.toContain(ticket);
+    expect(replay).toMatchObject({
+      ok: true,
+      result: { id: 'preview-1', url: 'http://127.0.0.1:9/', port: 9 },
+    });
+  });
+
+  it('does not replay a bearer already stored on a preview receipt', async () => {
+    const ticket = 'bearer-secret-ticket';
+    let runs = 0;
+    const booted = bootDispatch(async () => {
+      runs += 1;
+      return { marker: 'should-not-run' };
+    });
+    acceptDispatchCheckpointEffect(booted.manager, booted.scope, {
+      commandId: 'op-poison',
+      threadId: MISSION_ID,
+      toolName: 'terminal_run',
+      missionBound: true,
+    });
+    booted.manager.open(booted.scope).db.prepare(
+      `UPDATE command_receipts SET outcome_json = ? WHERE command_id = ?`,
+    ).run(
+      JSON.stringify({
+        ok: true,
+        tool: 'nexus_terminal_run',
+        result: {
+          url: 'http://127.0.0.1:9/',
+          cdpWebSocketUrl: `ws://127.0.0.1:9/cdp/pane-a?ticket=${ticket}`,
+          ticket,
+        },
+      }),
+      'op-poison',
+    );
+    const replay = await dispatchToolCall(
+      'http-mcp',
+      booted.registry,
+      'nexus_terminal_run',
+      { command: 'true' },
+      booted.ctx,
+      { ...booted.options, logicalOperationId: 'op-poison' },
+    );
+    expect(runs).toBe(0);
+    const replayJson = JSON.stringify(replay);
+    expect(replayJson).not.toContain('cdpWebSocketUrl');
+    expect(replayJson).not.toContain(ticket);
+    expect(replay).toMatchObject({
+      ok: true,
+      result: { url: 'http://127.0.0.1:9/' },
+    });
+  });
+
   it('returns effectMayHaveCommitted when a fresh process finds a receipt without an outcome', async () => {
     let runs = 0;
     const booted = bootDispatch(async () => {
