@@ -100,11 +100,16 @@ describe('Launcher onboarding', () => {
     expect(handlers.onOpenPane).not.toHaveBeenCalled();
     const input = document.createElement('input');
     host.appendChild(input);
+    const select = document.createElement('select');
+    host.appendChild(select);
     act(() => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
+      select.focus();
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
     });
     expect(handlers.onOpenPane).not.toHaveBeenCalled();
     act(() => {
+      select.blur();
       window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
     });
     expect(handlers.onOpenPane).toHaveBeenCalledOnce();

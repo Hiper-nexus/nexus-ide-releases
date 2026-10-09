@@ -2215,6 +2215,7 @@ describe('Caminho Expresso', () => {
       );
     });
     expect(document.activeElement).toBe(objective);
+    act(() => objective.blur());
 
     act(() => {
       window.dispatchEvent(
@@ -2239,6 +2240,22 @@ describe('Caminho Expresso', () => {
 
     act(() => {
       objective.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '5', bubbles: true }),
+      );
+    });
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+
+    await flush();
+    await flush();
+    const tool = host.querySelector<HTMLSelectElement>(
+      'select[aria-label^="Ferramenta de IA"]',
+    );
+    expect(tool).not.toBeNull();
+    act(() => {
+      tool!.focus();
+      window.dispatchEvent(
         new KeyboardEvent('keydown', { key: '5', bubbles: true }),
       );
     });
