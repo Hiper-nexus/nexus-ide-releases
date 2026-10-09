@@ -29,6 +29,7 @@ const harness = vi.hoisted(() => ({
     adapterId?: string;
   }>,
   spawnCount: 0,
+  operatorDismissed: false,
   spawnOptions: [] as Array<{ initialPrompt?: string; cwd: string; scope: ReturnType<typeof testProjectScope>; executionScope: ReturnType<typeof testProjectScope> }>,
   redeliver: vi.fn((): number => 0),
   handoffsOfSession: undefined as string | undefined,
@@ -137,7 +138,7 @@ vi.mock('./pane-registry', () => ({
   },
   isMissionPaneOperatorDismissed: () => false,
   readSessionOutput: () => '',
-  wasOrchestratorOperatorDismissed: () => false,
+  wasOrchestratorOperatorDismissed: () => harness.operatorDismissed,
   clearOperatorDismissedPanes: () => {},
   listPaneSnapshots: () =>
     harness.snapshots.map((pane) => ({
@@ -334,6 +335,7 @@ beforeEach(async () => {
   harness.sessionStates.clear();
   harness.snapshots.length = 0;
   harness.spawnCount = 0;
+  harness.operatorDismissed = false;
   harness.spawnOptions.length = 0;
   harness.redeliver.mockClear();
   harness.deliver.mockClear();
@@ -964,4 +966,52 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
       }),
     );
   });
+});
+
+
+it('F-1063: real automatic resume reports the operator-dismiss no-op without mounting', async () => {
+  harness.operatorDismissed = true;
+  liveMission = { ...mission, createdAt: Date.now(), updatedAt: Date.now() };
+  await expect(fastLane.resumeFastLaneMission(scope, mission.id, { remountKind: 'automatic' }))
+    .resolves.toMatchObject({ kind: 'operator-dismissed' });
+  expect(harness.spawnCount).toBe(0);
+  expect(harness.terminate).not.toHaveBeenCalled();
+});
+
+it('F-1063: real watch path reports the existing live leader rather than a rebind', async () => {
+  liveMission = { ...mission, createdAt: Date.now(), updatedAt: Date.now() };
+  harness.sessionStates.set('existing-leader', 'idle');
+  harness.snapshots.push({ missionId: mission.id, paneId: 'existing-pane', sessionId: 'existing-leader', role: 'orchestrator', agentName: 'Maestro' });
+  await expect(fastLane.resumeFastLaneMission(scope, mission.id, { remountKind: 'automatic' }))
+    .resolves.toMatchObject({ kind: 'already-running', sessionId: 'existing-leader' });
+  expect(harness.spawnCount).toBe(0);
+  expect(harness.terminate).not.toHaveBeenCalled();
+});
+
+it.each(['signal', 'authority', 'operator-dismiss'] as const)(
+  'F-1063: real asynchronous resume refuses a spawn after %s changes during termination', async (fault) => {
+    liveMission = { ...mission, createdAt: Date.now(), updatedAt: Date.now() };
+    harness.registeredOrchestrators.push({ missionId: mission.id, sessionId: 'stale-session', state: 'exited', adapterId: 'codex' });
+    const controller = new AbortController();
+    let revoked = false;
+    let finishTermination!: (value: boolean) => void;
+    harness.terminate.mockImplementationOnce(() => new Promise<boolean>((resolve) => { finishTermination = resolve; }));
+    const resuming = fastLane.resumeFastLaneMission(scope, mission.id, { remountKind: 'automatic', invocation: {
+      signal: controller.signal, assertCurrentAuthority: () => { if (revoked) throw new Error('session_authority_revoked'); },
+    } });
+    expect(harness.terminate).toHaveBeenCalledOnce();
+    if (fault === 'signal') controller.abort();
+    if (fault === 'authority') revoked = true;
+    if (fault === 'operator-dismiss') harness.operatorDismissed = true;
+    finishTermination(true);
+    await expect(resuming).rejects.toThrow(fault === 'operator-dismiss' ? /orchestrator_operator_dismissed/ : /session_authority_revoked/);
+    expect(harness.spawnCount).toBe(0);
+  },
+);
+
+it('F-1063: only the actual respawn result proves a new mounted runtime', async () => {
+  liveMission = { ...mission, createdAt: Date.now(), updatedAt: Date.now() };
+  const result = await fastLane.resumeFastLaneMission(scope, mission.id, { remountKind: 'automatic' });
+  expect(result).toMatchObject({ kind: 'mounted', sessionId: 'session-1' });
+  expect(harness.spawnCount).toBe(1);
 });

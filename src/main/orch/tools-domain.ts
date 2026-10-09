@@ -653,7 +653,8 @@ const missionRequestResumeTool: McpToolDef = {
     },
     required: ['missionId'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const requestedMissionId = requireStr(args, 'missionId');
     const note = str(args, 'note')?.trim().slice(0, 200) ?? '';
     // O argumento não escolhe a missão. Só o vínculo que o Main gravou no
@@ -688,10 +689,12 @@ const missionRequestResumeTool: McpToolDef = {
     if (wasOrchestratorOperatorDismissed(missionId)) {
       return operatorDismissedResumeResult(missionId);
     }
+    let outcome: Awaited<ReturnType<typeof resumeFastLaneMission>>;
     try {
       // Chamada de agente não é o botão Retomar: remount automático preserva
       // o veredito de encerramento do operador.
-      await resumeFastLaneMission(ctx.scope, missionId, {
+      outcome = await resumeFastLaneMission(ctx.scope, missionId, {
+        invocation,
         remountKind: 'automatic',
         note: note || 'Retomada pedida por nexus_mission_request_resume',
       });
@@ -712,13 +715,20 @@ const missionRequestResumeTool: McpToolDef = {
       }
       throw error;
     }
+    assertMcpInvocationCurrent(invocation);
+    if (outcome.kind === 'operator-dismissed') return operatorDismissedResumeResult(missionId);
     const after = stores.missions.get(missionId);
     return {
       ok: true,
       missionId,
-      resumed: true,
+      resumed: outcome.kind === 'mounted',
+      reason: outcome.kind,
       status: after?.status ?? mission.status,
-      note: 'Liderança religada pelo Main (mesmo caminho do botão “Retomar missão”). Repita o pedido original.',
+      note: outcome.kind === 'mounted'
+        ? 'O Main montou a liderança. Continue no painel de liderança da missão.'
+        : outcome.kind === 'already-running'
+          ? 'Já existe liderança viva nesta missão; esta chamada não a transferiu para sua sessão.'
+          : 'Pedido processado sem prova de nova montagem. Confira o estado da missão na interface.',
     };
   },
 };

@@ -492,7 +492,7 @@ const productionMissionDirectDeliveryDeps: MissionDirectDeliveryDeps = {
     ],
   deliverAgentPrompt,
   emitMissionEvent,
-  resumeOrchestrator: resumeFastLaneMission,
+  resumeOrchestrator: async (scope, missionId) => { await resumeFastLaneMission(scope, missionId); },
   getSessionState,
   readSessionOutput,
   noteOperatorDirection,

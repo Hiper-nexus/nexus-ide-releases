@@ -5,7 +5,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 const mocks = vi.hoisted(() => ({
   getProjectDomainStores: vi.fn(),
   resumeFastLaneMission: vi.fn(),
-  wasOrchestratorOperatorDismissed: vi.fn(() => false),
+  wasOrchestratorOperatorDismissed: vi.fn((_missionId: string) => false),
 }));
 
 vi.mock('./project-domain-store-registry', () => ({
@@ -54,7 +54,7 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
   beforeEach(() => {
     mocks.getProjectDomainStores.mockReset();
     mocks.resumeFastLaneMission.mockReset();
-    mocks.resumeFastLaneMission.mockResolvedValue(undefined);
+    mocks.resumeFastLaneMission.mockResolvedValue({ kind: 'already-running', sessionId: 'someone-else' });
     mocks.wasOrchestratorOperatorDismissed.mockReset();
     mocks.wasOrchestratorOperatorDismissed.mockReturnValue(false);
   });
@@ -70,7 +70,7 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
     );
   });
 
-  it('a stale Maestro can request resume — the Main rebinds via resumeFastLaneMission', async () => {
+  it('F-1063: a stale Maestro cannot claim rebind when the real outcome is already-running', async () => {
     mocks.getProjectDomainStores.mockReturnValue({
       missions: {
         get: (id: string) =>
@@ -91,7 +91,8 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
     expect(result).toMatchObject({
       ok: true,
       missionId: 'mission-existing',
-      resumed: true,
+      resumed: false,
+      reason: 'already-running',
     });
   });
 

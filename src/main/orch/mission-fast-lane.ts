@@ -1,3 +1,4 @@
+import { assertMcpInvocationCurrent, type McpToolInvocation } from './mcp-protocol';
 import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import { AsyncProcessGitRunner } from '../runtime/git-command';
 import { missionExecutionScope } from './mission-execution-scope';
@@ -1126,6 +1127,7 @@ async function pasteBriefAfterBoot(
   sessionId: string,
   prompt: string,
   adapterId: string,
+  invocation?: McpToolInvocation,
 ): Promise<string | null> {
   let failure: string | null;
   try {
@@ -1133,8 +1135,9 @@ async function pasteBriefAfterBoot(
       getSessionState(sessionId) === 'idle'
         ? 'idle'
         : await waitForIdle(sessionId, ORCHESTRATOR_BOOT_TIMEOUT_MS);
+    assertMcpInvocationCurrent(invocation);
     if (boot === 'exited') return 'pane saiu antes do briefing';
-    failure = (await deliverAgentPrompt(sessionId, prompt, undefined, { adapterId }))
+    failure = (await deliverAgentPrompt(sessionId, prompt, invocation, { adapterId }))
       ? null
       : 'briefing não foi aceito pelo pane';
   } catch (error) {
@@ -1164,8 +1167,10 @@ async function spawnAgentPane(
      */
     readonly resumeFromPaneId?: string;
     readonly accountId?: string;
+    readonly invocation?: McpToolInvocation;
   },
 ): Promise<SpawnedAgent | { error: string }> {
+  assertMcpInvocationCurrent(spawnOpts?.invocation);
   const executionScope = missionExecutionScope(scope, mission);
   const role: 'orchestrator' | 'worker' =
     agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
@@ -1219,6 +1224,7 @@ async function spawnAgentPane(
     readOnly,
     agentCategory: agent.category,
   });
+  assertMcpInvocationCurrent(spawnOpts?.invocation);
   if (role === 'worker') {
     const isMeta =
       getMissionRoutingHints(mission.intentContract).paneQuestion !== null ||
@@ -1243,7 +1249,9 @@ async function spawnAgentPane(
     warmPool.take(agent.cli);
   }
 
+  assertMcpInvocationCurrent(spawnOpts?.invocation);
   const spawn = await requestPaneSpawn({
+    ...(spawnOpts?.invocation?.signal ? { abortSignal: spawnOpts.invocation.signal } : {}),
     adapterId: agent.cli,
     model: runtimeAgent.model || undefined,
     effort: runtimeAgent.effort || undefined,
@@ -1273,6 +1281,7 @@ async function spawnAgentPane(
   }
 
   try {
+    assertMcpInvocationCurrent(spawnOpts?.invocation);
     bindSpawnedMissionPane(stores, scope, mission, runtimeAgent, role, {
       paneId: spawn.paneId, sessionId: spawn.sessionId, title, readOnly,
     }, previous);
@@ -1301,7 +1310,7 @@ async function spawnAgentPane(
   if (role === 'worker' && initialPrompt) {
     const delivery = resolveOrchestratorBriefDelivery(agent.cli, initialPrompt);
     if (delivery === 'paste') {
-      const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli);
+      const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli, spawnOpts?.invocation);
       if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };
     }
   }
@@ -1320,8 +1329,9 @@ async function spawnAgentPane(
       ? 'paste'
       : resolveOrchestratorBriefDelivery(agent.cli, initialPrompt);
     if (delivery === 'paste') {
-      const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli);
+      const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli, spawnOpts?.invocation);
       if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };
+      assertMcpInvocationCurrent(spawnOpts?.invocation);
       tryAcceptIdleOrchestratorKickoff(
         stores,
         mission,
@@ -1353,6 +1363,7 @@ async function spawnAgentPane(
           }`,
         };
       }
+      assertMcpInvocationCurrent(spawnOpts?.invocation);
       const tail = readSessionOutput(spawn.sessionId, 80);
       const blocked = maestroKickoffBlockReason(tail);
       if (blocked?.kind === 'auth') {
@@ -1363,6 +1374,7 @@ async function spawnAgentPane(
       if (blocked?.kind === 'onboarding') {
         // Uma segunda passagem: o autoresponder pode ainda estar a meio.
         await waitOutBootPrompts(spawn.sessionId, 10_000);
+        assertMcpInvocationCurrent(spawnOpts?.invocation);
         const tail2 = readSessionOutput(spawn.sessionId, 80);
         const still = maestroKickoffBlockReason(tail2);
         if (still) {
@@ -1374,6 +1386,7 @@ async function spawnAgentPane(
       // Recibo quando idle + briefing no argv + sem auth. Não espera a prova
       // de Enter — o poke do operador e o primeiro turno deixam de ficar
       // atrás de 60s+ de waitForIdle/prove.
+      assertMcpInvocationCurrent(spawnOpts?.invocation);
       tryAcceptIdleOrchestratorKickoff(
         stores,
         mission,
@@ -1385,6 +1398,7 @@ async function spawnAgentPane(
           spawn.sessionId,
           initialPrompt,
           agent.cli,
+          spawnOpts?.invocation,
         );
       } catch (error) {
         const after = maestroKickoffBlockReason(
@@ -2100,8 +2114,9 @@ function resolveFastLaneSquad(squadId?: string): import('../../shared/orch-types
 async function respawnFastLaneOrchestrator(
   scope: ProjectExecutionScope,
   mission: Mission,
-  options: { readonly note?: string } = {},
-): Promise<void> {
+  options: { readonly note?: string; readonly invocation?: McpToolInvocation } = {},
+): Promise<SpawnedAgent> {
+  assertMcpInvocationCurrent(options.invocation);
   const stores = getProjectDomainStores(scope);
 
   // Re-valida o estado durável antes de spawnar: um Stop do operador (ou
@@ -2196,11 +2211,13 @@ async function respawnFastLaneOrchestrator(
       mission.id,
     );
     for (const stale of staleOrchestrators) {
+      assertMcpInvocationCurrent(options.invocation);
       const proven = await orchTerminateSession(stale.sessionId, {
         termTimeoutMs: 5_000,
         killTimeoutMs: 10_000,
         origin: 'fast-lane:respawn-stale-orchestrator',
       });
+      assertMcpInvocationCurrent(options.invocation);
       if (!proven) {
         throw new Error(
           `orquestrador anterior (${stale.sessionId}, estado ${stale.state}, ` +
@@ -2211,12 +2228,15 @@ async function respawnFastLaneOrchestrator(
       }
     }
 
+    assertMcpInvocationCurrent(options.invocation);
     const result = operatorResume
       ? await spawnAgentPane(scope, live, orchestrator, prompt, operatorResume.title, {
+          invocation: options.invocation,
           resumeFromPaneId: operatorResume.paneId,
           ...(operatorResume.accountId ? { accountId: operatorResume.accountId } : {}),
         })
-      : await spawnAgentPane(scope, live, orchestrator, prompt);
+      : await spawnAgentPane(scope, live, orchestrator, prompt, undefined, { invocation: options.invocation });
+    assertMcpInvocationCurrent(options.invocation);
     if ('error' in result) {
       throw new Error(`orquestrador não reabriu: ${result.error}`);
     }
@@ -2276,6 +2296,7 @@ async function respawnFastLaneOrchestrator(
         `orquestrador respawnado (mission=${mission.id})`,
     );
   }
+  return spawned;
 }
 
 // Each mission owns its dispatch budget. Selecting or starting another mission
@@ -2466,7 +2487,9 @@ async function adoptOrchestratorPane(
   scope: ProjectExecutionScope,
   mission: Mission,
   briefPrompt: string,
+  invocation?: McpToolInvocation,
 ): Promise<OrchestratorAdoptionOutcome> {
+  assertMcpInvocationCurrent(invocation);
   const reservation = takeOrchestratorAdoption(mission.id);
   const adapter = reservation ? getAdapter(reservation.adapterId) : null;
   const decision = decideOrchestratorAdoption({
@@ -2494,6 +2517,7 @@ async function adoptOrchestratorPane(
     );
     granted = false;
   }
+  assertMcpInvocationCurrent(invocation);
   const stores = getProjectDomainStores(scope);
   // Prova, não promessa: o store tem que apontar para a sessão adotada. Se a
   // concessão disse ok mas o vínculo não mudou, isto NÃO é uma adoção.
@@ -2512,6 +2536,7 @@ async function adoptOrchestratorPane(
     missionId: live.id,
     role: 'orchestrator',
   })) ?? briefPrompt;
+  assertMcpInvocationCurrent(invocation);
   rememberKickoffBrief({
     missionId: live.id,
     orchestratorSessionId: adopted.sessionId,
@@ -2534,13 +2559,14 @@ async function adoptOrchestratorPane(
       getSessionState(adopted.sessionId) === 'idle'
         ? 'idle'
         : await waitForIdle(adopted.sessionId, ORCHESTRATOR_BOOT_TIMEOUT_MS);
+    assertMcpInvocationCurrent(invocation);
     if (boot === 'exited') {
       return { ...settled, briefingError: 'o painel saiu antes do briefing' };
     }
     const accepted = await deliverAgentPrompt(
       adopted.sessionId,
       initialPrompt,
-      undefined,
+      invocation,
       { adapterId: adopted.adapterId },
     );
     if (!accepted) {
@@ -2556,6 +2582,7 @@ async function adoptOrchestratorPane(
         error instanceof Error ? error.message : String(error),
     };
   }
+  assertMcpInvocationCurrent(invocation);
   tryAcceptIdleOrchestratorKickoff(stores, live, adopted.sessionId, initialPrompt);
   if (!stores.missions.hasCurrentKickoffAcceptance(live.id)) {
     try {
@@ -2578,8 +2605,9 @@ async function adoptOrchestratorPane(
 export async function fastLaneBootstrap(
   scope: ProjectExecutionScope,
   missionId: string,
-  options?: { readonly waitForFirstPane?: boolean },
+  options?: { readonly waitForFirstPane?: boolean; readonly invocation?: McpToolInvocation },
 ): Promise<void> {
+  assertMcpInvocationCurrent(options?.invocation);
   const stores = getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
   if (!mission) throw new Error('missão não encontrada para a Via Rápida');
@@ -2620,7 +2648,7 @@ export async function fastLaneBootstrap(
       return;
     }
     if (action === 'respawn') {
-      await respawnFastLaneOrchestrator(scope, mission);
+      await respawnFastLaneOrchestrator(scope, mission, { invocation: options?.invocation });
       return;
     }
     return;
@@ -2668,6 +2696,7 @@ export async function fastLaneBootstrap(
     );
   }
 
+  assertMcpInvocationCurrent(options?.invocation);
   let live = mission;
   {
     const dispatched = stores.missions.transitionLifecycle(
@@ -2709,11 +2738,13 @@ export async function fastLaneBootstrap(
   );
 
   const finishFirstPane = async (): Promise<void> => {
+    assertMcpInvocationCurrent(options?.invocation);
     const wave = dispatchFastLaneFirstWave(scope, missionId);
     // Adoção primeiro: se o operador indicou um painel para liderar, ele vira o
     // Maestro e nenhum pane novo nasce. Recusa não derruba a missão — ela cai
     // no arranque normal com o aviso registrado.
-    const adoption = await adoptOrchestratorPane(scope, live, prompt);
+    const adoption = await adoptOrchestratorPane(scope, live, prompt, options?.invocation);
+    assertMcpInvocationCurrent(options?.invocation);
     if (adoption.adopted) {
       orchPanes.set(missionId, {
         paneId: adoption.paneId,
@@ -2775,7 +2806,9 @@ export async function fastLaneBootstrap(
         occurredAt: Date.now(),
       });
     }
-    const spawned = await spawnAgentPane(scope, live, orchestrator, prompt);
+    assertMcpInvocationCurrent(options?.invocation);
+    const spawned = await spawnAgentPane(scope, live, orchestrator, prompt, undefined, { invocation: options?.invocation });
+    assertMcpInvocationCurrent(options?.invocation);
     if ('error' in spawned) {
       const current = stores.missions.get(missionId);
       if (current && current.status === 'running' && current.intentState) {
@@ -3070,14 +3103,20 @@ export async function dispatchFastLaneFirstWave(
 
 // ── Resume ───────────────────────────────────────────────────────────────
 
+export type FastLaneResumeOutcome =
+  | { readonly kind: 'operator-dismissed' | 'leftover-parked' | 'request-processed' }
+  | { readonly kind: 'already-running' | 'mounted'; readonly sessionId: string };
+
 export async function resumeFastLaneMission(
   scope: ProjectExecutionScope,
   missionId: string,
   options: {
     readonly remountKind?: LeftoverRemountKind;
     readonly note?: string;
+    readonly invocation?: McpToolInvocation;
   } = {},
-): Promise<void> {
+): Promise<FastLaneResumeOutcome> {
+  assertMcpInvocationCurrent(options.invocation);
   const stores = getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
   if (!mission) throw new Error('missão não encontrada para retomar');
@@ -3095,8 +3134,27 @@ export async function resumeFastLaneMission(
         wasOrchestratorOperatorDismissed(missionId),
     })
   ) {
-    return;
+    return { kind: 'operator-dismissed' };
   }
+  const invocation: McpToolInvocation = {
+    ...options.invocation,
+    assertCurrentAuthority: () => {
+      assertMcpInvocationCurrent(options.invocation);
+      const latest = stores.missions.get(missionId);
+      if (!latest) throw new Error('mission_resume_authority_lost');
+      if (remountKind === 'automatic') {
+        if (wasOrchestratorOperatorDismissed(missionId)) throw new Error('orchestrator_operator_dismissed');
+        if (hasCurrentMissionRuntimeCloseVerdict(latest) || wasMissionLeftoverParked(latest))
+          throw new Error('mission_closed_by_operator');
+      }
+    },
+  };
+  const processedOutcome = (): FastLaneResumeOutcome => {
+    const sessionId = liveOrchestratorSessionId(missionId) ?? liveRegisteredOrchestratorSessionId(missionId);
+    return sessionId && sessionId === liveMaestroSessionId
+      ? { kind: 'already-running', sessionId }
+      : { kind: 'request-processed' };
+  };
   if (remountKind === 'operator') {
     clearOperatorDismissedPanes(missionId);
     respawnBudgets.delete(watcherKey(scope, missionId));
@@ -3132,7 +3190,7 @@ export async function resumeFastLaneMission(
     })
   ) {
     persistLeftoverIsolation(stores.missions, mission.id, 'leftover');
-    return;
+    return { kind: 'leftover-parked' };
   }
 
   const action = decideFastLaneResumeAction({
@@ -3141,13 +3199,14 @@ export async function resumeFastLaneMission(
   });
   if (action === 'watch') {
     if (liveMaestroSessionId) startWatcher(scope, missionId, liveMaestroSessionId);
-    return;
+    return liveMaestroSessionId ? { kind: 'already-running', sessionId: liveMaestroSessionId } : { kind: 'request-processed' };
   }
   if (action === 'respawn') {
-    await respawnFastLaneOrchestrator(scope, mission, {
+    const spawned = await respawnFastLaneOrchestrator(scope, mission, {
       note: options.note,
+      invocation,
     });
-    return;
+    return { kind: 'mounted', sessionId: spawned.sessionId };
   }
 
   // Se bloqueada, tenta re-assumir E spawna novo orquestrador.
@@ -3212,12 +3271,13 @@ export async function resumeFastLaneMission(
       // Falhou o resumeTechnical, mas o bootstrap ainda pode funcionar
       // se a missão já estiver em running.
     }
-    await fastLaneBootstrap(scope, missionId);
-    return;
+    await fastLaneBootstrap(scope, missionId, { invocation });
+    return processedOutcome();
   }
 
   // Outros estados: re-spawna do zero.
-  await fastLaneBootstrap(scope, missionId);
+  await fastLaneBootstrap(scope, missionId, { invocation });
+  return processedOutcome();
 }
 
 // ── UI helpers ───────────────────────────────────────────────────────────

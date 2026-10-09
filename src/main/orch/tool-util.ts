@@ -1258,8 +1258,9 @@ export async function proveNativeArgvBriefAccepted(
   sessionId: string,
   finalPrompt: string,
   adapterId: string,
+  invocation?: McpToolInvocation,
 ): Promise<void> {
-  await ensureNativeArgvPromptAccepted(sessionId, finalPrompt, adapterId);
+  await ensureNativeArgvPromptAccepted(sessionId, finalPrompt, adapterId, invocation);
 }
 
 /**
