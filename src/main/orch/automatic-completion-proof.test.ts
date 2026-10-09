@@ -59,12 +59,13 @@ describe('assertCompletionEffectsSettled reads the handoff ledger', () => {
     }
   });
 
-  function openScope() {
+  function openScope(now?: () => number) {
     const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-completion-gate-'));
     directories.push(baseDir);
     const runtime = new ProjectRuntimeManager({
       baseDir,
       appVersion: 'completion-gate-test',
+      ...(now ? { now } : {}),
     });
     managers.push(runtime);
     const projectScope = testProjectScope({
@@ -227,4 +228,36 @@ describe('assertCompletionEffectsSettled reads the handoff ledger', () => {
       { excludeSessionId: 'maestro-session' })).not.toThrow();
   });
 
+
+  it('still sees a later worker queue when the oldest fifty rows are the Maestro', () => {
+    let clock = 1_000;
+    const { runtime, projectScope, missions, handoffs } = openScope(() => clock);
+    const missionRow = missions.create({ title: 'Board done' });
+    for (let index = 0; index < 51; index += 1) {
+      clock += 1;
+      handoffs.submit({
+        missionId: missionRow.id,
+        sessionId: 'maestro-session',
+        fromAgent: 'maestro',
+        status: 'success',
+        summary: `Resumo do Maestro ${index}.`,
+      });
+    }
+    clock += 1;
+    handoffs.submit({
+      missionId: missionRow.id,
+      sessionId: 'worker-session',
+      fromAgent: 'worker',
+      status: 'success',
+      summary: 'Handoff do worker depois do teto da fila.',
+    });
+    const exclude = { excludeSessionId: 'maestro-session' };
+
+    expect(() => assertCompletionEffectsSettled(
+      runtime,
+      projectScope,
+      missionRow.id,
+      exclude,
+    )).toThrow(/completion_effects_pending:.*handoff\.deliver=pending/);
+  });
 });

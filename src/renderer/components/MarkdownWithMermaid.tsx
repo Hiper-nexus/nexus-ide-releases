@@ -1,8 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import {
-  escapeMermaidSource,
-  splitMarkdownMermaid,
-} from '../../shared/mermaid-fences';
+import { splitMarkdownMermaid } from '../../shared/mermaid-fences';
 
 /**
  * Markdown + Mermaid renderizado de verdade (item T3).
@@ -77,7 +74,7 @@ function MermaidBlock({
         Diagrama Mermaid
       </figcaption>
       <pre className="markdown-with-mermaid__source">
-        <code>{escapeMermaidSource(source)}</code>
+        <code>{source}</code>
       </pre>
     </figure>
   );

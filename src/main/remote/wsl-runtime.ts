@@ -55,6 +55,11 @@ export function planWslRuntime(input: WslRuntimePlanInput): WslRuntimePlan {
   if (distro.length === 0) throw new Error('wsl distro is required');
   if (input.command.length === 0) throw new Error('wsl command is required');
   const unc = parseWslUncPath(input.hostCwd);
+  if (unc && unc.distro !== distro) {
+    throw new Error(
+      `wsl unc distro ${unc.distro} does not match selected distro ${distro}`,
+    );
+  }
   const linuxCwd = unc ? unc.linuxPath : toLinuxPath(input.hostCwd);
   const windowsUncCwd = toWindowsWslUncPath(linuxCwd, distro);
   const quoted = input.command.map(quotePosix).join(' ');

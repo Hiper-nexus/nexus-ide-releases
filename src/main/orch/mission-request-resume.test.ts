@@ -5,6 +5,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 const mocks = vi.hoisted(() => ({
   getProjectDomainStores: vi.fn(),
   resumeFastLaneMission: vi.fn(),
+  wasOrchestratorOperatorDismissed: vi.fn(() => false),
 }));
 
 vi.mock('./project-domain-store-registry', () => ({
@@ -12,6 +13,11 @@ vi.mock('./project-domain-store-registry', () => ({
 }));
 vi.mock('./mission-fast-lane', () => ({
   resumeFastLaneMission: mocks.resumeFastLaneMission,
+}));
+vi.mock('./pane-registry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./pane-registry')>()),
+  wasOrchestratorOperatorDismissed: (missionId: string) =>
+    mocks.wasOrchestratorOperatorDismissed(missionId),
 }));
 
 import { buildDomainTools } from './tools-domain';
@@ -49,6 +55,8 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
     mocks.getProjectDomainStores.mockReset();
     mocks.resumeFastLaneMission.mockReset();
     mocks.resumeFastLaneMission.mockResolvedValue(undefined);
+    mocks.wasOrchestratorOperatorDismissed.mockReset();
+    mocks.wasOrchestratorOperatorDismissed.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -219,6 +227,49 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
     expect(result).toMatchObject({
       ok: false,
       reason: 'mission_closed_by_operator',
+    });
+  });
+
+  it('operator-dismissed Maestro is not reported as resumed', async () => {
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({ id: 'mission-existing', status: 'running' }),
+      },
+    });
+    mocks.wasOrchestratorOperatorDismissed.mockReturnValue(true);
+    const result = await requestResumeTool().handler(
+      { missionId: 'mission-existing' },
+      context(),
+    );
+    expect(mocks.resumeFastLaneMission).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: false,
+      missionId: 'mission-existing',
+      reason: 'orchestrator_operator_dismissed',
+      resumed: false,
+    });
+    expect(result).not.toMatchObject({ resumed: true });
+  });
+
+  it('resume that throws orchestrator_operator_dismissed stays unsuccessful', async () => {
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({ id: 'mission-existing', status: 'running' }),
+      },
+    });
+    mocks.resumeFastLaneMission.mockRejectedValue(
+      new Error(
+        'orchestrator_operator_dismissed: o pane do coordenador foi fechado — use Retomar para reabrir a missão',
+      ),
+    );
+    const result = await requestResumeTool().handler(
+      { missionId: 'mission-existing' },
+      context(),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'orchestrator_operator_dismissed',
+      resumed: false,
     });
   });
 });

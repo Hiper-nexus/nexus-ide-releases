@@ -890,7 +890,6 @@ const handoffListTool: McpToolDef = {
           .map((s) => s.sessionId)
           .filter((s): s is string => s !== null)
       : undefined;
-    if (paneSessionIds?.length === 0) return [];
     const rawIds = Array.isArray(args.ids)
       ? args.ids.filter((i) => typeof i === "string")
       : [];
@@ -903,6 +902,41 @@ const handoffListTool: McpToolDef = {
       ids: rawIds,
       panes: rawPanes,
     });
+    // Cursor antes do filtro vazio: página vazia ainda usa o envelope, e
+    // cursor inválido não pode voltar [] nem reconhecer linha nenhuma.
+    const wantCursorMode =
+      args.cursor !== undefined || args.limit !== undefined;
+    let cursorAfter: { createdAt: number; id: string } | undefined;
+    if (wantCursorMode && typeof args.cursor === "string") {
+      try {
+        const decoded = decodeCursor(args.cursor);
+        if (decoded.s !== cursorSlice) {
+          throw new InvalidCursorError("cursor does not match this slice");
+        }
+        if (
+          typeof decoded.k !== "number" ||
+          !Number.isInteger(decoded.k) ||
+          decoded.k < 0
+        ) {
+          throw new InvalidCursorError("cursor key is not a handoff timestamp");
+        }
+        cursorAfter = { createdAt: decoded.k, id: decoded.i };
+      } catch (error) {
+        if (error instanceof InvalidCursorError) {
+          throw new Error(
+            `nexus_handoff_list: cursor inválido (${error.message}). ` +
+              "Comece a primeira página sem cursor.",
+          );
+        }
+        throw error;
+      }
+    }
+    if (paneSessionIds?.length === 0) {
+      if (wantCursorMode) {
+        return { items: [], nextCursor: null, hasMoreHistory: false };
+      }
+      return [];
+    }
     const listFilter = {
       missionId,
       includeDelivered,
@@ -919,29 +953,12 @@ const handoffListTool: McpToolDef = {
     let returned: ScopedHandoff[];
     let nextCursor: string | null = null;
     let hasMoreHistory = false;
-    const wantCursorMode =
-      args.cursor !== undefined || args.limit !== undefined;
     if (wantCursorMode) {
       try {
-        let after: { createdAt: number; id: string } | undefined;
-        if (typeof args.cursor === "string") {
-          const decoded = decodeCursor(args.cursor);
-          if (decoded.s !== cursorSlice) {
-            throw new InvalidCursorError("cursor does not match this slice");
-          }
-          if (
-            typeof decoded.k !== "number" ||
-            !Number.isInteger(decoded.k) ||
-            decoded.k < 0
-          ) {
-            throw new InvalidCursorError("cursor key is not a handoff timestamp");
-          }
-          after = { createdAt: decoded.k, id: decoded.i };
-        }
         const pageLimit = clampPageSize(args.limit);
         const window = handoffStore.listCursorPage({
           ...listFilter,
-          ...(after ? { after } : {}),
+          ...(cursorAfter ? { after: cursorAfter } : {}),
           limit: pageLimit + 1,
         });
         hasMoreHistory = window.length > pageLimit;
