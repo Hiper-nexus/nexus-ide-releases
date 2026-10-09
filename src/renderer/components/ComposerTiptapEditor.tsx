@@ -66,14 +66,15 @@ function spansToTiptapContent(spans: readonly RichTextSpan[]) {
   };
 }
 
-/** doc JSON → spans → markdown canônico. */
-function tiptapJsonToMarkdown(doc: {
+/** doc JSON → spans → markdown canônico. Enter vira quebra entre parágrafos. */
+export function tiptapJsonToMarkdown(doc: {
   content?: Array<{
     content?: Array<{ text?: string; marks?: Array<{ type: string }> }>;
   }>;
 }): string {
-  const spans: RichTextSpan[] = [];
+  const blocks: string[] = [];
   for (const paragraph of doc.content ?? []) {
+    const spans: RichTextSpan[] = [];
     for (const node of paragraph.content ?? []) {
       if (typeof node.text !== 'string') continue;
       const marks = (node.marks ?? [])
@@ -83,8 +84,9 @@ function tiptapJsonToMarkdown(doc: {
         );
       spans.push({ text: node.text, marks });
     }
+    blocks.push(serializeInlineMarkdown(spans));
   }
-  return serializeInlineMarkdown(spans);
+  return blocks.join('\n');
 }
 
 export function ComposerTiptapEditor({

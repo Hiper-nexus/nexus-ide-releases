@@ -63,6 +63,7 @@ export function planWslRuntime(input: WslRuntimePlanInput): WslRuntimePlan {
   const linuxCwd = unc ? unc.linuxPath : toLinuxPath(input.hostCwd);
   const windowsUncCwd = toWindowsWslUncPath(linuxCwd, distro);
   const quoted = input.command.map(quotePosix).join(' ');
+  const script = `${validatedEnvPrefix(input.env)}${quoted}`;
   const argv = [
     '-d',
     distro,
@@ -71,7 +72,7 @@ export function planWslRuntime(input: WslRuntimePlanInput): WslRuntimePlan {
     '--exec',
     'bash',
     '-lc',
-    quoted,
+    script,
   ];
   return {
     distro,
@@ -80,6 +81,25 @@ export function planWslRuntime(input: WslRuntimePlanInput): WslRuntimePlan {
     windowsUncCwd: windowsUncCwd || null,
     credentialSlot: wslCredentialSlot(distro),
   };
+}
+
+/** Atribuições pedidas entram no `bash -lc`. Nome inseguro não é descartado. */
+function validatedEnvPrefix(
+  env: Readonly<Record<string, string>> | undefined,
+): string {
+  if (!env) return '';
+  const assignments: string[] = [];
+  for (const [rawKey, value] of Object.entries(env)) {
+    const key = rawKey.trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(key)) {
+      throw new Error(`wsl env name is not safe: ${rawKey}`);
+    }
+    if (value.includes('\0') || value.includes('\n') || value.includes('\r')) {
+      throw new Error(`wsl env value is not safe: ${key}`);
+    }
+    assignments.push(`export ${key}=${quotePosix(value)}`);
+  }
+  return assignments.length === 0 ? '' : `${assignments.join('; ')}; `;
 }
 
 function quotePosix(arg: string): string {

@@ -115,6 +115,25 @@ describe('CdpRelay (T3 port)', () => {
     });
   });
 
+  it('returns the same browser context that Target.getTargets advertises', async () => {
+    const { relay, written } = collectWrites();
+    relay.receive(JSON.stringify({ id: 10, method: 'Target.getBrowserContexts' }));
+    relay.receive(JSON.stringify({ id: 11, method: 'Target.getTargets' }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    const contexts = written.find((message) => message.id === 10);
+    const targets = written.find((message) => message.id === 11);
+    const contextIds = (
+      contexts?.result as { browserContextIds?: string[] } | undefined
+    )?.browserContextIds;
+    const targetInfos = (
+      targets?.result as { targetInfos?: Array<{ browserContextId?: string }> } | undefined
+    )?.targetInfos;
+    expect(contextIds).toEqual(['nexus-preview']);
+    expect(targetInfos?.[0]?.browserContextId).toBe('nexus-preview');
+  });
+
   it('rejects unsupported browser commands', async () => {
     const written: Record<string, unknown>[] = [];
     const relay = createCdpRelayConnection(fakeTarget(), (raw) => {
