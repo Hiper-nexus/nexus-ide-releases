@@ -18,7 +18,7 @@ import { getAdapter, resolveAdapterBinary, isAdapterInstalled } from './adapters
 import { readAuditLog } from './jarvis/audit-log';
 import { armPrivateCaptureProbe, privateCaptureProbeAllowed, privateCaptureMediaPermission } from './voice/private-capture-probe';
 import { getWorkspaceMemoryStore } from './memory/workspace-memory';
-import { getContextBySession } from './orch/gate';
+import { getContextBySession, isCurrentGateContext, executionScopeFor } from './orch/gate';
 import { checkVisualHandoff } from './orch/visual-handoff-gate';
 import { createScopedBrowserArtifactStore } from './browser/browser-artifact-store';
 import { getMissionEventRuntimeManager } from './orch/mission-event-emit';
@@ -59,6 +59,13 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
   const scope = requireLiveRendererWorkspaceScope(wc);
   if (scope.rootRealPath !== input.workspacePath) throw new Error('runtime renderer is not the private fixture workspace');
   const stores = getProjectDomainStores(scope);
+  const verifiedAgent = (agent: ReturnType<typeof listAgentSessions>[number]): boolean => {
+    const ctx = getContextBySession(agent.sessionId);
+    return ctx !== null && isCurrentGateContext(ctx) && ctx.sessionId === agent.sessionId &&
+      ctx.missionId === agent.missionId && ctx.role === agent.role && sameProjectScope(ctx.scope, scope) &&
+      sameProjectScope(agent.scope, executionScopeFor(ctx)) &&
+      (!agent.coordinationScope || sameProjectScope(agent.coordinationScope, scope));
+  };
   const history: unknown[] = [], terminated = new Set<string>();
   let stopped = false, flight: Promise<unknown> | null = null, releaseVoice: (() => void) | null = null;
   const echoSessions = new Set<string>(), armedShells = new Set<string>(), resumedOutput = new Set<string>(), visibleQuestions = new Set<string>();
@@ -87,7 +94,10 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
       try { wc.session.setPermissionRequestHandler((_sender, _permission, callback) => callback(false));
         wc.session.setPermissionCheckHandler(() => false); } catch { /* The destroyed private session has no remaining renderer. */ } };
     const removeTap = tapSessionData((id, data) => {
-      if (stopped || input.signal.aborted || (!armedShells.has(id) && !listAgentSessions().some(a => a.sessionId === id && sameProjectScope(a.scope, scope)))) return;
+      if (stopped || input.signal.aborted) return;
+      try { current(); } catch { return; }
+      const agent = listAgentSessions().find(a => a.sessionId === id);
+      if (agent ? !verifiedAgent(agent) : !(armedShells.has(id) && isSessionOwnedBy(wc, id) && getSessionCwd(id) === input.workspacePath)) return;
       const text = ((outputWindows.get(id) ?? '') + data).slice(-2048); outputWindows.set(id, text);
       if (armedShells.has(id) && text.includes(`RT_MOVE_${config.gatewayNonce}`)) echoSessions.add(id);
       if (text.includes(`RT_RESUME_OK_${config.gatewayNonce}`)) resumedOutput.add(id);
@@ -149,7 +159,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
           if (!mission || !mission.title.includes(config.gatewayNonce)) throw new Error('private mission absent');
           const snapshot = await missionEngineForScope(scope).snapshot(scope, req.missionId); current();
           const footprints = await probePaneFootprints(); current();
-          const agents = await Promise.all(listAgentSessions().filter(v => v.missionId === req.missionId && sameProjectScope(v.scope, scope)).map(async v => {
+          const agents = await Promise.all(listAgentSessions().filter(v => v.missionId === req.missionId && verifiedAgent(v)).map(async v => {
             const ctx = getContextBySession(v.sessionId); let visual;
             if (ctx?.visualTask) {
               const verdict = await checkVisualHandoff(ctx, { assertCurrent: current }); current();
@@ -181,11 +191,25 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
             audit: result.audit.filter(a => a.result === 'ok' && ['nexus_terminal_run', 'nexus_handoff_ack'].includes(a.tool)) });
           return { ...result, resumedOutput: [...resumedOutput] };
         }
-        const own = isSessionOwnedBy(wc, req.sessionId) && getSessionCwd(req.sessionId) === input.workspacePath;
-        const agent = listAgentSessions().find(v => v.sessionId === req.sessionId && sameProjectScope(v.scope, scope));
+        const info = listAgentSessions().find(v => v.sessionId === req.sessionId);
+        const agent = info && verifiedAgent(info);
+        const authority = info ? getContextBySession(info.sessionId) : null;
+        const binding = authority && { sessionId: authority.sessionId, missionId: authority.missionId, role: authority.role,
+          coordination: { ...authority.scope }, execution: { ...executionScopeFor(authority) } };
+        const own = !info && isSessionOwnedBy(wc, req.sessionId) && getSessionCwd(req.sessionId) === input.workspacePath;
         if (!own && !agent) throw new Error('foreign runtime session');
         if (req.operation === 'terminate') { const closed = await orchTerminateSession(req.sessionId, { origin: 'private-runtime-gate' }); current(); if (!closed) throw new Error('runtime physical termination unproved'); terminated.add(req.sessionId); return { closed }; }
         const footprints = await probePaneFootprints(); current();
+        const liveInfo = listAgentSessions().find(v => v.sessionId === req.sessionId);
+        const sameAgent = info && liveInfo && authority && binding &&
+          liveInfo.sessionId === info.sessionId && liveInfo.paneId === info.paneId && liveInfo.adapterId === info.adapterId &&
+          liveInfo.missionId === info.missionId && liveInfo.role === info.role && sameProjectScope(liveInfo.scope, info.scope) &&
+          sameProjectScope(liveInfo.coordinationScope ?? binding.coordination, info.coordinationScope ?? binding.coordination) &&
+          getContextBySession(liveInfo.sessionId) === authority && verifiedAgent(liveInfo) &&
+          authority.sessionId === binding.sessionId && authority.missionId === binding.missionId && authority.role === binding.role &&
+          sameProjectScope(authority.scope, binding.coordination) && sameProjectScope(executionScopeFor(authority), binding.execution);
+        const sameShell = !info && !liveInfo && isSessionOwnedBy(wc, req.sessionId) && getSessionCwd(req.sessionId) === input.workspacePath;
+        if (!(info ? sameAgent : sameShell)) throw new Error('runtime session binding changed during lookup');
         const pid = footprints?.find(v => v.sessionId === req.sessionId)?.rootPid;
         if (!pid) throw new Error('runtime session PID unavailable'); armedShells.add(req.sessionId);
         const result = { sessionId: req.sessionId, pid }; addHistory(result); return { ...result, echoed: echoSessions.has(req.sessionId) };
