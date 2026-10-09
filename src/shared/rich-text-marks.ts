@@ -169,7 +169,13 @@ function readSingleCodeSpan(
   while (index < text.length) {
     const char = text[index]!;
     if (char === '\n') return null;
-    if (char === '\\' && index + 1 < text.length && text[index + 1] !== '\n') {
+    // O serializer de código só emite `\\` e `\``. Uma barra comum
+    // (`C:\Users`) fica no texto; consumi-la corromperia o próximo save.
+    if (
+      char === '\\' &&
+      index + 1 < text.length &&
+      (text[index + 1] === '\\' || text[index + 1] === '`')
+    ) {
       content += text[index + 1];
       index += 2;
       continue;

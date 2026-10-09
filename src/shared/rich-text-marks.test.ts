@@ -41,6 +41,16 @@ describe('rich text marks (T3 composer core)', () => {
     expect(parseInlineMarkdown(serializeInlineMarkdown(spans))).toEqual(spans);
   });
 
+  it('round-trips a Windows path inside a code span', () => {
+    const source = '`C:\\Users\\me`';
+    const spans = parseInlineMarkdown(source);
+    expect(spans).toEqual([{ text: 'C:\\Users\\me', marks: ['code'] }]);
+    expect(parseInlineMarkdown(serializeInlineMarkdown(spans))).toEqual(spans);
+    expect(parseInlineMarkdown('`a\\`b`')).toEqual([
+      { text: 'a`b', marks: ['code'] },
+    ]);
+  });
+
   it('nests bold inside italic', () => {
     const spans = parseInlineMarkdown('***both***');
     expect(spanText(spans)).toBe('both');

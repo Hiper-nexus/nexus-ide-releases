@@ -2221,6 +2221,9 @@ async function respawnFastLaneOrchestrator(
       mission.id,
     );
     for (const stale of staleOrchestrators) {
+      // Cada terminate é um await. A sessão pode ser revogada no anterior;
+      // o próximo kill físico não começa sem o checkpoint.
+      revalidateResumeAuthority(options.authority);
       const proven = await orchTerminateSession(stale.sessionId, {
         termTimeoutMs: 5_000,
         killTimeoutMs: 10_000,

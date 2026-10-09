@@ -969,6 +969,55 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     );
   });
 
+  it('sessão revogada no primeiro terminate não mata o segundo orquestrador nem spawna', async () => {
+    vi.useRealTimers();
+    const now = Date.now();
+    liveMission = {
+      ...mission,
+      createdAt: now,
+      updatedAt: now,
+    } as Mission;
+    harness.registeredOrchestrators.push(
+      {
+        missionId: 'mission-1',
+        sessionId: 'stale-1',
+        state: 'exited',
+        adapterId: 'codex',
+      },
+      {
+        missionId: 'mission-1',
+        sessionId: 'stale-2',
+        state: 'exited',
+        adapterId: 'codex',
+      },
+    );
+    let revoked = false;
+    harness.terminate.mockImplementation(async (sessionId: string) => {
+      if (sessionId === 'stale-1') revoked = true;
+      return true;
+    });
+
+    await expect(
+      fastLane.resumeFastLaneMission(scope, 'mission-1', {
+        remountKind: 'automatic',
+        authority: {
+          assertCurrent() {
+            if (revoked) throw new Error('session_authority_revoked');
+          },
+        },
+      }),
+    ).rejects.toThrow('session_authority_revoked');
+
+    expect(harness.terminate).toHaveBeenCalledTimes(1);
+    expect(harness.terminate).toHaveBeenCalledWith(
+      'stale-1',
+      expect.objectContaining({ origin: 'fast-lane:respawn-stale-orchestrator' }),
+    );
+    expect(harness.spawnCount).toBe(0);
+    expect(liveMission.status).toBe('running');
+    harness.terminate.mockImplementation(async () => true);
+  });
+
   it('sessão revogada durante a sonda de auth não grava a missão nem spawna', async () => {
     vi.useRealTimers();
     const now = Date.now();
