@@ -1,7 +1,10 @@
 /**
  * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
  * Upstream reference: apps/desktop/src/preview/CdpRelay.ts.
- * Nexus changes: Only the scoped internal CDP factory is inspired by upstream preview CDP access; resolves exact scoped live pane authority and refuses failed attach. Existing Nexus browser manager remains locally authored; no transport/endpoint added by this factory.
+ * Nexus changes: Only the scoped internal CDP factory references upstream preview access; exact
+ * frozen scope/entry/window/WC session/document/profile and abort/current-authority guard revoke
+ * internal leases. Personal and locked review profiles refuse. Production anonymous preview
+ * bridge/transport removed; remaining browser manager is Nexus-authored.
  */
 import { decisionResultUsage } from '../decision-models/decision-usage';
 import {

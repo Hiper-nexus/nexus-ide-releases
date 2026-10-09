@@ -3,7 +3,10 @@
  * Copyright (c) 2026 T3 Tools Inc. — MIT License.
  * See third_party/licenses/t3code-MIT.txt.
  * Upstream reference: apps/web/src/composer-rich-text.ts.
- * Nexus changes: Inline markdown parser, mark/delimiter vocabulary and span coalescing adapted; serializer and Nexus representation preserve supported marks/literal unmatched markers.
+ * Nexus changes: Inline parser/mark vocabulary/span coalescing adapted; Nexus lossless serializer
+ * supports literal Windows/UNC/regex/JSON slashes, marker escapes, variable-length literal code
+ * delimiters/padding, whitespace/newline and adjacent-style boundaries, verified through actual
+ * Tiptap save/remount.
  */
 /**
  * Editor rich-text (item T3 "editor Tiptap" / `composer-rich-text.ts` @ 26285ab).

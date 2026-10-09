@@ -592,9 +592,14 @@ Nexus stack; no T3 Code package is a dependency.
   and completion consumers exist; production effect producers/handlers and
   command-receipt callers are not provided by this harvest.
 - CDP relay: per-tab protocol adapted from desktop `CdpRelay.ts`; Nexus scoped
-  Electron attachment/factory references that design. Contract tests establish
-  authority and attach truth; this factory does not establish a transport or
-  authenticate a CDP endpoint.
+  Electron adapter/factory references that design. The experimental anonymous
+  preview HTTP/WebSocket bridge is removed. There is no product CDP endpoint,
+  raw-connect tool or enabling credential/flag. Internal envelope/session/child
+  and document/profile/owner lease contracts are hardened; arbitrary Runtime
+  access requires a separate governed data/visual contract before integration.
+- Rich-text persistence: Nexus serialization preserves literal paths/escapes,
+  delimiters, code padding, whitespace/newlines and adjacent marks through
+  actual Tiptap save/remount. This standalone editor still has no product caller.
 - Composer: inline-markdown parser and narrow Tiptap code-mark policy adapted;
   preview is Nexus React. Mermaid queue/configuration/sanitizer policy adapted
   from `MermaidDiagram.tsx`, mounted as sanitized DOM in an isolated ShadowRoot.

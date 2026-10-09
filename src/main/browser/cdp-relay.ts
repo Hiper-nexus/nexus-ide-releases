@@ -3,7 +3,10 @@
  * Copyright (c) 2026 T3 Tools Inc. — MIT License.
  * See third_party/licenses/t3code-MIT.txt.
  * Upstream reference: apps/desktop/src/preview/CdpRelay.ts.
- * Nexus changes: Minimal per-tab CDP protocol/Target handling adapted to injected pure target/send/write callbacks; upstream Electron/transport construction is not copied.
+ * Nexus changes: Per-page protocol adapted with bounded envelopes, finite native methods,
+ * synthetic Browser/Target restrictions on every channel, no native downloads, event-proved
+ * selected-origin child leases and late-data/global-target suppression. No production endpoint;
+ * arbitrary Runtime requires a separate governed data/visual contract.
  */
 /**
  * CdpRelay (item T3 `apps/desktop/src/preview/CdpRelay.ts` @ 26285ab).
@@ -29,10 +32,7 @@ export interface CdpRelayTarget {
   readonly url: () => string;
   readonly title: () => string;
   readonly userAgent: () => string;
-  /**
-   * Where the server wants this tab's downloads, named by their CDP guid.
-   * `null` restores the default.
-   */
+  /** Legacy compatibility callback; never called to change native download policy. */
   readonly setDownloadDirectory: (directory: string | null) => void;
 }
 
