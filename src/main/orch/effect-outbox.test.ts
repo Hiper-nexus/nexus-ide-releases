@@ -1353,3 +1353,76 @@ describe("ORC-06 provider runtime boot reconciliation", () => {
     ).toBeNull();
   });
 });
+
+
+describe('F-1073: command acceptance requires one transaction owner', () => {
+  it('rejects identical scope ids from distinct SQLite roots before a receipt write or foreign partial commit', () => {
+    const { manager, scope } = freshStore();
+    const foreign = freshStore();
+    let receiptAttempts = 0;
+    const receipts = createScopedCommandReceiptStore(manager, scope, {
+      now: () => { receiptAttempts += 1; return Date.now(); },
+    });
+    const db = manager.open(scope).db;
+    expect(foreign.manager.open(scope).databasePath).not.toBe(manager.open(scope).databasePath);
+    const attempt = db.transaction(() => {
+      receipts.acceptCommandEffect(
+        foreign.store,
+        { commandId: 'cmd-cross-db', commandType: 'turn.start', threadId: 'thread-a' },
+        { commandId: 'cmd-cross-db', type: 'turn.start', threadId: 'thread-a' },
+      );
+      // A caller failure must never leave an effect committed in a second DB.
+      throw new Error('injected outer rollback');
+    });
+    expect.soft(() => attempt()).toThrow(/same transaction database/);
+    expect.soft(receiptAttempts).toBe(0);
+    expect(receipts.getByCommandId('cmd-cross-db')).toBeNull();
+    expect(foreign.store.listByCommandId('cmd-cross-db')).toEqual([]);
+  });
+
+  it('rejects another manager connection even when both open the same SQLite file', () => {
+    const { manager, scope } = freshStore();
+    const receipts = createScopedCommandReceiptStore(manager, scope);
+    const secondManager = runtime(manager.baseDirectory);
+    const outbox = createScopedEffectOutboxStore(secondManager, scope);
+    expect(() => receipts.acceptCommandEffect(
+      outbox,
+      { commandId: 'cmd-second-connection', commandType: 'turn.start', threadId: 'thread-a' },
+      { commandId: 'cmd-second-connection', type: 'turn.start', threadId: 'thread-a' },
+    )).toThrow(/same transaction database/);
+    expect(receipts.getByCommandId('cmd-second-connection')).toBeNull();
+    expect(outbox.listByCommandId('cmd-second-connection')).toEqual([]);
+  });
+
+  it.each([
+    { installationId: 'foreign-installation' },
+    { rootRealPath: '/foreign-root' },
+    { identitySource: 'provisional' as const },
+    { workspaceRootDevice: '1', workspaceRootInode: '2' },
+  ])('rejects a same-manager outbox with conflicting immutable scope metadata %j', overrides => {
+    const { manager, scope } = freshStore();
+    const receipts = createScopedCommandReceiptStore(manager, scope);
+    const outbox = createScopedEffectOutboxStore(manager, { ...scope, ...overrides });
+    expect(() => receipts.acceptCommandEffect(
+      outbox,
+      { commandId: 'cmd-scope-collision', commandType: 'turn.start', threadId: 'thread-a' },
+      { commandId: 'cmd-scope-collision', type: 'turn.start', threadId: 'thread-a' },
+    )).toThrow(/same transaction database/);
+    expect(receipts.getByCommandId('cmd-scope-collision')).toBeNull();
+    expect(outbox.listByCommandId('cmd-scope-collision')).toEqual([]);
+  });
+
+  it('rolls back the same-manager receipt when the real SQLite outbox insert fails', () => {
+    const { manager, store, scope } = freshStore();
+    const receipts = createScopedCommandReceiptStore(manager, scope);
+    manager.open(scope).db.exec(`CREATE TRIGGER fail_effect_insert BEFORE INSERT ON effect_outbox
+      BEGIN SELECT RAISE(ABORT, 'injected enqueue failure'); END`);
+    expect(() => receipts.acceptCommandEffect(
+      store,
+      { commandId: 'cmd-enqueue-failure', commandType: 'turn.start', threadId: 'thread-a' },
+      { commandId: 'cmd-enqueue-failure', type: 'turn.start', threadId: 'thread-a' },
+    )).toThrow(/injected enqueue failure/);
+    expect(receipts.getByCommandId('cmd-enqueue-failure')).toBeNull();
+    expect(store.listByCommandId('cmd-enqueue-failure')).toEqual([]);
+  });
+});

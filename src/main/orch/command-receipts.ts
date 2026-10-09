@@ -203,6 +203,9 @@ export class CommandReceiptStore {
     ) {
       throw new Error('command receipt and effect must share a project scope');
     }
+    if (!outbox.sharesTransactionWith(this.#binding)) {
+      throw new Error('command receipt and effect must share the same transaction database');
+    }
     const db = this.#binding.writeDatabase();
     return db.transaction(() => {
       const inserted = this.insertIfAbsent(receipt);

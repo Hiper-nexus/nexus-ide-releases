@@ -89,6 +89,21 @@ export class ScopedStoreBinding {
     this.#idFactory = options.idFactory ?? defaultIdFactory;
   }
 
+  /** Same manager connection and immutable authority, without exposing either handle. */
+  sharesTransactionWith(other: ScopedStoreBinding): boolean {
+    return (
+      this.#runtimeManager === other.#runtimeManager &&
+      this.scope.version === other.scope.version &&
+      this.scope.installationId === other.scope.installationId &&
+      this.scope.projectId === other.scope.projectId &&
+      this.scope.checkoutId === other.scope.checkoutId &&
+      this.scope.rootRealPath === other.scope.rootRealPath &&
+      this.scope.workspaceRootDevice === other.scope.workspaceRootDevice &&
+      this.scope.workspaceRootInode === other.scope.workspaceRootInode &&
+      this.scope.identitySource === other.scope.identitySource
+    );
+  }
+
   readDatabase(): Database.Database {
     return this.#runtimeManager.open(this.scope).db;
   }

@@ -282,6 +282,11 @@ export class EffectOutboxStore {
     return this.#binding.scope;
   }
 
+  /** Capability check for atomic receipt acceptance; no connection escapes the binding. */
+  sharesTransactionWith(binding: ScopedStoreBinding): boolean {
+    return this.#binding.sharesTransactionWith(binding);
+  }
+
   /**
    * Persiste a linha (política T3: notificar workers só depois do commit).
    * O mesmo id com a mesma identidade devolve a linha existente, mesmo se o
