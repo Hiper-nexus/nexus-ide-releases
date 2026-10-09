@@ -55,12 +55,10 @@ export function assertCompletionEffectsSettled(
   const queuedDeliveries = createScopedHandoffStore(
     runtimeManager,
     scope,
-  )
-    .listQueuedDeliveries(threadId)
-    .filter(
-      (delivery) =>
-        !(excludeSessionId && delivery.sessionId === excludeSessionId),
-    );
+  ).listQueuedDeliveries(
+    threadId,
+    excludeSessionId ? { excludeSessionId } : undefined,
+  );
   const gate = canMarkTurnSettled(
     [
       ...open.map((entry) => ({

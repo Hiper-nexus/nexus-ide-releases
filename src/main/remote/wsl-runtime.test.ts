@@ -20,6 +20,16 @@ describe('WSL runtime backend (first cut)', () => {
     expect(plan.windowsUncCwd).toContain('wsl.localhost\\Ubuntu');
   });
 
+  it('rejects a UNC path whose distro is not the selected one', () => {
+    expect(() =>
+      planWslRuntime({
+        distro: 'Debian',
+        hostCwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\app',
+        command: ['git', 'status'],
+      }),
+    ).toThrow(/Ubuntu does not match selected distro Debian/);
+  });
+
   it('maps WSL UNC host cwd to a Linux path inside the distro', () => {
     const plan = planWslRuntime({
       distro: 'Debian',

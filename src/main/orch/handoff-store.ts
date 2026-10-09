@@ -1725,28 +1725,37 @@ export class ScopedHandoffStore {
    */
   listQueuedDeliveries(
     missionId?: string,
+    options?: { readonly excludeSessionId?: string },
   ): Array<{ id: string; missionId: string; sessionId: string | null }> {
     const mission =
       missionId === undefined ? undefined : identifierSchema.parse(missionId);
+    const excluded = options?.excludeSessionId?.trim() ?? '';
+    const excludeSessionId =
+      excluded.length > 0 ? identifierSchema.parse(excluded) : undefined;
+    const sessionClause = excludeSessionId
+      ? ' AND (session_id IS NULL OR session_id != ?)'
+      : '';
     const db = this.#binding.readDatabase();
     const rows = (
       mission === undefined
         ? db
             .prepare(
               `SELECT id, mission_id, session_id FROM handoffs
-               WHERE delivery_state = 'queued' AND mission_id IS NOT NULL
+               WHERE delivery_state = 'queued' AND mission_id IS NOT NULL${sessionClause}
                ORDER BY created_at ASC, id ASC
                LIMIT 50`,
             )
-            .all()
+            .all(...(excludeSessionId ? [excludeSessionId] : []))
         : db
             .prepare(
               `SELECT id, mission_id, session_id FROM handoffs
-               WHERE delivery_state = 'queued' AND mission_id = ?
+               WHERE delivery_state = 'queued' AND mission_id = ?${sessionClause}
                ORDER BY created_at ASC, id ASC
                LIMIT 50`,
             )
-            .all(mission)
+            .all(
+              ...(excludeSessionId ? [mission, excludeSessionId] : [mission]),
+            )
     ) as Array<{ id: string; mission_id: string; session_id: string | null }>;
     return rows.map((row) => ({
       id: row.id,
