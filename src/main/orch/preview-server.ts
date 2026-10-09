@@ -236,6 +236,26 @@ function previewStartResult(entry: RunningPreview): PreviewStartResult {
   };
 }
 
+/**
+ * URL do debugger para quem já chamou `startPreview` neste processo.
+ * O ticket fica na query; `/json/version` continua sem ele.
+ */
+export function authorizedPreviewCdpUrl(
+  scope: PreviewCdpScope,
+  preview: Pick<PreviewStartResult, 'url' | 'port' | 'cdpTicket'>,
+): string | null {
+  if (!preview.cdpTicket || preview.cdpTicket.length > 128) return null;
+  let origin: string;
+  try {
+    origin = new URL(preview.url).origin;
+  } catch {
+    return null;
+  }
+  const paneId = previewCdpBridge()?.solePaneId(scope, origin) ?? null;
+  if (!paneId) return null;
+  return `ws://127.0.0.1:${preview.port}/cdp/${encodeURIComponent(paneId)}?ticket=${encodeURIComponent(preview.cdpTicket)}`;
+}
+
 function attachPreviewCdp(
   server: http.Server,
   scope: PreviewCdpScope,

@@ -43,6 +43,8 @@ export interface CommandReceipt {
   readonly status: CommandReceiptStatus;
   readonly error: string | null;
   readonly effectClass: EffectClass;
+  /** Resultado JSON do despacho, quando o handler já terminou. */
+  readonly outcomeJson: string | null;
 }
 
 export interface CommandReceiptInsertInput {
@@ -74,6 +76,7 @@ const rowSchema = z
     status: z.enum(['accepted', 'rejected']),
     error: z.string().max(512).nullable(),
     effect_class: z.enum(['process_bound', 'replay_safe']),
+    outcome_json: z.string().max(32768).nullable(),
   })
   .strict();
 
@@ -129,6 +132,7 @@ function rowToReceipt(row: unknown): CommandReceipt {
     status: value.status,
     error: value.error,
     effectClass: value.effect_class,
+    outcomeJson: value.outcome_json,
   };
 }
 
@@ -334,6 +338,30 @@ export class CommandReceiptStore {
     })();
   }
 
+  /**
+   * Grava o resultado do primeiro despacho. O retry lê isto e não roda o
+   * handler de novo. Não mexe em `result_sequence`: o efeito pode continuar
+   * pending enquanto o resultado da tool já é conhecido.
+   */
+  rememberDispatchOutcome(commandId: string, outcome: unknown): void {
+    const id = z.string().min(1).max(128).parse(commandId);
+    let json: string;
+    try {
+      json = JSON.stringify(outcome);
+    } catch {
+      return;
+    }
+    if (json.length === 0 || json.length > 32_768) return;
+    this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE command_receipts
+         SET outcome_json = ?
+         WHERE command_id = ? AND outcome_json IS NULL`,
+      )
+      .run(json, id);
+  }
+
   getByCommandId(commandId: string): CommandReceipt | null {
     const row = this.#binding
       .readDatabase()
@@ -376,7 +404,7 @@ export function acceptDispatchCheckpointEffect(
 ): { readonly inserted: boolean; readonly effect: EffectOutboxEntry | null } {
   const receipts = createScopedCommandReceiptStore(runtimeManager, scope);
   const outbox = createScopedEffectOutboxStore(runtimeManager, scope);
-  return receipts.acceptCommandEffect(
+  const accepted = receipts.acceptCommandEffect(
     outbox,
     command.missionBound
       ? {
@@ -397,6 +425,21 @@ export function acceptDispatchCheckpointEffect(
       payload: { toolName: command.toolName },
     },
   );
+  if (!accepted.inserted) {
+    const storedTool = toolNameFromEffectPayload(accepted.effect?.payload);
+    if (storedTool && storedTool !== command.toolName) {
+      throw new Error('command receipt is already bound to another command');
+    }
+  }
+  return accepted;
+}
+
+function toolNameFromEffectPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+  const toolName = (payload as { toolName?: unknown }).toolName;
+  return typeof toolName === 'string' && toolName.length > 0 ? toolName : null;
 }
 
 export function createScopedCommandReceiptStore(

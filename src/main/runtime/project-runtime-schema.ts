@@ -1167,4 +1167,13 @@ END;`,
       appVersion: '0.76.212',
       sql: EFFECT_OUTBOX_COMMAND_RECEIPTS_SCHEMA,
     }),
+    // Resultado do despacho para o retry da mesma operação. Não muda a
+    // sequence: sequence 0 continua sendo "o efeito ainda não assentou".
+    createProjectMigration({
+      id: '049-command-receipt-dispatch-outcome',
+      schemaVersion: 49,
+      appVersion: '0.76.212',
+      sql: `ALTER TABLE command_receipts ADD COLUMN outcome_json TEXT
+        CHECK (outcome_json IS NULL OR length(outcome_json) <= 32768);`,
+    }),
   ]);

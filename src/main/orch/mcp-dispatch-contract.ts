@@ -153,6 +153,12 @@ export interface McpDispatchOptions {
   resolveCommittedPhysicalHandoffReplayCandidate?: CommittedPhysicalHandoffReplayCandidateResolver;
   /** Internal seam; production reserves synchronously in the scoped store. */
   reserveMissionBudget?: MissionBudgetReserver;
+  /**
+   * Stable caller identity for one logical operation. A lost-response retry
+   * passes the same id; the receipt key is this id, and the handler does not
+   * run again.
+   */
+  logicalOperationId?: string;
 }
 
 export function permissionScopeForTool(

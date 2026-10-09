@@ -5,6 +5,7 @@ import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerPreviewCdpBridge } from './preview-cdp-bridge';
 import {
+  authorizedPreviewCdpUrl,
   isRunningPreviewUrl,
   isRunningPreviewUrlForScope,
   listPreviews,
@@ -338,5 +339,49 @@ describe('preview-server', () => {
     });
     expect(opened).toBe(1);
     privileged.close();
+  });
+
+  it('gives the authorized caller a ticket URL that attaches, and the page that only knows discovery still cannot', async () => {
+    let opened = 0;
+    registerPreviewCdpBridge({
+      open: () => {
+        opened += 1;
+        return {
+          connection: { receive: () => undefined },
+          detach: () => undefined,
+        };
+      },
+      solePaneId: () => 'pane-preview',
+    });
+    const preview = await startPreview(dir, scopeA);
+    const authorized = authorizedPreviewCdpUrl(scopeA, preview);
+    expect(authorized).toBe(
+      `ws://127.0.0.1:${preview.port}/cdp/pane-preview?ticket=${encodeURIComponent(preview.cdpTicket)}`,
+    );
+
+    const discovery = await fetch(new URL('/json/version', preview.url));
+    const body = (await discovery.json()) as { webSocketDebuggerUrl: string };
+    expect(JSON.stringify(body)).not.toContain(preview.cdpTicket);
+    expect(JSON.stringify(body)).not.toContain('ticket=');
+    expect(body.webSocketDebuggerUrl).toBe(
+      `ws://127.0.0.1:${preview.port}/cdp/pane-preview`,
+    );
+
+    const pageSocket = new WebSocket(body.webSocketDebuggerUrl, {
+      headers: { Origin: new URL(preview.url).origin },
+    });
+    await new Promise<void>((resolve) => {
+      pageSocket.once('error', () => resolve());
+      pageSocket.once('close', () => resolve());
+    });
+    expect(opened).toBe(0);
+
+    const caller = new WebSocket(authorized!);
+    await new Promise<void>((resolve, reject) => {
+      caller.once('open', () => resolve());
+      caller.once('error', reject);
+    });
+    expect(opened).toBe(1);
+    caller.close();
   });
 });

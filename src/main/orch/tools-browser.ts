@@ -23,7 +23,12 @@ import {
 } from '../browser/browser-manager';
 import type { BrowserExtractField } from '../../shared/browser-automation';
 import { collectPerfSnapshotDetailed } from '../perf/perf-ipc';
-import { listPreviews, startPreview, stopPreview } from './preview-server';
+import {
+  authorizedPreviewCdpUrl,
+  listPreviews,
+  startPreview,
+  stopPreview,
+} from './preview-server';
 import { requestBrowserPane, requestPaneClose } from './pane-registry';
 import { authorizePaneRef, num, requireStr, str, strArray } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
@@ -93,8 +98,9 @@ const previewStartTool: McpToolDef = {
   name: 'nexus_preview_start',
   description:
     'Serve a built static web app inside the active workspace on a Nexus-owned ' +
-    '127.0.0.1 preview URL. Returns an opaque {id, url}; idempotent per project, ' +
-    'checkout and canonical directory.',
+    '127.0.0.1 preview URL. Returns {id, url, port} and, when a pane is attached, ' +
+    'cdpWebSocketUrl for this caller only. The preview HTTP server never publishes ' +
+    'that debugger ticket. Idempotent per project, checkout and canonical directory.',
   inputSchema: {
     type: 'object',
     properties: { dir: { type: 'string' } },
@@ -106,7 +112,13 @@ const previewStartTool: McpToolDef = {
     const workspaceDir = resolveCwdForScope(executionScope, dir);
     try {
       const started = await startPreview(workspaceDir, executionScope, invocation);
-      return { id: started.id, url: started.url, port: started.port };
+      const cdpWebSocketUrl = authorizedPreviewCdpUrl(executionScope, started);
+      return {
+        id: started.id,
+        url: started.url,
+        port: started.port,
+        ...(cdpWebSocketUrl ? { cdpWebSocketUrl } : {}),
+      };
     } catch (err) {
       throw new Error(
         `preview falhou para ${workspaceDir}: ${err instanceof Error ? err.message : String(err)}`,

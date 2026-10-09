@@ -177,6 +177,14 @@ export function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
  * Tool-level failures come back as `isError` results; gate refusals are
  * explicit so agents can adjust instead of retrying blindly.
  */
+function logicalOperationIdFromRpcId(
+  id: JsonRpcRequest["id"],
+): string | undefined {
+  if (typeof id === "string") return id;
+  if (typeof id === "number" && Number.isFinite(id)) return String(id);
+  return undefined;
+}
+
 export async function handleMcpMessage(
   registry: McpRegistry,
   ctx: AgentGateContext,
@@ -249,13 +257,18 @@ export async function handleMcpMessage(
         return rpcError(id, -32602, "tools/call requires params.name");
       }
       const args = (message.params?.arguments as Record<string, unknown>) ?? {};
+      const logicalOperationId =
+        dispatchOptions.logicalOperationId ??
+        logicalOperationIdFromRpcId(message.id);
       const result = await dispatchToolCall(
         dispatchOptions.source ?? "http-mcp",
         registry,
         name,
         args,
         ctx,
-        dispatchOptions,
+        logicalOperationId
+          ? { ...dispatchOptions, logicalOperationId }
+          : dispatchOptions,
       );
       try {
         dispatchOptions.onToolResult?.(result);

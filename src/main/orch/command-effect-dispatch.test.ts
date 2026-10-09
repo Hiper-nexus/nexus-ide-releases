@@ -188,4 +188,191 @@ describe('dispatchToolCall accepts the checkpoint effect', () => {
       if (previous) registerEffectOutboxHandler('checkpoint.capture', previous);
     }
   });
+
+  function bootDispatch(handler: () => Promise<unknown>) {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-command-effect-'));
+    directories.push(baseDir);
+    const manager = new ProjectRuntimeManager({
+      baseDir,
+      appVersion: 'command-effect-test',
+    });
+    managers.push(manager);
+    const scope = testProjectScope({
+      projectId: 'project-command-effect',
+      checkoutId: 'checkout-command-effect',
+      rootRealPath: baseDir,
+    });
+    configureAuditLogRuntime(manager);
+    configureProjectDomainStoreRegistry(manager);
+    configured = true;
+    const now = Date.now();
+    manager.open(scope).db.prepare(
+      `INSERT INTO missions
+         (id, title, description, status, milestones_json, created_at, updated_at)
+       VALUES (?, ?, '', 'running', '[]', ?, ?)`,
+    ).run(MISSION_ID, 'Command effect', now, now);
+    const registry: McpRegistry = {
+      tools: [
+        {
+          name: 'nexus_terminal_run',
+          description: 'command effect proof',
+          inputSchema: { type: 'object', properties: {} },
+          handler,
+        },
+      ],
+      serverName: 'command-effect-test',
+      serverVersion: '0',
+    };
+    resetGateForTests();
+    const ctx = mintToken({
+      label: 'command-effect',
+      role: 'worker',
+      missionId: MISSION_ID,
+      scope,
+      allowedTools: null,
+      allowedSkills: null,
+    });
+    const options = {
+      confirm: async () => false,
+      reserveMissionBudget: () => undefined,
+      resolveWorkflowAuthority: () => ({
+        contextRevision: undefined,
+        assertExecutionEffectAllowed() {
+          return undefined;
+        },
+      }),
+      resolveMissionForIntentGate: (_scope: typeof scope, missionId: string) =>
+        missionId === MISSION_ID
+          ? {
+              mission: {
+                id: MISSION_ID,
+                title: 'Command effect',
+                description: 'production path',
+                status: 'running' as const,
+                milestones: [],
+                learnings: '',
+                intentState: 'dispatched' as const,
+                intentVersion: 1,
+                intentContract: {
+                  version: 1 as const,
+                  source: 'typed' as const,
+                  goal: 'prove the receipt',
+                  acceptanceCriteria: ['ok'],
+                  risk: 'normal' as const,
+                  executionMode: 'assisted' as const,
+                  contextPolicy: 'on-demand' as const,
+                  intentVersion: 1,
+                  approvedAt: Date.now(),
+                  budgets: {
+                    planningTokens: 100,
+                    executionTokens: 100,
+                    maxWorkers: 1,
+                  },
+                },
+                createdAt: 1,
+                updatedAt: 1,
+              },
+              taskCount: 0,
+              workerPaneCount: 0,
+            }
+          : null,
+    };
+    return { manager, scope, registry, ctx, options };
+  }
+
+  it('runs the handler once when two dispatches share a logical operation id', async () => {
+    let runs = 0;
+    const booted = bootDispatch(async () => {
+      runs += 1;
+      return { marker: 'once' };
+    });
+    const options = {
+      ...booted.options,
+      logicalOperationId: 'logical-op-1',
+    };
+    const first = await dispatchToolCall(
+      'http-mcp',
+      booted.registry,
+      'nexus_terminal_run',
+      { command: 'true' },
+      booted.ctx,
+      options,
+    );
+    const second = await dispatchToolCall(
+      'http-mcp',
+      booted.registry,
+      'nexus_terminal_run',
+      { command: 'true' },
+      booted.ctx,
+      options,
+    );
+    expect(runs).toBe(1);
+    expect(first).toMatchObject({
+      ok: true,
+      tool: 'nexus_terminal_run',
+      result: { marker: 'once' },
+    });
+    expect(second).toEqual(first);
+    const effects = createScopedEffectOutboxStore(
+      booted.manager,
+      booted.scope,
+    ).listByCommandId('logical-op-1');
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.type).toBe('checkpoint.capture');
+  });
+
+  it('keeps the checkpoint blocking when the handler is still in flight across one drain', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const booted = bootDispatch(async () => {
+      entered();
+      await hold;
+      return { marker: 'done' };
+    });
+    const previous = registeredEffectHandler('checkpoint.capture');
+    const unregister = registerCheckpointCaptureHandler();
+    const pending = dispatchToolCall(
+      'http-mcp',
+      booted.registry,
+      'nexus_terminal_run',
+      { command: 'true' },
+      booted.ctx,
+      {
+        ...booted.options,
+        logicalOperationId: 'logical-op-inflight',
+      },
+    );
+    try {
+      await started;
+      const drained = await drainEffectOutbox({
+        store: createScopedEffectOutboxStore(booted.manager, booted.scope),
+        scope: booted.scope,
+        workerId: 'orchestration-coordinator',
+      });
+      expect(drained.succeeded).toBe(0);
+      expect(() =>
+        assertCompletionEffectsSettled(
+          booted.manager,
+          booted.scope,
+          MISSION_ID,
+        ),
+      ).toThrow(/completion_effects_pending/);
+      const blocking = createScopedEffectOutboxStore(
+        booted.manager,
+        booted.scope,
+      ).listUnsettledBlocking(MISSION_ID);
+      expect(blocking.rows.map((row) => row.status)).toEqual(['pending']);
+    } finally {
+      release();
+      unregister();
+      if (previous) registerEffectOutboxHandler('checkpoint.capture', previous);
+    }
+    await expect(pending).resolves.toMatchObject({ ok: true });
+  });
 });

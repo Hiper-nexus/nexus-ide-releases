@@ -10,7 +10,9 @@ const stubs = vi.hoisted(() => ({
     id: 'preview-opaque',
     url: 'http://127.0.0.1:1234/',
     port: 1234,
+    cdpTicket: 'ticket-not-for-http',
   })),
+  authorizedPreviewCdpUrl: vi.fn(() => null as string | null),
   stopPreview: vi.fn(() => true),
   listPreviews: vi.fn(
     (): Array<{ id: string; dir: string; url: string }> => [],
@@ -77,6 +79,7 @@ vi.mock('./preview-server', () => ({
   startPreview: stubs.startPreview,
   stopPreview: stubs.stopPreview,
   listPreviews: stubs.listPreviews,
+  authorizedPreviewCdpUrl: stubs.authorizedPreviewCdpUrl,
 }));
 vi.mock('../browser/browser-manager', () => ({
   analyzeBrowserResponsive: stubs.analyzeBrowserResponsive,
@@ -217,6 +220,26 @@ describe('preview tool workspace confinement', () => {
       path: '/runtime/shot.png',
       url: 'http://127.0.0.1:1234/',
     });
+  });
+
+  it('returns the ticket-bearing CDP url to the authorized caller', async () => {
+    const cdpWebSocketUrl =
+      'ws://127.0.0.1:1234/cdp/pane-preview?ticket=secret-ticket';
+    stubs.authorizedPreviewCdpUrl.mockReturnValueOnce(cdpWebSocketUrl);
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_preview_start')!;
+    await expect(tool.handler({ dir: 'dist' }, context)).resolves.toEqual({
+      id: 'preview-opaque',
+      url: 'http://127.0.0.1:1234/',
+      port: 1234,
+      cdpWebSocketUrl,
+    });
+    expect(stubs.authorizedPreviewCdpUrl).toHaveBeenCalledWith(
+      scope,
+      expect.objectContaining({
+        port: 1234,
+        cdpTicket: 'ticket-not-for-http',
+      }),
+    );
   });
 
   it('serves only the canonical directory resolved inside the captured scope', async () => {
