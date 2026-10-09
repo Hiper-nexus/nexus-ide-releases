@@ -2258,6 +2258,7 @@ export function registerOrchIpc(): void {
       missionId: z.string().min(1).max(128),
       adapterId: z.string().min(1).max(64),
       model: z.string().min(1).max(128).optional(),
+      accountId: z.string().min(1).max(128).optional(),
       prompt: z.string().max(8_192).optional(),
       tabKey: z.string().min(1).max(256).optional(),
     })

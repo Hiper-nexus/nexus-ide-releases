@@ -1406,6 +1406,7 @@ export class RendererMissionAuthority {
       readonly missionId: string;
       readonly adapterId: string;
       readonly model?: string;
+      readonly accountId?: string;
       readonly prompt?: string;
       readonly tabKey?: string;
     },
@@ -1452,6 +1453,7 @@ export class RendererMissionAuthority {
     const spawned = await spawnMainOwnedMissionPaneAsync({
       adapterId: adapter.id,
       ...(input.model ? { model: input.model } : {}),
+      ...(input.accountId ? { accountId: input.accountId } : {}),
       scope: rendererScope,
       executionScope,
       cwd: executionScope.rootRealPath,
@@ -1482,6 +1484,14 @@ export class RendererMissionAuthority {
       physical.adapterId === adapter.id
         ? physical
         : null;
+    // O pin é um pedido, não prova: só a identidade física validada acima
+    // pode autorizar a conta gravada e devolvida à apresentação.
+    if (input.accountId && sealedRuntime?.accountId !== input.accountId) {
+      return {
+        ok: false,
+        error: "selected account diverges from the authorized account pin",
+      };
+    }
     try {
       suite.missionPanes.record({
         missionId: mission.id,

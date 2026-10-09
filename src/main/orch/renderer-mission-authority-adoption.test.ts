@@ -1099,6 +1099,53 @@ describe("F-231 — '+ Pane' dentro da missão (spawnOperatorPaneFromRenderer)",
     });
   });
 
+  it("transporta o pin por id e conserva conta e esforço físicos no selo", async () => {
+    const missionId = await liveMission();
+    operatorPhysical.set("pty-op-1", {
+      sessionId: "pty-op-1", paneId: "pane-op-1", missionId,
+      adapterId: "test-cli", role: "worker", accountId: "acct-no-email",
+      effort: "high", cwd: scope.rootRealPath,
+    });
+    const result = await authority().spawnOperatorPaneFromRenderer(owner, {
+      missionId, adapterId: "test-cli", accountId: "acct-no-email",
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(operatorSpawn.calls[0]).toMatchObject({ accountId: "acct-no-email" });
+    expect(requireProjectDomainStoreRegistry().forScope(scope).missionPanes
+      .findByPaneId("pane-op-1")).toMatchObject({
+        accountId: "acct-no-email", effort: "high", workerIncarnationId: expect.any(String),
+      });
+  });
+
+  it.each(["acct-other", undefined])("recusa pin sem prova física exata (%s)", async (accountId) => {
+    const missionId = await liveMission();
+    operatorPhysical.set("pty-op-1", {
+      sessionId: "pty-op-1", paneId: "pane-op-1", missionId,
+      adapterId: "test-cli", role: "worker", accountId, cwd: scope.rootRealPath,
+    });
+    const result = await authority().spawnOperatorPaneFromRenderer(owner, {
+      missionId, adapterId: "test-cli", accountId: "acct-selected",
+    });
+    expect(result).toEqual({ ok: false, error: "selected account diverges from the authorized account pin" });
+    expect(requireProjectDomainStoreRegistry().forScope(scope).missionPanes
+      .findByPaneId("pane-op-1")).toBeNull();
+  });
+
+  it.each(["paneId", "missionId", "adapterId"])("recusa pin com identidade física estrangeira: %s", async (field) => {
+    const missionId = await liveMission();
+    operatorPhysical.set("pty-op-1", {
+      sessionId: "pty-op-1", paneId: "pane-op-1", missionId,
+      adapterId: "test-cli", role: "worker", accountId: "acct-selected",
+      cwd: scope.rootRealPath, [field]: "foreign",
+    });
+    const result = await authority().spawnOperatorPaneFromRenderer(owner, {
+      missionId, adapterId: "test-cli", accountId: "acct-selected",
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(requireProjectDomainStoreRegistry().forScope(scope).missionPanes
+      .findByPaneId("pane-op-1")).toBeNull();
+  });
+
   it("recusa adapter fora do roster selado da missão", async () => {
     const suite = requireProjectDomainStoreRegistry().forScope(scope);
     const mission = suite.missions.create({

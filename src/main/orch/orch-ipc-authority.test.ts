@@ -118,6 +118,7 @@ const harness = vi.hoisted(() => {
     resolveOwnedPaneForAdoption: vi.fn(),
     promoteOrchestrator: vi.fn(),
     createPaneMission: vi.fn(),
+    spawnOperatorPane: vi.fn(),
     planPromotionCandidate: vi.fn(),
     promotePlan: vi.fn(),
     missionLifecycleCandidate: vi.fn(),
@@ -474,6 +475,9 @@ vi.mock('./renderer-mission-authority', () => ({
       input: unknown,
     ) {
       return harness.promoteOrchestrator(owner, missionId, input);
+    }
+    spawnOperatorPaneFromRenderer(owner: unknown, input: unknown) {
+      return harness.spawnOperatorPane(owner, input);
     }
     createPaneMissionFromRenderer(owner: unknown, input: unknown) {
       return harness.createPaneMission(owner, input);
@@ -4315,4 +4319,35 @@ it('mission-this-pane returns license denial before calling mission creation aut
   vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'inactive' });
   expect(await canonicalHandler(ORCH_CHANNELS.missionCreateForPane)({ sender }, { paneId: 'pane-a', title: 'License' })).toMatchObject({ ok: false, code: 'license_access_denied' });
   expect(harness.createPaneMission).not.toHaveBeenCalled();
+});
+
+
+describe('missionSpawnOperatorPane — selected account contract', () => {
+  it.each(['acct-no-email', undefined])('transports the optional account id (%s)', async (accountId) => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(940); harness.scopes.set(sender.id, SCOPE_A);
+    harness.spawnOperatorPane.mockResolvedValue({ ok: false, error: 'test-authority' });
+    const input = { missionId: 'mission-1', adapterId: 'codex', ...(accountId ? { accountId } : {}) };
+    expect(await canonicalHandler(ORCH_CHANNELS.missionSpawnOperatorPane)({ sender }, input))
+      .toEqual({ ok: false, error: 'test-authority' });
+    expect(harness.spawnOperatorPane).toHaveBeenCalledWith(sender, input);
+  });
+
+  it.each(['', 'x'.repeat(129), 42])('rejects invalid account id (%s) before authority', async (accountId) => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(941); harness.scopes.set(sender.id, SCOPE_A);
+    expect(await canonicalHandler(ORCH_CHANNELS.missionSpawnOperatorPane)({ sender }, {
+      missionId: 'mission-1', adapterId: 'codex', accountId,
+    })).toEqual({ ok: false, error: 'invalid_payload' });
+    expect(harness.spawnOperatorPane).not.toHaveBeenCalled();
+  });
+
+  it('rejects extra identity fields before authority', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(942); harness.scopes.set(sender.id, SCOPE_A);
+    expect(await canonicalHandler(ORCH_CHANNELS.missionSpawnOperatorPane)({ sender }, {
+      missionId: 'mission-1', adapterId: 'codex', accountId: 'acct-no-email', sessionFingerprint: 'foreign',
+    })).toEqual({ ok: false, error: 'invalid_payload' });
+    expect(harness.spawnOperatorPane).not.toHaveBeenCalled();
+  });
 });

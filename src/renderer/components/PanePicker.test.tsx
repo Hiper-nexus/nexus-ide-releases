@@ -1155,6 +1155,22 @@ describe('F-231 — "+ Pane" numa aba com missão viva escolhe o destino', () =>
     expect(onPaneCreated).toHaveBeenCalledWith('pane-op');
   });
 
+  it('"Nesta missão" transporta o id de uma conta sem e-mail', async () => {
+    mountMissionPicker();
+    useAccountStore.setState({ accounts: [
+      account('acc-sem-email', 'codex', 'workspace 2', { email: undefined }),
+    ] } as never);
+    openMenu();
+    pickDestination('mission');
+    drillInto('codex');
+    clickEntry('agent:codex:acc-sem-email:codex-alt');
+    await act(async () => {});
+    expect(spawnOperatorPane).toHaveBeenCalledWith({
+      missionId: 'mission-1', adapterId: 'codex', model: 'codex-alt',
+      accountId: 'acc-sem-email',
+    });
+  });
+
   it('"Nesta aba (solto)" usa o caminho normal e avisa o callback solto', () => {
     spawnAgent.mockReturnValueOnce('pane-loose');
     const { onPaneCreatedLoose, onPaneCreatedInNewTab } = mountMissionPicker();

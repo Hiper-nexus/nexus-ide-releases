@@ -851,6 +851,8 @@ export interface NexusApi {
       missionId: string;
       adapterId: string;
       model?: string;
+      /** Id do cofre, inclusive conta sem e-mail; nunca fingerprint. */
+      accountId?: string;
       prompt?: string;
       tabKey?: string;
     }): Promise<

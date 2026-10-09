@@ -1083,6 +1083,9 @@ export function PanePicker({
           ...(intent.kind === 'agent' && intent.model
             ? { model: intent.model }
             : {}),
+          ...(intent.kind === 'agent' && intent.accountId
+            ? { accountId: intent.accountId }
+            : {}),
         })
         .then((result) => {
           if (result.ok) {
