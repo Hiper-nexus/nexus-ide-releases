@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
@@ -15,6 +16,23 @@ import {
 
 const scopeA = { projectId: 'project-a', checkoutId: 'checkout-a' };
 const scopeB = { projectId: 'project-b', checkoutId: 'checkout-b' };
+
+function requestRawPreviewPath(port: number, requestPath: string): Promise<{
+  status: number | undefined;
+  body: string;
+}> {
+  return new Promise((resolve, reject) => {
+    const request = http.get({ hostname: '127.0.0.1', port, path: requestPath, agent: false }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk: string) => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, body }));
+      response.on('error', reject);
+    });
+    request.setTimeout(1_000, () => request.destroy(new Error('preview request timed out')));
+    request.on('error', reject);
+  });
+}
 
 let dir: string;
 let outsideDir: string;
@@ -104,6 +122,22 @@ describe('preview-server', () => {
     expect([403, 404]).toContain(res.status);
     const res2 = await fetch(`${url}%2e%2e/%2e%2e/etc/passwd`);
     expect([403, 404]).toContain(res2.status);
+  });
+
+  it.each(['/%', '/%C3%28'])('F-1107: refuses raw malformed path %s without losing the preview', async (requestPath) => {
+    const preview = await startPreview(dir, scopeA);
+    try {
+      await expect(requestRawPreviewPath(preview.port, requestPath)).resolves.toEqual({
+        status: 403,
+        body: 'forbidden',
+      });
+      await expect(requestRawPreviewPath(preview.port, '/%69ndex.html?ignored=%')).resolves.toEqual({
+        status: 200,
+        body: '<h1>preview ok</h1>',
+      });
+    } finally {
+      await stopPreviewWithProof(preview.id, scopeA);
+    }
   });
 
   it('bloqueia symlink dentro da raiz que aponta para arquivo externo', async () => {

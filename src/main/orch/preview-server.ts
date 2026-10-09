@@ -95,7 +95,12 @@ function describePreview(entry: RunningPreview): PreviewDescriptor {
 }
 
 function resolveSafe(root: string, urlPath: string): string | null {
-  const decoded = decodeURIComponent(urlPath.split('?')[0]);
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(urlPath.split('?')[0]);
+  } catch {
+    return null;
+  }
   const resolved = path.resolve(root, `.${path.posix.normalize(`/${decoded}`)}`);
   if (resolved !== root && !resolved.startsWith(root + path.sep)) return null;
   return resolved;
