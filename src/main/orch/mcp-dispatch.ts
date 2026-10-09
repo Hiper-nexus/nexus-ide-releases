@@ -64,7 +64,7 @@ import { getProjectDomainStores, requireProjectDomainStoreRegistry } from "./pro
 import {
   createScopedCommandReceiptStore,
 } from "./command-receipts";
-import { createScopedEffectOutboxStore } from "./effect-outbox";
+import { isUnreconciledEffectOutbox, createScopedEffectOutboxStore } from "./effect-outbox";
 import {
   normalizeDispatchSessionId,
   permissionScopeForTool,
@@ -647,12 +647,12 @@ function readReplayableCommandDispatch(
 }
 
 function rememberDispatchOutcome(
+  runtimeManager: ProjectRuntimeManager,
   scope: ProjectExecutionScope,
   commandId: string,
   outcome: ToolDispatchResult,
 ): void {
   try {
-    const runtimeManager = requireProjectDomainStoreRegistry().runtimeManager();
     createScopedCommandReceiptStore(
       runtimeManager,
       scope,
@@ -667,7 +667,7 @@ function rememberDispatchOutcome(
 type CheckpointAcceptance =
   | { readonly status: "skipped" }
   | { readonly status: "denied" | "conflict" }
-  | { readonly status: "accepted"; readonly inserted: boolean };
+  | { readonly status: "accepted"; readonly inserted: boolean; readonly runtimeManager: ProjectRuntimeManager };
 
 /**
  * Recibo da observação lógica, sem inferir checkpoint ou saída física.
@@ -683,7 +683,10 @@ function acceptProductionCommandObservation(
 ): CheckpointAcceptance {
   let runtimeManager: ProjectRuntimeManager;
   try {
-    runtimeManager = requireProjectDomainStoreRegistry().runtimeManager();
+    const registry = requireProjectDomainStoreRegistry();
+    registry.forScope(ctx.scope); // Reconcile and publish before any receipt or process.
+    if(isUnreconciledEffectOutbox(ctx.scope)) return {status:"denied"};
+    runtimeManager = registry.runtimeManager();
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (message.includes("not initialized")) return { status: "skipped" };
@@ -696,7 +699,7 @@ function acceptProductionCommandObservation(
       commandId, toolName: canonicalToolName(toolName), bindingDigest, generated,
       ...(missionId ? {threadId:missionId} : {projectId:ctx.scope.projectId}),
     });
-    return { status: "accepted", inserted: accepted.inserted };
+    return { status: "accepted", inserted: accepted.inserted, runtimeManager };
   } catch (error) {
     if (error instanceof Error && error.message === 'command_effect_identity_conflict') return {status:'conflict'};
     console.warn("[mcp-dispatch] command effect acceptance failed:", error);
@@ -1563,13 +1566,14 @@ export async function dispatchToolCall(
   let outcomeAuditWritten = false;
   let handlerStarted = false;
   let commandAccepted = false;
+  let commandRuntimeManager: ProjectRuntimeManager | undefined;
   let resolveOwnedFlight: ((result: ToolDispatchResult) => void) | undefined;
   let ownedFlightKey: string | undefined;
   const releaseOwnedFlight = (
     result: ToolDispatchResult,
   ): ToolDispatchResult => {
-    if (commandAccepted && commandId) {
-      rememberDispatchOutcome(commandReceiptScope, commandId, result);
+    if (commandAccepted && commandId && commandRuntimeManager) {
+      rememberDispatchOutcome(commandRuntimeManager, commandReceiptScope, commandId, result);
     }
     resolveOwnedFlight?.({ok:false,tool:result.tool,error:'command_result_unavailable',effectMayHaveCommitted:result.ok || result.effectMayHaveCommitted || undefined,denied:result.denied});
     resolveOwnedFlight = undefined;
@@ -1669,6 +1673,7 @@ export async function dispatchToolCall(
       }
       if (checkpoint.status === "accepted" && checkpoint.inserted) {
         commandAccepted = true;
+        commandRuntimeManager = checkpoint.runtimeManager;
         if (callerCommandId) {
           ownedFlightKey = logicalFlightKey(ctx.scope, callerCommandId);
           let resolveFlight!: (result: ToolDispatchResult) => void;
@@ -1683,6 +1688,8 @@ export async function dispatchToolCall(
   } catch (error) {
     return denyAfterIntent(error instanceof Error ? error.message : 'command_effect_unavailable');
   }
+
+  try { assertAdmissionCurrent(); } catch { return denyAfterIntent('session_authority_revoked'); }
 
   // Persist the correlated effect intent before charging mission budget. If
   // the audit INSERT fails, the reservation callback is never reached, so a
@@ -1926,7 +1933,7 @@ export async function dispatchToolCall(
       signal: invocationSignal,
       assertCurrentAuthority,
       ...(commandAccepted && commandId && tool.ownedProcessLifetime === true && ["terminal_run","bg_run"].includes(canonical)
-        ? {beginOwnedProcess:createOwnedProcessLifetimeRegistration(requireProjectDomainStoreRegistry().runtimeManager(),ctx.scope,commandId,operationIdentity!.bindingDigest,tool.name,assertCurrentAuthority)} : {}),
+        ? {beginOwnedProcess:createOwnedProcessLifetimeRegistration(commandRuntimeManager!,commandReceiptScope,commandId,operationIdentity!.bindingDigest,tool.name,assertCurrentAuthority)} : {}),
       ...(invocationId
         ? {
             effectIntent: Object.freeze({

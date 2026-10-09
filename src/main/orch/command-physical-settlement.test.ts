@@ -63,3 +63,13 @@ it('F-1082: real additive migration preserves old fake-success rows as unknown b
   expect(new CommandReceiptStore(manager,scope).getByCommandId('legacy-no-proof')).toMatchObject({physicalState:'unknown',resultSequence:0});
   expect(new EffectOutboxStore(manager,scope).listUnsettledBlocking('mission-old').rows).toMatchObject([{type:'dispatch.physical-settlement',status:'pending'}]);
 });
+
+it('F-1082: legacy receipt with a pruned effect is reconstructed as unknown blocking proof, never replayed',()=>{
+  manager.closeAll();manager=new ProjectRuntimeManager({baseDir:root,appVersion:'legacy-test',migrations:INITIAL_PROJECT_MIGRATIONS.filter(m=>m.schemaVersion<=51)});
+  const receipts=new CommandReceiptStore(manager,scope);const outbox=new EffectOutboxStore(manager,scope);
+  receipts.acceptCommandEffect(outbox,{commandId:'legacy-pruned',commandType:'checkpoint.capture',threadId:'mission-pruned'},{commandId:'legacy-pruned',threadId:'mission-pruned',type:'checkpoint.capture'});
+  manager.open(scope).db.prepare('DELETE FROM effect_outbox').run();
+  manager.closeAll();manager=new ProjectRuntimeManager({baseDir:root,appVersion:'physical-test'});
+  expect(new CommandReceiptStore(manager,scope).getByCommandId('legacy-pruned')).toMatchObject({physicalState:'unknown',resultSequence:0});
+  expect(new EffectOutboxStore(manager,scope).listUnsettledBlocking('mission-pruned').rows).toMatchObject([{type:'dispatch.physical-settlement',status:'pending'}]);
+});

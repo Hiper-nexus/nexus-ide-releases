@@ -9,7 +9,7 @@ import { EffectOutboxStore } from './effect-outbox';
 import { mintToken,bindTokenToSession,resetGateForTests } from './gate';
 import { dispatchToolCall } from './mcp-dispatch';
 import type { McpRegistry } from './mcp-protocol';
-import { configureProjectDomainStoreRegistry,disposeProjectDomainStoreRegistry } from './project-domain-store-registry';
+import { configureProjectDomainStoreRegistry,disposeProjectDomainStoreRegistry,requireProjectDomainStoreRegistry } from './project-domain-store-registry';
 import { testProjectScope } from './__tests__/scope-fixture';
 let root:string;let manager:ProjectRuntimeManager;let scope:ReturnType<typeof testProjectScope>;let ctx:ReturnType<typeof mintToken>;
 beforeEach(()=>{root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'nexus-logical-dispatch-')));const st=fs.statSync(root);scope=testProjectScope({rootRealPath:root,workspaceRootDevice:String(st.dev),workspaceRootInode:String(st.ino)});manager=new ProjectRuntimeManager({baseDir:root,appVersion:'logical-test'});configureAuditLogRuntime(manager);configureProjectDomainStoreRegistry(manager);resetGateForTests();ctx=mintToken({label:'logical',role:'user',scope,allowedTools:null,allowedSkills:null});bindTokenToSession(ctx.token,'logical-session');});
@@ -33,4 +33,18 @@ it('generic handler throw remains unknown after its JS flight ends and does not 
   expect(await dispatchToolCall('http-mcp',registry,'nexus_file_write',args,ctx,options)).toMatchObject({ok:false,effectMayHaveCommitted:true});
   expect(await dispatchToolCall('http-mcp',registry,'nexus_file_write',args,ctx,options)).toMatchObject({ok:false,error:'command_result_unavailable',effectMayHaveCommitted:true});
   expect(runs).toBe(1);expect(new CommandReceiptStore(manager,scope).listUnsettledMetadata().rows).toMatchObject([{dispatchState:'unknown',physicalState:'none',resultSequence:0}]);
+});
+
+it('F-1082: standalone dispatch registers a fresh scope for the actual coordinator before admitting work',async()=>{
+  const registry=requireProjectDomainStoreRegistry();expect(registry.listSuites()).toEqual([]);
+  let registeredBeforeHandler=false;
+  expect((await dispatchToolCall('http-mcp',tools(async()=>{registeredBeforeHandler=registry.listSuites().some(s=>s.scope.checkoutId===scope.checkoutId);return {}; }),'nexus_file_write',args,ctx)).ok).toBe(true);
+  expect(registeredBeforeHandler).toBe(true);expect(registry.listSuites().map(s=>s.scope)).toEqual([scope]);
+});
+it('F-1082: fresh standalone scope recovers prior pending physical proof before admitting new work',async()=>{
+  const receipts=new CommandReceiptStore(manager,scope);const outbox=new EffectOutboxStore(manager,scope);const binding='d'.repeat(64);
+  receipts.acceptDispatchObservation({commandId:'previous-owned',toolName:'nexus_terminal_run',projectId:scope.projectId,bindingDigest:binding,generated:true});receipts.beginPhysicalDispatch(outbox,'previous-owned',binding,'nexus_terminal_run');
+  let stateAtHandler:string|undefined;
+  expect((await dispatchToolCall('http-mcp',tools(async()=>{stateAtHandler=receipts.getByCommandId('previous-owned')?.physicalState;return {}; }),'nexus_file_write',args,ctx)).ok).toBe(true);
+  expect(stateAtHandler).toBe('unknown');expect(outbox.listUnsettledBlocking(scope.projectId).rows).toHaveLength(1);
 });

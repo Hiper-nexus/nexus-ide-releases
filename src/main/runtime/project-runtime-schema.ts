@@ -1213,4 +1213,11 @@ END;`,
         UPDATE command_receipts SET command_type='dispatch.observation',physical_state='unknown',dispatch_state='unknown',result_sequence=0
         WHERE command_type='checkpoint.capture';`,
     }),
+    createProjectMigration({
+      id: '054-restore-unproven-dispatch-blockers', schemaVersion: 54, appVersion: '0.76.213',
+      sql: `INSERT INTO effect_outbox(effect_id,command_id,thread_id,effect_type,payload_json,status,attempt_count,available_at,created_at,updated_at,last_error)
+        SELECT command_id,command_id,aggregate_id,'dispatch.physical-settlement','{}','pending',0,accepted_at,accepted_at,accepted_at,'Physical exit proof unavailable'
+        FROM command_receipts AS receipt WHERE physical_state='unknown' AND result_sequence=0
+          AND NOT EXISTS(SELECT 1 FROM effect_outbox AS effect WHERE effect.command_id=receipt.command_id);`,
+    }),
   ]);
