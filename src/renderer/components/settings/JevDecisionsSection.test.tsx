@@ -2,6 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { JevDecisionRow } from '../../../shared/jev-ipc';
 import { JevDecisionsSection } from './JevDecisionsSection';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -56,7 +57,7 @@ const jev = vi.hoisted(() => ({
     },
     pricing: { usdPerInputToken: 0.042 / 1e6, source: 'typesafe-published' },
   })),
-  decisionsList: vi.fn(async () => [
+  decisionsList: vi.fn(async (): Promise<JevDecisionRow[]> => [
     {
       id: 'd1',
       at: Date.now(),
@@ -163,6 +164,56 @@ describe('JevDecisionsSection', () => {
     await act(async () => Promise.resolve());
     expect(host.textContent).toContain('erro interno');
   });
+
+  it.each(['jev', 'luna', 'clef'] as const)(
+    'labels an ensemble led by %s as Juntos without inventing its members',
+    async (provider) => {
+      jev.decisionsList.mockResolvedValueOnce([{
+        id: 'ensemble', at: Date.now(), surface: 'handoffReview',
+        model: 'ensemble', provider, questions: ['is_specific'],
+        probabilities: { is_specific: 0.9 }, decision: 'ok', inputTokens: 1200, usd: 0.0000852,
+      }]);
+      const host = mount(<JevDecisionsSection />);
+      await act(async () => Promise.resolve());
+      const meta = host.querySelector('.jev-log__meta')!.textContent!;
+      expect(meta).toContain(' · Juntos · ensemble · is_specific 0.90');
+      expect(meta).not.toMatch(/TypeSafe|OpenAI|Cloudflare|Jev|Luna|Clef/);
+    },
+  );
+
+  it('recognizes the ensemble route even when the row carries a member model', async () => {
+    jev.decisionsList.mockResolvedValueOnce([{
+      id: 'ensemble-route', at: Date.now(), surface: 'handoffReview',
+      model: 'gpt-6-luna', provider: 'luna',
+      route: { provider: 'luna', model: 'ensemble', reason: 'ensemble', evidence: 'manual', policyVersion: 'jev-clef-luna-v1' },
+      questions: [], probabilities: {}, decision: 'ok', inputTokens: 1200, usd: 0.0000852,
+    }]);
+    const host = mount(<JevDecisionsSection />);
+    await act(async () => Promise.resolve());
+    expect(host.querySelector('.jev-log__meta')!.textContent).toContain(' · Juntos · gpt-6-luna ·');
+  });
+
+  it.each([
+    { provider: 'jev', model: 'jev-1.13.0', caption: 'TypeSafe' },
+    { provider: 'luna', model: 'gpt-6-luna', caption: 'OpenAI' },
+    { provider: 'clef', model: 'clef-flash', caption: 'Cloudflare' },
+    { provider: undefined, model: 'jev-1.13.0', caption: 'TypeSafe' },
+    { provider: undefined, model: 'gpt-6-luna', caption: 'OpenAI' },
+    { provider: undefined, model: 'clef', caption: 'Cloudflare' },
+  ] satisfies Array<Pick<JevDecisionRow, 'provider' | 'model'> & { caption: string }>)(
+    'keeps $caption for an ordinary $model decision (provider: $provider)',
+    async ({ provider, model, caption }) => {
+      jev.decisionsList.mockResolvedValueOnce([{
+        id: 'ordinary', at: Date.now(), surface: 'handoffReview', model, provider,
+        questions: [], probabilities: {}, decision: 'ok', inputTokens: 600, usd: 0.0000252,
+      }]);
+      const host = mount(<JevDecisionsSection />);
+      await act(async () => Promise.resolve());
+      const meta = host.querySelector('.jev-log__meta')!.textContent!;
+      expect(meta).toContain(` · ${caption} · ${model} ·`);
+      expect(meta).not.toContain('Juntos');
+    },
+  );
 
   it('lists decisions and sends feedback', async () => {
     const host = mount(<JevDecisionsSection />);

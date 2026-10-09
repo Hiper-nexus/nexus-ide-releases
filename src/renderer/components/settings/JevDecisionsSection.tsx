@@ -332,6 +332,10 @@ export function JevDecisionsSection() {
             <ul className="jev-log">
               {rows.map((row) => {
                 const noAnswer = row.kind === 'no-answer';
+                const providerLabel = row.model === 'ensemble' || row.route?.reason === 'ensemble'
+                  ? 'Juntos'
+                  : row.provider === 'luna' || row.model === 'gpt-6-luna' ? 'OpenAI'
+                  : row.provider === 'clef' || row.model.startsWith('clef') ? 'Cloudflare' : 'TypeSafe';
                 return (
                   <li key={row.id} className="jev-log__row">
                     <div className="jev-log__body">
@@ -348,7 +352,7 @@ export function JevDecisionsSection() {
                         </span>
                       </div>
                       <p className="jev-log__meta">
-                        {formatTime(row.at)} · {row.provider === 'luna' || row.model === 'gpt-6-luna' ? 'OpenAI' : row.provider === 'clef' || row.model.startsWith('clef') ? 'Cloudflare' : 'TypeSafe'} · {row.model} ·{' '}
+                        {formatTime(row.at)} · {providerLabel} · {row.model} ·{' '}
                         {topProbabilities(row)}
                         {row.route?.reason === 'credential-fallback' ? ' · alternativa disponível' : row.route?.evidence === 'public-benchmark' ? ' · regra inicial' : ''}
                       </p>
