@@ -54,189 +54,164 @@ interface CdpCommand {
   readonly sessionId?: string;
 }
 
+const plainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) &&
+  Object.getPrototypeOf(value) === Object.prototype;
+const validSession = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\0-\x1f]/u.test(value);
 const isCommand = (value: unknown): value is CdpCommand =>
-  typeof value === 'object' &&
-  value !== null &&
-  typeof (value as { id?: unknown }).id === 'number' &&
-  typeof (value as { method?: unknown }).method === 'string';
+  plainObject(value) && Number.isSafeInteger(value.id) &&
+  typeof value.method === 'string' && value.method.length <= 128 &&
+  /^[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*$/u.test(value.method) &&
+  (value.params === undefined || plainObject(value.params)) &&
+  (value.sessionId === undefined || validSession(value.sessionId));
 
 const BROWSER_CONTEXT_ID = 'nexus-preview';
-/** Marks an event to send right after a command's reply. */
 const ANNOUNCE = Symbol('announce');
-/** The page's root session id, as Playwright sees it. */
 const PAGE_SESSION_ID = 'nexus-preview-page';
-
-/** Browser-level commands that only need acknowledging for a page the desktop owns. */
-const ACKNOWLEDGED = new Set([
-  'Target.setDiscoverTargets',
-  'Browser.grantPermissions',
-  'Browser.resetPermissions',
-  'Browser.cancelDownload',
+// This retained protocol has no production transport. A future governed
+// connection still needs a sensitive-field/visual contract for arbitrary JS.
+const PAGE_METHODS = new Set([
+  'Page.enable', 'Page.disable', 'Page.getFrameTree', 'Page.getLayoutMetrics',
+  'Page.navigate', 'Page.reload',
+  'Runtime.enable', 'Runtime.disable', 'Runtime.evaluate', 'Runtime.callFunctionOn',
+  'Runtime.getProperties', 'Runtime.releaseObject', 'Runtime.releaseObjectGroup',
+  'Runtime.runIfWaitingForDebugger',
+  'DOM.getDocument', 'DOM.querySelector', 'DOM.querySelectorAll', 'DOM.describeNode',
+  'DOM.resolveNode', 'DOM.getBoxModel', 'DOM.getContentQuads', 'DOM.scrollIntoViewIfNeeded',
+  'Input.dispatchKeyEvent', 'Input.dispatchMouseEvent', 'Input.insertText',
+  'Network.enable', 'Network.disable',
 ]);
+const ACKNOWLEDGED = new Set(['Target.setDiscoverTargets', 'Browser.resetPermissions', 'Browser.cancelDownload']);
+
+export interface CdpRelayAuthority {
+  readonly assertCurrentAuthority?: () => void;
+}
 
 export function createCdpRelayConnection(
   target: CdpRelayTarget,
   write: (message: string) => void,
+  authority: CdpRelayAuthority = {},
 ): CdpRelayConnection {
-  const send = (message: Record<string, unknown>) => write(JSON.stringify(message));
+  const assertCurrent = () => authority.assertCurrentAuthority?.();
+  const send = (message: Record<string, unknown>) => {
+    try { assertCurrent(); write(JSON.stringify(message)); } catch { /* Revoked or closed consumer. */ }
+  };
+  const nativeSend = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
+    assertCurrent();
+    const result = await target.send(method, params, sessionId);
+    assertCurrent();
+    return result;
+  };
   let attached = false;
-  /**
-   * Sessions this relay invented. Extra page sessions (Playwright's
-   * `newCDPSession`) all reach the one real debugger session, so each gets the
-   * page's events; other ids are the page's own child sessions, such as iframes.
-   */
   const sessions = new Map<string, 'browser' | 'page'>([[PAGE_SESSION_ID, 'page']]);
+  const children = new Map<string, {parent?: string; targetId: string}>();
   let sessionSequence = 0;
   const newSession = (kind: 'browser' | 'page') => {
     const sessionId = `nexus-preview-${kind}-${++sessionSequence}`;
     sessions.set(sessionId, kind);
     return sessionId;
   };
-  const targetInfo = async () => ({
-    targetId: await target.targetId(),
-    type: 'page',
-    title: target.title(),
-    url: target.url(),
-    attached: true,
-    canAccessOpener: false,
-    browserContextId: BROWSER_CONTEXT_ID,
-  });
-
+  const sameOrigin = (url: string) => {
+    try { return new URL(url).origin === new URL(target.url()).origin && /^(http|https):$/u.test(new URL(url).protocol); }
+    catch { return false; }
+  };
+  const removeChild = (id: string) => {
+    for (const [child, info] of children) if (info.parent === id) removeChild(child);
+    children.delete(id);
+  };
+  const targetInfo = async () => {
+    assertCurrent();
+    const targetId = await target.targetId();
+    assertCurrent();
+    return {targetId, type:'page', title:target.title(), url:target.url(), attached:true, canAccessOpener:false, browserContextId:BROWSER_CONTEXT_ID};
+  };
   const browserCommand = async (command: CdpCommand): Promise<unknown> => {
     if (ACKNOWLEDGED.has(command.method)) return {};
     switch (command.method) {
-      case 'Browser.setDownloadBehavior': {
-        const directory = command.params?.['downloadPath'];
-        const allowed =
-          command.params?.['behavior'] !== 'deny' && typeof directory === 'string';
-        target.setDownloadDirectory(allowed ? directory : null);
-        const { browserContextId: _ignored, ...params } = command.params ?? {};
-        return target.send('Browser.setDownloadBehavior', params, undefined);
-      }
+      case 'Browser.setDownloadBehavior':
+        if (command.params?.behavior !== 'deny' || command.params.downloadPath !== undefined) throw new Error('Downloads are not authorized for this relay.');
+        return {}; // Main cancels downloads; no caller-selected directory or native policy change.
       case 'Browser.getVersion':
-        return {
-          protocolVersion: '1.3',
-          product: 'NexusIDE',
-          revision: '',
-          userAgent: target.userAgent(),
-          jsVersion: '',
-        };
+        return {protocolVersion:'1.3',product:'NexusIDE',revision:'',userAgent:target.userAgent(),jsVersion:''};
       case 'Target.getTargetInfo':
-        return {
-          targetInfo: {
-            targetId: 'browser',
-            type: 'browser',
-            title: '',
-            url: '',
-            attached: true,
-            canAccessOpener: false,
-          },
-        };
-      case 'Target.getBrowserContexts':
-        return { browserContextIds: [BROWSER_CONTEXT_ID] };
-      case 'Target.getTargets':
-        return { targetInfos: [await targetInfo()] };
-      case 'Target.attachToBrowserTarget':
-        return { sessionId: newSession('browser') };
-      case 'Target.attachToTarget': {
-        const targetId = command.params?.['targetId'];
-        if (targetId !== (await target.targetId()))
-          throw new Error('Only this preview tab\'s page can be attached.');
-        return { sessionId: newSession('page') };
-      }
+        if (command.params?.targetId !== undefined && command.params.targetId !== (await target.targetId())) throw new Error('Only this preview tab\'s page can be inspected.');
+        assertCurrent();
+        return {targetInfo:await targetInfo()};
+      case 'Target.getBrowserContexts': return {browserContextIds:[BROWSER_CONTEXT_ID]};
+      case 'Target.getTargets': return {targetInfos:[await targetInfo()]};
+      case 'Target.attachToBrowserTarget': return {sessionId:newSession('browser')};
+      case 'Target.attachToTarget':
+        if (command.params?.targetId !== (await target.targetId())) throw new Error('Only this preview tab\'s page can be attached.');
+        assertCurrent();
+        return {sessionId:newSession('page')};
       case 'Target.detachFromTarget': {
-        const sessionId = command.params?.['sessionId'];
-        if (typeof sessionId === 'string' && sessionId !== PAGE_SESSION_ID)
-          sessions.delete(sessionId);
+        const id = command.params?.sessionId;
+        if (!validSession(id) || (!sessions.has(id) && !children.has(id))) throw new Error('Unknown session.');
+        if (id !== PAGE_SESSION_ID) sessions.delete(id);
+        removeChild(id);
         return {};
       }
       case 'Target.setAutoAttach': {
+        if (command.sessionId && (sessions.get(command.sessionId) === 'page' || children.has(command.sessionId))) {
+          if (command.params?.flatten !== true || typeof command.params.autoAttach !== 'boolean' || typeof command.params.waitForDebuggerOnStart !== 'boolean') throw new Error('Unsupported child attachment policy.');
+          return nativeSend('Target.setAutoAttach', {
+            autoAttach:command.params.autoAttach, flatten:true, waitForDebuggerOnStart:command.params.waitForDebuggerOnStart,
+            filter:[{type:'iframe',exclude:false},{type:'worker',exclude:false},{exclude:true}],
+          }, children.has(command.sessionId) ? command.sessionId : undefined);
+        }
         if (attached) return {};
-        attached = true;
-        // The page is announced once, right after this reply, as Chromium does.
         const info = await targetInfo();
-        return {
-          [ANNOUNCE]: {
-            method: 'Target.attachedToTarget',
-            params: {
-              sessionId: PAGE_SESSION_ID,
-              targetInfo: info,
-              waitingForDebugger: false,
-            },
-          },
-        };
+        attached = true;
+        return {[ANNOUNCE]:{method:'Target.attachedToTarget',params:{sessionId:PAGE_SESSION_ID,targetInfo:info,waitingForDebugger:false}}};
       }
-      default:
-        throw new Error(
-          `Not supported for a desktop preview tab: ${command.method}`,
-        );
+      default: throw new Error(`Not supported for a desktop preview tab: ${command.method}`);
     }
   };
-
-  const pageCommand = (command: CdpCommand): Promise<unknown> => {
-    const child =
-      sessions.get(command.sessionId!) === 'page' ? undefined : command.sessionId;
-    // The page itself is already running, but its child frames are not:
-    // Playwright auto-attaches with waitForDebuggerOnStart, so Chromium pauses
-    // every new cross-site iframe and worker until this reaches it.
-    if (command.method === 'Runtime.runIfWaitingForDebugger' && child === undefined) {
-      return Promise.resolve({});
-    }
-    return target.send(command.method, command.params ?? {}, child);
+  const pageCommand = async (command: CdpCommand): Promise<unknown> => {
+    if (!PAGE_METHODS.has(command.method)) throw new Error(`Not supported for a desktop preview tab: ${command.method}`);
+    const child = children.has(command.sessionId!) ? command.sessionId : undefined;
+    if (command.method === 'Page.navigate' && (typeof command.params?.url !== 'string' || !sameOrigin(command.params.url) || command.params.frameId !== undefined || child)) throw new Error('Navigation must stay in the selected preview page.');
+    if (command.method === 'Runtime.runIfWaitingForDebugger' && child === undefined) return {};
+    return nativeSend(command.method, command.params ?? {}, child);
   };
-
   return {
-    receive: (raw) => {
+    receive: raw => {
+      if (raw.length > 1024 * 1024) return;
       let command: unknown;
-      try {
-        command = JSON.parse(raw);
-      } catch {
-        return;
-      }
+      try { command = JSON.parse(raw); } catch { return; }
       if (!isCommand(command)) return;
-      const result =
-        command.sessionId === undefined ||
-        sessions.get(command.sessionId) === 'browser'
-          ? browserCommand(command)
-          : pageCommand(command);
-      const route =
-        command.sessionId === undefined ? {} : { sessionId: command.sessionId };
-      // Replies leave as commands finish, as Chromium's do, so a slow command
-      // such as a screenshot never holds up the ones behind it.
-      void result.then(
-        (value) => {
-          const announce =
-            typeof value === 'object' && value !== null && ANNOUNCE in value
-              ? (value as { [ANNOUNCE]: Record<string, unknown> })[ANNOUNCE]
-              : undefined;
-          send({ id: command.id, result: announce ? {} : (value ?? {}), ...route });
-          if (announce) send(announce);
-        },
-        (cause: unknown) =>
-          send({
-            id: command.id,
-            error: {
-              code: -32000,
-              message: cause instanceof Error ? cause.message : String(cause),
-            },
-            ...route,
-          }),
-      );
+      const request = command;
+      const route = request.sessionId === undefined ? {} : {sessionId:request.sessionId};
+      // Async dispatch also catches a synchronous native/authority failure.
+      void Promise.resolve().then(async () => {
+        assertCurrent();
+        if (request.sessionId !== undefined && !sessions.has(request.sessionId) && !children.has(request.sessionId)) throw new Error('Unknown session.');
+        if (/^(Browser|Target)\./u.test(request.method)) return browserCommand(request);
+        if (!request.sessionId || sessions.get(request.sessionId) === 'browser') throw new Error('A proved page session is required.');
+        return pageCommand(request);
+      }).then(value => {
+        const announce = typeof value === 'object' && value !== null && ANNOUNCE in value ? (value as {[ANNOUNCE]:Record<string,unknown>})[ANNOUNCE] : undefined;
+        send({id:request.id,result:announce ? {} : (value ?? {}),...route});
+        if (announce) send(announce);
+      }, cause => send({id:request.id,error:{code:-32000,message:cause instanceof Error ? cause.message : 'CDP command refused'},...route}));
     },
     event: (method, params, sessionId) => {
-      if (!attached) return;
-      // Download events are the browser's; Playwright listens on its root session.
-      if (method.startsWith('Browser.download')) {
-        send({ method, params });
-        return;
+      try { assertCurrent(); } catch { return; }
+      if (!attached || (sessionId !== undefined && !children.has(sessionId))) return;
+      if (method === 'Target.attachedToTarget') {
+        if (!plainObject(params) || !validSession(params.sessionId) || sessions.has(params.sessionId) || children.has(params.sessionId) || !plainObject(params.targetInfo)) return;
+        const info = params.targetInfo;
+        if ((info.type !== 'iframe' && info.type !== 'worker') || typeof info.url !== 'string' || !sameOrigin(info.url) || typeof info.targetId !== 'string' || !validSession(info.targetId)) return;
+        children.set(params.sessionId,{parent:sessionId,targetId:info.targetId});
+      } else if (method === 'Target.detachedFromTarget' && plainObject(params) && validSession(params.sessionId)) {
+        removeChild(params.sessionId);
+      } else if (method === 'Target.targetDestroyed' && plainObject(params)) {
+        for (const [id, info] of children) if (info.targetId === params.targetId) removeChild(id);
       }
-      // Electron reports the page's own events with an empty session id.
-      if (sessionId) {
-        send({ method, params, sessionId });
-        return;
-      }
-      for (const [id, kind] of sessions)
-        if (kind === 'page') send({ method, params, sessionId: id });
+      if (method.startsWith('Browser.download')) { send({method,params}); return; }
+      if (sessionId) { send({method,params,sessionId}); return; }
+      for (const [id,kind] of sessions) if (kind === 'page') send({method,params,sessionId:id});
     },
   };
 }

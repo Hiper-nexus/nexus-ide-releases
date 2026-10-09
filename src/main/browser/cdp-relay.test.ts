@@ -25,8 +25,7 @@ describe('CdpRelay (T3 port)', () => {
   it('answers Browser.getVersion with the Nexus product string', async () => {
     const { relay, written } = collectWrites();
     relay.receive(JSON.stringify({ id: 1, method: 'Browser.getVersion' }));
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
     expect(written[0]).toMatchObject({
       id: 1,
       result: expect.objectContaining({ product: 'NexusIDE' }),
@@ -36,9 +35,7 @@ describe('CdpRelay (T3 port)', () => {
   it('Target.setAutoAttach announces the page session after the reply', async () => {
     const { relay, written } = collectWrites();
     relay.receive(JSON.stringify({ id: 2, method: 'Target.setAutoAttach' }));
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
     const ids = written.map((m) => m.id);
     expect(ids).toContain(2);
     const announce = written.find((m) => m.method === 'Target.attachedToTarget');
@@ -60,8 +57,7 @@ describe('CdpRelay (T3 port)', () => {
         params: { targetId: 'other' },
       }),
     );
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
     expect(written[0]).toMatchObject({
       id: 3,
       error: expect.objectContaining({ message: expect.stringContaining('Only this preview') }),
@@ -79,7 +75,7 @@ describe('CdpRelay (T3 port)', () => {
         sessionId: 'nexus-preview-page',
       }),
     );
-    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
     expect(target.send).toHaveBeenCalledWith(
       'Page.navigate',
       { url: 'https://app.local/x' },
@@ -92,7 +88,7 @@ describe('CdpRelay (T3 port)', () => {
         sessionId: 'nexus-preview-page',
       }),
     );
-    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
     expect(target.send).toHaveBeenCalledTimes(1);
   });
 
@@ -102,9 +98,7 @@ describe('CdpRelay (T3 port)', () => {
       written.push(JSON.parse(raw) as Record<string, unknown>);
     });
     relay.receive(JSON.stringify({ id: 6, method: 'Target.setAutoAttach' }));
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
     written.length = 0;
     relay.event('Browser.downloadWillBegin', { guid: 'g' }, undefined);
     relay.event('Page.loadEventFired', {}, undefined);
@@ -119,9 +113,7 @@ describe('CdpRelay (T3 port)', () => {
     const { relay, written } = collectWrites();
     relay.receive(JSON.stringify({ id: 10, method: 'Target.getBrowserContexts' }));
     relay.receive(JSON.stringify({ id: 11, method: 'Target.getTargets' }));
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
     const contexts = written.find((message) => message.id === 10);
     const targets = written.find((message) => message.id === 11);
     const contextIds = (
@@ -140,11 +132,66 @@ describe('CdpRelay (T3 port)', () => {
       written.push(JSON.parse(raw) as Record<string, unknown>);
     });
     relay.receive(JSON.stringify({ id: 7, method: 'Browser.close' }));
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
     expect(written[0]).toMatchObject({
       id: 7,
       error: expect.objectContaining({ message: expect.stringContaining('Not supported') }),
     });
+  });
+});
+
+describe('F-1077: per-page CDP envelope and channel confinement', () => {
+  function setup() {
+    const target=fakeTarget();const written:Record<string,unknown>[]=[];
+    return {target,written,relay:createCdpRelayConnection(target,raw=>written.push(JSON.parse(raw)))};
+  }
+  it.each([undefined,'nexus-preview-page','invented-child','nexus-preview-browser-1'])('never forwards Browser/Target restrictions through session %s',async(sessionId)=>{
+    const {relay,target,written}=setup();
+    relay.receive(JSON.stringify({id:1,method:'Target.attachToTarget',sessionId,params:{targetId:'foreign-target'}}));
+    relay.receive(JSON.stringify({id:2,method:'Browser.close',sessionId}));
+    relay.receive(JSON.stringify({id:3,method:'Browser.setDownloadBehavior',sessionId,params:{behavior:'allow',downloadPath:'/outside-workspace'}}));
+    await vi.waitFor(()=>expect(written).toHaveLength(3));
+    expect(written.every(message=>'error' in message)).toBe(true);
+    expect(target.send).not.toHaveBeenCalled();expect(target.setDownloadDirectory).not.toHaveBeenCalled();
+  });
+  it('rejects malformed envelopes without synchronous exceptions or native sends',async()=>{
+    const {relay,target}=setup();
+    for(const command of [{id:1.2,method:'Page.enable'},{id:1e30,method:'Page.enable'},{id:1,method:7},{id:1,method:'Page.enable',params:[]},{id:1,method:'Page.enable',params:null},{id:1,method:'Page.enable',sessionId:5},{id:1,method:'x'.repeat(1025)},{id:1,method:'Page.enable',sessionId:'x'.repeat(1025)}]) {
+      expect(()=>relay.receive(JSON.stringify(command))).not.toThrow();
+    }
+    await new Promise(resolve => setTimeout(resolve, 0));expect(target.send).not.toHaveBeenCalled();
+  });
+  it('rejects invented sessions and global namespaces outside Browser/Target',async()=>{
+    const {relay,target,written}=setup();
+    relay.receive(JSON.stringify({id:1,method:'Runtime.evaluate',sessionId:'guessed-child',params:{expression:'document.title'}}));
+    relay.receive(JSON.stringify({id:2,method:'SystemInfo.getProcessInfo',sessionId:'nexus-preview-page'}));
+    relay.receive(JSON.stringify({id:3,method:'Page.navigateToHistoryEntry',sessionId:'nexus-preview-page',params:{entryId:123}}));
+    await vi.waitFor(()=>expect(written).toHaveLength(3));expect(written.every(m=>'error' in m)).toBe(true);expect(target.send).not.toHaveBeenCalled();
+  });
+  it('admits only actual same-preview child attachment events and removes detached descendants',async()=>{
+    const {relay,target}=setup();
+    relay.receive(JSON.stringify({id:0,method:'Target.setAutoAttach'}));await new Promise(resolve=>setTimeout(resolve,0));
+    relay.event('Target.attachedToTarget',{sessionId:'child',targetInfo:{targetId:'frame-child',type:'iframe',url:'https://app.local/frame'}},undefined);
+    relay.event('Target.attachedToTarget',{sessionId:'nested',targetInfo:{targetId:'worker-child',type:'worker',url:'https://app.local/worker.js'}},'child');
+    relay.event('Target.attachedToTarget',{sessionId:'foreign',targetInfo:{targetId:'outside',type:'iframe',url:'https://foreign.test/'}},undefined);
+    for(const sessionId of ['child','nested','foreign'])relay.receive(JSON.stringify({id:1,sessionId,method:'Runtime.runIfWaitingForDebugger'}));
+    await vi.waitFor(()=>expect(target.send).toHaveBeenCalledWith('Runtime.runIfWaitingForDebugger',{},'nested'));
+    expect(target.send).toHaveBeenCalledTimes(2);
+    relay.event('Target.detachedFromTarget',{sessionId:'child'},undefined);
+    for(const sessionId of ['child','nested'])relay.receive(JSON.stringify({id:2,sessionId,method:'Runtime.evaluate',params:{expression:'1'}}));
+    await new Promise(resolve=>setTimeout(resolve,0));expect(target.send).toHaveBeenCalledTimes(2);
+  });
+  it('refuses off-origin/frame navigation and pathful download policy before native send',async()=>{
+    const {relay,target,written}=setup();
+    relay.receive(JSON.stringify({id:1,method:'Page.navigate',sessionId:'nexus-preview-page',params:{url:'https://foreign.test/'}}));
+    relay.receive(JSON.stringify({id:2,method:'Page.navigate',sessionId:'nexus-preview-page',params:{url:'https://app.local/',frameId:'foreign-frame'}}));
+    relay.receive(JSON.stringify({id:3,method:'Browser.setDownloadBehavior',params:{behavior:'deny',downloadPath:'/outside'}}));
+    await vi.waitFor(()=>expect(written).toHaveLength(3));expect(written.every(m=>'error' in m)).toBe(true);expect(target.send).not.toHaveBeenCalled();
+  });
+  it('absorbs synchronous target failures in the response boundary',async()=>{
+    const written:Record<string,unknown>[]=[];
+    const relay=createCdpRelayConnection(fakeTarget({send:()=>{throw new Error('native synchronous failure')}}),raw=>written.push(JSON.parse(raw)));
+    expect(()=>relay.receive(JSON.stringify({id:1,method:'Page.enable',sessionId:'nexus-preview-page'}))).not.toThrow();
+    await vi.waitFor(()=>expect(written[0]).toMatchObject({id:1,error:{message:'native synchronous failure'}}));
   });
 });

@@ -50,9 +50,7 @@ describe('CdpRelay attach (Electron plug)', () => {
     wc.listeners.get('message')?.({}, 'Page.loadEventFired', {}, undefined);
     // Precisa do Target.setAutoAttach antes de o relay emitir eventos.
     attach.connection.receive(JSON.stringify({ id: 1, method: 'Target.setAutoAttach' }));
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
     written.length = 0;
     wc.listeners.get('message')?.({}, 'Page.loadEventFired', {}, undefined);
     expect(written[0]).toMatchObject({ method: 'Page.loadEventFired' });
@@ -73,15 +71,14 @@ describe('CdpRelay attach (Electron plug)', () => {
       JSON.stringify({
         id: 3,
         method: 'Page.navigate',
-        params: { url: 'https://still-held' },
+        params: { url: 'https://app.local/still-held' },
         sessionId: 'nexus-preview-page',
       }),
     );
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
     expect(wc.debugger.sendCommand).toHaveBeenCalledWith(
       'Page.navigate',
-      { url: 'https://still-held' },
+      { url: 'https://app.local/still-held' },
       undefined,
     );
     second.detach();
@@ -105,15 +102,14 @@ describe('CdpRelay attach (Electron plug)', () => {
       JSON.stringify({
         id: 2,
         method: 'Page.navigate',
-        params: { url: 'https://x' },
+        params: { url: 'https://app.local/x' },
         sessionId: 'nexus-preview-page',
       }),
     );
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise(resolve => setTimeout(resolve, 0));
     expect(wc.debugger.sendCommand).toHaveBeenCalledWith(
       'Page.navigate',
-      { url: 'https://x' },
+      { url: 'https://app.local/x' },
       undefined,
     );
     attach.detach();
