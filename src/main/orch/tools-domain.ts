@@ -609,7 +609,7 @@ function missionLeadershipRefusalHint(missionId: string): string {
     `veja quem lidera com nexus_mission_control(${JSON.stringify({ missionId })}) e ` +
     `peça a retomada com nexus_mission_request_resume(${JSON.stringify({ missionId })}). ` +
     'Não repita o pedido de conclusão nem marque blocked/failed por cima do líder; ' +
-    'a retomada religa a liderança pelo mesmo caminho do botão “Retomar missão”, e depois dela o pedido pode ser repetido.'
+    'a retomada não transfere a liderança a esta sessão. Encaminhe o trabalho ao painel do líder identificado; se não houver líder vivo, o operador usa “Retomar missão”.'
   );
 }
 
@@ -641,7 +641,7 @@ const missionRequestResumeTool: McpToolDef = {
     'Request the Main-owned mission resume (same path as the “Retomar missão” button). ' +
     'Use when this session lost or never held leadership (stale/read-only Maestro) and the ' +
     'mission needs the coordinator rebound. Does not grant leadership to the calling session; ' +
-    'it rebinds coordination and returns a receipt. After resume, retry your original call.',
+    'it reports whether Main mounted a coordinator, kept an existing leader, or processed no new mount. Continue leadership work in the current leader pane; this stale token does not gain leadership.',
   inputSchema: {
     type: 'object',
     properties: {

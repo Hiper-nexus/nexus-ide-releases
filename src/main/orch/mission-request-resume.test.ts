@@ -274,3 +274,21 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
     });
   });
 });
+
+
+it('F-1063: actual stale completion refusal directs the work to the leader pane', async () => {
+  const updateContent = vi.fn();
+  mocks.getProjectDomainStores.mockReturnValue({ missions: {
+    get: () => ({ id: 'mission-existing', status: 'running', orchestratorSessionId: 'someone-else',
+      intentContract: { lane: 'standard', workspaceBinding: { adoptedPaneId: 'operator-pane' } } }),
+    updateContent,
+  } });
+  const tool = buildDomainTools().find((candidate) => candidate.name === 'nexus_mission_set_status')!;
+  const error = await tool.handler({ missionId: 'mission-existing', status: 'done' }, context())
+    .then(() => { throw new Error('stale session unexpectedly completed'); }, (cause: unknown) => cause) as { hint?: string };
+  expect(error.hint).toContain('nexus_mission_control');
+  expect(error.hint).toContain('painel do líder');
+  expect(error.hint).not.toMatch(/depois dela o pedido pode ser repetido/);
+  expect(updateContent).not.toHaveBeenCalled();
+  expect(requestResumeTool().description).not.toMatch(/retry your original call/);
+});
