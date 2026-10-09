@@ -3132,13 +3132,19 @@ export function getBrowserViewCount(): number {
  */
 export function openCdpRelayForPane(
   paneId: string,
+  scope: ProjectExecutionScope,
   options: {
     readonly write: (message: string) => void;
     readonly onDownloadDirectory?: (directory: string | null) => void;
   },
 ): { readonly connection: CdpRelayConnection; readonly detach: () => void } | null {
-  const entry = browsers.get(paneId);
-  if (!entry || entry.view.webContents.isDestroyed()) return null;
+  let entry: BrowserEntry;
+  try {
+    entry = withEntry(paneId, scope);
+  } catch {
+    return null;
+  }
+  if (!liveOwnerWindow(entry.owner) || !canSend(entry.view.webContents)) return null;
   const attach = attachCdpRelay(entry.view.webContents, options);
   return { connection: attach.connection, detach: attach.detach };
 }

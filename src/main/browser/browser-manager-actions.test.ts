@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 
 const scope: ProjectExecutionScope = Object.freeze({
@@ -50,7 +50,7 @@ const state = vi.hoisted(() => {
     isLoading: vi.fn(() => false),
     isDestroyed: vi.fn(() => false),
     isCrashed: vi.fn(() => false),
-    debugger: { isAttached: () => false, attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn(async () => ({ root: {} })) },
+    debugger: { isAttached: () => false, attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn(async () => ({ root: {} })), on: vi.fn(), removeListener: vi.fn() },
     setWebRTCIPHandlingPolicy: vi.fn(),
     loadURL: vi.fn(async () => {}),
     stop: vi.fn(),
@@ -238,6 +238,7 @@ import {
   destroyBrowser,
   ensureBrowser,
   loadBrowser,
+  openCdpRelayForPane,
   pressBrowserKey,
   readBrowserPage,
   readBrowserPageCompact,
@@ -245,7 +246,7 @@ import {
   captureRedactedBrowserVisual,
 } from './browser-manager';
 import { BROWSER_CHANNELS } from '../../shared/channels';
-import { bindResolvedRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import { bindResolvedRendererWorkspaceScope, clearRendererWorkspaceScope, forgetRendererWorkspace } from '../persistence/renderer-workspace-scope';
 import { isAgentRequestedBrowser } from '../orch/pane-registry';
 
 const PANE = 'pane-actions-test';
@@ -1171,5 +1172,123 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
     state.guest.getURL.mockReturnValue('about:blank');
     await expect(analyzeBrowserResponsive(PANE, scope)).rejects.toThrow(/no page open/);
     destroyBrowser(PANE, scope);
+  });
+});
+
+
+describe('F-1069: CDP relay factory for a real Main-owned browser entry', () => {
+  beforeEach(() => {
+    destroyBrowser(PANE, scope);
+    vi.clearAllMocks();
+    state.guestHandlers.clear();
+    state.guest.isDestroyed.mockReturnValue(false);
+    state.owner.isDestroyed.mockReturnValue(false);
+    state.win.isDestroyed.mockReturnValue(false);
+    state.guest.getURL.mockReturnValue('https://example.test/owned');
+  });
+
+  afterEach(() => {
+    state.guest.isDestroyed.mockReturnValue(false);
+    state.owner.isDestroyed.mockReturnValue(false);
+    state.win.isDestroyed.mockReturnValue(false);
+    destroyBrowser(PANE, scope);
+    vi.restoreAllMocks();
+  });
+
+  it('resolves the scoped entry created by ensureBrowser and passes CDP through its debugger', async () => {
+    await boot();
+    const messages: unknown[] = [];
+    const relay = openCdpRelayForPane(PANE, scope, {
+      write: raw => messages.push(JSON.parse(raw)),
+    });
+    expect(relay).not.toBeNull();
+    try {
+      relay!.connection.receive(JSON.stringify({
+        id: 1, method: 'Page.getFrameTree', sessionId: 'nexus-preview-page',
+      }));
+      await vi.waitFor(() => expect(messages).toEqual([
+        { id: 1, sessionId: 'nexus-preview-page', result: { root: {} } },
+      ]));
+      expect(state.guest.debugger.sendCommand).toHaveBeenCalledWith('Page.getFrameTree', {}, undefined);
+    } finally {
+      relay?.detach();
+    }
+  });
+
+  it('does not borrow an entry by raw pane id, foreign checkout, or forged scope identity', async () => {
+    await boot();
+    const options = { write: () => undefined };
+    expect(openCdpRelayForPane(PANE, { ...scope, checkoutId: 'foreign' }, options)).toBeNull();
+    expect(openCdpRelayForPane(PANE, { ...scope, rootRealPath: '/foreign' }, options)).toBeNull();
+    expect(openCdpRelayForPane(PANE, { ...scope, installationId: 'foreign' }, options)).toBeNull();
+    expect(openCdpRelayForPane('unknown-pane', scope, options)).toBeNull();
+    expect(state.guest.debugger.attach).not.toHaveBeenCalled();
+  });
+
+  it('refuses a closed pane, destroyed tab, or dead owner/window', async () => {
+    await boot();
+    const options = { write: () => undefined };
+    state.guest.isDestroyed.mockReturnValue(true);
+    expect(openCdpRelayForPane(PANE, scope, options)).toBeNull();
+    state.guest.isDestroyed.mockReturnValue(false);
+    state.owner.isDestroyed.mockReturnValue(true);
+    expect(openCdpRelayForPane(PANE, scope, options)).toBeNull();
+    state.owner.isDestroyed.mockReturnValue(false);
+    state.win.isDestroyed.mockReturnValue(true);
+    expect(openCdpRelayForPane(PANE, scope, options)).toBeNull();
+    state.win.isDestroyed.mockReturnValue(false);
+    destroyBrowser(PANE, scope);
+    expect(openCdpRelayForPane(PANE, scope, options)).toBeNull();
+    expect(state.guest.debugger.attach).not.toHaveBeenCalled();
+  });
+
+  it('keeps the relay scoped to a parked project and refuses it after that workspace is forgotten', async () => {
+    registerBrowserIpc({} as never);
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    await boot();
+    const foreign = { ...scope, projectId: 'foreign', checkoutId: 'foreign', rootRealPath: '/foreign' };
+    bindResolvedRendererWorkspaceScope(state.owner, foreign);
+    let relay: ReturnType<typeof openCdpRelayForPane> = null;
+    try {
+      relay = openCdpRelayForPane(PANE, scope, { write: () => undefined });
+      expect(relay).not.toBeNull();
+      expect(openCdpRelayForPane(PANE, foreign, { write: () => undefined })).toBeNull();
+      relay!.detach();
+      forgetRendererWorkspace(state.owner, scope.rootRealPath);
+      expect(openCdpRelayForPane(PANE, scope, { write: () => undefined })).toBeNull();
+    } finally {
+      relay?.detach();
+      clearRendererWorkspaceScope(state.owner);
+    }
+  });
+
+  it('preserves shared relay leases and detaches only the last owned attach', async () => {
+    await boot();
+    const options = { write: () => undefined };
+    const first = openCdpRelayForPane(PANE, scope, options);
+    const second = openCdpRelayForPane(PANE, scope, options);
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    try {
+      expect(state.guest.debugger.attach).toHaveBeenCalledTimes(1);
+      first!.detach();
+      first!.detach();
+      expect(state.guest.debugger.detach).not.toHaveBeenCalled();
+      second!.detach();
+      expect(state.guest.debugger.detach).toHaveBeenCalledTimes(1);
+    } finally {
+      first?.detach();
+      second?.detach();
+    }
+  });
+
+  it('does not detach a debugger already owned by another Main consumer', async () => {
+    await boot();
+    vi.spyOn(state.guest.debugger, 'isAttached').mockReturnValue(true);
+    const relay = openCdpRelayForPane(PANE, scope, { write: () => undefined });
+    expect(relay).not.toBeNull();
+    relay!.detach();
+    expect(state.guest.debugger.attach).not.toHaveBeenCalled();
+    expect(state.guest.debugger.detach).not.toHaveBeenCalled();
   });
 });
