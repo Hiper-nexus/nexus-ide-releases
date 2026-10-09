@@ -89,6 +89,29 @@ const insertSchema = z
   })
   .strict();
 
+/** Aceite que ainda vai enfileirar efeito: só `accepted` com sequence 0. */
+const acceptanceSchema = z
+  .object({
+    commandId: z.string().min(1).max(128),
+    commandType: z.string().min(1).max(128),
+    acceptedAt: z.number().int().nonnegative().optional(),
+    resultSequence: z.literal(0).optional(),
+    status: z.literal('accepted').optional(),
+    threadId: z.string().min(1).max(128).optional(),
+    projectId: z.string().min(1).max(128).optional(),
+  })
+  .strict();
+
+export interface CommandEffectAcceptanceInput {
+  readonly commandId: string;
+  readonly commandType: string;
+  readonly acceptedAt?: number;
+  readonly resultSequence?: 0;
+  readonly status?: 'accepted';
+  readonly threadId?: string;
+  readonly projectId?: string;
+}
+
 function rowToReceipt(row: unknown): CommandReceipt {
   const parsed = rowSchema.safeParse(row);
   if (!parsed.success) {
@@ -161,10 +184,10 @@ export class CommandReceiptStore {
    */
   acceptCommandEffect(
     outbox: EffectOutboxStore,
-    receiptInput: CommandReceiptInsertInput,
+    receiptInput: CommandEffectAcceptanceInput,
     effectInput: EffectOutboxEnqueueInput,
   ): { readonly inserted: boolean; readonly effect: EffectOutboxEntry | null } {
-    const receipt = insertSchema.parse(receiptInput);
+    const receipt = acceptanceSchema.parse(receiptInput);
     if (effectInput.commandId !== receipt.commandId) {
       throw new Error('command receipt and effect commandId must match');
     }

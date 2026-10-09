@@ -69,14 +69,6 @@ export async function drainEffectOutbox(
     attempted.add(entry.id);
     claimed += 1;
     const heartbeatMs = Math.max(1, Math.floor(leaseDurationMs / 3));
-    let rejectRenewal: ((error: unknown) => void) | undefined;
-    let finishRenewal: (() => void) | undefined;
-    const renewalFailed = new Promise<never>((resolve, reject) => {
-      finishRenewal = () => resolve(undefined as never);
-      rejectRenewal = reject;
-    });
-    // O timer pode rejeitar depois que o handler já venceu a corrida.
-    renewalFailed.catch(() => undefined);
     const heartbeat = setInterval(() => {
       try {
         const renewed = deps.store.renewLease(
@@ -87,17 +79,22 @@ export async function drainEffectOutbox(
         );
         if (!renewed) clearInterval(heartbeat);
       } catch (error) {
+        // Falha do heartbeat não assenta a linha. O claim segue
+        // indeterminado até o handler físico terminar; soltá-lo aqui
+        // abriria o thread enquanto o efeito ainda pode commitar.
         clearInterval(heartbeat);
-        rejectRenewal?.(error);
-        rejectRenewal = undefined;
+        console.warn(
+          `[effect-outbox] lease renewal failed (${entry.class} ${entry.type} ${entry.id} attempt ${entry.attemptCount})`,
+          error,
+        );
       }
     }, heartbeatMs);
     heartbeat.unref?.();
     try {
       try {
-        const outcome = Promise.resolve(deps.handler(entry, deps.scope));
-        const waited = context ? context.wait(outcome) : outcome;
-        await Promise.race([waited, renewalFailed]);
+        const outcome = deps.handler(entry, deps.scope);
+        if (context) await context.wait(Promise.resolve(outcome));
+        else await outcome;
         if (deps.store.succeed(entry.id, deps.workerId, entry.attemptCount)) {
           succeeded += 1;
         } else {
@@ -145,9 +142,6 @@ export async function drainEffectOutbox(
       }
     } finally {
       clearInterval(heartbeat);
-      finishRenewal?.();
-      finishRenewal = undefined;
-      rejectRenewal = undefined;
     }
   }
   return { claimed, succeeded, failed, retried };
