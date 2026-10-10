@@ -4,6 +4,8 @@
 
 - **API e sessão nativa distintas.** Credenciais de transporte não provam uma assinatura nativa do Claude; a seleção preserva a prioridade da sessão nativa comprovada.
 - **Verificação de runtime entre worktrees.** O verificador usa a identidade de coordenação dos agentes e conserva a execução isolada, sem afrouxar as guardas de escopo.
+- **Conclusão automática com prova durável.** Toda conclusão automática confere os efeitos e entregas pendentes da missão; comandos sem saída comprovada continuam impedindo concluir.
+- **Retomada revogada.** Se a autorização cair antes da confirmação, a limpeza fica limitada ao runtime novo criado por aquela tentativa; sessões anteriores, adotadas ou de outra tentativa são preservadas.
 
 2026-10-09
 

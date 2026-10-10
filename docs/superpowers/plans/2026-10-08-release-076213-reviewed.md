@@ -419,3 +419,48 @@ lote monitorado. Pública 212 e históricos 213–217 ficam preservados. Sem
 novas dependências ou features, site/API deploy, outra plataforma ou claims
 de paridade total T3, Luna paga, microfone real, Windows nativo ou upgrade
 instalado.
+
+
+## Extensão de correção na fonte 218 ainda sem tag (09/10)
+
+A versão permanece 0.76.218; a tag 218 continua ausente. O ciclo completo
+de 26ae5f6f3 foi cancelado por Root após a triagem material da cauda 126,
+com SIGINT somente no Vitest de PID/nascimento próprios conferidos. Os
+quatro gates estáticos passaram; app saiu 130 sem agregado completo e
+servidor/MainPTY não começaram. Este resultado é CANCELLED por fonte a
+corrigir, não PASS final nem regressão afirmada por uma assertiva. Logs e
+prova de fechamento dos 18 processos próprios permanecem preservados.
+
+F1115 recebeu aprovação de escopo em 3397: a fronteira comum de conclusão
+automática consulta efeitos duráveis e handoffs no escopo de coordenação
+imediatamente antes do CAS. Saída pending/unknown e entrega da missão na
+fila bloqueiam todas as conclusões automáticas, inclusive ops/consult;
+só a entrega à própria sessão atual comprovada pelo Main pode ser excluída.
+A conclusão humana explícita conserva sua semântica. Prova focada real de
+background/SQLite/dispatcher passou, mas não substitui gates completos.
+
+F1116 recebeu aprovação de escopo em 4a0102571, árvore 9ef758f4d:
+a limpeza de uma retomada revogada fica ligada à capacidade opaca, ao
+runtime físico novo e ao proprietário da tentativa. Não usar o estado
+mais recente para matar sessão anterior, adotada, estrangeira ou de outra
+tentativa; não desfazer setup já provado por revogação legítima da própria
+sessão anterior. Passaram nove casos nativos e 194 testes locais, TSC e
+checks estáticos; handoff limpo e recursos próprios encerrados. Todos os
+reparos materiais F1109–F1116 estão aprovados no escopo. Isso não declara
+gates completos, pacote, runtime ou publicação 218 aprovados.
+
+Após o handoff e a revisão, aplicar somente as notas factuais necessárias,
+congelar o novo SHA e executar uma vez os oito gates frescos e revisão
+global. Não transferir os gates parciais de 26ae para a fonte reparada.
+Tag 218 ainda livre, novo build/sign/notary/candidata/Node restore, soak
+fixo, runtime/resume/saída física, confirmação nativa normal da própria
+pergunta sintética e inspeção de todas as PNGs continuam obrigatórios
+antes da única publicação guardada. A continuidade nativa exata continua
+restrita à missão adotada de um pane do operador; a missão standard fica
+responsável pelos workers, preview registrado e dois relatórios/ACKs reais.
+
+Pública 212, cutoff ad517bfb mais reparos revisados e archives 213–217
+permanecem preservados. Cauda 126/8da e PR127 DRAFT ficam no próximo lote
+monitorado, sem promessa de inclusão. Sem novas features/dependências,
+site/API deploy, paridade total T3, Luna paga, native Windows, upgrade
+instalado ou aceitação/política/timeout artificiais.
