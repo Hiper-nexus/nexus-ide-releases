@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.76.220 — Missões com acompanhamento contínuo
+## 0.76.221 — Missões com acompanhamento contínuo
 
 - **Envio confirmado no Claude.** Pedidos comuns, entradas do operador e continuidade após retomada aguardam a aceitação nativa do prompt. Se o primeiro Enter não enviar, o retry protegido repete somente o Enter, sem colar o pedido outra vez (F-1122/F-1137).
 - **Acompanhamento desde o início e na retomada.** A preparação do Maestro preserva o gasto legítimo de ferramentas sem perder sua autorização atual. O encerramento e as mudanças de objetivo, permissões ou liderança continuam invalidando a tentativa antiga (F-1134).
