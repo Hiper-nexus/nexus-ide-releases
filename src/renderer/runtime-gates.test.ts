@@ -7,7 +7,7 @@ vi.mock('./state/layout-store', () => ({ useLayoutStore: { getState: () => ({ sp
 vi.mock('./terminal/terminal-host', () => ({ waitForSession: native.session, getPaneSessionId: native.current,
   submitPromptToPaneConfirmed: native.confirmed, submitPromptToPaneOperatorInput: native.operator }));
 vi.mock('./lib/split-tree', () => ({ listPanes: () => [{ id: 'ordinary-pane', kind: 'cli-agent', adapterId: 'claude' }] }));
-vi.mock('./state/product-navigation-store', () => ({ useProductNavigationStore: { getState: () => ({ openTerminal: native.open }) } }));
+vi.mock('./state/product-navigation-store', () => ({ useProductNavigationStore: { getState: () => ({ openTerminal: native.open, openMission: native.open }) } }));
 beforeEach(() => { native.current.mockReturnValue('ordinary-session'); native.promptState.mockReset().mockResolvedValue({ turnStartSequence: 0, state: 'idle', awaitingInput: false }); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetModules(); vi.clearAllMocks(); });
 it.each(['nexus-app://bundle/index.html', 'https://foreign.invalid/index.html?nexusRuntimeGates=1', 'nexus-app://bundle/other.html?nexusRuntimeGates=1'])('remains dormant on %s, including a later marker edit', async href => {
@@ -110,4 +110,21 @@ it('F-1122: an unanswered Main readiness probe expires within the same bound wit
   await vi.advanceTimersByTimeAsync(45_000);
   expect(await replied).toMatchObject({ ok: false });
   expect(native.confirmed).not.toHaveBeenCalled(); expect(native.operator).not.toHaveBeenCalled();
+});
+
+it.each([[300, true], [null, false]] as const)('runtime question waits for the asynchronously rendered mission question (render after %s ms → %s)', async (renderAfter, expected) => {
+  vi.useFakeTimers();
+  vi.stubGlobal('location', { href: 'nexus-app://bundle/index.html?nexusRuntimeGates=1' });
+  const win = new EventTarget(); vi.stubGlobal('window', win);
+  vi.stubGlobal('requestAnimationFrame', (callback: () => void) => { callback(); return 1; });
+  const marker = 'RT_QUESTION_11111111-1111-4111-8111-111111111111', started = Date.now();
+  const element = { textContent: `Pergunta ${marker}`, isConnected: true, getBoundingClientRect: () => ({ width: 120, height: 20 }) };
+  vi.stubGlobal('document', { querySelectorAll: () => renderAfter !== null && Date.now() - started >= renderAfter ? [element] : [] });
+  vi.stubGlobal('getComputedStyle', () => ({ visibility: 'visible', display: 'block', opacity: '1' }));
+  const { installRuntimeGateRenderer } = await import('./runtime-gates'); installRuntimeGateRenderer();
+  const replied = new Promise<any>(resolve => win.addEventListener(RUNTIME_DOM_REPLY, e => resolve((e as CustomEvent).detail), { once: true }));
+  win.dispatchEvent(new CustomEvent(RUNTIME_DOM_REQUEST, { detail: { nonce: '11111111-1111-4111-8111-111111111111', request: 1, operation: 'question', missionId: 'mission-1', marker } }));
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(await replied).toMatchObject({ ok: true, result: { visible: expected } });
+  expect(native.open).toHaveBeenCalledWith('mission-1');
 });

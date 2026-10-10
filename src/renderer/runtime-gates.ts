@@ -95,10 +95,14 @@ export function installRuntimeGateRenderer(): void {
       if (value.operation === 'question') {
         if (typeof value.missionId !== 'string' || typeof value.marker !== 'string' || value.marker.length > 256) throw new Error('runtime question invalid');
         useProductNavigationStore.getState().openMission(value.missionId); await frame(); await frame();
-        const visible = [...document.querySelectorAll<HTMLElement>('h1,h2,h3,p,button,span')].some(e => {
+        const shown = () => [...document.querySelectorAll<HTMLElement>('h1,h2,h3,p,button,span')].some(e => {
           const r = e.getBoundingClientRect(), style = getComputedStyle(e); return e.textContent?.includes(value.marker) && e.isConnected && r.width > 0 && r.height > 0 &&
             style.visibility === 'visible' && style.display !== 'none' && Number(style.opacity) > 0;
         });
+        // The mission view loads its snapshot asynchronously; wait for the question to render instead of sampling once.
+        const deadline = Date.now() + 5000;
+        let visible = shown();
+        while (!visible && Date.now() < deadline) { await new Promise(resolve => setTimeout(resolve, 100)); visible = shown(); }
         reply(true, { visible }); return;
       }
       if (value.operation === 'media-observe') {
