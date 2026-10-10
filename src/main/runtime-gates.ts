@@ -219,7 +219,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
               if (!sameRuntimeConversation(conversation, getProviderPaneSession(scope, v.paneId!, v.adapterId, v.accountId))) throw new Error('runtime native conversation changed');
             });
             return {
-            paneId: v.paneId, sessionId: v.sessionId, role: v.role, adapterId: v.adapterId, agentName: v.agentName, model: v.model, bindingSha256: seal,
+            paneId: v.paneId, sessionId: v.sessionId, role: v.role, adapterId: v.adapterId, agentName: v.agentName, readOnly: v.readOnly, model: v.model, bindingSha256: seal,
             pid: footprints?.find(f => f.sessionId === v.sessionId)?.rootPid ?? null,
             conversation,
             ...(visual ? { visual } : {}),
@@ -262,7 +262,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
           // Keep the canonical response for the driver, but persist only the
           // bounded Main facts needed by the gate, not repeated full briefs.
           addHistory({ ...result, snapshot: { question: snapshot.question },
-            handoffs: result.handoffs.map(h => ({ id: h.id, status: h.status, summary: h.summary.slice(0, 512), deliveryState: h.deliveryState,
+            handoffs: result.handoffs.map(h => ({ id: h.id, sessionId: h.sessionId, status: h.status, summary: h.summary.slice(0, 512), deliveryState: h.deliveryState,
               consumedBySession: h.consumedBySession, consumedDeliveryAttemptId: h.consumedDeliveryAttemptId })),
             audit: result.audit.filter(a => a.result === 'ok' && ['nexus_terminal_run', 'nexus_handoff_ack', 'nexus_pane_spawn'].includes(a.tool)) });
           return { ...result, resumedOutput: [...resumedOutput] };

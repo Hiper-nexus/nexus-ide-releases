@@ -33,7 +33,8 @@ it('does not execute product APIs for incomplete/foreign private instructions', 
 it('does not install the private driver in a subframe', () => {
   const ipc = { on: vi.fn() }; installRuntimeGatePreload(ipc as never, {} as never, { isMainFrame: false }); expect(ipc.on).not.toHaveBeenCalled();
 });
-it.each(['identity', 'report-ready'])('F-1112: selects named workers and preserves report causality (%s)', async stage => {
+it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer'])('F-1112: selects named workers and preserves report causality (%s)', async stage => {
+  if (stage === 'missing-reviewer') vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
   const marker = '22222222-2222-4222-8222-222222222222';
   let question = false, opsStopped = false, prepared = 0, resumed = false, writeDirected = false, reportReady = false;
   const directions: Array<{ targetAgentId: string; text: string }> = [];
@@ -46,7 +47,7 @@ it.each(['identity', 'report-ready'])('F-1112: selects named workers and preserv
     return request.operation !== 'observe' ? {} :
     request.missionId === 'ops' ? { agents: opsStopped ? [] : [chief], audit: [{ tool: 'nexus_terminal_run', result: 'ok' }],
       snapshot: { question: question ? { id: 'question', options: [{ id: 'proceed' }] } : undefined } } :
-    { agents: [reviewer, resumed ? newWriter : writer, chief], handoffs: reportReady ? [{ status: 'success', summary: `RT_WRITE_${marker}` }] : [],
+    { agents: [...(stage === 'missing-reviewer' ? [] : stage === 'ambiguous-reviewer' && reportReady ? [reviewer, { ...reviewer, paneId: 'other-reviewer', sessionId: 'other-reviewer-sid' }] : [reviewer]), resumed ? newWriter : writer, chief], handoffs: reportReady ? [{ sessionId: newWriter.sessionId, status: 'success', summary: `RT_WRITE_${marker}` }] : [],
       recovery: resumed ? { fromPaneId: writer.paneId, fromSessionId: writer.sessionId, paneId: newWriter.paneId, sessionId: newWriter.sessionId } : undefined,
       snapshot: { agents: [{ id: 'reviewer-id', paneId: reviewer.paneId }, { id: 'writer-id', paneId: resumed ? newWriter.paneId : writer.paneId }] } };
   },
@@ -60,6 +61,7 @@ it.each(['identity', 'report-ready'])('F-1112: selects named workers and preserv
       if (value.text?.includes('RT_GATE RECOVER')) resumed = true;
       if (value.text?.includes('RT_GATE WRITE')) writeDirected = true;
       if (value.text?.includes('RT_GATE REVIEW')) { directions.push({ targetAgentId: value.targetAgentId!, text: String(reportReady) }); throw new Error('private report-order test ended'); }
+      if (value.text?.includes('RT_GATE ACK')) { directions.push({ targetAgentId: 'none', text: 'ACK sent without review' }); throw new Error('private missing-review test ended'); }
       return {};
     } } };
   const ui = (event: Event) => { const detail = (event as CustomEvent).detail; window.dispatchEvent(new CustomEvent(RUNTIME_DOM_REPLY,
@@ -69,7 +71,8 @@ it.each(['identity', 'report-ready'])('F-1112: selects named workers and preserv
   try {
     installRuntimeGatePreload(ipc as never, api as never, { isMainFrame: true });
     ipc.emit(RUNTIME_CHANNELS.run, null, { nonce: '11111111-1111-4111-8111-111111111111', gatewayNonce: marker, phase: 'exercise', workspacePath: '/private/runtime-fixture' });
-    await ended; expect(directions).toEqual(stage === 'identity' ? [{ targetAgentId: 'writer-id', text: `RT_GATE IDLE ${marker}` }] :
+    if (stage === 'missing-reviewer') await vi.advanceTimersByTimeAsync(46000);
+    await ended; expect(directions).toEqual(stage !== 'report-ready' ? [{ targetAgentId: 'writer-id', text: `RT_GATE IDLE ${marker}` }] :
       [{ targetAgentId: 'writer-id', text: `RT_GATE IDLE ${marker}` }, { targetAgentId: 'reviewer-id', text: 'true' }]);
-  } finally { window.removeEventListener(RUNTIME_DOM_REQUEST, ui); }
+  } finally { window.removeEventListener(RUNTIME_DOM_REQUEST, ui); vi.useRealTimers(); }
 });

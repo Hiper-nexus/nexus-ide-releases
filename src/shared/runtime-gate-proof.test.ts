@@ -47,3 +47,13 @@ it('F-1111: requires the exact returned new worker identity, fresh chief audit a
     const f = runtimeFactFixture(); mutate(f); expect(() => deriveRuntimeChecks(f)).toThrow(/worker-recovery/);
   }
 });
+it('F-1112: Main requires both real named worker reports and each exact consumed ACK relation', () => {
+  expect(deriveRuntimeChecks(runtimeFactFixture())['handoff-ack']).toBe(true);
+  for (const mutate of [(f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].handoffs.splice(1, 1); },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].agents.splice(2, 1); },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].handoffs[1].sessionId = 'foreign-worker'; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].agents[2].readOnly = false; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].acknowledgements[1].invocationId = 'foreign-ack'; }]) {
+    const f = runtimeFactFixture(); mutate(f); expect(() => deriveRuntimeChecks(f)).toThrow(/handoff-ack/);
+  }
+});

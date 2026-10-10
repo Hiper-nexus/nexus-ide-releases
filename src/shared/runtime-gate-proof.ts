@@ -3,12 +3,13 @@ import { z } from 'zod';
 import { RUNTIME_REQUIRED, RUNTIME_RESUME_REQUIRED } from './runtime-gates.ts';
 const conversation = z.object({ key: z.enum(['session_id', 'conversation_id']), id: z.string().min(1) }).passthrough();
 const agent = z.object({ paneId: z.string(), sessionId: z.string(), role: z.string(), adapterId: z.string(), pid: z.number().int().positive().nullable(),
+  agentName: z.string().optional(), readOnly: z.boolean().optional(),
   conversation: conversation.nullable(), bindingSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   visual: z.object({ assignmentId: z.string(), artifactId: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).optional() }).passthrough();
 const recovery = z.object({ fromPaneId: z.string(), fromSessionId: z.string(), paneId: z.string(), sessionId: z.string(),
   chiefSessionId: z.string(), invocationId: z.string() });
 const observation = z.object({ missionId: z.string(), lane: z.string().optional(), agents: z.array(agent), snapshot: z.object({
-  question: z.object({ id: z.string() }).passthrough().optional() }).passthrough(), handoffs: z.array(z.object({ id: z.string(), status: z.string(), summary: z.string(),
+  question: z.object({ id: z.string() }).passthrough().optional() }).passthrough(), handoffs: z.array(z.object({ id: z.string(), sessionId: z.string().optional(), status: z.string(), summary: z.string(),
     deliveryState: z.string(), consumedBySession: z.string().optional(), consumedDeliveryAttemptId: z.string().optional() }).passthrough()),
   acknowledgements: z.array(z.object({ handoffId: z.string(), sessionId: z.string(), deliveryAttemptId: z.string(), invocationId: z.string(), source: z.literal('http-mcp') })),
   recovery: recovery.optional(),
@@ -62,10 +63,14 @@ export function deriveRuntimeChecks(input: {
       value.audit.some(a => a.tool === 'nexus_pane_spawn' && a.result === 'ok' && a.source === 'http-mcp' && a.session === relation.chiefSessionId &&
         a.invocation === relation.invocationId && a.resume === relation.fromPaneId);
   });
-  const handoff = standard.some(v => v.handoffs.some(h => h.status === 'success' && h.summary.includes(input.marker) && h.deliveryState === 'consumed' &&
+  const reportAcked = (v: typeof standard[number], kind: 'WRITE' | 'REVIEW', name: string, readOnly: boolean): boolean => {
+    const authors = v.agents.filter(a => a.role === 'worker' && a.agentName === name && a.readOnly === readOnly && a.pid);
+    return authors.length === 1 && v.handoffs.some(h => h.sessionId === authors[0].sessionId && h.status === 'success' && h.summary.includes(`RT_${kind}_${input.marker}`) && h.deliveryState === 'consumed' &&
     v.acknowledgements.some(r => r.handoffId === h.id && r.sessionId === h.consumedBySession && r.deliveryAttemptId === h.consumedDeliveryAttemptId &&
-      chiefs.some(c => c.sessionId === r.sessionId) && v.audit.some(a => a.tool === 'nexus_handoff_ack' && a.result === 'ok' && a.source === 'http-mcp' &&
-        a.session === r.sessionId && a.handoffId === h.id && a.invocation === r.invocationId))));
+      v.agents.some(c => c.role === 'orchestrator' && c.pid && c.sessionId === r.sessionId) && v.audit.some(a => a.tool === 'nexus_handoff_ack' && a.result === 'ok' && a.source === 'http-mcp' &&
+        a.session === r.sessionId && a.handoffId === h.id && a.invocation === r.invocationId)));
+  };
+  const handoff = standard.some(v => reportAcked(v, 'WRITE', 'Runtime writer', false) && reportAcked(v, 'REVIEW', 'Runtime reviewer', true));
   const visual = workers.some(a => !!a.visual?.assignmentId && !!a.visual.artifactId);
   const sessions = input.history.flatMap(raw => { const parsed = z.object({ sessionId: z.string(), pid: z.number().int().positive() }).safeParse(raw); return parsed.success ? [parsed.data] : []; });
   const moved = sessions.some((a, i) => input.terminated.includes(a.sessionId) && input.echoSessions.includes(a.sessionId) && input.visibleMoves.includes(a.sessionId) && sessions.slice(i + 1).some(b => b.sessionId === a.sessionId && b.pid === a.pid));

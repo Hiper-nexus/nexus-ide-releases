@@ -86,12 +86,15 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         const recovered = observed.agents.find((a: any) => a.paneId === observed.recovery.paneId && a.sessionId === observed.recovery.sessionId);
         if (!sameRuntimeConversation(recovered.conversation, original.conversation)) throw new Error('worker recovery lost exact conversation'); checks['worker-recovery'] = true;
         await direct(standardId, `RT_GATE WRITE ${marker}`, agentFor(observed, recovered.paneId));
-        observed = await poll(() => observe(standardId), v => v.handoffs.some((h: any) => h.status === 'success' && h.summary.includes(`RT_WRITE_${marker}`)), 'actual writer handoff');
+        await poll(() => observe(standardId), v => v.handoffs.some((h: any) => h.sessionId === recovered.sessionId && h.status === 'success' && h.summary.includes(`RT_WRITE_${marker}`)), 'actual writer handoff');
+        observed = await poll(() => observe(standardId), v => {
+          const candidates = v.agents.filter((a: any) => a.role === 'worker' && a.agentName === 'Runtime reviewer');
+          if (candidates.length > 1) throw new Error('private Runtime reviewer identity is ambiguous');
+          return candidates.length === 1 && candidates[0].pid > 0;
+        }, 'actual named reviewer');
         const reviewer = observed.agents.find((a: any) => a.role === 'worker' && a.agentName === 'Runtime reviewer');
-        if (reviewer) {
-          await direct(standardId, `RT_GATE REVIEW ${marker}`, agentFor(observed, reviewer.paneId));
-          await poll(() => observe(standardId), v => v.handoffs.some((h: any) => h.status === 'success' && h.summary.includes(`RT_REVIEW_${marker}`)), 'actual reviewer handoff');
-        }
+        await direct(standardId, `RT_GATE REVIEW ${marker}`, agentFor(observed, reviewer.paneId));
+        await poll(() => observe(standardId), v => v.handoffs.some((h: any) => h.sessionId === reviewer.sessionId && h.status === 'success' && h.summary.includes(`RT_REVIEW_${marker}`)), 'actual reviewer handoff');
         await direct(standardId, `RT_GATE ACK ${marker}`);
         observed = await poll(() => observe(standardId), v => v.audit.some((a: any) => a.tool === 'nexus_handoff_ack' && a.result === 'ok' && a.source === 'http-mcp'), 'physical Maestro ACK'); checks['handoff-ack'] = true;
         await poll(() => observe(standardId), v => v.agents.some((a: any) => a.visual?.assignmentId && a.visual.artifactId), 'Main visual assignment capture'); checks['visual-capture'] = true;
