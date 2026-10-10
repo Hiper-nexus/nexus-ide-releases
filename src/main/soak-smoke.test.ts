@@ -53,38 +53,65 @@ it('cancellation drains the sole pending collector and owned PTY before settling
   expect(ipc.listenerCount(SOAK_CHANNELS.cycle)).toBe(0);
   await expect(fs.stat(path.join(userData, 'logs', 'soak-smoke.json'))).rejects.toThrow();
 });
-it('Main measures monotonic activity and writes acceptance only after all physical closes and final functional probes', async () => {
+it.each([
+  { cadence: 'five-second cycles', intervalMs: 5000, firstMs: 500, count: 61, deadline: false },
+  { cadence: '38 samples at five minutes, then 40 at 316 seconds', intervalMs: 8000, firstMs: 4508, count: 40, deadline: false },
+  { cadence: '38 samples followed by the unchanged seven-minute deadline', intervalMs: 8000, firstMs: 4508, count: 38, deadline: true },
+])('Main preserves physical/final-functional proof with $cadence', async ({ intervalMs, firstMs, count, deadline }) => {
+  if (deadline) vi.useFakeTimers();
   const userData = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-soak-clock-unit-'))); directories.push(userData);
   await fs.mkdir(path.join(userData, 'home'), { mode: 0o700 });
   const ipc = new EventEmitter(), win = new EventEmitter(), frame = {};
   const sent: Array<[string, any]> = [];
-  const wc = Object.assign(new EventEmitter(), { mainFrame: frame, getOSProcessId: () => 1234, send: (channel: string, data: unknown) => { sent.push([channel, data]); } });
+  let deadlineAt = 0;
+  const wc = Object.assign(new EventEmitter(), { mainFrame: frame, getOSProcessId: () => 1234, send: (channel: string, data: unknown) => {
+    sent.push([channel, data]);
+    if (channel === SOAK_CHANNELS.run) deadlineAt = Date.now() + 420000;
+    if (channel === SOAK_CHANNELS.stop) ipc.emit(SOAK_CHANNELS.stopped, { sender: wc, senderFrame: frame }, { nonce: (data as { nonce: string }).nonce, sessionIds: ['pty-fixture'] });
+  } });
   Object.assign(win, { webContents: wc }); let clock = 1;
-  const terminate = vi.fn(async () => true);
+  const terminate = vi.fn(async () => true), shutdown = vi.fn(), controller = new AbortController();
   const perf = { process: { pid: process.pid, heapUsedBytes: 32000000, rssBytes: 160000000 },
     appMetrics: [{ pid: 1234, type: 'Tab', memory: { workingSetSize: 180000 } }],
     panes: { livePtySessions: 1, footprints: [{ sessionId: 'pty-fixture', rootPid: 9000, processCount: 1, rssBytes: 12000000 }] } };
   const flight = proveSoakForSmoke(win as never, { ipc: ipc as never, userData, appVersion: '0.76.192', packaged: true, smokeTest: true,
-    workspacePath: `${userData}/functional-smoke-workspace`, env: { ...env, NEXUS_USER_DATA_DIR: userData, HOME: `${userData}/home` }, signal: new AbortController().signal },
+    workspacePath: `${userData}/functional-smoke-workspace`, env: { ...env, NEXUS_USER_DATA_DIR: userData, HOME: `${userData}/home` }, signal: controller.signal, requestPhysicalShutdown: shutdown },
     { collect: async () => perf as never, terminate, owned: () => true, cwd: () => `${userData}/functional-smoke-workspace`, now: () => clock });
+  const outcome = flight.catch(error => error);
   await vi.waitFor(() => expect(sent[0]?.[0]).toBe(SOAK_CHANNELS.run));
   const nonce = sent[0]![1].nonce;
-  for (let sequence = 0; sequence < 61; sequence++) {
-    clock = sequence * 5000 + 500;
-    ipc.emit(SOAK_CHANNELS.cycle, { sender: wc, senderFrame: frame }, { ...cycle(), nonce, sequence });
-    await vi.waitFor(() => expect(sent.some(v => v[0] === SOAK_CHANNELS.ack && v[1].sequence === sequence)).toBe(true));
+  try {
+    for (let sequence = 0; sequence < count; sequence++) {
+      clock = sequence * intervalMs + firstMs;
+      ipc.emit(SOAK_CHANNELS.cycle, { sender: wc, senderFrame: frame }, { ...cycle(), nonce, sequence });
+      await vi.waitFor(() => expect(sent.some(v => v[0] === SOAK_CHANNELS.ack && v[1].sequence === sequence || v[0] === SOAK_CHANNELS.stop)).toBe(true));
+      expect(sent.find(v => v[0] === SOAK_CHANNELS.ack && v[1].sequence === sequence)?.[1].done).toBe(!deadline && sequence === count - 1);
+      expect(shutdown).not.toHaveBeenCalled();
+    }
+    expect(terminate).toHaveBeenCalledTimes(count);
+    await expect(fs.stat(path.join(userData, 'logs', 'soak-smoke.json'))).rejects.toThrow();
+    if (deadline) {
+      await vi.advanceTimersByTimeAsync(deadlineAt - Date.now() - 1);
+      expect(shutdown).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await outcome).message).toBe('soak deadline exceeded');
+      expect(shutdown).toHaveBeenCalledExactlyOnceWith('soak deadline exceeded');
+      expect(terminate).toHaveBeenCalledTimes(count + 1);
+      expect(ipc.listenerCount(SOAK_CHANNELS.cycle)).toBe(0);
+      await expect(fs.stat(path.join(userData, 'logs', 'soak-smoke.json'))).rejects.toThrow();
+      return;
+    }
+    clock += 1000;
+    ipc.emit(SOAK_CHANNELS.done, { sender: wc, senderFrame: frame }, { nonce, result: { ok: true, probes: [...FUNCTIONAL_SMOKE_REQUIRED_PROBES], adapterCount: FUNCTIONAL_SMOKE_MIN_ADAPTERS, toolCount: FUNCTIONAL_SMOKE_MIN_TOOLS } });
+    await flight;
+    const receipt = JSON.parse(await fs.readFile(path.join(userData, 'logs', 'soak-smoke.json'), 'utf8'));
+    expect(receipt.durationMs).toBeGreaterThanOrEqual(300000); expect(receipt.samples.length).toBe(count);
+    expect(receipt.samples[0].memoryBytes.rendererHeap).toBe(32000 * 1024);
+    expect(receipt.samples[0].memoryBytes.rendererRss).toBe(180000 * 1024);
+    expect(receipt.finalFunctional.ok).toBe(true);
+  } finally {
+    controller.abort(); await outcome;
   }
-  expect(terminate).toHaveBeenCalledTimes(61);
-  await expect(fs.stat(path.join(userData, 'logs', 'soak-smoke.json'))).rejects.toThrow();
-  expect(sent.at(-1)![1].done).toBe(true);
-  clock += 1000;
-  ipc.emit(SOAK_CHANNELS.done, { sender: wc, senderFrame: frame }, { nonce, result: { ok: true, probes: [...FUNCTIONAL_SMOKE_REQUIRED_PROBES], adapterCount: FUNCTIONAL_SMOKE_MIN_ADAPTERS, toolCount: FUNCTIONAL_SMOKE_MIN_TOOLS } });
-  await flight;
-  const receipt = JSON.parse(await fs.readFile(path.join(userData, 'logs', 'soak-smoke.json'), 'utf8'));
-  expect(receipt.durationMs).toBeGreaterThanOrEqual(300000); expect(receipt.samples.length).toBe(61);
-  expect(receipt.samples[0].memoryBytes.rendererHeap).toBe(32000 * 1024);
-  expect(receipt.samples[0].memoryBytes.rendererRss).toBe(180000 * 1024);
-  expect(receipt.finalFunctional.ok).toBe(true);
 });
 
 async function stoppedFixture() {

@@ -152,7 +152,7 @@ export async function proveSoakForSmoke(win: BrowserWindow, input: {
           await fs.appendFile(progress, JSON.stringify(sample) + '\n');
           if (stopped) return;
           const durationMs = now() - start;
-          if (durationMs >= SOAK_POLICY.requiredDurationMs && sample.elapsedMs >= SOAK_POLICY.requiredDurationMs) {
+          if (durationMs >= SOAK_POLICY.requiredDurationMs && sample.elapsedMs >= SOAK_POLICY.requiredDurationMs && samples.length >= SOAK_POLICY.minSamples) {
             assertSoakSamples(samples, durationMs);
             activityDurationMs = durationMs; awaitingDone = true;
             wc.send(SOAK_CHANNELS.ack, { nonce, sequence: value.sequence, done: true });
