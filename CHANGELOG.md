@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.76.218 — Decisões OpenAI e missões revisadas
+## 0.76.219 — Decisões OpenAI e missões revisadas
+
+- **Conclusão sem perder a nova tentativa.** O idle do Maestro durante a coleta da entrega preserva uma reverificação, com líder e autorização atuais. Encerrar continua impedindo a retomada automática (F-1117).
+- **Conta coerente quando a recuperação recusa.** Sem grant de substituição e com o PTY original provado como o único ativo, a composição volta por CAS à conta física anterior. Um efeito tardio ou terminal substituto nunca é desfeito por suposição (F-1118).
+- A candidata 0.76.218 foi preservada; esta integração acrescenta os dois reparos revisados antes da publicação final.
 
 - **API e sessão nativa distintas.** Credenciais de transporte não provam uma assinatura nativa do Claude; a seleção preserva a prioridade da sessão nativa comprovada.
 - **Verificação de runtime entre worktrees.** O verificador usa a identidade de coordenação dos agentes e conserva a execução isolada, sem afrouxar as guardas de escopo.

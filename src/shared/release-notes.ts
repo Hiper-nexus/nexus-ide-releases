@@ -10250,7 +10250,7 @@ export const RELEASE_076212: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.218',
+  version: '0.76.219',
   date: '2026-10-09',
   codename: 'Decisões OpenAI e missões revisadas',
   summary: 'Luna (beta) e decisões em conjunto, com escolha por conta, Quadro vivo, capturas no destino escolhido e correções de retomada e entrega de missões.',
@@ -10262,6 +10262,8 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Launcher pelo teclado', detail: 'As ações do Launcher respondem aos atalhos de 1 a 6, uma vez por toque; campos de texto preservam a digitação.' },
   ],
   fixes: [
+    { title: 'Conclusão que continua', detail: 'Missões comuns e iniciadas por um pane preservam a nova tentativa de verificar a entrega quando o Maestro termina o turno durante uma verificação. Encerrar cancela essa retomada.' },
+    { title: 'Conta coerente na recuperação', detail: 'Uma troca recusada antes de criar o terminal substituto preserva a conta do terminal original quando sua identidade está comprovada.' },
     { title: 'Orientação no início da missão', detail: 'Enquanto o líder se prepara, a orientação fica na fila. O app distingue a entrega comprovada do pedido ainda pendente e mostra falha sem reenviar para outro pane.' },
     { title: 'API e sessão nativa distintas', detail: 'Uma credencial de API ou transporte não é tratada como login nativo do Claude. A sessão nativa comprovada continua com prioridade sobre a chave de API.' },
     { title: 'Retomada com resultado real', detail: 'O Nexus distingue um pedido de retomada do religamento confirmado, revalida a autoridade após esperas e encaminha a conclusão ao líder atual da missão.' },
