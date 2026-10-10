@@ -558,3 +558,33 @@ describe('approval supersede (PRV-02: the TUI answered first)', () => {
     expect(broker.list()).toEqual([]);
   });
 });
+
+
+describe('F-1139 authenticated native argv ingress', () => {
+  it('only records an applied first native prompt through the exact current bearer', async () => {
+    const gate = await import('./gate');
+    const pty = await import('../pty/pty-manager');
+    const { testProjectScope } = await import('./__tests__/scope-fixture');
+    const ctx = gate.mintToken({ label: 'private argv test', role: 'user', scope: testProjectScope(),
+      allowedTools: [], allowedSkills: [] });
+    gate.bindTokenToSession(ctx.token, 'argv-ingress');
+    const record = vi.spyOn(pty, 'recordAuthenticatedNativeArgvSubmission').mockImplementation(() => {});
+    const applied = () => ({ applied: true, transitioned: false, entry: null });
+    try {
+      const envelope = (eventType: string, body: Record<string, unknown> = { prompt: 'exact private argv' }) =>
+        ({ eventType, flavor: 'claude', body });
+      handleHookStatusRequest({ sessionId: 'argv-ingress' }, envelope('user-submit'), applied);
+      handleHookStatusRequest(ctx, envelope('user-submit'), () => ({ applied: false, transitioned: false, entry: null }));
+      handleHookStatusRequest(ctx, envelope('tool-use'), applied);
+      handleHookStatusRequest(ctx, envelope('stop'), applied, () => {});
+      expect(record).not.toHaveBeenCalled();
+      const result = handleHookStatusRequest(ctx, envelope('user-submit'), applied);
+      expect(result).toMatchObject({ statusCode: 200, payload: { applied: true, authorizesEvidence: false } });
+      expect(record).toHaveBeenCalledExactlyOnceWith('argv-ingress', 'exact private argv');
+      record.mockClear();
+      gate.releaseSession('argv-ingress');
+      handleHookStatusRequest(ctx, envelope('user-submit'), applied);
+      expect(record).not.toHaveBeenCalled();
+    } finally { gate.releaseSession('argv-ingress'); record.mockRestore(); }
+  });
+});

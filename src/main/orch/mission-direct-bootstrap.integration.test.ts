@@ -14,10 +14,11 @@ import { execFileSync, fork, type ChildProcess } from 'node:child_process';
 import { randomUUID, createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { HostControlMsg, HostEventMsg } from '../pty/pty-host-core';
+import type { Mission } from '../../shared/orch-types';
 import type { MissionReview } from '../../shared/mission-engine-contract';
 
 const ENABLED = process.env.NEXUS_DIRECT_BOOTSTRAP_E2E === '1';
@@ -134,6 +135,7 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
   let profileRuntimeId = '';
   let profileFlow = false;
   let profileOriginalAdapter: CliPtyAdapter | null = null;
+  let priorMissionIds = new Set<string>();
   const nativeRequests: Array<{ userTexts: string[]; toolResults: unknown[] }> = [];
   const submitted = deferred<void>(), hookHeld = deferred<void>();
   let releaseHook: () => void = () => undefined;
@@ -144,10 +146,26 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
   const inputs: Array<{ sessionId: string; data: string }> = [];
   let untapInput: () => void = () => undefined;
   let chiefId = '', nativeHookHeld = false, hostDiagnostics = '';
+  // Stable originals must never be captured from a timed-out preceding spy.
+  let originalPeriodic: typeof import('../observability/periodic-task').runPeriodicTask;
+  let originalIdle: typeof import('./pane-registry').waitForIdle;
+  let originalEndKickoff: typeof import('./mission-kickoff-direct-queue').endKickoffBriefDelivery;
+  const caseCleanups: Array<() => void> = [];
   const spawnOutcomes: Array<{ ok: boolean; error?: string; hasSession: boolean }> = [];
   const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+  const controlledStopReturned = (token: string, sequence: number): boolean => {
+    const hash = createHash('sha256').update(token).digest('hex');
+    try {
+      return fs.readFileSync(path.join(controlledDir, 'hook.ndjson'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+        .some(row => row.gateSha256 === hash && row.event === 'stop' && row.turn === sequence && row.phase === 'returned' && row.status === 200);
+    } catch { return false; }
+  };
+
 
   beforeAll(async () => {
+    originalPeriodic = (await import('../observability/periodic-task')).runPeriodicTask;
+    originalIdle = (await import('./pane-registry')).waitForIdle;
+    originalEndKickoff = (await import('./mission-kickoff-direct-queue')).endKickoffBriefDelivery;
     root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-direct-native-')));
     state.userData = path.join(root, 'user-data');
     const hostAppRoot = path.join(root, 'app');
@@ -307,7 +325,26 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     });
     await initOrchestration(); closeMain = closeOrchestration; registerOrchIpc(); registerPtyIpc(); pty.setPtyHost(bridge.host);
   }, 120_000);
+  beforeEach(async () => {
+    const { getProjectDomainStores } = await import('./project-domain-store-registry');
+    priorMissionIds = new Set(getProjectDomainStores(scope).missions.list().map(mission => mission.id));
+  });
   afterEach(async () => {
+    for (const cleanup of caseCleanups.splice(0)) cleanup();
+    releaseHook(); holdNextHook = null;
+    const { ORCH_CHANNELS } = await import('../../shared/orch-channels');
+    const { getProjectDomainStores } = await import('./project-domain-store-registry');
+    const pty = await import('../pty/pty-manager');
+    const stores = getProjectDomainStores(scope);
+    for (const missionId of stores.missions.list().map(mission => mission.id).filter(id => !priorMissionIds.has(id))) {
+      const row = stores.missions.get(missionId);
+      if (!row) continue;
+      const closed = await state.handlers.get(ORCH_CHANNELS.missionCloseRuntime)!({ sender: owner, senderFrame: owner.mainFrame }, { missionId }) as { ok: boolean; error?: string };
+      expect(closed, JSON.stringify(closed)).toMatchObject({ ok: true });
+      expect(pty.listAgentSessions().filter(agent => agent.missionId === missionId)).toEqual([]);
+      expect(stores.missions.get(missionId)?.status).not.toBe('running');
+      console.info('Native fixture case closed with real scoped lifecycle and physical exit proof', { missionId });
+    }
     if (profileFlow) {
       await closeUsage(); await closeAgentHooks(); closeUsage = async () => undefined; closeAgentHooks = async () => undefined;
       const pty = await import('../pty/pty-manager'); pty.configureAgentHookEndpointPath(null); await pty.stopSessionMortalityReconciler();
@@ -420,6 +457,30 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
   }, 120_000);
 
   it('queues a cold direct instead of certifying the unrelated native argv turn, then delivers the exact envelope once', async () => {
+    let completedArgvSid = '';
+    if (CONTROLLED) {
+      const registry = await import('./pane-registry');
+      const pty = await import('../pty/pty-manager');
+      const gate = await import('./gate');
+      const turns = await import('./agent-status');
+      const causalIdle = vi.spyOn(registry, 'waitForIdle').mockImplementation(async (...args) => {
+        const result = await originalIdle(...args);
+        const agent = pty.getAgentSessionInfo(args[0]);
+        if (agent?.role === 'worker' && agent.agentName === 'Runtime writer') {
+          await until(() => {
+            const ctx = gate.getContextBySession(args[0]);
+            const sequence = turns.getAgentTurnStartSequence(args[0]);
+            return sequence === 1 && turns.getAgentLastTurnEnd(args[0])?.sequence === sequence &&
+              Boolean(ctx && controlledStopReturned(ctx.token, sequence));
+          }, 'F-1139 true original idle continuation after matching native Stop HTTP200');
+          completedArgvSid = args[0];
+          expect(pty.getSessionState(args[0])).toBe('idle');
+        }
+        return result;
+      });
+      caseCleanups.push(() => causalIdle.mockRestore());
+    }
+
     const { ORCH_CHANNELS } = await import('../../shared/orch-channels');
     const { getProjectDomainStores } = await import('./project-domain-store-registry');
     const { getMissionEventRuntimeManager } = await import('./mission-event-emit');
@@ -501,6 +562,8 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
       }, 'two actual returned named spawn RPCs');
       const calls = fs.readFileSync(path.join(controlledDir, 'mcp.ndjson'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
       expect(calls.filter(call => call.tool === 'nexus_pane_spawn')).toHaveLength(2);
+      expect(completedArgvSid, 'F-1139 actual worker first turn completed before original idle continuation').not.toBe('');
+      expect(inputs.filter(input => input.sessionId === completedArgvSid && input.data.length > 0), 'exact argv acceptance requires no Enter or repaste').toHaveLength(0);
       expect(calls.some(call => call.tool === 'nexus_handoff_list')).toBe(true);
       expect(calls.every(call => call.status === 200 && call.body.result.isError !== true)).toBe(true);
       const spawned = calls.filter(call => call.tool === 'nexus_pane_spawn').map(call => JSON.parse(call.body.result.content[0].text));
@@ -519,6 +582,229 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     }
   }, 120_000);
 
+  it.runIf(CONTROLLED).each(['initial', 'resume', 'resume-abort', 'resume-unknown-exit'] as const)(
+    'F-1134: real native %s setup commits after its own durable reviewer spend and runs its watcher', async mode => {
+    nativeHookHeld = false; chiefId = '';
+    console.info('F1134 fixture phase: begin', mode);
+    const { ORCH_CHANNELS } = await import('../../shared/orch-channels');
+    const { getProjectDomainStores } = await import('./project-domain-store-registry');
+    const { dispatchToolCall } = await import('./mcp-dispatch');
+    const { buildDomainTools } = await import('./tools-domain');
+    const { buildPaneTools } = await import('./tools-panes');
+    const { getContextBySession, mintToken, bindTokenToSession, releaseSession } = await import('./gate');
+    const { getAgentTurnStartSequence, getAgentLastTurnEnd } = await import('./agent-status');
+    const kickoff = await import('./mission-kickoff-direct-queue');
+    const { provedKickoffBriefDelivery } = kickoff;
+    const { fastLaneOrchestratorPaneSummary } = await import('./mission-fast-lane');
+    const { missionIntentAuthoritySnapshot } = await import('../../shared/mission-intent');
+    const registry = await import('./pane-registry');
+    const periodic = await import('../observability/periodic-task');
+    const pty = await import('../pty/pty-manager');
+    const stores = getProjectDomainStores(scope);
+    const invoke = (channel: string, input: unknown) => state.handlers.get(channel)!({ sender: owner, senderFrame: owner.mainFrame }, input);
+    const reviewerName = mode === 'initial' ? 'Runtime reviewer' : 'Resume reviewer';
+    const abort = new AbortController();
+    let termination: ReturnType<typeof vi.spyOn> | undefined;
+    let previousSpec: import('./mission-pane-store').ScopedMissionPaneSpec | undefined;
+    const tools = ['nexus_pane_spawn', 'nexus_handoff_list', 'nexus_mission_request_resume'];
+    const review = await invoke(ORCH_CHANNELS.missionPrepare, { title: `Runtime spend ${mode} ${nonce}`,
+      objective: 'Review the private report while the native coordinator setup remains pending.', contextPaths: [],
+      roster: [
+        { id: 'rt-spend-chief', agentName: 'Runtime chief', category: 'orchestrator', cli: 'claude', allowedTools: tools, allowedSkills: [] },
+        { id: 'rt-spend-caller', agentName: 'Resume caller', category: 'executor', cli: 'claude', allowedTools: tools, allowedSkills: [] },
+        { id: 'rt-spend-reviewer', agentName: reviewerName, category: 'reviewer', cli: 'claude', allowedTools: tools, allowedSkills: [] },
+      ], advanced: { lane: 'standard' } }) as MissionReview;
+    console.info('F1134 fixture phase: prepared', mode);
+    const idleResolved = deferred<void>(), idleRelease = deferred<void>(), reviewerHook = deferred<void>();
+    let reviewerIdle = false, reviewerSid = '', turnHold = '';
+    const proofSignals = new Map<string, ReturnType<typeof deferred<boolean>>>();
+    const proofOf = (sid: string) => {
+      let proof = proofSignals.get(sid);
+      if (!proof) { proof = deferred<boolean>(); proofSignals.set(sid, proof); }
+      return proof;
+    };
+    const endKickoff = originalEndKickoff;
+    const proofSpy = vi.spyOn(kickoff, 'endKickoffBriefDelivery').mockImplementation((expected, accepted) => {
+      const ended = endKickoff(expected, accepted);
+      if (ended && expected.missionId === review.missionId) proofOf(expected.orchestratorSessionId).resolve(accepted === true);
+      return ended;
+    });
+    let targetSid = '', heldIdle: string | undefined, holdIdle = mode === 'initial';
+    const waitForIdle = originalIdle;
+    const idleSpy = vi.spyOn(registry, 'waitForIdle').mockImplementation(async (...args) => {
+      const result = await waitForIdle(...args);
+      const physical = pty.getAgentSessionInfo(args[0]);
+      if (physical?.missionId === review.missionId && physical.agentName === reviewerName) {
+        reviewerIdle = result === 'idle'; reviewerSid = args[0];
+      }
+      if (holdIdle && pty.getAgentSessionInfo(args[0])?.missionId === review.missionId &&
+          pty.getAgentSessionInfo(args[0])?.role === 'orchestrator') {
+        holdIdle = false; targetSid = args[0]; heldIdle = result; idleResolved.resolve(); await idleRelease.promise;
+      }
+      return result;
+    });
+    const ticks: Array<{ id: string; at: number; cadence: number | undefined; ownerSid: string; signal: AbortSignal }> = [];
+    const watcherOwners = new Map<AbortSignal, string>();
+    const runPeriodic = originalPeriodic;
+    const periodicSpy = vi.spyOn(periodic, 'runPeriodicTask').mockImplementation((id, run, options) => {
+      const watched = id.startsWith('mission-fast-lane:') && id.endsWith(`:${review.missionId}`);
+      const signal = options?.signal;
+      if (watched && signal && !watcherOwners.has(signal)) {
+        const ownerSid = stores.missions.get(review.missionId)?.orchestratorSessionId;
+        if (!ownerSid) throw new Error('fixture watcher registration missing its durable owner');
+        watcherOwners.set(signal, ownerSid);
+      }
+      const ownerSid = signal ? watcherOwners.get(signal) : undefined;
+      return runPeriodic(id, async context => {
+        if (watched && signal && ownerSid) ticks.push({ id, at: Date.now(), cadence: options?.cadenceMs, ownerSid, signal });
+        await run(context);
+      }, options);
+    });
+    caseCleanups.push(() => {
+      idleRelease.resolve(); releaseHook(); holdNextHook = null; abort.abort();
+      for (const proof of proofSignals.values()) proof.resolve(false);
+      fs.rmSync(path.join(controlledDir, 'spawn-before-stop.json'), { force: true });
+      if (turnHold) fs.rmSync(turnHold, { force: true });
+      idleSpy.mockRestore(); proofSpy.mockRestore(); periodicSpy.mockRestore(); termination?.mockRestore();
+    });
+    let resumed: ReturnType<typeof dispatchToolCall> | undefined;
+    try {
+      await invoke(ORCH_CHANNELS.missionStart, { missionId: review.missionId, reviewSha256: review.reviewSha256 });
+      console.info('F1134 fixture phase: started', mode);
+      await until(() => nativeHookHeld, 'spend original native hook');
+      console.info('F1134 fixture phase: native hook held', mode);
+      const original = pty.listAgentSessions().find(a => a.missionId === review.missionId && a.role === 'orchestrator')!;
+      expect(original).toBeDefined(); chiefId = original.sessionId;
+      if (mode !== 'initial') {
+        releaseHook();
+        expect(await proofOf(original.sessionId).promise, 'original native briefing actually proved').toBe(true);
+        await until(() => provedKickoffBriefDelivery(scope, review.missionId)?.orchestratorSessionId === original.sessionId &&
+          fastLaneOrchestratorPaneSummary(scope, review.missionId)?.sessionId === original.sessionId &&
+          getAgentTurnStartSequence(original.sessionId) > 0 && pty.getSessionState(original.sessionId) === 'idle',
+          'original coordinator committed its setup and completed the actual native turn');
+        // Seal the old watcher's real signal/SID before changing the leader.
+        await until(() => ticks.some(tick => tick.ownerSid === original.sessionId), 'original real 15-second watcher generation registered');
+        const caller = await dispatchToolCall('http-mcp', { serverName: 'spend-fixture-panes', serverVersion: '0', tools: buildPaneTools() },
+          'nexus_pane_spawn', { adapterId: 'claude', operatorChoice: true, agentName: 'Resume caller', role: 'worker',
+            task: 'Keep the native coordinator recovery caller', prompt: 'Wait for the private scoped follow-up.' }, getContextBySession(original.sessionId)!);
+        expect(caller).toMatchObject({ ok: true, result: { sessionId: expect.any(String) } });
+        const callerSid = (caller.result as { sessionId: string }).sessionId;
+        await until(() => {
+          const sequence = getAgentTurnStartSequence(callerSid), end = getAgentLastTurnEnd(callerSid);
+          return sequence > 0 && end?.sequence === sequence && end.outcome === 'completed' &&
+            controlledStopReturned(getContextBySession(callerSid)!.token, sequence) && pty.getSessionState(callerSid) === 'idle';
+        }, 'physical recovery caller completed its actual Stop and HTTP response');
+        // Reuse the existing F-1116 fixture's narrow recovery grant to the
+        // same real caller. Production role/intent/physical checks stay live.
+        const callerGrant = getContextBySession(callerSid)!;
+        const recoveryGrant = mintToken({ label: 'controlled spend recovery caller', role: callerGrant.role,
+          providerId: callerGrant.providerId, missionId: review.missionId, scope: callerGrant.scope,
+          executionScope: callerGrant.executionScope, contextRevision: callerGrant.contextRevision,
+          workerIncarnationId: callerGrant.workerIncarnationId, readOnly: callerGrant.readOnly,
+          allowedTools: ['nexus_mission_request_resume'], allowedSkills: [] });
+        releaseSession(callerSid); bindTokenToSession(recoveryGrant.token, callerSid);
+        previousSpec = structuredClone(stores.missionPanes.list(review.missionId).find(pane => pane.role === 'orchestrator')!);
+        expect(await pty.orchTerminateSession(original.sessionId, { origin: 'spend-fixture:old-coordinator-exit' })).toBe(true);
+        const resumeHook = deferred<void>(); holdNextHook = () => resumeHook.resolve(); holdIdle = true;
+        resumed = dispatchToolCall('http-mcp', { serverName: 'spend-fixture-domain', serverVersion: '0', tools: buildDomainTools() },
+          'nexus_mission_request_resume', { missionId: review.missionId, note: 'Resume the private native spend fixture.' }, getContextBySession(callerSid)!, { callerSignal: abort.signal });
+        let resumeOutcome: Awaited<typeof resumed> | undefined;
+        void resumed.then(outcome => { resumeOutcome = outcome; });
+        void resumed.catch(() => undefined);
+        await Promise.race([resumeHook.promise, resumed]);
+        expect(resumeOutcome, JSON.stringify(resumeOutcome)).toBeUndefined();
+      }
+      const chief = pty.listAgentSessions().find(a => a.missionId === review.missionId && a.role === 'orchestrator')!;
+      targetSid = chief.sessionId;
+      const bound = structuredClone(stores.missions.get(review.missionId)!);
+      expect(bound.orchestratorSessionId).toBe(targetSid);
+      const gateSha256 = createHash('sha256').update(getContextBySession(targetSid)!.token).digest('hex');
+      fs.writeFileSync(path.join(controlledDir, 'spawn-before-stop.json'), JSON.stringify({ gateSha256, agentName: reviewerName }), { mode: 0o600 });
+      await until(() => heldIdle !== undefined, 'original real idle resolution captured');
+      await idleResolved.promise;
+      expect(heldIdle, 'only the original real idle resolution is held').toBe('idle');
+      const targetTicks = () => ticks.filter(tick => tick.ownerSid === targetSid);
+      const beforeTicks = targetTicks().length;
+      holdNextHook = () => reviewerHook.resolve();
+      releaseHook();
+      await reviewerHook.promise;
+      await until(() => reviewerIdle, 'reviewer original real idle resolution before native submit');
+      const reviewerGateHash = createHash('sha256').update(getContextBySession(reviewerSid)!.token).digest('hex');
+      turnHold = path.join(controlledDir, `turn-hold.${reviewerGateHash}`); fs.writeFileSync(turnHold, '', { mode: 0o600 });
+      releaseHook();
+      const calls = (): Array<{ pid: number; gateSha256: string; tool: string; body: { result: { content: Array<{ text: string }>; isError?: boolean } }; status: number }> => {
+        try { return fs.readFileSync(path.join(controlledDir, 'mcp.ndjson'), 'utf8').trim().split('\n').map(line => JSON.parse(line)); } catch { return []; }
+      };
+      await until(() => calls().some(call => call.gateSha256 === gateSha256 && call.tool === 'nexus_pane_spawn'), 'exact chief returned real spawn RPC');
+      const rpc = calls().find(call => call.gateSha256 === gateSha256 && call.tool === 'nexus_pane_spawn')!;
+      expect(rpc.status).toBe(200); expect(rpc.body.result.isError).not.toBe(true);
+      fs.rmSync(turnHold, { force: true });
+      const worker = JSON.parse(rpc.body.result.content[0]!.text) as { sessionId: string; paneId: string };
+      expect(pty.getAgentSessionInfo(worker.sessionId)).toMatchObject({ missionId: review.missionId, agentName: reviewerName, readOnly: true });
+      const footprints = await pty.probePaneFootprints();
+      expect(footprints!.find(p => p.sessionId === worker.sessionId)?.rootPid).toBeGreaterThan(0);
+      const spent = stores.missions.get(review.missionId)!;
+      expect(spent.intentContract!.spentSteps).toBeGreaterThan(bound.intentContract!.spentSteps ?? 0);
+      expect(spent.intentContract!.spentTokens).toBeGreaterThan(bound.intentContract!.spentTokens ?? 0);
+      expect(spent.updatedAt).toBeGreaterThan(bound.updatedAt);
+      expect(missionIntentAuthoritySnapshot(spent.intentContract!)).toEqual(missionIntentAuthoritySnapshot(bound.intentContract!));
+      expect({ ...spent, updatedAt: bound.updatedAt, intentContract: missionIntentAuthoritySnapshot(spent.intentContract!) })
+        .toEqual({ ...bound, intentContract: missionIntentAuthoritySnapshot(bound.intentContract!) });
+      expect(spent.intentVersion).toBe(bound.intentVersion); expect(spent.orchestratorSessionId).toBe(targetSid);
+      expect(targetTicks().length, 'new watcher cannot tick while its setup is held').toBe(beforeTicks);
+      console.info('F1134 causal spend proved', { mode, sessionId: targetSid, updatedAtBefore: bound.updatedAt, updatedAtAfter: spent.updatedAt,
+        spentSteps: spent.intentContract!.spentSteps, spentTokens: spent.intentContract!.spentTokens, physicalReviewer: worker.sessionId });
+      const boundSpec = structuredClone(stores.missionPanes.findByPaneId(chief.paneId!)!);
+      if (mode === 'resume-unknown-exit') {
+        const terminate = pty.orchTerminateSession;
+        termination = vi.spyOn(pty, 'orchTerminateSession').mockImplementation((sid, options) =>
+          sid === targetSid && options?.origin === 'fast-lane:owned-resume-failed' ? Promise.resolve(false) : terminate(sid, options));
+      }
+      if (mode === 'resume-abort' || mode === 'resume-unknown-exit') abort.abort();
+      idleRelease.resolve();
+      if (mode === 'resume-abort' || mode === 'resume-unknown-exit') {
+        expect(await resumed).toMatchObject({ ok: false });
+        expect(stores.missions.get(review.missionId)).toMatchObject({ status: 'blocked', intentState: 'blocked_technical',
+          intentContract: { spentSteps: spent.intentContract!.spentSteps, spentTokens: spent.intentContract!.spentTokens } });
+        if (mode === 'resume-abort') {
+          expect(pty.getAgentSessionInfo(targetSid)).toBeNull();
+          expect(stores.missionPanes.list(review.missionId).find(pane => pane.id === previousSpec!.id)).toEqual(previousSpec);
+        } else {
+          expect(pty.getAgentSessionInfo(targetSid)).not.toBeNull();
+          expect(stores.missionPanes.findByPaneId(chief.paneId!)).toEqual(boundSpec);
+          expect(stores.missions.get(review.missionId)?.orchestratorSessionId).toBe(targetSid);
+        }
+        console.info('F1134 spent owned failure cleanup proved', { mode, physicalExitProven: mode === 'resume-abort' });
+        return;
+      }
+      if (resumed) expect(await resumed).toMatchObject({ ok: true, result: { resumed: true, reason: 'mounted' } });
+      expect(await proofOf(targetSid).promise, 'actual exact native kickoff delivery completed').toBe(true);
+      expect(provedKickoffBriefDelivery(scope, review.missionId)?.orchestratorSessionId).toBe(targetSid);
+      const argv = fs.readFileSync(path.join(controlledDir, 'accepted.ndjson'), 'utf8').trim().split('\n')
+        .map(line => JSON.parse(line) as { pid: number; kind: string; sha256: string }).find(message => message.pid === rpc.pid && message.kind === 'argv')!;
+      expect(argv).toBeDefined();
+      expect(provedKickoffBriefDelivery(scope, review.missionId)).toMatchObject({ missionId: review.missionId, scope,
+        orchestratorSessionId: targetSid, intentVersion: bound.intentVersion, promptHash: argv.sha256 });
+      await until(() => targetTicks().length > beforeTicks, 'setup committed and actual new 15-second periodic watcher tick');
+      const tick = targetTicks().at(-1)!;
+      expect(tick.cadence).toBe(15_000);
+      expect(watcherOwners.get(tick.signal)).toBe(targetSid);
+      expect(stores.missions.get(review.missionId)).toMatchObject({ status: 'running', orchestratorSessionId: targetSid });
+      console.info('F1134 setup and real watcher proved', { mode, sessionId: targetSid, cadence: tick.cadence, oldGenerationTicks: ticks.filter(value => value.ownerSid !== targetSid).length });
+    } finally {
+      fs.rmSync(path.join(controlledDir, 'spawn-before-stop.json'), { force: true });
+      if (turnHold) fs.rmSync(turnHold, { force: true });
+      idleRelease.resolve(); releaseHook(); holdNextHook = null;
+      idleSpy.mockRestore(); proofSpy.mockRestore(); periodicSpy.mockRestore(); termination?.mockRestore();
+      abort.abort();
+      for (const session of pty.listAgentSessions().filter(a => a.missionId === review.missionId)) {
+        expect(await pty.orchTerminateSession(session.sessionId, { origin: 'spend-fixture:teardown' })).toBe(true);
+      }
+      await resumed?.catch(() => undefined);
+      console.info('F1134 fixture-owned teardown physically proved', { mode, missionId: review.missionId });
+    }
+  }, 120_000);
+
   it.runIf(CONTROLLED).each(['abort', 'authority', 'newer-session', 'newer-intent', 'operator-close', 'unknown-exit', 'proved-self-revocation', 'paste-abort'] as const)(
     'F-1116: actual Main/PTY resume keeps exact ownership under %s after fresh binding', async fault => {
     nativeHookHeld = false; chiefId = '';
@@ -528,9 +814,10 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     const { buildDomainTools } = await import('./tools-domain');
     const { buildPaneTools } = await import('./tools-panes');
     const { getContextBySession, mintToken, bindTokenToSession, releaseSession } = await import('./gate');
-    const { getAgentTurnStartSequence } = await import('./agent-status');
+    const { getAgentTurnStartSequence, getAgentLastTurnEnd } = await import('./agent-status');
     const { provedKickoffBriefDelivery } = await import('./mission-kickoff-direct-queue');
     const { MISSION_RUNTIME_CLOSED_MARKER } = await import('../../shared/mission-recovery-policy');
+    const { hasCurrentDispatchAuthority } = await import('../../shared/mission-intent');
     const pty = await import('../pty/pty-manager');
     const invoke = (channel: string, input: unknown) => state.handlers.get(channel)!({ sender: owner, senderFrame: owner.mainFrame }, input);
     const tools = ['nexus_pane_spawn', 'nexus_handoff_submit', 'nexus_handoff_list', 'nexus_handoff_ack', 'nexus_mission_request_resume'];
@@ -555,8 +842,16 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
         task: 'Hold the scoped coordinator resume request', prompt: `RT_GATE IDLE ${nonce}. Preserve the waiting participant.` }, chiefContext);
     expect(spawnedCaller, JSON.stringify(spawnedCaller)).toMatchObject({ ok: true, result: { sessionId: expect.any(String) } });
     const callerSessionId = (spawnedCaller.result as { sessionId: string }).sessionId;
-    await until(() => getAgentTurnStartSequence(callerSessionId) > 0 && pty.getSessionState(callerSessionId) === 'idle', 'caller finished its authentic native turn');
+    await until(() => {
+      const sequence = getAgentTurnStartSequence(callerSessionId), end = getAgentLastTurnEnd(callerSessionId);
+      return sequence > 0 && end?.sequence === sequence && end.outcome === 'completed' &&
+        controlledStopReturned(getContextBySession(callerSessionId)!.token, sequence) && pty.getSessionState(callerSessionId) === 'idle';
+    }, 'caller completed its matching authentic Stop and returned HTTP response');
     const caller = structuredClone(pty.getAgentSessionInfo(callerSessionId)!);
+    const callerExits: Array<import('../pty/pty-manager').SessionRootExit | null> = [];
+    const untapCallerTermination = pty.tapSessionTermination((sid, _agent, rootExit) => {
+      if (sid === callerSessionId) { callerExits.push(rootExit); console.info('F1116 logical caller termination tap', { fault, rootExit }); }
+    });
     const originalCallerContext = getContextBySession(callerSessionId)!;
     // Main fixture grants one recovery tool to an existing physical caller;
     // production allowlist/role/intent and exact session checks stay real.
@@ -591,21 +886,31 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     let termination: ReturnType<typeof vi.spyOn> | undefined;
     let proofCheck: ReturnType<typeof vi.spyOn> | undefined;
     let abortAfterProof = false;
-    const retirements: Array<{ origin?: string; proven: boolean }> = [];
+    const retirements: Array<{ sessionId: string; origin?: string; before: Mission | null; proven?: boolean }> = [];
     const boundSpec = structuredClone(stores.missionPanes.findByPaneId(fresh.paneId!)!);
-    if (fault === 'unknown-exit') {
-      const terminate = pty.orchTerminateSession;
-      termination = vi.spyOn(pty, 'orchTerminateSession').mockImplementation((sessionId, options) =>
-        sessionId === fresh.sessionId && options?.origin === 'fast-lane:owned-resume-failed'
-          ? Promise.resolve(false) : terminate(sessionId, options));
-    } else if (fault === 'paste-abort') {
-      const terminate = pty.orchTerminateSession;
-      termination = vi.spyOn(pty, 'orchTerminateSession').mockImplementation(async (sessionId, options) => {
-        const proven = await terminate(sessionId, options);
-        if (sessionId === fresh.sessionId) retirements.push({ origin: options?.origin, proven });
-        return proven;
-      });
-    }
+    const terminate = pty.orchTerminateSession;
+    termination = vi.spyOn(pty, 'orchTerminateSession').mockImplementation(async (sessionId, options) => {
+      const before = stores.missions.get(review.missionId);
+      const entry = { sessionId, origin: options?.origin, before: before ? structuredClone(before) : null, proven: undefined as boolean | undefined };
+      retirements.push(entry);
+      entry.proven = fault === 'unknown-exit' && sessionId === fresh.sessionId && options?.origin === 'fast-lane:owned-resume-failed'
+        ? false : await terminate(sessionId, options);
+      console.info('F1116 actual physical termination attribution', { fault, sessionId, origin: entry.origin,
+        preStatus: entry.before?.status, preIntent: entry.before?.intentState, preLeader: entry.before?.orchestratorSessionId, proven: entry.proven });
+      return entry.proven;
+    });
+    const transition = stores.missions.transitionLifecycle.bind(stores.missions);
+    const transitions: Mission[] = [];
+    const transitionSpy = vi.spyOn(stores.missions, 'transitionLifecycle').mockImplementation((...args) => {
+      const updated = transition(...args);
+      if (args[0] === review.missionId && updated) transitions.push(structuredClone(updated));
+      return updated;
+    });
+    const compensate = stores.missionPanes.compensateOrchestratorSpawn.bind(stores.missionPanes);
+    const compensations: string[] = [];
+    const compensationSpy = vi.spyOn(stores.missionPanes, 'compensateOrchestratorSpawn').mockImplementation((...args) => {
+      compensations.push(args[0].id); return compensate(...args);
+    });
     if (fault === 'newer-session') stores.missions.setOrchestratorSession(review.missionId, callerSessionId);
     if (fault === 'newer-intent') {
       const row = stores.missions.get(review.missionId)!;
@@ -630,7 +935,10 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     releaseHook();
     try {
       expect(await resumed).toMatchObject({ ok: false });
-      if (fault === 'paste-abort') expect(retirements).toEqual([{ origin: 'fast-lane:owned-resume-failed', proven: true }]);
+      const ownRetirements = retirements.filter(entry => entry.origin === 'fast-lane:owned-resume-failed');
+      expect(ownRetirements.every(entry => entry.sessionId === fresh.sessionId)).toBe(true);
+      expect(ownRetirements.some(entry => entry.sessionId === callerSessionId)).toBe(false);
+      if (fault === 'paste-abort') expect(ownRetirements).toMatchObject([{ sessionId: fresh.sessionId, proven: true }]);
       if (fault === 'abort' || fault === 'authority' || fault === 'paste-abort') {
         expect(pty.getAgentSessionInfo(fresh.sessionId), 'revoked unproved resume must not leave its new physical coordinator').toBeNull();
         expect(stores.missions.get(review.missionId)).toMatchObject({ status: 'blocked', intentState: 'blocked_technical' });
@@ -644,12 +952,32 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
           expect(abortAfterProof).toBe(true);
           expect((await import('./mission-fast-lane')).fastLaneOrchestratorPaneSummary(scope, review.missionId)?.sessionId).toBe(fresh.sessionId);
         }
-        expect(pty.getAgentSessionInfo(fresh.sessionId)).not.toBeNull();
-        expect(stores.missions.get(review.missionId)).toEqual(changed);
+        expect(ownRetirements).toEqual([]); expect(transitions).toEqual([]); expect(compensations).toEqual([]);
+        const policy = retirements.find(entry => entry.sessionId === fresh.sessionId && entry.origin === 'mission-termination' &&
+          entry.proven === true && entry.before && !hasCurrentDispatchAuthority(entry.before));
+        if (pty.getAgentSessionInfo(fresh.sessionId)) {
+          expect(stores.missions.get(review.missionId)).toEqual(changed);
+        } else {
+          // Runtime-closed revokes this coordinator; only the real policy
+          // terminator's exact pre-row and physical proof justify absence.
+          expect(policy, 'fresh disappearance needs independently authorized physical teardown').toBeDefined();
+          expect(policy!.before).toEqual(changed);
+          const after = stores.missions.get(review.missionId)!;
+          expect([changed.orchestratorSessionId, undefined]).toContain(after.orchestratorSessionId);
+          expect(after.updatedAt).toBeGreaterThanOrEqual(changed.updatedAt);
+          expect({ ...after, updatedAt: changed.updatedAt, orchestratorSessionId: changed.orchestratorSessionId }).toEqual(changed);
+        }
         expect(stores.missionPanes.findByPaneId(fresh.paneId!)).toEqual(boundSpec);
       }
-    } finally {termination?.mockRestore(); proofCheck?.mockRestore(); state.adapter!.spawn.initialPrompt = promptDelivery;}
-    expect(pty.getAgentSessionInfo(callerSessionId)).toEqual(caller);
+      const callerNow = pty.getAgentSessionInfo(callerSessionId);
+      if (callerNow) expect(callerNow).toEqual(caller);
+      else {
+        const policy = retirements.find(entry => entry.sessionId === callerSessionId && entry.origin === 'mission-termination' &&
+          entry.proven === true && entry.before && !hasCurrentDispatchAuthority(entry.before));
+        expect(policy, 'caller disappearance needs independently authorized physical teardown').toBeDefined();
+      }
+    } finally {termination?.mockRestore(); proofCheck?.mockRestore(); transitionSpy.mockRestore(); compensationSpy.mockRestore();
+      state.adapter!.spawn.initialPrompt = promptDelivery; untapCallerTermination();}
   }, 120_000);
 
   it.runIf(CONTROLLED)('F-1122: registered Main/real PTY proves the native turn after one swallowed Enter without repasting', async () => {
@@ -720,7 +1048,9 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
       const current = (await probe(sessionId))!;
       expect(current.turnStartSequence).toBe(baseline.turnStartSequence + 1);
       expect(inputs.slice(inputStart).filter(i => i.sessionId === sessionId).map(i => i.data)).toEqual([payload, '\r', '\r']);
-      fs.writeFileSync(path.join(REPO, '.superpowers/sdd/release-076213-reviewed/f1122-source-proof/main-pty-native-facts.json'), JSON.stringify({
+      const proofDir = path.join(REPO, '.superpowers/sdd/release-076213-reviewed/f1122-source-proof');
+      fs.mkdirSync(proofDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(path.join(proofDir, 'main-pty-native-facts.json'), JSON.stringify({
         mode: 'controlled-physical-cli-registered-main-pty-authenticated-native-hooks', signedPackagedProof: false,
         paneId, sessionId, rootPid: footprint.rootPid, nativePid: accepted[0]!.pid, baseline, current,
         enterRequests, payloadWrites: 1, composerAcceptances: accepted.length, nativeConversation: getProviderPaneSession(scope, paneId, 'claude')?.id,

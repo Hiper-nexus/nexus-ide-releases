@@ -10262,6 +10262,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Launcher pelo teclado', detail: 'As ações do Launcher respondem aos atalhos de 1 a 6, uma vez por toque; campos de texto preservam a digitação.' },
   ],
   fixes: [
+    { title: 'Workers rápidos reconhecidos', detail: 'Quando o primeiro turno termina durante a preparação do terminal, o Nexus reconhece o envio do pedido e libera o orquestrador sem repetir o prompt.' },
     { title: 'Envio confirmado no Claude', detail: 'Pedidos e continuidade após retomada aguardam a aceitação do prompt. Se o primeiro Enter não enviar, o Nexus tenta somente o Enter outra vez, sem duplicar o pedido.' },
     { title: 'Maestro acompanha a missão desde o início', detail: 'O início e a retomada mantêm o acompanhamento quando o Maestro começa a delegar durante a preparação. Alterações na missão e encerramento continuam protegidos.' },
     { title: 'Conclusão que continua', detail: 'Missões comuns e iniciadas por um pane preservam a nova tentativa de verificar a entrega quando o Maestro termina o turno durante uma verificação. Encerrar cancela essa retomada.' },

@@ -17,7 +17,8 @@ import {
   type NexusHookFlavor,
 } from '../../vendor/emdash/hooks/flavors';
 import type { CanonicalHookEvent } from '../../vendor/emdash/hooks/hooks-types';
-import type { AgentGateContext } from './gate';
+import { isCurrentGateContext, type AgentGateContext } from './gate';
+import { recordAuthenticatedNativeArgvSubmission } from '../pty/pty-manager';
 import {
   applyCanonicalHookEvent,
   type AgentStatusApplyResult,
@@ -180,7 +181,7 @@ export function supersedeApprovalsForHookEvent(
  * prove the fail-closed contract (reducer throws → 500, gate unaffected).
  */
 export function handleHookStatusRequest(
-  ctx: Pick<AgentGateContext, 'sessionId'>,
+  ctx: Pick<AgentGateContext, 'sessionId'> & Partial<AgentGateContext>,
   rawEnvelope: unknown,
   applyEvent: ApplyEventFn = applyCanonicalHookEvent,
   onTurnEnd: TurnEndHook = (input) => {
@@ -237,6 +238,12 @@ export function handleHookStatusRequest(
       // canonical event intentionally drops (additive; reducer ignores it).
       hook: { eventType, toolName, ...extractHookToolLabels(eventType, toolName, body) },
     });
+    // F-1139: only the exact live bearer and an applied native prompt event
+    // can satisfy the launch receipt. The raw text is hashed transiently.
+    if (result.applied && event.kind === 'status' && event.type === 'start' &&
+        event.promptSubmitted === true && ctx.token && isCurrentGateContext(ctx as AgentGateContext)) {
+      recordAuthenticatedNativeArgvSubmission(ctx.sessionId, body.prompt);
+    }
     // C-194.1: o turno do worker acabou. Quem garante que a resposta chega ao
     // orquestrador quando ele NÃO chamou a tool é o fechamento mecânico —
     // fire-and-forget, nunca no caminho da resposta HTTP nem do reducer.
@@ -317,7 +324,7 @@ function readBodyCapped(req: http.IncomingMessage): Promise<string> {
 export async function handleHookStatusHttp(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  ctx: Pick<AgentGateContext, 'sessionId'> | null,
+  ctx: Pick<AgentGateContext, 'sessionId'> & Partial<AgentGateContext> | null,
   applyEvent?: ApplyEventFn,
 ): Promise<void> {
   if (!ctx) {

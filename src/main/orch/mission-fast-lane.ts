@@ -251,6 +251,24 @@ function kickoffPromptHash(initialPrompt: string | undefined): string {
     .digest('hex');
 }
 
+/** Setup keeps its exact durable owner while the live MCP spend ledger advances. */
+function sameMissionSetupOwner(current: Mission, expected: Mission): boolean {
+  const durable = (row: Mission): Mission => JSON.parse(JSON.stringify(row));
+  const left = durable(current), right = durable(expected);
+  const authority = (row: Mission) => ({
+    ...row, updatedAt: 0,
+    intentContract: row.intentContract ? hashMissionIntentAuthority(row.intentContract) : null,
+  });
+  if (!isDeepStrictEqual(authority(left), authority(right))) return false;
+  const steps = left.intentContract?.spentSteps ?? 0, priorSteps = right.intentContract?.spentSteps ?? 0;
+  const tokens = left.intentContract?.spentTokens ?? 0, priorTokens = right.intentContract?.spentTokens ?? 0;
+  if (steps < priorSteps || tokens < priorTokens) return false;
+  // A timestamp alone is still a different owner. Only forward ledger spend
+  // permits its correlated store timestamp to advance during an await.
+  return left.updatedAt === right.updatedAt ||
+    left.updatedAt > right.updatedAt && (steps > priorSteps || tokens > priorTokens);
+}
+
 function bindSpawnedMissionPane(
   stores: ProjectDomainStoreSuite,
   scope: ProjectExecutionScope,
@@ -2263,12 +2281,12 @@ async function respawnFastLaneOrchestrator(
   let committed = false;
   let cleanupFlight: Promise<void> | undefined;
   let physicalExitProven = false;
-  const sameRow = (left: Mission, right: Mission): boolean =>
-    isDeepStrictEqual(JSON.parse(JSON.stringify(left)), JSON.parse(JSON.stringify(right)));
-  const stillOwned = (): boolean => {
+  const sameRow = sameMissionSetupOwner;
+  const currentOwned = (): Mission | null => {
     const current = stores.missions.get(mission.id);
-    return Boolean(current && sameRow(current, owned) && !wasMissionRuntimeClosedByOperator(current));
+    return current && sameRow(current, owned) && !wasMissionRuntimeClosedByOperator(current) ? current : null;
   };
+  const stillOwned = (): boolean => currentOwned() !== null;
   const invocation: McpToolInvocation = { ...options.invocation, retireRevokedPrompt: async sessionId => {
     if (runtime?.sessionId !== sessionId) return false;
     await cleanupOwnedFailure();
@@ -2305,9 +2323,10 @@ async function respawnFastLaneOrchestrator(
       isDeepStrictEqual(actual.authoritySeal, physical.authoritySeal));
   };
   const performOwnedFailureCleanup = async (): Promise<void> => {
-    if (committed || cleanupHandled || runtime?.kind !== 'spawned' || runtime.phase !== 'bound' || !stillOwned() || !ownsPhysical() || !owned.intentState ||
+    if (committed || cleanupHandled || runtime?.kind !== 'spawned' || runtime.phase !== 'bound') return;
+    const captured = currentOwned();
+    if (!captured?.intentState || !ownsPhysical() ||
         native && !isDeepStrictEqual(stores.missionPanes.findByPaneId(runtime.paneId), native)) return;
-    const captured = owned;
     missionEngineForScope(scope).blockTechnical(scope, {
       missionId: mission.id, expectedStatus: captured.status, expectedIntentState: captured.intentState!,
       expectedUpdatedAt: captured.updatedAt, expectedIntentVersion: captured.intentVersion ?? 0,
@@ -2865,14 +2884,14 @@ export async function fastLaneBootstrap(
     ...(row.intentContract ? {intentContract:JSON.parse(JSON.stringify(row.intentContract))} : {}),
   });
   const sameSemanticOwner = (row: Mission, expected: Mission): boolean =>
-    row.status === expected.status && row.intentState === expected.intentState &&
-    row.intentVersion === expected.intentVersion && intentHash(row) === intentHash(expected) &&
-    row.description === expected.description && !wasMissionRuntimeClosedByOperator(row);
-  const stillOwned = (): boolean => {
+    sameMissionSetupOwner({ ...row, updatedAt: expected.updatedAt, orchestratorSessionId: expected.orchestratorSessionId }, expected) &&
+    !wasMissionRuntimeClosedByOperator(row);
+  const currentOwned = (): Mission | null => {
+    if (!owned) return null;
     const current = stores.missions.get(missionId);
-    return Boolean(owned && current && sameSemanticOwner(current,owned) &&
-      current.updatedAt === owned.updatedAt && current.orchestratorSessionId === owned.orchestratorSessionId);
+    return owned && current && sameMissionSetupOwner(current, owned) && !wasMissionRuntimeClosedByOperator(current) ? current : null;
   };
+  const stillOwned = (): boolean => currentOwned() !== null;
   const current = (): void => {
     assertMcpInvocationCurrent(options?.invocation);
     if (owned && !stillOwned()) throw new Error('bootstrap_attempt_authority_changed');
@@ -2895,8 +2914,9 @@ export async function fastLaneBootstrap(
     owned=bound;
   };
   const blockOwnedFailure = async (): Promise<void> => {
-    if (committed || !owned || !stillOwned() || !owned.intentState) return;
-    const captured=owned;
+    if (committed || !owned) return;
+    const captured=currentOwned();
+    if (!captured?.intentState) return;
     const capturedIntentState=captured.intentState;
     if (!capturedIntentState) return;
     missionEngineForScope(scope).blockTechnical(scope,{
@@ -2912,8 +2932,12 @@ export async function fastLaneBootstrap(
     if (!blocked || blocked.status!=='blocked' || blocked.intentState!=='blocked_technical' ||
         blocked.intentVersion!==captured.intentVersion || intentHash(blocked)!==intentHash(captured) ||
         blocked.orchestratorSessionId!==captured.orchestratorSessionId ||
-        !actual || actual.sessionId!==physical.sessionId || actual.paneId!==physical.paneId ||
+        !actual || actual.operatorOpened || actual.sessionId!==physical.sessionId || actual.paneId!==physical.paneId ||
         actual.missionId!==missionId || actual.role!=='orchestrator' ||
+        actual.adapterId!==physical.adapterId || actual.accountId!==physical.accountId || actual.cwd!==physical.cwd ||
+        actual.requestedModel!==physical.requestedModel || actual.effort!==physical.effort ||
+        actual.readOnly!==physical.readOnly || actual.nativeReadOnly!==physical.nativeReadOnly ||
+        !isDeepStrictEqual(actual.allowedTools,physical.allowedTools) || !isDeepStrictEqual(actual.allowedSkills,physical.allowedSkills) ||
         !isDeepStrictEqual(actual.scope,physical.scope) || !isDeepStrictEqual(actual.coordinationScope,physical.coordinationScope) ||
         !isDeepStrictEqual(actual.authoritySeal,physical.authoritySeal)) return;
     const acp=getAcpDriverSession(runtime.sessionId);

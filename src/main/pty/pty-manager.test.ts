@@ -253,6 +253,8 @@ import {
   configureAgentHookEndpointPath,
   consumeMissionOrchestratorGrant,
   getAgentSessionInfo,
+  recordAuthenticatedNativeArgvSubmission,
+  hasAcceptedNativeArgvPrompt,
   getLastSessionInputOrigin,
   getOwnedAgentSessionInfo,
   getSessionState,
@@ -304,6 +306,7 @@ import {
   getContext,
   mintToken,
   resetGateForTests,
+  releaseSession,
 } from "../orch/gate";
 import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revocation";
 import { cleanupCliMcpSession } from "../orch/cli-mcp-session-config";
@@ -2466,6 +2469,48 @@ describe("AGY advisory native profile", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it.each(['fresh', 'no-argv', 'resume', 'paste', 'direct-user'] as const)(
+    'F-1139 arms only the actual final fresh argv launch (%s)', async mode => {
+      setSquadCliPolicyLookupForTests(() => "operator-choice");
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-argv-proof-"));
+      const worktree = path.join(root, "worktree"); fs.mkdirSync(worktree);
+      const host = fakeHost(); setPtyHost(host.host);
+      const base = revisionBoundWorker(fs.realpathSync.native(worktree));
+      const prompt = 'exact sanitized native argv';
+      const authority = mode === 'direct-user' ? trustedSpawn(fs.realpathSync.native(worktree)) : {
+        ...base, context: { ...base.context!, ...(mode === 'no-argv' ? {} : { initialPrompt: prompt }) },
+      };
+      const builtin = builtinCliPtyAdapter('grok');
+      const adapter = mode === 'paste' ? { ...builtin, spawn: { ...builtin.spawn, initialPrompt: 'paste' as const } } : builtin;
+      let ctx: ReturnType<typeof mintToken> | undefined;
+      let sid: string | undefined;
+      setAgentSpawnHook((_adapter, _request, actual) => {
+        ctx = mintToken({ label: 'private argv birth', role: actual.context?.role ?? 'user',
+          missionId: actual.context?.missionId, workerIncarnationId: actual.context?.workerIncarnationId,
+          scope: actual.coordinationScope ?? actual.scope, allowedTools: [], allowedSkills: [] });
+        return { authorityToken: ctx.token, env: { NEXUS_GATE_TOKEN: ctx.token }, extraArgs: [],
+          onSpawned: sessionId => bindTokenToSession(ctx!.token, sessionId) };
+      });
+      try {
+        sid = spawnAgentSession(mode === 'direct-user' ? fakeWc() : null, { kind: 'cli-agent', paneId: 'argv-proof', cols: 100, rows: 30,
+          ...(mode === 'resume' ? { resume: true } : {}) }, adapter, {}, authority).sessionId;
+        expect(host.specFor(sid).args.includes(prompt)).toBe(mode === 'fresh');
+        recordAuthenticatedNativeArgvSubmission(sid, prompt);
+        publishSessionActivityState(sid, 'idle'); // Completion does not erase the exact launch proof.
+        expect(hasAcceptedNativeArgvPrompt(sid, prompt, 'grok')).toBe(mode === 'fresh');
+        expect(hasAcceptedNativeArgvPrompt(sid, 'later paste', 'grok')).toBe(false);
+        // Loss of the exact authenticated bearer never makes a receipt current.
+        releaseSession(sid);
+        expect(hasAcceptedNativeArgvPrompt(sid, prompt, 'grok')).toBe(false);
+        await orchTerminateSession(sid);
+        expect(hasAcceptedNativeArgvPrompt(sid, prompt, 'grok')).toBe(false);
+      } finally {
+        if (sid) await orchTerminateSession(sid);
+        if (ctx) cleanupCliMcpSession(ctx.token);
+        setAgentSpawnHook(null); resetGateForTests(); fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
 
   it("entrega o prompt posicional no argv do grok — sem allowlist de ids", async () => {
     setSquadCliPolicyLookupForTests(() => "operator-choice");

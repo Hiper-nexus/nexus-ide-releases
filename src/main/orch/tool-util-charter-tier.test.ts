@@ -21,6 +21,7 @@ vi.mock('./pane-registry', () => ({
 }));
 vi.mock('./pane-authz', () => ({ authorizePaneAccess: vi.fn() }));
 vi.mock('../pty/pty-manager', () => ({
+  hasAcceptedNativeArgvPrompt: () => false,
   getAgentSessionInfo: vi.fn(() => null),
   getSessionState: vi.fn(() => null),
   orchWriteSession: vi.fn(() => true),

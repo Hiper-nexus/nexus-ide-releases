@@ -17,6 +17,7 @@ vi.mock('./pane-registry', () => ({
 // As in the existing tool-util suites, keep the native PTY graph outside this
 // authorization test. The pane gate and browser-owner decision remain real.
 vi.mock('../pty/pty-manager', () => ({
+  hasAcceptedNativeArgvPrompt: () => false,
   getAgentSessionInfo: vi.fn(() => null),
   getSessionState: vi.fn(() => 'idle'),
   isSessionStdinWritable: vi.fn(() => true),

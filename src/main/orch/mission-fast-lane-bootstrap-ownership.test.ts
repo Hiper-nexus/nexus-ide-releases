@@ -111,3 +111,27 @@ it('F-1093: only exact freshly born partial session is cleaned; unknown exit kee
   expect(h.terminate).toHaveBeenCalledOnce();expect(h.terminate).toHaveBeenCalledWith('owned-partial',expect.objectContaining({origin:'fast-lane:spawn-binding-failed'}));
   expect(getProjectDomainStores(scope).missions.get(mission.id)).toMatchObject({status:'blocked',intentState:'blocked_technical'});expect(h.physical.has('owned-partial')).toBe(true);expect(h.physical.has('operator-owned')).toBe(true);expect(h.warm).not.toHaveBeenCalled();
 });
+
+it.each(['spend', 'timestamp-only', 'goal', 'budget', 'capability', 'description', 'spend-regression'] as const)('F-1134: revoked own preparation uses fresh lifecycle CAS only for %s', async change => {
+  const mission = setup(); const store = getProjectDomainStores(scope).missions;
+  if (change === 'spend-regression') store.update(mission.id, { intentContract: { ...mission.intentContract!, spentSteps: 2, spentTokens: 400 } });
+  let entered!: () => void, release!: () => void, revoked = false;
+  const ready = new Promise<void>(r => { entered = r; }), hold = new Promise<void>(r => { release = r; });
+  h.prepare = async options => { if (options.role === 'orchestrator') { entered(); await hold; } return options.prompt; };
+  const start = fastLaneBootstrap(scope, mission.id, { invocation: { assertCurrentAuthority: () => { if (revoked) throw new Error('session_authority_revoked'); } } });
+  void start.catch(() => undefined); await ready;
+  const bound = store.get(mission.id)!; vi.advanceTimersByTime(1);
+  store.update(mission.id, change === 'timestamp-only' ? { description: bound.description } : change === 'description' ? { description: 'New owner description' } : {
+    intentContract: { ...bound.intentContract!, spentSteps: 1, spentTokens: 200,
+      ...(change === 'goal' ? { goal: 'New approved goal' } : {}),
+      ...(change === 'budget' ? { budgets: { ...bound.intentContract!.budgets, executionTokens: 10 } } : {}),
+      ...(change === 'capability' ? { executionMode: 'manual' as const } : {}),
+    },
+  });
+  const changed = store.get(mission.id)!; expect(changed.updatedAt).toBeGreaterThan(bound.updatedAt);
+  revoked = true; release(); await expect(start).rejects.toThrow(/session_authority_revoked/);
+  if (change === 'spend') {
+    expect(store.get(mission.id)).toMatchObject({ status: 'blocked', intentState: 'blocked_technical', intentContract: { spentSteps: 1, spentTokens: 200 } });
+  } else expect(store.get(mission.id)).toEqual(changed);
+  expect(h.terminate).not.toHaveBeenCalled(); expect(h.physical.has('operator-owned')).toBe(true);
+});

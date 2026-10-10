@@ -29,6 +29,7 @@ const stubs = vi.hoisted(() => ({
   stateTaps: [] as Array<(sessionId: string, state: string) => void>,
   dataTaps: [] as Array<(sessionId: string, data: string) => void>,
   exitTaps: [] as Array<(sessionId: string) => void>,
+  nativeArgvAccepted: vi.fn(() => false),
   turnStartSequence: 0,
   turnStartTaps: [] as Array<
     (entry: { sessionId: string; sequence: number }) => void
@@ -101,6 +102,7 @@ vi.mock('../pty/pty-analysis-runtime', async original => {
 
 vi.mock('../pty/pty-manager', () => ({
   getAgentSessionInfo: stubs.physicalSessionInfo,
+  hasAcceptedNativeArgvPrompt: stubs.nativeArgvAccepted,
   orchWriteSession: stubs.writeSession,
   orchTerminateSession: stubs.terminateSession,
   getSessionState: stubs.sessionState,
@@ -272,6 +274,7 @@ vi.mock('../persistence/settings-store', () => ({
 }));
 
 import {
+  proveNativeArgvBriefAccepted,
   deliverAgentPrompt,
   injectPrompt,
   clearAdaptiveEnterTimers,
@@ -360,6 +363,7 @@ describe('agent pane workspace confinement', () => {
     stubs.dataTaps.length = 0;
     stubs.exitTaps.length = 0;
     stubs.turnStartSequence = 0;
+    stubs.nativeArgvAccepted.mockReset().mockReturnValue(false);
     stubs.turnStartTaps.length = 0;
     stubs.resolveCwdForScope.mockReturnValue('/workspace');
     stubs.preSpawnProbe.mockResolvedValue(undefined);
@@ -889,6 +893,119 @@ describe('agent pane workspace confinement', () => {
     );
   });
 
+  it('F-1139 accepts the exact native first turn completed during boot without future activity or Enter', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.waitForIdle.mockImplementationOnce(async () => {
+        // Real receipt is retained after matching native Stop; no later edge.
+        stubs.nativeArgvAccepted.mockReturnValue(true);
+        return 'idle';
+      });
+      let accepted = false;
+      const pending = proveNativeArgvBriefAccepted('session-1', 'exact argv', 'claude')
+        .then(() => { accepted = true; });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(accepted).toBe(true);
+      await pending;
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+      expect(stubs.stateTaps).toHaveLength(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('F-1139 accepts a fast matching native turn after the activity observer arms without later chunks', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      let accepted = false;
+      const pending = proveNativeArgvBriefAccepted('session-1', 'exact argv', 'claude').then(() => { accepted = true; });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(stubs.stateTaps.length).toBeGreaterThan(0);
+      // The reducer emits native turn-start before endpoint receipt recording;
+      // Stop then settles physical idle in the same turn without output chunks.
+      for (const tap of [...stubs.turnStartTaps]) tap({ sessionId: 'session-1', sequence: 1 });
+      stubs.nativeArgvAccepted.mockReturnValue(true);
+      stubs.sessionState.mockReturnValue('idle');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(accepted).toBe(true);
+      await pending;
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+      expect(stubs.turnStartTaps).toHaveLength(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('F-1139 never treats an unrelated native turn counter as argv acceptance', async () => {
+    vi.useFakeTimers();
+    const abort = new AbortController();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.nativeArgvAccepted.mockReturnValue(false);
+      let accepted = false;
+      const pending = proveNativeArgvBriefAccepted('session-1', 'exact argv', 'claude', { signal: abort.signal })
+        .then(() => { accepted = true; });
+      const rejected = expect(pending).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(1);
+      for (const tap of [...stubs.turnStartTaps]) tap({ sessionId: 'other-sid', sequence: 1 });
+      for (const tap of [...stubs.turnStartTaps]) tap({ sessionId: 'session-1', sequence: 99 });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(accepted).toBe(false);
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+      abort.abort(); await rejected;
+      expect(stubs.turnStartTaps).toHaveLength(0);
+    } finally { abort.abort(); vi.useRealTimers(); }
+  });
+
+  it.each(['idle', 'busy'])('F-1139 recognizes the launch accepted before Maestro wrapper entry (%s)', async state => {
+    stubs.sessionState.mockReturnValue(state);
+    stubs.nativeArgvAccepted.mockReturnValue(true);
+    await proveNativeArgvBriefAccepted('session-1', 'exact argv', 'claude');
+    expect(stubs.writeSession).not.toHaveBeenCalled();
+    expect(stubs.stateTaps).toHaveLength(0);
+  });
+
+  it.each(['abort', 'revoke', 'exit'])('F-1139 completed receipt cannot bypass current %s guard', async mode => {
+    const abort = new AbortController();
+    stubs.nativeArgvAccepted.mockReturnValue(true);
+    stubs.sessionState.mockReturnValue('idle');
+    stubs.waitForIdle.mockImplementationOnce(async () => {
+      if (mode === 'abort') abort.abort();
+      return mode === 'exit' ? 'exited' : 'idle';
+    });
+    await expect(proveNativeArgvBriefAccepted('session-1', 'exact argv', 'claude', {
+      signal: abort.signal,
+      assertCurrentAuthority: () => { if (mode === 'revoke') throw new Error('revoked'); },
+    })).rejects.toThrow();
+    expect(stubs.writeSession).not.toHaveBeenCalled();
+  });
+
+  it.each(['request-gone', 'request-rebound', 'mission-blocked', 'seal-changed'])(
+    'F-1139 pending receipt rechecks durable %s after boot and never rescues', async mode => {
+      const onPendingSpawn = vi.fn();
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.requestPaneSpawn.mockResolvedValueOnce({ ok: true, pending: true, requestId: 'pending-argv', paneId: 'pane-1' } as never);
+      await expect(spawnPaneAndMaybePrompt({ adapterId: 'claude', missionId: 'm1', role: 'worker',
+        readOnly: true, prompt: 'exact argv', scope, executionScope: taskExecutionScope }, { onPendingSpawn })).rejects.toThrow('pane spawn failed');
+      const info = { sessionId: 'session-1', paneId: 'pane-1', adapterId: 'claude', scope, role: 'worker' };
+      stubs.physicalSessionInfo.mockReturnValue(info);
+      vi.mocked(pendingSpawnAttemptSession).mockReturnValue({ state: 'bound', sessionId: 'session-1' });
+      stubs.nativeArgvAccepted.mockReturnValue(true);
+      stubs.waitForIdle.mockImplementationOnce(async () => {
+        if (mode === 'request-gone') vi.mocked(pendingSpawnAttemptSession).mockReturnValue({ state: 'gone' });
+        if (mode === 'request-rebound') vi.mocked(pendingSpawnAttemptSession).mockReturnValue({ state: 'bound', sessionId: 'other-session' });
+        if (mode === 'mission-blocked') stubs.missionGet.mockReturnValue({ id: 'm1', squadId: 'squad-1', status: 'blocked' } as never);
+        if (mode === 'seal-changed') stubs.resolveMissionPaneAuthoritySeal.mockReturnValue({ intentVersion: 2 } as never);
+        return 'idle';
+      });
+      try {
+        await expect(onPendingSpawn.mock.calls[0]![0].redeliver()).rejects.toThrow(/stale brief/);
+        expect(stubs.writeSession).not.toHaveBeenCalled();
+      } finally {
+        stubs.missionGet.mockImplementation(missionId => missionId === 'm1' ? { id: 'm1', squadId: 'squad-1' } : null);
+        stubs.resolveMissionPaneAuthoritySeal.mockReturnValue({ intentVersion: 1, intentContractHash: 'intent-contract-hash',
+          contextRevision: 'context-revision', contractHash: 'contract-hash', squadRevisionHash: 'squad-revision-hash' });
+      }
+    });
+
   it('accepts the AGY argv brief when the turn opens after boot settles', async () => {
     const onPromptAccepted = vi.fn();
     stubs.sessionState.mockReturnValue('idle');
@@ -1052,6 +1169,39 @@ describe('agent pane workspace confinement', () => {
       expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-1');
       expect(onPromptAccepted).not.toHaveBeenCalled();
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-1139 preserves exact durable handoff when the worker exits during Enter rescue', async () => {
+    vi.useFakeTimers();
+    try {
+      let running = true;
+      const onPromptAccepted = vi.fn();
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.writeSession.mockImplementation(((_sid: string, data: string) => {
+        if (data === '\r') queueMicrotask(() => {
+          stubs.taskDispatchesList.mockReturnValue([{ missionId: 'm1', sessionId: 'session-1',
+            workerIncarnationId: 'inc-rescue', handoffId: 'handoff-rescue' }]);
+          running = false;
+          stubs.sessionState.mockReturnValue(null as never);
+          for (const tap of [...stubs.exitTaps]) tap('session-1');
+        });
+        return true;
+      }) as typeof stubs.writeSession);
+      const pending = spawnPaneAndMaybePrompt({ adapterId: 'agy', missionId: 'm1', role: 'worker',
+        readOnly: true, prompt: 'Exact rescue handoff.', workerIncarnationId: 'inc-rescue', scope,
+        executionScope: taskExecutionScope }, { onPromptAccepted, invocation: { assertCurrentAuthority: () => {
+          if (!running) throw new Error('dispatch handoff_ready revoked running authority');
+        } } });
+      const result = expect(pending).resolves.toEqual({ paneId: 'pane-1', sessionId: 'session-1' });
+      await vi.advanceTimersByTimeAsync(45_000);
+      await result;
+      expect(onPromptAccepted).toHaveBeenCalledOnce();
+      expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+    } finally {
+      stubs.writeSession.mockReset().mockReturnValue(true);
+      stubs.sessionState.mockReturnValue('busy');
       vi.useRealTimers();
     }
   });

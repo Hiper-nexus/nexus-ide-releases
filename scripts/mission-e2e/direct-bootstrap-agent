@@ -29,6 +29,7 @@ if ($profile_fixture) {
   for my $index (0 .. $#ARGV - 1) { $native_id = $ARGV[$index + 1] if $ARGV[$index] eq '--resume'; }
 }
 my $rpc = 0;
+my $hook_turn = 0;
 my $select = IO::Select->new(\*STDIN);
 system('/bin/stty', 'raw', '-echo') == 0 or die 'controlled raw PTY unavailable';
 sub record {
@@ -39,11 +40,14 @@ sub record {
 }
 sub hook {
   my ($event, $text) = @_;
+  ++$hook_turn if $event eq 'user-submit';
+  record('hook', { pid => $$, gateSha256 => sha256_hex($ENV{NEXUS_GATE_TOKEN}), event => $event, turn => $hook_turn, phase => 'started' });
   my $out = $http->request('POST', $ENV{NEXUS_HOOK_URL}, {
     headers => { 'content-type' => 'application/json', authorization => 'Bearer ' . $ENV{NEXUS_GATE_TOKEN},
       'x-nexus-hook-event' => $event, 'x-nexus-hook-flavor' => 'claude' },
     content => $json->encode({ hook_event_name => $event eq 'user-submit' ? 'UserPromptSubmit' : 'Stop',
       session_id => $native_id, prompt => $text }) });
+  record('hook', { pid => $$, gateSha256 => sha256_hex($ENV{NEXUS_GATE_TOKEN}), event => $event, turn => $hook_turn, phase => 'returned', status => 0 + $out->{status} });
   die "native hook refused: $out->{status}" unless $out->{success};
 }
 sub rpc {
@@ -96,8 +100,25 @@ native_session_start();
 my $catalog = rpc('tools/list', {});
 die 'actual tool catalog absent' unless ref($catalog->{body}{result}{tools}) eq 'ARRAY' && @{$catalog->{body}{result}{tools}};
 mcp('nexus_handoff_list', { full => JSON::PP::true });
+# F-1134: only an exact fixture-owned chief may consume this one-shot arm.
+# Its RPC uses the ordinary live token and approved named roster grant.
+if ($chief && -f "$dir/spawn-before-stop.json") {
+  open(my $arm_file, '<', "$dir/spawn-before-stop.json") or die 'controlled spawn arm unreadable';
+  local $/; my $arm = $json->decode(<$arm_file>); close($arm_file);
+  if (($arm->{gateSha256} // '') eq sha256_hex($ENV{NEXUS_GATE_TOKEN})) {
+    unlink("$dir/spawn-before-stop.json") or die 'controlled spawn arm not consumed';
+    mcp('nexus_pane_spawn', { adapterId => 'claude', agentName => $arm->{agentName}, role => 'worker',
+      readOnly => JSON::PP::true, autoCloseOnHandoff => JSON::PP::false,
+      task => 'Review the private setup spend receipt', prompt => 'Wait for the private scoped follow-up.' });
+  }
+}
+# A fixture-owned reviewer can hold its real first turn while Main observes
+# the genuine post-idle activity edge. No state/receipt is supplied by the test.
+my $turn_hold = "$dir/turn-hold." . sha256_hex($ENV{NEXUS_GATE_TOKEN});
+while (-f $turn_hold) { select(undef, undef, undef, 0.02); }
 print "Controlled native argv turn completed.\r\n";
 hook('stop', '');
+
 my $buffer = '';
 while (1) {
   my $n = sysread(STDIN, my $chunk, 65536);

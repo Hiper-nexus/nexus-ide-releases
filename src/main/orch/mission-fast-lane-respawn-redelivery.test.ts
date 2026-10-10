@@ -1055,3 +1055,28 @@ it('F-1063: only the actual respawn result proves a new mounted runtime', async 
   expect(result).toMatchObject({ kind: 'mounted', sessionId: 'session-1' });
   expect(harness.spawnCount).toBe(1);
 });
+
+it.each(['spend', 'timestamp-only', 'goal', 'budget', 'capability', 'spend-regression'] as const)(
+  'F-1134: resume setup permits only the live spend ledger during bound delivery (%s)', async change => {
+    liveMission = { ...mission, createdAt: Date.now(), updatedAt: Date.now(),
+      ...(change === 'spend-regression' ? { intentContract: { ...mission.intentContract!, spentSteps: 2, spentTokens: 400 } } : {}) };
+    harness.deliver.mockImplementationOnce(async () => {
+      liveMission = { ...liveMission, updatedAt: liveMission.updatedAt + 1,
+        intentContract: { ...liveMission.intentContract!,
+          ...(change === 'spend' || change === 'spend-regression' ? { spentSteps: 1, spentTokens: 200 } : {}),
+          ...(change === 'goal' ? { goal: 'A newer approved objective' } : {}),
+          ...(change === 'budget' ? { budgets: { ...liveMission.intentContract!.budgets, executionTokens: 10 } } : {}),
+          ...(change === 'capability' ? { executionMode: 'manual' as const } : {}),
+        } };
+      return true;
+    });
+    if (change === 'spend') {
+      await expect(fastLane.resumeFastLaneMission(scope, mission.id, { remountKind: 'automatic' }))
+        .resolves.toMatchObject({ kind: 'mounted', sessionId: 'session-1' });
+      expect(liveMission.intentContract).toMatchObject({ spentSteps: 1, spentTokens: 200 });
+    } else {
+      await expect(fastLane.resumeFastLaneMission(scope, mission.id, { remountKind: 'automatic' }))
+        .rejects.toThrow(/resume_attempt_authority_changed|setup_unproven/);
+      expect(liveMission.status).toBe('running'); expect(harness.terminate).not.toHaveBeenCalled();
+    }
+});

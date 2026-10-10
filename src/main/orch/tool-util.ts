@@ -30,6 +30,7 @@ import {
 import type { AgentGateContext } from './gate';
 import {
   getAgentSessionInfo,
+  hasAcceptedNativeArgvPrompt,
   getSessionState,
   isSessionStdinWritable,
   orchTerminateSession,
@@ -1081,6 +1082,7 @@ function waitForAgentActivity(
   sessionId: string,
   windowMs: number,
   signal?: AbortSignal,
+  exactNativeReceipt?: () => boolean,
 ): Promise<boolean> {
   if (signal?.aborted) {
     return Promise.reject(signal.reason ?? new Error('aborted'));
@@ -1098,7 +1100,7 @@ function waitForAgentActivity(
         confirmTimer = setTimeout(() => {
           confirmTimer = null;
           // Still busy past the confirm bound: a working turn, not a repaint.
-          if (getSessionState(sessionId) === 'busy') finish(true);
+          if (exactNativeReceipt?.() || getSessionState(sessionId) === 'busy') finish(true);
           else edgeArmed = false;
         }, NATIVE_ARGV_ACTIVITY_CONFIRM_MS);
       } else if (state === 'idle' && edgeArmed) {
@@ -1121,6 +1123,14 @@ function waitForAgentActivity(
     const untapExit = tapSessionExit((exitedSessionId) => {
       if (exitedSessionId === sessionId) finish(false);
     });
+    const untapNativeTurn = exactNativeReceipt ? tapAgentTurnStart((entry) => {
+      if (entry.sessionId !== sessionId) return;
+      // The reducer publishes turn-start before hook-status records the
+      // digest. Observe after that synchronous endpoint transaction finishes.
+      queueMicrotask(() => {
+        if (!settled && exactNativeReceipt()) finish(true);
+      });
+    }) : undefined;
     const onAbort = () => {
       cleanup();
       reject(signal?.reason ?? new Error('aborted'));
@@ -1132,6 +1142,7 @@ function waitForAgentActivity(
       untapState();
       untapData();
       untapExit();
+      untapNativeTurn?.();
     };
     let settled = false;
     const finish = (accepted: boolean) => {
@@ -1178,8 +1189,8 @@ function hasBoundHandoffForExactWorker(
 
 /**
  * Prove that a provider-native argv brief physically opened a turn. Spawn argv
- * has no delivery receipt, so acceptance is observed on the PTY: boot held
- * busy, a confirmed busy edge, or the exact worker's durable handoff. An
+ * retains an exact first native submission receipt through boot; providers
+ * without that receipt keep PTY busy/stream proof and the exact worker's handoff. An
  * interactive provider may still need one bounded Enter nudge for its
  * preloaded composer. OpenCode's headless `run` normally exits after its
  * handoff; that exact durable receipt outranks the normal process exit. Any
@@ -1222,27 +1233,35 @@ async function ensureNativeArgvPromptAccepted(
   // stronger proof than the now-stale invocation, so recognize it before the
   // post-boot authority fence.
   if (handoffDelivered()) return;
+  assertMcpInvocationCurrent(invocation);
+  // The first exact argv submission can already have completed during boot.
+  if (hasAcceptedNativeArgvPrompt(sessionId, finalPrompt, adapterId)) return;
   // Boot output never settled: the provider is already streaming the turn.
   if (boot === 'timeout' && getSessionState(sessionId) === 'busy') return;
-  assertMcpInvocationCurrent(invocation);
   if (
     await waitForAgentActivity(
       sessionId,
       NATIVE_ARGV_PROMPT_ACTIVITY_WINDOW_MS,
       invocation?.signal,
+      () => hasAcceptedNativeArgvPrompt(sessionId, finalPrompt, adapterId),
     )
   ) {
+    if (handoffDelivered()) return;
+    assertMcpInvocationCurrent(invocation);
     return;
   }
   // The activity wait also resolves false on physical session exit.
   if (handoffDelivered()) return;
   assertMcpInvocationCurrent(invocation);
+  if (hasAcceptedNativeArgvPrompt(sessionId, finalPrompt, adapterId)) return;
   const rescued = await submitPendingAgentPrompt(sessionId, invocation, {
     adapterId,
     windowMs: PROMPT_ACCEPTANCE_WINDOW_MS,
   });
   // A busy session here means the turn opened while the proof was pending —
   // re-typing the brief would interleave with live work.
+  if (handoffDelivered()) return;
+  assertMcpInvocationCurrent(invocation);
   if (rescued || getSessionState(sessionId) === 'busy') return;
   if (handoffDelivered()) return;
   assertMcpInvocationCurrent(invocation);
@@ -2293,7 +2312,17 @@ async function redeliverPendingSpawnBrief(
   }
   assertMissionStillWantsBrief(notice);
   if (argvBrief) {
-    await ensureNativeArgvPromptAccepted(bound.sessionId, prompt, adapterId);
+    const identity = JSON.stringify(info);
+    const durableInvocation: McpToolInvocation = { assertCurrentAuthority: () => {
+      const current = pendingSpawnAttemptSession(attempt.requestId);
+      if (current.state !== 'bound' || current.sessionId !== bound.sessionId ||
+          JSON.stringify(getAgentSessionInfo(bound.sessionId)) !== identity) {
+        throw new StaleBriefError('pending spawn binding changed; stale brief not delivered');
+      }
+      assertMissionStillWantsBrief(notice);
+    } };
+    await ensureNativeArgvPromptAccepted(bound.sessionId, prompt, adapterId, durableInvocation);
+    assertMcpInvocationCurrent(durableInvocation);
     return true;
   }
   return deliverAgentPrompt(bound.sessionId, prompt, undefined, { adapterId });

@@ -1,10 +1,11 @@
+import { armNativeArgvAcceptance, forgetNativeArgvAcceptance, recordNativeArgvSubmission, acceptedNativeArgvPrompt } from './native-argv-acceptance';
 import { noteMimoMissionAuthority } from '../agent-hooks/mimo-mission-authority';
 import { heavyZshProfile } from '../orch/native-heavy-zdotdir';
 import { stripInheritedHeavyCommandEnvironment, reassertHeavyCommandBashEnvironment } from '../orch/native-heavy-preload';
 import { reserveMuseNativeHeavyProfile } from '../orch/native-heavy-muse-profile';
 import { cleanupCliMcpSession } from '../orch/cli-mcp-session-artifacts';
 import { prepareOpenCodeSessionArgs, isOpenCodeOwnedServerProved } from './opencode-session-process';
-import { getContext as getNativeHeavyGateContext, isCurrentGateContext } from '../orch/gate';
+import { getContext as getNativeHeavyGateContext, isCurrentGateContext, getContextBySession } from '../orch/gate';
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { recordSessionInputReceipt, forgetSessionInputReceipt, type SystemInputWriter } from '../orch/operator-input-receipts';
 import { configurePtyAnalysis, bindPtyAnalysisSession, feedPtyAnalysis, inputPtyAnalysis, statePtyAnalysis, resizePtyAnalysis, exitPtyAnalysis, terminatePtyAnalysis } from './pty-analysis-runtime';
@@ -1285,6 +1286,7 @@ function finalizeSession(
 ): void {
   const s = sessions.get(sessionId);
   if (!s) return;
+  forgetNativeArgvAcceptance(sessionId);
   let pendingTermination = physicalTerminationFlights.get(sessionId);
   if (!pendingTermination || pendingTermination.session !== s) {
     // F-792: saída sozinha — os taps de terminação já recebem o código.
@@ -3051,6 +3053,22 @@ export function spawnAgentSession(
   })() : undefined;
   const readiness = ready ? { wait: ready, assertCurrent: assertDeferredCurrent, cleanup: async () => { deferredCancelled = true; agyCancel?.abort(); await ready.catch(() => {}); await nativeChannel?.dispose(); await museHeavyProfile?.dispose(); } } : undefined;
   void ready?.catch(() => {});
+  // Seal the launch before the child can emit its first native hook. A
+  // persistent attach, resume or Windows paste is not a fresh argv launch.
+  const lease = sessionLeaseRegistry.issueLease(sessionId, { kind: adapter.id });
+  if (safeNativeInitialPrompt !== undefined && !deferredInitialPrompt &&
+      authority.source === "pending" && !req.resume && persistencePlan.mode === "direct") {
+    armNativeArgvAcceptance({ sessionId, paneId: req.paneId, adapterId: adapter.id,
+      accountId: req.accountId, model: model || undefined, requestedModel: req.model, effort: req.effort,
+      readOnly: authority.context?.readOnly === true, nativeReadOnly,
+      allowedTools: authority.context?.allowedTools ?? null, allowedSkills: authority.context?.allowedSkills ?? null,
+      operatorOpened: authority.context?.operatorOpened === true || undefined, cwd, scope: authority.scope,
+      ...(authority.coordinationScope && !sameCoordinationIdentity(authority.coordinationScope, authority.scope)
+        ? { coordinationScope: authority.coordinationScope } : {}),
+      source: authority.source, role: authority.context?.role ?? "user",
+      missionId: authority.context?.missionId, workerIncarnationId: authority.context?.workerIncarnationId,
+      authoritySeal: authority.context?.authoritySeal }, lease.startKey, safeNativeInitialPrompt, spawnEnv.NEXUS_GATE_TOKEN);
+  }
   try {
     const host = requireHost();
     const handlers = sessionHandlers(sessionId, () => session);
@@ -3066,6 +3084,8 @@ export function spawnAgentSession(
     // otherwise a valid bearer token leaks in memory and on disk. A spawn that
     // fails INSIDE the host instead arrives as an async exit, and the exit tap
     // runs the very same cleanup.
+    forgetNativeArgvAcceptance(sessionId);
+    sessionLeaseRegistry.revokeLease(sessionId);
     decoration?.onSpawnFailed?.();
     throw err;
   }
@@ -3163,7 +3183,6 @@ export function spawnAgentSession(
         }
       : {}),
   };
-  const lease = sessionLeaseRegistry.issueLease(sessionId, { kind: adapter.id });
   session.startKey = lease.startKey;
   sessions.set(sessionId, session);
   bindPtyAnalysisSession(sessionId);
@@ -3522,6 +3541,27 @@ export function getAgentSessionInfo(
 ): OwnedAgentSessionInfo | null {
   const info = sessions.get(sessionId)?.agent;
   return info ? cloneAgentInfo(info) : null;
+}
+
+/** Private hook ingress; the endpoint has already validated the live bearer. */
+export function recordAuthenticatedNativeArgvSubmission(sessionId: string, prompt: unknown): void {
+  const session = sessions.get(sessionId);
+  const lease = sessionLeaseRegistry.inspectLease(sessionId);
+  if (!session?.agent || !lease || lease.startKey !== session.startKey ||
+      physicalTerminationFlights.has(sessionId)) return;
+  const ctx = getContextBySession(sessionId);
+  if (!ctx || !isCurrentGateContext(ctx)) return;
+  recordNativeArgvSubmission(session.agent, lease.startKey, prompt, ctx.token);
+}
+
+/** Retained across Stop, invalidated by any physical/authority identity drift. */
+export function hasAcceptedNativeArgvPrompt(sessionId: string, prompt: string, adapterId: string): boolean {
+  const session = sessions.get(sessionId);
+  const lease = sessionLeaseRegistry.inspectLease(sessionId);
+  const ctx = getContextBySession(sessionId);
+  return Boolean(ctx && isCurrentGateContext(ctx) && session?.agent && session.agent.adapterId === adapterId && lease &&
+    session.startKey === lease.startKey && !physicalTerminationFlights.has(sessionId) &&
+    acceptedNativeArgvPrompt(session.agent, lease.startKey, prompt, ctx!.token));
 }
 
 /** Main-owned physical inventory; renderer layout visibility is irrelevant. */
