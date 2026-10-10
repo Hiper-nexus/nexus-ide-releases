@@ -73,6 +73,11 @@ jobs:
       - name: Install Linux sandbox provider (bubblewrap)
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - run: npm ci
+      # As suítes da bridge importam o cliente TS real do mobile. Seu tsconfig
+      # estende Expo, que vive no projeto pnpm independente, fora da raiz.
+      - name: Prepare locked mobile transport dependencies
+        working-directory: mobile
+        run: npm exec --yes --package=pnpm@12.4.2 -- pnpm install --frozen-lockfile --ignore-scripts
       - run: npm run typecheck
       - run: npm run lint:main-sync
       # Só erros: as regras do plugin local nexus (oxlint-plugin-nexus) —

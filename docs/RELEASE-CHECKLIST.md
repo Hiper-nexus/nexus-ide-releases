@@ -5,6 +5,7 @@ Checklist mínimo para declarar o `.dmg`/`.zip` do NexusIDE release-ready. Inspi
 ## Pré-build (local)
 
 - [ ] `npm install` limpo passa.
+- [ ] Antes da suíte do app, `cd mobile && pnpm install --frozen-lockfile --ignore-scripts` prepara o tsconfig Expo usado pelos testes reais da bridge; o build do mobile continua independente.
 - [ ] `npm run rebuild:electron` e `npm run rebuild:node` passam.
 - [ ] `npx tsc --noEmit` (ou `npm run typecheck`) passa sem erros.
 - [ ] `npm run security:renderer-sinks` passa (0 executable DOM sinks).
@@ -107,4 +108,3 @@ limite explicitamente. Nunca marque a release pronta apenas por um build unsigne
 
 - [ ] O preview de PR/main registrou o SHA exato e os resultados de build/smokes; `linux-x64-preview` e `linux-browser-smoke` são evidência de CI, não candidatas publicáveis.
 - [ ] Compatibilidade Omarchy/Hyprland, se anunciada, tem prova na máquina alvo. Xvfb com sandbox desabilitada exclusivamente no harness não comprova essa sessão nem Bubblewrap real.
-
