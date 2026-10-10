@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.76.225 — Missões com acompanhamento contínuo
+## 0.76.226 — Missões com acompanhamento contínuo
 
 - **Comandos do Grok no Mac.** A integração usa o Bash do sistema compatível com o transporte suportado. A seleção de outro Bash instalado deixa de impedir a execução; scripts de inicialização exclusivos do Bash 5 exigem adaptação (F-1101).
 
