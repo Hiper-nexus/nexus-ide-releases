@@ -399,6 +399,7 @@ export function resolveSpawnAuthority(
       missionId: persistedPane.missionId,
       agentName: persistedPane.agentName,
       workerIncarnationId: persistedPane.workerIncarnationId,
+      ...(persistedPane.operatorOpened === true ? { operatorOpened: true } : {}),
       role: persistedPane.role,
       allowedTools:
         persistedPane.allowedTools !== undefined

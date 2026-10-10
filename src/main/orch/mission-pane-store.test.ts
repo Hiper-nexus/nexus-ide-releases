@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { testProjectScope } from './__tests__/scope-fixture';
-import { createScopedMissionPaneStore } from './mission-pane-store';
+import { createScopedMissionPaneStore, workerContinuationSpecHash } from './mission-pane-store';
 import { createScopedMissionStore } from './mission-store';
 import { compileIntentContract } from '../../shared/mission-intent';
 import {
@@ -136,12 +136,38 @@ describe('scoped mission pane store', () => {
       visualTask: { since: 1000, id: 'current-assignment' } });
     const db = runtimeManager.open(scope).db;
     const row = db.prepare('SELECT scope_json FROM mission_panes WHERE id = ?').get(recorded.id) as { scope_json: string };
-    const legacy = JSON.parse(row.scope_json); legacy.schemaVersion = 6; delete legacy.visualTask.id;
+    const legacy = JSON.parse(row.scope_json); legacy.schemaVersion = 6; delete legacy.visualTask.id; delete legacy.workerContinuation;
     db.prepare('UPDATE mission_panes SET scope_json = ? WHERE id = ?').run(JSON.stringify(legacy), recorded.id);
     runtimeManager.close(scope);
     const restored = createScopedMissionPaneStore(runtimeManager, scope).findByPaneId('legacy-pane')!;
     expect(restored.visualTask).toMatchObject({ since: 1000, id: expect.stringMatching(/^legacy-/) });
     expect(createScopedMissionPaneStore(runtimeManager, scope).findByPaneId('legacy-pane')?.visualTask).toEqual(restored.visualTask);
+  });
+
+  it('F-1151: a real V7 row (no continuation field) is read as-is and only a continuation write upgrades it to V8', () => {
+    const runtimeManager = manager(); const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({ title: 'V7 to V8' });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    const recorded = panes.record({ missionId: mission.id, adapterId: 'codex', paneId: 'v7-pane', role: 'worker',
+      workerIncarnationId: 'inc-v7', visualTask: { since: 1000, id: 'assignment-v7' } });
+    const db = runtimeManager.open(scope).db;
+    const readEnvelope = () => JSON.parse((db.prepare('SELECT scope_json FROM mission_panes WHERE id = ?').get(recorded.id) as { scope_json: string }).scope_json);
+    const v7 = readEnvelope(); v7.schemaVersion = 7; delete v7.workerContinuation;
+    db.prepare('UPDATE mission_panes SET scope_json = ? WHERE id = ?').run(JSON.stringify(v7), recorded.id);
+    runtimeManager.close(scope);
+    const restored = createScopedMissionPaneStore(runtimeManager, scope);
+    const source = restored.findByPaneId('v7-pane')!;
+    expect(source).toMatchObject({ workerIncarnationId: 'inc-v7', visualTask: { since: 1000, id: 'assignment-v7' } });
+    expect(source.workerContinuation).toBeUndefined();
+    // Reading never rewrites a V7 row.
+    expect(runtimeManager.open(scope).db.prepare('SELECT scope_json FROM mission_panes WHERE id = ?').get(recorded.id)).toMatchObject({ scope_json: JSON.stringify(v7) });
+    const claim = { attemptId: 'attempt-v7', sourceSpecHash: workerContinuationSpecHash(source), ownerEpoch: 'epoch-1',
+      nativeIdentityHash: 'a'.repeat(64), state: 'reserved' as const, childPossible: false, target: null, dispatch: null };
+    restored.reserveWorkerContinuation(source, claim);
+    const upgraded = JSON.parse((runtimeManager.open(scope).db.prepare('SELECT scope_json FROM mission_panes WHERE id = ?').get(recorded.id) as { scope_json: string }).scope_json);
+    expect(upgraded.schemaVersion).toBe(8);
+    expect(upgraded.visualTask).toEqual({ since: 1000, id: 'assignment-v7' });
+    expect(restored.findByPaneId('v7-pane')?.workerContinuation).toMatchObject({ attemptId: 'attempt-v7', state: 'reserved' });
   });
 
   it('keeps worker pane incarnations distinct and durable', () => {

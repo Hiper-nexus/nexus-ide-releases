@@ -870,6 +870,27 @@ describe("renderer mission authority", () => {
     ).toThrow(/outside renderer workspace scope/);
   });
 
+  it("F-1151: never sends the Main-only worker continuation claim to the renderer", () => {
+    const spec = {
+      id: "mpane-w", missionId: "mission-a", paneId: "pane-w", adapterId: "codex", cwd: session.cwd,
+      title: "Worker", role: "worker" as const, scope, createdAt: 1,
+      workerContinuation: {
+        attemptId: "workerresume-secret", sourceSpecHash: "a".repeat(64), ownerEpoch: "epoch-secret",
+        nativeIdentityHash: "b".repeat(64), state: "bound" as const, childPossible: true,
+        target: { paneId: "pane-target", requestId: "req-secret", workerIncarnationId: "inc-target", sessionId: "sess-secret" },
+        dispatch: null,
+      },
+    };
+    const orchestrator = { id: "mpane-o", missionId: "mission-a", paneId: "pane-o", adapterId: "codex", cwd: session.cwd,
+      title: "Orq", role: "orchestrator" as const, scope, createdAt: 1 };
+    deps.resolvePaneActivity.mockReturnValue(null);
+    deps.listMissionPanes.mockReturnValueOnce([orchestrator, spec]);
+    const listed = authority.listMissionPanesForRenderer(owner, "mission-a").find(pane => pane.paneId === "pane-w")!;
+    expect(listed).toMatchObject({ paneId: "pane-w", role: "worker" });
+    expect((listed as unknown as Record<string, unknown>).workerContinuation).toBeUndefined();
+    expect(JSON.stringify(listed)).not.toMatch(/workerresume-secret|epoch-secret|req-secret|sess-secret/);
+  });
+
   it("confirms restore only for the exact pane on the current approved revision", () => {
     const authoritySeal = createMissionPaneAuthoritySeal({
       mission: approvedMission,

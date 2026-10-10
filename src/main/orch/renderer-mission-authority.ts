@@ -4,6 +4,7 @@ import type { WebContents } from "electron";
 import { adoptedMissionWorkspaceBinding, missionExecutionScope } from './mission-execution-scope';
 import { operatorHandMissionContract } from './operator-hand-mission';
 import { isOperatorTabResumeTransferSource } from './operator-tab-mission-resume';
+import { reconcilePreparedWorkerContinuation } from './mission-pane-resume-ownership';
 import {
   hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
@@ -1284,6 +1285,9 @@ export class RendererMissionAuthority {
     }
     return specs.map((spec) => ({
       ...spec,
+      // F-1151: the durable continuation claim (hashes, owner epoch, attempt and
+      // target ids) is Main-only authority; the renderer never needs to read it.
+      workerContinuation: undefined,
       // Activity summary (zero-LLM harvest): computed on demand with a 30s
       // mtime-invalidated cache; resolution failures degrade to null, never
       // break the reopen path.
@@ -1333,7 +1337,9 @@ export class RendererMissionAuthority {
     // F-721: a conversa deste líder está sendo levada pelo Main para outro
     // pane. O restore do renderer o deixa parado em vez de subir um segundo
     // Maestro (e sem a conversa) na mesma missão.
-    if (isOperatorTabResumeTransferSource(missionId, paneId)) return false;
+    const continuation = (spec as import('./mission-pane-store').ScopedMissionPaneSpec).workerContinuation
+      ? reconcilePreparedWorkerContinuation(spec as import('./mission-pane-store').ScopedMissionPaneSpec).workerContinuation : undefined;
+    if (isOperatorTabResumeTransferSource(missionId, paneId) || continuation && continuation.state !== 'released') return false;
     // Via Rápida: pane gravado pelo main, escopo conferido acima — sem selo
     // gravado não há o que comparar, e recusar aqui deixava a equipe inteira
     // trabalhando INVISÍVEL ("nenhum pane foi aberto ainda" com 8 CLIs vivas).

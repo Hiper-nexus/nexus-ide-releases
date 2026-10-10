@@ -25,6 +25,22 @@ const capabilityListSchema = z.array(z.string().min(1).max(128)).max(256);
 const nullableCapabilityListSchema = capabilityListSchema.nullable();
 const entityIdSchema = z.string().min(1).max(256);
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const workerContinuationSchema = z.object({
+  attemptId: entityIdSchema, sourceSpecHash: hashSchema, nativeIdentityHash: hashSchema,
+  ownerEpoch: entityIdSchema,
+  state: z.enum(['reserved', 'bound', 'committed', 'released']), childPossible: z.boolean(),
+  outcome: z.enum(['prepared-cancelled', 'physical-tree-exited']).optional(),
+  target: z.object({ paneId: entityIdSchema, requestId: entityIdSchema,
+    workerIncarnationId: entityIdSchema, sessionId: entityIdSchema.optional() }).strict().nullable(),
+  dispatch: z.object({ taskId: entityIdSchema, revision: z.number().int().nonnegative(),
+    sessionId: entityIdSchema, workerIncarnationId: entityIdSchema }).strict().nullable(),
+}).strict();
+export type WorkerContinuation = z.infer<typeof workerContinuationSchema>;
+export interface WorkerContinuationRef { readonly sourcePaneId: string; readonly attemptId: string }
+export function workerContinuationSpecHash(spec: ScopedMissionPaneSpec): string {
+  const { workerContinuation: _continuation, ...original } = spec;
+  return createHash('sha256').update(JSON.stringify(original)).digest('hex');
+}
 const legacyVisualTaskSchema = z.object({ since: z.number().int().nonnegative().safe() }).strict();
 const visualTaskSchema = legacyVisualTaskSchema.extend({ id: z.string().regex(/^[A-Za-z0-9:_-]{1,128}$/) });
 const missionPaneAuthoritySealSchema = z
@@ -100,6 +116,7 @@ export type RebindOrchestratorAuthorityInput = z.input<
 export interface ScopedMissionPaneSpec extends MissionPaneSpec {
   scope: ProjectExecutionScope;
   executionScope: ProjectExecutionScope;
+  workerContinuation?: WorkerContinuation;
 }
 
 /**
@@ -172,6 +189,9 @@ const persistedPaneScopesV6Schema = persistedPaneScopesV5Schema.extend({
 const persistedPaneScopesV7Schema = persistedPaneScopesV5Schema.extend({
   schemaVersion: z.literal(7), visualTask: visualTaskSchema.nullable(),
 });
+const persistedPaneScopesV8Schema = persistedPaneScopesV7Schema.extend({
+  schemaVersion: z.literal(8), workerContinuation: workerContinuationSchema.nullable(),
+});
 const persistedPaneScopesSchema = z.union([
   persistedPaneScopesV2Schema,
   persistedPaneScopesV3Schema,
@@ -179,6 +199,7 @@ const persistedPaneScopesSchema = z.union([
   persistedPaneScopesV5Schema,
   persistedPaneScopesV6Schema,
   persistedPaneScopesV7Schema,
+  persistedPaneScopesV8Schema,
 ]);
 
 function encodeCapabilityList(
@@ -205,6 +226,7 @@ function parseCapabilityList(
 function cloneSpec(spec: ScopedMissionPaneSpec): ScopedMissionPaneSpec {
   return {
     ...spec,
+    ...(spec.workerContinuation ? { workerContinuation: structuredClone(spec.workerContinuation) } : {}),
     visualTask: spec.visualTask ? Object.freeze({ ...spec.visualTask }) : undefined,
     allowedTools:
       spec.allowedTools === null
@@ -257,9 +279,11 @@ function encodePersistedPaneScopes(input: {
   readonly workerIncarnationId?: string;
   readonly authoritySeal?: MissionPaneAuthoritySeal;
   readonly visualTask?: VisualTaskRequirement;
+  readonly workerContinuation?: WorkerContinuation;
 }): string {
   return JSON.stringify({
-    schemaVersion: 7,
+    schemaVersion: 8,
+    workerContinuation: input.workerContinuation ?? null,
     visualTask: input.visualTask ?? null,
     coordinationScope: input.coordinationScope,
     executionScope: input.executionScope,
@@ -292,6 +316,70 @@ export class ScopedMissionPaneStore {
 
   onChange(listener: ScopedStoreChangeListener): () => void {
     return this.#binding.onChange(listener);
+  }
+
+  /** F-1151: durable ownership before any provider preparation/physical birth. */
+  reserveWorkerContinuation(expected: ScopedMissionPaneSpec, reservation: WorkerContinuation): void {
+    const db = this.#binding.writeDatabase();
+    db.transaction(() => {
+      const current = this.findByPaneId(expected.paneId!);
+      if (!current || current.role !== 'worker' || current.workerContinuation && current.workerContinuation.state !== 'released' || !isDeepStrictEqual(current, expected)) {
+        throw new Error('resume_continuation_owned: origem mudou ou já possui continuação; recupere a tentativa existente');
+      }
+      this.#writeWorkerContinuation(db, current, workerContinuationSchema.parse(reservation));
+    }).immediate();
+    this.#binding.emitChange();
+  }
+
+  updateWorkerContinuation(ref: WorkerContinuationRef, update: (current: WorkerContinuation) => WorkerContinuation | undefined): void {
+    const db = this.#binding.writeDatabase();
+    db.transaction(() => {
+      const current = this.findByPaneId(ref.sourcePaneId);
+      if (!current?.workerContinuation || current.workerContinuation.attemptId !== ref.attemptId ||
+          workerContinuationSpecHash(current) !== current.workerContinuation.sourceSpecHash) {
+        throw new Error('resume_authority_changed: tentativa ou origem da continuação mudou');
+      }
+      const next = update(structuredClone(current.workerContinuation));
+      this.#writeWorkerContinuation(db, current, next ? workerContinuationSchema.parse(next) : undefined);
+    }).immediate();
+    this.#binding.emitChange();
+  }
+
+  commitWorkerContinuation(ref: WorkerContinuationRef, target: RecordMissionPaneInput,
+    sessionId: string, rebindDispatch: (claim: WorkerContinuation) => void): ScopedMissionPaneSpec {
+    const db = this.#binding.writeDatabase();
+    const result = db.transaction(() => {
+      const source = this.findByPaneId(ref.sourcePaneId);
+      const claim = source?.workerContinuation;
+      const grantsFit = (requested: string[] | null | undefined, original: string[] | null | undefined) =>
+        original === null || requested !== null && (requested ?? []).every(grant => (original ?? []).includes(grant));
+      if (!source || !claim || claim.attemptId !== ref.attemptId || claim.state !== 'bound' || !claim.childPossible ||
+          workerContinuationSpecHash(source) !== claim.sourceSpecHash || !claim.target ||
+          target.paneId !== claim.target.paneId || claim.target.sessionId !== sessionId || target.workerIncarnationId !== claim.target.workerIncarnationId ||
+          target.missionId !== source.missionId || target.adapterId !== source.adapterId ||
+          target.accountId !== source.accountId || target.model !== source.model || target.effort !== source.effort ||
+          target.role !== 'worker' || target.cwd !== source.cwd ||
+          !grantsFit(target.allowedTools, source.allowedTools) || !grantsFit(target.allowedSkills, source.allowedSkills) ||
+          !isDeepStrictEqual(target.executionScope ?? source.scope, source.executionScope) ||
+          !isDeepStrictEqual(target.visualTask, source.visualTask) ||
+          target.operatorOpened !== source.operatorOpened || source.readOnly && !target.readOnly) {
+        throw new Error('resume_authority_changed: commit não corresponde à continuação física reservada');
+      }
+      rebindDispatch(claim);
+      const recorded = this.record(target);
+      this.#writeWorkerContinuation(db, source, { ...claim, state: 'committed', childPossible: true,
+        target: { ...claim.target, sessionId } });
+      return recorded;
+    }).immediate();
+    this.#binding.emitChange();
+    return result;
+  }
+
+  #writeWorkerContinuation(db: Database.Database, source: ScopedMissionPaneSpec, claim: WorkerContinuation | undefined): void {
+    db.prepare('UPDATE mission_panes SET scope_json = ? WHERE id = ?').run(encodePersistedPaneScopes({
+      coordinationScope: source.scope, executionScope: source.executionScope, readOnly: source.readOnly === true,
+      workerIncarnationId: source.workerIncarnationId, authoritySeal: source.authoritySeal,
+      visualTask: source.visualTask, workerContinuation: claim }), source.id);
   }
 
   /**
@@ -409,7 +497,7 @@ export class ScopedMissionPaneStore {
           readOnly: spec.readOnly === true,
           workerIncarnationId: spec.workerIncarnationId,
           authoritySeal: spec.authoritySeal,
-          visualTask: spec.visualTask,
+          visualTask: spec.visualTask, workerContinuation: spec.workerContinuation,
         }),
         encodeCapabilityList(spec.allowedTools),
         encodeCapabilityList(spec.allowedSkills),
@@ -477,7 +565,7 @@ export class ScopedMissionPaneStore {
             readOnly: next.readOnly === true,
             workerIncarnationId: next.workerIncarnationId,
             authoritySeal: next.authoritySeal,
-            visualTask: next.visualTask,
+            visualTask: next.visualTask, workerContinuation: next.workerContinuation,
           }),
           encodeCapabilityList(next.allowedTools),
           encodeCapabilityList(next.allowedSkills),
@@ -568,7 +656,7 @@ export class ScopedMissionPaneStore {
         encodeCapabilityList(next.allowedTools), encodeCapabilityList(next.allowedSkills),
         encodePersistedPaneScopes({ coordinationScope: next.scope, executionScope: next.executionScope,
           readOnly: next.readOnly === true, workerIncarnationId: next.workerIncarnationId,
-          authoritySeal: next.authoritySeal, visualTask: next.visualTask }), specId);
+          authoritySeal: next.authoritySeal, visualTask: next.visualTask, workerContinuation: next.workerContinuation }), specId);
       if (update.changes !== 1) {
         throw new ScopedStoreCorruptionError('mission orchestrator pane move');
       }
@@ -606,7 +694,7 @@ export class ScopedMissionPaneStore {
         encodeCapabilityList(previous.allowedTools), encodeCapabilityList(previous.allowedSkills),
         encodePersistedPaneScopes({ coordinationScope: previous.scope, executionScope: previous.executionScope,
           readOnly: previous.readOnly === true, workerIncarnationId: previous.workerIncarnationId,
-          authoritySeal: previous.authoritySeal, visualTask: previous.visualTask }), expected.id,
+          authoritySeal: previous.authoritySeal, visualTask: previous.visualTask, workerContinuation: previous.workerContinuation }), expected.id,
       ).changes === 1;
     })();
     if (changed) this.#binding.emitChange();
@@ -775,7 +863,7 @@ export class ScopedMissionPaneStore {
             readOnly: updated.readOnly === true,
             workerIncarnationId: updated.workerIncarnationId,
             authoritySeal: updated.authoritySeal,
-            visualTask: updated.visualTask,
+            visualTask: updated.visualTask, workerContinuation: updated.workerContinuation,
           }),
           updated.id,
         );
@@ -805,7 +893,7 @@ export class ScopedMissionPaneStore {
       return db.prepare('UPDATE mission_panes SET scope_json = ? WHERE id = ?').run(encodePersistedPaneScopes({
         coordinationScope: this.#binding.scope, executionScope: existing.executionScope,
         readOnly: existing.readOnly === true, workerIncarnationId: existing.workerIncarnationId,
-        authoritySeal: existing.authoritySeal, visualTask: next,
+        authoritySeal: existing.authoritySeal, visualTask: next, workerContinuation: existing.workerContinuation,
       }), existing.id).changes === 1;
     })();
     if (changed) this.#binding.emitChange();
@@ -890,7 +978,7 @@ export class ScopedMissionPaneStore {
           readOnly: updated.readOnly === true,
           workerIncarnationId: updated.workerIncarnationId,
           authoritySeal: updated.authoritySeal,
-          visualTask: updated.visualTask,
+          visualTask: updated.visualTask, workerContinuation: updated.workerContinuation,
         }),
         encodeCapabilityList(updated.allowedTools),
         encodeCapabilityList(updated.allowedSkills),
@@ -980,28 +1068,30 @@ export class ScopedMissionPaneStore {
     let workerIncarnationId: string | undefined;
     let authoritySeal: MissionPaneAuthoritySeal | undefined;
     let visualTask: VisualTaskRequirement | undefined;
+    let workerContinuation: WorkerContinuation | undefined;
     try {
       const raw = JSON.parse(row.scope_json) as unknown;
       const modern = persistedPaneScopesSchema.safeParse(raw);
       if (modern.success) {
         persistedScope = modern.data.coordinationScope;
-        visualTask = modern.data.schemaVersion === 7 ? modern.data.visualTask ?? undefined :
+        workerContinuation = modern.data.schemaVersion === 8 ? modern.data.workerContinuation ?? undefined : undefined;
+        visualTask = modern.data.schemaVersion === 7 || modern.data.schemaVersion === 8 ? modern.data.visualTask ?? undefined :
           modern.data.schemaVersion === 6 && modern.data.visualTask ? { ...modern.data.visualTask,
             id: `legacy-${createHash('sha256').update(row.id).digest('hex')}` } : undefined;
         executionScope = modern.data.executionScope;
         readOnly =
           modern.data.schemaVersion === 3 ||
           modern.data.schemaVersion === 4 ||
-          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6 || modern.data.schemaVersion === 7
+          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6 || modern.data.schemaVersion === 7 || modern.data.schemaVersion === 8
             ? modern.data.readOnly === true
             : false;
         workerIncarnationId =
           modern.data.schemaVersion === 4 ||
-          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6 || modern.data.schemaVersion === 7
+          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6 || modern.data.schemaVersion === 7 || modern.data.schemaVersion === 8
             ? modern.data.workerIncarnationId ?? undefined
             : undefined;
         authoritySeal =
-          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6 || modern.data.schemaVersion === 7
+          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6 || modern.data.schemaVersion === 7 || modern.data.schemaVersion === 8
             ? modern.data.authoritySeal ?? undefined
             : undefined;
       } else {
@@ -1029,6 +1119,7 @@ export class ScopedMissionPaneStore {
 
     return {
       id: row.id,
+      ...(workerContinuation ? { workerContinuation } : {}),
       missionId: row.mission_id,
       adapterId: row.adapter_id,
       model: row.model ?? undefined,

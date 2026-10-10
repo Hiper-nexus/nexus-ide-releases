@@ -8,6 +8,7 @@ import type {
 import { hasCurrentMissionRuntimeCloseVerdict } from "../../shared/mission-recovery-policy";
 import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
 import { getProjectDomainStores } from "./project-domain-store-registry";
+import { bindWorkerContinuationTarget, assertWorkerContinuationTarget, assertWorkerContinuationAccount, workerContinuationPhysicalProof, bindWorkerContinuationSession, authorizeWorkerContinuationBirth } from './mission-pane-resume-ownership';
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import { copyProviderPaneSession } from '../persistence/provider-session-store';
@@ -67,6 +68,7 @@ import { spawnMainOwnedAcpMissionPane } from "./acp-mission-spawn";
 import { issueAgentIdentityBestEffort } from "./agent-identity-spawn";
 
 export interface PaneOrchMeta {
+  workerContinuation?: import('./mission-pane-store').WorkerContinuationRef;
   visualTask?: import('../../shared/orch-types').VisualTaskRequirement;
   /** Main-authored spawner for missionless operator handoffs. */
   operatorParentSessionId?: string;
@@ -107,6 +109,8 @@ export interface PaneOrchMeta {
 }
 
 export interface PaneSpawnOptions {
+  readonly workerContinuation?: import('./mission-pane-store').WorkerContinuationRef;
+  readonly continuationTarget?: { readonly requestId: string; readonly paneId: string; readonly workerIncarnationId: string };
   /** Main-only origin fence; never serialized into pane metadata or renderer requests. */
   assertOriginCurrent?: () => void;
   /** Main-only task verification metadata; not part of the renderer request. */
@@ -338,6 +342,11 @@ export async function fallbackPendingSpawnToMain(
       nativeReadOnly: pending.meta.nativeReadOnly,
       operatorOpened: pending.meta.operatorOpened === true || undefined,
       authoritySeal: pending.meta.authoritySeal,
+      workerContinuation: pending.meta.workerContinuation,
+      ...(pending.meta.workerContinuation && pending.meta.workerIncarnationId ? {
+        continuationTarget: { requestId: pending.request.requestId, paneId: pending.request.paneId,
+          workerIncarnationId: pending.meta.workerIncarnationId },
+      } : {}),
     },
     hooks,
   );
@@ -433,10 +442,16 @@ export function spawnMainOwnedMissionPane(
   coordinateAuthRefresh = false,
   spawnPermitHeld = false,
 ): OrchPaneSpawnResult | Promise<OrchPaneSpawnResult> {
-  const requestId = makeId("orchspawn");
+  const requestId = options.continuationTarget?.requestId ?? makeId("orchspawn");
   try { options.assertOriginCurrent?.(); assertMissionDispatchCurrent(options); }
   catch (error) { return { requestId, ok: false, error: error instanceof Error ? error.message : 'origin pane is stale' }; }
-  const paneId = makeId("pane");
+  const paneId = options.continuationTarget?.paneId ?? makeId("pane");
+  if (options.workerContinuation) {
+    options = { ...options, workerIncarnationId: options.continuationTarget?.workerIncarnationId ?? makeId('workerinc') };
+    if (!options.continuationTarget) bindWorkerContinuationTarget(options.scope, options.workerContinuation!,
+      { requestId, paneId, workerIncarnationId: options.workerIncarnationId! });
+    options = { ...options, continuationTarget: { requestId, paneId, workerIncarnationId: options.workerIncarnationId! } };
+  }
   const operatorChoice = isOperatorChoicePolicy(
     getOrchSettings().squadCliPolicy,
   );
@@ -658,6 +673,12 @@ export function spawnMainOwnedMissionPane(
   if (options.accountId && selectedAccountId !== options.accountId) {
     return { requestId, ok: false, error: "selected account diverges from the authorized account pin" };
   }
+  if (options.workerContinuation) {
+    // F-1151: the same pre-birth account fence as the renderer route; a mismatch
+    // here would otherwise only surface at the post-birth commit.
+    try { assertWorkerContinuationAccount(options.scope, options.workerContinuation, selectedAccountId); }
+    catch (error) { return { requestId, ok: false, error: error instanceof Error ? error.message : String(error) }; }
+  }
   if (coordinateAuthRefresh) {
     const authFile = resolveRotatingAuthFile(adapter.id, prepared.overrides.keyEnv);
     if (authFile) {
@@ -727,6 +748,7 @@ export function spawnMainOwnedMissionPane(
       error: 'resume_context_unavailable: conversa original indisponível; recusando pane sem contexto' };
   }
   const context = Object.freeze({
+    workerContinuation: options.workerContinuation,
     visualTask: visualTaskAtSpawn(options),
     operatorParentSessionId: options.operatorParentSessionId,
     missionId: options.missionId,
@@ -763,9 +785,18 @@ export function spawnMainOwnedMissionPane(
   let reservationFailed = false;
   const overridesForSpawn = {
     ...preparedOverrides,
+    ...(options.workerContinuation ? { onPhysicalTerminationProof: workerContinuationPhysicalProof(options.scope,
+      options.workerContinuation, { requestId, paneId, workerIncarnationId: options.workerIncarnationId! }),
+      onSpawnSessionAllocated: (sessionId: string) => bindWorkerContinuationSession(options.scope, options.workerContinuation!,
+        { requestId, paneId, workerIncarnationId: options.workerIncarnationId! }, sessionId),
+      onNativeBirthAuthorized: () => authorizeWorkerContinuationBirth(options.scope, options.workerContinuation!,
+        { requestId, paneId, workerIncarnationId: options.workerIncarnationId! }),
+    } : {}),
     // This closure remains in Main. Publication transfers dispatch authority
     // to this exact new record; presentation may retire the ended origin.
     assertDeferredSpawnCurrent: () => {
+      if (options.workerContinuation) assertWorkerContinuationTarget(options.scope, options.workerContinuation,
+        { requestId, paneId, workerIncarnationId: options.workerIncarnationId! });
       assertMissionDispatchCurrent(options);
       if (reservationFailed) throw new Error('main-owned spawn reservation failed');
       if (!reservation) options.assertOriginCurrent?.();
@@ -781,6 +812,8 @@ export function spawnMainOwnedMissionPane(
     },
   };
   try {
+    if (options.workerContinuation) assertWorkerContinuationTarget(options.scope, options.workerContinuation,
+      { requestId, paneId, workerIncarnationId: options.workerIncarnationId! });
     options.assertOriginCurrent?.();
     // Best-effort only: vault/keyring must never block the first PTY.
     issueAgentIdentityBestEffort({

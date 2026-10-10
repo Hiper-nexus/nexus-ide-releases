@@ -36,6 +36,7 @@ import {
 } from "./mission-pane-authority";
 import { isOperatorTabResumeTransferSource } from "./operator-tab-mission-resume";
 import { listSquads } from "./squad-store";
+import { assertWorkerContinuationTarget, reconcilePreparedWorkerContinuation } from './mission-pane-resume-ownership';
 import {
   bindSpawnAuthority,
   consumeImmediateSquadSpawnGrant,
@@ -231,8 +232,12 @@ function canonicalizePendingSpawnRequest(
  * processo nascia com sessão nova e ficava com a conta da retomada certa.
  */
 function assertPersistedPaneNotInTabResumeTransfer(
-  persisted: Pick<ScopedMissionPaneSpec, "missionId" | "paneId">,
-): void {
+  persisted: ScopedMissionPaneSpec,
+): ScopedMissionPaneSpec {
+  persisted = reconcilePreparedWorkerContinuation(persisted);
+  if (persisted.workerContinuation && persisted.workerContinuation.state !== 'released') {
+    throw new Error('resume_continuation_owned: este pane é histórico de uma continuação exclusiva; use o pane alvo ou recupere a tentativa existente');
+  }
   if (
     persisted.paneId &&
     isOperatorTabResumeTransferSource(persisted.missionId, persisted.paneId)
@@ -243,7 +248,9 @@ function assertPersistedPaneNotInTabResumeTransfer(
         "não é religado",
     );
   }
+  return persisted;
 }
+
 
 /**
  * Persisted mission panes are also main-owned process envelopes. Recovery can
@@ -543,7 +550,7 @@ export function authorizeMainOwnedAgentSpawn(
         runtimeManager,
         found,
       );
-      assertPersistedPaneNotInTabResumeTransfer(persistedPane);
+      persistedPane = assertPersistedPaneNotInTabResumeTransfer(persistedPane);
       const livenessPaneId = persistedPane.paneId ?? canonicalRequest.paneId;
       canonicalRequest = canonicalizePersistedSpawnRequest(
         canonicalRequest,
@@ -692,6 +699,12 @@ export function assertMainOwnedAgentSpawnGrantActive(input: {
   /** F-721: a retomada da aba pode ter começado durante a preparação. */
   readonly persistedPane?: ScopedMissionPaneSpec | null;
   readonly runtimeManager?: ProjectRuntimeManager | null;
+  /**
+   * F-1151: set only by the native-readiness birth fence. The single-use
+   * renderer grant may already be consumed by this exact allocated session
+   * before the host post; every other authority check stays unchanged.
+   */
+  readonly deferredSessionId?: string;
 }): void {
   const assertMissionStillDispatchable = (missionId: string, scope: ScopedMissionPaneSpec['scope']) => {
     if (!input.runtimeManager) throw new Error('mission runtime authority unavailable');
@@ -705,14 +718,21 @@ export function assertMainOwnedAgentSpawnGrantActive(input: {
     assertPersistedPaneNotInTabResumeTransfer(pane);
     requireLiveRendererWorkspaceScope(input.owner, pane.scope);
     if (!input.runtimeManager || !pane.paneId) throw new Error('persisted pane runtime authority unavailable');
-    const current = createScopedMissionPaneStore(input.runtimeManager, pane.scope).findByPaneId(pane.paneId);
+    let current = createScopedMissionPaneStore(input.runtimeManager, pane.scope).findByPaneId(pane.paneId);
+    if (current) current = assertPersistedPaneNotInTabResumeTransfer(current);
     if (!isDeepStrictEqual(current, pane)) throw new Error('persisted mission pane authority changed during preparation');
     assertMissionStillDispatchable(pane.missionId, pane.scope);
     assertMissionSpawnAuthorityCurrent({ missionId: pane.missionId, scope: pane.scope,
       contextRevision: pane.authoritySeal?.contextRevision, authoritySeal: pane.authoritySeal });
   }
   if (input.pending && input.requestId) {
-    assertPendingSpawnGrantActive(input.requestId, input.owner);
+    if (input.deferredSessionId) assertPendingSpawnGrantActive(input.requestId, input.owner, input.deferredSessionId);
+    else assertPendingSpawnGrantActive(input.requestId, input.owner);
+    if (input.pending.workerContinuation && input.pending.scope && input.pending.sealedRequest && input.pending.workerIncarnationId) {
+      assertWorkerContinuationTarget(input.pending.scope, input.pending.workerContinuation, {
+        requestId: input.requestId, paneId: input.pending.sealedRequest.paneId,
+        workerIncarnationId: input.pending.workerIncarnationId });
+    }
     if (
       input.pending.missionId &&
       (input.pending.role === "orchestrator" ||
@@ -729,7 +749,8 @@ export function assertMainOwnedAgentSpawnGrantActive(input: {
     }
   }
   if (input.recovery && input.requestId) {
-    assertPendingRecoverySpawnGrantActive(input.requestId, input.owner);
+    if (input.deferredSessionId) assertPendingRecoverySpawnGrantActive(input.requestId, input.owner, input.deferredSessionId);
+    else assertPendingRecoverySpawnGrantActive(input.requestId, input.owner);
     assertMissionStillDispatchable(input.recovery.request.missionId, input.recovery.scope);
   }
 }

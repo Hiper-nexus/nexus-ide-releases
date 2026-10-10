@@ -35,6 +35,8 @@ const stubs = vi.hoisted(() => ({
     (entry: { sessionId: string; sequence: number }) => void
   >,
   missionPanesRecord: vi.fn(),
+  continuationCommit: vi.fn(),
+  continuationBirth: vi.fn((..._args: unknown[]): 'authorized' | 'waiting' | 'gone' => { throw new Error('the ordinary path must not consult the continuation birth state'); }),
   physicalSessionInfo: vi.fn<() => unknown>(() => null),
   acpSessionInfo: vi.fn<() => unknown>(() => null),
   taskDispatchesList: vi.fn((): Array<unknown> => []),
@@ -249,6 +251,11 @@ vi.mock('../pty/pre-spawn-probe', async original => ({
   assertPreSpawnProbe: stubs.preSpawnProbe,
 }));
 vi.mock('./mission-pane-store', () => ({ recordMissionPane: vi.fn() }));
+vi.mock('./mission-pane-resume-ownership', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./mission-pane-resume-ownership')>()),
+  commitWorkerContinuation: stubs.continuationCommit,
+  workerContinuationBirthState: stubs.continuationBirth,
+}));
 vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: vi.fn(() => ({
     missions: { get: stubs.missionGet },
@@ -289,6 +296,7 @@ import { PreSpawnProbeError } from '../pty/pre-spawn-probe';
 import { getPaneAuthzInfo, pendingSpawnAttemptSession } from './pane-registry';
 import { onWorkerSpawnFailed } from './spawn-fail-events';
 import { adapterCircuitBreakers } from './circuit-breaker';
+import { ORCH_SPAWN_GRANT_TTL_MS } from './orch-spawn-grant-recovery';
 import {
   getPaneStartWatch,
   resetPaneStartWatchdogForTests,
@@ -357,6 +365,8 @@ const taskExecutionScope = {
 describe('agent pane workspace confinement', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    stubs.continuationCommit.mockReset();
+    stubs.continuationBirth.mockReset().mockImplementation(() => { throw new Error('the ordinary path must not consult the continuation birth state'); });
     stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
     stubs.acpSessionInfo.mockReset().mockReturnValue(null);
     stubs.stateTaps.length = 0;
@@ -387,6 +397,14 @@ describe('agent pane workspace confinement', () => {
       executionScope: scope,
       scope,
     });
+  });
+
+  it('F-1151: continuation preparation keeps the original visual assignment identity', async () => {
+    const visualTask = { id: 'original-visual-assignment', since: 123 };
+    await spawnPaneAndMaybePrompt({ adapterId: 'codex', scope, resume: true,
+      resumeFromPaneId: 'closed-original', visualTask,
+      workerContinuation: { sourcePaneId: 'closed-original', attemptId: 'owned-attempt' } });
+    expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(expect.objectContaining({ visualTask }));
   });
 
   it('F-736: PTY gravável não fecha o disjuntor do adapter (não prova que a CLI funciona)', async () => {
@@ -2180,6 +2198,133 @@ describe('agent prompt injection', () => {
 
       expect(stubs.missionPanesRecord).not.toHaveBeenCalled();
       await expect(outcomes[0]).resolves.toBe('no-session');
+    });
+
+    describe('F-1151: a worker continuation records only after its exact attempt reached the host post', () => {
+      const ref = { sourcePaneId: 'closed-original', attemptId: 'owned-attempt' };
+      const born = { ...physical, workerIncarnationId: 'incarnation-new' };
+      beforeEach(() => { stubs.continuationCommit.mockReset(); stubs.continuationBirth.mockReset().mockReturnValue('authorized'); });
+
+      it('pending ACK: a visible but unborn session is not committed; the commit follows the authorization once', async () => {
+        const outcomes: Array<Promise<string>> = [];
+        stubs.requestPaneSpawn.mockResolvedValueOnce({ requestId: 'req-w', ok: true, pending: true, paneId: 'pane-w', sessionId: null } as never);
+        await expect(spawnPaneAndMaybePrompt(
+          { adapterId: 'codex', missionId: 'm1', role: 'worker', scope, resume: true, resumeFromPaneId: 'closed-original', workerContinuation: ref },
+          { onPendingMissionPane: (recorded) => { outcomes.push(recorded); } },
+        )).rejects.toThrow();
+        stubs.continuationBirth.mockReturnValue('waiting');
+        bind(born);
+        await vi.advanceTimersByTimeAsync(5_000);
+        // Native readiness still owns the host post: session visible, nothing committed, no rebind.
+        expect(stubs.continuationCommit).not.toHaveBeenCalled();
+        stubs.continuationBirth.mockReturnValue('authorized');
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(stubs.continuationCommit).toHaveBeenCalledTimes(1);
+        expect(stubs.continuationBirth).toHaveBeenCalledWith(scope, ref);
+        expect(stubs.continuationCommit).toHaveBeenCalledWith(scope, ref, expect.objectContaining({ paneId: 'pane-w', workerIncarnationId: 'incarnation-new' }), 'session-w');
+        await expect(outcomes[0]).resolves.toBe('recorded');
+      });
+
+      it('pending ACK: a reservation released before the birth never commits and reports no session', async () => {
+        const outcomes: Array<Promise<string>> = [];
+        stubs.requestPaneSpawn.mockResolvedValueOnce({ requestId: 'req-w', ok: true, pending: true, paneId: 'pane-w', sessionId: null } as never);
+        await expect(spawnPaneAndMaybePrompt(
+          { adapterId: 'codex', missionId: 'm1', role: 'worker', scope, resume: true, resumeFromPaneId: 'closed-original', workerContinuation: ref },
+          { onPendingMissionPane: (recorded) => { outcomes.push(recorded); } },
+        )).rejects.toThrow();
+        stubs.continuationBirth.mockReturnValue('gone');
+        bind(born);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(stubs.continuationCommit).not.toHaveBeenCalled();
+        await expect(outcomes[0]).resolves.toBe('no-session');
+      });
+
+      it('synchronous result: waits for the authorization before committing, then commits exactly once', async () => {
+        stubs.physicalSessionInfo.mockImplementation(((id: string) => id === 'session-w' ? born : null) as never);
+        stubs.requestPaneSpawn.mockResolvedValueOnce({ ok: true, paneId: 'pane-w', sessionId: 'session-w' } as never);
+        stubs.continuationBirth.mockReturnValue('waiting');
+        const spawning = spawnPaneAndMaybePrompt({ adapterId: 'codex', missionId: 'm1', role: 'worker', scope,
+          resume: true, resumeFromPaneId: 'closed-original', workerContinuation: ref });
+        let settled = false;
+        void spawning.then(() => { settled = true; }, () => { settled = true; });
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(settled).toBe(false);
+        expect(stubs.continuationCommit).not.toHaveBeenCalled();
+        stubs.continuationBirth.mockReturnValue('authorized');
+        await vi.advanceTimersByTimeAsync(300);
+        await expect(spawning).resolves.toMatchObject({ paneId: 'pane-w', sessionId: 'session-w' });
+        expect(stubs.continuationCommit).toHaveBeenCalledTimes(1);
+        expect(stubs.continuationBirth).toHaveBeenCalledWith(scope, ref);
+        expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+      });
+
+      it('synchronous result: a reservation released while waiting fails the call without committing', async () => {
+        stubs.physicalSessionInfo.mockImplementation(((id: string) => id === 'session-w' ? born : null) as never);
+        stubs.requestPaneSpawn.mockResolvedValueOnce({ ok: true, paneId: 'pane-w', sessionId: 'session-w' } as never);
+        stubs.continuationBirth.mockReturnValue('waiting');
+        const spawning = spawnPaneAndMaybePrompt({ adapterId: 'codex', missionId: 'm1', role: 'worker', scope,
+          resume: true, resumeFromPaneId: 'closed-original', workerContinuation: ref });
+        const rejected = expect(spawning).rejects.toThrow(/liberada antes do nascimento/);
+        await vi.advanceTimersByTimeAsync(500);
+        stubs.continuationBirth.mockReturnValue('gone');
+        await vi.advanceTimersByTimeAsync(500);
+        await rejected;
+        expect(stubs.continuationCommit).not.toHaveBeenCalled();
+        // Released before any birth: no child can ever exist, so there is nothing to close.
+        expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+      });
+
+      it('synchronous result: an aborted call closes the pane (the readiness could still post) and never commits', async () => {
+        stubs.physicalSessionInfo.mockImplementation(((id: string) => id === 'session-w' ? born : null) as never);
+        stubs.requestPaneSpawn.mockResolvedValueOnce({ ok: true, paneId: 'pane-w', sessionId: 'session-w' } as never);
+        stubs.continuationBirth.mockReturnValue('waiting');
+        const abort = new AbortController();
+        const spawning = spawnPaneAndMaybePrompt({ adapterId: 'codex', missionId: 'm1', role: 'worker', scope,
+          resume: true, resumeFromPaneId: 'closed-original', workerContinuation: ref },
+        { invocation: { signal: abort.signal } } as never);
+        const rejected = expect(spawning).rejects.toThrow(/session_authority_revoked/);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+        abort.abort();
+        await vi.advanceTimersByTimeAsync(200);
+        await rejected;
+        expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-w');
+        expect(stubs.continuationCommit).not.toHaveBeenCalled();
+      });
+
+      it('synchronous result: an exhausted wait closes the pane and never commits', async () => {
+        stubs.physicalSessionInfo.mockImplementation(((id: string) => id === 'session-w' ? born : null) as never);
+        stubs.requestPaneSpawn.mockResolvedValueOnce({ ok: true, paneId: 'pane-w', sessionId: 'session-w' } as never);
+        stubs.continuationBirth.mockReturnValue('waiting');
+        const spawning = spawnPaneAndMaybePrompt({ adapterId: 'codex', missionId: 'm1', role: 'worker', scope,
+          resume: true, resumeFromPaneId: 'closed-original', workerContinuation: ref });
+        const rejected = expect(spawning).rejects.toThrow(/não foi autorizado a tempo/);
+        await vi.advanceTimersByTimeAsync(ORCH_SPAWN_GRANT_TTL_MS + 1_000);
+        await rejected;
+        expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-w');
+        expect(stubs.continuationCommit).not.toHaveBeenCalled();
+      });
+
+      it('the ordinary mission worker never consults the continuation birth state (pending ACK and synchronous)', async () => {
+        // Default stub THROWS if consulted; a mission worker without `workerContinuation` must still be recorded.
+        const outcomes: Array<Promise<string>> = [];
+        stubs.requestPaneSpawn.mockResolvedValueOnce({ requestId: 'req-w', ok: true, pending: true, paneId: 'pane-w', sessionId: null } as never);
+        await expect(spawnPaneAndMaybePrompt({ adapterId: 'codex', missionId: 'm1', role: 'worker', scope },
+          { onPendingMissionPane: (recorded) => { outcomes.push(recorded); } })).rejects.toThrow();
+        bind(born);
+        await vi.advanceTimersByTimeAsync(1_000);
+        await expect(outcomes[0]).resolves.toBe('recorded');
+        expect(stubs.missionPanesRecord).toHaveBeenCalledTimes(1);
+        stubs.missionPanesRecord.mockClear();
+        stubs.physicalSessionInfo.mockImplementation(((id: string) => id === 'session-w' ? born : null) as never);
+        stubs.requestPaneSpawn.mockResolvedValueOnce({ ok: true, paneId: 'pane-w', sessionId: 'session-w' } as never);
+        const sync = spawnPaneAndMaybePrompt({ adapterId: 'codex', missionId: 'm1', role: 'worker', scope });
+        await vi.advanceTimersByTimeAsync(300);
+        await expect(sync).resolves.toMatchObject({ paneId: 'pane-w' });
+        expect(stubs.missionPanesRecord).toHaveBeenCalledTimes(1);
+        expect(stubs.continuationBirth).not.toHaveBeenCalled();
+        expect(stubs.continuationCommit).not.toHaveBeenCalled();
+      });
     });
 
     it('pane fora de missão ou transitório não vira composição de missão', async () => {

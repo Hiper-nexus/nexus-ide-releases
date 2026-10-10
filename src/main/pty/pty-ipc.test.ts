@@ -169,6 +169,28 @@ vi.mock("../orch/pane-registry", () => ({
   hasLivePaneSession: () => false,
 }));
 
+// F-1151: durable ownership is proved by its own suites; here only the WIRING of
+// pty-ipc to the exact reserved tuple is observed.
+const continuationDeps = vi.hoisted(() => ({
+  bindWorkerContinuationSession: vi.fn(),
+  authorizeWorkerContinuationBirth: vi.fn(),
+  assertWorkerContinuationTarget: vi.fn(),
+  assertWorkerContinuationAccount: vi.fn(),
+  physicalProofFactory: vi.fn(),
+  physicalProof: vi.fn(),
+}));
+vi.mock("../orch/mission-pane-resume-ownership", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../orch/mission-pane-resume-ownership")>()),
+  bindWorkerContinuationSession: continuationDeps.bindWorkerContinuationSession,
+  authorizeWorkerContinuationBirth: continuationDeps.authorizeWorkerContinuationBirth,
+  assertWorkerContinuationTarget: continuationDeps.assertWorkerContinuationTarget,
+  assertWorkerContinuationAccount: continuationDeps.assertWorkerContinuationAccount,
+  workerContinuationPhysicalProof: (...args: unknown[]) => {
+    continuationDeps.physicalProofFactory(...args);
+    return continuationDeps.physicalProof;
+  },
+}));
+
 vi.mock("../orch/mission-pane-store", () => ({
   createScopedMissionPaneStore: authorityDeps.createScopedMissionPaneStore,
 }));
@@ -611,6 +633,56 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(result).toEqual({ ok: true, sessionId: 'pty-created' });
     expect(providerDeps.prepareProviderSpawn.mock.calls[0]?.[1])
       .not.toHaveProperty('allowNativeAuthAttempt');
+  });
+
+  it('F-1151: a pending worker continuation wires account, deferred fence, session binding, birth authorization and raw proof to its exact tuple', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: { selectedAccountId: 'sealed-account' } });
+    const ref = { sourcePaneId: 'pane-original', attemptId: 'workerresume-1' };
+    const pending = { ...sealedPendingSpawn(), workerIncarnationId: 'incarnation-new', workerContinuation: ref };
+    authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce('/workspace/a/packages/api');
+    const sender = { id: 7 };
+    const result = await ipcDeps.handlers.get(PTY_CHANNELS.spawn)?.({ sender },
+      { ...pending.sealedRequest, kind: 'cli-agent', orchRequestId: 'orchspawn-1', cols: 100, rows: 30 });
+    expect(result).toMatchObject({ ok: true, sessionId: 'pty-created' });
+    const tuple = { paneId: 'pane-main-sealed', requestId: 'orchspawn-1', workerIncarnationId: 'incarnation-new' };
+    // The account Main will physically use is fenced BEFORE any child exists.
+    expect(continuationDeps.assertWorkerContinuationAccount).toHaveBeenCalledWith(authorityDeps.scope, ref, 'sealed-account');
+    expect(continuationDeps.assertWorkerContinuationAccount.mock.invocationCallOrder[0])
+      .toBeLessThan(ptyDeps.spawnAgentSession.mock.invocationCallOrder[0]!);
+    const overrides = (ptyDeps.spawnAgentSession.mock.calls.at(-1) as unknown as unknown[])[3] as {
+      assertDeferredSpawnCurrent: (sessionId: string) => void; onSpawnSessionAllocated: (sessionId: string) => void;
+      onNativeBirthAuthorized: () => void; onPhysicalTerminationProof: unknown;
+    };
+    expect(continuationDeps.physicalProofFactory).toHaveBeenCalledWith(authorityDeps.scope, ref, tuple);
+    expect(overrides.onPhysicalTerminationProof).toBe(continuationDeps.physicalProof);
+    overrides.onSpawnSessionAllocated('pty-created');
+    expect(continuationDeps.bindWorkerContinuationSession).toHaveBeenCalledWith(authorityDeps.scope, ref, tuple, 'pty-created');
+    overrides.onNativeBirthAuthorized();
+    expect(continuationDeps.authorizeWorkerContinuationBirth).toHaveBeenCalledWith(authorityDeps.scope, ref, tuple);
+    // The deferred fence is told WHICH session may still be born after the grant was consumed.
+    authorityDeps.assertPendingSpawnGrantActive.mockClear();
+    continuationDeps.assertWorkerContinuationTarget.mockClear();
+    overrides.assertDeferredSpawnCurrent('pty-created');
+    expect(authorityDeps.assertPendingSpawnGrantActive).toHaveBeenCalledWith('orchspawn-1', sender, 'pty-created');
+    expect(continuationDeps.assertWorkerContinuationTarget).toHaveBeenCalledWith(authorityDeps.scope, ref, tuple);
+  });
+
+  it('F-1151: a physical account that differs from the original pin refuses the continuation before any spawn', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: { selectedAccountId: 'sealed-account' } });
+    continuationDeps.assertWorkerContinuationAccount.mockImplementationOnce(() => {
+      throw new Error('resume_authority_changed: a conta selecionada difere da conta original do worker');
+    });
+    const pending = { ...sealedPendingSpawn(), workerIncarnationId: 'incarnation-new',
+      workerContinuation: { sourcePaneId: 'pane-original', attemptId: 'workerresume-1' } };
+    authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce('/workspace/a/packages/api');
+    const result = await ipcDeps.handlers.get(PTY_CHANNELS.spawn)?.({ sender: { id: 7 } },
+      { ...pending.sealedRequest, kind: 'cli-agent', orchRequestId: 'orchspawn-1', cols: 100, rows: 30 });
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/conta selecionada/) });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
   it("rejects renderer cwd outside the main-authorized project", () => {

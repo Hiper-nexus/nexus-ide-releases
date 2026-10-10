@@ -292,6 +292,21 @@ como o usuário, então o GitHub sozinho não é a raiz de confiança.
 
 Additive SQLite migrations only. Feature flags kill-switch new paths.
 
+F-1151 (worker continuation): the `mission_panes` scope envelope is written as
+schemaVersion 8 (adds the nullable `workerContinuation` claim). The decoder still
+reads V2..V7 and never rewrites a row on read. Rollback note: a build that predates
+V8 treats a V8 row as corrupt and fails closed (`ScopedStoreCorruptionError`, the
+same precedence as the V7 bump), so a downgrade after new panes were recorded makes
+those rows unreadable until the newer build returns. There is no runtime kill-switch
+for the explicit-resume path: it is reachable only through `nexus_pane_spawn({resume})`
+of a closed worker. A refusal BEFORE the reservation (`resume_source_live`, an
+unrebindable dispatch) leaves the original worker restorable, and so does any failure
+proved to happen before a child could exist, including a mismatching account or a
+dispatch revised before the host post (the exact attempt is cancelled by CAS). Once a child may exist, `resume_continuation_owned` is the
+intended answer: the source stays owned until the full process tree is proved gone.
+A claim whose birth may have happened without a persisted outcome is never
+auto-released (no TTL, PID or boolean is proof); see F-1153.
+
 ## Metrics
 
 Secrets redacted count; denied path escapes; MCP denials.

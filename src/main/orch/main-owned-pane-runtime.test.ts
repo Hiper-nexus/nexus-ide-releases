@@ -19,6 +19,9 @@ const deps = vi.hoisted(() => ({
   liveClaudeAccounts: vi.fn(() => [] as string[]),
   settle: vi.fn<(adapter: unknown) => Promise<void> | null | undefined>(),
   copyConversation: vi.fn(() => true),
+  continuationBind: vi.fn(),
+  continuationAssert: vi.fn(),
+  continuationAccount: vi.fn(),
 }));
 
 vi.mock('../adapters/adapter-registry', () => ({
@@ -39,6 +42,11 @@ vi.mock('../persistence/provider-config-store', () => ({
 vi.mock('../adapters/managed-auth-spawn-gate', async (importOriginal) => ({
   ...await importOriginal<typeof import('../adapters/managed-auth-spawn-gate')>(),
   waitForRotatingAuthSpawnGate: deps.gate,
+}));
+vi.mock('./mission-pane-resume-ownership', () => ({
+  bindWorkerContinuationTarget: deps.continuationBind, assertWorkerContinuationTarget: deps.continuationAssert,
+  assertWorkerContinuationAccount: deps.continuationAccount,
+  workerContinuationPhysicalProof: () => vi.fn(), bindWorkerContinuationSession: vi.fn(), authorizeWorkerContinuationBirth: vi.fn(),
 }));
 vi.mock('./codex-cli-version', () => ({ settleCodexCliVersionForSpawn: deps.settle }));
 vi.mock('../adapters/managed-credentials', async (importOriginal) => ({
@@ -107,6 +115,40 @@ describe('exact headless mission resume', () => {
     expect(call[2].assertDeferredSpawnCurrent).toBeTypeOf('function');
     return call[2].assertDeferredSpawnCurrent!;
   }
+
+  it('F-1151: rotating auth wait reentry keeps the already bound continuation tuple', async () => {
+    const continuation = { sourcePaneId: 'closed-original', attemptId: 'exact-attempt' };
+    deps.continuationBind.mockImplementationOnce(() => {}).mockImplementation(() => {
+      throw new Error('continuation already bound');
+    });
+    const result = await spawnMainOwnedMissionPaneAsync({ ...options, workerContinuation: continuation,
+      resume: true, resumeFromPaneId: continuation.sourcePaneId }, hooks);
+    expect(result.ok).toBe(true);
+    expect(deps.continuationBind).toHaveBeenCalledTimes(1);
+    const bound = deps.continuationBind.mock.calls[0][2];
+    expect(result).toMatchObject({ requestId: bound.requestId, paneId: bound.paneId });
+    expect(deps.continuationAssert).toHaveBeenCalledWith(options.scope, continuation, bound);
+    deleteMainOwnedPane(result.paneId!);
+  });
+
+  it('F-1151: the selected physical account is fenced against the original pin before any headless child exists', async () => {
+    const continuation = { sourcePaneId: 'closed-original', attemptId: 'exact-attempt' };
+    const resumed = { ...options, workerContinuation: continuation, resume: true, resumeFromPaneId: continuation.sourcePaneId };
+    deps.continuationAccount.mockClear();
+    // The account Main will physically use is what the fence receives, not the (absent) request pin.
+    deps.prepare.mockReturnValue({ ok: true, overrides: { ...overrides, selectedAccountId: 'account-selected' } });
+    await spawnMainOwnedMissionPaneAsync(resumed, hooks).then(result => deleteMainOwnedPane(result.paneId!));
+    // Idempotent read-only fence: it also runs again on the rotating-auth re-entry.
+    expect(deps.continuationAccount).toHaveBeenCalled();
+    expect(deps.continuationAccount.mock.calls.every(call => call[0] === options.scope && call[1] === continuation && call[2] === 'account-selected')).toBe(true);
+    deps.spawn.mockClear();
+    deps.continuationAccount.mockImplementationOnce(() => {
+      throw new Error('resume_authority_changed: a conta selecionada difere da conta original do worker');
+    });
+    const refused = await spawnMainOwnedMissionPaneAsync(resumed, hooks);
+    expect(refused).toMatchObject({ ok: false, error: expect.stringMatching(/conta selecionada/) });
+    expect(deps.spawn).not.toHaveBeenCalled();
+  });
 
   it('accepts only the exact Main reservation after a deferred spawn handle is published', async () => {
     const result = await spawnMainOwnedMissionPaneAsync(options, hooks);

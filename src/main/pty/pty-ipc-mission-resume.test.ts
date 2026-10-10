@@ -397,6 +397,47 @@ describe("registerPtyIpc account fail-fast", () => {
     configurePtyProjectRuntimeManager({} as never);
     registerPtyIpc();
   });
+  it('F-1151: persisted restore installs its final deferred source fence before renderer synchronization', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValue({ ok: true, overrides: {} });
+    const persisted = { id: 'original-record', missionId: 'mission-a', adapterId: 'claude',
+      paneId: 'original-pane', role: 'worker', workerIncarnationId: 'original-incarnation',
+      cwd: '/workspace/a', scope: authorityDeps.scope, authoritySeal: authoritySealFor(), createdAt: 1 };
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    const result = await ipcDeps.handlers.get(PTY_CHANNELS.spawn)?.({ sender: { id: 7 } },
+      { kind: 'cli-agent', adapterId: 'claude', paneId: persisted.paneId, missionId: persisted.missionId,
+        cwd: persisted.cwd, cols: 100, rows: 30, resume: true });
+    expect(result).toMatchObject({ ok: true });
+    const call = ptyDeps.spawnAgentSession.mock.calls.at(-1) as unknown as [unknown, unknown, unknown,
+      { assertDeferredSpawnCurrent?: () => void }];
+    expect(call[3].assertDeferredSpawnCurrent).toBeTypeOf('function');
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue({ ...persisted,
+      workerContinuation: { state: 'bound', childPossible: true } });
+    expect(() => call[3].assertDeferredSpawnCurrent!()).toThrow(/resume_continuation_owned/);
+  });
+
+  it('F-1151: a recovery restore of a persisted pane tells its deferred birth fence WHICH session may still be born', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValue({ ok: true, overrides: {} });
+    const persisted = { id: 'orch-record', missionId: 'mission-a', adapterId: 'claude', model: 'm', accountId: 'a', effort: 'high',
+      paneId: 'orch-pane', role: 'orchestrator' as const, cwd: '/workspace/a', scope: authorityDeps.scope,
+      authoritySeal: authoritySealFor(), createdAt: 1 };
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    const recovery = { scope: authorityDeps.scope, request: { requestId: 'orchrecover-1', missionId: 'mission-a', paneId: 'orch-pane',
+      role: 'orchestrator' as const, recap: 'continue', pane: { adapterId: 'claude', model: 'm', accountId: 'a', effort: 'high', cwd: '/workspace/a',
+        title: 'Orchestrator', role: 'orchestrator' as const } } };
+    authorityDeps.claimPendingRecoverySpawnMeta.mockReturnValueOnce(recovery);
+    const sender = { id: 7 };
+    const result = await ipcDeps.handlers.get(PTY_CHANNELS.spawn)?.({ sender },
+      { kind: 'cli-agent', adapterId: 'claude', model: 'm', accountId: 'a', effort: 'high', paneId: 'orch-pane', missionId: 'mission-a',
+        cwd: '/workspace/a', orchRequestId: 'orchrecover-1', cols: 100, rows: 30, resume: true });
+    expect(result).toMatchObject({ ok: true });
+    const overrides = (ptyDeps.spawnAgentSession.mock.calls.at(-1) as unknown as unknown[])[3] as { assertDeferredSpawnCurrent: (sessionId: string) => void };
+    authorityDeps.assertPendingRecoverySpawnGrantActive.mockClear();
+    overrides.assertDeferredSpawnCurrent('pty-created');
+    expect(authorityDeps.assertPendingRecoverySpawnGrantActive).toHaveBeenCalledWith('orchrecover-1', sender, 'pty-created');
+  });
+
   it.each([
     { mode: "operator-choice" as const, isolatedHome: false },
     { mode: "governed" as const, isolatedHome: true },

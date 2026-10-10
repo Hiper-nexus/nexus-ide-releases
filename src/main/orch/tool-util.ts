@@ -1,4 +1,5 @@
 import type { SystemInputWriter } from './operator-input-receipts';
+import { commitWorkerContinuation, workerContinuationBirthState, type WorkerContinuationBirthState } from './mission-pane-resume-ownership';
 import { createVisualTaskRequirement, visualTaskRequirement } from './visual-handoff-gate';
 import { assertLicensedAgentCapacity } from '../license-enforcement';
 import { licenseErrorFrom } from '../../shared/license-errors';
@@ -1359,6 +1360,7 @@ export async function withProjectContextBlocksAsync(
 }
 
 export interface SpawnToolOptions {
+  workerContinuation?: import('./mission-pane-store').WorkerContinuationRef;
   visualTask?: import('../../shared/orch-types').VisualTaskRequirement;
   adapterId: string;
   /** Origem da rota (A, 25/09) exibida no cabeçalho do pane; nunca autoridade. */
@@ -1849,8 +1851,9 @@ export async function spawnPaneAndMaybePrompt(
   // pty-manager's user-shell fallback to HOME.
   const safeOptions: SpawnToolOptions = {
     ...options,
-    visualTask: options.role === 'orchestrator' ? undefined : options.visualTask
-      ? createVisualTaskRequirement() : visualTaskRequirement(options.memoryQuery ?? options.prompt),
+    visualTask: options.role === 'orchestrator' ? undefined : options.workerContinuation
+      ? options.visualTask : options.visualTask
+        ? createVisualTaskRequirement() : visualTaskRequirement(options.memoryQuery ?? options.prompt),
     model: effectiveModel,
     ...(initialPrompt === undefined ? {} : { initialPrompt }),
     // The durable pane seal is the authoritative mission revision. Main-owned
@@ -1957,6 +1960,9 @@ export async function spawnPaneAndMaybePrompt(
         paneId: pane.paneId,
         sessionId,
       }),
+      recordOptions.workerContinuation
+        ? () => workerContinuationBirthState(recordOptions.scope, recordOptions.workerContinuation!)
+        : undefined,
     );
     try {
       hooks.onPendingMissionPane?.(recorded);
@@ -2053,6 +2059,22 @@ export async function spawnPaneAndMaybePrompt(
   // Remember the mission's composition so it can be reopened from history.
   if (options.missionId && options.transient !== true) {
     assertMcpInvocationCurrent(hooks.invocation);
+    // F-1151: a continuation target becomes durable only once its exact attempt
+    // reached the host post; a native readiness can outlive the session being visible.
+    if (options.workerContinuation) {
+      let birth: 'authorized' | 'gone';
+      try {
+        birth = await awaitWorkerContinuationBirth(options, hooks.invocation);
+      } catch (error) {
+        // Giving up while the readiness can still post would leave a live worker with no
+        // durable row: close the pane so the full physical proof releases the source.
+        try { await requestPaneClose(result.paneId); } catch { /* the original abort/deadline matters more */ }
+        throw error;
+      }
+      if (birth === 'gone') {
+        throw new Error('resume_authority_changed: a continuação foi liberada antes do nascimento do processo');
+      }
+    }
     recordSpawnedMissionPane(options, safeOptions, {
       missionId: options.missionId,
       model: effectiveModel,
@@ -2151,6 +2173,31 @@ export async function spawnPaneAndMaybePrompt(
   return { paneId: result.paneId, sessionId: result.sessionId };
 }
 
+const WORKER_CONTINUATION_BIRTH_POLL_MS = 100;
+
+/**
+ * F-1151: the synchronous result can arrive while the native readiness still owns
+ * the host post. Wait (bounded, abortable) until the exact attempt authorized the
+ * birth; a released reservation means no child will ever exist for it.
+ */
+async function awaitWorkerContinuationBirth(
+  options: SpawnToolOptions,
+  invocation: Parameters<typeof assertMcpInvocationCurrent>[0],
+): Promise<'authorized' | 'gone'> {
+  const deadline = Date.now() + ORCH_SPAWN_GRANT_TTL_MS;
+  for (;;) {
+    const state = workerContinuationBirthState(options.scope, options.workerContinuation!);
+    // `gone`: the reservation was released, so no child can ever appear for it.
+    if (state === 'authorized' || state === 'gone') return state;
+    // Abort or deadline: the readiness may STILL end in a birth, so the caller must close the pane.
+    assertMcpInvocationCurrent(invocation);
+    if (Date.now() >= deadline) {
+      throw new Error('resume_authority_changed: o nascimento do processo não foi autorizado a tempo');
+    }
+    await delay(WORKER_CONTINUATION_BIRTH_POLL_MS);
+  }
+}
+
 /**
  * Grava a composição da missão (reopen do histórico, contagem de maxWorkers,
  * grafo do Quadro) com a seleção FÍSICA do Main — nunca a resposta do
@@ -2180,7 +2227,7 @@ function recordSpawnedMissionPane(
   )) {
     throw new Error('physical pane account authority does not match the spawned mission pane');
   }
-  getProjectDomainStores(options.scope).missionPanes.record({
+  const record = {
     missionId: pane.missionId,
     adapterId: options.adapterId,
     model: pane.model,
@@ -2191,8 +2238,8 @@ function recordSpawnedMissionPane(
     executionScope: safeOptions.executionScope,
     title: options.title,
     agentName: options.agentName,
-    workerIncarnationId: options.workerIncarnationId,
-    role: options.role ?? 'worker',
+    workerIncarnationId: physical?.workerIncarnationId ?? options.workerIncarnationId,
+    role: options.role ?? 'worker' as const,
     allowedTools: options.allowedTools,
     allowedSkills: options.allowedSkills,
     readOnly: options.readOnly,
@@ -2202,7 +2249,11 @@ function recordSpawnedMissionPane(
     // Chave do resume direcionado: o reopen reusa este paneId para o CLI
     // voltar à MESMA conversa (não à mais recente do cwd).
     paneId: pane.paneId,
-  });
+  };
+  if (options.workerContinuation) {
+    if (!physical || !record.workerIncarnationId) throw new Error('resume_physical_unproved: a continuação ainda não possui identidade física provada');
+    commitWorkerContinuation(options.scope, options.workerContinuation, record, pane.sessionId);
+  } else getProjectDomainStores(options.scope).missionPanes.record(record);
 }
 
 const PENDING_SPAWN_SESSION_POLL_MS = 500;
@@ -2212,11 +2263,14 @@ const PENDING_SPAWN_SESSION_POLL_MS = 500;
  * nunca "a sessão atual do paneId") e grava a linha com a conferência física.
  * Como a entrega adiada do brief, não depende da autoridade da requisição — a
  * tool já respondeu; vale o que o Main vinculou. Só leitura de mapas em
- * memória a cada 500 ms: nada síncrono pesado no Main.
+ * memória a cada 500 ms (uma continuação de worker também lê o claim durável,
+ * uma consulta indexada por pane): nada síncrono pesado no Main.
  */
-async function recordMissionPaneAfterPendingSpawn(
+export async function recordMissionPaneAfterPendingSpawn(
   attempt: { readonly requestId: string; readonly paneId: string },
   record: (sessionId: string) => void,
+  /** F-1151: a worker continuation records only after its exact attempt reached the host post. */
+  birth?: () => WorkerContinuationBirthState,
 ): Promise<PendingMissionPaneRecord> {
   const deadline = Date.now() + ORCH_SPAWN_GRANT_TTL_MS;
   try {
@@ -2229,11 +2283,18 @@ async function recordMissionPaneAfterPendingSpawn(
           getAgentSessionInfo(bound.sessionId) ??
           getAcpDriverSession(bound.sessionId)?.agent;
         if (physical?.paneId === attempt.paneId) {
-          record(bound.sessionId);
-          return 'recorded';
+          // A visible session is not a born one: the native readiness can still
+          // fail, and the durable target needs `childPossible` (host post authorized).
+          const birthState = birth?.() ?? 'authorized';
+          if (birthState === 'gone') return 'no-session';
+          if (birthState === 'authorized') {
+            record(bound.sessionId);
+            return 'recorded';
+          }
+        } else if (!physical && getSessionState(bound.sessionId) === null) {
+          // A sessão da tentativa morreu antes de se registrar: nada a contar.
+          return 'no-session';
         }
-        // A sessão da tentativa morreu antes de se registrar: nada a contar.
-        if (!physical && getSessionState(bound.sessionId) === null) return 'no-session';
       }
       if (Date.now() >= deadline) return 'no-session';
       await delay(PENDING_SPAWN_SESSION_POLL_MS);

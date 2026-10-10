@@ -456,6 +456,7 @@ describe("spawn authority resolution", () => {
       allowedTools: ["nexus_file_read"],
       allowedSkills: ["review"],
       authoritySeal,
+      operatorOpened: true,
       createdAt: 1,
     };
 
@@ -463,6 +464,7 @@ describe("spawn authority resolution", () => {
       missionId: "mission-a",
       agentName: "QA",
       role: "worker",
+      operatorOpened: true,
       allowedTools: ["nexus_file_read"],
       allowedSkills: ["review"],
       contextRevision: authoritySeal.contextRevision,

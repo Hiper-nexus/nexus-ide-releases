@@ -81,6 +81,25 @@ vi.mock('./project-domain-store-registry', () => ({
     missionPanes: { list: () => [{ paneId: 'pane-w', role: 'worker' }], findByPaneId: () => h.resumeSpec, assignVisualTask: h.assignVisualTask },
   }),
 }));
+// F-1151: this suite is about routing. The durable reservation is proved in
+// mission-pane-resume-ownership.test.ts; here it only mirrors the one contract the
+// routing tests rely on: the native conversation captured at reservation must still
+// be the current one at every later fence.
+const continuationFixture = vi.hoisted(() => ({ baseline: '' }));
+vi.mock('./mission-pane-resume-ownership', async original => ({
+  ...(await original<typeof import('./mission-pane-resume-ownership')>()),
+  reserveWorkerContinuation: () => {
+    continuationFixture.baseline = JSON.stringify(h.providerSession());
+    return { sourcePaneId: 'pane-old', attemptId: 'attempt-routing-fixture' };
+  },
+  assertWorkerContinuationCurrent: () => {
+    if (JSON.stringify(h.providerSession()) !== continuationFixture.baseline) {
+      throw new Error('resume_authority_changed: origem, conta, conversa ou tentativa mudou');
+    }
+    return {} as never;
+  },
+  rollbackWorkerContinuationBeforeBirth: () => true,
+}));
 vi.mock('../persistence/provider-session-store', async original => ({
   ...(await original<typeof import('../persistence/provider-session-store')>()),
   getProviderPaneSession: (...args: unknown[]) => h.providerSession(...args),

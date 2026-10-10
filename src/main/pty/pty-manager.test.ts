@@ -6712,7 +6712,7 @@ it.skipIf(process.env.NEXUS_PROVIDER_BOOT_SMOKE !== "1").each([
 
 describe("F-906 AGY native heavy admission readiness", () => {
   const darwinIt = process.platform === "darwin" ? it : it.skip;
-  async function spawnAgy(gate: boolean) {
+  async function spawnAgy(gate: boolean, overrides: Parameters<typeof spawnAgentSession>[3] = {}) {
     setSquadCliPolicyLookupForTests(() => "operator-choice");
     const spawns: Array<{ spec: PtySpawnSpec; readiness?: PtySpawnReadiness }> = [];
     setPtyHost({
@@ -6730,7 +6730,7 @@ describe("F-906 AGY native heavy admission readiness", () => {
       const env: Record<string, string> = gate ? { NEXUS_GATE_TOKEN: ctx.token } : {};
       return { authorityToken: ctx.token, env, extraArgs: [] };
     });
-    const session = spawnAgentSession(fakeWc(), { kind: "cli-agent", cols: 80, rows: 24 }, builtinCliPtyAdapter("agy"), {}, trustedSpawn());
+    const session = spawnAgentSession(fakeWc(), { kind: "cli-agent", cols: 80, rows: 24 }, builtinCliPtyAdapter("agy"), overrides, trustedSpawn());
     return { spawns, session, tokens };
   }
   async function finish(run: Awaited<ReturnType<typeof spawnAgy>>) {
@@ -6805,6 +6805,42 @@ describe("F-906 AGY native heavy admission readiness", () => {
       await expect(run.spawns[0].readiness!.wait).rejects.toThrow("native_deferred_spawn_context_changed");
       expect(agyHeavy.channels).not.toHaveBeenCalled();
     } finally { await finish(run); }
+  });
+
+  darwinIt("F-1151: the deferred origin fence receives the allocated session id at every readiness boundary and at the host post", async () => {
+    const fence = vi.fn();
+    const run = await spawnAgy(true, { assertDeferredSpawnCurrent: fence });
+    try {
+      const readiness = run.spawns[0].readiness!;
+      await readiness.wait;
+      // The renderer may consume its single-use grant for THIS session before this point.
+      expect(fence.mock.calls.length).toBeGreaterThan(1);
+      readiness.assertCurrent();
+      expect(fence.mock.calls.every(([sessionId]) => sessionId === run.session.sessionId)).toBe(true);
+    } finally { await finish(run); }
+  });
+
+  darwinIt("F-1151: a refusing deferred fence stops the host post and never authorizes the birth", async () => {
+    const onNativeBirthAuthorized = vi.fn();
+    const fence = vi.fn();
+    const run = await spawnAgy(true, { assertDeferredSpawnCurrent: fence, onNativeBirthAuthorized });
+    try {
+      const readiness = run.spawns[0].readiness!;
+      await readiness.wait;
+      fence.mockImplementation(() => { throw new Error("resume_authority_changed: claim released"); });
+      expect(() => readiness.assertCurrent()).toThrow(/resume_authority_changed/);
+      expect(onNativeBirthAuthorized).not.toHaveBeenCalled();
+    } finally { await finish(run); }
+  });
+
+  it("F-1151: a refused late physical-proof callback never aborts the normal termination of the session", async () => {
+    const run = await spawnAgy(false, { onPhysicalTerminationProof: () => { throw new Error("resume_cleanup_changed: foreign proof"); } });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(orchTerminateSession(run.session.sessionId)).resolves.toBe(true);
+      expect(getSessionState(run.session.sessionId)).toBeNull();
+      expect(logged.mock.calls.some(([line]) => String(line).includes("continuation physical proof not recorded"))).toBe(true);
+    } finally { logged.mockRestore(); await finish(run); }
   });
 
   darwinIt("leaves AGY without a Nexus gate token unchanged", async () => {

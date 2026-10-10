@@ -4,8 +4,12 @@ import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import type { ScopedMissionPaneStore } from './mission-pane-store';
 const binding = vi.hoisted(() => ({ store: null as ScopedMissionPaneStore | null,
+  manager: null as import('../runtime/project-runtime-manager').ProjectRuntimeManager | null,
   nativeDb: null as import('better-sqlite3').Database | null }));
-vi.mock('./project-domain-store-registry', () => ({ getProjectDomainStores: () => ({ missionPanes: binding.store }) }));
+vi.mock('./project-domain-store-registry', () => ({
+  getProjectDomainStores: () => ({ missionPanes: binding.store, taskDispatches: { list: () => [] } }),
+  requireProjectDomainStoreRegistry: () => ({ runtimeManager: () => binding.manager }),
+}));
 vi.mock('../persistence/db', () => ({ getDb: () => binding.nativeDb }));
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedMissionPaneStore } from './mission-pane-store';
@@ -23,6 +27,7 @@ function nativeStore(db: import('better-sqlite3').Database) {
 it('fences a real persisted mission runtime when its account changes during resume', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-resume-'));
   const manager = new ProjectRuntimeManager({ baseDir: dir, appVersion: 'test' });
+  binding.manager = manager;
   const scope = testProjectScope();
   try {
     const db = manager.open(scope).db;
@@ -41,6 +46,7 @@ it('fences a real persisted mission runtime when its account changes during resu
 it('F-1111: normal persisted resume copies the exact native record to a new pane without borrowing another account or checkout', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-native-resume-'));
   const manager = new ProjectRuntimeManager({ baseDir: dir, appVersion: 'test' }), scope = testProjectScope();
+  binding.manager = manager;
   try {
     const db = manager.open(scope).db; nativeStore(db);
     db.prepare("INSERT INTO missions (id, title, status, created_at, updated_at) VALUES ('m', 'M', 'running', 1, 1)").run();

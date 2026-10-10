@@ -21,6 +21,7 @@ import type {
 } from "../../shared/orch-types";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
 import { copyProviderPaneSession } from "../persistence/provider-session-store";
+import { bindWorkerContinuationTarget, rollbackWorkerContinuationBeforeBirth } from './mission-pane-resume-ownership';
 import { visualTaskAtSpawn } from './visual-handoff-gate';
 import { currentMimoSessionOwnerKey } from "../adapters/mimo-session-owner";
 import { providerAuthStrategy, resolveRuntimeApiKey } from "../persistence/provider-config-store";
@@ -563,6 +564,27 @@ interface PendingPaneRecovery {
   resolutionSent: boolean;
 }
 const pendingPaneRecoveries = new Map<string, PendingPaneRecovery>();
+
+/**
+ * F-1151: a recovery grant is single-use and its final ACK removes the record
+ * while a native child may still be waiting on readiness. Remember only the
+ * exact (owner, replacement session) pair so that one deferred birth is still
+ * admitted by the physical fence; nothing else reads this map.
+ */
+const consumedPaneRecoveries = new Map<string, {
+  readonly owner: WebContents;
+  readonly sessionId: string;
+  readonly scope: Readonly<ProjectExecutionScope>;
+  readonly createdAt: number;
+}>();
+
+function pruneConsumedPaneRecoveries(now: number = Date.now()): void {
+  for (const [id, consumed] of consumedPaneRecoveries) {
+    if (consumed.createdAt + ORCH_SPAWN_GRANT_TOMBSTONE_TTL_MS <= now || consumed.owner.isDestroyed()) {
+      consumedPaneRecoveries.delete(id);
+    }
+  }
+}
 
 function resolvePaneRecoveryOnce(
   pending: PendingPaneRecovery,
@@ -1349,6 +1371,22 @@ export function abandonPendingOrchSpawn(
   return true;
 }
 
+/**
+ * F-1151: an accepted pending ACK transfers the worker-continuation reservation
+ * to this grant. A settlement that ends with no session and no headless birth
+ * has proved the child never existed (`childPossible` only flips at the host
+ * post), so the exact attempt is cancelled by CAS here. Anything that may have
+ * a child is refused by the rollback itself and keeps its owner; a stale or
+ * foreign attempt id never clears a newer reservation.
+ */
+function cancelUnbornWorkerContinuation(pending: PendingSpawn): void {
+  const continuation = pending.meta.workerContinuation;
+  const scope = pending.meta.scope;
+  if (!continuation || !scope || pending.claimedSessionId) return;
+  try { rollbackWorkerContinuationBeforeBirth(scope, continuation); }
+  catch { /* Changed or already-released owner is retained; compensation never clears it. */ }
+}
+
 async function settlePendingSpawnFailure(
   requestId: string,
   pending: PendingSpawn,
@@ -1432,6 +1470,7 @@ async function settlePendingSpawnFailure(
       };
     }
   }
+  if (!fallback?.ok) cancelUnbornWorkerContinuation(pending);
   sendAttemptPaneCleanup(
     pending.owner,
     requestId,
@@ -2770,8 +2809,28 @@ export function bindPendingSpawnSession(
 export function assertPendingSpawnGrantActive(
   requestId: string,
   owner: WebContents,
+  /**
+   * F-1151: only for the native-readiness birth fence. The renderer's final
+   * ACK consumes this single-use grant as soon as the allocated session is
+   * visible, which can precede the host post by the whole readiness wait. A
+   * grant consumed by THIS exact session still authorizes that one child; an
+   * expired, foreign or unbound tombstone never does. Trade-off: after the final
+   * ACK, a caller abort/watchdog/30-min timeout no longer revokes the not-yet-born
+   * child (those settle only live grants); the claim, mission, seal, workspace and
+   * owner fences, and termination of the session, still do.
+   */
+  consumedBySessionId?: string,
 ): void {
   const pending = pendingSpawns.get(requestId);
+  if (!pending && consumedBySessionId) {
+    pruneOrchSpawnGrantTombstones();
+    const tomb = orchSpawnGrantTombstones.get(requestId);
+    if (tomb && tomb.kind === "consumed" && tomb.owner === owner &&
+        tomb.sessionId === consumedBySessionId && tomb.meta.scope) {
+      requireLiveRendererWorkspaceScope(owner, tomb.meta.scope);
+      return;
+    }
+  }
   if (!pending || pending.owner !== owner || !pending.claimed) {
     throw new Error("orchestration pane spawn grant expired before process start");
   }
@@ -2839,8 +2898,18 @@ export function bindPendingRecoverySpawnSession(
 export function assertPendingRecoverySpawnGrantActive(
   requestId: string,
   owner: WebContents,
+  /** F-1151: native-readiness birth fence only; see assertPendingSpawnGrantActive. */
+  consumedBySessionId?: string,
 ): void {
   const pending = pendingPaneRecoveries.get(requestId);
+  if (!pending && consumedBySessionId) {
+    pruneConsumedPaneRecoveries();
+    const consumed = consumedPaneRecoveries.get(requestId);
+    if (consumed && consumed.owner === owner && consumed.sessionId === consumedBySessionId) {
+      requireLiveRendererWorkspaceScope(owner, consumed.scope);
+      return;
+    }
+  }
   if (
     !pending ||
     pending.owner !== owner ||
@@ -2867,6 +2936,9 @@ export function hasLivePaneSession(paneId: string): boolean {
   ) {
     return true;
   }
+  // F-1151: the physical inventory also covers a child the renderer mirror has
+  // not seen yet and one whose tree is still terminating without proof.
+  if (listAgentSessionsForPane(paneId).length > 0) return true;
   return panes.some(
     ({ entry }) =>
       entry.paneId === paneId &&
@@ -3151,6 +3223,11 @@ export function requestPaneSpawn(
     exactResumeRequired = copied && options.resume != null && options.resume !== false;
   }
   const executionScope = options.executionScope ?? options.scope;
+  if (options.workerContinuation) {
+    options = { ...options, workerIncarnationId: makeId('workerinc') };
+    bindWorkerContinuationTarget(options.scope, options.workerContinuation!,
+      { requestId, paneId, workerIncarnationId: options.workerIncarnationId! });
+  }
   const requestedCwd = options.cwd ?? executionScope.rootRealPath;
   const request: OrchPaneSpawnRequest = Object.freeze({
     requestId,
@@ -3221,6 +3298,7 @@ export function requestPaneSpawn(
         contextRevision: options.contextRevision,
         agentName: options.agentName,
         workerIncarnationId: mintedWorkerIncarnationId(options),
+        workerContinuation: options.workerContinuation,
         operatorParentSessionId: options.operatorParentSessionId,
         allowedTools: options.allowedTools,
         allowedSkills: options.allowedSkills,
@@ -3688,6 +3766,8 @@ export function resolveMissionPaneRecovery(
     return false;
   }
   clearTimeout(pending.timer);
+  pruneConsumedPaneRecoveries();
+  consumedPaneRecoveries.set(result.requestId, { owner, sessionId: result.sessionId, scope: pending.scope, createdAt: Date.now() });
   pendingPaneRecoveries.delete(result.requestId);
   pending.settled = true;
   resolvePaneRecoveryOnce(pending, result);

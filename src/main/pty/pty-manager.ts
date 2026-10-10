@@ -192,6 +192,7 @@ import {
  */
 
 interface Session {
+  continuationPhysicalProof?: AgentSpawnOverrides['onPhysicalTerminationProof'];
   proc: PtyProcHandle;
   releaseLicenseAgent?: () => void;
   /**
@@ -1533,8 +1534,12 @@ export function spawnSession(
 
 /** User overrides from the provider settings hub, applied at spawn time. */
 export interface AgentSpawnOverrides {
+  onSpawnSessionAllocated?: (sessionId: string) => void;
+  onNativeBirthAuthorized?: () => void;
+  /** F-1151: persist exact raw cohort proof before normal shutdown closes the stores. */
+  onPhysicalTerminationProof?: (sessionId: string, proof: import('./pty-descendant-termination').PtyProcessTreeTerminationProof) => void;
   /** Main-only origin/reservation fence; never carried in env or Host IPC. */
-  assertDeferredSpawnCurrent?: () => void;
+  assertDeferredSpawnCurrent?: (sessionId: string) => void;
   binPath?: string | null;
   defaultModel?: string | null;
   extraArgs?: string[];
@@ -2023,6 +2028,7 @@ export function spawnAgentSession(
     safeNativeInitialPrompt = safeInitialPrompt;
   }
   const sessionId = makeSessionId();
+  overrides.onSpawnSessionAllocated?.(sessionId);
   const gatewayBaseUrl = configuredGatewayBaseUrl();
   const gatewayApiKey = resolveGatewayApiKey();
   // TRANSPORTE: o env que a CLI realmente recebe, com as base URLs no gateway.
@@ -3011,7 +3017,7 @@ export function spawnAgentSession(
   let nativeChannel: import('../orch/native-heavy-local-channel').NativeHeavyLocalChannel | undefined;
   const assertDeferredCurrent = () => {
     if (deferredCancelled || allSessionsTerminationInProgress || !session || sessions.get(sessionId) !== session || physicalTerminationFlights.has(sessionId)) throw new Error('native_deferred_spawn_reservation_changed');
-    overrides.assertDeferredSpawnCurrent?.();
+    overrides.assertDeferredSpawnCurrent?.(sessionId);
     const ctx = getNativeHeavyGateContext(spawnEnv.NEXUS_GATE_TOKEN ?? '');
     if (!ctx || !isCurrentGateContext(ctx)) throw new Error('native_deferred_spawn_context_changed');
   };
@@ -3051,7 +3057,7 @@ export function spawnAgentSession(
     }
     assertDeferredCurrent(); return { args: nextArgs, env: nextEnv };
   })() : undefined;
-  const readiness = ready ? { wait: ready, assertCurrent: assertDeferredCurrent, cleanup: async () => { deferredCancelled = true; agyCancel?.abort(); await ready.catch(() => {}); await nativeChannel?.dispose(); await museHeavyProfile?.dispose(); } } : undefined;
+  const readiness = ready ? { wait: ready, assertCurrent: () => { assertDeferredCurrent(); overrides.onNativeBirthAuthorized?.(); }, cleanup: async () => { deferredCancelled = true; agyCancel?.abort(); await ready.catch(() => {}); await nativeChannel?.dispose(); await museHeavyProfile?.dispose(); } } : undefined;
   void ready?.catch(() => {});
   // Seal the launch before the child can emit its first native hook. A
   // persistent attach, resume or Windows paste is not a fresh argv launch.
@@ -3076,6 +3082,7 @@ export function spawnAgentSession(
       revalidateTrustedNativeConfinementLaunch(trustedNativeLaunch);
     }
     assertLicenseAccess();
+    if (!readiness) overrides.onNativeBirthAuthorized?.();
     proc = host.spawn(spec, handlers, readiness);
     licenseChildSpawned = true;
   } catch (err) {
@@ -3151,6 +3158,7 @@ export function spawnAgentSession(
         : {}),
     },
     agentSpawn: { paneId: req.paneId, adapterId: adapter.id },
+    continuationPhysicalProof: overrides.onPhysicalTerminationProof,
     ...(exactResumeId && req.paneId
       ? {
           exactResume: {
@@ -4153,6 +4161,12 @@ async function drivePhysicalTermination(
       termTimeoutMs,
       killTimeoutMs,
     });
+    try { flight.session.continuationPhysicalProof?.(flight.sessionId, proof); }
+    catch {
+      // F-1151: a refused late/foreign proof must never abort the normal
+      // shutdown of this session; the durable claim simply keeps its owner.
+      console.error(`[pty] continuation physical proof not recorded session=${flight.sessionId}`);
+    }
     const fullProof =
       proof.ok && proof.rootExited && proof.descendantsExited;
     // Root is gone when the host saw exit (even without a descendant receipt)

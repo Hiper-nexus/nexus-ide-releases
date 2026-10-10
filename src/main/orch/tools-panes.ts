@@ -1,5 +1,6 @@
 import { assertLicenseAccess } from '../license-enforcement';
 import { captureMissionPaneResume } from './mission-pane-resume';
+import { rollbackWorkerContinuationBeforeBirth } from './mission-pane-resume-ownership';
 import { createVisualTaskRequirement, visualTaskRequirement } from './visual-handoff-gate';
 import { assertTabSupportsOperation, isolatedWriterBaseRoot, missionExecutionScope } from './mission-execution-scope';
 import { nestedWorktreeExecution, requestedCwdInside } from './nested-worktree-execution';
@@ -1120,6 +1121,7 @@ const paneSpawnAfterTabMission = {
           accountId: str(args, 'accountId'), effort: str(args, 'effort'), cwd: str(args, 'cwd'),
         }) : null;
     let resumeBound = false;
+    try {
     if (missionResume) {
       const callerInvocation = invocation;
       invocation = { ...invocation, assertCurrentAuthority: () => {
@@ -1556,6 +1558,8 @@ const paneSpawnAfterTabMission = {
     if (missionResume) {
       const original = missionResume.spec;
       options = { ...options, adapterId: original.adapterId, model: original.model,
+        workerContinuation: missionResume.continuation,
+        operatorOpened: original.operatorOpened,
         visualTask: original.visualTask,
         accountId: original.accountId, effort: original.effort, cwd: original.cwd,
         executionScope: original.executionScope, resume: true, resumeFromPaneId: original.paneId,
@@ -2416,6 +2420,8 @@ const paneSpawnAfterTabMission = {
           }
           throw error;
         }
+        // Accepted pending attempt owns deferred birth even before child allocation.
+        resumeBound = true;
         // ACK pendente: ainda não há sessão para armar; o braço vai no pane e
         // o handoff da sessão que nascer nele o encontra.
         if (autoClose && pending.paneId) armAutoCloseOnHandoffForPane(pending.paneId);
@@ -2559,6 +2565,12 @@ const paneSpawnAfterTabMission = {
               `maxWorkers reservation (mission=${missionId}, pane=${spawnedWorkerPaneId})`,
           );
         }
+      }
+    }
+    } finally {
+      if (missionResume?.continuation && !resumeBound) {
+        try { rollbackWorkerContinuationBeforeBirth(ctx.scope, missionResume.continuation); }
+        catch { /* Changed/stale owner is retained; compensation never clears it. */ }
       }
     }
   },

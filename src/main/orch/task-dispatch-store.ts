@@ -1155,6 +1155,106 @@ export class TaskDispatchStore {
   }
 
   /**
+   * Exact preconditions shared by rebindRestartedWorker() and the F-1151
+   * read-only pre-birth fence, so the check before a child exists is the very
+   * predicate the later commit applies.
+   */
+  #assertRestartedWorkerRebindable(
+    db: ReturnType<ScopedStoreBinding["readDatabase"]>,
+    expected: {
+      readonly missionId: string;
+      readonly paneId: string;
+      readonly expectedSessionId: string;
+      readonly workerIncarnationId: string;
+      readonly expectedTaskId?: string;
+      readonly expectedRevision?: number;
+    },
+  ): {
+    readonly current: z.infer<typeof rowSchema>;
+    readonly isRunning: boolean;
+    readonly isRecoverableSuperseded: boolean;
+  } {
+    const { missionId, paneId, expectedSessionId, workerIncarnationId } = expected;
+    const input = expected;
+    const rows = db
+      .prepare(
+        `SELECT task_id
+           FROM task_dispatch_queue
+          WHERE mission_id = ? AND pane_id = ? AND session_id = ?
+            AND worker_incarnation_id = ?`,
+      )
+      .all(
+        missionId,
+        paneId,
+        expectedSessionId,
+        workerIncarnationId,
+      ) as Array<{ task_id: string }>;
+    if (rows.length !== 1) {
+      throw new Error(
+        "nenhum dispatch exato autoriza rebind do worker reiniciado",
+      );
+    }
+    const current = this.#getRow(db, rows[0]!.task_id);
+    if (!current) {
+      throw new Error("dispatch desapareceu antes do rebind do worker");
+    }
+    if (input.expectedTaskId !== undefined && current.task_id !== input.expectedTaskId ||
+        input.expectedRevision !== undefined && current.revision !== input.expectedRevision) {
+      throw new Error('worker continuation perdeu CAS da tarefa original');
+    }
+    this.#assertCurrentIntent(db, current);
+    const isRunning = current.state === "running";
+    const isRecoverableSuperseded =
+      current.state === "superseded" &&
+      (current.last_error === TASK_DISPATCH_MISSING_RUNTIME_REASON ||
+        current.last_error === TASK_DISPATCH_SESSION_EXIT_REASON);
+    if (!isRunning && !isRecoverableSuperseded) {
+      throw new Error(
+        `dispatch ${current.state} não autoriza rebind do worker`,
+      );
+    }
+    if (
+      current.handoff_id !== null ||
+      current.handoff_accepted_at !== null ||
+      current.integration_receipt_json !== null ||
+      current.completed_at !== null
+    ) {
+      throw new Error("rebind do worker recusou dispatch com receipt");
+    }
+    const task = db
+      .prepare(
+        `SELECT status FROM tasks WHERE id = ? AND mission_id = ?`,
+      )
+      .get(current.task_id, missionId) as
+      | { status: string }
+      | undefined;
+    const expectedTaskStatus = isRunning ? "running" : "pending";
+    if (task?.status !== expectedTaskStatus) {
+      throw new Error(
+        `task não está ${expectedTaskStatus} para rebind do worker`,
+      );
+    }
+    return { current, isRunning, isRecoverableSuperseded };
+  }
+
+  /** F-1151: read-only twin of the rebind preconditions; never mutates. */
+  assertRestartedWorkerRebindable(input: {
+    readonly missionId: string;
+    readonly paneId: string;
+    readonly expectedSessionId: string;
+    readonly workerIncarnationId: string;
+    readonly expectedTaskId: string;
+    readonly expectedRevision: number;
+  }): void {
+    this.#assertRestartedWorkerRebindable(this.#binding.readDatabase(), {
+      missionId: idSchema.parse(input.missionId), paneId: idSchema.parse(input.paneId),
+      expectedSessionId: idSchema.parse(input.expectedSessionId),
+      workerIncarnationId: idSchema.parse(input.workerIncarnationId),
+      expectedTaskId: input.expectedTaskId, expectedRevision: input.expectedRevision,
+    });
+  }
+
+  /**
    * Rebind a replacement PTY to the same persisted logical worker after main
    * proved the old process absent. This is intentionally narrower than claim:
    * mission, pane, old session and incarnation must all still match, and no
@@ -1167,12 +1267,24 @@ export class TaskDispatchStore {
     readonly replacementSessionId: string;
     readonly workerIncarnationId: string;
     readonly leaseMs: number;
+    /** F-1151: exact durable new-pane continuation; ordinary restart stays in-place. */
+    readonly expectedTaskId?: string;
+    readonly expectedRevision?: number;
+    readonly replacementPaneId?: string;
+    readonly replacementWorkerIncarnationId?: string;
   }): TaskDispatchRecord {
     const missionId = idSchema.parse(input.missionId);
     const paneId = idSchema.parse(input.paneId);
     const expectedSessionId = idSchema.parse(input.expectedSessionId);
     const replacementSessionId = idSchema.parse(input.replacementSessionId);
     const workerIncarnationId = idSchema.parse(input.workerIncarnationId);
+    const replacementPaneId = input.replacementPaneId ? idSchema.parse(input.replacementPaneId) : paneId;
+    const replacementIncarnation = input.replacementWorkerIncarnationId
+      ? idSchema.parse(input.replacementWorkerIncarnationId) : workerIncarnationId;
+    if ((replacementPaneId !== paneId || replacementIncarnation !== workerIncarnationId) &&
+        (!input.expectedTaskId || input.expectedRevision === undefined)) {
+      throw new Error('worker continuation requires exact task/revision CAS');
+    }
     const leaseMs = z
       .number()
       .int()
@@ -1186,64 +1298,15 @@ export class TaskDispatchStore {
     const db = this.#binding.writeDatabase();
     const record = db
       .transaction(() => {
-        const rows = db
-          .prepare(
-            `SELECT task_id
-               FROM task_dispatch_queue
-              WHERE mission_id = ? AND pane_id = ? AND session_id = ?
-                AND worker_incarnation_id = ?`,
-          )
-          .all(
-            missionId,
-            paneId,
-            expectedSessionId,
-            workerIncarnationId,
-          ) as Array<{ task_id: string }>;
-        if (rows.length !== 1) {
-          throw new Error(
-            "nenhum dispatch exato autoriza rebind do worker reiniciado",
-          );
-        }
-        const current = this.#getRow(db, rows[0]!.task_id);
-        if (!current) {
-          throw new Error("dispatch desapareceu antes do rebind do worker");
-        }
-        this.#assertCurrentIntent(db, current);
-        const isRunning = current.state === "running";
-        const isRecoverableSuperseded =
-          current.state === "superseded" &&
-          (current.last_error === TASK_DISPATCH_MISSING_RUNTIME_REASON ||
-            current.last_error === TASK_DISPATCH_SESSION_EXIT_REASON);
-        if (!isRunning && !isRecoverableSuperseded) {
-          throw new Error(
-            `dispatch ${current.state} não autoriza rebind do worker`,
-          );
-        }
-        if (
-          current.handoff_id !== null ||
-          current.handoff_accepted_at !== null ||
-          current.integration_receipt_json !== null ||
-          current.completed_at !== null
-        ) {
-          throw new Error("rebind do worker recusou dispatch com receipt");
-        }
-        const task = db
-          .prepare(
-            `SELECT status FROM tasks WHERE id = ? AND mission_id = ?`,
-          )
-          .get(current.task_id, missionId) as
-          | { status: string }
-          | undefined;
-        const expectedTaskStatus = isRunning ? "running" : "pending";
-        if (task?.status !== expectedTaskStatus) {
-          throw new Error(
-            `task não está ${expectedTaskStatus} para rebind do worker`,
-          );
-        }
+        const { current, isRecoverableSuperseded } =
+          this.#assertRestartedWorkerRebindable(db, {
+            missionId, paneId, expectedSessionId, workerIncarnationId,
+            expectedTaskId: input.expectedTaskId, expectedRevision: input.expectedRevision,
+          });
         const updated = db
           .prepare(
             `UPDATE task_dispatch_queue
-                SET state = 'running', session_id = ?,
+                SET state = 'running', session_id = ?, pane_id = ?, worker_incarnation_id = ?,
                     last_heartbeat_at = ?, lease_expires_at = ?,
                     last_error = NULL, revision = revision + 1,
                     attempt = attempt + CASE
@@ -1257,6 +1320,8 @@ export class TaskDispatchStore {
           )
           .run(
             replacementSessionId,
+            replacementPaneId,
+            replacementIncarnation,
             now,
             now + leaseMs,
             now,

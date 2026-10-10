@@ -17,6 +17,9 @@ import * as mainOwnedPaneRuntime from "./main-owned-pane-runtime";
 import type { CallerCtx } from "./pane-authz";
 import {
   attachOrchMeta,
+  assertPendingRecoverySpawnGrantActive,
+  bindPendingRecoverySpawnSession,
+  claimPendingRecoverySpawnMeta,
   bindPendingSpawnSession,
   claimPendingSpawnMeta,
   claimPendingSpawnMetaByPane,
@@ -1003,6 +1006,68 @@ describe("pending pane spawn authority", () => {
       error: "test cleanup",
     }, owner);
     await expect(promise).resolves.toMatchObject({ ok: false });
+  });
+});
+
+describe("F-1151: deferred native birth after the single-use recovery grant was consumed", () => {
+  it("admits only the exact replacement session once the renderer's final ACK consumed the recovery grant", async () => {
+    const owner = renderer();
+    const scope = testProjectScope();
+    registered = owner;
+    registerOrchRenderer(owner);
+    bindScope(owner, scope);
+    const promise = requestMissionPaneRecovery({
+      missionId: "mission-missing",
+      paneId: "pane-missing",
+      role: "orchestrator",
+      expectedSessionId: "old-session",
+      pane: {
+        id: "spec-orch", missionId: "mission-missing", paneId: "pane-missing", adapterId: "codex",
+        title: "Orchestrator", role: "orchestrator", scope, createdAt: 1,
+      },
+      scope,
+      recap: "Continue the mission.",
+    });
+    await Promise.resolve();
+    const request = owner.send.mock.calls[0]?.[1] as MissionPaneRecoveryRequest;
+    expect(claimPendingRecoverySpawnMeta(request.requestId, owner)).not.toBeNull();
+    expect(bindPendingRecoverySpawnSession(request.requestId, owner, "sess-replacement")).toBe(true);
+    expect(() => assertPendingRecoverySpawnGrantActive(request.requestId, owner)).not.toThrow();
+    // The renderer sees the allocated SID before the native readiness finishes.
+    vi.spyOn(ptyManager, "isSessionOwnedBy").mockImplementation((candidate, id) => candidate.id === owner.id && id === "sess-replacement");
+    vi.spyOn(ptyManager, "getSessionState").mockImplementation((id) => id === "sess-replacement" ? "busy" : null);
+    syncPanes([{ paneId: request.paneId, sessionId: "sess-replacement", kind: "cli-agent", title: "Orchestrator", adapterId: "codex", state: "busy" }], owner);
+    attachOrchMeta(owner, request.paneId, { missionId: request.missionId, role: "orchestrator", scope });
+    expect(resolveMissionPaneRecovery({ requestId: request.requestId, ok: true, paneId: request.paneId, sessionId: "sess-replacement" }, owner)).toBe(true);
+    await expect(promise).resolves.toMatchObject({ ok: true });
+
+    // The ordinary single-use fence keeps its meaning; only the deferred fence knows the session.
+    expect(() => assertPendingRecoverySpawnGrantActive(request.requestId, owner)).toThrow(/expired before process start/);
+    expect(() => assertPendingRecoverySpawnGrantActive(request.requestId, owner, "sess-replacement")).not.toThrow();
+    expect(() => assertPendingRecoverySpawnGrantActive(request.requestId, owner, "sess-other")).toThrow(/expired before process start/);
+    expect(() => assertPendingRecoverySpawnGrantActive(request.requestId, renderer(), "sess-replacement")).toThrow(/expired before process start/);
+    syncPanes([], owner);
+  });
+
+  it("never admits a recovery grant that settled as a failure", async () => {
+    const owner = renderer();
+    const scope = testProjectScope();
+    registered = owner;
+    registerOrchRenderer(owner);
+    bindScope(owner, scope);
+    const promise = requestMissionPaneRecovery({
+      missionId: "mission-missing", paneId: "pane-missing", role: "orchestrator", expectedSessionId: "old-session",
+      pane: { id: "spec-orch", missionId: "mission-missing", paneId: "pane-missing", adapterId: "codex",
+        title: "Orchestrator", role: "orchestrator", scope, createdAt: 1 },
+      scope, recap: "Continue the mission.",
+    });
+    await Promise.resolve();
+    const request = owner.send.mock.calls[0]?.[1] as MissionPaneRecoveryRequest;
+    expect(claimPendingRecoverySpawnMeta(request.requestId, owner)).not.toBeNull();
+    expect(bindPendingRecoverySpawnSession(request.requestId, owner, "sess-replacement")).toBe(true);
+    resolveMissionPaneRecovery({ requestId: request.requestId, ok: false, paneId: request.paneId, error: "renderer refused" }, owner);
+    await expect(promise).resolves.toMatchObject({ ok: false });
+    expect(() => assertPendingRecoverySpawnGrantActive(request.requestId, owner, "sess-replacement")).toThrow(/expired before process start/);
   });
 });
 

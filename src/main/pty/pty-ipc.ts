@@ -2,6 +2,7 @@ import { readOwnedPromptState, submitOwnedPromptEnter } from './pty-prompt-state
 import { licenseFailure } from '../../shared/license-errors';
 import { ipcMain } from "electron";
 import type { WebContents } from "electron";
+import { workerContinuationPhysicalProof, bindWorkerContinuationSession, authorizeWorkerContinuationBirth, assertWorkerContinuationAccount } from '../orch/mission-pane-resume-ownership';
 import { PTY_CHANNELS } from "../../shared/channels";
 import {
   spawnRequestSchema,
@@ -526,6 +527,11 @@ function spawnCliPtyAgentPane(
       recovery,
       persistedPane,
     });
+    // F-1151: the account Main will physically use must be the original pin,
+    // so a mismatch refuses before any child exists, not at the post-birth commit.
+    if (pending?.workerContinuation && pending.scope) {
+      assertWorkerContinuationAccount(pending.scope, pending.workerContinuation, selectedAccountId);
+    }
     // Auth refresh / CLI update above may outlive the operator's workspace.
     if (authority.source === 'direct-user' && authority.coordinationScope &&
         authority.scope.rootRealPath !== authority.coordinationScope.rootRealPath) {
@@ -535,7 +541,25 @@ function spawnCliPtyAgentPane(
       sender,
       authorizedRequest,
       adapter,
-      overrides,
+      pending?.workerContinuation && pending.scope && pending.sealedRequest && pending.workerIncarnationId
+        ? { ...overrides,
+          assertDeferredSpawnCurrent: (deferredSessionId: string) => assertMainOwnedAgentSpawnGrantActive({
+            runtimeManager: projectRuntimeManager, owner: sender, requestId: request.orchRequestId,
+            pending, recovery, persistedPane, deferredSessionId }),
+          onPhysicalTerminationProof: workerContinuationPhysicalProof(pending.scope, pending.workerContinuation,
+            { paneId: pending.sealedRequest.paneId, requestId: pending.sealedRequest.requestId,
+              workerIncarnationId: pending.workerIncarnationId }),
+          onSpawnSessionAllocated: (sessionId: string) => bindWorkerContinuationSession(pending.scope!, pending.workerContinuation!,
+            { paneId: pending.sealedRequest!.paneId, requestId: pending.sealedRequest!.requestId,
+              workerIncarnationId: pending.workerIncarnationId! }, sessionId),
+          onNativeBirthAuthorized: () => authorizeWorkerContinuationBirth(pending.scope!, pending.workerContinuation!,
+            { paneId: pending.sealedRequest!.paneId, requestId: pending.sealedRequest!.requestId,
+              workerIncarnationId: pending.workerIncarnationId! }),
+        } : persistedPane ? { ...overrides,
+          assertDeferredSpawnCurrent: (deferredSessionId: string) => assertMainOwnedAgentSpawnGrantActive({
+            runtimeManager: projectRuntimeManager, owner: sender, requestId: request.orchRequestId,
+            pending, recovery, persistedPane, deferredSessionId }),
+        } : overrides,
       authority,
     );
     timer.mark("pty-spawn");
