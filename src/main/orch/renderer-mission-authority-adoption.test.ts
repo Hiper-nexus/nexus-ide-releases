@@ -736,6 +736,77 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(getOwnedAgentSessionInfo(owner, sessionId)).toMatchObject({ missionId: next.mission!.id });
   });
 
+  it("pane novo logo após encerrar a missão anterior: o espelho do renderer ainda sem sessão não recusa a adoção", async () => {
+    // Exercício canônico do runtime: a missão liderada pela mão do operador
+    // acaba, o operador abre um pane novo e o adota no mesmo instante. O PTY
+    // já é deste renderer (ficha Main-owned + gate `user`), mas o espelho do
+    // layout só leva o sessionId no próximo quadro (rAF do orch-bridge).
+    const oldHand = operatorPane("pane-old");
+    register([{ paneId: "pane-old", sessionId: oldHand }]);
+    const main = authority();
+    const previous = await main.createPaneMissionFromRenderer(owner, { paneId: "pane-old", title: "Missão · Padrão", ownGroup: true });
+    expect(previous.ok).toBe(true);
+    requireProjectDomainStoreRegistry().forScope(scope).missions.update(previous.mission!.id, { status: "failed" });
+    expect(returnOperatorHandFromEndedMission(getContextBySession(oldHand)!)).toBe(true);
+
+    const fresh = operatorPane("pane-new");
+    syncPanes(
+      [
+        { paneId: "pane-old", sessionId: oldHand },
+        { paneId: "pane-new", sessionId: null },
+      ].map((entry) => ({ ...entry, title: entry.paneId, kind: "cli-agent" as const, adapterId: "test-cli" })),
+      owner,
+    );
+
+    const adopted = await main.createPaneMissionFromRenderer(owner, { paneId: "pane-new", title: "Runtime native", ownGroup: true });
+
+    expect(adopted).toMatchObject({ ok: true, created: true });
+    expect(adopted.mission?.id).not.toBe(previous.mission!.id);
+    expect(adopted.mission?.squadId).toBeUndefined();
+    expect(adopted.mission?.intentContract?.workspaceBinding?.adoptedPaneId).toBe("pane-new");
+    expect(adopted.mission?.orchestratorSessionId).toBe(fresh);
+    expect(getContextBySession(fresh)).toMatchObject({ role: "orchestrator", missionId: adopted.mission!.id });
+    // A mão devolvida da missão anterior não é tocada.
+    expect(getContextBySession(oldHand)).toMatchObject({ role: "user" });
+    expect(getContextBySession(oldHand)?.missionId).toBeUndefined();
+  });
+
+  it("espelho sem sessão não vira atalho: PTY de outro pane, de outra janela ou ambíguo continua recusado", async () => {
+    const other = operatorPane("pane-other");
+    syncPanes(
+      [
+        { paneId: "pane-other", sessionId: other },
+        { paneId: "pane-ghost", sessionId: null },
+      ].map((entry) => ({ ...entry, title: entry.paneId, kind: "cli-agent" as const, adapterId: "test-cli" })),
+      owner,
+    );
+    const main = authority();
+    // Nenhum PTY nasceu para o pane-ghost: a sessão do vizinho não serve.
+    expect(await main.createPaneMissionFromRenderer(owner, { paneId: "pane-ghost", title: "Missão", ownGroup: true }))
+      .toEqual({ ok: false, error: "pane_unavailable" });
+    // PTY do mesmo paneId, mas de OUTRA janela: não é deste renderer.
+    const foreignOwner = { ...owner, id: 92 } as unknown as WebContents;
+    bindResolvedRendererWorkspaceScope(foreignOwner, scope);
+    const { sessionId: foreign } = spawnAgentSession(
+      foreignOwner,
+      { kind: "cli-agent", cols: 80, rows: 24, paneId: "pane-ghost", adapterId: "test-cli" },
+      adapter(),
+      {},
+      { source: "direct-user", context: null, cwd: scope.rootRealPath, scope },
+    );
+    sessions.push(foreign);
+    bindTokenToSession(mintToken({ label: "pane-ghost", role: "user", scope }).token, foreign);
+    expect(await main.createPaneMissionFromRenderer(owner, { paneId: "pane-ghost", title: "Missão", ownGroup: true }))
+      .toEqual({ ok: false, error: "pane_unavailable" });
+    // Dois PTYs vivos deste renderer para o mesmo pane: ambíguo, falha fechado.
+    operatorPane("pane-ghost");
+    operatorPane("pane-ghost");
+    expect(await main.createPaneMissionFromRenderer(owner, { paneId: "pane-ghost", title: "Missão", ownGroup: true }))
+      .toEqual({ ok: false, error: "pane_unavailable" });
+    expect(requireProjectDomainStoreRegistry().forScope(scope).missions.list()).toEqual([]);
+    clearRendererWorkspaceScope(foreignOwner);
+  });
+
   it("exceção no meio da promoção desfaz a missão e responde promotion_failed", async () => {
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);

@@ -32,6 +32,7 @@ import {
   adoptUserAgentSessionAsMissionOrchestrator,
   getAgentSessionInfo,
   getOwnedAgentSessionInfo,
+  listAgentSessionsForPane,
   returnAdoptedAgentSessionToUser,
   updateOwnedAgentSessionRole,
   type OwnedAgentSessionInfo,
@@ -283,24 +284,42 @@ function ownedPaneSession(
   paneRef: string,
 ): { paneId: string; sessionId: string; info: OwnedAgentSessionInfo; scope: ProjectExecutionScope } {
   const pane = findPaneOwnedBy(owner, paneRef);
-  if (!pane?.sessionId || pane.kind !== "cli-agent") {
+  const sessionId = pane?.kind === "cli-agent"
+    ? pane.sessionId ?? mirrorPendingOwnedSession(owner, pane.paneId)
+    : null;
+  if (!pane || !sessionId) {
     throw new Error(
       "mission requires an owned registered pane with a live agent session",
     );
   }
-  const info = getOwnedAgentSessionInfo(owner, pane.sessionId);
+  const info = getOwnedAgentSessionInfo(owner, sessionId);
   if (!info || info.paneId !== pane.paneId) {
     throw new Error(
       "registered pane does not match its main-owned agent session",
     );
   }
   const rendererScope = requireRendererWorkspaceScope(owner);
-  const context = getContextBySession(pane.sessionId);
+  const context = getContextBySession(sessionId);
   if (!sameScope(rendererScope, context?.scope ?? info.scope) ||
       !sameScope(context?.executionScope ?? context?.scope ?? info.scope, info.scope)) {
     throw new Error("agent session is outside renderer workspace scope");
   }
-  return { paneId: pane.paneId, sessionId: pane.sessionId, info, scope: rendererScope };
+  return { paneId: pane.paneId, sessionId, info, scope: rendererScope };
+}
+
+/**
+ * O espelho do layout leva o sessionId de um pane recém-aberto só no próximo
+ * quadro (rAF do orch-bridge), mas o renderer já pode agir sobre ele: o
+ * exercício de runtime abre o pane e o adota no mesmo tick. Nesse intervalo a
+ * fonte da verdade é a ficha PTY do Main — a mesma que o espelho teria de
+ * casar (`isSessionOwnedBy`). Só vale o PTY vivo deste renderer com este
+ * paneId, e só se for exatamente um; qualquer ambiguidade falha fechado.
+ */
+function mirrorPendingOwnedSession(owner: WebContents, paneId: string): string | null {
+  const owned = listAgentSessionsForPane(paneId).filter(
+    (info) => getOwnedAgentSessionInfo(owner, info.sessionId)?.paneId === paneId,
+  );
+  return owned.length === 1 ? owned[0].sessionId : null;
 }
 
 function hasMatchingGateContext(

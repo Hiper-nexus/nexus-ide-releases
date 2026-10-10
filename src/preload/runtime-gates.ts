@@ -155,7 +155,7 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         await shutdownMission(standardId);
         const operator = await ui('operator-pane', chief.model == null ? {} : { model: chief.model });
         const adopted = await api.orch.createPaneMission({ paneId: operator.paneId, title: `Runtime native ${marker}`, ownGroup: true }); check();
-        if (!adopted.ok || !adopted.mission || adopted.mission.squadId || adopted.mission.intentContract?.workspaceBinding?.adoptedPaneId !== operator.paneId) throw new Error('normal native mission adoption refused');
+        if (!adopted.ok || !adopted.mission || adopted.mission.squadId || adopted.mission.intentContract?.workspaceBinding?.adoptedPaneId !== operator.paneId) throw new Error(`normal native mission adoption refused: ${adopted.ok ? (adopted.mission?.squadId ? 'joined squad mission' : 'adopted pane differs') : String((adopted as { error?: unknown }).error ?? 'unknown')}`);
         const continuityMissionId = adopted.mission.id;
         await direct(continuityMissionId, `RT_GATE IDLE ${marker}`);
         const native = await poll(() => observe(continuityMissionId), v => v.agents.length === 1 && v.agents[0].role === 'orchestrator' &&
