@@ -1786,7 +1786,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(completeVerified).toHaveBeenCalledOnce();
   });
 
-  it('F-1117: idle durante a leitura da entrega reverifica o pedido done com panes atuais', async () => {
+  it('F-1130: idle durante a leitura da entrega reverifica o pedido done com panes atuais', async () => {
     completeVerified.mockClear();
     const missionId = 'mission-idle-during-delivery-read';
     const sessionId = 'maestro-idle-during-delivery-read';
@@ -1823,7 +1823,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
   });
 
   it.each(['without-done', 'leader', 'version', 'authority', 'ended', 'stopped', 'unproved', 'runtime-closed-arrival', 'runtime-closed-settlement'] as const)(
-    'F-1117: retomada pendente não executa com autoridade %s', async change => {
+    'F-1130: retomada pendente não executa com autoridade %s', async change => {
       completeVerified.mockClear();
       const missionId = `mission-deferred-wake-${change}`;
       const sessionId = `maestro-deferred-wake-${change}`;

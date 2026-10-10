@@ -59,7 +59,7 @@ function fixture() {
   return { original, physical, inventory, writable, input, deps, panes, persisted };
 }
 
-describe('F-1118: account switch refused before replacement', () => {
+describe('F-1131: account switch refused before replacement', () => {
   it('keeps the durable contract on A when Main has no renderer and the original PTY remains writable', async () => {
     const f = fixture();
     // Real recovery refuses before issuing a grant or terminating the original.

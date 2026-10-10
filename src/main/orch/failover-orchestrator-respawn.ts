@@ -73,7 +73,7 @@ const productionDeps: OrchestratorAccountSwitchDeps = {
 };
 
 /**
- * F-1118: requestId vazio prova que o Main recusou ANTES de emitir um grant
+ * F-1131: requestId vazio prova que o Main recusou ANTES de emitir um grant
  * de substituição. Timeout/tombstone/exception não dão essa prova. Só volta
  * B→A com o MESMO PTY A ainda conectado, inventário exclusivo e composição
  * intacta; CAS preserva qualquer escolha concorrente. Nenhum await separa a

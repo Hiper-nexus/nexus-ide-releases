@@ -1405,7 +1405,7 @@ export function maybeCompleteFastLaneOnDelivery(
     if (completionFlights.get(key) !== entry) return;
     completionFlights.delete(key);
     const wake = entry.wake;
-    // F-1117: one fresh attempt for the idle/done wake that arrived during IO.
+    // F-1130: one fresh attempt for the idle/done wake that arrived during IO.
     // Install its physical flight before resolving this one, so Stop owns it.
     // Only external wakes schedule another attempt; there is no polling loop.
     if (wake && completionLifetime === owner && !owner.controller.signal.aborted &&
