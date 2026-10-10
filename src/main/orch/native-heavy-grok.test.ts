@@ -109,6 +109,20 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
  const bashFile = path.join(resources, 'shell.bash');
  const shellTrace = (reason: string) => `printf ${JSON.stringify('%s\n')} '${JSON.stringify({ stage: 'shell.bash', reason })}' 2>/dev/null >> "$NEXUS_HEAVY_DIR/diagnostic.jsonl" || :;`;
  let bashContents = fs.readFileSync(bashFile, 'utf8');
+ const descriptorProbe = `__finite_bash_path=false; [[ "$BASH" == /bin/bash ]] && __finite_bash_path=true
+  __finite_argc_zero=false; [[ "$#" == 0 ]] && __finite_argc_zero=true
+  __finite_fd3_pipe=false; [[ -p /dev/fd/3 ]] && __finite_fd3_pipe=true
+  __finite_fd3_socket=false; [[ -S /dev/fd/3 ]] && __finite_fd3_socket=true
+  __finite_fd5_pipe=false; [[ -p /dev/fd/5 ]] && __finite_fd5_pipe=true
+  __finite_fd5_socket=false; [[ -S /dev/fd/5 ]] && __finite_fd5_socket=true
+  __finite_fd4_absent=false; [[ ! -e /dev/fd/4 ]] && __finite_fd4_absent=true
+  __finite_fd4_regular=false; [[ -f /dev/fd/4 ]] && __finite_fd4_regular=true
+  __finite_fd4_pipe=false; [[ -p /dev/fd/4 ]] && __finite_fd4_pipe=true
+  __finite_fd4_socket=false; [[ -S /dev/fd/4 ]] && __finite_fd4_socket=true
+  printf '%s\\n' '{"stage":"shell.bash","reason":"descriptor-terms","bashPath":'"$__finite_bash_path"',"argcZero":'"$__finite_argc_zero"',"fd3Pipe":'"$__finite_fd3_pipe"',"fd3Socket":'"$__finite_fd3_socket"',"fd5Pipe":'"$__finite_fd5_pipe"',"fd5Socket":'"$__finite_fd5_socket"',"fd4Absent":'"$__finite_fd4_absent"',"fd4Regular":'"$__finite_fd4_regular"',"fd4Pipe":'"$__finite_fd4_pipe"',"fd4Socket":'"$__finite_fd4_socket"'}'  2>/dev/null >> "$NEXUS_HEAVY_DIR/diagnostic.jsonl" || :
+  unset __finite_bash_path __finite_argc_zero __finite_fd3_pipe __finite_fd3_socket __finite_fd5_pipe __finite_fd5_socket __finite_fd4_absent __finite_fd4_regular __finite_fd4_pipe __finite_fd4_socket
+  `;
+ bashContents = replaceOnce(bashContents, '  [[ "$BASH" == /bin/bash', descriptorProbe + '  [[ "$BASH" == /bin/bash');
  for (const [needle, reason] of [
   ['builtin shopt -q extglob || exit 78', 'extglob'],
   ['! -e /dev/fd/4 ]] || exit 78', 'descriptor-shape'],
