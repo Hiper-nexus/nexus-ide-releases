@@ -34,6 +34,39 @@ function toolResult(messages, call, kind = 'QUESTION') {
   if (!value || typeof value !== 'object' || Array.isArray(value) || value.ok === false || value.isError === true || value.error != null) throw new Error(`real ${kind} tool result invalid`);
   return value;
 }
+// External QA adaptation: only an ordinary, bound top-level list result can
+// supply the session of a previously acknowledged pending recovery pane.
+function recoveryListResult(messages, call) {
+  const results = messages.filter(message => message.role === 'user' && Array.isArray(message.content))
+    .flatMap(message => message.content).filter(block => block.type === 'tool_result' && block.tool_use_id === call.id);
+  if (results.length !== 1 || (results[0].is_error !== undefined && results[0].is_error !== false)) throw new Error('real RECOVER list result absent, ambiguous or failed');
+  const content = results[0].content;
+  const text = typeof content === 'string' ? content : Array.isArray(content) && content.length === 1 && content[0].type === 'text' ? content[0].text : null;
+  if (typeof text !== 'string') throw new Error('real RECOVER list content invalid');
+  const rows = JSON.parse(text), identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value);
+  if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== 'object' || Array.isArray(row) ||
+    !identifier(row.paneId) || (row.sessionId !== null && !identifier(row.sessionId)) ||
+    !['shell', 'cli-agent', 'browser'].includes(row.kind) ||
+    !['spawning', 'busy', 'idle', 'exited', 'hibernated', 'unknown', 'parked'].includes(row.state) ||
+    row.ok === false || row.isError === true || row.error != null)) throw new Error('real RECOVER list rows invalid');
+  return rows;
+}
+function assertRecoveryChain(messages, calls, issued, seals) {
+  if (calls.length !== issued.length || calls.some((call, index) => call.id !== issued[index].id ||
+    call.name !== issued[index].name || JSON.stringify(call.input) !== JSON.stringify(issued[index].input))) throw new Error('real recovery tool call binding invalid');
+  const chain = messages.flatMap(message => Array.isArray(message.content) ? message.content
+    .filter(block => (message.role === 'assistant' && block.type === 'tool_use' && block.id?.startsWith('toolu_rt_RECOVER_')) ||
+      (message.role === 'user' && block.type === 'tool_result' && block.tool_use_id?.startsWith('toolu_rt_RECOVER_'))) : []);
+  if (chain.length !== issued.length * 2) throw new Error('real recovery call/result chain incomplete or duplicated');
+  for (let index = 0; index < issued.length; index++) {
+    const call = chain[index * 2], result = chain[index * 2 + 1];
+    if (call.type !== 'tool_use' || call.id !== issued[index].id || result.type !== 'tool_result' || result.tool_use_id !== call.id)
+      throw new Error('real recovery call/result order invalid');
+    const seal = JSON.stringify({ content: result.content, is_error: result.is_error });
+    if (seals[index] !== undefined && seals[index] !== seal) throw new Error('real recovery prior result changed');
+    seals[index] = seal;
+  }
+}
 function writeReply(messages, step, tool, calls, nonce) {
   const dir = `runtime-visual-${nonce}`, file = `${dir}/index.html`;
   if (step === 0) return tool('nexus_file_write', { path: file,
@@ -61,7 +94,8 @@ function writeReply(messages, step, tool, calls, nonce) {
 /** Only inference is simulated. Every Nexus tool result must come from the real installed CLI. */
 export async function startRuntimeGateway(nonce) {
   if (!/^[a-f0-9-]{36}$/u.test(nonce)) throw new Error('runtime gateway nonce invalid');
-  let requests = 0, stopped = false, closeFlight = null, recovery = null, creation = null;
+  let requests = 0, stopped = false, closeFlight = null, recovery = null, creation = null, recoveryTarget = null;
+  const recoveryResultSeals = [];
   const sockets = new Set(), observations = [], questionCalls = [], writeCalls = [], recoveryCalls = [], reviewCalls = [], createCalls = [];
   const server = http.createServer((req, res) => {
     req.setTimeout(5000, () => req.destroy());
@@ -149,17 +183,41 @@ export async function startRuntimeGateway(nonce) {
         }
         else if (kind === 'RECOVER') {
           const target = [...text.matchAll(/RT_GATE RECOVER ([a-f0-9-]{36}) ([A-Za-z0-9][A-Za-z0-9._:-]{0,255}) ([A-Za-z0-9][A-Za-z0-9._:-]{0,255})(?=\s|$)/gu)].at(-1);
-          if (!target || target[1] !== nonce || step > 1) throw new Error('real recovery instruction scope invalid');
-          if (step === 0) content = tool('nexus_pane_spawn', { resume: target[2], agentName: 'Runtime writer', role: 'worker', autoCloseOnHandoff: false,
-            prompt: `RT_GATE IDLE ${nonce}. Continue the same approved private visual assignment; wait for the scoped WRITE follow-up.` });
+          if (!target || target[1] !== nonce || (recoveryTarget && (target[2] !== recoveryTarget[0] || target[3] !== recoveryTarget[1]))) throw new Error('real recovery instruction scope invalid');
+          if (step === 0) {
+            if (recoveryCalls.length) throw new Error('real recovery conversation omitted issued call');
+            recoveryTarget = [target[2], target[3]];
+            content = tool('nexus_pane_spawn', { resume: target[2], agentName: 'Runtime writer', role: 'worker', autoCloseOnHandoff: false,
+              prompt: `RT_GATE IDLE ${nonce}. Continue the same approved private visual assignment; wait for the scoped WRITE follow-up.` });
+          }
           else {
-            const call = used[0], issued = recoveryCalls[0];
-            if (!issued || call.id !== issued.id || call.name !== issued.name || JSON.stringify(call.input) !== JSON.stringify(issued.input)) throw new Error('real recovery tool call binding invalid');
-            const result = toolResult(body.messages, issued, 'RECOVER');
+            assertRecoveryChain(body.messages, used, recoveryCalls, recoveryResultSeals);
+            const result = toolResult(body.messages, recoveryCalls[0], 'RECOVER');
             const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value);
-            if (!identifier(result.paneId) || !identifier(result.sessionId) ||
-              result.paneId === target[2] || result.sessionId === target[3]) throw new Error('real recovery result identity invalid');
-            recovery = { fromPaneId: target[2], fromSessionId: target[3], paneId: result.paneId, sessionId: result.sessionId };
+            if (!identifier(result.paneId) || result.paneId === target[2]) throw new Error('real recovery result identity invalid');
+            if (result.pending === true) {
+              if (result.ok !== true || result.sessionId !== null || !identifier(result.requestId)) throw new Error('real recovery pending receipt invalid');
+              if (step === 1) observations.push({ kind, step, receipt: 'pending', paneId: result.paneId, requestId: result.requestId });
+              let ready;
+              for (let index = 1; index < recoveryCalls.length; index++) {
+                const rows = recoveryListResult(body.messages, recoveryCalls[index]), matches = rows.filter(row => row.paneId === result.paneId);
+                if (matches.length > 1) throw new Error('real RECOVER list pane ambiguous');
+                const next = matches[0];
+                if (next && (next.kind !== 'cli-agent' || next.role !== 'worker' || next.adapterId !== 'claude' ||
+                  (creation && next.missionId !== creation.missionId))) throw new Error('real RECOVER list pane metadata differs');
+                if (next?.sessionId === target[3]) throw new Error('real RECOVER list has terminated session');
+                if (next && ['exited', 'hibernated', 'parked'].includes(next.state)) throw new Error('real RECOVER target is unavailable');
+                if (ready) throw new Error('real RECOVER list chain continued after ready');
+                if (next?.sessionId !== undefined && next.sessionId !== null && next.state === 'idle') ready = next;
+              }
+              if (ready) {
+                recovery = { fromPaneId: target[2], fromSessionId: target[3], paneId: ready.paneId, sessionId: ready.sessionId };
+                observations.push({ kind, step, receipt: 'ready-list', paneId: ready.paneId, sessionId: ready.sessionId });
+              } else content = tool('nexus_pane_list', {});
+            } else {
+              if (step !== 1 || !identifier(result.sessionId) || result.sessionId === target[3]) throw new Error('real recovery result identity invalid');
+              recovery = { fromPaneId: target[2], fromSessionId: target[3], paneId: result.paneId, sessionId: result.sessionId };
+            }
           }
         }
         else if (kind === 'QUESTION' && step === 0) content = tool('nexus_clarify', { question: `RT_QUESTION_${nonce}: select the private fixture route.`, options: ['Proceed', 'Wait'], allowFreeform: false });

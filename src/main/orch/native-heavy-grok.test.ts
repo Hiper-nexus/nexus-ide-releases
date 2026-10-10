@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { Script } from 'node:vm';
+import { createHash } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { NativeHeavyCommands } from './native-heavy-command';
@@ -30,6 +31,7 @@ function streamMessage(res: http.ServerResponse, model: string, content: { type:
 }
 
 it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash is admitted by inherited scoped shell env before absolute sh/make', async () => {
+ const actualGrok = fs.realpathSync(grok!), binarySha256 = createHash('sha256').update(fs.readFileSync(actualGrok)).digest('hex');
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-real-grok-'));
  fs.writeFileSync(path.join(root, 'Makefile'), 'all:\n\t@printf done > command-ran\n\t@printf x >> command-count\n');
  fs.writeFileSync(path.join(root, '.bashrc'), `finite_snapshot() { printf x >> snapshot-count; printf preserved > ${JSON.stringify(path.join(root, 'snapshot-preserved'))}; }\n`);
@@ -39,7 +41,10 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
  const scope = { version: 1 as const, installationId: 'finite', projectId: 'claude-hook', checkoutId: 'finite', rootRealPath: root, identitySource: 'manifest' as const };
  const ctx = { token: 'finite-native-hook', sessionId: 'finite-hook-session', role: 'user', scope } as AgentGateContext;
  let cliPid = 0, cliAlive = true; const identity = {};
- const proof = new OwnedCommandProcesses((id) => id === ctx.sessionId && cliPid && cliAlive ? { pid: cliPid, identity } : null, undefined, (pid) => watchDarwinHeavyCommand(runtime, pid));
+ const claims: Array<Awaited<ReturnType<typeof watchDarwinHeavyCommand>>> = [];
+ const proof = new OwnedCommandProcesses((id) => id === ctx.sessionId && cliPid && cliAlive ? { pid: cliPid, identity } : null, undefined, async (pid) => {
+  const claim = await watchDarwinHeavyCommand(runtime, pid); claims.push(claim); return claim;
+ });
  const pool = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 16384, swapUsedMB: 0 }), limits: () => ({ minFreeMB: 512, maxSwapUsedMB: 0 }), refreshMemory: async () => {}, pollMs: 10 });
  const transitions: string[] = []; const admissions: unknown[] = []; const admissionResults: unknown[] = [];
  const admittedLeases: string[] = [];
@@ -144,11 +149,12 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
  // Exercise Main's shell-selection policy with Homebrew before system Bash.
  selectGrokHeavyShell(env, 'grok');
  const profile = `(version 1)(allow default)(deny network*)(allow network-outbound (remote tcp "localhost:${port}"))(allow network-bind (local tcp "localhost:*"))(allow network-inbound (local tcp "localhost:*"))(allow network-bind (local unix (subpath ${JSON.stringify(fs.realpathSync(root))})))(allow network-inbound (local unix (subpath ${JSON.stringify(fs.realpathSync(root))})))(allow network-outbound (remote unix (subpath ${JSON.stringify(fs.realpathSync(root))})))`;
- const command = supervisedPtyCommand(runtime, '/usr/bin/sandbox-exec', ['-p', profile, grok!, '-p', 'finite fixture', '--always-approve', '--disable-web-search', '--model', 'finite', '--output-format', 'json']);
+ const command = supervisedPtyCommand(runtime, '/usr/bin/sandbox-exec', ['-p', profile, actualGrok, '-p', 'finite fixture', '--always-approve', '--disable-web-search', '--model', 'finite', '--output-format', 'json']);
  const child = spawn(command.file, command.args, { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
  cliPid = child.pid!; let stderr = '', stdout = ''; child.stderr.on('data', (part) => stderr += part); child.stdout.on('data', (part) => stdout += part);
  const exit = new Promise<number | null>((resolve) => child.once('close', (code) => { cliAlive = false; resolve(code); }));
- const timer = setTimeout(() => child.kill('SIGTERM'), 25_000);
+ let forcedTimeout = false;
+ const timer = setTimeout(() => { forcedTimeout = true; child.kill('SIGTERM'); }, 25_000);
  try {
   const code = await exit;
   const admissionShapes = admissions.map((value) => { const request = value as { pid?: number; kind?: string; proof?: string; leaseId?: string }; return { pid: request.pid, kind: request.kind, proof: request.proof, hasLease: Boolean(request.leaseId) }; });
@@ -158,7 +164,7 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
   catch { /* missing/unreadable private trace cannot replace the original assertion */ }
   finally { if (diagnosticFd !== undefined) { try { fs.closeSync(diagnosticFd); } catch { /* diagnostic only */ } } }
   const diagnostic = JSON.stringify({ shapes, toolResults, admissions: admissionShapes, admissionResults, transitions, transportDiagnostics }) + (stderr + stdout).slice(0, 8000);
-  expect(code, diagnostic).toBe(0); expect(modelCalls, diagnostic).toBeGreaterThanOrEqual(2);
+  expect(code, diagnostic).toBe(0); expect(forcedTimeout).toBe(false); expect(modelCalls, diagnostic).toBeGreaterThanOrEqual(2);
   expect(fs.existsSync(path.join(root, 'command-ran')), diagnostic).toBe(true);
   expect(fs.readFileSync(path.join(root, 'command-ran'), 'utf8')).toBe('done');
   expect(fs.readFileSync(path.join(root, 'snapshot-preserved'), 'utf8')).toBe('preserved');
@@ -168,6 +174,13 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
   expect(admittedLeases.length).toBeGreaterThan(0);
   expect(new Set(admittedLeases).size).toBe(1);
   await native.drain(); expect(transitions).toEqual(['grant', 'release']); expect(stdout).toContain('finite fixture done');
+  expect(claims.length).toBeGreaterThan(0); expect(claims.every(claim => claim?.state() === 'gone')).toBe(true);
+  expect(createHash('sha256').update(fs.readFileSync(actualGrok)).digest('hex')).toBe(binarySha256);
+  const proofDir = path.join(process.cwd(), '.superpowers/sdd/release-076213-reviewed/f1148-grok-proof');
+  if (fs.existsSync(proofDir)) fs.writeFileSync(path.join(proofDir, 'native-managed-grok-facts.json'), JSON.stringify({ actualGrok, binarySha256,
+   cliPid, privateProfile: root, selectedShell: env.GROK_SHELL, homebrewFirst: true, forcedTimeout, code,
+   commandCount: 1, snapshotCount: 1, admittedLeaseCount: new Set(admittedLeases).size, transitions,
+   physicalClaims: claims.map(claim => claim?.state() ?? 'unproved'), signedPackagedProof: false }, null, 2) + '\n', { mode: 0o600 });
  } finally {
   clearTimeout(timer); child.kill('SIGTERM'); await exit; pool.close();
   await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true });
