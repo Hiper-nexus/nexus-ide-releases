@@ -96,8 +96,9 @@ describe('Main Shot destination wiring (F-1054)', () => {
     expect(shot).toContain('listPaneSnapshots()');
     expect(shot).toContain('getRendererWorkspaceScope(win.webContents)');
     expect(shot).toContain('listLiveSessionLocations()');
-    expect(shot).toContain('onFiles: (files, targetPaneId)');
+    expect(shot).toContain('onFiles: (files, targetPaneId, targetBinding)');
     expect(shot).toContain('...(targetPaneId ? { targetPaneId } : {})');
+    expect(shot).toContain('...(targetBinding ? { targetBinding } : {})');
     expect(shot).toContain('app.getPath("pictures")');
     expect(shot).toContain('app.getPath("videos")');
   });

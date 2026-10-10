@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { PGlite } from '@electric-sql/pglite';
@@ -12,7 +12,15 @@ import { issueTokens } from '../auth/session-service';
 import { errorHandler } from '../middleware/errors';
 import { buildTeamRouter } from './team-routes';
 
-async function setupTwo() {
+interface JoinTrace {
+  fixtureEntries: number;
+  routerFallthrough: boolean;
+  matchedRoute: boolean;
+  authenticated: boolean;
+  fixtureStatus: number | null;
+}
+
+async function setupTwo(joinTrace?: JoinTrace) {
   const client = new PGlite();
   // PGlite sobe um PostgreSQL WASM por fixture. Sem fechar, cada teste do
   // arquivo deixa mais um runtime residente e a rodada inteira disputa
@@ -43,7 +51,28 @@ async function setupTwo() {
   } as Env;
   const app = express();
   app.use(express.json());
+  if (joinTrace) {
+    app.use((req, res, next) => {
+      if (req.method === 'POST' && req.path === '/v1/team/join') {
+        joinTrace.fixtureEntries++;
+        res.on('finish', () => {
+          joinTrace.matchedRoute = req.route?.path === '/team/join';
+          joinTrace.authenticated = typeof req.accountId === 'string';
+          joinTrace.fixtureStatus = res.statusCode;
+        });
+      }
+      next();
+    });
+  }
   app.use('/v1', buildTeamRouter({ db, env }));
+  if (joinTrace) {
+    app.use((req, _res, next) => {
+      if (req.method === 'POST' && req.path === '/v1/team/join') {
+        joinTrace.routerFallthrough = true;
+      }
+      next();
+    });
+  }
   app.use(errorHandler);
   const mk = async (email: string) => {
     const [account] = await db.insert(schema.accounts).values({ email })
@@ -93,17 +122,45 @@ async function mkTeam(db: Db, owner: string, seats = 3, status = 'active'): Prom
 
 describe('team-routes', () => {
   it('fluxo: owner cria convite, membro entra, GET /team mostra os dois', async () => {
-    const { app, db, ownerBearer, memberBearer, ownerId } = await setupTwo();
+    const joinTrace: JoinTrace = {
+      fixtureEntries: 0,
+      routerFallthrough: false,
+      matchedRoute: false,
+      authenticated: false,
+      fixtureStatus: null,
+    };
+    const { app, db, ownerBearer, memberBearer, ownerId } = await setupTwo(joinTrace);
     await mkTeam(db, ownerId, 3);
 
     const invite = await request(app).post('/v1/team/invites').set('authorization', ownerBearer);
     expect(invite.status).toBe(200);
     expect(invite.body.data.code).toMatch(/^[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4}$/);
     expect(invite.body.data.url).toContain('/join/');
+    const transaction = vi.spyOn(db, 'transaction');
+    onTestFinished(() => transaction.mockRestore());
     const join = await request(app).post('/v1/team/join')
       .set('authorization', memberBearer)
       .send({ code: invite.body.data.code });
-    expect(join.status).toBe(200);
+    // F-1142: report only fixed classifications; never response bodies, the
+    // invitation code, authorization headers, or request/DB arguments.
+    const knownErrors = [
+      'sem time', 'não autenticado', 'rate limited', 'erro interno',
+      'não encontrado', 'você já está num time', 'convite inválido ou esgotado',
+      'assinatura do time não está ativa', 'sem assento livre — peça ao dono',
+    ];
+    const diagnostic = JSON.stringify({
+      route: 'POST /v1/team/join',
+      status: join.status,
+      ...joinTrace,
+      serviceTransactions: transaction.mock.calls.length,
+      bodyClassification: knownErrors.includes(join.body?.error)
+        ? join.body.error
+        : join.text.includes('Cannot POST /v1/team/join')
+          ? 'express-default-404'
+          : join.body?.ok === true ? 'ok-json' : 'unclassified',
+    });
+    console.info('[team-join diagnostic]', diagnostic);
+    expect(join.status, diagnostic).toBe(200);
 
     const team = await request(app).get('/v1/team').set('authorization', memberBearer);
     expect(team.status).toBe(200);

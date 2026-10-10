@@ -39,22 +39,25 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
  let cliPid = 0, cliAlive = true; const identity = {};
  const proof = new OwnedCommandProcesses((id) => id === ctx.sessionId && cliPid && cliAlive ? { pid: cliPid, identity } : null, undefined, (pid) => watchDarwinHeavyCommand(runtime, pid));
  const pool = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 16384, swapUsedMB: 0 }), limits: () => ({ minFreeMB: 512, maxSwapUsedMB: 0 }), refreshMemory: async () => {}, pollMs: 10 });
- const transitions: string[] = []; const admissions: unknown[] = [];
+ const transitions: string[] = []; const admissions: unknown[] = []; const admissionResults: unknown[] = [];
  const admittedLeases: string[] = [];
  const native = new NativeHeavyCommands({ current: () => cliAlive, claim: (id, pid, proofKind) => proofKind === 'darwin-job' ? proof.claim(id, pid, proofKind) : Promise.resolve(null), probe: (id, claim) => proof.probe(id, claim), borrow: (id, claim, pid) => proof.borrow(id, claim, pid), stop: (id, claim) => proof.stop(id, claim),
    acquire: async (request) => { const permit = await pool.acquire(request); transitions.push('grant'); return { id: permit.id, release: () => { transitions.push('release'); permit.release(); } }; } });
- let modelCalls = 0; let toolSent = false; const shapes: unknown[] = [];
+ let modelCalls = 0; let toolSent = false; const shapes: unknown[] = []; const toolResults: unknown[] = [];
  const server = http.createServer((req, res) => {
   let raw = ''; req.on('data', (part) => { raw += part; if (raw.length > 4 * 1024 * 1024) req.destroy(); });
   req.on('end', () => {
    if (req.url === '/hook/heavy-command') {
     admissions.push(JSON.parse(raw));
     if (req.headers.authorization !== `Bearer ${ctx.token}`) { res.writeHead(401); res.end(); return; }
-    void native.admit(ctx, JSON.parse(raw)).then((result) => { if (result.allow && result.leaseId) admittedLeases.push(result.leaseId); res.end(JSON.stringify(result)); }); return;
+    void native.admit(ctx, JSON.parse(raw)).then((result) => { admissionResults.push({ allow: result.allow, reason: result.reason, hasLease: Boolean(result.leaseId) }); if (result.allow && result.leaseId) admittedLeases.push(result.leaseId); res.end(JSON.stringify(result)); }); return;
    }
    if (req.url?.includes('count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
    if (req.url?.startsWith('/v1/messages')) {
     const request = JSON.parse(raw); modelCalls++; shapes.push({ keys: Object.keys(request), tools: (request.tools ?? []).map((tool: Record<string, unknown>) => ({ name: tool.name, type: tool.type, function: (tool.function as { name?: string } | undefined)?.name })) });
+    for (const message of request.messages ?? []) for (const block of Array.isArray(message.content) ? message.content : []) {
+     if (block.type === 'tool_result' && block.tool_use_id === 'toolu_finite_make') toolResults.push({ is_error: block.is_error, content: JSON.stringify(block.content).slice(0, 8000) });
+    }
     if (!toolSent && (request.tools ?? []).some((tool: { name?: string }) => tool.name === 'run_terminal_command')) { toolSent = true; streamMessage(res, request.model, { type: 'tool_use', id: 'toolu_finite_make', name: 'run_terminal_command', input: { command: 'finite_snapshot; NODE_OPTIONS= /bin/sh -c "/usr/bin/make -f Makefile"', description: 'finite fixture only', explanation: 'finite fixture only', is_background: false } }); }
     else streamMessage(res, request.model, { type: 'text', text: 'finite fixture done' }); return;
    }
@@ -79,7 +82,8 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
  const timer = setTimeout(() => child.kill('SIGTERM'), 25_000);
  try {
   const code = await exit; expect(code, (stderr || stdout).slice(0, 2048)).toBe(0); expect(modelCalls).toBeGreaterThanOrEqual(2);
-  expect(fs.existsSync(path.join(root, 'command-ran')), JSON.stringify(shapes) + (stderr + stdout).slice(0, 8000)).toBe(true);
+  const admissionShapes = admissions.map((value) => { const request = value as { pid?: number; kind?: string; proof?: string; leaseId?: string }; return { pid: request.pid, kind: request.kind, proof: request.proof, hasLease: Boolean(request.leaseId) }; });
+  expect(fs.existsSync(path.join(root, 'command-ran')), JSON.stringify({ shapes, toolResults, admissions: admissionShapes, admissionResults, transitions }) + (stderr + stdout).slice(0, 8000)).toBe(true);
   expect(fs.readFileSync(path.join(root, 'command-ran'), 'utf8')).toBe('done');
   expect(fs.readFileSync(path.join(root, 'snapshot-preserved'), 'utf8')).toBe('preserved');
   expect((admissions[0] as { proof?: string }).proof).toBe('darwin-job');
