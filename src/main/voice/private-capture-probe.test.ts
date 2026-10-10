@@ -35,3 +35,23 @@ it('authorizes only audio from the exact leased main-frame entry URL, including 
   } finally { release(); }
   expect(privateCaptureMediaPermission(wc as never, 'media', details, 'request', 'granted')).toBe(false);
 });
+it('accepts the exact Electron 43.7.4 media payloads (securityOrigin is a GURL spec with trailing slash)', () => {
+  // Captured from Electron 43.7.4 with a standard `nexus-app:` scheme. The
+  // slashless comparison denied every real getUserMedia before TCC was asked.
+  const url = 'nexus-app://app/index.html?rt=1';
+  const frame = { url }, scope = { installationId: 'i', projectId: 'p', checkoutId: 'c', rootRealPath: '/private' };
+  const wc = { mainFrame: frame, isDestroyed: () => false, getURL: () => frame.url };
+  deps.scope = scope;
+  const release = armPrivateCaptureProbe(wc as never, scope as never, 'nonce', 'granted');
+  try {
+    expect(privateCaptureMediaPermission(wc as never, 'media',
+      { isMainFrame: true, mediaTypes: ['audio'], requestingUrl: url, securityOrigin: 'nexus-app://app/' }, 'request', 'granted')).toBe(true);
+    expect(privateCaptureMediaPermission(wc as never, 'media',
+      { isMainFrame: true, mediaType: 'audio', requestingUrl: url, securityOrigin: 'nexus-app://app/' }, 'check', 'granted')).toBe(true);
+    expect(privateCaptureMediaPermission(wc as never, 'media',
+      { isMainFrame: true, mediaType: 'video', requestingUrl: url, securityOrigin: 'nexus-app://app/' }, 'check', 'granted')).toBe(false);
+    for (const securityOrigin of ['nexus-app://app/index.html', 'nexus-app://other/', 'https://app/', 'nexus-app://app//', 'nexus-app://app/?x'])
+      expect(privateCaptureMediaPermission(wc as never, 'media',
+        { isMainFrame: true, mediaTypes: ['audio'], requestingUrl: url, securityOrigin }, 'request', 'granted')).toBe(false);
+  } finally { release(); }
+});

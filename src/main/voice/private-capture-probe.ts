@@ -19,7 +19,10 @@ export function privateCaptureMediaPermission(sender: WebContents | null, permis
       !current.entryUrl || sender.getURL() !== current.entryUrl || current.frame.url !== current.entryUrl ||
       details.isMainFrame !== true || details.requestingUrl !== current.entryUrl) return false;
   const entry = new URL(current.entryUrl);
-  if (entry.protocol !== 'nexus-app:' || details.securityOrigin !== `${entry.protocol}//${entry.host}`) return false;
+  // Electron 43.7.4 serializes the media origin as a GURL spec ("nexus-app://app/"),
+  // not as an Origin string; requiring the slashless form denied every real capture.
+  const origin = `${entry.protocol}//${entry.host}`;
+  if (entry.protocol !== 'nexus-app:' || details.securityOrigin !== `${origin}/` && details.securityOrigin !== origin) return false;
   return kind === 'request' ? details.mediaTypes?.length === 1 && details.mediaTypes[0] === 'audio' : details.mediaType === 'audio';
 }
 export function privateCaptureProbeAllowed(sender?: WebContents, senderFrame?: Electron.WebFrameMain | null): boolean {
