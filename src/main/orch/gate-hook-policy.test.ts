@@ -3,50 +3,22 @@ import { describe, expect, it } from 'vitest';
 import { isHookToolAllowed } from './gate';
 import { HOOK_SCRIPT } from './hooks-gen';
 
-describe('CLI hook gate policy', () => {
-  it('applies Nexus allowlists to MCP calls without disabling native coding tools', () => {
-    expect(isHookToolAllowed([], 'Read')).toBe(true);
-    expect(isHookToolAllowed([], 'Edit')).toBe(true);
-    expect(isHookToolAllowed([], 'Bash')).toBe(true);
-    expect(isHookToolAllowed([], 'mcp__nexus__nexus_pane_read')).toBe(true);
-    expect(isHookToolAllowed([], 'mcp__nexus__nexus_pane_list')).toBe(true);
-    expect(isHookToolAllowed([], 'mcp__nexus__nexus_pane_write')).toBe(false);
-    expect(isHookToolAllowed([], 'mcp__nexus__nexus_pane_spawn')).toBe(false);
-    expect(
-      isHookToolAllowed(
-        ['nexus_pane_read'],
-        'mcp__nexus__nexus_pane_read',
-      ),
-    ).toBe(true);
+describe('CLI hook gate policy (F-1157: agentes sem amarras)', () => {
+  it.each(['orchestrator', 'worker', 'user'] as const)('the %s reaches native, Nexus and plugin tools with any allowlist', (role) => {
+    for (const allowed of [null, [], ['nexus_file_read']]) {
+      for (const tool of [
+        'Read', 'Edit', 'Write', 'Bash', 'Task', 'NotebookEdit', 'WebFetch',
+        'mcp__nexus__nexus_pane_write', 'mcp__nexus__nexus_pane_spawn', 'mcp__nexus__nexus_image_generate',
+        'mcp__agent-plugin-acme-files__delete_everything', 'mcp__user-server__ordinary_tool',
+      ]) {
+        expect(isHookToolAllowed(allowed, tool, role), `${role} ${JSON.stringify(allowed)} ${tool}`).toBe(true);
+      }
+    }
   });
 
-  it('keeps Agent Plugins MCP tools behind an exact main-owned grant', () => {
-    const pluginTool = 'mcp__agent-plugin-acme-files__delete_everything';
-
-    expect(isHookToolAllowed([], pluginTool)).toBe(false);
-    expect(isHookToolAllowed(['nexus_file_read'], pluginTool)).toBe(false);
-    expect(isHookToolAllowed([pluginTool], pluginTool)).toBe(true);
-    expect(isHookToolAllowed(null, pluginTool)).toBe(true);
-    expect(isHookToolAllowed([], 'mcp__user-server__ordinary_tool')).toBe(true);
-  });
-
-  it('keeps an orchestrator in coordination-only authority', () => {
-    expect(isHookToolAllowed(null, 'Read', 'orchestrator')).toBe(true);
-    expect(isHookToolAllowed(null, 'Bash', 'orchestrator')).toBe(false);
-    expect(isHookToolAllowed(null, 'Edit', 'orchestrator')).toBe(false);
-    expect(isHookToolAllowed(null, 'Write', 'orchestrator')).toBe(false);
-    expect(
-      isHookToolAllowed(null, 'mcp__nexus__nexus_image_generate', 'orchestrator'),
-    ).toBe(false);
-    expect(
-      isHookToolAllowed(null, 'mcp__nexus__nexus_pane_spawn', 'orchestrator'),
-    ).toBe(true);
-    expect(isHookToolAllowed(null, 'Bash', 'worker')).toBe(true);
-  });
-
-  it('fails closed when the gate or hook input is unavailable', () => {
-    expect(HOOK_SCRIPT).toContain('gate credentials unavailable — blocking');
-    expect(HOOK_SCRIPT).toContain('gate unreachable — blocking tool call');
-    expect(HOOK_SCRIPT).not.toContain('fail open');
+  it('the hook never blocks because Nexus is down or has no credentials', () => {
+    expect(HOOK_SCRIPT).not.toContain('gate credentials unavailable — blocking');
+    expect(HOOK_SCRIPT).not.toContain('gate unreachable — blocking tool call');
+    expect(HOOK_SCRIPT).toContain('nunca bloqueia ferramenta');
   });
 });

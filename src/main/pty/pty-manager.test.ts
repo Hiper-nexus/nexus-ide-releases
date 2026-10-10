@@ -2857,7 +2857,7 @@ describe("entrega física das skills concedidas ao Codex", () => {
   });
 
   it.runIf(process.platform !== "linux")(
-    "modo endurecido continua entregando só no CODEX_HOME privado",
+    "modo endurecido entrega no CODEX_HOME privado, sem filtro de skill (F-1157), e nunca no perfil real",
     () => {
     setSquadCliPolicyLookupForTests(() => "governed");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-sealed-"));
@@ -2883,9 +2883,10 @@ describe("entrega física das skills concedidas ao Codex", () => {
           path.join(spec.env.CODEX_HOME!, "skills", "granted-skill", "SKILL.md"),
         ),
       ).toBe(true);
+      // F-1157: sem filtro de skill no overlay privado.
       expect(
-        fs.existsSync(path.join(spec.env.CODEX_HOME!, "skills", "ungranted-skill")),
-      ).toBe(false);
+        fs.existsSync(path.join(spec.env.CODEX_HOME!, "skills", "ungranted-skill", "SKILL.md")),
+      ).toBe(true);
       // O perfil real do usuário nunca é semeado quando existe overlay.
       expect(
         fs.existsSync(path.join(home, ".codex", "skills", "granted-skill")),

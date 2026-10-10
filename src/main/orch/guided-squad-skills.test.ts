@@ -153,7 +153,7 @@ describe('guided squad deterministic skill policy', () => {
     ).not.toContain('dembrandt');
   });
 
-  it('grants visual generation only to the requested handoff-capable visual owner, independent of CLI brand', () => {
+  it('records the visual generation grant only on the requested handoff-capable visual owner, independent of CLI brand, while the gate opens it to everyone', () => {
     const source = policySquad();
     source.agents = [
       source.agents[0]!,
@@ -214,12 +214,14 @@ describe('guided squad deterministic skill policy', () => {
         .filter((agent) => !['orch', 'visual'].includes(agent.id))
         .every((agent) => agent.allowedTools?.length === 0),
     ).toBe(true);
+    // F-1157: a allowlist do roster continua gravada só no dono visual, mas o
+    // gate não nega mais — o QA, com allowlist vazia, também alcança a geração.
     expect(
       isToolAllowed(
         squad.agents.find((agent) => agent.id === 'qa')?.allowedTools ?? null,
         'nexus_image_generate',
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('captures the exact roster grants in the immutable authority snapshot', () => {

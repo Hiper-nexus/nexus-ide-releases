@@ -35,36 +35,6 @@ export function assertIsolatedWriterGitTool(ctx: ExecutionContext, toolName: str
   }
 }
 
-function canonicalIsolatedGitToolName(toolName: string): string {
-  let name = toolName.trim().toLowerCase();
-  // Claude-family PreToolUse vê a tool como `mcp__nexus__nexus_git_commit`.
-  if (name.startsWith('mcp__nexus__')) name = name.slice('mcp__nexus__'.length);
-  return name.startsWith('nexus_') ? name.slice('nexus_'.length) : name;
-}
-
-/**
- * F-794: as cinco operações Git do writer isolado (status/diff/log/add/commit)
- * valem pela AUTORIDADE do Main — worktree e branch alocadas no registry —, não
- * pelo allowlist da squad. O contrato do brief manda commitar com
- * nexus_git_add/commit, mas workers nascem com allowlist vazia: na Missão
- * Terminais (03/10) o Codex recebeu "outside this agent's allowlist" e o
- * trabalho validado do F-764 e do F-768 ficou só no working tree.
- *
- * A concessão sai do contexto mintado pelo Main (papel + escopo de execução
- * diferente do checkout de coordenação), nunca de argumento nem de texto. Cada
- * chamada continua presa ao handler (`assertIsolatedGitAuthority`: registro
- * `ready`, HEAD na branch `nexus/…` alocada, toplevel = worktree) e ao resto do
- * despacho (intent da missão, auditoria). Sessão read-only nunca ganha a
- * concessão; push/pull/sync/troca de branch seguem negados.
- */
-export function grantsIsolatedWriterGitTool(
-  ctx: ExecutionContext & { readonly readOnly?: boolean },
-  toolName: string,
-): boolean {
-  if (ctx.readOnly === true || !isIsolatedWriterContext(ctx)) return false;
-  return ALLOWED.has(canonicalIsolatedGitToolName(toolName));
-}
-
 /**
  * A PATH wrapper cannot confine absolute executables, scripts or nested shells.
  * This MCP main-process lane therefore executes NO shell for isolated writers.

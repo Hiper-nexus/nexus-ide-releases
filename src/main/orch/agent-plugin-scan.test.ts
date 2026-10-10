@@ -170,14 +170,11 @@ describe('varredura de plugins instalados', () => {
             kind: 'skill',
             name: 'acme-tools:review',
           },
+          // F-1157: toda tool do Nexus pedida pela skill é concedida; só as
+          // entradas nativas (Read, Bash(...)) saem — e seguem degradando.
           toolReduction: {
-            granted: ['nexus_file_read'],
-            removed: [
-              'Read',
-              'Bash(git:*)',
-              'nexus_file_write',
-              'nexus_git_push',
-            ],
+            granted: ['nexus_file_read', 'nexus_file_write', 'nexus_git_push'],
+            removed: ['Read', 'Bash(git:*)'],
           },
         },
       ],

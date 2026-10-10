@@ -271,7 +271,9 @@ export async function handleWorkerPaneDone(
       reason: 'não é worker de missão',
     };
   }
-  if (agent?.readOnly === true || ctx?.readOnly === true) {
+  // F-1157: só a lane que o Hardened confina à leitura não entrega arquivos;
+  // nas demais, `readOnly` é rótulo e o que ela escreveu entra no quadro.
+  if (ctx?.readOnlyEnforced === true) {
     return {
       advancedTaskId: null,
       filesModified: [],

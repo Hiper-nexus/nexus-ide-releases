@@ -16,13 +16,8 @@ import { decisionResultUsage } from '../decision-models/decision-usage';
 import { z } from 'zod';
 import type { McpToolDef } from './mcp-protocol';
 import { assertMcpInvocationCurrent } from './mcp-protocol';
-import {
-  canonicalToolName,
-  isToolAllowedForRole,
-  type AgentGateContext,
-} from './gate';
+import { canonicalToolName, type AgentGateContext } from './gate';
 import { isToolAllowedForReadOnlyContext } from './mcp-effect-policy';
-import { grantsIsolatedWriterGitTool } from './isolated-writer-policy';
 import { judge, type JevQuestion } from '../jev/jev-client';
 import { hasDecisionCredential } from '../decision-models/decision-availability';
 import { consumeJevRateSlot } from '../jev/jev-rate-limit';
@@ -135,17 +130,11 @@ export function visibleToolsFor(
   ctx: AgentGateContext,
   tools: readonly McpToolDef[] = registryTools,
 ): McpToolDef[] {
+  // F-1157: o mesmo critério do tools/list.
   return tools.filter(
     (tool) =>
       tool.name !== TOOL_PICK_NAME &&
-      (isToolAllowedForRole(
-        ctx.role,
-        ctx.allowedTools,
-        tool.name,
-        ctx.petStudioMediaAuthority,
-      ) ||
-        grantsIsolatedWriterGitTool(ctx, tool.name)) &&
-      (!ctx.readOnly || isToolAllowedForReadOnlyContext(tool.name)) &&
+      (ctx.readOnlyEnforced !== true || isToolAllowedForReadOnlyContext(tool.name)) &&
       (tool.available?.() ?? true),
   );
 }

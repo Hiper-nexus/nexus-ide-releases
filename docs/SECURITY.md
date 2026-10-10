@@ -2,7 +2,9 @@
 
 ## Contract
 
-Fail-closed for permissions, MCP, filesystem, secrets, agents, and side effects.
+Fail-closed for permissions, MCP authentication, filesystem, secrets, and side
+effects. Agents themselves are not restricted by tool or skill (F-1157, below):
+the gate keeps session authority and human consent, not access lists.
 All external input validated with Zod at process boundaries.
 
 ## Ownership
@@ -321,12 +323,41 @@ npx vitest run src/main/orch/mcp-dispatch-security.test.ts \
 ```
 
 
+## Agents without restraints (F-1157, 2026-10-10)
+
+Owner's doctrine: the orchestrator, helpers, workers and reviewers reach every
+tool. The agent gate no longer denies anything by allowlist, role, exact
+reviewer profile or read-only authority: `tools/list` shows every available
+Nexus tool and `tools/call` lets it through those checks. The allowlists,
+skills and `readOnly` flags are still recorded in the token and in mission
+seals (changing the data would break sealed missions), but they no longer deny.
+Claude panes no longer carry a Nexus Node control hook on every tool call (the
+light `sh`+`curl` status hooks stay), the WebFetch deny
+or the skill filter; the only Nexus hook left on tools is the handoff spool for
+`nexus_handoff_submit` (F-795), and it never blocks anything else, even with
+Main down. Which hub MCP servers a mission pane loads at spawn is unchanged
+(a memory decision, F-247/F-572, not an access denial).
+
+What stays, because it is not access: bearer authentication and revocation,
+session/mission/leader binding, handoff provenance, human consent and
+confirmation flows (`requiresConfirm`, renderer-exact consent), the mission
+binding of effects, the integration review gate on push/merge, CPU/RAM
+admission of heavy commands, and the operator's explicit Hardened mode
+(native read-only, workspace sandboxes, advisory Seatbelt). Under Hardened a
+read-only lane is confined on both sides: the CLI natively and the MCP
+(`readOnlyEnforced`), so the Main is never a write path around the sandbox.
+Hardened no longer filters skills (owner's order); its overlays receive every
+installed skill as real copies, including third-party plugin skills. Role checks inside
+specific tool handlers (pane-authz, desktop driving, worker vs orchestrator
+workflow tools) are listed in `docs/qa/items/F-1157.md` for the owner's next
+decision.
+
 ## Authorized worker capabilities (2026-10-02)
 
 Autopilot workers may use native subagents and the browser tools of their own
-mission. Claude/OpenClaude Task restrictions are computed at spawn — for governed
-or read-only panes and for the orchestrator — rather than attached to every
-adapter invocation. Native subprocesses inherit their pane's existing authority;
+mission. Since F-1157 the Claude/OpenClaude Task restriction is computed at
+spawn only for the operator's explicit Hardened (governed) mode, rather than
+attached to every adapter invocation. Native subprocesses inherit their pane's existing authority;
 this change does not grant cross-workspace access or a global MCP profile.
 
 Browser ownership is derived in Main from an exact project scope and a live PTY

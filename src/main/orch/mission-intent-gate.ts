@@ -153,9 +153,10 @@ export function assertMissionIntentAllowsTool(
   }
 
   // Lane-specific hard fences are intentionally removed: any running mission
-  // must be able to spawn panes, run commands, read files and diagnose. The
-  // real boundaries are the gate context (role/allowlist/readOnly), workspace
-  // sandbox, and the contract's deniedTools list.
+  // must be able to spawn panes, run commands, read files and diagnose. Since
+  // F-1157 the gate context restricts nothing (no allowlist, no role deny;
+  // read-only only under the operator's Hardened mode). What remains is the
+  // workspace sandbox of Hardened and the contract's deniedTools list.
 
   // Step/token budgets after dispatch.
   if (isDispatchAuthorized) {

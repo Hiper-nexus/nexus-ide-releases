@@ -70,14 +70,18 @@ describe("worker handoff transport contract", () => {
   });
 
   it.each(["codex", "kimi", "grok", "agy"])(
-    "F-781: o brief do %s manda página web para o navegador do Nexus quando o pane o alcança",
+    "F-781: o brief do %s recomenda o navegador do Nexus para página web quando o pane o alcança, sem proibir WebFetch nem curl",
     (nexusMcp) => {
       const prompt = withHandoffContract("Leia a documentação da API e corrija o cliente.", {
         quirks: { mcpAutoload: false, nexusMcp },
       }, { nexusBrowser: true });
       expect(prompt).toContain(NEXUS_BROWSER_BRIEF_RULE);
       expect(prompt).toContain("nexus_browser_open");
-      expect(prompt).toContain("Não use WebFetch nem o fetch de página nativo");
+      // F-1157: a regra recomenda o navegador e libera WebFetch, fetch nativo e curl.
+      expect(prompt).toContain(
+        "WebFetch, o fetch nativo da sua CLI e curl também estão liberados",
+      );
+      expect(prompt).not.toContain("Não use WebFetch");
       // A regra vem antes do contrato de entrega (a última instrução do brief).
       expect(prompt.indexOf("nexus_browser_open")).toBeLessThan(
         prompt.indexOf("Ao concluir sua tarefa"),

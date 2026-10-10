@@ -70,9 +70,11 @@ describe('buildLspTools', () => {
     expect(
       isToolAllowedForRole('worker', ['nexus_lsp_symbols'], 'nexus_lsp_symbols'),
     ).toBe(true);
+    // F-1157: a allowlist do worker não nega mais — o LSP fica ao alcance
+    // mesmo quando a lista não o nomeia.
     expect(
       isToolAllowedForRole('worker', ['nexus_file_read'], 'nexus_lsp_symbols'),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('rejects traversal, symlink escape and oversized source before worker launch', async () => {

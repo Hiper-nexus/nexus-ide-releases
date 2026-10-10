@@ -210,16 +210,17 @@ function AgentCanonicalDetails({
       <CanonicalField label="Documentos do plano">
         <PlanDocumentAuthority value={agent.ownsPlanDocs} />
       </CanonicalField>
-      <CanonicalField label="Skills autorizadas">
+      {/* F-1157: as listas ficam como registro do selo; não restringem. */}
+      <CanonicalField label="Skills registradas (acesso a todas)">
         <CapabilityList
           values={agent.allowedSkills}
-          empty="Nenhuma skill autorizada."
+          empty="Nenhuma skill registrada."
         />
       </CanonicalField>
-      <CanonicalField label="Ferramentas autorizadas">
+      <CanonicalField label="Ferramentas registradas (acesso a todas)">
         <CapabilityList
           values={agent.allowedTools}
-          empty="Nenhuma ferramenta autorizada."
+          empty="Nenhuma ferramenta registrada."
         />
       </CanonicalField>
     </dl>

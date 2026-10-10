@@ -198,11 +198,11 @@ export function isMissionBoundCodexWorkspaceAuthority(
  * - Pet Studio builtin, por um grant imediato canônico e de uso único;
  * - usuário direto, sob a escolha explícita de permissão do provider.
  *
- * Os demais orquestradores são delegate-only: planejam, delegam e integram
- * pelas tools Nexus auditadas, mas nunca ganham Bash/Edit/git nativos no
- * checkout base.
- * `readOnly` continua sendo a restrição MCP completa para reviewers; o novo
- * `nativeReadOnly` permite confinar a CLI sem negar a superfície de delegação.
+ * Os demais orquestradores pedem confinamento nativo de leitura no checkout
+ * base, mas ele só é aplicado no modo Hardened que o operador escolhe
+ * (mission-cli-execution-policy); no Autopilot não há confinamento (F-1157).
+ * `readOnly` só é fronteira MCP quando o Hardened o confina
+ * (`readOnlyEnforced`); `nativeReadOnly` confina a CLI no mesmo modo.
  */
 export function requiresReadOnlyNativeAuthority(
   authority: NativeEffectAuthority,

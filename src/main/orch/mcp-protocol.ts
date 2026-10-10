@@ -1,6 +1,5 @@
 import type { AgentGateContext } from "./gate";
-import { canonicalToolName, isToolAllowedForRole } from "./gate";
-import { grantsIsolatedWriterGitTool } from "./isolated-writer-policy";
+import { canonicalToolName } from "./gate";
 import { dispatchToolCall, type McpDispatchOptions } from "./mcp-dispatch";
 import { isToolAllowedForReadOnlyContext } from "./mcp-effect-policy";
 import type { AgentTransportPhysicalReceipt } from "./http-mcp-boundary";
@@ -229,19 +228,13 @@ export async function handleMcpMessage(
       return ok(id, {});
 
     case "tools/list": {
+      // F-1157: todo agente vê toda tool disponível nesta máquina. Só a lane
+      // que o modo Hardened confina à leitura não vê efeitos de escrita.
       const tools = registry.tools
         .filter(
           (tool) =>
-            // F-794: o writer isolado VÊ o Git da própria worktree mesmo com
-            // allowlist vazia — o mesmo critério do despacho.
-            (isToolAllowedForRole(
-              ctx.role,
-              ctx.allowedTools,
-              tool.name,
-              ctx.petStudioMediaAuthority,
-            ) ||
-              grantsIsolatedWriterGitTool(ctx, tool.name)) &&
-            (!ctx.readOnly || isToolAllowedForReadOnlyContext(tool.name)) &&
+            (ctx.readOnlyEnforced !== true ||
+              isToolAllowedForReadOnlyContext(tool.name)) &&
             (tool.available?.() ?? true),
         )
         .map((tool) => ({

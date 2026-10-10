@@ -253,7 +253,7 @@ describe('prepareOpenCodeMcpSession', () => {
     expect(result.env.OPENCODE_DB).toBe(path.join(root, 'provider-state', 'opencode', 'checkout-inline', 'database', 'opencode.db'));
   });
 
-  it('isolates governed config/plugins and exposes only Nexus plus granted skills', () => {
+  it('isolates governed config/plugins and exposes Nexus plus every installed skill (F-1157)', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');
     const artifacts = path.join(root, 'artifacts');
@@ -308,11 +308,12 @@ describe('prepareOpenCodeMcpSession', () => {
         ),
       ),
     ).toBe(true);
+    // F-1157: sem filtro de skill no overlay privado.
     expect(
       fs.existsSync(
-        path.join(result.env.OPENCODE_CONFIG_DIR, 'skills', 'blocked'),
+        path.join(result.env.OPENCODE_CONFIG_DIR, 'skills', 'blocked', 'SKILL.md'),
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(JSON.stringify(result.env)).not.toContain('external-mcp');
     expect(JSON.stringify(result.env)).not.toContain('external-plugin');
   });
@@ -687,9 +688,10 @@ describe('prepareCodexGovernedSession', () => {
     expect(
       fs.existsSync(path.join(result.env.CODEX_HOME, 'requirements.toml')),
     ).toBe(false);
+    // F-1157: sem filtro de skill no overlay privado.
     expect(
-      fs.existsSync(path.join(result.env.CODEX_HOME, 'skills', 'blocked')),
-    ).toBe(false);
+      fs.existsSync(path.join(result.env.CODEX_HOME, 'skills', 'blocked', 'SKILL.md')),
+    ).toBe(true);
   });
 
   it('resumes the exact checkout thread without importing or modifying native history', () => {
@@ -1035,7 +1037,7 @@ describe('prepareKimiMcpSession', () => {
     expect(fs.readFileSync(realMcp, 'utf8')).toBe(originalMcp);
   });
 
-  it('drops external MCPs/hooks/skills from a governed overlay', () => {
+  it('drops external MCPs/hooks from a governed overlay and mirrors every installed skill (F-1157)', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');
     const artifacts = path.join(root, 'artifacts');
@@ -1087,8 +1089,9 @@ describe('prepareKimiMcpSession', () => {
     expect(
       fs.existsSync(path.join(overlayHome, 'skills', 'allowed', 'SKILL.md')),
     ).toBe(true);
-    expect(fs.existsSync(path.join(overlayHome, 'skills', 'blocked'))).toBe(
-      false,
+    // F-1157: sem filtro de skill no overlay privado.
+    expect(fs.existsSync(path.join(overlayHome, 'skills', 'blocked', 'SKILL.md'))).toBe(
+      true,
     );
     // OAuth refresh in the ephemeral KIMI_CODE_HOME needs the live token
     // material AND the device identity — presence of the overlay alone is not
@@ -1242,7 +1245,7 @@ describe('prepareGrokMcpSession', () => {
     ).toBe(true);
   });
 
-  it('isolates HOME and drops external MCPs/plugins/hooks/skills when governed', () => {
+  it('isolates HOME and drops external MCPs/plugins/hooks when governed, mirroring every installed skill (F-1157)', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');
     const artifacts = path.join(root, 'artifacts');
@@ -1333,9 +1336,10 @@ describe('prepareGrokMcpSession', () => {
         path.join(result.env.GROK_HOME, 'skills', 'allowed', 'SKILL.md'),
       ),
     ).toBe(true);
+    // F-1157: sem filtro de skill no overlay privado.
     expect(
-      fs.existsSync(path.join(result.env.GROK_HOME, 'skills', 'blocked')),
-    ).toBe(false);
+      fs.existsSync(path.join(result.env.GROK_HOME, 'skills', 'blocked', 'SKILL.md')),
+    ).toBe(true);
   });
 });
 

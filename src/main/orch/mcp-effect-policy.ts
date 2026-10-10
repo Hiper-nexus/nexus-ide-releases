@@ -314,7 +314,7 @@ export function permitsOperatorPaneEffect(
  * do operador ("sem cabresto nenhum, só auditoria depois").
  *
  * Fronteiras que PERMANECEM: pane-authz de alvo (worker não lê shell/browser),
- * allowlists do token, `RENDERER_EXACT_CONSENT_TOOLS` (mutação global de
+ * `RENDERER_EXACT_CONSENT_TOOLS` (mutação global de
  * agentes/squads continua na superfície nativa), o recibo exato do `cron` e o
  * bind de contexto da missão quando existe. O registro continua em auditoria;
  * texto destrutivo injetado em pane leva um aviso `[vibe]` no log.
@@ -387,7 +387,10 @@ export function effectPolicyForTool(toolName: string): McpEffectPolicy {
 }
 
 /**
- * Mechanical MCP boundary for a token minted with readOnly=true.
+ * Mechanical MCP boundary for a token whose read-only label is ENFORCED
+ * (`ctx.readOnlyEnforced`: read-only lane under the operator's Hardened
+ * mode, F-1157). In the default Autopilot `readOnly` is only a label and
+ * callers do not consult this predicate.
  *
  * The effect policy remains default-deny, while a tiny set of internal Nexus
  * receipts is allowed by exact name. Allowlist/role/mission checks still run

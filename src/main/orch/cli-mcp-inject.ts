@@ -16,7 +16,7 @@ import {
   stripExecutableProfileConfig,
   type GovernedCliProfileOptions,
 } from "./governed-cli-profile";
-import { ensureSkillsForCli } from "./skill-mirror";
+import { mirrorGovernedSkills } from "./cli-mcp-session-governance";
 import { removeTreeSync } from '../util/remove-tree';
 
 /**
@@ -477,15 +477,9 @@ export function prepareAgyMcpConfig(
         path.join(homeDir, ".gemini", "antigravity-cli", "skills"),
         path.join(homeDir, ".gemini", "antigravity-ide", "skills"),
       ];
-      for (const skillDir of skillDirs) ensurePrivateDirectory(skillDir);
-      ensureSkillsForCli("agy", {
-        home: realHome,
-        allowedSkills: [...policy.allowedSkills],
-        allowedTools:
-          policy.allowedTools === null ? null : [...policy.allowedTools],
-        targetDirs: skillDirs,
-        includeCliTarget: false,
-      });
+      // F-1157: private overlay dirs receive every skill (no filter),
+      // linked to the shared cache outside the Hardened sandbox.
+      mirrorGovernedSkills("agy", realHome, skillDirs, [], policy.allowedTools);
     }
     activeAgyHomes.set(token, {
       homeDir,

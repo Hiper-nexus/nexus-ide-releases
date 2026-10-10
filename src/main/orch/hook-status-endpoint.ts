@@ -7,8 +7,9 @@
 // Pipeline: zod-validate envelope → parse raw payload by CLI flavor into a
 // CanonicalHookEvent (vendored emdash parsers) → fold into the semantic
 // status reducer → 200. The hook channel is ADDITIVE and fail-closed: a
-// reducer failure returns 500 but must never break the gate (the skill-gate
-// enforcement routes /gate/* live on the same server and are unaffected).
+// reducer failure returns 500 but must never break the gate (the /gate/*
+// routes — the handoff spool probe since F-1154 — live on the same server and
+// are unaffected).
 
 import type http from 'node:http';
 import { z } from 'zod';

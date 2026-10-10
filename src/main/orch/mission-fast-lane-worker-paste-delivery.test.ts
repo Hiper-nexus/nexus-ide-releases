@@ -265,7 +265,9 @@ describe('Via Rápida first-wave — regra do navegador do Nexus no briefing (F-
     expect(state.spawnPrompts[0] ?? '').toContain(NEXUS_BROWSER_BRIEF_RULE);
   });
 
-  it('seat somente leitura da pergunta aos panes não recebe a regra (não abre aba)', async () => {
+  it('seat da pergunta aos panes recebe SÓ a pergunta, sem a regra do navegador', async () => {
+    // F-1157 abriu o navegador a todo pane, mas o assento que só responde
+    // continua lendo só o pedido ("quem é perguntado recebe SÓ a pergunta").
     seedBuiltinKimi();
     const { scope, mission } = prepare();
     expect(await dispatchFastLaneFirstWave(scope, mission.id)).toBe(1);
@@ -276,8 +278,8 @@ describe('Via Rápida first-wave — regra do navegador do Nexus no briefing (F-
 /**
  * F-781 (complemento): o Maestro de qualquer CLI com o MCP do Nexus recebe a
  * regra do navegador no kickoff — o mesmo prompt vai para o pane spawnado e
- * para o pane do operador adotado como Maestro. Na família Claude o hook do
- * WebFetch ainda nega; no Codex/Kimi/Grok o kickoff é a única trava.
+ * para o pane do operador adotado como Maestro. F-1157: não há mais hook que
+ * negue o WebFetch; o kickoff só recomenda o navegador, em toda CLI.
  */
 describe('kickoff do Maestro — regra do navegador do Nexus (F-781)', () => {
   const orchestrator = {
@@ -297,15 +299,17 @@ describe('kickoff do Maestro — regra do navegador do Nexus (F-781)', () => {
     expect(prompt.indexOf(NEXUS_BROWSER_BRIEF_RULE)).toBeLessThan(prompt.indexOf('ORQUESTRAÇÃO'));
   });
 
-  it('sem adapter conhecido (sem MCP do Nexus) ou com allowlist sem o navegador, a regra não entra', () => {
+  it('sem adapter conhecido (sem MCP do Nexus) a regra não entra; allowlist sem o navegador não tira mais a regra', () => {
     const { mission } = prepare();
     expect(agentPrompt(orchestrator, mission, ['Maestro'], false)).not.toContain(
       NEXUS_BROWSER_BRIEF_RULE,
     );
     const kimi = BUILTIN_ADAPTERS.find((adapter) => (adapter as { id?: unknown }).id === 'kimi');
     state.adapters.set('kimi', adapterSchema.parse(kimi));
+    // F-1157: a allowlist não nega mais o navegador, então o Maestro com MCP
+    // do Nexus recebe a regra mesmo com allowlist que não o nomeia.
     const restricted = { ...orchestrator, allowedTools: ['nexus_pane_spawn'] };
-    expect(agentPrompt(restricted, mission, ['Maestro'], false)).not.toContain(
+    expect(agentPrompt(restricted, mission, ['Maestro'], false)).toContain(
       NEXUS_BROWSER_BRIEF_RULE,
     );
   });

@@ -19,8 +19,8 @@ import {
   readAuditLog,
 } from "../jarvis/audit-log";
 import { clearAll as clearAllPermissions } from "../jarvis/permissions";
-import { bindTokenToSession, mintToken, PreEffectRefusalError, releaseSessionByToken, resetGateForTests } from "./gate";
-import { DENIAL_HINTS, dispatchToolCall } from "./mcp-dispatch";
+import { bindTokenToSession, mintToken, PreEffectRefusalError, registerHardenedSpawnPolicy, releaseSessionByToken, resetGateForTests } from "./gate";
+import { dispatchToolCall, READ_ONLY_HARDENED_HINT } from "./mcp-dispatch";
 import { guardToolCall } from "./jev-dispatch-guard";
 import type { McpDispatchOptions } from "./mcp-dispatch";
 import type { IntentGateMissionResolver } from "./mcp-dispatch";
@@ -425,7 +425,7 @@ describe("MCP dispatch effect safety", () => {
     } finally { fs.rmSync(executionRoot, { recursive: true, force: true }); }
   });
 
-  it("denies workspace and process effects for read-only agents before handlers run", async () => {
+  it("F-1157: a formerly read-only agent is never refused for being read-only", async () => {
     const confirm = vi.fn(async () => true);
     const deniedCases: Array<{
       toolName: string;
@@ -467,17 +467,62 @@ describe("MCP dispatch effect safety", () => {
         workflowOptions({ confirm }),
       );
 
-      expect(result, toolName).toMatchObject({
-        ok: false,
-        denied: true,
-        error: expect.stringContaining("read-only"),
-      });
-      expect(handler, toolName).not.toHaveBeenCalled();
+      // The write runs. Only the route keeps its role rule (delegation is
+      // an orchestrator act — a handler check, not the read-only boundary).
+      if (toolName === "nexus_route_task") {
+        expect(result, toolName).toMatchObject({
+          ok: false,
+          error: "delegation authority requires an orchestrator bound to a mission",
+        });
+        expect(handler, toolName).not.toHaveBeenCalled();
+      } else {
+        expect(result, toolName).toMatchObject({ ok: true });
+        expect(handler, toolName).toHaveBeenCalledOnce();
+      }
     }
-    expect(confirm).not.toHaveBeenCalled();
   });
 
-  it("dispatches image generation only for the exact Pet Studio media marker", async () => {
+  it("F-1157: the Hardened mode keeps a read-only lane from writing through the MCP", async () => {
+    registerHardenedSpawnPolicy(() => true);
+    try {
+      const handler = vi.fn(async () => ({ shouldNotRun: true }));
+      resetGateForTests();
+      const context = mintToken({
+        label: "hardened-reviewer",
+        role: "worker",
+        missionId: TEST_MISSION_ID,
+        contextRevision: TEST_CONTEXT_REVISION,
+        readOnly: true,
+        scope: auditScope,
+        allowedTools: null,
+      });
+      expect(context.readOnlyEnforced).toBe(true);
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_git_commit",
+          description: "commit",
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        "nexus_git_commit",
+        { message: "must not run" },
+        context,
+        workflowOptions(),
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        denied: true,
+        error: expect.stringContaining('read-only authority denied tool "nexus_git_commit"'),
+        hint: READ_ONLY_HARDENED_HINT,
+      });
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      registerHardenedSpawnPolicy(() => false);
+    }
+  });
+
+  it("F-1157: dispatches image generation for the Pet Studio marker and for any orchestrator", async () => {
     const handler = vi.fn(async () => ({ generated: true }));
     const confirm = vi.fn(async () => true);
     const tool: McpToolDef = {
@@ -521,22 +566,18 @@ describe("MCP dispatch effect safety", () => {
       scope: auditScope,
       allowedTools: [...(maker.allowedTools ?? [])],
     });
-    const denied = await dispatchToolCall(
+    const ordinaryResult = await dispatchToolCall(
       "http-mcp",
       registryWith(tool),
       tool.name,
-      { prompt: "must not run" },
+      { prompt: "ordinary orchestrator image" },
       ordinary,
       standardWorkflowOptions({ confirm }),
     );
 
-    expect(denied).toMatchObject({
-      ok: false,
-      denied: true,
-      error: expect.stringContaining("outside this agent's allowlist"),
-    });
-    expect(handler).not.toHaveBeenCalled();
-    expect(confirm).not.toHaveBeenCalled();
+    // The marker no longer gates media: the ordinary orchestrator runs it.
+    expect(ordinaryResult).toMatchObject({ ok: true, tool: tool.name });
+    expect(handler).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -3266,7 +3307,7 @@ describe("MCP dispatch effect safety", () => {
       });
     }
 
-    it("hints that an allowlist denial is a squad decision, not a mission blocker", async () => {
+    it("F-1157: a tool outside the allowlist is not refused by the gate", async () => {
       const handler = vi.fn(async () => ({ shouldNotRun: true }));
       const context = missionContext(undefined, ["nexus_file_read"]);
       const result = await dispatchToolCall(
@@ -3283,16 +3324,11 @@ describe("MCP dispatch effect safety", () => {
         workflowOptions(),
       );
 
-      expect(result).toMatchObject({
-        ok: false,
-        denied: true,
-        error: expect.stringContaining("outside this agent's allowlist"),
-        hint: DENIAL_HINTS.allowlist,
-      });
-      expect(handler).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true });
+      expect(handler).toHaveBeenCalledOnce();
     });
 
-    it("hints that a read-only denial must not be routed around", async () => {
+    it("F-1157: a formerly read-only worker is not refused for being read-only", async () => {
       const handler = vi.fn(async () => ({ shouldNotRun: true }));
       const result = await dispatchToolCall(
         "http-mcp",
@@ -3308,16 +3344,11 @@ describe("MCP dispatch effect safety", () => {
         workflowOptions(),
       );
 
-      expect(result).toMatchObject({
-        ok: false,
-        denied: true,
-        error: expect.stringContaining("read-only authority denied tool"),
-        hint: DENIAL_HINTS.readOnly,
-      });
-      expect(handler).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true });
+      expect(handler).toHaveBeenCalledOnce();
     });
 
-    it("lets a read-only Maestro request resume and still denies other mission controls", async () => {
+    it("lets a formerly read-only Maestro request resume and reach other mission controls (F-1157)", async () => {
       const resume = vi.fn(async () => ({ resumed: true }));
       const resumed = await dispatchToolCall(
         "http-mcp",
@@ -3352,15 +3383,11 @@ describe("MCP dispatch effect safety", () => {
         readOnlyContext(),
         workflowOptions(),
       );
-      expect(focused).toMatchObject({
-        ok: false,
-        denied: true,
-        error: expect.stringContaining("read-only authority denied tool"),
-      });
-      expect(focus).not.toHaveBeenCalled();
+      expect(focused).toMatchObject({ ok: true });
+      expect(focus).toHaveBeenCalledOnce();
     });
 
-    it("F-794: writer isolado com allowlist vazia commita na própria worktree; push segue negado", async () => {
+    it("F-794/F-1157: writer isolado com allowlist vazia commita e o push não é negado pelo gate", async () => {
       const context = missionContext(TEST_CONTEXT_REVISION, []);
       context.executionScope = {
         ...context.scope,
@@ -3397,15 +3424,14 @@ describe("MCP dispatch effect safety", () => {
         context,
         workflowOptions(),
       );
-      expect(pushed).toMatchObject({
-        ok: false,
-        denied: true,
-        error: expect.stringContaining("outside this agent's allowlist"),
-      });
+      // O gate não nega mais pela allowlist; quem recusa é a guarda do writer
+      // isolado (pendente de decisão do dono no F-1157).
+      expect(pushed).toMatchObject({ ok: false, error: expect.stringContaining("isolated_worktree:") });
+      expect(String(pushed.error)).not.toContain("allowlist");
       expect(push).not.toHaveBeenCalled();
     });
 
-    it("hints that the internal reviewer only reads and concludes", async () => {
+    it("F-1157: the internal reviewer is not confined to an exact profile", async () => {
       const handler = vi.fn(async () => ({ shouldNotRun: true }));
       const result = await dispatchToolCall(
         "http-mcp",
@@ -3421,15 +3447,8 @@ describe("MCP dispatch effect safety", () => {
         workflowOptions(),
       );
 
-      expect(result).toMatchObject({
-        ok: false,
-        denied: true,
-        error: expect.stringContaining(
-          "outside this internal reviewer's exact profile",
-        ),
-        hint: DENIAL_HINTS.internalReviewer,
-      });
-      expect(handler).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true });
+      expect(handler).toHaveBeenCalledOnce();
     });
 
     // Bug de campo: a mão do operador num pane sem missão que tenta handoff
@@ -3474,7 +3493,7 @@ describe("MCP dispatch effect safety", () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
-    it("does not point a read-only, allowlist-empty user pane at nexus_mission_create or nexus_pane_write", async () => {
+    it("F-1157: a formerly read-only, allowlist-empty user pane gets the full unbound-handoff path", async () => {
       const handler = vi.fn(async () => ({ shouldNotRun: true }));
       const result = await dispatchToolCall(
         "http-mcp",
@@ -3490,17 +3509,14 @@ describe("MCP dispatch effect safety", () => {
       );
 
       expect(result).toMatchObject({ ok: false, denied: true });
-      // The only tool this pane can actually reach without a mission.
+      // Every tool is reachable now, so the hint names the whole path.
       expect(result.hint).toContain("nexus_pane_ask");
-      // Neither tool is reachable from this pane: readOnly and the allowlist
-      // both deny pane_write, and both deny mission_create too. The hint must
-      // never tell the agent to call something the gate itself will refuse.
-      expect(result.hint).not.toContain("crie uma missão com nexus_mission_create");
-      expect(result.hint).not.toMatch(/use nexus_pane_write/);
+      expect(result.hint).toContain("nexus_pane_write");
+      expect(result.hint).toContain("crie uma missão com nexus_mission_create");
       expect(handler).not.toHaveBeenCalled();
     });
 
-    it("gives no actionable hint to an orphaned worker with no mission and no reachable tool", async () => {
+    it("F-1157: an orphaned worker with no mission is pointed at nexus_mission_create", async () => {
       resetGateForTests();
       const orphanedWorker = mintToken({
         label: "orfao-handoff",
@@ -3524,8 +3540,10 @@ describe("MCP dispatch effect safety", () => {
       );
 
       expect(result).toMatchObject({ ok: false, denied: true });
-      // Nothing is actually reachable for this pane: no false lead offered.
-      expect(result.hint).toBeUndefined();
+      // The worker cannot talk to panes without a mission (operator hand
+      // only), but mission_create is reachable for every role.
+      expect(result.hint).toContain("crie uma missão com nexus_mission_create");
+      expect(result.hint).not.toContain("nexus_pane_ask");
       expect(handler).not.toHaveBeenCalled();
     });
 

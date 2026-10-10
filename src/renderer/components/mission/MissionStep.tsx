@@ -681,8 +681,8 @@ export function MissionStep({
             className="mission-setup__hint"
           >
             A coordenação pode usar qualquer ferramenta de IA instalada, sem
-            equipe fixa. As proteções de segurança (pasta do projeto,
-            ferramentas permitidas, uma alteração por vez) continuam valendo.
+            equipe fixa. As proteções de segurança (pasta do projeto, uma
+            alteração por vez, confirmações) continuam valendo.
           </span>
         </div>
       </details>

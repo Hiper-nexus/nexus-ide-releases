@@ -52,15 +52,9 @@ const SPEAK_HUMAN =
  * Os built-ins a aplicam no load; os squads custom/arquiteto/importados a
  * aplicam na camada de persistência (squad-store.saveSquad / importSquadsJson)
  * para que TODO worker persistido tenha `allowedTools` não-nulo e passe o
- * fire-gate do wizard (validateWorkerToolScopes). O `[]` do worker escopa
- * APENAS o toolset MCP de CONTROLE do Nexus (nexus_pane_spawn/write/close,
- * remote_*, missão) — as tools NATIVAS da CLI do worker (Read/Write/Edit/Bash/
- * Grep/Glob) não passam por este gate, então `[]` NÃO incapacita o worker: ele
- * continua codando normalmente, lê peers via pane_read (always-allowed) e
- * entrega via nexus_handoff_submit (sempre permitido). Tools nativas continuam
- * sob o sandbox/modo de permissão seguro do próprio CLI; o hook distingue essas
- * tools das chamadas MCP Nexus.
- * Ver gate.ts isHookToolAllowed/isToolAllowed + mcp-protocol.ts.
+ * fire-gate do wizard (validateWorkerToolScopes). Desde o F-1157 o `[]` é só
+ * registro no selo: o gate não restringe tool nem skill, e o worker alcança
+ * toda tool do Nexus e as nativas da CLI. Ver gate.ts (doutrina F-1157).
  *
  * CORREÇÃO (`allowedSkills`): "aberto de propósito" valia enquanto ausente
  * significasse irrestrito. No modo governado ausente significa NENHUMA skill

@@ -18,23 +18,17 @@ import {
 
 export { registerMissionLeaderSessionCheck };
 import {
-  internalPrevcReviewerAllowsTool,
   isExactInternalPrevcReviewerProfile,
   type InternalPrevcReviewerAuthority,
 } from "./prevc-reviewer-profile";
 
 /**
- * Skill-gate — the server-side half of the dual enforcement described in
- * docs/ARCHITECTURE.md §E.4. Every MCP client (a CLI agent inside a PTY) holds
- * a bearer token minted at spawn time and bound to that agent's allowlists.
- * The embedded MCP server refuses out-of-allowlist calls HERE, regardless of
- * whether the client-side PreToolUse hook was bypassed.
- *
- * Allowlist semantics: `null` = unrestricted, and
- * handoff_submit / handoff_list / handoff_ack / ToolSearch plus in-mission
- * pane observation (pane_read / pane_read_many / pane_list / pane_whoami)
- * are always allowed. Object-level pane-authz still confines reads to the
- * caller's mission and blocks the user's shell/browser.
+ * Agent gate — docs/ARCHITECTURE.md §E.4. Every MCP client (a CLI agent inside
+ * a PTY) holds a bearer token minted at spawn time and bound to its session,
+ * mission and checkout. Since F-1157 the gate does not restrict tools or
+ * skills (see the doctrine note below); it keeps the session authority:
+ * bearer, revocation, leader binding and the stop/handoff bookkeeping.
+ * Object-level pane-authz still confines panes to the caller's mission.
  */
 
 export type GateRole = "orchestrator" | "worker" | "user";
@@ -81,6 +75,13 @@ export interface AgentGateContext {
    */
   internalPrevcReviewerAuthority?: InternalPrevcReviewerAuthority;
   readOnly?: boolean;
+  /**
+   * F-1157: `readOnly` is a label everywhere except when the operator chose
+   * Hardened (governed) mode, where the CLI is natively confined. Then the
+   * MCP must not become a write path around that confinement. Main decides
+   * it at mint/restore; a lane with this mark never writes by any path.
+   */
+  readOnlyEnforced?: true;
   /** Immutable project/checkout authority captured before the PTY starts. */
   scope: Readonly<ProjectExecutionScope>;
   /** Filesystem checkout granted to this agent (task worktree when present). */
@@ -114,84 +115,45 @@ export interface AgentGateContext {
 
 export const MAX_STOP_ATTEMPTS = 10;
 
-/** Tools that must work regardless of any allowlist. */
-const ALWAYS_ALLOWED = new Set([
-  "handoff_submit",
-  "handoff_list",
-  "handoff_ack",
-  "worker_heartbeat",
-  "toolsearch",
-  // Overclock parity: any pane in the mission may inspect any other pane's
-  // PTY buffer (worker↔worker, worker→orchestrator, orchestrator→worker).
-  // Write/spawn/close stay on the squad allowlist. pane-authz is the real
-  // boundary (same mission, never the user's shell/browser).
-  "pane_read",
-  "pane_read_many",
-  "pane_list",
-  "pane_whoami",
-  // Conversa entre panes (ordem do operador, 20/08): qualquer pane pergunta
-  // a outro e recebe a resposta. pane-authz continua a fronteira real —
-  // worker não escreve no orquestrador, nunca no shell/browser do usuário.
-  "pane_ask",
-  // Observation: any pane can read GitHub merge-queue state for the branch PR.
-  "pr_inspect",
-  // Decision helper for any role (TypeSafe Jev); allowlists still govern
-  // everything effectful — judge itself only reads state and returns a verdict.
-  "judge",
-  // F-234: um juiz spawnado com perfil readOnly precisa registrar o veredito;
-  // gravar a linha não tem efeito além do ledger — o portão de integração
-  // (frontier + HEAD exato + árvore limpa) é que decide se o veredito vale.
-  "review_verdict",
-  // Same for candidate ranking: read-only judgment, composite computed in code.
-  "rank",
-  // Tool recommendation: reads the caller's own visible tool list and returns
-  // a ranking; the agent still calls the recommended tool through every gate.
-  "tool_pick",
-  // Memória compartilhada de longa duração (F-769): workers nascem com
-  // allowlist vazia e nunca podiam consultar nem gravar — 0 retains na
-  // auditoria. recall/stats são leitura FTS local; retain é validado e
-  // redigido no handler (bootstrap-authority) e escreve no banco de memória
-  // em userData (SQLite + projeção). A cópia legível na PASTA DO PROJETO é
-  // opt-in do operador (F-806) e nunca é disparada por contexto read-only.
-  "memory_recall",
-  "memory_stats",
-  "memory_retain",
-]);
+/*
+ * F-1157 — doutrina do dono (10/10/2026): orquestrador, helpers, workers e
+ * revisores têm acesso a TUDO. As allowlists (`allowedTools`/`allowedSkills`),
+ * o `readOnly` e o perfil exato do revisor continuam gravados no token e nos
+ * selos de missão (mudar os dados quebraria a ligação de missões já seladas),
+ * mas deixaram de negar: nenhuma chamada recebe mais "tool fora da allowlist"
+ * nem negação de papel do orquestrador; `readOnly` só confina sob o Hardened
+ * (`readOnlyEnforced`, mcp-effect-policy). As funções abaixo ficam como a
+ * resposta única e aberta para quem ainda pergunta (hoje: a interseção do
+ * `allowed-tools` das skills de Agent Plugin) — `tools/list`, `tools/call`,
+ * o hook e o `tool_pick` não as consultam mais.
+ * Integridade de protocolo (bearer, ligação de sessão/missão, proveniência de
+ * handoff, consentimento humano) não é acesso e segue nos seus módulos.
+ */
+
+let hardenedSpawnLookup: () => boolean = () => false;
 
 /**
- * High-impact tools that reach OUTSIDE the sandbox — SSH to arbitrary hosts,
- * mutating the shared ~/.claude/agents specs, or opening the network bridge.
- * A default (null) allowlist means "unrestricted" for ordinary tools, but a
- * prompt-injected agent must NOT inherit these implicitly. They are granted
- * only when a squad/mission names them EXPLICITLY in the agent's allowlist.
+ * F-1157: Main registers, at boot, whether the operator chose Hardened
+ * (governed) mode. Registered instead of imported so this module stays free
+ * of the settings store (Electron) and of import cycles. Unregistered or a
+ * failing lookup means the default Autopilot: `readOnly` is only a label.
  */
-const REQUIRES_EXPLICIT_ALLOW = new Set([
-  "remote_spawn",
-  "remote_cli_detect",
-  "remote_tmux_list",
-  "remote_bridge_status",
-  "agent_spec_write",
-  "catalog_install",
-  // OVKA-702: install/remove de skill toca o perfil REAL de cada CLI — só com
-  // allowlist explícita (mesma fronteira do catalog_install).
-  "skills",
-  "cron",
-  "cron_schedule",
-  "cron_list",
-  "cron_cancel",
-]);
+export function registerHardenedSpawnPolicy(lookup: () => boolean): void {
+  hardenedSpawnLookup = lookup;
+}
 
-const ORCHESTRATOR_DENIED_TOOLS = new Set([
-  "file_write", "editor_insert", "editor_replace_selection",
-  "editor_apply_patch",
-  "terminal_kill", "git_add", "git_commit", "git_push",
-  "git_pull", "git_branch_create", "git_branch_switch",
-  "image_generate", "video_generate", "audio_generate",
-]);
+function hardenedSpawnPolicy(): boolean {
+  try {
+    return hardenedSpawnLookup() === true;
+  } catch {
+    return false;
+  }
+}
 
-const ORCHESTRATOR_DENIED_NATIVE_TOOLS = new Set([
-  "task", "bash", "edit", "write", "notebookedit",
-]);
+/** Did the operator choose Hardened (governed) mode? Autopilot when unknown. */
+export function isHardenedSpawnPolicy(): boolean {
+  return hardenedSpawnPolicy();
+}
 
 const NAMESPACE_PREFIXES = ["nexus_"];
 
@@ -204,117 +166,39 @@ export function canonicalToolName(name: string): string {
   return lower;
 }
 
-/** Pure allowlist check — exported separately for unit tests. */
+/** F-1157: toda tool do Nexus está ao alcance de todo agente. */
 export function isToolAllowed(
-  allowedTools: string[] | null,
-  toolName: string,
+  _allowedTools: string[] | null,
+  _toolName: string,
 ): boolean {
-  const canonical = canonicalToolName(toolName);
-  if (ALWAYS_ALLOWED.has(canonical)) return true;
-  if (REQUIRES_EXPLICIT_ALLOW.has(canonical)) {
-    // Never implicitly available — requires an explicit grant, even when the
-    // rest of the toolset is unrestricted.
-    return (
-      allowedTools !== null &&
-      allowedTools.some((allowed) => {
-        const allowedCanonical = canonicalToolName(allowed);
-        if (allowedCanonical === canonical) return true;
-        if (
-          allowedCanonical === 'cron' &&
-          (canonical === 'cron_schedule' ||
-            canonical === 'cron_list' ||
-            canonical === 'cron_cancel')
-        ) {
-          return true;
-        }
-        return false;
-      })
-    );
-  }
-  if (allowedTools === null) return true;
-  return allowedTools.some((allowed) => {
-    const allowedCanonical = canonicalToolName(allowed);
-    if (allowedCanonical === canonical) return true;
-    // Squad allowlists speak native CLI tool names (Bash/Read/Edit). Map the
-    // corresponding nexus_* instrumented forms so a squad that grants Bash
-    // also grants nexus_terminal_run, and one that grants Edit also grants
-    // nexus file/editor writes. Read is already covered by the read-only
-    // boundary, but we keep the mapping symmetric.
-    if (canonical === 'terminal_run' && allowedCanonical === 'bash') return true;
-    if (canonical === 'bg_run' && allowedCanonical === 'bash') return true;
-    if (canonical === 'file_read' && allowedCanonical === 'read') return true;
-    if (canonical === 'file_search' && allowedCanonical === 'read') return true;
-    if (canonical === 'file_write' && allowedCanonical === 'edit') return true;
-    if (canonical === 'editor_insert' && allowedCanonical === 'edit') return true;
-    if (canonical === 'editor_replace_selection' && allowedCanonical === 'edit') {
-      return true;
-    }
-    if (canonical === 'editor_apply_patch' && allowedCanonical === 'edit') {
-      return true;
-    }
-    return false;
-  });
-}
-
-/** Role boundary applied after the squad allowlist. A coordinator may inspect,
- * plan, delegate, validate and merge, but cannot become the implementation pane. */
-export function isToolAllowedForRole(
-  role: GateRole,
-  allowedTools: string[] | null,
-  toolName: string,
-  petStudioMediaAuthority = false,
-): boolean {
-  const canonical = canonicalToolName(toolName);
-  if (
-    role === "orchestrator" &&
-    ORCHESTRATOR_DENIED_TOOLS.has(canonical) &&
-    !(petStudioMediaAuthority && canonical === "image_generate")
-  ) {
-    return false;
-  }
-  // Mission orchestrators must always be able to delegate to workers, even
-  // when the squad roster expresses that as an empty allowlist. pane_spawn
-  // itself enforces role/mission/authority downstream.
-  if (role === "orchestrator" && canonical === "pane_spawn") return true;
-  return isToolAllowed(allowedTools, toolName);
-}
-
-/**
- * Claude hooks also observe native Read/Edit/Bash calls. Nexus MCP allowlists
- * must not be mistaken for a native-tool allowlist: native tools remain under
- * the CLI's explicit safe permission/sandbox mode, while Nexus MCP calls keep
- * the per-agent gate enforced here and again in the HTTP MCP server.
- */
-export function isHookToolAllowed(
-  allowedTools: string[] | null,
-  hookToolName: string,
-  role: GateRole = "worker",
-): boolean {
-  const lower = hookToolName.trim().toLowerCase();
-  const mcpPrefix = "mcp__nexus__";
-  if (lower.startsWith(mcpPrefix)) {
-    return isToolAllowedForRole(role, allowedTools, lower.slice(mcpPrefix.length));
-  }
-  if (lower.startsWith("mcp__agent-plugin-")) {
-    if (allowedTools === null) return true;
-    return allowedTools.some(
-      (allowed) => allowed.trim().toLowerCase() === lower,
-    );
-  }
-  if (lower.startsWith("nexus_")) return isToolAllowedForRole(role, allowedTools, lower);
-  if (role === "orchestrator" && ORCHESTRATOR_DENIED_NATIVE_TOOLS.has(lower)) {
-    return false;
-  }
   return true;
 }
 
-export function isSkillAllowed(
-  allowedSkills: string[] | null,
-  skillName: string,
+/** F-1157: o orquestrador também implementa, commita e gera mídia. */
+export function isToolAllowedForRole(
+  _role: GateRole,
+  _allowedTools: string[] | null,
+  _toolName: string,
+  _petStudioMediaAuthority = false,
 ): boolean {
-  if (allowedSkills === null) return true;
-  const target = skillName.toLowerCase();
-  return allowedSkills.some((allowed) => allowed.toLowerCase() === target);
+  return true;
+}
+
+/** F-1157: nativas, Nexus e Agent Plugins, para todo papel. */
+export function isHookToolAllowed(
+  _allowedTools: string[] | null,
+  _hookToolName: string,
+  _role: GateRole = "worker",
+): boolean {
+  return true;
+}
+
+/** F-1157: sem filtro de skill. */
+export function isSkillAllowed(
+  _allowedSkills: string[] | null,
+  _skillName: string,
+): boolean {
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -469,6 +353,9 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
         ? Object.freeze({ ...input.internalPrevcReviewerAuthority })
         : undefined,
     readOnly: input.readOnly === true,
+    ...(input.readOnly === true && hardenedSpawnPolicy()
+      ? { readOnlyEnforced: true as const }
+      : {}),
     scope: Object.freeze({ ...input.scope }),
     executionScope: Object.freeze({ ...executionScope }),
     ...(input.sharedTabWorktree === true ? { sharedTabWorktree: true as const } : {}),
@@ -499,42 +386,29 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
 }
 
 /**
- * Exact MCP vocabulary for a main-owned internal reviewer. This check runs in
- * addition to the ordinary allowlist so the global handoff escape hatches
- * cannot widen a reviewer token after its PREVC stage has ended.
+ * F-1157: o revisor interno deixou de ter vocabulário exato. A prova de que o
+ * token pertence a um revisor PREVC ativo continua no mint (integridade); ela
+ * só não restringe mais as tools.
  */
 export function isInternalPrevcReviewerToolAllowed(
-  ctx: Pick<
+  _ctx: Pick<
     AgentGateContext,
     "internalPrevcReviewerAuthority" | "allowedTools"
   >,
-  toolName: string,
+  _toolName: string,
 ): boolean {
-  if (!ctx.internalPrevcReviewerAuthority) return true;
-  return internalPrevcReviewerAllowsTool(
-    ctx.internalPrevcReviewerAuthority,
-    ctx.allowedTools,
-    toolName,
-  );
+  return true;
 }
 
-/** Claude-family hook spelling of the same exact reviewer vocabulary. */
+/** Claude-family hook spelling of the same open reviewer vocabulary. */
 export function isInternalPrevcReviewerHookToolAllowed(
-  ctx: Pick<
+  _ctx: Pick<
     AgentGateContext,
     "internalPrevcReviewerAuthority" | "allowedTools"
   >,
-  hookToolName: string,
+  _hookToolName: string,
 ): boolean {
-  if (!ctx.internalPrevcReviewerAuthority) return true;
-  const normalized = hookToolName.trim().toLowerCase();
-  // Native discovery is not an MCP effect and is required to find the seven
-  // namespaced tools. No other native tool receives this exception.
-  if (normalized === "toolsearch") return true;
-  const nexusTool = normalized.startsWith("mcp__nexus__")
-    ? normalized.slice("mcp__nexus__".length)
-    : normalized;
-  return isInternalPrevcReviewerToolAllowed(ctx, nexusTool);
+  return true;
 }
 
 export function executionScopeFor(
@@ -709,6 +583,7 @@ export function restoreSessionAuthority(
           : [...authority.allowedSkills];
   }
   if (authority.readOnly === true) ctx.readOnly = true;
+  if (ctx.readOnly && hardenedSpawnPolicy()) ctx.readOnlyEnforced = true;
   ctx.missionId = authority.missionId;
   if (authority.workerIncarnationId) {
     ctx.workerIncarnationId = authority.workerIncarnationId;

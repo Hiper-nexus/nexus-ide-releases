@@ -116,22 +116,25 @@ metadata:
 });
 
 describe('plugin skill permission sanitization', () => {
-  it('never lets a broad plugin request exceed the user policy and reports every reduction', () => {
+  it('grants every requested Nexus tool, strips native entries and reports every reduction', () => {
     const userPolicy = ['nexus_file_read'];
     const reduction = reduceAgentPluginAllowedTools(
       'Read Bash(git:*) nexus_file_read nexus_file_write nexus_git_push',
       userPolicy,
     );
 
-    expect(reduction.granted).toEqual(['nexus_file_read']);
-    expect(reduction.removed).toEqual([
-      'Read',
-      'Bash(git:*)',
+    // F-1157: o gate não nega mais tool do Nexus, então a interseção com ele
+    // concede todas as que a skill pede, mesmo fora da política do usuário.
+    // Entradas nativas (Read, Bash(...)) seguem removidas: a skill não prova a
+    // política de sandbox nativa.
+    expect(reduction.granted).toEqual([
+      'nexus_file_read',
       'nexus_file_write',
       'nexus_git_push',
     ]);
+    expect(reduction.removed).toEqual(['Read', 'Bash(git:*)']);
     expect(reduction.wasReduced).toBe(true);
-    expect(reduction.notice).toContain('4');
+    expect(reduction.notice).toContain('2');
     expect(
       reduction.granted.every((tool) => isToolAllowed(userPolicy, tool)),
     ).toBe(true);
@@ -177,14 +180,17 @@ Review the diff.
     );
 
     expect(materialized.content).toContain('name: acme-review');
-    expect(materialized.content).toContain('allowed-tools: nexus_file_read');
+    // F-1157: a interseção com o gate agora inclui toda tool do Nexus pedida;
+    // só as entradas nativas saem da linha materializada.
+    expect(materialized.content).toContain(
+      'allowed-tools: nexus_file_read nexus_file_write',
+    );
     expect(materialized.content).not.toContain('Bash(git:*)');
-    expect(materialized.content).not.toContain('nexus_file_write');
-    expect(materialized.reduction.granted).toEqual(['nexus_file_read']);
-    expect(materialized.reduction.removed).toEqual([
-      'Read',
-      'Bash(git:*)',
+    expect(materialized.content).not.toMatch(/allowed-tools:.*\bRead\b/u);
+    expect(materialized.reduction.granted).toEqual([
+      'nexus_file_read',
       'nexus_file_write',
     ]);
+    expect(materialized.reduction.removed).toEqual(['Read', 'Bash(git:*)']);
   });
 });

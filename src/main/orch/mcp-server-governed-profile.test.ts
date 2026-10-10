@@ -344,7 +344,8 @@ describe('mcp-server governed CLI profile wiring', () => {
   it.each([
     { squadCliPolicy: 'operator-choice' as const, readOnly: false, denied: false },
     { squadCliPolicy: 'governed' as const, readOnly: false, denied: true },
-    { squadCliPolicy: 'operator-choice' as const, readOnly: true, denied: true },
+    // F-1157: o somente-leitura não corta mais o Task; só o Hardened explícito.
+    { squadCliPolicy: 'operator-choice' as const, readOnly: true, denied: false },
   ])('scopes the native Claude Task restriction to explicit authority ($squadCliPolicy/readOnly=$readOnly)', ({ squadCliPolicy, readOnly, denied }) => {
     const home = path.join(tempRoot(), 'home');
     const cwd = path.join(home, 'workspace');
@@ -368,9 +369,9 @@ describe('mcp-server governed CLI profile wiring', () => {
   });
 
   it.each([
-    { role: 'orchestrator' as const, denied: true },
+    { role: 'orchestrator' as const, denied: false },
     { role: 'worker' as const, denied: false },
-  ])('denies native Claude Task to the orchestrator even in free mode, never to a free $role', ({ role, denied }) => {
+  ])('F-1157: a free $role keeps native Claude Task, the orchestrator included', ({ role, denied }) => {
     const home = path.join(tempRoot(), 'home');
     const cwd = path.join(home, 'workspace');
     fs.mkdirSync(cwd, { recursive: true });
@@ -823,7 +824,7 @@ describe('mcp-server governed CLI profile wiring', () => {
       const spoolDir = decoration.env.NEXUS_HANDOFF_SPOOL_DIR;
       expect(spoolDir).toBe(fs.realpathSync(path.join(spoolRoot, 'sessions', decoration.env.NEXUS_HANDOFF_SPOOL_ID)));
       expect(decoration.env.NEXUS_HANDOFF_SPOOL_KEY).toMatch(/^[a-f0-9]{64}$/);
-      expect(decoration.env.NEXUS_GATE_OFFLINE_POLICY).toBe('read-handoff');
+      expect(decoration.env.NEXUS_GATE_OFFLINE_POLICY).toBeUndefined();
       expect(decoration.missionShimWritePaths).toContain(spoolDir);
       expect(decoration.missionShimReadPaths).toContain(spoolDir);
       // O vínculo (chave, missão) fica fora do que o agente pode escrever.
@@ -942,7 +943,69 @@ describe('mcp-server governed CLI profile wiring', () => {
     decoration.onSpawnFailed?.();
   });
 
-  it('delivers the granted skill to the private Claude profile in operator-choice', () => {
+  it('F-1157: the operator hand with a skill grant never gets Nexus writes in the REAL ~/.claude/skills', () => {
+    homePolicyDeps.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    const cwd = fs.realpathSync(workspace);
+    vi.stubEnv('HOME', home);
+    write(path.join(home, '.claude', 'skills', 'granted-one', 'SKILL.md'), '---\nname: granted-one\n---\n');
+    write(path.join(home, '.codex', 'skills', 'codex-only', 'SKILL.md'), '---\nname: codex-only\n---\n');
+    write(path.join(home, '.agents', 'skills', 'agents-only', 'SKILL.md'), '---\nname: agents-only\n---\n');
+    const base = authority(cwd, false);
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      {
+        ...base,
+        source: 'pending',
+        context: { allowedTools: null, allowedSkills: ['granted-one'], scope: base.scope, executionScope: base.scope, agentName: 'Designer' },
+      },
+      undefined,
+    );
+    if (!decoration) throw new Error('expected operator-hand Claude decoration');
+    try {
+      const overlaySkills = path.join(decoration.env.HOME, '.claude', 'skills');
+      // The operator's own profile is linked in, untouched by the mirror.
+      expect(fs.lstatSync(overlaySkills).isSymbolicLink()).toBe(true);
+      expect(fs.realpathSync(overlaySkills)).toBe(fs.realpathSync(path.join(home, '.claude', 'skills')));
+      expect(fs.readdirSync(path.join(home, '.claude', 'skills')).sort()).toEqual(['granted-one']);
+    } finally {
+      decoration.onSpawnFailed?.();
+    }
+  });
+
+  it('F-1157: a gated private Claude HOME links to the shared per-adapter skill cache in Autopilot', () => {
+    homePolicyDeps.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    const cwd = fs.realpathSync(workspace);
+    vi.stubEnv('HOME', home);
+    write(path.join(home, '.agents', 'skills', 'blocked', 'SKILL.md'), '# blocked');
+    const first = prepareAgentSpawnDecoration(adapter('claude'), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, true), undefined);
+    const second = prepareAgentSpawnDecoration(adapter('claude'), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, true), undefined);
+    if (!first || !second) throw new Error('expected Claude decorations');
+    try {
+      const cache = fs.realpathSync(path.join(home, '.nexus', 'skill-cache', 'claude'));
+      for (const decoration of [first, second]) {
+        const overlaySkills = path.join(decoration.env.HOME, '.claude', 'skills');
+        expect(fs.lstatSync(overlaySkills).isSymbolicLink()).toBe(true);
+        expect(fs.realpathSync(overlaySkills)).toBe(cache);
+        expect(fs.existsSync(path.join(overlaySkills, 'blocked', 'SKILL.md'))).toBe(true);
+      }
+      // Nothing was mirrored into the real Claude profile.
+      expect(fs.existsSync(path.join(home, '.claude', 'skills', 'blocked'))).toBe(false);
+    } finally {
+      first.onSpawnFailed?.();
+      second.onSpawnFailed?.();
+    }
+  });
+
+  it('delivers every installed skill to the private Claude profile in operator-choice (F-1157)', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');
     const workspace = path.join(root, 'workspace');
@@ -971,8 +1034,9 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(
       fs.existsSync(path.join(decoration.env.HOME, '.claude', 'skills', 'allowed', 'SKILL.md')),
     ).toBe(true);
-    expect(fs.existsSync(path.join(decoration.env.HOME, '.claude', 'skills', 'blocked'))).toBe(
-      false,
+    // F-1157: sem filtro de skill no HOME privado.
+    expect(fs.existsSync(path.join(decoration.env.HOME, '.claude', 'skills', 'blocked', 'SKILL.md'))).toBe(
+      true,
     );
 
     decoration.onSpawnFailed?.();
@@ -1994,7 +2058,7 @@ describe('Muse is not Claude MCP autoload (F-596)', () => {
   });
 });
 
-describe('F-781: WebFetch negado só onde o navegador do Nexus está ao alcance', () => {
+describe('F-1157: nenhum pane Claude-family nega o WebFetch', () => {
   /** Settings Claude-family que o spawn realmente montou (os dois canais). */
   function claudeSettingsFiles(decoration: AgentSpawnDecoration): string[] {
     const files: string[] = [];
@@ -2035,38 +2099,19 @@ describe('F-781: WebFetch negado só onde o navegador do Nexus está ao alcance'
     return decoration;
   }
 
-  it('worker de missão livre (operator-choice): o --settings do pane nega o WebFetch', () => {
-    const decoration = spawnClaudeFamily('claude', () => {});
-    try {
-      expect(decoration.extraArgs).toContain('--settings');
-      expect(deniesWebFetch(decoration)).toBe(true);
-    } finally {
-      decoration.onSpawnFailed?.();
-    }
-  });
-
-  it('F-797: worker governado com a allowlist padrão de página (GLM): o settings.json do HOME efêmero nega', () => {
-    const decoration = spawnClaudeFamily('glm', (context) => {
-      context.allowedTools = [...NEXUS_BROWSER_WORKER_TOOLS];
-    });
-    try {
-      // GLM com allowlist = HOME efêmero com o portão de skill, sem --settings.
-      expect(decoration.extraArgs).not.toContain('--settings');
-      expect(deniesWebFetch(decoration)).toBe(true);
-    } finally {
-      decoration.onSpawnFailed?.();
-    }
-  });
-
   it.each([
-    ['allowlist vazia (padrão do worker ad hoc)', (context: NonNullable<BoundSpawnAuthority['context']>) => {
+    ['worker de missão livre (operator-choice)', 'claude' as const, () => {}],
+    ['worker governado com a allowlist de página (GLM, HOME efêmero)', 'glm' as const, (context: NonNullable<BoundSpawnAuthority['context']>) => {
+      context.allowedTools = [...NEXUS_BROWSER_WORKER_TOOLS];
+    }],
+    ['allowlist vazia (padrão do worker ad hoc)', 'claude' as const, (context: NonNullable<BoundSpawnAuthority['context']>) => {
       context.allowedTools = [];
     }],
-    ['pane somente leitura', (context: NonNullable<BoundSpawnAuthority['context']>) => {
+    ['pane que era somente leitura', 'claude' as const, (context: NonNullable<BoundSpawnAuthority['context']>) => {
       context.readOnly = true;
     }],
-  ])('%s: o WebFetch fica (o pane não tem o navegador do Nexus)', (_label, configure) => {
-    const decoration = spawnClaudeFamily('claude', configure);
+  ])('%s: o WebFetch fica liberado', (_label, id, configure) => {
+    const decoration = spawnClaudeFamily(id, configure);
     try {
       expect(claudeSettingsFiles(decoration).length).toBeGreaterThan(0);
       expect(deniesWebFetch(decoration)).toBe(false);

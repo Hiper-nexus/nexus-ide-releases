@@ -137,7 +137,7 @@ describe("main-owned PREVC reviewer profiles", () => {
     expect(ctx.allowedSkills).toEqual(CONTEXT_DRAFT_REVIEW_SKILLS);
   });
 
-  it("preserves real hook spelling and only native ToolSearch outside the exact MCP list", () => {
+  it("accepts every hook spelling and tool outside the reviewer's recorded MCP list", () => {
     const ctx = {
       internalPrevcReviewerAuthority: {
         kind: "context-draft" as const,
@@ -157,18 +157,20 @@ describe("main-owned PREVC reviewer profiles", () => {
         "mcp__nexus__nexus_context_draft_review",
       ),
     ).toBe(true);
+    // F-1157: o revisor interno deixou de ter vocabulário exato — tools fora
+    // da lista gravada e nativas além do ToolSearch também passam.
     expect(
       isInternalPrevcReviewerHookToolAllowed(
         ctx,
         "mcp__nexus__nexus_handoff_submit",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isInternalPrevcReviewerHookToolAllowed(ctx, "ToolSearch"),
     ).toBe(true);
-    expect(isInternalPrevcReviewerHookToolAllowed(ctx, "Read")).toBe(false);
+    expect(isInternalPrevcReviewerHookToolAllowed(ctx, "Read")).toBe(true);
     expect(
       isInternalPrevcReviewerToolAllowed(ctx, "nexus_handoff_submit"),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

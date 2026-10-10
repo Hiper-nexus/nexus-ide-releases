@@ -189,37 +189,27 @@ describe('ReviewStep', () => {
     expect(coordinatorText).toContain(
       'Instruções: Conduza a entrega em duas ondas. Pare antes de qualquer mudança fora do objetivo aprovado.',
     );
-    expect(coordinatorText).toMatch(
-      /Ferramentas permitidas:? Sem lista restrita; este papel pode usar qualquer ferramenta disponível\./i,
-    );
-    expect(coordinatorText).toMatch(
-      /Habilidades permitidas:? Nenhuma habilidade autorizada para este papel\./i,
-    );
+    // F-1157: a aprovação mostra o acesso real — tudo — e nunca promete um
+    // limite que o gate não aplica mais.
+    expect(coordinatorText).toMatch(/Ferramentas:? Todas as ferramentas do Nexus e da CLI\./i);
+    expect(coordinatorText).toMatch(/Habilidades:? Todas as habilidades instaladas\./i);
+    expect(coordinatorText).not.toMatch(/Nenhuma (ferramenta|habilidade) autorizada/i);
 
     const builder = detailedRole(host, 'Especialista de interface');
     const builderText = normalizedText(builder);
     expect(builderText).toContain(
       'Instruções: Implemente somente a interface revisada e preserve integralmente a navegação por teclado.',
     );
-    expect(builderText).toMatch(
-      /Ferramentas permitidas:?.*Ler arquivos.*Editar arquivos/i,
-    );
-    expect(builderText).not.toContain('Executar comandos');
-    expect(builderText).toMatch(
-      /Habilidades permitidas:? react-patterns, a11y-debugging(?:\.|$)/i,
-    );
+    expect(builderText).toMatch(/Ferramentas:? Todas as ferramentas do Nexus e da CLI\./i);
+    expect(builderText).toMatch(/Habilidades:? Todas as habilidades instaladas\./i);
 
     const reviewer = detailedRole(host, 'Revisora independente');
     const reviewerText = normalizedText(reviewer);
     expect(reviewerText).toContain(
       'Instruções: Verifique a entrega completa e relate qualquer diferença antes de aprovar o resultado.',
     );
-    expect(reviewerText).toMatch(
-      /Ferramentas permitidas:? Nenhuma ferramenta autorizada para este papel\./i,
-    );
-    expect(reviewerText).toMatch(
-      /Habilidades permitidas:? Sem lista restrita; este papel pode usar qualquer habilidade disponível\./i,
-    );
+    expect(reviewerText).toMatch(/Ferramentas:? Todas as ferramentas do Nexus e da CLI\./i);
+    expect(reviewerText).not.toMatch(/Nenhuma (ferramenta|habilidade) autorizada/i);
 
     const start = startButton(host);
     for (const role of [coordinator, builder, reviewer]) {
@@ -232,7 +222,7 @@ describe('ReviewStep', () => {
     }
   });
 
-  it('states null grants as honestly unrestricted without claiming a hidden work-type limit', () => {
+  it('F-1157: states every role as unrestricted without claiming a hidden work-type limit', () => {
     const host = renderReadyReview();
     openTeamDetails(host);
     const coordinatorText = normalizedText(
@@ -242,12 +232,8 @@ describe('ReviewStep', () => {
       detailedRole(host, 'Revisora independente'),
     );
 
-    expect(coordinatorText).toMatch(
-      /Ferramentas permitidas:? Sem lista restrita; este papel pode usar qualquer ferramenta disponível\./i,
-    );
-    expect(reviewerText).toMatch(
-      /Habilidades permitidas:? Sem lista restrita; este papel pode usar qualquer habilidade disponível\./i,
-    );
+    expect(coordinatorText).toMatch(/Ferramentas:? Todas as ferramentas do Nexus e da CLI\./i);
+    expect(reviewerText).toMatch(/Habilidades:? Todas as habilidades instaladas\./i);
     expect(`${coordinatorText} ${reviewerText}`).not.toMatch(
       /limitado pelo tipo de trabalho/i,
     );
@@ -293,7 +279,7 @@ describe('ReviewStep', () => {
     },
   );
 
-  it('labels each role authority as readable rows and translates tool IDs for beginners', () => {
+  it('labels each role authority as readable rows and never shows a restricted tool list (F-1157)', () => {
     const authorityReview: MissionReview = {
       ...CUSTOM_REVIEW,
       roster: CUSTOM_REVIEW.roster.map((agent) =>
@@ -318,11 +304,7 @@ describe('ReviewStep', () => {
 
       expect(authorityRows.length).toBeGreaterThanOrEqual(3);
       expect(labels).toEqual(
-        expect.arrayContaining([
-          'Instruções',
-          'Ferramentas permitidas',
-          'Habilidades permitidas',
-        ]),
+        expect.arrayContaining(['Instruções', 'Ferramentas', 'Habilidades']),
       );
       for (const row of authorityRows) {
         expect(row.firstElementChild?.tagName).toBe('DT');
@@ -331,21 +313,15 @@ describe('ReviewStep', () => {
     }
 
     const builder = detailedRole(host, 'Especialista de interface');
-    const toolRow = Array.from(builder.querySelectorAll('dl > div')).find(
-      (row) =>
-        row.querySelector('dt')?.textContent?.trim() ===
-        'Ferramentas permitidas',
-    );
-    const beginnerTools = toolRow ? normalizedText(toolRow) : '';
     const beginnerRole = builder.cloneNode(true) as HTMLElement;
     for (const advanced of beginnerRole.querySelectorAll('details')) {
       advanced.remove();
     }
-
-    expect(beginnerTools).toContain('Executar comandos');
-    expect(beginnerTools).toContain('Ler arquivos');
-    expect(beginnerTools).toContain('Editar arquivos');
+    // The roster list is sealed data, not a limit: the beginner view states
+    // the real access and never a subset or raw tool IDs.
+    expect(normalizedText(beginnerRole)).toContain('Todas as ferramentas do Nexus e da CLI.');
     expect(normalizedText(beginnerRole)).not.toMatch(/\b(?:Bash|Read|Edit)\b/);
+    expect(normalizedText(beginnerRole)).not.toMatch(/Executar comandos|Ler arquivos|Editar arquivos/);
   });
 
   it('keeps the start action in a dock and shows objective, team and context in the beginner review', () => {

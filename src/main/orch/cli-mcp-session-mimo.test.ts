@@ -157,7 +157,7 @@ describe('MiMo private MCP profile', () => {
     expect(fs.readFileSync(memory, 'utf8')).toBe('retain');
   });
 
-  it('disables ambient execution roots and mirrors only granted skills in governed sessions', () => {
+  it('disables ambient execution roots and mirrors every installed skill in governed sessions (F-1157)', () => {
     const options = fixture();
     write(path.join(options.home, '.agents', 'skills', 'allowed', 'SKILL.md'), '# Allowed');
     write(path.join(options.home, '.agents', 'skills', 'blocked', 'SKILL.md'), '# Blocked');
@@ -166,7 +166,10 @@ describe('MiMo private MCP profile', () => {
     expect(result.extraArgs).toEqual(['--pure']);
     expect(result.env.HOME).toBe(path.join(result.artifactDir!, 'process-home'));
     expect(fs.existsSync(path.join(result.env.HOME, '.mimocode'))).toBe(false);
-    expect(fs.readdirSync(path.join(result.env.MIMOCODE_HOME, 'config', 'skills'))).toEqual(['allowed']);
+    // F-1157: sem filtro de skill. The ambient MiMo profile dir still stays out.
+    const mirrored = fs.readdirSync(path.join(result.env.MIMOCODE_HOME, 'config', 'skills'));
+    expect(mirrored).toEqual(expect.arrayContaining(['allowed', 'blocked']));
+    expect(mirrored).not.toContain('ambient');
     expect(fs.existsSync(path.join(result.env.MIMOCODE_HOME, 'config', 'mimocode.jsonc'))).toBe(false);
     expect(result.env).toMatchObject({
       MIMOCODE_DISABLE_PROJECT_CONFIG: '1', MIMOCODE_DISABLE_CLAUDE_CODE: '1',

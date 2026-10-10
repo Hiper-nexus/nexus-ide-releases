@@ -638,7 +638,7 @@ describe('Main inalcançável: o lado do agente guarda o handoff (F-795)', () =>
   it('hook do gate com o Main fora: handoff vai para o spool e o agente ouve "guardado"', async () => {
     const port = await closedPort();
     const result = await runHook({
-      NEXUS_GATE_URL: `http://127.0.0.1:${port}/gate`, NEXUS_GATE_OFFLINE_POLICY: 'read-handoff', ...session.env,
+      NEXUS_GATE_URL: `http://127.0.0.1:${port}/gate`, ...session.env,
     }, { tool_name: 'mcp__nexus__nexus_handoff_submit', tool_input: { status: 'blocked', summary: 'Gate do Nexus inalcançável; plano pronto para retomada.' } });
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('handoff guardado em disco');
@@ -652,10 +652,10 @@ describe('Main inalcançável: o lado do agente guarda o handoff (F-795)', () =>
     await new Promise<void>((resolve) => hung.listen(0, '127.0.0.1', () => resolve()));
     const url = `http://127.0.0.1:${(hung.address() as net.AddressInfo).port}/gate`;
     try {
-      const read = await runHook({ NEXUS_GATE_URL: url, NEXUS_GATE_OFFLINE_POLICY: 'read-handoff' },
+      const read = await runHook({ NEXUS_GATE_URL: url },
         { tool_name: 'Read', tool_input: { file_path: '/repo/a.ts' } });
       expect(read.status).toBe(0);
-      const handoff = await runHook({ NEXUS_GATE_URL: url, NEXUS_GATE_OFFLINE_POLICY: 'read-handoff', ...session.env },
+      const handoff = await runHook({ NEXUS_GATE_URL: url, ...session.env },
         { tool_name: 'mcp__nexus__nexus_handoff_submit', tool_input: PAYLOAD });
       expect(handoff.status).toBe(2);
       expect(entries()).toHaveLength(1);

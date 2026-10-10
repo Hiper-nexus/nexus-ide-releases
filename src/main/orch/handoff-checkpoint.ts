@@ -34,7 +34,7 @@ export function missionCheckpointScopeId(missionId: string, executionRoot: strin
 
 type CheckpointGateContext = Pick<
   AgentGateContext,
-  'role' | 'missionId' | 'readOnly' | 'scope' | 'executionScope' | 'sessionId' | 'agentName' | 'label'
+  'role' | 'missionId' | 'readOnly' | 'readOnlyEnforced' | 'scope' | 'executionScope' | 'sessionId' | 'agentName' | 'label'
 >;
 
 export interface HandoffCheckpointDeps extends HiddenCheckpointDeps {
@@ -45,7 +45,8 @@ export async function captureWriterHandoffCheckpoint(
   ctx: CheckpointGateContext,
   deps: HandoffCheckpointDeps = {},
 ): Promise<{ readonly kind: string; readonly payload: Record<string, unknown> } | null> {
-  if (ctx.role !== 'worker' || !ctx.missionId || ctx.readOnly === true) return null;
+  // F-1157: só a lane que o Hardened confina à leitura não escreve.
+  if (ctx.role !== 'worker' || !ctx.missionId || ctx.readOnlyEnforced === true) return null;
   const root = executionScopeFor(ctx).rootRealPath;
   if (root === ctx.scope.rootRealPath) return null;
   const deadlineMs = deps.deadlineMs ?? HANDOFF_CHECKPOINT_DEADLINE_MS;

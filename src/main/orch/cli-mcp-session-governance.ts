@@ -1,21 +1,49 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ensurePrivateDirectory } from './cli-mcp-session-artifacts';
-import { ensureSkillsForCli, type SkillMirrorResult } from './skill-mirror';
+import { isHardenedSpawnPolicy } from './gate';
+import {
+  ensureSkillsForCli,
+  linkSkillsDirToCache,
+  sharedSkillCacheDir,
+  type SkillMirrorResult,
+} from './skill-mirror';
 
+/**
+ * Mirror skills into a session's PRIVATE overlay directories. F-1157 (doutrina
+ * do dono): sem filtro de skill — the overlay receives every installed skill,
+ * whatever `allowedSkills` the token recorded. The real provider profile is a
+ * different path (`deliverGrantedSkillsToProviderHome`) and stays grant-only.
+ *
+ * Unsandboxed overlays (Autopilot) link to the shared per-adapter cache
+ * instead of copying ~100 skill trees per spawn. A kernel-sandboxed overlay
+ * (Hardened, or the private Codex profile even for Pet Studio) only reads
+ * inside itself, so it keeps real copies (`linkToSharedCache: false`).
+ */
 export function mirrorGovernedSkills(
   adapterId: string,
   home: string,
   targetDirs: readonly string[],
-  allowedSkills: readonly string[],
+  _allowedSkills: readonly string[],
   allowedTools: readonly string[] | null = [],
+  options: { readonly linkToSharedCache?: boolean } = {},
 ): void {
-  for (const targetDir of targetDirs) ensurePrivateDirectory(targetDir);
+  const linkToSharedCache = options.linkToSharedCache ?? !isHardenedSpawnPolicy();
+  let copyTargets = targetDirs;
+  if (linkToSharedCache) {
+    const cacheDir = sharedSkillCacheDir(adapterId, home);
+    copyTargets = targetDirs.filter((targetDir) => {
+      ensurePrivateDirectory(path.dirname(targetDir));
+      return !linkSkillsDirToCache(targetDir, cacheDir);
+    });
+    if (copyTargets.length === 0) return;
+  }
+  for (const targetDir of copyTargets) ensurePrivateDirectory(targetDir);
   ensureSkillsForCli(adapterId, {
     home,
-    allowedSkills: [...allowedSkills],
+    allowedSkills: null,
     allowedTools: allowedTools === null ? null : [...allowedTools],
-    targetDirs: [...targetDirs],
+    targetDirs: [...copyTargets],
     includeCliTarget: false,
   });
 }

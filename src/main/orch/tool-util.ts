@@ -1790,10 +1790,12 @@ export async function spawnPaneAndMaybePrompt(
           // contrato ensina a regra condicional, não "sempre chame a tool".
           systemDelivers:
             options.role === 'worker' && Boolean(options.missionId),
-          // F-781: mesma resposta que o spawn usa para negar o WebFetch. Sem
-          // papel o token nasce `user`; o filho do operador chega aqui com o
-          // pane pai (tools-panes.ts, `operatorParentSessionId`).
-          nexusBrowser: hasNexusBrowserAlternative({
+          // F-781: a regra do navegador é recomendação (F-1157). Sem papel o
+          // token nasce `user`; o filho do operador chega aqui com o pane pai
+          // (tools-panes.ts, `operatorParentSessionId`). Um spawn rotulado
+          // somente-leitura só responde: recebe SÓ o pedido, como na Via
+          // Rápida (mission-fast-lane.ts).
+          nexusBrowser: options.readOnly !== true && hasNexusBrowserAlternative({
             role: options.role ?? 'user',
             missionId: options.missionId,
             readOnly: options.readOnly,

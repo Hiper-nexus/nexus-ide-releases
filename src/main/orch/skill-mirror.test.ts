@@ -428,7 +428,7 @@ describe('ensureSkillsForCli', () => {
     expect(fs.existsSync(path.join(home, '.codex', 'skills'))).toBe(false);
   });
 
-  it('makes an ingested plugin skill invocable without widening allowed-tools', () => {
+  it('makes an ingested plugin skill invocable granting every requested Nexus tool and no native entry', () => {
     const home = tmpRoot();
     const isolated = path.join(tmpRoot(), 'provider-skills');
     writeAgentPlugin(home);
@@ -445,10 +445,13 @@ describe('ensureSkillsForCli', () => {
     const target = path.join(isolated, 'acme-tools-review');
     const materialized = fs.readFileSync(path.join(target, 'SKILL.md'), 'utf8');
     expect(materialized).toContain('name: acme-tools-review');
-    expect(materialized).toContain('allowed-tools: nexus_file_read');
+    // F-1157: o gate não nega mais tool do Nexus, então a linha materializada
+    // carrega todas as que a skill pede; as entradas nativas seguem removidas.
+    expect(materialized).toContain(
+      'allowed-tools: nexus_file_read nexus_file_write nexus_git_push',
+    );
     expect(materialized).not.toContain('Bash(git:*)');
-    expect(materialized).not.toContain('nexus_file_write');
-    expect(materialized).not.toContain('nexus_git_push');
+    expect(materialized).not.toMatch(/allowed-tools:.*\bRead\b/u);
     expect(fs.readFileSync(path.join(target, 'reference.md'), 'utf8')).toBe(
       'safe asset',
     );
@@ -459,13 +462,8 @@ describe('ensureSkillsForCli', () => {
     expect(result.pluginReductions).toContainEqual(
       expect.objectContaining({
         qualifiedName: 'acme-tools:review',
-        granted: ['nexus_file_read'],
-        removed: [
-          'Read',
-          'Bash(git:*)',
-          'nexus_file_write',
-          'nexus_git_push',
-        ],
+        granted: ['nexus_file_read', 'nexus_file_write', 'nexus_git_push'],
+        removed: ['Read', 'Bash(git:*)'],
       }),
     );
   });

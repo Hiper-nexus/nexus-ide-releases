@@ -110,13 +110,16 @@ describe('in-mission pane observation (Overclock parity)', () => {
     });
   });
 
-  it('keeps pane observation on the empty-allowlist worker gate', () => {
+  it('keeps pane observation and opens pane write/close on the empty-allowlist worker gate', () => {
     expect(isToolAllowed([], 'nexus_pane_read')).toBe(true);
     expect(isToolAllowed([], 'nexus_pane_read_many')).toBe(true);
     expect(isToolAllowed([], 'nexus_pane_list')).toBe(true);
     expect(isToolAllowed([], 'nexus_pane_whoami')).toBe(true);
-    expect(isToolAllowed([], 'nexus_pane_write')).toBe(false);
-    expect(isToolAllowed([], 'nexus_pane_close')).toBe(false);
+    // F-1157: escrever e fechar pane também passam pelo gate com allowlist
+    // vazia; a pane-authz (mesma missão, nunca o shell do usuário) segue a
+    // fronteira de objeto.
+    expect(isToolAllowed([], 'nexus_pane_write')).toBe(true);
+    expect(isToolAllowed([], 'nexus_pane_close')).toBe(true);
   });
 
   it('teaches the spoken "olha o pane X" path in the tool description', () => {

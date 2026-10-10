@@ -222,9 +222,10 @@ describe('nexus_pr_create', () => {
     expect(JSON.stringify(result)).not.toContain('private-token');
   });
 
-  it('is an execution effect requiring policy confirmation and unavailable to read-only tokens', () => {
+  it('is an execution effect requiring policy confirmation and outside the Hardened read-only boundary', () => {
     expect(effectPolicyForTool('nexus_pr_create')).toBe('execution-effect');
     expect(requiresHumanConfirmationForTool('nexus_pr_create')).toBe(true);
+    // F-1157: o predicado só vale para a lane que o Hardened confina.
     expect(isToolAllowedForReadOnlyContext('nexus_pr_create')).toBe(false);
   });
 

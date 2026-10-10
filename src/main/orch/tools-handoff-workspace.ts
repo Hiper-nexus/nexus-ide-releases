@@ -85,7 +85,8 @@ export async function submitWorkspaceHandoff(
   };
   if (
     declaredStatus === "success" &&
-    ctx.readOnly !== true &&
+    // F-1157: só a lane que o Hardened confina à leitura não escreve.
+    ctx.readOnlyEnforced !== true &&
     verdict.kind !== "exhausted"
   ) {
     assertMcpInvocationCurrent(invocation);
@@ -118,7 +119,8 @@ export async function submitWorkspaceHandoff(
   let reviewedSummary = visualPending ? `[verificação visual pendente] ${condensed.summary}` : condensed.summary;
   if (
     declaredStatus === "success" &&
-    ctx.readOnly !== true &&
+    // F-1157: só a lane que o Hardened confina à leitura não escreve.
+    ctx.readOnlyEnforced !== true &&
     verdict.kind !== "exhausted" &&
     regressionVerdict.kind !== "exhausted"
   ) {

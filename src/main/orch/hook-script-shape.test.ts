@@ -2,52 +2,36 @@ import { describe, expect, it } from 'vitest';
 import { HOOK_SCRIPT } from './hooks-gen';
 
 /**
- * D5 — a forma do hook, e por que ela NÃO pode ser unificada entre eventos.
+ * F-1154 — a forma do hook depois da doutrina do dono (10/10/2026): agentes do
+ * Nexus têm acesso a tudo e o Nexus fora do ar nunca bloqueia ferramenta.
  *
- * Medido no motor do Overclock (handoff-deliver.mjs:400-430, handoff-stop.mjs:
- * 497-520): o processo que a CLI espera NÃO faz I/O de rede — grava o payload,
- * relança a si mesmo `detached` e sai `exit 0` em milissegundos. E é FAIL-OPEN
- * no `stop`, por escolha explícita documentada no próprio arquivo deles:
- * "eco a mais é ruído; resultado perdido é o bug que este mecanismo conserta".
- *
- * É por isso que eles podem instalar o hook em todo pane sem risco, e é
- * exatamente o que faltava ao nosso: o nosso era síncrono e fail-closed, e essa
- * é a razão DOCUMENTADA (auditoria 0fe423aa) de nunca o termos instalado no
- * caminho padrão — gate fora do ar trancaria o worker.
- *
- * A DISTINÇÃO É INEGOCIÁVEL e este teste existe para impedir que uma futura
- * refatoração "unifique os eventos por consistência":
- *   · `stop`    = obrigação de RELATO      → desacoplado, fail-OPEN
- *   · `pretool` = gate de AUTORIZAÇÃO      → síncrono,    fail-CLOSED
- * Um gate de autorização fail-open não é gate: é convite.
+ * O hook antigo era um gate de autorização síncrono e fail-closed em toda
+ * ferramenta, mais Stop/PostToolUse sem efeito no Main. O que sobra é só a
+ * entrega do relato (F-795): com o Main inalcançável, o nexus_handoff_submit
+ * vai para o spool assinado. Este teste impede que alguém reintroduza o gate
+ * bloqueante "por segurança" sem pedido do dono.
  */
-describe('forma do hook por evento', () => {
-  it('pretool continua SÍNCRONO e FAIL-CLOSED', () => {
-    // Gate inalcançável tem de bloquear a tool call. É o comportamento correto.
-    expect(HOOK_SCRIPT).toContain('gate unreachable');
-    expect(HOOK_SCRIPT).toMatch(/pretool[\s\S]*exit\(2\)|exit\(2\)[\s\S]*pretool/);
+describe('forma do hook de entrega do handoff', () => {
+  it('não autoriza nem bloqueia ferramenta: a única saída 2 é a do spool', () => {
+    expect(HOOK_SCRIPT.match(/process\.exit\(2\)/g)).toHaveLength(1);
+    expect(HOOK_SCRIPT).toMatch(/spooled[\s\S]*process\.exit\(2\)/);
+    expect(HOOK_SCRIPT).not.toContain('gate unreachable');
+    expect(HOOK_SCRIPT).not.toContain('blocking');
+    expect(HOOK_SCRIPT).not.toContain('verdict');
   });
 
-  it('a degradação de gate inalcançável é estreita, vem do Main e nasce fechada (F-795)', () => {
-    // Só leitura e o handoff (spool) degradam; o resto segue exit(2). Sem a
-    // política explícita do Main no env, nada degrada.
-    expect(HOOK_SCRIPT).toContain("!== 'read-handoff') return { allow: false }");
-    expect(HOOK_SCRIPT).toContain('OFFLINE_NATIVE_READ_TOOLS');
-    expect(HOOK_SCRIPT).not.toMatch(/OFFLINE_NATIVE_READ_TOOLS = new Set\([^)]*'(bash|edit|write|webfetch|task|skill)'/i);
+  it('só o nexus_handoff_submit degrada para o disco', () => {
+    expect(HOOK_SCRIPT).toContain("nexus[1] !== 'nexus_handoff_submit'");
+    expect(HOOK_SCRIPT).not.toContain('OFFLINE_NATIVE_READ_TOOLS');
   });
 
-  it('stop NÃO bloqueia quando o gate está fora do ar (fail-open)', () => {
-    // O worker precisa conseguir encerrar mesmo com o gate indisponível.
-    expect(HOOK_SCRIPT).toMatch(/stop[\s\S]*fail-open|fail-open[\s\S]*stop/i);
+  it('não sobra caminho de Stop nem processo destacado', () => {
+    expect(HOOK_SCRIPT).not.toContain('detached');
+    expect(HOOK_SCRIPT).not.toContain("'node:child_process'");
   });
 
-  it('stop é DESACOPLADO: o pai sai sem esperar rede', () => {
-    expect(HOOK_SCRIPT).toContain('detached');
-    expect(HOOK_SCRIPT).toContain('unref');
-  });
-
-  it('o script diz POR QUE as formas divergem, para ninguém unificá-las', () => {
-    expect(HOOK_SCRIPT).toMatch(/autoriza|authorization/i);
-    expect(HOOK_SCRIPT).toMatch(/relato|report/i);
+  it('o script diz por que não é gate, para ninguém religar a allowlist', () => {
+    expect(HOOK_SCRIPT).toMatch(/NÃO é gate de autorização/);
+    expect(HOOK_SCRIPT).toMatch(/nunca bloqueia/);
   });
 });

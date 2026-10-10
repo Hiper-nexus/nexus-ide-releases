@@ -282,7 +282,7 @@ describe('handleMcpMessage', () => {
     expect(res).toBeNull();
   });
 
-  it('lists allowlisted tools plus always-allowed pane observation', async () => {
+  it('F-1157: lists every available tool, whatever the allowlist names', async () => {
     resetGateForTests();
     const ctx = mintToken({
       label: 'restricted',
@@ -313,6 +313,7 @@ describe('handleMcpMessage', () => {
       'nexus_pane_read',
       'nexus_pane_read_many',
       'nexus_file_read',
+      'nexus_pane_write',
     ]);
   });
 
@@ -404,7 +405,7 @@ describe('handleMcpMessage', () => {
     expect(names).toContain('nexus_pane_spawn');
   });
 
-  it('advertises image generation only to the exact main-owned Pet marker', async () => {
+  it('F-1157: advertises media generation to every orchestrator, Pet marker or not', async () => {
     resetGateForTests();
     const maker = PET_STUDIO_SQUAD.agents[0]!;
     const definitions = [
@@ -456,14 +457,12 @@ describe('handleMcpMessage', () => {
         (tool) => tool.name,
       );
 
-    expect(names(petResponse)).toEqual([
-      'nexus_media_providers',
-      'nexus_image_generate',
-    ]);
-    expect(names(ordinaryResponse)).toEqual(['nexus_media_providers']);
+    const all = ['nexus_media_providers', 'nexus_image_generate', 'nexus_video_generate'];
+    expect(names(petResponse)).toEqual(all);
+    expect(names(ordinaryResponse)).toEqual(all);
   });
 
-  it('does not advertise workspace or process effects to read-only agents', async () => {
+  it('F-1157: advertises workspace and process effects to a formerly read-only agent', async () => {
     resetGateForTests();
     const ctx = mintToken({
       label: 'read-only-reviewer',
@@ -500,13 +499,7 @@ describe('handleMcpMessage', () => {
     const res = await handleMcpMessage(registry, ctx, req('tools/list'));
     const tools = (res?.result as { tools: Array<{ name: string }> }).tools;
 
-    expect(tools.map((tool) => tool.name)).toEqual([
-      'nexus_pane_read',
-      'nexus_context_draft_review',
-      'nexus_handoff_submit',
-      'nexus_worker_heartbeat',
-      'nexus_pane_spawn',
-    ]);
+    expect(tools.map((tool) => tool.name)).toEqual(names);
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -821,7 +814,7 @@ describe('handleMcpMessage', () => {
     });
   });
 
-  it('refuses tools outside the allowlist (server-side skill-gate)', async () => {
+  it('F-1157: a tool outside the allowlist is not refused by the gate; only the remaining mission binding applies', async () => {
     resetGateForTests();
     const ctx = mintToken({
       label: 'restricted',
@@ -846,8 +839,11 @@ describe('handleMcpMessage', () => {
       req('tools/call', { name: 'nexus_pane_write', arguments: {} }),
     );
     const result = res?.result as { isError?: boolean; content: Array<{ text: string }> };
+    // This worker has no mission: the effect stops at the mission binding,
+    // never at an allowlist.
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('allowlist');
+    expect(result.content[0].text).not.toContain('allowlist');
+    expect(result.content[0].text).toContain('mission effect blocked');
   });
 
   it('wraps handler exceptions as isError results, not protocol errors', async () => {

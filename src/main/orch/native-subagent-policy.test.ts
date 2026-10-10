@@ -24,20 +24,11 @@ describe('native subagent spawn policy', () => {
       .toEqual(['--disallowed-tools', 'Task']);
   });
 
-  it.each(['readOnly', 'nativeReadOnly'] as const)('keeps an explicit %s boundary in free mode', (boundary) => {
-    expect(nativeSubagentPolicyArgs(claude, { squadCliPolicy: 'operator-choice', [boundary]: true }))
-      .toEqual(['--disallowedTools', 'Task']);
-  });
-
-  it('keeps Task denied to the orchestrator even in free mode: the Maestro delegates through visible panes', () => {
-    expect(nativeSubagentPolicyArgs(claude, { squadCliPolicy: 'operator-choice', role: 'orchestrator' }))
-      .toEqual(['--disallowedTools', 'Task']);
-    expect(nativeSubagentPolicyArgs(openclaude, { squadCliPolicy: undefined, role: 'orchestrator' }))
-      .toEqual(['--disallowed-tools', 'Task']);
-  });
-
-  it.each(['worker', 'user', undefined] as const)('leaves native helpers to a free %s', (role) => {
-    expect(nativeSubagentPolicyArgs(claude, { squadCliPolicy: 'operator-choice', role })).toEqual([]);
+  it('F-1157: no free-mode role or read-only lane loses native Task, the orchestrator included', () => {
+    // The doctrine gives every agent every tool; only the operator's explicit
+    // Hardened (governed) choice still cuts native subagents.
+    expect(nativeSubagentPolicyArgs(claude, { squadCliPolicy: 'operator-choice' })).toEqual([]);
+    expect(nativeSubagentPolicyArgs(openclaude, { squadCliPolicy: undefined })).toEqual([]);
   });
 
   it('never sends Claude flags to a different CLI binary', () => {

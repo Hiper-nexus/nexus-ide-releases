@@ -511,14 +511,12 @@ saber isto antes de mexer:
   contraria a autoridade de execução (clone próprio, push, outra branch)
   perde para o Nexus e volta como bloqueio no handoff. `features.multi_agent`
   e `default_mode_request_user_input` do Codex não removem a ferramenta; a
-  regra vive no contrato (`withHandoffContract`). No Autopilot livre, workers e a
-  mão do operador podem usar subagentes nativos (`Task` / `spawn_agent`) dentro da
-  autoridade do pane. O ORQUESTRADOR nunca recebe `Task`: ele delega por panes
-  visíveis (rota, cota e ledger ficam com o Maestro) e, no modo livre, os hooks do
-  gate que negariam um `task` nativo não estão instalados — o argv é a única
-  barreira. Não acrescentar bloqueio estático de Task ao adapter: governado,
-  read-only e orquestrador aplicam a restrição no spawn, em
-  `native-subagent-policy.ts`.
+  regra vive no contrato (`withHandoffContract`). No Autopilot todo papel —
+  orquestrador, helper, worker e revisor — usa subagentes nativos (`Task` /
+  `spawn_agent`) dentro da autoridade do pane (doutrina "agentes sem amarras",
+  F-1157). Só o modo Hardened, escolha explícita do operador, corta o `Task` no
+  spawn (`native-subagent-policy.ts`). Não acrescentar bloqueio estático de Task
+  ao adapter nem reintroduzir o corte por papel sem pedido do dono.
 - Modelo mais novo sempre (regra do operador, F-691/F-217/F-218): dentro de
   uma linha (`modelLineOf` em `src/shared/model-line.ts`: só os números
   mudam), a versão mais nova que a CLI oferece substitui a velha na rota, no
@@ -848,7 +846,9 @@ saber isto antes de mexer:
   `_netrc`, `.ssh`, `.gnupg`, `.config/git`, `.config/gh`) para toda lane
   gravável, e `carryNativeHome` (POSIX; todo o topo do HOME real menos
   `.claude`, `.claude.json*`, `.nexus`, `Library`, `.Trash`) só para a lane
-  sem gate hooks (`!gateHome`). Lane readOnly não recebe nada.
+  sem gate hooks (`!gateHome`). Desde o F-1157 `readOnly` é rótulo fora do
+  Hardened: a lane recebe a identidade como as demais; só a lane somente-leitura
+  do modo Hardened (que o kernel pode confinar) não recebe nada.
 - `Library` fica fora do tier 2 de propósito: o keychain entra arquivo a
   arquivo pela política do F-575 (só `carryNativeClaudeAuth && gateHooks
   false`); third-party (GLM/LongCat) nunca vê keychain nem `.claude.json`.
@@ -1245,7 +1245,7 @@ saber isto antes de mexer:
   de revisor e pendência admitida entram marcados; rubrica medida com o Jev
   real nas 105 entregas do HiperGO, reavalie no mesmo conjunto se mudar o
   texto); tool `nexus_judge`
-  (read-only, ALWAYS_ALLOWED, 30/min/sessão, state ≤ 32 KB); toggle
+  (read-only, alcançável por todo agente, 30/min/sessão, state ≤ 32 KB); toggle
   `orch.jevAutopilot` / `NEXUS_JEV_AUTOPILOT=0`; skill `typesafe-ai` bundled e
   concedida aos roles `clean-code`.
 - Sem credencial utilizável para a rota: `nexus_judge`/`nexus_rank`/
@@ -1284,7 +1284,7 @@ saber isto antes de mexer:
   Limiar 0.35 medido em 17/09 (`git push --force main` numa missão de login
   saiu coherent 0.33 / destructive 0.88); recalibrar pelo painel.
 - **`nexus_tool_pick`** (`orch/tools-tool-pick.ts`, read-only,
-  ALWAYS_ALLOWED): pré-filtro lexical (sinônimos pt-BR → inglês) sobre as
+  alcançável por todo agente): pré-filtro lexical (sinônimos pt-BR → inglês) sobre as
   ferramentas VISÍVEIS ao chamador (mesmo critério do tools/list), top 24,
   uma `choice` do Jev com `none`; devolve top-N com probabilidades e a
   margem 1º–2º — não corta por confiança (lição das rubricas: 24 opções

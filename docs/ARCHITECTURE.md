@@ -48,7 +48,7 @@ a única superfície de verdade operacional.
 | B   | Processos              | **Main + Renderer + PTY Host (utilityProcess) + MCP embutido**                                                                      | isola crash de PTY nativo; separa orquestração da UI                                               |
 | C   | Panes                  | **Workspace → Grid (split-tree) → Pane → Session**; pane referencia a MESMA Session                                                 | mover pane na grade nunca re-spawna o PTY                                                          |
 | D   | Adapters               | **JSON declarativo tipado: `cli-pty`, `api-provider`, `voice`**; hot-reload                                                         | usuário adiciona CLI nova sem tocar código; handoff/estado/modelos de primeira classe              |
-| E   | Orquestração           | **Domínio squads/missões/handoffs/catálogo + MCP embutido (24 tools, namespace `nexus_*`)**; skill-gate client+server               | orquestração multi-agente completa, auditável                                                      |
+| E   | Orquestração           | **Domínio squads/missões/handoffs/catálogo + MCP embutido (namespace `nexus_*`)**; gate de sessão (acesso aberto, F-1157)            | orquestração multi-agente completa, auditável                                                      |
 | F   | Voz                    | **Jarvis v1: STT + Silero VAD + Groq translate + TTS streaming + resposta falada**                                                  | ditado E resposta falada de volta                                                                  |
 | G   | Persistência/Segurança | **better-sqlite3 + Keychain + CSP + contextIsolation**                                                                              | secrets fora do DB; sem cripto caseira                                                             |
 | H   | Build                  | **2a shell/grid → 2b adapters → 2d orquestração → 2e voz → 3 QA/.dmg**                                                              | cada fase com entregável verificável                                                               |
@@ -250,7 +250,7 @@ Formato de squad JSON do NexusIDE:
 }
 ```
 
-Notas de design: `category` inclui **orchestrator** (não só os 4 worker roles); `orchestratorInstructions` é markdown; `effort` pinado por agente; allowlists por agente alimentam o skill-gate (§E.4). Squads têm **export/import em JSON** nativo do schema.
+Notas de design: `category` inclui **orchestrator** (não só os 4 worker roles); `orchestratorInstructions` é markdown; `effort` pinado por agente; allowlists por agente ficam registradas no selo, sem restringir (§E.4, F-1157). Squads têm **export/import em JSON** nativo do schema.
 
 ### E.2 Servidor MCP embutido — namespace `nexus_*`
 
@@ -327,17 +327,19 @@ embala os dados da página no envelope não confiável padrão; os comentários 
 usuário (confiáveis) e as instruções por intenção ficam fora do envelope.
 `nexus_design_selection_get` lista as anotações da página junto da seleção.
 
-Aliases curtos `pane_*`/`handoff_*` mantidos no registry (namespace duplo) para prompts/agentes que usam nomes não-prefixados. **Sempre permitidos independente de allowlist:** `ToolSearch`, `nexus_handoff_submit`, `nexus_handoff_list`.
+Aliases curtos `pane_*`/`handoff_*` mantidos no registry (namespace duplo) para prompts/agentes que usam nomes não-prefixados. **Desde o F-1157 toda tool do Nexus está ao alcance de todo agente** (sem allowlist, sem negação de papel, sem somente-leitura).
 
 ### E.3 Handoffs — mecanismo durável
 
-O NexusIDE controla handoffs por **3 hooks `.mjs` gerados por sessão+pane**: PostToolUse (registra o handoff), Stop (bloqueia a saída do worker se não houver handoff pendente, máx 3 tentativas), PreToolUse (skill-gate por whitelist, exit 2 se a tool/skill estiver fora da allowlist; `ALLOWED_TOOLS`/`ALLOWED_SKILLS` null = irrestrito). O worker chama `handoff_submit({status,summary,artifacts})`; o orquestrador coleta via `handoff_list`.
+O worker chama `handoff_submit({status,summary,artifacts})`; o orquestrador coleta via `handoff_list`. Nos panes Claude o Nexus registra **um único hook `.mjs`**, só no `PreToolUse` do `nexus_handoff_submit` (F-1154): com o Main inalcançável, o relato vai para o spool assinado da sessão e o agente ouve "guardado" (F-795). Ele nunca bloqueia outra ferramenta. Os antigos PostToolUse/Stop/PreToolUse do gate em toda ferramenta saíram: custavam um processo Node por chamada (≈3 s com a admissão de carga) e não decidiam mais nada.
 
-**Substrato durável:** em vez de marker files temporários no filesystem, o handoff é gravado numa tabela `handoffs` (SQLite) e um evento `orch:handoff.received` é emitido ao orquestrador; o Stop-gate consulta o DB, não o filesystem. Isso elimina corrida e lixo de arquivos e dá durabilidade + auditabilidade. Entrega automática quando o orquestrador fica ocioso. Como fallback de parsing no terminal, o marker `### NEXUS_HANDOFF v1` também é reconhecido. `outputSchema` valida `artifacts` no submit.
+**Substrato durável:** em vez de marker files temporários no filesystem, o handoff é gravado numa tabela `handoffs` (SQLite) e um evento `orch:handoff.received` é emitido ao orquestrador; a entrega e o fechamento mecânico consultam o DB, não o filesystem (o Stop-gate antigo saiu no F-1154). Isso elimina corrida e lixo de arquivos e dá durabilidade + auditabilidade. Entrega automática quando o orquestrador fica ocioso. Como fallback de parsing no terminal, o marker `### NEXUS_HANDOFF v1` também é reconhecido. `outputSchema` valida `artifacts` no submit.
 
-### E.4 Skill-gate (enforcement duplo)
+### E.4 Gate de agente e acesso aberto (F-1157)
 
-Ao spawnar worker Claude-like, o Nexus injeta hook PreToolUse e um `$HOME` efêmero. Codex, AGY, OpenCode, Kimi e Grok governados também usam overlays privados por sessão: preservam somente a continuidade mínima de auth/sessão, recebem o MCP Nexus e materializam apenas as skills nomeadas na allowlist. Configurações executáveis do perfil real — plugins, hooks, comandos, agentes, skills e MCPs externos — não atravessam a fronteira; panes diretos continuam com o perfil completo do usuário. **Defesa em profundidade:** o MCP server ainda recusa server-side qualquer chamada fora da allowlist do bearer; o isolamento do perfil não substitui a autoridade main-owned.
+Doutrina do dono (10/10/2026): orquestrador, helpers, workers e revisores têm acesso a tudo. O gate do servidor MCP não nega mais por allowlist, papel, perfil exato de revisor ou somente-leitura; `allowedTools`/`allowedSkills`/`readOnly` continuam gravados no token e nos selos (mudar os dados quebraria missões seladas), mas não negam. Continuam: bearer e revogação, vínculo de sessão/missão/líder, proveniência de handoff, consentimento humano e o modo Hardened que o operador escolhe. Os parágrafos abaixo descrevem os overlays de perfil, que seguem valendo para isolamento de estado e conta.
+
+Ao spawnar worker Claude-like, o Nexus monta um `$HOME` efêmero. Codex, AGY, OpenCode, Kimi e Grok governados também usam overlays privados por sessão: preservam somente a continuidade mínima de auth/sessão, recebem o MCP Nexus e todas as skills instaladas (F-1157), por link para um cache único por adapter fora do Hardened e por cópia real dentro dele. Configurações executáveis do perfil real — plugins, hooks, comandos, agentes, skills e MCPs externos — não atravessam a fronteira; panes diretos continuam com o perfil completo do usuário. O isolamento do perfil separa estado e conta; não é negação de tool.
 
 No fluxo agêntico, o Squad Architect não aceita `allowedSkills` ou
 `allowedTools` do JSON do modelo. O main deriva uma projeção determinística por
@@ -389,10 +391,10 @@ reexamina somente o output exclusivo daquela missão.
 | Spawn de agente (providerId/model/cwd)                                      | §B.4       | adapters cli-pty: claude\|codex\|agy\|kimi + qualquer CLI via JSON                                               |
 | Providers HTTP + `pane_list_providers`                                      | §D.2, §E.2 | api-provider (glm/fugu)                                                                                          |
 | Squads (id/name/createdAt/builtin/orchestratorInstructions/agents[])        | §E.1       | category inclui orchestrator; effort low\|high\|xhigh; allowedSkills/allowedTools por agente; export/import JSON |
-| Skill-gate (`$HOME` efêmero + hooks .mjs)                                   | §E.4       | PreToolUse exit 2; null=irrestrito; sempre: ToolSearch/handoff_submit/handoff_list                               |
+| Gate de agente (`$HOME` efêmero + hook do spool)                            | §E.4       | Acesso aberto (F-1157); único hook: spool do nexus_handoff_submit com o Main fora                                |
 | Missões (create/get/list/set_status/spawn_pane)                             | §E.1, §E.2 | Estado em `~/.nexus/nexus.db` (better-sqlite3)                                                                   |
 | `todo_manager` + milestones visíveis                                        | §E.2       | —                                                                                                                |
-| Handoffs (submit/list; 3 hooks .mjs; Stop máx 3; artifacts/outputSchema)    | §E.3       | SQLite + IPC tipado (durável, auditável)                                                                         |
+| Handoffs (submit/list; hook do spool F-795; artifacts/outputSchema)         | §E.3       | SQLite + IPC tipado (durável, auditável)                                                                         |
 | Entrega auto quando ocioso + marker `### NEXUS_HANDOFF v1`                  | §E.3       | —                                                                                                                |
 | Catálogo (aitmpl 70+ agentes, davila7/claude-code-templates)                | §E.6       | API `GET /api/catalog/search?q=&kind=agent\|skill\|command&limit=`; plugin `.claude-plugin/plugin.json`          |
 | Voz/ditado (audio-config)                                                   | §F         | groq/whisper-large-v3/pt→english/hold/Space/coding/190wpm/4700ms — estendido p/ Jarvis (TTS)                     |
@@ -488,7 +490,7 @@ Temas (JSON, CSS custom properties `--color/*text/*space/*duration` — sem pale
 | CSP                   | estrita (default-src 'self', sem unsafe-eval, sem remote scripts)                                                                                                                                    |
 | Spawn                 | node-pty só no PTY Host; argv array (sem shell-string concat); panes diretos preservam perfil; workers governados usam overlay privado por sessão com auth mínima e extensões executáveis bloqueadas |
 | **Secrets**           | **macOS Keychain (safeStorage/keytar) ou libsodium (secretbox) como fallback gracioso — sem cripto caseira, nunca plaintext.** Nunca em SQLite/logs; resolução on-demand no spawn                    |
-| Skill-gate            | client (hook) + server (MCP) — defesa em profundidade                                                                                                                                                |
+| Gate de agente        | acesso aberto a todo agente (F-1157); bearer, vínculo de sessão/missão e consentimento humano seguem                                                                                                 |
 | Plugins untrusted     | JSON fail-fast; adapters não executam código arbitrário (só declaram argv/env)                                                                                                                       |
 | Mic                   | entitlement microphone + NSMicrophoneUsageDescription; captura só sob PTT                                                                                                                            |
 | Auth nuvem (opcional) | Auth de nuvem (Supabase/Google OAuth) NÃO é requisito v1 (local-first); se adicionada, tokens no Keychain                                                                                            |
@@ -505,7 +507,7 @@ Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac). Signing `@el
 
 **2b — Adapters:** registry + zod (cli-pty/api-provider); hot-reload; seletor por pane; adapters JSON (claude/codex/agy/kimi/grok/aider/opencode + glm/fugu); stateParsing. _Verificável:_ spawn claude+codex; adicionar CLI nova só dropando JSON (sem rebuild); pane_wait_idle correto.
 
-**2d — Orquestração+MCP:** MCP server no namespace `nexus_*`; domínio squads(schema)/missões/handoffs (SQLite+IPC, não marker files); todo_manager; skill-gate duplo; entrega auto ocioso; parser do marker `### NEXUS_HANDOFF v1` (fallback); catálogo aitmpl. _Verificável:_ Squad orquestrador+2 workers delega via pane_spawn/write; worker handoff_submit; entregue ao ficar ocioso; skill fora da allowlist BLOQUEADA; export/import de squad funciona.
+**2d — Orquestração+MCP:** MCP server no namespace `nexus_*`; domínio squads(schema)/missões/handoffs (SQLite+IPC, não marker files); todo_manager; gate de sessão (acesso aberto desde o F-1157); entrega auto ocioso; parser do marker `### NEXUS_HANDOFF v1` (fallback); catálogo aitmpl. _Verificável:_ Squad orquestrador+2 workers delega via pane_spawn/write; worker handoff_submit; entregue ao ficar ocioso; (F-1157: nenhuma skill ou tool bloqueada por allowlist); export/import de squad funciona.
 
 **2e — Voz Jarvis:** PTT (globalShortcut+uiohook keyup); getUserMedia+AudioWorklet; Silero VAD; STT multi (Groq+whisper.cpp); roteamento; TTS streaming (OpenAI→Piper→say); sumário falável; voice plugin estendendo audio-config. _Verificável:_ segurar PTT, falar PT, ver EN injetado, agente responde, **NexusIDE fala resumo**; sem key → whisper.cpp+Piper/say.
 
@@ -541,7 +543,7 @@ Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac). Signing `@el
 | Latência voz alta                        | Média | Batch Groq + TTS streaming + fallback local                         |
 | Pricing STT/TTS incerto                  | Baixa | Providers plugáveis; default Groq barato; fallback local            |
 | Notarization falha em native modules     | Média | Prebuilt multiarch; hardened runtime; testar signing cedo           |
-| Skill-gate contornável                   | Alta  | Enforcement duplo (hook + MCP server-side)                          |
+| Agente com acesso amplo (F-1157)         | Alta  | Decisão do dono; bearer, vínculo de missão, consentimento, Hardened |
 | Secrets vazando                          | Alta  | Só Keychain/libsodium; nunca SQLite/logs                            |
 | @lydell/node-pty é beta (v1.2.0-beta.12) | Média | maduro na prática; fallback node-pty-prebuilt-multiarch             |
 

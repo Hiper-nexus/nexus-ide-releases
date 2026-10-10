@@ -154,12 +154,13 @@ describe('nexus_checkpoint_list / nexus_checkpoint_restore', () => {
     expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('turno 1\n');
   });
 
-  it('recusa ref de outra missão, sessão read-only, operador e chamada fora de missão', async () => {
+  it('recusa ref de outra missão, lane read-only confinada pelo Hardened, operador e chamada fora de missão', async () => {
     const foreign = checkpointRefForScopeOrdinal(missionCheckpointScopeId('mission-b', worktree), 1);
     const restore = tool('nexus_checkpoint_restore');
     await expect(restore.handler({ ref: foreign }, ctx())).rejects.toThrow(/não pertence/);
     await expect(restore.handler({ ref: 'refs/heads/main' }, ctx())).rejects.toThrow(/ref inválida/);
-    await expect(restore.handler({ ref: firstRef() }, ctx({ readOnly: true }))).rejects.toThrow(/read-only/);
+    // F-1157: só a lane que o Hardened confina à leitura é recusada.
+    await expect(restore.handler({ ref: firstRef() }, ctx({ readOnly: true, readOnlyEnforced: true }))).rejects.toThrow(/read-only/);
     await expect(restore.handler({ ref: firstRef() }, ctx({ role: 'user' }))).rejects.toThrow(/orquestrador ou um worker/);
     await expect(restore.handler({ ref: firstRef() }, ctx({ missionId: undefined }))).rejects.toThrow(/missão/);
     h.records = [];
@@ -167,7 +168,7 @@ describe('nexus_checkpoint_list / nexus_checkpoint_restore', () => {
     expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
   });
 
-  it('lista é leitura; restauração é execution-effect com confirmação e fora de read-only', () => {
+  it('lista é leitura; restauração é execution-effect com confirmação e fora da leitura confinada pelo Hardened', () => {
     expect(buildToolset().map((candidate) => candidate.name)).toEqual(
       expect.arrayContaining(['nexus_checkpoint_list', 'nexus_checkpoint_restore']),
     );
@@ -175,6 +176,7 @@ describe('nexus_checkpoint_list / nexus_checkpoint_restore', () => {
     expect(effectPolicyForTool('nexus_checkpoint_restore')).toBe('execution-effect');
     expect(requiresHumanConfirmationForTool('nexus_checkpoint_restore')).toBe(true);
     expect(isToolAllowedForReadOnlyContext('nexus_checkpoint_list')).toBe(true);
+    // F-1157: o predicado só vale para a lane que o Hardened confina.
     expect(isToolAllowedForReadOnlyContext('nexus_checkpoint_restore')).toBe(false);
     expect(() => validateToolArgs('nexus_checkpoint_restore', { ref: 'refs/heads/main' })).toThrow();
     expect(() => validateToolArgs('nexus_checkpoint_restore', { ref: firstRef(), cwd: '/tmp' })).toThrow();
@@ -257,15 +259,32 @@ describe('nexus_checkpoint_list / nexus_checkpoint_restore', () => {
     expect(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/nexus-checkpoint')).toBe(firstRef());
   });
 
-  it('o próprio writer chamando (em tool call) e sessões read-only não contam como ocupados', async () => {
+  it('o próprio writer chamando (em tool call) não conta como ocupado; lane só rotulada read-only conta (F-1157)', async () => {
     h.sessions = [
       { sessionId: 'session-a', cwd: worktree, scope: testProjectScope({ rootRealPath: worktree }), role: 'worker', readOnly: false },
       { sessionId: 'session-r', cwd: worktree, scope: testProjectScope({ rootRealPath: worktree }), role: 'worker', readOnly: true },
     ];
     h.idle = () => false;
 
+    // Sem o Hardened, o rótulo read-only não impede escrever: a sessão ocupada
+    // pode estar escrevendo e o restore recusa.
     await expect(tool('nexus_checkpoint_restore').handler({ ref: firstRef() }, ctx()))
-      .resolves.toMatchObject({ applied: true });
-    expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('turno 1\n');
+      .rejects.toThrow(/ocupado/);
+
+    // Lane confinada pelo Hardened nunca escreve: não conta como ocupada.
+    const gate = await import('./gate');
+    gate.resetGateForTests();
+    gate.registerHardenedSpawnPolicy(() => true);
+    try {
+      const confined = gate.mintToken({ label: 'revisor', role: 'worker', missionId: 'mission-a', readOnly: true,
+        scope: testProjectScope({ rootRealPath: repo }) });
+      gate.bindTokenToSession(confined.token, 'session-r');
+      await expect(tool('nexus_checkpoint_restore').handler({ ref: firstRef() }, ctx()))
+        .resolves.toMatchObject({ applied: true });
+      expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('turno 1\n');
+    } finally {
+      gate.registerHardenedSpawnPolicy(() => false);
+      gate.resetGateForTests();
+    }
   });
 });

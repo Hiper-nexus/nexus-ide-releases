@@ -120,9 +120,16 @@ describe('handleHookRegressionRequest (Stop do pane do operador)', () => {
     const deps = { run, git, enabled: () => true };
     await handleHookRegressionRequest({ ...operator, missionId: 'm-1' }, {}, deps);
     await handleHookRegressionRequest({ ...operator, role: 'worker' }, {}, deps);
-    await handleHookRegressionRequest({ ...operator, readOnly: true }, {}, deps);
+    // F-1157: só a lane que o Hardened confina à leitura não escreve.
+    await handleHookRegressionRequest({ ...operator, readOnly: true, readOnlyEnforced: true }, {}, deps);
     await handleHookRegressionRequest(operator, {}, { ...deps, enabled: () => false });
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it('F-1157: o pane do operador só rotulado read-only escreve no Autopilot, então passa pelo portão', async () => {
+    const run = vi.fn(async () => failed);
+    await handleHookRegressionRequest({ ...operator, readOnly: true }, {}, { run, git, enabled: () => true });
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it('operador promovido a orquestrador (missão sob demanda do 1º helper) continua com o portão no Stop', async () => {

@@ -538,15 +538,25 @@ describe("workspace handoff", () => {
     );
   });
 
-  it("não revisa status não-success nem sessão read-only", async () => {
+  it("não revisa status não-success nem sessão que o Hardened confina à leitura", async () => {
     caller("parent");
     const child = caller("child");
     await tool("submit").handler({ ...args, status: "partial" }, child);
     expect(reviewMissionHandoff).not.toHaveBeenCalled();
 
+    // F-1157: só a lane que o Hardened confina à leitura não escreve.
     child.readOnly = true;
+    child.readOnlyEnforced = true;
     await tool("submit").handler(args, child);
     expect(reviewMissionHandoff).not.toHaveBeenCalled();
+  });
+
+  it("F-1157: sessão só rotulada read-only escreve no Autopilot, então a entrega é revisada", async () => {
+    caller("parent");
+    const child = caller("child");
+    child.readOnly = true;
+    await tool("submit").handler(args, child);
+    expect(reviewMissionHandoff).toHaveBeenCalled();
   });
 
   it("does not list mission history without a mission or grant mission ACK", async () => {

@@ -46,53 +46,15 @@ interface ReviewStepProps {
   onStart(): void;
 }
 
-const BEGINNER_TOOL_LABELS: Readonly<Partial<Record<string, string>>> = {
-  Bash: 'Executar comandos',
-  Read: 'Ler arquivos',
-  Edit: 'Editar arquivos',
-};
-
-function allowedToolsCopy(
-  values: readonly string[] | null | undefined,
-): string {
-  if (values === null || values === undefined) {
-    return 'Sem lista restrita; este papel pode usar qualquer ferramenta disponível.';
-  }
-  if (values.length === 0) {
-    return 'Nenhuma ferramenta autorizada para este papel.';
-  }
-
-  const labels: string[] = [];
-  let additionalToolCount = 0;
-  for (const tool of values) {
-    const beginnerLabel = BEGINNER_TOOL_LABELS[tool];
-    if (beginnerLabel) {
-      labels.push(beginnerLabel);
-    } else {
-      additionalToolCount += 1;
-    }
-  }
-  if (additionalToolCount > 0) {
-    labels.push(
-      additionalToolCount === 1
-        ? '1 ferramenta técnica adicional'
-        : `${additionalToolCount} ferramentas técnicas adicionais`,
-    );
-  }
-  return `${labels.join(', ')}.`;
-}
-
-function allowedSkillsCopy(
-  values: readonly string[] | null | undefined,
-): string {
-  if (values === null || values === undefined) {
-    return 'Sem lista restrita; este papel pode usar qualquer habilidade disponível.';
-  }
-  if (values.length === 0) {
-    return 'Nenhuma habilidade autorizada para este papel.';
-  }
-  return `${values.join(', ')}.`;
-}
+/**
+ * F-1157 (doutrina do dono, 10/10/2026): todo agente da missão alcança toda
+ * ferramenta e habilidade. As listas do roster continuam no selo como
+ * registro, mas não restringem — a aprovação não pode prometer limite que
+ * não existe. Só o modo Hardened, quando o operador o escolhe, confina a
+ * leitura de quem revisa.
+ */
+const OPEN_TOOLS_COPY = 'Todas as ferramentas do Nexus e da CLI.';
+const OPEN_SKILLS_COPY = 'Todas as habilidades instaladas.';
 
 function AuthorityRow({
   label,
@@ -361,11 +323,11 @@ export function ReviewStep({
                         ? agent.instructions
                         : 'Nenhuma instrução adicional foi fornecida.'}
                     </AuthorityRow>
-                    <AuthorityRow label="Ferramentas permitidas">
-                      {allowedToolsCopy(agent.allowedTools)}
+                    <AuthorityRow label="Ferramentas">
+                      {OPEN_TOOLS_COPY}
                     </AuthorityRow>
-                    <AuthorityRow label="Habilidades permitidas">
-                      {allowedSkillsCopy(agent.allowedSkills)}
+                    <AuthorityRow label="Habilidades">
+                      {OPEN_SKILLS_COPY}
                     </AuthorityRow>
                   </dl>
                 </li>
@@ -478,7 +440,7 @@ export function ReviewStep({
               </div>
               {review.roster.map((agent) => (
                 <div key={agent.id}>
-                  <dt>{agent.agentName}: autoridade exata</dt>
+                  <dt>{agent.agentName}: concessões registradas no selo (não restringem o acesso)</dt>
                   <dd className="mission-review__canonical-authority">
                     <span>
                       Papel: <code>{agent.id}</code>

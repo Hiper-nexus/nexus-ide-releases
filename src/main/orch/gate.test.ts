@@ -28,6 +28,7 @@ const {
   promoteMissionSessionAuthority,
   rollbackSessionAuthorityMission,
   returnOperatorHandFromEndedMission,
+  registerHardenedSpawnPolicy,
   registerMissionLeaderSessionCheck,
   releaseSession,
   resetGateForTests,
@@ -50,89 +51,64 @@ describe('canonicalToolName', () => {
   });
 });
 
-describe('isToolAllowed', () => {
-  it('treats a null allowlist as unrestricted', () => {
-    expect(isToolAllowed(null, 'nexus_pane_spawn')).toBe(true);
-    expect(isToolAllowed(null, 'Bash')).toBe(true);
+describe('F-1157: o gate não nega tool nem skill a nenhum agente', () => {
+  it.each([[null], [[]], [['Read', 'Grep']], [['nexus_pane_read']]] as Array<[string[] | null]>)('allowlist %j não nega nada', (allowed) => {
+    for (const tool of [
+      'Bash', 'nexus_pane_spawn', 'nexus_pane_write', 'nexus_pr_enqueue', 'nexus_terminal_run',
+      // Antes exigiam concessão explícita mesmo com allowlist livre.
+      'nexus_remote_spawn', 'nexus_agent_spec_write', 'nexus_remote_cli_detect',
+      'nexus_remote_bridge_status', 'nexus_cron', 'nexus_catalog_install', 'nexus_skills',
+    ]) {
+      expect(isToolAllowed(allowed, tool), tool).toBe(true);
+    }
   });
 
-  it('blocks tools outside the allowlist', () => {
-    expect(isToolAllowed(['Read', 'Grep'], 'Bash')).toBe(false);
-    expect(isToolAllowed([], 'nexus_pane_spawn')).toBe(false);
+  it.each(['orchestrator', 'worker', 'user'] as const)('o papel %s alcança escrita, git, terminal e mídia', (role) => {
+    for (const tool of [
+      'nexus_file_write', 'nexus_editor_apply_patch', 'nexus_git_commit', 'nexus_git_push',
+      'nexus_terminal_kill', 'nexus_image_generate', 'nexus_terminal_run',
+    ]) {
+      expect(isToolAllowedForRole(role, [], tool), `${role} ${tool}`).toBe(true);
+    }
   });
 
-  it('matches across the nexus_ namespace and bare names', () => {
-    expect(isToolAllowed(['nexus_pane_read'], 'pane_read')).toBe(true);
-    expect(isToolAllowed(['pane_read'], 'nexus_pane_read')).toBe(true);
+  it('isSkillAllowed libera toda skill, com qualquer lista', () => {
+    for (const allowed of [null, [], ['code-review']]) {
+      expect(isSkillAllowed(allowed, 'deploy')).toBe(true);
+      expect(isSkillAllowed(allowed, 'Code-Review')).toBe(true);
+    }
   });
 
-  it('terminal_run segue o Bash da lane do WORKER: instrumentado quando execução já é permitida (R5)', () => {
-    // Rodada 3 R5: worker de lane [Bash,Read,Edit] podia o Bash NATIVO mas
-    // não o nexus_terminal_run (forma instrumentada que o main observa) —
-    // o gate de evidência pedia prova da coisa que a allowlist proibia de
-    // instrumentar. Regra (worker apenas): terminal_run liberado sse a lane
-    // libera Bash (ou é irrestrita). Operador/renderer mantém o regime
-    // próprio (destructive gate exige contexto de missão — travado em
-    // mcp-ipc.test); orquestrador não executa.
-    expect(
-      isToolAllowedForRole('worker', ['Bash', 'Read', 'Edit'], 'nexus_terminal_run'),
-    ).toBe(true);
-    expect(isToolAllowedForRole('worker', null, 'nexus_terminal_run')).toBe(true);
-    expect(isToolAllowedForRole('worker', ['Read', 'Grep'], 'nexus_terminal_run')).toBe(false);
-    expect(isToolAllowedForRole('worker', [], 'nexus_terminal_run')).toBe(false);
+  it('canonicalToolName segue normalizando o namespace', () => {
+    expect(canonicalToolName('nexus_pane_read')).toBe('pane_read');
   });
 
-  it('always allows handoff tools, pane observation, and ToolSearch, even with empty allowlist', () => {
-    expect(isToolAllowed([], 'nexus_handoff_submit')).toBe(true);
-    expect(isToolAllowed([], 'handoff_list')).toBe(true);
-    expect(isToolAllowed([], 'nexus_handoff_ack')).toBe(true);
-    expect(isToolAllowed([], 'nexus_worker_heartbeat')).toBe(true);
-    expect(isToolAllowed([], 'ToolSearch')).toBe(true);
-    expect(isToolAllowed([], 'nexus_pane_read')).toBe(true);
-    expect(isToolAllowed([], 'pane_read_many')).toBe(true);
-    expect(isToolAllowed([], 'nexus_pane_list')).toBe(true);
-    expect(isToolAllowed([], 'nexus_pane_whoami')).toBe(true);
-    expect(isToolAllowed([], 'nexus_pr_inspect')).toBe(true);
-    expect(isToolAllowed([], 'nexus_pr_enqueue')).toBe(false);
-    expect(isToolAllowed([], 'nexus_pane_write')).toBe(false);
-    expect(isToolAllowed([], 'nexus_pane_spawn')).toBe(false);
-  });
-
-  it('always allows the shared-memory tools, even with empty allowlist (F-769)', () => {
-    expect(isToolAllowed([], 'nexus_memory_recall')).toBe(true);
-    expect(isToolAllowed([], 'nexus_memory_stats')).toBe(true);
-    expect(isToolAllowed([], 'nexus_memory_retain')).toBe(true);
-  });
-
-  it('never grants high-impact tools implicitly (null allowlist)', () => {
-    // These reach outside the sandbox — a prompt-injected agent with the
-    // default (unrestricted) allowlist must NOT inherit them.
-    expect(isToolAllowed(null, 'nexus_remote_spawn')).toBe(false);
-    expect(isToolAllowed(null, 'nexus_agent_spec_write')).toBe(false);
-    expect(isToolAllowed(null, 'nexus_remote_cli_detect')).toBe(false);
-    expect(isToolAllowed(null, 'nexus_remote_bridge_status')).toBe(false);
-    expect(isToolAllowed(null, 'nexus_cron')).toBe(false);
-  });
-
-  it('grants high-impact tools only when named explicitly', () => {
-    expect(isToolAllowed(['nexus_remote_spawn'], 'nexus_remote_spawn')).toBe(true);
-    expect(isToolAllowed(['remote_spawn'], 'nexus_remote_spawn')).toBe(true);
-    expect(isToolAllowed(['agent_spec_write'], 'nexus_agent_spec_write')).toBe(true);
-    expect(isToolAllowed(['cron'], 'nexus_cron')).toBe(true);
-    // A different explicit grant does not leak the dangerous one.
-    expect(isToolAllowed(['nexus_pane_read'], 'nexus_remote_spawn')).toBe(false);
-    expect(isToolAllowed(['nexus_pane_read'], 'nexus_cron')).toBe(false);
-  });
-});
-
-describe('isSkillAllowed', () => {
-  it('null allowlist is unrestricted', () => {
-    expect(isSkillAllowed(null, 'anything')).toBe(true);
-  });
-
-  it('matches case-insensitively', () => {
-    expect(isSkillAllowed(['code-review'], 'Code-Review')).toBe(true);
-    expect(isSkillAllowed(['code-review'], 'deploy')).toBe(false);
+  it('readOnly só vira fronteira (readOnlyEnforced) quando o operador escolheu o Hardened', () => {
+    resetGateForTests();
+    const label = mintToken({ label: 'rotulo', role: 'worker', missionId: 'm-ro', readOnly: true, scope: testProjectScope() });
+    expect(label.readOnly).toBe(true);
+    expect(label.readOnlyEnforced).toBeUndefined();
+    registerHardenedSpawnPolicy(() => true);
+    try {
+      const confined = mintToken({ label: 'hardened', role: 'worker', missionId: 'm-ro', readOnly: true, scope: testProjectScope() });
+      expect(confined.readOnlyEnforced).toBe(true);
+      const writer = mintToken({ label: 'writer', role: 'worker', missionId: 'm-ro', scope: testProjectScope() });
+      expect(writer.readOnlyEnforced).toBeUndefined();
+      // Retomada de pane persistido: o rótulo restaurado também confina no Hardened.
+      const resumed = mintToken({ label: 'retomado', role: 'user', scope: testProjectScope() });
+      bindTokenToSession(resumed.token, 'sess-ro-resume');
+      expect(restoreSessionAuthority('sess-ro-resume', { missionId: 'm-ro', role: 'worker', readOnly: true })).toBe(true);
+      expect(resumed.readOnlyEnforced).toBe(true);
+    } finally {
+      registerHardenedSpawnPolicy(() => false);
+    }
+    // Lookup quebrado é o Autopilot: o rótulo não confina.
+    registerHardenedSpawnPolicy(() => { throw new Error('settings indisponíveis'); });
+    try {
+      expect(mintToken({ label: 'falha', role: 'worker', missionId: 'm-ro', readOnly: true, scope: testProjectScope() }).readOnlyEnforced).toBeUndefined();
+    } finally {
+      registerHardenedSpawnPolicy(() => false);
+    }
   });
 });
 
@@ -599,6 +575,8 @@ describe('token registry + stop gate', () => {
         pet.petStudioMediaAuthority,
       ),
     ).toBe(true);
+    // F-1157: o marcador continua sendo prova de mint, mas mídia deixou de ser
+    // exclusiva dele — todo orquestrador alcança as tools de geração.
     expect(
       isToolAllowedForRole(
         pet.role,
@@ -606,14 +584,14 @@ describe('token registry + stop gate', () => {
         'nexus_video_generate',
         pet.petStudioMediaAuthority,
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isToolAllowedForRole(
         'orchestrator',
         maker.allowedTools ?? null,
         'nexus_image_generate',
       ),
-    ).toBe(false);
+    ).toBe(true);
 
     expect(() =>
       mintToken({
@@ -772,27 +750,6 @@ describe('token registry + stop gate', () => {
   });
 
   describe('allowedSkills semantics (T6)', () => {
-    it('treats [] as a hard gate where NO skills are allowed', () => {
-      expect(isSkillAllowed([], 'ponytail')).toBe(false);
-      expect(isSkillAllowed([], 'impeccable')).toBe(false);
-      expect(isSkillAllowed([], 'review')).toBe(false);
-    });
-
-    it('treats null/omitted as unrestricted where ANY skill is allowed', () => {
-      expect(isSkillAllowed(null, 'ponytail')).toBe(true);
-      expect(isSkillAllowed(null, 'impeccable')).toBe(true);
-      expect(isSkillAllowed(null, 'any-custom-skill')).toBe(true);
-    });
-
-    it('treats populated array as an allowlist permitting only listed skills', () => {
-      const list = ['impeccable', 'ponytail'];
-      expect(isSkillAllowed(list, 'impeccable')).toBe(true);
-      expect(isSkillAllowed(list, 'IMPECCABLE')).toBe(true);
-      expect(isSkillAllowed(list, 'ponytail')).toBe(true);
-      expect(isSkillAllowed(list, 'review')).toBe(false);
-      expect(isSkillAllowed(list, 'blocked')).toBe(false);
-    });
-
     it('arms requiresSpawnGate when allowedSkills is [] but not when null', () => {
       expect(requiresSpawnGate({ role: 'worker', allowedSkills: [] })).toBe(true);
       expect(requiresSpawnGate({ role: 'worker', allowedSkills: ['review'] })).toBe(true);

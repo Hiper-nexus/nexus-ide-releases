@@ -17,7 +17,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { executionScopeFor, type AgentGateContext } from './gate';
+import { executionScopeFor, getContextBySession, type AgentGateContext } from './gate';
 import { assertMcpInvocationCurrent, type McpToolDef } from './mcp-protocol';
 import { requireStr, str } from './tool-util';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -102,7 +102,8 @@ function busyWriters(ctx: AgentGateContext, root: string): string[] {
   return listAgentSessions()
     .filter((info) =>
       info.sessionId !== ctx.sessionId &&
-      info.readOnly !== true &&
+      // F-1157: só a lane que o Hardened confina à leitura não escreve.
+      getContextBySession(info.sessionId)?.readOnlyEnforced !== true &&
       (info.scope?.rootRealPath === root || (typeof info.cwd === 'string' && isInsidePath(root, info.cwd))) &&
       !isSessionInjectableIdle(info.sessionId))
     .map((info) => info.agentName ?? info.sessionId);
@@ -141,7 +142,7 @@ function assertRestoreTargets(
   assertGovernedWorkspaceControlBoundary(ctx, RESTORE_TOOL, targets);
   const authority = resolveProductionWorkflowAuthority(ctx.scope, ctx.missionId!);
   for (const target of targets) {
-    authority.assertExecutionEffectAllowed(RESTORE_TOOL, { path: target }, ctx.readOnly === true);
+    authority.assertExecutionEffectAllowed(RESTORE_TOOL, { path: target }, ctx.readOnlyEnforced === true);
   }
   if (isPlanLane(mission)) {
     const outside = targets.find((target) => !isPlanLaneWritablePath(target));
@@ -234,7 +235,8 @@ const checkpointRestore: McpToolDef = {
     required: ['ref'],
   },
   handler: async (args, ctx, invocation) => {
-    if (ctx.readOnly === true) throw new Error('checkpoint: sessão read-only não restaura arquivos');
+    // F-1157: só a lane que o Hardened confina à leitura não restaura.
+    if (ctx.readOnlyEnforced === true) throw new Error('checkpoint: sessão read-only (Hardened) não restaura arquivos');
     const ref = requireStr(args, 'ref');
     const target = rootForRef(missionCheckpointRoots(ctx), ref);
     const root = sealedExecutionRoot(ctx, target.root);

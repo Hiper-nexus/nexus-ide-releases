@@ -382,7 +382,8 @@ async function preparePtyHandoff(
   // depois de o MCP ter recusado a mesma entrega.
   const declaredFiles = normalizeFilesModified({ artifacts: payload.artifacts });
   const regression =
-    payload.status === "success" && !isPlanHandoff && ctx.readOnly !== true
+    // F-1157: só a lane que o Hardened confina à leitura não escreve.
+    payload.status === "success" && !isPlanHandoff && ctx.readOnlyEnforced !== true
       ? await evaluateWriterHandoffRegression(ctx, {
           declaredFiles,
           mission,
@@ -412,7 +413,7 @@ async function preparePtyHandoff(
   if (
     payload.status === "success" &&
     !isPlanHandoff &&
-    ctx.readOnly !== true &&
+    ctx.readOnlyEnforced !== true &&
     regression?.kind !== "exhausted"
   ) {
     try {

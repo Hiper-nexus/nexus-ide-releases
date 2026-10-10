@@ -3,29 +3,20 @@ import { isOperatorChoicePolicy, type SquadCliPolicyInput } from '../../shared/s
 import { acceptsClaudeMcpCliFlags, usesClaudeHomeLayout } from './spawn-home-policy';
 
 /**
- * Native helpers share this pane's account and execution authority. The
- * orchestrator never gets `Task`: it delegates through visible panes (routing,
- * quota and ledger stay in the Maestro's hands), and in free mode the gate hooks
- * that would otherwise deny a native `task` are not installed.
+ * Native helpers share this pane's account and execution authority.
+ *
+ * F-1157 (doutrina do dono): no modo padrão (Autopilot) todo agente —
+ * orquestrador, helper, worker ou revisor — fica com o `Task` nativo; o
+ * Nexus não corta subagentes. Só o modo Hardened, que o operador escolhe
+ * explicitamente para confinar a squad, mantém o corte.
  */
 export function nativeSubagentPolicyArgs(
   adapter: Pick<CliPtyAdapter, 'bin' | 'env' | 'quirks'>,
   authority: {
     readonly squadCliPolicy: SquadCliPolicyInput;
-    readonly readOnly?: boolean;
-    readonly nativeReadOnly?: boolean;
-    readonly role?: string;
   },
 ): string[] {
   if (!acceptsClaudeMcpCliFlags(adapter)) return [];
-  if (
-    authority.role !== 'orchestrator' &&
-    isOperatorChoicePolicy(authority.squadCliPolicy) &&
-    authority.readOnly !== true &&
-    authority.nativeReadOnly !== true
-  ) {
-    return [];
-  }
+  if (isOperatorChoicePolicy(authority.squadCliPolicy)) return [];
   return [usesClaudeHomeLayout(adapter) ? '--disallowedTools' : '--disallowed-tools', 'Task'];
 }
-

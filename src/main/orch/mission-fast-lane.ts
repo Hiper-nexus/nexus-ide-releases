@@ -1252,11 +1252,14 @@ async function spawnAgentPane(
   // colagens abaixo entregam este texto. O canal do "+ Pane" exclui missão.
   const resumeFromPaneId = spawnOpts?.resumeFromPaneId;
   // F-781: este brief não passa pelo withHandoffContract, então a regra do
-  // navegador entra aqui — o deny do WebFetch só alcança a família Claude.
-  // Mesmo predicado do spawn: só com o MCP do Nexus e o navegador ao alcance.
+  // navegador entra aqui. Só com o MCP do Nexus e o navegador ao alcance. Um
+  // assento rotulado somente-leitura (a pergunta aos panes, a revisão) só
+  // responde: recebe SÓ o pedido, sem a orientação de trabalho (F-1157 tirou
+  // a negação de escrita, não mudou o que esse assento lê).
   const workerAdapter = role === 'worker' ? getAdapter(agent.cli) : undefined;
   const brief =
     briefPrompt &&
+    !readOnly &&
     workerAdapter &&
     canUseNexusMcp(workerAdapter) &&
     hasNexusBrowserAlternative({

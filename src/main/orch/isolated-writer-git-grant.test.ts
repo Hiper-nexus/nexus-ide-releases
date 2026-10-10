@@ -2,16 +2,17 @@ import { describe, expect, it } from 'vitest';
 import type { McpRegistry, McpToolDef } from './mcp-protocol';
 import { handleMcpMessage } from './mcp-protocol';
 import { mintToken, resetGateForTests, type AgentGateContext } from './gate';
-import { grantsIsolatedWriterGitTool } from './isolated-writer-policy';
 import { visibleToolsFor } from './tools-tool-pick';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 /**
  * F-794 (B4 da Missão Terminais): o brief do writer isolado manda commitar com
- * nexus_git_add/commit, mas o worker nasce com allowlist vazia — o Codex do
- * F-764 recebeu "nexus_git_status failed: tool is outside this agent's
- * allowlist" e o trabalho validado ficou sem commit. A concessão do Git da
- * própria worktree vem do contexto do Main, não do allowlist da squad.
+ * nexus_git_add/commit, mas o worker nascia com allowlist vazia e recebia
+ * "outside this agent's allowlist". F-1157 (doutrina do dono, 10/10/2026): a
+ * allowlist não nega mais nada, então o writer isolado — e todo worker — vê o
+ * Git inteiro. O que o handler do Git do writer isolado decide (branch
+ * `nexus/…` alocada, sem push/pull/troca de branch) segue no handler
+ * (`assertIsolatedWriterGitTool`), fora deste teste.
  */
 
 const coordination = testProjectScope({ rootRealPath: '/repo/checkout' });
@@ -31,8 +32,7 @@ function worker(overrides: Partial<Parameters<typeof mintToken>[0]> = {}): Agent
   });
 }
 
-const GIT_TOOLS = ['status', 'diff', 'log', 'add', 'commit'].map((op) => `nexus_git_${op}`);
-const DENIED_GIT_TOOLS = ['push', 'pull', 'sync', 'branch_create', 'branch_switch', 'branch_list']
+const GIT_TOOLS = ['status', 'diff', 'log', 'add', 'commit', 'push', 'pull', 'sync', 'branch_create', 'branch_switch', 'branch_list']
   .map((op) => `nexus_git_${op}`);
 
 function tool(name: string): McpToolDef {
@@ -40,7 +40,7 @@ function tool(name: string): McpToolDef {
 }
 
 const registry: McpRegistry = {
-  tools: [...GIT_TOOLS, ...DENIED_GIT_TOOLS, 'nexus_file_write', 'nexus_terminal_run', 'nexus_handoff_submit'].map(tool),
+  tools: [...GIT_TOOLS, 'nexus_file_write', 'nexus_terminal_run', 'nexus_handoff_submit'].map(tool),
   serverName: 'nexus-test',
   serverVersion: '0.0.1',
 };
@@ -51,54 +51,24 @@ async function listed(ctx: AgentGateContext): Promise<string[]> {
   return result.tools.map((entry) => entry.name);
 }
 
-describe('Git da própria worktree para o writer isolado (F-794)', () => {
-  it('concede status/diff/log/add/commit ao writer isolado mesmo com allowlist vazia', () => {
-    const ctx = worker();
-    for (const name of GIT_TOOLS) expect(grantsIsolatedWriterGitTool(ctx, name), name).toBe(true);
-    // Forma vista pelo PreToolUse da família Claude.
-    expect(grantsIsolatedWriterGitTool(ctx, 'mcp__nexus__nexus_git_commit')).toBe(true);
-    for (const name of DENIED_GIT_TOOLS) expect(grantsIsolatedWriterGitTool(ctx, name), name).toBe(false);
-    expect(grantsIsolatedWriterGitTool(ctx, 'nexus_file_write')).toBe(false);
-    expect(grantsIsolatedWriterGitTool(ctx, 'nexus_terminal_run')).toBe(false);
-  });
-
-  it('nunca concede fora do writer isolado: mesmo checkout, read-only, aba compartilhada, orquestrador', () => {
-    expect(grantsIsolatedWriterGitTool(worker({ executionScope: coordination }), 'nexus_git_commit')).toBe(false);
-    expect(grantsIsolatedWriterGitTool(worker({ readOnly: true }), 'nexus_git_status')).toBe(false);
-    expect(grantsIsolatedWriterGitTool(worker({ sharedTabWorktree: true }), 'nexus_git_commit')).toBe(false);
-    resetGateForTests();
-    const orchestrator = mintToken({
-      label: 'Maestro', role: 'orchestrator', missionId: 'mission-a',
-      scope: coordination, executionScope: worktree, allowedTools: null,
-    });
-    expect(grantsIsolatedWriterGitTool(orchestrator, 'nexus_git_commit')).toBe(false);
-    // Mão do operador SEM a marca do Main de writer isolado.
-    resetGateForTests();
-    const operator = mintToken({ label: 'op', role: 'user', scope: coordination, executionScope: worktree });
-    expect(grantsIsolatedWriterGitTool(operator, 'nexus_git_commit')).toBe(false);
-    resetGateForTests();
-    const operatorWriter = mintToken({
-      label: 'op', role: 'user', scope: coordination, executionScope: worktree, isolatedWriter: true, allowedTools: [],
-    });
-    expect(grantsIsolatedWriterGitTool(operatorWriter, 'nexus_git_commit')).toBe(true);
-  });
-
-  it('tools/list mostra o Git da worktree ao writer isolado e esconde push/pull', async () => {
+describe('F-794/F-1157: Git e escrita ao alcance de todo worker', () => {
+  it('tools/list mostra todo o Git, a escrita e o terminal ao writer isolado com allowlist vazia', async () => {
     const names = await listed(worker());
-    for (const name of GIT_TOOLS) expect(names).toContain(name);
-    for (const name of DENIED_GIT_TOOLS) expect(names).not.toContain(name);
-    expect(names).not.toContain('nexus_file_write');
-    expect(names).toContain('nexus_handoff_submit');
+    for (const name of [...GIT_TOOLS, 'nexus_file_write', 'nexus_terminal_run', 'nexus_handoff_submit']) {
+      expect(names).toContain(name);
+    }
   });
 
-  it('tools/list do worker no checkout de coordenação continua sem Git (allowlist vazia)', async () => {
-    const names = await listed(worker({ executionScope: coordination }));
-    for (const name of GIT_TOOLS) expect(names).not.toContain(name);
+  it('o worker no checkout de coordenação e o que era somente leitura também veem tudo', async () => {
+    for (const ctx of [worker({ executionScope: coordination }), worker({ readOnly: true })]) {
+      const names = await listed(ctx);
+      for (const name of GIT_TOOLS) expect(names).toContain(name);
+    }
   });
 
-  it('nexus_tool_pick enxerga o mesmo conjunto do tools/list', () => {
-    const visible = visibleToolsFor(worker(), registry.tools).map((entry) => entry.name);
-    expect(visible).toEqual(expect.arrayContaining(GIT_TOOLS));
-    expect(visible).not.toContain('nexus_git_push');
+  it('nexus_tool_pick enxerga o mesmo conjunto do tools/list', async () => {
+    const ctx = worker();
+    const visible = visibleToolsFor(ctx, registry.tools).map((entry) => entry.name);
+    expect(visible.sort()).toEqual((await listed(ctx)).sort());
   });
 });

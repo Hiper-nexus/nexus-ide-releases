@@ -123,9 +123,9 @@ export function missionLaneMaximumTools(
   _lane: MissionLane,
   _category: string,
 ): readonly string[] | null {
-  // Lanes and categories do not impose a hard tool ceiling. The real
-  // boundaries are the gate context (role, allowlist, readOnly), the workspace
-  // sandbox, and the mission contract's deniedTools list.
+  // Lanes and categories do not impose a hard tool ceiling. Since F-1157 the
+  // gate context restricts nothing (read-only only under the operator's
+  // Hardened mode); the mission contract's deniedTools list still applies.
   return null;
 }
 

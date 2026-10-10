@@ -35,7 +35,7 @@ const MAX_LEDGERS = 256;
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
   Partial<Pick<AgentGateContext,
-    'scope' | 'executionScope' | 'providerId' | 'readOnly' | 'operatorParentSessionId' | 'promotedFromUserSession'>>;
+    'scope' | 'executionScope' | 'providerId' | 'readOnly' | 'readOnlyEnforced' | 'operatorParentSessionId' | 'promotedFromUserSession'>>;
 
 interface SessionLedger {
   /** Sem spawn conhecido: o primeiro HEAD visto é a base da sessão. */
@@ -91,7 +91,8 @@ export async function handleHookRegressionRequest(
   try {
     // Helper do "+ Pane" (tem pai operador) e workers de missão já passam
     // pelo portão no handoff.
-    if (!isOperatorHandContext(ctx) || ctx.readOnly === true || !ctx.sessionId || ctx.operatorParentSessionId) {
+    // F-1157: só a lane que o Hardened confina à leitura não escreve.
+    if (!isOperatorHandContext(ctx) || ctx.readOnlyEnforced === true || !ctx.sessionId || ctx.operatorParentSessionId) {
       return { statusCode: 200, payload: {} };
     }
     if (!(deps.enabled ?? isRegressionGateEnabled)()) return { statusCode: 200, payload: {} };

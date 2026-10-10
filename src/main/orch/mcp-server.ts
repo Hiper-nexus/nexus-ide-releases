@@ -40,15 +40,13 @@ import {
   getContext,
   getContextBySession,
   isCurrentGateContext,
-  isSkillAllowed,
-  isHookToolAllowed,
-  isInternalPrevcReviewerHookToolAllowed,
+  isHardenedSpawnPolicy,
   mintToken,
+  registerHardenedSpawnPolicy,
   releaseSession,
   releaseSessionByToken,
   type AgentGateContext,
 } from "./gate";
-import { grantsIsolatedWriterGitTool } from "./isolated-writer-policy";
 import { installWorktreeSalvageNotifier } from "./worktree-salvage-notice";
 import {
   createHandoffSpoolSession,
@@ -79,7 +77,6 @@ import type {
   McpConfirmationRequest,
 } from "./mcp-dispatch-contract";
 import { McpConfirmationScheduler } from "./mcp-confirmation-scheduler";
-import { isHookMcpToolAllowedForReadOnlyContext } from "./mcp-effect-policy";
 import { clearSession as clearMcpPermissionSession } from "../jarvis/permissions";
 import {
   boundedConfirmationArgs,
@@ -116,7 +113,6 @@ import {
   writeClaudeFamilyZeroClickSettings,
   writeMcpConfigFile,
 } from "./hooks-gen";
-import { hasNexusBrowserAlternative } from "./nexus-browser-policy";
 import { handleHookStatusHttp } from "./hook-status-endpoint";
 import { handleHookTriageHttp } from "./hook-triage-endpoint";
 import { handleHookRegressionHttp } from "./hook-regression-endpoint";
@@ -247,12 +243,16 @@ import {
   selectHubServersForSpawn,
   type McpHubSpawnServer,
 } from "../mcp-hub/mcp-hub-spawn";
-import { ensureSkillsForCli } from "./skill-mirror";
+import {
+  ensureSkillsForCli,
+  linkSkillsDirToCache,
+  sharedSkillCacheDir,
+} from "./skill-mirror";
 import {
   isPetStudioNativeWorkspaceAuthority,
 } from "../pty/autonomous-cli-policy";
 import { getOrchSettings } from "../persistence/settings-store";
-import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
+import { isGovernedPolicy, isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import {
   isThirdPartyClaudeFamily,
   requiresSpawnGate,
@@ -378,6 +378,14 @@ const confirmHttpMcpTool: McpConfirmationHandler = (request) =>
 
 function mcpUrl(): string {
   return `http://127.0.0.1:${port}/mcp`;
+}
+
+function isSymbolicLinkPath(target: string): boolean {
+  try {
+    return fs.lstatSync(target).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 function gateUrl(): string {
@@ -707,79 +715,28 @@ async function handleMcpHubRequest(
   sendJson(res, 200, response);
 }
 
-interface GateBody {
-  toolName?: string | null;
-  toolInput?: Record<string, unknown> | null;
-}
-
 async function handleGateRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   ctx: AgentGateContext,
   event: string,
 ): Promise<void> {
-  let body: GateBody = {};
-  try {
-    body = JSON.parse((await readBody(req)) || "{}") as GateBody;
-  } catch {
-    // Empty/invalid body — treat as a bare event.
-  }
+  // The body (tool name/input) no longer decides anything; drain it.
+  await readBody(req).catch(() => "");
   if (!isCurrentGateContext(ctx)) {
     sendJson(res, 401, { error: "session authority was revoked" });
     return;
   }
   switch (event) {
-    case "pretool": {
-      const toolName = body.toolName ?? "";
-      if (!toolName) {
-        sendJson(res, 200, {
-          allow: false,
-          reason: "hook omitted tool identity",
-        });
-        return;
-      }
-      if (toolName === "Skill") {
-        const skill = String(
-          (body.toolInput as { skill?: unknown } | null)?.skill ?? "",
-        );
-        const allow = skill === "" || isSkillAllowed(ctx.allowedSkills, skill);
-        sendJson(res, 200, {
-          allow,
-          reason: allow
-            ? undefined
-            : `skill "${skill}" is outside this agent's allowlist`,
-        });
-        return;
-      }
-      const allowlisted =
-        isHookToolAllowed(ctx.allowedTools, toolName, ctx.role) ||
-        // F-794: mesmo critério do despacho para o Git da própria worktree.
-        grantsIsolatedWriterGitTool(ctx, toolName);
-      const reviewerAllowed = isInternalPrevcReviewerHookToolAllowed(
-        ctx,
-        toolName,
-      );
-      const readOnlyAllowed =
-        !ctx.readOnly ||
-        (ctx.internalPrevcReviewerAuthority !== undefined &&
-          reviewerAllowed) ||
-        isHookMcpToolAllowedForReadOnlyContext(toolName);
-      const allow = allowlisted && reviewerAllowed && readOnlyAllowed;
-      sendJson(res, 200, {
-        allow,
-        reason: allow
-          ? undefined
-          : !allowlisted
-            ? `tool "${toolName}" is outside this agent's allowlist`
-            : !reviewerAllowed
-              ? `tool "${toolName}" is outside this internal reviewer's exact profile`
-            : `read-only authority denied tool "${toolName}"`,
-      });
-      return;
-    }
+    // F-1154/F-1157: o hook só pergunta se o Main da sessão responde (o
+    // spool do handoff depende disso); nenhuma tool é negada aqui.
+    case "pretool":
     case "posttool":
       sendJson(res, 200, { allow: true });
       return;
+    // No generated hook calls /gate/stop since F-1154; kept for panes spawned
+    // by an earlier build whose nexus-gate.mjs still reports Stop (they die
+    // with the app). Remove after the 0.77 line.
     case "stop": {
       let hasTrustedHandoff = false;
       try {
@@ -1146,18 +1103,6 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       // Writer isolado da mão do operador: mesma guarda de git do worker.
       ...(operatorChild && meta?.isolatedWriter === true ? { isolatedWriter: true as const } : {}),
     });
-    // F-781: só nega o WebFetch onde o navegador do Nexus está ao alcance
-    // deste token — mesmos portões do tools/list e do dispatch.
-    const denyWebFetch =
-      canUseNexusMcp(adapter) &&
-      hasNexusBrowserAlternative({
-        role: ctx.role,
-        missionId: ctx.missionId,
-        readOnly: ctx.readOnly,
-        allowedTools: ctx.allowedTools,
-        operatorChild,
-      });
-
     const env: Record<string, string> = canUseNexusMcp(adapter)
       ? {
           NEXUS_MCP_URL: mcpUrl(),
@@ -1176,11 +1121,6 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           NEXUS_HOOK_INTEGRATION_URL: hookIntegrationUrl(),
           // PermissionRequest → broker de aprovação (card do desktop/celular).
           NEXUS_HOOK_PERMISSION_URL: hookPermissionUrl(),
-          // F-795: com o gate inalcançável, o hook libera só leitura e o
-          // handoff (spool). O perfil exato do revisor interno não degrada.
-          NEXUS_GATE_OFFLINE_POLICY: internalPrevcReviewerAuthority
-            ? "closed"
-            : "read-handoff",
         }
       : {};
     {
@@ -1218,14 +1158,10 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         role: meta?.role,
       },
     );
-    // Free workers and the operator's own panes keep their native helper tools.
-    // Governed/read-only authority and the orchestrator retain the provider
-    // restriction without changing the adapter.
+    // F-1157: every role keeps its native helper tools (Task); only the
+    // operator's explicit Hardened mode cuts them, without changing the adapter.
     extraArgs.push(...nativeSubagentPolicyArgs(adapter, {
       squadCliPolicy: getOrchSettings().squadCliPolicy,
-      readOnly: meta?.readOnly,
-      nativeReadOnly: meta?.nativeReadOnly,
-      role: meta?.role,
     }));
     const mcpConfig = buildMcpConfig(ctx.token, hubServers);
     const thirdPartyClaudeFamily = isThirdPartyClaudeFamily(
@@ -1291,9 +1227,6 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           coordinationScope: authority.coordinationScope ?? authority.scope,
           effectiveEnv: transportEnv,
           inheritNativeProfile,
-          // OVKA-713/747: filtro declarado de skill → skillOverrides off no
-          // overlay (pessoais/projeto fora do conjunto não invocam).
-          skillFilter: meta?.allowedSkills,
           // Hub MCP compartilhado (07645): só computado quando o pane
           // herdaria mesmo — nunca calculado nem exposto a worker/orquestrador.
           mcpHubBridge: inheritNativeProfile ? computeMcpHubBridge() : undefined,
@@ -1301,16 +1234,21 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           cwd: authority.cwd,
           approvedMissionProjectTrust,
           workspaceProjectTrust: isCwdInsideOpenedWorkspace(authority),
-          // F-579: writable lanes commit and push as the operator; read-only
-          // lanes never commit (and may be Seatbelt-confined), so they get
-          // nothing.
-          carryDeveloperIdentity: meta?.readOnly !== true,
+          // F-579: lanes commit and push as the operator. F-1157: outside
+          // the operator's explicit Hardened mode no lane is read-only, so
+          // every one carries the identity; a Hardened read-only lane (never
+          // commits, may be Seatbelt-confined) still gets nothing.
+          carryDeveloperIdentity:
+            meta?.readOnly !== true ||
+            isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
           // Operator-choice/direct lane (no gate hooks): the pane is the
           // operator's own HOME minus Claude conversation state. Hardened
           // gated panes keep the minimal surface and receive only the
           // identity entries above.
-          carryNativeHome: meta?.readOnly !== true && !gateHome,
-          denyWebFetch,
+          carryNativeHome:
+            (meta?.readOnly !== true ||
+              isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)) &&
+            !gateHome,
         });
         if (approvedMissionProjectTrust) {
           const stagedProfile = JSON.parse(
@@ -1404,7 +1342,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         if (!gateHome) {
           extraArgs.push(
             "--settings",
-            writeClaudeFamilyZeroClickSettings(ctx.token, { denyWebFetch }),
+            writeClaudeFamilyZeroClickSettings(ctx.token),
           );
         }
       } else if (
@@ -1418,7 +1356,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           "--mcp-config",
           writeMcpConfigFile(ctx.token, mcpConfig),
           "--settings",
-          writeClaudeFamilyZeroClickSettings(ctx.token, { denyWebFetch }),
+          writeClaudeFamilyZeroClickSettings(ctx.token),
         );
         if (gated) {
           // A mission-owned pane must not inherit the operator's unrelated
@@ -1609,14 +1547,38 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         // autoload providers retain their existing native-profile delivery.
         const deliversToRealProfile =
           gated && ephemeralHomeDir === null && adapter.quirks.mcpAutoload;
-        ensureSkillsForCli(adapter.id, {
-          allowedSkills: (deliversToRealProfile || (gated && usesClaudeHomeLayout(adapter)))
-            ? [...(meta?.allowedSkills ?? [])]
-            : (meta?.allowedSkills ?? null),
-          allowedTools: meta?.allowedTools ?? null,
-          ephemeralHomeDir,
-          includeCliTarget: !gated || deliversToRealProfile,
-        });
+        const overlaySkills = ephemeralHomeDir
+          ? path.join(ephemeralHomeDir, ".claude", "skills")
+          : null;
+        // The operator hand's overlay links the REAL ~/.claude/skills
+        // (inheritNativeProfile). With a gate, Nexus writes nothing through
+        // that link: it is the operator's own profile.
+        const overlayIsRealProfile =
+          overlaySkills !== null && isSymbolicLinkPath(overlaySkills);
+        // F-1157: a private Claude HOME receives every skill (no filter),
+        // linked to the shared per-adapter cache outside Hardened; the real
+        // provider profile still receives only what was granted.
+        const privateClaudeHome =
+          gated &&
+          usesClaudeHomeLayout(adapter) &&
+          overlaySkills !== null &&
+          !overlayIsRealProfile;
+        const linkedToSharedCache =
+          privateClaudeHome &&
+          !isHardenedSpawnPolicy() &&
+          linkSkillsDirToCache(overlaySkills, sharedSkillCacheDir(adapter.id));
+        if (!linkedToSharedCache) {
+          ensureSkillsForCli(adapter.id, {
+            allowedSkills: privateClaudeHome
+              ? null
+              : (deliversToRealProfile || (gated && usesClaudeHomeLayout(adapter)))
+                ? [...(meta?.allowedSkills ?? [])]
+                : (meta?.allowedSkills ?? null),
+            allowedTools: meta?.allowedTools ?? null,
+            ephemeralHomeDir: gated && overlayIsRealProfile ? null : ephemeralHomeDir,
+            includeCliTarget: !gated || deliversToRealProfile,
+          });
+        }
       }
     } catch (err) {
       releaseSessionByToken(ctx.token);
@@ -2070,6 +2032,10 @@ export async function startMcpServer(): Promise<void> {
   // por chamador na hora da chamada (mesmo critério do tools/list).
   setToolPickRegistry(registry.tools);
   installSpawnHook();
+  // F-1157: `readOnly` só confina quando o operador escolheu o Hardened.
+  registerHardenedSpawnPolicy(() =>
+    isGovernedPolicy(getOrchSettings().squadCliPolicy),
+  );
   // F-794: salvaguarda da worktree do writer avisa o orquestrador da missão.
   installWorktreeSalvageNotifier();
   // F-795: spool de handoffs que o Main não recebeu — ingestão no boot, na

@@ -85,15 +85,6 @@ function closeServer(server: http.Server): Promise<void> {
   return new Promise((resolve) => server.close(() => resolve()));
 }
 
-function waitFor<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms),
-    ),
-  ]);
-}
-
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -110,133 +101,81 @@ afterEach(async () => {
   }
 });
 
+function spoolEnv(): { env: Record<string, string>; files: () => string[] } {
+  const dir = makeTempDir();
+  return {
+    env: {
+      NEXUS_HANDOFF_SPOOL_DIR: dir,
+      NEXUS_HANDOFF_SPOOL_ID: 'spool-hooks-gen-test',
+      NEXUS_HANDOFF_SPOOL_KEY: 'a'.repeat(64),
+    },
+    files: () => fs.readdirSync(dir).filter((name) => name.endsWith('.json')),
+  };
+}
+
+const HANDOFF = {
+  tool_name: 'mcp__nexus__nexus_handoff_submit',
+  tool_input: { status: 'blocked', summary: 'Main fora do ar; plano pronto para retomada.' },
+};
+
 describe('HOOK_SCRIPT', () => {
-  it('prints Codex continue JSON for stop and exits quickly while detached child posts stop', async () => {
-    let resolveStop!: (body: string) => void;
-    const stopPosted = new Promise<string>((resolve) => {
-      resolveStop = resolve;
-    });
-    const gate = await listen((req, res) => {
-      if (req.method === 'POST' && req.url === '/gate/stop') {
-        void readBody(req).then(resolveStop);
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ allow: true }));
-        return;
-      }
-      res.writeHead(404).end();
-    });
-    const script = writeHook();
-    const startedAt = Date.now();
-
-    const result = await runHook(
-      script,
-      'stop',
-      { tool_name: 'Stop', tool_input: { ok: true } },
-      { NEXUS_GATE_URL: gate.url },
-    );
-
-    expect(Date.now() - startedAt).toBeLessThan(2_000);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe('{"continue":true}\n');
-    expect(result.stderr).toBe('');
-    await expect(waitFor(stopPosted, 2_000)).resolves.toContain('"toolName":"Stop"');
-  });
-
-  it('blocks pretool with no stdout when the gate is unreachable', async () => {
-    const script = writeHook();
-
-    const result = await runHook(
-      script,
-      'pretool',
-      { tool_name: 'Bash', tool_input: { command: 'date' } },
-      { NEXUS_GATE_URL: 'http://127.0.0.1:9/gate' },
-    );
-
-    expect(result.status).toBe(2);
-    expect(result.stdout).toBe('');
-    expect(result.stderr).toContain('gate unreachable');
-  });
-
-  describe('gate INALCANÇÁVEL: degradação estreita (F-795)', () => {
-    const unreachable = { NEXUS_GATE_URL: 'http://127.0.0.1:9/gate', NEXUS_GATE_OFFLINE_POLICY: 'read-handoff' };
-
-    it.each(['Read', 'Grep', 'Glob', 'LS', 'ToolSearch'])('libera a leitura local %s', async (tool) => {
-      const result = await runHook(writeHook(), 'pretool', { tool_name: tool, tool_input: {} }, unreachable);
+  // Doutrina do dono (10/10/2026): o hook não autoriza nada e o Nexus fora do
+  // ar nunca bloqueia ferramenta. A única saída 2 é a do spool do handoff.
+  it.each(['Bash', 'Edit', 'Write', 'WebFetch', 'Task', 'Skill', 'Read', 'mcp__nexus__nexus_git_commit', 'mcp__other__delete'])(
+    'never blocks %s when the gate is unreachable',
+    async (tool) => {
+      const result = await runHook(writeHook(), 'pretool', { tool_name: tool, tool_input: { command: 'date' } }, {
+        NEXUS_GATE_URL: 'http://127.0.0.1:9/gate',
+      });
       expect(result.status).toBe(0);
       expect(result.stdout).toBe('');
-    });
+      expect(result.stderr).toBe('');
+    },
+  );
 
-    it.each(['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'Task', 'Skill', 'mcp__nexus__nexus_pane_write', 'mcp__nexus__nexus_git_commit', 'mcp__other__delete'])(
-      'continua bloqueando %s',
-      async (tool) => {
-        const result = await runHook(writeHook(), 'pretool', { tool_name: tool, tool_input: { command: 'rm -rf /' } }, unreachable);
-        expect(result.status).toBe(2);
-        expect(result.stderr).toContain('gate unreachable — blocking tool call');
-        expect(result.stderr).toContain('só leitura');
-      },
-    );
-
-    it('libera as leituras do Nexus que todo papel já tem (o MCP reaplica o gate ao chegar)', async () => {
-      for (const tool of ['mcp__nexus__nexus_pane_read', 'mcp__nexus__nexus_handoff_list', 'mcp__nexus__nexus_memory_recall']) {
-        const result = await runHook(writeHook(), 'pretool', { tool_name: tool, tool_input: {} }, unreachable);
-        expect(result.status, tool).toBe(0);
-      }
+  it('never blocks when the pane has no gate credentials', async () => {
+    const result = await runHook(writeHook(), 'pretool', { tool_name: 'Bash', tool_input: { command: 'date' } }, {
+      NEXUS_GATE_URL: '', NEXUS_GATE_TOKEN: '',
     });
-
-    it('handoff sem spool disponível segue para o MCP em vez de ser bloqueado', async () => {
-      const result = await runHook(writeHook(), 'pretool', {
-        tool_name: 'mcp__nexus__nexus_handoff_submit', tool_input: { status: 'blocked', summary: 'x' },
-      }, unreachable);
-      expect(result.status).toBe(0);
-    });
-
-    it('sem a política do Main (env ausente ou "closed", ex.: revisor interno) tudo continua bloqueado', async () => {
-      for (const env of [{ NEXUS_GATE_URL: 'http://127.0.0.1:9/gate' }, { ...unreachable, NEXUS_GATE_OFFLINE_POLICY: 'closed' }]) {
-        const read = await runHook(writeHook(), 'pretool', { tool_name: 'Read', tool_input: {} }, env);
-        expect(read.status).toBe(2);
-        const handoff = await runHook(writeHook(), 'pretool', { tool_name: 'mcp__nexus__nexus_handoff_submit', tool_input: { status: 'blocked', summary: 'x' } }, env);
-        expect(handoff.status).toBe(2);
-      }
-    });
-
-    it('gate alcançável continua mandando: veredito negado bloqueia até leitura', async () => {
-      const gate = await listen((req, res) => {
-        void readBody(req).then(() => {
-          res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ allow: false, reason: 'perfil exato' }));
-        });
-      });
-      const result = await runHook(writeHook(), 'pretool', { tool_name: 'Read', tool_input: {} }, {
-        NEXUS_GATE_URL: gate.url, NEXUS_GATE_OFFLINE_POLICY: 'read-handoff',
-      });
-      expect(result.status).toBe(2);
-      expect(result.stderr).toContain('perfil exato');
-    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
   });
 
-  it('blocks pretool with the gate verdict reason', async () => {
+  it('a reachable gate no longer authorizes: a legacy deny verdict does not block', async () => {
     const gate = await listen((req, res) => {
       void readBody(req).then(() => {
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ allow: false, reason: 'x' }));
+        res.end(JSON.stringify({ allow: false, reason: 'allowlist antiga' }));
       });
     });
-    const script = writeHook();
-
-    const result = await runHook(
-      script,
-      'pretool',
-      { tool_name: 'Bash', tool_input: { command: 'date' } },
-      { NEXUS_GATE_URL: gate.url },
-    );
-
-    expect(result.status).toBe(2);
-    expect(result.stdout).toBe('');
-    expect(result.stderr).toContain('x');
+    const result = await runHook(writeHook(), 'pretool', { tool_name: 'Bash', tool_input: { command: 'date' } }, {
+      NEXUS_GATE_URL: gate.url,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
   });
 
-  it('hides the detached stop child window on Windows', () => {
-    expect(HOOK_SCRIPT).toContain('windowsHide: true');
+  it('with the Main unreachable the handoff goes to the spool and the agent hears it was saved (F-795)', async () => {
+    const spool = spoolEnv();
+    const result = await runHook(writeHook(), 'pretool', HANDOFF, {
+      NEXUS_GATE_URL: 'http://127.0.0.1:9/gate', ...spool.env,
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('handoff guardado em disco');
+    expect(spool.files()).toHaveLength(1);
+  });
+
+  it('with the Main reachable the handoff follows the MCP call and nothing is spooled', async () => {
+    const gate = await listen((req, res) => {
+      void readBody(req).then(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ allow: true }));
+      });
+    });
+    const spool = spoolEnv();
+    const result = await runHook(writeHook(), 'pretool', HANDOFF, { NEXUS_GATE_URL: gate.url, ...spool.env });
+    expect(result.status).toBe(0);
+    expect(spool.files()).toHaveLength(0);
   });
 
   it('falls back to the arms runtime gate port when the env gate is stale', async () => {
@@ -252,21 +191,18 @@ describe('HOOK_SCRIPT', () => {
       path.join(home, '.nexus', 'arms-runtime.json'),
       `${JSON.stringify({ schemaVersion: 1, port: gate.port, at: Date.now() })}\n`,
     );
-    const script = writeHook();
+    const spool = spoolEnv();
+    const result = await runHook(writeHook(), 'pretool', HANDOFF, {
+      HOME: home,
+      NEXUS_GATE_URL: 'http://127.0.0.1:9/gate',
+      ...spool.env,
+    });
 
-    const result = await runHook(
-      script,
-      'pretool',
-      { tool_name: 'Bash', tool_input: { command: 'date' } },
-      {
-        HOME: home,
-        NEXUS_GATE_URL: 'http://127.0.0.1:9/gate',
-      },
-    );
-
+    // The live fallback answered, so the handoff was not diverted to disk.
     expect(result.status).toBe(0);
     expect(result.stdout).toBe('');
     expect(result.stderr).toBe('');
+    expect(spool.files()).toHaveLength(0);
   });
 
   it('usa o descriptor da instância do pane, não o do app instalado (F-644)', async () => {
@@ -288,21 +224,17 @@ describe('HOOK_SCRIPT', () => {
       devDescriptor,
       `${JSON.stringify({ schemaVersion: 1, port: gate.port, at: Date.now() })}\n`,
     );
-    const script = writeHook();
-
-    const result = await runHook(
-      script,
-      'pretool',
-      { tool_name: 'Bash', tool_input: { command: 'date' } },
-      {
-        HOME: home,
-        USERPROFILE: home,
-        NEXUS_GATE_URL: 'http://127.0.0.1:9/gate',
-        NEXUS_PANE_ARMS_DESCRIPTOR: devDescriptor,
-      },
-    );
+    const spool = spoolEnv();
+    const result = await runHook(writeHook(), 'pretool', HANDOFF, {
+      HOME: home,
+      USERPROFILE: home,
+      NEXUS_GATE_URL: 'http://127.0.0.1:9/gate',
+      NEXUS_PANE_ARMS_DESCRIPTOR: devDescriptor,
+      ...spool.env,
+    });
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
+    expect(spool.files()).toHaveLength(0);
   });
 });

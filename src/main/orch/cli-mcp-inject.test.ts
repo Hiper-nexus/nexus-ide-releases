@@ -391,11 +391,13 @@ describe("prepareAgyMcpConfig", () => {
         ),
       ),
     ).toBe(true);
+    // F-1157: sem filtro de skill — o overlay recebe também a que não foi
+    // concedida (MCPs e plugins externos continuam fora, logo acima).
     expect(
       fs.existsSync(
-        path.join(result.geminiHomeDir, "config", "skills", "blocked"),
+        path.join(result.geminiHomeDir, "config", "skills", "blocked", "SKILL.md"),
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 

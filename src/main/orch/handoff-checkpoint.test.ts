@@ -91,11 +91,17 @@ describe('captureWriterHandoffCheckpoint', () => {
     expect(await captureWriterHandoffCheckpoint(ctx())).toMatchObject({ payload: { ok: true, ordinal: 2 } });
   });
 
+  it('F-1157: lane só rotulada read-only escreve no Autopilot, então é fotografada', async () => {
+    expect(await captureWriterHandoffCheckpoint(ctx({ readOnly: true }))).not.toBeNull();
+    expect(checkpointRefs()).toHaveLength(1);
+  });
+
   it('nunca fotografa a raiz de coordenação nem sessão sem autoridade de escrita', async () => {
     const coordination = { executionScope: testProjectScope({ rootRealPath: repo }) };
     expect(await captureWriterHandoffCheckpoint(ctx(coordination))).toBeNull();
     expect(await captureWriterHandoffCheckpoint(ctx({ executionScope: undefined }))).toBeNull();
-    expect(await captureWriterHandoffCheckpoint(ctx({ readOnly: true }))).toBeNull();
+    // F-1157: só a lane que o Hardened confina à leitura não escreve.
+    expect(await captureWriterHandoffCheckpoint(ctx({ readOnly: true, readOnlyEnforced: true }))).toBeNull();
     expect(await captureWriterHandoffCheckpoint(ctx({ role: 'orchestrator' }))).toBeNull();
     expect(await captureWriterHandoffCheckpoint(ctx({ missionId: undefined }))).toBeNull();
     expect(checkpointRefs()).toEqual([]);

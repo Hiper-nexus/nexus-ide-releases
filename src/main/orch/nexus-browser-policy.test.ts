@@ -4,7 +4,6 @@ import {
   NEXUS_BROWSER_PAGE_TOOLS,
   NEXUS_BROWSER_UNAVAILABLE_HINT,
   NEXUS_BROWSER_WORKER_TOOLS,
-  WEB_FETCH_DENY_MESSAGE,
   browserUnavailableError,
   defaultMissionWorkerTools,
   hasNexusBrowserAlternative,
@@ -36,30 +35,30 @@ describe('F-781: o navegador do Nexus está ao alcance do pane?', () => {
       subject: { role: 'user' as const, allowedTools: null, operatorChild: true },
       expected: true,
     },
-    // Fallback seguro: sem a alternativa, o WebFetch fica.
+    // F-1157: allowlist e somente-leitura não tiram mais o navegador.
     {
       caso: 'worker de missão com allowlist vazia (o padrão do spawn ad hoc)',
       subject: { role: 'worker' as const, missionId: 'm-1', allowedTools: [] },
-      expected: false,
+      expected: true,
     },
     {
-      caso: 'allowlist só com leitura (não abre nem navega)',
+      caso: 'allowlist só com leitura',
       subject: {
         role: 'worker' as const,
         missionId: 'm-1',
         allowedTools: ['nexus_browser_read'],
       },
-      expected: false,
+      expected: true,
     },
     {
-      caso: 'pane somente leitura (não abre aba)',
+      caso: 'pane que era somente leitura',
       subject: {
         role: 'worker' as const,
         missionId: 'm-1',
         allowedTools: null,
         readOnly: true,
       },
-      expected: false,
+      expected: true,
     },
     {
       caso: 'worker sem missão (efeito recusado no dispatch)',
@@ -74,7 +73,7 @@ describe('F-781: o navegador do Nexus está ao alcance do pane?', () => {
     {
       caso: 'filho do operador com allowlist vazia',
       subject: { role: 'user' as const, allowedTools: [], operatorChild: true },
-      expected: false,
+      expected: true,
     },
   ])('$caso → $expected', ({ subject, expected }) => {
     expect(hasNexusBrowserAlternative(subject)).toBe(expected);
@@ -82,26 +81,12 @@ describe('F-781: o navegador do Nexus está ao alcance do pane?', () => {
 });
 
 describe('F-781: textos da regra', () => {
-  it('a recusa do WebFetch diz o que usar no lugar e quando o curl vale', () => {
-    for (const piece of [
-      'nexus_browser_open',
-      'nexus_browser_read',
-      'nexus_browser_navigate',
-      'curl -sL',
-      'JSON de API',
-      'truncated: true',
-      'WebSearch continua liberado',
-      'registre a falha no handoff',
-    ]) {
-      expect(WEB_FETCH_DENY_MESSAGE).toContain(piece);
+  it('F-1157: a regra do brief recomenda o navegador e não proíbe WebFetch, fetch nativo nem curl', () => {
+    for (const piece of ['nexus_browser_open', 'nexus_browser_read', 'nexus_browser_navigate', 'truncated: true']) {
+      expect(NEXUS_BROWSER_BRIEF_RULE).toContain(piece);
     }
-    // Vai entre aspas simples num comando de shell (hooks-gen.ts).
-    expect(WEB_FETCH_DENY_MESSAGE).not.toContain("'");
-  });
-
-  it('a regra do brief não bloqueia busca nem curl de API', () => {
-    expect(NEXUS_BROWSER_BRIEF_RULE).toContain('Não use WebFetch');
-    expect(NEXUS_BROWSER_BRIEF_RULE).toContain('curl só para JSON de API');
+    expect(NEXUS_BROWSER_BRIEF_RULE).toContain('WebFetch, o fetch nativo da sua CLI e curl também estão liberados');
+    expect(NEXUS_BROWSER_BRIEF_RULE).not.toMatch(/Não use|só para/u);
     expect(NEXUS_BROWSER_BRIEF_RULE).toContain('busca na web nativa continua valendo');
   });
 });
@@ -127,7 +112,7 @@ describe('F-797: allowlist padrão do worker de missão', () => {
     expect(defaultMissionWorkerTools({ missionWorker: false, readOnly: false })).toEqual([]);
   });
 
-  it('com a lista padrão o worker alcança o navegador: o deny do WebFetch e o brief ligam sozinhos', () => {
+  it('com a lista padrão o worker alcança o navegador e o brief liga sozinho, inclusive no analista somente leitura', () => {
     expect(
       hasNexusBrowserAlternative({
         role: 'worker',
@@ -135,6 +120,8 @@ describe('F-797: allowlist padrão do worker de missão', () => {
         allowedTools: defaultMissionWorkerTools({ missionWorker: true, readOnly: false }),
       }),
     ).toBe(true);
+    // F-1157: readOnly e allowlist vazia não tiram mais o navegador; só a
+    // falta de missão tira (o dispatch recusa efeito de missão sem missão).
     expect(
       hasNexusBrowserAlternative({
         role: 'worker',
@@ -142,7 +129,7 @@ describe('F-797: allowlist padrão do worker de missão', () => {
         readOnly: true,
         allowedTools: defaultMissionWorkerTools({ missionWorker: true, readOnly: true }),
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('o erro de aba indisponível mantém o motivo e aponta o caminho (curl + handoff)', () => {

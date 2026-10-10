@@ -11,7 +11,7 @@ import { hasJevCredential } from '../jev/jev-secrets';
 import { resetJevRateLimitsForTesting } from '../jev/jev-rate-limit';
 import type { JevResult, JudgeInput } from '../jev/jev-client';
 import type { McpToolDef } from './mcp-protocol';
-import { mintToken, resetGateForTests } from './gate';
+import { mintToken, registerHardenedSpawnPolicy, resetGateForTests } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
   buildToolPickTools,
@@ -93,7 +93,7 @@ describe('tokenize / prefilter', () => {
 });
 
 describe('visibleToolsFor', () => {
-  it('excludes itself, unavailable tools and tools outside the allowlist', () => {
+  it('excludes itself and unavailable tools, but not tools outside the allowlist', () => {
     const visible = visibleToolsFor(userCtx(['nexus_pane_read', 'nexus_file_write']), TOOLS).map(
       (t) => t.name,
     );
@@ -101,15 +101,28 @@ describe('visibleToolsFor', () => {
     expect(visible).not.toContain('nexus_secret_tool');
     expect(visible).toContain('nexus_pane_read');
     expect(visible).toContain('nexus_file_write');
-    // ALWAYS_ALLOWED observation tools stay visible even with a strict allowlist.
     expect(visible).toContain('nexus_pane_list');
-    expect(visible).not.toContain('nexus_git_commit');
+    // F-1157: a allowlist do token não esconde mais nada — o commit aparece.
+    expect(visible).toContain('nexus_git_commit');
   });
 
-  it('hides effectful tools from a read-only context', () => {
+  it('F-1157: a read-only label in Autopilot sees effectful tools', () => {
     const visible = visibleToolsFor(userCtx(null, true), TOOLS).map((t) => t.name);
     expect(visible).toContain('nexus_pane_read');
-    expect(visible).not.toContain('nexus_terminal_run');
+    expect(visible).toContain('nexus_terminal_run');
+  });
+
+  it('F-1157: a read-only lane confined by the Hardened mode does not see effectful tools', () => {
+    registerHardenedSpawnPolicy(() => true);
+    try {
+      const ctx = userCtx(null, true);
+      expect(ctx.readOnlyEnforced).toBe(true);
+      const visible = visibleToolsFor(ctx, TOOLS).map((t) => t.name);
+      expect(visible).toContain('nexus_pane_read');
+      expect(visible).not.toContain('nexus_terminal_run');
+    } finally {
+      registerHardenedSpawnPolicy(() => false);
+    }
   });
 });
 
@@ -143,11 +156,15 @@ describe('runToolPick', () => {
     }
   });
 
-  it('never recommends a tool the caller cannot see', async () => {
+  it('never recommends itself or an unavailable tool, and offers tools outside the allowlist', async () => {
     const judge = vi.fn<JudgeMock>(async (input) => {
       const q = input.questions.tool;
       const ids = q.type === 'choice' ? Object.keys(q.criteria) : [];
-      expect(ids).not.toContain('git_commit');
+      // F-1157: o chamador vê toda tool disponível, então o commit pedido
+      // entra entre os candidatos mesmo fora da allowlist do token.
+      expect(ids).toContain('git_commit');
+      expect(ids).not.toContain('tool_pick');
+      expect(ids).not.toContain('secret_tool');
       return choice({ pane_read: 0.9, none: 0.1 });
     });
     await runToolPick(

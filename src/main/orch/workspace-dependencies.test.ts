@@ -135,7 +135,8 @@ describe('workspace dependency bridge', () => {
     expect(tool.name).toBe('load_workspace_dependencies');
     expect(tool.inputSchema).toMatchObject({ additionalProperties: false });
     expect(isToolAllowed(['load_workspace_dependencies'], tool.name)).toBe(true);
-    expect(isToolAllowed([], tool.name)).toBe(false);
+    // F-1157: allowlist vazia não nega mais — todo agente alcança a tool.
+    expect(isToolAllowed([], tool.name)).toBe(true);
     expect(effectPolicyForTool(tool.name)).toBe('read-only');
     await expect(tool.handler({}, {} as never)).resolves.toContain(
       `Python executable: \`${python}\``,

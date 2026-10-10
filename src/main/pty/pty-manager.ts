@@ -2991,11 +2991,14 @@ export function spawnAgentSession(
   // Seatbelt/Bubblewrap têm contrato de arquivos próprio e ficam de fora.
   // Lane gravável também recebe a identidade git/SSH/gh do operador (F-579
   // tier 1), senão o agente pede `gh auth login` com a máquina autenticada.
+  // F-1157: fora do Hardened, `readOnly` é rótulo — a lane também escreve.
   if (!processSandboxActive && !codexProcessSandbox) {
     ensurePrivateHomeOperatorAccess(spawnEnv.HOME, {
       realHome: os.homedir(),
       userDataDir: app.getPath("userData"),
-      writable: !nativeReadOnly && authority.context?.readOnly !== true,
+      writable:
+        !nativeReadOnly &&
+        (authority.context?.readOnly !== true || executionPolicy.isFrictionless),
     });
   }
 

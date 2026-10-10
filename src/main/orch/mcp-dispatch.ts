@@ -26,14 +26,11 @@ import {
   executionScopeFor,
   canonicalToolName,
   gateContextAbortSignal,
-  isInternalPrevcReviewerToolAllowed,
   isCurrentGateContext,
-  isToolAllowedForRole,
   PreEffectRefusalError,
   returnOperatorHandFromEndedMission,
   type AgentGateContext,
 } from "./gate";
-import { grantsIsolatedWriterGitTool } from "./isolated-writer-policy";
 import {
   effectPolicyForTool,
   isEffectfulTool,
@@ -115,21 +112,9 @@ export {
   type WorkflowEffectAuthority,
 } from "./mcp-dispatch-contract";
 
-/**
- * Copy que ensina o agente a NÃO insistir. Vive em `hint` (não em `error`) pelo
- * contrato de dispatch: `error` é comparado por string exata em smoke/renderer,
- * enquanto `hint` é dica e pode evoluir. Cada negação de autoridade termina com
- * o caminho que funciona, e não com uma recusa muda — o modelo que não ouve a
- * saída tenta de novo, contorna ou reporta bloqueio de missão.
- */
-export const DENIAL_HINTS = Object.freeze({
-  allowlist:
-    "Não tente de novo nem trate como bloqueio da missão: esta ferramenta está fora do seu papel/allowlist por decisão de quem montou a squad. Entregue com o que tem e declare em nexus_handoff_submit (campo blockers) o que ficou de fora por falta dela.",
-  readOnly:
-    "Você está em modo somente-leitura: não tente escrever por outro caminho (shell, editor, git). Registre no handoff o que precisaria mudar e por quê.",
-  internalReviewer:
-    "Reviewer interno só lê e opina: conclua com nexus_merge_review_submit ou o handoff de revisão, sem tentar editar.",
-});
+/** Dica da única recusa de leitura que sobrou (Hardened, F-1157). */
+export const READ_ONLY_HARDENED_HINT =
+  "Esta lane está no modo Hardened escolhido pelo operador e só lê: não tente escrever por outro caminho (shell, editor, git). Registre no handoff o que precisaria mudar e por quê.";
 
 /**
  * Saída para o pane do operador preso a uma missão que não roda (F-651). Sem
@@ -528,7 +513,7 @@ function bindEffectAuthority(
     // assertExecutionEffectAllowed quando a política é execution-effect.
   }
   if (policy === "execution-effect") {
-    authority.assertExecutionEffectAllowed(toolName, args, ctx.readOnly === true);
+    authority.assertExecutionEffectAllowed(toolName, args, ctx.readOnlyEnforced === true);
   }
   return {
     contextRevision: authority.contextRevision,
@@ -865,87 +850,25 @@ export async function dispatchToolCall(
     );
   };
 
-  if (!isInternalPrevcReviewerToolAllowed(ctx, tool.name)) {
-    return denyBeforeIntent(
-      `tool "${tool.name}" is outside this internal reviewer's exact profile`,
-      DENIAL_HINTS.internalReviewer,
-    );
-  }
-
+  // F-1157: sem negação por allowlist, papel ou perfil exato de revisor —
+  // todo agente alcança toda tool. Seguem os portões que não são acesso:
+  // disponibilidade, vínculo de missão, intent e consentimento. A única
+  // fronteira de leitura que fica é a do modo Hardened que o operador
+  // escolheu: ali a CLI está confinada e o MCP não pode virar caminho de
+  // escrita em volta do confinamento.
   if (
-    !isToolAllowedForRole(
-      ctx.role,
-      ctx.allowedTools,
-      tool.name,
-      ctx.petStudioMediaAuthority,
-    ) &&
-    // F-794: Git da própria worktree pela autoridade do Main, não da squad.
-    !grantsIsolatedWriterGitTool(ctx, tool.name)
-  ) {
-    const reason =
-      `tool "${tool.name}" is outside this agent's allowlist ` +
-      `(agent: ${ctx.label})`;
-    const auditFailure = writeAudit(
-      () =>
-        auditDenied(
-          auditContext,
-          sessionId,
-          tool.name,
-          args,
-          Date.now() - startMs,
-          reason,
-          source,
-        ),
-      tool.name,
-    );
-    if (auditFailure) return auditFailure;
-    return {
-      ok: false,
-      tool: tool.name,
-      denied: true,
-      error: reason,
-      hint: DENIAL_HINTS.allowlist,
-    };
-  }
-
-  const internalReviewerReadOnlyException =
-    ctx.internalPrevcReviewerAuthority !== undefined &&
-    isInternalPrevcReviewerToolAllowed(ctx, tool.name);
-  if (
-    ctx.readOnly &&
-    !internalReviewerReadOnlyException &&
+    ctx.readOnlyEnforced === true &&
     !isToolAllowedForReadOnlyContext(tool.name)
   ) {
-    const reason =
-      `read-only authority denied tool "${tool.name}": workspace, process, ` +
-      `delegation, and external effects are unavailable (agent: ${ctx.label})`;
-    const hint = DENIAL_HINTS.readOnly;
-    const auditFailure = writeAudit(
-      () =>
-        auditDenied(
-          auditContext,
-          sessionId,
-          tool.name,
-          args,
-          Date.now() - startMs,
-          reason,
-          source,
-        ),
-      tool.name,
+    return denyBeforeIntent(
+      `read-only authority denied tool "${tool.name}": the operator's Hardened ` +
+        `mode confines this lane to reading (agent: ${ctx.label})`,
+      READ_ONLY_HARDENED_HINT,
     );
-    if (auditFailure) return auditFailure;
-    return {
-      ok: false,
-      tool: tool.name,
-      denied: true,
-      error: reason,
-      hint,
-    };
   }
 
-  // Runtime availability (ex.: credencial TypeSafe ausente): depois dos gates
-  // de papel/allowlist/read-only para não vazar a superfície a quem não tem
-  // autoridade — e antes do intent, como os demais denyBeforeIntent.
+  // Runtime availability (ex.: credencial TypeSafe ausente): antes do intent,
+  // como os demais denyBeforeIntent.
   if (tool.available && !tool.available()) {
     return denyBeforeIntent(
       `${tool.name} indisponível: configure a chave TypeSafe em Ajustes → Chaves de API`,
@@ -993,29 +916,12 @@ export async function dispatchToolCall(
     // comparam a string exata. A dica de caminho vai em `hint`.
     const error =
       "mission effect blocked: projectId, checkoutId, missionId and contextRevision are required";
-    // A dica só pode nomear uma tool que ESTE pane de fato alcança. `reachable`
-    // reaplica os dois gates que já rodaram acima (allowlist + readOnly) para a
-    // tool candidata — sem isso a dica mente para panes readOnly/allowlist
-    // vazio (bug de campo: nexus_mission_create sugerido a um pane readOnly
-    // spawnado sem allowedTools, que nunca chega perto de criar a missão).
-    const reachable = (name: string): boolean =>
-      isToolAllowedForRole(
-        ctx.role,
-        ctx.allowedTools,
-        name,
-        ctx.petStudioMediaAuthority,
-      ) && (!ctx.readOnly || isToolAllowedForReadOnlyContext(name));
-    // pane_write/pane_spawn/pane_ask/pane_close só furam o cabresto de missão
-    // pela mão do operador (permitsOperatorPaneEffect/modo vibe) — role
-    // "user", nunca worker/orchestrator.
-    const canPaneAsk = ctx.role === "user" && reachable("pane_ask");
-    const canPaneWrite = ctx.role === "user" && reachable("pane_write");
-    // mission_create fura o cabresto pra qualquer role (permitsUnboundEffect
-    // não olha role); só falta o allowlist/readOnly deste pane.
-    const canCreateMission = reachable("mission_create");
-    const missionCreateReason = canCreateMission
-      ? "crie uma missão com nexus_mission_create"
-      : "nexus_mission_create não está disponível neste pane (somente-leitura ou fora do allowlist)";
+    // F-1157: todo pane alcança toda tool, então a dica nomeia o caminho
+    // inteiro. pane_write/pane_spawn/pane_ask/pane_close só furam o cabresto
+    // de missão pela mão do operador (permitsOperatorPaneEffect/modo vibe) —
+    // role "user", nunca worker/orchestrator; mission_create fura para todos.
+    const operatorHand = ctx.role === "user";
+    const missionCreateReason = "crie uma missão com nexus_mission_create";
     // F-1013: set_status de uma missão que este pane não lidera (a conversa
     // guardou a instrução de fecho de quando liderava). Criar outra missão não
     // conclui esta: a dica diz quem pode e a chamada que este pane faz.
@@ -1025,40 +931,21 @@ export async function dispatchToolCall(
         : "";
     const hint = unboundStatusMissionId
       ? unboundMissionStatusHint(unboundStatusMissionId, {
-          canInspect: reachable("mission_control"),
-          canPaneAsk,
+          canInspect: true,
+          canPaneAsk: operatorHand,
         })
       : canonical === "handoff_submit"
-        ? (() => {
-            const talkPart =
-              canPaneWrite && canPaneAsk
-                ? "para falar com outro pane use nexus_pane_write ou nexus_pane_ask"
-                : canPaneAsk
-                  ? "para falar com outro pane use nexus_pane_ask (nexus_pane_write não está disponível neste pane)"
-                  : canPaneWrite
-                    ? "para falar com outro pane use nexus_pane_write"
-                    : undefined;
-            if (!talkPart && !canCreateMission) return undefined;
-            const missionPart = canCreateMission
-              ? `para registrar um handoff, ${missionCreateReason}`
-              : missionCreateReason;
-            return `handoff exige missão: ${[talkPart, missionPart].filter(Boolean).join("; ")}`;
-          })()
-        : (() => {
-            const availablePaneTools = (
-              ["pane_spawn", "pane_write", "pane_ask", "pane_close"] as const
-            ).filter((name) => ctx.role === "user" && reachable(name));
-            if (!canCreateMission && availablePaneTools.length === 0) {
-              return undefined;
-            }
-            const paneToolsLabel = availablePaneTools
-              .map((name) => `nexus_${name}`)
-              .join("/");
-            const verb = availablePaneTools.length > 1 ? "funcionam" : "funciona";
-            return `${tool.name} exige missão neste pane: ${missionCreateReason}${
-              paneToolsLabel ? ` (${paneToolsLabel} ${verb} sem missão)` : ""
-            }`;
-          })();
+        ? `handoff exige missão: ${[
+            operatorHand
+              ? "para falar com outro pane use nexus_pane_write ou nexus_pane_ask"
+              : undefined,
+            `para registrar um handoff, ${missionCreateReason}`,
+          ].filter(Boolean).join("; ")}`
+        : `${tool.name} exige missão neste pane: ${missionCreateReason}${
+            operatorHand
+              ? " (nexus_pane_spawn/nexus_pane_write/nexus_pane_ask/nexus_pane_close funcionam sem missão)"
+              : ""
+          }`;
     const auditFailure = writeAudit(
       () =>
         auditDenied(
@@ -1863,7 +1750,7 @@ export async function dispatchToolCall(
           currentWorkflowAuthority.assertExecutionEffectAllowed(
             tool.name,
             args,
-            ctx.readOnly === true,
+            ctx.readOnlyEnforced === true,
           );
         }
       }
