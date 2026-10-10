@@ -10,7 +10,7 @@ const deps = vi.hoisted(() => ({ grant: 'denied', scope: { version: 1 as const, 
   manager: null as object | null, visual: vi.fn(), screenshot: vi.fn(), conversation: vi.fn((): { key: 'session_id'; id: string } | null => null),
   agents: [] as OwnedAgentSessionInfo[], tap: null as null | ((id: string, text: string) => void),
   probe: vi.fn(async (): Promise<unknown[]> => []), tapRemoved: vi.fn(), terminate: vi.fn(async () => true),
-  audit: [] as AuditEntry[], recovery: null as Record<string, unknown> | null }));
+  audit: [] as AuditEntry[], recovery: null as Record<string, unknown> | null, nativeDb: null as import('better-sqlite3').Database | null }));
 vi.mock('electron', () => ({ systemPreferences: { getMediaAccessStatus: () => deps.grant } }));
 vi.mock('node:child_process', () => {
   const refused = () => { throw new Error('subprocess forbidden in private runtime unit fixture'); };
@@ -19,12 +19,16 @@ vi.mock('node:child_process', () => {
 });
 vi.mock('./persistence/renderer-workspace-scope', () => ({ requireLiveRendererWorkspaceScope: () => deps.scope, getRendererWorkspaceScope: () => deps.scope,
   onRendererWorkspaceScopeChange: () => () => undefined }));
-vi.mock('./orch/project-domain-store-registry', () => ({ getProjectDomainStores: () => ({ missions: { get: () => ({ id: 'm', title: 'Runtime 11111111-1111-4111-8111-111111111111', intentContract: { lane: 'standard' } }) }, handoffs: { list: () => [] } }) }));
+vi.mock('./orch/project-domain-store-registry', () => ({ getProjectDomainStores: () => ({ missions: { get: (id: string) => ({ id, title: 'Runtime 11111111-1111-4111-8111-111111111111', intentContract: { lane: 'standard' } }) }, handoffs: { list: () => [] } }) }));
 vi.mock('./orch/mission-engine-registry', () => ({ missionEngineForScope: () => ({ snapshot: async () => ({}) }) }));
 vi.mock('./pty/pty-manager', () => ({ listAgentSessions: () => deps.agents.map(agent => ({ ...agent, scope: { ...agent.scope },
   ...(agent.coordinationScope ? { coordinationScope: { ...agent.coordinationScope } } : {}) })), probePaneFootprints: () => deps.probe(), orchTerminateSession: () => deps.terminate(),
   isSessionOwnedBy: () => false, getSessionCwd: () => null, tapSessionData: (tap: (id: string, text: string) => void) => { deps.tap = tap; return deps.tapRemoved; } }));
-vi.mock('./persistence/provider-session-store', () => ({ getProviderPaneSession: deps.conversation }));
+vi.mock('./persistence/db', () => ({ getDb: () => deps.nativeDb }));
+vi.mock('./persistence/provider-session-store', async original => {
+  const real = await original<typeof import('./persistence/provider-session-store')>();
+  return { ...real, getProviderPaneSession: (...args: Parameters<typeof real.getProviderPaneSession>) => deps.nativeDb ? real.getProviderPaneSession(...args) : deps.conversation() };
+});
 vi.mock('./adapters/adapter-registry', () => ({ getAdapter: () => ({ kind: 'cli-pty' }), isAdapterInstalled: () => true, resolveAdapterBinary: () => process.env.RUNTIME_TEST_BINARY }));
 vi.mock('./jarvis/audit-log', () => ({ readAuditLog: () => deps.audit }));
 vi.mock('./memory/workspace-memory', () => ({ getWorkspaceMemoryStore: () => ({ recall: () => [] }) }));
@@ -35,6 +39,8 @@ import { proveRuntimeGates } from './runtime-gates';
 import { RUNTIME_CHANNELS } from '../shared/runtime-gates';
 import { prepareEphemeralHome } from './orch/hooks-gen';
 import { startPreview, stopPreviewWithProof } from './orch/preview-server';
+import { ProjectRuntimeManager } from './runtime/project-runtime-manager';
+import { saveProviderPaneSession, copyProviderPaneSession } from './persistence/provider-session-store';
 const roots: string[] = [];
 const previews: Array<{ id: string; scope: OwnedAgentSessionInfo['scope'] }> = [];
 const savedEnv = new Map<string, string | undefined>();
@@ -342,13 +348,13 @@ async function recoveredWorkerFixture(priorAudit = false) {
   const worker: OwnedAgentSessionInfo = { ...agent, paneId: 'new-pane', sessionId: 'new-session' };
   deps.agents = [chiefAgent, worker]; deps.probe.mockResolvedValue([{ sessionId: 'new-session', rootPid: 2345 }, { sessionId: 'chief-session', rootPid: 3333 }]);
   if (!priorAudit) deps.audit.push(audit);
-  deps.recovery = { fromPaneId: 'owned-pane', fromSessionId: 'owned-session', paneId: 'new-pane', sessionId: 'new-session', requestId: 'normal-spawn-result' };
+  deps.recovery = { fromPaneId: 'owned-pane', fromSessionId: 'owned-session', paneId: 'new-pane', sessionId: 'new-session' };
   return { f, event, next, worker };
 }
 it('F-1111: accepts the actual new result identity only with the exact prior worker, native context and own fresh chief audit', async () => {
   const { f, event } = await recoveredWorkerFixture();
   try { expect((await f.request(event, { operation: 'observe', missionId: 'm' })).recovery).toEqual({
-    fromPaneId: 'owned-pane', fromSessionId: 'owned-session', paneId: 'new-pane', sessionId: 'new-session', requestId: 'normal-spawn-result',
+    fromPaneId: 'owned-pane', fromSessionId: 'owned-session', paneId: 'new-pane', sessionId: 'new-session',
     chiefSessionId: 'chief-session', invocationId: 'resume-invocation' }); }
   finally { f.controller.abort(); await f.rejected; }
 });
@@ -382,4 +388,35 @@ it.each(['nonce', 'parent-pid'] as const)('F-1111: rejects a recovery result fro
     pid: changed === 'parent-pid' ? process.ppid + 1 : process.ppid, recovery: deps.recovery }) }));
   try { await expect(f.request(event, { operation: 'observe', missionId: 'm' })).rejects.toThrow('recovery gateway ownership differs'); }
   finally { f.controller.abort(); await f.rejected; }
+});
+it('F-1111: the standard recovery hint never binds a separate live adopted mission', async () => {
+  const { f, event, worker } = await recoveredWorkerFixture();
+  const chief = mintToken({ label: 'separate adopted chief', role: 'orchestrator', missionId: 'native', scope: { ...deps.scope },
+    executionScope: { ...worker.scope }, readOnly: false, allowedTools: null, allowedSkills: null });
+  bindTokenToSession(chief.token, 'native-chief'); deps.agents = [{ ...worker, missionId: 'native', role: 'orchestrator', paneId: 'native-pane', sessionId: 'native-chief' }];
+  deps.probe.mockResolvedValue([{ sessionId: 'native-chief', rootPid: 4567 }]);
+  try {
+    const result = await f.request(event, { operation: 'observe', missionId: 'native' });
+    expect(result.agents[0].sessionId).toBe('native-chief'); expect(result.recovery).toBeUndefined();
+  } finally { f.controller.abort(); await f.rejected; }
+});
+it('F-1111: a real native record changed during the gateway await never commits stale recovery', async () => {
+  const { f, event } = await recoveredWorkerFixture();
+  const manager = new ProjectRuntimeManager({ baseDir: path.join(f.root, 'native-runtime'), appVersion: 'unit' });
+  deps.nativeDb = manager.open({ ...deps.scope }).db;
+  deps.nativeDb.exec(`CREATE TABLE IF NOT EXISTS provider_pane_sessions (installation_id TEXT NOT NULL, project_id TEXT NOT NULL, checkout_id TEXT NOT NULL,
+    pane_id TEXT NOT NULL, adapter_id TEXT NOT NULL, session_key TEXT NOT NULL, session_id TEXT NOT NULL, transcript_path TEXT, updated_at INTEGER NOT NULL,
+    account_id TEXT, PRIMARY KEY (installation_id, project_id, checkout_id, pane_id, adapter_id))`);
+  saveProviderPaneSession(deps.scope, 'owned-pane', 'claude', { key: 'session_id', id: 'exact-native-conversation' }, 'account-a');
+  copyProviderPaneSession(deps.scope, 'owned-pane', 'new-pane', 'claude', 'account-a');
+  saveProviderPaneSession(deps.scope, 'chief-pane', 'claude', { key: 'session_id', id: 'exact-native-conversation' }, 'account-a');
+  let release!: (value: object) => void;
+  vi.stubGlobal('fetch', () => new Promise(resolve => { release = resolve; }));
+  try {
+    const pending = f.request(event, { operation: 'observe', missionId: 'm' }), outcome = pending.catch((error: Error) => error);
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    saveProviderPaneSession(deps.scope, 'new-pane', 'claude', { key: 'session_id', id: 'changed-during-await' }, 'account-a');
+    release({ ok: true, json: async () => ({ nonce: '11111111-1111-4111-8111-111111111111', pid: process.ppid, recovery: deps.recovery }) });
+    expect(await outcome).toMatchObject({ message: 'runtime native conversation changed' });
+  } finally { deps.nativeDb = null; manager.closeAll(); f.controller.abort(); await f.rejected; }
 });

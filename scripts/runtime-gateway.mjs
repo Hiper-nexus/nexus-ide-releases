@@ -31,7 +31,7 @@ function toolResult(messages, call, kind = 'QUESTION') {
   const text = typeof content === 'string' ? content : Array.isArray(content) && content.length === 1 && content[0].type === 'text' ? content[0].text : null;
   if (typeof text !== 'string') throw new Error(`real ${kind} tool result content invalid`);
   const value = JSON.parse(text);
-  if (!value || typeof value !== 'object' || Array.isArray(value) || value.ok === false || value.isError === true) throw new Error(`real ${kind} tool result invalid`);
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.ok === false || value.isError === true || value.error != null) throw new Error(`real ${kind} tool result invalid`);
   return value;
 }
 function writeReply(messages, step, tool, calls, nonce) {
@@ -131,9 +131,9 @@ export async function startRuntimeGateway(nonce) {
             if (!issued || call.id !== issued.id || call.name !== issued.name || JSON.stringify(call.input) !== JSON.stringify(issued.input)) throw new Error('real recovery tool call binding invalid');
             const result = toolResult(body.messages, issued, 'RECOVER');
             const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value);
-            if (result.ok !== true || !identifier(result.paneId) || !identifier(result.sessionId) || !identifier(result.requestId) ||
+            if (!identifier(result.paneId) || !identifier(result.sessionId) ||
               result.paneId === target[2] || result.sessionId === target[3]) throw new Error('real recovery result identity invalid');
-            recovery = { fromPaneId: target[2], fromSessionId: target[3], paneId: result.paneId, sessionId: result.sessionId, requestId: result.requestId };
+            recovery = { fromPaneId: target[2], fromSessionId: target[3], paneId: result.paneId, sessionId: result.sessionId };
           }
         }
         else if (kind === 'QUESTION' && step === 0) content = tool('nexus_clarify', { question: `RT_QUESTION_${nonce}: select the private fixture route.`, options: ['Proceed', 'Wait'], allowFreeform: false });

@@ -255,7 +255,7 @@ describe('F-1111 normal worker recovery exchange', () => {
         expect(first.call).toMatchObject({ name: 'mcp__nexus__nexus_pane_spawn', input: {
           resume: 'pane-old', agentName: 'Runtime writer', role: 'worker', autoCloseOnHandoff: false } });
         const result = { role: 'user', content: [{ type: 'tool_result', tool_use_id: variant === 'wrong-id' ? 'foreign-call' : first.call.id,
-          is_error: variant === 'failed', content: JSON.stringify({ ok: true, requestId: 'actual-spawn',
+          is_error: variant === 'failed', content: JSON.stringify({
             paneId: variant === 'old-pane' ? 'pane-old' : 'pane-new', sessionId: variant === 'old-session' ? 'session-old' : 'session-new' }) }] };
         const callbacks = variant === 'missing' ? [] : variant === 'duplicate' ? [result, result] : [result];
         const next = await post(server, [...initial, { role: 'assistant', content: [first.call] }, ...callbacks]);
@@ -263,7 +263,7 @@ describe('F-1111 normal worker recovery exchange', () => {
         expect((await fetch(`${server.url}/runtime-recovery`)).status).toBe(401);
         const hint = await (await fetch(`${server.url}/runtime-recovery`, { headers: { 'x-api-key': `rt-${nonce}` } })).json();
         expect(hint).toEqual({ nonce, pid: process.pid, recovery: variant === 'valid' ? {
-          fromPaneId: 'pane-old', fromSessionId: 'session-old', paneId: 'pane-new', sessionId: 'session-new', requestId: 'actual-spawn' } : null });
+          fromPaneId: 'pane-old', fromSessionId: 'session-old', paneId: 'pane-new', sessionId: 'session-new' } : null });
       } finally { await server.close(); }
     });
 });

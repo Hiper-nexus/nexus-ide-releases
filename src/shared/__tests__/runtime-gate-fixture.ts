@@ -8,7 +8,7 @@ export function runtimeFactFixture(phase: 'exercise' | 'resume' = 'exercise') {
   const first = observed('ops', 'ops', [chief]); first.audit.push({ tool: 'nexus_terminal_run', result: 'ok', source: 'http-mcp', session: 'chief-sid' });
   const standard = observed('std', 'standard', [chief, worker]);
   const recovered = observed('std', 'standard', [chief, { ...worker, paneId: 'writer-resumed', sessionId: 'new-worker', pid: 345, visual: { assignmentId: 'main-assignment-uuid', artifactId: 'capture', sha256: 'a'.repeat(64) } }]);
-  recovered.recovery = { fromPaneId: 'writer', fromSessionId: 'old-worker', paneId: 'writer-resumed', sessionId: 'new-worker', requestId: 'native-spawn', chiefSessionId: 'chief-sid', invocationId: 'resume-call' };
+  recovered.recovery = { fromPaneId: 'writer', fromSessionId: 'old-worker', paneId: 'writer-resumed', sessionId: 'new-worker', chiefSessionId: 'chief-sid', invocationId: 'resume-call' };
   recovered.handoffs.push({ id: 'handoff', status: 'success', summary: marker, deliveryState: 'consumed', consumedBySession: 'chief-sid', consumedDeliveryAttemptId: 'delivery' });
   recovered.acknowledgements.push({ handoffId: 'handoff', sessionId: 'chief-sid', deliveryAttemptId: 'delivery', invocationId: 'physical-call', source: 'http-mcp' });
   recovered.audit.push({ tool: 'nexus_handoff_ack', result: 'ok', source: 'http-mcp', session: 'chief-sid', invocation: 'physical-call', handoffId: 'handoff' });

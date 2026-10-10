@@ -103,6 +103,7 @@ vi.mock('../adapters/cli-model-discovery', async (original) => ({
 }));
 
 import { paneSpawnTool, setOperatorRouteResolver } from './tools-panes';
+import { startRuntimeGateway } from '../../../scripts/runtime-gateway.mjs';
 
 const missionCtx: AgentGateContext = {
   token: 'orch', label: 'Maestro', role: 'orchestrator', sessionId: 'orch-session',
@@ -133,6 +134,23 @@ beforeEach(() => {
 });
 
 describe('nexus_pane_spawn resume sem adapterId herda a CLI do pane (F-919)', () => {
+  it('F-1111: the inference exchange consumes the actual ordinary tool handler success shape', async () => {
+    h.findByPaneId.mockReturnValue({ paneId: 'pane-muuku9jt-8', missionId: 'mission-a', adapterId: 'codex', model: 'gpt-5.4', role: 'worker' });
+    const actual = await paneSpawnTool.handler({ resume: 'pane-muuku9jt-8', prompt: 'private adjustment', task: 'private adjustment' }, ctx);
+    const nonce = '11111111-1111-4111-8111-111111111111', gateway = await startRuntimeGateway(nonce);
+    const messages: unknown[] = [{ role: 'user', content: `RT_GATE RECOVER ${nonce} pane-muuku9jt-8 session-old` }];
+    const post = () => fetch(`${gateway.url}/v1/messages`, { method: 'POST', headers: { 'x-api-key': `rt-${nonce}` },
+      body: JSON.stringify({ tools: [{ name: 'nexus_pane_spawn' }], messages }) });
+    try {
+      const events = (await (await post()).text()).split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));
+      const call = events.find(event => event.type === 'content_block_start').content_block;
+      call.input = JSON.parse(events.find(event => event.delta?.type === 'input_json_delta').delta.partial_json);
+      messages.push({ role: 'assistant', content: [call] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: JSON.stringify(actual) }] });
+      expect((await post()).status).toBe(200);
+      expect(await (await fetch(`${gateway.url}/runtime-recovery`, { headers: { 'x-api-key': `rt-${nonce}` } })).json()).toMatchObject({
+        recovery: { fromPaneId: 'pane-muuku9jt-8', fromSessionId: 'session-old', paneId: 'pane-new', sessionId: 'session-new' } });
+    } finally { await gateway.close(); }
+  });
   it('pane fechado: herda adapterId/model do worker record durável', async () => {
     h.findByPaneId.mockReturnValue({
       paneId: 'pane-muuku9jt-8',

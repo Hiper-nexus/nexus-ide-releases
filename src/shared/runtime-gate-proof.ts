@@ -5,7 +5,7 @@ const conversation = z.object({ key: z.enum(['session_id', 'conversation_id']), 
 const agent = z.object({ paneId: z.string(), sessionId: z.string(), role: z.string(), adapterId: z.string(), pid: z.number().int().positive().nullable(),
   conversation: conversation.nullable(), bindingSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   visual: z.object({ assignmentId: z.string(), artifactId: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).optional() }).passthrough();
-const recovery = z.object({ fromPaneId: z.string(), fromSessionId: z.string(), paneId: z.string(), sessionId: z.string(), requestId: z.string(),
+const recovery = z.object({ fromPaneId: z.string(), fromSessionId: z.string(), paneId: z.string(), sessionId: z.string(),
   chiefSessionId: z.string(), invocationId: z.string() });
 const observation = z.object({ missionId: z.string(), lane: z.string().optional(), agents: z.array(agent), snapshot: z.object({
   question: z.object({ id: z.string() }).passthrough().optional() }).passthrough(), handoffs: z.array(z.object({ id: z.string(), status: z.string(), summary: z.string(),

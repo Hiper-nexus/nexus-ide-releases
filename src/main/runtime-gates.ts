@@ -213,15 +213,20 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
               }
             }
             assertCurrent();
+            const conversation = v.paneId ? getProviderPaneSession(scope, v.paneId, v.adapterId, v.accountId) : null;
+            if (conversation && v.paneId) bindings.push(() => {
+              assertCurrent();
+              if (!sameRuntimeConversation(conversation, getProviderPaneSession(scope, v.paneId!, v.adapterId, v.accountId))) throw new Error('runtime native conversation changed');
+            });
             return {
             paneId: v.paneId, sessionId: v.sessionId, role: v.role, adapterId: v.adapterId, agentName: v.agentName, model: v.model, bindingSha256: seal,
             pid: footprints?.find(f => f.sessionId === v.sessionId)?.rootPid ?? null,
-            conversation: v.paneId ? getProviderPaneSession(scope, v.paneId, v.adapterId, v.accountId) : null,
+            conversation,
             ...(visual ? { visual } : {}),
           }; })); current();
           const audit = readAuditLog({ scope }, 200).filter(v => v.mission_id === mission.id);
           let recovery;
-          if (terminatedWorkers.size && agents.length) {
+          if ([...terminatedWorkers.values()].some(b => b.missionId === mission.id) && agents.length) {
             const response = await fetch(`${config.gateway}/runtime-recovery`, { headers: { 'x-api-key': `rt-${config.gatewayNonce}` },
               signal: AbortSignal.any([input.signal, AbortSignal.timeout(5000)]) }); current();
             if (!response.ok) throw new Error('recovery gateway result unavailable');
@@ -231,7 +236,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
               const result = hint.recovery as Record<string, unknown>;
               const baseline = terminatedWorkers.get(String(result.fromSessionId));
               if (!baseline || baseline.missionId !== mission.id || baseline.paneId !== result.fromPaneId ||
-                typeof result.paneId !== 'string' || typeof result.sessionId !== 'string' || typeof result.requestId !== 'string') throw new Error('recovery result baseline differs');
+                typeof result.paneId !== 'string' || typeof result.sessionId !== 'string') throw new Error('recovery result baseline differs');
               const candidates = agents.filter(a => a.role === 'worker' && a.bindingSha256 === baseline.bindingSha256 && sameRuntimeConversation(a.conversation, baseline.conversation));
               const next = candidates[0], chiefs = agents.filter(a => a.role === 'orchestrator' && a.pid);
               const calls = audit.filter(a => a.tool === 'nexus_pane_spawn' && a.result === 'ok' && a.source === 'http-mcp' && a.args.resume === baseline.paneId &&
@@ -239,7 +244,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
               if (candidates.length !== 1 || !next?.pid || next.pid === baseline.pid || next.paneId !== result.paneId || next.sessionId !== result.sessionId ||
                 next.paneId === baseline.paneId || next.sessionId === baseline.sessionId || chiefs.length !== 1 || calls.length !== 1) throw new Error('recovery native result or authenticated provenance differs');
               recovery = { fromPaneId: baseline.paneId, fromSessionId: baseline.sessionId, paneId: next.paneId, sessionId: next.sessionId,
-                requestId: result.requestId, chiefSessionId: calls[0].session, invocationId: calls[0].invocation_id };
+                chiefSessionId: calls[0].session, invocationId: calls[0].invocation_id };
             }
           }
           bindings.forEach(assertCurrent => assertCurrent());
