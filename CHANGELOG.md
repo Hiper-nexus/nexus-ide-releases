@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.76.221 — Missões com acompanhamento contínuo
+## 0.76.224 — Missões com acompanhamento contínuo
+
+- **Liderança ligada ao terminal real.** Criar uma missão pelo MCP mantém o vínculo do Maestro nas sessões e no Quadro, inclusive após a sincronização dos panes. A recuperação dos workers usa essa liderança comprovada (F-1143).
+- **Pane do operador devolvido ao encerrar.** O terminal adotado pela missão retorna ao papel do operador e permanece utilizável; a limpeza posterior preserva essa sessão (F-1143).
 
 - **Missão com modelo automático.** Um terminal que usa o modelo padrão da CLI pode criar a missão pelo MCP ou pela interface; o valor vazio de exibição não é tratado como uma escolha explícita de modelo (F-1123).
 - **Workers rápidos reconhecidos.** Se o primeiro turno termina enquanto o terminal ainda está sendo preparado, o Nexus conserva a confirmação do pedido original e libera o orquestrador sem reenviar o prompt. Sessão substituída, pedido diferente ou autoridade revogada continuam sendo recusados (F-1139).

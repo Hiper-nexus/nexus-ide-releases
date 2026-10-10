@@ -10250,7 +10250,7 @@ export const RELEASE_076212: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.221',
+  version: '0.76.224',
   date: '2026-10-10',
   codename: 'Missões com acompanhamento contínuo',
   summary: 'Melhorias no início e na retomada das missões, conclusão com entrega verificada e capturas vinculadas ao terminal escolhido. Inclui decisões por conta e Quadro com participantes vivos.',
@@ -10262,6 +10262,8 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Launcher pelo teclado', detail: 'As ações do Launcher respondem aos atalhos de 1 a 6, uma vez por toque; campos de texto preservam a digitação.' },
   ],
   fixes: [
+    { title: 'Liderança ligada ao terminal real', detail: 'Criar uma missão pelo MCP preserva o vínculo do Maestro após a sincronização dos panes. A recuperação dos workers reconhece o líder atual.' },
+    { title: 'Terminal disponível após encerrar', detail: 'O terminal do operador adotado pela missão volta ao seu controle e permanece aberto quando a missão termina.' },
     { title: 'Missão com modelo automático', detail: 'Terminais que usam o modelo padrão da CLI podem criar a missão pelo MCP e pela interface, sem exigir uma escolha explícita de modelo.' },
     { title: 'Workers rápidos reconhecidos', detail: 'Quando o primeiro turno termina durante a preparação do terminal, o Nexus reconhece o envio do pedido e libera o orquestrador sem repetir o prompt.' },
     { title: 'Envio confirmado no Claude', detail: 'Pedidos e continuidade após retomada aguardam a aceitação do prompt. Se o primeiro Enter não enviar, o Nexus tenta somente o Enter outra vez, sem duplicar o pedido.' },
