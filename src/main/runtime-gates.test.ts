@@ -8,7 +8,7 @@ import { mintToken, bindTokenToSession, resetGateForTests, releaseSessionByToken
 import type { AuditEntry } from './jarvis/audit-log';
 const deps = vi.hoisted(() => ({ grant: 'denied', scope: { version: 1 as const, identitySource: 'manifest' as const, installationId: 'i', projectId: 'p', checkoutId: 'c', rootRealPath: '' },
   manager: null as object | null, visual: vi.fn(), screenshot: vi.fn(), conversation: vi.fn((): { key: 'session_id'; id: string } | null => null),
-  agents: [] as OwnedAgentSessionInfo[], tap: null as null | ((id: string, text: string) => void),
+  agents: [] as OwnedAgentSessionInfo[], snapshot: vi.fn(async (): Promise<Record<string, unknown>> => ({})), tap: null as null | ((id: string, text: string) => void),
   probe: vi.fn(async (): Promise<unknown[]> => []), tapRemoved: vi.fn(), terminate: vi.fn(async () => true),
   audit: [] as AuditEntry[], recovery: null as Record<string, unknown> | null, nativeDb: null as import('better-sqlite3').Database | null }));
 vi.mock('electron', () => ({ systemPreferences: { getMediaAccessStatus: () => deps.grant } }));
@@ -20,7 +20,7 @@ vi.mock('node:child_process', () => {
 vi.mock('./persistence/renderer-workspace-scope', () => ({ requireLiveRendererWorkspaceScope: () => deps.scope, getRendererWorkspaceScope: () => deps.scope,
   onRendererWorkspaceScopeChange: () => () => undefined }));
 vi.mock('./orch/project-domain-store-registry', () => ({ getProjectDomainStores: () => ({ missions: { get: (id: string) => ({ id, title: 'Runtime 11111111-1111-4111-8111-111111111111', intentContract: { lane: 'standard' } }) }, handoffs: { list: () => [] } }) }));
-vi.mock('./orch/mission-engine-registry', () => ({ missionEngineForScope: () => ({ snapshot: async () => ({}) }) }));
+vi.mock('./orch/mission-engine-registry', () => ({ missionEngineForScope: () => ({ snapshot: () => deps.snapshot() }) }));
 vi.mock('./pty/pty-manager', () => ({ listAgentSessions: () => deps.agents.map(agent => ({ ...agent, scope: { ...agent.scope },
   ...(agent.coordinationScope ? { coordinationScope: { ...agent.coordinationScope } } : {}) })), probePaneFootprints: () => deps.probe(), orchTerminateSession: () => deps.terminate(),
   isSessionOwnedBy: () => false, getSessionCwd: () => null, tapSessionData: (tap: (id: string, text: string) => void) => { deps.tap = tap; return deps.tapRemoved; } }));
@@ -60,7 +60,7 @@ async function fixture(options: { helloNonce?: string; helloPid?: number; homeMo
     { nonce: options.helloNonce ?? env.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE, pid: options.helloPid ?? process.ppid } }));
   deps.scope.rootRealPath = path.join(root, 'workspace'); await fs.mkdir(deps.scope.rootRealPath);
   resetGateForTests(); deps.agents = []; deps.tap = null; deps.manager = null; deps.visual.mockReset(); deps.screenshot.mockReset(); deps.conversation.mockClear(); deps.probe.mockResolvedValue([]); deps.tapRemoved.mockClear();
-  deps.audit = []; deps.recovery = null; deps.terminate.mockResolvedValue(true); deps.conversation.mockReturnValue(null);
+  deps.audit = []; deps.recovery = null; deps.terminate.mockResolvedValue(true); deps.conversation.mockReturnValue(null); deps.snapshot.mockResolvedValue({});
   const url = 'nexus-app://bundle/index.html?nexusRuntimeGates=1', frame = { url }, session = { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() };
   const wc = Object.assign(new EventEmitter(), { mainFrame: frame, session, getURL: () => url, isDestroyed: () => false, getOSProcessId: () => 9999, send: vi.fn() });
   const win = Object.assign(new EventEmitter(), { webContents: wc }), handlers = new Map<string, (...args: any[]) => any>();
@@ -156,15 +156,15 @@ it('arms physical FAIL immediately during a pending Main observation, drains it 
   expect(deps.tapRemoved).toHaveBeenCalledOnce();
 });
 
-async function scopedAgent(f: Awaited<ReturnType<typeof fixture>>) {
+async function scopedAgent(f: Awaited<ReturnType<typeof fixture>>, role: 'orchestrator' | 'worker' = 'orchestrator', agentName?: string) {
   const executionRoot = path.join(f.root, 'mission-execution'); await fs.mkdir(executionRoot);
   const executionScope = { ...deps.scope, rootRealPath: executionRoot };
-  const ctx = mintToken({ label: 'private runtime current leader', role: 'orchestrator', missionId: 'm', scope: { ...deps.scope },
+  const ctx = mintToken({ label: agentName ?? 'private runtime current leader', role, missionId: 'm', scope: { ...deps.scope },
     executionScope, readOnly: false, allowedTools: null, allowedSkills: null });
   bindTokenToSession(ctx.token, 'owned-session');
   const agent: OwnedAgentSessionInfo = { sessionId: 'owned-session', paneId: 'owned-pane', adapterId: 'claude',
     scope: executionScope, coordinationScope: { ...deps.scope }, cwd: executionRoot, source: 'pending',
-    role: 'orchestrator', missionId: 'm', readOnly: false, allowedTools: null, allowedSkills: null };
+    role, agentName, missionId: 'm', readOnly: false, allowedTools: null, allowedSkills: null };
   deps.agents = [agent]; deps.probe.mockResolvedValue([{ sessionId: 'owned-session', rootPid: 1234 }]);
   return { ctx, agent };
 }
@@ -174,6 +174,24 @@ it('observes and looks up the exact current mission process using its coordinati
     const observed = await f.request(event, { operation: 'observe', missionId: 'm' });
     expect(observed.agents).toEqual([expect.objectContaining({ sessionId: 'owned-session', role: 'orchestrator', pid: 1234 })]);
     await expect(f.request(event, { operation: 'session', sessionId: 'owned-session' })).resolves.toMatchObject({ sessionId: 'owned-session', pid: 1234 });
+  } finally { f.controller.abort(); await f.rejected; }
+});
+it('F-1117: a worker spawning during deferred footprints legitimately precedes its next canonical projection', async () => {
+  const f = await fixture(), event = { sender: f.wc, senderFrame: f.frame };
+  deps.snapshot.mockImplementation(async () => ({ id: 'm', agents: deps.agents.map(a => ({ id: 'approved-writer', agentName: a.agentName,
+    cli: a.adapterId, category: 'executor', state: 'working', paneId: a.paneId, terminalLive: true })) }));
+  let release!: (value: unknown[]) => void;
+  deps.probe.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  try {
+    const pending = f.request(event, { operation: 'observe', missionId: 'm' });
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    const { agent } = await scopedAgent(f, 'worker', 'Runtime writer');
+    release([{ sessionId: agent.sessionId, rootPid: 1234 }]);
+    const mixed = await pending;
+    expect(mixed.snapshot.agents).toEqual([]);
+    expect(mixed.agents).toEqual([expect.objectContaining({ paneId: agent.paneId, sessionId: agent.sessionId, agentName: 'Runtime writer', pid: 1234 })]);
+    expect((await f.request(event, { operation: 'observe', missionId: 'm' })).snapshot.agents)
+      .toEqual([expect.objectContaining({ id: 'approved-writer', paneId: agent.paneId, agentName: 'Runtime writer', terminalLive: true })]);
   } finally { f.controller.abort(); await f.rejected; }
 });
 it('records actual scoped output from the current execution worktree without treating coordination as its cwd', async () => {

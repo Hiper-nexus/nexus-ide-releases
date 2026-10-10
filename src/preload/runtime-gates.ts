@@ -33,6 +33,24 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
     };
     const observe = (missionId: string) => request('observe', { missionId });
     const direct = async (missionId: string, text: string, targetAgentId: string | null = null) => { check(); await api.mission.command({ kind: 'direct', missionId, targetAgentId, text }); check(); };
+    const agentFor = async (missionId: string, expected: any): Promise<string> => {
+      if (!expected?.paneId || !expected.sessionId || !expected.bindingSha256 || expected.pid <= 0) throw new Error('private worker binding unavailable');
+      const joined = await poll(() => observe(missionId), v => {
+        if (v.missionId !== missionId || v.snapshot.id !== missionId) return false;
+        const physical = v.agents.filter((a: any) => a.role === 'worker' && a.agentName === expected.agentName);
+        if (physical.length > 1) throw new Error('private named worker identity is ambiguous');
+        const live = physical[0];
+        if (!live || live.paneId !== expected.paneId || live.sessionId !== expected.sessionId || live.pid !== expected.pid ||
+          live.adapterId !== expected.adapterId || live.readOnly !== expected.readOnly || live.bindingSha256 !== expected.bindingSha256 ||
+          expected.conversation && !sameRuntimeConversation(live.conversation, expected.conversation)) return false;
+        const canonical = v.snapshot.agents.filter((a: any) => a.paneId === live.paneId);
+        if (canonical.length > 1) throw new Error('private canonical worker identity is ambiguous');
+        const agent = canonical[0];
+        return agent?.agentName === live.agentName && agent.cli === live.adapterId && agent.terminalLive === true &&
+          agent.category === (live.agentName === 'Runtime reviewer' ? 'reviewer' : 'executor') && typeof agent.id === 'string' && agent.id.length > 0;
+      }, `current canonical ${expected.agentName}`);
+      return joined.snapshot.agents.find((a: any) => a.paneId === expected.paneId).id;
+    };
     const prepare = async (lane: 'ops' | 'standard') => {
       const tools = ['nexus_pane_spawn', 'nexus_handoff_submit', 'nexus_handoff_list', 'nexus_handoff_ack', 'nexus_clarify', 'nexus_mission_set_status', 'nexus_terminal_run', 'nexus_file_read', 'nexus_file_write', 'nexus_preview_start', 'nexus_browser_open', 'nexus_browser_screenshot'];
       const review = await api.mission.prepare({ title: `Runtime ${lane} ${marker}`, objective: lane === 'ops' ?
@@ -75,8 +93,8 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         observed = await poll(() => observe(standardId), v => v.agents.some((a: any) => a.role === 'worker' && a.agentName === 'Runtime writer'), 'actual standard writer');
         const workers = observed.agents.filter((a: any) => a.role === 'worker');
         if (workers.length > 2 || workers.some((a: any) => a.adapterId !== 'claude' || !a.pid)) throw new Error('worker inventory invalid'); checks['standard-workers'] = true;
-        const writer = workers.find((a: any) => a.agentName === 'Runtime writer'), agentFor = (v: any, paneId: string) => { const id = v.snapshot.agents.find((a: any) => a.paneId === paneId)?.id; if (!id) throw new Error('canonical worker agent ID unavailable'); return id; };
-        await direct(standardId, `RT_GATE IDLE ${marker}`, agentFor(observed, writer.paneId));
+        const writer = workers.find((a: any) => a.agentName === 'Runtime writer');
+        await direct(standardId, `RT_GATE IDLE ${marker}`, await agentFor(standardId, writer));
         observed = await poll(() => observe(standardId), v => v.agents.some((a: any) => a.paneId === writer.paneId && a.conversation), 'native conversation recorded');
         const original = observed.agents.find((a: any) => a.paneId === writer.paneId);
         await request('terminate', { sessionId: original.sessionId });
@@ -85,7 +103,7 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
           v.agents.some((a: any) => a.paneId === v.recovery.paneId && a.sessionId === v.recovery.sessionId && a.pid > 0), 'worker recovery');
         const recovered = observed.agents.find((a: any) => a.paneId === observed.recovery.paneId && a.sessionId === observed.recovery.sessionId);
         if (!sameRuntimeConversation(recovered.conversation, original.conversation)) throw new Error('worker recovery lost exact conversation'); checks['worker-recovery'] = true;
-        await direct(standardId, `RT_GATE WRITE ${marker}`, agentFor(observed, recovered.paneId));
+        await direct(standardId, `RT_GATE WRITE ${marker}`, await agentFor(standardId, recovered));
         await poll(() => observe(standardId), v => v.handoffs.some((h: any) => h.sessionId === recovered.sessionId && h.status === 'success' && h.summary.includes(`RT_WRITE_${marker}`)), 'actual writer handoff');
         observed = await poll(() => observe(standardId), v => {
           const candidates = v.agents.filter((a: any) => a.role === 'worker' && a.agentName === 'Runtime reviewer');
@@ -93,7 +111,7 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
           return candidates.length === 1 && candidates[0].pid > 0;
         }, 'actual named reviewer');
         const reviewer = observed.agents.find((a: any) => a.role === 'worker' && a.agentName === 'Runtime reviewer');
-        await direct(standardId, `RT_GATE REVIEW ${marker}`, agentFor(observed, reviewer.paneId));
+        await direct(standardId, `RT_GATE REVIEW ${marker}`, await agentFor(standardId, reviewer));
         await poll(() => observe(standardId), v => v.handoffs.some((h: any) => h.sessionId === reviewer.sessionId && h.status === 'success' && h.summary.includes(`RT_REVIEW_${marker}`)), 'actual reviewer handoff');
         await direct(standardId, `RT_GATE ACK ${marker}`);
         observed = await poll(() => observe(standardId), v => v.audit.some((a: any) => a.tool === 'nexus_handoff_ack' && a.result === 'ok' && a.source === 'http-mcp'), 'physical Maestro ACK'); checks['handoff-ack'] = true;
