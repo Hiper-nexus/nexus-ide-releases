@@ -10262,6 +10262,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Launcher pelo teclado', detail: 'As ações do Launcher respondem aos atalhos de 1 a 6, uma vez por toque; campos de texto preservam a digitação.' },
   ],
   fixes: [
+    { title: 'Comandos do Grok no Mac', detail: 'A integração usa o Bash do sistema para evitar a recusa causada pela escolha de outro Bash. Scripts de inicialização exclusivos do Bash 5 precisam ser adaptados.' },
     { title: 'Liderança ligada ao terminal real', detail: 'Criar uma missão pelo MCP preserva o vínculo do Maestro após a sincronização dos panes. A recuperação dos workers reconhece o líder atual.' },
     { title: 'Terminal disponível após encerrar', detail: 'O terminal do operador adotado pela missão volta ao seu controle e permanece aberto quando a missão termina.' },
     { title: 'Missão com modelo automático', detail: 'Terminais que usam o modelo padrão da CLI podem criar a missão pelo MCP e pela interface, sem exigir uma escolha explícita de modelo.' },
