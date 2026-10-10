@@ -31,6 +31,14 @@ import { z } from 'zod';
 /** IDs opacos: jamais caminhos, texto de terminal ou caracteres de controle. */
 export const shotTargetIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
 
+/** Internal Main → renderer binding; never accepted from the Shot request. */
+export const shotTargetBindingSchema = z.object({
+  paneId: shotTargetIdSchema,
+  sessionId: z.string().min(1).max(256),
+  workspacePath: z.string().min(1).max(8192),
+}).strict();
+export type ShotTargetBinding = z.infer<typeof shotTargetBindingSchema>;
+
 export const shotDestinationSchema = z.object({
   targetPaneId: shotTargetIdSchema.optional(),
   // Compatibilidade com o seletor do Shot do PR106.
@@ -79,6 +87,8 @@ export interface ShotFilesReceivedPayload {
   receivedAt: number;
   /** Destino explícito: indisponível nunca cai no pane padrão. */
   targetPaneId?: string;
+  /** Main's exact physical destination before the event is queued. */
+  targetBinding?: ShotTargetBinding;
 }
 
 /** Slugs de erro estáveis do ack (o cliente mapeia para i18n). */

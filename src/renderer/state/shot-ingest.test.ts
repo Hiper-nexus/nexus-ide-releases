@@ -287,7 +287,8 @@ describe('explicit destination and staging races (F-1054)', () => {
   it('explicit target wins over focus; quotes paths with trailing space and no Enter', async () => {
     const f = destinationApi();
     initShotIngestToasts(f.api);
-    f.emit({ ...payloadOf([PNG]), targetPaneId: 'pane-selected' });
+    f.emit({ ...payloadOf([PNG]), targetPaneId: 'pane-selected',
+      targetBinding: { paneId: 'pane-selected', sessionId: 'session-a', workspacePath: '/workspace-a' } });
     await vi.waitFor(() => expect(f.write).toHaveBeenCalledWith('pane-selected', "'/Users/op/Pictures/Nexus Shot/clip.png' "));
     expect(f.write.mock.calls[0][1]).not.toMatch(/[\r\n]/);
   });
@@ -311,13 +312,26 @@ describe('explicit destination and staging races (F-1054)', () => {
     const stage = vi.fn(() => new Promise<{ ok: boolean; path: string }>(resolve => { finish = resolve; }));
     f.api.files = { importDroppedUri: stage };
     initShotIngestToasts(f.api);
-    f.emit({ ...payloadOf([PNG]), targetPaneId: 'pane-selected' });
+    f.emit({ ...payloadOf([PNG]), targetPaneId: 'pane-selected',
+      targetBinding: { paneId: 'pane-selected', sessionId: 'session-a', workspacePath: '/workspace-a' } });
     await vi.waitFor(() => expect(stage).toHaveBeenCalledTimes(1));
     if (change === 'workspace') f.switchWorkspace();
     else if (change === 'target') f.removeTarget();
     else f.replaceSession();
     finish({ ok: true, path: '.nexus/attachments/mission-context/capture.png' });
     await vi.waitFor(() => expect(useToastStore.getState().toasts.length).toBeGreaterThan(0));
+    expect(f.write).not.toHaveBeenCalled();
+    expect(useToastStore.getState().toasts.some(t => t.kind === 'error')).toBe(true);
+  });
+
+  it('refuses a live explicit pane when its Main binding is absent', async () => {
+    const f = destinationApi();
+    const stage = vi.fn(async () => ({ ok: true, path: 'capture.png' }));
+    f.api.files = { importDroppedUri: stage };
+    initShotIngestToasts(f.api);
+    f.emit({ ...payloadOf([PNG]), targetPaneId: 'pane-selected' });
+    await vi.waitFor(() => expect(useToastStore.getState().toasts.length).toBeGreaterThan(0));
+    expect(stage).not.toHaveBeenCalled();
     expect(f.write).not.toHaveBeenCalled();
     expect(useToastStore.getState().toasts.some(t => t.kind === 'error')).toBe(true);
   });

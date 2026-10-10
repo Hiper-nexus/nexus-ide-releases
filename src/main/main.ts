@@ -486,6 +486,7 @@ import {
 import { AgentHookDropBoxWatcher } from './agent-hooks/hook-drop-box';
 import {
   buildShotTargets,
+  buildShotTargetBinding,
   startShotBridgeServer,
   stopShotBridgeServer,
 } from './shot-bridge/shot-bridge-server';
@@ -1199,7 +1200,12 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
               new Set(listLiveSessionLocations().map(session => session.sessionId)),
             );
           },
-          onFiles: (files, targetPaneId) => {
+          resolveTargetBinding: paneId => {
+            const win = BrowserWindow.getAllWindows().find(w => !isPetWindow(w));
+            return buildShotTargetBinding(listPaneSnapshots(), win ? getRendererWorkspaceScope(win.webContents) : null,
+              new Set(listLiveSessionLocations().map(session => session.sessionId)), paneId);
+          },
+          onFiles: (files, targetPaneId, targetBinding) => {
             // Janela principal = qualquer janela que não seja o pet (mesmo
             // filtro do activate; getAllWindows()[0] poderia ser o pet).
             const win = BrowserWindow.getAllWindows().filter(
@@ -1213,6 +1219,7 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
                 source: 'nexus-shot',
                 receivedAt: Date.now(),
                 ...(targetPaneId ? { targetPaneId } : {}),
+                ...(targetBinding ? { targetBinding } : {}),
               });
             }
             try {

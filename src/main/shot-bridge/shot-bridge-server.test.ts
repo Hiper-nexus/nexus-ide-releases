@@ -13,6 +13,7 @@ import {
   stopShotBridgeServer,
   shotAllowedRoots,
   validateShotIngestFiles,
+  buildShotTargetBinding,
   type ShotBridgeServerHandle,
 } from './shot-bridge-server';
 import type { ShotFileMeta } from '../../shared/shot-bridge';
@@ -274,13 +275,14 @@ describe('servidor HTTP (handshake ponta a ponta)', () => {
 
 describe('explicit Shot destination (F-1054)', () => {
   it('protects targets with the token and roundtrips a selected target through real HTTP', async () => {
-    const received: Array<{ files: ShotFileMeta[]; targetPaneId?: string }> = [];
+    const received: Array<{ files: ShotFileMeta[]; targetPaneId?: string; targetBinding?: import('../../shared/shot-bridge').ShotTargetBinding }> = [];
     handle = await startShotBridgeServer({
       userDataPath: userData, homeDir: home,
       listTargets: () => ({ missions: [{ id: 'operator', title: 'Panes', panes: [
         { id: 'pane-selected', title: 'Codex', focused: false },
       ] }] }),
-      onFiles: (files, targetPaneId) => received.push({ files, targetPaneId }),
+      resolveTargetBinding: paneId => ({ paneId, sessionId: 'session-selected', workspacePath: '/fixture-workspace' }),
+      onFiles: (files, targetPaneId, targetBinding) => received.push({ files, targetPaneId, targetBinding }),
     });
     const url = `http://127.0.0.1:${handle.port}`;
     for (const token of [undefined, 'deadbeef']) {
@@ -294,15 +296,18 @@ describe('explicit Shot destination (F-1054)', () => {
       { id: 'pane-selected', title: 'Codex', focused: false },
     ] }] } });
     const png = makeFile(picturesDir, 'capture.png');
-    for (const destination of [{ targetPaneId: targets.data.missions[0].panes[0].id }, { target: { paneId: 'pane-selected' } }]) {
+    for (const destination of [{ targetPaneId: targets.data.missions[0].panes[0].id }, { target: { paneId: 'pane-selected' } },
+      { targetPaneId: 'pane-selected', targetBinding: { paneId: 'pane-selected', sessionId: 'forged-session', workspacePath: '/forged-workspace' } }]) {
       const sent = await fetch(`${url}/shot/ingest`, { method: 'POST', headers,
         body: JSON.stringify({ type: 'ingest', source: 'nexus-shot', files: [png], ...destination }) });
       expect(sent.status).toBe(200);
       expect(await sent.json()).toEqual({ ok: true, received: 1 });
     }
-    expect(received).toHaveLength(2);
+    expect(received).toHaveLength(3);
     expect(received[0].targetPaneId).toBe('pane-selected');
     expect(received[1].targetPaneId).toBe('pane-selected');
+    expect(received[0].targetBinding).toEqual({ paneId: 'pane-selected', sessionId: 'session-selected', workspacePath: '/fixture-workspace' });
+    expect(received[2].targetBinding).toEqual(received[0].targetBinding);
     expect(received[0].files[0].path).toBe(realpathSync(png));
     for (const destination of [
       { targetPaneId: '' }, { targetPaneId: null }, { targetPaneId: 4 },
@@ -319,7 +324,7 @@ describe('explicit Shot destination (F-1054)', () => {
       body: JSON.stringify({ type: 'ingest', source: 'nexus-shot', files: [png], targetPaneId: 'pane-gone' }) });
     expect(stale.status).toBe(400);
     expect(await stale.json()).toEqual({ ok: false, reason: 'target-unavailable' });
-    expect(received).toHaveLength(2);
+    expect(received).toHaveLength(3);
   });
 
   it('bounds and sanitizes target IDs/titles/counts without exposing extra fields', async () => {
@@ -347,6 +352,21 @@ describe('explicit Shot destination (F-1054)', () => {
     }
     expect(JSON.stringify(result)).not.toContain('private');
   });
+});
+
+it('mints the binding only for the unique live physical session in the coordination workspace', () => {
+  const scope = { projectId: 'project', checkoutId: 'checkout', rootRealPath: '/coordination' };
+  const agent = { paneId: 'pane-a', sessionId: 'session-a', kind: 'cli-agent',
+    scope: { ...scope, rootRealPath: '/writer-worktree' }, coordinationScope: scope };
+  expect(buildShotTargetBinding([agent], scope, new Set(['session-a']), 'pane-a')).toEqual({
+    paneId: 'pane-a', sessionId: 'session-a', workspacePath: '/coordination',
+  });
+  for (const sessions of [[agent, agent], [{ ...agent, state: 'parked' }],
+    [{ ...agent, coordinationScope: { ...scope, checkoutId: 'foreign' } }]]) {
+    expect(buildShotTargetBinding(sessions, scope, new Set(['session-a']), 'pane-a')).toBeNull();
+  }
+  expect(buildShotTargetBinding([agent], scope, new Set(), 'pane-a')).toBeNull();
+  expect(buildShotTargetBinding([agent], null, new Set(['session-a']), 'pane-a')).toBeNull();
 });
 
 
@@ -394,7 +414,8 @@ it('local HTTP query → selected capture → Main event → staged renderer bat
   try {
     handle = await startShotBridgeServer({ userDataPath: userData, homeDir: home,
       listTargets: () => ({ missions: [{ id: 'operator', title: 'Panes', panes: [{ id: 'pane-selected', title: 'Codex', focused: false }] }] }),
-      onFiles: (files, targetPaneId) => emit?.({ files, source: 'nexus-shot', receivedAt: Date.now(), ...(targetPaneId ? { targetPaneId } : {}) }),
+      resolveTargetBinding: paneId => ({ paneId, sessionId: 'session-selected', workspacePath: '/fixture-workspace' }),
+      onFiles: (files, targetPaneId, targetBinding) => emit?.({ files, source: 'nexus-shot', receivedAt: Date.now(), ...(targetPaneId ? { targetPaneId, targetBinding } : {}) }),
     });
     const headers = { 'x-nexus-shot-token': handle.token, 'content-type': 'application/json' };
     const url = `http://127.0.0.1:${handle.port}`;
@@ -428,4 +449,48 @@ it('a failed targets provider responds with a generic bounded error', async () =
   });
   expect(response.status).toBe(500);
   expect(await response.json()).toEqual({ ok: false, reason: 'internal' });
+});
+
+it.each(['session', 'workspace'] as const)('explicit Shot destination refuses a %s change before the Main event reaches the renderer', async change => {
+  const { initShotIngestToasts } = await import('../../renderer/state/shot-ingest');
+  const { useToastStore } = await import('../../renderer/state/toast-store');
+  type Payload = import('../../shared/shot-bridge').ShotFilesReceivedPayload;
+  let emit: ((payload: Payload) => void | Promise<void>) | undefined;
+  let pending: Payload | undefined;
+  let session = 'session-selected';
+  let workspace = '/fixture-workspace';
+  const imports: string[] = [], writes: string[] = [];
+  const off = initShotIngestToasts({
+    onShotFilesReceived: callback => { emit = callback; return () => { emit = undefined; }; },
+    openTerminalPath: async () => ({ ok: true }),
+    resolveTargetPaneId: requested => requested === 'pane-selected' ? requested : 'pane-focused',
+    getPaneSessionId: () => session,
+    getActiveWorkspacePath: () => workspace,
+    writeToPane: (_paneId, data) => { writes.push(data); return true; },
+    files: { importDroppedUri: async uri => { imports.push(uri); return { ok: true, path: '.nexus/attachments/capture.png' }; } },
+  });
+  try {
+    handle = await startShotBridgeServer({ userDataPath: userData, homeDir: home,
+      listTargets: () => ({ missions: [{ id: 'operator', title: 'Panes', panes: [{ id: 'pane-selected', title: 'Codex', focused: false }] }] }),
+      resolveTargetBinding: paneId => buildShotTargetBinding([{ paneId, kind: 'cli-agent', sessionId: session,
+        scope: { projectId: 'project-a', checkoutId: 'checkout-a', rootRealPath: workspace } }],
+      { projectId: 'project-a', checkoutId: 'checkout-a', rootRealPath: workspace }, new Set([session]), paneId),
+      onFiles: (files, targetPaneId, targetBinding) => { pending = { files, source: 'nexus-shot', receivedAt: Date.now(), targetPaneId, targetBinding }; },
+    });
+    const response = await fetch(`http://127.0.0.1:${handle.port}/shot/ingest`, {
+      method: 'POST', headers: { 'x-nexus-shot-token': handle.token, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'ingest', source: 'nexus-shot', files: [makeFile(picturesDir, 'capture.png')], targetPaneId: 'pane-selected' }),
+    });
+    expect(response.status).toBe(200);
+    expect(pending?.targetPaneId).toBe('pane-selected');
+    if (change === 'session') session = 'session-replacement';
+    else workspace = '/another-workspace';
+    await emit!(pending!);
+    expect(imports, 'the prior validated destination must be checked before the first file copy').toHaveLength(0);
+    expect(writes).toHaveLength(0);
+    expect(useToastStore.getState().toasts.some(toast => toast.title === 'Não deu para colar a captura no pane escolhido')).toBe(true);
+  } finally {
+    off();
+    for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+  }
 });

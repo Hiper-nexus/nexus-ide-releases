@@ -29,6 +29,8 @@ import {
   SHOT_TARGETS_MAX_TITLE_CHARS,
   shotTargetIdSchema,
   shotDestinationSchema,
+  shotTargetBindingSchema,
+  type ShotTargetBinding,
   type ShotTargetsData,
   type ShotPaneTarget,
   type ShotFileKind,
@@ -227,6 +229,21 @@ export function buildShotTargets(
   return sanitizeShotTargets({ missions: [...groups.values()] });
 }
 
+/** Uses the same physical/scope/uniqueness fence as the public catalog. */
+export function buildShotTargetBinding(
+  sessions: Parameters<typeof buildShotTargets>[0],
+  currentScope: Parameters<typeof buildShotTargets>[1],
+  liveSessionIds: ReadonlySet<string>,
+  paneId: string,
+): ShotTargetBinding | null {
+  if (!currentScope || !buildShotTargets(sessions, currentScope, liveSessionIds).missions
+    .some(mission => mission.panes.some(pane => pane.id === paneId))) return null;
+  const session = sessions.find(candidate => candidate.paneId === paneId);
+  const binding = shotTargetBindingSchema.safeParse({ paneId, sessionId: session?.sessionId,
+    workspacePath: currentScope.rootRealPath });
+  return binding.success ? binding.data : null;
+}
+
 /** Resposta com lista de permissão e limites, sem campos privados do provider. */
 export function sanitizeShotTargets(data: unknown): ShotTargetsData {
   const result: ShotTargetsData = { missions: [] };
@@ -252,10 +269,11 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   expectedToken: string,
-  onFiles: (files: ShotFileMeta[], targetPaneId?: string) => void,
+  onFiles: (files: ShotFileMeta[], targetPaneId?: string, targetBinding?: ShotTargetBinding) => void,
   homeDir?: string,
   knownFolders?: ShotKnownFolders,
   listTargets?: () => unknown,
+  resolveTargetBinding?: (paneId: string) => ShotTargetBinding | null,
 ): Promise<void> {
   const path = req.url?.split('?')[0];
   if (!((req.method === 'POST' && path === '/shot/ingest') || (req.method === 'GET' && path === '/shot/targets'))) {
@@ -314,6 +332,12 @@ async function handleRequest(
     res.end(JSON.stringify({ ok: false, reason: 'target-unavailable' }));
     return;
   }
+  const parsedBinding = targetPaneId ? shotTargetBindingSchema.safeParse(resolveTargetBinding?.(targetPaneId)) : null;
+  if (targetPaneId && (!parsedBinding?.success || parsedBinding.data.paneId !== targetPaneId)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, reason: 'target-unavailable' }));
+    return;
+  }
   const outcome = validateShotIngestFiles(shape.files, { homeDir, knownFolders });
   if (!outcome.ok) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -321,7 +345,7 @@ async function handleRequest(
     return;
   }
 
-  onFiles(outcome.files, targetPaneId);
+  onFiles(outcome.files, targetPaneId, parsedBinding?.success ? parsedBinding.data : undefined);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, received: outcome.files.length }));
 }
@@ -337,9 +361,11 @@ export async function startShotBridgeServer(options: {
   homeDir?: string;
   /** app.getPath('pictures'|'videos') — pastas conhecidas redirecionadas. */
   knownFolders?: ShotKnownFolders;
-  onFiles: (files: ShotFileMeta[], targetPaneId?: string) => void;
+  onFiles: (files: ShotFileMeta[], targetPaneId?: string, targetBinding?: ShotTargetBinding) => void;
   /** Sessões físicas do workspace exibido na janela principal. */
   listTargets?: () => unknown;
+  /** Trusted Main callback; the HTTP caller only supplies a pane ID. */
+  resolveTargetBinding?: (paneId: string) => ShotTargetBinding | null;
 }): Promise<ShotBridgeServerHandle> {
   if (active) return active;
 
@@ -348,7 +374,7 @@ export async function startShotBridgeServer(options: {
 
   const server: Server = createServer(async (req, res) => {
     try {
-      await handleRequest(req, res, token, options.onFiles, options.homeDir, options.knownFolders, options.listTargets);
+      await handleRequest(req, res, token, options.onFiles, options.homeDir, options.knownFolders, options.listTargets, options.resolveTargetBinding);
     } catch {
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });

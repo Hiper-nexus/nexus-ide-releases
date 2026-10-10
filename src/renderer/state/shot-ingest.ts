@@ -2,7 +2,7 @@ import type {
   ShotFileKind,
   ShotFilesReceivedPayload,
 } from '../../shared/shot-bridge';
-import { shotTargetIdSchema } from '../../shared/shot-bridge';
+import { shotTargetIdSchema, shotTargetBindingSchema } from '../../shared/shot-bridge';
 import { usePaneParkedStore } from './pane-parked-store';
 import type { NexusApi } from '../../shared/types';
 import { useToastStore } from './toast-store';
@@ -184,9 +184,11 @@ export function initShotIngestToasts(
     const targetPaneId = explicit && !shotTargetIdSchema.safeParse(payload.targetPaneId).success
       ? null : targetPaneResolver(payload.targetPaneId);
     const sessionGetter = api.getPaneSessionId ?? getPaneSessionId;
-    const targetSessionId = targetPaneId ? sessionGetter(targetPaneId) : null;
-    const workspacePath = workspaceGetter();
-    const destinationCurrent = () => targetPaneId !== null && workspaceGetter() === workspacePath &&
+    const parsedBinding = explicit ? shotTargetBindingSchema.safeParse(payload.targetBinding) : null;
+    const binding = parsedBinding?.success && parsedBinding.data.paneId === targetPaneId ? parsedBinding.data : null;
+    const targetSessionId = explicit ? binding?.sessionId ?? null : targetPaneId ? sessionGetter(targetPaneId) : null;
+    const workspacePath = explicit ? binding?.workspacePath ?? null : workspaceGetter();
+    const destinationCurrent = () => targetPaneId !== null && (!explicit || binding !== null) && workspaceGetter() === workspacePath &&
       targetPaneResolver(targetPaneId) === targetPaneId && sessionGetter(targetPaneId) === targetSessionId;
     let injectedCount = 0;
 
