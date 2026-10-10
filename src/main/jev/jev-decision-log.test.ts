@@ -352,7 +352,7 @@ describe('jev decision log', () => {
 
   it('agrega janelas hoje/30d/desde sempre e o split jev/regra por superfície', () => {
     const d = setup();
-    const now = Date.now();
+    const now = new Date(2026, 0, 10, 12, 0, 0).getTime();
     writeEntry(d, { at: now - 60_000, usd: 0.001, inputTokens: 1000 });
     writeEntry(d, { at: now - 10 * 86_400_000, usd: 0.002, inputTokens: 2000 });
     writeEntry(d, { at: now - 40 * 86_400_000, usd: 0.004, inputTokens: 4000 });
@@ -390,6 +390,18 @@ describe('jev decision log', () => {
       usdPerInputToken: USD_PER_INPUT_TOKEN,
       source: 'typesafe-published',
     });
+  });
+
+  it('a janela hoje exclui a decisão anterior à meia-noite local', () => {
+    const d = setup();
+    const now = new Date(2026, 0, 10, 0, 0, 45).getTime();
+    writeEntry(d, { at: now - 60_000, usd: 0.001 });
+    writeEntry(d, { at: now - 30_000, usd: 0.002 });
+    const stats = jevDecisionStats({ dir: d, now });
+    expect(stats.windows.today.consultations).toBe(1);
+    expect(stats.windows.today.usd).toBeCloseTo(0.002, 6);
+    expect(stats.windows.last30d.consultations).toBe(2);
+    expect(stats.windows.allTime.consultations).toBe(2);
   });
 
   it('stats e lista contam o arquivo rotacionado (decisions.1.jsonl)', () => {
