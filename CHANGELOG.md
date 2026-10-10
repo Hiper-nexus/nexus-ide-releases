@@ -2,6 +2,7 @@
 
 ## 0.76.228 — Missões com acompanhamento contínuo
 
+- **Instruções ao Maestro confirmadas mesmo quando ele responde na hora.** Se o Maestro recebe a instrução e já bloqueia a missão com uma pergunta, a instrução conta como entregue em vez de aparecer como recusada (F-1158).
 - **Agentes com acesso a tudo.** Orquestrador, helpers, workers e revisores alcançam toda ferramenta do Nexus e as nativas da CLI. O orquestrador também pode editar, commitar e abrir subagentes; revisores deixam de ser somente leitura; não há mais filtro de skill nem bloqueio do WebFetch. Confirmações humanas, vínculo de missão e o modo Hardened escolhido pelo operador continuam valendo (F-1157).
 - **Ferramentas dos agentes de missão mais rápidas.** O Nexus deixa de rodar um controle em Node a cada ferramenta de um agente de missão. No Mac cada chamada esperava cerca de 6 segundos; restam só os avisos leves de status. O envio do handoff mantém o hook que guarda o relato em disco quando o app não responde (F-1154).
 

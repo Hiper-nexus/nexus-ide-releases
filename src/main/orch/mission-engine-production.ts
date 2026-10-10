@@ -856,6 +856,20 @@ function isRecoverableMissionDirectFailure(
   );
 }
 
+function settledByAcceptedTarget(
+  stores: ProjectDomainStoreSuite,
+  missionId: string,
+  initial: MissionDirectAuthority,
+  error: unknown,
+): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes("live current dispatch authority")) return false;
+  const mission = stores.missions.get(missionId);
+  if (!mission || (mission.status !== "blocked" && mission.status !== "completed")) return false;
+  return initial.operatorDirectToWorker !== true &&
+    mission.orchestratorSessionId === initial.sessionId;
+}
+
 async function resolveMissionDirectAuthority(
   scope: ProjectExecutionScope,
   stores: ProjectDomainStoreSuite,
@@ -1104,10 +1118,21 @@ export async function deliverMissionDirectInstruction(
     }
   }
 
-  const current = missionDirectAuthority(scope, stores, command, deps);
+  let current: MissionDirectAuthority | null = null;
+  try {
+    current = missionDirectAuthority(scope, stores, command, deps);
+  } catch (error) {
+    // The prompt is already accepted by the target session. A fast leader can
+    // act on it before this re-check and legitimately settle the mission
+    // (e.g. block it on a question it just asked). That is the instruction
+    // landing, not authority changing hands: same target session, mission
+    // settled by it. Anything else still fails closed.
+    if (!settledByAcceptedTarget(stores, command.missionId, initial, error)) throw error;
+  }
   if (
-    current.sessionId !== initial.sessionId ||
-    current.authorityFingerprint !== initial.authorityFingerprint
+    current &&
+    (current.sessionId !== initial.sessionId ||
+      current.authorityFingerprint !== initial.authorityFingerprint)
   ) {
     throw new Error("mission direct authority changed during delivery");
   }

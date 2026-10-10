@@ -756,6 +756,40 @@ describe('mission direct — operador como orquestrador', () => {
     expect(deliverSpy.mock.calls[0]?.[0]).toBe(orch.sessionId);
   });
 
+  it.each([
+    { label: 'o próprio líder bloqueia a missão logo após aceitar (pergunta)', swap: false, ok: true },
+    { label: 'outra sessão assume a liderança durante a entrega', swap: true, ok: false },
+  ])('runtime 228: $label', async ({ swap, ok }) => {
+    const squad = makeSquad([
+      makeAgent(),
+      makeAgent({ id: 'ag-orch', agentName: 'Orquestrador', category: 'orchestrator' }),
+    ]);
+    const orch = makeOrchSession();
+    const mission = makeApprovedMission(squad);
+    mission.orchestratorSessionId = orch.sessionId;
+    const { stores, deps, deliverSpy, emitSpy } = makeHarness({
+      mission,
+      squad,
+      workers: [makeWorkerSession()],
+      panes: [makeWorkerPane(), makeOrchPane()],
+      getRuntimeAgentSessionInfo: (sessionId) => (sessionId === orch.sessionId ? orch : null),
+    });
+    deliverSpy.mockImplementation(async () => {
+      // A fast leader acts on the accepted prompt before the post-delivery check.
+      (mission as { status: Mission['status'] }).status = 'blocked';
+      if (swap) mission.orchestratorSessionId = 'pty-other-leader';
+      return true;
+    });
+    const run = deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps);
+    if (ok) {
+      await expect(run).resolves.toBeUndefined();
+      expect(emitSpy).toHaveBeenCalled();
+    } else {
+      await expect(run).rejects.toThrow('mission direct requires live current dispatch authority');
+    }
+    expect(deliverSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('missão pending não pede respawn do Maestro', async () => {
     const squad = makeSquad();
     const mission = makeApprovedMission(squad, { status: 'pending' });
