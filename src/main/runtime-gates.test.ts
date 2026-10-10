@@ -481,7 +481,7 @@ it('F-1111: accepts the actual new result identity only with the exact prior wor
   finally { f.controller.abort(); await f.rejected; }
 });
 it.each([{ before: undefined, after: false }, { before: false, after: undefined }])(
-  'F-1149: writable readOnly representation $before to $after keeps the same recovery authority', async readOnly => {
+  'F-1152: writable readOnly representation $before to $after keeps the same recovery authority', async readOnly => {
     const { f, event } = await recoveredWorkerFixture(false, readOnly);
     try {
       expect((await f.request(event, { operation: 'observe', missionId: 'm' })).recovery).toEqual({
@@ -490,7 +490,7 @@ it.each([{ before: undefined, after: false }, { before: false, after: undefined 
     } finally { f.controller.abort(); await f.rejected; }
   });
 it.each([{ before: true, after: false }, { before: false, after: true }])(
-  'F-1149: readOnly authority change $before to $after remains rejected', async readOnly => {
+  'F-1152: readOnly authority change $before to $after remains rejected', async readOnly => {
     const { f, event } = await recoveredWorkerFixture(false, readOnly);
     try {
       await expect(f.request(event, { operation: 'observe', missionId: 'm' })).rejects.toThrow('recovery native result or authenticated provenance differs');
@@ -498,7 +498,7 @@ it.each([{ before: true, after: false }, { before: false, after: true }])(
   });
 it.each(['equivalent-workers', 'binding-drift', 'missing-pid', 'old-pid', 'hint-session', 'old-pane', 'old-session',
   'missing-chief', 'multiple-chiefs', 'missing-audit', 'duplicate-audit', 'prior-audit'] as const)(
-  'F-1149: bounded recovery diagnosis preserves rejection for %s', async kind => {
+  'F-1152: bounded recovery diagnosis preserves rejection for %s', async kind => {
     const { f, event, next, worker } = await recoveredWorkerFixture(kind === 'prior-audit', { before: false, after: undefined });
     const logger = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
@@ -556,7 +556,7 @@ it.each(['equivalent-workers', 'binding-drift', 'missing-pid', 'old-pid', 'hint-
       if (kind === 'duplicate-audit') expect(diagnosis).toMatchObject({ freshResumeCalls: 2, singleFreshResumeCall: false });
     } finally { f.controller.abort(); await f.rejected; logger.mockRestore(); }
   });
-it('F-1149: diagnostic logger failure cannot bypass or replace recovery rejection', async () => {
+it('F-1152: diagnostic logger failure cannot bypass or replace recovery rejection', async () => {
   const { f, event } = await recoveredWorkerFixture(); deps.audit = [];
   const logger = vi.spyOn(console, 'error').mockImplementation(() => { throw new Error('private logger unavailable'); });
   try {
