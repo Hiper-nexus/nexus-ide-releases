@@ -9,6 +9,44 @@ import os from 'node:os';
 import path from 'node:path';
 import { stopPreviewWithProof, isRunningPreviewUrl } from '../src/main/orch/preview-server';
 import { assessBrowserUrl } from '../src/main/browser/url-policy';
+describe('F-1118 normal ROOT mission creation', () => {
+  const nonce = '11111111-1111-4111-8111-111111111111', runtimeId = 'mission-runtime-44444444-4444-4444-8444-444444444444';
+  const initial = [{ role: 'user', content: `RT_GATE CREATE ${nonce} ${runtimeId}` }];
+  async function post(server, messages) {
+    const response = await fetch(`${server.url}/v1/messages`, { method: 'POST', headers: { 'x-api-key': `rt-${nonce}` }, body: JSON.stringify({
+      tools: buildToolset().map(t => ({ name: t.name, input_schema: t.inputSchema })), messages }) });
+    const text = await response.text();
+    if (!response.ok) return { status: response.status, text };
+    const events = text.split('\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6)));
+    const call = events.find(e => e.type === 'content_block_start').content_block;
+    if (call.type === 'tool_use') call.input = JSON.parse(events.find(e => e.delta?.type === 'input_json_delta').delta.partial_json);
+    return { status: response.status, text, call };
+  }
+  it.each(['current', 'missing-result', 'wrapped-mission', 'wrong-runtime', 'unapproved', 'failed', 'duplicate', 'substituted-call'])(
+    'binds only the actual successful ROOT result (%s)', async variant => {
+      const server = await startRuntimeGateway(nonce);
+      try {
+        const first = await post(server, initial);
+        expect(first.call).toMatchObject({ name: 'nexus_mission_create', input: { title: `Runtime standard ${nonce}`, squadId: runtimeId } });
+        expect(() => validateToolArgs(first.call.name, first.call.input)).not.toThrow();
+        const mission = { id: 'actual-created-mission', title: first.call.input.title, squadId: runtimeId, orchestratorSessionId: 'actual-user-session',
+          status: 'running', intentState: 'dispatched', intentVersion: 1, intentContract: { intentVersion: 1, lane: 'standard', approvedAt: 10, dispatchedAt: 11 } };
+        if (variant === 'wrong-runtime') mission.squadId = 'foreign-runtime';
+        if (variant === 'unapproved') delete mission.intentContract.approvedAt;
+        const result = { role: 'user', content: [{ type: 'tool_result', tool_use_id: first.call.id, is_error: variant === 'failed',
+          content: [{ type: 'text', text: JSON.stringify(variant === 'wrapped-mission' ? { ok: true, mission } : mission) }] }] };
+        const call = variant === 'substituted-call' ? { ...first.call, name: 'nexus_file_read' } : first.call;
+        const next = await post(server, [...initial, { role: 'assistant', content: [call] },
+          ...(variant === 'missing-result' ? [] : variant === 'duplicate' ? [result, result] : [result])]);
+        if (variant === 'current') {
+          expect(next.call).toMatchObject({ name: 'nexus_pane_spawn', input: { agentName: 'Runtime writer', readOnly: false, autoCloseOnHandoff: false } });
+          const creation = await fetch(`${server.url}/runtime-created`, { headers: { 'x-api-key': `rt-${nonce}` } }).then(r => r.json());
+          expect(creation).toEqual({ nonce, pid: process.pid, creation: { missionId: mission.id, runtimeSquadId: runtimeId, creatorSessionId: 'actual-user-session', intentVersion: 1 } });
+        } else expect(next.status).toBe(422);
+        expect((await fetch(`${server.url}/runtime-created`)).status).toBe(401);
+      } finally { await server.close(); }
+    });
+});
 it('serves only bounded loopback Anthropic protocol, choosing real advertised Nexus tools', async () => {
   const server = await startRuntimeGateway('11111111-1111-4111-8111-111111111111');
   try {

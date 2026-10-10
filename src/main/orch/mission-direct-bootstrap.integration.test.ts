@@ -11,10 +11,10 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { execFileSync, fork, type ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { HostControlMsg, HostEventMsg } from '../pty/pty-host-core';
@@ -121,13 +121,19 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
   let closeManager: () => void = () => undefined;
   let closeRuntime: () => void = () => undefined;
   let closeAnalysis: () => Promise<void> = async () => undefined;
+  let closeAgentHooks: () => Promise<void> = async () => undefined;
+  let closeUsage: () => Promise<void> = async () => undefined;
+  let profileManager: import('../runtime/project-runtime-manager').ProjectRuntimeManager | null = null;
   let releaseConsent: () => void = () => undefined;
   let scope: ProjectExecutionScope;
   let gateway: http.Server | null = null;
   let gatewayUrl = '';
   const nonce = randomUUID();
-  const owner = { id: 1109, isDestroyed: () => false, isCrashed: () => false,
-    mainFrame: {}, send: () => undefined, on: () => undefined, once: () => undefined, removeListener: () => undefined };
+  const owner = { id: 1109, isDestroyed: () => false, isCrashed: () => false, getURL: () => 'nexus-app://bundle/index.html', getOSProcessId: () => process.pid,
+    mainFrame: { url: 'nexus-app://bundle/index.html' }, send: () => undefined, on: () => undefined, once: () => undefined, removeListener: () => undefined };
+  let profileRuntimeId = '';
+  let profileFlow = false;
+  let profileOriginalAdapter: CliPtyAdapter | null = null;
   const nativeRequests: Array<{ userTexts: string[]; toolResults: unknown[] }> = [];
   const submitted = deferred<void>(), hookHeld = deferred<void>();
   let releaseHook: () => void = () => undefined;
@@ -237,7 +243,7 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     host.on('message', message => bridge.dispatchEvent(message as HostEventMsg)); host.on('exit', () => bridge.handleHostDown());
     const { ProjectRuntimeManager } = await import('../runtime/project-runtime-manager');
     const { configureAuditLogRuntime } = await import('../jarvis/audit-log');
-    const { configurePtyProjectRuntimeManager } = await import('../pty/pty-ipc');
+    const { configurePtyProjectRuntimeManager, registerPtyIpc } = await import('../pty/pty-ipc');
     const { configureRendererMissionAuthority, initOrchestration, closeOrchestration, registerOrchIpc } = await import('./orch-ipc');
     const { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry } = await import('../runtime/worktree-runtime-registry');
     const { configureContextWorkflowRegistry } = await import('../context/context-workflow-registry');
@@ -245,6 +251,7 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     const { disposeProjectDomainStoreRegistry } = await import('./project-domain-store-registry');
     const pty = await import('../pty/pty-manager');
     const manager = new ProjectRuntimeManager({ baseDir: path.join(state.userData, 'project-runtime'), appVersion: '0.0.0-direct-fixture' });
+    profileManager = manager;
     closeManager = () => manager.closeAll(); closeRuntime = disposeWorktreeRuntimeRegistry; closeStores = disposeProjectDomainStoreRegistry;
     configureAuditLogRuntime(manager); configurePtyProjectRuntimeManager(manager); configureRendererMissionAuthority(manager);
     const runtime = configureWorktreeRuntimeRegistry(manager);
@@ -284,7 +291,7 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
       scope, signal: lifetime.signal, isCurrent: () => !lifetime.signal.aborted });
     const originalCreate = http.createServer;
     intercept = vi.spyOn(http, 'createServer').mockImplementation(((handler: http.RequestListener) => originalCreate((req, res) => {
-      if (req.url === '/hook/status' && req.headers['x-nexus-hook-event'] === 'user-submit' && (!chiefId || holdNextHook)) {
+      if (!profileFlow && req.url === '/hook/status' && req.headers['x-nexus-hook-event'] === 'user-submit' && (!chiefId || holdNextHook)) {
         const held = holdNextHook; holdNextHook = null;
         req.pause();
         nativeHookHeld = true;
@@ -298,8 +305,16 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
       inputs.push({ sessionId, data });
       if (data === '\r' && inputs.some(input => input.sessionId === sessionId && input.data.includes(`RT_GATE SPAWN ${nonce}`))) submitted.resolve();
     });
-    await initOrchestration(); closeMain = closeOrchestration; registerOrchIpc();
+    await initOrchestration(); closeMain = closeOrchestration; registerOrchIpc(); registerPtyIpc(); pty.setPtyHost(bridge.host);
   }, 120_000);
+  afterEach(async () => {
+    if (profileFlow) {
+      await closeUsage(); await closeAgentHooks(); closeUsage = async () => undefined; closeAgentHooks = async () => undefined;
+      const pty = await import('../pty/pty-manager'); pty.configureAgentHookEndpointPath(null); await pty.stopSessionMortalityReconciler();
+      state.adapter = profileOriginalAdapter; profileOriginalAdapter = null;
+    }
+    profileFlow = false;
+  });
 
   afterAll(async () => {
     releaseHook(); lifetime.abort(); releaseConsent(); untapInput(); intercept?.mockRestore();
@@ -308,11 +323,100 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
       const exited = await pty.orchTerminateSession(session.sessionId, { origin: 'direct-native-fixture:teardown' });
       if (!exited) throw new Error('owned fixture physical exit unproven; private resources retained');
     }
-    await closeMain(); await closeAnalysis(); await closeStores(); closeRuntime(); closeManager();
+    await pty.stopSessionMortalityReconciler();
+    await closeMain(); await closeAnalysis(); await closeUsage(); await closeAgentHooks(); pty.configureAgentHookEndpointPath(null); await closeStores(); closeRuntime(); closeManager();
     if (host) { if (host.connected) host.disconnect(); await new Promise<void>(resolve => { if (host!.exitCode !== null) resolve(); else host!.once('exit', () => resolve()); }); }
     for (const socket of sockets) socket.destroy();
     if (gateway) await new Promise<void>(resolve => gateway!.close(() => resolve()));
     if (root) fs.rmSync(root, { recursive: true, force: true });
+  }, 120_000);
+
+  it.runIf(CONTROLLED)('F-1118: normal catalog/runtime saves, USER creation, named grants and operator input work without a wizard kickoff receipt', async () => {
+    profileFlow = true;
+    const profileReceipts = path.join(root, 'profile-cli'); fs.mkdirSync(profileReceipts, { mode: 0o700 });
+    profileOriginalAdapter = state.adapter;
+    state.adapter = { ...state.adapter!, env: { ...state.adapter!.env, static: { ...state.adapter!.env?.static,
+      NEXUS_CONTROLLED_CLI_DIR: profileReceipts, NEXUS_CONTROLLED_PROFILE_FIXTURE: '1' } } };
+    const { initUsageTelemetry, shutdownUsageTelemetry } = await import('../usage/usage-service');
+    await initUsageTelemetry(profileManager!); closeUsage = shutdownUsageTelemetry;
+    const { startAgentHookHttpServer } = await import('../agent-hooks/hook-http-server');
+    const hooks = await startAgentHookHttpServer({ userDataPath: state.userData }); closeAgentHooks = hooks.close;
+    const { ORCH_CHANNELS } = await import('../../shared/orch-channels');
+    const { PTY_CHANNELS } = await import('../../shared/channels');
+    const { runtimeStandardProfile } = await import('../../shared/runtime-gates');
+    const { snapshotSquadAuthority } = await import('./squad-authority-snapshot');
+    const { getProjectDomainStores } = await import('./project-domain-store-registry');
+    const { missionEngineForScope } = await import('./mission-engine-registry');
+    const { getContextBySession } = await import('./gate');
+    const { getProviderPaneSession } = await import('../persistence/provider-session-store');
+    const { readAuditLog } = await import('../jarvis/audit-log');
+    const pty = await import('../pty/pty-manager');
+    pty.configureAgentHookEndpointPath(hooks.endpointFilePath);
+    const invoke = (channel: string, input: unknown) => state.handlers.get(channel)!({ sender: owner, senderFrame: owner.mainFrame }, input);
+    const catalog = await invoke(ORCH_CHANNELS.squadSave, runtimeStandardProfile(nonce)) as import('../../shared/orch-types').SquadSaveResult;
+    expect(catalog.ok).toBe(true);
+    const saved = await invoke(ORCH_CHANNELS.squadSave, { squad: catalog.squad, purpose: 'mission-runtime', guided: false, sourceSquadId: catalog.squad!.id }) as import('../../shared/orch-types').SquadSaveResult;
+    expect(saved.ok).toBe(true); expect(saved.squad!.runtimeSourceSquadRevisionHash).toBe(snapshotSquadAuthority(catalog.squad!).hash);
+    expect(saved.squad!.agents).toEqual(catalog.squad!.agents); profileRuntimeId = saved.squad!.id;
+    const creator = await invoke(PTY_CHANNELS.spawn, { kind: 'cli-agent', adapterId: 'claude', paneId: `profile-user-${nonce}`, cwd: repo,
+      cols: 80, rows: 24, resume: false, resumeLatestOnly: false, restorePersistedAuthority: false }) as { ok: boolean; sessionId: string; error?: string };
+    expect(creator.ok, creator.error).toBe(true); expect(getContextBySession(creator.sessionId)?.role).toBe('user');
+    // Normal confirmed USER submission; later mission input uses the dedicated operator lane.
+    const creatorGateHash = createHash('sha256').update(getContextBySession(creator.sessionId)!.token).digest('hex');
+    await until(() => fs.existsSync(path.join(profileReceipts, 'mcp.ndjson')) && fs.readFileSync(path.join(profileReceipts, 'mcp.ndjson'), 'utf8').trim().split('\n')
+      .map(line => JSON.parse(line) as { gateSha256: string; tool: string }).some(r => r.gateSha256 === creatorGateHash && r.tool === 'nexus_handoff_list'),
+    'owned loose actual MCP readiness');
+    expect(await invoke(PTY_CHANNELS.writeConfirmed, { sessionId: creator.sessionId, data: `\x1b[200~RT_GATE PROFILE_CREATE ${nonce} ${profileRuntimeId}\x1b[201~` })).toBe(true);
+    expect(await invoke(PTY_CHANNELS.writeConfirmed, { sessionId: creator.sessionId, data: '\r' })).toBe(true);
+    const stores = getProjectDomainStores(scope);
+    try { await until(() => stores.missions.list().some(m => m.squadId === profileRuntimeId), 'actual USER mission create result'); }
+    catch (error) {
+      const { readSessionOutput } = await import('./pane-registry');
+      const { redactTerminalText } = await import('../../shared/secret-redaction');
+      console.error('owned profile creator diagnostic', redactTerminalText(readSessionOutput(creator.sessionId, 60)).slice(-4096));
+      throw error;
+    }
+    const mission = stores.missions.list().find(m => m.squadId === profileRuntimeId)!;
+    expect(mission).toMatchObject({ status: 'running', intentState: 'dispatched', orchestratorSessionId: creator.sessionId });
+    expect(stores.missions.hasCurrentKickoffAcceptance(mission.id)).toBe(false);
+    expect(getContextBySession(creator.sessionId)).toMatchObject({ role: 'orchestrator', missionId: mission.id });
+    await until(() => readAuditLog({ scope }, 1000).some(a => a.tool === 'nexus_mission_create' && a.result === 'ok' && a.session === creator.sessionId &&
+      a.source === 'http-mcp' && a.args.squadId === profileRuntimeId && a.invocation_id), 'actual authenticated creation audit');
+    await until(() => pty.listAgentSessions().filter(a => a.missionId === mission.id && a.role === 'worker').length === 2, 'actual named profile workers');
+    const workers = pty.listAgentSessions().filter(a => a.missionId === mission.id && a.role === 'worker');
+    for (const worker of workers) {
+      expect(worker.allowedTools).toEqual(saved.squad!.agents.find(a => a.agentName === worker.agentName)!.allowedTools);
+      expect(getContextBySession(worker.sessionId)?.scope).toEqual(scope);
+      expect(getContextBySession(worker.sessionId)?.executionScope).toEqual(worker.scope);
+    }
+    const footprints = await pty.probePaneFootprints(); expect(footprints).not.toBeNull();
+    expect(footprints!.filter(p => workers.some(w => w.sessionId === p.sessionId)).every(p => p.rootPid !== null && p.rootPid > 0)).toBe(true);
+    const writer = workers.find(a => a.agentName === 'Runtime writer')!;
+    expect(workers.find(a => a.agentName === 'Runtime reviewer')!.readOnly).toBe(true);
+    await vi.waitFor(async () => {
+      const snapshot = await missionEngineForScope(scope).snapshot(scope, mission.id);
+      expect(snapshot.id).toBe(mission.id);
+      for (const worker of workers) {
+        const canonical = snapshot.agents.filter(a => a.paneId === worker.paneId);
+        expect(canonical).toHaveLength(1);
+        expect(canonical[0]).toMatchObject({ id: saved.squad!.agents.find(a => a.agentName === worker.agentName)!.id,
+          agentName: worker.agentName, cli: worker.adapterId, terminalLive: true });
+      }
+    }, { timeout: 45000, interval: 20 });
+    expect(await invoke(ORCH_CHANNELS.paneOperatorInput, { sessionId: writer.sessionId, data: `\x1b[200~RT_GATE PROFILE_WRITE ${nonce}\x1b[201~` })).toBe(true);
+    expect(await invoke(ORCH_CHANNELS.paneOperatorInput, { sessionId: writer.sessionId, data: '\r' })).toBe(true);
+    await until(() => fs.existsSync(path.join(writer.scope.rootRealPath, 'runtime-profile-proof.txt')), 'actual authorized worker file write');
+    expect(fs.readFileSync(path.join(writer.scope.rootRealPath, 'runtime-profile-proof.txt'), 'utf8')).toBe(`RT_PROFILE_${nonce}`);
+    const original = getProviderPaneSession(writer.scope, writer.paneId!, 'claude', writer.accountId);
+    expect(original).not.toBeNull(); expect(await pty.orchTerminateSession(writer.sessionId, { origin: 'profile-fixture:recovery' })).toBe(true);
+    expect(await invoke(ORCH_CHANNELS.paneOperatorInput, { sessionId: creator.sessionId, data: `\x1b[200~RT_GATE PROFILE_RECOVER ${nonce} ${writer.paneId}\x1b[201~` })).toBe(true);
+    expect(await invoke(ORCH_CHANNELS.paneOperatorInput, { sessionId: creator.sessionId, data: '\r' })).toBe(true);
+    await until(() => pty.listAgentSessions().some(a => a.missionId === mission.id && a.agentName === 'Runtime writer' && a.sessionId !== writer.sessionId), 'actual normal chief worker resume');
+    const next = pty.listAgentSessions().find(a => a.missionId === mission.id && a.agentName === 'Runtime writer' && a.sessionId !== writer.sessionId)!;
+    expect(next.paneId).not.toBe(writer.paneId); expect(next.allowedTools).toEqual(writer.allowedTools);
+    expect(getProviderPaneSession(next.scope, next.paneId!, 'claude', next.accountId)).toMatchObject({ key: original!.key, id: original!.id });
+    await invoke(ORCH_CHANNELS.missionCommand, { kind: 'stop', missionId: mission.id });
+    expect(pty.listAgentSessions().filter(a => a.missionId === mission.id)).toEqual([]);
   }, 120_000);
 
   it('queues a cold direct instead of certifying the unrelated native argv turn, then delivers the exact envelope once', async () => {

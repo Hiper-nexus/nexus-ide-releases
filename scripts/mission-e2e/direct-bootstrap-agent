@@ -20,7 +20,13 @@ my $http = HTTP::Tiny->new(timeout => 15);
 my ($brief) = sort { length($b) <=> length($a) } @ARGV;
 $brief //= '';
 my $chief = $brief =~ /Papel: você é Runtime chief/;
+my $profile_fixture = ($ENV{NEXUS_CONTROLLED_PROFILE_FIXTURE} // '') eq '1';
 my $native_id = 'controlled-' . $$;
+if ($profile_fixture) {
+  my $native_hex = sha256_hex("controlled-native-conversation-$$");
+  $native_id = substr($native_hex, 0, 8) . '-' . substr($native_hex, 8, 4) . '-4' . substr($native_hex, 13, 3) . '-8' . substr($native_hex, 17, 3) . '-' . substr($native_hex, 20, 12);
+  for my $index (0 .. $#ARGV - 1) { $native_id = $ARGV[$index + 1] if $ARGV[$index] eq '--resume'; }
+}
 my $rpc = 0;
 my $select = IO::Select->new(\*STDIN);
 system('/bin/stty', 'raw', '-echo') == 0 or die 'controlled raw PTY unavailable';
@@ -58,7 +64,20 @@ sub rpc {
 sub mcp {
   my ($tool, $arguments) = @_;
   my $reply = rpc('tools/call', { name => $tool, arguments => $arguments });
-  record('mcp', { pid => $$, tool => $tool, %$reply });
+  record('mcp', { pid => $$, gateSha256 => sha256_hex($ENV{NEXUS_GATE_TOKEN}), tool => $tool, %$reply });
+  return $profile_fixture ? $json->decode($reply->{body}{result}{content}[0]{text}) : undef;
+}
+sub native_session_start {
+  return unless $profile_fixture && $ENV{NEXUS_AGENT_HOOK_ENDPOINT} && $ENV{NEXUS_PANE_KEY};
+  open(my $endpoint, '<', $ENV{NEXUS_AGENT_HOOK_ENDPOINT}) or die 'owned native hook endpoint unavailable';
+  local $/; my $config = <$endpoint>; close($endpoint);
+  my ($port) = $config =~ /NEXUS_AGENT_HOOK_PORT='([0-9]+)'/;
+  my ($token) = $config =~ /NEXUS_AGENT_HOOK_TOKEN='([a-f0-9]+)'/;
+  die 'normal native hook endpoint invalid' unless $port && $token;
+  my $reply = $http->request('POST', "http://127.0.0.1:$port/hook/claude", {
+    headers => { 'content-type' => 'application/json', 'x-nexus-agent-hook-token' => $token },
+    content => $json->encode({ paneKey => $ENV{NEXUS_PANE_KEY}, state => 'waiting', agentType => 'claude', hook_event_name => 'SessionStart', session_id => $native_id }) });
+  die "normal native SessionStart refused: $reply->{status}" unless $reply->{success};
 }
 record('accepted', { pid => $$, kind => 'argv', bytes => length($brief), sha256 => sha256_hex($brief),
   hasDirection => $brief =~ /RT_GATE SPAWN/ ? JSON::PP::true : JSON::PP::false });
@@ -72,6 +91,7 @@ record('cold-input', { pid => $$, bytes => $cold_bytes });
 print "Controlled native argv turn accepted.\r\n";
 my $initialized = rpc('initialize', { protocolVersion => '2024-11-05', capabilities => {}, clientInfo => { name => 'controlled-physical-cli', version => '1' } });
 die 'actual initialize capabilities absent' unless $initialized->{body}{result}{capabilities};
+native_session_start();
 my $catalog = rpc('tools/list', {});
 die 'actual tool catalog absent' unless ref($catalog->{body}{result}{tools}) eq 'ARRAY' && @{$catalog->{body}{result}{tools}};
 mcp('nexus_handoff_list', { full => JSON::PP::true });
@@ -100,6 +120,24 @@ while (1) {
         task => $name eq 'Runtime writer' ? 'Fix the UI visual fixture inspection report' : 'Review runtime report',
         prompt => "RT_GATE IDLE $nonce. Wait for the private scoped follow-up." });
     }
+  }
+  if ($profile_fixture && $text =~ /RT_GATE PROFILE_CREATE ([a-f0-9-]{36}) (mission-runtime-[a-f0-9-]{36})/) {
+    my ($nonce, $squad_id) = ($1, $2);
+    my $mission = mcp('nexus_mission_create', { title => "Runtime standard $nonce", squadId => $squad_id,
+      description => 'Write and review the finite private runtime report.', milestones => ['Write the report.', 'Review the report.'] });
+    die 'normal ROOT mission result missing' unless $mission->{id} && $mission->{squadId} eq $squad_id && $mission->{status} eq 'running';
+    for my $name ('Runtime writer', 'Runtime reviewer') {
+      mcp('nexus_pane_spawn', { adapterId => 'claude', agentName => $name, role => 'worker', autoCloseOnHandoff => JSON::PP::false,
+        readOnly => $name eq 'Runtime reviewer' ? JSON::PP::true : JSON::PP::false,
+        task => $name eq 'Runtime writer' ? 'Write the finite runtime report' : 'Review the runtime report',
+        prompt => "RT_GATE IDLE $nonce. Wait for the scoped operator follow-up." });
+    }
+  } elsif ($profile_fixture && $text =~ /RT_GATE PROFILE_WRITE ([a-f0-9-]{36})/) {
+    mcp('nexus_file_write', { path => 'runtime-profile-proof.txt', content => "RT_PROFILE_$1" });
+  } elsif ($profile_fixture && $text =~ /RT_GATE PROFILE_RECOVER ([a-f0-9-]{36}) ([A-Za-z0-9._:-]+)/) {
+    my ($nonce, $pane_id) = ($1, $2);
+    mcp('nexus_pane_spawn', { resume => $pane_id, agentName => 'Runtime writer', role => 'worker', autoCloseOnHandoff => JSON::PP::false,
+      prompt => "RT_GATE IDLE $nonce. Wait for the scoped operator follow-up." });
   }
   print "Controlled native composer turn completed.\r\n";
   hook('stop', '');

@@ -36,6 +36,15 @@ export function installRuntimeGateRenderer(): void {
         if (!sessionId) throw new Error('normal operator native session absent');
         reply(true, { paneId, sessionId }); return;
       }
+      if (value.operation === 'user-prompt' || value.operation === 'mission-prompt') {
+        const pane = listPanes(useLayoutStore.getState().root).find(p => p.id === value.paneId);
+        if (pane?.kind !== 'cli-agent' || pane.adapterId !== 'claude' || terminal.getPaneSessionId(pane.id) !== value.sessionId ||
+          typeof value.text !== 'string' || !value.text.startsWith('RT_GATE ') || value.text.length > 1024) throw new Error('private normal prompt target differs');
+        const accepted = value.operation === 'user-prompt' ? await terminal.submitPromptToPaneConfirmed(pane.id, value.text, value.sessionId) :
+          await terminal.submitPromptToPaneOperatorInput(pane.id, value.text, value.sessionId);
+        if (!accepted || terminal.getPaneSessionId(pane.id) !== value.sessionId) throw new Error('private normal prompt refused');
+        reply(true, { paneId: pane.id, sessionId: value.sessionId }); return;
+      }
       if (value.operation === 'shell') {
         useProductNavigationStore.getState().openTerminal(); await frame();
         const paneId = useLayoutStore.getState().addShellPane(), sessionId = await terminal.waitForSession(paneId, 10000);

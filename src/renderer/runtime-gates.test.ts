@@ -1,9 +1,11 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { RUNTIME_DOM_REQUEST, RUNTIME_DOM_REPLY } from '../shared/runtime-gates';
-const native = vi.hoisted(() => ({ spawn: vi.fn(() => 'ordinary-pane'), session: vi.fn(async () => 'ordinary-session'), open: vi.fn() }));
+const native = vi.hoisted(() => ({ spawn: vi.fn(() => 'ordinary-pane'), session: vi.fn(async () => 'ordinary-session'), open: vi.fn(),
+  current: vi.fn(() => 'ordinary-session'), confirmed: vi.fn(async () => true), operator: vi.fn(async () => true) }));
 vi.mock('./state/layout-store', () => ({ useLayoutStore: { getState: () => ({ spawnAgent: native.spawn }) } }));
-vi.mock('./terminal/terminal-host', () => ({ waitForSession: native.session }));
-vi.mock('./lib/split-tree', () => ({ listPanes: () => [] }));
+vi.mock('./terminal/terminal-host', () => ({ waitForSession: native.session, getPaneSessionId: native.current,
+  submitPromptToPaneConfirmed: native.confirmed, submitPromptToPaneOperatorInput: native.operator }));
+vi.mock('./lib/split-tree', () => ({ listPanes: () => [{ id: 'ordinary-pane', kind: 'cli-agent', adapterId: 'claude' }] }));
 vi.mock('./state/product-navigation-store', () => ({ useProductNavigationStore: { getState: () => ({ openTerminal: native.open }) } }));
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); vi.clearAllMocks(); });
 it.each(['nexus-app://bundle/index.html', 'https://foreign.invalid/index.html?nexusRuntimeGates=1', 'nexus-app://bundle/other.html?nexusRuntimeGates=1'])('remains dormant on %s, including a later marker edit', async href => {
@@ -41,4 +43,16 @@ it.each(['catalog-model', undefined])('F-1113/F-1119: normal operator pane prese
   win.dispatchEvent(new CustomEvent(RUNTIME_DOM_REQUEST, { detail: { nonce: '11111111-1111-4111-8111-111111111111', request: 0, operation: 'operator-pane', ...(model === undefined ? {} : { model }) } }));
   expect(await replied).toMatchObject({ ok: true, result: { paneId: 'ordinary-pane', sessionId: 'ordinary-session' } });
   expect(native.spawn).toHaveBeenCalledWith('claude', model ?? '');
+});
+it.each(['user-prompt', 'mission-prompt', 'foreign-session'] as const)('F-1118: finite normal prompt uses the correct exact-session submission lane (%s)', async operation => {
+  vi.stubGlobal('location', { href: 'nexus-app://bundle/index.html?nexusRuntimeGates=1' });
+  const win = new EventTarget(); vi.stubGlobal('window', win);
+  const { installRuntimeGateRenderer } = await import('./runtime-gates'); installRuntimeGateRenderer();
+  const replied = new Promise<any>(resolve => win.addEventListener(RUNTIME_DOM_REPLY, e => resolve((e as CustomEvent).detail), { once: true }));
+  const text = 'RT_GATE WRITE 11111111-1111-4111-8111-111111111111';
+  win.dispatchEvent(new CustomEvent(RUNTIME_DOM_REQUEST, { detail: { nonce: '11111111-1111-4111-8111-111111111111', request: 1,
+    operation: operation === 'foreign-session' ? 'mission-prompt' : operation, paneId: 'ordinary-pane', sessionId: operation === 'foreign-session' ? 'foreign' : 'ordinary-session', text } }));
+  expect(await replied).toMatchObject({ ok: operation !== 'foreign-session' });
+  if (operation === 'foreign-session') { expect(native.operator).not.toHaveBeenCalled(); expect(native.confirmed).not.toHaveBeenCalled(); }
+  else expect(operation === 'user-prompt' ? native.confirmed : native.operator).toHaveBeenCalledWith('ordinary-pane', text, 'ordinary-session');
 });

@@ -9,8 +9,9 @@ import type { AuditEntry } from './jarvis/audit-log';
 const deps = vi.hoisted(() => ({ grant: 'denied', scope: { version: 1 as const, identitySource: 'manifest' as const, installationId: 'i', projectId: 'p', checkoutId: 'c', rootRealPath: '' },
   manager: null as object | null, visual: vi.fn(), screenshot: vi.fn(), conversation: vi.fn((): { key: 'session_id'; id: string } | null => null),
   agents: [] as OwnedAgentSessionInfo[], snapshot: vi.fn(async (): Promise<Record<string, unknown>> => ({})), tap: null as null | ((id: string, text: string) => void),
-  probe: vi.fn(async (): Promise<unknown[]> => []), tapRemoved: vi.fn(), terminate: vi.fn(async () => true),
-  audit: [] as AuditEntry[], recovery: null as Record<string, unknown> | null, nativeDb: null as import('better-sqlite3').Database | null }));
+  probe: vi.fn(async (): Promise<unknown[] | null> => []), tapRemoved: vi.fn(), terminate: vi.fn(async () => true),
+  audit: [] as AuditEntry[], recovery: null as Record<string, unknown> | null, creation: null as Record<string, unknown> | null,
+  squads: new Map<string, import('../shared/orch-types').Squad>(), missions: new Map<string, import('../shared/orch-types').Mission>(), nativeDb: null as import('better-sqlite3').Database | null }));
 vi.mock('electron', () => ({ systemPreferences: { getMediaAccessStatus: () => deps.grant } }));
 vi.mock('node:child_process', () => {
   const refused = () => { throw new Error('subprocess forbidden in private runtime unit fixture'); };
@@ -19,7 +20,8 @@ vi.mock('node:child_process', () => {
 });
 vi.mock('./persistence/renderer-workspace-scope', () => ({ requireLiveRendererWorkspaceScope: () => deps.scope, getRendererWorkspaceScope: () => deps.scope,
   onRendererWorkspaceScopeChange: () => () => undefined }));
-vi.mock('./orch/project-domain-store-registry', () => ({ getProjectDomainStores: () => ({ missions: { get: (id: string) => ({ id, title: 'Runtime 11111111-1111-4111-8111-111111111111', intentContract: { lane: 'standard' } }) }, handoffs: { list: () => [] } }) }));
+vi.mock('./orch/project-domain-store-registry', () => ({ getProjectDomainStores: () => ({ missions: { get: (id: string) => deps.missions.get(id) ?? ({ id, title: 'Runtime 11111111-1111-4111-8111-111111111111', intentContract: { lane: 'standard' } }) }, handoffs: { list: () => [] } }) }));
+vi.mock('./orch/squad-store', () => ({ getSquad: (id: string) => deps.squads.get(id) }));
 vi.mock('./orch/mission-engine-registry', () => ({ missionEngineForScope: () => ({ snapshot: () => deps.snapshot() }) }));
 vi.mock('./pty/pty-manager', () => ({ listAgentSessions: () => deps.agents.map(agent => ({ ...agent, scope: { ...agent.scope },
   ...(agent.coordinationScope ? { coordinationScope: { ...agent.coordinationScope } } : {}) })), probePaneFootprints: () => deps.probe(), orchTerminateSession: () => deps.terminate(),
@@ -36,7 +38,9 @@ vi.mock('./orch/visual-handoff-gate', () => ({ checkVisualHandoff: deps.visual }
 vi.mock('./browser/browser-artifact-store', () => ({ createScopedBrowserArtifactStore: () => ({ verifiedScreenshot: deps.screenshot }) }));
 vi.mock('./orch/mission-event-emit', () => ({ getMissionEventRuntimeManager: () => deps.manager }));
 import { proveRuntimeGates } from './runtime-gates';
-import { RUNTIME_CHANNELS } from '../shared/runtime-gates';
+import { RUNTIME_CHANNELS, runtimeStandardProfile } from '../shared/runtime-gates';
+import { snapshotSquadAuthority } from './orch/squad-authority-snapshot';
+import { compileIntentContract } from '../shared/mission-intent';
 import { prepareEphemeralHome } from './orch/hooks-gen';
 import { startPreview, stopPreviewWithProof } from './orch/preview-server';
 import { ProjectRuntimeManager } from './runtime/project-runtime-manager';
@@ -57,10 +61,11 @@ async function fixture(options: { helloNonce?: string; helloPid?: number; homeMo
   for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
   vi.stubGlobal('fetch', async (url: string) => ({ ok: true, json: async () => url.endsWith('/runtime-recovery') ?
     { nonce: env.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE, pid: process.ppid, recovery: deps.recovery } :
+    url.endsWith('/runtime-created') ? { nonce: env.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE, pid: process.ppid, creation: deps.creation } :
     { nonce: options.helloNonce ?? env.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE, pid: options.helloPid ?? process.ppid } }));
   deps.scope.rootRealPath = path.join(root, 'workspace'); await fs.mkdir(deps.scope.rootRealPath);
   resetGateForTests(); deps.agents = []; deps.tap = null; deps.manager = null; deps.visual.mockReset(); deps.screenshot.mockReset(); deps.conversation.mockClear(); deps.probe.mockResolvedValue([]); deps.tapRemoved.mockClear();
-  deps.audit = []; deps.recovery = null; deps.terminate.mockResolvedValue(true); deps.conversation.mockReturnValue(null); deps.snapshot.mockResolvedValue({});
+  deps.audit = []; deps.recovery = null; deps.creation = null; deps.squads.clear(); deps.missions.clear(); deps.terminate.mockResolvedValue(true); deps.conversation.mockReturnValue(null); deps.snapshot.mockResolvedValue({});
   const url = 'nexus-app://bundle/index.html?nexusRuntimeGates=1', frame = { url }, session = { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() };
   const wc = Object.assign(new EventEmitter(), { mainFrame: frame, session, getURL: () => url, isDestroyed: () => false, getOSProcessId: () => 9999, send: vi.fn() });
   const win = Object.assign(new EventEmitter(), { webContents: wc }), handlers = new Map<string, (...args: any[]) => any>();
@@ -194,6 +199,40 @@ it('F-1117: a worker spawning during deferred footprints legitimately precedes i
       .toEqual([expect.objectContaining({ id: 'approved-writer', paneId: agent.paneId, agentName: 'Runtime writer', terminalLive: true })]);
   } finally { f.controller.abort(); await f.rejected; }
 });
+it.each(['current', 'wrong-session', 'stripped-tools', 'foreign-source', 'unapproved', 'missing-audit', 'foreign-audit', 'changed-intent', 'pending-footprints'] as const)(
+  'F-1118: Main binds the actual ROOT creation, owned creator, immutable profile and authenticated invocation (%s)', async change => {
+    const f = await fixture(), { agent } = await scopedAgent(f), marker = '11111111-1111-4111-8111-111111111111';
+    const source = runtimeStandardProfile(marker), runtime = { ...source, id: 'mission-runtime-44444444-4444-4444-8444-444444444444',
+      runtimeSourceSquadId: source.id, runtimeSourceSquadRevisionHash: snapshotSquadAuthority(source).hash, agents: source.agents.map(a => ({ ...a })) };
+    deps.squads.set(source.id, source); deps.squads.set(runtime.id, runtime);
+    const mission = { id: 'm', title: `Runtime standard ${marker}`, status: 'running', intentState: 'dispatched', intentVersion: 1, squadId: runtime.id,
+      orchestratorSessionId: agent.sessionId, intentContract: { ...compileIntentContract({ goal: 'Write runtime-report.txt and review the private runtime UI and report using at most two workers.', intentVersion: 1 }), approvedAt: 10, dispatchedAt: 11 } };
+    deps.missions.set('m', mission as never); deps.creation = { missionId: 'm', runtimeSquadId: runtime.id, creatorSessionId: agent.sessionId, intentVersion: 1 };
+    deps.audit = [{ timestamp: '2026-10-10T00:00:00.000Z', project_id: deps.scope.projectId, checkout_id: deps.scope.checkoutId,
+      duration_ms: 1, user_authorized: true, tool: 'nexus_mission_create', source: 'http-mcp', result: 'ok', session: agent.sessionId, invocation_id: 'actual-create-call',
+      args: { squadId: runtime.id, title: mission.title } }];
+    if (change === 'wrong-session') deps.creation.creatorSessionId = 'foreign-session';
+    if (change === 'stripped-tools') runtime.agents[1].allowedTools = [];
+    if (change === 'foreign-source') runtime.runtimeSourceSquadRevisionHash = 'b'.repeat(64);
+    if (change === 'unapproved') delete (mission.intentContract as { approvedAt?: number }).approvedAt;
+    if (change === 'missing-audit') deps.audit = [];
+    if (change === 'foreign-audit') deps.audit[0] = { ...deps.audit[0], source: 'ipc-renderer' };
+    if (change === 'pending-footprints') deps.probe.mockResolvedValueOnce(null);
+    let release: ((v: unknown[]) => void) | undefined;
+    if (change === 'changed-intent') deps.probe.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    try {
+      const request = f.request({ sender: f.wc, senderFrame: f.frame }, { operation: 'created-mission', sourceSquadId: source.id, runtimeSquadId: runtime.id,
+        creatorPaneId: agent.paneId, creatorSessionId: agent.sessionId });
+      if (change === 'changed-intent') {
+        await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+        mission.intentVersion = 2; mission.intentContract = { ...mission.intentContract, intentVersion: 2, goal: 'New approved intent' };
+        release!([{ sessionId: agent.sessionId, rootPid: 1234 }]);
+      }
+      if (change === 'current') await expect(request).resolves.toEqual({ missionId: 'm' });
+      else if (change === 'missing-audit' || change === 'pending-footprints') await expect(request).resolves.toEqual({});
+      else await expect(request).rejects.toThrow(/creation|profile|provenance/);
+    } finally { f.controller.abort(); await f.rejected; }
+  });
 it('records actual scoped output from the current execution worktree without treating coordination as its cwd', async () => {
   const f = await fixture(); await scopedAgent(f); const event = { sender: f.wc, senderFrame: f.frame };
   try {

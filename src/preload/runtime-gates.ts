@@ -1,5 +1,6 @@
 import type { NexusApi } from '../shared/types';
-import { RUNTIME_CHANNELS, RUNTIME_DOM_REQUEST, RUNTIME_DOM_REPLY } from '../shared/runtime-gates';
+import { RUNTIME_CHANNELS, RUNTIME_DOM_REQUEST, RUNTIME_DOM_REPLY, runtimeStandardProfile } from '../shared/runtime-gates';
+import { isMissionRuntimeSquadId } from '../shared/orch-types';
 import { soakNonce } from '../shared/soak-smoke';
 import { runFunctionalSmokeProbes } from './functional-smoke';
 import { sameRuntimeConversation } from '../shared/runtime-gate-proof';
@@ -51,6 +52,25 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
       }, `current canonical ${expected.agentName}`);
       return joined.snapshot.agents.find((a: any) => a.paneId === expected.paneId).id;
     };
+    const standardDirect = async (missionId: string, text: string, worker?: any) => {
+      if (worker) await agentFor(missionId, worker);
+      const value = worker ?? (await poll(() => observe(missionId), v => v.missionId === missionId && v.snapshot.id === missionId &&
+        v.agents.filter((a: any) => a.role === 'orchestrator' && a.pid > 0).length === 1 && v.snapshot.agents.some((a: any) => a.category === 'orchestrator' &&
+          a.terminalLive === true && a.paneId === v.agents.find((p: any) => p.role === 'orchestrator')?.paneId), 'current standard operator leader')).agents.find((a: any) => a.role === 'orchestrator');
+      await ui('mission-prompt', { missionId, paneId: value.paneId, sessionId: value.sessionId, text }); check();
+    };
+    const prepareStandard = async () => {
+      const saved = await api.orch.saveSquad(runtimeStandardProfile(marker)); check();
+      if (!saved.ok || !saved.squad || saved.squad.id !== `runtime-profile-${marker}` || saved.squad.builtin) throw new Error('normal private catalog save refused');
+      const runtime = await api.orch.saveSquad(saved.squad, { purpose: 'mission-runtime', guided: false, sourceSquadId: saved.squad.id }); check();
+      if (!runtime.ok || !runtime.squad || !isMissionRuntimeSquadId(runtime.squad.id) || !runtime.squad.id.startsWith('mission-runtime-') ||
+        runtime.squad.runtimeSourceSquadId !== saved.squad.id || JSON.stringify(runtime.squad.agents) !== JSON.stringify(saved.squad.agents)) throw new Error('normal private runtime profile differs');
+      const operator = await ui('operator-pane');
+      await ui('user-prompt', { ...operator, text: `RT_GATE CREATE ${marker} ${runtime.squad.id}` });
+      const created = await poll(() => request('created-mission', { sourceSquadId: saved.squad!.id, runtimeSquadId: runtime.squad!.id,
+        creatorPaneId: operator.paneId, creatorSessionId: operator.sessionId }), v => typeof v.missionId === 'string', 'actual USER-created standard mission');
+      return created.missionId;
+    };
     const prepare = async (lane: 'ops' | 'standard') => {
       const tools = ['nexus_pane_spawn', 'nexus_handoff_submit', 'nexus_handoff_list', 'nexus_handoff_ack', 'nexus_clarify', 'nexus_mission_set_status', 'nexus_terminal_run', 'nexus_file_read', 'nexus_file_write', 'nexus_preview_start', 'nexus_browser_open', 'nexus_browser_screenshot'];
       const review = await api.mission.prepare({ title: `Runtime ${lane} ${marker}`, objective: lane === 'ops' ?
@@ -87,23 +107,22 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         await api.mission.command({ kind: 'answer-question', missionId: opsId, questionId: question.id, optionId: question.options[0].id });
         await poll(() => observe(opsId), v => !v.snapshot.question, 'question answer'); checks['question-answer'] = true;
         await shutdownMission(opsId);
-        const standardId = await prepare('standard');
+        const standardId = await prepareStandard();
         let observed = await observe(standardId);
-        if (!observed.agents.some((a: any) => a.role === 'worker')) await direct(standardId, `RT_GATE SPAWN ${marker}`);
         observed = await poll(() => observe(standardId), v => v.agents.some((a: any) => a.role === 'worker' && a.agentName === 'Runtime writer'), 'actual standard writer');
         const workers = observed.agents.filter((a: any) => a.role === 'worker');
         if (workers.length > 2 || workers.some((a: any) => a.adapterId !== 'claude' || !a.pid)) throw new Error('worker inventory invalid'); checks['standard-workers'] = true;
         const writer = workers.find((a: any) => a.agentName === 'Runtime writer');
-        await direct(standardId, `RT_GATE IDLE ${marker}`, await agentFor(standardId, writer));
+        await standardDirect(standardId, `RT_GATE IDLE ${marker}`, writer);
         observed = await poll(() => observe(standardId), v => v.agents.some((a: any) => a.paneId === writer.paneId && a.conversation), 'native conversation recorded');
         const original = observed.agents.find((a: any) => a.paneId === writer.paneId);
         await request('terminate', { sessionId: original.sessionId });
-        await direct(standardId, `RT_GATE RECOVER ${marker} ${original.paneId} ${original.sessionId}`);
+        await standardDirect(standardId, `RT_GATE RECOVER ${marker} ${original.paneId} ${original.sessionId}`);
         observed = await poll(() => observe(standardId), v => v.recovery?.fromPaneId === original.paneId && v.recovery.fromSessionId === original.sessionId &&
           v.agents.some((a: any) => a.paneId === v.recovery.paneId && a.sessionId === v.recovery.sessionId && a.pid > 0), 'worker recovery');
         const recovered = observed.agents.find((a: any) => a.paneId === observed.recovery.paneId && a.sessionId === observed.recovery.sessionId);
         if (!sameRuntimeConversation(recovered.conversation, original.conversation)) throw new Error('worker recovery lost exact conversation'); checks['worker-recovery'] = true;
-        await direct(standardId, `RT_GATE WRITE ${marker}`, await agentFor(standardId, recovered));
+        await standardDirect(standardId, `RT_GATE WRITE ${marker}`, recovered);
         await poll(() => observe(standardId), v => v.handoffs.some((h: any) => h.sessionId === recovered.sessionId && h.status === 'success' && h.summary.includes(`RT_WRITE_${marker}`)), 'actual writer handoff');
         observed = await poll(() => observe(standardId), v => {
           const candidates = v.agents.filter((a: any) => a.role === 'worker' && a.agentName === 'Runtime reviewer');
@@ -111,9 +130,9 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
           return candidates.length === 1 && candidates[0].pid > 0;
         }, 'actual named reviewer');
         const reviewer = observed.agents.find((a: any) => a.role === 'worker' && a.agentName === 'Runtime reviewer');
-        await direct(standardId, `RT_GATE REVIEW ${marker}`, await agentFor(standardId, reviewer));
+        await standardDirect(standardId, `RT_GATE REVIEW ${marker}`, reviewer);
         await poll(() => observe(standardId), v => v.handoffs.some((h: any) => h.sessionId === reviewer.sessionId && h.status === 'success' && h.summary.includes(`RT_REVIEW_${marker}`)), 'actual reviewer handoff');
-        await direct(standardId, `RT_GATE ACK ${marker}`);
+        await standardDirect(standardId, `RT_GATE ACK ${marker}`);
         observed = await poll(() => observe(standardId), v => v.audit.some((a: any) => a.tool === 'nexus_handoff_ack' && a.result === 'ok' && a.source === 'http-mcp'), 'physical Maestro ACK'); checks['handoff-ack'] = true;
         await poll(() => observe(standardId), v => v.agents.some((a: any) => a.visual?.assignmentId && a.visual.artifactId), 'Main visual assignment capture'); checks['visual-capture'] = true;
         const memory = await api.memory.attest({ type: 'architecture-rule', title: 'Private runtime fixture', summary: `RT_MEMORY_${marker}`, scope: 'workspace' }); check();

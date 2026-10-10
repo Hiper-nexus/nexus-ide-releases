@@ -35,6 +35,35 @@ it('does not execute product APIs for incomplete/foreign private instructions', 
 it('does not install the private driver in a subframe', () => {
   const ipc = { on: vi.fn() }; installRuntimeGatePreload(ipc as never, {} as never, { isMainFrame: false }); expect(ipc.on).not.toHaveBeenCalled();
 });
+it('F-1118: standard uses the normal explicit catalog/runtime profile and ordinary USER creation instead of guided preparation', async () => {
+  let question = false, stopped = false;
+  const saves: Array<{ squad: any; options: any }> = [];
+  const marker = '22222222-2222-4222-8222-222222222222';
+  const ipc = Object.assign(new EventEmitter(), { invoke: async () => ({ agents: stopped ? [] : [{ role: 'orchestrator', pid: 123 }],
+    audit: [{ tool: 'nexus_terminal_run', result: 'ok' }], snapshot: { question: question ? { id: 'q', options: [{ id: 'go' }] } : undefined } }),
+    send: (channel: string, value: unknown) => ipc.emit(channel, value) });
+  const api = { mission: { prepare: async (value: any) => { if (value.advanced.lane !== 'ops') throw new Error('guided standard strips explicit tools'); return { missionId: 'ops', reviewSha256: 'review' }; },
+    start: async () => ({}), command: async (value: any) => { if (value.text?.includes('QUESTION')) question = true;
+      if (value.kind === 'answer-question') question = false; if (value.kind === 'stop') stopped = true; return {}; } },
+    orch: { saveSquad: async (squad: any, options?: any) => { saves.push({ squad, options });
+      if (options) throw new Error('private actual-runtime producer boundary'); return { ok: true, squad }; } } };
+  const ui = (event: Event) => { const detail = (event as CustomEvent).detail; window.dispatchEvent(new CustomEvent(RUNTIME_DOM_REPLY,
+    { detail: { nonce: detail.nonce, request: detail.request, ok: true, result: { visible: true } } })); };
+  const ended = new Promise<void>(resolve => ipc.once(RUNTIME_CHANNELS.result, () => resolve()));
+  window.addEventListener(RUNTIME_DOM_REQUEST, ui);
+  try {
+    installRuntimeGatePreload(ipc as never, api as never, { isMainFrame: true });
+    ipc.emit(RUNTIME_CHANNELS.run, null, { nonce: '11111111-1111-4111-8111-111111111111', gatewayNonce: marker, phase: 'exercise', workspacePath: '/private/runtime-fixture' });
+    await ended;
+    expect(saves).toHaveLength(2);
+    expect(saves[0].options).toBeUndefined();
+    expect(saves[1].options).toEqual({ purpose: 'mission-runtime', guided: false, sourceSquadId: saves[0].squad.id });
+    const writer = saves[0].squad.agents.find((a: any) => a.agentName === 'Runtime writer');
+    const reviewer = saves[0].squad.agents.find((a: any) => a.agentName === 'Runtime reviewer');
+    expect(writer.allowedTools).toEqual(['nexus_file_write', 'nexus_preview_start', 'nexus_browser_open', 'nexus_browser_screenshot', 'nexus_handoff_submit']);
+    expect(reviewer.allowedTools).toEqual(['nexus_file_read', 'nexus_handoff_submit']);
+  } finally { window.removeEventListener(RUNTIME_DOM_REQUEST, ui); }
+});
 it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer', 'canonical-initial', 'canonical-recovered', 'canonical-reviewer', 'stale-session', 'stale-binding', 'foreign-snapshot', 'ambiguous-snapshot'])('F-1112/F-1117: selects current named canonical workers and preserves report causality (%s)', async stage => {
   const refusedJoin = ['stale-session', 'stale-binding', 'foreign-snapshot', 'ambiguous-snapshot'].includes(stage);
   if (stage === 'missing-reviewer' || refusedJoin) vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
@@ -47,6 +76,7 @@ it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer', '
   const newWriter = { ...writer, paneId: 'returned-writer', sessionId: 'new-writer-sid', pid: 202 };
   const chief = { ...writer, role: 'orchestrator', agentName: 'Runtime chief', paneId: 'chief-pane', sessionId: 'chief-sid', pid: 199 };
   const ipc = Object.assign(new EventEmitter(), { invoke: async (_channel: string, request: { operation: string; missionId: string }) => {
+    if (request.operation === 'created-mission') return { missionId: 'std' };
     if (writeDirected && request.operation === 'observe') reportReady = true;
     if (request.operation === 'observe' && request.missionId === 'std') standardReads++;
     const writerPending = (stage === 'canonical-initial' || refusedJoin) && standardReads <= 3 || stage === 'canonical-recovered' && resumed && !writeDirected && recoveredReads++ === 0;
@@ -56,6 +86,7 @@ it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer', '
     const canonical = [
       ...(!reviewerPending ? [{ id: 'reviewer-id', paneId: reviewer.paneId, agentName: reviewer.agentName, category: 'reviewer', cli: 'claude', state: 'waiting', terminalLive: true }] : []),
       ...(!writerPending ? [{ id: 'writer-id', paneId: currentWriter.paneId, agentName: writer.agentName, category: 'executor', cli: 'claude', state: 'waiting', terminalLive: true }] : []),
+      { id: 'chief-id', paneId: chief.paneId, agentName: chief.agentName, category: 'orchestrator', cli: 'claude', state: 'waiting', terminalLive: true },
     ];
     if (stage === 'ambiguous-snapshot' && !writerPending) canonical.push({ ...canonical[1], id: 'competing-approved-id' });
     return request.operation !== 'observe' ? {} :
@@ -66,8 +97,7 @@ it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer', '
       snapshot: { id: stage === 'foreign-snapshot' ? 'foreign-mission' : 'std', agents: canonical } };
   },
     send: (channel: string, value: unknown) => ipc.emit(channel, value) });
-  const api = { mission: { prepare: async () => ({ missionId: prepared++ ? 'std' : 'ops', reviewSha256: 'unit-review' }), start: async () => ({}),
-    command: async (value: { kind: string; missionId: string; text?: string; targetAgentId?: string }) => {
+  const command = async (value: { kind: string; missionId: string; text?: string; targetAgentId?: string }) => {
       if (value.kind === 'answer-question') question = false;
       if (value.kind === 'stop') opsStopped = true;
       if (value.text?.includes('RT_GATE QUESTION')) question = true;
@@ -78,9 +108,17 @@ it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer', '
       if (value.text?.includes('RT_GATE REVIEW')) { directions.push({ targetAgentId: value.targetAgentId!, text: String(reportReady) }); throw new Error('private report-order test ended'); }
       if (value.text?.includes('RT_GATE ACK')) { directions.push({ targetAgentId: 'none', text: 'ACK sent without review' }); throw new Error('private missing-review test ended'); }
       return {};
-    } } };
-  const ui = (event: Event) => { const detail = (event as CustomEvent).detail; window.dispatchEvent(new CustomEvent(RUNTIME_DOM_REPLY,
-    { detail: { nonce: detail.nonce, request: detail.request, ok: true, result: { visible: true } } })); };
+    };
+  const api = { mission: { prepare: async () => ({ missionId: prepared++ ? 'std' : 'ops', reviewSha256: 'unit-review' }), start: async () => ({}), command },
+    orch: { saveSquad: async (squad: any, options?: any) => ({ ok: true, squad: options ? { ...squad, id: 'mission-runtime-44444444-4444-4444-8444-444444444444',
+      runtimeSourceSquadId: squad.id, runtimeSourceSquadRevisionHash: 'a'.repeat(64) } : squad }) } };
+  const ui = (event: Event) => { const detail = (event as CustomEvent).detail;
+    const run = detail.operation === 'mission-prompt' ? command({ kind: 'direct', missionId: 'std', text: detail.text,
+      targetAgentId: detail.paneId === reviewer.paneId ? 'reviewer-id' : 'writer-id' }) : Promise.resolve();
+    void run.then(() => window.dispatchEvent(new CustomEvent(RUNTIME_DOM_REPLY, { detail: { nonce: detail.nonce, request: detail.request, ok: true,
+      result: { visible: true, paneId: chief.paneId, sessionId: chief.sessionId } } })), () => window.dispatchEvent(new CustomEvent(RUNTIME_DOM_REPLY,
+        { detail: { nonce: detail.nonce, request: detail.request, ok: false } })));
+  };
   window.addEventListener(RUNTIME_DOM_REQUEST, ui);
   const ended = new Promise<void>(resolve => ipc.once(RUNTIME_CHANNELS.result, () => resolve()));
   try {

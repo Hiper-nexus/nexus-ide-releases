@@ -61,8 +61,8 @@ function writeReply(messages, step, tool, calls, nonce) {
 /** Only inference is simulated. Every Nexus tool result must come from the real installed CLI. */
 export async function startRuntimeGateway(nonce) {
   if (!/^[a-f0-9-]{36}$/u.test(nonce)) throw new Error('runtime gateway nonce invalid');
-  let requests = 0, stopped = false, closeFlight = null, recovery = null;
-  const sockets = new Set(), observations = [], questionCalls = [], writeCalls = [], recoveryCalls = [], reviewCalls = [];
+  let requests = 0, stopped = false, closeFlight = null, recovery = null, creation = null;
+  const sockets = new Set(), observations = [], questionCalls = [], writeCalls = [], recoveryCalls = [], reviewCalls = [], createCalls = [];
   const server = http.createServer((req, res) => {
     req.setTimeout(5000, () => req.destroy());
     if (stopped) { res.writeHead(503); res.end(); return; }
@@ -70,6 +70,10 @@ export async function startRuntimeGateway(nonce) {
     if (req.url === '/runtime-recovery' && req.method === 'GET') {
       if (req.headers['x-api-key'] !== `rt-${nonce}`) { res.writeHead(401); res.end('{}'); return; }
       res.end(JSON.stringify({ nonce, pid: process.pid, recovery })); return;
+    }
+    if (req.url === '/runtime-created' && req.method === 'GET') {
+      if (req.headers['x-api-key'] !== `rt-${nonce}`) { res.writeHead(401); res.end('{}'); return; }
+      res.end(JSON.stringify({ nonce, pid: process.pid, creation })); return;
     }
     const requestPath = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
     if (req.method !== 'POST' || !['/v1/messages', '/v1/messages/count_tokens'].includes(requestPath)) { res.writeHead(404); res.end('{}'); return; }
@@ -83,10 +87,10 @@ export async function startRuntimeGateway(nonce) {
         if (req.url.includes('count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
         const all = objects(body.messages), text = all.flatMap(v => typeof v.text === 'string' ? [v.text] : []).concat(
           (body.messages ?? []).flatMap(v => typeof v.content === 'string' ? [v.content] : [])).join('\n');
-        const markers = [...text.matchAll(/RT_GATE (OPS|SPAWN|WRITE|REVIEW|ACK|QUESTION|RECOVER|RESUME|IDLE)/gu)];
+        const markers = [...text.matchAll(/RT_GATE (CREATE|OPS|SPAWN|WRITE|REVIEW|ACK|QUESTION|RECOVER|RESUME|IDLE)/gu)];
         const kind = markers.at(-1)?.[1];
         const assistantBlocks = (body.messages ?? []).filter(message => message.role === 'assistant' && Array.isArray(message.content)).flatMap(message => message.content);
-        const used = (['QUESTION', 'WRITE', 'RECOVER', 'REVIEW'].includes(kind) ? assistantBlocks : all).filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
+        const used = (['CREATE', 'QUESTION', 'WRITE', 'RECOVER', 'REVIEW'].includes(kind) ? assistantBlocks : all).filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
         const step = used.length;
         if (kind === 'QUESTION' && (!text.includes(`RT_GATE QUESTION ${nonce}`) || step > 2)) throw new Error('QUESTION instruction scope or step invalid');
         const tool = (suffix, input) => {
@@ -98,10 +102,30 @@ export async function startRuntimeGateway(nonce) {
           if (kind === 'WRITE') writeCalls[step] = call;
           if (kind === 'RECOVER') recoveryCalls[step] = call;
           if (kind === 'REVIEW') reviewCalls[step] = call;
+          if (kind === 'CREATE') createCalls[step] = call;
           return call;
         };
         let content = { type: 'text', text: 'Runtime fixture ready; waiting for scoped verifier instruction.' };
-        if (kind === 'OPS' && step === 0) content = tool('nexus_terminal_run', { command: `printf RT_OPS_${nonce}` });
+        if (kind === 'CREATE') {
+          const target = [...text.matchAll(/RT_GATE CREATE ([a-f0-9-]{36}) (mission-runtime-[a-f0-9-]{36})(?=\s|$)/gu)].at(-1);
+          if (!target || target[1] !== nonce || step > 3) throw new Error('real CREATE instruction scope invalid');
+          if (step === 0) content = tool('nexus_mission_create', { title: `Runtime standard ${nonce}`,
+            description: 'Write runtime-report.txt and review the private runtime UI and report using at most two workers.', squadId: target[2],
+            milestones: ['Write the private runtime report and capture.', 'Read and review the report with the named reviewer.'] });
+          else {
+            const issued = createCalls[0], call = used[0];
+            if (!issued || call.id !== issued.id || call.name !== issued.name || JSON.stringify(call.input) !== JSON.stringify(issued.input)) throw new Error('real CREATE call differs');
+            const result = toolResult(body.messages, issued, 'CREATE');
+            if (typeof result.id !== 'string' || !result.id || result.squadId !== target[2] || result.title !== issued.input.title || result.status !== 'running' ||
+              result.intentState !== 'dispatched' || result.intentVersion !== 1 || result.intentContract?.intentVersion !== 1 || result.intentContract.lane !== 'standard' ||
+              !result.intentContract.approvedAt || !result.intentContract.dispatchedAt || typeof result.orchestratorSessionId !== 'string' || !result.orchestratorSessionId) throw new Error('real ROOT CREATE result invalid');
+            creation = { missionId: result.id, runtimeSquadId: result.squadId, creatorSessionId: result.orchestratorSessionId, intentVersion: result.intentVersion };
+            if (step < 3) content = tool('nexus_pane_spawn', { adapterId: 'claude', agentName: step === 1 ? 'Runtime writer' : 'Runtime reviewer', role: 'worker',
+              readOnly: step === 2, autoCloseOnHandoff: false, task: step === 1 ? 'Fix the UI visual fixture inspection report' : 'Review runtime report',
+              prompt: `RT_GATE IDLE ${nonce}. ${step === 1 ? 'Fix the UI visual fixture inspection report: capture the local page with the Nexus browser and write runtime-report.txt when instructed.' : 'Review the report when instructed.'} Wait for the scoped follow-up; use only Nexus tools within the approved private workspace.` });
+          }
+        }
+        else if (kind === 'OPS' && step === 0) content = tool('nexus_terminal_run', { command: `printf RT_OPS_${nonce}` });
         else if (kind === 'SPAWN' && step < 2) content = tool('nexus_pane_spawn', { adapterId: 'claude', agentName: step ? 'Runtime reviewer' : 'Runtime writer',
           role: 'worker', readOnly: step === 1, autoCloseOnHandoff: false, task: step ? 'Review runtime report' : 'Fix the UI visual fixture inspection report',
           prompt: `RT_GATE IDLE ${nonce}. ${step ? 'Review the report when instructed.' : 'Fix the UI visual fixture inspection report: capture the local page with the Nexus browser and write runtime-report.txt when instructed.'} Wait for the scoped follow-up; use only Nexus tools within the approved private workspace.` });

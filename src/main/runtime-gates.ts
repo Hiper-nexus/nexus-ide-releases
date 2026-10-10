@@ -5,7 +5,12 @@ import { randomUUID, createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { systemPreferences, type BrowserWindow, type IpcMain } from 'electron';
-import { RUNTIME_CHANNELS, RUNTIME_TIMEOUT_MS, parseRuntimeRequest, assertRuntimeProof } from '../shared/runtime-gates';
+import { RUNTIME_CHANNELS, RUNTIME_TIMEOUT_MS, parseRuntimeRequest, assertRuntimeProof, runtimeStandardProfile } from '../shared/runtime-gates';
+import { hasCurrentDispatchAuthority } from '../shared/mission-intent';
+import { isMissionRuntimeSquadId } from '../shared/orch-types';
+import { getSquad } from './orch/squad-store';
+import { snapshotSquadAuthority } from './orch/squad-authority-snapshot';
+import { hashMissionIntentAuthority } from './orch/mission-pane-authority';
 import { deriveRuntimeChecks, sameRuntimeConversation } from '../shared/runtime-gate-proof';
 import { runtimeGateConfiguration, armPrivateRuntimeClaudeConsent } from './runtime-gate-mode';
 import { requireLiveRendererWorkspaceScope } from './persistence/renderer-workspace-scope';
@@ -69,6 +74,8 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
   };
   const history: unknown[] = [], terminated = new Set<string>();
   type WorkerBaseline = { missionId: string; paneId: string; sessionId: string; pid: number; conversation: unknown; bindingSha256: string };
+  const standardProfiles = new Map<string, { runtimeSquadId: string; runtimeHash: string; intentVersion: number; intentHash: string;
+    creatorSessionId: string; creatorPaneId: string; invocationId: string }>();
   const observedWorkers = new Map<string, WorkerBaseline>();
   const terminatedWorkers = new Map<string, WorkerBaseline & { priorInvocations: Set<string | undefined> }>();
   let stopped = false, flight: Promise<unknown> | null = null, releaseVoice: (() => void) | null = null;
@@ -190,6 +197,43 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
           if (!armedShells.has(req.sessionId) || !echoSessions.has(req.sessionId) || !isSessionOwnedBy(wc, req.sessionId) || getSessionCwd(req.sessionId) !== input.workspacePath) throw new Error('move does not identify the live private echoed PTY');
           visibleMoves.add(req.sessionId); return { recorded: true };
         }
+        if (req.operation === 'created-mission') {
+          const response = await fetch(`${config.gateway}/runtime-created`, { headers: { 'x-api-key': `rt-${config.gatewayNonce}` },
+            signal: AbortSignal.any([input.signal, AbortSignal.timeout(5000)]) }).then(r => { if (!r.ok) throw new Error('created mission exchange refused'); return r.json(); }); current();
+          if (response.nonce !== config.gatewayNonce || response.pid !== process.ppid) throw new Error('created mission launcher differs');
+          if (!response.creation) return {};
+          const source = getSquad(req.sourceSquadId), runtime = getSquad(req.runtimeSquadId), expected = runtimeStandardProfile(config.gatewayNonce);
+          const creation = response.creation, mission = stores.missions.get(creation.missionId);
+          const roleCaps = (squad: typeof expected) => squad.agents.map(a => [a.id, a.agentName, a.category, a.cli, a.allowedTools]);
+          if (!source || !runtime || source.id !== expected.id || !isMissionRuntimeSquadId(runtime.id) || !runtime.id.startsWith('mission-runtime-') ||
+            runtime.runtimeSourceSquadId !== source.id || runtime.runtimeSourceSquadRevisionHash !== snapshotSquadAuthority(source).hash ||
+            JSON.stringify(roleCaps(source)) !== JSON.stringify(roleCaps(expected)) || JSON.stringify(runtime.agents) !== JSON.stringify(source.agents) ||
+            creation.runtimeSquadId !== runtime.id || creation.creatorSessionId !== req.creatorSessionId || !mission || mission.squadId !== runtime.id ||
+            creation.intentVersion !== 1 || mission.intentVersion !== creation.intentVersion || mission.title !== `Runtime standard ${config.gatewayNonce}` ||
+            mission.intentContract?.goal !== 'Write runtime-report.txt and review the private runtime UI and report using at most two workers.' ||
+            mission.intentContract.lane !== 'standard' || !hasCurrentDispatchAuthority(mission) ||
+            mission.orchestratorSessionId !== req.creatorSessionId) throw new Error('normal standard profile or ROOT creation differs');
+          const creators = listAgentSessions().filter(a => a.missionId === mission.id && a.role === 'orchestrator' && verifiedAgent(a));
+          const creator = creators[0];
+          if (creators.length !== 1 || creator.paneId !== req.creatorPaneId || creator.sessionId !== req.creatorSessionId) throw new Error('normal standard creator identity differs');
+          const { assertCurrent } = captureAgentBinding(creator);
+          const runtimeHash = snapshotSquadAuthority(runtime).hash;
+          const intentVersion = mission.intentVersion!, intentHash = hashMissionIntentAuthority(JSON.parse(JSON.stringify(mission.intentContract)));
+          const footprints = await probePaneFootprints(); current(); assertCurrent();
+          const audit = readAuditLog({ scope }, 2000).filter(a => a.tool === 'nexus_mission_create' && a.session === creator.sessionId && a.args.squadId === runtime.id && a.args.title === mission.title);
+          const calls = audit.filter(a => a.result === 'ok' && a.source === 'http-mcp' && a.invocation_id);
+          if (audit.every(a => a.result === 'intent')) return {};
+          const freshRuntime = getSquad(runtime.id), freshMission = stores.missions.get(mission.id);
+          if (calls.length !== 1 ||
+            !freshRuntime || snapshotSquadAuthority(freshRuntime).hash !== runtimeHash || !freshMission || freshMission.orchestratorSessionId !== creator.sessionId ||
+            freshMission.intentVersion !== intentVersion || !freshMission.intentContract || hashMissionIntentAuthority(JSON.parse(JSON.stringify(freshMission.intentContract))) !== intentHash ||
+            !hasCurrentDispatchAuthority(freshMission))
+            throw new Error('normal standard creation provenance changed');
+          if (!footprints?.some(p => p.sessionId === creator.sessionId && p.rootPid !== null && p.rootPid > 0)) return {};
+          standardProfiles.set(mission.id, { runtimeSquadId: runtime.id, runtimeHash, intentVersion, intentHash,
+            creatorSessionId: creator.sessionId, creatorPaneId: creator.paneId!, invocationId: calls[0].invocation_id! });
+          return { missionId: mission.id };
+        }
         if (req.operation === 'observe') {
           const mission = stores.missions.get(req.missionId);
           if (!mission || !mission.title.includes(config.gatewayNonce)) throw new Error('private mission absent');
@@ -252,7 +296,14 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
             { missionId: mission.id, paneId: a.paneId, sessionId: a.sessionId, pid: a.pid, conversation: { ...a.conversation }, bindingSha256: a.bindingSha256 });
           stagedCaptures.forEach(capture => captures.set(capture.artifactId, capture));
           const leaders = snapshot.agents?.filter(a => a.category === 'orchestrator' && a.terminalLive === true && a.paneId) ?? [];
+          const profile = standardProfiles.get(mission.id);
+          const liveRuntime = profile && getSquad(profile.runtimeSquadId);
+          const liveMission = profile && stores.missions.get(mission.id);
+          if (profile && (!liveRuntime || !liveMission || liveMission.squadId !== profile.runtimeSquadId || snapshotSquadAuthority(liveRuntime).hash !== profile.runtimeHash ||
+            liveMission.intentVersion !== profile.intentVersion || !liveMission.intentContract || hashMissionIntentAuthority(JSON.parse(JSON.stringify(liveMission.intentContract))) !== profile.intentHash))
+            throw new Error('normal standard runtime profile changed');
           const result = { missionId: mission.id, lane: mission.intentContract?.lane, status: mission.status, snapshot, agents,
+            ...(profile ? { profile } : {}),
             squadId: mission.squadId ?? null, adoptedPaneId: mission.intentContract?.workspaceBinding?.adoptedPaneId,
             ...(recovery ? { recovery } : {}),
             handoffs: stores.handoffs.list({ missionId: mission.id, includeDelivered: true }),
@@ -303,6 +354,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
         if (proof.nonce !== nonce || flight || commandProbeFailed || !parseFunctionalSmokeResult(proof.finalFunctional)?.ok) throw new Error('runtime nonce/functionality mismatch');
         const state = proof.state as { standardId: string; continuityMissionId: string; chiefPaneId: string; chiefSessionId: string; chiefPid: number; bindingSha256: string; conversation: unknown; memoryId: string; marker: string };
         if (!state || state.marker !== config.gatewayNonce || typeof state.memoryId !== 'string') throw new Error('runtime state absent');
+        if (config.phase === 'exercise' && !standardProfiles.has(state.standardId)) throw new Error('Main standard profile proof absent');
         if (config.phase === 'resume' && JSON.stringify(state) !== JSON.stringify(prior)) throw new Error('runtime native state differs from Main history');
         const memoryIds = getWorkspaceMemoryStore(scope).recall({ query: `RT_MEMORY_${config.gatewayNonce}`, includeGlobal: false }).filter(h => h.content.includes(config.gatewayNonce) && h.scope === 'workspace').map(h => h.id);
         const facts = { phase: config.phase, history, terminated: [...terminated], memoryIds, marker: config.gatewayNonce, state,
