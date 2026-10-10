@@ -21,6 +21,7 @@ my ($brief) = sort { length($b) <=> length($a) } @ARGV;
 $brief //= '';
 my $chief = $brief =~ /Papel: você é Runtime chief/;
 my $profile_fixture = ($ENV{NEXUS_CONTROLLED_PROFILE_FIXTURE} // '') eq '1';
+my $swallow_first_enter = ($ENV{NEXUS_CONTROLLED_SWALLOW_FIRST_ENTER} // '') eq '1';
 my $native_id = 'controlled-' . $$;
 if ($profile_fixture) {
   my $native_hex = sha256_hex("controlled-native-conversation-$$");
@@ -103,6 +104,13 @@ while (1) {
   last unless $n;
   $buffer .= $chunk;
   next unless $buffer =~ /\r/;
+  if ($swallow_first_enter) {
+    $buffer =~ s/\r//;
+    $swallow_first_enter = 0;
+    record('prompt-enter', { pid => $$, kind => 'swallowed', bytes => length($buffer), sha256 => sha256_hex($buffer) });
+    print "Controlled first Enter swallowed; composer remains pending.\r\n";
+    next;
+  }
   my ($text, $rest) = split(/\r/, $buffer, 2); $buffer = $rest // '';
   next unless length($text);
   my $envelope;

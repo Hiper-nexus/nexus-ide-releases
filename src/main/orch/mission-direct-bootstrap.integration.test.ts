@@ -651,4 +651,83 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     } finally {termination?.mockRestore(); proofCheck?.mockRestore(); state.adapter!.spawn.initialPrompt = promptDelivery;}
     expect(pty.getAgentSessionInfo(callerSessionId)).toEqual(caller);
   }, 120_000);
+
+  it.runIf(CONTROLLED)('F-1122: registered Main/real PTY proves the native turn after one swallowed Enter without repasting', async () => {
+    profileFlow = true;
+    const receipts = path.join(root, 'prompt-proof-cli'); fs.mkdirSync(receipts, { mode: 0o700 });
+    profileOriginalAdapter = state.adapter;
+    state.adapter = { ...state.adapter!, env: { ...state.adapter!.env, static: { ...state.adapter!.env?.static,
+      NEXUS_CONTROLLED_CLI_DIR: receipts, NEXUS_CONTROLLED_PROFILE_FIXTURE: '1', NEXUS_CONTROLLED_SWALLOW_FIRST_ENTER: '1' } } };
+    const { initUsageTelemetry, shutdownUsageTelemetry } = await import('../usage/usage-service');
+    await initUsageTelemetry(profileManager!); closeUsage = shutdownUsageTelemetry;
+    const { startAgentHookHttpServer } = await import('../agent-hooks/hook-http-server');
+    const hooks = await startAgentHookHttpServer({ userDataPath: state.userData }); closeAgentHooks = hooks.close;
+    const pty = await import('../pty/pty-manager'); pty.configureAgentHookEndpointPath(hooks.endpointFilePath);
+    const { PTY_CHANNELS } = await import('../../shared/channels');
+    const { getContextBySession } = await import('./gate');
+    const { getProviderPaneSession } = await import('../persistence/provider-session-store');
+    const { submitPromptToPaneConfirmed } = await import('../../renderer/terminal/pane-submit');
+    const invoke = (channel: string, input: unknown) => state.handlers.get(channel)!({ sender: owner, senderFrame: owner.mainFrame }, input);
+    const paneId = `prompt-proof-user-${nonce}`;
+    const spawned = await invoke(PTY_CHANNELS.spawn, { kind: 'cli-agent', adapterId: 'claude', paneId, cwd: repo, cols: 80, rows: 24,
+      resume: false, resumeLatestOnly: false, restorePersistedAuthority: false }) as { ok: boolean; sessionId: string; error?: string };
+    expect(spawned.ok, spawned.error).toBe(true);
+    const sessionId = spawned.sessionId;
+    try {
+      expect(getContextBySession(sessionId)).toMatchObject({ role: 'user', scope });
+      const probe = (sid: string) => Promise.resolve(invoke(PTY_CHANNELS.promptState, { sessionId: sid })) as Promise<import('../../shared/types').PtyPromptState | null>;
+      await vi.waitFor(async () => {
+        expect(await probe(sessionId)).toMatchObject({ state: 'idle', awaitingInput: false, turnStartSequence: expect.any(Number) });
+        expect((await probe(sessionId))!.turnStartSequence).toBeGreaterThan(0);
+        expect(getProviderPaneSession(scope, paneId, 'claude')).not.toBeNull();
+      }, { timeout: 45_000, interval: 20 });
+      const baseline = (await probe(sessionId))!;
+      const foreign = state.handlers.get(PTY_CHANNELS.promptState)!({ sender: { ...owner, id: owner.id + 1 }, senderFrame: owner.mainFrame }, { sessionId });
+      expect(foreign).toBeNull(); expect(await probe('unknown-session')).toBeNull();
+      expect(await invoke(PTY_CHANNELS.promptEnter, { sessionId, turnStartSequence: baseline.turnStartSequence + 1, retry: false })).toBe(false);
+      const footprint = (await pty.probePaneFootprints())!.find(p => p.sessionId === sessionId)!;
+      expect(footprint.rootPid).toBeGreaterThan(0);
+      const inputStart = inputs.length;
+      const text = `RT_GATE PROMPT_PROOF ${nonce}`;
+      const payload = `\x1b[200~${text}\x1b[201~`;
+      const enterRequests: Array<{ sessionId: string; sequence: number; retry: boolean; accepted: boolean }> = [];
+      let result: boolean | undefined;
+      const submitted = submitPromptToPaneConfirmed(paneId, text, sessionId, {
+        getSessionId: () => pty.getAgentSessionInfo(sessionId)?.paneId === paneId ? sessionId : null,
+        write: (sid, data) => { void invoke(PTY_CHANNELS.write, { sessionId: sid, data }); },
+        writeConfirmed: async (sid, data) => await invoke(PTY_CHANNELS.writeConfirmed, { sessionId: sid, data }) as boolean,
+        probePromptState: probe,
+        submitPromptEnter: async (sid, sequence, retry) => {
+          const accepted = await invoke(PTY_CHANNELS.promptEnter, { sessionId: sid, turnStartSequence: sequence, retry }) as boolean;
+          enterRequests.push({ sessionId: sid, sequence, retry, accepted }); return accepted;
+        },
+        schedule: (callback, ms) => setTimeout(callback, ms),
+      }).then(accepted => { result = accepted; return accepted; });
+      const read = (name: string): Array<{ pid: number; kind: string; sha256: string }> => fs.existsSync(path.join(receipts, `${name}.ndjson`))
+        ? fs.readFileSync(path.join(receipts, `${name}.ndjson`), 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
+      await until(() => read('prompt-enter').some(r => r.kind === 'swallowed'), 'owned physical CLI swallowed its first Enter');
+      expect(result).toBeUndefined();
+      expect((await probe(sessionId))!.turnStartSequence).toBe(baseline.turnStartSequence);
+      expect(inputs.slice(inputStart).filter(i => i.sessionId === sessionId).map(i => i.data)).toEqual([payload, '\r']);
+      expect(await submitted).toBe(true);
+      expect(enterRequests).toEqual([
+        { sessionId, sequence: baseline.turnStartSequence, retry: false, accepted: true },
+        { sessionId, sequence: baseline.turnStartSequence, retry: true, accepted: true },
+      ]);
+      const accepted = read('accepted').filter(r => r.kind === 'composer');
+      expect(accepted).toHaveLength(1); expect(accepted[0]!.sha256).toBe(createHash('sha256').update(payload).digest('hex'));
+      expect(() => process.kill(accepted[0]!.pid, 0)).not.toThrow();
+      const current = (await probe(sessionId))!;
+      expect(current.turnStartSequence).toBe(baseline.turnStartSequence + 1);
+      expect(inputs.slice(inputStart).filter(i => i.sessionId === sessionId).map(i => i.data)).toEqual([payload, '\r', '\r']);
+      fs.writeFileSync(path.join(REPO, '.superpowers/sdd/release-076213-reviewed/f1122-source-proof/main-pty-native-facts.json'), JSON.stringify({
+        mode: 'controlled-physical-cli-registered-main-pty-authenticated-native-hooks', signedPackagedProof: false,
+        paneId, sessionId, rootPid: footprint.rootPid, nativePid: accepted[0]!.pid, baseline, current,
+        enterRequests, payloadWrites: 1, composerAcceptances: accepted.length, nativeConversation: getProviderPaneSession(scope, paneId, 'claude')?.id,
+      }, null, 2), { mode: 0o600 });
+    } finally {
+      expect(await pty.orchTerminateSession(sessionId, { origin: 'prompt-proof-fixture:teardown' })).toBe(true);
+      expect(pty.getAgentSessionInfo(sessionId)).toBeNull();
+    }
+  }, 120_000);
 });

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { useAccessStore } from '../state/access-store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PaneModel } from '../../shared/types';
+import type { PaneModel, PtyPromptState } from '../../shared/types';
 
 const xtermEvents = vi.hoisted(() => ({
   onData: new Set<(data: string) => void>(),
@@ -2755,6 +2755,109 @@ describe('F-266: real terminal host wires Kimi prompt proof on every submission 
     expect(await result).toBe(true);
     expect(probe).toHaveBeenCalledWith('kimi-proof-session');
     expect(writes).toEqual(['new prompt', '\r', '\r']);
+  });
+});
+
+describe('F-1122: Claude submission requires native prompt acceptance', () => {
+  function claudePane(id: string, governed = false) {
+    const agent: PaneModel = { id, kind: 'cli-agent', adapterId: 'claude', title: 'Claude',
+      ...(governed ? { role: 'worker', missionId: 'mission-claude-proof' } as const : {}) };
+    useLayoutStore.setState({ root: buildGridTree([agent]), focusedPaneId: agent.id });
+    const host = getOrCreateHost(agent);
+    const sessionId = 'claude-native-session';
+    host.sessionId = sessionId;
+    return { agent, host, sessionId };
+  }
+
+  it.each(['raw', 'raw-mission', 'confirmed', 'operator'] as const)('%s keeps a swallowed Enter pending and retries only Enter before native acceptance', async lane => {
+    const { agent, sessionId } = claudePane('claude-native-proof-' + lane, lane === 'raw-mission');
+    const writes: string[] = [];
+    const enters: Array<{ sessionId: string; sequence: number; retry: boolean }> = [];
+    let turnStartSequence = 0;
+    Object.assign(window.nexus.pty, {
+      writeConfirmed: async (_sessionId: string, data: string) => { writes.push(data); return true; },
+      promptState: async () => ({ turnStartSequence, state: 'idle' as const, awaitingInput: false }),
+      submitPromptEnter: async (sessionId: string, sequence: number, retry: boolean) => {
+        enters.push({ sessionId, sequence, retry });
+        return true;
+      },
+    });
+    Object.assign(window.nexus, { orch: { sendPaneOperatorInput: async (_input: { sessionId: string; data: string }) => { writes.push(_input.data); return true; } } });
+    let accepted: boolean | undefined;
+    const result = lane === 'raw' || lane === 'raw-mission' ? submitPromptToPane(agent.id, 'CREATE once') : lane === 'confirmed'
+      ? submitPromptToPaneConfirmed(agent.id, 'CREATE once', sessionId)
+      : submitPromptToPaneOperatorInput(agent.id, 'CREATE once', sessionId);
+    const submitted = result.then(result => { accepted = result; return result; });
+    const payload = lane === 'operator' || lane === 'raw-mission' ? 'CREATE once' : '\x1b[200~CREATE once\x1b[201~';
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(accepted).toBeUndefined();
+    expect(writes).toEqual([payload]);
+    expect(enters).toEqual([{ sessionId: 'claude-native-session', sequence: 0, retry: false }]);
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(accepted).toBeUndefined();
+    expect(enters).toEqual([
+      { sessionId: 'claude-native-session', sequence: 0, retry: false },
+      { sessionId: 'claude-native-session', sequence: 0, retry: true },
+    ]);
+    turnStartSequence = 1;
+    await vi.advanceTimersByTimeAsync(200);
+    expect(await submitted).toBe(true);
+    expect(writes).toEqual([payload]);
+  });
+
+  it('accepts the first native turn without sending a retry', async () => {
+    const { agent, sessionId } = claudePane('claude-immediate-proof');
+    const writes: string[] = [];
+    let turnStartSequence = 4, enters = 0;
+    Object.assign(window.nexus.pty, {
+      writeConfirmed: async (_id: string, data: string) => { writes.push(data); return true; },
+      promptState: async () => ({ turnStartSequence, state: 'idle', awaitingInput: false }),
+      submitPromptEnter: async () => { enters++; turnStartSequence++; return true; },
+    });
+    const submitted = submitPromptToPaneConfirmed(agent.id, 'one turn', sessionId);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await submitted).toBe(true);
+    expect(enters).toBe(1); expect(writes).toEqual(['\x1b[200~one turn\x1b[201~']);
+  });
+
+  it.each(['null', 'busy', 'spawning', 'dialog'] as const)('refuses a %s baseline before pasting', async fault => {
+    const { agent, sessionId } = claudePane('claude-baseline-' + fault);
+    const writes: string[] = [];
+    Object.assign(window.nexus.pty, {
+      writeConfirmed: async (_id: string, data: string) => { writes.push(data); return true; },
+      promptState: async () => fault === 'null' ? null : ({ turnStartSequence: 0, state: fault === 'dialog' ? 'idle' : fault, awaitingInput: fault === 'dialog' }),
+    });
+    expect(await submitPromptToPaneConfirmed(agent.id, 'never paste', sessionId)).toBe(false);
+    expect(writes).toEqual([]);
+  });
+
+  it.each(['no-sequence', 'echo-busy', 'dialog', 'atomic-dialog', 'rebind', 'parked', 'revoked'] as const)('never certifies %s or pastes twice', async fault => {
+    const { agent, host, sessionId } = claudePane('claude-negative-' + fault);
+    const writes: string[] = [];
+    let state: PtyPromptState | null = { turnStartSequence: 0, state: 'idle', awaitingInput: false };
+    let enters = 0;
+    Object.assign(window.nexus.pty, {
+      writeConfirmed: async (_id: string, data: string) => {
+        writes.push(data);
+        if (fault === 'rebind') host.sessionId = 'newer-session';
+        if (fault === 'parked') host.parked = true;
+        return true;
+      },
+      promptState: async () => state,
+      submitPromptEnter: async () => {
+        if (fault === 'atomic-dialog') return false;
+        enters++;
+        if (fault === 'echo-busy') state = { turnStartSequence: 0, state: 'busy', awaitingInput: false };
+        if (fault === 'dialog') state = { turnStartSequence: 0, state: 'idle', awaitingInput: true };
+        if (fault === 'revoked') state = null;
+        return true;
+      },
+    });
+    const submitted = submitPromptToPaneConfirmed(agent.id, 'unaccepted once', sessionId);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await submitted).toBe(false);
+    expect(writes).toEqual(['\x1b[200~unaccepted once\x1b[201~']);
+    expect(enters).toBe(fault === 'no-sequence' ? 2 : ['atomic-dialog', 'rebind', 'parked'].includes(fault) ? 0 : 1);
   });
 });
 

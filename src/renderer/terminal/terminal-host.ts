@@ -1656,7 +1656,7 @@ function startSpawn(
             (`Continue the current mission from exactly where you stopped as the ${role}. ` +
               'Preserve existing context and execute the next pending step now.');
           const ports = {
-            ...kimiPromptProofPorts(pane.id),
+            ...nativePromptProofPorts(pane.id),
             getSessionId: typingSessionId,
             write: (sessionId: string, data: string) => window.nexus.pty.write(sessionId, data),
             writeConfirmed: (sessionId: string, data: string) => window.nexus.pty.writeConfirmed(sessionId, data),
@@ -4455,12 +4455,12 @@ export function writeToPane(paneId: string, data: string): boolean {
   return true;
 }
 
-/** Kimi submission uses Main's hook sequence, never the busy echo of our own CR. */
-function kimiPromptProofPorts(paneId: string) {
+/** Claude/Kimi use Main's native hook sequence, never the busy echo of our own CR. */
+function nativePromptProofPorts(paneId: string) {
   const pane = listPanes(useLayoutStore.getState().root).find(candidate => candidate.id === paneId);
-  if (pane?.adapterId !== 'kimi') return {};
+  if (pane?.adapterId !== 'kimi' && pane?.adapterId !== 'claude') return {};
   return {
-    bracketedPaste: false,
+    bracketedPaste: pane.adapterId !== 'kimi',
     submitPromptEnter: async (sessionId: string, sequence: number, retry: boolean) => {
       if (typingSessionId(paneId) !== sessionId) return false;
       const accepted = await window.nexus.pty.submitPromptEnter(sessionId, sequence, retry);
@@ -4482,7 +4482,7 @@ function kimiPromptProofPorts(paneId: string) {
 export async function submitPromptToPane(paneId: string, text: string): Promise<boolean> {
   const host = hosts.get(paneId);
   if (host && !host.disposed) host.inputVisibility.onUserInput();
-  const proof = kimiPromptProofPorts(paneId);
+  const proof = nativePromptProofPorts(paneId);
   if (proof.probePromptState) {
     const sessionId = typingSessionId(paneId);
     if (!sessionId) return false;
@@ -4509,7 +4509,7 @@ export function submitPromptToPaneConfirmed(
   const host = hosts.get(paneId);
   if (host && !host.disposed) host.inputVisibility.onUserInput();
   return submitPanePromptConfirmed(paneId, text, expectedSessionId, {
-    ...kimiPromptProofPorts(paneId),
+    ...nativePromptProofPorts(paneId),
     getSessionId: typingSessionId,
     write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
     writeConfirmed: (sessionId, data) =>
@@ -4530,7 +4530,7 @@ export function submitPromptToPaneOperatorInput(
   const host = hosts.get(paneId);
   if (host && !host.disposed) host.inputVisibility.onUserInput();
   return submitPanePromptOperator(paneId, text, expectedSessionId, {
-    ...kimiPromptProofPorts(paneId),
+    ...nativePromptProofPorts(paneId),
     getSessionId: typingSessionId,
     operatorWrite: (sessionId, data) =>
       window.nexus.orch.sendPaneOperatorInput({ sessionId, data }),

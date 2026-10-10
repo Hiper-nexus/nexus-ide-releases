@@ -40,6 +40,22 @@ export function installRuntimeGateRenderer(): void {
         const pane = listPanes(useLayoutStore.getState().root).find(p => p.id === value.paneId);
         if (pane?.kind !== 'cli-agent' || pane.adapterId !== 'claude' || terminal.getPaneSessionId(pane.id) !== value.sessionId ||
           typeof value.text !== 'string' || !value.text.startsWith('RT_GATE ') || value.text.length > 1024) throw new Error('private normal prompt target differs');
+        const current = () => listPanes(useLayoutStore.getState().root).some(p => p.id === pane.id && p.kind === 'cli-agent' && p.adapterId === 'claude') &&
+          terminal.getPaneSessionId(pane.id) === value.sessionId;
+        const deadline = performance.now() + 45_000;
+        let ready = false;
+        while (performance.now() < deadline) {
+          if (!current()) throw new Error('private normal prompt target differs');
+          let probeTimer: ReturnType<typeof setTimeout> | undefined;
+          const state = await Promise.race([
+            window.nexus.pty.promptState(value.sessionId),
+            new Promise<null>(resolve => { probeTimer = setTimeout(() => resolve(null), deadline - performance.now()); }),
+          ]).finally(() => clearTimeout(probeTimer));
+          if (!current() || !state || state.awaitingInput || !['idle', 'busy', 'spawning'].includes(state.state)) throw new Error('private normal composer unavailable');
+          if (state.state === 'idle') { ready = true; break; }
+          await new Promise<void>(resolve => setTimeout(resolve, 200));
+        }
+        if (!ready || !current()) throw new Error('private normal composer not ready');
         const accepted = value.operation === 'user-prompt' ? await terminal.submitPromptToPaneConfirmed(pane.id, value.text, value.sessionId) :
           await terminal.submitPromptToPaneOperatorInput(pane.id, value.text, value.sessionId);
         if (!accepted || terminal.getPaneSessionId(pane.id) !== value.sessionId) throw new Error('private normal prompt refused');
