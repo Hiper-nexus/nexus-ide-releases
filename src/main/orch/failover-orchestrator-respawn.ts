@@ -86,7 +86,7 @@ function restoreAccountAfterPreflightRefusal(
   result: Awaited<ReturnType<typeof requestMissionPaneRecovery>>,
   deps: OrchestratorAccountSwitchDeps,
 ): void {
-  if (result.ok || result.requestId !== '' || result.sessionId || !original.accountId) return;
+  if (result.ok || result.requestId !== '' || result.sessionId || result.paneId !== input.paneId || !original.accountId) return;
   try {
     const sessions = listAgentSessionsForPane(input.paneId);
     const session = sessions.length === 1 ? sessions[0] : undefined;

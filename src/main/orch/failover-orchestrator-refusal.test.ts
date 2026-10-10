@@ -89,6 +89,13 @@ describe('F-1131: account switch refused before replacement', () => {
     expect(f.persisted()?.accountId).toBe('account-b');
   });
 
+  it('does not borrow an empty-request refusal for another pane', async () => {
+    const f = fixture();
+    f.deps.requestRecovery = async () => ({ requestId: '', paneId: 'another-pane', ok: false, error: 'renderer unavailable' });
+    await switchRendererOrchestratorAccount(f.input, f.deps);
+    expect(f.persisted()?.accountId).toBe('account-b');
+  });
+
   it('never compensates a replacement B already in the physical inventory', async () => {
     const f = fixture();
     f.inventory.mockReturnValue([f.physical, { ...f.physical, sessionId: 'pty-replacement-b', accountId: 'account-b' }]);
