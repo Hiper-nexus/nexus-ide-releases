@@ -138,6 +138,7 @@ import {
   refreshHost,
   releaseHeldSpawns,
   repaintPaneTui,
+  respawnWithResume,
   revealTerminalHostsAfterWorkspaceShow,
   setHostVisibility,
   submitPromptToPane,
@@ -2861,6 +2862,67 @@ describe('F-1122: Claude submission requires native prompt acceptance', () => {
   });
 });
 
+
+describe('F-1137: respawn continuity waits for native prompt acceptance', () => {
+  it.each([
+    ['claude', 'same-account-resume'],
+    ['claude', 'cross-account-continuity'],
+    ['kimi', 'same-account-resume'],
+    ['kimi', 'cross-account-continuity'],
+  ] as const)('%s %s pastes once and reports submission only after the native turn starts', async (adapterId, mode) => {
+    const agent: PaneModel = { id: `continuity-proof-${adapterId}-${mode}`, kind: 'cli-agent', adapterId, title: adapterId };
+    useLayoutStore.setState({ root: buildGridTree([agent]), focusedPaneId: agent.id });
+    const host = getOrCreateHost(agent);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(agent, slot);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(getPaneSessionId(agent.id)).toBe('pty-hidden');
+
+    const sessionId = 'continuity-respawn-session';
+    spawn.mockResolvedValue({ ok: true, sessionId, resumeMode: 'exact' });
+    const writes: string[] = [];
+    const enters: Array<{ sessionId: string; sequence: number; retry: boolean }> = [];
+    let turnStartSequence = 0;
+    Object.assign(window.nexus.pty, {
+      writeConfirmed: async (_sessionId: string, data: string) => { writes.push(data); return true; },
+      promptState: async () => ({ turnStartSequence, state: 'idle' as const, awaitingInput: false }),
+      submitPromptEnter: async (sessionId: string, sequence: number, retry: boolean) => {
+        enters.push({ sessionId, sequence, retry });
+        return true;
+      },
+    });
+    const output = vi.spyOn(host.term, 'writeln');
+    respawnWithResume(agent, undefined, { mode, continuityPack: 'Continue the pending step from the handoff.' });
+    const text = mode === 'cross-account-continuity'
+      ? 'Continue the pending step from the handoff.'
+      : 'Continue the current mission from exactly where you stopped as the agent. Preserve existing context and execute the next pending step now.';
+    const payload = adapterId === 'claude' ? `\x1b[200~${text}\x1b[201~` : text;
+    const submittedNotice = mode === 'cross-account-continuity' ? 'handoff multi-conta submetido' : 'continuidade submetida automaticamente';
+
+    await vi.advanceTimersByTimeAsync(2_800);
+    expect(getPaneSessionId(agent.id)).toBe(sessionId);
+    expect(output.mock.calls.flat().join(' ')).not.toContain(submittedNotice);
+    expect(writes).toEqual([payload]);
+    expect(ptyWrite).not.toHaveBeenCalled();
+    expect(enters).toEqual([{ sessionId, sequence: 0, retry: false }]);
+
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(enters).toEqual([
+      { sessionId, sequence: 0, retry: false },
+      { sessionId, sequence: 0, retry: true },
+    ]);
+    expect(writes).toEqual([payload]);
+    expect(output.mock.calls.flat().join(' ')).not.toContain(submittedNotice);
+
+    turnStartSequence = 1;
+    await vi.advanceTimersByTimeAsync(200);
+    expect(output.mock.calls.flat().join(' ')).toContain(submittedNotice);
+    expect(writes).toEqual([payload]);
+    expect(ptyWrite).not.toHaveBeenCalled();
+  });
+});
 
 describe('F-429 — Encerrar never becomes automatic human resume', () => {
   it('does not relive a Maestro after Main deliberately terminated it', async () => {

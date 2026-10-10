@@ -1662,7 +1662,7 @@ function startSpawn(
             writeConfirmed: (sessionId: string, data: string) => window.nexus.pty.writeConfirmed(sessionId, data),
             schedule: (callback: () => void, delayMs: number) => setTimeout(callback, delayMs),
           };
-          const submitted = pane.adapterId === 'kimi'
+          const submitted = pane.adapterId === 'kimi' || pane.adapterId === 'claude'
             ? submitPromptToPane(pane.id, continuation)
             : Promise.resolve(submitPanePrompt(pane.id, continuation, ports));
           void submitted.then((accepted) => {
