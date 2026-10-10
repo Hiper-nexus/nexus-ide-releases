@@ -865,7 +865,7 @@ function settledByAcceptedTarget(
   const message = error instanceof Error ? error.message : String(error);
   if (!message.includes("live current dispatch authority")) return false;
   const mission = stores.missions.get(missionId);
-  if (!mission || (mission.status !== "blocked" && mission.status !== "completed")) return false;
+  if (!mission || (mission.status !== "blocked" && mission.status !== "done")) return false;
   return initial.operatorDirectToWorker !== true &&
     mission.orchestratorSessionId === initial.sessionId;
 }
