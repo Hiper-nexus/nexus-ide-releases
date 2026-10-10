@@ -274,11 +274,17 @@ describe('cron control-plane routes', () => {
       .put(`/v1/cron/projects/${PROJECT_ID}/schedules/${SCHEDULE_ID}`)
       .set(fixture.auth)
       .send({ expectedVersion: 0, definition: definition() });
-    await request(fixture.app)
+    expect(first.status, JSON.stringify({ error: first.body.error,
+      actualVersion: first.body.conflict?.actualVersion })).toBe(201);
+    expect(first.body.data.version).toBe(1);
+    const updated = await request(fixture.app)
       .put(`/v1/cron/projects/${PROJECT_ID}/schedules/${SCHEDULE_ID}`)
       .set(fixture.auth)
-      .send({ expectedVersion: 1, definition: definition({ name: 'Updated' }) })
-      .expect(200);
+      .send({ expectedVersion: 1, definition: definition({ name: 'Updated' }) });
+    expect(updated.status, JSON.stringify({ error: updated.body.error,
+      expectedVersion: updated.body.conflict?.expectedVersion, actualVersion: updated.body.conflict?.actualVersion,
+      currentVersion: updated.body.conflict?.current?.version })).toBe(200);
+    expect(updated.body.data.version).toBe(2);
 
     const response = await request(fixture.app)
       .post('/v1/cron/leases/acquire')
