@@ -491,9 +491,11 @@ describe('spool de handoff: ingestão no Main (F-795)', () => {
   it('fim da sessão: última passada e o diretório some vazio; spawn que falhou apaga na hora', async () => {
     snippetWriter()(session.env, 'gate-hook', PAYLOAD);
     session.dispose();
-    await vi.waitFor(() => expect(fs.existsSync(session.dir)).toBe(false), { timeout: 3_000 });
+    await vi.waitFor(() => {
+      expect(fs.existsSync(session.dir)).toBe(false);
+      expect(fs.existsSync(path.join(root, 'bindings', `${session.spoolId}.json`))).toBe(false);
+    }, { timeout: 3_000 });
     expect(handoffs).toHaveLength(1);
-    expect(fs.existsSync(path.join(root, 'bindings', `${session.spoolId}.json`))).toBe(false);
 
     const failed = openSession();
     failed.discard();
