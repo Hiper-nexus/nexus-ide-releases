@@ -1267,11 +1267,13 @@ describe.runIf(process.platform === "darwin")(
       }
     }, 60_000);
 
-    it("rejects a swapped helper under 5,000 SIGCONT signals before its constructor runs", async () => {
+    it.each([0, 2_000])("rejects a swapped helper under 5,000 SIGCONT signals before its constructor runs (observer delay %i ms)", async (observerDelayMs) => {
       const { root, helper, runtime } = temporaryRuntime();
       buildNativeDevelopmentHelper(helper);
       const command = supervisedPtyCommand(runtime, "/usr/bin/true", []);
       const marker = path.join(root, "stage-zero-swap.marker");
+      const ready = path.join(root, "stage-zero-swap.ready");
+      const release = path.join(root, "stage-zero-swap.release");
       const replacementSource = path.join(root, "replacement-helper.c");
       const replacement = path.join(root, "replacement-helper");
       fs.writeFileSync(
@@ -1312,32 +1314,78 @@ describe.runIf(process.platform === "darwin")(
 
       const sourceIndex = command.args.indexOf(DARWIN_PTY_STAGE_ZERO_SOURCE);
       expect(sourceIndex).toBeGreaterThan(0);
+      // F-1146: hold the actual exec-trapped child until the observer has
+      // delivered every signal. A wall-clock pause can expire before pgrep.
+      const firstExecBarrier =
+        "  wait_for_exec_trap();\n  validate_live_helper();\n  continue_trace(7);";
+      expect(DARWIN_PTY_STAGE_ZERO_SOURCE.split(firstExecBarrier)).toHaveLength(2);
       command.args[sourceIndex] = DARWIN_PTY_STAGE_ZERO_SOURCE.replace(
-        "wait_for_exec_trap();\nvalidate_live_helper();",
-        "wait_for_exec_trap();\n" +
-          "select(undef, undef, undef, 1.5);\n" +
-          "validate_live_helper();",
+        firstExecBarrier,
+        [
+          "  wait_for_exec_trap();",
+          '  my $fixture_ready_path = clean($ENV{"NEXUS_TEST_STAGE0_READY"});',
+          '  my $fixture_release_path = clean($ENV{"NEXUS_TEST_STAGE0_RELEASE"});',
+          '  open(my $fixture_ready, ">", $fixture_ready_path)',
+          '    or die "stage0 fixture: ready open failed\\n";',
+          '  print {$fixture_ready} "$child\\n";',
+          '  close($fixture_ready) or die "stage0 fixture: ready close failed\\n";',
+          "  my $fixture_deadline = time() + 30;",
+          '  while (!-e $fixture_release_path) {',
+          '    time() < $fixture_deadline or die "stage0 fixture: release timed out\\n";',
+          "    check_termination();",
+          "    select(undef, undef, undef, 0.02);",
+          "  }",
+          "  validate_live_helper();",
+          "  continue_trace(7);",
+        ].join("\n"),
       );
+      expect(command.args[sourceIndex]).not.toBe(DARWIN_PTY_STAGE_ZERO_SOURCE);
       let launch: ReturnType<typeof collectSpawn> | undefined;
       let helperPid: number | undefined;
       try {
         launch = collectSpawn(command.file, command.args, {
-          env: { ...process.env, NEXUS_STAGE0_SWAP_MARKER: marker },
+          env: {
+            ...process.env,
+            NEXUS_STAGE0_SWAP_MARKER: marker,
+            NEXUS_TEST_STAGE0_READY: ready,
+            NEXUS_TEST_STAGE0_RELEASE: release,
+          },
         });
-        helperPid = await waitForValue(() => {
-          const result = spawnSync(
-            "/usr/bin/pgrep",
-            ["-P", String(launch?.child.pid)],
-            { encoding: "utf8" },
-          );
-          const parsed = Number.parseInt(result.stdout.trim(), 10);
-          return Number.isInteger(parsed) && parsed > 0 ? parsed : false;
-        });
-        for (let index = 0; index < 5_000; index += 1) {
-          process.kill(helperPid, "SIGCONT");
+        if (observerDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, observerDelayMs));
         }
+        helperPid = await waitForValue(() => {
+          if (!fs.existsSync(ready)) return false;
+          const parsed = Number(fs.readFileSync(ready, "utf8").trim());
+          return Number.isInteger(parsed) && parsed > 1 ? parsed : false;
+        }, 30_000 - observerDelayMs);
+        // The tracer publishes its own traced child, then stays alive until
+        // release. Check the exact parent and birth before signalling it.
+        const identity = spawnSync(
+          "/bin/ps",
+          ["-o", "ppid=,lstart=", "-p", String(helperPid)],
+          { encoding: "utf8" },
+        );
+        expect(identity.status).toBe(0);
+        expect(Number(identity.stdout.trim().split(/\s+/, 1)[0])).toBe(launch.child.pid);
+        expect(launch.child.exitCode).toBe(null);
+        expect(fs.existsSync(marker)).toBe(false);
+        let deliveredSignals = 0;
+        for (let index = 0; index < 5_000; index += 1) {
+          if (process.kill(helperPid, "SIGCONT")) deliveredSignals += 1;
+        }
+        expect(deliveredSignals).toBe(5_000);
         await new Promise((resolve) => setTimeout(resolve, 100));
         expect(fs.existsSync(marker)).toBe(false);
+        expect(launch.child.exitCode).toBe(null);
+        const afterSignals = spawnSync(
+          "/bin/ps",
+          ["-o", "ppid=,lstart=", "-p", String(helperPid)],
+          { encoding: "utf8" },
+        );
+        expect(afterSignals.status).toBe(0);
+        expect(afterSignals.stdout).toBe(identity.stdout);
+        fs.writeFileSync(release, "release", { flag: "wx", mode: 0o600 });
         const exit = await launch.completion;
         expect(exit).toMatchObject({ status: 76, signal: null });
         expect(exit.stderr).toContain("live helper identity rejected");
@@ -1346,6 +1394,7 @@ describe.runIf(process.platform === "darwin")(
       } finally {
         if (launch?.child.pid) {
           await cleanupProcessGroup(launch.child.pid);
+          expect(processGroupExists(launch.child.pid)).toBe(false);
         }
       }
     }, 60_000);
