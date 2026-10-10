@@ -119,7 +119,7 @@ describe('evaluateMomentumJudgment (política em código)', () => {
 });
 
 describe('judgeMissionMomentum (fail-open)', () => {
-  it.each([['jev', 0.000042], ['clef', 0.00024], ['clef-flash', 0.00009]] as const)('records canonical pricing for %s', async (model, usd) => {
+  it.each([['jev', 0.000042], ['clef', 0.00024], ['clef-flash', 0.000038]] as const)('records canonical pricing for %s', async (model, usd) => {
     calls.judge.mockResolvedValueOnce({
       model, usage: { input_tokens: 1000 },
       answers: { best_action: { type: 'choice', choice: 'open-workers', confidence: 0.9, probabilities: {} } },
