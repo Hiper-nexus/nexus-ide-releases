@@ -30,6 +30,12 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+// The explicit controlled adapter proves its own synthetic auth. Warming
+// unrelated installed CLIs would touch the operator's native credential stores.
+vi.mock('./squad-runtime-inventory', async original => ({
+  ...await original<typeof import('./squad-runtime-inventory')>(),
+  warmSquadRuntimeSubscriptionAuth: async () => undefined,
+}));
 vi.mock('../adapters/adapter-registry', async original => {
   const actual = await original<typeof import('../adapters/adapter-registry')>();
   const all = () => state.adapter ? [state.adapter] : [];
@@ -125,6 +131,7 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
   const nativeRequests: Array<{ userTexts: string[]; toolResults: unknown[] }> = [];
   const submitted = deferred<void>(), hookHeld = deferred<void>();
   let releaseHook: () => void = () => undefined;
+  let holdNextHook: (() => void) | null = null;
   let intercept: ReturnType<typeof vi.spyOn> | null = null;
   const lifetime = new AbortController();
   const sockets = new Set<import('node:net').Socket>();
@@ -277,12 +284,14 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
       scope, signal: lifetime.signal, isCurrent: () => !lifetime.signal.aborted });
     const originalCreate = http.createServer;
     intercept = vi.spyOn(http, 'createServer').mockImplementation(((handler: http.RequestListener) => originalCreate((req, res) => {
-      if (req.url === '/hook/status' && req.headers['x-nexus-hook-event'] === 'user-submit' && !chiefId) {
+      if (req.url === '/hook/status' && req.headers['x-nexus-hook-event'] === 'user-submit' && (!chiefId || holdNextHook)) {
+        const held = holdNextHook; holdNextHook = null;
         req.pause();
         nativeHookHeld = true;
         let released = false;
         releaseHook = () => { if (released) return; released = true; handler(req, res); req.resume(); };
         hookHeld.resolve();
+        held?.();
       } else handler(req, res);
     })) as typeof http.createServer);
     untapInput = pty.tapSessionInput((sessionId, data) => {
@@ -404,5 +413,138 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
         namedWorkers: pty.listAgentSessions().filter(session => session.missionId === review.missionId && session.role === 'worker').map(session => ({ sessionId: session.sessionId, name: session.agentName })),
       }, null, 2), { mode: 0o600 });
     }
+  }, 120_000);
+
+  it.runIf(CONTROLLED).each(['abort', 'authority', 'newer-session', 'newer-intent', 'operator-close', 'unknown-exit', 'proved-self-revocation', 'paste-abort'] as const)(
+    'F-1116: actual Main/PTY resume keeps exact ownership under %s after fresh binding', async fault => {
+    nativeHookHeld = false; chiefId = '';
+    const { ORCH_CHANNELS } = await import('../../shared/orch-channels');
+    const { getProjectDomainStores } = await import('./project-domain-store-registry');
+    const { dispatchToolCall } = await import('./mcp-dispatch');
+    const { buildDomainTools } = await import('./tools-domain');
+    const { buildPaneTools } = await import('./tools-panes');
+    const { getContextBySession, mintToken, bindTokenToSession, releaseSession } = await import('./gate');
+    const { getAgentTurnStartSequence } = await import('./agent-status');
+    const { provedKickoffBriefDelivery } = await import('./mission-kickoff-direct-queue');
+    const { MISSION_RUNTIME_CLOSED_MARKER } = await import('../../shared/mission-recovery-policy');
+    const pty = await import('../pty/pty-manager');
+    const invoke = (channel: string, input: unknown) => state.handlers.get(channel)!({ sender: owner, senderFrame: owner.mainFrame }, input);
+    const tools = ['nexus_pane_spawn', 'nexus_handoff_submit', 'nexus_handoff_list', 'nexus_handoff_ack', 'nexus_mission_request_resume'];
+    const review = await invoke(ORCH_CHANNELS.missionPrepare, { title: `Runtime resume ${fault} ${nonce}`,
+      objective: 'Produce a private report after the coordinator has resumed, preserving the waiting participant.', contextPaths: [],
+      roster: [
+        { id: 'rt-resume-chief', agentName: 'Runtime chief', category: 'orchestrator', cli: 'claude', allowedTools: tools, allowedSkills: [] },
+        { id: 'rt-resume-caller', agentName: 'Resume caller', category: 'executor', cli: 'claude', allowedTools: tools, allowedSkills: [] },
+        { id: 'rt-resume-reviewer', agentName: 'Resume reviewer', category: 'reviewer', cli: 'claude', allowedTools: tools, allowedSkills: [] },
+      ], advanced: { lane: 'standard' } }) as MissionReview;
+    await invoke(ORCH_CHANNELS.missionStart, { missionId: review.missionId, reviewSha256: review.reviewSha256 });
+    const stores = getProjectDomainStores(scope);
+    await until(() => nativeHookHeld, 'original coordinator native hook');
+    const original = pty.listAgentSessions().find(session => session.missionId === review.missionId && session.role === 'orchestrator')!;
+    expect(original).toBeDefined(); chiefId = original.sessionId;
+    releaseHook();
+    await until(() => stores.missions.hasCurrentKickoffAcceptance(review.missionId) && pty.getSessionState(original.sessionId) === 'idle', 'original coordinator completed its native kickoff');
+    const chiefContext = getContextBySession(original.sessionId)!;
+    expect(chiefContext).not.toBeNull();
+    const spawnedCaller = await dispatchToolCall('http-mcp', { serverName: 'resume-fixture-panes', serverVersion: '0', tools: buildPaneTools() },
+      'nexus_pane_spawn', { adapterId: 'claude', operatorChoice: true, agentName: 'Resume caller', role: 'worker',
+        task: 'Hold the scoped coordinator resume request', prompt: `RT_GATE IDLE ${nonce}. Preserve the waiting participant.` }, chiefContext);
+    expect(spawnedCaller, JSON.stringify(spawnedCaller)).toMatchObject({ ok: true, result: { sessionId: expect.any(String) } });
+    const callerSessionId = (spawnedCaller.result as { sessionId: string }).sessionId;
+    await until(() => getAgentTurnStartSequence(callerSessionId) > 0 && pty.getSessionState(callerSessionId) === 'idle', 'caller finished its authentic native turn');
+    const caller = structuredClone(pty.getAgentSessionInfo(callerSessionId)!);
+    const originalCallerContext = getContextBySession(callerSessionId)!;
+    // Main fixture grants one recovery tool to an existing physical caller;
+    // production allowlist/role/intent and exact session checks stay real.
+    const callerContext = mintToken({ label: 'controlled resume caller', role: originalCallerContext.role,
+      providerId: originalCallerContext.providerId, missionId: review.missionId, scope: originalCallerContext.scope,
+      executionScope: originalCallerContext.executionScope, contextRevision: originalCallerContext.contextRevision,
+      workerIncarnationId: originalCallerContext.workerIncarnationId, readOnly: originalCallerContext.readOnly,
+      allowedTools: ['nexus_mission_request_resume'], allowedSkills: [] });
+    releaseSession(callerSessionId);
+    bindTokenToSession(callerContext.token, callerSessionId);
+    const previousSpec = structuredClone(stores.missionPanes.list(review.missionId).find(pane => pane.role === 'orchestrator')!);
+    expect(await pty.orchTerminateSession(original.sessionId, { origin: 'resume-native-fixture:old-coordinator-exit' })).toBe(true);
+    const resumeHook = deferred<void>();
+    holdNextHook = () => resumeHook.resolve();
+    const abort = new AbortController();
+    const promptDelivery = state.adapter!.spawn.initialPrompt;
+    if (fault === 'paste-abort') state.adapter!.spawn.initialPrompt = 'paste';
+    const resumed = dispatchToolCall('http-mcp', { serverName: 'resume-fixture-domain', serverVersion: '0', tools: buildDomainTools() },
+      'nexus_mission_request_resume', { missionId: review.missionId, note: 'Controlled native resume cancellation after binding.' }, callerContext,
+      { callerSignal: abort.signal });
+    let resumeOutcome: Awaited<typeof resumed> | undefined;
+    void resumed.then(outcome => { resumeOutcome = outcome; });
+    void resumed.catch(() => undefined);
+    await until(() => resumeOutcome !== undefined || stores.missions.get(review.missionId)?.orchestratorSessionId !== original.sessionId &&
+      Boolean(pty.listAgentSessions().find(session => session.missionId === review.missionId && session.role === 'orchestrator')), 'fresh coordinator physical binding');
+    expect(resumeOutcome, JSON.stringify(resumeOutcome)).toBeUndefined();
+    const fresh = pty.listAgentSessions().find(session => session.missionId === review.missionId && session.role === 'orchestrator')!;
+    expect(fresh.sessionId).not.toBe(original.sessionId);
+    expect(stores.missions.get(review.missionId)?.orchestratorSessionId).toBe(fresh.sessionId);
+    expect(stores.missionPanes.list(review.missionId).find(pane => pane.role === 'orchestrator')?.paneId).toBe(fresh.paneId);
+    await resumeHook.promise;
+    let termination: ReturnType<typeof vi.spyOn> | undefined;
+    let proofCheck: ReturnType<typeof vi.spyOn> | undefined;
+    let abortAfterProof = false;
+    const retirements: Array<{ origin?: string; proven: boolean }> = [];
+    const boundSpec = structuredClone(stores.missionPanes.findByPaneId(fresh.paneId!)!);
+    if (fault === 'unknown-exit') {
+      const terminate = pty.orchTerminateSession;
+      termination = vi.spyOn(pty, 'orchTerminateSession').mockImplementation((sessionId, options) =>
+        sessionId === fresh.sessionId && options?.origin === 'fast-lane:owned-resume-failed'
+          ? Promise.resolve(false) : terminate(sessionId, options));
+    } else if (fault === 'paste-abort') {
+      const terminate = pty.orchTerminateSession;
+      termination = vi.spyOn(pty, 'orchTerminateSession').mockImplementation(async (sessionId, options) => {
+        const proven = await terminate(sessionId, options);
+        if (sessionId === fresh.sessionId) retirements.push({ origin: options?.origin, proven });
+        return proven;
+      });
+    }
+    if (fault === 'newer-session') stores.missions.setOrchestratorSession(review.missionId, callerSessionId);
+    if (fault === 'newer-intent') {
+      const row = stores.missions.get(review.missionId)!;
+      stores.missions.update(review.missionId, { intentVersion: 2, intentContract: { ...row.intentContract!, intentVersion: 2 } });
+    }
+    if (fault === 'operator-close') stores.missions.update(review.missionId, {
+      status: 'blocked', intentState: 'blocked_user', description: MISSION_RUNTIME_CLOSED_MARKER,
+    });
+    const changed = structuredClone(stores.missions.get(review.missionId)!);
+    if (fault === 'proved-self-revocation') {
+      const hasAcceptance = stores.missions.hasCurrentKickoffAcceptance.bind(stores.missions);
+      proofCheck = vi.spyOn(stores.missions, 'hasCurrentKickoffAcceptance').mockImplementation(missionId => {
+        const accepted = hasAcceptance(missionId);
+        if (missionId === review.missionId && accepted &&
+            provedKickoffBriefDelivery(scope, missionId)?.orchestratorSessionId === fresh.sessionId) {
+          abortAfterProof = true; abort.abort();
+        }
+        return accepted;
+      });
+    } else if (fault === 'authority') releaseSession(callerSessionId);
+    else abort.abort();
+    releaseHook();
+    try {
+      expect(await resumed).toMatchObject({ ok: false });
+      if (fault === 'paste-abort') expect(retirements).toEqual([{ origin: 'fast-lane:owned-resume-failed', proven: true }]);
+      if (fault === 'abort' || fault === 'authority' || fault === 'paste-abort') {
+        expect(pty.getAgentSessionInfo(fresh.sessionId), 'revoked unproved resume must not leave its new physical coordinator').toBeNull();
+        expect(stores.missions.get(review.missionId)).toMatchObject({ status: 'blocked', intentState: 'blocked_technical' });
+        expect(stores.missionPanes.list(review.missionId).find(pane => pane.id === previousSpec.id)).toEqual(previousSpec);
+      } else if (fault === 'unknown-exit') {
+        expect(pty.getAgentSessionInfo(fresh.sessionId)).not.toBeNull();
+        expect(stores.missions.get(review.missionId)).toMatchObject({ status: 'blocked', intentState: 'blocked_technical', orchestratorSessionId: fresh.sessionId });
+        expect(stores.missionPanes.findByPaneId(fresh.paneId!)).toEqual(boundSpec);
+      } else {
+        if (fault === 'proved-self-revocation') {
+          expect(abortAfterProof).toBe(true);
+          expect((await import('./mission-fast-lane')).fastLaneOrchestratorPaneSummary(scope, review.missionId)?.sessionId).toBe(fresh.sessionId);
+        }
+        expect(pty.getAgentSessionInfo(fresh.sessionId)).not.toBeNull();
+        expect(stores.missions.get(review.missionId)).toEqual(changed);
+        expect(stores.missionPanes.findByPaneId(fresh.paneId!)).toEqual(boundSpec);
+      }
+    } finally {termination?.mockRestore(); proofCheck?.mockRestore(); state.adapter!.spawn.initialPrompt = promptDelivery;}
+    expect(pty.getAgentSessionInfo(callerSessionId)).toEqual(caller);
   }, 120_000);
 });

@@ -676,9 +676,9 @@ async function submitEnter(
         authorityLost = true;
       }
       if (authorityLost) {
-        const exited = await orchTerminateSession(sessionId, {
-          origin: 'tool-util:authority-revoked',
-        });
+        const exited = invocation.retireRevokedPrompt
+          ? await invocation.retireRevokedPrompt(sessionId)
+          : await orchTerminateSession(sessionId, { origin: 'tool-util:authority-revoked' });
         if (!exited) {
           throw new Error(
             'session_authority_revoked; pasted prompt could not be cleared ' +
@@ -723,9 +723,9 @@ async function assertAcceptedPromptAuthority(
   try {
     assertMcpInvocationCurrent(invocation);
   } catch (error) {
-    const exited = await orchTerminateSession(sessionId, {
-      origin: 'tool-util:authority-revoked',
-    });
+    const exited = invocation?.retireRevokedPrompt
+      ? await invocation.retireRevokedPrompt(sessionId)
+      : await orchTerminateSession(sessionId, { origin: 'tool-util:authority-revoked' });
     if (!exited && getSessionState(sessionId) !== null) {
       throw new Error(
         'session_authority_revoked; accepted turn could not be fenced ' +

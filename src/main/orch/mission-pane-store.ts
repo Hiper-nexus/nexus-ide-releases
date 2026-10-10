@@ -578,6 +578,41 @@ export class ScopedMissionPaneStore {
     return cloneSpec(result.spec);
   }
 
+  /** Main-only compensation after a captured fresh orchestrator proves exit. */
+  compensateOrchestratorSpawn(
+    expected: ScopedMissionPaneSpec,
+    previous?: ScopedMissionPaneSpec,
+  ): boolean {
+    const previousIdentity = previous && { ...previous, paneId: expected.paneId, model: expected.model,
+      effort: expected.effort, accountId: expected.accountId, allowedTools: expected.allowedTools,
+      allowedSkills: expected.allowedSkills, readOnly: expected.readOnly, authoritySeal: expected.authoritySeal };
+    if (expected.role !== 'orchestrator' || !isDeepStrictEqual(expected.scope, this.#binding.scope) ||
+        previous && (previous.id !== expected.id || previous.missionId !== expected.missionId ||
+          previous.role !== 'orchestrator' || previous.createdAt !== expected.createdAt ||
+          !isDeepStrictEqual(previous.scope, expected.scope) ||
+          !isDeepStrictEqual(previous.executionScope, expected.executionScope) ||
+          !isDeepStrictEqual(JSON.parse(JSON.stringify(previousIdentity)), JSON.parse(JSON.stringify(expected))))) {
+      throw new Error('orchestrator compensation snapshot authority differs');
+    }
+    const db = this.#binding.writeDatabase();
+    const changed = db.transaction(() => {
+      const current = this.#listFromDatabase(db, expected.missionId).find(row => row.id === expected.id);
+      if (!isDeepStrictEqual(current, expected)) return false;
+      if (!previous) return db.prepare('DELETE FROM mission_panes WHERE id = ?').run(expected.id).changes === 1;
+      if (previous.paneId && this.#findRowsByPaneId(db, previous.paneId).some(row => row.id !== expected.id)) return false;
+      return db.prepare(`UPDATE mission_panes SET pane_id = ?, model = ?, effort = ?,
+        account_id = ?, allowed_tools_json = ?, allowed_skills_json = ?, scope_json = ? WHERE id = ?`).run(
+        previous.paneId ?? null, previous.model ?? null, previous.effort ?? null, previous.accountId ?? null,
+        encodeCapabilityList(previous.allowedTools), encodeCapabilityList(previous.allowedSkills),
+        encodePersistedPaneScopes({ coordinationScope: previous.scope, executionScope: previous.executionScope,
+          readOnly: previous.readOnly === true, workerIncarnationId: previous.workerIncarnationId,
+          authoritySeal: previous.authoritySeal, visualTask: previous.visualTask }), expected.id,
+      ).changes === 1;
+    })();
+    if (changed) this.#binding.emitChange();
+    return changed;
+  }
+
   /**
    * F-995: o failover de conta do Main troca a conta SELADA do orquestrador
    * antes de pedir o religamento do pane (a cerca do spawn persistido exige

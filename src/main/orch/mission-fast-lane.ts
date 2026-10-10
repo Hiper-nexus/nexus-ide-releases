@@ -1151,6 +1151,7 @@ async function pasteBriefAfterBoot(
   prompt: string,
   adapterId: string,
   invocation?: McpToolInvocation,
+  terminateOnFailure = true,
 ): Promise<string | null> {
   let failure: string | null;
   try {
@@ -1166,7 +1167,7 @@ async function pasteBriefAfterBoot(
   } catch (error) {
     failure = `falha ao colar briefing — ${error instanceof Error ? error.message : String(error)}`;
   }
-  if (failure) {
+  if (failure && terminateOnFailure) {
     await orchTerminateSession(sessionId, {
       origin: 'fast-lane:briefing-undelivered',
     }).catch((error: unknown) => {
@@ -1199,6 +1200,8 @@ async function spawnAgentPane(
     readonly accountId?: string;
     readonly invocation?: McpToolInvocation;
     readonly onBootstrapRuntime?: (runtime: BootstrapRuntime) => void;
+    /** Respawn owns exact row/native compensation and physical exit proof. */
+    readonly ownFailureCleanup?: true;
   },
 ): Promise<SpawnedAgent | { error: string }> {
   assertMcpInvocationCurrent(spawnOpts?.invocation);
@@ -1370,7 +1373,7 @@ async function spawnAgentPane(
       ? 'paste'
       : resolveOrchestratorBriefDelivery(agent.cli, initialPrompt);
     if (delivery === 'paste') {
-      const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli, spawnOpts?.invocation);
+      const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli, spawnOpts?.invocation, !spawnOpts?.ownFailureCleanup);
       if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };
       assertMcpInvocationCurrent(spawnOpts?.invocation);
       tryAcceptIdleOrchestratorKickoff(
@@ -2252,6 +2255,80 @@ async function respawnFastLaneOrchestrator(
     );
   }
   let spawned: SpawnedAgent;
+  let owned = structuredClone(live);
+  let runtime: BootstrapRuntime | undefined;
+  let physical: ReturnType<typeof getAgentSessionInfo> | undefined;
+  let native: ScopedMissionPaneSpec | undefined;
+  let cleanupHandled = false;
+  let committed = false;
+  let cleanupFlight: Promise<void> | undefined;
+  let physicalExitProven = false;
+  const sameRow = (left: Mission, right: Mission): boolean =>
+    isDeepStrictEqual(JSON.parse(JSON.stringify(left)), JSON.parse(JSON.stringify(right)));
+  const stillOwned = (): boolean => {
+    const current = stores.missions.get(mission.id);
+    return Boolean(current && sameRow(current, owned) && !wasMissionRuntimeClosedByOperator(current));
+  };
+  const invocation: McpToolInvocation = { ...options.invocation, retireRevokedPrompt: async sessionId => {
+    if (runtime?.sessionId !== sessionId) return false;
+    await cleanupOwnedFailure();
+    return physicalExitProven;
+  }, assertCurrentAuthority: () => {
+    assertMcpInvocationCurrent(options.invocation);
+    if (!stillOwned()) throw new Error('resume_attempt_authority_changed');
+  } };
+  const captureRuntime = (value: BootstrapRuntime): void => {
+    if (value.phase === 'cleanup-handled') { cleanupHandled = true; return; }
+    runtime = value;
+    if (value.phase === 'created') {
+      const actual = getAgentSessionInfo(value.sessionId) ?? getAcpDriverSession(value.sessionId)?.agent;
+      physical = actual ? structuredClone(actual) : undefined;
+      return;
+    }
+    const bound = stores.missions.get(mission.id);
+    if (!bound || bound.orchestratorSessionId !== value.sessionId ||
+        !sameRow({ ...bound, updatedAt: owned.updatedAt, orchestratorSessionId: owned.orchestratorSessionId }, owned)) {
+      throw new Error('resume_attempt_authority_changed');
+    }
+    owned = structuredClone(bound);
+    native = stores.missionPanes.findByPaneId(value.paneId) ?? undefined;
+  };
+  const ownsPhysical = (): boolean => {
+    const actual = runtime && (getAgentSessionInfo(runtime.sessionId) ?? getAcpDriverSession(runtime.sessionId)?.agent);
+    return Boolean(physical && actual && !actual.operatorOpened && actual.role === 'orchestrator' &&
+      actual.sessionId === physical.sessionId && actual.paneId === physical.paneId && actual.missionId === mission.id &&
+      actual.adapterId === physical.adapterId && actual.accountId === physical.accountId && actual.cwd === physical.cwd &&
+      actual.requestedModel === physical.requestedModel && actual.effort === physical.effort &&
+      actual.readOnly === physical.readOnly && actual.nativeReadOnly === physical.nativeReadOnly &&
+      isDeepStrictEqual(actual.scope, physical.scope) && isDeepStrictEqual(actual.coordinationScope, physical.coordinationScope) &&
+      isDeepStrictEqual(actual.allowedTools, physical.allowedTools) && isDeepStrictEqual(actual.allowedSkills, physical.allowedSkills) &&
+      isDeepStrictEqual(actual.authoritySeal, physical.authoritySeal));
+  };
+  const performOwnedFailureCleanup = async (): Promise<void> => {
+    if (committed || cleanupHandled || runtime?.kind !== 'spawned' || runtime.phase !== 'bound' || !stillOwned() || !ownsPhysical() || !owned.intentState ||
+        native && !isDeepStrictEqual(stores.missionPanes.findByPaneId(runtime.paneId), native)) return;
+    const captured = owned;
+    missionEngineForScope(scope).blockTechnical(scope, {
+      missionId: mission.id, expectedStatus: captured.status, expectedIntentState: captured.intentState!,
+      expectedUpdatedAt: captured.updatedAt, expectedIntentVersion: captured.intentVersion ?? 0,
+      description: 'O coordenador não concluiu a retomada. Use Retomar para tentar novamente.',
+    });
+    const blocked = stores.missions.get(mission.id);
+    if (!blocked || !ownsPhysical()) return;
+    const acp = getAcpDriverSession(runtime.sessionId);
+    let proven = false;
+    if (acp) await acp.shutdown();
+    else proven = await orchTerminateSession(runtime.sessionId, { origin: 'fast-lane:owned-resume-failed' });
+    physicalExitProven = proven;
+    // Unknown physical exit retains the new binding. Compensation never
+    // borrows a later mission row or overwrites a newer native pane snapshot.
+    const after = stores.missions.get(mission.id);
+    if (!proven || !native || !after ||
+        after.orchestratorSessionId && after.orchestratorSessionId !== runtime.sessionId ||
+        !sameRow({ ...after, updatedAt: blocked.updatedAt, orchestratorSessionId: blocked.orchestratorSessionId }, blocked)) return;
+    stores.missionPanes.compensateOrchestratorSpawn(native, composition.find(pane => pane.id === native!.id));
+  };
+  const cleanupOwnedFailure = (): Promise<void> => cleanupFlight ??= performOwnedFailureCleanup();
   try {
     // P0-1 (2026-08-17): NUNCA spawnar por cima de um orquestrador registrado.
     // A cerca do pty-manager conta QUALQUER sessão registrada (exited/
@@ -2283,16 +2360,28 @@ async function respawnFastLaneOrchestrator(
     assertMcpInvocationCurrent(options.invocation);
     const result = operatorResume
       ? await spawnAgentPane(scope, live, orchestrator, prompt, operatorResume.title, {
-          invocation: options.invocation,
+          invocation, onBootstrapRuntime: captureRuntime, ownFailureCleanup: true,
           resumeFromPaneId: operatorResume.paneId,
           ...(operatorResume.accountId ? { accountId: operatorResume.accountId } : {}),
         })
-      : await spawnAgentPane(scope, live, orchestrator, prompt, undefined, { invocation: options.invocation });
-    assertMcpInvocationCurrent(options.invocation);
+      : await spawnAgentPane(scope, live, orchestrator, prompt, undefined, { invocation, onBootstrapRuntime: captureRuntime, ownFailureCleanup: true });
     if ('error' in result) {
       throw new Error(`orquestrador não reabriu: ${result.error}`);
     }
     spawned = result;
+    const leader = getMissionLeadership().resolveMissionLeader(scope, mission.id);
+    if (!stillOwned() || !ownsPhysical() || !leader?.proven || leader.sessionId !== spawned.sessionId ||
+        leader.paneId !== spawned.paneId || !stores.missions.hasCurrentKickoffAcceptance(mission.id)) {
+      throw new Error('resume_coordinator_setup_unproven');
+    }
+    committed = true;
+    stopWatcher(scope, mission.id);
+    orchPanes.set(mission.id, {
+      paneId: spawned.paneId, sessionId: spawned.sessionId, adapterId: spawned.adapterId,
+      cwd: missionExecutionScope(scope, live).rootRealPath, title: orchestrator.agentName, agentName: orchestrator.agentName,
+    });
+    startWatcher(scope, mission.id, spawned.sessionId);
+    assertMcpInvocationCurrent(options.invocation);
     // F-664: a conversa agora mora no pane novo. Se o record() deduplicou o
     // pane novo na linha retomada (mesma identidade), a linha passa a apontar
     // para ele — a próxima retomada continua DESTA conversa, não da anterior.
@@ -2305,24 +2394,18 @@ async function respawnFastLaneOrchestrator(
         console.warn('[fast-lane] vínculo do pane retomado não foi atualizado:', error);
       }
     }
+  } catch (error) {
+    try { await cleanupOwnedFailure(); }
+    catch { console.warn('[fast-lane] owned resume compensation unavailable'); }
+    throw error;
   } finally {
     releaseTabResumeTransfer?.();
   }
 
-  stopWatcher(scope, mission.id);
-  orchPanes.set(mission.id, {
-    paneId: spawned.paneId,
-    sessionId: spawned.sessionId,
-    adapterId: spawned.adapterId,
-    cwd: missionExecutionScope(scope, live).rootRealPath,
-    title: orchestrator.agentName,
-    agentName: orchestrator.agentName,
-  });
   console.info(
     `[fast-lane] orquestrador respawnado para ${mission.id} ` +
       `(session=${spawned.sessionId})`,
   );
-  startWatcher(scope, mission.id, spawned.sessionId);
   void maybeRedispatchFastLaneFirstWave(scope, live, {
     focusedLiveMission: true,
   }).catch((error) => {

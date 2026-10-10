@@ -80,6 +80,8 @@ export interface McpToolInvocation {
    * immediately before starting a process, network request, or durable write.
    */
   readonly assertCurrentAuthority?: () => void;
+  /** Main-only spawned-prompt owner; false retains unknown/newer bindings. */
+  readonly retireRevokedPrompt?: (sessionId: string) => Promise<boolean>;
   /**
    * Correlated durable-effect identity issued by the central dispatcher after
    * audit intent persistence. HTTP MCP handoff provenance must bind to this

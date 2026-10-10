@@ -373,6 +373,12 @@ beforeEach(async () => {
   vi.resetModules();
   vi.doMock('./tool-util', toolUtilMock);
   fastLane = await import('./mission-fast-lane');
+  const { ProjectRuntimeManager } = await import('../runtime/project-runtime-manager');
+  const registry = await import('./project-domain-store-registry');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-respawn-leadership-'));
+  const manager = new ProjectRuntimeManager({ baseDir: root, appVersion: 'test' });
+  leadershipRuntime = { manager, root };
+  registry.configureProjectDomainStoreRegistry(manager).forScope(scope);
 });
 
 afterEach(async () => {
@@ -475,10 +481,8 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
   });
 
   it.each(['pending', 'running'] as const)('materializes approved defaults in a %s Maestro, persisted pane and later remount (F-428)', async status => {
-    const { ProjectRuntimeManager } = await import('../runtime/project-runtime-manager');
     const registry = await import('./project-domain-store-registry');
-    const root=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-default-runtime-leader-'));
-    const manager=new ProjectRuntimeManager({baseDir:root,appVersion:'test'});leadershipRuntime={manager,root};
+    const manager = leadershipRuntime!.manager;
     registry.configureProjectDomainStoreRegistry(manager).forScope(scope);
     const { compileIntentContract } = await import('../../shared/mission-intent');
     liveMission = { ...mission, status, intentState: status === 'pending' ? 'ready_to_start' : 'executing', intentContract: {
@@ -521,6 +525,13 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     const manager = new ProjectRuntimeManager({ baseDir: path.join(root, 'runtime'), appVersion: 'test' });
     registry.configureWorktreeRuntimeRegistry(manager);
     const coordination = testProjectScope({ rootRealPath: repository });
+    const gate = await import('./gate');
+    harness.afterSpawn = physical => {
+      const context = gate.mintToken({ label: 'physical worktree coordinator fixture', role: 'orchestrator',
+        missionId: physical.missionId, scope: coordination, executionScope: physical.scope,
+        allowedTools: null, allowedSkills: null });
+      gate.bindTokenToSession(context.token, physical.sessionId);
+    };
     try {
       const { MainMissionEngine } = await import('./mission-engine');
       const { createMissionEnginePreparationPorts } = await import('./mission-engine-preparation');
@@ -577,6 +588,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
       await expect(fastLane.resumeFastLaneMission(coordination, mission.id, { remountKind: 'operator' })).rejects.toThrow();
       expect(harness.spawnOptions).toHaveLength(beforeFailure);
     } finally {
+      gate.resetGateForTests();
       registry.disposeWorktreeRuntimeRegistry(); manager.closeAll(); fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -713,7 +725,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     expect(harness.deliver).toHaveBeenCalledWith(
       'session-1',
       expect.stringContaining('Esta conversa foi retomada'),
-      undefined,
+      expect.objectContaining({ assertCurrentAuthority: expect.any(Function), retireRevokedPrompt: expect.any(Function) }),
       { adapterId: 'claude' },
     );
     // Com a conversa no pane novo, o antigo deixa de ser reservado.

@@ -832,4 +832,29 @@ describe('retomada da missão da aba move o pane do orquestrador (F-664)', () =>
     })).toThrow(/new pane/);
     expect(panes.findByPaneId(leader.paneId!)?.effort).toBeUndefined();
   });
+
+  it('F-1116: compensates only the entire captured replacement and restores omitted native defaults', () => {
+    const { mission, panes, leader } = setup();
+    const moved = panes.moveOrchestratorPane(mission.id, leader.id, 'pane-failed-resume', {
+      expected: leader, model: leader.model, effort: 'medium',
+    });
+    expect(panes.compensateOrchestratorSpawn(moved, leader)).toBe(true);
+    expect(panes.findByPaneId(leader.paneId!)).toEqual(leader);
+    expect(panes.findByPaneId('pane-failed-resume')).toBeNull();
+    const newer = panes.moveOrchestratorPane(mission.id, leader.id, 'pane-newer');
+    expect(panes.compensateOrchestratorSpawn(moved, leader)).toBe(false);
+    expect(panes.findByPaneId('pane-newer')).toEqual(newer);
+  });
+
+  it('F-1116: compensation refuses foreign identity and an old pane now owned by a participant', () => {
+    const { mission, panes, leader } = setup();
+    const moved = panes.moveOrchestratorPane(mission.id, leader.id, 'pane-failed-resume');
+    expect(() => panes.compensateOrchestratorSpawn(moved, { ...leader, title: 'Foreign native identity' })).toThrow(/authority/);
+    expect(() => panes.compensateOrchestratorSpawn({ ...moved, scope: { ...moved.scope, checkoutId: 'foreign' } }, leader)).toThrow(/authority/);
+    const participant = panes.record({ missionId: mission.id, adapterId: 'codex', paneId: leader.paneId!,
+      role: 'worker', agentName: 'Operator participant', operatorOpened: true });
+    expect(panes.compensateOrchestratorSpawn(moved, leader)).toBe(false);
+    expect(panes.findByPaneId(moved.paneId!)).toEqual(moved);
+    expect(panes.findByPaneId(participant.paneId!)).toEqual(participant);
+  });
 });
