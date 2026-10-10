@@ -337,3 +337,51 @@ describe('F-1112 finite writer and read-only reviewer', () => {
     } finally { await server.close(); }
   });
 });
+describe('F-1156 the instruction is the latest user RT_GATE, never a marker quoted by a Nexus delivery', () => {
+  const nonce = '11111111-1111-4111-8111-111111111111';
+  const delivery = '\n\n<pasted_content id="3a35">\n[nexus handoff delivery_metadata] from=nexus-handoff-enforcement reported_status=failed summary: '
+    + `[NEXUS_HANDOFF_REQUIRED] Último estado real observado do pane: RT_GATE IDLE ${nonce}. Fix the UI visual fixture … ⏺ RT_DONE_IDLE_${nonce}\n</pasted_content id="3a35">\n`;
+  async function post(server, messages) {
+    const response = await fetch(`${server.url}/v1/messages`, { method: 'POST', headers: { 'x-api-key': `rt-${nonce}` },
+      body: JSON.stringify({ tools: buildToolset().map(t => ({ name: `mcp__nexus__${t.name}` })), messages }) });
+    const text = await response.text(), events = response.ok ? text.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6))) : [];
+    const block = events.find(event => event.type === 'content_block_start')?.content_block;
+    if (block?.type === 'tool_use') block.input = JSON.parse(events.find(event => event.delta?.type === 'input_json_delta').delta.partial_json);
+    if (block?.type === 'text') block.text = events.filter(event => event.delta?.type === 'text_delta').map(event => event.delta.text).join('');
+    return { status: response.status, block };
+  }
+  const recoverSpawn = { type: 'tool_use', name: 'mcp__nexus__nexus_pane_spawn',
+    input: { resume: 'pane-old', agentName: 'Runtime writer', role: 'worker', autoCloseOnHandoff: false } };
+
+  it('newest RECOVER (block form) wins over an older delivered paste that quotes RT_GATE IDLE (string form)', async () => {
+    const server = await startRuntimeGateway(nonce);
+    try {
+      const next = await post(server, [
+        { role: 'user', content: [{ type: 'text', text: '<system-reminder>context</system-reminder>' }, { type: 'text', text: `RT_GATE IDLE ${nonce}` }] },
+        { role: 'assistant', content: [{ type: 'text', text: `RT_DONE_IDLE_${nonce}` }] },
+        { role: 'user', content: delivery },
+        { role: 'assistant', content: [{ type: 'text', text: `RT_DONE_IDLE_${nonce}` }] },
+        { role: 'user', content: [{ type: 'text', text: `RT_GATE RECOVER ${nonce} pane-old session-old` }] },
+      ]);
+      expect(next.status).toBe(200);
+      expect(next.block).toMatchObject(recoverSpawn);
+    } finally { await server.close(); }
+  });
+
+  it('RECOVER typed into the same message as the delivery (the 225 shape) still recovers', async () => {
+    const server = await startRuntimeGateway(nonce);
+    try {
+      const next = await post(server, [{ role: 'user', content: `${delivery}RT_GATE RECOVER ${nonce} pane-old session-old` }]);
+      expect(next.block).toMatchObject(recoverSpawn);
+    } finally { await server.close(); }
+  });
+
+  it('a delivery alone never becomes an instruction: the quoted IDLE is not acted on', async () => {
+    const server = await startRuntimeGateway(nonce);
+    try {
+      const next = await post(server, [{ role: 'user', content: delivery }]);
+      expect(next.status).toBe(200);
+      expect(next.block).toMatchObject({ type: 'text', text: 'Runtime fixture ready; waiting for scoped verifier instruction.' });
+    } finally { await server.close(); }
+  });
+});

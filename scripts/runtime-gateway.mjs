@@ -121,8 +121,16 @@ export async function startRuntimeGateway(nonce) {
         if (req.url.includes('count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
         const all = objects(body.messages), text = all.flatMap(v => typeof v.text === 'string' ? [v.text] : []).concat(
           (body.messages ?? []).flatMap(v => typeof v.content === 'string' ? [v.content] : [])).join('\n');
-        const markers = [...text.matchAll(/RT_GATE (CREATE|OPS|SPAWN|WRITE|REVIEW|ACK|QUESTION|RECOVER|RESUME|IDLE)/gu)];
-        const kind = markers.at(-1)?.[1];
+        // The instruction is the latest RT_GATE marker in conversation order among the USER's own text. Nexus-delivered pastes
+        // (handoff deliveries) quote the dead worker's last screen, which still holds earlier RT_GATE prompts: never instructions.
+        const withoutDeliveredPastes = value => value.replace(/<pasted_content\b[^>]*>[\s\S]*?<\/pasted_content\b[^>]*>/gu, ' ');
+        const instructionMarkers = (body.messages ?? []).filter(message => message.role === 'user').flatMap(message =>
+          typeof message.content === 'string' ? [message.content]
+            : Array.isArray(message.content) ? message.content.flatMap(block => block?.type === 'text' && typeof block.text === 'string' ? [block.text] : []) : [])
+          .flatMap(piece => [...withoutDeliveredPastes(piece).matchAll(/RT_GATE (CREATE|OPS|SPAWN|WRITE|REVIEW|ACK|QUESTION|RECOVER|RESUME|IDLE)/gu)].map(match => match[1]));
+        // Fallback (no user instruction at all) keeps the legacy scan, still blind to delivered pastes.
+        const kind = instructionMarkers.at(-1) ??
+          [...withoutDeliveredPastes(text).matchAll(/RT_GATE (CREATE|OPS|SPAWN|WRITE|REVIEW|ACK|QUESTION|RECOVER|RESUME|IDLE)/gu)].at(-1)?.[1];
         const assistantBlocks = (body.messages ?? []).filter(message => message.role === 'assistant' && Array.isArray(message.content)).flatMap(message => message.content);
         const used = (['CREATE', 'QUESTION', 'WRITE', 'RECOVER', 'REVIEW'].includes(kind) ? assistantBlocks : all).filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
         const step = used.length;
