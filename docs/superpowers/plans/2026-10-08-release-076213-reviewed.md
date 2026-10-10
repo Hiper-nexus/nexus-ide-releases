@@ -353,3 +353,69 @@ PNG e publicação guardada permanecem pendentes até evidência real. Nenhuma
 feature ou dependência nova; sem site/API deploy, outra plataforma ou claims
 de upgrade/full T3/provedor pago/microfone real. Archives 213–216 e suas
 falhas, pública 212 e cutoff ad517 mais reparos são preservados.
+
+
+## Sucessora 0.76.218 da candidata privada 217 (09/10)
+
+A fonte e4421b010, árvore 9104a81be, teve oito gates verdes e revisão global:
+app 24.780/60 skips, servidor 157 e Main/PTY 1. A tag local 217 49900b00
+permanece imutável. Build/sign/notary/candidata base/Node restore e dois
+soaks fixos de cinco minutos (42 amostras cada) passaram. Nenhuma 217 foi
+publicada; a versão pública conhecida permanece 212. Artefatos, recibos,
+REDs e metadados estão no archive de 86 arquivos e addenda por FD/hash/readback.
+
+O primeiro runtime aguardou a confirmação nativa normal da pergunta privada.
+Na segunda execução do mesmo ZIP, Root observou a instância e os vínculos
+da pergunta sintética e confirmou somente Proceed pelo botão normal. O
+fluxo avançou ao encerramento de OPS e à missão padrão, que falhou sem
+workers. O journal admitiu RT_GATE SPAWN, mas a instrução não apareceu no
+histórico aceito da CLI; o segundo pedido aceito foi o lembrete de momentum.
+Isso não permite atribuir a falha apenas ao Keychain da primeira onda.
+
+F1109 recebeu aprovação de escopo em 5c3efabc6: direção durante bootstrap
+frio fica honestamente na fila da tentativa possuída; sua prova atual libera
+a entrega correlacionada. A validação causal Main/PTY/HTTP/MCP controlada
+recebeu o envelope uma vez e casou dois spawns reais com sessões físicas;
+perda ou troca de autoridade produz unproven sem replay para outro alvo.
+Isso não substitui o runtime assinado com a CLI instalada.
+
+F1110 (4360a67c5) usa somente os fluxos normais de escrita, preview registrado,
+URL retornada e captura do pane retornado, com registro Main e artefato
+nativo atuais. F1111 (0dfd1f58d, após ef8530efd) usa o chief real para
+nexus_pane_spawn/resume; o resultado normal devolve nova identidade Main,
+que precisa casar com a conversa nativa, o runtime e a auditoria autenticada.
+F1112 (a4eb75c87, após b6213b85c) conserva os dois workers finitos até a parada
+normal, declara o revisor readOnly e exige seus dois relatórios reais com
+ACKs independentes do chief atual; só o relatório do writer não satisfaz.
+
+F1113 (c9ac3fd09) mantém a missão standard para workers/review/ACK/captura.
+A continuidade nativa exata é exercitada numa missão separada, sem squad,
+adotada de um pane do operador pelos controles normais. O estado original
+é imutável; depois do restart, o novo líder Main precisa preservar o CID
+e o vínculo de runtime originais. Não prometer mesma conversa ao retomar
+squad preparada, igualdade de pane antigo, extensão de produto ou prova
+operacional assinada por testes de fixture. Os escopos F1109–F1113 foram
+aprovados independentemente; permissões, prazos e políticas continuam iguais.
+
+F1114 foi aprovado no handoff limpo 41228ade6, árvore 7d296c754: um arquivo
+de teste e seu QA alinham 15 positivos ao contrato aprovado e um mock físico
+ao coordinationScope real, preservando guardas negativas. Os 42 testes do
+arquivo e checks estáticos passaram. Todos os escopos F1109–F1114 estão
+aprovados; isso não marca os oito gates completos de 218, pacote, runtime,
+retomada, saída física, PNG ou publicação como PASS.
+
+O handoff e a revisão autorizam aplicar estes sete metadados agora.
+Então congelar o SHA, rodar uma vez os oito gates e obter revisão global;
+só depois criar tag 218 ainda livre e novo build/sign/notary/candidata/restore.
+Soak fixo, runtime/resume, saída física, PNG e inspeção reais permanecem
+obrigatórios antes da única publicação guardada. A confirmação nativa de
+pergunta continua pelo fluxo normal, limitada à pergunta sintética vinculada
+à própria instância; nenhuma aprovação ampla, chave do operador ou falsa
+aceitação será usada. Não retagar ou reutilizar 217 como 218.
+
+A fronteira incluída continua PR126 até ad517bfb por ancestralidade mais
+reparos locais revisados; caudas posteriores, inclusive cb9, ficam no próximo
+lote monitorado. Pública 212 e históricos 213–217 ficam preservados. Sem
+novas dependências ou features, site/API deploy, outra plataforma ou claims
+de paridade total T3, Luna paga, microfone real, Windows nativo ou upgrade
+instalado.

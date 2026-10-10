@@ -1,13 +1,13 @@
 # Changelog
 
-## 0.76.217 — Decisões OpenAI e missões revisadas
+## 0.76.218 — Decisões OpenAI e missões revisadas
 
 - **API e sessão nativa distintas.** Credenciais de transporte não provam uma assinatura nativa do Claude; a seleção preserva a prioridade da sessão nativa comprovada.
 - **Verificação de runtime entre worktrees.** O verificador usa a identidade de coordenação dos agentes e conserva a execução isolada, sem afrouxar as guardas de escopo.
 
 2026-10-09
 
-- **Orientação com estado de entrega claro.** Sem prova de aceitação pelo pane, a direção aparece como não comprovada; erro e fila não equivalem a execução.
+- **Orientação no início da missão.** Enquanto o líder se prepara, o pedido fica na fila da tentativa atual. A entrega exige prova de aceitação; falha não provoca replay para outro pane.
 
 - **Luna (beta), Decisions API da OpenAI:** `Configurações → Modelos de decisão` oferece
   `Somente Luna (beta)` e `Luna junto com Jev e Clef`. Usa a chave OpenAI de

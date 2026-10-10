@@ -90,10 +90,10 @@ Critério: **integrado e acessível** exige código presente E ponto de uso que 
 - Nada foi exercitado em aparelho, simulador ou navegador nesta auditoria.
 - Licenças de `@pierre/diffs`, `@legendapp/list`, `nitro-markdown`, `@react-native-ai/apple`, `@napi-rs/keyring` e `@crowecawcaw/xa11y` vêm dos estudos e não foram reverificadas sem rede.
 
-## Atualização de escopo para 0.76.217 (09/10)
+## Atualização de escopo para 0.76.218 (09/10)
 
 A contagem 39/4/20/1 acima pertence ao snapshot descrito no início; não é uma
-contagem refeita de recursos da 0.76.217. A PR126 até a fronteira `ad517bfb`
+contagem refeita de recursos da 0.76.218. A PR126 até a fronteira `ad517bfb`
 foi integrada por ancestralidade; commits posteriores ficam no próximo lote
 monitorado. A revisão e as correções preservam a diferença entre código
 presente, consumidor de produção e prova operacional. Os pontos abaixo
@@ -105,7 +105,7 @@ atualizam as descrições antigas sem anunciar paridade de todos os 64 itens.
 | WEB-16 | Dependências Tiptap presentes; `ComposerTiptapEditor` usa o SDK real, com testes de linhas, ciclo controlado, seleção, readonly e persistência de marcas/texto. | O composer de produto não foi substituído; a existência do componente não prova integração da superfície. |
 | WEB-18 | `cli-history-import` e `cli-history-sweep` existem como helpers de JSONL. | Falta o comando/serviço/UI que importa e grava no store; não equivalem ao worker SDK do T3. |
 | ORC-01/04 | Admissão Main grava observação lógica e sequência saneadas, com identidade imutável; no PTY, sessão/canal privado vêm do Main e seu encerramento cancela chamadas ainda aguardando despacho. `terminal_run`/`bg_run` registram obrigação antes da preparação e assentam prova real de saída/recibo/outbox na mesma conexão e escopo. | ACK lógico não prova efeito físico. Não há cache de stdout/segredos, replay automático de mutações incertas ou checkpoint genérico; retry sem resultado informa indisponibilidade. |
-| ORC-02 | Consumidor civil consulta bloqueadores duráveis e entregas ainda na fila; só exclui o Maestro antes do limiteSQL. Comandos instrumentados mantêm obrigação física durante timeout, ACK de background e saída dos descendentes. Primeira onda exige setup/kickoff confirmados; falha de bootstrap só terminaliza a tentativa ainda possuída. | Fatos de saída sem prova após perda do processo ficam unknown e bloqueiam conclusão. Provas nativas focadas não substituem os gates completos de missão e do pacote. |
+| ORC-02 | Consumidor civil consulta bloqueadores duráveis e entregas ainda na fila; só exclui o Maestro antes do limiteSQL. Comandos instrumentados mantêm obrigação física durante timeout, ACK de background e saída dos descendentes. Primeira onda exige setup/kickoff confirmados; direções durante bootstrap ficam na fila da tentativa possuída e só a prova atual libera entrega correlacionada. Falha só terminaliza a tentativa ainda possuída. | Fatos de saída sem prova após perda do processo ficam unknown e bloqueiam conclusão. Provas nativas focadas não substituem os gates completos de missão e do pacote. |
 | ORC-06 | Boot/registro reconciliam o outbox antes de efeitos; obrigações sem prova ficam unknown, inclusive após poda legada. Manutenção por escopo remove até 500 efeitos assentados e 100 recibos gerados elegíveis por passagem; falha local preserva o escopo e não trava os saudáveis. | Cancelamento/perda do registry interrompem a passagem. Vínculos explícitos/unknown ficam preservados; não reconstruir sessões nem anunciar reconciliação de todas as CLIs. |
 | DSK-08 | Amostrador TS `resource-monitor` existe. | Sem binário nativo/consumidor produtivo; não equivale ao monitor Rust do T3. |
 | DSK-10 | Relay puro e adapter Electron de escopo/ciclo de vida revisados. Exposição HTTP/WebSocket experimental fechada por violar proteção de dados e visão. | Endpoint rawCDP/Playwright precisa de contrato de confiança próprio. Preview estático e ferramentas tipadas do Nexus são as operações suportadas. |
