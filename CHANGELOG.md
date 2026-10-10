@@ -2,7 +2,8 @@
 
 ## 0.76.228 — Missões com acompanhamento contínuo
 
-- **Ferramentas dos agentes de missão mais rápidas no Mac.** O controle de segurança de cada ferramenta deixa de passar pela fila de admissão de carga de trabalho; cada chamada de um agente de missão deixa de esperar cerca de 6 segundos, e preloads herdados do terminal não rodam mais dentro desse controle (F-1154).
+- **Agentes com acesso a tudo.** Orquestrador, helpers, workers e revisores alcançam toda ferramenta do Nexus e as nativas da CLI. O orquestrador também pode editar, commitar e abrir subagentes; revisores deixam de ser somente leitura; não há mais filtro de skill nem bloqueio do WebFetch. Confirmações humanas, vínculo de missão e o modo Hardened escolhido pelo operador continuam valendo (F-1157).
+- **Ferramentas dos agentes de missão mais rápidas.** O Nexus deixa de rodar um controle em Node a cada ferramenta de um agente de missão. No Mac cada chamada esperava cerca de 6 segundos; restam só os avisos leves de status. O envio do handoff mantém o hook que guarda o relato em disco quando o app não responde (F-1154).
 
 - **Comandos do Grok no Mac.** A integração usa o Bash do sistema compatível com o transporte suportado. A seleção de outro Bash instalado deixa de impedir a execução; scripts de inicialização exclusivos do Bash 5 exigem adaptação (F-1101).
 

@@ -10255,6 +10255,7 @@ export const CURRENT_RELEASE: AppRelease = {
   codename: 'Missões com acompanhamento contínuo',
   summary: 'Melhorias no início e na retomada das missões, conclusão com entrega verificada e capturas vinculadas ao terminal escolhido. Inclui decisões por conta e Quadro com participantes vivos.',
   highlights: [
+    { title: 'Agentes com acesso a tudo', detail: 'Orquestrador, helpers, workers e revisores alcançam toda ferramenta do Nexus e as nativas da CLI. O orquestrador também edita e commita, revisores deixam de ser somente leitura e não há filtro de skill nem bloqueio do WebFetch. Confirmações humanas e o modo Hardened continuam valendo.' },
     { title: 'Luna, Decisions API da OpenAI', detail: 'Em Configurações → Modelos de decisão, escolha Somente Luna (beta) ou Luna junto com Jev e Clef. A chave é a da OpenAI em Chaves de API; a preferência fica nesta conta Nexus.' },
     { title: 'Imagens com autorização por provedor', detail: 'O envio de imagens à OpenAI exige autorização própria. Trocar o modelo ou cadastrar uma chave não concede essa autorização.' },
     { title: 'Quadro com participantes vivos', detail: 'O Quadro acompanha os participantes atuais da missão, mantém o Maestro ocioso visível e oferece controles de zoom sem sobrepor o inspetor.' },
@@ -10271,7 +10272,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Maestro acompanha a missão desde o início', detail: 'O início e a retomada mantêm o acompanhamento quando o Maestro começa a delegar durante a preparação. Alterações na missão e encerramento continuam protegidos.' },
     { title: 'Conclusão que continua', detail: 'Missões comuns e iniciadas por um pane preservam a nova tentativa de verificar a entrega quando o Maestro termina o turno durante uma verificação. Encerrar cancela essa retomada.' },
     { title: 'Conta coerente na recuperação', detail: 'Uma troca recusada antes de criar o terminal substituto preserva a conta do terminal original quando sua identidade está comprovada.' },
-    { title: 'Ferramentas dos agentes mais rápidas no Mac', detail: 'O controle de segurança de cada ferramenta de um agente de missão deixa de passar pela fila de admissão de carga; cada chamada deixa de esperar cerca de 6 segundos.' },
+    { title: 'Ferramentas dos agentes mais rápidas', detail: 'O Nexus deixa de rodar um controle a cada ferramenta de um agente de missão. No Mac cada chamada esperava cerca de 6 segundos; o envio do handoff mantém só a cópia em disco para quando o app não responde.' },
     { title: 'Retomada de worker sem duplicar', detail: 'Retomar um worker fechado reserva a continuação antes de iniciar o processo, para que o terminal antigo e o novo não rodem a mesma conversa ao mesmo tempo. A tarefa continua a mesma e o novo terminal só é registrado depois de iniciar de fato.' },
     { title: 'Orientação no início da missão', detail: 'Enquanto o líder se prepara, a orientação fica na fila. O app distingue a entrega comprovada do pedido ainda pendente e mostra falha sem reenviar para outro pane.' },
     { title: 'API e sessão nativa distintas', detail: 'Uma credencial de API ou transporte não é tratada como login nativo do Claude. A sessão nativa comprovada continua com prioridade sobre a chave de API.' },
