@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.76.227 — Missões com acompanhamento contínuo
+## 0.76.228 — Missões com acompanhamento contínuo
+
+- **Ferramentas dos agentes de missão mais rápidas no Mac.** O controle de segurança de cada ferramenta deixa de passar pela fila de admissão de carga de trabalho; cada chamada de um agente de missão deixa de esperar cerca de 6 segundos, e preloads herdados do terminal não rodam mais dentro desse controle (F-1154).
 
 - **Comandos do Grok no Mac.** A integração usa o Bash do sistema compatível com o transporte suportado. A seleção de outro Bash instalado deixa de impedir a execução; scripts de inicialização exclusivos do Bash 5 exigem adaptação (F-1101).
 
