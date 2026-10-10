@@ -62,7 +62,7 @@ function writeReply(messages, step, tool, calls, nonce) {
 export async function startRuntimeGateway(nonce) {
   if (!/^[a-f0-9-]{36}$/u.test(nonce)) throw new Error('runtime gateway nonce invalid');
   let requests = 0, stopped = false, closeFlight = null, recovery = null;
-  const sockets = new Set(), observations = [], questionCalls = [], writeCalls = [], recoveryCalls = [];
+  const sockets = new Set(), observations = [], questionCalls = [], writeCalls = [], recoveryCalls = [], reviewCalls = [];
   const server = http.createServer((req, res) => {
     req.setTimeout(5000, () => req.destroy());
     if (stopped) { res.writeHead(503); res.end(); return; }
@@ -86,7 +86,7 @@ export async function startRuntimeGateway(nonce) {
         const markers = [...text.matchAll(/RT_GATE (OPS|SPAWN|WRITE|REVIEW|ACK|QUESTION|RECOVER|RESUME|IDLE)/gu)];
         const kind = markers.at(-1)?.[1];
         const assistantBlocks = (body.messages ?? []).filter(message => message.role === 'assistant' && Array.isArray(message.content)).flatMap(message => message.content);
-        const used = (['QUESTION', 'WRITE', 'RECOVER'].includes(kind) ? assistantBlocks : all).filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
+        const used = (['QUESTION', 'WRITE', 'RECOVER', 'REVIEW'].includes(kind) ? assistantBlocks : all).filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
         const step = used.length;
         if (kind === 'QUESTION' && (!text.includes(`RT_GATE QUESTION ${nonce}`) || step > 2)) throw new Error('QUESTION instruction scope or step invalid');
         const tool = (suffix, input) => {
@@ -97,12 +97,13 @@ export async function startRuntimeGateway(nonce) {
           if (kind === 'QUESTION') questionCalls[step] = call;
           if (kind === 'WRITE') writeCalls[step] = call;
           if (kind === 'RECOVER') recoveryCalls[step] = call;
+          if (kind === 'REVIEW') reviewCalls[step] = call;
           return call;
         };
         let content = { type: 'text', text: 'Runtime fixture ready; waiting for scoped verifier instruction.' };
         if (kind === 'OPS' && step === 0) content = tool('nexus_terminal_run', { command: `printf RT_OPS_${nonce}` });
         else if (kind === 'SPAWN' && step < 2) content = tool('nexus_pane_spawn', { adapterId: 'claude', agentName: step ? 'Runtime reviewer' : 'Runtime writer',
-          role: 'worker', task: step ? 'Review runtime report' : 'Fix the UI visual fixture inspection report',
+          role: 'worker', readOnly: step === 1, autoCloseOnHandoff: false, task: step ? 'Review runtime report' : 'Fix the UI visual fixture inspection report',
           prompt: `RT_GATE IDLE ${nonce}. ${step ? 'Review the report when instructed.' : 'Fix the UI visual fixture inspection report: capture the local page with the Nexus browser and write runtime-report.txt when instructed.'} Wait for the scoped follow-up; use only Nexus tools within the approved private workspace.` });
         else if (kind === 'WRITE') {
           if (!text.includes(`RT_GATE WRITE ${nonce}`) || step > 6 || !used.every((call, index) => {
@@ -115,7 +116,8 @@ export async function startRuntimeGateway(nonce) {
         }
         else if (kind === 'REVIEW' && step === 0) content = tool('nexus_file_read', { path: 'runtime-report.txt' });
         else if (kind === 'REVIEW' && step === 1) {
-          if (!all.some(v => typeof v.content === 'string' && v.content.includes(`RT_REPORT_${nonce}`))) throw new Error('real file read result absent');
+          const report = toolResult(body.messages, reviewCalls[0], 'REVIEW');
+          if (report.path !== 'runtime-report.txt' || typeof report.content !== 'string' || !report.content.includes(`RT_REPORT_${nonce}`)) throw new Error('real file read result absent');
           content = tool('nexus_handoff_submit', { status: 'success',
           summary: `RT_${kind}_${nonce}: Private runtime acceptance report was ${kind === 'WRITE' ? 'written' : 'read and reviewed'} through scoped Nexus tools. This durable full report preserves the actual result and deliberately contains no operator credentials or external data.`,
           fullText: `RT_REVIEW_${nonce}\nThe real CLI executed the advertised scoped Nexus tools for the approved private runtime fixture. The reviewer read runtime-report.txt using the real file read tool and observed the RT_REPORT marker for this fixture.\nNo operator credentials, external pages, login, or model inference service were used by this fixture. The handoff and its ACK still require their physical authenticated Nexus receipts and normal Main gates.`,

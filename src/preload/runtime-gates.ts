@@ -72,10 +72,10 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         const standardId = await prepare('standard');
         let observed = await observe(standardId);
         if (!observed.agents.some((a: any) => a.role === 'worker')) await direct(standardId, `RT_GATE SPAWN ${marker}`);
-        observed = await poll(() => observe(standardId), v => v.agents.filter((a: any) => a.role === 'worker').length >= 1, 'actual standard workers');
+        observed = await poll(() => observe(standardId), v => v.agents.some((a: any) => a.role === 'worker' && a.agentName === 'Runtime writer'), 'actual standard writer');
         const workers = observed.agents.filter((a: any) => a.role === 'worker');
         if (workers.length > 2 || workers.some((a: any) => a.adapterId !== 'claude' || !a.pid)) throw new Error('worker inventory invalid'); checks['standard-workers'] = true;
-        const writer = workers[0], agentFor = (v: any, paneId: string) => { const id = v.snapshot.agents.find((a: any) => a.paneId === paneId)?.id; if (!id) throw new Error('canonical worker agent ID unavailable'); return id; };
+        const writer = workers.find((a: any) => a.agentName === 'Runtime writer'), agentFor = (v: any, paneId: string) => { const id = v.snapshot.agents.find((a: any) => a.paneId === paneId)?.id; if (!id) throw new Error('canonical worker agent ID unavailable'); return id; };
         await direct(standardId, `RT_GATE IDLE ${marker}`, agentFor(observed, writer.paneId));
         observed = await poll(() => observe(standardId), v => v.agents.some((a: any) => a.paneId === writer.paneId && a.conversation), 'native conversation recorded');
         const original = observed.agents.find((a: any) => a.paneId === writer.paneId);
@@ -86,8 +86,12 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         const recovered = observed.agents.find((a: any) => a.paneId === observed.recovery.paneId && a.sessionId === observed.recovery.sessionId);
         if (!sameRuntimeConversation(recovered.conversation, original.conversation)) throw new Error('worker recovery lost exact conversation'); checks['worker-recovery'] = true;
         await direct(standardId, `RT_GATE WRITE ${marker}`, agentFor(observed, recovered.paneId));
-        if (workers[1]) await direct(standardId, `RT_GATE REVIEW ${marker}`, agentFor(observed, workers[1].paneId));
-        await poll(() => observe(standardId), v => v.handoffs.some((h: any) => h.status === 'success' && h.summary.includes(marker)), 'actual worker handoff');
+        observed = await poll(() => observe(standardId), v => v.handoffs.some((h: any) => h.status === 'success' && h.summary.includes(`RT_WRITE_${marker}`)), 'actual writer handoff');
+        const reviewer = observed.agents.find((a: any) => a.role === 'worker' && a.agentName === 'Runtime reviewer');
+        if (reviewer) {
+          await direct(standardId, `RT_GATE REVIEW ${marker}`, agentFor(observed, reviewer.paneId));
+          await poll(() => observe(standardId), v => v.handoffs.some((h: any) => h.status === 'success' && h.summary.includes(`RT_REVIEW_${marker}`)), 'actual reviewer handoff');
+        }
         await direct(standardId, `RT_GATE ACK ${marker}`);
         observed = await poll(() => observe(standardId), v => v.audit.some((a: any) => a.tool === 'nexus_handoff_ack' && a.result === 'ok' && a.source === 'http-mcp'), 'physical Maestro ACK'); checks['handoff-ack'] = true;
         await poll(() => observe(standardId), v => v.agents.some((a: any) => a.visual?.assignmentId && a.visual.artifactId), 'Main visual assignment capture'); checks['visual-capture'] = true;

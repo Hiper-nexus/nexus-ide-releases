@@ -267,3 +267,35 @@ describe('F-1111 normal worker recovery exchange', () => {
       } finally { await server.close(); }
     });
 });
+describe('F-1112 finite writer and read-only reviewer', () => {
+  const nonce = '11111111-1111-4111-8111-111111111111';
+  async function post(server, messages) {
+    const response = await fetch(`${server.url}/v1/messages`, { method: 'POST', headers: { 'x-api-key': `rt-${nonce}` },
+      body: JSON.stringify({ tools: buildToolset().map(t => ({ name: t.name })), messages }) });
+    const events = response.ok ? (await response.text()).split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6))) : [];
+    const call = events.find(event => event.type === 'content_block_start')?.content_block;
+    if (call?.type === 'tool_use') call.input = JSON.parse(events.find(event => event.delta?.type === 'input_json_delta').delta.partial_json);
+    return { status: response.status, call };
+  }
+  it.each(['writer', 'reviewer'])('declares the ordinary %s lifetime and write authority', async kind => {
+    const server = await startRuntimeGateway(nonce), messages = [{ role: 'user', content: `RT_GATE SPAWN ${nonce}` }];
+    try {
+      let result = await post(server, messages);
+      if (kind === 'reviewer') { messages.push({ role: 'assistant', content: [result.call] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: result.call.id,
+        content: JSON.stringify({ paneId: 'writer-pane', sessionId: 'writer-session' }) }] }); result = await post(server, messages); }
+      expect(result.call.input).toMatchObject({ agentName: kind === 'writer' ? 'Runtime writer' : 'Runtime reviewer', role: 'worker',
+        readOnly: kind === 'reviewer', autoCloseOnHandoff: false });
+    } finally { await server.close(); }
+  });
+  it.each(['valid', 'foreign-path', 'failed'])('accepts only the exact actual shared report read (%s)', async variant => {
+    const server = await startRuntimeGateway(nonce), messages = [{ role: 'user', content: `RT_GATE REVIEW ${nonce}` }];
+    try {
+      const first = await post(server, messages);
+      messages.push({ role: 'assistant', content: [first.call] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: first.call.id,
+        is_error: variant === 'failed', content: JSON.stringify({ path: variant === 'foreign-path' ? 'foreign-report.txt' : 'runtime-report.txt', content: `RT_REPORT_${nonce}\n` }) }] });
+      const next = await post(server, messages);
+      expect(next.status).toBe(variant === 'valid' ? 200 : 422);
+      if (variant === 'valid') expect(next.call.name).toBe('nexus_handoff_submit');
+    } finally { await server.close(); }
+  });
+});

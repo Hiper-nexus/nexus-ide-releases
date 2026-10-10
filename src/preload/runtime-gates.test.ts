@@ -2,7 +2,7 @@
 import { EventEmitter } from 'node:events';
 import { expect, it, vi } from 'vitest';
 import { installRuntimeGatePreload } from './runtime-gates';
-import { RUNTIME_CHANNELS } from '../shared/runtime-gates';
+import { RUNTIME_CHANNELS, RUNTIME_DOM_REQUEST, RUNTIME_DOM_REPLY } from '../shared/runtime-gates';
 import { isToolAllowedForRole } from '../main/orch/gate';
 it('the private frozen chief can register a question and declare its normal blocked status', async () => {
   const ipc = Object.assign(new EventEmitter(), { invoke: vi.fn(), send: (channel: string, value: unknown) => ipc.emit(channel, value) });
@@ -32,4 +32,44 @@ it('does not execute product APIs for incomplete/foreign private instructions', 
 });
 it('does not install the private driver in a subframe', () => {
   const ipc = { on: vi.fn() }; installRuntimeGatePreload(ipc as never, {} as never, { isMainFrame: false }); expect(ipc.on).not.toHaveBeenCalled();
+});
+it.each(['identity', 'report-ready'])('F-1112: selects named workers and preserves report causality (%s)', async stage => {
+  const marker = '22222222-2222-4222-8222-222222222222';
+  let question = false, opsStopped = false, prepared = 0, resumed = false, writeDirected = false, reportReady = false;
+  const directions: Array<{ targetAgentId: string; text: string }> = [];
+  const writer = { role: 'worker', agentName: 'Runtime writer', paneId: 'writer-pane', sessionId: 'writer-sid', adapterId: 'claude', pid: 200, conversation: { key: 'session_id', id: 'writer-native' } };
+  const reviewer = { ...writer, agentName: 'Runtime reviewer', paneId: 'reviewer-pane', sessionId: 'reviewer-sid', pid: 201 };
+  const newWriter = { ...writer, paneId: 'returned-writer', sessionId: 'new-writer-sid', pid: 202 };
+  const chief = { ...writer, role: 'orchestrator', agentName: 'Runtime chief', paneId: 'chief-pane', sessionId: 'chief-sid', pid: 199 };
+  const ipc = Object.assign(new EventEmitter(), { invoke: async (_channel: string, request: { operation: string; missionId: string }) => {
+    if (writeDirected && request.operation === 'observe') reportReady = true;
+    return request.operation !== 'observe' ? {} :
+    request.missionId === 'ops' ? { agents: opsStopped ? [] : [chief], audit: [{ tool: 'nexus_terminal_run', result: 'ok' }],
+      snapshot: { question: question ? { id: 'question', options: [{ id: 'proceed' }] } : undefined } } :
+    { agents: [reviewer, resumed ? newWriter : writer, chief], handoffs: reportReady ? [{ status: 'success', summary: `RT_WRITE_${marker}` }] : [],
+      recovery: resumed ? { fromPaneId: writer.paneId, fromSessionId: writer.sessionId, paneId: newWriter.paneId, sessionId: newWriter.sessionId } : undefined,
+      snapshot: { agents: [{ id: 'reviewer-id', paneId: reviewer.paneId }, { id: 'writer-id', paneId: resumed ? newWriter.paneId : writer.paneId }] } };
+  },
+    send: (channel: string, value: unknown) => ipc.emit(channel, value) });
+  const api = { mission: { prepare: async () => ({ missionId: prepared++ ? 'std' : 'ops', reviewSha256: 'unit-review' }), start: async () => ({}),
+    command: async (value: { kind: string; missionId: string; text?: string; targetAgentId?: string }) => {
+      if (value.kind === 'answer-question') question = false;
+      if (value.kind === 'stop') opsStopped = true;
+      if (value.text?.includes('RT_GATE QUESTION')) question = true;
+      if (value.text?.includes('RT_GATE IDLE')) { directions.push({ targetAgentId: value.targetAgentId!, text: value.text }); if (stage === 'identity') throw new Error('private name-selection test ended'); }
+      if (value.text?.includes('RT_GATE RECOVER')) resumed = true;
+      if (value.text?.includes('RT_GATE WRITE')) writeDirected = true;
+      if (value.text?.includes('RT_GATE REVIEW')) { directions.push({ targetAgentId: value.targetAgentId!, text: String(reportReady) }); throw new Error('private report-order test ended'); }
+      return {};
+    } } };
+  const ui = (event: Event) => { const detail = (event as CustomEvent).detail; window.dispatchEvent(new CustomEvent(RUNTIME_DOM_REPLY,
+    { detail: { nonce: detail.nonce, request: detail.request, ok: true, result: { visible: true } } })); };
+  window.addEventListener(RUNTIME_DOM_REQUEST, ui);
+  const ended = new Promise<void>(resolve => ipc.once(RUNTIME_CHANNELS.result, () => resolve()));
+  try {
+    installRuntimeGatePreload(ipc as never, api as never, { isMainFrame: true });
+    ipc.emit(RUNTIME_CHANNELS.run, null, { nonce: '11111111-1111-4111-8111-111111111111', gatewayNonce: marker, phase: 'exercise', workspacePath: '/private/runtime-fixture' });
+    await ended; expect(directions).toEqual(stage === 'identity' ? [{ targetAgentId: 'writer-id', text: `RT_GATE IDLE ${marker}` }] :
+      [{ targetAgentId: 'writer-id', text: `RT_GATE IDLE ${marker}` }, { targetAgentId: 'reviewer-id', text: 'true' }]);
+  } finally { window.removeEventListener(RUNTIME_DOM_REQUEST, ui); }
 });
