@@ -1,17 +1,20 @@
 # Changelog
 
-## 0.76.219 — Decisões OpenAI e missões revisadas
+## 0.76.220 — Missões com acompanhamento contínuo
+
+- **Acompanhamento desde o início e na retomada.** A preparação do Maestro preserva o gasto legítimo de ferramentas sem perder sua autorização atual. O encerramento e as mudanças de objetivo, permissões ou liderança continuam invalidando a tentativa antiga (F-1134).
+- **Captura ligada ao destino real.** O Shot conserva o terminal, sua sessão e o projeto validados pelo Main antes da entrega. Mudança de sessão ou projeto recusa a cópia e digitação da captura antiga (F-1135).
 
 - **Conclusão sem perder a nova tentativa.** O idle do Maestro durante a coleta da entrega preserva uma reverificação, com líder e autorização atuais. Encerrar continua impedindo a retomada automática (F-1130).
 - **Conta coerente quando a recuperação recusa.** Sem grant de substituição e com o PTY original provado como o único ativo, a composição volta por CAS à conta física anterior. Um efeito tardio ou terminal substituto nunca é desfeito por suposição (F-1131).
-- A candidata 0.76.218 foi preservada; esta integração acrescenta os dois reparos revisados antes da publicação final.
+- As candidatas anteriores foram preservadas; esta integração reúne os reparos revisados de conclusão, recuperação, preparação e captura antes da publicação final.
 
 - **API e sessão nativa distintas.** Credenciais de transporte não provam uma assinatura nativa do Claude; a seleção preserva a prioridade da sessão nativa comprovada.
 - **Verificação de runtime entre worktrees.** O verificador usa a identidade de coordenação dos agentes e conserva a execução isolada, sem afrouxar as guardas de escopo.
 - **Conclusão automática com prova durável.** Toda conclusão automática confere os efeitos e entregas pendentes da missão; comandos sem saída comprovada continuam impedindo concluir.
 - **Retomada revogada.** Se a autorização cair antes da confirmação, a limpeza fica limitada ao runtime novo criado por aquela tentativa; sessões anteriores, adotadas ou de outra tentativa são preservadas.
 
-2026-10-09
+2026-10-10
 
 - **Orientação no início da missão.** Enquanto o líder se prepara, o pedido fica na fila da tentativa atual. A entrega exige prova de aceitação; falha não provoca replay para outro pane.
 

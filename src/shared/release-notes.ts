@@ -10250,18 +10250,19 @@ export const RELEASE_076212: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.219',
-  date: '2026-10-09',
-  codename: 'Decisões OpenAI e missões revisadas',
-  summary: 'Luna (beta) e decisões em conjunto, com escolha por conta, Quadro vivo, capturas no destino escolhido e correções de retomada e entrega de missões.',
+  version: '0.76.220',
+  date: '2026-10-10',
+  codename: 'Missões com acompanhamento contínuo',
+  summary: 'Melhorias no início e na retomada das missões, conclusão com entrega verificada e capturas vinculadas ao terminal escolhido. Inclui decisões por conta e Quadro com participantes vivos.',
   highlights: [
     { title: 'Luna, Decisions API da OpenAI', detail: 'Em Configurações → Modelos de decisão, escolha Somente Luna (beta) ou Luna junto com Jev e Clef. A chave é a da OpenAI em Chaves de API; a preferência fica nesta conta Nexus.' },
     { title: 'Imagens com autorização por provedor', detail: 'O envio de imagens à OpenAI exige autorização própria. Trocar o modelo ou cadastrar uma chave não concede essa autorização.' },
     { title: 'Quadro com participantes vivos', detail: 'O Quadro acompanha os participantes atuais da missão, mantém o Maestro ocioso visível e oferece controles de zoom sem sobrepor o inspetor.' },
-    { title: 'Captura no pane escolhido', detail: 'A bridge do Shot lista destinos vivos e aceita um destino explícito. Se ele sair ou pertencer a outro projeto, a captura não é digitada em outro pane.' },
+    { title: 'Captura no pane escolhido', detail: 'A captura conserva a sessão e o projeto do destino escolhido. Se o terminal reiniciar ou o projeto mudar antes da entrega, o app pede um destino vivo.' },
     { title: 'Launcher pelo teclado', detail: 'As ações do Launcher respondem aos atalhos de 1 a 6, uma vez por toque; campos de texto preservam a digitação.' },
   ],
   fixes: [
+    { title: 'Maestro acompanha a missão desde o início', detail: 'O início e a retomada mantêm o acompanhamento quando o Maestro começa a delegar durante a preparação. Alterações na missão e encerramento continuam protegidos.' },
     { title: 'Conclusão que continua', detail: 'Missões comuns e iniciadas por um pane preservam a nova tentativa de verificar a entrega quando o Maestro termina o turno durante uma verificação. Encerrar cancela essa retomada.' },
     { title: 'Conta coerente na recuperação', detail: 'Uma troca recusada antes de criar o terminal substituto preserva a conta do terminal original quando sua identidade está comprovada.' },
     { title: 'Orientação no início da missão', detail: 'Enquanto o líder se prepara, a orientação fica na fila. O app distingue a entrega comprovada do pedido ainda pendente e mostra falha sem reenviar para outro pane.' },
