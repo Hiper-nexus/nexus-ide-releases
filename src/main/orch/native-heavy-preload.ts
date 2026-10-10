@@ -49,8 +49,18 @@ export function stripInheritedHeavyCommandEnvironment(env: Record<string, string
   for (const key of Object.keys(env)) if (key.startsWith('NEXUS_HEAVY_')) delete env[key];
 }
 
+/** Managed Grok on macOS uses the system Bash supported by its wire adapter.
+ * Caller/custom shell selection cannot override this already-scoped lane.
+ * This selects a shell; it never creates heavy-command authority or a grant.
+ */
+export function selectGrokHeavyShell(env: NodeJS.ProcessEnv, adapterId: string | undefined, platform: NodeJS.Platform = process.platform): void {
+  if (platform === 'darwin' && adapterId === 'grok' && env.NEXUS_HEAVY_COMMAND_URL && env.NEXUS_HEAVY_BASH_ENV) {
+    env.GROK_SHELL = '/bin/bash';
+  }
+}
+
 /** Reassert the canonical Main-owned path at the physical spawn boundary. */
-export function reassertHeavyCommandBashEnvironment(env: Record<string, string>, agentEntry?: string): void {
+export function reassertHeavyCommandBashEnvironment(env: Record<string, string>, agentEntry?: string, adapterId?: string): void {
   if (!env.NEXUS_HEAVY_COMMAND_URL) { stripInheritedHeavyCommandEnvironment(env); return; }
   const directory = path.dirname(fs.realpathSync(heavyCommandPreloadPath()));
   const bash = path.join(directory, 'shell.bash');
@@ -65,6 +75,7 @@ export function reassertHeavyCommandBashEnvironment(env: Record<string, string>,
   if (process.platform === 'darwin' && !profile) throw new Error('heavy_zsh_profile_authority_unavailable');
   if (profile) env.NEXUS_HEAVY_ZDOTDIR = profile.directory; else delete env.NEXUS_HEAVY_ZDOTDIR;
   env.ZDOTDIR = profile?.directory ?? directory;
+  selectGrokHeavyShell(env, adapterId);
 }
 
 export async function nativeHeavyJobEnvironment(): Promise<Record<string, string>> {

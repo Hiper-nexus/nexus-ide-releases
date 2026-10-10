@@ -1,6 +1,6 @@
 import { heavyZshProfile } from './native-heavy-zdotdir';
 import { handleNativeHeavyCommandHttp, nativeHeavyCommands } from './native-heavy-command';
-import { appendHeavyCommandPreload, heavyCommandPreloadPath, heavyCommandShellEnvironment } from './native-heavy-preload';
+import { appendHeavyCommandPreload, heavyCommandPreloadPath, heavyCommandShellEnvironment, selectGrokHeavyShell } from './native-heavy-preload';
 import { analysisClient, flushPtyAnalysis, subscribePtyAnalysis } from '../pty/pty-analysis-runtime';
 import type { AnalysisFence } from '../pty/pty-analysis-protocol';
 import http from "node:http";
@@ -1721,6 +1721,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
   }
 
   let disposeHeavyProfileExit: (() => void) | undefined;
+  selectGrokHeavyShell(env, adapter.id);
   const decoration: AgentSpawnDecoration = {
     authorityToken: ctx.token,
     env,

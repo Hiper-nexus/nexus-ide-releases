@@ -2580,7 +2580,7 @@ export function spawnAgentSession(
   let spawnArgs = args;
   let spawnCwd = cwd;
   let spawnEnv = cleanEnv(env);
-  reassertHeavyCommandBashEnvironment(spawnEnv, /^node(?:\.exe)?$/i.test(path.basename(bin)) && args[0] ? args[0] : bin);
+  reassertHeavyCommandBashEnvironment(spawnEnv, /^node(?:\.exe)?$/i.test(path.basename(bin)) && args[0] ? args[0] : bin, adapter.id);
   const heavyZsh = heavyZshProfile(spawnEnv.NEXUS_GATE_TOKEN);
   /** Seatbelt/Bubblewrap already owns this spawn — never wrap with tmux attach. */
   let processSandboxActive = false;

@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { appendHeavyCommandPreload, heavyCommandShellEnvironment, stripInheritedHeavyCommandEnvironment } from './native-heavy-preload';
+import { appendHeavyCommandPreload, heavyCommandShellEnvironment, stripInheritedHeavyCommandEnvironment, selectGrokHeavyShell } from './native-heavy-preload';
 it('preserves existing NODE_OPTIONS and quotes resource paths with spaces', () => {
  expect(appendHeavyCommandPreload('--max-old-space-size=256', '/tmp/Application Support/preload.cjs')).toBe('--max-old-space-size=256 --require "/tmp/Application Support/preload.cjs"');
 });
@@ -357,4 +357,18 @@ it('Main refuses a missing or substituted bundled Grok transport resource', () =
   fs.symlinkSync(path.join(process.cwd(), 'resources/heavy-command/grok-transport.cjs'), bridge);
   expect(() => heavyCommandShellEnvironment({ PATH: path.dirname(process.execPath), HOME: root }, path.join(directory, 'preload.cjs'))).toThrow('heavy_command_resource_identity_invalid');
  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// Adapter identity comes from the Main; replay and human shells have none.
+it.each([
+  ['grok', 'darwin', true, '/bin/bash'], ['grok', 'darwin', false, '/finite/custom-bash'],
+  ['grok', 'linux', true, '/finite/custom-bash'], ['grok', 'win32', true, '/finite/custom-bash'],
+  ['custom-grok', 'darwin', true, '/finite/custom-bash'], ['kimi', 'darwin', true, '/finite/custom-bash'],
+  [undefined, 'darwin', true, '/finite/custom-bash'],
+] as const)('F-1101: shell selection scopes adapter=%s platform=%s heavy=%s', (adapterId, platform, scoped, want) => {
+  const unchanged = { HOME: '/finite/home', PATH: '/finite/bin:/bin', SHELL: '/bin/zsh', NEXUS_HEAVY_ORIG_BASH_ENV: '/finite/original.bash', NEXUS_HEAVY_ORIG_ZDOTDIR: '/finite/zprofile' };
+  const env: NodeJS.ProcessEnv = { ...unchanged, GROK_SHELL: '/finite/custom-bash', ...(scoped ? { NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1/hook/heavy-command', NEXUS_HEAVY_BASH_ENV: '/finite/scoped.bash' } : {}) };
+  selectGrokHeavyShell(env, adapterId, platform);
+  expect(env.GROK_SHELL).toBe(want); expect(env).toMatchObject(unchanged);
+  expect(env.NEXUS_GATE_TOKEN).toBeUndefined(); expect(env.NEXUS_HEAVY_JOB_BASE).toBeUndefined();
 });

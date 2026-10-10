@@ -17,9 +17,11 @@ vi.mock("electron", async () => {
   const os = await import("node:os");
   const path = await import("node:path");
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), "f567-pty-userdata-"));
-  return { app: { getPath: () => userData } };
+  return { app: { getPath: () => userData, getAppPath: () => process.cwd(), isPackaged: false } };
 });
 import { parse } from "smol-toml";
+import { heavyCommandShellEnvironment } from "../orch/native-heavy-preload";
+import { cleanupHeavyZshProfile } from "../orch/native-heavy-zdotdir";
 import { BUILTIN_ADAPTERS } from "../../adapters/builtin";
 import { cliPtyAdapterSchema } from "../../shared/adapter-types";
 import { PTY_CHANNELS } from "../../shared/channels";
@@ -3694,6 +3696,44 @@ describe("cli-agent spawn argv hardening", () => {
     } finally {
       configureAgentHookEndpointPath(null);
     }
+  });
+
+  it.runIf(process.platform === 'darwin').each(['user', 'worker', 'read-only'] as const)('F-1101: final Grok host environment rejects shell override (%s)', async lane => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-grok-shell-')), home = path.join(root, 'home'), cwd = path.join(root, 'workspace'), runtime = path.join(root, 'runtime');
+    for (const directory of [home, cwd, runtime]) fs.mkdirSync(directory);
+    vi.stubEnv('HOME', home); vi.stubEnv('USERPROFILE', home); setSquadCliPolicyLookupForTests(() => lane === 'read-only' ? 'governed' : 'operator-choice');
+    const h = fakeHost(); setPtyHost(h.host); const token = `finite-grok-${lane}`;
+    const prepared = { HOME: home, PATH: '/usr/bin:/bin', SHELL: '/bin/zsh', BASH_ENV: '/finite/original.bash', ZDOTDIR: '/finite/original-zdot' };
+    const heavy = heavyCommandShellEnvironment(prepared, path.join(process.cwd(), 'resources/heavy-command/preload.cjs'), token);
+    setAgentSpawnHook(() => ({ authorityToken: token, env: { ...heavy, NEXUS_GATE_TOKEN: token,
+      NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1/hook/heavy-command', GROK_SHELL: '/opt/homebrew/bin/bash' }, extraArgs: [], processHome: home, sandboxDir: runtime }));
+    const base = lane === 'user' ? trustedSpawn(fs.realpathSync(cwd)) : revisionBoundWorker(fs.realpathSync(cwd));
+    const authority = lane === 'read-only' ? { ...base, context: { ...base.context!, readOnly: true, nativeReadOnly: true } } : base;
+    const grok = { ...makeAdapter({ static: { GROK_SHELL: '/caller/custom-bash', SHELL: '/bin/zsh' }, passthrough: [], ephemeralHome: false }), id: 'grok', control: builtinCliPtyAdapter('grok').control };
+    let sid: string | undefined; const owner = fakeWc();
+    try {
+      ({ sessionId: sid } = spawnAgentSession(owner, { kind: 'cli-agent', paneId: `grok-shell-${lane}`, cols: 80, rows: 24 }, grok, {}, authority));
+      const spec = h.specFor(sid); expect(spec.env.GROK_SHELL).toBe('/bin/bash');
+      expect(spec.env.SHELL).toBe('/bin/zsh'); expect(spec.env.NEXUS_HEAVY_ORIG_BASH_ENV).toBe('/finite/original.bash');
+      expect(spec.env.NEXUS_HEAVY_ORIG_ZDOTDIR).toBe('/finite/original-zdot');
+      // Grok uses its own native read-only sandbox; it has no advisory Seatbelt lane.
+      if (lane === 'read-only') expect(spec.args).toEqual(expect.arrayContaining(['--permission-mode', 'plan', '--sandbox', 'read-only']));
+    } finally { if (sid) killSession(owner, sid); setAgentSpawnHook(null); cleanupHeavyZshProfile(token); vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it.runIf(process.platform === 'darwin').each(['other-adapter', 'no-heavy'] as const)('F-1101: final host does not pin Grok shell outside the scoped lane (%s)', lane => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-grok-shell-negative-')), home = path.join(root, 'home'); fs.mkdirSync(home);
+    vi.stubEnv('HOME', home); vi.stubEnv('USERPROFILE', home);
+    const h = fakeHost(); setPtyHost(h.host); const owner = fakeWc(), token = `finite-grok-${lane}`;
+    const heavy = heavyCommandShellEnvironment({ HOME: home }, path.join(process.cwd(), 'resources/heavy-command/preload.cjs'), token);
+    setAgentSpawnHook(() => ({ authorityToken: token, env: { ...(lane === 'other-adapter' ? { ...heavy, NEXUS_GATE_TOKEN: token, NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1/hook/heavy-command' } : {}), GROK_SHELL: '/finite/custom-bash' }, extraArgs: [] }));
+    // An executable named grok does not identify an adapter to the Main.
+    const adapter = { ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }), id: lane === 'no-heavy' ? 'grok' : 'test-cli', bin: 'grok' };
+    let sid: string | undefined;
+    try {
+      ({ sessionId: sid } = spawnAgentSession(owner, { kind: 'cli-agent', cols: 80, rows: 24 }, adapter, {}, trustedSpawn()));
+      expect(h.specFor(sid).env.GROK_SHELL).toBe('/finite/custom-bash');
+    } finally { if (sid) killSession(owner, sid); setAgentSpawnHook(null); cleanupHeavyZshProfile(token); vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: true }); }
   });
 
   it("deletes decoration envRemove keys from the spawned child env (F-576)", () => {

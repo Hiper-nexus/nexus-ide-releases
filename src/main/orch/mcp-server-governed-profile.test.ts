@@ -290,6 +290,29 @@ afterEach(() => {
 });
 
 describe('mcp-server governed CLI profile wiring', () => {
+  it.runIf(process.platform === 'darwin').each(['kimi', 'custom-grok'] as const)('F-1101: Main does not select Grok Bash for adapter %s', id => {
+    const root = tempRoot(), home = path.join(root, 'home'), cwd = path.join(root, 'workspace'); fs.mkdirSync(cwd);
+    privateRuntimePaths.userData = root; vi.stubEnv('HOME', home);
+    const selected = id === 'custom-grok' ? { ...adapter('grok'), id } : adapter(id);
+    const decoration = prepareAgentSpawnDecoration(selected, { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, false), { HOME: home, GROK_HOME: path.join(home, '.grok'), KIMI_CODE_HOME: path.join(home, '.kimi-code') })!;
+    try { expect(decoration.env.GROK_SHELL).toBeUndefined(); } finally { decoration.onSpawnFailed?.(); }
+  });
+
+  it.runIf(process.platform === 'darwin').each([false, true])('F-1101: Main selects supported Grok Bash after provider merges (worker=%s)', worker => {
+    const root = tempRoot(), home = path.join(root, 'home'), cwd = path.join(root, 'workspace'); fs.mkdirSync(cwd);
+    privateRuntimePaths.userData = root; vi.stubEnv('HOME', home);
+    const prepared = { HOME: home, PATH: '/opt/homebrew/bin:/usr/bin:/bin', SHELL: '/bin/zsh', GROK_HOME: path.join(home, '.grok'),
+      GROK_SHELL: '/opt/homebrew/bin/bash', BASH_ENV: '/finite/original.bash', ZDOTDIR: '/finite/original-zdot' };
+    const decoration = prepareAgentSpawnDecoration(adapter('grok'), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, worker, true), prepared)!;
+    try {
+      expect(decoration.env.GROK_SHELL).toBe('/bin/bash');
+      expect(decoration.env.NEXUS_HEAVY_ORIG_BASH_ENV).toBe(prepared.BASH_ENV);
+      expect(decoration.env.NEXUS_HEAVY_ORIG_ZDOTDIR).toBe(prepared.ZDOTDIR);
+      expect(prepared).toMatchObject({ GROK_SHELL: '/opt/homebrew/bin/bash', PATH: '/opt/homebrew/bin:/usr/bin:/bin', SHELL: '/bin/zsh', HOME: home });
+      expect(decoration.env.NEXUS_GATE_TOKEN).toBe(decoration.authorityToken);
+    } finally { decoration.onSpawnFailed?.(); }
+  });
+
   it.each(['owned', 'foreign-key', 'foreign-route', 'missing-transport'] as const)('F-1104: actual spawn decoration requires the %s transport, independently of provider identity', changed => {
     const root = fs.realpathSync(tempRoot()), home = path.join(root, 'home'), cwd = path.join(root, 'workspace');
     fs.chmodSync(root, 0o700); fs.chmodSync(home, 0o700); fs.mkdirSync(cwd);

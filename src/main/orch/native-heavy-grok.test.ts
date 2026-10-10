@@ -6,6 +6,7 @@ import { Script } from 'node:vm';
 import { spawn, execFileSync } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { NativeHeavyCommands } from './native-heavy-command';
+import { selectGrokHeavyShell } from './native-heavy-preload';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
@@ -135,11 +136,13 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
  fs.writeFileSync(bashFile, bashContents);
  const grokHome = path.join(root, 'grok'); fs.mkdirSync(grokHome);
  fs.writeFileSync(path.join(grokHome, 'config.toml'), `[cli]\nuse_leader = false\n[models]\ndefault = "finite"\n[model.finite]\nmodel = "finite"\nbase_url = "http://127.0.0.1:${port}/v1"\napi_backend = "messages"\nenv_key = "NEXUS_FAKE_PROVIDER_KEY"\ncontext_window = 32768\n`);
- const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, LANG: 'en_US.UTF-8', TERM: 'xterm-256color', TMPDIR: root, HOME: root, XDG_CONFIG_HOME: path.join(root, 'config'), XDG_CACHE_HOME: path.join(root, 'cache'), CLAUDE_CONFIG_DIR: path.join(root, 'claude'), CLAUDE_SECURESTORAGE_CONFIG_DIR: path.join(root, 'securestorage'),
+ const env: NodeJS.ProcessEnv = { PATH: `${path.dirname(process.execPath)}:/opt/homebrew/bin:${process.env.PATH ?? '/usr/bin:/bin'}`, LANG: 'en_US.UTF-8', TERM: 'xterm-256color', TMPDIR: root, HOME: root, XDG_CONFIG_HOME: path.join(root, 'config'), XDG_CACHE_HOME: path.join(root, 'cache'), CLAUDE_CONFIG_DIR: path.join(root, 'claude'), CLAUDE_SECURESTORAGE_CONFIG_DIR: path.join(root, 'securestorage'),
   ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`, ANTHROPIC_AUTH_TOKEN: 'finite-test-credential', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   NEXUS_HEAVY_JOB_BASE: JSON.stringify(nestedHeavyJobBaseCommand(runtime)), NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command`, NEXUS_GATE_TOKEN: ctx.token, NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources, NEXUS_HEAVY_CURL: '/usr/bin/curl' };
  delete env.ANTHROPIC_API_KEY; delete env.CLAUDECODE; delete env.NODE_OPTIONS;
  Object.assign(env, { GROK_HOME: grokHome, GROK_DISABLE_AUTOUPDATER: '1', NEXUS_FAKE_PROVIDER_KEY: 'finite-test-credential', NEXUS_HEAVY_BASH_ENV: path.join(resources, 'shell.bash'), BASH_ENV: path.join(resources, 'shell.bash'), ZDOTDIR: resources });
+ // Exercise Main's shell-selection policy with Homebrew before system Bash.
+ selectGrokHeavyShell(env, 'grok');
  const profile = `(version 1)(allow default)(deny network*)(allow network-outbound (remote tcp "localhost:${port}"))(allow network-bind (local tcp "localhost:*"))(allow network-inbound (local tcp "localhost:*"))(allow network-bind (local unix (subpath ${JSON.stringify(fs.realpathSync(root))})))(allow network-inbound (local unix (subpath ${JSON.stringify(fs.realpathSync(root))})))(allow network-outbound (remote unix (subpath ${JSON.stringify(fs.realpathSync(root))})))`;
  const command = supervisedPtyCommand(runtime, '/usr/bin/sandbox-exec', ['-p', profile, grok!, '-p', 'finite fixture', '--always-approve', '--disable-web-search', '--model', 'finite', '--output-format', 'json']);
  const child = spawn(command.file, command.args, { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
