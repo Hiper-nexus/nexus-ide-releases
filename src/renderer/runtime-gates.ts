@@ -27,6 +27,15 @@ export function installRuntimeGateRenderer(): void {
     tail = tail.then(async () => {
       const [{ useLayoutStore }, terminal, { listPanes }, { useProductNavigationStore }] = await Promise.all([
         import('./state/layout-store'), import('./terminal/terminal-host'), import('./lib/split-tree'), import('./state/product-navigation-store')]);
+      if (value.operation === 'operator-pane') {
+        if (typeof value.model !== 'string' || !value.model.trim() || value.model.length > 128) throw new Error('normal native model invalid');
+        useProductNavigationStore.getState().openTerminal(); await frame();
+        const paneId = useLayoutStore.getState().spawnAgent('claude', value.model);
+        if (!paneId) throw new Error('normal operator pane refused');
+        const sessionId = await terminal.waitForSession(paneId, 10000);
+        if (!sessionId) throw new Error('normal operator native session absent');
+        reply(true, { paneId, sessionId }); return;
+      }
       if (value.operation === 'shell') {
         useProductNavigationStore.getState().openTerminal(); await frame();
         const paneId = useLayoutStore.getState().addShellPane(), sessionId = await terminal.waitForSession(paneId, 10000);

@@ -99,7 +99,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
       const canonicalScope = (value: typeof scope) => Object.entries(value).filter(([, entry]) => entry !== undefined).sort(([a], [b]) => a.localeCompare(b));
       const grants = (value: readonly string[] | null | undefined) => value == null ? null : [...value].sort();
       return createHash('sha256').update(JSON.stringify([info.adapterId, info.model ?? null, info.accountId ?? null, info.effort ?? null, info.cwd,
-        info.role, info.readOnly, info.nativeReadOnly ?? null, grants(info.allowedTools), grants(info.allowedSkills), grants(ctx.allowedTools), grants(ctx.allowedSkills),
+        info.role, info.readOnly, info.nativeReadOnly === true, grants(info.allowedTools), grants(info.allowedSkills), grants(ctx.allowedTools), grants(ctx.allowedSkills),
         canonicalScope(ctx.scope), canonicalScope(executionScopeFor(ctx)), ctx.visualTask ? [ctx.visualTask.id, ctx.visualTask.since] : null])).digest('hex');
     };
     const captureAgentBinding = (info: ReturnType<typeof listAgentSessions>[number]) => {
@@ -251,7 +251,9 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
           for (const a of agents) if (a.role === 'worker' && a.paneId && a.pid && a.conversation && a.bindingSha256) observedWorkers.set(a.sessionId,
             { missionId: mission.id, paneId: a.paneId, sessionId: a.sessionId, pid: a.pid, conversation: { ...a.conversation }, bindingSha256: a.bindingSha256 });
           stagedCaptures.forEach(capture => captures.set(capture.artifactId, capture));
+          const leaders = snapshot.agents?.filter(a => a.category === 'orchestrator' && a.terminalLive === true && a.paneId) ?? [];
           const result = { missionId: mission.id, lane: mission.intentContract?.lane, status: mission.status, snapshot, agents,
+            squadId: mission.squadId ?? null, adoptedPaneId: mission.intentContract?.workspaceBinding?.adoptedPaneId,
             ...(recovery ? { recovery } : {}),
             handoffs: stores.handoffs.list({ missionId: mission.id, includeDelivered: true }),
             acknowledgements: getMissionEventRuntimeManager()?.open(scope).db.prepare(`SELECT handoff_id AS handoffId, orchestrator_session_id AS sessionId,
@@ -261,7 +263,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
               resume: typeof v.args.resume === 'string' ? v.args.resume : undefined })) };
           // Keep the canonical response for the driver, but persist only the
           // bounded Main facts needed by the gate, not repeated full briefs.
-          addHistory({ ...result, snapshot: { question: snapshot.question },
+          addHistory({ ...result, snapshot: { question: snapshot.question, leaderPaneId: leaders.length === 1 ? leaders[0].paneId : undefined },
             handoffs: result.handoffs.map(h => ({ id: h.id, sessionId: h.sessionId, status: h.status, summary: h.summary.slice(0, 512), deliveryState: h.deliveryState,
               consumedBySession: h.consumedBySession, consumedDeliveryAttemptId: h.consumedDeliveryAttemptId })),
             audit: result.audit.filter(a => a.result === 'ok' && ['nexus_terminal_run', 'nexus_handoff_ack', 'nexus_pane_spawn'].includes(a.tool)) });
@@ -299,11 +301,9 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
         const proof = raw as Record<string, unknown>;
         if (proof.nonce === nonce && typeof proof.failed === 'string') throw new Error(proof.failed.slice(0, 256));
         if (proof.nonce !== nonce || flight || commandProbeFailed || !parseFunctionalSmokeResult(proof.finalFunctional)?.ok) throw new Error('runtime nonce/functionality mismatch');
-        const state = proof.state as { standardId: string; chiefPaneId: string; conversation: unknown; memoryId: string; marker: string };
+        const state = proof.state as { standardId: string; continuityMissionId: string; chiefPaneId: string; chiefSessionId: string; chiefPid: number; bindingSha256: string; conversation: unknown; memoryId: string; marker: string };
         if (!state || state.marker !== config.gatewayNonce || typeof state.memoryId !== 'string') throw new Error('runtime state absent');
-        const liveHistory = history as Array<{ missionId?: string; agents?: Array<{ paneId: string; role: string; conversation: unknown }> }>;
-        const chief = liveHistory.filter(h => h.missionId === state.standardId).flatMap(h => h.agents ?? []).find(a => a.role === 'orchestrator' && a.paneId === state.chiefPaneId && sameRuntimeConversation(a.conversation, state.conversation));
-        if (!chief || config.phase === 'resume' && JSON.stringify(state) !== JSON.stringify(prior)) throw new Error('runtime native state differs from Main history');
+        if (config.phase === 'resume' && JSON.stringify(state) !== JSON.stringify(prior)) throw new Error('runtime native state differs from Main history');
         const memoryIds = getWorkspaceMemoryStore(scope).recall({ query: `RT_MEMORY_${config.gatewayNonce}`, includeGlobal: false }).filter(h => h.content.includes(config.gatewayNonce) && h.scope === 'workspace').map(h => h.id);
         const facts = { phase: config.phase, history, terminated: [...terminated], memoryIds, marker: config.gatewayNonce, state,
           resumedOutput: [...resumedOutput], echoSessions: [...echoSessions], visibleQuestions: [...visibleQuestions], visibleMoves: [...visibleMoves], questionCommands, voice };

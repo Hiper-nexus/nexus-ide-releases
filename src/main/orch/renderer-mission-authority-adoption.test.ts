@@ -186,6 +186,9 @@ import {
 import { captureMissionCodeBaseline } from './mission-code-baseline-ledger';
 import { RendererMissionAuthority } from "./renderer-mission-authority";
 import * as panes from "./pane-registry";
+import * as nativeDb from '../persistence/db';
+import { saveProviderPaneSession, getProviderPaneSession, copyProviderPaneSession } from '../persistence/provider-session-store';
+import { operatorTabMissionResumeSpec } from './operator-tab-mission-resume';
 import { authorizePaneRef } from "./tool-util";
 import { paneSpawnTool, setOperatorTabMissionProvider } from "./tools-panes";
 
@@ -329,6 +332,30 @@ function authority(
 }
 
 describe("missão leve da aba — adoção da mão do operador", () => {
+  it('F-1113: actual normal adoption and reopened domain/native stores preserve the exact conversation for a new pane', async () => {
+    const sessionId = operatorPane('native-original'); register([{ paneId: 'native-original', sessionId }]);
+    const result = await authority().createPaneMissionFromRenderer(owner, { paneId: 'native-original', title: 'Runtime native fixture', ownGroup: true });
+    expect(result.ok).toBe(true); expect(result.mission?.squadId).toBeUndefined();
+    expect(result.mission?.intentContract?.workspaceBinding?.adoptedPaneId).toBe('native-original');
+    const db = manager.open(scope).db;
+    db.exec(`CREATE TABLE IF NOT EXISTS provider_pane_sessions (installation_id TEXT NOT NULL, project_id TEXT NOT NULL, checkout_id TEXT NOT NULL,
+      pane_id TEXT NOT NULL, adapter_id TEXT NOT NULL, session_key TEXT NOT NULL, session_id TEXT NOT NULL, transcript_path TEXT, updated_at INTEGER NOT NULL,
+      account_id TEXT, PRIMARY KEY (installation_id, project_id, checkout_id, pane_id, adapter_id))`);
+    const access = vi.spyOn(nativeDb, 'getDb').mockReturnValue(db);
+    expect(saveProviderPaneSession(scope, 'native-original', 'test-cli', { key: 'session_id', id: 'native-before-restart' })).toBe(true);
+    expect(await orchTerminateSession(sessionId)).toBe(true);
+    access.mockRestore(); disposeContextWorkflowRegistry(); disposeProjectDomainStoreRegistry(); manager.closeAll();
+    manager = new ProjectRuntimeManager({ baseDir: path.join(dir, '.runtime'), appVersion: 'test-restarted' });
+    configureProjectDomainStoreRegistry(manager); configureContextWorkflowRegistry(manager, { appVersion: 'test-restarted' });
+    const suite = requireProjectDomainStoreRegistry().forScope(scope), mission = suite.missions.get(result.mission!.id)!;
+    const spec = operatorTabMissionResumeSpec(mission, suite.missionPanes.list(mission.id));
+    expect(spec?.paneId).toBe('native-original');
+    vi.spyOn(nativeDb, 'getDb').mockReturnValue(manager.open(scope).db);
+    expect(copyProviderPaneSession(scope, spec!.paneId!, 'new-normal-pane', 'test-cli')).toBe(true);
+    expect(getProviderPaneSession(scope, 'new-normal-pane', 'test-cli')).toEqual({ key: 'session_id', id: 'native-before-restart' });
+    expect(copyProviderPaneSession({ ...scope, checkoutId: 'foreign' }, spec!.paneId!, 'foreign-pane', 'test-cli')).toBe(false);
+    expect(operatorTabMissionResumeSpec({ ...mission, squadId: 'prepared-squad' }, suite.missionPanes.list(mission.id))).toBeNull();
+  });
   it("promove o pane user: gate, ficha PTY e composição selada concordam, e a retomada passa", async () => {
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);

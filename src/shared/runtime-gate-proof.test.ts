@@ -31,7 +31,7 @@ it('matches actual provider identity and requires the resumed CLI reply in that 
   expect(sameRuntimeConversation(null, null)).toBe(false);
   expect(deriveRuntimeChecks(runtimeFactFixture('resume'))['exact-resume']).toBe(true);
   const f = runtimeFactFixture('resume'); f.resumedOutput = ['other-sid']; expect(() => deriveRuntimeChecks(f)).toThrow();
-  f.resumedOutput = ['chief-sid']; f.state.conversation = { key: 'session_id', id: 'fresh-conversation' }; expect(() => deriveRuntimeChecks(f)).toThrow();
+  f.resumedOutput = ['native-new-sid']; f.state.conversation = { key: 'session_id', id: 'fresh-conversation' }; expect(() => deriveRuntimeChecks(f)).toThrow();
 });
 it('F-1111: requires the exact returned new worker identity, fresh chief audit and full Main binding', () => {
   expect(deriveRuntimeChecks(runtimeFactFixture())['worker-recovery']).toBe(true);
@@ -55,5 +55,17 @@ it('F-1112: Main requires both real named worker reports and each exact consumed
     (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].agents[2].readOnly = false; },
     (f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].acknowledgements[1].invocationId = 'foreign-ack'; }]) {
     const f = runtimeFactFixture(); mutate(f); expect(() => deriveRuntimeChecks(f)).toThrow(/handoff-ack/);
+  }
+});
+it('F-1113: the supported adopted mission resumes only the new Main returned leader and exact native runtime', () => {
+  expect(deriveRuntimeChecks(runtimeFactFixture('resume'))['exact-resume']).toBe(true);
+  for (const mutate of [(f: ReturnType<typeof runtimeFactFixture>) => { f.history[0].agents[0].paneId = f.state.chiefPaneId; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[0].snapshot.leaderPaneId = 'foreign-return'; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[0].agents[0].sessionId = f.state.chiefSessionId; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[0].agents[0].bindingSha256 = 'e'.repeat(64); },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[0].squadId = 'prepared-squad'; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[0].adoptedPaneId = 'foreign-adoption'; },
+    (f: ReturnType<typeof runtimeFactFixture>) => { f.history[0].agents.push({ ...f.history[0].agents[0], paneId: 'competing-native' }); }]) {
+    const f = runtimeFactFixture('resume'); mutate(f); expect(() => deriveRuntimeChecks(f)).toThrow(/resume/);
   }
 });

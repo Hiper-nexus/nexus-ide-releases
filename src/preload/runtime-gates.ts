@@ -113,9 +113,19 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         await ui('close', { paneId: shell.paneId });
         await request('terminate', { sessionId: secondShell.sessionId }); await ui('close', { paneId: secondShell.paneId });
         const chief = observed.agents.find((a: any) => a.role === 'orchestrator');
-        if (!chief?.conversation) throw new Error('leader native resume unavailable');
-        state = { opsId, standardId, chiefPaneId: chief.paneId, conversation: chief.conversation, memoryId: memory.id, marker };
-        await shutdownMission(standardId); checks['mission-stop'] = true;
+        if (typeof chief?.model !== 'string' || !chief.model) throw new Error('normal catalog-resolved native model unavailable');
+        await shutdownMission(standardId);
+        const operator = await ui('operator-pane', { model: chief.model });
+        const adopted = await api.orch.createPaneMission({ paneId: operator.paneId, title: `Runtime native ${marker}`, ownGroup: true }); check();
+        if (!adopted.ok || !adopted.mission || adopted.mission.squadId || adopted.mission.intentContract?.workspaceBinding?.adoptedPaneId !== operator.paneId) throw new Error('normal native mission adoption refused');
+        const continuityMissionId = adopted.mission.id;
+        await direct(continuityMissionId, `RT_GATE IDLE ${marker}`);
+        const native = await poll(() => observe(continuityMissionId), v => v.agents.length === 1 && v.agents[0].role === 'orchestrator' &&
+          v.agents[0].paneId === operator.paneId && v.agents[0].sessionId === operator.sessionId && v.agents[0].pid > 0 && v.agents[0].conversation && v.agents[0].bindingSha256, 'actual adopted native leader');
+        const nativeChief = native.agents[0];
+        state = { opsId, standardId, continuityMissionId, chiefPaneId: nativeChief.paneId, chiefSessionId: nativeChief.sessionId, chiefPid: nativeChief.pid,
+          bindingSha256: nativeChief.bindingSha256, conversation: nativeChief.conversation, memoryId: memory.id, marker };
+        await shutdownMission(continuityMissionId); checks['mission-stop'] = true;
         await ui('media-observe'); const grant = await request('voice-arm');
         await api.voice.setConfig({ jarvisLiveEnabled: true, jarvisLiveTransport: 'classic', wakeWordEnabled: false, speakMode: 'off' });
         await poll(() => api.voice.getInfo(), v => v.captureAllowed === true, 'voice lease info');
@@ -125,16 +135,20 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         voice = await poll(() => ui('media-state'), v => v.tracks.length > 0 && v.tracks.every((t: any) => t.state === 'ended') && v.contexts.length > 0 && v.contexts.every((c: any) => c.state === 'closed'), 'actual microphone/context teardown', 10000);
         await request('capture-observation', voice); voice.grant = grant.grant; await ui('media-cleanup'); checks['voice-capture'] = true;
       } else {
-        if (!state?.standardId || state.marker !== marker) throw new Error('resume state missing');
+        if (!state?.continuityMissionId || state.continuityMissionId === state.standardId || state.marker !== marker) throw new Error('resume state missing');
         const recalled = await api.memory.recall({ query: `RT_MEMORY_${marker}` });
         if (!recalled.enabled || !recalled.hits.some(h => h.id === state.memoryId)) throw new Error('memory lost across process restart'); checks['memory-resume'] = true;
-        await api.mission.command({ kind: 'resume', missionId: state.standardId });
-        const restored = await poll(() => observe(state.standardId), v => v.agents.filter((a: any) => a.role === 'orchestrator').length === 1, 'single resumed leader');
+        const returned = await api.mission.command({ kind: 'resume', missionId: state.continuityMissionId });
+        const returnedLeaders = returned.agents.filter(a => a.category === 'orchestrator' && a.terminalLive === true && a.paneId);
+        if (returned.id !== state.continuityMissionId || returnedLeaders.length !== 1 || returnedLeaders[0].paneId === state.chiefPaneId) throw new Error('normal resumed leader identity invalid');
+        const restored = await poll(() => observe(state.continuityMissionId), v => v.agents.length === 1 && v.agents[0].role === 'orchestrator' &&
+          v.agents[0].paneId === returnedLeaders[0].paneId && v.agents[0].pid > 0, 'single returned resumed leader');
         const chief = restored.agents.find((a: any) => a.role === 'orchestrator');
-        if (!sameRuntimeConversation(chief.conversation, state.conversation)) throw new Error('resume replaced exact conversation');
-        await direct(state.standardId, `RT_GATE RESUME ${marker}`);
-        await poll(() => observe(state.standardId), v => v.resumedOutput.includes(chief.sessionId), 'actual CLI resumed history reply'); checks['exact-resume'] = true;
-        await shutdownMission(state.standardId); checks['mission-stop'] = true;
+        if (chief.sessionId === state.chiefSessionId || chief.pid === state.chiefPid || chief.bindingSha256 !== state.bindingSha256 ||
+          !sameRuntimeConversation(chief.conversation, state.conversation)) throw new Error('resume replaced exact conversation or runtime');
+        await direct(state.continuityMissionId, `RT_GATE RESUME ${marker}`);
+        await poll(() => observe(state.continuityMissionId), v => v.resumedOutput.includes(chief.sessionId), 'actual CLI resumed history reply'); checks['exact-resume'] = true;
+        await shutdownMission(state.continuityMissionId); checks['mission-stop'] = true;
       }
       const finalFunctional = await runFunctionalSmokeProbes(api, input.workspacePath); check();
       if (!finalFunctional.ok) throw new Error('runtime repeated functional probes failed');

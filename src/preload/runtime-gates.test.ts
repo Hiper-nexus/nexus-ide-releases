@@ -4,6 +4,8 @@ import { expect, it, vi } from 'vitest';
 import { installRuntimeGatePreload } from './runtime-gates';
 import { RUNTIME_CHANNELS, RUNTIME_DOM_REQUEST, RUNTIME_DOM_REPLY } from '../shared/runtime-gates';
 import { isToolAllowedForRole } from '../main/orch/gate';
+import { runtimeFactFixture } from '../shared/__tests__/runtime-gate-fixture';
+vi.mock('./functional-smoke', () => ({ runFunctionalSmokeProbes: async () => ({ ok: true }) }));
 it('the private frozen chief can register a question and declare its normal blocked status', async () => {
   const ipc = Object.assign(new EventEmitter(), { invoke: vi.fn(), send: (channel: string, value: unknown) => ipc.emit(channel, value) });
   let statusAllowed = false, previewAllowed = false;
@@ -75,4 +77,21 @@ it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer'])(
     await ended; expect(directions).toEqual(stage !== 'report-ready' ? [{ targetAgentId: 'writer-id', text: `RT_GATE IDLE ${marker}` }] :
       [{ targetAgentId: 'writer-id', text: `RT_GATE IDLE ${marker}` }, { targetAgentId: 'reviewer-id', text: 'true' }]);
   } finally { window.removeEventListener(RUNTIME_DOM_REQUEST, ui); vi.useRealTimers(); }
+});
+it('F-1113: resumes the separate native mission and binds the normal returned new leader while preserving original state', async () => {
+  const prior = runtimeFactFixture('resume').state;
+  const calls: Array<{ kind: string; missionId: string }> = []; let stopped = false;
+  const chief = { paneId: 'native-returned-new', sessionId: 'native-new-sid', pid: 678, role: 'orchestrator', adapterId: 'claude', conversation: prior.conversation, bindingSha256: prior.bindingSha256 };
+  const ipc = Object.assign(new EventEmitter(), { invoke: async () => ({ agents: stopped ? [] : [chief], resumedOutput: ['native-new-sid'] }),
+    send: (channel: string, value: unknown) => ipc.emit(channel, value) });
+  const api = { memory: { recall: async () => ({ enabled: true, hits: [{ id: prior.memoryId }] }) }, mission: {
+    command: async (value: { kind: string; missionId: string }) => { calls.push(value); if (value.kind === 'stop') stopped = true;
+      return { id: 'native', agents: [{ category: 'orchestrator', paneId: 'native-returned-new', terminalLive: true }] }; } } };
+  const ended = new Promise<any>(resolve => ipc.once(RUNTIME_CHANNELS.result, resolve));
+  installRuntimeGatePreload(ipc as never, api as never, { isMainFrame: true });
+  ipc.emit(RUNTIME_CHANNELS.run, null, { nonce: '33333333-3333-4333-8333-333333333333', gatewayNonce: prior.marker,
+    phase: 'resume', workspacePath: '/private/runtime-fixture', prior });
+  const proof = await ended;
+  expect(calls.map(v => [v.kind, v.missionId])).toEqual([['resume', 'native'], ['direct', 'native'], ['stop', 'native']]);
+  expect(proof.state).toEqual(prior); expect(proof.checks['exact-resume']).toBe(true);
 });

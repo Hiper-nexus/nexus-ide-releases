@@ -9,7 +9,8 @@ const agent = z.object({ paneId: z.string(), sessionId: z.string(), role: z.stri
 const recovery = z.object({ fromPaneId: z.string(), fromSessionId: z.string(), paneId: z.string(), sessionId: z.string(),
   chiefSessionId: z.string(), invocationId: z.string() });
 const observation = z.object({ missionId: z.string(), lane: z.string().optional(), agents: z.array(agent), snapshot: z.object({
-  question: z.object({ id: z.string() }).passthrough().optional() }).passthrough(), handoffs: z.array(z.object({ id: z.string(), sessionId: z.string().optional(), status: z.string(), summary: z.string(),
+  question: z.object({ id: z.string() }).passthrough().optional(), leaderPaneId: z.string().optional() }).passthrough(),
+  squadId: z.string().nullable().optional(), adoptedPaneId: z.string().optional(), handoffs: z.array(z.object({ id: z.string(), sessionId: z.string().optional(), status: z.string(), summary: z.string(),
     deliveryState: z.string(), consumedBySession: z.string().optional(), consumedDeliveryAttemptId: z.string().optional() }).passthrough()),
   acknowledgements: z.array(z.object({ handoffId: z.string(), sessionId: z.string(), deliveryAttemptId: z.string(), invocationId: z.string(), source: z.literal('http-mcp') })),
   recovery: recovery.optional(),
@@ -21,7 +22,7 @@ export function sameRuntimeConversation(a: unknown, b: unknown): boolean {
 /** Recomputed from Main's own observations, never from renderer checks:true. */
 export function deriveRuntimeChecks(input: {
   phase: 'exercise' | 'resume'; history: readonly unknown[]; terminated: readonly string[]; memoryIds: readonly string[];
-  marker: string; state: { standardId: string; chiefPaneId: string; conversation: unknown; memoryId: string };
+  marker: string; state: { standardId: string; continuityMissionId: string; chiefPaneId: string; chiefSessionId: string; chiefPid: number; bindingSha256: string; conversation: unknown; memoryId: string };
   resumedOutput: readonly string[]; echoSessions: readonly string[]; visibleQuestions: readonly string[]; visibleMoves: readonly string[];
   questionCommands: readonly { missionId: string; questionId: string; kind: 'retry-kickoff' | 'answer-question'; refused: boolean; remainingQuestionId?: string }[];
   voice?: { permissions: number; started: boolean; released: boolean; live: { tracks: number; live: number; frames: number; trackIds: string[]; contextIds: string[] } | null;
@@ -29,16 +30,24 @@ export function deriveRuntimeChecks(input: {
 }): Record<string, boolean> {
   const missions = input.history.flatMap(raw => { const parsed = observation.safeParse(raw); return parsed.success ? [parsed.data] : []; });
   const standard = missions.filter(v => v.missionId === input.state.standardId && v.lane === 'standard');
-  const chiefs = standard.flatMap(v => v.agents.filter(a => a.role === 'orchestrator'));
   const last = standard.at(-1);
   const stopped = !!last && last.agents.length === 0;
+  const native = missions.filter(v => input.state.continuityMissionId !== input.state.standardId && v.missionId === input.state.continuityMissionId &&
+    v.squadId === null && v.adoptedPaneId === input.state.chiefPaneId);
+  const nativeStopped = !!native.length && native.at(-1)!.agents.length === 0;
   const memory = input.memoryIds.includes(input.state.memoryId);
   if (input.phase === 'resume') {
-    const resumed = chiefs.some(a => a.pid && a.paneId === input.state.chiefPaneId && sameRuntimeConversation(a.conversation, input.state.conversation) && input.resumedOutput.includes(a.sessionId));
-    const result = { 'memory-resume': memory, 'exact-resume': resumed, 'mission-stop': stopped };
+    const resumed = native.some(v => v.agents.length === 1 && v.agents[0].role === 'orchestrator' && v.agents[0].pid &&
+      v.agents[0].paneId === v.snapshot.leaderPaneId && v.agents[0].paneId !== input.state.chiefPaneId && v.agents[0].sessionId !== input.state.chiefSessionId &&
+      v.agents[0].pid !== input.state.chiefPid && v.agents[0].bindingSha256 === input.state.bindingSha256 &&
+      sameRuntimeConversation(v.agents[0].conversation, input.state.conversation) && input.resumedOutput.includes(v.agents[0].sessionId));
+    const result = { 'memory-resume': memory, 'exact-resume': resumed, 'mission-stop': nativeStopped };
     if (RUNTIME_RESUME_REQUIRED.some(key => !result[key])) throw new Error('Main resume observations incomplete');
     return result;
   }
+  if (!native.some(v => v.agents.length === 1 && v.agents[0].role === 'orchestrator' && v.agents[0].paneId === input.state.chiefPaneId &&
+    v.agents[0].sessionId === input.state.chiefSessionId && v.agents[0].pid === input.state.chiefPid && v.agents[0].bindingSha256 === input.state.bindingSha256 &&
+    v.snapshot.leaderPaneId === input.state.chiefPaneId && sameRuntimeConversation(v.agents[0].conversation, input.state.conversation))) throw new Error('Main native continuity seed incomplete');
   const ops = missions.filter(v => v.lane === 'ops');
   const opsRun = ops.some(v => v.agents.some(a => a.role === 'orchestrator' && a.pid) && v.audit.some(a => a.tool === 'nexus_terminal_run' && a.result === 'ok' && a.source === 'http-mcp')) &&
     ops.every(v => !v.agents.some(a => a.role === 'worker')) && ops.at(-1)?.agents.length === 0;
@@ -81,7 +90,7 @@ export function deriveRuntimeChecks(input: {
     voice.live.trackIds.length === voice.live.tracks && voice.final.trackIds.length === voice.final.tracks &&
     voice.live.trackIds.every(id => voice.final!.trackIds.includes(id)) && voice.live.contextIds.every(id => voice.final!.contextIds.includes(id));
   const result = { 'ops-runtime': !!opsRun, 'standard-workers': workerInventory, 'handoff-ack': handoff, 'worker-recovery': recovered,
-    'pane-move': moved, 'question-answer': answered, 'memory-write': memory, 'voice-capture': captured, 'visual-capture': visual, 'mission-stop': stopped };
+    'pane-move': moved, 'question-answer': answered, 'memory-write': memory, 'voice-capture': captured, 'visual-capture': visual, 'mission-stop': stopped && nativeStopped };
   if (RUNTIME_REQUIRED.some(key => !result[key])) throw new Error(`Main runtime observations incomplete: ${RUNTIME_REQUIRED.filter(key => !result[key]).join(', ')}`);
   return result;
 }

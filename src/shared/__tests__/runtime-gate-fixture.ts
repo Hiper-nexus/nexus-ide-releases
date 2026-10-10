@@ -17,11 +17,15 @@ export function runtimeFactFixture(phase: 'exercise' | 'resume' = 'exercise') {
   recovered.handoffs.push({ id: 'review-handoff', sessionId: 'reviewer-sid', status: 'success', summary: `RT_REVIEW_${marker}`, deliveryState: 'consumed', consumedBySession: 'chief-sid', consumedDeliveryAttemptId: 'review-delivery' });
   recovered.acknowledgements.push({ handoffId: 'review-handoff', sessionId: 'chief-sid', deliveryAttemptId: 'review-delivery', invocationId: 'review-ack', source: 'http-mcp' });
   recovered.audit.push({ tool: 'nexus_handoff_ack', result: 'ok', source: 'http-mcp', session: 'chief-sid', invocation: 'review-ack', handoffId: 'review-handoff' });
-  return { phase, marker, state: { standardId: 'std', chiefPaneId: 'chief', conversation, memoryId: 'memory', marker },
-    history: phase === 'resume' ? [standard, observed('std', 'standard', [])] : [first, observed('ops', 'ops', [chief], { id: 'question' }),
+  const native = { ...chief, paneId: 'native-original', sessionId: 'native-old-sid', pid: 567, bindingSha256: 'f'.repeat(64) };
+  const nativeObserved = (agent: typeof native | null) => ({ ...observed('native', 'standard', agent ? [agent] : []), squadId: null, adoptedPaneId: 'native-original',
+    snapshot: { leaderPaneId: agent?.paneId } });
+  return { phase, marker, state: { standardId: 'std', continuityMissionId: 'native', chiefPaneId: native.paneId, chiefSessionId: native.sessionId,
+    chiefPid: native.pid, bindingSha256: native.bindingSha256, conversation, memoryId: 'memory', marker },
+    history: phase === 'resume' ? [nativeObserved({ ...native, paneId: 'native-returned-new', sessionId: 'native-new-sid', pid: 678 }), nativeObserved(null)] : [first, observed('ops', 'ops', [chief], { id: 'question' }),
       observed('ops', 'ops', [chief], { id: 'question' }), observed('ops', 'ops', [chief]), observed('ops', 'ops', []), standard, recovered,
-      { sessionId: 'shell', pid: 456 }, { sessionId: 'shell', pid: 456 }, observed('std', 'standard', [])],
-    terminated: ['old-worker', 'shell'], memoryIds: ['memory'], resumedOutput: phase === 'resume' ? ['chief-sid'] : [], echoSessions: ['shell'], visibleQuestions: ['question'], visibleMoves: ['shell'],
+      { sessionId: 'shell', pid: 456 }, { sessionId: 'shell', pid: 456 }, observed('std', 'standard', []), nativeObserved(native), nativeObserved(null)],
+    terminated: ['old-worker', 'shell'], memoryIds: ['memory'], resumedOutput: phase === 'resume' ? ['native-new-sid'] : [], echoSessions: ['shell'], visibleQuestions: ['question'], visibleMoves: ['shell'],
     questionCommands: [{ missionId: 'ops', questionId: 'question', kind: 'retry-kickoff' as const, refused: true, remainingQuestionId: 'question' },
       { missionId: 'ops', questionId: 'question', kind: 'answer-question' as const, refused: false }],
     voice: { permissions: 1, started: true, released: true,
