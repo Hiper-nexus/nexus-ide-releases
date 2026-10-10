@@ -39,6 +39,7 @@ import {
   listAgentSessions,
   orchTerminateSession,
   releaseOperatorOpenedAgentSession,
+  returnAdoptedAgentSessionToUser,
 } from '../pty/pty-manager';
 import {
   getAcpDriverSession,
@@ -119,7 +120,11 @@ function releaseOperatorOpenedTarget(
   target: RuntimeTarget,
 ): void {
   returnOperatorOpenedSessionToUser(target.sessionId, missionId);
-  releaseOperatorOpenedAgentSession(target.sessionId, missionId);
+  if (!releaseOperatorOpenedAgentSession(target.sessionId, missionId)) {
+    // A released manual hand loses operatorOpened in the PTY. Its subsequent
+    // adoption carries the exact promoted-user/mission proof instead.
+    returnAdoptedAgentSessionToUser(target.sessionId, missionId);
+  }
   detachOperatorOpenedPaneMission(target.paneId, missionId);
 }
 

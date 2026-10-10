@@ -260,6 +260,8 @@ import {
   getSessionState,
   isSessionDetached,
   adoptMainOwnedAgentSession,
+  adoptUserAgentSessionAsMissionOrchestrator,
+  releaseOperatorOpenedAgentSession,
   killSession,
   killSessionsFor,
   listAgentSessions,
@@ -307,6 +309,8 @@ import {
   mintToken,
   resetGateForTests,
   releaseSession,
+  returnOperatorOpenedSessionToUser,
+  adoptUserContextAsMissionOrchestrator,
 } from "../orch/gate";
 import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revocation";
 import { cleanupCliMcpSession } from "../orch/cli-mcp-session-config";
@@ -6829,5 +6833,65 @@ describe("F-992: perfil por modelo do Claude no argv físico", () => {
   it("CLI na versão mínima ou acima não avisa", async () => {
     const { warnings } = await spawnClaude("claude-sonnet-5-5", [], "2.1.293");
     expect(warnings).toBeUndefined();
+  });
+});
+
+
+describe('F-1143 — actual physical manual adoption and return', () => {
+  it.each(['volatile', 'durable'] as const)('returns the released/adopted physical hand from %s manual ownership without killing it', async ownership => {
+    const h = fakeHost(); setPtyHost(h.host);
+    const base = trustedSpawn();
+    const authority: BoundSpawnAuthority = { ...base, source: 'pending', coordinationScope: base.scope,
+      context: { missionId: 'f1143-old', role: 'worker', operatorOpened: true, scope: base.scope,
+        executionScope: base.scope, allowedTools: [], allowedSkills: [] } };
+    const paneId = `f1143-manual-${ownership}`;
+    const sessionId = spawnMainOwnedAgentSession({ kind: 'cli-agent', paneId, cols: 80, rows: 24 },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }), {}, authority).sessionId;
+    const panes = await import('../orch/pane-registry');
+    const main = await import('../orch/main-owned-pane-runtime');
+    const runtime = await import('../orch/mission-runtime-termination');
+    const ctx = mintToken({ label: 'f1143 physical manual', role: 'worker', missionId: 'f1143-old', scope: base.scope, allowedTools: [], allowedSkills: [] });
+    bindTokenToSession(ctx.token, sessionId);
+    main.setMainOwnedPane(paneId, { entry: { paneId, sessionId, kind: 'cli-agent', title: 'Manual', adapterId: 'test-cli' },
+      meta: { missionId: 'f1143-old', role: 'worker', operatorOpened: true, scope: base.scope, executionScope: base.scope } });
+    try {
+      expect(returnOperatorOpenedSessionToUser(sessionId, 'f1143-old')).toBe(true);
+      expect(releaseOperatorOpenedAgentSession(sessionId, 'f1143-old')).toBe(true);
+      panes.detachOperatorOpenedPaneMission(paneId, 'f1143-old');
+      const before = getAgentSessionInfo(sessionId)!;
+      expect(before).toMatchObject({ role: 'user', sessionId });
+      expect(before.operatorOpened).toBeUndefined();
+      const origin = panes.captureOperatorPaneAdoptionOrigin(sessionId)!;
+      expect(origin.authority.operatorOpened).toBe(true);
+      expect(adoptUserContextAsMissionOrchestrator(ctx, 'f1143-new')).toBe(true);
+      expect(adoptUserAgentSessionAsMissionOrchestrator(sessionId, 'f1143-new')).toBe(true);
+      expect(panes.publishAdoptedOperatorMissionPane(origin, ctx, 'f1143-new')).toBe(true);
+      const spec = { id: 'manual-spec', missionId: 'f1143-new', paneId, adapterId: 'test-cli', title: 'Manual', role: 'orchestrator',
+        operatorOpened: true, scope: base.scope, executionScope: base.scope };
+      if (ownership === 'durable') {
+        const current = main.getMainOwnedPane(paneId)!;
+        main.setMainOwnedPane(paneId, { ...current, meta: { ...current.meta, operatorOpened: undefined } });
+      }
+      const suite = { missions: { get: () => ({ id: 'f1143-new', status: 'done' }) },
+        missionPanes: { list: () => ownership === 'durable' ? [spec] : [] } };
+      await expect(runtime.terminateMissionRuntime({ scope: base.scope, missionId: 'f1143-new', suite: suite as never,
+        reason: 'operator-close' })).resolves.toMatchObject({ ok: true });
+      const returned = getAgentSessionInfo(sessionId)!;
+      expect(returned).toMatchObject({ sessionId, paneId, role: 'user', allowedTools: before.allowedTools,
+        allowedSkills: before.allowedSkills, readOnly: before.readOnly, nativeReadOnly: before.nativeReadOnly });
+      expect(returned.missionId).toBeUndefined();
+      expect(ctx.role).toBe('user'); expect(ctx.missionId).toBeUndefined();
+      expect(main.getMainOwnedPane(paneId)?.meta.missionId).toBeUndefined();
+      expect(getSessionState(sessionId)).not.toBeNull();
+      expect(h.procFor(sessionId).terminate).not.toHaveBeenCalled();
+      expect(h.procFor(sessionId).kill).not.toHaveBeenCalled();
+      await expect(runtime.closeOrphanedMissionRuntime({ scope: base.scope, missionId: 'f1143-new' })).resolves.toMatchObject({ ok: true, terminatedSessionIds: [] });
+      expect(getAgentSessionInfo(sessionId)?.role).toBe('user');
+      expect(getAgentSessionInfo(sessionId)?.missionId).toBeUndefined();
+    } finally {
+      main.deleteMainOwnedPane(paneId);
+      await orchTerminateSession(sessionId, { origin: 'f1143-physical-fixture:teardown' });
+      releaseSession(sessionId);
+    }
   });
 });

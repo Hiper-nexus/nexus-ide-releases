@@ -33,6 +33,8 @@ import type { AgentGateContext } from './gate';
 import { z } from 'zod';
 import {
   findPane,
+  captureOperatorPaneAdoptionOrigin,
+  publishAdoptedOperatorMissionPane,
   getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
   readSessionOutput,
@@ -376,7 +378,9 @@ const missionCreateTool: McpToolDef = {
     // vínculo que falharia depois (pane de outra missão viva) é recusado ANTES
     // de gravar. Antes a missão ficava gravada com o erro na resposta, e o
     // Nexus subia um orquestrador para ela (lote duplicado, 27/09).
-    const orchPane = ctx.sessionId ? findPane(ctx.sessionId) : null;
+    const creatorPhysical = ctx.sessionId ? getAgentSessionInfo(ctx.sessionId) : null;
+    const creatorOrigin = ctx.sessionId ? captureOperatorPaneAdoptionOrigin(ctx.sessionId) : null;
+    const orchPane = creatorOrigin?.entry ?? (ctx.sessionId ? findPane(ctx.sessionId) : null);
     if (orchPane?.adapterId) {
       const owner = stores.missionPanes.findByPaneId(orchPane.paneId);
       const ownerStatus = owner ? stores.missions.get(owner.missionId)?.status : undefined;
@@ -386,6 +390,9 @@ const missionCreateTool: McpToolDef = {
             'conclua-a (done/failed) ou continue nela — nenhuma missão nova foi criada',
         );
       }
+    }
+    if (!creatorOrigin && (orchPane?.adapterId || creatorPhysical)) {
+      throw new Error('mission creator has no exact owned pane origin');
     }
     const spaceId = ctx.executionScope ? sharedPaneSpaceId(ctx.scope, ctx.executionScope) : undefined;
     // F-810: a missão da mão do operador hospeda helpers; só a sincronização
@@ -447,6 +454,8 @@ const missionCreateTool: McpToolDef = {
             : {}),
           allowedTools: ctx.allowedTools,
           allowedSkills: ctx.allowedSkills,
+          ...(ctx.readOnly || creatorPhysical?.readOnly ? { readOnly: true } : {}),
+          ...(creatorOrigin?.authority.operatorOpened || creatorPhysical?.operatorOpened ? { operatorOpened: true } : {}),
         });
       }
       return autopilot
@@ -458,11 +467,22 @@ const missionCreateTool: McpToolDef = {
     // Falhou a promoção: a missão commitada sai (cascata leva o pane) e a mão
     // volta a ser do operador — nunca missão órfã sem orquestrador.
     try {
-      adoptUserContextAsMissionOrchestrator(ctx, mission.id);
-      if (ctx.sessionId) adoptUserAgentSessionAsMissionOrchestrator(ctx.sessionId, mission.id);
+      if (!adoptUserContextAsMissionOrchestrator(ctx, mission.id)) {
+        throw new Error('mission creator gate adoption failed');
+      }
+      if (creatorOrigin && ctx.sessionId) {
+        if (!adoptUserAgentSessionAsMissionOrchestrator(ctx.sessionId, mission.id)) {
+          throw new Error('mission creator physical adoption failed');
+        }
+        if (!publishAdoptedOperatorMissionPane(creatorOrigin, ctx, mission.id)) {
+          throw new Error('mission creator pane publication failed');
+        }
+      } else if (ctx.sessionId) {
+        adoptUserAgentSessionAsMissionOrchestrator(ctx.sessionId, mission.id);
+      }
     } catch (error) {
       if (ctx.sessionId) returnAdoptedAgentSessionToUser(ctx.sessionId, mission.id);
-      returnOperatorHandFromEndedMission(ctx);
+      if (ctx.missionId === mission.id) returnOperatorHandFromEndedMission(ctx);
       stores.missions.remove(mission.id);
       throw error;
     }

@@ -10,7 +10,7 @@ const facts = vi.hoisted(() => ({
   sessions: new Map<string, { ownerId: number | null; live: boolean; scope: ProjectExecutionScope;
     sessionId?: string; paneId?: string; missionId?: string; role?: CallerCtx['role']; adapterId?: string;
     accountId?: string; source?: 'direct-user' | 'orchestrator' | 'pending'; workerIncarnationId?: string;
-    authoritySeal?: typeof seal; operatorOpened?: true }>(),
+    authoritySeal?: typeof seal; operatorOpened?: true; promotedFromUser?: true }>(),
   releasePhysical: true,
   contexts: new Map<string, CallerCtx & { promotedFromUserSession?: true }>(),
   rendererScopes: new Map<number, ProjectExecutionScope>(),
@@ -46,6 +46,17 @@ vi.mock('../pty/pty-manager', () => ({
     facts.sessions.set(id, { ...rest, role: 'user' });
     return true;
   }),
+  adoptUserAgentSessionAsMissionOrchestrator: (id: string, missionId: string) => {
+    const session = facts.sessions.get(id);
+    if (!session || session.role !== 'user' || session.missionId) return false;
+    Object.assign(session, { role: 'orchestrator', missionId, promotedFromUser: true }); return true;
+  },
+  returnAdoptedAgentSessionToUser: (id: string, missionId: string) => {
+    const session = facts.sessions.get(id);
+    if (!session?.promotedFromUser || session.missionId !== missionId) return false;
+    const { missionId: _mission, promotedFromUser: _promoted, workerIncarnationId: _worker, ...rest } = session;
+    facts.sessions.set(id, { ...rest, role: 'user' }); return true;
+  },
   listAgentSessionsForPane: () => [], orchTerminateSession: vi.fn(async () => true),
   reattachDetachedMissionAgentSession: vi.fn(), tapSessionData: vi.fn(), tapSessionExit: vi.fn(), tapSessionState: vi.fn(),
 }));
@@ -68,11 +79,11 @@ vi.mock('./mission-orchestrator-exit-policy', () => ({ sanitizeMissionOrchestrat
 vi.mock('./main-owned-pane-runtime', () => ({
   deleteMainOwnedPane: (id: string) => facts.owned.delete(id), fallbackPendingSpawnToMain: vi.fn(),
   findMainOwnedPaneAuthz: (id: string) => facts.headless.has(id) ? [facts.headless.get(id)] : [],
-  findMainOwnedPaneEntries: () => [],
+  findMainOwnedPaneEntries: (id: string) => [...facts.owned.values()].filter(pane => pane.entry.paneId === id || pane.entry.sessionId === id).map(pane => pane.entry),
   findMainOwnedRuntimeAuthority: (id: string) => facts.headless.has(id) ? [{ ...facts.headless.get(id), owner: null }] :
     [...facts.owned.values()].filter(pane => pane.entry.sessionId === id).map(pane => ({ ...pane.entry, ...pane.meta, owner: null })),
   getMainOwnedPane: (id: string) => facts.owned.get(id), hasMainOwnedPaneReference: vi.fn(), hasMainOwnedPaneSession: vi.fn(),
-  listMainOwnedPaneSnapshots: () => [], mainOwnedPaneValues: () => [...facts.owned.values()], listVisibleMainOwnedPaneSnapshots: () => [],
+  listMainOwnedPaneSnapshots: () => [...facts.owned.values()].map(pane => ({ ...pane.entry, ...pane.meta })), mainOwnedPaneValues: () => [...facts.owned.values()], listVisibleMainOwnedPaneSnapshots: () => [],
   retainClaimedPendingSpawn: vi.fn(), setMainOwnedPane: (id: string, pane: MainOwnedPane) => facts.owned.set(id, pane), spawnMainOwnedMissionPane: vi.fn(), spawnMainOwnedMissionPaneAsync: vi.fn(),
 }));
 vi.mock('./pane-session-output', () => ({
@@ -468,4 +479,170 @@ describe('Main-derived browser originating owner', () => {
     facts.acp.delete('headless');
     expect(registry.callerWithPaneOwner(boundCaller).ownerWebContentsId).toBeUndefined();
   });
+});
+
+
+describe('F-1143 — operator MCP adoption metadata publication', () => {
+  function adoption() {
+    const wc = owner(41);
+    const context = { sessionId: 'creator', role: 'orchestrator', missionId: 'created', scope,
+      promotedFromUserSession: true, readOnly: true, allowedTools: ['nexus_pane_read'], allowedSkills: ['review'] } as AgentGateContext;
+    facts.contexts.set('creator', context);
+    facts.sessions.set('creator', { ownerId: wc.id, live: true, sessionId: 'creator', paneId: 'pane-creator',
+      adapterId: 'provider', source: 'direct-user', scope, role: 'orchestrator', missionId: 'created' });
+    registry.syncPanes([{ paneId: 'pane-creator', sessionId: 'creator', kind: 'cli-agent', title: 'Creator', adapterId: 'provider' }], wc);
+    const origin = registry.captureOperatorPaneAdoptionOrigin('creator')!;
+    return { wc, context, origin };
+  }
+
+  async function releasedMainOwned(mirror = false) {
+    const gate = await import('./gate');
+    const pty = await import('../pty/pty-manager');
+    gate.releaseSession('headless-creator');
+    const context = gate.mintToken({ label: 'operator-opened', role: 'worker', missionId: 'old', scope, allowedTools: [], allowedSkills: [] });
+    gate.bindTokenToSession(context.token, 'headless-creator');
+    facts.contexts.set('headless-creator', context);
+    facts.sessions.set('headless-creator', { ownerId: null, live: true, sessionId: 'headless-creator', paneId: 'headless-pane',
+      adapterId: 'provider', source: 'pending', scope, role: 'worker', missionId: 'old', operatorOpened: true });
+    facts.owned.set('headless-pane', { entry: { paneId: 'headless-pane', sessionId: 'headless-creator', kind: 'cli-agent', title: 'Operator hand', adapterId: 'provider' },
+      meta: { missionId: 'old', role: 'worker', operatorOpened: true, scope, executionScope: scope, allowedTools: [], allowedSkills: [] } });
+    expect(gate.returnOperatorOpenedSessionToUser('headless-creator', 'old')).toBe(true);
+    expect(pty.releaseOperatorOpenedAgentSession('headless-creator', 'old')).toBe(true);
+    registry.detachOperatorOpenedPaneMission('headless-pane', 'old');
+    expect(registry.getOwnedPaneAuthzInfoBySession('headless-creator')).toBeNull();
+    if (mirror) {
+      const retained = facts.owned.get('headless-pane')!;
+      const wc = owner(52);
+      facts.sessions.get('headless-creator')!.ownerId = wc.id;
+      registry.syncPanes([{ paneId: 'headless-pane', sessionId: 'headless-creator', kind: 'cli-agent', title: 'Operator hand', adapterId: 'provider' }], wc);
+      // F-927: a Main runtime publication can overlap its existing mirror.
+      // Seed the exact retained record through the Main producer boundary.
+      const runtime = await import('./main-owned-pane-runtime');
+      runtime.setMainOwnedPane('headless-pane', retained);
+      expect(registry.findPane('headless-creator')).toBeNull();
+    }
+    const origin = registry.captureOperatorPaneAdoptionOrigin('headless-creator')!;
+    expect(origin.authority).toMatchObject({ owner: null, paneId: 'headless-pane' });
+    expect(gate.adoptUserContextAsMissionOrchestrator(context, 'created')).toBe(true);
+    expect(pty.adoptUserAgentSessionAsMissionOrchestrator('headless-creator', 'created')).toBe(true);
+    return { context, origin };
+  }
+
+  it.each([false, true])('publishes the released Main-owned hand (presentation mirror=%s)', async mirror => {
+    const { context, origin } = await releasedMainOwned(mirror);
+    expect(registry.publishAdoptedOperatorMissionPane(origin, context, 'created')).toBe(true);
+    expect(registry.getPaneRuntimeAuthorityBySession('headless-creator')).toMatchObject({ owner: null, role: 'orchestrator', missionId: 'created' });
+    const published = registry.listPaneSnapshots().filter(pane => pane.missionId === 'created');
+    expect(published).toHaveLength(mirror ? 2 : 1);
+    expect(new Set(published.map(pane => `${pane.paneId}:${pane.sessionId}`)).size).toBe(1);
+    for (const pane of published) expect(pane).toMatchObject({
+      paneId: 'headless-pane', sessionId: 'headless-creator', role: 'orchestrator', allowedTools: null, allowedSkills: null,
+    });
+    if (mirror) {
+      registry.syncPanes([{ ...origin.entry }], origin.physicalOwner!);
+      expect(registry.getPaneRuntimeAuthorityBySession('headless-creator')).toMatchObject({
+        owner: origin.physicalOwner, paneId: 'headless-pane', sessionId: 'headless-creator', missionId: 'created', role: 'orchestrator', scope, executionScope: scope,
+      });
+      expect(registry.listPaneSnapshots().filter(pane => pane.missionId === 'created')).toMatchObject([{
+        paneId: 'headless-pane', sessionId: 'headless-creator', role: 'orchestrator', scope, executionScope: scope,
+      }]);
+    }
+  });
+
+  it.each(['metadata', 'replacement-session'] as const)('refuses changed presentation %s without overwriting it', async changed => {
+    const { context, origin } = await releasedMainOwned(true);
+    const owner = origin.physicalOwner!;
+    if (changed === 'metadata') registry.attachOrchMeta(owner, 'headless-pane', { missionId: 'newer', role: 'worker', scope });
+    else {
+      facts.sessions.set('replacement', { ownerId: owner.id, live: true, scope, sessionId: 'replacement', paneId: 'headless-pane', role: 'user' });
+      registry.syncPanes([{ paneId: 'headless-pane', sessionId: 'replacement', kind: 'cli-agent', adapterId: 'provider', title: 'Replacement' }], owner);
+    }
+    const retained = facts.owned.get('headless-pane');
+    expect(registry.publishAdoptedOperatorMissionPane(origin, context, 'created')).toBe(false);
+    expect(facts.owned.get('headless-pane')).toBe(retained);
+    const presentation = registry.listPaneSnapshots().find(pane => changed === 'metadata' ? pane.missionId === 'newer' : pane.sessionId === 'replacement');
+    expect(presentation).toBeDefined();
+    expect(presentation?.missionId).not.toBe('created');
+  });
+
+  it('retains manual ownership through a later mission teardown', async () => {
+    const { context, origin } = await releasedMainOwned();
+    expect(registry.publishAdoptedOperatorMissionPane(origin, context, 'created')).toBe(true);
+    expect.soft(registry.getPaneRuntimeAuthorityBySession('headless-creator')?.operatorOpened).toBe(true);
+    const pty = await import('../pty/pty-manager');
+    vi.mocked(pty.orchTerminateSession).mockClear();
+    const runtime = await import('./mission-runtime-termination');
+    const suite = { missions: { get: () => ({ id: 'created', status: 'done' }) }, missionPanes: { list: () => [] } };
+    await expect(runtime.terminateMissionRuntime({ scope, missionId: 'created', suite: suite as never, reason: 'operator-close' })).resolves.toMatchObject({ ok: true });
+    expect(pty.orchTerminateSession).not.toHaveBeenCalled();
+    expect(context.role).toBe('user');
+    expect(facts.sessions.get('headless-creator')?.live).toBe(true);
+    expect(facts.sessions.get('headless-creator')?.role).toBe('user');
+    expect(facts.sessions.get('headless-creator')?.missionId).toBeUndefined();
+    expect(facts.owned.get('headless-pane')?.meta.missionId).toBeUndefined();
+  });
+
+  it.each(['record-replaced', 'session-replaced', 'owner-claimed', 'foreign-shadow', 'scope-drift'] as const)(
+    'refuses changed Main-owned %s without altering the record', async kind => {
+      const { context, origin } = await releasedMainOwned();
+      if (kind === 'record-replaced') facts.owned.set('headless-pane', { ...origin.mainOwned! });
+      if (kind === 'session-replaced') facts.owned.set('headless-pane', { ...origin.mainOwned!, entry: { ...origin.entry, sessionId: 'replacement' } });
+      if (kind === 'owner-claimed') facts.sessions.get('headless-creator')!.ownerId = 99;
+      if (kind === 'scope-drift') facts.sessions.get('headless-creator')!.scope = { ...scope, checkoutId: 'foreign' };
+      if (kind === 'foreign-shadow') facts.headless.set('headless-creator', { paneId: 'foreign-pane', sessionId: 'headless-creator', kind: 'cli-agent', scope });
+      const unchanged = facts.owned.get('headless-pane');
+      expect(registry.publishAdoptedOperatorMissionPane(origin, context, 'created')).toBe(false);
+      expect(facts.owned.get('headless-pane')).toBe(unchanged);
+      expect(facts.owned.get('headless-pane')!.meta.missionId).toBeUndefined();
+    });
+
+  it('publishes the exact adopted creator and preserves capabilities through normal sync', () => {
+    const { wc, context, origin } = adoption();
+    registry.publishAdoptedOperatorMissionPane(origin, context, 'created');
+    expect(registry.getPaneRuntimeAuthorityBySession('creator')).toMatchObject({ missionId: 'created', role: 'orchestrator', owner: wc });
+    expect(registry.listPaneSnapshots()[0]).toMatchObject({ readOnly: true, allowedTools: ['nexus_pane_read'], allowedSkills: ['review'] });
+    registry.syncPanes([{ paneId: 'pane-creator', sessionId: 'creator', kind: 'cli-agent', title: 'Creator', adapterId: 'provider' }], wc);
+    expect(registry.getPaneRuntimeAuthorityBySession('creator')).toMatchObject({ missionId: 'created', role: 'orchestrator', owner: wc });
+  });
+
+  it('refuses metadata changed after the captured origin', () => {
+    const { wc, context, origin } = adoption();
+    registry.attachOrchMeta(wc, 'pane-creator', { missionId: 'newer', role: 'worker', scope });
+    expect(registry.publishAdoptedOperatorMissionPane(origin, context, 'created')).toBe(false);
+    expect(registry.listPaneSnapshots()[0]).toMatchObject({ missionId: 'newer', role: 'worker' });
+  });
+
+  it.each([false, true])('publication failure compensates only its own metadata (newer=%s)', newer => {
+    const { wc, context, origin } = adoption();
+    let checks = 0;
+    wc.isDestroyed = () => {
+      if (++checks === 2) {
+        if (newer) registry.attachOrchMeta(wc, 'pane-creator', { missionId: 'newer', role: 'worker', scope });
+        throw new Error('origin publication failed');
+      }
+      return false;
+    };
+    expect(() => registry.publishAdoptedOperatorMissionPane(origin, context, 'created')).toThrow('origin publication failed');
+    const snapshot = registry.listPaneSnapshots()[0]!;
+    expect(snapshot.missionId).toBe(newer ? 'newer' : undefined);
+    expect(snapshot.role).toBe(newer ? 'worker' : undefined);
+  });
+
+  it.each(['missing', 'foreign-owner', 'replaced-session', 'physical-pane', 'coordination-scope', 'execution-scope', 'stale-gate', 'dead-owner', 'filesystem-identity'] as const)(
+    'refuses %s without overwriting existing metadata', kind => {
+      const { wc, context, origin } = adoption();
+      if (kind === 'missing') facts.sessions.delete('creator');
+      if (kind === 'foreign-owner') facts.sessions.get('creator')!.ownerId = 42;
+      if (kind === 'replaced-session') { facts.sessions.set('replacement', { ownerId: wc.id, live: true, sessionId: 'replacement', paneId: 'pane-creator', scope, role: 'user' }); registry.syncPanes([{ paneId: 'pane-creator', sessionId: 'replacement', kind: 'cli-agent', title: 'Replacement' }], wc); }
+      if (kind === 'physical-pane') facts.sessions.get('creator')!.paneId = 'foreign-pane';
+      if (kind === 'coordination-scope') facts.rendererScopes.set(wc.id, { ...scope, rootRealPath: '/foreign' });
+      if (kind === 'execution-scope') facts.sessions.get('creator')!.scope = { ...scope, checkoutId: 'foreign' };
+      if (kind === 'stale-gate') facts.contexts.set('creator', { ...context });
+      if (kind === 'dead-owner') wc.isDestroyed = () => true;
+      if (kind === 'filesystem-identity') facts.sessions.get('creator')!.scope = { ...scope, workspaceRootDevice: 'foreign', workspaceRootInode: 'foreign' };
+      registry.publishAdoptedOperatorMissionPane(origin, context, 'created');
+      const snapshot = registry.listPaneSnapshots().find(pane => pane.paneId === 'pane-creator')!;
+      expect(snapshot.missionId).toBeUndefined();
+      expect(snapshot.role).toBeUndefined();
+    });
 });

@@ -103,6 +103,8 @@ import { buildDomainTools } from './tools-domain';
 import { createScopedMissionStore } from './mission-store';
 import { createScopedMissionPaneStore } from './mission-pane-store';
 import * as paneRegistry from './pane-registry';
+import * as ptyManager from '../pty/pty-manager';
+import { requiresReadOnlyNativeAuthority } from '../pty/autonomous-cli-policy';
 import { assertMissionIntentAllowsTool } from './mission-intent-gate';
 import { listSquads } from './squad-store';
 import {
@@ -506,6 +508,17 @@ describe('mission creation authority', () => {
       expect(ctx.role).toBe('user');
     });
 
+    function ownedCreator() {
+      vi.spyOn(paneRegistry, 'captureOperatorPaneAdoptionOrigin').mockReturnValue({
+        authority: { paneId: 'pane-operator', sessionId: 'operator-session', kind: 'cli-agent', scope, executionScope: scope, owner: { id: 1 } },
+        entry: { paneId: 'pane-operator', sessionId: 'operator-session', kind: 'cli-agent', adapterId: 'codex' },
+        physicalOwner: { id: 1 },
+      } as never);
+      vi.spyOn(ptyManager, 'adoptUserAgentSessionAsMissionOrchestrator').mockReturnValue(true);
+      vi.spyOn(ptyManager, 'getAgentSessionInfo').mockReturnValue({ scope, allowedTools: null, allowedSkills: null } as never);
+      return vi.spyOn(paneRegistry, 'publishAdoptedOperatorMissionPane').mockReturnValue(true);
+    }
+
     it.each([
       ['no registro do pane', 'record'],
       ['no update para running (SQLITE_FULL)', 'update'],
@@ -514,6 +527,7 @@ describe('mission creation authority', () => {
       vi.spyOn(paneRegistry, 'findPane').mockReturnValue({
         paneId: 'pane-operator', adapterId: 'codex',
       } as never);
+      ownedCreator();
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mission-create-'));
       const manager = new ProjectRuntimeManager({ baseDir: directory, appVersion: 'test' });
       try {
@@ -553,6 +567,66 @@ describe('mission creation authority', () => {
       } finally {
         manager.closeAll();
         fs.rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
+    it('F-1143: a released Main-owned operator hand creates and publishes its mission without a renderer owner', async () => {
+      const entry = { paneId: 'pane-operator', sessionId: 'operator-session', kind: 'cli-agent', adapterId: 'codex' };
+      vi.spyOn(paneRegistry, 'findPane').mockReturnValue(entry as never);
+      vi.spyOn(paneRegistry, 'getOwnedPaneAuthzInfoBySession').mockReturnValue(null);
+      vi.spyOn(paneRegistry, 'getPaneRuntimeAuthorityBySession').mockReturnValue({ ...entry, owner: null, scope, executionScope: scope } as never);
+      const publish = ownedCreator();
+      vi.mocked(paneRegistry.captureOperatorPaneAdoptionOrigin).mockReturnValue({
+        authority: { ...entry, owner: null, scope, executionScope: scope, operatorOpened: true }, entry, physicalOwner: null,
+        mainOwned: { entry, meta: { scope } },
+      } as never);
+      const stores = missionStores();
+      mocks.getProjectDomainStores().missionPanes.findByPaneId = () => null;
+      const ctx = operatorHand(); ctx.readOnly = true; ctx.allowedTools = ['nexus_pane_read']; ctx.allowedSkills = ['review'];
+      await expect(missionCreateTool().handler({ title: 'Continue the released operator hand' }, ctx)).resolves.toMatchObject({ status: 'running' });
+      expect(mocks.getProjectDomainStores().missionPanes.record).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true, operatorOpened: true, allowedTools: ['nexus_pane_read'], allowedSkills: ['review'] }));
+      expect(stores.create).toHaveBeenCalledOnce();
+      expect(publish).toHaveBeenCalledWith(expect.objectContaining({ physicalOwner: null }), expect.objectContaining({ role: 'orchestrator' }), 'mission-new');
+    });
+
+    it('F-1143: native-only confinement remains delegate-only on persisted orchestrator recovery', async () => {
+      ownedCreator();
+      vi.mocked(ptyManager.getAgentSessionInfo).mockReturnValue({ scope, readOnly: false, nativeReadOnly: true } as never);
+      const stores = missionStores();
+      mocks.getProjectDomainStores().missionPanes.findByPaneId = () => null;
+      const ctx = operatorHand(); ctx.allowedTools = ['nexus_pane_spawn'];
+      await missionCreateTool().handler({ title: 'Delegate with native confinement' }, ctx);
+      const spec = mocks.getProjectDomainStores().missionPanes.record.mock.calls[0][0];
+      expect(spec.readOnly).not.toBe(true);
+      expect(spec.allowedTools).toEqual(['nexus_pane_spawn']);
+      for (const adapterId of ['codex', 'claude']) {
+        expect(requiresReadOnlyNativeAuthority({ source: 'persisted-pane', adapterId, role: spec.role,
+          missionId: 'mission-new', readOnly: spec.readOnly, allowedTools: spec.allowedTools })).toBe(true);
+      }
+      expect(stores.create).toHaveBeenCalledOnce();
+    });
+
+    it.each(['refused', 'thrown'] as const)('F-1143: %s publication removes the committed mission and returns the exact adopted hand', async failure => {
+      vi.spyOn(paneRegistry, 'findPane').mockReturnValue({ paneId: 'pane-operator', adapterId: 'codex' } as never);
+      const publish = ownedCreator();
+      if (failure === 'refused') publish.mockReturnValue(false);
+      else publish.mockImplementation(() => { throw new Error('publication failed'); });
+      const restore = vi.spyOn(ptyManager, 'returnAdoptedAgentSessionToUser').mockReturnValue(true);
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mission-publication-'));
+      const manager = new ProjectRuntimeManager({ baseDir: directory, appVersion: 'test' });
+      try {
+        const missions = createScopedMissionStore(manager, scope);
+        const missionPanes = createScopedMissionPaneStore(manager, scope);
+        mocks.getProjectDomainStores.mockReturnValue({ missions, missionPanes });
+        const ctx = operatorHand();
+        await expect(missionCreateTool().handler({ title: 'Publish the exact leader' }, ctx)).rejects.toThrow(/publication failed/);
+        expect(missions.list()).toEqual([]);
+        expect(missionPanes.findByPaneId('pane-operator')).toBeNull();
+        expect(ctx).toMatchObject({ role: 'user', sessionId: 'operator-session' });
+        expect(ctx.missionId).toBeUndefined();
+        expect(restore).toHaveBeenCalledWith('operator-session', expect.stringMatching(/^mission-/));
+      } finally {
+        manager.closeAll(); fs.rmSync(directory, { recursive: true, force: true });
       }
     });
 

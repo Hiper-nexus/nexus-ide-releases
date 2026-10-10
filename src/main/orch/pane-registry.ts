@@ -44,7 +44,7 @@ import {
   requireLiveRendererWorkspaceScope,
 } from "../persistence/renderer-workspace-scope";
 import { sameProjectScope } from "./project-scoped-broadcast";
-import { getContextBySession } from './gate';
+import { getContextBySession, type AgentGateContext } from './gate';
 import { canListPane, sameExactPaneScope, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
 import { parsePaneNumberRef } from "../../shared/pane-number";
 import { makeId } from "./store-util";
@@ -2066,6 +2066,99 @@ export function attachOrchMeta(
   orchMetaByPane.set(paneMetaKey(owner, paneId), meta);
   const registered = panes.find(pane => pane.owner === owner && pane.entry.paneId === paneId);
   if (registered) rememberBrowserOrigin(owner, authzInfoOf(registered));
+}
+
+/** Main-only capture: a presentation mirror does not replace the runtime owner. */
+export interface OperatorPaneAdoptionOrigin {
+  readonly authority: PaneRuntimeAuthority;
+  readonly entry: Readonly<PaneRegistryEntry>;
+  readonly physicalOwner: WebContents | null;
+  readonly mainOwned?: MainOwnedPane;
+  readonly rendererMeta?: OrchMeta;
+}
+
+export function captureOperatorPaneAdoptionOrigin(sessionId: string): OperatorPaneAdoptionOrigin | null {
+  const authority = getPaneRuntimeAuthorityBySession(sessionId);
+  if (!authority || authority.kind !== 'cli-agent') return null;
+  const mainOwned = authority.owner === null ? getMainOwnedPane(authority.paneId) : undefined;
+  const entry = mainOwned?.entry ?? (authority.owner ? findPaneBySessionOwnedBy(authority.owner, sessionId) : null);
+  const physicalOwner = authority.owner ?? liveOwnerForSession(sessionId);
+  const rendererMeta = physicalOwner ? orchMetaByPane.get(paneMetaKey(physicalOwner, authority.paneId)) : undefined;
+  if (!entry || entry.sessionId !== sessionId || entry.paneId !== authority.paneId ||
+      (physicalOwner ? !isSessionOwnedBy(physicalOwner, sessionId) : !isSessionDetached(sessionId))) return null;
+  return { authority: Object.freeze({ ...authority,
+    scope: authority.scope ? Object.freeze({ ...authority.scope }) : undefined,
+    executionScope: authority.executionScope ? Object.freeze({ ...authority.executionScope }) : undefined,
+  }), entry: Object.freeze({ ...entry }), physicalOwner, rendererMeta, ...(mainOwned ? { mainOwned } : {}) };
+}
+
+/** Publish a successfully adopted operator hand from current Main authority only. */
+export function publishAdoptedOperatorMissionPane(
+  origin: OperatorPaneAdoptionOrigin,
+  context: AgentGateContext,
+  missionId: string,
+): boolean {
+  const { authority, entry, physicalOwner, mainOwned, rendererMeta } = origin;
+  const { sessionId, paneId } = authority;
+  const current = sessionId ? getPaneRuntimeAuthorityBySession(sessionId) : null;
+  const physical = sessionId ? getAgentSessionInfo(sessionId) : null;
+  const execution = context.executionScope ?? context.scope;
+  const sameScope = (left: Readonly<ProjectExecutionScope>, right: Readonly<ProjectExecutionScope>) =>
+    sameExactPaneScope(left, right) && left.workspaceRootDevice === right.workspaceRootDevice &&
+    left.workspaceRootInode === right.workspaceRootInode;
+  if (!sessionId || !current || current.owner !== authority.owner || current.paneId !== paneId ||
+      current.missionId !== authority.missionId || current.role !== authority.role ||
+      (mainOwned && getMainOwnedPane(paneId) !== mainOwned) ||
+      (physicalOwner ? physicalOwner.isDestroyed() || physicalOwner.isCrashed() || !isSessionOwnedBy(physicalOwner, sessionId)
+        : !isSessionDetached(sessionId)) || getSessionState(sessionId) === null ||
+      !physical || physical.sessionId !== sessionId || physical.paneId !== paneId || physical.adapterId !== entry.adapterId ||
+      getContextBySession(sessionId) !== context || context.sessionId !== sessionId ||
+      context.promotedFromUserSession !== true || context.role !== 'orchestrator' || context.missionId !== missionId ||
+      physical.role !== context.role || physical.missionId !== missionId ||
+      !authority.scope || !sameScope(authority.scope, context.scope) ||
+      !current.scope || !sameScope(current.scope, context.scope) ||
+      !current.executionScope || !sameScope(current.executionScope, execution) ||
+      !sameScope(physical.coordinationScope ?? physical.scope, context.scope) ||
+      !sameScope(physical.scope, execution) ||
+      !authority.executionScope || !sameScope(authority.executionScope, execution)) return false;
+  if (physicalOwner) {
+    const rendererScope = getRendererWorkspaceScope(physicalOwner);
+    const presentation = findPaneBySessionOwnedBy(physicalOwner, sessionId);
+    if (!rendererScope || !sameScope(rendererScope, context.scope) ||
+        !presentation || presentation.paneId !== paneId ||
+        orchMetaByPane.get(paneMetaKey(physicalOwner, paneId)) !== rendererMeta ||
+        (rendererMeta && (rendererMeta.missionId !== authority.missionId || rendererMeta.role !== authority.role ||
+          (rendererMeta.scope && !sameScope(rendererMeta.scope, context.scope)) ||
+          (rendererMeta.executionScope && !sameScope(rendererMeta.executionScope, execution))))) return false;
+  }
+  const meta: OrchMeta = {
+    missionId, role: 'orchestrator', scope: context.scope, executionScope: execution,
+    contextRevision: context.contextRevision, agentName: physical.agentName,
+    allowedTools: context.allowedTools, allowedSkills: context.allowedSkills,
+    ...(context.readOnly || physical.readOnly ? { readOnly: true } : {}),
+    ...(physical.nativeReadOnly ? { nativeReadOnly: true } : {}),
+    // Manual ownership survives F-231 release; old mission assignments do not.
+    ...(authority.operatorOpened || physical.operatorOpened ? { operatorOpened: true } : {}),
+  };
+  const rendererKey = physicalOwner ? paneMetaKey(physicalOwner, paneId) : null;
+  try {
+    // F-927: the next accepted sync retires Main ownership without reclaiming
+    // an already-owned presentation. Publish to that exact mirror first.
+    if (physicalOwner) attachOrchMeta(physicalOwner, paneId, meta);
+    if (mainOwned) {
+      if (getMainOwnedPane(paneId) !== mainOwned) throw new Error('operator pane changed during publication');
+      setMainOwnedPane(paneId, { ...mainOwned, meta });
+    }
+  } catch (error) {
+    // Compensate only this exact publication, never a foreign/newer record.
+    if (rendererKey && orchMetaByPane.get(rendererKey) === meta) {
+      if (rendererMeta) orchMetaByPane.set(rendererKey, rendererMeta);
+      else orchMetaByPane.delete(rendererKey);
+    }
+    throw error;
+  }
+  panesVersion += 1;
+  return true;
 }
 
 /** A mão do operador saiu da missão (troca de coroa): some a meta dela. */

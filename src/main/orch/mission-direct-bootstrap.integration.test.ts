@@ -134,7 +134,7 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
   let gatewayUrl = '';
   const nonce = randomUUID();
   const owner = { id: 1109, isDestroyed: () => false, isCrashed: () => false, getURL: () => 'nexus-app://bundle/index.html', getOSProcessId: () => process.pid,
-    mainFrame: { url: 'nexus-app://bundle/index.html' }, send: () => undefined, on: () => undefined, once: () => undefined, removeListener: () => undefined };
+    mainFrame: { url: 'nexus-app://bundle/index.html' }, send: (_channel: string, ..._args: unknown[]) => undefined, on: () => undefined, once: () => undefined, removeListener: () => undefined };
   let profileRuntimeId = '';
   let profileFlow = false;
   let profileOriginalAdapter: CliPtyAdapter | null = null;
@@ -153,7 +153,8 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
   let originalPeriodic: typeof import('../observability/periodic-task').runPeriodicTask;
   let originalIdle: typeof import('./pane-registry').waitForIdle;
   let originalEndKickoff: typeof import('./mission-kickoff-direct-queue').endKickoffBriefDelivery;
-  const caseCleanups: Array<() => void> = [];
+  const caseCleanups: Array<() => void | Promise<void>> = [];
+  const casePostCleanups: Array<() => void | Promise<void>> = [];
   const spawnOutcomes: Array<{ ok: boolean; error?: string; hasSession: boolean }> = [];
   const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
   const controlledStopReturned = (token: string, sequence: number): boolean => {
@@ -333,7 +334,7 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     priorMissionIds = new Set(getProjectDomainStores(scope).missions.list().map(mission => mission.id));
   });
   afterEach(async () => {
-    for (const cleanup of caseCleanups.splice(0)) cleanup();
+    for (const cleanup of caseCleanups.splice(0)) await cleanup();
     releaseHook(); holdNextHook = null;
     const { ORCH_CHANNELS } = await import('../../shared/orch-channels');
     const { getProjectDomainStores } = await import('./project-domain-store-registry');
@@ -348,6 +349,7 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
       expect(stores.missions.get(missionId)?.status).not.toBe('running');
       console.info('Native fixture case closed with real scoped lifecycle and physical exit proof', { missionId });
     }
+    for (const cleanup of casePostCleanups.splice(0)) await cleanup();
     if (profileFlow) {
       await closeUsage(); await closeAgentHooks(); closeUsage = async () => undefined; closeAgentHooks = async () => undefined;
       const pty = await import('../pty/pty-manager'); pty.configureAgentHookEndpointPath(null); await pty.stopSessionMortalityReconciler();
@@ -387,6 +389,8 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     const { snapshotSquadAuthority } = await import('./squad-authority-snapshot');
     const { getProjectDomainStores } = await import('./project-domain-store-registry');
     const { missionEngineForScope } = await import('./mission-engine-registry');
+    const { projectMissionEngineSnapshotView } = await import('./mission-engine-production');
+    const { getPaneRuntimeAuthorityBySession } = await import('./pane-registry');
     const { getContextBySession } = await import('./gate');
     const { getProviderPaneSession } = await import('../persistence/provider-session-store');
     const { readAuditLog } = await import('../jarvis/audit-log');
@@ -406,6 +410,82 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     await until(() => fs.existsSync(path.join(profileReceipts, 'mcp.ndjson')) && fs.readFileSync(path.join(profileReceipts, 'mcp.ndjson'), 'utf8').trim().split('\n')
       .map(line => JSON.parse(line) as { gateSha256: string; tool: string }).some(r => r.gateSha256 === creatorGateHash && r.tool === 'nexus_handoff_list'),
     'owned loose actual MCP readiness');
+    // Match terminal-host's actual session assignment → onPaneSessionChange
+    // → orch-bridge panesSync; this fixture has no mounted renderer/rAF bridge.
+    expect(pty.getOwnedAgentSessionInfo(owner as never, creator.sessionId)).toMatchObject({
+      paneId: `profile-user-${nonce}`, sessionId: creator.sessionId, role: 'user', scope,
+    });
+    state.listeners.get(ORCH_CHANNELS.panesSync)!({ sender: owner, senderFrame: owner.mainFrame }, {
+      generationId: `profile-normal-${nonce}`, entries: [{ paneId: `profile-user-${nonce}`, sessionId: creator.sessionId,
+        paneNumber: 1, title: 'Claude', kind: 'cli-agent', adapterId: 'claude', model: '', state: 'idle', tabKey: '__loose__' }],
+    });
+    // Exercise the actual sealed renderer request → PTY spawn → sync → ACK
+    // transport. owner.send is otherwise a noop in this windowless fixture.
+    const { buildPtySpawnRequest } = await import('../../renderer/terminal/spawn-request');
+    const rendererEntries = new Map<string, import('../../shared/orch-types').PaneRegistryEntry>([[`profile-user-${nonce}`, {
+      paneId: `profile-user-${nonce}`, sessionId: creator.sessionId, title: 'Claude', kind: 'cli-agent', adapterId: 'claude', model: '',
+    }]]);
+    const spawnFlights = new Map<string, Promise<void>>();
+    const safeSpawnRefusal = (message?: string): string | undefined => {
+      if (!message) return undefined;
+      const codes = ['session_authority_revoked', 'resume_unavailable', 'resume_context_unavailable', 'native_heavy_channel_context_invalid',
+        'native_deferred_spawn_context_changed', 'native_deferred_spawn_reservation_changed'];
+      const known = ['renderer payload does not match main-sealed pending spawn request',
+        'governed native confinement resume requires an exact main-owned provider session',
+        'invalid spawn request', 'mission-bound worker requires a main-owned coordination scope'];
+      return codes.find(code => message.includes(code)) ?? known.find(reason => message.startsWith(reason)) ?? 'unclassified_spawn_refusal';
+    };
+    const syncRenderer = () => state.listeners.get(ORCH_CHANNELS.panesSync)!({ sender: owner, senderFrame: owner.mainFrame }, {
+      generationId: `profile-normal-${nonce}`, entries: [...rendererEntries.values()],
+    });
+    const acknowledge = (result: import('../../shared/orch-types').OrchPaneSpawnResult) =>
+      state.listeners.get(ORCH_CHANNELS.paneSpawnResult)!({ sender: owner, senderFrame: owner.mainFrame }, result);
+    const send = vi.spyOn(owner, 'send').mockImplementation((channel, ...payload) => {
+      if (channel !== ORCH_CHANNELS.paneSpawnRequest) return;
+      const request = payload[0] as import('../../shared/orch-types').OrchPaneSpawnRequest;
+      if (spawnFlights.has(request.requestId)) return;
+      const flight = (async () => {
+        rendererEntries.set(request.paneId, { paneId: request.paneId, sessionId: null, title: request.title ?? request.adapterId,
+          kind: 'cli-agent', adapterId: request.adapterId, model: request.model ?? '' });
+        if (request.allowPending) {
+          syncRenderer(); acknowledge({ requestId: request.requestId, paneId: request.paneId, sessionId: null, ok: true, pending: true });
+        }
+        const result = await invoke(PTY_CHANNELS.spawn, buildPtySpawnRequest({
+          pane: { id: request.paneId, kind: 'cli-agent', adapterId: request.adapterId, model: request.model ?? '',
+            accountId: request.accountId, effort: request.effort, cwd: request.cwd, orchRequestId: request.requestId },
+          // Fresh renderer pane uses ordinary startSpawn defaults. Main restores
+          // its sealed resume intent; the renderer is forbidden to author it.
+          cols: 120, rows: 36, resume: false, resumeLatestOnly: false,
+          restorePersistedAuthority: false, missionId: request.missionId,
+        })) as { ok: boolean; sessionId?: string; error?: string };
+        console.info('owned profile renderer spawn outcome', { requestId: request.requestId, paneId: request.paneId,
+          sealedResume: request.resume, rendererResume: false, pendingAcknowledged: request.allowPending === true, ok: result.ok,
+          sessionId: result.sessionId ?? null, errorCode: safeSpawnRefusal(result.error) });
+        if (!result.ok || !result.sessionId) {
+          rendererEntries.delete(request.paneId); syncRenderer();
+          acknowledge({ requestId: request.requestId, paneId: request.paneId, ok: false, error: result.error }); return;
+        }
+        expect(pty.getOwnedAgentSessionInfo(owner as never, result.sessionId)).toMatchObject({
+          paneId: request.paneId, role: request.role, missionId: request.missionId,
+        });
+        rendererEntries.set(request.paneId, { ...rendererEntries.get(request.paneId)!, sessionId: result.sessionId });
+        syncRenderer();
+        acknowledge({ requestId: request.requestId, paneId: request.paneId, sessionId: result.sessionId, ok: true });
+        const published = getPaneRuntimeAuthorityBySession(result.sessionId);
+        console.info('owned profile renderer final ACK', { requestId: request.requestId, paneId: request.paneId,
+          sessionId: result.sessionId, publishedRole: published?.role ?? null,
+          missionMatches: published?.missionId === request.missionId });
+      })();
+      spawnFlights.set(request.requestId, flight);
+      void flight.catch(error => acknowledge({ requestId: request.requestId, paneId: request.paneId, ok: false,
+        error: error instanceof Error ? error.message : 'fixture renderer transport failed' }));
+    });
+    caseCleanups.push(async () => { await Promise.allSettled(spawnFlights.values()); });
+    casePostCleanups.push(async () => {
+      send.mockRestore();
+      const registry = await import('./pane-registry');
+      registry.unregisterOrchRenderer(owner as never);
+    });
     expect(await invoke(PTY_CHANNELS.writeConfirmed, { sessionId: creator.sessionId, data: `\x1b[200~RT_GATE PROFILE_CREATE ${nonce} ${profileRuntimeId}\x1b[201~` })).toBe(true);
     expect(await invoke(PTY_CHANNELS.writeConfirmed, { sessionId: creator.sessionId, data: '\r' })).toBe(true);
     const stores = getProjectDomainStores(scope);
@@ -420,10 +500,42 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     expect(mission).toMatchObject({ status: 'running', intentState: 'dispatched', orchestratorSessionId: creator.sessionId });
     expect(stores.missions.hasCurrentKickoffAcceptance(mission.id)).toBe(false);
     expect(getContextBySession(creator.sessionId)).toMatchObject({ role: 'orchestrator', missionId: mission.id });
+    expect(pty.getAgentSessionInfo(creator.sessionId)).toMatchObject({ role: 'orchestrator', missionId: mission.id, scope });
+    expect(getPaneRuntimeAuthorityBySession(creator.sessionId)).toMatchObject({ paneId: `profile-user-${nonce}`,
+      sessionId: creator.sessionId, missionId: mission.id, role: 'orchestrator', owner, scope, executionScope: scope });
+    const leaderView = projectMissionEngineSnapshotView(scope, stores, mission.id);
+    const leaderId = saved.squad!.agents.find(agent => agent.category === 'orchestrator')!.id;
+    expect(leaderView.orchestratorLive).toBe(true);
+    expect(leaderView.roster.filter(agent => agent.id === leaderId)).toHaveLength(1);
+    expect(leaderView.panes.filter(pane => pane.agentId === leaderId)).toMatchObject([{ paneId: `profile-user-${nonce}`, terminalLive: true }]);
     await until(() => readAuditLog({ scope }, 1000).some(a => a.tool === 'nexus_mission_create' && a.result === 'ok' && a.session === creator.sessionId &&
       a.source === 'http-mcp' && a.args.squadId === profileRuntimeId && a.invocation_id), 'actual authenticated creation audit');
     await until(() => pty.listAgentSessions().filter(a => a.missionId === mission.id && a.role === 'worker').length === 2, 'actual named profile workers');
     const workers = pty.listAgentSessions().filter(a => a.missionId === mission.id && a.role === 'worker');
+    const physicalWorkersObservedAt = Date.now();
+    const { sameExactPaneScope } = await import('./pane-authz');
+    const originalAuthorityFacts = (stage: string, worker: typeof workers[number]) => {
+      const spec = stores.missionPanes.findByPaneId(worker.paneId!);
+      const physical = pty.getAgentSessionInfo(worker.sessionId);
+      const authority = getPaneRuntimeAuthorityBySession(worker.sessionId);
+      console.info('owned profile original authority', { stage, paneId: worker.paneId, sessionId: worker.sessionId,
+        compositionExists: Boolean(spec), compositionMissionMatches: spec?.missionId === mission.id,
+        compositionScopeMatches: Boolean(spec?.scope && sameExactPaneScope(spec.scope, scope)), compositionRole: spec?.role ?? null,
+        capabilityMatches: JSON.stringify(spec?.allowedTools) === JSON.stringify(worker.allowedTools),
+        physicalPresent: Boolean(physical), physicalRole: physical?.role ?? null, physicalMissionMatches: physical?.missionId === mission.id,
+        registryRole: authority?.role ?? null, registryMissionMatches: authority?.missionId === mission.id,
+        nativeConversationPresent: Boolean(getProviderPaneSession(scope, worker.paneId!, worker.adapterId, worker.accountId)) });
+    };
+    for (const worker of workers) originalAuthorityFacts('physical-observed', worker);
+    // A pending ACK proves a live pane, not that its asynchronous durable
+    // composition/conversation has reached the resume boundary yet (F-793).
+    await until(() => workers.every(worker => {
+      const spec = stores.missionPanes.findByPaneId(worker.paneId!);
+      return spec?.missionId === mission.id && spec.role === worker.role && Boolean(spec.scope && sameExactPaneScope(spec.scope, scope)) &&
+        JSON.stringify(spec.allowedTools) === JSON.stringify(worker.allowedTools) && JSON.stringify(spec.allowedSkills) === JSON.stringify(worker.allowedSkills) &&
+        Boolean(getProviderPaneSession(scope, worker.paneId!, worker.adapterId, worker.accountId));
+    }), 'actual durable original composition and native conversation');
+    console.info('owned profile durable readiness', { latencyAfterPhysicalMs: Date.now() - physicalWorkersObservedAt });
     for (const worker of workers) {
       expect(worker.allowedTools).toEqual(saved.squad!.agents.find(a => a.agentName === worker.agentName)!.allowedTools);
       expect(getContextBySession(worker.sessionId)?.scope).toEqual(scope);
@@ -448,7 +560,9 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     await until(() => fs.existsSync(path.join(writer.scope.rootRealPath, 'runtime-profile-proof.txt')), 'actual authorized worker file write');
     expect(fs.readFileSync(path.join(writer.scope.rootRealPath, 'runtime-profile-proof.txt'), 'utf8')).toBe(`RT_PROFILE_${nonce}`);
     const original = getProviderPaneSession(writer.scope, writer.paneId!, 'claude', writer.accountId);
-    expect(original).not.toBeNull(); expect(await pty.orchTerminateSession(writer.sessionId, { origin: 'profile-fixture:recovery' })).toBe(true);
+    expect(original).not.toBeNull(); originalAuthorityFacts('before-intentional-exit', writer);
+    expect(await pty.orchTerminateSession(writer.sessionId, { origin: 'profile-fixture:recovery' })).toBe(true);
+    originalAuthorityFacts('after-intentional-exit-before-resume', writer);
     expect(await invoke(ORCH_CHANNELS.paneOperatorInput, { sessionId: creator.sessionId, data: `\x1b[200~RT_GATE PROFILE_RECOVER ${nonce} ${writer.paneId}\x1b[201~` })).toBe(true);
     expect(await invoke(ORCH_CHANNELS.paneOperatorInput, { sessionId: creator.sessionId, data: '\r' })).toBe(true);
     await until(() => pty.listAgentSessions().some(a => a.missionId === mission.id && a.agentName === 'Runtime writer' && a.sessionId !== writer.sessionId), 'actual normal chief worker resume');
@@ -1078,7 +1192,10 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     const { ORCH_CHANNELS } = await import('../../shared/orch-channels');
     const { PTY_CHANNELS } = await import('../../shared/channels');
     const { getContextBySession } = await import('./gate');
-    const { findPane } = await import('./pane-registry');
+    const { findPane, getPaneRuntimeAuthorityBySession } = await import('./pane-registry');
+    const { missionEngineForScope } = await import('./mission-engine-registry');
+    const { projectMissionEngineSnapshotView } = await import('./mission-engine-production');
+    const { spawnMainOwnedMissionPaneAsync } = await import('./pane-registry');
     const { getProjectDomainStores } = await import('./project-domain-store-registry');
     const { readAuditLog } = await import('../jarvis/audit-log');
     const invoke = (channel: string, input: unknown) => state.handlers.get(channel)!({ sender: owner, senderFrame: owner.mainFrame }, input);
@@ -1121,6 +1238,40 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
           model: lane === 'native-mcp' ? undefined : physical.model });
         expect(getContextBySession(sessionId)).toMatchObject({ role: 'orchestrator', missionId: mission.id, scope });
         expect(pty.getAgentSessionInfo(sessionId)).toMatchObject({ role: 'orchestrator', missionId: mission.id, scope });
+        // F-1143: successful Gate/PTY/durable adoption must also publish the
+        // creator to the physical registry and canonical engine consumers.
+        for (const phase of ['adopted', 'later-layout-sync', 'worker-terminated'] as const) {
+          if (phase === 'later-layout-sync') {
+            state.listeners.get(ORCH_CHANNELS.panesSync)!({ sender: owner, senderFrame: owner.mainFrame }, { generationId: `empty-model-${lane}-${nonce}`, entries: [{
+              paneId, sessionId, paneNumber: 1, title: 'Claude', kind: 'cli-agent', adapterId: 'claude', model: '', state: 'idle', tabKey: '__loose__',
+            }] });
+          }
+          if (phase === 'worker-terminated' && lane === 'native-mcp') {
+            // This exercises the existing Main-owned physical worker boundary.
+            // MCP routing is covered by the fixture's unchanged named-seat cases;
+            // its sole synthetic Claude adapter cannot satisfy diverse free routing.
+            const spawnedWorker = await spawnMainOwnedMissionPaneAsync({ adapterId: 'claude', role: 'worker',
+              missionId: mission.id, scope, allowedTools: [], allowedSkills: [],
+              initialPrompt: `RT_GATE IDLE ${nonce}. Await the next instruction.` });
+            expect(spawnedWorker, JSON.stringify(spawnedWorker)).toMatchObject({ ok: true, sessionId: expect.any(String) });
+            const worker = spawnedWorker as { sessionId: string; paneId: string };
+            owned.push({ ...worker, rootPid: null });
+            expect(pty.getAgentSessionInfo(worker.sessionId)).toMatchObject({ role: 'worker', missionId: mission.id });
+            expect(await pty.orchTerminateSession(worker.sessionId, { origin: 'leader-publication-fixture:intentional-writer-termination' })).toBe(true);
+            expect(pty.getAgentSessionInfo(worker.sessionId)).toBeNull();
+          }
+          expect.soft(getPaneRuntimeAuthorityBySession(sessionId), phase).toMatchObject({
+            paneId, sessionId, role: 'orchestrator', missionId: mission.id, scope, executionScope: scope, owner,
+          });
+          const view = projectMissionEngineSnapshotView(scope, stores, mission.id);
+          expect(view.orchestratorLive, phase).toBe(true);
+          expect.soft(view.roster.filter(agent => agent.id === 'orchestrator'), phase).toMatchObject([{ category: 'orchestrator' }]);
+          expect.soft(view.panes.filter(pane => pane.agentId === 'orchestrator'), phase).toMatchObject([{ paneId, terminalLive: true }]);
+          const snapshot = await missionEngineForScope(scope).snapshot(scope, mission.id);
+          expect.soft(snapshot.agents.filter(agent => agent.paneId === paneId), phase).toMatchObject([{
+            id: 'orchestrator', category: 'orchestrator', paneId, terminalLive: true,
+          }]);
+        }
         await invoke(ORCH_CHANNELS.missionCommand, { kind: 'stop', missionId: mission.id });
         expect(pty.getAgentSessionInfo(sessionId)).toBeNull();
       }
