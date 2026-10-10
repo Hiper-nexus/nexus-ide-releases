@@ -108,7 +108,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
       const canonicalScope = (value: typeof scope) => Object.entries(value).filter(([, entry]) => entry !== undefined).sort(([a], [b]) => a.localeCompare(b));
       const grants = (value: readonly string[] | null | undefined) => value == null ? null : [...value].sort();
       return createHash('sha256').update(JSON.stringify([info.adapterId, info.model ?? null, info.accountId ?? null, info.effort ?? null, info.cwd,
-        info.role, info.readOnly, info.nativeReadOnly === true, grants(info.allowedTools), grants(info.allowedSkills), grants(ctx.allowedTools), grants(ctx.allowedSkills),
+        info.role, info.readOnly === true, info.nativeReadOnly === true, grants(info.allowedTools), grants(info.allowedSkills), grants(ctx.allowedTools), grants(ctx.allowedSkills),
         canonicalScope(ctx.scope), canonicalScope(executionScopeFor(ctx)), ctx.visualTask ? [ctx.visualTask.id, ctx.visualTask.since] : null])).digest('hex');
     };
     const captureAgentBinding = (info: ReturnType<typeof listAgentSessions>[number]) => {
@@ -313,7 +313,23 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
               const calls = audit.filter(a => a.tool === 'nexus_pane_spawn' && a.result === 'ok' && a.source === 'http-mcp' && a.args.resume === baseline.paneId &&
                 a.invocation_id && !baseline.priorInvocations.has(a.invocation_id) && chiefs.some(c => c.sessionId === a.session));
               if (candidates.length !== 1 || !next?.pid || next.pid === baseline.pid || next.paneId !== result.paneId || next.sessionId !== result.sessionId ||
-                next.paneId === baseline.paneId || next.sessionId === baseline.sessionId || chiefs.length !== 1 || calls.length !== 1) throw new Error('recovery native result or authenticated provenance differs');
+                next.paneId === baseline.paneId || next.sessionId === baseline.sessionId || chiefs.length !== 1 || calls.length !== 1) {
+                try {
+                  const workers = agents.filter(a => a.role === 'worker');
+                  console.error('[smoke] runtime-recovery-rejected', {
+                    schema: 'nexus.runtime-recovery-rejection/v1', workers: workers.length,
+                    conversationMatches: workers.filter(a => sameRuntimeConversation(a.conversation, baseline.conversation)).length,
+                    bindingMatches: workers.filter(a => a.bindingSha256 === baseline.bindingSha256).length,
+                    candidates: candidates.length, chiefs: chiefs.length, freshResumeCalls: calls.length,
+                    singleCandidate: candidates.length === 1, candidatePidPresent: Boolean(next?.pid),
+                    candidatePidDistinct: Boolean(next?.pid && next.pid !== baseline.pid),
+                    hintPaneMatches: next?.paneId === result.paneId, hintSessionMatches: next?.sessionId === result.sessionId,
+                    newPaneDistinct: Boolean(next && next.paneId !== baseline.paneId), newSessionDistinct: Boolean(next && next.sessionId !== baseline.sessionId),
+                    singleChief: chiefs.length === 1, singleFreshResumeCall: calls.length === 1,
+                  });
+                } catch { /* Diagnostic failure cannot change the authoritative rejection. */ }
+                throw new Error('recovery native result or authenticated provenance differs');
+              }
               recovery = { fromPaneId: baseline.paneId, fromSessionId: baseline.sessionId, paneId: next.paneId, sessionId: next.sessionId,
                 chiefSessionId: calls[0].session, invocationId: calls[0].invocation_id };
             }

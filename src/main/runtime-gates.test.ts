@@ -400,9 +400,14 @@ it('final observation rechecks an already-collected agent while another visual r
   } finally { f.controller.abort(); await f.rejected; }
 });
 
-async function recoveredWorkerFixture(priorAudit = false) {
+async function recoveredWorkerFixture(priorAudit = false, readOnly?: { before: boolean | undefined; after: boolean | undefined }) {
   const f = await fixture(), { ctx, agent } = await scopedAgent(f), event = { sender: f.wc, senderFrame: f.frame };
   ctx.role = 'worker'; agent.role = 'worker'; agent.model = 'sealed-model'; agent.accountId = 'account-a'; agent.effort = 'high';
+  if (readOnly) {
+    if (readOnly.before === undefined) Reflect.deleteProperty(agent, 'readOnly');
+    else agent.readOnly = readOnly.before;
+    ctx.readOnly = readOnly.before === true;
+  }
   ctx.visualTask = { id: 'original-assignment', since: 1 };
   deps.visual.mockResolvedValue({ required: true, verified: false, reason: 'unit native capture pending' });
   const nativeId = '2a825b8f-7024-4dfb-b62b-601c8fdea852', marker = '11111111-1111-4111-8111-111111111111';
@@ -417,7 +422,7 @@ async function recoveredWorkerFixture(priorAudit = false) {
   const chief = mintToken({ label: 'Runtime chief', role: 'orchestrator', missionId: 'm', scope: { ...deps.scope },
     executionScope: { ...agent.scope }, readOnly: false, allowedTools: null, allowedSkills: null });
   bindTokenToSession(chief.token, 'chief-session');
-  const chiefAgent: OwnedAgentSessionInfo = { ...agent, sessionId: 'chief-session', paneId: 'chief-pane', role: 'orchestrator' };
+  const chiefAgent: OwnedAgentSessionInfo = { ...agent, sessionId: 'chief-session', paneId: 'chief-pane', role: 'orchestrator', readOnly: false };
   deps.agents.push(chiefAgent); deps.probe.mockResolvedValue([{ sessionId: agent.sessionId, rootPid: 1234 }, { sessionId: chief.sessionId, rootPid: 3333 }]);
   const audit = { timestamp: new Date().toISOString(), project_id: 'p', checkout_id: 'c', mission_id: 'm', duration_ms: 1, user_authorized: false,
     session: 'chief-session', source: 'http-mcp' as const, tool: 'nexus_pane_spawn', args: { resume: 'owned-pane' }, result: 'ok' as const, invocation_id: 'resume-invocation' };
@@ -429,6 +434,11 @@ async function recoveredWorkerFixture(priorAudit = false) {
     executionScope: { ...agent.scope }, readOnly: false, allowedTools: null, allowedSkills: null });
   bindTokenToSession(next.token, 'new-session'); next.visualTask = ctx.visualTask;
   const worker: OwnedAgentSessionInfo = { ...agent, paneId: 'new-pane', sessionId: 'new-session' };
+  if (readOnly) {
+    if (readOnly.after === undefined) Reflect.deleteProperty(worker, 'readOnly');
+    else worker.readOnly = readOnly.after;
+    next.readOnly = readOnly.after === true;
+  }
   deps.agents = [chiefAgent, worker]; deps.probe.mockResolvedValue([{ sessionId: 'new-session', rootPid: 2345 }, { sessionId: 'chief-session', rootPid: 3333 }]);
   if (!priorAudit) deps.audit.push(audit);
   deps.recovery = { fromPaneId: 'owned-pane', fromSessionId: 'owned-session', paneId: 'new-pane', sessionId: 'new-session' };
@@ -469,6 +479,89 @@ it('F-1111: accepts the actual new result identity only with the exact prior wor
     fromPaneId: 'owned-pane', fromSessionId: 'owned-session', paneId: 'new-pane', sessionId: 'new-session',
     chiefSessionId: 'chief-session', invocationId: 'resume-invocation' }); }
   finally { f.controller.abort(); await f.rejected; }
+});
+it.each([{ before: undefined, after: false }, { before: false, after: undefined }])(
+  'F-1149: writable readOnly representation $before to $after keeps the same recovery authority', async readOnly => {
+    const { f, event } = await recoveredWorkerFixture(false, readOnly);
+    try {
+      expect((await f.request(event, { operation: 'observe', missionId: 'm' })).recovery).toEqual({
+        fromPaneId: 'owned-pane', fromSessionId: 'owned-session', paneId: 'new-pane', sessionId: 'new-session',
+        chiefSessionId: 'chief-session', invocationId: 'resume-invocation' });
+    } finally { f.controller.abort(); await f.rejected; }
+  });
+it.each([{ before: true, after: false }, { before: false, after: true }])(
+  'F-1149: readOnly authority change $before to $after remains rejected', async readOnly => {
+    const { f, event } = await recoveredWorkerFixture(false, readOnly);
+    try {
+      await expect(f.request(event, { operation: 'observe', missionId: 'm' })).rejects.toThrow('recovery native result or authenticated provenance differs');
+    } finally { f.controller.abort(); await f.rejected; }
+  });
+it.each(['equivalent-workers', 'binding-drift', 'missing-pid', 'old-pid', 'hint-session', 'old-pane', 'old-session',
+  'missing-chief', 'multiple-chiefs', 'missing-audit', 'duplicate-audit', 'prior-audit'] as const)(
+  'F-1149: bounded recovery diagnosis preserves rejection for %s', async kind => {
+    const { f, event, next, worker } = await recoveredWorkerFixture(kind === 'prior-audit', { before: false, after: undefined });
+    const logger = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      if (kind === 'equivalent-workers' || kind === 'multiple-chiefs') {
+        const role = kind === 'equivalent-workers' ? 'worker' : 'orchestrator';
+        const competing = mintToken({ label: 'private competing agent', role, missionId: 'm', scope: { ...deps.scope },
+          executionScope: { ...worker.scope }, readOnly: false, allowedTools: null, allowedSkills: null });
+        bindTokenToSession(competing.token, 'competing-session'); competing.visualTask = next.visualTask;
+        deps.agents.push({ ...worker, paneId: 'competing-pane', sessionId: 'competing-session', role, readOnly: false });
+        deps.probe.mockResolvedValue([{ sessionId: 'new-session', rootPid: 2345 }, { sessionId: 'chief-session', rootPid: 3333 },
+          { sessionId: 'competing-session', rootPid: 4444 }]);
+      }
+      if (kind === 'binding-drift') worker.model = 'changed-model';
+      if (kind === 'missing-pid') deps.probe.mockResolvedValue([{ sessionId: 'chief-session', rootPid: 3333 }]);
+      if (kind === 'old-pid') deps.probe.mockResolvedValue([{ sessionId: 'new-session', rootPid: 1234 }, { sessionId: 'chief-session', rootPid: 3333 }]);
+      if (kind === 'hint-session') deps.recovery!.sessionId = 'unrelated-session';
+      if (kind === 'old-pane') { worker.paneId = 'owned-pane'; deps.recovery!.paneId = 'owned-pane'; }
+      if (kind === 'old-session') {
+        releaseSessionByToken(next.token);
+        const recycled = mintToken({ label: 'private recycled identity', role: 'worker', missionId: 'm', scope: { ...deps.scope },
+          executionScope: { ...worker.scope }, readOnly: false, allowedTools: null, allowedSkills: null });
+        bindTokenToSession(recycled.token, 'owned-session'); recycled.visualTask = next.visualTask;
+        worker.sessionId = 'owned-session'; deps.recovery!.sessionId = 'owned-session';
+        deps.probe.mockResolvedValue([{ sessionId: 'owned-session', rootPid: 2345 }, { sessionId: 'chief-session', rootPid: 3333 }]);
+      }
+      if (kind === 'missing-chief') deps.agents = [worker];
+      if (kind === 'missing-audit') deps.audit = [];
+      if (kind === 'duplicate-audit') deps.audit.push({ ...deps.audit[0]!, invocation_id: 'second-resume-invocation' });
+      await expect(f.request(event, { operation: 'observe', missionId: 'm' })).rejects.toThrow('recovery native result or authenticated provenance differs');
+      const logs = logger.mock.calls.filter(([name]) => name === '[smoke] runtime-recovery-rejected');
+      expect(logs).toHaveLength(1);
+      const diagnosis = logs[0]![1] as Record<string, unknown>;
+      expect(Object.keys(diagnosis).sort()).toEqual(['schema', 'workers', 'conversationMatches', 'bindingMatches', 'candidates', 'chiefs',
+        'freshResumeCalls', 'singleCandidate', 'candidatePidPresent', 'candidatePidDistinct', 'hintPaneMatches', 'hintSessionMatches',
+        'newPaneDistinct', 'newSessionDistinct', 'singleChief', 'singleFreshResumeCall'].sort());
+      expect(diagnosis.schema).toBe('nexus.runtime-recovery-rejection/v1');
+      // Literal schema permits only counts/booleans: no identities, hashes,
+      // account/grant values, paths or terminal text can enter this record.
+      for (const [key, value] of Object.entries(diagnosis)) if (key !== 'schema') {
+        expect(['number', 'boolean']).toContain(typeof value);
+        if (typeof value === 'number') expect(Number.isSafeInteger(value) && value >= 0).toBe(true);
+      }
+      if (kind === 'equivalent-workers') expect(diagnosis).toMatchObject({ workers: 2, conversationMatches: 2, bindingMatches: 2,
+        candidates: 2, singleCandidate: false });
+      if (kind === 'binding-drift') expect(diagnosis).toMatchObject({ workers: 1, conversationMatches: 1, bindingMatches: 0,
+        candidates: 0, singleCandidate: false });
+      if (kind === 'missing-pid') expect(diagnosis).toMatchObject({ candidates: 1, candidatePidPresent: false, candidatePidDistinct: false });
+      if (kind === 'old-pid') expect(diagnosis).toMatchObject({ candidates: 1, candidatePidPresent: true, candidatePidDistinct: false });
+      if (kind === 'hint-session') expect(diagnosis.hintSessionMatches).toBe(false);
+      if (kind === 'old-pane') expect(diagnosis.newPaneDistinct).toBe(false);
+      if (kind === 'old-session') expect(diagnosis.newSessionDistinct).toBe(false);
+      if (kind === 'missing-chief') expect(diagnosis).toMatchObject({ chiefs: 0, freshResumeCalls: 0, singleChief: false });
+      if (kind === 'multiple-chiefs') expect(diagnosis).toMatchObject({ chiefs: 2, singleChief: false });
+      if (kind === 'missing-audit' || kind === 'prior-audit') expect(diagnosis).toMatchObject({ freshResumeCalls: 0, singleFreshResumeCall: false });
+      if (kind === 'duplicate-audit') expect(diagnosis).toMatchObject({ freshResumeCalls: 2, singleFreshResumeCall: false });
+    } finally { f.controller.abort(); await f.rejected; logger.mockRestore(); }
+  });
+it('F-1149: diagnostic logger failure cannot bypass or replace recovery rejection', async () => {
+  const { f, event } = await recoveredWorkerFixture(); deps.audit = [];
+  const logger = vi.spyOn(console, 'error').mockImplementation(() => { throw new Error('private logger unavailable'); });
+  try {
+    await expect(f.request(event, { operation: 'observe', missionId: 'm' })).rejects.toThrow('recovery native result or authenticated provenance differs');
+  } finally { logger.mockRestore(); f.controller.abort(); await f.rejected; }
 });
 it.each(['foreign-result', 'no-audit', 'prior-audit', 'foreign-chief', 'foreign-resume', 'account', 'model', 'effort', 'assignment', 'full-root', 'ambiguous', 'native-context'] as const)(
   'F-1111: rejects %s recovery provenance', async variant => {
