@@ -52,7 +52,7 @@ import {
 } from "../../shared/pet-studio";
 import { assertIndependentReviewForDone, missionRequiresIndependentReview } from "./mission-independent-review-gate";
 import { assertDeliveryArtifactsForDone } from "./mission-delivery-artifact-gate";
-import { getAutomaticCompletionProof } from "./automatic-completion-proof";
+import { assertCompletionEffectsSettled, getAutomaticCompletionProof } from "./automatic-completion-proof";
 import { resolveFrozenMissionReviewProof } from "./mission-review-proof";
 import { assertTeamQuestionCompletion, teamQuestionResponseSummary, type TeamQuestionObserverBinding, type TeamQuestionPaneRuntime } from "./mission-team-question-completion";
 import { noteOperatorDirection } from "./operator-cli-mentions";
@@ -105,6 +105,7 @@ import {
 import { maestroKickoffBlockReason } from "./maestro-boot-gate";
 import {
   getProjectDomainStores,
+  requireProjectDomainStoreRegistry,
   type ProjectDomainStoreSuite,
 } from "./project-domain-store-registry";
 import { withMissionLifecycleLock } from "./mission-lifecycle-lock";
@@ -1954,6 +1955,12 @@ export function completeVerifiedMission(
     if (teamQuestion.applicable) {
       result = { ...result, summary: teamQuestionResponseSummary(teamQuestion), artifactRefs: [], evidenceIds: [] };
     }
+    const leader = getMissionLeadership().resolveMissionLeader(scope, current.id);
+    assertCompletionEffectsSettled(
+      requireProjectDomainStoreRegistry().runtimeManager(), scope, current.id,
+      { excludeSessionId: leader?.proven && leader.sessionId === current.orchestratorSessionId
+        ? leader.sessionId : undefined },
+    );
   }
   transitionMissionEngineLifecycle(stores, input, {
     status: 'done', intentState: 'done', learnings: input.learnings, result,
