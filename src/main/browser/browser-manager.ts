@@ -210,6 +210,8 @@ export interface BrowserEntry {
   navSeq: number;
   /** Bumped at the start of every Main-driven load (operator or agent). */
   loadGeneration: number;
+  /** Main-driven loads still awaiting their navigation (loadBrowserForEntry). */
+  loadsInFlight: number;
   lastNewDocNavSeq: number;
   lastInPageNavSeq: number;
   /** Bounded ring of console/HTTP/load failures (≤ 20), newest last. */
@@ -883,6 +885,7 @@ async function createEntry(
     restoringExactNavigation: false,
     navSeq: 0,
     loadGeneration: 0,
+    loadsInFlight: 0,
     lastNewDocNavSeq: 0,
     lastInPageNavSeq: 0,
     errors: [],
@@ -1111,6 +1114,21 @@ export async function ensureBrowser(
     emitState(entry);
     return stateOf(paneId, entry);
   }
+  // A URL do renderer é só a navegação INICIAL do pane. Se o Main já navegou
+  // esta vista (nexus_browser_open cria o pane em about:blank e carrega o
+  // alvo logo depois do ack), o pane chega atrasado com a URL do nascimento:
+  // durante o primeiro carregamento o getURL() ainda é '' e a comparação
+  // abaixo via a URL-alvo como "diferente", disparando um about:blank que
+  // abortava o carregamento do agente. A página viva é a verdade: com uma
+  // navegação do Main em voo, ou com a vista já navegada e o pane pedindo só
+  // o about:blank de nascimento, o pedido do renderer não navega.
+  const initialUrl = url?.trim();
+  if (
+    entry.loadsInFlight > 0 ||
+    (initialUrl === 'about:blank' && entry.loadGeneration > 0)
+  ) {
+    return stateOf(paneId, entry);
+  }
   if (url && url.trim() && url.trim() !== (entry.view.webContents.getURL() || entry.url)) {
     void loadBrowserForEntry(paneId, entry, url).catch((err) => {
       entry.error = err instanceof Error ? err.message : String(err);
@@ -1149,10 +1167,54 @@ async function loadURLWithDeadline(entry: BrowserEntry, url: string, timeoutMs: 
   }
 }
 
+/**
+ * Teto de ESPERA de uma navegação comum (agente ou operador). Não é deadline
+ * de carregamento: passado o teto, a ferramenta devolve o estado atual com
+ * `loading: true` e a página segue carregando — nada é parado. Sem ele, um
+ * loadURL que não assenta prendia a chamada MCP até o app fechar.
+ */
+export const BROWSER_LOAD_WAIT_MS = 15_000;
+
+async function loadURLWithBoundedWait(entry: BrowserEntry, url: string, waitMs: number): Promise<void> {
+  const load = entry.view.webContents.loadURL(url);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = await Promise.race([
+    load.then(() => false),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(true), waitMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  if (timedOut) {
+    // O carregamento continua; uma falha tardia chega pelos eventos da vista
+    // e o `loading` do estado vem do próprio webContents.
+    load.catch(() => {});
+  }
+}
+
 /** `nexus_browser_responsive`: the operator's (or the page's) navigation wins over ours. */
 const NAVIGATED_ELSEWHERE = 'the pane navigated elsewhere during the run';
 
+type LoadBrowserForEntryOptions = Parameters<typeof navigateBrowserEntry>[3];
+
+/**
+ * Toda navegação do Main passa por aqui: enquanto ela não assenta, o pedido
+ * inicial do renderer (ensureBrowser) não pode navegar por cima dela.
+ */
 async function loadBrowserForEntry(
+  paneId: string,
+  entry: BrowserEntry,
+  rawUrl: string,
+  options: LoadBrowserForEntryOptions = {},
+): Promise<BrowserPaneState> {
+  entry.loadsInFlight += 1;
+  try {
+    return await navigateBrowserEntry(paneId, entry, rawUrl, options);
+  } finally {
+    entry.loadsInFlight -= 1;
+  }
+}
+
+async function navigateBrowserEntry(
   paneId: string,
   entry: BrowserEntry,
   rawUrl: string,
@@ -1161,7 +1223,10 @@ async function loadBrowserForEntry(
     signal?: AbortSignal;
     assertCurrentAuthority?: () => void;
     device?: BrowserDeviceKind;
-    /** Only `nexus_browser_responsive`: ordinary navigation has no deadline. */
+    /**
+     * Only `nexus_browser_responsive`: a real deadline that stops the load.
+     * Ordinary navigation only bounds its WAIT (BROWSER_LOAD_WAIT_MS).
+     */
     loadTimeoutMs?: number;
     /**
      * Only `nexus_browser_responsive`: the pane's navigation counter the
@@ -1214,7 +1279,7 @@ async function loadBrowserForEntry(
   if (url === 'about:blank') {
     entry.view.webContents.loadURL(url).catch(() => {});
   } else {
-    if (options.loadTimeoutMs === undefined) await entry.view.webContents.loadURL(url);
+    if (options.loadTimeoutMs === undefined) await loadURLWithBoundedWait(entry, url, BROWSER_LOAD_WAIT_MS);
     else await loadURLWithDeadline(entry, url, options.loadTimeoutMs);
     assertCurrentAuthority();
   }

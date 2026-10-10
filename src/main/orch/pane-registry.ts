@@ -130,6 +130,14 @@ import {
 // busy machine and turned a healthy late spawn into a retry storm.
 const SPAWN_TIMEOUT_MS = ORCH_SPAWN_GRANT_TTL_MS;
 const RECOVERY_TIMEOUT_MS = 90_000;
+/**
+ * Um pane de navegador não tem CLI para dar boot: o renderer insere o pane e
+ * espera a vista nascer por até 25 s (CREATE_TIMEOUT_MS em browser-host.ts),
+ * respondendo sucesso ou a falha real. Herdar os 30 min do spawn de CLI fazia
+ * um ack perdido prender nexus_browser_open até o app fechar. O teto fica
+ * acima dos 25 s do renderer para a falha dele ainda chegar com o motivo.
+ */
+export const BROWSER_OPEN_TIMEOUT_MS = 35_000;
 
 /** Internal opt-in used only by the public MCP pane spawn transaction. */
 export const PENDING_SPAWN_RESULT = Symbol("pending-pane-spawn-result");
@@ -3386,13 +3394,16 @@ export function requestBrowserPane(options: {
     paneId,
     url: options.url,
     title: options.title,
+    // F-1159: no modo missão o renderer só monta panes da missão; sem o
+    // vínculo a aba do agente nunca montava e o pedido não respondia.
+    ...(options.missionId ? { missionId: options.missionId } : {}),
   };
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       pendingBrowserOpens.delete(requestId);
       retainExpiredBrowserOpen(requestId, pending);
       resolve({ requestId, ok: false, error: "browser open timed out" });
-    }, SPAWN_TIMEOUT_MS);
+    }, BROWSER_OPEN_TIMEOUT_MS);
     const pending: PendingBrowserOpen = {
       resolve,
       timer,

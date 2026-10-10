@@ -164,6 +164,7 @@ vi.mock('./browser-personal-profile', () => ({
 }));
 
 import {
+  BROWSER_LOAD_WAIT_MS,
   assertBrowserAtExactUrl,
   assertTrustedLocalDesignPreview,
   browserDesignSessionKey,
@@ -673,5 +674,74 @@ describe('browser manager pinned network boundary', () => {
     expect(getBrowserViewCount()).toBe(0);
     expect(state.proxy.close).toHaveBeenCalled();
     clearRendererWorkspaceScope(state.owner);
+  });
+
+  describe('agent navigation vs. the pane\'s initial renderer URL', () => {
+    const flush = async () => {
+      for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    it('does not let a late renderer create abort the agent navigation in flight', async () => {
+      installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+      bindResolvedRendererWorkspaceScope(state.owner, scope);
+      registerBrowserIpc({} as never);
+      // nexus_browser_open: o pane nasce em about:blank pelo renderer.
+      state.browserSession.resolveHost.mockResolvedValue({ endpoints: [{ address: '93.184.216.34', port: 0 }] });
+      await ensureBrowser(state.owner as never, scope, 'pane-agent-race', 'about:blank');
+      // Primeiro carregamento ainda sem commit: o Chromium devolve '' aqui.
+      state.guest.getURL.mockReturnValue('');
+      let finishLoad!: () => void;
+      state.guest.loadURL.mockImplementation(((url: string) =>
+        url === 'about:blank'
+          ? Promise.reject(new Error('ERR_ABORTED (-3)'))
+          : new Promise<void>((resolve) => { finishLoad = resolve; })) as () => Promise<void>);
+      const opened = loadBrowser('pane-agent-race', 'https://example.com/', { scope });
+      await vi.waitFor(() => expect(state.guest.loadURL).toHaveBeenCalledWith('https://example.com/'));
+
+      // O create do renderer chega com a URL de nascimento do pane.
+      const late = await ensureBrowser(state.owner as never, scope, 'pane-agent-race', 'about:blank');
+      await flush();
+      expect(state.guest.loadURL).not.toHaveBeenCalledWith('about:blank');
+      expect(late.url).toBe('https://example.com/');
+
+      finishLoad();
+      state.guest.getURL.mockReturnValue('https://example.com/');
+      await expect(opened).resolves.toMatchObject({ url: 'https://example.com/' });
+
+      // Depois do commit, o about:blank de nascimento também não apaga a página.
+      await ensureBrowser(state.owner as never, scope, 'pane-agent-race', 'about:blank');
+      await flush();
+      expect(state.guest.loadURL).not.toHaveBeenCalledWith('about:blank');
+      destroyBrowser('pane-agent-race', scope);
+      clearRendererWorkspaceScope(state.owner);
+    });
+
+    it('returns the current state when an ordinary load never settles, without stopping it', async () => {
+      installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+      bindResolvedRendererWorkspaceScope(state.owner, scope);
+      registerBrowserIpc({} as never);
+      state.browserSession.resolveHost.mockResolvedValue({ endpoints: [{ address: '93.184.216.34', port: 0 }] });
+      await ensureBrowser(state.owner as never, scope, 'pane-agent-stall', 'about:blank');
+      vi.useFakeTimers();
+      try {
+        state.guest.loadURL.mockImplementation(() => new Promise<void>(() => {}));
+        state.guest.isLoading.mockReturnValue(true);
+        state.guest.getURL.mockReturnValue('');
+        let settled: unknown;
+        void loadBrowser('pane-agent-stall', 'https://example.com/slow', { scope })
+          .then((value) => { settled = value; }, (error) => { settled = error; });
+        await vi.advanceTimersByTimeAsync(BROWSER_LOAD_WAIT_MS - 1);
+        expect(settled).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(settled).toMatchObject({ url: 'https://example.com/slow', loading: true });
+        expect(settled).not.toBeInstanceOf(Error);
+      } finally {
+        vi.useRealTimers();
+        state.guest.isLoading.mockReturnValue(false);
+        state.guest.loadURL.mockImplementation(async () => {});
+        destroyBrowser('pane-agent-stall', scope);
+        clearRendererWorkspaceScope(state.owner);
+      }
+    });
   });
 });

@@ -881,6 +881,8 @@ export interface BrowserPaneOpenRequest {
   paneId: string;
   url: string;
   title?: string;
+  /** Mission of the agent that asked: the pane must belong to it to mount. */
+  missionId?: string;
 }
 
 /**

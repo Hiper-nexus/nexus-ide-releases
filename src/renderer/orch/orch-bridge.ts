@@ -767,6 +767,9 @@ export function useOrchBridge(): void {
             if (paneId !== req.paneId) {
               throw new Error('browser pane identity mismatch');
             }
+            // F-1159: no modo missão só montam os panes da missão; a aba que
+            // o agente abriu precisa pertencer a ela para nascer.
+            if (req.missionId) useOrchStore.getState().bindPaneMission(paneId, req.missionId);
             await waitForBrowserPaneCreated(paneId);
             syncPanesNow(); // Critical: main needs state before result
             window.nexus.orch.sendBrowserOpenResult({

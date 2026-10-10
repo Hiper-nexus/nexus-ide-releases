@@ -16,6 +16,7 @@ import * as providerSessionStore from "../persistence/provider-session-store";
 import * as mainOwnedPaneRuntime from "./main-owned-pane-runtime";
 import type { CallerCtx } from "./pane-authz";
 import {
+  BROWSER_OPEN_TIMEOUT_MS,
   attachOrchMeta,
   assertPendingRecoverySpawnGrantActive,
   bindPendingRecoverySpawnSession,
@@ -327,6 +328,47 @@ describe("pending pane spawn authority", () => {
       ok: true,
       paneId: "renderer-controlled-id",
     }, owner)).toBe(true);
+    expect(owner.send).toHaveBeenLastCalledWith(
+      ORCH_CHANNELS.paneCloseRequest,
+      { requestId: request.requestId, paneId: request.paneId },
+    );
+  });
+
+  it("bounds a browser open whose renderer acknowledgement never arrives", async () => {
+    // Smoke empacotado 0.76.229: um ack perdido prendia nexus_browser_open
+    // nos 30 min do spawn de CLI e a chamada só terminava no fechamento do app.
+    vi.useFakeTimers();
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    const caller = bindLiveBrowserWorker(owner, scope);
+
+    const pending = requestBrowserPane({
+      url: "about:blank",
+      missionId: "mission-browser",
+      role: "worker",
+      scope,
+      caller,
+    });
+    let settled: unknown;
+    void pending.then((result) => { settled = result; });
+    const request = owner.send.mock.calls[0]?.[1] as BrowserPaneOpenRequest;
+    // F-1159: o pedido leva a missão para o renderer montar a aba no modo missão.
+    expect(request.missionId).toBe("mission-browser");
+
+    // O renderer espera a vista nascer por até 25 s antes de responder.
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(settled).toBeUndefined();
+    expect(BROWSER_OPEN_TIMEOUT_MS).toBeGreaterThan(25_000);
+    expect(BROWSER_OPEN_TIMEOUT_MS).toBeLessThan(45_000);
+
+    await vi.advanceTimersByTimeAsync(BROWSER_OPEN_TIMEOUT_MS - 25_000 + 1);
+    expect(settled).toMatchObject({ ok: false, error: "browser open timed out" });
+
+    // O ack tardio continua limpando o pane pelo selo do pedido.
+    expect(resolveBrowserOpen({ requestId: request.requestId, ok: true, paneId: request.paneId }, owner)).toBe(true);
     expect(owner.send).toHaveBeenLastCalledWith(
       ORCH_CHANNELS.paneCloseRequest,
       { requestId: request.requestId, paneId: request.paneId },
