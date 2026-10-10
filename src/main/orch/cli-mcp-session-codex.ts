@@ -494,15 +494,12 @@ export function prepareCodexGovernedSession(
       ensurePrivateDirectory(shellHome);
       ensurePrivateDirectory(shellTmp);
       linkSelectedEntries(providerHome, artifactDir, CODEX_LIVE_AUTH_STATE);
-      // The private Codex profile is kernel-sandboxed (`:root: deny`), also
-      // for Pet Studio: real copies, never a link outside the overlay.
       mirrorGovernedSkills(
         'codex',
         home,
         [path.join(artifactDir, 'skills')],
         policy.allowedSkills,
         policy.allowedTools,
-        { linkToSharedCache: false },
       );
       // Preferências de TUI que o Codex tenta gravar em config.toml no boot.
       // O arquivo é immutable (protectedWritePaths); se já estiverem aqui, o

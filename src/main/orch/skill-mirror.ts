@@ -207,12 +207,6 @@ export interface SkillMirrorOptions {
    * Default drops bundled `typesafe-ai` when no TypeSafe credential exists.
    */
   bundledSkillFilter?: (name: string) => boolean;
-  /**
-   * The shared cache (F-1157) is reused across spawns: a user skill whose
-   * SKILL.md changed after it was cached is copied again instead of the
-   * ordinary "existing target wins".
-   */
-  refreshStaleCopies?: boolean;
 }
 
 function skillName(name: string): string {
@@ -817,18 +811,9 @@ function bundledManifestFor(
   return BUNDLED_MANIFESTS[skillName(source.name)];
 }
 
-function copySkill(source: SkillSource, targetRoot: string, refreshStale = false): boolean {
+function copySkill(source: SkillSource, targetRoot: string): boolean {
   const target = path.join(targetRoot, source.name);
-  const targetSkill = path.join(target, 'SKILL.md');
-  if (fs.existsSync(targetSkill)) {
-    if (!refreshStale) return false;
-    try {
-      if (fs.statSync(path.join(source.dir, 'SKILL.md')).mtimeMs <= fs.statSync(targetSkill).mtimeMs) return false;
-    } catch {
-      return false;
-    }
-    fs.rmSync(target, { recursive: true, force: true });
-  }
+  if (fs.existsSync(path.join(target, 'SKILL.md'))) return false;
   fs.mkdirSync(targetRoot, { recursive: true });
   fs.cpSync(source.dir, target, {
     recursive: true,
@@ -851,51 +836,6 @@ function addAgentPluginSources(
       grantNames: plugin.grantNames,
       plugin,
     });
-  }
-}
-
-/**
- * F-1157 (sem filtro de skill): every agent's PRIVATE overlay sees every
- * installed skill. Copying ~100 skill trees (~1,250 files) into each fresh
- * overlay cost ~180 ms of synchronous Main time per spawn, so the full set is
- * materialized ONCE per adapter here and refreshed non-destructively (a few
- * ms after the first run); unsandboxed overlays link to it. Sandboxed overlays
- * (Hardened, the private Codex profile) still receive real copies, because
- * their kernel profile only reads paths inside the overlay.
- */
-export function sharedSkillCacheDir(adapterId: string, home = os.homedir()): string {
-  const dir = path.join(home, '.nexus', 'skill-cache', adapterId.replace(/[^A-Za-z0-9._-]/g, '_'));
-  ensureSkillsForCli(adapterId, {
-    home,
-    allowedSkills: null,
-    allowedTools: null,
-    targetDirs: [dir],
-    includeCliTarget: false,
-    refreshStaleCopies: true,
-  });
-  return dir;
-}
-
-/**
- * Point a private overlay's skills directory at the shared cache. Only a
- * fresh target (absent or empty) is replaced; anything already there stays
- * and the caller falls back to copying. Returns whether the link is in place.
- */
-export function linkSkillsDirToCache(targetDir: string, cacheDir: string): boolean {
-  try {
-    const stat = fs.lstatSync(targetDir);
-    if (stat.isSymbolicLink()) return fs.realpathSync(targetDir) === fs.realpathSync(cacheDir);
-    if (!stat.isDirectory() || fs.readdirSync(targetDir).length > 0) return false;
-    fs.rmdirSync(targetDir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false;
-  }
-  try {
-    fs.mkdirSync(path.dirname(targetDir), { recursive: true, mode: 0o700 });
-    fs.symlinkSync(cacheDir, targetDir, process.platform === 'win32' ? 'junction' : 'dir');
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -962,7 +902,7 @@ export function ensureSkillsForCli(
         } else {
           const manifest = bundledManifestFor(source, generatedRoot);
           if (!manifest) {
-            didCopy = copySkill(source, targetDir, options.refreshStaleCopies === true);
+            didCopy = copySkill(source, targetDir);
           } else {
             const install = installBundledSkill(
               targetDir,

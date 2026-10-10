@@ -977,34 +977,6 @@ describe('mcp-server governed CLI profile wiring', () => {
     }
   });
 
-  it('F-1157: a gated private Claude HOME links to the shared per-adapter skill cache in Autopilot', () => {
-    homePolicyDeps.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
-    const root = tempRoot();
-    const home = path.join(root, 'home');
-    const workspace = path.join(root, 'workspace');
-    fs.mkdirSync(workspace, { recursive: true });
-    const cwd = fs.realpathSync(workspace);
-    vi.stubEnv('HOME', home);
-    write(path.join(home, '.agents', 'skills', 'blocked', 'SKILL.md'), '# blocked');
-    const first = prepareAgentSpawnDecoration(adapter('claude'), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, true), undefined);
-    const second = prepareAgentSpawnDecoration(adapter('claude'), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, true), undefined);
-    if (!first || !second) throw new Error('expected Claude decorations');
-    try {
-      const cache = fs.realpathSync(path.join(home, '.nexus', 'skill-cache', 'claude'));
-      for (const decoration of [first, second]) {
-        const overlaySkills = path.join(decoration.env.HOME, '.claude', 'skills');
-        expect(fs.lstatSync(overlaySkills).isSymbolicLink()).toBe(true);
-        expect(fs.realpathSync(overlaySkills)).toBe(cache);
-        expect(fs.existsSync(path.join(overlaySkills, 'blocked', 'SKILL.md'))).toBe(true);
-      }
-      // Nothing was mirrored into the real Claude profile.
-      expect(fs.existsSync(path.join(home, '.claude', 'skills', 'blocked'))).toBe(false);
-    } finally {
-      first.onSpawnFailed?.();
-      second.onSpawnFailed?.();
-    }
-  });
-
   it('delivers every installed skill to the private Claude profile in operator-choice (F-1157)', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');

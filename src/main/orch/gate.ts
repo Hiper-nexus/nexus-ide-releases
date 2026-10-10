@@ -150,10 +150,6 @@ function hardenedSpawnPolicy(): boolean {
   }
 }
 
-/** Did the operator choose Hardened (governed) mode? Autopilot when unknown. */
-export function isHardenedSpawnPolicy(): boolean {
-  return hardenedSpawnPolicy();
-}
 
 const NAMESPACE_PREFIXES = ["nexus_"];
 

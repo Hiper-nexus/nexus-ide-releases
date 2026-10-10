@@ -168,6 +168,12 @@ describe('nexus_checkpoint_list / nexus_checkpoint_restore', () => {
     expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
   });
 
+  it('F-1157: lane só rotulada read-only escreve no Autopilot, então pode restaurar', async () => {
+    await expect(tool('nexus_checkpoint_restore').handler({ ref: firstRef() }, ctx({ readOnly: true })))
+      .resolves.toMatchObject({ applied: true });
+    expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('turno 1\n');
+  });
+
   it('lista é leitura; restauração é execution-effect com confirmação e fora da leitura confinada pelo Hardened', () => {
     expect(buildToolset().map((candidate) => candidate.name)).toEqual(
       expect.arrayContaining(['nexus_checkpoint_list', 'nexus_checkpoint_restore']),

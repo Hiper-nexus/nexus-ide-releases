@@ -40,7 +40,6 @@ import {
   getContext,
   getContextBySession,
   isCurrentGateContext,
-  isHardenedSpawnPolicy,
   mintToken,
   registerHardenedSpawnPolicy,
   releaseSession,
@@ -243,11 +242,7 @@ import {
   selectHubServersForSpawn,
   type McpHubSpawnServer,
 } from "../mcp-hub/mcp-hub-spawn";
-import {
-  ensureSkillsForCli,
-  linkSkillsDirToCache,
-  sharedSkillCacheDir,
-} from "./skill-mirror";
+import { ensureSkillsForCli } from "./skill-mirror";
 import {
   isPetStudioNativeWorkspaceAuthority,
 } from "../pty/autonomous-cli-policy";
@@ -1555,19 +1550,14 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         // that link: it is the operator's own profile.
         const overlayIsRealProfile =
           overlaySkills !== null && isSymbolicLinkPath(overlaySkills);
-        // F-1157: a private Claude HOME receives every skill (no filter),
-        // linked to the shared per-adapter cache outside Hardened; the real
-        // provider profile still receives only what was granted.
+        // F-1157: a private Claude HOME receives every skill (no filter);
+        // the real provider profile still receives only what was granted.
         const privateClaudeHome =
           gated &&
           usesClaudeHomeLayout(adapter) &&
           overlaySkills !== null &&
           !overlayIsRealProfile;
-        const linkedToSharedCache =
-          privateClaudeHome &&
-          !isHardenedSpawnPolicy() &&
-          linkSkillsDirToCache(overlaySkills, sharedSkillCacheDir(adapter.id));
-        if (!linkedToSharedCache) {
+        {
           ensureSkillsForCli(adapter.id, {
             allowedSkills: privateClaudeHome
               ? null

@@ -54,7 +54,6 @@ const MAX_MCP_TOOLS_PER_SERVER = 32;
 const MAX_MCP_KEYS = 32;
 const MAX_SKILL_ITEMS = 200;
 const DEFAULT_SKILL_LIMIT = 100;
-const MAX_GATE_SKILLS = 64;
 const MAX_CLIS = 64;
 const MAX_MODELS_PER_CLI = 24;
 /** Hard ceiling on any free-text reason we echo from an upstream failure. */
@@ -658,12 +657,12 @@ const skillsInventoryTool: McpToolDef = {
     'machine (Settings → Skills): name, kind, home-relative source directory, ' +
     'size and mtime. Consult BEFORE planning work that assumes a skill ' +
     'exists, and before naming a skill in a squad. Also reports the calling ' +
-    "agent's OWN skill gate (allowlist) — never another agent's. When the " +
+    "agent's OWN skill access (open to every skill since F-1157). When the " +
     'enriched arsenal exists, each item carries tier ' +
     '(scout|builder|reviewer), blurb and whenToUse — ground squad/pipeline ' +
     'composition in THESE annotations, never in memory. Absolute ' +
-    'paths are never returned. Read-only: installing is a separate, ' +
-    'explicitly-granted tool.',
+    'paths are never returned. Read-only: installing is the separate ' +
+    'nexus_skills tool (human confirmation applies).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -682,13 +681,12 @@ const skillsInventoryTool: McpToolDef = {
       limit: { type: 'number', description: 'Max items (default 100).' },
     },
   },
-  handler: async (args, ctx) => {
+  handler: async (args, _ctx) => {
     const input = skillsInputSchema.parse(args);
+    // F-1157: every agent may use every installed skill.
     const gate = {
-      restricted: ctx.allowedSkills !== null,
-      allowed: ctx.allowedSkills
-        ? ctx.allowedSkills.slice(0, MAX_GATE_SKILLS)
-        : null,
+      restricted: false,
+      allowed: null,
     };
 
     let items: ReadonlyArray<{

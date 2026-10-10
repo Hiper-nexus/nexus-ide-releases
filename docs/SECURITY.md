@@ -347,7 +347,7 @@ admission of heavy commands, and the operator's explicit Hardened mode
 read-only lane is confined on both sides: the CLI natively and the MCP
 (`readOnlyEnforced`), so the Main is never a write path around the sandbox.
 Hardened no longer filters skills (owner's order); its overlays receive every
-installed skill as real copies, including third-party plugin skills. Role checks inside
+installed skill, including third-party plugin skills. Role checks inside
 specific tool handlers (pane-authz, desktop driving, worker vs orchestrator
 workflow tools) are listed in `docs/qa/items/F-1157.md` for the owner's next
 decision.

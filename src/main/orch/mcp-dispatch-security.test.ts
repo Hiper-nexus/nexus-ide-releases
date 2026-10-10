@@ -482,6 +482,57 @@ describe("MCP dispatch effect safety", () => {
     }
   });
 
+  it("F-1157: the PREVC stage guard treats only a Hardened-confined lane as read-only", async () => {
+    const callerReadOnlyArgs: boolean[] = [];
+    const options: McpDispatchOptions = {
+      ...workflowOptions(),
+      resolveWorkflowAuthority: (_scope, missionId) => {
+        if (missionId !== TEST_MISSION_ID) throw new Error("wrong test mission");
+        return {
+          contextRevision: TEST_CONTEXT_REVISION,
+          assertExecutionEffectAllowed: (_tool: string, _args: unknown, callerReadOnly?: boolean) => {
+            callerReadOnlyArgs.push(callerReadOnly === true);
+          },
+        };
+      },
+    };
+    const run = async (hardened: boolean) => {
+      registerHardenedSpawnPolicy(() => hardened);
+      try {
+        resetGateForTests();
+        const context = mintToken({
+          label: hardened ? "hardened-ro" : "label-ro",
+          role: "worker",
+          missionId: TEST_MISSION_ID,
+          contextRevision: TEST_CONTEXT_REVISION,
+          readOnly: true,
+          scope: auditScope,
+          allowedTools: null,
+        });
+        return dispatchToolCall(
+          "http-mcp",
+          registryWith({
+            name: "nexus_terminal_run",
+            description: "terminal",
+            inputSchema: { type: "object", properties: {} },
+            handler: vi.fn(async () => ({ exitCode: 0 })),
+          }),
+          "nexus_terminal_run",
+          { command: "echo ok" },
+          context,
+          options,
+        );
+      } finally {
+        registerHardenedSpawnPolicy(() => false);
+      }
+    };
+    // Autopilot: the label lane writes, so the stage guard judges it as a writer
+    // (before and during execution).
+    expect(await run(false)).toMatchObject({ ok: true });
+    expect(callerReadOnlyArgs.length).toBeGreaterThanOrEqual(2);
+    expect(callerReadOnlyArgs.every((value) => value === false)).toBe(true);
+  });
+
   it("F-1157: the Hardened mode keeps a read-only lane from writing through the MCP", async () => {
     registerHardenedSpawnPolicy(() => true);
     try {

@@ -188,6 +188,25 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     expect(mocks.onHandoffSubmitted).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    { label: 'só rotulado read-only (Autopilot)', extra: { readOnly: true }, reviewed: true },
+    { label: 'confinado pelo Hardened', extra: { readOnly: true, readOnlyEnforced: true }, reviewed: false },
+  ])('F-1157: worker $label → revisão de evidência roda? $reviewed', async ({ extra, reviewed }) => {
+    mocks.getContextBySession.mockReturnValue({ ...workerCtx(), ...extra });
+    mocks.getStores.mockReturnValue({
+      missions: { get: () => approvedMission() }, tasks: { list: () => [], getPlannedTask: () => null },
+      missionPanes: { list: () => [] }, taskDispatches: { list: () => [] },
+      handoffs: {
+        submitFromPhysicalAgentBoundaryWithReplay: vi.fn(() => ({
+          handoff: { id: 'hoff-ro', evidenceTrust: 'nexus-trusted', deliveryState: 'queued' }, replayed: false,
+        })),
+        submitFromPhysicalAgentBoundaryAndTransitionDispatch: vi.fn(),
+      },
+    });
+    await submitPtyStreamHandoff('agy-session', { ...payload, status: 'success' });
+    expect(mocks.reviewMissionHandoff.mock.calls.length > 0).toBe(reviewed);
+  });
+
   it('keeps mechanical visual completion partial even when the worker claims a screenshot', async () => {
     const persist = vi.fn((_input: Record<string, unknown>) => ({
       handoff: { id: 'visual-handoff', evidenceTrust: 'nexus-trusted', deliveryState: 'queued' }, replayed: false,

@@ -775,16 +775,13 @@ describe('nexus_skills_inventory', () => {
     expect(out.available).toBe(true);
   });
 
-  it('reports the calling agent own skill gate, not other agents', async () => {
+  it('F-1157: reports open skill access whatever the token recorded', async () => {
     catalogMocks.listInstalledCatalogItems.mockReturnValue(items);
     const out = (await tool('nexus_skills_inventory').handler(
       {},
       ctx({ role: 'worker', allowedSkills: ['impeccable', 'ponytail'] }),
     )) as { gate: { restricted: boolean; allowed: string[] | null } };
-    expect(out.gate).toEqual({
-      restricted: true,
-      allowed: ['impeccable', 'ponytail'],
-    });
+    expect(out.gate).toEqual({ restricted: false, allowed: null });
   });
 
   it('answers honestly when nothing is installed', async () => {

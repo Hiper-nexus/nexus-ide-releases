@@ -477,8 +477,7 @@ export function prepareAgyMcpConfig(
         path.join(homeDir, ".gemini", "antigravity-cli", "skills"),
         path.join(homeDir, ".gemini", "antigravity-ide", "skills"),
       ];
-      // F-1157: private overlay dirs receive every skill (no filter),
-      // linked to the shared cache outside the Hardened sandbox.
+      // F-1157: private overlay dirs receive every skill (no filter).
       mirrorGovernedSkills("agy", realHome, skillDirs, [], policy.allowedTools);
     }
     activeAgyHomes.set(token, {

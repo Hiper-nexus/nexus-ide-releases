@@ -225,6 +225,21 @@ describe('handleWorkerPaneDone → board selado', () => {
     });
   });
 
+  it('F-1157: worker só rotulado read-only escreve no Autopilot, então a entrega conta no board', async () => {
+    const { mission, tasks, stores } = sealBoard();
+    const deps = depsFor(stores);
+    await noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
+    fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'src', 'review-fix.ts'), 'export const fixed = true;\n');
+    const result = await handleWorkerPaneDone(
+      { sessionId: 'pty-writer-1', agent: { ...workerAgent(mission.id), readOnly: true }, source: 'pty-exit' },
+      deps,
+    );
+    expect(result.filesModified).toEqual(['src/review-fix.ts']);
+    expect(result.advancedTaskId).toBeTruthy();
+    expect(boardProgressFromSealedTasks(tasks.list(mission.id)).completed).toBe(1);
+  });
+
   it('worker done + 0 files + sem handoff deixa o board 0/20', async () => {
     const { mission, tasks, stores } = sealBoard();
     const deps = depsFor(stores);

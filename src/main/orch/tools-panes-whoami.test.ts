@@ -48,8 +48,12 @@ describe('nexus_pane_whoami', () => {
       agentName: 'Frontend',
       providerId: 'codex',
       executionRoot: '/workspace/.worktrees/task-1',
-      allowedTools: ['nexus_file_read'],
+      // F-1157: the lists are seal records; access is open.
+      access: 'all-tools-and-skills',
+      readOnlyEnforced: false,
+      recordedTools: ['nexus_file_read'],
     });
+    expect(result).not.toHaveProperty('allowedTools');
     expect(JSON.stringify(result)).not.toContain('secret-bearer-token');
     expect(effectPolicyForTool(tool!.name)).toBe('read-only');
   });
