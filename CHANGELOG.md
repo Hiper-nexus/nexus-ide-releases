@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.76.228 — Missões com acompanhamento contínuo
+## 0.76.229 — Missões com acompanhamento contínuo
 
 - **Instruções ao Maestro confirmadas mesmo quando ele responde na hora.** Se o Maestro recebe a instrução e já bloqueia a missão com uma pergunta, a instrução conta como entregue em vez de aparecer como recusada (F-1158).
 - **Agentes com acesso a tudo.** Orquestrador, helpers, workers e revisores alcançam toda ferramenta do Nexus e as nativas da CLI. O orquestrador também pode editar, commitar e abrir subagentes; revisores deixam de ser somente leitura; não há mais filtro de skill nem bloqueio do WebFetch. Confirmações humanas, vínculo de missão e o modo Hardened escolhido pelo operador continuam valendo (F-1157).
@@ -20,7 +20,7 @@
 - **Conclusão sem perder a nova tentativa.** O idle do Maestro durante a coleta da entrega preserva uma reverificação, com líder e autorização atuais. Encerrar continua impedindo a retomada automática (F-1130).
 - **Conta coerente quando a recuperação recusa.** Sem grant de substituição e com o PTY original provado como o único ativo, a composição volta por CAS à conta física anterior. Um efeito tardio ou terminal substituto nunca é desfeito por suposição (F-1131).
 - **Retomada de worker fechado sem duplicar.** Retomar a conversa de um worker fechado reserva a continuação antes de iniciar o processo: o pane antigo não é restaurado ao mesmo tempo, o pedido segue na mesma tarefa e o novo terminal só é registrado depois de iniciar de fato. Falha provada antes do início devolve o worker original; se o início ficou incerto, ele permanece retido até a prova de que o processo terminou (F-1151/F-1153).
-- As candidatas anteriores foram preservadas; esta integração reúne os reparos revisados de conclusão, recuperação, preparação e captura antes da publicação final.
+- As candidatas anteriores (inclusive a 0.76.228, reprovada no runtime canônico pelo F-1158) foram preservadas; esta integração reúne os reparos revisados de conclusão, recuperação, preparação e captura antes da publicação final.
 
 - **API e sessão nativa distintas.** Credenciais de transporte não provam uma assinatura nativa do Claude; a seleção preserva a prioridade da sessão nativa comprovada.
 - **Verificação de runtime entre worktrees.** O verificador usa a identidade de coordenação dos agentes e conserva a execução isolada, sem afrouxar as guardas de escopo.
