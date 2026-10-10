@@ -69,6 +69,8 @@ import {
   listDeliveredProductFiles,
   maybeCompleteFastLaneOnDelivery,
   configureCivilianCodeCompletionGate,
+  startCivilianDeliveryCompletion,
+  stopCivilianDeliveryCompletion,
   toArtifactRefs,
 } from './civilian-delivery-completion';
 import { maybeApplyCivilianPronto } from './civilian-pronto';
@@ -1783,6 +1785,97 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(secondResult).toMatchObject({ action: 'wait', completed: false, reason: 'review-in-progress' });
     expect(completeVerified).toHaveBeenCalledOnce();
   });
+
+  it('F-1117: idle durante a leitura da entrega reverifica o pedido done com panes atuais', async () => {
+    completeVerified.mockClear();
+    const missionId = 'mission-idle-during-delivery-read';
+    const sessionId = 'maestro-idle-during-delivery-read';
+    let busy = true;
+    let reads = 0;
+    let release!: () => void;
+    const collecting = new Promise<string[]>(resolve => { release = () => resolve(['server.js']); });
+    let entered!: () => void;
+    const firstRead = new Promise<void>(resolve => { entered = resolve; });
+    let verifiedSession: string | null | undefined;
+    const state = boardDoneHarness({
+      missionOverrides: { id: missionId, squadId: undefined, orchestratorSessionId: sessionId, intentContract: civilianContract },
+      depsExtras: {
+        listPanes: () => [{ paneId: 'maestro', missionId, sessionId, role: 'orchestrator', state: busy ? 'busy' : 'idle' }],
+        listProductFiles: () => { reads++; if (reads === 1) { entered(); return collecting; } return ['server.js']; },
+        resolveMissionLeader: () => ({ sessionId, paneId: 'maestro', source: 'live', proven: true }),
+        runCodeCompletionGate: async (input: Parameters<import('./civilian-delivery-completion').CivilianCodeCompletionGate>[0]) => {
+          verifiedSession = input.liveOrchestratorSessionId;
+          return { kind: 'waiting', code: 'review_pending', reason: 'O juiz independente ainda está revisando.', hint: 'Aguarde a revisão.' };
+        },
+      },
+    });
+    recordOperatorTabCompletionRequest(scope, state.liveMission);
+    const flight = state.reconcile();
+    await firstRead;
+    busy = false;
+    expect(await state.reconcile()).toMatchObject({ completed: false, reason: 'review-in-progress' });
+    release();
+    await flight;
+    await vi.waitFor(() => expect(verifiedSession).toBe(sessionId));
+    expect(reads).toBe(2);
+    expect(state.liveMission.status).toBe('running');
+    expect(completeVerified).not.toHaveBeenCalled();
+  });
+
+  it.each(['without-done', 'leader', 'version', 'authority', 'ended', 'stopped', 'unproved', 'runtime-closed-arrival', 'runtime-closed-settlement'] as const)(
+    'F-1117: retomada pendente não executa com autoridade %s', async change => {
+      completeVerified.mockClear();
+      const missionId = `mission-deferred-wake-${change}`;
+      const sessionId = `maestro-deferred-wake-${change}`;
+      let busy = true;
+      let proven = true;
+      let reads = 0;
+      let verified = false;
+      let release!: () => void;
+      const collecting = new Promise<string[]>(resolve => { release = () => resolve(['server.js']); });
+      let entered!: () => void;
+      const firstRead = new Promise<void>(resolve => { entered = resolve; });
+      const state = boardDoneHarness({
+        missionOverrides: { id: missionId, squadId: undefined, orchestratorSessionId: sessionId, intentContract: civilianContract },
+        depsExtras: {
+          listPanes: () => [{ paneId: 'maestro', missionId, sessionId, role: 'orchestrator', state: busy ? 'busy' : 'idle' }],
+          listProductFiles: () => { reads++; if (reads === 1) { entered(); return collecting; } return ['server.js']; },
+          resolveMissionLeader: () => ({ sessionId, paneId: 'maestro', source: 'live', proven }),
+          runCodeCompletionGate: async () => {
+            verified = true;
+            return { kind: 'waiting', code: 'review_pending', reason: 'Revisão pendente', hint: 'Aguarde.' };
+          },
+        },
+      });
+      if (change !== 'without-done') recordOperatorTabCompletionRequest(scope, state.liveMission);
+      const flight = state.reconcile();
+      await firstRead;
+      busy = false;
+      if (change === 'runtime-closed-arrival') state.liveMission.description += '\n<!-- nexus:runtime-closed -->\n<!-- nexus:leftover-parked -->';
+      expect(await state.reconcile()).toMatchObject({ completed: false, reason: 'review-in-progress' });
+      if (change === 'leader') state.liveMission.orchestratorSessionId = 'replacement';
+      if (change === 'version') state.liveMission.intentVersion = 2;
+      if (change === 'authority') state.liveMission.intentContract = { ...state.liveMission.intentContract!, goal: 'Outro pedido' };
+      if (change === 'ended') state.liveMission.status = 'done';
+      if (change === 'unproved') proven = false;
+      if (change === 'runtime-closed-settlement') state.liveMission.description += '\n<!-- nexus:runtime-closed -->\n<!-- nexus:leftover-parked -->';
+      const stopping = change === 'stopped' ? stopCivilianDeliveryCompletion() : undefined;
+      try {
+        release();
+        await flight;
+        await stopping;
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(reads).toBe(1);
+        expect(verified).toBe(false);
+        expect(completeVerified).not.toHaveBeenCalled();
+      } finally {
+        release();
+        await flight.catch(() => undefined);
+        await stopping;
+        if (change === 'stopped') startCivilianDeliveryCompletion();
+      }
+    },
+  );
 
   it('mudança no candidato durante revisão impede concluir e a próxima tentativa revalida', async () => {
     completeVerified.mockClear();

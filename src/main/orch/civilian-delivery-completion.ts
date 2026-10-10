@@ -1,7 +1,8 @@
 import { missionExecutionScope, missionExecutionBaseSha } from './mission-execution-scope';
-import { awaitsOperatorTabCompletionRequest } from './operator-tab-completion';
+import { awaitsOperatorTabCompletionRequest, hasCurrentCompletionRequest } from './operator-tab-completion';
+import { missionIntentAuthoritySnapshot } from '../../shared/mission-intent';
 import { execFile } from 'node:child_process';
-import { holdsAwaitingOperatorAdjustment } from '../../shared/mission-recovery-policy';
+import { hasCurrentMissionRuntimeCloseVerdict, holdsAwaitingOperatorAdjustment } from '../../shared/mission-recovery-policy';
 import {
   existsSync,
   statSync,
@@ -1340,7 +1341,11 @@ function emptyResult(
  * Fail-closed: sandbox / session_authority_revoked / orchestrator_spawn_forbidden
  * / blocked_technical / failed. Não inventa números do board.
  */
-const completionFlights = new Map<string, Promise<CivilianDeliveryResult>>();
+interface CompletionFlight {
+  readonly promise: Promise<CivilianDeliveryResult>;
+  wake?: { readonly deps: CivilianDeliveryDependencies; readonly authority: string };
+}
+const completionFlights = new Map<string, CompletionFlight>();
 let completionGeneration = 1;
 let completionLifetime: { generation: number; controller: AbortController } | null =
   { generation: completionGeneration, controller: new AbortController() };
@@ -1357,7 +1362,21 @@ export function stopCivilianDeliveryCompletion(): Promise<void> {
   const previous = completionLifetime;
   completionLifetime = null;
   previous?.controller.abort(new Error('civilian completion stopped'));
-  return Promise.allSettled([...completionFlights.values()]).then(() => undefined);
+  return Promise.allSettled([...completionFlights.values()].map(entry => entry.promise)).then(() => undefined);
+}
+
+/** A deferred done wake cannot migrate to another leader, goal or approval. */
+function completionWakeAuthority(scope: ProjectExecutionScope, missionId: string, deps: CivilianDeliveryDependencies): string | null {
+  try {
+    const mission = (deps.getStores?.(scope) ?? getProjectDomainStores(scope)).missions.get(missionId);
+    if (!mission || mission.status !== 'running' || hasCurrentMissionRuntimeCloseVerdict(mission) ||
+      !hasCurrentCompletionRequest(scope, mission)) return null;
+    const leader = deps.resolveMissionLeader?.(scope, missionId) ??
+      (deps.resolveMissionLeader ? null : getMissionLeadership().resolveMissionLeader(scope, missionId));
+    if (!leader?.proven || leader.sessionId !== mission.orchestratorSessionId) return null;
+    return JSON.stringify([mission.intentVersion ?? 0, leader.sessionId,
+      mission.intentContract ? missionIntentAuthoritySnapshot(mission.intentContract) : null]);
+  } catch { return null; }
 }
 
 export function maybeCompleteFastLaneOnDelivery(
@@ -1368,17 +1387,34 @@ export function maybeCompleteFastLaneOnDelivery(
   const owner = completionLifetime;
   if (!missionId || !owner) return Promise.resolve({ ...emptyResult(), reason: 'completion-stopped' });
   const key = missionLifecycleKey(scope, missionId);
-  if (completionFlights.has(key)) {
+  const active = completionFlights.get(key);
+  if (active) {
+    const authority = completionWakeAuthority(scope, missionId, deps);
+    if (authority !== null) active.wake = { deps, authority };
     return Promise.resolve({ ...emptyResult(), reason: 'review-in-progress' });
   }
   let resolve!: (result: CivilianDeliveryResult) => void, reject!: (error: unknown) => void;
   const flight = new Promise<CivilianDeliveryResult>((yes, no) => { resolve = yes; reject = no; });
-  completionFlights.set(key, flight);
+  const entry: CompletionFlight = { promise: flight };
+  completionFlights.set(key, entry);
   let result = emptyResult();
   const work = runPeriodicTask(`civilian-delivery:${owner.generation}:${key}`, async context => {
     result = await reconcileCivilianCompletionAttempt(scope, missionId, deps, context);
   }, { signal: owner.controller.signal });
-  const settled = () => { if (completionFlights.get(key) === flight) completionFlights.delete(key); };
+  const settled = () => {
+    if (completionFlights.get(key) !== entry) return;
+    completionFlights.delete(key);
+    const wake = entry.wake;
+    // F-1117: one fresh attempt for the idle/done wake that arrived during IO.
+    // Install its physical flight before resolving this one, so Stop owns it.
+    // Only external wakes schedule another attempt; there is no polling loop.
+    if (wake && completionLifetime === owner && !owner.controller.signal.aborted &&
+      completionWakeAuthority(scope, missionId, wake.deps) === wake.authority) {
+      void maybeCompleteFastLaneOnDelivery(scope, missionId, wake.deps).catch(() => {
+        console.warn('[civilian-delivery] deferred completion wake failed');
+      });
+    }
+  };
   void work.then(() => { settled(); resolve(result); }, error => {
     settled();
     if (owner.controller.signal.aborted) resolve({ ...emptyResult(), reason: 'completion-stopped' });
