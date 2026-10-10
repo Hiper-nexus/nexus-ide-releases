@@ -17,10 +17,12 @@
  * continuidade como recap. O resultado só é "ok" depois que a sessão nova
  * existe e foi religada à missão.
  */
+import { isDeepStrictEqual } from 'node:util';
 import type { MissionPaneSpec } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { isPtySessionConnectedAndWritable, listAgentSessionsForPane } from '../pty/pty-manager';
 import { requestMissionPaneRecovery } from './pane-registry';
-import { getProjectDomainStores } from './project-domain-store-registry';
+import { getProjectDomainStores, sameProjectExecutionScope } from './project-domain-store-registry';
 
 export interface OrchestratorAccountSwitchInput {
   readonly scope: ProjectExecutionScope;
@@ -69,6 +71,36 @@ const productionDeps: OrchestratorAccountSwitchDeps = {
   // Ligação tardia: o binding só é lido na chamada, nunca no load do módulo.
   requestRecovery: (options) => requestMissionPaneRecovery(options),
 };
+
+/**
+ * F-1118: requestId vazio prova que o Main recusou ANTES de emitir um grant
+ * de substituição. Timeout/tombstone/exception não dão essa prova. Só volta
+ * B→A com o MESMO PTY A ainda conectado, inventário exclusivo e composição
+ * intacta; CAS preserva qualquer escolha concorrente. Nenhum await separa a
+ * prova da compensação. Sem prova, mantém B: nunca desfaz um efeito tardio.
+ */
+function restoreAccountAfterPreflightRefusal(
+  input: OrchestratorAccountSwitchInput,
+  original: MissionPaneSpec,
+  rebound: MissionPaneSpec,
+  result: Awaited<ReturnType<typeof requestMissionPaneRecovery>>,
+  deps: OrchestratorAccountSwitchDeps,
+): void {
+  if (result.ok || result.requestId !== '' || result.sessionId || !original.accountId) return;
+  try {
+    const sessions = listAgentSessionsForPane(input.paneId);
+    const session = sessions.length === 1 ? sessions[0] : undefined;
+    if (!session || session.sessionId !== input.sessionId ||
+        session.missionId !== input.missionId || session.role !== 'orchestrator' ||
+        session.adapterId !== original.adapterId || session.accountId !== original.accountId ||
+        !sameProjectExecutionScope(session.coordinationScope ?? session.scope, input.scope) ||
+        !isPtySessionConnectedAndWritable(input.sessionId) ||
+        !isDeepStrictEqual(deps.findSpec(input.scope, input.paneId), rebound)) return;
+    deps.rebindAccount(input.scope, input.missionId, input.paneId, input.toAccountId, original.accountId);
+  } catch {
+    // Leitura/compensação indisponível não autoriza adivinhar a conta física.
+  }
+}
 
 export async function switchRendererOrchestratorAccount(
   input: OrchestratorAccountSwitchInput,
@@ -125,6 +157,7 @@ export async function switchRendererOrchestratorAccount(
     };
   }
   if (!result.ok || !result.sessionId || result.sessionId === input.sessionId) {
+    restoreAccountAfterPreflightRefusal(input, spec, rebound, result, deps);
     return {
       handled: true,
       ok: false,
