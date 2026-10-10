@@ -269,8 +269,21 @@ if (CHILD) {
 
 `;
 
-function hookCommand(scriptPath: string, event: string): string {
-  return `node "${scriptPath}" ${event}`;
+/**
+ * F-1154: the gate is Nexus's own fail-closed control plane, not agent workload.
+ * The pane's NODE_OPTIONS carries the CPU/RAM admission preload (F-988), which
+ * re-launches every non-persistent Node through the supervised job path; on
+ * Darwin that cost ~3 s before AND after every tool call. Clearing it also keeps
+ * operator preloads (--require/--import) out of this security hook. Windows keeps
+ * the plain form until its hook shell is proven POSIX.
+ */
+export function hookCommand(
+  scriptPath: string,
+  event: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const command = `node "${scriptPath}" ${event}`;
+  return platform === 'win32' ? command : `NODE_OPTIONS= ${command}`;
 }
 
 export interface EphemeralHome {

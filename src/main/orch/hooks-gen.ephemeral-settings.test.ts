@@ -3,8 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { isNexusHookText } from '../../vendor/emdash/hooks/hook-commands';
+import { execFileSync } from 'node:child_process';
 import {
   cleanupSessionArtifacts,
+  hookCommand,
   prepareEphemeralHome,
   writeClaudeFamilyZeroClickSettings,
 } from './hooks-gen';
@@ -141,6 +143,49 @@ describe('Claude-family zero-click settings (system default)', () => {
       expect(settings.skipDangerousModePermissionPrompt).toBe(true);
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('F-1154: the gate hook never runs under the pane workload admission preload', () => {
+  const gateCommands = (dir: string) => {
+    const settings = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8')) as {
+      hooks: Record<string, Array<{ hooks?: Array<{ command?: string }> }>>;
+    };
+    return Object.fromEntries(['PreToolUse', 'PostToolUse', 'Stop'].map((event) => [event,
+      settings.hooks[event]!.flatMap((entry) => entry.hooks ?? []).map((hook) => hook.command ?? '')
+        .filter((command) => command.includes('nexus-gate.mjs'))]));
+  };
+
+  it('clears NODE_OPTIONS for every gate event on POSIX and keeps the plain form on Windows', () => {
+    const commands = gateCommands(prepareEphemeralHome(TOKEN, {}).dir);
+    for (const event of ['PreToolUse', 'PostToolUse', 'Stop']) {
+      expect(commands[event]).toHaveLength(1);
+      if (process.platform !== 'win32') expect(commands[event]![0]).toMatch(/^NODE_OPTIONS= node "[^"]+nexus-gate\.mjs" (pretool|posttool|stop)$/);
+    }
+    expect(hookCommand('/x/nexus-gate.mjs', 'pretool', 'win32')).toBe('node "/x/nexus-gate.mjs" pretool');
+    expect(hookCommand('/x/nexus-gate.mjs', 'pretool', 'darwin')).toBe('NODE_OPTIONS= node "/x/nexus-gate.mjs" pretool');
+  });
+
+  it.runIf(process.platform !== 'win32')('an inherited --require preload is not executed by the real gate command', () => {
+    const home = prepareEphemeralHome(TOKEN, {});
+    const stop = gateCommands(home.dir).Stop![0]!;
+    const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-gate-preload-'));
+    try {
+      const marker = path.join(sandbox, 'preload-ran');
+      const preload = path.join(sandbox, 'admission-preload.cjs');
+      fs.writeFileSync(preload, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid));\n`);
+      // Exactly how Claude Code runs a command hook: through the POSIX shell, with the pane env.
+      const out = execFileSync('/bin/sh', ['-c', stop], {
+        input: '{}', encoding: 'utf8', timeout: 20_000,
+        // The detached stop grandchild must never reach a live Nexus (no gate URL, no ARMS descriptor fallback).
+        env: { ...process.env, NODE_OPTIONS: `--require ${JSON.stringify(preload)}`, NEXUS_GATE_URL: '', NEXUS_GATE_TOKEN: '',
+          NEXUS_PANE_ARMS_DESCRIPTOR: path.join(sandbox, 'absent-arms-runtime.json') },
+      });
+      expect(out).toContain('{"continue":true}');
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true });
     }
   });
 });
