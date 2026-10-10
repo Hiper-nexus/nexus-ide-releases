@@ -264,6 +264,7 @@ import {
   adoptMainOwnedAgentSession,
   adoptUserAgentSessionAsMissionOrchestrator,
   releaseOperatorOpenedAgentSession,
+  returnAdoptedAgentSessionToUser,
   killSession,
   killSessionsFor,
   listAgentSessions,
@@ -316,7 +317,7 @@ import {
 } from "../orch/gate";
 import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revocation";
 import { cleanupCliMcpSession } from "../orch/cli-mcp-session-config";
-import { saveProviderPaneSession } from "../persistence/provider-session-store";
+import { getProviderPaneSession, saveProviderPaneSession } from "../persistence/provider-session-store";
 import { mimoSessionOwnerKey } from "../adapters/mimo-session-owner";
 import { qwenNeedsLogicalCwd } from "./qwen-long-cwd";
 
@@ -6878,6 +6879,81 @@ describe("F-992: perfil por modelo do Claude no argv físico", () => {
 
 
 describe('F-1143 — actual physical manual adoption and return', () => {
+  it.each([false, true])('keeps exact identity and public authority through a second published manual adoption and heartbeat (readOnly=%s)', async readOnly => {
+    const h = fakeHost(); setPtyHost(h.host);
+    setSquadCliPolicyLookupForTests(() => 'operator-choice');
+    const owner = Object.assign(fakeWc(), { id: readOnly ? 11432 : 11431 });
+    const base = trustedSpawn(), oldMission = 'f1143-manual-old', newMission = 'f1143-manual-new';
+    const paneId = `f1143-rendered-manual-${readOnly}`;
+    const ctx = mintToken({ label: 'f1143 manual continuity', role: 'worker', missionId: oldMission, scope: base.scope,
+      executionScope: base.scope, readOnly, allowedTools: ['pane_read'], allowedSkills: ['review'] });
+    const authority: BoundSpawnAuthority = { ...base, source: 'pending', coordinationScope: base.scope, context: {
+      scope: base.scope, executionScope: base.scope, role: 'worker', missionId: oldMission, operatorOpened: true,
+      readOnly, nativeReadOnly: readOnly, allowedTools: ['pane_read'], allowedSkills: ['review'] } };
+    const adapter = { ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }), id: 'grok',
+      control: { ...builtinCliPtyAdapter('grok').control, effort: { arg: '--effort', levels: ['medium'], default: 'medium' } } };
+    const panes = await import('../orch/pane-registry');
+    const main = await import('../orch/main-owned-pane-runtime');
+    const runtime = await import('../orch/mission-runtime-termination');
+    const workspace = await import('../persistence/renderer-workspace-scope');
+    setAgentSpawnHook(() => ({ authorityToken: ctx.token, env: {}, extraArgs: [] }));
+    let sessionId: string | undefined;
+    try {
+      sessionId = spawnAgentSession(owner, { kind: 'cli-agent', paneId, cols: 80, rows: 24,
+        accountId: 'manual-account', model: 'default', effort: 'medium' }, adapter, {}, authority).sessionId;
+      bindTokenToSession(ctx.token, sessionId);
+      const entry = { paneId, sessionId, kind: 'cli-agent' as const, adapterId: 'grok', model: 'default', title: 'Manual' };
+      workspace.bindResolvedRendererWorkspaceScope(owner, base.scope);
+      panes.syncPanes([entry], owner);
+      panes.attachOrchMeta(owner, paneId, { missionId: oldMission, role: 'worker', operatorOpened: true,
+        scope: base.scope, executionScope: base.scope, readOnly });
+      main.setMainOwnedPane(paneId, { entry, meta: { missionId: oldMission, role: 'worker', operatorOpened: true,
+        scope: base.scope, executionScope: base.scope, readOnly } });
+      expect(saveProviderPaneSession(base.scope, paneId, 'grok', { key: 'session_id', id: 'manual-native-conversation' }, 'manual-account')).toBe(true);
+      expect(returnOperatorOpenedSessionToUser(sessionId, oldMission)).toBe(true);
+      expect(releaseOperatorOpenedAgentSession(sessionId, oldMission)).toBe(true);
+      panes.detachOperatorOpenedPaneMission(paneId, oldMission);
+      const before = getAgentSessionInfo(sessionId)!;
+      const stable = { sessionId, paneId, accountId: before.accountId, model: before.model, effort: before.effort,
+        scope: before.scope, readOnly: before.readOnly, nativeReadOnly: before.nativeReadOnly,
+        allowedTools: before.allowedTools, allowedSkills: before.allowedSkills };
+      expect(before.operatorOpened).toBeUndefined(); expect(before.missionId).toBeUndefined();
+      // The original Main-owned manual mark survives the first normal return;
+      // the second role/mission publication must come from the real producer.
+      const origin = panes.captureOperatorPaneAdoptionOrigin(sessionId)!;
+      expect(origin.authority.operatorOpened).toBe(true);
+      expect(adoptUserContextAsMissionOrchestrator(ctx, newMission)).toBe(true);
+      expect(adoptUserAgentSessionAsMissionOrchestrator(sessionId, newMission)).toBe(true);
+      expect(panes.publishAdoptedOperatorMissionPane(origin, ctx, newMission)).toBe(true);
+      const adopted = getAgentSessionInfo(sessionId)!;
+      expect(returnAdoptedAgentSessionToUser(sessionId, oldMission)).toBe(false);
+      expect(getAgentSessionInfo(sessionId)).toEqual(adopted);
+      panes.syncPanes([entry], owner);
+      expect(panes.listPaneSnapshots().find(pane => pane.paneId === paneId)).toMatchObject({ sessionId, paneId,
+        role: 'orchestrator', missionId: newMission, scope: base.scope, executionScope: base.scope });
+      expect(panes.getPaneRuntimeAuthorityBySession(sessionId)).toMatchObject({ sessionId, paneId,
+        role: 'orchestrator', missionId: newMission, scope: base.scope, executionScope: base.scope, owner });
+      const spec = { id: 'manual-rendered-spec', missionId: newMission, paneId, adapterId: 'grok', title: 'Manual',
+        role: 'orchestrator', operatorOpened: true, scope: base.scope, executionScope: base.scope };
+      const suite = { missions: { get: () => ({ id: newMission, status: 'done' }) }, missionPanes: { list: () => [spec] } };
+      await expect(runtime.terminateMissionRuntime({ scope: base.scope, missionId: newMission, suite: suite as never,
+        reason: 'operator-close' })).resolves.toMatchObject({ ok: true });
+      const returned = getAgentSessionInfo(sessionId)!;
+      expect(returned).toMatchObject({ role: 'user', ...stable });
+      expect(returned.coordinationScope ?? returned.scope).toEqual(before.coordinationScope ?? before.scope);
+      expect(returned.missionId).toBeUndefined(); expect(ctx).toMatchObject({ role: 'user', readOnly });
+      expect(ctx.missionId).toBeUndefined(); expect(returnAdoptedAgentSessionToUser(sessionId, newMission)).toBe(false);
+      expect(getProviderPaneSession(base.scope, paneId, 'grok', 'manual-account')?.id).toBe('manual-native-conversation');
+      expect(panes.getPaneRuntimeAuthorityBySession(sessionId)?.missionId).toBeUndefined();
+      expect(h.procFor(sessionId).kill).not.toHaveBeenCalled(); expect(h.procFor(sessionId).terminate).not.toHaveBeenCalled();
+    } finally {
+      panes.syncPanes([], owner); panes.unregisterOrchRenderer(owner); workspace.clearRendererWorkspaceScope(owner);
+      main.deleteMainOwnedPane(paneId);
+      if (sessionId) await orchTerminateSession(sessionId, { origin: 'f1143-rendered-manual-fixture:teardown' });
+      setAgentSpawnHook(null); if (sessionId) releaseSession(sessionId);
+    }
+  });
+
   it.each(['volatile', 'durable'] as const)('returns the released/adopted physical hand from %s manual ownership without killing it', async ownership => {
     const h = fakeHost(); setPtyHost(h.host);
     const base = trustedSpawn();

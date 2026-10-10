@@ -64,7 +64,7 @@ vi.mock('../pty/pty-manager', () => ({
     const entry = runtime.pty.find(
       (candidate) => candidate.sessionId === sessionId,
     );
-    if (!entry || entry.missionId !== missionId) return false;
+    if (!entry || entry.operatorOpened !== true || entry.missionId !== missionId) return false;
     runtime.order.push(`release:${sessionId}`);
     const { missionId: _m, workerIncarnationId: _w, operatorOpened: _o, authoritySeal: _s, ...rest } =
       entry;
@@ -74,6 +74,13 @@ vi.mock('../pty/pty-manager', () => ({
         : candidate,
     );
     return true;
+  },
+  returnAdoptedAgentSessionToUser: (sessionId: string, missionId: string) => {
+    const entry = runtime.pty.find(candidate => candidate.sessionId === sessionId);
+    if (!entry?.promotedFromUser || entry.missionId !== missionId) return false;
+    const { missionId: _m, promotedFromUser: _p, workerIncarnationId: _w, ...rest } = entry;
+    runtime.pty = runtime.pty.map(candidate => candidate.sessionId === sessionId ? { ...rest, role: 'user' } : candidate);
+    runtime.order.push(`return-adopted:${sessionId}`); return true;
   },
 }));
 
@@ -256,6 +263,21 @@ beforeEach(() => {
   runtime.order = [];
   runtime.terminatePty.mockReset().mockResolvedValue(true);
   runtime.closeMissionPane.mockReset().mockResolvedValue(true);
+});
+
+it('F-1143: second manual teardown uses the promoted-user fallback after the physical manual flag was removed', async () => {
+  const spec: MissionPaneSpec = { ...pane('pane-op', 'inc-op'), operatorOpened: true };
+  runtime.pty = [{ ...physical('pty-op', 'pane-op', 'inc-op'), operatorOpened: true }];
+  const stores = suite([spec]);
+  expect((await terminateMissionRuntime({ scope, suite: stores, missionId: mission.id, reason: 'operator-close' })).ok).toBe(true);
+  expect(runtime.pty[0]).toMatchObject({ sessionId: 'pty-op', role: 'user' });
+  expect(runtime.pty[0].operatorOpened).toBeUndefined();
+  runtime.pty[0] = { ...runtime.pty[0], role: 'orchestrator', missionId: mission.id, promotedFromUser: true };
+  spec.role = 'orchestrator'; spec.workerIncarnationId = undefined;
+  expect((await terminateMissionRuntime({ scope, suite: stores, missionId: mission.id, reason: 'operator-close' })).ok).toBe(true);
+  expect(runtime.pty[0]).toMatchObject({ sessionId: 'pty-op', role: 'user', scope });
+  expect(runtime.pty[0].missionId).toBeUndefined();
+  expect(runtime.terminatePty).not.toHaveBeenCalled(); expect(runtime.closeMissionPane).not.toHaveBeenCalled();
 });
 
 describe('mission runtime physical inventory termination', () => {
