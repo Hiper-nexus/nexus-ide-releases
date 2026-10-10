@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneSessionState } from '../../shared/surface-payload-types';
 import type { Mission, SquadAgent } from '../../shared/orch-types';
+import { compileIntentContract } from '../../shared/mission-intent';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 /**
@@ -163,6 +165,7 @@ vi.mock('./pane-registry', () => ({
       sessionId, paneId, adapterId: request.adapterId, model: request.model, requestedModel: request.model,
       effort: request.effort, accountId: request.accountId, cwd: options.cwd,
       scope: options.executionScope ?? options.scope, source: 'pending', role: 'orchestrator',
+      ...(options.executionScope && !isDeepStrictEqual(options.executionScope, options.scope) ? { coordinationScope: options.scope } : {}),
       missionId: request.missionId, agentName: request.agentName, readOnly: false, nativeReadOnly: false,
       allowedTools: request.allowedTools ?? null, allowedSkills: request.allowedSkills ?? null, authoritySeal: harness.currentSeal,
     });
@@ -186,6 +189,10 @@ const mission: Mission = {
   status: 'running',
   intentState: 'executing',
   intentVersion: 1,
+  intentContract: {
+    ...compileIntentContract({ goal: 'Prove authorized Maestro recovery', acceptanceCriteria: ['Preserve normal runtime and handoffs'], intentVersion: 1 }),
+    approvedAt: 10, dispatchedAt: 11,
+  },
   createdAt: 1,
   updatedAt: 1,
   squadId: 'squad-1',
@@ -374,6 +381,14 @@ afterEach(async () => {
 });
 
 describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
+  it.each(['missing-contract', 'wrong-physical-coordination'] as const)('F-1114: real kickoff guards still refuse %s', async fault => {
+    if (fault === 'missing-contract') liveMission = { ...mission, intentContract: undefined };
+    else harness.afterSpawn = physical => { physical.coordinationScope = { ...scope, checkoutId: 'foreign-coordination' }; };
+    await expect(fastLane.fastLaneBootstrap(scope, mission.id)).rejects.toThrow(
+      fault === 'missing-contract' ? /kickoff_delivery_authority_changed/ : /bootstrap_coordinator_setup_unproven/,
+    );
+    expect(harness.redeliver).not.toHaveBeenCalled();
+  });
   it.each([
     { oldModel: undefined, fault: undefined }, { oldModel: 'approved-model', fault: undefined },
     ...['missing-seal', 'wrong-seal', 'wrong-session', 'wrong-scope', 'wrong-coordination', 'native-readonly', 'live-old', 'stale-spec', 'acp-stale-spec', 'stale-intent', 'explicit-model', 'explicit-effort'].map(fault => ({ oldModel: 'approved-model', fault })),
@@ -487,6 +502,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
       agents: squadAgents.map(agent => agent.category === 'orchestrator' ? { ...agent, model: 'explicit-model', effort: 'high' } : agent),
     };
     liveMission = { ...mission, intentContract: {
+      ...mission.intentContract,
       orchestratorRuntime: { adapterId: 'codex', model: 'explicit-model', effort: 'high', readOnly: false, nativeReadOnly: false },
     } } as Mission;
     await fastLane.fastLaneBootstrap(scope, 'mission-1');
@@ -620,7 +636,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     liveMission = {
       ...mission,
       squadId: undefined,
-      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+      intentContract: { ...mission.intentContract, workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
     } as unknown as Mission;
     harness.missionPaneSpecs = [
       {
@@ -666,7 +682,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     liveMission = {
       ...mission,
       squadId: undefined,
-      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+      intentContract: { ...mission.intentContract, workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
     } as unknown as Mission;
     harness.missionPaneSpecs = [
       {
@@ -708,7 +724,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     liveMission = {
       ...mission,
       squadId: undefined,
-      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+      intentContract: { ...mission.intentContract, workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
     } as unknown as Mission;
     harness.missionPaneSpecs = [
       {
@@ -731,7 +747,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     const tab = {
       ...mission,
       squadId: undefined,
-      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+      intentContract: { ...mission.intentContract, workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
     };
     harness.missionPaneSpecs = [
       { id: 'mp-1', missionId: 'mission-1', paneId: 'pane-operador', adapterId: 'claude', role: 'orchestrator', title: 'Orquestrador' },
@@ -755,7 +771,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     liveMission = {
       ...mission,
       squadId: undefined,
-      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+      intentContract: { ...mission.intentContract, workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
       description: `contexto
 
 <!-- nexus:awaiting-adjustment:${Date.now() - 10_000} -->`,
@@ -770,7 +786,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     liveMission = {
       ...mission,
       squadId: undefined,
-      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+      intentContract: { ...mission.intentContract, workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
     } as unknown as Mission;
     harness.missionPaneSpecs = [
       {
@@ -920,6 +936,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
       ...mission,
       squadId: undefined,
       intentContract: {
+        ...mission.intentContract,
         workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' },
       },
       createdAt: Date.now(),
