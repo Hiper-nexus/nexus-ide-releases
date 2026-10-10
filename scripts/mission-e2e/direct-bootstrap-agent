@@ -161,6 +161,11 @@ while (1) {
         task => $name eq 'Runtime writer' ? 'Write the finite runtime report' : 'Review the runtime report',
         prompt => "RT_GATE IDLE $nonce. Wait for the scoped operator follow-up." });
     }
+  } elsif ($profile_fixture && $text =~ /RT_GATE PROFILE_CREATE_ONLY ([a-f0-9-]{36})/) {
+    # A finite native tool turn for the renderer-model boundary regression;
+    # helper inference belongs to the original full profile flow above.
+    mcp('nexus_mission_create', { title => "Empty model native mission $1",
+      description => 'Create the finite private renderer-model regression mission.' });
   } elsif ($profile_fixture && $text =~ /RT_GATE PROFILE_WRITE ([a-f0-9-]{36})/) {
     mcp('nexus_file_write', { path => 'runtime-profile-proof.txt', content => "RT_PROFILE_$1" });
   } elsif ($profile_fixture && $text =~ /RT_GATE PROFILE_RECOVER ([a-f0-9-]{36}) ([A-Za-z0-9._:-]+)/) {

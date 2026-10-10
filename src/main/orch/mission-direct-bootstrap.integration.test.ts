@@ -28,6 +28,7 @@ const REPO = process.cwd();
 const state = vi.hoisted(() => ({
   userData: '', appRoot: '', adapter: null as CliPtyAdapter | null,
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
+  listeners: new Map<string, (...args: unknown[]) => unknown>(),
 }));
 
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
@@ -77,7 +78,9 @@ vi.mock('electron', () => {
       quit: noop,
       exit: noop,
     },
-    ipcMain: { handle: (channel: string, handler: (...args: unknown[]) => unknown) => { state.handlers.set(channel, handler); }, handleOnce: noop, on: noop, once: noop, removeHandler: (channel: string) => state.handlers.delete(channel), removeListener: noop, removeAllListeners: noop },
+    ipcMain: { handle: (channel: string, handler: (...args: unknown[]) => unknown) => { state.handlers.set(channel, handler); }, handleOnce: noop,
+      on: (channel: string, handler: (...args: unknown[]) => unknown) => { state.listeners.set(channel, handler); },
+      once: noop, removeHandler: (channel: string) => state.handlers.delete(channel), removeListener: noop, removeAllListeners: noop },
     BrowserWindow: Object.assign(function BrowserWindow(): void { throw new Error('mission E2E: sem janela'); }, {
       getAllWindows: () => [], getFocusedWindow: () => null, fromWebContents: () => null, fromId: () => null,
     }),
@@ -1058,6 +1061,82 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
     } finally {
       expect(await pty.orchTerminateSession(sessionId, { origin: 'prompt-proof-fixture:teardown' })).toBe(true);
       expect(pty.getAgentSessionInfo(sessionId)).toBeNull();
+    }
+  }, 120_000);
+
+  it.runIf(CONTROLLED)('F-1123: registered empty renderer model creates a durable mission through native MCP and createForPane', async () => {
+    profileFlow = true;
+    const receipts = path.join(root, 'empty-model-cli'); fs.mkdirSync(receipts, { mode: 0o700 });
+    profileOriginalAdapter = state.adapter;
+    state.adapter = { ...state.adapter!, env: { ...state.adapter!.env, static: { ...state.adapter!.env?.static,
+      NEXUS_CONTROLLED_CLI_DIR: receipts, NEXUS_CONTROLLED_PROFILE_FIXTURE: '1' } } };
+    const { initUsageTelemetry, shutdownUsageTelemetry } = await import('../usage/usage-service');
+    await initUsageTelemetry(profileManager!); closeUsage = shutdownUsageTelemetry;
+    const { startAgentHookHttpServer } = await import('../agent-hooks/hook-http-server');
+    const hooks = await startAgentHookHttpServer({ userDataPath: state.userData }); closeAgentHooks = hooks.close;
+    const pty = await import('../pty/pty-manager'); pty.configureAgentHookEndpointPath(hooks.endpointFilePath);
+    const { ORCH_CHANNELS } = await import('../../shared/orch-channels');
+    const { PTY_CHANNELS } = await import('../../shared/channels');
+    const { getContextBySession } = await import('./gate');
+    const { findPane } = await import('./pane-registry');
+    const { getProjectDomainStores } = await import('./project-domain-store-registry');
+    const { readAuditLog } = await import('../jarvis/audit-log');
+    const invoke = (channel: string, input: unknown) => state.handlers.get(channel)!({ sender: owner, senderFrame: owner.mainFrame }, input);
+    const stores = getProjectDomainStores(scope);
+    const owned: Array<{ paneId: string; sessionId: string; rootPid: number | null }> = [];
+    try {
+      for (const lane of ['native-mcp', 'renderer-create'] as const) {
+        const paneId = `empty-model-${lane}-${nonce}`;
+        const spawned = await invoke(PTY_CHANNELS.spawn, { kind: 'cli-agent', adapterId: 'claude', paneId, cwd: repo,
+          cols: 80, rows: 24, resume: false, resumeLatestOnly: false, restorePersistedAuthority: false }) as { ok: boolean; sessionId: string; error?: string };
+        expect(spawned.ok, spawned.error).toBe(true);
+        const sessionId = spawned.sessionId;
+        const ownedPane = { paneId, sessionId, rootPid: null as number | null }; owned.push(ownedPane);
+        const gateHash = createHash('sha256').update(getContextBySession(sessionId)!.token).digest('hex');
+        await until(() => fs.existsSync(path.join(receipts, 'mcp.ndjson')) && fs.readFileSync(path.join(receipts, 'mcp.ndjson'), 'utf8').split('\n').slice(0, -1)
+          .map(line => JSON.parse(line) as { gateSha256: string; tool: string }).some(r => r.gateSha256 === gateHash && r.tool === 'nexus_handoff_list'),
+        'owned empty-model native MCP readiness');
+        const footprint = (await pty.probePaneFootprints())!.find(p => p.sessionId === sessionId)!;
+        expect(footprint.rootPid).toBeGreaterThan(0);
+        ownedPane.rootPid = footprint.rootPid!;
+        const physical = pty.getAgentSessionInfo(sessionId)!;
+        expect(physical).toMatchObject({ paneId, role: 'user', requestedModel: undefined, scope });
+        // The registered IPC consumes the ordinary layout display default.
+        state.listeners.get(ORCH_CHANNELS.panesSync)!({ sender: owner, senderFrame: owner.mainFrame }, { generationId: `empty-model-${lane}-${nonce}`, entries: [{
+          paneId, sessionId, paneNumber: 1, title: 'Claude', kind: 'cli-agent', adapterId: 'claude', model: '', state: 'idle', tabKey: '__loose__',
+        }] });
+        expect(findPane(sessionId)).toMatchObject({ paneId, sessionId });
+        if (lane === 'native-mcp') {
+          expect(await invoke(PTY_CHANNELS.writeConfirmed, { sessionId, data: `\x1b[200~RT_GATE PROFILE_CREATE_ONLY ${nonce}\x1b[201~` })).toBe(true);
+          expect(await invoke(PTY_CHANNELS.writeConfirmed, { sessionId, data: '\r' })).toBe(true);
+          await until(() => readAuditLog({ scope }, 1000).some(a => a.tool === 'nexus_mission_create' && a.result === 'ok' &&
+            a.session === sessionId && a.source === 'http-mcp' && a.invocation_id), 'actual authenticated empty-model mission creation');
+        } else {
+          const created = await invoke(ORCH_CHANNELS.missionCreateForPane, { paneId, title: 'Empty model renderer mission', tabKey: '__loose__' }) as { ok: boolean; error?: string };
+          expect(created.ok, created.error).toBe(true);
+        }
+        const mission = stores.missions.list().find(m => m.orchestratorSessionId === sessionId)!;
+        expect(mission).toMatchObject({ status: 'running', intentState: 'dispatched', orchestratorSessionId: sessionId });
+        expect(stores.missionPanes.findByPaneId(paneId)).toMatchObject({ missionId: mission.id, role: 'orchestrator', adapterId: 'claude',
+          model: lane === 'native-mcp' ? undefined : physical.model });
+        expect(getContextBySession(sessionId)).toMatchObject({ role: 'orchestrator', missionId: mission.id, scope });
+        expect(pty.getAgentSessionInfo(sessionId)).toMatchObject({ role: 'orchestrator', missionId: mission.id, scope });
+        await invoke(ORCH_CHANNELS.missionCommand, { kind: 'stop', missionId: mission.id });
+        expect(pty.getAgentSessionInfo(sessionId)).toBeNull();
+      }
+      const proofDir = path.join(REPO, '.superpowers/sdd/release-076213-reviewed/f1123-source-proof');
+      fs.mkdirSync(proofDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(path.join(proofDir, 'main-pty-native-facts.json'), JSON.stringify({
+        mode: 'controlled-physical-cli-registered-main-renderer-sync-authenticated-native-mcp-and-createForPane',
+        signedPackagedProof: false, fixtureRoot: root, rendererModel: '', normalizedRendererModelOmitted: true, owned,
+        nativePids: [...new Set(fs.readFileSync(path.join(receipts, 'accepted.ndjson'), 'utf8').trim().split('\n')
+          .map(line => (JSON.parse(line) as { pid: number }).pid))],
+      }, null, 2), { mode: 0o600 });
+    } finally {
+      for (const pane of owned) {
+        if (pty.getAgentSessionInfo(pane.sessionId)) expect(await pty.orchTerminateSession(pane.sessionId, { origin: 'empty-model-fixture:teardown' })).toBe(true);
+        expect(pty.getAgentSessionInfo(pane.sessionId)).toBeNull();
+      }
     }
   }, 120_000);
 });

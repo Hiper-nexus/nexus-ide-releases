@@ -1975,6 +1975,9 @@ export function syncPanes(
       paneIdCounts.get(entry.paneId) === 1 &&
       (!entry.sessionId ||
         isSessionOwnedBy(owner, entry.sessionId)),
+  ).map((entry) =>
+    // Empty is the renderer's display default, not an explicit runtime model.
+    entry.model === '' ? { ...entry, model: undefined } : entry,
   );
   const previousGeneration = paneSyncGenerationByOwner.get(owner.id);
   const generationUnchanged =

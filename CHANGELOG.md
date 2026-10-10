@@ -2,6 +2,7 @@
 
 ## 0.76.221 — Missões com acompanhamento contínuo
 
+- **Missão com modelo automático.** Um terminal que usa o modelo padrão da CLI pode criar a missão pelo MCP ou pela interface; o valor vazio de exibição não é tratado como uma escolha explícita de modelo (F-1123).
 - **Workers rápidos reconhecidos.** Se o primeiro turno termina enquanto o terminal ainda está sendo preparado, o Nexus conserva a confirmação do pedido original e libera o orquestrador sem reenviar o prompt. Sessão substituída, pedido diferente ou autoridade revogada continuam sendo recusados (F-1139).
 - **Envio confirmado no Claude.** Pedidos comuns, entradas do operador e continuidade após retomada aguardam a aceitação nativa do prompt. Se o primeiro Enter não enviar, o retry protegido repete somente o Enter, sem colar o pedido outra vez (F-1122/F-1137).
 - **Acompanhamento desde o início e na retomada.** A preparação do Maestro preserva o gasto legítimo de ferramentas sem perder sua autorização atual. O encerramento e as mudanças de objetivo, permissões ou liderança continuam invalidando a tentativa antiga (F-1134).

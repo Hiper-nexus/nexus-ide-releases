@@ -40,6 +40,7 @@ import {
   getPaneRuntimeAuthorityBySession,
   listLivePaneNumbers,
   listPaneSnapshots,
+  findPane,
   syncPanes,
   attachOrchMeta,
 } from './pane-registry';
@@ -74,6 +75,27 @@ function entry(
 }
 
 const renderer = owner(1);
+
+describe('F-1123 — renderer model defaults at the accepted registry boundary', () => {
+  beforeEach(() => {
+    pty.live.clear();
+    syncPanes([], renderer, 'model-reset');
+  });
+
+  it.each([
+    ['', undefined],
+    [undefined, undefined],
+    ['claude-sonnet-4-6', 'claude-sonnet-4-6'],
+    [' custom-provider/model:latest ', ' custom-provider/model:latest '],
+  ])('publishes model %j as %j without changing the renderer DTO', (model, expected) => {
+    const dto = { ...entry('model-pane', 1, 'model-session'), adapterId: 'claude', model };
+    pty.live.add('model-session');
+    syncPanes([dto], renderer, 'model-generation');
+    expect(findPane('model-session')?.model).toBe(expected);
+    expect(listPaneSnapshots().find(pane => pane.paneId === 'model-pane')?.model).toBe(expected);
+    expect(dto.model).toBe(model);
+  });
+});
 
 describe('nexus_pane_list publica o número junto do id', () => {
   beforeEach(() => {
