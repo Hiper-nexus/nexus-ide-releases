@@ -1,6 +1,14 @@
 import { expect, it } from 'vitest';
 import { deriveRuntimeChecks, sameRuntimeConversation } from './runtime-gate-proof';
 import { runtimeFactFixture } from './__tests__/runtime-gate-fixture';
+it('F-1146: Main cannot certify a header-only native continuity seed', () => {
+  const f = runtimeFactFixture(); f.history[10].agents[0].nativeIdleReady = false;
+  expect(() => deriveRuntimeChecks(f)).toThrow(/native continuity seed/);
+});
+it('F-1146: recovery requires Main native readiness before the old worker was terminated', () => {
+  const f = runtimeFactFixture(); f.history[5].agents[1].nativeIdleReady = false;
+  expect(() => deriveRuntimeChecks(f)).toThrow(/worker-recovery/);
+});
 it('requires exact consumed handoff, physical delivery/ACK call and live Maestro identity', () => {
   expect(deriveRuntimeChecks(runtimeFactFixture())['handoff-ack']).toBe(true);
   for (const mutate of [(f: ReturnType<typeof runtimeFactFixture>) => { f.history[6].audit[0].handoffId = 'other-row'; },

@@ -114,7 +114,8 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         if (workers.length > 2 || workers.some((a: any) => a.adapterId !== 'claude' || !a.pid)) throw new Error('worker inventory invalid'); checks['standard-workers'] = true;
         const writer = workers.find((a: any) => a.agentName === 'Runtime writer');
         await standardDirect(standardId, `RT_GATE IDLE ${marker}`, writer);
-        observed = await poll(() => observe(standardId), v => v.agents.some((a: any) => a.paneId === writer.paneId && a.conversation), 'native conversation recorded');
+        observed = await poll(() => observe(standardId), v => v.agents.some((a: any) => a.paneId === writer.paneId && a.sessionId === writer.sessionId &&
+          a.pid === writer.pid && a.bindingSha256 === writer.bindingSha256 && a.conversation && a.nativeIdleReady === true), 'native completed IDLE conversation');
         const original = observed.agents.find((a: any) => a.paneId === writer.paneId);
         await request('terminate', { sessionId: original.sessionId });
         await standardDirect(standardId, `RT_GATE RECOVER ${marker} ${original.paneId} ${original.sessionId}`);
@@ -158,7 +159,8 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         const continuityMissionId = adopted.mission.id;
         await direct(continuityMissionId, `RT_GATE IDLE ${marker}`);
         const native = await poll(() => observe(continuityMissionId), v => v.agents.length === 1 && v.agents[0].role === 'orchestrator' &&
-          v.agents[0].paneId === operator.paneId && v.agents[0].sessionId === operator.sessionId && v.agents[0].pid > 0 && v.agents[0].conversation && v.agents[0].bindingSha256, 'actual adopted native leader');
+          v.agents[0].paneId === operator.paneId && v.agents[0].sessionId === operator.sessionId && v.agents[0].pid > 0 && v.agents[0].conversation &&
+          v.agents[0].bindingSha256 && v.agents[0].nativeIdleReady === true, 'actual adopted native leader');
         const nativeChief = native.agents[0];
         state = { opsId, standardId, continuityMissionId, chiefPaneId: nativeChief.paneId, chiefSessionId: nativeChief.sessionId, chiefPid: nativeChief.pid,
           bindingSha256: nativeChief.bindingSha256, conversation: nativeChief.conversation, memoryId: memory.id, marker };

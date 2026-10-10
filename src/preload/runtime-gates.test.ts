@@ -71,7 +71,7 @@ it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer', '
   let question = false, opsStopped = false, prepared = 0, resumed = false, writeDirected = false, reportReady = false, standardReads = 0, recoveredReads = 0, reviewerReads = 0;
   const directions: Array<{ targetAgentId: string; text: string }> = [];
   const writer = { role: 'worker', agentName: 'Runtime writer', paneId: 'writer-pane', sessionId: 'writer-sid', adapterId: 'claude', pid: 200, readOnly: false,
-    bindingSha256: 'a'.repeat(64), conversation: { key: 'session_id', id: 'writer-native' } };
+    bindingSha256: 'a'.repeat(64), conversation: { key: 'session_id', id: 'writer-native' }, nativeIdleReady: true };
   const reviewer = { ...writer, agentName: 'Runtime reviewer', paneId: 'reviewer-pane', sessionId: 'reviewer-sid', pid: 201, readOnly: true };
   const newWriter = { ...writer, paneId: 'returned-writer', sessionId: 'new-writer-sid', pid: 202 };
   const chief = { ...writer, role: 'orchestrator', agentName: 'Runtime chief', paneId: 'chief-pane', sessionId: 'chief-sid', pid: 199 };

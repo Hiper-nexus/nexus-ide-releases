@@ -4,6 +4,7 @@ import { RUNTIME_REQUIRED, RUNTIME_RESUME_REQUIRED } from './runtime-gates.ts';
 const conversation = z.object({ key: z.enum(['session_id', 'conversation_id']), id: z.string().min(1) }).passthrough();
 const agent = z.object({ paneId: z.string(), sessionId: z.string(), role: z.string(), adapterId: z.string(), pid: z.number().int().positive().nullable(),
   agentName: z.string().optional(), readOnly: z.boolean().optional(),
+  nativeIdleReady: z.boolean().optional(),
   conversation: conversation.nullable(), bindingSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   visual: z.object({ assignmentId: z.string(), artifactId: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).optional() }).passthrough();
 const recovery = z.object({ fromPaneId: z.string(), fromSessionId: z.string(), paneId: z.string(), sessionId: z.string(),
@@ -47,7 +48,7 @@ export function deriveRuntimeChecks(input: {
   }
   if (!native.some(v => v.agents.length === 1 && v.agents[0].role === 'orchestrator' && v.agents[0].paneId === input.state.chiefPaneId &&
     v.agents[0].sessionId === input.state.chiefSessionId && v.agents[0].pid === input.state.chiefPid && v.agents[0].bindingSha256 === input.state.bindingSha256 &&
-    v.snapshot.leaderPaneId === input.state.chiefPaneId && sameRuntimeConversation(v.agents[0].conversation, input.state.conversation))) throw new Error('Main native continuity seed incomplete');
+    v.snapshot.leaderPaneId === input.state.chiefPaneId && v.agents[0].nativeIdleReady === true && sameRuntimeConversation(v.agents[0].conversation, input.state.conversation))) throw new Error('Main native continuity seed incomplete');
   const ops = missions.filter(v => v.lane === 'ops');
   const opsRun = ops.some(v => v.agents.some(a => a.role === 'orchestrator' && a.pid) && v.audit.some(a => a.tool === 'nexus_terminal_run' && a.result === 'ok' && a.source === 'http-mcp')) &&
     ops.every(v => !v.agents.some(a => a.role === 'worker')) && ops.at(-1)?.agents.length === 0;
@@ -63,7 +64,7 @@ export function deriveRuntimeChecks(input: {
   const recovered = standard.some((value, index) => {
     const relation = value.recovery;
     if (!relation) return false;
-    const before = standard.slice(0, index).flatMap(v => v.agents).find(a => a.role === 'worker' && a.paneId === relation.fromPaneId && a.sessionId === relation.fromSessionId && a.pid && a.conversation);
+    const before = standard.slice(0, index).flatMap(v => v.agents).find(a => a.role === 'worker' && a.paneId === relation.fromPaneId && a.sessionId === relation.fromSessionId && a.pid && a.conversation && a.nativeIdleReady === true);
     if (!before?.bindingSha256 || !input.terminated.includes(before.sessionId)) return false;
     const candidates = value.agents.filter(a => a.role === 'worker' && a.bindingSha256 === before.bindingSha256 && sameRuntimeConversation(a.conversation, before.conversation));
     const after = candidates[0];

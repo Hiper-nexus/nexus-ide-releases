@@ -45,6 +45,7 @@ import { prepareEphemeralHome } from './orch/hooks-gen';
 import { startPreview, stopPreviewWithProof } from './orch/preview-server';
 import { ProjectRuntimeManager } from './runtime/project-runtime-manager';
 import { saveProviderPaneSession, copyProviderPaneSession } from './persistence/provider-session-store';
+import { claudeProjectSlug } from './usage/claude-transcript';
 const roots: string[] = [];
 const previews: Array<{ id: string; scope: OwnedAgentSessionInfo['scope'] }> = [];
 const savedEnv = new Map<string, string | undefined>();
@@ -173,6 +174,23 @@ async function scopedAgent(f: Awaited<ReturnType<typeof fixture>>, role: 'orches
   deps.agents = [agent]; deps.probe.mockResolvedValue([{ sessionId: 'owned-session', rootPid: 1234 }]);
   return { ctx, agent };
 }
+it('F-1146: a dictated UUID and header-only native file never authorize recovery termination', async () => {
+  const f = await fixture(), { agent } = await scopedAgent(f, 'worker', 'Runtime writer');
+  const event = { sender: f.wc, senderFrame: f.frame }, id = '2a825b8f-7024-4dfb-b62b-601c8fdea852';
+  const dir = path.join(f.root, 'provider-state', 'claude', deps.scope.checkoutId, 'claude', 'projects', claudeProjectSlug(agent.cwd));
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(path.join(dir, `${id}.jsonl`), [
+    { type: 'mode', mode: 'normal', sessionId: id }, { type: 'permission-mode', permissionMode: 'bypassPermissions', sessionId: id },
+  ].map(row => JSON.stringify(row) + '\n').join(''), { mode: 0o600 });
+  deps.conversation.mockReturnValue({ key: 'session_id', id }); deps.terminate.mockClear();
+  try {
+    deps.tap!(agent.sessionId, 'RT_DONE_IDLE_11111111-1111-4111-8111-111111111111');
+    const observed = await f.request(event, { operation: 'observe', missionId: 'm' });
+    expect(observed.agents[0].conversation).toEqual({ key: 'session_id', id });
+    await expect(f.request(event, { operation: 'terminate', sessionId: agent.sessionId })).rejects.toThrow(/native.*(idle|conversation|ready)/);
+    expect(deps.terminate).not.toHaveBeenCalled();
+  } finally { f.controller.abort(); await f.rejected; }
+});
 it('observes and looks up the exact current mission process using its coordination scope across an execution worktree', async () => {
   const f = await fixture(); await scopedAgent(f); const event = { sender: f.wc, senderFrame: f.frame };
   try {
@@ -387,7 +405,15 @@ async function recoveredWorkerFixture(priorAudit = false) {
   ctx.role = 'worker'; agent.role = 'worker'; agent.model = 'sealed-model'; agent.accountId = 'account-a'; agent.effort = 'high';
   ctx.visualTask = { id: 'original-assignment', since: 1 };
   deps.visual.mockResolvedValue({ required: true, verified: false, reason: 'unit native capture pending' });
-  deps.conversation.mockReturnValue({ key: 'session_id', id: 'exact-native-conversation' });
+  const nativeId = '2a825b8f-7024-4dfb-b62b-601c8fdea852', marker = '11111111-1111-4111-8111-111111111111';
+  deps.conversation.mockReturnValue({ key: 'session_id', id: nativeId });
+  const nativeDir = path.join(f.root, 'provider-state', 'claude', deps.scope.checkoutId, 'claude', 'projects', claudeProjectSlug(agent.cwd));
+  await fs.mkdir(nativeDir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(path.join(nativeDir, `${nativeId}.jsonl`), [
+    { type: 'user', uuid: marker, parentUuid: null, sessionId: nativeId, cwd: agent.cwd, isSidechain: false, message: { role: 'user', content: `RT_GATE IDLE ${marker}` } },
+    { type: 'assistant', uuid: nativeId, parentUuid: marker, sessionId: nativeId, cwd: agent.cwd, isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: `RT_DONE_IDLE_${marker}` }] } },
+  ].map(row => JSON.stringify(row) + '\n').join(''), { mode: 0o600 });
+  deps.tap!(agent.sessionId, `RT_DONE_IDLE_${marker}`);
   const chief = mintToken({ label: 'Runtime chief', role: 'orchestrator', missionId: 'm', scope: { ...deps.scope },
     executionScope: { ...agent.scope }, readOnly: false, allowedTools: null, allowedSkills: null });
   bindTokenToSession(chief.token, 'chief-session');
@@ -408,6 +434,35 @@ async function recoveredWorkerFixture(priorAudit = false) {
   deps.recovery = { fromPaneId: 'owned-pane', fromSessionId: 'owned-session', paneId: 'new-pane', sessionId: 'new-session' };
   return { f, event, next, worker };
 }
+it.each(['CID', 'PID'])('F-1146: %s drift cannot reuse the prior native idle proof for termination', async kind => {
+  const f = await fixture(), { agent } = await scopedAgent(f, 'worker', 'Runtime writer'), event = { sender: f.wc, senderFrame: f.frame };
+  const id = '2a825b8f-7024-4dfb-b62b-601c8fdea852', marker = '11111111-1111-4111-8111-111111111111';
+  const dir = path.join(f.root, 'provider-state', 'claude', deps.scope.checkoutId, 'claude', 'projects', claudeProjectSlug(agent.cwd));
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(path.join(dir, `${id}.jsonl`), [
+    { type: 'user', uuid: marker, parentUuid: null, sessionId: id, cwd: agent.cwd, isSidechain: false, message: { role: 'user', content: `RT_GATE IDLE ${marker}` } },
+    { type: 'assistant', uuid: id, parentUuid: marker, sessionId: id, cwd: agent.cwd, isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: `RT_DONE_IDLE_${marker}` }] } },
+  ].map(row => JSON.stringify(row) + '\n').join(''), { mode: 0o600 });
+  deps.conversation.mockReturnValue({ key: 'session_id', id }); deps.terminate.mockClear();
+  try {
+    deps.tap!(agent.sessionId, `RT_DONE_IDLE_${marker}`);
+    expect((await f.request(event, { operation: 'observe', missionId: 'm' })).agents[0].nativeIdleReady).toBe(true);
+    if (kind === 'PID') {
+      deps.probe.mockResolvedValue([{ sessionId: agent.sessionId, rootPid: 2345 }]);
+      expect((await f.request(event, { operation: 'observe', missionId: 'm' })).agents[0].nativeIdleReady).toBe(false);
+      await expect(f.request(event, { operation: 'terminate', sessionId: agent.sessionId })).rejects.toThrow(/physical|PID|pid/);
+      expect(deps.terminate).not.toHaveBeenCalled(); return;
+    }
+    let release!: (value: unknown[]) => void;
+    deps.probe.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const pending = f.request(event, { operation: 'terminate', sessionId: agent.sessionId }).catch((error: Error) => error);
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    deps.conversation.mockReturnValue({ key: 'session_id', id: '33333333-3333-4333-8333-333333333333' });
+    release([{ sessionId: agent.sessionId, rootPid: 1234 }]);
+    expect(await pending).toMatchObject({ message: 'runtime native conversation changed' });
+    expect(deps.terminate).not.toHaveBeenCalled();
+  } finally { f.controller.abort(); await f.rejected; }
+});
 it('F-1111: accepts the actual new result identity only with the exact prior worker, native context and own fresh chief audit', async () => {
   const { f, event } = await recoveredWorkerFixture();
   try { expect((await f.request(event, { operation: 'observe', missionId: 'm' })).recovery).toEqual({
@@ -464,9 +519,9 @@ it('F-1111: a real native record changed during the gateway await never commits 
   deps.nativeDb.exec(`CREATE TABLE IF NOT EXISTS provider_pane_sessions (installation_id TEXT NOT NULL, project_id TEXT NOT NULL, checkout_id TEXT NOT NULL,
     pane_id TEXT NOT NULL, adapter_id TEXT NOT NULL, session_key TEXT NOT NULL, session_id TEXT NOT NULL, transcript_path TEXT, updated_at INTEGER NOT NULL,
     account_id TEXT, PRIMARY KEY (installation_id, project_id, checkout_id, pane_id, adapter_id))`);
-  saveProviderPaneSession(deps.scope, 'owned-pane', 'claude', { key: 'session_id', id: 'exact-native-conversation' }, 'account-a');
+  saveProviderPaneSession(deps.scope, 'owned-pane', 'claude', { key: 'session_id', id: '2a825b8f-7024-4dfb-b62b-601c8fdea852' }, 'account-a');
   copyProviderPaneSession(deps.scope, 'owned-pane', 'new-pane', 'claude', 'account-a');
-  saveProviderPaneSession(deps.scope, 'chief-pane', 'claude', { key: 'session_id', id: 'exact-native-conversation' }, 'account-a');
+  saveProviderPaneSession(deps.scope, 'chief-pane', 'claude', { key: 'session_id', id: '2a825b8f-7024-4dfb-b62b-601c8fdea852' }, 'account-a');
   let release!: (value: object) => void;
   vi.stubGlobal('fetch', () => new Promise(resolve => { release = resolve; }));
   try {

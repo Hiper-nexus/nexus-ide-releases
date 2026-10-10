@@ -2,7 +2,7 @@ export function runtimeFactFixture(phase: 'exercise' | 'resume' = 'exercise') {
   const marker = '11111111-1111-4111-8111-111111111111';
   const conversation = { key: 'session_id', id: 'native-real-fixture-id' };
   const chief = { paneId: 'chief', sessionId: 'chief-sid', role: 'orchestrator', adapterId: 'claude', pid: 123, conversation };
-  const worker = { paneId: 'writer', sessionId: 'old-worker', role: 'worker', agentName: 'Runtime writer', readOnly: false, adapterId: 'claude', pid: 234, conversation, bindingSha256: 'b'.repeat(64) };
+  const worker = { paneId: 'writer', sessionId: 'old-worker', role: 'worker', agentName: 'Runtime writer', readOnly: false, adapterId: 'claude', pid: 234, conversation, bindingSha256: 'b'.repeat(64), nativeIdleReady: true };
   const observed = (missionId: string, lane: string, agents: unknown[], question?: { id: string }) => ({ missionId, lane, agents,
     snapshot: question ? { question } : {}, handoffs: [], acknowledgements: [], audit: [] } as any);
   const first = observed('ops', 'ops', [chief]); first.audit.push({ tool: 'nexus_terminal_run', result: 'ok', source: 'http-mcp', session: 'chief-sid' });
@@ -17,7 +17,7 @@ export function runtimeFactFixture(phase: 'exercise' | 'resume' = 'exercise') {
   recovered.handoffs.push({ id: 'review-handoff', sessionId: 'reviewer-sid', status: 'success', summary: `RT_REVIEW_${marker}`, deliveryState: 'consumed', consumedBySession: 'chief-sid', consumedDeliveryAttemptId: 'review-delivery' });
   recovered.acknowledgements.push({ handoffId: 'review-handoff', sessionId: 'chief-sid', deliveryAttemptId: 'review-delivery', invocationId: 'review-ack', source: 'http-mcp' });
   recovered.audit.push({ tool: 'nexus_handoff_ack', result: 'ok', source: 'http-mcp', session: 'chief-sid', invocation: 'review-ack', handoffId: 'review-handoff' });
-  const native = { ...chief, paneId: 'native-original', sessionId: 'native-old-sid', pid: 567, bindingSha256: 'f'.repeat(64) };
+  const native = { ...chief, paneId: 'native-original', sessionId: 'native-old-sid', pid: 567, bindingSha256: 'f'.repeat(64), nativeIdleReady: true };
   const nativeObserved = (agent: typeof native | null) => ({ ...observed('native', 'standard', agent ? [agent] : []), squadId: null, adoptedPaneId: 'native-original',
     snapshot: { leaderPaneId: agent?.paneId } });
   return { phase, marker, state: { standardId: 'std', continuityMissionId: 'native', chiefPaneId: native.paneId, chiefSessionId: native.sessionId,

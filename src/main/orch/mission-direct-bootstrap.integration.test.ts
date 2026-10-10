@@ -117,6 +117,157 @@ async function until(check: () => boolean, label: string, bound = 30_000): Promi
   }
 }
 
+// Test-only resource ownership: a failed proof or closure never prevents an
+// attempt to close another resource, and every non-diagnostic failure survives.
+async function withNativeIdleFixtureCleanup(
+  run: (defer: (cleanup: () => void | Promise<void>) => void) => Promise<void>,
+  diagnose: () => void,
+): Promise<void> {
+  const cleanups: Array<() => void | Promise<void>> = [];
+  const failures: unknown[] = [];
+  try { await run(cleanup => cleanups.push(cleanup)); }
+  catch (error) { failures.push(error); }
+  finally {
+    try { diagnose(); }
+    catch { console.info('Native IDLE history diagnostic unavailable; continuing owned cleanup'); }
+    while (cleanups.length) {
+      const cleanup = cleanups.pop()!;
+      try { await cleanup(); }
+      catch (error) { failures.push(error); }
+    }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, 'Native IDLE fixture failed; all owned cleanup attempted');
+}
+
+function observeNativeIdleSpawnFlight(flight: Promise<unknown>, flights: Promise<unknown>[]): void {
+  // Observe now, but keep the original rejection for the aggregate teardown.
+  void flight.catch(() => undefined);
+  flights.push(flight);
+}
+async function joinNativeIdleSpawnFlights(flights: Promise<unknown>[]): Promise<void> {
+  const outcomes = await Promise.allSettled(flights);
+  const errors = outcomes.filter((value): value is PromiseRejectedResult => value.status === 'rejected').map(value => value.reason);
+  if (errors.length) throw new AggregateError(errors, 'Owned native fixture spawn failed during teardown');
+}
+
+describe('F-1147 — native IDLE fixture cleanup', () => {
+  it.each(['partial-json', 'diagnostic-write'] as const)('restores acquired resources after %s diagnostic failure', async fault => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-idle-cleanup-'));
+    const priorHome = process.env.HOME;
+    const server = http.createServer();
+    const primary = new Error('native IDLE proof failed');
+    try {
+      await expect(withNativeIdleFixtureCleanup(async defer => {
+        defer(() => { if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome; });
+        process.env.HOME = dir;
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        defer(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+        fs.writeFileSync(path.join(dir, 'history.jsonl'), '{"type":"assistant"');
+        throw primary;
+      }, () => {
+        if (fault === 'partial-json') JSON.parse(fs.readFileSync(path.join(dir, 'history.jsonl'), 'utf8'));
+        else fs.writeFileSync(path.join(dir, 'missing', 'diagnostic.json'), '{}');
+      })).rejects.toBe(primary);
+      expect(server.listening).toBe(false);
+      expect(process.env.HOME).toBe(priorHome);
+    } finally {
+      if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()));
+      if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('attempts every remaining closure after setup and physical teardown failures', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-idle-cleanup-'));
+    const priorHome = process.env.HOME;
+    const server = http.createServer();
+    const primary = new Error('native setup failed');
+    const physical = new Error('owned fixture physical exit unproven');
+    const otherClosed = path.join(dir, 'other-owned-resource');
+    fs.writeFileSync(otherClosed, 'owned');
+    try {
+      let failure: unknown;
+      try {
+        await withNativeIdleFixtureCleanup(async defer => {
+          defer(() => { if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome; });
+          process.env.HOME = dir;
+          await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+          defer(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+          defer(() => fs.unlinkSync(otherClosed));
+          // A rejected physical-exit proof must remain a failure, while later
+          // cleanup still closes other owned resources and restores HOME.
+          defer(() => { throw physical; });
+          // Closing the actual server twice produces a real close rejection.
+          defer(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+          throw primary;
+        }, () => undefined);
+      } catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(AggregateError);
+      const errors = (failure as AggregateError).errors;
+      expect(errors).toHaveLength(3);
+      expect(errors[0]).toBe(primary);
+      expect(errors[1]).toBe(physical);
+      expect(errors[2]).toMatchObject({ code: 'ERR_SERVER_NOT_RUNNING' });
+      expect(fs.existsSync(otherClosed)).toBe(false);
+      expect(server.listening).toBe(false);
+      expect(process.env.HOME).toBe(priorHome);
+    } finally {
+      if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()));
+      if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('observes rejected spawn immediately and joins a pending spawn before its new owned cleanup', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-idle-flight-'));
+    const ownedFile = path.join(dir, 'pending-owned-session');
+    fs.writeFileSync(ownedFile, 'owned');
+    const priorHome = process.env.HOME;
+    const pending = deferred<void>(), joining = deferred<void>();
+    const rejected = new Error('Main spawn callback rejected'), primary = new Error('ACK failed');
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    let outcome: Promise<void> | undefined;
+    try {
+      outcome = withNativeIdleFixtureCleanup(async defer => {
+        defer(() => { if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome; });
+        process.env.HOME = dir;
+        const flights: Promise<unknown>[] = [];
+        observeNativeIdleSpawnFlight(Promise.resolve().then(() => { throw rejected; }), flights);
+        observeNativeIdleSpawnFlight(pending.promise.then(() => { defer(() => fs.unlinkSync(ownedFile)); }), flights);
+        defer(async () => { joining.resolve(); await joinNativeIdleSpawnFlights(flights); });
+        // Delay the ACK result for one event-loop turn: teardown must not be
+        // the first rejection observer of a spawn that already failed.
+        await new Promise<void>(resolve => setImmediate(resolve));
+        throw primary;
+      }, () => undefined);
+      void outcome.catch(() => undefined);
+      await joining.promise;
+      expect(process.env.HOME).toBe(dir);
+      expect(fs.existsSync(ownedFile)).toBe(true);
+      pending.resolve();
+      let failure: unknown;
+      try { await outcome; } catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(AggregateError);
+      const errors = (failure as AggregateError).errors;
+      expect(errors).toHaveLength(2);
+      expect(errors[0]).toBe(primary);
+      expect(errors[1]).toBeInstanceOf(AggregateError);
+      expect((errors[1] as AggregateError).errors).toEqual([rejected]);
+      expect(fs.existsSync(ownedFile)).toBe(false);
+      expect(process.env.HOME).toBe(priorHome);
+      expect(unhandled).toEqual([]);
+    } finally {
+      pending.resolve(); await outcome?.catch(() => undefined);
+      process.removeListener('unhandledRejection', onUnhandled);
+      if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal transport', () => {
   let root = '', repo = '', host: ChildProcess | null = null;
   let controlledDir = '';
@@ -1176,6 +1327,197 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
       expect(await pty.orchTerminateSession(sessionId, { origin: 'prompt-proof-fixture:teardown' })).toBe(true);
       expect(pty.getAgentSessionInfo(sessionId)).toBeNull();
     }
+  }, 120_000);
+
+  it.runIf(!CONTROLLED)('F-1146: installed native CLI persists its real IDLE turn before exact same-CID recovery', async () => {
+    profileFlow = true; profileOriginalAdapter = state.adapter;
+    const priorGateway = process.env.NEXUS_SMOKE_RUNTIME_GATEWAY, priorBase = process.env.ANTHROPIC_BASE_URL;
+    const priorHome = process.env.HOME, priorConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    let diagnose = (): void => undefined;
+    await withNativeIdleFixtureCleanup(async defer => {
+      defer(() => {
+        if (priorGateway === undefined) delete process.env.NEXUS_SMOKE_RUNTIME_GATEWAY; else process.env.NEXUS_SMOKE_RUNTIME_GATEWAY = priorGateway;
+        if (priorBase === undefined) delete process.env.ANTHROPIC_BASE_URL; else process.env.ANTHROPIC_BASE_URL = priorBase;
+        if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+        if (priorConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = priorConfigDir;
+      });
+      const { startRuntimeGateway } = await import('../../../scripts/runtime-gateway.mjs');
+      const actualGateway = await startRuntimeGateway(nonce);
+      defer(async () => { await actualGateway.close(); });
+      const { armPrivateRuntimeClaudeConsent } = await import('../runtime-gate-mode');
+      releaseConsent(); process.env.NEXUS_SMOKE_RUNTIME_GATEWAY = actualGateway.url; process.env.ANTHROPIC_BASE_URL = actualGateway.url;
+      defer(() => releaseConsent());
+      releaseConsent = armPrivateRuntimeClaudeConsent({ userData: state.userData, gateway: actualGateway.url, gatewayNonce: nonce,
+        scope, signal: lifetime.signal, isCurrent: () => !lifetime.signal.aborted });
+      const { prepareEphemeralHome } = await import('./hooks-gen');
+      const normalProfile = prepareEphemeralHome(`native-idle-${nonce}`, {}, { adapterId: 'claude', userDataPath: state.userData,
+        coordinationScope: scope, checkoutId: scope.checkoutId, cwd: repo, effectiveEnv: { ...process.env }, workspaceProjectTrust: true });
+      const normalSettings = path.join(normalProfile.dir, '.claude', 'settings.json');
+      const canonicalSettingsSha256 = createHash('sha256').update(fs.readFileSync(normalSettings)).digest('hex');
+      const expectedProjects = path.join(state.userData, 'provider-state', 'claude', scope.checkoutId, 'claude', 'projects');
+      expect(fs.lstatSync(path.join(normalProfile.dir, '.claude', 'projects')).isSymbolicLink()).toBe(true);
+      expect(fs.realpathSync(path.join(normalProfile.dir, '.claude', 'projects'))).toBe(expectedProjects);
+      process.env.HOME = normalProfile.dir; process.env.CLAUDE_CONFIG_DIR = path.join(normalProfile.dir, '.claude');
+      const actualBinary = fs.realpathSync(state.adapter!.bin), actualBinarySha256 = createHash('sha256').update(fs.readFileSync(actualBinary)).digest('hex');
+      const actualCliVersion = execFileSync(actualBinary, ['--version'], { encoding: 'utf8', timeout: 15000 }).trim();
+      const { initUsageTelemetry, shutdownUsageTelemetry } = await import('../usage/usage-service');
+      closeUsage = shutdownUsageTelemetry;
+      defer(async () => { await shutdownUsageTelemetry(); closeUsage = async () => undefined; });
+      await initUsageTelemetry(profileManager!);
+      const { startAgentHookHttpServer } = await import('../agent-hooks/hook-http-server');
+      const hooks = await startAgentHookHttpServer({ userDataPath: state.userData }); closeAgentHooks = hooks.close;
+      defer(async () => { await hooks.close(); closeAgentHooks = async () => undefined; });
+      const pty = await import('../pty/pty-manager');
+      defer(() => pty.configureAgentHookEndpointPath(null));
+      pty.configureAgentHookEndpointPath(hooks.endpointFilePath);
+      const { PTY_CHANNELS } = await import('../../shared/channels');
+      const { readSessionOutput, requestPaneSpawn, registerOrchRenderer, unregisterOrchRenderer } = await import('./pane-registry');
+      const { ORCH_CHANNELS } = await import('../../shared/orch-channels');
+      const { getProviderPaneSession } = await import('../persistence/provider-session-store');
+      const { hasPrivateNativeIdleHistory } = await import('../runtime-native-idle');
+      const { claudeProjectSlug } = await import('../usage/claude-transcript');
+      const { submitPromptToPaneConfirmed } = await import('../../renderer/terminal/pane-submit');
+      const { redactTerminalText } = await import('../../shared/secret-redaction');
+      const { buildPtySpawnRequest } = await import('../../renderer/terminal/spawn-request');
+      const { injectPrompt } = await import('./tool-util');
+      const { getContextBySession } = await import('./gate');
+      const invoke = (channel: string, input: unknown) => state.handlers.get(channel)!({ sender: owner, senderFrame: owner.mainFrame }, input);
+      const promptStages: unknown[] = [];
+      const submit = (paneId: string, sessionId: string, text: string) => submitPromptToPaneConfirmed(paneId, text, sessionId, {
+        getSessionId: () => pty.getAgentSessionInfo(sessionId)?.paneId === paneId ? sessionId : null,
+        write: (id, data) => { void invoke(PTY_CHANNELS.write, { sessionId: id, data }); },
+        writeConfirmed: async (id, data) => { const accepted = await invoke(PTY_CHANNELS.writeConfirmed, { sessionId: id, data }) as boolean;
+          promptStages.push({ stage: 'paste', accepted }); return accepted; },
+        probePromptState: async id => { const measured = await invoke(PTY_CHANNELS.promptState, { sessionId: id }) as import('../../shared/types').PtyPromptState | null;
+          promptStages.push({ stage: 'probe', measured }); return measured; },
+        submitPromptEnter: async (id, sequence, retry) => { const accepted = await invoke(PTY_CHANNELS.promptEnter, { sessionId: id, turnStartSequence: sequence, retry }) as boolean;
+          promptStages.push({ stage: 'enter', sequence, retry, accepted }); return accepted; },
+        schedule: (callback, ms) => setTimeout(callback, ms),
+      });
+      const owned: string[] = []; let conversationId = '', initialPid = 0, resumedPid = 0;
+      const ownSession = (sessionId: string): void => {
+        owned.push(sessionId);
+        defer(async () => {
+          if (pty.getAgentSessionInfo(sessionId)) expect(await pty.orchTerminateSession(sessionId, { origin: 'native-idle-proof:teardown' })).toBe(true);
+          expect(pty.getAgentSessionInfo(sessionId)).toBeNull();
+        });
+      };
+      diagnose = () => {
+        const nativeFile = path.join(state.userData, 'provider-state', 'claude', scope.checkoutId, 'claude', 'projects', claudeProjectSlug(repo), `${conversationId}.jsonl`);
+        let nativeShape: unknown = null;
+        if (conversationId && fs.existsSync(nativeFile)) {
+          const fd = fs.openSync(nativeFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+          try {
+            const stat = fs.fstatSync(fd);
+            if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw new Error('native history diagnostic exceeds bound');
+            const buffer = Buffer.alloc(stat.size);
+            const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+            nativeShape = {
+              stat: { size: stat.size, nlink: stat.nlink, uid: stat.uid }, canonicalPath: fs.realpathSync(nativeFile),
+              rows: buffer.subarray(0, bytesRead).toString('utf8').split('\n').filter(Boolean).map(line => {
+                const row = JSON.parse(line), content = row.message?.content;
+                const texts: string[] = typeof content === 'string' ? [content] : Array.isArray(content)
+                  ? content.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text) : [];
+                return { type: row.type, uuid: row.uuid, parentUuid: row.parentUuid, timestamp: row.timestamp,
+                  sessionId: row.sessionId, cwd: row.cwd, isSidechain: row.isSidechain, role: row.message?.role,
+                  idleRequest: texts.some(text => text.includes(`RT_GATE IDLE ${nonce}`)), idleResponse: texts.includes(`RT_DONE_IDLE_${nonce}`) };
+              }),
+            };
+          } finally { fs.closeSync(fd); }
+        }
+        const proofDir = path.join(REPO, '.superpowers/sdd/release-076213-reviewed/f1146-source-proof');
+        fs.mkdirSync(proofDir, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(path.join(proofDir, 'installed-native-history-shape.json'), JSON.stringify({
+          userData: state.userData, cwd: repo, checkoutId: scope.checkoutId, conversationId, nativeFile, nativeShape,
+        }, null, 2) + '\n', { mode: 0o600 });
+      };
+      const paneId = `real-idle-${nonce}`;
+      const spawned = await invoke(PTY_CHANNELS.spawn, { kind: 'cli-agent', adapterId: 'claude', paneId, cwd: repo,
+        cols: 100, rows: 30, resume: false, resumeLatestOnly: false, restorePersistedAuthority: false }) as { ok: boolean; sessionId: string; error?: string };
+      if (spawned.sessionId) ownSession(spawned.sessionId);
+      expect(spawned.ok, spawned.error).toBe(true);
+      const mirror = (id: string, sid: string) => state.listeners.get(ORCH_CHANNELS.panesSync)!({ sender: owner, senderFrame: owner.mainFrame }, {
+        generationId: `native-idle-${nonce}`, entries: [{ paneId: id, sessionId: sid, kind: 'cli-agent', adapterId: 'claude', model: '', title: 'Claude', paneNumber: 1, tabKey: '__loose__' }],
+      });
+      mirror(paneId, spawned.sessionId);
+      await originalIdle(spawned.sessionId, 45000);
+      initialPid = (await pty.probePaneFootprints())!.find(value => value.sessionId === spawned.sessionId)!.rootPid!;
+      const readyPrompt = async (sid: string) => {
+        await vi.waitFor(async () => {
+          const measured = await invoke(PTY_CHANNELS.promptState, { sessionId: sid });
+          expect(measured).toMatchObject({ state: 'idle', awaitingInput: false });
+        }, { timeout: 45000, interval: 200 });
+      };
+      await readyPrompt(spawned.sessionId);
+      const submitted = await submit(paneId, spawned.sessionId, `RT_GATE IDLE ${nonce}`);
+      const proofDir = path.join(REPO, '.superpowers/sdd/release-076213-reviewed/f1146-source-proof'); fs.mkdirSync(proofDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(path.join(proofDir, 'installed-native-prompt-diagnostics.json'), JSON.stringify({ submitted, promptStages,
+        actualCliVersion, actualBinarySha256, generatedPrivateHome: normalProfile.dir,
+        canonicalSettingsKeys: Object.keys(JSON.parse(fs.readFileSync(normalSettings, 'utf8'))),
+        canonicalSettingsSha256, mainConfiguredSettingsSha256: createHash('sha256').update(fs.readFileSync(normalSettings)).digest('hex'),
+        projectsLinkTarget: fs.realpathSync(path.join(normalProfile.dir, '.claude', 'projects')),
+        output: redactTerminalText(readSessionOutput(spawned.sessionId, 200)) }, null, 2) + '\n', { mode: 0o600 });
+      expect(submitted, JSON.stringify(promptStages)).toBe(true);
+      await vi.waitFor(async () => {
+        const current = getProviderPaneSession(scope, paneId, 'claude'); expect(current).not.toBeNull();
+        conversationId = current!.id;
+        expect(pty.getAgentSessionInfo(spawned.sessionId)).toMatchObject({ paneId, cwd: repo, scope });
+        expect(readSessionOutput(spawned.sessionId, 100)).toContain(`RT_DONE_IDLE_${nonce}`);
+        expect(await hasPrivateNativeIdleHistory({ userData: state.userData, checkoutId: scope.checkoutId, cwd: repo, conversationId, marker: nonce })).toBe(true);
+      }, { timeout: 45000, interval: 200 });
+      expect(await pty.orchTerminateSession(spawned.sessionId, { origin: 'native-idle-proof:owned-close' })).toBe(true);
+      expect(pty.getAgentSessionInfo(spawned.sessionId)).toBeNull();
+      // Exercise the normal Main-authored new-pane resume relation. The
+      // renderer edge claims that published request through registered IPC.
+      registerOrchRenderer(owner as never);
+      defer(() => unregisterOrchRenderer(owner as never));
+      const spawnFlights: Promise<unknown>[] = [];
+      const spawnPort = vi.spyOn(owner, 'send').mockImplementation((channel, ...args) => {
+        if (channel !== ORCH_CHANNELS.paneSpawnRequest) return undefined;
+        const request = args[0] as import('../../shared/orch-types').OrchPaneSpawnRequest;
+        const payload = buildPtySpawnRequest({ pane: { id: request.paneId, kind: 'cli-agent', adapterId: request.adapterId,
+          cwd: request.cwd, model: request.model ?? '', accountId: request.accountId, effort: request.effort, orchRequestId: request.requestId },
+          cols: 100, rows: 30, missionId: request.missionId, resume: false, resumeLatestOnly: false, restorePersistedAuthority: false });
+        const flight = Promise.resolve(invoke(PTY_CHANNELS.spawn, payload))
+          .then(value => {
+            const actual = value as { ok: boolean; sessionId?: string; error?: string };
+            if (actual.sessionId) ownSession(actual.sessionId);
+            state.listeners.get(ORCH_CHANNELS.paneSpawnResult)!({ sender: owner, senderFrame: owner.mainFrame }, {
+              requestId: request.requestId, paneId: request.paneId, ...actual,
+            });
+          });
+        observeNativeIdleSpawnFlight(flight, spawnFlights);
+        return undefined;
+      });
+      defer(() => { spawnPort.mockRestore(); });
+      defer(() => joinNativeIdleSpawnFlights(spawnFlights));
+      const result = await requestPaneSpawn({ adapterId: 'claude', role: 'worker', scope, executionScope: scope, cwd: repo,
+        resume: true, resumeFromPaneId: paneId, resumeLatestOnly: false });
+      expect(result.ok, result.error).toBe(true); expect(result.sessionId).toBeTypeOf('string');
+      const returned = { sessionId: result.sessionId! }, returnedPaneId = result.paneId!;
+      expect(returned.sessionId).not.toBe(spawned.sessionId);
+      mirror(returnedPaneId, returned.sessionId);
+      await originalIdle(returned.sessionId, 45000);
+      resumedPid = (await pty.probePaneFootprints())!.find(value => value.sessionId === returned.sessionId)!.rootPid!;
+      expect(resumedPid).toBeGreaterThan(0); expect(resumedPid).not.toBe(initialPid);
+      expect(getProviderPaneSession(scope, returnedPaneId, 'claude')?.id).toBe(conversationId);
+      await readyPrompt(returned.sessionId);
+      const returnedContext = getContextBySession(returned.sessionId)!;
+      expect(returnedContext).toMatchObject({ role: 'worker', scope, executionScope: scope });
+      await injectPrompt(returned.sessionId, `RT_GATE RESUME ${nonce}`);
+      expect(getContextBySession(returned.sessionId)).toBe(returnedContext);
+      fs.writeFileSync(path.join(proofDir, 'installed-native-resume-prompt-diagnostics.json'), JSON.stringify({ inputTransport: 'normal-main-injectPrompt',
+        returnedSessionId: returned.sessionId, returnedPaneId, originalConversationId: conversationId,
+        currentConversationId: getProviderPaneSession(scope, returnedPaneId, 'claude')?.id,
+        output: redactTerminalText(readSessionOutput(returned.sessionId, 200)) }, null, 2) + '\n', { mode: 0o600 });
+      await until(() => readSessionOutput(returned.sessionId, 100).includes(`RT_RESUME_OK_${nonce}`), 'actual CLI read its earlier native IDLE conversation', 45000);
+      expect(getProviderPaneSession(scope, returnedPaneId, 'claude')?.id).toBe(conversationId);
+      expect(readSessionOutput(returned.sessionId, 100)).not.toContain('No conversation found');
+      expect(createHash('sha256').update(fs.readFileSync(actualBinary)).digest('hex')).toBe(actualBinarySha256);
+      fs.writeFileSync(path.join(proofDir, 'installed-native-idle-facts.json'), JSON.stringify({ mode: 'installed-native-cli-real-main-pty-local-finite-gateway',
+        signedPackagedProof: false, nativeHistoryAuthoredByCli: true, conversationId, initialPid, resumedPid, ownedSessionIds: owned,
+        nativeGatewayToolObservations: actualGateway.observations.length, actualCliVersion, actualBinarySha256 }, null, 2) + '\n', { mode: 0o600 });
+    }, () => diagnose());
   }, 120_000);
 
   it.runIf(CONTROLLED)('F-1123: registered empty renderer model creates a durable mission through native MCP and createForPane', async () => {

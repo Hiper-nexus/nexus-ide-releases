@@ -31,6 +31,7 @@ import { parseFunctionalSmokeResult } from '../shared/smoke-types';
 import { armPrivateMissionCommandProbe } from './private-mission-command-probe';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { listPreviews, isRunningPreviewDescriptorForScope } from './orch/preview-server';
+import { hasPrivateNativeIdleHistory } from './runtime-native-idle';
 const execute = promisify(execFile);
 
 export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMain; userData: string; workspacePath: string;
@@ -82,6 +83,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
   const echoSessions = new Set<string>(), armedShells = new Set<string>(), resumedOutput = new Set<string>(), visibleQuestions = new Set<string>();
   const visibleMoves = new Set<string>();
   const outputWindows = new Map<string, string>(), captures = new Map<string, { path: string; sha256: string; assignmentId: string; artifactId: string }>();
+  const idleOutputs = new Map<string, { paneId: string; pid: number; bindingSha256: string; conversation: NonNullable<ReturnType<typeof getProviderPaneSession>> }>();
   const voice: Parameters<typeof deriveRuntimeChecks>[0]['voice'] = { permissions: 0, started: false, released: false, live: null, final: null };
   const questionCommands: Parameters<typeof deriveRuntimeChecks>[0]['questionCommands'][number][] = [];
   const statePath = path.join(input.userData, 'runtime-gates-state.json');
@@ -130,6 +132,17 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
       assertCurrent();
       return { authority, assertCurrent, seal };
     };
+    const nativeIdleReady = async (info: ReturnType<typeof listAgentSessions>[number], captured: ReturnType<typeof captureAgentBinding>, conversation: ReturnType<typeof getProviderPaneSession>, pid: number | null): Promise<boolean> => {
+      const output = idleOutputs.get(info.sessionId);
+      if (info.adapterId !== 'claude' || !conversation || conversation.key !== 'session_id' || !output || output.paneId !== info.paneId ||
+          !pid || output.pid !== pid || output.bindingSha256 !== captured.seal || !sameRuntimeConversation(output.conversation, conversation)) return false;
+      captured.assertCurrent();
+      const ready = await hasPrivateNativeIdleHistory({ userData: input.userData, checkoutId: captured.authority!.scope.checkoutId,
+        cwd: info.cwd, conversationId: conversation.id, marker: config.gatewayNonce });
+      captured.assertCurrent();
+      if (!sameRuntimeConversation(conversation, getProviderPaneSession(scope, info.paneId!, info.adapterId, info.accountId))) throw new Error('runtime native conversation changed');
+      return ready;
+    };
     const addHistory = (value: unknown): void => { if (history.length >= 1200) throw new Error('runtime observation budget exceeded'); history.push(value); };
     const revokeVoice = (): void => { releaseVoice?.(); releaseVoice = null;
       // This is a disposable acceptance session. Revocation remains deny-all,
@@ -144,13 +157,25 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
       const text = ((outputWindows.get(id) ?? '') + data).slice(-2048); outputWindows.set(id, text);
       if (armedShells.has(id) && text.includes(`RT_MOVE_${config.gatewayNonce}`)) echoSessions.add(id);
       if (text.includes(`RT_RESUME_OK_${config.gatewayNonce}`)) resumedOutput.add(id);
+      if (agent && text.includes(`RT_DONE_IDLE_${config.gatewayNonce}`)) {
+        try {
+          const captured = captureAgentBinding(agent), conversation = agent.paneId && getProviderPaneSession(scope, agent.paneId, agent.adapterId, agent.accountId);
+          if (agent.paneId && conversation) void probePaneFootprints().then(footprints => {
+            captured.assertCurrent();
+            if (!sameRuntimeConversation(conversation, getProviderPaneSession(scope, agent.paneId!, agent.adapterId, agent.accountId))) return;
+            const matches = footprints?.filter(value => value.sessionId === id);
+            if (matches?.length === 1 && matches[0].rootPid && matches[0].rootPid > 0)
+              idleOutputs.set(id, { paneId: agent.paneId!, pid: matches[0].rootPid, bindingSha256: captured.seal!, conversation: { ...conversation } });
+          }).catch(() => undefined);
+        } catch { /* Stale output cannot make a native conversation ready. */ }
+      }
     }, { name: 'private-runtime-acceptance', delivery: 'complete' });
     let commandProbeFailed = false;
     const releaseCommands = armPrivateMissionCommandProbe({ wc, frame, scope, nonce,
       snapshot: async id => { current(); const snapshot = await missionEngineForScope(scope).snapshot(scope, id); current(); return snapshot; },
       record: value => { current(); if (questionCommands.length >= 8) throw new Error('private command observation budget'); questionCommands.push(value); },
       failed: () => { commandProbeFailed = true; } });
-    const cleanup = (): void => { clearTimeout(timer); releaseConsent(); revokeVoice(); removeTap(); releaseCommands(); outputWindows.clear(); input.ipc.removeHandler(RUNTIME_CHANNELS.request);
+    const cleanup = (): void => { clearTimeout(timer); releaseConsent(); revokeVoice(); removeTap(); releaseCommands(); outputWindows.clear(); idleOutputs.clear(); input.ipc.removeHandler(RUNTIME_CHANNELS.request);
       input.ipc.removeListener(RUNTIME_CHANNELS.result, onResult); input.signal.removeEventListener('abort', onAbort); wc.removeListener('render-process-gone', onGone); win.removeListener('closed', onGone); };
     const fail = (reason = 'runtime proof incomplete'): void => { if (stopped) return; stopped = true; releaseConsent(); revokeVoice();
       console.error(`[smoke] runtime failed: ${reason.replace(/[\r\n]/gu, ' ').slice(0, 256)}`);
@@ -241,7 +266,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
           const footprints = await probePaneFootprints(); current();
           const bindings: Array<() => void> = [], stagedCaptures: Array<{ path: string; sha256: string; assignmentId: string; artifactId: string }> = [];
           const agents = await Promise.all(listAgentSessions().filter(v => v.missionId === req.missionId && verifiedAgent(v)).map(async v => {
-            const { authority: ctx, assertCurrent, seal } = captureAgentBinding(v); bindings.push(assertCurrent);
+            const captured = captureAgentBinding(v), { authority: ctx, assertCurrent, seal } = captured; bindings.push(assertCurrent);
             const assignmentId = ctx?.visualTask?.id; let visual;
             if (ctx?.visualTask && assignmentId) {
               const verdict = await checkVisualHandoff(ctx, { assertCurrent }); assertCurrent();
@@ -258,14 +283,16 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
             }
             assertCurrent();
             const conversation = v.paneId ? getProviderPaneSession(scope, v.paneId, v.adapterId, v.accountId) : null;
+            const pid = footprints?.find(f => f.sessionId === v.sessionId)?.rootPid ?? null;
+            const idleReady = await nativeIdleReady(v, captured, conversation, pid); assertCurrent();
             if (conversation && v.paneId) bindings.push(() => {
               assertCurrent();
               if (!sameRuntimeConversation(conversation, getProviderPaneSession(scope, v.paneId!, v.adapterId, v.accountId))) throw new Error('runtime native conversation changed');
             });
             return {
             paneId: v.paneId, sessionId: v.sessionId, role: v.role, adapterId: v.adapterId, agentName: v.agentName, readOnly: v.readOnly, model: v.model, bindingSha256: seal,
-            pid: footprints?.find(f => f.sessionId === v.sessionId)?.rootPid ?? null,
-            conversation,
+            pid,
+            conversation, nativeIdleReady: idleReady,
             ...(visual ? { visual } : {}),
           }; })); current();
           const audit = readAuditLog({ scope }, 200).filter(v => v.mission_id === mission.id);
@@ -274,7 +301,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
             const response = await fetch(`${config.gateway}/runtime-recovery`, { headers: { 'x-api-key': `rt-${config.gatewayNonce}` },
               signal: AbortSignal.any([input.signal, AbortSignal.timeout(5000)]) }); current();
             if (!response.ok) throw new Error('recovery gateway result unavailable');
-            const hint = await response.json(); current();
+            const hint = await response.json(); current(); bindings.forEach(assertCurrent => assertCurrent());
             if (hint.nonce !== config.gatewayNonce || hint.pid !== process.ppid) throw new Error('recovery gateway ownership differs');
             if (hint.recovery !== null) {
               const result = hint.recovery as Record<string, unknown>;
@@ -292,7 +319,7 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
             }
           }
           bindings.forEach(assertCurrent => assertCurrent());
-          for (const a of agents) if (a.role === 'worker' && a.paneId && a.pid && a.conversation && a.bindingSha256) observedWorkers.set(a.sessionId,
+          for (const a of agents) if (a.role === 'worker' && a.paneId && a.pid && a.conversation && a.bindingSha256 && a.nativeIdleReady) observedWorkers.set(a.sessionId,
             { missionId: mission.id, paneId: a.paneId, sessionId: a.sessionId, pid: a.pid, conversation: { ...a.conversation }, bindingSha256: a.bindingSha256 });
           stagedCaptures.forEach(capture => captures.set(capture.artifactId, capture));
           const leaders = snapshot.agents?.filter(a => a.category === 'orchestrator' && a.terminalLive === true && a.paneId) ?? [];
@@ -327,8 +354,16 @@ export async function proveRuntimeGates(win: BrowserWindow, input: { ipc: IpcMai
         if (!own && !agent) throw new Error('foreign runtime session');
         if (req.operation === 'terminate') {
           const baseline = observedWorkers.get(req.sessionId);
+          if (info?.role === 'worker' && !baseline) throw new Error('runtime native idle conversation is not ready');
           if (baseline && (!info || !captured?.authority || captured.seal !== baseline.bindingSha256 ||
             !sameRuntimeConversation(baseline.conversation, getProviderPaneSession(scope, baseline.paneId, info.adapterId, info.accountId)))) throw new Error('recovery termination baseline changed');
+          if (baseline && info && captured) {
+            if (!await nativeIdleReady(info, captured, getProviderPaneSession(scope, baseline.paneId, info.adapterId, info.accountId), baseline.pid)) throw new Error('runtime native idle conversation is not ready');
+            const footprints = await probePaneFootprints(); current(); captured.assertCurrent();
+            const matches = footprints?.filter(value => value.sessionId === req.sessionId);
+            if (matches?.length !== 1 || matches[0].rootPid !== baseline.pid) throw new Error('recovery termination PID changed');
+            if (!sameRuntimeConversation(baseline.conversation, getProviderPaneSession(scope, baseline.paneId, info.adapterId, info.accountId))) throw new Error('runtime native conversation changed');
+          }
           const priorInvocations = new Set(readAuditLog({ scope }, 200).map(a => a.invocation_id));
           const closed = await orchTerminateSession(req.sessionId, { origin: 'private-runtime-gate' }); current();
           if (!closed) throw new Error('runtime physical termination unproved'); terminated.add(req.sessionId);
