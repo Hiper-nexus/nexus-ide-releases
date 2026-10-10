@@ -2,6 +2,7 @@
 
 ## 0.76.231 — Missões com acompanhamento contínuo
 
+- **Clef-omni nos modelos de decisão.** Em Somente Clef, a variante Clef-omni (texto, imagem e áudio; US$ 0,15 por milhão de tokens) atende todas as decisões da Cloudflare, inclusive o julgamento visual do navegador. Com a nova autorização de áudio, separada da de imagens e desligada por padrão, cada detecção local de “Hey Jarvis” envia à Cloudflare os cerca de 2 s de áudio que terminam nela (a frase e o que soou logo antes; num falso positivo, pode ser som ambiente ou conversa), e o Clef-omni ajuda a descartar ativações de TV ou som ambiente. A ativação pode esperar até cerca de 1,5 s; erro ou demora mantêm a ativação. O custo do Clef Flash foi corrigido para US$ 0,038 (F-1161).
 - **Missão nativa a partir de um terminal recém-aberto.** Criar a missão logo depois de abrir o terminal não é mais recusado por "pane indisponível" (F-1160).
 - **Navegador aberto por workers de missão.** A aba que um worker abre para ver o preview passa a pertencer à missão e aparece na hora; antes podia ficar presa até o app fechar (F-1159).
 - **Instruções ao Maestro confirmadas mesmo quando ele responde na hora.** Se o Maestro recebe a instrução e já bloqueia a missão com uma pergunta, a instrução conta como entregue em vez de aparecer como recusada (F-1158).

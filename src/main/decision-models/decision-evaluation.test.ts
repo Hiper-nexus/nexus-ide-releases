@@ -32,6 +32,7 @@ describe('decision workload evaluation', () => {
     expect(report.models.jev.heldout).toMatchObject({ cases: 1, correct: 0, consequentialErrors: 1 });
     expect(report.models.clef.heldout).toMatchObject({ cases: 1, correct: 1, accuracy: 1 });
     expect(report.models['clef-flash']).toMatchObject({ answered: 0, failures: 2, usd: null });
+    expect(report.models['clef-omni'].heldout).toMatchObject({ cases: 1, correct: 1 });
     expect(report.models.clef.p50Ms).toBe(10);
     expect(JSON.stringify(report)).not.toContain('private heldout payload');
     expect(JSON.stringify(report)).not.toContain('private development payload');

@@ -1,22 +1,30 @@
-import type { ClefModel } from '../../shared/decision-models';
+import { CLEF_AUDIO_MODEL, CLEF_MODELS, type ClefModel } from '../../shared/decision-models';
 import type { JevTestResult } from '../../shared/jev-ipc';
 import type { JudgeInput, JevQuestion, JevResult, JevAnswer } from '../jev/jev-client';
 import type { JevNoAnswerReason } from '../jev/jev-decision-log';
 import { decisionUsageSchema, validateDecisionResponse } from './decision-response';
 import { redactState, redactQuestions } from './decision-redaction';
 import { validateDecisionImages } from './decision-images';
+import { decisionAudioDataUrl, MAX_DECISION_AUDIO_TOTAL_BYTES, validateDecisionAudio } from './decision-audio';
 import { decisionResultCostUsd } from './decision-pricing';
 
 const API_BASE = 'https://api.cloudflare.com/client/v4/accounts';
 const MAX_QUESTIONS_PER_REQUEST = 64;
+/** Texto + até 8 MiB de imagens em base64 (~10,7 MiB). */
 const MAX_BODY_BYTES = 13 * 1024 * 1024;
+/** Áudio viaja em base64 (+1/3) e como data URL: o teto cresce só quando o clipe vai de fato. */
+const MAX_AUDIO_BODY_BYTES = Math.ceil(MAX_DECISION_AUDIO_TOTAL_BYTES / 3) * 4 + 4 * 64;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 8_000;
 const RETRY_DELAY_MS = 400;
 const MAX_RETRY_DELAY_MS = 2_000;
 const MAX_ATTEMPTS = 2;
 
-export interface ClefConnection { accountId: string; token: string; model: ClefModel }
+export interface ClefConnection {
+  accountId: string; token: string; model: ClefModel;
+  /** Autorização de áudio do operador (Cloudflare). Sem ela, áudio nunca entra no corpo. */
+  audioConsent?: boolean;
+}
 export interface ClefDeps { fetch?: typeof fetch; now?: () => number }
 interface ClefBatch { questions: Record<string, JevQuestion>; ids: ReadonlyMap<string, string> }
 class ClefFailure extends Error {
@@ -34,10 +42,18 @@ function buildBatches(questions: Record<string, JevQuestion>): ClefBatch[] {
   return batches;
 }
 
+/** Áudio só com Clef-omni e autorização explícita; fora disso o clipe é descartado aqui, antes do corpo. */
+function sendsAudio(input: JudgeInput, connection: ClefConnection): boolean {
+  return Boolean(input.audio?.length) && connection.model === CLEF_AUDIO_MODEL && connection.audioConsent === true;
+}
+
 function inputIsValid(input: JudgeInput, connection: ClefConnection): boolean {
   if (!/^[a-fA-F0-9]{32}$/.test(connection.accountId) || !connection.token.trim()) return false;
-  if (connection.model !== 'clef' && connection.model !== 'clef-flash') return false;
+  if (!(CLEF_MODELS as readonly string[]).includes(connection.model)) return false;
   if (input.images !== undefined && !validateDecisionImages(input.images)) return false;
+  if (sendsAudio(input, connection) && !validateDecisionAudio(input.audio)) return false;
+  // Pergunta que depende do clipe: com o áudio descartado, a chamada não sai (nem cobra).
+  if (input.audioRequired && !sendsAudio(input, connection)) return false;
   const questions = Object.values(input.questions);
   return questions.length > 0 && questions.every(question => {
     if (!question || !question.instructions || !['noul', 'choice', 'score'].includes(question.type)) return false;
@@ -124,11 +140,12 @@ export async function judgeClef(input: JudgeInput, connection: ClefConnection, d
     const timeout = AbortSignal.timeout(input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
     const answers = new Map<string, JevAnswer>();
+    const audio = sendsAudio(input, connection) ? input.audio!.map(decisionAudioDataUrl) : undefined;
     for (const batch of buildBatches(input.questions)) {
       signal.throwIfAborted();
       const body = JSON.stringify({ model: connection.model, state: redactState(input.state), questions: batch.questions,
-        ...(input.images?.length ? { images: input.images } : {}) });
-      if (Buffer.byteLength(body, 'utf8') > MAX_BODY_BYTES) throw new ClefFailure('client-error');
+        ...(input.images?.length ? { images: input.images } : {}), ...(audio ? { audio } : {}) });
+      if (Buffer.byteLength(body, 'utf8') > MAX_BODY_BYTES + (audio ? MAX_AUDIO_BODY_BYTES : 0)) throw new ClefFailure('client-error');
       const envelope = await requestBatch(body, connection, signal, deps.fetch ?? fetch, () => { requestCount++; });
       const rawResult = (envelope as { result?: { model?: string; usage?: unknown } })?.result;
       const measured = decisionUsageSchema.safeParse(rawResult?.usage);

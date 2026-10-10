@@ -55,7 +55,7 @@ async function callMember(
 ): Promise<JevResult | null> {
   const connection = member.provider === 'clef' ? (deps.getClefConnection ?? (() => getClefConnection(settings)))() : undefined;
   const lunaKey = member.provider === 'luna' ? (deps.resolveLunaKey ?? resolveLunaApiKey)()?.trim() : undefined;
-  if (member.provider === 'jev') return deps.nativeJudge({ ...input, images: undefined, model: member.model });
+  if (member.provider === 'jev') return deps.nativeJudge({ ...input, images: undefined, audio: undefined, model: member.model });
   if (member.provider === 'luna') return lunaKey ? judgeLuna(input, lunaKey, { fetch: deps.fetch, now: deps.now }) : null;
   return connection ? judgeClef(input, { ...connection, model: member.model as ClefConnection['model'] }, { fetch: deps.fetch, now: deps.now }) : null;
 }
@@ -147,7 +147,7 @@ async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Prom
   const route = resolveDecisionRoute(input, settings, available);
   if (!route) {
     // Preserve the native client's no-key accounting without ever sending it images.
-    if (settings.mode === 'jev' && !available.jev && !input.images?.length) return deps.nativeJudge(input);
+    if (settings.mode === 'jev' && !available.jev && !input.images?.length) return deps.nativeJudge({ ...input, audio: undefined });
     return noAnswer(input, null, input.signal?.aborted ? 'aborted' : 'client-error');
   }
   const configuration = deps.getConfigurationKey ?? decisionConfigurationKey;
@@ -164,7 +164,7 @@ async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Prom
     const connection = route.provider === 'clef' ? (deps.getClefConnection ?? (() => getClefConnection(settings)))() : undefined;
     const lunaKey = route.provider === 'luna' ? (deps.resolveLunaKey ?? resolveLunaApiKey)()?.trim() : undefined;
     const result = route.provider === 'jev'
-      ? await deps.nativeJudge({ ...currentInput, model: route.model })
+      ? await deps.nativeJudge({ ...currentInput, audio: undefined, model: route.model })
       : route.provider === 'luna'
         ? lunaKey ? await judgeLuna(watched, lunaKey, { fetch: deps.fetch, now: deps.now })
           : noAnswer(input, route, 'client-error', NO_REQUEST_USAGE)

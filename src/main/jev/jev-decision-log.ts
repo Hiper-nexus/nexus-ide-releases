@@ -22,7 +22,9 @@ export type JevDecisionSurface =
   | 'judgeTool'
   | 'rankTool'
   | 'browserTool'
-  | 'computerTool';
+  | 'computerTool'
+  /** Clef-omni ouve o clipe da ativação passiva e diz se é TV/ambiente (F-1161). */
+  | 'wakeConfirm';
 
 /** Motivo categórico de uma consulta sem resposta — nunca o texto do erro. */
 export type JevNoAnswerReason =
@@ -440,7 +442,7 @@ export function jevDecisionStats(deps?: {
     });
     addOptimization(bucket, entry.optimization);
     if (entry.kind === 'optimization') continue;
-    const provider = entry.provider ?? (entry.model === 'clef' || entry.model === 'clef-flash' || entry.model.startsWith('@cf/cloudflare/') ? 'clef' : 'jev');
+    const provider = entry.provider ?? (entry.model === 'clef' || entry.model === 'clef-flash' || entry.model === 'clef-omni' || entry.model.startsWith('@cf/cloudflare/') ? 'clef' : 'jev');
     addProviderUsage(stats.byProvider, provider, entry);
     addProviderUsage(stats.byModel, entry.model, entry);
     stats.totals.usd += entry.usd ?? 0;

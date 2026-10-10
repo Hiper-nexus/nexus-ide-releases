@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { judgeClef, testClefConnection } from './clef-client';
 import type { JudgeInput } from '../jev/jev-client';
+import { syntheticWav } from './decision-audio.fixture';
 
 const connection = { accountId: '0123456789abcdef0123456789abcdef', token: 'synthetic-cloudflare-token', model: 'clef' as const };
 const input: JudgeInput = { state: { message: 'Observed confirmation' }, questions: { q: { type: 'noul', instructions: 'Did confirmation appear?' } } };
@@ -163,6 +164,67 @@ describe('Cloudflare decision transport', () => {
     const tooFewLevels = { type: 'score' as const, instructions: 'Rate it.', criteria: ['only one'] };
     expect(await judgeClef({ ...input, questions: { q: tooFewLevels } }, connection, { fetch: (async () => { requests++; return answer({ body: JSON.stringify(input) }); }) as typeof fetch })).toBeNull();
     expect(requests).toBe(0);
+  });
+});
+
+describe('Clef-omni audio', () => {
+  const omni = { ...connection, model: 'clef-omni' as const, audioConsent: true };
+  const clip = { content_type: 'audio/wav' as const, base64: syntheticWav(0.5).toString('base64') };
+  async function sentBody(conn: Parameters<typeof judgeClef>[1], audio = [clip]) {
+    const sent: Array<{ url: string; body: Record<string, any> }> = [];
+    const result = await judgeClef({ ...input, audio }, conn, { fetch: (async (url: any, options?: RequestInit) => {
+      sent.push({ url: String(url), body: JSON.parse(String(options?.body)) }); return answer(options);
+    }) as typeof fetch });
+    return { result, sent };
+  }
+
+  it('sends audio as data URLs to clef-omni only with the audio consent on', async () => {
+    const { result, sent } = await sentBody(omni);
+    expect(sent[0].url).toMatch(/\/ai\/run\/@cf\/cloudflare\/clef-omni$/);
+    expect(sent[0].body.model).toBe('clef-omni');
+    expect(sent[0].body.audio).toEqual([`data:audio/wav;base64,${clip.base64}`]);
+    expect(result?.model).toBe('clef-omni');
+  });
+
+  it.each([
+    ['consent off', { ...connection, model: 'clef-omni' as const, audioConsent: false }],
+    ['consent absent', { ...connection, model: 'clef-omni' as const }],
+    ['clef with consent', { ...connection, model: 'clef' as const, audioConsent: true }],
+    ['clef-flash with consent', { ...connection, model: 'clef-flash' as const, audioConsent: true }],
+  ])('drops the audio and never sends it (%s)', async (_label, conn) => {
+    const { result, sent } = await sentBody(conn);
+    expect(result).not.toBeNull();
+    expect(sent[0].body).not.toHaveProperty('audio');
+    expect(JSON.stringify(sent[0].body)).not.toContain(clip.base64.slice(0, 40));
+  });
+
+  it.each([
+    ['consent off', { ...connection, model: 'clef-omni' as const, audioConsent: false }],
+    ['clef with consent', { ...connection, model: 'clef' as const, audioConsent: true }],
+  ])('sends no question at all when the audio it depends on would be dropped (%s)', async (_label, conn) => {
+    const sent: unknown[] = []; const onNoAnswer = vi.fn();
+    const result = await judgeClef({ ...input, audio: [clip], audioRequired: true, onNoAnswer }, conn,
+      { fetch: (async (_url: any, options?: RequestInit) => { sent.push(options?.body); return answer(options); }) as typeof fetch });
+    expect(result).toBeNull(); expect(sent).toHaveLength(0);
+    expect(onNoAnswer).toHaveBeenCalledWith('client-error');
+  });
+
+  it('refuses an invalid clip before any request when it would be sent', async () => {
+    const forged = { content_type: 'audio/wav' as const, base64: Buffer.from('not a wave file at all').toString('base64') };
+    const { result, sent } = await sentBody(omni, [forged]);
+    expect(result).toBeNull(); expect(sent).toHaveLength(0);
+  });
+
+  it('rejects a response that names a different model than clef-omni', async () => {
+    const result = await judgeClef(input, omni, { fetch: (async (_url: any, options?: RequestInit) => answer(options, { model: 'clef' })) as typeof fetch });
+    expect(result).toBeNull();
+    const accepted = await judgeClef(input, omni, { fetch: (async (_url: any, options?: RequestInit) => answer(options, { model: '@cf/cloudflare/clef-omni' })) as typeof fetch });
+    expect(accepted?.model).toBe('clef-omni');
+  });
+
+  it('prices a clef-omni answer at US$ 0.15 per million input tokens', async () => {
+    const result = await judgeClef(input, omni, { fetch: (async (_url: any, options?: RequestInit) => answer(options, { usage: { input_tokens: 1_000_000, output_tokens: 0 } })) as typeof fetch });
+    expect(result?.estimatedUsd).toBeCloseTo(0.15, 10);
   });
 });
 

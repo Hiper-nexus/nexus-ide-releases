@@ -1,4 +1,4 @@
-import { hasVisionRecipientConsent, LUNA_DECISION_MODEL, type DecisionProvider, type DecisionRoute, type DecisionSettings, type ClefModel } from '../../shared/decision-models';
+import { CLEF_MODELS, hasVisionRecipientConsent, LUNA_DECISION_MODEL, type DecisionProvider, type DecisionRoute, type DecisionSettings, type ClefModel } from '../../shared/decision-models';
 import type { JudgeInput } from '../jev/jev-client';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
 
@@ -48,7 +48,7 @@ const LABEL_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurfa
 
 export function clefModel(model?: string): ClefModel | undefined {
   const selector = model?.replace('@cf/cloudflare/', '');
-  return selector === 'clef' || selector === 'clef-flash' ? selector : undefined;
+  return (CLEF_MODELS as readonly string[]).includes(selector ?? '') ? selector as ClefModel : undefined;
 }
 
 function lunaReady(available: DecisionAvailability): boolean {

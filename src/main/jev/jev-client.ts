@@ -1,4 +1,4 @@
-import type { DecisionImage, DecisionRoute, DecisionUsageReceipt } from '../../shared/decision-models';
+import type { DecisionAudio, DecisionImage, DecisionRoute, DecisionUsageReceipt } from '../../shared/decision-models';
 import { redactState, redactQuestions } from '../decision-models/decision-redaction';
 import { judgeDecision, type DecisionJudgeDeps } from '../decision-models/decision-judge';
 import { getDecisionAvailability } from '../decision-models/decision-availability';
@@ -134,6 +134,13 @@ export interface JudgeInput {
   onUsage?: (receipt: import('../../shared/decision-models').DecisionUsageReceipt) => void;
   /** Imagens validadas: Clef, ou a Luna quando a rota de visão aponta para a Decisions API. */
   images?: readonly DecisionImage[];
+  /**
+   * Clipes de voz curtos. Só saem para o Clef-omni com a autorização de áudio
+   * ligada (ClefConnection.audioConsent); qualquer outra rota descarta sem enviar.
+   */
+  audio?: readonly DecisionAudio[];
+  /** A pergunta só faz sentido ouvindo o clipe: se o áudio não puder sair, o Clef recusa sem requisição. */
+  audioRequired?: boolean;
   state: unknown;
   questions: Record<string, JevQuestion>;
   model?: string;

@@ -143,6 +143,40 @@ describe('complementary decision model settings', () => {
     expect(status.settings).toMatchObject({ mode: 'clef', clefModel: 'clef-flash' });
   });
 
+  it('offers Clef-omni with its capabilities and price, and describes the Flash 24k context', async () => {
+    status = { ...status, settings: { ...status.settings, mode: 'clef' } };
+    await mount();
+    const options = [...host.querySelectorAll<HTMLOptionElement>('select[aria-label="Variante Cloudflare"] option')];
+    expect(options.find(option => option.value === 'clef-omni')?.textContent).toBe('Clef-omni — texto, imagem e áudio; US$ 0,15/M');
+    expect(options.find(option => option.value === 'clef-flash')?.textContent).toContain('US$ 0,038/M');
+    expect(host.textContent).toContain('o Flash até 24.576');
+    expect(host.querySelector('input[aria-label="Confirmar ativação por voz com Clef-omni"]')).toBeNull();
+    await act(async () => { choose('Variante Cloudflare', 'clef-omni'); });
+    expect(status.settings).toMatchObject({ mode: 'clef', clefModel: 'clef-omni' });
+    expect(status.settings).not.toHaveProperty('audioConsent');
+  });
+
+  it('asks a separate confirmation before sending voice clips and turns it off at once', async () => {
+    status = { ...status, settings: { ...status.settings, mode: 'clef', clefModel: 'clef-omni', visionEnabled: true }, isReady: true, hasStoredKey: true };
+    await mount();
+    const audio = () => host.querySelector<HTMLInputElement>('input[aria-label="Confirmar ativação por voz com Clef-omni"]')!;
+    expect(audio().checked).toBe(false);
+    await act(async () => { audio().click(); });
+    expect(orchSet()).not.toHaveBeenCalled();
+    const consent = host.querySelector('[aria-label="Confirmar envio de áudio"]')?.textContent ?? '';
+    // Diz exatamente o que sai: ~2 s até a detecção de "Hey Jarvis", inclusive o ambiente num falso positivo.
+    for (const fact of ['Cloudflare', '“Hey Jarvis”', 'cerca de 2 segundos', 'terminam nesse instante', 'logo antes',
+      'sem uma detecção local', 'token da Cloudflare', 'som ambiente ou a conversa', 'até cerca de 1,5 s']) expect(consent).toContain(fact);
+    for (const claim of ['transcreve', 'depois de você dizer', 'conversas e gravações longas não vão']) expect(consent).not.toContain(claim);
+    await act(async () => { button('Ativar envio de áudio').click(); });
+    expect(status.settings).toMatchObject({ visionEnabled: true, audioConsent: { version: 1, recipients: ['clef'] } });
+    expect(audio().checked).toBe(true);
+    orchSet().mockClear();
+    await act(async () => { audio().click(); });
+    expect(orchSet()).toHaveBeenCalledTimes(1);
+    expect(status.settings).toMatchObject({ audioConsent: { version: 1, recipients: [] } });
+  });
+
   it('asks for a fresh confirmation before turning image analysis on, and not before turning it off', async () => {
     status = { ...status, settings: { ...status.settings, mode: 'auto' }, hasStoredKey: true, isReady: true };
     await mount();

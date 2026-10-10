@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decisionSettingsSchema, hasVisionRecipientConsent } from './decision-models';
+import { decisionSettingsSchema, hasAudioRecipientConsent, hasVisionRecipientConsent, testDecisionModelRequestSchema } from './decision-models';
 import { orchSettingsSchema } from './settings-types';
 
 describe('decision model configuration', () => {
@@ -42,7 +42,39 @@ describe('decision model configuration', () => {
     expect(hasVisionRecipientConsent({ ...disabled, visionEnabled: true }, 'luna')).toBe(false);
   });
 
+  it('accepts clef-omni as a variant while keeping existing values and the default unchanged', () => {
+    expect(decisionSettingsSchema.parse({}).clefModel).toBe('clef');
+    for (const clefModel of ['clef', 'clef-flash', 'clef-omni'] as const) {
+      expect(decisionSettingsSchema.parse({ mode: 'clef', clefModel }).clefModel).toBe(clefModel);
+    }
+    expect(testDecisionModelRequestSchema.parse({ model: 'clef-omni' })).toEqual({ model: 'clef-omni' });
+    expect(testDecisionModelRequestSchema.safeParse({ model: 'clef-omni-2' }).success).toBe(false);
+  });
+
+  it('keeps audio off by default and separate from the image consent', () => {
+    const omni = decisionSettingsSchema.parse({ mode: 'clef', clefModel: 'clef-omni', visionEnabled: true });
+    expect(omni).not.toHaveProperty('audioConsent');
+    expect(hasVisionRecipientConsent(omni, 'clef')).toBe(true);
+    expect(hasAudioRecipientConsent(omni, 'clef')).toBe(false);
+    const granted = decisionSettingsSchema.parse({ ...omni, audioConsent: { version: 1, recipients: ['clef'] } });
+    expect(hasAudioRecipientConsent(granted, 'clef')).toBe(true);
+    expect(hasAudioRecipientConsent({ ...granted, visionEnabled: false }, 'clef')).toBe(true);
+  });
+
   it.each([
+    ['Somente Jev', { mode: 'jev' }], ['Somente Luna', { mode: 'luna' }], ['Clef sem omni', { clefModel: 'clef' }], ['Flash', { clefModel: 'clef-flash' }],
+  ] as const)('drops the audio consent when the route can no longer hear it (%s)', (_label, change) => {
+    const granted = { mode: 'clef', clefModel: 'clef-omni', audioConsent: { version: 1, recipients: ['clef'] } };
+    const parsed = decisionSettingsSchema.parse({ ...granted, ...change });
+    expect(parsed.audioConsent).toEqual({ version: 1, recipients: [] });
+    // Voltar ao Clef-omni não ressuscita a autorização antiga.
+    expect(hasAudioRecipientConsent(decisionSettingsSchema.parse({ ...parsed, mode: 'clef', clefModel: 'clef-omni' }), 'clef')).toBe(false);
+  });
+
+  it.each([
+    { audioConsent: { version: 2, recipients: ['clef'] } },
+    { audioConsent: { version: 1, recipients: ['luna'] } },
+    { audioConsent: { version: 1, recipients: ['clef'], endpoint: 'https://other-host' } },
     { visionConsent: { version: 2, recipients: ['luna'] } },
     { visionConsent: { version: 1, recipients: ['other-host'] } },
     { visionConsent: { version: 1, recipients: ['luna'], redirect: 'https://other-host' } },

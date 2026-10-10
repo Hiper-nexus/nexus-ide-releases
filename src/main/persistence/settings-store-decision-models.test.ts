@@ -63,4 +63,13 @@ describe('decision configuration revision (in-flight and cache authority)', () =
     orchSet(trustedEvent(), { decisionModels: { ...getOrchSettings().decisionModels, mode: 'auto' } });
     expect(getOrchSettings().decisionModels.visionEnabled).toBe(false);
   });
+
+  it('persists clef-omni with its audio consent and keeps it out of any other variant', () => {
+    const orchSet = handlers.get(SETTINGS_CHANNELS.orchSet)!;
+    orchSet(trustedEvent(), { decisionModels: { mode: 'clef', clefModel: 'clef-omni', cloudflareAccountId: ACCOUNT, visionEnabled: false,
+      audioConsent: { version: 1, recipients: ['clef'] } } });
+    expect(getOrchSettings().decisionModels).toMatchObject({ clefModel: 'clef-omni', audioConsent: { version: 1, recipients: ['clef'] } });
+    orchSet(trustedEvent(), { decisionModels: { ...getOrchSettings().decisionModels, clefModel: 'clef-flash' } });
+    expect(getOrchSettings().decisionModels).toMatchObject({ clefModel: 'clef-flash', audioConsent: { version: 1, recipients: [] } });
+  });
 });

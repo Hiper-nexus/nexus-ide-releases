@@ -813,6 +813,14 @@ export function useVoiceController(active = true): void {
           });
           return;
         }
+        if (result.discarded === 'ambient') {
+          passiveWakeAdmission.reject(Date.now());
+          logVoiceEvent('info', 'wake.passiveAmbientDiscarded', 'Clef-omni ouviu TV/ambiente, não um chamado', {
+            latencyMs,
+            provider: result.provider,
+          });
+          return;
+        }
 
         const latestInfo = useVoiceStore.getState().info;
         if (

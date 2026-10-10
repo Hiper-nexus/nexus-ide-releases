@@ -94,6 +94,15 @@ describe('voice wake order', () => {
     expect(source).toContain("onWake('voice', utterance.preRoll)");
   });
 
+  it('rejects a passive wake that Clef-omni heard as ambient (F-1161)', () => {
+    const passiveStart = source.indexOf('const handlePassiveWake');
+    const passiveBlock = source.slice(passiveStart, source.indexOf('wakeMic.onDied', passiveStart));
+    const ambient = passiveBlock.indexOf("result.discarded === 'ambient'");
+    expect(ambient).toBeGreaterThan(0);
+    expect(passiveBlock.indexOf('passiveWakeAdmission.reject', ambient)).toBeGreaterThan(ambient);
+    expect(passiveBlock.indexOf('matchPassiveWakeWord')).toBeGreaterThan(ambient);
+  });
+
   it('executes a trusted cold embedded command without opening a second mic capture', () => {
     expect(source).toContain("via: 'wake-rest-cold'");
     expect(source).toContain('await runClassicTextCommand(match.command.trim()');

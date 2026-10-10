@@ -20,6 +20,7 @@ const SURFACE_LABELS: Record<string, string> = {
   taskRouting: 'Roteamento de tarefas',
   browserTool: 'Piloto do browser',
   computerTool: 'Piloto do desktop',
+  wakeConfirm: 'Confirmação da ativação por voz',
   judgeTool: 'Tool nexus_judge',
   rankTool: 'Tool nexus_rank',
   helperReuse: 'Reuso de helper ocioso',
@@ -203,7 +204,7 @@ export function JevDecisionsSection() {
           </div>
           <p className="settings-detail__hint">
             Custo estimado pelas tarifas públicas de cada modelo: Jev US$ 0,042,
-            Clef US$ 0,24, Flash US$ 0,09 e Luna US$ 0,10 por milhão de tokens de entrada.
+            Clef US$ 0,24, Flash US$ 0,038, Clef-omni US$ 0,15 e Luna US$ 0,10 por milhão de tokens de entrada.
             Consultas sem resposta podem ter custo não medido. "Pela regra" = o modelo foi
             consultado e não respondeu (timeout, erro, limite) — a superfície
             decidiu pelo caminho determinístico. Chamada direta ao provedor,

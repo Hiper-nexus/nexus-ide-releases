@@ -7,7 +7,8 @@ describe('model-specific decision pricing', () => {
   });
   it.each([
     ['jev-1.13.0', 0.042], ['jev-latest', 0.042], ['clef', 0.24],
-    ['clef-flash', 0.09], ['@cf/cloudflare/clef-flash', 0.09], ['gpt-6-luna', 0.10],
+    ['clef-flash', 0.038], ['@cf/cloudflare/clef-flash', 0.038],
+    ['clef-omni', 0.15], ['@cf/cloudflare/clef-omni', 0.15], ['gpt-6-luna', 0.10],
   ])('prices a million reported input tokens from %s', (model, expectedUsd) => {
     expect(decisionResultCostUsd({ model, answers: {}, usage: { input_tokens: 1_000_000, output_tokens: 100 } })).toBeCloseTo(expectedUsd, 10);
   });

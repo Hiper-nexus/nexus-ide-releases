@@ -4,7 +4,7 @@ import type { JevDecisionSurface } from '../jev/jev-decision-log';
 import { decisionResultUsage } from './decision-usage';
 import { z } from 'zod';
 
-export const DECISION_EVAL_MODELS = ['jev', 'clef', 'clef-flash'] as const;
+export const DECISION_EVAL_MODELS = ['jev', 'clef', 'clef-flash', 'clef-omni'] as const;
 export type DecisionEvalModel = typeof DECISION_EVAL_MODELS[number];
 type Expected = string | boolean | { min: number; max: number };
 export interface DecisionEvalCase {

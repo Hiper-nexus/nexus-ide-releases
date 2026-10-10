@@ -56,6 +56,11 @@ import { speak, stopSystemSpeech } from "./tts-service";
 import { echoSuppressor } from "./echo-suppress";
 import { matchWakeWord } from "../../shared/jarvis-passive-nlu";
 import {
+  AcousticWakeConfirmer,
+  shouldSuppressWake,
+  startWakeClefConfirmation,
+} from "./wake-clef-confirm";
+import {
   appBundlePathFromExecPath,
   readBundleId,
   resetMicrophoneTcc,
@@ -269,10 +274,18 @@ let wakeEngine: WakeEngine | null = null;
 let wakeFramesSeen = false;
 let wakeLockWarned = false;
 
+/**
+ * F-1161: últimos ~2 s do mic do wake, só em memória e só com o opt-in
+ * completo (Clef no modo, Clef-omni, autorização de áudio e credencial), para
+ * o Clef-omni confirmar a detecção. Revogar aborta a consulta e limpa o buffer.
+ */
+const wakeClefConfirmer = new AcousticWakeConfirmer();
+
 function disposeWakeEngineOnly(): void {
   const engine = wakeEngine;
   wakeEngine = null;
   wakeFramesSeen = false;
+  wakeClefConfirmer.clear();
   if (engine) void engine.dispose();
 }
 
@@ -793,6 +806,17 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
           attempts: [],
         };
       }
+      // F-1161: com Clef-omni + autorização de áudio, o MESMO clipe vai ao
+      // Clef em paralelo ao STT. Sem as chaves ligadas, `null` e nada sai.
+      const wakeClef =
+        parsed.data.purpose === "passive-wake" && parsed.data.mime === "audio/wav"
+          ? startWakeClefConfirmation({
+              wavBase64: parsed.data.audioBase64,
+              wakePhrase: parsed.data.passiveWakeWord
+                ? `"${parsed.data.passiveWakeWord}"`
+                : undefined,
+            })
+          : null;
       try {
         const sttStartedAt = Date.now();
         const res = await transcribe(
@@ -829,6 +853,25 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
           });
           return { ...res, discarded: "echo" };
         }
+        if (wakeClef) {
+          const clef = await shouldSuppressWake(wakeClef, containsRequestedWake);
+          if (clef.verdict && containsRequestedWake) {
+            logVoice(
+              clef.suppress ? "warn" : "info",
+              clef.suppress ? "wake.clefAmbient" : "wake.clefVerdict",
+              clef.suppress
+                ? "Clef-omni ouviu TV/ambiente: ativação passiva cancelada"
+                : "Clef-omni não barrou a ativação passiva",
+              {
+                verdict: clef.verdict.kind,
+                probability:
+                  "probability" in clef.verdict ? clef.verdict.probability : null,
+                reason: "reason" in clef.verdict ? clef.verdict.reason : null,
+              },
+            );
+          }
+          if (clef.suppress && res.ok) return { ...res, discarded: "ambient" };
+        }
         if (res.ok && parsed.data.polish === "code-prompt") {
           return await finalizeCodeDictation(parsed.data, res, sttMs, {
             polish: polishCodePrompt,
@@ -849,6 +892,9 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { ok: false, needsKey: false, error: message, attempts: [] };
+      } finally {
+        // STT falhou, lançou ou não trouxe o nome: o Clef pendente não serve a ninguém.
+        wakeClef?.cancel();
       }
     },
   );
@@ -922,7 +968,27 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
           logVoice("info", "wake.detected", '"Hey Jarvis"', {
             generation: claimedGeneration,
           });
-          emitWakeDetected(claimedGeneration, claimedOwner, claimedScope);
+          // Com o opt-in completo, a entrega espera o veredito do Clef-omni
+          // (no máximo ~1,45 s); uma confirmação por vez.
+          void wakeClefConfirmer.detect({
+            deliver: () =>
+              emitWakeDetected(claimedGeneration, claimedOwner, claimedScope),
+            log: (suppressed, verdict) =>
+              logVoice(
+                suppressed ? "warn" : "info",
+                suppressed ? "wake.clefAmbient" : "wake.clefVerdict",
+                suppressed
+                  ? "Clef-omni ouviu TV/ambiente: ativação descartada"
+                  : "Clef-omni não barrou a ativação",
+                {
+                  generation: claimedGeneration,
+                  verdict: verdict?.kind ?? null,
+                  probability:
+                    verdict && "probability" in verdict ? verdict.probability : null,
+                  reason: verdict && "reason" in verdict ? verdict.reason : null,
+                },
+              ),
+          });
         },
         (telemetry) => {
           logVoice("info", "wake.score", "janela de score do detector", {
@@ -960,6 +1026,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
       // Sem return: o primeiro lote também alimenta — o engine enfileira os
       // frames recebidos durante a init e processa quando ela completar.
     }
+    wakeClefConfirmer.push(frame);
     wakeEngine.feed(frame);
   });
   onIpcGuarded(VOICE_CHANNELS.wakeStop, (event) => {

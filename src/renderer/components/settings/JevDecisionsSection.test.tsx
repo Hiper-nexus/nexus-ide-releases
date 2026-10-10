@@ -128,6 +128,9 @@ describe('JevDecisionsSection', () => {
     expect(host.textContent).toContain('1 sem resposta');
     expect(host.textContent).toContain('Jev US$ 0,042');
     expect(host.textContent).toContain('Clef US$ 0,24');
+    expect(host.textContent).toContain('Flash US$ 0,038');
+    expect(host.textContent).toContain('Clef-omni US$ 0,15');
+    expect(host.textContent).not.toContain('Flash US$ 0,09');
     expect(host.textContent).toContain('2 pelo modelo · 1 pela regra');
     // Custo miúdo (0.0000252) não vira "US$ 0.0000": mostra o teto.
     expect(host.textContent).toContain('< US$ 0,0001');

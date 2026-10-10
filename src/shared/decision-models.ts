@@ -13,23 +13,37 @@ export const CLEF_SECRET_NAME = 'clef-env:CLOUDFLARE_API_TOKEN';
 /** Decisions API. Não é o modelo de geração do pane: a rota de texto não usa este id. */
 export const LUNA_DECISION_MODEL = 'gpt-6-luna';
 
+/** Variantes Cloudflare aceitas. Clef-omni é a única que entende áudio. */
+export const CLEF_MODELS = ['clef', 'clef-flash', 'clef-omni'] as const;
+export const CLEF_AUDIO_MODEL = 'clef-omni';
+
 export const decisionSettingsSchema = z.object({
   mode: z.enum(['auto', 'jev', 'clef', 'luna', 'together']).default('jev'),
-  clefModel: z.enum(['clef', 'clef-flash']).default('clef'),
+  clefModel: z.enum(CLEF_MODELS).default('clef'),
   cloudflareAccountId: z.string().trim().regex(/^(?:[a-fA-F0-9]{32})?$/).default(''),
   visionEnabled: z.boolean().default(false),
   /** Absent = legacy Cloudflare-only consent; a new recipient always needs an explicit grant. */
   visionConsent: z.object({ version: z.literal(1), recipients: z.array(z.enum(['clef', 'luna'])).max(2) }).strict().optional(),
-}).transform(settings => settings.mode === 'jev' || !settings.visionEnabled ? { ...settings, visionEnabled: false,
-  ...(settings.visionConsent ? { visionConsent: { version: 1 as const, recipients: [] } } : {}),
-} : settings);
+  /**
+   * Autorização própria para clipes de voz curtos irem à Cloudflare (Clef-omni).
+   * Ausente = nunca autorizado; não herda o consentimento de imagens.
+   */
+  audioConsent: z.object({ version: z.literal(1), recipients: z.array(z.enum(['clef'])).max(1) }).strict().optional(),
+}).transform(settings => {
+  const vision = settings.mode === 'jev' || !settings.visionEnabled ? { ...settings, visionEnabled: false,
+    ...(settings.visionConsent ? { visionConsent: { version: 1 as const, recipients: [] } } : {}),
+  } : settings;
+  // Sem rota Cloudflare ou sem Clef-omni o áudio não tem destino: a autorização cai e não volta sozinha.
+  const audioInert = settings.mode === 'jev' || settings.mode === 'luna' || settings.clefModel !== CLEF_AUDIO_MODEL;
+  return audioInert && vision.audioConsent ? { ...vision, audioConsent: { version: 1 as const, recipients: [] } } : vision;
+});
 
 export const setDecisionKeyRequestSchema = z.object({
   token: z.string().trim().max(512).refine(value => !/[\r\n]/.test(value)),
 }).strict();
 
 export const testDecisionModelRequestSchema = z.object({
-  model: z.enum(['clef', 'clef-flash']).optional(),
+  model: z.enum(CLEF_MODELS).optional(),
   provider: z.enum(['clef', 'luna']).optional(),
 }).strict();
 
@@ -42,6 +56,12 @@ export function hasVisionRecipientConsent(settings: DecisionSettings, recipient:
   if (!settings.visionEnabled || settings.mode === 'jev') return false;
   return settings.visionConsent
     ? settings.visionConsent.version === 1 && settings.visionConsent.recipients.includes(recipient) : recipient === 'clef';
+}
+
+/** Áudio sai só com Clef-omni, numa rota que aceita Cloudflare e com a autorização versionada. */
+export function hasAudioRecipientConsent(settings: DecisionSettings, recipient: 'clef'): boolean {
+  if (settings.mode === 'jev' || settings.mode === 'luna' || settings.clefModel !== CLEF_AUDIO_MODEL) return false;
+  return settings.audioConsent?.version === 1 && settings.audioConsent.recipients.includes(recipient);
 }
 
 export function visionRecipientsForMode(mode: DecisionMode): VisionRecipient[] {
@@ -66,6 +86,12 @@ export interface DecisionRoute {
 
 export interface DecisionImage {
   content_type: 'image/png' | 'image/jpeg' | 'image/webp';
+  base64: string;
+}
+
+/** Clipe de voz curto. Vai à Cloudflare como data URL, nunca como URL remota. */
+export interface DecisionAudio {
+  content_type: 'audio/wav' | 'audio/mpeg';
   base64: string;
 }
 

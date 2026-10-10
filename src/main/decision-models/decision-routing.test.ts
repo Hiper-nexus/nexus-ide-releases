@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canRouteBrowserVisual, ensembleMembers, resolveDecisionRoute } from './decision-routing';
+import { canRouteBrowserVisual, clefModel, ensembleMembers, resolveDecisionRoute } from './decision-routing';
 import { decisionSettingsSchema, type DecisionSettings } from '../../shared/decision-models';
 
 const settings: DecisionSettings = { mode: 'auto', clefModel: 'clef', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: false };
@@ -112,6 +112,23 @@ describe('complementary decision routing', () => {
 
   it('honors a configured Flash variant in Clef-only mode', () => {
     expect(resolveDecisionRoute({}, { ...settings, mode: 'clef', clefModel: 'clef-flash' }, both)).toMatchObject({ provider: 'clef', model: 'clef-flash', evidence: 'manual' });
+  });
+
+  it('recognizes clef-omni as a Clef variant and routes every Clef-only surface to it', () => {
+    expect(clefModel('clef-omni')).toBe('clef-omni');
+    expect(clefModel('@cf/cloudflare/clef-omni')).toBe('clef-omni');
+    expect(clefModel('clef-omni-preview')).toBeUndefined();
+    const omni: DecisionSettings = { ...settings, mode: 'clef', clefModel: 'clef-omni' };
+    for (const surface of ['toolPick', 'intake', 'paneState', 'rank'] as const) {
+      expect(resolveDecisionRoute({ surface }, omni, both)).toMatchObject({ provider: 'clef', model: 'clef-omni' });
+    }
+    expect(resolveDecisionRoute({ model: 'clef' }, omni, both)).toBeNull();
+  });
+
+  it('uses clef-omni for the masked browser visual judgment when selected', () => {
+    const images = [{ content_type: 'image/png' as const, base64: 'synthetic' }];
+    const omniVision: DecisionSettings = { ...settings, mode: 'clef', clefModel: 'clef-omni', visionEnabled: true, visionConsent };
+    expect(resolveDecisionRoute({ surface: 'browserTool', images }, omniVision, both)).toMatchObject({ provider: 'clef', model: 'clef-omni', reason: 'vision' });
   });
 
   it('does not allow a model argument to override a fixed provider or variant', () => {

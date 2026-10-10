@@ -10255,6 +10255,7 @@ export const CURRENT_RELEASE: AppRelease = {
   codename: 'Missões com acompanhamento contínuo',
   summary: 'Melhorias no início e na retomada das missões, conclusão com entrega verificada e capturas vinculadas ao terminal escolhido. Inclui decisões por conta e Quadro com participantes vivos.',
   highlights: [
+    { title: 'Clef-omni ouve antes de atender', detail: 'Em Modelos de decisão, escolha a variante Clef-omni (texto, imagem e áudio). Com a autorização de áudio ligada, cada detecção de “Hey Jarvis” envia à Cloudflare os cerca de 2 s de áudio que terminam nela, e o Clef-omni ajuda a descartar ativações de TV ou som ambiente; a ativação pode esperar até cerca de 1,5 s. Áudio e capturas só vão à Cloudflare com a sua autorização.' },
     { title: 'Agentes com acesso a tudo', detail: 'Orquestrador, helpers, workers e revisores alcançam toda ferramenta do Nexus e as nativas da CLI. O orquestrador também edita e commita, revisores deixam de ser somente leitura e não há filtro de skill nem bloqueio do WebFetch. Confirmações humanas e o modo Hardened continuam valendo.' },
     { title: 'Luna, Decisions API da OpenAI', detail: 'Em Configurações → Modelos de decisão, escolha Somente Luna (beta) ou Luna junto com Jev e Clef. A chave é a da OpenAI em Chaves de API; a preferência fica nesta conta Nexus.' },
     { title: 'Imagens com autorização por provedor', detail: 'O envio de imagens à OpenAI exige autorização própria. Trocar o modelo ou cadastrar uma chave não concede essa autorização.' },

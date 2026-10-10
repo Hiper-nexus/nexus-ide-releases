@@ -1,4 +1,5 @@
-import { hasVisionRecipientConsent, visionRecipientsForMode, type VisionRecipient, type DecisionSettings } from '../../../shared/decision-models';
+import { CLEF_AUDIO_MODEL, hasAudioRecipientConsent, hasVisionRecipientConsent, visionRecipientsForMode, type VisionRecipient, type DecisionSettings } from '../../../shared/decision-models';
+import { AudioConsentToggle } from './AudioConsentToggle';
 import { VisionConsentToggle } from './VisionConsentToggle';
 
 export function DecisionModeControls({ settings, busy, onChange }: {
@@ -8,6 +9,8 @@ export function DecisionModeControls({ settings, busy, onChange }: {
   const authorized = (['clef', 'luna'] as VisionRecipient[]).filter(recipient => hasVisionRecipientConsent(settings, recipient));
   const missing = recipients.filter(recipient => !authorized.includes(recipient));
   const visualEnabled = settings.mode === 'auto' ? authorized.length > 0 : recipients.length > 0 && missing.length === 0;
+  // Áudio só existe com Clef-omni numa rota que aceita Cloudflare; fora disso o schema já derruba a autorização.
+  const audioAvailable = settings.clefModel === CLEF_AUDIO_MODEL && settings.mode !== 'jev' && settings.mode !== 'luna';
   const additionalConsent = settings.mode === 'auto' && visualEnabled && missing.length
     ? `Autorizar também a ${missing[0] === 'luna' ? 'OpenAI' : 'Cloudflare'}` : undefined;
   return <>
@@ -26,10 +29,15 @@ export function DecisionModeControls({ settings, busy, onChange }: {
       {settings.mode === 'clef' && <label className="settings-field">Variante Cloudflare
         <select className="settings-input" aria-label="Variante Cloudflare" value={settings.clefModel} disabled={busy}
           onChange={event => onChange({ clefModel: event.target.value as DecisionSettings['clefModel'] })}>
-          <option value="clef">Clef</option><option value="clef-flash">Clef Flash</option>
+          <option value="clef">Clef — texto e imagem; US$ 0,24/M</option>
+          <option value="clef-flash">Clef Flash — texto e imagem, contexto de 24 mil tokens; US$ 0,038/M</option>
+          <option value="clef-omni">Clef-omni — texto, imagem e áudio; US$ 0,15/M</option>
         </select>
       </label>}
     </div>
+    {settings.mode === 'clef' && <p className="settings-field__note">Preços por milhão de tokens de entrada. O Clef aceita até 65.536 tokens de contexto,
+      {' '}o Clef-omni até 64.000 e o Flash até 24.576: em estados longos, prefira Clef ou Clef-omni.
+      {' '}A variante escolhida vale para todas as decisões que vão ao Clef, inclusive o julgamento visual do navegador.</p>}
     <p className="settings-field__note">No Automático, a rota inicial usa Clef para escolher ferramentas e Jev nas demais decisões de texto.
       {' '}As rotas baseadas em benchmarks públicos ainda precisam de comparação no Nexus.</p>
     {settings.mode === 'auto' && <p className="settings-field__note">No Automático, o texto de estados de panes, saídas de terminal, pedidos e candidatos de ferramentas pode ser enviado à Cloudflare.
@@ -50,5 +58,7 @@ export function DecisionModeControls({ settings, busy, onChange }: {
       onChange={visionEnabled => onChange({ visionEnabled, visionConsent: { version: 1,
         recipients: visionEnabled ? [...new Set([...authorized, ...recipients])] : [],
       } })} />
+    {audioAvailable && <AudioConsentToggle enabled={hasAudioRecipientConsent(settings, 'clef')} disabled={busy}
+      onChange={enabled => onChange({ audioConsent: { version: 1, recipients: enabled ? ['clef'] : [] } })} />}
   </>;
 }

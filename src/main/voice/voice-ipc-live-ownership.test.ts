@@ -304,6 +304,28 @@ vi.mock("./wake-engine", () => ({
   },
 }));
 vi.mock("./voice-log", () => ({ logVoice: vi.fn() }));
+// F-1161: preferências de decisão controladas pelo teste; o padrão (sem
+// opt-in de áudio) mantém os demais casos exatamente como antes.
+const decisionDeps = vi.hoisted(() => ({ settings: null as unknown, clef: true }));
+vi.mock("../decision-models/decision-availability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../decision-models/decision-availability")>();
+  const shared = await import("../../shared/decision-models");
+  type Settings = import("../../shared/decision-models").DecisionSettings;
+  return {
+    ...actual,
+    getDecisionSettings: () => (decisionDeps.settings as Settings | null) ?? shared.decisionSettingsSchema.parse({}),
+    getDecisionAvailability: (settings: Settings) => ({ jev: false, luna: false,
+      clef: decisionDeps.clef && settings.mode !== "jev" && settings.mode !== "luna" }),
+    getClefConnection: (settings: Settings) => ({ accountId: "0123456789abcdef0123456789abcdef",
+      token: "synthetic-cloudflare-token", model: settings.clefModel,
+      audioConsent: shared.hasAudioRecipientConsent(settings, "clef") }),
+  };
+});
+vi.mock("../jev/jev-decision-log", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../jev/jev-decision-log")>()),
+  recordJevDecision: vi.fn(() => "id"),
+  recordJevNoAnswer: vi.fn(() => "id"),
+}));
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
 vi.mock("./stt-service", () => ({ transcribe: vi.fn() }));
 vi.mock("./tts-service", () => ({
@@ -354,6 +376,11 @@ vi.mock("./live-runtime-config", () => ({
 }));
 
 import { closeVoiceIpc, registerVoiceIpc } from "./voice-ipc";
+import { logVoice } from "./voice-log";
+import { transcribe } from "./stt-service";
+import { bumpDecisionCredentialRevision } from "../decision-models/decision-revision";
+import { decisionSettingsSchema } from "../../shared/decision-models";
+import { syntheticWav } from "../decision-models/decision-audio.fixture";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 
 const runtimeManager = {} as ProjectRuntimeManager;
@@ -1382,5 +1409,139 @@ describe("Voice PTT and wake multi-window isolation", () => {
     send(VOICE_CHANNELS.wakeAudio, windowA, pcmFrame());
     expect(wakeEngineDeps.instances).toHaveLength(2);
     expect(wakeEngineDeps.instances[1]!.feed).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("F-1161 Clef-omni wake confirmation wired into voice-ipc", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  const optIn = (on: boolean) => {
+    decisionDeps.settings = on
+      ? decisionSettingsSchema.parse({ mode: "clef", clefModel: "clef-omni",
+          cloudflareAccountId: "0123456789abcdef0123456789abcdef",
+          audioConsent: { version: 1, recipients: ["clef"] } })
+      : null;
+    // O settings-store faz isto a cada mudança de preferências de decisão.
+    bumpDecisionCredentialRevision();
+  };
+  const reply = (noul: number) => async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    return Response.json({ success: true, result: { model: body.model, usage: { input_tokens: 400, output_tokens: 0 },
+      answers: Object.fromEntries(Object.keys(body.questions).map((id) => [id, { type: "noul", noul }])) } });
+  };
+  const hang = async (_url: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+  });
+  const armedOwner = (id: number) => {
+    voiceConfig.wakeWord.enabled = true;
+    const owner = new TestRenderer(id);
+    scopeDeps.scopes.set(owner.id, scopeA);
+    electronDeps.windows.push({ webContents: owner });
+    electronDeps.focusedWindow = { webContents: owner };
+    return owner;
+  };
+  const speak = (owner: TestRenderer, seconds: number) => {
+    for (let index = 0; index < seconds * 12.5; index++) send(VOICE_CHANNELS.wakeAudio, owner, pcmFrame(1280));
+  };
+  const delivered = (owner: TestRenderer) => owner.send.mock.calls.some(([channel]) => channel === VOICE_CHANNELS.wakeDetected);
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    decisionDeps.clef = true;
+    optIn(false);
+  });
+
+  it("drops a detection Clef-omni hears as confidently ambient", async () => {
+    optIn(true);
+    fetchMock.mockImplementation(reply(0.93));
+    const owner = armedOwner(901);
+    speak(owner, 3);
+    wakeEngineDeps.lastOnDetected?.();
+    expect(delivered(owner)).toBe(false);
+    await vi.waitFor(() => expect(logVoice).toHaveBeenCalledWith("warn", "wake.clefAmbient", expect.any(String),
+      expect.objectContaining({ verdict: "ambient", probability: 0.93 })));
+    expect(delivered(owner)).toBe(false);
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
+    expect(body.model).toBe("clef-omni");
+    expect(body.audio[0]).toMatch(/^data:audio\/wav;base64,UklGR/);
+  });
+
+  it.each([
+    ["speech", reply(0.2)],
+    ["an HTTP error", async () => Response.json({ success: false }, { status: 401 })],
+  ])("waits for Clef-omni and then delivers the detection on %s", async (_label, implementation) => {
+    optIn(true);
+    fetchMock.mockImplementation(implementation as typeof fetch);
+    const owner = armedOwner(902);
+    speak(owner, 3);
+    wakeEngineDeps.lastOnDetected?.();
+    expect(delivered(owner)).toBe(false);
+    await vi.waitFor(() => expect(delivered(owner)).toBe(true));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("delivers the detection when Clef-omni does not answer in time", async () => {
+    optIn(true);
+    fetchMock.mockImplementation(hang);
+    const owner = armedOwner(903);
+    speak(owner, 3);
+    const started = performance.now();
+    wakeEngineDeps.lastOnDetected?.();
+    await vi.waitFor(() => expect(delivered(owner)).toBe(true), { timeout: 3_000 });
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  it("without the audio opt-in delivers at once and never calls Clef", () => {
+    const owner = armedOwner(904);
+    speak(owner, 3);
+    wakeEngineDeps.lastOnDetected?.();
+    expect(delivered(owner)).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("turning the consent off aborts the confirmation in flight and the wake goes through", async () => {
+    optIn(true);
+    fetchMock.mockImplementation(hang);
+    const owner = armedOwner(905);
+    speak(owner, 3);
+    wakeEngineDeps.lastOnDetected?.();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const started = performance.now();
+    optIn(false);
+    await vi.waitFor(() => expect(delivered(owner)).toBe(true), { timeout: 3_000 });
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(fetchMock.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+  });
+
+  it("stopping the wake mic forgets the buffered audio", () => {
+    optIn(true);
+    fetchMock.mockImplementation(reply(0.2));
+    const owner = armedOwner(907);
+    speak(owner, 3);
+    send(VOICE_CHANNELS.wakeStop, owner);
+    // Rearmado com um único frame: não há clipe suficiente, entrega na hora sem Clef.
+    send(VOICE_CHANNELS.wakeAudio, owner, pcmFrame(1280));
+    wakeEngineDeps.lastOnDetected?.();
+    expect(delivered(owner)).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [0.9, "ambient"],
+    [0.2, undefined],
+  ])("passive-wake STT with noul %s is discarded as %s", async (noul, discarded) => {
+    optIn(true);
+    fetchMock.mockImplementation(reply(noul));
+    vi.mocked(transcribe).mockResolvedValueOnce({ ok: true, text: "Jarvis, abre o terminal", provider: "openai",
+      attempts: [] } as unknown as Awaited<ReturnType<typeof transcribe>>);
+    const owner = armedOwner(906);
+    const result = await invoke(VOICE_CHANNELS.transcribe, owner, { audioBase64: syntheticWav(1).toString("base64"),
+      mime: "audio/wav", purpose: "passive-wake", passiveWakeWord: "Jarvis" }) as { ok: boolean; discarded?: string };
+    expect(result.ok).toBe(true);
+    expect(result.discarded).toBe(discarded);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

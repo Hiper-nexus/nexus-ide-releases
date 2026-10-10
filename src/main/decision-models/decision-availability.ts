@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { decisionSettingsSchema, type DecisionSettings } from '../../shared/decision-models';
+import { decisionSettingsSchema, hasAudioRecipientConsent, type DecisionSettings } from '../../shared/decision-models';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
 import { getOrchSettings } from '../persistence/settings-store';
 import { currentDecisionAccountId, decisionAccountBookFile, readDecisionAccountBook, resolveAccountSettings } from './decision-accounts';
@@ -40,7 +40,8 @@ export function hasDecisionCredential(surface?: JevDecisionSurface): boolean {
 export function getClefConnection(settings = getDecisionSettings()): ClefConnection | undefined {
   const accountId = resolveCloudflareAccountId(settings.cloudflareAccountId);
   const token = resolveClefApiToken();
-  return accountId && token ? { accountId, token, model: settings.clefModel } : undefined;
+  return accountId && token
+    ? { accountId, token, model: settings.clefModel, audioConsent: hasAudioRecipientConsent(settings, 'clef') } : undefined;
 }
 
 /** No tokens or fingerprints: this key is process-local cache/in-flight authority. */

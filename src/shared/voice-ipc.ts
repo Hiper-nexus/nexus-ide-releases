@@ -262,9 +262,10 @@ export type TranscribeResult =
       /**
        * Transcrição válida porém descartável: 'echo' = é o próprio TTS vazando
        * do alto-falante para o mic (echo-suppress). O renderer deve ignorar em
-       * silêncio, como faz com as alucinações do Whisper.
+       * silêncio, como faz com as alucinações do Whisper. 'ambient' = o
+       * Clef-omni ouviu TV/ambiente no clipe da ativação passiva (F-1161).
        */
-      discarded?: 'echo';
+      discarded?: 'echo' | 'ambient';
       /** ITEM 7: the wake-path budget forced an early jump to local (stt.stall). */
       stalled?: boolean;
       attempts: SttAttempt[];
