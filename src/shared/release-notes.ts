@@ -10250,7 +10250,7 @@ export const RELEASE_076212: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.226',
+  version: '0.76.227',
   date: '2026-10-10',
   codename: 'Missões com acompanhamento contínuo',
   summary: 'Melhorias no início e na retomada das missões, conclusão com entrega verificada e capturas vinculadas ao terminal escolhido. Inclui decisões por conta e Quadro com participantes vivos.',
