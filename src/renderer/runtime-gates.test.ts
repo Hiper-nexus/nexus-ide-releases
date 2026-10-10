@@ -5,7 +5,7 @@ vi.mock('./state/layout-store', () => ({ useLayoutStore: { getState: () => ({ sp
 vi.mock('./terminal/terminal-host', () => ({ waitForSession: native.session }));
 vi.mock('./lib/split-tree', () => ({ listPanes: () => [] }));
 vi.mock('./state/product-navigation-store', () => ({ useProductNavigationStore: { getState: () => ({ openTerminal: native.open }) } }));
-afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); vi.clearAllMocks(); });
 it.each(['nexus-app://bundle/index.html', 'https://foreign.invalid/index.html?nexusRuntimeGates=1', 'nexus-app://bundle/other.html?nexusRuntimeGates=1'])('remains dormant on %s, including a later marker edit', async href => {
   vi.stubGlobal('location', { href }); const add = vi.fn(); vi.stubGlobal('window', { addEventListener: add });
   const { installRuntimeGateRenderer, isRuntimeRendererUrl } = await import('./runtime-gates');
@@ -32,13 +32,13 @@ it('observes the same actual capture objects and graph states, restores wrappers
   expect(Object.keys(ended).sort()).toEqual(['contexts', 'frames', 'tracks']); await send('media-cleanup');
   expect(navigator.mediaDevices.getUserMedia).toBe(media); expect(win.AudioContext).toBe(OriginalContext); expect(win.AudioWorkletNode).toBe(OriginalWorklet);
 });
-it('F-1113: normal operator pane creation returns the ordinary pane and actual session identity', async () => {
+it.each(['catalog-model', undefined])('F-1113/F-1119: normal operator pane preserves explicit or omitted model (%s)', async model => {
   vi.stubGlobal('location', { href: 'nexus-app://bundle/index.html?nexusRuntimeGates=1' });
   const win = new EventTarget(); vi.stubGlobal('window', win);
   vi.stubGlobal('requestAnimationFrame', (callback: () => void) => { callback(); return 1; });
   const { installRuntimeGateRenderer } = await import('./runtime-gates'); installRuntimeGateRenderer();
   const replied = new Promise<any>(resolve => win.addEventListener(RUNTIME_DOM_REPLY, event => resolve((event as CustomEvent).detail), { once: true }));
-  win.dispatchEvent(new CustomEvent(RUNTIME_DOM_REQUEST, { detail: { nonce: '11111111-1111-4111-8111-111111111111', request: 0, operation: 'operator-pane', model: 'catalog-model' } }));
+  win.dispatchEvent(new CustomEvent(RUNTIME_DOM_REQUEST, { detail: { nonce: '11111111-1111-4111-8111-111111111111', request: 0, operation: 'operator-pane', ...(model === undefined ? {} : { model }) } }));
   expect(await replied).toMatchObject({ ok: true, result: { paneId: 'ordinary-pane', sessionId: 'ordinary-session' } });
-  expect(native.spawn).toHaveBeenCalledWith('claude', 'catalog-model');
+  expect(native.spawn).toHaveBeenCalledWith('claude', model ?? '');
 });

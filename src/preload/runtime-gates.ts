@@ -131,9 +131,9 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         await ui('close', { paneId: shell.paneId });
         await request('terminate', { sessionId: secondShell.sessionId }); await ui('close', { paneId: secondShell.paneId });
         const chief = observed.agents.find((a: any) => a.role === 'orchestrator');
-        if (typeof chief?.model !== 'string' || !chief.model) throw new Error('normal catalog-resolved native model unavailable');
+        if (!chief || chief.model != null && (typeof chief.model !== 'string' || !chief.model.trim())) throw new Error('normal catalog-resolved native model invalid');
         await shutdownMission(standardId);
-        const operator = await ui('operator-pane', { model: chief.model });
+        const operator = await ui('operator-pane', chief.model == null ? {} : { model: chief.model });
         const adopted = await api.orch.createPaneMission({ paneId: operator.paneId, title: `Runtime native ${marker}`, ownGroup: true }); check();
         if (!adopted.ok || !adopted.mission || adopted.mission.squadId || adopted.mission.intentContract?.workspaceBinding?.adoptedPaneId !== operator.paneId) throw new Error('normal native mission adoption refused');
         const continuityMissionId = adopted.mission.id;
