@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.76.235 — O T3 Code nas telas
+
+O que veio do T3 Code (pingdotgg/t3code, MIT) e ainda não tinha tela agora aparece para o operador.
+
+- **Texto dos agentes formatado.** Resultado e plano da missão, orientação enviada, linha do tempo, perguntas e notas de memória mostram markdown (títulos, listas, citações, tabelas, código com realce de sintaxe) e diagramas Mermaid. HTML do agente vira texto literal; links só http/https, abertos no navegador. O parser é linear mesmo com entrada hostil (F-1169, F-1176).
+- **Editor rich-text na missão.** Orientação, resposta livre e objetivo da missão e do Expresso usam o editor Tiptap com negrito, itálico, tachado e código. Enter envia a orientação, a guarda de IME continua, a citação põe o cursor no fim, colar só traz texto puro e o limite de caracteres é o mesmo do Main. O título da missão sai sem marcadores (F-1170).
+- **Histórico das CLIs.** "Importar histórico das CLIs" no menu Cmds e na paleta grava no histórico do projeto os comandos de shell dos transcripts dos agentes — só deste projeto, com segredos redigidos, sem duplicar, mais recentes primeiro. A seção Histórico busca no SQLite com Copiar e Inserir (F-1171).
+- **Recursos da máquina.** Card em Uso e cotas com memória usada, pico, carga de CPU e memória dos panes e do Nexus, pela mesma leitura do gate de admissão de panes; aviso no rodapé do rail só sob pressão (F-1172).
+- **Pontos de restauração dos writers.** Lista de checkpoints por entrega na Atividade (missão em curso) e em O que mudou (com resultado); restaurar mostra a prévia, guarda o estado atual, recusa writer ocupado e árvore que mudou desde a prévia (F-1173).
+- **Calibração e Luna.** A tabela da calibração diz por que um modelo não respondeu, e "Testar a Luna" aparece no Automático e em Juntos com o motivo real da recusa da OpenAI.
+- **WSL.** PTY em distro e `host.wsl.*` para o aparelho: só no Windows fora do sandbox, binário Linux, ambiente da sessão por WSLENV; a lista de distros tem cache (F-1168). A prova viva em Windows segue com o operador.
+- **Limpeza.** O Launcher órfão saiu (a tela de início já tinha tudo; a lista de atalhos 1–6 para leitor de tela foi para ela) e a varredura síncrona do histórico foi trocada pelo serviço assíncrono. O ledger de proveniência T3 está em dia e um teste impede que envelheça (F-1174).
+
 ## 0.76.234 — Motor de decisão em toda missão
 
 - **Orçamento de decisão por missão.** Cada missão tem um teto para as consultas de Jev, Clef e Luna (padrão US$ 0,50). No Automático, acima de 80% só o modelo mais barato responde e, em 100%, param as consultas que o Automático escolhe; a missão segue pelo caminho normal. As checagens fixas no Jev e os modos com modelo fixo continuam e só entram na conta (F-1164).

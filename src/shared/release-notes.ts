@@ -10291,7 +10291,7 @@ export const RELEASE_076233: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076234: AppRelease = {
   version: '0.76.234',
   date: '2026-10-11',
   codename: 'Motor de decisão em toda missão',
@@ -10306,5 +10306,23 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Custo que sobrevive ao reinício', detail: 'O valor cobrado de cada consulta fica no diário, então reiniciar o app não devolve orçamento à missão.' },
     { title: 'Estatísticas sem a calibração', detail: 'O gasto da calibração aparece à parte e não infla a contagem de decisões.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.235',
+  date: '2026-10-11',
+  codename: 'O T3 Code nas telas',
+  summary: 'O que veio do T3 Code e ainda não aparecia agora está na tela: texto dos agentes formatado com diagramas, editor rich-text na missão, histórico das CLIs, recursos da máquina e pontos de restauração dos writers.',
+  highlights: [
+    { title: 'Texto dos agentes formatado', detail: 'Resultado, plano, orientação, linha do tempo, perguntas e notas de memória mostram markdown com títulos, listas, tabelas, código com realce de sintaxe e diagramas Mermaid. HTML do agente aparece como texto e links abrem só http/https no navegador.' },
+    { title: 'Editor rich-text na missão', detail: 'Orientação, resposta livre e objetivo da missão e do Expresso usam o editor com negrito, itálico, tachado e código (⌘B, ⌘I, ⌘E). Enter envia na orientação, a citação continua, e o título da missão sai sem marcadores.' },
+    { title: 'Histórico das CLIs', detail: 'No menu Cmds do pane e na paleta, "Importar histórico das CLIs" traz os comandos de shell dos agentes deste projeto, sem segredos e sem duplicar. A seção Histórico busca no que foi importado e gravado, com Copiar e Inserir.' },
+    { title: 'Recursos da máquina', detail: 'Uso e cotas mostra memória, pico, carga de CPU e o quanto os panes e o Nexus ocupam, com a mesma leitura que decide estacionar panes. O rodapé da barra lateral avisa só quando a memória aperta.' },
+    { title: 'Pontos de restauração dos writers', detail: 'A missão lista os checkpoints de cada entrega, na Atividade durante a missão e em O que mudou depois. Restaurar mostra antes o que será sobrescrito, guarda o estado atual e recusa se a árvore mudou desde a prévia.' },
+  ],
+  fixes: [
+    { title: 'Calibração explica a falha', detail: 'Modelo que não respondeu mostra o motivo. Testar a Luna aparece também no Automático e diz se a OpenAI recusou a chave, se a conta não tem acesso à Decisions API (beta) ou se faltou crédito.' },
+    { title: 'Runtime WSL mais seguro', detail: 'O terminal em distro WSL só vale no Windows fora do sandbox, roda o binário Linux e repassa o ambiente da sessão sem expor valores na linha de comando.' },
   ],
 };
