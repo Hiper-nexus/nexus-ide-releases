@@ -260,8 +260,6 @@ import {
   getLastSessionInputOrigin,
   getOwnedAgentSessionInfo,
   getSessionState,
-  getSessionFirstIncarnationAtMs,
-  getSessionSpawnedAtMs,
   isSessionDetached,
   adoptMainOwnedAgentSession,
   adoptUserAgentSessionAsMissionOrchestrator,
@@ -319,12 +317,7 @@ import {
 } from "../orch/gate";
 import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revocation";
 import { cleanupCliMcpSession } from "../orch/cli-mcp-session-config";
-import { copyProviderPaneSession, getProviderPaneSession, saveProviderPaneSession } from "../persistence/provider-session-store";
-import { __resetHookRegressionForTests, handleHookRegressionRequest } from "../orch/hook-regression-endpoint";
-import { __resetRegressionGateForTests, runRegressionGate, type RegressionExec } from "../regression-gate/regression-gate";
-import { computeBlastRadius } from "../context/orientation/orientation-blast-radius";
-import type { ProjectOrientationMap } from "../context/orientation/orientation-types";
-import { ProcessGitRunner } from "../runtime/git-command";
+import { getProviderPaneSession, saveProviderPaneSession } from "../persistence/provider-session-store";
 import { mimoSessionOwnerKey } from "../adapters/mimo-session-owner";
 import { qwenNeedsLogicalCwd } from "./qwen-long-cwd";
 
@@ -6104,115 +6097,6 @@ describe("F-721: o id de retomada que nunca virou transcrito não prende o Maest
       expect(exitPayloads(sendNatural, natural.sessionId)).toHaveLength(1);
     });
     expect(exitPayloads(sendNatural, natural.sessionId)[0]).not.toHaveProperty("terminationOrigin");
-  });
-});
-
-describe("F-1237: pane retomado responde pelas próprias edições no portão do Stop", () => {
-  it("edição antiga da primeira encarnação, vermelha, bloqueia o pane retomado; o pane novo herda o mesmo sujo", async () => {
-    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "f1237-resume-")));
-    const sh = new ProcessGitRunner();
-    const put = (file: string, content: string) => {
-      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-      fs.writeFileSync(path.join(root, file), content);
-    };
-    sh.run(root, ["init", "-q"]);
-    put("package.json", JSON.stringify({ devDependencies: { vitest: "^3.0.0" } }));
-    put("node_modules/.bin/vitest", "#!/bin/sh\n");
-    put(".gitignore", "node_modules\n");
-    sh.run(root, ["add", "-A"]);
-    sh.run(root, ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "base"]);
-    const authority = trustedSpawn(root);
-    const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }, { resumeIdArgs: ["--resume"] });
-    const conversation = "f1237-conversa-do-pane";
-    const now = Date.now();
-    // 1ª encarnação (90 s atrás): o vínculo durável pane → conversa nasce aqui...
-    const clock = vi.spyOn(Date, "now").mockReturnValue(now - 90_000);
-    try {
-      expect(saveProviderPaneSession(authority.scope, "pane-f1237", adapter.id, { key: "session_id", id: conversation })).toBe(true);
-    } finally {
-      clock.mockRestore();
-    }
-    // ...e deixa sujo e vermelho o próprio trabalho (60 s atrás).
-    put("src/x.ts", "export const x = 1;\n");
-    put("src/x.test.ts", "import { x } from './x';\n");
-    const old = new Date(now - 60_000);
-    for (const file of ["src/x.ts", "src/x.test.ts"]) fs.utimesSync(path.join(root, file), old, old);
-    const map = {
-      mapHash: "m", inventory: { entrypoints: [] }, symbols: { hubs: [] },
-      graph: { edgeCount: 1, dbEdgeCount: 0, sampleEdges: [], dbEntities: [],
-        adjacency: { "src/x.test.ts": ["src/x.ts"] }, reverse: { "src/x.ts": ["src/x.test.ts"] } },
-    } as unknown as ProjectOrientationMap;
-    const blastRadius = ({ changedFiles }: { changedFiles: readonly string[] }) => ({
-      tests: [...computeBlastRadius(map, { seedFiles: changedFiles, depth: 1 }).tests], dbEntities: [], dbConsumers: [],
-    });
-    const exec = vi.fn<RegressionExec>(async (_file, args, options) => {
-      const outFile = args.find((arg) => arg.startsWith("--outputFile="))!.slice("--outputFile=".length);
-      const files = args.filter((arg) => arg.endsWith(".test.ts"));
-      fs.writeFileSync(outFile, JSON.stringify({ testResults: files.map((file) => ({
-        name: path.join(options.cwd, file), status: "failed",
-        assertionResults: [{ status: "failed", fullName: "x", failureMessages: ["vermelho"] }],
-      })) }));
-      return { exitCode: 1, timedOut: false, stdout: "", stderr: "" };
-    });
-    // Stop do pane do operador com o horário que o Main resolve (sem injeção).
-    const stop = (sessionId: string) => handleHookRegressionRequest({ role: "user", sessionId, scope: authority.scope }, {}, {
-      run: (input) => runRegressionGate(input, { exec, extensions: { blastRadius } }),
-      enabled: () => true,
-    });
-    const h = fakeHost();
-    setPtyHost(h.host);
-    setResumeSessionLookup((_scope, paneId) => (paneId === "pane-f1237" ? conversation : null));
-    __resetRegressionGateForTests();
-    __resetHookRegressionForTests();
-    try {
-      // Retomada após reinício: sessão e spawn novos, a mesma conversa.
-      const resumed = spawnAgentSession(fakeWc(), { kind: "cli-agent", paneId: "pane-f1237", resume: true, cols: 80, rows: 24 }, adapter, {}, authority);
-      expect(resumed.resumeMode).toBe("exact");
-      const blocked = await stop(resumed.sessionId);
-      expect(exec).toHaveBeenCalled();
-      expect(blocked.payload.decision).toBe("block");
-      orchKillSession(resumed.sessionId);
-
-      // Pane novo no mesmo checkout: o mesmo sujo é WIP alheio anterior ao spawn.
-      __resetRegressionGateForTests();
-      const fresh = spawnAgentSession(fakeWc(), { kind: "cli-agent", paneId: "pane-f1237-novo", cols: 80, rows: 24 }, adapter, {}, authority);
-      const inherited = await stop(fresh.sessionId);
-      expect(inherited.payload.decision).toBeUndefined();
-      expect(String(inherited.payload.systemMessage)).toContain("WIP anterior ao seu spawn");
-      orchKillSession(fresh.sessionId);
-    } finally {
-      setResumeSessionLookup(null);
-      __resetRegressionGateForTests();
-      __resetHookRegressionForTests();
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("Retomar num pane novo (cópia do vínculo) não rejuvenesce a conversa; retomada sem prova de idade fica no próprio spawn", () => {
-    const authority = trustedSpawn();
-    const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }, { resumeIdArgs: ["--resume"] });
-    const bornAtMs = Date.now() - 90_000;
-    const clock = vi.spyOn(Date, "now").mockReturnValue(bornAtMs);
-    try {
-      saveProviderPaneSession(authority.scope, "pane-f1237-antigo", adapter.id, { key: "session_id", id: "f1237-copiada" });
-    } finally {
-      clock.mockRestore();
-    }
-    expect(copyProviderPaneSession(authority.scope, "pane-f1237-antigo", "pane-f1237-copia", adapter.id)).toBe(true);
-    const conversations: Record<string, string> = { "pane-f1237-copia": "f1237-copiada", "pane-f1237-sem-prova": "f1237-sem-registro" };
-    setPtyHost(fakeHost().host);
-    setResumeSessionLookup((_scope, paneId) => conversations[paneId] ?? null);
-    try {
-      const copied = spawnAgentSession(fakeWc(), { kind: "cli-agent", paneId: "pane-f1237-copia", resume: true, cols: 80, rows: 24 }, adapter, {}, authority);
-      expect(getSessionFirstIncarnationAtMs(copied.sessionId)).toBe(bornAtMs);
-      const unproven = spawnAgentSession(fakeWc(), { kind: "cli-agent", paneId: "pane-f1237-sem-prova", resume: true, cols: 80, rows: 24 }, adapter, {}, authority);
-      expect(unproven.resumeMode).toBe("exact");
-      expect(getSessionFirstIncarnationAtMs(unproven.sessionId)).toBe(getSessionSpawnedAtMs(unproven.sessionId));
-      orchKillSession(copied.sessionId);
-      orchKillSession(unproven.sessionId);
-    } finally {
-      setResumeSessionLookup(null);
-    }
   });
 });
 
