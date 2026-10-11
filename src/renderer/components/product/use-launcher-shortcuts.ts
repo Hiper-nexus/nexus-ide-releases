@@ -14,7 +14,10 @@ function elementIsEditable(node: EventTarget | null): boolean {
     node.tagName === 'INPUT' ||
     node.tagName === 'TEXTAREA' ||
     node.tagName === 'SELECT' ||
-    node.isContentEditable === true
+    node.isContentEditable === true ||
+    // F-1170: o objetivo é um editor contenteditable; o atributo vale também
+    // onde isContentEditable não é calculado (jsdom), como em keybindings.ts.
+    node.closest('[contenteditable=""], [contenteditable="true"]') !== null
   );
 }
 

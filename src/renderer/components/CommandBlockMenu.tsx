@@ -6,6 +6,15 @@ import {
   type CommandSuggestion,
   type CommandSuggestionScope,
 } from '../../shared/command-refinery';
+import {
+  commandHistoryEntrySchema,
+  type CommandHistoryEntry,
+} from '../../shared/cli-history';
+import { CLI_HISTORY_IMPORT_ACTION } from '../lib/action-names';
+import {
+  describeCliHistoryImport,
+  importCliHistoryForPane,
+} from '../lib/cli-history-import';
 import { useToastStore } from '../state/toast-store';
 import { getPaneSessionId } from '../terminal/terminal-host';
 import { PixelIcon } from './PixelIcon';
@@ -35,6 +44,21 @@ function parseSuggestions(raw: unknown[]): CommandSuggestion[] {
   });
 }
 
+const HISTORY_PAGE = 20;
+
+type ImportState =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'running' }
+  | { readonly kind: 'done'; readonly summary: string }
+  | { readonly kind: 'error'; readonly message: string };
+
+function parseHistory(raw: unknown[]): CommandHistoryEntry[] {
+  return raw.flatMap((item) => {
+    const parsed = commandHistoryEntrySchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
 function statusLabel(status: CommandBlock['status']): string {
   if (status === 'success') return 'ok';
   if (status === 'failed') return 'falhou';
@@ -54,8 +78,13 @@ export function CommandBlockMenu({
   const [busy, setBusy] = useState(false);
   const [blockError, setBlockError] = useState<string | null>(null);
   const [suggestionError, setSuggestionError] = useState<string | null>(null);
+  const [history, setHistory] = useState<CommandHistoryEntry[]>([]);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [importState, setImportState] = useState<ImportState>({ kind: 'idle' });
   const rootRef = useRef<HTMLDivElement>(null);
   const suggestionRequestRef = useRef(0);
+  const historyRequestRef = useRef(0);
   const pushToast = useToastStore((state) => state.push);
 
   const refreshBlocks = useCallback(async () => {
@@ -105,12 +134,50 @@ export function CommandBlockMenu({
     [paneId],
   );
 
+  /** F-1171: histórico persistido (SQLite) — importado + gravado. */
+  const refreshHistory = useCallback(
+    async (query: string, offset = 0) => {
+      const requestId = historyRequestRef.current + 1;
+      historyRequestRef.current = requestId;
+      const sessionId = getPaneSessionId(paneId);
+      if (!sessionId || !window.nexus?.terminalBlock?.searchHistory) {
+        setHistory([]);
+        setHistoryHasMore(false);
+        return;
+      }
+      try {
+        const result = await window.nexus.terminalBlock.searchHistory({
+          sessionId,
+          paneId,
+          query,
+          limit: HISTORY_PAGE,
+          offset,
+        });
+        if (requestId !== historyRequestRef.current) return;
+        const entries = parseHistory(result.entries ?? []);
+        setHistoryError(result.error ?? null);
+        setHistory((current) => (offset === 0 ? entries : [...current, ...entries]));
+        setHistoryHasMore(result.hasMore === true);
+      } catch (cause) {
+        if (requestId !== historyRequestRef.current) return;
+        setHistoryError(
+          cause instanceof Error ? cause.message : 'Histórico indisponível',
+        );
+      }
+    },
+    [paneId],
+  );
+
   const refreshAll = useCallback(async () => {
     setBusy(true);
     setBlockError(null);
     setSuggestionError(null);
     try {
-      await Promise.all([refreshBlocks(), refreshSuggestions(prefix)]);
+      await Promise.all([
+        refreshBlocks(),
+        refreshSuggestions(prefix),
+        refreshHistory(prefix),
+      ]);
     } catch (cause) {
       setBlockError(
         cause instanceof Error ? cause.message : 'Falha ao atualizar',
@@ -118,14 +185,19 @@ export function CommandBlockMenu({
     } finally {
       setBusy(false);
     }
-  }, [prefix, refreshBlocks, refreshSuggestions]);
+  }, [prefix, refreshBlocks, refreshHistory, refreshSuggestions]);
 
   useEffect(() => {
     if (!open) return;
     setBusy(true);
     setBlockError(null);
     setSuggestionError(null);
-    void Promise.all([refreshBlocks(), refreshSuggestions('')])
+    setImportState({ kind: 'idle' });
+    void Promise.all([
+      refreshBlocks(),
+      refreshSuggestions(''),
+      refreshHistory(''),
+    ])
       .catch((cause: unknown) => {
         setBlockError(
           cause instanceof Error ? cause.message : 'Falha ao atualizar',
@@ -146,7 +218,45 @@ export function CommandBlockMenu({
       document.removeEventListener('mousedown', onDocumentPointer);
       document.removeEventListener('keydown', onDocumentKey);
     };
-  }, [open, refreshBlocks, refreshSuggestions]);
+  }, [open, refreshBlocks, refreshHistory, refreshSuggestions]);
+
+  async function importHistory() {
+    setImportState({ kind: 'running' });
+    const result = await importCliHistoryForPane(paneId);
+    if (!result.ok || !result.counts) {
+      setImportState({
+        kind: 'error',
+        message: result.error ?? 'Não foi possível importar o histórico',
+      });
+      return;
+    }
+    setImportState({
+      kind: 'done',
+      summary: describeCliHistoryImport(result.counts),
+    });
+    await refreshHistory(prefix);
+  }
+
+  async function copyHistoryCommand(entry: CommandHistoryEntry) {
+    try {
+      await navigator.clipboard.writeText(entry.command);
+      pushToast('success', 'Copiado', entry.command.slice(0, 80));
+    } catch {
+      pushToast('warn', 'Comando', 'Não foi possível copiar');
+    }
+  }
+
+  /** Cola no prompt do pane sem Enter: o operador revisa antes de rodar. */
+  function insertHistoryCommand(entry: CommandHistoryEntry) {
+    const sessionId = getPaneSessionId(paneId);
+    if (!sessionId || !window.nexus?.pty?.write) {
+      pushToast('warn', 'Comando', 'Sessão indisponível');
+      return;
+    }
+    window.nexus.pty.write(sessionId, entry.command);
+    pushToast('success', 'Inserido no terminal', entry.command.slice(0, 80));
+    setOpen(false);
+  }
 
   async function runBlockAction(
     action: 'copy_command' | 'copy_path' | 'rerun',
@@ -311,6 +421,7 @@ export function CommandBlockMenu({
                 const nextPrefix = event.currentTarget.value;
                 setPrefix(nextPrefix);
                 void refreshSuggestions(nextPrefix);
+                void refreshHistory(nextPrefix);
               }}
             />
           </label>
@@ -405,6 +516,93 @@ export function CommandBlockMenu({
                 </li>
               ))}
             </ul>
+          </section>
+
+          <section className="cmd-history" aria-label="Histórico persistido">
+            <div className="cmd-history__head">
+              <div className="cmd-blocks__section-title">Histórico</div>
+              <button
+                type="button"
+                className="cmd-blocks__refresh cmd-history__import"
+                aria-label={CLI_HISTORY_IMPORT_ACTION.accessibleName}
+                data-tip={CLI_HISTORY_IMPORT_ACTION.description}
+                disabled={importState.kind === 'running'}
+                onClick={() => void importHistory()}
+              >
+                {importState.kind === 'running'
+                  ? 'Importando…'
+                  : CLI_HISTORY_IMPORT_ACTION.label}
+              </button>
+            </div>
+            {importState.kind !== 'idle' && (
+              <p
+                className={`cmd-history__status cmd-history__status--${importState.kind}`}
+                data-testid="cli-history-import-status"
+                role={importState.kind === 'error' ? 'alert' : 'status'}
+              >
+                {importState.kind === 'running' && 'Importando…'}
+                {importState.kind === 'done' && importState.summary}
+                {importState.kind === 'error' && importState.message}
+              </p>
+            )}
+            {historyError && <p className="cmd-blocks__error">{historyError}</p>}
+            {!historyError && history.length === 0 && (
+              <p className="cmd-blocks__empty">
+                {prefix.trim()
+                  ? 'Nada no histórico com esse filtro.'
+                  : 'Sem comandos gravados ainda. Importe o histórico das CLIs deste projeto.'}
+              </p>
+            )}
+            <ul className="cmd-blocks__list">
+              {history.map((entry) => {
+                const multiline = /[\r\n]/.test(entry.command);
+                return (
+                  <li key={entry.id} className="cmd-blocks__item">
+                    <div className="cmd-blocks__row">
+                      <span
+                        className={`cmd-history__origin cmd-history__origin--${entry.origin}`}
+                      >
+                        {entry.origin === 'imported' ? 'importado' : 'gravado'}
+                      </span>
+                      <code className="cmd-blocks__cmd" title={entry.command}>
+                        {entry.command || '(vazio)'}
+                      </code>
+                    </div>
+                    <div className="cmd-blocks__actions" role="group">
+                      <button
+                        type="button"
+                        aria-label={`Copiar comando: ${entry.command}`}
+                        onClick={() => void copyHistoryCommand(entry)}
+                      >
+                        Copiar
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Inserir no terminal: ${entry.command}`}
+                        data-tip={
+                          multiline
+                            ? 'Comando de várias linhas: use Copiar'
+                            : 'Cola no prompt sem Enter'
+                        }
+                        disabled={multiline || !entry.command.trim()}
+                        onClick={() => insertHistoryCommand(entry)}
+                      >
+                        Inserir
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            {historyHasMore && (
+              <button
+                type="button"
+                className="cmd-blocks__refresh cmd-history__more"
+                onClick={() => void refreshHistory(prefix, history.length)}
+              >
+                Mais antigos
+              </button>
+            )}
           </section>
         </div>
       )}

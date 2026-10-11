@@ -4,7 +4,15 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const api = vi.hoisted(() => ({ initialize: vi.fn(), render: vi.fn() }));
 vi.mock('mermaid', () => ({ default: api }));
-import { MarkdownWithMermaid } from './MarkdownWithMermaid';
+const highlighted = vi.hoisted(() => [] as Array<{ code: string; lang: string }>);
+vi.mock('./MarkdownCodeHighlight', () => ({
+  MarkdownCodeHighlight: ({ code, lang }: { code: string; lang: string }) => {
+    highlighted.push({ code, lang });
+    return <div data-testid="highlighted" data-lang={lang}>{code}</div>;
+  },
+}));
+import { MARKDOWN_MAX_DIAGRAMS, MarkdownWithMermaid } from './MarkdownWithMermaid';
+import { MARKDOWN_MAX_CHARS } from '../../shared/markdown-blocks';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const roots: Root[] = [];
@@ -103,5 +111,42 @@ describe('MarkdownWithMermaid real async consumer / real sanitizer', () => {
     expect(rendered.querySelector('script,foreignObject,img,image,a')).toBeNull();
     expect(rendered.outerHTML).not.toMatch(/evil\.test|onload|onclick|onerror/);
     expect(rendered.outerHTML).toContain('url(#local)');
+  });
+  it('F-1169: prose around the diagram is formatted markdown, not raw <pre>', async () => {
+    const source = '## Plano\n\n- **um**\n- dois\n\n' + SOURCE + '\n\nFim com `código`.';
+    const { host } = render(<MarkdownWithMermaid source={source} className="extra" id="md" />); await settle();
+    const root = host.querySelector('#md')!;
+    expect(root.className).toBe('markdown-with-mermaid extra');
+    expect(root.querySelector('h2')?.textContent).toBe('Plano');
+    expect(root.querySelector('ul li strong')?.textContent).toBe('um');
+    expect(root.querySelector('figure.markdown-with-mermaid__diagram')).not.toBeNull();
+    expect(output(host)).not.toBeNull();
+    expect(root.querySelector('p code')?.textContent).toBe('código');
+    expect(root.querySelector('pre.markdown-with-mermaid__text')).toBeNull();
+  });
+  it('F-1169: raw HTML in prose stays literal text', async () => {
+    const { host } = render(<MarkdownWithMermaid source={'<img src=x onerror=alert(1)><script>alert(2)</script>'} />); await settle();
+    expect(host.querySelector('img,script')).toBeNull();
+    expect(host.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+  it('F-1169: caps diagrams and oversized text', async () => {
+    const many = Array.from({ length: MARKDOWN_MAX_DIAGRAMS + 2 }, (_, i) => `\`\`\`mermaid\ngraph TD; N${i}-->M\n\`\`\``).join('\n\n');
+    const { host } = render(<MarkdownWithMermaid source={many} />); await settle();
+    expect(host.querySelectorAll('figure')).toHaveLength(MARKDOWN_MAX_DIAGRAMS);
+    expect(host.querySelectorAll('pre > code.language-mermaid')).toHaveLength(2);
+    expect(api.render).toHaveBeenCalledTimes(MARKDOWN_MAX_DIAGRAMS);
+    const big = render(<MarkdownWithMermaid source={'a'.repeat(MARKDOWN_MAX_CHARS + 5)} />);
+    expect(big.host.querySelector('[role="note"]')?.textContent).toMatch(/Texto longo/);
+    expect(big.host.querySelector('p')?.textContent).toHaveLength(MARKDOWN_MAX_CHARS);
+  });
+  it('F-1176: code highlight sits beside diagrams without touching Mermaid blocks', async () => {
+    highlighted.length = 0;
+    const source = '```ts\nconst a = 1;\n```\n\n' + SOURCE;
+    const { host } = render(<MarkdownWithMermaid source={source} />); await settle();
+    expect(host.querySelector('[data-testid="highlighted"]')?.getAttribute('data-lang')).toBe('typescript');
+    expect(highlighted.every((call) => call.lang !== 'mermaid' && !call.code.includes('graph TD'))).toBe(true);
+    expect(host.querySelector('figure.markdown-with-mermaid__diagram')).not.toBeNull();
+    expect(output(host)).not.toBeNull();
+    expect(api.render).toHaveBeenCalledOnce();
   });
 });

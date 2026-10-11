@@ -753,7 +753,8 @@ describe('MissionBoard canonical controller', () => {
     expect(host.textContent).not.toContain('Pode fechar esta tela');
     expect(host.textContent).not.toContain('A equipe está');
     // A direção segue habilitada — é o caminho para acordar a missão.
-    expect(host.querySelector('textarea')).not.toBeNull();
+    // F-1170: o rascunho da direção é o editor rich-text, editável.
+    expect(host.querySelector('.mission-board__direction-composer [role="textbox"][contenteditable="true"]')).not.toBeNull();
   });
 
   it('running de verdade mantém a linha de progresso e o aviso de fundo', async () => {

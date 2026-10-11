@@ -43,6 +43,8 @@ import {
   type KeybindingOverrides,
 } from '../lib/keybindings';
 import { reportLicenseDenial } from '../state/access-guard';
+import { CLI_HISTORY_IMPORT_ACTION } from '../lib/action-names';
+import { importCliHistoryWithToast } from '../lib/cli-history-import';
 import { formatShortcut } from '../lib/platform';
 import { SETTINGS_GROUPS } from './settings/settings-nav';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
@@ -504,6 +506,17 @@ export function CommandPalette() {
       () => useProductNavigationStore.getState().openMemory(),
       '',
       'memory memória decisões contexto',
+    );
+    // F-1171: transcripts das CLIs do projeto do pane focado → histórico.
+    tool(
+      CLI_HISTORY_IMPORT_ACTION.id,
+      CLI_HISTORY_IMPORT_ACTION.label,
+      'terminal',
+      () => {
+        void importCliHistoryWithToast(useLayoutStore.getState().focusedPaneId);
+      },
+      '',
+      'histórico comandos importar cli transcript shell claude codex',
     );
     tool(
       'mcps',

@@ -3,18 +3,28 @@
  * Copyright (c) 2026 T3 Tools Inc. — MIT License.
  * See third_party/licenses/t3code-MIT.txt.
  * Upstream reference: apps/web/src/components/chat/MermaidDiagram.tsx.
- * Nexus changes: Lazy render queue, unique ids, protected Mermaid configuration and SVG DOMPurify/CSS/link policy adapted. Nexus uses sanitized DOM nodes in ShadowRoot, post-commit readiness, stale/unmount cleanup and literal React plaintext fallback; no innerHTML sink or product caller.
+ * Nexus changes: Lazy render queue, unique ids, protected Mermaid configuration and SVG DOMPurify/CSS/link policy adapted. Nexus uses sanitized DOM nodes in ShadowRoot, post-commit readiness, stale/unmount cleanup and literal React plaintext fallback; no innerHTML sink. Prose renders through the Nexus React-only MarkdownView, with size and diagram caps, on mission surfaces.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { splitMarkdownMermaid } from '../../shared/mermaid-fences';
+import { limitMarkdownSource } from '../../shared/markdown-blocks';
+import { MarkdownView, type MarkdownLinkMode } from './MarkdownView';
 
 export interface MarkdownWithMermaidProps {
   readonly source: string;
   readonly theme?: 'light' | 'dark';
   /** Called after a fresh sanitized source/theme result is committed. */
   readonly onMermaidReady?: (el: HTMLElement, source: string) => void;
+  /** Classe extra do contêiner (a superfície mantém a sua). */
+  readonly className?: string;
+  readonly id?: string;
+  /** Ver `MarkdownView`: `text` onde a superfície já é clicável. */
+  readonly links?: MarkdownLinkMode;
 }
+
+/** Cada diagrama é um render serial do Mermaid; além disso, fica o fonte. */
+export const MARKDOWN_MAX_DIAGRAMS = 8;
 type MermaidApi = {
   initialize: (config: Record<string, unknown>) => void;
   render: (id: string, code: string) => Promise<{ svg: string }>;
@@ -130,14 +140,30 @@ function MermaidBlock({ source, index, theme, onReady }: {
   );
 }
 
-export function MarkdownWithMermaid({ source, theme, onMermaidReady }: MarkdownWithMermaidProps) {
-  const parts = useMemo(() => splitMarkdownMermaid(source), [source]);
+export function MarkdownWithMermaid({ source, theme, onMermaidReady, className, id, links }: MarkdownWithMermaidProps) {
+  const { parts, truncated } = useMemo(() => {
+    const limited = limitMarkdownSource(source);
+    return { parts: splitMarkdownMermaid(limited.text), truncated: limited.truncated };
+  }, [source]);
   const displayTheme = theme ?? (document.documentElement.dataset.theme?.includes('light') ? 'light' : 'dark');
   return (
-    <div className="markdown-with-mermaid">
-      {parts.map((part, i) => part.kind === 'text'
-        ? <pre key={`t${i}`} className="markdown-with-mermaid__text">{part.text}</pre>
-        : <MermaidBlock key={`m${part.index}`} source={part.source} index={part.index} theme={displayTheme} onReady={onMermaidReady} />)}
+    <div className={['markdown-with-mermaid', className].filter(Boolean).join(' ')} id={id}>
+      {parts.map((part, i) => {
+        if (part.kind === 'text') return <MarkdownView key={`t${i}`} markdown={part.text} links={links} />;
+        if (part.index >= MARKDOWN_MAX_DIAGRAMS) {
+          return (
+            <pre key={`m${part.index}`} className="markdown-view__code" data-language="mermaid">
+              <code className="language-mermaid">{part.source}</code>
+            </pre>
+          );
+        }
+        return <MermaidBlock key={`m${part.index}`} source={part.source} index={part.index} theme={displayTheme} onReady={onMermaidReady} />;
+      })}
+      {truncated ? (
+        <p className="markdown-with-mermaid__notice" role="note">
+          Texto longo: mostrando só o começo.
+        </p>
+      ) : null}
     </div>
   );
 }

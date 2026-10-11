@@ -159,4 +159,57 @@ describe('CommandBlockStore', () => {
     expect(stats.failed).toBe(1);
     expect(store.search({ gitBranch: 'feat/x' }).length).toBe(3);
   });
+
+  function plainBlock(id: string, command: string, startedAt: number) {
+    return createCommandBlock({
+      id,
+      sessionId: 's',
+      paneId: 'p',
+      workspaceId: 'w',
+      command,
+      cwd: '/workspace',
+      shell: 'zsh',
+      startedAt,
+      status: 'unknown',
+      redaction: { redacted: false, denylisted: false, secretHits: 0 },
+      idempotencyKey: computeCommandBlockIdempotencyKey({
+        sessionId: 's',
+        startedAt,
+        command,
+        cwd: '/workspace',
+      }),
+    });
+  }
+
+  it('F-1171: insertWithOutcome distingue gravado de duplicado', () => {
+    const store = makeStore();
+    const first = store.insertWithOutcome(plainBlock('cb-a', 'ls', 1));
+    const again = store.insertWithOutcome(plainBlock('cb-a', 'ls', 1));
+    expect(first.inserted).toBe(true);
+    expect(again.inserted).toBe(false);
+    expect(again.block.id).toBe('cb-a');
+    expect(store.search({}).length).toBe(1);
+  });
+
+  it('F-1171: mantém a redação já aplicada pelo chamador (não zera o metadado)', () => {
+    const store = makeStore();
+    const block = store.insert(
+      createCommandBlock({
+        ...plainBlock('cb-r', 'export T=[REDACTED]', 2),
+        redaction: { redacted: true, denylisted: false, secretHits: 1 },
+      }),
+    );
+    expect(block.redaction.redacted).toBe(true);
+    expect(block.redaction.secretHits).toBe(1);
+  });
+
+  it('F-1171: search pagina com offset, mais novo primeiro', () => {
+    const store = makeStore();
+    for (let i = 0; i < 5; i += 1) store.insert(plainBlock(`cb-${i}`, `echo ${i}`, i));
+    const page1 = store.search({ limit: 2 });
+    const page2 = store.search({ limit: 2, offset: 2 });
+    expect(page1.map((b) => b.command)).toEqual(['echo 4', 'echo 3']);
+    expect(page2.map((b) => b.command)).toEqual(['echo 2', 'echo 1']);
+    expect(store.search({ commandContains: 'echo 1' }).map((b) => b.id)).toEqual(['cb-1']);
+  });
 });

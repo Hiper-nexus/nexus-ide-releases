@@ -2,6 +2,11 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const cliHistory = vi.hoisted(() => ({ importWithToast: vi.fn(async () => {}) }));
+vi.mock('../lib/cli-history-import', () => ({
+  importCliHistoryWithToast: cliHistory.importWithToast,
+}));
+
 import { CommandPalette } from './CommandPalette';
 import { useCommandPaletteStore } from '../state/command-palette-store';
 import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
@@ -561,5 +566,20 @@ describe('CommandPalette modos de arquivo, conteúdo e submenu', () => {
     expect(host.querySelector<HTMLInputElement>('.palette__input')?.value).toBe(
       'answer',
     );
+  });
+});
+
+describe('CommandPalette histórico das CLIs (F-1171)', () => {
+  it('importa o histórico a partir do pane focado', () => {
+    useCommandPaletteStore.setState({ open: true, mode: 'command' });
+    const host = render(<CommandPalette />);
+    const input = host.querySelector<HTMLInputElement>('input')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(input, 'importar histórico');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => actionButton(host, 'Importar histórico das CLIs').click());
+    expect(cliHistory.importWithToast).toHaveBeenCalledWith('pane-1');
   });
 });

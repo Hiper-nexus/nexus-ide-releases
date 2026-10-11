@@ -171,6 +171,12 @@ import type {
   CommandRefinerySuggestResult,
 } from './command-refinery';
 import type {
+  CliHistoryImportRequest,
+  CliHistoryImportResult,
+  CommandHistorySearchRequest,
+  CommandHistorySearchResult,
+} from './cli-history';
+import type {
   AdapterAuthStatus,
   CliAutoUpdateStatus,
   ProviderConfigPatch,
@@ -813,6 +819,19 @@ export interface NexusApi {
       missionId: string;
       paneId: string;
     }): Promise<boolean>;
+    /**
+     * F-1173: checkpoints ocultos dos writers da missão. O renderer manda
+     * missionId (+ ref); a árvore sai sempre da autoridade do Main.
+     */
+    listMissionCheckpoints(input: {
+      missionId: string;
+    }): Promise<import('./mission-checkpoints').MissionCheckpointListResult>;
+    previewMissionCheckpoint(
+      input: import('./mission-checkpoints').MissionCheckpointRefInput,
+    ): Promise<import('./mission-checkpoints').MissionCheckpointPreviewResult>;
+    restoreMissionCheckpoint(
+      input: import('./mission-checkpoints').MissionCheckpointRefInput,
+    ): Promise<import('./mission-checkpoints').MissionCheckpointRestoreResult>;
     /** Point handoff delivery at the reopened orchestrator's new session. */
     rebindMissionOrchestrator(
       missionId: string,
@@ -1191,6 +1210,12 @@ export interface NexusApi {
     runSuggestion(
       req: CommandRefineryCommandRequest,
     ): Promise<CommandRefineryMutationResult>;
+    /** F-1171: transcripts das CLIs do checkout → histórico persistido. */
+    importCliHistory(req: CliHistoryImportRequest): Promise<CliHistoryImportResult>;
+    /** F-1171: busca paginada no histórico persistido (importado + gravado). */
+    searchHistory(
+      req: CommandHistorySearchRequest,
+    ): Promise<CommandHistorySearchResult>;
   };
   /** Unified SearchMixer (flag: feature.search.mixer). */
   searchMixer: {
