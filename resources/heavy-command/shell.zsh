@@ -1,18 +1,24 @@
 # Scoped zsh DEBUG runs before an external command, including absolute paths.
-if [[ -n "$NEXUS_HEAVY_JOB_BASE" && -z "$NEXUS_HEAVY_LEASE" && "$NEXUS_HEAVY_HELPER" != 1 && -n "$ZSH_EXECUTION_STRING" ]]; then
+# F-1184: sourced again in the same shell, our DEBUG trap would classify this
+# file's own statements as commands. Hold it until the guard is loaded.
+__nexus_heavy_in_debug=1
+if [[ -n "${NEXUS_HEAVY_JOB_BASE-}" && -z "${NEXUS_HEAVY_LEASE-}" && "${NEXUS_HEAVY_HELPER-}" != 1 && -n "${ZSH_EXECUTION_STRING-}" ]]; then
   __nexus_start_kind=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/classify.cjs" "$ZSH_EXECUTION_STRING") || exit 78
   if [[ -n "$__nexus_start_kind" ]]; then
     exec env NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/job-launch.cjs" "$__nexus_start_kind" /bin/zsh -c "$ZSH_EXECUTION_STRING" "$0" "$@"
   fi
 fi
-if [[ -n "$NEXUS_HEAVY_COMMAND_URL" && -n "$NEXUS_GATE_TOKEN" && "$NEXUS_HEAVY_HELPER" != 1 ]]; then
-  if (( $+functions[TRAPDEBUG] )); then
+if [[ -n "${NEXUS_HEAVY_COMMAND_URL-}" && -n "${NEXUS_GATE_TOKEN-}" && "${NEXUS_HEAVY_HELPER-}" != 1 ]]; then
+  # F-1184: loaded twice in one shell, our own TRAPDEBUG would become the
+  # "previous" trap and call itself until FUNCNEST. Expansions default for
+  # `setopt nounset` in the caller's script.
+  if (( $+functions[TRAPDEBUG] )) && [[ "$functions[TRAPDEBUG]" != *__nexus_heavy_admitted* ]]; then
     functions[__nexus_heavy_previous_debug]=$functions[TRAPDEBUG]
   fi
   TRAPDEBUG() {
     if (( $+functions[__nexus_heavy_previous_debug] )); then __nexus_heavy_previous_debug "$@"; fi
-    [[ "$__nexus_heavy_admitted" == 1 || "$__nexus_heavy_in_debug" == 1 ]] && return 0
-    local nexus_command="$ZSH_DEBUG_CMD" nexus_kind nexus_lease
+    [[ "${__nexus_heavy_admitted-}" == 1 || "${__nexus_heavy_in_debug-}" == 1 ]] && return 0
+    local nexus_command="${ZSH_DEBUG_CMD-}" nexus_kind nexus_lease
     case "$nexus_command" in
       *node*|*npm*|*pnpm*|*yarn*|*bun*|*tsc*|*tsgo*|*typecheck*|*vitest*|*jest*|*pytest*|*mocha*|*vite*|*esbuild*|*webpack*|*rollup*|*cargo*|*'go '*|*dotnet*|*make*|*ninja*|*gradle*|*mvn*) ;;
       *) return 0 ;;
@@ -29,3 +35,4 @@ if [[ -n "$NEXUS_HEAVY_COMMAND_URL" && -n "$NEXUS_GATE_TOKEN" && "$NEXUS_HEAVY_H
   }
   setopt DEBUG_BEFORE_CMD
 fi
+__nexus_heavy_in_debug=0
