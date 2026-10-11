@@ -16,6 +16,10 @@ const guardEnv = (extra: Record<string, string> = {}) => ({
   ...extra,
 });
 const dirs: string[] = [];
+// stdin herdado do libuv é um socket: o bash do Debian/Ubuntu se acha shell
+// remoto e lê o bashrc do sistema (PS1 unbound sob -u). Sem stdin, só o guard.
+const quiet = { stdio: ['ignore', 'pipe', 'pipe'] as const, encoding: 'utf8' as const };
+const hasZsh = fs.existsSync('/bin/zsh');
 afterEach(() => {
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -24,7 +28,7 @@ describe.skipIf(process.platform === 'win32')('F-1184: heavy shell guard under s
   it('a bash script with set -euo pipefail runs every line', () => {
     const run = spawnSync('/bin/bash', ['-c', 'set -euo pipefail; echo one; echo two'], {
       env: guardEnv({ BASH_ENV: path.join(resources, 'shell.bash') }),
-      encoding: 'utf8',
+      ...quiet,
     });
     expect(run.stderr).toBe('');
     expect(run.stdout).toBe('one\ntwo\n');
@@ -34,20 +38,20 @@ describe.skipIf(process.platform === 'win32')('F-1184: heavy shell guard under s
   it('bash started with -u sources the guard cleanly', () => {
     const run = spawnSync('/bin/bash', ['-u', '-c', 'echo ok'], {
       env: guardEnv({ BASH_ENV: path.join(resources, 'shell.bash') }),
-      encoding: 'utf8',
+      ...quiet,
     });
     expect(run.stderr).toBe('');
     expect(run.stdout).toBe('ok\n');
     expect(run.status).toBe(0);
   });
 
-  it('zsh loading the guard twice, with nounset, neither recurses nor complains', () => {
+  it.skipIf(!hasZsh)('zsh loading the guard twice, with nounset, neither recurses nor complains', () => {
     const zdotdir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-zsh-'));
     dirs.push(zdotdir);
     const guard = path.join(resources, 'shell.zsh');
     const run = spawnSync('/bin/zsh', ['-c', `source ${JSON.stringify(guard)}; source ${JSON.stringify(guard)}; setopt nounset; echo one`], {
       env: guardEnv({ ZDOTDIR: zdotdir }),
-      encoding: 'utf8',
+      ...quiet,
     });
     expect(run.stderr).toBe('');
     expect(run.stdout).toBe('one\n');
