@@ -13,9 +13,9 @@ import { RailMemoryPressure } from './RailMemoryPressure';
 
 const GiB = 1024 ** 3;
 
-function machine(pressure: MachineResources['pressure']): MachineResources {
+function machine(pressure: MachineResources['pressure'], sampledAt = Date.now()): MachineResources {
   return {
-    sampledAt: 1_000,
+    sampledAt,
     memory: {
       totalBytes: 24 * GiB,
       availableBytes: 2 * GiB,
@@ -34,6 +34,7 @@ function machine(pressure: MachineResources['pressure']): MachineResources {
 
 const roots: Root[] = [];
 let onPaneFootprints: ReturnType<typeof vi.fn>;
+let snapshot: ReturnType<typeof vi.fn>;
 
 function render(onOpen?: () => void): HTMLElement {
   const host = document.createElement('div');
@@ -47,10 +48,12 @@ function render(onOpen?: () => void): HTMLElement {
 beforeEach(() => {
   usePaneFootprintStore.setState({ machine: null });
   onPaneFootprints = vi.fn(() => () => {});
-  Object.assign(window, { nexus: { perf: { onPaneFootprints } } });
+  snapshot = vi.fn(() => new Promise(() => {}));
+  Object.assign(window, { nexus: { perf: { onPaneFootprints, snapshot } } });
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const root of roots.splice(0)) act(() => root.unmount());
   document.body.replaceChildren();
   delete (window as { nexus?: unknown }).nexus;
@@ -94,5 +97,58 @@ describe('RailMemoryPressure (F-1172)', () => {
       kind: 'settings',
       section: 'usage-quota',
     });
+  });
+
+  it('a região viva fica montada (vazia) antes da pressão e é preenchida quando ela chega', () => {
+    const host = render();
+    const region = host.querySelector('[role="status"]');
+    expect(region).not.toBeNull();
+    expect(region!.textContent).toBe('');
+    act(() => usePaneFootprintStore.setState({ machine: machine('pressure') }));
+    // Mesmo nó: o leitor de tela anuncia a mudança de conteúdo.
+    expect(host.querySelector('[role="status"]')).toBe(region);
+    expect(region!.textContent).toContain('Memória sob pressão');
+  });
+
+  it('amostra velha (> 2× o push) some e pede uma leitura nova pelo perf:snapshot uma vez', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    usePaneFootprintStore.setState({ machine: machine('pressure', 100_000) });
+    const host = render();
+    expect(host.querySelector('button')).not.toBeNull();
+    expect(snapshot).not.toHaveBeenCalled();
+
+    // Sessões fecharam: o push parou. Passou de 60 s sem amostra nova.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_001);
+    });
+    expect(host.querySelector('button')).toBeNull();
+    expect(host.querySelector('[role="status"]')!.textContent).toBe('');
+    expect(snapshot).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(snapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('a leitura nova do snapshot volta a mostrar a pressão se ela continua', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    usePaneFootprintStore.setState({ machine: machine('pressure', 100_000) });
+    snapshot.mockImplementation(async () => ({ machine: machine('pressure', Date.now()) }));
+    const host = render();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_001);
+    });
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('button')).not.toBeNull();
+  });
+
+  it('amostra já velha na montagem nunca aparece', () => {
+    usePaneFootprintStore.setState({ machine: machine('pressure', Date.now() - 120_000) });
+    const host = render();
+    expect(host.querySelector('button')).toBeNull();
+    expect(snapshot).toHaveBeenCalledTimes(1);
   });
 });
