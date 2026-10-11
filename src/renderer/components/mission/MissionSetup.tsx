@@ -41,6 +41,7 @@ import {
   openExpressTerminalGrid,
 } from './ExpressTerminalOptions';
 import { useLauncherShortcuts } from '../product/use-launcher-shortcuts';
+import { LAUNCHER_ACTIONS } from '../../lib/action-names';
 import { MissionStep } from './MissionStep';
 import {
   ReviewStep,
@@ -1048,7 +1049,8 @@ export function MissionSetup({
     }
   };
 
-  useLauncherShortcuts(home || draft.step === 'express', {
+  const launcherShortcutsActive = home || draft.step === 'express';
+  useLauncherShortcuts(launcherShortcutsActive, {
     pane: openExpressTerminalGrid,
     mission: () => {
       document.getElementById('express-objective')?.focus();
@@ -1089,6 +1091,14 @@ export function MissionSetup({
 
   return (
     <div className="mission-setup" data-step={draft.step}>
+      {/* F-1174: as teclas 1–6 visíveis são aria-hidden; sem isto o leitor
+          de tela nunca sabia dos atalhos. Veio do Launcher órfão, removido. */}
+      {launcherShortcutsActive && (
+        <p id="mission-setup-shortcuts" className="mission-setup__sr-only">
+          Atalhos do teclado:{' '}
+          {LAUNCHER_ACTIONS.map((action) => `${action.shortcut} ${action.label}`).join('; ')}
+        </p>
+      )}
       {draft.step !== 'express' && (
         <>
           <nav className="mission-setup__progress" aria-label="Etapas da missão">
