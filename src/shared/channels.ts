@@ -99,6 +99,10 @@ export const TERMINAL_BLOCK_CHANNELS = {
   dismiss: 'terminal-block:dismiss',
   /** invoke: resolve in Main and re-run a durable suggestion safely. */
   runSuggestion: 'terminal-block:run-suggestion',
+  /** invoke: importa os transcripts das CLIs do checkout para o histórico (F-1171). */
+  importCliHistory: 'terminal-block:import-cli-history',
+  /** invoke: busca paginada no histórico persistido (importado + gravado). */
+  searchHistory: 'terminal-block:search-history',
 } as const;
 
 /** Unified SearchMixer IPC. */
