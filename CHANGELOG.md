@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.76.236 — Nexus testado por dentro
+
+- **Panes voltam a nascer do pane do operador.** Desde a 0.76.213, o primeiro helper aberto de um pane do operador morria em ~9 ms com `session_authority_revoked`: a missão da aba promove o próprio pane a orquestrador, e o vínculo de identidade lia isso como revogação. A promoção do próprio Main agora é aceita, também para chamadas do mesmo pane em andamento; qualquer outra mudança no meio continua sendo recusada. O E2E de missão do gate da release ganhou esse cenário e fica vermelho se a correção sair (F-1185/F-1204/F-1233).
+- **Atualização sem congelar o app.** O aviso nativo de "atualização pronta" prendia o processo principal até alguém clicar: a 0.76.233 ficou 4,9 h parada de madrugada. O banner do app já pede o reinício. A checagem do boot também deixou de consultar o GitHub duas ou três vezes seguidas (F-1181/F-1182).
+- **Diálogos que não travam o Nexus.** Confirmações pedidas por agentes, permissões ACP, pedidos do celular pareado, ações por voz e o auto-update de CLIs abrem presas a uma janela, sem prender o processo principal. Sem janela ou com prazo esgotado, a resposta é negar, nunca aprovar (F-1200–F-1203).
+- **Scripts estritos nos panes.** Um script com `set -euo pipefail` rodado por um agente morria antes da segunda linha, e o zsh entrava em recursão quando a guarda era carregada duas vezes. A guarda de comandos pesados aceita `set -u`/`nounset` e carga dupla (F-1184).
+- **Fila de comandos pesados por worktree real.** Agentes de um mesmo pane trabalhando em worktrees diferentes caíam numa fila só e saíam com exit 74 depois de 300 s. Agora cada raiz git do projeto tem a sua fila, e a mensagem do 74 diz quanto tempo esperou e atrás de quem (F-1229/F-1235).
+- **Mac dorme de novo.** O "manter acordado" deixava processos `caffeinate` órfãos depois de um crash ou atualização, e um deles prendia a fila de comandos pesados. A asserção agora morre junto com o Nexus, e o equivalente no Linux também (F-1186/F-1212).
+- **LSP, OCR, blocos de comando e ferramentas ACP no app instalado.** `nexus_lsp_definition`/`references`/`diagnostics`, o OCR, as marcas OSC 133 dos terminais e as ferramentas do Nexus em sessões ACP funcionavam no desenvolvimento, mas não no app empacotado (F-1183/F-1208/F-1209/F-1210).
+- **Code map completo.** O mapa contava imagens e evidências no limite de bytes e parava na metade do repositório. Agora a busca acha arquivo pelo nome e diz por que caiu na busca simples (F-1226).
+- **Doctor sem alarmes falsos.** O aviso de attestation diz qual alvo mudou, e o Codex volta a contar como revisor independente somente-leitura (F-1227/F-1228).
+- **Ranking de modelos atual.** `nexus_model_ranking` só recomenda modelos instalados e troca versões antigas pela mais nova da mesma linha (gpt-6, grok-4.7, sonnet-5.5, kimi k3) (F-1230).
+- **Busca de arquivos rápida.** `nexus_file_search` começa pelo prefixo fixo do padrão em vez de varrer o repositório inteiro (F-1231).
+- **Handoffs do operador sem falso "travado".** Entregas de helpers sem missão não pedem mais o ACK de um Maestro que não existe (F-1232).
+- **Portão de regressão justo.** WIP não rastreado de outro agente, anterior ao spawn, não bloqueia mais o encerramento do pane (F-1224). O timeout do gate de meta encerra o grupo inteiro de processos (F-1214).
+- **Suíte confiável dentro dos panes.** Agentes que rodam os testes do Nexus num pane não veem mais dezenas de falhas falsas por herdar o ambiente do app; o que só roda fora do pane é pulado com o motivo (F-1216/F-1217/F-1218).
+
 ## 0.76.235 — O T3 Code nas telas
 
 O que veio do T3 Code (pingdotgg/t3code, MIT) e ainda não tinha tela agora aparece para o operador.

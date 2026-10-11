@@ -10309,7 +10309,7 @@ export const RELEASE_076234: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076235: AppRelease = {
   version: '0.76.235',
   date: '2026-10-11',
   codename: 'O T3 Code nas telas',
@@ -10324,5 +10324,27 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Calibração explica a falha', detail: 'Modelo que não respondeu mostra o motivo. Testar a Luna aparece também no Automático e diz se a OpenAI recusou a chave, se a conta não tem acesso à Decisions API (beta) ou se faltou crédito.' },
     { title: 'Runtime WSL mais seguro', detail: 'O terminal em distro WSL só vale no Windows fora do sandbox, roda o binário Linux e repassa o ambiente da sessão sem expor valores na linha de comando.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.236',
+  date: '2026-10-11',
+  codename: 'Nexus testado por dentro',
+  summary: 'Uma varredura sênior feita de dentro do próprio Nexus: panes voltam a nascer do pane do operador, o app não congela mais com diálogos e o que só falhava no app instalado foi corrigido.',
+  highlights: [
+    { title: 'Panes voltam a nascer', detail: 'O primeiro helper aberto de um pane do operador morria em ~9 ms desde a 0.76.213. A missão da aba nasce, o helper entra nela e a entrega volta ao pane. O teste de missão da release cobre esse caminho.' },
+    { title: 'Nada de app congelado', detail: 'O aviso de atualização e as confirmações de agentes, ACP, celular e voz abrem presos a uma janela, sem parar o Nexus. Sem janela ou com prazo esgotado, a resposta é negar.' },
+    { title: 'Fila de comandos pesados por worktree', detail: 'Agentes em worktrees diferentes testam em paralelo. Quando a fila estoura, a mensagem diz quanto tempo esperou e atrás de quem.' },
+    { title: 'Ferramentas completas no app instalado', detail: 'Definição, referências e diagnósticos do LSP, OCR, blocos de comando nos terminais e as ferramentas do Nexus em sessões ACP voltam a funcionar fora do ambiente de desenvolvimento.' },
+    { title: 'Suíte confiável dentro dos panes', detail: 'Agentes que rodam os testes do Nexus num pane deixam de ver dezenas de falhas falsas; o que só roda fora do pane é pulado com o motivo.' },
+  ],
+  fixes: [
+    { title: 'Scripts estritos nos panes', detail: 'Scripts com set -euo pipefail não morrem mais na segunda linha, e o zsh não entra em recursão.' },
+    { title: 'Mac volta a dormir', detail: 'O manter-acordado não deixa mais processos órfãos depois de um crash ou atualização.' },
+    { title: 'Code map completo', detail: 'O mapa do projeto não para mais na metade, e a busca acha arquivo pelo nome.' },
+    { title: 'Doctor sem alarme falso', detail: 'O Codex volta a contar como revisor independente, e o aviso de attestation diz qual alvo mudou.' },
+    { title: 'Ranking de modelos atual', detail: 'Só recomenda modelos instalados, na versão mais nova de cada linha.' },
+    { title: 'Portão de regressão justo', detail: 'WIP antigo de outro agente não bloqueia mais o encerramento do pane.' },
   ],
 };
