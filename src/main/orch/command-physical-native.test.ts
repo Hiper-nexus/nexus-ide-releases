@@ -21,6 +21,7 @@ import { processSandboxRuntimeAvailable } from '../runtime/process-sandbox-capab
 import { setPtyHost } from '../pty/pty-manager';
 import { supervisedJobCommand } from '../pty/darwin-pty-supervisor';
 import { buildTestDarwinPtySupervisor } from '../../test/darwin-pty-supervisor-fixture';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 let root:string;let manager:ProjectRuntimeManager;let scope:ReturnType<typeof testProjectScope>;let ctx:ReturnType<typeof mintToken>;
 let supervisor:ReturnType<typeof buildTestDarwinPtySupervisor>|undefined;
 vi.mock('../license-access',async()=> (await import('../__tests__/licensed-access')).licensedAccessMock);
@@ -30,7 +31,7 @@ afterAll(()=>{supervisor?.dispose();});
 beforeEach(()=>{root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'nexus-dispatch-native-')));const st=fs.statSync(root);scope=testProjectScope({projectId:path.basename(root),checkoutId:path.basename(root),rootRealPath:root,workspaceRootDevice:String(st.dev),workspaceRootInode:String(st.ino)});manager=new ProjectRuntimeManager({baseDir:path.join(root,'runtime'),appVersion:'native-dispatch-test'});configureAuditLogRuntime(manager);configureProjectDomainStoreRegistry(manager);configureContextWorkflowRegistry(manager,{appVersion:'native-dispatch-test'});resetGateForTests();ctx=mintToken({label:'native-owned',role:'user',scope,allowedTools:null,allowedSkills:null});bindTokenToSession(ctx.token,'native-owned-session');});
 afterEach(async()=>{resetGateForTests();disposeContextWorkflowRegistry();await disposeProjectDomainStoreRegistry();await disposeAuditLogRuntime();manager.closeAll();fs.rmSync(root,{recursive:true,force:true});});
 const native=it.runIf(processSandboxRuntimeAvailable());
-native('F-1082: actual sandbox/native supervisor terminal tree exit settles the receipt through production verifier',async()=>{
+native('F-1082: actual sandbox/native supervisor terminal tree exit settles the receipt through production verifier',async(testContext)=>{skipUnderNexusPtySupervisor(testContext);
   const result=await dispatchToolCall('http-mcp',{serverName:'native',serverVersion:'0',tools:buildTerminalTools()},'nexus_terminal_run',{command:'(sleep 0.1; printf native-child-proof) & wait',timeoutMs:5000},ctx,{confirm:async()=>true});
   expect(result,JSON.stringify(result)).toMatchObject({ok:true,result:{exitCode:0,stdout:expect.stringContaining('native-child-proof')}});
   const receipts=new CommandReceiptStore(manager,scope);const row=receipts.listUnsettledMetadata().rows[0];expect(row).toMatchObject({physicalState:'proven',resultSequence:0});
@@ -39,7 +40,7 @@ native('F-1082: actual sandbox/native supervisor terminal tree exit settles the 
     expect(JSON.stringify(manager.open(scope).db.prepare('SELECT outcome_json FROM command_receipts').all())).not.toContain('native-child-proof');
   }finally{unregister();}
 },15000);
-native('F-1082: actual background launch acknowledgment remains blocking until native owned tree exit',async()=>{
+native('F-1082: actual background launch acknowledgment remains blocking until native owned tree exit',async(testContext)=>{skipUnderNexusPtySupervisor(testContext);
   const result=await dispatchToolCall('http-mcp',{serverName:'native-bg',serverVersion:'0',tools:buildBgTools()},'nexus_bg_run',{command:'sleep 0.3; printf native-bg-proof',sandboxProfile:'workspace-only'},ctx,{confirm:async()=>true});
   expect(result,JSON.stringify(result)).toMatchObject({ok:true,result:{taskId:expect.any(String)}});
   const receipts=new CommandReceiptStore(manager,scope);expect(receipts.listUnsettledMetadata().rows[0]).toMatchObject({physicalState:'pending',resultSequence:0});
@@ -48,7 +49,7 @@ native('F-1082: actual background launch acknowledgment remains blocking until n
   const unregister=registerDispatchPhysicalSettlementHandler(()=>manager);
   try{expect((await drainEffectOutbox({store:new EffectOutboxStore(manager,scope),scope,workerId:'native-bg-verifier'})).succeeded).toBe(1);expect(receipts.countUnsettled()).toBe(0);}finally{unregister();}
 },15000);
-native('F-1088: actual dispatcher accepts advertised workspace-only profile and rejects an unknown enum before effect',async()=>{
+native('F-1088: actual dispatcher accepts advertised workspace-only profile and rejects an unknown enum before effect',async(testContext)=>{skipUnderNexusPtySupervisor(testContext);
   const registry={serverName:'native-profile',serverVersion:'0',tools:buildTerminalTools()};
   expect(await dispatchToolCall('http-mcp',registry,'nexus_terminal_run',{command:'printf native-profile-contract',sandboxProfile:'unrestricted'},ctx)).toMatchObject({ok:false,error:expect.stringContaining('invalid arguments')});
   expect(manager.open(scope).db.prepare('SELECT COUNT(*) AS n FROM command_receipts').get()).toEqual({n:0});
@@ -75,7 +76,7 @@ function completionFixture(lane:'consult'|'ops'='ops') {
   return {stores,mission,chief,done};
 }
 
-native('F-1115: normal MCP done waits for actual background owned-tree proof and durable settlement',async()=>{
+native('F-1115: normal MCP done waits for actual background owned-tree proof and durable settlement',async(testContext)=>{skipUnderNexusPtySupervisor(testContext);
   const state=completionFixture();
   const result=await dispatchToolCall('http-mcp',{serverName:'completion-bg',serverVersion:'0',tools:buildBgTools()},
     'nexus_bg_run',{command:'while [ ! -f release-bg ]; do sleep 0.05; done; printf completion-bg-proof',sandboxProfile:'workspace-only'},state.chief);

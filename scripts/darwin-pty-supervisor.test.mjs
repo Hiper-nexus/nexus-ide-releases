@@ -22,14 +22,12 @@ import * as nodePty from "@lydell/node-pty";
 import { buildDarwinPtySupervisor } from "./build-darwin-pty-supervisor.mjs";
 import { darwinNodePtyBootstrapLaunch } from "../src/main/pty/darwin-node-pty-bootstrap.ts";
 import { supervisedPtyCommand, supervisedJobCommand, nestedHeavyJobBaseCommand } from "../src/main/pty/darwin-pty-supervisor.ts";
+import { nestedPtySupervisorSkipReason } from "../src/test/nested-pty-supervisor.ts";
 
-// F-715: pty-manager sets these markers; a pane inherits its supervisor's
-// responsibility, which main.c rejects as responsible_is_supervisor.
-const nexusPaneSkipReason =
-  process.platform === "darwin" &&
-  (process.env.NEXUS_PANE_ID || process.env.NEXUS_PANE_KEY)
-    ? "AMBIENTE-PANE (F-715): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
-    : undefined;
+// F-715/F-1217: a pane (or any process under a nexus-pty-supervisor) inherits
+// its supervisor's responsibility, which main.c rejects as
+// responsible_is_supervisor. Central detector: src/test/nested-pty-supervisor.ts.
+const nexusPaneSkipReason = nestedPtySupervisorSkipReason();
 
 // F-715: a write-denying sandbox (the Nexus regression gate's Seatbelt profile)
 // cannot open /dev/ptmx and refuses setuid exec ("spawn EPERM"), so the cases

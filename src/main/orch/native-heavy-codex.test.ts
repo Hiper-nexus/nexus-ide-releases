@@ -12,6 +12,7 @@ import { configureCodexNativeHeavyChannel } from './codex-native-heavy-channel';
 import { stringify } from 'smol-toml';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -35,7 +36,8 @@ function response(res: http.ServerResponse, item: Record<string, unknown>) {
   res.end();
 }
 
-it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'file', 'default-baseline', 'default-scheduled'] as const)('real Codex %s preserves selected policy with admission', async mode => {
+it.runIf(process.platform === 'darwin' && Boolean(codex)).for(['baseline', 'file', 'default-baseline', 'default-scheduled'] as const)('real Codex %s preserves selected policy with admission', { timeout: 40000 }, async (mode, testContext) => {
+  skipUnderNexusPtySupervisor(testContext);
   const freedom = mode.startsWith('default-'), scheduled = mode === 'file' || mode === 'default-scheduled';
   // Codex rejects helper aliases when CODEX_HOME is under the system TMP.
   // This new private directory is outside TMP and never reads a native HOME.
@@ -177,4 +179,4 @@ it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'fil
     cleanupCliMcpSession(ctx.token);
     fs.rmSync(root, { recursive: true, force: true });
   }
-}, 40000);
+});

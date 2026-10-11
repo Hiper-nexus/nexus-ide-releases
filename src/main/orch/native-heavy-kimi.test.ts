@@ -6,6 +6,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -27,7 +28,8 @@ function streamMessage(res: http.ServerResponse, model: string, content: { type:
  event('message_stop', { type: 'message_stop' }); res.end();
 }
 
-it.runIf(process.platform === 'darwin' && Boolean(kimi))('real Kimi native Bash is admitted by inherited scoped shell env before absolute sh/make', async () => {
+it.runIf(process.platform === 'darwin' && Boolean(kimi))('real Kimi native Bash is admitted by inherited scoped shell env before absolute sh/make', async (testContext) => {
+ skipUnderNexusPtySupervisor(testContext);
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-real-kimi-'));
  fs.writeFileSync(path.join(root, 'Makefile'), 'all:\n\t@printf done > command-ran\n');
  const helper = path.join(root, 'resources/native/darwin/nexus-pty-supervisor');

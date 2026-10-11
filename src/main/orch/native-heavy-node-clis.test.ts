@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand, type PhysicalCommandClaim } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -326,6 +327,6 @@ describe('F-1144 — C6 terminal completion proof', () => {
   });
 });
 
-it.runIf(process.platform === 'darwin' && selected === 'qwen' && fs.existsSync(installed.qwen))('actual Qwen ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', () => actualControl('qwen'), 85000);
-it.runIf(process.platform === 'darwin' && selected === 'minimax' && fs.existsSync(installed.minimax))('actual MiniMax ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', () => actualControl('minimax'), 85000);
-it.runIf(process.platform === 'darwin' && selected === 'mimo' && fs.existsSync(installed.mimo))('actual MiMo native ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', () => actualControl('mimo'), 85000);
+it.runIf(process.platform === 'darwin' && selected === 'qwen' && fs.existsSync(installed.qwen))('actual Qwen ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', (testContext) => { skipUnderNexusPtySupervisor(testContext); return actualControl('qwen'); }, 85000);
+it.runIf(process.platform === 'darwin' && selected === 'minimax' && fs.existsSync(installed.minimax))('actual MiniMax ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', (testContext) => { skipUnderNexusPtySupervisor(testContext); return actualControl('minimax'); }, 85000);
+it.runIf(process.platform === 'darwin' && selected === 'mimo' && fs.existsSync(installed.mimo))('actual MiMo native ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', (testContext) => { skipUnderNexusPtySupervisor(testContext); return actualControl('mimo'); }, 85000);

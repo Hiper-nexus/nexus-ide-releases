@@ -34,14 +34,12 @@ import {
 import type { DarwinAdHocSmokeExecutableSeal } from "./darwin-pty-supervisor";
 import type { DarwinTrustedExecutableSeal } from "./trusted-native-cli-binary";
 import { darwinNodePtyBootstrapLaunch } from "./darwin-node-pty-bootstrap";
+import { nestedPtySupervisorSkipReason } from "../../test/nested-pty-supervisor";
 
-// F-715: pty-manager sets these markers; a pane inherits its supervisor's
-// responsibility, which main.c rejects as responsible_is_supervisor.
-const nexusPaneSkipReason =
-  process.platform === "darwin" &&
-  (process.env.NEXUS_PANE_ID || process.env.NEXUS_PANE_KEY)
-    ? "AMBIENTE-PANE (F-715): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
-    : undefined;
+// F-715/F-1217: a pane (or any process under a nexus-pty-supervisor) inherits
+// its supervisor's responsibility, which main.c rejects as
+// responsible_is_supervisor. Central detector: src/test/nested-pty-supervisor.ts.
+const nexusPaneSkipReason = nestedPtySupervisorSkipReason();
 
 // F-715: a write-denying sandbox (the Nexus regression gate's Seatbelt profile)
 // cannot open /dev/ptmx, so no real PTY exists there. Probed once, on first use.
