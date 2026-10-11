@@ -1,5 +1,9 @@
 import fs from 'node:fs';
-import { afterEach, describe, expect, it } from 'vitest';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import forgeConfig from '../../../forge.config';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import {
   getFeatureFlagRegistry,
@@ -12,6 +16,8 @@ import {
   shellIntegrationBootstrapCommand,
   shellIntegrationSpawnArgs,
 } from './shell-integration-env';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 afterEach(() => {
   resetFeatureFlagRegistryForTests();
@@ -79,5 +85,43 @@ describe('shell integration env', () => {
     expect(env).toEqual({ A: '1' });
     expect(cleanupPaths).toEqual([]);
     expect(shellIntegrationBootstrapCommand('/bin/zsh')).toBeNull();
+  });
+
+  // Symlinks de diretório pedem privilégio no Windows; zsh/bash são POSIX aqui.
+  it.skipIf(process.platform === 'win32')('F-1210: o app empacotado acha os scripts OSC 133 em Resources', () => {
+    getFeatureFlagRegistry().setOverride(
+      FEATURE_FLAG_IDS.terminalCommandBlocks,
+      true,
+    );
+    // Resources do app empacotado: o packager copia cada extraResource para
+    // Resources/<basename>. Aberto pelo Finder, o cwd é "/" e não há
+    // NEXUS_RESOURCES_DIR — só o process.resourcesPath vale.
+    const resources = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-packaged-resources-'));
+    for (const entry of forgeConfig.packagerConfig?.extraResource ?? []) {
+      fs.symlinkSync(path.resolve(repoRoot, entry), path.join(resources, path.basename(entry)));
+    }
+    const runtime = process as NodeJS.Process & { resourcesPath?: string };
+    const previousResources = runtime.resourcesPath;
+    const previousDir = process.env.NEXUS_RESOURCES_DIR;
+    delete process.env.NEXUS_RESOURCES_DIR;
+    runtime.resourcesPath = resources;
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue('/');
+    let applied: ReturnType<typeof applyShellIntegrationEnv>;
+    try {
+      applied = applyShellIntegrationEnv({ PATH: '/usr/bin' }, '/bin/zsh');
+    } finally {
+      cwd.mockRestore();
+      runtime.resourcesPath = previousResources;
+      if (previousDir !== undefined) process.env.NEXUS_RESOURCES_DIR = previousDir;
+    }
+    try {
+      expect(applied.env.NEXUS_OSC133_ZSH).toBe(
+        path.join(resources, 'shell-integration', 'nexus-osc133.zsh'),
+      );
+      expect(applied.env.ZDOTDIR).toBeTruthy();
+    } finally {
+      cleanupShellIntegrationPaths(applied.cleanupPaths);
+      fs.rmSync(resources, { recursive: true, force: true });
+    }
   });
 });

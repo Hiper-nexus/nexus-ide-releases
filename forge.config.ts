@@ -465,6 +465,9 @@ const config: ForgeConfig = {
       'resources/wake',
       'resources/mission-shims',
       'resources/heavy-command',
+      // F-1210: OSC 133 rc scripts (CommandBlocks). Main resolves them from
+      // process.resourcesPath; without this the packaged shells got none.
+      'resources/shell-integration',
       'resources/model-ranking.json',
       // Pacote de ~15 pets Codex v2 offline (manifest + sheets/*.webp).
       'resources/pets',
