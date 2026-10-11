@@ -72,34 +72,55 @@ export function safeExternalHref(raw: string): string | null {
 const LINK = /\[([^[\]\n]{1,1000})\]\(\s*<?([^\s<>()]{1,2048})>?(?:\s+"[^"\n]{0,500}")?\s*\)/y;
 const AUTOLINK = /<(https?:\/\/[^\s<>]{1,2048})>/y;
 const BARE_URL = /https?:\/\/[^\s<>"'`]{1,2048}/y;
+const INLINE_SPECIAL = /[\\`[<h]/g;
 const MARK_ESCAPABLE = /[*`_~\\]/;
 const PUNCTUATION_ESCAPABLE = /[!"#$%&'()+,\-./:;<=>?@[\]^{|}]/;
 
 function textNodes(buffer: string): MarkdownInline[] {
   if (!buffer) return [];
+  // Sem marcador nenhum, o parser do composer devolveria um span só; pular
+  // a chamada evita o custo por caractere dele em texto longo e liso.
+  if (!/[*_~`\\]/.test(buffer)) return [{ kind: 'text', text: buffer, marks: [] }];
   return parseInlineMarkdown(buffer).map((span) => ({ kind: 'text', text: span.text, marks: span.marks }));
 }
 
-/** Fim de um code span que abre em `open` com `width` crases, ou -1. */
-function codeSpanEnd(text: string, open: number, width: number): number {
-  let index = open + width;
-  while (index < text.length) {
-    const next = text.indexOf('`', index);
-    if (next < 0) return -1;
-    let end = next;
+/**
+ * Fecho de code span em O(n) por linha. Indexa uma vez os runs de crase
+ * maximais por largura; cada consulta avança um cursor por largura, então
+ * as consultas precisam vir da esquerda para a direita. A busca do fecho
+ * ignora barra invertida, como em `readCodeSpan` (código é literal).
+ * Devolve o índice logo após o fecho, ou -1.
+ */
+function codeSpanCloser(text: string): (open: number, width: number) => number {
+  const starts = new Map<number, number[]>();
+  let index = text.indexOf('`');
+  while (index >= 0) {
+    let end = index;
     while (text[end] === '`') end += 1;
-    if (end - next === width) return end;
-    index = end;
+    const list = starts.get(end - index);
+    if (list) list.push(index);
+    else starts.set(end - index, [index]);
+    index = text.indexOf('`', end);
   }
-  return -1;
+  const cursors = new Map<number, number>();
+  return (open, width) => {
+    const list = starts.get(width);
+    if (!list) return -1;
+    let cursor = cursors.get(width) ?? 0;
+    while (cursor < list.length && list[cursor]! < open + width) cursor += 1;
+    cursors.set(width, cursor);
+    return cursor < list.length ? list[cursor]! + width : -1;
+  };
 }
 
 function trimUrlTail(url: string): string {
+  // ')' final só sai se a URL não abriu '(' antes dele (Wikipedia_(x)).
+  const firstOpen = url.indexOf('(');
   let end = url.length;
   while (end > 0) {
     const ch = url[end - 1]!;
     if (/[.,;:!?'"*_~\]]/.test(ch)) { end -= 1; continue; }
-    if (ch === ')' && !url.slice(0, end).includes('(')) { end -= 1; continue; }
+    if (ch === ')' && (firstOpen < 0 || firstOpen >= end)) { end -= 1; continue; }
     break;
   }
   return url.slice(0, end);
@@ -110,9 +131,10 @@ export function parseMarkdownInline(text: string): MarkdownInline[] {
   const out: MarkdownInline[] = [];
   let buffer = '';
   const flush = () => {
-    out.push(...textNodes(buffer));
+    for (const node of textNodes(buffer)) out.push(node);
     buffer = '';
   };
+  const closer = codeSpanCloser(text);
   let i = 0;
   while (i < text.length) {
     const ch = text[i]!;
@@ -128,10 +150,11 @@ export function parseMarkdownInline(text: string): MarkdownInline[] {
     if (ch === '`') {
       let run = i;
       while (text[run] === '`') run += 1;
-      const end = codeSpanEnd(text, i, run - i);
-      const stop = end < 0 ? run : end;
-      buffer += text.slice(i, stop);
-      i = stop;
+      const end = closer(i, run - i);
+      // Run sem par vai escapado: o parser do composer não procura fecho
+      // de novo (essa busca, repetida por run, era quadrática).
+      buffer += end < 0 ? '\\`'.repeat(run - i) : text.slice(i, end);
+      i = end < 0 ? run : end;
       continue;
     }
     if (ch === '[') {
@@ -143,7 +166,8 @@ export function parseMarkdownInline(text: string): MarkdownInline[] {
           flush();
           out.push({ kind: 'link', href, label: parseInlineMarkdown(match[1]!) });
         } else {
-          buffer += match[0];
+          flush();
+          out.push({ kind: 'text', text: match[0], marks: [] });
         }
         i += match[0].length;
         continue;
@@ -172,10 +196,22 @@ export function parseMarkdownInline(text: string): MarkdownInline[] {
           i += raw.length;
           continue;
         }
+        // Não é URL válida: o trecho todo é literal (nó próprio), sem tentar
+        // de novo a cada 'h' de dentro dele.
+        if (raw) {
+          flush();
+          out.push({ kind: 'text', text: raw, marks: [] });
+          i += raw.length;
+          continue;
+        }
       }
     }
-    buffer += ch;
-    i += 1;
+    // Texto comum vai em bloco até o próximo caractere que pode abrir algo.
+    INLINE_SPECIAL.lastIndex = i + 1;
+    const special = INLINE_SPECIAL.exec(text);
+    const stop = special ? special.index : text.length;
+    buffer += text.slice(i, stop);
+    i = stop;
   }
   flush();
   return out;
@@ -253,6 +289,7 @@ function splitTableRow(line: string): string[] {
   if (text.startsWith('|')) text = text.slice(1);
   if (text.endsWith('|') && !text.endsWith('\\|')) text = text.slice(0, -1);
   const cells: string[] = [];
+  const closer = codeSpanCloser(text);
   let cell = '';
   let i = 0;
   while (i < text.length) {
@@ -265,7 +302,7 @@ function splitTableRow(line: string): string[] {
     if (ch === '`') {
       let run = i;
       while (text[run] === '`') run += 1;
-      const end = codeSpanEnd(text, i, run - i);
+      const end = closer(i, run - i);
       const stop = end < 0 ? run : end;
       cell += text.slice(i, stop).replace(/\\\|/g, '|');
       i = stop;
@@ -313,7 +350,7 @@ function paragraphInline(lines: readonly string[]): MarkdownInline[] {
   const inline: MarkdownInline[] = [];
   lines.forEach((line, index) => {
     if (index > 0) inline.push({ kind: 'break' });
-    inline.push(...parseMarkdownInline(line.trim()));
+    for (const node of parseMarkdownInline(line.trim())) inline.push(node);
   });
   return inline;
 }
@@ -370,11 +407,12 @@ function collectListItem(
   while (i < lines.length) {
     const candidate = lines[i]!;
     if (isBlank(candidate)) {
+      // O bloco de linhas em branco é lido uma vez só: varrer adiante a cada
+      // linha em branco era quadrático.
       let ahead = i + 1;
       while (ahead < lines.length && isBlank(lines[ahead])) ahead += 1;
       if (ahead < lines.length && leadingSpaces(lines[ahead]!) >= need) {
-        itemLines.push('');
-        i += 1;
+        for (; i < ahead; i += 1) itemLines.push('');
         continue;
       }
       const sibling = ahead < lines.length ? listMarkerOf(lines[ahead]!) : null;
