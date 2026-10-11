@@ -12,7 +12,8 @@ import { createSystemReversibilityIo } from "./destructive-reversibility-system-
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { app, dialog } from "electron";
+import { app } from "electron";
+import { showMessageBoxWithoutBlocking } from "../native-confirm";
 import type { McpRuntimeInfo, Mission } from "../../shared/orch-types";
 import { hasCurrentApprovedDispatchContract } from "../../shared/mission-intent";
 import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
@@ -341,10 +342,16 @@ function disposeMissionShimBySession(sessionId: string): void {
   disposeMissionShim(missionShimBySession.get(sessionId) ?? null);
 }
 
-async function showHttpMcpConfirmation(
+/**
+ * F-1200: a confirmação nasce de uma tool call de agente, muitas vezes com o
+ * operador longe. Sem janela-mãe o macOS a mostrava como NSAlert runModal e
+ * prendia a main thread (todo o MCP, PTYs e missões) até o clique. Agora é sheet
+ * numa janela viva; sem janela nenhuma, nega na hora.
+ */
+export async function showHttpMcpConfirmation(
   request: McpConfirmationRequest,
 ): Promise<boolean> {
-  const result = await dialog.showMessageBox({
+  const result = await showMessageBoxWithoutBlocking({
     type: "warning",
     title: "Nexus IDE — autorização do agente",
     buttons: ["Negar", "Permitir"],
@@ -361,7 +368,7 @@ async function showHttpMcpConfirmation(
       `Motivo: ${boundedConfirmationLine(request.reason)}\n\n` +
       `Argumentos (segredos ocultos):\n${boundedConfirmationArgs(request.args)}`,
   });
-  return result.response === 1;
+  return result?.response === 1;
 }
 
 let httpConfirmationScheduler = new McpConfirmationScheduler(
