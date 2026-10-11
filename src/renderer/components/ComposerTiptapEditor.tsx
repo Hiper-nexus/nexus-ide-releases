@@ -336,7 +336,7 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
           ...((ariaDescribedBy || limitHit)
             ? { 'aria-describedby': [ariaDescribedBy, limitHit ? limitId : null].filter(Boolean).join(' ') }
             : {}),
-          'aria-placeholder': placeholder,
+          ...(placeholder ? { 'aria-placeholder': placeholder } : {}),
           role: 'textbox',
           'aria-multiline': 'true',
           class: `composer-rich-text composer-tiptap__surface${surfaceClassName ? ` ${surfaceClassName}` : ''}`,
