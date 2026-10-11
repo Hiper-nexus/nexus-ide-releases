@@ -25,7 +25,11 @@ export interface CliHistoryImportServiceDeps {
   readonly userDataPath: string;
   readonly checkoutId: string;
   readonly target: CliHistoryAdaptTarget;
-  /** cwd usado quando o transcript não traz o diretório da chamada. */
+  /**
+   * cwd para linha sem cwd/workdir, usado só se `target.projectRoot` faltar.
+   * Entra na chave de idempotência: tem de ser estável (raiz do escopo),
+   * nunca o cwd vivo do pane — esse muda com OSC 7 e duplicaria o import.
+   */
   readonly fallbackCwd: string;
   /** Grava um bloco; `true` = novo, `false` = chave já existia. Pode lançar. */
   readonly insert: (input: CreateCommandBlockInput) => boolean;
@@ -118,6 +122,8 @@ export async function importCliHistoryForScope(
   const maxBlocks = Math.max(1, deps.maxBlocks ?? MAX_BLOCKS_DEFAULT);
   const readFile = deps.readFile ?? ((file: string) => fs.promises.readFile(file, 'utf8'));
   const yieldToLoop = deps.yieldToLoop ?? defaultYield;
+  // A raiz do projeto vence o fallback do chamador: mesma chave de qualquer pane.
+  const stableCwd = deps.target.projectRoot || deps.fallbackCwd;
 
   let files = 0;
   let filesSkipped = 0;
@@ -169,10 +175,7 @@ export async function importCliHistoryForScope(
       transcript.adapterId,
       path.relative(transcript.base, transcript.file),
     );
-    const blocks = importCliHistoryBlocks(jsonl, {
-      sessionId,
-      cwd: deps.fallbackCwd,
-    });
+    const blocks = importCliHistoryBlocks(jsonl, { sessionId, cwd: stableCwd });
     found += blocks.length;
     for (const block of blocks) {
       if (imported >= maxBlocks) {

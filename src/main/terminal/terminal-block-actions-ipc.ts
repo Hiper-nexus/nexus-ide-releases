@@ -239,9 +239,11 @@ export function registerTerminalBlockActionsIpc(
             checkoutId: owned.scope.checkoutId,
             target: {
               workspaceId: owned.context.workspaceId,
-              projectRoot: owned.context.projectRoot,
+              projectRoot: owned.context.projectRoot ?? owned.scope.rootRealPath,
             },
-            fallbackCwd: owned.context.cwd,
+            // Raiz imutável do escopo, nunca `context.cwd` (muda com OSC 7):
+            // o cwd do fallback entra na chave de idempotência.
+            fallbackCwd: owned.scope.rootRealPath,
             insert: (input) => store.insertWithOutcome(input).inserted,
           });
           if (counts.imported > 0) {

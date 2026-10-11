@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CLI_HISTORY_UNKNOWN_CWD,
   importCliHistoryBlocks,
   importCliHistoryFiles,
 } from './cli-history-import';
@@ -170,5 +171,14 @@ describe('cli history import (T3)', () => {
     );
     expect(blocks).toHaveLength(1);
     expect(blocks[0]?.command).toBe('npm test');
+  });
+
+  it('sem cwd do chamador usa marcador fixo, não process.cwd() (chave estável)', () => {
+    const line = JSON.stringify({
+      message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] },
+    });
+    const [block] = importCliHistoryBlocks(line, { sessionId: 's' });
+    expect(block?.cwd).toBe(CLI_HISTORY_UNKNOWN_CWD);
+    expect(block?.cwd).not.toBe(process.cwd());
   });
 });

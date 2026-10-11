@@ -400,7 +400,8 @@ describe('registerTerminalBlockActionsIpc', () => {
           userDataPath: '/user-data',
           checkoutId: 'checkout-a',
           target: { workspaceId: 'checkout-a', projectRoot: '/workspace' },
-          fallbackCwd: '/workspace/app',
+          // Raiz do escopo, não o cwd vivo do pane ('/workspace/app').
+          fallbackCwd: '/workspace',
         }),
       );
       expect(blockStorePrune).toHaveBeenCalled();
