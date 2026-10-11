@@ -32,6 +32,7 @@ import {
 } from './command-block-tracker';
 import { resolveCommandBlockScope } from './command-block-scope-registry';
 import { CommandRefineryStore } from './command-refinery-store';
+import { handleTrusted } from '../security/trusted-ipc';
 import { CommandBlockStore } from './command-block-store';
 import { importCliHistoryForScope } from './cli-history-import-service';
 
@@ -210,7 +211,8 @@ export function registerTerminalBlockActionsIpc(
 
   // F-1171: transcripts das CLIs → command_blocks do projeto do pane dono.
   // Status `unknown` não alimenta o refinador (sem exit code provado).
-  ipcMain.handle(
+  // Canais novos já nascem no `handleTrusted` (QLT-07): só a janela principal.
+  handleTrusted(
     TERMINAL_BLOCK_CHANNELS.importCliHistory,
     async (event, raw): Promise<CliHistoryImportResult> => {
       try {
@@ -263,7 +265,7 @@ export function registerTerminalBlockActionsIpc(
     },
   );
 
-  ipcMain.handle(
+  handleTrusted(
     TERMINAL_BLOCK_CHANNELS.searchHistory,
     (event, raw): CommandHistorySearchResult => {
       try {

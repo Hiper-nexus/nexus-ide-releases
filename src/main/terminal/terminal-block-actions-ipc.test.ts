@@ -6,6 +6,11 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/user-data' },
 }));
 
+// handleTrusted (QLT-07) delega ao ipcMain.handle depois de checar a janela.
+vi.mock('../security/trusted-ipc', () => ({
+  handleTrusted: (channel: string, handler: unknown) => handle(channel, handler),
+}));
+
 const blockStoreConstruct = vi.fn();
 const blockStoreSearch = vi.fn();
 const blockStoreInsert = vi.fn();
