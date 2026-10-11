@@ -15,8 +15,9 @@ afterEach(() => {
   for (const dir of roots.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// Estes scripts só rodam em host Linux (exigem /bin/true e recusam outro SO); o CI Linux os executa.
-describe.skipIf(process.platform !== 'linux')('verified Linux Codex smoke prerequisite', () => {
+// Estes scripts só rodam em host Linux x64 (exigem /bin/true e recusam outro SO
+// ou arquitetura: LINUX_CODEX_HOST); o CI Linux x64 os executa.
+describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('verified Linux Codex smoke prerequisite', () => {
   it('rejects a tampered archive before extraction or PATH publication', () => {
     const dir = root();
     const archive = path.join(dir, 'untrusted.tgz');
