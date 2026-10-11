@@ -10249,7 +10249,7 @@ export const RELEASE_076212: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076233: AppRelease = {
   version: '0.76.233',
   date: '2026-10-10',
   codename: 'Missões com acompanhamento contínuo',
@@ -10288,5 +10288,23 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Limite confirmado por cota medida', detail: 'Uma janela recente com cota esgotada pode confirmar o limite da conta. Texto de terminal e cota sem resposta continuam sem provocar troca imediata.' },
     { title: 'Handoffs paginados', detail: 'A listagem com cursor só marca como vistos os itens devolvidos; cursor inválido não consome entregas.' },
     { title: 'Preview com as proteções do Nexus', detail: 'O preview local preserva os comandos de navegador governados e fecha o acesso experimental de depuração que contornava suas proteções.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.234',
+  date: '2026-10-11',
+  codename: 'Motor de decisão em toda missão',
+  summary: 'Jev, Clef e Luna acompanham a missão do início ao fim, com orçamento por missão, escolha por custo e qualidade no Automático e dicas ao Maestro que nunca bloqueiam.',
+  highlights: [
+    { title: 'Orçamento de decisão por missão', detail: 'Cada missão tem um teto para as consultas de Jev, Clef e Luna (padrão US$ 0,50), ajustável em Modelos de decisão. As checagens de segurança fixas no Jev continuam e só entram na conta.' },
+    { title: 'Automático por custo e qualidade', detail: 'No modo Automático o motor pesa qualidade e preço: Clef Flash no texto barato e Clef-omni na imagem autorizada. Escolher Jev, Clef, Luna ou Juntos mantém o modelo fixo.' },
+    { title: 'Dicas do início ao fim', detail: 'O Maestro recebe sugestão de workers no início (inclusive em missão +pane), risco de cada entrega de código, conselho quando um worker cai e a cobertura do objetivo antes de concluir.' },
+    { title: 'Calibrar modelos', detail: 'Mede Jev, Clef e Luna com as suas chaves em 55 casos, mostra o custo antes e pode ser cancelada. Com medição, o Automático junta dois modelos nas decisões reversíveis quando compensa.' },
+    { title: 'Motor de decisão na missão', detail: 'A aba Plano mostra o gasto de decisão da missão, o orçamento usado, as chamadas por modelo e as dicas com o modelo que respondeu.' },
+  ],
+  fixes: [
+    { title: 'Custo que sobrevive ao reinício', detail: 'O valor cobrado de cada consulta fica no diário, então reiniciar o app não devolve orçamento à missão.' },
+    { title: 'Estatísticas sem a calibração', detail: 'O gasto da calibração aparece à parte e não infla a contagem de decisões.' },
   ],
 };
