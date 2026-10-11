@@ -60,12 +60,13 @@ describe('common decision service', () => {
       getSettings: () => settings, getAvailability: () => ({ jev: true, clef: true }),
       getConfigurationKey: () => 'stable', getClefConnection: () => connection,
       fetch: (async (url, options) => { endpoint = String(url); const body = JSON.parse(String(options?.body));
-        return Response.json({ success: true, result: { ...nativeResult, model: 'clef', answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, { type: 'noul', noul: 0.9 }])) } }); }) as typeof fetch,
+        return Response.json({ success: true, result: { ...nativeResult, model: body.model, answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, { type: 'noul', noul: 0.9 }])) } }); }) as typeof fetch,
     });
-    expect(endpoint).toContain('/ai/run/@cf/cloudflare/clef');
+    // F-1165: no Automático, escolha barata de texto vai ao Flash (antes: Clef cheio sempre).
+    expect(endpoint).toMatch(/\/ai\/run\/@cf\/cloudflare\/clef-flash$/);
     expect(nativeCalls).toBe(0);
-    expect(result?.route).toMatchObject({ provider: 'clef', evidence: 'public-benchmark' });
-    expect(result?.estimatedUsd).toBeCloseTo(0.000024, 10);
+    expect(result?.route).toMatchObject({ provider: 'clef', model: 'clef-flash', evidence: 'prior', policyVersion: 'decision-engine-v2' });
+    expect(result?.estimatedUsd).toBeCloseTo(0.0000038, 10);
   });
 
   it('returns a Jev answer whose provider omitted usage without inventing a cost or failing', async () => {

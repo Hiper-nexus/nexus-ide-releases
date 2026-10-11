@@ -159,3 +159,27 @@ it('keeps the versioned OpenAI grant through IPC save and authoritative reload',
   expect(resolveDecisionRoute({ surface: 'browserTool', images: [{ content_type: 'image/png', base64: 'synthetic' }] }, loaded,
     { jev: false, clef: false, luna: true })?.provider).toBe('luna');
 });
+
+it('F-1164: missionBudgetUsd fora da faixa no arquivo vira o padrão e preserva o modo do operador', async () => {
+  const file = resolveSettingsFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  for (const invalid of [25, -1, 'NaN']) {
+    const saved = { mode: 'auto', clefModel: 'clef-flash', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: false,
+      missionBudgetUsd: invalid === 'NaN' ? Number.NaN : invalid };
+    // JSON grava NaN como null: também precisa cair no padrão sem derrubar o resto.
+    fs.writeFileSync(path.join(path.dirname(file), 'decision-models.json'), JSON.stringify(saved));
+    vi.resetModules();
+    const store = await import('./settings-store'); store.registerSettingsIpc();
+    const loaded = store.getOrchSettings().decisionModels;
+    expect(loaded).toMatchObject({ mode: 'auto', clefModel: 'clef-flash' });
+    expect(loaded.missionBudgetUsd).toBeUndefined();
+  }
+  const store = await import('./settings-store'); store.registerSettingsIpc();
+  const saved = handlers.get(SETTINGS_CHANNELS.orchSet)!(null, { decisionModels: {
+    mode: 'auto', clefModel: 'clef', cloudflareAccountId: '', visionEnabled: false, missionBudgetUsd: 25 } });
+  expect(saved.decisionModels).toMatchObject({ mode: 'auto' });
+  expect(saved.decisionModels.missionBudgetUsd).toBeUndefined();
+  handlers.get(SETTINGS_CHANNELS.orchSet)!(null, { decisionModels: {
+    mode: 'auto', clefModel: 'clef', cloudflareAccountId: '', visionEnabled: false, missionBudgetUsd: 2 } });
+  expect(store.getOrchSettings().decisionModels.missionBudgetUsd).toBe(2);
+});

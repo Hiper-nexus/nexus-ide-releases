@@ -355,3 +355,52 @@ describe('classifyPaneTailForDigest (digest do pane_read)', () => {
     expect(screen.endsWith('FIM')).toBe(true);
   });
 });
+
+describe('F-1164: missionId chega ao judge no paneState', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    for (const d of disposers) d();
+    disposers.length = 0;
+  });
+
+  it('digest: a missão de quem lê vai ao judge', async () => {
+    const judge = vi.fn<typeof jevJudge>(async () => jevResult('working', 0));
+    await classifyPaneTailForDigest('mission-tail-propagation', {
+      judge, enabled: () => true, hasKey: () => true, configurationKey: () => 'k-mission', missionId: 'm-digest',
+    });
+    expect(judge).toHaveBeenCalledWith(expect.objectContaining({ surface: 'paneState', missionId: 'm-digest' }));
+  });
+
+  it('classificador: a missão do pane (registro) vai ao judge com a sessão', async () => {
+    const judge = vi.fn<typeof jevJudge>(async () => jevResult());
+    const missionOf = vi.fn((sessionId: string) => (sessionId === 's1' ? 'm-pane' : undefined));
+    const { deps, emit } = harness({ judge, missionOf, screenText: () => 'mission screen text' });
+    start(deps);
+    emit(record());
+    await advance(15_001);
+    expect(missionOf).toHaveBeenCalledWith('s1');
+    expect(judge).toHaveBeenCalledWith(expect.objectContaining({ surface: 'paneState', sessionId: 's1', missionId: 'm-pane' }));
+  });
+});
+
+describe('P2-4: recusa por orçamento não envenena o cache do digest', () => {
+  it("null por 'budget' não vira falha lembrada para outra missão", async () => {
+    const judge = vi.fn<typeof jevJudge>(async (input) => {
+      if (input.missionId === 'm-broke') { input.onNoAnswer?.('budget'); return null; }
+      return jevResult('working', 0);
+    });
+    const deps = { judge, enabled: () => true, hasKey: () => true, configurationKey: () => 'k-budget' };
+    expect(await classifyPaneTailForDigest('budget-shared-tail', { ...deps, missionId: 'm-broke' })).toBeNull();
+    expect(await classifyPaneTailForDigest('budget-shared-tail', { ...deps, missionId: 'm-rich' })).toMatchObject({ state: 'working' });
+    expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('falha de verdade (timeout) continua lembrada', async () => {
+    const judge = vi.fn<typeof jevJudge>(async (input) => { input.onNoAnswer?.('timeout'); return null; });
+    const deps = { judge, enabled: () => true, hasKey: () => true, configurationKey: () => 'k-timeout' };
+    await classifyPaneTailForDigest('timeout-shared-tail', { ...deps, missionId: 'a' });
+    await classifyPaneTailForDigest('timeout-shared-tail', { ...deps, missionId: 'b' });
+    expect(judge).toHaveBeenCalledTimes(1);
+  });
+});

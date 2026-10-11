@@ -419,6 +419,7 @@ async function preparePtyHandoff(
     try {
       const jevVerdict = await reviewMissionHandoff({
         sessionId,
+        missionId: mission.id,
         declaredStatus: payload.status,
         summary,
         fullText: artifactFullText(payload.artifacts),

@@ -20,7 +20,9 @@ export type JevUnavailableReason =
   /** A distribuição parseou, mas não serve o contrato. */
   | 'ambiguous'
   /** Os modelos do modo Juntos não concordaram. */
-  | 'divergent';
+  | 'divergent'
+  /** O orçamento de decisão da missão esgotou (F-1164). */
+  | 'budget';
 
 export type SpawnRouteSource = 'jev' | 'mixed' | 'heuristic';
 
@@ -170,6 +172,7 @@ export const JEV_UNAVAILABLE_LABEL: Readonly<Record<JevUnavailableReason, string
   refusal: 'recusa do modelo',
   ambiguous: 'resposta ambígua',
   divergent: 'sem acordo entre os modelos',
+  budget: 'orçamento da missão esgotado',
 };
 
 export function isJevUnavailableReason(value: unknown): value is JevUnavailableReason {

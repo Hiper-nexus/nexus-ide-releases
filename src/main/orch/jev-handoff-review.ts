@@ -380,6 +380,9 @@ export async function reviewMissionHandoff(
     timeoutMs: JEV_REVIEW_TIMEOUT_MS,
     retryOnTimeout: false,
     surface: 'handoffReview',
+    // F-1164: a consulta conta no orçamento da missão do handoff (e o no-answer leva a missão ao diário).
+    sessionId: params.sessionId,
+    missionId: params.missionId,
   });
   if (!result) {
     recordJevDecision({

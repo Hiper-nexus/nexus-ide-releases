@@ -2921,10 +2921,12 @@ function paneReadMode(
 async function paneDigestResult(
   tail: string,
   maxChars: number = DIGEST_MAX_CHARS,
+  missionId?: string,
 ): Promise<Record<string, unknown>> {
   // F-987: redesenho de TUI colapsado e teto de caracteres por pane.
   const digest = digestPaneTail(tail, { maxChars });
-  const classified = await classifyPaneTailForDigest(digest.text);
+  // F-1164: quem lê (o Maestro) paga a classificação no orçamento da missão dele.
+  const classified = await classifyPaneTailForDigest(digest.text, { missionId });
   return {
     mode: 'digest',
     ...(classified
@@ -2987,7 +2989,7 @@ const paneRead: McpToolDef = {
     const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'paneId'), 'read');
     const tail = readSessionOutput(sessionId, num(args, 'lines') ?? 200);
     if (paneReadMode(args, ctx) !== 'digest') return tail;
-    return paneDigestResult(tail);
+    return paneDigestResult(tail, DIGEST_MAX_CHARS, ctx.missionId);
   },
 };
 
@@ -3059,7 +3061,7 @@ const paneReadMany: McpToolDef = {
         try {
           const tail = readSessionOutput(item.sessionId, lines);
           if (mode !== 'digest') return { paneId: item.paneId, output: tail };
-          return { paneId: item.paneId, ...(await paneDigestResult(tail, budget)) };
+          return { paneId: item.paneId, ...(await paneDigestResult(tail, budget, ctx.missionId)) };
         } catch (err) {
           return {
             paneId: item.paneId,

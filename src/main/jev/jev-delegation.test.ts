@@ -178,3 +178,18 @@ describe('F-784: decisão de delegação em casos representativos', () => {
     expect((await advisePrompt(SCAN, { judge }))?.delegation).not.toHaveProperty('heavyRead');
   });
 });
+
+describe('F-1164: missionId chega ao judge na delegação', () => {
+  it('propaga a missão conhecida ao judge e ao diário', async () => {
+    const judge = vi.fn<JudgeMock>(async () => verdict(0.9, '3', '2'));
+    await advisePrompt(LONG, { judge, enabled: () => true, hasKey: () => true, sessionId: 's-m', missionId: 'm-deleg' });
+    expect(judge).toHaveBeenCalledWith(expect.objectContaining({ surface: 'delegation', sessionId: 's-m', missionId: 'm-deleg' }));
+    expect(recordJevDecision).toHaveBeenLastCalledWith(expect.objectContaining({ missionId: 'm-deleg' }));
+  });
+
+  it('sem missão conhecida não inventa uma', async () => {
+    const judge = vi.fn<JudgeMock>(async () => verdict(0.9, '3', '2'));
+    await advisePrompt(LONG, { judge, enabled: () => true, hasKey: () => true, sessionId: 's-solo' });
+    expect(judge.mock.calls[0]![0].missionId).toBeUndefined();
+  });
+});

@@ -506,3 +506,18 @@ describe('F-782: o ACK do Maestro rotula a revisão do Jev', () => {
     expect(listJevDecisions({ dir: logDir })).toEqual([]);
   });
 });
+
+describe('F-1164: missionId chega ao judge no handoffReview', () => {
+  beforeEach(() => {
+    resetJevReviewBudgetsForTesting();
+    vi.clearAllMocks();
+  });
+
+  it('a revisão consulta com a sessão e a missão do handoff', async () => {
+    const judge = vi.fn(async () => allPass());
+    await reviewMissionHandoff({ sessionId: 's-h', missionId: 'm-handoff', ...baseInput }, deps(judge));
+    expect(judge).toHaveBeenCalledWith(expect.objectContaining({
+      surface: 'handoffReview', sessionId: 's-h', missionId: 'm-handoff',
+    }));
+  });
+});

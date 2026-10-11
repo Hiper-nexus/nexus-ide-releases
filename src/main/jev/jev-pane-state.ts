@@ -111,6 +111,8 @@ export interface PaneTailClassifyDeps {
   readonly enabled?: () => boolean;
   readonly hasKey?: () => boolean;
   readonly now?: () => number;
+  /** Missão de quem lê o digest (o Maestro): a consulta conta no orçamento dela (F-1164). */
+  readonly missionId?: string;
 }
 
 /** `result: null` is a remembered failure (outage, malformed answer), keyed like any other by configuration. */
@@ -134,16 +136,22 @@ export async function classifyPaneTailForDigest(
     const hash = createHash('sha256').update(before).update(clipped).digest('hex');
     const cached = digestClassifyCache.get(hash);
     if (cached && now() - cached.at < (cached.result ? DIGEST_CACHE_TTL_MS : DIGEST_NEGATIVE_CACHE_TTL_MS)) {
-      if (cached.result && cached.model) recordJevOptimization({ surface: 'paneState', model: cached.model, optimization: { jevRequestsAvoided: 1 } });
+      if (cached.result && cached.model) recordJevOptimization({ surface: 'paneState', missionId: deps.missionId, model: cached.model, optimization: { jevRequestsAvoided: 1 } });
       return cached.result;
     }
     const judgeFn = deps.judge ?? judge;
+    let noAnswerReason: string | undefined;
     const result = await judgeFn({
       state: { screen: clipped },
       questions: PANE_STATE_QUESTIONS,
       timeoutMs: DIGEST_CLASSIFY_TIMEOUT_MS,
       surface: 'paneState',
+      missionId: deps.missionId,
+      onNoAnswer: (reason) => { noAnswerReason = reason; },
     });
+    // F-1164: recusa por orçamento é da missão de quem leu, não do texto —
+    // lembrada como falha, calaria o digest das outras missões pelo mesmo texto.
+    if (!result && noAnswerReason === 'budget') return null;
     if (configuration() !== before || !enabled() || !hasKey()) return null;
     let classified: PaneTailClassification | null = null;
     const stateAnswer = result?.answers.state;
@@ -163,6 +171,7 @@ export async function classifyPaneTailForDigest(
       };
       recordJevDecision({
         surface: 'paneState',
+        missionId: deps.missionId,
         model: result.model,
         questions: Object.keys(PANE_STATE_QUESTIONS),
         probabilities: jevAnswerProbabilities(result.answers),
@@ -221,6 +230,17 @@ function defaultPaneLabel(sessionId: string, paneId?: string): string | null {
   }
 }
 
+function defaultMissionOf(sessionId: string): string | undefined {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- mesmo motivo do defaultPaneLabel: pane-registry é pesado e ausente nos testes
+    const { getPaneAuthzInfo } =
+      require('../orch/pane-registry') as typeof import('../orch/pane-registry');
+    return getPaneAuthzInfo(sessionId)?.missionId || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function defaultNarrate(text: string, paneId?: string): void {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires -- Electron só existe no app; nos testes o require cai no catch
@@ -254,6 +274,8 @@ export interface JevPaneStateDeps {
   }) => void;
   narrate?: (text: string, paneId?: string) => void;
   paneLabel?: (sessionId: string, paneId?: string) => string | null;
+  /** Missão do pane classificado (F-1164); padrão = registro de panes. */
+  missionOf?: (sessionId: string) => string | undefined;
 }
 
 interface SessionTrack {
@@ -332,11 +354,14 @@ export function startJevPaneStateClassifier(
     t.lastCallAt = now();
     try {
       const judgeFn = deps.judge ?? judge;
+      const missionId = (deps.missionOf ?? defaultMissionOf)(sessionId);
       const result = await judgeFn({
         state: { screen: text },
         questions: PANE_STATE_QUESTIONS,
         timeoutMs: CLASSIFY_TIMEOUT_MS,
         surface: 'paneState',
+        sessionId,
+        missionId,
       });
       if (!result) return;
       const stateAnswer = result.answers.state;
@@ -361,6 +386,7 @@ export function startJevPaneStateClassifier(
       recordJevDecision({
         surface: 'paneState',
         sessionId,
+        missionId,
         model: result.model,
         questions: Object.keys(PANE_STATE_QUESTIONS),
         probabilities: jevAnswerProbabilities(result.answers),

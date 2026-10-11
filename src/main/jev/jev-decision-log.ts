@@ -42,7 +42,11 @@ export type JevNoAnswerReason =
   /** A resposta parseou, mas a distribuição não serve o contrato. */
   | 'ambiguous'
   /** Juntos não teve respostas comparáveis, ou uma escolha de segurança divergiu. */
-  | 'divergent';
+  | 'divergent'
+  /** O orçamento de decisão da missão esgotou: nenhuma requisição saiu (F-1164). */
+  | 'budget';
+
+export { JEV_NO_ANSWER_REASONS } from './jev-decision-row';
 
 export interface JevDecisionEntry {
   id: string;
@@ -66,6 +70,12 @@ export interface JevDecisionEntry {
   /** `null` nas linhas sem resposta — métrica ausente, nunca zero fabricado. */
   inputTokens: number | null;
   usd: number | null;
+  /**
+   * Valor que o livro de orçamento da missão efetivamente cobrou (F-1164):
+   * custo medido, ou o estimado quando o custo é desconhecido. Ausente em
+   * linhas antigas e fora do livro; a reconstrução cai no `usd`.
+   */
+  budgetChargedUsd?: number;
   feedback?: 'right' | 'wrong';
   feedbackAt?: number;
   optimization?: JevOptimizationEvidence;
@@ -159,6 +169,7 @@ export function recordJevDecision(
       confidence: entry.confidence, decision: entry.decision, inputTokens: entry.inputTokens, usd: entry.usd,
       provider: entry.provider, route: entry.route, durationMs: entry.durationMs, requestCount: entry.requestCount,
       usageIncomplete: entry.usageIncomplete, diverged: entry.diverged, ensemblePeers: entry.ensemblePeers,
+      budgetChargedUsd: entry.budgetChargedUsd,
       feedback: entry.feedback, feedbackAt: entry.feedbackAt, optimization: entry.optimization };
     fs.appendFileSync(file, JSON.stringify(line) + '\n');
   } catch (error) {
@@ -197,6 +208,8 @@ export function recordJevNoAnswer(
     usage?: DecisionUsageReceipt;
     /** Tentativas HTTP já feitas; `0` = falhou antes de qualquer requisição (medido, não desconhecido). */
     requestCount?: number;
+    /** Valor cobrado pelo livro de orçamento da missão (F-1164). */
+    budgetChargedUsd?: number;
   },
   deps?: { dir?: string },
 ): string {
@@ -221,6 +234,7 @@ export function recordJevNoAnswer(
       requestCount,
       durationMs: input.usage?.durationMs,
       usageIncomplete: Boolean(input.usage?.usageIncomplete || (requestCount !== 0 && (inputTokens === null || usd === null))),
+      ...(input.budgetChargedUsd === undefined ? {} : { budgetChargedUsd: input.budgetChargedUsd }),
     },
     deps,
   );
@@ -345,7 +359,23 @@ export interface JevDecisionStats {
       optimization?: JevOptimizationStats;
     }
   >;
+  /** Gasto e consultas por missão (F-1164). Linhas sem missionId ficam fora. */
+  byMission: Record<string, JevMissionStats>;
   pricing: { usdPerInputToken: number; source: 'typesafe-published' };
+}
+
+export interface JevMissionStats {
+  calls: number;
+  noAnswer: number;
+  /** Consultas recusadas pelo orçamento da missão (subconjunto de noAnswer). */
+  budgetRefusals: number;
+  usd: number;
+  /** O que o livro de orçamento cobrou (custo desconhecido pesa o estimado). */
+  chargedUsd: number;
+  inputTokens: number;
+  /** Linhas cujo custo não foi medido: o usd é limite inferior. */
+  incompleteUsage: number;
+  byProvider: Record<string, { calls: number; noAnswer: number; usd: number }>;
 }
 
 const DAY_MS = 86_400_000;
@@ -362,6 +392,71 @@ function addProviderUsage(buckets: Record<string, DecisionUsageStats>, key: stri
   if (entry.requestCount === undefined) bucket.legacyRows += 1;
   else { bucket.measuredRows += 1; bucket.requests = (bucket.requests ?? 0) + entry.requestCount; }
   if (entry.durationMs !== undefined) bucket.durationMs = (bucket.durationMs ?? 0) + entry.durationMs;
+}
+
+/**
+ * A linha `judge-unavailable` do handoffReview só registra que a revisão não
+ * rodou; a consulta já tem a sua linha `no-answer`. Não é chamada nem custo.
+ */
+function isUnavailableMarker(entry: JevDecisionEntry): boolean {
+  return entry.kind !== 'no-answer' && entry.decision === 'judge-unavailable';
+}
+
+/** Quanto a linha pesa no livro da missão: o cobrado, senão o custo medido. */
+function chargedUsdOf(entry: JevDecisionEntry): number {
+  const charged = entry.budgetChargedUsd ?? entry.usd ?? 0;
+  return Number.isFinite(charged) && charged > 0 ? charged : 0;
+}
+
+const SPEND_YIELD_EVERY_LINES = 2_000;
+
+async function readMissionSpend(file: string, before: number, into: Record<string, number>): Promise<void> {
+  let raw: string;
+  try {
+    raw = await fs.promises.readFile(file, 'utf8');
+  } catch {
+    return;
+  }
+  const lines = raw.split('\n');
+  for (let index = 0; index < lines.length; index++) {
+    // Cede a thread a cada bloco: o diário pode ter 10 MB e o Main não trava.
+    if (index > 0 && index % SPEND_YIELD_EVERY_LINES === 0) await new Promise<void>(resolve => setImmediate(resolve));
+    const trimmed = lines[index].trim();
+    if (!trimmed) continue;
+    let row: JevDecisionEntry | null = null;
+    try { row = parseDecisionRow(JSON.parse(trimmed)); } catch { row = null; }
+    if (!row?.missionId || row.kind === 'optimization' || isUnavailableMarker(row) || row.at >= before) continue;
+    into[row.missionId] = (into[row.missionId] ?? 0) + chargedUsdOf(row);
+  }
+}
+
+/**
+ * Gasto por missão gravado ANTES de `before` (o nascimento do livro deste
+ * processo). Assíncrono e cooperativo: aquece o livro fora do caminho quente.
+ */
+export async function jevMissionChargedSpend(opts: { before: number; dir?: string }): Promise<Record<string, number>> {
+  const spend: Record<string, number> = Object.create(null);
+  let dir: string;
+  try { dir = opts.dir ?? decisionsDir(); } catch { return spend; }
+  await readMissionSpend(rotatedLogFile(dir), opts.before, spend);
+  await readMissionSpend(logFile(dir), opts.before, spend);
+  return spend;
+}
+
+function addMissionUsage(
+  buckets: Record<string, JevMissionStats>, missionId: string, provider: string, entry: JevDecisionEntry,
+): void {
+  const bucket = buckets[missionId] ??= { calls: 0, noAnswer: 0, budgetRefusals: 0, usd: 0, chargedUsd: 0, inputTokens: 0,
+    incompleteUsage: 0, byProvider: Object.create(null) };
+  const perProvider = bucket.byProvider[provider] ??= { calls: 0, noAnswer: 0, usd: 0 };
+  if (entry.kind === 'no-answer') {
+    bucket.noAnswer += 1; perProvider.noAnswer += 1;
+    if (entry.reason === 'budget') bucket.budgetRefusals += 1;
+  } else { bucket.calls += 1; perProvider.calls += 1; }
+  bucket.usd += entry.usd ?? 0; perProvider.usd += entry.usd ?? 0;
+  bucket.chargedUsd += chargedUsdOf(entry);
+  bucket.inputTokens += entry.inputTokens ?? 0;
+  if (entry.usageIncomplete || (entry.requestCount !== 0 && entry.usd === null)) bucket.incompleteUsage += 1;
 }
 
 function emptyWindow(): JevWindowStats {
@@ -418,7 +513,7 @@ export function jevDecisionStats(deps?: {
     totals: { calls: 0, usd: 0, inputTokens: 0, noAnswer: 0 },
     windows: { today: emptyWindow(), last30d: emptyWindow(), allTime: emptyWindow() },
     bySurface: {},
-    byProvider: Object.create(null), byModel: Object.create(null),
+    byProvider: Object.create(null), byModel: Object.create(null), byMission: Object.create(null),
     pricing: { usdPerInputToken: USD_PER_INPUT_TOKEN, source: 'typesafe-published' },
   };
   let entries: JevDecisionEntry[];
@@ -445,6 +540,7 @@ export function jevDecisionStats(deps?: {
     const provider = entry.provider ?? (entry.model === 'clef' || entry.model === 'clef-flash' || entry.model === 'clef-omni' || entry.model.startsWith('@cf/cloudflare/') ? 'clef' : 'jev');
     addProviderUsage(stats.byProvider, provider, entry);
     addProviderUsage(stats.byModel, entry.model, entry);
+    if (entry.missionId && !isUnavailableMarker(entry)) addMissionUsage(stats.byMission, entry.missionId, provider, entry);
     stats.totals.usd += entry.usd ?? 0;
     stats.totals.inputTokens += entry.inputTokens ?? 0;
     bucket.usd += entry.usd ?? 0;

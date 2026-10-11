@@ -88,6 +88,8 @@ export interface JevResult {
   usage: { input_tokens: number; output_tokens: number };
   /** O provedor não informou `usage`: `usage` vale zero só para satisfazer o tipo; tokens e custo seguem desconhecidos. */
   usageMissing?: true;
+  /** F-1164: valor cobrado pelo livro de orçamento da missão (o diário o grava). */
+  budgetChargedUsd?: number;
   /** Juntos discordou. Os números por pergunta e provedor não carregam texto. */
   diverged?: boolean;
   ensemblePeers?: Record<string, Record<string, number>>;
@@ -160,6 +162,11 @@ export interface JudgeInput {
    * caiu no caminho determinístico sem mudar o retorno `null`.
    */
   onNoAnswer?: (reason: JevNoAnswerReason) => void;
+  /**
+   * F-1164 (interno do motor): quanto o livro de orçamento cobra por esta
+   * consulta dado o recibo. Quem grava a linha `no-answer` o anota no diário.
+   */
+  budgetChargeFor?: (usage: import('../../shared/decision-models').DecisionUsageReceipt | undefined) => number | undefined;
   /**
    * `false` = um timeout encerra na hora (fail-open), sem a 2ª tentativa.
    * Para superfícies auto-on com teto próprio: o retry dobrava o pior caso.
@@ -323,6 +330,7 @@ export async function judgeJevTransport(
       requestCount,
       sessionId: input.sessionId,
       missionId: input.missionId,
+      budgetChargedUsd: input.budgetChargeFor?.(usage),
     });
   }
   warnRateLimited(lastFailure, now);

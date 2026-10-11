@@ -40,6 +40,7 @@ const NO_ANSWER_REASONS: Record<string, string> = {
   refusal: 'recusa do modelo',
   ambiguous: 'resposta ambígua',
   divergent: 'sem acordo',
+  budget: 'orçamento da missão esgotado',
 };
 
 function surfaceLabel(surface: string): string {

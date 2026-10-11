@@ -61,7 +61,8 @@ export interface JevDecisionRow {
     | 'internal-error'
     | 'refusal'
     | 'ambiguous'
-    | 'divergent';
+    | 'divergent'
+    | 'budget';
   surface: string;
   sessionId?: string;
   missionId?: string;
@@ -133,6 +134,11 @@ export interface JevDecisionStatsResult {
       optimization?: JevOptimizationStats;
     }
   >;
+  /** Gasto de decisão por missão (F-1164); ausente em versões antigas. */
+  byMission?: Record<string, {
+    calls: number; noAnswer: number; budgetRefusals: number; usd: number; chargedUsd: number; inputTokens: number;
+    incompleteUsage: number; byProvider: Record<string, { calls: number; noAnswer: number; usd: number }>;
+  }>;
   pricing: { usdPerInputToken: number; source: 'typesafe-published' };
 }
 

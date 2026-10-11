@@ -104,6 +104,8 @@ export interface AdviseDelegationDeps {
   enabled?: () => boolean;
   hasKey?: () => boolean;
   sessionId?: string;
+  /** Missão conhecida do chamador (Maestro, pane de missão): a consulta conta no orçamento dela. */
+  missionId?: string;
 }
 
 function countOf(choice: string | undefined): number {
@@ -137,6 +139,7 @@ export async function advisePrompt(
     signal: AbortSignal.timeout(DELEGATE_TIMEOUT_MS),
     surface: 'delegation',
     sessionId: deps.sessionId,
+    missionId: deps.missionId,
   });
   if (!result) return null;
 
@@ -159,6 +162,7 @@ export async function advisePrompt(
   recordJevDecision({
     surface: 'delegation',
     sessionId: deps.sessionId,
+    missionId: deps.missionId,
     model: result.model,
     questions: Object.keys(DELEGATION_QUESTIONS),
     probabilities: jevAnswerProbabilities(result.answers),

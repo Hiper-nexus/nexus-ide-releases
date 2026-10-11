@@ -4,7 +4,7 @@ import type { JevDecisionInput } from '../jev/jev-decision-log';
 import { decisionResultCostUsd } from './decision-pricing';
 
 export function decisionResultUsage(result: JevResult): Pick<JevDecisionInput,
-  'provider' | 'route' | 'durationMs' | 'requestCount' | 'inputTokens' | 'usd' | 'usageIncomplete'> {
+  'provider' | 'route' | 'durationMs' | 'requestCount' | 'inputTokens' | 'usd' | 'usageIncomplete' | 'budgetChargedUsd'> {
   const tokens = result.usage?.input_tokens;
   const measured = !result.usageMissing && typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0;
   return {
@@ -20,6 +20,7 @@ export function decisionResultUsage(result: JevResult): Pick<JevDecisionInput,
       requestCount: result.usageReceipt.requestCount, durationMs: result.usageReceipt.durationMs,
       usageIncomplete: result.usageReceipt.usageIncomplete,
     } : {}),
+    ...(typeof result.budgetChargedUsd === 'number' ? { budgetChargedUsd: result.budgetChargedUsd } : {}),
   };
 }
 

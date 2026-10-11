@@ -200,3 +200,19 @@ describe('routeWithJev', () => {
     expect(questions).toHaveProperty('skill_typesafe_ai');
   });
 });
+
+describe('F-1164: missionId chega ao judge no intake', () => {
+  it('propaga a missão conhecida do chamador', async () => {
+    const judge = vi.fn<typeof jevJudge>(async () => result());
+    await routeWithJev('crie um site de portfólio com página de contato', {
+      judge, enabled, hasKey, designReferences: () => [], missionId: 'm-intake',
+    });
+    expect(judge).toHaveBeenCalledWith(expect.objectContaining({ surface: 'intake', missionId: 'm-intake' }));
+  });
+
+  it('sem missão (preparação antes de a missão existir) não inventa uma', async () => {
+    const judge = vi.fn<typeof jevJudge>(async () => result());
+    await routeWithJev('crie um site de portfólio com página de contato', { judge, enabled, hasKey, designReferences: () => [] });
+    expect(judge.mock.calls[0]![0].missionId).toBeUndefined();
+  });
+});

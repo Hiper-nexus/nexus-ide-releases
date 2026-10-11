@@ -5,11 +5,19 @@ import { judgeClef, type ClefConnection } from './clef-client';
 import { judgeLuna } from './luna-client';
 import { resolveLunaApiKey } from './luna-credentials';
 import { combineEnsembleAnswers } from './decision-ensemble';
-import { ensembleMembers, resolveDecisionRoute, type DecisionAvailability } from './decision-routing';
+import {
+  ensembleMembers, JEV_PINNED_SURFACES, REVERSIBLE_ENSEMBLE_SURFACES, resolveDecisionRoute, type DecisionAvailability,
+} from './decision-routing';
 import { decisionConfigurationKey, getClefConnection, getDecisionAvailability, getDecisionSettings } from './decision-availability';
-import { decisionResultCostUsd } from './decision-pricing';
+import { decisionResultCostUsd, estimateDecisionCostUsd, estimateDecisionInputTokens } from './decision-pricing';
 import { aggregateUsageReceipts, decisionResultUsage } from './decision-usage';
 import { onDecisionConfigurationChanged } from './decision-revision';
+import {
+  decisionBudgetChargeForUsage, getDecisionBudgetLedger, type DecisionBudgetLedger, type DecisionBudgetReservation,
+} from './decision-budget';
+import { DECISION_ENGINE_POLICY, planAutoDecision } from './decision-engine';
+import { readDecisionQualityTable, type DecisionQualityTable } from './decision-quality';
+import { missionDecisionBudgetUsd } from '../../shared/decision-models';
 
 export interface DecisionJudgeDeps {
   nativeJudge: (input: JudgeInput) => Promise<JevResult | null>;
@@ -20,7 +28,15 @@ export interface DecisionJudgeDeps {
   resolveLunaKey?: () => string | undefined;
   fetch?: typeof fetch;
   now?: () => number;
+  /** Livro de orçamento por missão (F-1164); padrão = o do processo, reconstruído do diário. */
+  budgetLedger?: DecisionBudgetLedger;
+  /** Tabela de qualidade do roteador v2 (F-1165); `null` = priors embutidos. */
+  getQualityTable?: () => DecisionQualityTable | null;
 }
+
+/** Recibo visto por uma consulta com reserva: decide o acerto do orçamento. */
+interface UsageTracker { usage?: DecisionUsageReceipt; noAnswerUsage?: DecisionUsageReceipt }
+const usageTrackers = new WeakMap<object, UsageTracker>();
 
 /** Nothing was sent: a measured zero, so the journal never reads it as an unknown count. */
 const NO_REQUEST_USAGE: DecisionUsageReceipt = { inputTokens: 0, usd: 0, requestCount: 0, durationMs: 0, usageIncomplete: false };
@@ -43,8 +59,12 @@ function failureReason(error: unknown, input: JudgeInput, now: () => number): Je
 }
 
 function noAnswer(input: JudgeInput, route: DecisionRoute | null, reason: JevNoAnswerReason, usage?: DecisionUsageReceipt): null {
+  const tracker = usageTrackers.get(input);
+  if (tracker && usage) tracker.noAnswerUsage = usage;
+  const budgetChargedUsd = input.budgetChargeFor?.(usage ?? tracker?.usage);
   if (input.surface && route) recordJevNoAnswer({ surface: input.surface, model: route.model,
-    sessionId: input.sessionId, missionId: input.missionId, reason, provider: route.provider, route, usage });
+    sessionId: input.sessionId, missionId: input.missionId, reason, provider: route.provider, route, usage,
+    ...(budgetChargedUsd === undefined ? {} : { budgetChargedUsd }) });
   try { input.onNoAnswer?.(reason); }
   catch { console.warn('[decision-models] no-answer callback failed'); }
   return null;
@@ -62,8 +82,12 @@ async function callMember(
 
 async function performEnsemble(
   input: JudgeInput, deps: DecisionJudgeDeps, settings: DecisionSettings, members: DecisionRoute[],
+  /** v2 em surface reversível: falha parcial devolve quem respondeu. Juntos (v1) nunca. */
+  options: { partialFallback?: boolean } = {},
 ): Promise<JevResult | null> {
-  const lead = { ...members[0], model: 'ensemble', reason: 'ensemble' };
+  // v2 guarda o porquê legível; v1 mantém o rótulo que a tela já reconhece.
+  const lead = { ...members[0], model: 'ensemble',
+    reason: members[0].policyVersion === DECISION_ENGINE_POLICY ? members[0].reason : 'ensemble' };
   const configuration = deps.getConfigurationKey ?? decisionConfigurationKey;
   const before = configuration();
   const started = (deps.now ?? (() => performance.now()))();
@@ -107,7 +131,24 @@ async function performEnsemble(
       }
     }));
     const usage = aggregateUsageReceipts(receipts);
-    if (results.some(result => !result)) return finishNoAnswer(firstFailure ?? 'client-error');
+    const answeredIndex = results.findIndex(Boolean);
+    if (results.some(result => !result)) {
+      if (!options.partialFallback || answeredIndex < 0) return finishNoAnswer(firstFailure ?? 'client-error');
+      if (currentInput.signal.aborted || configuration() !== before) return finishNoAnswer('aborted');
+      // Reversível: a resposta válida de um membro não se perde porque o outro caiu (429, timeout).
+      const member = members[answeredIndex];
+      const survivor = results[answeredIndex]!;
+      const silent = members.filter((_, index) => !results[index]).map(peer => peer.model).join(', ');
+      const elapsedPartial = (deps.now ?? (() => performance.now()))() - started;
+      return {
+        ...survivor, route: { ...member, reason: `${member.reason} · parcial: ${silent} sem resposta (${firstFailure ?? 'client-error'})` },
+        diverged: undefined, ensemblePeers: undefined,
+        requestCount: usage.requestCount, durationMs: usage.durationMs ?? elapsedPartial,
+        usage: { input_tokens: usage.inputTokens ?? 0, output_tokens: 0 }, usageReceipt: usage,
+        ...(usage.usageIncomplete ? { usageMissing: true as const } : {}),
+        ...(usage.usd === null ? {} : { estimatedUsd: usage.usd }),
+      };
+    }
     if (currentInput.signal.aborted || configuration() !== before) return finishNoAnswer('aborted');
     const answered = results as JevResult[];
     const combined = combineEnsembleAnswers(members.map((member, index) => ({ provider: member.provider, answers: answered[index].answers })), input.surface);
@@ -131,12 +172,102 @@ async function performEnsemble(
   finally { unsubscribe(); }
 }
 
+/**
+ * Acerto pelo recibo real. Sem recibo (falha sem medição) o estimado fica:
+ * custo desconhecido nunca vira zero. Nenhuma requisição = devolve a reserva.
+ */
+function settleReservation(
+  ledger: DecisionBudgetLedger, reservation: DecisionBudgetReservation, result: JevResult | null, tracker: UsageTracker,
+): number {
+  if (result) {
+    const usage = decisionResultUsage(result);
+    return ledger.settle(reservation, usage.usd, Boolean(usage.usageIncomplete));
+  }
+  const usage = tracker.noAnswerUsage ?? tracker.usage;
+  if (!usage) return ledger.settle(reservation, null);
+  if (usage.requestCount === 0) return ledger.settle(reservation, 0);
+  return ledger.settle(reservation, usage.usd, usage.usageIncomplete);
+}
+
+async function runReserved(
+  input: JudgeInput, ledger: DecisionBudgetLedger, reservation: DecisionBudgetReservation | null,
+  run: (input: JudgeInput) => Promise<JevResult | null>,
+): Promise<JevResult | null> {
+  if (!reservation) return run(input);
+  const tracker: UsageTracker = {};
+  const tracked: JudgeInput = { ...input,
+    onUsage: receipt => { tracker.usage = receipt; input.onUsage?.(receipt); },
+    // A linha `no-answer` anota o mesmo valor que o acerto cobra (reconstrução após reinício).
+    budgetChargeFor: usage => decisionBudgetChargeForUsage(reservation.estimatedUsd, usage) };
+  usageTrackers.set(tracked, tracker);
+  let result: JevResult | null = null;
+  let charged: number | undefined;
+  try {
+    result = await run(tracked);
+  } finally {
+    try { charged = settleReservation(ledger, reservation, result, tracker); }
+    catch { console.warn('[decision-models] budget settle failed'); }
+  }
+  // A surface grava a decisão com `decisionResultUsage(result)`: o cobrado vai junto ao diário.
+  return result && charged !== undefined ? { ...result, budgetChargedUsd: charged } : result;
+}
+
+function estimateRoutesUsd(input: JudgeInput, routes: readonly DecisionRoute[]): number {
+  const tokens = estimateDecisionInputTokens(input);
+  return routes.reduce((sum, route) => sum + estimateDecisionCostUsd(tokens, route.provider, route.model), 0);
+}
+
+/** Automático: roteador v2 + orçamento da missão. Só o Automático recusa por orçamento. */
+async function performAutoDecision(
+  input: JudgeInput, deps: DecisionJudgeDeps, settings: DecisionSettings, available: DecisionAvailability,
+): Promise<JevResult | null> {
+  const ledger = deps.budgetLedger ?? getDecisionBudgetLedger();
+  const budgetUsd = missionDecisionBudgetUsd(settings);
+  const missionId = input.missionId;
+  let quality: DecisionQualityTable | null = null;
+  try { quality = (deps.getQualityTable ?? readDecisionQualityTable)(); } catch { quality = null; }
+  // Surfaces fixas no Jev (limiares calibrados) só contabilizam: classificação de fundo não as cala.
+  const pinned = Boolean(input.surface && JEV_PINNED_SURFACES.has(input.surface));
+  const level = missionId && !pinned ? ledger.snapshot(missionId, budgetUsd).level : 'normal';
+  let plan = planAutoDecision(input, settings, available, { budgetLevel: level, quality });
+  if (!plan) {
+    const reason: JevNoAnswerReason = input.signal?.aborted ? 'aborted' : 'client-error';
+    // Nem v2 nem v1 têm rota: a consulta ainda deixa a sua linha no diário.
+    if (input.surface) recordJevNoAnswer({ surface: input.surface, model: 'unrouted', reason,
+      sessionId: input.sessionId, missionId: input.missionId, requestCount: 0 });
+    return noAnswer(input, null, reason);
+  }
+  let reservation: DecisionBudgetReservation | null = null;
+  if (missionId) {
+    reservation = ledger.reserve(missionId, plan.estimatedUsd, budgetUsd, !pinned);
+    // O plano cheio não cabe: tenta o mais barato elegível antes de recusar.
+    if (!reservation && level === 'normal') {
+      const cheaper = planAutoDecision(input, settings, available, { budgetLevel: 'soft', quality });
+      reservation = cheaper ? ledger.reserve(missionId, cheaper.estimatedUsd, budgetUsd) : null;
+      if (reservation && cheaper) plan = cheaper;
+    }
+    if (!reservation) {
+      return noAnswer(input, plan.members ? { ...plan.route, model: 'ensemble' } : plan.route, 'budget', NO_REQUEST_USAGE);
+    }
+  }
+  const chosen = plan;
+  const partialFallback = Boolean(input.surface && REVERSIBLE_ENSEMBLE_SURFACES.has(input.surface));
+  return runReserved(input, ledger, reservation, tracked => chosen.members
+    ? performEnsemble(tracked, deps, settings, chosen.members, { partialFallback })
+    : performRoute(tracked, deps, settings, chosen.route));
+}
+
 async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Promise<JevResult | null> {
   const settings = (deps.getSettings ?? getDecisionSettings)();
   const available = (deps.getAvailability ?? (() => getDecisionAvailability(settings)))();
+  if (settings.mode === 'auto') return performAutoDecision(input, deps, settings, available);
+  // Modos explícitos: a escolha do operador vence. O livro só contabiliza, nunca recusa.
+  const ledger = deps.budgetLedger ?? getDecisionBudgetLedger();
+  const account = (routes: readonly DecisionRoute[]): DecisionBudgetReservation | null => input.missionId
+    ? ledger.reserve(input.missionId, estimateRoutesUsd(input, routes), missionDecisionBudgetUsd(settings), false) : null;
   if (settings.mode === 'together') {
     const members = ensembleMembers(input, settings, available);
-    if (members) return performEnsemble(input, deps, settings, members);
+    if (members) return runReserved(input, ledger, account(members), tracked => performEnsemble(tracked, deps, settings, members));
     if (input.surface && !(input.surface === 'computerTool' || input.surface === 'browserTool') || input.images?.length) {
       if (input.surface) recordJevNoAnswer({ surface: input.surface, model: 'ensemble', reason: 'client-error',
         sessionId: input.sessionId, missionId: input.missionId, requestCount: 0 });
@@ -150,6 +281,12 @@ async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Prom
     if (settings.mode === 'jev' && !available.jev && !input.images?.length) return deps.nativeJudge({ ...input, audio: undefined });
     return noAnswer(input, null, input.signal?.aborted ? 'aborted' : 'client-error');
   }
+  return runReserved(input, ledger, account([route]), tracked => performRoute(tracked, deps, settings, route));
+}
+
+async function performRoute(
+  input: JudgeInput, deps: DecisionJudgeDeps, settings: DecisionSettings, route: DecisionRoute,
+): Promise<JevResult | null> {
   const configuration = deps.getConfigurationKey ?? decisionConfigurationKey;
   const before = configuration();
   const started = (deps.now ?? (() => performance.now()))();

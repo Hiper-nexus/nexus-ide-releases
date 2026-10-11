@@ -118,6 +118,8 @@ export type RouterDeps = {
   readonly totalTimeoutMs?: number;
   /** Jev intake triage — injectable; default calls the real Jev router. */
   readonly routeWithJev?: typeof routeWithJev;
+  /** Missão já conhecida do chamador: a triagem conta no orçamento dela (F-1164). */
+  readonly missionId?: string;
 };
 
 const DEFAULT_ROUTER_TIMEOUT_MS = 6_000;
@@ -254,7 +256,8 @@ export async function routeIntent(
   // cadeia de provedores exatamente como antes — e o tempo do Jev conta
   // dentro do deadline total do router (o deadline nasce ANTES da chamada).
   const deadline = Date.now() + (deps.totalTimeoutMs ?? DEFAULT_ROUTER_TIMEOUT_MS);
-  const viaJev = await (deps.routeWithJev ?? routeWithJev)(objective);
+  const triage = deps.routeWithJev ?? routeWithJev;
+  const viaJev = await (deps.missionId ? triage(objective, { missionId: deps.missionId }) : triage(objective));
   if (viaJev) return viaJev;
   const hasKeyFor = deps.hasKeyFor ?? hasRuntimeKey;
   const loadKeyFor = deps.loadKeyFor ?? resolveRuntimeApiKey;

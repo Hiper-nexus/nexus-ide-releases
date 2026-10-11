@@ -470,7 +470,7 @@ async function maestroDelegationDirective(
   budgetOf: ParallelBudgetFn,
 ): Promise<string | null> {
   if (!doctrineFor(ctx)) return null;
-  const advice = await advise(prompt, { sessionId: ctx.sessionId }).catch(() => null);
+  const advice = await advise(prompt, { sessionId: ctx.sessionId, missionId: ctx.missionId }).catch(() => null);
   const delegation = advice?.delegation;
   if (!delegation || (delegation.parts < 2 && !delegation.heavyRead)) return null;
   const budget = budgetOf();
@@ -716,7 +716,7 @@ export async function handleHookDelegateRequest(
     // decisions.jsonl de 26–27/09 tem briefs de helper com delegate:5p.
     const advicePromise =
       ctx.operatorParentSessionId === undefined
-        ? advise(prompt, { sessionId: ctx.sessionId }).catch(() => null)
+        ? advise(prompt, { sessionId: ctx.sessionId, missionId: ctx.missionId }).catch(() => null)
         : Promise.resolve(null);
     const businessModelPromise = businessContextFor(ctx, prompt, now, businessContext);
     // F-753: a skill certa para o pedido, entre as do Nexus e as do projeto —

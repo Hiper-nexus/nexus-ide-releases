@@ -206,6 +206,8 @@ import { registerVoiceIpc, closeVoiceIpc } from "./voice/voice-ipc";
 import { registerJevIpc } from "./jev/jev-ipc";
 import { registerMissionPickIpc } from "./jev/jev-mission-pick-ipc";
 import { registerDecisionModelIpc } from "./decision-models/decision-model-ipc";
+import { startDecisionBudgetLedger } from "./decision-models/decision-budget";
+import { subscribeAppEvents } from "./connectors/app-events";
 import { registerVisionIpc } from "./vision/ipc-bridge";
 import {
   initAdapterRegistry,
@@ -743,6 +745,9 @@ async function bootstrap(): Promise<void> {
   bootStep('registerJevIpc', () => registerJevIpc());
   bootStep('registerMissionPickIpc', () => registerMissionPickIpc());
   bootStep('registerDecisionModelIpc', () => registerDecisionModelIpc());
+  // F-1164: aquece o livro de orçamento por missão fora do caminho quente e
+  // esquece missões encerradas.
+  bootStep('startDecisionBudgetLedger', () => { startDecisionBudgetLedger({ subscribe: subscribeAppEvents }); });
   // The window is created by the app-ready handler before bootstrap starts.
   // Keep the rest of registration below it so account/secrets/billing cannot
   // delay the first visible UI.

@@ -17,6 +17,10 @@ export const LUNA_DECISION_MODEL = 'gpt-6-luna';
 export const CLEF_MODELS = ['clef', 'clef-flash', 'clef-omni'] as const;
 export const CLEF_AUDIO_MODEL = 'clef-omni';
 
+/** Orçamento de decisão por missão (F-1164). 0 ou ausente = padrão. */
+export const DEFAULT_MISSION_DECISION_BUDGET_USD = 0.5;
+export const MAX_MISSION_DECISION_BUDGET_USD = 20;
+
 export const decisionSettingsSchema = z.object({
   mode: z.enum(['auto', 'jev', 'clef', 'luna', 'together']).default('jev'),
   clefModel: z.enum(CLEF_MODELS).default('clef'),
@@ -29,6 +33,12 @@ export const decisionSettingsSchema = z.object({
    * Ausente = nunca autorizado; não herda o consentimento de imagens.
    */
   audioConsent: z.object({ version: z.literal(1), recipients: z.array(z.enum(['clef'])).max(1) }).strict().optional(),
+  /**
+   * Teto em US$ das decisões de UMA missão no Automático (F-1164). 0 ou ausente = US$ 0,50.
+   * Fora da faixa vira ausente (padrão): um campo novo inválido nunca derruba o
+   * parse inteiro, que voltaria a configuração do operador para Somente Jev.
+   */
+  missionBudgetUsd: z.number().finite().min(0).max(MAX_MISSION_DECISION_BUDGET_USD).optional().catch(undefined),
 }).transform(settings => {
   const vision = settings.mode === 'jev' || !settings.visionEnabled ? { ...settings, visionEnabled: false,
     ...(settings.visionConsent ? { visionConsent: { version: 1 as const, recipients: [] } } : {}),
@@ -68,6 +78,13 @@ export function visionRecipientsForMode(mode: DecisionMode): VisionRecipient[] {
   return mode === 'jev' ? [] : mode === 'clef' ? ['clef'] : mode === 'luna' ? ['luna'] : ['clef', 'luna'];
 }
 
+/** Orçamento efetivo da missão: 0, ausente ou inválido vira o padrão. */
+export function missionDecisionBudgetUsd(settings: Pick<DecisionSettings, 'missionBudgetUsd'>): number {
+  const value = settings.missionBudgetUsd;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= MAX_MISSION_DECISION_BUDGET_USD
+    ? value : DEFAULT_MISSION_DECISION_BUDGET_USD;
+}
+
 export interface DecisionUsageReceipt {
   inputTokens: number | null; usd: number | null; requestCount: number; durationMs: number; usageIncomplete: boolean;
 }
@@ -79,8 +96,10 @@ export type TestDecisionModelRequest = z.infer<typeof testDecisionModelRequestSc
 export interface DecisionRoute {
   provider: DecisionProvider;
   model: string;
-  policyVersion: 'jev-clef-v1' | 'jev-clef-luna-v1';
-  evidence: 'public-benchmark' | 'legacy' | 'manual' | 'capability';
+  /** v2 = motor custo×qualidade do Automático (F-1165). */
+  policyVersion: 'jev-clef-v1' | 'jev-clef-luna-v1' | 'decision-engine-v2';
+  /** local-evaluation = tabela gerada por evaluateDecisionCases; prior = qualidade embutida. */
+  evidence: 'public-benchmark' | 'legacy' | 'manual' | 'capability' | 'local-evaluation' | 'prior';
   reason: string;
 }
 

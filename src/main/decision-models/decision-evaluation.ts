@@ -1,11 +1,23 @@
-import type { DecisionImage } from '../../shared/decision-models';
+import { LUNA_DECISION_MODEL, type DecisionImage } from '../../shared/decision-models';
+import type { JevNoAnswerReason } from '../jev/jev-decision-log';
 import type { JudgeInput, JevAnswer, JevQuestion, JevResult } from '../jev/jev-client';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
 import { decisionResultUsage } from './decision-usage';
 import { z } from 'zod';
 
-export const DECISION_EVAL_MODELS = ['jev', 'clef', 'clef-flash', 'clef-omni'] as const;
+/** A Luna entra na avaliação (F-1165): a tabela de qualidade do roteador compara os cinco. */
+export const DECISION_EVAL_MODELS = ['jev', 'clef', 'clef-flash', 'clef-omni', 'luna'] as const;
 export type DecisionEvalModel = typeof DECISION_EVAL_MODELS[number];
+
+/**
+ * Id que o funil de decisão reconhece para cada chave da avaliação. `luna`
+ * sozinho seria lido como modelo do Jev: a chave vira LUNA_DECISION_MODEL.
+ */
+export function decisionEvalModelId(model: DecisionEvalModel): string {
+  if (model === 'luna') return LUNA_DECISION_MODEL;
+  if (model === 'jev') return process.env.NEXUS_JEV_MODEL ?? 'jev-latest';
+  return model;
+}
 type Expected = string | boolean | { min: number; max: number };
 export interface DecisionEvalCase {
   id: string; surface: JevDecisionSurface; split: 'development' | 'heldout';
@@ -33,9 +45,11 @@ export const decisionEvalCasesSchema = z.array(z.object({
     questionIds.includes(id) && (typeof expected !== 'object' || expected.min <= expected.max));
 }, 'Every question needs a valid reference label.')) .min(1).max(1_000)
   .refine(cases => new Set(cases.map(testCase => testCase.id)).size === cases.length, 'Case IDs must be unique.');
-interface EvalObservation {
+export interface EvalObservation {
   caseId: string; surface: string; split: 'development' | 'heldout'; requestedModel: DecisionEvalModel;
   model?: string; status: 'answered' | 'failed' | 'unsupported'; correct: boolean | null;
+  /** Motivo categórico da falha (onNoAnswer); ausente = sem motivo (exceção, sem chave). */
+  failureReason?: JevNoAnswerReason;
   consequential: boolean; durationMs: number | null; usd: number | null; inputTokens: number | null;
 }
 interface SplitScore { cases: number; correct: number; accuracy: number | null; consequentialErrors: number }
@@ -61,9 +75,11 @@ async function observe(testCase: DecisionEvalCase, requestedModel: DecisionEvalM
     consequential: Boolean(testCase.consequential), correct: null, durationMs: null, usd: null, inputTokens: null };
   if (requestedModel === 'jev' && testCase.images?.length) return { ...base, status: 'unsupported' };
   const started = performance.now();
+  let failureReason: JevNoAnswerReason | undefined;
   try {
-    const result = await judge(requestedModel, { state: testCase.state, questions: testCase.questions, images: testCase.images });
-    if (!result) return { ...base, status: 'failed' };
+    const result = await judge(requestedModel, { state: testCase.state, questions: testCase.questions, images: testCase.images,
+      onNoAnswer: reason => { failureReason ??= reason; } });
+    if (!result) return { ...base, status: 'failed', ...(failureReason ? { failureReason } : {}) };
     const correct = Object.entries(testCase.expected).every(([id, expected]) => matches(result.answers[id], expected));
     const measured = decisionResultUsage(result);
     return { ...base, status: 'answered', correct, model: result.model,

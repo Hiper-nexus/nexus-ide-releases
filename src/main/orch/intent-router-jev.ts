@@ -159,6 +159,12 @@ export interface RouteWithJevDeps {
   enabled?: () => boolean;
   hasKey?: () => boolean;
   designReferences?: () => string[];
+  /**
+   * Missão já conhecida do chamador. A preparação de missão classifica ANTES
+   * de a missão existir, então hoje nenhum caminho de produção a tem; quando
+   * houver, a triagem conta no orçamento dela (F-1164).
+   */
+  missionId?: string;
 }
 
 /**
@@ -186,6 +192,7 @@ export async function routeWithJev(
     // de um prazo que já é o máximo tolerado, atrasando a missão nascer.
     retryOnTimeout: false,
     surface: 'intake',
+    missionId: deps.missionId,
   });
   if (!result) return null;
 
@@ -246,6 +253,7 @@ export async function routeWithJev(
 
   recordJevDecision({
     surface: 'intake',
+    missionId: deps.missionId,
     model: result.model,
     questions: Object.keys(questions),
     probabilities: jevAnswerProbabilities(result.answers),
