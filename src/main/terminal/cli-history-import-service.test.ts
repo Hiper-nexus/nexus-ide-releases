@@ -155,6 +155,17 @@ describe('importCliHistoryForScope', () => {
     expect(store3.search({}).length).toBe(6);
   });
 
+  it('com mais transcripts que o teto, importa os mais recentes (não os primeiros do alfabeto)', async () => {
+    const store = makeStore();
+    const old = writeTranscript('claude', 'a-old.jsonl', [claudeLine('echo velho', '2026-09-01T10:00:00Z')]);
+    const recent = writeTranscript('claude', 'z-new.jsonl', [claudeLine('echo novo', '2026-10-10T10:00:00Z')]);
+    fs.utimesSync(old, new Date('2026-09-01T10:00:00Z'), new Date('2026-09-01T10:00:00Z'));
+    fs.utimesSync(recent, new Date('2026-10-10T10:00:00Z'), new Date('2026-10-10T10:00:00Z'));
+    const result = await importCliHistoryForScope(deps(store, { maxFiles: 1 }));
+    expect(result.capped).toBe(true);
+    expect(store.search({}).map(block => block.command)).toEqual(['echo novo']);
+  });
+
   it('sem provider-state devolve zeros sem erro', async () => {
     const store = makeStore();
     const counts = await importCliHistoryForScope(deps(store));

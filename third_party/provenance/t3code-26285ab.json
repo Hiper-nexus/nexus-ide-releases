@@ -2319,10 +2319,10 @@
       "copyright": "Copyright (c) 2026 T3 Tools Inc.",
       "type": "reference",
       "feature": "PR126 reviewed integration",
-      "changeSummary": "Nexus bounded filesystem traversal/parser composition, no SDK worker copying and no production boot caller/persistence wiring.",
+      "changeSummary": "Nexus bounded filesystem traversal/parser composition, no SDK worker copying and no production boot caller/persistence wiring. Removed 2026-10-11 (F-1171): superseded by the async, project-scoped src/main/terminal/cli-history-import-service.ts (Nexus code); the synchronous sweep never had a production caller.",
       "secondaryProvenance": [],
       "importDate": "2026-10-09",
-      "status": "imported"
+      "status": "removed"
     },
     {
       "upstreamUrl": "https://github.com/pingdotgg/t3code/blob/26285ab80513260d1ff29d2c3fbe18f21990cb62/apps/web/src/composer-rich-text.ts",
