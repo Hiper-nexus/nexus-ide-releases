@@ -1725,6 +1725,30 @@ export async function dispatchToolCall(
       invocationSignals.length > 1
         ? AbortSignal.any(invocationSignals)
         : invocationSignals[0];
+    // F-1185/F-1204: adotar a mão do operador (user → orchestrator da missão,
+    // só o Main faz) muda o ctx do chamador sem revogá-lo — feita pelo próprio
+    // handler (1º helper) ou por uma chamada irmã do mesmo pane em voo
+    // (nexus_mission_create, 1º helper, auto-orquestração do hook). Prova que
+    // a ÚNICA diferença para o chamador ancorado é essa promoção e reancora;
+    // qualquer outra mudança no meio (política, escopo, rebaixamento) segue
+    // revogação. Aceita uma transição só: a partir do chamador original.
+    const reanchorOperatorHandAdoption = (): boolean => {
+      if (!operationIdentity) return false;
+      const promoted =
+        anchoredCaller.role === "user" && !anchoredCaller.missionId &&
+        ctx.role === "orchestrator" && Boolean(ctx.missionId) &&
+        ctx.promotedFromUserSession === true;
+      if (!promoted) return false;
+      const beforePromotion = captureCommandDispatchIdentity(source,
+        { ...ctx, ...anchoredCaller }, canonical, args, undefined,
+        initialIntent.resolved?.mission.intentVersion);
+      if (beforePromotion.bindingDigest !== operationIdentity.bindingDigest) return false;
+      const promotedIntent = checkMissionIntent();
+      if (!promotedIntent.ok) throw new Error(promotedIntent.error);
+      operationIdentity = captureCommandDispatchIdentity(source, ctx, canonical, args,
+        options.logicalOperationId, promotedIntent.resolved?.mission.intentVersion);
+      return true;
+    };
     const assertCurrentAuthorityState = (recheckIntent: boolean, recheckBinding = true): void => {
       if (
         !hasCurrentBearerAuthority() ||
@@ -1738,7 +1762,9 @@ export async function dispatchToolCall(
           "intent_preempted: bootstrap cancelled by newer user intent",
         );
       }
-      if (recheckBinding && !isOperationIdentityCurrent()) throw new Error('session_authority_revoked');
+      if (recheckBinding && !isOperationIdentityCurrent() && !reanchorOperatorHandAdoption()) {
+        throw new Error('session_authority_revoked');
+      }
       if (recheckIntent) {
         const currentIntent = checkMissionIntent();
         if (!currentIntent.ok) throw new Error(currentIntent.error);
@@ -1772,23 +1798,9 @@ export async function dispatchToolCall(
     // "session_authority_revoked": o spawn morria em ~9 ms desde a 0.76.213.
     const reanchorAfterOwnPromotion = (): void => {
       assertCurrentAuthorityState(false, false);
-      if (!operationIdentity) return;
-      const promoted =
-        anchoredCaller.role === "user" && !anchoredCaller.missionId &&
-        ctx.role === "orchestrator" && Boolean(ctx.missionId) &&
-        ctx.promotedFromUserSession === true;
-      // Desfeita a promoção, o chamador tem de ser exatamente o original:
-      // qualquer outra mudança no meio (política, escopo) segue revogação.
-      const beforePromotion = captureCommandDispatchIdentity(source,
-        { ...ctx, ...anchoredCaller }, canonical, args, undefined,
-        initialIntent.resolved?.mission.intentVersion);
-      if (!promoted || beforePromotion.bindingDigest !== operationIdentity.bindingDigest) {
+      if (!isOperationIdentityCurrent() && !reanchorOperatorHandAdoption()) {
         throw new Error("session_authority_revoked");
       }
-      const promotedIntent = checkMissionIntent();
-      if (!promotedIntent.ok) throw new Error(promotedIntent.error);
-      operationIdentity = captureCommandDispatchIdentity(source, ctx, canonical, args,
-        options.logicalOperationId, promotedIntent.resolved?.mission.intentVersion);
     };
     assertCurrentAuthority();
     const exactUserConsent =
