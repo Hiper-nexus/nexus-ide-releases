@@ -10,7 +10,10 @@ async function main() {
     if (!['typescript', 'tests', 'build', 'install'].includes(kind) || !file || !file.startsWith('/') ||
         !base || base.file !== '/usr/bin/perl' || !Array.isArray(base.args) ||
         !base.args.every(arg => typeof arg === 'string') || base.args.at(-1) !== 'heavy-job') throw new Error('invalid job');
-    const env = { ...process.env }; delete env.NEXUS_HEAVY_HELPER;
+    const env = { ...process.env }; delete env.NEXUS_HEAVY_HELPER; delete env.NEXUS_HEAVY_CWD;
+    // F-1229: the supervisor's admission precedes the line's own `cd`; name it.
+    const cd = !env.NEXUS_HEAVY_LEASE && args[0] === '-c' ? require('./catalog.cjs').leadingCd(args[1]) : null;
+    if (cd) env.NEXUS_HEAVY_CWD = require('node:path').resolve(cd);
     let target = base.file, targetArgs = [...base.args, kind, '--', file, ...args];
     if (env.NEXUS_HEAVY_LEASE) {
       const lease = await new Promise(resolve => {

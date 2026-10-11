@@ -14,9 +14,20 @@ export interface HeavyCommandRequest {
 }
 /** release is Main-only: callers must first prove physical exit or no spawn. */
 export interface HeavyCommandPermit { readonly id: string; release(): void }
+/** F-1229: why a waiter gave up — attached to `heavy_command_wait_timeout`. */
+export interface HeavyCommandQueueWait {
+  readonly waitedMs: number;
+  readonly root: string;
+  /** Jobs of the same execution root: running now / still waiting besides this one. */
+  readonly running: number;
+  readonly waiting: number;
+  readonly machineActive: number;
+  readonly maxActive: number;
+}
 interface Waiter {
   readonly request: HeavyCommandRequest;
   readonly lane: string;
+  readonly since: number;
   readonly deadline: number;
   readonly resolve: (permit: HeavyCommandPermit) => void;
   readonly reject: (error: Error) => void;
@@ -79,8 +90,9 @@ export class HeavyCommandPermitPool {
     // share one physical checkout (same build outputs and caches).
     const lane = JSON.stringify([request.scope.installationId, request.scope.projectId, request.scope.rootRealPath]);
     return new Promise((resolve, reject) => {
-      const waiter: Waiter = { request, lane, resolve, reject,
-        deadline: Date.now() + (this.#options.waitMs ?? DEFAULT_WAIT_MS),
+      const since = Date.now();
+      const waiter: Waiter = { request, lane, resolve, reject, since,
+        deadline: since + (this.#options.waitMs ?? DEFAULT_WAIT_MS),
         aborted: () => { this.#remove(waiter); reject(error('aborted')); this.#pump(); },
       };
       this.#waiters.push(waiter);
@@ -102,6 +114,13 @@ export class HeavyCommandPermitPool {
     const index = this.#waiters.indexOf(waiter);
     if (index >= 0) this.#waiters.splice(index, 1);
     waiter.request.signal?.removeEventListener('abort', waiter.aborted);
+  }
+
+  #queueWait(waiter: Waiter, maxActive: number): HeavyCommandQueueWait {
+    return { waitedMs: Date.now() - waiter.since, root: waiter.request.scope.rootRealPath,
+      running: [...this.#active.values()].filter(entry => entry.lane === waiter.lane).length,
+      waiting: this.#waiters.filter(other => other !== waiter && other.lane === waiter.lane).length,
+      machineActive: this.#active.size, maxActive };
   }
 
   #hasRam(): boolean {
@@ -127,7 +146,8 @@ export class HeavyCommandPermitPool {
       if (!this.#waiters.includes(waiter)) continue;
       current &&= !waiter.request.signal?.aborted;
       if (!current || Date.now() >= waiter.deadline) {
-        this.#remove(waiter); waiter.reject(error(current ? 'wait_timeout' : 'authority_revoked')); continue;
+        const failure = current ? Object.assign(error('wait_timeout'), { queue: this.#queueWait(waiter, maxActive) }) : error('authority_revoked');
+        this.#remove(waiter); waiter.reject(failure); continue;
       }
       if (blockedLanes.has(waiter.lane)) continue;
       const activeLane = [...this.#active.values()].some(entry => entry.lane === waiter.lane);
