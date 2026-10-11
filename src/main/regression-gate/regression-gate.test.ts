@@ -18,6 +18,7 @@ import {
   __resetRegressionGateForTests,
   detectRegressionRunner,
   formatRegressionGateReport,
+  RECORDED_EDIT_SLACK_MS,
   runRegressionGate,
   type RegressionExec,
 } from './regression-gate';
@@ -605,6 +606,78 @@ describe('runRegressionGate', () => {
       expect(result.status).toBe('failed');
       expect(result.failures.map((failure) => failure.file)).toEqual(['src/b.test.ts']);
       expect(result.inheritedFailures.map((failure) => failure.file)).toEqual(['src/seal.test.ts']);
+    });
+  });
+
+  describe('F-1237: autoria por proveniência (edições registradas da conversa retomada)', () => {
+    const HOUR = 3_600_000;
+    function age(root: string, file: string, atMs: number): void {
+      fs.utimesSync(path.join(root, file), new Date(atMs), new Date(atMs));
+    }
+    /** Falha só no checkout do pane; na worktree da base (F-246) passa: a quebra é do diff. */
+    function failingOnlyAt(root: string, failing: readonly string[]) {
+      const inner = fakeVitest(failing);
+      return vi.fn<RegressionExec>((file, args, options) =>
+        options.cwd === root ? inner.exec(file, args, options) : fakeVitest().exec(file, args, options));
+    }
+
+    it('(a) edição antiga que a própria conversa registrou, vermelha, bloqueia o pane retomado', async () => {
+      const { root, scope } = project();
+      const editedAtMs = Date.now() - 20 * HOUR; // 1ª encarnação, ontem
+      write(root, 'src/c.ts', 'export const c = 30;\n');
+      age(root, 'src/c.ts', editedAtMs - 50);
+      const startedAtMs = Date.now() - 1_000; // retomada: spawn novo, mesma conversa
+      const exec = failingOnlyAt(root, ['src/c.test.ts']);
+
+      const before = await runRegressionGate({ scope, startedAtMs }, { exec });
+      expect(before.status).not.toBe('failed'); // sem registro: o mtime diz "alheio"
+      __resetRegressionGateForTests();
+      const result = await runRegressionGate(
+        { scope, startedAtMs, recordedEdits: new Map([['src/c.ts', editedAtMs]]) },
+        { exec },
+      );
+
+      expect(result.status).toBe('failed');
+      expect(result.failures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
+      expect(result.inheritedFailures).toEqual([]);
+    });
+
+    it('(b) WIP de outro agente, não registrado e mais novo que o nascimento da conversa, continua herdado', async () => {
+      const { root, scope } = project();
+      const bornAtMs = Date.now() - 20 * HOUR;
+      // A conversa editou c.ts ao nascer; o trabalho já foi integrado (limpo).
+      const recordedEdits = new Map([['src/c.ts', bornAtMs]]);
+      write(root, 'src/a.ts', 'export const a = 2;\n'); // WIP do outro agente, depois do nascimento
+      age(root, 'src/a.ts', bornAtMs + 2 * HOUR);
+      const startedAtMs = Date.now() - 1_000;
+      const exec = failingOnlyAt(root, ['src/a.test.ts']);
+
+      const result = await runRegressionGate({ scope, startedAtMs, recordedEdits }, { exec });
+
+      expect(result.status).not.toBe('failed');
+      expect(result.failures).toEqual([]);
+      expect(result.inheritedFailures.map((failure) => failure.file)).toEqual(['src/a.test.ts']);
+      expect(result.changedFiles).toEqual(['src/a.ts']); // o registro limpo não alarga o diff
+    });
+
+    it('arquivo da conversa reescrito depois por outro agente volta a ser alheio; o formatador logo após a edição não', async () => {
+      const { root, scope } = project();
+      const editedAtMs = Date.now() - 20 * HOUR;
+      write(root, 'src/c.ts', 'export const c = 31;\n');
+      age(root, 'src/c.ts', editedAtMs + 2 * HOUR); // o outro agente escreveu por cima depois
+      const startedAtMs = Date.now() - 1_000;
+      const exec = failingOnlyAt(root, ['src/c.test.ts']);
+      const recordedEdits = new Map([['src/c.ts', editedAtMs]]);
+
+      const rewritten = await runRegressionGate({ scope, startedAtMs, recordedEdits }, { exec });
+      expect(rewritten.status).not.toBe('failed');
+      expect(rewritten.inheritedFailures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
+
+      __resetRegressionGateForTests();
+      age(root, 'src/c.ts', editedAtMs + RECORDED_EDIT_SLACK_MS - 1_000); // hook de formatação do próprio turno
+      const formatted = await runRegressionGate({ scope, startedAtMs, recordedEdits }, { exec });
+      expect(formatted.status).toBe('failed');
+      expect(formatted.failures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
     });
   });
 

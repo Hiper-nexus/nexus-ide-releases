@@ -227,6 +227,8 @@ interface Session {
    * o argv levou `--resume <id>`; julgada na saída.
    */
   exactResume?: ExactResumeAttempt;
+  /** F-1237: a conversa do provider segundo o argv montado pelo Main. */
+  providerConversation?: SessionProviderConversation;
   missionOrchestratorGrantAvailable: boolean;
   missionOrchestratorGrantExpiresAt: number | null;
   missionOrchestratorGrantTimer: ReturnType<typeof setTimeout> | null;
@@ -3203,6 +3205,22 @@ export function spawnAgentSession(
     },
     agentSpawn: { paneId: req.paneId, adapterId: adapter.id },
     continuationPhysicalProof: overrides.onPhysicalTerminationProof,
+    // F-1237: de quem é a conversa que roda aqui (retomada exata ou id
+    // ditado). Só pane tem retomada exata, então só pane registra edições.
+    ...(req.paneId
+      ? {
+          providerConversation: Object.freeze({
+            scope: Object.freeze({
+              installationId: (authority.coordinationScope ?? authority.scope).installationId,
+              projectId: (authority.coordinationScope ?? authority.scope).projectId,
+              checkoutId: (authority.coordinationScope ?? authority.scope).checkoutId,
+            }),
+            adapterId: adapter.id,
+            conversationId: exactResumeId ?? dictatedSessionId ?? null,
+            resumed: Boolean(exactResumeId),
+          }),
+        }
+      : {}),
     ...(exactResumeId && req.paneId
       ? {
           exactResume: {
@@ -4505,6 +4523,25 @@ export function isPtySessionConnectedAndWritable(sessionId: string): boolean {
 /** Criação da sessão no main (ms): o portão de regressão usa o HEAD desse instante como base. */
 export function getSessionSpawnedAtMs(sessionId: string): number | null {
   return sessions.get(sessionId)?.spawnedAtMs ?? null;
+}
+
+/**
+ * F-1237: a conversa do provider que este PTY roda, pelo argv que o Main
+ * montou — `--resume <id>` exato ou o `--session-id` ditado no spawn fresco.
+ * `conversationId` null quando o CLI escolhe o próprio id (Codex fresco).
+ * Escopo de coordenação, o mesmo do vínculo de retomada exata. Null fora de
+ * pane de CLI.
+ */
+export interface SessionProviderConversation {
+  readonly scope: ExactResumeAttempt["scope"];
+  readonly adapterId: string;
+  readonly conversationId: string | null;
+  /** O argv retomou exatamente esta conversa (`--resume <id>`). */
+  readonly resumed: boolean;
+}
+
+export function getSessionProviderConversation(sessionId: string): SessionProviderConversation | null {
+  return sessions.get(sessionId)?.providerConversation ?? null;
 }
 
 /** Spawn cwd of a live session — the caller's workspace dir. */

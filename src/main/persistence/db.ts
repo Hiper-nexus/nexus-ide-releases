@@ -165,6 +165,22 @@ CREATE TABLE IF NOT EXISTS provider_pane_sessions (
   PRIMARY KEY (installation_id, project_id, checkout_id, pane_id, adapter_id)
 );
 
+/* F-1237: arquivos que cada conversa do provider editou (PostToolUse de
+   edição, recebido pelo bearer do próprio pane), relativos à raiz de execução.
+   O portão de regressão de um pane que retoma exatamente a conversa os conta
+   como dele quando a última escrita no arquivo é a registrada aqui. */
+CREATE TABLE IF NOT EXISTS provider_conversation_edits (
+  installation_id TEXT NOT NULL,
+  project_id      TEXT NOT NULL,
+  checkout_id     TEXT NOT NULL,
+  adapter_id      TEXT NOT NULL,
+  session_id      TEXT NOT NULL,
+  root_real_path  TEXT NOT NULL,
+  rel_path        TEXT NOT NULL,
+  edited_at       INTEGER NOT NULL,
+  PRIMARY KEY (installation_id, project_id, checkout_id, adapter_id, session_id, root_real_path, rel_path)
+);
+
 /* tmux-backed PTY sessions that survive app quit (feature.pty.persistentSession). */
 CREATE TABLE IF NOT EXISTS persistent_pty_sessions (
   workspace_id TEXT NOT NULL,

@@ -355,6 +355,14 @@ export interface RunRegressionGateInput {
    * falha só nele vira aviso, não devolução.
    */
   readonly startedAtMs?: number;
+  /**
+   * F-1237: edições que a conversa retomada por esta sessão registrou pelo
+   * próprio hook (caminho relativo → última edição, ms), resolvidas pelo Main.
+   * Sujo da lista cuja última escrita é a registrada conta como declarado
+   * (do agente), mesmo com mtime anterior ao spawn. Não muda a base nem a
+   * regra de mtime dos demais arquivos.
+   */
+  readonly recordedEdits?: ReadonlyMap<string, number>;
   /** Prazo TOTAL (mapa + execução + retentativa), não por execução. */
   readonly timeoutMs?: number;
   readonly maxTestFiles?: number;
@@ -392,6 +400,18 @@ export function __resetRegressionGateForTests(): void {
   cache.clear();
   inflight.clear();
   registeredExtensions = {};
+}
+
+/**
+ * F-1237: folga entre a escrita no disco e o registro da edição no Main (o
+ * PostToolUse chega depois da escrita; formatador do próprio hook do usuário
+ * pode reescrever logo em seguida). Escrita mais nova que isso não é provada.
+ */
+export const RECORDED_EDIT_SLACK_MS = 5_000;
+
+/** Caminho relativo à raiz no formato do diff do portão (null: fora do diff). */
+export function normalizeRegressionPath(value: string): string | null {
+  return normalizeRelative(value);
 }
 
 function normalizeRelative(value: string): string | null {
@@ -515,7 +535,7 @@ interface ChangedSnapshot {
 
 async function collectChanged(
   root: string,
-  input: Pick<RunRegressionGateInput, 'declaredFiles' | 'startedAtMs'>,
+  input: Pick<RunRegressionGateInput, 'declaredFiles' | 'startedAtMs' | 'recordedEdits'>,
   base: RegressionBase,
   git: GitRunner,
 ): Promise<ChangedSnapshot> {
@@ -543,7 +563,14 @@ async function collectChanged(
     for (const file of out) {
       if (owned.has(file)) continue;
       try {
-        if (fs.lstatSync(path.join(root, file)).mtimeMs < input.startedAtMs) foreign.push(file);
+        const mtimeMs = fs.lstatSync(path.join(root, file)).mtimeMs;
+        if (!(mtimeMs < input.startedAtMs)) continue;
+        // F-1237: a conversa retomada registrou a edição e ninguém escreveu
+        // depois dela — é declarado. Sem registro, ou escrito depois (outro
+        // agente, formatador, checkout), segue a regra do mtime: alheio.
+        const editedAtMs = input.recordedEdits?.get(file);
+        if (editedAtMs !== undefined && mtimeMs <= editedAtMs + RECORDED_EDIT_SLACK_MS) continue;
+        foreign.push(file);
       } catch {
         // removido: sem como datar, conta como do agente
       }
@@ -559,7 +586,7 @@ async function collectChanged(
 /** Diff observado: sujo + não rastreado + commits desde a base + declarados. */
 export async function collectRegressionChangedFiles(
   root: string,
-  input: Pick<RunRegressionGateInput, 'declaredFiles' | 'baseSha' | 'startedAtMs'>,
+  input: Pick<RunRegressionGateInput, 'declaredFiles' | 'baseSha' | 'startedAtMs' | 'recordedEdits'>,
   git: GitRunner = new ProcessGitRunner(),
  ): Promise<string[]> {
   return [...(await collectChanged(root, input, resolveRegressionBase(root, input, git), git)).files];

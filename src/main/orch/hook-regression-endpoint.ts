@@ -22,6 +22,7 @@ import {
 } from '../regression-gate/regression-gate';
 import { ProcessGitRunner, type GitRunner } from '../runtime/git-command';
 import { getSessionSpawnedAtMs } from '../pty/pty-manager';
+import { recordedEditsForSession } from './hook-edit-provenance';
 
 export const MAX_CONSECUTIVE_STOP_BLOCKS = 3;
 /**
@@ -83,6 +84,8 @@ export async function handleHookRegressionRequest(
     readonly enabled?: () => boolean;
     readonly git?: GitRunner;
     readonly startedAtMs?: (sessionId: string) => number | null;
+    /** F-1237: edições registradas da conversa retomada por esta sessão. */
+    readonly recordedEdits?: (sessionId: string, rootRealPath: string) => ReadonlyMap<string, number> | undefined;
     /** Abortado quando o transporte do hook desistiu (curl fechou). */
     readonly signal?: AbortSignal;
   } = {},
@@ -107,6 +110,8 @@ export async function handleHookRegressionRequest(
       scope,
       projectScope: ctx.scope,
       startedAtMs,
+      // F-1237: pane retomado responde pelo que a própria conversa editou.
+      recordedEdits: (deps.recordedEdits ?? recordedEditsForSession)(ctx.sessionId, scope.rootRealPath),
       baseSha: startedAtMs === undefined ? ledger.firstHead : undefined,
       timeoutMs: STOP_HOOK_BUDGET_MS,
       maxTestFiles: STOP_HOOK_MAX_TEST_FILES,

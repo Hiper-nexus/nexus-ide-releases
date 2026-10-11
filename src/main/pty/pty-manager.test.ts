@@ -260,6 +260,7 @@ import {
   getLastSessionInputOrigin,
   getOwnedAgentSessionInfo,
   getSessionState,
+  getSessionProviderConversation,
   isSessionDetached,
   adoptMainOwnedAgentSession,
   adoptUserAgentSessionAsMissionOrchestrator,
@@ -318,6 +319,17 @@ import {
 import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revocation";
 import { cleanupCliMcpSession } from "../orch/cli-mcp-session-config";
 import { getProviderPaneSession, saveProviderPaneSession } from "../persistence/provider-session-store";
+import { __resetHookEditProvenanceForTests, recordHookEditProvenance } from "../orch/hook-edit-provenance";
+import { __resetHookRegressionForTests, handleHookRegressionRequest } from "../orch/hook-regression-endpoint";
+import {
+  __resetRegressionGateForTests,
+  runRegressionGate,
+  type RegressionExec,
+  type RegressionGateResult,
+} from "../regression-gate/regression-gate";
+import { computeBlastRadius } from "../context/orientation/orientation-blast-radius";
+import type { ProjectOrientationMap } from "../context/orientation/orientation-types";
+import { ProcessGitRunner } from "../runtime/git-command";
 import { mimoSessionOwnerKey } from "../adapters/mimo-session-owner";
 import { qwenNeedsLogicalCwd } from "./qwen-long-cwd";
 
@@ -6097,6 +6109,120 @@ describe("F-721: o id de retomada que nunca virou transcrito não prende o Maest
       expect(exitPayloads(sendNatural, natural.sessionId)).toHaveLength(1);
     });
     expect(exitPayloads(sendNatural, natural.sessionId)[0]).not.toHaveProperty("terminationOrigin");
+  });
+});
+
+describe("F-1237: autoria por proveniência — o pane retomado responde pelas edições registradas da própria conversa", () => {
+  it("edição registrada pelo hook na 1ª encarnação bloqueia o Stop da retomada exata; WIP alheio posterior ao nascimento segue herdado; outro pane não herda o registro", async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "f1237-prov-")));
+    const sh = new ProcessGitRunner();
+    const put = (file: string, content: string) => {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), content);
+    };
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 30));
+    sh.run(root, ["init", "-q"]);
+    put("package.json", JSON.stringify({ devDependencies: { vitest: "^3.0.0" } }));
+    put("node_modules/.bin/vitest", "#!/bin/sh\n");
+    put(".gitignore", "node_modules\n");
+    sh.run(root, ["add", "-A"]);
+    sh.run(root, ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "base"]);
+    const authority = trustedSpawn(root);
+    // Claude-like: o Main dita o id da conversa no spawn fresco e o retoma depois.
+    const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false },
+      { resumeArgs: [], resumeIdArgs: ["--resume"], sessionIdArg: "--session-id" });
+    const map = {
+      mapHash: "m", inventory: { entrypoints: [] }, symbols: { hubs: [] },
+      graph: { edgeCount: 2, dbEdgeCount: 0, sampleEdges: [], dbEntities: [],
+        adjacency: { "src/x.test.ts": ["src/x.ts"], "src/seal.test.ts": ["src/seal.ts"] },
+        reverse: { "src/x.ts": ["src/x.test.ts"], "src/seal.ts": ["src/seal.test.ts"] } },
+    } as unknown as ProjectOrientationMap;
+    const blastRadius = ({ changedFiles }: { changedFiles: readonly string[] }) => ({
+      tests: [...computeBlastRadius(map, { seedFiles: changedFiles, depth: 1 }).tests], dbEntities: [], dbConsumers: [],
+    });
+    // Vermelho no checkout do pane; verde na worktree da base (F-246): a quebra é do diff.
+    const exec = vi.fn<RegressionExec>(async (_file, args, options) => {
+      const outFile = args.find((arg) => arg.startsWith("--outputFile="))!.slice("--outputFile=".length);
+      const files = args.filter((arg) => arg.endsWith(".test.ts"));
+      const red = options.cwd === root;
+      fs.writeFileSync(outFile, JSON.stringify({ testResults: files.map((file) => ({
+        name: path.join(options.cwd, file), status: red ? "failed" : "passed",
+        assertionResults: [red
+          ? { status: "failed", fullName: "x", failureMessages: ["vermelho"] }
+          : { status: "passed", fullName: "ok" }],
+      })) }));
+      return { exitCode: red ? 1 : 0, timedOut: false, stdout: "", stderr: "" };
+    });
+    const results: RegressionGateResult[] = [];
+    // Stop do pane do operador com o spawn e o registro que o Main resolve (sem injeção).
+    const stop = (sessionId: string) => handleHookRegressionRequest({ role: "user", sessionId, scope: authority.scope }, {}, {
+      run: async (input) => {
+        const result = await runRegressionGate(input, { exec, extensions: { blastRadius } });
+        results.push(result);
+        return result;
+      },
+      enabled: () => true,
+    });
+    setPtyHost(fakeHost().host);
+    __resetRegressionGateForTests();
+    __resetHookRegressionForTests();
+    __resetHookEditProvenanceForTests();
+    try {
+      // 1ª encarnação: a conversa nasce aqui e escreve x.ts + o teste dele.
+      const first = spawnAgentSession(fakeWc(), { kind: "cli-agent", paneId: "pane-f1237", cols: 80, rows: 24 }, adapter, {}, authority);
+      const conversation = getSessionProviderConversation(first.sessionId)!;
+      expect(conversation).toMatchObject({ adapterId: "test-cli", resumed: false });
+      const conversationId = conversation.conversationId!;
+      expect(conversationId).toMatch(/^[0-9a-f-]{36}$/);
+      const firstCtx = { sessionId: first.sessionId, scope: authority.scope };
+      for (const file of ["src/x.ts", "src/x.test.ts"]) {
+        put(file, file.endsWith(".test.ts") ? "import { x } from './x';\n" : "export const x = 1;\n");
+        // PostToolUse do Write, pelo bearer do próprio pane.
+        expect(recordHookEditProvenance(firstCtx, "tool-complete", {
+          session_id: conversationId, cwd: root, tool_name: "Write", tool_input: { file_path: path.join(root, file) },
+        })).toBe(1);
+      }
+      // (c) Corpo com outra conversa, ou caminho fora da raiz: nada registrado.
+      expect(recordHookEditProvenance(firstCtx, "tool-complete", {
+        session_id: "conversa-do-outro-agente", tool_name: "Edit", tool_input: { file_path: path.join(root, "src/seal.ts") },
+      })).toBe(0);
+      expect(recordHookEditProvenance(firstCtx, "tool-complete", {
+        session_id: conversationId, tool_name: "Edit", tool_input: { file_path: path.join(os.tmpdir(), "fora-da-raiz.ts") },
+      })).toBe(0);
+      orchKillSession(first.sessionId);
+      await tick();
+
+      // Outro agente no mesmo checkout: WIP vermelho DEPOIS do nascimento da conversa.
+      put("src/seal.ts", "export const seal = 1;\n");
+      put("src/seal.test.ts", "import { seal } from './seal';\n");
+      await tick();
+
+      // Retomada exata após reinício: sessão e spawn novos, a mesma conversa.
+      setResumeSessionLookup((_scope, paneId) => (paneId === "pane-f1237" ? conversationId : null));
+      const resumed = spawnAgentSession(fakeWc(), { kind: "cli-agent", paneId: "pane-f1237", resume: true, cols: 80, rows: 24 }, adapter, {}, authority);
+      expect(resumed.resumeMode).toBe("exact");
+      expect(getSessionProviderConversation(resumed.sessionId)).toMatchObject({ conversationId, resumed: true });
+      const blocked = await stop(resumed.sessionId);
+      expect(blocked.payload.decision).toBe("block");
+      expect(results.at(-1)!.failures.map((failure) => failure.file)).toEqual(["src/x.test.ts"]);
+      expect(results.at(-1)!.inheritedFailures.map((failure) => failure.file)).toEqual(["src/seal.test.ts"]);
+      orchKillSession(resumed.sessionId);
+
+      // Pane novo no mesmo checkout: o registro é da conversa, não do checkout.
+      __resetRegressionGateForTests();
+      const fresh = spawnAgentSession(fakeWc(), { kind: "cli-agent", paneId: "pane-f1237-novo", cols: 80, rows: 24 }, adapter, {}, authority);
+      const inherited = await stop(fresh.sessionId);
+      expect(inherited.payload.decision).toBeUndefined();
+      expect(results.at(-1)!.failures).toEqual([]);
+      expect(String(inherited.payload.systemMessage)).toContain("WIP anterior ao seu spawn");
+      orchKillSession(fresh.sessionId);
+    } finally {
+      setResumeSessionLookup(null);
+      __resetRegressionGateForTests();
+      __resetHookRegressionForTests();
+      __resetHookEditProvenanceForTests();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

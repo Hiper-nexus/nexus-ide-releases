@@ -12,6 +12,7 @@ import type { McpToolInvocation } from './mcp-protocol';
 import { missionExecutionBaseSha } from './mission-execution-scope';
 import { isolatedWriterBaseShaOfSession } from './isolated-writer-worktree';
 import { getSessionSpawnedAtMs } from '../pty/pty-manager';
+import { recordedEditsForSession } from './hook-edit-provenance';
 import {
   evaluateHandoffRegressionGate,
   type RegressionHandoffVerdict,
@@ -47,6 +48,8 @@ export function evaluateWriterHandoffRegression(
     // Sem base registrada: o HEAD no spawn é a base, e o WIP sujo antes do
     // spawn (operador, outro writer) não é cobrado de quem entrega.
     startedAtMs: ctx.sessionId ? (getSessionSpawnedAtMs(ctx.sessionId) ?? undefined) : undefined,
+    // F-1237: retomada exata responde pelo que a própria conversa editou.
+    recordedEdits: recordedEditsForSession(ctx.sessionId, execution.rootRealPath),
     trustedDependencyRoot: ctx.scope.rootRealPath,
     signal: input.invocation?.signal,
     authority: input.invocation,

@@ -37,6 +37,7 @@ import {
   normalizeSkillName,
   observerToolKind,
 } from './observer-tool-kind';
+import { hookBodyMayCarryEdit, recordHookEditProvenance } from './hook-edit-provenance';
 
 /** Turn-end callback seam — the default runs the mechanical handoff closure. */
 export type TurnEndHook = (input: {
@@ -48,6 +49,12 @@ export type TurnEndHook = (input: {
  *  `last_agent_message` (up to the 60k mechanical fullText cap) plus cwd /
  *  transcript_path; 16 KB 400'd that POST and skipped turn-end entirely. */
 export const HOOK_STATUS_MAX_BODY_BYTES = 64 * 1024;
+/**
+ * F-1237: o PostToolUse de uma edição carrega o conteúdo escrito (Write,
+ * patch do Codex) e passa dos 64 KB num arquivo grande. Só a proveniência lê
+ * além do teto do status; o status desse corpo continua recusado (400).
+ */
+export const HOOK_EDIT_PROVENANCE_MAX_BODY_BYTES = 4 * 1024 * 1024;
 
 export const HOOK_STATUS_FLAVORS = [
   'claude',
@@ -188,6 +195,7 @@ export function handleHookStatusRequest(
   onTurnEnd: TurnEndHook = (input) => {
     void handleTurnEndMechanicalHandoff(input);
   },
+  recordEdit: typeof recordHookEditProvenance = recordHookEditProvenance,
 ): HookStatusHandlerResult {
   const parsed = hookStatusEnvelopeSchema.safeParse(rawEnvelope);
   if (!parsed.success) {
@@ -228,6 +236,13 @@ export function handleHookStatusRequest(
     supersedeApprovalsForHookEvent(ctx.sessionId, eventType, body);
   } catch {
     // Aditivo: o broker nunca derruba o canal de status.
+  }
+
+  try {
+    // F-1237: edição da própria conversa vira proveniência durável.
+    recordEdit(ctx, eventType, body);
+  } catch {
+    // Aditivo: o registro nunca derruba o canal de status.
   }
 
   try {
@@ -297,13 +312,16 @@ function sendJson(
   res.end(body);
 }
 
-function readBodyCapped(req: http.IncomingMessage): Promise<string> {
+function readBodyCapped(
+  req: http.IncomingMessage,
+  maxBytes: number = HOOK_STATUS_MAX_BODY_BYTES,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > HOOK_STATUS_MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         // Reject WITHOUT destroying the socket so the handler can still flush
         // a 400 (destroy-then-respond races and the client sees a dropped
         // connection instead of the validation error).
@@ -312,7 +330,7 @@ function readBodyCapped(req: http.IncomingMessage): Promise<string> {
       }
       chunks.push(chunk);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }
@@ -337,9 +355,14 @@ export async function handleHookStatusHttp(
     return;
   }
 
-  let raw: string;
+  const eventType = req.headers['x-nexus-hook-event'];
+  const flavor = req.headers['x-nexus-hook-flavor'];
+  let bytes: Buffer;
   try {
-    raw = await readBodyCapped(req);
+    bytes = await readBodyCapped(
+      req,
+      eventType === 'tool-complete' ? HOOK_EDIT_PROVENANCE_MAX_BODY_BYTES : HOOK_STATUS_MAX_BODY_BYTES,
+    );
   } catch {
     // Early response: the unread remainder of an oversized body may still be
     // in flight, so close the connection once the 400 has been flushed.
@@ -353,6 +376,25 @@ export async function handleHookStatusHttp(
     return;
   }
 
+  if (bytes.length > HOOK_STATUS_MAX_BODY_BYTES) {
+    // Acima do teto do status só uma edição grande é lida (o cabeçalho do
+    // corpo diz a ferramenta): grava a proveniência; o status segue
+    // recusando o corpo, como antes.
+    if (ctx.sessionId && hookBodyMayCarryEdit(bytes.subarray(0, 8192).toString('utf8'))) {
+      try {
+        const big: unknown = JSON.parse(bytes.toString('utf8'));
+        if (big && typeof big === 'object' && !Array.isArray(big)) {
+          recordHookEditProvenance(ctx, 'tool-complete', big as Record<string, unknown>);
+        }
+      } catch {
+        // corpo inválido: sem proveniência
+      }
+    }
+    sendJson(res, 400, { ok: false, error: 'hook payload too large' });
+    return;
+  }
+
+  const raw = bytes.toString('utf8');
   let body: unknown;
   try {
     body = raw.length > 0 ? JSON.parse(raw) : {};
@@ -361,8 +403,6 @@ export async function handleHookStatusHttp(
     return;
   }
 
-  const eventType = req.headers['x-nexus-hook-event'];
-  const flavor = req.headers['x-nexus-hook-flavor'];
   const result = handleHookStatusRequest(
     ctx,
     {

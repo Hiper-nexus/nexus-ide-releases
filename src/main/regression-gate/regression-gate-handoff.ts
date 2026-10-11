@@ -92,6 +92,8 @@ export async function evaluateHandoffRegressionGate(
     readonly baseSha?: string;
     /** Spawn da sessão que entrega: base do diff e corte do WIP alheio. */
     readonly startedAtMs?: number;
+    /** F-1237: edições registradas da conversa retomada (ver RunRegressionGateInput). */
+    readonly recordedEdits?: ReadonlyMap<string, number>;
     readonly signal?: AbortSignal;
     readonly authority?: McpToolInvocation;
     /** Checkout principal do projeto (escopo do Main): ver RunRegressionGateInput. */
@@ -117,6 +119,7 @@ export async function evaluateHandoffRegressionGate(
         declaredFiles: input.declaredFiles,
         baseSha: input.baseSha,
         startedAtMs: input.startedAtMs,
+        recordedEdits: input.recordedEdits,
         timeoutMs: HANDOFF_REGRESSION_BUDGET_MS,
         signal: input.signal,
         authority: input.authority,

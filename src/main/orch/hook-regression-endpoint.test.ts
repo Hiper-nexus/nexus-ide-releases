@@ -311,4 +311,78 @@ describe('handleHookRegressionRequest (Stop do pane do operador)', () => {
     expect(response.payload.decision).toBeUndefined();
     expect(String(response.payload.systemMessage)).toContain('WIP anterior ao seu spawn');
   });
+
+  it('F-1237: pane retomado bloqueia pela edição antiga que a própria conversa registrou; o WIP alheio segue herdado', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-stop-f1237-')));
+    repos.push(root);
+    const sh = new ProcessGitRunner();
+    const put = (file: string, content: string) => {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), content);
+    };
+    const age = (file: string, atMs: number) => fs.utimesSync(path.join(root, file), new Date(atMs), new Date(atMs));
+    sh.run(root, ['init', '-q']);
+    put('package.json', JSON.stringify({ devDependencies: { vitest: '^3.0.0' } }));
+    put('node_modules/.bin/vitest', '#!/bin/sh\n');
+    put('.gitignore', 'node_modules\n');
+    sh.run(root, ['add', '-A']);
+    sh.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'base']);
+    const bornAtMs = Date.now() - 20 * 3_600_000;
+    // 1ª encarnação da conversa: escreveu x.ts e o teste dele (registrados pelo hook).
+    put('src/x.ts', 'export const x = 1;\n');
+    put('src/x.test.ts', "import { x } from './x';\n");
+    for (const file of ['src/x.ts', 'src/x.test.ts']) age(file, bornAtMs + 60_000);
+    const recorded = new Map([['src/x.ts', bornAtMs + 60_000], ['src/x.test.ts', bornAtMs + 60_000]]);
+    // Outro agente: WIP vermelho DEPOIS do nascimento da conversa, antes da retomada.
+    put('src/seal.ts', 'export const seal = 1;\n');
+    put('src/seal.test.ts', "import { seal } from './seal';\n");
+    for (const file of ['src/seal.ts', 'src/seal.test.ts']) age(file, bornAtMs + 2 * 3_600_000);
+    const spawnedAtMs = Date.now() - 1_000; // retomada: spawn novo
+    const map = {
+      mapHash: 'm', inventory: { entrypoints: [] }, symbols: { hubs: [] },
+      graph: { edgeCount: 2, dbEdgeCount: 0, sampleEdges: [], dbEntities: [],
+        adjacency: { 'src/x.test.ts': ['src/x.ts'], 'src/seal.test.ts': ['src/seal.ts'] },
+        reverse: { 'src/x.ts': ['src/x.test.ts'], 'src/seal.ts': ['src/seal.test.ts'] } },
+    } as unknown as ProjectOrientationMap;
+    const blastRadius = ({ changedFiles }: { changedFiles: readonly string[] }) => ({
+      tests: [...computeBlastRadius(map, { seedFiles: changedFiles, depth: 1 }).tests], dbEntities: [], dbConsumers: [],
+    });
+    // Vermelho só no checkout do pane; na worktree da base (F-246) passa.
+    const exec = vi.fn<RegressionExec>(async (_file, args, options) => {
+      const outFile = args.find((arg) => arg.startsWith('--outputFile='))!.slice('--outputFile='.length);
+      const files = args.filter((arg) => arg.endsWith('.test.ts'));
+      const red = options.cwd === root;
+      fs.writeFileSync(outFile, JSON.stringify({ testResults: files.map((file) => ({
+        name: path.join(options.cwd, file), status: red ? 'failed' : 'passed',
+        assertionResults: [red
+          ? { status: 'failed', fullName: 'vermelho', failureMessages: ['vermelho'] }
+          : { status: 'passed', fullName: 'ok' }],
+      })) }));
+      return { exitCode: red ? 1 : 0, timedOut: false, stdout: '', stderr: '' };
+    });
+    const results: RegressionGateResult[] = [];
+    const stop = (sessionId: string, recordedEdits?: ReadonlyMap<string, number>) =>
+      handleHookRegressionRequest({ role: 'user', sessionId, scope: testProjectScope({ rootRealPath: root }) }, {}, {
+        run: async (input) => {
+          const gate = await runRegressionGate(input, { exec, extensions: { blastRadius } });
+          results.push(gate);
+          return gate;
+        },
+        enabled: () => true,
+        startedAtMs: () => spawnedAtMs,
+        recordedEdits: (_sessionId, rootRealPath) => (rootRealPath === root ? recordedEdits : undefined),
+      });
+
+    const resumed = await stop('op-resumed', recorded);
+    expect(resumed.payload.decision).toBe('block');
+    expect(results[0]!.failures.map((failure) => failure.file)).toEqual(['src/x.test.ts']);
+    expect(results[0]!.inheritedFailures.map((failure) => failure.file)).toEqual(['src/seal.test.ts']);
+
+    // Sem registro (CLI sem evento de edição, ou pane novo): como antes, tudo herdado.
+    __resetRegressionGateForTests();
+    const unrecorded = await stop('op-fresh');
+    expect(unrecorded.payload.decision).toBeUndefined();
+    expect(results[1]!.failures).toEqual([]);
+    expect(String(unrecorded.payload.systemMessage)).toContain('WIP anterior ao seu spawn');
+  });
 });

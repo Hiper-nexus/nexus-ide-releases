@@ -588,3 +588,51 @@ describe('F-1139 authenticated native argv ingress', () => {
     } finally { gate.releaseSession('argv-ingress'); record.mockRestore(); }
   });
 });
+
+describe('F-1237: proveniência de edição pelo hook de status', () => {
+  it('todo evento autenticado passa pelo registro; registro que lança não derruba o status', () => {
+    const recordEdit = vi.fn(() => 1);
+    const body = { session_id: 'conv-a', tool_name: 'Edit', tool_input: { file_path: '/r/src/a.ts' } };
+    const ok = handleHookStatusRequest(CTX, { eventType: 'tool-complete', flavor: 'claude', body }, undefined, undefined, recordEdit);
+    expect(ok.statusCode).toBe(200);
+    expect(recordEdit).toHaveBeenCalledExactlyOnceWith(CTX, 'tool-complete', body);
+
+    const throwing = vi.fn(() => {
+      throw new Error('boom');
+    });
+    expect(handleHookStatusRequest(CTX, { eventType: 'tool-complete', flavor: 'claude', body }, undefined, undefined, throwing).statusCode).toBe(200);
+    // Sem pane vinculado não há de quem registrar.
+    const unbound = vi.fn(() => 1);
+    handleHookStatusRequest({ sessionId: '' } as never, { eventType: 'tool-complete', flavor: 'claude', body }, undefined, undefined, unbound);
+    expect(unbound).not.toHaveBeenCalled();
+  });
+
+  it('Write grande demais para o status ainda registra a proveniência; leitura grande não é nem lida', async () => {
+    const provenance = await import('./hook-edit-provenance');
+    const spy = vi.spyOn(provenance, 'recordHookEditProvenance').mockReturnValue(1);
+    try {
+      await boot();
+      const big = 'x'.repeat(HOOK_STATUS_MAX_BODY_BYTES + 1);
+      const write = await postHook({
+        event: 'tool-complete',
+        flavor: 'claude',
+        body: JSON.stringify({ session_id: 'conv-a', tool_name: 'Write', tool_input: { file_path: '/r/big.md', content: big } }),
+      });
+      expect(write.status).toBe(400); // o status continua recusando o corpo acima do teto
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]![1]).toBe('tool-complete');
+      expect((spy.mock.calls[0]![2] as { tool_input: { file_path: string } }).tool_input.file_path).toBe('/r/big.md');
+
+      spy.mockClear();
+      const read = await postHook({
+        event: 'tool-complete',
+        flavor: 'claude',
+        body: JSON.stringify({ session_id: 'conv-a', tool_name: 'Read', tool_response: { content: big } }),
+      });
+      expect(read.status).toBe(400);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
