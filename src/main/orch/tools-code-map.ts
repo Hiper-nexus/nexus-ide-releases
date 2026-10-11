@@ -107,7 +107,7 @@ const queryTool: McpToolDef = {
       '../context/orientation/orientation-local-index'
     );
     const index = getOrientationLocalIndex(map.mapHash);
-    const files = service.indexedPaths(ctx.scope);
+    const files = await service.indexedPaths(ctx.scope);
     if (!index.snapshot.ready || index.snapshot.mapHash !== map.mapHash) {
       void index.build(map, { files, signal: invocation?.signal }).catch(() => {
         /* index is optional */

@@ -146,52 +146,72 @@ function parseFile(value: unknown): OrientationStructuralFile | null {
   }) as OrientationStructuralFile;
 }
 
+function parseOrientationStructuralIndex(
+  raw: Record<string, unknown>,
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+): OrientationStructuralIndex | null {
+  if (
+    raw.schemaVersion !== 1 ||
+    raw.projectId !== scope.projectId ||
+    raw.checkoutId !== scope.checkoutId ||
+    !(raw.headSha === null ||
+      (typeof raw.headSha === 'string' && SHA_PATTERN.test(raw.headSha))) ||
+    typeof raw.truncated !== 'boolean' ||
+    !Array.isArray(raw.files) ||
+    raw.files.length > MAX_INDEX_FILES
+  ) {
+    return null;
+  }
+  const files = raw.files.map(parseFile);
+  if (files.some((item) => item === null)) return null;
+  const concrete = files as OrientationStructuralFile[];
+  const paths = new Set(concrete.map((item) => item.relativePath));
+  if (paths.size !== concrete.length) return null;
+  return Object.freeze({
+    schemaVersion: 1,
+    projectId: scope.projectId,
+    checkoutId: scope.checkoutId,
+    headSha: raw.headSha,
+    truncated: raw.truncated,
+    files: Object.freeze(
+      concrete.sort((left, right) =>
+        left.relativePath.localeCompare(right.relativePath)),
+    ),
+  }) as OrientationStructuralIndex;
+}
+
+function readableIndexStat(stat: fs.Stats): boolean {
+  return !stat.isSymbolicLink() && stat.isFile() && stat.size <= MAX_INDEX_BYTES;
+}
+
 export function readOrientationStructuralIndex(
   cacheRoot: string,
   scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
 ): OrientationStructuralIndex | null {
   const file = orientationStructuralIndexPath(cacheRoot, scope);
   try {
-    const stat = fs.lstatSync(file);
-    if (
-      stat.isSymbolicLink() ||
-      !stat.isFile() ||
-      stat.size > MAX_INDEX_BYTES
-    ) {
-      return null;
-    }
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<
-      string,
-      unknown
-    >;
-    if (
-      raw.schemaVersion !== 1 ||
-      raw.projectId !== scope.projectId ||
-      raw.checkoutId !== scope.checkoutId ||
-      !(raw.headSha === null ||
-        (typeof raw.headSha === 'string' && SHA_PATTERN.test(raw.headSha))) ||
-      typeof raw.truncated !== 'boolean' ||
-      !Array.isArray(raw.files) ||
-      raw.files.length > MAX_INDEX_FILES
-    ) {
-      return null;
-    }
-    const files = raw.files.map(parseFile);
-    if (files.some((item) => item === null)) return null;
-    const concrete = files as OrientationStructuralFile[];
-    const paths = new Set(concrete.map((item) => item.relativePath));
-    if (paths.size !== concrete.length) return null;
-    return Object.freeze({
-      schemaVersion: 1,
-      projectId: scope.projectId,
-      checkoutId: scope.checkoutId,
-      headSha: raw.headSha,
-      truncated: raw.truncated,
-      files: Object.freeze(
-        concrete.sort((left, right) =>
-          left.relativePath.localeCompare(right.relativePath)),
-      ),
-    }) as OrientationStructuralIndex;
+    if (!readableIndexStat(fs.lstatSync(file))) return null;
+    return parseOrientationStructuralIndex(
+      JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>,
+      scope,
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Same contract as the sync reader, without blocking Main on disk I/O (F-1238). */
+export async function readOrientationStructuralIndexAsync(
+  cacheRoot: string,
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+): Promise<OrientationStructuralIndex | null> {
+  const file = orientationStructuralIndexPath(cacheRoot, scope);
+  try {
+    if (!readableIndexStat(await fs.promises.lstat(file))) return null;
+    return parseOrientationStructuralIndex(
+      JSON.parse(await fs.promises.readFile(file, 'utf8')) as Record<string, unknown>,
+      scope,
+    );
   } catch {
     return null;
   }

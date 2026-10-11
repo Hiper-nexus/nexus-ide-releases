@@ -24,6 +24,22 @@ vi.mock('./worktree-pty-sweep', () => ({
   worktreeHasLiveSession: liveSession,
 }));
 
+// Sonda real de cwd (lsof/procfs) por padrão; `fault` simula a sonda sob carga.
+const cwdProbe = vi.hoisted(() => ({
+  fault: undefined as undefined | (() => Promise<readonly string[] | null>),
+  calls: 0,
+}));
+vi.mock('./process-cwds', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./process-cwds')>();
+  return {
+    ...actual,
+    listProcessCwds: (...args: Parameters<typeof actual.listProcessCwds>) => {
+      cwdProbe.calls += 1;
+      return cwdProbe.fault ? cwdProbe.fault() : actual.listProcessCwds(...args);
+    },
+  };
+});
+
 const roots: string[] = [];
 const managers: ProjectRuntimeManager[] = [];
 
@@ -130,6 +146,8 @@ function seedWorkState(
 }
 
 afterEach(() => {
+  cwdProbe.fault = undefined;
+  cwdProbe.calls = 0;
   sweep.mockClear();
   liveSession.mockReset();
   liveSession.mockReturnValue(false);
@@ -1399,6 +1417,46 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
     fs.symlinkSync(path.join(outside, "checkout"), parent);
     expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).kept).toEqual({ "path-mismatch": 1 });
     expect(fs.existsSync(path.join(outside, "checkout", path.basename(swapped.worktreePath), "owned.txt"))).toBe(true);
+    registry.dispose();
+  });
+
+  it("F-1239: recusa determinística vem antes da sonda de liveness lenta, com erro ou indisponível", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const swapped = await paneWriter(registry, scope, "operator-hand", "link");
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-gc-outside-")));
+    roots.push(outside);
+    fs.writeFileSync(path.join(outside, "alvo.txt"), "não pode sumir");
+    fs.renameSync(swapped.worktreePath, `${swapped.worktreePath}.moved`);
+    fs.symlinkSync(outside, swapped.worktreePath);
+    const faults: Record<string, () => Promise<readonly string[] | null>> = {
+      indisponivel: async () => null,
+      lenta: () => new Promise((resolve) => setTimeout(() => resolve(null), 50)),
+      erro: async () => { throw new Error("lsof: prazo estourado"); },
+    };
+    for (const [fault, probe] of Object.entries(faults)) {
+      cwdProbe.fault = probe;
+      cwdProbe.calls = 0;
+      const report = await registry.collectAgedPaneWriterWorktrees(scope, NOW);
+      expect({ fault, removed: report.removed, kept: report.kept })
+        .toEqual({ fault, removed: [], kept: { "not-a-directory": 1 } });
+      // A recusa determinística não precisou da sonda.
+      expect(cwdProbe.calls).toBe(0);
+    }
+    expect(fs.readFileSync(path.join(outside, "alvo.txt"), "utf8")).toBe("não pode sumir");
+    // Sem prova de uso, a worktree comum continua sem sair: nada afrouxou.
+    const plain = await paneWriter(registry, scope, "operator-hand", "plain");
+    for (const [fault, probe] of Object.entries(faults)) {
+      cwdProbe.fault = probe;
+      cwdProbe.calls = 0;
+      const report = await registry.collectAgedPaneWriterWorktrees(scope, NOW);
+      expect({ fault, removed: report.removed, symlink: report.kept["not-a-directory"] })
+        .toEqual({ fault, removed: [], symlink: 1 });
+      expect(report.kept).toHaveProperty(
+        [fault === "erro" ? "error: lsof: prazo estourado" : "liveness-unavailable"], 1);
+      expect(cwdProbe.calls).toBe(1);
+      expect(fs.existsSync(path.join(plain.worktreePath, "owned.txt"))).toBe(true);
+    }
     registry.dispose();
   });
 

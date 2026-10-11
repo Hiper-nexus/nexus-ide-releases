@@ -18,7 +18,7 @@ import { buildOrientationInventoryAsync } from './orientation-inventory';
 import { mergeHubs } from './orientation-import-graph';
 import { renderOrientationMarkdown } from './orientation-markdown';
 import {
-  readOrientationStructuralIndex,
+  readOrientationStructuralIndexAsync,
   writeOrientationStructuralIndexAsync,
 } from './orientation-structural-index-cache';
 import {
@@ -163,6 +163,10 @@ export class ProjectOrientationService {
   readonly #includeContextSummary: boolean;
   readonly #memory = new Map<string, ProjectOrientationMap>();
   readonly #structuralIndexes = new Map<string, OrientationStructuralIndex>();
+  readonly #structuralIndexLoads = new Map<
+    string,
+    Promise<OrientationStructuralIndex | null>
+  >();
   readonly #inflight = new Map<string, Promise<ProjectOrientationMap>>();
   readonly #incrementalLock = new KeyedLock();
 
@@ -201,14 +205,38 @@ export class ProjectOrientationService {
   }
 
   /** Repo-relative paths of the structural index (memory, else disk cache). */
-  indexedPaths(scope: ProjectExecutionScope): readonly string[] {
-    const key = scopeKey(scope);
-    let index = this.#structuralIndexes.get(key) ?? null;
-    if (!index) {
-      index = readOrientationStructuralIndex(this.#cacheRoot, scope);
-      if (index) this.#structuralIndexes.set(key, index);
-    }
+  async indexedPaths(scope: ProjectExecutionScope): Promise<readonly string[]> {
+    const index = await this.#loadStructuralIndex(scope);
     return index ? index.files.map((file) => file.relativePath) : [];
+  }
+
+  /**
+   * F-1238: the disk read is async and shared by concurrent callers, so a cold
+   * cache costs one read instead of one synchronous read per query in Main.
+   */
+  #loadStructuralIndex(
+    scope: ProjectExecutionScope,
+  ): Promise<OrientationStructuralIndex | null> {
+    const key = scopeKey(scope);
+    const memory = this.#structuralIndexes.get(key);
+    if (memory) return Promise.resolve(memory);
+    const pending = this.#structuralIndexLoads.get(key);
+    if (pending) return pending;
+    const load = readOrientationStructuralIndexAsync(this.#cacheRoot, scope)
+      .then((index) => {
+        // A build or merge that published while the disk was read is newer.
+        const current = this.#structuralIndexes.get(key);
+        if (current) return current;
+        if (index) this.#structuralIndexes.set(key, index);
+        return index;
+      })
+      .finally(() => {
+        if (this.#structuralIndexLoads.get(key) === load) {
+          this.#structuralIndexLoads.delete(key);
+        }
+      });
+    this.#structuralIndexLoads.set(key, load);
+    return load;
   }
 
   async ensure(
