@@ -1189,6 +1189,36 @@ export async function dispatchToolCall(
       return current.bindingDigest === operationIdentity.bindingDigest;
     } catch { return false; }
   };
+  // F-1185/F-1204: adotar a mão do operador (user → orchestrator da missão,
+  // só o Main faz) muda o ctx do chamador sem revogá-lo — feita pelo próprio
+  // handler (1º helper) ou por uma chamada irmã do mesmo pane em voo
+  // (nexus_mission_create, 1º helper, auto-orquestração do hook). Prova que
+  // a ÚNICA diferença para o chamador ancorado é essa promoção e reancora;
+  // qualquer outra mudança no meio (política, escopo, rebaixamento) segue
+  // revogação. Aceita uma transição só: a partir do chamador original.
+  const reanchorOperatorHandAdoption = (): boolean => {
+    if (!operationIdentity) return false;
+    const promoted =
+      anchoredCaller.role === "user" && !anchoredCaller.missionId &&
+      ctx.role === "orchestrator" && Boolean(ctx.missionId) &&
+      ctx.promotedFromUserSession === true;
+    if (!promoted) return false;
+    const beforePromotion = captureCommandDispatchIdentity(source,
+      { ...ctx, ...anchoredCaller }, canonical, args, undefined,
+      initialIntent.resolved?.mission.intentVersion);
+    if (beforePromotion.bindingDigest !== operationIdentity.bindingDigest) return false;
+    const promotedIntent = checkMissionIntent();
+    if (!promotedIntent.ok) throw new Error(promotedIntent.error);
+    operationIdentity = captureCommandDispatchIdentity(source, ctx, canonical, args,
+      options.logicalOperationId, promotedIntent.resolved?.mission.intentVersion);
+    return true;
+  };
+  // F-1233: os checkpoints antes do handler (guarda Jev, auditoria, admissão
+  // e junção de operação lógica) aceitam a MESMA adoção, com a mesma prova;
+  // prova que falha segue revogação.
+  const isOperationIdentityCurrentOrAdopted = (): boolean => {
+    try { return isOperationIdentityCurrent() || reanchorOperatorHandAdoption(); } catch { return false; }
+  };
 
   // Guarda Jev (piloto automático): coerência com o objetivo, sinais de
   // injeção e efeito destrutivo, só para chamada com efeito dentro de missão e
@@ -1212,7 +1242,7 @@ export async function dispatchToolCall(
     }
     // Autoridade revalidada depois do await de rede — mesma regra dos handlers;
     // um chamador nativo que sumiu no meio (callerSignal) também não segue.
-    if (!hasCurrentBearerAuthority() || options.callerSignal?.aborted || !isOperationIdentityCurrent()) {
+    if (!hasCurrentBearerAuthority() || options.callerSignal?.aborted || !isOperationIdentityCurrentOrAdopted()) {
       return {
         ok: false,
         tool: tool.name,
@@ -1434,7 +1464,7 @@ export async function dispatchToolCall(
     return denyIntentCheck(finalIntent.error, finalIntent.hint);
   }
 
-  if (!isOperationIdentityCurrent()) return denyIntentCheck('session_authority_revoked');
+  if (!isOperationIdentityCurrentOrAdopted()) return denyIntentCheck('session_authority_revoked');
   const invocationId = effectful ? randomUUID() : undefined;
   const commandId = effectful ? (callerCommandId ?? invocationId) : undefined;
   if (invocationId) {
@@ -1523,7 +1553,7 @@ export async function dispatchToolCall(
   };
 
   const assertAdmissionCurrent = (): void => {
-    if (!hasCurrentBearerAuthority() || options.callerSignal?.aborted || !isOperationIdentityCurrent()) throw new Error('session_authority_revoked');
+    if (!hasCurrentBearerAuthority() || options.callerSignal?.aborted || !isOperationIdentityCurrentOrAdopted()) throw new Error('session_authority_revoked');
   };
   // Logical ownership is elected synchronously after audit/admission and before
   // one real spend. Losers terminate their own audit without charging a step.
@@ -1725,30 +1755,6 @@ export async function dispatchToolCall(
       invocationSignals.length > 1
         ? AbortSignal.any(invocationSignals)
         : invocationSignals[0];
-    // F-1185/F-1204: adotar a mão do operador (user → orchestrator da missão,
-    // só o Main faz) muda o ctx do chamador sem revogá-lo — feita pelo próprio
-    // handler (1º helper) ou por uma chamada irmã do mesmo pane em voo
-    // (nexus_mission_create, 1º helper, auto-orquestração do hook). Prova que
-    // a ÚNICA diferença para o chamador ancorado é essa promoção e reancora;
-    // qualquer outra mudança no meio (política, escopo, rebaixamento) segue
-    // revogação. Aceita uma transição só: a partir do chamador original.
-    const reanchorOperatorHandAdoption = (): boolean => {
-      if (!operationIdentity) return false;
-      const promoted =
-        anchoredCaller.role === "user" && !anchoredCaller.missionId &&
-        ctx.role === "orchestrator" && Boolean(ctx.missionId) &&
-        ctx.promotedFromUserSession === true;
-      if (!promoted) return false;
-      const beforePromotion = captureCommandDispatchIdentity(source,
-        { ...ctx, ...anchoredCaller }, canonical, args, undefined,
-        initialIntent.resolved?.mission.intentVersion);
-      if (beforePromotion.bindingDigest !== operationIdentity.bindingDigest) return false;
-      const promotedIntent = checkMissionIntent();
-      if (!promotedIntent.ok) throw new Error(promotedIntent.error);
-      operationIdentity = captureCommandDispatchIdentity(source, ctx, canonical, args,
-        options.logicalOperationId, promotedIntent.resolved?.mission.intentVersion);
-      return true;
-    };
     const assertCurrentAuthorityState = (recheckIntent: boolean, recheckBinding = true): void => {
       if (
         !hasCurrentBearerAuthority() ||

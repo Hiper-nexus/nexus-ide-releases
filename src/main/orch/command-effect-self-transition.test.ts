@@ -142,6 +142,49 @@ describe('F-1204: a sibling effect of the same pane survives Main promoting that
   });
 });
 
+describe('F-1233: checkpoints before the handler accept the same operator-hand adoption, and nothing else',()=>{
+  // pty-stream não tem o modo vibe: a mão do operador sem missão só alcança as tools de pane.
+  const paneWrite={paneId:'pane-b',text:'npm test'};
+  /** Duas chamadas pty-stream da mesma operação lógica (id explícito); a segunda junta-se à primeira, parada no handler. */
+  async function joinedPair(sessionId:string){
+    const ctx=operatorPane(sessionId);const owner=parkedSibling();const tools=registryOf({...owner.tool,name:'nexus_pane_write'});
+    const options:McpDispatchOptions={...missionOptions,logicalOperationId:`${sessionId}-op`};
+    const first=dispatchToolCall('pty-stream',tools,'nexus_pane_write',paneWrite,ctx,options);
+    await owner.started;
+    const second=dispatchToolCall('pty-stream',tools,'nexus_pane_write',paneWrite,ctx,options);
+    await new Promise(resolve=>setTimeout(resolve,0));
+    return {ctx,owner,first,second};
+  }
+  it('a duplicate of the logical operation, joined in flight, survives the pane being promoted mid-join',async()=>{
+    const mission=runningMission();const {ctx,owner,first,second}=await joinedPair('operator-join');
+    expect(adoptUserContextAsMissionOrchestrator(ctx,mission.id)).toBe(true);
+    owner.release();
+    expect(await first).toMatchObject({ok:true,result:{role:'orchestrator',missionId:mission.id}});
+    // A junção devolve o desfecho assentado do dono, não uma revogação espúria.
+    expect(await second).toMatchObject({ok:false,error:'command_result_unavailable',effectMayHaveCommitted:true});
+  });
+  it('a join whose promotion rides along with an attenuated allowlist is still refused',async()=>{
+    const mission=runningMission();const {ctx,owner,first,second}=await joinedPair('operator-join-attenuated');
+    adoptUserContextAsMissionOrchestrator(ctx,mission.id);ctx.allowedTools=['nexus_pane_write'];
+    owner.release();
+    expect(await first).toMatchObject({ok:false,error:'session_authority_revoked'});
+    expect(await second).toMatchObject({ok:false,error:'session_authority_revoked'});
+  });
+  const quickPaneWrite:McpToolDef={...quickEffect,name:'nexus_pane_write'};
+  it('a promotion during the first guard await (before admission) does not revoke the owning call',async()=>{
+    const mission=runningMission();const ctx=operatorPane('operator-guard-await');
+    const pending=dispatchToolCall('pty-stream',registryOf(quickPaneWrite),'nexus_pane_write',paneWrite,ctx,missionOptions);
+    adoptUserContextAsMissionOrchestrator(ctx,mission.id);
+    expect(await pending).toMatchObject({ok:true,result:{role:'orchestrator',missionId:mission.id}});
+  });
+  it('an attenuated promotion during the first guard await is still a revocation',async()=>{
+    const mission=runningMission();const ctx=operatorPane('operator-guard-attenuated');
+    const pending=dispatchToolCall('pty-stream',registryOf(quickPaneWrite),'nexus_pane_write',paneWrite,ctx,missionOptions);
+    adoptUserContextAsMissionOrchestrator(ctx,mission.id);ctx.allowedTools=['nexus_pane_write'];
+    expect(await pending).toMatchObject({ok:false,error:'session_authority_revoked'});
+  });
+});
+
 describe('F-1185 sweep: Main transitions of the caller inside its own dispatch are not revocations',()=>{
   it('bindContextRevision: the dispatcher binding the frozen revision of a legacy contract does not revoke the handler',async()=>{
     const mission=runningMission();
