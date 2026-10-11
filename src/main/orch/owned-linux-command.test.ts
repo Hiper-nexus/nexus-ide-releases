@@ -149,7 +149,8 @@ describe('owned Bubblewrap namespace lifetime', () => {
 // Explicit Linux CI fixture; macOS injected tests never claim real bwrap proof.
 it.runIf(process.platform === 'linux' && process.env.NEXUS_LINUX_OWNED_COMMAND_TEST === '1')('captures real namespace PID1 before exec and proves reparented setsid teardown', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-f869-linux-'));
-  const sandbox = path.join(root, 'sandbox'); await fs.mkdir(sandbox, { mode: 0o700 });
+  // O runtime privado do sandbox tem de ser disjunto do checkout (process-sandbox.ts).
+  const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-f869-sandbox-'));
   const plan = buildLinuxBubblewrapPlan({ platform: 'linux', executable: '/bin/sh',
     args: ['-c', "setsid sh -c 'sleep 5' >/dev/null 2>&1 & printf 'fixture-started\\n'; exit 0"],
     rootRealPath: root, cwd: root, sandboxDir: sandbox, env: { PATH: '/usr/bin:/bin' }, sandboxProfile: 'workspace-net',
@@ -158,5 +159,5 @@ it.runIf(process.platform === 'linux' && process.env.NEXUS_LINUX_OWNED_COMMAND_T
   const proc = spawn(owned.plan.file, owned.plan.args, { cwd: owned.plan.cwd, env: owned.plan.env, detached: true, stdio: owned.stdio });
   const proof = owned.waitForExit(proc); let output = ''; proc.stdout?.on('data', chunk => { output += String(chunk); });
   try { await proof; expect(output).toContain('fixture-started'); }
-  finally { void owned.stop(); owned.dispose(); await fs.rm(root, { recursive: true, force: true }); }
+  finally { void owned.stop(); owned.dispose(); await fs.rm(root, { recursive: true, force: true }); await fs.rm(sandbox, { recursive: true, force: true }); }
 }, 15_000);
