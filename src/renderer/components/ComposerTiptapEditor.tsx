@@ -198,6 +198,18 @@ export function tiptapJsonToMarkdown(doc: JSONContent): string {
   return chosen.join('\n');
 }
 
+/** Texto literal (fala, colagem de fora) → markdown que se lê igual ao texto. */
+export function plainTextToMarkdown(text: string): string {
+  const lines = text.replace(/\r\n?/gu, '\n').split('\n');
+  return tiptapJsonToMarkdown({
+    type: 'doc',
+    content: lines.map((line) => ({
+      type: 'paragraph',
+      content: line ? [{ type: 'text', text: line }] : [],
+    })),
+  });
+}
+
 function pmDocMarkdown(doc: PmNode): string {
   return tiptapJsonToMarkdown(doc.toJSON() as JSONContent);
 }
@@ -389,9 +401,13 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
       lastExternalValue.current = value;
       // Equal canonical content is an acknowledgement, not a document reset.
       const next = markdownToTiptapContent(value);
-      if (tiptapJsonToMarkdown(editor.getJSON()) !== tiptapJsonToMarkdown(next)) {
-        // Troca programática (ditado, exemplo, rascunho restaurado): o cursor
-        // fica onde estava, preso ao novo fim se o texto encolheu.
+      const current = tiptapJsonToMarkdown(editor.getJSON());
+      const incoming = tiptapJsonToMarkdown(next);
+      if (current !== incoming) {
+        // Troca programática: acréscimo no fim (ditado) mantém o cursor onde
+        // estava; substituição (exemplo, rascunho restaurado) leva o cursor ao
+        // fim, como o textarea. O foco não muda.
+        const appended = current.length > 0 && incoming.startsWith(current);
         const { anchor, head } = editor.state.selection;
         editor
           .chain()
@@ -403,7 +419,11 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
           .command(({ tr }) => {
             const end = Selection.atEnd(tr.doc).from;
             const clamp = (pos: number) => Math.max(1, Math.min(pos, end));
-            tr.setSelection(TextSelection.between(tr.doc.resolve(clamp(anchor)), tr.doc.resolve(clamp(head))));
+            tr.setSelection(
+              appended
+                ? TextSelection.between(tr.doc.resolve(clamp(anchor)), tr.doc.resolve(clamp(head)))
+                : Selection.atEnd(tr.doc),
+            );
             return true;
           })
           .run();

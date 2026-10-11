@@ -206,6 +206,14 @@ describe('F-1170: valor externo (ditado, exemplo) substitui sem perder cursor ne
     expect(onChange.mock.calls.at(-1)?.[0]).toBe('abcXdef ditado');
   });
 
+  it('substituição por outro texto maior (exemplo) leva o cursor ao fim, como o textarea', async () => {
+    const { surface, editor, render } = await setup({ value: 'rascunho' });
+    act(() => { editor.commands.setTextSelection(3); editor.view.focus(); });
+    await render({ value: 'crie uma página de contato simples' });
+    expect(editor.state.selection.from).toBe(editor.state.doc.content.size - 1);
+    expect(document.activeElement).toBe(surface);
+  });
+
   it('substituição por um texto menor (exemplo) prende o cursor no novo fim', async () => {
     const { editor, render } = await setup({ value: 'um texto bem comprido' });
     act(() => editor.commands.setTextSelection(18));

@@ -440,4 +440,10 @@ describe('ReviewStep', () => {
     ).toBe('Módulo de bônus. Calcular variável da equipe.');
     expect(excerptReviewText('abc def ghi jkl', 10)).toBe('abc def…');
   });
+
+  it('F-1170: o objetivo em markdown aparece no resumo como texto puro', () => {
+    expect(
+      reviewBriefBody('Corrija o total', '**Corrija** o `total`\nE prove com 2\\*3.'),
+    ).toBe('Corrija o total E prove com 2*3.');
+  });
 });
