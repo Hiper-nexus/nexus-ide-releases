@@ -123,6 +123,13 @@ describe('Nexus Doctor production bootstrap', () => {
     expect(secureReadOnlyArgs).toHaveBeenCalledWith(adapter(), [], true);
   });
 
+  it('conta o codex real como reviewer read-only confinável (política de produção)', async () => {
+    const codex = (await import('../../adapters/builtin/codex.json')).default;
+    expect(buildDoctorProviderSnapshot(provider(), {
+      getAdapter: () => codex as never,
+    }).readOnlyCapable).toBe(true);
+  });
+
   it('fails the provider capability closed when policy cannot confine it', () => {
     expect(buildDoctorProviderSnapshot(provider(), {
       getAdapter: () => adapter(),
