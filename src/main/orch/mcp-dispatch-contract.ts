@@ -58,6 +58,18 @@ export type McpConfirmationHandler = (
   request: McpConfirmationRequest,
 ) => Promise<boolean>;
 
+/**
+ * F-1236: a confirmação ficou sem resposta até o prazo. Nega (fail-closed), mas
+ * não é `user_denied`: o operador não disse não, só não estava lá. A mensagem é
+ * a dica acionável que o agente lê.
+ */
+export class McpConfirmationExpiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'McpConfirmationExpiredError';
+  }
+}
+
 export interface IntentGateMissionResolver {
   (
     scope: ProjectExecutionScope,

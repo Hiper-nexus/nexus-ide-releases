@@ -63,6 +63,7 @@ import {
 } from "./command-receipts";
 import { isUnreconciledEffectOutbox, createScopedEffectOutboxStore } from "./effect-outbox";
 import {
+  McpConfirmationExpiredError,
   normalizeDispatchSessionId,
   permissionScopeForTool,
   type CommittedPhysicalHandoffReplayCandidate,
@@ -1350,7 +1351,9 @@ export async function dispatchToolCall(
           });
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
-          const error = "confirmation_failed";
+          // F-1236: prazo estourado nega com causa própria e dica para o agente.
+          const expired = err instanceof McpConfirmationExpiredError;
+          const error = expired ? "confirmation_expired" : "confirmation_failed";
           const auditFailure = writeAudit(
             () =>
               auditDenied(
@@ -1372,6 +1375,7 @@ export async function dispatchToolCall(
             requiredConfirmation: true,
             confirmationReason: reason,
             error,
+            ...(expired ? { hint: detail } : {}),
           };
         }
 

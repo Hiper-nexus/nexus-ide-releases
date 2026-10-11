@@ -72,9 +72,10 @@ import {
   type ToolDispatchResult,
 } from "./mcp-dispatch";
 import { dispatchPtyStreamMissionAction } from "./pty-stream-dispatch";
-import type {
-  McpConfirmationHandler,
-  McpConfirmationRequest,
+import {
+  McpConfirmationExpiredError,
+  type McpConfirmationHandler,
+  type McpConfirmationRequest,
 } from "./mcp-dispatch-contract";
 import { McpConfirmationScheduler } from "./mcp-confirmation-scheduler";
 import { clearSession as clearMcpPermissionSession } from "../jarvis/permissions";
@@ -343,6 +344,17 @@ function disposeMissionShimBySession(sessionId: string): void {
 }
 
 /**
+ * F-1236: prazo da confirmação HTTP de agente. Longo de propósito (o operador
+ * pode estar lendo o pedido, noutra janela, numa call), mas finito: sheet numa
+ * janela minimizada ou noutro Space ficava aberto para sempre e, como o
+ * scheduler mostra uma confirmação por vez, segurava as de todas as sessões.
+ * Ao estourar, NEGA (fail-closed, como o ACP) e a fila anda.
+ */
+export const HTTP_MCP_CONFIRMATION_TIMEOUT_MS = 10 * 60_000;
+
+const CONFIRMATION_EXPIRED = Symbol("confirmation-expired");
+
+/**
  * F-1200: a confirmação nasce de uma tool call de agente, muitas vezes com o
  * operador longe. Sem janela-mãe o macOS a mostrava como NSAlert runModal e
  * prendia a main thread (todo o MCP, PTYs e missões) até o clique. Agora é sheet
@@ -351,7 +363,15 @@ function disposeMissionShimBySession(sessionId: string): void {
 export async function showHttpMcpConfirmation(
   request: McpConfirmationRequest,
 ): Promise<boolean> {
-  const result = await showMessageBoxWithoutBlocking({
+  const timeoutMs = HTTP_MCP_CONFIRMATION_TIMEOUT_MS;
+  // O prazo nasce antes do sheet: com o mesmo timeoutMs este timer dispara
+  // primeiro, então a expiração sai como expiração (não como "Negar") e libera
+  // a fila mesmo se o sheet não fechar com o abort.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<typeof CONFIRMATION_EXPIRED>((resolve) => {
+    timer = setTimeout(() => resolve(CONFIRMATION_EXPIRED), timeoutMs);
+  });
+  const dialog = showMessageBoxWithoutBlocking({
     type: "warning",
     title: "Nexus IDE — autorização do agente",
     buttons: ["Negar", "Permitir"],
@@ -367,8 +387,20 @@ export async function showHttpMcpConfirmation(
       `Contexto: ${request.contextRevision ?? "bootstrap"}\n` +
       `Motivo: ${boundedConfirmationLine(request.reason)}\n\n` +
       `Argumentos (segredos ocultos):\n${boundedConfirmationArgs(request.args)}`,
-  });
-  return result?.response === 1;
+  }, { timeoutMs });
+  try {
+    const result = await Promise.race([expiry, dialog]);
+    if (result === CONFIRMATION_EXPIRED) {
+      throw new McpConfirmationExpiredError(
+        `confirmação expirou: o operador não respondeu em ` +
+          `${timeoutMs / 60_000} min; nada foi executado. ` +
+          `Peça de novo quando ele voltar.`,
+      );
+    }
+    return result?.response === 1;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 let httpConfirmationScheduler = new McpConfirmationScheduler(

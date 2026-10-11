@@ -72,3 +72,62 @@ describe('confirmação HTTP de agente (F-1200)', () => {
     expect(electron.showMessageBox).not.toHaveBeenCalled();
   });
 });
+
+// F-1236: o sheet numa janela minimizada ou noutro Space ficava aberto sem
+// prazo e, como o scheduler mostra uma confirmação por vez, segurava as de
+// todas as sessões.
+describe('confirmação HTTP sem resposta (F-1236)', () => {
+  const TEN_MINUTES = 10 * 60_000;
+  const settle = (promise: Promise<boolean>) => {
+    const box: { value?: unknown } = {};
+    promise.then((value) => { box.value = value; }, (error) => { box.value = error; });
+    return box;
+  };
+  afterEach(() => vi.useRealTimers());
+
+  it('nega ao estourar 10 min, fecha o sheet e libera a próxima da fila', async () => {
+    vi.useFakeTimers();
+    electron.windows = [fakeWindow(false)];
+    const signals: Array<AbortSignal | undefined> = [];
+    // Ninguém clica: só o abort fecha o sheet, como no Electron (vira cancelId).
+    electron.showMessageBox.mockImplementationOnce((_win, options) => {
+      const signal = (options as { signal?: AbortSignal }).signal;
+      signals.push(signal);
+      return new Promise((resolve) => {
+        signal?.addEventListener('abort', () => resolve({ response: 0, checkboxChecked: false }));
+      });
+    });
+    const { McpConfirmationScheduler } = await import('./mcp-confirmation-scheduler');
+    const scheduler = new McpConfirmationScheduler(showHttpMcpConfirmation);
+    const stuck = settle(scheduler.enqueue(request));
+    const next = settle(scheduler.enqueue({ ...request, sessionId: 'worker-day' }));
+
+    await vi.advanceTimersByTimeAsync(TEN_MINUTES - 1);
+    expect(stuck.value).toBeUndefined();
+    expect(electron.showMessageBox).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(stuck.value).toMatchObject({
+      name: 'McpConfirmationExpiredError',
+      message: expect.stringMatching(/não respondeu .*10 min.*peça de novo/i),
+    });
+    expect(signals[0]?.aborted).toBe(true);
+    expect(electron.showMessageBox).toHaveBeenCalledTimes(2);
+    expect(next.value).toBe(true);
+    scheduler.close();
+  });
+
+  it('aprovar dentro do prazo continua aprovando e não deixa timer para trás', async () => {
+    vi.useFakeTimers();
+    electron.windows = [fakeWindow(false)];
+    electron.showMessageBox.mockImplementationOnce(() => new Promise((resolve) => {
+      setTimeout(() => resolve({ response: 1, checkboxChecked: false }), TEN_MINUTES - 60_000);
+    }));
+
+    const approval = settle(showHttpMcpConfirmation(request));
+    await vi.advanceTimersByTimeAsync(TEN_MINUTES - 60_000);
+
+    expect(approval.value).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});

@@ -23,6 +23,7 @@ import { bindTokenToSession, mintToken, PreEffectRefusalError, registerHardenedS
 import { dispatchToolCall, READ_ONLY_HARDENED_HINT } from "./mcp-dispatch";
 import { guardToolCall } from "./jev-dispatch-guard";
 import type { McpDispatchOptions } from "./mcp-dispatch";
+import { McpConfirmationExpiredError } from "./mcp-dispatch-contract";
 import type { IntentGateMissionResolver } from "./mcp-dispatch";
 import {
   CONTEXT_DRAFT_REVIEW_SKILLS,
@@ -864,6 +865,28 @@ describe("MCP dispatch effect safety", () => {
         opsWorkflowOptions({ confirm: vi.fn(async () => false) }),
       );
       expect(result).toMatchObject({ ok: false, denied: true, error: "user_denied" });
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("confirm expired (F-1236) → confirmation_expired with an actionable hint, handler never runs", async () => {
+      const handler = vi.fn(async () => ({ exitCode: 0 }));
+      vi.mocked(guardToolCall).mockResolvedValueOnce({
+        kind: "confirm",
+        reason: "chamada destrutiva sem relação clara com o objetivo da missão",
+        probabilities: {},
+      });
+      const hint = "confirmação expirou: o operador não respondeu em 10 min; peça de novo quando ele voltar.";
+      const result = await dispatchToolCall(
+        "http-mcp",
+        terminalRegistry(handler),
+        "nexus_terminal_run",
+        { command: "rm -rf ./dist" },
+        missionContext(),
+        opsWorkflowOptions({
+          confirm: vi.fn(async () => { throw new McpConfirmationExpiredError(hint); }),
+        }),
+      );
+      expect(result).toMatchObject({ ok: false, denied: true, error: "confirmation_expired", hint });
       expect(handler).not.toHaveBeenCalled();
     });
 
