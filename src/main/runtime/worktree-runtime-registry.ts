@@ -279,27 +279,31 @@ export class WorktreeRuntimeRegistry {
     };
     // Prune primeiro: libera a branch de pasta sumida para o `branch -d`.
     const prune = await runtime.worktrees.pruneManagedWorktrees(scope);
-    const cwds = await listProcessCwds({ privateAncestors: [runtime.worktrees.runtimeRoot] });
-    const occupied = (worktreePath: string, current: readonly string[]) =>
-      worktreeHasLiveSession(worktreePath) || current.some((cwd) => isPathInsideOrEqual(worktreePath, cwd));
-    const report: PaneWorktreeGcReport = cwds === null
+    const runtimeRoot = runtime.worktrees.runtimeRoot;
+    // F-1239: a sonda (lsof/procfs, com prazo) roda só quando um candidato
+    // passou nas recusas determinísticas, e uma vez por rodada.
+    let cwds: Promise<readonly string[] | null> | undefined;
+    const report = await runtime.worktrees.collectReleasedPaneWorktrees(scope, {
+      owner: finished,
+      inUse: (worktreePath) => worktreeHasLiveSession(worktreePath),
       // win32, lsof/procfs indisponível ou com erro: sem prova de uso, nada sai.
-      ? { removed: [], kept: { "liveness-unavailable": 1 }, deferred: 0 }
-      : await runtime.worktrees.collectReleasedPaneWorktrees(scope, {
-        owner: finished,
-        inUse: (worktreePath) => occupied(worktreePath, cwds),
-        confirmUnused: this.#unusedByProcesses(),
-        minIdleMs,
-        maxCandidates,
-        deadlineAt,
-        salvageDirty: (record) => scheduleWorktreeSalvage({
-          worktreePath: record.worktreePath,
-          branchRef: record.branchRef,
-          missionId: record.missionId,
-          taskId: record.taskId,
-          reason: "gc",
-        }, { notify: false }),
-      });
+      liveness: async () => {
+        const current = await (cwds ??= listProcessCwds({ privateAncestors: [runtimeRoot] }));
+        return current && ((worktreePath) =>
+          current.some((cwd) => isPathInsideOrEqual(worktreePath, cwd)));
+      },
+      confirmUnused: this.#unusedByProcesses(),
+      minIdleMs,
+      maxCandidates,
+      deadlineAt,
+      salvageDirty: (record) => scheduleWorktreeSalvage({
+        worktreePath: record.worktreePath,
+        branchRef: record.branchRef,
+        missionId: record.missionId,
+        taskId: record.taskId,
+        reason: "gc",
+      }, { notify: false }),
+    });
     if (report.removed.length > 0 || Object.keys(report.kept).length > 0 ||
         report.deferred > 0 || !('pruned' in prune) || prune.pruned > 0) {
       console.warn(

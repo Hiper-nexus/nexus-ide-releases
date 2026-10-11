@@ -110,6 +110,12 @@ export interface PaneWorktreeGcOptions {
   /** Chaves do registry (missão ou `operator-hand`) cujos writers podem sair. */
   readonly owner: (missionId: string) => boolean;
   readonly inUse: (worktreePath: string) => boolean;
+  /**
+   * F-1239: sonda cara de uso (cwd real dos processos), pedida só depois das
+   * recusas determinísticas do caminho. `null` = sem prova: o candidato fica
+   * como "liveness-unavailable"; o predicado devolvido diz se está em uso.
+   */
+  readonly liveness?: () => Promise<((worktreePath: string) => boolean) | null>;
   /** Prova assíncrona de uso, repetida logo antes de remover; erro = em uso. */
   readonly confirmUnused?: (worktreePath: string) => Promise<boolean>;
   /** Idade mínima desde a última mudança do registro (`updatedAt`). */
@@ -1219,7 +1225,6 @@ export class WorktreeManager {
       throw error;
     });
     let real: string | undefined;
-    let statusBefore = "";
     if (entry) {
       // Nunca segue symlink nem sai da raiz gerenciada.
       if (entry.isSymbolicLink() || !entry.isDirectory()) return "not-a-directory";
@@ -1228,6 +1233,16 @@ export class WorktreeManager {
       const managed = [this.worktreesRoot, this.legacyWorktreesRoot].some((managedRoot) =>
         real !== managedRoot && isPathInsideOrEqual(managedRoot, real!));
       if (!managed || isDangerousWorktreeRemovalPath(real, root)) return "outside-managed-root";
+    }
+    // F-1239: a sonda cara vem depois das recusas determinísticas acima, que
+    // assim não dependem dela (nem do prazo dela sob carga).
+    if (options.liveness) {
+      const inUse = await options.liveness();
+      if (!inUse) return "liveness-unavailable";
+      if (inUse(candidate.worktreePath)) return "in-use";
+    }
+    let statusBefore = "";
+    if (real !== undefined) {
       await assertSafeLocalGitConfigAsync(git, real);
       const top = await git.run(real, ["rev-parse", "--show-toplevel"], { allowFailure: true });
       const head = await git.run(real, ["symbolic-ref", "--quiet", "HEAD"], { allowFailure: true });
