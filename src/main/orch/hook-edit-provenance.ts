@@ -28,6 +28,11 @@
  * F-1242: grava o sha256 do conteúdo lido no PostToolUse (arquivo regular,
  * confinado, até 1 MB); o portão só conta como da conversa o arquivo cujo
  * conteúdo ainda é esse. A leitura é assíncrona e serializada por sessão.
+ * F-1249: o CLI roda os hooks PostToolUse em paralelo; o formatador do usuário
+ * pode reescrever o arquivo depois do hash. No Stop do turno, a mesma sessão
+ * re-hasheia os caminhos que o turno gravou e atualiza o sha (só linha que já
+ * existe). O conjunto do turno some no Stop e no prompt seguinte: escrita
+ * posterior, de quem for, não entra.
  * Falha aqui nunca derruba o hook (tudo em try, devolve 0).
  */
 import fs from 'node:fs';
@@ -74,10 +79,15 @@ const PIN_EVENT_TYPES: ReadonlySet<string> = new Set(['session-start', 'session'
  * vez lê arquivos; um curl em loop não multiplica leituras em paralelo no Main.
  */
 let hashQueues = new WeakMap<SessionProviderConversation, { tail: Promise<unknown>; queued: number }>();
+/** F-1249: fim do turno (o PostToolUse do turno, formatador incluso, já acabou). */
+const TURN_END_EVENT_TYPES: ReadonlySet<string> = new Set(['stop', 'stop-failure']);
+/** F-1249: caminhos gravados no turno em curso, por sessão viva (até o teto por evento). */
+let turnEdits = new WeakMap<SessionProviderConversation, Set<string>>();
 
 export function __resetHookEditProvenanceForTests(): void {
   pinnedConversations = new WeakMap();
   hashQueues = new WeakMap();
+  turnEdits = new WeakMap();
 }
 
 function stringField(value: unknown): string | null {
@@ -224,21 +234,32 @@ export async function recordHookEditProvenance(
       deps.heldByOtherPane ??
         ((own, id) => providerSessionHeldByOtherPane(own.adapterId, id, own.paneId)),
     );
-    if (!conversationId || eventType !== 'tool-complete') return 0;
-    const raw = extractEditedPaths(body);
-    if (raw.length === 0) return 0;
+    if (!conversationId) return 0;
+    if (eventType === 'user-submit') turnEdits.delete(conversation);
+    const turnEnd = TURN_END_EVENT_TYPES.has(eventType);
+    if (!turnEnd && eventType !== 'tool-complete') return 0;
     const root = scope.rootRealPath;
     const cwd = typeof body.cwd === 'string' && path.isAbsolute(body.cwd) ? body.cwd : root;
-    const relPaths = raw
-      .map((file) => confineEditedPath(root, cwd, file))
-      .filter((file): file is string => file !== null);
+    const turn = turnEdits.get(conversation);
+    if (turnEnd) turnEdits.delete(conversation);
+    const relPaths = turnEnd
+      ? [...(turn ?? [])]
+      : extractEditedPaths(body)
+        .map((file) => confineEditedPath(root, cwd, file))
+        .filter((file): file is string => file !== null);
     if (relPaths.length === 0) return 0;
     const queue = hashQueues.get(conversation) ?? { tail: Promise.resolve(), queued: 0 };
     hashQueues.set(conversation, queue);
     if (queue.queued >= MAX_QUEUED_EDIT_EVENTS_PER_SESSION) return 0;
+    if (!turnEnd) {
+      const current = turn ?? new Set<string>();
+      turnEdits.set(conversation, current);
+      for (const rel of relPaths) if (current.size < MAX_RECORDED_PATHS_PER_EVENT) current.add(rel);
+    }
     queue.queued += 1;
     const job = queue.tail.then(async () => {
       // O conteúdo que a edição deixou: lido agora, depois da escrita do CLI.
+      // No fim do turno, relido depois dos hooks paralelos (formatador).
       const edits = new Map<string, string>();
       for (const rel of relPaths) {
         const sha256 = await (deps.hash ?? hashRegressionFile)(root, rel);
@@ -249,6 +270,8 @@ export async function recordHookEditProvenance(
         { scope: conversation.scope, adapterId: conversation.adapterId, conversationId, rootRealPath: root },
         edits,
         (deps.now ?? Date.now)(),
+        undefined,
+        !turnEnd,
       );
     });
     queue.tail = job.catch(() => 0).finally(() => {

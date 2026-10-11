@@ -38,6 +38,14 @@ describe('conversation-edit-store (F-1237, nexus.db real)', () => {
     expect(listConversationEdits({ ...key, scope: { ...key.scope, checkoutId: 'outro' } })).toEqual(new Map());
   });
 
+  it('F-1249: o re-hash do fim do turno só atualiza linha que já existe', async () => {
+    const { listConversationEdits, recordConversationEdits } = await import('./conversation-edit-store');
+    const turn = { ...key, conversationId: 'conv-f1249' };
+    expect(recordConversationEdits(turn, new Map([['src/a.ts', H('1')]]), 1_000)).toBe(1);
+    expect(recordConversationEdits(turn, new Map([['src/a.ts', H('2')], ['src/b.ts', H('2')]]), 2_000, undefined, false)).toBe(1);
+    expect(listConversationEdits(turn)).toEqual(new Map([['src/a.ts', H('2')]]));
+  });
+
   it('caminho fora de forma e chave inválida não gravam (e não lançam)', async () => {
     const { listConversationEdits, recordConversationEdits } = await import('./conversation-edit-store');
     const other = { ...key, conversationId: 'conv-forma' };

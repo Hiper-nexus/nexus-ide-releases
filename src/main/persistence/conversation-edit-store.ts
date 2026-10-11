@@ -61,14 +61,16 @@ function relPathShape(value: string): string | null {
  * Grava (upsert) que a conversa deixou em cada caminho de `edits` o conteúdo de
  * sha256 dado, em `editedAtMs`. Idempotente; edição atrasada não sobrescreve a
  * mais nova. F-1243: com a conversa no teto de linhas, caminho novo não grava
- * (o que já existe atualiza). Devolve quantos caminhos gravou; banco ausente,
- * chave inválida ou erro de SQLite dão 0 — nunca lança.
+ * (o que já existe atualiza). F-1249: `insertNew` false (re-hash do fim do
+ * turno) só atualiza linha que já existe. Devolve quantos caminhos gravou;
+ * banco ausente, chave inválida ou erro de SQLite dão 0 — nunca lança.
  */
 export function recordConversationEdits(
   key: ConversationEditKey,
   edits: ReadonlyMap<string, string>,
   editedAtMs: number,
   db: Db | null = getDb(),
+  insertNew = true,
 ): number {
   try {
     const params = keyParams(key);
@@ -108,7 +110,7 @@ export function recordConversationEdits(
     }
     try {
       for (const [rel, sha256] of paths) {
-        if (room > 0 && changes(insert.run(...params, rel, at, sha256)) > 0) {
+        if (insertNew && room > 0 && changes(insert.run(...params, rel, at, sha256)) > 0) {
           room -= 1;
           written += 1;
         } else if (changes(update.run(at, sha256, ...params, rel, at)) > 0) {

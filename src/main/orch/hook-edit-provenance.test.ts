@@ -10,6 +10,7 @@ import { RECORDED_EDIT_MAX_HASH_BYTES } from '../regression-gate/regression-gate
 import {
   __resetHookEditProvenanceForTests,
   MAX_QUEUED_EDIT_EVENTS_PER_SESSION,
+  MAX_RECORDED_PATHS_PER_EVENT,
   confineEditedPath,
   extractEditedPaths,
   hookBodyMayCarryEdit,
@@ -41,7 +42,7 @@ const codexFresh = (paneId = 'pane-a'): SessionProviderConversation =>
 
 function recorder() {
   const calls: Array<{ key: ConversationEditKey; paths: readonly string[]; hashes: readonly string[]; at: number }> = [];
-  const record = vi.fn((key: ConversationEditKey, edits: ReadonlyMap<string, string>, at: number) => {
+  const record = vi.fn((key: ConversationEditKey, edits: ReadonlyMap<string, string>, at: number, _db?: unknown, _insertNew?: boolean) => {
     calls.push({ key, paths: [...edits.keys()], hashes: [...edits.values()], at });
     return edits.size;
   });
@@ -272,6 +273,51 @@ describe('recordHookEditProvenance (F-1237)', () => {
     expect(maxActive).toBe(1);
     // A fila esvaziou: o próximo evento grava de novo.
     expect(await recordHookEditProvenance(ctx, 'tool-complete', body, deps)).toBe(1);
+  });
+
+  it('F-1249: o Stop re-hasheia só o que o turno gravou, uma vez; Stop de outra conversa ou prompt novo não', async () => {
+    const root = checkout();
+    const { calls, record } = recorder();
+    const ctx = { sessionId: 'pty-1', scope: testProjectScope({ rootRealPath: root }) };
+    const conversation = claude('conv-a');
+    const deps = { conversationOf: () => conversation, record };
+    const edit = { session_id: 'conv-a', tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/x.ts') } };
+    const event = (eventType: string, sessionId = 'conv-a') => recordHookEditProvenance(ctx, eventType, { session_id: sessionId }, deps);
+
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', edit, deps)).toBe(1);
+    fs.writeFileSync(path.join(root, 'src/x.ts'), 'formatado\n'); // o formatador, depois do hash
+    expect(await event('stop', 'conv-do-outro')).toBe(0);
+    expect(await event('stop')).toBe(1);
+    expect(calls.at(-1)).toMatchObject({ paths: ['src/x.ts'], hashes: [sha256('formatado\n')] });
+    expect(record.mock.calls.at(-1)![4]).toBe(false); // só atualiza a linha que o turno gravou
+    expect(await event('stop')).toBe(0); // turno fechado: nada a reler
+
+    // Turno interrompido (sem Stop): o prompt seguinte descarta o que ele gravou.
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', edit, deps)).toBe(1);
+    expect(await event('user-submit')).toBe(0);
+    expect(await event('stop')).toBe(0);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('F-1249: o Stop relê no máximo MAX_RECORDED_PATHS_PER_EVENT caminhos do turno', async () => {
+    const root = checkout();
+    const { record } = recorder();
+    const ctx = { sessionId: 'pty-1', scope: testProjectScope({ rootRealPath: root }) };
+    const conversation = claude('conv-a');
+    const hash = vi.fn(async () => 'a'.repeat(64));
+    const deps = { conversationOf: () => conversation, record, hash };
+    const patch = (from: number) => ['*** Begin Patch',
+      ...Array.from({ length: MAX_RECORDED_PATHS_PER_EVENT }, (_, i) => `*** Add File: src/f${from + i}.ts`),
+      '*** End Patch'].join('\n');
+    for (const from of [0, 1_000]) {
+      expect(await recordHookEditProvenance(ctx, 'tool-complete', {
+        session_id: 'conv-a', tool_name: 'apply_patch', tool_input: { command: patch(from) }, cwd: root,
+      }, deps)).toBe(MAX_RECORDED_PATHS_PER_EVENT);
+    }
+    hash.mockClear();
+
+    expect(await recordHookEditProvenance(ctx, 'stop', { session_id: 'conv-a' }, deps)).toBe(MAX_RECORDED_PATHS_PER_EVENT);
+    expect(hash).toHaveBeenCalledTimes(MAX_RECORDED_PATHS_PER_EVENT);
   });
 
   it('falha do banco nunca derruba o hook', async () => {

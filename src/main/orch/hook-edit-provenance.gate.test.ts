@@ -1,7 +1,8 @@
 // F-1242, ponta a ponta: PostToolUse pelo hook → nexus.db real → portão de
 // regressão da retomada exata. Só a edição cujo conteúdo ainda está no disco é
-// da conversa; quem reescreveu depois (outro agente, formatador) devolve o
-// arquivo para "alheio", por mais perto que a escrita esteja no tempo.
+// da conversa; quem reescreveu depois (outro agente; o formatador, se o Stop do
+// turno não re-hasheou — F-1249) devolve o arquivo para "alheio", por mais
+// perto que a escrita esteja no tempo.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -134,5 +135,67 @@ describe('F-1242: autoria pelo conteúdo registrado, não por janela de mtime', 
 
     expect(result.status).toBe('failed');
     expect(result.failures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
+  });
+});
+
+describe('F-1249: o formatador do PostToolUse termina depois do hash', () => {
+  function turn(root: string, scope: ReturnType<typeof testProjectScope>) {
+    const conversation: SessionProviderConversation = {
+      scope: { installationId: scope.installationId, projectId: scope.projectId, checkoutId: scope.checkoutId },
+      adapterId: 'claude',
+      paneId: 'pane-f1249',
+      conversationId: 'conv-f1249',
+      resumed: false,
+    };
+    // Hooks do mesmo bearer (1ª encarnação do pane).
+    const hook = (eventType: string, body: Record<string, unknown>, atMs: number) =>
+      recordHookEditProvenance({ sessionId: 'pty-first', scope }, eventType, { session_id: 'conv-f1249', ...body },
+        { conversationOf: () => conversation, now: () => atMs });
+    const resumedGate = () => runRegressionGate({
+      scope,
+      startedAtMs: Date.now() - 1_000, // retomada exata: spawn novo, mesma conversa
+      recordedEdits: recordedEditsForSession('pty-resumed', root, { conversationOf: () => ({ ...conversation, resumed: true }) }),
+    }, { exec: failingOnlyAt(root, ['src/c.test.ts']) });
+    return { hook, resumedGate };
+  }
+
+  async function writeThenFormat(root: string, hook: ReturnType<typeof turn>['hook'], editedAtMs: number) {
+    write(root, 'src/c.ts', 'export const c = 30;\n');
+    age(root, 'src/c.ts', editedAtMs);
+    expect(await hook('tool-complete', { tool_name: 'Write', tool_input: { file_path: path.join(root, 'src/c.ts') } }, editedAtMs)).toBe(1);
+    // O prettier do usuário, hook PostToolUse paralelo, termina depois do hash.
+    write(root, 'src/c.ts', 'export const c = 30; // formatado\n');
+    age(root, 'src/c.ts', editedAtMs + 500);
+  }
+
+  it('o Stop do turno re-hasheia o que o turno gravou: na retomada o arquivo formatado é do pane', async () => {
+    const { root, scope } = project();
+    const { hook, resumedGate } = turn(root, scope);
+    const editedAtMs = Date.now() - 20 * HOUR;
+    await writeThenFormat(root, hook, editedAtMs);
+    expect(await hook('stop', {}, editedAtMs + 1_000)).toBe(1);
+
+    const result = await resumedGate();
+
+    expect(result.status).toBe('failed');
+    expect(result.failures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
+  });
+
+  it('reescrita por OUTRO agente depois do Stop continua alheia, mesmo com um Stop seguinte da conversa', async () => {
+    const { root, scope } = project();
+    const { hook, resumedGate } = turn(root, scope);
+    const editedAtMs = Date.now() - 20 * HOUR;
+    await writeThenFormat(root, hook, editedAtMs);
+    expect(await hook('stop', {}, editedAtMs + 1_000)).toBe(1);
+    write(root, 'src/c.ts', 'export const c = 31;\n'); // o outro agente, por cima
+    age(root, 'src/c.ts', editedAtMs + 2_000);
+    // Turno seguinte sem edição: nada a reler.
+    expect(await hook('stop', {}, editedAtMs + 3_000)).toBe(0);
+
+    const result = await resumedGate();
+
+    expect(result.status).not.toBe('failed');
+    expect(result.failures).toEqual([]);
+    expect(result.inheritedFailures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
   });
 });
