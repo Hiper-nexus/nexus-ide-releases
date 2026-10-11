@@ -59,6 +59,8 @@ export interface DecisionCalibrationModelResult {
   readonly usd: number | null;
   /** Data da medição em vigor depois da mescla (a de um pulado pode ser antiga); null = sem medição. */
   readonly measuredAt: number | null;
+  /** Motivo mais frequente das falhas (ex.: 'client-error'); ausente quando nada falhou ou o motivo não veio. */
+  readonly failureReason?: string;
 }
 
 export type DecisionCalibrationResult =

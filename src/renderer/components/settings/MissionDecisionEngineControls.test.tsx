@@ -177,6 +177,21 @@ describe('F-1167: botão "Calibrar modelos"', () => {
     expect(host.textContent).toContain('O Automático já usa estas medições');
   });
 
+  it('modelo que falhou em tudo mostra o motivo, não só "Sem resposta"', async () => {
+    calibration = { ok: true, written: true, models: [
+      { model: 'luna', skipped: false, answered: 0, failures: 55, accuracy: null, p95Ms: null, usd: 0, measuredAt: null, failureReason: 'client-error' },
+      { model: 'clef', skipped: false, answered: 0, failures: 3, accuracy: null, p95Ms: null, usd: 0, measuredAt: null, failureReason: 'algo-novo' },
+    ] };
+    await mount();
+    await act(async () => { button('Calibrar modelos')!.click(); });
+    await flush();
+    await act(async () => { button('Calibrar agora')!.click(); });
+    await flush();
+    const table = host.querySelector('table[aria-label="Resultado da calibração"]')!;
+    expect(table.textContent).toContain('Sem resposta: a API recusou a chave ou o acesso');
+    expect(table.textContent).toContain('Sem resposta: falha do provedor');
+  });
+
   it('cancelar não calibra', async () => {
     await mount();
     await act(async () => { button('Calibrar modelos')!.click(); });

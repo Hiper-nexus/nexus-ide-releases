@@ -26,9 +26,21 @@ function measuredText(measuredAt: number | null, now: number): string {
   return isStale(measuredAt, now) ? `${date} (antiga)` : date;
 }
 
+/** Motivo mais comum das falhas, em linguagem do operador. A chave inválida ou sem acesso aparece como recusa da API. */
+const FAILURE_TEXT: Readonly<Record<string, string>> = {
+  'client-error': 'a API recusou a chave ou o acesso',
+  'rate-limited': 'limite de uso do provedor',
+  'server-error': 'erro no servidor do provedor',
+  timeout: 'o provedor demorou demais',
+  network: 'sem conexão com o provedor',
+  malformed: 'resposta fora do formato',
+  refusal: 'o provedor recusou a pergunta',
+  'internal-error': 'falha interna do Nexus',
+};
+
 function accuracyText(row: DecisionCalibrationModelResult): string {
   if (row.skipped) return 'Pulado: sem credencial';
-  if (row.accuracy === null) return 'Sem resposta';
+  if (row.accuracy === null) return row.failureReason ? `Sem resposta: ${FAILURE_TEXT[row.failureReason] ?? 'falha do provedor'}` : 'Sem resposta';
   return `${Math.round(row.accuracy * 100)}%`;
 }
 

@@ -148,4 +148,15 @@ describe('F-1167: calibração só nos modelos com credencial', () => {
     }, ['jev']);
     expect(summarizeCalibration(report, ['jev']).find(row => row.model === 'jev')).toMatchObject({ accuracy: null, failures: 4 });
   });
+
+  it('a tela recebe o motivo mais comum das falhas (Luna sem acesso à API aparecia só como "Sem resposta")', async () => {
+    let call = 0;
+    const report = await evaluateDecisionCases(DECISION_CALIBRATION_CASES.slice(0, 5), async (_model, input) => {
+      input.onNoAnswer?.(call++ === 0 ? 'network' : 'client-error');
+      return null;
+    }, ['luna']);
+    const summary = summarizeCalibration(report, ['luna']);
+    expect(summary.find(row => row.model === 'luna')).toMatchObject({ failures: 5, failureReason: 'client-error' });
+    expect(summary.find(row => row.model === 'jev')).not.toHaveProperty('failureReason');
+  });
 });

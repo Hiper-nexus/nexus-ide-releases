@@ -103,6 +103,14 @@ export function estimateCalibration(
   });
 }
 
+function mostFrequent(values: readonly string[]): string | undefined {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  let best: string | undefined;
+  for (const [value, count] of counts) if (best === undefined || count > counts.get(best)!) best = value;
+  return best;
+}
+
 /** Resumo por modelo para a tela: acurácia, p95, custo e a data da medição em vigor. */
 export function summarizeCalibration(
   report: DecisionEvalReport, consulted: readonly DecisionEvalModel[], table: DecisionQualityTable | null = null,
@@ -113,8 +121,11 @@ export function summarizeCalibration(
     // Mesmo denominador da tabela de qualidade: indisponibilidade não conta como erro.
     const measured = report.observations.filter(row => row.requestedModel === model && isQualityObservation(row));
     const correct = measured.filter(row => row.correct === true).length;
+    const failureReason = mostFrequent(report.observations.flatMap(row =>
+      row.requestedModel === model && row.status === 'failed' && row.failureReason ? [row.failureReason] : []));
     return { model, skipped, answered: score.answered, failures: score.failures,
       accuracy: skipped || measured.length === 0 ? null : correct / measured.length,
-      p95Ms: score.p95Ms, usd: skipped ? 0 : score.usd, measuredAt: decisionQualityMeasuredAt(table, model) };
+      p95Ms: score.p95Ms, usd: skipped ? 0 : score.usd, measuredAt: decisionQualityMeasuredAt(table, model),
+      ...(failureReason ? { failureReason } : {}) };
   });
 }
