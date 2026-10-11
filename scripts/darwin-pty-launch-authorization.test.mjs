@@ -423,8 +423,10 @@ suite("Darwin supervisor one-shot launch authorization", () => {
         "--",
         "/bin/sh",
         "-c",
+        // O sh espera o helper aninhado: ao sair, o supervisor externo encerra
+        // o grupo, e sob carga isso matava o aninhado antes de ele gravar a recusa.
         '"$1" supervise -- /bin/sleep 30 >"$3" 2>&1 & ' +
-          'nested_pid=$!; printf "%s\\n" "$nested_pid" > "$2"; exit 0',
+          'nested_pid=$!; printf "%s\\n" "$nested_pid" > "$2"; wait "$nested_pid"; exit 0',
         "nexus-nested-direct",
         helper,
         nestedPidFile,

@@ -42,13 +42,14 @@ it.runIf(process.platform === 'darwin')('uses the confined production plan and w
   let settled = false;
   const pending = proveMainOwnedCommandForSmoke(fixture, { seal: () => ({ teamIdentifier: NEXUS_APPLE_TEAM_ID }), execute })
     .finally(() => { settled = true; });
-  await vi.waitFor(() => expect(execute).toHaveBeenCalled());
+  // Antes de executar, o smoke cria 768 arquivos no dense-bin; com a máquina carregada isso passa de 1 s.
+  await vi.waitFor(() => expect(execute).toHaveBeenCalled(), { timeout: 30_000 });
   expect(settled).toBe(false);
   await expect(fs.stat(runtime)).resolves.toBeDefined();
   exit();
   expect(await pending).toMatchObject({ status: 'passed', densePathFiles: 768, exitCode: 0, physicalExitProven: true });
   await vi.waitFor(async () => expect(await fs.stat(runtime).catch(() => null)).toBeNull());
-});
+}, 60_000);
 
 it.runIf(process.platform === 'darwin').each(['missing-nonce', 'logical-timeout', 'nonzero'])('rejects %s even when physical exit is proven', async fault => {
   const execute: typeof execOwnedCheck = async ({ plan }) => ({
