@@ -54,6 +54,7 @@ vi.mock("../pty/pty-manager", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../pty/pty-manager")>()),
   getLastSessionInputOrigin: () => "system",
   getSessionSpawnedAtMs: (sessionId: string) => spawnedAt.get(sessionId) ?? null,
+  getSessionFirstIncarnationAtMs: (sessionId: string) => spawnedAt.get(sessionId) ?? null,
 }));
 vi.mock("./idle-delivery", () => ({ onHandoffSubmitted: vi.fn() }));
 vi.mock("./mission-story-plan", () => ({
