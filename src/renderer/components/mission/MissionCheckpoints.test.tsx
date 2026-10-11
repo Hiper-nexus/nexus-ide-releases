@@ -57,23 +57,27 @@ const PLAN = {
 
 let host: HTMLElement;
 let root: Root;
-let api: {
-  listMissionCheckpoints: ReturnType<typeof vi.fn<(input: { missionId: string }) => Promise<MissionCheckpointListResult>>>;
-  previewMissionCheckpoint: ReturnType<typeof vi.fn<(input: { missionId: string; ref: string }) => Promise<MissionCheckpointPreviewResult>>>;
-  restoreMissionCheckpoint: ReturnType<typeof vi.fn<(input: { missionId: string; ref: string }) => Promise<MissionCheckpointRestoreResult>>>;
-};
+type ListFn = (input: { missionId: string }) => Promise<MissionCheckpointListResult>;
+type PreviewFn = (input: { missionId: string; ref: string }) => Promise<MissionCheckpointPreviewResult>;
+type RestoreFn = (input: { missionId: string; ref: string }) => Promise<MissionCheckpointRestoreResult>;
 
-beforeEach(() => {
-  api = {
-    listMissionCheckpoints: vi.fn(async () => LIST),
-    previewMissionCheckpoint: vi.fn(async () => ({ ok: true as const, ...PLAN })),
-    restoreMissionCheckpoint: vi.fn(async () => ({
-      ok: true as const,
+function createApi() {
+  return {
+    listMissionCheckpoints: vi.fn<ListFn>(async () => LIST),
+    previewMissionCheckpoint: vi.fn<PreviewFn>(async () => ({ ok: true, ...PLAN })),
+    restoreMissionCheckpoint: vi.fn<RestoreFn>(async () => ({
+      ok: true,
       applied: true,
       backupRef: `refs/nexus-checkpoint/${'a'.repeat(32)}/ordinal/3`,
       ...PLAN,
     })),
   };
+}
+
+let api: ReturnType<typeof createApi>;
+
+beforeEach(() => {
+  api = createApi();
   (window as unknown as { nexus: unknown }).nexus = { orch: api };
   host = document.createElement('div');
   document.body.appendChild(host);
