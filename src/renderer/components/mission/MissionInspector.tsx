@@ -11,6 +11,9 @@ import { useContextualPanelNavStore } from '../../state/contextual-panel-nav-sto
 import { DirectionComposer } from './DirectionComposer';
 import { AgentActivityTimeline, type TimelineItemModel } from './AgentActivityTimeline';
 import { MissionDecisionPanel } from './MissionDecisionPanel';
+import { MarkdownWithMermaid } from '../MarkdownWithMermaid';
+import { ComposerRichTextView } from '../ComposerRichTextView';
+import { MissionCheckpoints } from './MissionCheckpoints';
 
 /**
  * F-1005: o renderer só tem a janela que o Main paginou. `total` é o tamanho
@@ -285,7 +288,7 @@ function SealedPlan({ missionId }: { readonly missionId: string }) {
       aria-label="O que vamos construir"
     >
       <h2>O que vamos construir</h2>
-      <p className="mission-inspector__sealed-plan-body">{plan.summary}</p>
+      <MarkdownWithMermaid className="mission-inspector__sealed-plan-body" source={plan.summary} />
       <details className="mission-inspector__technical">
         <summary>Detalhes técnicos</summary>
         <dl className="mission-inspector__details">
@@ -491,7 +494,7 @@ function ConversationProjection({
             {directions.map((direction) => (
               <li key={direction.eventId}>
                 <article className="mission-inspector__direction">
-                  <p>{direction.text}</p>
+                  <p><ComposerRichTextView markdown={direction.text} /></p>
                   <p className="mission-inspector__direction-target">
                     Destino:{' '}
                     {directionTargetLabel(
@@ -869,6 +872,12 @@ function ActivityProjection({
     snapshot.state === 'blocked_technical' ? snapshot.stateReason : undefined;
   // F-1005: na timeline a lista virtual é a ÚNICA rolagem do painel.
   const timelineMode = items.length > 0 && viewMode === 'timeline';
+  // F-1173: sem resultado (missão em curso), os pontos de restauração ficam
+  // aqui, onde a pessoa vê "Entrega enviada"; com resultado, só em "O que
+  // mudou". Cada entrega nova relê a lista.
+  const deliveries = events.filter(
+    (event) => event.missionId === snapshot.id && event.type === 'handoff.submitted',
+  ).length;
 
   return (
     <div
@@ -899,6 +908,9 @@ function ActivityProjection({
             </p>
           )}
         </section>
+      )}
+      {!snapshot.result && (
+        <MissionCheckpoints missionId={snapshot.id} collapsible refreshKey={deliveries} />
       )}
       {items.length === 0 ? (
         <p className="mission-inspector__empty" role="status">
@@ -1001,6 +1013,9 @@ function MissingResult({ snapshot }: { readonly snapshot: MissionSnapshot }) {
   return (
     <div className="mission-inspector__missing-result" role="status">
       <p>{message}</p>
+      <p className="mission-inspector__empty-value">
+        Os pontos de restauração dos writers ficam na aba Atividade até a missão ter resultado.
+      </p>
       {snapshot.stateReason && (
         <dl className="mission-inspector__details">
           <CanonicalField label="Código do estado">
@@ -1025,11 +1040,11 @@ function ResultProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) 
       <header className="mission-inspector__projection-header">
         <h2>{RESULT_OUTCOME_LABELS[result.outcome]}</h2>
       </header>
-      <p className="mission-inspector__result-summary">{result.summary}</p>
+      <MarkdownWithMermaid className="mission-inspector__result-summary" source={result.summary} />
       <p>
         Referências de evidência registradas: {result.evidenceIds.length}. O status de conclusão não atesta validação visual.
       </p>
-      <ChangedFiles artifactRefs={result.artifactRefs} />
+      <ChangedFiles missionId={snapshot.id} artifactRefs={result.artifactRefs} />
       <details className="mission-inspector__technical">
         <summary>Detalhes técnicos</summary>
         <section aria-label="Evidências do resultado">
@@ -1057,8 +1072,10 @@ function ResultProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) 
  * link e sem dizer o que cada arquivo é.
  */
 function ChangedFiles({
+  missionId,
   artifactRefs,
 }: {
+  readonly missionId: string;
   readonly artifactRefs: readonly string[];
 }) {
   const projection = useMemo(
@@ -1076,6 +1093,7 @@ function ChangedFiles({
         <p className="mission-inspector__changed-empty">
           Nenhum arquivo do projeto foi alterado nesta missão.
         </p>
+        <MissionCheckpoints missionId={missionId} />
       </section>
     );
   }
@@ -1110,6 +1128,7 @@ function ChangedFiles({
           </li>
         ))}
       </ul>
+      <MissionCheckpoints missionId={missionId} />
     </section>
   );
 }

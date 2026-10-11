@@ -62,8 +62,29 @@ async function readDirSorted(dir: string): Promise<fs.Dirent[]> {
   }
 }
 
-/** Lista até `limit` transcripts; symlinks nunca são seguidos. */
+/** Teto da descoberta: acima disso a pasta é tratada como cortada. */
+const DISCOVERY_LIMIT = 5_000;
+
+/**
+ * Lista até `limit` transcripts, os MAIS RECENTES primeiro: com mais arquivos
+ * que o teto, a ordem alfabética deixava os novos de fora para sempre.
+ * Symlinks nunca são seguidos.
+ */
 async function listTranscripts(
+  root: string,
+  checkoutId: string,
+  limit: number,
+): Promise<TranscriptFile[]> {
+  const found = await discoverTranscripts(root, checkoutId, DISCOVERY_LIMIT);
+  const dated = await Promise.all(found.map(async (entry) => {
+    try { return { entry, mtimeMs: (await fs.promises.stat(entry.file)).mtimeMs }; }
+    catch { return { entry, mtimeMs: 0 }; }
+  }));
+  dated.sort((a, b) => b.mtimeMs - a.mtimeMs || a.entry.file.localeCompare(b.entry.file));
+  return dated.slice(0, limit).map(({ entry }) => entry);
+}
+
+async function discoverTranscripts(
   root: string,
   checkoutId: string,
   limit: number,

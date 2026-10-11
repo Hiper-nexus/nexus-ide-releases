@@ -48,6 +48,7 @@ import {
 } from './squad-store';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { routeIntent } from './intent-router';
+import { objectiveFirstLinePlainText } from '../../shared/mission-identity';
 import {
   missionRoutingReviewWarnings,
   parseMissionRoutingAdvice,
@@ -224,7 +225,8 @@ function assertRosterShape(
 function missionTitle(request: MissionPrepareRequest): string {
   const explicit = request.title?.trim();
   if (explicit) return explicit.slice(0, 512);
-  return request.objective.split(/\r?\n/u, 1)[0]!.trim().slice(0, 512);
+  // F-1170: o objetivo é markdown; o título não carrega `**`/`*`/crases.
+  return objectiveFirstLinePlainText(request.objective).slice(0, 512);
 }
 
 function sourceSquadForRequest(request: MissionPrepareRequest): Squad {

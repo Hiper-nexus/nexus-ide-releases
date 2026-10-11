@@ -14,6 +14,7 @@ import { useAdapterStore } from '../../state/adapter-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { usePaneFootprintStore } from '../../state/pane-footprint-store';
 import { buildGridTree, createLeaf, createPane } from '../../lib/split-tree';
 
 (
@@ -653,6 +654,41 @@ describe('WorkspaceRail', () => {
 
     const conn = host.querySelector('.workspace-rail__cockpit-conn');
     expect(conn?.textContent).toContain('Local');
+  });
+
+  it('F-1172: pressão de memória aparece no rodapé do rail e leva a Uso e cotas', () => {
+    const GiB = 1024 ** 3;
+    usePaneFootprintStore.setState({ machine: null });
+    const onOpenUsageQuota = vi.fn();
+    const { host } = renderRail({ onOpenUsageQuota });
+    const footer = host.querySelector('.workspace-rail__footer')!;
+    expect(footer.textContent).not.toContain('Memória sob pressão');
+
+    act(() =>
+      usePaneFootprintStore.setState({
+        machine: {
+          sampledAt: 1,
+          memory: {
+            totalBytes: 16 * GiB,
+            availableBytes: 1 * GiB,
+            usedRatio: 15 / 16,
+            peakUsedRatio: 15 / 16,
+            swapUsedBytes: null,
+            minFreeBytes: 2.4 * GiB,
+          },
+          cpu: { cores: 8, loadAvg1: 1, averageLoad1: 1 },
+          nexus: { appBytes: null, panesBytes: null, paneCount: 0 },
+          pressure: 'pressure',
+          admissionEnabled: true,
+          window: { samples: 1, spanMs: 0 },
+        },
+      }),
+    );
+    const indicator = footer.querySelector('.workspace-rail__pressure') as HTMLButtonElement;
+    expect(indicator.textContent).toContain('Memória sob pressão');
+    act(() => indicator.click());
+    expect(onOpenUsageQuota).toHaveBeenCalledTimes(1);
+    act(() => usePaneFootprintStore.setState({ machine: null }));
   });
 
   it('mostra as duas janelas de quota estilo Orca e a barra da pior janela', () => {

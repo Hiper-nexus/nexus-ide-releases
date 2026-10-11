@@ -129,7 +129,7 @@ function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
 }
 
 // Plain-text views do not queue a highlight task that could retry a blank first render.
-function DiffWorkerReady({ children }: { children?: ReactNode }) {
+function DiffWorkerReady({ children, fallback }: { children?: ReactNode; fallback?: ReactNode }) {
   const workerPool = useWorkerPool();
   const [readyPool, setReadyPool] = useState<WorkerPoolManager>();
   const ready = workerPool
@@ -150,16 +150,24 @@ function DiffWorkerReady({ children }: { children?: ReactNode }) {
     };
   }, [ready, workerPool]);
 
-  return ready ? (
-    <>{children}</>
-  ) : (
+  if (ready) return <>{children}</>;
+  // Quem já tem o texto puro (bloco de código do markdown) mostra ele enquanto espera.
+  if (fallback !== undefined) return <>{fallback}</>;
+  return (
     <p role="status" className="git-scm__diff-placeholder">
       Carregando realce…
     </p>
   );
 }
 
-export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
+export function DiffWorkerPoolProvider({
+  children,
+  fallback,
+}: {
+  children?: ReactNode;
+  /** No lugar do "Carregando realce…" enquanto o pool inicializa. */
+  fallback?: ReactNode;
+}) {
   const diffThemeName = resolveDiffThemeName(useDiffColorScheme());
   const workerPoolSize = useMemo(() => {
     const cores =
@@ -191,7 +199,7 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
   return (
     <WorkerPoolContext.Provider value={workerPool}>
       <DiffWorkerThemeSync themeName={diffThemeName} />
-      <DiffWorkerReady>{children}</DiffWorkerReady>
+      <DiffWorkerReady fallback={fallback}>{children}</DiffWorkerReady>
     </WorkerPoolContext.Provider>
   );
 }

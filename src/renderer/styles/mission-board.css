@@ -2220,6 +2220,15 @@
   word-break: break-word;
 }
 
+/* F-1169: texto narrativo do agente em markdown; mesma caixa rolável. */
+.agent-timeline__markdown {
+  max-height: 320px;
+  overflow: auto;
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
 .mission-inspector__result-summary {
   margin: 0 0 var(--space-5);
   color: var(--text);
@@ -2263,6 +2272,79 @@
   padding: var(--space-3);
   line-height: 1.5;
   resize: vertical;
+}
+
+/* F-1170: resposta livre da pergunta também é o editor Tiptap. */
+.mission-board__question-free-text-editor {
+  min-width: 0;
+  width: 100%;
+}
+
+.composer-tiptap__surface.mission-board__question-free-text-draft {
+  min-height: var(--space-8);
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+
+.composer-tiptap__surface.mission-board__question-free-text-draft:hover:not([contenteditable='false']) {
+  border-color: color-mix(in srgb, var(--text) 28%, var(--border-strong));
+  background: color-mix(in srgb, var(--text) 5%, var(--bg-elevated));
+}
+
+.composer-tiptap__surface.mission-board__question-free-text-draft:focus {
+  border-color: var(--accent);
+}
+
+.composer-tiptap__surface.mission-board__question-free-text-draft[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.composer-tiptap__surface.mission-board__question-free-text-draft[contenteditable='false'] {
+  border-color: var(--border-strong);
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+/* F-1170: o rascunho é o editor Tiptap (contenteditable). A superfície do
+   composer cede ao visual do campo de orientação; :disabled não existe num
+   div, então o estado de envio em curso vem por contenteditable=false. */
+.mission-board__direction-editor {
+  min-width: 0;
+  width: 100%;
+}
+
+.composer-tiptap__surface.mission-board__direction-draft {
+  min-height: calc(var(--space-8) + var(--space-4));
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+
+.composer-tiptap__surface.mission-board__direction-draft:focus {
+  border-color: var(--accent);
+}
+
+.composer-tiptap__surface.mission-board__direction-draft[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.composer-tiptap__surface.mission-board__direction-draft[contenteditable='false'] {
+  border-color: var(--border-strong);
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 
 .mission-board__direction-hint {
@@ -2553,6 +2635,26 @@
   outline: none;
 }
 
+.mission-board__direct-bar .mission-board__direction-editor {
+  flex: 1;
+}
+
+.mission-board__direct-bar .composer-tiptap__surface.mission-board__direction-draft {
+  min-height: 34px;
+  max-height: 120px;
+  padding: 7px 4px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.mission-board__direct-bar .composer-tiptap__surface.mission-board__direction-draft:focus,
+.mission-board__direct-bar .composer-tiptap__surface.mission-board__direction-draft:focus-visible {
+  outline: none;
+}
+
 .mission-board__direct-bar .mission-board__direction-draft::placeholder {
   color: var(--text-dim);
 }
@@ -2718,6 +2820,208 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+/* F-1173 — pontos de restauração dos writers, dentro de "O que mudou".
+   Lista sóbria por árvore; a confirmação abre em linha, nunca em modal. */
+.mission-checkpoints {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.mission-checkpoints__title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+/* Missão em curso: uma linha na Atividade que abre a lista sem empurrar a
+   timeline (ela segue sendo a única rolagem do painel). */
+.mission-checkpoints--collapsible {
+  flex: 0 0 auto;
+  margin: 0 0 var(--space-2);
+  padding: 0 0 var(--space-2);
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.mission-checkpoints--collapsible > summary {
+  cursor: pointer;
+}
+
+.mission-checkpoints--collapsible > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mission-checkpoints__hint,
+.mission-checkpoints__files-empty,
+.mission-checkpoints__more {
+  margin: var(--space-2) 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.mission-checkpoints__scope {
+  margin-top: var(--space-3);
+}
+
+.mission-checkpoints__scope-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  min-width: 0;
+}
+
+.mission-checkpoints__branch {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+
+.mission-checkpoints__folder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.mission-checkpoints__list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.mission-checkpoints__item {
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.mission-checkpoints__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.mission-checkpoints__copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.mission-checkpoints__when {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.mission-checkpoints__files {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.mission-checkpoints__files > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+}
+
+.mission-checkpoints__files ul {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.mission-checkpoints__button {
+  flex-shrink: 0;
+  appearance: none;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.mission-checkpoints__button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.mission-checkpoints__button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mission-checkpoints__button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mission-checkpoints__button--danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border-strong));
+  color: var(--danger);
+}
+
+.mission-checkpoints__confirm {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 6%, transparent);
+  font-size: var(--text-sm);
+}
+
+.mission-checkpoints__confirm-title {
+  margin: 0;
+  font-weight: 650;
+}
+
+.mission-checkpoints__plan {
+  margin: var(--space-1) 0 0;
+}
+
+.mission-checkpoints__consequences {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.mission-checkpoints__confirm-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.mission-checkpoints__error {
+  margin-top: var(--space-2);
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.mission-checkpoints__error > p {
+  margin: 0 0 var(--space-1);
+}
+
+.mission-checkpoints__outcome {
+  margin: var(--space-2) 0 0;
+  color: var(--ok);
   font-size: var(--text-sm);
 }
 

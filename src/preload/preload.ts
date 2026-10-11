@@ -1064,6 +1064,22 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionPaneRestoreAuthority, input),
     resumeMissionBootstrap: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionResumeBootstrap, input),
+    // F-1173: só missionId (+ ref) atravessam; nenhum campo extra do
+    // renderer (caminho, cwd) chega ao Main.
+    listMissionCheckpoints: (input: { missionId: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionCheckpointsList, {
+        missionId: input.missionId,
+      }),
+    previewMissionCheckpoint: (input: { missionId: string; ref: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionCheckpointPreview, {
+        missionId: input.missionId,
+        ref: input.ref,
+      }),
+    restoreMissionCheckpoint: (input: { missionId: string; ref: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionCheckpointRestore, {
+        missionId: input.missionId,
+        ref: input.ref,
+      }),
     missionEventsRecent: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsRecent, input),
     missionEventsReplay: (input) =>

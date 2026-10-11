@@ -41,8 +41,6 @@
         "src/renderer/pet/pet-main.tsx!",
         "src/renderer/pet/PetApp.tsx!",
         "src/renderer/components/ComposerTiptapEditor.tsx!",
-        "src/renderer/components/ComposerRichTextView.tsx!",
-        "src/renderer/components/MarkdownWithMermaid.tsx!",
         "src/main/usage/mimo-usage-worker-entry.ts!",
         "vite.*.config.ts!",
         "scripts/**/*.{mjs,cjs,js,ts}!",

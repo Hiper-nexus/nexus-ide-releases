@@ -95,7 +95,8 @@ app.whenReady().then(async () => {
         order: pick('#harness-order'),
         readout: pick('.usage-history__readout'),
         quoteNotice: pick('.mission-board__direction-quote'),
-        draft: document.querySelector('.mission-board__direction-draft')?.value ?? null,
+        // F-1170: o rascunho é o editor Tiptap (div), não mais um textarea.
+        draft: document.querySelector('.mission-board__direction-draft')?.innerText ?? null,
         drop: document.querySelector('.workspace-tab[data-drop]')?.getAttribute('data-drop') ?? null,
         live: pick('.workspace-tabs__live'),
         menu: [...document.querySelectorAll('[role="menuitem"] strong')].map((node) => node.textContent),

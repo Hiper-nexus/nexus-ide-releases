@@ -12,10 +12,17 @@ import {
   type MissionEvent,
 } from '../../../shared/mission-events';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
+import { useOrchStore } from '../../state/orch-store';
 import {
   directionUnavailableReason,
   MissionInspector,
 } from './MissionInspector';
+
+const mermaidApi = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: vi.fn(async (id: string) => ({ svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${id}"><text>diagrama</text></svg>` })),
+}));
+vi.mock('mermaid', () => ({ default: mermaidApi }));
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -600,7 +607,8 @@ describe('MissionInspector', () => {
     const composer = panel.querySelector('form');
     expect(composer).not.toBeNull();
     expect(composer?.querySelector('select')?.textContent).toContain('@todos');
-    expect(composer?.querySelector('textarea')).not.toBeNull();
+    // F-1170: o rascunho é o editor rich-text (Tiptap) do DirectionComposer.
+    expect(composer?.querySelector('[role="textbox"][contenteditable="true"]')).not.toBeNull();
     expect(composer?.querySelector('button[type="submit"]')).not.toBeNull();
   });
 
@@ -854,6 +862,66 @@ describe('MissionInspector', () => {
     }
   });
 
+  it('F-1173: "O que mudou" traz os pontos de restauração dos writers desta missão', async () => {
+    const listMissionCheckpoints = vi.fn(async ({ missionId }: { missionId: string }) => ({
+      ok: true, missionId, scopes: [{ root: '/p/.nexus/worktrees/writer-ada', branch: 'nexus/writer-ada', checkpoints: [{
+        ref: `refs/nexus-checkpoint/${'b'.repeat(32)}/ordinal/1`, ordinal: 1, createdAt: Date.UTC(2026, 9, 11, 13, 0),
+        kind: 'turn', writer: 'Ada', changed: { files: ['src/app.ts'], total: 1 } }] }],
+    }));
+    const previous = (window as unknown as { nexus?: unknown }).nexus;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: { listMissionCheckpoints } } });
+    try {
+      const host = mount({ snapshot: RESULT_SNAPSHOT, question: null });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      const panel = selectTab(host, 'Resultado');
+      expect(listMissionCheckpoints).toHaveBeenCalledWith({ missionId: RESULT_SNAPSHOT.id });
+      const changed = panel.querySelector('section[aria-label="O que mudou no projeto"]');
+      const restore = changed?.querySelector('section[aria-label="Pontos de restauração dos writers"]');
+      expect(restore?.textContent).toContain('Fim do turno de Ada');
+      expect(restore?.textContent).toContain('nexus/writer-ada');
+      // Com resultado: um lugar só (nada na Atividade) e uma leitura só.
+      expect(host.querySelectorAll('[aria-label="Pontos de restauração dos writers"]')).toHaveLength(1);
+      expect(selectTab(host, 'Atividade').querySelector('[aria-label="Pontos de restauração dos writers"]')).toBeNull();
+      expect(listMissionCheckpoints).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(window, 'nexus', { configurable: true, value: previous });
+    }
+  });
+
+  it('F-1173: missão em curso mostra os pontos de restauração na Atividade, sem duplicar', async () => {
+    const listMissionCheckpoints = vi.fn(async ({ missionId }: { missionId: string }) => ({
+      ok: true, missionId, scopes: [{ root: '/p/.nexus/worktrees/writer-ada', branch: 'nexus/writer-ada', checkpoints: [{
+        ref: `refs/nexus-checkpoint/${'b'.repeat(32)}/ordinal/1`, ordinal: 1, createdAt: Date.UTC(2026, 9, 11, 13, 0),
+        kind: 'turn', writer: 'Ada', changed: { files: ['src/app.ts'], total: 1 } }] }],
+    }));
+    const previous = (window as unknown as { nexus?: unknown }).nexus;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: { listMissionCheckpoints } } });
+    try {
+      const running = missionSnapshotSchema.parse({ ...SNAPSHOT, state: 'running', stateReason: undefined, result: undefined });
+      const host = mount({
+        snapshot: running,
+        question: null,
+        events: [event({ id: 'event-handoff', type: 'handoff.submitted', idempotencyKey: 'event-key-handoff' })],
+      });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(listMissionCheckpoints).toHaveBeenCalledTimes(1);
+      expect(listMissionCheckpoints).toHaveBeenCalledWith({ missionId: running.id });
+      expect(host.querySelectorAll('[aria-label="Pontos de restauração dos writers"]')).toHaveLength(1);
+
+      const activity = selectTab(host, 'Atividade');
+      const restore = activity.querySelector<HTMLDetailsElement>('details[aria-label="Pontos de restauração dos writers"]');
+      expect(restore?.querySelector('summary')?.textContent).toBe('Pontos de restauração (1)');
+      expect(restore?.textContent).toContain('Fim do turno de Ada');
+      expect(restore?.querySelector('button[aria-label^="Restaurar: Fim do turno de Ada"]')).not.toBeNull();
+
+      const result = selectTab(host, 'Resultado');
+      expect(result.querySelector('[aria-label="Pontos de restauração dos writers"]')).toBeNull();
+      expect(result.textContent).toContain('Os pontos de restauração dos writers ficam na aba Atividade');
+    } finally {
+      Object.defineProperty(window, 'nexus', { configurable: true, value: previous });
+    }
+  });
+
   it('makes a terminal mission without a persisted result explicit', () => {
     const host = mount({ snapshot: TERMINAL_WITHOUT_RESULT, question: null });
     const panel = selectTab(host, 'Resultado');
@@ -915,7 +983,8 @@ describe('MissionInspector', () => {
       ],
     });
     const panel = selectTab(host, 'Atividade');
-    const details = panel.querySelector('details');
+    // F-1173: a Atividade também tem o <details> dos pontos de restauração.
+    const details = panel.querySelector('details.mission-inspector__final-screen-item');
     const summary = details?.querySelector('summary');
 
     expect(summary?.textContent).toContain('Última tela — Construtor (worker)');
@@ -1083,5 +1152,88 @@ describe('F-1005 — atividade diz quanto falta e carrega mais pelo Main', () =>
 
     expect(panel.textContent).not.toContain('Carregar eventos anteriores');
     expect(panel.textContent).not.toContain('mais recentes de');
+  });
+});
+
+describe('MissionInspector — texto dos agentes em markdown (F-1169)', () => {
+  const MARKDOWN = [
+    '## Entrega',
+    '',
+    '- **Painel** integrado',
+    '- teclado verificado',
+    '',
+    '```mermaid',
+    'graph TD; A-->B',
+    '```',
+    '',
+    '<img src=x onerror="window.__pwned = 1"><script>window.__pwned = 2</script>',
+  ].join('\n');
+
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  function expectFormatted(root: Element | null | undefined): void {
+    expect(root).toBeTruthy();
+    expect(root!.querySelector('h2')?.textContent).toBe('Entrega');
+    expect(root!.querySelector('ul li strong')?.textContent).toBe('Painel');
+    expect(root!.querySelector('figure.markdown-with-mermaid__diagram figcaption')?.textContent).toBe('Diagrama Mermaid');
+    expect(root!.querySelector('img, script')).toBeNull();
+    expect(root!.textContent).toContain('<img src=x onerror="window.__pwned = 1">');
+    expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
+  }
+
+  afterEach(() => {
+    useOrchStore.setState({ missions: [] });
+  });
+
+  it('Resultado: o resumo do agente sai formatado, com diagrama e sem HTML executável', async () => {
+    const snapshot = missionSnapshotSchema.parse({
+      ...RESULT_SNAPSHOT,
+      result: { ...RESULT_SNAPSHOT.result, summary: MARKDOWN },
+    });
+    const host = mount({ snapshot, question: null });
+    const panel = selectTab(host, 'Resultado');
+    await settle();
+    const summary = panel.querySelector('.mission-inspector__result-summary');
+    expectFormatted(summary);
+    expect(summary?.querySelector('[data-mermaid-rendered]')?.shadowRoot?.querySelector('svg')).not.toBeNull();
+  });
+
+  it('Plano selado: o PRD do agente sai formatado', async () => {
+    useOrchStore.setState({
+      missions: [
+        {
+          id: SNAPSHOT.id,
+          intentContract: {
+            promotedPlan: { summary: MARKDOWN, summarySha256: 'f'.repeat(64), artifacts: [] },
+          },
+        },
+      ] as never,
+    });
+    const host = mount();
+    const panel = selectTab(host, 'Plano');
+    await settle();
+    expectFormatted(panel.querySelector('.mission-inspector__sealed-plan-body'));
+  });
+
+  it('Orientação enviada: marcas inline viram negrito/código e HTML fica literal', () => {
+    const direction = event({
+      ...ACCEPTED_DIRECTION_EVENTS[0],
+      payload: {
+        ...ACCEPTED_DIRECTION_EVENTS[0].payload,
+        text: 'Use **pnpm** e rode `npm test` <b>agora</b>',
+      },
+    });
+    const host = mount({ events: [direction] });
+    const panel = selectTab(host, 'Conversa');
+    const article = panel.querySelector('.mission-inspector__direction');
+    expect(article?.querySelector('.rt-bold')?.textContent).toBe('pnpm');
+    expect(article?.querySelector('code.rt-code')?.textContent).toBe('npm test');
+    expect(article?.querySelector('b')).toBeNull();
+    expect(article?.textContent).toContain('<b>agora</b>');
   });
 });
