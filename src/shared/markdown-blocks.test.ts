@@ -244,3 +244,78 @@ describe('limitMarkdownSource', () => {
     expect(limitMarkdownSource(undefined as unknown as string)).toEqual({ text: '', truncated: false });
   });
 });
+
+describe('custo linear com entrada adversarial (revisão sênior F-1169)', () => {
+  /** Melhor de 3, depois de aquecer: mede o algoritmo, não o JIT nem o GC. */
+  function bestMs(input: string): number {
+    parseMarkdownBlocks(input);
+    let best = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 3; run += 1) {
+      const started = performance.now();
+      parseMarkdownBlocks(input);
+      best = Math.min(best, performance.now() - started);
+    }
+    return best;
+  }
+
+  const ticksWithDistinctWidths = (size: number, cell = '') => {
+    let text = '';
+    for (let width = 1; text.length < size; width += 1) text += '`'.repeat(width) + 'a' + cell;
+    return text;
+  };
+
+  it.each([
+    ['linhas em branco dentro de item de lista (P2)', '- a\n' + '\n'.repeat(50_000) + '  b'],
+    ['brancas em lista aninhada até o teto', Array.from({ length: 8 }, (_, i) => `${'  '.repeat(i)}- n`).join('\n') + '\n'.repeat(50_000) + '                b'],
+    ['brancas antes de irmão e de fim de lista', '1. a\n' + '\n'.repeat(30_000) + '2. b\n' + '\n'.repeat(30_000) + 'fim'],
+    // Acima do teto da view de propósito: o parser não corta, e o custo
+    // quadrático só aparece com volume.
+    ['URL terminando em muitos ")" (P3)', ('https://a.test/' + ')'.repeat(2_000) + ' ').repeat(500)],
+    ['candidatos a URL inválidos em sequência', 'http://['.repeat(50_000)],
+    ['crases sem par de larguras distintas', ticksWithDistinctWidths(MARKDOWN_MAX_CHARS)],
+    ['crases sem par numa linha de tabela', '|' + ticksWithDistinctWidths(MARKDOWN_MAX_CHARS, '|') + '\n|-|'],
+    ['tabela larga', '|a'.repeat(25_000) + '\n' + '|-'.repeat(25_000)],
+    ['citação aninhada até o teto com continuação preguiçosa', '>'.repeat(8) + ' a\n' + 'b\n'.repeat(50_000)],
+    ['muitas cercas vazias', '```\n'.repeat(25_000)],
+  ])('%s', (_name, input) => {
+    expect(bestMs(input)).toBeLessThan(200);
+  });
+
+  it('a linha em branco dentro de item continua no item (código cercado preserva as brancas)', () => {
+    const list = only('- a\n\n\n  ```\n  x\n\n\n  y\n  ```\n- b');
+    if (list.kind !== 'list') throw new Error('lista');
+    expect(list.items).toHaveLength(2);
+    expect(list.items[0]?.[1]).toEqual({ kind: 'code', language: '', text: 'x\n\n\ny' });
+  });
+
+  it('")" final só sai quando a URL não abriu "("', () => {
+    expect(parseMarkdownInline('https://w.test/Foo_(bar).')).toEqual([
+      { kind: 'link', href: 'https://w.test/Foo_(bar)', label: [{ text: 'https://w.test/Foo_(bar)', marks: [] }] },
+      { kind: 'text', text: '.', marks: [] },
+    ]);
+    expect(parseMarkdownInline('(https://a.test/x)')).toEqual([
+      { kind: 'text', text: '(', marks: [] },
+      { kind: 'link', href: 'https://a.test/x', label: [{ text: 'https://a.test/x', marks: [] }] },
+      { kind: 'text', text: ')', marks: [] },
+    ]);
+  });
+
+  it('crase sem par fica literal e não impede o code span seguinte', () => {
+    expect(parseMarkdownInline('a `` b `c` d')).toEqual([
+      { kind: 'text', text: 'a `` b ', marks: [] },
+      { kind: 'text', text: 'c', marks: ['code'] },
+      { kind: 'text', text: ' d', marks: [] },
+    ]);
+    expect(parseMarkdownInline('**x ` y**')).toEqual([{ kind: 'text', text: 'x ` y', marks: ['bold'] }]);
+    expect(parseMarkdownInline('\\``c`')).toEqual([
+      { kind: 'text', text: '`', marks: [] },
+      { kind: 'text', text: 'c', marks: ['code'] },
+    ]);
+  });
+
+  it('candidato a URL inválido fica literal inteiro', () => {
+    const nodes = parseMarkdownInline('http://[x] e http://');
+    expect(nodes.every((node) => node.kind === 'text')).toBe(true);
+    expect(nodes.map((node) => (node.kind === 'text' ? node.text : '')).join('')).toBe('http://[x] e http://');
+  });
+});
