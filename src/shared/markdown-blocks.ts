@@ -318,157 +318,169 @@ function paragraphInline(lines: readonly string[]): MarkdownInline[] {
   return inline;
 }
 
+/** Resultado de um leitor de bloco: o bloco e a próxima linha a ler. */
+interface Parsed {
+  readonly block: MarkdownBlock;
+  readonly next: number;
+}
+
+function parseFence(lines: readonly string[], start: number): Parsed | null {
+  const fence = FENCE_OPEN.exec(lines[start] ?? '');
+  // Info string de cerca com crase não pode conter crase (CommonMark).
+  if (!fence || (fence[2]![0] === '`' && fence[3]!.includes('`'))) return null;
+  const indent = fence[1]!.length;
+  const marker = fence[2]!;
+  const word = fence[3]!.trim().split(/\s+/)[0] ?? '';
+  const body: string[] = [];
+  let i = start + 1;
+  while (i < lines.length) {
+    const candidate = lines[i]!;
+    i += 1;
+    const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(candidate);
+    if (close && close[1]![0] === marker[0] && close[1]!.length >= marker.length) break;
+    body.push(candidate.slice(Math.min(indent, leadingSpaces(candidate))));
+  }
+  return { block: { kind: 'code', language: LANGUAGE.test(word) ? word : '', text: body.join('\n') }, next: i };
+}
+
+function parseQuote(lines: readonly string[], start: number, depth: number, ctx: Context): Parsed {
+  const inner: string[] = [];
+  let i = start;
+  while (i < lines.length && !isBlank(lines[i])) {
+    const candidate = lines[i]!;
+    if (QUOTE.test(candidate)) inner.push(candidate.replace(QUOTE, ''));
+    else if (!startsBlock(lines, i, true)) inner.push(candidate); // continuação preguiçosa
+    else break;
+    i += 1;
+  }
+  ctx.remaining -= 1;
+  return { block: { kind: 'quote', blocks: parseBlocks(inner, depth + 1, ctx) }, next: i };
+}
+
+/** Linhas de um item: até o próximo irmão (`sibling`) ou o fim da lista. */
+function collectListItem(
+  lines: readonly string[],
+  start: number,
+  first: ListMarker,
+  current: ListMarker,
+): { itemLines: string[]; next: number; sibling: ListMarker | null } {
+  const need = Math.min(current.contentIndent, current.indent + 2);
+  const itemLines = [current.content];
+  let i = start + 1;
+  while (i < lines.length) {
+    const candidate = lines[i]!;
+    if (isBlank(candidate)) {
+      let ahead = i + 1;
+      while (ahead < lines.length && isBlank(lines[ahead])) ahead += 1;
+      if (ahead < lines.length && leadingSpaces(lines[ahead]!) >= need) {
+        itemLines.push('');
+        i += 1;
+        continue;
+      }
+      const sibling = ahead < lines.length ? listMarkerOf(lines[ahead]!) : null;
+      const continues = sibling !== null && sibling.indent < need && sibling.indent <= 3 && sameListType(first, sibling);
+      return { itemLines, next: continues ? ahead : i, sibling: continues ? sibling : null };
+    }
+    const lead = leadingSpaces(candidate);
+    if (lead >= need) {
+      itemLines.push(candidate.slice(Math.min(lead, current.contentIndent)));
+      i += 1;
+      continue;
+    }
+    const sibling = listMarkerOf(candidate);
+    if (sibling) return { itemLines, next: i, sibling: sameListType(first, sibling) ? sibling : null };
+    if (startsBlock(lines, i, true)) break;
+    itemLines.push(candidate.trimStart()); // continuação preguiçosa
+    i += 1;
+  }
+  return { itemLines, next: i, sibling: null };
+}
+
+function parseList(lines: readonly string[], start: number, first: ListMarker, depth: number, ctx: Context): Parsed {
+  const items: MarkdownBlock[][] = [];
+  let current: ListMarker | null = first;
+  let i = start;
+  ctx.remaining -= 1;
+  while (current && i < lines.length && ctx.remaining > 0) {
+    const item = collectListItem(lines, i, first, current);
+    items.push(parseBlocks(item.itemLines, depth + 1, ctx));
+    i = item.next;
+    current = item.sibling;
+  }
+  return { block: { kind: 'list', ordered: first.bullet === null, start: first.start, items }, next: i };
+}
+
+function parseTable(
+  lines: readonly string[],
+  start: number,
+  align: MarkdownTableAlign[],
+  nested: boolean,
+  ctx: Context,
+): Parsed {
+  const columns = align.length;
+  const cellsOf = (row: string): MarkdownInline[][] => {
+    const cells = splitTableRow(row).slice(0, columns);
+    while (cells.length < columns) cells.push('');
+    return cells.map((cell) => parseMarkdownInline(cell));
+  };
+  const header = cellsOf(lines[start]!);
+  const rows: MarkdownInline[][][] = [];
+  let i = start + 2;
+  ctx.remaining -= 1;
+  while (i < lines.length && ctx.remaining > 0) {
+    const row = lines[i]!;
+    if (isBlank(row) || !row.includes('|') || startsBlock(lines, i, nested)) break;
+    rows.push(cellsOf(row));
+    ctx.remaining -= 1;
+    i += 1;
+  }
+  return { block: { kind: 'table', align, header, rows }, next: i };
+}
+
+function parseParagraph(lines: readonly string[], start: number, nested: boolean, ctx: Context): Parsed {
+  let i = start + 1;
+  while (i < lines.length && !isBlank(lines[i]) && !startsBlock(lines, i, nested)) i += 1;
+  ctx.remaining -= 1;
+  return { block: { kind: 'paragraph', inline: paragraphInline(lines.slice(start, i)) }, next: i };
+}
+
+function parseBlockAt(lines: readonly string[], i: number, depth: number, ctx: Context): Parsed {
+  const line = lines[i]!;
+  const nested = depth < MARKDOWN_MAX_DEPTH;
+  const fence = parseFence(lines, i);
+  if (fence) {
+    ctx.remaining -= 1;
+    return fence;
+  }
+  const heading = headingOf(line);
+  if (heading) {
+    ctx.remaining -= 1;
+    const level = heading.level as 1 | 2 | 3 | 4 | 5 | 6;
+    return { block: { kind: 'heading', level, inline: parseMarkdownInline(heading.text) }, next: i + 1 };
+  }
+  if (RULE.test(line)) {
+    ctx.remaining -= 1;
+    return { block: { kind: 'rule' }, next: i + 1 };
+  }
+  if (nested && QUOTE.test(line)) return parseQuote(lines, i, depth, ctx);
+  const marker = nested ? listMarkerOf(line) : null;
+  if (marker && marker.indent <= 3) return parseList(lines, i, marker, depth, ctx);
+  const align = tableStart(lines, i);
+  if (align) return parseTable(lines, i, align, nested, ctx);
+  return parseParagraph(lines, i, nested, ctx);
+}
+
 function parseBlocks(lines: readonly string[], depth: number, ctx: Context): MarkdownBlock[] {
   const blocks: MarkdownBlock[] = [];
-  const nested = depth < MARKDOWN_MAX_DEPTH;
-  const push = (block: MarkdownBlock) => {
-    blocks.push(block);
-    ctx.remaining -= 1;
-  };
   let i = 0;
   while (i < lines.length && ctx.remaining > 0) {
-    const line = lines[i]!;
-    if (isBlank(line)) {
+    if (isBlank(lines[i])) {
       i += 1;
       continue;
     }
-
-    const fence = FENCE_OPEN.exec(line);
-    if (fence && !(fence[2]![0] === '`' && fence[3]!.includes('`'))) {
-      const indent = fence[1]!.length;
-      const marker = fence[2]!;
-      const word = fence[3]!.trim().split(/\s+/)[0] ?? '';
-      const body: string[] = [];
-      i += 1;
-      while (i < lines.length) {
-        const candidate = lines[i]!;
-        const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(candidate);
-        if (close && close[1]![0] === marker[0] && close[1]!.length >= marker.length) {
-          i += 1;
-          break;
-        }
-        body.push(candidate.slice(Math.min(indent, leadingSpaces(candidate))));
-        i += 1;
-      }
-      push({ kind: 'code', language: LANGUAGE.test(word) ? word : '', text: body.join('\n') });
-      continue;
-    }
-
-    const heading = headingOf(line);
-    if (heading) {
-      push({
-        kind: 'heading',
-        level: heading.level as 1 | 2 | 3 | 4 | 5 | 6,
-        inline: parseMarkdownInline(heading.text),
-      });
-      i += 1;
-      continue;
-    }
-
-    if (RULE.test(line)) {
-      push({ kind: 'rule' });
-      i += 1;
-      continue;
-    }
-
-    if (nested && QUOTE.test(line)) {
-      const inner: string[] = [];
-      while (i < lines.length && !isBlank(lines[i])) {
-        const candidate = lines[i]!;
-        if (QUOTE.test(candidate)) inner.push(candidate.replace(QUOTE, ''));
-        else if (!startsBlock(lines, i, true)) inner.push(candidate); // continuação preguiçosa
-        else break;
-        i += 1;
-      }
-      ctx.remaining -= 1;
-      blocks.push({ kind: 'quote', blocks: parseBlocks(inner, depth + 1, ctx) });
-      continue;
-    }
-
-    const marker = nested ? listMarkerOf(line) : null;
-    if (marker && marker.indent <= 3) {
-      const items: MarkdownBlock[][] = [];
-      let current: ListMarker | null = marker;
-      ctx.remaining -= 1;
-      while (current && i < lines.length && ctx.remaining > 0) {
-        const need = Math.min(current.contentIndent, current.indent + 2);
-        const itemLines = [current.content];
-        let next: ListMarker | null = null;
-        i += 1;
-        while (i < lines.length) {
-          const candidate = lines[i]!;
-          if (isBlank(candidate)) {
-            let ahead = i + 1;
-            while (ahead < lines.length && isBlank(lines[ahead])) ahead += 1;
-            if (ahead < lines.length && leadingSpaces(lines[ahead]!) >= need) {
-              itemLines.push('');
-              i += 1;
-              continue;
-            }
-            const sibling = ahead < lines.length ? listMarkerOf(lines[ahead]!) : null;
-            if (sibling && sibling.indent < need && sibling.indent <= 3 && sameListType(marker, sibling)) {
-              i = ahead;
-              next = sibling;
-            }
-            break;
-          }
-          const lead = leadingSpaces(candidate);
-          if (lead >= need) {
-            itemLines.push(candidate.slice(Math.min(lead, current.contentIndent)));
-            i += 1;
-            continue;
-          }
-          const sibling = listMarkerOf(candidate);
-          if (sibling) {
-            if (sameListType(marker, sibling)) next = sibling;
-            break;
-          }
-          if (startsBlock(lines, i, true)) break;
-          itemLines.push(candidate.trimStart()); // continuação preguiçosa
-          i += 1;
-        }
-        items.push(parseBlocks(itemLines, depth + 1, ctx));
-        current = next;
-      }
-      blocks.push({
-        kind: 'list',
-        ordered: marker.bullet === null,
-        start: marker.start,
-        items,
-      });
-      continue;
-    }
-
-    const align = tableStart(lines, i);
-    if (align) {
-      const columns = align.length;
-      const cellsOf = (row: string): MarkdownInline[][] => {
-        const cells = splitTableRow(row).slice(0, columns);
-        while (cells.length < columns) cells.push('');
-        return cells.map((cell) => parseMarkdownInline(cell));
-      };
-      const header = cellsOf(line);
-      const rows: MarkdownInline[][][] = [];
-      i += 2;
-      ctx.remaining -= 1;
-      while (i < lines.length && ctx.remaining > 0) {
-        const row = lines[i]!;
-        if (isBlank(row) || !row.includes('|') || startsBlock(lines, i, nested)) break;
-        rows.push(cellsOf(row));
-        ctx.remaining -= 1;
-        i += 1;
-      }
-      blocks.push({ kind: 'table', align, header, rows });
-      continue;
-    }
-
-    const paragraph = [line];
-    i += 1;
-    while (i < lines.length && !isBlank(lines[i]) && !startsBlock(lines, i, nested)) {
-      paragraph.push(lines[i]!);
-      i += 1;
-    }
-    push({ kind: 'paragraph', inline: paragraphInline(paragraph) });
+    const parsed = parseBlockAt(lines, i, depth, ctx);
+    blocks.push(parsed.block);
+    i = parsed.next;
   }
   return blocks;
 }
