@@ -21,7 +21,7 @@ import {
   runRegressionGate,
 } from '../regression-gate/regression-gate';
 import { ProcessGitRunner, type GitRunner } from '../runtime/git-command';
-import { getSessionSpawnedAtMs } from '../pty/pty-manager';
+import { getSessionFirstIncarnationAtMs } from '../pty/pty-manager';
 
 export const MAX_CONSECUTIVE_STOP_BLOCKS = 3;
 /**
@@ -99,7 +99,8 @@ export async function handleHookRegressionRequest(
     const scope = ctx.executionScope ?? ctx.scope;
     if (!scope) return { statusCode: 200, payload: {} };
     const ledger = ledgerFor(ctx.sessionId);
-    const startedAtMs = (deps.startedAtMs ?? getSessionSpawnedAtMs)(ctx.sessionId) ?? undefined;
+    // F-1237: pane retomado responde desde a primeira encarnação da conversa.
+    const startedAtMs = (deps.startedAtMs ?? getSessionFirstIncarnationAtMs)(ctx.sessionId) ?? undefined;
     if (startedAtMs === undefined) {
       ledger.firstHead ??= headSha(deps.git ?? new ProcessGitRunner(), scope.rootRealPath);
     }

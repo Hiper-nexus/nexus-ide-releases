@@ -165,6 +165,19 @@ CREATE TABLE IF NOT EXISTS provider_pane_sessions (
   PRIMARY KEY (installation_id, project_id, checkout_id, pane_id, adapter_id)
 );
 
+/* F-1237: primeira gravação de cada conversa do provider (o vínculo acima;
+   o Claude grava no spawn, pelo --session-id ditado). A retomada exata é a
+   mesma conversa: o portão de regressão a cobra desde aqui, não do respawn. */
+CREATE TABLE IF NOT EXISTS provider_session_births (
+  installation_id TEXT NOT NULL,
+  project_id      TEXT NOT NULL,
+  checkout_id     TEXT NOT NULL,
+  adapter_id      TEXT NOT NULL,
+  session_id      TEXT NOT NULL,
+  born_at         INTEGER NOT NULL,
+  PRIMARY KEY (installation_id, project_id, checkout_id, adapter_id, session_id)
+);
+
 /* tmux-backed PTY sessions that survive app quit (feature.pty.persistentSession). */
 CREATE TABLE IF NOT EXISTS persistent_pty_sessions (
   workspace_id TEXT NOT NULL,

@@ -173,6 +173,7 @@ import {
   deletePersistentPty,
   upsertPersistentPty,
 } from "../persistence/persistent-session-store";
+import { providerSessionBornAtMs } from "../persistence/provider-session-store";
 import { trace } from "../observability/main-trace";
 import {
   PtyDataTapDispatcher,
@@ -4505,6 +4506,21 @@ export function isPtySessionConnectedAndWritable(sessionId: string): boolean {
 /** Criação da sessão no main (ms): o portão de regressão usa o HEAD desse instante como base. */
 export function getSessionSpawnedAtMs(sessionId: string): number | null {
   return sessions.get(sessionId)?.spawnedAtMs ?? null;
+}
+
+/**
+ * F-1237: início do trabalho para o portão de regressão. A retomada exata
+ * (`--resume <id>` do vínculo durável do pane) responde desde a primeira
+ * gravação daquela conversa; sem essa prova, desde o próprio spawn.
+ */
+export function getSessionFirstIncarnationAtMs(sessionId: string): number | null {
+  const session = sessions.get(sessionId);
+  if (!session) return null;
+  const resumed = session.exactResume;
+  const bornAtMs = resumed
+    ? providerSessionBornAtMs(resumed.scope, resumed.adapterId, resumed.sessionId)
+    : null;
+  return bornAtMs !== null && bornAtMs < session.spawnedAtMs ? bornAtMs : session.spawnedAtMs;
 }
 
 /** Spawn cwd of a live session — the caller's workspace dir. */

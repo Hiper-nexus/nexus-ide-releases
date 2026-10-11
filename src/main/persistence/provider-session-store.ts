@@ -91,7 +91,40 @@ export function saveProviderPaneSession(
     Date.now(),
     account,
   );
+  // F-1237: a primeira gravação da conversa vence (cópia e retomada não a
+  // rejuvenescem). Acessória ao vínculo: sem ela, o portão fica no spawn.
+  try {
+    db.prepare(
+      `INSERT OR IGNORE INTO provider_session_births
+         (installation_id, project_id, checkout_id, adapter_id, session_id, born_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(scope.installationId, scope.projectId, scope.checkoutId, adapter, id, Date.now());
+  } catch {
+    // banco sem a tabela: a conversa fica sem prova de idade
+  }
   return true;
+}
+
+/**
+ * F-1237: quando o Nexus gravou pela primeira vez esta conversa neste checkout
+ * (ms). Null sem registro; nunca lança.
+ */
+export function providerSessionBornAtMs(
+  scope: Readonly<{ installationId: string; projectId: string; checkoutId: string }>,
+  adapterId: string,
+  sessionId: string,
+): number | null {
+  try {
+    const row = getDb()?.prepare(
+      `SELECT born_at FROM provider_session_births
+        WHERE installation_id = ? AND project_id = ? AND checkout_id = ?
+          AND adapter_id = ? AND session_id = ?`,
+    ).get(scope.installationId, scope.projectId, scope.checkoutId, adapterId, sessionId) as
+      { born_at?: unknown } | undefined;
+    return typeof row?.born_at === 'number' && Number.isFinite(row.born_at) ? row.born_at : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
