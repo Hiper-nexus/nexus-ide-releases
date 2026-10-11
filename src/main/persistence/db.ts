@@ -168,7 +168,8 @@ CREATE TABLE IF NOT EXISTS provider_pane_sessions (
 /* F-1237: arquivos que cada conversa do provider editou (PostToolUse de
    edição, recebido pelo bearer do próprio pane), relativos à raiz de execução.
    O portão de regressão de um pane que retoma exatamente a conversa os conta
-   como dele quando a última escrita no arquivo é a registrada aqui. */
+   como dele quando o conteúdo no disco ainda é o registrado aqui (F-1242:
+   sha256 lido no PostToolUse). */
 CREATE TABLE IF NOT EXISTS provider_conversation_edits (
   installation_id TEXT NOT NULL,
   project_id      TEXT NOT NULL,
@@ -178,6 +179,7 @@ CREATE TABLE IF NOT EXISTS provider_conversation_edits (
   root_real_path  TEXT NOT NULL,
   rel_path        TEXT NOT NULL,
   edited_at       INTEGER NOT NULL,
+  content_sha256  TEXT NOT NULL,
   PRIMARY KEY (installation_id, project_id, checkout_id, adapter_id, session_id, root_real_path, rel_path)
 );
 
@@ -191,6 +193,12 @@ CREATE TABLE IF NOT EXISTS persistent_pty_sessions (
   PRIMARY KEY (workspace_id, pane_id)
 );
 `;
+
+/**
+ * F-1243: a proveniência de edição (`provider_conversation_edits`) vale 30
+ * dias. Retomar conversa mais velha cai na regra do mtime do portão.
+ */
+export const CONVERSATION_EDITS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 let db: Db | null = null;
 let initialized = false;
@@ -279,6 +287,13 @@ export function getDb(): Db | null {
     db.exec(`INSERT OR IGNORE INTO provider_session_accounts
       SELECT installation_id, project_id, checkout_id, adapter_id, session_id, account_id
       FROM provider_pane_sessions WHERE adapter_id = 'mimo-code' AND session_key = 'session_id'`);
+    try {
+      db.prepare('DELETE FROM provider_conversation_edits WHERE edited_at < ?')
+        .run(Date.now() - CONVERSATION_EDITS_RETENTION_MS);
+    } catch (err) {
+      // A poda é manutenção: falhar aqui nunca degrada o banco.
+      console.warn('[nexus] poda da proveniência de edição falhou:', err);
+    }
     if (snapshot) {
       // Dentro do try de propósito: se nem o estado `migrated` grava, o
       // `migrating` no disco faria o próximo boot desfazer esta sessão inteira;

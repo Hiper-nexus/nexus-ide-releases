@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -5,8 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionProviderConversation } from '../pty/pty-manager';
 import type { ConversationEditKey } from '../persistence/conversation-edit-store';
 import { testProjectScope } from './__tests__/scope-fixture';
+import { RECORDED_EDIT_MAX_HASH_BYTES } from '../regression-gate/regression-gate';
 import {
   __resetHookEditProvenanceForTests,
+  MAX_QUEUED_EDIT_EVENTS_PER_SESSION,
   confineEditedPath,
   extractEditedPaths,
   hookBodyMayCarryEdit,
@@ -31,16 +34,21 @@ function checkout(): string {
 
 const triple = { installationId: 'i', projectId: 'p', checkoutId: 'c' };
 const claude = (conversationId: string | null, resumed = false): SessionProviderConversation =>
-  ({ scope: triple, adapterId: 'claude', conversationId, resumed });
+  ({ scope: triple, adapterId: 'claude', paneId: 'pane-a', conversationId, resumed });
+/** Codex fresco: sem id no argv. Um objeto por sessão viva, como o do pty-manager. */
+const codexFresh = (paneId = 'pane-a'): SessionProviderConversation =>
+  Object.freeze({ scope: triple, adapterId: 'codex', paneId, conversationId: null, resumed: false });
 
 function recorder() {
-  const calls: Array<{ key: ConversationEditKey; paths: readonly string[]; at: number }> = [];
-  const record = vi.fn((key: ConversationEditKey, paths: readonly string[], at: number) => {
-    calls.push({ key, paths, at });
-    return paths.length;
+  const calls: Array<{ key: ConversationEditKey; paths: readonly string[]; hashes: readonly string[]; at: number }> = [];
+  const record = vi.fn((key: ConversationEditKey, edits: ReadonlyMap<string, string>, at: number) => {
+    calls.push({ key, paths: [...edits.keys()], hashes: [...edits.values()], at });
+    return edits.size;
   });
   return { calls, record };
 }
+
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 describe('extractEditedPaths (F-1237)', () => {
   it('família Claude: file_path de Edit/Write/MultiEdit e notebook_path de NotebookEdit', () => {
@@ -106,11 +114,11 @@ describe('confineEditedPath (F-1237)', () => {
 });
 
 describe('recordHookEditProvenance (F-1237)', () => {
-  it('grava o caminho da edição pela conversa do argv, na raiz de execução do pane', () => {
+  it('grava o caminho da edição pela conversa do argv, na raiz de execução do pane', async () => {
     const root = checkout();
     const { calls, record } = recorder();
     const ctx = { sessionId: 'pty-1', scope: testProjectScope({ rootRealPath: root }) };
-    const n = recordHookEditProvenance(ctx, 'tool-complete', {
+    const n = await recordHookEditProvenance(ctx, 'tool-complete', {
       session_id: 'conv-a', tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/x.ts') },
     }, { conversationOf: () => claude('conv-a'), record, now: () => 1_234 });
 
@@ -118,11 +126,13 @@ describe('recordHookEditProvenance (F-1237)', () => {
     expect(calls).toEqual([{
       key: { scope: triple, adapterId: 'claude', conversationId: 'conv-a', rootRealPath: root },
       paths: ['src/x.ts'],
+      // F-1242: o conteúdo que a edição deixou no disco.
+      hashes: [sha256('export const x = 1;\n')],
       at: 1_234,
     }]);
   });
 
-  it('(c) outra conversa, caminho fora da raiz, evento que não é fim de tool ou sessão sem pane: nada gravado', () => {
+  it('(c) outra conversa, caminho fora da raiz, evento que não é fim de tool ou sessão sem pane: nada gravado', async () => {
     const root = checkout();
     const { record } = recorder();
     const ctx = { sessionId: 'pty-1', scope: testProjectScope({ rootRealPath: root }) };
@@ -131,35 +141,146 @@ describe('recordHookEditProvenance (F-1237)', () => {
       ({ session_id: sessionId, tool_name: 'Write', tool_input: { file_path: file } });
 
     // Corpo forjado com a conversa de outro agente: o pane só registra a dele.
-    expect(recordHookEditProvenance(ctx, 'tool-complete', edit(path.join(root, 'src/x.ts'), 'conv-do-outro'), deps)).toBe(0);
-    expect(recordHookEditProvenance(ctx, 'tool-complete', edit('/etc/hosts'), deps)).toBe(0);
-    expect(recordHookEditProvenance(ctx, 'tool-complete', edit(path.join(root, '../fora.ts')), deps)).toBe(0);
-    expect(recordHookEditProvenance(ctx, 'tool-use', edit(path.join(root, 'src/x.ts')), deps)).toBe(0);
-    expect(recordHookEditProvenance(ctx, 'tool-complete', { tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/x.ts') } }, deps)).toBe(0);
-    expect(recordHookEditProvenance(ctx, 'tool-complete', edit(path.join(root, 'src/x.ts')), { ...deps, conversationOf: () => null })).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', edit(path.join(root, 'src/x.ts'), 'conv-do-outro'), deps)).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', edit('/etc/hosts'), deps)).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', edit(path.join(root, '../fora.ts')), deps)).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'tool-use', edit(path.join(root, 'src/x.ts')), deps)).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', { tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/x.ts') } }, deps)).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', edit(path.join(root, 'src/x.ts')), { ...deps, conversationOf: () => null })).toBe(0);
     expect(record).not.toHaveBeenCalled();
   });
 
-  it('sem id no argv (Codex fresco): a primeira conversa que o CLI anuncia no bearer fica fixada; outra é recusada', () => {
+  it('sem id no argv (Codex fresco): a primeira conversa que o CLI anuncia no bearer fica fixada; outra é recusada', async () => {
     const root = checkout();
     const { calls, record } = recorder();
     const ctx = { sessionId: 'pty-codex', scope: testProjectScope({ rootRealPath: root }) };
-    const deps = { conversationOf: () => ({ ...claude(null), adapterId: 'codex' }), record };
+    const conversation = codexFresh();
+    const deps = { conversationOf: () => conversation, record, heldByOtherPane: () => false };
     const patch = { command: '*** Begin Patch\n*** Update File: src/x.ts\n*** End Patch' };
 
-    expect(recordHookEditProvenance(ctx, 'session-start', { session_id: 'thread-1' }, deps)).toBe(0);
-    expect(recordHookEditProvenance(ctx, 'tool-complete', { session_id: 'thread-forjado', tool_name: 'apply_patch', tool_input: patch, cwd: root }, deps)).toBe(0);
-    expect(recordHookEditProvenance(ctx, 'tool-complete', { session_id: 'thread-1', tool_name: 'apply_patch', tool_input: patch, cwd: root }, deps)).toBe(1);
+    expect(await recordHookEditProvenance(ctx, 'session-start', { session_id: 'thread-1' }, deps)).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', { session_id: 'thread-forjado', tool_name: 'apply_patch', tool_input: patch, cwd: root }, deps)).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', { session_id: 'thread-1', tool_name: 'apply_patch', tool_input: patch, cwd: root }, deps)).toBe(1);
     expect(calls.map((call) => [call.key.adapterId, call.key.conversationId, call.paths])).toEqual([['codex', 'thread-1', ['src/x.ts']]]);
   });
 
-  it('falha do banco nunca derruba o hook', () => {
+  it('F-1241: só o SessionStart fixa a conversa; o tool-complete de um curl com hooks mudos, não', async () => {
+    const root = checkout();
+    const { calls, record } = recorder();
+    const ctx = { sessionId: 'pty-codex', scope: testProjectScope({ rootRealPath: root }) };
+    const conversation = codexFresh();
+    const deps = { conversationOf: () => conversation, record, heldByOtherPane: () => false };
+    const patch = { command: '*** Begin Patch\n*** Update File: src/x.ts\n*** End Patch' };
+    const edit = (sessionId: string) => ({ session_id: sessionId, tool_name: 'apply_patch', tool_input: patch, cwd: root });
+
+    // O primeiro evento do canal é um tool-complete com o thread de outro pane.
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', edit('thread-de-outro-pane'), deps)).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'user-submit', { session_id: 'thread-de-outro-pane' }, deps)).toBe(0);
+    // O SessionStart do próprio CLI fixa; o resto do canal tem de concordar.
+    expect(await recordHookEditProvenance(ctx, 'session-start', { session_id: 'thread-1' }, deps)).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', edit('thread-de-outro-pane'), deps)).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', edit('thread-1'), deps)).toBe(1);
+    expect(calls.map((call) => call.key.conversationId)).toEqual(['thread-1']);
+    // Kimi/Grok anunciam pelo evento `session`.
+    const kimi = codexFresh('pane-kimi');
+    const kimiDeps = { ...deps, conversationOf: () => kimi };
+    expect(await recordHookEditProvenance({ ...ctx, sessionId: 'pty-kimi' }, 'session', { session_id: 'kimi-1' }, kimiDeps)).toBe(0);
+    expect(await recordHookEditProvenance({ ...ctx, sessionId: 'pty-kimi' }, 'tool-complete', edit('kimi-1'), kimiDeps)).toBe(1);
+  });
+
+  it('F-1241: id que provider_pane_sessions já dá a outro pane não é fixado', async () => {
+    const root = checkout();
+    const { calls, record } = recorder();
+    const ctx = { sessionId: 'pty-codex', scope: testProjectScope({ rootRealPath: root }) };
+    const conversation = codexFresh('pane-a');
+    const heldByOtherPane = vi.fn((_conversation: SessionProviderConversation, claimed: string) => claimed === 'thread-do-pane-b');
+    const deps = { conversationOf: () => conversation, record, heldByOtherPane };
+    const patch = { command: '*** Begin Patch\n*** Update File: src/x.ts\n*** End Patch' };
+    const edit = (sessionId: string) => ({ session_id: sessionId, tool_name: 'apply_patch', tool_input: patch, cwd: root });
+
+    expect(await recordHookEditProvenance(ctx, 'session-start', { session_id: 'thread-do-pane-b' }, deps)).toBe(0);
+    expect(heldByOtherPane).toHaveBeenCalledWith(conversation, 'thread-do-pane-b');
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', edit('thread-do-pane-b'), deps)).toBe(0);
+    // O SessionStart legítimo, depois, ainda fixa o id próprio.
+    expect(await recordHookEditProvenance(ctx, 'session-start', { session_id: 'thread-1' }, deps)).toBe(0);
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', edit('thread-1'), deps)).toBe(1);
+    expect(calls.map((call) => call.key.conversationId)).toEqual(['thread-1']);
+  });
+
+  it('F-1241: o pin vive com a sessão viva, sem despejo por volume de spawns', async () => {
+    const root = checkout();
+    const { record } = recorder();
+    const scope = testProjectScope({ rootRealPath: root });
+    const patch = { command: '*** Begin Patch\n*** Update File: src/x.ts\n*** End Patch' };
+    const edit = (sessionId: string) => ({ session_id: sessionId, tool_name: 'apply_patch', tool_input: patch, cwd: root });
+    const first = codexFresh('pane-0');
+    const firstDeps = { conversationOf: () => first, record, heldByOtherPane: () => false };
+    expect(await recordHookEditProvenance({ sessionId: 'pty-0', scope }, 'session-start', { session_id: 'thread-0' }, firstDeps)).toBe(0);
+    for (let i = 1; i <= 1_100; i += 1) {
+      const other = codexFresh(`pane-${i}`);
+      await recordHookEditProvenance({ sessionId: `pty-${i}`, scope }, 'session-start', { session_id: `thread-${i}` },
+        { conversationOf: () => other, record, heldByOtherPane: () => false });
+    }
+
+    expect(await recordHookEditProvenance({ sessionId: 'pty-0', scope }, 'tool-complete', edit('thread-forjado'), firstDeps)).toBe(0);
+    expect(await recordHookEditProvenance({ sessionId: 'pty-0', scope }, 'tool-complete', edit('thread-0'), firstDeps)).toBe(1);
+  });
+
+  it('F-1242: arquivo sem prova de conteúdo (symlink, acima do teto, apagado) não é gravado', async () => {
+    const root = checkout();
+    const { calls, record } = recorder();
+    const ctx = { sessionId: 'pty-1', scope: testProjectScope({ rootRealPath: root }) };
+    const deps = { conversationOf: () => claude('conv-a'), record };
+    fs.symlinkSync('x.ts', path.join(root, 'src/link.ts'));
+    fs.writeFileSync(path.join(root, 'src/big.ts'), Buffer.alloc(RECORDED_EDIT_MAX_HASH_BYTES + 1, 0x61));
+    const patch = ['*** Begin Patch', '*** Update File: src/link.ts', '*** Update File: src/big.ts',
+      '*** Delete File: src/gone.ts', '*** Update File: src/x.ts', '*** End Patch'].join('\n');
+
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', {
+      session_id: 'conv-a', tool_name: 'apply_patch', tool_input: { command: patch }, cwd: root,
+    }, deps)).toBe(1);
+    expect(calls.map((call) => call.paths)).toEqual([['src/x.ts']]);
+  });
+
+  it('F-1242: um evento de cada vez lê arquivos por sessão; fila cheia descarta na hora', async () => {
+    const root = checkout();
+    const { record } = recorder();
+    const ctx = { sessionId: 'pty-1', scope: testProjectScope({ rootRealPath: root }) };
+    const conversation = claude('conv-a');
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let active = 0;
+    let maxActive = 0;
+    const hash = vi.fn(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await held;
+      active -= 1;
+      return 'a'.repeat(64);
+    });
+    const deps = { conversationOf: () => conversation, record, hash };
+    const body = { session_id: 'conv-a', tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/x.ts') } };
+
+    const queued = Array.from({ length: MAX_QUEUED_EDIT_EVENTS_PER_SESSION }, () =>
+      recordHookEditProvenance(ctx, 'tool-complete', body, deps));
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', body, deps)).toBe(0);
+    release();
+
+    expect(await Promise.all(queued)).toEqual(Array(MAX_QUEUED_EDIT_EVENTS_PER_SESSION).fill(1));
+    expect(maxActive).toBe(1);
+    // A fila esvaziou: o próximo evento grava de novo.
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', body, deps)).toBe(1);
+  });
+
+  it('falha do banco nunca derruba o hook', async () => {
     const root = checkout();
     const ctx = { sessionId: 'pty-1', scope: testProjectScope({ rootRealPath: root }) };
     const record = vi.fn(() => {
       throw new Error('SQLITE_BUSY');
     });
-    expect(recordHookEditProvenance(ctx, 'tool-complete', {
+    expect(await recordHookEditProvenance(ctx, 'tool-complete', {
       session_id: 'conv-a', tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/x.ts') },
     }, { conversationOf: () => claude('conv-a'), record })).toBe(0);
   });
@@ -167,10 +288,11 @@ describe('recordHookEditProvenance (F-1237)', () => {
 
 describe('recordedEditsForSession (F-1237)', () => {
   it('só a retomada exata lê o registro da conversa, na mesma raiz', () => {
+    const hash = 'a'.repeat(64);
     const list = vi.fn((key: ConversationEditKey) =>
-      new Map(key.conversationId === 'conv-a' && key.rootRealPath === '/r' ? [['src/x.ts', 1]] : []));
+      new Map<string, string>(key.conversationId === 'conv-a' && key.rootRealPath === '/r' ? [['src/x.ts', hash]] : []));
 
-    expect(recordedEditsForSession('pty-1', '/r', { conversationOf: () => claude('conv-a', true), list })).toEqual(new Map([['src/x.ts', 1]]));
+    expect(recordedEditsForSession('pty-1', '/r', { conversationOf: () => claude('conv-a', true), list })).toEqual(new Map([['src/x.ts', hash]]));
     // Spawn fresco: tudo o que escreveu é posterior ao spawn — nada a ler.
     expect(recordedEditsForSession('pty-1', '/r', { conversationOf: () => claude('conv-a', false), list })).toBeUndefined();
     expect(recordedEditsForSession('pty-1', '/outra', { conversationOf: () => claude('conv-a', true), list })).toBeUndefined();

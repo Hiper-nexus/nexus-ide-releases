@@ -262,6 +262,7 @@ import {
   findActiveContextDraftReviewerId,
 } from "../context/cli-context-draft-reviewer";
 import {
+  createLoopbackServer,
   listenOnLoopback,
   ReplaceableEventTapScope,
 } from "./mcp-server-lifecycle";
@@ -2098,7 +2099,7 @@ export async function startMcpServer(): Promise<void> {
   }
   disposeTerminationRevocation?.();
   disposeTerminationRevocation = installMcpSessionTerminationRevocation();
-  const candidate = http.createServer((req, res) => {
+  const candidate = createLoopbackServer((req, res) => {
     void (async () => {
       const url = req.url ?? "";
       // Nexus Arms PRIMEIRO: token dedicado, não é bearer de sessão de pane.

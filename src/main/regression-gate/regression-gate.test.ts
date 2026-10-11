@@ -18,7 +18,8 @@ import {
   __resetRegressionGateForTests,
   detectRegressionRunner,
   formatRegressionGateReport,
-  RECORDED_EDIT_SLACK_MS,
+  hashRegressionFile,
+  RECORDED_EDIT_MAX_HASH_BYTES,
   runRegressionGate,
   type RegressionExec,
 } from './regression-gate';
@@ -611,6 +612,8 @@ describe('runRegressionGate', () => {
 
   describe('F-1237: autoria por proveniência (edições registradas da conversa retomada)', () => {
     const HOUR = 3_600_000;
+    /** F-1242: o registro guarda o sha256 do conteúdo que a conversa deixou. */
+    const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
     function age(root: string, file: string, atMs: number): void {
       fs.utimesSync(path.join(root, file), new Date(atMs), new Date(atMs));
     }
@@ -633,7 +636,7 @@ describe('runRegressionGate', () => {
       expect(before.status).not.toBe('failed'); // sem registro: o mtime diz "alheio"
       __resetRegressionGateForTests();
       const result = await runRegressionGate(
-        { scope, startedAtMs, recordedEdits: new Map([['src/c.ts', editedAtMs]]) },
+        { scope, startedAtMs, recordedEdits: new Map([['src/c.ts', sha256('export const c = 30;\n')]]) },
         { exec },
       );
 
@@ -646,7 +649,7 @@ describe('runRegressionGate', () => {
       const { root, scope } = project();
       const bornAtMs = Date.now() - 20 * HOUR;
       // A conversa editou c.ts ao nascer; o trabalho já foi integrado (limpo).
-      const recordedEdits = new Map([['src/c.ts', bornAtMs]]);
+      const recordedEdits = new Map([['src/c.ts', sha256('export const c = 3;\n')]]);
       write(root, 'src/a.ts', 'export const a = 2;\n'); // WIP do outro agente, depois do nascimento
       age(root, 'src/a.ts', bornAtMs + 2 * HOUR);
       const startedAtMs = Date.now() - 1_000;
@@ -660,24 +663,48 @@ describe('runRegressionGate', () => {
       expect(result.changedFiles).toEqual(['src/a.ts']); // o registro limpo não alarga o diff
     });
 
-    it('arquivo da conversa reescrito depois por outro agente volta a ser alheio; o formatador logo após a edição não', async () => {
+    it('F-1242: reescrito depois (outro agente 1 s depois, ou formatador) volta a ser alheio; o mesmo conteúdo segue da conversa', async () => {
       const { root, scope } = project();
       const editedAtMs = Date.now() - 20 * HOUR;
+      const recordedEdits = new Map([['src/c.ts', sha256('export const c = 30;\n')]]);
       write(root, 'src/c.ts', 'export const c = 31;\n');
-      age(root, 'src/c.ts', editedAtMs + 2 * HOUR); // o outro agente escreveu por cima depois
+      age(root, 'src/c.ts', editedAtMs + 1_000); // o outro agente escreveu por cima 1 s depois
       const startedAtMs = Date.now() - 1_000;
       const exec = failingOnlyAt(root, ['src/c.test.ts']);
-      const recordedEdits = new Map([['src/c.ts', editedAtMs]]);
 
       const rewritten = await runRegressionGate({ scope, startedAtMs, recordedEdits }, { exec });
       expect(rewritten.status).not.toBe('failed');
       expect(rewritten.inheritedFailures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
 
       __resetRegressionGateForTests();
-      age(root, 'src/c.ts', editedAtMs + RECORDED_EDIT_SLACK_MS - 1_000); // hook de formatação do próprio turno
+      write(root, 'src/c.ts', 'export const c = 30;'); // formatador: mudou o conteúdo, fica alheio (fail-open)
+      age(root, 'src/c.ts', editedAtMs);
       const formatted = await runRegressionGate({ scope, startedAtMs, recordedEdits }, { exec });
-      expect(formatted.status).toBe('failed');
-      expect(formatted.failures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
+      expect(formatted.status).not.toBe('failed');
+
+      __resetRegressionGateForTests();
+      write(root, 'src/c.ts', 'export const c = 30;\n'); // exatamente o que a conversa deixou
+      age(root, 'src/c.ts', editedAtMs + 3 * HOUR); // o mtime não decide
+      const same = await runRegressionGate({ scope, startedAtMs, recordedEdits }, { exec });
+      expect(same.status).toBe('failed');
+      expect(same.failures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
+    });
+
+    it('F-1242: hash só de arquivo regular, sem seguir symlink, até o teto', async () => {
+      const { root } = project();
+      write(root, 'src/c.ts', 'export const c = 30;\n');
+      fs.symlinkSync('c.ts', path.join(root, 'src/link.ts'));
+      fs.writeFileSync(path.join(root, 'src/big.ts'), Buffer.alloc(RECORDED_EDIT_MAX_HASH_BYTES + 1, 0x61));
+      fs.writeFileSync(path.join(root, 'src/limit.ts'), Buffer.alloc(RECORDED_EDIT_MAX_HASH_BYTES, 0x61));
+
+      expect(await hashRegressionFile(root, 'src/c.ts')).toBe(sha256('export const c = 30;\n'));
+      expect(await hashRegressionFile(root, 'src/limit.ts')).toBe(
+        createHash('sha256').update(Buffer.alloc(RECORDED_EDIT_MAX_HASH_BYTES, 0x61)).digest('hex'),
+      );
+      expect(await hashRegressionFile(root, 'src/link.ts')).toBeNull();
+      expect(await hashRegressionFile(root, 'src/big.ts')).toBeNull();
+      expect(await hashRegressionFile(root, 'src')).toBeNull();
+      expect(await hashRegressionFile(root, 'src/nao-existe.ts')).toBeNull();
     });
   });
 

@@ -7,6 +7,8 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  HOOK_EDIT_HEAD_BYTES,
+  HOOK_EDIT_PROVENANCE_MAX_BODY_BYTES,
   HOOK_STATUS_MAX_BODY_BYTES,
   HOOK_TOOL_NAME_MAX_LENGTH,
   extractHookToolLabels,
@@ -591,7 +593,7 @@ describe('F-1139 authenticated native argv ingress', () => {
 
 describe('F-1237: proveniência de edição pelo hook de status', () => {
   it('todo evento autenticado passa pelo registro; registro que lança não derruba o status', () => {
-    const recordEdit = vi.fn(() => 1);
+    const recordEdit = vi.fn(async () => 1);
     const body = { session_id: 'conv-a', tool_name: 'Edit', tool_input: { file_path: '/r/src/a.ts' } };
     const ok = handleHookStatusRequest(CTX, { eventType: 'tool-complete', flavor: 'claude', body }, undefined, undefined, recordEdit);
     expect(ok.statusCode).toBe(200);
@@ -602,14 +604,17 @@ describe('F-1237: proveniência de edição pelo hook de status', () => {
     });
     expect(handleHookStatusRequest(CTX, { eventType: 'tool-complete', flavor: 'claude', body }, undefined, undefined, throwing).statusCode).toBe(200);
     // Sem pane vinculado não há de quem registrar.
-    const unbound = vi.fn(() => 1);
+    const unbound = vi.fn(async () => 1);
     handleHookStatusRequest({ sessionId: '' } as never, { eventType: 'tool-complete', flavor: 'claude', body }, undefined, undefined, unbound);
     expect(unbound).not.toHaveBeenCalled();
   });
 
   it('Write grande demais para o status ainda registra a proveniência; leitura grande não é nem lida', async () => {
     const provenance = await import('./hook-edit-provenance');
-    const spy = vi.spyOn(provenance, 'recordHookEditProvenance').mockReturnValue(1);
+    const pty = await import('../pty/pty-manager');
+    const spy = vi.spyOn(provenance, 'recordHookEditProvenance').mockResolvedValue(1);
+    // F-1240: corpo grande só para pane com conversa vinculada.
+    const bound = vi.spyOn(pty, 'getSessionProviderConversation').mockReturnValue(BOUND_CONVERSATION);
     try {
       await boot();
       const big = 'x'.repeat(HOOK_STATUS_MAX_BODY_BYTES + 1);
@@ -633,6 +638,128 @@ describe('F-1237: proveniência de edição pelo hook de status', () => {
       expect(spy).not.toHaveBeenCalled();
     } finally {
       spy.mockRestore();
+      bound.mockRestore();
     }
+  });
+});
+
+const BOUND_CONVERSATION = Object.freeze({
+  scope: Object.freeze({ installationId: 'i', projectId: 'p', checkoutId: 'c' }),
+  adapterId: 'claude',
+  paneId: 'pane-a',
+  conversationId: 'conv-a',
+  resumed: false,
+});
+
+const openRequests: http.ClientRequest[] = [];
+
+/** POST que fica aberto: só passa se o servidor decidir antes do fim do corpo. */
+function openHook(event: string): { req: http.ClientRequest; status: Promise<number | 'error'> } {
+  const url = new URL(`${baseUrl}/hook/status`);
+  const req = http.request({
+    host: url.hostname,
+    port: url.port,
+    path: url.pathname,
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-nexus-hook-event': event, 'x-nexus-hook-flavor': 'claude' },
+  });
+  openRequests.push(req);
+  const status = new Promise<number | 'error'>((resolve) => {
+    req.on('response', (res) => {
+      res.resume();
+      resolve(res.statusCode ?? 0);
+    });
+    req.on('error', () => resolve('error'));
+  });
+  return { req, status };
+}
+
+function within<T>(promise: Promise<T>, ms = 3_000): Promise<T | 'pending'> {
+  return Promise.race([promise, new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), ms))]);
+}
+
+describe('F-1240: corpo grande do /hook/status decide cedo, um por sessão, até 1 MB', () => {
+  const WRITE_HEAD = '{"session_id":"conv-a","tool_name":"Write","tool_input":{"file_path":"/r/big.md","content":"';
+  const PAST_STATUS_CAP = 'x'.repeat(HOOK_STATUS_MAX_BODY_BYTES + 4_096);
+
+  afterEach(() => {
+    // Antes do close do servidor (afterEach de fora), que espera as conexões.
+    for (const req of openRequests.splice(0)) req.destroy();
+    vi.restoreAllMocks();
+  });
+
+  async function spies(conversation: typeof BOUND_CONVERSATION | null) {
+    const provenance = await import('./hook-edit-provenance');
+    const pty = await import('../pty/pty-manager');
+    vi.spyOn(pty, 'getSessionProviderConversation').mockReturnValue(conversation);
+    return {
+      record: vi.spyOn(provenance, 'recordHookEditProvenance').mockResolvedValue(1),
+      head: vi.spyOn(provenance, 'hookBodyMayCarryEdit'),
+    };
+  }
+
+  it('corpo grande que não é edição: 400 pelos primeiros 8 KB, sem esperar (nem guardar) o resto', async () => {
+    const { record, head } = await spies(BOUND_CONVERSATION);
+    await boot();
+    const read = openHook('tool-complete');
+    read.req.write('{"session_id":"conv-a","tool_name":"Read","tool_response":{"content":"');
+    read.req.write(PAST_STATUS_CAP);
+
+    expect(await within(read.status)).toBe(400);
+    read.req.destroy();
+    expect(head).toHaveBeenCalledTimes(1);
+    expect(head.mock.calls[0]![0].length).toBeLessThanOrEqual(HOOK_EDIT_HEAD_BYTES);
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('pane sem conversa vinculada: nem a edição grande é lida', async () => {
+    const { record } = await spies(null);
+    await boot();
+    const write = openHook('tool-complete');
+    write.req.write(WRITE_HEAD);
+    write.req.write(PAST_STATUS_CAP);
+
+    expect(await within(write.status)).toBe(400);
+    write.req.destroy();
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('segundo corpo grande concorrente na mesma sessão: 400 na hora; a vaga volta quando o primeiro termina', async () => {
+    const { record, head } = await spies(BOUND_CONVERSATION);
+    await boot();
+    const first = openHook('tool-complete');
+    first.req.write(WRITE_HEAD);
+    first.req.write(PAST_STATUS_CAP);
+    // O primeiro passou do teto do status e foi aceito pelo começo do corpo.
+    await vi.waitFor(() => expect(head).toHaveBeenCalledTimes(1), { timeout: 3_000 });
+
+    const second = openHook('tool-complete');
+    second.req.write(WRITE_HEAD);
+    second.req.write(PAST_STATUS_CAP);
+    expect(await within(second.status)).toBe(400);
+    second.req.destroy();
+    expect(record).not.toHaveBeenCalled();
+
+    first.req.end('"}}');
+    expect(await within(first.status)).toBe(400); // o status recusa; a proveniência grava
+    expect(record).toHaveBeenCalledTimes(1);
+
+    const third = openHook('tool-complete');
+    third.req.end(`${WRITE_HEAD}${PAST_STATUS_CAP}"}}`);
+    expect(await within(third.status)).toBe(400);
+    expect(record).toHaveBeenCalledTimes(2);
+  });
+
+  it('acima de 1 MB: recusado sem ler o resto, nada gravado', async () => {
+    const { record } = await spies(BOUND_CONVERSATION);
+    await boot();
+    const huge = openHook('tool-complete');
+    huge.req.write(WRITE_HEAD);
+    huge.req.write('x'.repeat(1024 * 1024));
+
+    expect(await within(huge.status)).toBe(400);
+    huge.req.destroy();
+    expect(record).not.toHaveBeenCalled();
+    expect(HOOK_EDIT_PROVENANCE_MAX_BODY_BYTES).toBe(1024 * 1024);
   });
 });

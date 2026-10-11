@@ -3216,6 +3216,7 @@ export function spawnAgentSession(
               checkoutId: (authority.coordinationScope ?? authority.scope).checkoutId,
             }),
             adapterId: adapter.id,
+            paneId: req.paneId,
             conversationId: exactResumeId ?? dictatedSessionId ?? null,
             resumed: Boolean(exactResumeId),
           }),
@@ -4535,6 +4536,8 @@ export function getSessionSpawnedAtMs(sessionId: string): number | null {
 export interface SessionProviderConversation {
   readonly scope: ExactResumeAttempt["scope"];
   readonly adapterId: string;
+  /** F-1241: o pane dono desta sessão (a conversa fixada não pode ser de outro). */
+  readonly paneId: string;
   readonly conversationId: string | null;
   /** O argv retomou exatamente esta conversa (`--resume <id>`). */
   readonly resumed: boolean;

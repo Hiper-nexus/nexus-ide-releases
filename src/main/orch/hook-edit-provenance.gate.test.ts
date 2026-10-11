@@ -1,0 +1,138 @@
+// F-1242, ponta a ponta: PostToolUse pelo hook → nexus.db real → portão de
+// regressão da retomada exata. Só a edição cujo conteúdo ainda está no disco é
+// da conversa; quem reescreveu depois (outro agente, formatador) devolve o
+// arquivo para "alheio", por mais perto que a escrita esteja no tempo.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('electron', async () => {
+  const nodeFs = await import('node:fs');
+  const nodeOs = await import('node:os');
+  const nodePath = await import('node:path');
+  const userData = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'nexus-f1242-db-'));
+  return { app: { getPath: () => userData, getAppPath: () => process.cwd(), isPackaged: false } };
+});
+
+import type { SessionProviderConversation } from '../pty/pty-manager';
+import {
+  __resetRegressionGateForTests,
+  runRegressionGate,
+  type RegressionExec,
+} from '../regression-gate/regression-gate';
+import { ProcessGitRunner } from '../runtime/git-command';
+import { testProjectScope } from './__tests__/scope-fixture';
+import {
+  __resetHookEditProvenanceForTests,
+  recordHookEditProvenance,
+  recordedEditsForSession,
+} from './hook-edit-provenance';
+
+const HOUR = 3_600_000;
+const roots: string[] = [];
+
+afterEach(() => {
+  __resetRegressionGateForTests();
+  __resetHookEditProvenanceForTests();
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+afterAll(async () => {
+  const { closeDb } = await import('../persistence/db');
+  closeDb();
+  const { app } = await import('electron');
+  fs.rmSync(app.getPath('userData'), { recursive: true, force: true });
+});
+
+function write(root: string, file: string, content: string): void {
+  fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+  fs.writeFileSync(path.join(root, file), content);
+}
+
+function age(root: string, file: string, atMs: number): void {
+  fs.utimesSync(path.join(root, file), new Date(atMs), new Date(atMs));
+}
+
+function project() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-f1242-')));
+  roots.push(root);
+  const git = new ProcessGitRunner();
+  write(root, 'src/c.ts', 'export const c = 3;\n');
+  write(root, 'src/c.test.ts', "import { c } from './c';\n");
+  write(root, 'package.json', JSON.stringify({ devDependencies: { vitest: '^3.0.0' } }));
+  write(root, 'node_modules/.bin/vitest', '#!/bin/sh\n');
+  write(root, '.gitignore', 'node_modules\n');
+  git.run(root, ['init', '-q']);
+  git.run(root, ['add', '-A']);
+  git.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'base']);
+  return { root, scope: testProjectScope({ rootRealPath: root }) };
+}
+
+/** Vermelho só no checkout do pane; verde na worktree da base (F-246): a quebra é do diff. */
+function failingOnlyAt(root: string, failing: readonly string[]) {
+  return vi.fn<RegressionExec>(async (_file, args, options) => {
+    const outFile = args.find((arg) => arg.startsWith('--outputFile='))!.slice('--outputFile='.length);
+    const files = args.filter((arg) => arg.endsWith('.test.ts'));
+    const red = (file: string) => options.cwd === root && failing.includes(file);
+    fs.writeFileSync(outFile, JSON.stringify({
+      testResults: files.map((file) => ({
+        name: path.join(options.cwd, file),
+        status: red(file) ? 'failed' : 'passed',
+        assertionResults: [red(file)
+          ? { status: 'failed', fullName: 'c', failureMessages: ['vermelho'] }
+          : { status: 'passed', fullName: 'ok' }],
+      })),
+    }));
+    return { exitCode: files.some(red) ? 1 : 0, timedOut: false, stdout: '', stderr: '' };
+  });
+}
+
+describe('F-1242: autoria pelo conteúdo registrado, não por janela de mtime', () => {
+  async function editByConversation(root: string, scope: ReturnType<typeof testProjectScope>, content: string, atMs: number) {
+    const conversation: SessionProviderConversation = {
+      scope: { installationId: scope.installationId, projectId: scope.projectId, checkoutId: scope.checkoutId },
+      adapterId: 'claude',
+      paneId: 'pane-f1242',
+      conversationId: 'conv-f1242',
+      resumed: false,
+    };
+    write(root, 'src/c.ts', content);
+    age(root, 'src/c.ts', atMs);
+    // PostToolUse do Write, pelo bearer do próprio pane (1ª encarnação).
+    const recorded = await recordHookEditProvenance({ sessionId: 'pty-first', scope }, 'tool-complete', {
+      session_id: 'conv-f1242', tool_name: 'Write', tool_input: { file_path: path.join(root, 'src/c.ts') },
+    }, { conversationOf: () => conversation, now: () => atMs });
+    expect(recorded).toBe(1);
+    return { ...conversation, resumed: true };
+  }
+
+  it('outro agente reescreve o arquivo 1 s depois: na retomada ele continua alheio', async () => {
+    const { root, scope } = project();
+    const editedAtMs = Date.now() - 20 * HOUR;
+    const resumed = await editByConversation(root, scope, 'export const c = 30;\n', editedAtMs);
+    write(root, 'src/c.ts', 'export const c = 31;\n'); // o outro agente, por cima
+    age(root, 'src/c.ts', editedAtMs + 1_000);
+    const startedAtMs = Date.now() - 1_000; // retomada exata: spawn novo, mesma conversa
+    const recordedEdits = recordedEditsForSession('pty-resumed', root, { conversationOf: () => resumed });
+
+    const result = await runRegressionGate({ scope, startedAtMs, recordedEdits }, { exec: failingOnlyAt(root, ['src/c.test.ts']) });
+
+    expect(result.status).not.toBe('failed');
+    expect(result.failures).toEqual([]);
+    expect(result.inheritedFailures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
+  });
+
+  it('sem ninguém por cima, a edição registrada continua da conversa e bloqueia', async () => {
+    const { root, scope } = project();
+    const editedAtMs = Date.now() - 20 * HOUR;
+    const resumed = await editByConversation(root, scope, 'export const c = 30;\n', editedAtMs);
+    const startedAtMs = Date.now() - 1_000;
+    const recordedEdits = recordedEditsForSession('pty-resumed', root, { conversationOf: () => resumed });
+
+    const result = await runRegressionGate({ scope, startedAtMs, recordedEdits }, { exec: failingOnlyAt(root, ['src/c.test.ts']) });
+
+    expect(result.status).toBe('failed');
+    expect(result.failures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
+  });
+});

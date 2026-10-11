@@ -19,7 +19,10 @@ import {
 } from '../../vendor/emdash/hooks/flavors';
 import type { CanonicalHookEvent } from '../../vendor/emdash/hooks/hooks-types';
 import { isCurrentGateContext, type AgentGateContext } from './gate';
-import { recordAuthenticatedNativeArgvSubmission } from '../pty/pty-manager';
+import {
+  getSessionProviderConversation,
+  recordAuthenticatedNativeArgvSubmission,
+} from '../pty/pty-manager';
 import {
   applyCanonicalHookEvent,
   type AgentStatusApplyResult,
@@ -53,8 +56,11 @@ export const HOOK_STATUS_MAX_BODY_BYTES = 64 * 1024;
  * F-1237: o PostToolUse de uma edição carrega o conteúdo escrito (Write,
  * patch do Codex) e passa dos 64 KB num arquivo grande. Só a proveniência lê
  * além do teto do status; o status desse corpo continua recusado (400).
+ * F-1240: teto de 1 MB (era 4 MB) — qualquer filho do pane tem o bearer.
  */
-export const HOOK_EDIT_PROVENANCE_MAX_BODY_BYTES = 4 * 1024 * 1024;
+export const HOOK_EDIT_PROVENANCE_MAX_BODY_BYTES = 1024 * 1024;
+/** F-1240: começo do corpo que decide, ao passar dos 64 KB, se é edição. */
+export const HOOK_EDIT_HEAD_BYTES = 8 * 1024;
 
 export const HOOK_STATUS_FLAVORS = [
   'claude',
@@ -239,8 +245,9 @@ export function handleHookStatusRequest(
   }
 
   try {
-    // F-1237: edição da própria conversa vira proveniência durável.
-    recordEdit(ctx, eventType, body);
+    // F-1237: edição da própria conversa vira proveniência durável. F-1242:
+    // assíncrona (lê o conteúdo para o hash), fora do caminho da resposta.
+    void Promise.resolve(recordEdit(ctx, eventType, body)).catch(() => undefined);
   } catch {
     // Aditivo: o registro nunca derruba o canal de status.
   }
@@ -312,26 +319,58 @@ function sendJson(
   res.end(body);
 }
 
-function readBodyCapped(
+/** F-1240: sessões com um corpo de edição acima do teto do status em leitura. */
+const bigBodySessions = new Set<string>();
+
+/**
+ * Lê o corpo até 64 KB. Passou disso, decide NA HORA, pelos primeiros 8 KB e
+ * sem guardar mais nada, se segue lendo (F-1240): só um PostToolUse de edição
+ * (`bigBodySession`: pane com conversa vinculada), um por sessão de cada vez,
+ * até 1 MB. O resto recebe 400 sem que o Main bufferize o corpo.
+ */
+function readHookStatusBody(
   req: http.IncomingMessage,
-  maxBytes: number = HOOK_STATUS_MAX_BODY_BYTES,
+  bigBodySession: string | null,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     let size = 0;
-    const chunks: Buffer[] = [];
+    let holdsBigSlot = false;
+    let settled = false;
+    let chunks: Buffer[] = [];
+    const settle = (error: Error | null): void => {
+      if (settled) return;
+      settled = true;
+      if (holdsBigSlot && bigBodySession) bigBodySessions.delete(bigBodySession);
+      const body = error ? null : Buffer.concat(chunks);
+      chunks = [];
+      if (body) resolve(body);
+      else reject(error);
+    };
     req.on('data', (chunk: Buffer) => {
+      if (settled) return;
       size += chunk.length;
-      if (size > maxBytes) {
-        // Reject WITHOUT destroying the socket so the handler can still flush
-        // a 400 (destroy-then-respond races and the client sees a dropped
-        // connection instead of the validation error).
-        reject(new Error('body-too-large'));
+      if (size > HOOK_STATUS_MAX_BODY_BYTES && !holdsBigSlot) {
+        const head = Buffer.concat([...chunks, chunk], Math.min(size, HOOK_EDIT_HEAD_BYTES)).toString('utf8');
+        if (!bigBodySession || bigBodySessions.has(bigBodySession) || !hookBodyMayCarryEdit(head)) {
+          // Reject WITHOUT destroying the socket so the handler can still
+          // flush a 400 (destroy-then-respond races and the client sees a
+          // dropped connection instead of the validation error).
+          settle(new Error('body-too-large'));
+          return;
+        }
+        bigBodySessions.add(bigBodySession);
+        holdsBigSlot = true;
+      }
+      if (size > HOOK_EDIT_PROVENANCE_MAX_BODY_BYTES) {
+        settle(new Error('body-too-large'));
         return;
       }
       chunks.push(chunk);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
+    req.on('end', () => settle(null));
+    req.on('error', (error) => settle(error));
+    // Cliente que desiste no meio não segura a vaga do corpo grande.
+    req.on('close', () => settle(new Error('closed')));
   });
 }
 
@@ -357,12 +396,15 @@ export async function handleHookStatusHttp(
 
   const eventType = req.headers['x-nexus-hook-event'];
   const flavor = req.headers['x-nexus-hook-flavor'];
+  // F-1240: corpo acima do teto do status só para o PostToolUse de um pane
+  // com conversa vinculada (o único que grava proveniência).
+  const bigBodySession =
+    eventType === 'tool-complete' && ctx.sessionId && getSessionProviderConversation(ctx.sessionId)
+      ? ctx.sessionId
+      : null;
   let bytes: Buffer;
   try {
-    bytes = await readBodyCapped(
-      req,
-      eventType === 'tool-complete' ? HOOK_EDIT_PROVENANCE_MAX_BODY_BYTES : HOOK_STATUS_MAX_BODY_BYTES,
-    );
+    bytes = await readHookStatusBody(req, bigBodySession);
   } catch {
     // Early response: the unread remainder of an oversized body may still be
     // in flight, so close the connection once the 400 has been flushed.
@@ -377,18 +419,16 @@ export async function handleHookStatusHttp(
   }
 
   if (bytes.length > HOOK_STATUS_MAX_BODY_BYTES) {
-    // Acima do teto do status só uma edição grande é lida (o cabeçalho do
-    // corpo diz a ferramenta): grava a proveniência; o status segue
-    // recusando o corpo, como antes.
-    if (ctx.sessionId && hookBodyMayCarryEdit(bytes.subarray(0, 8192).toString('utf8'))) {
-      try {
-        const big: unknown = JSON.parse(bytes.toString('utf8'));
-        if (big && typeof big === 'object' && !Array.isArray(big)) {
-          recordHookEditProvenance(ctx, 'tool-complete', big as Record<string, unknown>);
-        }
-      } catch {
-        // corpo inválido: sem proveniência
+    // Acima do teto do status só chega uma edição grande (o começo do corpo
+    // disse a ferramenta): grava a proveniência; o status segue recusando o
+    // corpo, como antes.
+    try {
+      const big: unknown = JSON.parse(bytes.toString('utf8'));
+      if (big && typeof big === 'object' && !Array.isArray(big)) {
+        void recordHookEditProvenance(ctx, 'tool-complete', big as Record<string, unknown>);
       }
+    } catch {
+      // corpo inválido: sem proveniência
     }
     sendJson(res, 400, { ok: false, error: 'hook payload too large' });
     return;

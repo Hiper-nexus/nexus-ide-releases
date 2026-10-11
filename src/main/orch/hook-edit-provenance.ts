@@ -17,13 +17,17 @@
  * Segurança — só pode APERTAR o portão contra o próprio agente:
  * - o pane vem do bearer (o Main resolveu a sessão PTY), nunca do corpo;
  * - a conversa é a do argv que o Main montou (`--resume <id>` ou o
- *   `--session-id` ditado); sem id no argv, a primeira que o próprio CLI
- *   anunciou neste bearer. O `session_id` do corpo só precisa CONCORDAR —
- *   outra conversa é descartada;
+ *   `--session-id` ditado); sem id no argv, a que o próprio CLI anunciou no
+ *   SessionStart deste bearer, desde que nenhum outro pane já a tenha
+ *   (F-1241). O `session_id` do corpo só precisa CONCORDAR — outra conversa
+ *   é descartada;
  * - o caminho é normalizado e confinado à raiz de execução do pane (realpath
  *   do diretório); fora dela, descartado;
  * - o registro só move arquivo SUJO de "alheio" para "do agente" no portão do
  *   próprio pane retomado; nunca toca o portão de outra sessão.
+ * F-1242: grava o sha256 do conteúdo lido no PostToolUse (arquivo regular,
+ * confinado, até 1 MB); o portão só conta como da conversa o arquivo cujo
+ * conteúdo ainda é esse. A leitura é assíncrona e serializada por sessão.
  * Falha aqui nunca derruba o hook (tudo em try, devolve 0).
  */
 import fs from 'node:fs';
@@ -37,7 +41,8 @@ import {
   listConversationEdits,
   recordConversationEdits,
 } from '../persistence/conversation-edit-store';
-import { normalizeRegressionPath } from '../regression-gate/regression-gate';
+import { providerSessionHeldByOtherPane } from '../persistence/provider-session-store';
+import { hashRegressionFile, normalizeRegressionPath } from '../regression-gate/regression-gate';
 
 /** Ferramentas cujo `tool_input` traz o caminho editado. */
 const PATH_EDIT_TOOLS = new Map<string, readonly string[]>([
@@ -51,17 +56,28 @@ const PATCH_EDIT_TOOLS = new Set(['apply_patch']);
 const PATCH_HEADER_RE = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/u;
 export const MAX_RECORDED_PATHS_PER_EVENT = 128;
 const MAX_PATCH_SCAN_CHARS = 4 * 1024 * 1024;
-const MAX_PINNED_SESSIONS = 1024;
+/** F-1242: eventos de edição na fila de hash de uma sessão; além disso, descarta. */
+export const MAX_QUEUED_EDIT_EVENTS_PER_SESSION = 32;
 
 /**
  * Conversa anunciada pelo próprio CLI no bearer do pane quando o argv não
- * traz id (Codex fresco). O primeiro evento do canal é do CLI (SessionStart /
- * prompt / PreToolUse chegam antes de qualquer comando do agente rodar).
+ * traz id (Codex fresco). F-1241: só o SessionStart fixa (o do CLI chega antes
+ * de qualquer comando do agente; um curl dele com outro evento não fixa
+ * nada). A chave é o objeto de conversa do Session do pty-manager: o pin vive
+ * e morre com a sessão viva, sem despejo por volume de spawns.
  */
-const pinnedConversations = new Map<string, string>();
+let pinnedConversations = new WeakMap<SessionProviderConversation, string>();
+/** Eventos em que o CLI anuncia a conversa (Codex: `session-start`; Kimi/Grok: `session`). */
+const PIN_EVENT_TYPES: ReadonlySet<string> = new Set(['session-start', 'session']);
+/**
+ * F-1242: fila de hash por sessão viva (mesma chave do pin). Um evento de cada
+ * vez lê arquivos; um curl em loop não multiplica leituras em paralelo no Main.
+ */
+let hashQueues = new WeakMap<SessionProviderConversation, { tail: Promise<unknown>; queued: number }>();
 
 export function __resetHookEditProvenanceForTests(): void {
-  pinnedConversations.clear();
+  pinnedConversations = new WeakMap();
+  hashQueues = new WeakMap();
 }
 
 function stringField(value: unknown): string | null {
@@ -155,23 +171,27 @@ export function confineEditedPath(rootRealPath: string, base: string, raw: strin
 
 /** Conversa deste PTY a que o evento pertence, ou null (não registra). */
 function boundConversation(
-  sessionId: string,
   conversation: SessionProviderConversation,
   claimed: string,
+  eventType: string,
+  heldByOtherPane: NonNullable<HookEditProvenanceDeps['heldByOtherPane']>,
 ): string | null {
   if (conversation.conversationId) return claimed === conversation.conversationId ? claimed : null;
-  const pinned = pinnedConversations.get(sessionId);
+  const pinned = pinnedConversations.get(conversation);
   if (pinned !== undefined) return claimed === pinned ? claimed : null;
-  pinnedConversations.set(sessionId, claimed);
-  while (pinnedConversations.size > MAX_PINNED_SESSIONS) {
-    pinnedConversations.delete(pinnedConversations.keys().next().value!);
-  }
+  // F-1241: só o SessionStart fixa, e nunca a conversa que outro pane já tem
+  // (um pin forjado faria as edições deste pane contarem no portão do outro).
+  if (!PIN_EVENT_TYPES.has(eventType) || heldByOtherPane(conversation, claimed)) return null;
+  pinnedConversations.set(conversation, claimed);
   return claimed;
 }
 
 export interface HookEditProvenanceDeps {
   readonly conversationOf?: (sessionId: string) => SessionProviderConversation | null;
+  /** F-1241: `provider_pane_sessions` já dá a conversa a outro pane. */
+  readonly heldByOtherPane?: (conversation: SessionProviderConversation, claimed: string) => boolean;
   readonly record?: typeof recordConversationEdits;
+  readonly hash?: typeof hashRegressionFile;
   readonly now?: () => number;
 }
 
@@ -181,14 +201,15 @@ type ProvenanceContext = Pick<AgentGateContext, 'sessionId'> &
 /**
  * Hook de status autenticado pelo bearer do pane: fixa a conversa anunciada
  * (quando o argv não trouxe id) e, no `tool-complete` de uma edição, grava os
- * caminhos confinados à raiz. Devolve quantos gravou; nunca lança.
+ * caminhos confinados à raiz com o sha256 do conteúdo no disco. Devolve
+ * quantos gravou; nunca rejeita.
  */
-export function recordHookEditProvenance(
+export async function recordHookEditProvenance(
   ctx: ProvenanceContext,
   eventType: string,
   body: Record<string, unknown>,
   deps: HookEditProvenanceDeps = {},
-): number {
+): Promise<number> {
   try {
     const sessionId = ctx.sessionId;
     const scope = ctx.executionScope ?? ctx.scope;
@@ -196,7 +217,13 @@ export function recordHookEditProvenance(
     const conversation = (deps.conversationOf ?? getSessionProviderConversation)(sessionId);
     const claimed = stringField(body.session_id ?? body.sessionId);
     if (!conversation || !claimed) return 0;
-    const conversationId = boundConversation(sessionId, conversation, claimed);
+    const conversationId = boundConversation(
+      conversation,
+      claimed,
+      eventType,
+      deps.heldByOtherPane ??
+        ((own, id) => providerSessionHeldByOtherPane(own.adapterId, id, own.paneId)),
+    );
     if (!conversationId || eventType !== 'tool-complete') return 0;
     const raw = extractEditedPaths(body);
     if (raw.length === 0) return 0;
@@ -206,11 +233,28 @@ export function recordHookEditProvenance(
       .map((file) => confineEditedPath(root, cwd, file))
       .filter((file): file is string => file !== null);
     if (relPaths.length === 0) return 0;
-    return (deps.record ?? recordConversationEdits)(
-      { scope: conversation.scope, adapterId: conversation.adapterId, conversationId, rootRealPath: root },
-      relPaths,
-      (deps.now ?? Date.now)(),
-    );
+    const queue = hashQueues.get(conversation) ?? { tail: Promise.resolve(), queued: 0 };
+    hashQueues.set(conversation, queue);
+    if (queue.queued >= MAX_QUEUED_EDIT_EVENTS_PER_SESSION) return 0;
+    queue.queued += 1;
+    const job = queue.tail.then(async () => {
+      // O conteúdo que a edição deixou: lido agora, depois da escrita do CLI.
+      const edits = new Map<string, string>();
+      for (const rel of relPaths) {
+        const sha256 = await (deps.hash ?? hashRegressionFile)(root, rel);
+        if (sha256) edits.set(rel, sha256);
+      }
+      if (edits.size === 0) return 0;
+      return (deps.record ?? recordConversationEdits)(
+        { scope: conversation.scope, adapterId: conversation.adapterId, conversationId, rootRealPath: root },
+        edits,
+        (deps.now ?? Date.now)(),
+      );
+    });
+    queue.tail = job.catch(() => 0).finally(() => {
+      queue.queued -= 1;
+    });
+    return await job;
   } catch {
     return 0;
   }
@@ -228,7 +272,7 @@ export function recordedEditsForSession(
     readonly conversationOf?: (sessionId: string) => SessionProviderConversation | null;
     readonly list?: typeof listConversationEdits;
   } = {},
-): ReadonlyMap<string, number> | undefined {
+): ReadonlyMap<string, string> | undefined {
   try {
     if (!sessionId || !rootRealPath) return undefined;
     const conversation = (deps.conversationOf ?? getSessionProviderConversation)(sessionId);

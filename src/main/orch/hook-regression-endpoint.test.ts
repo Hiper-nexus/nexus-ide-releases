@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -332,7 +333,12 @@ describe('handleHookRegressionRequest (Stop do pane do operador)', () => {
     put('src/x.ts', 'export const x = 1;\n');
     put('src/x.test.ts', "import { x } from './x';\n");
     for (const file of ['src/x.ts', 'src/x.test.ts']) age(file, bornAtMs + 60_000);
-    const recorded = new Map([['src/x.ts', bornAtMs + 60_000], ['src/x.test.ts', bornAtMs + 60_000]]);
+    // F-1242: o registro guarda o sha256 do conteúdo que a conversa deixou.
+    const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+    const recorded = new Map([
+      ['src/x.ts', sha256('export const x = 1;\n')],
+      ['src/x.test.ts', sha256("import { x } from './x';\n")],
+    ]);
     // Outro agente: WIP vermelho DEPOIS do nascimento da conversa, antes da retomada.
     put('src/seal.ts', 'export const seal = 1;\n');
     put('src/seal.test.ts', "import { seal } from './seal';\n");
@@ -361,7 +367,7 @@ describe('handleHookRegressionRequest (Stop do pane do operador)', () => {
       return { exitCode: red ? 1 : 0, timedOut: false, stdout: '', stderr: '' };
     });
     const results: RegressionGateResult[] = [];
-    const stop = (sessionId: string, recordedEdits?: ReadonlyMap<string, number>) =>
+    const stop = (sessionId: string, recordedEdits?: ReadonlyMap<string, string>) =>
       handleHookRegressionRequest({ role: 'user', sessionId, scope: testProjectScope({ rootRealPath: root }) }, {}, {
         run: async (input) => {
           const gate = await runRegressionGate(input, { exec, extensions: { blastRadius } });

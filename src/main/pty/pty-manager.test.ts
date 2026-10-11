@@ -6171,22 +6171,22 @@ describe("F-1237: autoria por proveniência — o pane retomado responde pelas e
       // 1ª encarnação: a conversa nasce aqui e escreve x.ts + o teste dele.
       const first = spawnAgentSession(fakeWc(), { kind: "cli-agent", paneId: "pane-f1237", cols: 80, rows: 24 }, adapter, {}, authority);
       const conversation = getSessionProviderConversation(first.sessionId)!;
-      expect(conversation).toMatchObject({ adapterId: "test-cli", resumed: false });
+      expect(conversation).toMatchObject({ adapterId: "test-cli", paneId: "pane-f1237", resumed: false });
       const conversationId = conversation.conversationId!;
       expect(conversationId).toMatch(/^[0-9a-f-]{36}$/);
       const firstCtx = { sessionId: first.sessionId, scope: authority.scope };
       for (const file of ["src/x.ts", "src/x.test.ts"]) {
         put(file, file.endsWith(".test.ts") ? "import { x } from './x';\n" : "export const x = 1;\n");
         // PostToolUse do Write, pelo bearer do próprio pane.
-        expect(recordHookEditProvenance(firstCtx, "tool-complete", {
+        expect(await recordHookEditProvenance(firstCtx, "tool-complete", {
           session_id: conversationId, cwd: root, tool_name: "Write", tool_input: { file_path: path.join(root, file) },
         })).toBe(1);
       }
       // (c) Corpo com outra conversa, ou caminho fora da raiz: nada registrado.
-      expect(recordHookEditProvenance(firstCtx, "tool-complete", {
+      expect(await recordHookEditProvenance(firstCtx, "tool-complete", {
         session_id: "conversa-do-outro-agente", tool_name: "Edit", tool_input: { file_path: path.join(root, "src/seal.ts") },
       })).toBe(0);
-      expect(recordHookEditProvenance(firstCtx, "tool-complete", {
+      expect(await recordHookEditProvenance(firstCtx, "tool-complete", {
         session_id: conversationId, tool_name: "Edit", tool_input: { file_path: path.join(os.tmpdir(), "fora-da-raiz.ts") },
       })).toBe(0);
       orchKillSession(first.sessionId);
