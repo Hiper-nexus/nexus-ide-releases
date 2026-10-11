@@ -1,7 +1,7 @@
 // Adapted from pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62
 // Copyright (c) 2026 T3 Tools Inc. — MIT License
-// See third_party/licenses/t3code-MIT.txt. Nexus changes: só a guarda de IME do Enter (ComposerPromptEditorTiptap.tsx:975–977) levada a um textarea React via nativeEvent.isComposing/keyCode 229; o resto do composer é do Nexus.
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+// See third_party/licenses/t3code-MIT.txt. Nexus changes: o rascunho é o ComposerTiptapEditor (F-1170), que carrega a guarda de IME do Enter (ComposerPromptEditorTiptap.tsx:975–977); o resto do composer é do Nexus.
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type {
   MissionAgentSnapshot,
   MissionEngineCommand,
@@ -9,10 +9,18 @@ import type {
 } from '../../../shared/mission-engine-contract';
 import { toUserFacingMissionRecovery } from '../../lib/user-facing-mission-error';
 import { appendQuote, quoteSpeaker, type QuoteDraft } from '../../lib/quote-reference';
+import {
+  ComposerTiptapEditor,
+  type ComposerTiptapEditorHandle,
+} from '../ComposerTiptapEditor';
 
 const ALL_AGENTS_VALUE = '';
 const DELIVERY_ERROR_MESSAGE =
   'Não foi possível enviar a orientação. Tente novamente.';
+const FORMAT_SHORTCUTS =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/u.test(navigator.platform)
+    ? '⌘B, ⌘I e ⌘E'
+    : 'Ctrl+B, Ctrl+I e Ctrl+E';
 
 interface DirectionComposerProps {
   readonly missionId: string;
@@ -39,11 +47,12 @@ export function DirectionComposer({
 }: DirectionComposerProps) {
   const targetId = useId();
   const draftId = useId();
+  const labelId = useId();
   const hintId = useId();
   const errorId = useId();
   const quoteNoticeId = useId();
   const pendingRef = useRef(false);
-  const draftRef = useRef<HTMLTextAreaElement | null>(null);
+  const draftRef = useRef<ComposerTiptapEditorHandle | null>(null);
   const [targetAgentId, setTargetAgentId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState(false);
@@ -66,16 +75,13 @@ export function DirectionComposer({
     onQuoteConsumed?.(quote.nonce);
   }, [quote, disabled, pending, missionId, onQuoteConsumed]);
 
-  // O texto citado só está no textarea depois do render: foco e cursor no
-  // fim aqui, uma vez por citação — digitar depois não move o cursor.
+  // O texto citado só está no editor depois do render (o efeito do filho
+  // aplica o valor antes deste): foco e cursor no fim aqui, uma vez por
+  // citação — digitar depois não move o cursor.
   useEffect(() => {
     if (!caretToEndRef.current) return;
     caretToEndRef.current = false;
-    const textarea = draftRef.current;
-    if (!textarea) return;
-    textarea.focus();
-    const end = textarea.value.length;
-    textarea.setSelectionRange?.(end, end);
+    draftRef.current?.focusEnd();
   }, [draft]);
 
   if (disabled) return null;
@@ -106,22 +112,6 @@ export function DirectionComposer({
   };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault();
-    void submitDirection();
-  };
-
-  const handleDraftKeyDown = (
-    event: KeyboardEvent<HTMLTextAreaElement>,
-  ): void => {
-    // Enter que confirma a composição do IME (acentos, pinyin, kana) não envia.
-    if (
-      event.key === 'Enter' &&
-      (event.nativeEvent.isComposing || event.keyCode === 229)
-    ) {
-      event.stopPropagation();
-      return;
-    }
-    if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
     void submitDirection();
   };
@@ -160,25 +150,32 @@ export function DirectionComposer({
       </div>
 
       <div className="mission-board__direction-field mission-board__direction-field--draft">
-        <label htmlFor={draftId}>Orientação</label>
-        <textarea
+        {/* A superfície é contenteditable: o nome vem por aria-labelledby;
+            clicar no rótulo foca o editor como faria com o textarea. */}
+        <label id={labelId} htmlFor={draftId} onClick={() => draftRef.current?.focus()}>
+          Orientação
+        </label>
+        <ComposerTiptapEditor
           ref={draftRef}
           id={draftId}
-          className="mission-board__direction-draft"
+          className="mission-board__direction-editor"
+          surfaceClassName="mission-board__direction-draft"
+          toolbar={false}
           value={draft}
           placeholder="Escreva uma orientação para a equipe"
-          disabled={pending}
-          aria-invalid={Boolean(error)}
-          aria-describedby={describedBy}
-          onChange={(event) => {
-            setDraft(event.target.value);
+          editable={!pending}
+          ariaLabelledBy={labelId}
+          ariaInvalid={Boolean(error)}
+          ariaDescribedBy={describedBy}
+          onSubmit={() => void submitDirection()}
+          onChange={(markdown) => {
+            setDraft(markdown);
             setError(null);
-            if (!event.target.value.trim()) setQuoteNotice(null);
+            if (!markdown.trim()) setQuoteNotice(null);
           }}
-          onKeyDown={handleDraftKeyDown}
         />
         <span id={hintId} className="mission-board__direction-hint">
-          Enter envia. Shift+Enter adiciona uma nova linha.
+          Enter envia. Shift+Enter adiciona uma nova linha. {FORMAT_SHORTCUTS} formatam.
         </span>
       </div>
 

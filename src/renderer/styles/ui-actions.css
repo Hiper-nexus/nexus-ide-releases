@@ -26,7 +26,7 @@
 /* DESIGN.md §2: a ação primária é a coisa mais clara da tela (branco neutro);
    o acento fica reservado a ESTADO. Derivar o primário de --accent fazia o
    rosa virar decoração e, com o hover abaixo, tornava primário e neutro
-   indistinguíveis. Mesmo idioma de .launcher-action--primary. */
+   indistinguíveis. */
 .action-card--primary {
   border-color: var(--btn-primary);
   background: var(--btn-primary);

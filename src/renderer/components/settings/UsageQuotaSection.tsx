@@ -5,6 +5,7 @@ import { useQuotaStore } from '../../state/quota-store';
 import { useLifetimeUsage } from '../../state/lifetime-usage';
 import { useUsageHistory } from '../../state/usage-history';
 import { UsageHistoryChart } from './UsageHistoryChart';
+import { MachineResourcesCard } from './MachineResourcesCard';
 import { fmtTokens, fmtUsd } from '../../lib/lifetime-format';
 import { useAccountStore } from '../../state/account-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
@@ -693,6 +694,7 @@ export function UsageQuotaSection() {
           </span>
         </div>
       )}
+      <MachineResourcesCard />
       {usageHistory.status !== 'unavailable' && (
         <UsageHistoryChart
           status={usageHistory.status}

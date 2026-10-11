@@ -76,6 +76,22 @@
   padding: 0;
 }
 
+/* Bloco com realce (F-1176): o `File` do @pierre/diffs pinta no próprio
+   shadow root; o host repete a moldura do bloco puro e faz a ponte
+   --code-background/--code-foreground que o CSS do diff lê (como o
+   .diff-render-surface do git-scm.css). Sem numeração: é texto de agente. */
+.markdown-view .markdown-view__highlight {
+  --code-background: color-mix(in srgb, var(--text) 4%, var(--surface-1));
+  --code-foreground: var(--text);
+  display: block;
+  margin: 0 0 var(--space-2);
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
 .markdown-view .markdown-view__inline-code {
   padding: 0 var(--space-1);
   border-radius: var(--radius-xs);

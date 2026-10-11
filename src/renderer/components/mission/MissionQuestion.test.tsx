@@ -1,13 +1,16 @@
 /** @vitest-environment jsdom */
 import { act, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Editor } from '@tiptap/core';
+import { Selection } from '@tiptap/pm/state';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   MissionEngineCommand,
   MissionQuestion as MissionQuestionContract,
   MissionSnapshot,
 } from '../../../shared/mission-engine-contract';
 import { MissionQuestion } from './MissionQuestion';
+import { tiptapJsonToMarkdown } from '../ComposerTiptapEditor';
 
 const mermaidApi = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -166,40 +169,54 @@ function button(scope: HTMLElement, name: string): HTMLButtonElement {
   return found;
 }
 
-function fieldByLabel(
-  scope: HTMLElement,
-  labelText: string,
-): HTMLInputElement | HTMLTextAreaElement {
+/** F-1170: a resposta livre é o editor rich-text (role=textbox, contenteditable). */
+type AnswerField = HTMLElement & { editor: Editor };
+
+function fieldByLabel(scope: HTMLElement, labelText: string): AnswerField {
   const label = Array.from(scope.querySelectorAll('label')).find((item) =>
     item.textContent?.includes(labelText),
   );
-  const id = label?.htmlFor;
-  const candidate = id ? document.getElementById(id) : null;
-  if (
-    !candidate ||
-    !scope.contains(candidate) ||
-    !(
-      candidate instanceof HTMLInputElement ||
-      candidate instanceof HTMLTextAreaElement
-    )
-  ) {
+  const candidate = label?.id
+    ? scope.querySelector<AnswerField>(`[role="textbox"][aria-labelledby="${label.id}"]`)
+    : null;
+  if (!candidate?.editor || candidate.id !== label?.htmlFor) {
     throw new Error(`Field not found: ${labelText}`);
   }
   return candidate;
 }
 
-function enterText(
-  field: HTMLInputElement | HTMLTextAreaElement,
-  value: string,
-): void {
+/** Valor do campo: o markdown canônico do editor (o que a resposta envia). */
+function fieldValue(field: AnswerField): string {
+  return tiptapJsonToMarkdown(field.editor.getJSON());
+}
+
+/** Digitação do operador: troca o documento inteiro por texto literal, cursor no fim. */
+function enterText(field: AnswerField, value: string): void {
+  const { editor } = field;
   act(() => {
-    const setter = Object.getOwnPropertyDescriptor(
-      Object.getPrototypeOf(field),
-      'value',
-    )?.set;
-    setter?.call(field, value);
-    field.dispatchEvent(new Event('input', { bubbles: true }));
+    const { schema } = editor.state;
+    const paragraphs = value
+      .split('\n')
+      .map((line) => schema.nodes.paragraph!.create(null, line ? schema.text(line) : null));
+    const tr = editor.state.tr.replaceWith(0, editor.state.doc.content.size, paragraphs);
+    editor.view.dispatch(tr.setSelection(Selection.atEnd(tr.doc)));
   });
+}
+
+const CONTROLS = 'button, input, textarea, [role="textbox"]';
+
+function isControlDisabled(control: HTMLElement): boolean {
+  if (
+    control instanceof HTMLButtonElement ||
+    control instanceof HTMLInputElement ||
+    control instanceof HTMLTextAreaElement
+  ) {
+    return control.disabled;
+  }
+  return (
+    control.getAttribute('contenteditable') === 'false' &&
+    control.getAttribute('aria-disabled') === 'true'
+  );
 }
 
 function click(control: HTMLButtonElement): void {
@@ -232,7 +249,22 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+const geometry = new Map<string, PropertyDescriptor | undefined>();
+
+beforeEach(() => {
+  // F-1170: editor Tiptap real; o jsdom só não tem geometria.
+  for (const [name, value] of [['getClientRects', () => []], ['getBoundingClientRect', () => new DOMRect()]] as const) {
+    geometry.set(name, Object.getOwnPropertyDescriptor(Range.prototype, name));
+    Object.defineProperty(Range.prototype, name, { configurable: true, value });
+  }
+});
+
 afterEach(() => {
+  for (const [name, original] of geometry) {
+    if (original) Object.defineProperty(Range.prototype, name, original);
+    else Reflect.deleteProperty(Range.prototype, name);
+  }
+  geometry.clear();
   for (const root of mountedRoots) {
     act(() => root.unmount());
   }
@@ -291,7 +323,7 @@ describe('MissionQuestion', () => {
         item.textContent?.includes('Resposta livre'),
       ),
     ).toBe(false);
-    expect(view.host.querySelectorAll('textarea, input[type="text"]')).toHaveLength(
+    expect(view.host.querySelectorAll('textarea, input[type="text"], [role="textbox"]')).toHaveLength(
       0,
     );
   });
@@ -310,13 +342,13 @@ describe('MissionQuestion', () => {
     const conversationText = fieldByLabel(conversation, 'Resposta livre');
 
     enterText(topText, 'Manter a liberação restrita aos validadores internos.');
-    expect(conversationText.value).toBe(
+    expect(fieldValue(conversationText)).toBe(
       'Manter a liberação restrita aos validadores internos.',
     );
 
     click(button(conversation, QUESTION.options[0].label));
-    expect(topText.value).toBe('');
-    expect(conversationText.value).toBe('');
+    expect(fieldValue(topText)).toBe('');
+    expect(fieldValue(conversationText)).toBe('');
     expectOptionSelected(top, QUESTION.options[0].label, true);
     expectOptionSelected(conversation, QUESTION.options[0].label, true);
     expectOptionSelected(top, QUESTION.options[1].label, false);
@@ -325,7 +357,7 @@ describe('MissionQuestion', () => {
       topText,
       'Publicar apenas depois da auditoria final de acessibilidade.',
     );
-    expect(conversationText.value).toBe(
+    expect(fieldValue(conversationText)).toBe(
       'Publicar apenas depois da auditoria final de acessibilidade.',
     );
     expectOptionSelected(top, QUESTION.options[0].label, false);
@@ -434,13 +466,10 @@ describe('MissionQuestion', () => {
     click(button(top, 'Responder'));
 
     expect(onCommand).toHaveBeenCalledTimes(1);
-    const controls = Array.from(
-      host.querySelectorAll<
-        HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement
-      >('button, input, textarea'),
-    );
+    const controls = Array.from(host.querySelectorAll<HTMLElement>(CONTROLS));
     expect(controls.length).toBeGreaterThan(0);
-    expect(controls.every((control) => control.disabled)).toBe(true);
+    expect(controls.filter((control) => control.getAttribute('role') === 'textbox')).toHaveLength(2);
+    expect(controls.every(isControlDisabled)).toBe(true);
     expect(
       Array.from(
         host.querySelectorAll<HTMLButtonElement>('button[type="submit"]'),
@@ -462,8 +491,8 @@ describe('MissionQuestion', () => {
       await Promise.resolve();
     });
 
-    expect(fieldByLabel(top, 'Resposta livre').value).toBe(answer);
-    expect(fieldByLabel(conversation, 'Resposta livre').value).toBe(answer);
+    expect(fieldValue(fieldByLabel(top, 'Resposta livre'))).toBe(answer);
+    expect(fieldValue(fieldByLabel(conversation, 'Resposta livre'))).toBe(answer);
     const alerts = Array.from(host.querySelectorAll<HTMLElement>('[role="alert"]'));
     expect(alerts).toHaveLength(2);
     expect(alerts.map((alert) => alert.textContent?.trim())).toEqual([
@@ -474,11 +503,9 @@ describe('MissionQuestion', () => {
       /Error invoking|IPC|response failed|\/Users\/|mission-engine\.ts|answerQuestion|ipc\.ts/i,
     );
     expect(
-      Array.from(
-        host.querySelectorAll<
-          HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement
-        >('button, input, textarea'),
-      ).every((control) => !control.disabled),
+      Array.from(host.querySelectorAll<HTMLElement>(CONTROLS)).every(
+        (control) => !isControlDisabled(control),
+      ),
     ).toBe(true);
   });
 
@@ -540,6 +567,50 @@ describe('MissionQuestion', () => {
     await flush();
     expect(onDismiss).toHaveBeenCalledOnce();
     expect(onCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe('MissionQuestion — resposta livre no editor rich-text (F-1170)', () => {
+  it('Enter quebra linha como no textarea (não envia) e a resposta sai como markdown, sem escapes', async () => {
+    const snapshot = canonicalSnapshot();
+    const onCommand = vi.fn<CommandHandler>().mockResolvedValue(snapshot);
+    const { host } = render(
+      <SharedQuestionHarness snapshot={snapshot} onCommand={onCommand} />,
+    );
+    const top = region(host, 'Pergunta no topo da missão');
+    const field = fieldByLabel(top, 'Resposta livre');
+    enterText(field, 'Use o arquivo release_notes.md');
+    act(() => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
+      field.editor.view.dispatch(field.editor.state.tr.insertText('e publique'));
+    });
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(fieldValue(field)).toBe('Use o arquivo release_notes.md\ne publique');
+
+    click(button(top, 'Responder'));
+    await flush();
+    expect(onCommand).toHaveBeenCalledWith({
+      kind: 'answer-question',
+      missionId: 'mission-release-desktop',
+      questionId: 'question-release-strategy',
+      text: 'Use o arquivo release_notes.md\ne publique',
+    });
+  });
+
+  it('erro marca aria-invalid e liga o alerta pela descrição do campo', async () => {
+    const onCommand = vi.fn<CommandHandler>().mockRejectedValue(new Error('falha'));
+    const { host } = render(
+      <SharedQuestionHarness snapshot={canonicalSnapshot()} onCommand={onCommand} />,
+    );
+    const top = region(host, 'Pergunta no topo da missão');
+    const field = fieldByLabel(top, 'Resposta livre');
+    expect(field.getAttribute('aria-invalid')).toBe('false');
+    enterText(field, 'Resposta');
+    click(button(top, 'Responder'));
+    await flush();
+    const alert = top.querySelector<HTMLElement>('[role="alert"]')!;
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(field.getAttribute('aria-describedby')).toBe(alert.id);
   });
 });
 

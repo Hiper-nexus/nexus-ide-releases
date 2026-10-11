@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   parseMarkdownBlocks,
   type MarkdownBlock,
@@ -7,6 +7,11 @@ import {
 } from '../../shared/markdown-blocks';
 import type { RichTextMark } from '../../shared/rich-text-marks';
 import { openExternalFromAnchor } from '../lib/open-external';
+import {
+  MARKDOWN_HIGHLIGHT_TIMEOUT_MS,
+  markdownHighlightLanguage,
+  withHighlightTimeout,
+} from '../lib/markdown-code-highlight';
 
 /**
  * Prosa markdown dos agentes (item T3 `ChatMarkdown`), só com elementos
@@ -27,6 +32,80 @@ export type MarkdownLinkMode = 'external' | 'text';
 export interface MarkdownViewProps {
   readonly markdown: string;
   readonly links?: MarkdownLinkMode;
+}
+
+type HighlightModule = typeof import('./MarkdownCodeHighlight');
+let highlightLoading: Promise<HighlightModule> | null = null;
+
+/** O realce (@pierre/diffs + Shiki) só carrega quando um bloco pede; falha tenta de novo depois. */
+function loadHighlight(): Promise<HighlightModule> {
+  highlightLoading ??= withHighlightTimeout(import('./MarkdownCodeHighlight'), MARKDOWN_HIGHLIGHT_TIMEOUT_MS).catch(
+    (error: unknown) => {
+      highlightLoading = null;
+      throw error;
+    },
+  );
+  return highlightLoading;
+}
+
+/** Erro do realce nunca derruba a prosa: o bloco volta ao texto puro (texto novo tenta de novo). */
+interface HighlightBoundaryProps {
+  readonly text: string;
+  readonly fallback: ReactNode;
+  readonly children: ReactNode;
+}
+
+class HighlightBoundary extends Component<HighlightBoundaryProps, { failed: boolean; text: string }> {
+  state = { failed: false, text: this.props.text };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  static getDerivedStateFromProps(props: HighlightBoundaryProps, state: { text: string }) {
+    return props.text === state.text ? null : { failed: false, text: props.text };
+  }
+
+  render(): ReactNode {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
+
+/**
+ * Bloco cercado. Sempre nasce `<pre><code>` puro; com linguagem conhecida e
+ * dentro do teto, troca pelo realce quando ele carrega. Sem linguagem,
+ * linguagem desconhecida, carregamento lento ou erro: fica o puro.
+ */
+function CodeBlock({ language, text }: { readonly language: string; readonly text: string }) {
+  const lang = markdownHighlightLanguage(language, text);
+  const [highlight, setHighlight] = useState<HighlightModule | null>(null);
+
+  useEffect(() => {
+    if (!lang) return;
+    let live = true;
+    loadHighlight().then(
+      (module) => {
+        if (live) setHighlight(module);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [lang]);
+
+  const plain = (
+    <pre className="markdown-view__code" data-language={language || undefined}>
+      <code className={language ? `language-${language}` : undefined}>{text}</code>
+    </pre>
+  );
+  if (!lang || !highlight) return plain;
+  const { MarkdownCodeHighlight } = highlight;
+  return (
+    <HighlightBoundary text={text} fallback={plain}>
+      <MarkdownCodeHighlight code={text} lang={lang} fallback={plain} />
+    </HighlightBoundary>
+  );
 }
 
 function marked(text: string, marks: readonly RichTextMark[], key: string): ReactNode {
@@ -96,11 +175,7 @@ function Blocks({ blocks, links }: { readonly blocks: readonly MarkdownBlock[]; 
               </p>
             );
           case 'code':
-            return (
-              <pre key={index} className="markdown-view__code" data-language={block.language || undefined}>
-                <code className={block.language ? `language-${block.language}` : undefined}>{block.text}</code>
-              </pre>
-            );
+            return <CodeBlock key={index} language={block.language} text={block.text} />;
           case 'quote':
             return (
               <blockquote key={index} className="markdown-view__quote">

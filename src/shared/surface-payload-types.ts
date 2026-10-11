@@ -1,6 +1,7 @@
 import type { DecisionProvider } from './decision-models';
 import type { LicenseErrorCode, LicenseDenialReason } from './license-errors';
 import type { SpawnRouteInfo } from './spawn-route';
+import type { MachineResources } from './machine-resources';
 /**
  * Catalog / browser / design / layout / PTY payload types shared across IPC.
  * Extracted from types.ts for the Akita ~800-line module budget.
@@ -341,6 +342,8 @@ export interface PerfSnapshot {
     maxSwapUsedMB: number;
     liveAgentPanes: number;
   };
+  /** F-1172: recursos da máquina (monitor T3 em TS) para o card de Uso e cotas. */
+  machine?: MachineResources;
   warmPool?: {
     hits: number;
     misses: number;
@@ -366,6 +369,8 @@ export interface PaneFootprintBroadcast {
   capturedAt: number;
   bySessionId: Record<string, { rssBytes: number | null; processCount: number }>;
   systemMemory: { freeMB: number | null; swapUsedMB: number | null } | null;
+  /** F-1172: mesmo resumo do PerfSnapshot.machine; ausente/null = sem leitura. */
+  machine?: MachineResources | null;
 }
 
 export interface RecipeLintIssue {

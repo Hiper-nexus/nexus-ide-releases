@@ -1,6 +1,12 @@
 /** @vitest-environment jsdom */
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import type { Editor } from '@tiptap/core';
+import { Selection } from '@tiptap/pm/state';
+import { tiptapJsonToMarkdown } from '../ComposerTiptapEditor';
+import { deliverDictationToClaim } from '../../voice/dictation-target';
+import { objectivePlainText } from '../../../shared/mission-identity';
+import { MISSION_INTENT_GOAL_MAX_CHARS } from '../../../shared/mission-intent';
 import {
   afterEach,
   beforeEach,
@@ -10,9 +16,10 @@ import {
   vi,
 } from 'vitest';
 import type { AccountInfo } from '../../../shared/account-types';
-import type {
-  MissionReview,
-  MissionSnapshot,
+import {
+  missionPrepareRequestSchema,
+  type MissionReview,
+  type MissionSnapshot,
 } from '../../../shared/mission-engine-contract';
 import {
   strictSquadAgentSchema,
@@ -365,10 +372,62 @@ function fieldByLabel<T extends HTMLInputElement | HTMLTextAreaElement | HTMLSel
   return field;
 }
 
+/** F-1170: o objetivo é o editor rich-text (Tiptap): superfície role=textbox. */
+type ObjectiveField = HTMLElement & { editor: Editor };
+
+/** O rótulo aponta (htmlFor) para a superfície do editor, nomeada por ele. */
+function objectiveField(host: HTMLElement, labelText: string): ObjectiveField {
+  const label = Array.from(host.querySelectorAll('label')).find((item) =>
+    item.textContent?.includes(labelText),
+  );
+  const field = label?.htmlFor ? document.getElementById(label.htmlFor) : null;
+  if (
+    !field ||
+    !host.contains(field) ||
+    field.getAttribute('role') !== 'textbox' ||
+    field.getAttribute('aria-labelledby') !== label?.id ||
+    !(field as ObjectiveField).editor
+  ) {
+    throw new Error(`Objective editor not found: ${labelText}`);
+  }
+  return field as ObjectiveField;
+}
+
+/** Valor do objetivo: o markdown canônico do editor (o que vai ao store). */
+function fieldValue(field: ObjectiveField): string {
+  return tiptapJsonToMarkdown(field.editor.getJSON());
+}
+
+function isObjectiveDisabled(field: ObjectiveField): boolean {
+  const off =
+    field.getAttribute('contenteditable') === 'false' &&
+    field.getAttribute('aria-disabled') === 'true' &&
+    !field.editor.isEditable;
+  const on =
+    field.getAttribute('contenteditable') === 'true' &&
+    !field.hasAttribute('aria-disabled') &&
+    field.editor.isEditable;
+  if (off === on) throw new Error('Objective editor disabled state is inconsistent');
+  return off;
+}
+
 function enterText(
-  field: HTMLInputElement | HTMLTextAreaElement,
+  field: HTMLInputElement | HTMLTextAreaElement | ObjectiveField,
   value: string,
 ): void {
+  if ('editor' in field) {
+    // Digitação do operador: troca o documento por texto literal, cursor no fim.
+    const { editor } = field;
+    act(() => {
+      const { schema } = editor.state;
+      const paragraphs = value
+        .split('\n')
+        .map((line) => schema.nodes.paragraph!.create(null, line ? schema.text(line) : null));
+      const tr = editor.state.tr.replaceWith(0, editor.state.doc.content.size, paragraphs);
+      editor.view.dispatch(tr.setSelection(Selection.atEnd(tr.doc)));
+    });
+    return;
+  }
   act(() => {
     const setter = Object.getOwnPropertyDescriptor(
       Object.getPrototypeOf(field),
@@ -383,7 +442,7 @@ async function renderAtTeam(): Promise<HTMLElement> {
   const host = render(<MissionSetup />);
   await flush();
   enterText(
-    fieldByLabel<HTMLTextAreaElement>(
+    objectiveField(
       host,
       'O que você quer que a equipe entregue?',
     ),
@@ -401,7 +460,14 @@ async function renderAtReview(): Promise<HTMLElement> {
   return host;
 }
 
+const geometry = new Map<string, PropertyDescriptor | undefined>();
+
 beforeEach(() => {
+  // F-1170: editor Tiptap real no objetivo; o jsdom só não tem geometria.
+  for (const [name, value] of [['getClientRects', () => []], ['getBoundingClientRect', () => new DOMRect()]] as const) {
+    geometry.set(name, Object.getOwnPropertyDescriptor(Range.prototype, name));
+    Object.defineProperty(Range.prototype, name, { configurable: true, value });
+  }
   localStorage.clear();
   for (const mock of Object.values(api)) mock.mockClear();
   api.listAdapters.mockResolvedValue([CLAUDE, CODEX]);
@@ -451,6 +517,11 @@ afterEach(() => {
   document.body.replaceChildren();
   vi.restoreAllMocks();
   restoreStorageDoubles();
+  for (const [name, original] of geometry) {
+    if (original) Object.defineProperty(Range.prototype, name, original);
+    else Reflect.deleteProperty(Range.prototype, name);
+  }
+  geometry.clear();
 });
 
 const installedStorageDoubles = new Set<() => void>();
@@ -877,7 +948,7 @@ describe('MissionSetup', () => {
     expect(project.readOnly).toBe(true);
     expect(project.value).toBe(WORKSPACE.path);
 
-    const objective = fieldByLabel<HTMLTextAreaElement>(
+    const objective = objectiveField(
       host,
       'O que você quer que a equipe entregue?',
     );
@@ -953,9 +1024,9 @@ describe('MissionSetup', () => {
     await flush();
 
     // Fechar o projeto volta à entrada expressa sem descartar a ideia.
-    const objective = fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido');
-    expect(objective.disabled).toBe(false);
-    expect(objective.value).toBe(
+    const objective = objectiveField(host, 'Seu pedido');
+    expect(isObjectiveDisabled(objective)).toBe(false);
+    expect(fieldValue(objective)).toBe(
       'Quero um sistema de agendamento para minha barbearia',
     );
     expect(
@@ -980,7 +1051,7 @@ describe('MissionSetup', () => {
     const host = render(<MissionSetup />);
     await flush();
 
-    const objective = fieldByLabel<HTMLTextAreaElement>(
+    const objective = objectiveField(
       host,
       'Seu pedido',
     );
@@ -993,7 +1064,7 @@ describe('MissionSetup', () => {
     );
 
     expect(button(host, 'Escolher pasta').disabled).toBe(false);
-    expect(objective.disabled).toBe(false);
+    expect(isObjectiveDisabled(objective)).toBe(false);
     expect(acceptance.disabled).toBe(false);
     // Sem bloqueio de leitura, não há motivo de desabilitação.
     expect(reason).toBeNull();
@@ -1023,7 +1094,7 @@ describe('MissionSetup', () => {
     });
 
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(
+      objectiveField(
         host,
         'O que você quer que a equipe entregue?',
       ),
@@ -1094,22 +1165,22 @@ describe('MissionSetup', () => {
       'Não foi possível ler o rascunho salvo',
     );
     expect(
-      fieldByLabel<HTMLTextAreaElement>(
+      isObjectiveDisabled(objectiveField(
         host,
         'Seu pedido',
-      ).disabled,
+      )),
     ).toBe(true);
 
     storage.restore();
     act(() => button(host, 'Tentar ler novamente').click());
     await flush();
 
-    const objective = fieldByLabel<HTMLTextAreaElement>(
+    const objective = objectiveField(
       host,
       'O que você quer que a equipe entregue?',
     );
-    expect(objective.disabled).toBe(false);
-    expect(objective.value).toBe('Rascunho salvo antes da falha de leitura');
+    expect(isObjectiveDisabled(objective)).toBe(false);
+    expect(fieldValue(objective)).toBe('Rascunho salvo antes da falha de leitura');
     expect(host.textContent).not.toContain('Rascunho somente na memória');
   });
 
@@ -1132,12 +1203,12 @@ describe('MissionSetup', () => {
     const retry = button(host, 'Tentar ler novamente');
     const blockedStepHeading =
       host.querySelector<HTMLHeadingElement>('#express-mission-title');
-    const objective = fieldByLabel<HTMLTextAreaElement>(
+    const objective = objectiveField(
       host,
       'Seu pedido',
     );
 
-    expect(objective.disabled).toBe(true);
+    expect(isObjectiveDisabled(objective)).toBe(true);
     expect([readAlert, retry]).toContain(document.activeElement);
     expect(document.activeElement).not.toBe(blockedStepHeading);
   });
@@ -1151,12 +1222,12 @@ describe('MissionSetup', () => {
     const host = render(<MissionSetup />);
     await flush();
 
-    const blockedObjective = fieldByLabel<HTMLTextAreaElement>(
+    const blockedObjective = objectiveField(
       host,
       'Seu pedido',
     );
     expect(host.textContent).toContain('O rascunho salvo está corrompido');
-    expect(blockedObjective.disabled).toBe(true);
+    expect(isObjectiveDisabled(blockedObjective)).toBe(true);
 
     withStorageFailure({
       setItem: () => {
@@ -1168,12 +1239,12 @@ describe('MissionSetup', () => {
     );
     await flush();
 
-    const objective = fieldByLabel<HTMLTextAreaElement>(
+    const objective = objectiveField(
       host,
       'Seu pedido',
     );
-    expect(objective.value).toBe('');
-    expect(objective.disabled).toBe(false);
+    expect(fieldValue(objective)).toBe('');
+    expect(isObjectiveDisabled(objective)).toBe(false);
     expect(host.textContent).not.toContain(
       'O rascunho salvo está corrompido',
     );
@@ -1183,10 +1254,10 @@ describe('MissionSetup', () => {
     enterText(objective, 'Começar uma missão nova depois do descarte');
     await flush();
 
-    expect(objective.value).toBe(
+    expect(fieldValue(objective)).toBe(
       'Começar uma missão nova depois do descarte',
     );
-    expect(objective.disabled).toBe(false);
+    expect(isObjectiveDisabled(objective)).toBe(false);
     expect(host.textContent).toContain('Rascunho somente na memória');
     expect(button(host, 'Tentar salvar novamente').disabled).toBe(false);
   });
@@ -1568,11 +1639,11 @@ describe('MissionSetup', () => {
     });
     await flush();
 
-    const objective = fieldByLabel<HTMLTextAreaElement>(
+    const objective = objectiveField(
       host,
       'O que você quer que a equipe entregue?',
     );
-    expect(objective.value).toBe('');
+    expect(fieldValue(objective)).toBe('');
     enterText(
       objective,
       'Auditar a interface do cadastro e garantir acessibilidade',
@@ -2100,7 +2171,7 @@ describe('MissionSetup', () => {
     expect(host.querySelector('nav[aria-label="Etapas da missão"]')).not.toBeNull();
     expect(host.querySelector('[aria-live="polite"]')).not.toBeNull();
     expect(
-      fieldByLabel<HTMLTextAreaElement>(
+      objectiveField(
         host,
         'O que você quer que a equipe entregue?',
       ).getAttribute('aria-describedby'),
@@ -2147,12 +2218,12 @@ describe('Caminho Expresso', () => {
     expect(project?.textContent).toBe(WORKSPACE.name);
     expect(project?.title).toBe(WORKSPACE.path);
     expect(button(host, 'Trocar pasta').type).toBe('button');
-    const objective = fieldByLabel<HTMLTextAreaElement>(
+    const objective = objectiveField(
       host,
       'Seu pedido',
     );
-    expect(objective.value).toBe('');
-    expect(objective.disabled).toBe(false);
+    expect(fieldValue(objective)).toBe('');
+    expect(isObjectiveDisabled(objective)).toBe(false);
     expect(button(host, 'Iniciar criação').type).toBe('submit');
     expect(button(host, 'Mais papéis e tamanho').type).toBe('button');
     expect(button(host, 'Ditar objetivo').type).toBe('button');
@@ -2208,7 +2279,7 @@ describe('Caminho Expresso', () => {
       host.querySelector('[data-launcher-action="workspace"] kbd')?.textContent,
     ).toBe('3');
 
-    const objective = fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido');
+    const objective = objectiveField(host, 'Seu pedido');
     act(() => {
       window.dispatchEvent(
         new KeyboardEvent('keydown', { key: '2', bubbles: true }),
@@ -2272,7 +2343,7 @@ describe('Caminho Expresso', () => {
     await flush();
     await flush();
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido'),
+      objectiveField(host, 'Seu pedido'),
       'Crie uma página de contato',
     );
 
@@ -2301,10 +2372,23 @@ describe('Caminho Expresso', () => {
     await flush();
   });
 
+  it('F-1174: leitor de tela ouve a lista de atalhos do início (as teclas visíveis são aria-hidden)', async () => {
+    const host = render(<MissionSetup home />);
+    await flush();
+    const announced = host.querySelector('#mission-setup-shortcuts');
+    expect(announced?.classList.contains('mission-setup__sr-only')).toBe(true);
+    expect(announced?.textContent).toBe(
+      'Atalhos do teclado: 1 Montar meus terminais; 2 Criar com IA; 3 Abrir projeto existente; ' +
+        '4 Terminal sem IA; 5 Quadro de tarefas; 6 Memória do projeto',
+    );
+    expect(host.querySelector('[data-launcher-action="pane"] kbd')?.getAttribute('aria-hidden')).toBe('true');
+  });
+
   it('atalhos do início não disparam no assistente avançado', async () => {
     const host = render(<MissionSetup />);
     await flush();
     expect(host.querySelector('[data-launcher-action="tasks"]')).toBeNull();
+    expect(host.querySelector('#mission-setup-shortcuts')).toBeNull();
     act(() => {
       window.dispatchEvent(
         new KeyboardEvent('keydown', { key: '5', bubbles: true }),
@@ -2318,7 +2402,7 @@ describe('Caminho Expresso', () => {
   it('abrir e recolher opções preserva o rascunho e inicia a equipe selecionada', async () => {
     const host = await renderAtExpress();
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido'),
+      objectiveField(host, 'Seu pedido'),
       'Crie uma página de contato',
     );
     await flush();
@@ -2352,7 +2436,7 @@ describe('Caminho Expresso', () => {
     ).toBeTruthy();
     act(() => details!.querySelector('summary')!.click());
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido'),
+      objectiveField(host, 'Seu pedido'),
       'Crie uma página de contato',
     );
     enterText(
@@ -2763,7 +2847,7 @@ describe('Caminho Expresso', () => {
   it('Iniciar missão recomenda a equipe e chama prepare+start com modo livre selado', async () => {
     const host = await renderAtExpress();
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(
+      objectiveField(
         host,
         'Seu pedido',
       ),
@@ -2809,7 +2893,7 @@ describe('Caminho Expresso', () => {
   it('Iniciar missão também funciona pela submissão nativa do formulário', async () => {
     const host = await renderAtExpress();
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(
+      objectiveField(
         host,
         'Seu pedido',
       ),
@@ -2850,7 +2934,7 @@ describe('Caminho Expresso', () => {
 
     const host = await renderAtExpress();
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(
+      objectiveField(
         host,
         'Seu pedido',
       ),
@@ -2910,7 +2994,7 @@ describe('Caminho Expresso', () => {
     ]);
     const host = await renderAtExpress();
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(
+      objectiveField(
         host,
         'Seu pedido',
       ),
@@ -2987,7 +3071,7 @@ describe('Caminho Expresso', () => {
     const host = await renderAtExpress();
 
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(
+      objectiveField(
         host,
         'Seu pedido',
       ),
@@ -3016,12 +3100,12 @@ describe('Caminho Expresso', () => {
     const host = render(<MissionSetup />);
     await flush();
 
-    const objective = fieldByLabel<HTMLTextAreaElement>(
+    const objective = objectiveField(
       host,
       'Seu pedido',
     );
     // A ideia pode ser escrita antes da pasta.
-    expect(objective.disabled).toBe(false);
+    expect(isObjectiveDisabled(objective)).toBe(false);
     enterText(objective, 'Construir uma landing page');
     await flush();
     expect(useMissionSetupStore.getState().draft.objective).toBe(
@@ -3048,7 +3132,7 @@ describe('Caminho Expresso', () => {
     )).toHaveLength(1);
 
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(
+      objectiveField(
         host,
         'Seu pedido',
       ),
@@ -3093,7 +3177,7 @@ describe('Caminho Expresso', () => {
     // trabalhadores para escrever código, o oposto do pedido.
     const host = await renderAtExpress();
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(
+      objectiveField(
         host,
         'Seu pedido',
       ),
@@ -3115,7 +3199,7 @@ describe('Caminho Expresso', () => {
   it('objetivo de trabalho comum continua em standard', async () => {
     const host = await renderAtExpress();
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(
+      objectiveField(
         host,
         'Seu pedido',
       ),
@@ -3136,7 +3220,7 @@ describe('Caminho Expresso', () => {
   it('Mais papéis e tamanho revela o wizard completo na etapa Equipe', async () => {
     const host = await renderAtExpress();
     enterText(
-      fieldByLabel<HTMLTextAreaElement>(
+      objectiveField(
         host,
         'Seu pedido',
       ),
@@ -3154,5 +3238,109 @@ describe('Caminho Expresso', () => {
     ).toContain('Equipe');
     expect(host.textContent).not.toContain('O que você quer criar?');
     expect(button(host, 'Voltar para missão')).toBeDefined();
+  });
+
+  it('F-1170: clique num exemplo substitui o objetivo no editor e a digitação continua no fim', async () => {
+    const host = await renderAtExpress();
+    const objective = objectiveField(host, 'Seu pedido');
+    enterText(objective, 'rascunho que será trocado');
+    act(() => objective.editor.view.focus());
+    act(() => button(host, 'Criar uma tela').click());
+    const example =
+      'crie uma página de contato simples com nome, e-mail e mensagem, no mesmo estilo do resto do site';
+    expect(useMissionSetupStore.getState().draft.objective).toBe(example);
+    expect(fieldValue(objective)).toBe(example);
+    expect(objective.editor.state.doc.textContent).toBe(example);
+    // O cursor estava no fim do rascunho maior: preso ao novo fim, sem perder o editor.
+    act(() => objective.editor.view.dispatch(objective.editor.state.tr.insertText('!')));
+    expect(useMissionSetupStore.getState().draft.objective).toBe(`${example}!`);
+  });
+
+  it('F-1170: ditado no Expresso acrescenta a fala como texto literal ao objetivo', async () => {
+    const host = await renderAtExpress();
+    const objective = objectiveField(host, 'Seu pedido');
+    enterText(objective, 'Crie uma calculadora');
+    act(() => {
+      deliverDictationToClaim('que mostre 2*3*4 e use my_file.ts');
+    });
+    const stored = useMissionSetupStore.getState().draft.objective;
+    expect(objectivePlainText(stored)).toBe('Crie uma calculadora que mostre 2*3*4 e use my_file.ts');
+    expect(fieldValue(objective)).toBe(stored);
+    expect(objective.editor.state.doc.textContent).toBe(
+      'Crie uma calculadora que mostre 2*3*4 e use my_file.ts',
+    );
+  });
+
+  it('F-1170: o teto do objetivo conta o markdown, igual ao schema do Main, e barra na borda com aviso', async () => {
+    const host = await renderAtExpress();
+    const objective = objectiveField(host, 'Seu pedido');
+    const max = MISSION_INTENT_GOAL_MAX_CHARS;
+    // `**b**` ocupa 5 caracteres do teto (o markdown é o que vai ao Main).
+    enterText(objective, 'a'.repeat(max - 6));
+    act(() => {
+      const { editor } = objective;
+      const end = editor.state.doc.content.size - 1;
+      editor.view.dispatch(editor.state.tr.insertText('b', end).addMark(end, end + 1, editor.schema.marks.bold!.create()));
+    });
+    const belowMax = `${'a'.repeat(max - 6)}**b**`;
+    expect(useMissionSetupStore.getState().draft.objective).toBe(belowMax);
+    act(() => objective.editor.view.dispatch(objective.editor.state.tr.insertText('c', 1)));
+    const atBorder = useMissionSetupStore.getState().draft.objective;
+    expect(atBorder).toHaveLength(max);
+    expect(atBorder.endsWith('**b**')).toBe(true);
+    act(() => objective.editor.view.dispatch(objective.editor.state.tr.insertText('d', 1)));
+    expect(useMissionSetupStore.getState().draft.objective).toBe(atBorder);
+    expect(host.querySelector('.composer-tiptap__limit')?.textContent).toContain(
+      `Limite de ${max} caracteres`,
+    );
+
+    // O Main é a autoridade: o pedido real na borda passa no schema; +1 não.
+    act(() => button(host, 'Iniciar criação').click());
+    await flush();
+    const sent = api.prepare.mock.calls[0]![0] as Record<string, unknown>;
+    expect(sent.objective).toBe(atBorder);
+    expect(missionPrepareRequestSchema.safeParse(sent).success).toBe(true);
+    expect(missionPrepareRequestSchema.safeParse({ ...sent, objective: `${atBorder}d` }).success).toBe(false);
+  });
+
+});
+
+describe('MissionStep — objetivo no editor rich-text (F-1170)', () => {
+  it('ditado acrescenta a fala, foca o objetivo e põe o cursor no fim', async () => {
+    const host = render(<MissionSetup />);
+    await flush();
+    const objective = objectiveField(host, 'O que você quer que a equipe entregue?');
+    enterText(objective, 'Corrija o checkout');
+    act(() => objective.editor.commands.setTextSelection(3));
+    act(() => {
+      deliverDictationToClaim('e prove com um teste');
+    });
+    expect(useMissionSetupStore.getState().draft.objective).toBe(
+      'Corrija o checkout e prove com um teste',
+    );
+    expect(fieldValue(objective)).toBe('Corrija o checkout e prove com um teste');
+    expect(document.activeElement).toBe(objective);
+    expect(objective.editor.state.selection.empty).toBe(true);
+    expect(objective.editor.state.selection.from).toBe(
+      Selection.atEnd(objective.editor.state.doc).from,
+    );
+  });
+
+  it('o objetivo formatado chega ao prepare em markdown, e o rótulo nomeia o editor', async () => {
+    const host = render(<MissionSetup />);
+    await flush();
+    const objective = objectiveField(host, 'O que você quer que a equipe entregue?');
+    expect(document.getElementById(objective.getAttribute('aria-labelledby')!)?.textContent).toContain(
+      'O que você quer que a equipe entregue?',
+    );
+    enterText(objective, 'Corrija o total');
+    const mod = /Mac|iPhone|iPad/.test(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
+    act(() => {
+      objective.editor.commands.setTextSelection({ from: 1, to: 8 });
+      objective.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'b', keyCode: 66, ...mod }),
+      );
+    });
+    expect(useMissionSetupStore.getState().draft.objective).toBe('**Corrija** o total');
   });
 });

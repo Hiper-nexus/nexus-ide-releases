@@ -303,3 +303,18 @@ describe('moldura de fim de linha em tempo linear (F-764 C.3)', () => {
     expect(cpuTimeMs(() => trimLineDecoration(line))).toBeLessThan(20);
   });
 });
+
+describe('agentPrompt — título de reserva a partir do objetivo em markdown (F-1170)', () => {
+  it('sem título, o cabeçalho usa o objetivo em texto puro; o objetivo segue em markdown no corpo', () => {
+    const objective = '**Corrija** o `total` do *checkout*';
+    const prompt = agentPrompt(
+      agent(),
+      mission({ title: undefined as unknown as string, description: objective }),
+      ['Coordenar e revisar', 'Implementar motor'],
+      false,
+    );
+    expect(prompt).toContain('## Missão: Corrija o total do checkout');
+    expect(prompt).not.toContain('## Missão: **');
+    expect(prompt).toContain(objective);
+  });
+});

@@ -16,6 +16,11 @@ import {
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 import { isMissionContextAttachmentPath } from '../../lib/mission-attachments';
 import { useObjectiveDictation } from './use-objective-dictation';
+import {
+  ComposerTiptapEditor,
+  plainTextToMarkdown,
+  type ComposerTiptapEditorHandle,
+} from '../ComposerTiptapEditor';
 
 interface MissionStepProps {
   workspace: WorkspaceInfo | null;
@@ -178,7 +183,8 @@ export function MissionStep({
 }: MissionStepProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const workspaceErrorRef = useRef<HTMLParagraphElement>(null);
-  const objectiveRef = useRef<HTMLTextAreaElement>(null);
+  const objectiveRef = useRef<ComposerTiptapEditorHandle>(null);
+  const objectiveCaretToEndRef = useRef(false);
   const newContextInputRef = useRef<HTMLInputElement>(null);
   const advancedRef = useRef<HTMLDetailsElement>(null);
   const removeButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -197,19 +203,28 @@ export function MissionStep({
   const advancedDisabled = draftFieldsDisabled || !workspace;
   const needsWorkspace = !workspace;
   // Ditado do objetivo: transcript literal APENSA ao texto atual (nunca
-  // substitui o que o operador já digitou) e respeita o teto do campo.
+  // substitui o que o operador já digitou) e respeita o teto do campo. O
+  // objetivo é markdown (F-1170): a fala entra como texto literal, e o
+  // cursor vai para o fim depois que o editor recebe o valor novo.
   const dictation = useObjectiveDictation({
     enabled: !draftEditingDisabled,
     onTranscript: (text) => {
       const current = draft.objective;
+      const spoken = plainTextToMarkdown(text);
       const next = current.trim().length > 0
-        ? `${current.replace(/\s+$/u, '')} ${text}`
-        : text;
+        ? `${current.replace(/\s+$/u, '')} ${spoken}`
+        : spoken;
       onObjectiveChange(next.slice(0, MISSION_INTENT_GOAL_MAX_CHARS));
       setObjectiveError(null);
+      objectiveCaretToEndRef.current = true;
       objectiveRef.current?.focus();
     },
   });
+  useEffect(() => {
+    if (!objectiveCaretToEndRef.current) return;
+    objectiveCaretToEndRef.current = false;
+    objectiveRef.current?.focusEnd();
+  }, [draft.objective]);
   const projectContextPaths = draft.contextPaths.filter(
     (path) => !isMissionContextAttachmentPath(path),
   );
@@ -430,7 +445,13 @@ export function MissionStep({
 
         <div className="mission-setup__field mission-setup__objective-field">
           <div className="mission-setup__objective-label-row">
-            <label htmlFor="mission-objective">
+            {/* F-1170: o objetivo é o editor rich-text (contenteditable),
+                nomeado por aria-labelledby; clicar no rótulo foca. */}
+            <label
+              id="mission-objective-label"
+              htmlFor="mission-objective"
+              onClick={() => objectiveRef.current?.focus()}
+            >
               O que você quer que a equipe entregue?
             </label>
             {dictation.available && (
@@ -458,20 +479,23 @@ export function MissionStep({
               </button>
             )}
           </div>
-          <textarea
-            id="mission-objective"
+          <ComposerTiptapEditor
             ref={objectiveRef}
+            id="mission-objective"
+            className="mission-setup__objective-editor"
+            surfaceClassName="mission-setup__objective-draft"
+            toolbar={false}
             value={draft.objective}
-            rows={8}
             maxLength={MISSION_INTENT_GOAL_MAX_CHARS}
             placeholder="Exemplo: refaça o fluxo de cadastro para ficar simples no celular e confirme que ele funciona do início ao fim."
-            disabled={draftEditingDisabled}
-            aria-invalid={Boolean(objectiveError)}
-            aria-describedby={objectiveDescribedBy}
-            onChange={(event) => {
+            editable={!draftEditingDisabled}
+            ariaLabelledBy="mission-objective-label"
+            ariaInvalid={Boolean(objectiveError)}
+            ariaDescribedBy={objectiveDescribedBy}
+            onChange={(markdown) => {
               if (draftEditingDisabled) return;
-              onObjectiveChange(event.target.value);
-              if (event.target.value.trim()) setObjectiveError(null);
+              onObjectiveChange(markdown);
+              if (markdown.trim()) setObjectiveError(null);
             }}
           />
           <span id="mission-objective-hint" className="mission-setup__hint">

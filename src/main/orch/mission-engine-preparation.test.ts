@@ -257,6 +257,18 @@ describe('mission routing before approval', () => {
     expect(secondReview.reviewSha256).not.toBe(review.reviewSha256);
   });
 
+  it('F-1170: sem título, a 1ª linha do objetivo vira título em texto puro e o objetivo guarda o markdown', async () => {
+    const objective = '**Corrija** o `total` do *checkout*\nE prove com ~~um~~ teste.';
+    const { engine, store } = createRoutingHarness(async () => ({ kind: 'mission-work', skills: [] }));
+    const { title: _omitted, ...untitled } = request;
+    const review = await engine.prepare(scope, { ...untitled, objective });
+    expect(store.current()?.title).toBe('Corrija o total do checkout');
+    expect(store.current()?.description).toBe(objective);
+    expect(store.current()?.intentContract?.goal).toBe(objective);
+    expect(review.objective).toBe(objective);
+    expect(review.title).toBe('Corrija o total do checkout');
+  });
+
   it('waits for routing before creating the reviewable mission', async () => {
     let finishRouting!: (route: unknown) => void;
     let classifiedObjective: string | undefined;

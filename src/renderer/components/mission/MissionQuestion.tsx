@@ -1,10 +1,14 @@
-import { useId, type Dispatch, type FormEvent, type SetStateAction } from 'react';
+import { useId, useRef, type Dispatch, type FormEvent, type SetStateAction } from 'react';
 import type {
   MissionEngineCommand,
   MissionQuestion as MissionQuestionContract,
   MissionSnapshot,
 } from '../../../shared/mission-engine-contract';
 import { toUserFacingMissionRecovery } from '../../lib/user-facing-mission-error';
+import {
+  ComposerTiptapEditor,
+  type ComposerTiptapEditorHandle,
+} from '../ComposerTiptapEditor';
 import { MarkdownWithMermaid } from '../MarkdownWithMermaid';
 
 const ANSWER_ERROR_MESSAGE =
@@ -41,6 +45,8 @@ export function MissionQuestion({
   const promptId = useId();
   const detailId = useId();
   const freeTextId = useId();
+  const freeTextLabelId = useId();
+  const freeTextRef = useRef<ComposerTiptapEditorHandle | null>(null);
   const errorId = useId();
   const answerText = state.text.trim();
   const hasAnswer = Boolean(state.optionId || answerText);
@@ -171,18 +177,32 @@ export function MissionQuestion({
 
       {question.allowFreeText && (
         <div className="mission-board__question-free-text">
-          <label htmlFor={freeTextId}>Resposta livre</label>
-          <textarea
+          {/* F-1170: editor rich-text (contenteditable) nomeado pelo rótulo;
+              Enter quebra linha como no textarea — o envio é o Responder. */}
+          <label
+            id={freeTextLabelId}
+            htmlFor={freeTextId}
+            onClick={() => freeTextRef.current?.focus()}
+          >
+            Resposta livre
+          </label>
+          <ComposerTiptapEditor
+            ref={freeTextRef}
             id={freeTextId}
+            className="mission-board__question-free-text-editor"
+            surfaceClassName="mission-board__question-free-text-draft"
+            toolbar={false}
             value={state.text}
-            disabled={state.pending}
-            aria-invalid={Boolean(state.error)}
-            aria-describedby={state.error ? errorId : undefined}
-            onChange={(event) => {
+            placeholder=""
+            editable={!state.pending}
+            ariaLabelledBy={freeTextLabelId}
+            ariaInvalid={Boolean(state.error)}
+            ariaDescribedBy={state.error ? errorId : undefined}
+            onChange={(markdown) => {
               if (state.pending) return;
               onStateChange({
                 optionId: null,
-                text: event.target.value,
+                text: markdown,
                 pending: false,
                 error: null,
               });
