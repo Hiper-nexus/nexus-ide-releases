@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.237 — Varredura fechada
+
+- **Confirmação de agente não segura mais a fila.** Uma confirmação pedida por agente que ninguém responde é negada depois de 10 min (nunca aprovada), o diálogo fecha e as confirmações dos outros panes andam. O agente recebe `confirmation_expired` com a orientação de pedir de novo (F-1236).
+- **Coleta de worktrees estável sob carga.** As recusas que não dependem de sonda (symlink, não-diretório, fora da raiz gerenciada) vêm antes da sonda de processos (`ps`/`lsof`). Com a máquina carregada, a rodada não vira mais "liveness indisponível" por inteiro, e a sonda só roda quando um candidato precisa dela. Nenhuma worktree em uso é removida sem prova (F-1239).
+- **Code map sem travar o Main.** O índice estrutural é lido de forma assíncrona e uma vez só, mesmo com consultas simultâneas (F-1238).
+- **Mac livre de asserções órfãs.** Os processos `caffeinate` deixados por versões e testes anteriores foram encerrados nesta máquina; a partir da 0.76.236 eles não ficam mais órfãos (F-1186/F-1213).
+- **Portão de regressão continua conservador em pane retomado.** A tentativa de datar o trabalho próprio pelo nascimento da conversa foi revertida antes da release: no checkout compartilhado ela voltava a culpar o pane pelo WIP de outro agente. A direção certa, a autoria pelo registro de edições da conversa, fica registrada (F-1237).
+
 ## 0.76.236 — Nexus testado por dentro
 
 - **Panes voltam a nascer do pane do operador.** Desde a 0.76.213, o primeiro helper aberto de um pane do operador morria em ~9 ms com `session_authority_revoked`: a missão da aba promove o próprio pane a orquestrador, e o vínculo de identidade lia isso como revogação. A promoção do próprio Main agora é aceita, também para chamadas do mesmo pane em andamento; qualquer outra mudança no meio continua sendo recusada. O E2E de missão do gate da release ganhou esse cenário e fica vermelho se a correção sair (F-1185/F-1204/F-1233).

@@ -10327,7 +10327,7 @@ export const RELEASE_076235: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076236: AppRelease = {
   version: '0.76.236',
   date: '2026-10-11',
   codename: 'Nexus testado por dentro',
@@ -10346,5 +10346,20 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Doctor sem alarme falso', detail: 'O Codex volta a contar como revisor independente, e o aviso de attestation diz qual alvo mudou.' },
     { title: 'Ranking de modelos atual', detail: 'Só recomenda modelos instalados, na versão mais nova de cada linha.' },
     { title: 'Portão de regressão justo', detail: 'WIP antigo de outro agente não bloqueia mais o encerramento do pane.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.237',
+  date: '2026-10-11',
+  codename: 'Varredura fechada',
+  summary: 'Fecha as pendências da varredura sênior: confirmações de agente não seguram mais a fila, a coleta de worktrees fica estável sob carga e o code map não trava o Main.',
+  highlights: [
+    { title: 'Confirmação que não trava a fila', detail: 'Sem resposta em 10 min, a confirmação pedida por agente é negada (nunca aprovada), o diálogo fecha e as dos outros panes andam. O agente é avisado para pedir de novo.' },
+    { title: 'Coleta de worktrees estável', detail: 'Symlink, pasta inválida ou fora da raiz são recusados antes da sonda de processos; com a máquina carregada a coleta segue decidindo certo e nada em uso é removido sem prova.' },
+  ],
+  fixes: [
+    { title: 'Code map sem travar o Main', detail: 'O índice estrutural é lido de forma assíncrona e uma vez só, mesmo com consultas simultâneas.' },
+    { title: 'Portão conservador em pane retomado', detail: 'A mudança que culparia o pane pelo WIP de outro agente no checkout compartilhado saiu antes da release.' },
   ],
 };
