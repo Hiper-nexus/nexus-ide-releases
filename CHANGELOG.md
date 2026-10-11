@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.238 — Autoria pela própria conversa
+
+- **Pane retomado responde pelas próprias edições.** O portão de regressão sabia de quem era um arquivo sujo só pela data. Um pane retomado (`--resume`) perdia a autoria do que ele mesmo tinha editado, e datar pela idade da conversa culparia o pane pelo WIP de outro agente no checkout compartilhado. Agora o Nexus registra os arquivos que a própria conversa editou (Edit/Write do Claude, `apply_patch` do Codex) com o hash do conteúdo. Na retomada, só conta como do pane o arquivo que ainda tem esse conteúdo. A reescrita de outro agente continua alheia, e o formatador do próprio turno é reconhecido no fim do turno (F-1237, F-1242, F-1249).
+- **Hooks mais robustos.** O `/hook/status` tria o corpo pelos primeiros 8 KB, aceita corpo grande só de ferramenta de edição numa conversa conhecida (até 3 por sessão, teto de 1 MB), e o servidor local ganhou prazos de recepção. A conversa só é fixada no início da sessão, id de outro pane é recusado, e o registro tem poda de 30 dias, limpeza ao esquecer a conversa, teto de linhas e migração de esquema (F-1240, F-1241, F-1243, F-1248, F-1250).
+- **CI de Linux sem GitHub Actions.** Com o orçamento de Actions esgotado, o job de Linux foi reproduzido num container local fiel ao runner (usuário `runner`, bubblewrap, zsh). Isso revelou quatro testes que falhariam no Linux: a prova do sandbox punha o runtime dentro do checkout, o teste de locale do `ps` oscilava pelo RSS, o teste do guard de shell não era portável e o do instalador Codex rodava fora de x64. Todos foram corrigidos, e o CI passa a instalar o zsh (F-1244–F-1247).
+
 ## 0.76.237 — Varredura fechada
 
 - **Confirmação de agente não segura mais a fila.** Uma confirmação pedida por agente que ninguém responde é negada depois de 10 min (nunca aprovada), o diálogo fecha e as confirmações dos outros panes andam. O agente recebe `confirmation_expired` com a orientação de pedir de novo (F-1236).

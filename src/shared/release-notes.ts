@@ -10349,7 +10349,7 @@ export const RELEASE_076236: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076237: AppRelease = {
   version: '0.76.237',
   date: '2026-10-11',
   codename: 'Varredura fechada',
@@ -10361,5 +10361,20 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Code map sem travar o Main', detail: 'O índice estrutural é lido de forma assíncrona e uma vez só, mesmo com consultas simultâneas.' },
     { title: 'Portão conservador em pane retomado', detail: 'A mudança que culparia o pane pelo WIP de outro agente no checkout compartilhado saiu antes da release.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.238',
+  date: '2026-10-11',
+  codename: 'Autoria pela própria conversa',
+  summary: 'O portão de regressão passa a saber quais arquivos a própria conversa editou: o pane retomado responde pelo que fez, sem herdar o WIP de outro agente. Hooks mais robustos e CI de Linux validado sem GitHub Actions.',
+  highlights: [
+    { title: 'Pane retomado responde pelo que fez', detail: 'O Nexus registra os arquivos que a conversa editou, com o hash do conteúdo. Na retomada, só conta como do pane o arquivo que ainda tem esse conteúdo; a reescrita de outro agente continua alheia.' },
+    { title: 'Hooks mais robustos', detail: 'Corpo de hook triado logo no início, com tetos por sessão e prazos de recepção no servidor local; o registro tem poda, limpeza e migração.' },
+  ],
+  fixes: [
+    { title: 'Formatador reconhecido', detail: 'O fim do turno atualiza o hash dos arquivos editados, então o format-on-save do próprio agente não apaga a autoria.' },
+    { title: 'Testes portáveis para Linux', detail: 'Quatro testes que falhariam no CI de Linux foram corrigidos, e o CI passa a instalar o zsh.' },
   ],
 };
