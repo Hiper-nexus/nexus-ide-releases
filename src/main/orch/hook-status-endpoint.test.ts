@@ -7,6 +7,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  HOOK_EDIT_BIG_BODIES_PER_SESSION,
   HOOK_EDIT_HEAD_BYTES,
   HOOK_EDIT_PROVENANCE_MAX_BODY_BYTES,
   HOOK_STATUS_MAX_BODY_BYTES,
@@ -674,11 +675,18 @@ function openHook(event: string): { req: http.ClientRequest; status: Promise<num
   return { req, status };
 }
 
+/** Conexões que o servidor ainda vê abertas (o abort do cliente já chegou?). */
+function serverConnections(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server!.getConnections((error, count) => (error ? reject(error) : resolve(count)));
+  });
+}
+
 function within<T>(promise: Promise<T>, ms = 3_000): Promise<T | 'pending'> {
   return Promise.race([promise, new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), ms))]);
 }
 
-describe('F-1240: corpo grande do /hook/status decide cedo, um por sessão, até 1 MB', () => {
+describe('F-1240: corpo grande do /hook/status decide cedo, poucos por sessão (F-1250), até 1 MB', () => {
   const WRITE_HEAD = '{"session_id":"conv-a","tool_name":"Write","tool_input":{"file_path":"/r/big.md","content":"';
   const PAST_STATUS_CAP = 'x'.repeat(HOOK_STATUS_MAX_BODY_BYTES + 4_096);
 
@@ -724,30 +732,33 @@ describe('F-1240: corpo grande do /hook/status decide cedo, um por sessão, até
     expect(record).not.toHaveBeenCalled();
   });
 
-  it('segundo corpo grande concorrente na mesma sessão: 400 na hora; a vaga volta quando o primeiro termina', async () => {
+  it('F-1250: 3 corpos grandes concorrentes na mesma sessão passam; o 4º recebe 400 na hora; abortar libera a vaga', async () => {
     const { record, head } = await spies(BOUND_CONVERSATION);
     await boot();
-    const first = openHook('tool-complete');
-    first.req.write(WRITE_HEAD);
-    first.req.write(PAST_STATUS_CAP);
-    // O primeiro passou do teto do status e foi aceito pelo começo do corpo.
-    await vi.waitFor(() => expect(head).toHaveBeenCalledTimes(1), { timeout: 3_000 });
+    const big = () => {
+      const open = openHook('tool-complete');
+      open.req.write(WRITE_HEAD);
+      open.req.write(PAST_STATUS_CAP);
+      return open;
+    };
+    const held = Array.from({ length: HOOK_EDIT_BIG_BODIES_PER_SESSION }, big);
+    // Os 3 passaram do teto do status e foram aceitos pelo começo do corpo.
+    await vi.waitFor(() => expect(head).toHaveBeenCalledTimes(3), { timeout: 3_000 });
 
-    const second = openHook('tool-complete');
-    second.req.write(WRITE_HEAD);
-    second.req.write(PAST_STATUS_CAP);
-    expect(await within(second.status)).toBe(400);
-    second.req.destroy();
-    expect(record).not.toHaveBeenCalled();
+    const fourth = big();
+    expect(await within(fourth.status)).toBe(400);
+    fourth.req.destroy();
+    expect(head).toHaveBeenCalledTimes(3); // sem vaga, nem olha o começo
 
-    first.req.end('"}}');
-    expect(await within(first.status)).toBe(400); // o status recusa; a proveniência grava
-    expect(record).toHaveBeenCalledTimes(1);
+    // O 1º desiste no meio: quando o servidor vê o fim da conexão, a vaga volta.
+    held[0]!.req.destroy();
+    await vi.waitFor(async () => expect(await serverConnections()).toBe(2), { timeout: 3_000 });
+    const fifth = big();
+    await vi.waitFor(() => expect(head).toHaveBeenCalledTimes(4), { timeout: 3_000 });
 
-    const third = openHook('tool-complete');
-    third.req.end(`${WRITE_HEAD}${PAST_STATUS_CAP}"}}`);
-    expect(await within(third.status)).toBe(400);
-    expect(record).toHaveBeenCalledTimes(2);
+    for (const open of [held[1]!, held[2]!, fifth]) open.req.end('"}}');
+    for (const open of [held[1]!, held[2]!, fifth]) expect(await within(open.status)).toBe(400); // o status recusa
+    expect(record).toHaveBeenCalledTimes(3); // a proveniência grava
   });
 
   it('acima de 1 MB: recusado sem ler o resto, nada gravado', async () => {

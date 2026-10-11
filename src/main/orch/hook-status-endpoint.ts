@@ -61,6 +61,8 @@ export const HOOK_STATUS_MAX_BODY_BYTES = 64 * 1024;
 export const HOOK_EDIT_PROVENANCE_MAX_BODY_BYTES = 1024 * 1024;
 /** F-1240: começo do corpo que decide, ao passar dos 64 KB, se é edição. */
 export const HOOK_EDIT_HEAD_BYTES = 8 * 1024;
+/** F-1250: corpos de edição acima dos 64 KB em leitura ao mesmo tempo por sessão (Writes paralelas). */
+export const HOOK_EDIT_BIG_BODIES_PER_SESSION = 3;
 
 export const HOOK_STATUS_FLAVORS = [
   'claude',
@@ -319,14 +321,14 @@ function sendJson(
   res.end(body);
 }
 
-/** F-1240: sessões com um corpo de edição acima do teto do status em leitura. */
-const bigBodySessions = new Set<string>();
+/** F-1240/F-1250: corpos de edição acima do teto do status em leitura, por sessão. */
+const bigBodySessions = new Map<string, number>();
 
 /**
  * Lê o corpo até 64 KB. Passou disso, decide NA HORA, pelos primeiros 8 KB e
  * sem guardar mais nada, se segue lendo (F-1240): só um PostToolUse de edição
- * (`bigBodySession`: pane com conversa vinculada), um por sessão de cada vez,
- * até 1 MB. O resto recebe 400 sem que o Main bufferize o corpo.
+ * (`bigBodySession`: pane com conversa vinculada), até 3 por sessão ao mesmo
+ * tempo (F-1250), até 1 MB. O resto recebe 400 sem que o Main bufferize o corpo.
  */
 function readHookStatusBody(
   req: http.IncomingMessage,
@@ -340,7 +342,11 @@ function readHookStatusBody(
     const settle = (error: Error | null): void => {
       if (settled) return;
       settled = true;
-      if (holdsBigSlot && bigBodySession) bigBodySessions.delete(bigBodySession);
+      if (holdsBigSlot && bigBodySession) {
+        const left = (bigBodySessions.get(bigBodySession) ?? 1) - 1;
+        if (left > 0) bigBodySessions.set(bigBodySession, left);
+        else bigBodySessions.delete(bigBodySession);
+      }
       const body = error ? null : Buffer.concat(chunks);
       chunks = [];
       if (body) resolve(body);
@@ -351,14 +357,15 @@ function readHookStatusBody(
       size += chunk.length;
       if (size > HOOK_STATUS_MAX_BODY_BYTES && !holdsBigSlot) {
         const head = Buffer.concat([...chunks, chunk], Math.min(size, HOOK_EDIT_HEAD_BYTES)).toString('utf8');
-        if (!bigBodySession || bigBodySessions.has(bigBodySession) || !hookBodyMayCarryEdit(head)) {
+        const reading = bigBodySession ? bigBodySessions.get(bigBodySession) ?? 0 : 0;
+        if (!bigBodySession || reading >= HOOK_EDIT_BIG_BODIES_PER_SESSION || !hookBodyMayCarryEdit(head)) {
           // Reject WITHOUT destroying the socket so the handler can still
           // flush a 400 (destroy-then-respond races and the client sees a
           // dropped connection instead of the validation error).
           settle(new Error('body-too-large'));
           return;
         }
-        bigBodySessions.add(bigBodySession);
+        bigBodySessions.set(bigBodySession, reading + 1);
         holdsBigSlot = true;
       }
       if (size > HOOK_EDIT_PROVENANCE_MAX_BODY_BYTES) {
