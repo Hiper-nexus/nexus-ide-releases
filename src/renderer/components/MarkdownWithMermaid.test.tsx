@@ -4,6 +4,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const api = vi.hoisted(() => ({ initialize: vi.fn(), render: vi.fn() }));
 vi.mock('mermaid', () => ({ default: api }));
+const highlighted = vi.hoisted(() => [] as Array<{ code: string; lang: string }>);
+vi.mock('./MarkdownCodeHighlight', () => ({
+  MarkdownCodeHighlight: ({ code, lang }: { code: string; lang: string }) => {
+    highlighted.push({ code, lang });
+    return <div data-testid="highlighted" data-lang={lang}>{code}</div>;
+  },
+}));
 import { MARKDOWN_MAX_DIAGRAMS, MarkdownWithMermaid } from './MarkdownWithMermaid';
 import { MARKDOWN_MAX_CHARS } from '../../shared/markdown-blocks';
 
@@ -131,5 +138,15 @@ describe('MarkdownWithMermaid real async consumer / real sanitizer', () => {
     const big = render(<MarkdownWithMermaid source={'a'.repeat(MARKDOWN_MAX_CHARS + 5)} />);
     expect(big.host.querySelector('[role="note"]')?.textContent).toMatch(/Texto longo/);
     expect(big.host.querySelector('p')?.textContent).toHaveLength(MARKDOWN_MAX_CHARS);
+  });
+  it('F-1176: code highlight sits beside diagrams without touching Mermaid blocks', async () => {
+    highlighted.length = 0;
+    const source = '```ts\nconst a = 1;\n```\n\n' + SOURCE;
+    const { host } = render(<MarkdownWithMermaid source={source} />); await settle();
+    expect(host.querySelector('[data-testid="highlighted"]')?.getAttribute('data-lang')).toBe('typescript');
+    expect(highlighted.every((call) => call.lang !== 'mermaid' && !call.code.includes('graph TD'))).toBe(true);
+    expect(host.querySelector('figure.markdown-with-mermaid__diagram')).not.toBeNull();
+    expect(output(host)).not.toBeNull();
+    expect(api.render).toHaveBeenCalledOnce();
   });
 });
