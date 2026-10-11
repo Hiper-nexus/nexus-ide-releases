@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import { z } from 'zod';
 import { TERMINAL_BLOCK_CHANNELS } from '../../shared/channels';
 import type { CommandBlock } from '../../shared/command-block';
@@ -8,6 +8,13 @@ import {
   type CommandRefineryMutationResult,
   type CommandRefinerySuggestResult,
 } from '../../shared/command-refinery';
+import {
+  cliHistoryImportRequestSchema,
+  commandHistoryOriginOf,
+  commandHistorySearchRequestSchema,
+  type CliHistoryImportResult,
+  type CommandHistorySearchResult,
+} from '../../shared/cli-history';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
@@ -25,6 +32,17 @@ import {
 } from './command-block-tracker';
 import { resolveCommandBlockScope } from './command-block-scope-registry';
 import { CommandRefineryStore } from './command-refinery-store';
+import { handleTrusted } from '../security/trusted-ipc';
+import { CommandBlockStore } from './command-block-store';
+import { importCliHistoryForScope } from './cli-history-import-service';
+
+export interface TerminalBlockActionsIpcOptions {
+  /** Raiz do userData (onde mora `provider-state`). */
+  readonly userDataPath?: () => string;
+}
+
+/** Uma importação por checkout por vez (duplo clique, paleta + menu). */
+const importsInFlight = new Set<string>();
 
 const listRequestSchema = z
   .object({
@@ -43,8 +61,10 @@ const listRequestSchema = z
  */
 export function registerTerminalBlockActionsIpc(
   runtimeManager: ProjectRuntimeManager | null,
+  options: TerminalBlockActionsIpcOptions = {},
 ): void {
   const deps = defaultTerminalBlockActionDeps();
+  const userDataPath = options.userDataPath ?? (() => app.getPath('userData'));
   ipcMain.handle(
     TERMINAL_BLOCK_CHANNELS.action,
     async (event, raw): Promise<TerminalBlockActionResult> => {
@@ -184,6 +204,101 @@ export function registerTerminalBlockActionsIpc(
         return {
           ok: false,
           error: reportRefineryFailure(err, 'Execução recusada'),
+        };
+      }
+    },
+  );
+
+  // F-1171: transcripts das CLIs → command_blocks do projeto do pane dono.
+  // Status `unknown` não alimenta o refinador (sem exit code provado).
+  // Canais novos já nascem no `handleTrusted` (QLT-07): só a janela principal.
+  handleTrusted(
+    TERMINAL_BLOCK_CHANNELS.importCliHistory,
+    async (event, raw): Promise<CliHistoryImportResult> => {
+      try {
+        if (!isCommandHistoryEnabled() || !runtimeManager) {
+          return { ok: false, error: 'Histórico de comandos desligado' };
+        }
+        const req = cliHistoryImportRequestSchema.parse(raw);
+        const owned = resolveOwnedRefineryContext(event.sender, req);
+        if (!owned) {
+          return {
+            ok: false,
+            error: 'Abra um terminal deste projeto para importar o histórico',
+          };
+        }
+        const key = owned.scope.checkoutId;
+        if (importsInFlight.has(key)) {
+          return { ok: false, error: 'Importação já em andamento' };
+        }
+        importsInFlight.add(key);
+        try {
+          const store = new CommandBlockStore(runtimeManager, owned.scope);
+          const counts = await importCliHistoryForScope({
+            userDataPath: userDataPath(),
+            checkoutId: owned.scope.checkoutId,
+            target: {
+              workspaceId: owned.context.workspaceId,
+              projectRoot: owned.context.projectRoot,
+            },
+            fallbackCwd: owned.context.cwd,
+            insert: (input) => store.insertWithOutcome(input).inserted,
+          });
+          if (counts.imported > 0) {
+            try {
+              store.prune();
+              store.enforceSizeBudget();
+            } catch (err) {
+              console.warn('[command-block] retention after import failed:', err);
+            }
+          }
+          return { ok: true, counts };
+        } finally {
+          importsInFlight.delete(key);
+        }
+      } catch (err) {
+        return {
+          ok: false,
+          error: reportRefineryFailure(err, 'Não foi possível importar o histórico'),
+        };
+      }
+    },
+  );
+
+  handleTrusted(
+    TERMINAL_BLOCK_CHANNELS.searchHistory,
+    (event, raw): CommandHistorySearchResult => {
+      try {
+        if (!isCommandHistoryEnabled() || !runtimeManager) {
+          return { entries: [], hasMore: false };
+        }
+        const req = commandHistorySearchRequestSchema.parse(raw);
+        const owned = resolveOwnedRefineryContext(event.sender, req);
+        if (!owned) return { entries: [], hasMore: false };
+        const limit = req.limit ?? 20;
+        const query = req.query?.trim();
+        const rows = new CommandBlockStore(runtimeManager, owned.scope).search({
+          ...(query ? { commandContains: query } : {}),
+          // +1 só para saber se há próxima página.
+          limit: limit + 1,
+          offset: req.offset ?? 0,
+        });
+        return {
+          entries: rows.slice(0, limit).map((block) => ({
+            id: block.id,
+            command: block.command,
+            cwd: block.cwd,
+            status: block.status,
+            startedAt: block.startedAt,
+            origin: commandHistoryOriginOf(block.sessionId),
+          })),
+          hasMore: rows.length > limit,
+        };
+      } catch (err) {
+        return {
+          entries: [],
+          hasMore: false,
+          error: reportRefineryFailure(err, 'Não foi possível buscar no histórico'),
         };
       }
     },

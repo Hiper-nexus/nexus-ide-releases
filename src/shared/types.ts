@@ -171,6 +171,12 @@ import type {
   CommandRefinerySuggestResult,
 } from './command-refinery';
 import type {
+  CliHistoryImportRequest,
+  CliHistoryImportResult,
+  CommandHistorySearchRequest,
+  CommandHistorySearchResult,
+} from './cli-history';
+import type {
   AdapterAuthStatus,
   CliAutoUpdateStatus,
   ProviderConfigPatch,
@@ -1191,6 +1197,12 @@ export interface NexusApi {
     runSuggestion(
       req: CommandRefineryCommandRequest,
     ): Promise<CommandRefineryMutationResult>;
+    /** F-1171: transcripts das CLIs do checkout → histórico persistido. */
+    importCliHistory(req: CliHistoryImportRequest): Promise<CliHistoryImportResult>;
+    /** F-1171: busca paginada no histórico persistido (importado + gravado). */
+    searchHistory(
+      req: CommandHistorySearchRequest,
+    ): Promise<CommandHistorySearchResult>;
   };
   /** Unified SearchMixer (flag: feature.search.mixer). */
   searchMixer: {

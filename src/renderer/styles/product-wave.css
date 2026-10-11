@@ -795,6 +795,62 @@
   background: color-mix(in srgb, var(--text) 9%, transparent);
 }
 
+/* F-1171: histórico persistido (importado das CLIs + gravado). */
+.cmd-history {
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--border);
+}
+
+.cmd-history__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.cmd-history__import {
+  min-height: 28px;
+  color: var(--accent);
+}
+
+.cmd-history__status {
+  margin: 0;
+  padding: var(--space-1) var(--space-1) var(--space-2);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+
+.cmd-history__status--done {
+  color: var(--ok);
+}
+
+.cmd-history__status--error {
+  color: var(--danger);
+}
+
+.cmd-history__origin {
+  flex: 0 0 auto;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cmd-history__origin--imported {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.cmd-history__more {
+  width: 100%;
+  margin-top: var(--space-1);
+}
+
 /* Mission journal (contextual panel) */
 .mission-journal__controls {
   flex-wrap: wrap;
