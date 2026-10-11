@@ -2265,6 +2265,79 @@
   resize: vertical;
 }
 
+/* F-1170: resposta livre da pergunta também é o editor Tiptap. */
+.mission-board__question-free-text-editor {
+  min-width: 0;
+  width: 100%;
+}
+
+.composer-tiptap__surface.mission-board__question-free-text-draft {
+  min-height: var(--space-8);
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+
+.composer-tiptap__surface.mission-board__question-free-text-draft:hover:not([contenteditable='false']) {
+  border-color: color-mix(in srgb, var(--text) 28%, var(--border-strong));
+  background: color-mix(in srgb, var(--text) 5%, var(--bg-elevated));
+}
+
+.composer-tiptap__surface.mission-board__question-free-text-draft:focus {
+  border-color: var(--accent);
+}
+
+.composer-tiptap__surface.mission-board__question-free-text-draft[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.composer-tiptap__surface.mission-board__question-free-text-draft[contenteditable='false'] {
+  border-color: var(--border-strong);
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+/* F-1170: o rascunho é o editor Tiptap (contenteditable). A superfície do
+   composer cede ao visual do campo de orientação; :disabled não existe num
+   div, então o estado de envio em curso vem por contenteditable=false. */
+.mission-board__direction-editor {
+  min-width: 0;
+  width: 100%;
+}
+
+.composer-tiptap__surface.mission-board__direction-draft {
+  min-height: calc(var(--space-8) + var(--space-4));
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+
+.composer-tiptap__surface.mission-board__direction-draft:focus {
+  border-color: var(--accent);
+}
+
+.composer-tiptap__surface.mission-board__direction-draft[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.composer-tiptap__surface.mission-board__direction-draft[contenteditable='false'] {
+  border-color: var(--border-strong);
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .mission-board__direction-hint {
   color: var(--text-dim);
   font-size: var(--text-2xs);
@@ -2550,6 +2623,26 @@
 }
 
 .mission-board__direct-bar .mission-board__direction-draft:focus {
+  outline: none;
+}
+
+.mission-board__direct-bar .mission-board__direction-editor {
+  flex: 1;
+}
+
+.mission-board__direct-bar .composer-tiptap__surface.mission-board__direction-draft {
+  min-height: 34px;
+  max-height: 120px;
+  padding: 7px 4px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.mission-board__direct-bar .composer-tiptap__surface.mission-board__direction-draft:focus,
+.mission-board__direct-bar .composer-tiptap__surface.mission-board__direction-draft:focus-visible {
   outline: none;
 }
 

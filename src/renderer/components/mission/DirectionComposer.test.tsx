@@ -1,7 +1,9 @@
 /** @vitest-environment jsdom */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Editor } from '@tiptap/core';
+import { Selection } from '@tiptap/pm/state';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   MissionAgentSnapshot,
   MissionEngineCommand,
@@ -9,6 +11,7 @@ import type {
 } from '../../../shared/mission-engine-contract';
 import { DirectionComposer } from './DirectionComposer';
 import type { QuoteDraft } from '../../lib/quote-reference';
+import { tiptapJsonToMarkdown } from '../ComposerTiptapEditor';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -72,6 +75,15 @@ function deferred<T>(): Deferred<T> {
 }
 
 const mountedRoots = new Set<Root>();
+const geometry = new Map<string, PropertyDescriptor | undefined>();
+
+beforeEach(() => {
+  // F-1170: o rascunho é o editor Tiptap real; o jsdom só não tem geometria.
+  for (const [name, value] of [['getClientRects', () => []], ['getBoundingClientRect', () => new DOMRect()]] as const) {
+    geometry.set(name, Object.getOwnPropertyDescriptor(Range.prototype, name));
+    Object.defineProperty(Range.prototype, name, { configurable: true, value });
+  }
+});
 
 afterEach(() => {
   act(() => {
@@ -79,7 +91,15 @@ afterEach(() => {
   });
   mountedRoots.clear();
   document.body.innerHTML = '';
+  for (const [name, original] of geometry) {
+    if (original) Object.defineProperty(Range.prototype, name, original);
+    else Reflect.deleteProperty(Range.prototype, name);
+  }
+  geometry.clear();
 });
+
+/** F-1170: o rascunho é a superfície do editor rich-text (role=textbox). */
+type DraftSurface = HTMLElement & { editor: Editor };
 
 function mountComposer(
   onCommand: (command: MissionEngineCommand) => Promise<MissionSnapshot>,
@@ -106,11 +126,11 @@ function mountComposer(
 
 function composerControls(host: HTMLElement): {
   target: HTMLSelectElement;
-  draft: HTMLTextAreaElement;
+  draft: DraftSurface;
   submit: HTMLButtonElement;
 } {
   const target = host.querySelector<HTMLSelectElement>('select');
-  const draft = host.querySelector<HTMLTextAreaElement>('textarea');
+  const draft = host.querySelector<DraftSurface>('[role="textbox"]');
   const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]');
   if (!target || !draft || !submit) {
     throw new Error('DirectionComposer must expose target, draft, and submit controls');
@@ -118,17 +138,30 @@ function composerControls(host: HTMLElement): {
   return { target, draft, submit };
 }
 
-function setDraft(draft: HTMLTextAreaElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(
-    HTMLTextAreaElement.prototype,
-    'value',
-  )?.set;
-  if (!setter) throw new Error('textarea value setter unavailable');
-
+/** Digitação do operador: troca o documento inteiro por texto literal, cursor no fim. */
+function setDraft(draft: DraftSurface, value: string): void {
+  const { editor } = draft;
   act(() => {
-    setter.call(draft, value);
-    draft.dispatchEvent(new Event('input', { bubbles: true }));
+    const { schema } = editor.state;
+    const paragraphs = value
+      .split('\n')
+      .map((line) => schema.nodes.paragraph!.create(null, line ? schema.text(line) : null));
+    const tr = editor.state.tr.replaceWith(0, editor.state.doc.content.size, paragraphs);
+    editor.view.dispatch(tr.setSelection(Selection.atEnd(tr.doc)));
   });
+}
+
+/** Valor do rascunho: o markdown canônico do editor (o que o envio lê). */
+function draftValue(draft: DraftSurface): string {
+  return tiptapJsonToMarkdown(draft.editor.getJSON());
+}
+
+function isDraftDisabled(draft: DraftSurface): boolean {
+  return (
+    draft.getAttribute('contenteditable') === 'false' &&
+    draft.getAttribute('aria-disabled') === 'true' &&
+    !draft.editor.isEditable
+  );
 }
 
 function selectTarget(target: HTMLSelectElement, value: string): void {
@@ -139,7 +172,7 @@ function selectTarget(target: HTMLSelectElement, value: string): void {
 }
 
 function pressEnter(
-  draft: HTMLTextAreaElement,
+  draft: HTMLElement,
   shiftKey = false,
 ): KeyboardEvent {
   const event = new KeyboardEvent('keydown', {
@@ -230,13 +263,17 @@ describe('DirectionComposer', () => {
     const { draft } = composerControls(host);
 
     setDraft(draft, 'Primeira linha');
-    const shiftEnter = pressEnter(draft, true);
+    pressEnter(draft, true);
 
-    expect(shiftEnter.defaultPrevented).toBe(false);
+    // F-1170: no editor o ProseMirror insere a quebra ele mesmo (por isso o
+    // default do Shift+Enter é dele) — a prova é a linha nova no rascunho.
+    expect(draftValue(draft)).toBe('Primeira linha\n');
     expect(onCommand).not.toHaveBeenCalled();
 
-    // jsdom does not perform the native textarea insertion after keydown.
-    setDraft(draft, 'Primeira linha\nSegunda linha');
+    act(() => {
+      draft.editor.view.dispatch(draft.editor.state.tr.insertText('Segunda linha'));
+    });
+    expect(draftValue(draft)).toBe('Primeira linha\nSegunda linha');
     const enter = pressEnter(draft);
     await act(async () => {
       await Promise.resolve();
@@ -321,9 +358,9 @@ describe('DirectionComposer', () => {
 
     expect(onCommand).toHaveBeenCalledTimes(1);
     expect(target.disabled).toBe(true);
-    expect(draft.disabled).toBe(true);
+    expect(isDraftDisabled(draft)).toBe(true);
     expect(submit.disabled).toBe(true);
-    expect(draft.value).toBe('Mantenha este rascunho até a confirmação.');
+    expect(draftValue(draft)).toBe('Mantenha este rascunho até a confirmação.');
 
     act(() => {
       submit.click();
@@ -342,9 +379,10 @@ describe('DirectionComposer', () => {
       await pending.promise;
     });
 
-    expect(draft.value).toBe('');
+    expect(draftValue(draft)).toBe('');
     expect(target.disabled).toBe(false);
-    expect(draft.disabled).toBe(false);
+    expect(isDraftDisabled(draft)).toBe(false);
+    expect(draft.editor.isEditable).toBe(true);
     expect(submit.disabled).toBe(true);
   });
 
@@ -367,7 +405,7 @@ describe('DirectionComposer', () => {
 
     const alert = host.querySelector<HTMLElement>('[role="alert"]');
     expect(onCommand).toHaveBeenCalledTimes(1);
-    expect(draft.value).toBe(longDraft);
+    expect(draftValue(draft)).toBe(longDraft);
     expect(target.value).toBe('result-reviewer');
     expect(alert).not.toBeNull();
     expect(alert?.textContent).toBe(
@@ -403,7 +441,7 @@ describe('DirectionComposer', () => {
     const onCommand = successfulCommand();
     const host = mountComposer(onCommand, true);
     const target = host.querySelector<HTMLSelectElement>('select');
-    const draft = host.querySelector<HTMLTextAreaElement>('textarea');
+    const draft = host.querySelector<DraftSurface>('[role="textbox"]');
     const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]');
     const hidden = !target && !draft && !submit;
 
@@ -414,7 +452,7 @@ describe('DirectionComposer', () => {
       expect(draft).not.toBeNull();
       expect(submit).not.toBeNull();
       expect(target?.disabled).toBe(true);
-      expect(draft?.disabled).toBe(true);
+      expect(draft && isDraftDisabled(draft)).toBe(true);
       expect(submit?.disabled).toBe(true);
 
       act(() => {
@@ -430,6 +468,59 @@ describe('DirectionComposer', () => {
     }
 
     expect(onCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe('DirectionComposer — editor rich-text (F-1170)', () => {
+  it('o rascunho é nomeado pelo rótulo visível, descrito pela dica e marca aria-invalid no erro', async () => {
+    const onCommand = vi.fn(async (_command: MissionEngineCommand) => {
+      throw new Error('falha');
+    });
+    const host = mountComposer(onCommand);
+    const { draft, submit } = composerControls(host);
+    const labelId = draft.getAttribute('aria-labelledby');
+    expect(labelId && document.getElementById(labelId)?.textContent).toBe('Orientação');
+    const hintId = draft.getAttribute('aria-describedby')!;
+    expect(document.getElementById(hintId)?.textContent).toContain('Enter envia');
+    expect(draft.getAttribute('aria-invalid')).toBe('false');
+    expect(draft.getAttribute('aria-placeholder')).toBe('Escreva uma orientação para a equipe');
+
+    setDraft(draft, 'Refaça');
+    await act(async () => {
+      submit.click();
+      await Promise.resolve();
+    });
+    const alert = host.querySelector<HTMLElement>('[role="alert"]')!;
+    expect(draft.getAttribute('aria-invalid')).toBe('true');
+    expect(draft.getAttribute('aria-describedby')?.split(' ')).toContain(alert.id);
+  });
+
+  it('envia o texto como foi escrito, sem escapes, e a formatação sai como markdown', async () => {
+    const onCommand = successfulCommand();
+    const host = mountComposer(onCommand);
+    const { draft } = composerControls(host);
+    setDraft(draft, 'Renomeie my_file.ts; 2*3 = 6 ');
+    act(() => {
+      draft.editor.view.dispatch(draft.editor.state.tr.insertText('agora'));
+    });
+    const mod = /Mac|iPhone|iPad/.test(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
+    act(() => {
+      const end = draft.editor.state.doc.content.size - 1;
+      draft.editor.commands.setTextSelection({ from: end - 5, to: end });
+      draft.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'b', keyCode: 66, ...mod }),
+      );
+    });
+    pressEnter(draft);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onCommand).toHaveBeenCalledWith({
+      kind: 'direct',
+      missionId: MISSION_ID,
+      targetAgentId: null,
+      text: 'Renomeie my_file.ts; 2*3 = 6 **agora**',
+    });
   });
 });
 
@@ -475,9 +566,11 @@ describe('DirectionComposer — citação da atividade (WEB-17)', () => {
     const { host, renderWith, onQuoteConsumed } = mountWithQuote(vi.fn(), QUOTE);
     const { draft } = composerControls(host);
 
-    expect(draft.value).toBe(`${QUOTE.text}\n\n`);
+    expect(draftValue(draft)).toBe(`${QUOTE.text}\n\n`);
     expect(document.activeElement).toBe(draft);
-    expect(draft.selectionStart).toBe(draft.value.length);
+    // Cursor no fim: seleção vazia no último ponto do documento.
+    expect(draft.editor.state.selection.empty).toBe(true);
+    expect(draft.editor.state.selection.from).toBe(Selection.atEnd(draft.editor.state.doc).from);
     expect(onQuoteConsumed).toHaveBeenCalledWith(1);
     const notice = host.querySelector('[role="status"]')!;
     expect(notice.textContent).toContain('Citação de Implementar interface (evento #3) adicionada');
@@ -486,7 +579,7 @@ describe('DirectionComposer — citação da atividade (WEB-17)', () => {
 
     // Re-render com a mesma citação (o pai ainda não limpou) não duplica.
     renderWith(QUOTE);
-    expect(draft.value).toBe(`${QUOTE.text}\n\n`);
+    expect(draftValue(draft)).toBe(`${QUOTE.text}\n\n`);
   });
 
   it('preserva o que já foi escrito e envia o texto com a marca de origem', async () => {
@@ -496,7 +589,7 @@ describe('DirectionComposer — citação da atividade (WEB-17)', () => {
     setDraft(draft, 'Corrija o teste abaixo');
 
     renderWith(QUOTE);
-    expect(draft.value).toBe(`Corrija o teste abaixo\n\n${QUOTE.text}\n\n`);
+    expect(draftValue(draft)).toBe(`Corrija o teste abaixo\n\n${QUOTE.text}\n\n`);
 
     await act(async () => {
       submit.click();
@@ -507,14 +600,14 @@ describe('DirectionComposer — citação da atividade (WEB-17)', () => {
       targetAgentId: null,
       text: `Corrija o teste abaixo\n\n${QUOTE.text}`,
     });
-    expect(draft.value).toBe('');
+    expect(draftValue(draft)).toBe('');
     expect(host.querySelector('[role="status"]')).toBeNull();
   });
 
   it('citação de outra missão não entra', () => {
     const other: QuoteDraft = { ...QUOTE, origin: { ...QUOTE.origin, missionId: 'outra' } };
     const { host, onQuoteConsumed } = mountWithQuote(vi.fn(), other);
-    expect(composerControls(host).draft.value).toBe('');
+    expect(draftValue(composerControls(host).draft)).toBe('');
     expect(onQuoteConsumed).not.toHaveBeenCalled();
   });
 
@@ -534,6 +627,6 @@ describe('DirectionComposer — citação da atividade (WEB-17)', () => {
       await delivery.promise;
     });
     expect(onQuoteConsumed).toHaveBeenCalledWith(1);
-    expect(draft.value).toBe(`${QUOTE.text}\n\n`);
+    expect(draftValue(draft)).toBe(`${QUOTE.text}\n\n`);
   });
 });

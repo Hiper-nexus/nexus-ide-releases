@@ -600,7 +600,8 @@ describe('MissionInspector', () => {
     const composer = panel.querySelector('form');
     expect(composer).not.toBeNull();
     expect(composer?.querySelector('select')?.textContent).toContain('@todos');
-    expect(composer?.querySelector('textarea')).not.toBeNull();
+    // F-1170: o rascunho é o editor rich-text (Tiptap) do DirectionComposer.
+    expect(composer?.querySelector('[role="textbox"][contenteditable="true"]')).not.toBeNull();
     expect(composer?.querySelector('button[type="submit"]')).not.toBeNull();
   });
 
