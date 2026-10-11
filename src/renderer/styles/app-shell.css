@@ -2278,6 +2278,16 @@
   display: none;
 }
 
+/* F-1172: pressão de memória no rodapé do rail — só existe sob pressão; o texto
+   diz o estado, o vermelho só reforça (doutrina aviônica). */
+.workspace-rail__pressure {
+  color: var(--danger);
+}
+.workspace-rail__pressure .workspace-rail__row-count {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 /* Aviso de fim do teste no rodapé da barra lateral: âmbar, discreto, com a ação ao lado. */
 .trial-notice {
   display: flex;

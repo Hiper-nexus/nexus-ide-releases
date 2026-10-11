@@ -21,6 +21,7 @@ import { PERF_CHANNELS } from '../../shared/channels';
 import type { PaneFootprintBroadcast } from '../../shared/surface-payload-types';
 import { getCachedSystemMemory } from '../orch/pane-admission';
 import { getLiveSessionCount, getSessionState, probePaneFootprints } from '../pty/pty-manager';
+import { machineResourceSampler } from './machine-resources';
 
 const BROADCAST_INTERVAL_MS = 30_000;
 
@@ -43,6 +44,8 @@ async function tick(context: PeriodicTaskContext): Promise<void> {
   const footprints = await context.wait(probePaneFootprints());
   if (!footprints) return;
   const bySessionId: PaneFootprintBroadcast['bySessionId'] = {};
+  let panesRssBytes: number | null = null;
+  let paneCount = 0;
   for (const footprint of footprints) {
     await context.checkpoint();
     if (getSessionState(footprint.sessionId) === null) continue;
@@ -50,14 +53,19 @@ async function tick(context: PeriodicTaskContext): Promise<void> {
       rssBytes: footprint.rssBytes,
       processCount: footprint.processCount,
     };
+    paneCount += 1;
+    if (footprint.rssBytes !== null) panesRssBytes = (panesRssBytes ?? 0) + footprint.rssBytes;
   }
   if (!current()) return;
+  const systemMemory = getCachedSystemMemory();
   const payload: PaneFootprintBroadcast = {
     generation: series,
     sequence: ++sequence,
     capturedAt: Date.now(),
     bySessionId,
-    systemMemory: getCachedSystemMemory(),
+    systemMemory,
+    // F-1172: resumo da máquina com a mesma leitura do gate (sem `ps` extra).
+    machine: machineResourceSampler.sample({ memory: systemMemory, panesRssBytes, paneCount }),
   };
   for (const wc of [...subscribers]) {
     await context.checkpoint();
