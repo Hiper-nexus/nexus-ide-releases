@@ -52,6 +52,8 @@ export interface CommandBlockSearchQuery {
   readonly commandContains?: string;
   readonly workspaceId?: string;
   readonly limit?: number;
+  /** Paginação: linhas a pular (mais novo primeiro). */
+  readonly offset?: number;
 }
 
 export interface CommandBlockStats {
@@ -77,12 +79,24 @@ export class CommandBlockStore {
    * (fail-closed) — caller redaction metadata is merged, never trusted alone.
    */
   insert(raw: CreateCommandBlockInput): CommandBlock {
+    return this.insertWithOutcome(raw).block;
+  }
+
+  /** Igual a `insert`, mas diz se gravou ou achou a chave já persistida. */
+  insertWithOutcome(raw: CreateCommandBlockInput): {
+    readonly block: CommandBlock;
+    readonly inserted: boolean;
+  } {
     const scrubbed = redactCommandLine(raw.command);
     const command = scrubbed.command;
+    // F-1171: quem já redigiu (tracker, import) manda o comando com
+    // [REDACTED]; o segundo passe não acha nada e zerava o metadado.
+    const callerRedaction = raw.redaction;
     const redaction = {
-      redacted: scrubbed.redacted || scrubbed.denylisted,
-      denylisted: scrubbed.denylisted,
-      secretHits: scrubbed.secretHits,
+      redacted:
+        scrubbed.redacted || scrubbed.denylisted || callerRedaction?.redacted === true,
+      denylisted: scrubbed.denylisted || callerRedaction?.denylisted === true,
+      secretHits: Math.max(scrubbed.secretHits, callerRedaction?.secretHits ?? 0),
     };
 
     const idempotencyKey =
@@ -115,7 +129,7 @@ export class CommandBlockStore {
       ) {
         throw new Error('command block idempotency conflict');
       }
-      return stored;
+      return { block: stored, inserted: false };
     }
 
     db.prepare(
@@ -154,7 +168,7 @@ export class CommandBlockStore {
       idempotency_key: block.idempotencyKey,
     });
 
-    return block;
+    return { block, inserted: true };
   }
 
   update(block: CommandBlock): CommandBlock {
@@ -181,6 +195,7 @@ export class CommandBlockStore {
 
   search(query: CommandBlockSearchQuery): readonly CommandBlock[] {
     const limit = Math.min(Math.max(query.limit ?? 50, 1), 200);
+    const offset = Math.min(Math.max(Math.trunc(query.offset ?? 0), 0), 100_000);
     const clauses: string[] = [];
     const params: unknown[] = [];
 
@@ -210,9 +225,9 @@ export class CommandBlockStore {
     const rows = db
       .prepare(
         `SELECT * FROM command_blocks ${where}
-         ORDER BY started_at DESC LIMIT ?`,
+         ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?`,
       )
-      .all(...params, limit);
+      .all(...params, limit, offset);
     return rows.map((row) => rowToBlock(row));
   }
 

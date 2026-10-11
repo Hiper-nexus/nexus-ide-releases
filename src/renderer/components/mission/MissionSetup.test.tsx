@@ -2372,10 +2372,23 @@ describe('Caminho Expresso', () => {
     await flush();
   });
 
+  it('F-1174: leitor de tela ouve a lista de atalhos do início (as teclas visíveis são aria-hidden)', async () => {
+    const host = render(<MissionSetup home />);
+    await flush();
+    const announced = host.querySelector('#mission-setup-shortcuts');
+    expect(announced?.classList.contains('mission-setup__sr-only')).toBe(true);
+    expect(announced?.textContent).toBe(
+      'Atalhos do teclado: 1 Montar meus terminais; 2 Criar com IA; 3 Abrir projeto existente; ' +
+        '4 Terminal sem IA; 5 Quadro de tarefas; 6 Memória do projeto',
+    );
+    expect(host.querySelector('[data-launcher-action="pane"] kbd')?.getAttribute('aria-hidden')).toBe('true');
+  });
+
   it('atalhos do início não disparam no assistente avançado', async () => {
     const host = render(<MissionSetup />);
     await flush();
     expect(host.querySelector('[data-launcher-action="tasks"]')).toBeNull();
+    expect(host.querySelector('#mission-setup-shortcuts')).toBeNull();
     act(() => {
       window.dispatchEvent(
         new KeyboardEvent('keydown', { key: '5', bubbles: true }),

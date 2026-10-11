@@ -71,6 +71,20 @@ export const LAUNCHER_ACTIONS: readonly ActionNameEntry[] = [
   },
 ];
 
+/**
+ * F-1171: importar os transcripts das CLIs para o histórico de comandos.
+ * Menu de comandos do pane e paleta leem o mesmo nome.
+ */
+export const CLI_HISTORY_IMPORT_ACTION: ActionNameEntry = {
+  id: 'cli-history-import',
+  label: 'Importar histórico das CLIs',
+  accessibleName:
+    'Importar histórico das CLIs: trazer os comandos de shell dos agentes deste projeto para o histórico',
+  shortcut: '',
+  description:
+    'Lê as conversas das CLIs deste projeto e grava os comandos no histórico, sem duplicar.',
+};
+
 const byId = new Map(LAUNCHER_ACTIONS.map((entry) => [entry.id, entry]));
 
 export function launcherAction(id: string): ActionNameEntry | null {

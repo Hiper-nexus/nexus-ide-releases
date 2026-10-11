@@ -2106,7 +2106,9 @@
       "changeSummary": "Sem código do upstream: aplica a regra de foco editável aos callbacks existentes do Launcher do Nexus; nomes acessíveis e dicas de teclas mantêm o desenho local. Reviewed PR126 integration retains validated paged ACKs and current scoped launcher shortcut behavior.",
       "secondaryProvenance": [],
       "importDate": "2026-10-08",
-      "status": "imported"
+      "status": "removed",
+      "removedDate": "2026-10-11",
+      "removalNote": "F-1174: componente órfão (nenhum importador; a rota de início monta MissionSetup). Tudo o que ele oferecia já estava na tela real (atalhos 1–6 via use-launcher-shortcuts, dicas kbd, terminais/quadro/memória em ExpressTerminalOptions, pasta e pedido no Expresso); a lista de atalhos para leitor de tela foi levada ao MissionSetup antes da remoção. nexusSha256 = últimos bytes antes da remoção."
     },
     {
       "upstreamUrl": "https://github.com/pingdotgg/t3code/blob/26285ab80513260d1ff29d2c3fbe18f21990cb62/apps/server/src/orchestration-v2/EffectOutbox.ts",
@@ -2319,10 +2321,10 @@
       "copyright": "Copyright (c) 2026 T3 Tools Inc.",
       "type": "reference",
       "feature": "PR126 reviewed integration",
-      "changeSummary": "Nexus bounded filesystem traversal/parser composition, no SDK worker copying and no production boot caller/persistence wiring.",
+      "changeSummary": "Nexus bounded filesystem traversal/parser composition, no SDK worker copying and no production boot caller/persistence wiring. Removed 2026-10-11 (F-1171): superseded by the async, project-scoped src/main/terminal/cli-history-import-service.ts (Nexus code); the synchronous sweep never had a production caller.",
       "secondaryProvenance": [],
       "importDate": "2026-10-09",
-      "status": "imported"
+      "status": "removed"
     },
     {
       "upstreamUrl": "https://github.com/pingdotgg/t3code/blob/26285ab80513260d1ff29d2c3fbe18f21990cb62/apps/web/src/composer-rich-text.ts",
@@ -2346,12 +2348,12 @@
       "originalSha256": "c1619849068b2d9d8dc3dd4414ad24af6bf44fb90ecb8ce73b9b7b48e93e71b7",
       "originalPath": "apps/web/src/composer-rich-text.ts",
       "nexusPath": "src/renderer/components/ComposerRichTextView.tsx",
-      "nexusSha256": "bb59a08172b8caea016eb8ec85420e2623ec21c50cab6e7758f59392601faea6",
+      "nexusSha256": "50f0153997d575a5486843e28a970865f8c229988eeddafb0ae2e712f9103437",
       "license": "MIT",
       "copyright": "Copyright (c) 2026 T3 Tools Inc.",
       "type": "reference",
       "feature": "PR126 reviewed integration",
-      "changeSummary": "Nexus safe React span/code preview over the adapted parser; no upstream rendered UI code copied, no product caller.",
+      "changeSummary": "Nexus safe React span/code preview over the adapted parser; no upstream rendered UI code copied. Product caller: sent operator directions in the mission inspector.",
       "secondaryProvenance": [],
       "importDate": "2026-10-09",
       "status": "imported"
@@ -2378,12 +2380,12 @@
       "originalSha256": "bb0c678135e51d9aa36d93e0fdbb4ecada37bd5ed4c0bf5bb5a13db6e91e122d",
       "originalPath": "apps/web/src/components/chat/MermaidDiagram.tsx",
       "nexusPath": "src/renderer/components/MarkdownWithMermaid.tsx",
-      "nexusSha256": "dcf440e4ad6e622516378bd49b7cb1270bb3f42a47e473a98842806e76806eb5",
+      "nexusSha256": "89fff107a33defe6deef5ebf274635f8e5cacc4ba4c293bd39aceaea6b734aac",
       "license": "MIT",
       "copyright": "Copyright (c) 2026 T3 Tools Inc.",
       "type": "adapted",
       "feature": "PR126 reviewed integration",
-      "changeSummary": "Lazy render queue, unique ids, protected Mermaid configuration and SVG DOMPurify/CSS/link policy adapted. Nexus uses sanitized DOM nodes in ShadowRoot, post-commit readiness, stale/unmount cleanup and literal React plaintext fallback; no innerHTML sink or product caller.",
+      "changeSummary": "Lazy render queue, unique ids, protected Mermaid configuration and SVG DOMPurify/CSS/link policy adapted. Nexus uses sanitized DOM nodes in ShadowRoot, post-commit readiness, stale/unmount cleanup and literal React plaintext fallback; no innerHTML sink. Prose renders through the Nexus React-only MarkdownView, with size and diagram caps, on mission surfaces.",
       "secondaryProvenance": [],
       "importDate": "2026-10-09",
       "status": "imported"

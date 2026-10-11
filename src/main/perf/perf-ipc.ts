@@ -12,6 +12,7 @@ import { summarizeFootprints } from '../pty/pane-footprint';
 import { readPaneAdmissionLimits, sampleSystemMemory } from '../orch/pane-admission';
 import { handleTrusted, onTrusted } from '../security/trusted-ipc';
 import { setPaneFootprintSubscription } from './pane-footprint-broadcast';
+import { machineResourceSampler } from './machine-resources';
 // Sem import de pane-registry aqui: perf-ipc é importado pelas tools de orch e
 // esse edge fechava um ciclo ESM (squad-store/guided-squad-skills em TDZ).
 
@@ -74,6 +75,12 @@ export async function collectPerfSnapshotDetailed(): Promise<PerfSnapshot> {
   ]);
   const limits = readPaneAdmissionLimits();
   const liveAgentPanes = countLiveAgentSessions();
+  // F-1172: mesma leitura do gate e o RSS já medido acima — nenhum `ps` extra.
+  const machine = machineResourceSampler.sample({
+    memory: systemMemory,
+    panesRssBytes: footprints ? summarizeFootprints(footprints).totalRssBytes : null,
+    paneCount: footprints?.length ?? 0,
+  });
   return {
     ...base,
     panes: {
@@ -86,6 +93,7 @@ export async function collectPerfSnapshotDetailed(): Promise<PerfSnapshot> {
         : {}),
     },
     ...(systemMemory ? { systemMemory } : {}),
+    ...(machine ? { machine } : {}),
     paneAdmission: {
       enabled: limits.enabled,
       maxAgentPanes: limits.maxAgentPanes,

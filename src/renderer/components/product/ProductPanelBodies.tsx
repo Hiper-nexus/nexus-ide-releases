@@ -24,6 +24,7 @@ import { useToastStore } from '../../state/toast-store';
 import { useFilesStore } from '../../state/files-store';
 import { useContextualPanelNavStore } from '../../state/contextual-panel-nav-store';
 import { readableMemoryBody } from './memory-note-readable';
+import { MarkdownWithMermaid } from '../MarkdownWithMermaid';
 
 type Hit = {
   id: string;
@@ -644,17 +645,16 @@ export function MemoryPanelBody({
                       .join(' · ')}
                   </p>
                 ) : null}
-                <p
-                  className={
-                    presentation === 'full'
-                      ? 'product-pane__snip product-pane__body'
-                      : 'product-pane__snip'
-                  }
-                >
-                  {presentation === 'full'
-                    ? readable.body
-                    : readable.body.slice(0, 200)}
-                </p>
+                {presentation === 'full' ? (
+                  <MarkdownWithMermaid
+                    className="product-pane__snip product-pane__body"
+                    source={readable.body}
+                  />
+                ) : (
+                  <p className="product-pane__snip">
+                    {readable.body.slice(0, 200)}
+                  </p>
+                )}
               </li>
             );
           })}

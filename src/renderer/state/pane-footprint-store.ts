@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
 import type { PaneFootprintBroadcast } from '../../shared/types';
+import { parseMachineResources, type MachineResources } from '../../shared/machine-resources';
 
 /**
  * 0.76.45: espelho renderer do push periódico main → renderers assinantes
@@ -19,6 +20,8 @@ interface PaneFootprintStore {
   readonly sequence: number;
   readonly bySessionId: Readonly<Record<string, PaneFootprintEntry>>;
   readonly systemMemory: PaneFootprintBroadcast['systemMemory'];
+  /** F-1172: resumo da máquina (push ou perf:snapshot), já validado. */
+  readonly machine: MachineResources | null;
 }
 
 export const usePaneFootprintStore = create<PaneFootprintStore>(() => ({
@@ -27,6 +30,7 @@ export const usePaneFootprintStore = create<PaneFootprintStore>(() => ({
   sequence: 0,
   bySessionId: {},
   systemMemory: null,
+  machine: null,
 }));
 
 export function receivePaneFootprintBroadcast(
@@ -45,7 +49,20 @@ export function receivePaneFootprintBroadcast(
     sequence: event.sequence,
     bySessionId: event.bySessionId,
     systemMemory: event.systemMemory,
+    machine: parseMachineResources(event.machine ?? null),
   });
+}
+
+/**
+ * F-1172: resumo vindo do perf:snapshot (card de Uso e cotas). Só substitui
+ * quando é mais novo que o do push; fora do contrato é ignorado.
+ */
+export function receiveMachineResources(value: unknown): void {
+  const machine = parseMachineResources(value);
+  if (!machine) return;
+  const current = usePaneFootprintStore.getState().machine;
+  if (current && current.sampledAt >= machine.sampledAt) return;
+  usePaneFootprintStore.setState({ machine });
 }
 
 /** Assina o footprint enquanto o componente estiver montado. */

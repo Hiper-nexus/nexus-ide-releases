@@ -181,6 +181,20 @@ describe('UsageQuotaSection', () => {
     act(() => root.unmount());
   });
 
+  it('F-1172: o card "Recursos da máquina" aparece em Uso e cotas e pede o perf:snapshot', async () => {
+    const snapshot = vi.fn(async () => ({}));
+    Object.assign(window.nexus, { perf: { snapshot, onPaneFootprints: () => () => {} } });
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('#machine-resources')?.textContent).toContain('Recursos da máquina');
+    expect(snapshot).toHaveBeenCalledTimes(1);
+
+    act(() => root.unmount());
+  });
+
   it('F-1005: singular e plural certos na faixa de resumo (1 conexão, 1 conta fora da soma)', async () => {
     const single: QuotaFleetSnapshot = {
       ...sampleSnapshot,

@@ -14,7 +14,7 @@ import {
   styleTracks,
 } from '../style-contract.test-utils';
 import { AppShell } from './AppShell';
-import { Launcher } from './Launcher';
+import { ExpressTerminalOptions } from '../mission/ExpressTerminalOptions';
 import { MemoryWorkspace } from './MemoryWorkspace';
 import { WorkspaceRail } from './WorkspaceRail';
 import { ComposerTiptapEditor } from '../ComposerTiptapEditor';
@@ -217,15 +217,12 @@ describe('Nexus V2 shell and product workspace style contracts', () => {
   ])('lets launcher shortcut hints follow theme tokens in pixel=$pixel', ({ pixel, radius }) => {
     document.documentElement.dataset.themePixel = pixel;
     const style = installStyleContract(productStyles, { width: 1_400 });
-    const host = render(<Launcher
-      onOpenWorkspace={vi.fn()} onStartMission={vi.fn()} onOpenPane={vi.fn()}
-      onOpenShellTerminal={vi.fn()} onOpenTaskBoard={vi.fn()} onOpenMemory={vi.fn()}
-      onOpenProviders={vi.fn()}
-    />);
+    // F-1174: a dica vem da tela real de início (o Launcher órfão saiu).
+    const host = render(<ExpressTerminalOptions />);
     const hint = host.querySelector<HTMLElement>(
-      '[data-launcher-action="mission"] .launcher-action__shortcut',
+      '[data-launcher-action="pane"] .launcher-action__shortcut',
     );
-    if (!hint) throw new Error('Launcher did not render its secondary shortcut hint');
+    if (!hint) throw new Error('start screen did not render its shortcut hint');
 
     expect(styleLengthPx(hint, 'border-radius')).toBe(radius);
     document.documentElement.style.setProperty('--text-xs', '15px');
