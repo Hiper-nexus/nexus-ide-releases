@@ -351,12 +351,20 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
           onSubmitRef.current();
           return true;
         },
-        // HTML externo nunca entra no documento: só o texto puro, lido como
-        // markdown (a fonte canônica) — o valor sai igual ao que foi colado.
-        handlePaste: (view, event) => {
-          const text = event.clipboardData?.getData('text/plain') ?? '';
-          if (text) insertPlainText(view, text);
-          return true;
+        handleDOMEvents: {
+          // HTML externo nunca entra no documento: só o texto puro, lido como
+          // markdown (a fonte canônica) — o valor sai igual ao que foi colado.
+          // Sem texto (print, imagem, HTML com imagem embutida) o editor não
+          // insere nada e NÃO reivindica o default: o app anexa o arquivo à
+          // missão (App.tsx onPaste ignora cola com defaultPrevented). O
+          // schema não tem nó de imagem, então nada nativo sobra no doc.
+          paste: (view, event) => {
+            const text = event.clipboardData?.getData('text/plain') ?? '';
+            if (!text) return true;
+            event.preventDefault();
+            insertPlainText(view, text);
+            return true;
+          },
         },
         handleDrop: (view, event, _slice, moved) => {
           if (moved) return false;
@@ -382,6 +390,9 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
       // Equal canonical content is an acknowledgement, not a document reset.
       const next = markdownToTiptapContent(value);
       if (tiptapJsonToMarkdown(editor.getJSON()) !== tiptapJsonToMarkdown(next)) {
+        // Troca programática (ditado, exemplo, rascunho restaurado): o cursor
+        // fica onde estava, preso ao novo fim se o texto encolheu.
+        const { anchor, head } = editor.state.selection;
         editor
           .chain()
           .command(({ tr }) => {
@@ -389,6 +400,12 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
             return true;
           })
           .setContent(next, { emitUpdate: false })
+          .command(({ tr }) => {
+            const end = Selection.atEnd(tr.doc).from;
+            const clamp = (pos: number) => Math.max(1, Math.min(pos, end));
+            tr.setSelection(TextSelection.between(tr.doc.resolve(clamp(anchor)), tr.doc.resolve(clamp(head))));
+            return true;
+          })
           .run();
       }
     }, [editor, value]);

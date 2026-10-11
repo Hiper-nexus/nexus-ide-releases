@@ -193,6 +193,34 @@ describe('F-1170: ref imperativa, id e atributos de acessibilidade', () => {
   });
 });
 
+describe('F-1170: valor externo (ditado, exemplo) substitui sem perder cursor nem foco', () => {
+  it('acréscimo externo no fim mantém o cursor onde estava e o foco', async () => {
+    const { surface, editor, render, onChange } = await setup({ value: 'abcdef' });
+    act(() => { editor.commands.setTextSelection(4); editor.view.focus(); });
+    await render({ value: 'abcdef ditado' });
+    expect(editor.state.doc.textContent).toBe('abcdef ditado');
+    expect(editor.state.selection.from).toBe(4);
+    expect(document.activeElement).toBe(surface);
+    expect(onChange).not.toHaveBeenCalled();
+    typeText(editor, 'X');
+    expect(onChange.mock.calls.at(-1)?.[0]).toBe('abcXdef ditado');
+  });
+
+  it('substituição por um texto menor (exemplo) prende o cursor no novo fim', async () => {
+    const { editor, render } = await setup({ value: 'um texto bem comprido' });
+    act(() => editor.commands.setTextSelection(18));
+    await render({ value: 'curto' });
+    expect(editor.state.doc.textContent).toBe('curto');
+    expect(editor.state.selection.from).toBe(editor.state.doc.content.size - 1);
+  });
+
+  it('valor externo acima do maxLength é exibido inteiro (nada se perde); o teto só barra digitação', async () => {
+    const { editor, render } = await setup({ value: 'ab', maxLength: 4 });
+    await render({ value: 'abcdefgh' });
+    expect(editor.state.doc.textContent).toBe('abcdefgh');
+  });
+});
+
 describe('F-1170: maxLength recusa ou trunca de forma visível', () => {
   it('digitação além do limite é recusada e o aviso aparece ligado à superfície', async () => {
     const { host, surface, editor, onChange } = await setup({ value: 'abcd', maxLength: 5 });
@@ -251,9 +279,26 @@ describe('F-1170: colar só texto puro', () => {
     expect(host.querySelector('h1, a, img, script')).toBeNull();
   });
 
-  it('só HTML, sem texto puro: nada entra', async () => {
+  it('só HTML, sem texto puro: nada entra e o default fica livre (imagem embutida vai para o anexo do app)', async () => {
     const { surface, editor, onChange } = await setup({ value: 'x' });
-    paste(surface, { 'text/html': '<b>negrito</b>' });
+    const appPaste = vi.fn((event: Event) => event.defaultPrevented);
+    document.addEventListener('paste', appPaste);
+    try {
+      const event = paste(surface, { 'text/html': '<img src="data:image/png;base64,AAAA">' });
+      expect(event.defaultPrevented).toBe(false);
+      expect(appPaste).toHaveBeenCalledTimes(1);
+      expect(appPaste.mock.results[0]?.value).toBe(false);
+    } finally {
+      document.removeEventListener('paste', appPaste);
+    }
+    expect(editor.state.doc.textContent).toBe('x');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('colar só arquivo (print/imagem) não insere nada e não reivindica o default', async () => {
+    const { surface, editor, onChange } = await setup({ value: 'x' });
+    const event = paste(surface, { Files: '' });
+    expect(event.defaultPrevented).toBe(false);
     expect(editor.state.doc.textContent).toBe('x');
     expect(onChange).not.toHaveBeenCalled();
   });
