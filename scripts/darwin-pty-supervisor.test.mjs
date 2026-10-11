@@ -339,6 +339,21 @@ const PYTHON_PUBLISH_PID = [
   '  os.replace(pending,file)',
 ];
 
+// F-1215: a fixture whose release never comes (the run died before the test
+// wrote it, so neither its finally nor afterAll ran) must not wait forever: a
+// setsid daemon left that way lived 31 h with ppid 1. Every wait gives up on
+// its own, far past any test timeout.
+const PYTHON_RELEASE_DEADLINE_S = 120;
+const pythonWaitRelease = (file, interval = "0.02") =>
+  `while not os.path.exists(${file}) and time.time() < ${Math.floor(Date.now() / 1000) + PYTHON_RELEASE_DEADLINE_S}: time.sleep(${interval})`;
+
+it("F-1215: no Python fixture waits for its release file forever", () => {
+  const unbounded = readFileSync(new URL(import.meta.url), "utf8")
+    .split("\n")
+    .filter((line) => /while not os\.path\.exists\([^)]*\):/.test(line));
+  expect(unbounded).toEqual([]);
+});
+
 function readPidMarker(file) {
   const text = readFileSync(file, 'utf8');
   const pid = Number(text);
@@ -1066,7 +1081,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
       "  os._exit(0)",
       "os.waitpid(first,0)",
       'with open(ready_file,"w") as f: f.write("ready")',
-      "while not os.path.exists(release_file): time.sleep(0.02)",
+      pythonWaitRelease("release_file"),
       "sys.exit(23)",
     ].join("\n");
 
@@ -1156,8 +1171,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); const port = server.address().port;
     const python = ['import os,sys,time,signal', `daemon=${JSON.stringify(daemonFile)}`, `primary=${JSON.stringify(primaryFile)}`, `release=${JSON.stringify(releaseFile)}`,
       ...PYTHON_PUBLISH_PID,
-      'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()', '  if second > 0: os._exit(0)', '  signal.signal(signal.SIGTERM, signal.SIG_IGN)', `  publish_pid(daemon, ${completion === 'killed-helper' ? '0.15' : '0'})`, '  while not os.path.exists(release): time.sleep(0.01)', '  os._exit(0)',
-      'os.waitpid(first,0)', 'publish_pid(primary)', `try: open(${JSON.stringify(forbidden)},"w").write("widened")`, 'except PermissionError: pass', ...(['killed-helper', 'killed-owner'].includes(completion) ? ['while not os.path.exists(release): time.sleep(0.02)'] : []), 'sys.exit(23)'].join('\n');
+      'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()', '  if second > 0: os._exit(0)', '  signal.signal(signal.SIGTERM, signal.SIG_IGN)', `  publish_pid(daemon, ${completion === 'killed-helper' ? '0.15' : '0'})`, `  ${pythonWaitRelease("release", "0.01")}`, '  os._exit(0)',
+      'os.waitpid(first,0)', 'publish_pid(primary)', `try: open(${JSON.stringify(forbidden)},"w").write("widened")`, 'except PermissionError: pass', ...(['killed-helper', 'killed-owner'].includes(completion) ? [pythonWaitRelease("release")] : []), 'sys.exit(23)'].join('\n');
     const base = nestedHeavyJobBaseCommand(runtime);
     const script = `const child=require('node:child_process').spawn(${JSON.stringify(base.file)},${JSON.stringify([...base.args, 'build', '--', '/usr/bin/python3', '-c', python])},{stdio:'inherit'});child.on('exit',(code)=>process.exit(code));`;
     const resources = path.join(process.cwd(), 'resources/heavy-command');
@@ -1291,9 +1306,9 @@ suite("Darwin PTY native responsibility supervisor", () => {
       'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()',
       '  if second > 0: os._exit(0)', '  signal.signal(signal.SIGTERM, signal.SIG_IGN)',
       `  publish_pid(daemon_file, ${mode === 'natural' ? '0.15' : '0'})`,
-      '  while not os.path.exists(daemon_release): time.sleep(0.02)', '  os._exit(0)',
+      `  ${pythonWaitRelease("daemon_release")}`, '  os._exit(0)',
       'os.waitpid(first,0)', 'publish_pid(primary_file)',
-      'while not os.path.exists(primary_release): time.sleep(0.02)', 'sys.exit(23)',
+      pythonWaitRelease("primary_release"), 'sys.exit(23)',
     ].join('\n');
     const job = spawn(helper, ['supervise-job', '--', '/usr/bin/python3', '-c', python], { stdio: ['ignore', 'pipe', 'pipe'] });
     let finished = false; let daemonPid = 0, primaryPid = 0, phase = 'waiting-pid-markers', stderr = '';
@@ -1334,7 +1349,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
     const python = ['import os,signal,sys,time', ...PYTHON_PUBLISH_PID, `daemon_file=${JSON.stringify(daemonFile)}`, `primary_file=${JSON.stringify(primaryFile)}`, `release_file=${JSON.stringify(releaseFile)}`,
       'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()', '  if second > 0: os._exit(0)',
       '  signal.signal(signal.SIGTERM, signal.SIG_IGN)', '  publish_pid(daemon_file)', '  time.sleep(30)', '  os._exit(0)',
-      'os.waitpid(first,0)', 'publish_pid(primary_file)', 'while not os.path.exists(release_file): time.sleep(0.02)', 'sys.exit(23)',
+      'os.waitpid(first,0)', 'publish_pid(primary_file)', pythonWaitRelease("release_file"), 'sys.exit(23)',
     ].join('\n');
     const command = supervisedJobCommand({ platform: 'darwin', packaged: false, cwd: fixtureRoot, moduleDir: fixtureRoot }, '/usr/bin/python3', ['-c', python]);
     const ownerScript = `const fs=require('node:fs');const task=require('node:child_process').spawn(${JSON.stringify(command.file)},${JSON.stringify(command.args)},{stdio:'ignore'});const marker=${JSON.stringify(ownerReady)};fs.writeFileSync(marker+'.pending',String(task.pid)+'\\n');fs.renameSync(marker+'.pending',marker);setInterval(()=>{},1000);`;
@@ -1370,7 +1385,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
       `ready_file=${JSON.stringify(readyFile)}`,
       `release_file=${JSON.stringify(releaseFile)}`,
       'with open(ready_file,"w") as f: f.write("ready")',
-      "while not os.path.exists(release_file): time.sleep(0.02)",
+      pythonWaitRelease("release_file"),
       "sys.exit(0)",
     ].join("\n");
     const supervised = spawn(
