@@ -194,6 +194,16 @@ export function forgetProviderSessionById(
     adapterId,
     sessionId,
   );
+  try {
+    // F-1243: a conversa esquecida não deixa proveniência de edição para trás.
+    db.prepare(
+      `DELETE FROM provider_conversation_edits
+        WHERE installation_id = ? AND project_id = ? AND checkout_id = ?
+          AND adapter_id = ? AND session_id = ?`,
+    ).run(scope.installationId, scope.projectId, scope.checkoutId, adapterId, sessionId);
+  } catch {
+    // Acessório: o vínculo de retomada já foi esquecido acima.
+  }
   const changes = (result as { changes?: number }).changes;
   return typeof changes === 'number' ? changes : 0;
 }

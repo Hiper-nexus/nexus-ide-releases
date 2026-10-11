@@ -194,6 +194,12 @@ CREATE TABLE IF NOT EXISTS persistent_pty_sessions (
 );
 `;
 
+/**
+ * F-1243: a proveniência de edição (`provider_conversation_edits`) vale 30
+ * dias. Retomar conversa mais velha cai na regra do mtime do portão.
+ */
+export const CONVERSATION_EDITS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
 let db: Db | null = null;
 let initialized = false;
 let degraded = false;
@@ -281,6 +287,13 @@ export function getDb(): Db | null {
     db.exec(`INSERT OR IGNORE INTO provider_session_accounts
       SELECT installation_id, project_id, checkout_id, adapter_id, session_id, account_id
       FROM provider_pane_sessions WHERE adapter_id = 'mimo-code' AND session_key = 'session_id'`);
+    try {
+      db.prepare('DELETE FROM provider_conversation_edits WHERE edited_at < ?')
+        .run(Date.now() - CONVERSATION_EDITS_RETENTION_MS);
+    } catch (err) {
+      // A poda é manutenção: falhar aqui nunca degrada o banco.
+      console.warn('[nexus] poda da proveniência de edição falhou:', err);
+    }
     if (snapshot) {
       // Dentro do try de propósito: se nem o estado `migrated` grava, o
       // `migrating` no disco faria o próximo boot desfazer esta sessão inteira;

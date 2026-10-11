@@ -22,7 +22,11 @@ export interface ConversationEditKey {
 
 const ID_MAX = 512;
 const PATH_MAX = 4096;
-/** Teto por leitura: uma conversa enorme não vira consulta sem fim no Stop. */
+/**
+ * Teto por conversa e raiz. Na leitura, uma conversa enorme não vira consulta
+ * sem fim no Stop. F-1243: também na escrita — um loop de edições não enche o
+ * banco, e tudo o que se grava cabe na leitura.
+ */
 export const MAX_CONVERSATION_EDITS_READ = 20_000;
 
 function clean(value: unknown, max = ID_MAX): string | null {
@@ -56,8 +60,9 @@ function relPathShape(value: string): string | null {
 /**
  * Grava (upsert) que a conversa deixou em cada caminho de `edits` o conteúdo de
  * sha256 dado, em `editedAtMs`. Idempotente; edição atrasada não sobrescreve a
- * mais nova. Devolve quantos caminhos gravou; banco ausente, chave inválida ou
- * erro de SQLite dão 0 — nunca lança.
+ * mais nova. F-1243: com a conversa no teto de linhas, caminho novo não grava
+ * (o que já existe atualiza). Devolve quantos caminhos gravou; banco ausente,
+ * chave inválida ou erro de SQLite dão 0 — nunca lança.
  */
 export function recordConversationEdits(
   key: ConversationEditKey,
@@ -75,15 +80,22 @@ export function recordConversationEdits(
     }
     const paths = [...shaped];
     if (paths.length === 0) return 0;
-    const statement = db.prepare(
-      `INSERT INTO provider_conversation_edits
+    const where = `installation_id = ? AND project_id = ? AND checkout_id = ?
+          AND adapter_id = ? AND session_id = ? AND root_real_path = ?`;
+    const counted = db.prepare(`SELECT COUNT(*) AS n FROM provider_conversation_edits WHERE ${where}`)
+      .get(...params) as { n?: unknown } | undefined;
+    let room = MAX_CONVERSATION_EDITS_READ - (typeof counted?.n === 'number' ? counted.n : MAX_CONVERSATION_EDITS_READ);
+    const insert = db.prepare(
+      `INSERT OR IGNORE INTO provider_conversation_edits
          (installation_id, project_id, checkout_id, adapter_id, session_id, root_real_path, rel_path, edited_at, content_sha256)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(installation_id, project_id, checkout_id, adapter_id, session_id, root_real_path, rel_path)
-       DO UPDATE SET edited_at = excluded.edited_at, content_sha256 = excluded.content_sha256
-       WHERE excluded.edited_at >= provider_conversation_edits.edited_at`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const update = db.prepare(
+      `UPDATE provider_conversation_edits SET edited_at = ?, content_sha256 = ?
+        WHERE ${where} AND rel_path = ? AND edited_at <= ?`,
     );
     const at = Math.floor(editedAtMs);
+    let written = 0;
     // Um patch com vários arquivos vira uma transação só (um fsync).
     let transaction = false;
     if (paths.length > 1) {
@@ -95,7 +107,14 @@ export function recordConversationEdits(
       }
     }
     try {
-      for (const [rel, sha256] of paths) statement.run(...params, rel, at, sha256);
+      for (const [rel, sha256] of paths) {
+        if (room > 0 && changes(insert.run(...params, rel, at, sha256)) > 0) {
+          room -= 1;
+          written += 1;
+        } else if (changes(update.run(at, sha256, ...params, rel, at)) > 0) {
+          written += 1;
+        }
+      }
       if (transaction) db.exec('COMMIT');
     } catch (error) {
       if (transaction) {
@@ -107,10 +126,15 @@ export function recordConversationEdits(
       }
       throw error;
     }
-    return paths.length;
+    return written;
   } catch {
     return 0;
   }
+}
+
+function changes(result: unknown): number {
+  const value = (result as { changes?: unknown } | undefined)?.changes;
+  return typeof value === 'number' ? value : 0;
 }
 
 /**
