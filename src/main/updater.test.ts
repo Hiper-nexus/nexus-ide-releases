@@ -291,6 +291,28 @@ describe('UpdateManager', () => {
     expect(zipUrls().length).toBe(downloads);
   });
 
+  it('F-1182: a checagem de boot reaproveita a do renderer feita segundos antes', async () => {
+    vi.useFakeTimers();
+    const runGh = vi.fn(async (args: string[]) => {
+      if (args[0] === 'api') return JSON.stringify([apiRelease('0.15.0')]);
+      throw new Error('sem download neste teste');
+    });
+    const manager = createManager(true, { runGh, runtimeArch: 'arm64', runtimePlatform: 'darwin' });
+    manager.init();
+    const apiCalls = () => runGh.mock.calls.filter(([args]) => args[0] === 'api').length;
+
+    await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+    expect(manager.getState().phase).toBe('uptodate');
+    expect(apiCalls()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(apiCalls()).toBe(1);
+
+    // Resultado velho volta a consultar: o relógio de 6 h segue valendo.
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000);
+    expect(apiCalls()).toBe(2);
+  });
+
   it('cai no slug legado quando o gh da org nova falha', async () => {
     const runGh = vi.fn(async (args: string[]) => {
       if (args.join(' ').includes('Hiper-nexus/nexus-ide')) {
@@ -498,6 +520,29 @@ describe('UpdateManager', () => {
       if (prevFeed === undefined) delete process.env.NEXUS_UPDATE_FEED;
       else process.env.NEXUS_UPDATE_FEED = prevFeed;
     }
+  });
+
+  it('F-1181: update baixado vira banner "pronta", sem diálogo nativo que prende o main', () => {
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    electron.autoUpdater.on.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+      listeners.set(event, cb);
+      return electron.autoUpdater;
+    });
+    vi.stubEnv('NEXUS_UPDATE_FEED', 'https://api.nexuside.app/feed');
+    const manager = createManager(true, {
+      runtimeArch: 'arm64',
+      runtimePlatform: 'darwin',
+    });
+    manager.init();
+
+    listeners.get('update-downloaded')?.({}, '', 'v0.76.234');
+
+    expect(manager.getState()).toMatchObject({
+      phase: 'ready',
+      available: { version: '0.76.234', tag: 'v0.76.234' },
+    });
+    expect(electron.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(electron.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
   });
 
   it('trata feed Windows ausente como nenhuma atualização publicada', () => {
