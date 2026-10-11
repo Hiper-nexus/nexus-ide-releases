@@ -2161,8 +2161,9 @@ export function registerOrchIpc(): void {
 
 
   // F-1173: checkpoints de writer na tela humana — mesma autoridade do
-  // nexus_checkpoint_* no papel de orquestrador, escopo do renderer vivo.
-  registerMissionCheckpointIpc(ipcMain);
+  // nexus_checkpoint_* no papel de orquestrador, escopo do renderer vivo,
+  // canais por handleTrusted (só a janela principal).
+  registerMissionCheckpointIpc();
 
   ipcMain.handle(ORCH_CHANNELS.missionResumeBootstrap, (event, raw) => {
     const parsed = missionResumeBootstrapSchema.safeParse(raw);

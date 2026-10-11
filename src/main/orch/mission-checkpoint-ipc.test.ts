@@ -11,6 +11,13 @@ const h = vi.hoisted(() => ({
   sessions: [] as Array<Record<string, unknown>>,
   idle: (_sessionId: string): boolean => true,
   missions: new Set<string>(['mission-a']),
+  trustedChannels: [] as string[],
+}));
+vi.mock('../security/trusted-ipc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../security/trusted-ipc')>()),
+  handleTrusted: (channel: string) => {
+    h.trustedChannels.push(channel);
+  },
 }));
 vi.mock('../pty/pty-manager', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../pty/pty-manager')>()),
@@ -86,10 +93,10 @@ function harness() {
     if (expected && expected !== live.scope) throw new Error('renderer workspace authority changed');
     return live.scope;
   });
-  registerMissionCheckpointIpc(
-    { handle: (channel, listener) => handlers.set(channel, listener as Handler) },
-    { rendererScope },
-  );
+  registerMissionCheckpointIpc({
+    rendererScope,
+    handle: (channel, listener) => handlers.set(channel, listener as unknown as Handler),
+  });
   const sender = { id: 1, isDestroyed: () => false, isCrashed: () => false };
   const call = (channel: string, raw: unknown) => handlers.get(channel)!({ sender }, raw);
   return { call, live, rendererScope };
@@ -123,6 +130,16 @@ afterEach(async () => {
 const firstRef = () => checkpointRefForScopeOrdinal(missionCheckpointScopeId('mission-a', worktree), 1);
 
 describe('IPC de checkpoints da missão (F-1173)', () => {
+  it('sem injeção, os três canais nascem por handleTrusted (nunca ipcMain.handle cru)', () => {
+    h.trustedChannels = [];
+    registerMissionCheckpointIpc();
+    expect(h.trustedChannels).toEqual([
+      ORCH_CHANNELS.missionCheckpointsList,
+      ORCH_CHANNELS.missionCheckpointPreview,
+      ORCH_CHANNELS.missionCheckpointRestore,
+    ]);
+  });
+
   it('lista por árvore com writer, data, branch e arquivos — nunca a raiz de coordenação', async () => {
     const { call } = harness();
     const listed = await call(ORCH_CHANNELS.missionCheckpointsList, { missionId: 'mission-a' });

@@ -35,6 +35,7 @@ import type {
 } from '../../shared/mission-checkpoints';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { requireLiveRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import { handleTrusted } from '../security/trusted-ipc';
 import { AsyncProcessGitRunner, type AsyncGitRunner } from '../runtime/git-command';
 import {
   CHECKPOINT_REF_PATTERN,
@@ -74,10 +75,8 @@ export interface MissionCheckpointIpcDeps {
   /** Escopo vivo do renderer; com `expected`, recusa se ele mudou. */
   readonly rendererScope?: (owner: RendererOwner, expected?: ProjectExecutionScope) => ProjectExecutionScope;
   readonly git?: AsyncGitRunner;
-}
-
-interface Ipc {
-  handle(channel: string, listener: (event: { readonly sender: RendererOwner }, raw: unknown) => unknown): void;
+  /** Registro do canal; padrão `handleTrusted` (só a janela principal, frame principal). */
+  readonly handle?: typeof handleTrusted;
 }
 
 function message(error: unknown): string {
@@ -235,10 +234,11 @@ async function restoreMissionCheckpointForRenderer(
   };
 }
 
-export function registerMissionCheckpointIpc(ipc: Ipc, deps: MissionCheckpointIpcDeps = {}): void {
+export function registerMissionCheckpointIpc(deps: MissionCheckpointIpcDeps = {}): void {
+  const handle = deps.handle ?? handleTrusted;
   const rendererScope = deps.rendererScope ?? requireLiveRendererWorkspaceScope;
   const gitDeps = deps.git ? { git: deps.git } : {};
-  ipc.handle(ORCH_CHANNELS.missionCheckpointsList, async (event, raw): Promise<MissionCheckpointListResult> => {
+  handle(ORCH_CHANNELS.missionCheckpointsList, async (event, raw: unknown): Promise<MissionCheckpointListResult> => {
     const parsed = listInputSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'pedido inválido' };
     try {
@@ -247,7 +247,7 @@ export function registerMissionCheckpointIpc(ipc: Ipc, deps: MissionCheckpointIp
       return { ok: false, error: message(error) };
     }
   });
-  ipc.handle(ORCH_CHANNELS.missionCheckpointPreview, async (event, raw): Promise<MissionCheckpointPreviewResult> => {
+  handle(ORCH_CHANNELS.missionCheckpointPreview, async (event, raw: unknown): Promise<MissionCheckpointPreviewResult> => {
     const parsed = refInputSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'pedido inválido' };
     try {
@@ -256,7 +256,7 @@ export function registerMissionCheckpointIpc(ipc: Ipc, deps: MissionCheckpointIp
       return { ok: false, error: message(error) };
     }
   });
-  ipc.handle(ORCH_CHANNELS.missionCheckpointRestore, async (event, raw): Promise<MissionCheckpointRestoreResult> => {
+  handle(ORCH_CHANNELS.missionCheckpointRestore, async (event, raw: unknown): Promise<MissionCheckpointRestoreResult> => {
     const parsed = refInputSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'pedido inválido' };
     try {

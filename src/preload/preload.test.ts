@@ -106,6 +106,18 @@ describe('preload PTY delivery', () => {
     expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('decisionModels:missionPanel', { missionId: 'mission-a' });
   });
 
+  it('F-1173: checkpoints da missão levam só missionId e ref, nunca caminho do renderer', async () => {
+    const api = await loadPreloadApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true });
+    const ref = `refs/nexus-checkpoint/${'a'.repeat(32)}/ordinal/1`;
+    await (api.orch.listMissionCheckpoints as (...args: unknown[]) => Promise<unknown>)({ missionId: 'mission-a', root: '/tmp' });
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('orch:mission.checkpoints.list', { missionId: 'mission-a' });
+    await (api.orch.previewMissionCheckpoint as (...args: unknown[]) => Promise<unknown>)({ missionId: 'mission-a', ref, cwd: '/tmp' });
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('orch:mission.checkpoints.preview', { missionId: 'mission-a', ref });
+    await (api.orch.restoreMissionCheckpoint as (...args: unknown[]) => Promise<unknown>)({ missionId: 'mission-a', ref, cwd: '/tmp' });
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('orch:mission.checkpoints.restore', { missionId: 'mission-a', ref });
+  });
+
   it('exposes Main-owned logout over billing:logout', async () => {
     const api = await loadPreloadApi();
     electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true });
