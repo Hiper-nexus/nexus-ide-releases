@@ -4,11 +4,12 @@
  * Nexus registry deliberately remains the single owner of tool dispatch,
  * confirmations, receipts and mission gates.
  *
- * The bridge is intentionally a tiny self-contained CommonJS program. The
- * main process launches it with the Electron/Node executable and --eval, so
- * no extra bundled file or npm dependency is needed on another PC.
+ * The bridge is intentionally a tiny self-contained CommonJS program run with
+ * Node and --eval, so no extra bundled file or npm dependency is needed on
+ * another PC.
  */
 import type { AcpMcpServerSpec } from '../../shared/acp-protocol';
+import { resolveCliBinary } from '../path-resolver';
 
 const ACP_MCP_BRIDGE_SCRIPT = String.raw`
 const http = require('node:http');
@@ -24,7 +25,7 @@ if (!token || !/^https?:$/.test(target.protocol)) {
 
 function boundedError(error) {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/[\\r\\n]+/g, ' ').slice(0, 256);
+  return message.replace(/[\r\n]+/g, ' ').slice(0, 256);
 }
 
 function request(payload) {
@@ -87,15 +88,15 @@ input.on('line', (line) => {
   try {
     payload = JSON.parse(line);
   } catch {
-    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Nexus MCP bridge received invalid JSON' } }) + '\\n');
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Nexus MCP bridge received invalid JSON' } }) + '\n');
     return;
   }
   queue = queue.then(async () => {
     try {
       const result = await request(payload);
-      if (result !== null) process.stdout.write(JSON.stringify(result) + '\\n');
+      if (result !== null) process.stdout.write(JSON.stringify(result) + '\n');
     } catch (error) {
-      process.stdout.write(JSON.stringify(responseForFailure(payload, error)) + '\\n');
+      process.stdout.write(JSON.stringify(responseForFailure(payload, error)) + '\n');
     }
   });
 });
@@ -126,10 +127,13 @@ export function buildAcpMcpStdioServer(
   }
   return Object.freeze({
     name: 'nexus',
-    command: process.execPath,
+    // F-1209: not process.execPath + ELECTRON_RUN_AS_NODE. The packaged app
+    // ships with the RunAsNode fuse off, so that binary ignores both and just
+    // boots NexusIDE; the agent's MCP server never answered. Same Node the
+    // other stdio bridges (minimax, muse, qwen) use.
+    command: resolveCliBinary('node')?.binPath ?? 'node',
     args: ['--eval', ACP_MCP_BRIDGE_SCRIPT],
     env: Object.freeze([
-      { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
       { name: 'NEXUS_MCP_URL', value: endpoint.toString() },
       { name: 'NEXUS_MCP_TOKEN', value: token },
     ]),

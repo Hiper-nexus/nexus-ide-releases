@@ -465,6 +465,9 @@ const config: ForgeConfig = {
       'resources/wake',
       'resources/mission-shims',
       'resources/heavy-command',
+      // F-1210: OSC 133 rc scripts (CommandBlocks). Main resolves them from
+      // process.resourcesPath; without this the packaged shells got none.
+      'resources/shell-integration',
       'resources/model-ranking.json',
       // Pacote de ~15 pets Codex v2 offline (manifest + sheets/*.webp).
       'resources/pets',
@@ -516,7 +519,10 @@ const config: ForgeConfig = {
     asar: {
       // onnxruntime-node (wake word) dlopens its platform shared library beside
       // the .node binding — both must live outside the asar.
-      unpack: '**/{*.node,*.dll,*.dylib,*.so*,*.wasm,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**}',
+      // F-1208: the OCR worker runs from app.asar.unpacked, and Node's module
+      // lookup never walks into the archive: everything it requires must be
+      // unpacked too (regenerator-runtime, is-url, bmp-js included).
+      unpack: '**/{*.node,*.dll,*.dylib,*.so*,*.wasm,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**,regenerator-runtime/**,is-url/**,bmp-js/**}',
       // Keep the complete platform package adjacent to its native binding.
       // Release verification separately requires zero spawn-helper entries.
       unpackDir: '**/node_modules/@lydell/{node-pty,node-pty-*}',
