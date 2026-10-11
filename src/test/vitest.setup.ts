@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { stripInheritedHeavyAdmission } from './inherited-heavy-admission';
+
+// F-1216: o worker também (o preload do processo principal reinjeta o
+// `--require` no NODE_OPTIONS do fork). Ver src/test/inherited-heavy-admission.ts.
+stripInheritedHeavyAdmission(process.env);
 
 /**
  * Windows: `%TEMP%` pode vir em nome curto 8.3 (`C:\Users\ADMINI~1\...`, com
