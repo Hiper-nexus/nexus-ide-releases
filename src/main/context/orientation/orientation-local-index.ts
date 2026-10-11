@@ -59,7 +59,7 @@ export function documentsFromOrientationMap(map: {
     readonly topDirs: readonly { readonly path: string }[];
   };
   readonly docs: { readonly rootDocs: readonly string[] };
-}): OrientationIndexDocument[] {
+}, files: readonly string[] = []): OrientationIndexDocument[] {
   const docs: OrientationIndexDocument[] = [];
   for (const hub of map.symbols.hubs) {
     docs.push({
@@ -106,6 +106,11 @@ export function documentsFromOrientationMap(map: {
       text: dir.path,
     });
   }
+  const seen = new Set(docs.filter((doc) => doc.kind !== 'hub').map((doc) => doc.path));
+  for (const path of files) {
+    if (seen.has(path)) continue;
+    docs.push({ id: `file:${path}`, title: path, kind: 'path', path, text: path });
+  }
   return docs;
 }
 
@@ -141,7 +146,11 @@ export class OrientationLocalIndex {
    */
   async build(
     map: Parameters<typeof documentsFromOrientationMap>[0],
-    options: { readonly chunkSize?: number; readonly signal?: AbortSignal } = {},
+    options: {
+      readonly chunkSize?: number;
+      readonly signal?: AbortSignal;
+      readonly files?: readonly string[];
+    } = {},
   ): Promise<OrientationIndexSnapshot> {
     const generation = ++this.#buildGeneration;
     this.#cancelled = false;
@@ -150,7 +159,7 @@ export class OrientationLocalIndex {
     if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
       throw new RangeError('orientation index chunkSize must be a positive integer');
     }
-    const documents = documentsFromOrientationMap(map);
+    const documents = documentsFromOrientationMap(map, options.files);
     const docs = new Map<string, OrientationIndexDocument>();
     const inverted: Inverted = new Map();
 

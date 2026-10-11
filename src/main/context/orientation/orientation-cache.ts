@@ -34,7 +34,7 @@ export function orientationCurrentPath(
  * graph, 800-node persisted adjacency), so an upgraded Nexus does not keep
  * serving a map built by the previous extractors until HEAD happens to move.
  */
-export const ORIENTATION_EXTRACTOR_VERSION = 2;
+export const ORIENTATION_EXTRACTOR_VERSION = 3;
 
 export function toOrientationJson(map: ProjectOrientationMap): ProjectOrientationMapJson {
   return Object.freeze({

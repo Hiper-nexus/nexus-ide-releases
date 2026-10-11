@@ -18,6 +18,7 @@ import { buildOrientationInventoryAsync } from './orientation-inventory';
 import { mergeHubs } from './orientation-import-graph';
 import { renderOrientationMarkdown } from './orientation-markdown';
 import {
+  readOrientationStructuralIndex,
   writeOrientationStructuralIndexAsync,
 } from './orientation-structural-index-cache';
 import {
@@ -197,6 +198,17 @@ export class ProjectOrientationService {
   /** Hot-path advisory consumers never read/rebuild a cold cache in Main. */
   peek(scope: ProjectExecutionScope): ProjectOrientationMap | null {
     return this.#memory.get(scopeKey(scope)) ?? null;
+  }
+
+  /** Repo-relative paths of the structural index (memory, else disk cache). */
+  indexedPaths(scope: ProjectExecutionScope): readonly string[] {
+    const key = scopeKey(scope);
+    let index = this.#structuralIndexes.get(key) ?? null;
+    if (!index) {
+      index = readOrientationStructuralIndex(this.#cacheRoot, scope);
+      if (index) this.#structuralIndexes.set(key, index);
+    }
+    return index ? index.files.map((file) => file.relativePath) : [];
   }
 
   async ensure(

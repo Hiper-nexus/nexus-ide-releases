@@ -105,7 +105,8 @@ export function walkOrientationTree(
       fingerprintParts.push(`${relative}\0skip-size\0${size}`);
       return;
     }
-    totalBytes += size;
+    // maxTotalBytes limita conteúdo LIDO; só fonte é lida (structural-index).
+    if (isSource) totalBytes += size;
     if (files.length >= limits.maxFiles || totalBytes > limits.maxTotalBytes) {
       truncated = true;
       return;
@@ -209,7 +210,8 @@ export async function walkOrientationTreeAsync(
       fingerprintParts.push(`${relative}\0skip-size\0${size}`);
       return;
     }
-    totalBytes += size;
+    // maxTotalBytes limita conteúdo LIDO; só fonte é lida (structural-index).
+    if (isSource) totalBytes += size;
     if (files.length >= limits.maxFiles || totalBytes > limits.maxTotalBytes) {
       truncated = true;
       return;

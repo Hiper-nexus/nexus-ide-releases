@@ -107,8 +107,9 @@ const queryTool: McpToolDef = {
       '../context/orientation/orientation-local-index'
     );
     const index = getOrientationLocalIndex(map.mapHash);
+    const files = service.indexedPaths(ctx.scope);
     if (!index.snapshot.ready || index.snapshot.mapHash !== map.mapHash) {
-      void index.build(map, { signal: invocation?.signal }).catch(() => {
+      void index.build(map, { files, signal: invocation?.signal }).catch(() => {
         /* index is optional */
       });
     }
@@ -143,18 +144,23 @@ const queryTool: McpToolDef = {
           hub.samplePaths.some((p) => p.toLowerCase().includes(needle)),
       )
       .slice(0, input.limit);
-    const paths = [
+    const paths = [...new Set([
       ...map.inventory.entrypoints,
       ...map.inventory.manifests,
       ...map.docs.rootDocs,
       ...map.inventory.topDirs.map((dir) => dir.path),
-    ]
+      ...files,
+    ])]
       .filter((item) => item.toLowerCase().includes(needle))
       .slice(0, input.limit);
     return Object.freeze({
       mapHash: map.mapHash,
       status: map.status,
       mode: 'substring' as const,
+      fallbackReason:
+        index.snapshot.ready && index.snapshot.mapHash === map.mapHash
+          ? ('no-index-hits' as const)
+          : ('index-building' as const),
       index: index.snapshot,
       hubs,
       paths,
