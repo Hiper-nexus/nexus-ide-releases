@@ -44,6 +44,7 @@
 @import './settings-agents-polish.css';
 @import './settings-media-polish.css';
 @import './pane-approval.css';
+@import './markdown.css';
 /* Camada de overlay (H6) por último de propósito: é a folha que ANCORA a
    ladder no topo e define scrim/motion da camada. Vindo depois, suas regras
    de vidro e entrada vencem sem precisar de !important. */
