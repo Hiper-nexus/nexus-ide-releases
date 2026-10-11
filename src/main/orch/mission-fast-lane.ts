@@ -184,6 +184,7 @@ import {
   type MissionLeadershipErrorCode,
 } from './mission-leadership';
 import { getMissionLeadership } from './mission-leadership-runtime';
+import { objectivePlainText } from '../../shared/mission-identity';
 
 /**
  * Via Rápida de missão (2026-08-12) — motor limpo, modelo PULL.
@@ -814,7 +815,7 @@ export function agentPrompt(
   sealedPlanTitles: readonly string[] = [],
 ): string {
   const objective = mission.description ?? '';
-  const title = mission.title ?? objective.slice(0, 80);
+  const title = mission.title ?? objectivePlainText(objective).slice(0, 80);
   const routingHints = getMissionRoutingHints(mission.intentContract);
   const skillNote = missionRoutingSkillNote(mission, agent);
   // Missão-pergunta aos panes: contrato META-DE-PANE no lugar do plano selado

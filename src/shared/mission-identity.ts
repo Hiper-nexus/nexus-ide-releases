@@ -8,6 +8,8 @@
  * antigo>", competindo com o objetivo vigente no kickoff.
  */
 
+import { parseInlineMarkdown, spanText } from './rich-text-marks';
+
 const MISSION_TITLE_MAX = 72;
 const MISSION_CHROME_MAX = 48;
 const MISSION_CHROME_FALLBACK = 'Missão';
@@ -52,13 +54,27 @@ export function missionChromeTitle(
 }
 
 /**
+ * F-1170: o objetivo é markdown canônico (o editor do wizard escreve
+ * `**negrito**` e escapa `\*` literal). Título e chrome são texto puro:
+ * marcadores saem, escapes viram o caractere — o objetivo guardado não muda.
+ */
+export function objectivePlainText(objective: string): string {
+  return spanText(parseInlineMarkdown(objective.replace(/\r\n?/gu, '\n')));
+}
+
+/** Primeira linha do objetivo (mesmo vazia), em texto puro e aparada. */
+export function objectiveFirstLinePlainText(objective: string): string {
+  return objectivePlainText(objective).split('\n', 1)[0]!.trim();
+}
+
+/**
  * Título de missão derivado do objetivo do usuário: primeira linha com
- * conteúdo, truncada com reticências. Fallback (nome do squad) só quando o
- * objetivo está vazio.
+ * conteúdo, em texto puro, truncada com reticências. Fallback (nome do squad)
+ * só quando o objetivo está vazio.
  */
 export function missionTitleFromGoal(goal: string, fallback: string): string {
   const firstLine =
-    goal
+    objectivePlainText(goal)
       .split('\n')
       .map((line) => line.trim())
       .find((line) => line.length > 0) ?? '';

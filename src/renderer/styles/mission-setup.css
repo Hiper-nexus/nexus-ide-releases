@@ -834,6 +834,52 @@
   margin-top: var(--space-5);
 }
 
+/* F-1170: o objetivo é o editor Tiptap (contenteditable). A superfície do
+   composer cede ao visual do campo de objetivo; o estado desabilitado vem
+   por contenteditable=false (div não tem :disabled). */
+.mission-setup__objective-editor {
+  min-width: 0;
+  width: 100%;
+}
+
+.composer-tiptap__surface.mission-setup__objective-draft {
+  min-height: 176px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.6;
+  transition:
+    border-color 150ms var(--ease-out-quart),
+    background-color 150ms var(--ease-out-quart);
+}
+
+.composer-tiptap__surface.mission-setup__objective-draft--express {
+  min-height: calc(var(--space-8) * 2 + var(--space-6));
+  font-size: var(--text-lg);
+}
+
+.composer-tiptap__surface.mission-setup__objective-draft:hover:not([contenteditable='false']) {
+  background: color-mix(in srgb, var(--bg-elevated) 92%, var(--text));
+}
+
+.composer-tiptap__surface.mission-setup__objective-draft:focus {
+  border-color: var(--accent);
+}
+
+.composer-tiptap__surface.mission-setup__objective-draft[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.composer-tiptap__surface.mission-setup__objective-draft[contenteditable='false'] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .mission-setup__project-line {
   display: flex;
   flex-wrap: wrap;
@@ -1899,6 +1945,7 @@
   .mission-setup__field input,
   .mission-setup__field textarea,
   .mission-setup__field select,
+  .mission-setup__objective-draft,
   .mission-setup__button {
     transition: none;
   }
