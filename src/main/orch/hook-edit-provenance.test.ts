@@ -31,7 +31,10 @@ function checkout(): string {
 
 const triple = { installationId: 'i', projectId: 'p', checkoutId: 'c' };
 const claude = (conversationId: string | null, resumed = false): SessionProviderConversation =>
-  ({ scope: triple, adapterId: 'claude', conversationId, resumed });
+  ({ scope: triple, adapterId: 'claude', paneId: 'pane-a', conversationId, resumed });
+/** Codex fresco: sem id no argv. Um objeto por sessão viva, como o do pty-manager. */
+const codexFresh = (paneId = 'pane-a'): SessionProviderConversation =>
+  Object.freeze({ scope: triple, adapterId: 'codex', paneId, conversationId: null, resumed: false });
 
 function recorder() {
   const calls: Array<{ key: ConversationEditKey; paths: readonly string[]; at: number }> = [];
@@ -144,13 +147,76 @@ describe('recordHookEditProvenance (F-1237)', () => {
     const root = checkout();
     const { calls, record } = recorder();
     const ctx = { sessionId: 'pty-codex', scope: testProjectScope({ rootRealPath: root }) };
-    const deps = { conversationOf: () => ({ ...claude(null), adapterId: 'codex' }), record };
+    const conversation = codexFresh();
+    const deps = { conversationOf: () => conversation, record, heldByOtherPane: () => false };
     const patch = { command: '*** Begin Patch\n*** Update File: src/x.ts\n*** End Patch' };
 
     expect(recordHookEditProvenance(ctx, 'session-start', { session_id: 'thread-1' }, deps)).toBe(0);
     expect(recordHookEditProvenance(ctx, 'tool-complete', { session_id: 'thread-forjado', tool_name: 'apply_patch', tool_input: patch, cwd: root }, deps)).toBe(0);
     expect(recordHookEditProvenance(ctx, 'tool-complete', { session_id: 'thread-1', tool_name: 'apply_patch', tool_input: patch, cwd: root }, deps)).toBe(1);
     expect(calls.map((call) => [call.key.adapterId, call.key.conversationId, call.paths])).toEqual([['codex', 'thread-1', ['src/x.ts']]]);
+  });
+
+  it('F-1241: só o SessionStart fixa a conversa; o tool-complete de um curl com hooks mudos, não', () => {
+    const root = checkout();
+    const { calls, record } = recorder();
+    const ctx = { sessionId: 'pty-codex', scope: testProjectScope({ rootRealPath: root }) };
+    const conversation = codexFresh();
+    const deps = { conversationOf: () => conversation, record, heldByOtherPane: () => false };
+    const patch = { command: '*** Begin Patch\n*** Update File: src/x.ts\n*** End Patch' };
+    const edit = (sessionId: string) => ({ session_id: sessionId, tool_name: 'apply_patch', tool_input: patch, cwd: root });
+
+    // O primeiro evento do canal é um tool-complete com o thread de outro pane.
+    expect(recordHookEditProvenance(ctx, 'tool-complete', edit('thread-de-outro-pane'), deps)).toBe(0);
+    expect(recordHookEditProvenance(ctx, 'user-submit', { session_id: 'thread-de-outro-pane' }, deps)).toBe(0);
+    // O SessionStart do próprio CLI fixa; o resto do canal tem de concordar.
+    expect(recordHookEditProvenance(ctx, 'session-start', { session_id: 'thread-1' }, deps)).toBe(0);
+    expect(recordHookEditProvenance(ctx, 'tool-complete', edit('thread-de-outro-pane'), deps)).toBe(0);
+    expect(recordHookEditProvenance(ctx, 'tool-complete', edit('thread-1'), deps)).toBe(1);
+    expect(calls.map((call) => call.key.conversationId)).toEqual(['thread-1']);
+    // Kimi/Grok anunciam pelo evento `session`.
+    const kimi = codexFresh('pane-kimi');
+    const kimiDeps = { ...deps, conversationOf: () => kimi };
+    expect(recordHookEditProvenance({ ...ctx, sessionId: 'pty-kimi' }, 'session', { session_id: 'kimi-1' }, kimiDeps)).toBe(0);
+    expect(recordHookEditProvenance({ ...ctx, sessionId: 'pty-kimi' }, 'tool-complete', edit('kimi-1'), kimiDeps)).toBe(1);
+  });
+
+  it('F-1241: id que provider_pane_sessions já dá a outro pane não é fixado', () => {
+    const root = checkout();
+    const { calls, record } = recorder();
+    const ctx = { sessionId: 'pty-codex', scope: testProjectScope({ rootRealPath: root }) };
+    const conversation = codexFresh('pane-a');
+    const heldByOtherPane = vi.fn((_conversation: SessionProviderConversation, claimed: string) => claimed === 'thread-do-pane-b');
+    const deps = { conversationOf: () => conversation, record, heldByOtherPane };
+    const patch = { command: '*** Begin Patch\n*** Update File: src/x.ts\n*** End Patch' };
+    const edit = (sessionId: string) => ({ session_id: sessionId, tool_name: 'apply_patch', tool_input: patch, cwd: root });
+
+    expect(recordHookEditProvenance(ctx, 'session-start', { session_id: 'thread-do-pane-b' }, deps)).toBe(0);
+    expect(heldByOtherPane).toHaveBeenCalledWith(conversation, 'thread-do-pane-b');
+    expect(recordHookEditProvenance(ctx, 'tool-complete', edit('thread-do-pane-b'), deps)).toBe(0);
+    // O SessionStart legítimo, depois, ainda fixa o id próprio.
+    expect(recordHookEditProvenance(ctx, 'session-start', { session_id: 'thread-1' }, deps)).toBe(0);
+    expect(recordHookEditProvenance(ctx, 'tool-complete', edit('thread-1'), deps)).toBe(1);
+    expect(calls.map((call) => call.key.conversationId)).toEqual(['thread-1']);
+  });
+
+  it('F-1241: o pin vive com a sessão viva, sem despejo por volume de spawns', () => {
+    const root = checkout();
+    const { record } = recorder();
+    const scope = testProjectScope({ rootRealPath: root });
+    const patch = { command: '*** Begin Patch\n*** Update File: src/x.ts\n*** End Patch' };
+    const edit = (sessionId: string) => ({ session_id: sessionId, tool_name: 'apply_patch', tool_input: patch, cwd: root });
+    const first = codexFresh('pane-0');
+    const firstDeps = { conversationOf: () => first, record, heldByOtherPane: () => false };
+    expect(recordHookEditProvenance({ sessionId: 'pty-0', scope }, 'session-start', { session_id: 'thread-0' }, firstDeps)).toBe(0);
+    for (let i = 1; i <= 1_100; i += 1) {
+      const other = codexFresh(`pane-${i}`);
+      recordHookEditProvenance({ sessionId: `pty-${i}`, scope }, 'session-start', { session_id: `thread-${i}` },
+        { conversationOf: () => other, record, heldByOtherPane: () => false });
+    }
+
+    expect(recordHookEditProvenance({ sessionId: 'pty-0', scope }, 'tool-complete', edit('thread-forjado'), firstDeps)).toBe(0);
+    expect(recordHookEditProvenance({ sessionId: 'pty-0', scope }, 'tool-complete', edit('thread-0'), firstDeps)).toBe(1);
   });
 
   it('falha do banco nunca derruba o hook', () => {

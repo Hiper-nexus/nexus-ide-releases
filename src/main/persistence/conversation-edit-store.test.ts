@@ -46,3 +46,22 @@ describe('conversation-edit-store (F-1237, nexus.db real)', () => {
     expect(recordConversationEdits(other, ['src/a.ts'], 5, null)).toBe(0);
   });
 });
+
+describe('providerSessionHeldByOtherPane (F-1241, nexus.db real)', () => {
+  it('id gravado para outro pane é de outro; o do próprio pane, de outro adapter ou desconhecido, não', async () => {
+    const { providerSessionHeldByOtherPane, saveProviderPaneSession } = await import('./provider-session-store');
+    const scope = {
+      version: 1 as const, installationId: 'i', projectId: 'p', checkoutId: 'c',
+      rootRealPath: '/repo', identitySource: 'manifest' as const,
+    };
+    expect(saveProviderPaneSession(scope, 'pane-b', 'codex', { key: 'session_id', id: 'thread-b' })).toBe(true);
+    // Escopo de execução e de coordenação podem diferir: a conversa é global.
+    expect(saveProviderPaneSession({ ...scope, checkoutId: 'worktree' }, 'pane-c', 'codex', { key: 'session_id', id: 'thread-c' })).toBe(true);
+
+    expect(providerSessionHeldByOtherPane('codex', 'thread-b', 'pane-a')).toBe(true);
+    expect(providerSessionHeldByOtherPane('codex', 'thread-c', 'pane-a')).toBe(true);
+    expect(providerSessionHeldByOtherPane('codex', 'thread-b', 'pane-b')).toBe(false);
+    expect(providerSessionHeldByOtherPane('codex', 'thread-nova', 'pane-a')).toBe(false);
+    expect(providerSessionHeldByOtherPane('claude', 'thread-b', 'pane-a')).toBe(false);
+  });
+});

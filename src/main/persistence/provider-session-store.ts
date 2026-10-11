@@ -199,6 +199,31 @@ export function forgetProviderSessionById(
 }
 
 /**
+ * F-1241: a conversa `sessionId` já está gravada para OUTRO pane. Sem escopo
+ * de propósito: o id da conversa é global e a linha pode ter sido gravada com o
+ * escopo de execução ou o de coordenação. Banco ausente ou erro: true (na
+ * dúvida, a proveniência não fixa a conversa).
+ */
+export function providerSessionHeldByOtherPane(
+  adapterId: string,
+  sessionId: string,
+  paneId: string,
+): boolean {
+  try {
+    const db = getDb();
+    if (!db) return true;
+    const rows = db.prepare(
+      `SELECT 1 FROM provider_pane_sessions
+        WHERE adapter_id = ? AND session_id = ? AND pane_id <> ?
+        LIMIT 1`,
+    ).all(adapterId, sessionId, paneId);
+    return rows.length > 0;
+  } catch {
+    return true;
+  }
+}
+
+/**
  * 0.76.45: um pane NOVO retoma a conversa de um pane antigo (estacionado ou
  * fechado). Copia o registro de sessão do provider para o paneId novo, com o
  * mesmo dono de conta, para o lookup de resume exato (por paneId) encontrá-lo.

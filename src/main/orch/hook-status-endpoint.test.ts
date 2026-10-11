@@ -646,6 +646,7 @@ describe('F-1237: proveniência de edição pelo hook de status', () => {
 const BOUND_CONVERSATION = Object.freeze({
   scope: Object.freeze({ installationId: 'i', projectId: 'p', checkoutId: 'c' }),
   adapterId: 'claude',
+  paneId: 'pane-a',
   conversationId: 'conv-a',
   resumed: false,
 });

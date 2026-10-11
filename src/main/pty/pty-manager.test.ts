@@ -6171,7 +6171,7 @@ describe("F-1237: autoria por proveniência — o pane retomado responde pelas e
       // 1ª encarnação: a conversa nasce aqui e escreve x.ts + o teste dele.
       const first = spawnAgentSession(fakeWc(), { kind: "cli-agent", paneId: "pane-f1237", cols: 80, rows: 24 }, adapter, {}, authority);
       const conversation = getSessionProviderConversation(first.sessionId)!;
-      expect(conversation).toMatchObject({ adapterId: "test-cli", resumed: false });
+      expect(conversation).toMatchObject({ adapterId: "test-cli", paneId: "pane-f1237", resumed: false });
       const conversationId = conversation.conversationId!;
       expect(conversationId).toMatch(/^[0-9a-f-]{36}$/);
       const firstCtx = { sessionId: first.sessionId, scope: authority.scope };
