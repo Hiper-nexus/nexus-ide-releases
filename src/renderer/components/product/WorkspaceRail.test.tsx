@@ -667,7 +667,7 @@ describe('WorkspaceRail', () => {
     act(() =>
       usePaneFootprintStore.setState({
         machine: {
-          sampledAt: 1,
+          sampledAt: Date.now(),
           memory: {
             totalBytes: 16 * GiB,
             availableBytes: 1 * GiB,
