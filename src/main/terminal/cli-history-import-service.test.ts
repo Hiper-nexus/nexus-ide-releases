@@ -148,6 +148,11 @@ describe('importCliHistoryForScope', () => {
     expect(blocks.capped).toBe(true);
     expect(blocks.imported).toBe(3);
     expect(blocks.imported + blocks.duplicates + blocks.skipped).toBe(blocks.found);
+    // Duplicado não gasta o teto: rodar de novo avança no que faltou.
+    const again = await importCliHistoryForScope(deps(store3, { maxBlocks: 3, maxBytesPerFile: 500 }));
+    expect(again.duplicates).toBe(3);
+    expect(again.imported).toBe(3);
+    expect(store3.search({}).length).toBe(6);
   });
 
   it('sem provider-state devolve zeros sem erro', async () => {

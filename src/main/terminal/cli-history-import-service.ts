@@ -127,7 +127,7 @@ export async function importCliHistoryForScope(
   let sinceYield = 0;
   for (const transcript of transcripts) {
     await yieldToLoop();
-    if (imported + duplicates >= maxBlocks) {
+    if (imported >= maxBlocks) {
       capped = true;
       break;
     }
@@ -154,7 +154,7 @@ export async function importCliHistoryForScope(
     });
     found += blocks.length;
     for (const block of blocks) {
-      if (imported + duplicates >= maxBlocks) {
+      if (imported >= maxBlocks) {
         capped = true;
         skipped += 1;
         continue;
