@@ -48,7 +48,11 @@ export interface MissionCheckpointPlanView {
 }
 
 export type MissionCheckpointPreviewResult =
-  | ({ readonly ok: true } & MissionCheckpointPlanView)
+  | ({
+      readonly ok: true;
+      /** Impressão do plano mostrado; a restauração exige a mesma. */
+      readonly fingerprint: string;
+    } & MissionCheckpointPlanView)
   | { readonly ok: false; readonly error: string };
 
 export type MissionCheckpointRestoreResult =
@@ -58,9 +62,19 @@ export type MissionCheckpointRestoreResult =
       /** Estado anterior guardado antes de escrever (só quando escreveu). */
       readonly backupRef: string | null;
     } & MissionCheckpointPlanView)
-  | { readonly ok: false; readonly error: string };
+  | {
+      readonly ok: false;
+      readonly error: string;
+      /** O plano mudou desde a prévia: nada foi escrito; peça outra prévia. */
+      readonly stale?: true;
+    };
 
 export interface MissionCheckpointRefInput {
   readonly missionId: string;
   readonly ref: string;
+}
+
+export interface MissionCheckpointRestoreInput extends MissionCheckpointRefInput {
+  /** `fingerprint` devolvido pela prévia que a pessoa confirmou. */
+  readonly fingerprint: string;
 }
