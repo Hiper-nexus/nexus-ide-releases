@@ -12,6 +12,7 @@ import { cliPtyAdapterSchema } from '../../shared/adapter-types';
 import museAdapter from '../../adapters/builtin/muse.json';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -30,10 +31,11 @@ function response(res: http.ServerResponse, item: Record<string, unknown>) {
  res.end();
 }
 
-it.runIf(process.platform === 'darwin' && Boolean(muse)).each([
+it.runIf(process.platform === 'darwin' && Boolean(muse)).for([
  { scheduled: false, fullAuto: false }, { scheduled: true, fullAuto: false },
  { scheduled: false, fullAuto: true }, { scheduled: true, fullAuto: true },
-])('real Muse selected config in place and scheduling=$scheduled fullAuto=$fullAuto', async ({ scheduled, fullAuto }) => {
+])('real Muse selected config in place and scheduling=$scheduled fullAuto=$fullAuto', { timeout: 35_000 }, async ({ scheduled, fullAuto }, testContext) => {
+ skipUnderNexusPtySupervisor(testContext);
  const root = fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(process.cwd()), 'native-muse-control-')));
  const workspace = path.join(root, 'workspace'), privateTmp = path.join(root, 'tmp'), home = path.join(root, 'home');
  for (const directory of [workspace, privateTmp, home]) fs.mkdirSync(directory);
@@ -150,7 +152,7 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).each([
   for (const socket of sockets) socket.destroy();
   await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true });
  }
-}, 35_000);
+});
 
 // F-904: a lease entry left behind after the app was removed must not block the
 // operator's own Muse. Muse 1.4 only blocks on exit 2 / an explicit deny; a

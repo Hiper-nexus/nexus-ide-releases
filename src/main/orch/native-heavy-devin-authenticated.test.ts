@@ -11,6 +11,7 @@ import { HeavyCommandPermitPool } from './heavy-command-permit';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { supervisedPtyCommand, nestedHeavyJobBaseCommand } from '../pty/darwin-pty-supervisor';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { darwinNodePtyBootstrapLaunch } from '../pty/darwin-node-pty-bootstrap';
 import { prepareCheckoutProviderHome } from '../adapters/managed-credentials';
 import { buildControlArgs } from '../adapters/control-args';
@@ -22,7 +23,8 @@ const hash = (file: string) => createHash('sha256').update(fs.readFileSync(file)
 const statIdentity = (file: string) => { const s = fs.statSync(file); return [s.ino, s.size, s.mtimeMs]; };
 
 // Explicit opt-in: ordinary suites do not invoke authenticated inference.
-it.runIf(process.platform === 'darwin' && process.env.NEXUS_TEST_DEVIN_AUTHENTICATED === '1' && fs.existsSync(devin))('actual authenticated Devin default PTY shell baseline and current Main admission', async () => {
+it.runIf(process.platform === 'darwin' && process.env.NEXUS_TEST_DEVIN_AUTHENTICATED === '1' && fs.existsSync(devin))('actual authenticated Devin default PTY shell baseline and current Main admission', async (testContext) => {
+  skipUnderNexusPtySupervisor(testContext);
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-c6-devin-auth-')));
   console.log(`owned Devin evidence: ${root}`);
   const nativeHome = '/Users/cleofaspereirarocha', authSource = path.join(nativeHome, '.local/share');

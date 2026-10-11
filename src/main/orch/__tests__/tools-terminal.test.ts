@@ -12,6 +12,7 @@ import { processSandboxRuntimeAvailable } from '../../runtime/process-sandbox-ca
 import { setPtyHost } from '../../pty/pty-manager';
 import { supervisedJobCommand } from '../../pty/darwin-pty-supervisor';
 import { buildTestDarwinPtySupervisor } from '../../../test/darwin-pty-supervisor-fixture';
+import { nestedPtySupervisorSkipReason, skipUnderNexusPtySupervisor } from '../../../test/nested-pty-supervisor';
 
 const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-terminal');
 /** Real exec through Seatbelt/bwrap — skip when host userns is blocked (GHA Linux). */
@@ -22,7 +23,7 @@ describe('tools-terminal', () => {
   let supervisor: ReturnType<typeof buildTestDarwinPtySupervisor> | undefined;
   beforeAll(() => {
     fs.mkdirSync(testDir, { recursive: true });
-    if (process.platform !== 'darwin') return;
+    if (process.platform !== 'darwin' || nestedPtySupervisorSkipReason()) return;
     const fixture = buildTestDarwinPtySupervisor();
     supervisor = fixture;
     setPtyHost({
@@ -65,7 +66,8 @@ describe('tools-terminal', () => {
     expect(sanitizeEnv(null).PATH).toBe(process.env.PATH);
   });
 
-  itSandboxed('nexus_terminal_run executes a simple command', async () => {
+  itSandboxed('nexus_terminal_run executes a simple command', async (testContext) => {
+    skipUnderNexusPtySupervisor(testContext);
     const tools = buildTerminalTools();
     const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
     const result = await run.handler(
@@ -77,7 +79,8 @@ describe('tools-terminal', () => {
     expect(result.stdout).toContain('hello world');
   });
 
-  itSandboxed('nexus_terminal_run returns exit code for failed commands', async () => {
+  itSandboxed('nexus_terminal_run returns exit code for failed commands', async (testContext) => {
+    skipUnderNexusPtySupervisor(testContext);
     const tools = buildTerminalTools();
     const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
     const result = await run.handler(
@@ -87,7 +90,8 @@ describe('tools-terminal', () => {
     expect(result).toHaveProperty('exitCode', 42);
   });
 
-  itSandboxed('nexus_terminal_run captures stderr', async () => {
+  itSandboxed('nexus_terminal_run captures stderr', async (testContext) => {
+    skipUnderNexusPtySupervisor(testContext);
     const tools = buildTerminalTools();
     const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
     const result = await run.handler(
@@ -97,7 +101,8 @@ describe('tools-terminal', () => {
     expect(result.stderr).toContain('error');
   });
 
-  itSandboxed('drops environment variables outside the allowlist', async () => {
+  itSandboxed('drops environment variables outside the allowlist', async (testContext) => {
+    skipUnderNexusPtySupervisor(testContext);
     const tools = buildTerminalTools();
     const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
     const result = await run.handler(
@@ -111,7 +116,8 @@ describe('tools-terminal', () => {
     expect(result.stdout.trim()).toBe('missing');
   });
 
-  itSandboxed('caps stdout at 1 MB with a truncation marker', async () => {
+  itSandboxed('caps stdout at 1 MB with a truncation marker', async (testContext) => {
+    skipUnderNexusPtySupervisor(testContext);
     const tools = buildTerminalTools();
     const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
     const result = await run.handler(
@@ -135,7 +141,8 @@ describe('tools-terminal', () => {
 
   it.runIf(process.platform === 'darwin' && sandboxAvailable)(
     'denies absolute reads and writes outside the project',
-    async () => {
+    async (testContext) => {
+      skipUnderNexusPtySupervisor(testContext);
       const outsideDir = fs.mkdtempSync(
         path.join(os.tmpdir(), 'nexus-terminal-outside-'),
       );
@@ -165,7 +172,8 @@ describe('tools-terminal', () => {
 
   it.runIf(process.platform === 'darwin' && sandboxAvailable)(
     'terminates the whole process group on timeout',
-    async () => {
+    async (testContext) => {
+      skipUnderNexusPtySupervisor(testContext);
       const pidFile = path.join(testDir, 'child.pid');
       fs.rmSync(pidFile, { force: true });
       const tools = buildTerminalTools();

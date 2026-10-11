@@ -19,6 +19,7 @@ import { processSandboxRuntimeAvailable } from "../runtime/process-sandbox-capab
 import { setPtyHost } from "../pty/pty-manager";
 import { supervisedJobCommand } from "../pty/darwin-pty-supervisor";
 import { buildTestDarwinPtySupervisor } from "../../test/darwin-pty-supervisor-fixture";
+import { nestedPtySupervisorSkipReason, skipUnderNexusPtySupervisor } from "../../test/nested-pty-supervisor";
 import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
   configureWorktreeRuntimeRegistry,
@@ -123,7 +124,7 @@ function fixtureRepo(): string {
 
 let supervisor: ReturnType<typeof buildTestDarwinPtySupervisor> | undefined;
 beforeAll(() => {
-  if (process.platform === 'darwin') supervisor = buildTestDarwinPtySupervisor();
+  if (process.platform === 'darwin' && !nestedPtySupervisorSkipReason()) supervisor = buildTestDarwinPtySupervisor();
 }, 60_000);
 afterAll(() => supervisor?.dispose());
 
@@ -162,6 +163,9 @@ afterEach(() => {
 const darwinOnly = process.platform === "darwin" && processSandboxRuntimeAvailable() ? describe : describe.skip;
 
 darwinOnly("portão de regressão na fronteira comum do handoff", () => {
+  // O portão roda o vitest real sob o supervisor da suíte (F-1217).
+  beforeEach((testContext) => skipUnderNexusPtySupervisor(testContext));
+
   it("fechamento mecânico (nasce success) com teste impactado falhando entra blocked — mesmo depois de o MCP recusar", async () => {
     const scope = testProjectScope();
     const repo = fixtureRepo();

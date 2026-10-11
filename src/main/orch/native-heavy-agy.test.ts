@@ -13,6 +13,7 @@ import { HeavyCommandPermitPool } from './heavy-command-permit';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import type { AgentGateContext } from './gate';
 
 // AGY 1.2.16 asked for a new login in a Main checkout HOME (F-567), so this
@@ -36,7 +37,8 @@ const agyEnv = (extra: Record<string, string> = {}) => ({ PATH: process.env.PATH
   SHELL: '/bin/zsh', LANG: 'en_US.UTF-8', TERM: 'xterm-256color', AGY_CLI_DISABLE_AUTO_UPDATE: '1', ...extra });
 
 // Explicit opt-in: ordinary suites never run authenticated inference.
-it.runIf(process.platform === 'darwin' && process.env.NEXUS_TEST_AGY_AUTHENTICATED === '1' && fs.existsSync(agy))('actual authenticated AGY global plugin admits heavy commands through the file channel', async () => {
+it.runIf(process.platform === 'darwin' && process.env.NEXUS_TEST_AGY_AUTHENTICATED === '1' && fs.existsSync(agy))('actual authenticated AGY global plugin admits heavy commands through the file channel', async (testContext) => {
+  skipUnderNexusPtySupervisor(testContext);
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-agy-plugin-proof-')));
   console.log(`owned AGY evidence: ${root}`);
   // Install/uninstall only the exclusive name, and only when nothing owns it yet.
