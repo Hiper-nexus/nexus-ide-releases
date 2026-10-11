@@ -12,7 +12,11 @@
 #                 conclui a missão por `nexus_mission_set_status`;
 #   revisor     — (F-1007) o revisor independente que o PRÓPRIO Main abre na
 #                 conclusão de código: lê o candidato em leitura, registra
-#                 `nexus_review_verdict` e entrega o relatório por handoff.
+#                 `nexus_review_verdict` e entrega o relatório por handoff;
+#   operador    — (F-1185) a mão do operador num pane do "+ Pane": nasce
+#                 interativa (sem tarefa no argv), recebe a tarefa DIGITADA no
+#                 PTY, solta o 1º helper pelo MCP HTTP real sem missionId e
+#                 recebe a entrega dele no PTY.
 # Tudo o que acontece vira recibo em <E2E_DIR>/agents, lido pelo teste.
 use strict;
 use warnings;
@@ -33,14 +37,21 @@ my $json = JSON::PP->new->utf8->canonical;
 # (--mcp-config, --model…) são ignoradas. O brief é o argumento mais longo.
 my ($brief) = sort { length($b) <=> length($a) } @ARGV;
 $brief //= '';
-my ($dir) = $brief =~ /\[\[E2E_DIR=([^\]\s]+)\]\]/;
-$dir //= $ENV{NEXUS_E2E_DIR};
-die "[nexus-e2e-agent] brief sem [[E2E_DIR=...]]\r\n" unless defined $dir && -d $dir;
 my ($role) = $brief =~ /\[\[E2E_ROLE=([a-z0-9:-]+)\]\]/;
 # F-1007: o brief do revisor é o do Main (reviewerPrompt), sem marcador do teste.
 $role //= 'reviewer' if $brief =~ /^Você é o revisor independente da entrega\./;
+if (!defined $role) {
+  # F-1185: pane do "+ Pane" — a CLI abre interativa, sem tarefa no argv (como
+  # o Claude ou o Codex que o operador abre). A tarefa chega DIGITADA no PTY.
+  say_pty('nexus-e2e-agent 1.0 — pronto; digite a tarefa');
+  $brief = read_typed_prompt();
+  ($role) = $brief =~ /\[\[E2E_ROLE=([a-z0-9:-]+)\]\]/;
+}
 die "[nexus-e2e-agent] brief sem [[E2E_ROLE=...]]\r\n" unless defined $role;
-my $id = $role eq 'orchestrator' || $role eq 'reviewer' ? $role : ($role =~ /^worker:([a-z0-9-]+)$/)[0];
+my ($dir) = $brief =~ /\[\[E2E_DIR=([^\]\s]+)\]\]/;
+$dir //= $ENV{NEXUS_E2E_DIR};
+die "[nexus-e2e-agent] brief sem [[E2E_DIR=...]]\r\n" unless defined $dir && -d $dir;
+my $id = $role eq 'orchestrator' || $role eq 'reviewer' || $role eq 'operator' ? $role : ($role =~ /^worker:([a-z0-9-]+)$/)[0];
 die "[nexus-e2e-agent] papel inválido: $role\r\n" unless defined $id;
 my $agents = "$dir/agents";
 make_path($agents);
@@ -61,6 +72,19 @@ sub append_line {
   close($fh);
 }
 sub say_pty { print map { "$_\r\n" } @_ }
+# F-1185: o que o operador digita no pane (texto ou colagem) até o Enter.
+sub read_typed_prompt {
+  system('/bin/stty', 'raw', '-echo');
+  my $typed = '';
+  until ($typed =~ /\[\[E2E_ROLE=/ && $typed =~ /[\r\n]/) {
+    my $read = sysread(STDIN, my $chunk, 65536);
+    exit(0) unless $read;
+    $typed .= $chunk;
+  }
+  $typed =~ s/\x1b\[20[01]~//g;
+  $typed =~ s/[\r\n]+\z//;
+  return $typed;
+}
 
 my $cwd = Cwd::getcwd();
 my %boot = (
@@ -202,6 +226,50 @@ if ($role eq 'reviewer') {
   write_file("$agents/reviewer.result.json", $json->encode({ %result, handoff => $handoff }));
   say_pty('[revisor] veredito registrado e relatório entregue');
   idle_forever("$agents/reviewer.input.ndjson");
+  exit(0);
+}
+
+if ($role eq 'operator') {
+  # ------------------------------------------------- mão do operador (F-1185)
+  # Pane `user`, sem missão: solta o helper do plano pelo MCP HTTP REAL do
+  # próprio pane, SEM missionId. O Main cria a missão leve da aba e adota este
+  # pane como orquestrador dela; a entrega do helper chega colada no PTY.
+  my $plan = do { local $/; open(my $fh, '<', "$dir/operator-plan.json") or die "plano: $!"; $json->decode(<$fh>) };
+  start_heartbeat('operador');
+  my $before = mcp('nexus_pane_whoami', {});
+  my $spawn = mcp('nexus_pane_spawn', $plan->{helper}{args});
+  write_file("$agents/operator.spawn.json", $json->encode($spawn));
+  my $after = mcp('nexus_pane_whoami', {});
+  stop_heartbeat();
+  write_file("$agents/operator.result.json", $json->encode({ whoamiBefore => $before, spawn => $spawn, whoamiAfter => $after, finishedAt => time() }));
+  say_pty('[operador] helper solto; aguardando a entrega');
+  system('/bin/stty', 'raw', '-echo');
+  my $select = IO::Select->new(\*STDIN);
+  my ($buffer, @pending, %acked) = ('');
+  while (!$stopping) {
+    next unless $select->can_read(0.5);
+    my $read = sysread(STDIN, my $chunk, 65536);
+    exit(0) unless $read;
+    append_line("$agents/operator.input.ndjson", $json->encode({ at => time(), bytes => length($chunk), text => $chunk }));
+    $buffer .= $chunk;
+    while ($buffer =~ s/\x1b\[200~(.*?)\x1b\[201~//s) {
+      my $paste = $1;
+      my @segments = grep { length } split(/(?=\[nexus handoff delivery_metadata\])/, $paste);
+      push @pending, @segments ? @segments : ($paste);
+    }
+    next unless $buffer =~ s/\r//g;
+    $buffer = '';
+    while (my $text = shift @pending) {
+      my ($handoff) = $text =~ /handoff_id=(\S+)/;
+      my ($from) = $text =~ /from=(\S+)/;
+      my %delivery = (handoff => $handoff // 'sem-id', from => $from, worker => ($text =~ /claim_trust=untrusted/ ? 1 : 0), at => time());
+      say_pty("[operador] recebido $delivery{handoff} de " . ($from // '?'));
+      if ($delivery{worker} && !$acked{$delivery{handoff}}++) {
+        $delivery{ack} = mcp('nexus_handoff_ack', { handoffId => $delivery{handoff}, verdict => 'accepted' });
+      }
+      append_line("$agents/operator.deliveries.ndjson", $json->encode(\%delivery));
+    }
+  }
   exit(0);
 }
 
