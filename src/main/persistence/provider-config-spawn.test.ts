@@ -9,7 +9,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 const spawnDeps = vi.hoisted(() => ({
   resolvedClaudeBin: '/usr/local/bin/claude' as string | null,
   trustedHandlers: new Map<string, (event: unknown, args: unknown) => unknown>(),
-  confirmInstall: vi.fn(async () => ({ response: 1 })),
+  confirmInstall: vi.fn(async (..._args: unknown[]) => ({ response: 1 })),
+  windows: [] as unknown[],
   downloadInstaller: vi.fn(async () => ({ ok: true, text: async () => '#!/bin/bash\nexit 0\n' })),
   systemIdleTime: vi.fn(() => 0),
   rescanBinaries: vi.fn(async () => []),
@@ -259,7 +260,7 @@ const credentiallessAdapter = {
 
 vi.mock('electron', () => ({
   powerMonitor: { getSystemIdleTime: spawnDeps.systemIdleTime },
-  BrowserWindow: { getAllWindows: () => [], getFocusedWindow: () => null },
+  BrowserWindow: { getAllWindows: () => spawnDeps.windows, getFocusedWindow: () => null },
   dialog: { showMessageBox: spawnDeps.confirmInstall },
   net: { fetch: spawnDeps.downloadInstaller },
   ipcMain: { handle: vi.fn() },
@@ -494,6 +495,10 @@ import {
 } from './provider-config-store';
 import { fetchLiveProviderWindows } from '../quota/provider-live-usage';
 
+function sheetHost(visible: boolean) {
+  return { isDestroyed: () => false, isVisible: () => visible, isFocusable: () => true };
+}
+
 describe('background CLI maintenance during pane startup', () => {
   let stop: (() => void) | undefined;
   let finishUpdate: (() => void) | undefined;
@@ -503,6 +508,8 @@ describe('background CLI maintenance during pane startup', () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
     spawnDeps.systemIdleTime.mockReturnValue(120);
     spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
+    spawnDeps.confirmInstall.mockClear();
+    spawnDeps.windows = [];
     vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: {} }));
     vi.spyOn(fs, 'realpathSync').mockReturnValue('/fixture-quota-home/.local/share/claude/versions/1');
     vi.spyOn(fs, 'accessSync').mockImplementation(() => {});
@@ -547,6 +554,37 @@ describe('background CLI maintenance during pane startup', () => {
     stop = startCliAutoUpdate('/fixture-quota-home', () => false);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(finishUpdate).toBeTypeOf('function');
+  });
+
+  // F-1203: quem respondeu "Agora não" é perguntado de novo 7 dias depois, e
+  // só com o sistema ocioso — o operador longe e o Nexus fora de foco. No macOS
+  // um showMessageBox sem janela-mãe é NSAlert runModal e prendia a main thread
+  // até alguém voltar.
+  const declined = JSON.stringify({ enabled: false, askAgainAt: 1, checkedAt: {} });
+  const declinedBefore = () => {
+    vi.spyOn(fs, 'readFileSync').mockReturnValue(declined);
+    vi.spyOn(periodicFileRead, 'readRegularFileCappedAsync').mockResolvedValue({ kind: 'text', stamp: 'declined', text: declined });
+  };
+
+  it('asks the idle consent again as a sheet on the unfocused Nexus window', async () => {
+    const win = sheetHost(false);
+    spawnDeps.windows = [win];
+    declinedBefore();
+    stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(spawnDeps.confirmInstall).toHaveBeenCalled();
+    for (const call of spawnDeps.confirmInstall.mock.calls) expect(call[0]).toBe(win);
+    expect(fsp.writeFile).toHaveBeenCalled();
+  });
+
+  it('without any window it neither freezes Main on a parentless alert nor records a decision', async () => {
+    spawnDeps.windows = [];
+    declinedBefore();
+    stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(spawnDeps.confirmInstall).not.toHaveBeenCalled();
+    expect(fsp.writeFile).not.toHaveBeenCalled();
+    expect(finishUpdate).toBeUndefined();
   });
 
   it.each([
