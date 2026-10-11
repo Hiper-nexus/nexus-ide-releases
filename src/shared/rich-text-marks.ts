@@ -55,6 +55,15 @@ function pushSpan(
 
 /** Parse the supported inline styles, leaving unmatched and escaped markers literal. */
 export function parseInlineMarkdown(text: string): RichTextSpan[] {
+  return parseInlineMarkdownDetailed(text).spans;
+}
+
+/**
+ * F-1170: `balanced` diz se nenhum marcador ficou aberto no fim. Um trecho
+ * que se lê igual sozinho E fecha tudo lê igual dentro de um documento maior
+ * (o parser só carrega a pilha entre linhas; `\n` não é marcador nem escape).
+ */
+export function parseInlineMarkdownDetailed(text: string): { spans: RichTextSpan[]; balanced: boolean } {
   const root: RichTextSpan[] = [];
   const stack: {
     delimiter: string;
@@ -155,13 +164,14 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
       }
     }
   }
+  const balanced = stack.length === 0;
   while (stack.length > 0) {
     const frame = stack.pop()!;
     pushSpan(current(), frame.delimiter, []);
     for (const span of frame.spans)
       pushSpan(current(), span.text, span.marks);
   }
-  return root;
+  return { spans: root, balanced };
 }
 
 /** Code contents are literal, including backslashes. Match an exact tick run.

@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ComposerTiptapEditor,
   tiptapJsonToMarkdown,
+  plainTextToMarkdown,
+  truncateMarkdown,
   type ComposerTiptapEditorHandle,
   type ComposerTiptapEditorProps,
 } from './ComposerTiptapEditor';
@@ -414,3 +416,114 @@ function readAs(markdown: string): Array<[string, string]> {
   }
   return out;
 }
+
+describe('F-1170 (revisão P2): custo por tecla e por colagem num objetivo grande', () => {
+  // Texto real que derruba a saída mínima (globs com `**`/`*`): cada linha
+  // precisa de escapes, e o documento todo cabe no teto do objetivo.
+  const lines = Array.from(
+    { length: 300 },
+    (_, index) => `- revisar src/**/*.ts e docs/*.md ${index}`,
+  );
+  const objective = plainTextToMarkdown(lines.join('\n'));
+  const MAX = 16_384;
+
+  it('o objetivo de 300 linhas cabe no teto e faz ida e volta', async () => {
+    expect(objective.length).toBeLessThan(MAX);
+    const { editor } = await setup({ value: objective, maxLength: MAX });
+    expect(editor.state.doc.childCount).toBe(300);
+    expect(tiptapJsonToMarkdown(editor.getJSON())).toBe(objective);
+  });
+
+  it('digitar e colar no fim custam bem menos de 50 ms cada, sem perder texto', async () => {
+    const { editor, onChange } = await setup({ value: objective, maxLength: MAX });
+    act(() => editor.commands.setTextSelection(editor.state.doc.content.size - 1));
+    typeText(editor, 'x'); // aquece caches/JIT
+    const typing: number[] = [];
+    for (const char of ' e *depois* **x**') {
+      const start = performance.now();
+      typeText(editor, char);
+      typing.push(performance.now() - start);
+    }
+    const pasteStart = performance.now();
+    paste(editor.view.dom, { 'text/plain': '\n- colar src/**/*.tsx e mais_um_arquivo.md' });
+    const pasting = performance.now() - pasteStart;
+    const sorted = [...typing].sort((a, b) => a - b);
+    // Mediana e pior caso, com margem para o jsdom; antes: centenas de ms por tecla.
+    expect(sorted[Math.floor(sorted.length / 2)]!).toBeLessThan(50);
+    expect(sorted.at(-1)!).toBeLessThan(150);
+    expect(pasting).toBeLessThan(150);
+    const saved = onChange.mock.calls.at(-1)?.[0] as string;
+    const fresh = await setup({ value: saved });
+    expect(fresh.editor.state.doc.textContent).toBe(editor.state.doc.textContent);
+    expect(tiptapJsonToMarkdown(fresh.editor.getJSON())).toBe(saved);
+  });
+
+  it('linhas com marcador solto (2*3) que parearia entre linhas: rápido e sem virar itálico', async () => {
+    const loose = Array.from({ length: 300 }, (_, index) => `calcule 2*3 na etapa_${index}`).join('\n');
+    const value = plainTextToMarkdown(loose);
+    expect(value.length).toBeLessThan(MAX);
+    const { editor, onChange } = await setup({ value, maxLength: MAX });
+    expect(editor.state.doc.textContent).toBe(loose.replaceAll('\n', ''));
+    act(() => editor.commands.setTextSelection(editor.state.doc.content.size - 1));
+    typeText(editor, 'x');
+    const typing: number[] = [];
+    for (const char of ' 4*5') {
+      const start = performance.now();
+      typeText(editor, char);
+      typing.push(performance.now() - start);
+    }
+    expect(Math.max(...typing)).toBeLessThan(150);
+    const saved = onChange.mock.calls.at(-1)?.[0] as string;
+    const fresh = await setup({ value: saved });
+    expect(fresh.editor.state.doc.textContent).toBe(editor.state.doc.textContent);
+    let marked = 0;
+    fresh.editor.state.doc.descendants((node) => { if (node.marks.length) marked += 1; });
+    expect(marked).toBe(0);
+  });
+
+  it('dois marcadores soltos em linhas diferentes não pareiam depois de salvar', async () => {
+    const { editor, onChange } = await setup({ value: '' });
+    typeText(editor, 'a*b');
+    act(() => { editor.commands.splitBlock(); });
+    typeText(editor, 'c*d');
+    const saved = onChange.mock.calls.at(-1)?.[0] as string;
+    const fresh = await setup({ value: saved });
+    expect(fresh.editor.state.doc.child(0).textContent).toBe('a*b');
+    expect(fresh.editor.state.doc.child(1).textContent).toBe('c*d');
+    let marked = 0;
+    fresh.editor.state.doc.descendants((node) => { if (node.marks.length) marked += 1; });
+    expect(marked).toBe(0);
+  });
+
+  it('colar além do teto num objetivo grande trunca rápido', async () => {
+    const { editor, onChange } = await setup({ value: objective, maxLength: MAX });
+    act(() => editor.commands.setTextSelection(editor.state.doc.content.size - 1));
+    const start = performance.now();
+    paste(editor.view.dom, { 'text/plain': ' src/**/*.ts'.repeat(400) });
+    expect(performance.now() - start).toBeLessThan(300);
+    const saved = onChange.mock.calls.at(-1)?.[0] as string;
+    expect(saved.length).toBeLessThanOrEqual(MAX);
+    expect(saved.length).toBeGreaterThan(MAX - 20);
+  });
+});
+
+describe('F-1170 (revisão P3): truncateMarkdown corta por unidades seguras', () => {
+  it.each([
+    [String.raw`abc \*\*x`, 6],
+    [String.raw`C:\Users\x \_y`, 12],
+    ['**negrito** depois', 5],
+    ['`código` e mais', 4],
+    ['ação 🚀 fim', 6],
+    ['linha 1\nlinha **2**', 12],
+  ])('%j em %i: cabe no teto e lê como prefixo do original', (markdown, max) => {
+    const out = truncateMarkdown(markdown, max);
+    expect(out.length).toBeLessThanOrEqual(max);
+    const plain = (md: string) => parseInlineMarkdown(md).map((span) => span.text).join('');
+    expect(plain(markdown).startsWith(plain(out))).toBe(true);
+    expect(truncateMarkdown(out, max)).toBe(out);
+  });
+
+  it('dentro do teto devolve o mesmo texto', () => {
+    expect(truncateMarkdown('a_b *c*', 100)).toBe('a_b *c*');
+  });
+});

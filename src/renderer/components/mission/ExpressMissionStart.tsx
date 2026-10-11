@@ -12,7 +12,11 @@ import { useObjectiveDictation } from './use-objective-dictation';
 import { PixelIcon } from '../PixelIcon';
 import { launcherShortcutHint } from '../../lib/action-names';
 import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
-import { ComposerTiptapEditor, plainTextToMarkdown } from '../ComposerTiptapEditor';
+import {
+  ComposerTiptapEditor,
+  plainTextToMarkdown,
+  truncateMarkdown,
+} from '../ComposerTiptapEditor';
 
 interface ExpressMissionStartProps {
   workspace: WorkspaceInfo | null;
@@ -150,7 +154,8 @@ export function ExpressMissionStart({
         current.trim().length > 0
           ? `${current.replace(/\s+$/u, '')} ${spoken}`
           : spoken;
-      onObjectiveChange(next.slice(0, MISSION_INTENT_GOAL_MAX_CHARS));
+      // Revisão P3: corte por unidades seguras (nunca no meio de um escape).
+      onObjectiveChange(truncateMarkdown(next, MISSION_INTENT_GOAL_MAX_CHARS));
     },
   });
 
