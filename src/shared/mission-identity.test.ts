@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   missionChromeTitle,
   missionTitleFromGoal,
+  objectiveFirstLinePlainText,
+  objectivePlainText,
   retargetSquadInstructions,
 } from './mission-identity';
 
@@ -52,6 +54,28 @@ describe('missionTitleFromGoal', () => {
     expect(missionTitleFromGoal('   \n  ', 'Clone Reference ADE')).toBe(
       'Clone Reference ADE',
     );
+  });
+});
+
+describe('título a partir do objetivo em markdown (F-1170)', () => {
+  it('missionTitleFromGoal tira os marcadores e mantém o texto', () => {
+    expect(missionTitleFromGoal('**Refatorar** o *checkout* e o `total`\n~~nada~~', 'x')).toBe(
+      'Refatorar o checkout e o total',
+    );
+  });
+
+  it('objectiveFirstLinePlainText: primeira linha (mesmo vazia) sem marcadores', () => {
+    expect(objectiveFirstLinePlainText('  **x** y  \r\nresto')).toBe('x y');
+    expect(objectiveFirstLinePlainText('\n**x**')).toBe('');
+  });
+
+  it('escapes do markdown viram o caractere literal no título', () => {
+    expect(objectiveFirstLinePlainText(String.raw`renomeie \_\_init\_\_.py e 2\*3`)).toBe('renomeie __init__.py e 2*3');
+    expect(objectiveFirstLinePlainText(String.raw`C:\Users\x my_file.ts`)).toBe(String.raw`C:\Users\x my_file.ts`);
+  });
+
+  it('objectivePlainText preserva quebras de linha e acentos', () => {
+    expect(objectivePlainText('**ação** 🚀\n*linha* 2')).toBe('ação 🚀\nlinha 2');
   });
 });
 
