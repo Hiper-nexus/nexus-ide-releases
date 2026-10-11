@@ -862,6 +862,28 @@ describe('MissionInspector', () => {
     }
   });
 
+  it('F-1173: "O que mudou" traz os pontos de restauração dos writers desta missão', async () => {
+    const listMissionCheckpoints = vi.fn(async ({ missionId }: { missionId: string }) => ({
+      ok: true, missionId, scopes: [{ root: '/p/.nexus/worktrees/writer-ada', branch: 'nexus/writer-ada', checkpoints: [{
+        ref: `refs/nexus-checkpoint/${'b'.repeat(32)}/ordinal/1`, ordinal: 1, createdAt: Date.UTC(2026, 9, 11, 13, 0),
+        kind: 'turn', writer: 'Ada', changed: { files: ['src/app.ts'], total: 1 } }] }],
+    }));
+    const previous = (window as unknown as { nexus?: unknown }).nexus;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: { listMissionCheckpoints } } });
+    try {
+      const host = mount({ snapshot: RESULT_SNAPSHOT, question: null });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      const panel = selectTab(host, 'Resultado');
+      expect(listMissionCheckpoints).toHaveBeenCalledWith({ missionId: RESULT_SNAPSHOT.id });
+      const changed = panel.querySelector('section[aria-label="O que mudou no projeto"]');
+      const restore = changed?.querySelector('section[aria-label="Pontos de restauração dos writers"]');
+      expect(restore?.textContent).toContain('Fim do turno de Ada');
+      expect(restore?.textContent).toContain('nexus/writer-ada');
+    } finally {
+      Object.defineProperty(window, 'nexus', { configurable: true, value: previous });
+    }
+  });
+
   it('makes a terminal mission without a persisted result explicit', () => {
     const host = mount({ snapshot: TERMINAL_WITHOUT_RESULT, question: null });
     const panel = selectTab(host, 'Resultado');

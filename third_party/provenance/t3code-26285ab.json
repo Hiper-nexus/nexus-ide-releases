@@ -2106,7 +2106,9 @@
       "changeSummary": "Sem código do upstream: aplica a regra de foco editável aos callbacks existentes do Launcher do Nexus; nomes acessíveis e dicas de teclas mantêm o desenho local. Reviewed PR126 integration retains validated paged ACKs and current scoped launcher shortcut behavior.",
       "secondaryProvenance": [],
       "importDate": "2026-10-08",
-      "status": "imported"
+      "status": "removed",
+      "removedDate": "2026-10-11",
+      "removalNote": "F-1174: componente órfão (nenhum importador; a rota de início monta MissionSetup). Tudo o que ele oferecia já estava na tela real (atalhos 1–6 via use-launcher-shortcuts, dicas kbd, terminais/quadro/memória em ExpressTerminalOptions, pasta e pedido no Expresso); a lista de atalhos para leitor de tela foi levada ao MissionSetup antes da remoção. nexusSha256 = últimos bytes antes da remoção."
     },
     {
       "upstreamUrl": "https://github.com/pingdotgg/t3code/blob/26285ab80513260d1ff29d2c3fbe18f21990cb62/apps/server/src/orchestration-v2/EffectOutbox.ts",

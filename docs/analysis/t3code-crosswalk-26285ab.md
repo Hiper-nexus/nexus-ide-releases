@@ -112,7 +112,7 @@ atualizam as descrições antigas sem anunciar paridade de todos os 64 itens.
 | DSK-11 | `wsl-runtime` planeja argv/ambiente/slots por distro, com referência atribuída. | Sem executor PTY/credenciais/validação Windows real. |
 | QLT-04 | `knip.jsonc` e scripts `knip`, `knip:check`, `knip:production` presentes e acessíveis. | Achados de uso/dependências são relatório de qualidade; não afirmar gateCI verde por existir configuração. |
 | QLT-09 | `nexus_handoff_list` tem cursor keysetSQL; só os ids devolvidos são marcados vistos, com validação/dedupe/lotes. | Não substitui todo histórico de missão, stream do terminal ou snapshots offline do celular. |
-| QLT-10 | Registry de nomes acessíveis e Launcher conectado, com atalhos1–6 e bloqueio de repeat/editáveis testados. | Não equivale a uma regra global que computa nomes acessíveis em todas as superfícies. |
+| QLT-10 | Registry de nomes acessíveis e tela de início (MissionSetup; o Launcher órfão saiu no F-1174) conectada, com atalhos1–6 e bloqueio de repeat/editáveis testados. | Não equivale a uma regra global que computa nomes acessíveis em todas as superfícies. |
 
 Proveniência: `third_party/provenance/t3code-26285ab.json` e
 `THIRD_PARTY_NOTICES.md`; revisão por achado em `docs/qa/items/F-1049.md`,

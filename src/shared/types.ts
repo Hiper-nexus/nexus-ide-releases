@@ -819,6 +819,19 @@ export interface NexusApi {
       missionId: string;
       paneId: string;
     }): Promise<boolean>;
+    /**
+     * F-1173: checkpoints ocultos dos writers da missão. O renderer manda
+     * missionId (+ ref); a árvore sai sempre da autoridade do Main.
+     */
+    listMissionCheckpoints(input: {
+      missionId: string;
+    }): Promise<import('./mission-checkpoints').MissionCheckpointListResult>;
+    previewMissionCheckpoint(
+      input: import('./mission-checkpoints').MissionCheckpointRefInput,
+    ): Promise<import('./mission-checkpoints').MissionCheckpointPreviewResult>;
+    restoreMissionCheckpoint(
+      input: import('./mission-checkpoints').MissionCheckpointRefInput,
+    ): Promise<import('./mission-checkpoints').MissionCheckpointRestoreResult>;
     /** Point handoff delivery at the reopened orchestrator's new session. */
     rebindMissionOrchestrator(
       missionId: string,

@@ -584,8 +584,9 @@ Nexus stack; no T3 Code package is a dependency.
   timestamp/id rows (`src/shared/cursor-pagination.ts`).
 - Launcher number shortcuts and action names: Nexus implementation inspired by
   the editable-focus context in `apps/web/src/keybindings.ts`, with no code
-  copied (`src/renderer/lib/action-names.ts`,
-  `src/renderer/components/product/Launcher.tsx`).
+  copied (`src/renderer/lib/action-names.ts`). The former
+  `src/renderer/components/product/Launcher.tsx` was removed on 2026-10-11
+  (F-1174); its ledger entry is kept with status `removed`.
 - PR126 orchestration: effect-type/lease/recovery and receipt schemas adapted
   from `EffectOutbox.ts` / `CommandReceiptStore.ts`; Nexus drainer and settlement
   gate reference `EffectWorker.ts` / `RunFinalizationService.ts`. Nexus Main

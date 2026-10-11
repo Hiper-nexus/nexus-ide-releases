@@ -29,7 +29,7 @@ export function openExpressBareShell(): void {
  * deixar o Nexus montar a equipe.
  *
  * Existe porque a capacidade foi PERDIDA, não porque faltou: o antigo
- * `product/Launcher.tsx` (hoje código morto) tinha esta mesma seção com estas
+ * `product/Launcher.tsx` (código morto, removido no F-1174) tinha esta mesma seção com estas
  * mesmas duas portas, e o `pane-picker-store.requestOpen()` ficou órfão — o
  * docstring dele ainda aponta para um "Início → Abrir um pane" que não existe
  * mais na árvore. Sem isto, o operador tinha que sair para Terminais só para

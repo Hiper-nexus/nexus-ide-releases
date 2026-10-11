@@ -51,6 +51,14 @@ export const ORCH_CHANNELS = {
   /** Operator archives a parked or finished mission as verified-complete. */
   missionCompleteByOperator: 'orch:missions.completeByOperator',
   missionRemove: 'orch:missions.remove',
+  /**
+   * F-1173: checkpoints ocultos dos writers da missão (lista, prévia e
+   * restauração explícita). O renderer manda missionId + ref; a árvore sai
+   * da autoridade do Main.
+   */
+  missionCheckpointsList: 'orch:mission.checkpoints.list',
+  missionCheckpointPreview: 'orch:mission.checkpoints.preview',
+  missionCheckpointRestore: 'orch:mission.checkpoints.restore',
   /** Mission event journal consumer (flag: feature.mission.eventJournal). */
   missionEventsRecent: 'orch:missionEvents.recent',
   missionEventsReplay: 'orch:missionEvents.replay',
