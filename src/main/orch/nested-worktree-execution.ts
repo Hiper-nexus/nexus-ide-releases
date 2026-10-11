@@ -49,16 +49,40 @@ export async function nestedWorktreeExecution(
   const commonArgs = ['rev-parse', '--path-format=absolute', '--git-common-dir'];
   const [ours, theirs] = await Promise.all([gitPath(git, root, commonArgs), gitPath(git, topLevel, commonArgs)]);
   if (!ours || ours !== theirs) return undefined;
+  return { scope: rootScope(execution, topLevel), cwd };
+}
+
+function rootScope(execution: ProjectExecutionScope, topLevel: string): ProjectExecutionScope {
   const stat = fs.statSync(topLevel, { bigint: true });
-  return {
-    scope: Object.freeze({
-      ...execution,
-      rootRealPath: topLevel,
-      workspaceRootDevice: stat.dev.toString(),
-      workspaceRootInode: stat.ino.toString(),
-    }),
-    cwd,
-  };
+  return Object.freeze({
+    ...execution,
+    rootRealPath: topLevel,
+    workspaceRootDevice: stat.dev.toString(),
+    workspaceRootInode: stat.ino.toString(),
+  });
+}
+
+/**
+ * F-1229: a fila de comando pesado é a raiz Git REAL onde o job roda — o
+ * checkout ou uma worktree ligada, mesmo fora do workspace —, não a raiz do
+ * token do pane. Subagentes de um pane, cada um na sua worktree, herdam o
+ * mesmo token e caíam todos na fila do checkout até estourar os 300 s (exit
+ * 74). Só vale raiz DESTE repositório (git common-dir igual ao da raiz de
+ * execução); outro repositório, pasta sem Git ou qualquer dúvida devolve
+ * `undefined` e o chamador fica no escopo do token. RAM/CPU continuam sendo
+ * limites da máquina: a raiz só decide quem divide saídas e caches.
+ */
+export async function sameRepositoryExecutionRoot(
+  execution: ProjectExecutionScope,
+  cwd: string,
+  git: AsyncGitRunner = (sharedGit ??= new AsyncProcessGitRunner()),
+): Promise<ProjectExecutionScope | undefined> {
+  const real = path.isAbsolute(cwd) ? realpathOrNull(cwd) : null;
+  const topLevel = real ? await gitPath(git, real, ['rev-parse', '--show-toplevel']) : null;
+  if (!topLevel || topLevel === execution.rootRealPath) return undefined;
+  const commonArgs = ['rev-parse', '--path-format=absolute', '--git-common-dir'];
+  const [ours, theirs] = await Promise.all([gitPath(git, execution.rootRealPath, commonArgs), gitPath(git, topLevel, commonArgs)]);
+  return ours && ours === theirs ? rootScope(execution, topLevel) : undefined;
 }
 
 /**
