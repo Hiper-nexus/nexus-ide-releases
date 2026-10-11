@@ -174,7 +174,9 @@ describe('pane-footprint (F-1001): o ps real da máquina', () => {
     const run = (env: NodeJS.ProcessEnv) => execFileSync(psBinary!, ['-o', 'pid=,ppid=,rss=,lstart=', '-p', String(process.pid)], { env, encoding: 'utf8' });
     const localized = run({ ...process.env, ...ptBR });
     const c = run(footprintPsEnv({ ...process.env, ...ptBR }));
-    if (localized === c) ctx.skip(); // locale pt_BR não instalado nesta máquina
+    // Só a data depende do locale; o RSS muda entre duas chamadas do ps.
+    const lstart = (env: NodeJS.ProcessEnv) => execFileSync(psBinary!, ['-o', 'lstart=', '-p', String(process.pid)], { env, encoding: 'utf8' });
+    if (lstart({ ...process.env, ...ptBR }) === lstart(footprintPsEnv({ ...process.env, ...ptBR }))) ctx.skip(); // locale pt_BR não instalado nesta máquina
     expect(parseRssProcessTable(localized)).toEqual([]);
     expect(parseRssProcessTable(c).map((row) => row.pid)).toEqual([process.pid]);
   });
