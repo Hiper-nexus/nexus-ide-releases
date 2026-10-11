@@ -71,7 +71,7 @@ jobs:
           # GITHUB_PATH takes effect in the next step, including collector npm --version.
 
       - name: Install Linux sandbox provider (bubblewrap)
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap zsh
       - run: npm ci
       # As suítes da bridge importam o cliente TS real do mobile. Seu tsconfig
       # estende Expo, que vive no projeto pnpm independente, fora da raiz.
