@@ -67,7 +67,7 @@ export class NativeHeavyCommands {
     // pelo checkout de coordenação do token — senão writers isolados voltam à
     // fila única do projeto. F-1229: e a raiz é a do cwd do job, se for deste
     // repositório (subagentes do mesmo token, cada um na sua worktree).
-    try { permit = await this.ports.acquire({ scope: await this.#executionScope(ctx, body.data.cwd), missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting }); }
+    try { permit = await this.ports.acquire({ scope: await this.#executionScope(ctx, body.data.cwd, body.data.pid), missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting }); }
     catch (failure) {
       this.#reap(ctx, claim);
       const wait = (failure as { queue?: HeavyCommandQueueWait } | null)?.queue;
@@ -80,10 +80,15 @@ export class NativeHeavyCommands {
     if (state !== 'live' || !this.#flights.has(flight) || !this.#accepting || !this.#current(ctx) || signal?.aborted) return { allow: false, reason: 'heavy_command_process_ownership_changed' };
     return { allow: true, leaseId: permit.id };
   }
-  async #executionScope(ctx: AgentGateContext, cwd: string | undefined): Promise<Readonly<ProjectExecutionScope>> {
+  async #executionScope(ctx: AgentGateContext, cwd: string | undefined, pid: number): Promise<Readonly<ProjectExecutionScope>> {
     const scope = executionScopeFor(ctx);
-    // A spoofed cwd only picks another root's serialization; RAM/CPU stay machine-wide.
-    try { return (cwd && await this.ports.executionRoot?.(scope, cwd)) || scope; } catch { return scope; }
+    // A spoofed cwd only picks another registered root's serialization; RAM/CPU stay machine-wide.
+    let lane: Readonly<ProjectExecutionScope> | undefined;
+    try { lane = cwd ? await this.ports.executionRoot?.(scope, cwd) : undefined; } catch { lane = undefined; }
+    if (!lane || lane.rootRealPath === scope.rootRealPath) return scope;
+    // F-1235: the request, not the token, picked this lane — auditable in the Main trace.
+    trace({ kind: 'heavy-command-lane', sessionId: ctx.sessionId ?? '', pid, root: lane.rootRealPath, paneRoot: scope.rootRealPath });
+    return lane;
   }
   #reap(ctx: AgentGateContext, claim: string) {
     const done = (async () => {

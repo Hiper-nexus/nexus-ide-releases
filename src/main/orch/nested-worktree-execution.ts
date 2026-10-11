@@ -33,6 +33,14 @@ async function gitPath(git: AsyncGitRunner, cwd: string, args: readonly string[]
   return result.status === 0 ? realpathOrNull(result.stdout.trim()) : null;
 }
 
+/** F-1235: raízes que o repositório registra (`git worktree list`): o checkout e as worktrees ligadas. */
+async function registeredWorktreeRoots(git: AsyncGitRunner, cwd: string): Promise<ReadonlySet<string>> {
+  const result = await git.run(cwd, ['worktree', 'list', '--porcelain'], { allowFailure: true });
+  if (result.status !== 0) return new Set();
+  return new Set(result.stdout.split('\n').filter((line) => line.startsWith('worktree '))
+    .map((line) => realpathOrNull(line.slice('worktree '.length))).filter((root): root is string => root !== null));
+}
+
 export async function nestedWorktreeExecution(
   execution: ProjectExecutionScope,
   requestedCwd: string | undefined,
@@ -81,8 +89,11 @@ export async function sameRepositoryExecutionRoot(
   const topLevel = real ? await gitPath(git, real, ['rev-parse', '--show-toplevel']) : null;
   if (!topLevel || topLevel === execution.rootRealPath) return undefined;
   const commonArgs = ['rev-parse', '--path-format=absolute', '--git-common-dir'];
-  const [ours, theirs] = await Promise.all([gitPath(git, execution.rootRealPath, commonArgs), gitPath(git, topLevel, commonArgs)]);
-  return ours && ours === theirs ? rootScope(execution, topLevel) : undefined;
+  const [ours, theirs, registered] = await Promise.all([gitPath(git, execution.rootRealPath, commonArgs), gitPath(git, topLevel, commonArgs),
+    registeredWorktreeRoots(git, execution.rootRealPath)]);
+  // F-1235: common-dir igual não prova registro — uma pasta com `.git` arquivo
+  // apontando para este repositório também casa e virava uma lane nova.
+  return ours && ours === theirs && registered.has(topLevel) ? rootScope(execution, topLevel) : undefined;
 }
 
 /**

@@ -4,7 +4,10 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+const traces = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+vi.mock('../observability/main-trace', () => ({ trace: (event: Record<string, unknown>) => traces.push(event) }));
 import { testProjectScope } from './__tests__/scope-fixture';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
 import { NativeHeavyCommands } from './native-heavy-command';
@@ -20,7 +23,7 @@ const catalog = require('../../../resources/heavy-command/catalog.cjs') as { lea
 const resources = path.resolve('resources/heavy-command');
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
 
-let temp: string, root: string, wt1: string, wt2: string, foreign: string, plain: string;
+let temp: string, root: string, wt1: string, wt2: string, foreign: string, plain: string, unregistered: string;
 beforeAll(() => {
   temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-lane-')));
   root = path.join(temp, 'repo'); fs.mkdirSync(root);
@@ -32,6 +35,10 @@ beforeAll(() => {
   for (const dir of [wt1, wt2]) fs.mkdirSync(path.join(dir, 'src'));
   foreign = path.join(temp, 'foreign'); fs.mkdirSync(foreign); git(foreign, 'init', '-q');
   plain = path.join(temp, 'plain'); fs.mkdirSync(plain);
+  // F-1235: um `.git` arquivo apontando para o repositório tem o mesmo
+  // git-common-dir, mas não é worktree registrada (`git worktree list`).
+  unregistered = path.join(temp, 'unregistered'); fs.mkdirSync(unregistered);
+  fs.writeFileSync(path.join(unregistered, '.git'), `gitdir: ${path.join(root, '.git')}\n`);
 });
 afterAll(() => fs.rmSync(temp, { recursive: true, force: true }));
 
@@ -121,6 +128,29 @@ describe('F-1229: a fila de comando pesado é a raiz Git real do job', () => {
       for (const result of results) expect(result).toMatchObject({ allow: false, reason: 'heavy_command_wait_timeout' });
       expect(results[0]!.message).toMatch(/^nexus-heavy: gave up after \d+ s in the admission queue of .+: 1 job\(s\) running there, \d+ more waiting \(one job per root at a time\); machine 1\/4 heavy jobs running\.$/);
       expect(results[0]!.message).toContain(root);
+    } finally { await h.close(); }
+  });
+});
+
+describe('F-1235: a lane declarada pelo pedido só vale para raiz registrada e fica no trace', () => {
+  it('raiz com o mesmo git-common-dir que não é worktree registrada cai na lane do token', async () => {
+    expect(git(unregistered, 'rev-parse', '--show-toplevel')).toBe(unregistered);
+    expect(await sameRepositoryExecutionRoot(testProjectScope({ rootRealPath: root }), unregistered)).toBeUndefined();
+    expect((await sameRepositoryExecutionRoot(testProjectScope({ rootRealPath: root }), wt1))?.rootRealPath).toBe(wt1);
+    const h = harness(400); const ctx = pane();
+    try {
+      expect((await h.native.admit(ctx, { pid: 501, kind: 'tests', cwd: unregistered })).allow).toBe(true);
+      expect(h.lanes).toEqual([root]);
+    } finally { await h.close(); }
+  });
+
+  it('o trace do Main registra a raiz e o pid quando a lane difere da do token', async () => {
+    const h = harness(400); const ctx = pane(); traces.length = 0;
+    try {
+      expect((await h.native.admit(ctx, { pid: 601, kind: 'tests', cwd: path.join(wt1, 'src') })).allow).toBe(true);
+      expect((await h.native.admit(ctx, { pid: 602, kind: 'tests', cwd: root })).allow).toBe(true);
+      expect(traces.filter((event) => event.kind === 'heavy-command-lane'))
+        .toEqual([{ kind: 'heavy-command-lane', sessionId: 'pane-session', pid: 601, root: wt1, paneRoot: root }]);
     } finally { await h.close(); }
   });
 });
