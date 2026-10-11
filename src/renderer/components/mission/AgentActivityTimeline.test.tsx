@@ -25,6 +25,12 @@ vi.mock('@legendapp/list/react', async (importOriginal) => {
   return { ...actual, LegendList: RecordingLegendList };
 });
 
+const mermaidApi = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: vi.fn(async (id: string) => ({ svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${id}"><text>d</text></svg>` })),
+}));
+vi.mock('mermaid', () => ({ default: mermaidApi }));
+
 function lastLegendProps(): Record<string, unknown> {
   return legendRecorder.props[legendRecorder.props.length - 1];
 }
@@ -683,5 +689,63 @@ describe('AgentActivityTimeline — citar resposta (WEB-17)', () => {
     );
     // Citar não abre nem fecha o detalhe do card.
     expect(host.querySelector('.agent-timeline__pre')).toBeNull();
+  });
+});
+
+describe('AgentActivityTimeline — detalhe em markdown (F-1169)', () => {
+  const NARRATIVE = '**Pronto**: veja [docs](https://example.com/d)\n\n```mermaid\ngraph TD; A-->B\n```\n\n<img src=x onerror="window.__pwned = 1">';
+  function narrativeEvents(): MissionEvent[] {
+    return [
+      {
+        id: 'evt-turn', sequence: 1, missionId: 'm-1', runId: 'r-1', origin: 'mcp', deliveryStatus: 'delivered',
+        type: 'observer.turn_ended', occurredAt: 1000,
+        payload: { outcome: 'completed', content: NARRATIVE }, idempotencyKey: 'md-1',
+      },
+      {
+        id: 'evt-json', sequence: 2, missionId: 'm-1', runId: 'r-1', origin: 'mcp', deliveryStatus: 'delivered',
+        type: 'observer.status_changed', occurredAt: 1100,
+        payload: { status: 'busy', result: { files: ['**a.ts**'] } }, idempotencyKey: 'md-2',
+      },
+      {
+        id: 'evt-tool', sequence: 3, missionId: 'm-1', runId: 'r-1', origin: 'mcp', deliveryStatus: 'delivered',
+        type: 'observer.tool_result', occurredAt: 1200,
+        payload: { toolName: 'bash', ok: true, output: 'ls **/*.ts' }, idempotencyKey: 'md-3',
+      },
+    ];
+  }
+
+  it('marca como markdown só o texto narrativo; JSON e saída de ferramenta ficam crus', () => {
+    const items = parseTimelineItems(narrativeEvents(), 'm-1');
+    expect(items.map((item) => item.detailFormat)).toEqual(['markdown', 'raw', 'raw']);
+  });
+
+  function expand(host: HTMLElement, text: string): void {
+    const card = Array.from(host.querySelectorAll<HTMLElement>('.agent-timeline__card')).find((c) => c.textContent?.includes(text));
+    expect(card).toBeDefined();
+    act(() => card!.click());
+  }
+
+  it('texto narrativo expandido sai formatado, com diagrama, sem âncora nem HTML executável', async () => {
+    const host = render(<AgentActivityTimeline events={narrativeEvents()} missionId="m-1" />);
+    expand(host, 'Etapa concluída');
+    await act(async () => { await Promise.resolve(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    const detail = host.querySelector('.agent-timeline__markdown');
+    expect(detail).not.toBeNull();
+    expect(detail?.querySelector('strong')?.textContent).toBe('Pronto');
+    expect(detail?.querySelector('figure.markdown-with-mermaid__diagram')).not.toBeNull();
+    expect(detail?.querySelector('a, img, script')).toBeNull();
+    expect(detail?.textContent).toContain('docs (https://example.com/d)');
+    expect(detail?.textContent).toContain('<img src=x onerror="window.__pwned = 1">');
+    expect(host.querySelector('.agent-timeline__pre')).toBeNull();
+  });
+
+  it('JSON e saída de ferramenta continuam em <pre> literal', () => {
+    const host = render(<AgentActivityTimeline events={narrativeEvents()} missionId="m-1" />);
+    expand(host, 'Estado: busy');
+    expect(host.querySelector('.agent-timeline__pre')?.textContent).toContain('"**a.ts**"');
+    expand(host, 'Concluída com sucesso');
+    const pres = Array.from(host.querySelectorAll('.agent-timeline__pre')).map((pre) => pre.textContent);
+    expect(pres).toContain('ls **/*.ts');
+    expect(host.querySelector('.agent-timeline__markdown')).toBeNull();
   });
 });

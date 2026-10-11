@@ -1,7 +1,7 @@
 /**
  * Inspired by pingdotgg/t3code @ 26285ab80513260d1ff29d2c3fbe18f21990cb62 (no code copied).
  * Upstream reference: apps/web/src/composer-rich-text.ts.
- * Nexus changes: Nexus safe React span/code preview over the adapted parser; no upstream rendered UI code copied, no product caller.
+ * Nexus changes: Nexus safe React span/code preview over the adapted parser; no upstream rendered UI code copied. Product caller: sent operator directions in the mission inspector.
  */
 import { useMemo } from 'react';
 import {

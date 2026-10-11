@@ -12,6 +12,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { LegendList } from '@legendapp/list/react';
 import type { MissionEvent } from '../../../shared/mission-events';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
+import { MarkdownWithMermaid } from '../MarkdownWithMermaid';
 import {
   ACTIVITY_TIMELINE_FOLLOW_THRESHOLD,
   ACTIVITY_TIMELINE_MAINTAIN_VISIBLE_CONTENT_POSITION,
@@ -35,6 +36,12 @@ export interface TimelineItemModel {
   readonly subtitle?: string;
   readonly status: 'running' | 'completed' | 'failed';
   readonly detail?: string;
+  /**
+   * F-1169: `markdown` só para texto narrativo do agente (etapa, decisão,
+   * estado). Saída de ferramenta e JSON do payload ficam `raw` (<pre>):
+   * stdout não é markdown e `*`/`_` de glob ou caminho não podem virar ênfase.
+   */
+  readonly detailFormat?: 'markdown' | 'raw';
   readonly icon: PixelIconName;
   /** Origem estável do evento (WEB-17): run do journal e pane, quando houver. */
   readonly runId?: string;
@@ -64,10 +71,21 @@ function classifyToolKind(toolName: string): { kind: ToolKind; label: string; ic
   return { kind: 'generic', label: toolName || 'Ferramenta', icon: 'config' };
 }
 
-function stringifyPayload(payload: unknown): string | undefined {
+function payloadOutput(payload: unknown): unknown {
   if (!payload || typeof payload !== 'object') return undefined;
   const p = payload as Record<string, unknown>;
-  const output = p.output ?? p.result ?? p.stdout ?? p.content ?? p.error ?? p.reason;
+  return p.output ?? p.result ?? p.stdout ?? p.content ?? p.error ?? p.reason;
+}
+
+function detailFormatOf(
+  textDetail: boolean,
+  category: TimelineItemModel['category'],
+): NonNullable<TimelineItemModel['detailFormat']> {
+  return textDetail && category !== 'tool' ? 'markdown' : 'raw';
+}
+
+function stringifyPayload(payload: unknown): string | undefined {
+  const output = payloadOutput(payload);
   if (typeof output === 'string' && output.trim()) return output.trim();
   if (output && typeof output === 'object') {
     try {
@@ -86,6 +104,7 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
     if (event.missionId !== missionId) continue;
     const p = (event.payload ?? {}) as Record<string, unknown>;
     const detail = stringifyPayload(p);
+    const textDetail = typeof payloadOutput(p) === 'string';
 
     switch (event.type) {
       case 'tool.invoked':
@@ -212,6 +231,7 @@ export function parseTimelineItems(events: readonly MissionEvent[], missionId: s
     if (last && last.id === event.id) {
       items[items.length - 1] = {
         ...last,
+        ...(last.detail === undefined ? {} : { detailFormat: detailFormatOf(textDetail, last.category) }),
         runId: event.runId,
         ...(typeof p.paneId === 'string' && p.paneId ? { paneId: p.paneId } : {}),
       };
@@ -329,7 +349,12 @@ const TimelineRow = memo(function TimelineRow({
 
         {hasDetail && expanded && (
           <div className="agent-timeline__detail">
-            <pre className="agent-timeline__pre">{item.detail}</pre>
+            {item.detailFormat === 'markdown' ? (
+              // Dentro de role=button: links como texto, nunca âncora aninhada.
+              <MarkdownWithMermaid className="agent-timeline__markdown" source={item.detail!} links="text" />
+            ) : (
+              <pre className="agent-timeline__pre">{item.detail}</pre>
+            )}
           </div>
         )}
       </div>
