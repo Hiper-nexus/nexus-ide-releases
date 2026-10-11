@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,7 +18,7 @@ const guardEnv = (extra: Record<string, string> = {}) => ({
 const dirs: string[] = [];
 // stdin herdado do libuv é um socket: o bash do Debian/Ubuntu se acha shell
 // remoto e lê o bashrc do sistema (PS1 unbound sob -u). Sem stdin, só o guard.
-const quiet = { stdio: ['ignore', 'pipe', 'pipe'] as const, encoding: 'utf8' as const };
+const quiet: SpawnSyncOptionsWithStringEncoding = { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' };
 const hasZsh = fs.existsSync('/bin/zsh');
 afterEach(() => {
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
