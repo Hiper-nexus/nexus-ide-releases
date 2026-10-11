@@ -19,6 +19,18 @@ const api = vi.hoisted(() => ({
       error?: string;
     }> => ({ ok: true }),
   ),
+  importCliHistory: vi.fn(
+    async (): Promise<{ ok: boolean; counts?: unknown; error?: string }> => ({
+      ok: true,
+    }),
+  ),
+  searchHistory: vi.fn(
+    async (): Promise<{ entries: unknown[]; hasMore: boolean; error?: string }> => ({
+      entries: [],
+      hasMore: false,
+    }),
+  ),
+  ptyWrite: vi.fn(),
   pushToast: vi.fn(),
 }));
 
@@ -62,9 +74,10 @@ beforeEach(() => {
   api.suggest.mockResolvedValue({ suggestions: [suggestion] });
   api.dismiss.mockResolvedValue({ ok: true });
   api.runSuggestion.mockResolvedValue({ ok: true });
+  api.searchHistory.mockResolvedValue({ entries: [], hasMore: false });
   Object.defineProperty(window, 'nexus', {
     configurable: true,
-    value: { terminalBlock: api },
+    value: { terminalBlock: api, pty: { write: api.ptyWrite } },
   });
   host = document.createElement('div');
   document.body.appendChild(host);
@@ -242,5 +255,199 @@ describe('CommandBlockMenu command refinery', () => {
       await Promise.resolve();
     });
     expect(host.textContent).not.toContain('npm test');
+  });
+});
+
+function historyEntry(id: string, command: string, origin: 'imported' | 'recorded') {
+  return {
+    id,
+    command,
+    cwd: '/workspace',
+    status: origin === 'imported' ? 'unknown' : 'success',
+    startedAt: 10,
+    origin,
+  };
+}
+
+async function typeFilter(value: string): Promise<void> {
+  const input = host.querySelector<HTMLInputElement>(
+    'input[aria-label="Filtrar comandos"]',
+  );
+  await act(async () => {
+    const setValue = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value',
+    )?.set;
+    setValue!.call(input, value);
+    input!.dispatchEvent(new Event('input', { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
+function historySection(): HTMLElement {
+  return host.querySelector<HTMLElement>('section[aria-label="Histórico persistido"]')!;
+}
+
+describe('CommandBlockMenu histórico das CLIs (F-1171)', () => {
+  it('importa com estado visível e mostra as contagens', async () => {
+    let finish: (value: { ok: boolean; counts: unknown }) => void = () => {};
+    api.importCliHistory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await openMenu();
+    const button = host.querySelector<HTMLButtonElement>(
+      'button[aria-label^="Importar histórico das CLIs"]',
+    );
+    expect(button).not.toBeNull();
+    await act(async () => {
+      button!.click();
+      await Promise.resolve();
+    });
+    expect(api.importCliHistory).toHaveBeenCalledWith({
+      sessionId: 'session-a',
+      paneId: 'pane-a',
+    });
+    expect(button!.disabled).toBe(true);
+    expect(host.textContent).toContain('Importando…');
+
+    const searchesBefore = api.searchHistory.mock.calls.length;
+    await act(async () => {
+      finish({
+        ok: true,
+        counts: {
+          files: 3,
+          filesSkipped: 1,
+          found: 7,
+          imported: 5,
+          duplicates: 2,
+          skipped: 0,
+          capped: false,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const status = host.querySelector('[data-testid="cli-history-import-status"]');
+    expect(status?.textContent).toContain('5 importados');
+    expect(status?.textContent).toContain('2 já no histórico');
+    expect(status?.textContent).toContain('1 ignorado');
+    expect(status?.textContent).toContain('3 arquivos');
+    expect(button!.disabled).toBe(false);
+    // O histórico relê o SQLite depois da importação.
+    expect(api.searchHistory.mock.calls.length).toBeGreaterThan(searchesBefore);
+  });
+
+  it('mostra o erro da importação de forma legível', async () => {
+    api.importCliHistory.mockResolvedValueOnce({
+      ok: false,
+      error: 'Importação já em andamento',
+    });
+    await openMenu();
+    const button = host.querySelector<HTMLButtonElement>(
+      'button[aria-label^="Importar histórico das CLIs"]',
+    );
+    await act(async () => {
+      button!.click();
+      await Promise.resolve();
+    });
+    const status = host.querySelector('[data-testid="cli-history-import-status"]');
+    expect(status?.textContent).toContain('Importação já em andamento');
+    expect(status?.getAttribute('role')).toBe('alert');
+  });
+
+  it('lista o histórico persistido com a origem e busca pelo filtro', async () => {
+    api.searchHistory.mockResolvedValue({
+      entries: [
+        historyEntry('h1', 'pnpm build', 'imported'),
+        historyEntry('h2', 'git status', 'recorded'),
+      ],
+      hasMore: false,
+    });
+    await openMenu();
+    expect(api.searchHistory).toHaveBeenCalledWith({
+      sessionId: 'session-a',
+      paneId: 'pane-a',
+      query: '',
+      limit: 20,
+      offset: 0,
+    });
+    const section = historySection();
+    expect(section.textContent).toContain('pnpm build');
+    expect(section.textContent).toContain('importado');
+    expect(section.textContent).toContain('git status');
+    expect(section.textContent).toContain('gravado');
+
+    await typeFilter('pnpm');
+    expect(api.searchHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ query: 'pnpm', offset: 0 }),
+    );
+  });
+
+  it('pagina com "Mais antigos" acumulando a lista', async () => {
+    api.searchHistory
+      .mockResolvedValueOnce({
+        entries: [historyEntry('h1', 'echo 1', 'imported')],
+        hasMore: true,
+      })
+      .mockResolvedValueOnce({
+        entries: [historyEntry('h2', 'echo 2', 'imported')],
+        hasMore: false,
+      });
+    await openMenu();
+    const more = [...historySection().querySelectorAll('button')].find(
+      (button) => button.textContent === 'Mais antigos',
+    );
+    await act(async () => {
+      more!.click();
+      await Promise.resolve();
+    });
+    expect(api.searchHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ offset: 1 }),
+    );
+    expect(historySection().textContent).toContain('echo 1');
+    expect(historySection().textContent).toContain('echo 2');
+  });
+
+  it('reaproveita o comando: copia ou insere no terminal sem Enter', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    api.searchHistory.mockResolvedValue({
+      entries: [
+        historyEntry('h1', 'pnpm build', 'imported'),
+        historyEntry('h2', 'cat <<EOF\nx\nEOF', 'imported'),
+      ],
+      hasMore: false,
+    });
+    await openMenu();
+    const copy = historySection().querySelector<HTMLButtonElement>(
+      'button[aria-label="Copiar comando: pnpm build"]',
+    );
+    await act(async () => {
+      copy!.click();
+      await Promise.resolve();
+    });
+    expect(writeText).toHaveBeenCalledWith('pnpm build');
+
+    // Várias linhas executariam no primeiro \n: só Copiar.
+    const multi = [...historySection().querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.getAttribute('aria-label')?.startsWith('Inserir no terminal: cat'),
+    );
+    expect(multi?.disabled).toBe(true);
+
+    const insert = historySection().querySelector<HTMLButtonElement>(
+      'button[aria-label="Inserir no terminal: pnpm build"]',
+    );
+    await act(async () => {
+      insert!.click();
+      await Promise.resolve();
+    });
+    expect(api.ptyWrite).toHaveBeenCalledWith('session-a', 'pnpm build');
+    expect(host.querySelector('[data-testid="command-block-menu"]')).toBeNull();
   });
 });

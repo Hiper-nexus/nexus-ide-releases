@@ -3,6 +3,41 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const handle = vi.fn();
 vi.mock('electron', () => ({
   ipcMain: { handle },
+  app: { getPath: () => '/user-data' },
+}));
+
+// handleTrusted (QLT-07) delega ao ipcMain.handle depois de checar a janela.
+vi.mock('../security/trusted-ipc', () => ({
+  handleTrusted: (channel: string, handler: unknown) => handle(channel, handler),
+}));
+
+const blockStoreConstruct = vi.fn();
+const blockStoreSearch = vi.fn();
+const blockStoreInsert = vi.fn();
+const blockStorePrune = vi.fn();
+vi.mock('./command-block-store', () => ({
+  CommandBlockStore: class {
+    constructor(runtimeManager: unknown, scope: unknown) {
+      blockStoreConstruct(runtimeManager, scope);
+    }
+    search(query: unknown) {
+      return blockStoreSearch(query);
+    }
+    insertWithOutcome(input: unknown) {
+      return blockStoreInsert(input);
+    }
+    prune() {
+      return blockStorePrune();
+    }
+    enforceSizeBudget() {
+      return 0;
+    }
+  },
+}));
+
+const importForScope = vi.fn();
+vi.mock('./cli-history-import-service', () => ({
+  importCliHistoryForScope: (deps: unknown) => importForScope(deps),
 }));
 
 const isSessionOwnedBy = vi.fn();
@@ -86,6 +121,11 @@ describe('registerTerminalBlockActionsIpc', () => {
     refineryResolveRunnable.mockReset();
     refineryConstruct.mockReset();
     writeSession.mockClear();
+    blockStoreConstruct.mockReset();
+    blockStoreSearch.mockReset();
+    blockStoreInsert.mockReset();
+    blockStorePrune.mockReset();
+    importForScope.mockReset();
   });
 
   it('registers action + list channels', async () => {
@@ -291,5 +331,152 @@ describe('registerTerminalBlockActionsIpc', () => {
       ),
     ).toEqual({ suggestions: [] });
     expect(refinerySuggest).not.toHaveBeenCalled();
+  });
+
+  describe('F-1171: histórico persistido', () => {
+    const sender = { id: 11 };
+    const scope = {
+      projectId: 'project-a',
+      checkoutId: 'checkout-a',
+      rootRealPath: '/workspace',
+    };
+    const request = { sessionId: 'session-a', paneId: 'pane-a' };
+
+    async function setup(enabled = true) {
+      const { getFeatureFlagRegistry } = await import(
+        '../feature-flags/feature-flag-registry'
+      );
+      const { FEATURE_FLAG_IDS } = await import('../../shared/feature-flags');
+      getFeatureFlagRegistry().setOverride(
+        FEATURE_FLAG_IDS.terminalCommandBlocks,
+        enabled,
+      );
+      const { registerTerminalBlockActionsIpc } = await import(
+        './terminal-block-actions-ipc'
+      );
+      const { TERMINAL_BLOCK_CHANNELS } = await import('../../shared/channels');
+      isSessionOwnedBy.mockReturnValue(true);
+      getSessionContext.mockReturnValue({
+        paneId: 'pane-a',
+        workspaceId: 'checkout-a',
+        cwd: '/workspace/app',
+        projectRoot: '/workspace',
+      });
+      resolveCommandBlockScope.mockReturnValue(scope);
+      registerTerminalBlockActionsIpc({ marker: 'runtime' } as never);
+      const byChannel = new Map(
+        handle.mock.calls.map((call) => [call[0], call[1]]),
+      );
+      return {
+        importHistory: byChannel.get(
+          TERMINAL_BLOCK_CHANNELS.importCliHistory,
+        ) as Function,
+        searchHistory: byChannel.get(
+          TERMINAL_BLOCK_CHANNELS.searchHistory,
+        ) as Function,
+      };
+    }
+
+    const counts = {
+      files: 2,
+      filesSkipped: 0,
+      found: 3,
+      imported: 3,
+      duplicates: 0,
+      skipped: 0,
+      capped: false,
+    };
+
+    it('importa no escopo do pane dono e devolve as contagens', async () => {
+      const { importHistory } = await setup();
+      importForScope.mockResolvedValue(counts);
+      await expect(importHistory({ sender }, request)).resolves.toEqual({
+        ok: true,
+        counts,
+      });
+      expect(blockStoreConstruct).toHaveBeenCalledWith({ marker: 'runtime' }, scope);
+      expect(importForScope).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userDataPath: '/user-data',
+          checkoutId: 'checkout-a',
+          target: { workspaceId: 'checkout-a', projectRoot: '/workspace' },
+          fallbackCwd: '/workspace/app',
+        }),
+      );
+      expect(blockStorePrune).toHaveBeenCalled();
+    });
+
+    it('valida o pedido (zod estrito) e recusa sessão alheia', async () => {
+      const { importHistory, searchHistory } = await setup();
+      const bad = await importHistory({ sender }, { ...request, extra: 1 });
+      expect(bad.ok).toBe(false);
+      expect(bad.error).toBe('Não foi possível importar o histórico');
+      const badSearch = searchHistory({ sender }, { ...request, limit: 500 });
+      expect(badSearch.entries).toEqual([]);
+      expect(badSearch.error).toBeTruthy();
+      isSessionOwnedBy.mockReturnValue(false);
+      const foreign = await importHistory({ sender }, request);
+      expect(foreign.ok).toBe(false);
+      expect(importForScope).not.toHaveBeenCalled();
+      expect(blockStoreSearch).not.toHaveBeenCalled();
+    });
+
+    it('não roda duas importações do mesmo checkout ao mesmo tempo', async () => {
+      const { importHistory } = await setup();
+      let release: (value: unknown) => void = () => {};
+      importForScope.mockReturnValue(
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+      );
+      const first = importHistory({ sender }, request);
+      const second = await importHistory({ sender }, request);
+      expect(second).toEqual({ ok: false, error: 'Importação já em andamento' });
+      release(counts);
+      await expect(first).resolves.toEqual({ ok: true, counts });
+    });
+
+    it('com a flag desligada não importa nem busca', async () => {
+      const { importHistory, searchHistory } = await setup(false);
+      expect((await importHistory({ sender }, request)).ok).toBe(false);
+      expect(searchHistory({ sender }, request).entries).toEqual([]);
+      expect(importForScope).not.toHaveBeenCalled();
+    });
+
+    it('busca paginada no SQLite com origem de cada comando', async () => {
+      const { searchHistory } = await setup();
+      const row = (id: string, sessionId: string) => ({
+        id,
+        sessionId,
+        paneId: 'p',
+        workspaceId: 'checkout-a',
+        command: `echo ${id}`,
+        cwd: '/workspace',
+        shell: 'zsh',
+        startedAt: 10,
+        status: 'unknown',
+        redaction: { redacted: false, denylisted: false, secretHits: 0 },
+        idempotencyKey: 'a'.repeat(64),
+      });
+      blockStoreSearch.mockReturnValue([
+        row('a', 'cli-import:claude:abc'),
+        row('b', 'live-session'),
+        row('c', 'live-session'),
+      ]);
+      const result = searchHistory(
+        { sender },
+        { ...request, query: ' echo ', limit: 2, offset: 4 },
+      );
+      expect(blockStoreSearch).toHaveBeenCalledWith({
+        commandContains: 'echo',
+        limit: 3,
+        offset: 4,
+      });
+      expect(result.hasMore).toBe(true);
+      expect(result.entries).toEqual([
+        { id: 'a', command: 'echo a', cwd: '/workspace', status: 'unknown', startedAt: 10, origin: 'imported' },
+        { id: 'b', command: 'echo b', cwd: '/workspace', status: 'unknown', startedAt: 10, origin: 'recorded' },
+      ]);
+    });
   });
 });

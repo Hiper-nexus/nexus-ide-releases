@@ -12,10 +12,17 @@ import {
   type MissionEvent,
 } from '../../../shared/mission-events';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
+import { useOrchStore } from '../../state/orch-store';
 import {
   directionUnavailableReason,
   MissionInspector,
 } from './MissionInspector';
+
+const mermaidApi = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: vi.fn(async (id: string) => ({ svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${id}"><text>diagrama</text></svg>` })),
+}));
+vi.mock('mermaid', () => ({ default: mermaidApi }));
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -600,7 +607,8 @@ describe('MissionInspector', () => {
     const composer = panel.querySelector('form');
     expect(composer).not.toBeNull();
     expect(composer?.querySelector('select')?.textContent).toContain('@todos');
-    expect(composer?.querySelector('textarea')).not.toBeNull();
+    // F-1170: o rascunho é o editor rich-text (Tiptap) do DirectionComposer.
+    expect(composer?.querySelector('[role="textbox"][contenteditable="true"]')).not.toBeNull();
     expect(composer?.querySelector('button[type="submit"]')).not.toBeNull();
   });
 
@@ -1105,5 +1113,88 @@ describe('F-1005 — atividade diz quanto falta e carrega mais pelo Main', () =>
 
     expect(panel.textContent).not.toContain('Carregar eventos anteriores');
     expect(panel.textContent).not.toContain('mais recentes de');
+  });
+});
+
+describe('MissionInspector — texto dos agentes em markdown (F-1169)', () => {
+  const MARKDOWN = [
+    '## Entrega',
+    '',
+    '- **Painel** integrado',
+    '- teclado verificado',
+    '',
+    '```mermaid',
+    'graph TD; A-->B',
+    '```',
+    '',
+    '<img src=x onerror="window.__pwned = 1"><script>window.__pwned = 2</script>',
+  ].join('\n');
+
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  function expectFormatted(root: Element | null | undefined): void {
+    expect(root).toBeTruthy();
+    expect(root!.querySelector('h2')?.textContent).toBe('Entrega');
+    expect(root!.querySelector('ul li strong')?.textContent).toBe('Painel');
+    expect(root!.querySelector('figure.markdown-with-mermaid__diagram figcaption')?.textContent).toBe('Diagrama Mermaid');
+    expect(root!.querySelector('img, script')).toBeNull();
+    expect(root!.textContent).toContain('<img src=x onerror="window.__pwned = 1">');
+    expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
+  }
+
+  afterEach(() => {
+    useOrchStore.setState({ missions: [] });
+  });
+
+  it('Resultado: o resumo do agente sai formatado, com diagrama e sem HTML executável', async () => {
+    const snapshot = missionSnapshotSchema.parse({
+      ...RESULT_SNAPSHOT,
+      result: { ...RESULT_SNAPSHOT.result, summary: MARKDOWN },
+    });
+    const host = mount({ snapshot, question: null });
+    const panel = selectTab(host, 'Resultado');
+    await settle();
+    const summary = panel.querySelector('.mission-inspector__result-summary');
+    expectFormatted(summary);
+    expect(summary?.querySelector('[data-mermaid-rendered]')?.shadowRoot?.querySelector('svg')).not.toBeNull();
+  });
+
+  it('Plano selado: o PRD do agente sai formatado', async () => {
+    useOrchStore.setState({
+      missions: [
+        {
+          id: SNAPSHOT.id,
+          intentContract: {
+            promotedPlan: { summary: MARKDOWN, summarySha256: 'f'.repeat(64), artifacts: [] },
+          },
+        },
+      ] as never,
+    });
+    const host = mount();
+    const panel = selectTab(host, 'Plano');
+    await settle();
+    expectFormatted(panel.querySelector('.mission-inspector__sealed-plan-body'));
+  });
+
+  it('Orientação enviada: marcas inline viram negrito/código e HTML fica literal', () => {
+    const direction = event({
+      ...ACCEPTED_DIRECTION_EVENTS[0],
+      payload: {
+        ...ACCEPTED_DIRECTION_EVENTS[0].payload,
+        text: 'Use **pnpm** e rode `npm test` <b>agora</b>',
+      },
+    });
+    const host = mount({ events: [direction] });
+    const panel = selectTab(host, 'Conversa');
+    const article = panel.querySelector('.mission-inspector__direction');
+    expect(article?.querySelector('.rt-bold')?.textContent).toBe('pnpm');
+    expect(article?.querySelector('code.rt-code')?.textContent).toBe('npm test');
+    expect(article?.querySelector('b')).toBeNull();
+    expect(article?.textContent).toContain('<b>agora</b>');
   });
 });

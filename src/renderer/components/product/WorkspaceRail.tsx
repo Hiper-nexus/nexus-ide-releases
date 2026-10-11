@@ -26,6 +26,7 @@ import { useCommandPaletteStore } from '../../state/command-palette-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { WorkspaceCleanup } from './WorkspaceCleanup';
 import { RailQuotaCard } from './RailQuotaCard';
+import { RailMemoryPressure } from './RailMemoryPressure';
 import { ReportProblemButton } from '../bug-report/ReportProblemButton';
 import { NexusMark } from '../NexusMark';
 import { TrialNoticeCard } from './TrialNoticeCard';
@@ -1027,6 +1028,8 @@ export function WorkspaceRail({
             <span className="workspace-rail__row-count">{attentionCount}</span>
           </button>
         ) : null}
+
+        <RailMemoryPressure onOpen={onOpenUsageQuota} />
 
         {quotaEntries.length > 0 ? (
           <RailQuotaCard

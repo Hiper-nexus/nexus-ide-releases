@@ -1328,6 +1328,10 @@ const api: NexusApi = {
       ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.dismiss, req),
     runSuggestion: (req) =>
       ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.runSuggestion, req),
+    importCliHistory: (req) =>
+      ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.importCliHistory, req),
+    searchHistory: (req) =>
+      ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.searchHistory, req),
   },
   searchMixer: {
     search: (query: unknown) =>

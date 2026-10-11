@@ -12,6 +12,7 @@ const physical = vi.hoisted(() => ({
   /** Quando definido, o próximo probe fica pendente até o teste resolver. */
   hold: null as null | { resolve: (value: readonly SessionFootprint[] | null) => void },
   probe: vi.fn(),
+  machineSample: vi.fn(),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -22,6 +23,11 @@ vi.mock('../pty/pty-manager', () => ({
 vi.mock('../orch/pane-admission', () => ({
   getCachedSystemMemory: () => physical.systemMemory,
 }));
+vi.mock('./machine-resources', () => ({
+  machineResourceSampler: { sample: physical.machineSample },
+}));
+
+const MACHINE = { pressure: 'pressure', sampledAt: 1 } as const;
 
 type FakeRenderer = WebContents & { send: ReturnType<typeof vi.fn>; destroy(): void };
 
@@ -60,6 +66,8 @@ describe('pane-footprint-broadcast (QLT-11: coleta só com assinante)', () => {
     physical.systemMemory = { freeMB: 2048, swapUsedMB: 0 };
     physical.hold = null;
     physical.probe.mockReset();
+    physical.machineSample.mockReset();
+    physical.machineSample.mockReturnValue(MACHINE);
     physical.probe.mockImplementation(() => {
       if (!physical.hold) return Promise.resolve(physical.footprints);
       return new Promise((resolve) => {
@@ -99,6 +107,13 @@ describe('pane-footprint-broadcast (QLT-11: coleta só com assinante)', () => {
       capturedAt: expect.any(Number),
       bySessionId: { s1: { rssBytes: 512 * 1024 * 1024, processCount: 3 } },
       systemMemory: { freeMB: 2048, swapUsedMB: 0 },
+      machine: MACHINE,
+    });
+    // F-1172: o resumo da máquina usa a MESMA leitura do gate e o RSS medido.
+    expect(physical.machineSample).toHaveBeenCalledWith({
+      memory: { freeMB: 2048, swapUsedMB: 0 },
+      panesRssBytes: 512 * 1024 * 1024,
+      paneCount: 1,
     });
 
     await vi.advanceTimersByTimeAsync(30_000);
