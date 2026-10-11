@@ -91,6 +91,29 @@ describe('importCliHistoryForScope', () => {
     expect(store.search({}).length).toBe(3);
   });
 
+  it('linha sem cwd usa a raiz do projeto: reimportar de outro pane/pasta não duplica', async () => {
+    const store = makeStore();
+    // function_call do Codex sem workdir e linha Claude sem cwd.
+    writeTranscript('codex', 'sessions/r.jsonl', [
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: '2026-10-02T10:00:00Z',
+        payload: { type: 'function_call', name: 'shell', arguments: { command: ['bash', '-lc', 'ls'] } },
+      }),
+      JSON.stringify({
+        timestamp: '2026-10-02T10:01:00Z',
+        message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'pwd' } }] },
+      }),
+    ]);
+    const first = await importCliHistoryForScope(deps(store, { fallbackCwd: '/workspace/app' }));
+    expect(first.imported).toBe(2);
+    // O cwd vivo do pane mudou (OSC 7) ou o pedido veio de outro pane.
+    const second = await importCliHistoryForScope(deps(store, { fallbackCwd: '/tmp/outra' }));
+    expect(second.imported).toBe(0);
+    expect(second.duplicates).toBe(2);
+    expect(store.search({}).map((b) => b.cwd)).toEqual(['/workspace', '/workspace']);
+  });
+
   it('só lê o checkout do escopo (outros projetos ficam de fora)', async () => {
     const store = makeStore();
     writeTranscript('claude', 'a.jsonl', [claudeLine('echo mine', '2026-10-01T10:00:00Z')]);

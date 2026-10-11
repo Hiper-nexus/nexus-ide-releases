@@ -34,6 +34,9 @@ export interface ImportedCommandBlock {
   readonly status: 'running' | 'success' | 'failed' | 'cancelled' | 'unknown';
 }
 
+/** cwd de linha sem diretório quando o chamador não deu um fallback. */
+export const CLI_HISTORY_UNKNOWN_CWD = '(cwd desconhecido)';
+
 export interface CliHistoryImportOptions {
   readonly sessionId: string;
   readonly paneId?: string;
@@ -142,7 +145,9 @@ export function importCliHistoryBlocks(
   options: CliHistoryImportOptions,
 ): ImportedCommandBlock[] {
   const shell = options.shell ?? 'bash';
-  const cwd = options.cwd ?? process.cwd();
+  // Sem cwd do chamador, marcador fixo: `process.cwd()` muda entre execuções
+  // e o cwd entra na chave de idempotência do bloco.
+  const cwd = options.cwd ?? CLI_HISTORY_UNKNOWN_CWD;
   const blocks: ImportedCommandBlock[] = [];
   const lines = (jsonl ?? '').split(/\r?\n/);
   let index = 0;
