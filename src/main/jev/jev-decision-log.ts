@@ -24,7 +24,9 @@ export type JevDecisionSurface =
   | 'browserTool'
   | 'computerTool'
   /** Clef-omni ouve o clipe da ativação passiva e diz se é TV/ambiente (F-1161). */
-  | 'wakeConfirm';
+  | 'wakeConfirm'
+  /** F-1167: linha agregada por modelo de uma calibração (gasto visível nas estatísticas). */
+  | 'calibration';
 
 /** Motivo categórico de uma consulta sem resposta — nunca o texto do erro. */
 export type JevNoAnswerReason =
@@ -459,6 +461,74 @@ export async function jevMissionChargedSpend(opts: { before: number; dir?: strin
   await readMissionSpend(rotated, opts.before, spend);
   await readMissionSpend(current, opts.before, spend);
   return spend;
+}
+
+/**
+ * F-1167: agregado por missão para o painel, SEM leitura síncrona: lê o par
+ * rotacionado/corrente de forma assíncrona e cooperativa e guarda o resultado
+ * enquanto mtime e tamanho dos dois arquivos não mudam. Chamadas simultâneas
+ * compartilham a mesma leitura. Nunca rejeita: erro vira "sem dados".
+ */
+interface MissionUsageCache { dir: string; stamp: string; byMission: Record<string, JevMissionStats> }
+let missionUsageCache: MissionUsageCache | undefined;
+let missionUsageInFlight: { dir: string; stamp: string; promise: Promise<Record<string, JevMissionStats>> } | undefined;
+
+async function journalStamp(dir: string): Promise<string> {
+  const part = async (file: string) => {
+    try { const stat = await fs.promises.stat(file); return `${stat.ino}:${stat.mtimeMs}:${stat.size}`; } catch { return 'missing'; }
+  };
+  return `${await part(rotatedLogFile(dir))}|${await part(logFile(dir))}`;
+}
+
+function providerOfEntry(entry: JevDecisionEntry): string {
+  return entry.provider ?? (entry.model === 'clef' || entry.model === 'clef-flash' || entry.model === 'clef-omni'
+    || entry.model.startsWith('@cf/cloudflare/') ? 'clef' : 'jev');
+}
+
+async function aggregateMissionUsage(raw: string, into: Record<string, JevMissionStats>): Promise<void> {
+  if (!raw) return;
+  const lines = raw.split('\n');
+  for (let index = 0; index < lines.length; index++) {
+    if (index > 0 && index % SPEND_YIELD_EVERY_LINES === 0) await new Promise<void>(resolve => setImmediate(resolve));
+    const trimmed = lines[index].trim();
+    if (!trimmed) continue;
+    let row: JevDecisionEntry | null = null;
+    try { row = parseDecisionRow(JSON.parse(trimmed)); } catch { row = null; }
+    if (!row?.missionId || row.kind === 'optimization' || isUnavailableMarker(row)) continue;
+    addMissionUsage(into, row.missionId, providerOfEntry(row), row);
+  }
+}
+
+export async function jevMissionUsage(missionId: string, opts: { dir?: string } = {}): Promise<JevMissionStats | undefined> {
+  let dir: string;
+  try { dir = opts.dir ?? decisionsDir(); } catch { return undefined; }
+  try {
+    const stamp = await journalStamp(dir);
+    if (missionUsageCache?.dir === dir && missionUsageCache.stamp === stamp) return missionUsageCache.byMission[missionId];
+    let flight = missionUsageInFlight;
+    if (!flight || flight.dir !== dir || flight.stamp !== stamp) {
+      const promise = (async () => {
+        const byMission: Record<string, JevMissionStats> = Object.create(null);
+        const [rotated, current] = await readJournalPair(dir);
+        await aggregateMissionUsage(rotated, byMission);
+        await aggregateMissionUsage(current, byMission);
+        missionUsageCache = { dir, stamp, byMission };
+        return byMission;
+      })();
+      flight = { dir, stamp, promise };
+      missionUsageInFlight = flight;
+      void promise.finally(() => { if (missionUsageInFlight?.promise === promise) missionUsageInFlight = undefined; }).catch(() => undefined);
+    }
+    return (await flight.promise)[missionId];
+  } catch {
+    return undefined;
+  }
+}
+
+/** Para testes: esquece o agregado por missão. */
+export function resetJevMissionUsageCacheForTesting(): void {
+  missionUsageCache = undefined;
+  missionUsageInFlight = undefined;
 }
 
 function addMissionUsage(

@@ -15,7 +15,7 @@ import type { JudgeInput } from '../jev/jev-client';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
 import type { DecisionBudgetLevel } from './decision-budget';
 import { decisionInputUsdPerMillion, estimateDecisionCostUsd, estimateDecisionInputTokens } from './decision-pricing';
-import { decisionQuality, type DecisionModelKey, type DecisionQualityTable, type QualityModality } from './decision-quality';
+import { decisionQuality, MIN_QUALITY_CASES, type DecisionModelKey, type DecisionQualityTable, type QualityModality } from './decision-quality';
 import {
   JEV_PINNED_SURFACES, REVERSIBLE_ENSEMBLE_SURFACES, SECURITY_ENSEMBLE_SURFACES,
   resolveDecisionRoute, type DecisionAvailability,
@@ -69,7 +69,9 @@ export function decisionSurfaceProfile(
 
 export interface DecisionCandidate {
   key: DecisionModelKey; provider: DecisionProvider; model: string;
-  quality: number; source: 'local-evaluation' | 'prior'; usdPerMillion: number; score: number; p50Ms: number | null;
+  quality: number; source: 'local-evaluation' | 'blended' | 'prior'; usdPerMillion: number; score: number; p50Ms: number | null;
+  /** Casos medidos na PRÓPRIA surface (o ensemble exige ≥ MIN_QUALITY_CASES nos dois membros). */
+  surfaceCases: number;
 }
 
 function providerOf(key: DecisionModelKey): DecisionProvider {
@@ -109,7 +111,7 @@ export function scoreDecisionCandidates(
     const estimate = decisionQuality(table, surface, key, profile.modality);
     const usdPerMillion = decisionInputUsdPerMillion(provider, key === 'luna' ? LUNA_DECISION_MODEL : key);
     return { key, provider, model: modelIdOf(key), quality: estimate.quality, source: estimate.source,
-      usdPerMillion, score: estimate.quality - lambda * usdPerMillion, p50Ms: estimate.p50Ms };
+      usdPerMillion, score: estimate.quality - lambda * usdPerMillion, p50Ms: estimate.p50Ms, surfaceCases: estimate.surfaceCases };
   });
   // Elegibilidade é credencial + modalidade + consentimento; a qualidade só ordena.
   // Latência medida acima do orçamento da surface tira o candidato — se sobrar alguém.
@@ -164,7 +166,8 @@ export function planAutoDecision(
   const budgetNote = soft ? 'orçamento acima de 80%: o mais barato' : 'orçamento normal';
   const alternatives = ranked.filter(candidate => candidate !== chosen).slice(0, 3)
     .map(candidate => `${candidate.key} ${fmt(candidate.score)}`).join(', ');
-  const why = `${chosen.key} q=${fmt(chosen.quality)} (${chosen.source === 'prior' ? 'prior' : 'avaliação local'}) `
+  const evidenceLabel = chosen.source === 'prior' ? 'prior' : chosen.source === 'blended' ? 'prior + medição global' : 'avaliação local';
+  const why = `${chosen.key} q=${fmt(chosen.quality)} (${evidenceLabel}) `
     + `US$ ${chosen.usdPerMillion}/M → ${fmt(chosen.score)}`;
   // "Usar várias": segurança/reversível, texto, orçamento normal, 2+ provedores e nenhum sozinho confiável.
   if (!soft && profile.modality === 'text' && profile.criticality !== 'normal' && chosen.quality < ENSEMBLE_QUALITY_CEILING) {
@@ -173,7 +176,8 @@ export function planAutoDecision(
       if (!perProvider.some(member => member.provider === candidate.provider)) perProvider.push(candidate);
     }
     const pair = perProvider.slice(0, 2);
-    if (pair.length >= 2 && pair.every(member => member.source === 'local-evaluation')) {
+    // Só com medição DA PRÓPRIA surface (≥ MIN_QUALITY_CASES) nos dois membros: a global misturada não liga ensemble.
+    if (pair.length >= 2 && pair.every(member => member.source === 'local-evaluation' && member.surfaceCases >= MIN_QUALITY_CASES)) {
       const reason = `${header} · usar várias: ${pair.map(member => `${member.key} ${fmt(member.score)}`).join(' + ')}`
         + ` (melhor sozinho q=${fmt(chosen.quality)} < ${ENSEMBLE_QUALITY_CEILING}) · ${budgetNote}`;
       const members = pair.map(member => v2Route(member, reason));

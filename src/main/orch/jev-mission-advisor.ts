@@ -482,6 +482,10 @@ export function auditCompletionAtDone(
     }).catch(() => null);
     state.chain = run;
     await run;
+    // Missão encerrada: a fila terminou e nada novo entrou nela; o estado sai do mapa.
+    if (completionStates.get(missionId) === state && state.chain === run && !state.timer) {
+      completionStates.delete(missionId);
+    }
   });
 }
 
@@ -500,6 +504,11 @@ export function resetMissionAdvisorForTesting(): void {
   recentRecovery.clear();
   for (const state of completionStates.values()) if (state.timer) clearTimeout(state.timer);
   completionStates.clear();
+}
+
+/** Para testes: a missão ainda tem estado de cobertura em memória? */
+export function hasCompletionStateForTesting(missionId: string): boolean {
+  return completionStates.has(missionId);
 }
 
 /** Para testes: espera as consultas de cobertura em fila. */

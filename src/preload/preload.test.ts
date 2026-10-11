@@ -93,6 +93,19 @@ describe('preload PTY delivery', () => {
     expect(api.decisionModels).not.toHaveProperty('getKey');
   });
 
+  it('F-1167: calibração e painel da missão saem com payload fixo (o renderer não escolhe casos nem modelos)', async () => {
+    const api = await loadPreloadApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true });
+    await api.decisionModels.calibrationPlan();
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('decisionModels:calibrationPlan');
+    await (api.decisionModels.calibrate as (...args: unknown[]) => Promise<unknown>)({ cases: [], models: ['luna'] });
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('decisionModels:calibrate', { confirm: true });
+    await (api.decisionModels.cancelCalibration as (...args: unknown[]) => Promise<unknown>)({ confirm: true });
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('decisionModels:calibrate', { cancel: true });
+    await api.decisionModels.missionPanel('mission-a');
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('decisionModels:missionPanel', { missionId: 'mission-a' });
+  });
+
   it('exposes Main-owned logout over billing:logout', async () => {
     const api = await loadPreloadApi();
     electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true });

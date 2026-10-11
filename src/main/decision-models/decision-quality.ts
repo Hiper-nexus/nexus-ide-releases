@@ -21,6 +21,8 @@ const cellSchema = z.object({
   accuracy: z.number().finite().min(0).max(1),
   cases: z.number().int().min(0),
   p50Ms: z.number().finite().min(0).nullable().optional(),
+  /** F-1167: quando ESTA célula foi medida (a mescla preserva células de calibrações antigas). */
+  generatedAt: z.number().finite().optional(),
 }).strip();
 const modelCellsSchema = z.partialRecord(z.enum(DECISION_MODEL_KEYS), cellSchema);
 
@@ -35,7 +37,20 @@ export const decisionQualityTableSchema = z.object({
 export type DecisionQualityCell = z.infer<typeof cellSchema>;
 export type DecisionQualityTable = z.infer<typeof decisionQualityTableSchema>;
 
-export interface DecisionQualityEstimate { quality: number; source: 'local-evaluation' | 'prior'; p50Ms: number | null }
+/**
+ * `local-evaluation` = célula medida DA PRÓPRIA surface com casos suficientes;
+ * `blended` = medição global do modelo misturada ao prior da surface;
+ * `prior` = só o embutido. `surfaceCases` = casos medidos na própria surface.
+ */
+export interface DecisionQualityEstimate {
+  quality: number; source: 'local-evaluation' | 'blended' | 'prior'; p50Ms: number | null; surfaceCases: number;
+}
+
+/**
+ * Peso do prior da surface (em "casos") ao misturar com a medição global: um
+ * conjunto pequeno de calibração não apaga sozinho o conhecimento da surface.
+ */
+export const PRIOR_WEIGHT_CASES = 30;
 
 export type QualityModality = 'text' | 'image' | 'audio';
 
@@ -65,18 +80,27 @@ export function decisionQualityPrior(surface: string | undefined, model: Decisio
 }
 
 /**
- * Medição local da surface, depois a global do modelo, depois o prior.
- * Imagem/áudio só usam medição da surface. Acurácia medida 0 é tratada como
- * medição suspeita (credencial, endpoint): cai no prior em vez de enterrar o modelo.
+ * Medição local da PRÓPRIA surface (≥ MIN_QUALITY_CASES) substitui o prior.
+ * Sem ela, a medição global do modelo (só texto) é MISTURADA ao prior da
+ * surface, ponderada pelo nº de casos (o prior pesa PRIOR_WEIGHT_CASES): poucos
+ * casos de outras surfaces não decidem sozinhos esta. Imagem/áudio só usam
+ * medição da surface. Acurácia medida 0 é suspeita (credencial, endpoint): ignorada.
  */
 export function decisionQuality(
   table: DecisionQualityTable | null, surface: string | undefined, model: DecisionModelKey, modality: QualityModality,
 ): DecisionQualityEstimate {
   const local = surface ? table?.surfaces[surface]?.[model] : undefined;
-  if (local && local.cases >= MIN_QUALITY_CASES && local.accuracy > 0) return { quality: local.accuracy, source: 'local-evaluation', p50Ms: local.p50Ms ?? null };
+  const surfaceCases = local && local.accuracy > 0 ? local.cases : 0;
+  if (local && local.cases >= MIN_QUALITY_CASES && local.accuracy > 0) {
+    return { quality: local.accuracy, source: 'local-evaluation', p50Ms: local.p50Ms ?? null, surfaceCases };
+  }
+  const prior = decisionQualityPrior(surface, model, modality);
   const global = modality === 'text' ? table?.models[model] : undefined;
-  if (global && global.cases >= MIN_QUALITY_CASES && global.accuracy > 0) return { quality: global.accuracy, source: 'local-evaluation', p50Ms: global.p50Ms ?? null };
-  return { quality: decisionQualityPrior(surface, model, modality), source: 'prior', p50Ms: null };
+  if (global && global.cases >= MIN_QUALITY_CASES && global.accuracy > 0) {
+    const quality = (prior * PRIOR_WEIGHT_CASES + global.accuracy * global.cases) / (PRIOR_WEIGHT_CASES + global.cases);
+    return { quality, source: 'blended', p50Ms: global.p50Ms ?? null, surfaceCases };
+  }
+  return { quality: prior, source: 'prior', p50Ms: null, surfaceCases };
 }
 
 let injectedFile: string | undefined;
@@ -155,44 +179,101 @@ export function isQualityObservation(row: DecisionEvalReport['observations'][num
   return row.failureReason !== undefined && QUALITY_FAILURES.has(row.failureReason);
 }
 
-function cellOf(rows: DecisionEvalReport['observations']): DecisionQualityCell | undefined {
+function cellOf(rows: DecisionEvalReport['observations'], now: number): DecisionQualityCell | undefined {
   const eligible = rows.filter(isQualityObservation);
   if (!eligible.length) return undefined;
   const correct = eligible.filter(row => row.correct === true).length;
   return { accuracy: correct / eligible.length, cases: eligible.length,
-    p50Ms: percentile50(eligible.flatMap(row => row.status === 'answered' && row.durationMs !== null ? [row.durationMs] : [])) };
+    p50Ms: percentile50(eligible.flatMap(row => row.status === 'answered' && row.durationMs !== null ? [row.durationMs] : [])),
+    generatedAt: now };
 }
 
-/** Falha de qualidade conta como erro; indisponibilidade e caso sem suporte ficam fora. */
+/**
+ * Falha de qualidade conta como erro; indisponibilidade e caso sem suporte
+ * ficam fora. Só ganha célula o par (surface, modelo) medido de fato.
+ */
 export function buildDecisionQualityTable(report: DecisionEvalReport, now = Date.now()): DecisionQualityTable {
   const models: DecisionQualityTable['models'] = {};
   const surfaces: DecisionQualityTable['surfaces'] = {};
   for (const model of DECISION_MODEL_KEYS) {
     const rows = report.observations.filter(row => row.requestedModel === model);
-    const cell = cellOf(rows);
+    const cell = cellOf(rows, now);
     if (cell) models[model] = cell;
     for (const surface of new Set(rows.map(row => row.surface))) {
-      const surfaceCell = cellOf(rows.filter(row => row.surface === surface));
+      const surfaceCell = cellOf(rows.filter(row => row.surface === surface), now);
       if (surfaceCell) (surfaces[surface] ??= {})[model] = surfaceCell;
     }
   }
   return { version: DECISION_QUALITY_TABLE_VERSION, generatedAt: now, source: 'evaluateDecisionCases', models, surfaces };
 }
 
-/** Grava a tabela (tmp + rename). `false` = sem userData ou erro de fs; nunca lança. */
-export function writeDecisionQualityTable(report: DecisionEvalReport, deps?: { file?: string; now?: number }): boolean {
-  const file = deps?.file ?? qualityTableFile();
-  if (!file) return false;
+/**
+ * F-1167: mescla uma calibração nova na tabela atual. Só as células que a
+ * nova mediu de fato são trocadas; as demais (modelo sem credencial agora,
+ * indisponível, surface fora do conjunto) ficam com a medição antiga e a
+ * data dela (`generatedAt` da célula, ou o da tabela antiga).
+ */
+export function mergeDecisionQualityTables(previous: DecisionQualityTable | null, next: DecisionQualityTable): DecisionQualityTable {
+  if (!previous) return next;
+  const dated = (cell: DecisionQualityCell): DecisionQualityCell => ({ ...cell, generatedAt: cell.generatedAt ?? previous.generatedAt });
+  const models: DecisionQualityTable['models'] = {};
+  for (const model of DECISION_MODEL_KEYS) {
+    const cell = next.models[model] ?? (previous.models[model] ? dated(previous.models[model]!) : undefined);
+    if (cell) models[model] = cell;
+  }
+  const surfaces: DecisionQualityTable['surfaces'] = {};
+  for (const surface of new Set([...Object.keys(previous.surfaces), ...Object.keys(next.surfaces)])) {
+    for (const model of DECISION_MODEL_KEYS) {
+      const fresh = next.surfaces[surface]?.[model];
+      const old = previous.surfaces[surface]?.[model];
+      const cell = fresh ?? (old ? dated(old) : undefined);
+      if (cell) (surfaces[surface] ??= {})[model] = cell;
+    }
+  }
+  return { ...next, models, surfaces };
+}
+
+/** Lê o arquivo agora (sem cache): base da mescla. Ausente/ilegível = sem tabela. */
+function readTableFile(file: string): DecisionQualityTable | null {
   try {
-    const table = decisionQualityTableSchema.parse(buildDecisionQualityTable(report, deps?.now));
+    const parsed = decisionQualityTableSchema.safeParse(JSON.parse(fs.readFileSync(file, 'utf8')));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Mescla e grava (tmp + rename). Devolve a tabela gravada; `null` = sem
+ * userData ou erro de fs. Nunca lança.
+ */
+export function mergeAndWriteDecisionQualityTable(
+  report: DecisionEvalReport, deps?: { file?: string; now?: number },
+): DecisionQualityTable | null {
+  const file = deps?.file ?? qualityTableFile();
+  if (!file) return null;
+  try {
+    const table = decisionQualityTableSchema.parse(
+      mergeDecisionQualityTables(readTableFile(file), buildDecisionQualityTable(report, deps?.now)));
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(table, null, 2));
     fs.renameSync(tmp, file);
     cache = undefined;
-    return true;
+    return table;
   } catch (error) {
     console.warn(`[decision-models] quality table write failed (${error instanceof Error ? error.name : 'unknown'})`);
-    return false;
+    return null;
   }
+}
+
+/** Grava a tabela mesclando com a atual. `false` = sem userData ou erro de fs; nunca lança. */
+export function writeDecisionQualityTable(report: DecisionEvalReport, deps?: { file?: string; now?: number }): boolean {
+  return mergeAndWriteDecisionQualityTable(report, deps) !== null;
+}
+
+/** Quando a medição de um modelo foi feita (global de texto), para a UI marcar medição antiga. */
+export function decisionQualityMeasuredAt(table: DecisionQualityTable | null, model: DecisionModelKey): number | null {
+  const cell = table?.models[model];
+  return cell ? cell.generatedAt ?? table!.generatedAt : null;
 }

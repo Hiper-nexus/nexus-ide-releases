@@ -98,8 +98,11 @@ export interface DecisionRoute {
   model: string;
   /** v2 = motor custo×qualidade do Automático (F-1165). */
   policyVersion: 'jev-clef-v1' | 'jev-clef-luna-v1' | 'decision-engine-v2';
-  /** local-evaluation = tabela gerada por evaluateDecisionCases; prior = qualidade embutida. */
-  evidence: 'public-benchmark' | 'legacy' | 'manual' | 'capability' | 'local-evaluation' | 'prior';
+  /**
+   * local-evaluation = medição da própria surface (evaluateDecisionCases); prior = qualidade embutida;
+   * blended = medição global do modelo misturada ao prior da surface (F-1167).
+   */
+  evidence: 'public-benchmark' | 'legacy' | 'manual' | 'capability' | 'local-evaluation' | 'blended' | 'prior';
   reason: string;
 }
 

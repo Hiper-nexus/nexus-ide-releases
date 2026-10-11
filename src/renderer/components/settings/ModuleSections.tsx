@@ -28,6 +28,7 @@ import { EmptyState } from '../ActionCard';
 import { SquadEditor } from '../SquadEditor';
 import { VoiceSettings } from '../VoiceSettings';
 import { DecisionModelsSection } from './DecisionModelsSection';
+import { JEV_SURFACES_CHANGED_EVENT } from './MissionDecisionEngineControls';
 
 /** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
@@ -495,6 +496,17 @@ export function SquadsSection() {
     });
   }, []);
 
+  // F-1167: a chave "Motor de decisão em toda missão" grava as quatro fases de
+  // uma vez; a lista abaixo acompanha para não regravar um valor velho.
+  useEffect(() => {
+    const onSurfaces = (event: Event) => {
+      const detail = (event as CustomEvent<Partial<NonNullable<OrchSettings['jevSurfaces']>>>).detail;
+      if (detail && typeof detail === 'object') setJevSurfaces((current) => ({ ...current, ...detail }));
+    };
+    window.addEventListener(JEV_SURFACES_CHANGED_EVENT, onSurfaces);
+    return () => window.removeEventListener(JEV_SURFACES_CHANGED_EVENT, onSurfaces);
+  }, []);
+
   function openCreateEditor() {
     setFeedback(null);
     setEditing(createSquadDraft());
@@ -921,7 +933,8 @@ export function SquadsSection() {
               onChange={(checked) => {
                 const next = { ...jevSurfaces, [surface]: checked };
                 setJevSurfaces(next);
-                void window.nexus.settings.orchSet({ jevSurfaces: next });
+                // F-1167: só a chave mudada; o Main mescla no objeto atual.
+                void window.nexus.settings.orchSet({ jevSurfaces: { [surface]: checked } });
               }}
             />
           ))}

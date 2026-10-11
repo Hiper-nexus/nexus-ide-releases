@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DECISION_EVAL_MODELS, decisionEvalModelId, evaluateDecisionCases, type DecisionEvalCase } from './decision-evaluation';
 import { calibrateDecisionQuality } from './decision-calibration';
 import {
-  buildDecisionQualityTable, configureDecisionQualityClock, configureDecisionQualityTable, QUALITY_TABLE_TTL_MS, decisionQuality, readDecisionQualityTable, writeDecisionQualityTable,
+  buildDecisionQualityTable, mergeDecisionQualityTables, PRIOR_WEIGHT_CASES, decisionQualityPrior, MIN_QUALITY_CASES, configureDecisionQualityClock, configureDecisionQualityTable, QUALITY_TABLE_TTL_MS, decisionQuality, readDecisionQualityTable, writeDecisionQualityTable, type DecisionQualityTable,
 } from './decision-quality';
 
 let dir: string; let file: string;
@@ -126,5 +126,50 @@ describe('P3: cache da tabela com TTL', () => {
     now += 2;
     expect(readDecisionQualityTable()?.surfaces.judgeTool.clef?.accuracy).toBe(0.75);
     stat.mockRestore();
+  });
+});
+
+describe('F-1167: mistura global + prior e mescla de calibrações', () => {
+  const table = (models: DecisionQualityTable['models'], surfaces: DecisionQualityTable['surfaces'] = {}): DecisionQualityTable =>
+    ({ version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models, surfaces });
+
+  it('P2-2a: global (texto) é ponderada com o prior da surface pelo nº de casos', () => {
+    const prior = decisionQualityPrior('taskRouting', 'jev', 'text');
+    const estimate = decisionQuality(table({ jev: { accuracy: 0.5, cases: 30 } }), 'taskRouting', 'jev', 'text');
+    expect(estimate.source).toBe('blended');
+    expect(estimate.quality).toBeCloseTo((prior * PRIOR_WEIGHT_CASES + 0.5 * 30) / (PRIOR_WEIGHT_CASES + 30), 10);
+    expect(estimate.surfaceCases).toBe(0);
+    // Célula da surface com casos suficientes vence e conta os casos.
+    const local = decisionQuality(table({ jev: { accuracy: 0.5, cases: 30 } }, { taskRouting: { jev: { accuracy: 0.9, cases: MIN_QUALITY_CASES } } }),
+      'taskRouting', 'jev', 'text');
+    expect(local).toMatchObject({ source: 'local-evaluation', quality: 0.9, surfaceCases: MIN_QUALITY_CASES });
+    // Imagem não usa a global.
+    expect(decisionQuality(table({ clef: { accuracy: 0.1, cases: 50 } }), 'browserTool', 'clef', 'image').source).toBe('prior');
+  });
+
+  it('P2-1: a mescla troca só o que foi medido; o resto fica com a data antiga', () => {
+    const previous = { ...table({ jev: { accuracy: 0.7, cases: 20 }, luna: { accuracy: 0.8, cases: 20, generatedAt: 3 } },
+      { toolPick: { jev: { accuracy: 0.6, cases: 5 }, luna: { accuracy: 0.9, cases: 5 } } }), generatedAt: 10 };
+    const next = { ...table({ jev: { accuracy: 0.75, cases: 20, generatedAt: 99 } }, { toolPick: { jev: { accuracy: 0.65, cases: 5, generatedAt: 99 } },
+      paneState: { jev: { accuracy: 1, cases: 5, generatedAt: 99 } } }), generatedAt: 99 };
+    const merged = mergeDecisionQualityTables(previous, next);
+    expect(merged.generatedAt).toBe(99);
+    expect(merged.models.jev).toMatchObject({ accuracy: 0.75, generatedAt: 99 });
+    expect(merged.models.luna).toMatchObject({ accuracy: 0.8, generatedAt: 3 });
+    expect(merged.surfaces.toolPick!.luna).toMatchObject({ accuracy: 0.9, generatedAt: 10 });
+    expect(merged.surfaces.toolPick!.jev).toMatchObject({ accuracy: 0.65, generatedAt: 99 });
+    expect(merged.surfaces.paneState!.jev).toMatchObject({ generatedAt: 99 });
+    expect(mergeDecisionQualityTables(null, next)).toBe(next);
+  });
+
+  it('P2-1: gravar mescla com o arquivo atual (indisponível não vira célula)', () => {
+    const cells = (status: 'answered' | 'failed', model: 'jev' | 'luna') => Array.from({ length: 5 }, (_, index) => ({
+      caseId: `c${index}`, surface: 'toolPick', split: 'development' as const, requestedModel: model, status, correct: status === 'answered',
+      consequential: false, durationMs: 10, usd: 0, inputTokens: 1, ...(status === 'failed' ? { failureReason: 'network' as const } : {}) }));
+    expect(writeDecisionQualityTable({ models: {} as never, observations: [...cells('answered', 'jev'), ...cells('answered', 'luna')] }, { now: 1 })).toBe(true);
+    expect(writeDecisionQualityTable({ models: {} as never, observations: [...cells('answered', 'jev'), ...cells('failed', 'luna')] }, { now: 2 })).toBe(true);
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(saved.models.jev.generatedAt).toBe(2);
+    expect(saved.models.luna).toMatchObject({ accuracy: 1, generatedAt: 1 });
   });
 });

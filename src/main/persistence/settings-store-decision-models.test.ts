@@ -73,3 +73,27 @@ describe('decision configuration revision (in-flight and cache authority)', () =
     expect(getOrchSettings().decisionModels).toMatchObject({ clefModel: 'clef-flash', audioConsent: { version: 1, recipients: [] } });
   });
 });
+
+describe('F-1167: jevSurfaces parcial é mesclado no Main (sem corrida entre telas)', () => {
+  beforeEach(() => { handlers.clear(); registerSettingsIpc(); });
+
+  it('orchSet com só as quatro fases preserva as outras superfícies; patch completo continua valendo', () => {
+    const orchSet = handlers.get(SETTINGS_CHANNELS.orchSet)!;
+    orchSet(trustedEvent(), { jevSurfaces: { ...getOrchSettings().jevSurfaces, paneState: false, intake: false } });
+    orchSet(trustedEvent(), { jevSurfaces: { missionKickoff: false, reviewTriage: false, recoveryAdvice: false, completionCheck: false } });
+    expect(getOrchSettings().jevSurfaces).toMatchObject({ paneState: false, intake: false, handoffReview: true,
+      missionKickoff: false, reviewTriage: false, recoveryAdvice: false, completionCheck: false });
+    // A outra tela grava uma chave só: as fases desligadas acima ficam como estão.
+    orchSet(trustedEvent(), { jevSurfaces: { paneState: true } });
+    expect(getOrchSettings().jevSurfaces).toMatchObject({ paneState: true, intake: false, missionKickoff: false });
+    replaceOrchSettings({ jevSurfaces: { missionKickoff: true } } as never);
+    expect(getOrchSettings().jevSurfaces).toMatchObject({ missionKickoff: true, reviewTriage: false, intake: false });
+  });
+
+  it('valor inválido numa chave parcial é recusado sem mudar nada', () => {
+    const orchSet = handlers.get(SETTINGS_CHANNELS.orchSet)!;
+    const before = JSON.stringify(getOrchSettings().jevSurfaces);
+    orchSet(trustedEvent(), { jevSurfaces: { missionKickoff: 'sim' } });
+    expect(JSON.stringify(getOrchSettings().jevSurfaces)).toBe(before);
+  });
+});

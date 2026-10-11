@@ -238,9 +238,10 @@ describe("submitPtyStreamHandoff MCP parity", () => {
   it('F-1166: handoff PTY de sucesso agenda a cobertura do objetivo; blocked não', async () => {
     advisor.scheduleCompletionCheck.mockClear();
     const list = vi.fn(() => [{ id: 'hoff-1', status: 'success', summary: 'feito' }]);
+    const live: Record<string, unknown> = approvedMission();
     mocks.getContextBySession.mockReturnValue(workerCtx());
     mocks.getStores.mockReturnValue({
-      missions: { get: () => approvedMission() }, tasks: { list: () => [], getPlannedTask: () => null },
+      missions: { get: () => live }, tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] }, taskDispatches: { list: () => [] },
       handoffs: {
         list,
@@ -255,6 +256,10 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     const [missionId, collect] = advisor.scheduleCompletionCheck.mock.calls[0]!;
     expect(missionId).toBe('mission-a');
     expect(collect()).toMatchObject({ missionId: 'mission-a', goal: 'Implementar interface', handoffs: [{ id: 'hoff-1' }] });
+    // P3: worker atrasado não consulta missão já concluída.
+    live.status = 'done';
+    expect(collect()).toBeNull();
+    live.status = 'running';
     advisor.scheduleCompletionCheck.mockClear();
     await submitPtyStreamHandoff('agy-session', { ...payload, status: 'blocked', summary: 'Bloqueado: falta credencial do banco.' });
     expect(advisor.scheduleCompletionCheck).not.toHaveBeenCalled();

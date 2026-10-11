@@ -552,6 +552,23 @@ describe('MissionInspector', () => {
     expect(text).not.toMatch(/\bonda\s+\d+/i);
   });
 
+  it('F-1167: a aba Plano tem a seção "Motor de decisão" desta missão, lida por IPC só leitura', async () => {
+    const missionPanel = vi.fn(async (missionId: string) => ({ ok: true, missionId, mode: 'auto', budgetUsd: 0.5, chargedUsd: 0.1, reservedUsd: 0,
+      usd: 0.0001, calls: 1, noAnswer: 0, budgetRefusals: 0, ratio: 0.2, byProvider: {}, hints: null }));
+    const previous = (window as unknown as { nexus?: unknown }).nexus;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { decisionModels: { missionPanel } } });
+    try {
+      const host = mount();
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      const panel = selectTab(host, 'Plano');
+      expect(missionPanel).toHaveBeenCalledWith(SNAPSHOT.id);
+      const section = panel.querySelector('section[aria-label="Motor de decisão"]');
+      expect(section?.textContent).toContain('US$ 0,1000 de US$ 0,5000');
+    } finally {
+      Object.defineProperty(window, 'nexus', { configurable: true, value: previous });
+    }
+  });
+
   it('shows only accepted operator directions with the supplied question and real composer', () => {
     const host = mount({ events: ACCEPTED_DIRECTION_EVENTS });
     const panel = selectTab(host, 'Conversa');

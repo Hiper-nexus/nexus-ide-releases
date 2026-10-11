@@ -1,4 +1,5 @@
 import { DecisionModeControls } from './DecisionModeControls';
+import { MissionDecisionEngineControls } from './MissionDecisionEngineControls';
 import { ClefCredentials } from './ClefCredentials';
 import { decisionNotices } from './decision-readiness';
 import { useDecisionModelSettings } from './use-decision-model-settings';
@@ -26,6 +27,7 @@ export function DecisionModelsSection({ showCredentials = true }: { showCredenti
         {notices.map(entry => <li key={entry.id} className={`decision-models__notice decision-models__notice--${entry.tone}`}>{entry.text}</li>)}
       </ul>}
       <DecisionModeControls settings={status.settings} busy={busy} onChange={change} />
+      <MissionDecisionEngineControls settings={status.settings} busy={busy} onChange={change} />
       {status.settings.mode === 'luna' && <div className="settings-row decision-models__actions">
         <button className="settings-btn settings-btn--sm" type="button" disabled={busy || !status.lunaReady} onClick={() => void run(async () => {
           const result = await window.nexus.decisionModels.test({ provider: 'luna' });

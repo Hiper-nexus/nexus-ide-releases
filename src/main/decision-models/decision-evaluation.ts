@@ -32,7 +32,9 @@ const evalQuestionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('score'), instructions: instructionsSchema, criteria: z.array(z.string()).min(2).max(10) }),
 ]);
 export const decisionEvalCasesSchema = z.array(z.object({
-  id: z.string().min(1).max(100), surface: z.enum(['toolPick', 'intake', 'judgeTool', 'paneState', 'handoffReview', 'dispatchGuard', 'researchTriage', 'browserTool', 'delegation', 'taskRouting', 'rankTool', 'terminalTriage', 'memoryDistill', 'helperReuse', 'businessModel']),
+  id: z.string().min(1).max(100), surface: z.enum(['toolPick', 'intake', 'judgeTool', 'paneState', 'handoffReview', 'dispatchGuard', 'researchTriage', 'browserTool', 'delegation', 'taskRouting', 'rankTool', 'terminalTriage', 'memoryDistill', 'helperReuse', 'businessModel',
+    // F-1167: surfaces consultivas da missão (F-1166) e as reversíveis do Automático entram na calibração.
+    'missionKickoff', 'reviewTriage', 'recoveryAdvice', 'completionCheck', 'missionPick', 'catalogPick']),
   split: z.enum(['development', 'heldout']), state: z.unknown(),
   questions: z.record(z.string(), evalQuestionSchema),
   expected: z.record(z.string(), z.union([z.string(), z.boolean(), z.object({ min: z.number(), max: z.number() })])),
@@ -111,11 +113,23 @@ function modelScore(rows: readonly EvalObservation[]): ModelScore {
     development: splitScore(rows, 'development'), heldout: splitScore(rows, 'heldout') };
 }
 
-/** Reference labels and input payloads never enter the report or the provider request. */
-export async function evaluateDecisionCases(cases: readonly DecisionEvalCase[], judge: EvalJudge): Promise<DecisionEvalReport> {
+/**
+ * Reference labels and input payloads never enter the report or the provider request.
+ * `only` restringe quem é consultado (ex.: só quem tem credencial); os demais
+ * ficam sem observação e, na tabela de qualidade, seguem no prior.
+ */
+export async function evaluateDecisionCases(
+  cases: readonly DecisionEvalCase[], judge: EvalJudge, only: readonly DecisionEvalModel[] = DECISION_EVAL_MODELS,
+  signal?: AbortSignal,
+): Promise<DecisionEvalReport> {
   const observations: EvalObservation[] = [];
+  const consulted = DECISION_EVAL_MODELS.filter(model => only.includes(model));
+  // Cancelado: para entre consultas (a que está em voo é abortada pelo próprio sinal).
   for (const testCase of cases) {
-    for (const model of DECISION_EVAL_MODELS) observations.push(await observe(testCase, model, judge));
+    for (const model of consulted) {
+      if (signal?.aborted) break;
+      observations.push(await observe(testCase, model, judge));
+    }
   }
   const models = Object.fromEntries(DECISION_EVAL_MODELS.map(model => [model,
     modelScore(observations.filter(row => row.requestedModel === model))])) as Record<DecisionEvalModel, ModelScore>;

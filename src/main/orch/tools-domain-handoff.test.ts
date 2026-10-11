@@ -55,6 +55,10 @@ vi.mock("./jev-mission-advisor", async (importOriginal) => ({
   scheduleReviewTriageAdvice: advisor.scheduleReviewTriageAdvice,
   scheduleCompletionCheck: advisor.scheduleCompletionCheck,
 }));
+vi.mock("../jev/jev-decision-log", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../jev/jev-decision-log")>()),
+  recordJevDecision: vi.fn(() => "id"),
+}));
 vi.mock("./idle-delivery", () => ({
   onHandoffSubmitted: mocks.onHandoffSubmitted,
 }));
@@ -1558,6 +1562,52 @@ describe("handoff MCP stop receipt", () => {
     advisor.scheduleCompletionCheck.mockClear();
     await submitTool().handler({ status: "blocked", summary: "Não consegui: falta a credencial do banco de dados." }, context(), invocation());
     expect(advisor.scheduleCompletionCheck).not.toHaveBeenCalled();
+  });
+
+  it("P3 F-1166: worker atrasado não consulta a cobertura de missão já concluída", async () => {
+    advisor.scheduleCompletionCheck.mockClear();
+    const stores = mocks.getStores();
+    const live = { ...stores.missions.get("mission-a") };
+    mocks.getStores.mockReturnValue({ ...stores, missions: { ...stores.missions, get: () => live } });
+    mocks.submit.mockImplementationOnce(() => handoff("unverified"));
+    await submitTool().handler({ status: "success", summary: "Implementei o formulário de login com testes." }, context(), invocation());
+    const [, collect] = advisor.scheduleCompletionCheck.mock.calls[0]!;
+    mocks.listHandoffs.mockReturnValue([{ id: "h-1", status: "success", summary: "feito" }]);
+    expect(collect()).toMatchObject({ missionId: "mission-a" });
+    live.status = "done";
+    expect(collect()).toBeNull();
+  });
+
+  it("P3 F-1166: o detectLimit real não casa na saída serializada do nexus_handoff_list com missionDecisionHint", async () => {
+    const { detectLimit } = await import("./limit-detector");
+    const advisorReal = await import("./jev-mission-advisor");
+    const hints = await import("./mission-decision-hints");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "list-limit-"));
+    hints.configureMissionDecisionHints(dir);
+    const LIMIT_TEXT = "Error: 429 Too Many Requests";
+    expect(detectLimit(LIMIT_TEXT)).not.toBeNull();
+    const deps = { enabled: () => true, hasKey: () => true };
+    const answer = (answers: Record<string, unknown>) => async () => ({ model: "jev-1", answers, usage: { input_tokens: 10, output_tokens: 0 } }) as never;
+    try {
+      await advisorReal.adviseCompletionCheck({ missionId: "mission-a", goal: LIMIT_TEXT, acceptanceCriteria: [LIMIT_TEXT], handoffs: [] },
+        { ...deps, judge: answer({ covers_goal: { type: "noul", noul: 0.2 }, missing: { type: "choice", choice: "c1", probabilities: {}, confidence: 0.9 } }) });
+      await advisorReal.adviseReviewTriage({ missionId: "mission-a", handoffId: "h-2", summary: LIMIT_TEXT, declaredFiles: ["src/a.ts"] },
+        { ...deps, judge: answer({ regression_risk: { type: "noul", noul: 0.9 } }) });
+      expect(hints.getMissionDecisionHints("mission-a")?.completion?.missing).toBeDefined();
+      mocks.listHandoffs.mockReturnValue([{ id: "h-1", delivered: true }, { id: "h-2", delivered: true }]);
+      const rows = (await listTool().handler({}, orchestratorContext())) as Array<Record<string, unknown>>;
+      expect(rows.at(-1)!.missionDecisionHint).toContain("parece faltar");
+      const page = (await listTool().handler({ limit: 10 }, orchestratorContext())) as Record<string, unknown>;
+      expect(page.missionDecisionHint).toContain("parece faltar");
+      for (const serialized of [JSON.stringify(rows), JSON.stringify(page), JSON.stringify(rows, null, 2), JSON.stringify(page, null, 2)]) {
+        expect(detectLimit(serialized)).toBeNull();
+        for (const line of serialized.split("\n")) expect(detectLimit(line)).toBeNull();
+      }
+      await hints.flushMissionDecisionHints();
+    } finally {
+      hints.configureMissionDecisionHints(undefined);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("F-1166: o Maestro listando a própria missão vê a linha de cobertura; worker e outra missão não", async () => {

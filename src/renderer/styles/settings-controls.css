@@ -45,6 +45,30 @@
   background: var(--surface-1);
 }
 .decision-models__confirm .settings-field__note { margin: 0 0 var(--space-2); }
+/* F-1167: motor de decisão em toda missão — cor só para estado. */
+.decision-engine {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.decision-engine .settings-form-grid { margin: var(--space-2) 0 0; }
+.decision-engine__attention { color: var(--text); }
+.decision-engine__attention::before {
+  content: '';
+  display: inline-block;
+  inline-size: 0.5em;
+  block-size: 0.5em;
+  margin-inline-end: var(--space-1);
+  border-radius: 50%;
+  background: var(--warn);
+  vertical-align: 0.1em;
+}
+.decision-calibration { margin-top: var(--space-3); }
+.decision-calibration .decision-models__table { margin: var(--space-2) 0 0; }
+.decision-calibration td { font-variant-numeric: tabular-nums; }
+.decision-calibration__skipped th, .decision-calibration__skipped td { color: var(--text-dim); }
+/* Medição antiga é estado de atenção: âmbar só no texto que diz isso. */
+.decision-calibration__stale { color: var(--warn); }
 .decision-models__loading {
   min-height: var(--space-6);
   padding: var(--space-3);

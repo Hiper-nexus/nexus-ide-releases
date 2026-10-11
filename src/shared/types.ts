@@ -46,6 +46,7 @@ import type {
 } from './context-draft-types';
 import type { UpdateState } from './update-ipc';
 import type { DecisionModelStatus, SetDecisionKeyRequest, TestDecisionModelRequest } from './decision-models';
+import type { DecisionCalibrationCancelResult, DecisionCalibrationPlan, DecisionCalibrationResult, DecisionMissionPanelResult } from './decision-engine-ui';
 import type {
   JevDecisionRow,
   JevDecisionStatsResult,
@@ -120,6 +121,7 @@ import type {
   AudioSettingsPatch,
   TerminalSettings,
   OrchSettings,
+  OrchSettingsPatch,
   TerminalSettingsPatch,
   UiSettings,
   UiSettingsPatch,
@@ -707,6 +709,14 @@ export interface NexusApi {
     status(): Promise<DecisionModelStatus>;
     setKey(req: SetDecisionKeyRequest): Promise<{ ok: boolean; error?: string }>;
     test(req?: TestDecisionModelRequest): Promise<JevTestResult>;
+    /** F-1167: custo estimado da calibração, sem chamar provedor. */
+    calibrationPlan(): Promise<DecisionCalibrationPlan>;
+    /** F-1167: calibra os modelos com credencial (só por clique do operador). */
+    calibrate(): Promise<DecisionCalibrationResult>;
+    /** F-1167: cancela a calibração em curso (as medições anteriores continuam). */
+    cancelCalibration(): Promise<DecisionCalibrationCancelResult>;
+    /** F-1167: gasto e dicas do motor numa missão do workspace atual (só leitura). */
+    missionPanel(missionId: string): Promise<DecisionMissionPanelResult>;
   };
   jev: {
     /** Status sem segredo (presença da chave, autopilot, stats de uso). */
@@ -1045,7 +1055,8 @@ export interface NexusApi {
     set(patch: TerminalSettingsPatch): Promise<TerminalSettings>;
     onChanged(cb: (settings: TerminalSettings) => void): Unsubscribe;
     orchGet(): Promise<OrchSettings>;
-    orchSet(patch: Partial<OrchSettings>): Promise<OrchSettings>;
+    /** `jevSurfaces` parcial é MESCLADO no Main (F-1167): só as chaves enviadas mudam. */
+    orchSet(patch: OrchSettingsPatch): Promise<OrchSettings>;
     audioGet(): Promise<AudioSettings>;
     audioSet(patch: AudioSettingsPatch): Promise<AudioSettings>;
     onAudioChanged(cb: (audio: AudioSettings) => void): Unsubscribe;

@@ -380,6 +380,24 @@ export const orchSettingsSchema = z.object({
   taskHarnessTable: z.record(z.string(), z.unknown()).nullable().default(null),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
+/**
+ * Patch do `orchSet`. `jevSurfaces` pode vir parcial e é MESCLADO no Main ao
+ * objeto atual (F-1167): dois toggles de telas diferentes não regravam um ao outro.
+ */
+export type OrchSettingsPatch = Omit<Partial<OrchSettings>, 'jevSurfaces'> & {
+  jevSurfaces?: Partial<NonNullable<OrchSettings['jevSurfaces']>>;
+};
+
+/** Mescla de um patch nas configurações atuais (rasa, exceto `jevSurfaces`). */
+export function mergeOrchSettingsPatch(current: OrchSettings, patch: unknown): Record<string, unknown> {
+  const raw = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch as Record<string, unknown> : {};
+  const merged: Record<string, unknown> = { ...current, ...raw };
+  const surfaces = raw.jevSurfaces;
+  if (surfaces && typeof surfaces === 'object' && !Array.isArray(surfaces)) {
+    merged.jevSurfaces = { ...(current.jevSurfaces ?? {}), ...(surfaces as Record<string, unknown>) };
+  }
+  return merged;
+}
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});
 export type SquadCliPolicy = OrchSettings['squadCliPolicy'];
 export type AgentTransport = OrchSettings['agentTransport'];

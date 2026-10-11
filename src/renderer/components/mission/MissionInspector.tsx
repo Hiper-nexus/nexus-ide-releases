@@ -10,6 +10,7 @@ import { useOrchStore } from '../../state/orch-store';
 import { useContextualPanelNavStore } from '../../state/contextual-panel-nav-store';
 import { DirectionComposer } from './DirectionComposer';
 import { AgentActivityTimeline, type TimelineItemModel } from './AgentActivityTimeline';
+import { MissionDecisionPanel } from './MissionDecisionPanel';
 
 /**
  * F-1005: o renderer só tem a janela que o Main paginou. `total` é o tamanho
@@ -336,6 +337,7 @@ function PlanProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) {
         <p className="mission-inspector__empty" role="status">
           Nenhuma unidade de plano foi persistida para esta missão.
         </p>
+        <MissionDecisionPanel missionId={snapshot.id} version={snapshot.version} />
       </>
     );
   }
@@ -388,6 +390,7 @@ function PlanProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) {
         );
       })}
     </ol>
+    <MissionDecisionPanel missionId={snapshot.id} version={snapshot.version} />
     </>
   );
 }

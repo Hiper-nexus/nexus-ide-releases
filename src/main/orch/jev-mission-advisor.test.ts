@@ -18,7 +18,7 @@ import {
   missionKickoffQuestions, resetMissionAdvisorForTesting, reviewTriageContextLine, scheduleCompletionCheck,
   scheduleMissionKickoffAdvice, scheduleRecoveryAdvice, scheduleReviewTriageAdvice, withReviewTriageLines, type AdvisoryDeps,
   auditCompletionAtDone, completionContextLine, completionSignature, recoveryTriggerClass, settleCompletionChecksForTesting,
-  COMPLETION_MAX_CONSULTS,
+  COMPLETION_MAX_CONSULTS, hasCompletionStateForTesting,
 } from './jev-mission-advisor';
 import { detectLimit } from './limit-detector';
 import {
@@ -305,6 +305,19 @@ describe('completionCheck no ciclo (revisão da Fase 2)', () => {
     auditCompletionAtDone('m-c4', facts('m-c4', ['a']), opts); await tick(); await settleCompletionChecksForTesting();
     expect(judge).toHaveBeenCalledTimes(1);
     expect(getMissionDecisionHints('m-c4')).toMatchObject({ finalizedAt: 7_000, completion: { finalAudit: { at: 7_000, reused: true } } });
+  });
+
+  it('P3: a auditoria final limpa o estado da cobertura depois que a fila termina', async () => {
+    const judge = covered(0.9);
+    const opts = { judge, debounceMs: 0, budgetLevel: () => 'normal' as const };
+    scheduleCompletionCheck('m-clean', facts('m-clean', ['a']), opts); await wait(5); await settleCompletionChecksForTesting();
+    expect(hasCompletionStateForTesting('m-clean')).toBe(true);
+    auditCompletionAtDone('m-clean', facts('m-clean', ['a', 'b']), opts);
+    await tick(); await settleCompletionChecksForTesting(); await tick();
+    expect(hasCompletionStateForTesting('m-clean')).toBe(false);
+    expect(getMissionDecisionHints('m-clean')?.completion).toMatchObject({ consultations: 2, finalAudit: { reused: false } });
+    // Um worker atrasado depois da limpeza continua sob o teto (contagem vem da dica).
+    expect(judge).toHaveBeenCalledTimes(2);
   });
 
   it('conclusão com assinatura nova consulta uma vez, sem debounce; coletor que lança não derruba nada', async () => {

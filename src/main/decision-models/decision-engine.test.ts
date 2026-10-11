@@ -159,3 +159,30 @@ describe('F-1166: perfis e priors das surfaces consultivas', () => {
     expect(planAutoDecision(text('reviewTriage'), auto, all, { budgetLevel: 'soft', quality: null })?.route.model).toBe('clef-flash');
   });
 });
+
+describe('F-1167 P2-2: medição global não domina e não liga ensemble', () => {
+  const GLOBAL_ONLY: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases',
+    models: { jev: { accuracy: 0.6, cases: 55 }, clef: { accuracy: 0.6, cases: 55 }, 'clef-flash': { accuracy: 0.65, cases: 55 },
+      'clef-omni': { accuracy: 0.6, cases: 55 }, luna: { accuracy: 0.62, cases: 55 } },
+    surfaces: { toolPick: { jev: { accuracy: 0.6, cases: 5 } } } };
+
+  it('sem célula da própria surface, a global é misturada ao prior (evidence blended), nunca "avaliação local"', () => {
+    const plan = planAutoDecision(text('taskRouting'), auto, { jev: true, clef: false, luna: false }, { budgetLevel: 'normal', quality: GLOBAL_ONLY });
+    expect(plan?.route.evidence).toBe('blended');
+    expect(plan?.route.reason).toContain('prior + medição global');
+  });
+
+  it('ensemble v2 exige ≥5 casos medidos NA PRÓPRIA surface nos dois membros', () => {
+    // Só global (mesmo com muitos casos e qualidade baixa): sem ensemble em taskRouting/missionPick/catalogPick.
+    for (const surface of ['taskRouting', 'missionPick', 'catalogPick']) {
+      expect(planAutoDecision(text(surface), auto, all, { budgetLevel: 'normal', quality: GLOBAL_ONLY })?.members).toBeUndefined();
+    }
+    // Um membro com 4 casos na surface: sem ensemble.
+    const thin: DecisionQualityTable = { ...GLOBAL_ONLY, surfaces: { taskRouting: { jev: { accuracy: 0.85, cases: 10 }, 'clef-flash': { accuracy: 0.8, cases: 4 },
+      luna: { accuracy: 0.8, cases: 4 } } } };
+    expect(planAutoDecision(text('taskRouting'), auto, all, { budgetLevel: 'normal', quality: thin })?.members).toBeUndefined();
+    // Os dois com ≥5 na surface: ensemble.
+    const both: DecisionQualityTable = { ...GLOBAL_ONLY, surfaces: { taskRouting: { jev: { accuracy: 0.85, cases: 5 }, 'clef-flash': { accuracy: 0.8, cases: 5 } } } };
+    expect(planAutoDecision(text('taskRouting'), auto, all, { budgetLevel: 'normal', quality: both })?.members).toHaveLength(2);
+  });
+});

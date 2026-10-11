@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.234 — Motor de decisão em toda missão
+
+- **Orçamento de decisão por missão.** Cada missão tem um teto para as consultas de Jev, Clef e Luna (padrão US$ 0,50). No Automático, acima de 80% só o modelo mais barato responde e, em 100%, param as consultas que o Automático escolhe; a missão segue pelo caminho normal. As checagens fixas no Jev e os modos com modelo fixo continuam e só entram na conta (F-1164).
+- **Automático escolhe por custo e qualidade.** No modo Automático o motor pondera a qualidade de cada modelo e o preço, prefere o Clef Flash no texto barato e o Clef-omni na imagem. Ele só junta mais de um modelo em decisões reversíveis (roteamento de tarefas, missão falada e Marketplace) e só quando há medição local suficiente daquela decisão. As checagens de segurança continuam fixas no Jev, e escolher Jev, Clef, Luna ou Juntos continua fixando o modelo (F-1165).
+- **Dicas do início ao fim da missão.** O motor sugere complexidade, número de workers e trilha no início (também na "+ Pane"), avalia o risco de regressão de cada entrega de código, aconselha o que fazer quando um worker cai e confere se as entregas cobrem o objetivo antes de concluir. São só dicas: nunca bloqueiam, e falha ou falta de credencial não muda nada (F-1166).
+- **Motor de decisão na interface.** Em Modelos de decisão, uma chave liga ou desliga o motor em toda missão, com o orçamento por missão e o botão "Calibrar modelos". A calibração mostra o custo estimado antes, pode ser cancelada e mostra o acerto, o tempo e o custo de cada modelo depois. Ela só atualiza o que mediu: a medição de um modelo sem chave continua valendo e aparece como antiga depois de 30 dias. Na aba Plano da missão, a seção "Motor de decisão" mostra o gasto, o orçamento usado e as dicas com o modelo e o horário de cada uma (F-1167).
+
 ## 0.76.233 — Missões com acompanhamento contínuo
 
 - **Clef-omni nos modelos de decisão.** Em Somente Clef, a variante Clef-omni (texto, imagem e áudio; US$ 0,15 por milhão de tokens) atende todas as decisões da Cloudflare, inclusive o julgamento visual do navegador. Com a nova autorização de áudio, separada da de imagens e desligada por padrão, cada detecção local de “Hey Jarvis” envia à Cloudflare os cerca de 2 s de áudio que terminam nela (a frase e o que soou logo antes; num falso positivo, pode ser som ambiente ou conversa), e o Clef-omni ajuda a descartar ativações de TV ou som ambiente. A ativação pode esperar até cerca de 1,5 s; erro ou demora mantêm a ativação. O custo do Clef Flash foi corrigido para US$ 0,038 (F-1161).

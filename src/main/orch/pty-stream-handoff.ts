@@ -633,7 +633,8 @@ async function persistPtyHandoff(
       const coverageMissionId = prepared.missionId;
       scheduleCompletionCheck(coverageMissionId, () => {
         const live = prepared.suite.missions.get(coverageMissionId);
-        return live ? completionFactsFrom(live,
+        // Worker atrasado não consulta missão já encerrada (a auditoria final cuida dela).
+        return live && live.status !== "done" ? completionFactsFrom(live,
           prepared.suite.handoffs.list?.({ missionId: coverageMissionId, includeDelivered: true }) ?? []) : null;
       });
     }

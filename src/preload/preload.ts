@@ -706,6 +706,11 @@ function windowsBuildNumber(): number | null {
   }
 }
 
+/** F-1167: o mesmo canal calibra ou cancela; o payload é fixo aqui e validado (strict) no Main. */
+function invokeCalibration(payload: { confirm: true } | { cancel: true }) {
+  return ipcRenderer.invoke(DECISION_MODEL_CHANNELS.calibrate, payload);
+}
+
 const api: NexusApi = {
   pet: {
     getPrefs: () => ipcRenderer.invoke(PET_CHANNELS.getPrefs),
@@ -990,6 +995,10 @@ const api: NexusApi = {
     status: () => ipcRenderer.invoke(DECISION_MODEL_CHANNELS.status),
     setKey: (req) => ipcRenderer.invoke(DECISION_MODEL_CHANNELS.setKey, req),
     test: (req) => ipcRenderer.invoke(DECISION_MODEL_CHANNELS.test, req),
+    calibrationPlan: () => ipcRenderer.invoke(DECISION_MODEL_CHANNELS.calibrationPlan),
+    calibrate: () => invokeCalibration({ confirm: true }),
+    cancelCalibration: () => invokeCalibration({ cancel: true }),
+    missionPanel: (missionId) => ipcRenderer.invoke(DECISION_MODEL_CHANNELS.missionPanel, { missionId }),
   },
   jev: {
     status: () => ipcRenderer.invoke(JEV_CHANNELS.status),

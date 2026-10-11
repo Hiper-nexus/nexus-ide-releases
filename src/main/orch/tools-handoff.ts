@@ -714,7 +714,10 @@ const handoffSubmitTool: McpToolDef = {
       const coverageMissionId = ctx.missionId;
       scheduleCompletionCheck(coverageMissionId, () => {
         const live = suite.missions.get(coverageMissionId);
-        return live ? completionFactsFrom(live, suite.handoffs.list({ missionId: coverageMissionId, includeDelivered: true })) : null;
+        // Worker atrasado não consulta missão já encerrada (a auditoria final cuida dela).
+        return live && live.status !== "done"
+          ? completionFactsFrom(live, suite.handoffs.list({ missionId: coverageMissionId, includeDelivered: true }))
+          : null;
       });
     }
     if (ctx.sessionId && contractVerdict.kind !== "none") {

@@ -16,6 +16,7 @@ import {
   audioSettingsPatchSchema,
   audioSettingsSchema,
   integrationsSettingsSchema,
+  mergeOrchSettingsPatch,
   orchSettingsSchema,
   terminalSettingsPatchSchema,
   terminalSettingsSchema,
@@ -282,7 +283,7 @@ export function getOrchSettings(): OrchSettings {
  * results). Validates through the same Zod schema as the IPC orchSet path.
  */
 export function replaceOrchSettings(patch: Partial<OrchSettings>): OrchSettings {
-  const parsed = orchSettingsSchema.safeParse({ ...orchSettings, ...patch });
+  const parsed = orchSettingsSchema.safeParse(mergeOrchSettingsPatch(orchSettings, patch));
   if (!parsed.success) return orchSettings;
   persist(snapshot({ orch: parsed.data }), patch.decisionModels !== undefined);
   const changedDecisionModels = JSON.stringify(orchSettings.decisionModels) !== JSON.stringify(parsed.data.decisionModels);
@@ -442,7 +443,8 @@ export function registerSettingsIpc(): void {
 
   handleTrusted(SETTINGS_CHANNELS.orchSet, (_event, raw) => {
     const previousProbeRequestId = orchSettings.acpHarnessProbeRequest?.requestId;
-    const parsed = orchSettingsSchema.safeParse({ ...orchSettings, ...(raw ?? {}) });
+    // F-1167: `jevSurfaces` parcial é mesclado ao atual (sem corrida entre telas).
+    const parsed = orchSettingsSchema.safeParse(mergeOrchSettingsPatch(orchSettings, raw));
     if (parsed.success) {
       const next = {
         ...parsed.data,
