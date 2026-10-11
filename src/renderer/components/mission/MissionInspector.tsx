@@ -11,6 +11,7 @@ import { useContextualPanelNavStore } from '../../state/contextual-panel-nav-sto
 import { DirectionComposer } from './DirectionComposer';
 import { AgentActivityTimeline, type TimelineItemModel } from './AgentActivityTimeline';
 import { MissionDecisionPanel } from './MissionDecisionPanel';
+import { MissionCheckpoints } from './MissionCheckpoints';
 
 /**
  * F-1005: o renderer só tem a janela que o Main paginou. `total` é o tamanho
@@ -1029,7 +1030,7 @@ function ResultProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) 
       <p>
         Referências de evidência registradas: {result.evidenceIds.length}. O status de conclusão não atesta validação visual.
       </p>
-      <ChangedFiles artifactRefs={result.artifactRefs} />
+      <ChangedFiles missionId={snapshot.id} artifactRefs={result.artifactRefs} />
       <details className="mission-inspector__technical">
         <summary>Detalhes técnicos</summary>
         <section aria-label="Evidências do resultado">
@@ -1057,8 +1058,10 @@ function ResultProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) 
  * link e sem dizer o que cada arquivo é.
  */
 function ChangedFiles({
+  missionId,
   artifactRefs,
 }: {
+  readonly missionId: string;
   readonly artifactRefs: readonly string[];
 }) {
   const projection = useMemo(
@@ -1076,6 +1079,7 @@ function ChangedFiles({
         <p className="mission-inspector__changed-empty">
           Nenhum arquivo do projeto foi alterado nesta missão.
         </p>
+        <MissionCheckpoints missionId={missionId} />
       </section>
     );
   }
@@ -1110,6 +1114,7 @@ function ChangedFiles({
           </li>
         ))}
       </ul>
+      <MissionCheckpoints missionId={missionId} />
     </section>
   );
 }

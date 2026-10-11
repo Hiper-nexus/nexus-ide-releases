@@ -1,6 +1,7 @@
 import { assertLicenseAccess } from '../license-enforcement';
 import { licenseFailure } from '../../shared/license-errors';
 import { observePrivateMissionCommand } from '../private-mission-command-probe';
+import { registerMissionCheckpointIpc } from "./mission-checkpoint-ipc";
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { showOwnedOpenDialog } from "../dialog/owned-open-dialog";
 import type { WebContents } from "electron";
@@ -2158,6 +2159,10 @@ export function registerOrchIpc(): void {
   );
 
 
+
+  // F-1173: checkpoints de writer na tela humana — mesma autoridade do
+  // nexus_checkpoint_* no papel de orquestrador, escopo do renderer vivo.
+  registerMissionCheckpointIpc(ipcMain);
 
   ipcMain.handle(ORCH_CHANNELS.missionResumeBootstrap, (event, raw) => {
     const parsed = missionResumeBootstrapSchema.safeParse(raw);

@@ -43,10 +43,48 @@ import {
 const MAX_LISTED_FILES = 200;
 const RESTORE_TOOL = 'nexus_checkpoint_restore';
 
-interface CheckpointRoot {
+export interface CheckpointRoot {
   readonly root: string;
   readonly scopeId: string;
   readonly scopeKey: string;
+}
+
+/**
+ * Raízes de execução de UMA missão pela autoridade do Main (aba da missão e
+ * worktrees do registro), nunca por argumento. Também é a lista que o
+ * renderer vê (F-1173): a ref só escolhe entre elas.
+ */
+export function missionExecutionCheckpointRoots(
+  scope: AgentGateContext['scope'],
+  missionId: string,
+): CheckpointRoot[] {
+  const roots = new Set<string>();
+  try {
+    const mission = getProjectDomainStores(scope).missions.get(missionId);
+    if (mission) roots.add(missionExecutionScope(scope, mission).rootRealPath);
+  } catch (error) {
+    console.warn('[checkpoint] raiz de execução da missão indisponível:', error);
+  }
+  try {
+    for (const record of requireWorktreeRuntimeRegistry().listMission(scope, missionId)) {
+      roots.add(record.worktreePath);
+    }
+  } catch (error) {
+    console.warn('[checkpoint] registro de worktrees indisponível:', error);
+  }
+  return checkpointRootsFrom(scope, missionId, roots);
+}
+
+function checkpointRootsFrom(
+  scope: AgentGateContext['scope'],
+  missionId: string,
+  roots: Set<string>,
+): CheckpointRoot[] {
+  roots.delete(scope.rootRealPath);
+  return [...roots].sort().map((root) => {
+    const scopeId = missionCheckpointScopeId(missionId, root);
+    return { root, scopeId, scopeKey: checkpointScopeKey(scopeId) };
+  });
 }
 
 /** Raízes de execução da missão pela autoridade do Main, nunca por argumento. */
@@ -55,53 +93,41 @@ export function missionCheckpointRoots(ctx: AgentGateContext): CheckpointRoot[] 
   if (!missionId) {
     throw new Error('checkpoint: disponível só dentro de uma missão (o Nexus grava um por turno de writer da missão)');
   }
-  const roots = new Set<string>();
   if (ctx.role === 'worker') {
-    roots.add(executionScopeFor(ctx).rootRealPath);
-  } else if (ctx.role === 'orchestrator') {
-    try {
-      const mission = getProjectDomainStores(ctx.scope).missions.get(missionId);
-      if (mission) roots.add(missionExecutionScope(ctx.scope, mission).rootRealPath);
-    } catch (error) {
-      console.warn('[checkpoint] raiz de execução da missão indisponível:', error);
-    }
-    try {
-      for (const record of requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId)) {
-        roots.add(record.worktreePath);
-      }
-    } catch (error) {
-      console.warn('[checkpoint] registro de worktrees indisponível:', error);
-    }
-  } else {
-    throw new Error('checkpoint: só o orquestrador ou um worker da missão');
+    return checkpointRootsFrom(ctx.scope, missionId, new Set([executionScopeFor(ctx).rootRealPath]));
   }
-  roots.delete(ctx.scope.rootRealPath);
-  return [...roots].sort().map((root) => {
-    const scopeId = missionCheckpointScopeId(missionId, root);
-    return { root, scopeId, scopeKey: checkpointScopeKey(scopeId) };
-  });
+  if (ctx.role === 'orchestrator') return missionExecutionCheckpointRoots(ctx.scope, missionId);
+  throw new Error('checkpoint: só o orquestrador ou um worker da missão');
 }
 
 /**
  * Raiz selada: `resolveRootForScope` recusa caminho cujo real difere do
  * autorizado (symlink trocado) e o inode da coordenação nunca passa.
  */
-function sealedExecutionRoot(ctx: AgentGateContext, root: string): string {
-  const sealed = resolveRootForScope({ ...ctx.scope, rootRealPath: root });
-  const coordination = fs.statSync(ctx.scope.rootRealPath);
+export function sealedCheckpointRoot(scope: AgentGateContext['scope'], root: string): string {
+  const sealed = resolveRootForScope({ ...scope, rootRealPath: root });
+  const coordination = fs.statSync(scope.rootRealPath);
   const target = fs.statSync(sealed);
-  if (sealed === path.resolve(ctx.scope.rootRealPath) ||
+  if (sealed === path.resolve(scope.rootRealPath) ||
       (target.dev === coordination.dev && target.ino === coordination.ino)) {
     throw new Error('checkpoint: a raiz de coordenação nunca é restaurada');
   }
   return sealed;
 }
 
-/** Sessões que escrevem nesta árvore e não estão ociosas (estado real do PTY + hook). */
-function busyWriters(ctx: AgentGateContext, root: string): string[] {
+function sealedExecutionRoot(ctx: AgentGateContext, root: string): string {
+  return sealedCheckpointRoot(ctx.scope, root);
+}
+
+/**
+ * Sessões que escrevem nesta árvore e não estão ociosas (estado real do PTY +
+ * hook). `callerSessionId` é o próprio writer em tool call; o operador no
+ * renderer não é sessão e passa `undefined` (toda sessão ocupada conta).
+ */
+function busyWriters(callerSessionId: string | undefined, root: string): string[] {
   return listAgentSessions()
     .filter((info) =>
-      info.sessionId !== ctx.sessionId &&
+      info.sessionId !== callerSessionId &&
       // F-1157: só a lane que o Hardened confina à leitura não escreve.
       getContextBySession(info.sessionId)?.readOnlyEnforced !== true &&
       (info.scope?.rootRealPath === root || (typeof info.cwd === 'string' && isInsidePath(root, info.cwd))) &&
@@ -109,8 +135,8 @@ function busyWriters(ctx: AgentGateContext, root: string): string[] {
     .map((info) => info.agentName ?? info.sessionId);
 }
 
-function assertWritersIdle(ctx: AgentGateContext, root: string): void {
-  const busy = busyWriters(ctx, root);
+export function assertCheckpointWritersIdle(callerSessionId: string | undefined, root: string): void {
+  const busy = busyWriters(callerSessionId, root);
   if (busy.length > 0) {
     throw new Error(
       `checkpoint: writer ocupado na árvore ${root} (${busy.join(', ')}); restaurar agora perderia o que ele ` +
@@ -119,9 +145,18 @@ function assertWritersIdle(ctx: AgentGateContext, root: string): void {
   }
 }
 
-function missionForRestore(ctx: AgentGateContext): Parameters<typeof isPlanLane>[0] {
+function assertWritersIdle(ctx: AgentGateContext, root: string): void {
+  assertCheckpointWritersIdle(ctx.sessionId, root);
+}
+
+export type CheckpointMission = Parameters<typeof isPlanLane>[0];
+
+export function missionForCheckpointRestore(
+  scope: AgentGateContext['scope'],
+  missionId: string,
+): CheckpointMission {
   try {
-    const mission = getProjectDomainStores(ctx.scope).missions.get(ctx.missionId!);
+    const mission = getProjectDomainStores(scope).missions.get(missionId);
     if (mission) return mission;
   } catch (error) {
     throw new Error('mission authority unavailable; checkpoint restore denied', { cause: error });
@@ -129,20 +164,30 @@ function missionForRestore(ctx: AgentGateContext): Parameters<typeof isPlanLane>
   throw new Error('mission authority unavailable; checkpoint restore denied');
 }
 
-/** Todos os destinos pelas guardas existentes, antes de qualquer escrita. */
-function assertRestoreTargets(
-  ctx: AgentGateContext,
-  mission: Parameters<typeof isPlanLane>[0],
+function missionForRestore(ctx: AgentGateContext): CheckpointMission {
+  return missionForCheckpointRestore(ctx.scope, ctx.missionId!);
+}
+
+/**
+ * Guardas de destino que não dependem de quem chama: namespace .agents/.codex,
+ * autoridade de workflow (.context, estágio PREVC) e lane de plano. O
+ * renderer (F-1173) passa por estas mesmas; a fronteira de worker governado
+ * só existe para sessão de agente e fica em `assertRestoreTargets`.
+ */
+export function assertCheckpointRestoreTargets(
+  scope: AgentGateContext['scope'],
+  missionId: string,
+  mission: CheckpointMission,
   targets: readonly string[],
+  callerReadOnly = false,
 ): void {
   const control = targets.find(pathTargetsCodexControlRoot);
   if (control) {
     throw new Error(`checkpoint: restauração recusada em namespace protegido (.agents/.codex): ${control}`);
   }
-  assertGovernedWorkspaceControlBoundary(ctx, RESTORE_TOOL, targets);
-  const authority = resolveProductionWorkflowAuthority(ctx.scope, ctx.missionId!);
+  const authority = resolveProductionWorkflowAuthority(scope, missionId);
   for (const target of targets) {
-    authority.assertExecutionEffectAllowed(RESTORE_TOOL, { path: target }, ctx.readOnlyEnforced === true);
+    authority.assertExecutionEffectAllowed(RESTORE_TOOL, { path: target }, callerReadOnly);
   }
   if (isPlanLane(mission)) {
     const outside = targets.find((target) => !isPlanLaneWritablePath(target));
@@ -150,7 +195,21 @@ function assertRestoreTargets(
   }
 }
 
-function rootForRef(roots: readonly CheckpointRoot[], ref: string): CheckpointRoot {
+/** Todos os destinos pelas guardas existentes, antes de qualquer escrita. */
+function assertRestoreTargets(
+  ctx: AgentGateContext,
+  mission: CheckpointMission,
+  targets: readonly string[],
+): void {
+  const control = targets.find(pathTargetsCodexControlRoot);
+  if (control) {
+    throw new Error(`checkpoint: restauração recusada em namespace protegido (.agents/.codex): ${control}`);
+  }
+  assertGovernedWorkspaceControlBoundary(ctx, RESTORE_TOOL, targets);
+  assertCheckpointRestoreTargets(ctx.scope, ctx.missionId!, mission, targets, ctx.readOnlyEnforced === true);
+}
+
+export function checkpointRootForRef(roots: readonly CheckpointRoot[], ref: string): CheckpointRoot {
   const parsed = parseCheckpointRef(ref);
   if (!parsed) {
     throw new Error('checkpoint: ref inválida — use uma ref de nexus_checkpoint_list (refs/nexus-checkpoint/<32 hex>/ordinal/<n>)');
@@ -180,7 +239,7 @@ const checkpointList: McpToolDef = {
     const roots = missionCheckpointRoots(ctx);
     const ref = str(args, 'ref');
     if (ref) {
-      const target = rootForRef(roots, ref);
+      const target = checkpointRootForRef(roots, ref);
       const root = sealedExecutionRoot(ctx, target.root);
       const preview = await restoreHiddenCheckpoint({
         cwd: root, scopeId: target.scopeId, ref, apply: false, forbiddenRoot: ctx.scope.rootRealPath,
@@ -238,7 +297,7 @@ const checkpointRestore: McpToolDef = {
     // F-1157: só a lane que o Hardened confina à leitura não restaura.
     if (ctx.readOnlyEnforced === true) throw new Error('checkpoint: sessão read-only (Hardened) não restaura arquivos');
     const ref = requireStr(args, 'ref');
-    const target = rootForRef(missionCheckpointRoots(ctx), ref);
+    const target = checkpointRootForRef(missionCheckpointRoots(ctx), ref);
     const root = sealedExecutionRoot(ctx, target.root);
     const mission = missionForRestore(ctx);
     assertWritersIdle(ctx, root);

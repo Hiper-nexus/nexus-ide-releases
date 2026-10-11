@@ -1064,6 +1064,12 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionPaneRestoreAuthority, input),
     resumeMissionBootstrap: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionResumeBootstrap, input),
+    listMissionCheckpoints: (input: { missionId: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionCheckpointsList, input),
+    previewMissionCheckpoint: (input: { missionId: string; ref: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionCheckpointPreview, input),
+    restoreMissionCheckpoint: (input: { missionId: string; ref: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionCheckpointRestore, input),
     missionEventsRecent: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsRecent, input),
     missionEventsReplay: (input) =>
