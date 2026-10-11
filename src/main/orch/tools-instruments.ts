@@ -14,6 +14,8 @@ import type { McpToolDef } from './mcp-protocol';
 import type { AgentGateContext } from './gate';
 import type { EnrichedCatalogItem } from '../../shared/surface-payload-types';
 import { homeRelativeDirOf, OUTSIDE_HOME_LABEL } from './home-relative-path';
+import { migrateModelId } from '../../shared/model-defaults';
+import { newestInModelLine } from '../../shared/model-line';
 
 /**
  * Instrument panel — the five READ-ONLY consultations a pilot needs before
@@ -306,7 +308,108 @@ type RankingRow = {
   estimate?: boolean;
   sourceLabel?: string;
   rank?: number;
+  /** F-1230: o score veio de um modelo mais velho da mesma linha. */
+  upgradedFrom?: string;
 };
+
+/** Modelos elegíveis por CLI instalada e habilitada (F-1230). */
+interface InstalledAdapterModels {
+  readonly models: readonly string[];
+  readonly info: Readonly<Record<string, { costTier?: string; availability?: string }>>;
+}
+type InstalledModels = ReadonlyMap<string, InstalledAdapterModels>;
+
+/**
+ * F-1230 (regra do operador: "os mais novos são os melhores", nunca tabela
+ * velha): a linha do ranking só entra nas faixas e no pick se a CLI dela está
+ * instalada e habilitada e se o modelo está na oferta elegível dela (sem
+ * api-only/deprecated nem quarentena — o mesmo filtro de
+ * `newestExplicitModelInLine` no spawn). Um modelo com versão mais nova da
+ * mesma linha instalada sobe para ela; o score herdado vira estimativa. Um
+ * modelo fora da oferta e sem linha mais nova instalada sai.
+ */
+export function alignRankingToInstalled(
+  rows: readonly RankingRow[],
+  installed: InstalledModels,
+): { rows: RankingRow[]; dropped: string[]; lifted: string[] } {
+  const kept = new Map<string, RankingRow>();
+  const dropped: string[] = [];
+  const lifted: string[] = [];
+  for (const row of rows) {
+    const adapter = installed.get(row.adapterId);
+    const model = adapter
+      ? newestInModelLine(migrateModelId(row.modelId) ?? row.modelId, adapter.models)
+      : row.modelId;
+    if (!adapter || !adapter.models.includes(model)) {
+      dropped.push(row.id);
+      continue;
+    }
+    let next = row;
+    if (model !== row.modelId) {
+      const info = adapter.info[model];
+      next = {
+        ...row,
+        id: `${row.adapterId}/${model}`,
+        modelId: model,
+        costTier: info?.costTier ?? row.costTier,
+        availability: info?.availability ?? row.availability,
+        estimate: true,
+        sourceLabel: `estimativa herdada de ${row.modelId}`,
+        upgradedFrom: row.modelId,
+      };
+      lifted.push(`${row.adapterId}:${row.modelId}→${model}`);
+    }
+    const prior = kept.get(next.id);
+    // O score medido do próprio modelo vence o herdado de um mais velho.
+    if (prior && (prior.upgradedFrom === undefined || next.upgradedFrom !== undefined)) {
+      continue;
+    }
+    kept.set(next.id, next);
+  }
+  return { rows: [...kept.values()], dropped, lifted };
+}
+
+async function loadInstalledModels(): Promise<
+  { readonly installed: InstalledModels } | { readonly reason: string }
+> {
+  try {
+    const [{ listAdapterInfos }, { isModelBlockedForAutoRouting }, { modelAccessQuarantine }] =
+      await Promise.all([
+        import('../adapters/adapter-registry'),
+        import('../adapters/model-catalog'),
+        import('./model-access-quarantine'),
+      ]);
+    const adapters = listAdapterInfos();
+    if (adapters.length === 0) return { reason: 'adapter registry is empty' };
+    let disabled = new Set<string>();
+    try {
+      const { listProviderSettings } = await import('../persistence/provider-config-store');
+      disabled = new Set(
+        listProviderSettings({ nonBlockingAuth: true })
+          .filter((p) => !p.enabled)
+          .map((p) => p.adapterId),
+      );
+    } catch {
+      // Postura de Providers ilegível: só a instalação filtra.
+    }
+    const installed = new Map<string, InstalledAdapterModels>();
+    for (const adapter of adapters) {
+      if (!adapter.installed || disabled.has(adapter.id)) continue;
+      const info = adapter.models.info ?? {};
+      installed.set(adapter.id, {
+        models: adapter.models.list.filter(
+          (model) =>
+            !isModelBlockedForAutoRouting(info[model]) &&
+            !modelAccessQuarantine(adapter.id, model),
+        ),
+        info,
+      });
+    }
+    return { installed };
+  } catch (error) {
+    return { reason: `installed catalog unavailable: ${reasonFrom(error)}` };
+  }
+}
 
 function bandOfRankingRow(entry: RankingRow) {
   return classifyOperationalBand(entry);
@@ -319,6 +422,7 @@ function compactBandEntry(entry: RankingRow) {
     modelId: entry.modelId,
     band: bandOfRankingRow(entry),
     ...(entry.costTier !== undefined ? { costTier: entry.costTier } : {}),
+    ...(entry.upgradedFrom !== undefined ? { upgradedFrom: entry.upgradedFrom } : {}),
   });
 }
 
@@ -343,8 +447,11 @@ const modelRankingTool: McpToolDef = {
     'pick; the tool degrades to a cheaper band when the target is empty, ' +
     'never escalates. Score entries carry `estimate: true` when they come ' +
     'from offline fixtures — treat those as a hint, not evidence. Bands ' +
-    'come from catalog cost/availability, not from fixture scores. Public ' +
-    'data only — no accounts, no keys.',
+    'come from catalog cost/availability, not from fixture scores, and only ' +
+    'list models this machine runs: a CLI not installed/enabled or a model ' +
+    'outside its offer is dropped, and an older model is lifted to the ' +
+    'newest installed model of its line (`upgradedFrom`, score becomes an ' +
+    'estimate) — see `installedCatalog`. Public data only — no accounts, no keys.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -397,9 +504,24 @@ const modelRankingTool: McpToolDef = {
       });
     }
 
+    // F-1230: faixas e pick só com o que esta máquina roda, na linha mais nova.
+    const installedSource = await loadInstalledModels();
+    let rows: readonly RankingRow[] = snapshot.entries;
+    let installedCatalog: Readonly<Record<string, unknown>>;
+    if ('installed' in installedSource) {
+      const aligned = alignRankingToInstalled(snapshot.entries, installedSource.installed);
+      rows = aligned.rows;
+      installedCatalog = Object.freeze({
+        applied: true,
+        dropped: aligned.dropped.slice(0, MAX_RANKING_ENTRIES),
+        lifted: aligned.lifted.slice(0, MAX_RANKING_ENTRIES),
+      });
+    } else {
+      installedCatalog = Object.freeze({ applied: false, reason: installedSource.reason });
+    }
     const pool = input.adapterId
-      ? snapshot.entries.filter((e) => e.adapterId === input.adapterId)
-      : snapshot.entries;
+      ? rows.filter((e) => e.adapterId === input.adapterId)
+      : rows;
     const scoreOf = (e: RankingRow): number | undefined =>
       e[input.dimension as RankingDimension];
     const scored = pool.filter((e) => typeof scoreOf(e) === 'number');
@@ -417,6 +539,7 @@ const modelRankingTool: McpToolDef = {
         generatedAt: snapshot.generatedAt,
         doctrine: OPERATIONAL_DOCTRINE,
         bands,
+        installedCatalog,
         truncated: false,
         entries: [],
       });
@@ -438,6 +561,7 @@ const modelRankingTool: McpToolDef = {
       suiteRevision: snapshot.suiteRevision,
       doctrine: OPERATIONAL_DOCTRINE,
       bands,
+      installedCatalog,
       ...(askedNeed
         ? {
             need: Object.freeze({
@@ -466,6 +590,7 @@ const modelRankingTool: McpToolDef = {
         ...(e.confidence !== undefined ? { confidence: e.confidence } : {}),
         estimate: e.estimate === true,
         ...(e.sourceLabel !== undefined ? { sourceLabel: e.sourceLabel } : {}),
+        ...(e.upgradedFrom !== undefined ? { upgradedFrom: e.upgradedFrom } : {}),
         rank: index + 1,
       })),
     });

@@ -1201,6 +1201,7 @@ function compactHandoffListRows(
           : null;
       const diagnosis = diagnoseHandoffStuck({
         id: row.id,
+        missionId: row.missionId || null,
         deliveryState: row.deliveryState,
         delivered: row.delivered,
         consumedAt: row.consumedAt ?? null,

@@ -18,6 +18,11 @@ export type HandoffStuckReason =
 
 export interface HandoffStuckView {
   readonly id: string;
+  /**
+   * F-1232: `null` = handoff de workspace (helper do operador sem missão),
+   * entregue direto no pane do pai. Ausente = desconhecido (como antes).
+   */
+  readonly missionId?: string | null;
   readonly deliveryState?: string;
   readonly delivered?: boolean;
   readonly consumedAt?: number | null;
@@ -62,6 +67,17 @@ export function diagnoseHandoffStuck(
       reason: 'not-stuck',
       stuck: false,
       summary: 'Entrega já consumida/aceita pelo Maestro.',
+      escape: 'Nada a fazer.',
+    };
+  }
+  // F-1232: sem missão não há Maestro nem ACK — todo caminho de consumo
+  // (nexus_handoff_ack, list-ack) exige mission_id. A colagem no pane do
+  // operador (`submitted`) é o estado final da entrega.
+  if (view.missionId === null && view.delivered === true) {
+    return {
+      reason: 'not-stuck',
+      stuck: false,
+      summary: 'Entregue no pane do operador (helper sem missão): não há Maestro nem ACK a esperar.',
       escape: 'Nada a fazer.',
     };
   }
