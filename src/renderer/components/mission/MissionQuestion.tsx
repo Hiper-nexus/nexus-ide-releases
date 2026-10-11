@@ -5,6 +5,7 @@ import type {
   MissionSnapshot,
 } from '../../../shared/mission-engine-contract';
 import { toUserFacingMissionRecovery } from '../../lib/user-facing-mission-error';
+import { MarkdownWithMermaid } from '../MarkdownWithMermaid';
 
 const ANSWER_ERROR_MESSAGE =
   'Não foi possível enviar a resposta. Tente novamente.';
@@ -128,9 +129,11 @@ export function MissionQuestion({
       </h3>
 
       {question.detail && (
-        <p id={detailId} className="mission-board__question-detail">
-          {question.detail}
-        </p>
+        <MarkdownWithMermaid
+          id={detailId}
+          className="mission-board__question-detail"
+          source={question.detail}
+        />
       )}
 
       {question.options.length > 0 && (

@@ -11,6 +11,8 @@ import { useContextualPanelNavStore } from '../../state/contextual-panel-nav-sto
 import { DirectionComposer } from './DirectionComposer';
 import { AgentActivityTimeline, type TimelineItemModel } from './AgentActivityTimeline';
 import { MissionDecisionPanel } from './MissionDecisionPanel';
+import { MarkdownWithMermaid } from '../MarkdownWithMermaid';
+import { ComposerRichTextView } from '../ComposerRichTextView';
 
 /**
  * F-1005: o renderer só tem a janela que o Main paginou. `total` é o tamanho
@@ -285,7 +287,7 @@ function SealedPlan({ missionId }: { readonly missionId: string }) {
       aria-label="O que vamos construir"
     >
       <h2>O que vamos construir</h2>
-      <p className="mission-inspector__sealed-plan-body">{plan.summary}</p>
+      <MarkdownWithMermaid className="mission-inspector__sealed-plan-body" source={plan.summary} />
       <details className="mission-inspector__technical">
         <summary>Detalhes técnicos</summary>
         <dl className="mission-inspector__details">
@@ -491,7 +493,7 @@ function ConversationProjection({
             {directions.map((direction) => (
               <li key={direction.eventId}>
                 <article className="mission-inspector__direction">
-                  <p>{direction.text}</p>
+                  <p><ComposerRichTextView markdown={direction.text} /></p>
                   <p className="mission-inspector__direction-target">
                     Destino:{' '}
                     {directionTargetLabel(
@@ -1025,7 +1027,7 @@ function ResultProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) 
       <header className="mission-inspector__projection-header">
         <h2>{RESULT_OUTCOME_LABELS[result.outcome]}</h2>
       </header>
-      <p className="mission-inspector__result-summary">{result.summary}</p>
+      <MarkdownWithMermaid className="mission-inspector__result-summary" source={result.summary} />
       <p>
         Referências de evidência registradas: {result.evidenceIds.length}. O status de conclusão não atesta validação visual.
       </p>

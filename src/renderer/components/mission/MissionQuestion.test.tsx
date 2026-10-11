@@ -9,6 +9,12 @@ import type {
 } from '../../../shared/mission-engine-contract';
 import { MissionQuestion } from './MissionQuestion';
 
+const mermaidApi = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  render: vi.fn(async (id: string) => ({ svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${id}"><text>d</text></svg>` })),
+}));
+vi.mock('mermaid', () => ({ default: mermaidApi }));
+
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -534,5 +540,27 @@ describe('MissionQuestion', () => {
     await flush();
     expect(onDismiss).toHaveBeenCalledOnce();
     expect(onCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe('MissionQuestion — detalhe do agente em markdown (F-1169)', () => {
+  it('o detalhe sai formatado, com diagrama, descreve o formulário e não executa HTML', async () => {
+    const question: MissionQuestionContract = {
+      ...QUESTION,
+      detail: '**Atenção**: duas opções\n\n- `staged`\n- `single`\n\n```mermaid\ngraph LR; A-->B\n```\n\n<img src=x onerror="window.__pwned = 1">',
+    };
+    const view = render(
+      <SharedQuestionHarness snapshot={canonicalSnapshot(question)} onCommand={vi.fn<CommandHandler>()} />,
+    );
+    await act(async () => { await Promise.resolve(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    const form = region(view.host, 'Pergunta no topo da missão').querySelector('form')!;
+    const detail = form.querySelector('.mission-board__question-detail')!;
+    expect(detail).not.toBeNull();
+    expect(form.getAttribute('aria-describedby')).toContain(detail.id);
+    expect(detail.querySelector('strong')?.textContent).toBe('Atenção');
+    expect(detail.querySelectorAll('ul li code')).toHaveLength(2);
+    expect(detail.querySelector('figure.markdown-with-mermaid__diagram')).not.toBeNull();
+    expect(detail.querySelector('img, script')).toBeNull();
+    expect(detail.textContent).toContain('<img src=x onerror="window.__pwned = 1">');
   });
 });

@@ -2220,6 +2220,15 @@
   word-break: break-word;
 }
 
+/* F-1169: texto narrativo do agente em markdown; mesma caixa rolável. */
+.agent-timeline__markdown {
+  max-height: 320px;
+  overflow: auto;
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
 .mission-inspector__result-summary {
   margin: 0 0 var(--space-5);
   color: var(--text);
