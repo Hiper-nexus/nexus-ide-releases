@@ -69,6 +69,28 @@ Uma missão numa aba com pasta isolada em que o Maestro abre, **em paralelo**,
 | a missão chega a `done` com as branches integradas | caminho normal |
 | nenhum writer some antes do próprio handoff (só o `autoCloseOnHandoff` fecha, depois do sucesso) | mortes caladas |
 
+### Cenário do operador (F-1185)
+
+O Maestro acima já nasce preso à missão (pane main-owned, sem janela dona).
+O operador não: o segundo cenário abre um pane pelo "+ Pane" — role `user`,
+sem missão, Autopilot, dono = a janela — e a CLI falsa dele recebe a tarefa
+digitada no PTY e chama `nexus_pane_spawn` sem `missionId` pelo MCP HTTP real
+do pane. A janela é um renderer falso mínimo que só fala com o Main pelos
+handlers IPC reais (`pty:spawn/write/kill/acknowledge`, `orch:panes.sync`,
+`orch:pane.spawnResult`), na ordem do `terminal-host` e do `orch-bridge`.
+
+| Garantia | Pega a regressão de |
+|---|---|
+| o 1º spawn do pane do operador sai ok (nunca `session_authority_revoked`, nem no `pane-spawn-timing`) | F-1185 (0.76.213–0.76.234) |
+| o Main cria a missão leve da aba e o pane vira o orquestrador dela (gate, `nexus_pane_whoami` do próprio pane e `workspaceBinding.adoptedPaneId`) | F-1185 |
+| o helper nasce worker dessa missão pelo caminho do renderer (ACK pendente, `pty:spawn` com o grant) e trabalha | F-1185 |
+| a entrega do helper (shim `nexus_handoff_submit`) chega colada no PTY do pane do operador, que dá ACK | F-1185, F-988 |
+
+Com o `tools-panes.ts`, o `mcp-dispatch.ts` e o `mcp-protocol.ts` de antes do
+F-1185 o cenário fica vermelho em ~7 ms, com o mesmo
+`{"error":"session_authority_revoked","effectMayHaveCommitted":true}` do campo.
+Ele soma ~20 s ao E2E (máquina normal).
+
 Na primeira rodada ele achou quatro defeitos que os unitários deixavam passar
 (F-997): a vaga pesada pelo checkout de coordenação (writers em fila), worker
 sem janela sem `workerIncarnationId` (sem shim), o timer do shim herdando a
@@ -94,8 +116,9 @@ recibo vai para `release-artifacts/mission-e2e.json` (fora de `security/`).
 
 ## O que ainda não cobre
 
-- Renderer: os panes são main-owned (missão sem janela); o caminho em que o
-  renderer monta o pane e devolve o ACK não roda aqui.
+- Renderer: os panes da missão do Maestro são main-owned (missão sem janela).
+  No cenário do operador o renderer é um falso mínimo sobre os handlers IPC
+  reais; o React/xterm de verdade (layout, foco, colagem do operador) não roda.
 - CLIs reais (Claude, Codex, MiMo…): o modelo, o login e o protocolo de TUI de
   cada uma ficam com os smokes opt-in por provider.
 - Missão com squad (PREVC, Council) e o app empacotado (assinatura, asar) —

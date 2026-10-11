@@ -24,6 +24,14 @@
  * memória livre da máquina (fixa, para a admissão não depender da carga do
  * host). Nenhuma conta de IA é usada.
  *
+ * F-1185: o segundo cenário começa onde o operador começa — um pane do
+ * "+ Pane" (role user, sem missão, Autopilot) cujo dono é a janela. A CLI falsa
+ * dele solta o 1º helper pelo MCP HTTP real sem missionId; o Main cria a
+ * missão leve da aba, adota o pane como orquestrador e a entrega do helper
+ * volta ao PTY dele. A janela é um renderer FALSO mínimo que fala com o Main
+ * só pelos handlers IPC reais (pty:spawn/write/kill, orch:panes.sync,
+ * orch:pane.spawnResult), como o terminal-host e o orch-bridge.
+ *
  * Só roda com NEXUS_MISSION_E2E=1 (`npm run test:mission-e2e`), fora de um
  * pane do Nexus (launchd): o supervisor Darwin recusa herdar a
  * responsabilidade de um pane (F-715).
@@ -34,7 +42,9 @@ import path from 'node:path';
 import { execFileSync, fork, type ChildProcess } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { WebContents } from 'electron';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
+import type { OrchPaneSpawnRequest } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { HostControlMsg, HostEventMsg } from '../pty/pty-host-core';
 import { F984_LONG_UPSTREAM_PATH } from '../../test/f984-brief';
@@ -57,6 +67,8 @@ const MISSION_DEADLINE_MS = Number(process.env.NEXUS_MISSION_E2E_DEADLINE_MS ?? 
  * os dois mundos sem vermelho falso no gate com a máquina carregada.
  */
 const DELIVERY_LATENCY_CEILING_MS = Number(process.env.NEXUS_MISSION_E2E_DELIVERY_CEILING_MS ?? 6_000);
+/** F-1185: "+ Pane" → 1º helper → entrega no pane do operador (medido ~20 s). */
+const OPERATOR_DEADLINE_MS = Number(process.env.NEXUS_MISSION_E2E_OPERATOR_DEADLINE_MS ?? 120_000);
 
 const state = vi.hoisted(() => ({
   adapterId: 'nexus-e2e-agent',
@@ -67,11 +79,18 @@ const state = vi.hoisted(() => ({
   reviewer: null as unknown,
   userData: '',
   appRoot: process.cwd(),
+  /** F-1185: handlers IPC que o Main registrou — o renderer falso do operador chama os reais. */
+  ipc: new Map<string, (...args: unknown[]) => unknown>(),
+  /** O host de PTY real do E2E, também para o IPC de PTY do renderer (registerPtyIpc). */
+  ptyHost: null as unknown,
 }));
 
 vi.mock('electron', () => {
   const noop = (): void => undefined;
   const emitter = { on: noop, once: noop, off: noop, removeListener: noop, removeAllListeners: noop, emit: () => false };
+  // Guarda (não chama) cada handler IPC: só o renderer falso do F-1185 os usa.
+  const recordIpc = (channel: string, handler: (...args: unknown[]) => unknown): void => { state.ipc.set(channel, handler); };
+  const forgetIpc = (channel: string): void => { state.ipc.delete(channel); };
   const api = {
     app: {
       ...emitter,
@@ -89,7 +108,7 @@ vi.mock('electron', () => {
       quit: noop,
       exit: noop,
     },
-    ipcMain: { handle: noop, handleOnce: noop, on: noop, once: noop, removeHandler: noop, removeListener: noop, removeAllListeners: noop },
+    ipcMain: { handle: recordIpc, handleOnce: recordIpc, on: recordIpc, once: recordIpc, removeHandler: forgetIpc, removeListener: forgetIpc, removeAllListeners: noop },
     BrowserWindow: Object.assign(function BrowserWindow(): void { throw new Error('mission E2E: sem janela'); }, {
       getAllWindows: () => [], getFocusedWindow: () => null, fromWebContents: () => null, fromId: () => null,
     }),
@@ -113,6 +132,15 @@ vi.mock('electron', () => {
   return { ...api, default: api };
 });
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+// F-1185: registerPtyIpc liga o IPC de PTY ao host de PTY do app; aqui é o
+// MESMO host real do E2E (fork Node + supervisor Darwin), nunca um utilityProcess.
+vi.mock('../pty/pty-host-client', () => ({
+  createRealPtyHost: () => {
+    if (!state.ptyHost) throw new Error('mission E2E: o host de PTY ainda não subiu');
+    return state.ptyHost;
+  },
+  shutdownPtyHost: async () => undefined,
+}));
 // A memória livre da máquina vira constante: a admissão de pane e a de comando
 // pesado rodam o código real, mas não dependem da carga do host do teste.
 vi.mock('./pane-admission', async (original) => ({
@@ -322,6 +350,7 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
     const bridge = createPtyHostBridge({ ensure: () => undefined, post: (msg: HostControlMsg) => { host?.send(msg); } });
     host.on('message', (msg) => bridge.dispatchEvent(msg as HostEventMsg));
     host.on('exit', () => bridge.handleHostDown());
+    state.ptyHost = bridge.host;
 
     // ---- boot do Main (o mesmo subconjunto e a mesma ordem de main.ts)
     for (const level of ['warn', 'error'] as const) {
@@ -702,4 +731,241 @@ describe.runIf(ENABLED)('F-997 — missão inteira de ponta a ponta (Main real, 
     console.info(`[mission-e2e] VERDE em ${Math.round(elapsedMs / 1000)} s: 6 writers + revisor frontier, sobreposição pesada ${maxOverlap}, permits simultâneos ${maxPermits}, ` +
       `quadro ${boardSeen.size}/${ALL_WRITERS.length}, latência máx. de entrega ${maxDeliveryLatencyMs} ms ${JSON.stringify(deliveryLatency)}`);
   }, MISSION_DEADLINE_MS + 120_000);
+
+  /**
+   * F-1185: o caminho que o Maestro acima nunca percorre. Ele nasce preso à
+   * missão; o operador não — o pane dele é `user`, sem missão, e o 1º helper
+   * que ele solta cria a missão leve da aba e o promove NO MEIO do próprio
+   * nexus_pane_spawn. Da 0.76.213 à 0.76.234 esse spawn morreu em ~9 ms com
+   * session_authority_revoked e o gate ficou verde o tempo todo.
+   */
+  it('F-1185 — o pane do operador (user, sem missão, Autopilot) solta o 1º helper na missão da aba e recebe a entrega', async () => {
+    const { ORCH_CHANNELS } = await import('../../shared/orch-channels');
+    const { PTY_CHANNELS } = await import('../../shared/channels');
+    const { isOperatorChoicePolicy } = await import('../../shared/squad-cli-policy');
+    const { getOrchSettings } = await import('../persistence/settings-store');
+    const { bindResolvedRendererWorkspaceScope, clearRendererWorkspaceScope } = await import('../persistence/renderer-workspace-scope');
+    const { registerPtyIpc } = await import('../pty/pty-ipc');
+    const { registerOrchIpc } = await import('./orch-ipc');
+    const { getContextBySession } = await import('./gate');
+    const { getPaneRuntimeAuthorityBySession } = await import('./pane-registry');
+    const { getProjectDomainStores } = await import('./project-domain-store-registry');
+    const pty = await import('../pty/pty-manager');
+
+    // ---- projeto e recibos próprios: nada do cenário de cima interfere
+    const opDir = path.join(root, 'e2e-operator');
+    const agents = path.join(opDir, 'agents');
+    const opRepo = path.join(root, 'operator-project');
+    for (const dir of [agents, path.join(opDir, 'ready'), opRepo]) fs.mkdirSync(dir, { recursive: true });
+    // Um helper só: não há paralelismo a provar, a barreira já nasce aberta.
+    fs.writeFileSync(path.join(opDir, 'go'), `${Date.now()}\n`);
+    git(opRepo, 'init', '-q', '-b', 'main');
+    git(opRepo, 'config', 'user.name', 'Nexus Mission E2E');
+    git(opRepo, 'config', 'user.email', 'mission-e2e@nexus.invalid');
+    git(opRepo, 'config', 'commit.gpgsign', 'false');
+    fs.writeFileSync(path.join(opRepo, 'README.md'), '# projeto do operador (E2E)\n');
+    fs.mkdirSync(path.join(opRepo, 'bin'));
+    fs.copyFileSync(path.join(REPO, 'scripts/mission-e2e/fixture-vitest'), path.join(opRepo, 'bin/vitest'));
+    fs.chmodSync(path.join(opRepo, 'bin/vitest'), 0o755);
+    git(opRepo, 'add', 'README.md', 'bin/vitest');
+    git(opRepo, 'commit', '-qm', 'base do projeto do operador');
+    const scope: ProjectExecutionScope = {
+      version: 1, installationId: 'installation-mission-e2e', projectId: 'project-operator-e2e',
+      checkoutId: 'checkout-operator-e2e', rootRealPath: opRepo, identitySource: 'manifest',
+    };
+    const stores = getProjectDomainStores(scope);
+
+    // ---- a janela: renderer FALSO mínimo, dono do grid. Fala com o Main só
+    // pelos handlers IPC reais, na ordem do orch-bridge/terminal-host.
+    // No app o main.ts registra os dois no boot; o cenário de cima não os usa.
+    if (!state.ipc.has(PTY_CHANNELS.spawn)) registerPtyIpc();
+    if (!state.ipc.has(ORCH_CHANNELS.panesSync)) registerOrchIpc();
+    type GridPane = { paneId: string; sessionId: string | null; title: string; kind: 'cli-agent'; adapterId?: string; model?: string };
+    const grid: GridPane[] = [];
+    const output = new Map<string, string>();
+    const rendererLog: Array<{ at: number; event: string; detail?: unknown }> = [];
+    const ignored = new Map<string, number>();
+    let renderer: WebContents;
+    const ipc = (channel: string, payload: unknown): unknown => {
+      const handler = state.ipc.get(channel);
+      if (!handler) throw new Error(`harness: o Main não registrou o IPC ${channel}`);
+      return handler({ sender: renderer }, payload);
+    };
+    const syncGrid = (): void => {
+      ipc(ORCH_CHANNELS.panesSync, { generationId: 'mission-e2e-renderer', entries: grid.map((pane) => ({ ...pane })) });
+    };
+    /** orch-bridge.onPaneSpawnRequest: pane no grid, ACK pendente, pty:spawn com o grant, ACK final. */
+    const materialize = async (request: OrchPaneSpawnRequest): Promise<void> => {
+      rendererLog.push({ at: Date.now(), event: 'spawn-request', detail: { requestId: request.requestId, paneId: request.paneId, missionId: request.missionId, role: request.role, adapterId: request.adapterId } });
+      const pane: GridPane = { paneId: request.paneId, sessionId: null, title: request.title ?? request.paneId, kind: 'cli-agent', adapterId: request.adapterId, ...(request.model ? { model: request.model } : {}) };
+      grid.push(pane);
+      syncGrid();
+      if (request.allowPending) ipc(ORCH_CHANNELS.paneSpawnResult, { requestId: request.requestId, ok: true, paneId: request.paneId, sessionId: null, pending: true });
+      const born = await ipc(PTY_CHANNELS.spawn, {
+        kind: 'cli-agent', cols: 120, rows: 40, paneId: request.paneId, adapterId: request.adapterId,
+        ...(request.model ? { model: request.model } : {}), ...(request.accountId ? { accountId: request.accountId } : {}),
+        ...(request.effort ? { effort: request.effort } : {}), ...(request.cwd ? { cwd: request.cwd } : {}),
+        orchRequestId: request.requestId, ...(request.missionId ? { missionId: request.missionId } : {}),
+        resume: request.resume, resumeLatestOnly: request.resumeLatestOnly, restorePersistedAuthority: false,
+      }) as { ok: boolean; sessionId?: string; error?: string };
+      rendererLog.push({ at: Date.now(), event: 'spawn-result', detail: { requestId: request.requestId, ok: born.ok, sessionId: born.sessionId, error: born.error } });
+      if (!born.ok || !born.sessionId) {
+        grid.splice(grid.indexOf(pane), 1);
+        syncGrid();
+        ipc(ORCH_CHANNELS.paneSpawnResult, { requestId: request.requestId, ok: false, paneId: request.paneId, error: born.error ?? 'session did not start' });
+        return;
+      }
+      pane.sessionId = born.sessionId;
+      syncGrid();
+      ipc(ORCH_CHANNELS.paneSpawnResult, { requestId: request.requestId, ok: true, paneId: request.paneId, sessionId: born.sessionId });
+    };
+    /** orch-bridge.onPaneCloseRequest (autoCloseOnHandoff do helper, limpeza de tentativa). */
+    const close = (payload: unknown): void => {
+      const request = typeof payload === 'string' ? { paneId: payload } : (payload ?? {}) as { paneId?: string; closingSessionId?: string; expectedSessionId?: string };
+      rendererLog.push({ at: Date.now(), event: 'close-request', detail: request });
+      if (request.closingSessionId) return;
+      const pane = grid.find((entry) => entry.paneId === request.paneId);
+      if (!pane || (request.expectedSessionId && pane.sessionId && pty.getSessionState(pane.sessionId) !== null && pane.sessionId !== request.expectedSessionId)) return;
+      grid.splice(grid.indexOf(pane), 1);
+      if (pane.sessionId && pty.getSessionState(pane.sessionId) !== null) ipc(PTY_CHANNELS.kill, { sessionId: pane.sessionId });
+      syncGrid();
+    };
+    renderer = {
+      id: 9_185,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      on: () => renderer, once: () => renderer, off: () => renderer, removeListener: () => renderer,
+      send: (channel: string, payload: unknown) => {
+        if (channel === PTY_CHANNELS.data) {
+          const event = payload as { sessionId: string; data: string; sequence: number };
+          output.set(event.sessionId, ((output.get(event.sessionId) ?? '') + event.data).slice(-65_536));
+          setImmediate(() => { try { ipc(PTY_CHANNELS.acknowledge, { sessionId: event.sessionId, sequence: event.sequence }); } catch { /* sessão já saiu */ } });
+        } else if (channel === ORCH_CHANNELS.paneSpawnRequest) {
+          setImmediate(() => { void materialize(payload as OrchPaneSpawnRequest).catch((error: unknown) => rendererLog.push({ at: Date.now(), event: 'spawn-error', detail: String(error) })); });
+        } else if (channel === ORCH_CHANNELS.paneCloseRequest) {
+          setImmediate(() => close(payload));
+        } else {
+          ignored.set(channel, (ignored.get(channel) ?? 0) + 1);
+        }
+      },
+    } as unknown as WebContents;
+    bindResolvedRendererWorkspaceScope(renderer, scope);
+
+    const opSessions: string[] = [];
+    try {
+      // ---- "+ Pane": o pane entra no grid e o terminal-host pede o PTY sem grant (direct-user)
+      const operatorPaneId = 'pane-operator-e2e';
+      const operatorPane: GridPane = { paneId: operatorPaneId, sessionId: null, title: 'Operador', kind: 'cli-agent', adapterId: state.adapterId };
+      grid.push(operatorPane);
+      syncGrid();
+      const opened = await ipc(PTY_CHANNELS.spawn, {
+        kind: 'cli-agent', cols: 120, rows: 40, cwd: opRepo, paneId: operatorPaneId, adapterId: state.adapterId,
+        resume: false, resumeLatestOnly: false, restorePersistedAuthority: false,
+      }) as { ok: boolean; sessionId?: string; error?: string };
+      expect(opened, `harness: o "+ Pane" do operador não abriu: ${JSON.stringify(opened)}`).toMatchObject({ ok: true });
+      const operatorSession = opened.sessionId!;
+      sessions.push(operatorSession);
+      opSessions.push(operatorSession);
+      operatorPane.sessionId = operatorSession;
+      syncGrid();
+      // Auto-checagem: é exatamente a mão do operador que o F-1185 quebrava.
+      const handBefore = getContextBySession(operatorSession);
+      expect(handBefore?.role, 'harness: o pane do operador nasceu sem o token `user`').toBe('user');
+      expect(handBefore?.missionId, 'harness: o pane do operador nasceu dentro de uma missão').toBeUndefined();
+      expect(handBefore?.operatorParentSessionId, 'harness: o pane do operador nasceu como filho de outro pane').toBeUndefined();
+      const runtime = getPaneRuntimeAuthorityBySession(operatorSession);
+      expect(runtime?.owner === renderer && runtime.kind === 'cli-agent' && runtime.paneId === operatorPaneId,
+        'harness: getPaneRuntimeAuthorityBySession não acha a janela dona do pane do operador').toBe(true);
+      expect(isOperatorChoicePolicy(getOrchSettings().squadCliPolicy), 'harness: a política de CLIs não é Autopilot').toBe(true);
+
+      // ---- o operador digita a tarefa quando a CLI pede
+      for (const by = Date.now() + 30_000; !(output.get(operatorSession) ?? '').includes('digite a tarefa') && Date.now() < by;) await sleep(100);
+      const helperBrief = writerBrief(opDir, 'h1');
+      fs.writeFileSync(path.join(opDir, 'operator-plan.json'), JSON.stringify({
+        helper: { id: 'h1', args: { adapterId: state.adapterId, title: 'Helper h1', isolatedWriter: true, prompt: helperBrief } },
+      }, null, 2));
+      ipc(PTY_CHANNELS.write, { sessionId: operatorSession, data: `[[E2E_DIR=${opDir}]] [[E2E_ROLE=operator]] Solte um helper que escreva e2e/h1.txt e me entregue.\r` });
+
+      // ---- só observa: o spawn, a promoção, o helper e a entrega acontecem sozinhos
+      const started = Date.now();
+      type Delivery = { handoff: string; from?: string; worker: number; ack?: McpCall };
+      while (Date.now() - started < OPERATOR_DEADLINE_MS) {
+        const call = readJson<McpCall>(path.join(agents, 'operator.spawn.json'));
+        if (call && (call.isError || call.error || Number(call.status) !== 200)) { await sleep(1_500); break; }
+        if (readNdjson<Delivery>(path.join(agents, 'operator.deliveries.ndjson')).some((delivery) => delivery.worker && delivery.ack)) break;
+        const helper = readJson<WorkerResult>(path.join(agents, 'h1.result.json'));
+        if (helper?.handoff && helper.handoff.code !== 0) { await sleep(2_000); break; }
+        await sleep(200);
+      }
+      const elapsedMs = Date.now() - started;
+
+      // ---- evidências
+      const spawnCall = readJson<McpCall>(path.join(agents, 'operator.spawn.json'));
+      const spawnReceipt = spawnCall?.result as { paneId?: string; sessionId?: string | null; tabMission?: { missionId?: string } } | undefined;
+      const operatorResult = readJson<{ whoamiBefore?: McpCall; whoamiAfter?: McpCall }>(path.join(agents, 'operator.result.json'));
+      const whoamiBefore = operatorResult?.whoamiBefore?.result as { role?: string; missionId?: string } | undefined;
+      const whoamiAfter = operatorResult?.whoamiAfter?.result as { role?: string; missionId?: string } | undefined;
+      const operatorBoot = readJson<BootReceipt>(path.join(agents, 'operator.boot.json'));
+      const helperBoot = readJson<BootReceipt>(path.join(agents, 'h1.boot.json'));
+      const helperResult = readJson<WorkerResult>(path.join(agents, 'h1.result.json'));
+      const receivedBrief = (() => { try { return fs.readFileSync(path.join(agents, 'h1.brief'), 'utf8'); } catch { return ''; } })();
+      const deliveries = readNdjson<Delivery>(path.join(agents, 'operator.deliveries.ndjson'));
+      const handAfter = getContextBySession(operatorSession);
+      const missionId = handAfter?.missionId;
+      const mission = missionId ? stores.missions.get(missionId) : null;
+      const missionPanes = missionId ? stores.missionPanes.list(missionId) : [];
+      const handoffs = missionId ? stores.handoffs.list({ missionId, includeDelivered: true }) : [];
+      const helperHandoff = handoffs.find((h) => h.status === 'success' && h.summary.includes('Writer h1 entregou'));
+      if (helperHandoff?.sessionId) opSessions.push(helperHandoff.sessionId);
+      const delivered = deliveries.find((delivery) => delivery.worker && delivery.handoff === helperHandoff?.id);
+      const spawnTimings = (await traceEvents() as Array<Record<string, unknown>>)
+        .filter((event) => event.kind === 'pane-spawn-timing' && event.callerSessionId === operatorSession)
+        .map((event) => ({ source: event.source, ok: event.ok, paneCreated: event.paneCreated, missionId: event.missionId, role: event.role, errorCode: event.errorCode, totalMs: event.totalMs }));
+      const evidence = {
+        elapsedMs, operatorSession, missionId: missionId ?? null, spawnCall, whoamiBefore, whoamiAfter, operatorBoot, helperBoot, helperResult,
+        gateAfter: handAfter ? { role: handAfter.role, missionId: handAfter.missionId, promotedFromUserSession: handAfter.promotedFromUserSession } : null,
+        mission: mission ? { status: mission.status, orchestratorSessionId: mission.orchestratorSessionId, workspaceBinding: mission.intentContract?.workspaceBinding } : null,
+        missionPanes: missionPanes.map((pane) => ({ paneId: pane.paneId, role: pane.role, adapterId: pane.adapterId })),
+        handoffs: handoffs.map((h) => ({ id: h.id, from: h.fromAgent, status: h.status, session: h.sessionId })),
+        deliveries, spawnTimings, rendererLog, ignoredRendererChannels: Object.fromEntries(ignored), grid,
+        operatorScreen: (output.get(operatorSession) ?? '').slice(-4_000), mainConsole: mainConsole.slice(-120),
+      };
+      fs.writeFileSync(path.join(opDir, 'evidence.json'), JSON.stringify(evidence, null, 2));
+      const failures: string[] = [];
+      const check = (ok: unknown, message: string) => { if (!ok) failures.push(message); };
+
+      check(spawnCall && !spawnCall.isError && !spawnCall.error && Number(spawnCall.status) === 200,
+        `[F-1185 spawn] o 1º nexus_pane_spawn do pane do operador falhou: ${JSON.stringify(spawnCall?.result ?? spawnCall?.error ?? spawnCall?.raw ?? 'o operador não chegou a chamar').slice(0, 400)}`);
+      check(spawnTimings.every((event) => event.errorCode !== 'session_authority_revoked'),
+        `[F-1185 spawn] pane-spawn-timing do pane do operador com session_authority_revoked: ${JSON.stringify(spawnTimings)}`);
+      check(operatorBoot && whoamiBefore?.role === 'user' && !whoamiBefore.missionId,
+        `[F-1185 operador] antes do spawn o pane não era a mão do operador (whoami ${JSON.stringify(whoamiBefore ?? null)})`);
+      check(handAfter?.role === 'orchestrator' && missionId && handAfter.promotedFromUserSession === true,
+        `[F-1185 missão da aba] o pane do operador não virou orquestrador da missão da aba (gate ${JSON.stringify(evidence.gateAfter)})`);
+      check(whoamiAfter?.role === 'orchestrator' && whoamiAfter.missionId === missionId && spawnReceipt?.tabMission?.missionId === missionId,
+        `[F-1185 missão da aba] o pane não se vê orquestrador da missão do helper (whoami ${JSON.stringify(whoamiAfter ?? null)}, recibo ${JSON.stringify(spawnReceipt?.tabMission ?? null)})`);
+      check(mission?.status === 'running' && mission.orchestratorSessionId === operatorSession && mission.intentContract?.workspaceBinding?.adoptedPaneId === operatorPaneId,
+        `[F-1185 missão da aba] a missão leve da aba não está viva com o pane do operador no comando: ${JSON.stringify(evidence.mission)}`);
+      check(spawnReceipt?.paneId && missionPanes.some((pane) => pane.role === 'worker' && pane.paneId === spawnReceipt.paneId),
+        `[F-1185 helper] o helper não nasceu dentro da missão da aba: ${JSON.stringify({ recibo: spawnReceipt?.paneId ?? null, panes: evidence.missionPanes })}`);
+      check(spawnTimings.some((event) => event.source === 'mcp' && event.ok === true && event.paneCreated === true && event.missionId === missionId && event.role === 'worker'),
+        `[F-1185 helper] pane-spawn-timing não registrou o helper criado na missão da aba: ${JSON.stringify(spawnTimings)}`);
+      check(helperBoot && receivedBrief.includes(helperBrief), '[F-1185 helper] o helper nunca rodou no PTY ou o brief não chegou íntegro');
+      check(helperBoot?.mcp && helperBoot.shim, `[F-1185 helper] o helper nasceu sem o MCP ou sem o shim de entrega (${JSON.stringify(helperBoot)})`);
+      check(helperResult?.heavy.code === 0 && helperResult.commit.code === 0,
+        `[F-1185 helper] o helper não terminou o trabalho (pesado ${helperResult?.heavy.code}, commit ${helperResult?.commit.code})`);
+      check(helperHandoff, `[F-1185 entrega] nenhum handoff de sucesso do helper na missão da aba: ${JSON.stringify(evidence.handoffs)}` +
+        (helperResult?.handoff ? ` (shim exit ${helperResult.handoff.code}: ${helperResult.handoff.output.slice(-300)})` : ''));
+      check(delivered, `[F-1185 entrega] a entrega do helper não chegou ao PTY do pane do operador: ${JSON.stringify(deliveries.map(({ handoff, from, worker }) => ({ handoff, from, worker })))}`);
+      check(delivered?.ack && !delivered.ack.isError && !delivered.ack.error,
+        `[F-1185 entrega] o pane do operador não conseguiu dar ACK na entrega: ${JSON.stringify(delivered?.ack?.result ?? delivered?.ack?.error ?? null).slice(0, 400)}`);
+      if (failures.length > 0) {
+        throw new Error(`E2E do operador VERMELHO (${failures.length} falhas; evidências em ${path.join(opDir, 'evidence.json')}):\n- ${failures.join('\n- ')}`);
+      }
+      console.info(`[mission-e2e] operador VERDE em ${Math.round(elapsedMs / 1000)} s: missão da aba ${missionId}, helper ${spawnReceipt?.paneId}, entrega ${helperHandoff?.id} com ACK`);
+    } finally {
+      for (const id of opSessions) await pty.orchTerminateSession(id, { origin: 'mission-e2e-teardown' }).catch(() => undefined);
+      clearRendererWorkspaceScope(renderer);
+    }
+  }, OPERATOR_DEADLINE_MS + 90_000);
 });
