@@ -1965,6 +1965,119 @@
 /* Histórico de uso (WEB-12): um dia, uma barra. Mesmo registro do Fleet
    Pulse — hairlines, barra neutra em --text-dim, acento só no dia lido agora
    (foco/hover = vivo). Sem gradiente, vidro ou sombra. */
+/* F-1172: Recursos da máquina (Uso e cotas). Estado em texto no veredito; a cor
+   da barra e da borda só reforça. */
+.machine-resources {
+  display: grid;
+  gap: var(--space-2);
+  margin-block: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+.machine-resources:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.machine-resources--pressure {
+  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+.machine-resources__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.machine-resources__hint,
+.machine-resources__sub {
+  margin: var(--space-1) 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+.machine-resources__verdict {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-md);
+}
+.machine-resources__verdict strong {
+  color: var(--ok);
+}
+.machine-resources--pressure .machine-resources__verdict strong {
+  color: var(--danger);
+}
+.machine-resources--unknown .machine-resources__verdict strong {
+  color: var(--text);
+}
+.machine-resources__memory {
+  display: grid;
+  gap: var(--space-1);
+}
+.machine-resources__row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+.machine-resources__row strong,
+.machine-resources__facts dd {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.machine-resources__bar {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-round);
+  background: var(--surface-0);
+}
+.machine-resources__bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ok);
+}
+.machine-resources--pressure .machine-resources__bar-fill {
+  background: var(--danger);
+}
+/* Marca da reserva do gate: à direita dela é pressão. */
+.machine-resources__bar-reserve {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--text-dim);
+}
+.machine-resources__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+.machine-resources__facts dt {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+.machine-resources__facts dd {
+  margin: 0;
+  font-size: var(--text-md);
+}
+.machine-resources__policy {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+.machine-resources__policy-title {
+  margin: 0 0 var(--space-1);
+  color: var(--text);
+  font-weight: 600;
+}
+.machine-resources__policy ul {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
 .usage-history {
   display: grid;
   gap: var(--space-2);
