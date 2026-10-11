@@ -1,3 +1,5 @@
+import { showMessageBoxWithoutBlocking } from '../native-confirm';
+
 const CONTROL_CHARS = /[\0-\x1f\x7f\u202a-\u202e\u2066-\u2069]+/g;
 const MAX_LABEL = 140;
 const MAX_DETAIL = 1_200;
@@ -43,17 +45,6 @@ async function showPermissionDialog(
   params: Record<string, unknown> | undefined,
   context: AcpPermissionUiContext,
 ): Promise<Record<string, unknown>> {
-  let dialog: typeof import('electron').dialog | undefined;
-  try {
-    // Keep ACP protocol tests runnable in plain Node without importing the
-    // Electron native module at module-evaluation time.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    dialog = (require('electron') as typeof import('electron')).dialog;
-  } catch {
-    return cancelledOutcome();
-  }
-  if (!dialog) return cancelledOutcome();
-
   const options = optionsFromParams(params);
   if (options.length === 0) return cancelledOutcome();
   const tool = safeText(
@@ -67,7 +58,9 @@ async function showPermissionDialog(
     `Ação: ${tool}\n\n` +
     'A permissão vale somente para esta solicitação ACP.'
   ).slice(0, MAX_DETAIL);
-  const result = await dialog.showMessageBox({
+  // F-1200: sem janela-mãe o macOS prendia a main thread até o clique. Sheet
+  // numa janela viva, fechado no mesmo prazo do race abaixo; sem janela, nega.
+  const result = await showMessageBoxWithoutBlocking({
     type: 'warning',
     title: 'Nexus IDE — autorização do agente ACP',
     message: 'O agente pediu autorização para continuar.',
@@ -76,8 +69,8 @@ async function showPermissionDialog(
     defaultId: 0,
     cancelId: 0,
     noLink: true,
-  });
-  const selected = options[result.response - 1];
+  }, { timeoutMs: ACP_PERMISSION_TIMEOUT_MS }).catch(() => null); // sem Electron: nega
+  const selected = result ? options[result.response - 1] : undefined;
   return selected
     ? { outcome: { outcome: 'selected', optionId: selected.optionId } }
     : cancelledOutcome();

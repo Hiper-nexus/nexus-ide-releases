@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach,beforeEach,expect,it,vi,type MockInstance } from 'vitest';
-const h=vi.hoisted(()=>({handlers:new Map<string,(event:unknown,raw:unknown)=>Promise<unknown>>(),handler:vi.fn(),dialog:vi.fn()}));
-vi.mock('electron',()=>({ipcMain:{handle:(channel:string,callback:(event:unknown,raw:unknown)=>Promise<unknown>)=>h.handlers.set(channel,callback)},dialog:{showMessageBox:h.dialog}}));
+const h=vi.hoisted(()=>({handlers:new Map<string,(event:unknown,raw:unknown)=>Promise<unknown>>(),handler:vi.fn(),dialog:vi.fn(),win:{isDestroyed:()=>false,isVisible:()=>true,isFocusable:()=>true}}));
+// F-1202: the native confirmation is a sheet on a live window.
+vi.mock('electron',()=>({ipcMain:{handle:(channel:string,callback:(event:unknown,raw:unknown)=>Promise<unknown>)=>h.handlers.set(channel,callback)},BrowserWindow:{getAllWindows:()=>[h.win],getFocusedWindow:()=>null},dialog:{showMessageBox:h.dialog}}));
 vi.mock('../orch/tools',async importOriginal=>{
   const original=await importOriginal<typeof import('../orch/tools')>();
   return {...original,buildToolset:()=>{

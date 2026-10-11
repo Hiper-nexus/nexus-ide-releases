@@ -375,6 +375,7 @@ vi.mock("./live-runtime-config", () => ({
   liveRuntimeFingerprint: vi.fn(() => "stable"),
 }));
 
+import { dialog } from "electron";
 import { closeVoiceIpc, registerVoiceIpc } from "./voice-ipc";
 import { logVoice } from "./voice-log";
 import { transcribe } from "./stt-service";
@@ -1543,5 +1544,45 @@ describe("F-1161 Clef-omni wake confirmation wired into voice-ipc", () => {
     expect(result.ok).toBe(true);
     expect(result.discarded).toBe(discarded);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// F-1202: a JARVIS executa comandos por voz com o Nexus muitas vezes fora de
+// foco. No macOS um showMessageBox sem janela-mãe é NSAlert runModal e prende
+// a main thread até o clique.
+describe("confirmação de comando de alto impacto da JARVIS (F-1202)", () => {
+  const command = "git push --force origin main";
+  const sheetHost = (visible: boolean) => ({
+    webContents: null,
+    isDestroyed: () => false,
+    isVisible: () => visible,
+    isFocusable: () => true,
+  });
+
+  beforeEach(() => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 1, checkboxChecked: false });
+  });
+  afterEach(() => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
+    vi.restoreAllMocks();
+  });
+
+  it("vira sheet na janela do Nexus mesmo sem janela focada", async () => {
+    const win = sheetHost(true);
+    electronDeps.windows.push(win);
+    const owner = new TestRenderer(950);
+
+    await expect(invoke(VOICE_CHANNELS.confirmCommand, owner, command)).resolves.toBe(true);
+
+    expect(vi.mocked(dialog.showMessageBox).mock.calls[0]?.[0]).toBe(win);
+  });
+
+  it("sem nenhuma janela nega na hora em vez de prender a main thread", async () => {
+    const owner = new TestRenderer(951);
+
+    await expect(invoke(VOICE_CHANNELS.confirmCommand, owner, command)).resolves.toBe(false);
+
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
   });
 });

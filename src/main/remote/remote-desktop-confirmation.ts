@@ -7,6 +7,7 @@ import type {
   McpConfirmationRequest,
 } from '../orch/mcp-dispatch';
 import { McpConfirmationScheduler } from '../orch/mcp-confirmation-scheduler';
+import { showMessageBoxWithoutBlocking } from '../native-confirm';
 
 const REMOTE_CONFIRMATION_TIMEOUT_MS = 7_000;
 const DIALOG_CONTROL_CHARS =
@@ -34,17 +35,6 @@ function safeDialogValue(value: unknown, depth = 0): unknown {
 async function showRemoteDesktopConfirmation(
   request: McpConfirmationRequest,
 ): Promise<boolean> {
-  // Electron is unavailable in pure Node tests and may be unavailable during
-  // shutdown. This boundary is deliberately fail-closed.
-  let dialog: typeof import('electron').dialog | undefined;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires -- ver acima: sem Electron (testes ou shutdown) o catch nega a confirmação
-    const electron = require('electron') as typeof import('electron');
-    dialog = electron.dialog;
-  } catch {
-    // Denied below.
-  }
-  if (!dialog) return false;
   const command =
     typeof request.args.command === 'string'
       ? boundedConfirmationLine(
@@ -78,8 +68,14 @@ async function showRemoteDesktopConfirmation(
       )}\n\n` +
       `Dados (segredos ocultos):\n${boundedConfirmationArgs(safeArgs)}`,
   };
-  const result = await dialog.showMessageBox(options);
-  return result.response === 1;
+  // F-1201: o pedido vem do celular, com o operador longe da mesa. Sem
+  // janela-mãe o macOS prendia a main thread (e a própria ponte remota) até um
+  // clique na mesa; o prazo de 7 s nem disparava. Sheet que fecha no prazo;
+  // sem janela, ou sem Electron (testes, shutdown), nega.
+  const result = await showMessageBoxWithoutBlocking(options, {
+    timeoutMs: REMOTE_CONFIRMATION_TIMEOUT_MS,
+  }).catch(() => null);
+  return result?.response === 1;
 }
 
 /**
@@ -87,8 +83,9 @@ async function showRemoteDesktopConfirmation(
  * one native modal globally, per-device queue/rate caps and fail-closed
  * overflow. The caller times out before the PWA RPC does. Importantly, the
  * scheduler's presenter keeps waiting for the real dialog to close, so a
- * timed-out/orphaned prompt can never overlap a later prompt; a late click is
- * ignored because the caller already received `false`.
+ * timed-out/orphaned prompt can never overlap a later prompt; the sheet closes
+ * itself after the same timeout, and a late click is ignored because the
+ * caller already received `false`.
  */
 const remoteConfirmationScheduler = new McpConfirmationScheduler(
   showRemoteDesktopConfirmation,

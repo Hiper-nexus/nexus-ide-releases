@@ -5,6 +5,7 @@ import {
   app,
   type WebContents,
 } from "electron";
+import { showMessageBoxWithoutBlocking } from "../native-confirm";
 import { polishCodePrompt } from "./code-prompt-polish";
 import { finalizeCodeDictation } from "./code-dictation";
 import { VOICE_CHANNELS } from "../../shared/voice-channels";
@@ -1253,11 +1254,10 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
         detail: `${raw}\n\nConfirme apenas se deseja esse efeito externo ou irreversível.`,
         noLink: true,
       };
-      const win = BrowserWindow.getFocusedWindow();
-      const result = win
-        ? await dialog.showMessageBox(win, opts)
-        : await dialog.showMessageBox(opts);
-      return result.response === 1;
+      // F-1202: sem janela focada (operador falando com o Nexus em segundo
+      // plano) o diálogo saía sem janela-mãe e o macOS prendia a main thread.
+      const result = await showMessageBoxWithoutBlocking(opts);
+      return result?.response === 1;
     },
   );
 
