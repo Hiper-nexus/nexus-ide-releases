@@ -1,8 +1,10 @@
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
+import net, { type AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createLoopbackServer,
   listenOnLoopback,
+  LOOPBACK_SERVER_TIMEOUTS,
   ReplaceableEventTapScope,
 } from './mcp-server-lifecycle';
 
@@ -64,6 +66,49 @@ describe('listenOnLoopback', () => {
       initialListeningListeners,
     );
     expect(candidate.listenerCount('error')).toBe(initialErrorListeners);
+  });
+});
+
+describe('createLoopbackServer (F-1240)', () => {
+  it('pedido que não termina de chegar recebe 408; resposta longa (long-poll) não é cortada', async () => {
+    const candidate = createLoopbackServer(
+      (req, res) => {
+        req.resume();
+        req.on('end', () => setTimeout(() => res.end('ok'), 600));
+      },
+      { headersTimeout: 200, requestTimeout: 300, connectionsCheckingInterval: 50 },
+    );
+    openServers.add(candidate);
+    const port = await listenOnLoopback(candidate);
+
+    // Corpo prometido e nunca entregue: o servidor corta pelo prazo do pedido.
+    const slow = net.connect(port, '127.0.0.1');
+    slow.write('POST /x HTTP/1.1\r\nHost: loopback\r\nContent-Length: 100\r\n\r\nabc');
+    const reply = await new Promise<string>((resolve) => {
+      let text = '';
+      slow.on('data', (chunk) => {
+        text += chunk.toString('utf8');
+      });
+      slow.on('close', () => resolve(text));
+      slow.on('error', () => resolve(text));
+    });
+    expect(reply).toMatch(/^HTTP\/1\.1 408/);
+
+    // Pedido inteiro, resposta depois do prazo do pedido: o prazo não conta.
+    const res = await fetch(`http://127.0.0.1:${port}/wait`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('ok');
+  });
+
+  it('produção: cabeçalhos em 10 s e o pedido inteiro em 30 s, conferidos a cada 5 s', () => {
+    expect(LOOPBACK_SERVER_TIMEOUTS).toEqual({
+      headersTimeout: 10_000,
+      requestTimeout: 30_000,
+      connectionsCheckingInterval: 5_000,
+    });
+    const candidate = createLoopbackServer(() => undefined);
+    expect(candidate.headersTimeout).toBe(10_000);
+    expect(candidate.requestTimeout).toBe(30_000);
   });
 });
 

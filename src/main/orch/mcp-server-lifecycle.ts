@@ -1,7 +1,33 @@
-import type http from 'node:http';
+import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 const MCP_LOOPBACK_HOST = '127.0.0.1';
+
+/**
+ * F-1240: prazos do servidor embutido (MCP, gate, hooks). Medem só a CHEGADA
+ * do pedido: cabeçalhos e o pedido inteiro. Toda rota lê o corpo inteiro antes
+ * de responder, e um corpo legítimo no loopback chega em milissegundos. A
+ * resposta longa (long-poll de tool MCP, espera de aprovação) não conta: o
+ * Node para o relógio quando o pedido termina de chegar. O padrão do Node
+ * (5 min, conferido a cada 30 s) deixava um filho do pane segurar conexões
+ * pela metade por minutos.
+ */
+export type LoopbackServerTimeouts = Readonly<
+  Required<Pick<http.ServerOptions, 'headersTimeout' | 'requestTimeout' | 'connectionsCheckingInterval'>>
+>;
+
+export const LOOPBACK_SERVER_TIMEOUTS: LoopbackServerTimeouts = Object.freeze({
+  headersTimeout: 10_000,
+  requestTimeout: 30_000,
+  connectionsCheckingInterval: 5_000,
+});
+
+export function createLoopbackServer(
+  listener: http.RequestListener,
+  timeouts: LoopbackServerTimeouts = LOOPBACK_SERVER_TIMEOUTS,
+): http.Server {
+  return http.createServer({ ...timeouts }, listener);
+}
 
 type Disposer = () => void;
 type EventTapInstaller = (
