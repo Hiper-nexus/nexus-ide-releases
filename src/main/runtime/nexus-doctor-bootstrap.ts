@@ -79,10 +79,10 @@ function canEnforceReadOnly(
 
 export function buildDoctorProviderSnapshot(
   provider: ProviderSettingsInfo,
-  dependencies: Pick<
+  dependencies: Partial<Pick<
     NexusDoctorBootstrapDependencies,
     'getAdapter' | 'secureReadOnlyArgs'
-  > = DEFAULT_DEPENDENCIES,
+  >> = DEFAULT_DEPENDENCIES,
 ): IndependentProviderSnapshot {
   return Object.freeze({
     adapterId: provider.adapterId,
