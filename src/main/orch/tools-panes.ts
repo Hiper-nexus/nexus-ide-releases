@@ -1008,6 +1008,8 @@ const paneSpawn: McpToolDef = {
       meta: {},
     };
     try {
+      // F-1185: a adoção acima é efeito do próprio Main sobre este chamador.
+      if (tabMission) invocation?.reanchorAfterOwnPromotion?.();
       assertMcpInvocationCurrent(invocation);
       return await paneSpawnAfterTabMission.handler(
         args,

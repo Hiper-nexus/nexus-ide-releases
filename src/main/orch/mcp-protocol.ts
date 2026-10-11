@@ -79,6 +79,14 @@ export interface McpToolInvocation {
    * immediately before starting a process, network request, or durable write.
    */
   readonly assertCurrentAuthority?: () => void;
+  /**
+   * Main-only (F-1185). The handler itself promoted THIS caller in place — the
+   * on-demand tab mission of the first helper turns `user` into its
+   * orchestrator. Proves the same live bearer, then re-anchors the operation
+   * identity so later checkpoints still catch real revocations instead of
+   * reading Main's own promotion as one.
+   */
+  readonly reanchorAfterOwnPromotion?: () => void;
   /** Main-only spawned-prompt owner; false retains unknown/newer bindings. */
   readonly retireRevokedPrompt?: (sessionId: string) => Promise<boolean>;
   /**

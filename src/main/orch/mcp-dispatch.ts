@@ -1161,6 +1161,14 @@ export async function dispatchToolCall(
 
   const effectful = isEffectfulTool(tool.name);
   let operationIdentity: ReturnType<typeof captureCommandDispatchIdentity> | undefined;
+  // F-1185: o que a promoção do próprio Main pode mudar; nada além disso.
+  const anchoredCaller = {
+    role: ctx.role,
+    missionId: ctx.missionId,
+    promotedFromUserSession: ctx.promotedFromUserSession,
+    handoffSubmitted: ctx.handoffSubmitted,
+    contextRevision: ctx.contextRevision,
+  };
   if (effectful) {
     try {
       operationIdentity = captureCommandDispatchIdentity(source, ctx, canonical, args,
@@ -1758,6 +1766,30 @@ export async function dispatchToolCall(
     const assertCurrentAuthority = (): void => {
       assertCurrentAuthorityState(true);
     };
+    // F-1185: o 1º helper do pane do operador cria a missão da aba e promove
+    // ESTE chamador (user → orchestrator) no mesmo ctx. O digest de vínculo
+    // mudava por efeito do próprio Main e todo checkpoint seguinte via
+    // "session_authority_revoked": o spawn morria em ~9 ms desde a 0.76.213.
+    const reanchorAfterOwnPromotion = (): void => {
+      assertCurrentAuthorityState(false, false);
+      if (!operationIdentity) return;
+      const promoted =
+        anchoredCaller.role === "user" && !anchoredCaller.missionId &&
+        ctx.role === "orchestrator" && Boolean(ctx.missionId) &&
+        ctx.promotedFromUserSession === true;
+      // Desfeita a promoção, o chamador tem de ser exatamente o original:
+      // qualquer outra mudança no meio (política, escopo) segue revogação.
+      const beforePromotion = captureCommandDispatchIdentity(source,
+        { ...ctx, ...anchoredCaller }, canonical, args, undefined,
+        initialIntent.resolved?.mission.intentVersion);
+      if (!promoted || beforePromotion.bindingDigest !== operationIdentity.bindingDigest) {
+        throw new Error("session_authority_revoked");
+      }
+      const promotedIntent = checkMissionIntent();
+      if (!promotedIntent.ok) throw new Error(promotedIntent.error);
+      operationIdentity = captureCommandDispatchIdentity(source, ctx, canonical, args,
+        options.logicalOperationId, promotedIntent.resolved?.mission.intentVersion);
+    };
     assertCurrentAuthority();
     const exactUserConsent =
       // Recibo, não modal: mintado sempre que o store exige prova de mutação
@@ -1820,6 +1852,7 @@ export async function dispatchToolCall(
     const result = await tool.handler(args, ctx, {
       signal: invocationSignal,
       assertCurrentAuthority,
+      reanchorAfterOwnPromotion,
       ...(commandAccepted && commandId && tool.ownedProcessLifetime === true && ["terminal_run","bg_run"].includes(canonical)
         ? {beginOwnedProcess:createOwnedProcessLifetimeRegistration(commandRuntimeManager!,commandReceiptScope,commandId,operationIdentity!.bindingDigest,tool.name,assertCurrentAuthority)} : {}),
       ...(invocationId
