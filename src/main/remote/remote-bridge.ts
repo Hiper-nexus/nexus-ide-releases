@@ -45,7 +45,7 @@ import {
 } from '../orch/pane-registry';
 import { authorizePaneAccess } from '../orch/pane-authz';
 import { getProjectDomainStores } from '../orch/project-domain-store-registry';
-import { isWslRuntimeUsable } from './wsl-runtime';
+import { createWslDistroLister, isWslRuntimeUsable } from './wsl-runtime';
 import { execFile } from 'node:child_process';
 import {
   orchResizeSession,
@@ -863,25 +863,18 @@ async function respondToApprovalFromRemote(
 
 /**
  * F-1168 B6: lista as distros WSL do host (`wsl.exe -l -q`). Fora de Windows
- * devolve `[]` sem lançar — o chamador decide o que fazer com a lista vazia.
- * Usa `execFile` assíncrono (o ratchet F-764 recusa `execFileSync`).
+ * devolve `[]` sem lançar. `execFile` assíncrono (o ratchet F-764 recusa
+ * `execFileSync`) e cache curto: cada aparelho pedindo a lista não abre um
+ * `wsl.exe` novo.
  */
-async function listWslDistros(): Promise<string[]> {
-  if (process.platform !== 'win32') return [];
-  return new Promise((resolve) => {
+const listWslDistros = createWslDistroLister({
+  platform: process.platform,
+  run: () => new Promise((resolve) => {
     execFile('wsl.exe', ['-l', '-q'], { timeout: 10_000 }, (error, stdout) => {
-      if (error) {
-        resolve([]);
-        return;
-      }
-      const distros = String(stdout)
-        .split(/\r?\n/)
-        .map((line) => line.replace(/\0/g, '').trim())
-        .filter((line) => line.length > 0);
-      resolve(distros);
+      resolve(error ? null : String(stdout));
     });
-  });
-}
+  }),
+});
 
 /** Shape das mensagens autenticadas aceitas pelo dispatch da bridge. */
 export type AuthedBridgeCommand = {

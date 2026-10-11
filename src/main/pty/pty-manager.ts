@@ -2890,10 +2890,25 @@ export function spawnAgentSession(
   // exact entrypoint) runs its entrypoint directly: the .exe, or node.exe +
   // script. Direct, non-sandboxed Windows path only. Never rewrite a sandbox
   // plan: its wrapper and filesystem contract must remain exactly as built.
+  // F-1168 B5: runtime WSL só no Windows e fora do sandbox — o plano do
+  // sandbox nunca é reescrito. Pedido fora disso vira aviso e o spawn segue
+  // nativo (falha do Nexus nunca bloqueia o agente).
+  const requestedWslDistro = wslDistroFromEnv(spawnEnv);
+  const wslDistro =
+    requestedWslDistro && process.platform === "win32" && !processSandboxActive
+      ? requestedWslDistro
+      : null;
+  if (requestedWslDistro && !wslDistro) {
+    console.warn(
+      `[pty] runtime WSL ignorado: ${process.platform !== "win32" ? "host não é Windows" : "sandbox de processo ativo"}`,
+    );
+  }
+
   if (
     process.platform === "win32" &&
     isBuiltinAdapter(adapter.id) &&
     !processSandboxActive &&
+    !wslDistro &&
     spawnFile === bin
   ) {
     // F-706: o Muse não é npm — `muse.cmd` chama um launcher PowerShell
@@ -2911,19 +2926,28 @@ export function spawnAgentSession(
     }
   }
 
-  // F-1168 B5: runtime WSL — embrulha o spawn como `wsl.exe -d <distro> …`.
-  // `NEXUS_WSL_DISTRO` vem do runtime da sessão; sem ele o spawn passa intacto.
-  {
-    const wslDistro = wslDistroFromEnv(spawnEnv);
-    if (wslDistro) {
+  // F-1168 B5: com o runtime WSL o spawn vira `wsl.exe -d <distro> …`. Os
+  // atalhos .cmd do npm ficaram de fora acima: dentro da distro roda o
+  // binário Linux de mesmo nome. As variáveis que a sessão acrescentou
+  // atravessam por WSLENV, nunca pelo argv.
+  if (wslDistro) {
+    try {
       const wrapped = wrapSpawnForWsl({
         file: spawnFile,
         args: spawnArgs,
         cwd: spawnCwd,
         distro: wslDistro,
+        forwardEnvNames: Object.keys(spawnEnv).filter(
+          (name) => spawnEnv[name] !== undefined && spawnEnv[name] !== process.env[name],
+        ),
+        currentWslEnv: spawnEnv.WSLENV,
       });
       spawnFile = wrapped.file;
       spawnArgs = [...wrapped.args];
+      spawnEnv = { ...spawnEnv, ...wrapped.env };
+    } catch (error) {
+      decoration?.onSpawnFailed?.();
+      throw error;
     }
   }
 

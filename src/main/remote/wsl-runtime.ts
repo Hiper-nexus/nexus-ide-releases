@@ -165,26 +165,54 @@ export function isWslRuntimeUsable(
 
 /**
  * F-1168 B5: embrulha um spawn `{file, args}` para rodar DENTRO de uma
- * distro WSL. O binário original vira o comando POSIX do `wsl.exe`.
- * `env.NEXUS_WSL_DISTRO` (setado pelo runtime da sessão) dispara o embrulho;
- * sem distro o spawn passa intacto.
+ * distro WSL. O binário vira o NOME do comando (o `claude.cmd`/`codex.exe`
+ * resolvido no Windows não existe na distro; o `bash -lc` acha o binário
+ * Linux pelo PATH da distro). As variáveis da sessão atravessam por
+ * `WSLENV` — pelo ambiente, nunca pelo argv do `wsl.exe`, que qualquer
+ * processo do usuário lê.
  */
 export function wrapSpawnForWsl(input: {
   readonly file: string;
   readonly args: readonly string[];
   readonly cwd: string;
   readonly distro: string | null | undefined;
-}): { readonly file: string; readonly args: readonly string[] } {
+  /** Nomes de variáveis da sessão a repassar para dentro da distro. */
+  readonly forwardEnvNames?: readonly string[];
+  /** `WSLENV` atual do processo, preservado na frente. */
+  readonly currentWslEnv?: string;
+}): { readonly file: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> } {
   const distro = input.distro?.trim();
   if (!distro) {
-    return { file: input.file, args: [...input.args] };
+    return { file: input.file, args: [...input.args], env: {} };
   }
   const plan = planWslRuntime({
     distro,
     hostCwd: input.cwd,
-    command: [input.file, ...input.args],
+    command: [linuxCommandName(input.file), ...input.args],
   });
-  return { file: 'wsl.exe', args: [...plan.argv] };
+  const names = new Set((input.currentWslEnv ?? '').split(':').filter(Boolean));
+  for (const name of input.forwardEnvNames ?? []) {
+    if (/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name) && !HOST_ONLY_ENV.has(name.toUpperCase())) names.add(name);
+  }
+  return { file: 'wsl.exe', args: [...plan.argv], env: names.size ? { WSLENV: [...names].join(':') } : {} };
+}
+
+/**
+ * Variáveis do host Windows que nunca entram na distro: o PATH/HOME do
+ * Windows quebrariam o shell Linux, e o resto descreve só o host.
+ */
+const HOST_ONLY_ENV = new Set([
+  'WSLENV', 'PATH', 'PATHEXT', 'HOME', 'USER', 'USERNAME', 'SHELL', 'PWD', 'OLDPWD', 'TMP', 'TEMP', 'TMPDIR',
+  'COMSPEC', 'SYSTEMROOT', 'WINDIR', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'PROGRAMDATA', 'PROGRAMFILES',
+  'PSMODULEPATH', 'NODE_OPTIONS', 'NEXUS_WSL_DISTRO',
+]);
+
+/** `C:\…\npm\claude.cmd` → `claude`. Nome sem caminho passa como veio. */
+export function linuxCommandName(file: string): string {
+  const base = file.split(/[\\/]/).pop() ?? file;
+  const name = base.replace(/\.(cmd|bat|exe|ps1|com)$/i, '');
+  if (!name) throw new Error('wsl command name is empty');
+  return name;
 }
 
 /** Distro da sessão atual, quando o runtime é `wsl`. */
@@ -193,4 +221,33 @@ export function wslDistroFromEnv(
 ): string | null {
   const value = env.NEXUS_WSL_DISTRO?.trim();
   return value && value.length > 0 ? value : null;
+}
+
+/** Validade da lista de distros: o bastante para rajadas de aparelhos. */
+export const WSL_DISTRO_LIST_TTL_MS = 30_000;
+
+/**
+ * Lister de distros com cache e pedido em voo compartilhado. `run` devolve
+ * a saída do `wsl.exe -l -q` (UTF-16 com NULs) ou `null` em erro; erro não
+ * fica em cache.
+ */
+export function createWslDistroLister(deps: {
+  readonly platform: NodeJS.Platform;
+  readonly run: () => Promise<string | null>;
+  readonly now?: () => number;
+}): () => Promise<string[]> {
+  const now = deps.now ?? Date.now;
+  let cached: { at: number; distros: string[] } | null = null;
+  let inFlight: Promise<string[]> | null = null;
+  return async () => {
+    if (deps.platform !== 'win32') return [];
+    if (cached && now() - cached.at < WSL_DISTRO_LIST_TTL_MS) return [...cached.distros];
+    inFlight ??= deps.run().then((stdout) => {
+      if (stdout === null) return [];
+      const distros = stdout.split(/\r?\n/).map((line) => line.replace(/\0/g, '').trim()).filter((line) => line.length > 0);
+      cached = { at: now(), distros };
+      return distros;
+    }).catch(() => []).finally(() => { inFlight = null; });
+    return [...await inFlight];
+  };
 }
