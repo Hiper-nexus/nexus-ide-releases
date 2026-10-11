@@ -12,6 +12,7 @@ import { useObjectiveDictation } from './use-objective-dictation';
 import { PixelIcon } from '../PixelIcon';
 import { launcherShortcutHint } from '../../lib/action-names';
 import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
+import { ComposerTiptapEditor, plainTextToMarkdown } from '../ComposerTiptapEditor';
 
 interface ExpressMissionStartProps {
   workspace: WorkspaceInfo | null;
@@ -143,10 +144,12 @@ export function ExpressMissionStart({
     enabled: !draftEditingDisabled && !busy,
     onTranscript: (text) => {
       const current = draft.objective;
+      // F-1170: o objetivo é markdown; a fala entra como texto literal.
+      const spoken = plainTextToMarkdown(text);
       const next =
         current.trim().length > 0
-          ? `${current.replace(/\s+$/u, '')} ${text}`
-          : text;
+          ? `${current.replace(/\s+$/u, '')} ${spoken}`
+          : spoken;
       onObjectiveChange(next.slice(0, MISSION_INTENT_GOAL_MAX_CHARS));
     },
   });
@@ -183,7 +186,10 @@ export function ExpressMissionStart({
       <div className="mission-setup__continuous-section">
         <div className="mission-setup__field mission-setup__objective-field">
           <div className="mission-setup__objective-label-row">
-            <label htmlFor="express-objective">Seu pedido</label>
+            {/* F-1170: editor rich-text nomeado por aria-labelledby. */}
+            <label id="express-objective-label" htmlFor="express-objective">
+              Seu pedido
+            </label>
             <kbd
               className="launcher-action__shortcut"
               data-launcher-action="mission"
@@ -221,17 +227,20 @@ export function ExpressMissionStart({
                   : 'Ditar objetivo'}
             </button>
           </div>
-          <textarea
+          <ComposerTiptapEditor
             id="express-objective"
+            className="mission-setup__objective-editor"
+            surfaceClassName="mission-setup__objective-draft mission-setup__objective-draft--express"
+            toolbar={false}
             value={draft.objective}
-            rows={5}
             maxLength={MISSION_INTENT_GOAL_MAX_CHARS}
             placeholder="Exemplo: refaça o fluxo de cadastro para ficar simples no celular e confirme que ele funciona do início ao fim."
-            disabled={draftEditingDisabled || busy}
-            aria-describedby="express-objective-hint"
-            onChange={(event) => {
+            editable={!(draftEditingDisabled || busy)}
+            ariaLabelledBy="express-objective-label"
+            ariaDescribedBy="express-objective-hint"
+            onChange={(markdown) => {
               if (draftEditingDisabled) return;
-              onObjectiveChange(event.target.value);
+              onObjectiveChange(markdown);
             }}
           />
           <span id="express-objective-hint" className="mission-setup__sr-only">

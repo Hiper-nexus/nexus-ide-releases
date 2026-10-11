@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { MissionReview } from '../../../shared/mission-engine-contract';
 import type { MissionLane } from '../../../shared/mission-intent';
 import { missionLanePresentation } from './mission-lane-presentation';
+import { objectivePlainText } from '../../../shared/mission-identity';
 
 export const REVIEW_BRIEF_EXCERPT_CHARS = 140;
 
@@ -11,7 +12,8 @@ export function collapseReviewText(value: string): string {
 
 export function reviewBriefBody(title: string, objective: string): string {
   const titleText = collapseReviewText(title);
-  const objectiveText = collapseReviewText(objective);
+  // F-1170: o objetivo é markdown; o resumo mostra o texto, sem marcadores.
+  const objectiveText = collapseReviewText(objectivePlainText(objective));
   if (!titleText) return objectiveText;
   if (!objectiveText) return titleText;
   if (objectiveText === titleText || objectiveText.startsWith(titleText)) {

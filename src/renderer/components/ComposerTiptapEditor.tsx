@@ -198,6 +198,18 @@ export function tiptapJsonToMarkdown(doc: JSONContent): string {
   return chosen.join('\n');
 }
 
+/** Texto literal (fala, colagem de fora) → markdown que se lê igual ao texto. */
+export function plainTextToMarkdown(text: string): string {
+  const lines = text.replace(/\r\n?/gu, '\n').split('\n');
+  return tiptapJsonToMarkdown({
+    type: 'doc',
+    content: lines.map((line) => ({
+      type: 'paragraph',
+      content: line ? [{ type: 'text', text: line }] : [],
+    })),
+  });
+}
+
 function pmDocMarkdown(doc: PmNode): string {
   return tiptapJsonToMarkdown(doc.toJSON() as JSONContent);
 }
@@ -351,12 +363,20 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
           onSubmitRef.current();
           return true;
         },
-        // HTML externo nunca entra no documento: só o texto puro, lido como
-        // markdown (a fonte canônica) — o valor sai igual ao que foi colado.
-        handlePaste: (view, event) => {
-          const text = event.clipboardData?.getData('text/plain') ?? '';
-          if (text) insertPlainText(view, text);
-          return true;
+        handleDOMEvents: {
+          // HTML externo nunca entra no documento: só o texto puro, lido como
+          // markdown (a fonte canônica) — o valor sai igual ao que foi colado.
+          // Sem texto (print, imagem, HTML com imagem embutida) o editor não
+          // insere nada e NÃO reivindica o default: o app anexa o arquivo à
+          // missão (App.tsx onPaste ignora cola com defaultPrevented). O
+          // schema não tem nó de imagem, então nada nativo sobra no doc.
+          paste: (view, event) => {
+            const text = event.clipboardData?.getData('text/plain') ?? '';
+            if (!text) return true;
+            event.preventDefault();
+            insertPlainText(view, text);
+            return true;
+          },
         },
         handleDrop: (view, event, _slice, moved) => {
           if (moved) return false;
@@ -381,7 +401,14 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
       lastExternalValue.current = value;
       // Equal canonical content is an acknowledgement, not a document reset.
       const next = markdownToTiptapContent(value);
-      if (tiptapJsonToMarkdown(editor.getJSON()) !== tiptapJsonToMarkdown(next)) {
+      const current = tiptapJsonToMarkdown(editor.getJSON());
+      const incoming = tiptapJsonToMarkdown(next);
+      if (current !== incoming) {
+        // Troca programática: acréscimo no fim (ditado) mantém o cursor onde
+        // estava; substituição (exemplo, rascunho restaurado) leva o cursor ao
+        // fim, como o textarea. O foco não muda.
+        const appended = current.length > 0 && incoming.startsWith(current);
+        const { anchor, head } = editor.state.selection;
         editor
           .chain()
           .command(({ tr }) => {
@@ -389,6 +416,16 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
             return true;
           })
           .setContent(next, { emitUpdate: false })
+          .command(({ tr }) => {
+            const end = Selection.atEnd(tr.doc).from;
+            const clamp = (pos: number) => Math.max(1, Math.min(pos, end));
+            tr.setSelection(
+              appended
+                ? TextSelection.between(tr.doc.resolve(clamp(anchor)), tr.doc.resolve(clamp(head)))
+                : Selection.atEnd(tr.doc),
+            );
+            return true;
+          })
           .run();
       }
     }, [editor, value]);

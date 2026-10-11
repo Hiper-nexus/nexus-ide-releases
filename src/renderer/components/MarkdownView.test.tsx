@@ -2,6 +2,16 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const highlight = vi.hoisted(() => ({ mode: 'ok' as 'ok' | 'throw', calls: [] as Array<{ code: string; lang: string }> }));
+vi.mock('./MarkdownCodeHighlight', () => ({
+  MarkdownCodeHighlight: ({ code, lang }: { code: string; lang: string }) => {
+    highlight.calls.push({ code, lang });
+    if (highlight.mode === 'throw') throw new Error('shiki caiu');
+    return <div data-testid="highlighted" data-lang={lang}>{code}</div>;
+  },
+}));
+
 import { MarkdownView } from './MarkdownView';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -14,7 +24,15 @@ function render(node: ReactNode): HTMLElement {
   act(() => root.render(node));
   return host;
 }
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
 afterEach(() => {
+  highlight.mode = 'ok';
+  highlight.calls.length = 0;
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) act(() => root.unmount());
   document.body.replaceChildren();
   Reflect.deleteProperty(window, 'nexus');
@@ -93,5 +111,47 @@ describe('MarkdownView', () => {
     const host = render(<MarkdownView markdown={'[docs](https://example.com/x) e https://a.test/y'} links="text" />);
     expect(host.querySelector('a')).toBeNull();
     expect(host.textContent).toBe('docs (https://example.com/x) e https://a.test/y');
+  });
+
+  describe('realce dos blocos cercados (F-1176)', () => {
+    it('com linguagem conhecida, troca o texto puro pelo realce carregado sob demanda', async () => {
+      const host = render(<MarkdownView markdown={'```ts\nconst a = 1;\n```'} />);
+      expect(host.querySelector('pre.markdown-view__code > code.language-ts')?.textContent).toBe('const a = 1;');
+      await settle();
+      const node = host.querySelector('[data-testid="highlighted"]');
+      expect(node?.getAttribute('data-lang')).toBe('typescript');
+      expect(node?.textContent).toBe('const a = 1;');
+      expect(host.querySelector('pre.markdown-view__code')).toBeNull();
+    });
+
+    it('sem linguagem, com linguagem desconhecida ou acima do teto, fica o <pre><code> puro', async () => {
+      const big = Array.from({ length: 401 }, () => 'x').join('\n');
+      const host = render(
+        <MarkdownView markdown={['```', 'sem', '```', '', '```cobolzinho', 'nao', '```', '', '```ts', big, '```'].join('\n')} />,
+      );
+      await settle();
+      expect(host.querySelector('[data-testid="highlighted"]')).toBeNull();
+      expect(highlight.calls).toHaveLength(0);
+      const blocks = host.querySelectorAll('pre.markdown-view__code > code');
+      expect(blocks).toHaveLength(3);
+      expect(blocks[0]!.className).toBe('');
+      expect(blocks[1]!.className).toBe('language-cobolzinho');
+    });
+
+    it('erro do realce volta ao texto puro sem derrubar a prosa', async () => {
+      highlight.mode = 'throw';
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      // O React de dev relança o erro capturado como evento do jsdom; é esperado aqui.
+      const quiet = (event: ErrorEvent) => event.preventDefault();
+      window.addEventListener('error', quiet);
+      const host = render(<MarkdownView markdown={'Antes\n\n```py\nprint(1)\n```\n\nDepois'} />);
+      await settle();
+      expect(highlight.calls.length).toBeGreaterThan(0);
+      expect(host.querySelector('[data-testid="highlighted"]')).toBeNull();
+      expect(host.querySelector('pre.markdown-view__code > code.language-py')?.textContent).toBe('print(1)');
+      expect(host.textContent).toContain('Antes');
+      expect(host.textContent).toContain('Depois');
+      window.removeEventListener('error', quiet);
+    });
   });
 });
