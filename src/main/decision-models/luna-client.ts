@@ -163,11 +163,27 @@ export async function judgeLuna(input: JudgeInput, token: string, deps: LunaDeps
   }
 }
 
+/** O que o status HTTP da Decisions API diz ao operador. A chave em si nunca entra na mensagem. */
+export function lunaStatusDetail(status: number | null, reason: JevNoAnswerReason | null): string {
+  if (status === 401) return 'A OpenAI recusou a chave (401). Confira a chave OpenAI em Chaves de API.';
+  if (status === 403 || status === 404) return `A chave OpenAI funciona, mas a conta não tem acesso à Decisions API (beta) do gpt-6-luna (${status}). Peça o acesso na OpenAI; enquanto isso o Automático usa Jev e Clef.`;
+  if (status === 429) return 'A OpenAI limitou a chave (429): limite de uso ou sem crédito na conta.';
+  if (status !== null && status >= 500) return `A Decisions API está com erro no servidor (${status}). Tente de novo mais tarde.`;
+  if (status !== null && status >= 400) return `A OpenAI recusou a consulta (${status}). Confira a chave OpenAI em Chaves de API.`;
+  if (reason === 'timeout') return 'A OpenAI não respondeu a tempo. Tente de novo.';
+  if (reason === 'network') return 'Sem conexão com a OpenAI.';
+  return 'A OpenAI não devolveu uma decisão válida. Confira a chave em Chaves de API e a disponibilidade da Decisions API (beta).';
+}
+
 export async function testLunaConnection(token: string, deps?: LunaDeps): Promise<JevTestResult> {
+  let status: number | null = null;
+  let reason: JevNoAnswerReason | null = null;
+  const baseFetch = deps?.fetch ?? fetch;
   const result = await judgeLuna({ state: { sample: 'connection-check' }, questions: {
     connection: { type: 'noul', instructions: 'Is sample equal to connection-check?' },
-  }, retryOnTimeout: false }, token, deps);
+  }, retryOnTimeout: false, onNoAnswer: value => { reason ??= value; } }, token, { ...deps,
+    fetch: (async (...args: Parameters<typeof fetch>) => { const response = await baseFetch(...args); status = response.status; return response; }) as typeof fetch });
   return result?.answers.connection?.type === 'noul'
     ? { ok: true, detail: 'Conectado — gpt-6-luna (beta)' }
-    : { ok: false, detail: 'A OpenAI não devolveu uma decisão válida. Confira a chave em Chaves de API e a disponibilidade da Decisions API (beta).' };
+    : { ok: false, detail: lunaStatusDetail(status !== null && status >= 200 && status < 300 ? null : status, reason) };
 }

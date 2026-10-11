@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DecisionUsageReceipt } from '../../shared/decision-models';
 import type { JevQuestion } from '../jev/jev-client';
-import { judgeLuna } from './luna-client';
+import { judgeLuna, testLunaConnection } from './luna-client';
 
 const TOKEN = 'sk-test-token-value';
 const noul: Record<string, JevQuestion> = { q: { type: 'noul', instructions: 'Is it relevant?' } };
@@ -152,5 +152,38 @@ describe('OpenAI Decisions client', () => {
     }) as typeof fetch });
     expect(calls).toBe(2);
     expect(result?.answers.q).toEqual({ type: 'noul', noul: 0.7 });
+  });
+});
+
+describe('Testar a Luna: o motivo real aparece para o operador', () => {
+  const answer = (async (_url: unknown, init?: RequestInit) => {
+    const sent = JSON.parse(String(init?.body)) as { questions: { name: string }[] };
+    return json({ answers: sent.questions.map(question => ({ type: 'predicate', name: question.name, probability: 0.9 })) });
+  }) as typeof fetch;
+
+  it.each([
+    [401, 'recusou a chave (401)'],
+    [403, 'não tem acesso à Decisions API (beta)'],
+    [404, 'não tem acesso à Decisions API (beta)'],
+    [429, 'limite de uso ou sem crédito'],
+    [400, 'recusou a consulta (400)'],
+  ])('HTTP %i vira mensagem específica, sem a chave', async (status, text) => {
+    const result = await testLunaConnection(TOKEN, { fetch: (async () => json({ error: { message: 'x' } }, status)) as typeof fetch });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain(text);
+    expect(result.detail).not.toContain(TOKEN);
+  });
+
+  it('5xx esgota as tentativas e diz que é o servidor', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = testLunaConnection(TOKEN, { fetch: (async () => json({}, 503)) as typeof fetch });
+      await vi.runAllTimersAsync();
+      expect((await pending).detail).toContain('erro no servidor (503)');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('sucesso continua "Conectado"', async () => {
+    expect(await testLunaConnection(TOKEN, { fetch: answer })).toEqual({ ok: true, detail: 'Conectado — gpt-6-luna (beta)' });
   });
 });

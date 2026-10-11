@@ -7,6 +7,11 @@ import type { DecisionSettings } from '../../../shared/decision-models';
 
 const ERROR_ID = 'decision-models-error';
 
+/** Modos em que a Luna pode responder: o teste aparece também no Automático, que a consulta e a calibra. */
+function usesLuna(mode: DecisionSettings['mode']): boolean {
+  return mode === 'luna' || mode === 'together' || mode === 'auto';
+}
+
 export function DecisionModelsSection({ showCredentials = true }: { showCredentials?: boolean }) {
   const { status, supported, busy, error, notice, run, setError } = useDecisionModelSettings();
   function change(patch: Partial<DecisionSettings>) {
@@ -28,13 +33,13 @@ export function DecisionModelsSection({ showCredentials = true }: { showCredenti
       </ul>}
       <DecisionModeControls settings={status.settings} busy={busy} onChange={change} />
       <MissionDecisionEngineControls settings={status.settings} busy={busy} onChange={change} />
-      {status.settings.mode === 'luna' && <div className="settings-row decision-models__actions">
+      {usesLuna(status.settings.mode) && <div className="settings-row decision-models__actions">
         <button className="settings-btn settings-btn--sm" type="button" disabled={busy || !status.lunaReady} onClick={() => void run(async () => {
           const result = await window.nexus.decisionModels.test({ provider: 'luna' });
           if (!result.ok) throw new Error(result.detail);
         }, 'Conexão com a Luna confirmada.')}>Testar a Luna</button>
       </div>}
-      {status.settings.mode === 'luna' && <p className="settings-field__note">A chave é a da OpenAI, em Chaves de API. O teste faz uma consulta pequena na Decisions API (beta).</p>}
+      {usesLuna(status.settings.mode) && <p className="settings-field__note">A chave é a da OpenAI, em Chaves de API. O teste faz uma consulta pequena na Decisions API (beta).</p>}
       {showCredentials ? <ClefCredentials status={status} busy={busy} run={run} onError={setError} errorId={error ? ERROR_ID : undefined} />
         : <p className="settings-field__note">Configure Account ID e API Token Cloudflare em Chaves de API.</p>}
     </>}

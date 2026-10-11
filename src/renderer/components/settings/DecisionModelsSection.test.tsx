@@ -291,6 +291,15 @@ describe('complementary decision model settings', () => {
     expect(bridge().test).toHaveBeenCalledWith({ provider: 'luna' });
   });
 
+  it('Automático também testa a Luna (ela entra na rota e na calibração); modo fixo no Jev não', async () => {
+    status = { ...status, settings: { ...status.settings, mode: 'auto' }, lunaReady: true };
+    await mount();
+    await act(async () => { button('Testar a Luna').click(); });
+    expect(bridge().test).toHaveBeenCalledWith({ provider: 'luna' });
+    await act(async () => { choose('Escolha do modelo', 'jev'); });
+    expect([...host.querySelectorAll('button')].some(b => b.textContent === 'Testar a Luna')).toBe(false);
+  });
+
   it('shows failed connection tests inline', async () => {
     status = { ...status, hasStoredKey: true, keyMasked: 'syn…oken', isReady: true };
     await mount(); await act(async () => { button('Testar conexão').click(); });
