@@ -19,6 +19,7 @@ import { useObjectiveDictation } from './use-objective-dictation';
 import {
   ComposerTiptapEditor,
   plainTextToMarkdown,
+  truncateMarkdown,
   type ComposerTiptapEditorHandle,
 } from '../ComposerTiptapEditor';
 
@@ -214,7 +215,8 @@ export function MissionStep({
       const next = current.trim().length > 0
         ? `${current.replace(/\s+$/u, '')} ${spoken}`
         : spoken;
-      onObjectiveChange(next.slice(0, MISSION_INTENT_GOAL_MAX_CHARS));
+      // Revisão P3: corte por unidades seguras (nunca no meio de um escape).
+      onObjectiveChange(truncateMarkdown(next, MISSION_INTENT_GOAL_MAX_CHARS));
       setObjectiveError(null);
       objectiveCaretToEndRef.current = true;
       objectiveRef.current?.focus();

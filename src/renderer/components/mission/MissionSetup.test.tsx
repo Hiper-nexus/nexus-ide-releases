@@ -3344,3 +3344,22 @@ describe('MissionStep — objetivo no editor rich-text (F-1170)', () => {
     expect(useMissionSetupStore.getState().draft.objective).toBe('**Corrija** o total');
   });
 });
+
+describe('MissionStep — ditado perto do teto (F-1170, revisão P3)', () => {
+  it('o corte respeita escapes: nada de barra solta e o texto visível é prefixo do ditado', async () => {
+    const host = render(<MissionSetup />);
+    await flush();
+    const objective = objectiveField(host, 'O que você quer que a equipe entregue?');
+    const base = 'a'.repeat(MISSION_INTENT_GOAL_MAX_CHARS - 4);
+    enterText(objective, base);
+    act(() => {
+      deliverDictationToClaim('b*c*d e mais');
+    });
+    const stored = useMissionSetupStore.getState().draft.objective;
+    expect(stored.length).toBeLessThanOrEqual(MISSION_INTENT_GOAL_MAX_CHARS);
+    const visible = objectivePlainText(stored);
+    expect(`${base} b*c*d e mais`.startsWith(visible)).toBe(true);
+    expect(visible.length).toBeGreaterThan(base.length);
+    expect(fieldValue(objective)).toBe(stored);
+  });
+});
