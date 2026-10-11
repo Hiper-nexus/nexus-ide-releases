@@ -1,3 +1,8 @@
+import {
+  completionContextLine, completionFactsFrom, missionGoalOf, scheduleCompletionCheck, scheduleReviewTriageAdvice,
+  withReviewTriageLines,
+} from "./jev-mission-advisor";
+import { getMissionDecisionHints } from "./mission-decision-hints";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { checkVisualHandoff } from './visual-handoff-gate';
@@ -695,6 +700,23 @@ const handoffSubmitTool: McpToolDef = {
     if (handoff.evidenceTrust === "nexus-trusted") {
       markHandoffSubmitted(ctx);
     }
+    // F-1166: triagem consultiva do handoff de código (risco de regressão),
+    // fora do caminho crítico; não muda o veredito do handoffReview.
+    if (ctx.missionId && !replayed && status === "success" && !isPlanHandoff && declaredFiles.length > 0) {
+      scheduleReviewTriageAdvice({
+        missionId: ctx.missionId, handoffId: handoff.id, summary, declaredFiles,
+        goal: missionGoalOf(mission), lane: mission.intentContract?.lane,
+      });
+    }
+    // F-1166: cobertura do objetivo enquanto a missão está viva (debounce 30 s,
+    // até 3 consultas, nada acima de 80% do orçamento); fora do caminho crítico.
+    if (ctx.missionId && !replayed && status === "success") {
+      const coverageMissionId = ctx.missionId;
+      scheduleCompletionCheck(coverageMissionId, () => {
+        const live = suite.missions.get(coverageMissionId);
+        return live ? completionFactsFrom(live, suite.handoffs.list({ missionId: coverageMissionId, includeDelivered: true })) : null;
+      });
+    }
     if (ctx.sessionId && contractVerdict.kind !== "none") {
       // Contrato cumprido (ok) ou esgotado (blocked): a cobrança acabou.
       disarmDeliveryContract(ctx.sessionId);
@@ -1028,20 +1050,28 @@ const handoffListTool: McpToolDef = {
         }
       }
     }
-    const visible = compactHandoffListRows(
+    const visible = withReviewTriageLines(compactHandoffListRows(
       returned,
       rawIds,
       str(args, "detail") === "full",
       ctx.scope,
       recentIds,
       acknowledgedIds,
-    );
+    ), missionId);
+    // F-1166: o próprio Maestro lendo a própria missão vê a cobertura do objetivo.
+    const coverageLine = isProvenCurrentOrchestrator && missionId === ctx.missionId && missionId
+      ? missionCoverageLine(missionId) : null;
     if (wantCursorMode) {
       return {
         items: visible,
         nextCursor,
         hasMoreHistory,
+        ...(coverageLine ? { missionDecisionHint: coverageLine } : {}),
       };
+    }
+    if (coverageLine && visible.length > 0) {
+      const last = visible.length - 1;
+      visible[last] = { ...visible[last], missionDecisionHint: coverageLine };
     }
     return visible;
   },
@@ -1093,6 +1123,15 @@ function maestroSessionAlive(
     return undefined;
   } catch {
     return undefined;
+  }
+}
+
+function missionCoverageLine(missionId: string): string | null {
+  try {
+    const hint = getMissionDecisionHints(missionId)?.completion;
+    return hint ? completionContextLine(hint) : null;
+  } catch {
+    return null;
   }
 }
 

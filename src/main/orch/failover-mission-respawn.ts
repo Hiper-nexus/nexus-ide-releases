@@ -11,6 +11,7 @@
  * estruturado (F-775) como initialPrompt.
  */
 
+import { recoveryTriggerClass, scheduleRecoveryAdvice } from './jev-mission-advisor';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { PaneSpawnOptions } from './main-owned-pane-runtime';
@@ -320,6 +321,17 @@ export async function respawnMainOwnedPaneWithAccount(input: {
 }, deps: { readonly git?: AsyncGitRunner } = {}): Promise<boolean> {
   const entry = getMainOwnedPane(input.paneId);
   if (!entry || input.sessionId && entry.entry.sessionId !== input.sessionId) return false;
+  // F-1166: dica consultiva de recuperação (repetir, trocar de CLI ou escalar).
+  // Só registra; a lógica de failover abaixo segue exatamente a mesma.
+  const failoverMissionId = entry.meta?.missionId;
+  if (failoverMissionId) {
+    // Só a classe da queda: o `reason` é texto do detector e não pode ser ecoado (F-520).
+    scheduleRecoveryAdvice({
+      missionId: failoverMissionId, paneId: input.paneId, adapterId: input.adapterId,
+      triggerClass: recoveryTriggerClass({ limitKind: input.limitKind, toModel: input.toModel }),
+      switchingTo: input.continuityPack ? 'cli' : input.toModel ? 'model' : input.toAccountId ? 'account' : undefined,
+    });
+  }
   const expectedSessionId = entry.entry.sessionId;
   const isCurrent = () => getMainOwnedPane(input.paneId) === entry &&
     entry.entry.sessionId === expectedSessionId;

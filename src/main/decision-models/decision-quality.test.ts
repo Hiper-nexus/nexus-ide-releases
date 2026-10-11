@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DECISION_EVAL_MODELS, decisionEvalModelId, evaluateDecisionCases, type DecisionEvalCase } from './decision-evaluation';
 import { calibrateDecisionQuality } from './decision-calibration';
 import {
-  buildDecisionQualityTable, configureDecisionQualityTable, decisionQuality, readDecisionQualityTable, writeDecisionQualityTable,
+  buildDecisionQualityTable, configureDecisionQualityClock, configureDecisionQualityTable, QUALITY_TABLE_TTL_MS, decisionQuality, readDecisionQualityTable, writeDecisionQualityTable,
 } from './decision-quality';
 
 let dir: string; let file: string;
@@ -75,6 +75,8 @@ describe('tabela de qualidade (F-1165)', () => {
 
 describe('cache da tabela por mtime e entrada de calibração (F-1165)', () => {
   it('relê a tabela quando o arquivo muda', () => {
+    let now = 5_000_000;
+    configureDecisionQualityClock(() => (now += QUALITY_TABLE_TTL_MS));
     const write = (accuracy: number, at: number) => {
       fs.writeFileSync(file, JSON.stringify({ version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
         surfaces: { judgeTool: { clef: { accuracy, cases: 10 } } } }));
@@ -86,6 +88,7 @@ describe('cache da tabela por mtime e entrada de calibração (F-1165)', () => {
     expect(readDecisionQualityTable()?.surfaces.judgeTool.clef?.accuracy).toBe(0.75);
     fs.rmSync(file);
     expect(readDecisionQualityTable()).toBeNull();
+    configureDecisionQualityClock(undefined);
   });
 
   it('calibração: cada chave vai com o id que o funil reconhece (Luna não vira Jev) e grava a tabela', async () => {
@@ -100,5 +103,28 @@ describe('cache da tabela por mtime e entrada de calibração (F-1165)', () => {
     expect(decisionEvalModelId('luna')).toBe('gpt-6-luna');
     expect(readDecisionQualityTable()?.surfaces.judgeTool.luna).toMatchObject({ accuracy: 1, cases: 6 });
     expect(await calibrateDecisionQuality([{ id: '' }], { file })).toMatchObject({ ok: false, written: false });
+  });
+});
+
+describe('P3: cache da tabela com TTL', () => {
+  afterEach(() => configureDecisionQualityClock(undefined));
+  it('não faz stat a cada decisão; relê depois do TTL', () => {
+    let now = 1_000_000;
+    configureDecisionQualityClock(() => now);
+    const write = (accuracy: number, at: number) => {
+      fs.writeFileSync(file, JSON.stringify({ version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
+        surfaces: { judgeTool: { clef: { accuracy, cases: 10 } } } }));
+      fs.utimesSync(file, at, at);
+    };
+    write(0.5, 1_000);
+    expect(readDecisionQualityTable()?.surfaces.judgeTool.clef?.accuracy).toBe(0.5);
+    const stat = vi.spyOn(fs, 'statSync');
+    write(0.75, 2_000);
+    now += QUALITY_TABLE_TTL_MS - 1;
+    expect(readDecisionQualityTable()?.surfaces.judgeTool.clef?.accuracy).toBe(0.5);
+    expect(stat).not.toHaveBeenCalled();
+    now += 2;
+    expect(readDecisionQualityTable()?.surfaces.judgeTool.clef?.accuracy).toBe(0.75);
+    stat.mockRestore();
   });
 });

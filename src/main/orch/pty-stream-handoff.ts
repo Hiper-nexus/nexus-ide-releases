@@ -1,3 +1,4 @@
+import { completionFactsFrom, missionGoalOf, scheduleCompletionCheck, scheduleReviewTriageAdvice } from "./jev-mission-advisor";
 import { analysisClient, flushPtyAnalysis, isPtyAnalysisEnabled } from '../pty/pty-analysis-runtime';
 import { checkVisualHandoff } from './visual-handoff-gate';
 import { randomUUID } from "node:crypto";
@@ -615,6 +616,26 @@ async function persistPtyHandoff(
     );
     if (committed.handoff.evidenceTrust === "nexus-trusted") {
       markHandoffSubmitted(ctx);
+    }
+    // F-1166: triagem consultiva do handoff de código, fora do caminho crítico.
+    const ptyFiles = normalizeFilesModified({ artifacts: prepared.payload.artifacts });
+    if (!committed.replayed && prepared.status === "success" && ptyFiles.length > 0) {
+      const ptyMission = prepared.suite.missions.get(prepared.missionId);
+      if (ptyMission?.intentContract?.lane !== "plan") {
+        scheduleReviewTriageAdvice({
+          missionId: prepared.missionId, handoffId: committed.handoff.id, summary: prepared.summary,
+          declaredFiles: ptyFiles, goal: ptyMission ? missionGoalOf(ptyMission) : undefined,
+          lane: ptyMission?.intentContract?.lane,
+        });
+      }
+    }
+    if (!committed.replayed && prepared.status === "success") {
+      const coverageMissionId = prepared.missionId;
+      scheduleCompletionCheck(coverageMissionId, () => {
+        const live = prepared.suite.missions.get(coverageMissionId);
+        return live ? completionFactsFrom(live,
+          prepared.suite.handoffs.list?.({ missionId: coverageMissionId, includeDelivered: true }) ?? []) : null;
+      });
     }
     if (!committed.replayed || committed.handoff.deliveryState === "queued") {
       onHandoffSubmitted(committed.handoff, ctx.scope);

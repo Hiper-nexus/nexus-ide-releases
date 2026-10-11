@@ -13,6 +13,11 @@ const deps = vi.hoisted(() => ({
   execFileSync: vi.fn(() => { throw new Error('execFileSync no caminho do failover'); }),
   spawnSyncChild: vi.fn(() => { throw new Error('spawnSync no caminho do failover'); }),
 }));
+const advisor = vi.hoisted(() => ({ scheduleRecoveryAdvice: vi.fn() }));
+vi.mock('./jev-mission-advisor', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./jev-mission-advisor')>()),
+  scheduleRecoveryAdvice: advisor.scheduleRecoveryAdvice,
+}));
 vi.mock('./main-owned-pane-runtime', () => ({ getMainOwnedPane: deps.getPane }));
 vi.mock('./pane-registry', () => ({
   spawnMainOwnedMissionPane: deps.spawnSync,
@@ -334,6 +339,25 @@ describe('planMainOwnedFailoverRespawn (failover de conta em pane de missão)', 
 });
 
 describe('respawnMainOwnedPaneWithAccount', () => {
+  it('F-1166: agenda a dica de recuperação da missão do pane e segue o failover igual', async () => {
+    advisor.scheduleRecoveryAdvice.mockClear();
+    deps.terminate.mockResolvedValueOnce(false);
+    deps.getPane.mockReturnValue({ entry: { paneId: 'old-pane', sessionId: 'old-session' }, meta: { ...meta, missionId: 'mission-rec' } });
+    const result = await respawnMainOwnedPaneWithAccount({ paneId: 'old-pane', sessionId: 'old-session',
+      adapterId: 'claude', toModel: 'fixture-model', fromAccountLabel: 'fixture', reason: 'model rejected', limitKind: 'quota' });
+    expect(result).toBe(false);
+    expect(advisor.scheduleRecoveryAdvice).toHaveBeenCalledWith(expect.objectContaining({
+      missionId: 'mission-rec', triggerClass: 'quota', paneId: 'old-pane', adapterId: 'claude', switchingTo: 'model',
+    }));
+    // P1: o texto do detector (`reason`) nunca sai daqui.
+    expect(JSON.stringify(advisor.scheduleRecoveryAdvice.mock.calls)).not.toContain('model rejected');
+    advisor.scheduleRecoveryAdvice.mockClear();
+    deps.getPane.mockReturnValue({ entry: { paneId: 'old-pane', sessionId: 'old-session' }, meta: { ...meta, missionId: undefined } });
+    await respawnMainOwnedPaneWithAccount({ paneId: 'old-pane', sessionId: 'old-session',
+      adapterId: 'claude', toModel: 'fixture-model', fromAccountLabel: 'fixture', reason: 'model rejected' });
+    expect(advisor.scheduleRecoveryAdvice).not.toHaveBeenCalled();
+  });
+
   it.each(['unproved', 'rejected'])('F-890 keeps the worker without replacement when termination is %s', async (mode) => {
     deps.spawnAsync.mockResolvedValue({ requestId: 'unexpected', ok: true, paneId: 'unexpected', sessionId: 'unexpected' });
     if (mode === 'unproved') deps.terminate.mockResolvedValueOnce(false);

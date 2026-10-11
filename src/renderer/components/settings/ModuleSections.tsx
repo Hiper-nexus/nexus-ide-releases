@@ -444,6 +444,10 @@ export function SquadsSection() {
     missionPick: true,
     catalogPick: true,
     missionMomentum: true,
+    missionKickoff: true,
+    reviewTriage: true,
+    recoveryAdvice: true,
+    completionCheck: true,
   });
   const [designPro, setDesignPro] = useState(true);
   const [memoryInjection, setMemoryInjection] = useState(true);
@@ -476,6 +480,10 @@ export function SquadsSection() {
         missionPick: o.jevSurfaces?.missionPick !== false,
         catalogPick: o.jevSurfaces?.catalogPick !== false,
         missionMomentum: o.jevSurfaces?.missionMomentum !== false,
+        missionKickoff: o.jevSurfaces?.missionKickoff !== false,
+        reviewTriage: o.jevSurfaces?.reviewTriage !== false,
+        recoveryAdvice: o.jevSurfaces?.recoveryAdvice !== false,
+        completionCheck: o.jevSurfaces?.completionCheck !== false,
       });
       setDesignPro(o.designPro);
       setMemoryInjection(o.workspaceMemoryInjection !== false);
@@ -898,6 +906,10 @@ export function SquadsSection() {
                 'missionMomentum',
                 'Momentum da missão (preso vs gate longo — refina o nudge do supervisor)',
               ],
+              ['missionKickoff', 'Início da missão (complexidade, workers e lane sugeridos)'],
+              ['reviewTriage', 'Triagem de revisão (risco de regressão do handoff de código)'],
+              ['recoveryAdvice', 'Recuperação de worker (repetir a CLI, trocar ou escalar)'],
+              ['completionCheck', 'Conclusão (os handoffs cobrem o objetivo? só aviso)'],
             ] as const
           ).map(([surface, label]) => (
             <OrchestrationToggle

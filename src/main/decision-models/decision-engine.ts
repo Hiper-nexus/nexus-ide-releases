@@ -43,6 +43,9 @@ const INTERACTIVE_SURFACES: ReadonlySet<string> = new Set([
   'intake', 'delegation', 'paneState', 'toolPick', 'judgeTool', 'wakeConfirm', 'terminalTriage', 'helperReuse',
 ]);
 const INTERACTIVE_LATENCY_MS = 5_000;
+/** F-1166: surfaces consultivas de fase — disparadas fora do caminho crítico, prazo curto. */
+export const ADVISORY_SURFACES: ReadonlySet<string> = new Set(['missionKickoff', 'reviewTriage', 'recoveryAdvice', 'completionCheck']);
+export const ADVISORY_LATENCY_MS = 8_000;
 const BACKGROUND_LATENCY_MS = 15_000;
 
 type EngineInput = Pick<JudgeInput, 'surface' | 'model' | 'images' | 'audio' | 'audioRequired' | 'state' | 'questions'>;
@@ -59,7 +62,8 @@ export function decisionSurfaceProfile(
     modality: input.images?.length ? 'image' : audioReady(input, settings, available) ? 'audio' : 'text',
     criticality: surface && SECURITY_ENSEMBLE_SURFACES.has(surface) ? 'security'
       : surface && REVERSIBLE_ENSEMBLE_SURFACES.has(surface) ? 'reversible' : 'normal',
-    latencyBudgetMs: surface && INTERACTIVE_SURFACES.has(surface) ? INTERACTIVE_LATENCY_MS : BACKGROUND_LATENCY_MS,
+    latencyBudgetMs: surface && INTERACTIVE_SURFACES.has(surface) ? INTERACTIVE_LATENCY_MS
+      : surface && ADVISORY_SURFACES.has(surface) ? ADVISORY_LATENCY_MS : BACKGROUND_LATENCY_MS,
   };
 }
 

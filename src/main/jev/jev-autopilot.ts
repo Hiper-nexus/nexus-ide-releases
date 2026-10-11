@@ -30,7 +30,12 @@ export type JevSurface =
   | 'businessModel'
   | 'missionPick'
   | 'catalogPick'
-  | 'missionMomentum';
+  | 'missionMomentum'
+  /** F-1166: surfaces consultivas de fase da missão (nunca bloqueiam). */
+  | 'missionKickoff'
+  | 'reviewTriage'
+  | 'recoveryAdvice'
+  | 'completionCheck';
 
 const JEV_SURFACES: readonly JevSurface[] = [
   'handoffReview',
@@ -50,6 +55,10 @@ const JEV_SURFACES: readonly JevSurface[] = [
   'missionPick',
   'catalogPick',
   'missionMomentum',
+  'missionKickoff',
+  'reviewTriage',
+  'recoveryAdvice',
+  'completionCheck',
 ];
 
 /**

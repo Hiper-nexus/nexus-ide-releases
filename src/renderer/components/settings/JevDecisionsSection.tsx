@@ -25,6 +25,10 @@ const SURFACE_LABELS: Record<string, string> = {
   rankTool: 'Tool nexus_rank',
   helperReuse: 'Reuso de helper ocioso',
   missionPick: 'Missão falada (desempate)',
+  missionKickoff: 'Início da missão (dica)',
+  reviewTriage: 'Triagem de revisão (dica)',
+  recoveryAdvice: 'Recuperação de worker (dica)',
+  completionCheck: 'Conclusão (aviso)',
   catalogPick: 'Recomendações do Marketplace',
 };
 

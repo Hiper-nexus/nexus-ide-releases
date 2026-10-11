@@ -50,10 +50,17 @@ const CHEAP_CHOICE_PRIORS: Record<DecisionModelKey, number> = { jev: 0.78, clef:
 const IMAGE_PRIORS: Record<DecisionModelKey, number> = { jev: 0, clef: 0.84, 'clef-flash': 0, 'clef-omni': 0.83, luna: 0.77 };
 const AUDIO_PRIORS: Record<DecisionModelKey, number> = { jev: 0, clef: 0, 'clef-flash': 0, 'clef-omni': 0.85, luna: 0 };
 const CHEAP_CHOICE_SURFACES = new Set(['toolPick', 'researchTriage', 'rank', 'rankTool']);
+/**
+ * F-1166: julgamento sobre trabalho entregue (risco de regressão, cobertura
+ * do objetivo). Prior favorece modelo de raciocínio; ainda consultivo.
+ */
+const JUDGMENT_PRIORS: Record<DecisionModelKey, number> = { jev: 0.80, clef: 0.84, 'clef-flash': 0.75, 'clef-omni': 0.79, luna: 0.84 };
+const JUDGMENT_SURFACES = new Set(['reviewTriage', 'completionCheck']);
 
 export function decisionQualityPrior(surface: string | undefined, model: DecisionModelKey, modality: QualityModality): number {
   if (modality === 'image') return IMAGE_PRIORS[model];
   if (modality === 'audio') return AUDIO_PRIORS[model];
+  if (surface && JUDGMENT_SURFACES.has(surface)) return JUDGMENT_PRIORS[model];
   return (surface && CHEAP_CHOICE_SURFACES.has(surface) ? CHEAP_CHOICE_PRIORS : TEXT_PRIORS)[model];
 }
 
@@ -73,7 +80,15 @@ export function decisionQuality(
 }
 
 let injectedFile: string | undefined;
-let cache: { file: string; stamp: string; table: DecisionQualityTable | null } | undefined;
+let cache: { file: string; stamp: string; checkedAt: number; table: DecisionQualityTable | null } | undefined;
+/** Sem `stat` a cada decisão: a tabela muda raramente (calibração manual). */
+export const QUALITY_TABLE_TTL_MS = 5_000;
+let clock: () => number = Date.now;
+
+/** Para testes: relógio do TTL do cache. */
+export function configureDecisionQualityClock(now?: () => number): void {
+  clock = now ?? Date.now;
+}
 
 /** Para testes: fixa o arquivo; `undefined` volta ao userData. */
 export function configureDecisionQualityTable(file?: string): void {
@@ -97,15 +112,20 @@ function qualityTableFile(): string | null {
 export function readDecisionQualityTable(): DecisionQualityTable | null {
   const file = qualityTableFile();
   if (!file) return null;
+  const at = clock();
+  if (cache?.file === file && at - cache.checkedAt >= 0 && at - cache.checkedAt < QUALITY_TABLE_TTL_MS) return cache.table;
   let stamp: string;
   try {
     const stat = fs.statSync(file);
     stamp = `${stat.mtimeMs}:${stat.size}`;
   } catch {
-    cache = { file, stamp: 'missing', table: null };
+    cache = { file, stamp: 'missing', checkedAt: at, table: null };
     return null;
   }
-  if (cache?.file === file && cache.stamp === stamp) return cache.table;
+  if (cache?.file === file && cache.stamp === stamp) {
+    cache.checkedAt = at;
+    return cache.table;
+  }
   let table: DecisionQualityTable | null = null;
   try {
     const parsed = decisionQualityTableSchema.safeParse(JSON.parse(fs.readFileSync(file, 'utf8')));
@@ -113,7 +133,7 @@ export function readDecisionQualityTable(): DecisionQualityTable | null {
   } catch {
     table = null;
   }
-  cache = { file, stamp, table };
+  cache = { file, stamp, checkedAt: at, table };
   return table;
 }
 

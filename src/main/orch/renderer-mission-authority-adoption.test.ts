@@ -12,6 +12,11 @@ import type { WebContents } from "electron";
  */
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 
+const advisor = vi.hoisted(() => ({ scheduleMissionKickoffAdvice: vi.fn() }));
+vi.mock("./jev-mission-advisor", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./jev-mission-advisor")>()),
+  scheduleMissionKickoffAdvice: advisor.scheduleMissionKickoffAdvice,
+}));
 vi.mock("electron", async () => {
   const fs = await import("node:fs");
   const os = await import("node:os");
@@ -398,7 +403,20 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(resumed.persistedPane).toMatchObject({ missionId, role: "orchestrator" });
   });
 
+  it("F-1166: a missão da +pane agenda o kickoff consultivo (sem esperar) só quando nasce", async () => {
+    advisor.scheduleMissionKickoffAdvice.mockClear();
+    const sessionId = operatorPane("pane-a");
+    register([{ paneId: "pane-a", sessionId }]);
+    const result = (await authority().createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Kickoff" }));
+    expect(result).toMatchObject({ ok: true, created: true });
+    expect(advisor.scheduleMissionKickoffAdvice).toHaveBeenCalledTimes(1);
+    expect(advisor.scheduleMissionKickoffAdvice).toHaveBeenCalledWith(expect.objectContaining({
+      missionId: result.mission!.id, origin: "pane", goal: expect.stringContaining("Kickoff"),
+    }));
+  });
+
   it("falha fechado quando o gate não aceita a adoção: nenhuma missão fica pendurada", async () => {
+    advisor.scheduleMissionKickoffAdvice.mockClear();
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);
     // Sessão `user` que já é mão de outro fluxo: o gate a deu a outra missão.
@@ -411,6 +429,7 @@ describe("missão leve da aba — adoção da mão do operador", () => {
 
     expect(result).toEqual({ ok: false, error: "promotion_failed" });
     expect(requireProjectDomainStoreRegistry().forScope(scope).missions.list()).toEqual([]);
+    expect(advisor.scheduleMissionKickoffAdvice).not.toHaveBeenCalled();
     expect(getOwnedAgentSessionInfo(owner, sessionId)).toMatchObject({ role: "user" });
   });
 

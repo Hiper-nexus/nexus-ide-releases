@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { SpawnRouteInfo } from './spawn-route';
+import type { DecisionRoute } from './decision-models';
 import { canonicalCliAdapterId } from './cli-adapter-id';
 import type { ProjectExecutionScope } from './types';
 import type {
@@ -359,8 +360,81 @@ export interface Mission {
   latestRoute?: MissionRouteTrace;
   /** Canonical, main-verified completion payload shown by the product UI. */
   result?: MissionResult;
+  /**
+   * F-1166: dicas consultivas do motor de decisão (kickoff, triagem de
+   * revisão, recuperação, conclusão). Só leitura, anexadas pelo Main ao ler a
+   * missão; ausente em missões antigas. Nunca autoridade.
+   */
+  decisionHints?: MissionDecisionHints;
   createdAt: number;
   updatedAt: number;
+}
+
+/** Recibo comum de uma dica consultiva: rota, custo e quando. */
+export interface MissionDecisionHintReceipt {
+  readonly at: number;
+  readonly model: string;
+  readonly route?: DecisionRoute;
+  /** Custo medido; null = desconhecido (o cobrado do orçamento fica em budgetChargedUsd). */
+  readonly usd: number | null;
+  readonly budgetChargedUsd?: number;
+  readonly probabilities: Readonly<Record<string, number>>;
+}
+
+export interface MissionKickoffHint extends MissionDecisionHintReceipt {
+  readonly origin: 'conventional' | 'pane';
+  /** 0 trivial … 3 grande. */
+  readonly complexity: number;
+  readonly complexityLevel: 'trivial' | 'small' | 'medium' | 'large';
+  /** Workers sugeridos, sempre dentro de maxWorkers. */
+  readonly workers: number;
+  readonly maxWorkers: number;
+  readonly lane: 'standard' | 'consult' | 'plan' | 'ops';
+  readonly laneConfidence: number;
+}
+
+export interface MissionReviewTriageHint extends MissionDecisionHintReceipt {
+  readonly handoffId: string;
+  readonly regressionRisk: number;
+  readonly recommendIndependentReview: boolean;
+}
+
+/**
+ * Classe categórica da queda. NUNCA o texto do detector: ecoado (whoami,
+ * mission_get), ele casaria de novo no PTY do worker religado (F-520).
+ */
+export type RecoveryTriggerClass = 'rate-limit' | 'quota' | 'auth' | 'transient' | 'model-rejected' | 'unknown';
+
+export interface MissionRecoveryHint extends MissionDecisionHintReceipt {
+  readonly triggerClass: RecoveryTriggerClass;
+  readonly paneId?: string;
+  readonly adapterId?: string;
+  readonly advice: 'retry-same-cli' | 'switch-cli' | 'escalate-orchestrator';
+  readonly confidence: number;
+}
+
+export interface MissionCompletionHint extends MissionDecisionHintReceipt {
+  /** Probabilidade de os handoffs cobrirem o objetivo. */
+  readonly coverage: number;
+  readonly warning: boolean;
+  readonly handoffCount: number;
+  /** Assinatura dos handoffs de sucesso julgados: igual = a dica ainda vale. */
+  readonly signature: string;
+  /** Consultas já feitas nesta missão (teto 3). */
+  readonly consultations: number;
+  /** Critério de aceite que parece faltar (texto do operador, neutralizado). */
+  readonly missing?: string;
+  /** Auditoria na conclusão: reaproveitou a dica (mesma assinatura) ou não. */
+  readonly finalAudit?: { readonly at: number; readonly reused: boolean };
+}
+
+export interface MissionDecisionHints {
+  readonly kickoff?: MissionKickoffHint;
+  readonly reviewTriage?: readonly MissionReviewTriageHint[];
+  readonly recovery?: readonly MissionRecoveryHint[];
+  readonly completion?: MissionCompletionHint;
+  /** Quando a missão concluiu (auditoria final): base da limpeza no boot. */
+  readonly finalizedAt?: number;
 }
 
 export type MissionOperatorCompleteResult =

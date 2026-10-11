@@ -1,3 +1,5 @@
+import { getMissionDecisionHints } from './mission-decision-hints';
+import type { MissionDecisionHints } from '../../shared/orch-types';
 import { assertLicenseAccess } from '../license-enforcement';
 import { captureMissionPaneResume } from './mission-pane-resume';
 import { rollbackWorkerContinuationBeforeBirth } from './mission-pane-resume-ownership';
@@ -2862,8 +2864,19 @@ const paneWhoami: McpToolDef = {
     account: ctx.sessionId
       ? (getAccountChoiceReceipt(ctx.sessionId) ?? null)
       : null,
+    // F-1166: dicas consultivas da PRÓPRIA missão (nunca de outra); ausente sem dica.
+    ...(ctx.missionId ? missionHintsField(ctx.missionId) : {}),
   }),
 };
+
+function missionHintsField(missionId: string): { decisionHints?: MissionDecisionHints } {
+  try {
+    const hints = getMissionDecisionHints(missionId);
+    return hints ? { decisionHints: hints } : {};
+  } catch {
+    return {};
+  }
+}
 
 const paneListProviders: McpToolDef = {
   name: 'nexus_pane_list_providers',

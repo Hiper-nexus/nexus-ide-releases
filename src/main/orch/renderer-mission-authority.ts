@@ -1,3 +1,4 @@
+import { missionKickoffFacts, scheduleMissionKickoffAdvice } from "./jev-mission-advisor";
 import { captureMissionCodeBaseline } from './mission-code-baseline-ledger';
 import { createHash } from "node:crypto";
 import type { WebContents } from "electron";
@@ -951,6 +952,8 @@ export class RendererMissionAuthority {
       this.#discardPaneMission(suite, created.id, owned.sessionId);
       return result;
     }
+    // F-1166: a +pane pula o intake; o kickoff consultivo cobre a lacuna, fora do caminho crítico.
+    scheduleMissionKickoffAdvice(missionKickoffFacts(suite.missions.get(created.id) ?? created, "pane"));
     return { ...result, created: true };
   }
 

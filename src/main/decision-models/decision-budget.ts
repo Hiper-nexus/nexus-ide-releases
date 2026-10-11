@@ -153,7 +153,12 @@ export function getDecisionBudgetLedger(): DecisionBudgetLedger {
   return defaultLedger;
 }
 
-const TERMINAL_MISSION_STATUSES = new Set(['done', 'failed', 'cancelled']);
+/**
+ * Só `done` é terminal: "completed mission status is immutable"
+ * (nexus_mission_set_status). `failed`/`blocked` voltam a `running` pelo
+ * Retomar e por reativação status-only — esquecer ali zeraria o gasto.
+ */
+const TERMINAL_MISSION_STATUSES = new Set(['done']);
 
 /**
  * Boot: cria o livro, aquece fora do caminho quente e esquece missões

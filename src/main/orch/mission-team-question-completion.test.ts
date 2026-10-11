@@ -7,7 +7,13 @@ import { maybeApplyCivilianPronto } from './civilian-pronto';
 import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
 import { inspectTeamQuestionCompletion } from './mission-team-question-completion';
 import { hashMissionIntentAuthority } from './mission-pane-authority';
-import { completeVerifiedMission } from './mission-engine-production';
+import { completeVerifiedMission, scheduleConventionalMissionKickoff } from './mission-engine-production';
+const advisor = vi.hoisted(() => ({ auditCompletionAtDone: vi.fn(), scheduleMissionKickoffAdvice: vi.fn() }));
+vi.mock('./jev-mission-advisor', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./jev-mission-advisor')>()),
+  auditCompletionAtDone: advisor.auditCompletionAtDone,
+  scheduleMissionKickoffAdvice: advisor.scheduleMissionKickoffAdvice,
+}));
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { configureProjectDomainStoreRegistry, disposeProjectDomainStoreRegistry, type ProjectDomainStoreSuite } from './project-domain-store-registry';
@@ -406,5 +412,58 @@ describe('team-question observer fallback for unsealed panes (F-143)', () => {
     });
     expect(current.status).toBe('done');
     expect(current.result?.summary).toBe('Respostas da equipe:\n- Codex: 4\n- Cursor: 4\n- DeepSeek: 4');
+  });
+});
+
+
+describe('F-1166: surfaces consultivas na fronteira de conclusão e no kickoff convencional', () => {
+  beforeEach(() => { advisor.auditCompletionAtDone.mockReset(); advisor.scheduleMissionKickoffAdvice.mockClear(); });
+
+  it('a conclusão agenda a auditoria final desta missão (com os handoffs dela) e conclui sem esperar', () => {
+    const state = complete([handoff('Codex')], { operatorOverride: true });
+    state.run();
+    expect(state.current.status).toBe('done');
+    expect(advisor.auditCompletionAtDone).toHaveBeenCalledTimes(1);
+    const [missionId, collect] = advisor.auditCompletionAtDone.mock.calls[0]!;
+    expect(missionId).toBe('ask-team');
+    expect(collect()).toMatchObject({ missionId: 'ask-team', goal: 'Pergunte aos panes quanto é 2 + 2.',
+      acceptanceCriteria: ['Resposta identificada de cada integrante'],
+      handoffs: [{ id: 'handoff-Codex', status: 'success', summary: '4' }] });
+  });
+
+  it('coletor que lança (store fechado) não impede concluir nem escapa da auditoria real', async () => {
+    const real = await vi.importActual<typeof import('./jev-mission-advisor')>('./jev-mission-advisor');
+    advisor.auditCompletionAtDone.mockImplementation(real.auditCompletionAtDone);
+    const state = complete([handoff('Codex')], { operatorOverride: true });
+    (state.stores.handoffs as unknown as { list: () => never }).list = () => { throw new Error('store fechado'); };
+    expect(() => state.run()).not.toThrow();
+    expect(state.current.status).toBe('done');
+    await new Promise((resolve) => setImmediate(resolve));
+    await real.settleCompletionChecksForTesting();
+  });
+
+  it('conclusão recusada pelas conferências não agenda nada', () => {
+    const state = complete([]);
+    expect(() => state.run()).toThrow();
+    expect(advisor.auditCompletionAtDone).not.toHaveBeenCalled();
+  });
+
+  it('erro no agendamento nunca impede concluir', () => {
+    advisor.auditCompletionAtDone.mockImplementationOnce(() => { throw new Error('advisor quebrado'); });
+    const state = complete([handoff('Codex')], { operatorOverride: true });
+    state.run();
+    expect(state.current.status).toBe('done');
+  });
+
+  it('kickoff convencional: agenda com os fatos da missão; missão ausente ou erro não lança', () => {
+    const current = mission();
+    scheduleConventionalMissionKickoff({ missions: { get: () => current } } as never, current.id);
+    expect(advisor.scheduleMissionKickoffAdvice).toHaveBeenCalledWith(expect.objectContaining({
+      missionId: 'ask-team', origin: 'conventional', maxWorkers: 3, lane: 'consult', goal: 'Pergunte aos panes quanto é 2 + 2.',
+    }));
+    advisor.scheduleMissionKickoffAdvice.mockClear();
+    expect(() => scheduleConventionalMissionKickoff({ missions: { get: () => null } } as never, 'gone')).not.toThrow();
+    expect(() => scheduleConventionalMissionKickoff({ missions: { get: () => { throw new Error('db'); } } } as never, 'x')).not.toThrow();
+    expect(advisor.scheduleMissionKickoffAdvice).not.toHaveBeenCalled();
   });
 });

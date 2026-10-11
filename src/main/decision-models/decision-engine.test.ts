@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DecisionSettings } from '../../shared/decision-models';
-import { planAutoDecision } from './decision-engine';
+import { decisionSurfaceProfile, planAutoDecision } from './decision-engine';
 import { resolveDecisionRoute, type DecisionAvailability } from './decision-routing';
 import type { DecisionQualityTable } from './decision-quality';
 
@@ -138,5 +138,24 @@ describe('roteador v2: orçamento e "usar várias"', () => {
     const slow: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
       surfaces: { judgeTool: { clef: { accuracy: 0.99, cases: 10, p50Ms: 9_000 } } } };
     expect(planAutoDecision(text('judgeTool'), auto, all, { budgetLevel: 'normal', quality: slow })?.route.provider).toBe('jev');
+  });
+});
+
+describe('F-1166: perfis e priors das surfaces consultivas', () => {
+  it('prazo consultivo de 8 s e criticidade normal (sem ensemble)', () => {
+    for (const surface of ['missionKickoff', 'reviewTriage', 'recoveryAdvice', 'completionCheck']) {
+      expect(decisionSurfaceProfile(text(surface), auto, all)).toEqual({ modality: 'text', criticality: 'normal', latencyBudgetMs: 8_000 });
+      expect(planAutoDecision(text(surface), auto, all, measured)?.members).toBeUndefined();
+    }
+  });
+
+  it('julgamento sobre entrega (triagem, conclusão) prefere raciocínio; kickoff e recuperação ficam no Jev', () => {
+    expect(planAutoDecision(text('reviewTriage'), auto, all, normal)?.route.provider).toBe('luna');
+    expect(planAutoDecision(text('completionCheck'), auto, all, normal)?.route.provider).toBe('luna');
+    expect(planAutoDecision(text('completionCheck'), auto, { jev: true, clef: true, luna: false }, normal)?.route.provider).toBe('jev');
+    expect(planAutoDecision(text('missionKickoff'), auto, all, normal)?.route.provider).toBe('jev');
+    expect(planAutoDecision(text('recoveryAdvice'), auto, all, normal)?.route.provider).toBe('jev');
+    // Acima de 80% do orçamento: o mais barato, como em qualquer surface.
+    expect(planAutoDecision(text('reviewTriage'), auto, all, { budgetLevel: 'soft', quality: null })?.route.model).toBe('clef-flash');
   });
 });

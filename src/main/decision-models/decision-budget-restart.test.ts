@@ -63,11 +63,50 @@ describe('P2-3: reinício reconstrói o cobrado, não zero', () => {
       listener?.({ kind: 'mission.completed', payload: { missionId: 'm-done' } });
       listener?.({ kind: 'mission.state', payload: { missionId: 'm-run', status: 'running' } });
       expect(ledger.size).toBe(1);
+      // failed/blocked voltam a running pelo Retomar: o gasto não pode zerar.
       listener?.({ kind: 'mission.state', payload: { missionId: 'm-run', status: 'failed' } });
+      listener?.({ kind: 'mission.state', payload: { missionId: 'm-run', status: 'blocked' } });
+      expect(ledger.size).toBe(1);
+      listener?.({ kind: 'mission.state', payload: { missionId: 'm-run', status: 'done' } });
       expect(ledger.size).toBe(0);
       await vi.advanceTimersByTimeAsync(60);
       dispose();
       expect(listener).toBeUndefined();
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('P3: leitura do diário resistente à rotação', () => {
+  it('lê o par rotacionado + corrente e soma os dois', async () => {
+    recordJevDecision({ surface: 'intake', missionId: 'm-pair', model: 'jev', questions: [], probabilities: {}, decision: 'ok',
+      inputTokens: 1, usd: 0.002 }, { dir });
+    fs.renameSync(path.join(dir, 'decisions.jsonl'), path.join(dir, 'decisions.1.jsonl'));
+    recordJevDecision({ surface: 'intake', missionId: 'm-pair', model: 'jev', questions: [], probabilities: {}, decision: 'ok',
+      inputTokens: 1, usd: 0.003 }, { dir });
+    const spend = await jevMissionChargedSpend({ before: Date.now() + 1, dir });
+    expect(spend['m-pair']).toBeCloseTo(0.005, 12);
+  });
+
+  it('rotação durante a leitura (inode do corrente muda) refaz a leitura', async () => {
+    recordJevDecision({ surface: 'intake', missionId: 'm-rot', model: 'jev', questions: [], probabilities: {}, decision: 'ok',
+      inputTokens: 1, usd: 0.004 }, { dir });
+    const realRead = fs.promises.readFile;
+    let rotated = false;
+    const spy = vi.spyOn(fs.promises, 'readFile').mockImplementation(async (...args: Parameters<typeof realRead>) => {
+      const result = await realRead(...args);
+      if (!rotated && String(args[0]).endsWith('decisions.jsonl')) {
+        rotated = true;
+        // Rotação concorrente: o corrente vira .1 e nasce um corrente novo (inode novo).
+        fs.renameSync(path.join(dir, 'decisions.jsonl'), path.join(dir, 'decisions.1.jsonl'));
+        recordJevDecision({ surface: 'intake', missionId: 'm-rot', model: 'jev', questions: [], probabilities: {},
+          decision: 'ok', inputTokens: 1, usd: 0.001 }, { dir });
+      }
+      return result;
+    });
+    try {
+      const spend = await jevMissionChargedSpend({ before: Date.now() + 60_000, dir });
+      // Sem refazer, a 1ª leitura via .1 vazio + corrente antigo (0,004) e perdia a linha nova (0,001).
+      expect(spend['m-rot']).toBeCloseTo(0.005, 12);
+    } finally { spy.mockRestore(); }
   });
 });

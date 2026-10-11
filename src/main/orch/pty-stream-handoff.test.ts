@@ -22,6 +22,12 @@ vi.mock("./gate", async (importOriginal) => ({
   markHandoffSubmitted: mocks.markHandoffSubmitted,
 }));
 
+const advisor = vi.hoisted(() => ({ scheduleReviewTriageAdvice: vi.fn(), scheduleCompletionCheck: vi.fn() }));
+vi.mock("./jev-mission-advisor", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./jev-mission-advisor")>()),
+  scheduleReviewTriageAdvice: advisor.scheduleReviewTriageAdvice,
+  scheduleCompletionCheck: advisor.scheduleCompletionCheck,
+}));
 vi.mock("./idle-delivery", () => ({
   onHandoffSubmitted: mocks.onHandoffSubmitted,
 }));
@@ -205,6 +211,53 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     });
     await submitPtyStreamHandoff('agy-session', { ...payload, status: 'success' });
     expect(mocks.reviewMissionHandoff.mock.calls.length > 0).toBe(reviewed);
+  });
+
+  it('F-1166: handoff PTY de código agenda a triagem consultiva da própria missão', async () => {
+    advisor.scheduleReviewTriageAdvice.mockClear();
+    mocks.getContextBySession.mockReturnValue(workerCtx());
+    mocks.getStores.mockReturnValue({
+      missions: { get: () => approvedMission() }, tasks: { list: () => [], getPlannedTask: () => null },
+      missionPanes: { list: () => [] }, taskDispatches: { list: () => [] },
+      handoffs: {
+        submitFromPhysicalAgentBoundaryWithReplay: vi.fn(() => ({
+          handoff: { id: 'hoff-code', evidenceTrust: 'nexus-trusted', deliveryState: 'queued' }, replayed: false,
+        })),
+        submitFromPhysicalAgentBoundaryAndTransitionDispatch: vi.fn(),
+      },
+    });
+    await submitPtyStreamHandoff('agy-session', { ...payload, artifacts: ['src/login.ts'] });
+    expect(advisor.scheduleReviewTriageAdvice).toHaveBeenCalledWith(expect.objectContaining({
+      missionId: 'mission-a', handoffId: 'hoff-code', declaredFiles: ['src/login.ts'], goal: 'Implementar interface',
+    }));
+    advisor.scheduleReviewTriageAdvice.mockClear();
+    await submitPtyStreamHandoff('agy-session', payload);
+    expect(advisor.scheduleReviewTriageAdvice).not.toHaveBeenCalled();
+  });
+
+  it('F-1166: handoff PTY de sucesso agenda a cobertura do objetivo; blocked não', async () => {
+    advisor.scheduleCompletionCheck.mockClear();
+    const list = vi.fn(() => [{ id: 'hoff-1', status: 'success', summary: 'feito' }]);
+    mocks.getContextBySession.mockReturnValue(workerCtx());
+    mocks.getStores.mockReturnValue({
+      missions: { get: () => approvedMission() }, tasks: { list: () => [], getPlannedTask: () => null },
+      missionPanes: { list: () => [] }, taskDispatches: { list: () => [] },
+      handoffs: {
+        list,
+        submitFromPhysicalAgentBoundaryWithReplay: vi.fn(() => ({
+          handoff: { id: 'hoff-1', evidenceTrust: 'nexus-trusted', deliveryState: 'queued' }, replayed: false,
+        })),
+        submitFromPhysicalAgentBoundaryAndTransitionDispatch: vi.fn(),
+      },
+    });
+    await submitPtyStreamHandoff('agy-session', payload);
+    expect(advisor.scheduleCompletionCheck).toHaveBeenCalledTimes(1);
+    const [missionId, collect] = advisor.scheduleCompletionCheck.mock.calls[0]!;
+    expect(missionId).toBe('mission-a');
+    expect(collect()).toMatchObject({ missionId: 'mission-a', goal: 'Implementar interface', handoffs: [{ id: 'hoff-1' }] });
+    advisor.scheduleCompletionCheck.mockClear();
+    await submitPtyStreamHandoff('agy-session', { ...payload, status: 'blocked', summary: 'Bloqueado: falta credencial do banco.' });
+    expect(advisor.scheduleCompletionCheck).not.toHaveBeenCalled();
   });
 
   it('keeps mechanical visual completion partial even when the worker claims a screenshot', async () => {

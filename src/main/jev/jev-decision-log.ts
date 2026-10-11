@@ -410,13 +410,30 @@ function chargedUsdOf(entry: JevDecisionEntry): number {
 
 const SPEND_YIELD_EVERY_LINES = 2_000;
 
-async function readMissionSpend(file: string, before: number, into: Record<string, number>): Promise<void> {
-  let raw: string;
-  try {
-    raw = await fs.promises.readFile(file, 'utf8');
-  } catch {
-    return;
+async function readOrEmpty(file: string): Promise<string> {
+  try { return await fs.promises.readFile(file, 'utf8'); } catch { return ''; }
+}
+
+async function inodeOf(file: string): Promise<number | null> {
+  try { return (await fs.promises.stat(file)).ino; } catch { return null; }
+}
+
+/**
+ * Lê rotacionado E corrente antes de processar. Uma rotação no meio (o
+ * corrente vira `.1`) troca o inode do corrente: refaz, até 3 vezes.
+ */
+async function readJournalPair(dir: string): Promise<[string, string]> {
+  let pair: [string, string] = ['', ''];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const before = await inodeOf(logFile(dir));
+    pair = await Promise.all([readOrEmpty(rotatedLogFile(dir)), readOrEmpty(logFile(dir))]);
+    if ((await inodeOf(logFile(dir))) === before) return pair;
   }
+  return pair;
+}
+
+async function readMissionSpend(raw: string, before: number, into: Record<string, number>): Promise<void> {
+  if (!raw) return;
   const lines = raw.split('\n');
   for (let index = 0; index < lines.length; index++) {
     // Cede a thread a cada bloco: o diário pode ter 10 MB e o Main não trava.
@@ -438,8 +455,9 @@ export async function jevMissionChargedSpend(opts: { before: number; dir?: strin
   const spend: Record<string, number> = Object.create(null);
   let dir: string;
   try { dir = opts.dir ?? decisionsDir(); } catch { return spend; }
-  await readMissionSpend(rotatedLogFile(dir), opts.before, spend);
-  await readMissionSpend(logFile(dir), opts.before, spend);
+  const [rotated, current] = await readJournalPair(dir);
+  await readMissionSpend(rotated, opts.before, spend);
+  await readMissionSpend(current, opts.before, spend);
   return spend;
 }
 

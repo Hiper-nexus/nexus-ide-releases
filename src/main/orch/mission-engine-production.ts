@@ -1,3 +1,4 @@
+import { auditCompletionAtDone, completionFactsFrom, missionKickoffFacts, scheduleMissionKickoffAdvice } from "./jev-mission-advisor";
 import path from "node:path";
 import { missionExecutionScope, prepareMissionExecutionScope } from './mission-execution-scope';
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
@@ -1927,6 +1928,22 @@ function transitionMissionEngineLifecycle(
   }
 }
 
+/**
+ * F-1166: dica de kickoff consultiva da missão convencional, depois do
+ * bootstrap do orquestrador e fora do caminho crítico (nunca lança).
+ */
+export function scheduleConventionalMissionKickoff(
+  stores: Pick<ProjectDomainStoreSuite, "missions">,
+  missionId: string,
+): void {
+  try {
+    const started = stores.missions.get(missionId);
+    if (started) scheduleMissionKickoffAdvice(missionKickoffFacts(started, "conventional"));
+  } catch (error) {
+    console.warn("[mission-engine] kickoff advice skipped:", error instanceof Error ? error.name : "unknown");
+  }
+}
+
 /** Final automatic completion boundary, shared by agents and civilian shortcuts. */
 export function completeVerifiedMission(
   scope: ProjectExecutionScope,
@@ -1987,6 +2004,13 @@ export function completeVerifiedMission(
         ? leader.sessionId : undefined },
     );
   }
+  // F-1166: auditoria final da cobertura (a consulta viva roda a cada handoff
+  // de sucesso). Mesma assinatura reaproveita a dica; nunca segura a conclusão.
+  try { auditCompletionAtDone(input.missionId, () => {
+    const mission = stores.missions.get(input.missionId);
+    if (!mission) return null;
+    return completionFactsFrom(mission, stores.handoffs?.list?.({ missionId: mission.id, includeDelivered: true }) ?? []);
+  }); } catch { /* consultivo: nunca segura a conclusão */ }
   transitionMissionEngineLifecycle(stores, input, {
     status: 'done', intentState: 'done', learnings: input.learnings, result,
   });
@@ -2040,6 +2064,7 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       // Via Rápida: terminais interativos direto no workspace — caminho único.
       // Do not block mission.start on first pane / Maestro boot idle.
       await fastLaneBootstrap(scope, missionId, { waitForFirstPane: false });
+      scheduleConventionalMissionKickoff(stores, missionId);
     },
     retryKickoff: (command) => withMissionLifecycleLock(scope, command.missionId, async () => {
       // O STOP do operador é lei (print de campo 19/08: "encerrei todas as

@@ -1,3 +1,4 @@
+import { withMissionDecisionHints } from './mission-decision-hints';
 import { isFindingCorrectionTask, matchesReviewedFinding } from './routing-cost-policy';
 import { captureMissionCodeBaseline } from './mission-code-baseline-ledger';
 import { configureCivilianCodeCompletionGate } from './civilian-delivery-completion';
@@ -503,7 +504,8 @@ const missionGetTool: McpToolDef = {
       requireStr(args, 'missionId'),
     );
     if (!mission) throw new Error('mission not found');
-    return mission;
+    // F-1166: dicas consultivas desta missão (kickoff, triagem, recuperação, conclusão).
+    return withMissionDecisionHints(mission);
   },
 };
 

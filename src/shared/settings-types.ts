@@ -163,6 +163,14 @@ export const orchSettingsSchema = z.object({
       catalogPick: z.boolean().default(true),
       /** Motor (06/10): julgamento do momentum da missão (preso vs gate longo). */
       missionMomentum: z.boolean().default(true),
+      /** F-1166: complexidade, workers e lane sugeridos no início da missão (consultivo). */
+      missionKickoff: z.boolean().default(true),
+      /** F-1166: risco de regressão do handoff de código e revisão independente sugerida. */
+      reviewTriage: z.boolean().default(true),
+      /** F-1166: na queda do worker, repetir a CLI, trocar ou escalar (consultivo). */
+      recoveryAdvice: z.boolean().default(true),
+      /** F-1166: os handoffs cobrem o objetivo? Aviso na conclusão, nunca bloqueia. */
+      completionCheck: z.boolean().default(true),
     })
     .prefault({}),
   /**

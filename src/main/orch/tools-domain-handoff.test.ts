@@ -49,6 +49,12 @@ vi.mock("./gate", async (importOriginal) => ({
   markHandoffSubmitted: mocks.markHandoffSubmitted,
 }));
 
+const advisor = vi.hoisted(() => ({ scheduleReviewTriageAdvice: vi.fn(), scheduleCompletionCheck: vi.fn() }));
+vi.mock("./jev-mission-advisor", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./jev-mission-advisor")>()),
+  scheduleReviewTriageAdvice: advisor.scheduleReviewTriageAdvice,
+  scheduleCompletionCheck: advisor.scheduleCompletionCheck,
+}));
 vi.mock("./idle-delivery", () => ({
   onHandoffSubmitted: mocks.onHandoffSubmitted,
 }));
@@ -587,6 +593,24 @@ describe("handoff MCP stop receipt", () => {
       expect.anything(),
     );
     expect(result).toMatchObject({ jevReview: "weak" });
+  });
+
+  it("F-1166: handoff de código de sucesso agenda a triagem consultiva (sem esperar); sem arquivos, não", async () => {
+    advisor.scheduleReviewTriageAdvice.mockClear();
+    await submitTool().handler(
+      { status: "success", summary: "Implementei o formulário de login com testes.", filesModified: ["src/login.ts"] },
+      context(), invocation(),
+    );
+    expect(advisor.scheduleReviewTriageAdvice).toHaveBeenCalledTimes(1);
+    expect(advisor.scheduleReviewTriageAdvice).toHaveBeenCalledWith(expect.objectContaining({
+      missionId: "mission-a", handoffId: "handoff-a", declaredFiles: ["src/login.ts"],
+    }));
+    advisor.scheduleReviewTriageAdvice.mockClear();
+    await submitTool().handler(
+      { status: "success", summary: "Respondi a pergunta do Maestro sem mexer em código." },
+      context(), invocation(),
+    );
+    expect(advisor.scheduleReviewTriageAdvice).not.toHaveBeenCalled();
   });
 
   it("skips the Jev review for plan-lane handoffs", async () => {
@@ -1520,6 +1544,44 @@ describe("handoff MCP stop receipt", () => {
         },
       ),
     ).rejects.toThrow(/sess[aã]o/i);
+  });
+
+  it("F-1166: handoff de sucesso agenda a cobertura do objetivo com os handoffs da própria missão", async () => {
+    advisor.scheduleCompletionCheck.mockClear();
+    mocks.submit.mockImplementationOnce(() => handoff("unverified")).mockImplementationOnce(() => ({ ...handoff("unverified"), status: "blocked" }));
+    await submitTool().handler({ status: "success", summary: "Implementei o formulário de login com testes." }, context(), invocation());
+    expect(advisor.scheduleCompletionCheck).toHaveBeenCalledTimes(1);
+    const [missionId, collect] = advisor.scheduleCompletionCheck.mock.calls[0]!;
+    expect(missionId).toBe("mission-a");
+    mocks.listHandoffs.mockReturnValueOnce([{ id: "h-1", status: "success", summary: "feito" }]);
+    expect(collect()).toMatchObject({ missionId: "mission-a", handoffs: [{ id: "h-1", status: "success", summary: "feito" }] });
+    advisor.scheduleCompletionCheck.mockClear();
+    await submitTool().handler({ status: "blocked", summary: "Não consegui: falta a credencial do banco de dados." }, context(), invocation());
+    expect(advisor.scheduleCompletionCheck).not.toHaveBeenCalled();
+  });
+
+  it("F-1166: o Maestro listando a própria missão vê a linha de cobertura; worker e outra missão não", async () => {
+    const hints = await import("./mission-decision-hints");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "list-coverage-"));
+    hints.configureMissionDecisionHints(dir);
+    try {
+      hints.recordCompletionHint("mission-a", { at: 1, model: "jev", usd: null, probabilities: {}, coverage: 0.35, warning: true,
+        handoffCount: 2, signature: "s", consultations: 1, missing: "testes passam" });
+      mocks.listHandoffs.mockReturnValue([{ id: "h-1", delivered: true }, { id: "h-2", delivered: true }]);
+      const rows = (await listTool().handler({}, orchestratorContext())) as Array<Record<string, unknown>>;
+      expect(rows[1]!.missionDecisionHint).toBe("[motor de decisão] cobertura do objetivo 35%: parece faltar: testes passam");
+      expect(rows[0]!.missionDecisionHint).toBeUndefined();
+      const page = (await listTool().handler({ limit: 10 }, orchestratorContext())) as Record<string, unknown>;
+      expect(page.missionDecisionHint).toContain("cobertura do objetivo 35%");
+      const asWorker = (await listTool().handler({}, context())) as Array<Record<string, unknown>>;
+      expect(asWorker.some((row) => "missionDecisionHint" in row)).toBe(false);
+      const otherMission = (await listTool().handler({ missionId: "mission-b" }, orchestratorContext())) as Array<Record<string, unknown>>;
+      expect(otherMission.some((row) => "missionDecisionHint" in row)).toBe(false);
+      await hints.flushMissionDecisionHints();
+    } finally {
+      hints.configureMissionDecisionHints(undefined);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("lists the Maestro audit trail by default, including delivered rows", async () => {

@@ -208,6 +208,7 @@ import { registerMissionPickIpc } from "./jev/jev-mission-pick-ipc";
 import { registerDecisionModelIpc } from "./decision-models/decision-model-ipc";
 import { startDecisionBudgetLedger } from "./decision-models/decision-budget";
 import { subscribeAppEvents } from "./connectors/app-events";
+import { startMissionDecisionHintsSweep } from "./orch/mission-decision-hints";
 import { registerVisionIpc } from "./vision/ipc-bridge";
 import {
   initAdapterRegistry,
@@ -748,6 +749,8 @@ async function bootstrap(): Promise<void> {
   // F-1164: aquece o livro de orçamento por missão fora do caminho quente e
   // esquece missões encerradas.
   bootStep('startDecisionBudgetLedger', () => { startDecisionBudgetLedger({ subscribe: subscribeAppEvents }); });
+  // F-1166: limpa no boot as dicas de missões concluídas há mais de 7 dias.
+  bootStep('startMissionDecisionHintsSweep', () => { startMissionDecisionHintsSweep(); });
   // The window is created by the app-ready handler before bootstrap starts.
   // Keep the rest of registration below it so account/secrets/billing cannot
   // delay the first visible UI.

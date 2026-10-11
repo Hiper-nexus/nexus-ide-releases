@@ -1668,3 +1668,63 @@ describe('remote spawn invocation authority', () => {
     );
   });
 });
+
+describe('F-1166: nexus_mission_get anexa as dicas consultivas da missão', () => {
+  it('missão com dica sai com decisionHints; antiga sai igual; dica de outra missão não vaza', async () => {
+    const hints = await import('./mission-decision-hints');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-get-hints-'));
+    hints.configureMissionDecisionHints(dir);
+    try {
+      const missions: Record<string, { id: string; title: string }> = {
+        'm-hint': { id: 'm-hint', title: 'com dica' }, 'm-old': { id: 'm-old', title: 'antiga' },
+      };
+      mocks.getProjectDomainStores.mockReturnValue({ missions: { get: (id: string) => missions[id] ?? null } });
+      hints.recordCompletionHint('m-hint', { at: 1, model: 'jev', usd: null, probabilities: {}, coverage: 0.2,
+        warning: true, handoffCount: 3, signature: 's', consultations: 1 });
+      const tool = buildDomainTools().find((candidate) => candidate.name === 'nexus_mission_get')!;
+      expect(await tool.handler({ missionId: 'm-hint' }, context('orchestrator'))).toMatchObject({
+        id: 'm-hint', decisionHints: { completion: { warning: true, coverage: 0.2 } } });
+      expect(await tool.handler({ missionId: 'm-old' }, context('orchestrator'))).toEqual({ id: 'm-old', title: 'antiga' });
+      await hints.flushMissionDecisionHints();
+    } finally {
+      hints.configureMissionDecisionHints(undefined);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+
+describe('F-1166 P1: dica de recuperação exposta não casa no limit-detector', () => {
+  it('JSON exposto com dica de recuperação e de cobertura: zero casamentos', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const hints = await import('./mission-decision-hints');
+    const advisorModule = await import('./jev-mission-advisor');
+    const { detectLimit } = await import('./limit-detector');
+    const LIMIT_TEXT = 'Error: 429 Too Many Requests';
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'limit-echo-'));
+    hints.configureMissionDecisionHints(dir);
+    try {
+      mocks.getProjectDomainStores.mockReturnValue({ missions: { get: (id: string) => (id === 'mission-1' ? { id, title: 't' } : null) } });
+      const deps = { enabled: () => true, hasKey: () => true };
+      const answer = (answers: Record<string, unknown>) => async () => ({ model: 'jev', answers, usage: { input_tokens: 1, output_tokens: 0 } }) as never;
+      // Classe vinda do detector real sobre o texto de limite; o texto não entra.
+      await advisorModule.adviseRecovery({ missionId: 'mission-1', paneId: 'p', adapterId: 'claude',
+        triggerClass: advisorModule.recoveryTriggerClass({ limitKind: detectLimit(LIMIT_TEXT)!.kind }) },
+      { ...deps, judge: answer({ next_step: { type: 'choice', choice: 'retry-same-cli', probabilities: {}, confidence: 0.9 } }) });
+      await advisorModule.adviseCompletionCheck({ missionId: 'mission-1', goal: 'g', acceptanceCriteria: [LIMIT_TEXT], handoffs: [] },
+        { ...deps, judge: answer({ covers_goal: { type: 'noul', noul: 0.2 }, missing: { type: 'choice', choice: 'c1', probabilities: {}, confidence: 0.9 } }) });
+      const tool = buildDomainTools().find((candidate) => candidate.name === 'nexus_mission_get')!;
+      const exposed = await tool.handler({ missionId: 'mission-1' }, context('orchestrator'));
+      const text = JSON.stringify(exposed, null, 2);
+      expect(text).toContain('rate-limit');
+      expect(detectLimit(text)).toBeNull();
+      for (const line of text.split('\n')) expect(detectLimit(line)).toBeNull();
+      await hints.flushMissionDecisionHints();
+    } finally {
+      hints.configureMissionDecisionHints(undefined);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
