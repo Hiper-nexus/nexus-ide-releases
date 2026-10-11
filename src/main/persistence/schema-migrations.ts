@@ -8,7 +8,7 @@ export interface MigrationDb {
 }
 
 interface AddColumnMigration {
-  table: 'squads' | 'mission_panes' | 'provider_pane_sessions';
+  table: 'squads' | 'mission_panes' | 'provider_pane_sessions' | 'provider_conversation_edits';
   column: string;
   definition: string;
 }
@@ -48,6 +48,13 @@ const ADD_COLUMN_MIGRATIONS: AddColumnMigration[] = [
     table: 'provider_pane_sessions',
     column: 'account_id',
     definition: 'account_id TEXT',
+  },
+  // F-1248: o build entre o F-1237 e o F-1242 criou a tabela sem o hash; lá o
+  // CREATE TABLE IF NOT EXISTS não muda nada. Linha sem hash ('') não é lida.
+  {
+    table: 'provider_conversation_edits',
+    column: 'content_sha256',
+    definition: "content_sha256 TEXT NOT NULL DEFAULT ''",
   },
 ];
 

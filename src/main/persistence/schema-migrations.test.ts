@@ -40,6 +40,8 @@ describe('migrateSchema', () => {
         'pane_id',
         'adapter_id',
       ],
+      // F-1248: tabela de um build entre o F-1237 e o F-1242, sem o hash.
+      provider_conversation_edits: ['rel_path', 'edited_at'],
     });
 
     migrateSchema(db);
@@ -58,6 +60,10 @@ describe('migrateSchema', () => {
       ]),
     );
     expect(columns.get('provider_pane_sessions')).toContain('account_id');
+    expect(columns.get('provider_conversation_edits')).toContain('content_sha256');
+    expect(calls).toContain(
+      "ALTER TABLE provider_conversation_edits ADD COLUMN content_sha256 TEXT NOT NULL DEFAULT ''",
+    );
 
     expect(calls.at(0)).toBe('BEGIN IMMEDIATE');
     expect(calls.at(-1)).toBe('COMMIT');
@@ -90,6 +96,7 @@ describe('migrateSchema', () => {
         'allowed_skills_json',
       ],
       provider_pane_sessions: ['account_id'],
+      provider_conversation_edits: ['content_sha256'],
     });
 
     migrateSchema(db);
@@ -118,6 +125,7 @@ CREATE TABLE IF NOT EXISTS todo_lists (id TEXT PRIMARY KEY);`;
       'allowed_skills_json',
     ],
     provider_pane_sessions: ['account_id'],
+    provider_conversation_edits: ['content_sha256'],
   };
 
   it('lists missing tables and columns without changing anything', () => {

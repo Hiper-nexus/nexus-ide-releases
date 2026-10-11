@@ -209,6 +209,37 @@ describe('nexus.db snapshot antes de migrar', () => {
   });
 });
 
+describe('F-1248: provider_conversation_edits de um build sem content_sha256', () => {
+  it('a tabela antiga ganha a coluna no boot e volta a gravar e ler; a linha antiga (sem hash) é ignorada', async () => {
+    const file = tempNexusDb();
+    // Build entre o F-1237 e o F-1242: a tabela existe, sem a coluna do hash.
+    const legacy = new Database(file);
+    legacy.exec(`CREATE TABLE provider_conversation_edits (
+      installation_id TEXT NOT NULL, project_id TEXT NOT NULL, checkout_id TEXT NOT NULL,
+      adapter_id TEXT NOT NULL, session_id TEXT NOT NULL, root_real_path TEXT NOT NULL,
+      rel_path TEXT NOT NULL, edited_at INTEGER NOT NULL,
+      PRIMARY KEY (installation_id, project_id, checkout_id, adapter_id, session_id, root_real_path, rel_path)
+    )`);
+    legacy.prepare('INSERT INTO provider_conversation_edits VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('i', 'p', 'c', 'claude', 'conv-a', '/repo', 'src/antigo.ts', Date.now());
+    legacy.close();
+
+    const mod = await boot();
+    expect(mod.getDb()).not.toBeNull();
+    const { listConversationEdits, recordConversationEdits } = await import('./conversation-edit-store');
+    const key = {
+      scope: { installationId: 'i', projectId: 'p', checkoutId: 'c' },
+      adapterId: 'claude',
+      conversationId: 'conv-a',
+      rootRealPath: '/repo',
+    };
+    const sha = 'a'.repeat(64);
+    expect(recordConversationEdits(key, new Map([['src/novo.ts', sha]]), Date.now())).toBe(1);
+    expect(listConversationEdits(key)).toEqual(new Map([['src/novo.ts', sha]]));
+    mod.closeDb();
+  });
+});
+
 describe('retenção dos snapshots', () => {
   it('mantém os mais novos, preserva o rollback ainda não confirmado e não toca em outros arquivos', () => {
     const file = tempNexusDb();
