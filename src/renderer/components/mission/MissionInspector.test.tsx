@@ -879,6 +879,44 @@ describe('MissionInspector', () => {
       const restore = changed?.querySelector('section[aria-label="Pontos de restauração dos writers"]');
       expect(restore?.textContent).toContain('Fim do turno de Ada');
       expect(restore?.textContent).toContain('nexus/writer-ada');
+      // Com resultado: um lugar só (nada na Atividade) e uma leitura só.
+      expect(host.querySelectorAll('[aria-label="Pontos de restauração dos writers"]')).toHaveLength(1);
+      expect(selectTab(host, 'Atividade').querySelector('[aria-label="Pontos de restauração dos writers"]')).toBeNull();
+      expect(listMissionCheckpoints).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(window, 'nexus', { configurable: true, value: previous });
+    }
+  });
+
+  it('F-1173: missão em curso mostra os pontos de restauração na Atividade, sem duplicar', async () => {
+    const listMissionCheckpoints = vi.fn(async ({ missionId }: { missionId: string }) => ({
+      ok: true, missionId, scopes: [{ root: '/p/.nexus/worktrees/writer-ada', branch: 'nexus/writer-ada', checkpoints: [{
+        ref: `refs/nexus-checkpoint/${'b'.repeat(32)}/ordinal/1`, ordinal: 1, createdAt: Date.UTC(2026, 9, 11, 13, 0),
+        kind: 'turn', writer: 'Ada', changed: { files: ['src/app.ts'], total: 1 } }] }],
+    }));
+    const previous = (window as unknown as { nexus?: unknown }).nexus;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: { listMissionCheckpoints } } });
+    try {
+      const running = missionSnapshotSchema.parse({ ...SNAPSHOT, state: 'running', stateReason: undefined, result: undefined });
+      const host = mount({
+        snapshot: running,
+        question: null,
+        events: [event({ id: 'event-handoff', type: 'handoff.submitted', idempotencyKey: 'event-key-handoff' })],
+      });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(listMissionCheckpoints).toHaveBeenCalledTimes(1);
+      expect(listMissionCheckpoints).toHaveBeenCalledWith({ missionId: running.id });
+      expect(host.querySelectorAll('[aria-label="Pontos de restauração dos writers"]')).toHaveLength(1);
+
+      const activity = selectTab(host, 'Atividade');
+      const restore = activity.querySelector<HTMLDetailsElement>('details[aria-label="Pontos de restauração dos writers"]');
+      expect(restore?.querySelector('summary')?.textContent).toBe('Pontos de restauração (1)');
+      expect(restore?.textContent).toContain('Fim do turno de Ada');
+      expect(restore?.querySelector('button[aria-label^="Restaurar: Fim do turno de Ada"]')).not.toBeNull();
+
+      const result = selectTab(host, 'Resultado');
+      expect(result.querySelector('[aria-label="Pontos de restauração dos writers"]')).toBeNull();
+      expect(result.textContent).toContain('Os pontos de restauração dos writers ficam na aba Atividade');
     } finally {
       Object.defineProperty(window, 'nexus', { configurable: true, value: previous });
     }
@@ -945,7 +983,8 @@ describe('MissionInspector', () => {
       ],
     });
     const panel = selectTab(host, 'Atividade');
-    const details = panel.querySelector('details');
+    // F-1173: a Atividade também tem o <details> dos pontos de restauração.
+    const details = panel.querySelector('details.mission-inspector__final-screen-item');
     const summary = details?.querySelector('summary');
 
     expect(summary?.textContent).toContain('Última tela — Construtor (worker)');

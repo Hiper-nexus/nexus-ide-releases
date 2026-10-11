@@ -161,7 +161,21 @@ function RestoreConfirmation({
   );
 }
 
-export function MissionCheckpoints({ missionId }: { readonly missionId: string }) {
+/**
+ * `collapsible`: missão em curso, dentro da Atividade — uma linha com a
+ * contagem que abre a lista, sem empurrar a timeline (F-1005: ela é a única
+ * rolagem do painel). `refreshKey` muda quando um writer entrega: a lista é
+ * relida em silêncio (sem "Carregando…" nem fechar a confirmação aberta).
+ */
+export function MissionCheckpoints({
+  missionId,
+  collapsible = false,
+  refreshKey = 0,
+}: {
+  readonly missionId: string;
+  readonly collapsible?: boolean;
+  readonly refreshKey?: number;
+}) {
   const [list, setList] = useState<ListState>({ kind: 'loading' });
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -169,9 +183,9 @@ export function MissionCheckpoints({ missionId }: { readonly missionId: string }
   const missionRef = useRef(missionId);
   missionRef.current = missionId;
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (quiet = false) => {
     const forMission = missionId;
-    setList({ kind: 'loading' });
+    if (!quiet) setList({ kind: 'loading' });
     try {
       const result = await window.nexus.orch.listMissionCheckpoints({ missionId: forMission });
       if (!alive.current || missionRef.current !== forMission) return;
@@ -181,6 +195,14 @@ export function MissionCheckpoints({ missionId }: { readonly missionId: string }
       setList({ kind: 'error', error: error instanceof Error ? error.message : String(error) });
     }
   }, [missionId]);
+
+  // Writer entregou de novo: relê sem apagar a lista nem a confirmação.
+  const lastRefresh = useRef(refreshKey);
+  useEffect(() => {
+    if (lastRefresh.current === refreshKey) return;
+    lastRefresh.current = refreshKey;
+    void load(true);
+  }, [load, refreshKey]);
 
   useEffect(() => {
     alive.current = true;
@@ -225,7 +247,7 @@ export function MissionCheckpoints({ missionId }: { readonly missionId: string }
           ? { kind: 'restored', ref, overwritten: result.overwrite.total, created: result.create.total }
           : { kind: 'unchanged', ref },
       );
-      void load();
+      void load(true);
     } catch (error) {
       if (!alive.current) return;
       setConfirm({ kind: 'failed', ref, error: error instanceof Error ? error.message : String(error) });
@@ -235,9 +257,8 @@ export function MissionCheckpoints({ missionId }: { readonly missionId: string }
   const scopes = list.kind === 'ready' ? list.scopes : [];
   const total = scopes.reduce((sum, scope) => sum + scope.checkpoints.length, 0);
 
-  return (
-    <section className="mission-checkpoints" aria-label="Pontos de restauração dos writers">
-      <h4 className="mission-checkpoints__title">Pontos de restauração</h4>
+  const body = (
+    <>
       {outcome ? (
         <p className="mission-checkpoints__outcome" role="status">
           {outcome.kind === 'restored'
@@ -305,6 +326,27 @@ export function MissionCheckpoints({ missionId }: { readonly missionId: string }
           </ul>
         </div>
       ))}
+    </>
+  );
+
+  if (collapsible) {
+    return (
+      <details
+        className="mission-checkpoints mission-checkpoints--collapsible"
+        aria-label="Pontos de restauração dos writers"
+      >
+        <summary className="mission-checkpoints__title">
+          Pontos de restauração{list.kind === 'ready' ? ` (${total})` : ''}
+        </summary>
+        {body}
+      </details>
+    );
+  }
+
+  return (
+    <section className="mission-checkpoints" aria-label="Pontos de restauração dos writers">
+      <h4 className="mission-checkpoints__title">Pontos de restauração</h4>
+      {body}
     </section>
   );
 }
