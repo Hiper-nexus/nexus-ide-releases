@@ -856,6 +856,9 @@ function isSourceNeedingTest(file: string): boolean {
   return /\.(?:[cm]?[jt]sx?|py)$/u.test(file);
 }
 
+/** F-1224: fonte de teste que a extensão/banco puxou só pelo WIP anterior ao spawn. */
+const WIP_IMPACT_SOURCE = '(WIP anterior ao spawn)';
+
 /**
  * Testes impactados: os próprios testes tocados, os co-localizados e os que
  * importam (direta ou transitivamente, até {@link REVERSE_DEPTH} saltos) um
@@ -868,6 +871,8 @@ export async function computeImpactedTests(
   /** Consumidores via banco: seus testes entram, mas eles não são "área sem teste". */
   dbConsumers: readonly string[] = [],
   includeE2E = false,
+  /** F-1224: os mesmos insumos, puxados só por WIP anterior ao spawn — rodam, mas não dão autoria. */
+  wip: { readonly tests: readonly string[]; readonly dbConsumers: readonly string[] } = { tests: [], dbConsumers: [] },
 ): Promise<ImpactedTests> {
   const { reverse, files, truncated } = await buildReverseGraph(scope, changedFiles);
   const fileSet = new Set(files);
@@ -920,15 +925,19 @@ export async function computeImpactedTests(
       untested.push(file);
     }
   }
-  for (const consumer of dbConsumers) {
-    const normalized = normalizeRelative(consumer);
-    if (!normalized) continue;
-    if (TEST_FILE_RE.test(normalized) || PY_TEST_RE.test(normalized)) addTest(normalized, '(banco)');
-    else testsOf(normalized, '(banco)');
+  for (const [consumers, label] of [[dbConsumers, '(banco)'], [wip.dbConsumers, WIP_IMPACT_SOURCE]] as const) {
+    for (const consumer of consumers) {
+      const normalized = normalizeRelative(consumer);
+      if (!normalized) continue;
+      if (TEST_FILE_RE.test(normalized) || PY_TEST_RE.test(normalized)) addTest(normalized, label);
+      else testsOf(normalized, label);
+    }
   }
-  for (const test of extraTests) {
-    const normalized = normalizeRelative(test);
-    if (normalized) addTest(normalized, '(extensão)');
+  for (const [tests, label] of [[extraTests, '(extensão)'], [wip.tests, WIP_IMPACT_SOURCE]] as const) {
+    for (const test of tests) {
+      const normalized = normalizeRelative(test);
+      if (normalized) addTest(normalized, label);
+    }
   }
   const e2eSkipped = includeE2E ? [] : ordered.filter((test) => E2E_FILE_RE.test(test));
   return {
@@ -1647,6 +1656,19 @@ async function evaluateMappedTests(
   const blastRadius = extensions.blastRadius ?? orientationBlastRadiusExtension;
   const radius = await safeExtension('blast radius estendido', warnings, () =>
     blastRadius({ scope: input.scope, changedFiles }));
+  // F-1224: raio e banco devolvem testes sem dizer de qual arquivo vieram (e o
+  // raio contém as próprias sementes). Com WIP anterior ao spawn no diff, a
+  // autoria deles sai do mesmo raio semeado só com o delta de quem entrega.
+  const foreign = new Set(state.changed.foreign);
+  const ownFiles = changedFiles.filter((file) => !foreign.has(file));
+  let ownRadius = radius;
+  if (radius && foreign.size > 0) {
+    try {
+      ownRadius = ownFiles.length > 0 ? await blastRadius({ scope: input.scope, changedFiles: ownFiles }) : null;
+    } catch {
+      // sem a 2ª consulta, o raio inteiro conta como do agente (conservador)
+    }
+  }
   const invariantsProvider = extensions.invariants ?? businessModelInvariantsExtension;
   const invariants: BusinessInvariant[] = (
     (await safeExtension('invariantes do modelo de negócio', warnings, () =>
@@ -1661,13 +1683,17 @@ async function evaluateMappedTests(
     funcoes: invariant.funcoes ?? [],
     testes: invariant.testes ?? [],
   }));
-  const dbEntities = new Set((radius?.dbEntities ?? []).map((name) => name.toLowerCase()));
-  const byFiles = new Set(invariantsTouchedBy(invariants, changedFiles));
-  const touched = invariants.filter(
-    (invariant) =>
-      byFiles.has(invariant) ||
-      [...invariant.tabelas, ...invariant.funcoes].some((name) => dbEntities.has(name.toLowerCase())),
-  );
+  const touchedBy = (files: readonly string[], entities: readonly string[] | undefined) => {
+    const dbEntities = new Set((entities ?? []).map((name) => name.toLowerCase()));
+    const byFiles = new Set(invariantsTouchedBy(invariants, files));
+    return invariants.filter(
+      (invariant) =>
+        byFiles.has(invariant) ||
+        [...invariant.tabelas, ...invariant.funcoes].some((name) => dbEntities.has(name.toLowerCase())),
+    );
+  };
+  const touched = touchedBy(changedFiles, radius?.dbEntities);
+  const ownTouched = foreign.size > 0 ? touchedBy(ownFiles, ownRadius?.dbEntities) : touched;
   const touchedSummary = (failedTests: ReadonlySet<string>): RegressionInvariantTouched[] =>
     touched.map((invariant) => ({
       id: invariant.id,
@@ -1691,10 +1717,20 @@ async function evaluateMappedTests(
     }),
   );
   const extraTests = [...(radius?.tests ?? []), ...touched.flatMap((invariant) => invariant.testes ?? [])];
+  const ownExtra = new Set([...(ownRadius?.tests ?? []), ...ownTouched.flatMap((invariant) => invariant.testes ?? [])]);
+  const dbConsumers = radius?.dbConsumers ?? [];
+  const ownConsumers = new Set(ownRadius?.dbConsumers ?? []);
 
   let impacted: ImpactedTests;
   try {
-    impacted = await computeImpactedTests(input.scope, changedFiles, extraTests, radius?.dbConsumers ?? [], input.includeE2E === true);
+    impacted = await computeImpactedTests(
+      input.scope,
+      changedFiles,
+      extraTests.filter((test) => ownExtra.has(test)),
+      dbConsumers.filter((file) => ownConsumers.has(file)),
+      input.includeE2E === true,
+      { tests: extraTests.filter((test) => !ownExtra.has(test)), dbConsumers: dbConsumers.filter((file) => !ownConsumers.has(file)) },
+    );
   } catch (error) {
     warnings.push(`mapa de testes indisponível: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200));
     return finish({
@@ -1840,8 +1876,8 @@ async function evaluateMappedTests(
   }
   // Quem entrega responde pelo próprio delta: teste puxado SÓ por WIP que já
   // estava sujo antes do spawn (outro writer, o operador) não o devolve.
-  const foreign = new Set(state.changed.foreign);
-  const owned = (test: string) => [...(impacted.sources.get(test) ?? [])].some((source) => !foreign.has(source));
+  const owned = (test: string) =>
+    [...(impacted.sources.get(test) ?? [])].some((source) => source !== WIP_IMPACT_SOURCE && !foreign.has(source));
   const ownFailures = failures.filter((failure) => !ran.has(failure.file) || owned(failure.file));
   const inheritedFailures = failures.filter((failure) => ran.has(failure.file) && !owned(failure.file));
   if (inheritedFailures.length > 0) {

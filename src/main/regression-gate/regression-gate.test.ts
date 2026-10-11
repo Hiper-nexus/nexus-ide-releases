@@ -12,6 +12,8 @@ import {
   recordAttestedBusinessModelHash,
 } from '../context/business-model/business-model-attested-store';
 import { BUSINESS_MODEL_TARGET_PATH } from '../context/business-model/business-model-contract';
+import { computeBlastRadius } from '../context/orientation/orientation-blast-radius';
+import type { ProjectOrientationMap } from '../context/orientation/orientation-types';
 import {
   __resetRegressionGateForTests,
   detectRegressionRunner,
@@ -530,6 +532,80 @@ describe('runRegressionGate', () => {
     expect(result.failures).toEqual([]);
     expect(result.inheritedFailures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
     expect(result.warnings.join(' ')).toContain('WIP anterior ao seu spawn');
+  });
+
+  describe('F-1224: teste de WIP alheio puxado pelo code map (raio estendido)', () => {
+    /** Code map mínimo: o raio de produção sempre contém as próprias sementes. */
+    function codeMapExtension(adjacency: Record<string, string[]>) {
+      const reverse: Record<string, string[]> = {};
+      for (const [from, tos] of Object.entries(adjacency)) for (const to of tos) (reverse[to] ??= []).push(from);
+      const map = {
+        mapHash: 'map-test',
+        inventory: { entrypoints: [] },
+        symbols: { hubs: [] },
+        graph: { edgeCount: 1, dbEdgeCount: 0, sampleEdges: [], dbEntities: [], adjacency, reverse },
+      } as unknown as ProjectOrientationMap;
+      return vi.fn(({ changedFiles }: { changedFiles: readonly string[] }) => ({
+        tests: [...computeBlastRadius(map, { seedFiles: changedFiles, depth: 1 }).tests],
+        dbEntities: [],
+        dbConsumers: [],
+      }));
+    }
+
+    /** Teste vermelho não rastreado de outro agente, sujo antes do spawn (o selo de 11/10). */
+    function foreignRedWip(root: string): number {
+      write(root, 'src/seal.ts', 'export const seal = 1;\n');
+      write(root, 'src/seal.test.ts', "import { seal } from './seal';\n");
+      const old = new Date(Date.now() - 60_000);
+      for (const file of ['src/seal.ts', 'src/seal.test.ts']) fs.utimesSync(path.join(root, file), old, old);
+      return Date.now() - 1_000;
+    }
+
+    it('pane sem delta próprio (o Stop de 11/10): a falha vira herdada, não devolução', async () => {
+      const { root, scope } = project();
+      const startedAtMs = foreignRedWip(root);
+      const blastRadius = codeMapExtension({ 'src/seal.test.ts': ['src/seal.ts'] });
+      const { exec } = fakeVitest(['src/seal.test.ts']);
+
+      const result = await runRegressionGate({ scope, startedAtMs }, { exec, extensions: { blastRadius } });
+
+      expect(blastRadius).toHaveBeenCalled();
+      expect(result.status).not.toBe('failed');
+      expect(result.failures).toEqual([]);
+      expect(result.inheritedFailures.map((failure) => failure.file)).toEqual(['src/seal.test.ts']);
+    });
+
+    it('com delta próprio sem relação: idem — o raio do WIP não vira autoria de quem entrega', async () => {
+      const { root, scope } = project();
+      const startedAtMs = foreignRedWip(root);
+      write(root, 'src/a.ts', 'export const a = 2;\n');
+      const blastRadius = codeMapExtension({ 'src/seal.test.ts': ['src/seal.ts'], 'src/a.test.ts': ['src/a.ts'] });
+      const { exec } = fakeVitest(['src/seal.test.ts']);
+
+      const result = await runRegressionGate({ scope, startedAtMs }, { exec, extensions: { blastRadius } });
+
+      expect(result.status).toBe('passed');
+      expect(result.failures).toEqual([]);
+      expect(result.inheritedFailures.map((failure) => failure.file)).toEqual(['src/seal.test.ts']);
+    });
+
+    it('teste que o code map puxa do delta próprio continua contando, mesmo com WIP alheio', async () => {
+      const { root, scope } = project();
+      const startedAtMs = foreignRedWip(root);
+      write(root, 'src/c.ts', 'export const c = 30;\n'); // o delta de quem entrega
+      // Só o code map liga b.test.ts a c.ts (o grafo de imports, não).
+      const blastRadius = codeMapExtension({ 'src/seal.test.ts': ['src/seal.ts'], 'src/b.test.ts': ['src/c.ts'] });
+      const inner = fakeVitest(['src/b.test.ts', 'src/seal.test.ts']);
+      // Na worktree da base (F-246) o b passa: a quebra é do delta.
+      const exec = vi.fn<RegressionExec>((file, args, options) =>
+        options.cwd === root ? inner.exec(file, args, options) : fakeVitest().exec(file, args, options));
+
+      const result = await runRegressionGate({ scope, startedAtMs }, { exec, extensions: { blastRadius } });
+
+      expect(result.status).toBe('failed');
+      expect(result.failures.map((failure) => failure.file)).toEqual(['src/b.test.ts']);
+      expect(result.inheritedFailures.map((failure) => failure.file)).toEqual(['src/seal.test.ts']);
+    });
   });
 
   it('dois arquivos relacionados mudando juntos não viram "área sem teste"', async () => {
