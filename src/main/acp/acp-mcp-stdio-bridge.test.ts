@@ -4,8 +4,14 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../path-resolver', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../path-resolver')>();
+  return { ...actual, resolveCliBinary: vi.fn(actual.resolveCliBinary) };
+});
+
+import { resolveCliBinary } from '../path-resolver';
 import { buildAcpMcpStdioServer } from './acp-mcp-stdio-bridge';
 
 const realExecPath = process.execPath;
@@ -72,4 +78,11 @@ describe('ACP MCP stdio bridge', () => {
     },
     15_000,
   );
+
+  it('F-1234: sem node resolvível falha com spawn_failed acionável, não um command literal', () => {
+    vi.mocked(resolveCliBinary).mockReturnValueOnce(null);
+    expect(() => buildAcpMcpStdioServer('http://127.0.0.1:1/mcp', 'token-1234'))
+      .toThrow(/^spawn_failed: node não encontrado no PATH/);
+    expect(vi.mocked(resolveCliBinary)).toHaveBeenCalledWith('node');
+  });
 });

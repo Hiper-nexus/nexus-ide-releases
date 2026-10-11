@@ -125,13 +125,21 @@ export function buildAcpMcpStdioServer(
   if (!token.trim() || token.includes('\0')) {
     throw new Error('ACP MCP bridge token is missing or malformed');
   }
+  // F-1209: not process.execPath + ELECTRON_RUN_AS_NODE. The packaged app
+  // ships with the RunAsNode fuse off, so that binary ignores both and just
+  // boots NexusIDE; the agent's MCP server never answered. Same Node the
+  // other stdio bridges (minimax, muse, qwen) use.
+  const node = resolveCliBinary('node')?.binPath;
+  // F-1234: a literal 'node' left the ACP session without the nexus MCP in silence.
+  if (!node) {
+    throw new Error(
+      'spawn_failed: node não encontrado no PATH — a sessão ACP precisa do Node.js para a ponte MCP do Nexus. ' +
+        'Instale o Node.js (ou ponha o diretório dele no PATH do shell de login) e reabra o pane.',
+    );
+  }
   return Object.freeze({
     name: 'nexus',
-    // F-1209: not process.execPath + ELECTRON_RUN_AS_NODE. The packaged app
-    // ships with the RunAsNode fuse off, so that binary ignores both and just
-    // boots NexusIDE; the agent's MCP server never answered. Same Node the
-    // other stdio bridges (minimax, muse, qwen) use.
-    command: resolveCliBinary('node')?.binPath ?? 'node',
+    command: node,
     args: ['--eval', ACP_MCP_BRIDGE_SCRIPT],
     env: Object.freeze([
       { name: 'NEXUS_MCP_URL', value: endpoint.toString() },
