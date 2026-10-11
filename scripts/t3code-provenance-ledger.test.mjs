@@ -34,7 +34,11 @@ describe('ledger de proveniência T3 Code', () => {
     (nexusPath, entry) => {
       const file = path.join(root, nexusPath);
       expect(fs.existsSync(file), `${nexusPath} sumiu: marque status "removed" no ledger`).toBe(true);
-      const hash = createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+      // Checkout Windows com core.autocrlf troca LF por CRLF; o ledger registra o conteúdo do Git (LF).
+      // Binário (.wasm) entra como está.
+      const raw = fs.readFileSync(file);
+      const bytes = raw.includes(0) ? raw : Buffer.from(raw.toString('latin1').replace(/\r\n/g, '\n'), 'latin1');
+      const hash = createHash('sha256').update(bytes).digest('hex');
       expect(hash, `${nexusPath} mudou: atualize nexusSha256 e o changeSummary`).toBe(entry.nexusSha256);
     },
   );

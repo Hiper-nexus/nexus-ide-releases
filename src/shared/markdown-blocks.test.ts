@@ -319,3 +319,20 @@ describe('custo linear com entrada adversarial (revisão sênior F-1169)', () =>
     expect(nodes.map((node) => (node.kind === 'text' ? node.text : '')).join('')).toBe('http://[x] e http://');
   });
 });
+
+describe('link com destino inválido (revisão P3)', () => {
+  it('fica literal sem quebrar a ênfase em volta e sem virar marca por dentro', () => {
+    const nodes = parseMarkdownInline('**veja [a_b*c](ftp://x/y_z) agora**');
+    const text = nodes.map((node) => node.kind === 'text' ? node.text : '').join('');
+    expect(text).toBe('veja [a_b*c](ftp://x/y_z) agora');
+    expect(nodes.every((node) => node.kind === 'text' && node.marks.includes('bold'))).toBe(true);
+    expect(nodes.some((node) => node.kind === 'link')).toBe(false);
+  });
+
+  it('URL nua inválida também fica no mesmo texto', () => {
+    const nodes = parseMarkdownInline('_ver http://[x_y] já_');
+    const text = nodes.map((node) => node.kind === 'text' ? node.text : '').join('');
+    expect(text).toBe('ver http://[x_y] já');
+    expect(nodes.every((node) => node.kind === 'text' && node.marks.includes('italic'))).toBe(true);
+  });
+});

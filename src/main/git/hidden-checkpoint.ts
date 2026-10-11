@@ -147,7 +147,7 @@ export interface CheckpointRestoreInput {
    * Recebe TODOS os destinos (relativos à raiz) antes de qualquer escrita e
    * lança para recusar (guardas de .context, .agents/.codex e workspace).
    */
-  readonly assertTargets?: (targets: readonly string[]) => void;
+  readonly assertTargets?: (targets: readonly string[]) => void | Promise<void>;
   /**
    * Revalida a autoridade do chamador antes do backup, depois dele e logo
    * antes de cada checkout-index; lançar cancela a restauração.
@@ -736,7 +736,7 @@ export function restoreHiddenCheckpoint(
       }
       // Todos os destinos passam pelas guardas do chamador antes de qualquer escrita.
       try {
-        input.assertTargets?.(writable);
+        await input.assertTargets?.(writable);
       } catch (error) {
         throw new CallerRefusal(error);
       }

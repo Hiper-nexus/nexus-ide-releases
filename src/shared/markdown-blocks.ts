@@ -126,6 +126,11 @@ function trimUrlTail(url: string): string {
   return url.slice(0, end);
 }
 
+/** Trecho que deve sair como escrito: marcadores escapados para o parser do composer. */
+function literalMarks(text: string): string {
+  return text.replace(/[\\*_~`]/g, (ch) => `\\${ch}`);
+}
+
 /** Uma linha de texto → nós inline. Quebras de linha são do bloco. */
 export function parseMarkdownInline(text: string): MarkdownInline[] {
   const out: MarkdownInline[] = [];
@@ -166,8 +171,9 @@ export function parseMarkdownInline(text: string): MarkdownInline[] {
           flush();
           out.push({ kind: 'link', href, label: parseInlineMarkdown(match[1]!) });
         } else {
-          flush();
-          out.push({ kind: 'text', text: match[0], marks: [] });
+          // Destino inválido fica literal, mas no mesmo texto: a ênfase em
+          // volta ("**veja [x](ftp://a) agora**") continua pareando.
+          buffer += literalMarks(match[0]);
         }
         i += match[0].length;
         continue;
@@ -199,8 +205,7 @@ export function parseMarkdownInline(text: string): MarkdownInline[] {
         // Não é URL válida: o trecho todo é literal (nó próprio), sem tentar
         // de novo a cada 'h' de dentro dele.
         if (raw) {
-          flush();
-          out.push({ kind: 'text', text: raw, marks: [] });
+          buffer += literalMarks(raw);
           i += raw.length;
           continue;
         }

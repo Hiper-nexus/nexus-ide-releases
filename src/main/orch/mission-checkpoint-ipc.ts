@@ -93,11 +93,12 @@ class StalePlanError extends Error {
  * writer que criou, apagou ou editou um destino depois da prévia muda a
  * impressão. Conteúdo sobrescrito ainda vai para o backup de qualquer forma.
  */
-function planFingerprint(root: string, ref: string, commit: string, targets: readonly string[]): string {
-  const files = [...targets].sort().map((file) => {
-    const stat = fs.lstatSync(path.join(root, file), { throwIfNoEntry: false });
+async function planFingerprint(root: string, ref: string, commit: string, targets: readonly string[]): Promise<string> {
+  // lstat assíncrono: com milhares de destinos o Main não para (F-764).
+  const files = await Promise.all([...targets].sort().map(async (file) => {
+    const stat = await fs.promises.lstat(path.join(root, file)).catch(() => null);
     return stat ? [file, stat.isSymbolicLink() ? 'l' : 'f', stat.size, stat.mtimeMs] : [file, null];
-  });
+  }));
   return createHash('sha256').update(JSON.stringify({ ref, commit, files })).digest('hex');
 }
 
@@ -234,7 +235,7 @@ async function previewMissionCheckpointForRenderer(
     deps.git ? { git: deps.git } : {},
   );
   if (!preview.ok) return { ok: false, error: `checkpoint: ${preview.reason}` };
-  const fingerprint = planFingerprint(root, input.ref, preview.commit, [...preview.overwrite, ...preview.create]);
+  const fingerprint = await planFingerprint(root, input.ref, preview.commit, [...preview.overwrite, ...preview.create]);
   return { ok: true, fingerprint, ...planView(root, input.ref, preview) };
 }
 
@@ -259,9 +260,9 @@ async function restoreMissionCheckpointForRenderer(
         ref: input.ref,
         apply: true,
         forbiddenRoot: scope.rootRealPath,
-        assertTargets: (targets) => {
+        assertTargets: async (targets) => {
           // Dentro da fila da raiz e antes de qualquer escrita: o plano é o da prévia?
-          if (planFingerprint(root, input.ref, commit, targets) !== input.fingerprint) throw new StalePlanError();
+          if (await planFingerprint(root, input.ref, commit, targets) !== input.fingerprint) throw new StalePlanError();
           assertCheckpointRestoreTargets(scope, input.missionId, mission, targets);
         },
         assertCanWrite: () => {
