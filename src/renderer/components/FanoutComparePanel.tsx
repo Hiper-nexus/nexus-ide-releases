@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useOrchStore } from '../state/orch-store';
+import { ComposerRichTextView } from './ComposerRichTextView';
 import { PixelIcon } from './PixelIcon';
 
 /**
@@ -82,7 +83,11 @@ export function FanoutComparePanel() {
               <span className="fanout__agent">{col.agent}</span>
               <span className="fanout__status">{col.status}</span>
             </header>
-            <p className="fanout__summary">{col.summary || '—'}</p>
+            {/* Cartão cortado em 4 linhas: só marcas inline (negrito, código…);
+                bloco de markdown quebraria o corte. */}
+            <p className="fanout__summary">
+              {col.summary ? <ComposerRichTextView markdown={col.summary} /> : '—'}
+            </p>
           </article>
         ))}
       </div>
