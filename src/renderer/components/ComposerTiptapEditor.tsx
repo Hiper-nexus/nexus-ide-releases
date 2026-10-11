@@ -25,6 +25,7 @@ import { Slice, type Node as PmNode } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import {
   parseInlineMarkdown,
+  parseInlineMarkdownDetailed,
   serializeInlineMarkdown,
   type RichTextMark,
   type RichTextSpan,
@@ -160,7 +161,64 @@ function spanFingerprint(spans: readonly RichTextSpan[]): string {
   return JSON.stringify(parts);
 }
 
-const MAX_GREEDY_BLOCKS = 400;
+interface BlockMarkdown {
+  readonly text: string;
+  /**
+   * `safe`: lê sozinho os mesmos trechos/marcas e fecha todo marcador.
+   * `open`: lê igual sozinho, mas sobra marcador aberto (ex.: `2*3`) que
+   * poderia parear com outra linha — só o documento inteiro decide.
+   * `unsafe`: nem os escapes leram igual (rede de segurança).
+   */
+  readonly state: 'safe' | 'open' | 'unsafe';
+}
+
+/**
+ * Um parágrafo → markdown. Texto sem marca sai cru quando o parágrafo se lê
+ * igual sozinho; senão, com escapes.
+ *
+ * F-1170 (revisão P2): a conferência é por parágrafo, não pelo documento a
+ * cada bloco. O parser só carrega a pilha de marcadores entre linhas, e `\n`
+ * não é marcador, escape nem conteúdo de código: com a pilha vazia na
+ * fronteira, um parágrafo `safe` se lê no documento exatamente como sozinho.
+ * Custo linear, e o resultado por nó ProseMirror (imutável) fica em cache.
+ */
+function serializeBlock(spans: readonly RichTextSpan[]): BlockMarkdown {
+  const target = spanFingerprint(spans);
+  const minimal = serializeMinimal(spans);
+  const read = parseInlineMarkdownDetailed(minimal);
+  if (spanFingerprint(read.spans) === target) {
+    return { text: minimal, state: read.balanced ? 'safe' : 'open' };
+  }
+  const escaped = serializeInlineMarkdown(spans);
+  const check = parseInlineMarkdownDetailed(escaped);
+  return {
+    text: escaped,
+    state: check.balanced && spanFingerprint(check.spans) === target ? 'safe' : 'unsafe',
+  };
+}
+
+function joinBlocks(
+  blocks: readonly BlockMarkdown[],
+  spansAt: (index: number) => readonly RichTextSpan[],
+): string {
+  const text = blocks.map((block) => block.text).join('\n');
+  if (blocks.every((block) => block.state === 'safe')) return text;
+  // Algum marcador sobrou aberto: uma leitura do documento inteiro decide
+  // (no máximo três, todas lineares — nunca uma por bloco).
+  const expected: RichTextSpan[] = [];
+  for (let index = 0; index < blocks.length; index += 1) {
+    if (index > 0) expected.push({ text: '\n', marks: [] });
+    expected.push(...spansAt(index));
+  }
+  const target = spanFingerprint(expected);
+  const reads = (markdown: string) => spanFingerprint(parseInlineMarkdown(markdown)) === target;
+  if (reads(text)) return text;
+  const closed = blocks
+    .map((block, index) => (block.state === 'open' ? serializeInlineMarkdown(spansAt(index)) : block.text))
+    .join('\n');
+  if (reads(closed)) return closed;
+  return blocks.map((_block, index) => serializeInlineMarkdown(spansAt(index))).join('\n');
+}
 
 /**
  * doc JSON → markdown canônico. Enter vira quebra entre parágrafos.
@@ -172,30 +230,8 @@ const MAX_GREEDY_BLOCKS = 400;
  * bloco cai no serializador com escapes. A ida e volta continua exata.
  */
 export function tiptapJsonToMarkdown(doc: JSONContent): string {
-  const blocks = (doc.content ?? []).map(paragraphSpans);
-  const expected: RichTextSpan[] = [];
-  blocks.forEach((spans, index) => {
-    if (index > 0) expected.push({ text: '\n', marks: [] });
-    expected.push(...spans);
-  });
-  const target = spanFingerprint(expected);
-  const reads = (markdown: string) => spanFingerprint(parseInlineMarkdown(markdown)) === target;
-
-  const minimal = blocks.map(serializeMinimal);
-  const minimalText = minimal.join('\n');
-  if (reads(minimalText)) return minimalText;
-
-  const escaped = blocks.map((spans) => serializeInlineMarkdown(spans));
-  if (blocks.length > MAX_GREEDY_BLOCKS) return escaped.join('\n');
-  // Bloco a bloco: mantém cru o que não muda a leitura do documento inteiro
-  // (ênfase pode parear entre linhas, então a conferência é global).
-  const chosen = [...escaped];
-  for (let index = 0; index < blocks.length; index += 1) {
-    if (minimal[index] === escaped[index]) continue;
-    chosen[index] = minimal[index]!;
-    if (!reads(chosen.join('\n'))) chosen[index] = escaped[index]!;
-  }
-  return chosen.join('\n');
+  const spans = (doc.content ?? []).map(paragraphSpans);
+  return joinBlocks(spans.map(serializeBlock), (index) => spans[index]!);
 }
 
 /** Texto literal (fala, colagem de fora) → markdown que se lê igual ao texto. */
@@ -210,8 +246,62 @@ export function plainTextToMarkdown(text: string): string {
   });
 }
 
+/**
+ * Corta markdown no maior prefixo que cabe em `max`, por unidades seguras:
+ * pontos de código do texto lido (escape, marcador e emoji nunca partem ao
+ * meio). Reserializa só quando precisa cortar.
+ */
+export function truncateMarkdown(markdown: string, max: number): string {
+  if (markdown.length <= max) return markdown;
+  const units: RichTextSpan[] = [];
+  for (const span of parseInlineMarkdown(markdown.replace(/\r\n?/gu, '\n'))) {
+    for (const char of Array.from(span.text)) units.push({ text: char, marks: span.marks });
+  }
+  const prefix = (count: number) =>
+    tiptapJsonToMarkdown(spansToTiptapContent(units.slice(0, count)));
+  let low = 0;
+  let high = units.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (prefix(mid).length <= max) low = mid;
+    else high = mid - 1;
+  }
+  return prefix(low);
+}
+
+function pmParagraphSpans(paragraph: PmNode): RichTextSpan[] {
+  const spans: RichTextSpan[] = [];
+  paragraph.forEach((node) => {
+    if (node.type.name === 'hardBreak') spans.push({ text: '\n', marks: [] });
+    else if (node.isText) {
+      spans.push({ text: node.text ?? '', marks: node.marks.map((m) => m.type.name).filter(isRichTextMark) });
+    }
+  });
+  return spans;
+}
+
+// Nós ProseMirror são imutáveis e reaproveitados entre transações: só o
+// parágrafo editado é serializado de novo a cada tecla.
+const blockCache = new WeakMap<PmNode, BlockMarkdown>();
+const docCache = new WeakMap<PmNode, string>();
+
+/** Markdown canônico de um doc ProseMirror, uma vez por doc (cache). */
 function pmDocMarkdown(doc: PmNode): string {
-  return tiptapJsonToMarkdown(doc.toJSON() as JSONContent);
+  const cached = docCache.get(doc);
+  if (cached !== undefined) return cached;
+  const paragraphs: PmNode[] = [];
+  doc.forEach((node) => paragraphs.push(node));
+  const blocks = paragraphs.map((paragraph) => {
+    let block = blockCache.get(paragraph);
+    if (!block) {
+      block = serializeBlock(pmParagraphSpans(paragraph));
+      blockCache.set(paragraph, block);
+    }
+    return block;
+  });
+  const markdown = joinBlocks(blocks, (index) => pmParagraphSpans(paragraphs[index]!));
+  docCache.set(doc, markdown);
+  return markdown;
 }
 
 /** Markdown colado → slice aberto (o 1º/último parágrafo fundem com o atual). */
@@ -249,6 +339,8 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
     ref,
   ) {
     const lastExternalValue = useRef(value);
+    /** Último markdown emitido por onChange: o eco do pai não reserializa nada. */
+    const lastEmittedValue = useRef<string | null>(null);
     const limitId = useId();
     const [limitHit, setLimitHit] = useState(false);
     const onSubmitRef = useRef(onSubmit);
@@ -389,7 +481,9 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
         },
       },
       onUpdate: ({ editor: e }) => {
-        const markdown = tiptapJsonToMarkdown(e.getJSON());
+        // Mesmo doc que o filtro de teto já serializou: vem do cache.
+        const markdown = pmDocMarkdown(e.state.doc);
+        lastEmittedValue.current = markdown;
         const max = maxLengthRef.current;
         if (max === undefined || markdown.length < max) setLimitHit(false);
         onChangeRef.current?.(markdown);
@@ -399,9 +493,11 @@ export const ComposerTiptapEditor = forwardRef<ComposerTiptapEditorHandle, Compo
     useEffect(() => {
       if (!editor || value === lastExternalValue.current) return;
       lastExternalValue.current = value;
+      // Eco do que o editor acabou de emitir: nada a comparar nem aplicar.
+      if (value === lastEmittedValue.current && value === pmDocMarkdown(editor.state.doc)) return;
       // Equal canonical content is an acknowledgement, not a document reset.
       const next = markdownToTiptapContent(value);
-      const current = tiptapJsonToMarkdown(editor.getJSON());
+      const current = pmDocMarkdown(editor.state.doc);
       const incoming = tiptapJsonToMarkdown(next);
       if (current !== incoming) {
         // Troca programática: acréscimo no fim (ditado) mantém o cursor onde
