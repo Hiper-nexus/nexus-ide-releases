@@ -7,7 +7,8 @@
  * the embedded MCP server, but reached via IPC instead of HTTP.
  */
 
-import { dialog, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
+import { showMessageBoxWithoutBlocking } from '../native-confirm';
 import { MCP_CHANNELS } from '../../shared/channels';
 import type {
   McpConfirmRequest,
@@ -109,7 +110,10 @@ async function requestNativeConfirmation(
   workspaceId: string,
 ): Promise<boolean> {
   const redacted = JSON.stringify(redactArgs(args), null, 2);
-  const result = await dialog.showMessageBox({
+  // F-1202: a JARVIS decide a ação por voz, com o Nexus muitas vezes fora de
+  // foco. Sem janela-mãe o macOS prendia a main thread até o clique. Sheet numa
+  // janela viva; sem janela, nega.
+  const result = await showMessageBoxWithoutBlocking({
     type: 'warning',
     buttons: ['Deny', 'Allow'],
     defaultId: 0,
@@ -122,7 +126,7 @@ async function requestNativeConfirmation(
       `Reason: ${reason}\n\n` +
       `Arguments:\n${redacted}`,
   });
-  return result.response === 1;
+  return result?.response === 1;
 }
 
 export async function confirmMcpTool(

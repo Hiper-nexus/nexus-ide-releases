@@ -19,12 +19,17 @@ import { clearConfirmationTokensForTests } from '../../jarvis/confirmation-token
 import { ProjectRuntimeManager } from '../../runtime/project-runtime-manager';
 import type { ProjectExecutionScope } from '../../../shared/types';
 
-vi.mock('electron', () => ({
-  ipcMain: { handle: vi.fn() },
-  dialog: {
-    showMessageBox: vi.fn(async () => ({ response: 1 })),
-  },
-}));
+vi.mock('electron', () => {
+  // F-1202: the native confirmation is a sheet on a live window.
+  const win = { isDestroyed: () => false, isVisible: () => true, isFocusable: () => true };
+  return {
+    ipcMain: { handle: vi.fn() },
+    BrowserWindow: { getAllWindows: () => [win], getFocusedWindow: () => null },
+    dialog: {
+      showMessageBox: vi.fn(async () => ({ response: 1 })),
+    },
+  };
+});
 
 const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-mcp-ipc');
 let auditManager: ProjectRuntimeManager;
