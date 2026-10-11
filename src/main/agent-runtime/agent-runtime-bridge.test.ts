@@ -146,6 +146,16 @@ describe('agent-runtime-bridge production seam', () => {
     ]);
   });
 
+  it('F-1213: the test reset disposes the awake service it drops (no live caffeinate left behind)', () => {
+    const awake = { setEnabled: vi.fn(), setStatuses: vi.fn(), dispose: vi.fn() };
+    __resetAgentRuntimeBridgeForTests({ awakeService: awake as never });
+    publishAgentHookActivity('working', { sessionId: 'agent-a' });
+
+    __resetAgentRuntimeBridgeForTests();
+
+    expect(awake.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps other working sessions awake when one agent finishes', () => {
     const setStatuses = vi.fn();
     const awake = {
