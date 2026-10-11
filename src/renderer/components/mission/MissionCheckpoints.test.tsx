@@ -55,6 +55,9 @@ const PLAN = {
   conflicts: { files: [], total: 0 },
 };
 
+const FP_1 = '1'.repeat(64);
+const FP_2 = '2'.repeat(64);
+
 let host: HTMLElement;
 let root: Root;
 type ListFn = (input: { missionId: string }) => Promise<MissionCheckpointListResult>;
@@ -64,7 +67,7 @@ type RestoreFn = (input: { missionId: string; ref: string }) => Promise<MissionC
 function createApi() {
   return {
     listMissionCheckpoints: vi.fn<ListFn>(async () => LIST),
-    previewMissionCheckpoint: vi.fn<PreviewFn>(async () => ({ ok: true, ...PLAN })),
+    previewMissionCheckpoint: vi.fn<PreviewFn>(async () => ({ ok: true, fingerprint: FP_1, ...PLAN })),
     restoreMissionCheckpoint: vi.fn<RestoreFn>(async () => ({
       ok: true,
       applied: true,
@@ -142,12 +145,59 @@ describe('MissionCheckpoints (F-1173)', () => {
     expect(text).toContain('nada é apagado');
     expect(text).toContain('Alterações não salvas no editor não estão no disco');
     expect(text).toContain('a restauração é recusada');
-    expect(document.activeElement?.textContent).toBe('Restaurar agora');
+    // Foco no lado seguro (revisão sênior): nunca no botão destrutivo.
+    expect(document.activeElement?.textContent).toBe('Cancelar');
 
     await act(async () => button(/^Cancelar$/).click());
     expect(host.querySelector('.mission-checkpoints__confirm')).toBeNull();
     expect(api.restoreMissionCheckpoint).not.toHaveBeenCalled();
     nativeConfirm.mockRestore();
+  });
+
+  it('Enter repetido depois de abrir a confirmação só cancela: o foco está em Cancelar', async () => {
+    await renderCheckpoints();
+    await act(async () => button(/^Restaurar: Fim do turno de Ada/).click());
+    await flush();
+
+    const focused = document.activeElement as HTMLButtonElement;
+    expect(focused.textContent).toBe('Cancelar');
+    expect(focused.classList.contains('mission-checkpoints__button--danger')).toBe(false);
+    // Enter num botão focado = clique nele; duas vezes não chega ao destrutivo.
+    await act(async () => focused.click());
+    await act(async () => (document.activeElement as HTMLElement | null)?.click());
+    await flush();
+    expect(api.restoreMissionCheckpoint).not.toHaveBeenCalled();
+    expect(host.querySelector('.mission-checkpoints__confirm')).toBeNull();
+  });
+
+  it('árvore mudou desde a prévia: mostra a recusa e oferece nova prévia, que restaura com a impressão nova', async () => {
+    api.restoreMissionCheckpoint.mockResolvedValueOnce({
+      ok: false,
+      error: 'o checkpoint ou a árvore mudou desde a prévia; reveja a prévia antes de restaurar',
+      stale: true,
+    });
+    await renderCheckpoints();
+    await act(async () => button(/^Restaurar: Fim do turno de Ada/).click());
+    await flush();
+    await act(async () => button(/^Restaurar agora$/).click());
+    await flush();
+
+    expect(api.restoreMissionCheckpoint).toHaveBeenLastCalledWith({ missionId: 'mission-a', ref: REF_TURN, fingerprint: FP_1 });
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('mudou desde a prévia');
+    expect(host.querySelector('.mission-checkpoints__outcome')).toBeNull();
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'Restaurar agora')).toBe(false);
+
+    api.previewMissionCheckpoint.mockResolvedValueOnce({
+      ok: true, fingerprint: FP_2, ...PLAN, overwrite: { files: ['src/app.ts', 'src/novo.ts'], total: 2 },
+    });
+    await act(async () => button(/^Ver a prévia de novo$/).click());
+    await flush();
+    expect(api.previewMissionCheckpoint).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('.mission-checkpoints__plan')?.textContent).toContain('2 arquivos serão sobrescritos');
+    await act(async () => button(/^Restaurar agora$/).click());
+    await flush();
+    expect(api.restoreMissionCheckpoint).toHaveBeenLastCalledWith({ missionId: 'mission-a', ref: REF_TURN, fingerprint: FP_2 });
+    expect(host.querySelector('.mission-checkpoints__outcome')?.textContent).toContain('Restaurado');
   });
 
   it('confirmado: restaura, mostra o sucesso e recarrega a lista', async () => {
@@ -158,7 +208,7 @@ describe('MissionCheckpoints (F-1173)', () => {
     await act(async () => button(/^Restaurar agora$/).click());
     await flush();
 
-    expect(api.restoreMissionCheckpoint).toHaveBeenCalledWith({ missionId: 'mission-a', ref: REF_TURN });
+    expect(api.restoreMissionCheckpoint).toHaveBeenCalledWith({ missionId: 'mission-a', ref: REF_TURN, fingerprint: FP_1 });
     expect(host.querySelector('.mission-checkpoints__confirm')).toBeNull();
     expect(host.querySelector('[role="status"]')?.textContent).toBe(
       'Restaurado: 1 arquivo sobrescrito e 1 criado. O estado anterior foi guardado como checkpoint novo.',

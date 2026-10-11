@@ -22,11 +22,17 @@ type ListState =
   | { readonly kind: 'error'; readonly error: string }
   | { readonly kind: 'ready'; readonly scopes: readonly MissionCheckpointScopeView[] };
 
+/** Plano mostrado + a impressão que a restauração exige (F-1173, TOCTOU). */
+interface ShownPlan {
+  readonly plan: MissionCheckpointPlanView;
+  readonly fingerprint: string;
+}
+
 type ConfirmState =
   | { readonly kind: 'previewing'; readonly ref: string }
-  | { readonly kind: 'ready'; readonly ref: string; readonly plan: MissionCheckpointPlanView }
-  | { readonly kind: 'restoring'; readonly ref: string; readonly plan: MissionCheckpointPlanView }
-  | { readonly kind: 'failed'; readonly ref: string; readonly error: string };
+  | ({ readonly kind: 'ready'; readonly ref: string } & ShownPlan)
+  | ({ readonly kind: 'restoring'; readonly ref: string } & ShownPlan)
+  | { readonly kind: 'failed'; readonly ref: string; readonly error: string; readonly stale?: boolean };
 
 type Outcome =
   | { readonly kind: 'restored'; readonly ref: string; readonly overwritten: number; readonly created: number }
@@ -84,17 +90,20 @@ function RestoreConfirmation({
   state,
   onConfirm,
   onCancel,
+  onRepreview,
 }: {
   readonly scope: MissionCheckpointScopeView;
   readonly state: ConfirmState;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
+  readonly onRepreview: () => void;
 }) {
   const titleId = useId();
-  const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const ready = state.kind === 'ready';
+  // Foco no lado seguro: Enter repetido nunca cai em "Restaurar agora".
   useEffect(() => {
-    if (ready) confirmRef.current?.focus();
+    if (ready) cancelRef.current?.focus();
   }, [ready]);
   const plan = state.kind === 'ready' || state.kind === 'restoring' ? state.plan : null;
   const where = scope.branch
@@ -137,18 +146,28 @@ function RestoreConfirmation({
           editor fica diferente do arquivo restaurado.
         </li>
         <li>Se algum agente estiver trabalhando nesta worktree, a restauração é recusada.</li>
+        <li>
+          Se a worktree ou o checkpoint mudarem depois desta prévia, a restauração é recusada sem
+          escrever nada e pede uma prévia nova.
+        </li>
       </ul>
       <div className="mission-checkpoints__confirm-actions">
+        {state.kind === 'failed' && state.stale ? (
+          <button type="button" className="mission-checkpoints__button" onClick={onRepreview}>
+            Ver a prévia de novo
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="mission-checkpoints__button mission-checkpoints__button--danger"
+            disabled={state.kind !== 'ready'}
+            onClick={onConfirm}
+          >
+            {state.kind === 'restoring' ? 'Restaurando…' : 'Restaurar agora'}
+          </button>
+        )}
         <button
-          ref={confirmRef}
-          type="button"
-          className="mission-checkpoints__button mission-checkpoints__button--danger"
-          disabled={state.kind !== 'ready'}
-          onClick={onConfirm}
-        >
-          {state.kind === 'restoring' ? 'Restaurando…' : 'Restaurar agora'}
-        </button>
-        <button
+          ref={cancelRef}
           type="button"
           className="mission-checkpoints__button"
           disabled={state.kind === 'restoring'}
@@ -222,7 +241,9 @@ export function MissionCheckpoints({
       if (!alive.current) return;
       setConfirm((current) => {
         if (current?.ref !== ref) return current;
-        return preview.ok ? { kind: 'ready', ref, plan: preview } : { kind: 'failed', ref, error: preview.error };
+        return preview.ok
+          ? { kind: 'ready', ref, plan: preview, fingerprint: preview.fingerprint }
+          : { kind: 'failed', ref, error: preview.error };
       });
     } catch (error) {
       if (!alive.current) return;
@@ -232,13 +253,13 @@ export function MissionCheckpoints({
 
   const restore = async () => {
     if (confirm?.kind !== 'ready') return;
-    const { ref, plan } = confirm;
-    setConfirm({ kind: 'restoring', ref, plan });
+    const { ref, plan, fingerprint } = confirm;
+    setConfirm({ kind: 'restoring', ref, plan, fingerprint });
     try {
-      const result = await window.nexus.orch.restoreMissionCheckpoint({ missionId, ref });
+      const result = await window.nexus.orch.restoreMissionCheckpoint({ missionId, ref, fingerprint });
       if (!alive.current) return;
       if (!result.ok) {
-        setConfirm({ kind: 'failed', ref, error: result.error });
+        setConfirm({ kind: 'failed', ref, error: result.error, stale: result.stale === true });
         return;
       }
       setConfirm(null);
@@ -318,6 +339,7 @@ export function MissionCheckpoints({
                       state={confirm}
                       onConfirm={() => void restore()}
                       onCancel={() => setConfirm(null)}
+                      onRepreview={() => void askRestore(entry.ref)}
                     />
                   ) : null}
                 </li>

@@ -46,7 +46,7 @@ vi.mock('../runtime/worktree-runtime-registry', async (importOriginal) => ({
   requireWorktreeRuntimeRegistry: () => ({ listMission: () => h.records }),
 }));
 
-import { registerMissionCheckpointIpc } from './mission-checkpoint-ipc';
+import { CHECKPOINT_PLAN_CHANGED, registerMissionCheckpointIpc } from './mission-checkpoint-ipc';
 import { captureWriterHandoffCheckpoint, missionCheckpointScopeId } from './handoff-checkpoint';
 import { checkpointRefForScopeOrdinal, hiddenCheckpointIdle } from '../git/hidden-checkpoint';
 import { ORCH_CHANNELS } from '../../shared/orch-channels';
@@ -128,6 +128,17 @@ afterEach(async () => {
 });
 
 const firstRef = () => checkpointRefForScopeOrdinal(missionCheckpointScopeId('mission-a', worktree), 1);
+/** Impressão que nunca casa: só para recusas que acontecem antes do plano. */
+const NO_PLAN = '0'.repeat(64);
+
+type Call = (channel: string, raw: unknown) => Promise<any>;
+
+/** Fluxo da tela: prévia, depois restauração com a impressão dela. */
+async function previewThenRestore(call: Call, ref: string, missionId = 'mission-a') {
+  const preview = await call(ORCH_CHANNELS.missionCheckpointPreview, { missionId, ref });
+  expect(preview).toMatchObject({ ok: true, fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/) });
+  return call(ORCH_CHANNELS.missionCheckpointRestore, { missionId, ref, fingerprint: preview.fingerprint });
+}
 
 describe('IPC de checkpoints da missão (F-1173)', () => {
   it('sem injeção, os três canais nascem por handleTrusted (nunca ipcMain.handle cru)', () => {
@@ -165,7 +176,9 @@ describe('IPC de checkpoints da missão (F-1173)', () => {
     expect(preview).toMatchObject({ ok: true, root: worktree, overwrite: { files: ['feito.txt'], total: 1 } });
     expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
 
-    const restored = await call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef() });
+    const restored = await call(ORCH_CHANNELS.missionCheckpointRestore, {
+      missionId: 'mission-a', ref: firstRef(), fingerprint: preview.fingerprint,
+    });
     expect(restored).toMatchObject({ ok: true, applied: true, overwrite: { files: ['feito.txt'] } });
     expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('turno 1\n');
     expect(git(repo, 'show', `${restored.backupRef}:feito.txt`)).toBe('quebrado');
@@ -179,22 +192,22 @@ describe('IPC de checkpoints da missão (F-1173)', () => {
     const { call } = harness();
     const foreign = checkpointRefForScopeOrdinal(missionCheckpointScopeId('mission-b', worktree), 1);
 
-    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef(), cwd: repo }))
+    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef(), fingerprint: NO_PLAN, cwd: repo }))
       .resolves.toEqual({ ok: false, error: 'pedido inválido' });
-    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: 'refs/heads/main' }))
+    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: 'refs/heads/main', fingerprint: NO_PLAN }))
       .resolves.toEqual({ ok: false, error: 'pedido inválido' });
     await expect(call(ORCH_CHANNELS.missionCheckpointsList, worktree))
       .resolves.toEqual({ ok: false, error: 'pedido inválido' });
-    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: foreign }))
+    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: foreign, fingerprint: NO_PLAN }))
       .resolves.toMatchObject({ ok: false, error: expect.stringMatching(/não pertence/) });
     // A ref de mission-a não vale pela mission-b, mesmo se a mission-b existir.
     h.missions.add('mission-b');
-    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-b', ref: firstRef() }))
+    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-b', ref: firstRef(), fingerprint: NO_PLAN }))
       .resolves.toMatchObject({ ok: false, error: expect.stringMatching(/não pertence/) });
     h.missions = new Set();
     await expect(call(ORCH_CHANNELS.missionCheckpointsList, { missionId: 'mission-a' }))
       .resolves.toMatchObject({ ok: false, error: expect.stringMatching(/não encontrada/) });
-    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef() }))
+    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef(), fingerprint: NO_PLAN }))
       .resolves.toMatchObject({ ok: false, error: expect.stringMatching(/não encontrada/) });
     expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
   });
@@ -205,7 +218,7 @@ describe('IPC de checkpoints da missão (F-1173)', () => {
 
     await expect(call(ORCH_CHANNELS.missionCheckpointsList, { missionId: 'mission-a' }))
       .resolves.toMatchObject({ ok: false, error: 'renderer is unavailable' });
-    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef() }))
+    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef(), fingerprint: NO_PLAN }))
       .resolves.toMatchObject({ ok: false, error: 'renderer is unavailable' });
     expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
   });
@@ -221,7 +234,7 @@ describe('IPC de checkpoints da missão (F-1173)', () => {
       return live.scope!;
     });
 
-    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef() }))
+    await expect(previewThenRestore(call, firstRef()))
       .resolves.toMatchObject({ ok: false, error: 'renderer workspace authority changed' });
     expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
     expect(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/nexus-checkpoint')).toBe(firstRef());
@@ -233,7 +246,7 @@ describe('IPC de checkpoints da missão (F-1173)', () => {
       role: 'worker', readOnly: false, agentName: 'Ada' }];
     h.idle = () => false;
 
-    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef() }))
+    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef(), fingerprint: NO_PLAN }))
       .resolves.toMatchObject({ ok: false, error: expect.stringMatching(/writer ocupado.*Ada/) });
     expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
   });
@@ -245,7 +258,7 @@ describe('IPC de checkpoints da missão (F-1173)', () => {
     const artifact = await captureWriterHandoffCheckpoint(writerCtx());
     fs.writeFileSync(path.join(worktree, '.context/notas.md'), 'v2\n');
 
-    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: String(artifact?.payload.ref) }))
+    await expect(previewThenRestore(call, String(artifact?.payload.ref)))
       .resolves.toMatchObject({ ok: false, error: 'versioned context authority is read-only to executors' });
     expect(fs.readFileSync(path.join(worktree, '.context/notas.md'), 'utf8')).toBe('v2\n');
 
@@ -253,7 +266,7 @@ describe('IPC de checkpoints da missão (F-1173)', () => {
     fs.writeFileSync(path.join(worktree, '.agents/skills/x/SKILL.md'), 'v1\n');
     const control = await captureWriterHandoffCheckpoint(writerCtx());
     fs.writeFileSync(path.join(worktree, '.agents/skills/x/SKILL.md'), 'v2\n');
-    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: String(control?.payload.ref) }))
+    await expect(previewThenRestore(call, String(control?.payload.ref)))
       .resolves.toMatchObject({ ok: false, error: expect.stringMatching(/namespace protegido/) });
     expect(fs.readFileSync(path.join(worktree, '.agents/skills/x/SKILL.md'), 'utf8')).toBe('v2\n');
   });
@@ -265,8 +278,48 @@ describe('IPC de checkpoints da missão (F-1173)', () => {
 
     const listed = await call(ORCH_CHANNELS.missionCheckpointsList, { missionId: 'mission-a' });
     expect(listed.scopes[0]).toMatchObject({ root: worktree, checkpoints: [], unavailable: expect.any(String) });
-    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef() }))
+    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef(), fingerprint: NO_PLAN }))
       .resolves.toMatchObject({ ok: false });
     expect(fs.existsSync(path.join(repo, 'feito.txt'))).toBe(false);
+  });
+
+  it('restauração sem impressão da prévia é pedido inválido', async () => {
+    const { call } = harness();
+    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref: firstRef() }))
+      .resolves.toEqual({ ok: false, error: 'pedido inválido' });
+    expect(fs.readFileSync(path.join(worktree, 'feito.txt'), 'utf8')).toBe('quebrado\n');
+  });
+
+  it('TOCTOU: árvore muda entre a prévia e a confirmação — recusa sem escrever nem guardar nada', async () => {
+    const { call } = harness();
+    // Prévia mostra 1 arquivo a sobrescrever; o checkpoint também traz um arquivo novo.
+    fs.writeFileSync(path.join(worktree, 'extra.txt'), 'v1\n');
+    const artifact = await captureWriterHandoffCheckpoint(writerCtx());
+    const ref = String(artifact?.payload.ref);
+    fs.rmSync(path.join(worktree, 'extra.txt'));
+    const preview = await call(ORCH_CHANNELS.missionCheckpointPreview, { missionId: 'mission-a', ref });
+    expect(preview).toMatchObject({ ok: true, create: { files: ['extra.txt'] } });
+    const refsBefore = git(repo, 'for-each-ref', '--format=%(refname)', 'refs/nexus-checkpoint');
+
+    // Um writer recria o arquivo depois da prévia: a restauração sobrescreveria mais do que o mostrado.
+    fs.writeFileSync(path.join(worktree, 'extra.txt'), 'trabalho novo do writer\n');
+    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref, fingerprint: preview.fingerprint }))
+      .resolves.toEqual({ ok: false, error: CHECKPOINT_PLAN_CHANGED, stale: true });
+    expect(fs.readFileSync(path.join(worktree, 'extra.txt'), 'utf8')).toBe('trabalho novo do writer\n');
+    expect(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/nexus-checkpoint')).toBe(refsBefore);
+
+    // Editar o conteúdo de um destino que JÁ estava na prévia (mesma lista) também a invalida.
+    const again = await call(ORCH_CHANNELS.missionCheckpointPreview, { missionId: 'mission-a', ref });
+    expect(again).toMatchObject({ ok: true, overwrite: { files: ['extra.txt'] }, create: { total: 0 } });
+    fs.writeFileSync(path.join(worktree, 'extra.txt'), 'writer escreveu ainda mais depois da prévia\n');
+    const recheck = await call(ORCH_CHANNELS.missionCheckpointPreview, { missionId: 'mission-a', ref });
+    expect(recheck).toMatchObject({ overwrite: { files: ['extra.txt'] } });
+    await expect(call(ORCH_CHANNELS.missionCheckpointRestore, { missionId: 'mission-a', ref, fingerprint: again.fingerprint }))
+      .resolves.toMatchObject({ ok: false, stale: true });
+    expect(fs.readFileSync(path.join(worktree, 'extra.txt'), 'utf8')).toBe('writer escreveu ainda mais depois da prévia\n');
+
+    // Nova prévia: agora restaura.
+    await expect(previewThenRestore(call, ref)).resolves.toMatchObject({ ok: true, applied: true });
+    expect(fs.readFileSync(path.join(worktree, 'extra.txt'), 'utf8')).toBe('v1\n');
   });
 });

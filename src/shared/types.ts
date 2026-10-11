@@ -830,7 +830,7 @@ export interface NexusApi {
       input: import('./mission-checkpoints').MissionCheckpointRefInput,
     ): Promise<import('./mission-checkpoints').MissionCheckpointPreviewResult>;
     restoreMissionCheckpoint(
-      input: import('./mission-checkpoints').MissionCheckpointRefInput,
+      input: import('./mission-checkpoints').MissionCheckpointRestoreInput,
     ): Promise<import('./mission-checkpoints').MissionCheckpointRestoreResult>;
     /** Point handoff delivery at the reopened orchestrator's new session. */
     rebindMissionOrchestrator(

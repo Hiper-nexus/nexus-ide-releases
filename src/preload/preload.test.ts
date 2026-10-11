@@ -114,8 +114,9 @@ describe('preload PTY delivery', () => {
     expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('orch:mission.checkpoints.list', { missionId: 'mission-a' });
     await (api.orch.previewMissionCheckpoint as (...args: unknown[]) => Promise<unknown>)({ missionId: 'mission-a', ref, cwd: '/tmp' });
     expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('orch:mission.checkpoints.preview', { missionId: 'mission-a', ref });
-    await (api.orch.restoreMissionCheckpoint as (...args: unknown[]) => Promise<unknown>)({ missionId: 'mission-a', ref, cwd: '/tmp' });
-    expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('orch:mission.checkpoints.restore', { missionId: 'mission-a', ref });
+    const fingerprint = 'f'.repeat(64);
+    await (api.orch.restoreMissionCheckpoint as (...args: unknown[]) => Promise<unknown>)({ missionId: 'mission-a', ref, fingerprint, cwd: '/tmp' });
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('orch:mission.checkpoints.restore', { missionId: 'mission-a', ref, fingerprint });
   });
 
   it('exposes Main-owned logout over billing:logout', async () => {

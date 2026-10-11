@@ -21,6 +21,9 @@
  * Falha volta como `{ ok: false, error }`: a tela mostra o motivo sem o
  * prefixo "Error invoking remote method" do Electron.
  */
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 import type { WebContents } from 'electron';
 import { ORCH_CHANNELS } from '../../shared/orch-channels';
@@ -68,6 +71,41 @@ const refInputSchema = z
     ref: z.string().max(200).regex(CHECKPOINT_REF_PATTERN),
   })
   .strict();
+const restoreInputSchema = refInputSchema
+  .extend({ fingerprint: z.string().regex(/^[0-9a-f]{64}$/) })
+  .strict();
+
+export const CHECKPOINT_PLAN_CHANGED =
+  'o checkpoint ou a árvore mudou desde a prévia; reveja a prévia antes de restaurar';
+
+/** Recusa por plano divergente: a tela oferece nova prévia. */
+class StalePlanError extends Error {
+  constructor() {
+    super(CHECKPOINT_PLAN_CHANGED);
+  }
+}
+
+/**
+ * Impressão digital do que a restauração ESCREVERIA: o commit do checkpoint
+ * e, para cada destino (sobrescrever + criar), se existe no disco, tamanho e
+ * mtime. A prévia devolve; a restauração recalcula dentro da fila da raiz,
+ * antes de qualquer escrita (`assertTargets`), e recusa se divergir — um
+ * writer que criou, apagou ou editou um destino depois da prévia muda a
+ * impressão. Conteúdo sobrescrito ainda vai para o backup de qualquer forma.
+ */
+function planFingerprint(root: string, ref: string, commit: string, targets: readonly string[]): string {
+  const files = [...targets].sort().map((file) => {
+    const stat = fs.lstatSync(path.join(root, file), { throwIfNoEntry: false });
+    return stat ? [file, stat.isSymbolicLink() ? 'l' : 'f', stat.size, stat.mtimeMs] : [file, null];
+  });
+  return createHash('sha256').update(JSON.stringify({ ref, commit, files })).digest('hex');
+}
+
+async function resolveCheckpointCommit(git: AsyncGitRunner, root: string, ref: string): Promise<string | null> {
+  const resolved = await git.run(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { allowFailure: true });
+  const commit = resolved.stdout.trim();
+  return resolved.status === 0 && OID.test(commit) ? commit : null;
+}
 
 type RendererOwner = Pick<WebContents, 'id' | 'isDestroyed' | 'isCrashed'>;
 
@@ -196,12 +234,13 @@ async function previewMissionCheckpointForRenderer(
     deps.git ? { git: deps.git } : {},
   );
   if (!preview.ok) return { ok: false, error: `checkpoint: ${preview.reason}` };
-  return { ok: true, ...planView(root, input.ref, preview) };
+  const fingerprint = planFingerprint(root, input.ref, preview.commit, [...preview.overwrite, ...preview.create]);
+  return { ok: true, fingerprint, ...planView(root, input.ref, preview) };
 }
 
 async function restoreMissionCheckpointForRenderer(
   scope: ProjectExecutionScope,
-  input: { readonly missionId: string; readonly ref: string },
+  input: { readonly missionId: string; readonly ref: string; readonly fingerprint: string },
   assertRendererCurrent: () => void,
   deps: Pick<MissionCheckpointIpcDeps, 'git'> = {},
 ): Promise<MissionCheckpointRestoreResult> {
@@ -209,23 +248,39 @@ async function restoreMissionCheckpointForRenderer(
   const root = sealedCheckpointRoot(scope, target.root);
   const mission = missionForCheckpointRestore(scope, input.missionId);
   assertCheckpointWritersIdle(undefined, root);
-  const result = await restoreHiddenCheckpoint(
-    {
-      cwd: root,
-      scopeId: target.scopeId,
-      ref: input.ref,
-      apply: true,
-      forbiddenRoot: scope.rootRealPath,
-      assertTargets: (targets) => assertCheckpointRestoreTargets(scope, input.missionId, mission, targets),
-      assertCanWrite: () => {
-        assertRendererCurrent();
-        sealedCheckpointRoot(scope, root);
-        assertCheckpointWritersIdle(undefined, root);
+  const commit = await resolveCheckpointCommit(deps.git ?? new AsyncProcessGitRunner(), root, input.ref);
+  if (!commit) return { ok: false, error: 'checkpoint: checkpoint-not-found' };
+  let result: Awaited<ReturnType<typeof restoreHiddenCheckpoint>>;
+  try {
+    result = await restoreHiddenCheckpoint(
+      {
+        cwd: root,
+        scopeId: target.scopeId,
+        ref: input.ref,
+        apply: true,
+        forbiddenRoot: scope.rootRealPath,
+        assertTargets: (targets) => {
+          // Dentro da fila da raiz e antes de qualquer escrita: o plano é o da prévia?
+          if (planFingerprint(root, input.ref, commit, targets) !== input.fingerprint) throw new StalePlanError();
+          assertCheckpointRestoreTargets(scope, input.missionId, mission, targets);
+        },
+        assertCanWrite: () => {
+          assertRendererCurrent();
+          sealedCheckpointRoot(scope, root);
+          assertCheckpointWritersIdle(undefined, root);
+        },
       },
-    },
-    deps.git ? { git: deps.git } : {},
-  );
+      deps.git ? { git: deps.git } : {},
+    );
+  } catch (error) {
+    if (error instanceof StalePlanError) return { ok: false, error: CHECKPOINT_PLAN_CHANGED, stale: true };
+    throw error;
+  }
   if (!result.ok) return { ok: false, error: `checkpoint: ${result.reason}` };
+  // A ref foi reapontada entre a resolução e a escrita (ordinal reescrito).
+  if (result.applied && result.commit !== commit) {
+    return { ok: false, error: `${CHECKPOINT_PLAN_CHANGED} (a ref passou a apontar outro commit; o estado anterior está em ${result.backup?.ref ?? 'um checkpoint novo'})` };
+  }
   return {
     ok: true,
     applied: result.applied,
@@ -257,7 +312,7 @@ export function registerMissionCheckpointIpc(deps: MissionCheckpointIpcDeps = {}
     }
   });
   handle(ORCH_CHANNELS.missionCheckpointRestore, async (event, raw: unknown): Promise<MissionCheckpointRestoreResult> => {
-    const parsed = refInputSchema.safeParse(raw);
+    const parsed = restoreInputSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'pedido inválido' };
     try {
       const scope = rendererScope(event.sender);

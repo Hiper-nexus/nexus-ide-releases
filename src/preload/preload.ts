@@ -1075,10 +1075,15 @@ const api: NexusApi = {
         missionId: input.missionId,
         ref: input.ref,
       }),
-    restoreMissionCheckpoint: (input: { missionId: string; ref: string }) =>
+    restoreMissionCheckpoint: (input: {
+      missionId: string;
+      ref: string;
+      fingerprint: string;
+    }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionCheckpointRestore, {
         missionId: input.missionId,
         ref: input.ref,
+        fingerprint: input.fingerprint,
       }),
     missionEventsRecent: (input) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionEventsRecent, input),
