@@ -7,6 +7,7 @@ import { expect, it } from 'vitest';
 import { claudeNativeHeavyHookCommand } from './native-heavy-tool-hook';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { DARWIN_PTY_STAGE_ZERO_SOURCE, nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -31,7 +32,8 @@ function streamMessage(res: http.ServerResponse, model: string, content: { type:
 }
 
 const NATIVE_HEAVY_CASES = [{ innerSandbox: false, scheduling: true, tracedLauncher: false }, { innerSandbox: true, scheduling: false, tracedLauncher: false }, { innerSandbox: true, scheduling: true, tracedLauncher: false }, { innerSandbox: true, scheduling: true, tracedLauncher: true }].map((variant) => ({ ...variant, label: `${variant.innerSandbox ? 'enabled' : 'disabled'} and scheduling ${variant.scheduling}${variant.tracedLauncher ? ' (original traced launcher denied before target)' : ''}` }));
-it.runIf(runNative).each(NATIVE_HEAVY_CASES)('real Claude native Bash receives scoped native admission with its inner sandbox $label', async ({ innerSandbox, scheduling, tracedLauncher }) => {
+it.runIf(runNative).for(NATIVE_HEAVY_CASES)('real Claude native Bash receives scoped native admission with its inner sandbox $label', { timeout: 35_000 }, async ({ innerSandbox, scheduling, tracedLauncher }, testContext) => {
+ skipUnderNexusPtySupervisor(testContext);
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-real-claude-'));
  fs.writeFileSync(path.join(root, 'Makefile'), 'all:\n\t@printf done > command-ran\n');
  const outside = path.join(os.homedir(), `.nexus-inner-sandbox-fixture-${path.basename(root)}`); fs.writeFileSync(outside, 'protected');
@@ -94,7 +96,7 @@ it.runIf(runNative).each(NATIVE_HEAVY_CASES)('real Claude native Bash receives s
   clearTimeout(timer); child.kill('SIGTERM'); await exit; pool.close();
   await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(outside, { force: true });
  }
-}, 35_000);
+});
 
 it('native input transformation preserves fields and never grants permission or sends a bearer', () => {
  const resources = path.join(process.cwd(), 'resources/heavy-command');

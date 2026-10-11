@@ -5,6 +5,7 @@ import { getAdapter } from '../adapters/adapter-registry';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { secureAutonomousCliArgs } from '../pty/autonomous-cli-policy';
+import { CODEX_READ_ONLY_PERMISSION_PROFILE } from '../pty/codex-native-authority';
 import {
   configureNexusDoctor,
   disposeNexusDoctor,
@@ -42,7 +43,12 @@ const DEFAULT_DEPENDENCIES: NexusDoctorBootstrapDependencies = {
   inspectContext: (scope) => getContextWorkflowService(scope).inspectReadiness(),
   listProviderSettings,
   getAdapter,
-  secureReadOnlyArgs: secureAutonomousCliArgs,
+  // Mirror the governed read-only spawn: pty-manager injects the main-owned
+  // Codex profile before building argv (pty-manager.ts:2263-2288).
+  secureReadOnlyArgs: (adapter, args, readOnly) =>
+    secureAutonomousCliArgs(adapter, args, readOnly, {
+      trustedCodexPermissionProfile: CODEX_READ_ONLY_PERMISSION_PROFILE,
+    }),
 };
 
 export function buildMultiPcBackendStatus(
@@ -73,10 +79,10 @@ function canEnforceReadOnly(
 
 export function buildDoctorProviderSnapshot(
   provider: ProviderSettingsInfo,
-  dependencies: Pick<
+  dependencies: Partial<Pick<
     NexusDoctorBootstrapDependencies,
     'getAdapter' | 'secureReadOnlyArgs'
-  > = DEFAULT_DEPENDENCIES,
+  >> = DEFAULT_DEPENDENCIES,
 ): IndependentProviderSnapshot {
   return Object.freeze({
     adapterId: provider.adapterId,

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { runPeriodicTask, stopPeriodicTask } from './observability/periodic-task';
-import { app, autoUpdater, BrowserWindow, dialog } from 'electron';
+import { app, autoUpdater, BrowserWindow } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -56,6 +56,7 @@ import {
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const BOOT_CHECK_DELAY_MS = 3_000;
+const FRESH_CHECK_MS = 60_000;
 const AUTO_INSTALL_RETRY_MS = 6 * 60 * 60 * 1000;
 const WINDOWS_SQUIRREL_FIRST_RUN_DELAY_MS = 10_000;
 const GH_CHECK_TIMEOUT_MS = 15_000;
@@ -599,7 +600,10 @@ export class UpdateManager {
    * foco: a mesma versão só tenta de novo depois de AUTO_INSTALL_RETRY_MS.
    */
   private async backgroundCheck(): Promise<void> {
-    await this.check();
+    // F-1182: no boot o chip do renderer checa ao montar e o relógio de 3 s
+    // checaria de novo logo depois. Resultado fresco basta; install() revalida.
+    const checkedAt = this.state.checkedAt;
+    if (!checkedAt || Date.now() - checkedAt >= FRESH_CHECK_MS) await this.check();
     const version = this.state.available?.version;
     if (this.mode !== 'gh' || this.state.phase !== 'available' || !this.state.canInstall || !version) return;
     const last = this.autoInstallAttempt;
@@ -1131,6 +1135,10 @@ export class UpdateManager {
         this.patch({ phase: 'uptodate', checkedAt: Date.now() });
       }
     });
+    // F-1181: sem diálogo nativo aqui. Sem janela-mãe, o showMessageBox do
+    // macOS é um NSAlert runModal que prende a main thread até o clique; com o
+    // download de fundo do F-1012 a 0.76.233 ficou 4,9 h parada de madrugada.
+    // O banner "Atualização pronta" do renderer já oferece "Reiniciar agora".
     autoUpdater.on('update-downloaded', (_e, _notes, name) => {
       writeUpdateLog('info', 'squirrel:update-downloaded', { name });
       this.patch({
@@ -1140,20 +1148,6 @@ export class UpdateManager {
           tag: String(name ?? ''),
         },
       });
-      void dialog
-        .showMessageBox({
-          type: 'info',
-          buttons: ['Reiniciar agora', 'Depois'],
-          defaultId: 0,
-          cancelId: 1,
-          title: 'Atualização pronta',
-          message: `NexusIDE ${name ?? ''} foi baixado.`,
-          detail: 'Reinicie para aplicar a atualização.',
-          noLink: true,
-        })
-        .then((res) => {
-          if (res.response === 0) autoUpdater.quitAndInstall();
-        });
     });
   }
 }

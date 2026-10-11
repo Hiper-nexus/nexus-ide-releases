@@ -649,6 +649,27 @@ describe('Context Doctor', () => {
     );
   });
 
+  it('identifica cada attestation quando várias compartilham a fonte que mudou', () => {
+    const { root, scope } = fixture();
+    write(root, 'README.md', '# Product v1');
+    write(root, '.context/docs/business-model.md', '# Business v1');
+    write(root, '.context/docs/testing.md', '# Testing v1');
+    attest(root, scope, '.context/docs/business-model.md', 'README.md');
+    attest(root, scope, '.context/docs/testing.md', 'README.md');
+    write(root, 'README.md', '# Product v2');
+
+    const report = inspectContextReadiness(scope, { knownSymbols: new Set() });
+    const drift = report.warnings.find(
+      (item) => item.code === 'invalid-context-attestation',
+    );
+    expect(drift?.details).toHaveLength(2);
+    expect(new Set(drift?.details).size).toBe(2);
+    expect(drift?.details).toEqual(expect.arrayContaining([
+      expect.stringContaining('.context/docs/business-model.md'),
+      expect.stringContaining('.context/docs/testing.md'),
+    ]));
+  });
+
   it('blocks when an attested target is absent', () => {
     const { root, scope } = fixture();
     write(root, 'README.md', '# Product v1');

@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, net, powerMonitor } from 'electron';
 import type { WebContents } from 'electron';
+import { showMessageBoxWithoutBlocking } from '../native-confirm';
 import { handleTrusted } from '../security/trusted-ipc';
 import {
   hasSensitiveChange,
@@ -2324,7 +2325,8 @@ function autoCliStatus(state: AutoCliPreferences | null): import('../../shared/p
   };
 }
 
-async function confirmAutomaticCliConsent(candidates: readonly AutomaticCliCandidate[]): Promise<boolean> {
+/** `null`: sem janela para o sheet — nada foi decidido, pergunta no próximo tick. */
+async function confirmAutomaticCliConsent(candidates: readonly AutomaticCliCandidate[]): Promise<boolean | null> {
   const opts = {
     type: 'question' as const,
     buttons: ['Agora não', 'Ativar atualizações automáticas'],
@@ -2339,9 +2341,11 @@ async function confirmAutomaticCliConsent(candidates: readonly AutomaticCliCandi
       ).join('\n'),
     noLink: true,
   };
-  const win = BrowserWindow.getFocusedWindow();
-  const result = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
-  return result.response === 1;
+  // F-1203: este diálogo só nasce com o sistema ocioso há 60 s — o operador
+  // longe e o Nexus quase nunca em foco. Sem janela-mãe o macOS prendia a main
+  // thread até alguém voltar. Sheet numa janela viva, sem prender nada.
+  const result = await showMessageBoxWithoutBlocking(opts);
+  return result ? result.response === 1 : null;
 }
 
 const CLI_AUTO_UPDATE_IDLE_SECONDS = 60;
@@ -2389,6 +2393,7 @@ export function startCliAutoUpdate(
         prompting = true;
         try {
           const accepted = await context.wait(confirmAutomaticCliConsent(candidates));
+          if (accepted === null) return;
           const next = {
             enabled: accepted,
             askAgainAt: accepted ? undefined : Date.now() + 7 * 24 * 60 * 60_000,

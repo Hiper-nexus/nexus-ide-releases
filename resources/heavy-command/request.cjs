@@ -24,10 +24,21 @@ if (inheritedProxy) {
 }
 function accepted(status, raw) {
   const result = JSON.parse(raw);
-  if (status !== 200 || result.allow !== true || typeof result.leaseId !== 'string' || !result.leaseId || result.leaseId.length > 128) process.exit(78);
+  if (status !== 200 || result.allow !== true || typeof result.leaseId !== 'string' || !result.leaseId || result.leaseId.length > 128) {
+    // F-1229: Main's reason (queue wait, root, jobs there) instead of a bare exit.
+    if (status === 200 && typeof result.message === 'string') process.stderr.write(result.message.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 600) + '\n');
+    process.exit(78);
+  }
   process.stdout.write(result.leaseId);
 }
-const body = JSON.stringify({ pid, kind, ...(process.argv[4] === 'darwin-job' ? { proof: 'darwin-job' } : {}), ...(process.env.NEXUS_HEAVY_LEASE ? { leaseId: process.env.NEXUS_HEAVY_LEASE } : {}) });
+// F-1229: Main queues one job per real git root of the work. The job runs in
+// this process's cwd; a wrapped `cd <dir> && …` line names its dir through
+// job-launch (the admission precedes that cd). Main accepts only this repo's roots.
+let cwd = (process.argv[4] === 'darwin-job' && process.env.NEXUS_HEAVY_CWD) || '';
+if (!cwd) { try { cwd = process.cwd(); } catch {} }
+// Every transport carries ≤2048 bytes; an unusual path just keeps the token's lane.
+if (!require('node:path').isAbsolute(cwd) || /[\x00-\x1f\x7f]/.test(cwd) || Buffer.byteLength(JSON.stringify(cwd)) > 1024) cwd = '';
+const body = JSON.stringify({ pid, kind, ...(process.argv[4] === 'darwin-job' ? { proof: 'darwin-job' } : {}), ...(process.env.NEXUS_HEAVY_LEASE ? { leaseId: process.env.NEXUS_HEAVY_LEASE } : cwd ? { cwd } : {}) });
 // ps birth identity is second-granularity: do not claim a same-second PID.
 setTimeout(async () => {
   if (process.env.NEXUS_HEAVY_CHANNEL_DIR) {

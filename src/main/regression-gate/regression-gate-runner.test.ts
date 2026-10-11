@@ -6,10 +6,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { setPtyHost } from '../pty/pty-manager';
 import { supervisedJobCommand } from '../pty/darwin-pty-supervisor';
 import { buildTestDarwinPtySupervisor } from '../../test/darwin-pty-supervisor-fixture';
+import { nestedPtySupervisorSkipReason, skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { processSandboxRuntimeAvailable } from '../runtime/process-sandbox-capability';
 import { ProcessGitRunner } from '../runtime/git-command';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
@@ -64,6 +65,7 @@ function realProject(files: Record<string, string>) {
 darwinOnly('runner real no sandbox do writer', () => {
   let supervisor: ReturnType<typeof buildTestDarwinPtySupervisor> | undefined;
   beforeAll(() => {
+    if (nestedPtySupervisorSkipReason()) return;
     const fixture = buildTestDarwinPtySupervisor();
     supervisor = fixture;
     setPtyHost({
@@ -72,6 +74,8 @@ darwinOnly('runner real no sandbox do writer', () => {
     });
   }, 60_000);
   afterAll(() => supervisor?.dispose());
+  // Todo caso aqui roda o vitest real sob o supervisor da suíte (F-1217).
+  beforeEach((testContext) => skipUnderNexusPtySupervisor(testContext));
 
   it('teste excluído pela config do runner não vira aprovação', async () => {
     const { write, scope, trustedDependencyRoot } = realProject({

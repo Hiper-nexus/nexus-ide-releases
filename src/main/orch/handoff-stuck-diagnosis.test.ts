@@ -46,6 +46,24 @@ describe('handoff stuck diagnosis (resto F-1040)', () => {
     expect(d.escape).toContain('nexus_handoff_ack');
   });
 
+  it('F-1232: entrega de helper do operador sem missão não espera ACK de Maestro', () => {
+    const view = {
+      id: 'h4b',
+      delivered: true,
+      deliveryState: 'submitted',
+      consumedAt: null,
+      submittedAt: NOW - 21 * 24 * 3_600_000,
+    };
+    const workspace = diagnoseHandoffStuck({ ...view, missionId: null }, NOW);
+    expect(workspace).toMatchObject({ stuck: false, reason: 'not-stuck' });
+    expect(workspace.escape).not.toContain('Maestro');
+    // Com missão, a semântica do ACK do Maestro não muda.
+    expect(diagnoseHandoffStuck({ ...view, missionId: 'mission-a' }, NOW)).toMatchObject({
+      stuck: true,
+      reason: 'accepted-not-consumed',
+    });
+  });
+
   it('queued inside the acceptance window is not stuck yet', () => {
     const d = diagnoseHandoffStuck(
       { id: 'h5', deliveryState: 'queued', submittedAt: NOW - 2_000 },

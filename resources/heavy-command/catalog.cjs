@@ -529,6 +529,16 @@ function commandKind(command, depth = 0) {
     return 'build'; // unreadable (too deeply nested): keep it metered
   }
 }
+// F-1229: `cd <dir> && …` wrapped whole as one job asks for admission before
+// its cd runs. The literal first-command target names where the work happens;
+// Main still accepts it only as this repository's checkout/worktree.
+function leadingCd(command) {
+  try {
+    const words = shellSegments(String(command))[0]?.words;
+    const dir = words?.length === 2 && words[0] === 'cd' ? words[1] : '';
+    return dir && !dir.includes(DYNAMIC) && !/^[~-]/.test(dir) ? dir : null;
+  } catch { return null; }
+}
 // F-982 (second review): an exec/spawn argv never went through a shell. Joining
 // it and re-reading the text as shell turned a `|` or newline inside one
 // argument (`rg -e 'a|vitest'`, a commit message with "\nmake …") into another
@@ -574,4 +584,4 @@ function isAgentEngine(file, entry, self) {
     return Boolean(root) && target.startsWith(root + path.sep) && fs.statSync(target).isFile();
   } catch { return false; }
 }
-module.exports = { moduleKind, entryKind, commandKind, argvKind, isPersistent, isDispatcher, isAgentEngine };
+module.exports = { moduleKind, entryKind, commandKind, argvKind, leadingCd, isPersistent, isDispatcher, isAgentEngine };

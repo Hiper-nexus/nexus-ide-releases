@@ -163,6 +163,58 @@ describe('nexus_file_search budgets', () => {
     });
   });
 
+  it('F-1231: começa no prefixo literal do glob — árvore grande fora dele não gasta orçamento', async () => {
+    for (let index = 0; index < 200; index += 1) {
+      fs.writeFileSync(path.join(root, `noise-${index}.ts`), 'export {};');
+    }
+    for (let index = 0; index < 20; index += 1) {
+      const noise = path.join(root, `aaa-${index}`, 'main');
+      fs.mkdirSync(noise, { recursive: true });
+      fs.writeFileSync(path.join(noise, 'updater.ts'), 'export {};');
+    }
+    fs.mkdirSync(path.join(root, 'src', 'main'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'src', 'renderer'));
+    for (const name of ['updater.ts', 'updater-ipc.ts', 'other.ts']) {
+      fs.writeFileSync(path.join(root, 'src', 'main', name), 'export {};');
+    }
+    fs.writeFileSync(path.join(root, 'src', 'renderer', 'updater.ts'), 'export {};');
+
+    const result = (await searchTool().handler(
+      { pattern: 'src/main/updater*.ts', maxFiles: 10, maxDirectories: 10, timeoutMs: 5_000 },
+      context(),
+    )) as SearchResult;
+
+    expect([...result.files].sort()).toEqual(['src/main/updater-ipc.ts', 'src/main/updater.ts']);
+    expect(result).toMatchObject({
+      truncated: false,
+      stoppedBy: null,
+      scanned: { files: 3, directories: 3 },
+    });
+  });
+
+  it('F-1231: o prefixo literal não sai do escopo nem segue symlink', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-search-outside-'));
+    try {
+      fs.mkdirSync(path.join(outside, 'main'));
+      fs.writeFileSync(path.join(outside, 'main', 'updater.ts'), 'export {};');
+      fs.symlinkSync(outside, path.join(root, 'linked'), 'dir');
+
+      for (const pattern of [
+        'linked/main/updater*.ts',
+        `../${path.basename(outside)}/main/*.ts`,
+        `${outside}/main/*.ts`,
+      ]) {
+        const result = (await searchTool().handler(
+          { pattern, timeoutMs: 5_000 },
+          context(),
+        )) as SearchResult;
+        expect(result).toMatchObject({ count: 0, files: [], scanned: { directories: 1 } });
+      }
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it('clamps caller-provided budgets to process-safe hard ceilings', async () => {
     fs.writeFileSync(path.join(root, 'entry.ts'), 'export {};');
 

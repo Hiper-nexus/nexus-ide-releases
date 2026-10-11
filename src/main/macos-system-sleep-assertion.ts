@@ -71,7 +71,10 @@ export class MacosSystemSleepAssertion {
 
     let child: CaffeinateProcess
     try {
-      child = this.spawn('/usr/bin/caffeinate', ['-i', '-s'], {
+      // F-1186: -w amarra a asserção a este processo. Sem ele, um app que
+      // caiu/atualizou (ou um worker de teste) deixava o caffeinate órfão
+      // segurando o Mac acordado — e o slot heavy do job que o criou.
+      child = this.spawn('/usr/bin/caffeinate', ['-i', '-s', '-w', String(process.pid)], {
         stdio: 'ignore',
         windowsHide: true
       })

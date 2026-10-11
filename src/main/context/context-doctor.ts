@@ -17,7 +17,10 @@ import {
 } from '../orch/workspace-path';
 import { detectContextConflicts } from './ambiguity-engine';
 import { canonicalJson } from './canonical-json';
-import { inspectContextAttestations } from './context-attestation';
+import {
+  inspectContextAttestations,
+  type ContextAttestationDiagnostic,
+} from './context-attestation';
 import {
   authorityFactLocators,
   partitionAttestationDiagnostics,
@@ -804,6 +807,14 @@ export function ensureContextScaffold(
   return Object.freeze({ created: Object.freeze(created.sort()) });
 }
 
+/** Names target + attestation: shared sources otherwise look duplicated. */
+function attestationDetail(item: ContextAttestationDiagnostic): string {
+  const where = [item.targetPath, item.attestationPath?.split('/').pop()]
+    .filter(Boolean)
+    .join(' via ');
+  return where ? `${item.message} (${where})` : item.message;
+}
+
 export function inspectContextReadiness(
   scope: ProjectExecutionScope,
   options: ContextReadinessOptions,
@@ -903,14 +914,14 @@ export function inspectContextReadiness(
     blockers.push({
       code: 'invalid-context-attestation',
       message: 'Uma autoridade de contexto perdeu o vínculo com suas fontes revisadas.',
-      details: attestationDiagnostics.blocking.map((item) => item.message),
+      details: attestationDiagnostics.blocking.map(attestationDetail),
     });
   }
   if (attestationDiagnostics.sourceDrift.length > 0) {
     warnings.push({
       code: 'invalid-context-attestation',
       message: 'A fonte revisada mudou, mas o conteúdo do alvo permanece idêntico.',
-      details: attestationDiagnostics.sourceDrift.map((item) => item.message),
+      details: attestationDiagnostics.sourceDrift.map(attestationDetail),
     });
   }
   if (attestationDiagnostics.quarantined.length > 0) {
@@ -918,7 +929,7 @@ export function inspectContextReadiness(
       code: 'invalid-context-attestation',
       message:
         'Uma attestation ilegível foi ignorada (quarentena). Remova ou regenere o arquivo.',
-      details: attestationDiagnostics.quarantined.map((item) => item.message),
+      details: attestationDiagnostics.quarantined.map(attestationDetail),
     });
   }
   try {

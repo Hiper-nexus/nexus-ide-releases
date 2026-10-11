@@ -2511,6 +2511,46 @@ describe("handoff MCP stop receipt", () => {
     expect(result[0]?.stuckDiagnosis?.reason).toBe("accepted-not-consumed");
   });
 
+  it("F-1232: o operador sem missão não vê seus helpers entregues como presos", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn(() => 0);
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: {
+        ...stores.handoffs,
+        list: mocks.listHandoffs,
+        acknowledgeSeenByOrchestratorList: ackSpy,
+        listDeliveryAttempts: () => [],
+      },
+    });
+    const threeWeeksAgo = Date.now() - 21 * 24 * 3_600_000;
+    mocks.listHandoffs.mockReturnValue([
+      {
+        id: "h-operator-helper",
+        delivered: true,
+        deliveryState: "submitted",
+        submittedAt: threeWeeksAgo,
+        createdAt: threeWeeksAgo,
+        artifacts: [],
+      },
+    ]);
+
+    const result = (await listTool().handler({}, {
+      ...context(),
+      token: "operator-token",
+      label: "operador",
+      role: "user",
+      missionId: undefined,
+      sessionId: "operator-session",
+      workerIncarnationId: undefined,
+      contextRevision: undefined,
+      agentName: undefined,
+    })) as Array<{ id: string; stuckDiagnosis?: { reason: string } }>;
+    expect(result.map((row) => row.id)).toEqual(["h-operator-helper"]);
+    expect(result[0]?.stuckDiagnosis).toBeUndefined();
+    expect(ackSpy).not.toHaveBeenCalled();
+  });
+
   it("compacts a cursor page using global recency, not the page length", async () => {
     mocks.listHandoffs.mockReturnValue(
       Array.from({ length: 8 }, (_, index) => ({

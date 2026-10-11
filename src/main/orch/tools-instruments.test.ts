@@ -498,6 +498,84 @@ describe('nexus_model_ranking', () => {
     expect(out.need.pick.servedBand).toBe('fast');
     expect(out.need.pick.degraded).toBe(true);
   });
+
+  it('F-1230: faixas e pick saem do catálogo instalado, na linha mais nova', async () => {
+    const row = (adapterId: string, modelId: string, security: number) => ({
+      id: `${adapterId}/${modelId}`,
+      adapterId,
+      modelId,
+      overall: security,
+      security,
+      costTier: 'high',
+      evaluatedAt: '2026-07-30T00:00:00.000Z',
+      source: 'nexus-eval/fixtures',
+      estimate: true,
+    });
+    rankingMocks.getPublicModelRanking.mockReturnValue({
+      ...ranking,
+      entries: [
+        row('codex', 'gpt-5.6-luna', 95),
+        row('kimi', 'kimi-k2.8', 94),
+        row('grok', 'grok-4.6', 93),
+        row('claude', 'claude-sonnet-5', 92),
+        // O score do próprio modelo novo vence o herdado do velho.
+        row('claude', 'claude-sonnet-5-5', 80),
+        row('agy', 'gemini-3.8-flash-high', 91),
+        row('opencode', 'glm-5', 90),
+        row('codex', 'gpt-4.1-mini', 89),
+      ],
+    });
+    const adapter = (id: string, list: string[], installed = true) => ({
+      id,
+      kind: 'cli-pty',
+      label: id,
+      models: { list, default: list[0], info: {} },
+      installed,
+    });
+    adapterMocks.listAdapterInfos.mockReturnValue([
+      adapter('codex', ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-luna']),
+      adapter('grok', ['grok-4.7', 'grok-4.7-build-fast', 'grok-4.6']),
+      adapter('kimi', ['kimi-code/k3', 'kimi-code/kimi-for-coding']),
+      adapter('claude', ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5']),
+      adapter('agy', ['gemini-3.8-flash-high']),
+      adapter('opencode', ['glm-5'], false),
+    ]);
+    providerMocks.listProviderSettings.mockReturnValue([
+      { adapterId: 'agy', enabled: false },
+    ]);
+
+    const out = (await tool('nexus_model_ranking').handler(
+      { need: 'revisão sênior de segurança em código TypeScript', dimension: 'security' },
+      ctx(),
+    )) as {
+      bands: { deep: Array<{ id: string; upgradedFrom?: string }> };
+      need: { band: string; pick: { id: string; upgradedFrom?: string } };
+      entries: Array<{ id: string; score: number; estimate: boolean }>;
+      installedCatalog: { applied: boolean; dropped: string[] };
+    };
+
+    expect(out.need.band).toBe('deep');
+    expect(out.need.pick).toMatchObject({ id: 'codex/gpt-6-luna', upgradedFrom: 'gpt-5.6-luna' });
+    // kimi-k2.8 é aposentado (migra para kimi-code/k3, instalado).
+    expect(out.bands.deep.map((e) => [e.id, e.upgradedFrom])).toEqual([
+      ['codex/gpt-6-luna', 'gpt-5.6-luna'],
+      ['kimi/kimi-code/k3', 'kimi-k2.8'],
+      ['grok/grok-4.7', 'grok-4.6'],
+      ['claude/claude-sonnet-5-5', undefined],
+    ]);
+    expect(out.entries.find((e) => e.id === 'claude/claude-sonnet-5-5')).toMatchObject({
+      score: 80,
+    });
+    expect(out.entries.every((e) => e.estimate)).toBe(true);
+    // CLI desabilitada (agy), CLI não instalada (opencode) e modelo fora da
+    // oferta da CLI (gpt-4.1-mini) não entram.
+    expect(out.installedCatalog.applied).toBe(true);
+    expect(out.installedCatalog.dropped).toEqual([
+      'agy/gemini-3.8-flash-high',
+      'opencode/glm-5',
+      'codex/gpt-4.1-mini',
+    ]);
+  });
 });
 
 describe('nexus_mcp_servers', () => {

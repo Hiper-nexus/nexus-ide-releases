@@ -8,6 +8,7 @@ vi.mock('electron', () => ({ app: { isPackaged: false, getAppPath: () => process
 import { createNativeHeavyLocalChannel } from './native-heavy-local-channel';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -29,7 +30,8 @@ function streamMessage(res: http.ServerResponse, model: string, content: { type:
  event('message_stop', { type: 'message_stop' }); res.end();
 }
 
-it.runIf(process.platform === 'darwin' && Boolean(opencode))('real OpenCode native shell is admitted by inherited scoped shell env before absolute sh/make', async () => {
+it.runIf(process.platform === 'darwin' && Boolean(opencode))('real OpenCode native shell is admitted by inherited scoped shell env before absolute sh/make', async (testContext) => {
+ skipUnderNexusPtySupervisor(testContext);
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-real-opencode-'));
  const workspace = path.join(root, 'workspace'), privateTmp = path.join(root, 'tmp'); fs.mkdirSync(workspace); fs.mkdirSync(privateTmp);
  fs.writeFileSync(path.join(workspace, 'Makefile'), 'all:\n\t@printf done > command-ran\n');

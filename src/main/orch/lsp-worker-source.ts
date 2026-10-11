@@ -89,6 +89,15 @@ function safeRead(candidate) {
   bytesRead += file.stat.size;
   let fd;
   let content;
+  if (file.kind === 'typescript-lib') {
+    // F-1183: empacotada, a lib do TypeScript mora no app.asar, e o Electron
+    // abre arquivo de asar por uma cópia temporária: o fstat do fd nunca bate
+    // com o stat do caminho e definition/references/diagnostics morriam aqui.
+    // A lib vem do bundle do app, não do workspace; o readFileSync lê o asar.
+    content = fs.readFileSync(file.absolute, 'utf8');
+    contentCache.set(file.absolute, content);
+    return content;
+  }
   try {
     fd = fs.openSync(
       file.absolute,

@@ -1,8 +1,18 @@
+import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { RegressionGateResult } from '../regression-gate/regression-gate';
-import type { GitRunner } from '../runtime/git-command';
+import { computeBlastRadius } from '../context/orientation/orientation-blast-radius';
+import type { ProjectOrientationMap } from '../context/orientation/orientation-types';
+import {
+  __resetRegressionGateForTests,
+  runRegressionGate,
+  type RegressionExec,
+  type RegressionGateResult,
+} from '../regression-gate/regression-gate';
+import { ProcessGitRunner, type GitRunner } from '../runtime/git-command';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
   adoptUserSessionAsMissionOrchestrator,
@@ -58,9 +68,13 @@ const failed = result({
   failures: [{ file: 'src/b.test.ts', message: 'soma: expected 2 to be 3' }],
 });
 
+const repos: string[] = [];
+
 afterEach(() => {
   __resetHookRegressionForTests();
+  __resetRegressionGateForTests();
   resetGateForTests();
+  for (const repo of repos.splice(0)) fs.rmSync(repo, { recursive: true, force: true });
 });
 
 describe('handleHookRegressionRequest (Stop do pane do operador)', () => {
@@ -245,5 +259,56 @@ describe('handleHookRegressionRequest (Stop do pane do operador)', () => {
       },
     );
     expect(response).toEqual({ statusCode: 200, payload: {} });
+  });
+
+  it('F-1224: Stop de pane sem delta próprio não bloqueia por teste vermelho de WIP alheio que o code map puxa', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-stop-wip-')));
+    repos.push(root);
+    const sh = new ProcessGitRunner();
+    const put = (file: string, content: string) => {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), content);
+    };
+    sh.run(root, ['init', '-q']);
+    put('package.json', JSON.stringify({ devDependencies: { vitest: '^3.0.0' } }));
+    put('node_modules/.bin/vitest', '#!/bin/sh\n');
+    put('.gitignore', 'node_modules\n');
+    sh.run(root, ['add', '-A']);
+    sh.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'base']);
+    // WIP não rastreado de outro agente, vermelho e sujo antes do spawn do pane.
+    put('src/seal.ts', 'export const seal = 1;\n');
+    put('src/seal.test.ts', "import { seal } from './seal';\n");
+    const old = new Date(Date.now() - 60_000);
+    for (const file of ['src/seal.ts', 'src/seal.test.ts']) fs.utimesSync(path.join(root, file), old, old);
+    const spawnedAtMs = Date.now() - 1_000;
+    // Code map como em produção: o raio contém as próprias sementes.
+    const map = {
+      mapHash: 'm', inventory: { entrypoints: [] }, symbols: { hubs: [] },
+      graph: { edgeCount: 1, dbEdgeCount: 0, sampleEdges: [], dbEntities: [],
+        adjacency: { 'src/seal.test.ts': ['src/seal.ts'] }, reverse: { 'src/seal.ts': ['src/seal.test.ts'] } },
+    } as unknown as ProjectOrientationMap;
+    const blastRadius = ({ changedFiles }: { changedFiles: readonly string[] }) => ({
+      tests: [...computeBlastRadius(map, { seedFiles: changedFiles, depth: 1 }).tests], dbEntities: [], dbConsumers: [],
+    });
+    const exec = vi.fn<RegressionExec>(async (_file, args, options) => {
+      const outFile = args.find((arg) => arg.startsWith('--outputFile='))!.slice('--outputFile='.length);
+      const files = args.filter((arg) => arg.endsWith('.test.ts'));
+      fs.writeFileSync(outFile, JSON.stringify({ testResults: files.map((file) => ({
+        name: path.join(options.cwd, file), status: 'failed',
+        assertionResults: [{ status: 'failed', fullName: 'selo', failureMessages: ['vermelho'] }],
+      })) }));
+      return { exitCode: 1, timedOut: false, stdout: '', stderr: '' };
+    });
+    const pane = { role: 'user' as const, sessionId: 'op-seal', scope: testProjectScope({ rootRealPath: root }) };
+
+    const response = await handleHookRegressionRequest(pane, {}, {
+      run: (input) => runRegressionGate(input, { exec, extensions: { blastRadius } }),
+      enabled: () => true,
+      startedAtMs: () => spawnedAtMs,
+    });
+
+    expect(exec).toHaveBeenCalled();
+    expect(response.payload.decision).toBeUndefined();
+    expect(String(response.payload.systemMessage)).toContain('WIP anterior ao seu spawn');
   });
 });

@@ -23,7 +23,7 @@ type SystemdInhibitProcess = {
 type SystemdInhibitSpawn = (
   command: string,
   args: string[],
-  options: { stdio: 'ignore'; windowsHide: true; shell?: false }
+  options: { stdio: ['pipe', 'ignore', 'ignore']; windowsHide: true; shell?: false }
 ) => SystemdInhibitProcess
 
 type LinuxLidSleepAssertionOptions = {
@@ -71,6 +71,10 @@ export class LinuxLidSleepAssertion {
     try {
       // logind's lid switch handling ignores ordinary sleep inhibitors on many systems,
       // so Linux needs both a sleep lock and a handle-lid-switch lock.
+      // F-1212: the lock lives as long as the wrapped command. `sleep infinity`
+      // outlived a crashed/killed Nexus (orphan holding sleep + lid switch
+      // forever). `cat` blocks on our stdin pipe and exits on EOF, which the
+      // kernel delivers the moment this process dies — however it dies.
       child = this.spawn(
         'systemd-inhibit',
         [
@@ -78,11 +82,10 @@ export class LinuxLidSleepAssertion {
           '--who=Orca',
           '--why=Agents are working',
           '--mode=block',
-          'sleep',
-          'infinity'
+          'cat'
         ],
         {
-          stdio: 'ignore',
+          stdio: ['pipe', 'ignore', 'ignore'],
           windowsHide: true
         }
       )

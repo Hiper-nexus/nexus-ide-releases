@@ -33,6 +33,14 @@ async function gitPath(git: AsyncGitRunner, cwd: string, args: readonly string[]
   return result.status === 0 ? realpathOrNull(result.stdout.trim()) : null;
 }
 
+/** F-1235: raízes que o repositório registra (`git worktree list`): o checkout e as worktrees ligadas. */
+async function registeredWorktreeRoots(git: AsyncGitRunner, cwd: string): Promise<ReadonlySet<string>> {
+  const result = await git.run(cwd, ['worktree', 'list', '--porcelain'], { allowFailure: true });
+  if (result.status !== 0) return new Set();
+  return new Set(result.stdout.split('\n').filter((line) => line.startsWith('worktree '))
+    .map((line) => realpathOrNull(line.slice('worktree '.length))).filter((root): root is string => root !== null));
+}
+
 export async function nestedWorktreeExecution(
   execution: ProjectExecutionScope,
   requestedCwd: string | undefined,
@@ -49,16 +57,43 @@ export async function nestedWorktreeExecution(
   const commonArgs = ['rev-parse', '--path-format=absolute', '--git-common-dir'];
   const [ours, theirs] = await Promise.all([gitPath(git, root, commonArgs), gitPath(git, topLevel, commonArgs)]);
   if (!ours || ours !== theirs) return undefined;
+  return { scope: rootScope(execution, topLevel), cwd };
+}
+
+function rootScope(execution: ProjectExecutionScope, topLevel: string): ProjectExecutionScope {
   const stat = fs.statSync(topLevel, { bigint: true });
-  return {
-    scope: Object.freeze({
-      ...execution,
-      rootRealPath: topLevel,
-      workspaceRootDevice: stat.dev.toString(),
-      workspaceRootInode: stat.ino.toString(),
-    }),
-    cwd,
-  };
+  return Object.freeze({
+    ...execution,
+    rootRealPath: topLevel,
+    workspaceRootDevice: stat.dev.toString(),
+    workspaceRootInode: stat.ino.toString(),
+  });
+}
+
+/**
+ * F-1229: a fila de comando pesado é a raiz Git REAL onde o job roda — o
+ * checkout ou uma worktree ligada, mesmo fora do workspace —, não a raiz do
+ * token do pane. Subagentes de um pane, cada um na sua worktree, herdam o
+ * mesmo token e caíam todos na fila do checkout até estourar os 300 s (exit
+ * 74). Só vale raiz DESTE repositório (git common-dir igual ao da raiz de
+ * execução); outro repositório, pasta sem Git ou qualquer dúvida devolve
+ * `undefined` e o chamador fica no escopo do token. RAM/CPU continuam sendo
+ * limites da máquina: a raiz só decide quem divide saídas e caches.
+ */
+export async function sameRepositoryExecutionRoot(
+  execution: ProjectExecutionScope,
+  cwd: string,
+  git: AsyncGitRunner = (sharedGit ??= new AsyncProcessGitRunner()),
+): Promise<ProjectExecutionScope | undefined> {
+  const real = path.isAbsolute(cwd) ? realpathOrNull(cwd) : null;
+  const topLevel = real ? await gitPath(git, real, ['rev-parse', '--show-toplevel']) : null;
+  if (!topLevel || topLevel === execution.rootRealPath) return undefined;
+  const commonArgs = ['rev-parse', '--path-format=absolute', '--git-common-dir'];
+  const [ours, theirs, registered] = await Promise.all([gitPath(git, execution.rootRealPath, commonArgs), gitPath(git, topLevel, commonArgs),
+    registeredWorktreeRoots(git, execution.rootRealPath)]);
+  // F-1235: common-dir igual não prova registro — uma pasta com `.git` arquivo
+  // apontando para este repositório também casa e virava uma lane nova.
+  return ours && ours === theirs && registered.has(topLevel) ? rootScope(execution, topLevel) : undefined;
 }
 
 /**

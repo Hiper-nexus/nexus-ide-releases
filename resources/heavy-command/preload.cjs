@@ -83,7 +83,9 @@ if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GAT
       if (!lease || lease.length > 128) throw new Error('missing physical lease');
       process.env.NEXUS_HEAVY_LEASE = lease;
       admitted = true;
-    } catch {
+    } catch (failure) {
+      // F-1229: request.cjs names a queue wait (time, root, jobs there).
+      if (typeof failure?.stderr === 'string') process.stderr.write(failure.stderr.slice(0, 1024));
       process.stderr.write('[Nexus] Heavy command not started: scoped CPU/RAM admission or process ownership could not be proved.\n');
       process.exit(78);
     }

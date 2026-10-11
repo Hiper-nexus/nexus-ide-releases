@@ -66,7 +66,7 @@ it('F-983/F-997: writers isolados do MESMO checkout testam ao mesmo tempo — a 
  expect(first.allow).toBe(true); expect(second.allow).toBe(true);
  expect(pool.snapshot().active).toBe(2);
  // Mesma worktree continua serializada (saídas e caches compartilhados).
- expect(await native.admit({ ...writer('w1'), token: 'w1b', sessionId: 'w1b' }, { pid: 103, kind: 'tests' })).toMatchObject({ allow: false, reason: 'heavy_command_admission_denied' });
+ expect(await native.admit({ ...writer('w1'), token: 'w1b', sessionId: 'w1b' }, { pid: 103, kind: 'tests' })).toMatchObject({ allow: false, reason: 'heavy_command_wait_timeout' });
  state = 'gone'; await native.drain(); expect(pool.snapshot().active).toBe(0); pool.close();
 });
 

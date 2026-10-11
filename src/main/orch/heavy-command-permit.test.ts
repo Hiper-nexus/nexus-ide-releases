@@ -81,6 +81,24 @@ it('serializes jobs in one checkout while worktrees of the same project run in p
   next.release(); worktree.release(); other.release(); expect(value.snapshot().active).toBe(0);
 });
 
+it('F-1229: a wait timeout carries how long it waited and what held its root or the machine', async () => {
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {}, pollMs: 10, waitMs: 60, reserveMB: 1000, maxActive: 2 });
+  pools.push(value);
+  const lane = (root: string) => ({ ...request(), scope: { ...scope, rootRealPath: root } });
+  const timedOut = (root: string) => value.acquire(lane(root))
+    .then(() => { throw new Error('unexpected admission'); }, (failure: Error & { queue?: { waitedMs: number } }) => failure);
+  const held = await value.acquire(lane('/wt'));
+  const sameRoot = await timedOut('/wt');
+  expect(sameRoot.message).toBe('heavy_command_wait_timeout');
+  expect(sameRoot).toMatchObject({ queue: { root: '/wt', running: 1, waiting: 0, machineActive: 1, maxActive: 2 } });
+  expect(sameRoot.queue?.waitedMs).toBeGreaterThanOrEqual(60);
+  const other = await value.acquire(lane('/other'));
+  const machine = await timedOut('/third');
+  expect(machine).toMatchObject({ message: 'heavy_command_wait_timeout', queue: { root: '/third', running: 0, waiting: 0, machineActive: 2, maxActive: 2 } });
+  held.release(); other.release(); expect(value.snapshot()).toMatchObject({ active: 0, waiting: 0 });
+});
+
 it('bounds machine-wide concurrency even when RAM would admit more lanes', async () => {
   const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
     limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {}, pollMs: 10, waitMs: 1000, reserveMB: 1000, maxActive: 2 });

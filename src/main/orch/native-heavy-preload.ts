@@ -4,6 +4,7 @@ import os from 'node:os';
 import { app } from 'electron';
 import { DARWIN_NESTED_HEAVY_JOB_LAUNCH_SOURCE, DARWIN_PTY_SUPERVISOR_IDENTIFIER, NEXUS_APPLE_TEAM_ID } from '../pty/darwin-pty-supervisor';
 import { heavyZshProfile, prepareHeavyZshProfile } from './native-heavy-zdotdir';
+import { stripInheritedHeavyCommandEnvironment } from './native-heavy-inherited-env';
 let mainOwnedJobBase: string | undefined;
 export function heavyCommandPreloadPath(): string {
   return app.isPackaged ? path.join(process.resourcesPath, 'heavy-command', 'preload.cjs') : path.join(app.getAppPath(), 'resources', 'heavy-command', 'preload.cjs');
@@ -38,16 +39,7 @@ export function heavyCommandShellEnvironment(prepared: NodeJS.ProcessEnv, preloa
   };
 }
 
-/** Shells created for the human hand never inherit an AI execution capability. */
-export function stripInheritedHeavyCommandEnvironment(env: Record<string, string>): void {
-  const dir = env.NEXUS_HEAVY_DIR;
-  if (dir && env.BASH_ENV === path.join(dir, 'shell.bash')) delete env.BASH_ENV;
-  if (dir && (env.ZDOTDIR === dir || env.ZDOTDIR === env.NEXUS_HEAVY_ZDOTDIR)) {
-    const original = env.NEXUS_HEAVY_ORIG_ZDOTDIR;
-    if (original) env.ZDOTDIR = original; else delete env.ZDOTDIR;
-  }
-  for (const key of Object.keys(env)) if (key.startsWith('NEXUS_HEAVY_')) delete env[key];
-}
+export { stripInheritedHeavyCommandEnvironment };
 
 /** Managed Grok on macOS uses the system Bash supported by its wire adapter.
  * Caller/custom shell selection cannot override this already-scoped lane.

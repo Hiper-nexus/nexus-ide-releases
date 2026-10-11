@@ -3,11 +3,14 @@ import { z } from 'zod';
 import type { AgentGateContext } from './gate';
 import { executionScopeFor, isCurrentGateContext, gateContextAbortSignal } from './gate';
 import { handleHookJsonPost } from './hook-http';
-import { acquireHeavyCommandPermit, type HeavyCommandPermit, type HeavyCommandRequest } from './heavy-command-permit';
+import { acquireHeavyCommandPermit, type HeavyCommandPermit, type HeavyCommandQueueWait, type HeavyCommandRequest } from './heavy-command-permit';
+import { sameRepositoryExecutionRoot } from './nested-worktree-execution';
+import type { ProjectExecutionScope } from '../../shared/types';
 import { claimSessionCommandProcess, probeSessionCommandProcess, borrowSessionCommandProcess, stopSessionCommandProcess } from '../pty/pty-manager';
 import type { CommandProcessState } from '../pty/owned-command-process';
 import { trace } from '../observability/main-trace';
-const schema = z.object({ pid: z.number().int().positive(), kind: z.enum(['typescript', 'tests', 'build', 'install']), leaseId: z.string().min(1).max(128).optional(), proof: z.literal('darwin-job').optional() }).strict();
+const schema = z.object({ pid: z.number().int().positive(), kind: z.enum(['typescript', 'tests', 'build', 'install']), leaseId: z.string().min(1).max(128).optional(), proof: z.literal('darwin-job').optional(), cwd: z.string().min(1).max(1024).optional() }).strict();
+type Admission = { allow: boolean; reason?: string; leaseId?: string; message?: string };
 export interface NativeHeavyCommandPorts {
   current(ctx: AgentGateContext): boolean;
   claim(sessionId: string, pid: number, proof?: 'darwin-job'): Promise<string | null>;
@@ -15,7 +18,16 @@ export interface NativeHeavyCommandPorts {
   borrow?(sessionId: string, claim: string, pid: number): Promise<boolean>;
   stop?(sessionId: string, claim: string): Promise<void>;
   acquire(request: HeavyCommandRequest): Promise<HeavyCommandPermit>;
+  /** F-1229: the job's real root when it is this repository's checkout/worktree. */
+  executionRoot?(scope: Readonly<ProjectExecutionScope>, cwd: string): Promise<Readonly<ProjectExecutionScope> | undefined>;
   afterDrain?(): Promise<void>;
+}
+/** F-1229: the 74 says it was a queue wait, for how long and behind what. */
+function queueWaitMessage(wait: HeavyCommandQueueWait): string {
+  const root = wait.root.length > 160 ? `…${wait.root.slice(-159)}` : wait.root;
+  const cause = wait.running > 0 ? 'one job per root at a time' : 'machine CPU/RAM bound, not this root';
+  return `nexus-heavy: gave up after ${Math.round(wait.waitedMs / 1000)} s in the admission queue of ${root}: ` +
+    `${wait.running} job(s) running there, ${wait.waiting} more waiting (${cause}); machine ${wait.machineActive}/${wait.maxActive} heavy jobs running.`;
 }
 interface Flight { ctx: AgentGateContext; claim: string; permit: HeavyCommandPermit; done: Promise<void> }
 /** No remote release endpoint. Kernel identity disappearance or physical PTY
@@ -25,9 +37,9 @@ export class NativeHeavyCommands {
   readonly #orphans = new Map<Promise<void>, AgentGateContext>();
   readonly #retired = new WeakSet<AgentGateContext>();
   #accepting = true;
-  readonly #pending = new Map<Promise<{ allow: boolean; reason?: string; leaseId?: string }>, AgentGateContext>();
+  readonly #pending = new Map<Promise<Admission>, AgentGateContext>();
   constructor(private readonly ports: NativeHeavyCommandPorts) {}
-  admit(ctx: AgentGateContext, raw: unknown, signal?: AbortSignal): Promise<{ allow: boolean; reason?: string; leaseId?: string }> {
+  admit(ctx: AgentGateContext, raw: unknown, signal?: AbortSignal): Promise<Admission> {
     const started = Date.now();
     const pending = this.#admit(ctx, raw, signal); this.#pending.set(pending, ctx);
     void pending.then((result) => {
@@ -36,7 +48,7 @@ export class NativeHeavyCommands {
       if (!result.allow) trace({ kind: 'heavy-command-denied', sessionId: ctx.sessionId ?? '', reason: result.reason ?? 'unknown', elapsedMs: Date.now() - started });
     }, () => this.#pending.delete(pending)); return pending;
   }
-  async #admit(ctx: AgentGateContext, raw: unknown, signal?: AbortSignal): Promise<{ allow: boolean; reason?: string; leaseId?: string }> {
+  async #admit(ctx: AgentGateContext, raw: unknown, signal?: AbortSignal): Promise<Admission> {
     const body = schema.safeParse(raw);
     if (!body.success || !ctx.sessionId || !this.#accepting || !this.#current(ctx)) return { allow: false, reason: 'heavy_command_authority_unavailable' };
     if (body.data.leaseId) {
@@ -53,15 +65,30 @@ export class NativeHeavyCommands {
     let permit: HeavyCommandPermit;
     // F-983/F-997: a fila é por raiz de EXECUÇÃO (a worktree do writer), não
     // pelo checkout de coordenação do token — senão writers isolados voltam à
-    // fila única do projeto.
-    try { permit = await this.ports.acquire({ scope: executionScopeFor(ctx), missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting }); }
-    catch { this.#reap(ctx, claim); return { allow: false, reason: 'heavy_command_admission_denied' }; }
+    // fila única do projeto. F-1229: e a raiz é a do cwd do job, se for deste
+    // repositório (subagentes do mesmo token, cada um na sua worktree).
+    try { permit = await this.ports.acquire({ scope: await this.#executionScope(ctx, body.data.cwd, body.data.pid), missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting }); }
+    catch (failure) {
+      this.#reap(ctx, claim);
+      const wait = (failure as { queue?: HeavyCommandQueueWait } | null)?.queue;
+      return wait ? { allow: false, reason: 'heavy_command_wait_timeout', message: queueWaitMessage(wait) } : { allow: false, reason: 'heavy_command_admission_denied' };
+    }
     const flight: Flight = { ctx, claim, permit, done: Promise.resolve() }; this.#flights.add(flight);
     flight.done = this.#observe(flight); void flight.done.catch(() => {});
     let state: CommandProcessState = 'unknown';
     try { state = await this.ports.probe(ctx.sessionId, claim); } catch { /* unknown is not permission */ }
     if (state !== 'live' || !this.#flights.has(flight) || !this.#accepting || !this.#current(ctx) || signal?.aborted) return { allow: false, reason: 'heavy_command_process_ownership_changed' };
     return { allow: true, leaseId: permit.id };
+  }
+  async #executionScope(ctx: AgentGateContext, cwd: string | undefined, pid: number): Promise<Readonly<ProjectExecutionScope>> {
+    const scope = executionScopeFor(ctx);
+    // A spoofed cwd only picks another registered root's serialization; RAM/CPU stay machine-wide.
+    let lane: Readonly<ProjectExecutionScope> | undefined;
+    try { lane = cwd ? await this.ports.executionRoot?.(scope, cwd) : undefined; } catch { lane = undefined; }
+    if (!lane || lane.rootRealPath === scope.rootRealPath) return scope;
+    // F-1235: the request, not the token, picked this lane — auditable in the Main trace.
+    trace({ kind: 'heavy-command-lane', sessionId: ctx.sessionId ?? '', pid, root: lane.rootRealPath, paneRoot: scope.rootRealPath });
+    return lane;
   }
   #reap(ctx: AgentGateContext, claim: string) {
     const done = (async () => {
@@ -96,6 +123,7 @@ export class NativeHeavyCommands {
 }
 export const nativeHeavyCommands = new NativeHeavyCommands({ current: isCurrentGateContext, claim: claimSessionCommandProcess,
   probe: probeSessionCommandProcess, stop: stopSessionCommandProcess, borrow: borrowSessionCommandProcess, acquire: acquireHeavyCommandPermit,
+  executionRoot: (scope, cwd) => sameRepositoryExecutionRoot(scope, cwd),
   afterDrain: async () => { const { drainNativeHeavyLocalChannels } = await import('./native-heavy-local-channel'); await drainNativeHeavyLocalChannels(); } });
 export async function handleNativeHeavyCommandHttp(req: http.IncomingMessage, res: http.ServerResponse, ctx: AgentGateContext | null): Promise<void> {
   const abort = new AbortController();

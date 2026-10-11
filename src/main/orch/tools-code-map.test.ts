@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { AgentGateContext } from './gate';
 import {
@@ -89,5 +89,29 @@ describe('buildCodeMapTools', () => {
     await expect(
       refresh.handler({}, ctx(scopeFor(root), 'worker')),
     ).rejects.toThrow(/orchestrator/i);
+  });
+
+  it('acha um arquivo existente pelo nome e rotula o modo pelo estado do índice', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-map-file-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-map-cache-'));
+    roots.push(root, cacheRoot);
+    fs.mkdirSync(path.join(root, 'src/main'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src/main/updater.ts'), 'void 0;\n');
+    configureProjectOrientationService({ cacheRoot, includeContextSummary: false });
+    const query = buildCodeMapTools().find((tool) => tool.name === 'nexus_code_map_query')!;
+    type Result = { mode: string; paths: string[]; fallbackReason?: string };
+
+    const first = (await query.handler({ q: 'updater' }, ctx(scopeFor(root)))) as Result;
+    expect(first.paths).toContain('src/main/updater.ts');
+
+    await vi.waitFor(async () => {
+      const next = (await query.handler({ q: 'updater' }, ctx(scopeFor(root)))) as Result;
+      expect(next.mode).toBe('local-index');
+      expect(next.paths).toContain('src/main/updater.ts');
+    });
+
+    const miss = (await query.handler({ q: 'zzqqnothing' }, ctx(scopeFor(root)))) as Result;
+    expect(miss.mode).toBe('substring');
+    expect(miss.fallbackReason).toBe('no-index-hits');
   });
 });

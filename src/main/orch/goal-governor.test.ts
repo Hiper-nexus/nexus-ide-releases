@@ -1,4 +1,7 @@
 import { describe, expect, it, beforeEach, vi, afterEach } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/project-identity-types';
 import {
   advanceWave,
@@ -359,4 +362,46 @@ describe('Goal Governor & Wave Engine', () => {
     expect(finalAdv.ok).toBe(true);
     expect(goal.status).toBe('completed');
   });
+  it.skipIf(process.platform === 'win32')(
+    'F-1214: a timed-out command gate takes its whole process tree down, not just the shell',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'nexus-goal-gate-'));
+      const isAlive = (pid: number) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const goal = registerGoal({
+        title: 'Hung gate',
+        scope: { ...scope, rootRealPath: root },
+        orchestratorSessionId: orchSessionId,
+        waves: [
+          {
+            id: 'wave_1',
+            name: 'Onda 1',
+            instructions: 'gate hangs',
+            tasks: [],
+            // The shell stays as parent of a hung grandchild (like `npm test` → node).
+            gate: { type: 'command', command: 'sleep 30 & echo $! > hung.pid; wait', timeoutMs: 400 },
+          },
+        ],
+      });
+
+      await advanceWave(goal.id);
+      expect(goal.waves[0].gateResult?.exitCode).toBe(124);
+      const hungPid = Number(readFileSync(join(root, 'hung.pid'), 'utf8'));
+      try {
+        for (let i = 0; i < 40 && isAlive(hungPid); i++) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(isAlive(hungPid)).toBe(false);
+      } finally {
+        if (isAlive(hungPid)) process.kill(hungPid, 'SIGKILL');
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

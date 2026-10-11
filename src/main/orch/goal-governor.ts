@@ -462,9 +462,13 @@ async function executeGateCheck(
     let stderr = '';
     let settled = false;
 
+    // F-1214: own process group so the timeout reaches the hung grandchild
+    // (`npm test` → node), not only the shell that launched it.
+    const ownGroup = process.platform !== 'win32';
     const proc = spawn(command, {
       cwd,
       shell: true,
+      detached: ownGroup,
       env: { ...process.env },
     });
 
@@ -472,7 +476,8 @@ async function executeGateCheck(
       if (settled) return;
       settled = true;
       try {
-        proc.kill('SIGKILL');
+        if (ownGroup && proc.pid) process.kill(-proc.pid, 'SIGKILL');
+        else proc.kill('SIGKILL');
       } catch {
         // ignore
       }

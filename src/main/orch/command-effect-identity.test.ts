@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import { configureAuditLogRuntime, disposeAuditLogRuntime } from '../jarvis/audit-log';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import { mintToken, bindTokenToSession, releaseSessionByToken, resetGateForTests } from './gate';
+import { adoptUserContextAsMissionOrchestrator, mintToken, bindTokenToSession, releaseSessionByToken, resetGateForTests } from './gate';
 import { dispatchToolCall } from './mcp-dispatch';
 import { handleMcpMessage, type McpRegistry } from './mcp-protocol';
 import { configureProjectDomainStoreRegistry, disposeProjectDomainStoreRegistry } from './project-domain-store-registry';
@@ -13,12 +14,13 @@ import { testProjectScope } from './__tests__/scope-fixture';
 let root:string;
 let manager:ProjectRuntimeManager;
 let scope:ReturnType<typeof testProjectScope>;
+let stores:ReturnType<typeof configureProjectDomainStoreRegistry>;
 beforeEach(()=>{
   root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'nexus-command-identity-')));
   manager=new ProjectRuntimeManager({baseDir:root,appVersion:'command-identity-test'});
   const stat=fs.statSync(root);
   scope=testProjectScope({projectId:'command-identity',checkoutId:'command-checkout',rootRealPath:root,workspaceRootDevice:String(stat.dev),workspaceRootInode:String(stat.ino)});
-  configureAuditLogRuntime(manager);configureProjectDomainStoreRegistry(manager);resetGateForTests();
+  configureAuditLogRuntime(manager);stores=configureProjectDomainStoreRegistry(manager);resetGateForTests();
 });
 afterEach(async()=>{
   resetGateForTests();await disposeProjectDomainStoreRegistry();await disposeAuditLogRuntime();manager.closeAll();
@@ -150,4 +152,26 @@ it('F-1084: actual bounded handler acknowledgment records a real sequence and no
   expect(row.command_type).toBe('dispatch.observation');expect(row.result_sequence).toBeGreaterThan(0);
   expect(db.prepare('SELECT command_id,event_kind FROM command_dispatch_events WHERE sequence=?').get(row.result_sequence)).toEqual({command_id:row.command_id,event_kind:'settled'});
   expect(db.prepare('SELECT COUNT(*) AS n FROM effect_outbox').get()).toEqual({n:0});
+});
+
+describe('F-1185: the first helper promotes its own caller to the tab mission orchestrator',()=>{
+  const spawnLike=(adopt:(ctx:Parameters<McpRegistry['tools'][number]['handler']>[1])=>void):McpRegistry=>({serverName:'tab-mission-test',serverVersion:'0',tools:[{name:'nexus_file_write',description:'controlled sink standing in for the spawn',inputSchema:{type:'object'},
+    handler:async(_a,c,invocation)=>{adopt(c);invocation?.reanchorAfterOwnPromotion?.();invocation?.assertCurrentAuthority?.();return {missionId:c.missionId,role:c.role};}}]});
+  const runningMission=()=>{const missions=stores.forScope(scope).missions;const created=missions.create({title:'Missão da aba'});return missions.update(created.id,{status:'running'})??created;};
+  it('Main promotion inside the handler is not read as a revoked caller',async()=>{
+    const mission=runningMission();const ctx=caller('operator-tab');
+    const result=await dispatchToolCall('http-mcp',spawnLike(c=>{expect(adoptUserContextAsMissionOrchestrator(c,mission.id)).toBe(true);}),'nexus_file_write',args('helper'),ctx);
+    expect(result).toMatchObject({ok:true,result:{missionId:mission.id,role:'orchestrator'}});
+  });
+  it('a policy change riding along with the promotion is still a revocation',async()=>{
+    const mission=runningMission();const ctx=caller('operator-tab-attenuated');
+    const result=await dispatchToolCall('http-mcp',spawnLike(c=>{adoptUserContextAsMissionOrchestrator(c,mission.id);c.sharedTabWorktree=true;}),'nexus_file_write',args('helper'),ctx);
+    expect(result).toMatchObject({ok:false,error:'session_authority_revoked'});
+  });
+  it('a real revocation after the re-anchor is still refused',async()=>{
+    const mission=runningMission();const ctx=caller('operator-tab-released');
+    const result=await dispatchToolCall('http-mcp',spawnLike(c=>{adoptUserContextAsMissionOrchestrator(c,mission.id);}),'nexus_file_write',args('helper'),ctx,
+      {assertCurrentCaller:()=>ctx.missionId===undefined});
+    expect(result).toMatchObject({ok:false,error:'session_authority_revoked'});
+  });
 });

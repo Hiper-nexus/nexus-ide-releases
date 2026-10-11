@@ -1,4 +1,9 @@
 import { configDefaults, defineConfig } from 'vitest/config';
+import { stripInheritedHeavyAdmission } from './src/test/inherited-heavy-admission';
+
+// F-1216: dentro de um pane do Nexus a suíte herdaria a admissão heavy do app
+// instalado. Limpa no processo principal, antes de qualquer worker nascer.
+stripInheritedHeavyAdmission(process.env);
 
 export default defineConfig({
   // `original-fs` só existe dentro do Electron; nos testes é o fs normal (src/main/util/real-fs.ts).

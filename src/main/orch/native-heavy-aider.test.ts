@@ -11,6 +11,7 @@ import { HeavyCommandPermitPool } from './heavy-command-permit';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { supervisedPtyCommand, nestedHeavyJobBaseCommand } from '../pty/darwin-pty-supervisor';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { darwinNodePtyBootstrapLaunch } from '../pty/darwin-node-pty-bootstrap';
 import { buildControlArgs } from '../adapters/control-args';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
@@ -20,7 +21,8 @@ const commandText = 'NODE_OPTIONS= /bin/sh -c "/usr/bin/make -f Makefile"';
 const once = process.env.NEXUS_TEST_AIDER_APPROVE_ONCE === '1';
 const sha = (file: string) => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 
-it.runIf(process.platform === 'darwin' && fs.existsSync(aider))('actual installed Aider owned-PTY default guard or exact normal one-time tool approval', async () => {
+it.runIf(process.platform === 'darwin' && fs.existsSync(aider))('actual installed Aider owned-PTY default guard or exact normal one-time tool approval', async (testContext) => {
+  skipUnderNexusPtySupervisor(testContext);
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-c6-aider-pty-'))), phases: unknown[] = [];
   console.log(`owned Aider evidence: ${root}`);
   const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();

@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
@@ -9,6 +11,7 @@ import {
   LSP_LIMITS,
   runScopedLspQuery,
 } from './lsp-sidecar';
+import { LSP_WORKER_SOURCE } from './lsp-worker-source';
 
 let parentDir = '';
 let root = '';
@@ -316,4 +319,43 @@ describe('runScopedLspQuery', () => {
     );
     expect(result.budget.directoriesRead).toBeLessThanOrEqual(2_000);
   }, 10_000);
+
+  it('F-1183: diagnostics leem a lib do TypeScript servida pelo app.asar', async () => {
+    const typescriptPath = createRequire(import.meta.url).resolve('typescript');
+    // Como o Electron faz com arquivo de asar: o fd aponta para uma cópia
+    // temporária, então o fstat nunca tem o dev/ino do caminho da lib.
+    const asarLikeLib = `
+const asarFs = module.require('node:fs');
+const asarLib = ${JSON.stringify(fs.realpathSync(path.dirname(typescriptPath)))};
+const asarCopies = ${JSON.stringify(parentDir)};
+const realOpenSync = asarFs.openSync;
+let asarCopy = 0;
+asarFs.openSync = (file, ...rest) => {
+  if (typeof file !== 'string' || !file.startsWith(asarLib)) return realOpenSync(file, ...rest);
+  const copy = module.require('node:path').join(asarCopies, 'asar-copy-' + (asarCopy += 1));
+  asarFs.copyFileSync(file, copy);
+  return realOpenSync(copy, ...rest);
+};
+`;
+    const worker = new Worker(
+      LSP_WORKER_SOURCE.replace("'use strict';\n", `'use strict';\n${asarLikeLib}`),
+      {
+        eval: true,
+        workerData: {
+          rootRealPath: root,
+          typescriptPath,
+          query: { kind: 'diagnostics', path: 'src/lib.ts', maxResults: 20 },
+          limits: LSP_LIMITS,
+        },
+      },
+    );
+
+    const diagnostics = await __settleLspWorkerForTests(worker, LSP_LIMITS.parentTimeoutMs);
+
+    expect(diagnostics.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'src/lib.ts', code: 2322, line: 4 }),
+      ]),
+    );
+  }, 15_000);
 });
