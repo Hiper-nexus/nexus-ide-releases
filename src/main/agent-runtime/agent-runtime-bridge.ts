@@ -149,6 +149,9 @@ export function __resetAgentRuntimeBridgeForTests(options?: {
   gpuFallbackAlreadyActive?: boolean;
 }): void {
   crashReportStore = options?.crashReportStore ?? null;
+  // F-1213: dropping a live service without dispose left its real
+  // caffeinate/systemd-inhibit running after the test (the F-1186 orphans).
+  if (awakeService && awakeService !== options?.awakeService) awakeService.dispose();
   awakeService = options?.awakeService ?? null;
   awakeStatusesBySession = new Map();
   diagnosticsAppBound = false;
