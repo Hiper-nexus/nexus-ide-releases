@@ -134,8 +134,9 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
  for (const [needle, reason] of [
   ['builtin shopt -q extglob || exit 78', 'extglob'],
   ['! -e /dev/fd/4 ]] || exit 78', 'descriptor-shape'],
-  ['__nexus_start_kind=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/classify.cjs" "$BASH_EXECUTION_STRING" "$@") || exit 78', 'boot-classify'],
-  ['nexus_start_kind=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/classify.cjs" "$BASH_EXECUTION_STRING" "$@") || exit 78', 'positional-classify'],
+  // F-1184 trocou "$@" por ${1+"$@"} no shell.bash (bash 3.2 com `set -u`).
+  ['__nexus_start_kind=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/classify.cjs" "$BASH_EXECUTION_STRING" ${1+"$@"}) || exit 78', 'boot-classify'],
+  ['nexus_start_kind=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/classify.cjs" "$BASH_EXECUTION_STRING" ${1+"$@"}) || exit 78', 'positional-classify'],
   ['nexus_kind=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/classify.cjs" "$nexus_command") || exit 78', 'debug-classify'],
  ] as const) bashContents = replaceOnce(bashContents, needle, needle.replace('|| exit 78', `|| { ${shellTrace(reason)} exit 78; }`));
  bashContents = replaceOnce(bashContents, '"${BASHPID:-$$}" "$nexus_kind") || { printf', '"${BASHPID:-$$}" "$nexus_kind") || { ' + shellTrace('debug-request') + ' printf');
