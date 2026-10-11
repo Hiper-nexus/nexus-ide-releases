@@ -85,7 +85,7 @@ export async function handleHookRegressionRequest(
     readonly git?: GitRunner;
     readonly startedAtMs?: (sessionId: string) => number | null;
     /** F-1237: edições registradas da conversa retomada por esta sessão. */
-    readonly recordedEdits?: (sessionId: string, rootRealPath: string) => ReadonlyMap<string, number> | undefined;
+    readonly recordedEdits?: (sessionId: string, rootRealPath: string) => ReadonlyMap<string, string> | undefined;
     /** Abortado quando o transporte do hook desistiu (curl fechou). */
     readonly signal?: AbortSignal;
   } = {},

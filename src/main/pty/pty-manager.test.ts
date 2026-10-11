@@ -6178,15 +6178,15 @@ describe("F-1237: autoria por proveniência — o pane retomado responde pelas e
       for (const file of ["src/x.ts", "src/x.test.ts"]) {
         put(file, file.endsWith(".test.ts") ? "import { x } from './x';\n" : "export const x = 1;\n");
         // PostToolUse do Write, pelo bearer do próprio pane.
-        expect(recordHookEditProvenance(firstCtx, "tool-complete", {
+        expect(await recordHookEditProvenance(firstCtx, "tool-complete", {
           session_id: conversationId, cwd: root, tool_name: "Write", tool_input: { file_path: path.join(root, file) },
         })).toBe(1);
       }
       // (c) Corpo com outra conversa, ou caminho fora da raiz: nada registrado.
-      expect(recordHookEditProvenance(firstCtx, "tool-complete", {
+      expect(await recordHookEditProvenance(firstCtx, "tool-complete", {
         session_id: "conversa-do-outro-agente", tool_name: "Edit", tool_input: { file_path: path.join(root, "src/seal.ts") },
       })).toBe(0);
-      expect(recordHookEditProvenance(firstCtx, "tool-complete", {
+      expect(await recordHookEditProvenance(firstCtx, "tool-complete", {
         session_id: conversationId, tool_name: "Edit", tool_input: { file_path: path.join(os.tmpdir(), "fora-da-raiz.ts") },
       })).toBe(0);
       orchKillSession(first.sessionId);

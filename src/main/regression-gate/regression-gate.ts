@@ -357,12 +357,12 @@ export interface RunRegressionGateInput {
   readonly startedAtMs?: number;
   /**
    * F-1237: edições que a conversa retomada por esta sessão registrou pelo
-   * próprio hook (caminho relativo → última edição, ms), resolvidas pelo Main.
-   * Sujo da lista cuja última escrita é a registrada conta como declarado
-   * (do agente), mesmo com mtime anterior ao spawn. Não muda a base nem a
-   * regra de mtime dos demais arquivos.
+   * próprio hook, resolvidas pelo Main. F-1242: caminho relativo → sha256 do
+   * conteúdo que a edição deixou no disco. Sujo da lista cujo conteúdo ainda é
+   * esse conta como declarado (do agente), mesmo com mtime anterior ao spawn.
+   * Não muda a base nem a regra de mtime dos demais arquivos.
    */
-  readonly recordedEdits?: ReadonlyMap<string, number>;
+  readonly recordedEdits?: ReadonlyMap<string, string>;
   /** Prazo TOTAL (mapa + execução + retentativa), não por execução. */
   readonly timeoutMs?: number;
   readonly maxTestFiles?: number;
@@ -403,11 +403,42 @@ export function __resetRegressionGateForTests(): void {
 }
 
 /**
- * F-1237: folga entre a escrita no disco e o registro da edição no Main (o
- * PostToolUse chega depois da escrita; formatador do próprio hook do usuário
- * pode reescrever logo em seguida). Escrita mais nova que isso não é provada.
+ * F-1242: teto do arquivo que a proveniência hasheia (no PostToolUse e no
+ * portão). Acima dele, ou sem arquivo regular, não há prova: fica alheio.
  */
-export const RECORDED_EDIT_SLACK_MS = 5_000;
+export const RECORDED_EDIT_MAX_HASH_BYTES = 1024 * 1024;
+const HASH_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * F-1242: sha256 do conteúdo de `root/rel`, ou null sem prova. Só arquivo
+ * regular (não segue symlink no último componente; FIFO não bloqueia), até o
+ * teto, lido em pedaços assíncronos; arquivo que muda de tamanho no meio da
+ * leitura não tem prova. `rel` é o caminho já confinado à raiz.
+ */
+export async function hashRegressionFile(root: string, rel: string): Promise<string | null> {
+  let handle: fs.promises.FileHandle | null = null;
+  try {
+    const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
+    handle = await fs.promises.open(path.join(root, rel), flags);
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > RECORDED_EDIT_MAX_HASH_BYTES) return null;
+    const hash = createHash('sha256');
+    const chunk = Buffer.allocUnsafe(HASH_CHUNK_BYTES);
+    let total = 0;
+    for (;;) {
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > stat.size) return null;
+      hash.update(chunk.subarray(0, bytesRead));
+    }
+    return total === stat.size ? hash.digest('hex') : null;
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
 
 /** Caminho relativo à raiz no formato do diff do portão (null: fora do diff). */
 export function normalizeRegressionPath(value: string): string | null {
@@ -565,11 +596,12 @@ async function collectChanged(
       try {
         const mtimeMs = fs.lstatSync(path.join(root, file)).mtimeMs;
         if (!(mtimeMs < input.startedAtMs)) continue;
-        // F-1237: a conversa retomada registrou a edição e ninguém escreveu
-        // depois dela — é declarado. Sem registro, ou escrito depois (outro
-        // agente, formatador, checkout), segue a regra do mtime: alheio.
-        const editedAtMs = input.recordedEdits?.get(file);
-        if (editedAtMs !== undefined && mtimeMs <= editedAtMs + RECORDED_EDIT_SLACK_MS) continue;
+        // F-1237/F-1242: a conversa retomada registrou a edição e o disco
+        // ainda tem exatamente o conteúdo que ela deixou — é declarado. Sem
+        // registro, ou reescrito depois (outro agente, formatador, checkout),
+        // segue a regra do mtime: alheio.
+        const recordedSha256 = input.recordedEdits?.get(file);
+        if (recordedSha256 !== undefined && (await hashRegressionFile(root, file)) === recordedSha256) continue;
         foreign.push(file);
       } catch {
         // removido: sem como datar, conta como do agente

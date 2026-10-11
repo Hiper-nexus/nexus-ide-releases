@@ -25,6 +25,9 @@
  *   do diretório); fora dela, descartado;
  * - o registro só move arquivo SUJO de "alheio" para "do agente" no portão do
  *   próprio pane retomado; nunca toca o portão de outra sessão.
+ * F-1242: grava o sha256 do conteúdo lido no PostToolUse (arquivo regular,
+ * confinado, até 1 MB); o portão só conta como da conversa o arquivo cujo
+ * conteúdo ainda é esse. A leitura é assíncrona e serializada por sessão.
  * Falha aqui nunca derruba o hook (tudo em try, devolve 0).
  */
 import fs from 'node:fs';
@@ -39,7 +42,7 @@ import {
   recordConversationEdits,
 } from '../persistence/conversation-edit-store';
 import { providerSessionHeldByOtherPane } from '../persistence/provider-session-store';
-import { normalizeRegressionPath } from '../regression-gate/regression-gate';
+import { hashRegressionFile, normalizeRegressionPath } from '../regression-gate/regression-gate';
 
 /** Ferramentas cujo `tool_input` traz o caminho editado. */
 const PATH_EDIT_TOOLS = new Map<string, readonly string[]>([
@@ -53,6 +56,8 @@ const PATCH_EDIT_TOOLS = new Set(['apply_patch']);
 const PATCH_HEADER_RE = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/u;
 export const MAX_RECORDED_PATHS_PER_EVENT = 128;
 const MAX_PATCH_SCAN_CHARS = 4 * 1024 * 1024;
+/** F-1242: eventos de edição na fila de hash de uma sessão; além disso, descarta. */
+export const MAX_QUEUED_EDIT_EVENTS_PER_SESSION = 32;
 
 /**
  * Conversa anunciada pelo próprio CLI no bearer do pane quando o argv não
@@ -64,9 +69,15 @@ const MAX_PATCH_SCAN_CHARS = 4 * 1024 * 1024;
 let pinnedConversations = new WeakMap<SessionProviderConversation, string>();
 /** Eventos em que o CLI anuncia a conversa (Codex: `session-start`; Kimi/Grok: `session`). */
 const PIN_EVENT_TYPES: ReadonlySet<string> = new Set(['session-start', 'session']);
+/**
+ * F-1242: fila de hash por sessão viva (mesma chave do pin). Um evento de cada
+ * vez lê arquivos; um curl em loop não multiplica leituras em paralelo no Main.
+ */
+let hashQueues = new WeakMap<SessionProviderConversation, { tail: Promise<unknown>; queued: number }>();
 
 export function __resetHookEditProvenanceForTests(): void {
   pinnedConversations = new WeakMap();
+  hashQueues = new WeakMap();
 }
 
 function stringField(value: unknown): string | null {
@@ -180,6 +191,7 @@ export interface HookEditProvenanceDeps {
   /** F-1241: `provider_pane_sessions` já dá a conversa a outro pane. */
   readonly heldByOtherPane?: (conversation: SessionProviderConversation, claimed: string) => boolean;
   readonly record?: typeof recordConversationEdits;
+  readonly hash?: typeof hashRegressionFile;
   readonly now?: () => number;
 }
 
@@ -189,14 +201,15 @@ type ProvenanceContext = Pick<AgentGateContext, 'sessionId'> &
 /**
  * Hook de status autenticado pelo bearer do pane: fixa a conversa anunciada
  * (quando o argv não trouxe id) e, no `tool-complete` de uma edição, grava os
- * caminhos confinados à raiz. Devolve quantos gravou; nunca lança.
+ * caminhos confinados à raiz com o sha256 do conteúdo no disco. Devolve
+ * quantos gravou; nunca rejeita.
  */
-export function recordHookEditProvenance(
+export async function recordHookEditProvenance(
   ctx: ProvenanceContext,
   eventType: string,
   body: Record<string, unknown>,
   deps: HookEditProvenanceDeps = {},
-): number {
+): Promise<number> {
   try {
     const sessionId = ctx.sessionId;
     const scope = ctx.executionScope ?? ctx.scope;
@@ -220,11 +233,28 @@ export function recordHookEditProvenance(
       .map((file) => confineEditedPath(root, cwd, file))
       .filter((file): file is string => file !== null);
     if (relPaths.length === 0) return 0;
-    return (deps.record ?? recordConversationEdits)(
-      { scope: conversation.scope, adapterId: conversation.adapterId, conversationId, rootRealPath: root },
-      relPaths,
-      (deps.now ?? Date.now)(),
-    );
+    const queue = hashQueues.get(conversation) ?? { tail: Promise.resolve(), queued: 0 };
+    hashQueues.set(conversation, queue);
+    if (queue.queued >= MAX_QUEUED_EDIT_EVENTS_PER_SESSION) return 0;
+    queue.queued += 1;
+    const job = queue.tail.then(async () => {
+      // O conteúdo que a edição deixou: lido agora, depois da escrita do CLI.
+      const edits = new Map<string, string>();
+      for (const rel of relPaths) {
+        const sha256 = await (deps.hash ?? hashRegressionFile)(root, rel);
+        if (sha256) edits.set(rel, sha256);
+      }
+      if (edits.size === 0) return 0;
+      return (deps.record ?? recordConversationEdits)(
+        { scope: conversation.scope, adapterId: conversation.adapterId, conversationId, rootRealPath: root },
+        edits,
+        (deps.now ?? Date.now)(),
+      );
+    });
+    queue.tail = job.catch(() => 0).finally(() => {
+      queue.queued -= 1;
+    });
+    return await job;
   } catch {
     return 0;
   }
@@ -242,7 +272,7 @@ export function recordedEditsForSession(
     readonly conversationOf?: (sessionId: string) => SessionProviderConversation | null;
     readonly list?: typeof listConversationEdits;
   } = {},
-): ReadonlyMap<string, number> | undefined {
+): ReadonlyMap<string, string> | undefined {
   try {
     if (!sessionId || !rootRealPath) return undefined;
     const conversation = (deps.conversationOf ?? getSessionProviderConversation)(sessionId);

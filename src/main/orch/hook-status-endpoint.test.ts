@@ -593,7 +593,7 @@ describe('F-1139 authenticated native argv ingress', () => {
 
 describe('F-1237: proveniência de edição pelo hook de status', () => {
   it('todo evento autenticado passa pelo registro; registro que lança não derruba o status', () => {
-    const recordEdit = vi.fn(() => 1);
+    const recordEdit = vi.fn(async () => 1);
     const body = { session_id: 'conv-a', tool_name: 'Edit', tool_input: { file_path: '/r/src/a.ts' } };
     const ok = handleHookStatusRequest(CTX, { eventType: 'tool-complete', flavor: 'claude', body }, undefined, undefined, recordEdit);
     expect(ok.statusCode).toBe(200);
@@ -604,7 +604,7 @@ describe('F-1237: proveniência de edição pelo hook de status', () => {
     });
     expect(handleHookStatusRequest(CTX, { eventType: 'tool-complete', flavor: 'claude', body }, undefined, undefined, throwing).statusCode).toBe(200);
     // Sem pane vinculado não há de quem registrar.
-    const unbound = vi.fn(() => 1);
+    const unbound = vi.fn(async () => 1);
     handleHookStatusRequest({ sessionId: '' } as never, { eventType: 'tool-complete', flavor: 'claude', body }, undefined, undefined, unbound);
     expect(unbound).not.toHaveBeenCalled();
   });
@@ -612,7 +612,7 @@ describe('F-1237: proveniência de edição pelo hook de status', () => {
   it('Write grande demais para o status ainda registra a proveniência; leitura grande não é nem lida', async () => {
     const provenance = await import('./hook-edit-provenance');
     const pty = await import('../pty/pty-manager');
-    const spy = vi.spyOn(provenance, 'recordHookEditProvenance').mockReturnValue(1);
+    const spy = vi.spyOn(provenance, 'recordHookEditProvenance').mockResolvedValue(1);
     // F-1240: corpo grande só para pane com conversa vinculada.
     const bound = vi.spyOn(pty, 'getSessionProviderConversation').mockReturnValue(BOUND_CONVERSATION);
     try {
@@ -693,7 +693,7 @@ describe('F-1240: corpo grande do /hook/status decide cedo, um por sessão, até
     const pty = await import('../pty/pty-manager');
     vi.spyOn(pty, 'getSessionProviderConversation').mockReturnValue(conversation);
     return {
-      record: vi.spyOn(provenance, 'recordHookEditProvenance').mockReturnValue(1),
+      record: vi.spyOn(provenance, 'recordHookEditProvenance').mockResolvedValue(1),
       head: vi.spyOn(provenance, 'hookBodyMayCarryEdit'),
     };
   }

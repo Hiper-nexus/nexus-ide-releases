@@ -168,7 +168,8 @@ CREATE TABLE IF NOT EXISTS provider_pane_sessions (
 /* F-1237: arquivos que cada conversa do provider editou (PostToolUse de
    edição, recebido pelo bearer do próprio pane), relativos à raiz de execução.
    O portão de regressão de um pane que retoma exatamente a conversa os conta
-   como dele quando a última escrita no arquivo é a registrada aqui. */
+   como dele quando o conteúdo no disco ainda é o registrado aqui (F-1242:
+   sha256 lido no PostToolUse). */
 CREATE TABLE IF NOT EXISTS provider_conversation_edits (
   installation_id TEXT NOT NULL,
   project_id      TEXT NOT NULL,
@@ -178,6 +179,7 @@ CREATE TABLE IF NOT EXISTS provider_conversation_edits (
   root_real_path  TEXT NOT NULL,
   rel_path        TEXT NOT NULL,
   edited_at       INTEGER NOT NULL,
+  content_sha256  TEXT NOT NULL,
   PRIMARY KEY (installation_id, project_id, checkout_id, adapter_id, session_id, root_real_path, rel_path)
 );
 

@@ -20,15 +20,17 @@ describe('conversation-edit-store (F-1237, nexus.db real)', () => {
     rootRealPath: '/repo',
   };
 
-  it('upsert idempotente guarda a última edição; a leitura é por conversa e raiz', async () => {
+  const H = (c: string) => c.repeat(64);
+
+  it('upsert idempotente guarda o conteúdo da última edição; a leitura é por conversa e raiz', async () => {
     const { getDb } = await import('./db');
     const { listConversationEdits, recordConversationEdits } = await import('./conversation-edit-store');
     expect(getDb()).not.toBeNull();
 
-    expect(recordConversationEdits(key, ['src/a.ts', 'src/b.ts', 'src/a.ts'], 1_000)).toBe(2);
-    expect(recordConversationEdits(key, ['src/a.ts'], 3_000)).toBe(1);
-    expect(recordConversationEdits(key, ['src/a.ts'], 2_000)).toBe(1); // atraso não rejuvenesce
-    expect(listConversationEdits(key)).toEqual(new Map([['src/a.ts', 3_000], ['src/b.ts', 1_000]]));
+    expect(recordConversationEdits(key, new Map([['src/a.ts', H('1')], ['src/b.ts', H('2')]]), 1_000)).toBe(2);
+    expect(recordConversationEdits(key, new Map([['src/a.ts', H('3')]]), 3_000)).toBe(1);
+    expect(recordConversationEdits(key, new Map([['src/a.ts', H('4')]]), 2_000)).toBe(1); // atraso não sobrescreve
+    expect(listConversationEdits(key)).toEqual(new Map([['src/a.ts', H('3')], ['src/b.ts', H('2')]]));
 
     expect(listConversationEdits({ ...key, conversationId: 'conv-b' })).toEqual(new Map());
     expect(listConversationEdits({ ...key, rootRealPath: '/outra-raiz' })).toEqual(new Map());
@@ -39,11 +41,13 @@ describe('conversation-edit-store (F-1237, nexus.db real)', () => {
   it('caminho fora de forma e chave inválida não gravam (e não lançam)', async () => {
     const { listConversationEdits, recordConversationEdits } = await import('./conversation-edit-store');
     const other = { ...key, conversationId: 'conv-forma' };
-    expect(recordConversationEdits(other, ['../fora.ts', '/abs.ts', 'a/../b.ts', 'a\\b.ts', '', 'a\u0000b'], 1)).toBe(0);
-    expect(recordConversationEdits({ ...other, conversationId: '' }, ['src/a.ts'], 1)).toBe(0);
-    expect(recordConversationEdits(other, ['src/a.ts'], Number.NaN)).toBe(0);
+    const bad = ['../fora.ts', '/abs.ts', 'a/../b.ts', 'a\\b.ts', '', 'a\u0000b'];
+    expect(recordConversationEdits(other, new Map(bad.map((rel) => [rel, H('a')])), 1)).toBe(0);
+    expect(recordConversationEdits(other, new Map([['src/a.ts', 'nao-e-sha256']]), 1)).toBe(0);
+    expect(recordConversationEdits({ ...other, conversationId: '' }, new Map([['src/a.ts', H('a')]]), 1)).toBe(0);
+    expect(recordConversationEdits(other, new Map([['src/a.ts', H('a')]]), Number.NaN)).toBe(0);
     expect(listConversationEdits(other)).toEqual(new Map());
-    expect(recordConversationEdits(other, ['src/a.ts'], 5, null)).toBe(0);
+    expect(recordConversationEdits(other, new Map([['src/a.ts', H('a')]]), 5, null)).toBe(0);
   });
 });
 

@@ -245,8 +245,9 @@ export function handleHookStatusRequest(
   }
 
   try {
-    // F-1237: edição da própria conversa vira proveniência durável.
-    recordEdit(ctx, eventType, body);
+    // F-1237: edição da própria conversa vira proveniência durável. F-1242:
+    // assíncrona (lê o conteúdo para o hash), fora do caminho da resposta.
+    void Promise.resolve(recordEdit(ctx, eventType, body)).catch(() => undefined);
   } catch {
     // Aditivo: o registro nunca derruba o canal de status.
   }
@@ -424,7 +425,7 @@ export async function handleHookStatusHttp(
     try {
       const big: unknown = JSON.parse(bytes.toString('utf8'));
       if (big && typeof big === 'object' && !Array.isArray(big)) {
-        recordHookEditProvenance(ctx, 'tool-complete', big as Record<string, unknown>);
+        void recordHookEditProvenance(ctx, 'tool-complete', big as Record<string, unknown>);
       }
     } catch {
       // corpo inválido: sem proveniência
