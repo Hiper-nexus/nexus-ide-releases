@@ -55,7 +55,7 @@ export async function searchWorkspaceFiles(
   pattern: string,
   budgets: SearchBudgets,
   /** Padrão: glob de `pattern`. A paleta passa um filtro próprio (sem caixa). */
-  matchesPattern: (relativePath: string) => boolean = createGlobMatcher(pattern),
+  matchesPattern?: (relativePath: string) => boolean,
 ): Promise<{
   pattern: string;
   count: number;
@@ -68,7 +68,11 @@ export async function searchWorkspaceFiles(
   const startedAt = performance.now();
   const deadline = startedAt + budgets.timeoutMs;
   const results: string[] = [];
+  const matches = matchesPattern ?? createGlobMatcher(pattern);
+  // F-1231: só o glob tem prefixo literal; o filtro próprio da paleta varre tudo.
+  const prefix = matchesPattern ? [] : literalDirectoryPrefix(pattern);
   const pendingDirectories = [root];
+  const pendingDepths = [0];
   let nextDirectory = 0;
   let scheduledDirectories = 1;
   let scannedDirectories = 0;
@@ -97,6 +101,7 @@ export async function searchWorkspaceFiles(
     }
 
     const directory = pendingDirectories[nextDirectory];
+    const depth = pendingDepths[nextDirectory];
     nextDirectory += 1;
     scannedDirectories += 1;
     let entries: fs.Dirent[];
@@ -125,6 +130,11 @@ export async function searchWorkspaceFiles(
         break search;
       }
       if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      // F-1231: acima do fim do prefixo literal só desce no diretório (real,
+      // nunca symlink) de nome exato; nada fora dele pode casar com o glob.
+      if (depth < prefix.length && (!entry.isDirectory() || entry.name !== prefix[depth])) {
+        continue;
+      }
 
       const fullPath = path.join(directory, entry.name);
       if (entry.isDirectory()) {
@@ -133,6 +143,7 @@ export async function searchWorkspaceFiles(
           break search;
         }
         pendingDirectories.push(fullPath);
+        pendingDepths.push(depth + 1);
         scheduledDirectories += 1;
         continue;
       }
@@ -144,7 +155,7 @@ export async function searchWorkspaceFiles(
 
       scannedFiles += 1;
       const relativePath = path.relative(root, fullPath).split(path.sep).join('/');
-      if (matchesPattern(relativePath)) results.push(relativePath);
+      if (matches(relativePath)) results.push(relativePath);
       if (results.length >= budgets.maxResults) {
         stoppedBy = 'maxResults';
         break search;
@@ -169,6 +180,22 @@ export async function searchWorkspaceFiles(
     },
     limits: budgets,
   };
+}
+
+/**
+ * F-1231: diretórios literais do começo do glob (`src/main/updater*.ts` →
+ * `src`, `main`). O último segmento é o nome do arquivo e nunca entra; o
+ * prefixo para no primeiro segmento com curinga. Glob sem `/` casa também
+ * pelo basename, em qualquer profundidade: prefixo vazio.
+ */
+export function literalDirectoryPrefix(pattern: string): string[] {
+  const segments = pattern.split('/');
+  const prefix: string[] = [];
+  for (const segment of segments.slice(0, -1)) {
+    if (/[*?[\]{}]/.test(segment)) break;
+    prefix.push(segment);
+  }
+  return prefix;
 }
 
 /**
