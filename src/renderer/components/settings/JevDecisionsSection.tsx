@@ -30,7 +30,14 @@ const SURFACE_LABELS: Record<string, string> = {
   recoveryAdvice: 'Recuperação de worker (dica)',
   completionCheck: 'Conclusão (aviso)',
   catalogPick: 'Recomendações do Marketplace',
+  calibration: 'Calibração',
 };
+
+/** "calibration:52/55" → "52 de 55 casos respondidos"; a linha não é uma decisão para votar. */
+function calibrationText(decision: string): string {
+  const match = /^calibration:(\d+)\/(\d+)$/.exec(decision);
+  return match ? `${match[1]} de ${match[2]} casos respondidos` : 'calibração';
+}
 
 const NO_ANSWER_REASONS: Record<string, string> = {
   timeout: 'timeout',
@@ -207,6 +214,12 @@ export function JevDecisionsSection() {
               );
             })}
           </div>
+          {stats.calibration && stats.calibration.lines > 0 && (
+            <p className="settings-detail__hint jev-decisions__calibration">
+              Gasto com calibração: {formatUsd(stats.calibration.usd)} ({formatUsd(stats.calibration.last30dUsd)} em 30 dias).
+              {' '}Já somado ao custo acima; não entra na contagem de consultas.
+            </p>
+          )}
           <p className="settings-detail__hint">
             Custo estimado pelas tarifas públicas de cada modelo: Jev US$ 0,042,
             Clef US$ 0,24, Flash US$ 0,038, Clef-omni US$ 0,15 e Luna US$ 0,10 por milhão de tokens de entrada.
@@ -338,6 +351,7 @@ export function JevDecisionsSection() {
             <ul className="jev-log">
               {rows.map((row) => {
                 const noAnswer = row.kind === 'no-answer';
+                const calibration = row.surface === 'calibration';
                 const providerLabel = row.model === 'ensemble' || row.route?.reason === 'ensemble'
                   ? 'Juntos'
                   : row.provider === 'luna' || row.model === 'gpt-6-luna' ? 'OpenAI'
@@ -352,7 +366,9 @@ export function JevDecisionsSection() {
                         <span
                           className={`jev-log__decision${noAnswer ? ' jev-log__decision--rule' : ''}`}
                         >
-                          {noAnswer
+                          {calibration
+                            ? calibrationText(row.decision)
+                            : noAnswer
                             ? `pela regra (${NO_ANSWER_REASONS[row.reason ?? ''] ?? 'sem resposta'})`
                             : row.decision}
                         </span>
@@ -363,7 +379,7 @@ export function JevDecisionsSection() {
                         {row.route?.reason === 'credential-fallback' ? ' · alternativa disponível' : row.route?.evidence === 'public-benchmark' ? ' · regra inicial' : ''}
                       </p>
                     </div>
-                    <div
+                    {!calibration && <div
                       className="jev-vote"
                       role="group"
                       aria-label="Este acerto estava certo ou errado?"
@@ -386,7 +402,7 @@ export function JevDecisionsSection() {
                         <PixelIcon name="close" size={10} />
                         Errado
                       </button>
-                    </div>
+                    </div>}
                   </li>
                 );
               })}

@@ -139,6 +139,8 @@ export interface JevDecisionStatsResult {
     calls: number; noAnswer: number; budgetRefusals: number; usd: number; chargedUsd: number; inputTokens: number;
     incompleteUsage: number; byProvider: Record<string, { calls: number; noAnswer: number; usd: number }>;
   }>;
+  /** F-1167: gasto das calibrações; fora das contagens de decisões. Ausente em versões antigas. */
+  calibration?: { lines: number; usd: number; inputTokens: number; last30dUsd: number };
   pricing: { usdPerInputToken: number; source: 'typesafe-published' };
 }
 

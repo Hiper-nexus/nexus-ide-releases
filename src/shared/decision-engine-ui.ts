@@ -63,7 +63,9 @@ export interface DecisionCalibrationModelResult {
 
 export type DecisionCalibrationResult =
   | { readonly ok: true; readonly written: boolean; readonly models: readonly DecisionCalibrationModelResult[] }
-  | { readonly ok: false; readonly error: string; readonly cancelled?: true };
+  | { readonly ok: false; readonly error: string; readonly cancelled?: true;
+    /** Há uma calibração cancelada terminando a consulta em voo: a tela mostra "Cancelando…". */
+    readonly cancelling?: true };
 
 /** Resposta do pedido `{ cancel: true }`: havia calibração em curso para cancelar? */
 export interface DecisionCalibrationCancelResult { readonly ok: true; readonly cancelRequested: boolean }

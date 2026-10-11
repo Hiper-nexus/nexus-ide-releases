@@ -47,3 +47,32 @@ describe('F-1167 P2-3: agregado por missão assíncrono, com cache por mtime+tam
     expect(await jevMissionUsage('m1', { dir: path.join(dir, 'nao-existe') })).toBeUndefined();
   });
 });
+
+describe('F-1167: linha de calibração só soma no gasto', () => {
+  it('fora de chamadas, consultas, superfícies e sem-resposta; dentro de US$ e tokens', () => {
+    recordJevDecision({ ...decision, surface: 'intake', model: 'jev', provider: 'jev', inputTokens: 100, usd: 0.001 }, { dir });
+    const base = jevDecisionStats({ dir });
+    recordJevDecision({ surface: 'calibration', provider: 'jev', model: 'jev-latest', questions: [], probabilities: {},
+      decision: 'calibration:55/55', inputTokens: 11000, usd: 0.0005, requestCount: 55 }, { dir });
+    recordJevDecision({ surface: 'calibration', provider: 'clef', model: 'clef-flash', questions: [], probabilities: {},
+      decision: 'calibration:50/55', inputTokens: 11000, usd: 0.0004, requestCount: 55 }, { dir });
+    const stats = jevDecisionStats({ dir });
+    expect(stats.totals.calls).toBe(base.totals.calls);
+    expect(stats.totals.noAnswer).toBe(base.totals.noAnswer);
+    for (const key of ['today', 'last30d', 'allTime'] as const) {
+      expect(stats.windows[key].consultations).toBe(base.windows[key].consultations);
+      expect(stats.windows[key].answered).toBe(base.windows[key].answered);
+      expect(stats.windows[key].usd).toBeCloseTo(base.windows[key].usd + 0.0009, 10);
+    }
+    expect(stats.bySurface.calibration).toBeUndefined();
+    expect(stats.byProvider.jev!.calls).toBe(base.byProvider.jev!.calls);
+    expect(stats.byProvider.jev!.usd).toBeCloseTo(base.byProvider.jev!.usd + 0.0005, 10);
+    expect(stats.byProvider.clef).toMatchObject({ calls: 0, noAnswer: 0 });
+    expect(stats.byProvider.clef!.usd).toBeCloseTo(0.0004, 10);
+    expect(stats.byModel['clef-flash']).toMatchObject({ calls: 0 });
+    expect(stats.totals.usd).toBeCloseTo(base.totals.usd + 0.0009, 10);
+    expect(stats.calibration).toMatchObject({ lines: 2, inputTokens: 22000 });
+    expect(stats.calibration.usd).toBeCloseTo(0.0009, 10);
+    expect(stats.calibration.last30dUsd).toBeCloseTo(0.0009, 10);
+  });
+});

@@ -236,6 +236,18 @@ describe('F-1167: botão "Calibrar modelos"', () => {
     expect(button('Calibrar modelos')!.disabled).toBe(false);
   });
 
+  it('calibração cancelada ainda terminando no Main: mostra "Cancelando…", não erro', async () => {
+    calibration = { ok: false, cancelling: true, error: 'Cancelando a calibração anterior…' };
+    await mount();
+    await act(async () => { button('Calibrar modelos')!.click(); });
+    await flush();
+    await act(async () => { button('Calibrar agora')!.click(); });
+    await flush();
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect([...host.querySelectorAll('[role="status"]')].some(node => node.textContent === 'Cancelando…')).toBe(true);
+    expect(host.textContent).not.toContain('já está rodando');
+  });
+
   it('enquanto calibra: carregando, sem segundo disparo', async () => {
     let release!: (value: DecisionCalibrationResult) => void;
     bridge().decisionModels.calibrate.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));

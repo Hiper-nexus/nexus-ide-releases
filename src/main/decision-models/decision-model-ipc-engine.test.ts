@@ -134,8 +134,12 @@ describe('F-1167: calibração por IPC', () => {
     const running = handlers.get('decisionModels:calibrate')!(trustedEvent(), { confirm: true });
     await Promise.resolve(); await Promise.resolve();
     expect(seen?.aborted).toBe(false);
-    expect(await handlers.get('decisionModels:calibrate')!(trustedEvent(), { cancel: true })).toEqual({ ok: true, cancelRequested: true });
+    const cancelled = handlers.get('decisionModels:calibrate')!(trustedEvent(), { cancel: true });
+    // Enquanto a cancelada termina (mesmo tique), um novo pedido vê "Cancelando…", não "já está rodando".
+    const again = handlers.get('decisionModels:calibrate')!(trustedEvent(), { confirm: true });
+    expect(await cancelled).toEqual({ ok: true, cancelRequested: true });
     expect(seen?.aborted).toBe(true);
+    expect(await again).toEqual({ ok: false, cancelling: true, error: 'Cancelando a calibração anterior…' });
     expect(await running).toEqual({ ok: false, cancelled: true, error: 'Calibração cancelada. As medições anteriores continuam valendo.' });
     // Depois do cancelamento a trava é solta.
     calibrate.mockImplementationOnce(async () => ({ ok: true, written: true, report: report(['jev']), table: null }) as any);

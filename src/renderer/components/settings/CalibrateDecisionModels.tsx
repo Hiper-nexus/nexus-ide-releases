@@ -70,7 +70,8 @@ export function CalibrateDecisionModels({ mode }: { mode: DecisionMode }) {
       const result = await window.nexus.decisionModels.calibrate();
       if (!result.ok) {
         // Cancelar não é erro: a tabela anterior continua valendo.
-        if (result.cancelled) setNotice(result.error); else setError(result.error);
+        if (result.cancelling) setNotice('Cancelando…');
+        else if (result.cancelled) setNotice(result.error); else setError(result.error);
         setPhase({ kind: 'idle' }); return;
       }
       setPhase({ kind: 'done', models: result.models, written: result.written });

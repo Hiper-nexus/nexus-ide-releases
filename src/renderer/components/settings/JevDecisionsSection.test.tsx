@@ -250,4 +250,19 @@ describe('JevDecisionsSection', () => {
     expect(votes.length).toBeGreaterThan(0);
     expect(votes.every((btn) => btn.querySelector('.pixel-icon'))).toBe(true);
   });
+  it('F-1167: calibração tem rótulo em pt-BR, gasto à parte e nenhum voto', async () => {
+    const stats = await jev.decisionsStats();
+    jev.decisionsStats.mockResolvedValueOnce({ ...stats, calibration: { lines: 2, usd: 0.0021, inputTokens: 22000, last30dUsd: 0.0021 } } as never);
+    jev.decisionsList.mockResolvedValueOnce([{ id: 'c1', at: Date.now(), surface: 'calibration', provider: 'jev', model: 'jev-latest',
+      questions: [], probabilities: {}, decision: 'calibration:52/55', inputTokens: 11000, usd: 0.0005 }]);
+    const host = mount(<JevDecisionsSection />);
+    await act(async () => Promise.resolve());
+    const row = host.querySelector('.jev-log__row')!;
+    expect(row.querySelector('.jev-log__surface')?.textContent).toBe('Calibração');
+    expect(row.textContent).toContain('52 de 55 casos respondidos');
+    expect(row.textContent).not.toContain('calibration');
+    expect(row.querySelector('.jev-vote')).toBeNull();
+    expect(host.querySelector('.jev-decisions__calibration')?.textContent).toContain('Gasto com calibração: US$ 0.0021');
+    expect(host.querySelector('.jev-decisions__calibration')?.textContent).toContain('não entra na contagem de consultas');
+  });
 });

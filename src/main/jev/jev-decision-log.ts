@@ -363,7 +363,31 @@ export interface JevDecisionStats {
   >;
   /** Gasto e consultas por missão (F-1164). Linhas sem missionId ficam fora. */
   byMission: Record<string, JevMissionStats>;
+  /**
+   * F-1167: gasto das calibrações (linhas `calibration`). Entra só no GASTO
+   * (totais, janelas, provedor e modelo); nunca nas contagens de decisões.
+   */
+  calibration: JevCalibrationSpend;
   pricing: { usdPerInputToken: number; source: 'typesafe-published' };
+}
+
+export interface JevCalibrationSpend {
+  /** Linhas agregadas gravadas (uma por modelo consultado em cada calibração). */
+  lines: number;
+  usd: number;
+  inputTokens: number;
+  last30dUsd: number;
+}
+
+/** Linha agregada de calibração: gasto real, mas não é decisão de uma surface. */
+export function isCalibrationEntry(entry: Pick<JevDecisionEntry, 'surface'>): boolean {
+  return entry.surface === 'calibration';
+}
+
+function addSpendOnly(buckets: Record<string, DecisionUsageStats>, key: string, entry: JevDecisionEntry): void {
+  const bucket = buckets[key] ??= { calls: 0, noAnswer: 0, usd: 0, inputTokens: 0, requests: null, durationMs: null, measuredRows: 0, legacyRows: 0 };
+  bucket.usd += entry.usd ?? 0;
+  bucket.inputTokens += entry.inputTokens ?? 0;
 }
 
 export interface JevMissionStats {
@@ -602,6 +626,7 @@ export function jevDecisionStats(deps?: {
     windows: { today: emptyWindow(), last30d: emptyWindow(), allTime: emptyWindow() },
     bySurface: {},
     byProvider: Object.create(null), byModel: Object.create(null), byMission: Object.create(null),
+    calibration: { lines: 0, usd: 0, inputTokens: 0, last30dUsd: 0 },
     pricing: { usdPerInputToken: USD_PER_INPUT_TOKEN, source: 'typesafe-published' },
   };
   let entries: JevDecisionEntry[];
@@ -611,6 +636,20 @@ export function jevDecisionStats(deps?: {
     return stats;
   }
   for (const entry of entries) {
+    if (isCalibrationEntry(entry) && entry.kind !== 'optimization') {
+      // F-1167: só gasto. Fora de consultas, chamadas, decisões e taxas de acerto/sem resposta.
+      const usd = entry.usd ?? 0;
+      const tokens = entry.inputTokens ?? 0;
+      stats.calibration.lines += 1; stats.calibration.usd += usd; stats.calibration.inputTokens += tokens;
+      stats.totals.usd += usd; stats.totals.inputTokens += tokens;
+      const windows = [stats.windows.allTime, ...(entry.at >= todayFrom ? [stats.windows.today] : []),
+        ...(entry.at >= last30dFrom ? [stats.windows.last30d] : [])];
+      for (const window of windows) { window.usd += usd; window.inputTokens += tokens; }
+      if (entry.at >= last30dFrom) stats.calibration.last30dUsd += usd;
+      addSpendOnly(stats.byProvider, entry.provider ?? 'jev', entry);
+      addSpendOnly(stats.byModel, entry.model, entry);
+      continue;
+    }
     const isNoAnswer = entry.kind === 'no-answer';
     addToWindow(stats.windows.allTime, entry);
     if (entry.at >= todayFrom) addToWindow(stats.windows.today, entry);

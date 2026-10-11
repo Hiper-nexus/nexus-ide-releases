@@ -129,6 +129,8 @@ function registerMissionEngineIpc(deps: DecisionModelIpcDeps): void {
       current?.abort();
       return { ok: true, cancelRequested: current !== null };
     }
+    // Cancelada mas ainda terminando a consulta em voo: não é erro, é "Cancelando…".
+    if (running?.signal.aborted) return { ok: false, cancelling: true, error: 'Cancelando a calibração anterior…' };
     if (running) return { ok: false, error: 'A calibração já está rodando.' };
     const controller = new AbortController();
     running = controller;
