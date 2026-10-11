@@ -872,6 +872,12 @@ function ActivityProjection({
     snapshot.state === 'blocked_technical' ? snapshot.stateReason : undefined;
   // F-1005: na timeline a lista virtual é a ÚNICA rolagem do painel.
   const timelineMode = items.length > 0 && viewMode === 'timeline';
+  // F-1173: sem resultado (missão em curso), os pontos de restauração ficam
+  // aqui, onde a pessoa vê "Entrega enviada"; com resultado, só em "O que
+  // mudou". Cada entrega nova relê a lista.
+  const deliveries = events.filter(
+    (event) => event.missionId === snapshot.id && event.type === 'handoff.submitted',
+  ).length;
 
   return (
     <div
@@ -902,6 +908,9 @@ function ActivityProjection({
             </p>
           )}
         </section>
+      )}
+      {!snapshot.result && (
+        <MissionCheckpoints missionId={snapshot.id} collapsible refreshKey={deliveries} />
       )}
       {items.length === 0 ? (
         <p className="mission-inspector__empty" role="status">
@@ -1004,6 +1013,9 @@ function MissingResult({ snapshot }: { readonly snapshot: MissionSnapshot }) {
   return (
     <div className="mission-inspector__missing-result" role="status">
       <p>{message}</p>
+      <p className="mission-inspector__empty-value">
+        Os pontos de restauração dos writers ficam na aba Atividade até a missão ter resultado.
+      </p>
       {snapshot.stateReason && (
         <dl className="mission-inspector__details">
           <CanonicalField label="Código do estado">

@@ -183,6 +183,54 @@ describe('MissionCheckpoints (F-1173)', () => {
     expect(button(/^Fechar$/)).toBeTruthy();
   });
 
+  it('missão em curso: linha recolhível com a contagem, mesma confirmação e recusa de writer ocupado', async () => {
+    api.restoreMissionCheckpoint.mockResolvedValueOnce({
+      ok: false,
+      error: 'checkpoint: writer ocupado na árvore /x (Ada); restaurar agora perderia o que ele está escrevendo.',
+    });
+    act(() => root.render(<MissionCheckpoints missionId="mission-a" collapsible />));
+    await flush();
+
+    const details = host.querySelector<HTMLDetailsElement>('details.mission-checkpoints--collapsible');
+    expect(details?.getAttribute('aria-label')).toBe('Pontos de restauração dos writers');
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector('summary')?.textContent).toBe('Pontos de restauração (2)');
+
+    await act(async () => button(/^Restaurar: Fim do turno de Ada/).click());
+    await flush();
+    expect(host.querySelector('.mission-checkpoints__confirm')?.textContent).toContain('guarda o estado atual desta worktree');
+    await act(async () => button(/^Restaurar agora$/).click());
+    await flush();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('writer ocupado');
+    expect(host.querySelector('.mission-checkpoints__outcome')).toBeNull();
+  });
+
+  it('entrega nova relê em silêncio, sem "Carregando…" e sem fechar a confirmação aberta', async () => {
+    act(() => root.render(<MissionCheckpoints missionId="mission-a" collapsible refreshKey={1} />));
+    await flush();
+    await act(async () => button(/^Restaurar: Fim do turno de Ada/).click());
+    await flush();
+    expect(api.listMissionCheckpoints).toHaveBeenCalledTimes(1);
+
+    let release: (value: MissionCheckpointListResult) => void = () => undefined;
+    api.listMissionCheckpoints.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    act(() => root.render(<MissionCheckpoints missionId="mission-a" collapsible refreshKey={2} />));
+    expect(api.listMissionCheckpoints).toHaveBeenCalledTimes(2);
+    expect(host.textContent).not.toContain('Carregando checkpoints');
+    expect(host.querySelector('.mission-checkpoints__confirm')).not.toBeNull();
+
+    const newer = {
+      ref: `refs/nexus-checkpoint/${'a'.repeat(32)}/ordinal/3`, ordinal: 3, createdAt: Date.UTC(2026, 9, 11, 14, 0),
+      kind: 'turn' as const, writer: 'Grace', changed: { files: ['src/b.ts'], total: 1 },
+    };
+    const scope = (LIST as Extract<MissionCheckpointListResult, { ok: true }>).scopes[0]!;
+    await act(async () => release({ ok: true, missionId: 'mission-a', scopes: [{ ...scope, checkpoints: [newer, ...scope.checkpoints] }] }));
+    await flush();
+    expect(host.querySelector('summary')?.textContent).toBe('Pontos de restauração (3)');
+    expect(host.textContent).toContain('Fim do turno de Grace');
+    expect(host.querySelector('.mission-checkpoints__confirm')).not.toBeNull();
+  });
+
   it('lista vazia explica quando o checkpoint é gravado; erro de leitura oferece tentar de novo', async () => {
     api.listMissionCheckpoints.mockResolvedValueOnce({ ok: true, missionId: 'mission-a', scopes: [] });
     await renderCheckpoints();
