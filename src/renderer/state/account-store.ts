@@ -35,8 +35,8 @@ interface AccountStore {
     accountId?: string,
   ): Promise<{ ok: boolean; id?: string; email?: string; error?: string }>;
   supportsSnapshot(adapterId: string): Promise<boolean>;
-  rename(id: string, label: string): Promise<void>;
-  remove(id: string): Promise<void>;
+  rename(id: string, label: string): Promise<{ ok: boolean; error?: string }>;
+  remove(id: string): Promise<{ ok: boolean; error?: string }>;
   activate(id: string): Promise<{ ok: boolean; error?: string; needsRestart?: boolean }>;
 }
 
@@ -79,11 +79,27 @@ export const useAccountStore = create<AccountStore>((set) => ({
       return false;
     }
   },
+  // F-1293: o IPC devolve {ok,error} — propagar em vez de descartar. Rejeição
+  // crua (main lançou antes do handler) também vira {ok:false}.
   rename: async (id, label) => {
-    await window.nexus.accounts.rename(id, label);
+    try {
+      return await window.nexus.accounts.rename(id, label);
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'failed to rename account',
+      };
+    }
   },
   remove: async (id) => {
-    await window.nexus.accounts.remove(id);
+    try {
+      return await window.nexus.accounts.remove(id);
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'failed to remove account',
+      };
+    }
   },
   activate: (id) => window.nexus.accounts.activate(id),
 }));

@@ -1040,3 +1040,106 @@ describe('AccountsManager', () => {
     act(() => root.unmount());
   });
 });
+
+// F-1293: recusa do IPC em remove/rename não pode virar anúncio de sucesso.
+describe('F-1293 — remove/rename recusados mostram erro, não sucesso', () => {
+  beforeEach(() => {
+    useAccountStore.setState({
+      accounts: [account()],
+      quota: [],
+      hydrate: vi.fn(async () => undefined),
+    } as never);
+    useConfirmStore.setState({ pending: null, queue: [] });
+    useUsageStore.setState({ snapshot: EMPTY_USAGE_SNAPSHOT });
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        providers: {
+          authStatus: vi.fn(async () => [
+            { adapterId: 'claude', state: 'ok', detail: 'ok' },
+          ]),
+        },
+        accounts: {
+          supportsSnapshot: vi.fn(async () => ({ ok: true, supported: true })),
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'nexus');
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  async function flush(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it('remove ok:false mantém a conta e mostra o erro, sem "Conta removida."', async () => {
+    const remove = vi.fn(async () => ({
+      ok: false as const,
+      error: 'vault unavailable',
+    }));
+    useAccountStore.setState({ remove } as never);
+    const { host, root } = mount();
+    await flush();
+
+    const rm = [...host.querySelectorAll('button')].find((b) =>
+      (b.textContent ?? '').includes('Remover'),
+    )!;
+    expect(rm).toBeTruthy();
+    await act(async () => rm.click());
+
+    // Confirma o diálogo de perigo (o host do diálogo não está montado aqui).
+    expect(useConfirmStore.getState().pending).toBeTruthy();
+    await act(async () => useConfirmStore.getState().pending!.resolve(true));
+    await flush();
+
+    expect(remove).toHaveBeenCalledWith('acct-1');
+    expect(useAccountStore.getState().accounts).toHaveLength(1);
+    expect(host.textContent).toContain('vault unavailable');
+    expect(host.textContent).not.toContain('Conta removida.');
+    act(() => root.unmount());
+  });
+
+  it('rename ok:false mantém o editor aberto e mostra o erro, sem "Nome atualizado."', async () => {
+    const rename = vi.fn(async () => ({
+      ok: false as const,
+      error: 'label too long',
+    }));
+    useAccountStore.setState({ rename } as never);
+    const { host, root } = mount();
+    await flush();
+
+    const renameBtn = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Renomear',
+    )!;
+    await act(async () => renameBtn.click());
+    const input = host.querySelector<HTMLInputElement>('.acct__rename-input');
+    expect(input).toBeTruthy();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )?.set;
+      setter?.call(input!, 'Nome de 129 caracteres '.repeat(6).slice(0, 129));
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const save = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Salvar nome',
+    )!;
+    await act(async () => save.click());
+    await flush();
+
+    expect(rename).toHaveBeenCalled();
+    expect(host.querySelector('.acct__rename-input')).toBeTruthy();
+    expect(host.textContent).toContain('label too long');
+    expect(host.textContent).not.toContain('Nome atualizado.');
+    act(() => root.unmount());
+  });
+});

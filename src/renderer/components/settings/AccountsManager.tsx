@@ -457,11 +457,20 @@ export function AccountsManager({
       return;
     }
     setBusy(true);
-    await rename(renamingId, next);
-    await hydrate();
-    setBusy(false);
-    cancelRename();
-    showNotice('Nome atualizado.', 'ok');
+    try {
+      // F-1293: sucesso só quando o IPC confirma; na recusa o editor fica
+      // aberto com o rascunho para correção.
+      const res = await rename(renamingId, next);
+      if (!res.ok) {
+        showNotice(res.error ?? 'Não consegui renomear a conta.', 'err');
+        return;
+      }
+      await hydrate();
+      cancelRename();
+      showNotice('Nome atualizado.', 'ok');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function addApiKey() {
@@ -625,12 +634,21 @@ export function AccountsManager({
     });
     if (!ok) return;
     setBusy(true);
-    await remove(account.id);
-    await hydrate();
-    await refreshAuth();
-    setBusy(false);
-    if (renamingId === account.id) cancelRename();
-    showNotice('Conta removida.', 'info');
+    try {
+      // F-1293: a conta só sai quando o vault confirma; na recusa ela segue
+      // elegível e o motivo aparece na UI.
+      const res = await remove(account.id);
+      if (!res.ok) {
+        showNotice(res.error ?? 'Não consegui remover a conta.', 'err');
+        return;
+      }
+      await hydrate();
+      await refreshAuth();
+      if (renamingId === account.id) cancelRename();
+      showNotice('Conta removida.', 'info');
+    } finally {
+      setBusy(false);
+    }
   }
 
   const authClass =
@@ -672,6 +690,7 @@ export function AccountsManager({
                 className="settings-input acct__rename-input"
                 value={renameDraft}
                 aria-label="Novo nome da conta"
+                maxLength={128}
                 disabled={busy}
                 onChange={(e) => setRenameDraft(e.target.value)}
                 onKeyDown={(e) => {
