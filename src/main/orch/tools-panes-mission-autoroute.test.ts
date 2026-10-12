@@ -129,6 +129,9 @@ vi.mock('./operator-cli-mentions', () => ({
   OPERATOR_CHOICE_PROOF_WINDOW_MS: 30 * 60_000,
   operatorRecentlyNamedCli: vi.fn((): boolean => false),
 }));
+vi.mock('./operator-submitted-prompts', () => ({
+  operatorNamedCliInSubmittedPrompts: vi.fn(async (): Promise<boolean> => false),
+}));
 vi.mock('./isolated-writer-worktree', async (original) => ({
   ...(await original<typeof import('./isolated-writer-worktree')>()),
   resumeIsolatedWriterWorktree: () => null,
@@ -141,6 +144,7 @@ vi.mock('../adapters/cli-model-discovery', async (original) => ({
 }));
 
 import { operatorRecentlyNamedCli } from './operator-cli-mentions';
+import { operatorNamedCliInSubmittedPrompts } from './operator-submitted-prompts';
 
 import { paneSpawnTool, reserveWorkerSpawnSlot, setOperatorRouteResolver } from './tools-panes';
 import { NEXUS_BROWSER_WORKER_TOOLS } from './nexus-browser-policy';
@@ -460,6 +464,26 @@ describe('pin de adapterId sem pedido do operador vira preferência (F-674 ampli
     );
     expect(resolver).not.toHaveBeenCalled();
     expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'claude' });
+  });
+
+  it('F-1418: "usa devin e muse" aceito no meio do turno (só no transcript) honra o pin do Devin', async () => {
+    h.mission = tabMission();
+    // Campo 12/10: o tap não viu o texto (sugestão aceita); o prompt humano
+    // registrado pela CLI, casado com o Enter humano, prova o pedido.
+    vi.mocked(operatorNamedCliInSubmittedPrompts).mockImplementation(
+      async (session, adapterId, _now, windowMs) =>
+        session === 'orch-session' && (adapterId === 'devin' || adapterId === 'muse') && windowMs === 30 * 60_000,
+    );
+    const resolver = vi.fn(async () => ({ adapterId: 'kimi', model: 'kimi-code/k3' }));
+    setOperatorRouteResolver(resolver);
+    const receipt = await paneSpawnTool.handler(
+      { adapterId: 'devin', operatorChoice: true, task: 'escrever testes de roteamento', prompt: 'escreva' }, ctx,
+    ) as Record<string, any>;
+    expect(resolver).not.toHaveBeenCalled();
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'devin' });
+    expect(receipt.route?.redistributed).toBeUndefined();
+    vi.mocked(operatorNamedCliInSubmittedPrompts).mockReset();
+    vi.mocked(operatorNamedCliInSubmittedPrompts).mockResolvedValue(false);
   });
 
   it('F-682: operatorChoice marcado pelo Maestro sem o operador pedir é ignorado e roteado', async () => {

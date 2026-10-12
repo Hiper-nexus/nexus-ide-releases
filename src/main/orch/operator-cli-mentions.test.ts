@@ -21,6 +21,7 @@ import {
   noteOperatorDirection,
   OPERATOR_CHOICE_PROOF_WINDOW_MS,
   operatorRecentlyNamedCli,
+  operatorSubmittedPromptNamesCli,
   textNamesCli,
 } from './operator-cli-mentions';
 
@@ -468,5 +469,115 @@ describe('F-1303 (revisão Fable): prefixo digitado tecla a tecla não prova CLI
     clock.mockReturnValue(t0 + 20 * MIN);
     type('tardio', ' ');
     expect(operatorRecentlyNamedCli('tardio', 'kimi', t0 + 31 * MIN, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(false);
+  });
+});
+
+describe('F-1418: "solta mais panes usa devin e muse tbm"', () => {
+  const PHRASE = 'solta mais panes usa devin e muse tbm';
+
+  it('a frase exata nomeia devin E muse (texto puro)', () => {
+    expect(textNamesCli(PHRASE, 'devin')).toBe(true);
+    expect(textNamesCli(PHRASE, 'muse')).toBe(true);
+    expect(textNamesCli(PHRASE, 'kimi')).toBe(false);
+  });
+
+  it('digitada tecla a tecla ou colada no compositor, prova devin E muse', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    for (const ch of PHRASE) type('f1418-keys', ch);
+    type('f1418-keys', '\r');
+    type('f1418-paste', PHRASE);
+    type('f1418-paste', '\r');
+    for (const session of ['f1418-keys', 'f1418-paste']) {
+      expect(operatorRecentlyNamedCli(session, 'devin', now, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(true);
+      expect(operatorRecentlyNamedCli(session, 'muse', now, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(true);
+    }
+  });
+
+  it('sugestão aceita no meio do turno: só o Enter passa pelo tap; o prompt registrado prova devin E muse', () => {
+    const now = 1_000_000;
+    const submittedAt = now - 5 * MIN;
+    vi.spyOn(Date, 'now').mockReturnValue(submittedAt - 90);
+    // Campo 12/10: Claude Code `inputSource: suggestion_accepted` — o operador
+    // aceitou o texto sugerido; o PTY recebeu só a tecla.
+    type('f1418-mid', '\r');
+    // O tap sozinho não tem o texto (era a causa do redistribuído).
+    expect(operatorRecentlyNamedCli('f1418-mid', 'devin', now, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(false);
+    const prompts = [{ at: submittedAt, text: PHRASE }];
+    expect(operatorSubmittedPromptNamesCli('f1418-mid', 'devin', prompts, now)).toBe(true);
+    expect(operatorSubmittedPromptNamesCli('f1418-mid', 'muse', prompts, now)).toBe(true);
+    expect(operatorSubmittedPromptNamesCli('f1418-mid', 'kimi', prompts, now)).toBe(false);
+  });
+
+  it('prompt registrado sem Enter HUMANO colado (injeção do Nexus) não prova', () => {
+    const now = 1_000_000;
+    const submittedAt = now - 5 * MIN;
+    vi.spyOn(Date, 'now').mockReturnValue(submittedAt);
+    type('f1418-sys', '\r', 'system');
+    const prompts = [{ at: submittedAt, text: PHRASE }];
+    expect(operatorSubmittedPromptNamesCli('f1418-sys', 'devin', prompts, now)).toBe(false);
+    // Enter humano longe do carimbo (20 s antes) também não.
+    vi.spyOn(Date, 'now').mockReturnValue(submittedAt - 20_000);
+    type('f1418-far', '\r');
+    expect(operatorSubmittedPromptNamesCli('f1418-far', 'devin', prompts, now)).toBe(false);
+    // Fora da janela de 30 min, mesmo com o Enter colado.
+    vi.spyOn(Date, 'now').mockReturnValue(submittedAt);
+    type('f1418-old', '\r');
+    expect(operatorSubmittedPromptNamesCli('f1418-old', 'devin', prompts, submittedAt + 31 * MIN)).toBe(false);
+  });
+});
+
+describe('F-1418: id, nome comum e modelo carro-chefe de cada CLI provam o pedido', () => {
+  it.each([
+    ['usa o devin swe2', 'devin'],
+    ['usa o swe2', 'devin'],
+    ['manda pro swe-2', 'devin'],
+    ['quero o SWE-2 nisso', 'devin'],
+    ['roda no swe 2', 'devin'],
+    ['usa o muse', 'muse'],
+    ['usa o wonder full', 'muse'],
+    ['abre o Wonder', 'muse'],
+    ['kimi nesse front', 'kimi'],
+    ['glm pra tarefa pequena', 'glm'],
+    ['glm flash ai', 'glm-flash'],
+    ['codex revisa', 'codex'],
+    ['chatgpt revisa', 'codex'],
+    ['grok olha os logs', 'grok'],
+    ['mimo faz isso', 'mimo-code'],
+    ['abre um mimo-code', 'mimo-code'],
+    ['minimax testa', 'minimax-code'],
+    ['deepseek pesquisa', 'deepseek'],
+    ['qwen resolve', 'qwen'],
+    ['agy olha', 'agy'],
+    ['antigravity olha', 'agy'],
+    ['gemini olha', 'agy'],
+    ['opus faz o jogo', 'claude'],
+    ['sonnet revisa', 'claude'],
+    ['longcat testa', 'longcat'],
+    ['opencode testa', 'opencode'],
+    ['openclaude testa', 'openclaude'],
+    ['aider testa', 'aider'],
+    ['muse-claude testa', 'muse-claude'],
+  ])('"%s" nomeia %s', (text, adapterId) => {
+    expect(textNamesCli(text, adapterId)).toBe(true);
+  });
+
+  it.each([
+    ['usa o devinn', 'devin'],
+    ['usa o deivin', 'devin'],
+    ['usa o musse', 'muse'],
+    ['usa o muze', 'muse'],
+    ['usa o cloude', 'claude'],
+    ['usa o antigravit', 'agy'],
+    ['usa o mimmo', 'mimo-code'],
+  ])('grafia errada comum "%s" nomeia %s', (text, adapterId) => {
+    expect(textNamesCli(text, adapterId)).toBe(true);
+  });
+
+  it('palavras comuns continuam fora (F-818)', () => {
+    expect(textNamesCli('sweep the repo', 'devin')).toBe(false);
+    expect(textNamesCli('o sol e a terra', 'codex')).toBe(false);
+    expect(textNamesCli('isso devia funcionar', 'devin')).toBe(false);
+    expect(textNamesCli('visita o museu', 'muse')).toBe(false);
   });
 });
