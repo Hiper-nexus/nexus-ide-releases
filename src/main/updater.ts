@@ -707,11 +707,13 @@ export class UpdateManager {
       const message = err instanceof Error ? err.message : String(err);
       const missing = /ENOENT/.test(message);
       writeUpdateLog('warn', 'check:gh-failed', { message, missing });
+      // F-1278: a tentativa também conta como checagem; sem checkedAt cada foco refazia gh + fetch.
       this.patch({
         phase: missing ? 'unsupported' : 'error',
         error: missing
           ? 'gh CLI não encontrado — atualização manual pelo DMG do release.'
           : `checagem falhou: ${message}`,
+        checkedAt: Date.now(),
       });
     }
   }
@@ -744,7 +746,7 @@ export class UpdateManager {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       writeUpdateLog('warn', 'check:public-failed', { message });
-      this.patch({ phase: 'error', error: `checagem falhou: ${message.slice(0, 160)}` });
+      this.patch({ phase: 'error', error: `checagem falhou: ${message.slice(0, 160)}`, checkedAt: Date.now() });
     }
   }
 

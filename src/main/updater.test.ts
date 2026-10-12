@@ -313,6 +313,34 @@ describe('UpdateManager', () => {
     expect(apiCalls()).toBe(2);
   });
 
+  it.each([
+    ['macOS (gh + espelho)', 'darwin', 'arm64'],
+    ['Linux manual (espelho)', 'linux', 'x64'],
+  ])('F-1278: checagem que falhou não refaz gh + fetch a cada foco da janela — %s', async (_name, runtimePlatform, runtimeArch) => {
+    vi.useFakeTimers();
+    const runGh = vi.fn(async () => { throw new Error('gh: sem rede'); });
+    const fetchMock = vi.fn(async () => new Response('{"message":"Forbidden"}', { status: 403 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const manager = createManager(true, { runGh, runtimeArch, runtimePlatform });
+    manager.init();
+    const onFocus = electron.app.on.mock.calls.find(
+      ([event]) => event === 'browser-window-focus',
+    )?.[1] as (() => void) | undefined;
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.waitFor(() => expect(manager.getState().phase).toBe('error'));
+    const fetches = fetchMock.mock.calls.length;
+    const ghCalls = runGh.mock.calls.length;
+    expect(fetches).toBeGreaterThan(0);
+
+    onFocus?.();
+    await vi.advanceTimersByTimeAsync(100);
+    onFocus?.();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fetchMock.mock.calls.length).toBe(fetches);
+    expect(runGh.mock.calls.length).toBe(ghCalls);
+  });
+
   it('cai no slug legado quando o gh da org nova falha', async () => {
     const runGh = vi.fn(async (args: string[]) => {
       if (args.join(' ').includes('Hiper-nexus/nexus-ide')) {
