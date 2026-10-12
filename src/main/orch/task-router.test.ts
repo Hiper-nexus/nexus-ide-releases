@@ -39,10 +39,16 @@ describe('classifyTask', () => {
     expect(classifyTask(task).tier).toBe('medium');
   });
 
-  it('diagnóstico de roteamento continua substancial mesmo em leitura', () => {
-    expect(classifyTask('Read-only diagnosis of CLI orchestration diversity across available providers').tier).toBe('hard');
-    expect(classifyTask('Investigação somente leitura das causas de concentração dos panes no roteador').tier).toBe('hard');
+  it('causa raiz continua substancial mesmo em leitura (F-1264)', () => {
+    expect(classifyTask('Read-only root cause diagnosis of CLI orchestration diversity across available providers').tier).toBe('hard');
+    expect(classifyTask('Investigação somente leitura da causa raiz de concentração dos panes no roteador').tier).toBe('hard');
     expect(classifyTask('read README').tier).toBe('trivial');
+  });
+
+  it('investigação e mapeamento somente leitura sem causa raiz é medium (F-1264 / F-194)', () => {
+    expect(
+      classifyTask('Investigar (somente leitura) o índice do code map e reportar onde ele é construído').tier,
+    ).toBe('medium');
   });
   it('flags security/payment/migration work as critical', () => {
     expect(classifyTask('implementar autenticação com refresh token').tier).toBe(

@@ -349,7 +349,7 @@ const HARD_SIGNALS = [
   'design de sistema', 'system design', 'distributed', 'distribuído',
   'distribuido', 'protocolo', 'protocol', 'parser', 'compiler', 'engine',
   'motor', 'integração', 'integracao', 'integration',
-  'diagnos', 'diagnós', 'investig', 'root cause', 'causa raiz',
+  'root cause', 'causa raiz',
 ];
 
 const EASY_SIGNALS = [
