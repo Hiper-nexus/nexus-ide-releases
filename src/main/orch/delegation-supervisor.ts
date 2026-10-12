@@ -960,7 +960,7 @@ async function handlePaneNotStarted(
       breaker = startFailureBreakerAction({ cause, accountBound });
       if (breaker === 'trip') {
         adapterCircuitBreakers.trip(watch.adapterId, CREDENTIAL_REJECTED_OPEN_MS);
-      } else {
+      } else if (breaker === 'count') {
         adapterCircuitBreakers.recordFailure(watch.adapterId);
       }
     }

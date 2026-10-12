@@ -414,6 +414,22 @@ describe('ficha do spawn pendente (F-723)', () => {
     }
   });
 
+  it('F-1367: saída com erro aos 791 s (acima do teto de boot) vira worker-exit em vez de boot-exit', () => {
+    resetPaneStartWatchdogForTests();
+    const watch = trackPaneStart(base());
+    notePaneSessionEnded(watch, {
+      sessionId: 'session-a',
+      requested: false,
+      spawnedAt: NOW,
+      started: false,
+      now: NOW + 791_000,
+      oneShot: true,
+      exit: { exitCode: 3, signal: 0 },
+    });
+    expect(watch.failure).toEqual({ cause: 'worker-exit', at: NOW + 791_000, exitCode: 3 });
+    expect(startFailureBreakerAction({ cause: 'worker-exit' as any, accountBound: false })).toBe('skipped');
+  });
+
   it('a ficha nunca guarda o texto do brief, só a closure de entrega', () => {
     const watch = trackPaneStart({ ...base(), redeliver: async () => true });
     expect(JSON.stringify(watch)).not.toMatch(/brief|prompt/i);

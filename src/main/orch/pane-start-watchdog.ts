@@ -37,6 +37,13 @@ import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-ex
  */
 export const START_GRACE_MS = 90_000;
 /**
+ * F-1367: teto de tempo para classificar saída como falha de boot (6 min = 360 s).
+ * F-984 provou fila de pesados do Codex saindo aos 303 s como boot-exit.
+ * Saída após este teto (como AGY aos 791 s) é encerramento de worker em trabalho,
+ * não falha de inicialização da CLI.
+ */
+export const BOOT_TIMEOUT_CEILING_MS = 6 * 60_000;
+/**
  * F-765: CLI sem prova de turno só é "começou" depois de o turno aberto
  * assentar — a recusa do modelo (400 do provedor) chega em segundos. É só
  * espera: enquanto assenta, a ficha não reenvia, não reroteia nem fecha nada.
@@ -78,6 +85,8 @@ export type PaneStartFailureCause =
   /** F-1270: teto de panes/memória — CLI-agnóstico, nunca reroteia. */
   | 'capacity-refused'
   | 'boot-exit'
+  /** F-1367: saída com erro após o teto de boot; não penaliza disjuntor da CLI. */
+  | 'worker-exit'
   | 'brief-rejected'
   /** F-984: sessão viva sem NENHUM byte no terminal depois da graça. */
   | 'boot-silent'
@@ -243,7 +252,8 @@ export function paneStartProgress(input: {
 export function startFailureBreakerAction(input: {
   readonly cause: PaneNotStartedCause;
   readonly accountBound: boolean;
-}): 'trip' | 'count' {
+}): 'trip' | 'count' | 'skipped' {
+  if (input.cause === 'worker-exit') return 'skipped';
   const credential =
     input.cause === 'provider-auth' || input.cause === 'provider-billing';
   return credential && !input.accountBound ? 'trip' : 'count';
@@ -255,6 +265,7 @@ const CAUSE_TEXT: Readonly<Record<PaneNotStartedCause, string>> = {
   'spawn-refused': 'o CLI não subiu (o spawn foi recusado)',
   'capacity-refused': 'a máquina não tem vaga para mais um pane de agente',
   'boot-exit': 'o processo saiu antes de abrir o primeiro turno',
+  'worker-exit': 'o processo encerrou após o período de boot (trabalho em andamento)',
   'brief-rejected': 'o briefing não foi aceito pelo pane',
   'boot-silent': `a CLI não escreveu nada no terminal em ${Math.round(START_GRACE_MS / 1000)} s`,
   'model-rejected':
@@ -624,14 +635,17 @@ export function notePaneSessionEnded(
   // 90 s já tinha passado. Saída limpa depois da graça continua sem veredito.
   const exit = input.exit ?? null;
   const errorExit = exit !== null && (exit.exitCode !== 0 || (exit.signal ?? 0) !== 0);
+  const uptime = input.now - windowStart;
   if (
     !input.requested &&
     !(input.oneShot && oneShotFinished(input.exit)) &&
     !input.started &&
-    (input.now - windowStart < START_GRACE_MS || errorExit)
+    (uptime < START_GRACE_MS || errorExit)
   ) {
+    const cause: PaneStartFailureCause =
+      uptime >= BOOT_TIMEOUT_CEILING_MS ? 'worker-exit' : 'boot-exit';
     watch.failure = {
-      cause: 'boot-exit',
+      cause,
       at: input.now,
       ...(exit !== null ? { exitCode: exit.exitCode } : {}),
     };

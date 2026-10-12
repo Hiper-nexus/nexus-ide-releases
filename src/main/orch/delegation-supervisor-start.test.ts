@@ -756,6 +756,44 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(h.onHandoffSubmitted).toHaveBeenCalledTimes(1);
   });
 
+  it('F-1367: saída com erro após o teto de boot (791 s) vira worker-exit e não penaliza disjuntor', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    trackPaneStart(watchInit({
+      paneId: 'pane-agy-long',
+      requestId: 'orchspawn-agy-long',
+      adapterId: 'agy',
+      createdAt: NOW - 795_000,
+    }));
+    h.spawnedAt.mockReturnValue(NOW - 791_000);
+    recordPaneSessionData('session-agy-long', 'agy completed execution\r\n');
+    h.terminationTap!(
+      'session-agy-long',
+      { paneId: 'pane-agy-long', adapterId: 'agy' },
+      { exitCode: 3, signal: 0 },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await flush();
+
+    const event = h.trace.mock.calls.map(([value]) => value).find(
+      (value) => value.kind === 'pane-not-started' && value.paneId === 'pane-agy-long',
+    );
+    expect(event).toMatchObject({
+      paneId: 'pane-agy-long',
+      cause: 'worker-exit',
+      exitCode: 3,
+      breaker: 'skipped',
+    });
+    expect(adapterCircuitBreakers.snapshot('agy')).toMatchObject({
+      state: 'closed',
+      recentFailures: 0,
+    });
+    expect(h.submit).toHaveBeenCalledTimes(1);
+    const summary = (h.submit.mock.calls[0]![0] as { summary: string }).summary;
+    expect(summary).toContain('[nao-iniciou:pane-agy-long]');
+    expect(summary).toContain('saiu com código 3');
+    expect(h.onHandoffSubmitted).toHaveBeenCalledTimes(1);
+  });
+
   it('F-984: saída LIMPA depois da graça continua sem veredito (não é morte)', async () => {
     vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     trackPaneStart(watchInit({ adapterId: 'codex', createdAt: NOW - 400_000 }));
