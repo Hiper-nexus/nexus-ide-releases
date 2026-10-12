@@ -5,6 +5,8 @@ deles passa do teto (etapa **Perf budgets** em `.github/workflows/ci.yml`; os
 mesmos arquivos também rodam no `npm test`). Método adaptado do T3 Code
 (`commands.performance.test.ts`, `docs/internals/performance-regressions.md`):
 teto numérico com o valor medido ao lado, e o CI quebra quando alguém o passa.
+Cruzamento completo com os tetos do T3:
+`docs/analysis/2026-10-12-t3code-perf-vs-nexus.md`.
 
 **Regra:** só contagem determinística — escritas, mensagens, bytes, renders,
 assinaturas, linhas. Nunca tempo de relógio. Timers e `performance.now` são
@@ -22,6 +24,7 @@ código dá o mesmo número em qualquer máquina.
 | idem | fluxo 60 quadros/16 ms: ≤ 31 escritas no pane mais ativo, 242 na grade, 181 drenos | mesmo, em regime |
 | `src/main/pty/pty-output-wire.budget.test.ts` | 1 mensagem de dados por chunk, 1 `stateChange` por rajada, ≤ 64 bytes de envelope por evento (53), 2 entregas aos taps por rajada de 400 chunks | evento magro `{ sessionId, data, sequence }`; virada para busy uma vez; F-764 C.1 (taps em lote) |
 | idem | 524288 caracteres (512 KiB) empurrados a um renderer que nunca confirma | backpressure: a fila de IPC do Main não cresce sem limite |
+| idem | 8 chunks / 65536 caracteres (64 KiB) em voo sem ACK (janela T3 `OutputProtocol`) | rajada de chunks minúsculos não enche o IPC do Electron com centenas de mensagens |
 | `src/main/orch/pane-output-digest.budget.test.ts` | 742 caracteres e 26 linhas para 12 passos × 15 quadros de TUI | dedupe de status/quadros/linha repetida do digest (F-987) — tokens do Maestro |
 
 O DOM da timeline virtualizada já tem teto próprio em
