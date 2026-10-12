@@ -4439,21 +4439,21 @@ function sendOperatorInputOrNotify(
  * B1 (F-1393): o que o xterm emite sozinho em `onData` — foco (CSI I/O),
  * posição do cursor, atributos do terminal e relatórios de mouse (rolar a
  * saída do agente). Não é o operador digitando. C-4: inclui as respostas do
- * xterm 6 às consultas das TUIs — DSR (`CSI 0 n`), DECRQM (`CSI ? Pd ; Ps $ y`),
- * DECRQSS (`DCS 1 $ r … ST`), window-ops (`CSI 8 ; R ; C t`) e as cores
- * OSC 10/11/12 (`OSC 11 ; rgb:… BEL|ST`).
+ * xterm 6 às consultas das TUIs — DSR (`CSI 0 n` e DSR privado `CSI ? Pn n`),
+ * DECRQM (`CSI ? Pd ; Ps $ y`), DECRQSS (`DCS 1 $ r … ST`), window-ops (`CSI 8 ; R ; C t`)
+ * e as cores OSC 4/10/11/12 (`OSC 4 ; idx ; rgb:…` e `OSC 11 ; rgb:… BEL|ST`).
  */
 const TERMINAL_REPORT_RE = new RegExp(
   '^(?:' +
     [
       String.raw`\x1b\[[IO]`,
       String.raw`\x1b\[\??\d+;\d+(?:;\d+)?R`,
-      String.raw`\x1b\[\d*n`,
+      String.raw`\x1b\[\??[\d;]*n`,
       String.raw`\x1b\[[?>][\d;]*c`,
       String.raw`\x1b\[\??[\d;]*\$y`,
       String.raw`\x1bP[01]\$r[^\x1b]*\x1b\\`,
       String.raw`\x1b\[\d+(?:;\d+)*t`,
-      String.raw`\x1b\](?:1[0-2]);[^\x07\x1b]*(?:\x07|\x1b\\)`,
+      String.raw`\x1b\](?:4|1[0-2]);[^\x07\x1b]*(?:\x07|\x1b\\)`,
       String.raw`\x1b\[<\d+;\d+;\d+[Mm]`,
       String.raw`\x1b\[M[\s\S]{3}`,
     ].join('|') +

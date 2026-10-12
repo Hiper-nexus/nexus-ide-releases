@@ -737,6 +737,10 @@ describe('B1 (F-1393): input humano no pane cancela o ditado pendente', () => {
 
     for (const listener of [...xtermEvents.onData]) listener('\x1b[I');
     for (const listener of [...xtermEvents.onData]) listener('\x1b[<64;10;5M');
+    // F-1393 M7: OSC 4 e DSR privado não contam como humano e não cancelam ditado pendente
+    for (const listener of [...xtermEvents.onData]) listener('\x1b]4;1;rgb:ff/00/00\x07');
+    for (const listener of [...xtermEvents.onData]) listener('\x1b[?13n');
+    for (const listener of [...xtermEvents.onData]) listener('\x1b[?50n');
     expect(cancelPendingDictation).not.toHaveBeenCalled();
 
     for (const listener of [...xtermEvents.onData]) listener('1');
@@ -753,6 +757,8 @@ describe('B1 (F-1393): input humano no pane cancela o ditado pendente', () => {
     expect(isTerminalReport('\x1b[12;40R')).toBe(true);
     expect(isTerminalReport('\x1b[?1;2c')).toBe(true);
     expect(isTerminalReport('\x1b[<0;3;4m')).toBe(true);
+    expect(isTerminalReport('\x1b]4;1;rgb:ff/00/00\x07')).toBe(true);
+    expect(isTerminalReport('\x1b[?13n')).toBe(true);
     expect(isTerminalReport('\r')).toBe(false);
     expect(isTerminalReport('\x1b[A')).toBe(false);
     expect(isTerminalReport('sim')).toBe(false);
@@ -760,17 +766,26 @@ describe('B1 (F-1393): input humano no pane cancela o ditado pendente', () => {
 
   it.each([
     ['DSR status', '\x1b[0n'],
+    ['DSR privado 13', '\x1b[?13n'],
+    ['DSR privado 21', '\x1b[?21n'],
+    ['DSR privado 27', '\x1b[?27n'],
+    ['DSR privado 50', '\x1b[?50n'],
+    ['DSR privado com múltiplos parâmetros', '\x1b[?1;2n'],
     ['DECRQM privado', '\x1b[?2004;1$y'],
     ['DECRQM ANSI', '\x1b[4;2$y'],
     ['DECRQSS', '\x1bP1$r0;1m\x1b\\'],
     ['DECRQSS inválido', '\x1bP0$r\x1b\\'],
     ['window-ops tamanho em células', '\x1b[8;24;80t'],
     ['window-ops tamanho em pixels', '\x1b[4;600;800t'],
+    ['OSC 4 com BEL', '\x1b]4;1;rgb:ff/00/00\x07'],
+    ['OSC 4 com ST', '\x1b]4;255;rgb:ff/ff/ff\x1b\\'],
+    ['OSC 4 com múltiplos índices', '\x1b]4;0;rgb:00/00/00;1;rgb:ff/ff/ff\x07'],
     ['OSC 10 com BEL', '\x1b]10;rgb:ffff/ffff/ffff\x07'],
     ['OSC 11 com ST', '\x1b]11;rgb:0b0b/0b0b/0c0c\x1b\\'],
     ['OSC 12', '\x1b]12;rgb:7c7c/8686/ffff\x07'],
     ['CPR estendido', '\x1b[?12;40;1R'],
     ['vários relatórios juntos', '\x1b[0n\x1b]11;rgb:0000/0000/0000\x07\x1b[?2004;2$y'],
+    ['combinação de DSR privado e OSC 4', '\x1b[?13n\x1b]4;1;rgb:ff/00/00\x07'],
   ])('C-4: resposta automática do xterm 6 (%s) não cancela o ditado', (_name, data) => {
     expect(isTerminalReport(data)).toBe(true);
   });
@@ -778,6 +793,8 @@ describe('B1 (F-1393): input humano no pane cancela o ditado pendente', () => {
   it.each([
     ['tecla com relatório colado', '\x1b[0nx'],
     ['OSC sem terminador', '\x1b]11;rgb:0000/0000/0000'],
+    ['OSC 4 sem terminador', '\x1b]4;1;rgb:ff/00/00'],
+    ['DSR privado com tecla colada', '\x1b[?13nx'],
     ['Enter', '\r'],
     ['Ctrl+C', '\x03'],
     ['seta para cima', '\x1b[A'],
