@@ -59,8 +59,50 @@ export const MODEL_REJECTION_HANDOFF_MS = 60_000;
  * a partir desse ponto quem cuida é o F-242 e a mortalidade de worker.
  */
 export const START_WATCH_TTL_MS = 30 * 60_000;
+/**
+ * F-1414: prazo da PROVA DE EXECUÇÃO — o 1º turno de verdade (UserPromptSubmit,
+ * status `working`/`completed`/`error`, ferramenta ou handoff), contado da
+ * entrega do brief (ou do nascimento da sessão, no brief por argv). A entrega
+ * aceita não basta: o Kimi Code 2.1.1 ficou minutos com o brief parado no
+ * composer ("No session yet", context 0%) e a ficha já o dava por iniciado.
+ */
+export const EXECUTION_PROOF_GRACE_MS = START_GRACE_MS;
+/**
+ * F-1414: CLIs lentas conhecidas ganham o dobro antes do veredito — Kimi Code
+ * (boot da TUI + MCPs + K3 thinking; o operador a chama de "lenta") e MiMo
+ * Code (ficou 158 s mudo na fila de pesados, F-984).
+ */
+const SLOW_CLI_EXECUTION_GRACE_MS: Readonly<Record<string, number>> = {
+  kimi: 2 * START_GRACE_MS,
+  'mimo-code': 2 * START_GRACE_MS,
+};
+
+export function executionProofGraceMs(adapterId: string): number {
+  return SLOW_CLI_EXECUTION_GRACE_MS[adapterId] ?? EXECUTION_PROOF_GRACE_MS;
+}
+
+/**
+ * F-1414: limite de uso CONFIRMADO (o failover já sondou) num pane de tarefa
+ * que ainda não entregou. O failover tem este prazo para trocar de conta ou
+ * reabrir a tarefa; depois, o supervisor reabre noutra CLI.
+ */
+export const LIMIT_HANDOFF_MS = 60_000;
 const EARLY_MARK_TTL_MS = 2 * 60_000;
 const MAX_EARLY_MARKS = 256;
+
+/**
+ * F-1414: teto de reaberturas automáticas do mesmo pedido (o mesmo de
+ * `MAX_PANE_TASK_REROUTES`, que reexporta este). Depois dele a tarefa fica
+ * `blocked` com o motivo — nunca laço.
+ */
+export const MAX_START_REROUTES = 3;
+
+/** F-1414: a ficha já gastou o teto de reaberturas automáticas. */
+export function startRerouteChainExhausted(
+  watch: Pick<PaneStartWatchInit, 'generation' | 'rerouted'>,
+): boolean {
+  return (watch.generation ?? (watch.rerouted ? 1 : 0)) >= MAX_START_REROUTES;
+}
 
 /**
  * F-734: credencial recusada (auth/billing) sem conta gerenciada é a chave de
@@ -92,6 +134,10 @@ export type PaneStartFailureCause =
   | 'boot-silent'
   /** F-984: a CLI instalada recusou o modelo roteado ao nascer. */
   | 'model-rejected'
+  /** F-1414: CLI viva e observável sem 1º turno no prazo (brief parado). */
+  | 'turn-not-started'
+  /** F-1414: estacionada pela admissão de memória antes do 1º turno. */
+  | 'parked-before-start'
   | ProviderRejectedCause;
 export type PaneNotStartedCause =
   | PaneStartFailureCause
@@ -115,7 +161,7 @@ export interface StartCheckInput {
   readonly canJudgeLiveSession: boolean;
   readonly spawnedAt: number;
   readonly redeliveredAt: number | null;
-  /** Esta tentativa já é o reenvio automático de outra (teto: um por pedido). */
+  /** F-1414: o pedido já gastou o teto de reaberturas automáticas (MAX_START_REROUTES). */
   readonly rerouted: boolean;
   /** CLI nomeada pelo operador ou retomada de conversa: não troca sozinho. */
   readonly pinnedRuntime: boolean;
@@ -253,7 +299,7 @@ export function startFailureBreakerAction(input: {
   readonly cause: PaneNotStartedCause;
   readonly accountBound: boolean;
 }): 'trip' | 'count' | 'skipped' {
-  if (input.cause === 'worker-exit') return 'skipped';
+  if (input.cause === 'worker-exit' || input.cause === 'parked-before-start') return 'skipped';
   const credential =
     input.cause === 'provider-auth' || input.cause === 'provider-billing';
   return credential && !input.accountBound ? 'trip' : 'count';
@@ -273,6 +319,10 @@ const CAUSE_TEXT: Readonly<Record<PaneNotStartedCause, string>> = {
   'no-session': `nenhuma sessão nasceu em ${Math.round(START_GRACE_MS / 1000)} s`,
   'never-started':
     'a sessão ficou parada sem abrir turno, mesmo com o briefing reenviado',
+  'turn-not-started':
+    'a CLI está viva, mas nenhum turno começou no prazo (o brief ficou parado, sem execução)',
+  'parked-before-start':
+    'o pane foi estacionado pela admissão de memória antes do primeiro turno',
   'provider-auth': `credencial recusada pelo provedor (${PROVIDER_REJECTED_TAIL})`,
   'provider-billing':
     `conta recusada pelo provedor — cobrança, crédito ou bloqueio (${PROVIDER_REJECTED_TAIL})`,
@@ -289,7 +339,7 @@ export type PaneStartOutcome =
   | { readonly kind: 'reroute-failed'; readonly error: string }
   | {
       readonly kind: 'not-rerouted';
-      readonly why: 'operator' | 'second-attempt' | 'pinned' | 'no-alternative' | 'capacity';
+      readonly why: 'operator' | 'chain-limit' | 'pinned' | 'no-alternative' | 'capacity';
     };
 
 /** Motivo curto de erro para o aviso: 1ª linha, sem segredo, até 160 chars. */
@@ -330,8 +380,9 @@ export function paneStartNoticeSummary(input: {
   }
   const why = {
     operator: 'O pane é do operador e continua aberto — decida.',
-    'second-attempt':
-      'Esta já era a tentativa reenviada; não reenvio de novo — decida.',
+    'chain-limit':
+      `A tarefa já foi reenviada ${MAX_START_REROUTES} vezes; não reenvio de novo — ` +
+      'bloqueada: decida (outra CLI, outro brief ou siga sem esta parte).',
     pinned:
       'A CLI foi pedida pelo operador (ou é retomada de conversa); não troquei ' +
       'sozinho — decida.',
@@ -339,6 +390,41 @@ export function paneStartNoticeSummary(input: {
     capacity:
       'A máquina está no teto (ou sem memória); não reenviei para outra CLI — ' +
       'feche os que entregaram ou aguarde.',
+  }[outcome.why];
+  return `${head} ${why}`;
+}
+
+/**
+ * F-1414: aviso de limite confirmado antes da entrega (pt-BR, só ids, adapter
+ * e o motivo curto do failover). Sem reabertura: o motivo de cada caso.
+ */
+export function paneLimitNoticeSummary(input: {
+  readonly paneId: string;
+  readonly adapterId: string;
+  readonly reason: string;
+  readonly outcome:
+    | PaneStartOutcome
+    | { readonly kind: 'not-rerouted'; readonly why: 'not-reopenable' };
+}): string {
+  const head =
+    `[limite:${input.paneId}] O pane ${input.paneId} (${input.adapterId}) bateu o ` +
+    `limite de uso confirmado (${input.reason}) antes de entregar a tarefa.`;
+  const outcome = input.outcome;
+  if (outcome.kind === 'rerouted') {
+    return `${head} Reenviada para ${outcome.adapterId} (pane ${outcome.paneId}), na mesma worktree quando havia uma.`;
+  }
+  if (outcome.kind === 'reroute-failed') {
+    return `${head} O reenvio automático falhou (${outcome.error}) — decida: abra com outra CLI ou siga sem essa parte.`;
+  }
+  const why = {
+    operator: 'O pane é do operador e continua aberto — decida.',
+    'chain-limit':
+      `A tarefa já foi reenviada ${MAX_START_REROUTES} vezes; não reenvio de novo — ` +
+      'bloqueada: decida (outra CLI, outro brief ou siga sem esta parte).',
+    pinned: 'A CLI foi pedida pelo operador; não troquei sozinho — decida.',
+    'no-alternative': 'Nenhuma outra CLI está disponível — decida.',
+    capacity: 'A máquina está no teto; não reenviei — decida.',
+    'not-reopenable': 'O Nexus não tem o pedido para reabrir esta tarefa — decida.',
   }[outcome.why];
   return `${head} ${why}`;
 }
@@ -361,7 +447,13 @@ export interface PaneStartWatchInit {
   readonly operatorOpened?: boolean;
   readonly turnProof: boolean;
   readonly pinnedRuntime: boolean;
+  /** Esta tentativa é uma reabertura automática de outra (generation > 0). */
   readonly rerouted: boolean;
+  /**
+   * F-1414: n-ésima reabertura automática do mesmo pedido (0 = original). O
+   * teto é MAX_START_REROUTES; ausente, vale `rerouted ? 1 : 0`.
+   */
+  readonly generation?: number;
   readonly createdAt: number;
   /** Mesma entrega comprovada do spawn; true = turno aceito. */
   readonly redeliver?: () => Promise<boolean>;
@@ -395,6 +487,13 @@ export interface PaneStartWatch extends PaneStartWatchInit {
   turnOpenedAt: number | null;
   /** F-765: quando a recusa do modelo apareceu no PTY sem trabalho. */
   modelRejectedAt: number | null;
+  /**
+   * F-1414: quando a prova de execução foi vista (turno aberto pelo hook,
+   * status de trabalho, ferramenta). Fica na ficha: a sessão morta perde os
+   * contadores dela, e o veredito de "estacionado antes do 1º turno" não pode
+   * esquecer um turno que já aconteceu.
+   */
+  executionSeenAt: number | null;
   redeliveredAt: number | null;
   /** Passo 1 em curso: a varredura espera, mas a saída da sessão ainda conta. */
   redelivering: boolean;
@@ -459,6 +558,7 @@ export function trackPaneStart(init: PaneStartWatchInit): PaneStartWatch {
     turnOutcome: null,
     turnOpenedAt: early?.accepted === true ? early.at : null,
     modelRejectedAt: null,
+    executionSeenAt: null,
     redeliveredAt: null,
     redelivering: false,
     phase: 'watching',
@@ -655,8 +755,41 @@ export function notePaneSessionEnded(
   watch.sessionEnded = true;
 }
 
+/**
+ * F-1414: limite de uso confirmado pelo failover (sonda/API) num pane. Só ids,
+ * adapter, o motivo curto já categorizado e a atividade vista na hora — a
+ * atividade que cresce depois prova que o worker se recuperou sozinho.
+ */
+export interface ConfirmedPaneLimit {
+  readonly paneId: string;
+  readonly sessionId: string;
+  readonly adapterId: string;
+  readonly reason: string;
+  readonly at: number;
+}
+
+const confirmedLimits = new Map<string, ConfirmedPaneLimit>();
+
+export function noteConfirmedPaneLimit(limit: ConfirmedPaneLimit): void {
+  confirmedLimits.set(limit.paneId, limit);
+  while (confirmedLimits.size > MAX_EARLY_MARKS) {
+    const oldest = confirmedLimits.keys().next().value;
+    if (oldest === undefined) break;
+    confirmedLimits.delete(oldest);
+  }
+}
+
+export function listConfirmedPaneLimits(): ConfirmedPaneLimit[] {
+  return [...confirmedLimits.values()];
+}
+
+export function forgetConfirmedPaneLimit(paneId: string): void {
+  confirmedLimits.delete(paneId);
+}
+
 export function resetPaneStartWatchdogForTests(): void {
   watches.clear();
   earlyMarks.clear();
+  confirmedLimits.clear();
   kick = null;
 }
