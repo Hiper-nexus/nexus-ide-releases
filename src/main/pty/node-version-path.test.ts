@@ -147,6 +147,15 @@ describe('F-1385 — resolução do bin instalado', () => {
     expect(candidateNodeBinDirs('22', '/Users/x', 'win32')).toEqual([]);
   });
 
+  it('nvm: a versão mais nova vem primeiro por semver, não por ordem de texto (revisão Fable)', () => {
+    const home = tmpRoot();
+    for (const v of ['v22.9.0', 'v22.10.0', 'v22.10.2', 'v23.1.0']) {
+      fs.mkdirSync(path.join(home, '.nvm', 'versions', 'node', v, 'bin'), { recursive: true });
+    }
+    const nvm = candidateNodeBinDirs('22', home, 'darwin').filter((dir) => dir.includes('.nvm'));
+    expect(nvm.map((dir) => path.basename(path.dirname(dir)))).toEqual(['v22.10.2', 'v22.10.0', 'v22.9.0']);
+  });
+
   it('resolveInstalledNodeBin devolve o primeiro candidato que existe', () => {
     const root = tmpRoot();
     const fake = path.join(root, 'node@22', 'bin');

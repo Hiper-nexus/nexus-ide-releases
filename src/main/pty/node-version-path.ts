@@ -99,10 +99,18 @@ function nvmNodeBins(major: string, homeDir: string): string[] {
     return [];
   }
   const prefix = `v${major}.`;
+  // Revisão Fable: semver, não texto — "v22.9.0" > "v22.10.0" na ordem de string.
+  const parts = (entry: string) => entry.slice(1).split('.').map((n) => Number.parseInt(n, 10) || 0);
   return entries
     .filter((entry) => entry.startsWith(prefix))
-    .sort()
-    .reverse()
+    .sort((a, b) => {
+      const [pa, pb] = [parts(a), parts(b)];
+      for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+        const diff = (pb[i] ?? 0) - (pa[i] ?? 0);
+        if (diff !== 0) return diff;
+      }
+      return 0;
+    })
     .map((entry) => path.join(versionsDir, entry, 'bin'));
 }
 
