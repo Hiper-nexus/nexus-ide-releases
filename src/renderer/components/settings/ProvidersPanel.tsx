@@ -1313,7 +1313,8 @@ export function ProvidersPanel() {
 
         {tab === 'clis' && autoCliUpdates?.enabled && (
           <p className="settings-field__note">
-            Verificação diária no macOS, Windows e Linux, quando você está ausente e a CLI está sem panes ativos.
+            O Nexus verifica todas as CLIs ao iniciar e uma vez por dia. Uma CLI com painel aberto atualiza quando o
+            último painel dela fecha; Claude, Devin e Grok atualizam na hora, e o painel aberto segue na versão dele.
             Canais desconhecidos ou que exigem privilégios continuam manuais.
           </p>
         )}
