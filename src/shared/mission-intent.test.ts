@@ -938,6 +938,50 @@ describe('suggestMissionLaneFromGoal — o que o leigo pede de verdade', () => {
   });
 });
 
+/**
+ * F-1304 — tabela das revisões Fable #1, #2 e #3. Princípio: na dúvida,
+ * ESCRITA (null); consult só quando o pedido é claramente só-leitura — a lane
+ * consult tira o worker que escreve no Expresso e libera entrega sem arquivo.
+ */
+describe('F-1304 — negação com escopo × recusa só-leitura (revisões Fable #1–#3)', () => {
+  it.each<[string, 'consult' | null]>([
+    // Fable #1: "sem X" só nega X.
+    ['implemente o endpoint de exportação CSV sem aplicar o lint nos arquivos antigos', null],
+    ['corrija o bug do login sem corrigir os warnings antigos', null],
+    ['adicione o filtro por data sem alterar o schema do banco', null],
+    ['corrija o typo do rodapé sem alterar nada além do README', null],
+    // Fable #3 (1): pedido de escrita em PT-BR corrente.
+    ['quero que você corrija o bug do login sem alterar o schema', null],
+    ['preciso corrigir o bug sem alterar o schema', null],
+    ['pode corrigir o bug sem alterar o schema', null],
+    ['vamos corrigir o bug sem alterar o schema', null],
+    ['tem que corrigir o bug sem alterar o schema', null],
+    ['preciso que você adicione o filtro sem alterar o schema', null],
+    ['quero que você refatore o módulo sem mudar a API', null],
+    ['a tarefa é corrigir o bug sem alterar o schema', null],
+    // Fable #3 (2): "nada no/do X" é escopo, não recusa global.
+    ['corrija o login sem alterar nada no banco', null],
+    ['adicione o índice sem mexer em nada do schema', null],
+    ['implemente o cache, mas não altere nada no banco', null],
+    // Fable #3 (3): "não mexa" sozinho não é global.
+    ['corrija o bug do login; no resto, não mexa', null],
+    // Fable #2: recusa global, cadeia negada, verbo de complemento.
+    ['não mexa em nada; só quero saber se a tela cria o registro certo', 'consult'],
+    ['sem alterar nada, verifique se a tela cria o registro', 'consult'],
+    ['revise o módulo de pagamento sem alterar ou corrigir nada', 'consult'],
+    ['analise o fluxo e aponte o que precisa resolver, sem corrigir', 'consult'],
+    // F-1304 original e vizinhos.
+    ['revise este PR com olhar adversarial e consolide os achados, sem corrigir', 'consult'],
+    ['audite a entrega e me diga o que está errado, sem aplicar nada', 'consult'],
+    ['analise o bug e aponte a causa, sem consertar', 'consult'],
+    ['não altere nada, me diga como corrigir o login', 'consult'],
+    ['revise o módulo de pagamento sem corrigir nem refatorar', 'consult'],
+    ['corrija o login, mas somente leitura por enquanto', 'consult'],
+  ])('%j → %s', (goal, lane) => {
+    expect(suggestMissionLaneFromGoal(goal)).toBe(lane);
+  });
+});
+
 describe('missão MISTA — a lane não pode proibir a outra metade', () => {
   it('construir E auditar não vira somente-leitura', () => {
     // Sonda 23/08: caía em `consult` por causa de "auditoria", e a missão
