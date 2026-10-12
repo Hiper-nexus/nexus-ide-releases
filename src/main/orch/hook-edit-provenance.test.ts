@@ -322,6 +322,73 @@ describe('recordHookEditProvenance (F-1237)', () => {
     expect(calls).toHaveLength(3);
   });
 
+  // F-1363: o endpoint responde ao Stop sem esperar a fila (void). Um job do
+  // turno que já acabou não pode ler o disco nem gravar depois do prompt seguinte.
+  function heldTurn() {
+    const root = checkout();
+    fs.writeFileSync(path.join(root, 'src/y.ts'), 'lento\n');
+    const persisted = new Map<string, string>();
+    const record = vi.fn((_key: ConversationEditKey, edits: ReadonlyMap<string, string>, _at: number, _db?: unknown, insertNew = true) => {
+      for (const [file, hash] of edits) if (insertNew || persisted.has(file)) persisted.set(file, hash);
+      return edits.size;
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const hashing = new Promise<void>((resolve) => { started = resolve; });
+    let holdNext = true;
+    const hash = vi.fn(async (dir: string, rel: string) => {
+      if (rel === 'src/y.ts' && holdNext) {
+        holdNext = false;
+        started();
+        await held;
+      }
+      return sha256(fs.readFileSync(path.join(dir, rel), 'utf8'));
+    });
+    const ctx = { sessionId: 'pty-1', scope: testProjectScope({ rootRealPath: root }) };
+    const conversation = claude('conv-a');
+    const deps = { conversationOf: () => conversation, record, hash };
+    const edit = (file: string) => recordHookEditProvenance(ctx, 'tool-complete',
+      { session_id: 'conv-a', tool_name: 'Write', tool_input: { file_path: path.join(root, file) } }, deps);
+    const event = (eventType: string) => recordHookEditProvenance(ctx, eventType, { session_id: 'conv-a' }, deps);
+    return { root, persisted, release, hashing, edit, event };
+  }
+
+  it('F-1363: Stop enfileirado de um turno encerrado não grava o que outro agente escreveu depois do prompt seguinte', async () => {
+    const turn = heldTurn();
+    expect(await turn.edit('src/x.ts')).toBe(1);
+    const ownHash = turn.persisted.get('src/x.ts');
+    const slow = turn.edit('src/y.ts');
+    await turn.hashing;
+    const stop = turn.event('stop'); // o endpoint já respondeu 200
+    fs.writeFileSync(path.join(turn.root, 'src/x.ts'), 'OUTRO AGENTE DEPOIS DO STOP\n');
+    expect(await turn.event('user-submit')).toBe(0);
+    turn.release();
+    await slow;
+    const recorded = await stop;
+
+    expect(turn.persisted.get('src/x.ts')).toBe(ownHash);
+    expect(recorded).toBe(0);
+  });
+
+  it('F-1363: hash de edição do turno anterior, ainda na fila no prompt seguinte, não lê o disco do turno novo', async () => {
+    const turn = heldTurn();
+    const slow = turn.edit('src/y.ts');
+    await turn.hashing;
+    const late = turn.edit('src/x.ts');
+    expect(await turn.event('user-submit')).toBe(0);
+    fs.writeFileSync(path.join(turn.root, 'src/x.ts'), 'OUTRO AGENTE NO TURNO NOVO\n');
+    turn.release();
+    await slow;
+    const recorded = await late;
+
+    expect(turn.persisted.has('src/x.ts')).toBe(false);
+    expect(recorded).toBe(0);
+    // O turno novo grava de novo, normalmente.
+    expect(await turn.edit('src/x.ts')).toBe(1);
+    expect(turn.persisted.get('src/x.ts')).toBe(sha256('OUTRO AGENTE NO TURNO NOVO\n'));
+  });
+
   it('F-1249: o Stop relê no máximo MAX_RECORDED_PATHS_PER_EVENT caminhos do turno', async () => {
     const root = checkout();
     const { record } = recorder();

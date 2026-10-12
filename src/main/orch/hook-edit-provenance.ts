@@ -98,11 +98,18 @@ let hashQueues = new WeakMap<SessionProviderConversation, { tail: Promise<unknow
 const TURN_END_EVENT_TYPES: ReadonlySet<string> = new Set(['stop', 'stop-failure']);
 /** F-1249: caminhos gravados no turno em curso, por sessão viva (até o teto por evento). */
 let turnEdits = new WeakMap<SessionProviderConversation, Set<string>>();
+/**
+ * F-1363: geração do turno por sessão viva. O user-submit abre a seguinte, e um
+ * job enfileirado no turno anterior (o Stop, que o endpoint confirma sem
+ * esperar, ou um hash atrasado) não lê o disco nem grava no turno novo.
+ */
+let turnGenerations = new WeakMap<SessionProviderConversation, number>();
 
 export function __resetHookEditProvenanceForTests(): void {
   pinnedConversations = new WeakMap();
   hashQueues = new WeakMap();
   turnEdits = new WeakMap();
+  turnGenerations = new WeakMap();
 }
 
 function stringField(value: unknown): string | null {
@@ -254,7 +261,10 @@ export async function recordHookEditProvenance(
         ((own, id) => providerSessionHeldByOtherPane(own.adapterId, id, own.paneId)),
     );
     if (!conversationId) return 0;
-    if (eventType === 'user-submit') turnEdits.delete(conversation);
+    if (eventType === 'user-submit') {
+      turnEdits.delete(conversation);
+      turnGenerations.set(conversation, (turnGenerations.get(conversation) ?? 0) + 1);
+    }
     const turnEnd = TURN_END_EVENT_TYPES.has(eventType);
     if (!turnEnd && eventType !== 'tool-complete') return 0;
     const root = scope.rootRealPath;
@@ -275,16 +285,19 @@ export async function recordHookEditProvenance(
       turnEdits.set(conversation, current);
       for (const rel of relPaths) if (current.size < MAX_RECORDED_PATHS_PER_EVENT) current.add(rel);
     }
+    const generation = turnGenerations.get(conversation) ?? 0;
+    const sameTurn = () => (turnGenerations.get(conversation) ?? 0) === generation;
     queue.queued += 1;
     const job = queue.tail.then(async () => {
       // O conteúdo que a edição deixou: lido agora, depois da escrita do CLI.
       // No fim do turno, relido depois dos hooks paralelos (formatador).
       const edits = new Map<string, string>();
       for (const rel of relPaths) {
+        if (!sameTurn()) return 0;
         const sha256 = await (deps.hash ?? hashRegressionFile)(root, rel);
         if (sha256) edits.set(rel, sha256);
       }
-      if (edits.size === 0) return 0;
+      if (edits.size === 0 || !sameTurn()) return 0;
       return (deps.record ?? recordConversationEdits)(
         { scope: conversation.scope, adapterId: conversation.adapterId, conversationId, rootRealPath: root },
         edits,
