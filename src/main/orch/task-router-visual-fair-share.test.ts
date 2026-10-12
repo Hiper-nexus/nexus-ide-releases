@@ -109,6 +109,19 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
     expect(decision.effort).not.toBe('max');
   });
 
+  it.each(['prepare the next app release', 'ship the next app version'])('Grok: "next app" em inglês genérico não é Next.js: %s', (task) => {
+    const decision = route(task, everyone);
+    expect(decision.reason).not.toContain('Next/jogo');
+    expect(decision.effort).not.toBe('max');
+  });
+
+  it.each(['criar landing em Next JS', 'criar landing em next-js', 'criar landing com create-next-app'])(
+    'Grok: variantes de Next.js mantêm Opus max: %s', (task) => {
+      const decision = route(task, everyone, { visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]) });
+      expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5', effort: 'max' });
+      expect(decision.reason).toContain('Next/jogo → Opus 5.5 (regra do operador)');
+    });
+
   it.each(['landing em Next.js', 'jogo em canvas'])('B1: Next.js e jogo com contexto continuam Opus max: %s', (task) => {
     const decision = route(task, everyone, { visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]) });
     expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5', effort: 'max', specialty: 'visual' });

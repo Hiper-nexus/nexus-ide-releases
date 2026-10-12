@@ -699,7 +699,8 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
 ]);
 
 const BOUNDED = (body: string) => new RegExp(`(?<![\\p{L}\\p{N}_])(?:${body})(?![\\p{L}\\p{N}_])`, 'iu');
-const NEXT_FRONT_RE = BOUNDED('next\\.?js|nextjs|next\\s+app|app\\s+router|phaser|three\\.js|unity\\s+webgl');
+// Revisão Grok: "next app" casava inglês genérico ("prepare the next app release").
+const NEXT_FRONT_RE = BOUNDED('next(?:\\.|[-\\s]+)?js|app\\s+router|create-next-app|phaser|three\\.js|unity\\s+webgl');
 const GAME_WORD_RE = BOUNDED('(?:web\\s+)?games?|jogos?');
 const GAME_CONTEXT_RE = BOUNDED('canvas|phaser|three\\.js|unity|webgl|html5|browser|navegador|2d|3d');
 
