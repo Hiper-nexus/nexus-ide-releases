@@ -117,6 +117,42 @@ describe('buildCodeMapTools', () => {
     expect(miss.fallbackReason).toBe('no-index-hits');
   });
 
+  it('F-1321: lê o escopo de execução, nunca o de coordenação', async () => {
+    const coordRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-map-coord-')));
+    const execRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-map-exec-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-map-cache-'));
+    roots.push(coordRoot, execRoot, cacheRoot);
+    fs.mkdirSync(path.join(coordRoot, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(execRoot, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(coordRoot, 'src', 'coord-only.ts'), 'export const coord = 1;\n');
+    fs.writeFileSync(path.join(execRoot, 'src', 'exec-only.ts'), 'export const execOnly = 1;\n');
+    configureProjectOrientationService({ cacheRoot, includeContextSummary: false });
+
+    // mintToken exige os mesmos projectId/checkoutId nos dois escopos; só a
+    // raiz física difere (coordenação na raiz do projeto, execução na worktree).
+    const coordScope = scopeFor(coordRoot);
+    const execScope = scopeFor(execRoot);
+    const tools = buildCodeMapTools();
+    const get = tools.find((tool) => tool.name === 'nexus_code_map_get')!;
+    const query = tools.find((tool) => tool.name === 'nexus_code_map_query')!;
+    const workerCtx: AgentGateContext = {
+      ...ctx(coordScope),
+      executionScope: execScope,
+    };
+
+    await get.handler({}, workerCtx);
+    const hits = (await query.handler({ q: 'exec-only' }, workerCtx)) as {
+      paths: string[];
+    };
+    expect(hits.paths).toContain('src/exec-only.ts');
+
+    const coordHits = (await query.handler(
+      { q: 'coord-only' },
+      workerCtx,
+    )) as { paths: string[] };
+    expect(coordHits.paths).not.toContain('src/coord-only.ts');
+  });
+
   it('F-1256: a 1ª consulta de várias palavras acha pelo fallback, sem esperar o índice', async () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-map-tokens-')));
     const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-map-cache-'));

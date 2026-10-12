@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { McpToolDef } from './mcp-protocol';
+import { executionScopeFor } from './gate';
 import { ensureBlastRadius } from '../context/orientation/orientation-blast-radius';
 import { tryGetProjectOrientationService } from '../context/orientation/orientation-service';
 
@@ -18,9 +19,9 @@ const getTool: McpToolDef = {
   inputSchema: { type: 'object', properties: {} },
   handler: async (_args, ctx, invocation) => {
     const service = requireService();
-    let map = service.get(ctx.scope);
+    let map = service.get(executionScopeFor(ctx));
     if (!map) {
-      map = await service.ensure(ctx.scope, {
+      map = await service.ensure(executionScopeFor(ctx), {
         reason: 'mcp',
         signal: invocation?.signal,
       });
@@ -52,7 +53,7 @@ const blastTool: McpToolDef = {
       })
       .strict()
       .parse(args);
-    return ensureBlastRadius(ctx.scope, input);
+    return ensureBlastRadius(executionScopeFor(ctx), input);
   },
 };
 
@@ -66,7 +67,7 @@ const refreshTool: McpToolDef = {
       throw new Error('only an orchestrator or user may force orientation refresh');
     }
     const service = requireService();
-    const map = await service.refresh(ctx.scope, invocation?.signal);
+    const map = await service.refresh(executionScopeFor(ctx), invocation?.signal);
     return service.toSnapshot(map);
   },
 };
@@ -94,9 +95,9 @@ const queryTool: McpToolDef = {
       .strict()
       .parse(args);
     const service = requireService();
-    let map = service.get(ctx.scope);
+    let map = service.get(executionScopeFor(ctx));
     if (!map) {
-      map = await service.ensure(ctx.scope, {
+      map = await service.ensure(executionScopeFor(ctx), {
         reason: 'mcp',
         signal: invocation?.signal,
       });
@@ -107,7 +108,7 @@ const queryTool: McpToolDef = {
       '../context/orientation/orientation-local-index'
     );
     const index = getOrientationLocalIndex(map.mapHash);
-    const files = await service.indexedPaths(ctx.scope);
+    const files = await service.indexedPaths(executionScopeFor(ctx));
     if (!index.snapshot.ready || index.snapshot.mapHash !== map.mapHash) {
       void index.build(map, { files, signal: invocation?.signal }).catch(() => {
         /* index is optional */

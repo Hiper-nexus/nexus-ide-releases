@@ -127,7 +127,9 @@ function validSha(value: string): string | null {
 }
 
 function scopeKey(scope: ProjectExecutionScope): string {
-  return `${scope.projectId}\0${scope.checkoutId}`;
+  // F-1321: coordenação e execução compartilham projectId/checkoutId e
+  // diferem só na raiz; a memória do serviço não pode servir uma pela outra.
+  return `${scope.projectId}\0${scope.checkoutId}\0${scope.rootRealPath}`;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {

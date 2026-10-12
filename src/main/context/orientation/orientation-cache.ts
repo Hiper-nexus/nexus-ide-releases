@@ -11,20 +11,31 @@ function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 24);
 }
 
+export type OrientationCacheScope = Pick<
+  ProjectExecutionScope,
+  'projectId' | 'checkoutId' | 'rootRealPath'
+>;
+
+/**
+ * F-1321: a coordenação e a execução de um mesmo worker compartilham
+ * projectId/checkoutId e divergem só na raiz física. Sem a raiz no nome do
+ * diretório, a worktree servia o mapa (e o índice) do checkout da raiz.
+ */
 export function orientationCacheDirectory(
   cacheRoot: string,
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  scope: OrientationCacheScope,
 ): string {
   return path.join(
     cacheRoot,
     `project-${digest(scope.projectId)}`,
     `checkout-${digest(scope.checkoutId)}`,
+    `root-${digest(scope.rootRealPath)}`,
   );
 }
 
 export function orientationCurrentPath(
   cacheRoot: string,
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  scope: OrientationCacheScope,
 ): string {
   return path.join(orientationCacheDirectory(cacheRoot, scope), 'current.json');
 }
@@ -98,7 +109,7 @@ export function fromOrientationJson(raw: ProjectOrientationMapJson): ProjectOrie
 
 export function readOrientationCache(
   cacheRoot: string,
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  scope: OrientationCacheScope,
 ): ProjectOrientationMap | null {
   const file = orientationCurrentPath(cacheRoot, scope);
   try {
@@ -117,7 +128,7 @@ export function readOrientationCache(
 
 export function writeOrientationCache(
   cacheRoot: string,
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  scope: OrientationCacheScope,
   map: ProjectOrientationMap,
 ): void {
   const dir = orientationCacheDirectory(cacheRoot, scope);
@@ -131,7 +142,7 @@ export function writeOrientationCache(
 
 export async function writeOrientationCacheAsync(
   cacheRoot: string,
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  scope: OrientationCacheScope,
   map: ProjectOrientationMap,
 ): Promise<void> {
   const dir = orientationCacheDirectory(cacheRoot, scope);

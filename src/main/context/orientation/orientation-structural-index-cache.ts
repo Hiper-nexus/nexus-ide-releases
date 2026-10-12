@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ProjectExecutionScope } from '../../../shared/types';
-import { orientationCacheDirectory } from './orientation-cache';
+import {
+  orientationCacheDirectory,
+  type OrientationCacheScope,
+} from './orientation-cache';
 import { normalizeOrientationChangedPath } from './orientation-path-policy';
 import type {
   OrientationStructuralFile,
@@ -23,8 +25,10 @@ const SHA_PATTERN = /^[a-f0-9]{40,64}$/;
 
 export function orientationStructuralIndexPath(
   cacheRoot: string,
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  scope: OrientationCacheScope,
 ): string {
+  // O diretório já carrega o hash da raiz (F-1321): o índice nunca cruza
+  // entre o checkout de coordenação e a worktree de execução.
   return path.join(
     orientationCacheDirectory(cacheRoot, scope),
     'structural-index.json',
@@ -148,7 +152,7 @@ function parseFile(value: unknown): OrientationStructuralFile | null {
 
 function parseOrientationStructuralIndex(
   raw: Record<string, unknown>,
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  scope: OrientationCacheScope,
 ): OrientationStructuralIndex | null {
   if (
     raw.schemaVersion !== 1 ||
@@ -186,7 +190,7 @@ function readableIndexStat(stat: fs.Stats): boolean {
 
 export function readOrientationStructuralIndex(
   cacheRoot: string,
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  scope: OrientationCacheScope,
 ): OrientationStructuralIndex | null {
   const file = orientationStructuralIndexPath(cacheRoot, scope);
   try {
@@ -203,7 +207,7 @@ export function readOrientationStructuralIndex(
 /** Same contract as the sync reader, without blocking Main on disk I/O (F-1238). */
 export async function readOrientationStructuralIndexAsync(
   cacheRoot: string,
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  scope: OrientationCacheScope,
 ): Promise<OrientationStructuralIndex | null> {
   const file = orientationStructuralIndexPath(cacheRoot, scope);
   try {
@@ -219,7 +223,7 @@ export async function readOrientationStructuralIndexAsync(
 
 export function writeOrientationStructuralIndex(
   cacheRoot: string,
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  scope: OrientationCacheScope,
   index: OrientationStructuralIndex,
 ): void {
   const dir = orientationCacheDirectory(cacheRoot, scope);
@@ -236,7 +240,7 @@ export function writeOrientationStructuralIndex(
  */
 export async function writeOrientationStructuralIndexAsync(
   cacheRoot: string,
-  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  scope: OrientationCacheScope,
   index: OrientationStructuralIndex,
   signal?: AbortSignal,
 ): Promise<void> {
