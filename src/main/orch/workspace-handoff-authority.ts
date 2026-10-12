@@ -78,17 +78,18 @@ function isCurrentMissionOrchestrator(
 
 /**
  * F-1262: leitura explícita, por id, da correspondência de workspace pelo pai
- * que a promoção tornou orquestrador da missão da aba (o mesmo destino que
- * `resolveWorkspaceHandoffParent` aceita na entrega). O vínculo continua sendo
- * o do spawn, cunhado pelo Main: sem ele, id adivinhado não lê nada. A linha
- * segue correspondência `unverified` com `mission_id` NULL — nunca evidência,
- * recibo ou ACK de missão.
+ * que a promoção tornou orquestrador da missão da aba. O vínculo é o
+ * destinatário durável gravado no submit (`workspaceRecipientSessionId`, a
+ * sessão-mãe que o `resolveWorkspaceHandoffParent` provou no momento da
+ * entrega): o helper já pode ter sido fechado pelo auto-close e saído do
+ * registro vivo de panes. A linha segue correspondência `unverified` com
+ * `mission_id` NULL — nunca evidência, recibo ou ACK de missão.
  */
 export function promotedParentMayReadWorkspaceHandoff(
   ctx: AgentGateContext,
   handoff: {
-    readonly sessionId?: string;
     readonly missionId?: string;
+    readonly workspaceRecipientSessionId?: string;
   },
 ): boolean {
   if (
@@ -98,21 +99,7 @@ export function promotedParentMayReadWorkspaceHandoff(
     !ctx.missionId ||
     ctx.workerIncarnationId ||
     handoff.missionId ||
-    !handoff.sessionId ||
-    handoff.sessionId === ctx.sessionId
-  )
-    return false;
-  const child = handPaneOf(handoff.sessionId);
-  if (
-    !child ||
-    child.operatorParentSessionId !== ctx.sessionId ||
-    child.kind !== "cli-agent" ||
-    child.role === "worker" ||
-    child.missionId ||
-    child.contextRevision ||
-    child.workerIncarnationId ||
-    !child.scope ||
-    !sameProjectExecutionScope(child.scope, ctx.scope)
+    handoff.workspaceRecipientSessionId !== ctx.sessionId
   )
     return false;
   const caller = handPaneOf(ctx.sessionId);

@@ -585,6 +585,12 @@ export interface Handoff {
   missionId?: string;
   /** PTY session of the worker that submitted. */
   sessionId?: string;
+  /**
+   * Workspace handoff only (missionId absent): the Main-proven parent session
+   * that received the notification. Durable read-by-id authority after the
+   * helper pane is auto-closed and leaves the live registry.
+   */
+  workspaceRecipientSessionId?: string;
   /** Main-issued generation nonce for the exact physical worker process. */
   workerIncarnationId?: string;
   fromAgent?: string;

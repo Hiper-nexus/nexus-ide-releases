@@ -106,6 +106,8 @@ const submitHandoffInputSchema = z
     sessionId: identifierSchema.optional(),
     workerIncarnationId: identifierSchema.optional(),
     fromAgent: agentLabelSchema.optional(),
+    /** F-1262: workspace handoff only — Main-proven recipient parent session. */
+    workspaceRecipientSessionId: identifierSchema.optional(),
   })
   .strict();
 
@@ -186,6 +188,7 @@ const handoffRowSchema = z
     id: identifierSchema,
     mission_id: identifierSchema.nullable(),
     session_id: identifierSchema.nullable(),
+    workspace_recipient_session_id: identifierSchema.nullable(),
     worker_incarnation_id: identifierSchema.nullable(),
     from_agent: agentLabelSchema.nullable(),
     adapter_id: z.string().min(1).max(128).nullable(),
@@ -271,7 +274,8 @@ const BINDING_KEYS: readonly (keyof EvidenceBinding)[] = [
 ];
 
 const HANDOFF_SELECT = `
-  SELECT id, mission_id, session_id, worker_incarnation_id, from_agent, adapter_id, model,
+  SELECT id, mission_id, session_id, workspace_recipient_session_id,
+         worker_incarnation_id, from_agent, adapter_id, model,
          authority_origin, status, summary,
          artifacts_json, evidence_ids_json, evidence_trusted,
          context_revision, contract_hash, base_sha, head_sha, diff_hash,
@@ -933,6 +937,11 @@ export class ScopedHandoffStore {
         id,
         missionId: input.missionId,
         sessionId: input.sessionId,
+        // ponytail: recipient only exists on workspace rows; mission submits
+        // can never carry a workspace read authority.
+        workspaceRecipientSessionId: input.missionId
+          ? undefined
+          : input.workspaceRecipientSessionId,
         workerIncarnationId: input.workerIncarnationId,
         fromAgent: input.fromAgent,
         ...(attribution ? { routeAttribution: Object.freeze({ ...attribution }) } : {}),
@@ -952,17 +961,19 @@ export class ScopedHandoffStore {
       };
       db.prepare(
         `INSERT INTO handoffs
-           (id, mission_id, session_id, worker_incarnation_id, from_agent,
+           (id, mission_id, session_id, workspace_recipient_session_id,
+            worker_incarnation_id, from_agent,
             authority_origin, status, summary,
             artifacts_json, evidence_ids_json, evidence_trusted,
             context_revision, contract_hash, base_sha, head_sha, diff_hash,
             workflow_revision, delivered, delivery_state, created_at,
             adapter_id, model, author_read_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?)`,
       ).run(
         handoff.id,
         handoff.missionId ?? null,
         handoff.sessionId ?? null,
+        handoff.workspaceRecipientSessionId ?? null,
         handoff.workerIncarnationId ?? null,
         handoff.fromAgent ?? null,
         handoff.authorityOrigin,
@@ -2837,6 +2848,8 @@ export class ScopedHandoffStore {
       id: row.id,
       missionId: row.mission_id ?? undefined,
       sessionId: row.session_id ?? undefined,
+      workspaceRecipientSessionId:
+        row.workspace_recipient_session_id ?? undefined,
       workerIncarnationId: row.worker_incarnation_id ?? undefined,
       fromAgent: row.from_agent ?? undefined,
       ...(row.adapter_id ? { routeAttribution: Object.freeze({

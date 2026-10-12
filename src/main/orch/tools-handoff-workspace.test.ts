@@ -590,9 +590,11 @@ describe("workspace handoff", () => {
       expect.stringContaining(result.handoffId),
       expect.anything(),
     );
-    // O auto-close fecha o helper: o relatório só existe no ledger.
+    // O auto-close fecha o helper: o relatório só existe no ledger e o pane
+    // some do registro vivo — a leitura por id não pode depender dele.
     await vi.runAllTimersAsync();
     expect(close).toHaveBeenCalledWith("pane-child", "child");
+    runtime.delete("child");
 
     const rows = (await tool("list").handler(
       { ids: [result.handoffId] },

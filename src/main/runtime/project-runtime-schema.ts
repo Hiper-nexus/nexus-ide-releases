@@ -1220,4 +1220,11 @@ END;`,
         FROM command_receipts AS receipt WHERE physical_state='unknown' AND result_sequence=0
           AND NOT EXISTS(SELECT 1 FROM effect_outbox AS effect WHERE effect.command_id=receipt.command_id);`,
     }),
+    // F-1262: destinatário durável do handoff sem missão — a sessão-mãe que
+    // recebeu a notificação, provada pelo Main no submit. A leitura por id
+    // depois do auto-close não pode depender do registro vivo de panes.
+    createProjectMigration({
+      id: '055-handoff-workspace-recipient', schemaVersion: 55, appVersion: '0.76.239',
+      sql: `ALTER TABLE handoffs ADD COLUMN workspace_recipient_session_id TEXT;`,
+    }),
   ]);

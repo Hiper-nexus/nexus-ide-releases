@@ -216,6 +216,9 @@ export async function submitWorkspaceHandoff(
     artifacts,
     sessionId: ctx.sessionId,
     fromAgent: ctx.agentName ?? ctx.label,
+    // F-1262: destinatário durável provado pelo Main no submit — a leitura
+    // por id depois do auto-close não depende do registro vivo de panes.
+    workspaceRecipientSessionId: destination.parentContext.sessionId!,
   });
   if (verdict.kind !== "none" && ctx.sessionId)
     disarmDeliveryContract(ctx.sessionId);
