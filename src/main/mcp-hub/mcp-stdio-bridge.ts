@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { readJsonObject } from '../orch/cli-mcp-session-artifacts';
+import { splitQuotedArgv } from './mcp-hub-core';
 import { MCP_PROTOCOL_VERSION, type JsonRpcRequest, type JsonRpcResponse } from '../orch/mcp-protocol';
 
 /**
@@ -49,6 +50,8 @@ export interface McpStdioServerDescriptor {
   readonly key: string;
   readonly command: string;
   readonly args: readonly string[];
+  /** Diretório de trabalho declarado na entrada original (F-1366). */
+  readonly cwd?: string;
   readonly env: Readonly<Record<string, string>>;
 }
 
@@ -86,7 +89,7 @@ export function isMcpSharedHubEnabled(env: NodeJS.ProcessEnv = process.env): boo
  */
 export function isStdioMcpServerEntry(
   value: unknown,
-): value is { command: string; args?: unknown; env?: unknown } {
+): value is { command: string; args?: unknown; cwd?: unknown; env?: unknown } {
   const entry = asRecord(value);
   if (typeof entry.type === 'string' && entry.type !== 'stdio') return false;
   if (typeof entry.url === 'string' && entry.url.length > 0) return false;
@@ -100,18 +103,31 @@ export function nativeStdioServerDescriptors(
   const out: McpStdioServerDescriptor[] = [];
   for (const [key, value] of Object.entries(asRecord(mcpServers))) {
     if (!isStdioMcpServerEntry(value)) continue;
-    const entry = value as { command: string; args?: unknown; env?: unknown };
-    const args = Array.isArray(entry.args)
+    const entry = value as { command: string; args?: unknown; cwd?: unknown; env?: unknown };
+    let command = entry.command;
+    let args = Array.isArray(entry.args)
       ? entry.args.filter((item): item is string => typeof item === 'string')
       : [];
+    // F-1365: `~/.claude.json` do operador pode carregar o argv inteiro no
+    // command ("npx pkg@latest", forma que o Cursor gravou) — o hub bridge
+    // spawn direto sem shell, então a string inteira seria o argv0 (ENOENT).
+    if (/\s/.test(command) && args.length === 0) {
+      const argv = splitQuotedArgv(command);
+      if (argv.length > 0) {
+        command = argv[0]!;
+        args = argv.slice(1);
+      }
+    }
     const env: Record<string, string> = {};
     for (const [envKey, envValue] of Object.entries(asRecord(entry.env))) {
       if (typeof envValue === 'string') env[envKey] = envValue;
     }
+    const cwd = typeof entry.cwd === 'string' && entry.cwd.trim() ? entry.cwd : undefined;
     out.push({
       key,
-      command: entry.command,
+      command,
       args: Object.freeze(args),
+      ...(cwd ? { cwd } : {}),
       env: Object.freeze(env),
     });
   }
@@ -370,6 +386,9 @@ class McpStdioChannel {
     try {
       const child = spawn(this.descriptor.command, [...this.descriptor.args], {
         env: backendEnv(this.descriptor.env),
+        // F-1366: command relativo resolve contra o cwd declarado na entrada,
+        // não contra o cwd do processo do hub.
+        ...(this.descriptor.cwd ? { cwd: this.descriptor.cwd } : {}),
         stdio: ['pipe', 'pipe', 'pipe'],
         // Windows resolves npm-installed shims (npx.cmd, etc.) through the
         // shell; every other platform spawns the binary directly.

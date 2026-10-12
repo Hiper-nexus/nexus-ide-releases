@@ -61,6 +61,31 @@ describe('nativeStdioServerDescriptors', () => {
     ]);
   });
 
+  it('F-1365/F-1366: parte command com espaço e carrega o cwd do descriptor', () => {
+    // `~/.claude.json` do operador carregava `command: "npx @playwright/mcp@latest"`
+    // (forma gravada pelo Cursor): o bridge spawn direto sem shell, então a
+    // string inteira virava argv0 e morria ENOENT.
+    const descriptors = nativeStdioServerDescriptors({
+      playwright: { command: 'npx @playwright/mcp@latest' },
+      'computer-use': {
+        command: './SkyComputerUseClient',
+        args: ['mcp'],
+        cwd: '/opt/cu/Codex Computer Use.app/Contents/MacOS',
+      },
+    });
+    expect(descriptors[0]).toMatchObject({
+      key: 'playwright',
+      command: 'npx',
+      args: ['@playwright/mcp@latest'],
+    });
+    expect(descriptors[1]).toMatchObject({
+      key: 'computer-use',
+      command: './SkyComputerUseClient',
+      args: ['mcp'],
+      cwd: '/opt/cu/Codex Computer Use.app/Contents/MacOS',
+    });
+  });
+
   it('returns empty for a non-object input', () => {
     expect(nativeStdioServerDescriptors(undefined)).toEqual([]);
     expect(nativeStdioServerDescriptors(null)).toEqual([]);

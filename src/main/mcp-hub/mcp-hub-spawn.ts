@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   isMaskedSecretValue,
   mcpHubConfigSchema,
+  splitQuotedArgv,
   type McpHubServer,
   type McpHubTransport,
 } from './mcp-hub-core';
@@ -49,6 +50,12 @@ export interface McpHubSpawnServer {
   readonly transport: McpHubTransport;
   readonly command?: string;
   readonly args: readonly string[];
+  /**
+   * Diretório de trabalho declarado no hub (F-1366): sem ele, um command
+   * relativo (`./client`) resolve contra o cwd do pane, não contra o
+   * diretório onde o servidor vive.
+   */
+  readonly cwd?: string;
   readonly url?: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly env: Readonly<Record<string, string>>;
@@ -98,15 +105,27 @@ function sanitizeRecord(
 function toSpawnServer(server: McpHubServer): McpHubSpawnServer | null {
   const key = serverKeyOf(server.id);
   if (!key) return null;
-  const command = server.command?.trim() || undefined;
+  let command = server.command?.trim() || undefined;
   const url = server.url?.trim() || undefined;
   // Sem command E sem url não há nada para o CLI conectar.
   if (!command && !url) return null;
+  const args = [...(server.args ?? [])];
+  // F-1365: hub gravado antes do fix carrega o argv inteiro no command —
+  // spawnado assim o posix_spawn morre ENOENT. Parte antes de materializar.
+  if (command && args.length === 0 && /\s/.test(command)) {
+    const argv = splitQuotedArgv(command);
+    if (argv.length > 0) {
+      command = argv[0];
+      args.push(...argv.slice(1));
+    }
+  }
+  const cwd = server.cwd?.trim() || undefined;
   return {
     key,
     transport: server.transport,
     ...(command ? { command } : {}),
-    args: Object.freeze([...(server.args ?? [])]),
+    args: Object.freeze(args),
+    ...(cwd ? { cwd } : {}),
     ...(url ? { url } : {}),
     headers: Object.freeze(sanitizeRecord(server.headers)),
     env: Object.freeze(sanitizeRecord(server.env)),
@@ -271,7 +290,13 @@ export function claudeFamilyHubMcpServers(
     out[key] = isStdioHubServer(server)
       ? {
           type: 'stdio',
-          command: server.command,
+          // F-1366: o formato do Claude não tem `cwd` (docs 2026-10) e entrada
+          // com campo desconhecido pode ser pulada no boot — um command
+          // explicitamente relativo (`./x`) é resolvido contra o cwd do hub.
+          command:
+            server.cwd && /^\.\.?\//.test(server.command ?? '')
+              ? path.resolve(server.cwd, server.command!)
+              : server.command,
           ...(server.args.length > 0 ? { args: [...server.args] } : {}),
           ...(Object.keys(server.env).length > 0 ? { env: { ...server.env } } : {}),
         }
@@ -297,6 +322,7 @@ export function openCodeHubMcpServers(
           type: 'local',
           command: [server.command!, ...server.args],
           enabled: true,
+          ...(server.cwd ? { cwd: server.cwd } : {}),
           ...(Object.keys(server.env).length > 0
             ? { environment: { ...server.env } }
             : {}),
@@ -323,6 +349,7 @@ export function grokHubMcpServers(
       ? {
           command: server.command,
           enabled: true,
+          ...(server.cwd ? { cwd: server.cwd } : {}),
           ...(server.args.length > 0 ? { args: [...server.args] } : {}),
           ...(Object.keys(server.env).length > 0 ? { env: { ...server.env } } : {}),
         }
@@ -372,6 +399,8 @@ export function codexHubMcpArgs(
     const base = `mcp_servers.${server.key}`;
     if (isStdioHubServer(server)) {
       push(`${base}.command`, server.command);
+      // Codex aceita cwd no [mcp_servers.*] (F-1366).
+      if (server.cwd) push(`${base}.cwd`, server.cwd);
       if (server.args.length > 0) push(`${base}.args`, [...server.args]);
       for (const [name, value] of Object.entries(server.env)) {
         if (isSecretFieldName(name)) continue;

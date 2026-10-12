@@ -1,10 +1,32 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   claudeFamilyHubMcpServers,
   codexHubMcpArgs,
+  loadMcpHubServersForSpawn,
   selectHubServersForSpawn,
   type McpHubSpawnServer,
 } from './mcp-hub-spawn';
+
+const tempDirs: string[] = [];
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function workspaceWithHub(servers: unknown[]): string {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-spawn-'));
+  tempDirs.push(workspace);
+  fs.mkdirSync(path.join(workspace, '.nexus'), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspace, '.nexus', 'mcp-hub.json'),
+    JSON.stringify({ schemaVersion: 1, servers }, null, 2),
+  );
+  return workspace;
+}
 
 function stdio(key: string): McpHubSpawnServer {
   return {
@@ -62,6 +84,83 @@ function http(key: string, url: string): McpHubSpawnServer {
     env: {},
   };
 }
+
+describe('loadMcpHubServersForSpawn — F-1365/F-1366', () => {
+  it('F-1365: hub legado com command "npx @playwright/mcp@latest" chega ao spawn partido', () => {
+    // Campo 2026-10-11: sessão Claude com `posix_spawn 'npx @playwright/mcp@latest'`
+    // (ENOENT) — o hub importou do Cursor o command como string única e o spawn
+    // repassou sem partir. Aqui o hub JÁ contém a forma legada: o spawn parte.
+    const workspace = workspaceWithHub([
+      {
+        id: 'playwright',
+        name: 'Playwright',
+        transport: 'stdio',
+        command: 'npx @playwright/mcp@latest',
+        tools: [],
+        source: 'cursor',
+      },
+    ]);
+    const servers = loadMcpHubServersForSpawn(workspace);
+    expect(servers).toHaveLength(1);
+    expect(servers[0]?.command).toBe('npx');
+    expect(servers[0]?.args).toEqual(['@playwright/mcp@latest']);
+    const claude = claudeFamilyHubMcpServers(servers) as Record<
+      string,
+      { command?: string; args?: string[] }
+    >;
+    expect(claude.playwright?.command).toBe('npx');
+    expect(claude.playwright?.args).toEqual(['@playwright/mcp@latest']);
+  });
+
+  it('F-1366: servidor com cwd chega ao spawn com o mesmo cwd', () => {
+    const workspace = workspaceWithHub([
+      {
+        id: 'computer-use-client',
+        name: 'computer-use-client',
+        transport: 'stdio',
+        command: './SkyComputerUseClient',
+        args: ['mcp'],
+        cwd: '/Users/x/.codex/computer-use/Codex Computer Use.app/Contents/MacOS',
+        tools: [],
+        source: 'codex',
+      },
+    ]);
+    const servers = loadMcpHubServersForSpawn(workspace);
+    expect(servers[0]?.cwd).toBe(
+      '/Users/x/.codex/computer-use/Codex Computer Use.app/Contents/MacOS',
+    );
+  });
+
+  it('F-1366: família Claude resolve command relativo contra o cwd (formato sem cwd)', () => {
+    // Claude Code não tem campo `cwd` no .mcp.json (docs 2026-10): entrada
+    // com campo desconhecido pode ser pulada no boot. O caminho relativo é
+    // resolvido para absoluto em vez de emitir cwd.
+    const servers = loadMcpHubServersForSpawn(
+      workspaceWithHub([
+        {
+          id: 'computer-use-client',
+          name: 'computer-use-client',
+          transport: 'stdio',
+          command: './SkyComputerUseClient',
+          args: ['mcp'],
+          cwd: '/Users/x/.codex/computer-use/Codex Computer Use.app/Contents/MacOS',
+          tools: [],
+          source: 'codex',
+        },
+      ]),
+    );
+    const claude = claudeFamilyHubMcpServers(servers) as Record<
+      string,
+      { command?: string; cwd?: unknown }
+    >;
+    expect(claude['computer-use-client']?.command).toBe(
+      '/Users/x/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseClient',
+    );
+    expect(claude['computer-use-client']?.cwd).toBeUndefined();
+    const codex = codexHubMcpArgs(servers).join(' ');
+    expect(codex).toContain('mcp_servers.computer-use-client.cwd=');
+  });
+});
 
 describe('codexHubMcpArgs — colisão com mcp_servers preservados', () => {
   it('omite o hub HTTP quando o mesmo nome já existe no config do operador', () => {
