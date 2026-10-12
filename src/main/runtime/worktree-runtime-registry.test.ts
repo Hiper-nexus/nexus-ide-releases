@@ -975,6 +975,67 @@ describe("project worktree runtime registry", () => {
     }
   });
 
+  it("F-1275: opens the scope while a queued worktree pins an unreadable merge queue", async () => {
+    const { scope, manager } = fixture();
+    const original = new WorktreeRuntimeRegistry(manager);
+    const record = await createTrackedWorktree(original, manager, {
+      scope,
+      missionId: "mission-future-merge",
+      taskId: "task-future-merge",
+      workerId: "worker-future-merge",
+      ownership: { files: ["owned.txt"], symbols: [], domains: ["core"] },
+    });
+    original.dispose();
+    const db = manager.open(scope).db;
+    const row = db
+      .prepare("SELECT records_json FROM worktree_state WHERE scope_key = ?")
+      .get(record.scopeKey) as { records_json: string };
+    const queued = (
+      JSON.parse(row.records_json) as Array<Record<string, unknown>>
+    ).map((candidate) => ({
+      ...candidate,
+      status: "queued",
+      taskHeadSha: record.baseSha,
+    }));
+    db.prepare(
+      `UPDATE worktree_state SET records_json = ?, revision = revision + 1
+       WHERE scope_key = ?`,
+    ).run(JSON.stringify(queued), record.scopeKey);
+    db.prepare(
+      `INSERT OR REPLACE INTO merge_queue_state
+         (scope_key, revision, state_json, updated_at)
+       VALUES (?, 1, ?, 1)`,
+    ).run(record.scopeKey, JSON.stringify({
+      activeTaskKey: null,
+      blocked: null,
+      entries: [],
+      events: [{
+        id: `merge-event-${"b".repeat(64)}`,
+        type: "future-type",
+        taskKey: record.taskKey,
+        attempt: 1,
+        stateRevision: 1,
+        occurredAt: 1,
+        evidenceIds: [],
+      }],
+    }));
+    manager.close(scope);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const reopened = new WorktreeRuntimeRegistry(manager);
+      expect(reopened.get(scope, record.missionId, record.taskId)).toMatchObject({
+        status: "queued",
+      });
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("merge queue reconcile skipped"),
+        expect.anything(),
+      );
+      reopened.dispose();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("self-heals an ownership-overlap block left by a deleted mission's task, without a fresh registry", async () => {
     const { scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);

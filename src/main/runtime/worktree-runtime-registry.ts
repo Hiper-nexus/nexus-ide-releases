@@ -144,16 +144,15 @@ export class WorktreeRuntimeRegistry {
     );
     if (worktreeRecovery.action === "quarantined") {
       console.warn(
-        `[worktree-runtime] archived ${worktreeRecovery.recordCount} invalid ` +
-          `worktree record(s) as ${worktreeRecovery.quarantineId} ` +
+        `[worktree-runtime] archived invalid worktree/merge state ` +
+          `(${worktreeRecovery.recordCount} worktree record(s)) as ${worktreeRecovery.quarantineId} ` +
           `(${worktreeRecovery.reason}); no Git path or ref was removed`,
       );
     } else if (worktreeRecovery.action === "blocked") {
       // F-1276: a recusa era silenciosa e a leitura seguinte lançava sem causa.
       console.warn(
-        `[worktree-runtime] invalid worktree state kept fail-closed ` +
-          `(${worktreeRecovery.reason}): no record was proven relocated or ` +
-          "terminal, so nothing was archived",
+        `[worktree-runtime] invalid worktree/merge state kept fail-closed ` +
+          `(${worktreeRecovery.reason}): nothing was proven safe to archive`,
       );
     }
     const queue = new MergeQueue({
@@ -189,7 +188,14 @@ export class WorktreeRuntimeRegistry {
           "pane writer interrupted by application restart; worktree and branch retained");
       }
     }
-    queue.reconcile(immutableScope);
+    try {
+      queue.reconcile(immutableScope);
+    } catch (error) {
+      // F-1275: a merge row that stays unreadable must not take pane spawn,
+      // tabs and missions of the scope down; only merge operations keep
+      // failing (claim refuses while the durable state is unresolved).
+      console.warn("[worktree-runtime] merge queue reconcile skipped", error);
+    }
     // A durable merge block can only be acknowledged by its exact blocked
     // task. If that task's mission was deleted, the block is permanently
     // unacknowledgeable and every future mission of this scope inherits

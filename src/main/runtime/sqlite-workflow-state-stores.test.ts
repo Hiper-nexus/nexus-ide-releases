@@ -87,6 +87,24 @@ function rawRecord(input: {
   };
 }
 
+/** Merge row as a newer build would write it: one event type this build lacks. */
+function futureMergeStateJson(): string {
+  return JSON.stringify({
+    activeTaskKey: null,
+    blocked: null,
+    entries: [],
+    events: [{
+      id: `merge-event-${'b'.repeat(64)}`,
+      type: 'future-type',
+      taskKey: 'c'.repeat(64),
+      attempt: 1,
+      stateRevision: 1,
+      occurredAt: 1,
+      evidenceIds: [],
+    }],
+  });
+}
+
 beforeEach(() => {
   baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-workflow-state-'));
 });
@@ -350,5 +368,91 @@ describe('SQLite worktree/merge CAS state', () => {
       reason: 'terminal-legacy-state',
     });
     expect(worktrees.read(key)).toEqual({ revision: 5, records: [] });
+  });
+
+  it('F-1275: archives an unreadable merge queue row next to a valid worktree projection', () => {
+    const manager = new ProjectRuntimeManager({ baseDir, appVersion: 'test' });
+    managers.push(manager);
+    const scope = testProjectScope();
+    const key = digest('worktree-scope', scope.projectId, scope.checkoutId);
+    const worktrees = new SqliteWorktreeStateStore(manager, scope);
+    const merges = new SqliteMergeQueueStateStore(manager, scope);
+    expect(worktrees.compareAndSwap(key, 0, [])).toBe(true);
+    const stateJson = futureMergeStateJson();
+    const db = manager.open(scope).db;
+    db.prepare(
+      `INSERT INTO merge_queue_state
+         (scope_key, revision, state_json, updated_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run(key, 3, stateJson, 9);
+    expect(() => merges.read(key)).toThrow(/invalid merge queue state/i);
+
+    expect(worktrees.recoverInvalidState(key)).toMatchObject({
+      action: 'quarantined',
+      recordCount: 0,
+    });
+    expect(merges.read(key)).toEqual({
+      revision: 4,
+      activeTaskKey: null,
+      blocked: null,
+      events: [],
+      entries: [],
+    });
+    expect(worktrees.read(key)).toEqual({ revision: 2, records: [] });
+    expect(
+      db
+        .prepare(
+          `SELECT source_revision, merge_state_json
+           FROM worktree_state_quarantine WHERE scope_key = ?`,
+        )
+        .get(key),
+    ).toEqual({ source_revision: 1, merge_state_json: stateJson });
+    expect(worktrees.recoverInvalidState(key)).toEqual({ action: 'none' });
+  });
+
+  it('F-1275: keeps an unreadable merge queue fail-closed while a worktree is queued', () => {
+    const manager = new ProjectRuntimeManager({ baseDir, appVersion: 'test' });
+    managers.push(manager);
+    const scope = testProjectScope();
+    const key = digest('worktree-scope', scope.projectId, scope.checkoutId);
+    const identity = worktreeIdentity(scope, 'mission-queued', 'task-queued');
+    const worktrees = new SqliteWorktreeStateStore(manager, scope);
+    expect(worktrees.compareAndSwap(key, 0, [{
+      ...rawRecord({
+        scope,
+        scopeKey: key,
+        missionId: 'mission-queued',
+        taskId: 'task-queued',
+        worktreePath: path.join(
+          manager.locationFor(scope).directory,
+          'worktrees',
+          identity.relativePath,
+        ),
+        status: 'queued',
+      }),
+      taskHeadSha: 'b'.repeat(40),
+    }])).toBe(true);
+    const stateJson = futureMergeStateJson();
+    const db = manager.open(scope).db;
+    db.prepare(
+      `INSERT INTO merge_queue_state
+         (scope_key, revision, state_json, updated_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run(key, 3, stateJson, 9);
+
+    expect(worktrees.recoverInvalidState(key)).toEqual({
+      action: 'blocked',
+      reason: 'unproven-invalid-state',
+    });
+    expect(
+      db
+        .prepare(
+          'SELECT revision, state_json FROM merge_queue_state WHERE scope_key = ?',
+        )
+        .get(key),
+    ).toEqual({ revision: 3, state_json: stateJson });
+    expect(
+      db.prepare('SELECT COUNT(*) AS count FROM worktree_state_quarantine').get(),
+    ).toEqual({ count: 0 });
   });
 });

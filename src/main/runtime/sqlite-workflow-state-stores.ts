@@ -36,6 +36,31 @@ function parseJson(raw: string, label: string): unknown {
   }
 }
 
+function readMergeQueueState(
+  db: Database.Database,
+  scopeKey: string,
+): MergeQueueStateSnapshot {
+  const row = db
+    .prepare('SELECT revision, state_json FROM merge_queue_state WHERE scope_key = ?')
+    .get(scopeKey) as { revision: number; state_json: string } | undefined;
+  if (!row) {
+    return Object.freeze({
+      revision: 0,
+      activeTaskKey: null,
+      blocked: null,
+      events: Object.freeze([]),
+      entries: Object.freeze([]),
+    });
+  }
+  try {
+    const state = parseJson(row.state_json, 'merge queue state') as Record<string, unknown>;
+    return validateMergeQueueStateSnapshot({ revision: row.revision, ...state });
+  } catch (error) {
+    if (error instanceof ScopedStoreCorruptionError) throw error;
+    throw new ScopedStoreCorruptionError('merge queue state', { cause: error });
+  }
+}
+
 function expectedScopeKey(scope: ProjectExecutionScope): string {
   return digest('worktree-scope', scope.projectId, scope.checkoutId);
 }
@@ -278,14 +303,33 @@ export class SqliteWorktreeStateStore implements WorktreeStateStore {
    */
   recoverInvalidState(scopeKey: string): WorktreeStateRecoveryResult {
     assertScopeKey(this.#binding.scope, scopeKey);
+    let readable: WorktreeStateSnapshot | undefined;
     try {
-      this.read(scopeKey);
-      return Object.freeze({ action: 'none' });
+      readable = this.read(scopeKey);
     } catch (error) {
       if (!(error instanceof ScopedStoreCorruptionError)) throw error;
     }
 
     const readDb = this.#binding.readDatabase();
+    if (readable) {
+      // F-1275: a valid projection next to a merge row this build cannot read
+      // (e.g. an event type from a newer build) made every reconcile throw.
+      // With no `queued` record nothing here depends on that row, so it is
+      // archived and reset below; the worktree records are kept verbatim
+      // (only their revision moves, under the same CAS as the merge row).
+      try {
+        readMergeQueueState(readDb, scopeKey);
+        return Object.freeze({ action: 'none' });
+      } catch (error) {
+        if (!(error instanceof ScopedStoreCorruptionError)) throw error;
+      }
+      if (readable.records.some((record) => record.status === 'queued')) {
+        return Object.freeze({
+          action: 'blocked',
+          reason: 'unproven-invalid-state',
+        });
+      }
+    }
     const row = readDb
       .prepare(
         `SELECT revision, records_json, updated_at
@@ -304,7 +348,7 @@ export class SqliteWorktreeStateStore implements WorktreeStateStore {
         reason: 'unproven-invalid-state',
       });
     }
-    const identities = recoverableIdentities(
+    const identities = readable ? [] : recoverableIdentities(
       row.records_json,
       this.#binding.scope,
       scopeKey,
@@ -315,14 +359,16 @@ export class SqliteWorktreeStateStore implements WorktreeStateStore {
         reason: 'unproven-invalid-state',
       });
     }
-    const relocated = identities.every((identity) =>
+    const relocated = !readable && identities.every((identity) =>
       isCanonicalRelocatedBinding(identity, [
         this.#worktreesRoot,
         this.#legacyWorktreesRoot,
       ]),
     );
+    // A merge-only recovery (F-1275) archives no worktree record.
     const terminal =
-      !relocated && hasOnlyTerminalDurableAuthority(readDb, identities);
+      !relocated &&
+      (readable !== undefined || hasOnlyTerminalDurableAuthority(readDb, identities));
     if (!relocated && !terminal) {
       return Object.freeze({
         action: 'blocked',
@@ -338,6 +384,7 @@ export class SqliteWorktreeStateStore implements WorktreeStateStore {
          FROM merge_queue_state WHERE scope_key = ?`,
       )
       .get(scopeKey) as RawMergeStateRow | undefined;
+    if (readable && !merge) return Object.freeze({ action: 'none' });
     if (
       merge &&
       (!Number.isSafeInteger(merge.revision) ||
@@ -429,7 +476,7 @@ export class SqliteWorktreeStateStore implements WorktreeStateStore {
         )
         .run(
           row.revision + 1,
-          canonicalJson([]),
+          readable ? row.records_json : canonicalJson([]),
           quarantinedAt,
           scopeKey,
           row.revision,
@@ -550,25 +597,7 @@ export class SqliteMergeQueueStateStore implements MergeQueueStateStore {
 
   read(scopeKey: string): MergeQueueStateSnapshot {
     assertScopeKey(this.#binding.scope, scopeKey);
-    const row = this.#binding.readDatabase()
-      .prepare('SELECT revision, state_json FROM merge_queue_state WHERE scope_key = ?')
-      .get(scopeKey) as { revision: number; state_json: string } | undefined;
-    if (!row) {
-      return Object.freeze({
-        revision: 0,
-        activeTaskKey: null,
-        blocked: null,
-        events: Object.freeze([]),
-        entries: Object.freeze([]),
-      });
-    }
-    try {
-      const state = parseJson(row.state_json, 'merge queue state') as Record<string, unknown>;
-      return validateMergeQueueStateSnapshot({ revision: row.revision, ...state });
-    } catch (error) {
-      if (error instanceof ScopedStoreCorruptionError) throw error;
-      throw new ScopedStoreCorruptionError('merge queue state', { cause: error });
-    }
+    return readMergeQueueState(this.#binding.readDatabase(), scopeKey);
   }
 
   compareAndSwap(
