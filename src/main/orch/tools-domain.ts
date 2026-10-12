@@ -104,7 +104,7 @@ import {
 } from '../adapters/seat-auth-readiness';
 import { writerCircuitBlocksSeat } from './writer-circuit-break';
 import { withAgentStatusVerdict } from '../../shared/mission-block-cause';
-import { missionStatusSchema, type SquadAgent } from '../../shared/orch-types';
+import { isMissionRuntimeSquadId, missionStatusSchema, type SquadAgent } from '../../shared/orch-types';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import { buildClarify } from '../../shared/clarify';
 import { emitClarifyQuestion } from './clarify-flow';
@@ -216,7 +216,8 @@ const agentListTool: McpToolDef = {
     },
   },
   handler: async (args) => {
-    const agents = listAgents();
+    // F-1335: squad runtime de missão é evidência da missão, não catálogo.
+    const agents = listAgents().filter((agent) => !isMissionRuntimeSquadId(agent.squadId));
     const need = str(args, 'need');
     if (!need) return agents;
     const limit = typeof args.limit === 'number' ? args.limit : 5;
@@ -2865,7 +2866,10 @@ const recipeListTool: McpToolDef = {
     assertMcpInvocationCurrent(invocation);
     const map = new Map<string, (typeof BUILTIN_SQUADS)[number]>();
     for (const s of BUILTIN_SQUADS) map.set(s.id, s);
-    for (const s of listSquads()) map.set(s.id, s);
+    for (const s of listSquads()) {
+      // F-1335: mesmo filtro da UI e do export (squad-store).
+      if (!isMissionRuntimeSquadId(s.id)) map.set(s.id, s);
+    }
     const squads = [...map.values()];
     return {
       recipes: squads.map((s) => ({
