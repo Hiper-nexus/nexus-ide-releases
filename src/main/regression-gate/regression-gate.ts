@@ -1944,65 +1944,103 @@ async function evaluateMappedTests(
     load.offenderUnknown ||
     runnerConfigTouched ||
     (load.offender !== null && changedSet.has(load.offender));
+  // Quem entrega responde pelo próprio delta: teste puxado SÓ por WIP que já
+  // estava sujo antes do spawn (outro writer, o operador) não o devolve.
+  const owned = (test: string) =>
+    [...(impacted.sources.get(test) ?? [])].some((source) => source !== WIP_IMPACT_SOURCE && !foreign.has(source));
   const failures: RegressionTestFailure[] = [];
   const ran = new Set<string>();
-  const failuresByGroup = new Map<RunnerGroup, RegressionTestFailure[]>();
+  /** F-246: arquivos cuja falha reproduz na base do diff. */
+  const reproducedOnBase = new Set<string>();
+  let baseMissingWarned = false;
   let retryable = false;
   let launched = false;
   let executedRunner: RegressionRunnerKind | null = null;
-  for (const group of groups) {
-    if (remaining() < MIN_RUN_BUDGET_MS) {
-      for (const test of group.tests) notRunCause.set(test, launched ? 'test-deadline' : 'map-deadline');
-      warnings.push(`prazo esgotado antes de rodar ${group.tests.length} teste(s) (${group.runner.kind})`);
-      continue;
+  // F-1348: faixa por faixa. A retentativa e a comparação com a base das
+  // falhas de uma faixa usam o prazo ANTES de a faixa seguinte subir: direto
+  // instável ou que já quebrava na base não vira devolução só porque os
+  // indiretos comeram o prazo.
+  for (const tierGroups of planned.map((plan) => plan.groups)) {
+    const failuresByGroup = new Map<RunnerGroup, RegressionTestFailure[]>();
+    for (const group of tierGroups) {
+      if (remaining() < MIN_RUN_BUDGET_MS) {
+        for (const test of group.tests) notRunCause.set(test, launched ? 'test-deadline' : 'map-deadline');
+        warnings.push(`prazo esgotado antes de rodar ${group.tests.length} teste(s) (${group.runner.kind})`);
+        continue;
+      }
+      launched = true;
+      const outcome = await runTests(input.scope, group, remaining(), exec, control);
+      retryable ||= outcome.retryable === true;
+      if (outcome.warning) warnings.push(outcome.warning);
+      for (const file of outcome.ran) ran.add(file);
+      if (outcome.ran.length > 0 || outcome.failures.length > 0 || (outcome.loadFailures?.length ?? 0) > 0) {
+        executedRunner ??= group.runner.kind;
+      }
+      for (const test of group.tests) {
+        if (!outcome.ran.includes(test)) notRunCause.set(test, outcome.timedOut ? 'test-deadline' : 'runner');
+      }
+      const groupFailures = [...outcome.failures];
+      for (const load of outcome.loadFailures ?? []) {
+        if (loadAttributable(load)) {
+          groupFailures.push({ file: load.file, message: load.message });
+        } else {
+          warnings.push(
+            `${group.runner.kind} não conseguiu carregar ${load.file} (erro de parse fora do diff — configuração do runner do projeto?)`,
+          );
+        }
+      }
+      if (groupFailures.length > 0) failuresByGroup.set(group, groupFailures);
     }
-    launched = true;
-    const outcome = await runTests(input.scope, group, remaining(), exec, control);
-    retryable ||= outcome.retryable === true;
-    if (outcome.warning) warnings.push(outcome.warning);
-    for (const file of outcome.ran) ran.add(file);
-    if (outcome.ran.length > 0 || outcome.failures.length > 0 || (outcome.loadFailures?.length ?? 0) > 0) {
-      executedRunner ??= group.runner.kind;
-    }
-    for (const test of group.tests) {
-      if (!outcome.ran.includes(test)) notRunCause.set(test, outcome.timedOut ? 'test-deadline' : 'runner');
-    }
-    const groupFailures = [...outcome.failures];
-    for (const load of outcome.loadFailures ?? []) {
-      if (loadAttributable(load)) {
-        groupFailures.push({ file: load.file, message: load.message });
+    // Teste instável (tempo, ordem) não pode barrar entrega: os arquivos que
+    // falharam rodam de novo uma vez, sozinhos; só a falha que se repete conta.
+    const tierFailures: RegressionTestFailure[] = [];
+    for (const [group, groupFailures] of failuresByGroup) {
+      const failedFiles = [...new Set(groupFailures.map((failure) => failure.file))].filter((file) =>
+        group.tests.includes(file),
+      );
+      if (failedFiles.length !== groupFailures.length || remaining() < MIN_RUN_BUDGET_MS) {
+        if (failedFiles.length === groupFailures.length) warnings.push('sem prazo para retentar teste(s) que falharam');
+        tierFailures.push(...groupFailures);
+        continue;
+      }
+      const retry = await runTests(input.scope, { ...group, tests: failedFiles }, remaining(), exec, control);
+      const retried = new Set(retry.ran);
+      const retryFailures = [
+        ...retry.failures,
+        ...(retry.loadFailures ?? [])
+          .filter(loadAttributable)
+          .map((load) => ({ file: load.file, message: load.message })),
+      ];
+      if (retryFailures.length === 0 && failedFiles.every((file) => retried.has(file))) {
+        warnings.push(`teste(s) instável(is), passaram na 2ª tentativa: ${failedFiles.slice(0, 5).join(', ')}`);
       } else {
-        warnings.push(
-          `${group.runner.kind} não conseguiu carregar ${load.file} (erro de parse fora do diff — configuração do runner do projeto?)`,
-        );
+        tierFailures.push(...(retryFailures.length > 0 ? retryFailures : groupFailures));
       }
     }
-    if (groupFailures.length > 0) failuresByGroup.set(group, groupFailures);
-  }
-  // Teste instável (tempo, ordem) não pode barrar entrega: os arquivos que
-  // falharam rodam de novo uma vez, sozinhos; só a falha que se repete conta.
-  for (const [group, groupFailures] of failuresByGroup) {
-    const failedFiles = [...new Set(groupFailures.map((failure) => failure.file))].filter((file) =>
-      group.tests.includes(file),
-    );
-    if (failedFiles.length !== groupFailures.length || remaining() < MIN_RUN_BUDGET_MS) {
-      if (failedFiles.length === groupFailures.length) warnings.push('sem prazo para retentar teste(s) que falharam');
-      failures.push(...groupFailures);
+    failures.push(...tierFailures);
+    // F-246: falha que já quebrava na base não é do diff — roda os arquivos
+    // falhados num worktree da base e reclassifica o que reproduzir. Metade do
+    // prazo restante, nunca a worktree do worker.
+    const tierOwnFailures = tierFailures.filter((failure) => !ran.has(failure.file) || owned(failure.file));
+    if (tierOwnFailures.length === 0) continue;
+    if (!state.base.sha) {
+      if (!baseMissingWarned) warnings.push('comparação com a base não rodou (sem base conhecida)');
+      baseMissingWarned = true;
       continue;
     }
-    const retry = await runTests(input.scope, { ...group, tests: failedFiles }, remaining(), exec, control);
-    const retried = new Set(retry.ran);
-    const retryFailures = [
-      ...retry.failures,
-      ...(retry.loadFailures ?? [])
-        .filter(loadAttributable)
-        .map((load) => ({ file: load.file, message: load.message })),
-    ];
-    if (retryFailures.length === 0 && failedFiles.every((file) => retried.has(file))) {
-      warnings.push(`teste(s) instável(is), passaram na 2ª tentativa: ${failedFiles.slice(0, 5).join(', ')}`);
-    } else {
-      failures.push(...(retryFailures.length > 0 ? retryFailures : groupFailures));
-    }
+    const reproduced = await compareFailuresAgainstBase({
+      root,
+      scope: input.scope,
+      baseSha: state.base.sha,
+      failures: tierOwnFailures,
+      exec,
+      control,
+      budgetMs: Math.floor(remaining() / 2),
+      now,
+      git,
+      warnings,
+    });
+    for (const file of reproduced) reproducedOnBase.add(file);
   }
   const testsRun = tests.filter((test) => ran.has(test));
   const testsNotRun = [...tests.filter((test) => !ran.has(test)), ...overflow];
@@ -2011,10 +2049,6 @@ async function evaluateMappedTests(
       `${testsNotRun.length} teste(s) impactado(s) NÃO rodaram (excluídos pela config do runner, prazo ou sandbox): ${testsNotRun.slice(0, 5).join(', ')}`,
     );
   }
-  // Quem entrega responde pelo próprio delta: teste puxado SÓ por WIP que já
-  // estava sujo antes do spawn (outro writer, o operador) não o devolve.
-  const owned = (test: string) =>
-    [...(impacted.sources.get(test) ?? [])].some((source) => source !== WIP_IMPACT_SOURCE && !foreign.has(source));
   const ownFailures = failures.filter((failure) => !ran.has(failure.file) || owned(failure.file));
   const inheritedFailures = failures.filter((failure) => ran.has(failure.file) && !owned(failure.file));
   if (inheritedFailures.length > 0) {
@@ -2022,35 +2056,12 @@ async function evaluateMappedTests(
       `falha em teste puxado só por WIP anterior ao seu spawn (não conta contra você): ${[...new Set(inheritedFailures.map((failure) => failure.file))].slice(0, 5).join(', ')}`,
     );
   }
-  // F-246: falha que já quebrava na base não é do diff — antes de devolver,
-  // roda os arquivos falhados num worktree da base e reclassifica o que
-  // reproduzir. Metade do prazo restante, nunca a worktree do worker.
-  let preexistingFailures: RegressionTestFailure[] = [];
-  let countedFailures = ownFailures;
-  if (ownFailures.length > 0) {
-    if (!state.base.sha) {
-      warnings.push('comparação com a base não rodou (sem base conhecida)');
-    } else {
-      const reproduced = await compareFailuresAgainstBase({
-        root,
-        scope: input.scope,
-        baseSha: state.base.sha,
-        failures: ownFailures,
-        exec,
-        control,
-        budgetMs: Math.floor(remaining() / 2),
-        now,
-        git,
-        warnings,
-      });
-      if (reproduced.size > 0) {
-        preexistingFailures = ownFailures.filter((failure) => reproduced.has(failure.file));
-        countedFailures = ownFailures.filter((failure) => !reproduced.has(failure.file));
-        warnings.push(
-          `falha pré-existente na base ${state.base.sha.slice(0, 7)} (ambiente/suite já quebrava antes do seu diff; não conta contra você): ${[...new Set(preexistingFailures.map((failure) => failure.file))].slice(0, 5).join(', ')}`,
-        );
-      }
-    }
+  const preexistingFailures = ownFailures.filter((failure) => reproducedOnBase.has(failure.file));
+  const countedFailures = ownFailures.filter((failure) => !reproducedOnBase.has(failure.file));
+  if (preexistingFailures.length > 0) {
+    warnings.push(
+      `falha pré-existente na base ${(state.base.sha ?? '').slice(0, 7)} (ambiente/suite já quebrava antes do seu diff; não conta contra você): ${[...new Set(preexistingFailures.map((failure) => failure.file))].slice(0, 5).join(', ')}`,
+    );
   }
   const ownRun = testsRun.filter(owned);
   // Aprovação só com TODOS os impactados do agente executados: um que passou

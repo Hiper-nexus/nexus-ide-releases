@@ -101,6 +101,47 @@ function fakeVitest(failing: readonly string[] = []) {
   return { exec, calls };
 }
 
+/** F-1348: src/a.test.ts direto + 40 indiretos (b.test.ts e 39 que importam b); diff em src/a.ts. */
+function directAndIndirectProject() {
+  const fixture = project();
+  for (let index = 0; index < 39; index += 1) {
+    write(fixture.root, `src/indirect/t${index}.test.ts`, "import { b } from '../b';\n");
+  }
+  const git = new ProcessGitRunner();
+  git.run(fixture.root, ['add', '-A']);
+  git.run(fixture.root, ['commit', '-qm', 'indiretos']);
+  const sha = git.run(fixture.root, ['rev-parse', 'HEAD']).stdout.trim();
+  write(fixture.root, 'src/a.ts', 'export const a = 2;\n');
+  return { ...fixture, sha };
+}
+
+/**
+ * Runner simulado a 1 s por arquivo sobre um relógio falso; o que não cabe no
+ * prazo recebido vence o prazo como o execOwnedCheck (nada termina nem é relatado).
+ */
+function slowVitest(clock: { now: number }, fails: (file: string, cwd: string) => boolean = () => false) {
+  const launched: string[][] = [];
+  const exec = vi.fn<RegressionExec>(async (file, args, options) => {
+    const files = args.filter((arg) => arg.endsWith('.test.ts'));
+    launched.push(files);
+    if (files.length * 1_000 > options.timeoutMs) {
+      clock.now += options.timeoutMs;
+      return { exitCode: null, timedOut: true, retryable: true, stdout: '', stderr: '\nVerificação excedeu o prazo.' };
+    }
+    clock.now += files.length * 1_000;
+    return fakeVitest(files.filter((test) => fails(test, options.cwd))).exec(file, args, options);
+  });
+  return { exec, launched };
+}
+
+/** Mapa de impacto com o custo medido no F-1302 (~8 s). */
+const slowMap = (clock: { now: number }) => ({
+  blastRadius: () => {
+    clock.now += 8_000;
+    return null;
+  },
+});
+
 const JEST_SCRIPTS = {
   test: 'jest --config tests/jest.config.js',
   'test:api':
@@ -364,39 +405,13 @@ describe('runRegressionGate', () => {
   });
 
   it('F-1348: 1 direto + 40 indiretos no prazo do handoff — o direto roda primeiro e passa; os indiretos ficam em notRun por prazo', async () => {
-    const { root, scope } = project();
-    // 39 testes que importam b (que importa a): distância 2, como b.test.ts.
-    for (let index = 0; index < 39; index += 1) {
-      write(root, `src/indirect/t${index}.test.ts`, "import { b } from '../b';\n");
-    }
-    const git = new ProcessGitRunner();
-    git.run(root, ['add', '-A']);
-    git.run(root, ['commit', '-qm', 'indiretos']);
-    write(root, 'src/a.ts', 'export const a = 2;\n');
-    let clock = 0;
-    const passing = fakeVitest();
-    const launched: string[][] = [];
-    // Runner simulado: 1 s por arquivo; o que não cabe no prazo recebido vence
-    // o prazo como o execOwnedCheck (nada termina, nada é relatado).
-    const exec = vi.fn<RegressionExec>(async (file, args, options) => {
-      const files = args.filter((arg) => arg.endsWith('.test.ts'));
-      launched.push(files);
-      if (files.length * 1_000 > options.timeoutMs) {
-        clock += options.timeoutMs;
-        return { exitCode: null, timedOut: true, retryable: true, stdout: '', stderr: '\nVerificação excedeu o prazo.' };
-      }
-      clock += files.length * 1_000;
-      return passing.exec(file, args, options);
-    });
-    // Mapa de impacto com o custo medido no F-1302 (~8 s).
-    const blastRadius = () => {
-      clock += 8_000;
-      return null;
-    };
+    const { scope } = directAndIndirectProject();
+    const clock = { now: 0 };
+    const { exec, launched } = slowVitest(clock);
 
     const result = await runRegressionGate(
       { scope, timeoutMs: HANDOFF_REGRESSION_BUDGET_MS },
-      { exec, now: () => clock, extensions: { blastRadius } },
+      { exec, now: () => clock.now, extensions: slowMap(clock) },
     );
 
     // Lote único (antes): 8 s de mapa + 41 s de runner > 45 s — nada terminava.
@@ -406,7 +421,7 @@ describe('runRegressionGate', () => {
     expect(Math.max(...launched.map((files) => files.length))).toBeLessThanOrEqual(40);
     expect(result.failures).toEqual([]);
     expect(result.runner).toBe('vitest');
-    expect(clock).toBeLessThanOrEqual(HANDOFF_REGRESSION_BUDGET_MS);
+    expect(clock.now).toBeLessThanOrEqual(HANDOFF_REGRESSION_BUDGET_MS);
     // Parcial com os diretos verdes não é aprovação completa.
     expect(result.status).not.toBe('passed');
     expect(result.testsNotRun).toHaveLength(40);
@@ -1518,6 +1533,32 @@ describe('evaluateHandoffRegressionGate', () => {
     expect(payload?.runner).toBeNull();
     expect(payload?.notRun).toMatchObject({ causes: ['test-deadline'], mapMs: 0, testBudgetMs: HANDOFF_REGRESSION_BUDGET_MS });
   });
+
+  it('F-1348: direto instável + 40 indiretos lentos — a retentativa vem antes da faixa seguinte e o handoff não volta', async () => {
+    const { scope } = directAndIndirectProject();
+    const clock = { now: 0 };
+    let directRuns = 0;
+    // src/a.test.ts falha só na 1ª execução.
+    const { exec, launched } = slowVitest(clock, (file) => file === 'src/a.test.ts' && directRuns++ === 0);
+
+    const verdict = await evaluateHandoffRegressionGate(
+      { sessionId: 'sess-f1348-flaky', scope },
+      { exec, now: () => clock.now, extensions: slowMap(clock), enabled: () => true },
+    );
+
+    // Antes: a faixa indireta comia o prazo, a retentativa não cabia e a falha devolvia o handoff.
+    expect(verdict).toMatchObject({ kind: 'accepted', unverified: true });
+    expect(launched.slice(0, 2)).toEqual([['src/a.test.ts'], ['src/a.test.ts']]);
+    const payload = verdict.kind === 'accepted' ? verdict.artifact?.payload : undefined;
+    expect(payload?.failures).toEqual([]);
+    expect(payload?.testsRun).toEqual(['src/a.test.ts']);
+    expect(payload?.warnings.join(' ')).toContain('instável(is), passaram na 2ª tentativa: src/a.test.ts');
+    expect(payload?.notRun?.byDistance).toEqual([
+      { distance: 1, run: 1, notRun: 0, causes: [] },
+      { distance: 2, run: 0, notRun: 40, causes: ['test-deadline'] },
+    ]);
+    expect(clock.now).toBeLessThanOrEqual(HANDOFF_REGRESSION_BUDGET_MS);
+  });
 });
 
 describe('comparação com a base do diff (F-246)', () => {
@@ -1547,6 +1588,28 @@ describe('comparação com a base do diff (F-246)', () => {
     const report = formatRegressionGateReport(result);
     expect(report).toContain('não conta contra você');
     expect(report).toContain('src/b.test.ts');
+    expect(worktreeCount(root)).toBe(1);
+  });
+
+  it('F-1348: direto que já falhava na base é reclassificado antes da faixa indireta comer o prazo', async () => {
+    const { root, scope, sha } = directAndIndirectProject();
+    const clock = { now: 0 };
+    // src/a.test.ts falha aqui e na worktree da base: pré-existente.
+    const { exec, launched } = slowVitest(clock, (file) => file === 'src/a.test.ts');
+
+    const result = await runRegressionGate(
+      { scope, baseSha: sha, trustedDependencyRoot: root, timeoutMs: HANDOFF_REGRESSION_BUDGET_MS },
+      { exec, now: () => clock.now },
+    );
+
+    // Antes: direto, indiretos (40 s), retentativa — e a base sem os 20 s mínimos: falha contada.
+    expect(result.status).toBe('passed');
+    expect(result.failures).toEqual([]);
+    expect(result.preexistingFailures.map((failure) => failure.file)).toEqual(['src/a.test.ts']);
+    // Direto, retentativa e base antes da faixa indireta.
+    expect(launched.slice(0, 3)).toEqual([['src/a.test.ts'], ['src/a.test.ts'], ['src/a.test.ts']]);
+    expect(result.testsRun).toHaveLength(41);
+    expect(clock.now).toBeLessThanOrEqual(HANDOFF_REGRESSION_BUDGET_MS);
     expect(worktreeCount(root)).toBe(1);
   });
 
