@@ -2335,6 +2335,58 @@ const CLI_AUTO_UPDATE_IDLE_SECONDS = 60;
 /** F-1395: o passe de boot espera só o boot assentar, não a ociosidade. */
 const CLI_BOOT_PASS_DELAY_MS = 5_000;
 
+/** Índice do Homebrew: no máximo um `brew update` a cada 6 h (tentativa persistida). */
+export const BREW_INDEX_UPDATE_INTERVAL_MS = 6 * 60 * 60_000;
+const BREW_INDEX_UPDATE_TIMEOUT_MS = 120_000;
+const BREW_INDEX_UPDATE_FILE = 'brew-index-update.json';
+
+/**
+ * Roda UM `brew update` assíncrono (timeout + AbortSignal) se a última
+ * tentativa tem mais de 6 h. Falha só loga: o analisador segue com o índice
+ * local. A tentativa é gravada mesmo na falha, para offline não martelar.
+ */
+async function refreshBrewIndexIfDue(userDataDir: string, signal: AbortSignal): Promise<void> {
+  if (process.platform === 'win32' || signal.aborted) return;
+  const brew = resolveRunnerPath('brew');
+  if (!brew) return;
+  const file = path.join(userDataDir, BREW_INDEX_UPDATE_FILE);
+  const now = Date.now();
+  let last = 0;
+  try {
+    const value: unknown = (JSON.parse(await fsp.readFile(file, 'utf8')) as { lastAttemptAt?: unknown }).lastAttemptAt;
+    if (typeof value === 'number' && Number.isFinite(value)) last = value;
+  } catch { /* sem registro: está devido */ }
+  if (last <= now && now - last < BREW_INDEX_UPDATE_INTERVAL_MS) return;
+  const ok = await new Promise<boolean>((resolve) => {
+    try {
+      execFile(
+        brew,
+        ['update', '--quiet'],
+        {
+          timeout: BREW_INDEX_UPDATE_TIMEOUT_MS,
+          maxBuffer: 1024 * 1024,
+          signal,
+          env: { ...process.env, HOMEBREW_NO_SUDO: '1', HOMEBREW_NO_INSTALL_CLEANUP: '1' },
+        },
+        (error) => {
+          if (error && !signal.aborted) {
+            console.warn('[cli-auto-update] brew update falhou; segue com o índice local:',
+              redactSecretText(String(error.message ?? error)).text.slice(0, 300));
+          }
+          resolve(!error);
+        },
+      );
+    } catch (error) {
+      console.warn('[cli-auto-update] brew update não iniciou; segue com o índice local', error);
+      resolve(false);
+    }
+  });
+  if (signal.aborted) return;
+  try {
+    await fsp.writeFile(file, JSON.stringify({ lastAttemptAt: now, ok }), { mode: 0o600 });
+  } catch { /* sem persistência: a próxima passada tenta de novo */ }
+}
+
 /** F-1395: último resultado por CLI — vai no snapshot que a UI de provedores recebe. */
 const cliAutoUpdateOutcomes = new Map<string, CliAutoUpdateOutcome>();
 
@@ -2403,6 +2455,11 @@ export function startCliAutoUpdate(
         !requireIdle || powerMonitor.getSystemIdleTime() >= CLI_AUTO_UPDATE_IDLE_SECONDS;
       if (!idleEnough()) return;
       if (Date.now() - lastDiscoveryAt >= 30 * 60_000) {
+        // Índice do Homebrew fresco ANTES do manifesto (`brew info`) e da
+        // checagem (`brew outdated`): o upgrade do cask roda com
+        // HOMEBREW_NO_AUTO_UPDATE (C7), então sem isto o índice local parava.
+        await context.wait(refreshBrewIndexIfDue(userDataDir, context.signal));
+        if (stopped) return;
         await context.wait(rescanAdapterBinaries());
         candidates = [];
         for (const adapter of listAdapters()) {
