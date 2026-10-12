@@ -948,6 +948,17 @@ describe('fetchClaudeAccountUsageWindows', () => {
       expect(r.windows).toBeNull();
     });
 
+    it('escopo gerenciado vencido-com-refresh e a CLI recusando: grant revogado é sessão expirada', async () => {
+      mocks.claudeAccountIsNativeLogin.mockReturnValue(false);
+      mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+      mocks.readManagedClaudeAuth.mockReturnValue(expiredRenewable);
+      mocks.probeClaudeCliUsage.mockResolvedValue({ windows: null, failure: 'auth-expired' });
+
+      const r = await fetchClaudeAccountUsageWindows('acct-reserva', { now: NOW });
+
+      expect(r).toEqual({ windows: null, hint: 'auth-expired' });
+    });
+
     it('a própria CLI recusando a sessão continua pedindo re-login', async () => {
       const home = nativeHome();
       mocks.readNativeOAuthCredential.mockResolvedValue(expiredRenewable);
