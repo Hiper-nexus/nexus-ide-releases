@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel } from '../../shared/types';
 import {
   attachBrowserPane,
+  boundsOf,
   scheduleBrowserPaneBoundsSync,
 } from './browser-host';
 
@@ -94,5 +95,78 @@ describe('native browser pane bounds', () => {
     });
 
     detach();
+  });
+
+  it('captures non-bubbling ancestor scroll, coalesces IPC and removes the listener', async () => {
+    const rail = document.createElement('div');
+    const slot = document.createElement('div');
+    let top = 60;
+    slot.getBoundingClientRect = () => ({ left: 40, top, right: 360, bottom: top + 240, width: 320, height: 240 }) as DOMRect;
+    rail.append(slot);
+    document.body.append(rail);
+    const detach = attachBrowserPane({ id: 'browser-scroll', kind: 'browser' } as PaneModel, slot, vi.fn());
+    try {
+      await Promise.resolve();
+      while (frames.length) frames.shift()?.(0);
+      setBounds.mockClear();
+      top = 120;
+      rail.dispatchEvent(new Event('scroll'));
+      rail.dispatchEvent(new Event('scroll'));
+      expect(frames).toHaveLength(1);
+      frames.shift()?.(16);
+      expect(setBounds).toHaveBeenCalledTimes(1);
+      expect(setBounds).toHaveBeenLastCalledWith('browser-scroll', { x: 40, y: 120, width: 320, height: 240, visible: true });
+    } finally {
+      detach();
+      rail.remove();
+    }
+    setBounds.mockClear();
+    window.dispatchEvent(new Event('scroll'));
+    expect(frames).toHaveLength(0);
+    expect(setBounds).not.toHaveBeenCalled();
+  });
+
+});
+
+
+describe('browser slot clipping (F-1407)', () => {
+  function rect(left: number, top: number, width: number, height: number): DOMRect {
+    return { left, top, right: left + width, bottom: top + height, x: left, y: top, width, height } as DOMRect;
+  }
+
+  it.each([
+    [80, 80, 180, true],
+    [20, 80, 120, true],
+    [260, 260, 40, true],
+    [320, 320, 0, false],
+  ])('clips slot at y=%s to the scrolling client viewport', (top, y, height, visible) => {
+    const rail = document.createElement('div');
+    rail.style.overflowY = 'auto';
+    rail.getBoundingClientRect = () => rect(40, 78, 400, 224);
+    Object.defineProperties(rail, {
+      clientTop: { value: 2 }, clientHeight: { value: 220 },
+    });
+    const slot = document.createElement('div');
+    slot.getBoundingClientRect = () => rect(60, top, 320, 180);
+    rail.append(slot);
+    expect(boundsOf(slot)).toEqual({ x: 60, y, width: 320, height, visible });
+  });
+
+  it('intersects nested clips on each axis, including scaled client borders', () => {
+    const outer = document.createElement('div');
+    outer.style.overflowX = 'hidden';
+    outer.getBoundingClientRect = () => rect(100, 0, 200, 500);
+    Object.defineProperties(outer, {
+      clientLeft: { value: 2 }, clientWidth: { value: 96 }, offsetWidth: { value: 100 },
+    });
+    const inner = document.createElement('div');
+    inner.style.overflowY = 'clip';
+    inner.getBoundingClientRect = () => rect(0, 100, 500, 100);
+    Object.defineProperty(inner, 'clientHeight', { value: 100 });
+    const slot = document.createElement('div');
+    slot.getBoundingClientRect = () => rect(0, 0, 500, 500);
+    outer.append(inner);
+    inner.append(slot);
+    expect(boundsOf(slot)).toEqual({ x: 104, y: 100, width: 192, height: 100, visible: true });
   });
 });

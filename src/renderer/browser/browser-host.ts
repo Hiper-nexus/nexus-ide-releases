@@ -23,7 +23,7 @@ const lastStates = new Map<string, BrowserPaneState>();
 const creationWaiters = new Map<string, CreationWaiter[]>();
 let pendingBoundsFrame: number | null = null;
 
-function boundsOf(slot: HTMLElement): {
+export function boundsOf(slot: HTMLElement): {
   x: number;
   y: number;
   width: number;
@@ -33,10 +33,33 @@ function boundsOf(slot: HTMLElement): {
   const rect = slot.getBoundingClientRect();
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const x = Math.max(0, rect.left);
-  const y = Math.max(0, rect.top);
-  const right = Math.min(vw, rect.right);
-  const bottom = Math.min(vh, rect.bottom);
+  let x = Math.max(0, rect.left);
+  let y = Math.max(0, rect.top);
+  let right = Math.min(vw, rect.right);
+  let bottom = Math.min(vh, rect.bottom);
+  // Native views are siblings of the renderer, so CSS overflow does not clip
+  // them. Intersect each clipping ancestor's client box (excluding its border
+  // and scrollbars), independently per axis, in window coordinates.
+  const clips = /^(auto|scroll|hidden|clip|overlay)$/;
+  for (let parent = slot.parentElement; parent; parent = parent.parentElement) {
+    const style = getComputedStyle(parent);
+    const clipX = clips.test(style.overflowX || style.overflow);
+    const clipY = clips.test(style.overflowY || style.overflow);
+    if (!clipX && !clipY) continue;
+    const box = parent.getBoundingClientRect();
+    const scaleX = parent.offsetWidth > 0 ? box.width / parent.offsetWidth : 1;
+    const scaleY = parent.offsetHeight > 0 ? box.height / parent.offsetHeight : 1;
+    const left = box.left + parent.clientLeft * scaleX;
+    const top = box.top + parent.clientTop * scaleY;
+    if (clipX) {
+      x = Math.max(x, left);
+      right = Math.min(right, left + parent.clientWidth * scaleX);
+    }
+    if (clipY) {
+      y = Math.max(y, top);
+      bottom = Math.min(bottom, top + parent.clientHeight * scaleY);
+    }
+  }
   const width = Math.max(0, right - x);
   const height = Math.max(0, bottom - y);
   return {
@@ -229,6 +252,11 @@ export function attachBrowserPane(
 
   const ro = new ResizeObserver(syncBounds);
   const focusPane = () => useLayoutStore.getState().focus(pane.id);
+  if (attachedSlots.size === 0) {
+    // Scroll does not bubble. Capture also covers ancestors introduced by a
+    // reparent without installing one listener for every scroll container.
+    window.addEventListener('scroll', scheduleBrowserPaneBoundsSync, { capture: true, passive: true });
+  }
   attachedSlots.set(pane.id, slot);
   ro.observe(slot);
   window.addEventListener('resize', syncBounds);
@@ -244,6 +272,11 @@ export function attachBrowserPane(
     window.removeEventListener('resize', syncBounds);
     slot.removeEventListener('mousedown', focusPane);
     if (attachedSlots.get(pane.id) === slot) attachedSlots.delete(pane.id);
+    if (attachedSlots.size === 0) {
+      window.removeEventListener('scroll', scheduleBrowserPaneBoundsSync, true);
+      if (pendingBoundsFrame !== null) cancelAnimationFrame(pendingBoundsFrame);
+      pendingBoundsFrame = null;
+    }
     window.nexus.browser.setBounds(pane.id, {
       x: 0,
       y: 0,
