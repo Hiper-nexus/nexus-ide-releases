@@ -91,6 +91,16 @@ describe('ProjectOverview', () => {
     });
   });
 
+  it('F-1369: does not invent idle for a restored pane with no session state', () => {
+    useSessionStateStore.setState({ paneStates: new Map(), displayStates: new Map() });
+    const host = render(<ProjectOverview workspaceName="Demo" workspacePath="/tmp/demo" />);
+    const item = host.querySelector('.project-overview__item')!;
+    expect(item.hasAttribute('data-state')).toBe(false);
+    expect(item.textContent).not.toContain('Aguardando');
+    expect(item.querySelector('.project-overview__session-icon')).toBeNull();
+    expect(item.textContent).toContain('claude');
+  });
+
   it('hands the goal box to mission setup', () => {
     const host = render(
       <ProjectOverview workspaceName="Demo" workspacePath="/tmp/demo" />,

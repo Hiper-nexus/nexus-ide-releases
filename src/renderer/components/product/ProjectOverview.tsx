@@ -106,9 +106,9 @@ export function ProjectOverview({
         ) : (
           <ul className="project-overview__list">
             {panes.map((pane) => {
-              const state = displayStates.get(pane.id) ?? 'idle';
+              const state = displayStates.get(pane.id);
               return (
-                <li key={pane.id} className="project-overview__item" data-state={paneSessionView(state).mod}>
+                <li key={pane.id} className="project-overview__item" data-state={state ? paneSessionView(state).mod : undefined}>
                   <button
                     type="button"
                     className="project-overview__session"
@@ -117,7 +117,7 @@ export function ProjectOverview({
                       focus(pane.id);
                     }}
                   >
-                    <span className="project-overview__session-icon" aria-hidden>
+                    {state ? <span className="project-overview__session-icon" aria-hidden>
                       <PixelIcon
                         name={
                           state === 'busy' || state === 'spawning'
@@ -128,14 +128,14 @@ export function ProjectOverview({
                         }
                         size={12}
                       />
-                    </span>
+                    </span> : null}
                     <span className="project-overview__session-copy">
                       <span className="project-overview__session-title">
                         {pane.title || pane.adapterId || pane.id}
                       </span>
                       <span className="project-overview__session-meta">
-                        {statusLabel(state)}
-                        {pane.adapterId ? ` · ${pane.adapterId}` : ''}
+                        {state ? statusLabel(state) : ''}
+                        {pane.adapterId ? `${state ? ' · ' : ''}${pane.adapterId}` : ''}
                       </span>
                     </span>
                   </button>
