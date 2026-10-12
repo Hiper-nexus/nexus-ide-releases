@@ -3,7 +3,7 @@ import {
   DEFAULT_MISSION_DECISION_BUDGET_USD, MAX_MISSION_DECISION_BUDGET_USD, missionDecisionBudgetUsd, type DecisionSettings,
 } from '../../../shared/decision-models';
 import type { OrchSettings } from '../../../shared/settings-types';
-import { formatDecisionUsd, parseMissionBudgetInput } from '../../lib/decision-format';
+import { parseMissionBudgetInput } from '../../lib/decision-format';
 import { CalibrateDecisionModels } from './CalibrateDecisionModels';
 
 /** As quatro surfaces consultivas da missão (F-1166) que a chave liga e desliga juntas. */
@@ -96,7 +96,7 @@ export function MissionDecisionEngineControls({ settings, busy, onChange }: {
     </div>
     {budgetError
       ? <p id={`${budgetId}-error`} className="settings-error" role="alert">{budgetError}</p>
-      : <p id={`${budgetId}-hint`} className="settings-field__note">De 0 a {MAX_MISSION_DECISION_BUDGET_USD}. Zero usa o padrão de {formatDecisionUsd(DEFAULT_MISSION_DECISION_BUDGET_USD)}.
+      : <p id={`${budgetId}-hint`} className="settings-field__note">De 0 a {MAX_MISSION_DECISION_BUDGET_USD}. Zero usa o padrão de US$ {DEFAULT_MISSION_DECISION_BUDGET_USD.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}.
         {' '}No Automático, acima de 80% só o modelo mais barato responde e, em 100%, param as consultas que o Automático escolhe.
         {' '}As checagens fixas no Jev continuam e só entram na conta.</p>}
     <p className="settings-field__note">No Automático, o motor escolhe o modelo por custo e qualidade. Jev, Clef, Luna ou Juntos fixam o modelo: o motor só contabiliza o gasto.

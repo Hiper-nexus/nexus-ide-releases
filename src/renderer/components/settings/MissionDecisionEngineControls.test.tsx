@@ -129,6 +129,13 @@ describe('F-1167: chave "Motor de decisão em toda missão"', () => {
 });
 
 describe('F-1167: orçamento por missão', () => {
+  it('mostra o padrão no hint com a mesma precisão do campo (F-1379)', async () => {
+    await mount();
+    const hint = document.getElementById(budget().getAttribute('aria-describedby')!)!;
+    expect(hint.textContent).toContain(`Zero usa o padrão de US$ ${budget().value}.`);
+    expect(hint.textContent).not.toContain('US$ 0,5000');
+  });
+
   it('normaliza o rascunho zero para o orçamento efetivo sem regravar (F-1374)', async () => {
     await mount();
     await act(async () => { type('0'); });
