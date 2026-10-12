@@ -92,4 +92,13 @@ describe('builtin CLI login commands', () => {
     if (adapter?.kind !== 'cli-pty') return;
     expect(adapter.auth.loginCommand).toBe('kimi login --region global');
   });
+
+  // F-1411: a TUI do Kimi Code 2.1.1 liga ESC[?2004h no boot; a rajada crua
+  // multilinha entope o stdin dela e o brief de nascimento ficava na caixa.
+  it('Kimi declares bracketed paste — briefs multilinha chegam como UMA colagem', () => {
+    const adapter = adapters.find((item) => item.id === 'kimi');
+    expect(adapter?.kind).toBe('cli-pty');
+    if (adapter?.kind !== 'cli-pty') return;
+    expect(adapter.promptInjection?.bracketedPaste).toBe(true);
+  });
 });
