@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentGateContext } from './gate';
+import { PreEffectRefusalError, type AgentGateContext } from './gate';
 import { compileIntentContract } from '../../shared/mission-intent';
 import { testProjectScope } from './__tests__/scope-fixture';
 
@@ -507,6 +507,20 @@ describe('pin de adapterId sem pedido do operador vira preferência (F-674 ampli
     await expect(paneSpawnTool.handler(
       { agentName: 'Worker', adapterId: 'claude', task: 'olha o repo' }, ctx,
     )).rejects.toThrow(/unknown squad agent/);
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it('F-1388: recusa do catálogo (agente desconhecido/ambíguo) é pré-efeito', async () => {
+    // F-1334: nenhum efeito pode ter sido cometido — nada foi reservado/gravado.
+    h.mission = { ...h.mission, squadId: undefined };
+    h.catalogAgent.mockImplementation(() => {
+      throw new Error('unknown squad agent: Fantasma — nenhum squad salvo tem esse agente');
+    });
+    const resolver = vi.fn(async () => ({ adapterId: 'codex' }));
+    setOperatorRouteResolver(resolver);
+    await expect(paneSpawnTool.handler({ agentName: 'Fantasma', task: 'x' }, ctx))
+      .rejects.toBeInstanceOf(PreEffectRefusalError);
+    expect(h.spawn).not.toHaveBeenCalled();
     expect(resolver).not.toHaveBeenCalled();
   });
 

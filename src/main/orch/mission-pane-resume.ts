@@ -11,6 +11,10 @@ export function captureMissionPaneResume(
   missionId: string,
   paneId: string | undefined,
   requested: { adapterId?: string; model?: string; accountId?: string; effort?: string; cwd?: string },
+  // F-1388: writer sem conversa retomável mas com worktree viva cai nela
+  // como pane novo — a validação de dono/runtime segue, a exigência de
+  // provider session é o que muda.
+  opts?: { allowMissingConversation?: boolean },
 ) {
   if (!paneId) throw new Error('resume_unavailable: pane original não encontrado nesta missão');
   const store = getProjectDomainStores(scope).missionPanes;
@@ -25,7 +29,9 @@ export function captureMissionPaneResume(
     }
   }
   const conversation = getProviderPaneSession(scope, paneId, stored.adapterId, stored.accountId);
-  if (!conversation) throw new Error('resume_context_unavailable: conversa original indisponível; nenhum pane novo foi iniciado');
+  if (!conversation && !opts?.allowMissingConversation) {
+    throw new Error('resume_context_unavailable: conversa original indisponível; nenhum pane novo foi iniciado');
+  }
   const baseline = JSON.stringify(stored);
   const conversationIdentity = JSON.stringify(conversation);
   if (stored.role === 'worker' && hasLivePaneSession(paneId)) {

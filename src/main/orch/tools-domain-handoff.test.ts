@@ -1213,6 +1213,27 @@ describe("handoff MCP stop receipt", () => {
       expect(mocks.markConsumedFromPhysicalAck).toHaveBeenCalledTimes(1);
     });
 
+    it("F-1388: writer sem conversa retomável — pane fresco na worktree conta como entregue e o recibo diz o modo", async () => {
+      paneMocks.listPaneSnapshots.mockReturnValue([
+        { paneId: "pane-writer", sessionId: "writer-session", paneNumber: 3, state: "exited" } as never,
+      ]);
+      reworkMocks.isolatedWriterPaneOfSession.mockReturnValue("pane-writer");
+      reworkMocks.spawn.mockResolvedValue({
+        paneId: "pane-fresh",
+        sessionId: "session-fresh",
+        resume: { mode: "fresh-in-worktree" },
+      });
+      await expect(ack({ note: "refaça com teste" })).resolves.toMatchObject({
+        ok: true,
+        verdict: "rework",
+        reworkDelivered: true,
+        reworkVia: "resume",
+        paneId: "pane-fresh",
+        resumeMode: "fresh-in-worktree",
+      });
+      expect(reworkMocks.spawn).toHaveBeenCalledTimes(1);
+    });
+
     it("falha no resume não desfaz o ACK: reworkDelivered:false com o erro", async () => {
       paneMocks.listPaneSnapshots.mockReturnValue([]);
       reworkMocks.isolatedWriterPaneOfSession.mockReturnValue("pane-writer");

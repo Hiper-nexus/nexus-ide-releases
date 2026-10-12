@@ -300,6 +300,27 @@ export function isPaneSpawnPending(paneId: string): boolean {
 }
 
 /**
+ * F-1388: o brief nativo entregue no nascimento deste pane (grant vivo ou
+ * túmulo). Usado pela retomada fresh-in-worktree: a conversa do provider não
+ * existe mais, então o pane novo recebe o brief original + o ajuste + os
+ * commits já feitos. Best-effort por vida de processo — sem grant, undefined.
+ */
+export function initialPromptForPane(paneId: string): string | undefined {
+  for (const pending of pendingSpawns.values()) {
+    if (pending.request.paneId === paneId && pending.initialPrompt) {
+      return pending.initialPrompt;
+    }
+  }
+  pruneOrchSpawnGrantTombstones();
+  for (const tomb of orchSpawnGrantTombstones.values()) {
+    if (tomb.request.paneId === paneId && tomb.initialPrompt) {
+      return tomb.initialPrompt;
+    }
+  }
+  return undefined;
+}
+
+/**
  * `spawnPaneAndMaybePrompt` predates the pending spawn ACK and still expects
  * a session id. Keep the compatibility seam local to this registry: the MCP
  * pane tool consumes the already-resolved pending result and returns it to the

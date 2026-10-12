@@ -1295,7 +1295,10 @@ const handoffAcknowledgeTool: McpToolDef = {
     'verdict (default "accepted"): pass "rework" when you do NOT accept the delivery ' +
     "as-is. With a `note`, Nexus sends it back to the SAME writer: typed into its " +
     "PTY if the pane is still alive, otherwise the writer is reopened with resume " +
-    "in its own worktree (branch and WIP intact) and the note is its prompt; the " +
+    "in its own worktree (branch and WIP intact) and the note is its prompt; " +
+    "when the CLI kept no resumable conversation the pane spawns fresh in the " +
+    "same worktree carrying the original brief, your note and the commits " +
+    "already made (resume.mode 'fresh-in-worktree'); the " +
     "receipt carries paneId and reworkVia. A writer that cannot be resumed (no " +
     "worktree of its own) is reported as reworkDelivered:false with the reason — " +
     "then open a new writer with the note yourself. Nexus also learns from the " +
@@ -1359,7 +1362,13 @@ const handoffAcknowledgeTool: McpToolDef = {
 };
 
 type ReworkDelivery =
-  | { reworkDelivered: true; reworkVia: "pty" | "resume"; paneId: string }
+  | {
+      reworkDelivered: true;
+      reworkVia: "pty" | "resume";
+      paneId: string;
+      /** F-1388: 'fresh-in-worktree' = conversa não retomável, pane novo na worktree. */
+      resumeMode?: string;
+    }
   | { reworkDelivered: false; reworkReason: string };
 
 /**
@@ -1405,9 +1414,15 @@ async function deliverReworkToWriter(
       { resume: resumePaneId, prompt, ...(ctx.missionId ? { missionId: ctx.missionId } : {}) },
       ctx,
       invocation,
-    )) as { paneId?: unknown } | null;
+    )) as { paneId?: unknown; resume?: { mode?: unknown } } | null;
     const paneId = typeof reopened?.paneId === "string" ? reopened.paneId : resumePaneId;
-    return { reworkDelivered: true, reworkVia: "resume", paneId };
+    const resumeMode = reopened?.resume?.mode;
+    return {
+      reworkDelivered: true,
+      reworkVia: "resume",
+      paneId,
+      ...(typeof resumeMode === "string" ? { resumeMode } : {}),
+    };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return { reworkDelivered: false, reworkReason: `a nota não chegou ao writer: ${reason}` };

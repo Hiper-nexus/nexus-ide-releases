@@ -38,6 +38,8 @@ const h = vi.hoisted(() => ({
   parents: {} as Record<string, string>,
   handoffs: {} as Record<string, { sessionId?: string }>,
   resumeRecords: new Map<string, Record<string, unknown>>(),
+  // F-1388: panes cuja CLI nunca gravou conversa retomável (kimi/devin/agy/…).
+  providerlessPanes: new Set<string>(),
   pendingPanes: new Set<string>(),
   // F-1259: panes cuja gravação em missionPanes falhou (sem linha durável).
   unrecorded: new Set<string>(),
@@ -79,7 +81,10 @@ vi.mock('./project-domain-store-registry', () => ({
 }));
 vi.mock('../persistence/provider-session-store', async original => ({
   ...(await original<typeof import('../persistence/provider-session-store')>()),
-  getProviderPaneSession: (_scope: unknown, id: string) => h.resumeRecords.has(id) ? { key: 'session_id', id: `conversation-${id}` } : null,
+  getProviderPaneSession: (_scope: unknown, id: string) =>
+    h.resumeRecords.has(id) && !h.providerlessPanes.has(id)
+      ? { key: 'session_id', id: `conversation-${id}` }
+      : null,
 }));
 vi.mock('./task-dispatch-authority', () => ({ isTaskQueueManagedMission: () => false }));
 const traceHarness = vi.hoisted(() => ({ events: [] as Array<Record<string, unknown>> }));
@@ -126,6 +131,7 @@ beforeEach(() => {
   h.parents = {};
   h.handoffs = {};
   h.resumeRecords.clear();
+  h.providerlessPanes.clear();
   h.pendingPanes.clear();
   h.unrecorded.clear();
   temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-pane-writer-')));
@@ -771,6 +777,58 @@ describe('revisão cruzada 0.76.110: corrida, retomada, WIP e GC', () => {
     expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(1);
   });
 
+  describe('F-1388: resume de writer sem conversa retomável cai fresco na mesma worktree', () => {
+    it('writer isolado sem provider session: pane novo na worktree com nota + commits, recibo fresh-in-worktree', async () => {
+      await paneSpawnTool.handler({ adapterId: 'kimi', isolatedWriter: true, prompt: 'brief original' }, op);
+      const [record] = opRecords();
+      fs.writeFileSync(path.join(record.worktreePath, 'base.txt'), 'writer\n');
+      git(record.worktreePath, 'commit', '-qam', 'worker output');
+      h.providerlessPanes.add('pane-0');
+      closePane(h.panes[0]);
+      const receipt = await paneSpawnTool.handler(
+        { adapterId: 'kimi', resume: 'pane-0', prompt: 'ajuste: falta teste do caso vazio' }, op,
+      ) as Record<string, any>;
+      expect(receipt.resume).toMatchObject({ mode: 'fresh-in-worktree' });
+      const options = h.spawn.mock.calls.at(-1)![0] as SpawnToolOptions;
+      expect(options.cwd).toBe(record.worktreePath);
+      expect(options.executionScope?.rootRealPath).toBe(record.worktreePath);
+      // Sem conversa para retomar: nada de resume/resumeFromPaneId no spawn.
+      expect(options.resumeFromPaneId).toBeUndefined();
+      expect(options.resume).toBeUndefined();
+      expect(options.prompt).toContain('ajuste: falta teste do caso vazio');
+      expect(options.prompt).toContain('worker output');
+    });
+
+    it('writer de missão sem provider session segue o mesmo caminho', async () => {
+      await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx);
+      const [record] = registry.listMission(ctx.scope, ctx.missionId!);
+      fs.writeFileSync(path.join(record.worktreePath, 'f.txt'), 'x');
+      git(record.worktreePath, 'add', 'f.txt');
+      git(record.worktreePath, 'commit', '-qm', 'partial work');
+      h.providerlessPanes.add('pane-0');
+      h.panes[0].state = 'exited';
+      exitPane(h.panes[0]);
+      const receipt = await paneSpawnTool.handler(
+        { agentName: 'Executor', resume: 'pane-0', prompt: 'melhore a entrega' }, ctx,
+      ) as Record<string, any>;
+      expect(receipt.resume).toMatchObject({ mode: 'fresh-in-worktree' });
+      const options = h.spawn.mock.calls.at(-1)![0] as SpawnToolOptions;
+      expect(options).toMatchObject({ cwd: record.worktreePath, isolatedWriter: true });
+      expect(options.prompt).toContain('melhore a entrega');
+      expect(options.prompt).toContain('partial work');
+    });
+
+    it('writer COM conversa retomável mantém o resume exato (sem fallback)', async () => {
+      await paneSpawnTool.handler({ adapterId: 'kimi', isolatedWriter: true }, op);
+      const [record] = opRecords();
+      closePane(h.panes[0]);
+      const receipt = await paneSpawnTool.handler({ adapterId: 'kimi', resume: 'pane-0' }, op) as Record<string, any>;
+      expect(receipt.resume).toBeUndefined();
+      const options = h.spawn.mock.calls.at(-1)![0] as SpawnToolOptions;
+      expect(options).toMatchObject({ cwd: record.worktreePath, resume: true, resumeFromPaneId: 'pane-0' });
+    });
+  });
+
   it('recibo e contrato dizem o SHA base e que o WIP do checkout não está na worktree', async () => {
     fs.writeFileSync(path.join(op.scope.rootRealPath, 'base.txt'), 'operator WIP\n');
     await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'edite X' }, op);
@@ -912,10 +970,14 @@ describe('1d: vínculo pane→worktree sobrevive ao reinício do app', () => {
     expect(registry.listMission(op.scope, OPERATOR_HAND_WORKTREE_KEY)[0])
       .toMatchObject({ paneIds: ['pending-pane'], sessionIds: ['pending-session'] });
     const after = await restartApp();
-    await after.tool.handler({ adapterId: 'codex', resume: 'h-7' }, op);
-    expect(h.spawn.mock.calls.at(-1)![0]).toMatchObject({
-      cwd: record.worktreePath, isolatedWriter: true, resume: true, resumeFromPaneId: 'pending-pane',
-    });
+    const receipt = await after.tool.handler({ adapterId: 'codex', resume: 'h-7' }, op) as Record<string, any>;
+    const resumed = h.spawn.mock.calls.at(-1)![0] as SpawnToolOptions;
+    // F-1388: o spawn pendente morreu com o app — nunca gravou provider
+    // session. O pane nasce fresco na mesma worktree, sem resume de provider.
+    expect(resumed).toMatchObject({ cwd: record.worktreePath, isolatedWriter: true });
+    expect(resumed.resume).toBeUndefined();
+    expect(resumed.resumeFromPaneId).toBeUndefined();
+    expect(receipt.resume).toMatchObject({ mode: 'fresh-in-worktree' });
     expect(after.registry.listMission(op.scope, OPERATOR_HAND_WORKTREE_KEY)).toHaveLength(1);
   });
 

@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 import { getMissionDecisionHints } from './mission-decision-hints';
 import type { MissionDecisionHints } from '../../shared/orch-types';
 import { assertLicenseAccess } from '../license-enforcement';
@@ -11,7 +13,7 @@ import {
   type McpToolDef,
   type McpToolInvocation,
 } from './mcp-protocol';
-import type { PaneSnapshot } from '../../shared/orch-types';
+import type { PaneSnapshot, Squad, SquadAgent } from '../../shared/orch-types';
 import {
   getPaneRuntimeAuthorityBySession,
   isPaneSpawnPending,
@@ -25,6 +27,7 @@ import {
   waitForIdle,
   waitForNextIdle,
   findPane,
+  initialPromptForPane,
 } from './pane-registry';
 import {
   getAgentSessionInfo,
@@ -121,6 +124,7 @@ import { adapterCircuitBreakers } from './circuit-breaker';
 import { isMissionWorkerWriteEligibleCli } from './squad-runtime-policy';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { getAccountChoiceReceipt } from '../persistence/account-choice-receipts';
+import { getProviderPaneSession } from '../persistence/provider-session-store';
 import { trace } from '../observability/main-trace';
 import { peekCodexCliVersion } from './codex-cli-version';
 import {
@@ -651,6 +655,113 @@ export function withIsolatedWriterContract(
     'Use a ferramenta nativa do CLI, conforme o perfil escolhido, para builds e testes. ' +
     'Ao terminar, chame nexus_handoff_submit uma vez com branch, sha, lista completa de arquivos tocados e diff ' +
     '(patch anexado ou caminho de um artefato de diff), além das validações e bloqueios.\n\n' + prompt;
+}
+
+/**
+ * F-1388: commits já feitos na worktree do writer — o contexto que a conversa
+ * perdida não carrega. Com `baseSha` (writer isolado registrado) lista o diff
+ * de commits desde a base; sem base (worktree por cwd) os últimos commits.
+ * Falha de Git nunca derruba o respawn: devolve lista vazia.
+ */
+function worktreeCommitsForFreshResume(
+  worktreePath: string,
+  baseSha: string | undefined,
+): Promise<string[]> {
+  const range = baseSha && /^[a-f0-9]{7,64}$/i.test(baseSha) ? `${baseSha}..HEAD` : 'HEAD';
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['-C', worktreePath, 'log', '--oneline', '--no-decorate', '-30', range],
+      { encoding: 'utf8', timeout: 10_000, windowsHide: true },
+      (error, stdout) => {
+        if (error) { resolve([]); return; }
+        resolve(stdout.split('\n').map((line) => line.trim()).filter(Boolean));
+      },
+    );
+  });
+}
+
+/**
+ * F-1388: o pane-alvo do `resume` tem worktree própria para onde um pane novo
+ * pode cair (writer isolado registrado ou snapshot com executionScope aninhado)?
+ * Sonda leve para o caminho de missão decidir se libera a exigência de provider
+ * session antes do spawn — sem ela o `resume` exige conversa gravada.
+ */
+function freshInWorktreeResumePossible(
+  scope: ProjectExecutionScope,
+  paneId: string,
+): boolean {
+  try {
+    if (requireWorktreeRuntimeRegistry().findPaneWriter(scope, { paneId })) return true;
+  } catch { /* registry indisponível → sem fallback prévio, mantém a recusa */ }
+  const snap = listPaneSnapshots().find((pane) => pane.paneId === paneId);
+  return !!snap?.executionScope && snap.executionScope.rootRealPath !== scope.rootRealPath;
+}
+
+/**
+ * F-1388: `resume` de writer cuja conversa NÃO é retomável (a CLI nunca gravou
+ * linha em provider_pane_sessions — kimi/devin/agy/muse/opencode antes do
+ * F-1353 — ou o adapter não tem resumeIdArgs). Com a worktree do writer ainda
+ * existente (writer isolado registrado ou cwd de worktree aninhada), o pane
+ * nasce FRESCO nela em vez de cair na recusa `resume_context_unavailable` do
+ * registry: mesmo adapter/rota, prompt = brief original + nota + commits.
+ * Devolve o motivo para o recibo (`resume.mode: 'fresh-in-worktree'`) ou
+ * undefined quando o resume normal segue.
+ */
+async function planFreshInWorktreeResume(
+  options: SpawnToolOptions,
+  ctx: AgentGateContext,
+  isolatedWriter: IsolatedWriterAllocation | undefined,
+): Promise<
+  | {
+      readonly prompt: string;
+      readonly worktreePath: string;
+      readonly executionScope?: ProjectExecutionScope;
+      readonly reason: string;
+    }
+  | undefined
+> {
+  const fromPaneId = options.resumeFromPaneId;
+  if (!fromPaneId || !options.adapterId) return undefined;
+  const adapter = getAdapter(options.adapterId);
+  const deadPane = listPaneSnapshots().find((pane) => pane.paneId === fromPaneId);
+  const nestedScope = deadPane?.executionScope &&
+      deadPane.executionScope.rootRealPath !== ctx.scope.rootRealPath
+    ? deadPane.executionScope
+    : undefined;
+  const worktreePath = isolatedWriter?.worktreePath ?? nestedScope?.rootRealPath;
+  if (!worktreePath || !fs.existsSync(worktreePath)) return undefined;
+  const providerConversation = getProviderPaneSession(
+    options.scope,
+    fromPaneId,
+    options.adapterId,
+    options.accountId,
+  );
+  // Adapter desconhecido do registry não decide a queda — a linha durável
+  // do provider sim. Adapter conhecido sem resumeIdArgs nunca retoma mesmo
+  // com linha gravada (o PTY cairia em fresh-context sem o contexto do F-1388).
+  const adapterCannotResume = adapter !== null &&
+    (adapter.kind !== 'cli-pty' || (adapter.spawn.resumeIdArgs?.length ?? 0) === 0);
+  if (providerConversation && !adapterCannotResume) return undefined;
+  const commits = await worktreeCommitsForFreshResume(
+    worktreePath,
+    isolatedWriter?.worktreePath === worktreePath ? isolatedWriter.baseSha : undefined,
+  );
+  const originalBrief = initialPromptForPane(fromPaneId)?.trim();
+  const reason = adapterCannotResume
+    ? `${adapter!.label} não retoma conversa do provider`
+    : `${options.adapterId}: nenhuma conversa do provider gravada para ${fromPaneId}`;
+  const prompt = [
+    originalBrief ? `## Brief original do writer\n${originalBrief}` : null,
+    options.prompt?.trim() ||
+      'Continue o trabalho do writer anterior nesta worktree.',
+    commits.length
+      ? `## Commits já feitos na worktree (desde ${isolatedWriter?.baseSha ?? 'a base'})\n${commits.join('\n')}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  return { prompt, worktreePath, executionScope: nestedScope, reason };
 }
 
 export function childMissionId(
@@ -1201,10 +1312,16 @@ const paneSpawnAfterTabMission = {
     // contra o que está instalado. `resume` fica de fora — trocar a CLI
     // perderia a conversa retomada.
     const resumeRef = str(args, 'resume');
+    const resumeTargetPaneId = resumeRef ? resumePaneRefOf(resumeRef, ctx.scope) : undefined;
     const missionResume = ctx.missionId && resumeRef
-      ? captureMissionPaneResume(ctx.scope, ctx.missionId, resumePaneRefOf(resumeRef, ctx.scope), {
+      ? captureMissionPaneResume(ctx.scope, ctx.missionId, resumeTargetPaneId, {
           adapterId: str(args, 'adapterId'), model: str(args, 'model'),
           accountId: str(args, 'accountId'), effort: str(args, 'effort'), cwd: str(args, 'cwd'),
+        }, {
+          // F-1388: sem provider session mas com worktree própria viva, o
+          // writer renasce nela como pane novo (ver planFreshInWorktreeResume).
+          allowMissingConversation: !!resumeTargetPaneId &&
+            freshInWorktreeResumePossible(ctx.scope, resumeTargetPaneId),
         }) : null;
     let resumeBound = false;
     try {
@@ -1353,13 +1470,25 @@ const paneSpawnAfterTabMission = {
       // "mandei abrir outro pane e não conseguiu"). Fora do operador, o
       // vínculo com a missão continua obrigatório. F-1314: a missão de agente
       // livre (sem squad) nomeia agente do catálogo salvo, com a CLI selada.
-      const found = mission?.squadId
-        ? findAgentInSquad(mission.squadId, agentRef)
-        : ctx.role === 'user'
-          ? findAgentInAnySquad(agentRef)
-          : mission
-            ? requireCatalogAgent(agentRef)
-            : null;
+      let found: { squad: Squad; agent: SquadAgent } | null;
+      try {
+        found = mission?.squadId
+          ? findAgentInSquad(mission.squadId, agentRef)
+          : ctx.role === 'user'
+            ? findAgentInAnySquad(agentRef)
+            : mission
+              ? requireCatalogAgent(agentRef)
+              : null;
+      } catch (error) {
+        // F-1388/F-1334: a recusa do catálogo (nome desconhecido ou ambíguo)
+        // é ANTERIOR a qualquer efeito — nada foi reservado nem gravado. A
+        // exceção é a reserva de continuação de um `resume`, cuja compensação
+        // pode falhar — aí não se pode dizer pre-effect.
+        if (missionResume?.continuation) throw error;
+        throw new PreEffectRefusalError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       if (!found && !mission?.squadId && ctx.role !== 'user') {
         const refusal = 'squad agent spawn requires a mission bound to a squad';
         // F-1334: nada foi gravado até aqui (missão da aba só nasce para
@@ -1806,6 +1935,8 @@ const paneSpawnAfterTabMission = {
       : {};
     let releaseWorkerSlot: (() => void) | undefined;
     let spawnedWorkerPaneId: string | undefined;
+    /** F-1388: recibo do resume fresh-in-worktree (writer sem conversa retomável). */
+    let freshResumeReceipt: Record<string, unknown> = {};
     /** F-793: gravação adiada da linha do worker que nasceu com ACK pendente. */
     let pendingMissionPane: Promise<PendingMissionPaneRecord> | undefined;
     let consumeReservedRoute: (() => void) | undefined;
@@ -2158,6 +2289,24 @@ const paneSpawnAfterTabMission = {
       // A read-only caller can delegate/spawn, but the spawned pane itself must
       // inherit the read-only confinement; handlers downstream trust this flag.
       options = coerceSpawnReadOnly(options, ctx.readOnly);
+      // F-1388: resume de writer sem conversa retomável (nenhuma linha em
+      // provider_pane_sessions) mas com worktree própria viva → pane NOVO na
+      // mesma worktree, com brief + nota + commits no prompt. O `resume`
+      // do provider fica fora para não cair na recusa resume_context_unavailable.
+      const freshResume = await planFreshInWorktreeResume(options, ctx, isolatedWriter);
+      if (freshResume) {
+        options = {
+          ...options,
+          resume: undefined,
+          resumeFromPaneId: undefined,
+          ...(freshResume.executionScope ? { executionScope: freshResume.executionScope } : {}),
+          cwd: isolatedWriter ? options.cwd : freshResume.worktreePath,
+          prompt: freshResume.prompt,
+        };
+        freshResumeReceipt = {
+          resume: { mode: 'fresh-in-worktree', reason: freshResume.reason },
+        };
+      }
       // Everything above may consult durable/worktree/provider state. Recheck
       // the exact bearer/intent after preparation, then linearize reservation
       // consumption and physical spawn without trusting the original call.
@@ -2547,6 +2696,7 @@ const paneSpawnAfterTabMission = {
           ...(modelUpgrade ? { modelUpgrade } : {}),
           // ACK pendente: ainda não há sessionId para buscar o recibo.
           harness: { ...harness, account: null },
+          ...freshResumeReceipt,
           ...routeReceipt,
           ...(pendingDiversity ? { diversity: pendingDiversity } : {}),
         };
@@ -2593,6 +2743,7 @@ const paneSpawnAfterTabMission = {
       return {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),
+        ...freshResumeReceipt,
         ...isolatedReceipt(),
         ...(tabMissionId ? { tabMission: { missionId: tabMissionId } } : {}),
         ...(modelUpgrade ? { modelUpgrade } : {}),

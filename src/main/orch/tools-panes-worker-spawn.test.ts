@@ -97,7 +97,9 @@ describe('nexus_pane_spawn — agentName sem squad (F-1334)', () => {
       .catch((error: unknown) => error);
 
     expect(outcome).toBeInstanceOf(PreEffectRefusalError);
-    expect((outcome as Error).message).toBe('squad agent spawn requires a mission bound to a squad');
+    // F-1314/F-1388: missão sem squad consulta o catálogo; nome desconhecido
+    // recusa pre-effect com a mensagem específica, não a genérica de squad.
+    expect((outcome as Error).message).toMatch(/unknown squad agent: Executor/);
   });
 });
 
