@@ -239,6 +239,55 @@ describe('commandKind deixa leves os pedidos triviais de versão e ajuda', () =>
   });
 });
 
+// F-1273 (revisão de ponta): com o Main também lendo o catálogo, runners
+// chamados pelo package manager ou pelo Python escapavam da vaga pesada
+// (null), e um `node -e` trivial virava 'build' e esperava até 300 s atrás de
+// um tsc/vitest real na única vaga do root.
+describe('commandKind mede runners de package manager e de Python; node -e não é build', () => {
+  it.each([
+    ['pnpm vitest run', 'tests'],
+    ['yarn vitest', 'tests'],
+    ['yarn jest', 'tests'],
+    ['bun vitest', 'tests'],
+    ['pnpm --filter app vitest run', 'tests'],
+    ['pnpm run vitest', 'tests'],
+    ['yarn tsc --noEmit', 'typescript'],
+    ['pnpm vite build', 'build'],
+    ['pnpx vitest run', 'tests'],
+    ['python -m pytest', 'tests'],
+    ['python3 -m pytest -q tests/', 'tests'],
+    ['python3.12 -B -m pytest', 'tests'],
+    ['poetry run pytest', 'tests'],
+    ['uv run pytest', 'tests'],
+    ['uv run --with pytest-cov pytest', 'tests'],
+    ['pipenv run pytest', 'tests'],
+    ['uv run python -m pytest', 'tests'],
+    // F-877: inline code that loads a heavy module or child_process, or is
+    // known only at run time, stays finite work (no preload may see it).
+    [`node -e "require('vite').build()"`, 'build'],
+    [`node -p "require('typescript').version"`, 'typescript'],
+    [`node -e "require('node:child_process').execSync('make')"`, 'build'],
+    ['node -e "$CODE"', 'build'],
+  ])('%s → %s', (command, kind) => {
+    expect(catalog.commandKind(command)).toBe(kind);
+  });
+
+  it.each([
+    "node -e 'console.log(1)'",
+    "node -p 'process.version'",
+    `node --eval 'require("fs")'`,
+    'node --print 1+1',
+    "node -pe 'process.arch'",
+    'pnpm vite',
+    'yarn vitest --version',
+    'python -m http.server',
+    "python3 -c 'print(1)'",
+    'uv run python script.py',
+  ])('%s → null', (command) => {
+    expect(catalog.commandKind(command)).toBeNull();
+  });
+});
+
 // F-982 (segunda revisão): o argv de spawn/execFile não passa por shell.
 describe('argvKind classifica o argv direto, palavra por palavra', () => {
   const argvKind = (catalog as unknown as { argvKind(argv: string[]): string | null }).argvKind;

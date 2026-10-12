@@ -122,6 +122,14 @@ const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 const PM_VALUE_OPTIONS = new Set(['--workspace', '-w', '--prefix', '--dir', '-C', '--filter', '--cache', '--userconfig', '--globalconfig', '--package', '-p']);
+// npx / pnpx / bunx run another program, like `npm exec` and `pnpm dlx`.
+const PM_RUNNERS = new Set(['npx', 'pnpx', 'bunx']);
+// F-1273 (revisão): pnpm/yarn/bun also run a dependency's bin by name
+// (`pnpm vitest run`, `yarn jest`, `bun run tsc`); that program is measured.
+const PM_BINS = new Set(['vitest', 'jest', 'mocha', 'tsc', 'tsgo', 'vite', 'webpack', 'rollup', 'esbuild', 'pytest']);
+// poetry/uv/pipenv options (global or of `run`) whose value is not the command.
+const PY_RUNNER_VALUE_OPTIONS = new Set(['-C', '--directory', '-P', '--project', '-p', '--python', '--with', '--with-requirements',
+  '--with-editable', '--from', '--package', '--extra', '--group', '--env-file', '--index', '--index-url']);
 // Wrappers run the command that follows their own options. Option letters and
 // names under `values` take an argument (so it is never the program); an
 // option missing from the table might, so the command stays metered.
@@ -447,6 +455,46 @@ function firstValue(args) {
   }
   return -1;
 }
+// The first word after options (and their values) that names a program.
+function pyRunnerTarget(args, from) {
+  for (let i = from; i < args.length; i++) {
+    if (PY_RUNNER_VALUE_OPTIONS.has(args[i])) { i++; continue; }
+    if (args[i] === '--') return i + 1 < args.length ? i + 1 : -1;
+    if (!args[i].startsWith('-')) return i;
+  }
+  return -1;
+}
+// `python -m MOD …` runs that module like a program; `-c CODE`, a script file
+// or stdin (`python3 - <<EOF`) are Python code, never a shell command line.
+function pythonKind(args, seg, depth) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '-' || !arg.startsWith('-')) return null;
+    if (arg.startsWith('--')) continue;
+    for (let k = 1; k < arg.length; k++) {
+      if (!'cmWX'.includes(arg[k])) continue;
+      const value = k + 1 < arg.length ? arg.slice(k + 1) : args[++i];
+      if (arg[k] === 'm') return value ? wordsKind([value, ...args.slice(i + 1)], seg, depth + 1) : null;
+      if (arg[k] === 'c') return null;
+      break;
+    }
+  }
+  return null;
+}
+// F-1273 (revisão): `node -e/-p CODE` runs inline JavaScript. A one-liner is
+// not a build (as 'build' it waited up to 300 s behind tsc/vitest); code that
+// names a heavy module or child_process, or is known only at run time, stays
+// finite work even with NODE_OPTIONS stripped and no preload to see it (F-877).
+function inlineKind(code) {
+  if (typeof code !== 'string' || code.includes(DYNAMIC)) return 'build';
+  const literal = /(['"`])((?:\\.|(?!\1)[^\\])*)\1/g;
+  let best = null;
+  for (let match, count = 0; (match = literal.exec(code)); count++) {
+    if (count >= 64 || /^(?:node:)?child_process$/.test(match[2])) return 'build';
+    best = heavier(best, moduleKind(match[2]));
+  }
+  return best;
+}
 function scriptKind(script) {
   const name = String(script || '').toLowerCase();
   if (/^(?:typecheck|check-types|tsc)(?::|$)/.test(name)) return 'typescript';
@@ -473,11 +521,11 @@ function programKind(words, seg, depth) {
   if (name === 'eval') return commandKind((args[0] === '--' ? args.slice(1) : args).join(' '), depth + 1);
   if (SHELLS.has(name)) return shellKind(args, seg, depth);
   if (name === 'find') return findKind(args, depth);
-  // npx / bunx / npm exec / pnpm dlx run another program: classify that one.
+  // npx / pnpx / bunx / npm exec / pnpm dlx run another program: classify that one.
   const verbAt = firstValue(args);
   const verb = verbAt >= 0 ? args[verbAt].toLowerCase() : '';
-  if (name === 'npx' || name === 'bunx' || (PACKAGE_MANAGERS.has(name) && ['exec', 'dlx', 'x'].includes(verb))) {
-    const rest = name === 'npx' || name === 'bunx' ? args : args.slice(verbAt + 1);
+  if (PM_RUNNERS.has(name) || (PACKAGE_MANAGERS.has(name) && ['exec', 'dlx', 'x'].includes(verb))) {
+    const rest = PM_RUNNERS.has(name) ? args : args.slice(verbAt + 1);
     for (let k = 0; k < rest.length; k++) {
       // `npx -c 'cmd'` / `npm exec --call 'cmd'` run a command line.
       if (rest[k] === '-c' || rest[k] === '--call') return commandKind(rest[k + 1] || '', depth + 1);
@@ -492,8 +540,19 @@ function programKind(words, seg, depth) {
   } else if (PACKAGE_MANAGERS.has(name)) {
     if (/^(?:test|tests|t)$/.test(verb)) return 'tests';
     if (/^(?:ci|install|i|add)$/.test(verb)) return 'install';
-    if (verb === 'run' || verb === 'run-script') { const script = firstValue(args.slice(verbAt + 1)); return script < 0 ? null : scriptKind(args.slice(verbAt + 1)[script]); }
-    return name === 'npm' ? null : scriptKind(verb);
+    let at = verbAt;
+    if (verb === 'run' || verb === 'run-script') { const script = firstValue(args.slice(verbAt + 1)); if (script < 0) return null; at = verbAt + 1 + script; }
+    else if (name === 'npm' || at < 0) return null;
+    const script = args[at].toLowerCase();
+    return name !== 'npm' && PM_BINS.has(script) ? wordsKind(args.slice(at), seg, depth + 1) : scriptKind(script);
+  }
+  if (/^python(?:\d+(?:\.\d+)*)?$/.test(name)) return pythonKind(args, seg, depth);
+  // `poetry|uv|pipenv run CMD …` and `uvx CMD …` run CMD in the project's env.
+  if (name === 'uvx' || ['poetry', 'uv', 'pipenv'].includes(name)) {
+    let at = 0;
+    if (name !== 'uvx') { const verbIndex = pyRunnerTarget(args, 0); if (verbIndex < 0 || args[verbIndex] !== 'run') return null; at = verbIndex + 1; }
+    const target = pyRunnerTarget(args, at);
+    return target < 0 ? null : wordsKind(args.slice(target), seg, depth + 1);
   }
   if (infoOnly(name, args)) return null;
   if (name === 'tsc' || name === 'tsgo' || name === '_tsc') return 'typescript';
@@ -511,6 +570,8 @@ function programKind(words, seg, depth) {
     const real = args.filter((arg) => arg !== '--');
     if (real.length > 0 && real.every((arg) => /^(?:-v|--version|-h|--help)$/.test(arg))) return null;
     const scriptAt = real.findIndex((arg) => !arg.startsWith('-'));
+    const evalAt = real.slice(0, scriptAt < 0 ? real.length : scriptAt).findIndex((arg) => /^(?:-[ep]|-pe|--eval|--print)(?:=|$)/.test(arg));
+    if (evalAt >= 0) { const eq = real[evalAt].indexOf('='); return inlineKind(eq < 0 ? real[evalAt + 1] : real[evalAt].slice(eq + 1)); }
     const script = scriptAt >= 0 ? real[scriptAt] : undefined;
     // Dev servers, watchers and MCP services are persistent, not finite work.
     if (script && isPersistent([words[at], script, ...real.slice(scriptAt + 1)])) return null;
