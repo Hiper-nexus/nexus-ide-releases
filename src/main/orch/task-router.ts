@@ -31,6 +31,7 @@ import {
 import {
   ROUTE_EFFORTS,
   CREDENTIAL_LINEAGE_SIGNALS,
+  SECURITY_DEFECT_SIGNALS,
   classifyRouteSpecialty,
   decisiveSignals,
   matchSignals,
@@ -381,6 +382,8 @@ const CRITICAL_SIGNALS = [
   'keychain', 'refresh token', 'access token',
   'sessão de login', 'sessao de login', 'login session',
   'conta gerenciada', 'managed account', ...CREDENTIAL_LINEAGE_SIGNALS,
+  // Revisão Grok: XSS/CSRF/injeção são defeito de segurança — critical, não easy.
+  ...SECURITY_DEFECT_SIGNALS,
 ];
 
 const HARD_SIGNALS = [

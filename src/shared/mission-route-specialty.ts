@@ -135,6 +135,21 @@ export const CREDENTIAL_LINEAGE_SIGNALS = [
 ] as const;
 
 /**
+ * F-1400 (revisão Grok): DEFEITO de segurança — vence o work-kind visual e a
+ * regra Next/jogo ("corrigir XSS na landing em Next.js" é segurança, não
+ * front). Substantivo de domínio (auth, pagamento) numa tela segue visual.
+ * 'injection' sozinho fica fora: "dependency injection" não é defeito.
+ */
+export const SECURITY_DEFECT_SIGNALS = [
+  'xss', 'csrf', 'sql injection', 'command injection', 'prompt injection',
+  'injeção de sql', 'injecao de sql', 'injeção de comando', 'injecao de comando',
+] as const;
+
+export function hasSecurityDefectSignals(text: string): boolean {
+  return matchSignals(text.toLowerCase(), SECURITY_DEFECT_SIGNALS).length > 0;
+}
+
+/**
  * Security overlay — a feature/bug that is actually an auth/payment/secret
  * surface should not ride the generic coding ladder. Doc stays doc: writing
  * about auth is still a document.
@@ -147,8 +162,8 @@ const SECURITY_SPECIALTY_SIGNALS = [
   'segurança',
   'seguranca',
   'vulnerab',
-  // F-1400 B1: "corrigir XSS no app Next.js" é defeito de segurança, não front.
-  'xss',
+  // F-1400 B1/Grok: defeito de segurança em qualquer superfície (inclusive front).
+  ...SECURITY_DEFECT_SIGNALS,
   'oauth',
   'auth',
   'autentica',
@@ -329,7 +344,7 @@ function workKindToSpecialty(kind: WorkKind): RouteSpecialty {
 export function classifyRouteSpecialty(taskText: string): RouteSpecialtyVerdict {
   const work = classifyWorkKind(taskText);
   const security = hasSecuritySpecialtySignals(taskText);
-  if (security && work.kind !== 'doc' && work.kind !== 'visual') {
+  if (security && work.kind !== 'doc' && (work.kind !== 'visual' || hasSecurityDefectSignals(taskText))) {
     return Object.freeze({
       specialty: 'security',
       workKind: work.kind,

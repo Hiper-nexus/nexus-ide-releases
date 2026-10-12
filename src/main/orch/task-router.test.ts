@@ -79,6 +79,14 @@ describe('classifyTask', () => {
     expect(classifyTask('listar as credenciais escopadas').tier).toBe('trivial');
   });
 
+  it('F-1400 (Grok): XSS/CSRF/injeção são critical, inclusive em app Next.js', () => {
+    expect(classifyTask('corrigir XSS no app Next.js').tier).toBe('critical');
+    expect(classifyTask('corrigir XSS na landing em Next.js').tier).toBe('critical');
+    expect(classifyTask('corrigir CSRF no formulário de contato').tier).toBe('critical');
+    expect(classifyTask('corrigir sql injection na busca').tier).toBe('critical');
+    expect(classifyTask('configurar dependency injection no módulo').tier).not.toBe('critical');
+  });
+
   it('F-1402 (Grok): flexões de/do/dos da linhagem de token são superfície de credencial', () => {
     expect(classifyTask('linhagem de token da conta').tier).toBe('critical');
     expect(classifyTask('linhagem dos tokens de sessão').tier).toBe('critical');

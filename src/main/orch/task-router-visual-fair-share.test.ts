@@ -115,6 +115,14 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
     expect(decision.reason).toContain('Next/jogo → Opus 5.5 (regra do operador)');
   });
 
+  it.each(['corrigir XSS no app Next.js', 'corrigir XSS na landing em Next.js'])(
+    'Grok: defeito de segurança vence visual e Next/jogo em qualquer work-kind: %s', (task) => {
+      const decision = routeTask(task, everyone, DEFAULT_ROUTING_TABLE, undefined, false, BUILTIN_MODEL_CATALOG, { multiScore: true })!;
+      expect(decision).toMatchObject({ tier: 'critical', specialty: 'security' });
+      expect(decision.reason).not.toContain('Next/jogo');
+      expect(decision.adapterId).not.toBe('muse');
+    });
+
   it('B1: segurança em app Next.js continua security (F-821), sem Opus max da regra de front', () => {
     const decision = route('corrigir XSS no app Next.js', everyone);
     expect(decision.specialty).toBe('security');
