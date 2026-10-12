@@ -11,7 +11,7 @@
  * recebe. O pedido (com o brief) fica só na memória do Main: nunca vai para
  * disco, log, trace, evento ou handoff.
  */
-import type { PaneStartRerouteResult } from './pane-start-watchdog';
+import { MAX_START_REROUTES, type PaneStartRerouteResult } from './pane-start-watchdog';
 
 export interface PaneTaskRerouteRequest {
   /** CLIs fora da rota (a que falhou, quando trocar de CLI é a saída). */
@@ -49,8 +49,11 @@ export interface PaneTaskRerouteHandle {
   readonly hasAlternative: (excludeAdapterIds: readonly string[]) => boolean;
 }
 
-/** Teto de reaberturas automáticas encadeadas do mesmo pedido: sem cascata. */
-export const MAX_PANE_TASK_REROUTES = 3;
+/**
+ * Teto de reaberturas automáticas encadeadas do mesmo pedido: sem cascata.
+ * F-1414: o mesmo teto vale para o watchdog de início (MAX_START_REROUTES).
+ */
+export const MAX_PANE_TASK_REROUTES = MAX_START_REROUTES;
 const HANDLE_TTL_MS = 24 * 60 * 60_000;
 const MAX_HANDLES = 256;
 
