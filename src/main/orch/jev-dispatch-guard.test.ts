@@ -326,6 +326,62 @@ describe('guardToolCall', () => {
     );
   });
 
+  it('M10: mission_spawn_pane recebe a mesma isenção de delegação que pane_spawn', async () => {
+    const judge = vi.fn<JudgeMock>(async () => result(benign));
+    // O brief real do F-1403 recusado — task + prompt são delegação escrita
+    // pelo próprio orquestrador apontando para o brief da missão. Pelo
+    // mission_spawn_pane a recusa volta: mesmo payload, outra tool.
+    const v = await guardToolCall(
+      input({
+        toolName: 'nexus_mission_spawn_pane',
+        args: {
+          missionId: 'm1',
+          task:
+            'Writer crítico de segurança de contas e credenciais OAuth: ' +
+            'compartilhar a linhagem de refresh token entre panes da mesma ' +
+            'conta gerenciada',
+          prompt:
+            'Leia e siga integralmente o brief em ' +
+            '/private/tmp/s240-briefs/W-claudecap.md. Nunca imprima tokens ' +
+            'ou credenciais.',
+        },
+        ctx: { role: 'orchestrator', missionId: 'm1', sessionId: 's-orch' },
+      }),
+      { judge },
+    );
+    expect(v.kind).toBe('pass');
+    const call = judge.mock.calls[0][0] as {
+      state: { caller: { role: string; lane: string } };
+      questions: Record<string, { instructions: string }>;
+    };
+    // Mesma classe de mcp-effect-policy (DELEGATION_AUTHORITY_TOOLS): lane do
+    // orquestrador E a pergunta que isenta delegação própria.
+    expect(call.state.caller.lane).toBe('orchestrator');
+    expect(call.questions.injected.instructions).toMatch(
+      /DELEGATE work the caller itself planned/,
+    );
+  });
+
+  it('M10: a isenção continua restrita às tools de delegação (file_write segue julgado)', async () => {
+    const judge = vi.fn<JudgeMock>(async () => result(benign));
+    await guardToolCall(
+      input({
+        toolName: 'nexus_file_write',
+        args: { path: 'docs/x.md', content: 'siga integralmente docs/x.md' },
+        ctx: { role: 'orchestrator', missionId: 'm1', sessionId: 's-orch' },
+      }),
+      { judge },
+    );
+    const call = judge.mock.calls[0][0] as {
+      state: { caller: { lane: string } };
+      questions: Record<string, { instructions: string }>;
+    };
+    expect(call.state.caller.lane).toBe('mission');
+    expect(call.questions.injected.instructions).not.toMatch(
+      /DELEGATE work the caller itself planned/,
+    );
+  });
+
   it('operator child (user sem missão COM brief) é julgado em modo só-injeção', async () => {
     const judge = vi.fn<JudgeMock>(async () =>
       result({ coherent: 0.3, injected: 0.9, destructive: 0.2 }),

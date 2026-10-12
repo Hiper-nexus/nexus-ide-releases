@@ -163,11 +163,15 @@ export const GUARD_QUESTIONS: Record<string, JevQuestion> = {
 };
 
 /**
- * F-1403: única ferramenta cujos argumentos SÃO uma delegação escrita pelo
- * chamador (task + prompt do spawn). Para ela — e só para ela — a lane do
+ * F-1403: únicas ferramentas cujos argumentos SÃO uma delegação escrita pelo
+ * chamador (task + prompt do spawn). Para elas — e só para elas — a lane do
  * orquestrador e a isenção "delegação é plano próprio" fazem sentido.
+ * M10: `mission_spawn_pane` é a MESMA classe de `pane_spawn`
+ * (`DELEGATION_AUTHORITY_TOOLS` em mcp-effect-policy) e era o caminho pelo qual
+ * o brief real do F-1403 recusado voltava: mesmo payload, outra tool, sem a
+ * isenção. Um nome solto não descreve a classe — é o conjunto que descreve.
  */
-const DELEGATION_TOOL = 'pane_spawn';
+const DELEGATION_TOOLS = new Set(['pane_spawn', 'mission_spawn_pane']);
 
 /**
  * Variante da pergunta de injeção para ferramentas cujos argumentos são a
@@ -191,7 +195,7 @@ const INJECTED_ACTION_INSTRUCTIONS =
 export function guardQuestionsForTool(
   toolName: string,
 ): Record<string, JevQuestion> {
-  if (canonicalToolName(toolName) === DELEGATION_TOOL) return GUARD_QUESTIONS;
+  if (DELEGATION_TOOLS.has(canonicalToolName(toolName))) return GUARD_QUESTIONS;
   return {
     ...GUARD_QUESTIONS,
     injected: {
@@ -469,11 +473,12 @@ export async function guardToolCall(
         role: input.ctx.role,
         // F-1403: o juiz vê QUEM escreveu os argumentos — spawn do
         // orquestrador da missão é plano próprio por construção. A lane só
-        // vale para pane_spawn: em terminal_run/file_write/git_push o
-        // orquestrador é julgado como membro da missão.
+        // vale para as tools de DELEGAÇÃO (pane_spawn/mission_spawn_pane): em
+        // terminal_run/file_write/git_push o orquestrador é julgado como
+        // membro da missão.
         lane: operatorChild
           ? 'operator-child'
-          : input.ctx.role === 'orchestrator' && canonical === DELEGATION_TOOL
+          : input.ctx.role === 'orchestrator' && DELEGATION_TOOLS.has(canonical)
             ? 'orchestrator'
             : 'mission',
       },
