@@ -68,9 +68,13 @@ export async function searchWorkspaceFiles(
   const startedAt = performance.now();
   const deadline = startedAt + budgets.timeoutMs;
   const results: string[] = [];
-  const matches = matchesPattern ?? createGlobMatcher(pattern);
+  // F-1325: `./` iniciais (repetidos) são cosméticos — sem a normalização o
+  // `.` virava segmento literal do prefixo e nada casava. `../` continua
+  // intocado e recusado pela contenção do prefixo.
+  const normalizedPattern = pattern.replace(/^(?:\.\/)+/, '');
+  const matches = matchesPattern ?? createGlobMatcher(normalizedPattern);
   // F-1231: só o glob tem prefixo literal; o filtro próprio da paleta varre tudo.
-  const prefix = matchesPattern ? [] : literalDirectoryPrefix(pattern);
+  const prefix = matchesPattern ? [] : literalDirectoryPrefix(normalizedPattern);
   const pendingDirectories = [root];
   const pendingDepths = [0];
   let nextDirectory = 0;

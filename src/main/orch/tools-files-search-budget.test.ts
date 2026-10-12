@@ -246,6 +246,28 @@ describe('nexus_file_search budgets', () => {
     });
   });
 
+  it('F-1325: glob iniciado por ./ acha o mesmo que sem o prefixo', async () => {
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'lib.ts'), 'export {};');
+    fs.writeFileSync(path.join(root, 'src', 'other.ts'), 'export {};');
+
+    for (const pattern of ['./src/lib.ts', '././src/lib.ts']) {
+      const result = (await searchTool().handler(
+        { pattern, timeoutMs: 5_000 },
+        context(),
+      )) as SearchResult;
+      expect(result.files).toEqual(['src/lib.ts']);
+      expect(result.truncated).toBe(false);
+    }
+
+    const globbed = (await searchTool().handler(
+      { pattern: './src/**/*.ts', timeoutMs: 5_000 },
+      context(),
+    )) as SearchResult;
+    expect([...globbed.files].sort()).toEqual(['src/lib.ts', 'src/other.ts']);
+    expect(globbed.truncated).toBe(false);
+  });
+
   it('clamps caller-provided budgets to process-safe hard ceilings', async () => {
     fs.writeFileSync(path.join(root, 'entry.ts'), 'export {};');
 
