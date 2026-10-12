@@ -1393,14 +1393,25 @@ describe('F-1313 — preferência explícita e espalhamento', () => {
   });
 
   it('recibo não atribui a escolha final ao fair-share quando a preferência venceu', () => {
-    const decision = routeTask('mapear o resumo diário', adapters('glm', 'deepseek'),
+    // Revisão Fable: preferência é boost — vence o fair-share só quando o
+    // preferido também está dentro da folga de uso global (FAIR_SHARE_GAP).
+    const decision = routeTask('mapear o resumo diário', adapters('glm', 'deepseek', 'longcat'),
+      DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+        multiScore: false, preferAdapters: ['longcat'],
+        globalUseCounts: new Map([['glm', 100], ['deepseek', 0], ['longcat', 1]]),
+      });
+    expect(decision!.adapterId).toBe('longcat');
+    expect(decision!.reason).toContain('longcat=preferido escolhido');
+    expect(decision!.reason).not.toContain('fair-share:');
+    // O preferido muito acima no uso global cede ao fair-share.
+    const yielded = routeTask('mapear o resumo diário', adapters('glm', 'deepseek'),
       DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
         multiScore: false, preferAdapters: ['glm'],
         globalUseCounts: new Map([['glm', 100], ['deepseek', 0]]),
       });
-    expect(decision!.adapterId).toBe('glm');
-    expect(decision!.reason).toContain('glm=preferido escolhido');
-    expect(decision!.reason).not.toContain('fair-share:');
+    expect(yielded!.adapterId).toBe('deepseek');
+    expect(yielded!.reason).toContain('fair-share:');
+    expect(yielded!.reason).toContain('preferência cedeu ao espalhamento');
   });
 
   it.each(['mission', 'global'])('writer preserva o assento sem uso antes do custo: %s', (history) => {
@@ -1476,13 +1487,54 @@ describe('F-1313 — preferência explícita e espalhamento', () => {
     const decision = routeTask(task,
       adapters('codex', 'deepseek', 'glm'), DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
         multiScore: true, preferAdapters: ['deepseek'],
-        missionUseCounts: new Map([['deepseek', 3]]),
-        globalUseCounts: new Map([['deepseek', 100]]),
       });
     expect(decision!.adapterId).toBe('deepseek');
     expect(decision!.reason).toContain('deepseek=preferido escolhido');
     expect(decision!.reason).not.toContain('rotação garantida');
     expect(decision!.reason).not.toContain('fair-share:');
+    // Revisão Fable: boost, não pin — com três assentos e uso global alto, o
+    // preferido cede a um par pronto do mesmo tier sem assento.
+    const spread = routeTask(task,
+      adapters('codex', 'deepseek', 'glm'), DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+        multiScore: true, preferAdapters: ['deepseek'],
+        missionUseCounts: new Map([['deepseek', 3]]),
+        globalUseCounts: new Map([['deepseek', 100]]),
+      });
+    expect(spread!.adapterId).not.toBe('deepseek');
+    expect(spread!.reason).toContain('preferência cedeu ao espalhamento');
+  });
+
+  it('revisão Fable (a): preferência não tira a tarefa visual da lane de topo', () => {
+    // O pin redistribuído vira preferAdapters; a override rodava depois da
+    // lane visual e o glm-5.3 levava a tela com o recibo dizendo "lane visual".
+    const decision = routeTask('implementar a tela responsiva e seus componentes visuais',
+      adapters('claude', 'codex', 'glm'), DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+        multiScore: true, preferAdapters: ['glm'],
+      });
+    expect(decision!.specialty).toBe('visual');
+    expect(decision!.adapterId).not.toBe('glm');
+    expect(decision!.reason).toContain('lane visual (modelos de topo)');
+    expect(decision!.reason).not.toContain('glm=preferido escolhido');
+    // Dentro da lane, a preferência continua escolhendo entre os assentos dela.
+    const inLane = routeTask('implementar a tela responsiva e seus componentes visuais',
+      adapters('claude', 'codex', 'glm'), DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+        multiScore: true, preferAdapters: ['codex'],
+      });
+    expect(inLane!.adapterId).toBe('codex');
+    expect(inLane!.reason).toContain('lane visual (modelos de topo)');
+  });
+
+  it('revisão Fable (b): preferência é boost, não pin — três spawns não vão todos para o preferido', () => {
+    const spawn = (counts: Array<[string, number]>) => routeTask('implementar o resumo diário',
+      adapters('codex', 'glm'), DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+        multiScore: true, preferAdapters: ['codex'],
+        missionUseCounts: new Map(counts), tieBreakUseCounts: new Map(counts),
+      })!;
+    expect(spawn([]).adapterId).toBe('codex');
+    const second = spawn([['codex', 1]]);
+    expect(second.adapterId).toBe('glm');
+    expect(second.reason).toContain('preferência cedeu ao espalhamento');
+    expect(spawn([['codex', 1], ['glm', 1]]).adapterId).toBe('codex');
   });
 
   it('zero explícito no mapa de uso continua sem assento no tier medium', () => {

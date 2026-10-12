@@ -1892,6 +1892,7 @@ export function routeTask(
   // adapter MENOS usado na missão vai primeiro — N workers se distribuem
   // entre os de topo em vez de concentrarem no primeiro da lista.
   let preferredLaneSeat: string | undefined;
+  let appliedLaneEntries: ReadonlySet<RankedRouteEntry> | undefined;
   const applyFrontierLane = (
     lane: ReadonlyArray<{ adapterId: string; model: string; preferenceOnly?: true }>,
   ): boolean => {
@@ -1965,6 +1966,7 @@ export function routeTask(
       ...inLane.sort((a, b) => used(a) - used(b) || laneRank(a) - laneRank(b)),
       ...ranked.filter((entry) => !set.has(entry)),
     ];
+    appliedLaneEntries = set;
     return true;
   };
 
@@ -1976,6 +1978,7 @@ export function routeTask(
     policy.source !== 'benchmark' &&
     mention.model === undefined &&
     applyFrontierLane(VISUAL_FRONTIER_LANE);
+  const visualLaneEntries = visualLaneApplied ? appliedLaneEntries : undefined;
   if (visualLaneApplied) {
     visualNote = '; lane visual (modelos de topo)';
   } else if (preferredLaneSeat) {
@@ -2128,20 +2131,38 @@ export function routeTask(
     }
   }
 
-  // F-1313: preferência explícita vence custo/rotação entre pares prontos,
+  // F-1313: preferência explícita vence custo/ordem entre pares prontos,
   // nunca empresta tier nem derruba segurança, juiz ou evidência medida.
+  // Revisão Fable: (a) com a lane visual aplicada, a preferência só escolhe
+  // entre os assentos da lane — o pin redistribuído não tira a UI do topo;
+  // (b) é BOOST, não pin (contrato do OperatorRouteInternal): um preferido
+  // com mais assentos na missão que um par pronto, ou com uso global além do
+  // FAIR_SHARE_GAP, cede ao espalhamento por uso.
+  let preferenceYieldNote = '';
   if (context.preferAdapters?.length && tier !== 'critical' && !securityWork &&
       frontier === null && purpose !== 'finding-fix' && evaluated.length === 0 &&
       policy.source !== 'benchmark' && mention.model === undefined) {
-    const preferred = ranked.find(entry => entry.fromTier === tier &&
-      context.preferAdapters!.includes(entry.c.adapterId) &&
+    const pool = ranked.filter(entry =>
+      (visualLaneEntries ? visualLaneEntries.has(entry) : entry.fromTier === tier) &&
       !adapterCircuitBreakers.isOpen(entry.c.adapterId));
+    const seats = (id: string) => context.missionUseCounts?.get(id) ?? (usedInMission.has(id) ? 1 : 0);
+    const globalUse = (id: string) => context.globalUseCounts?.get(id) ?? 0;
+    const minSeats = Math.min(...pool.map(entry => seats(entry.c.adapterId)));
+    const minGlobal = Math.min(...pool.map(entry => globalUse(entry.c.adapterId)));
+    const preferredInPool = pool.filter(entry => context.preferAdapters!.includes(entry.c.adapterId));
+    const preferred = preferredInPool.find(entry =>
+      seats(entry.c.adapterId) <= minSeats &&
+      globalUse(entry.c.adapterId) < minGlobal + FAIR_SHARE_GAP);
     if (preferred && preferred !== ranked[0]) {
       ranked = [preferred, ...ranked.filter(entry => entry !== preferred)];
       rotationNote = '';
       fairShareNote = '';
       writerCostApplied = false;
       writerCostNote = `; purpose=${purpose}`;
+    } else if (!preferred && preferredInPool.length > 0) {
+      preferenceYieldNote = '; preferência cedeu ao espalhamento por uso';
+    } else if (!preferred && visualLaneEntries) {
+      preferenceYieldNote = '; preferência fora da lane visual';
     }
   }
 
@@ -2237,7 +2258,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${writerCostNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${preferenceYieldNote}${writerCostNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,

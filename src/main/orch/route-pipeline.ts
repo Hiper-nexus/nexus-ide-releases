@@ -374,8 +374,9 @@ export function tieBreakByUse(input: TieBreakInput): {
     const candidate = input.ranked[index]!;
     if (candidate.fromTier !== head.fromTier) continue;
     if (isCircuitOpen(candidate.c.adapterId, input.circuitOpen)) continue;
-    if (input.context?.preferAdapters?.includes(head.c.adapterId) &&
-        !input.context.preferAdapters.includes(candidate.c.adapterId)) continue;
+    // F-1313 (revisão Fable): preferência é boost, não pin — o desempate por
+    // uso vale também entre preferido e não-preferido do mesmo tier; o
+    // roteador reaplica a preferência só entre os que não perdem no uso.
     if (totals[index]! < floor) continue;
     if (uses(input.ranked[index]!.c.adapterId) < uses(input.ranked[best]!.c.adapterId)) {
       best = index;
