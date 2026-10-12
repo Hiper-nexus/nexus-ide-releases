@@ -1369,3 +1369,15 @@ describe('F-1340/F-1341: domínio sozinho não sobe documento nem ação mecâni
     expect(classifyRouteSpecialty('implementar upload de documentos no cadastro').workKind).toBe('feature');
   });
 });
+
+describe('F-1344: verbo de migração e corrupção de dados são critical', () => {
+  it.each([
+    'migrar o banco de dados de produção sem downtime',
+    'migre o schema do postgres para a v2',
+    'migrate the production database to the new cluster',
+    'corrigir corrupção de dados que afeta todos os clientes',
+    'fix the corrupted rows in the orders table',
+  ])('%j → critical', (text) => {
+    expect(classifyTask(text).tier).toBe('critical');
+  });
+});

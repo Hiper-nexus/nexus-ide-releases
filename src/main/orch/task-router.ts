@@ -339,7 +339,12 @@ const CRITICAL_SIGNALS = [
   'authoriz', 'authn', 'authz',
   'autoriza', 'payment', 'pagamento', 'billing', 'cobrança', 'cartão',
   'cartao', 'migration',
-  'migração', 'migracao', 'migrações', 'migracoes', 'cript', 'crypt',
+  'migração', 'migracao', 'migrações', 'migracoes',
+  // F-1344: o VERBO de migração e a corrupção de dados são o risco em si.
+  // Palavra inteira no verbo para não duplicar 'migration'/'migração'.
+  'migrar', 'migre', 'migra', 'migrem', 'migrando', 'migrate', 'migrated',
+  'migrating', 'corrup', 'corromp',
+  'cript', 'crypt',
   'encrypt', 'decrypt', 'encripta', 'reencript', 'desencripta',
   'descriptografa', 'descriptografia',
   'tenant', 'multitenant', 'rls',
@@ -390,6 +395,7 @@ const CRITICAL_STEMS: ReadonlySet<string> = new Set([
   'autoriza', 'oauth', 'payment', 'pagamento', 'cript', 'crypt', 'encrypt',
   'decrypt', 'encripta', 'reencript', 'desencripta', 'descriptografa',
   'descriptografia', 'migration', 'migração', 'migracao', 'tenant',
+  'corrup', 'corromp',
   'race condition', 'concorrência', 'concorrencia', 'deadlock', 'webhook',
 ]);
 
