@@ -10,6 +10,10 @@ const spawnDeps = vi.hoisted(() => ({
   resolvedClaudeBin: '/usr/local/bin/claude' as string | null,
   /** F-1397: adapters elegíveis para candidato de atualização (mutável por teste). */
   builtinIds: new Set<string>(['claude']),
+  /** C5: brew resolvível só nos testes que pedem (null = sem Homebrew). */
+  brewBin: null as string | null,
+  /** C5: espião do execFileSync — o Main nunca pode bloquear num `brew info`. */
+  execFileSync: vi.fn(),
   trustedHandlers: new Map<string, (event: unknown, args: unknown) => unknown>(),
   confirmInstall: vi.fn(async (..._args: unknown[]) => ({ response: 1 })),
   windows: [] as unknown[],
@@ -75,10 +79,16 @@ vi.mock('node:os', async (importOriginal) => {
   const mock = { ...(await importOriginal<typeof import('node:os')>()), homedir: () => '/fixture-quota-home' };
   return { ...mock, default: mock };
 });
-vi.mock('node:child_process', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('node:child_process')>()),
-  execFile: spawnDeps.execFile,
-}));
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  // Espião que só registra; o brew do fixture nunca roda de verdade.
+  const execFileSync = ((...args: Parameters<typeof actual.execFileSync>) => {
+    spawnDeps.execFileSync(...args);
+    if (spawnDeps.brewBin && args[0] === spawnDeps.brewBin) throw new Error('brew síncrono no Main');
+    return actual.execFileSync(...args);
+  }) as typeof actual.execFileSync;
+  return { ...actual, execFile: spawnDeps.execFile, execFileSync };
+});
 vi.mock('node:fs', async (importOriginal) => {
   const mock = {
     ...(await importOriginal<typeof import('node:fs')>()),
@@ -266,6 +276,8 @@ vi.mock('electron', () => ({
   dialog: { showMessageBox: spawnDeps.confirmInstall },
   net: { fetch: spawnDeps.downloadInstaller },
   ipcMain: { handle: vi.fn() },
+  // C5: o handler do toggle grava a preferência em userData.
+  app: { getPath: () => '/fixture-quota-home' },
 }));
 
 vi.mock('../security/trusted-ipc', async (original) => ({
@@ -366,6 +378,8 @@ vi.mock('../path-resolver', () => ({
       ? { binPath: 'C:\\Program Files\\nodejs\\npm.cmd' }
       : runner === 'bash'
       ? { binPath: '/bin/bash' }
+      : runner === 'brew' && spawnDeps.brewBin
+      ? { binPath: spawnDeps.brewBin }
       : null,
 }));
 
@@ -796,7 +810,7 @@ describe('background CLI maintenance during pane startup', () => {
       spawnDeps.downloadInstaller.mockImplementation(() => new Promise(() => {}));
       stop = startCliAutoUpdate('/fixture-quota-home', () => false);
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(spawnDeps.downloadInstaller.mock.calls[0]?.[0]).toBe('https://claude.ai/install.sh');
+      expect((spawnDeps.downloadInstaller.mock.calls[0] as unknown[] | undefined)?.[0]).toBe('https://claude.ai/install.sh');
 
       const permit = await acquireCliSpawnPermit('claude');
       permit();
@@ -2626,7 +2640,9 @@ describe('F-210: instalação de Claude verifica e reutiliza o binário real', (
   it('instalador exit 0 sem binário encontrado não anuncia sucesso', async () => {
     spawnDeps.resolvedClaudeBin = null;
     await expect(install()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('não conseguiu verificar') });
-    expect(spawnDeps.downloadInstaller).toHaveBeenCalledWith('https://claude.ai/install.sh');
+    // C6: o download manual sempre leva o signal do prazo de 120 s.
+    expect(spawnDeps.downloadInstaller).toHaveBeenCalledWith(
+      'https://claude.ai/install.sh', { signal: expect.any(AbortSignal) });
     expect(spawnDeps.execFile.mock.calls[0]?.[0]).toBe('/bin/bash');
   });
   it('instalação nativa é reexaminada e sua versão comprovada antes do sucesso', async () => {
@@ -2640,6 +2656,84 @@ describe('F-210: instalação de Claude verifica e reutiliza o binário real', (
     expect(spawnDeps.execFile.mock.calls.at(-1)?.slice(0, 2)).toEqual([
       '/fixture-quota-home/.local/share/claude/versions/4.12.7', ['--version'],
     ]);
+  });
+});
+
+// C6: na instalação manual (sem signal do updater) o prazo de 120 s precisa
+// abortar o download de verdade — rejeitar a promise e deixar o fetch vivo
+// mantinha a conexão aberta depois do "tempo esgotado".
+describe('C6: prazo do download do instalador manual aborta o fetch', () => {
+  const install = () => spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId: 'claude', mode: 'install' });
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    spawnDeps.resolvedClaudeBin = null;
+    spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
+    registerProviderIpc();
+  });
+  afterEach(() => {
+    spawnDeps.resolvedClaudeBin = '/usr/local/bin/claude';
+    spawnDeps.downloadInstaller.mockReset().mockImplementation(async () => ({ ok: true, text: async () => '#!/bin/bash\nexit 0\n' }));
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+  it('download pendente: o prazo aborta o signal do net.fetch', async () => {
+    let fetchSignal: AbortSignal | undefined;
+    spawnDeps.downloadInstaller.mockImplementation(((_url: string, init?: { signal?: AbortSignal }) => {
+      fetchSignal = init?.signal;
+      return new Promise(() => {});
+    }) as never);
+    const result = install();
+    await vi.advanceTimersByTimeAsync(0);
+    expect((spawnDeps.downloadInstaller.mock.calls[0] as unknown[] | undefined)?.[0]).toBe('https://claude.ai/install.sh');
+    expect(fetchSignal).toBeInstanceOf(AbortSignal);
+    expect(fetchSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await expect(result).resolves.toMatchObject({ ok: false });
+    expect(fetchSignal?.aborted).toBe(true);
+  });
+});
+
+// C5: ligar o toggle de atualização automática lê o manifesto de cada cask.
+// O `brew info` síncrono (até 10 s por cask) congelava o Main; a descoberta
+// do handler usa o caminho assíncrono, com o mesmo env de segurança (B1).
+describe('C5: toggle de atualização automática não bloqueia o Main', () => {
+  const caskClaude = '/opt/homebrew/Caskroom/claude-code/2.1.296/claude';
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    spawnDeps.builtinIds.clear();
+    spawnDeps.builtinIds.add('claude');
+    spawnDeps.brewBin = '/opt/homebrew/bin/brew';
+    spawnDeps.resolvedClaudeBin = '/usr/local/bin/claude';
+    spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
+    spawnDeps.confirmInstall.mockClear();
+    spawnDeps.windows = [];
+    vi.spyOn(fs, 'realpathSync').mockReturnValue(caskClaude);
+    vi.spyOn(fsp, 'realpath').mockResolvedValue(caskClaude);
+    spawnDeps.execFileSync.mockClear();
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      (args.at(-1) as (error: Error | null, stdout: string) => void)(null, '');
+      return {} as ChildProcess;
+    });
+    registerProviderIpc();
+  });
+  afterEach(() => {
+    spawnDeps.brewBin = null;
+    vi.restoreAllMocks();
+  });
+  it('o manifesto do cask sai por execFile assíncrono, nunca execFileSync', async () => {
+    const handler = spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.autoCliUpdates)!;
+    await handler({}, { action: 'set', enabled: true });
+    const brewSync = spawnDeps.execFileSync.mock.calls.filter((call) => call[0] === '/opt/homebrew/bin/brew');
+    expect(brewSync).toEqual([]);
+    expect(spawnDeps.execFile).toHaveBeenCalledWith(
+      '/opt/homebrew/bin/brew',
+      ['info', '--cask', '--json=v2', 'claude-code'],
+      expect.objectContaining({
+        env: expect.objectContaining({ HOMEBREW_NO_AUTO_UPDATE: '1', HOMEBREW_NO_SUDO: '1' }),
+      }),
+      expect.any(Function),
+    );
   });
 });
 
