@@ -189,6 +189,12 @@ async function fetchPublicText(url: string, timeoutMs: number, maxBytes: number)
   }
 }
 
+/**
+ * F-1279: 403/429 com a cota anônima esgotada (mesma cota por IP para todos os slugs) não diz nada
+ * sobre os releases. A checagem para aí e a UI mantém o que já mostrava.
+ */
+class PublicApiRateLimited extends Error {}
+
 /** GET anônimo na API pública com deadline (mesma disciplina do gh). */
 async function fetchPublicJson(
   url: string,
@@ -209,6 +215,12 @@ async function fetchPublicJson(
     const moved = hop < 2 ? githubMovedPermanentlyUrl(text) : null;
     if (moved && moved !== url) {
       return fetchPublicJson(moved, timeoutMs, hop + 1);
+    }
+    if (
+      (response.status === 403 || response.status === 429) &&
+      (response.headers.get('x-ratelimit-remaining') === '0' || response.headers.has('retry-after'))
+    ) {
+      throw new PublicApiRateLimited(`releases públicos: HTTP ${response.status} (limite da API do GitHub)`);
     }
     if (!response.ok) {
       throw new Error(`releases públicos: HTTP ${response.status}`);
@@ -666,6 +678,7 @@ export class UpdateManager {
       await this.performManualCheck();
       return;
     }
+    const before = { phase: this.state.phase, error: this.state.error };
     this.patch({ phase: 'checking', error: undefined });
     try {
       const raw = await this.loadReleaseJson();
@@ -704,6 +717,7 @@ export class UpdateManager {
         });
       }
     } catch (err) {
+      if (this.keepStateWhenRateLimited(err, before)) return;
       const message = err instanceof Error ? err.message : String(err);
       const missing = /ENOENT/.test(message);
       writeUpdateLog('warn', 'check:gh-failed', { message, missing });
@@ -723,6 +737,7 @@ export class UpdateManager {
    * baixa nem instala: quem atualiza é o operador, com o comando do estado.
    */
   private async performManualCheck(): Promise<void> {
+    const before = { phase: this.state.phase, error: this.state.error };
     this.patch({ phase: 'checking', error: undefined });
     try {
       const raw = await this.loadPublicReleaseJson();
@@ -744,10 +759,19 @@ export class UpdateManager {
         this.patch({ phase: 'uptodate', available: undefined, checkedAt: Date.now() });
       }
     } catch (err) {
+      if (this.keepStateWhenRateLimited(err, before)) return;
       const message = err instanceof Error ? err.message : String(err);
       writeUpdateLog('warn', 'check:public-failed', { message });
       this.patch({ phase: 'error', error: `checagem falhou: ${message.slice(0, 160)}`, checkedAt: Date.now() });
     }
+  }
+
+  /** F-1279: limite da API não é falha de atualização; volta ao que a UI mostrava e conta como checagem. */
+  private keepStateWhenRateLimited(err: unknown, before: Pick<UpdateState, 'phase' | 'error'>): boolean {
+    if (!(err instanceof PublicApiRateLimited)) return false;
+    writeUpdateLog('warn', 'check:rate-limited', { message: err.message });
+    this.patch({ ...before, checkedAt: Date.now() });
+    return true;
   }
 
   /**
@@ -850,10 +874,11 @@ export class UpdateManager {
         this.releaseRepo = repo;
         return raw;
       } catch (err) {
+        if (err instanceof PublicApiRateLimited) throw err;
         errors.push(`${repo}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    throw new Error(errors.at(-1) ?? 'nenhuma fonte de release');
+    throw new Error(errors[0] ?? 'nenhuma fonte de release');
   }
 
   private async loadReleaseJson(): Promise<string> {
@@ -890,13 +915,14 @@ export class UpdateManager {
         this.releaseRepo = repo;
         return raw;
       } catch (pubErr) {
+        if (pubErr instanceof PublicApiRateLimited) throw pubErr;
         publicErrors.push(
           `${repo}: ${pubErr instanceof Error ? pubErr.message : String(pubErr)}`,
         );
       }
     }
     throw new Error(
-      publicErrors.at(-1) ?? ghErrors[0] ?? 'nenhuma fonte de release',
+      publicErrors[0] ?? ghErrors[0] ?? 'nenhuma fonte de release',
     );
   }
 

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -341,6 +341,38 @@ describe('UpdateManager', () => {
     expect(runGh.mock.calls.length).toBe(ghCalls);
   });
 
+  it('F-1279: cota da API pública esgotada não vira erro vermelho nem consulta o slug legado', async () => {
+    const runGh = vi.fn(async () => { throw new Error('gh: sem login'); });
+    const fetchMock = vi.fn(async () => new Response('{"message":"API rate limit exceeded"}', {
+      status: 403,
+      headers: { 'x-ratelimit-remaining': '0' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const manager = createManager(true, { runGh, runtimeArch: 'arm64', runtimePlatform: 'darwin' });
+    manager.init();
+
+    await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+
+    expect(manager.getState().phase).not.toBe('error');
+    expect(manager.getState()).toMatchObject({ phase: 'idle', error: undefined });
+    expect(manager.getState().checkedAt).toEqual(expect.any(Number));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(readFileSync(path.join(electron.logsPath, 'update.log'), 'utf8')).toContain('check:rate-limited');
+  });
+
+  it('F-1279: falha genérica dos dois espelhos cita o canônico, não o slug legado', async () => {
+    const runGh = vi.fn(async () => { throw new Error('gh: sem login'); });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 503 })));
+    const manager = createManager(true, { runGh, runtimeArch: 'arm64', runtimePlatform: 'darwin' });
+    manager.init();
+
+    await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+
+    expect(manager.getState().phase).toBe('error');
+    expect(manager.getState().error).toContain('Hiper-nexus/nexus-ide-releases');
+    expect(manager.getState().error).not.toContain('cleofasvolarehost');
+  });
+
   it('cai no slug legado quando o gh da org nova falha', async () => {
     const runGh = vi.fn(async (args: string[]) => {
       if (args.join(' ').includes('Hiper-nexus/nexus-ide')) {
@@ -451,6 +483,23 @@ describe('UpdateManager', () => {
       expect(manager.getState().phase).toBe('error');
       expect(manager.getState().error).toContain('checagem falhou');
       expect(manager.getState().manual?.command).toContain('install-repo.sh');
+    });
+
+    it('F-1279: 429 com Retry-After mantém a oferta já mostrada e não tenta o slug legado', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify([linuxRelease('0.15.2')]), { status: 200 }))
+        .mockImplementation(async () => new Response('', { status: 429, headers: { 'retry-after': '60' } }));
+      vi.stubGlobal('fetch', fetchMock);
+      const manager = linuxManager();
+      manager.init();
+      const check = electron.handlers.get(UPDATE_CHANNELS.check);
+      await check?.(trustedSenderEvent());
+      expect(manager.getState()).toMatchObject({ phase: 'available', available: { version: '0.15.2' } });
+
+      await check?.(trustedSenderEvent());
+
+      expect(manager.getState()).toMatchObject({ phase: 'available', available: { version: '0.15.2' }, error: undefined });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     it('keeps other non-updating platforms and Linux arm64 on the unsupported path', () => {
