@@ -314,6 +314,58 @@ describe('palavras comuns não provam pedido de CLI (F-818)', () => {
 });
 
 /**
+ * F-1303 (ao vivo 12/10): o operador digitou "kimi nunca ta sendo usado…" no
+ * pane do orquestrador e o spawn seguinte com `adapterId:'kimi',
+ * operatorChoice:true` foi redistribuído — a menção tinha sumido do buffer.
+ * Entre a menção e o spawn entrou uma colagem de ~10 KB (entrega de handoff)
+ * como um ÚNICO write humano; o teto de 4.000 chars removia TODOS os chunks,
+ * inclusive o próprio e as menções anteriores (inputBySession.delete).
+ */
+describe('F-1303: colagem gigante não apaga a menção do operador', () => {
+  const PASTE_10K = `\x1b[200~${'entrega de handoff: tudo verde, sem bloqueio. '.repeat(230)}\x1b[201~`;
+
+  it('menção recente sobrevive a uma colagem única maior que o teto da sessão', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - 2 * MIN);
+    type('f1303-a', 'kimi nunca ta sendo usado');
+    expect(PASTE_10K.length).toBeGreaterThan(4_000);
+    type('f1303-a', PASTE_10K);
+    expect(
+      operatorRecentlyNamedCli('f1303-a', 'kimi', now, OPERATOR_CHOICE_PROOF_WINDOW_MS),
+    ).toBe(true);
+  });
+
+  it('menção DENTRO da própria colagem gigante também conta (fica o final)', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    type('f1303-b', `\x1b[200~${'x'.repeat(9_000)} no fim o operador pede kimi code\x1b[201~`);
+    expect(operatorRecentlyNamedCli('f1303-b', 'kimi', now)).toBe(true);
+  });
+
+  it('teto por sessão continua: depois de MUITOS chunks o mais antigo sai', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    type('f1303-c', 'abre um kimi');
+    // > 4.000 chars em chunks pequenos (digitação corrida): evicção do lado
+    // antigo continua valendo — só a forma do corte do chunk GRANDE mudou.
+    for (let i = 0; i < 150; i++) type('f1303-c', `mensagem corrida numero ${i} do operador `);
+    expect(operatorRecentlyNamedCli('f1303-c', 'kimi', now)).toBe(false);
+  });
+
+  it('hipótese 2 derrubada: mensagem que COMEÇA com a CLI após outra, sem Enter no tap', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    // O compositor escreve a linha inteira (write humano único) e o Enter vem
+    // depois, em chunk próprio. Se o Enter chegasse como CSI removido, o
+    // replay ainda ganha fronteira: colagem nova após texto sem espaço em
+    // branco recebe separador (replayInput).
+    type('f1303-d', 'ejo na tabela acima minimax nao foi usado');
+    type('f1303-d', 'kimi nunca ta sendo usado');
+    expect(operatorRecentlyNamedCli('f1303-d', 'kimi', now)).toBe(true);
+  });
+});
+
+/**
  * F-818: os padrões flexíveis (espaço/hífen entre letras) rodam sobre texto do
  * operador; a varredura tem de ser linear. O buffer do pane retém ≤ 4.000
  * caracteres, mas a função pura recebe qualquer tamanho — mede-se 16 KB.

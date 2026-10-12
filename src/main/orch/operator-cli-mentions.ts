@@ -13,13 +13,24 @@
  *
  * Contrato do SessionInputTap: o texto é observacional — NUNCA persistido,
  * logado nem encaminhado. Só timestamps + trechos sanitizados em RAM, com
- * retenção de 30 minutos e teto de 4.000 caracteres por sessão.
+ * retenção de 30 minutos, teto de 4.000 caracteres por sessão e de 1.000 por
+ * chunk (colagem gigante fica com o final — F-1303).
  */
 import { tapSessionExit, tapSessionInput } from '../pty/pty-manager';
 
 const MENTION_WINDOW_MS = 15 * 60_000;
 const RETENTION_MS = 30 * 60_000;
 const MAX_RETAINED_CHARS = 4_000;
+/**
+ * Teto por CHUNK (fica o FINAL): um write humano maior que isso — colagem de
+ * handoff no compositor — não pode monopolizar o buffer nem, pior, deixar o
+ * laço de evicção remover TODOS os chunks junto com ele (F-1303: a menção
+ * "kimi…" sumia do buffer e o operatorChoice era redistribuído).
+ * ponytail: colagem que chega em MUITOS writes de 1.000 chars cada ainda
+ * evicta chunks antigos pelo teto da sessão; segurar isso exige orçamento
+ * reservado por tipo de chunk no tap.
+ */
+const MAX_CHUNK_CHARS = 1_000;
 
 interface InputChunk {
   readonly at: number;
@@ -195,7 +206,12 @@ function remember(sessionId: string, data: string): void {
   // fronteira entre palavras quando cada tecla chega num chunk.
   if (text.length === 0) return;
   const now = Date.now();
-  const chunks = [...(inputBySession.get(sessionId) ?? []), { at: now, text }]
+  // F-1303: chunk maior que o teto por chunk fica com o FINAL (sem ele, o
+  // laço abaixo removia o próprio chunk e TODOS os anteriores — um write de
+  // 10 KB evaporava a sessão inteira).
+  const clipped =
+    text.length > MAX_CHUNK_CHARS ? text.slice(-MAX_CHUNK_CHARS) : text;
+  const chunks = [...(inputBySession.get(sessionId) ?? []), { at: now, text: clipped }]
     .filter((chunk) => now - chunk.at <= RETENTION_MS);
   // Teto por sessão: corta do lado antigo até caber em MAX_RETAINED_CHARS.
   let total = chunks.reduce((sum, chunk) => sum + chunk.text.length, 0);
