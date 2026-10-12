@@ -62,6 +62,9 @@ describe('classifyRouteSpecialty', () => {
     expect(classifyRouteSpecialty('aplicar teoria dos jogos ao leilão de preços').specialty).not.toBe('visual');
     expect(classifyRouteSpecialty('game theory for the pricing engine').specialty).not.toBe('visual');
     expect(classifyRouteSpecialty('criar um jogo da velha').specialty).toBe('visual');
+    // Revisão Grok: o lookbehind só cobria "teoria dos".
+    expect(classifyRouteSpecialty('aplicar teoria de jogos ao leilão').specialty).not.toBe('visual');
+    expect(classifyRouteSpecialty('the name of the game is the 2d array').specialty).not.toBe('visual');
     expect(classifyRouteSpecialty('corrigir XSS no app Next.js').specialty).toBe('security');
   });
 

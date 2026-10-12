@@ -249,10 +249,11 @@ const UI_TERMS: readonly UiWorkTerm[] = Object.freeze([
     // lane visual (Opus 5.5 / Sonnet 5.5 / Sol 6.1 / Astra), nunca para a
     // escada geral onde o GLM lidera. Inclui engines e vocábulo de game dev.
     // F-1400 B1 (revisão Fable): teoria dos jogos/game theory é matemática de
-    // decisão ("game theory for the pricing engine"), não jogo.
+    // decisão ("game theory for the pricing engine"), não jogo. Revisão Grok:
+    // "teoria de/da/das jogos" e "the name of the game" também ficam fora.
     rule: 'ui.game',
     pattern:
-      /\b(?:(?<!\bteoria\s+dos\s+)jogos?|games?(?![-\s]+theor)|videogames?|video[-\s]*games?|gameplay|game[-\s]*dev\w*|gamedev|godot|unity|unreal|phaser|pygame|raylib|bevy|love2d|tilemaps?|platformer|roguelike)\b/,
+      /\b(?:(?<!\bteoria\s+d[eoa]s?\s+)jogos?|(?<!\bname\s+of\s+the\s+)games?(?![-\s]+theor)|videogames?|video[-\s]*games?|gameplay|game[-\s]*dev\w*|gamedev|godot|unity|unreal|phaser|pygame|raylib|bevy|love2d|tilemaps?|platformer|roguelike)\b/,
     selfEvident: true,
     authority: 'craft',
   },
