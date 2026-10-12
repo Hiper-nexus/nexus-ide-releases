@@ -9,6 +9,7 @@ import { reconcilePreparedWorkerContinuation } from './mission-pane-resume-owner
 import {
   hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
+  MISSION_INTENT_GOAL_MAX_CHARS,
   type MissionAttachmentSnapshot,
   type MissionOrchestratorRuntimeSnapshot,
   type PromotedPlanSnapshot,
@@ -852,6 +853,12 @@ export class RendererMissionAuthority {
     input: {
       readonly paneId: string;
       readonly title: string;
+      /**
+       * Pedido completo do operador: vira o goal do contrato (e a description
+       * da missão). O título é só rótulo de UI — F-1315: os portões de
+       * conclusão julgam o pedido inteiro, nunca os 60 chars do rótulo.
+       */
+      readonly description?: string;
       /** Aba no renderer: só desempata criação/reuso, nunca concede nada. */
       readonly tabKey?: string;
       /**
@@ -925,12 +932,13 @@ export class RendererMissionAuthority {
     const created = suite.missions.atomically(() => {
       const mission = suite.missions.create({
         title: input.title,
+        ...(input.description ? { description: input.description } : {}),
         milestones: [],
         orchestratorSessionId: owned.sessionId,
         intentState: "dispatched",
         intentVersion: 1,
         intentContract: {
-          ...operatorHandMissionContract(input.title, undefined, []),
+          ...operatorHandMissionContract(input.title, input.description, []),
           workspaceBinding: tabKey ? { ...workspaceBinding, tabKey } : workspaceBinding,
         },
       });
@@ -992,18 +1000,22 @@ export class RendererMissionAuthority {
     if (!runtime?.owner || runtime.kind !== "cli-agent") {
       return { ok: false, error: "pane_unavailable" };
     }
-    const summary = (task ?? "")
+    // F-1315: o título é rótulo (60 chars), mas o contrato guarda o pedido
+    // inteiro — os portões de conclusão julgam o goal completo do operador.
+    const request = (task ?? "")
       .replace(new RegExp(INVISIBLE_AUTHORITY_TEXT.source, "g"), " ")
       .replace(/\s+/g, " ")
       .trim()
-      .slice(0, 60)
+      .slice(0, MISSION_INTENT_GOAL_MAX_CHARS)
       .trim();
+    const summary = request.slice(0, 60).trim();
     // A aba vem do espelho do renderer: no checkout principal (sem worktree da
     // aba) é ela que marca a 1ª missão como a da aba para o clique explícito.
     const tabKey = getRenderedPaneTabKey(runtime.owner, runtime.paneId);
     return this.createPaneMissionFromRenderer(runtime.owner, {
       paneId: runtime.paneId,
       title: summary ? `Missão · ${summary}` : "Missão da aba",
+      ...(request ? { description: request } : {}),
       ...(tabKey ? { tabKey } : {}),
       ownGroup: true,
     });

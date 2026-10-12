@@ -571,6 +571,29 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(getContextBySession(second)).toMatchObject({ role: "user" });
   });
 
+  it("F-1315: o pedido inteiro do operador vira o goal da missão, não os 60 chars do título", async () => {
+    const sessionId = operatorPane("pane-goal");
+    syncPanes(
+      [{ paneId: "pane-goal", sessionId, tabKey: "__loose__", title: "pane-goal", kind: "cli-agent" as const, adapterId: "test-cli" }],
+      owner,
+    );
+    const tail = "e fecha o relatório final no repositório.";
+    const task =
+      `quero um novo teste interno nexus de caça a bugs onde possa executar sem tocar no repo alheio, ` +
+      "cuidadosamente e com provas de regressão. ".repeat(6) +
+      tail;
+    const result = await authority().adoptOperatorHandForSpawn(sessionId, task);
+
+    expect(result.ok).toBe(true);
+    const mission = result.mission!;
+    // O contrato guarda o pedido completo (teto de 16.384 chars), o título é só rótulo.
+    expect(mission.intentContract!.goal).toBe(task);
+    // Os critérios não podem repetir só o título cortado: precisam do resto do pedido.
+    expect((mission.intentContract!.acceptanceCriteria ?? []).join("\n")).toContain(tail);
+    expect(mission.title).toBe(`Missão · ${task.slice(0, 60).trim()}`);
+    expect(mission.title.length).toBeLessThanOrEqual(69);
+  });
+
   it("troca de coroa na aba devolve o líder anterior a `user` com tudo que tinha, nunca worker sem tools", async () => {
     const first = operatorPane("pane-a");
     const second = operatorPane("pane-b");
