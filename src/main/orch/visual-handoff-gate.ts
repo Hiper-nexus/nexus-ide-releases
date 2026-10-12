@@ -64,12 +64,32 @@ function withoutEnumerationContext(text: string): string {
     .replace(SLASH_OPTION, ' ');
 }
 
+/**
+ * F-1417 — o rodapé "Regra de design do projeto (sempre que o trabalho
+ * envolver UI)" é do Nexus, não da tarefa: cita DESIGN.md, tokens e "interface
+ * renderizada" em QUALQUER brief. Uma revisão de segurança só leitura cujo
+ * prompt trazia o rodapé foi rebaixada para `partial` com "[verificação visual
+ * pendente]". O bloco sai do texto classificado, do cabeçalho até a frase fixa
+ * que o fecha (ou até a próxima linha em branco, se a frase mudar).
+ */
+// Mesmo texto de WORKSPACE_DESIGN_RULE_HEADING/ruleText (workspace-design-rule.ts),
+// sem importar aquele módulo (settings e catálogo de design) para o gate.
+const DESIGN_RULE_BLOCK = new RegExp(
+  String.raw`Regra de design do projeto\s*\(sempre que o trabalho envolver UI\):` +
+  String.raw`[\s\S]*?(?:ainda não aplicada como regra vigente\.|(?=\n\s*\n)|$)`,
+  'gu',
+);
+
+function withoutWorkspaceDesignRule(text: string): string {
+  return text.replace(DESIGN_RULE_BLOCK, ' ');
+}
+
 export function visualTaskRequirement(assignment: string | undefined, now = Date.now(), id?: string): VisualTaskRequirement | undefined {
   if (!assignment) return undefined;
   // F-1271: os blocos de contexto montados na frente (<business-model> com as
   // invariantes de UI do projeto, <workspace-memory>…) não são a tarefa.
   const text = withoutEnumerationContext(
-    withoutMountedPromptContextBlocks(assignment),
+    withoutWorkspaceDesignRule(withoutMountedPromptContextBlocks(assignment)),
   ).slice(0, 16_384);
   // A UI defect is still a visual delivery. Requiring a capture does not
   // reclassify it as new design work or grant design-authority capabilities.
