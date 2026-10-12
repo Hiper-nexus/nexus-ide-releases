@@ -176,3 +176,44 @@ describe('deliverDictation — lane do operador para panes governados', () => {
     ).toBe(true);
   });
 });
+
+describe('F-1393 — ditado recusado pelo pane não some', () => {
+  it('as duas lanes recusam: o texto vai para a área de transferência e o resultado diz isso', async () => {
+    const preserveUndelivered = vi.fn(async () => true);
+    const { ports, logs } = makePorts({
+      deliverConfirmed: vi.fn(async () => false),
+      deliverOperator: vi.fn(async () => false),
+      preserveUndelivered,
+    });
+
+    const result = await deliverDictation('refatora o voice-controller', ports);
+
+    expect(result).toEqual({ ok: false, reason: 'delivery-failed', preserved: true });
+    expect(preserveUndelivered).toHaveBeenCalledWith('refatora o voice-controller');
+    expect(logs).toContainEqual({ level: 'info', event: 'dictation.preserved' });
+  });
+
+  it('sem pane vivo também guarda; cópia que falha vira preserved:false sem lançar', async () => {
+    const { ports } = makePorts({
+      listLivePaneIds: () => [],
+      preserveUndelivered: vi.fn(async () => {
+        throw new Error('clipboard negado');
+      }),
+    });
+
+    await expect(deliverDictation('abre o PR', ports)).resolves.toEqual({
+      ok: false,
+      reason: 'no-live-pane',
+      preserved: false,
+    });
+  });
+
+  it('entrega confirmada não toca a área de transferência', async () => {
+    const preserveUndelivered = vi.fn(async () => true);
+    const { ports } = makePorts({ preserveUndelivered });
+
+    await expect(deliverDictation('ok', ports)).resolves.toEqual({ ok: true, paneId: 'pane-focused' });
+    expect(preserveUndelivered).not.toHaveBeenCalled();
+  });
+});
+

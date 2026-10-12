@@ -158,6 +158,20 @@ describe('F-371 — dictationPending/dictationFailed no fluxo de ditado', () => 
     expect(useVoiceStore.getState().dictationFailed).toBe(true);
   });
 
+  it('F-1393: ditado recusado e copiado — o HUD manda colar com ⌘V', async () => {
+    transcribe.mockResolvedValue(sttOk('abre o painel'));
+    vi.mocked(routeDictation).mockResolvedValue({
+      ok: false,
+      reason: 'delivery-failed',
+      preserved: true,
+    });
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+
+    expect(useVoiceStore.getState().error).toContain('copiado');
+    expect(useVoiceStore.getState().error).toContain('⌘V');
+  });
+
   it('descarte (transcript vazio): limpa o pendente SEM armar falha', async () => {
     transcribe.mockResolvedValue(sttOk('   '));
 

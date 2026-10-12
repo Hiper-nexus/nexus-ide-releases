@@ -399,6 +399,13 @@ export function routeDictation(text: string): Promise<DictationRouteResult> {
       submitPromptToPaneConfirmed(paneId, promptText, sessionId),
     deliverOperator: (paneId, promptText, sessionId) =>
       submitPromptToPaneOperatorInput(paneId, promptText, sessionId),
+    // F-1393: pane ocupado/recusou — o prompt falado vai para a área de
+    // transferência em vez de sumir.
+    preserveUndelivered: (promptText) =>
+      navigator.clipboard.writeText(promptText).then(
+        () => true,
+        () => false,
+      ),
     log: logVoiceEvent,
   });
 }

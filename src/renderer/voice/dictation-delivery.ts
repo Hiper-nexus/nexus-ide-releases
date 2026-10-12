@@ -37,6 +37,12 @@ export interface DictationDeliveryPorts {
     text: string,
     sessionId: string,
   ): Promise<boolean>;
+  /**
+   * F-1393: o ditado que nenhum pane aceitou não pode sumir — o operador
+   * falou um prompt inteiro. Guarda o texto (área de transferência) e diz se
+   * conseguiu; ausente, o comportamento antigo segue.
+   */
+  preserveUndelivered?(text: string): Promise<boolean>;
   /** Espelha no voice.log cada salto do trajeto. */
   log(
     level: DictationLogLevel,
@@ -48,7 +54,12 @@ export interface DictationDeliveryPorts {
 
 export type DictationRouteResult =
   | { ok: true; paneId: string }
-  | { ok: false; reason: 'no-live-pane' | 'delivery-failed' };
+  | {
+      ok: false;
+      reason: 'no-live-pane' | 'delivery-failed';
+      /** F-1393: texto guardado na área de transferência para colar. */
+      preserved?: boolean;
+    };
 
 /**
  * Roteia o ditado para o pane focado (ou um fallback vivo) e só reporta sucesso
@@ -57,6 +68,24 @@ export type DictationRouteResult =
  * `no-live-pane` — ambos visíveis pro chamador surgir no HUD.
  */
 export async function deliverDictation(
+  text: string,
+  ports: DictationDeliveryPorts,
+): Promise<DictationRouteResult> {
+  const failed = await routeToPane(text, ports);
+  if (failed.ok || !ports.preserveUndelivered) return failed;
+  const preserved = await ports.preserveUndelivered(text).catch(() => false);
+  ports.log(
+    preserved ? 'info' : 'error',
+    'dictation.preserved',
+    preserved
+      ? 'ditado não entregue foi copiado para a área de transferência'
+      : 'ditado não entregue e a cópia falhou',
+    { reason: failed.reason, chars: text.length, preserved },
+  );
+  return { ...failed, preserved };
+}
+
+async function routeToPane(
   text: string,
   ports: DictationDeliveryPorts,
 ): Promise<DictationRouteResult> {
