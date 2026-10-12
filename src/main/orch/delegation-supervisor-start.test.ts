@@ -1333,6 +1333,21 @@ describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra L
     expect(getPaneStartWatch('pane-kimi')).toBeNull();
   });
 
+  it('revisão Grok: worker que entrega enquanto o pane fecha não tem a tarefa reaberta noutra CLI', async () => {
+    kimiStuckInComposer(10 * 60_000);
+    h.requestPaneClose.mockImplementationOnce(async () => {
+      // O handoff do worker chega no meio do fechamento.
+      h.handoffList.mockReturnValue([{ id: 'h-kimi', sessionId: 'session-kimi' }]);
+      return true;
+    });
+    await checkPaneStarts(NOW);
+    expect(h.requestPaneClose).toHaveBeenCalledTimes(1);
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
+    expect(adapterCircuitBreakers.snapshot('kimi').recentFailures).toBe(0);
+    expect(getPaneStartWatch('pane-kimi')).toBeNull();
+  });
+
   it('(a) brief ACEITO pela colagem também não basta: sem turno no prazo, reenvia', async () => {
     trackPaneStart(watchInit({ adapterId: 'qwen' }));
     notePaneStartAccepted('pane-qwen', NOW - START_GRACE_MS);
