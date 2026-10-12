@@ -171,15 +171,15 @@ it('suspension keeps a presented child alive until the AccessBoundary close acti
 });
 it('the registered warm spawner reserves trial slots and blocking drains it without killing an adopted pane', async () => {
   bridge.access!.applyLicenseToken(licenseFixture({ access: 'trial', limits: { maxAgents: 2, cloudSync: false } }));
-  registerWarmAgentSpawner({ resolveAdapter: () => adapter, resolveContext: () => ({ scope: authority().scope, cwd: dir }) });
+  registerWarmAgentSpawner({ resolveAdapter: () => adapter, resolveContext: () => ({ scope: authority().scope, cwd: dir }), acquireSpawnPermit: async () => () => undefined });
   warmPool.setWarmPoolSize(1);
   vi.spyOn(warmPool, 'measureCpuHeadroom').mockReturnValue(1);
   expect(await warmPool.replenish(adapter.id)).toBe(true);
   expect(warmPool.getMetrics().readyCount).toBe(1);
   expect(licensedAgentCount()).toBe(1);
   const adopted = spawn();
-  await Promise.resolve(); await Promise.resolve();
-  expect(warmPool.getMetrics().readyCount).toBe(1);
+  // R2: a reposição espera o permit de spawn da CLI (assíncrono) antes do PTY.
+  await vi.waitFor(() => expect(warmPool.getMetrics().readyCount).toBe(1));
   expect(licensedAgentCount()).toBe(2);
   expect(() => spawn('third-trial-child')).toThrow(/license_agent_limit/);
   bridge.access!.applyLicenseToken(licenseFixture({ access: 'suspended' }));

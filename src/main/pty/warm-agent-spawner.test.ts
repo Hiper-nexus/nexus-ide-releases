@@ -5,6 +5,8 @@ const deps = vi.hoisted(() => ({
   creator: undefined as undefined | ((cli: string) => Promise<unknown>),
   spawn: vi.fn(() => ({ sessionId: 'warm-session', startKey: 'warm-key' })),
   settle: vi.fn((_adapter: unknown): Promise<void> | null => null),
+  permit: vi.fn(async (_cli: string) => deps.release),
+  release: vi.fn(),
 }));
 
 vi.mock('./pty-manager', () => ({
@@ -33,9 +35,12 @@ beforeEach(() => {
   deps.spawn.mockClear();
   deps.settle.mockReset().mockReturnValue(null);
   deps.creator = undefined;
+  deps.release.mockReset();
+  deps.permit.mockReset().mockImplementation(async () => deps.release);
   registerWarmAgentSpawner({
     resolveAdapter: (cli) => adapterFor(cli),
     resolveContext: () => ({ scope, cwd: '/synthetic/workspace' }),
+    acquireSpawnPermit: deps.permit,
   });
 });
 
@@ -65,5 +70,30 @@ describe('F-955: pane ocioso sem a base do job nativo', () => {
     heavyBase.missing = true;
     await expect(deps.creator!('claude')).resolves.toBeNull();
     expect(deps.spawn).not.toHaveBeenCalled();
+  });
+});
+
+// R2: o pane ocioso pega o MESMO permit dos panes normais — com um
+// `npm install -g` em curso ele espera, e o updater enxerga o spawn em voo.
+describe('R2: pane ocioso do warm pool e o permit de atualização da CLI', () => {
+  it('não nasce enquanto o permit da CLI está preso; solta o permit depois do spawn', async () => {
+    let grant!: (release: () => void) => void;
+    deps.permit.mockImplementationOnce(() => new Promise((resolve) => { grant = resolve; }));
+    const pending = deps.creator!('opencode');
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(deps.permit).toHaveBeenCalledWith('opencode');
+    expect(deps.spawn).not.toHaveBeenCalled();
+    grant(deps.release);
+    await expect(pending).resolves.toMatchObject({ sessionId: 'warm-session', cli: 'opencode' });
+    expect(deps.spawn).toHaveBeenCalledOnce();
+    expect(deps.release).toHaveBeenCalledOnce();
+  });
+
+  it('spawn que lança ainda solta o permit', async () => {
+    deps.spawn.mockImplementationOnce(() => { throw new Error('pty falhou'); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await expect(deps.creator!('claude')).resolves.toBeNull();
+    expect(deps.release).toHaveBeenCalledOnce();
+    warn.mockRestore();
   });
 });
