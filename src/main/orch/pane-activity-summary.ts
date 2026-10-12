@@ -364,6 +364,33 @@ function resolveClaudeTranscript(options: {
   return best;
 }
 
+/**
+ * F-1418: transcript EXATO de uma sessão Claude (caminho do hook ou
+ * `<root>/projects/<slug>/<sessionId>.jsonl`) — sem o fallback "mais novo do
+ * cwd", que atribuiria a conversa de outro pane. Usado como prova de pedido.
+ */
+export function resolveExactClaudeTranscriptPath(options: {
+  home: string;
+  adapterId: string;
+  cwd?: string;
+  sessionId?: string;
+  transcriptPath?: string;
+}): string | null {
+  if (options.transcriptPath) {
+    const hit = statHit(options.transcriptPath);
+    if (hit) return hit.file;
+  }
+  if (!options.cwd || !options.sessionId || !/^[A-Za-z0-9_-]{1,128}$/.test(options.sessionId)) {
+    return null;
+  }
+  const slug = claudeProjectSlug(options.cwd);
+  for (const root of claudeRoots(options.home, options.adapterId)) {
+    const hit = statHit(path.join(root, 'projects', slug, `${options.sessionId}.jsonl`));
+    if (hit) return hit.file;
+  }
+  return null;
+}
+
 const CODEX_MAX_DAY_DIRS = 14;
 const CODEX_HEAD_PROBE_FILES = 5;
 

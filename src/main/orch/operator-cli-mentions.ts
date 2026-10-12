@@ -49,25 +49,41 @@ const inputBySession = new Map<string, InputChunk[]>();
  */
 const lastNamedAtBySession = new Map<string, Map<string, number>>();
 
+/**
+ * F-1418: horários em que o operador APERTOU Enter no pane (input humano com
+ * \r/\n). Só timestamps, mesma retenção de 30 min. Prova que um prompt que a
+ * TUI registrou (sugestão aceita, mensagem absorvida no meio do turno) foi
+ * enviado pela mão humana — o texto em si nunca passou pelo tap.
+ */
+const humanSubmitsBySession = new Map<string, number[]>();
+const MAX_SUBMITS_PER_SESSION = 64;
+
 let installed = false;
 
-/** Aliases conhecidos → adapter. Adapter fora da lista casa pelo próprio id. */
+/**
+ * Aliases conhecidos → adapter: id da CLI, nomes de uso comum e o nome dos
+ * modelos carro-chefe (F-1418: "devin swe2"/"swe-2", "wonder" do Muse). O
+ * próprio id do adapter sempre conta (ver `aliasesFor`). Nome que é palavra
+ * comum de pt/en fica FORA (F-818): "sol"/"luna"/"terra" (Codex), "spark"
+ * (Muse), "argon" (agy). "wonder" é exceção pedida pelo operador (é o nome
+ * que ele usa para o Muse Wonder Full); o pin ainda exige `operatorChoice`.
+ */
 const CLI_MENTION_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  claude: ['claude', 'opus', 'sonnet', 'haiku', 'fable', 'mythos'],
-  codex: ['codex', 'gpt', 'astra', 'openai'],
+  claude: ['claude', 'claude code', 'opus', 'sonnet', 'haiku', 'fable', 'mythos', 'anthropic'],
+  codex: ['codex', 'gpt', 'chatgpt', 'astra', 'openai'],
   grok: ['grok', 'xai'],
   agy: ['agy', 'gemini', 'antigravity'],
   kimi: ['kimi', 'moonshot'],
-  glm: ['glm', 'zai'],
-  'glm-flash': ['glm', 'zai'],
+  glm: ['glm', 'zai', 'z.ai'],
+  'glm-flash': ['glm', 'zai', 'z.ai'],
   'mimo-code': ['mimo', 'xiaomi'],
   'minimax-code': ['minimax'],
-  devin: ['devin', 'swe'],
-  longcat: ['longcat'],
-  muse: ['muse'],
+  devin: ['devin', 'swe', 'swe2', 'windsurf'],
+  longcat: ['longcat', 'meituan'],
+  muse: ['muse', 'wonder'],
   'muse-claude': ['muse'],
   deepseek: ['deepseek'],
-  opencode: ['opencode'],
+  opencode: ['opencode', 'big pickle'],
   openclaude: ['openclaude'],
   aider: ['aider'],
   qwen: ['qwen', 'qwen code', 'qwen 3.8'],
@@ -88,15 +104,18 @@ const KNOWN_ADAPTER_IDS = Object.keys(CLI_MENTION_ALIASES);
  * preferência (o pin é redistribuído), nunca escolha provada.
  */
 const CLI_MENTION_TYPOS: Readonly<Record<string, readonly string[]>> = {
-  claude: ['cluade', 'claud', 'calude'],
+  claude: ['cluade', 'claud', 'calude', 'cloude', 'claudee'],
   sonnet: ['sonet', 'sonnett'],
-  codex: ['codx', 'cdex'],
+  codex: ['codx', 'cdex', 'codexx', 'coddex'],
   grok: ['grook', 'grokk'],
   gemini: ['gemni', 'geminy', 'gemeni'],
+  antigravity: ['antigravit', 'antigraviti', 'antigravty', 'antigrav'],
   kimi: ['kimmi', 'kimy'],
-  minimax: ['minimaxx', 'minimx'],
-  devin: ['devim'],
-  muse: ['musse'],
+  minimax: ['minimaxx', 'minimx', 'minmiax'],
+  mimo: ['mimmo'],
+  devin: ['devim', 'devinn', 'deivin', 'devni', 'dvein'],
+  muse: ['musse', 'muze'],
+  wonder: ['wondr', 'woder'],
   deepseek: ['deepsek', 'depseek', 'dipseek', 'deepseak'],
   opencode: ['opencod', 'opnecode'],
   openclaude: ['openclaud'],
@@ -188,8 +207,10 @@ function normalizeForMatch(text: string): string {
     .replace(/[̀-ͯ]/g, '');
 }
 
+/** F-1418: o id do adapter sempre conta, além dos aliases da família. */
 function aliasesFor(adapterId: string): readonly string[] {
-  return CLI_MENTION_ALIASES[adapterId] ?? [adapterId];
+  const aliases = CLI_MENTION_ALIASES[adapterId] ?? [];
+  return aliases.includes(adapterId) ? aliases : [adapterId, ...aliases];
 }
 
 function escapeRegex(value: string): string {
@@ -329,6 +350,55 @@ function remember(sessionId: string, data: string): void {
   }
 }
 
+function noteHumanSubmit(sessionId: string, at: number): void {
+  const kept = (humanSubmitsBySession.get(sessionId) ?? []).filter(
+    (t) => at - t <= RETENTION_MS,
+  );
+  kept.push(at);
+  humanSubmitsBySession.set(sessionId, kept.slice(-MAX_SUBMITS_PER_SESSION));
+}
+
+/**
+ * F-1418: folga entre o Enter humano no tap e o carimbo que a TUI grava no
+ * prompt (o Claude Code grava ~100 ms depois; 5 s cobre main lento). Enter
+ * DEPOIS do carimbo só vale até 1 s (relógios do mesmo host).
+ */
+export const HUMAN_SUBMIT_BEFORE_MS = 5_000;
+export const HUMAN_SUBMIT_AFTER_MS = 1_000;
+
+/** Prompt que a própria CLI registrou como enviado pelo humano (transcript). */
+export interface SubmittedOperatorPrompt {
+  readonly at: number;
+  readonly text: string;
+}
+
+/**
+ * F-1418: o operador nomeou a CLI num prompt que a TUI registrou — sugestão
+ * aceita com Enter/Tab ou mensagem absorvida no meio do turno, cujo TEXTO não
+ * passa pelo tap (só a tecla). Vale quando o prompt está na janela, nomeia a
+ * CLI e há um Enter HUMANO no tap colado ao carimbo do prompt; texto injetado
+ * pelo Nexus (handoff, kickoff) é enviado por Enter `system` e não casa.
+ */
+export function operatorSubmittedPromptNamesCli(
+  sessionId: string | undefined,
+  adapterId: string,
+  prompts: readonly SubmittedOperatorPrompt[],
+  now = Date.now(),
+  windowMs = OPERATOR_CHOICE_PROOF_WINDOW_MS,
+): boolean {
+  if (!sessionId) return false;
+  const submits = humanSubmitsBySession.get(sessionId);
+  if (!submits || submits.length === 0) return false;
+  const window = Math.min(windowMs, RETENTION_MS);
+  return prompts.some((prompt) =>
+    Number.isFinite(prompt.at) &&
+    now - prompt.at >= 0 &&
+    now - prompt.at <= window &&
+    submits.some((t) =>
+      t >= prompt.at - HUMAN_SUBMIT_BEFORE_MS && t <= prompt.at + HUMAN_SUBMIT_AFTER_MS) &&
+    textNamesCli(prompt.text, adapterId));
+}
+
 /**
  * F-682: janela da PROVA exigida por `operatorChoice:true` — a retenção inteira
  * do input do operador (a flag sozinha é afirmação do agente, não pedido).
@@ -352,17 +422,20 @@ export function installOperatorCliMentionTap(): () => void {
   installed = true;
   const untapInput = tapSessionInput((sessionId, data, origin) => {
     if (origin !== 'human') return;
+    if (/[\r\n]/u.test(data)) noteHumanSubmit(sessionId, Date.now());
     remember(sessionId, data);
   });
   const untapExit = tapSessionExit((sessionId) => {
     inputBySession.delete(sessionId);
     lastNamedAtBySession.delete(sessionId);
+    humanSubmitsBySession.delete(sessionId);
   });
   return () => {
     untapInput();
     untapExit();
     inputBySession.clear();
     lastNamedAtBySession.clear();
+    humanSubmitsBySession.clear();
     installed = false;
   };
 }

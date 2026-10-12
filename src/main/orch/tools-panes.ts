@@ -171,6 +171,7 @@ import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-regi
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { isOperatorTabMission } from './operator-tab-mission-resume';
 import { OPERATOR_CHOICE_PROOF_WINDOW_MS, operatorRecentlyNamedCli } from './operator-cli-mentions';
+import { operatorNamedCliInSubmittedPrompts } from './operator-submitted-prompts';
 import {
   judgeIdleHelperReuse,
   listIdleHelperCandidates,
@@ -1347,15 +1348,24 @@ const paneSpawnAfterTabMission = {
     // da missão RU-261 (29/09) marcou-a sozinho em 4 de 4 helpers Claude. Só
     // vale quando o operador nomeou a CLI no pane (input humano ou orientação
     // do Quadro) dentro da retenção; sem isso o pin vira preferência.
+    // F-1418: sugestão aceita e mensagem absorvida no meio do turno não passam
+    // o TEXTO pelo tap (só a tecla) — o prompt que a CLI registrou como humano,
+    // casado com o Enter humano do tap, também prova o pedido.
     const operatorChoiceProved =
       pinnedAdapterId !== undefined &&
       args.operatorChoice === true &&
-      operatorRecentlyNamedCli(
+      (operatorRecentlyNamedCli(
         ctx.sessionId,
         pinnedAdapterId,
         Date.now(),
         OPERATOR_CHOICE_PROOF_WINDOW_MS,
-      );
+      ) ||
+        (await operatorNamedCliInSubmittedPrompts(
+          ctx.sessionId,
+          pinnedAdapterId,
+          Date.now(),
+          OPERATOR_CHOICE_PROOF_WINDOW_MS,
+        )));
     const operatorChoiceUnproved =
       args.operatorChoice === true && !operatorChoiceProved;
     const pinRedistributed =
