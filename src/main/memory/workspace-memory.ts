@@ -90,6 +90,12 @@ const DATABASE_MODE = 0o600;
 const RECALL_CANDIDATE_POOL = 64;
 const MAX_QUERY_TOKENS = 12;
 /**
+ * F-1350: fonte dos recibos de entrega (relato de agente por handoff aceito).
+ * Ficam no banco para auditoria, mas a injeção automática os põe depois de
+ * fato, decisão e problema resolvido.
+ */
+export const TRANSPORT_RECEIPT_SOURCE = 'trusted:accepted-handoff';
+/**
  * Provenance prefix of Nexus-verified events. These are the only memories the
  * automatic prompt recall injects (`trustedOnly`), so they are also the only
  * ones a file on disk may never author.
@@ -2193,6 +2199,8 @@ export class WorkspaceMemoryStore {
    */
   topTrustedWorkspace(limit: number): MemoryRecallHit[] {
     this.#assertOpen();
+    // F-1350: recibos de entrega vêm depois de todo o resto — dezenas deles,
+    // recentes e com o mesmo peso, tiravam fato e decisão do bloco fixo.
     const rows = this.#workspaceDb
       .prepare(
         `SELECT id, content, kind, scope, importance, source,
@@ -2200,10 +2208,10 @@ export class WorkspaceMemoryStore {
          FROM memories
          WHERE scope = 'workspace' AND superseded_by IS NULL
            AND source LIKE 'trusted:%'
-         ORDER BY importance DESC, updated_at DESC, id ASC
+         ORDER BY (source = ?) ASC, importance DESC, updated_at DESC, id ASC
          LIMIT ?`,
       )
-      .all(Math.max(0, Math.min(limit, 32)))
+      .all(TRANSPORT_RECEIPT_SOURCE, Math.max(0, Math.min(limit, 32)))
       .map((raw) => memoryRowSchema.parse(raw));
     return rows.map((row) =>
       Object.freeze({

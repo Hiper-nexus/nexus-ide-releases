@@ -280,6 +280,43 @@ describe('automatic workspace-memory recall', () => {
     expect(store.stats().workspace.totalRecalls).toBe(before + 1);
   });
 
+  it('F-1350: recibo de entrega (accepted-handoff) perde para o fato de mesmo peso e mesmo bm25 na injeção', () => {
+    const hit = (id: string, source: string, content: string) => ({
+      id, content, kind: 'fact' as const, scope: 'workspace' as const, importance: 4, source,
+      createdAt: 1, updatedAt: 1, recallCount: 0, score: 2,
+    });
+    const receiptContent = '# Delivered handoff\n\nAccepted handoff:\n' +
+      'Summary: [Agent report, unverified; Jev approved for retention, not factual verification.] F-1290 corrigido em fix/w-ranking\n' +
+      'Reference: h-1';
+    const context = formatAutoRecallContext([
+      hit('receipt', 'trusted:accepted-handoff', receiptContent),
+      hit('fact', 'trusted:resolved-problem', 'Resolved problem: cobrança idempotente usa cobrarUmaVez.'),
+    ], 'execution');
+    expect(context.indexOf('cobrarUmaVez')).toBeGreaterThan(-1);
+    expect(context.indexOf('F-1290')).toBeGreaterThan(-1); // nada é apagado
+    expect(context.indexOf('cobrarUmaVez')).toBeLessThan(context.indexOf('F-1290'));
+  });
+
+  it('F-1350: bloco fixo do MCP não deixa recibos recentes empurrarem o fato para fora', () => {
+    const store = getWorkspaceMemoryStore(scope);
+    store.retain({
+      content: 'Resolved problem: cobrança idempotente usa cobrarUmaVez.',
+      kind: 'fact', importance: 4, source: 'trusted:resolved-problem',
+    });
+    const after = Date.now();
+    while (Date.now() <= after) { /* recibos ficam estritamente mais novos */ }
+    for (let index = 0; index < 32; index += 1) {
+      store.retain({
+        content: `# Delivered handoff\n\nAccepted handoff:\nSummary: entrega ${index} do pane recebida\nReference: h-${index}`,
+        kind: 'fact', importance: 4, source: 'trusted:accepted-handoff',
+      });
+    }
+    const block = standingWorkspaceMemoryBlock(scope)!;
+    expect(block).toContain('cobrarUmaVez');
+    expect(block).toContain('entrega ');
+    expect(block.indexOf('cobrarUmaVez')).toBeLessThan(block.indexOf('entrega '));
+  });
+
   it('caps formatted memory between the architectural 2–4 KB envelope', () => {
     const context = formatAutoRecallContext(
       Array.from({ length: 12 }, (_, index) => ({

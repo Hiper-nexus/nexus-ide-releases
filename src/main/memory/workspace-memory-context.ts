@@ -7,6 +7,7 @@ import { getOrchSettings } from '../persistence/settings-store';
 import { hasMountedPromptContextBlock, mountPromptContextBlocks } from '../orch/prompt-context-blocks';
 import {
   getWorkspaceMemoryStore,
+  TRANSPORT_RECEIPT_SOURCE,
   type MemoryRecallHit,
   type WorkspaceMemoryStore,
 } from './workspace-memory';
@@ -230,11 +231,18 @@ export function planAutoRecallInjection(
 ): AutoRecallInjection | null {
   // Accepted receipts remain in the audit bank, but IDs alone are not reusable
   // knowledge. Only their distilled summary belongs in an agent's context.
-  const memories = dedupeHitsBySubject(hits).flatMap((hit) => {
-    if (hit.source !== 'trusted:accepted-handoff') return [hit];
+  const distilled = dedupeHitsBySubject(hits).flatMap((hit) => {
+    if (hit.source !== TRANSPORT_RECEIPT_SOURCE) return [hit];
     const summary = /^Summary: (?!Handoff accepted by Nexus Main\.$)(.+)$/m.exec(hit.content)?.[1];
     return summary ? [{ ...hit, content: summary }] : [];
-  }).slice(0, AUTO_RECALL_LIMIT);
+  });
+  // F-1350: recibo de entrega tem o peso de uma decisão (importance 4) e vinha
+  // primeiro por ser recente. Fato, decisão e problema resolvido entram antes;
+  // o recibo continua, depois deles (nada é apagado).
+  const memories = [
+    ...distilled.filter((hit) => hit.source !== TRANSPORT_RECEIPT_SOURCE),
+    ...distilled.filter((hit) => hit.source === TRANSPORT_RECEIPT_SOURCE),
+  ].slice(0, AUTO_RECALL_LIMIT);
   const notes = dedupeHitsBySubject(
     unverifiedHits.filter(
       (hit) => isUnverifiedMemorySource(hit.source) && !hit.flags?.includes('quarantine'),
