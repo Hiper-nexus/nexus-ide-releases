@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { redactSecretText } from '../../shared/secret-redaction';
 
 export const CONTENT_AUDIT_MAX_CHARS = 256 * 1024;
 const MAX_EVIDENCE_CHARS = 240;
@@ -88,9 +89,17 @@ export const SECRET_RE = /(?:sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|(?:api[_-]?k
 // Only ever used through matchAll, which clones it: no shared lastIndex state.
 const SECRET_GLOBAL_RE = new RegExp(SECRET_RE.source, 'gi');
 
-export function evidenceAt(content: string, index: number, match: string): string {
-  const start = Math.max(0, index - 80);
-  const end = Math.min(content.length, index + match.length + 80);
+/**
+ * F-1331 (revisão Fable): `const token = "…"` / `password: '…'` — quoted
+ * assignment the shared command-line redactor does not see (lowercase name,
+ * spaces around `=`). Only the value goes.
+ */
+const QUOTED_ASSIGN_SECRET_RE =
+  /\b([\w.-]*(?:token|secret|password|passwd|api[_-]?key|credential)[\w-]*["']?\s*[:=]\s*)(["'])[^"'\n]{8,}\2/gi;
+/** Widen the window to whole tokens so a prefix (ghp_, xoxb-, eyJ, scheme://) is never cut off. */
+const EVIDENCE_WIDEN_LIMIT = 2048;
+
+function redactEvidenceRange(content: string, start: number, end: number): string {
   // F-1331: secrets are found in the whole content, not in the excerpt, so one
   // cut by the window edge ("pi03-AAAA…") is still redacted.
   let raw = '';
@@ -103,6 +112,23 @@ export function evidenceAt(content: string, index: number, match: string): strin
     cursor = secretEnd;
   }
   raw += content.slice(cursor, end);
+  // F-1331 (revisão Fable): the shared patterns (ghp_, xoxb-, JWT,
+  // scheme://user:pass@, Bearer, NAME=value…) — single source with the
+  // terminal/memory redactor.
+  return redactSecretText(raw).text.replace(QUOTED_ASSIGN_SECRET_RE, '$1$2[REDACTED]$2');
+}
+
+export function evidenceAt(content: string, index: number, match: string): string {
+  let start = Math.max(0, index - 80);
+  let end = Math.min(content.length, index + match.length + 80);
+  const minStart = Math.max(0, start - EVIDENCE_WIDEN_LIMIT);
+  const maxEnd = Math.min(content.length, end + EVIDENCE_WIDEN_LIMIT);
+  while (start > minStart && !/\s/.test(content[start - 1]!)) start -= 1;
+  while (end < maxEnd && !/\s/.test(content[end]!)) end += 1;
+  const redacted = redactEvidenceRange(content, start, end);
+  // Re-center on the match: cutting already-redacted text cannot leak.
+  const lead = redactEvidenceRange(content, start, index).length;
+  const raw = redacted.slice(Math.max(0, lead - 80), lead + match.length + 80);
   const excerpt = revealHidden(raw).replace(/\s+/g, ' ').trim();
   return excerpt.length > MAX_EVIDENCE_CHARS
     ? `${excerpt.slice(0, MAX_EVIDENCE_CHARS - 1)}…`
