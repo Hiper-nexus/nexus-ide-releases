@@ -411,6 +411,29 @@ describe('CommandBlockMenu histórico das CLIs (F-1171)', () => {
     expect(historySection().textContent).toContain('echo 2');
   });
 
+  it.each([[0, 1], [1, 0]])('não duplica uma página com dois cliques e respostas na ordem %s, %s (F-1371)', async (first, second) => {
+    const finishes: Array<(value: { entries: unknown[]; hasMore: boolean }) => void> = [];
+    api.searchHistory
+      .mockResolvedValueOnce({
+        entries: [historyEntry('h1', 'echo 1', 'imported')],
+        hasMore: true,
+      })
+      .mockImplementation(() => new Promise((resolve) => finishes.push(resolve)));
+    await openMenu();
+    const more = historySection().querySelector<HTMLButtonElement>('.cmd-history__more')!;
+    await act(async () => {
+      more.click();
+      more.click();
+    });
+    expect(finishes).toHaveLength(2);
+    expect(api.searchHistory).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 1 }));
+    const page = { entries: [historyEntry('h2', 'echo 2', 'imported')], hasMore: false };
+    await act(async () => { finishes[first](page); });
+    await act(async () => { finishes[second](page); });
+    expect(historySection().querySelectorAll('code')).toHaveLength(2);
+    expect(historySection().querySelectorAll('button[aria-label="Copiar comando: echo 2"]')).toHaveLength(1);
+  });
+
   it('reaproveita o comando: copia ou insere no terminal sem Enter', async () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, 'clipboard', {
