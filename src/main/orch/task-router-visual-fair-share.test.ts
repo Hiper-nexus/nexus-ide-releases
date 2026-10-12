@@ -116,6 +116,29 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
       expect(decision.reason).toContain('Next/jogo → Opus 5.5 (regra do operador)');
     });
 
+  // Revisão Fable R1: frases medidas na revisão cruzada.
+  it.each(['Implement the next step of the pagination handler', 'Write the game plan for the migration',
+    'Create the game plan for the migration'])('Fable R1: next/game soltos não viram visual Opus max: %s', (task) => {
+    const decision = route(task, everyone);
+    expect(decision.reason).not.toContain('Next/jogo');
+    expect(decision.specialty).not.toBe('visual');
+  });
+
+  it('Fable R1: security em Next.js app router nunca é sobrescrita', () => {
+    const decision = route('Fix auth bug in the Next.js app router', everyone);
+    expect(decision.specialty).toBe('security');
+    expect(decision.reason).not.toContain('Next/jogo');
+  });
+
+  it('Fable R1: "Next steps" do brief anexado (classificationText) não aciona Next/jogo', () => {
+    const decision = route('Implementar o filtro de status da listagem de pedidos', everyone, {
+      classificationText: 'Implementar o filtro de status da listagem de pedidos\n\n## Next steps\n- criar um jogo de exemplo com create-next-app',
+      visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]),
+    });
+    expect(decision.reason).not.toContain('Next/jogo');
+    expect(decision.model).not.toBe('claude-opus-5-5');
+  });
+
   it.each(['prepare the next app release', 'ship the next app version'])('Grok: "next app" em inglês genérico não é Next.js: %s', (task) => {
     const decision = route(task, everyone);
     expect(decision.reason).not.toContain('Next/jogo');

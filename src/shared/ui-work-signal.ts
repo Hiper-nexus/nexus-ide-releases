@@ -251,9 +251,10 @@ const UI_TERMS: readonly UiWorkTerm[] = Object.freeze([
     // F-1400 B1 (revisão Fable): teoria dos jogos/game theory é matemática de
     // decisão ("game theory for the pricing engine"), não jogo. Revisão Grok:
     // "teoria de/da/das jogos" e "the name of the game" também ficam fora.
+    // Revisão Fable R1: "game plan" é plano, não jogo.
     rule: 'ui.game',
     pattern:
-      /\b(?:(?<!\bteoria\s+d[eoa]s?\s+)jogos?|(?<!\bname\s+of\s+the\s+)games?(?![-\s]+theor)|videogames?|video[-\s]*games?|gameplay|game[-\s]*dev\w*|gamedev|godot|unity|unreal|phaser|pygame|raylib|bevy|love2d|tilemaps?|platformer|roguelike)\b/,
+      /\b(?:(?<!\bteoria\s+d[eoa]s?\s+)jogos?|(?<!\bname\s+of\s+the\s+)games?(?![-\s]+(?:theor|plans?\b))|videogames?|video[-\s]*games?|gameplay|game[-\s]*dev\w*|gamedev|godot|unity|unreal|phaser|pygame|raylib|bevy|love2d|tilemaps?|platformer|roguelike)\b/,
     selfEvident: true,
     authority: 'craft',
   },

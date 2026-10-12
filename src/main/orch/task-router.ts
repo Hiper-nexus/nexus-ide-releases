@@ -703,7 +703,7 @@ const BOUNDED = (body: string) => new RegExp(`(?<![\\p{L}\\p{N}_])(?:${body})(?!
 const NEXT_FRONT_RE = BOUNDED('next(?:\\.|[-\\s]+)?js|app\\s+router|create-next-app|phaser|three\\.js|unity\\s+webgl');
 // Revisão Grok: "game/jogo + browser/2d/canvas" pinava Opus em teoria dos
 // jogos e expressão idiomática — esses trechos saem antes da intenção.
-const NOT_A_GAME_RE = /teoria\s+d[eoa]s?\s+jogos?|teoría\s+d[eoa]s?\s+jogos?|game[-\s]+theor\w*|name\s+of\s+the\s+game/giu;
+const NOT_A_GAME_RE = /teoria\s+d[eoa]s?\s+jogos?|teoría\s+d[eoa]s?\s+jogos?|game[-\s]+theor\w*|name\s+of\s+the\s+game|game[-\s]+plans?/giu;
 // Revisão Grok: JOGO É SEMPRE Opus 5.5 max (regra do operador) — basta a
 // intenção de construir um jogo (verbo de construção + jogo/game) ou uma
 // engine/gênero de jogo, sem exigir palavra de contexto de front.
@@ -1743,7 +1743,9 @@ export function routeTask(
   const heuristicSpecialty = classifyRouteSpecialty(classificationText);
   // F-1400 B1 (revisão Fable): só Next.js/app router e jogo COM contexto de
   // front; segurança nunca é sobrescrita (F-821 — securityWork precisa valer).
-  const nextOrGame = heuristicSpecialty.specialty !== 'security' && isNextOrGameTask(classificationText);
+  // Revisão Fable R1: só o texto da TASK — o classificationText traz os briefs
+  // .md referenciados, e um "Next steps" num brief mandava a missão ao Opus max.
+  const nextOrGame = heuristicSpecialty.specialty !== 'security' && isNextOrGameTask(taskText);
   const specialtyVerdict = context.specialtyOverride
     ? {
         ...heuristicSpecialty,
