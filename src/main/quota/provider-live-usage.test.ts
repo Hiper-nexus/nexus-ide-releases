@@ -11,6 +11,26 @@ vi.mock('./agy-cli-usage', () => ({ fetchAgyCliUsageWindows: agyCli }));
 // whatever happens to be running on the dev machine.
 const agyBridge = vi.hoisted(() => vi.fn<() => Promise<QuotaWindow[] | null>>(async () => null));
 vi.mock('./agy-bridge', () => ({ fetchAgyBridgeUsage: agyBridge }));
+// Token Plan Alibaba: probe compartilhado Qwen + DeepSeek (console/`bl`).
+const alibabaProbe = vi.hoisted(() =>
+  vi.fn(async () => ({
+    windows: [
+      {
+        kind: 'monthly' as const,
+        label: 'Mensal',
+        usedRatio: 0.0104,
+        source: 'provider-api' as const,
+        confidence: 'high' as const,
+      },
+    ] satisfies QuotaWindow[],
+  })),
+);
+vi.mock('./alibaba-token-plan-usage', () => ({
+  probeAlibabaTokenPlanUsage: alibabaProbe,
+  parseAlibabaTokenPlanUsage: () => [],
+  fetchAlibabaTokenPlanUsage: async () => ({ windows: null }),
+  fetchAlibabaTokenPlanUsageFromCli: async () => ({ windows: null }),
+}));
 
 describe('identidade da credencial que leu a cota (F-720)', () => {
   const zaiQuota = {
@@ -185,6 +205,120 @@ describe('fetchLiveProviderWindows', () => {
     resolveMinimaxCodeLogin.mockClear();
     await fetchLiveProviderWindows('minimax-code', 'saved-account', deps);
     expect(resolveMinimaxCodeLogin).not.toHaveBeenCalled();
+  });
+
+  it('muse: a linha nativa lê Current + Semanal do snapshot da assinatura', async () => {
+    const sse = 'data: {"subscription":{"window":{}}}\n\ndata: {"subscription":{"tier":"pro","weekly":{"resets_at":"1789344000","used_percent":"13"},"window":{"resets_at":"1789078632","used_percent":"31","window_duration_mins":"300"}}}\n\n';
+    const fetchImpl = vi.fn(async (_url: string) => ({ ok: true, status: 200, json: async () => ({}), text: async () => sse }));
+    const resolveMuseCredential = vi.fn(() => ({ apiKey: 'muse-login-key', model: 'muse-spark-1.3' }));
+    const deps = { resolveMuseCredential, museSignedIn: () => true, resolveGenericApiKeyCandidates: () => [], fetchImpl };
+    const probe = await fetchLiveProviderWindows('muse', undefined, deps, 100);
+    expect(probe.windows?.map((w) => [w.kind, w.label, w.usedRatio])).toEqual([
+      ['hours', '5 Horas', 0.31],
+      ['weekly', 'Semanal', 0.13],
+    ]);
+    expect(probe.credentialId).toBe(quotaCredentialId(['muse-login-key']));
+    // Linha de conta salva nunca usa a credencial do login nativo.
+    resolveMuseCredential.mockClear();
+    const saved = await fetchLiveProviderWindows('muse', 'saved-account', deps, 100);
+    expect(resolveMuseCredential).not.toHaveBeenCalled();
+    expect(saved).toEqual({ windows: null, hint: 'no-credential' });
+  });
+
+  it('muse: sessão provada sem segredo legível é conta conectada; sem sessão é sem credencial', async () => {
+    const fetchImpl = vi.fn();
+    const deps = { resolveMuseCredential: () => null, resolveGenericApiKeyCandidates: () => [], fetchImpl };
+    expect(
+      await fetchLiveProviderWindows('muse', undefined, { ...deps, museSignedIn: () => true }),
+    ).toEqual({ windows: null, hint: 'quota-key-required' });
+    expect(
+      await fetchLiveProviderWindows('muse', undefined, { ...deps, museSignedIn: () => false }),
+    ).toEqual({ windows: null, hint: 'no-credential' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('muse: credencial recusada (401) vira auth-expired', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => '' }));
+    const probe = await fetchLiveProviderWindows('muse', undefined, {
+      resolveMuseCredential: () => ({ apiKey: 'dead-key', model: 'muse-spark-1.3' }),
+      resolveGenericApiKeyCandidates: () => [],
+      fetchImpl,
+    }, 100);
+    expect(probe).toEqual({ windows: null, hint: 'auth-expired' });
+  });
+
+  it('openclaude: linha nativa lê OAuth usage do login da máquina', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        five_hour: { utilization: 31, resets_at: '2026-10-12T20:00:00Z' },
+        seven_day: { utilization: 13, resets_at: '2026-10-16T12:00:00Z' },
+      }),
+      text: async () => '',
+    }));
+    const resolveOpenClaudeToken = vi.fn(() => 'sk-ant-oat01-oc');
+    const probe = await fetchLiveProviderWindows('openclaude', undefined, {
+      resolveOpenClaudeToken,
+      openclaudeCliUsage: async () => ({ windows: null }),
+      resolveGenericApiKeyCandidates: () => [],
+      fetchImpl,
+    }, 100);
+    expect(probe.windows?.map((w) => w.usedRatio)).toEqual([0.31, 0.13]);
+    expect(probe.credentialId).toBe(quotaCredentialId(['sk-ant-oat01-oc']));
+    // Conta salva nunca lê o token nativo.
+    resolveOpenClaudeToken.mockClear();
+    const saved = await fetchLiveProviderWindows('openclaude', 'saved-account', {
+      resolveOpenClaudeToken,
+      resolveGenericApiKeyCandidates: () => [],
+      fetchImpl,
+    }, 100);
+    expect(resolveOpenClaudeToken).not.toHaveBeenCalled();
+    expect(saved).toEqual({ windows: null, hint: 'no-credential' });
+  });
+
+  it('openclaude: sem token, sessão provada vira auth-expired; sem sessão, no-credential', async () => {
+    const fetchImpl = vi.fn();
+    const deps = {
+      resolveOpenClaudeToken: () => null,
+      openclaudeCliUsage: async () => ({ windows: null, failure: 'unavailable' as const }),
+      resolveGenericApiKeyCandidates: () => [],
+      fetchImpl,
+    };
+    expect(
+      await fetchLiveProviderWindows('openclaude', undefined, { ...deps, openclaudeSignedIn: () => true }),
+    ).toEqual({ windows: null, hint: 'auth-expired' });
+    expect(
+      await fetchLiveProviderWindows('openclaude', undefined, { ...deps, openclaudeSignedIn: () => false }),
+    ).toEqual({ windows: null, hint: 'no-credential' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('qwen e deepseek-token-plan leem o MESMO plano Alibaba (Credits compartilhado)', async () => {
+    alibabaProbe.mockClear();
+    const key = 'sk-sp-shared-alibaba';
+    const deps = {
+      resolveGenericApiKeyCandidates: (adapterId: string) =>
+        adapterId === 'qwen' || adapterId === 'deepseek' ? [key] : [],
+      resolveApiQuotaKey: async () => key,
+      fetchImpl: vi.fn(),
+    };
+    const qwen = await fetchLiveProviderWindows('qwen', undefined, deps, 100);
+    const deepseek = await fetchLiveProviderWindows(
+      'deepseek',
+      undefined,
+      { ...deps },
+      100,
+      'deepseek-token-plan',
+      'api-key',
+    );
+    expect(qwen.windows?.[0]).toMatchObject({ kind: 'monthly', usedRatio: 0.0104 });
+    expect(deepseek.windows?.[0]).toMatchObject({ kind: 'monthly', usedRatio: 0.0104 });
+    // Mesma chave → mesmo grupo de cota na UI (uma linha, não duas).
+    expect(qwen.credentialId).toBe(quotaCredentialId([key]));
+    expect(deepseek.credentialId).toBe(quotaCredentialId([key]));
+    expect(qwen.credentialId).toBe(deepseek.credentialId);
+    expect(alibabaProbe).toHaveBeenCalled();
   });
 
   it('never reads native OpenCode keys for an account-bound quota row', async () => {

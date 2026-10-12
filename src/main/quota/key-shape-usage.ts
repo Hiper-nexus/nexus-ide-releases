@@ -12,6 +12,7 @@ import { fetchKimiCodingUsageWindows } from './kimi-usage';
 import { fetchGrokUsageWindows } from './grok-usage';
 import { fetchMinimaxTokenPlan } from './minimax-code-usage';
 import { minimaxCodeSignedInRegion } from '../adapters/minimax-code-auth';
+import { probeAlibabaTokenPlanUsage } from './alibaba-token-plan-usage';
 import { knownWindow } from './quota-normalize';
 
 export type KeyShape =
@@ -39,7 +40,7 @@ export function classifyKeyShape(key: string): KeyShape {
   return 'unknown';
 }
 
-type QuotaProvider = 'claude' | 'kimi' | 'grok' | 'glm' | 'longcat' | 'minimax-code';
+type QuotaProvider = 'claude' | 'kimi' | 'grok' | 'glm' | 'longcat' | 'minimax-code' | 'alibaba-token-plan';
 const DECLARED_PROVIDERS = new Map<string, QuotaProvider>([
   ['claude', 'claude'], ['anthropic', 'claude'],
   ['kimi', 'kimi'], ['kimi-for-coding', 'kimi'], ['moonshotai', 'kimi'],
@@ -47,6 +48,11 @@ const DECLARED_PROVIDERS = new Map<string, QuotaProvider>([
   ['glm', 'glm'], ['glm-flash', 'glm'], ['zai', 'glm'], ['zai-coding-plan', 'glm'], ['zhipu', 'glm'],
   ['longcat', 'longcat'],
   ['minimax-code', 'minimax-code'],
+  // Um Token Plan Alibaba = um Credits pool: Qwen Code, DeepSeek (rota
+  // token-plan) e GLM no mesmo `BAILIAN_TOKEN_PLAN_API_KEY` / `sk-sp-`.
+  ['qwen', 'alibaba-token-plan'], ['dashscope', 'alibaba-token-plan'],
+  ['bailian', 'alibaba-token-plan'], ['deepseek-token-plan', 'alibaba-token-plan'],
+  ['alibaba-token-plan', 'alibaba-token-plan'],
 ]);
 
 function prefixProvider(shape: KeyShape): QuotaProvider | 'openai' | null {
@@ -89,6 +95,17 @@ export async function fetchWindowsForApiKey(
     case 'minimax-code': return fetchMinimaxTokenPlan(token, {
       fetchImpl, now, region: minimaxCodeSignedInRegion() === 'cn' ? 'cn' : 'overseas',
     });
+    case 'alibaba-token-plan': {
+      // A chave de inferência (`sk-sp-`) não lê cota: o usage é do console
+      // (Cookie / `bl`). Qwen e DeepSeek compartilham o MESMO probe — a
+      // janela publicada é a do plano, não de cada CLI.
+      const probe = await probeAlibabaTokenPlanUsage({
+        fetchImpl,
+        now,
+        skipCli: false,
+      });
+      return probe.windows?.length ? probe.windows : null;
+    }
   }
 }
 

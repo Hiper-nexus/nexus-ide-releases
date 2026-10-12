@@ -209,6 +209,16 @@ export interface QuotaServiceDeps {
   minimaxCodeSignedIn?: () => boolean;
   /** Access token vigente do `mcode login` e sua região, só para a cota. */
   resolveMinimaxCodeLogin?: () => { accessToken: string; region: 'en' | 'cn' } | null;
+  /** Credencial da assinatura Muse (`muse login`), só para a sonda de cota. */
+  resolveMuseCredential?: LiveUsageAuthResolvers['resolveMuseCredential'];
+  /** Prova pública de sessão Muse (sem tocar o segredo). */
+  museSignedIn?: () => boolean;
+  /** Access token OAuth do login nativo OpenClaude. */
+  resolveOpenClaudeToken?: LiveUsageAuthResolvers['resolveOpenClaudeToken'];
+  /** Fallback print-only `openclaude /usage`. */
+  openclaudeCliUsage?: LiveUsageAuthResolvers['openclaudeCliUsage'];
+  /** Prova pública de sessão OpenClaude. */
+  openclaudeSignedIn?: LiveUsageAuthResolvers['openclaudeSignedIn'];
   /**
    * Detecção de plano de assinatura por linha (tier do provider → USD/mês de
    * lista quando mapeado). Produção liga `detectProviderPlan`; testes omitem
@@ -638,6 +648,11 @@ export class QuotaService {
       resolveGenericApiKeyCandidates: this.#deps.resolveGenericApiKeyCandidates,
       minimaxCodeSignedIn: this.#deps.minimaxCodeSignedIn,
       resolveMinimaxCodeLogin: this.#deps.resolveMinimaxCodeLogin,
+      resolveMuseCredential: this.#deps.resolveMuseCredential,
+      museSignedIn: this.#deps.museSignedIn,
+      resolveOpenClaudeToken: this.#deps.resolveOpenClaudeToken,
+      openclaudeCliUsage: this.#deps.openclaudeCliUsage,
+      openclaudeSignedIn: this.#deps.openclaudeSignedIn,
       fetchImpl: this.#deps.fetchImpl,
     };
   }

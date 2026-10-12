@@ -366,6 +366,15 @@ import {
   minimaxCodeHasCredential,
   minimaxCodeLoginAccessToken,
 } from "./adapters/minimax-code-auth";
+import {
+  museLoginSignedIn,
+  resolveMuseLoginCredential,
+} from "./quota/muse-usage";
+import {
+  openclaudeSignedIn,
+  probeOpenClaudeCliUsage,
+  resolveOpenClaudeToken,
+} from "./quota/openclaude-usage";
 import { closeDb } from "./persistence/db";
 import {
   getOrchSettings,
@@ -917,6 +926,16 @@ async function bootstrap(): Promise<void> {
     // (decisão do operador) lê a cota sem Subscription Key, só leitura.
     minimaxCodeSignedIn: () => minimaxCodeHasCredential(),
     resolveMinimaxCodeLogin: () => minimaxCodeLoginAccessToken(),
+    // Assinatura Muse (`muse login`): estado público prova a sessão e a
+    // credencial vigente (env/auth.json/cofre) alimenta a sonda mínima que
+    // lê Current + Semanal — a Meta não tem endpoint de usage.
+    museSignedIn: () => museLoginSignedIn(),
+    resolveMuseCredential: () => resolveMuseLoginCredential(),
+    // OpenClaude (fork do Claude Code): token OAuth nativo + fallback
+    // `openclaude /usage` — mesmas janelas 5h/semanal do Claude.
+    resolveOpenClaudeToken: () => resolveOpenClaudeToken(),
+    openclaudeCliUsage: () => probeOpenClaudeCliUsage(),
+    openclaudeSignedIn: () => openclaudeSignedIn(),
     // Plano de assinatura por linha (tier Claude/Codex/AGY → USD/mês de
     // lista). Reusa os mesmos resolvers de credencial do probe de uso.
     detectProviderPlan: (adapterId, accountId) =>

@@ -38,6 +38,15 @@ import {
 import { loadOpenCodeAuthKeys } from './opencode-auth';
 import { knownWindow } from './quota-normalize';
 import { fetchMinimaxLoginPlan } from './minimax-code-usage';
+import {
+  probeMuseUsageWindows,
+  type MuseLoginCredential,
+} from './muse-usage';
+import {
+  probeOpenClaudeUsage,
+  resolveOpenClaudeToken,
+  openclaudeSignedIn as defaultOpenClaudeSignedIn,
+} from './openclaude-usage';
 
 export interface ApiQuotaKeyRequest {
   adapterId: string;
@@ -151,6 +160,16 @@ export interface LiveUsageAuthResolvers {
   minimaxCodeSignedIn?: () => boolean;
   /** Access token vigente do `mcode login` e sua região, só para a cota. */
   resolveMinimaxCodeLogin?: () => { accessToken: string; region: 'en' | 'cn' } | null;
+  /** Credencial da assinatura Muse (`muse login`), só para a sonda de cota. */
+  resolveMuseCredential?: () => MuseLoginCredential | null | Promise<MuseLoginCredential | null>;
+  /** Prova pública de sessão Muse (sem tocar o segredo). */
+  museSignedIn?: () => boolean;
+  /** Access token OAuth do login nativo OpenClaude (linha nativa). */
+  resolveOpenClaudeToken?: () => string | null | Promise<string | null>;
+  /** Fallback print-only `openclaude /usage`. */
+  openclaudeCliUsage?: () => Promise<{ windows: QuotaWindow[] | null; failure?: ClaudeCliUsageFailure }>;
+  /** Prova pública de sessão OpenClaude (arquivo de credencial). */
+  openclaudeSignedIn?: () => boolean;
   fetchImpl?: FetchLike;
 }
 
@@ -510,6 +529,87 @@ export async function fetchLiveProviderWindows(
       return probe.hint === 'no-credential' && deps.minimaxCodeSignedIn?.()
         ? { windows: null, hint: 'quota-key-required' }
         : probe;
+    }
+    case 'muse': {
+      // Assinatura Muse: a cota (janela atual + semanal) viaja no stream
+      // de uma inferência mínima — não há endpoint de usage. A credencial
+      // do `muse login` é da LINHA NATIVA; linhas de conta salva só usam
+      // a chave genérica da própria conta, nunca a sessão da máquina.
+      // Cada tentativa é uma inferência real: candidatos têm teto baixo.
+      const candidates: MuseLoginCredential[] = [];
+      if (!accountId && deps.resolveMuseCredential) {
+        const login = await Promise.resolve(deps.resolveMuseCredential());
+        if (login?.apiKey?.trim()) candidates.push(login);
+      }
+      if (deps.resolveGenericApiKeyCandidates) {
+        const keys = await Promise.resolve(
+          deps.resolveGenericApiKeyCandidates('muse', accountId),
+        );
+        for (const key of keys ?? []) {
+          const trimmed = key?.trim();
+          if (trimmed && !candidates.some((c) => c.apiKey === trimmed)) {
+            candidates.push({ apiKey: trimmed, model: 'muse-spark-1.3' });
+          }
+        }
+      }
+      if (candidates.length === 0) {
+        // CLI conectada mas segredo ilegível (cofre negado etc.): conta
+        // conectada, cota sem fonte — nunca «sem credencial».
+        return !accountId && deps.museSignedIn?.()
+          ? { windows: null, hint: 'quota-key-required' }
+          : NO_CREDENTIAL;
+      }
+      let authFailed = false;
+      for (const cred of candidates.slice(0, 3)) {
+        const probe = await probeMuseUsageWindows(cred.apiKey, {
+          fetchImpl,
+          now,
+          model: cred.model,
+        });
+        if (probe.windows?.length) {
+          return withCredential({ windows: probe.windows }, [cred.apiKey]);
+        }
+        if (probe.authFailed) authFailed = true;
+      }
+      return authFailed ? AUTH_EXPIRED : UNAVAILABLE;
+    }
+    case 'openclaude': {
+      // Fork do Claude Code: blob `claudeAiOauth` em ~/.openclaude (ou
+      // keychain). Linha nativa lê o login da máquina; conta salva só a
+      // própria credencial (generic keys / vault), nunca o token nativo.
+      if (accountId) {
+        return fetchMultiKeyWindows('openclaude', deps, accountId, fetchImpl, now);
+      }
+      const token = deps.resolveOpenClaudeToken
+        ? await Promise.resolve(deps.resolveOpenClaudeToken())
+        : await resolveOpenClaudeToken();
+      const probe = await probeOpenClaudeUsage({
+        fetchImpl,
+        now,
+        token,
+        cliProbe: deps.openclaudeCliUsage
+          ? () => Promise.resolve(deps.openclaudeCliUsage!())
+          : undefined,
+      });
+      if (probe.windows?.length) {
+        return token
+          ? withCredential({ windows: probe.windows }, [token])
+          : { windows: probe.windows };
+      }
+      const signedIn = deps.openclaudeSignedIn
+        ? deps.openclaudeSignedIn()
+        : defaultOpenClaudeSignedIn();
+      const hint: QuotaReadHint =
+        probe.failure === 'auth-expired'
+          ? 'auth-expired'
+          : probe.failure === 'cli-missing'
+            ? 'cli-missing'
+            : token
+              ? 'unavailable'
+              : signedIn
+                ? 'auth-expired'
+                : 'no-credential';
+      return { windows: null, hint };
     }
     default: {
       // Any future / custom CLI: generic vault+launcher key routing.
