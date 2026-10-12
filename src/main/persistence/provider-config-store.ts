@@ -88,7 +88,7 @@ import {
 } from '../adapters/in-use-executable';
 import {
   BOOT_RECHECK_MS, CliAutoUpdateQueue, CliUpdateLease, caskManifestArtifactKinds, caskReceiptArtifactKinds,
-  caskReceiptPath, caskTokenFromRealBinPath, cliUpdateKey, cliVersionCheck, cliVersionCheckUpToDate,
+  caskReceiptPath, caskTokenFromRealBinPath, cliUpdateKey, cliVersionCheck, cliVersionCheckUpToDate, isBrewRunner,
   isVersionedCliInstall, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent,
 } from '../adapters/cli-auto-update';
 import type { CliVersionCheck } from '../adapters/cli-auto-update';
@@ -2334,6 +2334,18 @@ async function confirmAutomaticCliConsent(candidates: readonly AutomaticCliCandi
 const CLI_AUTO_UPDATE_IDLE_SECONDS = 60;
 /** F-1395: o passe de boot espera só o boot assentar, não a ociosidade. */
 const CLI_BOOT_PASS_DELAY_MS = 5_000;
+/** R3: teto para um install em curso terminar no shutdown (PTY até ~21 s + isto < quit ceiling de 45 s; estourado, o marcador cobre). */
+export const CLI_INSTALL_SHUTDOWN_GRACE_MS = 15_000;
+const CLI_INSTALL_MARKER_FILE = 'cli-install-inflight.json';
+
+/** true = terminou dentro do prazo. */
+function settleWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+    void promise.then(() => { clearTimeout(timer); resolve(true); },
+      () => { clearTimeout(timer); resolve(true); });
+  });
+}
 
 /** Índice do Homebrew: no máximo um `brew update` a cada 6 h (tentativa persistida). */
 export const BREW_INDEX_UPDATE_INTERVAL_MS = 6 * 60 * 60_000;
@@ -2345,10 +2357,29 @@ const BREW_INDEX_UPDATE_FILE = 'brew-index-update.json';
  * tentativa tem mais de 6 h. Falha só loga: o analisador segue com o índice
  * local. A tentativa é gravada mesmo na falha, para offline não martelar.
  */
-async function refreshBrewIndexIfDue(userDataDir: string, signal: AbortSignal): Promise<void> {
+export async function refreshBrewIndexIfDue(userDataDir: string, signal: AbortSignal): Promise<void> {
   if (process.platform === 'win32' || signal.aborted) return;
   const brew = resolveRunnerPath('brew');
   if (!brew) return;
+  // M8: serializado com todo brew que grava (install/upgrade do provisionamento,
+  // do botão e do passe) — sem "Another active Homebrew update process". O
+  // registro é lido DENTRO do lock: quem esperou vê a tentativa de quem rodou.
+  await withBrewLock(() => refreshBrewIndexLocked(brew, userDataDir, signal));
+}
+
+/**
+ * Um `brew` que grava por vez neste processo. A cadeia nunca rejeita: a falha
+ * de um não trava o próximo.
+ */
+let brewChain: Promise<unknown> = Promise.resolve();
+function withBrewLock<T>(task: () => Promise<T>): Promise<T> {
+  const turn = brewChain.then(task, task);
+  brewChain = turn.catch(() => undefined);
+  return turn;
+}
+
+async function refreshBrewIndexLocked(brew: string, userDataDir: string, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
   const file = path.join(userDataDir, BREW_INDEX_UPDATE_FILE);
   const now = Date.now();
   let last = 0;
@@ -2438,6 +2469,34 @@ export function startCliAutoUpdate(
   const releasedByPaneClose = new Set<string>();
   const paneBlocks = (id: string, candidate: AutomaticCliCandidate | null | undefined) =>
     hasLivePane(id) && !(candidate && isVersionedCliInstall(id, candidate.binPath, candidate.realBinPath));
+  /** R3: mata o processo do install só no teto do shutdown (stop não o aborta). */
+  const installAbort = new AbortController();
+  /** R3: install em curso (resolve quando o processo sai, com ou sem erro). */
+  let inflightInstall: Promise<void> | null = null;
+  const markerFile = path.join(userDataDir, CLI_INSTALL_MARKER_FILE);
+  const writeInstallMarker = async (adapterId: string) => {
+    try {
+      await fsp.writeFile(markerFile, JSON.stringify({ adapterId, startedAt: Date.now() }), { mode: 0o600 });
+    } catch { /* sem marcador: a instalação segue, só perde a detecção */ }
+  };
+  const clearInstallMarker = async () => {
+    try { await fsp.rm(markerFile, { force: true }); } catch { /* best-effort */ }
+  };
+  /**
+   * R3: o boot anterior saiu com um install no meio (marcador ficou). A CLI
+   * pode estar meio escrita: registra a falha e a põe devida no passe de boot.
+   */
+  const recoverInterruptedInstall = async () => {
+    let adapterId: unknown;
+    try {
+      adapterId = (JSON.parse(await fsp.readFile(markerFile, 'utf8')) as { adapterId?: unknown }).adapterId;
+    } catch { return; }
+    await clearInstallMarker();
+    if (typeof adapterId !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/u.test(adapterId)) return;
+    console.warn(`[cli-auto-update] ${adapterId}: instalação interrompida no encerramento anterior; reinstalando`);
+    recordCliAutoUpdate(adapterId, { status: 'failed', reason: 'interrupted' });
+    queue.forget(adapterId);
+  };
   const tick = async (context: PeriodicTaskContext) => {
     preferences = await context.wait(readAutoCliPreferencesAsync(file)) ?? preferences;
     if (stopped || prompting || checking || cliUpdateLease.isProvisioning() ||
@@ -2445,6 +2504,7 @@ export function startCliAutoUpdate(
     checking = true;
     try {
       const boot = bootPending;
+      if (boot) await context.wait(recoverInterruptedInstall());
       const released = [...releasedByPaneClose];
       releasedByPaneClose.clear();
       for (const id of released) awaitingPaneClose.delete(id);
@@ -2455,11 +2515,6 @@ export function startCliAutoUpdate(
         !requireIdle || powerMonitor.getSystemIdleTime() >= CLI_AUTO_UPDATE_IDLE_SECONDS;
       if (!idleEnough()) return;
       if (Date.now() - lastDiscoveryAt >= 30 * 60_000) {
-        // Índice do Homebrew fresco ANTES do manifesto (`brew info`) e da
-        // checagem (`brew outdated`): o upgrade do cask roda com
-        // HOMEBREW_NO_AUTO_UPDATE (C7), então sem isto o índice local parava.
-        await context.wait(refreshBrewIndexIfDue(userDataDir, context.signal));
-        if (stopped) return;
         await context.wait(rescanAdapterBinaries());
         candidates = [];
         for (const adapter of listAdapters()) {
@@ -2492,6 +2547,15 @@ export function startCliAutoUpdate(
       }
       if (!preferences?.enabled || stopped) return;
       if ((await context.wait(readAutoCliPreferencesAsync(file)))?.enabled !== true) return;
+      // Índice do Homebrew fresco antes do que DECIDE a instalação: o run()
+      // relê o manifesto (`brew info`) e roda a checagem (`brew outdated`)
+      // depois daqui, e o upgrade usa HOMEBREW_NO_AUTO_UPDATE (C7). M8: só com
+      // consentimento/enabled e alguma CLI do brew elegível.
+      if (candidates.some((candidate) =>
+        candidate.recipe.kind === 'argv' && isBrewRunner(candidate.recipe.runner))) {
+        await context.wait(refreshBrewIndexIfDue(userDataDir, context.signal));
+        if (stopped) return;
+      }
       const now = Date.now();
       const byId = new Map(candidates.map((candidate) => [candidate.adapterId, candidate]));
       const blocked = (id: string) => {
@@ -2512,6 +2576,38 @@ export function startCliAutoUpdate(
           awaitingPaneClose.add(id);
           return 'deferred';
         }
+        const sameTarget = async () => {
+          try {
+            return await fsp.realpath(process.platform === 'win32'
+              ? windowsNpmShimTarget(id, selected.binPath) ?? selected.binPath
+              : selected.binPath) === selected.realBinPath;
+          } catch { return false; /* The launcher disappeared while being checked. */ }
+        };
+        // M8: as checagens só-leitura (versão instalada, alvo, checagem barata)
+        // rodam SEM o lease — ele só segura o spawn quando há o que instalar.
+        const beforeVersion = await context.wait(installedCliVersion(id, selected.binPath));
+        const stillSameTarget = await sameTarget();
+        const effectivePreference = await context.wait(readAutoCliPreferencesAsync(file));
+        if (!beforeVersion || !stillSameTarget || stopped || !idleEnough() ||
+            effectivePreference?.enabled !== true ||
+            activeProviderBinary(id) !== selected.binPath) return false;
+        // F-1397: checagem barata antes de instalar — npm/brew respondem sem
+        // tocar na instalação; em dia, só marca a checagem.
+        const versionCheck = cliVersionCheck(selected.recipe);
+        if (versionCheck) {
+          const stdout = await context.wait(availableCliVersion(selected.recipe, versionCheck, context.signal));
+          if (cliVersionCheckUpToDate(versionCheck, beforeVersion, stdout ?? '') === true) {
+            console.info(`[cli-auto-update] ${id}: up-to-date, ${beforeVersion}`);
+            recordCliAutoUpdate(id, {
+              status: 'up-to-date', fromVersion: beforeVersion, toVersion: beforeVersion,
+            });
+            // Sem install não há broadcast no fim do run — o painel de
+            // Providers só recebe o "em dia" com este push (revisão F-1397).
+            broadcast();
+            return true;
+          }
+        }
+        if (stopped) return false;
         if (!cliUpdateLease.acquire(id, 'manual',
           isVersionedCliInstall(id, selected.binPath, selected.realBinPath))) {
           // F-1397: colisão com spawn em voo (o pane ainda não é "vivo") é
@@ -2523,37 +2619,12 @@ export function startCliAutoUpdate(
           return false;
         }
         try {
-          const beforeVersion = await context.wait(installedCliVersion(id, selected.binPath));
-          let stillSameTarget = false;
-          try {
-            stillSameTarget = await fsp.realpath(process.platform === 'win32'
-              ? windowsNpmShimTarget(id, selected.binPath) ?? selected.binPath
-              : selected.binPath) === selected.realBinPath;
-          } catch { /* The launcher disappeared while being checked. */ }
-          const effectivePreference = await context.wait(readAutoCliPreferencesAsync(file));
-          if (!beforeVersion || !stillSameTarget || stopped || !idleEnough() ||
-              effectivePreference?.enabled !== true ||
-              activeProviderBinary(id) !== selected.binPath) return false;
+          // Com o lease na mão: o lançador ainda é o mesmo e nenhum pane abriu.
           if (paneBlocks(id, selected)) {
             awaitingPaneClose.add(id);
             return 'deferred';
           }
-          // F-1397: checagem barata antes de instalar — npm/brew respondem sem
-          // tocar na instalação; em dia, só marca a checagem.
-          const versionCheck = cliVersionCheck(selected.recipe);
-          if (versionCheck) {
-            const stdout = await context.wait(availableCliVersion(selected.recipe, versionCheck, context.signal));
-            if (cliVersionCheckUpToDate(versionCheck, beforeVersion, stdout ?? '') === true) {
-              console.info(`[cli-auto-update] ${id}: up-to-date, ${beforeVersion}`);
-              recordCliAutoUpdate(id, {
-                status: 'up-to-date', fromVersion: beforeVersion, toVersion: beforeVersion,
-              });
-              // Sem install não há broadcast no fim do run — o painel de
-              // Providers só recebe o "em dia" com este push (revisão F-1397).
-              broadcast();
-              return true;
-            }
-          }
+          if (!await sameTarget() || activeProviderBinary(id) !== selected.binPath) return false;
           const preferenceRevision = autoCliPreferencesRevision;
           const authorityChanged = new Error('CLI update authority changed before execution');
           const assertInstallCurrent = () => {
@@ -2563,8 +2634,31 @@ export function startCliAutoUpdate(
               throw authorityChanged;
             }
           };
-          try { await context.wait(runInstallRecipe(selected.recipe, selected.prepared ?? undefined, assertInstallCurrent, context.signal)); }
+          // R3: o install em curso é esperado no stop (teto curto) em vez de
+          // virar órfão; o marcador acusa no próximo boot o que não terminou.
+          // O download (B3) segue abortável na hora; só o processo que grava
+          // entra no teto do stop e no marcador.
+          let child: Promise<void> | null = null;
+          let markerWritten: Promise<void> = Promise.resolve();
+          const install = runInstallRecipe(selected.recipe, selected.prepared ?? undefined,
+            assertInstallCurrent, context.signal, {
+              childSignal: installAbort.signal,
+              onChildStart: (exited) => {
+                child = exited;
+                inflightInstall = exited;
+                markerWritten = writeInstallMarker(id);
+              },
+            });
+          const clearAfterChild = async () => {
+            if (!child) return;
+            await child;
+            await markerWritten;
+            await clearInstallMarker();
+          };
+          try { await context.wait(install); await clearAfterChild(); }
           catch (error) {
+            // Abortado pelo stop com o processo ainda vivo: o marcador fica.
+            if (!stopped) await clearAfterChild();
             console.warn(`[cli-auto-update] ${id}: update failed`, error);
             if (!stopped && error !== authorityChanged) {
               const isDownloadTimeout = (error as { isDownloadTimeout?: boolean })?.isDownloadTimeout === true;
@@ -2579,6 +2673,7 @@ export function startCliAutoUpdate(
             }
             return false;
           }
+          finally { if (child && inflightInstall === child) inflightInstall = null; }
           // Refresh this launcher under the lease. The full PATH/login-shell
           // scan below must not keep a ready launcher behind unrelated CLIs.
           resolveAdapterBinary(id);
@@ -2645,6 +2740,19 @@ export function startCliAutoUpdate(
     stopPaneExitTap?.();
     clearTimeout(initial);
     clearInterval(interval);
+    // R3: nenhum install novo começa (assertInstallCurrent vê `stopped`); o que
+    // está no meio ganha um teto curto para terminar — matar `npm install -g`
+    // no meio deixaria a CLI meio escrita. Estourado o teto, o processo morre
+    // e o marcador fica para o próximo boot reinstalar.
+    const pending = inflightInstall;
+    if (pending) {
+      const finished = await settleWithin(pending, CLI_INSTALL_SHUTDOWN_GRACE_MS);
+      if (finished) await clearInstallMarker();
+      else {
+        installAbort.abort(new Error('CLI auto update stopped'));
+        await settleWithin(pending, 2_000);
+      }
+    }
     controller.abort(new Error('CLI auto update stopped'));
     await stopPeriodicTask(taskId);
   };
@@ -2799,11 +2907,26 @@ async function fetchInstallerBody(
 
 /** Baixa o instalador oficial (HTTPS) para um arquivo temporário 0700 e o
  * executa com bash — nunca `curl | sh`: o conteúdo em disco é o que roda. */
+/**
+ * R3: ganchos do processo que GRAVA a instalação (não do download). O stop do
+ * updater espera esse processo com teto curto e só então o mata.
+ */
+interface InstallChildHooks {
+  readonly childSignal?: AbortSignal;
+  readonly onChildStart?: (exited: Promise<void>) => void;
+}
+
+function trackInstallChild(run: Promise<void>, hooks?: InstallChildHooks): Promise<void> {
+  hooks?.onChildStart?.(run.then(() => undefined, () => undefined));
+  return run;
+}
+
 async function runScriptInstall(
   scriptUrl: string,
   envOverrides?: Readonly<Record<string, string>>,
   assertCurrent?: () => void,
   signal?: AbortSignal,
+  hooks?: InstallChildHooks,
 ): Promise<void> {
   assertCurrent?.();
   const body = await fetchInstallerBody(scriptUrl, { signal });
@@ -2814,17 +2937,18 @@ async function runScriptInstall(
   await fsp.writeFile(file, body, { mode: 0o700, flag: 'wx' });
   try {
     assertCurrent?.();
-    await new Promise<void>((resolve, reject) => {
+    const options = envOverrides
+      ? { ...installExecOptions(), env: { ...process.env, ...envOverrides } }
+      : installExecOptions();
+    await trackInstallChild(new Promise<void>((resolve, reject) => {
       const child = execFile(
         resolveRunnerPath('bash') ?? 'bash',
         [file],
-        envOverrides
-          ? { ...installExecOptions(), env: { ...process.env, ...envOverrides } }
-          : installExecOptions(),
+        hooks?.childSignal ? { ...options, signal: hooks.childSignal } : options,
         (error) => (error ? reject(error) : resolve()),
       );
       child?.stdin?.end();
-    });
+    }), hooks);
   } finally {
     await fsp.rm(file, { force: true });
   }
@@ -2936,10 +3060,11 @@ async function runInstallRecipe(
   prepared?: ArgvInstallInvocation,
   assertCurrent?: () => void,
   signal?: AbortSignal,
+  hooks?: InstallChildHooks,
 ): Promise<void> {
   assertCurrent?.();
   if (recipe.kind === 'script') {
-    await runScriptInstall(recipe.scriptUrl, recipe.env, assertCurrent, signal);
+    await runScriptInstall(recipe.scriptUrl, recipe.env, assertCurrent, signal, hooks);
     return;
   }
   if (recipe.kind === 'powershell-script') {
@@ -2947,18 +3072,22 @@ async function runInstallRecipe(
     return;
   }
   const invocation = prepared ?? prepareArgvInstallInvocation(recipe);
-  assertCurrent?.();
-  await new Promise<void>((resolve, reject) => {
-    const child = execFile(
-      invocation.executable,
-      [...invocation.args],
-      invocation.options,
-      (error) => (error ? reject(error) : resolve()),
-    );
-    // F-1395: sem TTY e stdin fechado — um prompt (sudo do brew) recebe EOF e
-    // falha na hora, em vez de pendurar até o timeout.
-    child?.stdin?.end();
-  });
+  const execute = () => {
+    // Revalida DENTRO do lock: quem esperou o brew de outro pode ter perdido a autoridade.
+    assertCurrent?.();
+    return trackInstallChild(new Promise<void>((resolve, reject) => {
+      const child = execFile(
+        invocation.executable,
+        [...invocation.args],
+        hooks?.childSignal ? { ...invocation.options, signal: hooks.childSignal } : invocation.options,
+        (error) => (error ? reject(error) : resolve()),
+      );
+      // F-1395: sem TTY e stdin fechado — um prompt (sudo do brew) recebe EOF e
+      // falha na hora, em vez de pendurar até o timeout.
+      child?.stdin?.end();
+    }), hooks);
+  };
+  await (isBrewRunner(recipe.runner) ? withBrewLock(execute) : execute());
 }
 
 /** Native, un-spoofable confirmation before trusting a renderer-supplied
@@ -3173,6 +3302,12 @@ export async function maybeOfferFirstRunProvisioning(
 
   const done: string[] = [];
   const pending: string[] = [];
+  // M8: índice do Homebrew atualizado UMA vez (mesmo limite de 6 h e o mesmo
+  // lock do passe de boot); os installs do brew não se auto-atualizam depois.
+  if (selections.some(({ selection }) =>
+    selection?.ok && selection.recipe.kind === 'argv' && isBrewRunner(selection.recipe.runner))) {
+    await refreshBrewIndexIfDue(userDataDir, new AbortController().signal);
+  }
   for (const { provider, selection } of selections) {
     if (!selection) continue;
     if (!selection.ok) {
@@ -3181,7 +3316,9 @@ export async function maybeOfferFirstRunProvisioning(
       );
       continue;
     }
-    const recipe = selection.recipe;
+    const recipe: CliInstallRecipe = selection.recipe.kind === 'argv' && isBrewRunner(selection.recipe.runner)
+      ? { ...selection.recipe, env: { ...selection.recipe.env, HOMEBREW_NO_AUTO_UPDATE: '1' } }
+      : selection.recipe;
     if (!cliUpdateLease.acquire(provider.adapterId, 'provisioning')) {
       pending.push(`${provider.label} — instalação ocupada; tente pelo botão da CLI`);
       continue;
