@@ -49,11 +49,11 @@ export function getTraceFilePath(): string | null {
 export function traceContextEvent(event: Record<string, unknown>, at: number): Readonly<Record<string, string | number | boolean>> {
   const kind = typeof event.kind === 'string' && /^[a-zA-Z][a-zA-Z0-9:_-]{0,95}$/.test(event.kind) ? event.kind : 'event';
   const out: Record<string, string | number | boolean> = { kind, at };
-  for (const key of ['sessionId', 'paneId', 'missionId', 'taskId', 'workerId']) {
+  for (const key of ['sessionId', 'paneId', 'missionId', 'taskId', 'workerId', 'callerSessionId']) {
     const value = event[key];
     if (typeof value === 'string' && /^(?:[a-f0-9-]{16,64}|(?:pty|pane|session|mission|task|worker)-[a-z0-9-]{1,96})$/i.test(value)) out[key] = value;
   }
-  for (const key of ['adapterId', 'phase', 'status', 'name', 'origin', 'signal']) {
+  for (const key of ['adapterId', 'phase', 'status', 'name', 'origin', 'signal', 'role']) {
     const value = event[key];
     if (typeof value === 'string' && /^[a-z][a-z0-9:_-]{0,63}$/i.test(value)) out[key] = value;
   }

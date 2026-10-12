@@ -6338,6 +6338,24 @@ describe("F-212 PTY lifecycle tracing (exit + termination origin)", () => {
     ]);
   });
 
+  it("F-1354: terminate rotulado registra callerSessionId e papel de quem pediu", async () => {
+    const h = fakeHost();
+    const { sessionId } = tracedAgentSession(h.host);
+    await orchTerminateSession(sessionId, {
+      origin: "pane-close",
+      callerSessionId: "session-operator-1234",
+      role: "orchestrator",
+    } as any);
+    expect(lifecycleEvents("agent-pty-terminate", sessionId)).toEqual([
+      expect.objectContaining({
+        sessionId,
+        origin: "pane-close",
+        callerSessionId: "session-operator-1234",
+        role: "orchestrator",
+      }),
+    ]);
+  });
+
   it("exit natural (sem pedido Nexus) registra terminationOrigin null e o signal", async () => {
     let handlers: PtySessionHandlers | null = null;
     setPtyHost({

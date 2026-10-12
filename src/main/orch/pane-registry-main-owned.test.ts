@@ -2743,7 +2743,15 @@ describe("main-owned mission pane spawn", () => {
     expect(await requestPaneClose("pane-reused", "pty-original")).toBe(false);
     expect(pty.terminate).not.toHaveBeenCalledWith("pty-replacement", expect.anything());
     expect(owner.send).not.toHaveBeenCalledWith(ORCH_CHANNELS.paneCloseRequest, expect.anything());
-    expect(await requestPaneClose("pane-reused", "pty-replacement")).toBe(true);
+    expect(await requestPaneClose("pane-reused", "pty-replacement", {
+      callerSessionId: "session-operator",
+      role: "orchestrator",
+    })).toBe(true);
+    expect(pty.terminate).toHaveBeenCalledWith("pty-replacement", {
+      origin: "pane-close",
+      callerSessionId: "session-operator",
+      role: "orchestrator",
+    });
     expect(owner.send).toHaveBeenCalledWith(ORCH_CHANNELS.paneCloseRequest, {
       paneId: "pane-reused",
       expectedSessionId: "pty-replacement",

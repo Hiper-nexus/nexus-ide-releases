@@ -342,9 +342,22 @@ const physicalTerminationFlights = new Map<string, PhysicalTerminationFlight>();
  */
 const terminationOrigins = new Map<string, string>();
 
-function noteTerminationRequest(sessionId: string, origin: string): void {
+function noteTerminationRequest(
+  sessionId: string,
+  origin: string,
+  caller?: {
+    readonly callerSessionId?: string;
+    readonly role?: string;
+  },
+): void {
   terminationOrigins.set(sessionId, origin);
-  trace({ kind: "agent-pty-terminate", sessionId, origin });
+  trace({
+    kind: "agent-pty-terminate",
+    sessionId,
+    origin,
+    ...(caller?.callerSessionId ? { callerSessionId: caller.callerSessionId } : {}),
+    ...(caller?.role ? { role: caller.role } : {}),
+  });
 }
 
 /**
@@ -4159,6 +4172,9 @@ export interface OrchTerminateSessionOptions {
    * exit final. Sem rótulo o default é 'unlabeled'.
    */
   readonly origin?: string;
+  /** F-1354: quem pediu a terminação (ex. pane-close). */
+  readonly callerSessionId?: string;
+  readonly role?: string;
 }
 
 /**
@@ -4313,7 +4329,10 @@ export function orchTerminateSession(
 ): Promise<boolean> {
   const session = sessions.get(sessionId);
   if (!session) return Promise.resolve(true);
-  noteTerminationRequest(sessionId, options.origin ?? "unlabeled");
+  noteTerminationRequest(sessionId, options.origin ?? "unlabeled", {
+    callerSessionId: options.callerSessionId,
+    role: options.role,
+  });
   const flight = ensurePhysicalTerminationFlight(sessionId, session);
   if (flight.attempt) return flight.attempt;
   // A termination listener is not expected to drive the PTY, but preserve

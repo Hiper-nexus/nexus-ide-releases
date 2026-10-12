@@ -3517,7 +3517,12 @@ const paneClose: McpToolDef = {
           throw new Error(`pane_close refused: ${auth.reason}`);
         }
       }
-      if (!(await requestPaneClose(info.paneId))) {
+      if (
+        !(await requestPaneClose(info.paneId, undefined, {
+          callerSessionId: ctx.sessionId,
+          role: ctx.role,
+        }))
+      ) {
         throw new Error('no renderer window available');
       }
       return { ok: true };
@@ -3548,7 +3553,14 @@ const paneClose: McpToolDef = {
     const closed: string[] = [];
     for (const paneId of selection.close) {
       try {
-        if (await requestPaneClose(paneId)) closed.push(paneId);
+        if (
+          await requestPaneClose(paneId, undefined, {
+            callerSessionId: ctx.sessionId,
+            role: ctx.role,
+          })
+        ) {
+          closed.push(paneId);
+        }
       } catch (error) {
         console.warn(`[pane-close] scope close failed for ${paneId}:`, error);
       }

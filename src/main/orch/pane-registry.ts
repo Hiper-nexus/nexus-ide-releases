@@ -619,6 +619,10 @@ async function terminateRecoveryReplacement(
 async function terminateOwnedMissionSession(
   sessionId: string,
   origin = "pane-registry:owned-mission-session",
+  caller?: {
+    readonly callerSessionId?: string;
+    readonly role?: string;
+  },
 ): Promise<boolean> {
   const acp = getAcpDriverSession(sessionId);
   if (acp) {
@@ -630,7 +634,11 @@ async function terminateOwnedMissionSession(
     }
   }
   if (getSessionState(sessionId) === null) return true;
-  return orchTerminateSession(sessionId, { origin });
+  return orchTerminateSession(sessionId, {
+    origin,
+    callerSessionId: caller?.callerSessionId,
+    role: caller?.role,
+  });
 }
 
 async function settlePaneRecoveryFailure(
@@ -4149,6 +4157,10 @@ function announceDeliberatePaneClose(
 export async function requestPaneClose(
   paneId: string,
   expectedSessionId?: string,
+  caller?: {
+    readonly callerSessionId?: string;
+    readonly role?: string;
+  },
 ): Promise<boolean> {
   if (!expectedSessionId) forgetParkedRecords(paneId);
   const owners = new Set(
@@ -4177,6 +4189,7 @@ export async function requestPaneClose(
       const exited = await terminateOwnedMissionSession(
         sessionId,
         "pane-close",
+        caller,
       );
       if (!exited) return false;
     }
@@ -4217,6 +4230,7 @@ export async function requestPaneClose(
     const exited = await terminateOwnedMissionSession(
       sessionId,
       "pane-close",
+      caller,
     );
     if (!exited) return false;
   }
