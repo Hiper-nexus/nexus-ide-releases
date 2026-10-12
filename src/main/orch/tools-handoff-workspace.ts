@@ -228,9 +228,12 @@ export async function submitWorkspaceHandoff(
         pane.paneId === destination.child.paneId,
     );
     const title = (snapshot?.title ?? ctx.label).replace(/[\r\n\u001b]/g, " ");
+    // F-1262: o auto-close pode fechar o helper em seguida; a notificação
+    // precisa trazer o id e a chamada que recupera o relatório completo.
     await injectPrompt(
       destination.parentContext.sessionId!,
-      `${WORKSPACE_HANDOFF_DELIVERY_PREFIX} de ${destination.child.paneId} (${title}): ${handoff.summary}\n`,
+      `${WORKSPACE_HANDOFF_DELIVERY_PREFIX} de ${destination.child.paneId} (${title}): ${handoff.summary}\n` +
+        `Relatório completo: nexus_handoff_list({ids:["${handoff.id}"]})\n`,
       { ...invocation, assertCurrentAuthority: assertDestinationCurrent },
     );
     assertDestinationCurrent();

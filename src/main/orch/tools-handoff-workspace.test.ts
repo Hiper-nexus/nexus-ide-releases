@@ -559,6 +559,64 @@ describe("workspace handoff", () => {
     expect(reviewMissionHandoff).toHaveBeenCalled();
   });
 
+  it("F-1262: pai promovido recupera por ids o relatório completo do helper sem missão", async () => {
+    const parent = caller("parent");
+    const child = caller("child");
+    // O operador promoveu o pai a orquestrador da missão da aba DEPOIS de
+    // abrir o helper: o helper sem missão continua entregando a ele.
+    const mission = getProjectDomainStores(scope).missions.create({
+      title: "Missão da aba",
+    });
+    getProjectDomainStores(scope).missions.setOrchestratorSession(
+      mission.id,
+      "parent",
+    );
+    parent.role = "orchestrator";
+    parent.missionId = mission.id;
+    parent.contextRevision = "rev-tab";
+    const close = vi.spyOn(panes, "requestPaneClose").mockResolvedValue(true);
+    armAutoCloseOnHandoff("child", "pane-child");
+    vi.useFakeTimers();
+
+    const unique = "RELATORIO-EXCLUSIVO-F-1262: causa raiz, diff e validação.";
+    const result = (await tool("submit").handler(
+      { ...args, fullText: unique },
+      child,
+    )) as { handoffId: string };
+    expect(result).toMatchObject({ delivered: true });
+    // A notificação precisa trazer o handoffId e a chamada de recuperação.
+    expect(transport.injectPrompt).toHaveBeenCalledWith(
+      "parent",
+      expect.stringContaining(result.handoffId),
+      expect.anything(),
+    );
+    // O auto-close fecha o helper: o relatório só existe no ledger.
+    await vi.runAllTimersAsync();
+    expect(close).toHaveBeenCalledWith("pane-child", "child");
+
+    const rows = (await tool("list").handler(
+      { ids: [result.handoffId] },
+      parent,
+    )) as Array<{ id: string; missionId?: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.id).toBe(result.handoffId);
+    expect(rows[0]!.missionId).toBeUndefined();
+    expect(JSON.stringify(rows)).toContain(unique);
+
+    // A correspondência de workspace continua fora da cadeia de ACK da missão.
+    await expect(
+      tool("ack").handler({ handoffId: result.handoffId }, parent),
+    ).rejects.toThrow();
+    // Sem o vínculo Main-owned do spawn, outro orquestrador não lê por id.
+    const stranger = caller("stranger");
+    stranger.role = "orchestrator";
+    stranger.missionId = mission.id;
+    stranger.contextRevision = "rev-tab";
+    expect(
+      await tool("list").handler({ ids: [result.handoffId] }, stranger),
+    ).toEqual([]);
+  });
+
   it("does not list mission history without a mission or grant mission ACK", async () => {
     const parent = caller("parent");
     const store = getProjectDomainStores(scope).handoffs;

@@ -76,6 +76,51 @@ function isCurrentMissionOrchestrator(
   }
 }
 
+/**
+ * F-1262: leitura explícita, por id, da correspondência de workspace pelo pai
+ * que a promoção tornou orquestrador da missão da aba (o mesmo destino que
+ * `resolveWorkspaceHandoffParent` aceita na entrega). O vínculo continua sendo
+ * o do spawn, cunhado pelo Main: sem ele, id adivinhado não lê nada. A linha
+ * segue correspondência `unverified` com `mission_id` NULL — nunca evidência,
+ * recibo ou ACK de missão.
+ */
+export function promotedParentMayReadWorkspaceHandoff(
+  ctx: AgentGateContext,
+  handoff: {
+    readonly sessionId?: string;
+    readonly missionId?: string;
+  },
+): boolean {
+  if (
+    !isCurrentGateContext(ctx) ||
+    !ctx.sessionId ||
+    ctx.role !== "orchestrator" ||
+    !ctx.missionId ||
+    ctx.workerIncarnationId ||
+    handoff.missionId ||
+    !handoff.sessionId ||
+    handoff.sessionId === ctx.sessionId
+  )
+    return false;
+  const child = handPaneOf(handoff.sessionId);
+  if (
+    !child ||
+    child.operatorParentSessionId !== ctx.sessionId ||
+    child.kind !== "cli-agent" ||
+    child.role === "worker" ||
+    child.missionId ||
+    child.contextRevision ||
+    child.workerIncarnationId ||
+    !child.scope ||
+    !sameProjectExecutionScope(child.scope, ctx.scope)
+  )
+    return false;
+  const caller = handPaneOf(ctx.sessionId);
+  if (!caller || caller.kind !== "cli-agent" || caller.role === "worker")
+    return false;
+  return isCurrentMissionOrchestrator(ctx.sessionId, caller, ctx, ctx.scope);
+}
+
 /** Resolve only Main-owned spawn metadata against both current physical panes. */
 export function resolveWorkspaceHandoffParent(ctx: AgentGateContext) {
   if (

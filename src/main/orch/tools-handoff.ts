@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { checkVisualHandoff } from './visual-handoff-gate';
 import { submitWorkspaceHandoff } from "./tools-handoff-workspace";
+import { promotedParentMayReadWorkspaceHandoff } from "./workspace-handoff-authority";
 import {
   canSubmitMissionHandoff,
   hasCurrentApprovedDispatchContract,
@@ -1014,6 +1015,22 @@ const handoffListTool: McpToolDef = {
     } else {
       returned = handoffStore.list(listFilter);
     }
+    // F-1262: o pai promovido a orquestrador recupera por id a correspondência
+    // de workspace do helper sem missão (auto-close já fechou o helper; a
+    // notificação só cola o summary). Leitura explícita com vínculo
+    // Main-owned comprovado: continua sem recibo, evidência ou ACK de missão.
+    const recoveredWorkspaceIds = new Set<string>();
+    if (rawIds.length > 0 && ctx.missionId) {
+      const workspaceRows = handoffStore
+        .list({ missionId: null, ids: rawIds, includeDelivered: true })
+        .filter(
+          (row) =>
+            !returned.some((seen) => seen.id === row.id) &&
+            promotedParentMayReadWorkspaceHandoff(ctx, row),
+        );
+      for (const row of workspaceRows) recoveredWorkspaceIds.add(row.id);
+      if (workspaceRows.length > 0) returned = [...returned, ...workspaceRows];
+    }
     // Recência é da trilha inteira, não da página. Com limit <= 5, tratar
     // as últimas linhas da página como "as 5 mais novas" devolveria artifact
     // completo de histórico. No modo cursor isso é um SELECT de ids, sem artifacts.
@@ -1028,8 +1045,14 @@ const handoffListTool: McpToolDef = {
     // idle-delivery. Leitura cross-mission é auditoria: nunca reconhece nada.
     const acknowledgedIds = new Set<string>();
     if (isProvenCurrentOrchestrator && missionId === ctx.missionId) {
+      // Linhas de workspace (F-1262) ficam de fora: o recibo de listagem é da
+      // missão e a correspondência sem missão nunca vira recibo.
       const seenIds = returned
-        .filter((row) => row.deliveryState === "submitted")
+        .filter(
+          (row) =>
+            row.deliveryState === "submitted" &&
+            !recoveredWorkspaceIds.has(row.id),
+        )
         .map((row) => row.id);
       if (seenIds.length > 0) {
         try {
