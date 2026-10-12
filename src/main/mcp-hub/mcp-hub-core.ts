@@ -228,7 +228,13 @@ export function restoreMaskedSecrets(
   };
 }
 
-/** Args are positional: a masked item restores the stored arg at its index. */
+/**
+ * Args are positional: a masked item restores the stored arg at its index.
+ * F-1383 (revisão Fable): só é seguro quando a lista não mudou de forma —
+ * com um arg removido/inserido o índice aponta para o vizinho errado
+ * (`['--verbose','--token','--token']`). Mudou o comprimento ou o vizinho
+ * anterior do placeholder? Recusa com erro claro em vez de adivinhar.
+ */
 function restoreMaskedArgs(
   next: readonly string[] | undefined,
   current: readonly string[] | undefined,
@@ -237,6 +243,15 @@ function restoreMaskedArgs(
   if (!next) return undefined;
   return next.map((value, index) => {
     if (!isMaskedSecretValue(value)) return value;
+    if (
+      current &&
+      (current.length !== next.length ||
+        (index > 0 && !isMaskedSecretValue(next[index - 1]!) && next[index - 1] !== current[index - 1]))
+    ) {
+      throw new Error(
+        `masked secret ${label}.${index} cannot be matched: args were added, removed or reordered — re-enter the real secret values before saving`,
+      );
+    }
     const stored = current?.[index];
     if (stored === undefined || isMaskedSecretValue(stored)) {
       throw new Error(

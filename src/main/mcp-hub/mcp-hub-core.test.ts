@@ -350,6 +350,41 @@ describe('restoreMaskedSecrets', () => {
     expect(restored.servers[0]?.env?.REGION).toBe('us-east-1');
   });
 
+  it('F-1383 (revisão Fable): arg removido com placeholders recusa o save em vez de trocar valores', () => {
+    const stored: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [
+        {
+          id: 'x',
+          name: 'X',
+          transport: 'stdio',
+          command: 'npx',
+          args: ['--verbose', 'sk-A-1234567890abcdef', '--token', 'sk-B-1234567890abcdef'],
+          tools: [],
+          source: 'nexus',
+        },
+      ],
+    };
+    // UI mostrou ['--verbose','[REDACTED]','--token','[REDACTED]']; o operador tirou '--verbose'.
+    const edited: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [{ ...stored.servers[0]!, args: ['[REDACTED]', '--token', '[REDACTED]'] }],
+    };
+    expect(() => restoreMaskedSecrets(edited, stored)).toThrow(/x\.args\.\d+ cannot be matched/);
+    // Mesmo comprimento, vizinho trocado: também recusa.
+    const reordered: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [{ ...stored.servers[0]!, args: ['--token', '[REDACTED]', '--verbose', '[REDACTED]'] }],
+    };
+    expect(() => restoreMaskedSecrets(reordered, stored)).toThrow(/cannot be matched/);
+    // Lista intacta continua restaurando por posição.
+    const same: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [{ ...stored.servers[0]!, args: ['--verbose', '[REDACTED]', '--token', '[REDACTED]'] }],
+    };
+    expect(restoreMaskedSecrets(same, stored).servers[0]?.args).toEqual(stored.servers[0]?.args);
+  });
+
   it('F-1383: restores a masked arg from the stored config by index', () => {
     const storedWithArgs: McpHubConfig = {
       schemaVersion: 1,
