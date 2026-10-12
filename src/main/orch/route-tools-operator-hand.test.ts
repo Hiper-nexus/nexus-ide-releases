@@ -198,15 +198,16 @@ describe('"+ Pane": especialidade da tarefa escolhe a CLI', () => {
     expect(visual.reason).toContain('lane visual');
     expect(doc.reason).toContain('specialty=doc');
     expect(doc.reason).not.toContain('lane visual');
-    // F-1313: o Kimi ("ótimo em front, lento") está na lane visual e ela
-    // espalha por uso — o pai já ocupa o Claude, então o Kimi leva a tela.
-    expect(visual).toMatchObject({ adapterId: 'kimi', model: 'kimi-code/k3' });
+    // F-1400 (parte 2): sem missão a lane visual agora reveza por MODELO
+    // (`visual:adapter:model`), como na missão. O pai ocupar o Claude conta
+    // como uso de adapter, não como uso visual de um modelo — o assento de
+    // topo é o Opus 5.5, não o Kimi.
+    expect(visual).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5' });
     expect(doc.adapterId).not.toBe(visual.adapterId);
-    // Com o Kimi ocupado, a próxima tela volta ao topo da lane (Opus 5.5).
-    h.livePanes = [...h.livePanes, { ...livePane('pane-helper-kimi', 'kimi'), sessionId: 's-helper-kimi' }];
+    // Com o Opus registrado, a próxima tela cai no Sonnet (mesma CLI, modelo livre).
     const next = await routeLikeSpawn(VISUAL_TASK);
     expect(next.reason).toContain('lane visual');
-    expect(next).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5' });
+    expect(next).toMatchObject({ adapterId: 'claude', model: 'claude-sonnet-5-5' });
   });
 
   it('a tabela de especialidade MEDIDA também é consultada fora de missão', async () => {

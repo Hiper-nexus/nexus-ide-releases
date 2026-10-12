@@ -37,39 +37,72 @@ describe('route provenance', () => {
 describe('memória de rotas sem missão (F-1291)', () => {
   beforeEach(() => clearRouteProvenance());
 
-  it('vazia, não conta nada', () => {
-    expect(missionlessRouteCountsByAdapterSince(0).size).toBe(0);
+  it('vazia, só o marcador visual presente', () => {
+    expect(missionlessRouteCountsByAdapterSince(0)).toEqual(new Map([['visual:', 0]]));
   });
 
   it('acumula por adapter dentro da janela', () => {
     const now = Date.now();
-    recordMissionlessRouteDecision('claude', now - 1000);
-    recordMissionlessRouteDecision('claude', now - 500);
-    recordMissionlessRouteDecision('kimi', now - 100);
+    recordMissionlessRouteDecision({ adapterId: 'claude' }, now - 1000);
+    recordMissionlessRouteDecision({ adapterId: 'claude' }, now - 500);
+    recordMissionlessRouteDecision({ adapterId: 'kimi' }, now - 100);
     expect(missionlessRouteCountsByAdapterSince(now - 60_000)).toEqual(
-      new Map([['claude', 2], ['kimi', 1]]),
+      new Map([['visual:', 0], ['claude', 2], ['kimi', 1]]),
     );
   });
 
   it('fora da janela não conta', () => {
     const now = Date.now();
-    recordMissionlessRouteDecision('claude', now - 8 * 24 * 60 * 60_000);
-    expect(
-      missionlessRouteCountsByAdapterSince(now - 7 * 24 * 60 * 60_000).size,
-    ).toBe(0);
+    recordMissionlessRouteDecision({ adapterId: 'claude' }, now - 8 * 24 * 60 * 60_000);
+    expect(missionlessRouteCountsByAdapterSince(now - 7 * 24 * 60 * 60_000)).toEqual(
+      new Map([['visual:', 0]]),
+    );
   });
 
   it('é limitada (não cresce sem teto)', () => {
     for (let i = 0; i < 200; i += 1) {
-      recordMissionlessRouteDecision('claude', Date.now());
+      recordMissionlessRouteDecision({ adapterId: 'claude' }, Date.now());
     }
     expect(missionlessRouteCountsByAdapterSince(0).get('claude')).toBeLessThanOrEqual(128);
   });
 
   it('clearRouteProvenance zera junto', () => {
-    recordMissionlessRouteDecision('claude');
+    recordMissionlessRouteDecision({ adapterId: 'claude' });
     clearRouteProvenance();
-    expect(missionlessRouteCountsByAdapterSince(0).size).toBe(0);
+    expect(missionlessRouteCountsByAdapterSince(0)).toEqual(new Map([['visual:', 0]]));
+  });
+});
+
+describe('memória de rotas sem missão — contadores visuais por modelo (F-1400 parte 2)', () => {
+  beforeEach(() => clearRouteProvenance());
+
+  it('conta visual por modelo e mantém o total por adapter', () => {
+    const now = Date.now();
+    recordMissionlessRouteDecision({ adapterId: 'claude', model: 'claude-opus-5-5', specialty: 'visual' }, now - 1000);
+    recordMissionlessRouteDecision({ adapterId: 'claude', model: 'claude-opus-5-5', specialty: 'visual' }, now - 500);
+    recordMissionlessRouteDecision({ adapterId: 'claude', model: 'claude-sonnet-5-5', specialty: 'visual' }, now - 100);
+    expect(missionlessRouteCountsByAdapterSince(now - 60_000)).toEqual(
+      new Map([
+        ['visual:', 0],
+        ['claude', 3],
+        ['visual:claude:claude-opus-5-5', 2],
+        ['visual:claude:claude-sonnet-5-5', 1],
+      ]),
+    );
+  });
+
+  it('especialidade não visual não gera contador visual', () => {
+    const now = Date.now();
+    recordMissionlessRouteDecision({ adapterId: 'claude', model: 'claude-sonnet-5-5', specialty: 'bug' }, now - 1000);
+    const counts = missionlessRouteCountsByAdapterSince(now - 60_000);
+    expect(counts.get('claude')).toBe(1);
+    expect(counts.has('visual:claude:claude-sonnet-5-5')).toBe(false);
+  });
+
+  it('sem modelo explícito não gera contador visual', () => {
+    const now = Date.now();
+    recordMissionlessRouteDecision({ adapterId: 'claude', specialty: 'visual' }, now - 1000);
+    expect(missionlessRouteCountsByAdapterSince(now - 60_000).has('visual:claude:undefined')).toBe(false);
   });
 });
 

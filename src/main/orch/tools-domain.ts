@@ -2148,7 +2148,9 @@ export async function routeTaskForCaller(
     // F-1291: sem missão não há reserva (só nasce com missionId), então o
     // store acima volta sempre zerado e o fair-share era no-op. Soma a
     // memória de decisões sem missão — fail-open isolado: sem ela, a rota
-    // segue exatamente como antes.
+    // segue exatamente como antes. F-1400 (parte 2): a mesma memória carrega
+    // `visual:adapter:model` e o marcador `visual:`, mesclados aqui para o
+    // revezamento de front por modelo valer fora de missão.
     try {
       const missionless = missionlessRouteCountsByAdapterSince(
         Date.now() - GLOBAL_USE_WINDOW_MS,
@@ -2387,7 +2389,14 @@ export async function routeTaskForCaller(
   // reserva, que só nasce com missionId, jamais a veria). Sugestão do hook
   // não é decisão e não conta.
   if (internal.suggestOnly !== true && !missionId) {
-    recordMissionlessRouteDecision(decision.adapterId);
+    // F-1400 (parte 2): modelo+especialidade alimentam o revezamento visual por
+    // modelo fora de missão — a memória só contava adapter, então Opus/Sonnet
+    // nunca se distinguiam e o primeiro assento do pool repetia para sempre.
+    recordMissionlessRouteDecision({
+      adapterId: decision.adapterId,
+      model: decision.model,
+      specialty: decision.specialty,
+    });
   }
   // Observabilidade ("ver para crer"): registra a decisão + motivo para
   // inspeção, já que o reason antes só existia no retorno consumido pelo LLM.

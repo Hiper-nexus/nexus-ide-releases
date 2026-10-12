@@ -40,6 +40,8 @@ export function clearRouteProvenance(): void {
  */
 interface MissionlessUse {
   adapterId: string;
+  model?: string;
+  specialty?: string;
   at: number;
 }
 
@@ -47,19 +49,36 @@ const MISSIONLESS_CAP = 128;
 
 let missionlessUses: MissionlessUse[] = [];
 
-export function recordMissionlessRouteDecision(adapterId: string, at: number = Date.now()): void {
+export function recordMissionlessRouteDecision(
+  decision: { adapterId: string; model?: string; specialty?: string },
+  at: number = Date.now(),
+): void {
   missionlessUses = [
     ...missionlessUses.slice(-(MISSIONLESS_CAP - 1)),
-    { adapterId, at },
+    {
+      adapterId: decision.adapterId,
+      model: decision.model,
+      specialty: decision.specialty,
+      at,
+    },
   ];
 }
 
-/** Usos sem missão por adapter desde `sinceMs` — insumo do fair-share. */
+/**
+ * Usos sem missão desde `sinceMs` — insumo do fair-share. F-1400 (parte 2): a
+ * forma espelha `consumedCountsByAdapterSince` do ledger (marcador `visual:`,
+ * totais por adapter e `visual:adapter:model` para especialidade visual), para
+ * o revezamento de front por modelo valer também fora de missão.
+ */
 export function missionlessRouteCountsByAdapterSince(sinceMs: number): Map<string, number> {
-  const counts = new Map<string, number>();
+  const counts = new Map<string, number>([['visual:', 0]]);
   for (const use of missionlessUses) {
     if (use.at < sinceMs) continue;
     counts.set(use.adapterId, (counts.get(use.adapterId) ?? 0) + 1);
+    if (use.specialty === 'visual' && use.model) {
+      const key = `visual:${use.adapterId}:${use.model}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
   }
   return counts;
 }
