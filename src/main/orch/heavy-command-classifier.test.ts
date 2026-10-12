@@ -14,3 +14,19 @@ it.each(['echo hello', 'git status', 'npm run dev', 'npm run start', 'cat typesc
 it('does bounded work and queues oversized scripts conservatively', () => {
   expect(classifyHeavyCommand(' '.repeat(1_000_000) + 'tsc')).toBe('build');
 });
+
+// F-1273: tool names inside quoted text, comments and heredoc bodies are not
+// the program being run; the same cases are null in catalog.commandKind
+// (heavy-command-catalog.test.ts, "ignores tool names that are not the
+// program being run"). A false positive here holds the single heavy permit
+// and the real heavy job dies with heavy_command_wait_timeout.
+it.each([
+  'git commit -m "fix: make tsc and vitest stop queueing; npm test passes"',
+  'echo "run vite build later" # npm run build',
+  `grep -n "'node'\\|npm\\|vitest" src/main/orch/heavy-command-classifier.ts | head -40`,
+  "python3 - file.ts <<'EOF'\nmake install\nnpx vitest run\nEOF\necho done",
+  'type git tr head node which sleep',
+  'npm view @pierre/diffs version',
+])('ignores tool names that are not the program: %s → null', (command) => {
+  expect(classifyHeavyCommand(command)).toBeNull();
+});
