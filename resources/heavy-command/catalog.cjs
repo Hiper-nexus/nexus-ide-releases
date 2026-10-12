@@ -488,6 +488,11 @@ function pythonKind(args, seg, depth) {
 function inlineKind(code) {
   if (typeof code !== 'string' || code.includes(DYNAMIC)) return 'build';
   const literal = /(['"`])((?:\\.|(?!\1)[^\\])*)\1/g;
+  // F-1361: require/import whose argument is not one plain literal
+  // (`require(process.env.TS)`, `'type' + 'script'`, `${…}`) names its module
+  // only at run time, so no literal below can clear it.
+  const bare = code.replace(literal, (_, quote, text) => (quote === '`' && text.includes('${') ? '_' : '""'));
+  if (/\b(?:require|import)\s*\((?!\s*""\s*[,)])/.test(bare)) return 'build';
   let best = null;
   for (let match, count = 0; (match = literal.exec(code)); count++) {
     if (count >= 64 || /^(?:node:)?child_process$/.test(match[2])) return 'build';

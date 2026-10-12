@@ -268,6 +268,12 @@ describe('commandKind mede runners de package manager e de Python; node -e não 
     [`node -p "require('typescript').version"`, 'typescript'],
     [`node -e "require('node:child_process').execSync('make')"`, 'build'],
     ['node -e "$CODE"', 'build'],
+    // F-1361: módulo nomeado só em tempo de execução (require/import com
+    // argumento que não é um literal simples) carrega tsc/vitest sem a reserva.
+    [`node -e 'const ts=require(process.env.TS);ts.createProgram(["a.ts"],{noEmit:true}).getSemanticDiagnostics()'`, 'build'],
+    [`node -e "import(process.env.MOD).then((m) => m.run())"`, 'build'],
+    ['node -e \'require(`${process.env.ROOT}/typescript`)\'', 'build'],
+    [`node -e "require('type' + 'script')"`, 'build'],
   ])('%s → %s', (command, kind) => {
     expect(catalog.commandKind(command)).toBe(kind);
   });
@@ -278,6 +284,9 @@ describe('commandKind mede runners de package manager e de Python; node -e não 
     `node --eval 'require("fs")'`,
     'node --print 1+1',
     "node -pe 'process.arch'",
+    `node -e "require( 'fs' ).readFileSync(0)"`,
+    `node -e "import('node:fs').then((fs) => fs.statSync('.'))"`,
+    'node -p \'require(`path`).sep\'',
     'pnpm vite',
     'yarn vitest --version',
     'python -m http.server',
@@ -302,6 +311,8 @@ describe('argvKind classifica o argv direto, palavra por palavra', () => {
     [['/bin/sh', '-c', 'npx vitest run'], 'tests'],
     [['arch', '-arm64', 'npm', 'install'], 'install'],
     [['npx', 'tsc', '--noEmit'], 'typescript'],
+    [['node', '-e', 'require(process.env.TS).createProgram([], {})'], 'build'],
+    [['node', '-e', 'require("fs").statSync(".")'], null],
   ] as Array<[string[], string | null]>)('%j → %s', (argv, kind) => {
     expect(argvKind(argv)).toBe(kind);
   });
