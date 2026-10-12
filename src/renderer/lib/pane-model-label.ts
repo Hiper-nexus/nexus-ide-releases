@@ -165,14 +165,15 @@ function parseModelVersion(model: string): ParsedModel {
     return { version: normalizeVersionParts(parts) };
   }
 
-  // Muse Spark: "muse-spark-1.3" → "Spark 1.3"
+  // Muse: "muse-spark-1.3" → "Spark 1.3", "muse-wonder-full-1.0" →
+  // "Wonder Full 1.0" (F-1391).
   // O placeholder "muse" (id do adapter) não é modelo — versão vazia.
   if (lower === 'muse') {
     return { version: '' };
   }
-  if (lower.startsWith('muse-spark-')) {
-    const parts = clean.slice('muse-spark-'.length).split('-');
-    return { version: normalizeVersionParts(['spark', ...parts]) };
+  if (lower.startsWith('muse-')) {
+    const parts = clean.slice('muse-'.length).split('-');
+    return { version: normalizeVersionParts(parts) };
   }
 
   // Qwen: "qwen2.5-coder" → "2.5 Coder"

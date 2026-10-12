@@ -59,6 +59,15 @@ describe('benchmarks oficiais publicados (F-675)', () => {
     expect(missing).toEqual([]);
   });
 
+  it('F-1391: wonder/wonder-full sem número público herdam o piso do spark-1.3, com a fonte não verificada', () => {
+    const spark = publishedCodingQuality('muse', 'muse-spark-1.3');
+    expect(spark).not.toBeNull();
+    for (const model of ['muse-wonder-1.0', 'muse-wonder-full-1.0']) {
+      expect(publishedCodingQuality('muse', model)).toBe(spark);
+      expect(PUBLISHED_BENCHMARKS[`muse:${model}`]?.source).toMatch(/Meta.*operador.*não verificado/);
+    }
+  });
+
   it('normaliza variantes de esforço, contexto e adapters irmãos', () => {
     expect(publishedBenchmarkKey('agy', 'gemini-3.8-flash-high')).toBe('agy:gemini-3.8-flash');
     expect(publishedBenchmarkKey('glm-flash', 'glm-5.3-flash[1m]')).toBe('glm:glm-5.3-flash');

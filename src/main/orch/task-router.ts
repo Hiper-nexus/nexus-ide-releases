@@ -194,7 +194,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // F-992: com esforço só no Claude Code >= 2.1.293; abaixo disso o 4.5 atende.
     { adapterId: 'claude', model: 'claude-haiku-5-5', effort: 'low' },
     { adapterId: 'claude', model: 'claude-haiku-4-5', effort: 'low' },
-    // F-696: Muse Spark 1.3 (free, DeepSWE 75,4 / TB2.1 88,8) em todo tier.
+    // F-696/F-1391: Muse free em todo tier — o wonder-1.0 (default do
+    // catálogo Meta, mais novo) antes; o spark-1.3 cobre a CLI sem o wonder.
+    { adapterId: 'muse', model: 'muse-wonder-1.0' },
     { adapterId: 'muse', model: 'muse-spark-1.3' },
   ],
   easy: [
@@ -219,7 +221,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'opencode', model: 'opencode/deepseek-v4-flash' },
     { adapterId: 'openclaude', model: 'haiku' },
     { adapterId: 'aider', model: 'claude-haiku-4-5' },
-    // F-696: Muse Spark 1.3 (free, DeepSWE 75,4 / TB2.1 88,8) em todo tier.
+    // F-696/F-1391: Muse free em todo tier (wonder-1.0, spark-1.3 de reserva).
+    { adapterId: 'muse', model: 'muse-wonder-1.0' },
     { adapterId: 'muse', model: 'muse-spark-1.3' },
   ],
   medium: [
@@ -245,7 +248,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // Catálogo builtin: priors de capacidade, não notas de benchmark.
     // Auth/modelos disponíveis continuam filtrados antes da escolha.
     { adapterId: 'devin', model: 'swe-2-medium' },
+    { adapterId: 'muse', model: 'muse-wonder-1.0' },
     { adapterId: 'muse', model: 'muse-spark-1.3' },
+    // Muse via Claude: sem evidência de que o endpoint aceita os wonder.
     { adapterId: 'muse-claude', model: 'muse-spark-1.3' },
     { adapterId: 'openclaude', model: 'sonnet' },
     { adapterId: 'aider', model: 'claude-sonnet-5' },
@@ -294,7 +299,10 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'openclaude', model: 'opus' },
     { adapterId: 'aider', model: 'claude-opus-4-8' },
     { adapterId: 'opencode', model: 'openrouter/anthropic/claude-opus-4.8' },
-    // F-696: Muse Spark 1.3 (free, DeepSWE 75,4 / TB2.1 88,8) em todo tier.
+    // F-1391: difícil/crítico no Muse vai para o wonder-full-1.0, o mais
+    // forte do catálogo Meta (o fabricante o compara ao Opus 5.5 — informado
+    // pelo operador, sem número público); spark-1.3 para a CLI sem o wonder.
+    { adapterId: 'muse', model: 'muse-wonder-full-1.0' },
     { adapterId: 'muse', model: 'muse-spark-1.3' },
   ],
   critical: [
@@ -322,7 +330,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
-    // F-696: Muse Spark 1.3 (free, DeepSWE 75,4 / TB2.1 88,8) em todo tier.
+    // F-1391: mesmo par do hard (wonder-full; spark-1.3 de reserva).
+    { adapterId: 'muse', model: 'muse-wonder-full-1.0' },
     { adapterId: 'muse', model: 'muse-spark-1.3' },
   ],
 };

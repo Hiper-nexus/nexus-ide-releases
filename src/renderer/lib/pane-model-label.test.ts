@@ -187,6 +187,11 @@ describe('resolveModelChipLabel', () => {
       expect(label!.full).toBe('Muse Spark 1.3 · XHigh');
     });
 
+    it('F-1391: muse-wonder-1.0 / muse-wonder-full-1.0 get readable labels', () => {
+      expect(resolveModelChipLabel('muse', 'muse-wonder-1.0', 'high')!.full).toBe('Muse Wonder 1.0 · High');
+      expect(resolveModelChipLabel('muse', 'muse-wonder-full-1.0', 'xhigh')!.full).toBe('Muse Wonder Full 1.0 · XHigh');
+    });
+
     it('placeholder id "muse" does not become "Muse muse"', () => {
       const label = resolveModelChipLabel('muse', 'muse', undefined);
       expect(label!.family).toBe('Muse');

@@ -46,9 +46,20 @@ describe('Muse CLI spawn contract (F-596)', () => {
     expect(adapter.spawn.extraArgs).toEqual(['--trust-workspace']);
   });
 
-  it('catalogs Muse Spark 1.3, not the adapter placeholder "muse"', () => {
-    expect(adapter.models.default).toBe('muse-spark-1.3');
-    expect(adapter.models.list).toEqual(['muse-spark-1.3', 'muse-spark-1.2']);
+  it('F-1391: catalogs the Muse 1.4.6 Meta models, default muse-wonder-1.0 (never the placeholder "muse")', () => {
+    expect(adapter.models.default).toBe('muse-wonder-1.0');
+    expect(adapter.models.list).toEqual([
+      'muse-wonder-full-1.0',
+      'muse-wonder-1.0',
+      'muse-spark-1.3',
+      'muse-spark-1.2',
+    ]);
     expect(adapter.models.flag).toBe('--model');
+  });
+
+  it('F-1391: offers only efforts every Muse model accepts — no `max` (the wonder has none)', () => {
+    expect(adapter.control?.effort?.arg.trim()).toBe('--reasoning-effort');
+    expect(adapter.control?.effort?.levels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
+    expect(adapter.control?.effort?.levels).not.toContain('max');
   });
 });

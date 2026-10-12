@@ -73,6 +73,9 @@ const COST_RANK: Record<ModelCostTier, number> = {
   high: 4,
 };
 
+/** Esforços que todo modelo do Muse aceita (`reasoning_effort_variants`, F-1391). */
+const MUSE_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+
 export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
   version: 1,
   adapters: {
@@ -267,12 +270,16 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       ],
     },
     muse: {
-      // 'muse' era placeholder e está em RETIRED_MODEL_MIGRATIONS; o binário
-      // 1.3 abre em muse-spark-1.3 (mesmo default do catálogo publicado).
-      default: 'muse-spark-1.3',
+      // F-1391: catálogo do provedor Meta (Muse 1.4.6, 12/10) — o default
+      // marcado é o muse-wonder-1.0; o wonder-full é o mais forte. Esforços
+      // por modelo vêm de `reasoning_effort_variants`: só o spark-1.3 tem `max`.
+      // Fallback estático do cache ~/.local/share/muse/model-catalog.
+      default: 'muse-wonder-1.0',
       models: [
-        { id: 'muse-spark-1.3', availability: 'free', costTier: 'free', source: 'bundled' },
-        { id: 'muse-spark-1.2', availability: 'free', costTier: 'free', source: 'bundled' },
+        { id: 'muse-wonder-full-1.0', availability: 'free', costTier: 'free', source: 'bundled', efforts: [...MUSE_EFFORTS] },
+        { id: 'muse-wonder-1.0', availability: 'free', costTier: 'free', source: 'bundled', efforts: [...MUSE_EFFORTS] },
+        { id: 'muse-spark-1.3', availability: 'free', costTier: 'free', source: 'bundled', efforts: [...MUSE_EFFORTS, 'max'] },
+        { id: 'muse-spark-1.2', availability: 'free', costTier: 'free', source: 'bundled', efforts: [...MUSE_EFFORTS] },
       ],
     },
   },

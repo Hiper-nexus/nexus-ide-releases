@@ -126,3 +126,18 @@ describe('isSameLineAtLeast (a vaga de topo é da linha, não do id)', () => {
     expect(isSameLineAtLeast(model, reference)).toBe(expected);
   });
 });
+
+describe('Muse wonder é linha própria (F-1391)', () => {
+  it('spark não é promovido para wonder/wonder-full pela regra de linha, nem o inverso', () => {
+    const catalog = ['muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3', 'muse-spark-1.2'];
+    expect(modelLineOf('muse-spark-1.3').stem).not.toBe(modelLineOf('muse-wonder-1.0').stem);
+    expect(modelLineOf('muse-wonder-1.0').stem).not.toBe(modelLineOf('muse-wonder-full-1.0').stem);
+    expect(newestInModelLine('muse-spark-1.2', catalog)).toBe('muse-spark-1.3');
+    expect(newestInModelLine('muse-spark-1.3', catalog)).toBe('muse-spark-1.3');
+    expect(newestInModelLine('muse-wonder-1.0', catalog)).toBe('muse-wonder-1.0');
+    expect(newestInModelLine('muse-wonder-full-1.0', catalog)).toBe('muse-wonder-full-1.0');
+    // A variante -contributor (conteúdo vai para melhoria de produto) não é
+    // a mesma linha: nunca substitui o wonder por upgrade.
+    expect(newestInModelLine('muse-wonder-1.0', ['muse-wonder-1.1-contributor'])).toBe('muse-wonder-1.0');
+  });
+});

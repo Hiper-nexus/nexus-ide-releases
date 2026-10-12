@@ -69,6 +69,12 @@ export const PUBLISHED_BENCHMARKS: Readonly<Record<string, PublishedBenchmark>> 
   'deepseek:deepseek-flash': { deepSWE: 74.2, terminalBench21: 90.6, source: 'https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash' },
   'deepseek:deepseek-v4-pro': { deepSWE: 62.7, terminalBench21: 87.9, source: 'https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813' },
   'muse:muse-spark-1.3': { deepSWE: 75.4, terminalBench21: 88.8, source: 'https://dev.meta.ai/models/muse-spark/' },
+  // F-1391 (12/10): wonder e wonder-full saíram hoje sem número público. Fonte:
+  // fabricante (Meta), informado pelo operador, NÃO verificado — o full
+  // "compara com o Opus 5.5 nos benchmarks deles"; o wonder fica entre o
+  // spark-1.3 e o full. Sem número, herdam o spark-1.3 como piso.
+  'muse:muse-wonder-full-1.0': { successorOf: 'muse:muse-spark-1.3', source: 'fabricante (Meta), informado pelo operador, não verificado: comparável ao Opus 5.5' },
+  'muse:muse-wonder-1.0': { successorOf: 'muse:muse-spark-1.3', source: 'fabricante (Meta), informado pelo operador, não verificado: entre o spark-1.3 e o wonder-full' },
   'mimo-code:xiaomi/mimo-v2.6-pro': { deepSWE: 71.9, terminalBench21: 89.9, source: 'https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-RL' },
   'mimo-code:xiaomi/mimo-v2.6-flash': { deepSWE: 67.9, terminalBench21: 87.6, source: 'https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Flash-RL' },
   'minimax-code:minimax/MiniMax-M3.1-Flash-Preview': { successorOf: 'minimax-code:minimax/MiniMax-M3', source: 'https://datanorth.ai/news/minimax-releases-m3-1-flash-preview' },

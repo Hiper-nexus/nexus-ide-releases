@@ -131,6 +131,22 @@ describe('model catalog overlays', () => {
 });
 
 describe('published catalog JSON', () => {
+  it('F-1391: sem cache, o Muse lista os 4 modelos Meta com default muse-wonder-1.0 e esforço por modelo', () => {
+    const missing = path.join(os.tmpdir(), `nexus-no-catalog-${process.pid}-f1391.json`);
+    for (const catalog of [BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG, loadModelCatalog(missing)]) {
+      const muse = catalog.adapters?.muse;
+      expect(muse?.default).toBe('muse-wonder-1.0');
+      expect(muse?.models?.map((m) => m.id)).toEqual([
+        'muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3', 'muse-spark-1.2',
+      ]);
+    }
+    const info = (id: string) => modelCatalogInfo(loadModelCatalog(missing), 'muse', id);
+    expect(info('muse-wonder-1.0')?.efforts).not.toContain('max');
+    expect(info('muse-wonder-full-1.0')?.efforts).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
+    expect(info('muse-spark-1.3')?.efforts).toContain('max');
+    // Muse via Claude fica no spark até haver evidência de que o endpoint aceita o wonder.
+    expect(PUBLISHED_MODEL_CATALOG.adapters?.['muse-claude']?.default).toBe('muse-spark-1.3');
+  });
   it('uses the available Sonnet 5.5 line for a fresh Claude default', () => {
     const original = { ...ADAPTER, id: 'claude', models: {
       flag: '--model', list: ['claude-sonnet-5'], default: 'claude-sonnet-5',

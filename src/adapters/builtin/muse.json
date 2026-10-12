@@ -30,8 +30,8 @@
   },
   "models": {
     "flag": "--model",
-    "list": ["muse-spark-1.3", "muse-spark-1.2"],
-    "default": "muse-spark-1.3"
+    "list": ["muse-wonder-full-1.0", "muse-wonder-1.0", "muse-spark-1.3", "muse-spark-1.2"],
+    "default": "muse-wonder-1.0"
   },
   "promptInjection": {
     "method": "arg",
@@ -63,7 +63,7 @@
     },
     "effort": {
       "arg": "--reasoning-effort ",
-      "levels": ["low", "medium", "high", "xhigh"]
+      "levels": ["minimal", "low", "medium", "high", "xhigh"]
     }
   },
   "quirks": {

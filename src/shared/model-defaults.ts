@@ -38,8 +38,9 @@ export const RETIRED_MODEL_MIGRATIONS: Readonly<Record<string, string>> = Object
   'gemini-3.1-pro-high': 'gemini-3.8-flash-high',
   'gemini-3.1-pro-low': 'gemini-3.8-flash-low',
   // Muse 1.3: o id "muse" era placeholder do adapter — o CLI recusa e o
-  // chip virava "Muse muse". Default real do binário 1.3.0: muse-spark-1.3.
-  muse: 'muse-spark-1.3',
+  // chip virava "Muse muse". Default real do catálogo do Muse 1.4.6 (F-1391):
+  // muse-wonder-1.0.
+  muse: 'muse-wonder-1.0',
   // xAI aposentou estes quatro (`grok models` na CLI instalada, 2026-09-27:
   // só grok-4.7/grok-4.7-build-fast/grok-4.6/grok-4.5 continuam na conta) —
   // o roteamento oferecia grok-4.1 para o operador achar "grok já é o 4.7".
