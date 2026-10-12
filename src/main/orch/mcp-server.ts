@@ -90,7 +90,8 @@ import {
   findPane,
   requestPaneClose,
 } from "./pane-registry";
-import { isWorkerSessionBusy, scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
+import { scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
+import { workerActivityProbes } from "./worker-idle-probe";
 import {
   isPlaceholderSummary,
   LegacyHandoffDedupe,
@@ -2094,13 +2095,18 @@ export async function startMcpServer(): Promise<void> {
         getStores: getProjectDomainStores,
         deliver: onHandoffSubmitted,
         // F-1409: success ingerido do spool fecha o worker armado, como no MCP.
-        afterIngest: (handoff) =>
+        afterIngest: (handoff, scope) =>
           scheduleAutoCloseAfterHandoff(
             handoff.sessionId,
             handoff.status,
             (sessionId) => findPane(sessionId)?.paneId ?? null,
             requestPaneClose,
-            { handoffId: handoff.id, isBusy: (id) => isWorkerSessionBusy(getSessionState(id)) },
+            {
+              handoffId: handoff.id,
+              ...workerActivityProbes,
+              isDelivered: (id) =>
+                getProjectDomainStores(scope).handoffs.get(id)?.deliveryState !== "queued",
+            },
           ),
       },
     });

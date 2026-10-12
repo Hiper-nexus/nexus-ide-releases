@@ -2,8 +2,10 @@
  * Fechamento de panes por ESCOPO explícito + autoCloseOnHandoff (paridade
  * coordenação, gap e). Doutrina: o chamador NOMEIA o que fecha — nada implícito;
  * o desligamento automático é declarado no nascimento do pane (registro, não
- * pergunta) e só dispara no handoff success — falha preserva pane e scrollback
- * para diagnóstico.
+ * pergunta). success fecha logo após o submit. partial/failed/blocked de
+ * worker de missão (F-1409) fecham no ACK aceito do Maestro ou na rede de
+ * segurança (15 min parado depois que a entrega chegou ao Maestro); rework e
+ * pane sem braço (operador, autoCloseOnHandoff:false) ficam abertos.
 */
 import { sanitizePaneBootOutput } from './pane-boot-output';
 
@@ -142,8 +144,16 @@ export function assertAutoCloseReportPreserved(
 type PaneIdOf = (sessionId: string) => string | null;
 type ClosePane = (paneId: string, expectedSessionId: string) => Promise<unknown>;
 
-function closeArmedPaneSoon(sessionId: string, armedPaneId: string, paneIdOf: PaneIdOf, close: ClosePane): void {
-  setTimeout(() => {
+function closeArmedPaneSoon(
+  sessionId: string,
+  armedPaneId: string,
+  paneIdOf: PaneIdOf,
+  close: ClosePane,
+): ReturnType<typeof setTimeout> {
+  return setTimeout(() => {
+    if (scheduledNonSuccessCloseBySession.get(sessionId)?.paneId === armedPaneId) {
+      scheduledNonSuccessCloseBySession.delete(sessionId);
+    }
     if (paneIdOf(sessionId) !== armedPaneId) return;
     void Promise.resolve().then(() => close(armedPaneId, sessionId)).catch((error) =>
       console.warn(`[handoff] auto-close do pane ${armedPaneId} falhou:`, error),
@@ -158,16 +168,32 @@ function closeArmedPaneSoon(sessionId: string, armedPaneId: string, paneIdOf: Pa
  */
 export const NON_SUCCESS_IDLE_CLOSE_MS = 15 * 60_000;
 
+/**
+ * F-1409/M3: enquanto a entrega está `queued` (Maestro em turno longo), o
+ * prazo não corre — o Maestro ainda não leu e pode pedir rework. Verifica a
+ * chegada a cada minuto; o prazo começa na primeira verificação entregue.
+ */
+export const NON_SUCCESS_DELIVERY_POLL_MS = 60_000;
+
 interface PendingNonSuccessClose {
   readonly paneId: string;
   readonly handoffId: string;
   readonly paneIdOf: PaneIdOf;
   readonly close: ClosePane;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 /** Entrega partial/failed/blocked de worker armado aguardando o Maestro, por sessão. */
 const pendingNonSuccessBySession = new Map<string, PendingNonSuccessClose>();
+
+/**
+ * Grok #1: entre desarmar e o setTimeout(0) do fechamento, um ACK rework
+ * ainda precisa vencer — o close agendado fica aqui até disparar.
+ */
+const scheduledNonSuccessCloseBySession = new Map<
+  string,
+  { readonly paneId: string; readonly timer: ReturnType<typeof setTimeout> }
+>();
 
 function clearPendingNonSuccess(sessionId: string): void {
   const pending = pendingNonSuccessBySession.get(sessionId);
@@ -180,7 +206,8 @@ function closePendingNonSuccess(sessionId: string, pending: PendingNonSuccessClo
   clearPendingNonSuccess(sessionId);
   if (armedAutoClosePaneId(sessionId, pending.paneId) !== pending.paneId) return;
   disarmAutoCloseOnHandoff(sessionId, pending.paneId);
-  closeArmedPaneSoon(sessionId, pending.paneId, pending.paneIdOf, pending.close);
+  const timer = closeArmedPaneSoon(sessionId, pending.paneId, pending.paneIdOf, pending.close);
+  scheduledNonSuccessCloseBySession.set(sessionId, { paneId: pending.paneId, timer });
 }
 
 /** Estados em que o worker ainda trabalha — a rede de segurança espera. */
@@ -193,6 +220,13 @@ export interface NonSuccessCloseOptions {
   readonly handoffId: string;
   /** Worker trabalhando (ex.: depois de rework por PTY) adia a rede de segurança. */
   readonly isBusy?: (sessionId: string) => boolean;
+  /**
+   * Grok #2: contador de saída do worker (one-shot fica "busy" enquanto o
+   * processo vive). null = sem sinal. Saída nova na janela adia o fechamento.
+   */
+  readonly activityMark?: (sessionId: string) => number | null;
+  /** A entrega já chegou ao Maestro (deliveryState ≠ queued)? Ausente = desde o submit. */
+  readonly isDelivered?: (handoffId: string) => boolean;
   readonly idleCloseMs?: number;
 }
 
@@ -216,18 +250,50 @@ export function scheduleAutoCloseAfterHandoff(
     if (nonSuccess) {
       clearPendingNonSuccess(sessionId);
       const idleMs = nonSuccess.idleCloseMs ?? NON_SUCCESS_IDLE_CLOSE_MS;
+      const handoffId = nonSuccess.handoffId;
+      const markOf = (): number | null => {
+        try {
+          return nonSuccess.activityMark?.(sessionId) ?? null;
+        } catch {
+          return null;
+        }
+      };
+      let windowMark: number | null = null;
+      const startIdleWindow = (): void => {
+        windowMark = markOf();
+        pending.timer = setTimeout(onIdle, idleMs);
+      };
+      const onIdle = (): void => {
+        if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
+        const mark = markOf();
+        const producedOutput = mark !== null && windowMark !== null && mark !== windowMark;
+        if (producedOutput || nonSuccess.isBusy?.(sessionId)) {
+          startIdleWindow();
+          return;
+        }
+        closePendingNonSuccess(sessionId, pending);
+      };
+      // O prazo só começa quando a entrega sai de `queued` (M3).
+      const awaitDelivery = (): void => {
+        if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
+        let delivered = true;
+        try {
+          delivered = nonSuccess.isDelivered?.(handoffId) ?? true;
+        } catch {
+          // Ledger indisponível agora: não fecha; tenta de novo na próxima volta.
+          delivered = false;
+        }
+        if (!delivered) {
+          pending.timer = setTimeout(awaitDelivery, Math.min(NON_SUCCESS_DELIVERY_POLL_MS, idleMs));
+          return;
+        }
+        startIdleWindow();
+      };
       const pending: PendingNonSuccessClose = {
-        paneId: armedPaneId, handoffId: nonSuccess.handoffId, paneIdOf, close,
-        timer: setTimeout(function onIdle() {
-          if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
-          if (nonSuccess.isBusy?.(sessionId)) {
-            pending.timer = setTimeout(onIdle, idleMs);
-            return;
-          }
-          closePendingNonSuccess(sessionId, pending);
-        }, idleMs),
+        paneId: armedPaneId, handoffId, paneIdOf, close,
       };
       pendingNonSuccessBySession.set(sessionId, pending);
+      awaitDelivery();
     }
     return;
   }
@@ -247,12 +313,20 @@ export function closeAfterNonSuccessHandoffAck(
   verdict: string,
 ): boolean {
   if (!sessionId) return false;
-  const pending = pendingNonSuccessBySession.get(sessionId);
-  if (!pending || pending.handoffId !== handoffId) return false;
   if (verdict === "rework") {
+    // O writer volta a trabalhar: cancela a rede de segurança e, se o timer
+    // já desarmou e agendou o close (setTimeout 0), cancela o close e rearma.
     clearPendingNonSuccess(sessionId);
+    const scheduled = scheduledNonSuccessCloseBySession.get(sessionId);
+    if (scheduled) {
+      clearTimeout(scheduled.timer);
+      scheduledNonSuccessCloseBySession.delete(sessionId);
+      armAutoCloseOnHandoff(sessionId, scheduled.paneId);
+    }
     return false;
   }
+  const pending = pendingNonSuccessBySession.get(sessionId);
+  if (!pending || pending.handoffId !== handoffId) return false;
   closePendingNonSuccess(sessionId, pending);
   return true;
 }

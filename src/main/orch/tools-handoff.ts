@@ -35,6 +35,7 @@ import {
 import { MAX_HANDOFF_DELIVERY_ATTEMPTS } from "./handoff-delivery-policy";
 import { classifySessionLiveness } from "../pty/session-liveness";
 import { getSessionState } from "../pty/pty-manager";
+import { workerActivityProbes } from "./worker-idle-probe";
 import type { ProjectExecutionScope } from "../../shared/project-identity-types";
 import {
   clampPageSize,
@@ -46,7 +47,6 @@ import {
   scheduleAutoCloseAfterHandoff,
   assertAutoCloseReportPreserved,
   closeAfterNonSuccessHandoffAck,
-  isWorkerSessionBusy,
 } from "./pane-close-scopes";
 import { findPane, listPaneSnapshots, readSessionOutput, requestPaneClose } from "./pane-registry";
 import {
@@ -837,16 +837,22 @@ const handoffSubmitTool: McpToolDef = {
           error instanceof Error ? error.message : error,
         );
       });    }
-    // autoCloseOnHandoff (paridade Bridge): declarado no spawn, dispara SÓ
-    // no success — falha preserva pane e scrollback. Fora do caminho da
-    // resposta: o fechamento nunca atrasa nem derruba o handoff.
+    // autoCloseOnHandoff (paridade Bridge): declarado no spawn. success fecha
+    // logo; partial/failed/blocked (F-1409) fecham no ACK aceito do Maestro
+    // ou após 15 min parado depois que a entrega chegou a ele; rework mantém.
+    // Fora do caminho da resposta: o fechamento nunca atrasa nem derruba o handoff.
     scheduleAutoCloseAfterHandoff(
       ctx.sessionId,
       status,
       (sessionId) => findPane(sessionId)?.paneId ?? null,
       requestPaneClose,
       // F-1409: partial/failed/blocked fecha no ACK do Maestro ou na rede de segurança.
-      { handoffId: handoff.id, isBusy: (id) => isWorkerSessionBusy(getSessionState(id)) },
+      {
+        handoffId: handoff.id,
+        ...workerActivityProbes,
+        // M3: o prazo corre só depois que a entrega chega ao Maestro.
+        isDelivered: (id) => suite.handoffs.get(id)?.deliveryState !== "queued",
+      },
     );
     return {
       ok: true,

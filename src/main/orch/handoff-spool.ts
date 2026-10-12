@@ -128,7 +128,7 @@ export interface HandoffSpoolDeps {
   /** Acorda o orquestrador (idle-delivery); falha não desfaz o handoff durável. */
   readonly deliver: (handoff: Handoff, scope: ProjectExecutionScope) => unknown;
   /** F-1409: depois do recibo (best-effort) — o auto-close do worker armado. */
-  readonly afterIngest?: (handoff: Handoff) => void;
+  readonly afterIngest?: (handoff: Handoff, scope: ProjectExecutionScope) => void;
   readonly now?: () => number;
 }
 
@@ -861,7 +861,7 @@ async function processClaimed(
       handoffId: handoff.id, status: handoff.status, spooledAt: entry.createdAt,
     });
     try {
-      deps.afterIngest?.(handoff);
+      deps.afterIngest?.(handoff, binding.scope);
     } catch (error) {
       console.warn('[handoff-spool] auto-close após ingestão falhou:', error);
     }

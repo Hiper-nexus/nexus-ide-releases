@@ -3634,6 +3634,11 @@ export function isSessionDetached(sessionId: string): boolean {
     physicalTerminationFlights.get(sessionId)?.session !== session);
 }
 
+/** F-1409: contador de saída da sessão (null = sessão inexistente). */
+export function getSessionOutputSequence(sessionId: string): number | null {
+  return sessions.get(sessionId)?.outputSequence ?? null;
+}
+
 export function acknowledgeSessionOutput(
   wc: WebContents,
   sessionId: string,
