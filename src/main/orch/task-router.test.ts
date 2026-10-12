@@ -9,6 +9,7 @@ import {
   type TaskTier,
 } from './task-router';
 import { countAdapterUses } from './route-pipeline';
+import { classifyRouteSpecialty } from '../../shared/mission-route-specialty';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
 import { adapterCircuitBreakers } from './circuit-breaker';
@@ -1190,5 +1191,61 @@ describe('F-217 — o mais novo da linha vence mesmo sem catálogo', () => {
     } finally {
       resetModelAccessQuarantineForTests();
     }
+  });
+});
+
+/**
+ * F-1289: a heurística decidia tier e especialidade por UMA palavra solta e
+ * ambígua, e por prefixo dentro de identificador. Os três textos abaixo são os
+ * recibos reais de `nexus_pane_spawn` (11/10/2026) que expuseram o defeito:
+ * trabalho grande caindo em modelo fraco e trabalho pequeno caindo em critical.
+ */
+describe('F-1289: palavra ambígua sozinha não decide tier nem especialidade', () => {
+  // "cobrança" aqui é cobrar ENTREGA do worker, não cobrança de dinheiro.
+  const ONE_SHOT_PANE =
+    'Corrigir pane one-shot do Nexus (agy --print, opencode run) vivo tratado como ocioso: cobrança e re-rota, reuso que perde a tarefa';
+  // 4 bugs de update; "checkedAt" é um campo do JSON, "checagem" é substantivo.
+  const UPDATER =
+    'Corrigir o atualizador do Nexus: erro de checagem sem checkedAt vira rajada, rate limit, ZIP de update esquecido e URL de download de qualquer host';
+  // Heurística de shell em bash/zsh; "texto cru" é domínio, não copy.
+  const OSC_MARKERS =
+    'Corrigir no Nexus: classificação de comando pesado por texto cru e marcadores OSC 133 errados no bash e no zsh';
+
+  it('pane one-shot não vira critical/security por "cobrança" nem por --print', () => {
+    const classification = classifyTask(ONE_SHOT_PANE);
+    expect(classification.tier).not.toBe('critical');
+    expect(classification.tier).toBe('medium');
+    expect(classifyRouteSpecialty(ONE_SHOT_PANE).specialty).not.toBe('security');
+  });
+
+  it('atualizador com 4 bugs não vira trivial por "checkedAt"', () => {
+    const classification = classifyTask(UPDATER);
+    expect(classification.tier).not.toBe('trivial');
+    expect(classification.tier).toBe('medium');
+  });
+
+  it('marcadores OSC em bash/zsh não vira easy por "texto"', () => {
+    const classification = classifyTask(OSC_MARKERS);
+    expect(classification.tier).not.toBe('easy');
+    expect(classification.tier).toBe('medium');
+  });
+
+  it('fronteira de palavra: identificador e palavra maior não casam o sinal', () => {
+    // author ≠ auth, dockerfile ≠ doc, login ≠ log, textual ≠ text
+    expect(classifyTask('Corrigir o author do formulário de cadastro').tier).toBe('medium');
+    expect(classifyTask('Ajustar o Dockerfile do serviço de build').tier).toBe('medium');
+    // 'login' não é 'log': o tier fácil aqui é só o nudge de tamanho (6 palavras).
+    expect(classifyTask('Corrigir o login social com Google').signals).not.toContain('log');
+    expect(classifyTask('Corrigir a contagem regressiva da tela inicial').tier).toBe('medium');
+  });
+
+  it('palavra ambígua com um segundo sinal continua decidindo', () => {
+    // "cobrança" + "produção" = dinheiro de verdade (matriz 23/08).
+    expect(classifyTask('implemente cobrança com cartão no checkout de produção').tier).toBe(
+      'critical',
+    );
+    expect(
+      classifyRouteSpecialty('implementar autenticação com refresh token e cobrança').specialty,
+    ).toBe('security');
   });
 });

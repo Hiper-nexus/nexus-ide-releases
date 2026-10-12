@@ -30,6 +30,8 @@ import {
 import {
   ROUTE_EFFORTS,
   classifyRouteSpecialty,
+  decisiveSignals,
+  matchSignals,
   preferAdapterOrder,
   resolveSpecialtyPolicy,
   type RoutePolicySource,
@@ -327,19 +329,20 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
  * the strongest matched bucket wins, then size nudges the tier up or down.
  */
 const CRITICAL_SIGNALS = [
-  // Com o match por prefixo-de-palavra, compostos genuínos precisam de
-  // entrada própria: 'encrypt'/'unauthorized'/'cybersecurity'/'reautentic'
-  // não começam com os sinais base ('crypt', 'authoriza', 'security', …).
+  // Com o match por PALAVRA INTEIRA, compostos genuínos precisam de entrada
+  // própria no radical: 'encrypt'/'unauthorized'/'cybersecurity'/'reautentic'
+  // não são as palavras base ('crypt', 'authoriza', 'security', …).
   'security', 'cybersecurity', 'ciberseg', 'ciberata', 'segurança',
   'vulnerab', 'auth', 'oauth', 'unauthorized', 'não autorizado',
   'nao autorizado', 'desautoriz', 'autentica', 'reautentic', 'authoriza',
-  'autoriza', 'payment', 'pagamento', 'billing', 'cobrança', 'migration',
+  'autoriza', 'payment', 'pagamento', 'billing', 'cobrança', 'cartão',
+  'cartao', 'migration',
   'migração', 'migracao', 'cript', 'crypt', 'encrypt', 'decrypt', 'encripta',
   'reencript', 'desencripta', 'descriptografa', 'descriptografia',
   'tenant', 'multitenant', 'rls',
   'produção', 'producao', 'production', 'data loss', 'perda de dados',
   'race condition', 'concorrência', 'concorrencia', 'deadlock', 'webhook',
-  'secret', 'token',
+  'secret', 'secrets', 'token', 'tokens',
 ];
 
 const HARD_SIGNALS = [
@@ -354,18 +357,44 @@ const HARD_SIGNALS = [
 
 const EASY_SIGNALS = [
   'rename', 'renomea', 'typo', 'comment', 'comentário', 'comentario',
-  'readme', 'doc', 'documenta', 'format', 'formata', 'lint', 'css', 'estilo',
-  'style', 'copy', 'texto', 'label', 'tradu', 'translat', 'ajuste simples',
-  'small fix', 'log', 'print',
+  'readme', 'doc', 'docs', 'documenta', 'format', 'formata', 'lint', 'css',
+  'estilo', 'style', 'copy', 'texto', 'label', 'tradu', 'translat',
+  'ajuste simples', 'small fix', 'log', 'logs', 'print',
 ];
 
 const TRIVIAL_SIGNALS = [
   // 'list'/'listar' como prefixo casavam DENTRO de "li(sta)gem" —
   // "implemente a página de listagem" ia para trivial (modelo mais barato
   // construindo feature; matriz 23/08). Imperativo de inspeção fica:
-  'liste', 'leitura', 'read', 'ler', 'check', 'verificar', 'status',
+  'liste', 'leitura', 'read', 'ler', 'check', 'checks', 'verificar', 'status',
   'mostrar', 'show', 'contar', 'count', 'buscar arquivo', 'find file',
 ];
+
+// Radicais: casam por PREFIXO DE PALAVRA porque a palavra pt-BR/EN é mais longa
+// que o sinal. O resto da lista casa por PALAVRA INTEIRA (ver `matchSignals`):
+// é o que impede 'check' de casar 'checkedAt', 'auth' de casar 'author' e
+// 'log' de casar 'login' (F-1289).
+const CRITICAL_STEMS: ReadonlySet<string> = new Set([
+  'ciberseg', 'ciberata', 'vulnerab', 'desautoriz', 'autentica', 'reautentic',
+  'autoriza', 'oauth', 'pagamento', 'cript', 'crypt', 'encrypt', 'decrypt',
+  'encripta', 'reencript', 'desencripta', 'descriptografa', 'descriptografia',
+  'migração', 'migracao', 'concorrência', 'concorrencia',
+]);
+
+const HARD_STEMS: ReadonlySet<string> = new Set([
+  'refatora', 'otimiza', 'optimiz', 'complex', 'complexo', 'complexa',
+  'vazamento', 'protocolo', 'protocol', 'engine', 'motor', 'integração',
+  'integracao', 'diagnos', 'diagnós', 'investig',
+]);
+
+const EASY_STEMS: ReadonlySet<string> = new Set([
+  'rename', 'renomea', 'typo', 'comment', 'comentário', 'comentario',
+  'documenta', 'formata', 'estilo', 'style', 'label', 'tradu', 'translat',
+]);
+
+const TRIVIAL_STEMS: ReadonlySet<string> = new Set([
+  'liste', 'leitura', 'verificar',
+]);
 
 export const TIER_ORDER: TaskTier[] = [
   'trivial',
@@ -374,25 +403,6 @@ export const TIER_ORDER: TaskTier[] = [
   'hard',
   'critical',
 ];
-
-// Sinais casam como PREFIXO DE PALAVRA ('autentica' → 'autenticação'), nunca
-// no meio de outra palavra ('cript' NÃO pode casar 'typescript'). Substring
-// pura inflava tasks rotineiras de TypeScript para tier critical.
-const signalMatchers = new Map<string, RegExp>();
-
-function signalMatcher(signal: string): RegExp {
-  let matcher = signalMatchers.get(signal);
-  if (!matcher) {
-    const escaped = signal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    matcher = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}`, 'u');
-    signalMatchers.set(signal, matcher);
-  }
-  return matcher;
-}
-
-function matchSignals(text: string, signals: string[]): string[] {
-  return signals.filter((signal) => signalMatcher(signal).test(text));
-}
 
 function bumpTier(tier: TaskTier, delta: number): TaskTier {
   const index = TIER_ORDER.indexOf(tier) + delta;
@@ -418,23 +428,30 @@ export function classifyTask(taskText: string): TaskClassification {
   );
   const words = text.split(/\s+/).filter((w) => w.length > 0).length;
 
-  const critical = matchSignals(text, CRITICAL_SIGNALS);
-  const hard = matchSignals(text, HARD_SIGNALS);
-  const easy = matchSignals(text, EASY_SIGNALS);
-  const trivial = matchSignals(text, TRIVIAL_SIGNALS);
+  const critical = matchSignals(text, CRITICAL_SIGNALS, CRITICAL_STEMS);
+  const hard = matchSignals(text, HARD_SIGNALS, HARD_STEMS);
+  const easy = matchSignals(text, EASY_SIGNALS, EASY_STEMS);
+  const trivial = matchSignals(text, TRIVIAL_SIGNALS, TRIVIAL_STEMS);
 
+  // F-1289: bucket nenhum é decidido por uma palavra ambígua sozinha ("cobrança"
+  // de cobrar entrega, "texto cru", "checkedAt"). Sem um sinal que se segure de
+  // pé, vale o padrão medium — a doutrina é default-down.
   let tier: TaskTier;
   let signals: string[];
-  if (critical.length > 0) {
+  if (decisiveSignals(critical).length > 0) {
     tier = 'critical';
     signals = critical;
   } else if (hard.length > 0) {
     tier = 'hard';
     signals = hard;
-  } else if (easy.length > 0 && easy.length >= trivial.length) {
+  } else if (
+    easy.length > 0 &&
+    easy.length >= trivial.length &&
+    decisiveSignals(easy).length > 0
+  ) {
     tier = 'easy';
     signals = easy;
-  } else if (trivial.length > 0) {
+  } else if (trivial.length > 0 && decisiveSignals(trivial).length > 0) {
     tier = 'trivial';
     signals = trivial;
   } else {
@@ -455,7 +472,7 @@ export function classifyTask(taskText: string): TaskClassification {
   const floor = codeReviewTierFloor(text);
   if (floor && TIER_ORDER.indexOf(tier) < TIER_ORDER.indexOf(floor)) {
     tier = floor;
-    signals = matchSignals(text, REVIEW_SIGNALS);
+    signals = matchSignals(text, REVIEW_SIGNALS, legacyPrefixSignals(REVIEW_SIGNALS));
   }
 
   return { tier, signals };
@@ -509,10 +526,22 @@ const REVIEW_CODE_SIGNALS = [
   'architecture', 'repositório', 'repositorio', 'repo',
 ];
 
+/**
+ * Revisão/high-risk são listas de frase composta ('code review', ' pull
+ * request', 'revis', 'system design'): a palavra real é mais longa que o
+ * sinal, então casam por prefixo como sempre. Fica explícito para a regra
+ * padrão do `matchSignals` (palavra inteira) não mudar a semântica delas.
+ */
+function legacyPrefixSignals(signals: readonly string[]): ReadonlySet<string> {
+  return new Set(signals);
+}
+
 export function codeReviewTierFloor(taskText: string): TaskTier | null {
   const text = taskText.toLowerCase();
-  if (matchSignals(text, REVIEW_SIGNALS).length === 0) return null;
-  if (matchSignals(text, REVIEW_CODE_SIGNALS).length === 0) return null;
+  if (matchSignals(text, REVIEW_SIGNALS, legacyPrefixSignals(REVIEW_SIGNALS)).length === 0)
+    return null;
+  if (matchSignals(text, REVIEW_CODE_SIGNALS, legacyPrefixSignals(REVIEW_CODE_SIGNALS)).length === 0)
+    return null;
   return 'hard';
 }
 
@@ -655,13 +684,13 @@ export function frontierRoutePolicy(
 ): { policy: FrontierRoutePolicy; signals: string[] } | null {
   if (tier !== 'hard' && tier !== 'critical') return null;
   const text = taskText.toLowerCase();
-  const review = matchSignals(text, REVIEW_SIGNALS);
+  const review = matchSignals(text, REVIEW_SIGNALS, legacyPrefixSignals(REVIEW_SIGNALS));
   if (review.length > 0) return { policy: 'cross-review', signals: review };
   if (tier === 'critical') return { policy: 'high-risk', signals: ['critical'] };
   if (specialty === 'security' || specialty === 'bug') {
     return { policy: 'high-risk', signals: [specialty] };
   }
-  const risk = matchSignals(text, HIGH_RISK_SIGNALS);
+  const risk = matchSignals(text, HIGH_RISK_SIGNALS, legacyPrefixSignals(HIGH_RISK_SIGNALS));
   return risk.length > 0 ? { policy: 'high-risk', signals: risk } : null;
 }
 

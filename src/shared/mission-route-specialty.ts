@@ -159,23 +159,110 @@ const SECURITY_SPECIALTY_SIGNALS = [
   'secret',
 ] as const;
 
-const securityMatchers = new Map<string, RegExp>();
+/**
+ * Sinais casam por PALAVRA INTEIRA por padrão. O prefixo de palavra (F-194)
+ * existe para o radical pt-BR colado — 'cript' precisa casar 'criptografia' —
+ * mas em palavra inglesa ele casa DENTRO de identificadores e de palavras
+ * maiores: 'check' casava 'checkedAt', 'auth' casava 'author', 'doc' casava
+ * 'dockerfile', 'log' casava 'login', 'print' casava '--print' (F-1289,
+ * 11/10/2026). Um campo de JSON virava tier trivial e um documento de autoria
+ * virava critical/security.
+ *
+ * `stems` é a saída explícita para o que é radical de verdade — o chamador
+ * declara, a lista não carrega sintaxe.
+ */
+const WORD_BEFORE = '(?<![\\p{L}\\p{N}_.$/-])';
+const WORD_AFTER = '(?![\\p{L}\\p{N}_])';
 
-function securityMatcher(signal: string): RegExp {
-  let matcher = securityMatchers.get(signal);
+const escapeSignal = (signal: string): string =>
+  signal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const exactSignalMatchers = new Map<string, RegExp>();
+const stemSignalMatchers = new Map<string, RegExp>();
+
+function exactSignalMatcher(signal: string): RegExp {
+  let matcher = exactSignalMatchers.get(signal);
   if (!matcher) {
-    const escaped = signal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    matcher = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}`, 'u');
-    securityMatchers.set(signal, matcher);
+    matcher = new RegExp(`${WORD_BEFORE}${escapeSignal(signal)}${WORD_AFTER}`, 'u');
+    exactSignalMatchers.set(signal, matcher);
   }
   return matcher;
 }
 
+function stemSignalMatcher(signal: string): RegExp {
+  let matcher = stemSignalMatchers.get(signal);
+  if (!matcher) {
+    matcher = new RegExp(`${WORD_BEFORE}${escapeSignal(signal)}`, 'u');
+    stemSignalMatchers.set(signal, matcher);
+  }
+  return matcher;
+}
+
+/** Sinais casados no texto, na ordem da lista (o "porquê" da decisão). */
+export function matchSignals(
+  text: string,
+  signals: readonly string[],
+  stems?: ReadonlySet<string>,
+): string[] {
+  return signals.filter((signal) =>
+    (stems?.has(signal) ? stemSignalMatcher(signal) : exactSignalMatcher(signal)).test(text),
+  );
+}
+
+/**
+ * Palavra que só quer dizer tier sozinha COM CONTEXTO (F-1289). Um sinal
+ * ambíguo sozinho não decide bucket nenhum — sem um segundo sinal vale o padrão
+ * medium (doutrina default-down), e a overlay de segurança deixa o work-kind
+ * mandar. A lista é curta e cada entrada tem um caso real:
+ *   - 'cobrança': cobrar ENTREGA do worker, não cobrança de dinheiro
+ *   - 'texto': 'texto cru' do shell, texto do erro, contexto de prompt
+ *   - 'check': 'checkedAt', 'checkout', a checagem que roda a suíte
+ *   - 'token': token de contexto, tokenizador, contagem de tokens
+ *   - 'produção': produção de vídeo/relatório, não só o deploy
+ * ponytail: a ambiguidade real é por TAREFA, não por palavra — isto cobre os
+ * casos que já quebraram. Um sinal ambíguo QUEBRADO com vizinho legítimo
+ * ('cobrança' + 'cartão de produção', matriz 23/08) continua mandando.
+ */
+export const AMBIGUOUS_SIGNALS: ReadonlySet<string> = new Set([
+  'cobrança',
+  'cobranca',
+  'texto',
+  'check',
+  'checks',
+  'token',
+  'produção',
+  'producao',
+  'production',
+]);
+
+/** Sinais da lista que não são ambíguos: algum deles sustenta a decisão. */
+export function decisiveSignals(signals: readonly string[]): string[] {
+  return signals.filter((signal) => !AMBIGUOUS_SIGNALS.has(signal));
+}
+
+/** Radicais pt-BR/EN que PRECISAM casar por prefixo de palavra. */
+const SECURITY_SIGNAL_STEMS: ReadonlySet<string> = new Set([
+  'ciberseg',
+  'ciberata',
+  'vulnerab',
+  'autentica',
+  'reautentic',
+  'authoriza',
+  'autoriza',
+  'oauth',
+  'encrypt',
+  'decrypt',
+  'encripta',
+  'reencript',
+  'desencripta',
+  'descriptografa',
+  'secret',
+]);
+
 export function hasSecuritySpecialtySignals(text: string): boolean {
   const canonical = text.toLowerCase();
-  return SECURITY_SPECIALTY_SIGNALS.some((signal) =>
-    securityMatcher(signal).test(canonical),
-  );
+  const matched = matchSignals(canonical, SECURITY_SPECIALTY_SIGNALS, SECURITY_SIGNAL_STEMS);
+  return decisiveSignals(matched).length > 0;
 }
 
 function workKindToSpecialty(kind: WorkKind): RouteSpecialty {
