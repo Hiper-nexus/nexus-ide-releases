@@ -254,6 +254,28 @@ const VERSION_TOKEN = /\d+(?:\.\d+)+[^\s,]*/u;
  * null = resposta ilegível (segue o caminho atual: instala). npm compara o
  * token de versão — `claude --version` costuma trazer texto junto do número.
  */
+/**
+ * M8: ordem de versão (núcleo numérico, e pré-release abaixo da estável do
+ * mesmo núcleo). Igualdade pura fazia `npm install -g` (tag latest) rebaixar
+ * uma pré-release mais nova que o operador instalou.
+ */
+export function compareCliVersions(a: string, b: string): number {
+  const split = (version: string) => {
+    const [core, ...pre] = version.replace(/\+.*$/u, '').split('-');
+    return { core: core.split('.').map((part) => Number.parseInt(part, 10) || 0), pre: pre.join('-') };
+  };
+  const left = split(a);
+  const right = split(b);
+  for (let i = 0; i < Math.max(left.core.length, right.core.length); i++) {
+    const diff = (left.core[i] ?? 0) - (right.core[i] ?? 0);
+    if (diff !== 0) return Math.sign(diff);
+  }
+  if (left.pre === right.pre) return 0;
+  if (!left.pre) return 1;
+  if (!right.pre) return -1;
+  return left.pre < right.pre ? -1 : 1;
+}
+
 export function cliVersionCheckUpToDate(
   check: CliVersionCheck,
   installedVersion: string,
@@ -264,7 +286,7 @@ export function cliVersionCheckUpToDate(
   if (check.kind === 'npm') {
     const available = text.match(VERSION_TOKEN)?.[0];
     const installed = installedVersion.match(VERSION_TOKEN)?.[0];
-    return available && installed ? available === installed : null;
+    return available && installed ? compareCliVersions(installed, available) >= 0 : null;
   }
   try {
     const parsed = JSON.parse(text) as {
@@ -333,7 +355,26 @@ export function selectAutomaticCliUpdateRecipe(input: AutoUpdateInput): CliInsta
       },
     };
   }
+  if (selection.recipe.kind === 'argv' && isBrewRunner(selection.recipe.runner) &&
+      selection.recipe.argv[1] === 'upgrade') {
+    // M8: fórmulas (opencode, kimi-code) com as mesmas garantias do cask —
+    // sem sudo, sem prompt e sem auto-update fora do `brew update` do passe.
+    return {
+      ...selection.recipe,
+      env: {
+        ...selection.recipe.env,
+        SUDO_ASKPASS: '/usr/bin/false',
+        HOMEBREW_NO_SUDO: '1',
+        HOMEBREW_NO_AUTO_UPDATE: '1',
+      },
+    };
+  }
   return selection.recipe;
+}
+
+/** Runner do Homebrew (nome cru ou caminho absoluto do `bin/brew`). */
+export function isBrewRunner(runner: string): boolean {
+  return runner === 'brew' || /[\\/]bin[\\/]brew$/u.test(runner);
 }
 
 /** Serialize background updates and remember successful checks by adapter. */
@@ -356,6 +397,12 @@ export class CliAutoUpdateQueue {
       now >= (this.retryAfter[id] ?? 0) && now - (this.checkedAt[id] ?? 0) >= intervalMs &&
       !hasLivePane(id),
     ) ?? null;
+  }
+
+  /** R3: instalação interrompida — a CLI volta a ser devida já no passe de boot. */
+  forget(id: string): void {
+    delete this.checkedAt[id];
+    delete this.retryAfter[id];
   }
 
   markAttempt(id: string, now: number): void {
