@@ -282,6 +282,13 @@ export interface ModelCatalogEntryInfo {
   /** Janela de contexto em tokens, quando documentada (F-912). Ausente = sem fonte. */
   maxContext?: number;
   /**
+   * F-1412: o modelo aceita IMAGEM na entrada (print, screenshot, PNG). Só
+   * declare com evidência — catálogo vendorado (`input: ["text","image"]`) ou
+   * palavra do operador. Ausente = sem visão declarada; o filtro do roteador
+   * só vige quando algum modelo instalado declara (fail-open).
+   */
+  vision?: boolean;
+  /**
    * F-992: níveis de esforço que a CLI aceita para ESTE modelo. Ausente = os
    * do adapter; vazio = o modelo não tem esforço (o spawn tira o `--effort`).
    */

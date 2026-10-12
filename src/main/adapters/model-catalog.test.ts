@@ -804,3 +804,49 @@ describe('maxContext enrichment (F-912)', () => {
     expect(modelCatalogInfo(catalog, 'claude', 'claude-sonnet-5-5')?.maxContext).toBe(123_456);
   });
 });
+
+describe('F-1412: visão por modelo no catálogo', () => {
+  const tmpDirs: string[] = [];
+  afterEach(() => {
+    invalidateModelCatalogCache();
+    for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
+    tmpDirs.length = 0;
+  });
+
+  it('GLM 5.3 Flash tem visão; GLM 5.3 (mais capaz, lento) não declara visão', () => {
+    const missing = path.join(os.tmpdir(), `nexus-no-catalog-${process.pid}-f1412.json`);
+    invalidateModelCatalogCache();
+    const catalog = loadModelCatalog(missing);
+    expect(modelCatalogInfo(catalog, 'glm-flash', 'glm-5.3-flash[1m]')?.vision).toBe(true);
+    expect(modelCatalogInfo(catalog, 'glm-flash', 'glm-5.3-flash')?.vision).toBe(true);
+    expect(modelCatalogInfo(catalog, 'glm', 'glm-5.3')?.vision).toBeUndefined();
+  });
+
+  it('overlay só afirma visão: vision:false do usuário não apaga a do Flash', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-model-catalog-'));
+    tmpDirs.push(dir);
+    const file = path.join(dir, 'model-catalog.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        adapters: {
+          'glm-flash': {
+            models: [
+              { id: 'glm-5.3-flash[1m]', availability: 'cheap', costTier: 'low', source: 'local', vision: false },
+            ],
+          },
+          glm: {
+            models: [
+              { id: 'glm-5.3', availability: 'cheap', costTier: 'low', source: 'local', vision: 'yes' },
+            ],
+          },
+        },
+      }),
+    );
+    invalidateModelCatalogCache();
+    const catalog = loadModelCatalog(file);
+    expect(modelCatalogInfo(catalog, 'glm-flash', 'glm-5.3-flash[1m]')?.vision).toBe(true);
+    expect(modelCatalogInfo(catalog, 'glm', 'glm-5.3')?.vision).toBeUndefined();
+  });
+});

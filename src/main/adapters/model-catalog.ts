@@ -199,8 +199,11 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
     'glm-flash': {
       default: 'glm-5.3-flash[1m]',
       models: [
-        { id: 'glm-5.3-flash[1m]', availability: 'cheap', costTier: 'low', source: 'bundled' },
-        { id: 'glm-5.3-flash', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        // F-1412 (operador, 12/10): o GLM 5.3 Flash TEM visão (entrada de
+        // imagem) — "Flash com visão e mais rápido, porém menos capaz". O glm
+        // 5.3 base é text-only no recorte vendorado (zai: input ["text"]).
+        { id: 'glm-5.3-flash[1m]', availability: 'cheap', costTier: 'low', source: 'bundled', vision: true },
+        { id: 'glm-5.3-flash', availability: 'cheap', costTier: 'low', source: 'bundled', vision: true },
         { id: 'glm-4.7-flash[1m]', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'glm-4.7-flash', availability: 'cheap', costTier: 'low', source: 'bundled' },
       ],
@@ -324,6 +327,9 @@ function safeModels(models: unknown, source: string): ModelCatalogEntryInfo[] {
       typeof raw.maxContext === 'number' && Number.isFinite(raw.maxContext) && raw.maxContext > 0
         ? Math.round(raw.maxContext)
         : undefined;
+    // F-1412: visão declarada no overlay só vale afirmativa (nunca "apaga" a
+    // visão que o BUILTIN/enriquecimento marcou — mesmo contrato do maxContext).
+    const vision = raw.vision === true ? true : undefined;
     const efforts = Array.isArray(raw.efforts)
       ? [...new Set(raw.efforts.filter((effort) => typeof effort === 'string' &&
           /^(?:none|minimal|low|medium|high|xhigh|max|ultra)$/.test(effort)))]
@@ -336,6 +342,7 @@ function safeModels(models: unknown, source: string): ModelCatalogEntryInfo[] {
         source: raw.source ?? source,
         warning: raw.warning,
         ...(maxContext !== undefined ? { maxContext } : {}),
+        ...(vision !== undefined ? { vision } : {}),
         ...(efforts?.length ? { efforts } : {}),
         // Omit when invalid — explicit `quality: undefined` would wipe published
         // scores during mergeModelCatalogs ({ ...prev, ...overlay }).
@@ -447,16 +454,18 @@ export function loadModelCatalog(file = USER_MODEL_CATALOG_FILE): ModelCatalog {
 }
 
 function composeModelCatalog(user: ModelCatalog): ModelCatalog {
-  return enrichMaxContext(
-    isStaleUserModelCatalog(user)
-      ? mergeModelCatalogs(
-          mergeModelCatalogs(user, BUILTIN_MODEL_CATALOG),
-          PUBLISHED_MODEL_CATALOG,
-        )
-      : mergeModelCatalogs(
-          mergeModelCatalogs(BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG),
-          user,
-        ),
+  return enrichVision(
+    enrichMaxContext(
+      isStaleUserModelCatalog(user)
+        ? mergeModelCatalogs(
+            mergeModelCatalogs(user, BUILTIN_MODEL_CATALOG),
+            PUBLISHED_MODEL_CATALOG,
+          )
+        : mergeModelCatalogs(
+            mergeModelCatalogs(BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG),
+            user,
+          ),
+    ),
   );
 }
 
@@ -484,6 +493,30 @@ function enrichMaxContext(catalog: ModelCatalog): ModelCatalog {
         return typeof contextWindow === 'number' && contextWindow > 0
           ? { ...entry, maxContext: contextWindow }
           : entry;
+      }),
+    };
+  }
+  return { ...catalog, adapters };
+}
+
+/**
+ * F-1412: marca `vision: true` quando o recorte vendorado do oh-my-pi declara
+ * entrada de imagem para o modelo (`input: ["text","image"]` — a única fonte
+ * de modalidades que o repo já traz). Aditivo: só quando o campo está ausente
+ * (valor explícito de BUILTIN/PUBLISHED/USER vence — é assim que o GLM 5.3
+ * Flash, que não tem entrada no recorte, carrega a visão declarada pelo
+ * operador). Modelo sem entrada no recorte fica SEM o campo: sem evidência,
+ * não marca (glm-5.3 é text-only; kimi-code/k3 e grok-4.7 não constam).
+ */
+function enrichVision(catalog: ModelCatalog): ModelCatalog {
+  const adapters: Record<string, AdapterModelCatalog> = {};
+  for (const [adapterId, adapterCatalog] of Object.entries(catalog.adapters ?? {})) {
+    adapters[adapterId] = {
+      ...adapterCatalog,
+      models: (adapterCatalog.models ?? []).map((entry) => {
+        if (entry.vision === true) return entry;
+        const input = getRichModelMetadata(adapterId, entry.id)?.input;
+        return input?.includes('image') ? { ...entry, vision: true } : entry;
       }),
     };
   }

@@ -689,6 +689,29 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
 ]);
 
 /**
+ * F-1412: ordem de PREFERÊNCIA para LEITURA de imagem nos tiers baixos
+ * (trivial/easy/medium). Entre os modelos com visão do pool, o rápido/barato
+ * (GLM 5.3 Flash — "com visão e mais rápido, porém menos capaz") lidera; os
+ * de visão mais fortes ficam como escada para quando o Flash não está pronto.
+ * Ler print não é escrever UI: esta lane substitui a lane visual nas tarefas
+ * de leitura de tier baixo. Só reordena quem JÁ está no ranking (com visão);
+ * não injeta candidato — o pool com visão já foi filtrado antes.
+ */
+export const READ_IMAGE_LANE: ReadonlyArray<{
+  adapterId: string;
+  model: string;
+}> = Object.freeze([
+  { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]' },
+  { adapterId: 'glm-flash', model: 'glm-5.3-flash' },
+  { adapterId: 'codex', model: 'gpt-6-luna' },
+  { adapterId: 'codex', model: 'gpt-5.6-luna' },
+  { adapterId: 'codex', model: 'gpt-6-sol' },
+  { adapterId: 'claude', model: 'claude-sonnet-5-5' },
+  { adapterId: 'claude', model: 'claude-haiku-4-5' },
+  { adapterId: 'claude', model: 'claude-opus-5-5' },
+]);
+
+/**
  * Lane de julgamento (regra do operador, 01/10): revisão/auditoria/veredito
  * só com modelos de ponta — GLM/MiMo davam "veredito APROVAR" em revisão de
  * código. F-1398 ADD3: Wonder Full max lidera, depois Fable, Opus/Sonnet e
@@ -1438,6 +1461,38 @@ export function taskNeedsWebSearch(taskText: string): boolean {
 }
 
 /**
+ * F-1412 (operador, 12/10): tarefa que pede LER/ANALISAR imagem — print,
+ * screenshot, PNG, "olha esta tela", anexo .png/.jpg. Só um modelo com visão
+ * (entrada de imagem) atende. Duas formas, espelhando o F-819 (o substantivo
+ * solto em texto comum de código não é pedido de visão):
+ *  1. âncora inequívoca: referência a arquivo de imagem (".png", "erro.jpg")
+ *     ou palavra de captura (screenshot, captura de tela, print de tela);
+ *  2. verbo de olhar (analise, olhe, veja, leia, descreva… / look, read,
+ *     describe…) até ~6 palavras antes do substantivo de imagem (print,
+ *     imagem, foto, tela, screen, png…): "olhe esta tela", "leia o png".
+ * "adicione um print no log" e "troque a imagem do botão" não casam — sem
+ * verbo de olhar e sem arquivo, não é leitura de imagem.
+ * Varredura linear: alternâncias de literais com retrovisores fixos.
+ */
+const IMAGE_UNCONDITIONAL =
+  /\.(?:png|jpe?g|webp|gif|bmp)\b|(?<![\p{L}\p{N}])(?:screenshots?|screen[\s-]shots?|captura\s+de\s+tela|print\s+de\s+tela)(?![\p{L}\p{N}])/iu;
+const IMAGE_NOUN =
+  /(?<![\p{L}\p{N}])(?:prints?|imagem|imagens|images?|fotos?|photographs?|pictures?|tela|screens?|pngs?|jpe?gs?|webp|gifs?|bmps?)(?![\p{L}\p{N}])/giu;
+const IMAGE_LOOK_VERB =
+  /(?<![\p{L}\p{N}])(?:analis\w*|olh\w*|vej\w*|l[eê]ia|ler|lendo|descrev\w*|describ\w*|confira|examin\w*|observ\w*|look(?:ing)?|see|view(?:ing)?|read(?:ing)?|watch(?:ing)?|check(?:ing)?)(?![\p{L}\p{N}])/iu;
+
+/** A tarefa exige que o modelo roteado aceite imagem na entrada. */
+export function taskNeedsVision(taskText: string): boolean {
+  const text = taskText.toLowerCase();
+  if (IMAGE_UNCONDITIONAL.test(text)) return true;
+  for (const match of text.matchAll(IMAGE_NOUN)) {
+    const before = text.slice(Math.max(0, (match.index ?? 0) - 48), match.index);
+    if (IMAGE_LOOK_VERB.test(before)) return true;
+  }
+  return false;
+}
+
+/**
  * F-912: janela de contexto mínima DECLARADA AFIRMATIVAMENTE no texto da
  * tarefa — "preciso de contexto de 200k", "janela de 1M tokens", "carregar
  * 300k tokens de contexto", "window of 250k tokens". O filtro exclui
@@ -1577,6 +1632,23 @@ export function routeTask(
       ? '; exige busca na web — pool limitado a capabilities.webSearch'
       : '; exige busca na web — nenhum adapter declara a capacidade'
     : '';
+  // F-1412: tarefa que pede ler imagem só vai para modelo com visão. A
+  // capacidade é POR MODELO no catálogo (`vision` — o glm-flash a tem, o
+  // glm-5.3 não), não por adapter. Mesmo contrato fail-open do webSearch: o
+  // filtro só vige quando algum modelo instalado declara; pool inteiro sem
+  // declaração segue como hoje (ausência de dado não derruba a rota).
+  const needsVision = taskNeedsVision(taskText);
+  const hasVision = (adapterId: string, model?: string): boolean =>
+    modelCatalogInfo(modelCatalog, adapterId, model)?.vision === true;
+  const visionCapable =
+    needsVision &&
+    adapters.some((a) =>
+      a.installed && (a.models ?? []).some((model) => hasVision(a.id, model)));
+  const visionNote = needsVision
+    ? visionCapable
+      ? '; exige leitura de imagem — pool limitado a modelos com visão'
+      : '; exige leitura de imagem — nenhum modelo declara visão'
+    : '';
   // F-912: janela de contexto declarada na tarefa. O filtro exclui o candidato
   // cujo maxContext DOCUMENTADO (catálogo do modelo ou manifest do adapter) é
   // menor que o pedido — ausência de maxContext não exclui ninguém. A menção
@@ -1668,7 +1740,10 @@ export function routeTask(
   );
   const evaluated = (evaluationCoversAllInstalled
     ? evaluatedCandidates(specialtyVerdict.specialty, tier, available, modelCatalog, contextRequirement)
-    : []).filter(candidate => permitsAutomaticAstra || !isAstraModel(candidate.adapterId, candidate.model));
+    : [])
+    .filter(candidate => permitsAutomaticAstra || !isAstraModel(candidate.adapterId, candidate.model))
+    // F-1412: o ranking avaliado também respeita o pool com visão.
+    .filter(candidate => !visionCapable || hasVision(candidate.adapterId, candidate.model));
   const why =
     classification.signals.length > 0
       ? `sinais: ${classification.signals.slice(0, 5).join(', ')}`
@@ -1803,6 +1878,15 @@ export function routeTask(
           skippedRisk.push(
             `${routed.adapterId}:${routed.model ?? '(default)'} ` +
               `(contexto ${effectiveMaxContext(routed.adapterId, routed.model)} < ${contextRequirement})`,
+          );
+          return [];
+        }
+        // F-1412: leitura de imagem exige visão declarada no catálogo do
+        // modelo (per-model: glm-flash sim, glm-5.3 não). Fail-open — só
+        // filtra quando algum modelo instalado declara a capacidade.
+        if (visionCapable && !hasVision(routed.adapterId, routed.model)) {
+          skippedRisk.push(
+            `${routed.adapterId}:${routed.model ?? '(default)'} (sem visão declarada)`,
           );
           return [];
         }
@@ -1989,6 +2073,9 @@ export function routeTask(
       // F-912: assento de lane com janela documentada menor que a exigida
       // perde o lugar (a lane promove topo de linha; sem fonte, segue).
       if (!fitsContext(seat.adapterId, chosen)) return;
+      // F-1412: assento sem visão declarada não é promovido numa tarefa de
+      // imagem quando o pool tem visão — a lane não pode furar o filtro.
+      if (visionCapable && !hasVision(seat.adapterId, chosen)) return;
       if (seat.effort) laneEfforts.set(`${seat.adapterId}:${chosen}`, seat.effort);
       laneSeats.push({
         lane: laneIndex, adapterId: seat.adapterId, model: chosen, preferenceOnly: seat.preferenceOnly === true,
@@ -2047,9 +2134,13 @@ export function routeTask(
   };
 
   // Lane visual (regra do operador, 30/09): UI/design vai sempre para os
-  // modelos de topo.
+  // modelos de topo. F-1412: LEITURA de imagem em tier baixo
+  // (trivial/easy/medium) não é escrita de UI — a lane visual não se aplica e
+  // vale a preferência de visão abaixo (Flash rápido primeiro).
+  const visionReading = visionCapable && tierIndex <= TIER_ORDER.indexOf('medium');
   let visualNote = '';
   const visualLaneApplied =
+    !visionReading &&
     specialtyVerdict.specialty === 'visual' &&
     (policy.source !== 'benchmark' || nextOrGame) &&
     mention.model === undefined &&
@@ -2093,6 +2184,30 @@ export function routeTask(
 
   if (purpose === 'finding-fix' && mention.model === undefined && frontier === null) {
     applyFrontierLane(JUDGE_FRONTIER_LANE.filter(seat => !isAstraModel(seat.adapterId, seat.model)));
+  }
+
+  // F-1412: entre os modelos COM visão do ranking, a leitura de tier baixo
+  // prefere o rápido/barato (GLM 5.3 Flash) — escada READ_IMAGE_LANE. Só
+  // reordena quem já está no ranking; hard/critical de imagem seguem na
+  // ordem normal (análise pesada de imagem quer o modelo forte, e a lane
+  // visual de topo continua valendo nesses tiers).
+  let visionLaneNote = '';
+  if (visionReading && mention.model === undefined) {
+    const laneRank = (entry: RankedRouteEntry): number =>
+      READ_IMAGE_LANE.findIndex((seat) =>
+        entry.c.adapterId === seat.adapterId &&
+        (entry.c.model === seat.model ||
+          isSameLineAtLeast(entry.c.model ?? '', seat.model)));
+    const inLane = ranked.filter(
+      (entry) => laneRank(entry) >= 0 && !adapterCircuitBreakers.isOpen(entry.c.adapterId),
+    );
+    if (inLane.length > 0) {
+      ranked = [
+        ...inLane.sort((a, b) => laneRank(a) - laneRank(b)),
+        ...ranked.filter((entry) => !inLane.includes(entry)),
+      ];
+      visionLaneNote = `; leitura de imagem: ${inLane[0]!.c.adapterId} primeiro (rápido com visão, F-1412)`;
+    }
   }
 
   // Rotação garantida por missão (regra do operador, 29/09): uma missão deve
@@ -2286,6 +2401,38 @@ export function routeTask(
 
   if (ranked.length > 0) {
     let chosen = ranked[0];
+    // F-1412 (operador, 12/10): escrita tier medium+ não rebaixa de tier por
+    // rota barata quando existe opção PRONTA do próprio tier no ranking
+    // (circuito fechado) — era o caminho real do "tier easy — melhor opção
+    // instalada": o benchmark do Flash (63,4/84,3) com penalidade leve de
+    // tier batia os candidatos medium neutros no multi-score. O empréstimo
+    // segue válido quando o próprio tier não tem candidato pronto. Fora do
+    // escopo: menção explícita (escolha de quem pede), leitura de imagem em
+    // tier baixo (vale a preferência de visão acima — o Flash É a rota) e
+    // assento promovido por lane de topo (julgação/visual/finding-fix): a
+    // lane escolheu AQUELE modelo de propósito, inclusive emprestado de tier
+    // (ex.: Argon/Grok na lane de julgamento do critical).
+    let ownTierGuardNote = '';
+    if (
+      !visionReading &&
+      mention.model === undefined &&
+      tierIndex >= TIER_ORDER.indexOf('medium') &&
+      TIER_ORDER.indexOf(chosen.fromTier) < tierIndex &&
+      !appliedLaneEntries?.has(chosen)
+    ) {
+      const ownTier = ranked.find(
+        (r) =>
+          r.fromTier === tier &&
+          r.c !== chosen.c &&
+          !adapterCircuitBreakers.isOpen(r.c.adapterId) &&
+          !(reserveClaude && r.c.adapterId === 'claude'),
+      );
+      if (ownTier) {
+        chosen = ownTier;
+        ownTierGuardNote =
+          '; opção do próprio tier pronta — sem empréstimo de tier mais barato (F-1412)';
+      }
+    }
     if (reserveClaude && chosen.c.adapterId === 'claude') {
       const alt = ranked.find((r) => r.c.adapterId !== 'claude');
       // ponytail: só claude instalado → sem alternativa, mantém claude (o
@@ -2338,7 +2485,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${preferenceYieldNote}${writerCostNote}${pick.adapterId === 'muse' && pick.model?.endsWith('-contributor') ? '; contributor (conteúdo pode ser usado pela Meta)' : ''}${effortNoteFor(pick.adapterId, pick.model)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${visionNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${visionLaneNote}${ownTierGuardNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${preferenceYieldNote}${writerCostNote}${pick.adapterId === 'muse' && pick.model?.endsWith('-contributor') ? '; contributor (conteúdo pode ser usado pela Meta)' : ''}${effortNoteFor(pick.adapterId, pick.model)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId, c.model) })),
       specialty: specialtyVerdict.specialty,
       policySource,
@@ -2379,17 +2526,30 @@ export function routeTask(
         models.some(model => !isAstraModel(id, model) && !isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, id, model)) && !modelAccessQuarantine(id, model));
     });
   if (fallbackPool.length === 0) return null;
+  // F-1412: o degrau final também respeita a visão — tarefa de imagem com
+  // modelo com visão instalado não cai num adapter text-only só porque a
+  // tabela não tinha candidato; fixa o modelo com visão daquele adapter.
+  const visionFallbackPool = visionCapable
+    ? fallbackPool.filter((id) => {
+        const visionModel = eligibleModels(available.get(id)!).find(
+          (model) => !isAstraModel(id, model) && fitsContext(id, model) && hasVision(id, model),
+        );
+        if (visionModel) safeFallbackModels.set(id, visionModel);
+        return visionModel !== undefined;
+      })
+    : [];
+  const finalFallbackPool = visionFallbackPool.length > 0 ? visionFallbackPool : fallbackPool;
   const useCount = (id: string): number =>
     context.missionUseCounts?.get(id) ?? 0;
-  const fallback = fallbackPool.reduce((least, id) =>
+  const fallback = finalFallbackPool.reduce((least, id) =>
     useCount(id) < useCount(least) ? id : least,
-  fallbackPool[0]!);
+  finalFallbackPool[0]!);
   return {
     tier,
     adapterId: fallback,
     ...(safeFallbackModels.has(fallback) ? { model: safeFallbackModels.get(fallback)! } : {}),
     effort: effortFor(fallback),
-    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${contextNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${effortNoteFor(fallback)}`,
+    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${visionNote}${contextNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${effortNoteFor(fallback)}`,
     alternatives: [],
     specialty: specialtyVerdict.specialty,
     policySource: policy.source,
