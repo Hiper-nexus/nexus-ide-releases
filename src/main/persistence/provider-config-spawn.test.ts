@@ -1043,16 +1043,12 @@ describe('background CLI maintenance during pane startup', () => {
     let calls: string[][];
     let updateOptions: Record<string, unknown> | undefined;
     let updateError: Error | null;
-    let holdUpdate: boolean;
-    let finishBrewUpdate: (() => void) | undefined;
     let outdatedReply: string;
     const brewFixture = async (lastAttemptAt: number | null, opts: { brewCandidate?: boolean } = {}) => {
       spawnDeps.brewBin = brew;
       calls = [];
       updateOptions = undefined;
       updateError = null;
-      holdUpdate = false;
-      finishBrewUpdate = undefined;
       outdatedReply = JSON.stringify({ formulae: [], casks: [] });
       if (opts.brewCandidate !== false) {
         const cliAutoUpdateModule = await import('../adapters/cli-auto-update');
@@ -1072,8 +1068,7 @@ describe('background CLI maintenance during pane startup', () => {
           calls.push(argv);
           if (argv[0] === 'update') {
             updateOptions = args[2] as Record<string, unknown>;
-            if (holdUpdate) finishBrewUpdate = () => callback(updateError, '');
-            else callback(updateError, '');
+            callback(updateError, '');
           } else if (argv[0] === 'outdated') callback(null, outdatedReply);
           else callback(null, '');
         } else if (argv[0] === 'update') {

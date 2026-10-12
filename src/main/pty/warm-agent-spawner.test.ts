@@ -78,7 +78,7 @@ describe('F-955: pane ocioso sem a base do job nativo', () => {
 describe('R2: pane ocioso do warm pool e o permit de atualização da CLI', () => {
   it('não nasce enquanto o permit da CLI está preso; solta o permit depois do spawn', async () => {
     let grant!: (release: () => void) => void;
-    deps.permit.mockImplementationOnce(() => new Promise((resolve) => { grant = resolve; }));
+    deps.permit.mockImplementationOnce(() => new Promise((resolve) => { grant = resolve as (release: () => void) => void; }));
     const pending = deps.creator!('opencode');
     for (let i = 0; i < 5; i++) await Promise.resolve();
     expect(deps.permit).toHaveBeenCalledWith('opencode');
