@@ -900,10 +900,12 @@ saber isto antes de mexer:
 - Adapter `muse`: CLI própria (`bin: muse`, `mcpAutoload: false`,
   `nexusMcp: muse`). `spawn.extraArgs` inclui `--trust-workspace`. F-696: o
   Muse Code 1.4+ lê `mcpServers` do `settings.json` (`$XDG_CONFIG_HOME/muse`,
-  padrão `~/.config/muse`) e herda o ambiente nos servidores stdio; o Nexus
+  padrão `~/.config/muse`); o Nexus
   registra UMA vez `mcpServers.nexus` → a mesma ponte stdio do MiniMax, com
-  URL/bearer só por ENV. `bearer_token_env_var` e `${VAR}` em `headers` não
-  funcionam no 1.4.1 (testado com `muse exec`). Muse < 1.4 não tem o arquivo
+  URL/sessão no `env` da entrada (F-1338: o 1.4.4 NÃO repassa o ambiente do
+  processo ao servidor — sem o `env` a ponte responde zero ferramentas; arquivo em 0600).
+  `bearer_token_env_var` e `${VAR}` em `headers` não funcionam no 1.4.1
+  (testado com `muse exec`). Muse < 1.4 não tem o arquivo
   tocado; o handoff cai no fallback PTY/nx-mail.
 - Opcional `muse-claude`: Claude Code apontado a `https://api.meta.ai`
   (Muse Spark). Key `ANTHROPIC_AUTH_TOKEN` (Model API da Meta). Não mistura

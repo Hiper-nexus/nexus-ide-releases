@@ -3,19 +3,32 @@
  *
  * Medido no Muse Code 1.4.1 (Windows, 30/09): o CLI lê servidores MCP de
  * `mcpServers` no `settings.json` do usuário (`$XDG_CONFIG_HOME/muse`, padrão
- * `~/.config/muse`) e herda o próprio ambiente nos servidores stdio. Teste de
- * ponta a ponta com `muse exec`: a ponte stdio do Nexus fez `initialize`,
- * `tools/list` e `tools/call` com o bearer da sessão e o Muse devolveu o
- * resultado da ferramenta. `bearer_token_env_var` e `${VAR}` em `headers` NÃO
- * funcionam nesta versão (o header sai vazio ou literal).
+ * `~/.config/muse`). Teste de ponta a ponta com `muse exec`: a ponte stdio
+ * do Nexus fez `initialize`, `tools/list` e `tools/call` levando a sessão, e
+ * o Muse devolveu o resultado da ferramenta. `bearer_token_env_var` e
+ * `${VAR}` em `headers` NÃO funcionam nesta versão (o header sai vazio ou
+ * literal).
+ *
+ * F-1338 (medido no Muse Code 1.4.4, macOS, 12/10): o CLI NÃO repassa o
+ * ambiente do processo aos servidores stdio — a ponte nascia sem a sessão e
+ * respondia zero ferramentas, e o pane ficava sem o MCP do Nexus mesmo com
+ * entrada registrada e ENV do pane correto. Por isso URL e sessão viajam no
+ * `env` da própria entrada `nexus` (único canal que o CLI entrega ao
+ * servidor, provado com servidor marcador: `env` da entrada chega,
+ * ambiente do processo não).
  *
  * Por isso, igual ao MiniMax (F-678): uma entrada `nexus` → ponte stdio
  * compartilhada, registrada uma vez por mescla (servidores do usuário
- * intactos); URL e bearer da sessão só por ENV. Fora do Nexus a ponte
- * responde zero ferramentas e o Muse segue normal. Muse anterior ao 1.4 não
- * tem MCP: o arquivo não é tocado e o pane segue sem o MCP.
+ * intactos). Sem sessão a ponte responde zero ferramentas e o Muse segue
+ * normal. Muse anterior ao 1.4 não tem MCP: o arquivo não é tocado e o pane
+ * segue sem o MCP.
+ *
+ * Segurança: a entrada carrega a sessão do pane, então o `settings.json`
+ * é travado em 0600 sempre que a registramos. A sessão é por pane e
+ * revogada no teardown; cada spawn regenera a entrada com a sessão viva.
  */
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveCliBinary } from '../path-resolver';
@@ -79,18 +92,30 @@ export function resetMuseVersionCacheForTests(): void {
   cachedVersion = undefined;
 }
 
+/** Sessão MCP do pane: viaja no `env` da entrada, nunca no ambiente. */
+export interface MuseMcpSession {
+  readonly url: string;
+  readonly token: string;
+}
+
 export interface MuseMcpRegistrationOptions {
   readonly home?: string;
   readonly xdgConfigHome?: string;
   readonly nodePath?: string;
   /** Versão já lida; omitida, o spawn roda `muse --version` uma vez. */
   readonly museVersion?: string | null;
+  /**
+   * Sessão do pane (F-1338: sem ela a entrada é inútil — o CLI não repassa
+   * o ambiente do processo ao servidor). Ausente, nada é registrado.
+   */
+  readonly session?: MuseMcpSession;
 }
 
 /**
  * Garante a ponte e a entrada `nexus` em `mcpServers` do `settings.json` do
  * Muse. Idempotente: só grava quando muda. `settings.json` ilegível nunca é
  * sobrescrito — o pane segue sem o MCP em vez de apagar config do usuário.
+ * Como a entrada carrega a sessão do pane, o arquivo é travado em 0600.
  */
 export function ensureMuseNexusMcpRegistration(
   options: MuseMcpRegistrationOptions = {},
@@ -100,6 +125,12 @@ export function ensureMuseNexusMcpRegistration(
     return {
       registered: false,
       reason: `Muse Code ${version ?? 'desconhecido'} sem MCP (precisa de 1.4+) — settings.json não foi alterado`,
+    };
+  }
+  if (!options.session) {
+    return {
+      registered: false,
+      reason: 'sessão MCP ausente — sem URL/sessão no env da entrada a ponte responde zero ferramentas (F-1338)',
     };
   }
   const home = options.home ?? os.homedir();
@@ -114,22 +145,60 @@ export function ensureMuseNexusMcpRegistration(
       ? (document.mcpServers as Record<string, unknown>)
       : {};
   const command = options.nodePath ?? resolveCliBinary('node')?.binPath ?? 'node';
-  const entry = { command, args: [bridge] };
+  const entry = {
+    command,
+    args: [bridge],
+    env: { NEXUS_MCP_URL: options.session.url, NEXUS_MCP_TOKEN: options.session.token },
+  };
   if (JSON.stringify(servers[MUSE_NEXUS_MCP_SERVER]) === JSON.stringify(entry)) {
+    lockMuseSettingsPermissions(settingsPath);
     return { registered: true };
   }
-  const next = { ...document, mcpServers: { ...servers, [MUSE_NEXUS_MCP_SERVER]: entry } };
+  let previous: string | null = null;
+  try {
+    previous = fs.readFileSync(settingsPath, 'utf8');
+  } catch {
+    previous = null;
+  }
+  // F-1338: o Muse 1.4.4 recusa o arquivo inteiro sem `schema_version`
+  // ("malformed settings file"); preserva o existente, assume 1 ao criar.
+  const next = { schema_version: 1, ...document, mcpServers: { ...servers, [MUSE_NEXUS_MCP_SERVER]: entry } };
   writeFileAtomic(settingsPath, `${JSON.stringify(next, null, 2)}\n`);
+  try {
+    fs.chmodSync(settingsPath, 0o600);
+  } catch {
+    // Fail-closed: sem o 0600 a sessão ficaria legível para outros usuários
+    // da máquina — desfaz a escrita e o pane segue sem o MCP.
+    try {
+      if (previous === null) fs.rmSync(settingsPath, { force: true });
+      else writeFileAtomic(settingsPath, previous);
+    } catch {
+      // Melhor esforço; o motivo abaixo continua valendo.
+    }
+    return { registered: false, reason: 'settings.json do Muse sem 0600 — entrada com sessão não foi mantida' };
+  }
   return { registered: true };
 }
 
-/** ENV do pane Muse: a ponte registrada lê a sessão daqui. */
+/** 0600 no melhor esforço (entrada legada já registrada por versão anterior). */
+function lockMuseSettingsPermissions(settingsPath: string): void {
+  try {
+    fs.chmodSync(settingsPath, 0o600);
+  } catch {
+    // Melhor esforço; a sessão da entrada segue válida para o pane vivo.
+  }
+}
+
+/** Sessão do pane Muse: viaja no `env` da entrada; o ENV do pane é redundância. */
 export function prepareMuseMcpSession(
   mcpUrl: string,
   token: string,
   options: MuseMcpRegistrationOptions = {},
 ): { env: Record<string, string>; registered: boolean; reason?: string } {
-  const registration = ensureMuseNexusMcpRegistration(options);
+  const registration = ensureMuseNexusMcpRegistration({
+    ...options,
+    session: { url: mcpUrl, token },
+  });
   return {
     env: registration.registered ? { NEXUS_MCP_URL: mcpUrl, NEXUS_MCP_TOKEN: token } : {},
     ...registration,

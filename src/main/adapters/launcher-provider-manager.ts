@@ -218,6 +218,10 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
     local: false,
     scopedTo: 'deepseek',
   },
+  // F-1338: SEMPRE sem ENABLE_TOOL_SEARCH. Medido no Claude Code 2.1.296:
+  // `true` adia todo MCP atrás do ToolSearch, mas o host terceiro não
+  // negocia o beta de tool-search — as ferramentas somem do request e o
+  // modelo nunca as alcança. O padrão (ausente) já entrega o MCP inline.
   'muse-claude': {
     id: 'muse-claude',
     label: 'Muse Spark (via Claude)',
@@ -225,7 +229,6 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
     defaultModel: 'muse-spark-1.3',
     extraEnv: {
       ...THIRD_PARTY_EXTRA,
-      ENABLE_TOOL_SEARCH: 'true',
       ANTHROPIC_MODEL: 'muse-spark-1.3',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'muse-spark-1.3',
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'muse-spark-1.3',

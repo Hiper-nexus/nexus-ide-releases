@@ -7,6 +7,7 @@ import { cliInstallRecipeFor } from '../../main/adapters/cli-install-recipes';
 import {
   buildProviderRoutingEnv,
   getUpstreamProvider,
+  UPSTREAM_PROVIDERS,
 } from '../../main/adapters/launcher-provider-manager';
 import { canUseNexusMcp } from '../../main/orch/cli-mcp-inject';
 import {
@@ -46,7 +47,12 @@ describe('Muse Spark via Claude vs Muse Code CLI (F-599)', () => {
     expect(viaClaude.env.static?.CLAUDE_CODE_SUBAGENT_MODEL).toBe(
       'muse-spark-1.3',
     );
-    expect(viaClaude.env.static?.ENABLE_TOOL_SEARCH).toBe('true');
+    // F-1338: SEMPRE ausente. Medido no Claude Code 2.1.296 contra host
+    // terceiro: `true` adia todo o MCP atrás do ToolSearch, mas sem o beta
+    // de tool-search as ferramentas somem do request — o worker nascia sem
+    // o MCP do Nexus. O padrão (ausente) entrega o MCP inline.
+    expect(viaClaude.env.static?.ENABLE_TOOL_SEARCH).toBeUndefined();
+    expect(getUpstreamProvider('muse-claude')?.extraEnv.ENABLE_TOOL_SEARCH).toBeUndefined();
     expect(viaClaude.auth.method).toBe('api_key');
     expect(accountLoginCommandFor('muse-claude')).toBeNull();
     expect(primaryKeyEnvVar(viaClaude)).toBe('ANTHROPIC_AUTH_TOKEN');
@@ -72,5 +78,18 @@ describe('Muse Spark via Claude vs Muse Code CLI (F-599)', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('meta-token');
     expect(env.ANTHROPIC_MODEL).toBe('muse-spark-1.3');
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
+  it('F-1338: nenhum adapter nem upstream terceiro opta no ToolSearch (esconderia o MCP)', () => {
+    const offenders: string[] = [];
+    for (const raw of BUILTIN_ADAPTERS) {
+      const id = (raw as { id?: string }).id ?? '?';
+      const staticEnv = (raw as { env?: { static?: Record<string, string> } }).env?.static;
+      if (staticEnv?.ENABLE_TOOL_SEARCH === 'true') offenders.push(`${id} (adapter)`);
+    }
+    for (const provider of Object.values(UPSTREAM_PROVIDERS)) {
+      if (provider.extraEnv.ENABLE_TOOL_SEARCH === 'true') offenders.push(`${provider.id} (upstream)`);
+    }
+    expect(offenders).toEqual([]);
   });
 });
