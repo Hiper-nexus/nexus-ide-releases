@@ -214,7 +214,18 @@ function globToRegex(pattern: string): RegExp {
   let regexStr = '';
   let i = 0;
   while (i < pattern.length) {
-    if (pattern.slice(i, i + 2) === '**') {
+    // F-1251: `/**/` no meio do glob casa zero ou mais diretórios (a/**/b casa a/b).
+    // `**/` no início também casa na raiz (**/b casa b).
+    if (pattern.slice(i, i + 4) === '/**/') {
+      regexStr += '/(?:.+/)?';
+      i += 4;
+    } else if (i === 0 && pattern.slice(i, i + 3) === '**/') {
+      regexStr += '(?:.+/)?';
+      i += 3;
+    } else if (pattern.slice(i) === '/**') {
+      regexStr += '/.*';
+      i += 3;
+    } else if (pattern.slice(i, i + 2) === '**') {
       regexStr += '.*';
       i += 2;
     } else if (pattern[i] === '*') {

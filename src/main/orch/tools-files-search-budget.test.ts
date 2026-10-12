@@ -215,6 +215,37 @@ describe('nexus_file_search budgets', () => {
     }
   });
 
+  it('F-1251: a/**/b casa a/b e a/x/y/b com poda por prefixo literal', async () => {
+    for (let index = 0; index < 20; index += 1) {
+      const noise = path.join(root, `noise-${index}`, 'sub');
+      fs.mkdirSync(noise, { recursive: true });
+      fs.writeFileSync(path.join(noise, 'target.ts'), 'export {};');
+    }
+    const a = path.join(root, 'a');
+    const axy = path.join(root, 'a', 'x', 'y');
+    fs.mkdirSync(axy, { recursive: true });
+    fs.writeFileSync(path.join(a, 'target.ts'), 'export {};');
+    fs.writeFileSync(path.join(a, 'other.ts'), 'export {};');
+    fs.writeFileSync(path.join(a, 'x', 'target.ts'), 'export {};');
+    fs.writeFileSync(path.join(axy, 'target.ts'), 'export {};');
+
+    const result = (await searchTool().handler(
+      { pattern: 'a/**/target.ts', maxFiles: 10, maxDirectories: 10, timeoutMs: 5_000 },
+      context(),
+    )) as SearchResult;
+
+    expect([...result.files].sort()).toEqual([
+      'a/target.ts',
+      'a/x/target.ts',
+      'a/x/y/target.ts',
+    ]);
+    expect(result).toMatchObject({
+      truncated: false,
+      stoppedBy: null,
+      scanned: { files: 4, directories: 4 },
+    });
+  });
+
   it('clamps caller-provided budgets to process-safe hard ceilings', async () => {
     fs.writeFileSync(path.join(root, 'entry.ts'), 'export {};');
 
