@@ -25,6 +25,7 @@ código dá o mesmo número em qualquer máquina.
 | `src/main/pty/pty-output-wire.budget.test.ts` | 1 mensagem de dados por chunk, 1 `stateChange` por rajada, ≤ 64 bytes de envelope por evento (53), 2 entregas aos taps por rajada de 400 chunks | evento magro `{ sessionId, data, sequence }`; virada para busy uma vez; F-764 C.1 (taps em lote) |
 | idem | 524288 caracteres (512 KiB) empurrados a um renderer que nunca confirma | backpressure: a fila de IPC do Main não cresce sem limite |
 | idem | 8 chunks / 65536 caracteres (64 KiB) em voo sem ACK (janela T3 `OutputProtocol`) | rajada de chunks minúsculos não enche o IPC do Electron com centenas de mensagens |
+| `src/main/pty/pty-load-profile.budget.test.ts` | 15 sessões × 80 chunks: 120 mensagens IPC (15×8), 8 por sessão, 6400 chars íntegros nos taps | perfil de carga canônico (F-764): o IPC não paga N_chunks × N_sessões |
 | `src/main/orch/pane-output-digest.budget.test.ts` | 742 caracteres e 26 linhas para 12 passos × 15 quadros de TUI | dedupe de status/quadros/linha repetida do digest (F-987) — tokens do Maestro |
 
 O DOM da timeline virtualizada já tem teto próprio em
