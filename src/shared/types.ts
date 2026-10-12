@@ -308,6 +308,8 @@ export interface PtyPromptState {
   readonly turnStartSequence: number;
   readonly state: PaneSessionState;
   readonly awaitingInput: boolean;
+  /** F-1393: o adapter da sessão enfileira texto + Enter durante o turno. */
+  readonly queuesInputWhileBusy?: boolean;
 }
 
 export interface AgentWaitingEvent {

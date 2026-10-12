@@ -172,6 +172,22 @@ describe('F-371 — dictationPending/dictationFailed no fluxo de ditado', () => 
     expect(useVoiceStore.getState().error).toContain('⌘V');
   });
 
+  it('F-1393: pane com diálogo — HUD diz que o ditado aguarda o pane ficar livre, sem falha', async () => {
+    transcribe.mockResolvedValue(sttOk('abre o painel'));
+    vi.mocked(routeDictation).mockResolvedValue({
+      ok: false,
+      reason: 'pending',
+      paneId: 'pane-1',
+      preserved: true,
+    });
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+
+    expect(useVoiceStore.getState().note).toContain('aguardando o pane ficar livre');
+    expect(useVoiceStore.getState().dictationFailed).toBe(false);
+    expect(useVoiceStore.getState().dictationPending).toBeNull();
+  });
+
   it('descarte (transcript vazio): limpa o pendente SEM armar falha', async () => {
     transcribe.mockResolvedValue(sttOk('   '));
 
@@ -274,6 +290,19 @@ describe('F-1392 — uma linha dictation.session por ditado, sem o texto', () =>
 
     expect(sessions()).toEqual([
       expect.objectContaining({ result: 'error', errorCode: 'delivery-failed', polished: false }),
+    ]);
+  });
+
+  it('F-1393: ditado enfileirado no pane ocupado vira resultado queued; pendente vira pending', async () => {
+    transcribe.mockResolvedValue(sttOk('abre o painel'));
+    vi.mocked(routeDictation).mockResolvedValueOnce({ ok: true, paneId: 'pane-1', queued: true });
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+    vi.mocked(routeDictation).mockResolvedValueOnce({ ok: false, reason: 'pending', paneId: 'pane-1' });
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+
+    expect(sessions()).toEqual([
+      expect.objectContaining({ result: 'queued' }),
+      expect.objectContaining({ result: 'pending' }),
     ]);
   });
 

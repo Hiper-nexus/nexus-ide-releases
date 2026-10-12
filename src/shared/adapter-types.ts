@@ -95,6 +95,12 @@ const quirksSchema = z
     requiresNoAutoUpdate: z.boolean().default(false),
     approvalFlag: z.string().optional(),
     mcpAutoload: z.boolean().default(false),
+    /**
+     * F-1393: a TUI aceita texto + Enter durante o turno e enfileira a mensagem
+     * para depois dele (Claude Code). Só o ditado usa isso para entregar ao
+     * pane ocupado; recovery e os demais submits continuam exigindo idle.
+     */
+    queuesInputWhileBusy: z.boolean().optional(),
     /** Per-session Nexus MCP integration. `none` keeps the CLI worker-only. */
     nexusMcp: z
       .enum(['none', 'autoload', 'codex', 'agy', 'opencode', 'kimi', 'grok', 'mimo-code', 'minimax-code', 'muse', 'devin', 'qwen'])

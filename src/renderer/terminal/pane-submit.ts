@@ -94,6 +94,14 @@ function confirmEnterTookEffect(
   );
 }
 
+/**
+ * F-1393: resultado do envio do DITADO. `queued` = pane ocupado cujo adapter
+ * enfileira texto + Enter (prova = recibo da escrita, o turno só abre depois
+ * do atual); `wait` = nada foi escrito (diálogo aberto ou adapter sem fila) e
+ * vale esperar o pane ficar livre; `failed` = recusa sem espera útil.
+ */
+export type PromptSubmitOutcome = 'started' | 'queued' | 'wait' | 'failed';
+
 /** Canonical UserPromptSubmit sequence, independent of paste/input-induced busy. */
 async function submitWithTurnProof(
   paneId: string,
@@ -102,6 +110,17 @@ async function submitWithTurnProof(
   ports: PromptProofPorts,
   write: (sessionId: string, data: string) => Promise<boolean>,
 ): Promise<boolean> {
+  return (await submitWithTurnProofOutcome(paneId, text, sessionId, ports, write, false)) === 'started';
+}
+
+async function submitWithTurnProofOutcome(
+  paneId: string,
+  text: string,
+  sessionId: string,
+  ports: PromptProofPorts,
+  write: (sessionId: string, data: string) => Promise<boolean>,
+  queueWhileBusy: boolean,
+): Promise<PromptSubmitOutcome> {
   const pause = (ms: number) => new Promise<void>(resolve => { ports.schedule(resolve, ms); });
   const current = () => ports.getSessionId(paneId) === sessionId;
   const read = async (): Promise<PtyPromptState | null> => {
@@ -113,17 +132,31 @@ async function submitWithTurnProof(
     return current() && result && Number.isSafeInteger(result.turnStartSequence) && result.turnStartSequence >= 0 ? result : null;
   };
   const baseline = await read();
-  if (!baseline || baseline.awaitingInput || baseline.state !== 'idle') return false;
-  if (!await write(sessionId, text) || !current()) return false;
-  await pause(pasteSettleMs(text));
-  const ready = await read();
-  if (!ready || ready.awaitingInput) return false;
-  if (ready.turnStartSequence > baseline.turnStartSequence) return true;
+  if (!baseline) return 'failed';
+  if (baseline.awaitingInput) return 'wait';
   // First CR submits our own paste even if its echo made the PTY busy.
   const enter = (retry: boolean) => current() && (ports.submitPromptEnter
     ? ports.submitPromptEnter(sessionId, baseline.turnStartSequence, retry)
     : Promise.resolve(false));
-  if (!await enter(false)) return false;
+  if (baseline.state !== 'idle') {
+    if (baseline.state !== 'busy') return 'failed';
+    if (!queueWhileBusy || baseline.queuesInputWhileBusy !== true) return 'wait';
+    // F-1393: a TUI enfileira a mensagem atrás do turno em curso. O
+    // turnStartSequence só sobe quando o turno atual terminar, então a prova
+    // é o recibo das escritas; o Enter atômico do Main ainda veta diálogo.
+    if (!await write(sessionId, text) || !current()) return 'failed';
+    await pause(pasteSettleMs(text));
+    const queuedReady = await read();
+    if (!queuedReady || queuedReady.awaitingInput) return 'failed';
+    if (queuedReady.turnStartSequence > baseline.turnStartSequence) return 'started';
+    return await enter(false) ? 'queued' : 'failed';
+  }
+  if (!await write(sessionId, text) || !current()) return 'failed';
+  await pause(pasteSettleMs(text));
+  const ready = await read();
+  if (!ready || ready.awaitingInput) return 'failed';
+  if (ready.turnStartSequence > baseline.turnStartSequence) return 'started';
+  if (!await enter(false)) return 'failed';
   const waitForProof = async (ms: number): Promise<'started' | 'blocked' | 'timeout'> => {
     const deadline = Date.now() + ms;
     while (Date.now() < deadline) {
@@ -136,12 +169,12 @@ async function submitWithTurnProof(
     return 'timeout';
   };
   const first = await waitForProof(SUBMIT_TURN_ACCEPTANCE_MS);
-  if (first !== 'timeout') return first === 'started';
+  if (first !== 'timeout') return first === 'started' ? 'started' : 'failed';
   const retry = await read();
-  if (!retry || retry.awaitingInput || retry.state !== 'idle') return false;
-  if (retry.turnStartSequence > baseline.turnStartSequence) return true;
-  if (!await enter(true)) return false;
-  return await waitForProof(SUBMIT_RETRY_ACCEPTANCE_MS) === 'started';
+  if (!retry || retry.awaitingInput || retry.state !== 'idle') return 'failed';
+  if (retry.turnStartSequence > baseline.turnStartSequence) return 'started';
+  if (!await enter(true)) return 'failed';
+  return await waitForProof(SUBMIT_RETRY_ACCEPTANCE_MS) === 'started' ? 'started' : 'failed';
 }
 
 function isSafePrompt(text: string): boolean {
@@ -292,4 +325,45 @@ export function submitPromptToPaneConfirmed(
       }, pasteSettleMs(text));
     });
   });
+}
+
+/**
+ * F-1393: envio do DITADO pela lane do terminal. Diferente de
+ * `submitPromptToPaneConfirmed` (recovery e demais chamadores, que exigem
+ * idle), aceita pane ocupado cujo adapter enfileira e devolve `wait` quando
+ * nada foi escrito e vale esperar o pane ficar livre.
+ */
+export function submitDictationToPaneConfirmed(
+  paneId: string,
+  text: string,
+  expectedSessionId: string,
+  ports: PaneSubmitPorts,
+): Promise<PromptSubmitOutcome> {
+  if (!isSafePrompt(text) || ports.getSessionId(paneId) !== expectedSessionId) {
+    return Promise.resolve('failed');
+  }
+  if (!ports.probePromptState) {
+    return submitPromptToPaneConfirmed(paneId, text, expectedSessionId, ports)
+      .then((ok) => (ok ? 'started' : 'failed'));
+  }
+  const input = ports.bracketedPaste === false ? text : `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}`;
+  return submitWithTurnProofOutcome(paneId, input, expectedSessionId, ports, ports.writeConfirmed, true);
+}
+
+/** F-1393: o mesmo contrato do ditado pela lane do operador (pane governado). */
+export function submitDictationToPaneOperator(
+  paneId: string,
+  text: string,
+  expectedSessionId: string,
+  ports: PaneOperatorSubmitPorts,
+): Promise<PromptSubmitOutcome> {
+  const line = text.replace(/\r?\n/gu, ' ');
+  if (!isSafePrompt(line) || ports.getSessionId(paneId) !== expectedSessionId) {
+    return Promise.resolve('failed');
+  }
+  if (!ports.probePromptState) {
+    return submitPromptToPaneOperator(paneId, text, expectedSessionId, ports)
+      .then((ok) => (ok ? 'started' : 'failed'));
+  }
+  return submitWithTurnProofOutcome(paneId, line, expectedSessionId, ports, ports.operatorWrite, true);
 }

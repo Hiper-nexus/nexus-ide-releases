@@ -34,6 +34,11 @@ describe('F-1392 — dictationSessionTraceEvent (lista branca do log de uso)', (
     expect(JSON.stringify(event)).not.toContain('comitar');
   });
 
+  it('F-1393: aceita os resultados queued e pending', () => {
+    expect(dictationSessionTraceEvent({ result: 'queued' })).toEqual({ kind: 'dictation-session', result: 'queued' });
+    expect(dictationSessionTraceEvent({ result: 'pending' })).toEqual({ kind: 'dictation-session', result: 'pending' });
+  });
+
   it('recusa resumo sem resultado válido', () => {
     expect(dictationSessionTraceEvent({ result: 'talvez' })).toBeNull();
     expect(dictationSessionTraceEvent('texto')).toBeNull();

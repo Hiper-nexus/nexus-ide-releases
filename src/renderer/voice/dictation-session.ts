@@ -10,7 +10,8 @@
 import type { TranscribeResult } from '../../shared/voice-ipc';
 import type { DictationOutputMode } from './dictation-output-mode';
 
-export type DictationSessionResult = 'ok' | 'empty' | 'error' | 'cancelled';
+/** F-1393: `queued` = pane ocupado enfileirou; `pending` = aguarda o pane ficar livre. */
+export type DictationSessionResult = 'ok' | 'queued' | 'pending' | 'empty' | 'error' | 'cancelled';
 
 export interface DictationSessionDraft {
   readonly outputMode: DictationOutputMode | undefined;

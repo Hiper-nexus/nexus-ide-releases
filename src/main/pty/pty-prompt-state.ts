@@ -5,6 +5,7 @@ import { getOwnedAgentSessionInfo, getSessionState, orchWriteSession } from './p
 import { getAgentSemanticStatusBySession, getAgentTurnStartSequence } from '../orch/agent-status';
 import { getContextBySession } from '../orch/gate';
 import { requireLiveRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import { getAdapter } from '../adapters/adapter-registry';
 
 const request = z.object({ sessionId: z.string().min(1).max(128) }).strict();
 
@@ -26,6 +27,7 @@ export function readOwnedPromptState(owner: WebContents, raw: unknown): PtyPromp
       turnStartSequence: getAgentTurnStartSequence(parsed.data.sessionId),
       state,
       awaitingInput: getAgentSemanticStatusBySession(parsed.data.sessionId)?.status === 'awaiting-input',
+      ...(getAdapter(info.adapterId)?.quirks?.queuesInputWhileBusy ? { queuesInputWhileBusy: true } : {}),
     };
   } catch { return null; }
 }

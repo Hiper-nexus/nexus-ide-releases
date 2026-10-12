@@ -1,9 +1,10 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-const h = vi.hoisted(() => ({ owned: vi.fn(), scope: vi.fn(), state: vi.fn(), sequence: vi.fn(), semantic: vi.fn(), context: vi.fn(), write: vi.fn() }));
+const h = vi.hoisted(() => ({ owned: vi.fn(), scope: vi.fn(), state: vi.fn(), sequence: vi.fn(), semantic: vi.fn(), context: vi.fn(), write: vi.fn(), adapter: vi.fn() }));
 vi.mock('./pty-manager', () => ({ getOwnedAgentSessionInfo: h.owned, getSessionState: h.state, orchWriteSession: h.write }));
 vi.mock('../orch/agent-status', () => ({ getAgentTurnStartSequence: h.sequence, getAgentSemanticStatusBySession: h.semantic }));
 vi.mock('../persistence/renderer-workspace-scope', () => ({ requireLiveRendererWorkspaceScope: h.scope }));
 vi.mock('../orch/gate', () => ({ getContextBySession: h.context }));
+vi.mock('../adapters/adapter-registry', () => ({ getAdapter: h.adapter }));
 import { readOwnedPromptState, submitOwnedPromptEnter } from './pty-prompt-state';
 const owner = {} as never;
 beforeEach(() => {
@@ -50,4 +51,14 @@ it.each([
 });
 it.each([{ sessionId: 'session', turnStartSequence: -1, retry: true }, { sessionId: 'session', turnStartSequence: 7, retry: true, text: 'injection' }])('rejects malformed Enter %j', raw => {
   expect(submitOwnedPromptEnter(owner, raw)).toBe(false); expect(h.owned).not.toHaveBeenCalled();
+});
+
+it('F-1393: a capacidade de fila vem do manifesto do adapter da sessão', () => {
+  h.owned.mockReturnValue({ adapterId: 'claude', scope: { rootRealPath: '/worktree' } });
+  h.state.mockReturnValue('busy'); h.semantic.mockReturnValue(undefined);
+  h.adapter.mockReturnValue({ quirks: { queuesInputWhileBusy: true } });
+  expect(readOwnedPromptState(owner, { sessionId: 'session' })).toEqual({ turnStartSequence: 7, state: 'busy', awaitingInput: false, queuesInputWhileBusy: true });
+  expect(h.adapter).toHaveBeenCalledWith('claude');
+  h.adapter.mockReturnValue({ quirks: {} });
+  expect(readOwnedPromptState(owner, { sessionId: 'session' })).toEqual({ turnStartSequence: 7, state: 'busy', awaitingInput: false });
 });

@@ -8,7 +8,7 @@ import { SerializeAddon } from '@xterm/addon-serialize';
 import { attachTerminalPathLinks } from './terminal-path-links';
 import { TerminalGhostAssist } from './terminal-ghost-assist';
 import '@xterm/xterm/css/xterm.css';
-import type { PaneModel } from '../../shared/types';
+import type { PaneModel, PtyPromptState } from '../../shared/types';
 import type { PaneParkRequest } from '../../shared/orch-types';
 import { buildPtySpawnRequest } from './spawn-request';
 import type { TerminalSettings } from '../../shared/settings-types';
@@ -107,6 +107,9 @@ import {
   submitPromptToPane as submitPanePrompt,
   submitPromptToPaneConfirmed as submitPanePromptConfirmed,
   submitPromptToPaneOperator as submitPanePromptOperator,
+  submitDictationToPaneConfirmed as submitPaneDictationConfirmed,
+  submitDictationToPaneOperator as submitPaneDictationOperator,
+  type PromptSubmitOutcome,
 } from './pane-submit';
 import { WebglLeasePool } from './webgl-lease';
 import { resumeTerminalVisibilityBeforePaint } from './terminal-visibility-resume';
@@ -4508,14 +4511,62 @@ export function submitPromptToPaneConfirmed(
 ): Promise<boolean> {
   const host = hosts.get(paneId);
   if (host && !host.disposed) host.inputVisibility.onUserInput();
-  return submitPanePromptConfirmed(paneId, text, expectedSessionId, {
+  return submitPanePromptConfirmed(paneId, text, expectedSessionId, confirmedSubmitPorts(paneId));
+}
+
+function confirmedSubmitPorts(paneId: string) {
+  return {
     ...nativePromptProofPorts(paneId),
     getSessionId: typingSessionId,
-    write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
-    writeConfirmed: (sessionId, data) =>
+    write: (sessionId: string, data: string) => window.nexus.pty.write(sessionId, data),
+    writeConfirmed: (sessionId: string, data: string) =>
       window.nexus.pty.writeConfirmed(sessionId, data),
-    schedule: (callback, delayMs) => setTimeout(callback, delayMs),
-  });
+    schedule: (callback: () => void, delayMs: number) => setTimeout(callback, delayMs),
+  };
+}
+
+function operatorSubmitPorts(paneId: string) {
+  return {
+    ...nativePromptProofPorts(paneId),
+    getSessionId: typingSessionId,
+    operatorWrite: (sessionId: string, data: string) =>
+      window.nexus.orch.sendPaneOperatorInput({ sessionId, data }),
+    schedule: (callback: () => void, delayMs: number) => setTimeout(callback, delayMs),
+  };
+}
+
+/**
+ * F-1393: envio do DITADO — entrega ao pane ocupado cujo adapter enfileira
+ * (`queued`) e devolve `wait` quando nada foi escrito. Só o ditado usa;
+ * recovery segue em `submitPromptToPaneConfirmed`, que exige idle.
+ */
+export function submitDictationToPaneConfirmed(
+  paneId: string,
+  text: string,
+  expectedSessionId: string,
+): Promise<PromptSubmitOutcome> {
+  const host = hosts.get(paneId);
+  if (host && !host.disposed) host.inputVisibility.onUserInput();
+  return submitPaneDictationConfirmed(paneId, text, expectedSessionId, confirmedSubmitPorts(paneId));
+}
+
+export function submitDictationToPaneOperatorInput(
+  paneId: string,
+  text: string,
+  expectedSessionId: string,
+): Promise<PromptSubmitOutcome> {
+  const host = hosts.get(paneId);
+  if (host && !host.disposed) host.inputVisibility.onUserInput();
+  return submitPaneDictationOperator(paneId, text, expectedSessionId, operatorSubmitPorts(paneId));
+}
+
+/** F-1393: estado de prompt do pane para o ditado pendente (null sem sonda). */
+export function probePanePromptState(
+  paneId: string,
+  sessionId: string,
+): Promise<PtyPromptState | null> {
+  const probe = nativePromptProofPorts(paneId).probePromptState;
+  return probe ? probe(sessionId).catch(() => null) : Promise.resolve(null);
 }
 
 /**
@@ -4529,13 +4580,7 @@ export function submitPromptToPaneOperatorInput(
 ): Promise<boolean> {
   const host = hosts.get(paneId);
   if (host && !host.disposed) host.inputVisibility.onUserInput();
-  return submitPanePromptOperator(paneId, text, expectedSessionId, {
-    ...nativePromptProofPorts(paneId),
-    getSessionId: typingSessionId,
-    operatorWrite: (sessionId, data) =>
-      window.nexus.orch.sendPaneOperatorInput({ sessionId, data }),
-    schedule: (callback, delayMs) => setTimeout(callback, delayMs),
-  });
+  return submitPanePromptOperator(paneId, text, expectedSessionId, operatorSubmitPorts(paneId));
 }
 
 /**

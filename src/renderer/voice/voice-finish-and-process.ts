@@ -420,14 +420,31 @@ export async function finishAndProcess(
       const routed = await routeDictation(transcript);
       reportDictationSession(
         routed.ok
-          ? { result: 'ok', stt, deliveredChars: transcript.length }
-          : {
-              result: 'error',
-              errorCode: routed.reason,
-              stt,
-              deliveredChars: transcript.length,
-            },
+          ? { result: routed.queued ? 'queued' : 'ok', stt, deliveredChars: transcript.length }
+          : routed.reason === 'pending'
+            ? { result: 'pending', stt, deliveredChars: transcript.length }
+            : {
+                result: 'error',
+                errorCode: routed.reason,
+                stt,
+                deliveredChars: transcript.length,
+              },
       );
+      if (!routed.ok && routed.reason === 'pending') {
+        // F-1393: diálogo aberto ou adapter sem fila — nada escrito ainda; o
+        // ditado entra sozinho quando o pane ficar livre (e já foi copiado).
+        store.setDictationPending(null);
+        store.setNote(
+          routed.preserved
+            ? 'Ditado aguardando o pane ficar livre — entra sozinho (texto também copiado).'
+            : 'Ditado aguardando o pane ficar livre — entra sozinho.',
+        );
+        store.setStatus('idle');
+        return;
+      }
+      if (routed.ok && routed.queued) {
+        store.setNote('Ditado enfileirado: o agente lê quando terminar o turno atual.');
+      }
       if (!routed.ok) {
         store.setDictationPending(null);
         store.setDictationFailed(true);

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  submitDictationToPaneConfirmed,
+  submitDictationToPaneOperator,
   submitPromptToPane,
   submitPromptToPaneConfirmed,
   submitPromptToPaneOperator,
@@ -401,3 +403,88 @@ it('F-266: a dialog appearing after the probe is vetoed by the atomic Main Enter
     expect(ports.submitPromptEnter).toHaveBeenCalledWith('session-kimi', 2, false);
   } finally { vi.useRealTimers(); }
 });
+
+describe('F-1393: ditado chega ao pane ocupado que enfileira', () => {
+  function claudePorts(state: { state: 'idle' | 'busy'; awaitingInput: boolean; queues?: boolean }) {
+    const writes: string[] = [];
+    const ports = {
+      getSessionId: () => 'session-claude',
+      schedule: (cb: () => void, ms: number) => setTimeout(cb, ms),
+      write: vi.fn(),
+      writeConfirmed: vi.fn(async (_id: string, data: string) => { writes.push(data); return true; }),
+      submitPromptEnter: vi.fn(async () => { writes.push('\r'); return true; }),
+      probePromptState: async () => ({
+        turnStartSequence: 3,
+        state: state.state,
+        awaitingInput: state.awaitingInput,
+        ...(state.queues === false ? {} : { queuesInputWhileBusy: true }),
+      }),
+    };
+    return { ports, writes };
+  }
+
+  it('(a) claude ocupado recebe o ditado: texto colado e depois Enter, sem esperar o turno abrir', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, writes } = claudePorts({ state: 'busy', awaitingInput: false });
+      const pending = submitDictationToPaneConfirmed('pane-claude', 'refatora o login', 'session-claude', ports);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(pending).resolves.toBe('queued');
+      expect(writes).toEqual(['\x1b[200~refatora o login\x1b[201~', '\r']);
+      expect(ports.submitPromptEnter).toHaveBeenCalledWith('session-claude', 3, false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('lane do operador também enfileira no pane governado ocupado', async () => {
+    vi.useFakeTimers();
+    try {
+      const operatorWrite = vi.fn(async () => true);
+      const pending = submitDictationToPaneOperator('pane-claude', 'abre o PR', 'session-claude', {
+        getSessionId: () => 'session-claude',
+        operatorWrite,
+        submitPromptEnter: vi.fn(async () => true),
+        schedule: (cb, ms) => setTimeout(cb, ms),
+        probePromptState: async () => ({ turnStartSequence: 3, state: 'busy', awaitingInput: false, queuesInputWhileBusy: true }),
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(pending).resolves.toBe('queued');
+      expect(operatorWrite).toHaveBeenCalledWith('session-claude', 'abre o PR');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each([
+    { name: 'diálogo aberto', state: 'idle' as const, awaitingInput: true, queues: true },
+    { name: 'diálogo aberto no turno', state: 'busy' as const, awaitingInput: true, queues: true },
+    { name: 'adapter sem fila ocupado', state: 'busy' as const, awaitingInput: false, queues: false },
+  ])('$name: nada é escrito e o ditado espera (wait)', async ({ state, awaitingInput, queues }) => {
+    vi.useFakeTimers();
+    try {
+      const { ports, writes } = claudePorts({ state, awaitingInput, queues });
+      const pending = submitDictationToPaneConfirmed('pane-claude', 'texto', 'session-claude', ports);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(pending).resolves.toBe('wait');
+      expect(writes).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('(c) recovery e demais chamadores continuam exigindo idle: pane ocupado que enfileira é recusado', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, writes } = claudePorts({ state: 'busy', awaitingInput: false });
+      const pending = submitPromptToPaneConfirmed('pane-claude', 'retoma a tarefa', 'session-claude', ports);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(pending).resolves.toBe(false);
+      expect(writes).toEqual([]);
+      const operatorWrite = vi.fn(async () => true);
+      const operator = submitPromptToPaneOperator('pane-claude', 'retoma', 'session-claude', {
+        getSessionId: () => 'session-claude', operatorWrite, schedule: (cb, ms) => setTimeout(cb, ms),
+        submitPromptEnter: vi.fn(async () => true),
+        probePromptState: async () => ({ turnStartSequence: 3, state: 'busy', awaitingInput: false, queuesInputWhileBusy: true }),
+      });
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(operator).resolves.toBe(false);
+      expect(operatorWrite).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+});
+

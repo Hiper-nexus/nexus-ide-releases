@@ -9,9 +9,10 @@ import { useVoiceStore } from './voice-store';
 import { useGamificationStore } from '../state/gamification-store';
 import {
   getPaneSessionId,
+  probePanePromptState,
+  submitDictationToPaneConfirmed,
+  submitDictationToPaneOperatorInput,
   submitPromptToPane,
-  submitPromptToPaneConfirmed,
-  submitPromptToPaneOperatorInput,
 } from '../terminal/terminal-host';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
@@ -395,10 +396,14 @@ export function routeDictation(text: string): Promise<DictationRouteResult> {
       );
     },
     getSessionId: (paneId) => getPaneSessionId(paneId),
+    // F-1393: lanes do DITADO — pane ocupado que enfileira recebe o texto;
+    // diálogo aberto ou adapter sem fila deixa o ditado pendente.
     deliverConfirmed: (paneId, promptText, sessionId) =>
-      submitPromptToPaneConfirmed(paneId, promptText, sessionId),
+      submitDictationToPaneConfirmed(paneId, promptText, sessionId),
     deliverOperator: (paneId, promptText, sessionId) =>
-      submitPromptToPaneOperatorInput(paneId, promptText, sessionId),
+      submitDictationToPaneOperatorInput(paneId, promptText, sessionId),
+    probePromptState: (paneId, sessionId) => probePanePromptState(paneId, sessionId),
+    schedule: (callback, delayMs) => setTimeout(callback, delayMs),
     // F-1393: pane ocupado/recusou — o prompt falado vai para a área de
     // transferência em vez de sumir.
     preserveUndelivered: (promptText) =>

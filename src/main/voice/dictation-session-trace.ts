@@ -15,7 +15,7 @@ const LABEL_RE = /^[a-z][a-z0-9:._-]{0,63}$/i;
 const LABEL_KEYS = ['mode', 'sttProvider', 'sttModel', 'language', 'result', 'errorCode'] as const;
 const NUMBER_KEYS = ['audioMs', 'latencyMs', 'rawChars', 'polishedChars'] as const;
 const BOOLEAN_KEYS = ['polished'] as const;
-const RESULTS: ReadonlySet<string> = new Set(['ok', 'empty', 'error', 'cancelled']);
+const RESULTS: ReadonlySet<string> = new Set(['ok', 'queued', 'pending', 'empty', 'error', 'cancelled']);
 
 export type DictationSessionTraceEvent = Record<string, string | number | boolean> & {
   kind: typeof DICTATION_SESSION_KIND;

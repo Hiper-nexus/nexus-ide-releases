@@ -91,7 +91,8 @@
     "altScreen": true,
     "requiresNoAutoUpdate": false,
     "mcpAutoload": true,
-    "nexusMcp": "autoload"
+    "nexusMcp": "autoload",
+    "queuesInputWhileBusy": true
   },
   "control": {
     "permission": {

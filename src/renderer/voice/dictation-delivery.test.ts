@@ -1,9 +1,13 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
+  DICTATION_PENDING_MAX_MS,
   deliverDictation,
+  resetPendingDictationsForTests,
   type DictationDeliveryPorts,
   type DictationLogLevel,
 } from './dictation-delivery';
+import { submitDictationToPaneConfirmed } from '../terminal/pane-submit';
+import type { PtyPromptState } from '../../shared/types';
 
 interface LogLine {
   level: DictationLogLevel;
@@ -214,6 +218,121 @@ describe('F-1393 — ditado recusado pelo pane não some', () => {
 
     await expect(deliverDictation('ok', ports)).resolves.toEqual({ ok: true, paneId: 'pane-focused' });
     expect(preserveUndelivered).not.toHaveBeenCalled();
+  });
+});
+
+describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar livre', () => {
+  afterEach(() => {
+    resetPendingDictationsForTests();
+    vi.useRealTimers();
+  });
+
+  /** Pane Claude real (pane-submit) com estado de prompt mutável. */
+  function claudePane() {
+    const prompt: { value: PtyPromptState } = {
+      value: { turnStartSequence: 5, state: 'busy', awaitingInput: false, queuesInputWhileBusy: true },
+    };
+    let session = 'sess-pane-focused';
+    const writes: string[] = [];
+    const paneSubmitPorts = {
+      getSessionId: () => session,
+      schedule: (cb: () => void, ms: number) => setTimeout(cb, ms),
+      write: vi.fn(),
+      writeConfirmed: vi.fn(async (_id: string, data: string) => { writes.push(data); return true; }),
+      submitPromptEnter: vi.fn(async () => {
+        writes.push('\r');
+        if (prompt.value.state === 'idle') {
+          prompt.value = { ...prompt.value, turnStartSequence: prompt.value.turnStartSequence + 1 };
+        }
+        return true;
+      }),
+      probePromptState: async () => prompt.value,
+    };
+    const logs: LogLine[] = [];
+    const ports: DictationDeliveryPorts = {
+      getFocusedPaneId: () => 'pane-focused',
+      listLivePaneIds: () => ['pane-focused'],
+      getSessionId: () => session,
+      deliverConfirmed: (paneId, text, sessionId) =>
+        submitDictationToPaneConfirmed(paneId, text, sessionId, paneSubmitPorts),
+      deliverOperator: vi.fn(async () => false),
+      probePromptState: async () => prompt.value,
+      schedule: (cb, ms) => setTimeout(cb, ms),
+      preserveUndelivered: vi.fn(async () => true),
+      log: (level, event) => logs.push({ level, event }),
+    };
+    return {
+      ports,
+      logs,
+      writes,
+      prompt,
+      switchSession: (next: string) => { session = next; },
+    };
+  }
+
+  it('claude ocupado: entrega na hora (queued) e registra dictation.ptyQueued', async () => {
+    vi.useFakeTimers();
+    const pane = claudePane();
+    const pending = deliverDictation('corrige o login', pane.ports);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(pending).resolves.toEqual({ ok: true, paneId: 'pane-focused', queued: true });
+    expect(pane.writes).toEqual(['\x1b[200~corrige o login\x1b[201~', '\r']);
+    expect(pane.logs).toContainEqual({ level: 'info', event: 'dictation.ptyQueued' });
+    expect(pane.ports.preserveUndelivered).not.toHaveBeenCalled();
+  });
+
+  it('(b) diálogo aberto: nada é escrito; quando o pane fica idle o ditado entra sozinho', async () => {
+    vi.useFakeTimers();
+    const pane = claudePane();
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true, queuesInputWhileBusy: true };
+
+    const result = deliverDictation('abre o PR', pane.ports);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(result).resolves.toEqual({
+      ok: false,
+      reason: 'pending',
+      paneId: 'pane-focused',
+      preserved: true,
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(pane.writes).toEqual([]);
+
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: false, queuesInputWhileBusy: true };
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(pane.writes).toEqual(['\x1b[200~abre o PR\x1b[201~', '\r']);
+    expect(pane.logs).toContainEqual({ level: 'info', event: 'dictation.pendingDelivered' });
+  });
+
+  it('pendente cai se a sessão do pane mudar ou passar o teto de 10 min — sem escrever', async () => {
+    vi.useFakeTimers();
+    const changed = claudePane();
+    changed.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('um', changed.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    changed.switchSession('sess-nova');
+    changed.prompt.value = { turnStartSequence: 0, state: 'idle', awaitingInput: false };
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(changed.writes).toEqual([]);
+    expect(changed.logs).toContainEqual({ level: 'warn', event: 'dictation.pendingDropped' });
+
+    resetPendingDictationsForTests();
+    const stuck = claudePane();
+    stuck.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('dois', stuck.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    await vi.advanceTimersByTimeAsync(DICTATION_PENDING_MAX_MS + 5_000);
+    expect(stuck.writes).toEqual([]);
+    expect(stuck.logs).toContainEqual({ level: 'warn', event: 'dictation.pendingDropped' });
+  });
+
+  it('um ditado novo substitui o pendente do mesmo pane: só o último entra', async () => {
+    vi.useFakeTimers();
+    const pane = claudePane();
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('primeiro', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    await Promise.all([deliverDictation('segundo', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    expect(pane.logs).toContainEqual({ level: 'info', event: 'dictation.pendingReplaced' });
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: false };
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(pane.writes).toEqual(['\x1b[200~segundo\x1b[201~', '\r']);
   });
 });
 

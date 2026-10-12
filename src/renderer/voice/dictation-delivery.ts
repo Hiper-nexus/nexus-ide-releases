@@ -12,7 +12,20 @@
  * voice.log, então uma morte silenciosa futura fica rastreável ponta a ponta.
  */
 
+import type { PtyPromptState } from '../../shared/types';
+
 export type DictationLogLevel = 'info' | 'warn' | 'error';
+
+/**
+ * F-1393: resultado de uma lane. `queued` = pane ocupado que enfileira texto
+ * + Enter; `wait` = nada escrito, vale esperar o pane ficar livre. Boolean
+ * segue aceito (true = started, false = failed) para portas antigas.
+ */
+export type DictationLaneOutcome = 'started' | 'queued' | 'wait' | 'failed';
+
+/** F-1393: teto de segurança do ditado pendente e cadência da sonda. */
+export const DICTATION_PENDING_MAX_MS = 10 * 60_000;
+export const DICTATION_PENDING_POLL_MS = 1_000;
 
 export interface DictationDeliveryPorts {
   /** Pane atualmente focado (destino natural do ditado). */
@@ -26,7 +39,7 @@ export interface DictationDeliveryPorts {
     paneId: string,
     text: string,
     sessionId: string,
-  ): Promise<boolean>;
+  ): Promise<boolean | DictationLaneOutcome>;
   /**
    * Lane do operador (orch:panes.operatorInput) — o caminho autorizado quando o
    * pane é um agente governado: o IPC cru do terminal recusa essas sessões por
@@ -36,7 +49,15 @@ export interface DictationDeliveryPorts {
     paneId: string,
     text: string,
     sessionId: string,
-  ): Promise<boolean>;
+  ): Promise<boolean | DictationLaneOutcome>;
+  /**
+   * F-1393: sonda do pane para o ditado pendente (diálogo aberto ou adapter
+   * sem fila). Com `schedule`, o pendente é entregue quando o pane voltar a
+   * idle sem diálogo, na MESMA sessão; sem as duas portas, `wait` vira falha.
+   */
+  probePromptState?(paneId: string, sessionId: string): Promise<PtyPromptState | null>;
+  schedule?(callback: () => void, delayMs: number): unknown;
+  now?(): number;
   /**
    * F-1393: o ditado que nenhum pane aceitou não pode sumir — o operador
    * falou um prompt inteiro. Guarda o texto (área de transferência) e diz se
@@ -53,11 +74,23 @@ export interface DictationDeliveryPorts {
 }
 
 export type DictationRouteResult =
-  | { ok: true; paneId: string }
+  | {
+      ok: true;
+      paneId: string;
+      /** F-1393: pane ocupado enfileirou; o turno abre depois do atual. */
+      queued?: boolean;
+    }
   | {
       ok: false;
       reason: 'no-live-pane' | 'delivery-failed';
       /** F-1393: texto guardado na área de transferência para colar. */
+      preserved?: boolean;
+    }
+  | {
+      /** F-1393: nada escrito ainda; entra quando o pane ficar livre. */
+      ok: false;
+      reason: 'pending';
+      paneId: string;
       preserved?: boolean;
     };
 
@@ -65,14 +98,16 @@ export type DictationRouteResult =
  * Roteia o ditado para o pane focado (ou um fallback vivo) e só reporta sucesso
  * quando o PTY confirma a injeção. Nunca devolve false-green: uma escrita não
  * confirmada vira `delivery-failed`, e ausência total de pane vivo vira
- * `no-live-pane` — ambos visíveis pro chamador surgir no HUD.
+ * `no-live-pane` — ambos visíveis pro chamador surgir no HUD. Pane ocupado
+ * que enfileira recebe o ditado (`queued`); diálogo aberto ou adapter sem fila
+ * deixa o ditado pendente até o pane ficar livre (F-1393).
  */
 export async function deliverDictation(
   text: string,
   ports: DictationDeliveryPorts,
 ): Promise<DictationRouteResult> {
-  const failed = await routeToPane(text, ports);
-  if (failed.ok || !ports.preserveUndelivered) return failed;
+  const routed = await routeToPane(text, ports);
+  if (routed.ok || !ports.preserveUndelivered) return routed;
   const preserved = await ports.preserveUndelivered(text).catch(() => false);
   ports.log(
     preserved ? 'info' : 'error',
@@ -80,9 +115,99 @@ export async function deliverDictation(
     preserved
       ? 'ditado não entregue foi copiado para a área de transferência'
       : 'ditado não entregue e a cópia falhou',
-    { reason: failed.reason, chars: text.length, preserved },
+    { reason: routed.reason, chars: text.length, preserved },
   );
-  return { ...failed, preserved };
+  return { ...routed, preserved };
+}
+
+function laneOutcome(value: boolean | DictationLaneOutcome): DictationLaneOutcome {
+  if (value === true) return 'started';
+  if (value === false) return 'failed';
+  return value;
+}
+
+async function deliverOnLanes(
+  targetPaneId: string,
+  text: string,
+  sessionId: string,
+  ports: DictationDeliveryPorts,
+): Promise<{ outcome: DictationLaneOutcome; lane: 'terminal' | 'operator' }> {
+  const outcome = laneOutcome(await ports.deliverConfirmed(targetPaneId, text, sessionId));
+  if (outcome !== 'failed') return { outcome, lane: 'terminal' };
+  // Pane governado: o IPC cru do terminal recusa sessões de agentes
+  // orquestrados por design (pty-manager, presentation-only). A recusa cai na
+  // lane do operador, que valida posse+missão no main e devolve recibo real.
+  ports.log(
+    'info',
+    'dictation.laneFallback',
+    'lane terminal recusou — tentando a lane do operador (pane governado)',
+    { targetPaneId, sessionId },
+  );
+  return {
+    outcome: laneOutcome(await ports.deliverOperator(targetPaneId, text, sessionId)),
+    lane: 'operator',
+  };
+}
+
+/** Um pendente por pane; um ditado novo para o pane substitui o anterior. */
+const pendingByPane = new Map<string, number>();
+let pendingSeq = 0;
+
+function cancelPending(paneId: string, ports: DictationDeliveryPorts): void {
+  if (!pendingByPane.delete(paneId)) return;
+  ports.log('info', 'dictation.pendingReplaced', 'ditado pendente substituído por um novo', {
+    targetPaneId: paneId,
+  });
+}
+
+function deferUntilFree(
+  paneId: string,
+  sessionId: string,
+  text: string,
+  ports: DictationDeliveryPorts,
+): void {
+  const probe = ports.probePromptState!;
+  const schedule = ports.schedule!;
+  const now = ports.now ?? Date.now;
+  const token = ++pendingSeq;
+  pendingByPane.set(paneId, token);
+  const startedAt = now();
+  const mine = () => pendingByPane.get(paneId) === token;
+  const settle = (level: DictationLogLevel, event: string, msg: string, extra: Record<string, unknown>) => {
+    pendingByPane.delete(paneId);
+    ports.log(level, event, msg, { targetPaneId: paneId, sessionId, chars: text.length, ...extra });
+  };
+  const tick = async (): Promise<void> => {
+    if (!mine()) return;
+    if (ports.getSessionId(paneId) !== sessionId) {
+      settle('warn', 'dictation.pendingDropped', 'sessão do pane mudou — ditado pendente descartado', { reason: 'session-changed' });
+      return;
+    }
+    if (now() - startedAt >= DICTATION_PENDING_MAX_MS) {
+      settle('warn', 'dictation.pendingDropped', 'pane não ficou livre em 10 min — ditado pendente descartado', { reason: 'timeout' });
+      return;
+    }
+    const state = await probe(paneId, sessionId).catch(() => null);
+    if (!mine()) return;
+    if (state && state.state === 'idle' && !state.awaitingInput) {
+      const { outcome, lane } = await deliverOnLanes(paneId, text, sessionId, ports);
+      if (!mine()) return;
+      if (outcome === 'wait') {
+        schedule(() => void tick(), DICTATION_PENDING_POLL_MS);
+        return;
+      }
+      const delivered = outcome === 'started' || outcome === 'queued';
+      settle(
+        delivered ? 'info' : 'error',
+        delivered ? 'dictation.pendingDelivered' : 'dictation.pendingFailed',
+        delivered ? 'ditado pendente entregue ao pane livre' : 'pane livre recusou o ditado pendente',
+        { lane, outcome },
+      );
+      return;
+    }
+    schedule(() => void tick(), DICTATION_PENDING_POLL_MS);
+  };
+  schedule(() => void tick(), DICTATION_PENDING_POLL_MS);
 }
 
 async function routeToPane(
@@ -129,6 +254,7 @@ async function routeToPane(
     sessionId,
     usedFallback,
   });
+  cancelPending(targetPaneId, ports);
 
   // Salto 3 — IPC: despacho da injeção confirmada para o processo main.
   ports.log('info', 'dictation.ipcDispatch', 'despachando injeção confirmada via IPC', {
@@ -136,24 +262,29 @@ async function routeToPane(
     sessionId,
     chars: text.length,
   });
-  let delivered = await ports.deliverConfirmed(targetPaneId, text, sessionId);
-  let lane: 'terminal' | 'operator' = 'terminal';
-
-  // Salto 3b — pane governado: o IPC cru do terminal recusa sessões de agentes
-  // orquestrados por design (pty-manager, presentation-only). A recusa cai na
-  // lane do operador, que valida posse+missão no main e devolve recibo real.
-  if (!delivered) {
-    ports.log(
-      'info',
-      'dictation.laneFallback',
-      'lane terminal recusou — tentando a lane do operador (pane governado)',
-      { targetPaneId, sessionId },
-    );
-    delivered = await ports.deliverOperator(targetPaneId, text, sessionId);
-    lane = 'operator';
-  }
+  const { outcome, lane } = await deliverOnLanes(targetPaneId, text, sessionId, ports);
 
   // Salto 4 — escrita no PTY: recibo real da injeção (ou a falha, sem false-green).
+  if (outcome === 'queued') {
+    ports.log('info', 'dictation.ptyQueued', 'pane ocupado enfileirou o ditado (entra depois do turno atual)', {
+      targetPaneId,
+      sessionId,
+      chars: text.length,
+      lane,
+    });
+    return { ok: true, paneId: targetPaneId, queued: true };
+  }
+  if (outcome === 'wait' && ports.probePromptState && ports.schedule) {
+    ports.log('info', 'dictation.pending', 'pane com diálogo ou sem fila — ditado aguardando o pane ficar livre', {
+      targetPaneId,
+      sessionId,
+      chars: text.length,
+      lane,
+    });
+    deferUntilFree(targetPaneId, sessionId, text, ports);
+    return { ok: false, reason: 'pending', paneId: targetPaneId };
+  }
+  const delivered = outcome === 'started';
   ports.log(
     delivered ? 'info' : 'error',
     delivered ? 'dictation.ptyConfirmed' : 'dictation.ptyFailed',
@@ -166,4 +297,9 @@ async function routeToPane(
   return delivered
     ? { ok: true, paneId: targetPaneId }
     : { ok: false, reason: 'delivery-failed' };
+}
+
+/** Test-only. */
+export function resetPendingDictationsForTests(): void {
+  pendingByPane.clear();
 }
