@@ -303,8 +303,15 @@ describe('main-owned Codex auth gate', () => {
     expect(deps.authoritative).toHaveBeenCalledOnce();
     expect(deps.spawn).not.toHaveBeenCalled();
   });
-  it('F-235: worker Claude passa as contas com pane vivo da missão ao prepare', async () => {
+  // F-1401 substitui a F-235: o escopo de credencial gerenciado é por conta
+  // (`managedClaudeAuthDirectory(accountId)`, sem componente de pane) e
+  // `freshestClaudeCredential` nunca deixa o vault velho desfazer a rotação
+  // do CLI — dois panes na mesma conta dividem UMA linhagem. Excluir as contas
+  // com pane vivo deixou de ser barreira de segurança; o prepare não as recebe.
+  it('F-1401: worker Claude NÃO exclui as contas com pane vivo da missão no prepare', async () => {
     deps.adapterId = 'claude';
+    // Há pane Claude vivo em acct-A: se a exclusão da F-235 voltasse, ela
+    // apareceria no prepare e este teste falharia.
     deps.liveClaudeAccounts.mockReturnValue(['acct-A']);
 
     await expect(
@@ -313,10 +320,9 @@ describe('main-owned Codex auth gate', () => {
         hooks,
       ),
     ).resolves.toMatchObject({ ok: true });
-    expect(deps.liveClaudeAccounts).toHaveBeenCalledWith('synthetic-mission');
     expect(deps.authoritative).toHaveBeenCalledWith(
       'claude',
-      expect.objectContaining({ excludeAccountIds: ['acct-A'] }),
+      expect.not.objectContaining({ excludeAccountIds: expect.anything() }),
     );
   });
   it('waits for the Claude update permit before physical main-owned spawn', async () => {
