@@ -277,3 +277,68 @@ describe('F-1088: advertised terminal sandbox profile contract',()=>{
     expect(()=>validateToolArgs('nexus_terminal_run',{command:'true',sandboxProfile})).toThrow();
   });
 });
+
+describe('F-1302: pane_spawn expect contract depth', () => {
+  const realisticSchema = {
+    type: 'object',
+    required: ['findings'],
+    properties: {
+      findings: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['title'],
+          properties: {
+            title: { type: 'string' },
+            severity: { enum: ['alta', 'media', 'baixa'] },
+          },
+        },
+      },
+    },
+  };
+
+  it('accepts a realistic expect.schema listing typed object fields', () => {
+    const args = { provider: 'claude', expect: { retries: 2, schema: realisticSchema } };
+    expect(validateToolArgs('nexus_pane_spawn', args)).toEqual(args);
+  });
+
+  it('accepts an expect.schema with anyOf branches', () => {
+    const anyOfSchema = {
+      type: 'object',
+      properties: {
+        result: {
+          anyOf: [
+            {
+              type: 'object',
+              required: ['items'],
+              properties: {
+                items: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: { name: { type: 'string' }, score: { type: 'number' } },
+                  },
+                },
+              },
+            },
+            { type: 'object', properties: { empty: { const: true } } },
+          ],
+        },
+      },
+    };
+    const args = { expect: { schema: anyOfSchema } };
+    expect(validateToolArgs('nexus_pane_spawn', args)).toEqual(args);
+  });
+
+  it('still rejects a pathologically deep payload', () => {
+    const deep: Record<string, unknown> = {};
+    let node = deep;
+    for (let i = 0; i < 40; i += 1) {
+      node.next = {};
+      node = node.next as Record<string, unknown>;
+    }
+    expect(() => validateToolArgs('nexus_pane_spawn', { expect: deep })).toThrow(
+      /exceed max depth/,
+    );
+  });
+});

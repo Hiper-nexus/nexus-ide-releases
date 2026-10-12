@@ -3,7 +3,9 @@ import { canonicalToolName } from './gate';
 import { CHECKPOINT_REF_PATTERN } from '../git/hidden-checkpoint';
 
 export const MAX_MCP_PAYLOAD_BYTES = 256 * 1024;
-const MAX_MCP_ARG_DEPTH = 8;
+// F-1302: 16 cobre um `expect.schema` realista de pane_spawn (lista de objetos
+// tipados ≈ profundidade 11 com anyOf); a largura já é limitada por keys/items.
+const MAX_MCP_ARG_DEPTH = 16;
 const MAX_OBJECT_KEYS = 200;
 const MAX_ARRAY_ITEMS = 1000;
 
