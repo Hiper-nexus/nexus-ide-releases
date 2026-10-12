@@ -87,7 +87,7 @@ export const useAccountStore = create<AccountStore>((set) => ({
     } catch (err) {
       return {
         ok: false,
-        error: err instanceof Error ? err.message : 'failed to rename account',
+        error: err instanceof Error ? err.message : 'Não consegui renomear a conta.',
       };
     }
   },
@@ -97,7 +97,7 @@ export const useAccountStore = create<AccountStore>((set) => ({
     } catch (err) {
       return {
         ok: false,
-        error: err instanceof Error ? err.message : 'failed to remove account',
+        error: err instanceof Error ? err.message : 'Não consegui remover a conta.',
       };
     }
   },
