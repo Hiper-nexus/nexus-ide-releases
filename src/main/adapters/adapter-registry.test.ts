@@ -15,6 +15,7 @@ import {
   adapterCapabilityMatrixForAdapter,
   applyNewestModelLineDefault,
   authMethodForAdapter,
+  bracketedPasteForAdapter,
   mergeAdapters,
   broadcastToListeners,
   orchestrationEvidenceForAdapter,
@@ -1012,5 +1013,16 @@ describe('F-217 — default do pane sobe para o mais novo da linha descoberto pe
       new Map([['muse', ['muse-spark-2.0']]]),
     );
     expect(applyNewestModelLineDefault(discovered, flatCatalog).models.default).toBe('');
+  });
+});
+
+describe('F-1411: bracketedPaste chega ao renderer pela declaração do adapter', () => {
+  it('projeta promptInjection.bracketedPaste do builtin (Kimi true, AGY/Devin conforme o JSON)', () => {
+    const adapters = BUILTIN_ADAPTERS as Adapter[];
+    expect(bracketedPasteForAdapter(adapters.find((adapter) => adapter.id === 'kimi')!)).toBe(true);
+    for (const adapter of adapters) {
+      const declared = adapter.kind === 'cli-pty' ? adapter.promptInjection?.bracketedPaste : undefined;
+      expect(bracketedPasteForAdapter(adapter)).toBe(declared);
+    }
   });
 });
