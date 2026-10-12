@@ -93,6 +93,19 @@ export const LIMIT_SIGNAL_PATTERNS: readonly LimitSignalPattern[] = [
   // PT: limite de uso / 5 horas (error-shaped).
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /limite de (?:uso|utiliza[cç][aã]o) (?:atingido|excedido|alcan[cç]ado)/i },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /limite de 5\s*horas? (?:atingido|excedido)/i },
+  // F-1357: limite com o nome do provider vem ANTES dos genéricos de 1 h. O
+  // detector para no primeiro padrão que casa, e o genérico "rate limit
+  // reached" engolia "grok rate limit reached", que voltava em 1 h e não em 5 h.
+  {
+    kind: 'rate-limit',
+    cooldownMs: 5 * HOUR,
+    re: /(?:codex|chatgpt).{0,40}(?:usage|rate)\s+limit\s+(?:reached|exceeded|hit)/i,
+  },
+  {
+    kind: 'rate-limit',
+    cooldownMs: 5 * HOUR,
+    re: /(?:grok|xai).{0,40}(?:rate|usage)\s+limit\s+(?:reached|exceeded|hit)/i,
+  },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /erro[:\s].{0,40}limite de (?:taxa|requisi[cç][oõ]es)/i },
   // Never match the bare phrase "rate limit": squad instructions legitimately
   // mention it ("em rate limit, re-roteie") and are echoed into the PTY. A
@@ -111,16 +124,6 @@ export const LIMIT_SIGNAL_PATTERNS: readonly LimitSignalPattern[] = [
   { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:tokens? per min(?:ute)?|tpm) (?:limit|exceeded)/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:requests? per min(?:ute)?|rpm) (?:limit|exceeded)/i },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /primary[_\s]?ip[_\s]?rate[_\s]?limit/i },
-  {
-    kind: 'rate-limit',
-    cooldownMs: 5 * HOUR,
-    re: /(?:codex|chatgpt).{0,40}(?:usage|rate)\s+limit\s+(?:reached|exceeded|hit)/i,
-  },
-  {
-    kind: 'rate-limit',
-    cooldownMs: 5 * HOUR,
-    re: /(?:grok|xai).{0,40}(?:rate|usage)\s+limit\s+(?:reached|exceeded|hit)/i,
-  },
   // Auth expiry — switching accounts may recover. Error-shaped like 429/402:
   // a bare "401" must be framed (HTTP 401 / status: 401 / error: 401 / 401
   // Unauthorized) or carry authentication_error. A naked "401" — as in the

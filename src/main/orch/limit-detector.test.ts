@@ -366,6 +366,16 @@ describe('detectLimit', () => {
     ).toBe('auth');
   });
 
+  it('F-1357: limite com nome do provider usa a janela do provider, não a genérica de 1 h', () => {
+    const fiveHours = 5 * 60 * 60 * 1000;
+    expect(detectLimit('grok rate limit reached')?.cooldownMs).toBe(fiveHours);
+    expect(detectLimit('xAI rate limit exceeded')?.cooldownMs).toBe(fiveHours);
+    expect(detectLimit('Grok rate limit exceeded, try later')?.cooldownMs).toBe(fiveHours);
+    expect(detectLimit('codex: ChatGPT rate limit hit')?.cooldownMs).toBe(fiveHours);
+    // Sem o provider, o genérico segue com 1 h.
+    expect(detectLimit('rate limit reached')?.cooldownMs).toBe(60 * 60 * 1000);
+  });
+
   it('does not false-positive on docs or agent prose', () => {
     expect(detectLimit('Codex has no usage limit in free tier docs')).toBeNull();
     expect(detectLimit('Please log in to GitHub to continue the OAuth flow')).toBeNull();
