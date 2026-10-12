@@ -9,6 +9,10 @@ import {
   selectHubServersForSpawn,
   type McpHubSpawnServer,
 } from './mcp-hub-spawn';
+import {
+  mcpHubVaultScope,
+  sealMcpHubSecretsInMemory,
+} from './mcp-hub-secrets';
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -159,6 +163,99 @@ describe('loadMcpHubServersForSpawn — F-1365/F-1366', () => {
     expect(claude['computer-use-client']?.cwd).toBeUndefined();
     const codex = codexHubMcpArgs(servers).join(' ');
     expect(codex).toContain('mcp_servers.computer-use-client.cwd=');
+  });
+});
+
+describe('loadMcpHubServersForSpawn — F-1383: args selados no cofre', () => {
+  const FIGMA_ARG = `--figma-api-key=figd_${'X'.repeat(56)}`;
+
+  function sealedFigmaWorkspace(): {
+    workspace: string;
+    store: Map<string, string>;
+    ref: string;
+  } {
+    const store = new Map<string, string>();
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-spawn-'));
+    tempDirs.push(workspace);
+    fs.mkdirSync(path.join(workspace, '.nexus'), { recursive: true });
+    const scope = mcpHubVaultScope(workspace);
+    const sealed = sealMcpHubSecretsInMemory(
+      {
+        schemaVersion: 1,
+        servers: [
+          {
+            id: 'figma',
+            name: 'Figma',
+            transport: 'stdio',
+            command: 'npx',
+            args: ['-y', 'figma-mcp', FIGMA_ARG],
+            tools: [],
+            source: 'claude-code',
+          },
+        ],
+      },
+      scope,
+      store,
+    );
+    fs.writeFileSync(
+      path.join(workspace, '.nexus', 'mcp-hub.json'),
+      JSON.stringify(sealed, null, 2),
+    );
+    return { workspace, store, ref: sealed.servers[0]?.args?.[2] ?? '' };
+  }
+
+  it('resolve a ref de cofre do arg para o valor real no spawn', () => {
+    const { workspace, store, ref } = sealedFigmaWorkspace();
+    expect(ref.startsWith('__nexus_vault__:')).toBe(true);
+    const servers = loadMcpHubServersForSpawn(workspace, {
+      secretGet: (key) => store.get(key) ?? null,
+    });
+    expect(servers[0]?.args).toEqual(['-y', 'figma-mcp', FIGMA_ARG]);
+    const claude = claudeFamilyHubMcpServers(servers) as Record<
+      string,
+      { args?: string[] }
+    >;
+    expect(claude.figma?.args).toEqual(['-y', 'figma-mcp', FIGMA_ARG]);
+  });
+
+  it('sem resolvedor o arg-ref é descartado (nunca vaza a ref no config gerado)', () => {
+    const { workspace } = sealedFigmaWorkspace();
+    const servers = loadMcpHubServersForSpawn(workspace);
+    expect(servers[0]?.args).toEqual(['-y', 'figma-mcp']);
+    expect(JSON.stringify(servers)).not.toContain('__nexus_vault__');
+    expect(JSON.stringify(servers)).not.toContain('figd_');
+  });
+
+  it('flag de credencial com valor-ref descartada leva a flag junto', () => {
+    const store = new Map<string, string>();
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-spawn-'));
+    tempDirs.push(workspace);
+    fs.mkdirSync(path.join(workspace, '.nexus'), { recursive: true });
+    const scope = mcpHubVaultScope(workspace);
+    const sealed = sealMcpHubSecretsInMemory(
+      {
+        schemaVersion: 1,
+        servers: [
+          {
+            id: 'figma',
+            name: 'Figma',
+            transport: 'stdio',
+            command: 'figma-mcp',
+            args: ['--token', 'opaque-token-value-123456', '--verbose'],
+            tools: [],
+            source: 'claude-code',
+          },
+        ],
+      },
+      scope,
+      store,
+    );
+    fs.writeFileSync(
+      path.join(workspace, '.nexus', 'mcp-hub.json'),
+      JSON.stringify(sealed, null, 2),
+    );
+    const servers = loadMcpHubServersForSpawn(workspace);
+    expect(servers[0]?.args).toEqual(['--verbose']);
   });
 });
 

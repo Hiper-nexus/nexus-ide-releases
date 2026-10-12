@@ -12,6 +12,7 @@ import {
   __testOnly_hubFromStdioLike,
 } from './mcp-hub-sync';
 import type { McpHubConfig } from './mcp-hub-core';
+import { sealMcpHubSecretsInMemory } from './mcp-hub-secrets';
 import {
   MCP_MANIFEST_SCHEMA,
   PLUGIN_MANIFEST_SCHEMA,
@@ -149,6 +150,69 @@ describe('F-1365 — command com espaço e args vazio vira argv na importação'
     ) as { mcpServers: Record<string, { command: string; args?: string[] }> };
     expect(cursor.mcpServers.playwright?.command).toBe('npx');
     expect(cursor.mcpServers.playwright?.args).toEqual(['@playwright/mcp@latest']);
+  });
+});
+
+describe('F-1383 — applyMcpSync sela o hub antes de gravar', () => {
+  const FIGMA_ARG = `--figma-api-key=figd_${'X'.repeat(56)}`;
+
+  beforeEach(() => {
+    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.mcpHub, true);
+  });
+
+  function homeWithFigmaCursor(): string {
+    const home = tmpHome();
+    fs.mkdirSync(path.join(home, '.cursor'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.cursor', 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          figma: {
+            command: 'npx',
+            args: ['-y', 'figma-mcp', FIGMA_ARG],
+          },
+        },
+      }),
+    );
+    return home;
+  }
+
+  it('importa servidor com segredo em args gravando ref de cofre, não o valor', () => {
+    const home = homeWithFigmaCursor();
+    const hubPath = path.join(home, 'mcp-hub.json');
+    const store = new Map<string, string>();
+    const result = applyMcpSync({
+      hub: emptyHub,
+      hubPath,
+      home,
+      sealHub: (config) => sealMcpHubSecretsInMemory(config, 'scope-sync', store),
+    });
+    expect(result.hubWrote).toBe(true);
+    const written = fs.readFileSync(hubPath, 'utf8');
+    expect(written).not.toContain('figd_');
+    expect(written).toContain('__nexus_vault__:mcphub:scope-sync:figma:args:2');
+    expect([...store.values()]).toEqual([FIGMA_ARG]);
+    // O export continua recebendo o valor real (a tool precisa dele).
+    const cursor = JSON.parse(
+      fs.readFileSync(path.join(home, '.cursor', 'mcp.json'), 'utf8'),
+    ) as { mcpServers: Record<string, { args?: string[] }> };
+    expect(cursor.mcpServers.figma?.args?.[2]).toBe(FIGMA_ARG);
+  });
+
+  it('dryRun não escreve no cofre nem no disco', () => {
+    const home = homeWithFigmaCursor();
+    const hubPath = path.join(home, 'mcp-hub.json');
+    const store = new Map<string, string>();
+    const result = applyMcpSync({
+      hub: emptyHub,
+      hubPath,
+      home,
+      dryRun: true,
+      sealHub: (config) => sealMcpHubSecretsInMemory(config, 'scope-sync', store),
+    });
+    expect(result.hubWrote).toBe(false);
+    expect(fs.existsSync(hubPath)).toBe(false);
+    expect(store.size).toBe(0);
   });
 });
 

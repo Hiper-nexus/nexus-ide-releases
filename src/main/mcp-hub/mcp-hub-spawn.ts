@@ -7,7 +7,14 @@ import {
   type McpHubServer,
   type McpHubTransport,
 } from './mcp-hub-core';
-import { isSecretFieldName, isVaultRef } from './mcp-hub-secrets';
+import {
+  hydrateMcpHubArgs,
+  isSecretFieldName,
+  isVaultRef,
+  mcpHubVaultScope,
+  type McpHubSecretGet,
+} from './mcp-hub-secrets';
+import { CREDENTIAL_FLAG_RE } from '../../shared/secret-redaction';
 import { trace } from '../observability/main-trace';
 
 /**
@@ -27,7 +34,9 @@ import { trace } from '../observability/main-trace';
  *   `--pure`, strip do ambiente do Codex) — o que muda é o CONTEÚDO gerado;
  * - hub quebrado/ausente/malformado degrada para o comportamento de hoje
  *   (só `nexus`); nenhum spawn falha por causa do hub;
- * - segredos (`env`/`headers`) nunca são logados e nunca entram em argv.
+ * - segredos (`env`/`headers`) nunca são logados e nunca entram em argv; refs
+ *   de cofre em `args` (F-1383) são resolvidas com o cofre quando disponível e
+ *   descartadas caso contrário — refs nunca são escritas no config gerado.
  */
 
 /** Teto de leitura: o schema já limita 64 servidores e o tamanho dos campos. */
@@ -102,6 +111,25 @@ function sanitizeRecord(
   return next;
 }
 
+/**
+ * F-1383: args selados no cofre chegam como `__nexus_vault__:…`. Sem
+ * resolvedor o ref é descartado (nunca vaza para o config gerado); se o valor
+ * descartado era o argumento de uma flag de credencial (`--token <ref>`), a
+ * flag órfã vai junto — um `--token` sem valor quebraria o argv do servidor.
+ */
+function sanitizeArgs(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const arg of args) {
+    if (isVaultRef(arg) || isMaskedSecretValue(arg)) {
+      const prev = out[out.length - 1];
+      if (prev !== undefined && CREDENTIAL_FLAG_RE.test(prev)) out.pop();
+      continue;
+    }
+    out.push(arg);
+  }
+  return out;
+}
+
 function toSpawnServer(server: McpHubServer): McpHubSpawnServer | null {
   const key = serverKeyOf(server.id);
   if (!key) return null;
@@ -109,7 +137,7 @@ function toSpawnServer(server: McpHubServer): McpHubSpawnServer | null {
   const url = server.url?.trim() || undefined;
   // Sem command E sem url não há nada para o CLI conectar.
   if (!command && !url) return null;
-  const args = [...(server.args ?? [])];
+  let args = [...(server.args ?? [])];
   // F-1365: hub gravado antes do fix carrega o argv inteiro no command —
   // spawnado assim o posix_spawn morre ENOENT. Parte antes de materializar.
   if (command && args.length === 0 && /\s/.test(command)) {
@@ -119,6 +147,7 @@ function toSpawnServer(server: McpHubServer): McpHubSpawnServer | null {
       args.push(...argv.slice(1));
     }
   }
+  args = sanitizeArgs(args);
   const cwd = server.cwd?.trim() || undefined;
   return {
     key,
@@ -142,9 +171,16 @@ function isStdioHubServer(server: McpHubSpawnServer): boolean {
  * Lê o hub do workspace e devolve os servidores prontos para materialização.
  * Nunca lança: qualquer falha (ausente, symlink, JSON inválido, schema fora do
  * contrato) devolve lista vazia — o pane volta ao comportamento de hoje.
+ *
+ * F-1383: com `secretGet` (cofre disponível), refs de cofre em `args` são
+ * resolvidas para o valor real — uma flag de api-key em argv não tem outro
+ * canal até o servidor (env/headers secretos continuam fora do config gerado,
+ * ver sanitizeRecord). Sem `secretGet` ou com falha na hidratação, o arg-ref é
+ * descartado em vez de vazar para o config.
  */
 export function loadMcpHubServersForSpawn(
   workspaceRoot: string | undefined | null,
+  options: { secretGet?: McpHubSecretGet } = {},
 ): readonly McpHubSpawnServer[] {
   if (!workspaceRoot || !path.isAbsolute(workspaceRoot)) return [];
   try {
@@ -154,9 +190,21 @@ export function loadMcpHubServersForSpawn(
     if (!fs.lstatSync(path.dirname(file)).isDirectory()) return [];
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.size > MAX_HUB_FILE_BYTES) return [];
-    const config = mcpHubConfigSchema.parse(
+    let config = mcpHubConfigSchema.parse(
       JSON.parse(fs.readFileSync(file, 'utf8')),
     );
+    if (options.secretGet) {
+      try {
+        config = hydrateMcpHubArgs(
+          config,
+          options.secretGet,
+          mcpHubVaultScope(workspaceRoot),
+        );
+      } catch {
+        // Vault miss / ref rejeitada: segue com a forma selada — os refs
+        // restantes são descartados em toSpawnServer, nunca escritos.
+      }
+    }
     const byKey = new Map<string, McpHubSpawnServer>();
     for (const server of config.servers) {
       const prepared = toSpawnServer(server);

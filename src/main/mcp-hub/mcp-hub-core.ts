@@ -133,8 +133,9 @@ function maskSecretFieldForUi(value: string): string {
  * - secret-looking names (existing rule)
  * - any remaining vault ref (planted `__nexus_vault__:…` under a bland name)
  * - any field that was resolved FROM a vault ref (hydrated plaintext)
- * `resolvedFromRef` holds `env.<name>` / `headers.<name>` keys collected
- * before hydration.
+ * `resolvedFromRef` holds `env.<name>` / `headers.<name>` / `args.<index>`
+ * keys collected before hydration. Args are masked whole: a partial mask of
+ * `--flag=value` would leak the flag shape and never round-trips on save.
  */
 export function maskServerForUi(
   server: McpHubServer,
@@ -160,10 +161,18 @@ export function maskServerForUi(
         ]),
       )
     : undefined;
-  return { ...server, env, headers };
+  const args = server.args
+    ? server.args.map((value, index) =>
+        value.startsWith('__nexus_vault__:') ||
+        (resolvedFromRef instanceof Set && resolvedFromRef.has(`args.${index}`))
+          ? '[REDACTED]'
+          : value,
+      )
+    : undefined;
+  return { ...server, env, headers, ...(args !== undefined ? { args } : {}) };
 }
 
-/** `env.<name>` / `headers.<name>` keys whose stored value is a vault ref. */
+/** `env.<name>` / `headers.<name>` / `args.<index>` keys whose stored value is a vault ref. */
 export function vaultRefFieldKeys(server: McpHubServer): ReadonlySet<string> {
   const keys = new Set<string>();
   for (const [name, value] of Object.entries(server.env ?? {})) {
@@ -172,6 +181,9 @@ export function vaultRefFieldKeys(server: McpHubServer): ReadonlySet<string> {
   for (const [name, value] of Object.entries(server.headers ?? {})) {
     if (value.startsWith('__nexus_vault__:')) keys.add(`headers.${name}`);
   }
+  (server.args ?? []).forEach((value, index) => {
+    if (value.startsWith('__nexus_vault__:')) keys.add(`args.${index}`);
+  });
   return keys;
 }
 
@@ -201,13 +213,38 @@ export function restoreMaskedSecrets(
         existing?.headers,
         `${server.id}.headers`,
       );
+      const args = restoreMaskedArgs(
+        server.args,
+        existing?.args,
+        `${server.id}.args`,
+      );
       return {
         ...server,
         ...(env !== undefined ? { env } : {}),
         ...(headers !== undefined ? { headers } : {}),
+        ...(args !== undefined ? { args } : {}),
       };
     }),
   };
+}
+
+/** Args are positional: a masked item restores the stored arg at its index. */
+function restoreMaskedArgs(
+  next: readonly string[] | undefined,
+  current: readonly string[] | undefined,
+  label: string,
+): string[] | undefined {
+  if (!next) return undefined;
+  return next.map((value, index) => {
+    if (!isMaskedSecretValue(value)) return value;
+    const stored = current?.[index];
+    if (stored === undefined || isMaskedSecretValue(stored)) {
+      throw new Error(
+        `masked secret ${label}.${index} has no stored value — re-enter the real secret before saving`,
+      );
+    }
+    return stored;
+  });
 }
 
 function restoreMaskedRecord(

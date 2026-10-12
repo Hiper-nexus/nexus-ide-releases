@@ -249,6 +249,10 @@ import {
   isPetStudioNativeWorkspaceAuthority,
 } from "../pty/autonomous-cli-policy";
 import { getOrchSettings } from "../persistence/settings-store";
+import {
+  getSecret,
+  isSecureStorageAvailable,
+} from "../persistence/secrets-store";
 import { isGovernedPolicy, isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import {
   isThirdPartyClaudeFamily,
@@ -1186,7 +1190,12 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     // outra ferramenta e nunca falha o spawn (hub quebrado ⇒ lista vazia).
     // Helper aberto por agente sem missão só leva os que o allowlist pede.
     const hubServers = selectHubServersForSpawn(
-      loadMcpHubServersForSpawn((authority.coordinationScope ?? authority.scope).rootRealPath),
+      loadMcpHubServersForSpawn(
+        (authority.coordinationScope ?? authority.scope).rootRealPath,
+        // F-1383: resolve refs de cofre em args (flag de api-key não tem outro
+        // canal até o servidor); cofre indisponível descarta o arg no spawn.
+        { secretGet: isSecureStorageAvailable() ? getSecret : undefined },
+      ),
       {
         operatorChild,
         allowedTools: meta?.allowedTools ?? null,

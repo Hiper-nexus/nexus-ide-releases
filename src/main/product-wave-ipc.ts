@@ -702,6 +702,9 @@ export function registerProductWaveIpc(): void {
       dryRun: input.dryRun,
       mode: input.mode,
       exportTools: input.exportTools,
+      // F-1383: imported servers carry plaintext secrets (env AND args) from
+      // third-party configs — the hub file must only persist vault refs.
+      sealHub: (config) => sealMcpHubForDisk(root, config),
     });
   });
 

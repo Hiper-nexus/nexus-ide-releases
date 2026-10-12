@@ -10,7 +10,7 @@
 const REDACTED = '[REDACTED]';
 
 const SECRET_VALUE_RE =
-  /\b(Bearer\s+[A-Za-z0-9._~+/-]+=*|sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|npm_[A-Za-z0-9_]{16,}|AIza[0-9A-Za-z_-]{35}|gsk_[A-Za-z0-9]{20,}|xai-[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{16,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|AGE-SECRET-KEY-1[0-9A-Z]{20,})\b/gi;
+  /\b(Bearer\s+[A-Za-z0-9._~+/-]+=*|sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|npm_[A-Za-z0-9_]{16,}|AIza[0-9A-Za-z_-]{35}|gsk_[A-Za-z0-9]{20,}|xai-[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{16,}|figd_[A-Za-z0-9_-]{16,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|AGE-SECRET-KEY-1[0-9A-Z]{20,})\b/gi;
 
 // GLM / z.ai (Zhipu) keys: "<32-hex id>.<secret>" with no fixed prefix.
 const GLM_KEY_RE = /\b[0-9a-f]{32}\.[A-Za-z0-9]{12,}\b/gi;
@@ -48,8 +48,19 @@ const HEADER_SECRET_RE =
 // Note: no bare `key` alternative — it over-redacts benign flags like
 // `sort --key=2` and `openssl -key file.pem`. Provider key values are matched by
 // SECRET_VALUE_RE regardless of the flag.
-const FLAG_SECRET_RE =
-  /(--?(?:token|secret|password|pass|api[-_]?key|authorization|cookie|credential|bearer)(?:=|\s+))(\S+)/gi;
+const SECRET_FLAG_NAME =
+  '(?:token|secret|password|pass|api[-_]?key|authorization|cookie|credential|bearer)';
+const FLAG_SECRET_RE = new RegExp(
+  `(--?${SECRET_FLAG_NAME}(?:=|\\s+))(\\S+)`,
+  'gi',
+);
+
+/**
+ * Exact credential flag with the value in the NEXT argv item (`--token VALOR`).
+ * Same flag list as FLAG_SECRET_RE — single source, so a new credential flag
+ * name covers both the inline (`--flag=value`) and the split form.
+ */
+export const CREDENTIAL_FLAG_RE = new RegExp(`^--?${SECRET_FLAG_NAME}$`, 'i');
 
 const ENV_ASSIGN_RE =
   /\b((?=[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API_KEY|CREDENTIAL|AUTH|BEARER))[A-Za-z_][A-Za-z0-9_]*)=([^\s]+)/g;

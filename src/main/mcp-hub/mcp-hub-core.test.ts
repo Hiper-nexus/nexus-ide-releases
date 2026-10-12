@@ -95,6 +95,39 @@ describe('mcp hub core', () => {
     expect(masked.env?.API_TOKEN).not.toMatch(/^__/);
   });
 
+  it('F-1383: masks args that hold a vault ref or were resolved from one', () => {
+    const masked = maskServerForUi(
+      {
+        id: 'figma',
+        name: 'Figma',
+        transport: 'stdio',
+        command: 'npx',
+        args: [
+          '-y',
+          'figma-mcp',
+          `--figma-api-key=figd_${'X'.repeat(56)}`,
+        ],
+        tools: [],
+        source: 'claude-code',
+      },
+      new Set(['args.2']),
+    );
+    expect(masked.args).toEqual(['-y', 'figma-mcp', '[REDACTED]']);
+    expect(JSON.stringify(masked)).not.toContain('figd_');
+
+    const withRef = maskServerForUi({
+      id: 'figma',
+      name: 'Figma',
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', '__nexus_vault__:mcphub:scope:figma:args:1'],
+      tools: [],
+      source: 'claude-code',
+    });
+    expect(withRef.args?.[1]).toBe('[REDACTED]');
+    expect(JSON.stringify(withRef)).not.toContain('__nexus_vault__');
+  });
+
   it('detects drift and builds tool matrix', () => {
     const a: McpHubConfig = {
       schemaVersion: 1,
@@ -315,6 +348,43 @@ describe('restoreMaskedSecrets', () => {
     expect(restored.servers[0]?.env?.API_KEY).toBe('sk-real-1234567890');
     // Non-secret values pass through untouched.
     expect(restored.servers[0]?.env?.REGION).toBe('us-east-1');
+  });
+
+  it('F-1383: restores a masked arg from the stored config by index', () => {
+    const storedWithArgs: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [
+        {
+          id: 'figma',
+          name: 'Figma',
+          transport: 'stdio',
+          command: 'npx',
+          args: ['-y', 'figma-mcp', '__nexus_vault__:mcphub:scope:figma:args:2'],
+          tools: [],
+          source: 'claude-code',
+        },
+      ],
+    };
+    const masked: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [
+        {
+          ...storedWithArgs.servers[0]!,
+          args: ['-y', 'figma-mcp', '[REDACTED]'],
+        },
+      ],
+    };
+    const restored = restoreMaskedSecrets(masked, storedWithArgs);
+    expect(restored.servers[0]?.args?.[2]).toBe(
+      '__nexus_vault__:mcphub:scope:figma:args:2',
+    );
+    // Masked arg without a stored counterpart is rejected (fail-closed).
+    expect(() =>
+      restoreMaskedSecrets(masked, {
+        schemaVersion: 1,
+        servers: [{ ...storedWithArgs.servers[0]!, args: ['-y'] }],
+      }),
+    ).toThrow(/masked secret/i);
   });
 
   it('accepts a new real secret value as-is', () => {

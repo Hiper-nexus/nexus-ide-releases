@@ -102,6 +102,140 @@ describe('mcp hub vault seals', () => {
   });
 });
 
+describe('F-1383 — segredo em args vai para o cofre', () => {
+  // Campo (sonda D, 2026-10-12): o servidor figma do hub real tem um 3º arg de
+  // 61 caracteres em forma de flag de api-key, em claro no mcp-hub.json e nos
+  // .bak. O selo só varria env/headers.
+  const FIGMA_ARG = `--figma-api-key=figd_${'X'.repeat(56)}`;
+
+  function configWithArgs(args: string[]): McpHubConfig {
+    return {
+      schemaVersion: 1,
+      servers: [
+        {
+          id: 'figma',
+          name: 'Figma',
+          transport: 'stdio',
+          command: 'npx',
+          args,
+          tools: [],
+          source: 'claude-code',
+        },
+      ],
+    };
+  }
+
+  it('seals a secret-shaped flag arg and hydrates it back', () => {
+    const store = new Map<string, string>();
+    const sealed = sealMcpHubSecretsInMemory(
+      configWithArgs(['-y', 'figma-mcp', FIGMA_ARG]),
+      'scope-args',
+      store,
+    );
+    const sealedArgs = sealed.servers[0]?.args ?? [];
+    expect(sealedArgs[0]).toBe('-y');
+    expect(sealedArgs[1]).toBe('figma-mcp');
+    expect(isVaultRef(sealedArgs[2] ?? '')).toBe(true);
+    expect(JSON.stringify(sealed)).not.toContain('figd_');
+    expect(mcpHubConfigHasPlaintextSecrets(sealed)).toBe(false);
+    expect(countMcpHubVaultRefs(sealed)).toBe(1);
+    expect([...store.values()]).toEqual([FIGMA_ARG]);
+
+    const hydrated = hydrateMcpHubSecretsInMemory(sealed, store, 'scope-args');
+    expect(hydrated.servers[0]?.args).toEqual(['-y', 'figma-mcp', FIGMA_ARG]);
+  });
+
+  it('seals the value after a credential flag (`--token VALOR`)', () => {
+    const store = new Map<string, string>();
+    const sealed = sealMcpHubSecretsInMemory(
+      configWithArgs(['--token', 'opaque-token-value-123456']),
+      'scope-args',
+      store,
+    );
+    const sealedArgs = sealed.servers[0]?.args ?? [];
+    expect(sealedArgs[0]).toBe('--token');
+    expect(isVaultRef(sealedArgs[1] ?? '')).toBe(true);
+    expect(JSON.stringify(sealed)).not.toContain('opaque-token-value-123456');
+    const hydrated = hydrateMcpHubSecretsInMemory(sealed, store, 'scope-args');
+    expect(hydrated.servers[0]?.args).toEqual([
+      '--token',
+      'opaque-token-value-123456',
+    ]);
+  });
+
+  it('seals a bare arg with a known token prefix (sk-, ghp_, xox, figd_)', () => {
+    for (const token of [
+      `sk-${'a'.repeat(20)}`,
+      `ghp_${'b'.repeat(20)}`,
+      `xoxb-${'c'.repeat(12)}`,
+      `figd_${'d'.repeat(43)}`,
+    ]) {
+      const store = new Map<string, string>();
+      const sealed = sealMcpHubSecretsInMemory(
+        configWithArgs(['-y', token]),
+        'scope-args',
+        store,
+      );
+      expect(isVaultRef(sealed.servers[0]?.args?.[1] ?? '')).toBe(true);
+      expect(JSON.stringify(sealed)).not.toContain(token);
+      const hydrated = hydrateMcpHubSecretsInMemory(sealed, store, 'scope-args');
+      expect(hydrated.servers[0]?.args?.[1]).toBe(token);
+    }
+  });
+
+  it('leaves ordinary args untouched', () => {
+    const store = new Map<string, string>();
+    const plain = configWithArgs(['-y', 'figma-mcp', '--port', '3845']);
+    const sealed = sealMcpHubSecretsInMemory(plain, 'scope-args', store);
+    expect(sealed.servers[0]?.args).toEqual(['-y', 'figma-mcp', '--port', '3845']);
+    expect(store.size).toBe(0);
+  });
+
+  it('is idempotent over already-sealed args', () => {
+    const store = new Map<string, string>();
+    const once = sealMcpHubSecretsInMemory(
+      configWithArgs(['-y', 'figma-mcp', FIGMA_ARG]),
+      'scope-args',
+      store,
+    );
+    const twice = sealMcpHubSecretsInMemory(once, 'scope-args', store);
+    expect(twice).toEqual(once);
+    expect(store.size).toBe(1);
+  });
+
+  it('detects plaintext secret args in mcpHubConfigHasPlaintextSecrets', () => {
+    expect(
+      mcpHubConfigHasPlaintextSecrets(configWithArgs(['-y', FIGMA_ARG])),
+    ).toBe(true);
+  });
+
+  it('rejects a planted ref at the wrong arg index (fail-closed)', () => {
+    const store = new Map<string, string>();
+    const sealed = sealMcpHubSecretsInMemory(
+      configWithArgs(['-y', 'figma-mcp', FIGMA_ARG]),
+      'scope-args',
+      store,
+    );
+    const ref = sealed.servers[0]?.args?.[2] ?? '';
+    const moved = configWithArgs([ref, 'figma-mcp', '-y']);
+    expect(() =>
+      hydrateMcpHubSecretsInMemory(moved, store, 'scope-args'),
+    ).toThrow(/vault ref rejected/i);
+  });
+
+  it('refuses to vault a masked placeholder arg', () => {
+    const store = new Map<string, string>();
+    expect(() =>
+      sealMcpHubSecretsInMemory(
+        configWithArgs(['--token', '[REDACTED]']),
+        'scope-args',
+        store,
+      ),
+    ).toThrow(/masked placeholder/i);
+    expect(store.size).toBe(0);
+  });
+});
+
 describe('N2 — vault ref cannot leave the MCP Hub namespace', () => {
   const SEAL_KEY = 'mcphub:scope-n2:firecrawl:env:FIRECRAWL_API_KEY';
 

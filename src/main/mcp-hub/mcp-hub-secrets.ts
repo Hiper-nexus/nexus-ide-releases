@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { isMaskedSecretValue, type McpHubConfig } from './mcp-hub-core';
+import {
+  CREDENTIAL_FLAG_RE,
+  redactCommandLine,
+} from '../../shared/secret-redaction';
 
 /**
  * MCP Hub secret vault refs.
@@ -58,10 +62,12 @@ export function mcpHubVaultScope(workspaceRoot: string): string {
   return createHash('sha256').update(resolved).digest('hex').slice(0, 24);
 }
 
+export type McpHubSecretKind = 'env' | 'headers' | 'args';
+
 export function mcpHubSecretKey(
   scope: string,
   serverId: string,
-  kind: 'env' | 'headers',
+  kind: McpHubSecretKind,
   name: string,
 ): string {
   // Keep keys short and path-safe for the vault index.
@@ -78,7 +84,7 @@ export function assertMcpHubVaultKey(
   key: string,
   scope: string,
   serverId: string,
-  kind: 'env' | 'headers',
+  kind: McpHubSecretKind,
   name: string,
   label: string,
 ): void {
@@ -95,7 +101,7 @@ function sealRecord(
   record: Record<string, string> | undefined,
   scope: string,
   serverId: string,
-  kind: 'env' | 'headers',
+  kind: McpHubSecretKind,
   put: McpHubSecretPut,
 ): Record<string, string> | undefined {
   if (!record) return record;
@@ -142,7 +148,7 @@ function hydrateRecord(
   get: McpHubSecretGet,
   scope: string,
   serverId: string,
-  kind: 'env' | 'headers',
+  kind: McpHubSecretKind,
   label: string,
 ): Record<string, string> | undefined {
   if (!record) return record;
@@ -164,6 +170,88 @@ function hydrateRecord(
   );
 }
 
+/**
+ * F-1383: an argv item is secret-shaped when the shared secret patterns
+ * (`redactCommandLine` — known token prefixes, `--flag=value`, `NAME=value`)
+ * hit it, or when it is the value right after a credential flag
+ * (`--token VALOR`). The vault entry stores the WHOLE arg, so hydration is an
+ * exact positional restore.
+ */
+function argIsSecretShaped(arg: string, afterCredentialFlag: boolean): boolean {
+  if (arg.length === 0) return false;
+  if (afterCredentialFlag) return true;
+  return redactCommandLine(arg, { denylist: [] }).secretHits > 0;
+}
+
+function sealArgs(
+  args: readonly string[] | undefined,
+  scope: string,
+  serverId: string,
+  put: McpHubSecretPut,
+): string[] | undefined {
+  if (!args) return undefined;
+  const next: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    const name = String(index);
+    if (isVaultRef(arg)) {
+      // Existing ref: must be exactly the key this position would own.
+      const key = vaultKeyFromRef(arg);
+      if (key === null) {
+        throw new Error(`mcp hub vault ref rejected for ${serverId}.args.${name}`);
+      }
+      assertMcpHubVaultKey(key, scope, serverId, 'args', name, `${serverId}.args`);
+      next.push(arg);
+      continue;
+    }
+    const afterCredentialFlag =
+      next.length > 0 && CREDENTIAL_FLAG_RE.test(next[next.length - 1]!);
+    if (!argIsSecretShaped(arg, afterCredentialFlag)) {
+      next.push(arg);
+      continue;
+    }
+    if (isMaskedSecretValue(arg)) {
+      throw new Error(
+        `mcp hub refuses to vault masked placeholder for ${serverId}.args.${name} — re-enter the real secret before saving`,
+      );
+    }
+    const key = mcpHubSecretKey(scope, serverId, 'args', name);
+    const result = put(key, arg);
+    if (!result.ok) {
+      throw new Error(
+        `mcp hub vault write failed for ${serverId}.args.${name}: ${result.error ?? 'unknown'}`,
+      );
+    }
+    next.push(vaultRefOf(key));
+  }
+  return next;
+}
+
+function hydrateArgs(
+  args: readonly string[] | undefined,
+  get: McpHubSecretGet,
+  scope: string,
+  serverId: string,
+  label: string,
+): string[] | undefined {
+  if (!args) return undefined;
+  return args.map((arg, index) => {
+    const key = vaultKeyFromRef(arg);
+    if (!key) return arg;
+    const name = String(index);
+    // Validate BEFORE the vault read — a planted auth:* ref must never
+    // reach getSecret (no decrypt, no side channel via miss timing).
+    assertMcpHubVaultKey(key, scope, serverId, 'args', name, label);
+    const plain = get(key);
+    if (plain === null || plain === '') {
+      throw new Error(
+        `mcp hub vault miss for ${label}.${name} (key present on disk, secret missing in vault)`,
+      );
+    }
+    return plain;
+  });
+}
+
 /** Replace plaintext secret fields with vault refs (writes vault). */
 export function sealMcpHubSecrets(
   config: McpHubConfig,
@@ -181,10 +269,12 @@ export function sealMcpHubSecrets(
         'headers',
         put,
       );
+      const args = sealArgs(server.args, scope, server.id, put);
       return {
         ...server,
         ...(env !== undefined ? { env } : {}),
         ...(headers !== undefined ? { headers } : {}),
+        ...(args !== undefined ? { args } : {}),
       };
     }),
   };
@@ -220,11 +310,45 @@ export function hydrateMcpHubSecrets(
         'headers',
         `${server.id}.headers`,
       );
+      const args = hydrateArgs(
+        server.args,
+        get,
+        scope,
+        server.id,
+        `${server.id}.args`,
+      );
       return {
         ...server,
         ...(env !== undefined ? { env } : {}),
         ...(headers !== undefined ? { headers } : {}),
+        ...(args !== undefined ? { args } : {}),
       };
+    }),
+  };
+}
+
+/**
+ * Args-only hydration for the spawn path (`loadMcpHubServersForSpawn`): env
+ * and header secrets deliberately never reach generated configs, but an argv
+ * flag has no other channel — without the real value the spawned server loses
+ * its credential. Same fail-closed key validation as the full hydrate.
+ */
+export function hydrateMcpHubArgs(
+  config: McpHubConfig,
+  get: McpHubSecretGet,
+  scope: string,
+): McpHubConfig {
+  return {
+    ...config,
+    servers: config.servers.map((server) => {
+      const args = hydrateArgs(
+        server.args,
+        get,
+        scope,
+        server.id,
+        `${server.id}.args`,
+      );
+      return args !== undefined ? { ...server, args } : server;
     }),
   };
 }
@@ -252,6 +376,14 @@ export function mcpHubConfigHasPlaintextSecrets(config: McpHubConfig): boolean {
         return true;
       }
     }
+    const args = server.args ?? [];
+    for (let index = 0; index < args.length; index += 1) {
+      const arg = args[index]!;
+      if (isVaultRef(arg) || isMaskedSecretValue(arg)) continue;
+      const afterCredentialFlag =
+        index > 0 && CREDENTIAL_FLAG_RE.test(args[index - 1]!);
+      if (argIsSecretShaped(arg, afterCredentialFlag)) return true;
+    }
   }
   return false;
 }
@@ -264,6 +396,9 @@ export function countMcpHubVaultRefs(config: McpHubConfig): number {
       if (isVaultRef(value)) n += 1;
     }
     for (const value of Object.values(server.headers ?? {})) {
+      if (isVaultRef(value)) n += 1;
+    }
+    for (const value of server.args ?? []) {
       if (isVaultRef(value)) n += 1;
     }
   }

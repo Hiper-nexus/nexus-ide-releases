@@ -505,6 +505,14 @@ export function applyMcpSync(options: {
   mode?: 'both' | 'import' | 'export';
   /** When set, only these tools receive export fill-gaps (opt-in). */
   exportTools?: readonly McpSyncExportToolId[];
+  /**
+   * F-1383: seal hook applied to the hub body BEFORE it hits disk — imported
+   * servers come from third-party configs with plaintext secrets in env AND
+   * args; the hub file must only ever hold vault refs. Exports below keep
+   * using the hydrated in-memory config (the tools need the real values).
+   * Not called on dryRun (no vault writes for a simulation).
+   */
+  sealHub?: (config: McpHubConfig) => McpHubConfig;
 }): McpSyncApplyResult {
   const home = options.home ?? os.homedir();
   const dryRun = options.dryRun === true;
@@ -529,7 +537,11 @@ export function applyMcpSync(options: {
       schemaVersion: 1,
       servers: [...hub.servers, ...additions].slice(0, 64),
     };
-    const result = writeConfigWithBackup(options.hubPath, next, { dryRun });
+    const result = writeConfigWithBackup(
+      options.hubPath,
+      !dryRun && options.sealHub ? options.sealHub(next) : next,
+      { dryRun },
+    );
     hubBackupPath = result.backupPath;
     hubWrote = result.wrote;
     hub = next;
