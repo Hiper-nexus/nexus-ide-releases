@@ -855,14 +855,31 @@ export function useOrchBridge(): void {
         // "retomar" na missão viva e o clique matava/respawnava ela mesma.
         // Índice pane→missão: diz a quem o pane PERTENCE, nunca quem lidera.
         const panes = listPanes(useLayoutStore.getState().root);
+        const terminalMissionIds = new Set(
+          missions
+            .filter((m) => m.status === 'done' || m.status === 'failed')
+            .map((m) => m.id),
+        );
         for (const mission of missions) {
           if (!mission.orchestratorSessionId) continue;
           const pane = panes.find(
             (p) => getPaneSessionId(p.id) === mission.orchestratorSessionId,
           );
-          if (pane) {
-            useOrchStore.getState().bindPaneMission(pane.id, mission.id);
+          if (!pane) continue;
+          // F-1268: a mão devolvida pode já liderar a missão SEGUINTE com a
+          // mesma sessão. O missionId persistido da missão terminal venceria
+          // o índice e a missão nova não herdaria a aba do anfitrião —
+          // reconcilia o vínculo gravado antes de espelhar a liderança.
+          if (
+            pane.missionId &&
+            pane.missionId !== mission.id &&
+            terminalMissionIds.has(pane.missionId)
+          ) {
+            useLayoutStore
+              .getState()
+              .retargetPaneMission(pane.id, mission.id);
           }
+          useOrchStore.getState().bindPaneMission(pane.id, mission.id);
         }
         // E o espelho: o Main é a autoridade, o layout é consequência. O
         // orquestrador que NÃO bate com a sessão durável dele é rebaixado, e o

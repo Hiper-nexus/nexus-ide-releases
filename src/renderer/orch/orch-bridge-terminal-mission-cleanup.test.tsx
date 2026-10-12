@@ -3,9 +3,14 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
+import {
+  missionHomeScopeKeys,
+  spaceScopeKey,
+} from '../lib/pane-spaces';
 import { listPanes } from '../lib/split-tree';
 import { setActiveWorkspacePath } from '../state/active-workspace';
 import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { useOrchBridge } from './orch-bridge';
 
 const terminal = vi.hoisted(() => ({
@@ -234,4 +239,63 @@ describe('cleanup de panes de missão terminal (campanha 0.50)', () => {
     const panes = listPanes(useLayoutStore.getState().root).map((p) => p.id);
     expect(panes).toContain('pane-done-mission');
   });
+
+  it.each(['done', 'failed'] as const)(
+    'mesma sessão lidera a missão seguinte (%s): o anfitrião herda a missão nova na MESMA aba',
+    (terminalStatus) => {
+      // F-1268: o pane do operador (sessão S, espaço X) hospeda a missão A.
+      // A termina, o Main devolve a mão e a MESMA sessão passa a liderar B —
+      // o broadcast prova a adoção pelo par sessão–missão. O missionId
+      // persistido da missão terminal não pode vencer: B mora na aba X.
+      useLayoutStore.setState({
+        root: {
+          kind: 'leaf',
+          id: 'leaf-op',
+          pane: {
+            id: 'pane-op',
+            kind: 'cli-agent',
+            title: 'mão do operador',
+            adapterId: 'claude',
+            missionId: 'mission-a',
+            missionHost: true,
+            role: 'orchestrator',
+            spaceId: 'space-x',
+            spaceTitle: 'Meus terminais',
+          },
+        },
+      });
+      terminal.getPaneSessionId.mockImplementation((paneId: string) =>
+        paneId === 'pane-op' ? 'session-s' : null,
+      );
+
+      act(() => {
+        missionsHandler?.([
+          { ...makeMission('mission-a', 'running'), orchestratorSessionId: 'session-s' },
+        ]);
+      });
+      act(() => {
+        missionsHandler?.([makeMission('mission-a', terminalStatus)]);
+      });
+      act(() => {
+        missionsHandler?.([
+          makeMission('mission-a', terminalStatus),
+          { ...makeMission('mission-b', 'running'), orchestratorSessionId: 'session-s' },
+        ]);
+      });
+
+      const pane = listPanes(useLayoutStore.getState().root).find(
+        (item) => item.id === 'pane-op',
+      );
+      expect(pane?.missionId).toBe('mission-b');
+      expect(pane?.role).toBe('orchestrator');
+      expect(pane?.spaceId).toBe('space-x');
+      const panes = listPanes(useLayoutStore.getState().root);
+      expect(
+        missionHomeScopeKeys(
+          panes,
+          useOrchStore.getState().paneMissions,
+        ).get('mission-b'),
+      ).toBe(spaceScopeKey('space-x'));
+    },
+  );
 });

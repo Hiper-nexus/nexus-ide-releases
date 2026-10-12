@@ -165,6 +165,14 @@ interface LayoutState {
    * tempestade de save/IPC).
    */
   reflectMissionLeader(missionId: string, leaderPaneId: string | null): void;
+  /**
+   * F-1268: o broadcast provou adoção nova pelo par sessão–missão e o
+   * missionId persistido do pane é de uma missão TERMINAL (a mão devolvida já
+   * lidera a seguinte com a mesma sessão). O vínculo gravado venceria o
+   * índice (`pane.missionId ?? paneMissions`) e a missão nova não herdaria a
+   * aba do anfitrião — recarimba só o missionId; aba e missionHost seguem.
+   */
+  retargetPaneMission(paneId: string, missionId: string): void;
   setPaneRole(paneId: string, role: 'orchestrator' | 'worker' | undefined): void;
   /**
    * Convert a dead mission/agent pane into an operator shell in place.
@@ -1499,6 +1507,16 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     if (!changed) return;
     // Antes do set: bindMissionSpaces re-carimbaria o anfitrião pelo índice.
     for (const paneId of released) useOrchStore.getState().unbindPaneMission(paneId, missionId);
+    set({ root });
+    persist();
+  },
+
+  retargetPaneMission: (paneId, missionId) => {
+    const pane = listPanes(get().root).find((item) => item.id === paneId);
+    // Só corrige o vínculo GRAVADO e só quando ele aponta para outra missão:
+    // pane solto (adoção) é carimbado pelo reflectMissionLeader, não aqui.
+    if (!pane?.missionId || pane.missionId === missionId) return;
+    const root = updatePane(get().root, paneId, { missionId });
     set({ root });
     persist();
   },
