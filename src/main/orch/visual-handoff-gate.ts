@@ -38,8 +38,19 @@ export function createVisualTaskRequirement(now = Date.now(), id: string = rando
  * é que é classificado; um pedido visual direto ("crie a tela de login")
  * sobrevive porque não é enumeração.
  */
-const ENUMERATION_INTRODUCER =
-  /\b(?:como|tais como|por exemplo|incluindo|incluem|e\.?\s?g\.?|exemplos?(?:\s+de)?|ferramentas?|tools?|skills?|cite|liste|nomeie|enumere|mencione)\s*:?[^\n.;]*/giu;
+// F-1311 (revisão Fable): o corte é só a ENUMERAÇÃO — itens curtos (até três
+// palavras) separados por vírgula/"e"/"ou" que terminam a frase —, não a
+// sentença inteira. "Mostre como a tela de login renderiza no mobile e
+// corrija o layout" e "liste os botões quebrados na tela de checkout e
+// corrija o alinhamento" não são listas: o pedido visual depois do "como"/
+// "liste" fica para a classificação.
+const ENUMERATION_WORD = String.raw`(?!(?:e|ou)\b)[^\s,.;:()\n]+`;
+const ENUMERATION_ITEM = `${ENUMERATION_WORD}(?:[ \\t]+${ENUMERATION_WORD}){0,2}`;
+const ENUMERATION_INTRODUCER = new RegExp(
+  String.raw`\b(?:como|tais como|por exemplo|incluindo|incluem|e\.?\s?g\.?|exemplos?(?:\s+de)?|ferramentas?|tools?|skills?|cite|liste|nomeie|enumere|mencione)\s*:?\s*` +
+  `${ENUMERATION_ITEM}(?:\\s*(?:,|\\be\\b|\\bou\\b)\\s*${ENUMERATION_ITEM})*(?=\\s*(?:[.;:)\\n]|$))`,
+  'giu',
+);
 /** Enumeração entre parênteses: só valem as que listam itens (vírgula, barra ou "e"). */
 const PAREN_ENUMERATION = /\([^()\n]*(?:[,\/]|\se\s)[^()\n]*\)/gu;
 const QUOTED_SPAN = /(["'`«»“”‘’])[^"'`«»“”‘’\n]*\1/g;

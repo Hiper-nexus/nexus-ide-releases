@@ -57,6 +57,24 @@ it('F-1311: palavra de UI em lista de exemplos ou nome de ferramenta não torna 
   expect(visualTaskRequirement('Redesenhe o dashboard com hierarquia visual e modo escuro.', 1000)).toBeDefined();
 });
 
+it('F-1311 (revisão Fable): "como"/"liste" só cortam a enumeração, não o resto da sentença', () => {
+  // O introdutor removia de "como"/"liste" até o fim da sentença e levava
+  // junto o pedido visual que vinha depois.
+  expect(visualTaskRequirement(
+    'Mostre como a tela de login renderiza no mobile e corrija o layout quebrado',
+    1000,
+  )).toBeDefined();
+  expect(visualTaskRequirement(
+    'liste os botões quebrados na tela de checkout e corrija o alinhamento',
+    1000,
+  )).toBeDefined();
+  // Uma lista curta de exemplos depois de "como" continua sendo contexto.
+  expect(visualTaskRequirement(
+    'Sonda: avaliar o roteamento para tarefas como UI, front-end e jogos.',
+    1000,
+  )).toBeUndefined();
+});
+
 it('F-1362: tarefa de UI embrulhada em XML continua exigindo a captura', async () => {
   const wrapped = '<task>\nCrie a tela de login com layout responsivo.\n</task>';
   const visualTask = visualTaskRequirement(wrapped, 1000);
