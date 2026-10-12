@@ -291,6 +291,7 @@ import {
   withHandoffContract,
   deliverPromptAfterPendingSpawn,
 } from './tool-util';
+import { PASTE_INGEST_GRACE_MS, PASTE_QUIESCE_MS } from './paste-ingest';
 import { startPhaseTimer } from '../observability/phase-timer';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { PreSpawnProbeError } from '../pty/pre-spawn-probe';
@@ -1708,6 +1709,42 @@ describe('agent prompt injection', () => {
     }
   });
 
+  it('F-1282: Enter perdido na ingestão — resgate calmo reenvia UM Enter quando a TUI assenta', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      const pending = injectPrompt('session-1', 'line one\nline two');
+      await vi.advanceTimersByTimeAsync(1_400);
+      await pending;
+
+      // A TUI engole os Enters da escada fixa enquanto ingere a colagem:
+      // eco contínuo de ingestão, PTY idle, nenhum turno começa (campo
+      // 11/10: Kimi 30 min com o brief colado e sem alarme nenhum).
+      const churn = setInterval(() => {
+        for (const tap of [...stubs.dataTaps]) tap('session-1', 'ingest echo');
+      }, 100);
+      await vi.advanceTimersByTimeAsync(12_000);
+      const enterCalls = () =>
+        (stubs.writeSession.mock.calls as unknown as Array<readonly [string, string]>)
+          .filter(([id, data]) => id === 'session-1' && (data === '\r' || data === '\r\n'));
+      const beforeQuiet = enterCalls().length;
+      clearInterval(churn);
+
+      // Saída quieta + sessão idle + nenhum turno: UM Enter depois de a TUI
+      // acalmar — hoje a escada (600/1200/2000 ms) já desistiu há tempo.
+      await vi.advanceTimersByTimeAsync(10_000);
+      const afterQuiet = enterCalls();
+      expect(afterQuiet.length).toBe(beforeQuiet + 1);
+      expect(afterQuiet[afterQuiet.length - 1]![1]).toBe('\r\n');
+      // Resgate concluído solta os taps.
+      expect(stubs.stateTaps).toHaveLength(0);
+      expect(stubs.dataTaps).toHaveLength(0);
+      expect(stubs.exitTaps).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   describe('brief de colagem com ACK pendente', () => {
     const answerEnterWithTurn = () =>
       stubs.writeSession.mockImplementation(
@@ -2569,7 +2606,9 @@ describe('agent prompt injection', () => {
       }
       await vi.advanceTimersByTimeAsync(149);
       expect(stubs.writeSession).toHaveBeenCalledOnce();
-      await vi.advanceTimersByTimeAsync(1);
+      // F-1282: o marcador só vale com a saída quieta (PASTE_QUIESCE_MS)
+      // antes da folga de sempre — a ingestão pode ter 2º bloco a caminho.
+      await vi.advanceTimersByTimeAsync(PASTE_QUIESCE_MS + PASTE_INGEST_GRACE_MS + 1);
       expect(stubs.writeSession).toHaveBeenNthCalledWith(
         2,
         'session-1',
@@ -2611,7 +2650,8 @@ describe('agent prompt injection', () => {
       }
       await vi.advanceTimersByTimeAsync(149);
       expect(stubs.writeSession).toHaveBeenCalledOnce();
-      await vi.advanceTimersByTimeAsync(1);
+      // F-1282: quietação da saída antes da folga (2º bloco pode vir depois).
+      await vi.advanceTimersByTimeAsync(PASTE_QUIESCE_MS + PASTE_INGEST_GRACE_MS + 1);
       expect(stubs.writeSession).toHaveBeenNthCalledWith(
         2,
         'session-1',

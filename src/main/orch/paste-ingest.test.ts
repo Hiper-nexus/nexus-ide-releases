@@ -44,6 +44,7 @@ import {
   DEVIN_LARGE_PASTE_LINES,
   DEVIN_PASTE_MARKER,
   PASTE_INGEST_MAX_MS,
+  PASTE_QUIESCE_MS,
   pasteIngestCapMs,
   pasteIngestPlan,
   pasteIngestPlanForSession,
@@ -127,9 +128,35 @@ describe('espera pela ingestão da colagem (F-735)', () => {
     // O ratatui pula espaços com CSI C e o marcador ainda chega partido.
     emit('pty-codex', '\x1b[3;5H[Pasted\x1b[1CCon');
     emit('pty-codex', 'tent\x1b[1C4498\x1b[1Cchars]');
-    await vi.advanceTimersByTimeAsync(0);
+    // F-1282: o marcador só libera com a saída quieta — o eco pode ser
+    // ingestião que ainda não acabou (2º bloco a caminho).
+    await vi.advanceTimersByTimeAsync(PASTE_QUIESCE_MS);
     expect(outcome).toBe('marker');
     // Resolvida, a espera solta os taps.
+    expect(pty.dataTaps).toHaveLength(0);
+    expect(pty.exitTaps).toHaveLength(0);
+  });
+
+  it('F-1282: colagem em 2+ blocos só libera o Enter depois do ÚLTIMO, com a saída quieta', async () => {
+    const plan = pasteIngestPlan('devin', linesOf(147))!;
+    const watch = watchPasteIngest('pty-devin', plan);
+    let outcome: PasteIngestOutcome | null = null;
+    void watch.done.then((value) => { outcome = value; });
+
+    // 1º bloco colapsa no marcador — mas o Devin ainda está ingerindo o
+    // resto do brief (campo 11/10: "[Pasted text #1 +47 lines]" seguido de
+    // "[Pasted text #2 +100 lines]", Enter nunca aplicado).
+    emit('pty-devin', '❯ [Pasted text #1 +47 lines]');
+    await vi.advanceTimersByTimeAsync(PASTE_QUIESCE_MS - 1);
+    expect(outcome).toBeNull();
+    // O 2º bloco chega DEPOIS, ainda dentro da janela de quietação: o eco
+    // novo empurra o Enter de novo.
+    emit('pty-devin', '❯ [Pasted text #2 +100 lines]');
+    await vi.advanceTimersByTimeAsync(PASTE_QUIESCE_MS - 1);
+    expect(outcome).toBeNull();
+    // Saída quieta pelo prazo inteiro: agora sim o marker conta e o Enter sai.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toBe('marker');
     expect(pty.dataTaps).toHaveLength(0);
     expect(pty.exitTaps).toHaveLength(0);
   });

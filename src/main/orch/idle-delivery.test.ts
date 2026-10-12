@@ -878,7 +878,7 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
 
     it('segura o CR até o marcador [Pasted Content] e entrega depois dele', async () => {
       const delivery = await import('./idle-delivery');
-      const { PASTE_INGEST_GRACE_MS } = await import('./paste-ingest');
+      const { PASTE_INGEST_GRACE_MS, PASTE_QUIESCE_MS } = await import('./paste-ingest');
       const scope = testProjectScope();
       authorizeTarget(scope);
       ptyMocks.adapters.set('orchestrator-session', 'codex');
@@ -896,7 +896,9 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
       emit('\x1b[2;3H[Pasted\x1b[1CContent\x1b[1C4012\x1b[1Cchars]');
       await vi.advanceTimersByTimeAsync(PASTE_INGEST_GRACE_MS - 1);
       expect(crs()).toHaveLength(0);
-      await vi.advanceTimersByTimeAsync(1);
+      // F-1282: o marcador só vale com a saída quieta (PASTE_QUIESCE_MS) —
+      // a ingestão pode ter mais blocos a caminho — antes da folga de sempre.
+      await vi.advanceTimersByTimeAsync(PASTE_QUIESCE_MS + 1);
       expect(crs()).toHaveLength(1);
 
       ptyMocks.state = 'busy';

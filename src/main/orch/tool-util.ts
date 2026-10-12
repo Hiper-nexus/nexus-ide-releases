@@ -131,6 +131,15 @@ export { assertSafePtyPrompt } from './pty-prompt-safety';
 const PROMPT_SETTLE_MS = 500;
 /** Janela para provar o submit: sessão ainda idle depois disto → CR comido. */
 const ENTER_RETRY_MS = 400;
+/**
+ * F-1282: depois da escada fixa de Enters, UMA última tentativa quando a
+ * saída assenta (sem bytes novos por este prazo) e a sessão segue idle — a
+ * TUI que engoliu os Enters enquanto ingeria a colagem só aceita submit
+ * depois de acalmar (Kimi 30 min com o brief colado, campo 11/10).
+ */
+export const ENTER_CALM_QUIESCE_MS = 800;
+/** Teto da fase calma a partir do arme do resgate: vencido, desiste. */
+export const ENTER_CALM_RETRY_MAX_MS = 20_000;
 // Wait for the CLI's first idle before typing. Expiring early types the brief
 // into a terminal that is still booting, so the prompt is swallowed and the
 // pane sits idle while every watchdog waits for a busy transition.
@@ -539,15 +548,28 @@ function scheduleAdaptiveEnterRescue(
 
   const delays = [600, 1200, 2000];
   let idx = 0;
+  /** F-1282: fase calma — escada acabou (ou viu busy), espera a TUI assentar. */
+  let calm = false;
+  const armedAt = Date.now();
+  let lastDataAt = armedAt;
+  // F-1282: turno que começou prova o submit (UserPromptSubmit nativo, F-735).
+  // Sem turno novo, um busy foi só eco de colagem e o brief segue no composer.
+  const turnStartBaseline = getAgentTurnStartSequence(sessionId);
 
   let untapExit: (() => void) | null = null;
   let untapState: (() => void) | null = null;
+  let untapData: (() => void) | null = null;
+  let untapTurnStart: (() => void) | null = null;
 
   const teardown = () => {
     untapExit?.();
     untapExit = null;
     untapState?.();
     untapState = null;
+    untapData?.();
+    untapData = null;
+    untapTurnStart?.();
+    untapTurnStart = null;
     for (const t of timers) clearTimeout(t);
     timers.clear();
     adaptiveEnterTimers.delete(sessionId);
@@ -560,18 +582,69 @@ function scheduleAdaptiveEnterRescue(
     if (exitedSessionId === sessionId) teardown();
   });
 
+  // Busy depois do Enter continua sendo prova de submit aceito (F-589): o
+  // resgate para na hora para não duplicar um prompt que já pegou.
   untapState = tapSessionState((changedSessionId, state) => {
     if (changedSessionId === sessionId && state === 'busy') teardown();
   });
 
+  untapData = tapSessionData((changedSessionId, _data) => {
+    if (changedSessionId === sessionId) lastDataAt = Date.now();
+  });
+
+  // F-735: turno que começou (UserPromptSubmit nativo) também prova o aceite.
+  untapTurnStart = tapAgentTurnStart((entry) => {
+    if (entry.sessionId === sessionId && entry.sequence > turnStartBaseline) teardown();
+  });
+
+  function enterCalm(): void {
+    if (calm) return;
+    calm = true;
+    scheduleCalmCheck();
+  }
+
+  function scheduleCalmCheck(): void {
+    const nowMs = Date.now();
+    if (nowMs - armedAt >= ENTER_CALM_RETRY_MAX_MS) {
+      teardown();
+      return;
+    }
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      // ponytail: a fase calma confia em "saída quieta + idle + nenhum turno
+      // novo" — CLI sem UserPromptSubmit nativo e turno curto silencioso
+      // levaria UM '\r\n' extra inócuo; o teto limita a janela.
+      if (Date.now() - lastDataAt < ENTER_CALM_QUIESCE_MS) {
+        scheduleCalmCheck();
+        return;
+      }
+      if (
+        getAgentTurnStartSequence(sessionId) > turnStartBaseline ||
+        !isPromptRetryIdle(sessionId, requireInjectableIdle) ||
+        getSessionState(sessionId) === 'busy'
+      ) {
+        teardown();
+        return;
+      }
+      orchWriteSession(sessionId, '\r\n', { markInputBusy: false, inputWriter });
+      teardown();
+    }, Math.max(50, ENTER_CALM_QUIESCE_MS - (nowMs - lastDataAt)));
+    if (typeof timer.unref === 'function') timer.unref();
+    timers.add(timer);
+  }
+
   function scheduleNext(): void {
     if (idx >= delays.length) {
-      teardown();
+      // F-1282: escada acabou sem prova nenhuma de aceite — a TUI pode ainda
+      // estar ingerindo a colagem (Kimi 30 min com o brief colado). A fase
+      // calma espera a saída assentar e reenvia UM Enter; teto de 20 s.
+      enterCalm();
       return;
     }
     const delayMs = delays[idx++];
     const timer = setTimeout(() => {
       timers.delete(timer);
+      if (calm) return;
       const isIdleNow = isPromptRetryIdle(sessionId, requireInjectableIdle);
       if (!isIdleNow || getSessionState(sessionId) === 'busy') {
         teardown();
@@ -665,7 +738,9 @@ async function submitEnter(
         }
         // F-589: Se o pane continua idle após 2 Enters, agenda resgate adaptativo
         // progressivo (600ms, 1200ms, 2000ms) com \r\n para acordar CLIs
-        // que ainda estavam processando o paste ou repintando a TUI sob carga alta.
+        // que ainda estavam processando o paste ou repintando a TUI sob carga
+        // alta. F-1282: esgotada a escada sem busy nem turno, a fase calma
+        // espera a TUI assentar e reenvia UM Enter (Kimi 30 min colado).
         scheduleAdaptiveEnterRescue(sessionId, requireInjectableIdle, inputWriter);
       }
     } finally {

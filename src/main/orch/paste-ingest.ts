@@ -22,6 +22,7 @@
  */
 import {
   getAgentSessionInfo,
+  tapSessionData,
   tapSessionExit,
 } from '../pty/pty-manager';
 import { watchPtyAnalysisSession } from '../pty/pty-analysis-runtime';
@@ -40,6 +41,15 @@ export const DEVIN_PASTE_MARKER =
   /Pasted\s*text\s*#\s*\d+\s*(?:\+\s*\d+\s*lines|\(\s*\d+\s*chars\s*\))/i;
 /** Folga entre o marcador e o Enter (o Codex aceitou com 0 ms; 150 é margem). */
 export const PASTE_INGEST_GRACE_MS = 150;
+/**
+ * F-1282: depois do marcador, a saída ainda precisa ficar quieta por este
+ * prazo antes do Enter. O Devin colapsa a colagem em BLOCOS — o marcador do
+ * 1º sai enquanto a TUI ainda ingere o resto ("[Pasted text #1 +47 lines]"
+ * seguido de "[Pasted text #2 +100 lines]"): Enter cedo é engolido como
+ * quebra de linha dentro do composer. Eco novo (2º bloco a caminho) empurra
+ * a janela; o teto continua mandando o Enter no fim.
+ */
+export const PASTE_QUIESCE_MS = 400;
 /**
  * Teto da espera: 2 s + 1,5 ms por caractere (3× o ritmo medido com a máquina
  * ociosa — com muitos panes vivos a ingestão é mais lenta), no máximo 30 s.
@@ -118,24 +128,57 @@ export function watchPasteIngest(
   plan: PasteIngestPlan,
 ): PasteIngestWatch {
   let settled = false;
+  let sawMarker = false;
+  let lastDataAt = 0;
+  let quiesceTimer: ReturnType<typeof setTimeout> | null = null;
   let resolveDone: (outcome: PasteIngestOutcome) => void = () => {};
   const done = new Promise<PasteIngestOutcome>((resolve) => {
     resolveDone = resolve;
   });
+  let untapMarker: () => void = () => {};
   let untapData: () => void = () => {};
   let untapExit: () => void = () => {};
+  const clearQuiesceTimer = () => {
+    if (quiesceTimer) {
+      clearTimeout(quiesceTimer);
+      quiesceTimer = null;
+    }
+  };
   const disarm = () => {
     settled = true;
+    untapMarker();
     untapData();
     untapExit();
     clearTimeout(timer);
+    clearQuiesceTimer();
   };
   const finish = (outcome: PasteIngestOutcome) => {
     if (settled) return;
     disarm();
     resolveDone(outcome);
   };
-  untapData = watchPtyAnalysisSession('paste', sessionId, { adapterId: plan.marker === DEVIN_PASTE_MARKER ? 'devin' : 'codex' }, () => finish('marker'));
+  // F-1282: o marcador só vale com a saída quieta — cada byte novo (eco da
+  // ingestão, 2º bloco do Devin) recomeça a janela e empurra o Enter.
+  const scheduleQuiesce = () => {
+    if (!sawMarker || settled) return;
+    clearQuiesceTimer();
+    quiesceTimer = setTimeout(() => {
+      quiesceTimer = null;
+      if (settled) return;
+      if (Date.now() - lastDataAt >= PASTE_QUIESCE_MS) finish('marker');
+      else scheduleQuiesce();
+    }, Math.max(0, PASTE_QUIESCE_MS - (Date.now() - lastDataAt)));
+    if (typeof quiesceTimer.unref === 'function') quiesceTimer.unref();
+  };
+  untapMarker = watchPtyAnalysisSession('paste', sessionId, { adapterId: plan.marker === DEVIN_PASTE_MARKER ? 'devin' : 'codex' }, () => {
+    sawMarker = true;
+    scheduleQuiesce();
+  });
+  untapData = tapSessionData((dataSessionId, _data) => {
+    if (dataSessionId !== sessionId) return;
+    lastDataAt = Date.now();
+    scheduleQuiesce();
+  });
   untapExit = tapSessionExit((exitedSessionId) => {
     if (exitedSessionId === sessionId) finish('exit');
   });
