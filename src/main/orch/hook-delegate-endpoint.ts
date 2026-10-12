@@ -43,7 +43,7 @@ import { getAdapter } from '../adapters/adapter-registry';
 import { isJevAutopilotEnabled } from '../jev/jev-autopilot';
 import { trace } from '../observability/main-trace';
 import { maestroStandingDoctrineFor } from './maestro-standing-context';
-import { suggestSkillForTask } from './jev-skill-suggestion';
+import { suggestSkillForTask, SKILL_SUGGESTION_MIN_CONFIDENCE } from './jev-skill-suggestion';
 import { helpersToOpenNow, type ParallelHelperBudget } from './pane-admission';
 import { currentParallelHelperBudget } from './parallel-helper-budget';
 import { isRecentHumanPrompt } from './operator-input-receipts';
@@ -150,8 +150,11 @@ const skillHintDeliveredAt = new Map<string, number>();
 /** F-802: a dica de CLI melhor, uma vez por sessão a cada 30 min. */
 const routeHintDeliveredAt = new Map<string, number>();
 
-/** Confiança mínima para a dica de skill entrar no pedido (a mesma do spawn). */
-export const OPERATOR_SKILL_HINT_MIN_CONFIDENCE = 0.7;
+/**
+ * Confiança mínima para a dica de skill entrar no pedido. F-1306: é o MESMO
+ * piso do parse e do spawn (`SKILL_SUGGESTION_MIN_CONFIDENCE`) — uma fonte só.
+ */
+export const OPERATOR_SKILL_HINT_MIN_CONFIDENCE = SKILL_SUGGESTION_MIN_CONFIDENCE;
 
 export function operatorSkillHint(skill: { name: string; path?: string }): string {
   return skill.path

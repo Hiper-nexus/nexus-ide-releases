@@ -394,6 +394,43 @@ describe('suggestSkillForTask', () => {
     ).toBeNull();
   });
 
+  it('F-1306: piso único 0.7 — 0.65 é recusado, 0.7 passa', async () => {
+    const judgeLow = vi.fn(async (_req: unknown) =>
+      jevResult({
+        skill: {
+          type: 'choice',
+          choice: 'impeccable',
+          probabilities: { impeccable: 0.65 },
+          confidence: 0.65,
+        },
+      }),
+    );
+    expect(
+      await suggestSkillForTask('task', {
+        allowedSkills: null,
+        deps: { judge: judgeLow, record: vi.fn(), ...on },
+      }),
+    ).toBeNull();
+    const judgeFloor = vi.fn(async (_req: unknown) =>
+      jevResult({
+        skill: {
+          type: 'choice',
+          choice: 'impeccable',
+          probabilities: { impeccable: 0.7 },
+          confidence: 0.7,
+        },
+      }),
+    );
+    expect(
+      (
+        await suggestSkillForTask('task', {
+          allowedSkills: null,
+          deps: { judge: judgeFloor, record: vi.fn(), ...on },
+        })
+      )?.name,
+    ).toBe('impeccable');
+  });
+
   it('returns null without calling judge when the surface is off or no key', async () => {
     const judge = vi.fn();
     expect(

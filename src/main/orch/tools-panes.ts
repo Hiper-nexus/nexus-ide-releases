@@ -142,6 +142,7 @@ import {
   type AgentGateContext,
 } from './gate';
 import { applyWorkerSpawnPolicy } from '../../shared/mission-intent';
+import { SKILL_SUGGESTION_MIN_CONFIDENCE } from './jev-skill-suggestion';
 import type { MissionIntentContract } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
@@ -1577,7 +1578,7 @@ const paneSpawnAfterTabMission = {
       if (
         adHocPrompt &&
         routeSkill &&
-        routeSkill.confidence >= 0.7 &&
+        routeSkill.confidence >= SKILL_SUGGESTION_MIN_CONFIDENCE &&
         (adHocAllowedSkills === null ||
           adHocAllowedSkills.some(
             // Grants são por pacote OU por nome, como o skill-mirror.

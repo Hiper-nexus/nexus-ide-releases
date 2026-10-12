@@ -33,7 +33,13 @@ import { suggestMissionLaneFromGoal } from '../../shared/mission-intent';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
 
-export const SKILL_SUGGESTION_MIN_CONFIDENCE = 0.6;
+/**
+ * Piso ÚNICO de confiança para uma sugestão de skill ser aplicada. F-1306:
+ * `parseSkillSuggestion` aceitava ≥0.6 enquanto o hook (0.7) e o spawn (0.7)
+ * exigiam ≥0.7 — o `nexus_route_task` devolvia uma sugestão que ninguém
+ * aplicava (banda morta 0.6–0.69). Uma constante só, importada nos três pontos.
+ */
+export const SKILL_SUGGESTION_MIN_CONFIDENCE = 0.7;
 const SKILL_SUGGESTION_TIMEOUT_MS = 4_000;
 const TASK_MAX_CHARS = 1_500;
 const DESCRIPTION_MAX_CHARS = 300;
