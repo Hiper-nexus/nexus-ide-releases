@@ -626,6 +626,44 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
       }),
     );
   });
+
+  it('M4: exceção na entrega não deixa a entrada presa em delivering', async () => {
+    vi.useFakeTimers();
+    const onSettled = vi.fn();
+    const onDelivering = vi.fn();
+    const pane = claudePane();
+    let attempts = 0;
+    // O tick do pendente chama deliverOnLanes; um throw ali (IPC principal
+    // fora do ar) não pode escapar nem deixar a entrada com delivering=true
+    // para sempre — aí cancelPendingDictation passa a mentir ("não cancela,
+    // está em voo") e o texto nunca mais sai.
+    pane.ports.deliverConfirmed = vi.fn(async () => {
+      // A primeira rota devolve `wait` (diálogo aberto) e o pendente nasce;
+      // só o TICK do pendente, com o pane livre, é que estoura a exceção.
+      if (attempts++ === 0) return 'wait' as const;
+      throw new Error('ipc fora do ar');
+    });
+    pane.ports.onSettled = onSettled;
+    pane.ports.onDelivering = onDelivering;
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true, queuesInputWhileBusy: true };
+    await deliverDictation('abre o PR', pane.ports);
+    await vi.advanceTimersByTimeAsync(3_000);
+    // Pane ficou livre → o tick tenta entregar e o throw estoura.
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: false, queuesInputWhileBusy: true };
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    // O pendente foi encerrado como falha, não ficou preso.
+    expect(hasPendingDictation()).toBe(false);
+    expect(onSettled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paneId: 'pane-focused',
+        result: 'error',
+        errorCode: 'pending-failed',
+      }),
+    );
+    // E o teclado do operador volta a poder cancelar (não há entrega em voo).
+    expect(cancelPendingDictation('pane-focused')).toBe(false);
+  });
 });
 
 

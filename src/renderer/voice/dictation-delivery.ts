@@ -356,6 +356,23 @@ function deferUntilFree(
           delivered ? undefined : outcome === 'lost' ? 'pending-lost' : 'pending-failed',
         );
         return;
+      } catch (err) {
+        // M4: uma exceção da lane (IPC principal fora do ar) não pode escapar
+        // do tick — além do unhandled rejection, deixava a entrada presa em
+        // `delivering=true`: cancelPendingDictation devolvia false para sempre
+        // ("entrega em voo") e o texto não saía mais. `settle` é o caminho
+        // (tira do mapa, guarda o texto, avisa o HUD) — um log solto aqui
+        // deixaria a entrada viva com a nota de "entregue".
+        if (mine()) {
+          settle(
+            'error',
+            'dictation.pendingFailed',
+            'falha ao escrever o ditado pendente no pane livre',
+            { error: err instanceof Error ? err.message : String(err) },
+            'pending-failed',
+          );
+        }
+        return;
       } finally {
         entry.deliveringDone = undefined;
         resolveDone();
