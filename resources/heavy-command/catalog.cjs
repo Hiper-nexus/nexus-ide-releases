@@ -574,9 +574,27 @@ function programKind(words, seg, depth) {
   if (name === 'node') {
     const real = args.filter((arg) => arg !== '--');
     if (real.length > 0 && real.every((arg) => /^(?:-v|--version|-h|--help)$/.test(arg))) return null;
-    const scriptAt = real.findIndex((arg) => !arg.startsWith('-'));
+    // F-852: `-r/--require` (and friends) take a value that is NOT the program.
+    // `node -r ./hooks.js ./node_modules/typescript/bin/tsc` used to classify
+    // the preload as the script and miss the TypeScript workload behind it.
+    const takesValue = new Set(['-r', '--require', '--input-type', '--conditions', '--import']);
+    let scriptAt = -1;
+    for (let i = 0; i < real.length; i += 1) {
+      const arg = real[i];
+      if (takesValue.has(arg)) { i += 1; continue; }
+      if (arg.startsWith('-') && arg.includes('=')) continue;
+      if (arg.startsWith('-') && takesValue.has(arg.split('=')[0])) continue;
+      if (!arg.startsWith('-')) { scriptAt = i; break; }
+    }
     const evalAt = real.slice(0, scriptAt < 0 ? real.length : scriptAt).findIndex((arg) => /^(?:-[ep]|-pe|--eval|--print)(?:=|$)/.test(arg));
     if (evalAt >= 0) { const eq = real[evalAt].indexOf('='); return inlineKind(eq < 0 ? real[evalAt + 1] : real[evalAt].slice(eq + 1)); }
+    // Also catch `node -r ./hooks.js -e 'require("tsc")'` where -e sits AFTER the preload value.
+    const lateEval = real.findIndex((arg) => /^(?:-[ep]|-pe|--eval|--print)(?:=|$)/.test(arg));
+    if (lateEval >= 0 && (scriptAt < 0 || lateEval < scriptAt || takesValue.has(real[lateEval - 1]))) {
+      const arg = real[lateEval];
+      const eq = arg.indexOf('=');
+      return inlineKind(eq < 0 ? real[lateEval + 1] : arg.slice(eq + 1));
+    }
     const script = scriptAt >= 0 ? real[scriptAt] : undefined;
     // Dev servers, watchers and MCP services are persistent, not finite work.
     if (script && isPersistent([words[at], script, ...real.slice(scriptAt + 1)])) return null;

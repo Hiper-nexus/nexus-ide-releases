@@ -274,6 +274,11 @@ describe('commandKind mede runners de package manager e de Python; node -e não 
     [`node -e "import(process.env.MOD).then((m) => m.run())"`, 'build'],
     ['node -e \'require(`${process.env.ROOT}/typescript`)\'', 'build'],
     [`node -e "require('type' + 'script')"`, 'build'],
+    // F-852: `-r/--require` carrega um preload que NÃO é o programa. O script
+    // real atrás do preload é quem classifica o trabalho.
+    ['node -r ./hooks.js ./node_modules/typescript/bin/tsc --noEmit', 'typescript'],
+    ['node --require ./hooks.js ./node_modules/vitest/vitest.mjs run', 'tests'],
+    ['node -r ./hooks.js ./node_modules/typescript/lib/tsc.js -p .', 'typescript'],
   ])('%s → %s', (command, kind) => {
     expect(catalog.commandKind(command)).toBe(kind);
   });
@@ -313,6 +318,9 @@ describe('argvKind classifica o argv direto, palavra por palavra', () => {
     [['npx', 'tsc', '--noEmit'], 'typescript'],
     [['node', '-e', 'require(process.env.TS).createProgram([], {})'], 'build'],
     [['node', '-e', 'require("fs").statSync(".")'], null],
+    // F-852: o preload não rouba o scriptAt do programa real.
+    [['node', '-r', './hooks.js', './node_modules/typescript/bin/tsc'], 'typescript'],
+    [['node', '--require', './hooks.js', '-e', 'require("typescript")'], 'typescript'],
   ] as Array<[string[], string | null]>)('%j → %s', (argv, kind) => {
     expect(argvKind(argv)).toBe(kind);
   });
