@@ -45,6 +45,8 @@ import {
 import {
   scheduleAutoCloseAfterHandoff,
   assertAutoCloseReportPreserved,
+  closeAfterNonSuccessHandoffAck,
+  isWorkerSessionBusy,
 } from "./pane-close-scopes";
 import { findPane, listPaneSnapshots, readSessionOutput, requestPaneClose } from "./pane-registry";
 import {
@@ -843,6 +845,8 @@ const handoffSubmitTool: McpToolDef = {
       status,
       (sessionId) => findPane(sessionId)?.paneId ?? null,
       requestPaneClose,
+      // F-1409: partial/failed/blocked fecha no ACK do Maestro ou na rede de segurança.
+      { handoffId: handoff.id, isBusy: (id) => isWorkerSessionBusy(getSessionState(id)) },
     );
     return {
       ok: true,
@@ -1354,6 +1358,13 @@ const handoffAcknowledgeTool: McpToolDef = {
     );
     if (!consumed)
       throw new Error("handoff is not awaiting consumption in this mission");
+    // F-1409: ACK aceito de entrega não-success fecha o worker armado; rework
+    // mantém o pane vivo para a nota.
+    closeAfterNonSuccessHandoffAck(
+      getProjectDomainStores(ctx.scope).handoffs.get(handoffId)?.sessionId,
+      handoffId,
+      verdict,
+    );
     const rework = verdict === "rework"
       ? await deliverReworkToWriter(ctx, invocation, handoffId, str(args, "note"))
       : {};

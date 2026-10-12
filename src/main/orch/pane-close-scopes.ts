@@ -139,24 +139,122 @@ export function assertAutoCloseReportPreserved(
   return null;
 }
 
-/** Consome o braço apenas depois de um handoff persistido; fechar fica fora da resposta. */
+type PaneIdOf = (sessionId: string) => string | null;
+type ClosePane = (paneId: string, expectedSessionId: string) => Promise<unknown>;
+
+function closeArmedPaneSoon(sessionId: string, armedPaneId: string, paneIdOf: PaneIdOf, close: ClosePane): void {
+  setTimeout(() => {
+    if (paneIdOf(sessionId) !== armedPaneId) return;
+    void Promise.resolve().then(() => close(armedPaneId, sessionId)).catch((error) =>
+      console.warn(`[handoff] auto-close do pane ${armedPaneId} falhou:`, error),
+    );
+  }, 0);
+}
+
+/**
+ * F-1409: rede de segurança da entrega não-success de worker de missão armado.
+ * Sem ACK do Maestro nesse prazo e com o worker parado, o pane fecha (a
+ * entrega e o scrollback relevante vivem no ledger). Worker ocupado adia.
+ */
+export const NON_SUCCESS_IDLE_CLOSE_MS = 15 * 60_000;
+
+interface PendingNonSuccessClose {
+  readonly paneId: string;
+  readonly handoffId: string;
+  readonly paneIdOf: PaneIdOf;
+  readonly close: ClosePane;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/** Entrega partial/failed/blocked de worker armado aguardando o Maestro, por sessão. */
+const pendingNonSuccessBySession = new Map<string, PendingNonSuccessClose>();
+
+function clearPendingNonSuccess(sessionId: string): void {
+  const pending = pendingNonSuccessBySession.get(sessionId);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingNonSuccessBySession.delete(sessionId);
+}
+
+function closePendingNonSuccess(sessionId: string, pending: PendingNonSuccessClose): void {
+  clearPendingNonSuccess(sessionId);
+  if (armedAutoClosePaneId(sessionId, pending.paneId) !== pending.paneId) return;
+  disarmAutoCloseOnHandoff(sessionId, pending.paneId);
+  closeArmedPaneSoon(sessionId, pending.paneId, pending.paneIdOf, pending.close);
+}
+
+/** Estados em que o worker ainda trabalha — a rede de segurança espera. */
+export function isWorkerSessionBusy(state: string | null): boolean {
+  return state === "busy" || state === "spawning";
+}
+
+export interface NonSuccessCloseOptions {
+  /** Handoff que o ACK do Maestro precisa citar para fechar o pane. */
+  readonly handoffId: string;
+  /** Worker trabalhando (ex.: depois de rework por PTY) adia a rede de segurança. */
+  readonly isBusy?: (sessionId: string) => boolean;
+  readonly idleCloseMs?: number;
+}
+
+/**
+ * Consome o braço apenas depois de um handoff persistido; fechar fica fora da resposta.
+ * success fecha já. Com `nonSuccess` (worker de missão), partial/failed/blocked
+ * ficam abertos até o ACK do Maestro ou a rede de segurança (F-1409).
+ */
 export function scheduleAutoCloseAfterHandoff(
   sessionId: string | undefined,
   status: string,
-  paneIdOf: (sessionId: string) => string | null,
-  close: (paneId: string, expectedSessionId: string) => Promise<unknown>,
+  paneIdOf: PaneIdOf,
+  close: ClosePane,
+  nonSuccess?: NonSuccessCloseOptions,
 ): void {
   if (!sessionId) return;
   const paneId = paneIdOf(sessionId);
   const armedPaneId = armedAutoClosePaneId(sessionId, paneId);
-  if (!shouldAutoCloseAfterHandoff({ armed: armedPaneId !== null, status })) return;
+  if (armedPaneId === null) return;
+  if (!shouldAutoCloseAfterHandoff({ armed: true, status })) {
+    if (nonSuccess) {
+      clearPendingNonSuccess(sessionId);
+      const idleMs = nonSuccess.idleCloseMs ?? NON_SUCCESS_IDLE_CLOSE_MS;
+      const pending: PendingNonSuccessClose = {
+        paneId: armedPaneId, handoffId: nonSuccess.handoffId, paneIdOf, close,
+        timer: setTimeout(function onIdle() {
+          if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
+          if (nonSuccess.isBusy?.(sessionId)) {
+            pending.timer = setTimeout(onIdle, idleMs);
+            return;
+          }
+          closePendingNonSuccess(sessionId, pending);
+        }, idleMs),
+      };
+      pendingNonSuccessBySession.set(sessionId, pending);
+    }
+    return;
+  }
+  clearPendingNonSuccess(sessionId);
   disarmAutoCloseOnHandoff(sessionId, paneId);
-  setTimeout(() => {
-    if (paneIdOf(sessionId) !== armedPaneId) return;
-    void Promise.resolve().then(() => close(armedPaneId!, sessionId)).catch((error) =>
-      console.warn(`[handoff] auto-close do pane ${armedPaneId} falhou:`, error),
-    );
-  }, 0);
+  closeArmedPaneSoon(sessionId, armedPaneId, paneIdOf, close);
+}
+
+/**
+ * F-1409: o Maestro consumiu (ACK) a entrega não-success. `accepted` fecha o
+ * worker armado; `rework` mantém o pane vivo para receber a nota (o braço
+ * segue armado para a próxima entrega).
+ */
+export function closeAfterNonSuccessHandoffAck(
+  sessionId: string | undefined,
+  handoffId: string,
+  verdict: string,
+): boolean {
+  if (!sessionId) return false;
+  const pending = pendingNonSuccessBySession.get(sessionId);
+  if (!pending || pending.handoffId !== handoffId) return false;
+  if (verdict === "rework") {
+    clearPendingNonSuccess(sessionId);
+    return false;
+  }
+  closePendingNonSuccess(sessionId, pending);
+  return true;
 }
 
 /**
@@ -190,6 +288,7 @@ export function disarmAutoCloseOnHandoff(
 ): void {
   armedBySession.delete(sessionId);
   if (paneId) armedByPane.delete(paneId);
+  clearPendingNonSuccess(sessionId);
 }
 
 export function armedAutoClosePaneId(

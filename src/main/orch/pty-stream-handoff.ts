@@ -34,7 +34,7 @@ import {
   runInsidePtyStreamAgentTransport,
 } from "./http-mcp-boundary";
 import { onHandoffSubmitted } from "./idle-delivery";
-import { scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
+import { isWorkerSessionBusy, scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
 import { findPane, requestPaneClose } from "./pane-registry";
 import { advanceFastLaneStoryTaskFromHandoff } from "./mission-story-plan";
 import {
@@ -44,7 +44,7 @@ import {
   StaleReadOnlyObservationError,
 } from "./physical-handoff-git";
 import type { ToolDispatchResult } from "./mcp-dispatch-contract";
-import { orchTerminateSession } from "../pty/pty-manager";
+import { getSessionState, orchTerminateSession } from "../pty/pty-manager";
 import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
@@ -666,6 +666,7 @@ async function persistPtyHandoff(
       committed.handoff.status,
       (id) => findPane(id)?.paneId ?? null,
       requestPaneClose,
+      { handoffId: committed.handoff.id, isBusy: (id) => isWorkerSessionBusy(getSessionState(id)) },
     );
     return Object.freeze({
       handoffId: committed.handoff.id,

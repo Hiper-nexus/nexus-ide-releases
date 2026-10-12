@@ -90,7 +90,7 @@ import {
   findPane,
   requestPaneClose,
 } from "./pane-registry";
-import { scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
+import { isWorkerSessionBusy, scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
 import {
   isPlaceholderSummary,
   LegacyHandoffDedupe,
@@ -2100,6 +2100,7 @@ export async function startMcpServer(): Promise<void> {
             handoff.status,
             (sessionId) => findPane(sessionId)?.paneId ?? null,
             requestPaneClose,
+            { handoffId: handoff.id, isBusy: (id) => isWorkerSessionBusy(getSessionState(id)) },
           ),
       },
     });
