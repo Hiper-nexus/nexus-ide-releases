@@ -44,6 +44,47 @@ const FAILURE_DISPOSITIONS = new Set<MergeFailureDisposition>([
 ]);
 const EVENT_ID_PATTERN = /^merge-event-[a-f0-9]{64}$/;
 
+/** Durable ceiling for one scope's operational event history. */
+export const MAX_MERGE_QUEUE_EVENTS = 8_192;
+
+/**
+ * F-1257 retention. History is capped, so the cap is enforced by dropping old
+ * operational events BEFORE an append is validated: a full history must never
+ * make the queue refuse the very transition that would unblock it (complete or
+ * block both append, so both used to strand the attempt active forever).
+ * Events of a task that can still be acted upon — the active claim and the
+ * durable block — are never dropped, because retry basis, finalization replay
+ * and the receipts read exactly those. Everything else is audit history of a
+ * task that can no longer transition, and is dropped oldest-first.
+ *
+ * ponytail: a single live task that alone exceeds the ceiling still fails
+ * closed. That needs ~2k attempts on one task; honest refusal beats silently
+ * dropping the evidence a retry is still being judged against.
+ */
+export function retainMergeQueueEvents(
+  events: readonly MergeQueueEvent[],
+  live: {
+    readonly activeTaskKey: string | null;
+    readonly blocked: MergeQueueBlock | null;
+  },
+): readonly MergeQueueEvent[] {
+  let excess = events.length - MAX_MERGE_QUEUE_EVENTS;
+  if (excess <= 0) return events;
+  const liveTaskKeys = new Set(
+    [live.activeTaskKey, live.blocked?.taskKey].filter(
+      (taskKey): taskKey is string => !!taskKey,
+    ),
+  );
+  return Object.freeze(
+    events.filter((event) => {
+      if (excess <= 0) return true;
+      if (liveTaskKeys.has(event.taskKey)) return true;
+      excess -= 1;
+      return false;
+    }),
+  );
+}
+
 function invalidState(message = 'invalid merge queue state entry'): never {
   throw new Error(message);
 }
@@ -321,7 +362,10 @@ export function validateMergeQueueStateSnapshot(
   const storedEvents = (snapshot as MergeQueueStateSnapshot & {
     readonly events?: unknown;
   }).events ?? [];
-  if (!Array.isArray(storedEvents) || storedEvents.length > 8_192) {
+  if (
+    !Array.isArray(storedEvents) ||
+    storedEvents.length > MAX_MERGE_QUEUE_EVENTS
+  ) {
     invalidState('invalid merge queue events');
   }
   const events = storedEvents.map((event) =>

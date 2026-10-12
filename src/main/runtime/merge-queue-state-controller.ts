@@ -19,6 +19,7 @@ import {
   cloneMergeQueueBlock as cloneBlock,
   cloneMergeQueueEntry as cloneEntry,
   cloneMergeQueueEvent as cloneEvent,
+  retainMergeQueueEvents,
   validateMergeQueueStateSnapshot,
 } from './merge-queue-state';
 
@@ -315,8 +316,16 @@ export class MergeQueueStateController {
         entries: snapshot.entries,
       };
       const nextRevision = snapshot.revision + 1;
+      // Every append in the queue funnels through here (complete, block,
+      // restart reconciliation, retry acknowledgement), so retention lives here.
       const next = update(current, nextRevision);
-      const state = this.#validatedState(next, nextRevision);
+      const state = this.#validatedState(
+        {
+          ...next,
+          events: retainMergeQueueEvents(next.events, next),
+        },
+        nextRevision,
+      );
       let swapped: boolean;
       try {
         swapped = this.#store.compareAndSwap(

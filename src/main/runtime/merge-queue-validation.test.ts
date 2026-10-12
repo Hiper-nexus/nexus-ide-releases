@@ -1,8 +1,52 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { MergeCasError, MergeQueue, MergeQueueStateError, MergeValidationRejectedError, type MergeQueueStateStore } from './merge-queue';
+import { MergeCasError, MergeQueue, MergeQueueStateError, MergeValidationRejectedError, type MergeQueueStateSnapshot, type MergeQueueStateStore } from './merge-queue';
 import { createSignal, root, runtimeRoot, scope, queueState, gitRunner, worktrees, queue, git, write, commitTask, approved, queueEntries } from './merge-queue-test-fixture';
+import { worktreeTaskKey } from './worktree-contract';
+const MAX_MERGE_QUEUE_EVENTS = 8_192;
+
+/** F-1257: a checkout whose durable history is already at the event ceiling. */
+function seedCeilingHistory(count: number, headSha: string): MergeQueueStateSnapshot {
+  const historyTasks = 8;
+  const entries = Array.from({ length: historyTasks }, (_unused, index) => {
+    const taskKey = worktreeTaskKey('mission-history', `task-history-${index}`);
+    return {
+      id: `merge-${taskKey}`,
+      taskKey,
+      missionId: 'mission-history',
+      taskId: `task-history-${index}`,
+      attempt: 1,
+      status: 'integrated' as const,
+      taskHeadSha: headSha,
+      integrationBaseSha: headSha,
+      candidateSha: headSha,
+      integratedSha: headSha,
+      diffHash: 'a'.repeat(64),
+      evidenceIds: ['history-evidence'],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+  });
+  const events = Array.from({ length: count }, (_unused, index) => ({
+    id: `merge-event-${index.toString(16).padStart(64, '0')}`,
+    type: 'integrated' as const,
+    taskKey: entries[index % historyTasks].taskKey,
+    attempt: 1,
+    stateRevision: index + 1,
+    occurredAt: 1,
+    taskHeadSha: headSha,
+    candidateSha: headSha,
+    evidenceIds: ['history-evidence'],
+  }));
+  return {
+    revision: count,
+    activeTaskKey: null,
+    blocked: null,
+    events,
+    entries,
+  };
+}
 
 describe('MergeQueue', () => {
 
@@ -256,5 +300,82 @@ describe('MergeQueue', () => {
       }),
     ).rejects.toThrow(MergeQueueStateError);
     expect(git(root, 'rev-parse', 'HEAD')).toBe(originalHead);
+  });
+
+
+  it('integrates a new task when the durable event history already sits at its ceiling (F-1257)', async () => {
+    await commitTask('mission-ceiling', 'task-ceiling', 'worker-ceiling', 'ceiling.txt', 'at the cap\n');
+    const scopeKey = worktrees.scopeKey(scope);
+    queueState.overwrite(
+      scopeKey,
+      seedCeilingHistory(MAX_MERGE_QUEUE_EVENTS, git(root, 'rev-parse', 'HEAD')),
+    );
+
+    const result = await queue.enqueue({
+      scope,
+      missionId: 'mission-ceiling',
+      taskId: 'task-ceiling',
+      validate: approved,
+    });
+
+    expect(result.integratedSha).toBe(git(root, 'rev-parse', 'HEAD'));
+    const snapshot = queue.snapshot(scope);
+    expect(snapshot.activeTaskKey).toBeNull();
+    expect(snapshot.events.length).toBeLessThanOrEqual(MAX_MERGE_QUEUE_EVENTS);
+    expect(snapshot.events.at(-1)).toMatchObject({
+      type: 'integrated',
+      taskKey: result.taskKey,
+    });
+    expect(
+      snapshot.entries.find((entry) => entry.taskKey === result.taskKey),
+    ).toMatchObject({ status: 'integrated', integratedSha: result.integratedSha });
+  });
+
+
+  it('still blocks and retries a recoverable failure at the event ceiling (F-1257)', async () => {
+    await commitTask('mission-cap-retry', 'task-cap-retry', 'worker-cap-retry', 'cap-retry.txt', 'recover me\n');
+    const scopeKey = worktrees.scopeKey(scope);
+    queueState.overwrite(
+      scopeKey,
+      seedCeilingHistory(MAX_MERGE_QUEUE_EVENTS, git(root, 'rev-parse', 'HEAD')),
+    );
+
+    await expect(
+      queue.enqueue({
+        scope,
+        missionId: 'mission-cap-retry',
+        taskId: 'task-cap-retry',
+        validate: async () => ({
+          sensorsPassed: false,
+          reviewPassed: true,
+          evidenceIds: ['rejected-at-cap'],
+        }),
+      }),
+    ).rejects.toThrow(MergeValidationRejectedError);
+
+    const blocked = queue.snapshot(scope);
+    expect(blocked.blocked).toMatchObject({
+      taskKey: worktreeTaskKey('mission-cap-retry', 'task-cap-retry'),
+      disposition: 'repair',
+    });
+    expect(blocked.events.at(-1)).toMatchObject({
+      type: 'blocked',
+      taskKey: blocked.blocked?.taskKey,
+    });
+
+    const retried = await queue.retry({
+      scope,
+      missionId: 'mission-cap-retry',
+      taskId: 'task-cap-retry',
+      expectedStateRevision: blocked.revision,
+      acknowledgement: { evidenceIds: ['review-evidence-after-cap'] },
+      validate: approved,
+    });
+
+    expect(retried.integratedSha).toBe(git(root, 'rev-parse', 'HEAD'));
+    expect(queue.snapshot(scope).events.at(-1)).toMatchObject({
+      type: 'integrated',
+      taskKey: retried.taskKey,
+    });
   });
 });
