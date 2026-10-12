@@ -39,6 +39,17 @@ describe('F-1392 — dictationSessionTraceEvent (lista branca do log de uso)', (
     expect(dictationSessionTraceEvent({ result: 'pending' })).toEqual({ kind: 'dictation-session', result: 'pending' });
   });
 
+  it('F-1392 (revisão Fable): aceita modelo org/modelo com / e :', () => {
+    expect(
+      dictationSessionTraceEvent({ result: 'ok', sttModel: 'org/whisper-large-v3-turbo' })?.sttModel,
+    ).toBe('org/whisper-large-v3-turbo');
+    expect(
+      dictationSessionTraceEvent({ result: 'ok', sttModel: 'groq:whisper-large-v3-turbo' })?.sttModel,
+    ).toBe('groq:whisper-large-v3-turbo');
+    expect(dictationSessionTraceEvent({ result: 'ok', sttModel: 'modelo com espaco' })?.sttModel)
+      .toBeUndefined();
+  });
+
   it('recusa resumo sem resultado válido', () => {
     expect(dictationSessionTraceEvent({ result: 'talvez' })).toBeNull();
     expect(dictationSessionTraceEvent('texto')).toBeNull();

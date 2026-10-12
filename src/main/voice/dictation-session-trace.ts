@@ -11,7 +11,9 @@
 export const DICTATION_SESSION_EVENT = 'dictation.session';
 export const DICTATION_SESSION_KIND = 'dictation-session';
 
-const LABEL_RE = /^[a-z][a-z0-9:._-]{0,63}$/i;
+// F-1392 (revisão Fable): modelo `org/modelo` precisa do `/`; `:` já era
+// aceito. Sem espaço nem controle, teto de 64 caracteres mantido.
+const LABEL_RE = /^[a-z][a-z0-9:._/-]{0,63}$/i;
 const LABEL_KEYS = ['mode', 'sttProvider', 'sttModel', 'language', 'result', 'errorCode'] as const;
 const NUMBER_KEYS = ['audioMs', 'latencyMs', 'rawChars', 'polishedChars'] as const;
 const BOOLEAN_KEYS = ['polished'] as const;
