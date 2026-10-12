@@ -112,6 +112,57 @@ describe('computeAccountPick', () => {
     expect(answer.reason).toContain('no eligible account');
   });
 
+  it('F-1292: conta excluída aparece com o motivo (plano B visível)', async () => {
+    setSnapshot([
+      {
+        id: 'codex:b1',
+        adapterId: 'codex',
+        accountId: 'b1',
+        label: 'Codex · pano',
+        windows: [
+          { kind: 'hours', label: '5h', usedRatio: 0.1, source: 'provider-api', confidence: 'high' },
+        ],
+      },
+      {
+        id: 'codex:b2',
+        adapterId: 'codex',
+        accountId: 'b2',
+        label: 'Codex · reserva',
+        windows: [
+          { kind: 'hours', label: '5h', usedRatio: null, source: 'provider-api', confidence: 'low' },
+          { kind: 'daily', label: '24h', usedRatio: null, source: 'provider-api', confidence: 'low' },
+        ],
+      },
+    ]);
+    const answer = await computeAccountPick({ adapterId: 'codex' });
+    expect(answer.pick?.entryId).toBe('codex:b1');
+    expect(answer.excluded).toMatchObject([
+      { entryId: 'codex:b2', adapterId: 'codex', excludedReason: 'unknown-usage' },
+    ]);
+    // Só ids opacos e motivo — rótulo/e-mail nunca cruzam.
+    expect(JSON.stringify(answer)).not.toContain('reserva');
+  });
+
+  it('F-1292: excluída aparece mesmo sem elegível (não some sem motivo)', async () => {
+    setSnapshot([
+      {
+        id: 'claude:a1',
+        adapterId: 'claude',
+        accountId: 'a1',
+        label: 'Claude · main',
+        onCooldown: true,
+        windows: [
+          { kind: 'hours', label: '5h', usedRatio: 0.0, source: 'provider-api', confidence: 'high' },
+        ],
+      },
+    ]);
+    const answer = await computeAccountPick({ adapterId: 'claude' });
+    expect(answer.pick).toBeUndefined();
+    expect(answer.excluded).toMatchObject([
+      { entryId: 'claude:a1', excludedReason: 'cooldown' },
+    ]);
+  });
+
   it('nunca deixa Jev substituir o scorer — decidedBy é scorer quando há elegível', async () => {
     setSnapshot([
       {

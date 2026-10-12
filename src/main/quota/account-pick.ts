@@ -7,7 +7,7 @@
 
 import { listAccountInfos } from '../persistence/account-store';
 import type { QuotaFleetSnapshot } from '../../shared/quota-types';
-import type { RedlineRankingRow } from '../../shared/redline-types';
+import type { RedlineEntry, RedlineRankingRow } from '../../shared/redline-types';
 import { scoreFleet } from './smart-pick';
 
 export interface AccountPickRow {
@@ -26,12 +26,27 @@ export interface AccountPickRow {
   minutesToReset?: number;
 }
 
+export interface AccountPickExcluded {
+  entryId: string;
+  adapterId: string;
+  accountId?: string;
+  /** `account` = vault account; `cli` = login nativo da CLI. */
+  kind: 'account' | 'cli';
+  excludedReason: NonNullable<RedlineEntry['excludedReason']>;
+}
+
 export interface AccountPickAnswer {
   available: boolean;
   reason?: string;
   adapterId?: string;
   pick?: AccountPickRow;
   alternatives: AccountPickRow[];
+  /**
+   * F-1292: fora da disputa, COM o motivo (só ids opacos — nunca rótulo ou
+   * e-mail). Sem isso a conta em `unknown-usage`/cooldown sumia e o
+   * orquestrador não via o plano B.
+   */
+  excluded: AccountPickExcluded[];
   decidedBy: 'scorer' | 'unavailable';
   /** Idade da leitura: now − snapshot.updatedAt. */
   readingAgeMs?: number;
@@ -45,15 +60,36 @@ export interface ComputeAccountPickOptions {
   signal?: AbortSignal;
 }
 
+function entryKind(adapterId: string, entryId: string): 'account' | 'cli' {
+  const prefix = `${adapterId}:`;
+  return entryId.startsWith(prefix) && entryId.length > prefix.length
+    ? 'account'
+    : 'cli';
+}
+
+function toExcluded(
+  entry: RedlineEntry & { excludedReason: NonNullable<RedlineEntry['excludedReason']> },
+): AccountPickExcluded {
+  const kind = entryKind(entry.adapterId, entry.id);
+  return {
+    entryId: entry.id,
+    adapterId: entry.adapterId,
+    ...(kind === 'account'
+      ? { accountId: entry.id.slice(entry.adapterId.length + 1) }
+      : {}),
+    kind,
+    excludedReason: entry.excludedReason,
+  };
+}
+
 function toRow(row: RedlineRankingRow): AccountPickRow {
-  const prefix = `${row.adapterId}:`;
-  const isAccount =
-    row.entryId.startsWith(prefix) && row.entryId.length > prefix.length;
+  const kind = entryKind(row.adapterId, row.entryId);
+  const isAccount = kind === 'account';
   return {
     entryId: row.entryId,
     adapterId: row.adapterId,
-    ...(isAccount ? { accountId: row.entryId.slice(prefix.length) } : {}),
-    kind: isAccount ? 'account' : 'cli',
+    ...(isAccount ? { accountId: row.entryId.slice(row.adapterId.length + 1) } : {}),
+    kind,
     headroomPct: Math.round(row.headroom * 100),
     ...(row.decisiveWindow
       ? {
@@ -85,6 +121,7 @@ export async function computeAccountPick(
       available: false,
       reason: `quota service unavailable: ${(error as Error).message}`,
       alternatives: [],
+      excluded: [],
       decidedBy: 'unavailable',
     };
   }
@@ -94,14 +131,28 @@ export async function computeAccountPick(
       reason:
         'no quota snapshot yet — it populates once the fleet gauge is read (Settings → Uso e cotas) or the failover path runs',
       alternatives: [],
+      excluded: [],
       decidedBy: 'unavailable',
     };
   }
 
   const accounts = listAccountInfos();
-  const { ranking } = scoreFleet(snapshot.entries, accounts, now);
+  const { ranking, entries } = scoreFleet(snapshot.entries, accounts, now);
 
   const requested = opts.adapterId?.trim();
+  // F-1292: fora da disputa com o motivo — no escopo pedido (ou na frota).
+  const excluded = entries
+    .filter(
+      (
+        entry,
+      ): entry is
+        RedlineEntry & { excludedReason: NonNullable<RedlineEntry['excludedReason']> } =>
+        !entry.eligible &&
+        entry.excludedReason !== undefined &&
+        (!requested || entry.adapterId === requested),
+    )
+    .slice(0, 8)
+    .map(toExcluded);
   let rows: RedlineRankingRow[];
   let resolvedAdapter: string | undefined;
   if (requested) {
@@ -121,6 +172,7 @@ export async function computeAccountPick(
         ? `no eligible account for ${requested} (all exhausted, on cooldown, or without known usage)`
         : 'no eligible account in the fleet right now',
       alternatives: [],
+      excluded,
       decidedBy: 'scorer',
       readingAgeMs: Math.max(0, now - snapshot.updatedAt),
     };
@@ -133,6 +185,7 @@ export async function computeAccountPick(
     ...(resolvedAdapter ? { adapterId: resolvedAdapter } : {}),
     pick: toRow(winner),
     alternatives: rest.slice(0, 8).map((r) => toRow(r)),
+    excluded,
     decidedBy: 'scorer',
     readingAgeMs: Math.max(0, now - snapshot.updatedAt),
   };
