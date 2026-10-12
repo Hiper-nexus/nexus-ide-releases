@@ -26,6 +26,7 @@ vi.mock('../pty/pty-manager', () => ({
 }));
 
 import {
+  admissionIdleCandidates,
   initNonWorkerAutoClose,
   shutdownNonWorkerAutoClose,
   NON_WORKER_AUTO_CLOSE_TTL_MS,
@@ -764,5 +765,48 @@ describe('pane guardian (0.76.45): carência pós-acordar e gate cego', () => {
     await vi.advanceTimersByTimeAsync(31_000);
     expect(parked).toEqual([]);
     expect(closed).toHaveLength(0);
+  });
+});
+
+describe('F-1381: admissão só sugere fechar pane ocioso de verdade', () => {
+  const now = 10 * 60 * 60_000;
+  const min = 60_000;
+  const pane = (sessionId: string, state: 'idle' | 'busy' = 'idle') => ({
+    kind: 'cli-agent' as const,
+    state,
+    role: 'worker' as const,
+    paneId: `pane-${sessionId}`,
+    paneNumber: 3,
+    title: sessionId,
+    sessionId,
+  });
+  const guardianIdle = () => 39 * min;
+
+  it('TUI que segue emitindo saída no PTY não entra como "ocioso há 39 min"', () => {
+    // minimax-code em "Loading 5min1s · ⚡ 67.9 tok/s · … · Esc stop": a tela
+    // publicava idle, o guardião contava 39 min, mas o PTY tinha saída de 2 s.
+    const candidates = admissionIdleCandidates(
+      [pane('mcode')], now, guardianIdle, () => now - 2_000,
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  it('pane parado de verdade continua sugerido, com o tempo real sem saída', () => {
+    const candidates = admissionIdleCandidates(
+      [pane('quiet'), pane('recent-quiet')],
+      now,
+      guardianIdle,
+      (sessionId) => (sessionId === 'quiet' ? now - 50 * min : now - 5 * min),
+    );
+    expect(candidates.map((c) => [c.paneId, Math.round(c.idleForMs / min)])).toEqual([
+      ['pane-quiet', 39],
+      ['pane-recent-quiet', 5],
+    ]);
+  });
+
+  it('one-shot vivo (snapshot busy pelo F-1312) não é sugerido', () => {
+    expect(
+      admissionIdleCandidates([pane('agy', 'busy')], now, guardianIdle, () => undefined),
+    ).toEqual([]);
   });
 });

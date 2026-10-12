@@ -52,7 +52,10 @@ import {
   isUnderMemoryPressure,
   readPaneAdmissionLimits,
   registerPaneAdmissionAdvisor,
+  type IdlePaneCandidate,
 } from './pane-admission';
+import { paneSessionLastOutputAt } from './pane-session-output';
+import type { PaneSnapshot } from '../../shared/orch-types';
 
 /** 30 minutos de idle antes de auto-fechar um pane sem dono. */
 export const NON_WORKER_AUTO_CLOSE_TTL_MS = 30 * 60_000;
@@ -232,21 +235,52 @@ function productionDeps(): NonWorkerAutoCloseDeps {
     registerAdvisor: () =>
       registerPaneAdmissionAdvisor({
         idleCandidates: (now) =>
-          listPaneSnapshots()
-            .filter(
-              (pane) =>
-                pane.kind === 'cli-agent' &&
-                pane.state === 'idle' &&
-                pane.role !== 'orchestrator',
-            )
-            .map((pane) => ({
-              paneId: pane.paneId,
-              paneNumber: pane.paneNumber,
-              title: pane.title,
-              idleForMs: pane.sessionId ? getGuardianIdleForMs(pane.sessionId, now) : 0,
-            })),
+          admissionIdleCandidates(
+            listPaneSnapshots(),
+            now,
+            getGuardianIdleForMs,
+            paneSessionLastOutputAt,
+          ),
       }),
   };
+}
+
+/**
+ * F-1381: saída do PTY mais nova que isto (uma varredura do guardião) tira o
+ * pane da lista de "ociosos" da admissão.
+ */
+export const ADMISSION_IDLE_MIN_QUIET_MS = PANE_GUARDIAN_SWEEP_INTERVAL_MS;
+
+/**
+ * Panes que a recusa/aviso da admissão sugere fechar. O estado do snapshot já
+ * conta o one-shot vivo como busy (F-1312); o relógio de ocioso é o do
+ * guardião, limitado pela última saída real do PTY (F-1381): a detecção de
+ * tela pode publicar `idle` sobre um TUI que segue redesenhando.
+ */
+export function admissionIdleCandidates(
+  panes: readonly Pick<PaneSnapshot, 'kind' | 'state' | 'role' | 'paneId' | 'paneNumber' | 'title' | 'sessionId'>[],
+  now: number,
+  guardianIdleForMs: (sessionId: string, now: number) => number,
+  lastOutputAt: (sessionId: string) => number | undefined,
+): IdlePaneCandidate[] {
+  const candidates: IdlePaneCandidate[] = [];
+  for (const pane of panes) {
+    if (pane.kind !== 'cli-agent' || pane.state !== 'idle' || pane.role === 'orchestrator') continue;
+    let idleForMs = pane.sessionId ? guardianIdleForMs(pane.sessionId, now) : 0;
+    const outputAt = pane.sessionId ? lastOutputAt(pane.sessionId) : undefined;
+    if (outputAt !== undefined) {
+      const quietMs = Math.max(0, now - outputAt);
+      if (quietMs < ADMISSION_IDLE_MIN_QUIET_MS) continue;
+      idleForMs = Math.min(idleForMs, quietMs);
+    }
+    candidates.push({
+      paneId: pane.paneId,
+      paneNumber: pane.paneNumber,
+      title: pane.title,
+      idleForMs,
+    });
+  }
+  return candidates;
 }
 
 /**

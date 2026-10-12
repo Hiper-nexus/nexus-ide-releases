@@ -135,7 +135,10 @@ const outputGcTimer = setInterval(() => {
     for (const sessionId of [...buffers.keys()]) {
       await context.checkpoint();
       const buffer = buffers.get(sessionId);
-      if (buffer?.exited && (buffer.exitedAt ?? 0) < cutoff) buffers.delete(sessionId);
+      if (buffer?.exited && (buffer.exitedAt ?? 0) < cutoff) {
+        buffers.delete(sessionId);
+        lastOutputAtBySession.delete(sessionId);
+      }
     }
   }, { signal: gcController.signal, cadenceMs: 60_000 }).catch(() => undefined);
 }, 60_000);
@@ -147,7 +150,15 @@ export async function stopPaneSessionOutputGc(): Promise<void> {
   await stopPeriodicTask('pane-output-gc');
 }
 
+/** F-1381: quando o PTY de cada sessão emitiu saída pela última vez. */
+const lastOutputAtBySession = new Map<string, number>();
+
+export function paneSessionLastOutputAt(sessionId: string): number | undefined {
+  return lastOutputAtBySession.get(sessionId);
+}
+
 export function recordPaneSessionData(sessionId: string, data: string): void {
+  lastOutputAtBySession.set(sessionId, Date.now());
   let buffer = buffers.get(sessionId);
   if (!buffer) {
     buffer = { chunks: [], size: 0, exited: false };

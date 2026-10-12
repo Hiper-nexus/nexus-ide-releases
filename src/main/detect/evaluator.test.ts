@@ -293,6 +293,18 @@ describe('minimax-code (F-699): o mcode sem hooks é visto trabalhando pela tela
     expect(explain.matchedRule?.id).toBe('background_task_working');
   });
 
+  it('F-1381: turno em "Loading" (tok/s + Esc stop) também é working', () => {
+    // Pane s240-a2-inv, 12/10: a admissão o sugeriu como "ocioso há 39 min".
+    const screen = [
+      '  ✶ Loading 5min1s · ⚡ 67.9 tok/s · Option+Enter queue · Esc stop',
+      '  › Ask Mcode to do anything',
+      '  s240-a2-inv │ ⎇ fix/s240-a2 · wt │ Full access │ ✦ M3.1-Flash-Preview │ Ctx 91%',
+    ].join('\n');
+    const explain = evaluateManifest(minimax, input(screen));
+    expect(explain.state).toBe('working');
+    expect(explain.matchedRule?.id).toBe('turn_running_working');
+  });
+
   it('composer parado sem turno nem tarefa ativa não é working', () => {
     const screen = [
       '  Tasks · 8 results ready · /tasks details',
