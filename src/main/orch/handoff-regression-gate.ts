@@ -6,13 +6,14 @@
  * spawn), spawn da sessão e o checkout principal do projeto para dependências.
  * Nada vem do transporte ou do texto do agente.
  */
+import path from 'node:path';
 import type { Mission } from '../../shared/orch-types';
 import { executionScopeFor, type AgentGateContext } from './gate';
 import type { McpToolInvocation } from './mcp-protocol';
 import { missionExecutionBaseSha } from './mission-execution-scope';
 import { isolatedWriterBaseShaOfSession } from './isolated-writer-worktree';
 import { getSessionSpawnedAtMs } from '../pty/pty-manager';
-import { recordedEditsForSession } from './hook-edit-provenance';
+import { confineEditedPath, recordedEditsForSession } from './hook-edit-provenance';
 import {
   evaluateHandoffRegressionGate,
   type RegressionHandoffVerdict,
@@ -39,11 +40,19 @@ export function evaluateWriterHandoffRegression(
       baseSha = undefined;
     }
   }
+  // F-1283: caminho declarado absoluto dentro da raiz de execução vira
+  // relativo (realpath, mesmo confinamento da proveniência). O portão descarta
+  // caminho absoluto: na retomada de CLI sem PostToolUse, o arquivo que o
+  // próprio writer declarou passava por WIP alheio e a falha por herdada.
+  const root = execution.rootRealPath;
+  const declaredFiles = input.declaredFiles?.map((file) =>
+    path.isAbsolute(file) ? (confineEditedPath(root, root, file) ?? file) : file,
+  );
   return evaluateHandoffRegressionGate({
     sessionId: ctx.sessionId,
     scope: execution,
     projectScope: ctx.scope,
-    declaredFiles: input.declaredFiles,
+    declaredFiles,
     baseSha,
     // Sem base registrada: o HEAD no spawn é a base, e o WIP sujo antes do
     // spawn (operador, outro writer) não é cobrado de quem entrega.
