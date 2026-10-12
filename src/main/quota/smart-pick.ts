@@ -50,8 +50,9 @@ function exclusionReason(
   if (entry.readHint === 'auth-expired' || entry.readHint === 'identity-mismatch') return 'needs-relogin';
   if (entry.readHint === 'no-credential') return 'no-credential';
   if (entry.onCooldown) return 'cooldown';
+  // F-1416/F-1417: número de confiança baixa não é uso conhecido desta linha.
   const known = entry.windows.some(
-    (w) => w.usedRatio !== null && w.usedRatio !== undefined,
+    (w) => w.usedRatio !== null && w.usedRatio !== undefined && w.confidence !== 'low',
   );
   if (!known) return 'unknown-usage';
   return undefined;
@@ -63,6 +64,9 @@ function decisiveOf(
 ): { window: RedlineDecisiveWindow; headroom: number } | null {
   let worst: RedlineDecisiveWindow | null = null;
   for (const w of windows) {
+    // Revisão de segurança (MÉDIA): estimativa (`confidence: 'low'`) nunca
+    // decide folga nem esgotamento — nem no pick, nem no Redline.
+    if (w.confidence === 'low') continue;
     const eff = effectiveUsedRatio(w, now);
     if (eff === null) continue;
     if (!worst || eff > worst.effectiveUsedRatio) {
@@ -112,6 +116,7 @@ export function scoreFleet(
         label: w.label,
         usedRatio: entry.readHint === 'identity-mismatch' ? null : w.usedRatio,
         ...(w.resetsAt !== undefined ? { resetsAt: w.resetsAt } : {}),
+        ...(w.confidence === 'low' && w.usedRatio !== null ? { estimated: true as const } : {}),
       })),
       updatedAt: entry.updatedAt,
       eligible,

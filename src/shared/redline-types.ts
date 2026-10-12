@@ -39,6 +39,17 @@ export interface RedlineWindow {
   usedRatio: number | null;
   /** Epoch ms do reset, quando conhecido. */
   resetsAt?: number;
+  /**
+   * F-1416/F-1417: número de confiança baixa (ex.: Token Plan lido da sessão
+   * `bl` da máquina, não da credencial da linha). Exibido como estimado; não
+   * decide folga, esgotamento nem a barra de status.
+   */
+  estimated?: true;
+}
+
+/** Janelas medidas desta linha (sem as estimadas). */
+export function measuredRedlineWindows(windows: readonly RedlineWindow[]): RedlineWindow[] {
+  return windows.filter((window) => window.estimated !== true);
 }
 
 /** Janela decisiva: a que estoura primeiro já com o crédito de reset. */
@@ -114,7 +125,7 @@ export function selectRedlineStatusBarEntryIds(
   entries: readonly RedlineEntry[],
 ): string[] {
   return [...entries]
-    .filter((entry) => peakUsedRatio(entry.windows) != null)
+    .filter((entry) => peakUsedRatio(measuredRedlineWindows(entry.windows)) != null)
     .sort(compareEntriesByConsumption)
     .slice(0, REDLINE_STATUS_BAR_MAX)
     .map((entry) => entry.id);

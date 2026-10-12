@@ -227,7 +227,8 @@ export function worstBarWindow(entries: readonly RedlineEntry[]): WorstWindow | 
   let worst: WorstWindow | null = null;
   for (const entry of entries) {
     for (const window of entry.windows) {
-      if (!BAR_KINDS.has(window.kind) || window.usedRatio === null) continue;
+      // Estimativa (sessão da máquina, não a credencial da linha) não é o pior consumo medido.
+      if (!BAR_KINDS.has(window.kind) || window.usedRatio === null || window.estimated) continue;
       if (worst === null || window.usedRatio > worst.usedRatio) {
         worst = { entry, window, usedRatio: window.usedRatio };
       }
@@ -280,7 +281,8 @@ function windowLine(window: RedlineWindow, nowMs: number): string {
     return `${INDENT}${label} ${barsText(null)} ${DASH}${SEP}sem leitura`;
   }
   const reset = resetText(window.resetsAt, nowMs);
-  return `${INDENT}${label} ${barsText(window.usedRatio)} ${pctText(window.usedRatio)}${reset === '' ? '' : `${SEP}${reset}`}`;
+  const estimated = window.estimated ? `${SEP}estimado` : '';
+  return `${INDENT}${label} ${barsText(window.usedRatio)} ${pctText(window.usedRatio)}${estimated}${reset === '' ? '' : `${SEP}${reset}`}`;
 }
 
 function accountBlock(

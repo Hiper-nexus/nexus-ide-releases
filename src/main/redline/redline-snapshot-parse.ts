@@ -133,6 +133,7 @@ function readWindow(raw: unknown): RedlineWindow | null {
     usedRatio: readRatio(raw.usedRatio),
   };
   if (isFiniteNumber(raw.resetsAt) && raw.resetsAt > 0) window.resetsAt = raw.resetsAt;
+  if (raw.estimated === true && window.usedRatio !== null) window.estimated = true;
   return window;
 }
 

@@ -22,6 +22,7 @@ import {
   REDLINE_REFRESH_FILENAME,
   REDLINE_SNAPSHOT_FILENAME,
   REDLINE_SNAPSHOT_FORMAT_VERSION,
+  measuredRedlineWindows,
   selectRedlineStatusBarEntryIds,
   type RedlineSnapshotFile,
 } from '../../shared/redline-types';
@@ -55,7 +56,7 @@ export function buildRedlineSnapshotFile(
   const entries = scored.entries
     .filter((entry) => shown.has(entry.id))
     .sort(compareEntriesByConsumption);
-  const ratios = entries.flatMap((entry) => entry.windows.map((window) => window.usedRatio))
+  const ratios = entries.flatMap((entry) => measuredRedlineWindows(entry.windows).map((window) => window.usedRatio))
     .filter((ratio): ratio is number => ratio !== null);
   return {
     formatVersion: REDLINE_SNAPSHOT_FORMAT_VERSION,
