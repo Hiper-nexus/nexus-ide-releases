@@ -1074,6 +1074,27 @@ describe('F-980/F-981: writers paralelos da aba isolada e cwd em outra worktree'
     expect(h.spawn).toHaveBeenCalledTimes(2);
   });
 
+  it('F-1327: sonda readOnly com cwd de worktree aninhada ganha escopo de execução na worktree', async () => {
+    const root = ctx.scope.rootRealPath;
+    const nested = path.join(root, '.harvest', 'w1');
+    git(root, 'worktree', 'add', '-q', '-b', 'harvest/w1', nested);
+    const receipt = await paneSpawnTool.handler({ agentName: 'Executor', readOnly: true, cwd: nested }, ctx) as Record<string, any>;
+    expect(receipt.executionMode).toBe('same_checkout');
+    expect(receipt.isolatedWorktree).toBeUndefined();
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ cwd: nested, readOnly: true });
+    expect(h.spawn.mock.calls[0][0].executionScope.rootRealPath).toBe(nested);
+  });
+
+  it('F-1327: sonda readOnly da mão do operador com cwd de worktree aninhada também ganha o escopo dela', async () => {
+    const root = ctx.scope.rootRealPath;
+    const nested = path.join(root, '.harvest', 'w1');
+    git(root, 'worktree', 'add', '-q', '-b', 'harvest/w1', nested);
+    const operator = { ...ctx, role: 'user' as const, missionId: undefined, sessionId: 'op-session' };
+    await paneSpawnTool.handler({ adapterId: 'codex', readOnly: true, cwd: nested }, operator);
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ cwd: nested, readOnly: true });
+    expect(h.spawn.mock.calls[0][0].executionScope.rootRealPath).toBe(nested);
+  });
+
   it('F-981: o cwd do worker de missão é honrado dentro do checkout e recusado fora — nunca descartado em silêncio', async () => {
     const root = ctx.scope.rootRealPath;
     fs.mkdirSync(path.join(root, 'sub'));

@@ -1855,9 +1855,18 @@ const paneSpawnAfterTabMission = {
         recoveryWorktree(undefined);
       if (resumed) {
         isolatedWriter = resumed;
-      } else if (options.readOnly !== true) {
+      } else if (options.readOnly === true) {
+        // F-1327: o cwd de worktree aninhada vale como escopo de execução
+        // também para panes readOnly. Sem claim de writer, sem disputa de
+        // vez e sem worktree isolada: só leitura continua só leitura.
+        const nested = args.isolatedWriter !== true
+          ? await nestedWorktreeExecution(callerExecutionScope, options.cwd)
+          : undefined;
+        if (nested) options = { ...options, executionScope: nested.scope, cwd: nested.cwd };
+      } else {
         // F-981: cwd na raiz de outra worktree Git deste repositório roda lá,
         // sem disputar a vez com os writers do checkout.
+        // (O ramo readOnly === true acima já saiu; aqui readOnly !== true.)
         const nested = args.isolatedWriter !== true
           ? await nestedWorktreeExecution(callerExecutionScope, options.cwd)
           : undefined;
@@ -2206,7 +2215,9 @@ const paneSpawnAfterTabMission = {
             options.readOnly === true || options.executionMode === 'read_only';
           // F-981: o guard olha a worktree Git REAL do pane — cwd na raiz de
           // outra worktree deste repositório roda lá, em escopo próprio.
-          const nested = !spawnReadOnly && args.isolatedWriter !== true
+          // F-1327: vale também para panes readOnly (só leitura continua só
+          // leitura — o claim de writer segue vetado para eles abaixo).
+          const nested = args.isolatedWriter !== true
             ? await nestedWorktreeExecution(callerExecutionScope, options.cwd)
             : undefined;
           const writerExecutionScope = nested?.scope ?? callerExecutionScope;
