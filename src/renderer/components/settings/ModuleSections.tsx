@@ -81,43 +81,8 @@ export function TerminalSection() {
     <section className="sys-section">
       <SettingsSectionTitle>Terminal</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Ajuste o texto e o funcionamento dos terminais. As cores ficam em Aparência.
+        Ajuste o funcionamento dos terminais. Fontes e cores ficam em Aparência.
       </p>
-
-      <div className="sys-group">
-        <div className="sys-group__head">
-          <div className="sys-group__titles">
-            <h3 className="sys-group__title">Texto</h3>
-            <p className="sys-group__hint">
-              Fonte e tamanho aplicados a todos os terminais.
-            </p>
-          </div>
-        </div>
-        <div className="sys-group__body">
-          <label className="settings-field">
-            Fonte (vazio = padrão do sistema)
-            <input
-              className="settings-input"
-              value={terminal.fontFamily}
-              placeholder='ex.: "JetBrains Mono", monospace'
-              onChange={(e) => void update({ fontFamily: e.target.value })}
-            />
-          </label>
-
-          <label className="settings-field">
-            Tamanho da fonte:{' '}
-            <span className="sys-range-value">{terminal.fontSize}px</span>
-            <input
-              className="settings-range"
-              type="range"
-              min={9}
-              max={24}
-              value={terminal.fontSize}
-              onChange={(e) => void update({ fontSize: Number(e.target.value) })}
-            />
-          </label>
-        </div>
-      </div>
 
       <div className="sys-group">
         <div className="sys-group__head">

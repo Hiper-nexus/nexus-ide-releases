@@ -3,6 +3,7 @@ import type { UpdateState } from '../../shared/update-ipc';
 import { CURRENT_RELEASE } from '../../shared/release-notes';
 import { OverlayLayer } from '../overlay/overlay-layer';
 import { CloseButton } from './CloseButton';
+import { UpdateEverythingDialog } from './UpdateEverythingDialog';
 
 /** Estado mínimo offline: versão visível, sem funcionalidade de update. */
 const OFFLINE_UPDATE_STATE: UpdateState = {
@@ -228,6 +229,7 @@ export function UpdateModal({ state, onClose }: Props) {
   const { phase, currentVersion, available, error, checkedAt, manual } = state;
   const busy = phase === 'checking' || phase === 'downloading';
   const [copied, setCopied] = useState(false);
+  const [showEverything, setShowEverything] = useState(false);
   const copyManualCommand = () => {
     if (!manual) return;
     void navigator.clipboard
@@ -395,9 +397,43 @@ export function UpdateModal({ state, onClose }: Props) {
           >
             {phase === 'checking' ? 'Verificando…' : 'Verificar agora'}
           </button>
+          <button
+            type="button"
+            className="update-modal__btn"
+            disabled={busy}
+            onClick={() => setShowEverything(true)}
+            title="Atualiza as CLIs dos providers e este app numa passada só"
+          >
+            Atualizar tudo…
+          </button>
         </div>
       </div>
       </div>
+      {showEverything && (
+        <UpdateEverythingDialog
+          localVersion={available?.version ?? null}
+          // NUNCA baixar em paralelo com os providers: o `install()` do
+          // Squirrel não é só download — o `update-downloaded` abre diálogo
+          // com quitAndInstall e reinicia no meio da passada. O app entra
+          // só DEPOIS das CLIs (installLocal).
+          canDownloadLocal={false}
+          canInstallLocal={phase === 'ready' || Boolean(state.canInstall)}
+          installLocal={
+            window.nexus?.update
+              ? async () => {
+                  if (phase === 'ready') {
+                    await window.nexus.update.restart();
+                    return;
+                  }
+                  // Download + prepare; o diálogo nativo de "Reiniciar agora"
+                  // só aparece quando as CLIs já terminaram.
+                  await window.nexus.update.install();
+                }
+              : undefined
+          }
+          onClose={() => setShowEverything(false)}
+        />
+      )}
     </OverlayLayer>
   );
 }

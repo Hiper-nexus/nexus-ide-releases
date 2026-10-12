@@ -1,10 +1,16 @@
 import { useRef, useState } from 'react';
 import {
+  MAX_CODE_FONT_SIZE,
+  MIN_CODE_FONT_SIZE,
+  MAX_INTERFACE_FONT_SIZE,
+  MIN_INTERFACE_FONT_SIZE,
+} from '../../styles/appearance-fonts';
+import {
   TERMINAL_THEME_IDS,
   type TerminalThemeId,
 } from '../../../shared/settings-types';
 import { TERMINAL_THEMES } from '../../styles/terminal-theme';
-import { PALETTES, type UiPalette } from '../../styles/ui-theme';
+import { PALETTES, applyUiTheme, type UiPalette } from '../../styles/ui-theme';
 import {
   MAX_VSCODE_THEME_CHARS,
   parseVsCodeThemeText,
@@ -14,13 +20,16 @@ import { useSettingsStore } from '../../state/settings-store';
 import { OperatorSprite } from '../OperatorSprite';
 import { PixelIcon } from '../PixelIcon';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { FontFamilyPicker, FontSizePicker } from './FontFamilyPicker';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { ThemeEditorPanel } from './ThemeEditorPanel';
 
 /**
- * Aparência global: paleta do app (tema), modo pixel (identidade retrô) e
- * atalho para o mascote de mesa. O tema restyla toda a UI via applyUiTheme —
- * fonte/shell do xterm ficam em Terminal. Temas do VS Code importados entram
- * na mesma grade, persistidos em `ui.importedThemes`.
+ * Aparência global: paleta do app (tema), fontes (interface/código/terminal),
+ * modo pixel (identidade retrô) e atalho para o mascote de mesa. O tema
+ * restyla toda a UI via applyUiTheme; as fontes aplicam `--font-ui` /
+ * `--font-mono` e o xterm (terminal.fontFamily/fontSize). Temas do VS Code
+ * importados entram na mesma grade, persistidos em `ui.importedThemes`.
  */
 
 function ThemeCard({
@@ -99,6 +108,7 @@ export function AppearanceSection() {
   const updateUi = useSettingsStore((s) => s.updateUi);
   const fileRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [editingTheme, setEditingTheme] = useState(false);
   const activeImported = ui.importedThemes.find(
     (theme) => theme.id === ui.activeImportedThemeId,
   );
@@ -184,6 +194,13 @@ export function AppearanceSection() {
           >
             Importar tema do VS Code
           </button>
+          <button
+            type="button"
+            className="settings-btn"
+            onClick={() => setEditingTheme((v) => !v)}
+          >
+            {editingTheme ? 'Fechar editor' : 'Criar tema…'}
+          </button>
           {activeImported ? (
             <button
               type="button"
@@ -205,6 +222,25 @@ export function AppearanceSection() {
             }}
           />
         </div>
+        {editingTheme && (
+          <ThemeEditorPanel
+            themeId={terminal.themeId}
+            activeImported={activeImported ?? null}
+            onSave={(theme) => {
+              void updateUi({
+                importedThemes: upsertImportedTheme(ui.importedThemes, theme),
+                activeImportedThemeId: theme.id,
+              }).then(() => setEditingTheme(false));
+            }}
+            onClose={() => {
+              setEditingTheme(false);
+              applyUiTheme(
+                terminal.themeId,
+                activeImported ?? null,
+              );
+            }}
+          />
+        )}
         <p className="settings-field__note settings-appearance__note">
           Use o arquivo <code>*-color-theme.json</code> da extensão. O Nexus
           ajusta o contraste para leitura e mantém o botão principal neutro.
@@ -214,6 +250,63 @@ export function AppearanceSection() {
             {importError}
           </p>
         ) : null}
+      </div>
+
+      <div className="settings-appearance__block">
+        <p className="settings-appearance__label">Fontes</p>
+        <p className="settings-field__note settings-appearance__note">
+          Interface, código e terminal têm preferências separadas. Uma família
+          escolhida entra à frente do stack padrão — a cobertura de glifos do
+          app nunca regride.
+        </p>
+        <div className="settings-font-grid">
+          <FontFamilyPicker
+            id="appearance-interface"
+            label="Interface"
+            defaultLabel="Inter"
+            value={ui.interfaceFontFamily}
+            onChange={(family) => void updateUi({ interfaceFontFamily: family })}
+          />
+          <FontSizePicker
+            id="appearance-interface"
+            label="Tamanho da interface"
+            value={ui.interfaceFontSize}
+            min={MIN_INTERFACE_FONT_SIZE}
+            max={MAX_INTERFACE_FONT_SIZE}
+            onChange={(size) => void updateUi({ interfaceFontSize: size })}
+          />
+          <FontFamilyPicker
+            id="appearance-code"
+            label="Código"
+            defaultLabel="JetBrains Mono"
+            value={ui.codeFontFamily}
+            onChange={(family) => void updateUi({ codeFontFamily: family })}
+          />
+          <FontSizePicker
+            id="appearance-code"
+            label="Tamanho do código"
+            value={ui.codeFontSize}
+            min={MIN_CODE_FONT_SIZE}
+            max={MAX_CODE_FONT_SIZE}
+            onChange={(size) => void updateUi({ codeFontSize: size })}
+          />
+          <FontFamilyPicker
+            id="appearance-terminal"
+            label="Terminal"
+            defaultLabel="JetBrains Mono"
+            value={terminal.fontFamily}
+            onChange={(family) => void updateTerminal({ fontFamily: family })}
+            note="Aplicado a todos os terminais abertos e aos novos."
+          />
+          <FontSizePicker
+            id="appearance-terminal"
+            label="Tamanho do terminal"
+            value={terminal.fontSize}
+            min={9}
+            max={24}
+            onChange={(size) => void updateTerminal({ fontSize: size })}
+          />
+        </div>
       </div>
 
       <div className="settings-appearance__block">

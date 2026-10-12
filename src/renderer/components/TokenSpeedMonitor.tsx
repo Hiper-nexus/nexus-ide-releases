@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { formatCompactTokens } from '../../shared/compact-tokens'
 import {
   TOKEN_SPEED_EMPTY_LABEL,
   modelLabel,
@@ -34,9 +35,7 @@ export function formatMs(value: number | null): string {
 }
 
 export function formatTokens(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return TOKEN_SPEED_EMPTY_LABEL
-  if (value < 10_000) return String(Math.round(value))
-  return `${(value / 1_000).toFixed(1)}k`
+  return formatCompactTokens(value, TOKEN_SPEED_EMPTY_LABEL)
 }
 
 export function formatClock(epochMs: number | null): string {

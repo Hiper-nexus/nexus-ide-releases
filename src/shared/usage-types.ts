@@ -41,6 +41,11 @@ export interface PaneUsage {
   outputTokens: number;
   cacheReadTokens: number;
   turns: number;
+  /**
+   * Preenchimento da janela de contexto na última rodada (input + cache_read
+   * do evento mais recente). `null` sem leitura — métrica ausente nunca é 0.
+   */
+  lastContextTokens?: number | null;
   source: 'real';
 }
 

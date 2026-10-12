@@ -513,3 +513,69 @@ describe.skipIf(!sqliteAvailable)('ScopedUsageStore', () => {
     expect(() => store.record('claude', usage())).toThrow(/read-only/i);
   });
 });
+
+// lastContextTokens: o que o modelo viu NA ÚLTIMA rodada (input + cache_read),
+// nunca a soma da sessão — é o que o medidor de janela de contexto mostra.
+describe.skipIf(!sqliteAvailable)('totalsByPane lastContextTokens', () => {
+  it('usa o evento mais recente do pane e ignora a soma', () => {
+    const { baseDir, scope } = fixture();
+    const runtimeManager = manager(baseDir);
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const mission = missions.create({ title: 'Ctx' });
+    createScopedMissionPaneStore(runtimeManager, scope).record({
+      missionId: mission.id,
+      adapterId: 'claude',
+      title: 'Worker',
+      paneId: 'pane-ctx',
+    });
+    const store = createScopedUsageStore(runtimeManager, scope);
+    store.record(
+      'claude',
+      usage({
+        paneId: 'pane-ctx',
+        missionId: mission.id,
+        messageId: 'm1',
+        inputTokens: 40_000,
+        cacheReadTokens: 10_000,
+        timestamp: 1_700_000_000_000,
+      }),
+    );
+    store.record(
+      'claude',
+      usage({
+        paneId: 'pane-ctx',
+        missionId: mission.id,
+        messageId: 'm2',
+        inputTokens: 50_000,
+        cacheReadTokens: 20_000,
+        timestamp: 1_700_000_100_000,
+      }),
+    );
+
+    const rows = store.totalsByPane();
+    const row = rows.find((r) => r.paneId === 'pane-ctx');
+    // Soma seria 120k; o contexto da última rodada é 70k.
+    expect(row?.lastContextTokens).toBe(70_000);
+    expect(row?.inputTokens).toBe(90_000);
+  });
+
+  it('sem evento de contexto → lastContextTokens null (nunca 0 confiante)', () => {
+    const { baseDir, scope } = fixture();
+    const runtimeManager = manager(baseDir);
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const mission = missions.create({ title: 'Ctx vazio' });
+    createScopedMissionPaneStore(runtimeManager, scope).record({
+      missionId: mission.id,
+      adapterId: 'claude',
+      title: 'Worker',
+      paneId: 'pane-sem-ctx',
+    });
+    const store = createScopedUsageStore(runtimeManager, scope);
+    // Evento sem cache_read e com input 0 ainda é leitura; o caso "sem
+    // leitura" é a ausência total de evento de token para o pane.
+    expect(store.totalsByPane()).toEqual([]);
+    // E o Map sem linha devolve undefined → null no snapshot da UI.
+    const row = store.totalsByPane().find((r) => r.paneId === 'pane-sem-ctx');
+    expect(row?.lastContextTokens ?? null).toBeNull();
+  });
+});

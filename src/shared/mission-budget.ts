@@ -5,6 +5,7 @@
 
 import type { Mission } from './orch-types';
 import type { MissionIntentContract } from './mission-intent';
+import { formatCompactTokens } from './compact-tokens';
 
 export interface MissionBudgetSnapshot {
   readonly missionId: string;
@@ -25,9 +26,7 @@ export interface MissionBudgetSnapshot {
 }
 
 function formatTok(n: number): string {
-  if (n < 1_000) return String(n);
-  if (n < 10_000) return `${(n / 1_000).toFixed(1)}k`;
-  return `${Math.round(n / 1_000)}k`;
+  return formatCompactTokens(n, '0');
 }
 
 export function summarizeMissionBudget(

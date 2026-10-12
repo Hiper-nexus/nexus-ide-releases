@@ -109,6 +109,9 @@ export function PaneInteractionSurface({
   return (
     <div
       className={`${className}${skillDragActive ? " pane--skill-target" : ""}`}
+      // F-572: alvo de scroll do `revealPaneTerminal` (revelar pane existente
+      // em vez de nascer outro PTY).
+      data-pane-id={pane.id}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();

@@ -228,6 +228,7 @@ function paneUsage(row: ReturnType<ProjectUsageStoreSuite['usage']['totalsByPane
     outputTokens: row.outputTokens,
     cacheReadTokens: row.cacheReadTokens,
     turns: row.turns,
+    lastContextTokens: row.lastContextTokens,
     source: 'real',
   };
 }

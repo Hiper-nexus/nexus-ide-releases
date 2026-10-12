@@ -239,7 +239,7 @@ beforeEach(() => {
     configurable: true,
     writable: true,
     value: {
-      app: { onDeepOpenPath: vi.fn(() => vi.fn()), onDeepOpenQuota: vi.fn(() => vi.fn()), onShotFilesReceived: vi.fn(() => vi.fn()) },
+      app: { onDeepOpenPath: vi.fn(() => vi.fn()), onDeepOpenQuota: vi.fn(() => vi.fn()), onDeepOpenNew: vi.fn(() => vi.fn()), onShotFilesReceived: vi.fn(() => vi.fn()) },
       billing: {
         onChanged: vi.fn(() => vi.fn()),
         get: vi.fn(async () => ({ ...DEFAULT_LICENSE, plan: 'pro', status: 'active', access: 'pro', verified: true, canUseApp: true, blockedReason: null, expiresAt: new Date(Date.now() + 3600000).toISOString(), limits: { maxAgents: null, cloudSync: true } })),

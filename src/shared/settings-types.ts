@@ -500,8 +500,13 @@ function hexRecordSchema<K extends string>(keys: readonly K[]) {
 export const MAX_IMPORTED_THEMES = 24;
 
 export const importedThemeSchema = z.object({
-  /** `vscode-` + slug estável do nome: reimportar substitui, não duplica. */
-  id: z.string().regex(/^vscode-[a-z0-9][a-z0-9-]{0,47}$/),
+  /**
+   * `vscode-` + slug estável (reimportar substitui) ou `custom-` + slug do
+   * editor de temas. Reimportar/substituir nunca duplica.
+   */
+  id: z
+    .string()
+    .regex(/^(?:vscode|custom)-[a-z0-9][a-z0-9-]{0,47}$/),
   label: z.string().trim().min(1).max(48),
   appearance: z.enum(['dark', 'light']),
   ui: hexRecordSchema(IMPORTED_UI_PALETTE_KEYS),
@@ -527,6 +532,18 @@ export const uiSettingsSchema = z.object({
   /** Cantos retos, VT323 como --font-ui, antialias desligado (data-theme-pixel). */
   pixelMode: z.boolean().default(false),
   /**
+   * Família custom da interface (sans). Vazio = stack padrão de `--font-ui`.
+   * O valor é aplicado como prefixo do stack em appearance-fonts (cobertura
+   * de glifos nunca regride). O terminal tem a própria em `terminal.fontFamily`.
+   */
+  interfaceFontFamily: z.string().max(256).default(''),
+  /** Família custom do código (mono de UI). Vazio = stack padrão de `--font-mono`. */
+  codeFontFamily: z.string().max(256).default(''),
+  /** Escala da tipografia da interface (rampa `--text-*`). */
+  interfaceFontSize: z.number().int().min(11).max(20).default(13),
+  /** Tamanho do mono de UI (`--font-size-code`). Terminal usa `terminal.fontSize`. */
+  codeFontSize: z.number().int().min(9).max(24).default(13),
+  /**
    * Leitura tolerante: um tema corrompido no arquivo cai sozinho, sem levar
    * junto o modo pixel nem os demais temas.
    */
@@ -551,6 +568,10 @@ export const DEFAULT_UI_SETTINGS: UiSettings = uiSettingsSchema.parse({});
 
 export const uiSettingsPatchSchema = z.object({
   pixelMode: z.boolean().optional(),
+  interfaceFontFamily: z.string().max(256).optional(),
+  codeFontFamily: z.string().max(256).optional(),
+  interfaceFontSize: z.number().int().min(11).max(20).optional(),
+  codeFontSize: z.number().int().min(9).max(24).optional(),
   importedThemes: z
     .array(importedThemeSchema)
     .max(MAX_IMPORTED_THEMES)

@@ -7,6 +7,8 @@ const harness = vi.hoisted(() => ({
   bindPaneMission: vi.fn(),
   markPersistedAuthorityOnSpawn: vi.fn(),
   waitForSession: vi.fn(),
+  getPaneSessionId: vi.fn((_paneId: string): string | null => null),
+  revealPaneTerminal: vi.fn(() => ({ action: 'reveal' as const, paneId: 'x' })),
   paneMissions: {} as Record<string, string>,
   layoutPanes: [] as Array<Record<string, unknown>>,
 }));
@@ -38,6 +40,24 @@ vi.mock('../lib/split-tree', () => ({
 vi.mock('../terminal/terminal-host', () => ({
   markPersistedAuthorityOnSpawn: harness.markPersistedAuthorityOnSpawn,
   waitForSession: harness.waitForSession,
+  getPaneSessionId: harness.getPaneSessionId,
+}));
+
+// F-572: o reveal é efeito — a decisão pura já está em reveal-pane-terminal.test.
+vi.mock('../lib/reveal-pane-terminal', () => ({
+  findPaneOwningAgentSession: (
+    panes: Array<{ id: string }>,
+    sessionIdOf: (paneId: string) => string | null,
+    agentSessionId: string,
+    isPaneSessionLive?: (paneId: string) => boolean,
+  ) => {
+    const live = isPaneSessionLive ?? (() => true);
+    const matches = panes.filter(
+      (pane) => sessionIdOf(pane.id) === agentSessionId && live(pane.id),
+    );
+    return matches.length === 1 ? matches[0]! : null;
+  },
+  revealPaneTerminal: harness.revealPaneTerminal,
 }));
 
 import { presentMainOwnedMissionPane } from './mission-pane-presentation';
@@ -56,6 +76,11 @@ const sealed = {
 describe('presentMainOwnedMissionPane', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    harness.getPaneSessionId.mockImplementation(() => null);
+    harness.revealPaneTerminal.mockReturnValue({
+      action: 'reveal',
+      paneId: 'x',
+    });
     harness.paneMissions = {
       'pane-old': 'mission-a',
       'pane-other': 'mission-other',
@@ -177,5 +202,39 @@ describe('presentMainOwnedMissionPane', () => {
       ok: false,
       error: expect.stringMatching(/sessão diferente/i),
     });
+  });
+
+  it('F-572: revela o pane que já possui a sessão selada em vez de montar outro', async () => {
+    harness.layoutPanes = [
+      {
+        id: 'pane-live',
+        kind: 'cli-agent',
+        missionId: 'mission-a',
+        role: 'orchestrator',
+      },
+    ];
+    harness.getPaneSessionId.mockImplementation((paneId: string) =>
+      paneId === 'pane-live' ? 'session-new' : null,
+    );
+    harness.revealPaneTerminal.mockReturnValue({
+      action: 'reveal',
+      paneId: 'pane-live',
+    });
+
+    const result = await presentMainOwnedMissionPane(
+      'mission-a',
+      sealed,
+      {},
+      { waitForSession: harness.waitForSession },
+    );
+
+    expect(result).toMatchObject({ ok: true, pane: { id: 'pane-live' } });
+    expect(harness.revealPaneTerminal).toHaveBeenCalledWith({
+      kind: 'pane',
+      paneId: 'pane-live',
+    });
+    expect(harness.setPanes).not.toHaveBeenCalled();
+    expect(harness.markPersistedAuthorityOnSpawn).not.toHaveBeenCalled();
+    expect(harness.waitForSession).not.toHaveBeenCalled();
   });
 });

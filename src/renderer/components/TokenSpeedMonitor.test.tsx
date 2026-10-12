@@ -77,7 +77,9 @@ describe('formatadores', () => {
     expect(formatMs(5_200)).toBe('5.2 s')
     expect(formatTokens(null)).toBe('—')
     expect(formatTokens(403)).toBe('403')
-    expect(formatTokens(12_400)).toBe('12.4k')
+    expect(formatTokens(12_400)).toBe('12k')
+    expect(formatTokens(999_499)).toBe('999k')
+    expect(formatTokens(1_100_000)).toBe('1.1m')
   })
 })
 

@@ -14,6 +14,7 @@ import { buildPtySpawnRequest } from './spawn-request';
 import type { TerminalSettings } from '../../shared/settings-types';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
 import { CSI_SEQUENCE_PATTERN } from '../../shared/ansi-escape-sequences';
+import { appearanceFontStack } from '../styles/appearance-fonts';
 import {
   setRestoredPanesHandler,
   setTerminalSnapshotProvider,
@@ -552,9 +553,9 @@ let currentSettings: TerminalSettings = DEFAULT_TERMINAL_SETTINGS;
 let importedTheme: ITheme | null = null;
 
 function fontFamilyOf(settings: TerminalSettings): string {
-  return settings.fontFamily.trim() !== ''
-    ? settings.fontFamily
-    : DEFAULT_FONT_STACK;
+  // Custom terminal families are prepended to the shared mono stack so glyph
+  // coverage never regresses (same rule as --font-ui / --font-mono).
+  return appearanceFontStack(settings.fontFamily, DEFAULT_FONT_STACK);
 }
 
 function themeOf(settings: TerminalSettings): ITheme {

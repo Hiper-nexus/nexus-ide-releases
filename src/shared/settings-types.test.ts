@@ -3,12 +3,15 @@ import {
   DEFAULT_AUDIO_SETTINGS,
   DEFAULT_ORCH_SETTINGS,
   DEFAULT_TERMINAL_SETTINGS,
+  DEFAULT_UI_SETTINGS,
   TERMINAL_THEME_IDS,
   audioSettingsPatchSchema,
   audioSettingsSchema,
   orchSettingsSchema,
   terminalSettingsPatchSchema,
   terminalSettingsSchema,
+  uiSettingsPatchSchema,
+  uiSettingsSchema,
 } from './settings-types';
 
 describe('terminalSettingsSchema', () => {
@@ -172,5 +175,40 @@ describe('orchSettingsSchema', () => {
     expect(
       orchSettingsSchema.safeParse({ defaultAccountId: 'x'.repeat(129) }).success,
     ).toBe(false);
+  });
+});
+
+describe('uiSettingsSchema font preferences', () => {
+  it('defaults interface/code families to the shared stacks and sizes to 13px', () => {
+    expect(DEFAULT_UI_SETTINGS.interfaceFontFamily).toBe('');
+    expect(DEFAULT_UI_SETTINGS.codeFontFamily).toBe('');
+    expect(DEFAULT_UI_SETTINGS.interfaceFontSize).toBe(13);
+    expect(DEFAULT_UI_SETTINGS.codeFontSize).toBe(13);
+    expect(uiSettingsSchema.parse({}).interfaceFontFamily).toBe('');
+  });
+
+  it('bounds interface and code font sizes', () => {
+    expect(uiSettingsSchema.safeParse({ interfaceFontSize: 10 }).success).toBe(false);
+    expect(uiSettingsSchema.safeParse({ interfaceFontSize: 21 }).success).toBe(false);
+    expect(uiSettingsSchema.safeParse({ codeFontSize: 8 }).success).toBe(false);
+    expect(uiSettingsSchema.safeParse({ codeFontSize: 25 }).success).toBe(false);
+    expect(
+      uiSettingsSchema.safeParse({ interfaceFontSize: 16, codeFontSize: 15 }).success,
+    ).toBe(true);
+  });
+
+  it('keeps font patches partial without defaults bleeding in', () => {
+    expect(
+      uiSettingsPatchSchema.parse({ interfaceFontFamily: 'Inter Tight' }),
+    ).toEqual({ interfaceFontFamily: 'Inter Tight' });
+  });
+
+  it('caps custom family strings', () => {
+    expect(
+      uiSettingsSchema.safeParse({ codeFontFamily: 'x'.repeat(257) }).success,
+    ).toBe(false);
+    expect(
+      uiSettingsSchema.safeParse({ codeFontFamily: 'Fira Code' }).success,
+    ).toBe(true);
   });
 });

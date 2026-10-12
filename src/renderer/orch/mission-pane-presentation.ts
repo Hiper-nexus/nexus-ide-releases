@@ -4,9 +4,14 @@ import { createPane, listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import {
+  getPaneSessionId,
   markPersistedAuthorityOnSpawn,
   waitForSession,
 } from '../terminal/terminal-host';
+import {
+  findPaneOwningAgentSession,
+  revealPaneTerminal,
+} from '../lib/reveal-pane-terminal';
 
 export interface PresentMainOwnedMissionPaneResult {
   readonly ok: boolean;
@@ -76,6 +81,28 @@ export async function presentMainOwnedMissionPane(
   const orch = useOrchStore.getState();
   const existing = listPanes(layout.root);
   const removePaneIds = options.removePaneIds ?? new Set<string>();
+
+  // F-572: a sessão SELADA já tem pane vivo? Revela o dono — nunca monta um
+  // segundo PTY para o mesmo trabalho. O soft-focus do reopen cobre o caso
+  // "todas as specs já vivas"; aqui a autoridade Main traz a sessão exata.
+  const alreadyOwning = findPaneOwningAgentSession(
+    existing,
+    (paneId) => getPaneSessionId(paneId),
+    sealed.sessionId,
+  );
+  if (alreadyOwning && !removePaneIds.has(alreadyOwning.id)) {
+    const revealed = revealPaneTerminal({
+      kind: 'pane',
+      paneId: alreadyOwning.id,
+    });
+    if (revealed.action !== 'missing') {
+      return {
+        ok: true,
+        pane: existing.find((candidate) => candidate.id === alreadyOwning.id) ?? pane,
+      };
+    }
+  }
+
   const kept = existing.filter((candidate) => {
     const boundMissionId =
       candidate.missionId ?? orch.paneMissions[candidate.id];

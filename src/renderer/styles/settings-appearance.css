@@ -118,6 +118,32 @@
   margin: 0;
 }
 
+/* Fontes: 3 pares (família + tamanho) em grade densa — Interface, Código e
+   Terminal. Controles usam os tokens de settings-controls; sem hex solto. */
+.settings-font-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+.settings-font-row {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.settings-font-row .settings-input,
+.settings-font-row .settings-range {
+  max-width: none;
+  width: 100%;
+}
+
+.settings-font-row .settings-field__label .sys-range-value {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
 /* Importar/remover tema do VS Code: ações secundárias logo abaixo da grade. */
 .settings-appearance__import {
   display: flex;
@@ -553,4 +579,88 @@
 .settings-pet-catalog__chip:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Editor de temas — cores do papel, prévia ao vivo. */
+.theme-editor {
+  margin-top: var(--space-3, 12px);
+  padding: var(--space-3, 12px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card, 16px);
+  background: var(--bg-elevated);
+}
+
+.theme-editor__title {
+  margin: 0 0 var(--space-1, 4px);
+  font-size: var(--text-sm, 13px);
+  color: var(--text);
+}
+
+.theme-editor__hint {
+  margin: 0 0 var(--space-2, 8px);
+  font-size: var(--text-xs, 11px);
+  color: var(--text-dim);
+}
+
+.theme-editor__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-2, 8px);
+  margin: var(--space-2, 8px) 0;
+}
+
+.theme-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-2xs, 10px);
+  color: var(--text-dim);
+}
+
+.theme-editor__input {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs, 2px);
+  color: var(--text);
+  padding: 4px 8px;
+  font-size: var(--text-xs, 11px);
+}
+
+.theme-editor__swatch {
+  width: 100%;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs, 2px);
+  background: transparent;
+  cursor: pointer;
+}
+
+.theme-editor__hex {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.theme-editor__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-2, 8px);
+}
+
+.theme-editor__btn {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: var(--text-xs, 11px);
+}
+
+.theme-editor__btn--primary {
+  background: var(--btn-primary);
+  color: var(--btn-primary-ink);
+  border-color: transparent;
 }

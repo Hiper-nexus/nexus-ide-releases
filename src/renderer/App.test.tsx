@@ -377,7 +377,7 @@ beforeEach(() => {
     writable: true,
     value: {
       billing: { onChanged: () => () => {}, get: async () => ({ ...DEFAULT_LICENSE, canUseApp: true, blockedReason: null, limits: { maxAgents: null, cloudSync: true } }) },
-      app: { onDeepOpenPath: vi.fn(() => vi.fn()), onDeepOpenQuota: vi.fn(() => vi.fn()), onShotFilesReceived: vi.fn(() => vi.fn()) },
+      app: { onDeepOpenPath: vi.fn(() => vi.fn()), onDeepOpenQuota: vi.fn(() => vi.fn()), onDeepOpenNew: vi.fn(() => vi.fn()), onShotFilesReceived: vi.fn(() => vi.fn()) },
       pet: {
         onOpenSettings: vi.fn(() => vi.fn()),
         onOpenOps: vi.fn(() => vi.fn()),

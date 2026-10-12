@@ -239,6 +239,9 @@ export const WINDOW_CHANNELS = {
   /** event: main → renderer. Deep link nexus://quota (Redline): navega para
    * a seção Uso e cotas. Read-only, sem confirmação. */
   deepOpenQuota: 'app:deepOpenQuota',
+  /** event: main → renderer. Deep link nexus://new?prompt=… (t3code-style):
+   * abre o formulário de nova missão com o prompt pronto — nunca inicia. */
+  deepOpenNew: 'app:deepOpenNew',
   /** invoke: renderer → main. Open a trusted https URL in the OS browser. */
   openExternal: 'app:openExternal',
   /**

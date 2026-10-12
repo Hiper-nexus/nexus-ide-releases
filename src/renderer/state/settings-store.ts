@@ -19,6 +19,7 @@ import {
   applyUiTheme,
   resolveImportedTheme,
 } from '../styles/ui-theme';
+import { applyAppearanceFontVariables } from '../styles/appearance-fonts';
 import { setAudioDevicePreferences } from '../voice/audio-device-preferences';
 
 /**
@@ -30,6 +31,12 @@ function applyEverywhere(settings: TerminalSettings, ui: UiSettings): void {
   const imported = resolveImportedTheme(ui);
   applyTerminalSettings(settings, imported?.terminal ?? null);
   applyUiTheme(settings.themeId, imported);
+  applyAppearanceFontVariables(document.documentElement, {
+    interfaceFamily: ui.interfaceFontFamily,
+    codeFamily: ui.codeFontFamily,
+    interfaceSize: ui.interfaceFontSize,
+    codeSize: ui.codeFontSize,
+  });
 }
 
 function applyUiEverywhere(settings: TerminalSettings, ui: UiSettings): void {

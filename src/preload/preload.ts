@@ -228,6 +228,12 @@ const deepOpenQuotaListeners = new Set<() => void>();
 ipcRenderer.on(WINDOW_CHANNELS.deepOpenQuota, () =>
   emitToListeners(deepOpenQuotaListeners, 'deepOpenQuotaListeners'),
 );
+const deepOpenNewListeners = new Set<(payload: { prompt: string | null }) => void>();
+ipcRenderer.on(
+  WINDOW_CHANNELS.deepOpenNew,
+  (_event, payload: { prompt: string | null }) =>
+    emitToListeners(deepOpenNewListeners, 'deepOpenNewListeners', payload),
+);
 const bugReportOpenListeners = new Set<() => void>();
 ipcRenderer.on(BUG_REPORT_CHANNELS.open, () =>
   emitToListeners(bugReportOpenListeners, 'bugReportOpenListeners'),
@@ -795,6 +801,8 @@ const api: NexusApi = {
     onAuthLoginResult: (cb: (result: LoginResultEvent) => void) =>
       addListener(authLoginResultListeners, cb),
     onDeepOpenQuota: (cb: () => void) => addListener(deepOpenQuotaListeners, cb),
+    onDeepOpenNew: (cb: (payload: { prompt: string | null }) => void) =>
+      addListener(deepOpenNewListeners, cb),
     onShotFilesReceived: (cb: (payload: ShotFilesReceivedPayload) => void) =>
       addListener(shotFilesListeners, cb),
   },

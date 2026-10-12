@@ -74,6 +74,35 @@ describe('parseDeepLink', () => {
     expect(parseDeepLink('nexus://auth/code1?state=tem espaço')).toBeNull();
     expect(parseDeepLink('nexus://auth/code1?state=' + 'a'.repeat(5000))).toBeNull();
   });
+
+  it('reconhece nexus://new e nexus://new?prompt= (formulário, nunca auto-start)', () => {
+    expect(parseDeepLink('nexus://new')).toEqual({ kind: 'new', prompt: null });
+    expect(parseDeepLink('nexus://new/')).toEqual({ kind: 'new', prompt: null });
+    expect(parseDeepLink('nexus://new?prompt=Corrigir%20o%20login')).toEqual({
+      kind: 'new',
+      prompt: 'Corrigir o login',
+    });
+  });
+
+  it('nexus://new aceita multi-linha e recusa só-invisíveis ou acima do teto', () => {
+    expect(parseDeepLink('nexus://new?prompt=linha1%0Alinha2')).toEqual({
+      kind: 'new',
+      prompt: 'linha1\nlinha2',
+    });
+    expect(parseDeepLink('nexus://new?prompt=' + 'a'.repeat(20_000))).toBeNull();
+    // zero-width: o link inteiro cai (só invisíveis = malicioso)
+    expect(parseDeepLink('nexus://new?prompt=%E2%80%8B%E2%80%8B')).toBeNull();
+    // invisíveis no meio do texto saem, o pedido continua
+    expect(parseDeepLink('nexus://new?prompt=ok%E2%80%8Bfim')).toEqual({
+      kind: 'new',
+      prompt: 'okfim',
+    });
+    // UTF-8 comum (inclusive emoji) é texto válido
+    expect(parseDeepLink('nexus://new?prompt=missão%20🚀')).toEqual({
+      kind: 'new',
+      prompt: 'missão 🚀',
+    });
+  });
 });
 
 describe('deepLinkFromArgv', () => {

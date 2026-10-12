@@ -446,6 +446,11 @@ export interface NexusApi {
     /** Deep link nexus://quota (Redline → seção Uso e cotas). */
     onDeepOpenQuota(cb: () => void): Unsubscribe;
     /**
+     * Deep link nexus://new?prompt=… (estilo t3code): abre o formulário de
+     * nova missão com o prompt pronto — nunca inicia o trabalho sozinho.
+     */
+    onDeepOpenNew(cb: (payload: { prompt: string | null }) => void): Unsubscribe;
+    /**
      * Arquivos entregues pelo Nexus Shot via shot-bridge (main → renderer).
      * Metadados já validados no main: realpath sob ~/Pictures|Movies/Nexus Shot.
      */

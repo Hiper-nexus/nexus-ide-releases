@@ -44,6 +44,12 @@ export interface UsageTotals {
 
 export interface PaneUsageTotals extends UsageTotals {
   paneId: string;
+  /**
+   * Preenchimento da janela de contexto na última rodada:
+   * `input + cache_read` do evento mais recente do pane (o que o modelo
+   * viu naquele turno). `null` sem evento. Não é a soma da sessão.
+   */
+  lastContextTokens: number | null;
 }
 
 export interface AccountUsageTotals extends UsageTotals {
@@ -661,10 +667,63 @@ export class ScopedUsageStore {
          ORDER BY display_pane_id ASC`,
       )
       .all(TOKEN_EVENT_TYPE) as Array<TotalsRow & { display_pane_id: unknown }>;
-    return rows.map((row) => ({
-      paneId: entityIdSchema.parse(row.display_pane_id),
-      ...toTotals(row),
-    }));
+    const lastContext = this.#lastContextByPane();
+    return rows.map((row) => {
+      const paneId = entityIdSchema.parse(row.display_pane_id);
+      return {
+        paneId,
+        ...toTotals(row),
+        lastContextTokens: lastContext.get(paneId) ?? null,
+      };
+    });
+  }
+
+  /**
+   * Janela de contexto por pane: input + cache_read do evento MAIS recente
+   * (o que o modelo viu na última rodada), nunca a soma da sessão.
+   */
+  #lastContextByPane(): Map<string, number> {
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT display_pane_id, last_context FROM (
+           SELECT
+             COALESCE(
+               mp.pane_id,
+               json_extract(usage_events.metadata_json, '$.displayPaneId')
+             ) AS display_pane_id,
+             usage_events.input_units
+               + COALESCE(
+                   CAST(json_extract(usage_events.metadata_json, '$.cacheReadTokens') AS INTEGER),
+                   0
+                 ) AS last_context,
+             ROW_NUMBER() OVER (
+               PARTITION BY COALESCE(
+                 mp.pane_id,
+                 json_extract(usage_events.metadata_json, '$.displayPaneId')
+               )
+               ORDER BY usage_events.occurred_at DESC, usage_events.id DESC
+             ) AS rn
+           FROM usage_events
+           LEFT JOIN mission_panes mp ON mp.id = usage_events.pane_id
+           WHERE usage_events.event_type = ?
+         ) WHERE rn = 1`,
+      )
+      .all(TOKEN_EVENT_TYPE) as Array<{
+      display_pane_id: unknown;
+      last_context: unknown;
+    }>;
+    const map = new Map<string, number>();
+    for (const row of rows) {
+      const paneId = entityIdSchema.safeParse(row.display_pane_id);
+      const last = z
+        .number()
+        .int()
+        .nonnegative()
+        .safeParse(row.last_context);
+      if (paneId.success && last.success) map.set(paneId.data, last.data);
+    }
+    return map;
   }
 
   totalsByAccount(): AccountUsageTotals[] {

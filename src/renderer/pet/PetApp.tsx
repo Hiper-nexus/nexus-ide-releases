@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { formatCompactTokensPrecise } from '../../shared/compact-tokens';
 import type {
   PetLifetimeStats,
   PetOpenAction,
@@ -62,9 +63,7 @@ function runBalloonAction(action: PetOpenAction): void {
 
 /** 1_234_567 → "1.2M" — ticker compacto em px de sprite. */
 function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return `${Math.floor(n)}`;
+  return formatCompactTokensPrecise(n, '0');
 }
 
 /** Linhas do ticker sob o sprite — cicla a cada poucos segundos. */

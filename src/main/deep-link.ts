@@ -3,6 +3,7 @@ import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { BILLING_CHANNELS } from '../shared/billing-types';
 import { WINDOW_CHANNELS } from '../shared/channels';
+import { readLinkedPrompt } from '../shared/prompt-link';
 import { confirmNativeAction } from './native-confirm';
 import { finishAuthDeepLink } from './auth-deep-link';
 import { ensureLinuxDesktopEntry } from './linux-desktop-entry';
@@ -24,7 +25,12 @@ export type DeepLink =
   | { kind: 'open'; path: string }
   | { kind: 'auth'; code: string; state: string | null }
   /** `nexus://quota` — o Redline abre as cotas dentro do Nexus. */
-  | { kind: 'quota' };
+  | { kind: 'quota' }
+  /**
+   * `nexus://new?prompt=…` (herdado do t3code prompt-link): abre o
+   * formulário de nova missão com o prompt pronto — NUNCA inicia sozinho.
+   */
+  | { kind: 'new'; prompt: string | null };
 
 /**
  * decodeURIComponent fora de try/catch lançava URIError síncrono no
@@ -81,6 +87,15 @@ export function parseDeepLink(raw: string): DeepLink | null {
 
   if (host === 'quota') {
     return { kind: 'quota' };
+  }
+
+  if (host === 'new') {
+    // Prompt livre (multi-linha ok), sanitizado como no t3code: invisíveis
+    // saem; só-invisíveis é malicioso e derruba o link. O link só PREENCHE
+    // o formulário — quem inicia é o operador.
+    const read = readLinkedPrompt(url.searchParams.get('prompt'));
+    if (!read.ok) return null;
+    return { kind: 'new', prompt: read.prompt };
   }
 
   return null;
@@ -149,6 +164,16 @@ function defaultHandler(link: DeepLink, trusted: boolean): void {
     // Read-only: só foca a janela e navega para a seção de cotas. Sem efeito
     // colateral — qualquer site pode disparar este link.
     sendOpenQuota(win);
+  } else if (link.kind === 'new') {
+    // Qualquer site pode disparar o link. Preencher o wizard SOBRESCREVE o
+    // rascunho do operador — como `open`/`license`, exigimos confirmação
+    // nativa quando o link não veio de um gesto confiável. Nunca inicia
+    // o trabalho sozinho.
+    if (!trusted && !confirmNewPrompt(link.prompt, win)) {
+      console.warn('[deep-link] nexus://new recusado pelo usuário');
+      return;
+    }
+    win?.webContents.send(WINDOW_CHANNELS.deepOpenNew, { prompt: link.prompt });
   }
 }
 
@@ -188,6 +213,32 @@ function confirmLicenseApply(win?: BrowserWindow | null): boolean {
         'Isso pode alterar seu plano e recursos disponíveis. ' +
         'Aplique apenas se você esperava este link (ex.: veio do seu e-mail de compra).',
       confirmLabel: 'Aplicar licença',
+    },
+    win,
+  );
+}
+
+/**
+ * L2: confirmação nativa para `nexus://new?prompt=…` não confiável.
+ * O efeito é só preencher o formulário (nunca iniciar), mas ainda assim
+ * sobrescreve o rascunho do operador.
+ */
+function confirmNewPrompt(
+  prompt: string | null,
+  win?: BrowserWindow | null,
+): boolean {
+  const preview =
+    prompt === null
+      ? '(sem texto — abre o formulário vazio)'
+      : prompt.length > 200
+        ? `${prompt.slice(0, 200)}…`
+        : prompt;
+  return confirmNativeAction(
+    {
+      title: 'Preencher nova missão?',
+      message: 'Um link externo quer abrir o formulário de nova missão com este texto:',
+      detail: `${preview}\n\nO Nexus não inicia o trabalho sozinho. Continue apenas se reconhece a origem.`,
+      confirmLabel: 'Preencher formulário',
     },
     win,
   );

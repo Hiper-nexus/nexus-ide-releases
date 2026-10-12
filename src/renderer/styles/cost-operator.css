@@ -1012,3 +1012,57 @@
 .prov__model-chip-x:hover {
   color: var(--danger);
 }
+
+/* Janela de contexto (herdado do t3code context meter) — chip no PaneToolbar. */
+.ctx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1, 4px);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-size: var(--text-2xs, 10px);
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs, 2px);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.ctx-chip--warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+
+.ctx-chip--critical {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.ctx-chip__label {
+  font-variant-numeric: tabular-nums;
+}
+
+.ctx-chip__bar {
+  display: block;
+  width: 28px;
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  overflow: hidden;
+}
+
+.ctx-chip__fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.ctx-chip__fill--warn { background: var(--warn); }
+.ctx-chip__fill--critical { background: var(--danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ctx-chip__fill { transition: none; }
+}

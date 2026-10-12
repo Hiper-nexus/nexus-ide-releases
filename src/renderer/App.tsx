@@ -925,6 +925,26 @@ export function App() {
     });
   }, []);
 
+  // Deep link nexus://new?prompt=… (estilo t3code): preenche o formulário de
+  // nova missão e abre o wizard — quem inicia continua sendo o operador.
+  // Só preenche quando o rascunho está vazio: nunca sobrescreve trabalho em
+  // andamento (o main já pediu confirmação nativa para link não confiável).
+  useEffect(() => {
+    return window.nexus.app.onDeepOpenNew(({ prompt }) => {
+      const setup = useMissionSetupStore.getState();
+      const hasDraft = setup.draft.objective.trim().length > 0;
+      if (prompt && prompt.trim().length > 0 && !hasDraft) {
+        setup.setObjective(prompt);
+        useProductNavigationStore.getState().openMissionSetup();
+      } else if (!hasDraft) {
+        useProductNavigationStore.getState().openNewMission();
+      } else {
+        // Rascunho do operador prevalece — só garante que o wizard está aberto.
+        useProductNavigationStore.getState().openMissionSetup();
+      }
+    });
+  }, []);
+
   // Menu "Ajuda → Reportar um problema…" (Main) abre o diálogo. Guarda para
   // preloads antigos e mocks de teste sem a ponte.
   useEffect(

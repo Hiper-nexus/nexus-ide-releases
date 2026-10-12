@@ -15,6 +15,8 @@
  *   injeção nem de payload gigante.
  */
 
+import { formatCompactTokensPrecise } from './compact-tokens';
+
 export interface HandoffTelemetry {
   readonly durationMs?: number;
   readonly tokensTotal?: number;
@@ -133,9 +135,7 @@ export function aggregateMissionTelemetry(
 }
 
 function formatTokens(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
-  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}k`;
-  return String(tokens);
+  return formatCompactTokensPrecise(tokens, '0');
 }
 
 /** "34 min · 1.2M tokens · autorrelato 5/7" — honesto sobre a cobertura. */

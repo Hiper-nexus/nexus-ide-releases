@@ -29,6 +29,7 @@ import {
   wakeHost,
 } from '../terminal/terminal-host';
 import { CostBadge } from './CostBadge';
+import { ContextWindowChip } from './ContextWindowChip';
 import { DevServerChip } from './DevServerChip';
 import { TokenSpeedChip } from './TokenSpeedMonitor';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
@@ -1033,6 +1034,11 @@ export function PaneToolbar({ pane, isFocused }: Props) {
 
       {pane.kind === 'cli-agent' && (
         <div className="toolbar__telemetry">
+          <ContextWindowChip
+            paneId={pane.id}
+            adapterId={pane.adapterId ?? null}
+            modelId={pane.model ?? null}
+          />
           <CostBadge paneId={pane.id} />
           <TokenSpeedChip paneId={pane.id} />
         </div>
