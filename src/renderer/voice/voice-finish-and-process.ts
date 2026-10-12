@@ -477,7 +477,7 @@ export async function finishAndProcess(
           return;
         }
         hud.setDictationFailed(true);
-        hud.setError(pendingDictationFailure(settled));
+        hud.setNote(pendingDictationFailure(settled));
       }, (_paneId, active) => {
         // C-3: paste + Enter em voo — tecla agora não cancela mais.
         useVoiceStore.getState().setNote(active ? 'Ditado entrando…' : PENDING_DICTATION_NOTE);

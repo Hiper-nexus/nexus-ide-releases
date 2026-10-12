@@ -344,8 +344,8 @@ describe('F-1392 — uma linha dictation.session por ditado, sem o texto', () =>
       expect.objectContaining({ result: 'pending' }),
       expect.objectContaining({ result: 'error', errorCode: 'pending-timeout', sttProvider: 'groq' }),
     ]);
-    expect(useVoiceStore.getState().error).toContain('10 minutos');
-    expect(useVoiceStore.getState().error).toContain('copiado');
+    expect(useVoiceStore.getState().note).toContain('10 minutos');
+    expect(useVoiceStore.getState().note).toContain('copiado');
     expect(useVoiceStore.getState().dictationFailed).toBe(true);
 
     await finishAndProcess(makeCapture(), { current: false }, makeDeps());
@@ -377,8 +377,8 @@ describe('F-1392 — uma linha dictation.session por ditado, sem o texto', () =>
 
     await finishAndProcess(makeCapture(), { current: false }, makeDeps());
     settlers[2]!({ paneId: 'pane-1', result: 'error', errorCode: 'pending-lost', preserved: true });
-    expect(useVoiceStore.getState().error).toContain('confira o painel');
-    expect(useVoiceStore.getState().error).toContain('copiado');
+    expect(useVoiceStore.getState().note).toContain('confira o painel');
+    expect(useVoiceStore.getState().note).toContain('copiado');
   });
 
   it('C-3/C-6: HUD mostra "Ditado entrando…" e só tira o título quando não sobra pendente', async () => {
@@ -416,5 +416,31 @@ describe('F-1392 — uma linha dictation.session por ditado, sem o texto', () =>
       expect.objectContaining({ result: 'empty', errorCode: 'discarded', sttProvider: 'groq' }),
     ]);
   });
+
+  it('F-1393 M5: erro tardio de ditado pendente vira aviso no HUD sem derrubar o status da Jarvis', async () => {
+    transcribe.mockResolvedValue(sttOk('abre o painel'));
+    let settle: ((settled: { paneId: string; result: 'ok' | 'error'; errorCode?: string; preserved?: boolean }) => void) | undefined;
+    vi.mocked(routeDictation).mockImplementation(async (_text, onSettled) => {
+      settle = onSettled as never;
+      return { ok: false, reason: 'pending', paneId: 'pane-1' };
+    });
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+    expect(settle).toBeDefined();
+
+    // Jarvis está no meio de uma resposta/fala (status = 'speaking')
+    useVoiceStore.getState().setStatus('speaking');
+
+    // Ditado pendente falha 10 min depois (pending-timeout)
+    settle!({ paneId: 'pane-1', result: 'error', errorCode: 'pending-timeout', preserved: true });
+
+    // Status global da Jarvis NÃO pode ter virado 'error'
+    expect(useVoiceStore.getState().status).toBe('speaking');
+    // Erro virou aviso no HUD (note), e dictationFailed foi marcado
+    expect(useVoiceStore.getState().note).toContain('10 minutos');
+    expect(useVoiceStore.getState().dictationFailed).toBe(true);
+    expect(useVoiceStore.getState().error).toBeNull();
+  });
 });
+
 
