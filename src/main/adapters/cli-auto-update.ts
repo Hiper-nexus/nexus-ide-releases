@@ -320,12 +320,16 @@ export function selectAutomaticCliUpdateRecipe(input: AutoUpdateInput): CliInsta
     }
     // Sem TTY e sem sudo: HOMEBREW_NO_SUDO=1 barra sudo mesmo com NOPASSWD;
     // SUDO_ASKPASS=/usr/bin/false garante que um prompt falha na hora em vez de pendurar.
+    // C7: HOMEBREW_NO_AUTO_UPDATE=1 — o upgrade usa o MESMO índice local que o
+    // `brew info` validou; sem isso o brew se auto-atualiza antes de instalar e
+    // pode trazer uma definição do cask que ninguém validou.
     return {
       ...selection.recipe,
       env: {
         ...selection.recipe.env,
         SUDO_ASKPASS: '/usr/bin/false',
         HOMEBREW_NO_SUDO: '1',
+        HOMEBREW_NO_AUTO_UPDATE: '1',
       },
     };
   }
