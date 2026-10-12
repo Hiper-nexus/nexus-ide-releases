@@ -212,27 +212,7 @@ function aliasPatterns(alias: string): RegExp[] {
 function aliasMatches(text: string, alias: string): boolean {
   const normalizedAlias = normalizeForMatch(alias);
   if (!normalizedAlias) return false;
-  return aliasEndsAfter(text, normalizedAlias, 0);
-}
-
-/**
- * Casa quando um casamento TERMINA depois de `boundary` — o alias inteiro
- * dentro do trecho anterior ao empalme já foi detectado quando entrou;
- * redetectá-lo renovaria o timestamp de uma menção velha.
- */
-function aliasEndsAfter(text: string, alias: string, boundary: number): boolean {
-  return aliasPatterns(alias).some((pattern) => {
-    const global = new RegExp(
-      pattern.source,
-      pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`,
-    );
-    let match: RegExpExecArray | null = global.exec(text);
-    while (match !== null) {
-      if (match.index + match[0].length > boundary) return true;
-      match = global.exec(text);
-    }
-    return false;
-  });
+  return aliasPatterns(normalizedAlias).some((pattern) => pattern.test(text));
 }
 
 /**
@@ -244,24 +224,67 @@ function aliasEndsAfter(text: string, alias: string, boundary: number): boolean 
  */
 const DETECTION_TAIL_CHARS = 64;
 
+/**
+ * F-1303 (revisão Fable): casamento NOVO do alias na junção. O fim do texto
+ * não é fronteira direita numa tecla solta ("swe" de "sweep", "muse" de
+ * "museu", "quen" de "quente", "codex" de "codexes") — só um caractere real
+ * depois do nome; colagem é texto completo e aceita o fim. 'new' = termina
+ * depois do empalme; 'deferred' = terminou na cauda e o separador/Enter que
+ * o confirma chegou agora (re-varredura da cauda).
+ */
+function newAliasMatch(
+  text: string,
+  alias: string,
+  boundary: number,
+  acceptTextEnd: boolean,
+): 'new' | 'deferred' | null {
+  let found: 'deferred' | null = null;
+  for (const pattern of aliasPatterns(alias)) {
+    const global = new RegExp(pattern.source, `${pattern.flags}g`);
+    for (let match = global.exec(text); match !== null; match = global.exec(text)) {
+      const end = match.index + match[0].length;
+      if (end < boundary) continue;
+      if (end === text.length && !(acceptTextEnd && end > boundary)) continue;
+      if (end > boundary) return 'new';
+      found = 'deferred';
+    }
+  }
+  return found;
+}
+
 function markNamed(
   sessionId: string,
   at: number,
+  previousAt: number | undefined,
   previousReplay: string,
   chunkText: string,
 ): void {
   const tail = previousReplay.slice(-DETECTION_TAIL_CHARS);
-  const junction = replayInput([{ at, text: tail }, { at, text: chunkText }]);
+  const junction = normalizeForMatch(
+    replayInput([{ at, text: tail }, { at, text: chunkText }]),
+  );
+  const boundary = normalizeForMatch(tail).length;
+  const acceptTextEnd = isPasteChunk(chunkText);
   let byAdapter = lastNamedAtBySession.get(sessionId);
   if (!byAdapter) {
     byAdapter = new Map();
     lastNamedAtBySession.set(sessionId, byAdapter);
   }
   for (const adapterId of KNOWN_ADAPTER_IDS) {
-    const named = aliasesFor(adapterId).some((alias) =>
-      aliasEndsAfter(junction, normalizeForMatch(alias), tail.length),
-    );
-    if (named) byAdapter.set(adapterId, at);
+    let namedAt: number | undefined;
+    for (const alias of aliasesFor(adapterId)) {
+      const found = newAliasMatch(junction, normalizeForMatch(alias), boundary, acceptTextEnd);
+      if (found === 'new') {
+        namedAt = at;
+        break;
+      }
+      // Confirmado pelo separador: a menção é da hora da última letra — um
+      // Enter tardio não renova a prova.
+      if (found === 'deferred') namedAt = previousAt;
+    }
+    if (namedAt !== undefined) {
+      byAdapter.set(adapterId, Math.max(namedAt, byAdapter.get(adapterId) ?? namedAt));
+    }
   }
   for (const [adapterId, namedAt] of byAdapter) {
     if (at - namedAt > RETENTION_MS) byAdapter.delete(adapterId);
@@ -286,7 +309,7 @@ function remember(sessionId: string, data: string): void {
   // Detecção na hora (F-1303, 2ª rodada): só o chunk novo é varrido — o final
   // do replay anterior entra só como fronteira de palavra. Antes da evicção,
   // para não perder o que está prestes a sair do buffer.
-  markNamed(sessionId, now, replayInput(retained), clipped);
+  markNamed(sessionId, now, retained.at(-1)?.at, replayInput(retained), clipped);
   const chunks = [...retained, { at: now, text: clipped }];
   // Teto por sessão: corta do lado antigo até caber em MAX_RETAINED_CHARS.
   let total = chunks.reduce((sum, chunk) => sum + chunk.text.length, 0);

@@ -420,3 +420,53 @@ describe('F-818: varredura linear em texto do operador', () => {
     expect(elapsedMs).toBeLessThan(50);
   });
 });
+
+/**
+ * F-1303 (revisão Fable): a detecção roda a cada tecla e o fim da junção
+ * satisfazia a fronteira direita — "swe" virava devin na 3ª tecla de "sweep"
+ * e a marca nunca saía (prova falsa do operatorChoice, F-682). Tecla solta só
+ * marca com fronteira direita REAL; o separador/Enter seguinte re-varre a cauda.
+ */
+describe('F-1303 (revisão Fable): prefixo digitado tecla a tecla não prova CLI', () => {
+  function typeKeys(sessionId: string, text: string) {
+    for (const ch of text) type(sessionId, ch);
+  }
+  const FLOOD = (i: number) => `\x1b[200~entrega numero ${i} ${'x'.repeat(1_200)}\x1b[201~`;
+
+  it.each([
+    ['sweep the repo', 'devin'],
+    ['visita o museu de arte', 'muse'],
+    ['ta quente aqui', 'qwen'],
+    ['os codexes antigos', 'codex'],
+  ])('"%s" tecla a tecla não marca %s (nem depois que o buffer some)', (text, adapterId) => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - 2 * MIN);
+    typeKeys('prefixo', text);
+    type('prefixo', '\r');
+    expect(operatorRecentlyNamedCli('prefixo', adapterId, now, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(false);
+    for (let i = 0; i < 6; i++) type('prefixo', FLOOD(i));
+    expect(operatorRecentlyNamedCli('prefixo', adapterId, now, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(false);
+  });
+
+  it.each([
+    ['Enter', '\r'],
+    ['espaço', ' '],
+    ['colagem seguinte', 'entrega colada'],
+  ])('menção no fim, tecla a tecla, é confirmada pelo %s e sobrevive ao buffer', (_label, separator) => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - 2 * MIN);
+    typeKeys('fim', 'usa o Kimi');
+    type('fim', separator);
+    for (let i = 0; i < 6; i++) type('fim', FLOOD(i));
+    expect(operatorRecentlyNamedCli('fim', 'kimi', now, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(true);
+  });
+
+  it('o separador tardio não renova a menção velha (fica a hora da última letra)', () => {
+    const t0 = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(t0);
+    type('tardio', 'usa o kimi');
+    clock.mockReturnValue(t0 + 20 * MIN);
+    type('tardio', ' ');
+    expect(operatorRecentlyNamedCli('tardio', 'kimi', t0 + 31 * MIN, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(false);
+  });
+});
