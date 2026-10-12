@@ -2586,12 +2586,19 @@ const paneSpawnAfterTabMission = {
           !options.missionId ||
           ctx.promotedFromUserSession === true ||
           (missionRow ? isOperatorTabMission(missionRow) : false);
+        // F-1414: as CLIs que já falharam neste pedido seguem fora da rota em
+        // toda a cadeia de reaberturas, não só a da última tentativa.
+        const chainExclude = (excludeAdapterIds: readonly string[]): readonly string[] =>
+          recoveryExcluded.length > 0
+            ? [...new Set([...recoveryExcluded, ...excludeAdapterIds])]
+            : excludeAdapterIds;
         return {
           reroute: (request: PaneTaskRerouteRequest) =>
             rerouteNotStartedSpawn({
               callerSessionId,
               args,
               ...request,
+              excludeAdapterIds: chainExclude(request.excludeAdapterIds),
               classificationPrompt,
               lineageId,
               generation: rerouteGeneration + 1,
@@ -2600,7 +2607,7 @@ const paneSpawnAfterTabMission = {
           hasAlternative: (excludeAdapterIds: readonly string[]) =>
             rosterSquadId
               ? rosterSuccessor() !== undefined
-              : hasRerouteAlternative(excludeAdapterIds, needsNexusMcp),
+              : hasRerouteAlternative(chainExclude(excludeAdapterIds), needsNexusMcp),
         };
       };
       // F-765/F-775: o pedido fica com o pane enquanto ele vive — o failover
@@ -2642,9 +2649,14 @@ const paneSpawnAfterTabMission = {
                 turnProof: attempt.turnProof,
                 pinnedRuntime,
                 rerouted: startRecovery !== undefined,
+                // F-1414: teto de reaberturas por pedido, não "um reenvio só".
+                generation: rerouteGeneration,
                 createdAt: Date.now(),
                 redeliver: attempt.redeliver,
-                reroute: (excludeAdapterIds) => taskReroute.reroute({ excludeAdapterIds }),
+                // F-1414: writer isolado segue na MESMA worktree/branch (sem
+                // worktree ligada ao pane, a rota abre um writer novo).
+                reroute: (excludeAdapterIds) =>
+                  taskReroute.reroute({ excludeAdapterIds, worktreeFromPaneId: attempt.paneId }),
                 hasAlternative: () => taskReroute.hasAlternative([attempt.adapterId]),
               });
               trackedStartPaneId = attempt.paneId;
