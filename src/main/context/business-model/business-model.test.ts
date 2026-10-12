@@ -16,7 +16,7 @@ import {
   readBusinessModelInvariants,
 } from './business-model-contract';
 import { configureBusinessModelAttestedStore } from './business-model-attested-store';
-import { businessModelContextBlock } from './business-model-context-block';
+import { businessModelContextBlock, taskBusinessContextBlock } from './business-model-context-block';
 import {
   __clearBusinessModelExtractionCacheForTests,
   extractBusinessModel,
@@ -459,6 +459,11 @@ describe('runBusinessModelBootstrap (store e atestações reais)', () => {
     const block = businessModelContextBlock(worktree, project);
     // F-1352: modelo vindo do doc revisado atestado → a fonte é o doc.
     expect(block).toContain(`<business-model fonte="${BUSINESS_MODEL_TARGET_PATH}">`);
+    // F-1352: a seleção por tarefa também cita o doc revisado quando ele é a origem.
+    const selected = await taskBusinessContextBlock(worktree, 'fechar close_commanda', project, {
+      surfaceEnabled: () => false,
+    });
+    expect(selected?.split('\n')[0]).toBe(`<business-model fonte="${BUSINESS_MODEL_TARGET_PATH} · lexical">`);
     expect(block).toContain('close_commanda#1');
     // Outro projeto não empresta o seu modelo.
     expect(businessModelContextBlock(worktree, { ...project, projectId: 'outro-projeto' })).toBeNull();

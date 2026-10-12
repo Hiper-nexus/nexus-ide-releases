@@ -1,7 +1,6 @@
 import type { ProjectExecutionScope } from '../../../shared/types';
 import {
   BUSINESS_MODEL_TARGET_PATH,
-  readBusinessModelForExecution,
   readBusinessModelForExecutionWithOrigin,
   type BusinessInvariant,
 } from './business-model-contract';
@@ -123,6 +122,7 @@ export function selectedBusinessContextBlock(
   selection: BusinessModelSelection,
   maxBytes: number = SELECTED_BUSINESS_BLOCK_MAX_BYTES,
   profile: readonly string[] = [],
+  origin: 'extract' | 'revised' = 'extract',
 ): string | null {
   if (
     selection.flows.length === 0 &&
@@ -131,7 +131,9 @@ export function selectedBusinessContextBlock(
   ) {
     return null;
   }
-  const open = `${BUSINESS_MODEL_BLOCK_TAG} fonte="${profile.length ? 'modelo e referências locais' : 'extrato HEAD'} · ${selection.source}">`;
+  // F-1352: a fonte é a origem real do modelo (extrato do HEAD × doc revisado).
+  const source = origin === 'revised' ? BUSINESS_MODEL_TARGET_PATH : 'extrato HEAD';
+  const open = `${BUSINESS_MODEL_BLOCK_TAG} fonte="${profile.length ? 'modelo e referências locais' : source} · ${selection.source}">`;
   const close = '</business-model>';
   const lines = [open, INSTRUCTION];
   let used = bytes(open) + bytes(INSTRUCTION) + bytes(close) + 3;
@@ -196,7 +198,8 @@ export async function taskBusinessContextBlock(
   options: TaskBusinessContextOptions = {},
 ): Promise<string | null> {
   try {
-    const document = readBusinessModelForExecution(scope, projectScope);
+    const model = readBusinessModelForExecutionWithOrigin(scope, projectScope);
+    const document = model?.document ?? null;
     const hurdles = readBusinessHurdles(scope, projectScope);
     const profile = businessProfileLines(scope, projectScope);
     if (!document && hurdles.length === 0) return selectedBusinessContextBlock({ ...EMPTY_DOCUMENT, hurdles: [], source: 'lexical', key: '' }, options.maxBytes, profile);
@@ -212,7 +215,7 @@ export async function taskBusinessContextBlock(
       options,
     );
     if (!selection) return null;
-    return selectedBusinessContextBlock(selection, options.maxBytes, profile);
+    return selectedBusinessContextBlock(selection, options.maxBytes, profile, model?.origin);
   } catch {
     return null;
   }
