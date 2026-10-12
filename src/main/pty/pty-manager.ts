@@ -376,6 +376,13 @@ let allSessionsTerminationSealed = false;
 let counter = 0;
 const MISSION_ORCHESTRATOR_GRANT_TTL_MS = 120_000;
 const MAX_NATIVE_INITIAL_PROMPT_BYTES = 64 * 1024;
+/**
+ * F-1316 × F-984: só um brief realmente grande vai para arquivo privado. Um
+ * brief normal de writer (4–20 KB) chega íntegro no argv do binário nativo,
+ * como o E2E de missão exige (brief de 4189 chars). 32 KB fica abaixo do teto
+ * de linha de comando do Windows (32.767) e do teto nativo acima.
+ */
+const NATIVE_BRIEF_FILE_THRESHOLD_BYTES = 32 * 1024;
 
 let ptyHost: PtyHost | null = null;
 let footprintsInflight: Promise<readonly import("./pane-footprint").SessionFootprint[] | null> | null = null;
@@ -2047,7 +2054,7 @@ export function spawnAgentSession(
           `1-${MAX_NATIVE_INITIAL_PROMPT_BYTES} bytes`,
       );
     }
-    if (Buffer.byteLength(safeInitialPrompt, "utf8") > 4 * 1024) {
+    if (Buffer.byteLength(safeInitialPrompt, "utf8") > NATIVE_BRIEF_FILE_THRESHOLD_BYTES) {
       const directory = path.join(app.getPath("userData"), "briefs");
       fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
       const directoryStat = fs.lstatSync(directory);

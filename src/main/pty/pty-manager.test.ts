@@ -2122,7 +2122,7 @@ describe("AGY advisory native profile", () => {
     const host = fakeHost();
     setPtyHost(host.host);
     const base = revisionBoundWorker(fs.realpathSync.native(root));
-    const prompt = "Implemente a tarefa.\n" + "contexto ".repeat(1_300) + "\nOPENAI_API_KEY=sk-" + "a".repeat(48);
+    const prompt = "Implemente a tarefa.\n" + "contexto ".repeat(4_000) + "\nOPENAI_API_KEY=sk-" + "a".repeat(48);
     let sessionId: string | undefined;
     let briefPath: string | undefined;
     try {
@@ -2138,7 +2138,7 @@ describe("AGY advisory native profile", () => {
       briefPath = JSON.parse(pointer!.slice("Leia e siga integralmente o brief em ".length));
       expect(briefPath!.startsWith(path.join(app.getPath("userData"), "briefs") + path.sep)).toBe(true);
       const content = fs.readFileSync(briefPath!, "utf8");
-      expect(content).toContain("contexto ".repeat(1_300));
+      expect(content).toContain("contexto ".repeat(4_000));
       expect(content).not.toContain("sk-" + "a".repeat(48));
       if (process.platform !== "win32") expect(fs.statSync(briefPath!).mode & 0o777).toBe(0o600);
       await orchTerminateSession(sessionId);
@@ -2146,6 +2146,28 @@ describe("AGY advisory native profile", () => {
       expect(fs.existsSync(briefPath!)).toBe(false);
     } finally {
       if (sessionId) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("F-984 × F-1316: brief normal de writer (4189 chars) chega íntegro no argv", () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-argv-brief-"));
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const base = revisionBoundWorker(fs.realpathSync.native(root));
+    const brief = "## Nexus execution authority\n" + "b".repeat(4_160);
+    try {
+      const { sessionId } = spawnMainOwnedAgentSession(
+        { kind: "cli-agent", paneId: "argv-brief", cols: 100, rows: 30 },
+        builtinCliPtyAdapter("claude"), {},
+        { ...base, context: { ...base.context!, initialPrompt: brief } },
+      );
+      const spec = host.specFor(sessionId);
+      expect(spec.args.some(arg => arg.startsWith("Leia e siga integralmente o brief em "))).toBe(false);
+      expect(spec.args.some(arg => arg.includes("b".repeat(4_160)))).toBe(true);
+      void orchTerminateSession(sessionId);
+    } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -2165,7 +2187,7 @@ describe("AGY advisory native profile", () => {
       expect(() => spawnMainOwnedAgentSession(
         { kind: "cli-agent", paneId: "failed-large-brief", cols: 100, rows: 30 },
         builtinCliPtyAdapter("claude"), {},
-        { ...base, context: { ...base.context!, initialPrompt: "contexto ".repeat(1_300) } },
+        { ...base, context: { ...base.context!, initialPrompt: "contexto ".repeat(4_000) } },
       )).toThrow("test host spawn failed");
       expect(briefPath).toBeDefined();
       expect(fs.existsSync(briefPath!)).toBe(false);
@@ -2554,7 +2576,7 @@ describe("AGY advisory native profile", () => {
       const worktree = path.join(root, "worktree"); fs.mkdirSync(worktree);
       const host = fakeHost(); setPtyHost(host.host);
       const base = revisionBoundWorker(fs.realpathSync.native(worktree));
-      const prompt = mode === 'fresh-large' ? 'large native argv '.repeat(600) : 'exact sanitized native argv';
+      const prompt = mode === 'fresh-large' ? 'large native argv '.repeat(2_000) : 'exact sanitized native argv';
       const authority = mode === 'direct-user' ? trustedSpawn(fs.realpathSync.native(worktree)) : {
         ...base, context: { ...base.context!, ...(mode === 'no-argv' ? {} : { initialPrompt: prompt }) },
       };
