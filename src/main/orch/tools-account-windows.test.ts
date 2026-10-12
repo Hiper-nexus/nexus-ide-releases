@@ -78,6 +78,61 @@ describe('nexus_account_windows', () => {
     expect(out.avisos.some((a) => a.status === 'queimada')).toBe(true);
   });
 
+  it('F-1329: unmeasured window is null, never 0% — and the account is not "ok"', async () => {
+    state.snapshot = {
+      updatedAt: NOW,
+      worstUsedRatio: null,
+      highUsageCount: 0,
+      unknownCount: 2,
+      entries: [
+        {
+          id: 'codex:b1',
+          adapterId: 'codex',
+          accountId: 'b1',
+          installed: true,
+          onCooldown: false,
+          updatedAt: NOW,
+          windows: [
+            { kind: 'hours', label: '5h', usedRatio: null, source: 'none', confidence: 'none' },
+            { kind: 'weekly', label: 'semana', usedRatio: null, source: 'none', confidence: 'none' },
+          ],
+        },
+        {
+          // known 10% on one window, null on the other: worst = 10, still "ok".
+          id: 'codex:b2',
+          adapterId: 'codex',
+          accountId: 'b2',
+          installed: true,
+          onCooldown: false,
+          updatedAt: NOW,
+          windows: [
+            { kind: 'hours', label: '5h', usedRatio: 0.1, source: 'provider-api', confidence: 'high' },
+            { kind: 'weekly', label: 'semana', usedRatio: null, source: 'none', confidence: 'none' },
+          ],
+        },
+      ],
+    };
+    const out = (await accountWindowsTool.handler({}, ctx(), undefined)) as {
+      accounts: Array<{
+        entryId: string;
+        status: string;
+        usedPctWorst: number | null;
+        windows: Array<{ kind: string; usedPct: number | null }>;
+      }>;
+      avisos: Array<{ entryId: string; status: string }>;
+    };
+    const unmeasured = out.accounts.find((a) => a.entryId === 'codex:b1');
+    expect(unmeasured?.status).toBe('sem leitura');
+    expect(unmeasured?.usedPctWorst).toBeNull();
+    expect(unmeasured?.windows.every((w) => w.usedPct === null)).toBe(true);
+    // the missing reading must surface as an aviso, not a silent "ok"
+    expect(out.avisos.some((a) => a.entryId === 'codex:b1')).toBe(true);
+    // partial reading: worst is the known one, never 0 from the null sibling
+    const partial = out.accounts.find((a) => a.entryId === 'codex:b2');
+    expect(partial?.usedPctWorst).toBe(10);
+    expect(partial?.status).toBe('ok');
+  });
+
   it('worker without provider identity never widens to the fleet', async () => {
     state.snapshot = { updatedAt: NOW, entries: [] };
     const out = (await accountWindowsTool.handler({}, ctx('worker'), undefined)) as {

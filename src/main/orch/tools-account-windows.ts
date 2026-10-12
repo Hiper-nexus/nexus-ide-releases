@@ -75,18 +75,24 @@ export const accountWindowsTool: McpToolDef = {
         const windows = (entry.windows ?? []).map((w) => ({
           label: w.label,
           kind: w.kind,
-          usedPct: Math.round((w.usedRatio ?? 0) * 100),
+          // F-1329: ratio ausente é ausência de leitura, não 0% de consumo.
+          // `0` aqui fazia uma conta que ninguém mediu parecer folgada.
+          usedPct: w.usedRatio === null || w.usedRatio === undefined
+            ? null
+            : Math.round(w.usedRatio * 100),
           ...(w.resetsAt !== undefined ? { resetsAt: w.resetsAt } : {}),
           source: w.source,
           confidence: w.confidence,
         }));
-        const worst = windows.reduce(
-          (acc, w) => (w.usedPct > acc ? w.usedPct : acc),
-          0,
-        );
+        // O pior caso só diz algo sobre as janelas REALMENTE lidas; uma janela
+        // sem leitura não pode virar o piso 0 nem baixar o pior da conta.
+        const readPcts = windows
+          .map((w) => w.usedPct)
+          .filter((pct): pct is number => pct !== null);
+        const worst = readPcts.reduce((acc, pct) => (pct > acc ? pct : acc), 0);
         const status = entry.onCooldown
           ? 'queimada'
-          : windows.length === 0
+          : readPcts.length === 0
             ? 'sem leitura'
             : worst >= 95
               ? 'queimada'
@@ -97,7 +103,7 @@ export const accountWindowsTool: McpToolDef = {
           ...(entry.accountId ? { accountId: entry.accountId } : {}),
           status,
           windows,
-          usedPctWorst: windows.length ? worst : null,
+          usedPctWorst: readPcts.length ? worst : null,
           onCooldown: Boolean(entry.onCooldown),
         };
       });
