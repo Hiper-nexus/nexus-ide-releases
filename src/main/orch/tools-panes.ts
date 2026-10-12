@@ -2012,7 +2012,10 @@ const paneSpawnAfterTabMission = {
         // são vinculados pelo branch de agentName acima (findAgentInSquad +
         // agent.cli). Fail-open quando o roster é irresolúvel (conjunto vazio).
         // Modo livre dispensa o vínculo por completo.
-        if (!agentRef && missionRow.squadId) {
+        // F-1319: a retomada de um pane da missão (devolução do ack rework)
+        // preserva o runtime do registro original, que já passou pelos gates
+        // (b) e (c) no nascimento — conta como rota já autorizada.
+        if (!agentRef && !missionResume && missionRow.squadId) {
           const bindingError = squadBindingViolationError({
             hasNamedAgent: false,
             missionSquadId: missionRow.squadId,
@@ -2031,7 +2034,7 @@ const paneSpawnAfterTabMission = {
         if (
           requiresRouteReservation({
             missionRunning: missionRow.status === 'running',
-            rosterRouteAuthorized,
+            rosterRouteAuthorized: rosterRouteAuthorized || Boolean(missionResume),
             freeAgentChoice,
           }) ||
           (autoRouteReservation && Boolean(ctx.sessionId))

@@ -43,6 +43,8 @@ const h = vi.hoisted(() => ({
   pendingPanes: new Set<string>(),
   // F-1259: panes cuja gravação em missionPanes falhou (sem linha durável).
   unrecorded: new Set<string>(),
+  // F-1319: CLIs do roster do squad selado da missão (gate b).
+  rosterClis: new Set<string>(['codex']),
 }));
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
@@ -100,6 +102,7 @@ vi.mock('./squad-store', () => ({
   findAgentInAnySquad: () => null,
   findAgentInSquad: () => ({ agent: { agentName: 'Executor', category: 'executor', cli: 'codex', model: 'gpt-5.4' } }),
   getSquad: () => null,
+  squadRoutableCliIds: () => h.rosterClis,
 }));
 
 import { ISOLATED_TAB_WORKTREE_NOTE, paneSpawnTool } from './tools-panes';
@@ -134,6 +137,7 @@ beforeEach(() => {
   h.providerlessPanes.clear();
   h.pendingPanes.clear();
   h.unrecorded.clear();
+  h.rosterClis = new Set(['codex']);
   temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-pane-writer-')));
   const root = path.join(temp, 'repo');
   fs.mkdirSync(root);
@@ -816,6 +820,29 @@ describe('revisão cruzada 0.76.110: corrida, retomada, WIP e GC', () => {
       expect(options).toMatchObject({ cwd: record.worktreePath, isolatedWriter: true });
       expect(options.prompt).toContain('melhore a entrega');
       expect(options.prompt).toContain('partial work');
+    });
+
+    // F-1319/F-1388 (revisão Fable): a devolução do ack rework chama
+    // handler({resume, prompt, missionId}) SEM agentName nem routeReservationId.
+    // Missão running com squad e sem modo livre: a retomada é a rota já
+    // autorizada do registro original — não pede reserva nova.
+    it.each([
+      [false, false], [true, false], [false, true],
+    ])('devolução por resume sem agentName em missão com squad não pede reserva (providerless=%s, cli fora do roster atual=%s)', async (providerless, rosterMoved) => {
+      await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx);
+      // O runtime do registro original já passou pelos gates no nascimento;
+      // o roster pode ter mudado depois — a retomada preserva o original.
+      if (rosterMoved) h.rosterClis = new Set(['claude']);
+      const [record] = registry.listMission(ctx.scope, ctx.missionId!);
+      if (providerless) h.providerlessPanes.add('pane-0');
+      h.panes[0].state = 'exited';
+      exitPane(h.panes[0]);
+      await expect(paneSpawnTool.handler(
+        { resume: 'pane-0', prompt: '[NEXUS_REWORK] refaça com teste', missionId: ctx.missionId }, ctx,
+      )).resolves.toMatchObject({ paneId: 'pane-1' });
+      const options = h.spawn.mock.calls.at(-1)![0] as SpawnToolOptions;
+      expect(options).toMatchObject({ adapterId: 'codex', cwd: record.worktreePath });
+      expect(options.prompt).toContain('refaça com teste');
     });
 
     it('writer COM conversa retomável mantém o resume exato (sem fallback)', async () => {
