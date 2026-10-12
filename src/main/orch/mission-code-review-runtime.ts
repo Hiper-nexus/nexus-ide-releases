@@ -164,6 +164,10 @@ export class MissionCodeReviewRuntime {
           owned.wakeTimer = setTimeout(() => {
             owned.wakeTimer = undefined;
             if (!this.#current(owned) || owned.result || owned.pane || owned.flight || !owned.lastInput) return;
+            // setTimeout é monotônico e retryAt é relógio de parede: o timer pode
+            // disparar um pouco antes do retryAt e o ensure voltaria `waiting`
+            // sem ninguém rearmar. O próprio disparo É o prazo vencido.
+            owned.retryAt = Math.min(owned.retryAt, this.ports.now());
             void this.ensure(owned.lastInput).catch(() => undefined);
           }, RETRY_MS);
           owned.wakeTimer.unref?.();

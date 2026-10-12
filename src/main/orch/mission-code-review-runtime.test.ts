@@ -158,6 +158,25 @@ describe('Main candidate reviewer ownership', () => {
     expect((await f.submit()).accepted).toBe(false);
   });
 
+  it('F-1261: o wake que dispara antes do relógio de parede ainda refaz a seleção', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fixture();
+      let selections = 0;
+      f.ports.select = async () => {
+        selections += 1;
+        return selections === 1 ? null : { adapterId: 'codex', model: 'frontier' };
+      };
+      expect((await f.runtime.ensure(f.input)).kind).toBe('waiting');
+      // Só os timers andam: ports.now() fica antes do retryAt (disparo adiantado).
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(selections).toBeGreaterThanOrEqual(2);
+      expect(f.spawned).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('F-1261: wake coalescido no retryAt refaz a seleção sem evento externo', async () => {
     vi.useFakeTimers();
     try {
