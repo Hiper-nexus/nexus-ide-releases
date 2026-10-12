@@ -535,6 +535,20 @@ describe('papel da tarefa e superfície do CLI filtram o catálogo (F-772)', () 
     expect(names).not.toContain('systematic-debugging');
   });
 
+  it('review adversarial "sem corrigir" mantém as skills de investigação (F-1304)', () => {
+    // O filtro por papel usa a lane: "sem corrigir" deve ser consult, então
+    // oc-conveyor/oc-scout sobrevivem e as de escrita saem.
+    const names = skillCatalogForTaskRole(
+      'revise este PR com olhar adversarial e consolide os achados, sem corrigir',
+      catalog,
+    ).map((entry) => entry.name);
+    expect(names).toContain('oc-conveyor');
+    expect(names).toContain('oc-scout');
+    expect(names).not.toContain('oc-builder');
+    expect(names).not.toContain('oc-pilot');
+    expect(names).not.toContain('systematic-debugging');
+  });
+
   it('CLI sem superfície de skills nem pergunta ao Jev', async () => {
     const judge = vi.fn();
     for (const adapterId of ['muse', 'minimax-code', 'aider', 'devin']) {

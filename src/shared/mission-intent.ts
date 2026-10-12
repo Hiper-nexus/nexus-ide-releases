@@ -1112,8 +1112,10 @@ export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
 
   // 1. "sem alterar nada", "não mexa", "só me diga", "somente leitura".
   //    Vence TUDO: é a pessoa proibindo a escrita com todas as letras.
+  // F-1304: o passo 4 casa "corrigir" sem honrar o "sem" — "revise, sem
+  // corrigir" virava lane de escrita. Negar também os verbos de conserto.
   const readOnlyRefusal =
-    /\b(?:sem|n[aã]o)\s+(?:alterar|mexer|mudar|modificar|editar|tocar)\b|\bn[aã]o\s+(?:mexa|altere|mude|modifique|edite|toque)\b|\b(?:s[oó]|apenas|somente)\s+(?:me\s+)?(?:diga|dize|olhe|leia|analise|revise|verifique)\b|\bsomente\s+leitura\b|\bread-?only\b/i.test(
+    /\b(?:sem|n[aã]o)\s+(?:alterar|mexer|mudar|modificar|editar|tocar|corrigir|aplicar|consertar|resolver)\b|\bn[aã]o\s+(?:mexa|altere|mude|modifique|edite|toque|corrija|aplique|conserte|resolva)\b|\b(?:s[oó]|apenas|somente)\s+(?:me\s+)?(?:diga|dize|olhe|leia|analise|revise|verifique)\b|\bsomente\s+leitura\b|\bread-?only\b/i.test(
       g,
     );
   if (readOnlyRefusal) return 'consult';

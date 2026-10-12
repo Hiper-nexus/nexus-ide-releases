@@ -878,6 +878,22 @@ describe('suggestMissionLaneFromGoal — o que o leigo pede de verdade', () => {
       suggestMissionLaneFromGoal('investigue por que o login está lento'),
     ).toBe('consult');
   });
+
+  it('"revise ..., sem corrigir" é consult, não lane de escrita (F-1304)', () => {
+    // O passo 4 casa "corrigir" sem honrar o "sem": a recusa de escrita
+    // precisava negar corrigir/aplicar/consertar/resolver também.
+    expect(
+      suggestMissionLaneFromGoal(
+        'revise este PR com olhar adversarial e consolide os achados, sem corrigir',
+      ),
+    ).toBe('consult');
+    expect(
+      suggestMissionLaneFromGoal('audite a entrega e me diga o que está errado, sem aplicar nada'),
+    ).toBe('consult');
+    expect(
+      suggestMissionLaneFromGoal('analise o bug e aponte a causa, sem consertar'),
+    ).toBe('consult');
+  });
 });
 
 describe('missão MISTA — a lane não pode proibir a outra metade', () => {
