@@ -12,6 +12,7 @@ import { PTY_CHANNELS } from '../../shared/channels';
 import type { PtyProcHandle, PtySessionHandlers } from './pty-host-core';
 import {
   __resetPtyShutdownLifecycleForTests,
+  acknowledgeSessionOutput,
   orchTerminateSession,
   setPtyHost,
   spawnSession,
@@ -41,6 +42,10 @@ vi.mock('../license-access', async () => (await import('../__tests__/licensed-ac
  *   chunk a chunk.
  * - unackedPushChars (524288 = 512 KiB): renderer que não drena pausa o push
  *   em 512 KiB sem ack; a fila de IPC dentro do Main não cresce sem limite.
+ * - pendingPushChunks (8) e pendingPushChars (65536 = 64 KiB): janela T3
+ *   `OutputProtocol` — no máximo 8 chunks / 64 KiB em voo sem ack, para que
+ *   rajadas de chunks minúsculos não encham o IPC do Electron (400×80 chars
+ *   são 32 KiB, abaixo do teto de caracteres, mas 400 mensagens).
  */
 const BUDGET = {
   dataSendsPerChunk: 1,
@@ -48,6 +53,8 @@ const BUDGET = {
   envelopeBytesPerEvent: 64,
   tapDeliveriesPerBurst: 2,
   unackedPushChars: 512 * 1024,
+  pendingPushChunks: 8,
+  pendingPushChars: 64 * 1024,
 } as const;
 
 const BURST_CHUNKS = 400;
@@ -59,6 +66,7 @@ interface Spawned {
   readonly sessionId: string;
   readonly handlers: PtySessionHandlers;
   readonly send: ReturnType<typeof vi.fn>;
+  readonly owner: WebContents;
 }
 
 const disposers: Array<() => void> = [];
@@ -111,7 +119,7 @@ function spawnShell(): Spawned {
       },
     },
   );
-  return { sessionId, handlers: handlers!, send };
+  return { sessionId, handlers: handlers!, send, owner };
 }
 
 async function finish(shell: Spawned): Promise<void> {
@@ -183,6 +191,32 @@ describe('orçamento de wire da saída de PTY (QLT-01)', () => {
     );
     console.info('[perf-budget] pty-output unacked', JSON.stringify({ pushed }));
     expect(pushed).toBeLessThanOrEqual(BUDGET.unackedPushChars);
+    await finish(shell);
+  });
+
+  it('janela T3 de ACK: no máximo 8 chunks / 64 KiB em voo sem confirmação', async () => {
+    fakeClock();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const shell = spawnShell();
+    // Chunks minúsculos ficam ABAIXO do teto de caracteres (400×80 = 32 KiB)
+    // mas estouram o teto de mensagens do OutputProtocol do T3.
+    const tiny = `${'z'.repeat(79)}\n`;
+    for (let i = 0; i < 400; i += 1) shell.handlers.onData(tiny);
+
+    const events = sendsOn(shell, PTY_CHANNELS.data) as Array<{ sequence: number; data: string }>;
+    const pushedChars = events.reduce((sum, event) => sum + event.data.length, 0);
+    const work = { chunks: events.length, pushedChars };
+    console.info('[perf-budget] pty-output pending-window', JSON.stringify(work));
+    expect(work.chunks).toBeLessThanOrEqual(BUDGET.pendingPushChunks);
+    expect(work.pushedChars).toBeLessThanOrEqual(BUDGET.pendingPushChars);
+
+    // ACK dos 8 em voo reabre a janela para o próximo chunk ao vivo.
+    const last = events.at(-1)!;
+    acknowledgeSessionOutput(shell.owner, shell.sessionId, last.sequence);
+    shell.handlers.onData(tiny);
+    const afterAck = sendsOn(shell, PTY_CHANNELS.data).length;
+    console.info('[perf-budget] pty-output pending-window-after-ack', JSON.stringify({ afterAck }));
+    expect(afterAck).toBe(events.length + 1);
     await finish(shell);
   });
 });

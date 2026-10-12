@@ -238,6 +238,12 @@ interface Session {
   replay: Array<{ sequence: number; data: string }>;
   /** Sum of `replay` data lengths — maintained incrementally, never walked. */
   replayChars: number;
+  /** Highest sequence actually handed to `wc.send` (not merely buffered). */
+  lastPushedSequence: number;
+  /** Pushed-but-unacked chunks in flight — T3 `OutputProtocol` window. */
+  pendingPushChunks: number;
+  /** Sum of `data.length` for those in-flight chunks. */
+  pendingPushChars: number;
   /** Throttle marker for the output-backpressure warning. */
   lastBackpressureWarnAt: number;
   /** Temp ZDOTDIR/bashrc dirs for OSC 133 — cleaned on session end. */
@@ -1148,6 +1154,15 @@ function canSend(wc: WebContents | null): wc is WebContents {
  * the full hole pullable before eviction.
  */
 const MAX_UNACKED_OUTPUT_CHARS = 512 * 1024;
+/**
+ * T3 Code `withTerminalOutputWindow` (MIT, `apps/server/src/terminal/OutputProtocol.ts`):
+ * at most 8 unacked chunks / 64 KiB of payload in flight before the stream pauses.
+ * The char cap above bounds total retained recovery data; this window bounds how
+ * many tiny messages can pile up in Electron IPC before the renderer acks them.
+ * 1 000×80-char chunks are 80 KiB — under the char cap, but 1 000 IPC messages.
+ */
+const MAX_PENDING_PUSH_CHUNKS = 8;
+const MAX_PENDING_PUSH_CHARS = 64 * 1024;
 const OUTPUT_BACKPRESSURE_WARN_INTERVAL_MS = 30_000;
 
 function warnOutputBackpressureThrottled(
@@ -1164,7 +1179,8 @@ function warnOutputBackpressureThrottled(
   session.lastBackpressureWarnAt = now;
   console.warn(
     `[pty-manager] output backpressure for ${sessionId}: ` +
-      `${session.replayChars} unacked chars exceed ${MAX_UNACKED_OUTPUT_CHARS}; ` +
+      `unacked ${session.replayChars} chars / ${session.pendingPushChunks} chunks ` +
+      `(limits ${MAX_UNACKED_OUTPUT_CHARS} chars, ${MAX_PENDING_PUSH_CHUNKS}×${MAX_PENDING_PUSH_CHARS}); ` +
       `push paused until the renderer drains`,
   );
 }
@@ -1263,19 +1279,30 @@ function onSessionData(
       drop < session.replay.length &&
       session.replayChars > MAX_REPLAY_WINDOW_CHARS
     ) {
-      session.replayChars -= session.replay[drop].data.length;
+      const dropped = session.replay[drop];
+      session.replayChars -= dropped.data.length;
+      if (dropped.sequence <= session.lastPushedSequence) {
+        session.pendingPushChunks = Math.max(0, session.pendingPushChunks - 1);
+        session.pendingPushChars = Math.max(0, session.pendingPushChars - dropped.data.length);
+      }
       drop += 1;
     }
     session.replay.splice(0, drop);
   }
   if (canSend(session.wc)) {
-    if (session.replayChars > MAX_UNACKED_OUTPUT_CHARS) {
+    const pendingWindowFull =
+      session.pendingPushChunks >= MAX_PENDING_PUSH_CHUNKS ||
+      session.pendingPushChars >= MAX_PENDING_PUSH_CHARS;
+    if (session.replayChars > MAX_UNACKED_OUTPUT_CHARS || pendingWindowFull) {
       // Renderer is not draining: pause the push. The chunk above still
       // landed in the replay window, so the recover pull catches up and its
       // acks resume the push — no data loss, no unbounded main-side IPC queue.
       warnOutputBackpressureThrottled(sessionId, session);
     } else {
       session.wc.send(PTY_CHANNELS.data, event);
+      session.lastPushedSequence = event.sequence;
+      session.pendingPushChunks += 1;
+      session.pendingPushChars += data.length;
     }
   }
   // F-764 C.1: taps de dados em lote por sessão (o push ao renderer acima e a
@@ -1546,6 +1573,9 @@ export function spawnSession(
       acknowledgedSequence: 0,
       replay: [],
       replayChars: 0,
+      lastPushedSequence: 0,
+      pendingPushChunks: 0,
+      pendingPushChars: 0,
       lastBackpressureWarnAt: 0,
       shellIntegrationCleanup: [...cleanupPaths],
     };
@@ -3315,6 +3345,9 @@ export function spawnAgentSession(
     acknowledgedSequence: 0,
     replay: [],
     replayChars: 0,
+    lastPushedSequence: 0,
+    pendingPushChunks: 0,
+    pendingPushChars: 0,
     lastBackpressureWarnAt: 0,
     shellIntegrationCleanup: [],
     ...(initialBriefPath ? { initialBriefPath } : {}),
@@ -3653,16 +3686,25 @@ export function acknowledgeSessionOutput(
   // Replay is ordered by sequence: drop the acknowledged prefix in place.
   let drop = 0;
   let droppedChars = 0;
+  let droppedPushedChunks = 0;
+  let droppedPushedChars = 0;
   while (
     drop < session.replay.length &&
     session.replay[drop].sequence <= session.acknowledgedSequence
   ) {
-    droppedChars += session.replay[drop].data.length;
+    const entry = session.replay[drop];
+    droppedChars += entry.data.length;
+    if (entry.sequence <= session.lastPushedSequence) {
+      droppedPushedChunks += 1;
+      droppedPushedChars += entry.data.length;
+    }
     drop += 1;
   }
   if (drop > 0) {
     session.replay.splice(0, drop);
     session.replayChars -= droppedChars;
+    session.pendingPushChunks = Math.max(0, session.pendingPushChunks - droppedPushedChunks);
+    session.pendingPushChars = Math.max(0, session.pendingPushChars - droppedPushedChars);
   }
 }
 
