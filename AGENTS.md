@@ -1557,6 +1557,14 @@ saber isto antes de mexer:
   pelo auto-route do spawn. Pane one-shot (`OwnedAgentSessionInfo.oneShot`,
   AGY `--print`/OpenCode `run`) não lê o terminal: `nexus_pane_ask` responde
   `state: 'oneshot'` sem digitar nada e `nexus_pane_write` avisa no recibo.
+- F-1272: one-shot com a raiz viva conta como ATIVO. Essas CLIs trabalham de
+  tela muda: a detecção cai no fallback de idle do avaliador e o PTY apaga por
+  silêncio. O predicado é `isOneShotSessionRunning` (pty-manager: sessão no
+  mapa + `oneShot` + sem voo de término físico) e o `PaneSnapshot` carrega
+  `oneShotAlive`. Todo consumidor de "pane idle" (watchdog de zero entrega,
+  reuso de helper, cleanup/park do guardian, conclusão civil) respeita a
+  marca; o fallback de idle do avaliador para CLIs interativos continua
+  intacto.
 - F-247: `selectHubServersForSpawn` filtra o hub MCP por papel. Worker de
   missão e filho do operador recebem só os servidores pedidos em
   `allowedTools` (`mcp__<server>__*`; sem pedido, nenhum — os 16 stdio e os
