@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AdapterInfo } from '../../shared/adapter-types';
-import { useAdapterStore } from './adapter-store';
+import { adapterAcceptsBracketedPaste, useAdapterStore } from './adapter-store';
 
 const CLAUDE: AdapterInfo = {
   id: 'claude',
@@ -38,5 +38,22 @@ describe('useAdapterStore', () => {
     expect(useAdapterStore.getState().adapters).toHaveLength(1);
     useAdapterStore.getState().receive([]);
     expect(useAdapterStore.getState().adapters).toEqual([]);
+  });
+});
+
+describe('F-1411: adapterAcceptsBracketedPaste', () => {
+  beforeEach(() => useAdapterStore.setState({ adapters: [] }));
+
+  it('lê a declaração do adapter; sem declaração ou antes da hidratação cola com marcador', () => {
+    expect(adapterAcceptsBracketedPaste('kimi')).toBe(true);
+    useAdapterStore.setState({ adapters: [
+      { ...CLAUDE, id: 'kimi', bracketedPaste: true },
+      { ...CLAUDE, id: 'devin', bracketedPaste: false },
+      CLAUDE,
+    ] });
+    expect(adapterAcceptsBracketedPaste('kimi')).toBe(true);
+    expect(adapterAcceptsBracketedPaste('devin')).toBe(false);
+    expect(adapterAcceptsBracketedPaste('claude')).toBe(true);
+    expect(adapterAcceptsBracketedPaste(undefined)).toBe(true);
   });
 });
