@@ -70,13 +70,16 @@ function withoutEnumerationContext(text: string): string {
  * renderizada" em QUALQUER brief. Uma revisão de segurança só leitura cujo
  * prompt trazia o rodapé foi rebaixada para `partial` com "[verificação visual
  * pendente]". O bloco sai do texto classificado, do cabeçalho até a frase fixa
- * que o fecha (ou até a próxima linha em branco, se a frase mudar).
+ * que o fecha.
  */
 // Mesmo texto de WORKSPACE_DESIGN_RULE_HEADING/ruleText (workspace-design-rule.ts),
 // sem importar aquele módulo (settings e catálogo de design) para o gate.
 const DESIGN_RULE_BLOCK = new RegExp(
   String.raw`Regra de design do projeto\s*\(sempre que o trabalho envolver UI\):` +
-  String.raw`[\s\S]*?(?:ainda não aplicada como regra vigente\.|(?=\n\s*\n)|$)`,
+  // Revisão Grok: só o bloco COMPLETO (título + frase de fechamento, sem
+  // atravessar linha em branco). Título citado sem o fechamento fica: nunca
+  // remover até o fim do texto, senão o pedido visual depois dele some.
+  String.raw`(?:(?!\n[ \t]*\n)[\s\S])*?ainda não aplicada como regra vigente\.`,
   'gu',
 );
 
