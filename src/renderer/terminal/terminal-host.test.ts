@@ -755,6 +755,33 @@ describe('B1 (F-1393): input humano no pane cancela o ditado pendente', () => {
     expect(isTerminalReport('\x1b[A')).toBe(false);
     expect(isTerminalReport('sim')).toBe(false);
   });
+
+  it.each([
+    ['DSR status', '\x1b[0n'],
+    ['DECRQM privado', '\x1b[?2004;1$y'],
+    ['DECRQM ANSI', '\x1b[4;2$y'],
+    ['DECRQSS', '\x1bP1$r0;1m\x1b\\'],
+    ['DECRQSS inválido', '\x1bP0$r\x1b\\'],
+    ['window-ops tamanho em células', '\x1b[8;24;80t'],
+    ['window-ops tamanho em pixels', '\x1b[4;600;800t'],
+    ['OSC 10 com BEL', '\x1b]10;rgb:ffff/ffff/ffff\x07'],
+    ['OSC 11 com ST', '\x1b]11;rgb:0b0b/0b0b/0c0c\x1b\\'],
+    ['OSC 12', '\x1b]12;rgb:7c7c/8686/ffff\x07'],
+    ['CPR estendido', '\x1b[?12;40;1R'],
+    ['vários relatórios juntos', '\x1b[0n\x1b]11;rgb:0000/0000/0000\x07\x1b[?2004;2$y'],
+  ])('C-4: resposta automática do xterm 6 (%s) não cancela o ditado', (_name, data) => {
+    expect(isTerminalReport(data)).toBe(true);
+  });
+
+  it.each([
+    ['tecla com relatório colado', '\x1b[0nx'],
+    ['OSC sem terminador', '\x1b]11;rgb:0000/0000/0000'],
+    ['Enter', '\r'],
+    ['Ctrl+C', '\x03'],
+    ['seta para cima', '\x1b[A'],
+  ])('C-4: digitação (%s) continua sendo input humano', (_name, data) => {
+    expect(isTerminalReport(data)).toBe(false);
+  });
 });
 
 describe('waitForSession with an attached terminal', () => {
