@@ -336,6 +336,8 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
         cause: 'spawn-refused',
         outcome: 'rerouted',
         nextAdapterId: 'codex',
+        // F-1410: o motivo real fica no trace local (diagnóstico), não no aviso.
+        error: 'Qwen Code: modelo selado "qwen3.7-plus" não entrou no argv do spawn',
       }),
     );
     expect(getPaneStartWatch('pane-qwen')).toBeNull();

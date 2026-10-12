@@ -475,6 +475,11 @@ export interface PaneStartWatch extends PaneStartWatchInit {
     readonly exitCode?: number;
     /** F-1270: motivo legível já categorizado (ex.: mensagem real da recusa de capacidade). */
     readonly detail?: string;
+    /**
+     * F-1410: 1ª linha saneada do erro da recusa (`shortStartError`) — só para
+     * o trace local `pane-not-started`, nunca para o aviso ao Maestro.
+     */
+    readonly error?: string;
   } | null;
   /** A sessão acabou sem falha provada (pedido de encerramento, one-shot, fora da janela). */
   sessionEnded: boolean;
@@ -506,6 +511,7 @@ interface EarlyMark {
   readonly at: number;
   readonly failure?: PaneStartFailureCause;
   readonly detail?: string;
+  readonly error?: string;
   readonly accepted?: true;
 }
 /** Sinal que chegou antes de a ficha existir (corrida com a resposta da tool). */
@@ -552,7 +558,8 @@ export function trackPaneStart(init: PaneStartWatchInit): PaneStartWatch {
     sessionSpawnedAt: null,
     accepted: early?.accepted === true,
     failure: early?.failure
-      ? { cause: early.failure, at: early.at, ...(early.detail ? { detail: early.detail } : {}) }
+      ? { cause: early.failure, at: early.at, ...(early.detail ? { detail: early.detail } : {}),
+          ...(early.error ? { error: early.error } : {}) }
       : null,
     sessionEnded: false,
     turnOutcome: null,
@@ -616,15 +623,17 @@ export function notePaneStartFailure(
   cause: PaneStartFailureCause,
   now: number = Date.now(),
   detail?: string,
+  error?: string,
 ): void {
+  const extra = { ...(detail ? { detail } : {}), ...(error ? { error } : {}) };
   const watch = watches.get(paneId);
   if (!watch) {
     pruneEarlyMarks(now);
-    earlyMarks.set(paneId, { at: now, failure: cause, ...(detail ? { detail } : {}) });
+    earlyMarks.set(paneId, { at: now, failure: cause, ...extra });
     return;
   }
   if (watch.phase !== 'watching' || watch.accepted || watch.failure) return;
-  watch.failure = { cause, at: now, ...(detail ? { detail } : {}) };
+  watch.failure = { cause, at: now, ...extra };
   scheduleKick();
 }
 

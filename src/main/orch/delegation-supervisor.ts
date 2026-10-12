@@ -1068,6 +1068,7 @@ async function handlePaneNotStarted(
     breaker,
     ...(watch.failure?.exitCode !== undefined ? { exitCode: watch.failure.exitCode } : {}),
     ...(detail ? { detail } : {}),
+    ...(watch.failure?.error ? { error: watch.failure.error } : {}),
     ...(outputTail !== null ? { outputTail } : {}),
     ...(outcome.kind === 'rerouted'
       ? { nextPaneId: outcome.paneId, nextAdapterId: outcome.adapterId }
@@ -1346,11 +1347,15 @@ function installPaneStartTaps(): void {
     // mensagem real e marca `capacity-refused` (não reroteia); o resto é recusa
     // da CLI e segue o reenvio de sempre.
     const refusal = parsePaneAdmissionRefusal(failure.error);
+    // F-1410: a recusa de CLI leva a 1ª linha saneada do erro para o trace
+    // local — sem isso a causa só ia ao console e o diagnóstico se perdia
+    // (dois spawns do Muse de 12/10 recusados sem motivo em lugar nenhum).
     notePaneStartFailure(
       failure.paneId,
       refusal ? 'capacity-refused' : 'spawn-refused',
       Date.now(),
       refusal?.message,
+      refusal ? undefined : shortStartError(failure.error),
     );
   });
   const untapTermination = tapSessionTermination((sessionId, agent, rootExit) => {
