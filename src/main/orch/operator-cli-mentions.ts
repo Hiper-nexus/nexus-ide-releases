@@ -57,16 +57,46 @@ const lastNamedAtBySession = new Map<string, Map<string, number>>();
  */
 const humanSubmitsBySession = new Map<string, number[]>();
 const MAX_SUBMITS_PER_SESSION = 64;
+/**
+ * F-1418 (revisão Fable): há texto no composer desde o último Enter? Texto
+ * digitado pelo humano já é julgado pelo próprio tap, e texto escrito pelo
+ * Nexus (`system`) não pode ser avalizado por um Enter humano. Só o Enter
+ * "nu" — composer sem texto de ninguém, como no aceite de sugestão — avaliza
+ * um prompt do transcript.
+ */
+const composerDirtyBySession = new Set<string>();
+/** Enter nu: `\r` sozinho ou Tab+Enter (aceite da sugestão). Shift+Enter e colagem não. */
+const NAKED_SUBMIT = /^\t?\r$/u;
+/** Chunk com texto visível (fora controles e sequências ESC). */
+function hasVisibleText(data: string): boolean {
+  return sanitizeInput(data).replace(/[\s\b\x7f]/gu, '').length > 0;
+}
+
+function observeComposer(sessionId: string, data: string, origin: string, at: number): void {
+  if (origin === 'human' && NAKED_SUBMIT.test(data) && !composerDirtyBySession.has(sessionId)) {
+    noteHumanSubmit(sessionId, at);
+    return;
+  }
+  // Colagem (de qualquer origem) deixa texto no composer, mesmo com quebras.
+  if (data.includes('\x1b[200~')) {
+    composerDirtyBySession.add(sessionId);
+    return;
+  }
+  // Enter de qualquer origem submete o que havia; vale o que vem depois dele.
+  const lastBreak = Math.max(data.lastIndexOf('\r'), data.lastIndexOf('\n'));
+  if (lastBreak >= 0) composerDirtyBySession.delete(sessionId);
+  if (hasVisibleText(data.slice(lastBreak + 1))) composerDirtyBySession.add(sessionId);
+}
 
 let installed = false;
 
 /**
  * Aliases conhecidos → adapter: id da CLI, nomes de uso comum e o nome dos
- * modelos carro-chefe (F-1418: "devin swe2"/"swe-2", "wonder" do Muse). O
+ * modelos carro-chefe (F-1418: "devin swe2"/"swe-2", "wonder full" do Muse). O
  * próprio id do adapter sempre conta (ver `aliasesFor`). Nome que é palavra
  * comum de pt/en fica FORA (F-818): "sol"/"luna"/"terra" (Codex), "spark"
- * (Muse), "argon" (agy). "wonder" é exceção pedida pelo operador (é o nome
- * que ele usa para o Muse Wonder Full); o pin ainda exige `operatorChoice`.
+ * (Muse), "argon" (agy), "wonder" solto ("I wonder…", "no wonder…" — revisão
+ * Fable do F-1418): do Muse só conta "wonder full" (com espaço, hífen ou junto).
  */
 const CLI_MENTION_ALIASES: Readonly<Record<string, readonly string[]>> = {
   claude: ['claude', 'claude code', 'opus', 'sonnet', 'haiku', 'fable', 'mythos', 'anthropic'],
@@ -80,7 +110,7 @@ const CLI_MENTION_ALIASES: Readonly<Record<string, readonly string[]>> = {
   'minimax-code': ['minimax'],
   devin: ['devin', 'swe', 'swe2', 'windsurf'],
   longcat: ['longcat', 'meituan'],
-  muse: ['muse', 'wonder'],
+  muse: ['muse', 'wonder full'],
   'muse-claude': ['muse'],
   deepseek: ['deepseek'],
   opencode: ['opencode', 'big pickle'],
@@ -104,7 +134,8 @@ const KNOWN_ADAPTER_IDS = Object.keys(CLI_MENTION_ALIASES);
  * preferência (o pin é redistribuído), nunca escolha provada.
  */
 const CLI_MENTION_TYPOS: Readonly<Record<string, readonly string[]>> = {
-  claude: ['cluade', 'claud', 'calude', 'cloude', 'claudee'],
+  // "claud" saiu (revisão Fable do F-1418): "Claud Monet" é nome próprio.
+  claude: ['cluade', 'calude', 'cloude', 'claudee'],
   sonnet: ['sonet', 'sonnett'],
   codex: ['codx', 'cdex', 'codexx', 'coddex'],
   grok: ['grook', 'grokk'],
@@ -112,10 +143,8 @@ const CLI_MENTION_TYPOS: Readonly<Record<string, readonly string[]>> = {
   antigravity: ['antigravit', 'antigraviti', 'antigravty', 'antigrav'],
   kimi: ['kimmi', 'kimy'],
   minimax: ['minimaxx', 'minimx', 'minmiax'],
-  mimo: ['mimmo'],
   devin: ['devim', 'devinn', 'deivin', 'devni', 'dvein'],
   muse: ['musse', 'muze'],
-  wonder: ['wondr', 'woder'],
   deepseek: ['deepsek', 'depseek', 'dipseek', 'deepseak'],
   opencode: ['opencod', 'opnecode'],
   openclaude: ['openclaud'],
@@ -374,10 +403,15 @@ export interface SubmittedOperatorPrompt {
 
 /**
  * F-1418: o operador nomeou a CLI num prompt que a TUI registrou — sugestão
- * aceita com Enter/Tab ou mensagem absorvida no meio do turno, cujo TEXTO não
- * passa pelo tap (só a tecla). Vale quando o prompt está na janela, nomeia a
- * CLI e há um Enter HUMANO no tap colado ao carimbo do prompt; texto injetado
- * pelo Nexus (handoff, kickoff) é enviado por Enter `system` e não casa.
+ * aceita ou mensagem absorvida no meio do turno, cujo TEXTO não passa pelo
+ * tap (só a tecla). Vale quando o prompt está na janela, nomeia a CLI e um
+ * Enter NU humano do tap (composer vazio, ver `observeComposer`) está colado
+ * ao carimbo dele.
+ *
+ * Revisão Fable: um Enter avaliza no máximo UM prompt. Se mais de um prompt
+ * humano cair na janela do mesmo Enter, ele não avaliza nenhum (falha
+ * fechada) — carimbos em rajada anexados ao transcript não "pegam carona"
+ * num Enter real.
  */
 export function operatorSubmittedPromptNamesCli(
   sessionId: string | undefined,
@@ -390,13 +424,16 @@ export function operatorSubmittedPromptNamesCli(
   const submits = humanSubmitsBySession.get(sessionId);
   if (!submits || submits.length === 0) return false;
   const window = Math.min(windowMs, RETENTION_MS);
-  return prompts.some((prompt) =>
-    Number.isFinite(prompt.at) &&
+  const valid = prompts.filter((prompt) => Number.isFinite(prompt.at));
+  const vouches = (submit: number, prompt: SubmittedOperatorPrompt) =>
+    submit >= prompt.at - HUMAN_SUBMIT_BEFORE_MS && submit <= prompt.at + HUMAN_SUBMIT_AFTER_MS;
+  return valid.some((prompt) =>
     now - prompt.at >= 0 &&
     now - prompt.at <= window &&
-    submits.some((t) =>
-      t >= prompt.at - HUMAN_SUBMIT_BEFORE_MS && t <= prompt.at + HUMAN_SUBMIT_AFTER_MS) &&
-    textNamesCli(prompt.text, adapterId));
+    textNamesCli(prompt.text, adapterId) &&
+    submits.some((submit) =>
+      vouches(submit, prompt) &&
+      valid.filter((other) => vouches(submit, other)).length === 1));
 }
 
 /**
@@ -421,14 +458,15 @@ export function installOperatorCliMentionTap(): () => void {
   if (installed) return () => {};
   installed = true;
   const untapInput = tapSessionInput((sessionId, data, origin) => {
+    observeComposer(sessionId, data, origin, Date.now());
     if (origin !== 'human') return;
-    if (/[\r\n]/u.test(data)) noteHumanSubmit(sessionId, Date.now());
     remember(sessionId, data);
   });
   const untapExit = tapSessionExit((sessionId) => {
     inputBySession.delete(sessionId);
     lastNamedAtBySession.delete(sessionId);
     humanSubmitsBySession.delete(sessionId);
+    composerDirtyBySession.delete(sessionId);
   });
   return () => {
     untapInput();
@@ -436,6 +474,7 @@ export function installOperatorCliMentionTap(): () => void {
     inputBySession.clear();
     lastNamedAtBySession.clear();
     humanSubmitsBySession.clear();
+    composerDirtyBySession.clear();
     installed = false;
   };
 }

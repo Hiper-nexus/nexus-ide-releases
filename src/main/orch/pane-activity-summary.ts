@@ -364,6 +364,31 @@ function resolveClaudeTranscript(options: {
   return best;
 }
 
+function realpathOrNull(file: string): string | null {
+  try {
+    return fs.realpathSync(file);
+  } catch {
+    return null;
+  }
+}
+
+/** realpath do arquivo sob o realpath de alguma raiz, com o nome da sessão. */
+export function transcriptPathContained(
+  transcriptPath: string,
+  roots: readonly string[],
+  sessionId: string,
+): boolean {
+  if (path.basename(transcriptPath) !== `${sessionId}.jsonl`) return false;
+  const real = realpathOrNull(transcriptPath);
+  if (!real || path.basename(real) !== `${sessionId}.jsonl`) return false;
+  return roots.some((root) => {
+    const realRoot = realpathOrNull(root);
+    if (!realRoot) return false;
+    const relative = path.relative(realRoot, real);
+    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  });
+}
+
 /**
  * F-1418: transcript EXATO de uma sessão Claude (caminho do hook ou
  * `<root>/projects/<slug>/<sessionId>.jsonl`) — sem o fallback "mais novo do
@@ -376,15 +401,19 @@ export function resolveExactClaudeTranscriptPath(options: {
   sessionId?: string;
   transcriptPath?: string;
 }): string | null {
-  if (options.transcriptPath) {
+  if (!options.sessionId || !/^[A-Za-z0-9_-]{1,128}$/.test(options.sessionId)) {
+    return null;
+  }
+  const roots = claudeRoots(options.home, options.adapterId);
+  // Revisão Fable: o caminho do hook só vale contido — realpath sob uma raiz
+  // Claude conhecida e basename `<sessionId>.jsonl`. Fora disso, o calculado.
+  if (options.transcriptPath && transcriptPathContained(options.transcriptPath, roots, options.sessionId)) {
     const hit = statHit(options.transcriptPath);
     if (hit) return hit.file;
   }
-  if (!options.cwd || !options.sessionId || !/^[A-Za-z0-9_-]{1,128}$/.test(options.sessionId)) {
-    return null;
-  }
+  if (!options.cwd) return null;
   const slug = claudeProjectSlug(options.cwd);
-  for (const root of claudeRoots(options.home, options.adapterId)) {
+  for (const root of roots) {
     const hit = statHit(path.join(root, 'projects', slug, `${options.sessionId}.jsonl`));
     if (hit) return hit.file;
   }

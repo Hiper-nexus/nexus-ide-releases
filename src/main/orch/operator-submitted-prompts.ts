@@ -9,8 +9,8 @@
  * `absorbed_mid_turn`) e o pin no Devin foi redistribuído para o Kimi.
  *
  * Aqui o Nexus lê o final do transcript exato da sessão Claude que chamou o
- * spawn, pega os prompts com `origin.kind === 'human'` e exige, além disso,
- * um Enter HUMANO no tap colado ao carimbo de cada um
+ * spawn, pega só os `queued_command` com `origin.kind === 'human'` e exige,
+ * além disso, um Enter NU humano no tap casado 1:1 com o carimbo de cada um
  * (`operatorSubmittedPromptNamesCli`). Texto lido do transcript nunca é
  * logado nem guardado — vira só um sim/não.
  */
@@ -40,18 +40,6 @@ function isHumanOrigin(value: unknown): boolean {
   return record(value)?.kind === 'human';
 }
 
-function messageText(content: unknown): string | null {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return null;
-  const parts = content
-    .map((block) => {
-      const item = record(block);
-      return item?.type === 'text' && typeof item.text === 'string' ? item.text : '';
-    })
-    .filter(Boolean);
-  return parts.length > 0 ? parts.join('\n') : null;
-}
-
 function timestampOf(...values: unknown[]): number {
   for (const value of values) {
     if (typeof value !== 'string') continue;
@@ -63,9 +51,12 @@ function timestampOf(...values: unknown[]): number {
 
 /**
  * Pura: prompts humanos de um trecho de transcript do Claude Code (JSONL).
- * Conta a mensagem do meio do turno (`attachment.type === 'queued_command'`)
- * e a mensagem de usuário comum, as duas só com `origin.kind === 'human'`;
- * notificação de tarefa, resumo de compactação e `isMeta` ficam de fora.
+ * Só a mensagem que a TUI enfileirou pelo operador
+ * (`attachment.type === 'queued_command'` com `origin.kind === 'human'`):
+ * sugestão aceita e mensagem absorvida no meio do turno. A mensagem `user`
+ * comum fica de fora (revisão Fable): é por ela que entra texto que o
+ * próprio Nexus cola no composer (handoff, retomada) — e o prompt digitado
+ * já é julgado pelo tap.
  */
 export function extractClaudeHumanPrompts(
   jsonl: string,
@@ -74,35 +65,26 @@ export function extractClaudeHumanPrompts(
   const prompts: SubmittedOperatorPrompt[] = [];
   for (const line of jsonl.split('\n')) {
     if (line.length === 0 || line.length > MAX_LINE_CHARS) continue;
-    if (!line.includes('"human"')) continue;
+    if (!line.includes('"queued_command"')) continue;
     let entry: Record<string, unknown> | null;
     try {
       entry = record(JSON.parse(line));
     } catch {
       continue;
     }
-    if (!entry) continue;
-    let text: string | null = null;
-    let at = Number.NaN;
-    const attachment = record(entry.attachment);
+    const attachment = record(entry?.attachment);
     if (
-      entry.type === 'attachment' &&
-      attachment?.type === 'queued_command' &&
-      isHumanOrigin(attachment.origin) &&
-      typeof attachment.prompt === 'string'
+      entry?.type !== 'attachment' ||
+      attachment?.type !== 'queued_command' ||
+      !isHumanOrigin(attachment.origin) ||
+      typeof attachment.prompt !== 'string' ||
+      attachment.prompt.length === 0
     ) {
-      text = attachment.prompt;
-      at = timestampOf(attachment.timestamp, entry.timestamp);
-    } else if (
-      entry.type === 'user' &&
-      entry.isMeta !== true &&
-      isHumanOrigin(entry.origin)
-    ) {
-      text = messageText(record(entry.message)?.content);
-      at = timestampOf(entry.timestamp);
+      continue;
     }
-    if (!text || !Number.isFinite(at) || at < sinceMs) continue;
-    prompts.push({ at, text: text.slice(0, MAX_PROMPT_CHARS) });
+    const at = timestampOf(attachment.timestamp, entry.timestamp);
+    if (!Number.isFinite(at) || at < sinceMs) continue;
+    prompts.push({ at, text: attachment.prompt.slice(0, MAX_PROMPT_CHARS) });
   }
   return prompts;
 }
