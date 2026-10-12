@@ -1114,6 +1114,7 @@ describe('nexus_cli_inventory', () => {
       defaultModel: 'sonnet',
       modelCount: 2,
       models: ['opus', 'sonnet'],
+      modelsTruncated: false,
       orchestratorCapable: true,
       orchestrationEvidence: 'verified',
       taskHandoffCapable: true,
@@ -1162,7 +1163,24 @@ describe('nexus_cli_inventory', () => {
     ).rejects.toThrow(/orchestrator/i);
   });
 
-  it('caps clis and per-cli model lists', async () => {
+  it('F-1355: reports model truncation per CLI without implying missing CLIs', async () => {
+    adapterMocks.listAdapterInfos.mockReturnValue([
+      { ...adapters[0], models: { list: Array.from({ length: 31 }, (_, i) => `m${i}`), default: 'm0' } },
+      adapters[1],
+    ]);
+    const out = await tool('nexus_cli_inventory').handler({}, ctx()) as {
+      truncated: boolean;
+      clis: Array<{ models: string[]; modelCount: number; modelsTruncated: boolean }>;
+    };
+    expect(out.truncated).toBe(false);
+    expect(out.clis).toHaveLength(2);
+    expect(out.clis[0].models).toHaveLength(24);
+    expect(out.clis[0].modelCount).toBe(31);
+    expect(out.clis[0].modelsTruncated).toBe(true);
+    expect(out.clis[1].modelsTruncated).toBe(false);
+  });
+
+  it('F-1355: reports truncated CLIs independently of model truncation', async () => {
     adapterMocks.listAdapterInfos.mockReturnValue(
       Array.from({ length: 200 }, (_, i) => ({
         id: `a${i}`,
@@ -1170,7 +1188,7 @@ describe('nexus_cli_inventory', () => {
         label: `A${i}`,
         icon: 'x',
         models: {
-          list: Array.from({ length: 100 }, (_, m) => `m${m}`),
+          list: ['m0', 'm1'],
           default: 'm0',
         },
         installed: true,
@@ -1180,12 +1198,13 @@ describe('nexus_cli_inventory', () => {
       })),
     );
     const out = (await tool('nexus_cli_inventory').handler({}, ctx())) as {
-      clis: Array<{ models: string[]; modelCount: number }>;
+      clis: Array<{ models: string[]; modelCount: number; modelsTruncated: boolean }>;
       truncated: boolean;
     };
     expect(out.clis).toHaveLength(64);
-    expect(out.clis[0].models).toHaveLength(24);
-    expect(out.clis[0].modelCount).toBe(100);
+    expect(out.clis[0].models).toHaveLength(2);
+    expect(out.clis[0].modelCount).toBe(2);
+    expect(out.clis[0].modelsTruncated).toBe(false);
     expect(out.truncated).toBe(true);
   });
 });

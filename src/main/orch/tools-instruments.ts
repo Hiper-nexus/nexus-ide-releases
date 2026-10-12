@@ -1060,9 +1060,7 @@ const cliInventoryTool: McpToolDef = {
       available: true,
       authSource,
       ...(authReason ? { reason: authReason } : {}),
-      truncated:
-        adapters.length > capped.length ||
-        capped.some((a) => a.models.list.length > MAX_MODELS_PER_CLI),
+      truncated: adapters.length > capped.length,
       clis: capped.map((adapter) => {
         const auth = authByAdapter.get(adapter.id);
         return {
@@ -1082,6 +1080,7 @@ const cliInventoryTool: McpToolDef = {
           defaultModel: adapter.models.default,
           modelCount: adapter.models.list.length,
           models: adapter.models.list.slice(0, MAX_MODELS_PER_CLI),
+          modelsTruncated: adapter.models.list.length > MAX_MODELS_PER_CLI,
           orchestratorCapable: adapter.orchestratorCapable,
           orchestrationEvidence:
             adapter.orchestrationEvidence ??
