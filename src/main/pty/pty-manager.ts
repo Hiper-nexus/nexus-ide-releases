@@ -29,6 +29,7 @@ import {
   initialPromptChannel,
 } from "../../shared/cli-initial-prompt";
 import { ensureUtf8Locale } from "./pty-env-locale";
+import { applyProjectNodeToWorkerPath } from "./node-version-path";
 import { createExactResumeHealth, type ExactResumeAttempt } from "./exact-resume-health";
 import { materializeProviderState, providerStateEnvFor } from "./provider-state-env";
 import { applyPaneTerminalIdentity } from "./pane-terminal-identity";
@@ -2095,6 +2096,30 @@ export function spawnAgentSession(
   // de terceiro e spawnaria com HOME isolado e SEM credencial nenhuma — o
   // /login no meio da missão.
   const identityEnv = gatewayBaseUrl ? agentEnv(adapter, null) : env;
+  // F-1385: o Node que o projeto fixa (.nvmrc / nexusRelease.node / engines.node)
+  // entra na frente do PATH do worker quando há um bin compatível instalado —
+  // `npx vitest`/`tsc` rodam na versão certa sem reexecuções nem ERR_DLOPEN_FAILED.
+  // O minimax-code fica de fora: o addon nativo dele (better-sqlite3, ABI 147) é
+  // compilado para o Node que o F-789 sonda no PATH, não para o Node do projeto;
+  // prefixar o Node 22 aqui quebraria a TUI e dessincronizaria a decisão do permit
+  // (process.env.PATH) do PATH real do spawn.
+  const nodeInfo =
+    adapter.id === "minimax-code"
+      ? { applied: false, binDir: null, major: null, reason: "minimax-node-gerido-pelo-F-789" }
+      : applyProjectNodeToWorkerPath(env, authority.scope.rootRealPath);
+  if (identityEnv !== env) {
+    identityEnv.PATH = env.PATH;
+  }
+  if (nodeInfo.applied) {
+    console.info(
+      `[worker-node] ${adapter.id}: PATH → ${nodeInfo.binDir} (${nodeInfo.reason})`,
+    );
+  } else if (nodeInfo.major !== null) {
+    // Pin presente mas sem Node compatível: o spawn segue, só sem o atalho.
+    console.info(
+      `[worker-node] ${adapter.id}: Node ${nodeInfo.major} do projeto sem bin instalado`,
+    );
+  }
   const spawnEnvs = identityEnv === env ? [env] : [env, identityEnv];
   if (agentHookEndpointPath) {
     // NEXUS_PANE_KEY carries the ephemeral sessionId (hook correlation);
