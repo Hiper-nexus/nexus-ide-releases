@@ -177,6 +177,19 @@ describe('MCP effect policy', () => {
     expect(requiresHumanConfirmationForTool('nexus_pick_account')).toBe(false);
   });
 
+  it('F-1338 parte 2: sonda read-only Hardened lê o roteamento, mas não reserva rota', () => {
+    // Política, não bug: as leituras que a sonda C dizia faltar ficam visíveis
+    // na lane read-only; route_task cunha RouteReservation (delegação) e só
+    // some quando o modo Hardened confina a lane (readOnlyEnforced).
+    for (const tool of ['nexus_agent_list', 'nexus_mission_get', 'nexus_model_ranking']) {
+      expect(isToolAllowedForReadOnlyContext(tool), tool).toBe(true);
+    }
+    expect(effectPolicyForTool('nexus_route_task')).toBe('delegation-authority');
+    expect(isToolAllowedForReadOnlyContext('nexus_route_task')).toBe(false);
+    // pane_spawn segue visível (READ_ONLY_BASIC_TOOLS) e auto-roteia sem reserva.
+    expect(isToolAllowedForReadOnlyContext('nexus_pane_spawn')).toBe(true);
+  });
+
   it('limits read-only contexts to observations and narrow Nexus metadata receipts', () => {
     for (const tool of [
       'nexus_file_read',
