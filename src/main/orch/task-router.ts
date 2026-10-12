@@ -353,6 +353,9 @@ const CRITICAL_SIGNALS = [
   'produção', 'producao', 'production', 'data loss', 'perda de dados',
   'race condition', 'concorrência', 'concorrencia', 'deadlock', 'webhook',
   'secret', 'secrets', 'token', 'tokens',
+  // Revisão Fable (F-1340/F-1341): 'token' é ambíguo sozinho (F-1289); JWT não
+  // — "corrigir typo na validação do token JWT" é código de autenticação.
+  'jwt',
 ];
 
 const HARD_SIGNALS = [
@@ -434,18 +437,21 @@ const DOMAIN_ONLY_SIGNALS: ReadonlySet<string> = new Set([
   'autentica', 'authentica', 'authoriz', 'authn', 'authz', 'autoriza',
   'payment', 'pagamento', 'billing', 'cobrança', 'cartão', 'cartao',
   'tenant', 'multitenant', 'rls', 'produção', 'producao', 'production',
-  'webhook', 'secret', 'secrets', 'token', 'tokens',
+  'webhook', 'secret', 'secrets', 'token', 'tokens', 'jwt',
   'integração', 'integracao', 'integrações', 'integracoes', 'integration',
   'engine', 'motor', 'protocolo', 'protocol', 'parser', 'compiler',
 ]);
 
-/** Verbos de ação mecânica: o domínio citado é só o alvo (F-1341). */
-const CHEAP_ACTION_SIGNALS: ReadonlySet<string> = new Set([
-  'typo', 'rename', 'renomea', 'tradu', 'translat', 'liste', 'listar',
-]);
+/**
+ * Listagem: o domínio citado é só o alvo (F-1341). Revisão Fable: typo/rename/
+ * tradução NÃO entram aqui — "corrigir typo na validação do token JWT" e
+ * "renomear o secret do webhook de produção" mexem no CÓDIGO daquele domínio;
+ * só rebaixam quando o artefato é documento (work-kind doc, abaixo).
+ */
+const LISTING_SIGNALS: ReadonlySet<string> = new Set(['liste', 'listar']);
 
 /**
- * Documento (work-kind doc sem concorrente forte) ou ação mecânica sem outro
+ * Documento (work-kind doc sem concorrente forte) ou listagem sem outro
  * trabalho forte — sempre numa ação só.
  * ponytail: "uma ação só" = frase sem coordenação (e/and/vírgula/;). Teto: um
  * pedido composto de partes todas baratas não ganha o rebaixamento; pedir
@@ -455,7 +461,7 @@ function isDomainOnlyCheapWork(taskText: string, text: string, cheapSignals: rea
   if (/[,;]|\s(?:e|and)\s/u.test(text)) return false;
   const work = classifyWorkKind(taskText);
   if (work.kind === 'doc' && work.confidence === 'high') return true;
-  return cheapSignals.some((signal) => CHEAP_ACTION_SIGNALS.has(signal)) &&
+  return cheapSignals.some((signal) => LISTING_SIGNALS.has(signal)) &&
     !work.signals.some((signal) => signal.strength === 'strong');
 }
 

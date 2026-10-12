@@ -1363,6 +1363,21 @@ describe('F-1340/F-1341: domínio sozinho não sobe documento nem ação mecâni
     }
   });
 
+  it('revisão Fable: typo/rename/tradução em código de auth/segredo/produção não rebaixa o domínio', () => {
+    // Só documento (work-kind doc) ou listagem rebaixam o domínio sozinho;
+    // a ação mecânica no CÓDIGO daquele domínio continua no tier do domínio.
+    for (const text of [
+      'corrigir typo na validação do token JWT',
+      'renomear o secret do webhook de produção',
+      'fix typo in the OAuth callback handler',
+    ]) {
+      expect(classifyTask(text).tier, text).toBe('critical');
+    }
+    // O artefato de doc continua rebaixando.
+    expect(classifyTask('fix typo in the OAuth docs').tier).toBe('easy');
+    expect(classifyTask('corrigir typo na documentação do token JWT').tier).toBe('easy');
+  });
+
   it('documento como produto ("upload de documentos") não vira doc', () => {
     expect(classifyRouteSpecialty('implementar upload de documentos no cadastro').workKind).toBe('feature');
   });
