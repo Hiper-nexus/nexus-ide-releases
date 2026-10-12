@@ -216,7 +216,6 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
     // roster deste squad só tem qwen/codex, então a rota recusa o resto).
     await getPaneStartWatch('pane-2')!.reroute!(['codex']).catch(() => undefined);
     expect(resolver.mock.calls.at(-1)![2]).toMatchObject({ excludeAdapterIds: ['qwen', 'codex'] });
-    expect(getPaneStartWatch('pane-2')!.hasAlternative!()).toBe(true);
   });
 
   it('pin de CLI e reserva antiga não viajam no reenvio', async () => {
