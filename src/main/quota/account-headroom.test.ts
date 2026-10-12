@@ -103,3 +103,20 @@ describe('compareAccountHeadroom (F-995)', () => {
     expect(headroomInputsByAccount([], 'claude')).toBeUndefined();
   });
 });
+
+describe('folga só de cota medida desta credencial (F-1417)', () => {
+  it('janela de confiança baixa (sessão `bl` da máquina) não conta como folga nem como esgotada', () => {
+    const fromMachineSession: HeadroomInput = {
+      windows: [{ kind: 'monthly', label: 'Mensal', usedRatio: 1, confidence: 'low' }],
+    };
+    expect(isHeadroomExhausted(fromMachineSession)).toBe(false);
+    const measured: HeadroomInput = {
+      windows: [{ kind: 'monthly', label: 'Mensal', usedRatio: 0.2, confidence: 'high' }],
+    };
+    const lowButEmpty: HeadroomInput = {
+      windows: [{ kind: 'monthly', label: 'Mensal', usedRatio: 0, confidence: 'low' }],
+    };
+    // A medida de verdade vence a que só "parece" vazia.
+    expect(compareAccountHeadroom(measured, lowButEmpty)).toBeGreaterThan(0);
+  });
+});

@@ -58,14 +58,14 @@ describe('alibaba-token-plan-usage', () => {
           ok: true,
           status: 200,
           json: async () => ({ data: { secToken: 'sec-1' } }),
-          text: async () => '',
+          text: async (): Promise<string> => '',
         };
       }
       return {
         ok: true,
         status: 200,
         json: async () => nested,
-        text: async () => '',
+        text: async (): Promise<string> => '',
       };
     });
     const probe = await fetchAlibabaTokenPlanUsage('session_id=abc', {
@@ -99,7 +99,7 @@ describe('alibaba-token-plan-usage', () => {
       ok: true,
       status: 200,
       json: async () => nested,
-      text: async () => '',
+      text: async (): Promise<string> => '',
     }));
     const fromCookie = await probeAlibabaTokenPlanUsage({
       cookie: 'session_id=x',
@@ -115,5 +115,14 @@ describe('alibaba-token-plan-usage', () => {
     });
     // Without cookie and without bl binary: honest null windows.
     expect(fromCli.windows === null || Array.isArray(fromCli.windows)).toBe(true);
+  });
+});
+
+describe('escala do Token Plan (F-1417)', () => {
+  it('fração acima de 1 é estouro do plano, não 1,04%', () => {
+    const windows = parseAlibabaTokenPlanUsage({ data: { per1MonthPercentage: 1.04, per5HourPercentage: '0.5' } }, 100);
+    const monthly = windows.find((w) => w.kind === 'monthly');
+    expect(monthly?.usedRatio).toBe(1);
+    expect(windows.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.5);
   });
 });

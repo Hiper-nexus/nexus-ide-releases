@@ -853,3 +853,35 @@ describe('QuotaService live Claude OAuth usage', () => {
     svc.stop();
   });
 });
+
+describe('sonda do Muse é uma inferência real: TTL de sucesso ≥ 5 min (F-1417)', () => {
+  it('não repete o POST de geração a cada minuto', async () => {
+    const snapshot = {
+      subscription: {
+        weekly: { resets_at: '1789344000', used_percent: '12.5' },
+        window: { resets_at: '1789078632', used_percent: '34', window_duration_mins: '300' },
+      },
+    };
+    const sse = `data: ${JSON.stringify(snapshot)}\n\n`;
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+      text: async () => sse,
+    }));
+    const svc = new QuotaService({
+      listProviders: () => [provider('muse', 'Muse Code')],
+      listAccounts: () => [] as AccountInfo[],
+      resolveMuseCredential: () => ({ apiKey: 'muse-key', model: 'muse-spark-1.3' }),
+      fetchImpl,
+    });
+    const first = await svc.snapshot(HIT_AT);
+    expect(first.entries.find((e) => e.adapterId === 'muse')?.windows.some((w) => w.usedRatio !== null)).toBe(true);
+    await svc.snapshot(HIT_AT + 2 * 60_000);
+    await svc.snapshot(HIT_AT + 4 * 60_000);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await svc.snapshot(HIT_AT + 5 * 60_000 + 1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    svc.stop();
+  });
+});

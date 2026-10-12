@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
+  OPENCLAUDE_CREDENTIALS_MAX_BYTES,
   openclaudeConfigDir,
   openclaudeSignedIn,
   probeOpenClaudeCliUsage,
@@ -90,6 +92,32 @@ describe('openclaude-usage', () => {
       expect(['cli-missing', 'unavailable', 'auth-expired']).toContain(
         probe.failure,
       );
+    }
+  });
+});
+
+describe('credencial do OpenClaude sem readFileSync sem teto (F-1417)', () => {
+  it.skipIf(process.platform === 'win32')('FIFO ou arquivo gigante não é lido nem pendura', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-oc-'));
+    const prev = process.env.OPENCLAUDE_CONFIG_DIR;
+    delete process.env.OPENCLAUDE_CONFIG_DIR;
+    try {
+      const dir = path.join(home, '.openclaude');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, '.credentials.json');
+      execFileSync('mkfifo', [file]);
+      expect(openclaudeSignedIn(home)).toBe(false);
+      fs.rmSync(file);
+      fs.writeFileSync(file, JSON.stringify({
+        claudeAiOauth: { accessToken: 'sk-ant-oat01-big' }, pad: 'x'.repeat(OPENCLAUDE_CREDENTIALS_MAX_BYTES),
+      }));
+      expect(openclaudeSignedIn(home)).toBe(false);
+      fs.writeFileSync(file, JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-ok' } }));
+      expect(openclaudeSignedIn(home)).toBe(true);
+      expect(await resolveOpenClaudeToken(home)).toBe('sk-ant-oat01-ok');
+    } finally {
+      if (prev === undefined) delete process.env.OPENCLAUDE_CONFIG_DIR; else process.env.OPENCLAUDE_CONFIG_DIR = prev;
+      fs.rmSync(home, { recursive: true, force: true });
     }
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { fetchLiveProviderWindows, parseKimiUsage, quotaCredentialId } from './provider-live-usage';
+import { ALIBABA_TOKEN_PLAN_SESSION_CREDENTIAL } from './key-shape-usage';
 
 const nativeOpenCode = vi.hoisted(() => vi.fn(() => [{ providerId: 'custom', key: 'native-other-account' }]));
 vi.mock('./opencode-auth', () => ({ loadOpenCodeAuthKeys: nativeOpenCode }));
@@ -314,11 +315,85 @@ describe('fetchLiveProviderWindows', () => {
     );
     expect(qwen.windows?.[0]).toMatchObject({ kind: 'monthly', usedRatio: 0.0104 });
     expect(deepseek.windows?.[0]).toMatchObject({ kind: 'monthly', usedRatio: 0.0104 });
-    // Mesma chave → mesmo grupo de cota na UI (uma linha, não duas).
-    expect(qwen.credentialId).toBe(quotaCredentialId([key]));
-    expect(deepseek.credentialId).toBe(quotaCredentialId([key]));
+    // Mesmo plano → mesmo grupo de cota na UI (uma linha, não duas).
     expect(qwen.credentialId).toBe(deepseek.credentialId);
     expect(alibabaProbe).toHaveBeenCalled();
+  });
+
+  // F-1417: o número vem da sessão de console da máquina (`bl`), não da chave.
+  describe('Token Plan Alibaba — identidade e confiança honestas (F-1417)', () => {
+    const tokenPlanKey = 'sk-sp-shared-alibaba';
+    const sessionId = quotaCredentialId([ALIBABA_TOKEN_PLAN_SESSION_CREDENTIAL]);
+
+    it('não etiqueta com o HMAC da chave um número lido da sessão `bl`; confiança baixa', async () => {
+      const qwen = await fetchLiveProviderWindows('qwen', undefined, {
+        resolveGenericApiKeyCandidates: () => [tokenPlanKey],
+      }, 100);
+      expect(qwen.credentialId).toBe(sessionId);
+      expect(qwen.credentialId).not.toBe(quotaCredentialId([tokenPlanKey]));
+      expect(qwen.windows?.every((w) => w.confidence === 'low')).toBe(true);
+    });
+
+    it('GLM numa chave do Token Plan entra no mesmo pool, com o mesmo credentialId', async () => {
+      alibabaProbe.mockClear();
+      const fetchImpl = vi.fn();
+      const glm = await fetchLiveProviderWindows('glm', undefined, {
+        resolveGlmApiKeyCandidates: () => [tokenPlanKey],
+        fetchImpl,
+      }, 100);
+      const qwen = await fetchLiveProviderWindows('qwen', undefined, {
+        resolveGenericApiKeyCandidates: () => [tokenPlanKey],
+      }, 100);
+      expect(alibabaProbe).toHaveBeenCalledTimes(2);
+      // A chave do Token Plan nunca vai para o z.ai.
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(glm.credentialId).toBe(qwen.credentialId);
+      expect(glm.windows?.[0]).toMatchObject({ kind: 'monthly', usedRatio: 0.0104 });
+    });
+
+    it('GLM numa chave z.ai continua no z.ai', async () => {
+      alibabaProbe.mockClear();
+      const zai = {
+        code: 200, success: true,
+        data: { limits: [{ type: 'TOKENS_LIMIT', unit: 3, number: 5, percentage: 10 }] },
+      };
+      const fetchImpl = vi.fn(async () => ({
+        ok: true, status: 200, json: async () => zai, text: async () => JSON.stringify(zai),
+      }));
+      const glm = await fetchLiveProviderWindows('glm', undefined, {
+        resolveGlmApiKeyCandidates: () => ['0123456789abcdef.zaiSecret'],
+        fetchImpl,
+      }, 100);
+      expect(alibabaProbe).not.toHaveBeenCalled();
+      expect(fetchImpl).toHaveBeenCalled();
+      expect(glm.credentialId).toBe(quotaCredentialId(['0123456789abcdef.zaiSecret']));
+    });
+
+    it('sessão de console recusada vira hint, não some', async () => {
+      alibabaProbe.mockResolvedValueOnce({ windows: null, authFailed: true } as never);
+      const qwen = await fetchLiveProviderWindows('qwen', undefined, {
+        resolveGenericApiKeyCandidates: () => [tokenPlanKey],
+      }, 100);
+      expect(qwen).toEqual({ windows: null, hint: 'quota-key-required' });
+    });
+  });
+
+  it('conta salva do OpenClaude com OAuth lê a própria cota (F-1417)', async () => {
+    const usage = {
+      five_hour: { utilization: 12, resets_at: '2026-10-13T00:00:00Z' },
+      seven_day: { utilization: 40, resets_at: '2026-10-18T00:00:00Z' },
+    };
+    const fetchImpl = vi.fn(async () => ({
+      ok: true, status: 200, json: async () => usage, text: async () => JSON.stringify(usage),
+    }));
+    const saved = await fetchLiveProviderWindows('openclaude', 'acct-openclaude-2', {
+      resolveGenericApiKeyCandidates: (adapterId: string, accountId?: string) =>
+        adapterId === 'openclaude' && accountId === 'acct-openclaude-2' ? ['sk-ant-oat01-saved-account'] : [],
+      fetchImpl,
+    }, Date.parse('2026-10-12T21:00:00Z'));
+    expect(saved.windows?.length).toBeGreaterThan(0);
+    expect(saved.credentialId).toBe(quotaCredentialId(['sk-ant-oat01-saved-account']));
+    expect(String((fetchImpl.mock.calls[0] as unknown[])[0])).toContain('api.anthropic.com');
   });
 
   it('never reads native OpenCode keys for an account-bound quota row', async () => {
