@@ -83,13 +83,21 @@ const JUNK_FILE = /(?:^|[/\\])(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|\
 const FAIL_CLOSED_TOKEN =
   /session_authority_revoked|orchestrator_spawn_forbidden|sandbox_denied|sandbox_forbidden|process sandbox recusou/iu;
 
-function hasCurrentFailClosedHandoff(
-  handoffs: readonly Pick<Handoff, 'summary' | 'status' | 'deliveryState'>[],
-): boolean {
+type FailClosedHandoffView = Pick<Handoff, 'summary' | 'status' | 'deliveryState' | 'fromAgent' | 'createdAt'>;
+
+function hasCurrentFailClosedHandoff(handoffs: readonly FailClosedHandoffView[]): boolean {
   return handoffs.some(
     (handoff) =>
       handoff.status !== 'success' &&
       handoff.deliveryState !== 'consumed' &&
+      // Revisão de ponta: o mesmo papel reenviado e entregue depois (worker
+      // morto → substituto com success) torna a falha histórica, mesmo sem ACK.
+      !handoffs.some(
+        (later) =>
+          later.status === 'success' &&
+          later.fromAgent === handoff.fromAgent &&
+          later.createdAt > handoff.createdAt,
+      ) &&
       FAIL_CLOSED_TOKEN.test(`${handoff.status} ${handoff.summary}`),
   );
 }
@@ -489,7 +497,7 @@ export function inspectDeliveryEvidence(
 
 export function isFailClosedCivilianMission(
   mission: Pick<Mission, 'status' | 'intentState'>,
-  handoffs: readonly Pick<Handoff, 'summary' | 'status' | 'deliveryState'>[] = [],
+  handoffs: readonly FailClosedHandoffView[] = [],
 ): boolean {
   return (
     mission.status === 'failed' ||

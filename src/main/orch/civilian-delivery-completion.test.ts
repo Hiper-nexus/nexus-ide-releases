@@ -2160,6 +2160,49 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(completeVerified).not.toHaveBeenCalled();
   });
 
+  it('F-1260: worker morto (sintético failed com o token) e substituto do mesmo papel com success depois — sem ACK, não veta', async () => {
+    completeVerified.mockClear();
+    const planned = storyPlan(2);
+    const { reconcile } = harness({
+      missionId: 'mission-f1260-dead-worker',
+      files: ['server.js'],
+      handoffs: [
+        handoff({
+          id: 'handoff-dead-worker',
+          fromAgent: 'Executor',
+          status: 'failed',
+          summary: 'O pane saiu sem entregar. Cauda: session_authority_revoked',
+          delivered: true,
+          deliveryState: 'acknowledged',
+          createdAt: 10,
+        }),
+        handoff({
+          id: 'handoff-replacement',
+          fromAgent: 'Executor',
+          status: 'success',
+          summary: 'Entrega concluída pelo substituto.',
+          delivered: true,
+          deliveryState: 'acknowledged',
+          createdAt: 100,
+        }),
+      ],
+      tasks: planned.map((row) =>
+        task({ id: row.taskId, title: row.agent.agentName, status: 'done' }),
+      ),
+      planned,
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: {
+        runAutoReviewGate: async () => ({
+          kind: 'approved' as const,
+          evidenceId: 'nexus-auto-review:f1260-dead',
+          note: 'Aprovado.',
+        }),
+      },
+    });
+
+    expect((await reconcile()).completed).toBe(true);
+  });
+
   it('F-1260: handoff antigo failed/consumed com sandbox_denied não veta o done', async () => {
     completeVerified.mockClear();
     const planned = storyPlan(2);
