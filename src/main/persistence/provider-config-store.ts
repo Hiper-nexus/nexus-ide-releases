@@ -2547,7 +2547,7 @@ export function startCliAutoUpdate(
           // tocar na instalação; em dia, só marca a checagem.
           const versionCheck = cliVersionCheck(selected.recipe);
           if (versionCheck) {
-            const stdout = await context.wait(availableCliVersion(selected.recipe, versionCheck));
+            const stdout = await context.wait(availableCliVersion(selected.recipe, versionCheck, context.signal));
             if (cliVersionCheckUpToDate(versionCheck, beforeVersion, stdout ?? '') === true) {
               console.info(`[cli-auto-update] ${id}: up-to-date, ${beforeVersion}`);
               recordCliAutoUpdate(id, {
@@ -2680,6 +2680,7 @@ function installedDevinDistribution(realBinPath: string): string | null {
 async function availableCliVersion(
   recipe: CliInstallRecipe,
   check: CliVersionCheck,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   // A checagem só existe para receitas argv; scripts seguem o caminho atual.
   if (recipe.kind !== 'argv') return null;
@@ -2692,9 +2693,12 @@ async function availableCliVersion(
         // Checagem de leitura: teto curto; a instalação continua com o de 15 min.
         // HOMEBREW_NO_AUTO_UPDATE: o `brew outdated` não pode disparar um
         // `brew update` inteiro (revisão F-1397) — usa o índice local.
+        // signal: o stop do updater (B3 "stop imediato") mata a checagem em voo
+        // em vez de deixá-la órfã até o teto de 30 s.
         {
           ...invocation.options, timeout: 30_000, maxBuffer: 1024 * 1024,
           env: { ...invocation.options.env, HOMEBREW_NO_AUTO_UPDATE: '1' },
+          ...(signal ? { signal } : {}),
         },
         (error, stdout) => resolve(error ? null : String(stdout)),
       );

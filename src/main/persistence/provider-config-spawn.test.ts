@@ -743,6 +743,10 @@ describe('background CLI maintenance during pane startup', () => {
       spawnDeps.systemIdleTime.mockReturnValue(0);
       checkedAgo(3 * 60 * 60_000);
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      // F-1397: instalação versionada (versions/) não prende spawn nem durante o
+      // download; o prazo B3 só segura o spawn de instalação que troca no lugar.
+      vi.spyOn(fs, 'realpathSync').mockReturnValue(npmClaude);
+      vi.spyOn(fsp, 'realpath').mockResolvedValue(npmClaude);
 
       const cliAutoUpdateModule = await import('../adapters/cli-auto-update');
       vi.spyOn(cliAutoUpdateModule, 'selectAutomaticCliUpdateRecipe').mockReturnValue({
@@ -771,6 +775,34 @@ describe('background CLI maintenance during pane startup', () => {
       expect(listProviderSettings().find((info) => info.adapterId === 'claude')?.cliAutoUpdate)
         .toMatchObject({ status: 'failed', reason: 'download-timeout' });
 
+      warn.mockRestore();
+    });
+
+    // Interação F-1397 × B3: com instalação versionada o spawn nasce durante o
+    // download pendente (o binário atual não é tocado), e o prazo de 120 s
+    // continua encerrando a instalação e soltando o lease.
+    it('B3 + F-1397: versionada com download pendente libera o spawn já e o prazo ainda encerra a instalação', async () => {
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const cliAutoUpdateModule = await import('../adapters/cli-auto-update');
+      vi.spyOn(cliAutoUpdateModule, 'selectAutomaticCliUpdateRecipe').mockReturnValue({
+        kind: 'script',
+        scriptUrl: 'https://claude.ai/install.sh',
+        runner: 'bash',
+        runnerHint: 'instale o bash',
+        automaticUpdate: true,
+      });
+      spawnDeps.downloadInstaller.mockImplementation(() => new Promise(() => {}));
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(spawnDeps.downloadInstaller.mock.calls[0]?.[0]).toBe('https://claude.ai/install.sh');
+
+      const permit = await acquireCliSpawnPermit('claude');
+      permit();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(listProviderSettings().find((info) => info.adapterId === 'claude')?.cliAutoUpdate)
+        .toMatchObject({ status: 'failed', reason: 'download-timeout' });
       warn.mockRestore();
     });
 
@@ -861,6 +893,8 @@ describe('background CLI maintenance during pane startup', () => {
       for (const options of viewOptions) {
         expect((options?.env as Record<string, string> | undefined)?.HOMEBREW_NO_AUTO_UPDATE).toBe('1');
         expect(options?.timeout).toBe(30_000);
+        // Interação com B3: o stop do updater cancela a checagem em voo.
+        expect(options?.signal).toBeInstanceOf(AbortSignal);
       }
     });
 
