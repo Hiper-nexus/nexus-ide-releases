@@ -23,8 +23,13 @@ let claudeConsent: { userData: string; gateway: string; gatewayNonce: string; sc
 function privateDirectory(directory: string): fs.Stats | null {
   try {
     const stat = fs.lstatSync(directory);
-    return stat.isDirectory() && !stat.isSymbolicLink() && !(stat.mode & 0o077) &&
-      stat.uid === process.getuid?.() && fs.realpathSync(directory) === directory ? stat : null;
+    if (!stat.isDirectory() || stat.isSymbolicLink() ||
+      fs.realpathSync(directory) !== directory) return null;
+    // Modo/uid POSIX não existem no Windows: os diretórios do perfil do
+    // usuário são privados por ACL. Lá fora, exige dono e sem bits de grupo/outros.
+    if (process.platform !== 'win32' &&
+      (!!(stat.mode & 0o077) || stat.uid !== process.getuid?.())) return null;
+    return stat;
   } catch { return null; }
 }
 

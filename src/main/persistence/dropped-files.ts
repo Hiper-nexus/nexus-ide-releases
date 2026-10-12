@@ -7,6 +7,25 @@ import type {
 } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 
+const IS_WINDOWS = process.platform === 'win32';
+
+/**
+ * No Windows não há modo POSIX: diretórios reportam sempre 0o666 e o chmod só
+ * controla o atributo read-only. A privacidade ali vem da ACL do perfil do
+ * usuário (já privada por padrão) e o lacre do bit read-only — por isso os
+ * checks de modo exato (0o700/0o400) só valem fora do win32. dev/ino/nlink do
+ * NTFS são reais, então as provas de identidade de arquivo se mantêm.
+ */
+function sealedFileModeIsImmutable(stat: { mode: number | bigint }): boolean {
+  const mode = BigInt(stat.mode) & 0o777n;
+  return IS_WINDOWS ? (mode & 0o222n) === 0n : mode === 0o400n;
+}
+
+function fsyncDirectoryIfPosix(directoryFd: number): void {
+  if (IS_WINDOWS) return;
+  fs.fsyncSync(directoryFd);
+}
+
 export const DROPPED_ATTACHMENT_MAX_COUNT = 6;
 export const DROPPED_ATTACHMENT_MAX_PATH_CHARS = 4_096;
 export const DROPPED_ATTACHMENT_MAX_BYTES = 14 * 1024 * 1024;
@@ -868,9 +887,11 @@ function requirePrivateRealDirectory(
   if (canonical !== path.resolve(directory)) {
     throw new Error(`${label} cannot traverse a symlink`);
   }
-  if (create) fs.chmodSync(canonical, SEALED_ATTACHMENT_DIRECTORY_MODE);
-  if ((fs.lstatSync(canonical).mode & 0o777) !== SEALED_ATTACHMENT_DIRECTORY_MODE) {
-    throw new Error(`${label} must be private`);
+  if (!IS_WINDOWS) {
+    if (create) fs.chmodSync(canonical, SEALED_ATTACHMENT_DIRECTORY_MODE);
+    if ((fs.lstatSync(canonical).mode & 0o777) !== SEALED_ATTACHMENT_DIRECTORY_MODE) {
+      throw new Error(`${label} must be private`);
+    }
   }
   return canonical;
 }
@@ -1054,13 +1075,13 @@ function writeSealedAttachment(
       !sameBigIntFileIdentity(opened, written) ||
       written.size !== BigInt(contents.length) ||
       written.nlink !== 1n ||
-      (written.mode & 0o777n) !== 0o400n ||
+      !sealedFileModeIsImmutable(written) ||
       !sealedBytes.equals(contents)
     ) {
       throw new Error('sealed attachment bytes were not durably published');
     }
     assertBigIntOwned(written, uid, 'sealed attachment');
-    fs.fsyncSync(directoryFd);
+    fsyncDirectoryIfPosix(directoryFd);
 
     const canonical = fs.realpathSync(sealedPath);
     const current = fs.lstatSync(sealedPath, { bigint: true });
@@ -1210,7 +1231,7 @@ export function revalidateSealedAttachmentSnapshots(
         before.isSymbolicLink() ||
         !before.isFile() ||
         before.nlink !== 1n ||
-        (before.mode & 0o777n) !== 0o400n ||
+        !sealedFileModeIsImmutable(before) ||
         before.dev.toString() !== snapshot.device ||
         before.ino.toString() !== snapshot.inode ||
         (snapshot.ctimeNs !== undefined &&
@@ -1237,7 +1258,7 @@ export function revalidateSealedAttachmentSnapshots(
         opened.ctimeNs !== after.ctimeNs ||
         after.size !== BigInt(snapshot.size) ||
         after.nlink !== 1n ||
-        (after.mode & 0o777n) !== 0o400n ||
+        !sealedFileModeIsImmutable(after) ||
         fs.realpathSync(snapshot.path) !== snapshot.path ||
         createHash('sha256').update(contents).digest('hex') !== snapshot.sha256
       ) {
@@ -1290,7 +1311,7 @@ export function releaseSealedAttachmentSnapshots(
   if (removed > 0) {
     const directoryFd = fs.openSync(root, fs.constants.O_RDONLY);
     try {
-      fs.fsyncSync(directoryFd);
+      fsyncDirectoryIfPosix(directoryFd);
     } finally {
       fs.closeSync(directoryFd);
     }
@@ -1344,7 +1365,7 @@ export function sweepSealedAttachmentOrphans(
   if (removed > 0) {
     const directoryFd = fs.openSync(root, fs.constants.O_RDONLY);
     try {
-      fs.fsyncSync(directoryFd);
+      fsyncDirectoryIfPosix(directoryFd);
     } finally {
       fs.closeSync(directoryFd);
     }
