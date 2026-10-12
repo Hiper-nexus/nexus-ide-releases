@@ -148,6 +148,13 @@ export class WorktreeRuntimeRegistry {
           `worktree record(s) as ${worktreeRecovery.quarantineId} ` +
           `(${worktreeRecovery.reason}); no Git path or ref was removed`,
       );
+    } else if (worktreeRecovery.action === "blocked") {
+      // F-1276: a recusa era silenciosa e a leitura seguinte lançava sem causa.
+      console.warn(
+        `[worktree-runtime] invalid worktree state kept fail-closed ` +
+          `(${worktreeRecovery.reason}): no record was proven relocated or ` +
+          "terminal, so nothing was archived",
+      );
     }
     const queue = new MergeQueue({
       runtimeRoot,

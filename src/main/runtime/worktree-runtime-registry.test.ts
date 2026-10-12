@@ -952,6 +952,29 @@ describe("project worktree runtime registry", () => {
     ).toEqual({ reason: "relocated-runtime-binding" });
   });
 
+  it("F-1276: names the unproven invalid worktree state it keeps fail-closed", () => {
+    const { scope, manager } = fixture();
+    const original = new WorktreeRuntimeRegistry(manager);
+    const key = original.forScope(scope).worktrees.scopeKey(scope);
+    original.dispose();
+    manager.open(scope).db.prepare(
+      `INSERT OR REPLACE INTO worktree_state
+         (scope_key, revision, records_json, updated_at)
+       VALUES (?, 1, '[{}]', 1)`,
+    ).run(key);
+    manager.close(scope);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const reopened = new WorktreeRuntimeRegistry(manager);
+      expect(() => reopened.forScope(scope)).toThrow(/invalid worktree state/i);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("kept fail-closed (unproven-invalid-state)"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("self-heals an ownership-overlap block left by a deleted mission's task, without a fresh registry", async () => {
     const { scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);

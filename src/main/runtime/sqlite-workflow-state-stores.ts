@@ -89,7 +89,8 @@ const TERMINAL_WORKTREE_STATUSES = new Set([
   'failed',
   'abandoned',
 ]);
-const TERMINAL_MISSION_STATUSES = new Set(['done', 'failed']);
+// F-1276: `blocked` é terminal como no registry (só pending|running são vivos).
+const TERMINAL_MISSION_STATUSES = new Set(['blocked', 'done', 'failed']);
 const TERMINAL_TASK_STATUSES = new Set(['done', 'failed']);
 const TERMINAL_DISPATCH_STATES = new Set([
   'completed',

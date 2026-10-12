@@ -311,4 +311,44 @@ describe('SQLite worktree/merge CAS state', () => {
     expect(worktrees.read(key)).toEqual({ revision: 5, records: [] });
     expect(fs.readFileSync(userArtifact, 'utf8')).toBe('do not delete\n');
   });
+
+  it('F-1276: archives the terminal legacy projection of a mission that ended blocked', () => {
+    const manager = new ProjectRuntimeManager({ baseDir, appVersion: 'test' });
+    managers.push(manager);
+    const scope = testProjectScope();
+    const key = digest('worktree-scope', scope.projectId, scope.checkoutId);
+    const identity = worktreeIdentity(scope, 'mission-blocked', 'task-blocked');
+    const worktreePath = path.join(
+      manager.locationFor(scope).directory,
+      'worktrees',
+      identity.relativePath,
+    );
+    const db = manager.open(scope).db;
+    db.prepare(
+      `INSERT INTO missions (id, title, status, created_at, updated_at)
+       VALUES (?, ?, 'blocked', 1, 1)`,
+    ).run('mission-blocked', 'mission-blocked');
+    db.prepare(
+      `INSERT INTO worktree_state
+         (scope_key, revision, records_json, updated_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run(key, 4, JSON.stringify([
+      rawRecord({
+        scope,
+        scopeKey: key,
+        missionId: 'mission-blocked',
+        taskId: 'task-blocked',
+        worktreePath,
+        status: 'failed',
+        ownership: { files: ['../legacy-invalid'], symbols: [], domains: [] },
+      }),
+    ]), 8);
+    const worktrees = new SqliteWorktreeStateStore(manager, scope);
+
+    expect(worktrees.recoverInvalidState(key)).toMatchObject({
+      action: 'quarantined',
+      reason: 'terminal-legacy-state',
+    });
+    expect(worktrees.read(key)).toEqual({ revision: 5, records: [] });
+  });
 });
