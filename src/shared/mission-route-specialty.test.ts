@@ -46,6 +46,11 @@ describe('classifyRouteSpecialty', () => {
     expect(classifyRouteSpecialty('linhagem dos tokens de sessão').specialty).toBe('security');
   });
 
+  it('F-1402 (Fable M9): credenciamento de fornecedores e linhagem de dados do pipeline não viram security', () => {
+    expect(classifyRouteSpecialty('Revisar o fluxo de credenciamento de fornecedores').specialty).not.toBe('security');
+    expect(classifyRouteSpecialty('Corrigir a linhagem de dados do pipeline e adicionar testes').specialty).not.toBe('security');
+  });
+
   it('F-1402 C8: linhagem de dados e credenciamento não viram security', () => {
     expect(classifyRouteSpecialty('implementar linhagem de dados no ETL').specialty).not.toBe('security');
     expect(classifyRouteSpecialty('página de credenciamento de parceiros').specialty).not.toBe('security');

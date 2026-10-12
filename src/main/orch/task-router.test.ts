@@ -92,6 +92,11 @@ describe('classifyTask', () => {
     expect(classifyTask('linhagem dos tokens de sessão').tier).toBe('critical');
   });
 
+  it('F-1402 (Fable M9): credenciamento de fornecedores e linhagem de dados do pipeline não são critical', () => {
+    expect(classifyTask('Revisar o fluxo de credenciamento de fornecedores').tier).not.toBe('critical');
+    expect(classifyTask('Corrigir a linhagem de dados do pipeline e adicionar testes').tier).not.toBe('critical');
+  });
+
   it('F-1402 C8: linhagem de dados e credenciamento não são superfície de credencial', () => {
     expect(classifyTask('implementar linhagem de dados no ETL').tier).not.toBe('critical');
     expect(classifyTask('página de credenciamento de parceiros').tier).not.toBe('critical');
