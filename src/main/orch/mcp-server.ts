@@ -1531,8 +1531,13 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           }
         } else if (flavor === "muse") {
           // F-696: Muse Code 1.4+ lê mcpServers do settings.json; mesma ponte
-          // stdio do MiniMax, sessão só por ENV (URL + bearer).
-          const prepared = prepareMuseMcpSession(mcpUrl(), ctx.token);
+          // stdio do MiniMax. F-1338: o settings.json com a sessão é privado do
+          // pane (XDG_CONFIG_HOME próprio), nunca o compartilhado.
+          const museEnv = preparedEnv ?? process.env;
+          const prepared = prepareMuseMcpSession(mcpUrl(), ctx.token, {
+            home: museEnv.HOME,
+            xdgConfigHome: museEnv.XDG_CONFIG_HOME,
+          });
           if (!prepared.registered) {
             console.warn("[mcp] Muse Code sem MCP do Nexus:", prepared.reason);
           }

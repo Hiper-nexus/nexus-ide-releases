@@ -10,6 +10,7 @@ import {
   prepareMuseMcpSession,
 } from './cli-mcp-session-muse';
 import { minimaxBridgePath } from './cli-mcp-session-minimax';
+import { cleanupCliMcpSession } from './cli-mcp-session-artifacts';
 
 const homes: string[] = [];
 function tempHome(): string {
@@ -90,20 +91,64 @@ describe('Muse Code recebe o MCP do Nexus pelo settings.json (F-696)', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe('{"schema_version":1}');
   });
 
-  it('a sessão viaja no env da entrada e o arquivo é travado em 0600 (F-1338)', () => {
+  it('a sessão viaja no env da entrada de um settings.json PRIVADO em 0600 (F-1338)', () => {
     const home = tempHome();
     const file = writeSettings(home, '{"schema_version":1}');
     const prepared = prepareMuseMcpSession('http://127.0.0.1:9/mcp', 'secret-token-xyz', {
       home, xdgConfigHome: '', nodePath: 'node', museVersion: '1.4.1',
     });
-    expect(prepared.registered).toBe(true);
-    expect(prepared.env).toEqual({ NEXUS_MCP_URL: 'http://127.0.0.1:9/mcp', NEXUS_MCP_TOKEN: 'secret-token-xyz' });
-    const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
-    expect(settings.mcpServers.nexus.env).toEqual({
-      NEXUS_MCP_URL: 'http://127.0.0.1:9/mcp',
-      NEXUS_MCP_TOKEN: 'secret-token-xyz',
-    });
-    if (process.platform !== 'win32') expect(fileMode(file)).toBe(0o600);
+    try {
+      expect(prepared.registered).toBe(true);
+      expect(prepared.env).toMatchObject({ NEXUS_MCP_URL: 'http://127.0.0.1:9/mcp', NEXUS_MCP_TOKEN: 'secret-token-xyz' });
+      const privateFile = museSettingsPath(home, prepared.env.XDG_CONFIG_HOME);
+      expect(privateFile).not.toBe(file);
+      const settings = JSON.parse(fs.readFileSync(privateFile, 'utf8'));
+      expect(settings.mcpServers.nexus.env).toEqual({
+        NEXUS_MCP_URL: 'http://127.0.0.1:9/mcp',
+        NEXUS_MCP_TOKEN: 'secret-token-xyz',
+      });
+      if (process.platform !== 'win32') expect(fileMode(privateFile)).toBe(0o600);
+      // O compartilhado nunca recebe a sessão.
+      expect(fs.readFileSync(file, 'utf8')).toBe('{"schema_version":1}');
+    } finally {
+      cleanupCliMcpSession('secret-token-xyz');
+    }
+  });
+
+  it('dois panes Muse geram configs distintas e nenhum lê o token do outro (F-1338, revisão Fable)', () => {
+    const home = tempHome();
+    const shared = writeSettings(home, JSON.stringify({ schema_version: 1, model: 'muse-spark' }));
+    fs.writeFileSync(path.join(path.dirname(shared), 'auth.json'), '{"login":"op"}');
+    fs.mkdirSync(path.join(home, '.config', 'gh'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.config', 'gh', 'hosts.yml'), 'github.com: {}\n');
+    const options = { home, xdgConfigHome: '', nodePath: 'node', museVersion: '1.4.4' };
+    const a = prepareMuseMcpSession('http://127.0.0.1:9/mcp', 'token-pane-A', options);
+    const b = prepareMuseMcpSession('http://127.0.0.1:9/mcp', 'token-pane-B', options);
+    try {
+      expect(a.registered && b.registered).toBe(true);
+      expect(a.env.XDG_CONFIG_HOME).toBeTruthy();
+      expect(a.env.XDG_CONFIG_HOME).not.toBe(b.env.XDG_CONFIG_HOME);
+      const fileA = museSettingsPath(home, a.env.XDG_CONFIG_HOME);
+      const fileB = museSettingsPath(home, b.env.XDG_CONFIG_HOME);
+      const rawA = fs.readFileSync(fileA, 'utf8');
+      const rawB = fs.readFileSync(fileB, 'utf8');
+      // A bootando depois de B continua lendo a PRÓPRIA sessão.
+      expect(JSON.parse(rawA).mcpServers.nexus.env.NEXUS_MCP_TOKEN).toBe('token-pane-A');
+      expect(JSON.parse(rawB).mcpServers.nexus.env.NEXUS_MCP_TOKEN).toBe('token-pane-B');
+      expect(rawA).not.toContain('token-pane-B');
+      expect(rawB).not.toContain('token-pane-A');
+      expect(JSON.parse(rawA).model).toBe('muse-spark');
+      expect(fs.readFileSync(shared, 'utf8')).not.toMatch(/token-pane/);
+      // Login e o resto do config do usuário continuam visíveis no pane.
+      expect(fs.readFileSync(path.join(a.env.XDG_CONFIG_HOME!, 'muse', 'auth.json'), 'utf8')).toBe('{"login":"op"}');
+      expect(fs.readFileSync(path.join(b.env.XDG_CONFIG_HOME!, 'gh', 'hosts.yml'), 'utf8')).toBe('github.com: {}\n');
+    } finally {
+      cleanupCliMcpSession('token-pane-A');
+      cleanupCliMcpSession('token-pane-B');
+    }
+    expect(fs.existsSync(a.env.XDG_CONFIG_HOME!)).toBe(false);
+    expect(fs.readFileSync(path.join(path.dirname(shared), 'auth.json'), 'utf8')).toBe('{"login":"op"}');
+    expect(fs.readFileSync(shared, 'utf8')).not.toMatch(/token-pane/);
   });
 
   it('sem sessão nada é registrado: entrada sem env nunca entrega ferramentas (F-1338)', () => {

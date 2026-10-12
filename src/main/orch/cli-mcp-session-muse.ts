@@ -33,6 +33,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { resolveCliBinary } from '../path-resolver';
 import {
+  activateArtifact,
+  ensurePrivateDirectory,
+  linkDirectoryEntries,
+  withCliMcpArtifactTransaction,
+} from './cli-mcp-session-artifacts';
+import {
   ensureNexusMcpBridgeScript,
   readJsonObject,
   writeFileAtomic,
@@ -189,18 +195,77 @@ function lockMuseSettingsPermissions(settingsPath: string): void {
   }
 }
 
+/**
+ * F-1338 (revisão Fable): a entrada carrega a sessão do pane, então NUNCA vai
+ * para o `settings.json` compartilhado — dois panes Muse em paralelo trocavam
+ * o token (o que bootava depois lia a sessão do outro). Cada pane ganha um
+ * `XDG_CONFIG_HOME` próprio (padrão do OpenCode): links para tudo do config
+ * real (git, gh… e `muse/auth.json`), mais um `muse/settings.json` privado
+ * (cópia do real + entrada `nexus` com a sessão deste pane, 0600). Login novo
+ * feito no pane volta ao perfil real no teardown; o settings privado, nunca.
+ */
+export interface MuseMcpSessionOptions extends MuseMcpRegistrationOptions {
+  readonly artifactRoot?: string;
+}
+
 /** Sessão do pane Muse: viaja no `env` da entrada; o ENV do pane é redundância. */
 export function prepareMuseMcpSession(
   mcpUrl: string,
   token: string,
-  options: MuseMcpRegistrationOptions = {},
+  options: MuseMcpSessionOptions = {},
 ): { env: Record<string, string>; registered: boolean; reason?: string } {
-  const registration = ensureMuseNexusMcpRegistration({
-    ...options,
-    session: { url: mcpUrl, token },
-  });
-  return {
-    env: registration.registered ? { NEXUS_MCP_URL: mcpUrl, NEXUS_MCP_TOKEN: token } : {},
-    ...registration,
-  };
+  const version = options.museVersion !== undefined ? options.museVersion : resolveMuseVersion();
+  if (!museSupportsMcp(version)) {
+    return {
+      env: {},
+      registered: false,
+      reason: `Muse Code ${version ?? 'desconhecido'} sem MCP (precisa de 1.4+) — settings.json não foi alterado`,
+    };
+  }
+  const home = path.resolve(options.home ?? os.homedir());
+  const realConfig = path.dirname(path.dirname(museSettingsPath(home, options.xdgConfigHome)));
+  const artifactRoot = path.resolve(options.artifactRoot ?? path.join(home, '.nexus', 'ephemeral', 'mcp-clients'));
+  let reason: string | undefined;
+  try {
+    const configHome = withCliMcpArtifactTransaction('muse', token, artifactRoot, (artifactDir) => {
+      linkDirectoryEntries(realConfig, artifactDir, new Set(['muse']));
+      const museDir = path.join(artifactDir, 'muse');
+      ensurePrivateDirectory(museDir);
+      linkDirectoryEntries(path.join(realConfig, 'muse'), museDir, new Set(['settings.json']));
+      const realSettings = path.join(realConfig, 'muse', 'settings.json');
+      if (fs.existsSync(realSettings)) {
+        fs.copyFileSync(realSettings, path.join(museDir, 'settings.json'));
+      }
+      const registration = ensureMuseNexusMcpRegistration({
+        ...options,
+        museVersion: version,
+        home,
+        xdgConfigHome: artifactDir,
+        session: { url: mcpUrl, token },
+      });
+      if (!registration.registered) {
+        reason = registration.reason;
+        throw new Error('muse_session_not_registered');
+      }
+      activateArtifact(token, {
+        artifactDir,
+        providerHome: realConfig,
+        configFiles: [],
+        // Só o settings privado carrega a sessão: ele nunca volta ao perfil real.
+        syncBackExcludeAnywhere: new Set(['settings.json']),
+        syncBack: true,
+      });
+      return artifactDir;
+    });
+    return {
+      env: { XDG_CONFIG_HOME: configHome, NEXUS_MCP_URL: mcpUrl, NEXUS_MCP_TOKEN: token },
+      registered: true,
+    };
+  } catch (error) {
+    return {
+      env: {},
+      registered: false,
+      reason: reason ?? `config privado do Muse falhou: ${(error as NodeJS.ErrnoException).code ?? 'erro'}`,
+    };
+  }
 }

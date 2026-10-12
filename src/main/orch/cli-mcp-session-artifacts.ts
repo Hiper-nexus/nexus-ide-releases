@@ -15,7 +15,7 @@ import type {
 } from './cli-mcp-session-types';
 import { removeTreeSync } from '../util/remove-tree';
 
-type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok' | 'mimo-code' | 'qwen';
+type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok' | 'mimo-code' | 'qwen' | 'muse';
 
 export interface ArtifactSession {
   /** `null`: nothing private on disk; `dispose` releases a shared-config lease (Muse). */
@@ -356,6 +356,11 @@ export function purgeStaleCliMcpSessions(
     ),
     purgeOwnedSessionRoot(
       path.join(artifactRoot, 'mimo-code'),
+      active,
+      trustedBoundary,
+    ),
+    purgeOwnedSessionRoot(
+      path.join(artifactRoot, 'muse'),
       active,
       trustedBoundary,
     ),

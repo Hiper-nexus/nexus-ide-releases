@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { activateArtifact } from './cli-mcp-session-artifacts';
+import { activateArtifact, getActiveCliMcpArtifact } from './cli-mcp-session-artifacts';
 import { createMuseNativeHeavySettingsLease } from './native-heavy-muse-lease';
 import { trace } from '../observability/main-trace';
 
@@ -48,8 +48,14 @@ export function reserveMuseNativeHeavyProfile(options: MuseNativeHeavyProfileOpt
   const lease = createMuseNativeHeavySettingsLease(path.join(selected, 'muse/settings.json'), hooks.PreToolUse[0], options.artifactRoot);
   let initialization: Promise<void> | undefined, disposed = false;
   const dispose = async () => { disposed = true; await initialization?.catch(() => {}); await lease.release(); };
-  activateArtifact(options.token, { artifactDir: null, providerHome: null, configFiles: [], syncBack: false,
-    dispose: () => { void dispose().catch(() => console.warn('[native-heavy] Muse hook lease release is pending until startup recovery')); } });
+  // F-1338: the MCP preparer already owns this token's private Muse config; keep
+  // its teardown (removal + login sync-back) and chain the lease release to it.
+  const prior = getActiveCliMcpArtifact(options.token);
+  activateArtifact(options.token, { ...(prior ?? { artifactDir: null, providerHome: null, configFiles: [], syncBack: false }),
+    dispose: () => {
+      try { prior?.dispose?.(); } catch { /* never block teardown */ }
+      void dispose().catch(() => console.warn('[native-heavy] Muse hook lease release is pending until startup recovery'));
+    } });
   const acquire = async (current: () => void) => {
     let cancelled = false;
     try { await lease.acquire(() => { try { current(); } catch (error) { cancelled = true; throw error; } }); }
