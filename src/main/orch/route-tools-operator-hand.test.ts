@@ -191,15 +191,22 @@ describe('"+ Pane": especialidade da tarefa escolhe a CLI', () => {
   });
 
   it('interface vai para a lane de topo e documentação para a rota barata: CLIs diferentes', async () => {
-    const visual = await routeLikeSpawn('Ajustar o layout responsivo e o espaçamento do cabeçalho da tela de login');
+    const VISUAL_TASK = 'Ajustar o layout responsivo e o espaçamento do cabeçalho da tela de login';
+    const visual = await routeLikeSpawn(VISUAL_TASK);
     const doc = await routeLikeSpawn('Atualizar o README com o guia de instalação');
     expect(visual.reason).toContain('specialty=visual');
     expect(visual.reason).toContain('lane visual');
     expect(doc.reason).toContain('specialty=doc');
     expect(doc.reason).not.toContain('lane visual');
-    expect(visual.adapterId).toBe('claude');
-    expect(visual.model).toBe('claude-opus-5-5');
+    // F-1313: o Kimi ("ótimo em front, lento") está na lane visual e ela
+    // espalha por uso — o pai já ocupa o Claude, então o Kimi leva a tela.
+    expect(visual).toMatchObject({ adapterId: 'kimi', model: 'kimi-code/k3' });
     expect(doc.adapterId).not.toBe(visual.adapterId);
+    // Com o Kimi ocupado, a próxima tela volta ao topo da lane (Opus 5.5).
+    h.livePanes = [...h.livePanes, { ...livePane('pane-helper-kimi', 'kimi'), sessionId: 's-helper-kimi' }];
+    const next = await routeLikeSpawn(VISUAL_TASK);
+    expect(next.reason).toContain('lane visual');
+    expect(next).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5' });
   });
 
   it('a tabela de especialidade MEDIDA também é consultada fora de missão', async () => {
