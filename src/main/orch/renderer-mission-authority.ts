@@ -1,5 +1,6 @@
 import { missionKickoffFacts, scheduleMissionKickoffAdvice } from "./jev-mission-advisor";
 import { captureMissionCodeBaseline } from './mission-code-baseline-ledger';
+import { trace } from '../observability/main-trace';
 import { createHash } from "node:crypto";
 import type { WebContents } from "electron";
 import { adoptedMissionWorkspaceBinding, missionExecutionScope } from './mission-execution-scope';
@@ -609,6 +610,16 @@ export class RendererMissionAuthority {
       );
     }
     if (result === "removed") {
+      // F-1358: o DELETE leva handoffs e panes em cascata; sem este registro
+      // no histórico diário (lifecycle-*.ndjson, 14 dias) a remoção pelo
+      // operador era indistinguível de perda silenciosa (mission-0afa9ca1).
+      trace({
+        kind: "mission-removed",
+        missionId: candidate.mission.id,
+        status: candidate.mission.status,
+        phase: candidate.mission.intentState,
+        origin: "renderer-remove",
+      });
       // Sessões presas à missão que acabou de sumir: sem isto o pane que a
       // criou continuava `orchestrator` apontando para uma missão inexistente
       // e nunca mais conseguia criar outra (campo 09/09).

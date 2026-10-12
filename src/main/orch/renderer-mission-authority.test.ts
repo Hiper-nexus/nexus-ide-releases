@@ -48,6 +48,11 @@ vi.mock("./gate", () => ({
 }));
 
 
+const traceEvents = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock("../observability/main-trace", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../observability/main-trace")>()),
+  trace: (event: Record<string, unknown>) => traceEvents.push(event),
+}));
 vi.mock("./pane-activity-summary", () => ({
   resolveMissionPaneActivity: deps.resolvePaneActivity,
 }));
@@ -249,6 +254,14 @@ describe("renderer mission authority", () => {
         "mission-a",
         expect.objectContaining({ id: "mission-a", status }),
       );
+      // F-1358: a remoção deixa registro auditável no histórico de ciclo de vida.
+      expect(traceEvents.filter((event) => event.kind === "mission-removed").at(-1)).toEqual({
+        kind: "mission-removed",
+        missionId: "mission-a",
+        status,
+        phase: status === "pending" ? "awaiting_goal" : "executing",
+        origin: "renderer-remove",
+      });
     },
   );
 

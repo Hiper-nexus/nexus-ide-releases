@@ -67,6 +67,33 @@ describe('getTraceFilePath', () => {
     }
   });
 
+  it('F-1358: mission-removed vai para o histórico diário de ciclo de vida', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-trace-lifecycle-'));
+    try {
+      setTraceDirectory(dir);
+      trace({
+        kind: 'mission-removed',
+        missionId: 'mission-0afa9ca1-2906-45ec-9fd4-eb46d4c0691a',
+        status: 'blocked',
+        phase: 'blocked_user',
+        origin: 'renderer-remove',
+      });
+      await flushMainTrace();
+      const history = fs.readdirSync(path.join(dir, 'logs')).filter((name) => name.startsWith('lifecycle-'));
+      expect(history).toHaveLength(1);
+      const line = JSON.parse(fs.readFileSync(path.join(dir, 'logs', history[0]!), 'utf8').trim());
+      expect(line).toMatchObject({
+        kind: 'mission-removed',
+        missionId: 'mission-0afa9ca1-2906-45ec-9fd4-eb46d4c0691a',
+        status: 'blocked',
+        phase: 'blocked_user',
+        origin: 'renderer-remove',
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('devolve null quando não há diretório de userData resolvível', () => {
     setTraceDirectory(null);
     // Fora do Electron (vitest) o `electron` não expõe `app.getPath`.

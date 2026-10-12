@@ -72,7 +72,7 @@ export function mainTraceStatus() {
 }
 export async function flushMainTrace(): Promise<void> { await Promise.all([...sinks.values()].map(sink => sink.flush())); }
 
-const LIFECYCLE_KIND = /^(?:(?:pty|pane|worker|agent|agent-pty|mission)-(?:spawn|exit|close|terminate|died|start|stop|created|ended|failed)|main-thread-hang|app-shutdown|exact-resume-forgotten)/;
+const LIFECYCLE_KIND = /^(?:(?:pty|pane|worker|agent|agent-pty|mission)-(?:spawn|exit|close|terminate|died|start|stop|created|ended|failed|removed)|main-thread-hang|app-shutdown|exact-resume-forgotten)/;
 export function trace(event: Record<string, unknown>): void {
   try {
     const at = Date.now();
