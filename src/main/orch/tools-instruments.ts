@@ -376,6 +376,9 @@ export function alignRankingToInstalled(
     for (const model of adapter.models) {
       const id = `${adapterId}/${model}`;
       if (kept.has(id)) continue;
+      // Modelo mais novo sempre: a versão velha de uma linha com sucessor
+      // instalado não volta (a tabela publicada guarda as velhas também).
+      if (newestInModelLine(model, adapter.models) !== model) continue;
       const hint = publishedScoreHint(adapterId, model);
       if (!hint) continue;
       const info = adapter.info[model];

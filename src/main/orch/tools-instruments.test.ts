@@ -649,6 +649,11 @@ describe('nexus_model_ranking', () => {
     }
     // Linha sem sucessor instalado continua listada (sem regressão).
     expect(banded).toContain('codex/gpt-5.6-terra');
+    // Modelo mais novo sempre: a síntese nunca devolve a versão velha de uma
+    // linha que tem sucessor instalado (o lift já trocou luna 5.6 → 6).
+    for (const id of ['codex/gpt-6-sol', 'codex/gpt-5.6-luna']) {
+      expect(out.entries.map((e) => e.id)).not.toContain(id);
+    }
     // Síntese é estimativa com fonte, nunca número inventado como medição.
     for (const id of ['codex/gpt-6.1-sol', 'codex/gpt-6-astra', 'agy/gemini-4-argon']) {
       const entry = out.entries.find((e) => e.id === id);
