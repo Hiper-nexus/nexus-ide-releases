@@ -92,4 +92,10 @@ describe('parsePolishedPrompt', () => {
     expect(parsePolishedPrompt('Sure! Here is the prompt')).toBeNull();
     expect(parsePolishedPrompt('{"prompt":""}')).toBeNull();
   });
+
+  it('F-1394 (revisão Fable): ignora "}" que vem depois do objeto', () => {
+    expect(parsePolishedPrompt('{"prompt":"Run tests."} e depois {nota}')).toBe('Run tests.');
+    expect(parsePolishedPrompt('{"prompt":"Say \\"hi\\" now."} trailing {x}')).toBe('Say "hi" now.');
+    expect(parsePolishedPrompt('{"prompt":"unclosed"')).toBeNull();
+  });
 });

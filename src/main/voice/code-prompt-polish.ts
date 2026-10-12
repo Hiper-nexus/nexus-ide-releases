@@ -85,6 +85,33 @@ function defaultChat(deps: BrainDeps): ChatFn {
   };
 }
 
+/**
+ * First balanced `{…}` from `start`, respecting strings and escapes; null
+ * when it never closes. A `}` after the object (revisão Fable do F-1394:
+ * `{"prompt":"x"} e depois {nota}`) must not leak into the candidate.
+ */
+function balancedObjectFrom(body: string, start: number): string | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < body.length; i++) {
+    const ch = body[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0) return body.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 /** Pulls the prompt out of the model reply; null when it is not usable. */
 export function parsePolishedPrompt(raw: string): string | null {
   let body = raw.trim();
@@ -93,10 +120,12 @@ export function parsePolishedPrompt(raw: string): string | null {
   // F-1394: o head do cérebro pode rodar sem JSON mode (gemini, jsonMode
   // false) e embrulhar o objeto em texto ("Here is the prompt: ```json …").
   // Recusar descartava uma reescrita válida e o CODE caía na tradução
-  // literal da STT. Tenta o corpo inteiro e, depois, do 1º "{" ao último "}".
+  // literal da STT. Tenta o corpo inteiro e, depois, o primeiro objeto JSON
+  // balanceado. Sem objeto, recusa (fail-closed: segue a tradução literal).
   const start = body.indexOf('{');
-  const end = body.lastIndexOf('}');
-  const candidates = start >= 0 && end > start ? [body, body.slice(start, end + 1)] : [body];
+  const balanced = start >= 0 ? balancedObjectFrom(body, start) : null;
+  const candidates =
+    balanced && balanced !== body ? [body, balanced] : [body];
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate) as { prompt?: unknown };
