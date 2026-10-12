@@ -31,6 +31,11 @@ function invalidState(message = 'invalid worktree state record'): never {
   throw new Error(message);
 }
 
+/** Quem é o writer, sem segredo: missão/task/worker já são identificadores. */
+function describeWriter(record: WorktreeRecord): string {
+  return `writer ${record.workerId} (mission ${record.missionId}, task ${record.taskId}, ${record.status})`;
+}
+
 function isOptionalSha(value: unknown): value is string | undefined {
   return value === undefined || (typeof value === 'string' && SHA_PATTERN.test(value));
 }
@@ -225,14 +230,25 @@ export function validateWorktreeStateSnapshot(
     }
   }
 
-  // F-1253: só writers ativos disputam a raiz e o ref de integração. Um writer
-  // encerrado (failed/integrated/abandoned) fica no ref em que nasceu; depois
-  // que o checkout troca de branch, contá-lo aqui recusava todo writer novo.
+  // F-1253: só writers ativos disputam a raiz; um encerrado fica no ref em
+  // que nasceu. F-1422: o ref de integração NÃO é mais único entre os ativos.
+  // Ele é o branch do checkout de coordenação no instante da reserva; quando
+  // o operador (ou outro agente) troca esse branch, todo writer isolado novo
+  // era recusado enquanto houvesse um ativo do branch anterior — mesmo com
+  // `baseRef` explícito. Cada registro integra só no próprio `integrationRef`
+  // e a fila de merge confere, na hora, que o checkout está nele
+  // (`inspectIntegration` → "integration branch changed"); a retomada da
+  // mesma task continua exigindo raiz e ref iguais (worktree-manager.ts).
+  // Bases diferentes (`baseSha`) do mesmo ref sempre foram aceitas.
   const active = records.filter((record) => ACTIVE_WORKTREE_STATUSES.has(record.status));
-  const roots = new Set(active.map((record) => record.rootRealPath));
-  const integrationRefs = new Set(active.map((record) => record.integrationRef));
-  if (roots.size > 1 || integrationRefs.size > 1) {
-    invalidState('active worktree writers disagree on checkout root or integration ref');
+  const firstRoot = active[0];
+  const otherRoot = firstRoot && active.find((record) => record.rootRealPath !== firstRoot.rootRealPath);
+  if (firstRoot && otherRoot) {
+    invalidState(
+      'active worktree writers disagree on checkout root: ' +
+        `${describeWriter(firstRoot)} has ${firstRoot.rootRealPath}, ` +
+        `${describeWriter(otherRoot)} has ${otherRoot.rootRealPath}`,
+    );
   }
 
   return Object.freeze({
