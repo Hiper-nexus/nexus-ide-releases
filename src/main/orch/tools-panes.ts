@@ -138,6 +138,7 @@ import {
   gateContextAbortSignal,
   getContextBySession,
   isCurrentGateContext,
+  PreEffectRefusalError,
   type AgentGateContext,
 } from './gate';
 import { applyWorkerSpawnPolicy } from '../../shared/mission-intent';
@@ -1346,7 +1347,12 @@ const paneSpawnAfterTabMission = {
           ? findAgentInAnySquad(agentRef)
           : null;
       if (!found && !mission?.squadId && ctx.role !== 'user') {
-        throw new Error('squad agent spawn requires a mission bound to a squad');
+        const refusal = 'squad agent spawn requires a mission bound to a squad';
+        // F-1334: nada foi gravado até aqui (missão da aba só nasce para
+        // `user`). A exceção é a reserva de continuação de um `resume`: o
+        // finally a desfaz, mas a compensação pode falhar — aí é efeito.
+        if (missionResume?.continuation) throw new Error(refusal);
+        throw new PreEffectRefusalError(refusal);
       }
       if (!found) {
         throw new Error(

@@ -23,6 +23,7 @@ import {
 import {
   assertOrchestratorMission,
   executionScopeFor,
+  refuseBeforeEffect,
 } from './gate';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { CliContextDraftReviewer } from '../context/cli-context-draft-reviewer';
@@ -649,7 +650,8 @@ const sensorTool: McpToolDef = {
   },
   handler: async (args, ctx, invocation) => {
     const input = z.object({ missionId: identifier, sensorId: identifier }).strict().parse(args);
-    assertOrchestratorMission(ctx, input.missionId);
+    // F-1334: recusa de papel antes de resolver o serviço e de rodar o sensor.
+    refuseBeforeEffect(() => assertOrchestratorMission(ctx, input.missionId));
     const assertCurrentAuthority = invocationAuthority(invocation);
     const result = await getContextWorkflowService(ctx.scope).runSensor(
       input.missionId,

@@ -3105,6 +3105,24 @@ describe("MCP dispatch effect safety", () => {
     expect(result.effectMayHaveCommitted).toBeUndefined();
   });
 
+  it("F-1334: sensor_run refused to a worker before any effect does not report a possible commit", async () => {
+    const tool = buildContextTools().find((item) => item.name === "nexus_sensor_run")!;
+    const workflowCalls = workflowRegistryMocks.getContextWorkflowService.mock.calls.length;
+    const result = await dispatchToolCall(
+      "http-mcp",
+      registryWith(tool),
+      tool.name,
+      { missionId: TEST_MISSION_ID, sensorId: "unit" },
+      missionContext(),
+      workflowOptions(),
+    );
+
+    expect(result).toMatchObject({ ok: false, error: "only the mission orchestrator is authorized" });
+    expect(result.effectMayHaveCommitted).toBeUndefined();
+    // Refused before the sensor service is even resolved.
+    expect(workflowRegistryMocks.getContextWorkflowService.mock.calls.length).toBe(workflowCalls);
+  });
+
   it("F-1013: recusa de autoridade anterior a toda escrita não reporta efeito e repassa a dica", async () => {
     const registry = registryWith({
       name: "nexus_terminal_run",

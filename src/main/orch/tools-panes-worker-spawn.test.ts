@@ -1,11 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import type { AgentGateContext } from './gate';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PreEffectRefusalError, type AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
   assertCallerMaySpawnPane,
   coerceSpawnReadOnly,
   paneSpawnTool,
 } from './tools-panes';
+import * as domainStores from './project-domain-store-registry';
 
 function context(
   overrides: Partial<AgentGateContext> = {},
@@ -80,6 +81,23 @@ describe('nexus_pane_spawn — contrato de entrega (expect) falha visível antes
         context({ role: 'orchestrator', label: 'orch' }),
       ),
     ).rejects.toThrow(/expect\.retries inválido/);
+  });
+});
+
+describe('nexus_pane_spawn — agentName sem squad (F-1334)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('recusa antes de qualquer efeito: o dispatcher não reporta efeito possível', async () => {
+    vi.spyOn(domainStores, 'getProjectDomainStores').mockReturnValue({
+      missions: { get: () => ({ id: 'mission-1', status: 'running' }) },
+    } as never);
+
+    const outcome = await paneSpawnTool
+      .handler({ agentName: 'Executor' }, context({ role: 'orchestrator', label: 'orch' }))
+      .catch((error: unknown) => error);
+
+    expect(outcome).toBeInstanceOf(PreEffectRefusalError);
+    expect((outcome as Error).message).toBe('squad agent spawn requires a mission bound to a squad');
   });
 });
 
