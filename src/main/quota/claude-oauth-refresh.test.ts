@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  claudeBlobIsRenewable,
   CLAUDE_CODE_CLIENT_ID,
   CLAUDE_OAUTH_TOKEN_URL,
   CLAUDE_REFRESH_SKEW_MS,
@@ -253,5 +254,19 @@ describe('refreshClaudeOauthBlob', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('claudeBlobIsRenewable (F-1416)', () => {
+  const now = Date.parse('2026-10-12T21:00:00Z');
+  const blob = (oauth: Record<string, unknown>) => JSON.stringify({ claudeAiOauth: oauth });
+  it('access vencido com refresh no prazo é renovável — não é sessão expirada', () => {
+    expect(claudeBlobIsRenewable(blob({ accessToken: 'a', expiresAt: now - 1, refreshToken: 'r', refreshTokenExpiresAt: now + 1 }), now)).toBe(true);
+    expect(claudeBlobIsRenewable(blob({ accessToken: 'a', expiresAt: now - 1, refreshToken: 'r' }), now)).toBe(true);
+  });
+  it('sem refresh token, refresh vencido ou blob ilegível não é renovável', () => {
+    expect(claudeBlobIsRenewable(blob({ accessToken: 'a', expiresAt: now - 1 }), now)).toBe(false);
+    expect(claudeBlobIsRenewable(blob({ accessToken: 'a', refreshToken: 'r', refreshTokenExpiresAt: now }), now)).toBe(false);
+    expect(claudeBlobIsRenewable('not json', now)).toBe(false);
   });
 });

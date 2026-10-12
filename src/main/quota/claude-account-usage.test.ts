@@ -859,4 +859,102 @@ describe('fetchClaudeAccountUsageWindows', () => {
     expect(mocks.refreshClaudeOauthBlobDetailed).not.toHaveBeenCalled();
     expect(mocks.setSecret).not.toHaveBeenCalled();
   });
+
+  // F-1416: conta "retorno" — login nativo (sessão do CLI) com o access token
+  // do Keychain vencido e refresh token vivo. A sonda de cota dizia
+  // 'auth-expired' só pelo relógio e o main ligava 12 h de "sessão expirada".
+  describe('F-1416 — login nativo com access token vencido e refresh vivo', () => {
+    const OWNER = 'retorno@example.test';
+    function nativeHome(): string {
+      const home = makeHome();
+      fs.mkdirSync(path.join(home, '.claude'));
+      writeClaudeJson(path.join(home, '.claude.json'), { oauthAccount: { emailAddress: OWNER } });
+      return home;
+    }
+    function oauthBlob(token: string, fields: Record<string, unknown>): string {
+      return JSON.stringify({ claudeAiOauth: { accessToken: token, ...fields } });
+    }
+    const expiredRenewable = oauthBlob('stale-native', {
+      expiresAt: NOW - 9 * 60 * 60 * 1000,
+      refreshToken: 'rt-native',
+      refreshTokenExpiresAt: NOW + 27 * 24 * 60 * 60 * 1000,
+    });
+    const freshNative = oauthBlob('fresh-native', { expiresAt: NOW + 60 * 60 * 1000, refreshToken: 'rt-2' });
+
+    beforeEach(() => {
+      mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: OWNER });
+      mocks.claudeAccountIsNativeLogin.mockReturnValue(true);
+      // Mesma regra do probe real: relógio do access token decide 'auth-expired'.
+      mocks.probeClaudeCredentialIdentity.mockImplementation(async (blob) => {
+        const exp = blob ? JSON.parse(blob).claudeAiOauth?.expiresAt : undefined;
+        return typeof exp === 'number' && exp > NOW ? 'match' : 'auth-expired';
+      });
+    });
+    afterEach(() => {
+      mocks.claudeAccountIsNativeLogin.mockReset().mockReturnValue(false);
+    });
+
+    it('deixa a CLI renovar a linhagem nativa e lê o uso da credencial renovada', async () => {
+      const home = nativeHome();
+      mocks.readNativeOAuthCredential
+        .mockResolvedValueOnce(expiredRenewable)
+        .mockResolvedValueOnce(freshNative);
+      mocks.probeClaudeCliUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.4)] });
+      mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.42)] });
+
+      const r = await fetchClaudeAccountUsageWindows('acct-retorno', { now: NOW, home, keychainProbe: () => true });
+
+      expect(r.hint).toBeUndefined();
+      expect(r.windows?.[0]?.usedRatio).toBe(0.42);
+      expect(mocks.probeClaudeOauthUsage).toHaveBeenCalledWith('fresh-native', expect.anything());
+      // Perfil nativo: a CLI roda sem escopo gerenciado (nunca semeia a linhagem nativa).
+      const call = mocks.probeClaudeCliUsage.mock.calls[0]![0] as { env?: Record<string, string> };
+      expect(call.env).toBeUndefined();
+      expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
+      expect(mocks.ensureFreshClaudeSubscription).not.toHaveBeenCalled();
+    });
+
+    it('sem leitura possível agora, fica indisponível — nunca "sessão expirada"', async () => {
+      const home = nativeHome();
+      mocks.readNativeOAuthCredential.mockResolvedValue(expiredRenewable);
+      mocks.probeClaudeCliUsage.mockResolvedValue({ windows: null, failure: 'unavailable' });
+
+      const r = await fetchClaudeAccountUsageWindows('acct-retorno', { now: NOW, home, keychainProbe: () => true });
+
+      expect(r).toEqual({ windows: null, hint: 'unavailable' });
+    });
+
+    it('a própria CLI recusando a sessão continua pedindo re-login', async () => {
+      const home = nativeHome();
+      mocks.readNativeOAuthCredential.mockResolvedValue(expiredRenewable);
+      mocks.probeClaudeCliUsage.mockResolvedValue({ windows: null, failure: 'auth-expired' });
+
+      const r = await fetchClaudeAccountUsageWindows('acct-retorno', { now: NOW, home, keychainProbe: () => true });
+
+      expect(r).toEqual({ windows: null, hint: 'auth-expired' });
+    });
+
+    it('refresh token vencido (ou ausente) ainda é sessão expirada', async () => {
+      const home = nativeHome();
+      mocks.readNativeOAuthCredential.mockResolvedValue(oauthBlob('dead', {
+        expiresAt: NOW - 1000, refreshToken: 'rt-dead', refreshTokenExpiresAt: NOW - 1,
+      }));
+
+      const r = await fetchClaudeAccountUsageWindows('acct-retorno', { now: NOW, home, keychainProbe: () => true });
+
+      expect(r).toEqual({ windows: null, hint: 'auth-expired' });
+      expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
+    });
+
+    it('escopo gerenciado com access vencido e refresh vivo não vira re-login', async () => {
+      mocks.claudeAccountIsNativeLogin.mockReturnValue(false);
+      mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+      mocks.readManagedClaudeAuth.mockReturnValue(expiredRenewable);
+      mocks.probeClaudeCliUsage.mockResolvedValue({ windows: null, failure: 'unavailable' });
+
+      const r = await fetchClaudeAccountUsageWindows('acct-reserva', { now: NOW });
+
+      expect(r).toEqual({ windows: null, hint: 'unavailable' });
+    });
+  });
 });
