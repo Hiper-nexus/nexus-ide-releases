@@ -34,6 +34,11 @@ import { handoffRawPayloadSha256 } from './handoff-payload-identity';
 import { HOOK_SCRIPT } from './hooks-gen';
 import { MINIMAX_NEXUS_MCP_BRIDGE_SCRIPT } from './cli-mcp-session-minimax';
 import { testProjectScope } from './__tests__/scope-fixture';
+import {
+  armAutoCloseOnHandoff,
+  disarmAutoCloseOnHandoff,
+  scheduleAutoCloseAfterHandoff,
+} from './pane-close-scopes';
 
 /**
  * F-795 (B5 da Missão Terminais): com o Main preso, o F-768 perdeu o handoff
@@ -677,4 +682,40 @@ describe('Main inalcançável: o lado do agente guarda o handoff (F-795)', () =>
       hung.close();
     }
   }, 30_000);
+});
+
+describe('F-1409: success ingerido do spool fecha o worker armado', () => {
+  async function ingestWithAutoClose(status: string, arm: boolean): Promise<ReturnType<typeof vi.fn>> {
+    const close = vi.fn(async () => true);
+    disarmAutoCloseOnHandoff('session-w', 'pane-w');
+    if (arm) armAutoCloseOnHandoff('session-w', 'pane-w');
+    // Mesma ligação do mcp-server: o braço decide, a fila do Maestro não.
+    startHandoffSpool({ root, watch: false, bootDelayMs: 600_000, deps: {
+      getStores: () => stores(),
+      deliver: (handoff) => { delivered.push(handoff); },
+      afterIngest: (handoff) => scheduleAutoCloseAfterHandoff(
+        handoff.sessionId, handoff.status, () => 'pane-w', close),
+    } });
+    snippetWriter()(session.env, 'gate-hook', { ...PAYLOAD, status });
+    await expect(ingestHandoffSpoolNow()).resolves.toMatchObject({ ingested: 1 });
+    expect(handoffs[0]).toMatchObject({ status, deliveryState: 'queued' });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return close;
+  }
+
+  it('success na fila do Maestro (queued) fecha o pane armado', async () => {
+    const close = await ingestWithAutoClose('success', true);
+    expect(close).toHaveBeenCalledWith('pane-w', 'session-w');
+  });
+
+  it('partial mantém o pane aberto para diagnóstico', async () => {
+    const close = await ingestWithAutoClose('partial', true);
+    expect(close).not.toHaveBeenCalled();
+    disarmAutoCloseOnHandoff('session-w', 'pane-w');
+  });
+
+  it('sem braço (autoCloseOnHandoff:false / pane do operador) success não fecha', async () => {
+    const close = await ingestWithAutoClose('success', false);
+    expect(close).not.toHaveBeenCalled();
+  });
 });
