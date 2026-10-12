@@ -191,7 +191,9 @@ export function DiffFileTree({
             // Without a label the name would also read the action buttons' labels.
             aria-label={`${row.name}, ${file.status}`}
             className={`git-scm__file${selected ? ' is-selected' : ''}`}
-            title={file.originalPath ? `${file.originalPath} → ${file.path}` : file.path}
+            // F-1413: o caminho completo vai no tooltip CSS (data-tip) — o `title`
+            // nativo vaza para fora do painel estreito e é cortado na borda.
+            data-tip={file.originalPath ? `${file.originalPath} → ${file.path}` : file.path}
           >
             <span className="git-scm__file-main" style={indent}>
               <span className="git-scm__code" data-status={file.status}>

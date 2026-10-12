@@ -44,15 +44,22 @@ function render(files: GitFileChange[], selectedPath: string | null) {
   );
 }
 
+// F-1413: file rows carry the full path in the CSS tooltip (data-tip); folders keep title.
+function tipOf(node: Element | null): string | null {
+  return node?.getAttribute('data-tip') ?? node?.getAttribute('title') ?? null;
+}
+
 function item(title: string): HTMLButtonElement {
-  const node = host.querySelector<HTMLButtonElement>(`[role="treeitem"][title="${title}"]`);
+  const node = host.querySelector<HTMLButtonElement>(
+    `[role="treeitem"][data-tip="${title}"], [role="treeitem"][title="${title}"]`,
+  );
   if (!node) throw new Error(`treeitem ${title} not rendered`);
   return node;
 }
 
 function visibleTitles(): string[] {
   return Array.from(host.querySelectorAll<HTMLElement>('[role="treeitem"]')).map(
-    (node) => node.title,
+    (node) => tipOf(node) ?? '',
   );
 }
 
@@ -151,7 +158,7 @@ describe('DiffFileTree', () => {
     const actions = Array.from(tree.querySelectorAll('button'));
     expect(actions).toHaveLength(FILES.length);
     for (const action of actions) {
-      expect(action.closest('[role="treeitem"]')?.getAttribute('title')).toBe(
+      expect(tipOf(action.closest('[role="treeitem"]'))).toBe(
         action.getAttribute('aria-label')!.replace('Stage ', ''),
       );
     }

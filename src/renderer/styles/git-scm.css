@@ -55,14 +55,21 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  /* F-1413: abaixo de ~240px (repo no mínimo + botões não cabem) os botões
+     pulam para uma segunda linha alinhada à direita — nunca por cima do texto. */
+  flex-wrap: wrap;
 }
 
 .git-scm__repo {
-  flex: 1;
-  min-width: 0;
+  /* Base 0 + min-width: a quebra de linha do wrap usa o tamanho hipotético
+     (min-width 120px), então os botões só saem da linha quando nem 120px de
+     texto + botões couberem (painel no mínimo, 200px). */
+  flex: 1 1 0;
+  min-width: 120px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  position: relative;
 }
 
 .git-scm__repo-path {
@@ -77,6 +84,13 @@
   font-size: var(--text-2xs);
   color: var(--accent, #ff4f8b);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* F-1413: o nome da branch fica numa linha com reticências — o wrap
+     caractere a caractere empilhava 6 linhas sob os botões pull/push. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .git-scm__tabs {
@@ -85,16 +99,32 @@
   gap: 4px;
   border-bottom: 1px solid var(--border, rgb(255 255 255 / 0.08));
   padding-bottom: 6px;
+  /* F-1413: as três abas cabem até no mínimo do painel; se não couberem
+     (locale mais largo), a faixa rola com o MESMO fade das abas externas do
+     painel (product-wave.css) — nunca palavra cortada sem pista. */
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  mask-image: linear-gradient(
+    90deg,
+    transparent,
+    black var(--ctx-tabs-fade-start),
+    black calc(100% - var(--ctx-tabs-fade-end)),
+    transparent
+  );
+  animation: ctx-tabs-fade linear both;
+  animation-timeline: scroll(self inline);
+}
+
+.git-scm__tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .git-scm__tabs button {
   appearance: none;
-  /* Painel estreito: as três abas encolhem com reticências em vez de a última
-     sair cortada pela borda. */
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Rótulo inteiro, sem encolher: "Alterações/Histórico/Issues" cabem na
+     faixa; sobrando espaço, rola com fade (mesmo idioma das abas externas). */
+  flex: 0 0 auto;
   white-space: nowrap;
   border: none;
   background: transparent;
@@ -216,6 +246,10 @@
 .git-scm__file {
   position: relative;
   border-radius: 6px;
+  /* F-1413: as ações ficam NO fluxo (área própria reservada) — antes eram
+     absolutas por cima do nome, e o nome ellipsizava atravessando elas. */
+  display: flex;
+  align-items: stretch;
 }
 
 .git-scm__file.is-selected {
@@ -223,10 +257,10 @@
 }
 
 .git-scm__file-main {
-  width: 100%;
+  flex: 1 1 auto;
   min-width: 0;
   display: grid;
-  grid-template-columns: 14px minmax(0, max-content) minmax(0, 1fr);
+  grid-template-columns: 14px minmax(0, 1fr);
   align-items: baseline;
   column-gap: 6px;
   appearance: none;
@@ -279,29 +313,25 @@
   text-align: left;
 }
 
-.git-scm__file-actions {
-  position: absolute;
-  inset-block: 0;
-  right: 2px;
+/* Área própria das ações na linha, no fluxo: em repouso fica vazia (o nome
+   usa a largura toda); em hover/foco as ações entram e o nome encolhe com
+   reticências respeitando-as — nunca por cima do texto. */
+.git-scm__tree-actions {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
+  padding-right: 2px;
+}
+
+.git-scm__file-actions {
+  display: none;
+  align-items: center;
   gap: 2px;
-  padding-left: 20px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    var(--bg-elevated, #111013) 45%
-  );
-  border-radius: 6px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 100ms ease;
 }
 
 .git-scm__file:hover .git-scm__file-actions,
 .git-scm__file:focus-within .git-scm__file-actions {
-  opacity: 1;
-  pointer-events: auto;
+  display: flex;
 }
 
 .git-scm__file-action {
@@ -715,6 +745,8 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  /* O nome da branch encolhe com reticências dentro do botão (F-1413). */
+  min-width: 0;
   background: none;
   border: none;
   padding: 1px 4px;
@@ -737,12 +769,16 @@
 .git-scm__branch-caret {
   font-size: 10px;
   color: var(--text-dim);
+  flex: 0 0 auto;
 }
 
 .git-scm__toolbar-actions {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
+  /* Na segunda linha (painel no mínimo) os botões ficam alinhados à direita. */
+  margin-left: auto;
 }
 
 .git-scm__branch-menu {
@@ -970,4 +1006,44 @@
   padding-inline: var(--space-2);
   white-space: normal;
   overflow-wrap: break-word;
+}
+
+/* Tooltip CSS do painel (mesmo idioma do data-tip do toolbar em base.css).
+   F-1413: o title nativo do caminho completo vazava para fora do painel
+   estreito e era cortado na borda; aqui o texto quebra DENTRO da largura da
+   linha (vira para a esquerda, sem sair da viewport do painel). */
+.git-scm__file[data-tip]::after,
+.git-scm__repo[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: calc(100% + 3px);
+  z-index: 6;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-elevated, #111013) 96%, #000);
+  border: 1px solid var(--border-strong, rgb(255 255 255 / 0.16));
+  color: var(--text, #faf7f9);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 100ms ease, visibility 100ms;
+  box-shadow: var(--shadow-2, 0 4px 12px rgba(0, 0, 0, 0.4));
+}
+
+/* Atraso curto ao mostrar: passar o mouse pela lista não pisca um bloco sobre
+   a linha de baixo a cada arquivo. */
+.git-scm__file:hover[data-tip]::after,
+.git-scm__file:focus-visible[data-tip]::after,
+.git-scm__repo:hover[data-tip]::after {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 450ms;
 }

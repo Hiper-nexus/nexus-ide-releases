@@ -728,7 +728,11 @@ export function GitPanelBody() {
   return (
     <div className="git-scm product-pane" data-testid="git-scm-panel">
       <header className="git-scm__toolbar">
-        <div className="git-scm__repo" title={workspacePath ?? undefined}>
+        <div
+          className="git-scm__repo"
+          data-tip={workspacePath ?? undefined}
+          aria-label={workspacePath ?? undefined}
+        >
           <span className="git-scm__repo-path">{workspaceLabel}</span>
           <button
             type="button"
