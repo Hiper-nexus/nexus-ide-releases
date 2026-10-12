@@ -18,8 +18,8 @@
  *     is answered ONLY when the directory printed on screen IS the pane's own
  *     cwd — the workspace the operator picked when launching the mission. No
  *     confirmable path on screen → no answer.
- *  4. Answers come from `ALLOWED_ANSWERS` and nothing else. Exactly one entry
- *     in the table is affirmative (`1\r`, fenced by rule 3); every other entry
+ *  4. Answers come from `ALLOWED_ANSWERS` and nothing else. The affirmative
+ *     entries (`1\r`) are ALL fenced by rule 3 (F-1419 added Devin's); every other entry
  *     dismisses with Esc, which cannot express consent to anything. Permission
  *     prompts, "run this command?" approvals, destructive confirmations, login
  *     screens and generic (y/N) questions are unreachable by construction —
@@ -65,6 +65,12 @@ export interface FirstRunInterstitialPattern {
   readonly forbidAny: readonly RegExp[];
   readonly answer: string;
   readonly directoryProof: DirectoryProof;
+  /**
+   * F-1419: o path impresso pode ter espaço e quebrar no meio (worktree em
+   * "Application Support"); a prova `cwd-match` aceita também
+   * `screenNamesWrappedPath`. Continua sendo o cwd do pane, só que remontado.
+   */
+  readonly pathMayWrap?: boolean;
   /** Why this exact answer is safe. Kept next to the pattern on purpose. */
   readonly why: string;
 }
@@ -107,6 +113,33 @@ const PATTERNS: FirstRunInterstitialPattern[] = [
     why:
       'Option 1 ("Yes, continue") trusts the mission workspace the operator ' +
       'already authorized at launch. Never blind-accept: option 2 quits.',
+  },
+  {
+    // F-1419: Devin CLI (swe-2, 12/10) num writer isolado parou em
+    // "✓ Trust <path>?  ❭ 1 Yes, trust / 2 No, exit  ↓↑ to select · ↵ to
+    // choose" — a cópia antiga ("do you trust the authors of this
+    // directory?") é da assinatura `devin-workspace-trust` do
+    // cli-prompt-autoresponder e fica proibida aqui. O path é a worktree que o
+    // próprio Nexus criou para o pane: só ele recebe o "1"; qualquer outro
+    // path na tela → nenhuma tecla.
+    name: 'devin-trust-path',
+    adapterIds: ['devin'],
+    requireAll: [
+      /\btrust (?:~|\/|[a-z]:[\\/])[^?]*\?/,
+      /\b1\.?\s*yes, trust\b/,
+      /\b2\.?\s*no, exit\b/,
+      /to select/,
+      /to choose/,
+    ],
+    forbidAny: [
+      /do you trust the authors of this directory\?/,
+    ],
+    answer: ANSWER_FIRST_NUMBERED_OPTION,
+    directoryProof: 'cwd-match',
+    pathMayWrap: true,
+    why:
+      'Option 1 ("Yes, trust") trusts the worktree/cwd Nexus created for this ' +
+      'mission pane. Any other path on screen gets no keystroke; option 2 exits.',
   },
   {
     name: 'grok-coding-data-consent',
@@ -231,6 +264,43 @@ export function screenNamesOwnCwd(
   );
 }
 
+/** Antes do path só cabe início, branco, aspa ou parêntese. */
+const PATH_LEFT_BOUNDARY = /[\s"'`(]/;
+
+/**
+ * F-1419: o path da worktree tem espaço ("Application Support") e, num pane
+ * estreito, quebra no meio — o candidato por token nunca o reconstitui. Aqui
+ * o cwd (completo ou com `~`) casa com espaço em branco OPCIONAL entre os
+ * caracteres (quebra de linha) e o espaço do próprio path como 1+ brancos.
+ * Fronteiras: antes, nada de caractere de path; depois, o próximo caractere
+ * visível é `?`, aspa, `)` ou o fim — "<cwd> d" (outro diretório quebrado
+ * na linha) não casa. Linear: cada `\s*` é seguido de um literal.
+ */
+export function screenNamesWrappedPath(screenText: string, cwd: string, homeDir?: string): boolean {
+  if (!cwd.trim()) return false;
+  const haystack = stripFrame(screenText);
+  const full = normalizePath(cwd, homeDir);
+  if (/^[A-Za-z]:\//.test(full)) return false;
+  const variants = [full];
+  if (homeDir) {
+    const home = normalizePath(homeDir);
+    if (home.length > 1 && full.startsWith(`${home}/`)) variants.push(`~${full.slice(home.length)}`);
+  }
+  for (const variant of variants) {
+    // Espaço do path → `\s+`; entre os demais caracteres → `\s*` (quebra).
+    const body = variant
+      .split(/\s+/)
+      .map((word) => [...word].map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*'))
+      .join('\\s+');
+    const re = new RegExp(`${body}\\/?(?=\\s*(?:[?"'\`)]|$))`, 'g');
+    for (const match of haystack.matchAll(re)) {
+      const before = match.index > 0 ? haystack[match.index - 1]! : '';
+      if (!before || PATH_LEFT_BOUNDARY.test(before)) return true;
+    }
+  }
+  return false;
+}
+
 function appliesToAdapter(
   pattern: FirstRunInterstitialPattern,
   adapterId: string,
@@ -280,7 +350,8 @@ export function decideFirstRunInterstitial(
     // Boundary 3: an authority-granting answer needs the cwd proof.
     if (
       pattern.directoryProof === 'cwd-match' &&
-      !screenNamesOwnCwd(screenText, context.cwd, context.homeDir)
+      !screenNamesOwnCwd(screenText, context.cwd, context.homeDir) &&
+      !(pattern.pathMayWrap && screenNamesWrappedPath(screenText, context.cwd, context.homeDir))
     ) {
       continue;
     }
