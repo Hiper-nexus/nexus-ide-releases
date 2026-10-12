@@ -65,6 +65,15 @@ describe('resolveHarnessType', () => {
     expect(resolveHarnessType(table, 'fix de bug').typeId).toBe('B1');
   });
 
+  it('F-1332: matches the type tokens inside a free-text task (not the reverse)', () => {
+    expect(resolveHarnessType(table, 'corrigir o bug que quebra o login').typeId).toBe('B1');
+    expect(resolveHarnessType(table, 'fazer a página de checkout').typeId).toBe('frontend-build-page');
+    expect(resolveHarnessType(table, 'replicar a página da Stripe').typeId).toBe('frontend-replicate-page');
+    expect(resolveHarnessType(table, 'preparar o release da 0.76.240').typeId).toBe('B4');
+    expect(resolveHarnessType(table, 'análise de latência do spawn').typeId).toBe('B5');
+    expect(resolveHarnessType(table, 'corrigir o bug que quebra o login').via).toBe('table');
+  });
+
   it('unknown type falls back to the declared default — never refuses', () => {
     const resolution = resolveHarnessType(table, 'does-not-exist-xyz');
     expect(resolution.via).toBe('default');
@@ -105,6 +114,8 @@ describe('receipt OVKA-748', () => {
     expect(receipt).toContain('▸ decisor:');
     expect(receipt).toContain('▸ origens:');
     expect(receipt).toContain('claude-sonnet-5');
+    // F-1332: nenhum código de rota/spawn lê a tabela — o recibo não finge que decidiu.
+    expect(receipt).toContain('informativa: não decide CLI/modelo/esforço do spawn');
   });
 });
 

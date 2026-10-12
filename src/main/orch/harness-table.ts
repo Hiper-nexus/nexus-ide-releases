@@ -371,27 +371,44 @@ export function resolveHarnessType(
       }
     }
   }
-  // keyword match simples (via=keyword no recibo)
+  // F-1332: casa os tokens do TIPO dentro da tarefa (antes era o contrário:
+  // exigia que o nome do tipo contivesse a frase inteira). Mais tokens
+  // casados vence; empate fica com a ordem da tabela.
+  const taskWords = harnessTokens(needle);
+  let best: { type: HarnessType; categoryId: string; score: number } | null = null;
   for (const category of table.categories) {
     for (const type of category.types) {
       if (type.typeId === HARNESS_DEFAULT_TYPE_ID) continue;
-      const hay = `${type.typeId} ${type.name}`.toLowerCase();
-      if (needle && hay.includes(needle)) {
-        return {
-          typeId: type.typeId,
-          categoryId: category.categoryId,
-          typeName: type.name,
-          values: type.values,
-          via: 'table',
-        };
-      }
+      const score = harnessTokens(`${type.typeId} ${type.name}`).filter((token) =>
+        taskWords.some((word) => word.startsWith(token)),
+      ).length;
+      if (score > (best?.score ?? 0)) best = { type, categoryId: category.categoryId, score };
     }
+  }
+  if (best) {
+    return {
+      typeId: best.type.typeId,
+      categoryId: best.categoryId,
+      typeName: best.type.name,
+      values: best.type.values,
+      via: 'table',
+    };
   }
   const fallback = resolveHarnessTypeSafeDefault(table);
   return {
     ...fallback,
     via: 'default',
   };
+}
+
+/** Palavras de 3+ letras, sem acento: "investigação/análise" → investigacao, analise. */
+function harnessTokens(text: string): string[] {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 3);
 }
 
 /** Default declarado sem recursão — a linha `default` pode ter sido removida. */
@@ -453,7 +470,7 @@ export function formatHarnessReceipt(input: HarnessReceiptInput): string {
   const category =
     resolution.categoryId;
   const lines = [
-    `▸ harness: ${category} › ${resolution.typeName} (task=${resolution.typeId} · via=${via} · fonte=tabela do app) · ${cli} · ${model} · ${effort} · ${skills} · ${agent}`,
+    `▸ harness: ${category} › ${resolution.typeName} (task=${resolution.typeId} · via=${via} · fonte=tabela do app, informativa: não decide CLI/modelo/esforço do spawn) · ${cli} · ${model} · ${effort} · ${skills} · ${agent}`,
   ];
   if (input.decisorNote) {
     lines.push(`▸ decisor: ${input.decisorNote}`);
