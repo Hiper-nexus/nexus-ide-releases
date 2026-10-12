@@ -1010,6 +1010,16 @@ async function handlePaneNotStarted(
     // Um PTY atrasado desta tentativa não pode nascer depois do reenvio.
     abandonPendingOrchSpawn(watch.requestId, 'pane did not start within the start window');
   }
+  // Revisão Grok (F-1414): o worker pode entregar enquanto este passo roda
+  // (os awaits de fechar e de rerotear). Entrega vista = a tarefa foi feita:
+  // nada de fechar, contar no disjuntor, reabrir noutra CLI nem avisar.
+  const deliveredMeanwhile = (): boolean => {
+    if (watch.sessionId === null || !sessionHasHandoff(watch, watch.sessionId)) return false;
+    console.warn(`[delegation-supervisor] pane ${watch.paneId} entregou durante a recuperação; nada reaberto`);
+    finishPaneStartWatch(watch);
+    return true;
+  };
+  if (deliveredMeanwhile()) return;
   let breaker: 'trip' | 'count' | 'skipped' = 'skipped';
   if (!watch.operatorOpened) {
     // F-734: o escopo da credencial é lido antes de fechar (a sessão some).
@@ -1017,6 +1027,7 @@ async function handlePaneNotStarted(
       watch.sessionId !== null &&
       Boolean(getAgentSessionInfo(watch.sessionId)?.accountId);
     await closeNotStartedPane(watch);
+    if (deliveredMeanwhile()) return;
     if (!capacityRefused) {
       // Recusa de capacidade não é falha da CLI: fecha o pane morto, mas não
       // conta no disjuntor do adapter.
@@ -1032,6 +1043,7 @@ async function handlePaneNotStarted(
   if (capacityRefused) {
     outcome = { kind: 'not-rerouted', why: 'capacity' };
   } else if (action === 'reroute' && watch.reroute) {
+    if (deliveredMeanwhile()) return;
     try {
       const next = await watch.reroute([watch.adapterId]);
       outcome = { kind: 'rerouted', paneId: next.paneId, adapterId: next.adapterId };
