@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   armAutoCloseOnHandoff,
   assertAutoCloseReportPreserved,
   armAutoCloseOnHandoffForPane,
   armedAutoClosePaneId,
+  closeAfterNonSuccessHandoffAck,
   disarmAutoCloseOnHandoff,
+  NON_SUCCESS_IDLE_CLOSE_MS,
   selectScopedPaneCloseTargets,
   scheduleAutoCloseAfterHandoff,
   shouldArmAutoCloseOnHandoff,
@@ -311,5 +313,81 @@ describe("braço de autoClose por pane (spawn com ACK pendente)", () => {
     expect(armedAutoClosePaneId("sess-a")).toBe("pane-a");
     disarmAutoCloseOnHandoff("sess-a");
     expect(armedAutoClosePaneId("sess-a")).toBeNull();
+  });
+});
+
+// F-1409: o operador fechava à mão os workers que entregaram partial e ficaram
+// parados. Não-success de worker armado fecha no ACK aceito do Maestro ou,
+// sem ACK, depois de NON_SUCCESS_IDLE_CLOSE_MS com o worker parado.
+describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", () => {
+  const paneOf = (sessionId: string) => sessionId === "sess-w" ? "pane-w" : null;
+  function deliver(status: string, opts: { arm?: boolean; busy?: () => boolean } = {}) {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    if (opts.arm !== false) armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", status, paneOf, close, {
+      handoffId: "hoff-1", isBusy: opts.busy,
+    });
+    return close;
+  }
+
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => {
+    disarmAutoCloseOnHandoff("sess-w", "pane-w");
+    vi.useRealTimers();
+  });
+
+  it.each(["partial", "failed", "blocked"])("%s fica aberto até o ACK aceito e então fecha", async (status) => {
+    const close = deliver(status);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(close).not.toHaveBeenCalled();
+
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-1", "accepted")).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+    expect(armedAutoClosePaneId("sess-w")).toBeNull();
+  });
+
+  it("ACK rework mantém o pane aberto (recebe a nota) e cancela a rede de segurança", async () => {
+    const close = deliver("partial");
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-1", "rework")).toBe(false);
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
+  });
+
+  it("ACK de outro handoff não fecha", async () => {
+    const close = deliver("partial");
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-outro", "accepted")).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("sem ACK: fecha depois de 15 min com o worker parado; ocupado adia", async () => {
+    let busy = true;
+    const close = deliver("blocked", { busy: () => busy });
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS - 1);
+    expect(close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(close).not.toHaveBeenCalled(); // ocupado: adiou
+    busy = false;
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS + 1);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  it("sem braço (autoCloseOnHandoff:false / pane do operador) nunca fecha", async () => {
+    const close = deliver("partial", { arm: false });
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-1", "accepted")).toBe(false);
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("success posterior fecha já e descarta a pendência", async () => {
+    const close = deliver("partial");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, { handoffId: "hoff-2" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-1", "accepted")).toBe(false);
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });
