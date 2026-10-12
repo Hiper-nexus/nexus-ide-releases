@@ -427,6 +427,7 @@ export async function fetchClaudeAccountUsageWindows(
     return { windows: null, hint: 'no-credential' };
   }
   let hint: QuotaReadHint | undefined;
+  let expiredButRenewable = false;
   // F-1416: `probeClaudeCredentialIdentity` diz 'auth-expired' só pelo relógio
   // do access token. Com refresh token vivo isso não prova sessão perdida — a
   // CLI renova no próximo uso. Virar 'auth-expired' aqui ligava o cooldown de
@@ -439,10 +440,16 @@ export async function fetchClaudeAccountUsageWindows(
   ): QuotaReadHint => {
     if (identity === 'mismatch') return 'identity-mismatch';
     if (identity === 'auth-expired' && credential && claudeBlobIsRenewable(credential, now)) {
+      expiredButRenewable = true;
       return 'unavailable';
     }
     return identity;
   };
+  // Revisão de segurança (MÉDIA): o rebaixamento acima não pode mascarar a
+  // prova real. Se o token estava vencido-com-refresh e a CLI dona da
+  // renovação (escopo gerenciado) respondeu sessão expirada, o grant morreu.
+  const cliProvedExpiry = (failure: string | undefined): boolean =>
+    expiredButRenewable && failure === 'auth-expired';
   const ownedWindows = async (credential: string | null): Promise<ClaudeAccountUsageResult> => {
     const identity = await probeClaudeCredentialIdentity(
       credential, account.email, { now, fetchImpl: opts.fetchImpl },
@@ -499,9 +506,12 @@ export async function fetchClaudeAccountUsageWindows(
     });
     // The CLI owns its refresh lock. Read its result without becoming a
     // second refresh actor, then obtain usage from that verified token.
+    expiredButRenewable = false;
     const owned = await ownedScopedWindows();
     if (owned.windows?.length || owned.hint === 'identity-mismatch') return owned;
-    hint = owned.hint ?? cliFailureHint(probe.failure ?? 'unavailable');
+    hint = cliProvedExpiry(probe.failure)
+      ? 'auth-expired'
+      : owned.hint ?? cliFailureHint(probe.failure ?? 'unavailable');
     // A managed scope that failed must not fall through to a native profile
     // whose display metadata merely resembles this saved account.
     return { windows: null, hint: hint ?? 'unavailable' };
@@ -616,9 +626,12 @@ export async function fetchClaudeAccountUsageWindows(
       runImpl: opts.runImpl,
       env: managedClaudeCliEnv(prepared.directory),
     });
+    expiredButRenewable = false;
     const owned = await ownedScopedWindows(prepared.blob);
     if (owned.windows?.length || owned.hint === 'identity-mismatch') return owned;
-    hint = owned.hint ?? hint ?? cliFailureHint(probe.failure ?? 'unavailable');
+    hint = cliProvedExpiry(probe.failure)
+      ? 'auth-expired'
+      : owned.hint ?? hint ?? cliFailureHint(probe.failure ?? 'unavailable');
   } catch {
     // materialização falhou (id inválido, blob sem slice) → hint honesto
   }
