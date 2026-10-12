@@ -91,6 +91,7 @@ import {
   type DevServerEntry,
 } from "./dev-server-registry";
 import { getProjectDomainStores } from "./project-domain-store-registry";
+import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import { listSquads } from "./squad-store";
 import {
   resolveMissionPaneAuthoritySeal,
@@ -1395,6 +1396,30 @@ function cancelUnbornWorkerContinuation(pending: PendingSpawn): void {
   catch { /* Changed or already-released owner is retained; compensation never clears it. */ }
 }
 
+/**
+ * F-1258: a liquidação sem sessão e sem filho de um grant de writer isolado
+ * libera a alocação (o registro `ready` falso, que nunca recebe o tap de
+ * saída porque nenhuma sessão nasceu). Só quando o vínculo ainda é desta
+ * tentativa (último pane vinculado é o do grant e o registro segue `ready`):
+ * um `resume` posterior religa outro pane ao mesmo registro e nunca é
+ * derrubado por liquidação tardia. Branch e arquivos ficam preservados para
+ * integração manual (markFailed retém ambos).
+ */
+function cancelUnbornIsolatedWriterAllocation(pending: PendingSpawn): void {
+  if (pending.meta.isolatedWriter !== true || pending.claimedSessionId) return;
+  const scope = pending.meta.scope;
+  if (!scope) return;
+  try {
+    const registry = requireWorktreeRuntimeRegistry();
+    const record = registry.findPaneWriter(scope, { paneId: pending.request.paneId });
+    if (!record || record.status !== 'ready' || record.paneIds?.at(-1) !== pending.request.paneId) return;
+    registry.markFailed(scope, record.missionId, record.taskId,
+      'pane writer closed or spawn failed before birth; worktree and branch retained for integration');
+  } catch {
+    /* Sem registry no escopo, sem vínculo ou já liberado: nada a compensar. */
+  }
+}
+
 async function settlePendingSpawnFailure(
   requestId: string,
   pending: PendingSpawn,
@@ -1478,7 +1503,10 @@ async function settlePendingSpawnFailure(
       };
     }
   }
-  if (!fallback?.ok) cancelUnbornWorkerContinuation(pending);
+  if (!fallback?.ok) {
+    cancelUnbornWorkerContinuation(pending);
+    cancelUnbornIsolatedWriterAllocation(pending);
+  }
   sendAttemptPaneCleanup(
     pending.owner,
     requestId,

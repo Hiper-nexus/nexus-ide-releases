@@ -3,9 +3,26 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import type { PaneSnapshot } from '../../shared/orch-types';
 import type { AgentGateContext } from './gate';
 import type { SpawnToolOptions } from './tool-util';
+import type { WebContents } from 'electron';
+import {
+  abandonPendingOrchSpawn,
+  claimPendingSpawnMeta,
+  registerOrchRenderer,
+  reportPendingSpawnStartFailure,
+  requestPaneSpawn,
+  resolvePaneSpawn,
+  unregisterOrchRenderer,
+  PENDING_SPAWN_RESULT,
+} from './pane-registry';
+import {
+  bindResolvedRendererWorkspaceScope,
+  clearRendererWorkspaceScope,
+} from '../persistence/renderer-workspace-scope';
 import type { SessionExitTap } from '../pty/pty-manager';
 import { compileIntentContract } from '../../shared/mission-intent';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
@@ -100,6 +117,7 @@ function exitPane(pane: PaneSnapshot) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  resetLicensedAccessMock();
   traceHarness.events.length = 0;
   h.pending.mockReturnValue(null);
   h.panes = [];
@@ -312,6 +330,99 @@ describe('Via Rápida isolated writers', () => {
     })).rejects.toThrow('authority revoked');
     expect(h.spawn).not.toHaveBeenCalled();
     expect(registry.listMission(ctx.scope, ctx.missionId!)[0].status).toBe('failed');
+  });
+
+  it('F-1258: pending sem sessão + recusa antes do nascimento libera o registro e preserva branch/arquivos', async () => {
+    const owner = { id: 1258, isDestroyed: () => false, isCrashed: () => false, send: vi.fn() } as unknown as WebContents;
+    bindResolvedRendererWorkspaceScope(owner, ctx.scope);
+    registerOrchRenderer(owner);
+    try {
+      // Grant real do renderer para o writer isolado (isolatedWriter:true no meta;
+      // sem missão/role para não exigir selo de autoridade — o caminho de
+      // liquidação sem filho é o mesmo).
+      const grantPromise = requestPaneSpawn({
+        adapterId: 'codex',
+        scope: ctx.scope,
+        isolatedWriter: true,
+        [PENDING_SPAWN_RESULT]: true,
+      });
+      const request = (owner as unknown as { send: ReturnType<typeof vi.fn> }).send.mock.calls[0]?.[1] as
+        { requestId: string; paneId: string };
+      expect(request?.requestId).toMatch(/^orchspawn-/);
+      // O renderer reivindica o grant e responde pending sem sessão.
+      expect(claimPendingSpawnMeta(request.requestId, owner)).not.toBeNull();
+      h.spawn.mockImplementationOnce(async (options: SpawnToolOptions) => {
+        h.panes.push({ paneId: request.paneId, sessionId: 'session-never-born', kind: 'cli-agent',
+          title: 'worker', state: 'spawning', role: 'worker', missionId: options.missionId,
+          scope: options.scope, executionScope: options.executionScope ?? options.scope,
+          readOnly: options.readOnly });
+        throw new Error('pane spawn pending');
+      });
+      h.pending.mockReturnValueOnce({ ok: true, paneId: request.paneId, sessionId: null, pending: true });
+      await expect(paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx))
+        .resolves.toMatchObject({ pending: true });
+      const [record] = registry.listMission(ctx.scope, ctx.missionId!);
+      expect(record.status).toBe('ready');
+      expect(record.worktreePath).not.toBe(ctx.scope.rootRealPath);
+      expect(resolvePaneSpawn(
+        { requestId: request.requestId, ok: true, paneId: request.paneId, sessionId: null, pending: true },
+        owner,
+      )).toBe(true);
+      await expect(grantPromise).resolves.toMatchObject({ pending: true });
+      // O preparo da CLI recusa ANTES de criar sessão: sem filho, sem tap de saída.
+      expect(reportPendingSpawnStartFailure(request.requestId, owner, 'cli_missing: provider binary unavailable')).toBe(true);
+      // O registro falso ("ready" durável) tem que cair para failed...
+      expect(registry.listMission(ctx.scope, ctx.missionId!)[0].status).toBe('failed');
+      // ...sem apagar a branch nem os arquivos do writer para integração manual.
+      expect(git(ctx.scope.rootRealPath, 'rev-parse', '--verify', record.branchRef)).toMatch(/^[a-f0-9]{40}$/);
+      expect(fs.existsSync(record.worktreePath)).toBe(true);
+      expect(fs.readFileSync(path.join(record.worktreePath, 'base.txt'), 'utf8')).toBe('committed\n');
+      // E uma nova alocação de writer isolado funciona.
+      h.panes[0].state = 'exited';
+      await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx);
+      expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(2);
+    } finally {
+      unregisterOrchRenderer(owner);
+      clearRendererWorkspaceScope(owner);
+    }
+  });
+
+  it('F-1258: o watchdog de início também libera o writer isolado sem filho', async () => {
+    const owner = { id: 1259, isDestroyed: () => false, isCrashed: () => false, send: vi.fn() } as unknown as WebContents;
+    bindResolvedRendererWorkspaceScope(owner, ctx.scope);
+    registerOrchRenderer(owner);
+    try {
+      const grantPromise = requestPaneSpawn({
+        adapterId: 'codex',
+        scope: ctx.scope,
+        isolatedWriter: true,
+        [PENDING_SPAWN_RESULT]: true,
+      });
+      const request = (owner as unknown as { send: ReturnType<typeof vi.fn> }).send.mock.calls[0]?.[1] as
+        { requestId: string; paneId: string };
+      expect(request?.requestId).toMatch(/^orchspawn-/);
+      h.spawn.mockImplementationOnce(async (options: SpawnToolOptions) => {
+        h.panes.push({ paneId: request.paneId, sessionId: 'session-never-born', kind: 'cli-agent',
+          title: 'worker', state: 'spawning', role: 'worker', missionId: options.missionId,
+          scope: options.scope, executionScope: options.executionScope ?? options.scope,
+          readOnly: options.readOnly });
+        throw new Error('pane spawn pending');
+      });
+      h.pending.mockReturnValueOnce({ ok: true, paneId: request.paneId, sessionId: null, pending: true });
+      await expect(paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx))
+        .resolves.toMatchObject({ pending: true });
+      expect(registry.listMission(ctx.scope, ctx.missionId!)[0].status).toBe('ready');
+      expect(resolvePaneSpawn(
+        { requestId: request.requestId, ok: true, paneId: request.paneId, sessionId: null, pending: true },
+        owner,
+      )).toBe(true);
+      await expect(grantPromise).resolves.toMatchObject({ pending: true });
+      expect(abandonPendingOrchSpawn(request.requestId, 'pane did not start')).toBe(true);
+      expect(registry.listMission(ctx.scope, ctx.missionId!)[0].status).toBe('failed');
+    } finally {
+      unregisterOrchRenderer(owner);
+      clearRendererWorkspaceScope(owner);
+    }
   });
 });
 
