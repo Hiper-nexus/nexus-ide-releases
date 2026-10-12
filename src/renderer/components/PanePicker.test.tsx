@@ -1227,4 +1227,23 @@ describe('F-231 — "+ Pane" numa aba com missão viva escolhe o destino', () =>
     expect(toast?.detail).toContain('equipe selada');
     useToastStore.getState().dismiss(toast!.id);
   });
+
+  it('F-1294: rejeição do spawn (IPC lança) vira toast, sem unhandled rejection', async () => {
+    const { useToastStore } = await import('../state/toast-store');
+    spawnOperatorPane.mockRejectedValueOnce(
+      new Error('A pasta da aba não está registrada. Restaure a worktree ou abra uma nova aba.'),
+    );
+    const { onPaneCreated } = mountMissionPicker();
+    openMenu();
+    pickDestination('mission');
+    drillInto('codex');
+    clickEntry('agent:codex:default:codex-alt');
+
+    await act(async () => {});
+    expect(onPaneCreated).not.toHaveBeenCalled();
+    const toast = useToastStore.getState().toasts.at(-1);
+    expect(toast?.title).toBe('O pane não entrou na missão');
+    expect(toast?.detail).toContain('não está registrada');
+    useToastStore.getState().dismiss(toast!.id);
+  });
 });

@@ -1101,6 +1101,20 @@ export function PanePicker({
               dedupeKey: `f231:${missionDestination.missionId}`,
             },
           );
+        })
+        // F-1294: handler do Main que lança (ex. worktree da aba sumida) volta
+        // como invoke cru rejeitado — mesmo toast do {ok:false}, nunca
+        // unhandled rejection.
+        .catch((err: unknown) => {
+          useToastStore.getState().push(
+            'error',
+            'O pane não entrou na missão',
+            {
+              detail:
+                err instanceof Error ? err.message : 'falha ao abrir o pane',
+              dedupeKey: `f231:${missionDestination.missionId}`,
+            },
+          );
         });
       return;
     }
