@@ -246,13 +246,30 @@ export const CLAUDE_CLI_PROBE_ENV = {
   CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: '1',
 } as const;
 
+/**
+ * F-1416 (revisão de segurança): variáveis que tiram a CLI do perfil nativo
+ * (outro config dir, outro escopo de cofre) ou que trocam a credencial por um
+ * token/chave de outra conta. A sonda do perfil nativo roda sem elas — senão
+ * a cota de outra conta seria publicada na linha do login nativo.
+ */
+export const CLAUDE_NATIVE_PROFILE_SCRUB_ENV = [
+  'CLAUDE_CONFIG_DIR',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+] as const;
+
 /** Env do processo da sonda: isolamento por cima da conta; sem forçar terminal de IDE. */
 export function claudeCliProbeEnv(
   base: NodeJS.ProcessEnv,
   extra: Record<string, string> | undefined,
   cwd: string,
+  unset: readonly string[] = [],
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...base, ...extra, ...CLAUDE_CLI_PROBE_ENV, PWD: cwd };
+  const env: NodeJS.ProcessEnv = { ...base };
+  for (const name of unset) delete env[name];
+  Object.assign(env, extra, CLAUDE_CLI_PROBE_ENV, { PWD: cwd });
   delete env.FORCE_CODE_TERMINAL;
   return env;
 }
@@ -272,6 +289,8 @@ export type ClaudeCliRunImpl = (
   args: readonly string[],
   cwd: string,
   env?: Record<string, string>,
+  /** Variáveis herdadas que o processo NÃO pode receber. */
+  unset?: readonly string[],
 ) => Promise<ClaudeCliRunResult>;
 
 /**
@@ -484,6 +503,7 @@ async function runClaudeCli(
   args: readonly string[],
   cwd: string,
   env?: Record<string, string>,
+  unset?: readonly string[],
 ): Promise<ClaudeCliRunResult> {
   return new Promise((resolve) => {
     const child = spawn(binary, [...args], {
@@ -492,7 +512,7 @@ async function runClaudeCli(
       // com a tabela de custo quando a sessão está morta — a mensagem de
       // auth («OAuth session expired») sai por aqui.
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: claudeCliProbeEnv(process.env, env, cwd),
+      env: claudeCliProbeEnv(process.env, env, cwd, unset),
     });
     let stdout = '';
     let stderr = '';
@@ -577,6 +597,8 @@ export async function probeClaudeCliUsage(opts?: {
   now?: number;
   cwd?: string;
   env?: Record<string, string>;
+  /** F-1416: roda no perfil nativo, sem herdar config dir/token de outra conta. */
+  nativeProfile?: boolean;
 }): Promise<ClaudeCliUsageProbe> {
   const run = opts?.runImpl ?? runClaudeCli;
   const cwd =
@@ -601,12 +623,9 @@ export async function probeClaudeCliUsage(opts?: {
     }
   }
 
-  const { code, stdout, stderr } = await run(
-    binary,
-    CLAUDE_CLI_USAGE_ARGS,
-    cwd,
-    opts?.env,
-  );
+  const { code, stdout, stderr } = opts?.nativeProfile
+    ? await run(binary, CLAUDE_CLI_USAGE_ARGS, cwd, opts?.env, CLAUDE_NATIVE_PROFILE_SCRUB_ENV)
+    : await run(binary, CLAUDE_CLI_USAGE_ARGS, cwd, opts?.env);
   // O `/usage` falha quieto no stdout (só tabela de custo) — a mensagem de
   // sessão morta sai no stderr. Os dois lados contam como sinal.
   if (

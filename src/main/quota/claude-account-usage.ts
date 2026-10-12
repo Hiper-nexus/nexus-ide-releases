@@ -531,9 +531,8 @@ export async function fetchClaudeAccountUsageWindows(
       // credencial é relida e provada de novo. Nexus nunca rotaciona o grant.
       if (identity === 'auth-expired' && nativeLogin && profile.slug === null &&
           credential && claudeBlobIsRenewable(credential, now)) {
-        const cli = await probeClaudeCliUsage({ now, runImpl: opts.runImpl });
+        const cli = await probeClaudeCliUsage({ now, runImpl: opts.runImpl, nativeProfile: true });
         cliAuthFailed = cli.failure === 'auth-expired';
-        cliWindows = cli.windows?.length ? cli.windows : null;
         const reread = await readProfileCredential(profile, keychainProbe);
         if (!reread.unavailable && reread.credential && reread.credential !== credential) {
           credential = reread.credential;
@@ -542,11 +541,14 @@ export async function fetchClaudeAccountUsageWindows(
             fetchImpl: opts.fetchImpl,
           });
         }
+        // A saída da CLI não carrega identidade. Ela só vale aqui quando a
+        // credencial que a CLI deixou no perfil MUDOU e foi provada desta
+        // conta (mesma regra do F-639); senão nada é publicado.
+        if (cli.windows?.length && identity === 'match') cliWindows = cli.windows;
       }
       if (identity !== 'match') {
         // A própria CLI recusou a sessão: isso sim é prova de re-login.
         if (cliAuthFailed) hint = 'auth-expired';
-        else if (cliWindows && identity === 'auth-expired') return { windows: cliWindows };
         else hint = renewableHint(credential, identity);
       } else {
         const token = credential ? extractClaudeAccessToken(credential) : null;
@@ -554,6 +556,7 @@ export async function fetchClaudeAccountUsageWindows(
           ? await probeClaudeOauthUsage(token, { now, fetchImpl: opts.fetchImpl })
           : { windows: null, failure: 'auth-expired' as const };
         if (live.windows?.length) return { windows: live.windows };
+        if (cliWindows) return { windows: cliWindows };
         hint = live.failure ?? 'unavailable';
         // A local utilization cache may be 30 minutes old. The fleet/Redline
         // snapshot cannot carry its observation timestamp, so publishing it as
