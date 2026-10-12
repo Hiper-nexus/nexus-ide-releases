@@ -84,7 +84,7 @@ import {
   ROUTE_OUTCOME_WINDOW_MS,
   type RouteSuccessIndex,
 } from './route-pipeline';
-import { recordRouteDecision } from './route-provenance';
+import { missionlessRouteCountsByAdapterSince, recordMissionlessRouteDecision, recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog, type RouteLogSink } from './route-log';
 import { ruleChoiceReceipt } from './route-rule-choice';
 import { loadSpecialtyBenchmark } from './specialty-benchmark';
@@ -2139,6 +2139,24 @@ export async function routeTaskForCaller(
     } catch {
       globalUseCounts = undefined;
     }
+    // F-1291: sem missão não há reserva (só nasce com missionId), então o
+    // store acima volta sempre zerado e o fair-share era no-op. Soma a
+    // memória de decisões sem missão — fail-open isolado: sem ela, a rota
+    // segue exatamente como antes.
+    try {
+      const missionless = missionlessRouteCountsByAdapterSince(
+        Date.now() - GLOBAL_USE_WINDOW_MS,
+      );
+      if (missionless.size > 0) {
+        const merged = new Map(globalUseCounts);
+        for (const [adapterId, n] of missionless) {
+          merged.set(adapterId, (merged.get(adapterId) ?? 0) + n);
+        }
+        globalUseCounts = merged;
+      }
+    } catch {
+      // Sem memória, a rota segue como antes.
+    }
   }
   if (missionId) {
     try {
@@ -2369,6 +2387,12 @@ export async function routeTaskForCaller(
   // F-802: a sugestão do hook não é uma decisão tomada — nem proveniência de
   // spawn, nem linha no diário de rotas.
   if (internal.suggestOnly !== true) recordRouteDecision({ adapterId: decision.adapterId, model: decision.model });
+  // F-1291: a decisão sem missão também alimenta a memória do fair-share (a
+  // reserva, que só nasce com missionId, jamais a veria). Sugestão do hook
+  // não é decisão e não conta.
+  if (internal.suggestOnly !== true && !missionId) {
+    recordMissionlessRouteDecision(decision.adapterId);
+  }
   // Observabilidade ("ver para crer"): registra a decisão + motivo para
   // inspeção, já que o reason antes só existia no retorno consumido pelo LLM.
   if (internal.suggestOnly !== true) recordRouteLog({

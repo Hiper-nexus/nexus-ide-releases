@@ -3,6 +3,8 @@ import {
   adHocSpawnGateError,
   clearRouteProvenance,
   hasRecentRouteMatch,
+  missionlessRouteCountsByAdapterSince,
+  recordMissionlessRouteDecision,
   recordRouteDecision,
 } from './route-provenance';
 
@@ -29,6 +31,45 @@ describe('route provenance', () => {
     }
     expect(hasRecentRouteMatch('grok', 'grok-4.1')).toBe(false);
     expect(hasRecentRouteMatch('codex', 'gpt-x-31')).toBe(true);
+  });
+});
+
+describe('memória de rotas sem missão (F-1291)', () => {
+  beforeEach(() => clearRouteProvenance());
+
+  it('vazia, não conta nada', () => {
+    expect(missionlessRouteCountsByAdapterSince(0).size).toBe(0);
+  });
+
+  it('acumula por adapter dentro da janela', () => {
+    const now = Date.now();
+    recordMissionlessRouteDecision('claude', now - 1000);
+    recordMissionlessRouteDecision('claude', now - 500);
+    recordMissionlessRouteDecision('kimi', now - 100);
+    expect(missionlessRouteCountsByAdapterSince(now - 60_000)).toEqual(
+      new Map([['claude', 2], ['kimi', 1]]),
+    );
+  });
+
+  it('fora da janela não conta', () => {
+    const now = Date.now();
+    recordMissionlessRouteDecision('claude', now - 8 * 24 * 60 * 60_000);
+    expect(
+      missionlessRouteCountsByAdapterSince(now - 7 * 24 * 60 * 60_000).size,
+    ).toBe(0);
+  });
+
+  it('é limitada (não cresce sem teto)', () => {
+    for (let i = 0; i < 200; i += 1) {
+      recordMissionlessRouteDecision('claude', Date.now());
+    }
+    expect(missionlessRouteCountsByAdapterSince(0).get('claude')).toBeLessThanOrEqual(128);
+  });
+
+  it('clearRouteProvenance zera junto', () => {
+    recordMissionlessRouteDecision('claude');
+    clearRouteProvenance();
+    expect(missionlessRouteCountsByAdapterSince(0).size).toBe(0);
   });
 });
 
