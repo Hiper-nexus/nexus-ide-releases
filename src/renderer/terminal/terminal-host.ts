@@ -13,6 +13,7 @@ import type { PaneParkRequest } from '../../shared/orch-types';
 import { buildPtySpawnRequest } from './spawn-request';
 import type { TerminalSettings } from '../../shared/settings-types';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
+import { CSI_SEQUENCE_PATTERN } from '../../shared/ansi-escape-sequences';
 import {
   setRestoredPanesHandler,
   setTerminalSnapshotProvider,
@@ -662,7 +663,9 @@ export type RespawnMode =
  */
 function stripAnsiForExcerpt(text: string): string {
   return text
-    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    // F-1406: CSI do padrão compartilhado — a classe [0-?]* cobre os
+    // parâmetros privados (ESC[>4;0m, ESC[>7u) que o Codex 0.162 emite.
+    .replace(CSI_SEQUENCE_PATTERN, '')
     .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, '')
     .replace(/\u001b./g, '');
 }

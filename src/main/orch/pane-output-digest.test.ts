@@ -176,6 +176,17 @@ describe('F-987: redesenho de TUI não estoura o digest', () => {
     expect(line.endsWith('fim-da-linha')).toBe(true);
   });
 
+  it('F-1406: escape CSI com parâmetro privado (Codex 0.162) não vira texto', () => {
+    // Codex 0.162 emite ESC[>4;0m (XTMODKEYS) e ESC[>7u (kitty keyboard) no
+    // boot; a primeira linha do pane mostrava ">4;0m>7u>_ OpenAI Codex…".
+    expect(normalizeRedrawLine('\x1b[>4;0m\x1b[>7u>_ OpenAI Codex (v0.162.1)')).toBe(
+      '>_ OpenAI Codex (v0.162.1)',
+    );
+    expect(
+      digestPaneTail('\x1b[>4;0m\x1b[>7u>_ OpenAI Codex (v0.162.1)\ncomposer').text,
+    ).toBe('>_ OpenAI Codex (v0.162.1)\ncomposer');
+  });
+
   it('seis panes com lixo de TUI cabem no teto somado e preservam as últimas linhas úteis', () => {
     const budget = digestBudgetPerPane(6);
     const raw = Array.from({ length: 6 }, (_, pane) => tuiGarbagePane(pane));

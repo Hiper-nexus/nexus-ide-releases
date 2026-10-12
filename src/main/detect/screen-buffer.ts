@@ -39,7 +39,10 @@ const MAX_BUFFER_CHARS = 262_144;
 /** Held escape fragments longer than this come from a broken writer; strip. */
 const MAX_HELD_ESCAPE = 4096;
 
-const CSI_PREFIX = /^\x1b\[[0-9;?]*[ -/]*[@-~]/;
+// F-1406: [0-?]* (ECMA-48, 0x30–0x3F) cobre parâmetros privados — o Codex
+// 0.162 emite ESC[>4;0m/ESC[>7u no boot; sem isso um CSI privado cortado no
+// meio do chunk vazava ">4;0" como texto visível.
+const CSI_PREFIX = /^\x1b\[[0-?]*[ -/]*[@-~]/;
 const OSC_TERMINATOR = /\x07|\x1b\\/;
 
 interface ScreenBufferState {

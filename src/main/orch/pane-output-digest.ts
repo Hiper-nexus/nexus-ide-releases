@@ -32,8 +32,12 @@ const GLYPH_ONLY_PATTERN =
 /** Glifos de spinner (Claude ✢✳✶✻✽, braille do Gemini/Qwen, meia-lua): decoração pura. */
 const SPINNER_GLYPHS = /[✢✳✶✻✽✺✹✸✷✴✵❋❊❉❈⠀-⣿◐◓◑◒]/gu;
 /** Escape residual (CSI/OSC/ESC solto) e controle, menos TAB e CR. */
+// F-1406: [0-?]* (ECMA-48, 0x30–0x3F) cobre os parâmetros privados que o
+// Codex 0.162 emite no boot (ESC[>4;0m, ESC[>7u) — a classe antiga [0-9;?]
+// deixava ">4;0m" como texto. Mesma forma do CSI_SEQUENCE_PATTERN
+// compartilhado (ansi-escape-sequences).
 // eslint-disable-next-line no-control-regex
-const RESIDUAL_ESCAPE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]/g;
+const RESIDUAL_ESCAPE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]/g;
 // eslint-disable-next-line no-control-regex -- remove controles residuais (menos TAB, LF e CR) de propósito
 const RESIDUAL_CONTROL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 

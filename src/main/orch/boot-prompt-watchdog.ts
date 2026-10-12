@@ -1,6 +1,7 @@
 import { type PeriodicTaskContext } from '../observability/periodic-task';
 import { getAgentSessionInfo, orchWriteSession, tapSessionExit, tapSessionState } from '../pty/pty-manager';
 import { readSessionOutput } from './pane-registry';
+import { CSI_SEQUENCE_PATTERN } from '../../shared/ansi-escape-sequences';
 
 /**
  * Boot-prompt watchdog (0.32.26): CLIs de agente que estréia num checkout
@@ -63,7 +64,9 @@ const BOOT_PROMPT_PATTERNS: readonly BootPromptPattern[] = [
   { re: /allow (telemetry|analytics|usage data)\?/i, label: 'telemetry-consent' },
 ];
 
-const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
+// F-1406: CSI do padrão compartilhado — a classe antiga [0-9;?]*[A-Za-z]
+// deixava parâmetros privados (ESC[>4;0m) e intermediários no texto.
+const ANSI_RE = CSI_SEQUENCE_PATTERN;
 
 export interface BootPromptMatch {
   readonly label: string;

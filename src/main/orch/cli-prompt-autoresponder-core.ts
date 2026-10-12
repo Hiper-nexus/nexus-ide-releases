@@ -1,4 +1,4 @@
-import { removeTerminatedSequences } from '../../shared/ansi-escape-sequences';
+import { CSI_SEQUENCE_PATTERN, removeTerminatedSequences } from '../../shared/ansi-escape-sequences';
 
 const PROMPT_WINDOW = 4_096;
 /** After auto-accepting a boot prompt, hold prompt injection briefly so the TUI can leave the menu. */
@@ -304,7 +304,10 @@ function compactPromptText(text: string): string {
 }
 
 /* eslint-disable no-control-regex -- os padrões de menu casam ESC e BEL das sequências ANSI de propósito */
-const MENU_CSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+// F-1406: CSI do padrão compartilhado — a classe [0-?]* cobre os parâmetros
+// privados (ESC[>4;0m/ESC[>7u do Codex 0.162) que a classe antiga [0-9;?]
+// deixava no texto do menu lido da tela.
+const MENU_CSI = CSI_SEQUENCE_PATTERN;
 const MENU_OSC_INTRODUCER = /\x1b\]/g;
 const MENU_OSC_TERMINATOR = /\x07/g;
 /* eslint-enable no-control-regex */

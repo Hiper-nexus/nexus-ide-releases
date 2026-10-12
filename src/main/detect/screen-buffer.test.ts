@@ -37,6 +37,20 @@ describe('SessionScreenBuffer', () => {
     expect(buffer.text('s')).toBe('ab');
   });
 
+  it('F-1406: strips private-parameter CSI (Codex 0.162 XTMODKEYS/kitty) as text', () => {
+    const buffer = new SessionScreenBuffer();
+    buffer.append('s', '\x1b[?2004h\x1b[>4;0m\x1b[>7u\x1b[?1004h>_ OpenAI Codex');
+    expect(buffer.text('s')).toBe('>_ OpenAI Codex');
+  });
+
+  it('F-1406: holds a private-parameter CSI split across chunks, never emits its body', () => {
+    const buffer = new SessionScreenBuffer();
+    buffer.append('s', 'boot\x1b[>4;0');
+    expect(buffer.text('s')).toBe('boot');
+    buffer.append('s', 'm\x1b[>7u>_ OpenAI Codex');
+    expect(buffer.text('s')).toBe('boot>_ OpenAI Codex');
+  });
+
   it('does not bump contentSeq for pure escape traffic', () => {
     const buffer = new SessionScreenBuffer();
     buffer.append('s', 'visible');

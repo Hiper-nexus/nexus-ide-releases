@@ -33,6 +33,8 @@ function rng(seed: number): () => number {
 const ALPHABET = [
   '\u001b', ']', '[', '\\', '\u0007', '\u009c', '\u009d', '\u0090', '\u0098',
   '\u009e', '\u009f', '\u009b', 'P', '_', '^', 'X', '0', ';', 'm', 'a', ' ', '\n',
+  // F-1406: parâmetros privados de CSI (ESC[>4;0m, ESC[<0;1m, ESC[=1u).
+  '>', '=', '<',
 ]
 
 function randomText(next: () => number, maxLength: number): string {

@@ -106,7 +106,12 @@ const CLI_MENTION_TYPOS: Readonly<Record<string, readonly string[]>> = {
 
 /* eslint-disable no-control-regex -- os padrões removem sequências ANSI (ESC/BEL) de propósito */
 const OSC_PATTERN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
-const CSI_PATTERN = /\x1b\[[0-9;?]*[ -\/]*[@-~]/g;
+// F-1406: [0-?]* (ECMA-48, 0x30–0x3F) cobre os parâmetros privados
+// (ESC[>4;0m/ESC[>7u do Codex 0.162) que a classe antiga [0-9;?] deixava no
+// buffer. Introducer literal — SEM a forma C1 de 8 bits do padrão
+// compartilhado: este tap roda em toda tecla do operador e a alternativa
+// extra estourava o teto linear do F-818.
+const CSI_PATTERN = /\x1b\[[0-?]*[ -\/]*[@-~]/g;
 const ESC_PATTERN = /\x1b[@-_]/g;
 // Backspace (\b/\x7f), tab e newline ficam: o replay apaga ou vira fronteira.
 const CONTROL_PATTERN = /[\x00-\x07\x0b\x0c\x0e-\x1f]/g;
