@@ -45,9 +45,13 @@ export interface AdvisoryDeps {
   readonly timeoutMs?: number;
 }
 
-/** Texto ao modelo: segredos redigidos e teto de tamanho (nunca diff inteiro). */
+/**
+ * Texto ao modelo: segredos redigidos e teto de tamanho (nunca diff inteiro).
+ * Cabeça + cauda (F-1346): o pedido de ação de um goal longo costuma estar no
+ * fim — cortando só a cauda, o kickoff respondia small/1 worker/0 escritas.
+ */
 function safeText(value: string | undefined, max = MAX_TEXT): string {
-  return capText(redactSecrets(value ?? ''), max);
+  return capText(redactSecrets(value ?? ''), max, { keepEnds: true });
 }
 
 interface AdvisoryOutcome { result: JevResult; receipt: MissionDecisionHintReceipt }

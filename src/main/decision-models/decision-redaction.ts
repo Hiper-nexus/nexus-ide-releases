@@ -84,14 +84,22 @@ export function redactState(state: unknown): unknown {
   return state;
 }
 
-/** Trunca texto longo; keepTail preserva o fim (saída de teste, tail de log). */
+/**
+ * Trunca texto longo; keepTail preserva o fim (saída de teste, tail de log).
+ * keepEnds preserva cabeça e cauda — pedido do operador: o contexto abre, o
+ * pedido de ação costuma fechar (F-1346).
+ */
 export function capText(
   text: string,
   maxChars: number,
-  opts?: { keepTail?: boolean },
+  opts?: { keepTail?: boolean; keepEnds?: boolean },
 ): string {
   if (text.length <= maxChars) return text;
   const omitted = text.length - maxChars;
+  if (opts?.keepEnds) {
+    const head = Math.ceil(maxChars / 2);
+    return `${text.slice(0, head)}\n[... ${omitted} chars omitted]\n${text.slice(head + omitted)}`;
+  }
   return opts?.keepTail
     ? `\n[... ${omitted} chars omitted]${text.slice(omitted)}`
     : `${text.slice(0, maxChars)}\n[... ${omitted} chars omitted]`;

@@ -71,13 +71,23 @@ describe('adviseDelegation', () => {
 
   it('segredo colado na mensagem sai mascarado no state do judge', async () => {
     const judge = vi.fn<JudgeMock>(async () => verdict(0.9, '2', '0'));
-    // O judge real aplica redactState; aqui provamos que a mensagem vai crua
-    // SÓ até o judge, que é quem redige — o teste do jev-client cobre a redação.
+    // A mensagem é redigida antes do corte cabeça + cauda (F-1346) e o judge
+    // real aplica redactState de novo — o teste do jev-client cobre a redação.
     const secret = `sk-ant-${'x'.repeat(40)}`;
     await adviseDelegation(`${LONG} chave ${secret}`, { judge });
     const { redactState } = await import('./jev-client');
     const sent = redactState(judge.mock.calls[0]![0].state) as { message: string };
     expect(sent.message).not.toContain(secret);
+  });
+
+  it('F-1346: mensagem longa chega ao Jev com o pedido do FIM (cabeça + cauda)', async () => {
+    const judge = vi.fn<JudgeMock>(async () => verdict(0.9, '2', '1'));
+    const ask = 'CORREÇÃO REAL: três writers em paralelo, um por F.';
+    await advisePrompt(`${LONG} ${'contexto '.repeat(1_200)} ${ask}`, { judge });
+    const sent = (judge.mock.calls[0]![0].state as { message: string }).message;
+    expect(sent).toContain(LONG);
+    expect(sent).toContain(ask);
+    expect(sent.length).toBeLessThan(3_100);
   });
 });
 

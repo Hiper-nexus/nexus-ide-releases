@@ -90,6 +90,17 @@ describe('missionKickoff (F-1166)', () => {
     expect(state).not.toContain(secret);
     expect(state.length).toBeLessThan(4_000);
   });
+
+  it('F-1346: goal longo chega ao Jev com o pedido do FIM (cabeça + cauda)', async () => {
+    const judge = vi.fn(async (_input: JudgeInput) => result(kickoffAnswers()));
+    const ask = 'CORREÇÃO REAL: corrija F-9999 no router com três writers.';
+    const goal = `Contexto da varredura s240. ${'x'.repeat(10_000)} ${ask}`;
+    await adviseMissionKickoff({ ...missionKickoffFacts(mission('m-tail'), 'conventional'), goal }, { judge });
+    const sent = (judge.mock.calls[0]![0].state as { goal: string }).goal;
+    expect(sent).toContain('Contexto da varredura s240.');
+    expect(sent).toContain(ask);
+    expect(sent.length).toBeLessThan(1_600);
+  });
 });
 
 describe('fail-open e toggle (F-1166)', () => {
