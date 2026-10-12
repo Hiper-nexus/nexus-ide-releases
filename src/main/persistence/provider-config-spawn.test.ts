@@ -1837,69 +1837,22 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(spawnDeps.activeClaudeAuthEnv).not.toHaveBeenCalled();
   });
 
-  describe('F-235: exclusão de contas com pane Claude vivo na missão', () => {
+  it('a conta ativa permanece quando há contas Claude (comportamento atual)', () => {
     const acctA = { id: 'acct-a', adapterId: 'claude', label: 'Conta A',
       mode: 'subscription', upstream: 'anthropic', email: 'a@example.com', createdAt: 1 };
-    const acctB = { id: 'acct-b', adapterId: 'claude', label: 'Conta B',
-      mode: 'subscription', upstream: 'anthropic', email: 'b@example.com', createdAt: 2 };
+    spawnDeps.listAccounts.mockReturnValue([acctA]);
+    spawnDeps.getActiveAccount.mockReturnValue(acctA);
+    spawnDeps.getAccount.mockReturnValue(acctA);
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account: acctA });
+    spawnDeps.prepareAccount.mockReturnValue({ ok: true, account: acctA,
+      authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/a' } });
 
-    beforeEach(() => {
-      spawnDeps.listAccounts.mockReturnValue([acctA, acctB]);
-      spawnDeps.getActiveAccount.mockReturnValue(acctA);
-      spawnDeps.getAccount.mockImplementation((id: string) =>
-        [acctA, acctB].find((a) => a.id === id) ?? null);
+    expect(prepareProviderSpawn('claude')).toMatchObject({
+      ok: true, overrides: { selectedAccountId: 'acct-a' },
     });
-
-    it('excluindo a conta A entre A+B com credencial, a escolha cai em B', async () => {
-      // O pick honra excludeIds (F-676) — o mock espelha a filtragem real.
-      spawnDeps.pickAvailableForFailover.mockImplementation(
-        (_adapterId: string, _excludeId: string | null, _now: number,
-          _scores: unknown, options?: { excludeIds?: ReadonlySet<string> }) => ({
-          account: [acctA, acctB].find((a) => !options?.excludeIds?.has(a.id)) ?? null,
-        }));
-      spawnDeps.prepareAccount.mockReturnValue({ ok: true, account: acctB,
-        authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/b' } });
-
-      await expect(prepareProviderSpawnAuthoritative('claude', {
-        excludeAccountIds: ['acct-a'],
-      })).resolves.toMatchObject({
-        ok: true,
-        overrides: { selectedAccountId: 'acct-b' },
-      });
-      expect(spawnDeps.pickAvailableForFailover).toHaveBeenCalledWith(
-        'claude', null, expect.any(Number), undefined,
-        { excludeIds: new Set(['acct-a']) },
-      );
-    });
-
-    it('excluindo A e B, o spawn cai no active-fallback (F-1401: linhagem compartilhada)', async () => {
-      spawnDeps.pickAvailableForFailover.mockReturnValue({ account: null });
-      spawnDeps.prepareAccount.mockReturnValue({ ok: true, account: acctA,
-        authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/a' } });
-
-      // F-1401: sem recusa por colisão — panes da mesma conta compartilham a
-      // linhagem de credencial (escopo por conta, CLI do .oauth_refresh.lock).
-      await expect(prepareProviderSpawnAuthoritative('claude', {
-        excludeAccountIds: ['acct-a', 'acct-b'],
-      })).resolves.toMatchObject({
-        ok: true,
-        overrides: { selectedAccountId: 'acct-a' },
-      });
-      expect(spawnDeps.prepareAccount).toHaveBeenCalled();
-    });
-
-    it('sem excludeAccountIds a conta ativa permanece (comportamento atual)', () => {
-      spawnDeps.pickAvailableForFailover.mockReturnValue({ account: acctA });
-      spawnDeps.prepareAccount.mockReturnValue({ ok: true, account: acctA,
-        authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/a' } });
-
-      expect(prepareProviderSpawn('claude')).toMatchObject({
-        ok: true, overrides: { selectedAccountId: 'acct-a' },
-      });
-      expect(spawnDeps.pickAvailableForFailover).toHaveBeenCalledWith(
-        'claude', null, expect.any(Number), undefined,
-      );
-    });
+    expect(spawnDeps.pickAvailableForFailover).toHaveBeenCalledWith(
+      'claude', null, expect.any(Number), undefined,
+    );
   });
 
   it('refuses to launch a Claude pane when its scoped credential belongs to another account', async () => {
@@ -1942,6 +1895,52 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     await expect(prepareProviderSpawnAuthoritative('claude', { accountId: account.id }))
       .resolves.toMatchObject({ ok: true });
     expect(spawnDeps.prepareAccount).toHaveBeenCalledOnce();
+  });
+
+  describe('F-1401: credencial Claude girada no meio do spawn refaz verify+prepare', () => {
+    // Mesma string que materializeManagedClaudeAuth lança quando o blob
+    // materializado diverge do verificado (pane irmão renovou o token).
+    const CREDENTIAL_CHANGED =
+      'managed Claude credential changed after verified profile; retry spawn';
+    const account = { id: 'acct-r', adapterId: 'claude', label: 'Conta R',
+      mode: 'subscription', upstream: 'anthropic', email: 'r@example.com', createdAt: 1 };
+
+    beforeEach(() => {
+      spawnDeps.listAccounts.mockReturnValue([account]);
+      spawnDeps.getActiveAccount.mockReturnValue(account);
+      spawnDeps.getAccount.mockReturnValue(account);
+    });
+
+    it('revalida o perfil e tenta o prepare de novo quando a credencial girou', async () => {
+      spawnDeps.prepareAccount
+        .mockReturnValueOnce({ ok: false, error: CREDENTIAL_CHANGED })
+        .mockReturnValue({ ok: true, account,
+          authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/r' } });
+
+      await expect(prepareProviderSpawnAuthoritative('claude', { accountId: account.id }))
+        .resolves.toMatchObject({ ok: true });
+      expect(spawnDeps.verifyClaudeAccount).toHaveBeenCalledTimes(2);
+      expect(spawnDeps.prepareAccount).toHaveBeenCalledTimes(2);
+    });
+
+    it('não tenta de novo para outros erros do prepare', async () => {
+      spawnDeps.prepareAccount.mockReturnValue({ ok: false, error: 'Conta R precisa de login' });
+
+      await expect(prepareProviderSpawnAuthoritative('claude', { accountId: account.id }))
+        .resolves.toMatchObject({ ok: false, error: 'Conta R precisa de login' });
+      expect(spawnDeps.verifyClaudeAccount).toHaveBeenCalledTimes(1);
+      expect(spawnDeps.prepareAccount).toHaveBeenCalledTimes(1);
+    });
+
+    it('esgota as tentativas e devolve o último erro', async () => {
+      spawnDeps.prepareAccount.mockReturnValue({ ok: false, error: CREDENTIAL_CHANGED });
+
+      await expect(prepareProviderSpawnAuthoritative('claude', { accountId: account.id }))
+        .resolves.toMatchObject({ ok: false, error: CREDENTIAL_CHANGED });
+      // 1 tentativa inicial + 2 retentativas, revalidando o perfil em cada uma.
+      expect(spawnDeps.verifyClaudeAccount).toHaveBeenCalledTimes(3);
+      expect(spawnDeps.prepareAccount).toHaveBeenCalledTimes(3);
+    });
   });
 
   it('fails visibly when the selected Claude account cannot be prepared instead of opening another login', () => {

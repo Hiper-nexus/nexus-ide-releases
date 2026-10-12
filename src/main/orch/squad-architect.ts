@@ -333,7 +333,7 @@ function deterministicSquadFallback(
       error:
         `${reason}; nenhuma CLI de worker está pronta. ` +
         (operatorChoice
-          ? "Autopiloto requer ao menos uma rota autenticada com handoff; a única sessão Claude não pode ser duplicada."
+          ? "Autopiloto requer ao menos uma rota autenticada com handoff; Claude permanece reservado ao Maestro."
           : "Claude permanece reservado ao Maestro. Nesta versão, o guided automático exige Codex autenticado com escrita autônoma confinada. Kimi, OpenCode, Grok e AGY continuam disponíveis somente em painéis, terminais ou fluxos manuais/experimentais conforme a capability declarada."),
     };
   }

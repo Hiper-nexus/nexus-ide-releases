@@ -16,7 +16,6 @@ const deps = vi.hoisted(() => ({
   acpSpawn: vi.fn(),
   authoritative: vi.fn<(...args: unknown[]) => Promise<ProviderSpawnPreparation>>(),
   acquirePermit: vi.fn(async (_adapterId: string): Promise<() => void> => () => {}),
-  liveClaudeAccounts: vi.fn(() => [] as string[]),
   settle: vi.fn<(adapter: unknown) => Promise<void> | null | undefined>(),
   copyConversation: vi.fn(() => true),
   continuationBind: vi.fn(),
@@ -60,7 +59,7 @@ vi.mock('../persistence/provider-session-store', async original => ({
 }));
 vi.mock('../pty/pty-manager', () => ({
   getAgentSessionInfo: vi.fn(), getSessionState: () => 'spawning', spawnMainOwnedAgentSession: deps.spawn,
-  liveClaudeMissionAccountIds: deps.liveClaudeAccounts, isOneShotSessionRunning: () => false,
+  isOneShotSessionRunning: () => false,
 }));
 vi.mock('../pty/autonomous-cli-policy', () => ({
   isMissionBoundCodexWorkspaceAuthority: () => false,
@@ -302,28 +301,6 @@ describe('main-owned Codex auth gate', () => {
       .resolves.toMatchObject({ ok: false, error: 'credencial de outra conta Claude' });
     expect(deps.authoritative).toHaveBeenCalledOnce();
     expect(deps.spawn).not.toHaveBeenCalled();
-  });
-  // F-1401 substitui a F-235: o escopo de credencial gerenciado é por conta
-  // (`managedClaudeAuthDirectory(accountId)`, sem componente de pane) e
-  // `freshestClaudeCredential` nunca deixa o vault velho desfazer a rotação
-  // do CLI — dois panes na mesma conta dividem UMA linhagem. Excluir as contas
-  // com pane vivo deixou de ser barreira de segurança; o prepare não as recebe.
-  it('F-1401: worker Claude NÃO exclui as contas com pane vivo da missão no prepare', async () => {
-    deps.adapterId = 'claude';
-    // Há pane Claude vivo em acct-A: se a exclusão da F-235 voltasse, ela
-    // apareceria no prepare e este teste falharia.
-    deps.liveClaudeAccounts.mockReturnValue(['acct-A']);
-
-    await expect(
-      spawnMainOwnedMissionPaneAsync(
-        { ...options, adapterId: 'claude', role: 'worker', readOnly: true },
-        hooks,
-      ),
-    ).resolves.toMatchObject({ ok: true });
-    expect(deps.authoritative).toHaveBeenCalledWith(
-      'claude',
-      expect.not.objectContaining({ excludeAccountIds: expect.anything() }),
-    );
   });
   it('waits for the Claude update permit before physical main-owned spawn', async () => {
     deps.adapterId = 'claude';

@@ -81,6 +81,7 @@ import {
   setCooldown,
   verifyManagedClaudeAccountForSpawn,
 } from '../persistence/account-store';
+import { retryClaudeSpawnOnCredentialChange } from '../persistence/claude-spawn-retry';
 import { broadcastToProject, sameProjectScope } from './project-scoped-broadcast';
 import {
   noteQuotaLimitHit,
@@ -678,26 +679,31 @@ async function prepareFailoverAccount(
   now: number,
   options?: Parameters<typeof prepareAccountForSpawn>[3],
 ): Promise<ReturnType<typeof prepareAccountForSpawn>> {
-  let verifiedClaudeBlob: string | undefined;
-  if (adapterId === 'claude' && getAccount(accountId)?.mode === 'subscription') {
-    // The synchronous prepare can persist a rotated credential to the managed
-    // store. Prove ownership first, including on alternate/native adoption.
-    const identity = await verifyManagedClaudeAccountForSpawn(accountId, (blob) => {
-      verifiedClaudeBlob = blob;
-    });
-    if (identity !== 'match') {
-      return { ok: false, error: identity === 'mismatch'
-        ? 'credencial Claude pertence a outra conta — entre novamente'
-        : identity === 'auth-expired'
-          ? 'sessão Claude expirada — entre novamente'
-          : 'não foi possível verificar a identidade da conta Claude' };
+  // F-1401: verify+prepare dentro da tentativa — um pane irmão pode renovar a
+  // credencial entre as duas etapas; a retentativa revalida o perfil e fixa o
+  // blob novo em vez de falhar o failover.
+  return retryClaudeSpawnOnCredentialChange(async () => {
+    let verifiedClaudeBlob: string | undefined;
+    if (adapterId === 'claude' && getAccount(accountId)?.mode === 'subscription') {
+      // The synchronous prepare can persist a rotated credential to the managed
+      // store. Prove ownership first, including on alternate/native adoption.
+      const identity = await verifyManagedClaudeAccountForSpawn(accountId, (blob) => {
+        verifiedClaudeBlob = blob;
+      });
+      if (identity !== 'match') {
+        return { ok: false as const, error: identity === 'mismatch'
+          ? 'credencial Claude pertence a outra conta — entre novamente'
+          : identity === 'auth-expired'
+            ? 'sessão Claude expirada — entre novamente'
+            : 'não foi possível verificar a identidade da conta Claude' };
+      }
+      if (!verifiedClaudeBlob) {
+        return { ok: false as const, error: 'credencial Claude verificada mudou — tente novamente' };
+      }
     }
-    if (!verifiedClaudeBlob) {
-      return { ok: false, error: 'credencial Claude verificada mudou — tente novamente' };
-    }
-  }
-  return prepareAccountForSpawn(adapterId, accountId, now,
-    verifiedClaudeBlob ? { ...options, expectedClaudeBlob: verifiedClaudeBlob } : options);
+    return prepareAccountForSpawn(adapterId, accountId, now,
+      verifiedClaudeBlob ? { ...options, expectedClaudeBlob: verifiedClaudeBlob } : options);
+  });
 }
 
 /* ------------------------------------------------------------------------ *

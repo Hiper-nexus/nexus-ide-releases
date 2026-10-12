@@ -15,6 +15,13 @@ import { removeTreeSync } from '../util/remove-tree';
 
 /** Physically verified with Claude Code 2.1.278; independent from conversation HOME. */
 export const CLAUDE_MANAGED_AUTH_ENV = 'CLAUDE_SECURESTORAGE_CONFIG_DIR';
+/**
+ * F-1401: sibling panes on the same account can rotate the credential between
+ * profile verification and spawn preparation — the only prepare error worth
+ * an automatic verify+prepare retry (`retryClaudeSpawnOnCredentialChange`).
+ */
+export const MANAGED_CLAUDE_CREDENTIAL_CHANGED_ERROR =
+  'managed Claude credential changed after verified profile; retry spawn';
 const CREDENTIAL_FILE = '.credentials.json';
 const scopedCache = new Map<string, { blob: string | null; at: number }>();
 const scopedFlights = new Map<string, Promise<string | null>>();
@@ -211,7 +218,7 @@ export function materializeManagedClaudeAuth(
   }
   const selected = options.replace ? vault : freshestClaudeCredential(scoped, file, vault)!;
   if (options.expectedBlob !== undefined && selected !== slimClaudeCredentialBlob(options.expectedBlob)) {
-    throw new Error('managed Claude credential changed after verified profile; retry spawn');
+    throw new Error(MANAGED_CLAUDE_CREDENTIAL_CHANGED_ERROR);
   }
   if (scoped && slimClaudeCredentialBlob(scoped) !== selected &&
       !writeManagedClaudeCredential(directory, selected)) {

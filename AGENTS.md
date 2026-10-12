@@ -1742,12 +1742,14 @@ saber isto antes de mexer:
   novos de auditoria/veredito em `REVIEW_SIGNALS`. Sem assento disponível,
   `judgeUnavailable` + hint — o Maestro julga no próprio pane; modelo barato
   nunca julga código.
-- F-235: panes Claude de missão coexistem até o nº de contas com credencial
-  utilizável (`countAccountsWithLiveCredential`), conta distinta por pane —
-  a cópia de refresh token (F-645) só colide na mesma conta. `excludeAccountIds`
-  no `prepareProviderSpawnAuthoritative` é o backstop fail-closed: sem conta
-  livre fora das contas com pane vivo na missão, o spawn recusa
-  (`claude_accounts_in_use`) em vez de cair no `active-fallback`.
+- F-235 → F-1401: o limite "um pane Claude por conta" caiu — panes da mesma
+  conta compartilham UMA linhagem de credencial (escopo por conta,
+  `managedClaudeAuthDirectory(accountId)`; a dona da rotação é a CLI via
+  `.oauth_refresh.lock`). `excludeAccountIds` e `liveClaudeMissionAccountIds`
+  foram removidos: quem prepara o spawn prova a identidade
+  (`verifyManagedClaudeAccountForSpawn`) e fixa o blob (`expectedClaudeBlob`);
+  se outro pane renovou o token no meio, o prepare refaz verify+prepare até 2
+  vezes (`retryClaudeSpawnOnCredentialChange`) em vez de falhar.
 - F-236: adapters host-Claude (glm, glm-flash, longcat, deepseek) aparecem
   juntos em `CLAUDE_FAMILY_ADAPTERS`, `CLAUDE_FAMILY_TURN_PROOF_ADAPTERS`,
   subscription-auth e seat-auth. Token Anthropic genérico do env

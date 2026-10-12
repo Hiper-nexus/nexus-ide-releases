@@ -1060,6 +1060,38 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     expect(second?.[1]).toEqual(expect.objectContaining({ switched: false }));
   });
 
+  it('F-1401: credencial Claude girada entre verify e prepare refaz as duas etapas', async () => {
+    const { prepareAccountForSpawn, verifyManagedClaudeAccountForSpawn } = await import(
+      '../persistence/account-store'
+    );
+    const owner = armPane(821);
+    const preparesBefore = vi.mocked(prepareAccountForSpawn).mock.calls.length;
+    const verifiesBefore = vi.mocked(verifyManagedClaudeAccountForSpawn).mock.calls.length;
+    vi.mocked(prepareAccountForSpawn).mockReturnValueOnce({
+      ok: false,
+      error: 'managed Claude credential changed after verified profile; retry spawn',
+    });
+
+    ptyMocks.dataTaps[0]!('sess-821', 'LIMIT');
+    await settleFailover();
+    await vi.advanceTimersByTimeAsync(200);
+    await settleFailover();
+
+    // verify+prepare refeitos na retentativa (a impl padrão volta a devolver ok).
+    const preparesForB = vi
+      .mocked(prepareAccountForSpawn)
+      .mock.calls.slice(preparesBefore)
+      .filter((call) => call[1] === 'account-b');
+    expect(preparesForB).toHaveLength(2);
+    expect(
+      vi.mocked(verifyManagedClaudeAccountForSpawn).mock.calls.length - verifiesBefore,
+    ).toBeGreaterThanOrEqual(2);
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ switched: true, toAccountId: 'account-b' }),
+    );
+  });
+
   it('saída da sessão cancela a espera-pela-irmã pendente', async () => {
     const { pickAvailableForFailover } = await import(
       '../persistence/account-store'

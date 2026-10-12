@@ -3727,26 +3727,6 @@ export function listAgentSessionsForPane(
     .map(cloneAgentInfo);
 }
 
-/**
- * F-235: ids das contas com pane Claude VIVO nesta missão, lidos do mapa de
- * sessões físicas do próprio manager (nunca do pane-registry — sem ciclo).
- * Pane sem `accountId` é login nativo sem registro e não exclui nada.
- */
-export function liveClaudeMissionAccountIds(missionId: string): string[] {
-  const ids = new Set<string>();
-  for (const session of sessions.values()) {
-    const agent = session.agent;
-    if (
-      agent?.missionId === missionId &&
-      agent.adapterId === 'claude' &&
-      agent.accountId
-    ) {
-      ids.add(agent.accountId);
-    }
-  }
-  return [...ids];
-}
-
 /** Complete main-owned physical agent inventory, including detached sessions. */
 export function listAgentSessions(): OwnedAgentSessionInfo[] {
   return [...sessions.values()]

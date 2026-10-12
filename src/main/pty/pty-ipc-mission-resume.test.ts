@@ -131,7 +131,6 @@ vi.mock("./pty-manager", () => ({
   spawnAgentSession: ptyDeps.spawnAgentSession,
   spawnSession: ptyDeps.spawnSession,
   writeSession: ptyDeps.writeSession,
-  liveClaudeMissionAccountIds: () => [],
 }));
 
 vi.mock("../orch/project-domain-store-registry", () => ({

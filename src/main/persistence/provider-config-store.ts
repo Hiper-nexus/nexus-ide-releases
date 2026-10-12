@@ -172,6 +172,7 @@ import {
   prepareAccountForSpawn,
   verifyManagedClaudeAccountForSpawn,
 } from './account-store';
+import { retryClaudeSpawnOnCredentialChange } from './claude-spawn-retry';
 import type { Account } from '../../shared/account-types';
 import {
   maskAccountLabel,
@@ -980,12 +981,6 @@ export interface ProviderPerSpawn {
   isolatedHome?: boolean;
   /** Main-only: an explicitly requested pane may let Muse check its native auth. */
   allowNativeAuthAttempt?: boolean;
-  /**
-   * F-235: contas com pane Claude VIVO na mesma missão — o pane novo nunca
-   * nasce numa delas (duas cópias do refresh token colidem, F-645). Backstop
-   * fail-closed: sem conta livre fora da exclusão o spawn recusa.
-   */
-  excludeAccountIds?: readonly string[];
 }
 
 /**
@@ -1612,20 +1607,15 @@ function resolveSpawnAccountChoice(
  */
 function pickUnpinnedAccountWithHeadroom(
   adapterId: string,
-  excludeIds?: ReadonlySet<string>,
 ): { account: Account | null; receipt: AccountChoiceReceipt } {
   const decidedAt = Date.now();
   const active = getActiveAccount(adapterId);
   const quotaScores = quotaScoresFor(adapterId);
   // F-995: folga comparada só entre janelas comparáveis.
   const quotaByAccountId = quotaHeadroomFor(adapterId);
-  const pickOptions = {
-    ...(excludeIds?.size ? { excludeIds } : {}),
-    ...(quotaByAccountId ? { quotaByAccountId } : {}),
-  };
   const picked = (
-    Object.keys(pickOptions).length > 0
-      ? pickAvailableForFailover(adapterId, null, decidedAt, quotaScores, pickOptions)
+    quotaByAccountId
+      ? pickAvailableForFailover(adapterId, null, decidedAt, quotaScores, { quotaByAccountId })
       : pickAvailableForFailover(adapterId, null, decidedAt, quotaScores)
   ).account;
   // F-1401: sem recusa por colisão de conta — panes Claude da mesma conta
@@ -1773,45 +1763,45 @@ export async function prepareProviderSpawnAuthoritative(
   // managed auth store. Prove the account *before* crossing that boundary.
   const selectedChoice = adapterId === 'claude' && !perSpawn.accountId &&
     listAccounts('claude').length > 0
-    ? pickUnpinnedAccountWithHeadroom(
-        'claude',
-        perSpawn.excludeAccountIds?.length
-          ? new Set(perSpawn.excludeAccountIds)
-          : undefined,
-      )
+    ? pickUnpinnedAccountWithHeadroom('claude')
     : undefined;
-  const account = perSpawn.accountId
-    ? getAccount(perSpawn.accountId)
-    : selectedChoice?.account;
-  let verifiedClaudeBlob: string | undefined;
-  if (adapterId === 'claude' && account?.mode === 'subscription') {
-    const identity = await verifyManagedClaudeAccountForSpawn(account.id, (blob) => {
-      verifiedClaudeBlob = blob;
-    });
-    if (identity !== 'match') {
-      return { ok: false, error: identity === 'mismatch'
-        ? `A credencial de “${account.label}” pertence a outra conta Claude — entre novamente antes de abrir um pane.`
-        : identity === 'auth-expired'
-          ? `A sessão de “${account.label}” expirou — entre novamente antes de abrir um pane.`
-          : `Não foi possível verificar a identidade de “${account.label}” — tente novamente.` };
+  // F-1401: verify+prepare dentro da tentativa — se um pane irmão renovou a
+  // credencial entre as duas etapas, a retentativa revalida o perfil e fixa
+  // o blob novo em vez de falhar o spawn.
+  const prepared = await retryClaudeSpawnOnCredentialChange(async () => {
+    const account = perSpawn.accountId
+      ? getAccount(perSpawn.accountId)
+      : selectedChoice?.account;
+    let verifiedClaudeBlob: string | undefined;
+    if (adapterId === 'claude' && account?.mode === 'subscription') {
+      const identity = await verifyManagedClaudeAccountForSpawn(account.id, (blob) => {
+        verifiedClaudeBlob = blob;
+      });
+      if (identity !== 'match') {
+        return { ok: false as const, error: identity === 'mismatch'
+          ? `A credencial de “${account.label}” pertence a outra conta Claude — entre novamente antes de abrir um pane.`
+          : identity === 'auth-expired'
+            ? `A sessão de “${account.label}” expirou — entre novamente antes de abrir um pane.`
+            : `Não foi possível verificar a identidade de “${account.label}” — tente novamente.` };
+      }
+      const current = getAccount(account.id);
+      if (!current || current.adapterId !== account.adapterId ||
+          current.mode !== account.mode ||
+          current.email?.trim().toLowerCase() !== account.email?.trim().toLowerCase()) {
+        return { ok: false as const, error: 'A conta Claude mudou durante a verificação — tente novamente.' };
+      }
+      if (!verifiedClaudeBlob) {
+        return { ok: false as const, error: 'Não foi possível fixar a credencial Claude verificada — tente novamente.' };
+      }
     }
-    const current = getAccount(account.id);
-    if (!current || current.adapterId !== account.adapterId ||
-        current.mode !== account.mode ||
-        current.email?.trim().toLowerCase() !== account.email?.trim().toLowerCase()) {
-      return { ok: false, error: 'A conta Claude mudou durante a verificação — tente novamente.' };
-    }
-    if (!verifiedClaudeBlob) {
-      return { ok: false, error: 'Não foi possível fixar a credencial Claude verificada — tente novamente.' };
-    }
-  }
-  const prepared = prepareProviderSpawnWithDecision(
-    adapterId,
-    perSpawn,
-    spawnDecision,
-    selectedChoice,
-    verifiedClaudeBlob,
-  );
+    return prepareProviderSpawnWithDecision(
+      adapterId,
+      perSpawn,
+      spawnDecision,
+      selectedChoice,
+      verifiedClaudeBlob,
+    );
+  });
   // F-677: no Windows a conta AGY do pane é a da vaga única do keyring — a
   // conta escolhida (pin, rotação por limite, headroom) vai para a vaga agora.
   // Conta por chave de API não passa pela vaga (a chave vai por ENV).

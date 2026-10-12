@@ -2343,8 +2343,8 @@ export async function routeTaskForCaller(
     if (missionId) {
       throw new Error(
         'mission_worker_route_unavailable: nenhuma CLI elegível está disponível ' +
-        'agora (confira autenticação, cota, cooldown, exclusões e a reserva de ' +
-        'uma única sessão Claude). Nenhuma RouteReservation foi criada.',
+        'agora (confira autenticação, cota, cooldown e exclusões). ' +
+        'Nenhuma RouteReservation foi criada.',
       );
     }
     throw new Error('no installed adapters to route to');
