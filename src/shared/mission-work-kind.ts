@@ -138,17 +138,17 @@ const canonicalGoal = canonicalizeWorkText;
 /** Document artifacts. DEVIATION: no bare `spec` (collides with *.spec.ts) and
  *  no bare `manual` (adjective in pt-BR: "teste manual"). */
 const DOC_ARTIFACT =
-  /\b(prd|adr|rfc|readme|changelog|release\s+notes|runbook|playbook|documentacao|documentation|docs?|guia|guide|tutorial|especificacao|specification|handbook|wiki|postmortem|post\s*mortem|relatorio)\b/;
+  /\b(prd|adr|rfc|readme|changelog|release\s+notes|runbook|playbook|documentacao|documentation|docs?|guia|guide|tutorial|especificacao|specification|handbook|wiki|postmortem|post\s*mortem|relatorio|documentos?)\b/;
 
 /**
- * F-1343: relatório também é SUPERFÍCIE de produto. Num complemento
- * preposicionado ("exportação para CSV no relatório", "filtro no relatório de
- * vendas") ele é o LUGAR da feature, não o entregável — o mesmo conceito
- * locativo de `visual.surface`. Como objeto ("escrever o relatório",
- * "relatório dos crashes") segue doc forte.
+ * F-1343: relatório (e documento, F-1340) também é SUPERFÍCIE de produto. Num
+ * complemento preposicionado ("exportação para CSV no relatório", "upload de
+ * documentos") ele é o LUGAR da feature, não o entregável — o mesmo conceito
+ * locativo de `visual.surface`. Como objeto ("escrever o relatório", "traduzir
+ * o documento") segue doc forte.
  */
 const DOC_SURFACE_LOCATIVE =
-  /\b(?:n[oa]s?|em|ao?s?|d[eoa]s?|para\s+[oa]s?)\s+(?:relatorios?)\b/g;
+  /\b(?:n[oa]s?|em|ao?s?|d[eoa]s?|para\s+[oa]s?)\s+(?:relatorios?|documentos?)\b/g;
 
 const DOC_VERB =
   /\b(documentar|documente|documenta|documentando|document|documenting|redigir|redija)\b/;

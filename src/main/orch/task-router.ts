@@ -39,6 +39,7 @@ import {
   type RouteSpecialty,
   type SpecialtyBenchmark,
 } from '../../shared/mission-route-specialty';
+import { classifyWorkKind } from '../../shared/mission-work-kind';
 import {
   bandForSpecialty,
   classifyOperationalBand,
@@ -369,8 +370,9 @@ const EASY_SIGNALS = [
 const TRIVIAL_SIGNALS = [
   // 'list'/'listar' como prefixo casavam DENTRO de "li(sta)gem" —
   // "implemente a página de listagem" ia para trivial (modelo mais barato
-  // construindo feature; matriz 23/08). Imperativo de inspeção fica:
-  'liste', 'leitura', 'read', 'ler', 'check', 'checks', 'verificar', 'status',
+  // construindo feature; matriz 23/08). Imperativo de inspeção fica; 'listar'
+  // casa por palavra inteira (F-1289), então "listagem" segue fora (F-1341).
+  'liste', 'listar', 'leitura', 'read', 'ler', 'check', 'checks', 'verificar', 'status',
   'mostrar', 'show', 'contar', 'count', 'buscar arquivo', 'find file',
 ];
 
@@ -409,6 +411,46 @@ const TRIVIAL_STEMS: ReadonlySet<string> = new Set([
   'liste', 'leitura', 'verificar',
 ]);
 
+/**
+ * F-1340/F-1341: CRITICAL_SIGNALS e HARD_SIGNALS misturam dificuldade com
+ * DOMÍNIO. O substantivo de domínio diz onde a tarefa mexe, não quão difícil
+ * ela é: "corrigir typo no README da integração de webhook", "escrever a
+ * documentação do endpoint de billing" e "listar os webhooks cadastrados"
+ * iam a critical (modelo de topo, esforço alto). Num documento ou numa ação
+ * mecânica de UMA ação só, estes sinais não sobem o tier. Modo de falha
+ * (race condition, deadlock, perda de dados), migração e defeito de segurança
+ * (vulnerabilidade, acesso não autorizado) continuam valendo.
+ */
+const DOMAIN_ONLY_SIGNALS: ReadonlySet<string> = new Set([
+  'security', 'cybersecurity', 'ciberseg', 'segurança', 'auth', 'oauth',
+  'autentica', 'authentica', 'authoriz', 'authn', 'authz', 'autoriza',
+  'payment', 'pagamento', 'billing', 'cobrança', 'cartão', 'cartao',
+  'tenant', 'multitenant', 'rls', 'produção', 'producao', 'production',
+  'webhook', 'secret', 'secrets', 'token', 'tokens',
+  'integração', 'integracao', 'integrações', 'integracoes', 'integration',
+  'engine', 'motor', 'protocolo', 'protocol', 'parser', 'compiler',
+]);
+
+/** Verbos de ação mecânica: o domínio citado é só o alvo (F-1341). */
+const CHEAP_ACTION_SIGNALS: ReadonlySet<string> = new Set([
+  'typo', 'rename', 'renomea', 'tradu', 'translat', 'liste', 'listar',
+]);
+
+/**
+ * Documento (work-kind doc sem concorrente forte) ou ação mecânica sem outro
+ * trabalho forte — sempre numa ação só.
+ * ponytail: "uma ação só" = frase sem coordenação (e/and/vírgula/;). Teto: um
+ * pedido composto de partes todas baratas não ganha o rebaixamento; pedir
+ * isso exigiria separar as orações.
+ */
+function isDomainOnlyCheapWork(taskText: string, text: string, cheapSignals: readonly string[]): boolean {
+  if (/[,;]|\s(?:e|and)\s/u.test(text)) return false;
+  const work = classifyWorkKind(taskText);
+  if (work.kind === 'doc' && work.confidence === 'high') return true;
+  return cheapSignals.some((signal) => CHEAP_ACTION_SIGNALS.has(signal)) &&
+    !work.signals.some((signal) => signal.strength === 'strong');
+}
+
 export const TIER_ORDER: TaskTier[] = [
   'trivial',
   'easy',
@@ -441,10 +483,17 @@ export function classifyTask(taskText: string): TaskClassification {
   );
   const words = text.split(/\s+/).filter((w) => w.length > 0).length;
 
-  const critical = matchSignals(text, CRITICAL_SIGNALS, CRITICAL_STEMS);
-  const hard = matchSignals(text, HARD_SIGNALS, HARD_STEMS);
+  let critical = matchSignals(text, CRITICAL_SIGNALS, CRITICAL_STEMS);
+  let hard = matchSignals(text, HARD_SIGNALS, HARD_STEMS);
   const easy = matchSignals(text, EASY_SIGNALS, EASY_STEMS);
   const trivial = matchSignals(text, TRIVIAL_SIGNALS, TRIVIAL_STEMS);
+  // O piso do nudge de tamanho continua olhando o domínio: ele não desce.
+  const riskNamed = critical.length > 0;
+  if ((critical.length > 0 || hard.length > 0) &&
+      isDomainOnlyCheapWork(taskText, text, [...easy, ...trivial])) {
+    critical = critical.filter((signal) => !DOMAIN_ONLY_SIGNALS.has(signal));
+    hard = hard.filter((signal) => !DOMAIN_ONLY_SIGNALS.has(signal));
+  }
 
   // F-1289: bucket nenhum é decidido por uma palavra ambígua sozinha ("cobrança"
   // de cobrar entrega, "texto cru", "checkedAt"). Sem um sinal que se segure de
@@ -474,7 +523,7 @@ export function classifyTask(taskText: string): TaskClassification {
 
   // Size nudge: risk keywords always keep their floor; otherwise a very short
   // ask is likely simpler and a long multi-part brief likely harder.
-  if (critical.length === 0) {
+  if (!riskNamed) {
     if (words <= 6 && tier !== 'trivial') tier = bumpTier(tier, -1);
     else if (words > 80) tier = bumpTier(tier, 1);
   }

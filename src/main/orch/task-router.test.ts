@@ -1331,3 +1331,41 @@ describe('F-1289 (revisão de ponta): flexão inglesa e hífen voltam a casar os
     expect(classifyTask('gerar a produção de vídeo do relatório semanal').tier).not.toBe('critical');
   });
 });
+
+/**
+ * F-1340/F-1341 (sonda C, s240): substantivo de domínio diz ONDE a tarefa mexe,
+ * não quão difícil ela é. Documento ou ação mecânica de uma ação só não sobe a
+ * critical por "segurança/webhook/billing".
+ */
+describe('F-1340/F-1341: domínio sozinho não sobe documento nem ação mecânica a critical', () => {
+  it('traduzir o documento de segurança é doc, não security/critical (F-1340)', () => {
+    const text = 'traduzir o documento de segurança para inglês';
+    expect(classifyRouteSpecialty(text)).toMatchObject({ specialty: 'doc', workKind: 'doc' });
+    expect(classifyTask(text).tier).not.toBe('critical');
+  });
+
+  it.each([
+    ['corrigir typo no README da integração de webhook', 'easy'],
+    ['escrever documentação do endpoint de billing', 'easy'],
+    ['listar os webhooks cadastrados', 'trivial'],
+  ])('%j → %s (F-1341)', (text, tier) => {
+    expect(classifyTask(text).tier).toBe(tier);
+  });
+
+  it('guardas: trabalho real, pedido composto e modo de falha seguem critical', () => {
+    for (const text of [
+      'corrigir auth',
+      'implementar OAuth e atualizar o README',
+      'renomear a variável e ajustar o fluxo OAuth',
+      'Analise o módulo de pagamentos e liste os riscos',
+      'corrigir typo no README do deadlock do webhook',
+      'listar as migrações pendentes do banco',
+    ]) {
+      expect(classifyTask(text).tier, text).toBe('critical');
+    }
+  });
+
+  it('documento como produto ("upload de documentos") não vira doc', () => {
+    expect(classifyRouteSpecialty('implementar upload de documentos no cadastro').workKind).toBe('feature');
+  });
+});
