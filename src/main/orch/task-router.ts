@@ -639,7 +639,10 @@ export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly strin
  * para os modelos de topo — Opus 5.5 e Sonnet 5.5 lideram (superam até o
  * Astra, palavra do operador). F-1313: Kimi é ótimo em front, lento —
  * aceitar a lentidão; participa antes do Sol 6.1, com o mesmo espalhamento
- * por uso da lane. O Astra entra por escolha
+ * por uso da lane. Ele é assento de PREFERÊNCIA, não modelo de topo: sem
+ * nenhum assento de topo pronto, a lane não fica exclusiva dele (F-658 —
+ * "todos os LLMs em uso": um assento só não leva todos os helpers visuais).
+ * O Astra entra por escolha
  * explícita do operador para UI (a proibição do F-700 vale para a rota
  * automática geral), mas fica por último: `gpt-6-sol` é o fallback para ele
  * não vencer por eliminação quando a missão já tirou o Claude do pool.
@@ -647,10 +650,12 @@ export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly strin
 export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   adapterId: string;
   model: string;
+  /** Preferência da lane, não modelo de topo: sozinho, não a torna exclusiva. */
+  preferenceOnly?: true;
 }> = Object.freeze([
   { adapterId: 'claude', model: 'claude-opus-5-5' },
   { adapterId: 'claude', model: 'claude-sonnet-5-5' },
-  { adapterId: 'kimi', model: 'kimi-code/k3' },
+  { adapterId: 'kimi', model: 'kimi-code/k3', preferenceOnly: true },
   { adapterId: 'codex', model: 'gpt-6.1-sol' },
   { adapterId: 'codex', model: 'gpt-6-sol' },
   { adapterId: 'codex', model: 'gpt-6-astra' },
@@ -1886,10 +1891,11 @@ export function routeTask(
   // lane é promovida à frente do resultado do rerank. Dentro da lane, o
   // adapter MENOS usado na missão vai primeiro — N workers se distribuem
   // entre os de topo em vez de concentrarem no primeiro da lista.
+  let preferredLaneSeat: string | undefined;
   const applyFrontierLane = (
-    lane: ReadonlyArray<{ adapterId: string; model: string }>,
+    lane: ReadonlyArray<{ adapterId: string; model: string; preferenceOnly?: true }>,
   ): boolean => {
-    const laneSeats: Array<{ lane: number; adapterId: string; model: string }> = [];
+    const laneSeats: Array<{ lane: number; adapterId: string; model: string; preferenceOnly: boolean }> = [];
     lane.forEach((seat, laneIndex) => {
       const adapter = available.get(seat.adapterId);
       if (!adapter?.installed) return;
@@ -1918,15 +1924,18 @@ export function routeTask(
       // F-912: assento de lane com janela documentada menor que a exigida
       // perde o lugar (a lane promove topo de linha; sem fonte, segue).
       if (!fitsContext(seat.adapterId, chosen)) return;
-      laneSeats.push({ lane: laneIndex, adapterId: seat.adapterId, model: chosen });
+      laneSeats.push({
+        lane: laneIndex, adapterId: seat.adapterId, model: chosen, preferenceOnly: seat.preferenceOnly === true,
+      });
       if (!ranked.some((r) => r.c.adapterId === seat.adapterId && r.c.model === chosen)) {
         ranked.push({ c: { adapterId: seat.adapterId, model: chosen }, fromTier: tier });
       }
     });
-    const laneRank = (entry: RankedRouteEntry): number =>
+    const laneSeatOf = (entry: RankedRouteEntry) =>
       laneSeats.find(
         (seat) => seat.adapterId === entry.c.adapterId && seat.model === entry.c.model,
-      )?.lane ?? -1;
+      );
+    const laneRank = (entry: RankedRouteEntry): number => laneSeatOf(entry)?.lane ?? -1;
     const inLane = ranked.filter(
       (entry) => laneRank(entry) >= 0 && !adapterCircuitBreakers.isOpen(entry.c.adapterId),
     );
@@ -1934,6 +1943,24 @@ export function routeTask(
     const set = new Set(inLane);
     const used = (entry: RankedRouteEntry) =>
       context.missionUseCounts?.get(entry.c.adapterId) ?? 0;
+    // Só assento de preferência pronto (Kimi sem Opus/Sonnet/Sol): a lane não
+    // fica exclusiva. Ele lidera enquanto nenhum outro candidato da rota tem
+    // menos assentos na missão; senão vale a ordem do multi-score, e a rotação
+    // e o fair-share seguem valendo (F-658: três helpers visuais seguidos não
+    // vão todos para a mesma CLI).
+    if (inLane.every((entry) => laneSeatOf(entry)?.preferenceOnly)) {
+      const minUse = Math.min(
+        ...ranked.filter((entry) => !adapterCircuitBreakers.isOpen(entry.c.adapterId)).map(used),
+      );
+      const pick = inLane
+        .filter((entry) => used(entry) <= minUse)
+        .sort((a, b) => laneRank(a) - laneRank(b))[0];
+      if (pick) {
+        ranked = [pick, ...ranked.filter((entry) => entry !== pick)];
+        preferredLaneSeat = pick.c.adapterId;
+      }
+      return false;
+    }
     ranked = [
       ...inLane.sort((a, b) => used(a) - used(b) || laneRank(a) - laneRank(b)),
       ...ranked.filter((entry) => !set.has(entry)),
@@ -1951,6 +1978,8 @@ export function routeTask(
     applyFrontierLane(VISUAL_FRONTIER_LANE);
   if (visualLaneApplied) {
     visualNote = '; lane visual (modelos de topo)';
+  } else if (preferredLaneSeat) {
+    visualNote = `; ${preferredLaneSeat} preferido para visual (sem modelo de topo pronto; rotação mantida)`;
   }
 
   // Lane de julgamento (regra do operador, 01/10): cross-review (revisão,

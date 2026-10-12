@@ -1453,6 +1453,25 @@ describe('F-1313 — preferência explícita e espalhamento', () => {
     expect(decision!.model).toBe('kimi-code/k3');
   });
 
+  it('Kimi sozinho na lane visual não a fecha: com assento, a próxima tela segue a diversidade', () => {
+    // Sem Opus/Sonnet/Sol prontos, o Kimi é preferência, não lane exclusiva
+    // (F-658: três helpers visuais seguidos não vão todos para a mesma CLI).
+    const ready = [
+      { id: 'codex', installed: true, models: ['gpt-6-luna'] },
+      { id: 'kimi', installed: true, models: ['kimi-code/k3'] },
+    ];
+    const visual = (counts: Array<[string, number]>) => routeTask(
+      'implementar a tela responsiva e seus componentes visuais', ready, DEFAULT_ROUTING_TABLE,
+      'medium', false, undefined, { multiScore: true, missionUseCounts: new Map(counts) },
+    )!;
+    const first = visual([['codex', 1]]);
+    expect(first.adapterId).toBe('kimi');
+    expect(first.reason).toContain('kimi preferido para visual');
+    expect(first.reason).not.toContain('lane visual (modelos de topo)');
+    expect(visual([['kimi', 1]]).adapterId).toBe('codex');
+    expect(visual([['kimi', 1], ['codex', 1]]).adapterId).toBe('kimi');
+  });
+
   it.each(['mapear o resumo diário', 'implementar o resumo diário'])('DeepSeek pronto preferido vence no mesmo tier: %s', (task) => {
     const decision = routeTask(task,
       adapters('codex', 'deepseek', 'glm'), DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
