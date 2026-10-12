@@ -22,6 +22,7 @@ import {
 import { useSessionStateStore } from '../state/session-state-store';
 import { usePaneParkedStore } from '../state/pane-parked-store';
 import { useOrchStore } from '../state/orch-store';
+import { adapterAcceptsBracketedPaste } from '../state/adapter-store';
 import { useToastStore } from '../state/toast-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { filesFromClipboardData } from '../lib/mission-attachments';
@@ -4502,7 +4503,7 @@ function nativePromptProofPorts(paneId: string) {
   const pane = listPanes(useLayoutStore.getState().root).find(candidate => candidate.id === paneId);
   if (pane?.adapterId !== 'kimi' && pane?.adapterId !== 'claude') return {};
   return {
-    bracketedPaste: pane.adapterId !== 'kimi',
+    bracketedPaste: adapterAcceptsBracketedPaste(pane.adapterId),
     submitPromptEnter: async (sessionId: string, sequence: number, retry: boolean) => {
       if (typingSessionId(paneId) !== sessionId) return false;
       const accepted = await window.nexus.pty.submitPromptEnter(sessionId, sequence, retry);
