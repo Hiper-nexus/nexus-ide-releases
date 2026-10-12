@@ -147,15 +147,19 @@ vi.mock('./nexus-task-fail-closed-recovery', () => ({
 vi.mock('../observability/main-trace', () => ({ trace: h.trace }));
 
 import {
+  checkLimitedTaskPanes,
   checkPaneStarts,
   prepareDelegationSupervisor,
   reconcileDelegationSupervisor,
   shutdownDelegationSupervisor,
 } from './delegation-supervisor';
 import {
+  LIMIT_HANDOFF_MS,
   MODEL_REJECTION_HANDOFF_MS,
   START_GRACE_MS,
+  executionProofGraceMs,
   getPaneStartWatch,
+  noteConfirmedPaneLimit,
   notePaneStartAccepted,
   releasePaneStartWatch,
   resetPaneStartWatchdogForTests,
@@ -163,6 +167,12 @@ import {
   type PaneStartWatchInit,
 } from './pane-start-watchdog';
 import { adapterCircuitBreakers } from './circuit-breaker';
+import {
+  getPaneTaskReroute,
+  registerPaneTaskReroute,
+  resetPaneTaskReroutesForTests,
+  type PaneTaskRerouteRequest,
+} from './pane-task-reroute';
 import { modelAccessQuarantine, resetModelAccessQuarantineForTests } from './model-access-quarantine';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
 import {
@@ -822,6 +832,8 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
       requestId: 'orchspawn-mimo',
       adapterId: 'mimo-code',
       rerouted: true,
+      // F-1414: já no teto de reaberturas do pedido.
+      generation: 3,
       createdAt: NOW - START_GRACE_MS - 2_000,
     }));
     h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-mimo' });
@@ -935,14 +947,27 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     );
   });
 
-  it('a tentativa que já era o reenvio e também não sobe só avisa (sem laço)', async () => {
-    trackPaneStart(watchInit({ rerouted: true }));
+  it('F-1414(e): a 3ª reabertura que também não sobe não reenvia de novo — bloqueia com o motivo (sem laço)', async () => {
+    trackPaneStart(watchInit({ rerouted: true, generation: 3 }));
     h.startFailureTap!({ requestId: 'orchspawn-qwen', paneId: 'pane-qwen', error: 'x' });
     await checkPaneStarts(NOW);
     expect(reroute).not.toHaveBeenCalled();
+    expect(h.submit.mock.calls[0]![0]).toMatchObject({
+      missionId: 'mission-f723',
+      status: 'blocked',
+      fromAgent: 'nexus-delegation-supervisor',
+    });
     expect(String((h.submit.mock.calls[0]![0] as { summary: string }).summary)).toContain(
-      'Esta já era a tentativa reenviada',
+      'A tarefa já foi reenviada 3 vezes; não reenvio de novo — bloqueada',
     );
+  });
+
+  it('F-1414(e): abaixo do teto (2ª reabertura) ainda reenvia — o teto é 3, não 1', async () => {
+    trackPaneStart(watchInit({ rerouted: true, generation: 2 }));
+    h.startFailureTap!({ requestId: 'orchspawn-qwen', paneId: 'pane-qwen', error: 'x' });
+    await checkPaneStarts(NOW);
+    expect(reroute).toHaveBeenCalledWith(['qwen']);
+    expect(h.submit.mock.calls[0]![0]).toMatchObject({ status: 'progress' });
   });
 
   it('reenvio que falha na rota vira aviso para o Maestro decidir', async () => {
@@ -1220,5 +1245,253 @@ describe('F-734: turno do brief recusado pelo provedor é falha de início', () 
     deepseekWatch();
     h.turnEndTap!(stopFailure('auth'));
     expect(getPaneStartWatch('pane-ds')?.failure).toBeNull();
+  });
+});
+
+/**
+ * F-1414 (operador, 12/10): "mandou algo, conferir se o pane está rodando —
+ * às vezes está com quota cheia ou dá erro; se der erro, abrir outro com outra
+ * LLM, ou aquela parte fica sem ser feita". A rede do supervisor exige PROVA
+ * DE EXECUÇÃO (1º turno), não só a entrega do brief.
+ */
+describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra LLM', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    h.pendingSession.mockReturnValue({ state: 'waiting' });
+    h.sessionState.mockReturnValue(null);
+    h.spawnedAt.mockReturnValue(null);
+    h.terminationOrigin.mockReturnValue(null);
+    h.turnStart.mockReturnValue(0);
+    h.getSemantic.mockReturnValue(null);
+    h.toolActivity.mockReturnValue(0);
+    h.lastTurnEnd.mockReturnValue(null);
+    h.sessionOutput.mockReturnValue('');
+    h.agentInfo.mockReturnValue(null);
+    h.handoffList.mockReturnValue([]);
+    h.listPaneSnapshots.mockReturnValue([]);
+    reroute.mockResolvedValue({ paneId: 'pane-novo', adapterId: 'codex' });
+    redeliver.mockResolvedValue(false);
+    adapterCircuitBreakers.reset();
+    resetPaneStartWatchdogForTests();
+    resetPaneTaskReroutesForTests();
+    resetModelAccessQuarantineForTests();
+    await shutdownDelegationSupervisor();
+    prepareDelegationSupervisor();
+    registerSuite();
+  });
+  afterEach(async () => {
+    await shutdownDelegationSupervisor();
+    resetPaneStartWatchdogForTests();
+    resetPaneTaskReroutesForTests();
+  });
+
+  const summaryAt = (index = 0): string =>
+    String((h.submit.mock.calls[index]![0] as { summary: string }).summary);
+
+  /** Kimi Code 2.1.1 (12/10): vivo, brief parado no composer, tela ociosa. */
+  function kimiStuckInComposer(spawnedAgoMs: number): void {
+    trackPaneStart(watchInit({ paneId: 'pane-kimi', requestId: 'orchspawn-kimi', adapterId: 'kimi' }));
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-kimi' });
+    h.spawnedAt.mockReturnValue(NOW - spawnedAgoMs);
+    h.sessionState.mockReturnValue('idle');
+    // O manifesto do Kimi publica a tela: conhecida e sem trabalho = idle.
+    h.getSemantic.mockReturnValue({ status: 'idle', updatedAt: NOW - 1_000 });
+    h.listPaneSnapshots.mockReturnValue([
+      { paneId: 'pane-kimi', sessionId: 'session-kimi', kind: 'cli-agent', role: 'worker', state: 'idle', missionId: 'mission-f723' },
+    ]);
+  }
+
+  it('(a) worker vivo sem 1º turno depois do prazo: fecha, reenvia para outro adapter e avisa o Maestro', async () => {
+    // Kimi é CLI lenta conhecida: o prazo dela é maior que os 90 s padrão.
+    expect(executionProofGraceMs('kimi')).toBeGreaterThan(START_GRACE_MS);
+    kimiStuckInComposer(START_GRACE_MS + 5_000);
+    await checkPaneStarts(NOW);
+    // Dentro do prazo do Kimi: sem veredito, sem reenvio do brief.
+    expect(reroute).not.toHaveBeenCalled();
+    expect(redeliver).not.toHaveBeenCalled();
+    expect(getPaneStartWatch('pane-kimi')).not.toBeNull();
+
+    await checkPaneStarts(NOW + executionProofGraceMs('kimi'));
+    expect(reroute).toHaveBeenCalledTimes(1);
+    expect(reroute).toHaveBeenCalledWith(['kimi']);
+    expect(h.requestPaneClose).toHaveBeenCalledWith('pane-kimi', 'session-kimi');
+    expect(h.submit.mock.calls[0]![0]).toMatchObject({
+      missionId: 'mission-f723',
+      status: 'progress',
+      fromAgent: 'nexus-delegation-supervisor',
+    });
+    expect(summaryAt()).toBe(
+      '[nao-iniciou:pane-kimi] O pane pane-kimi (kimi) não começou a tarefa: a CLI está viva, ' +
+        'mas nenhum turno começou no prazo (o brief ficou parado, sem execução). ' +
+        'Reenviada para codex (pane pane-novo).',
+    );
+    expect(h.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'pane-not-started', cause: 'turn-not-started', outcome: 'rerouted' }),
+    );
+    expect(getPaneStartWatch('pane-kimi')).toBeNull();
+  });
+
+  it('(a) brief ACEITO pela colagem também não basta: sem turno no prazo, reenvia', async () => {
+    trackPaneStart(watchInit({ adapterId: 'qwen' }));
+    notePaneStartAccepted('pane-qwen', NOW - START_GRACE_MS);
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-qwen' });
+    h.spawnedAt.mockReturnValue(NOW - START_GRACE_MS - 30_000);
+    h.sessionState.mockReturnValue('idle');
+    h.getSemantic.mockReturnValue({ status: 'idle', updatedAt: NOW - 1_000 });
+
+    await checkPaneStarts(NOW);
+    expect(reroute).toHaveBeenCalledWith(['qwen']);
+    expect(summaryAt()).toContain('nenhum turno começou no prazo');
+  });
+
+  it('(a) PTY ocupado segue sem veredito (manifesto que não reconhece o trabalho não derruba quem trabalha)', async () => {
+    kimiStuckInComposer(10 * 60_000);
+    h.sessionState.mockReturnValue('busy');
+    await checkPaneStarts(NOW);
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
+  });
+
+  it('(b) estacionado pela admissão de memória antes do 1º turno: reenvia sem contar no disjuntor', async () => {
+    trackPaneStart(watchInit({ paneId: 'pane-mimo', requestId: 'orchspawn-mimo', adapterId: 'mimo-code' }));
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-mimo' });
+    h.spawnedAt.mockReturnValue(NOW - 20_000);
+    h.sessionState.mockReturnValue('idle');
+    await checkPaneStarts(NOW - 5_000);
+    expect(getPaneStartWatch('pane-mimo')).not.toBeNull();
+
+    // O guardian encerrou a CLI (encerramento pedido) e o pane ficou `parked`.
+    h.terminationOrigin.mockReturnValue('pane-guardian:park');
+    h.terminationTap!('session-mimo', { paneId: 'pane-mimo', adapterId: 'mimo-code' }, null);
+    h.sessionState.mockReturnValue(null);
+    h.listPaneSnapshots.mockReturnValue([
+      { paneId: 'pane-mimo', sessionId: 'session-mimo', kind: 'cli-agent', role: 'worker', state: 'parked', missionId: 'mission-f723' },
+    ]);
+    await checkPaneStarts(NOW);
+
+    expect(reroute).toHaveBeenCalledWith(['mimo-code']);
+    expect(h.requestPaneClose).toHaveBeenCalledWith('pane-mimo', 'session-mimo');
+    expect(summaryAt()).toContain('o pane foi estacionado pela admissão de memória antes do primeiro turno');
+    expect(summaryAt()).toContain('Reenviada para codex');
+    // Memória não é falha da CLI.
+    expect(adapterCircuitBreakers.snapshot('mimo-code').recentFailures).toBe(0);
+  });
+
+  it('(b) estacionado DEPOIS de começar (turno visto) não é reaberto', async () => {
+    trackPaneStart(watchInit({ paneId: 'pane-mimo', requestId: 'orchspawn-mimo', adapterId: 'mimo-code' }));
+    const watch = getPaneStartWatch('pane-mimo')!;
+    watch.executionSeenAt = NOW - 30_000;
+    h.listPaneSnapshots.mockReturnValue([
+      { paneId: 'pane-mimo', sessionId: null, kind: 'cli-agent', role: 'worker', state: 'parked', missionId: 'mission-f723' },
+    ]);
+    await checkPaneStarts(NOW);
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
+  });
+
+  it('(d) worker que começou o turno: a ficha sai sem reenvio, mesmo ocioso depois do prazo', async () => {
+    kimiStuckInComposer(10 * 60_000);
+    h.getSemantic.mockReturnValue({ status: 'working', updatedAt: NOW - 1_000 });
+    await checkPaneStarts(NOW);
+    // Turno aberto assenta (F-765) e vira início.
+    await checkPaneStarts(NOW + 15_000);
+    expect(getPaneStartWatch('pane-kimi')).toBeNull();
+
+    h.getSemantic.mockReturnValue({ status: 'idle', updatedAt: NOW + 60_000 });
+    await checkPaneStarts(NOW + 10 * 60_000);
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.requestPaneClose).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
+  });
+
+  describe('(c) limite de uso confirmado antes da entrega', () => {
+    const taskReroute = vi.fn(async (_request: PaneTaskRerouteRequest) => ({
+      paneId: 'pane-novo',
+      adapterId: 'codex',
+    }));
+
+    function museWorkerAtLimit(generation = 0): void {
+      registerPaneTaskReroute({
+        paneId: 'pane-muse',
+        adapterId: 'muse',
+        missionId: 'mission-f723',
+        role: 'worker',
+        callerSessionId: 'session-maestro',
+        routeTask: 'implementar o login',
+        lineageId: 'pane-orig',
+        operatorOpened: false,
+        pinnedRuntime: false,
+        generation,
+        reroute: taskReroute,
+        hasAlternative: () => true,
+      }, NOW);
+      h.listPaneSnapshots.mockReturnValue([
+        { paneId: 'pane-muse', sessionId: 'session-muse', kind: 'cli-agent', role: 'worker', state: 'idle', missionId: 'mission-f723', scope: SCOPE },
+      ]);
+      h.sessionState.mockReturnValue('idle');
+      noteConfirmedPaneLimit({
+        paneId: 'pane-muse',
+        sessionId: 'session-muse',
+        adapterId: 'muse',
+        reason: 'Usage limit reached',
+        at: NOW,
+      });
+    }
+
+    beforeEach(() => taskReroute.mockClear());
+
+    it('o failover tem o prazo dele; depois, fecha o pane e reabre noutra CLI na mesma worktree', async () => {
+      museWorkerAtLimit();
+      await checkLimitedTaskPanes(NOW + LIMIT_HANDOFF_MS - 1);
+      expect(taskReroute).not.toHaveBeenCalled();
+
+      await checkLimitedTaskPanes(NOW + LIMIT_HANDOFF_MS);
+      expect(h.requestPaneClose).toHaveBeenCalledWith('pane-muse', 'session-muse');
+      expect(taskReroute).toHaveBeenCalledWith({
+        excludeAdapterIds: ['muse'],
+        worktreeFromPaneId: 'pane-muse',
+      });
+      expect(getPaneTaskReroute('pane-muse')).toBeNull();
+      expect(h.submit.mock.calls[0]![0]).toMatchObject({
+        missionId: 'mission-f723',
+        status: 'progress',
+        fromAgent: 'nexus-delegation-supervisor',
+      });
+      expect(summaryAt()).toBe(
+        '[limite:pane-muse] O pane pane-muse (muse) bateu o limite de uso confirmado ' +
+          '(Usage limit reached) antes de entregar a tarefa. Reenviada para codex ' +
+          '(pane pane-novo), na mesma worktree quando havia uma.',
+      );
+      // Uma vez só.
+      await checkLimitedTaskPanes(NOW + 2 * LIMIT_HANDOFF_MS);
+      expect(taskReroute).toHaveBeenCalledTimes(1);
+    });
+
+    it('quem já entregou (handoff da sessão) não é reaberto', async () => {
+      museWorkerAtLimit();
+      h.handoffList.mockReturnValue([{ id: 'h1', sessionId: 'session-muse' }]);
+      await checkLimitedTaskPanes(NOW + LIMIT_HANDOFF_MS);
+      expect(taskReroute).not.toHaveBeenCalled();
+      expect(h.submit).not.toHaveBeenCalled();
+    });
+
+    it('o failover já trocou (sessão nova no pane): nada a fazer', async () => {
+      museWorkerAtLimit();
+      h.listPaneSnapshots.mockReturnValue([
+        { paneId: 'pane-muse', sessionId: 'session-muse-2', kind: 'cli-agent', role: 'worker', state: 'busy', missionId: 'mission-f723', scope: SCOPE },
+      ]);
+      await checkLimitedTaskPanes(NOW + LIMIT_HANDOFF_MS);
+      expect(taskReroute).not.toHaveBeenCalled();
+      expect(h.requestPaneClose).not.toHaveBeenCalled();
+    });
+
+    it('(e) no teto de reaberturas: não reabre, deixa o pane e bloqueia com o motivo', async () => {
+      museWorkerAtLimit(3);
+      await checkLimitedTaskPanes(NOW + LIMIT_HANDOFF_MS);
+      expect(taskReroute).not.toHaveBeenCalled();
+      expect(h.requestPaneClose).not.toHaveBeenCalled();
+      expect(h.submit.mock.calls[0]![0]).toMatchObject({ status: 'blocked' });
+      expect(summaryAt()).toContain('A tarefa já foi reenviada 3 vezes');
+    });
   });
 });
