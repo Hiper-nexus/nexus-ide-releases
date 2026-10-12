@@ -9,6 +9,7 @@
  * Electron main process is not blocked on `cp -cR`.
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AsyncGitRunner } from './git-command';
@@ -511,6 +512,145 @@ async function withWorktreeAddLock<T>(input: MaterializeWorktreeInput, add: () =
   }
 }
 
+// ---------------------------------------------------------------------------
+// F-1386: gating de lockfile + caches de build (worktree nasce quente sem
+// reutilizar node_modules de uma árvore de dependências diferente).
+// ---------------------------------------------------------------------------
+
+const LOCKFILE_NAMES = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'] as const;
+
+/** Teto de bytes de um lockfile — nunca GBs, e o hash lê o arquivo uma vez. */
+const MAX_LOCKFILE_BYTES = 32 * 1024 * 1024;
+/** Teto de bytes por arquivo de cache de build (tsbuildinfo gigante é anômalo). */
+const MAX_BUILD_CACHE_BYTES = 256 * 1024 * 1024;
+
+function sha256File(filePath: string, maxBytes: number): string | null {
+  try {
+    if (fs.statSync(filePath).size > maxBytes) return null;
+    return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+/** Primeiro lockfile presente no checkout (precedência npm > pnpm > yarn). */
+export function findLockfile(root: string): string | null {
+  for (const name of LOCKFILE_NAMES) {
+    if (fs.existsSync(path.join(root, name))) return name;
+  }
+  return null;
+}
+
+export interface LockfileMatch {
+  readonly lockfile: string | null;
+  readonly matched: boolean;
+  readonly reason: 'none' | 'match' | 'mismatch' | 'only-source';
+}
+
+/**
+ * O node_modules da origem só vale para a worktree quando o lockfile dela
+ * (checkout do HEAD) tem o MESMO hash. Lockfile diferente = deps diferentes =
+ * node_modules não bate — não reutiliza (fail-closed quando não dá p/ ler).
+ */
+export function lockfilesMatch(sourceRoot: string, worktreeRoot: string): LockfileMatch {
+  const lockfile = findLockfile(sourceRoot);
+  if (!lockfile) return { lockfile: null, matched: false, reason: 'none' };
+  const sourceHash = sha256File(path.join(sourceRoot, lockfile), MAX_LOCKFILE_BYTES);
+  const worktreeHash = sha256File(path.join(worktreeRoot, lockfile), MAX_LOCKFILE_BYTES);
+  if (sourceHash === null || worktreeHash === null) {
+    return { lockfile, matched: false, reason: 'only-source' };
+  }
+  return {
+    lockfile,
+    matched: sourceHash === worktreeHash,
+    reason: sourceHash === worktreeHash ? 'match' : 'mismatch',
+  };
+}
+
+/** `*.tsbuildinfo` da raiz (declarado via tsBuildInfoFile ou o padrão). */
+export function discoverTsbuildinfoFiles(repositoryRoot: string): string[] {
+  const found = new Set<string>();
+  try {
+    const tsconfig = JSON.parse(
+      fs.readFileSync(path.join(repositoryRoot, 'tsconfig.json'), 'utf8'),
+    ) as { compilerOptions?: { tsBuildInfoFile?: string } };
+    const configured = tsconfig.compilerOptions?.tsBuildInfoFile;
+    if (typeof configured === 'string') {
+      const rel = configured.replaceAll('\\', '/');
+      if (!rel.includes('..') && !path.isAbsolute(rel) &&
+        fs.existsSync(path.join(repositoryRoot, rel))) {
+        found.add(rel);
+      }
+    }
+  } catch {
+    // tsconfig ausente/inválido: segue só com o padrão.
+  }
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(repositoryRoot, { withFileTypes: true });
+  } catch {
+    return [...found];
+  }
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name.endsWith('.tsbuildinfo')) found.add(entry.name);
+  }
+  return [...found];
+}
+
+export interface BuildCacheResult {
+  readonly copied: string[];
+  readonly skipped: { readonly rel: string; readonly reason: string }[];
+}
+
+/**
+ * Caches de build portáteis da origem → worktree. Só `*.tsbuildinfo` (TS ≥5
+ * grava caminhos relativos); `.vite`/`.cache` vivem DENTRO do node_modules e
+ * já vêm junto no clone CoW — copiá-los de novo seria redundante.
+ */
+export function copyBuildCaches(
+  repositoryRoot: string,
+  worktreeRoot: string,
+  deps?: {
+    readonly copyFile?: (source: string, dest: string) => void;
+    readonly statSize?: (filePath: string) => number | null;
+  },
+): BuildCacheResult {
+  const copyFile = deps?.copyFile ?? ((src, dest) => {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(src, dest);
+  });
+  const statSize = deps?.statSize ?? ((filePath) => {
+    try {
+      return fs.statSync(filePath).size;
+    } catch {
+      return null;
+    }
+  });
+  const copied: string[] = [];
+  const skipped: { rel: string; reason: string }[] = [];
+  for (const rel of discoverTsbuildinfoFiles(repositoryRoot)) {
+    const src = path.join(repositoryRoot, rel);
+    const dest = path.join(worktreeRoot, rel);
+    if (fs.existsSync(dest)) continue;
+    const size = statSize(src);
+    if (size === null) {
+      skipped.push({ rel, reason: 'unreadable' });
+      continue;
+    }
+    if (size > MAX_BUILD_CACHE_BYTES) {
+      skipped.push({ rel, reason: 'too-large' });
+      continue;
+    }
+    try {
+      copyFile(src, dest);
+      copied.push(rel);
+    } catch {
+      skipped.push({ rel, reason: 'copy-failed' });
+    }
+  }
+  return { copied, skipped };
+}
+
 /**
  * Materialize a linked git worktree, then optionally CoW heavy content.
  */
@@ -549,19 +689,40 @@ export async function materializeGitWorktree(
     )).status === 0;
   const cowMethods: Record<string, HeavyDirCloneMethod> = {};
   const cowSkipped: { dir: string; reason: string }[] = [];
+  // F-1386: node_modules da origem só entra com o MESMO lockfile da worktree.
+  const lockfile = lockfilesMatch(input.repositoryRoot, input.worktreePath);
+  const lockfileBlocksNodeModules = lockfile.lockfile !== null && !lockfile.matched;
+  const effectiveDirs = input.cowDirs ?? [
+    ...DEFAULT_COW_DIRS,
+    ...(await discoverNestedCowDirsAsync(input.repositoryRoot, input.worktreePath, isIgnored)),
+  ];
+  const cowDirs = lockfileBlocksNodeModules
+    ? effectiveDirs.filter((rel) => rel !== 'node_modules')
+    : effectiveDirs;
+  if (lockfileBlocksNodeModules && effectiveDirs.includes('node_modules')) {
+    cowSkipped.push({ dir: 'node_modules', reason: `lockfile-${lockfile.reason}` });
+  }
   const cowCopied = await cowCopyHeavyDirs(
     input.repositoryRoot,
     input.worktreePath,
-    input.cowDirs,
+    cowDirs,
     undefined,
     undefined,
-    isIgnored,
+    undefined,
     (dir, outcome) => {
       if ('method' in outcome) cowMethods[dir] = outcome.method;
       else cowSkipped.push({ dir, reason: outcome.skipped });
     },
   );
   const cowMs = Date.now() - cowStart;
+
+  // F-1386: caches de build portáteis — melhor esforço, nunca bloqueia o spawn.
+  const buildCaches = copyBuildCaches(input.repositoryRoot, input.worktreePath);
+  if (buildCaches.copied.length > 0) {
+    console.info(
+      `[worktree-cow] caches de build copiados: ${buildCaches.copied.join(', ')}`,
+    );
+  }
 
   return {
     method: cowCopied.length > 0 ? 'clonefile' : 'git-worktree',

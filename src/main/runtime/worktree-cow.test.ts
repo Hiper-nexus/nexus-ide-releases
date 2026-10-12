@@ -4,10 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   cloneHeavyDir,
+  copyBuildCaches,
   cowCopyHeavyDirs,
   cowCopyHeavyDirsSync,
   cowWorktreeAvailable,
   discoverNestedCowDirs,
+  discoverTsbuildinfoFiles,
+  findLockfile,
+  lockfilesMatch,
   materializeGitWorktree,
   tryClonefileCopy,
   tryClonefileCopySync,
@@ -797,4 +801,140 @@ it('F-255: another repository does not wait for an unrelated worktree registrati
     expect(fs.existsSync(path.join(b, 'wt'))).toBe(true);
     expect(fs.existsSync(path.join(a, 'wt'))).toBe(false);
   } finally { release(); await first; fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+describe('F-1386 — lockfile gating e caches de build', () => {
+  it('findLockfile: precedência npm > pnpm > yarn, null sem nenhum', () => {
+    const root = tmpRoot();
+    makeTree(root, { 'pnpm-lock.yaml': 'x', 'yarn.lock': 'y' });
+    expect(findLockfile(root)).toBe('pnpm-lock.yaml');
+    const npm = tmpRoot();
+    makeTree(npm, { 'package-lock.json': '{}' });
+    expect(findLockfile(npm)).toBe('package-lock.json');
+    expect(findLockfile(tmpRoot())).toBeNull();
+  });
+
+  it('lockfilesMatch: idênticos casam, diferentes não, só-origem fail-closed', () => {
+    const source = tmpRoot();
+    const wt = tmpRoot();
+    makeTree(source, { 'package-lock.json': '{"lockfileVersion":3}' });
+    makeTree(wt, { 'package-lock.json': '{"lockfileVersion":3}' });
+    expect(lockfilesMatch(source, wt)).toEqual({
+      lockfile: 'package-lock.json', matched: true, reason: 'match',
+    });
+
+    const wtDiff = tmpRoot();
+    makeTree(wtDiff, { 'package-lock.json': '{"lockfileVersion":2}' });
+    expect(lockfilesMatch(source, wtDiff)).toEqual({
+      lockfile: 'package-lock.json', matched: false, reason: 'mismatch',
+    });
+
+    const wtMissing = tmpRoot();
+    expect(lockfilesMatch(source, wtMissing)).toEqual({
+      lockfile: 'package-lock.json', matched: false, reason: 'only-source',
+    });
+
+    expect(lockfilesMatch(tmpRoot(), tmpRoot())).toEqual({
+      lockfile: null, matched: false, reason: 'none',
+    });
+  });
+
+  it('discoverTsbuildinfoFiles: padrão + tsBuildInfoFile do tsconfig', () => {
+    const root = tmpRoot();
+    makeTree(root, {
+      'tsconfig.tsbuildinfo': '{}',
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { tsBuildInfoFile: 'build/cache.tsbuildinfo' },
+      }),
+      'build/cache.tsbuildinfo': '{}',
+    });
+    const found = discoverTsbuildinfoFiles(root).sort();
+    expect(found).toEqual(['build/cache.tsbuildinfo', 'tsconfig.tsbuildinfo']);
+  });
+
+  it('copyBuildCaches copia o que existe e pula dest presente', () => {
+    const source = tmpRoot();
+    const wt = tmpRoot();
+    makeTree(source, {
+      'tsconfig.tsbuildinfo': 'version 5.0',
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { tsBuildInfoFile: 'build/cache.tsbuildinfo' },
+      }),
+      'build/cache.tsbuildinfo': 'version 5.0',
+    });
+    // dest já presente não é recopiado.
+    makeTree(wt, { 'tsconfig.tsbuildinfo': 'antigo' });
+    const result = copyBuildCaches(source, wt);
+    expect(result.copied).toEqual(['build/cache.tsbuildinfo']);
+    expect(fs.readFileSync(path.join(wt, 'build/cache.tsbuildinfo'), 'utf8'))
+      .toBe('version 5.0');
+    // o dest presente manteve o conteúdo antigo.
+    expect(fs.readFileSync(path.join(wt, 'tsconfig.tsbuildinfo'), 'utf8'))
+      .toBe('antigo');
+  });
+
+  it('copyBuildCaches pula arquivo acima do teto', () => {
+    const source = tmpRoot();
+    const wt = tmpRoot();
+    makeTree(source, { 'tsconfig.tsbuildinfo': '{}' });
+    const result = copyBuildCaches(source, wt, {
+      statSize: () => 300 * 1024 * 1024, // acima de MAX_BUILD_CACHE_BYTES
+    });
+    expect(result.copied).toEqual([]);
+    expect(result.skipped).toEqual([{ rel: 'tsconfig.tsbuildinfo', reason: 'too-large' }]);
+  });
+
+  it('materializeGitWorktree reutiliza node_modules com lockfile idêntico', async () => {
+    if (!darwin) return;
+    const root = tmpRoot();
+    const repo = path.join(root, 'repo');
+    const wt = path.join(root, 'wt');
+    const lockfile = '{"lockfileVersion":3}';
+    makeTree(repo, {
+      'package-lock.json': lockfile,
+      'node_modules/a/index.js': 'x',
+    });
+    const run = vi.fn(async (_cwd: string, args: readonly string[]) => {
+      if (args[0] === 'rev-parse') return { status: 0, stdout: repo, stderr: '' };
+      if (args[0] === 'check-ignore') return { status: 1, stdout: '', stderr: '' };
+      // simula o git worktree add real: materializa o lockfile no dest.
+      fs.mkdirSync(wt, { recursive: true });
+      fs.copyFileSync(path.join(repo, 'package-lock.json'), path.join(wt, 'package-lock.json'));
+      return { status: 0, stdout: '', stderr: '' };
+    });
+    const result = await materializeGitWorktree({
+      repositoryRoot: repo, worktreePath: wt, branchRef: 'refs/heads/nexus/t',
+      headSha: 'abc', git: { run } as never,
+    });
+    expect(result.cowCopied).toEqual(['node_modules']);
+    expect(result.cowSkipped).toEqual([]);
+  });
+
+  it('materializeGitWorktree pula node_modules com lockfile diferente', async () => {
+    if (!darwin) return;
+    const root = tmpRoot();
+    const repo = path.join(root, 'repo');
+    const wt = path.join(root, 'wt');
+    makeTree(repo, {
+      'package-lock.json': '{"lockfileVersion":3}',
+      'node_modules/a/index.js': 'x',
+    });
+    const run = vi.fn(async (_cwd: string, args: readonly string[]) => {
+      if (args[0] === 'rev-parse') return { status: 0, stdout: repo, stderr: '' };
+      if (args[0] === 'check-ignore') return { status: 1, stdout: '', stderr: '' };
+      fs.mkdirSync(wt, { recursive: true });
+      // lockfile do HEAD é diferente do da origem.
+      fs.writeFileSync(path.join(wt, 'package-lock.json'), '{"lockfileVersion":2}');
+      return { status: 0, stdout: '', stderr: '' };
+    });
+    const result = await materializeGitWorktree({
+      repositoryRoot: repo, worktreePath: wt, branchRef: 'refs/heads/nexus/t',
+      headSha: 'abc', git: { run } as never,
+    });
+    expect(result.cowCopied).toEqual([]);
+    expect(result.cowSkipped).toEqual([
+      { dir: 'node_modules', reason: 'lockfile-mismatch' },
+    ]);
+    expect(fs.existsSync(path.join(wt, 'node_modules'))).toBe(false);
+  });
 });
