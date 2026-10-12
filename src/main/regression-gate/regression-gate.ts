@@ -281,6 +281,13 @@ export interface RegressionNotRun {
   readonly mapMs: number;
   /** O que sobrou do prazo total para os testes quando o mapa terminou. */
   readonly testBudgetMs: number;
+  /** Por faixa de distância (1 = co-localizados e importadores diretos), na ordem em que rodam. */
+  readonly byDistance: readonly {
+    readonly distance: number;
+    readonly run: number;
+    readonly notRun: number;
+    readonly causes: readonly RegressionNotRunCause[];
+  }[];
 }
 
 export type RegressionGateStatus =
@@ -860,6 +867,11 @@ interface ImpactedTests {
   readonly tests: readonly string[];
   /** Teste → arquivos do diff que o puxaram (extensões: `(extensão)`). */
   readonly sources: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * F-1348: menor distância no grafo reverso até o diff — 0 tocado ou
+   * co-localizado, 1 importador direto (e extensão/invariante), 2–3 indiretos.
+   */
+  readonly distances: ReadonlyMap<string, number>;
   readonly untestedFiles: readonly string[];
   readonly e2eSkipped: readonly string[];
   readonly indexComplete: boolean;
@@ -959,9 +971,11 @@ export async function computeImpactedTests(
     isOrientationImportSource(path.posix.extname(file).toLowerCase()) && fs.existsSync(path.join(scope.rootRealPath, file)));
   const ordered: string[] = [];
   const sources = new Map<string, Set<string>>();
+  const distances = new Map<string, number>();
   /** true se o teste existe (mesmo já selecionado por outro arquivo do diff). */
-  const addTest = (test: string, source: string): boolean => {
+  const addTest = (test: string, source: string, distance: number): boolean => {
     if (!fileSet.has(test)) return false;
+    distances.set(test, Math.min(distances.get(test) ?? distance, distance));
     const from = sources.get(test);
     if (from) {
       from.add(source);
@@ -973,10 +987,10 @@ export async function computeImpactedTests(
   };
   const untested: string[] = [];
   let traversalIncomplete = false;
-  /** Testes co-localizados e importadores (até REVERSE_DEPTH saltos) de `file`. */
-  const testsOf = (file: string, source: string): boolean => {
+  /** Testes co-localizados e importadores (até REVERSE_DEPTH saltos) de `file`, a `base` saltos do diff. */
+  const testsOf = (file: string, source: string, base = 0): boolean => {
     let found = false;
-    for (const test of colocatedTests(file, files)) found = addTest(test, source) || found;
+    for (const test of colocatedTests(file, files)) found = addTest(test, source, base) || found;
     const seen = new Set<string>([file]);
     let frontier = [file];
     let visits = 0;
@@ -987,7 +1001,7 @@ export async function computeImpactedTests(
           if (seen.has(importer)) continue;
           if (++visits > MAX_REVERSE_VISITS) { traversalIncomplete = true; continue; }
           seen.add(importer);
-          if (TEST_FILE_RE.test(importer)) found = addTest(importer, source) || found;
+          if (TEST_FILE_RE.test(importer)) found = addTest(importer, source, base + depth + 1) || found;
           else next.push(importer);
         }
       }
@@ -996,7 +1010,7 @@ export async function computeImpactedTests(
     return found;
   };
   for (const file of changedFiles) {
-    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) addTest(file, file);
+    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) addTest(file, file, 0);
   }
   for (const file of changedFiles) {
     if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) continue;
@@ -1008,20 +1022,22 @@ export async function computeImpactedTests(
     for (const consumer of consumers) {
       const normalized = normalizeRelative(consumer);
       if (!normalized) continue;
-      if (TEST_FILE_RE.test(normalized) || PY_TEST_RE.test(normalized)) addTest(normalized, label);
-      else testsOf(normalized, label);
+      // Consumidor via banco já está a um salto do diff.
+      if (TEST_FILE_RE.test(normalized) || PY_TEST_RE.test(normalized)) addTest(normalized, label, 1);
+      else testsOf(normalized, label, 1);
     }
   }
   for (const [tests, label] of [[extraTests, '(extensão)'], [wip.tests, WIP_IMPACT_SOURCE]] as const) {
     for (const test of tests) {
       const normalized = normalizeRelative(test);
-      if (normalized) addTest(normalized, label);
+      if (normalized) addTest(normalized, label, 1);
     }
   }
   const e2eSkipped = includeE2E ? [] : ordered.filter((test) => E2E_FILE_RE.test(test));
   return {
     tests: includeE2E ? ordered : ordered.filter((test) => !E2E_FILE_RE.test(test)),
     sources,
+    distances,
     untestedFiles: untested,
     e2eSkipped,
     indexComplete: !truncated && !uncoveredChangedSource && !traversalIncomplete,
@@ -1843,8 +1859,12 @@ async function evaluateMappedTests(
   // Sob o teto, os testes dos invariantes de negócio tocados vêm primeiro:
   // um diff que encosta numa regra não pode deixar o teste dela fora do corte.
   const invariantTests = new Set(touched.flatMap((invariant) => invariant.testes));
+  // F-1348: depois deles, por distância no grafo reverso. Co-localizados e
+  // importadores diretos (0–1) formam a 1ª faixa; 2, 3… as seguintes.
+  const tierOf = (test: string) => Math.max(1, impacted.distances.get(test) ?? 1);
   const prioritizedTests = [...impacted.tests].sort(
-    (left, right) => Number(invariantTests.has(right)) - Number(invariantTests.has(left)),
+    (left, right) =>
+      Number(invariantTests.has(right)) - Number(invariantTests.has(left)) || tierOf(left) - tierOf(right),
   );
   const tests = prioritizedTests.slice(0, maxTests);
   // Cortados pelo teto não rodaram: contam como não verificados, não como aprovados.
@@ -1865,15 +1885,29 @@ async function evaluateMappedTests(
       businessRisk: await businessRiskPromise, ...common,
     });
   }
-  const { groups, orphans } = planRunnerGroups(root, tests);
+  // F-1348: um processo do runner por faixa, os diretos primeiro — o lote
+  // único dos impactados não cabia no prazo e nada terminava; assim os
+  // diretos rodam e os indiretos usam o que sobrar.
+  const tiers = [...new Set([...tests, ...overflow].map(tierOf))].sort((left, right) => left - right);
+  const planned = tiers.map((tier) => planRunnerGroups(root, tests.filter((test) => tierOf(test) === tier)));
+  const groups = planned.flatMap((plan) => plan.groups);
+  const orphans = planned.flatMap((plan) => plan.orphans);
   // F-1348: quanto o mapa levou e o que sobrou para os testes vão no recibo,
   // com a causa do que não rodou — o leitor não culpa a config pelo prazo.
   const totalMs = input.timeoutMs ?? DEFAULT_REGRESSION_TEST_TIMEOUT_MS;
   const mapMs = now() - started;
-  const notRunCauses = new Set<RegressionNotRunCause>(overflow.length > 0 ? ['limit'] : []);
-  if (groups.length === 0 || orphans.length > 0) notRunCauses.add('runner');
-  const notRunOf = (notRun: readonly string[]): RegressionNotRun | null =>
-    notRun.length > 0 ? { causes: [...notRunCauses], mapMs, testBudgetMs: Math.max(0, totalMs - mapMs) } : null;
+  const notRunCause = new Map<string, RegressionNotRunCause>(overflow.map((test) => [test, 'limit']));
+  const notRunOf = (notRun: readonly string[]): RegressionNotRun | null => {
+    if (notRun.length === 0) return null;
+    const missing = new Set(notRun);
+    const causesOf = (list: readonly string[]) => [...new Set(list.map((test) => notRunCause.get(test) ?? 'runner'))];
+    const byDistance = tiers.map((distance) => {
+      const inTier = [...tests, ...overflow].filter((test) => tierOf(test) === distance);
+      const left = inTier.filter((test) => missing.has(test));
+      return { distance, run: inTier.length - left.length, notRun: left.length, causes: causesOf(left) };
+    });
+    return { causes: causesOf(notRun), mapMs, testBudgetMs: Math.max(0, totalMs - mapMs), byDistance };
+  };
   if (groups.length === 0) {
     warnings.push('nenhum runner de teste detectado (vitest/jest/pytest): testes impactados NÃO verificados');
     return finish({ status: 'unavailable', testsRun: [], testsNotRun: [...tests, ...overflow], failures: [], inheritedFailures: [], preexistingFailures: [], runner: null, notRun: notRunOf([...tests, ...overflow]), businessRisk: await businessRiskPromise, ...common });
@@ -1918,7 +1952,7 @@ async function evaluateMappedTests(
   let executedRunner: RegressionRunnerKind | null = null;
   for (const group of groups) {
     if (remaining() < MIN_RUN_BUDGET_MS) {
-      notRunCauses.add(launched ? 'test-deadline' : 'map-deadline');
+      for (const test of group.tests) notRunCause.set(test, launched ? 'test-deadline' : 'map-deadline');
       warnings.push(`prazo esgotado antes de rodar ${group.tests.length} teste(s) (${group.runner.kind})`);
       continue;
     }
@@ -1930,8 +1964,8 @@ async function evaluateMappedTests(
     if (outcome.ran.length > 0 || outcome.failures.length > 0 || (outcome.loadFailures?.length ?? 0) > 0) {
       executedRunner ??= group.runner.kind;
     }
-    if (group.tests.some((test) => !outcome.ran.includes(test))) {
-      notRunCauses.add(outcome.timedOut ? 'test-deadline' : 'runner');
+    for (const test of group.tests) {
+      if (!outcome.ran.includes(test)) notRunCause.set(test, outcome.timedOut ? 'test-deadline' : 'runner');
     }
     const groupFailures = [...outcome.failures];
     for (const load of outcome.loadFailures ?? []) {
@@ -2267,7 +2301,9 @@ export function formatRegressionGateReport(result: RegressionGateResult): string
     );
   } else if (result.status === 'unavailable') {
     lines.push(
-      '[Nexus · portão de regressão] NÃO VERIFICADO: os testes impactados não rodaram — isto não conta como aprovado.',
+      result.testsRun.length > 0
+        ? `[Nexus · portão de regressão] NÃO VERIFICADO por completo: ${result.testsRun.length} de ${result.testsRun.length + result.testsNotRun.length} impactado(s) rodaram (diretos primeiro) — o resto não conta como aprovado.`
+        : '[Nexus · portão de regressão] NÃO VERIFICADO: os testes impactados não rodaram — isto não conta como aprovado.',
     );
   }
   if (result.preexistingFailures.length > 0) {

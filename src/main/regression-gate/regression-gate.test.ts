@@ -95,7 +95,8 @@ function fakeVitest(failing: readonly string[] = []) {
         })),
       }),
     );
-    return { exitCode: failing.length > 0 ? 1 : 0, timedOut: false, stdout: '', stderr: '' };
+    // Como o vitest real: sai 1 só se um arquivo PEDIDO falhou (F-1348: um processo por faixa).
+    return { exitCode: files.some((file) => failing.includes(file)) ? 1 : 0, timedOut: false, stdout: '', stderr: '' };
   });
   return { exec, calls };
 }
@@ -196,8 +197,12 @@ describe('runRegressionGate', () => {
     expect(result.status).toBe('passed');
     expect(result.changedFiles).toEqual(['src/a.ts']);
     expect([...result.testsRun].sort()).toEqual(['src/a.test.ts', 'src/b.test.ts']);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).not.toContain('src/c.test.ts');
+    // F-1348: um processo por faixa de distância, o direto primeiro.
+    expect(calls.map((args) => args.filter((arg) => arg.endsWith('.test.ts')))).toEqual([
+      ['src/a.test.ts'],
+      ['src/b.test.ts'],
+    ]);
+    expect(result.notRun).toBeNull();
   });
 
   it('teste impactado que falha vira status failed com o arquivo e a mensagem', async () => {
@@ -320,7 +325,15 @@ describe('runRegressionGate', () => {
     expect(result.testsNotRun).toHaveLength(2);
     // Nenhum runner executou nada: o recibo não pode culpar (nem creditar) o vitest.
     expect(result.runner).toBeNull();
-    expect(result.notRun).toEqual({ causes: ['map-deadline'], mapMs: 43_000, testBudgetMs: 2_000 });
+    expect(result.notRun).toEqual({
+      causes: ['map-deadline'],
+      mapMs: 43_000,
+      testBudgetMs: 2_000,
+      byDistance: [
+        { distance: 1, run: 0, notRun: 1, causes: ['map-deadline'] },
+        { distance: 2, run: 0, notRun: 1, causes: ['map-deadline'] },
+      ],
+    });
   });
 
   it('F-1348: runner que sobe e estoura o prazo (recibo do F-1302) — sem runner, causa prazo dos testes', async () => {
@@ -345,7 +358,64 @@ describe('runRegressionGate', () => {
     expect(result.status).toBe('unavailable');
     expect(result.testsRun).toEqual([]);
     expect(result.runner).toBeNull();
-    expect(result.notRun).toEqual({ causes: ['test-deadline'], mapMs: 0, testBudgetMs: 45_000 });
+    expect(result.notRun).toMatchObject({ causes: ['test-deadline'], mapMs: 0, testBudgetMs: 45_000 });
+    // O 1º processo (diretos) levou o prazo todo; a faixa seguinte nem subiu.
+    expect(result.notRun?.byDistance.map((tier) => tier.causes)).toEqual([['test-deadline'], ['test-deadline']]);
+  });
+
+  it('F-1348: 1 direto + 40 indiretos no prazo do handoff — o direto roda primeiro e passa; os indiretos ficam em notRun por prazo', async () => {
+    const { root, scope } = project();
+    // 39 testes que importam b (que importa a): distância 2, como b.test.ts.
+    for (let index = 0; index < 39; index += 1) {
+      write(root, `src/indirect/t${index}.test.ts`, "import { b } from '../b';\n");
+    }
+    const git = new ProcessGitRunner();
+    git.run(root, ['add', '-A']);
+    git.run(root, ['commit', '-qm', 'indiretos']);
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    let clock = 0;
+    const passing = fakeVitest();
+    const launched: string[][] = [];
+    // Runner simulado: 1 s por arquivo; o que não cabe no prazo recebido vence
+    // o prazo como o execOwnedCheck (nada termina, nada é relatado).
+    const exec = vi.fn<RegressionExec>(async (file, args, options) => {
+      const files = args.filter((arg) => arg.endsWith('.test.ts'));
+      launched.push(files);
+      if (files.length * 1_000 > options.timeoutMs) {
+        clock += options.timeoutMs;
+        return { exitCode: null, timedOut: true, retryable: true, stdout: '', stderr: '\nVerificação excedeu o prazo.' };
+      }
+      clock += files.length * 1_000;
+      return passing.exec(file, args, options);
+    });
+    // Mapa de impacto com o custo medido no F-1302 (~8 s).
+    const blastRadius = () => {
+      clock += 8_000;
+      return null;
+    };
+
+    const result = await runRegressionGate(
+      { scope, timeoutMs: HANDOFF_REGRESSION_BUDGET_MS },
+      { exec, now: () => clock, extensions: { blastRadius } },
+    );
+
+    // Lote único (antes): 8 s de mapa + 41 s de runner > 45 s — nada terminava.
+    expect(result.testsRun).toEqual(['src/a.test.ts']);
+    // Nunca os 41 de uma vez: primeiro só o direto, num processo próprio.
+    expect(launched[0]).toEqual(['src/a.test.ts']);
+    expect(Math.max(...launched.map((files) => files.length))).toBeLessThanOrEqual(40);
+    expect(result.failures).toEqual([]);
+    expect(result.runner).toBe('vitest');
+    expect(clock).toBeLessThanOrEqual(HANDOFF_REGRESSION_BUDGET_MS);
+    // Parcial com os diretos verdes não é aprovação completa.
+    expect(result.status).not.toBe('passed');
+    expect(result.testsNotRun).toHaveLength(40);
+    expect(result.notRun?.causes).toEqual(['test-deadline']);
+    expect(result.notRun?.byDistance).toEqual([
+      { distance: 1, run: 1, notRun: 0, causes: [] },
+      { distance: 2, run: 0, notRun: 40, causes: ['test-deadline'] },
+    ]);
+    expect(formatRegressionGateReport(result)).toContain('1 de 41');
   });
 
   it('falha de arquivo que o portão não pediu (filtro por substring do vitest) não bloqueia', async () => {
@@ -402,17 +472,19 @@ describe('runRegressionGate', () => {
     write(root, 'src/a.ts', 'export const a = 2;\n');
     const flaky = fakeVitest(['src/b.test.ts']);
     const stable = fakeVitest();
-    let call = 0;
+    let bRuns = 0;
+    // b.test.ts falha só na 1ª vez que roda.
     const exec = vi.fn<RegressionExec>((...args) =>
-      (call++ === 0 ? flaky.exec : stable.exec)(...args),
+      (args[1].includes('src/b.test.ts') && bRuns++ === 0 ? flaky.exec : stable.exec)(...args),
     );
 
     const result = await runRegressionGate({ scope }, { exec });
 
     expect(result.status).toBe('passed');
-    expect(exec).toHaveBeenCalledTimes(2);
+    // Faixa direta (a), faixa indireta (b, falha) e a retentativa de b.
+    expect(exec).toHaveBeenCalledTimes(3);
     // A retentativa roda só o arquivo que falhou.
-    expect(stable.calls[0]!.filter((arg) => arg.endsWith('.test.ts'))).toEqual(['src/b.test.ts']);
+    expect(stable.calls.at(-1)!.filter((arg) => arg.endsWith('.test.ts'))).toEqual(['src/b.test.ts']);
     expect(result.warnings.join(' ')).toContain('instável(is), passaram na 2ª tentativa: src/b.test.ts');
   });
 
@@ -459,12 +531,13 @@ describe('runRegressionGate', () => {
     expect(first.cached).toBe(false);
     expect(second.cached).toBe(true);
     expect(second.diffHash).toBe(first.diffHash);
-    expect(exec).toHaveBeenCalledTimes(1);
+    // Uma avaliação = um processo por faixa (direto a, indireto b).
+    expect(exec).toHaveBeenCalledTimes(2);
 
     write(root, 'src/a.ts', 'export const a = 3;\n');
     const third = await runRegressionGate({ scope }, { exec });
     expect(third.cached).toBe(false);
-    expect(exec).toHaveBeenCalledTimes(2);
+    expect(exec).toHaveBeenCalledTimes(4);
   });
 
   it('área tocada sem teste gera aviso explícito, sem bloquear', async () => {
@@ -519,7 +592,7 @@ describe('runRegressionGate', () => {
     const second = await runRegressionGate({ scope }, { exec });
 
     expect(second.cached).toBe(false);
-    expect(exec).toHaveBeenCalledTimes(2);
+    expect(exec).toHaveBeenCalledTimes(4);
     expect(second.headSha).toMatch(/^[a-f0-9]{40}$/u);
   });
 
@@ -535,7 +608,7 @@ describe('runRegressionGate', () => {
     const second = await runRegressionGate({ scope }, { exec });
 
     expect(second.cached).toBe(false);
-    expect(exec).toHaveBeenCalledTimes(2);
+    expect(exec).toHaveBeenCalledTimes(4);
   });
 
   it('edição concorrente durante os testes descarta o resultado e não entra no cache', async () => {
@@ -800,7 +873,7 @@ describe('runRegressionGate', () => {
 
     await runRegressionGate({ scope }, { exec });
 
-    expect(calls[0]).toContain('src/d.test.ts');
+    expect(calls.flat()).toContain('src/d.test.ts');
   });
 
   it.each([false, true])('invariante do modelo atestado roda no checkout de execução (fallback=%s)', async (fallback) => {
@@ -1350,8 +1423,8 @@ describe('evaluateHandoffRegressionGate', () => {
     }
     const exhausted = await evaluateHandoffRegressionGate(input, deps);
     expect(exhausted.kind).toBe('exhausted');
-    // Cache: três avaliações do mesmo diff, uma execução (+ a retentativa da falha).
-    expect(exec).toHaveBeenCalledTimes(2);
+    // Cache: três avaliações do mesmo diff, uma execução (2 faixas + a retentativa da falha).
+    expect(exec).toHaveBeenCalledTimes(3);
   });
 
   it('sem runner aceita (não bloqueia por infra) mas marca NÃO verificado; passou registra em artifact', async () => {
@@ -1385,7 +1458,8 @@ describe('evaluateHandoffRegressionGate', () => {
 
     expect(verdict).toMatchObject({ kind: 'accepted', unverified: true });
     expect(verdict.kind === 'accepted' && verdict.artifact?.payload.status).toBe('unavailable');
-    expect(exec).toHaveBeenCalledTimes(1);
+    // Um processo por faixa (a direto, b indireto).
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 
   it('flag desligada pula o portão', async () => {
@@ -1442,7 +1516,7 @@ describe('evaluateHandoffRegressionGate', () => {
     const payload = verdict.kind === 'accepted' ? verdict.artifact?.payload : undefined;
     expect(payload?.testsRun).toEqual([]);
     expect(payload?.runner).toBeNull();
-    expect(payload?.notRun).toEqual({ causes: ['test-deadline'], mapMs: 0, testBudgetMs: HANDOFF_REGRESSION_BUDGET_MS });
+    expect(payload?.notRun).toMatchObject({ causes: ['test-deadline'], mapMs: 0, testBudgetMs: HANDOFF_REGRESSION_BUDGET_MS });
   });
 });
 
