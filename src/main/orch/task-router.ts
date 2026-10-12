@@ -1708,13 +1708,17 @@ export function routeTask(
   const requestedEffort = mention.effort ?? context.effortOverride ?? effortForTier(tier);
   const laneEfforts = new Map<string, RouteEffort | 'max'>();
   let nextGameOpusApplied = false;
+  // F-1400 C4 (revisão Fable): o esforço escrito pelo operador no texto vence
+  // o max da regra Next/jogo; o max só vence lane/Jev/tier.
+  const nextGameMax = (adapterId: string, model?: string) =>
+    nextGameOpusApplied && adapterId === 'claude' && model === 'claude-opus-5-5';
   const requestedFor = (adapterId: string, model?: string): RouteEffort | 'max' =>
-    nextGameOpusApplied && adapterId === 'claude' && model === 'claude-opus-5-5' ? 'max' :
-      mention.effort ?? laneEfforts.get(`${adapterId}:${model}`) ?? context.effortOverride ?? requestedEffort;
+    mention.effort ?? (nextGameMax(adapterId, model) ? 'max' :
+      laneEfforts.get(`${adapterId}:${model}`) ?? context.effortOverride ?? requestedEffort);
   const effortFor = (adapterId: string, model?: string) => nativeRouteEffort(requestedFor(adapterId, model), available.get(adapterId)!);
   const effortNoteFor = (adapterId: string, model?: string) =>
     `; effort=${effortFor(adapterId, model) ?? 'cli-default'} requested=${requestedFor(adapterId, model)}` +
-    ` source=${nextGameOpusApplied && adapterId === 'claude' && model === 'claude-opus-5-5' ? 'regra-do-operador' : mention.effort ? 'texto' : laneEfforts.has(`${adapterId}:${model}`) ? 'lane' : context.effortOverride ? 'jev' : 'tier'}`;
+    ` source=${mention.effort ? 'texto' : nextGameMax(adapterId, model) ? 'regra-do-operador' : laneEfforts.has(`${adapterId}:${model}`) ? 'lane' : context.effortOverride ? 'jev' : 'tier'}`;
   const heuristicSpecialty = classifyRouteSpecialty(classificationText);
   // F-1400 B1 (revisão Fable): só Next.js/app router e jogo COM contexto de
   // front; segurança nunca é sobrescrita (F-821 — securityWork precisa valer).

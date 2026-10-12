@@ -139,6 +139,13 @@ describe('F-1400: transporte de uso visual do ledger', () => {
     ]) });
     expect(decision.adapterId).toBe('codex');
   });
+  it('C4: esforço explícito do operador no texto vence o max da regra Next/jogo', () => {
+    const decision = route('criar landing em Next.js com esforço low', [
+      { id: 'claude', installed: true, models: ['claude-opus-5-5'] }, ...pool,
+    ]);
+    expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5', effort: 'low' });
+    expect(decision.reason).toContain('requested=low source=texto');
+  });
   it('Next/jogo mantém max mesmo se o Jev pedir effort menor', () => {
     expect(route('criar landing em Next.js', [
       { id: 'claude', installed: true, models: ['claude-opus-5-5'] }, ...pool,
