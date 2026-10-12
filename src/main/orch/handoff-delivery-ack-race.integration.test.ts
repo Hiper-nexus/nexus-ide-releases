@@ -216,3 +216,184 @@ describe("F-1006: ACK do Maestro x tentativa colada (store real)", () => {
     expect(handoffs.get(handoff.id)?.deliveryState).toBe("consumed");
   });
 });
+
+/**
+ * F-1263 — Maestro A recebe handoff partial/blocked/failed (fica submitted) e
+ * morre antes do ACK; o rebind só re-enfileirava status='success'. O Maestro B
+ * lia o relatório, mas o ACK físico exigia tentativa aceita da sessão B:
+ * "handoff is not awaiting consumption in this mission".
+ */
+const REBIND_MISSION_ID = "mission-f1263";
+const SESSION_A = "session-f1263-maestro-a";
+const SESSION_B = "session-f1263-maestro-b";
+
+describe("F-1263: rebind re-enfileira entregas não-success aceitas pelo líder anterior", () => {
+  let baseDir = "";
+  let manager: ProjectRuntimeManager;
+  let handoffs: ReturnType<typeof createScopedHandoffStore>;
+  let missions: ReturnType<typeof createScopedMissionStore>;
+  let registry: McpRegistry;
+  let ctxA: ReturnType<typeof mintToken>;
+  let ctxB: ReturnType<typeof mintToken>;
+  let nextHandoffId = 0;
+
+  beforeEach(() => {
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-f1263-rebind-"));
+    manager = new ProjectRuntimeManager({ baseDir, appVersion: "f1263-test" });
+    configureProjectDomainStoreRegistry(manager);
+    configureAuditLogRuntime(manager);
+    const scope = testProjectScope();
+    missions = createScopedMissionStore(manager, scope, { idFactory: () => REBIND_MISSION_ID });
+    missions.create({ title: "F-1263 rebind não-success", orchestratorSessionId: SESSION_A });
+    missions.setStatus(REBIND_MISSION_ID, "running");
+    handoffs = createScopedHandoffStore(manager, scope, {
+      idFactory: () => `handoff-f1263-${++nextHandoffId}`,
+    });
+    resetGateForTests();
+    const maestro = (sessionId: string, label: string) => {
+      const ctx = mintToken({
+        label,
+        role: "orchestrator",
+        providerId: "codex",
+        missionId: REBIND_MISSION_ID,
+        contextRevision: "context-f1263",
+        scope,
+        allowedTools: null,
+      });
+      bindTokenToSession(ctx.token, sessionId);
+      return ctx;
+    };
+    ctxA = maestro(SESSION_A, "Maestro A");
+    ctxB = maestro(SESSION_B, "Maestro B");
+    const acknowledgeTool: McpToolDef = {
+      name: "nexus_handoff_ack",
+      description: "F-1263 ACK fixture (mesmo store do handler de produção)",
+      inputSchema: {
+        type: "object",
+        properties: { handoffId: { type: "string" } },
+        required: ["handoffId"],
+      },
+      handler: async (args, toolCtx, invocation) => {
+        const receipt = invocation?.agentTransportPhysicalReceipt;
+        if (!receipt || !toolCtx.missionId || !toolCtx.sessionId) {
+          throw new Error("physical ACK receipt missing");
+        }
+        const consumed = handoffs.markConsumedFromPhysicalAck(
+          {
+            handoffId: String(args.handoffId),
+            missionId: toolCtx.missionId,
+            orchestratorSessionId: toolCtx.sessionId,
+          },
+          receipt,
+        );
+        if (!consumed) throw new Error("handoff is not awaiting consumption");
+        return { deliveryState: "consumed" };
+      },
+    };
+    registry = { tools: [acknowledgeTool], serverName: "nexus-f1263", serverVersion: "1" };
+  });
+
+  afterEach(async () => {
+    disposeAuditLogRuntime();
+    await disposeProjectDomainStoreRegistry();
+    resetGateForTests();
+    manager?.closeAll();
+    if (baseDir) fs.rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  const dispatchOptions: McpDispatchOptions = {
+    resolveMissionForIntentGate: () => ({
+      mission: missions.get(REBIND_MISSION_ID) as unknown as Mission,
+      taskCount: 1,
+      workerPaneCount: 1,
+    }),
+  };
+  const ackAs = (ctx: ReturnType<typeof mintToken>, sessionId: string, handoffId: string) =>
+    runInsidePtyStreamAgentTransport(sessionId, ctx, () =>
+      dispatchToolCall("pty-stream", registry, "nexus_handoff_ack", { handoffId }, ctx, dispatchOptions),
+    );
+  const submitted = (status: "partial" | "blocked" | "failed") =>
+    handoffs.submit({
+      missionId: REBIND_MISSION_ID,
+      sessionId: "session-f1263-worker",
+      fromAgent: "worker",
+      status,
+      summary: "Entrega não-success que ficava presa no líder antigo.",
+    });
+  /** Maestro A recebe: reserva, cola e a borda busy aceita a tentativa dele. */
+  const receiveByA = (handoffId: string) => {
+    const attempt = handoffs.reserveDeliveryAttempt({
+      handoffId,
+      missionId: REBIND_MISSION_ID,
+      orchestratorSessionId: SESSION_A,
+      maxAttempts: 3,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId,
+      acceptDeadlineAt: Date.now() + 12_000,
+    });
+    expect(
+      handoffs.acceptDeliveryAttempt({ attemptId: attempt.id, handoffId }),
+    ).toBe(true);
+    return attempt;
+  };
+
+  it.each(["partial", "blocked", "failed"] as const)(
+    "status %s: rebind re-enfileira e o ACK físico de B consome preservando a tentativa de A",
+    async (status) => {
+      const handoff = submitted(status);
+      const attemptA = receiveByA(handoff.id);
+      expect(handoffs.get(handoff.id)).toMatchObject({
+        delivered: true,
+        deliveryState: "submitted",
+      });
+
+      // A morre sem ACK; o Main rebinda a missão para B.
+      expect(
+        missions.rebindOrchestratorSession(REBIND_MISSION_ID, SESSION_B),
+      ).not.toBeNull();
+      expect(handoffs.get(handoff.id)).toMatchObject({
+        delivered: false,
+        deliveryState: "queued",
+      });
+
+      // B lê o relatório e dá o ACK físico válido: consumido na tentativa de B.
+      await expect(ackAs(ctxB, SESSION_B, handoff.id)).resolves.toMatchObject({
+        ok: true,
+      });
+      const attempts = handoffs.listDeliveryAttempts(handoff.id);
+      expect(attempts).toHaveLength(2);
+      expect(attempts[0]).toMatchObject({
+        id: attemptA.id,
+        state: "accepted",
+        orchestratorSessionId: SESSION_A,
+      });
+      expect(attempts[1]).toMatchObject({
+        state: "accepted",
+        orchestratorSessionId: SESSION_B,
+      });
+      expect(handoffs.get(handoff.id)).toMatchObject({
+        deliveryState: "consumed",
+        consumedBySession: SESSION_B,
+      });
+    },
+  );
+
+  it("entrega não-success já consumida por A NÃO é re-enfileirada pelo rebind", async () => {
+    const handoff = submitted("partial");
+    receiveByA(handoff.id);
+    await expect(ackAs(ctxA, SESSION_A, handoff.id)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(handoffs.get(handoff.id)).toMatchObject({ deliveryState: "consumed" });
+
+    expect(
+      missions.rebindOrchestratorSession(REBIND_MISSION_ID, SESSION_B),
+    ).not.toBeNull();
+    expect(handoffs.get(handoff.id)).toMatchObject({
+      deliveryState: "consumed",
+      consumedBySession: SESSION_A,
+    });
+  });
+});

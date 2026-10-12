@@ -955,6 +955,11 @@ export class ScopedMissionStore {
    * the same SQLite transaction. Accepted attempts remain immutable audit
    * evidence; only the handoff's delivery projection is queued for the new
    * physical session. Task dispatch/integration receipts are never rewritten.
+   *
+   * F-1263: non-success deliveries accepted by the previous leader and not
+   * yet consumed are re-queued too — the new Maestro's physical ACK requires
+   * an accepted attempt of its own session. Consumed non-success rows keep
+   * their receipts.
    */
   rebindOrchestratorSession(
     rawId: string,
@@ -974,7 +979,10 @@ export class ScopedMissionStore {
         `SELECT h.id
          FROM handoffs AS h
          WHERE h.mission_id = ?
-           AND h.status = 'success'
+           AND (
+             h.status = 'success'
+             OR h.delivery_state <> 'consumed'
+           )
            AND h.delivered = 1
            AND EXISTS (
              SELECT 1 FROM handoff_delivery_attempts AS old_attempt
