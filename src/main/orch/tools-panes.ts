@@ -3742,8 +3742,9 @@ const agentPrompt: McpToolDef = {
 const sessionLeaseInspect: McpToolDef = {
   name: 'nexus_session_lease_inspect',
   description:
-    'Inspect the active physical lease and startKey proof for a session ID. ' +
-    'Returns the lease metadata if active, or null if unleased or terminated.',
+    'Inspect the active physical lease of your own session or of a pane you ' +
+    'may read (same boundary as nexus_pane_read). Returns the lease metadata ' +
+    '(hasStartKey, never the key) if active, or null if unleased or terminated.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -3754,10 +3755,15 @@ const sessionLeaseInspect: McpToolDef = {
     },
     required: ['sessionId'],
   },
-  handler: async (args) => {
-    const sessionId = requireStr(args, 'sessionId');
-    const lease = inspectSessionLease(sessionId);
-    return { ok: true, lease };
+  handler: async (args, ctx) => {
+    const ref = requireStr(args, 'sessionId');
+    // F-1336: o startKey é a prova que autoriza o kill da sessão — nunca sai
+    // pelo MCP. Fora a própria sessão, só panes que o chamador já pode ler.
+    const sessionId = ref === ctx.sessionId ? ref : authorizePaneRef(ctx, ref, 'read').sessionId;
+    const lease = sessionId ? inspectSessionLease(sessionId) : null;
+    if (!lease) return { ok: true, lease: null };
+    const { startKey, ...metadata } = lease;
+    return { ok: true, lease: { ...metadata, hasStartKey: Boolean(startKey) } };
   },
 };
 

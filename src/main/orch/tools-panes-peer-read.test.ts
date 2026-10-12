@@ -37,7 +37,17 @@ vi.mock('./pane-registry', () => ({
   waitForNextIdle: h.waitForNextIdle,
 }));
 
+const leases = vi.hoisted(() => ({
+  inspectSessionLease: vi.fn((sessionId: string) => ({
+    sessionId,
+    startKey: `sk_${sessionId}_secret`,
+    bornAtMs: 1,
+    kind: 'agent',
+  })),
+}));
+
 vi.mock('../pty/pty-manager', () => ({
+  inspectSessionLease: leases.inspectSessionLease,
   orchWriteSession: vi.fn(() => true),
   orchTerminateSession: vi.fn(async () => true),
   getAgentSessionInfo: vi.fn(() => null),
@@ -612,5 +622,51 @@ describe('in-mission pane observation (Overclock parity)', () => {
         error: expect.stringMatching(/unknown pane/),
       },
     ]);
+  });
+});
+
+describe('nexus_session_lease_inspect boundary (F-1336)', () => {
+  beforeEach(() => {
+    h.panes.clear();
+    vi.clearAllMocks();
+    h.getPaneAuthzInfo.mockImplementation((ref: string) => h.panes.get(ref) ?? null);
+  });
+
+  it('refuses a worker of another mission and never hands out the startKey', async () => {
+    registerPane({
+      paneId: 'pane-foreign-orch',
+      sessionId: 'session-foreign-orch',
+      kind: 'cli-agent',
+      missionId: 'mission-b',
+      role: 'orchestrator',
+      scope,
+    });
+
+    const outcome = await tool('nexus_session_lease_inspect')
+      .handler({ sessionId: 'session-foreign-orch' }, context())
+      .catch((error: unknown) => error);
+
+    expect((outcome as { lease?: { startKey?: string } }).lease?.startKey).toBeUndefined();
+    expect(String(outcome)).toMatch(/another mission/);
+    expect(leases.inspectSessionLease).not.toHaveBeenCalled();
+  });
+
+  it('reports hasStartKey instead of the key for its own and a visible pane', async () => {
+    registerPane({
+      paneId: 'pane-orch',
+      sessionId: 'session-orch',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'orchestrator',
+      scope,
+    });
+
+    for (const sessionId of ['session-a', 'session-orch']) {
+      const result = (await tool('nexus_session_lease_inspect').handler(
+        { sessionId },
+        context(),
+      )) as { lease: Record<string, unknown> };
+      expect(result.lease).toEqual({ sessionId, bornAtMs: 1, kind: 'agent', hasStartKey: true });
+    }
   });
 });
