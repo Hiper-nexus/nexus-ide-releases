@@ -383,3 +383,39 @@ describe('N2 — vault ref cannot leave the MCP Hub namespace', () => {
     expect(store.get('auth:license-seal-key')).toBe('SEAL-KEY-PLAINTEXT');
   });
 });
+
+describe('F-1383 (revisão Fable) — argv inteiro em command também é selado', () => {
+  const TOKEN = `sk-${'q'.repeat(24)}`;
+  function configWithCommand(command: string, args?: string[]): McpHubConfig {
+    return {
+      schemaVersion: 1,
+      servers: [
+        { id: 'x', name: 'X', transport: 'stdio', command, ...(args ? { args } : {}), tools: [], source: 'nexus' },
+      ],
+    };
+  }
+
+  it('normaliza o argv antes de selar: o token sai de command e vai ao cofre', () => {
+    const legacy = configWithCommand(`npx @x/mcp --token ${TOKEN}`, []);
+    expect(mcpHubConfigHasPlaintextSecrets(legacy)).toBe(true);
+    const store = new Map<string, string>();
+    const sealed = sealMcpHubSecretsInMemory(legacy, 'scope-cmd', store);
+    expect(JSON.stringify(sealed)).not.toContain(TOKEN);
+    expect(sealed.servers[0]?.command).toBe('npx');
+    expect(mcpHubConfigHasPlaintextSecrets(sealed)).toBe(false);
+    const hydrated = hydrateMcpHubSecretsInMemory(sealed, store, 'scope-cmd');
+    expect(hydrated.servers[0]?.args).toEqual(['@x/mcp', '--token', TOKEN]);
+  });
+
+  it('segredo em command que não dá para normalizar é recusado, nunca gravado', () => {
+    const mixed = configWithCommand(`npx @x/mcp --api-key=${TOKEN}`, ['--verbose']);
+    expect(mcpHubConfigHasPlaintextSecrets(mixed)).toBe(true);
+    expect(() => sealMcpHubSecretsInMemory(mixed, 'scope-cmd', new Map())).toThrow(/x\.command/);
+  });
+
+  it('command comum continua intacto', () => {
+    const plain = configWithCommand('npx', ['-y', 'figma-mcp']);
+    expect(mcpHubConfigHasPlaintextSecrets(plain)).toBe(false);
+    expect(sealMcpHubSecretsInMemory(plain, 'scope-cmd', new Map()).servers[0]).toEqual(plain.servers[0]);
+  });
+});

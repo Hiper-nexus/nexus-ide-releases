@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { isMaskedSecretValue, type McpHubConfig } from './mcp-hub-core';
+import {
+  isMaskedSecretValue,
+  normalizeHubServerArgv,
+  type McpHubConfig,
+  type McpHubServer,
+} from './mcp-hub-core';
 import {
   CREDENTIAL_FLAG_RE,
   redactCommandLine,
@@ -183,6 +188,17 @@ function argIsSecretShaped(arg: string, afterCredentialFlag: boolean): boolean {
   return redactCommandLine(arg, { denylist: [] }).secretHits > 0;
 }
 
+/**
+ * F-1383 (revisão Fable): o argv inteiro em `command` (hub legado, ou a UI com
+ * `npx @x/mcp --token sk-…` e args []) escapava do selo. Normaliza para
+ * command + args ANTES de selar/varrer; o que sobrar de segredo em `command`
+ * (caminho com espaço + args já preenchidos) é recusado, nunca gravado.
+ */
+function commandIsSecretShaped(server: McpHubServer): boolean {
+  const command = server.command?.trim();
+  return Boolean(command) && redactCommandLine(command!, { denylist: [] }).secretHits > 0;
+}
+
 function sealArgs(
   args: readonly string[] | undefined,
   scope: string,
@@ -260,7 +276,13 @@ export function sealMcpHubSecrets(
 ): McpHubConfig {
   return {
     ...config,
-    servers: config.servers.map((server) => {
+    servers: config.servers.map((original) => {
+      const server = normalizeHubServerArgv(original);
+      if (commandIsSecretShaped(server)) {
+        throw new Error(
+          `mcp hub refuses a secret in ${server.id}.command — move it to args or env before saving`,
+        );
+      }
       const env = sealRecord(server.env, scope, server.id, 'env', put);
       const headers = sealRecord(
         server.headers,
@@ -355,7 +377,8 @@ export function hydrateMcpHubArgs(
 
 /** True when any secret-shaped field still holds a non-ref plaintext value. */
 export function mcpHubConfigHasPlaintextSecrets(config: McpHubConfig): boolean {
-  for (const server of config.servers) {
+  for (const server of config.servers.map(normalizeHubServerArgv)) {
+    if (commandIsSecretShaped(server)) return true;
     for (const [name, value] of Object.entries(server.env ?? {})) {
       if (
         isSecretFieldName(name) &&
