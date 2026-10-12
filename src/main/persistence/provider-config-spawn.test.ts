@@ -1023,6 +1023,85 @@ describe('background CLI maintenance during pane startup', () => {
     });
   });
 
+  // Índice do Homebrew: um `brew update` assíncrono antes do manifesto, no
+  // máximo a cada 6 h (tentativa persistida); falha não trava o analisador.
+  describe('brew update antes do manifesto (índice do Homebrew)', () => {
+    const brew = '/opt/homebrew/bin/brew';
+    let calls: string[][];
+    let updateOptions: Record<string, unknown> | undefined;
+    let updateError: Error | null;
+    const brewFixture = (lastAttemptAt: number | null) => {
+      spawnDeps.brewBin = brew;
+      calls = [];
+      updateOptions = undefined;
+      updateError = null;
+      const realReadFile = fsp.readFile;
+      vi.spyOn(fsp, 'readFile').mockImplementation((async (file: unknown, ...rest: unknown[]) => {
+        if (String(file).endsWith('brew-index-update.json')) {
+          if (lastAttemptAt === null) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+          return JSON.stringify({ lastAttemptAt, ok: true });
+        }
+        return (realReadFile as (...args: unknown[]) => Promise<unknown>)(file, ...rest);
+      }) as never);
+      spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
+        const argv = args[1] as string[];
+        const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+        if (args[0] === brew) {
+          calls.push(argv);
+          if (argv[0] === 'update') {
+            updateOptions = args[2] as Record<string, unknown>;
+            callback(updateError, '');
+          } else callback(null, '');
+        } else if (argv[0] === 'update') {
+          calls.push(['claude', ...argv]);
+          finishUpdate = () => callback(null, '');
+        } else callback(null, '1.0.0');
+        return {} as ChildProcess;
+      });
+    };
+    afterEach(() => { spawnDeps.brewBin = null; });
+    const brewUpdates = () => calls.filter((argv) => argv[0] === 'update');
+
+    it('sem registro: roda UM brew update assíncrono antes da análise, com timeout e signal', async () => {
+      brewFixture(null);
+      vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: { claude: Date.now() - 3 * 60 * 60_000 } }));
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(brewUpdates()).toEqual([['update', '--quiet']]);
+      expect(spawnDeps.execFileSync).not.toHaveBeenCalledWith(brew, expect.anything(), expect.anything());
+      expect(updateOptions?.timeout).toBe(120_000);
+      expect(updateOptions?.signal).toBeInstanceOf(AbortSignal);
+      // O update vem antes de qualquer outra chamada da passada (analisador).
+      expect(calls[0]).toEqual(['update', '--quiet']);
+      expect(fsp.writeFile).toHaveBeenCalledWith(
+        expect.stringContaining('brew-index-update.json'), expect.stringContaining('lastAttemptAt'), expect.anything());
+      // Segue para a atualização das CLIs.
+      expect(finishUpdate).toBeTypeOf('function');
+    });
+
+    it.each([
+      ['1 h', 60 * 60_000, []],
+      ['7 h', 7 * 60 * 60_000, [['update', '--quiet']]],
+    ])('última tentativa há %s: limite de 6 h decide', async (_label, ago, expected) => {
+      brewFixture(Date.now() - (ago as number));
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(brewUpdates()).toEqual(expected);
+    });
+
+    it('brew update falha: só loga e a análise segue com o índice local', async () => {
+      brewFixture(null);
+      updateError = new Error('Command failed: brew update\nfatal: unable to access');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(brewUpdates()).toHaveLength(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('brew update falhou'), expect.any(String));
+      expect(finishUpdate).toBeTypeOf('function');
+      warn.mockRestore();
+    });
+  });
+
   it.each(['discovery', 'version'])('the daily tick defers installation if the operator returns during %s', async (phase) => {
     // F-1395: o boot (checada há 10 min) pula; o tick diário segue cedendo ao operador.
     vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: { claude: Date.now() - 10 * 60_000 } }));
