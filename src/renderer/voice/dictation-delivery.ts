@@ -197,6 +197,7 @@ interface PendingEntry {
   readonly token: number;
   /** C-3: entrega em voo (paste + Enter já saindo) — tecla não cancela. */
   delivering: boolean;
+  deliveringDone?: Promise<void>;
   cancel(reason: PendingCancelReason): void;
 }
 const pendingByPane = new Map<string, PendingEntry>();
@@ -207,8 +208,11 @@ export function hasPendingDictation(): boolean {
   return pendingByPane.size > 0;
 }
 
-function cancelPending(paneId: string): void {
-  pendingByPane.get(paneId)?.cancel('replaced');
+function cancelPending(paneId: string): boolean {
+  const entry = pendingByPane.get(paneId);
+  if (!entry || entry.delivering) return false;
+  entry.cancel('replaced');
+  return true;
 }
 
 /**
@@ -295,37 +299,46 @@ function deferUntilFree(
     if (!mine()) return;
     if (state && state.state === 'idle' && !state.awaitingInput) {
       entry.delivering = true;
+      let resolveDone: () => void = () => {};
+      entry.deliveringDone = new Promise<void>((resolve) => {
+        resolveDone = resolve;
+      });
       ports.onDelivering?.(paneId, true);
-      const { outcome, lane } = await deliverOnLanes(paneId, text, sessionId, ports);
-      if (!mine()) return;
-      if (outcome === 'wait') {
-        backToWaiting();
+      try {
+        const { outcome, lane } = await deliverOnLanes(paneId, text, sessionId, ports);
+        if (!mine()) return;
+        if (outcome === 'wait') {
+          backToWaiting();
+          return;
+        }
+        // C-7: recusa sem nada escrito (IPC, posse momentânea) não encerra o
+        // pendente de primeira — tenta de novo nos próximos ticks.
+        if (outcome === 'failed' && ++failedAttempts <= DICTATION_PENDING_FAILED_RETRIES) {
+          ports.log('info', 'dictation.pendingRetry', 'pane livre recusou sem escrever — nova tentativa', {
+            targetPaneId: paneId,
+            sessionId,
+            attempt: failedAttempts,
+          });
+          backToWaiting();
+          return;
+        }
+        const delivered = outcome === 'started' || outcome === 'queued';
+        settle(
+          delivered ? 'info' : 'error',
+          delivered ? 'dictation.pendingDelivered' : outcome === 'lost' ? 'dictation.pendingLost' : 'dictation.pendingFailed',
+          delivered
+            ? 'ditado pendente entregue ao pane livre'
+            : outcome === 'lost'
+              ? 'texto do pendente escrito no pane mas o envio não se confirmou'
+              : 'pane livre recusou o ditado pendente',
+          { lane, outcome },
+          delivered ? undefined : outcome === 'lost' ? 'pending-lost' : 'pending-failed',
+        );
         return;
+      } finally {
+        entry.deliveringDone = undefined;
+        resolveDone();
       }
-      // C-7: recusa sem nada escrito (IPC, posse momentânea) não encerra o
-      // pendente de primeira — tenta de novo nos próximos ticks.
-      if (outcome === 'failed' && ++failedAttempts <= DICTATION_PENDING_FAILED_RETRIES) {
-        ports.log('info', 'dictation.pendingRetry', 'pane livre recusou sem escrever — nova tentativa', {
-          targetPaneId: paneId,
-          sessionId,
-          attempt: failedAttempts,
-        });
-        backToWaiting();
-        return;
-      }
-      const delivered = outcome === 'started' || outcome === 'queued';
-      settle(
-        delivered ? 'info' : 'error',
-        delivered ? 'dictation.pendingDelivered' : outcome === 'lost' ? 'dictation.pendingLost' : 'dictation.pendingFailed',
-        delivered
-          ? 'ditado pendente entregue ao pane livre'
-          : outcome === 'lost'
-            ? 'texto do pendente escrito no pane mas o envio não se confirmou'
-            : 'pane livre recusou o ditado pendente',
-        { lane, outcome },
-        delivered ? undefined : outcome === 'lost' ? 'pending-lost' : 'pending-failed',
-      );
-      return;
     }
     schedule(() => void tick(), DICTATION_PENDING_POLL_MS);
   };
@@ -376,6 +389,10 @@ async function routeToPane(
     sessionId,
     usedFallback,
   });
+  const existingPending = pendingByPane.get(targetPaneId);
+  if (existingPending?.delivering && existingPending.deliveringDone) {
+    await existingPending.deliveringDone;
+  }
   cancelPending(targetPaneId);
 
   // Salto 3 — IPC: despacho da injeção confirmada para o processo main.

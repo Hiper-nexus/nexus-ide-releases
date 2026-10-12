@@ -245,7 +245,7 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
       submitPromptEnter: vi.fn(async () => {
         writes.push('\r');
         if (prompt.value.state === 'idle') {
-          prompt.value = { ...prompt.value, turnStartSequence: prompt.value.turnStartSequence + 1 };
+          prompt.value = { ...prompt.value, state: 'busy', turnStartSequence: prompt.value.turnStartSequence + 1 };
         }
         return true;
       }),
@@ -506,5 +506,51 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
     await vi.advanceTimersByTimeAsync(10_000);
     expect(pane.writes).toEqual(['\x1b[200~segundo\x1b[201~', '\r']);
   });
+
+  it('F-1393 M4: ditado B aguarda ditado A em entrega terminar e entra na fila em vez de substituir A', async () => {
+    vi.useFakeTimers();
+    const pane = claudePane();
+    const onFirstSettled = vi.fn();
+    pane.ports.onSettled = onFirstSettled;
+
+    // Ditado A fica pendente porque awaitingInput: true
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true, queuesInputWhileBusy: true };
+    await Promise.all([deliverDictation('ditado A', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    expect(hasPendingDictation()).toBe(true);
+
+    // O pane fica livre — A entra em delivering (paste já saiu, Enter ainda no settle)
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: false, queuesInputWhileBusy: true };
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(pane.writes).toEqual(['\x1b[200~ditado A\x1b[201~']);
+
+    // Ditado B chega enquanto A está em delivering.
+    // B deve aguardar A concluir e ser enfileirado (queued), sem substituir A nem juntar os textos.
+    let bResult: any;
+    const bPromise = deliverDictation('ditado B', pane.ports).then((r) => { bResult = r; });
+
+    // Avança o tempo para A completar o settle do Enter e B processar
+    await vi.advanceTimersByTimeAsync(5_000);
+    await bPromise;
+
+    // A foi entregue com sucesso (não substituído)
+    expect(onFirstSettled).toHaveBeenCalledWith({
+      paneId: 'pane-focused',
+      result: 'ok',
+    });
+    // B entrou na fila (queued) atrás de A
+    expect(bResult).toEqual({
+      ok: true,
+      paneId: 'pane-focused',
+      queued: true,
+    });
+    // Escritas separadas: texto A, Enter, texto B, Enter — nunca misturados
+    expect(pane.writes).toEqual([
+      '\x1b[200~ditado A\x1b[201~',
+      '\r',
+      '\x1b[200~ditado B\x1b[201~',
+      '\r',
+    ]);
+  });
 });
+
 
