@@ -357,7 +357,11 @@ describe('pattern table invariants', () => {
     const affirmative = FIRST_RUN_INTERSTITIAL_PATTERNS.filter(
       (pattern) => pattern.answer !== ANSWER_DISMISS,
     );
-    expect(affirmative).toHaveLength(1);
+    // F-1419: Claude-family e Devin — os dois cercados pela prova do cwd.
+    expect(affirmative.map((pattern) => pattern.name).sort()).toEqual([
+      'devin-trust-path',
+      'workspace-trust-directory-contents',
+    ]);
     for (const pattern of affirmative) {
       expect(pattern.directoryProof).toBe('cwd-match');
     }
@@ -585,5 +589,67 @@ describe('prova de cwd em tempo linear (F-764 C.3)', () => {
     const screen = `/${'.'.repeat(16_382)}x`;
     // A versão anterior custava ~190 ms com esta tela.
     expect(cpuTimeMs(() => screenNamesOwnCwd(screen, '/tmp/x'))).toBeLessThan(20);
+  });
+});
+
+describe('F-1419: trust do Devin CLI na worktree do writer isolado', () => {
+  const DEVIN_HOME = '/Users/op';
+  const WORKTREE =
+    '/Users/op/Library/Application Support/NexusIDE/project-runtime/projects/project-5c53/' +
+    'checkout-72eb/worktrees.noindex/project-4bd6/checkout-d099/task-3b7dd0367ea1eb29';
+  /** Texto exato do campo 12/10 (pane Devin swe-2-high parado), com o path real no lugar de <path>. */
+  const devinTrust = (path: string) =>
+    `✓ Trust ${path}?  ❭ 1 Yes, trust / 2 No, exit  ↓↑ to select · ↵ to choose`;
+  const devinContext = (overrides: Partial<FirstRunInterstitialContext> = {}) =>
+    context({ adapterId: 'devin', cwd: WORKTREE, homeDir: DEVIN_HOME, ...overrides });
+
+  it('responde "1" quando o path pedido é a worktree que o Nexus criou para o pane', () => {
+    expect(decideFirstRunInterstitial(devinTrust(WORKTREE), devinContext())).toEqual({
+      answer: ANSWER_FIRST_NUMBERED_OPTION,
+      pattern: 'devin-trust-path',
+    });
+  });
+
+  it('casa o path abreviado com ~ e o path quebrado em várias linhas num pane estreito', () => {
+    const tilde = WORKTREE.replace(DEVIN_HOME, '~');
+    expect(decideFirstRunInterstitial(devinTrust(tilde), devinContext())?.pattern).toBe('devin-trust-path');
+    const wrapped = devinTrust(WORKTREE).replace(/(.{80})/g, '$1\n');
+    expect(decideFirstRunInterstitial(wrapped, devinContext())?.pattern).toBe('devin-trust-path');
+  });
+
+  it('path desconhecido nunca recebe trust automático', () => {
+    for (const other of [
+      '/Users/op/dev/outro-repo',
+      `${WORKTREE}-irmao`,
+      `${WORKTREE}/sub`,
+      WORKTREE.replace('task-3b7dd0367ea1eb29', 'task-ffffffffffffffff'),
+      '/Users/op/Library/Application',
+    ]) {
+      expect(decideFirstRunInterstitial(devinTrust(other), devinContext()), other).toBeNull();
+    }
+    // Path quebrado seguido de outro pedaço de diretório na linha seguinte.
+    expect(decideFirstRunInterstitial(
+      `✓ Trust ${WORKTREE}\nd?  ❭ 1 Yes, trust / 2 No, exit  ↓↑ to select · ↵ to choose`,
+      devinContext(),
+    )).toBeNull();
+  });
+
+  it('fora de missão, para outro adapter ou depois de responder uma vez: nenhuma tecla', () => {
+    expect(decideFirstRunInterstitial(devinTrust(WORKTREE), devinContext({ missionId: undefined }))).toBeNull();
+    expect(decideFirstRunInterstitial(devinTrust(WORKTREE), devinContext({ adapterId: 'kimi' }))).toBeNull();
+    expect(decideFirstRunInterstitial(
+      devinTrust(WORKTREE), devinContext({ answeredPatterns: ['devin-trust-path'] }),
+    )).toBeNull();
+  });
+
+  it('o responder ao vivo liga para o Devin e responde a tela que chega em pedaços', () => {
+    const responder = new FirstRunInterstitialResponder();
+    responder.bind('pty-devin', { adapterId: 'devin', missionId: 'mission-42', cwd: WORKTREE, homeDir: DEVIN_HOME }, 0);
+    const screen = devinTrust(WORKTREE);
+    expect(responder.observe('pty-devin', screen.slice(0, 120), { now: 2_000 })).toBeNull();
+    expect(responder.observe('pty-devin', screen.slice(120), { now: 2_100 })).toEqual({
+      answer: ANSWER_FIRST_NUMBERED_OPTION,
+      pattern: 'devin-trust-path',
+    });
   });
 });
