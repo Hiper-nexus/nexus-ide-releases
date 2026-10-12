@@ -566,6 +566,22 @@ export function decideSameCheckoutSpawn(input: {
   };
 }
 
+/**
+ * F-1318: isolatedWriter explícito vence readOnly. O spawn que pede worktree
+ * própria entra no caminho de alocação mesmo rotulado como leitor — no
+ * Autopilot o rótulo readOnly é consultivo (sem readOnlyEnforced fora do
+ * Hardened) e o "leitor" que escreve não pode dividir o checkout. Leitor sem
+ * isolatedWriter segue no checkout, como antes.
+ */
+export function shouldEnterIsolatedWriterPath(input: {
+  readonly hasAllocation: boolean;
+  readonly spawnReadOnly: boolean;
+  readonly isolatedWriterRequested: boolean;
+}): boolean {
+  if (input.hasAllocation) return false;
+  return !input.spawnReadOnly || input.isolatedWriterRequested;
+}
+
 /** Aviso do auto-isolamento: a worktree sai do HEAD, sem o WIP do operador. */
 export const ISOLATED_WORKTREE_NOTE =
   'não contém alterações não commitadas do checkout principal';
@@ -2037,7 +2053,11 @@ const paneSpawnAfterTabMission = {
               missionResume.spec.executionScope.rootRealPath !== checkoutRoot) {
             throw new Error('resume_worktree_unavailable: worktree original indisponível; retomada preservada para recuperação');
           }
-          if (!isolatedWriter && !spawnReadOnly) {
+          if (shouldEnterIsolatedWriterPath({
+            hasAllocation: isolatedWriter !== undefined,
+            spawnReadOnly,
+            isolatedWriterRequested: args.isolatedWriter === true,
+          })) {
             let blockedBy: string | undefined;
             if (args.isolatedWriter !== true) {
               const snapshots = listPaneSnapshots();

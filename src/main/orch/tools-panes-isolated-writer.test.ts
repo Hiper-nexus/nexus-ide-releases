@@ -258,11 +258,18 @@ describe('Via Rápida isolated writers', () => {
     expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(0);
   });
 
-  it.each([false, true])('read-only wins over isolation (inherited=%s)', async (inherited) => {
+  // F-1318: isolatedWriter explícito vence readOnly — o "leitor" que escreve
+  // ganha worktree própria (antes: read-only vencia e o pane caía no checkout).
+  it.each([false, true])('F-1318: isolatedWriter wins over read-only (inherited=%s)', async (inherited) => {
     await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
     await Promise.all([1, 2].map(() => paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true, readOnly: !inherited }, { ...ctx, readOnly: inherited })));
-    expect(h.spawn.mock.calls.slice(1).every(([o]) => o.readOnly && !o.isolatedWriter && o.cwd === ctx.scope.rootRealPath)).toBe(true);
-    expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(0);
+    const fresh = h.spawn.mock.calls.slice(1).map(([o]) => o) as SpawnToolOptions[];
+    expect(fresh).toHaveLength(2);
+    for (const options of fresh) {
+      expect(options).toMatchObject({ executionMode: 'isolated_worktree', isolatedWriter: true });
+      expect(options.cwd).not.toBe(ctx.scope.rootRealPath);
+    }
+    expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(2);
   });
 
   it('releases only the closed worker after physical exit, preserving unmerged commits and dirty files', async () => {
