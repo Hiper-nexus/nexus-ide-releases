@@ -8,6 +8,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const spawnDeps = vi.hoisted(() => ({
   resolvedClaudeBin: '/usr/local/bin/claude' as string | null,
+  /** F-1397: adapters elegíveis para candidato de atualização (mutável por teste). */
+  builtinIds: new Set<string>(['claude']),
   trustedHandlers: new Map<string, (event: unknown, args: unknown) => unknown>(),
   confirmInstall: vi.fn(async (..._args: unknown[]) => ({ response: 1 })),
   windows: [] as unknown[],
@@ -274,7 +276,7 @@ vi.mock('../security/trusted-ipc', async (original) => ({
 }));
 
 vi.mock('../adapters/adapter-registry', () => ({
-  isBuiltinAdapter: (id: string) => id === 'claude',
+  isBuiltinAdapter: (id: string) => spawnDeps.builtinIds.has(id),
   getAdapter: (id: string) =>
     id === 'mimo-code'
       ? mimoRaw
@@ -505,6 +507,8 @@ describe('background CLI maintenance during pane startup', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    spawnDeps.builtinIds.clear();
+    spawnDeps.builtinIds.add('claude');
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
     spawnDeps.systemIdleTime.mockReturnValue(120);
     spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
@@ -628,18 +632,18 @@ describe('background CLI maintenance during pane startup', () => {
       stop = startCliAutoUpdate('/fixture-quota-home', () => false);
       await vi.advanceTimersByTimeAsync(5_000);
       expect(finishUpdate).toBeTypeOf('function');
-      // O boot só segura o spawn da CLI em atualização, não o das outras.
+      // F-1397: instalação versionada (claude no versions/) não segura spawn —
+      // o pane nasce já, no binário atual; outra CLI nunca foi presa.
       let kimi: (() => void) | undefined;
       void acquireCliSpawnPermit('kimi').then((release) => { kimi = release; });
       let claude: (() => void) | undefined;
       void acquireCliSpawnPermit('claude').then((release) => { claude = release; });
       await vi.advanceTimersByTimeAsync(0);
       expect(kimi).toBeTypeOf('function');
-      expect(claude).toBeUndefined();
-      finishUpdate!();
-      await vi.advanceTimersByTimeAsync(0);
       expect(claude).toBeTypeOf('function');
       kimi!(); claude!();
+      finishUpdate!();
+      await vi.advanceTimersByTimeAsync(0);
       // Antes→depois chega ao snapshot da UI de provedores.
       expect(listProviderSettings().find((info) => info.adapterId === 'claude')?.cliAutoUpdate)
         .toMatchObject({ status: 'unchanged', fromVersion: '1.0.0', toVersion: '1.0.0' });
@@ -800,6 +804,177 @@ describe('background CLI maintenance during pane startup', () => {
     });
   });
 
+  describe('F-1397: checagem barata de versão e spawn durante atualização', () => {
+    const checkedAgo = (ms: number) =>
+      vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: { claude: Date.now() - ms } }));
+    /**
+     * opencode pelo npm: a receita de update é `npm install -g --prefix`. O
+     * caminho fica sob o home do fixture — o updater só aceita instalação
+     * dentro do home do operador, e o claude continua candidato pelo
+     * self-update com esse mesmo realpath.
+     */
+    const npmOpencode = '/fixture-quota-home/.npm-global/lib/node_modules/opencode-ai/bin/opencode.js';
+    const npmInstall = ['install', '-g', '--prefix', '/fixture-quota-home/.npm-global', 'opencode-ai'];
+    let installs: string[][];
+    let viewReply: { error: Error | null; stdout: string };
+    let viewOptions: Array<Record<string, unknown> | undefined>;
+
+    /** Fixture npm: opencode vira candidato e o realpath aponta para o pacote. */
+    const npmFixture = () => {
+      spawnDeps.builtinIds.add('opencode');
+      vi.spyOn(fs, 'realpathSync').mockReturnValue(npmOpencode);
+      vi.spyOn(fsp, 'realpath').mockResolvedValue(npmOpencode);
+      installs = [];
+      viewOptions = [];
+      viewReply = { error: null, stdout: '1.0.0\n' };
+      spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
+        const argv = args[1] as string[];
+        const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+        if (argv[0] === 'update' || argv[0] === 'install') {
+          installs.push(argv);
+          finishUpdate = () => callback(null, '');
+        } else if (argv[0] === 'view') {
+          viewOptions.push(args[2] as Record<string, unknown> | undefined);
+          callback(viewReply.error, viewReply.stdout);
+        } else callback(null, '1.0.0');
+        return {} as ChildProcess;
+      });
+    };
+
+    const opencodeSnapshot = () =>
+      listProviderSettings().find((info) => info.adapterId === 'opencode')?.cliAutoUpdate;
+
+    it('(a) npm em dia: nenhuma instalação, evento up-to-date', async () => {
+      npmFixture();
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      finishUpdate!(); // o claude (self-update) termina e o passe segue
+      await vi.advanceTimersByTimeAsync(0);
+      // opencode (npm) NÃO reinstala em dia; o claude (self-update) pode rodar.
+      expect(installs.filter((argv) => argv[0] === 'install')).toEqual([]);
+      expect(opencodeSnapshot()).toMatchObject({ status: 'up-to-date', fromVersion: '1.0.0', toVersion: '1.0.0' });
+      // A checagem é de leitura: proíbe o `brew update` implícito do Homebrew
+      // (revisão F-1397) e roda com teto curto, não o de 15 min do install.
+      expect(viewOptions.length).toBeGreaterThan(0);
+      for (const options of viewOptions) {
+        expect((options?.env as Record<string, string> | undefined)?.HOMEBREW_NO_AUTO_UPDATE).toBe('1');
+        expect(options?.timeout).toBe(30_000);
+      }
+    });
+
+    it('(b) npm desatualizada: instala como hoje', async () => {
+      npmFixture();
+      viewReply.stdout = '2.0.0\n';
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      finishUpdate!(); // claude
+      await vi.advanceTimersByTimeAsync(0);
+      expect(installs).toContainEqual(npmInstall);
+      finishUpdate!(); // install do opencode, rearmado pelo mock
+      await vi.advanceTimersByTimeAsync(0);
+      expect(opencodeSnapshot()).toMatchObject({ status: 'unchanged', toVersion: '1.0.0' });
+    });
+
+    it('(c) checagem falha: instala como hoje', async () => {
+      npmFixture();
+      viewReply.error = new Error('npm ERR! network');
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      finishUpdate!(); // claude
+      await vi.advanceTimersByTimeAsync(0);
+      expect(installs).toContainEqual(npmInstall);
+    });
+
+    it('(d) spawn do claude versionado em atualização nasce na hora', async () => {
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(finishUpdate).toBeTypeOf('function');
+      let claudeRelease: (() => void) | undefined;
+      void acquireCliSpawnPermit('claude').then((release) => { claudeRelease = release; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(claudeRelease).toBeTypeOf('function');
+      claudeRelease!();
+      finishUpdate!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(listProviderSettings().find((info) => info.adapterId === 'claude')?.cliAutoUpdate)
+        .toMatchObject({ status: 'unchanged' });
+    });
+
+    it('(d) spawn da CLI npm (troca no lugar) espera o install acabar', async () => {
+      npmFixture();
+      viewReply.stdout = '2.0.0\n';
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      finishUpdate!(); // claude
+      await vi.advanceTimersByTimeAsync(0);
+      expect(installs).toContainEqual(npmInstall);
+      let opencodeRelease: (() => void) | undefined;
+      void acquireCliSpawnPermit('opencode').then((release) => { opencodeRelease = release; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(opencodeRelease).toBeUndefined();
+      finishUpdate!(); // install do opencode, rearmado pelo mock
+      await vi.advanceTimersByTimeAsync(0);
+      expect(opencodeRelease).toBeTypeOf('function');
+      opencodeRelease!();
+    });
+
+    it('spawn em voo (permit preso) adia a CLI sem retentativa de 1 h', async () => {
+      npmFixture();
+      viewReply.stdout = '2.0.0\n';
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      // Pane ainda não registrado: o permit de spawn está preso.
+      const releaseSpawn = await acquireCliSpawnPermit('opencode');
+      // O resultado por CLI é compartilhado entre testes: compara por identidade.
+      const baseline = opencodeSnapshot();
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      finishUpdate?.(); // claude
+      await vi.advanceTimersByTimeAsync(0);
+      // Não é falha: nenhum resultado novo para o opencode.
+      expect(opencodeSnapshot()).toBe(baseline);
+      releaseSpawn();
+      spawnDeps.systemIdleTime.mockReturnValue(120); // o tique periódico pede ociosidade
+      vi.setSystemTime(Date.now() + 61_000);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(installs).toContainEqual(npmInstall);
+    });
+
+    it('pane que abriu entre next() e run() dispara a atualização no fechamento, sem 1 h de castigo', async () => {
+      npmFixture(); // claude deixa de ser versionado: o pane volta a bloqueá-lo
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      let paneOpen = false;
+      let liveCalls = 0;
+      let paneExit!: (adapterId: string) => void;
+      // 1ª leitura (next): sem pane; 2ª (guarda do run): pane abriu no meio.
+      const live = () => (++liveCalls === 2 ? true : paneOpen);
+      stop = startCliAutoUpdate('/fixture-quota-home', (id) => (id === 'claude' ? live() : paneOpen), (listener) => {
+        paneExit = listener;
+        return () => undefined;
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(finishUpdate).toBeUndefined(); // recusada com o pane aberto
+      paneOpen = true;
+      paneOpen = false;
+      paneExit('claude');
+      vi.setSystemTime(Date.now() + 61_000);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(finishUpdate).toBeTypeOf('function'); // repassou no fechamento
+      finishUpdate!();
+    });
+  });
+
   it.each(['discovery', 'version'])('the daily tick defers installation if the operator returns during %s', async (phase) => {
     // F-1395: o boot (checada há 10 min) pula; o tick diário segue cedendo ao operador.
     vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: { claude: Date.now() - 10 * 60_000 } }));
@@ -824,6 +999,10 @@ describe('background CLI maintenance during pane startup', () => {
 
   it('releases a waiting pane after updating its launcher without awaiting unrelated CLI discovery', async () => {
     let finishDiscovery!: () => void;
+    // F-1397: instalação que troca no lugar (npm) continua excluindo spawns.
+    const npmClaudeLauncher = '/fixture-quota-home/.npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js';
+    vi.spyOn(fs, 'realpathSync').mockReturnValue(npmClaudeLauncher);
+    vi.spyOn(fsp, 'realpath').mockResolvedValue(npmClaudeLauncher);
     spawnDeps.rescanBinaries.mockResolvedValueOnce([]).mockImplementationOnce(() =>
       new Promise<never[]>((resolve) => { finishDiscovery = () => resolve([]); }),
     );

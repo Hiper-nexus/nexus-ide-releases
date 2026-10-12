@@ -88,9 +88,10 @@ import {
 } from '../adapters/in-use-executable';
 import {
   BOOT_RECHECK_MS, CliAutoUpdateQueue, CliUpdateLease, caskManifestArtifactKinds, caskReceiptArtifactKinds,
-  caskReceiptPath, caskTokenFromRealBinPath, cliUpdateKey,
+  caskReceiptPath, caskTokenFromRealBinPath, cliUpdateKey, cliVersionCheck, cliVersionCheckUpToDate,
   isVersionedCliInstall, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent,
 } from '../adapters/cli-auto-update';
+import type { CliVersionCheck } from '../adapters/cli-auto-update';
 import { trace } from '../observability/main-trace';
 import { execFile, execFileSync } from 'node:child_process';
 import { redactSecretText } from '../../shared/secret-redaction';
@@ -2505,13 +2506,27 @@ export function startCliAutoUpdate(
         awaitingPaneClose.add(id);
         return true;
       };
-      const run = async (id: string) => {
+      const run = async (id: string): Promise<boolean | 'deferred'> => {
         // Revalidate the effective launcher and permissions immediately before mutation.
         const selected = await context.wait(automaticCliCandidateAsync(id));
         const admittedPreference = await context.wait(readAutoCliPreferencesAsync(file));
-        if (!selected || stopped || paneBlocks(id, selected) || !idleEnough() ||
-            admittedPreference?.enabled !== true ||
-            !cliUpdateLease.acquire(id)) return false;
+        if (!selected || stopped || !idleEnough() || admittedPreference?.enabled !== true) return false;
+        if (paneBlocks(id, selected)) {
+          // F-1397/revisão: pane que abriu entre next() e run() não é falha —
+          // fica pendente e dispara no fechamento dele.
+          awaitingPaneClose.add(id);
+          return 'deferred';
+        }
+        if (!cliUpdateLease.acquire(id, 'manual',
+          isVersionedCliInstall(id, selected.binPath, selected.realBinPath))) {
+          // F-1397: colisão com spawn em voo (o pane ainda não é "vivo") é
+          // adiamento, não falha — sem a retentativa de 1 h.
+          if (cliUpdateLease.isSpawning(id)) {
+            awaitingPaneClose.add(id);
+            return 'deferred';
+          }
+          return false;
+        }
         try {
           const beforeVersion = await context.wait(installedCliVersion(id, selected.binPath));
           let stillSameTarget = false;
@@ -2521,9 +2536,29 @@ export function startCliAutoUpdate(
               : selected.binPath) === selected.realBinPath;
           } catch { /* The launcher disappeared while being checked. */ }
           const effectivePreference = await context.wait(readAutoCliPreferencesAsync(file));
-          if (!beforeVersion || !stillSameTarget || stopped || paneBlocks(id, selected) || !idleEnough() ||
+          if (!beforeVersion || !stillSameTarget || stopped || !idleEnough() ||
               effectivePreference?.enabled !== true ||
               activeProviderBinary(id) !== selected.binPath) return false;
+          if (paneBlocks(id, selected)) {
+            awaitingPaneClose.add(id);
+            return 'deferred';
+          }
+          // F-1397: checagem barata antes de instalar — npm/brew respondem sem
+          // tocar na instalação; em dia, só marca a checagem.
+          const versionCheck = cliVersionCheck(selected.recipe);
+          if (versionCheck) {
+            const stdout = await context.wait(availableCliVersion(selected.recipe, versionCheck));
+            if (cliVersionCheckUpToDate(versionCheck, beforeVersion, stdout ?? '') === true) {
+              console.info(`[cli-auto-update] ${id}: up-to-date, ${beforeVersion}`);
+              recordCliAutoUpdate(id, {
+                status: 'up-to-date', fromVersion: beforeVersion, toVersion: beforeVersion,
+              });
+              // Sem install não há broadcast no fim do run — o painel de
+              // Providers só recebe o "em dia" com este push (revisão F-1397).
+              broadcast();
+              return true;
+            }
+          }
           const preferenceRevision = autoCliPreferencesRevision;
           const authorityChanged = new Error('CLI update authority changed before execution');
           const assertInstallCurrent = () => {
@@ -2632,6 +2667,38 @@ function installedDevinDistribution(realBinPath: string): string | null {
   }
   try {
     return fs.readFileSync(marker, 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * F-1397: roda a checagem barata de versão (npm view / brew outdated) e devolve
+ * o stdout cru. `null` = runner sumiu, comando falhou ou timed out — a checagem
+ * nunca bloqueia: segue o caminho atual (instala).
+ */
+async function availableCliVersion(
+  recipe: CliInstallRecipe,
+  check: CliVersionCheck,
+): Promise<string | null> {
+  // A checagem só existe para receitas argv; scripts seguem o caminho atual.
+  if (recipe.kind !== 'argv') return null;
+  try {
+    const invocation = prepareArgvInstallInvocation({ ...recipe, argv: check.argv });
+    return await new Promise<string | null>((resolve) => {
+      execFile(
+        invocation.executable,
+        [...invocation.args],
+        // Checagem de leitura: teto curto; a instalação continua com o de 15 min.
+        // HOMEBREW_NO_AUTO_UPDATE: o `brew outdated` não pode disparar um
+        // `brew update` inteiro (revisão F-1397) — usa o índice local.
+        {
+          ...invocation.options, timeout: 30_000, maxBuffer: 1024 * 1024,
+          env: { ...invocation.options.env, HOMEBREW_NO_AUTO_UPDATE: '1' },
+        },
+        (error, stdout) => resolve(error ? null : String(stdout)),
+      );
+    });
   } catch {
     return null;
   }

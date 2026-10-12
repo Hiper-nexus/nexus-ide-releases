@@ -12,6 +12,8 @@ export function cliUpdateKey(adapterId: string): string {
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60_000;
 const RETRY_AFTER_FAILURE_MS = 60 * 60_000;
+/** F-1397: adiamento (pane/spawn em voo) — volta no próximo tique, sem 1 h de castigo. */
+const DEFER_RETRY_MS = 60_000;
 /**
  * F-1395: o boot analisa e atualiza TODAS as CLIs. Limite de segurança contra
  * loop de reinício: a CLI checada com sucesso há menos de 30 min fica de fora.
@@ -28,6 +30,8 @@ export function shouldOfferAutoCliConsent(
 /** Prevent the manual button and background runner from updating one CLI together. */
 export class CliUpdateLease {
   private active: string | null = null;
+  /** F-1397: a atualização em curso grava o binário noutro diretório — spawn não espera. */
+  private activeSpawnSafe = false;
   private provisioning = false;
   private autoConsent = false;
   private readonly spawning = new Map<string, number>();
@@ -36,6 +40,11 @@ export class CliUpdateLease {
   isHeld(adapterId: string): boolean {
     adapterId = cliUpdateKey(adapterId);
     return this.active === adapterId;
+  }
+
+  /** Um spawn desta CLI está com o permit na mão (pane ainda não registrado). */
+  isSpawning(adapterId: string): boolean {
+    return (this.spawning.get(cliUpdateKey(adapterId)) ?? 0) > 0;
   }
 
   isProvisioning(): boolean {
@@ -62,11 +71,16 @@ export class CliUpdateLease {
     this.autoConsent = false;
   }
 
-  acquire(adapterId: string, owner: 'manual' | 'provisioning' = 'manual'): boolean {
+  /**
+   * `spawnSafe` (F-1397): instalação versionada — o binário novo vai para outro
+   * diretório e só o link troca, então nem o spawn em voo precisa estorvar.
+   */
+  acquire(adapterId: string, owner: 'manual' | 'provisioning' = 'manual', spawnSafe = false): boolean {
     adapterId = cliUpdateKey(adapterId);
     if (this.active || this.autoConsent || (this.provisioning && owner !== 'provisioning') ||
-        (this.spawning.get(adapterId) ?? 0) > 0) return false;
+        (!spawnSafe && (this.spawning.get(adapterId) ?? 0) > 0)) return false;
     this.active = adapterId;
+    this.activeSpawnSafe = spawnSafe;
     return true;
   }
 
@@ -74,6 +88,7 @@ export class CliUpdateLease {
     adapterId = cliUpdateKey(adapterId);
     if (this.active !== adapterId) return;
     this.active = null;
+    this.activeSpawnSafe = false;
     const waiters = this.spawnWaiters.get(adapterId) ?? [];
     this.spawnWaiters.delete(adapterId);
     for (const grant of waiters) grant(this.grantSpawnPermit(adapterId));
@@ -93,7 +108,9 @@ export class CliUpdateLease {
 
   acquireSpawnPermit(adapterId: string): Promise<() => void> {
     adapterId = cliUpdateKey(adapterId);
-    if (this.active !== adapterId) return Promise.resolve(this.grantSpawnPermit(adapterId));
+    if (this.active !== adapterId || this.activeSpawnSafe) {
+      return Promise.resolve(this.grantSpawnPermit(adapterId));
+    }
     return new Promise((resolve) => {
       const waiters = this.spawnWaiters.get(adapterId) ?? [];
       waiters.push(resolve);
@@ -195,6 +212,78 @@ export function isVersionedCliInstall(adapterId: string, binPath: string, realBi
   return false;
 }
 
+/**
+ * F-1397: checagem barata de versão disponível — npm e brew têm comando de
+ * leitura que não toca em node_modules/Caskroom. Script e updater próprio
+ * (claude update, kimi upgrade, uv) já são no-op quando em dia: seguem o
+ * caminho atual. `null` = sem checagem barata para a receita.
+ */
+export interface CliVersionCheck {
+  readonly kind: 'npm' | 'brew';
+  /** Pacote npm, fórmula ou cask. */
+  readonly name: string;
+  /** Argv completo da checagem (o runner da receita resolve o executável). */
+  readonly argv: readonly string[];
+}
+
+export function cliVersionCheck(recipe: CliInstallRecipe): CliVersionCheck | null {
+  if (recipe.kind !== 'argv') return null;
+  if (recipe.argv[0] === 'npm' && recipe.argv[1] === 'install') {
+    // O pacote fica por último na receita npm (vide cli-install-recipes). A
+    // checagem consulta o MESMO registry do install (receita pode fixar um).
+    const name = recipe.argv[recipe.argv.length - 1];
+    const registry = recipe.argv.find((arg) => String(arg).startsWith('--registry='));
+    return { kind: 'npm', name, argv: ['npm', 'view', name, 'version', ...(registry ? [registry] : [])] };
+  }
+  if (recipe.argv[0] === recipe.runner && /\/bin\/brew$/u.test(recipe.runner) &&
+      recipe.argv[1] === 'upgrade') {
+    const cask = recipe.argv[2] === '--cask';
+    const name = (cask ? recipe.argv[3] : recipe.argv[2]) as string;
+    return {
+      kind: 'brew', name,
+      argv: [recipe.runner, 'outdated', '--json=v2', ...(cask ? ['--cask' as const] : []), name],
+    };
+  }
+  return null;
+}
+
+const VERSION_TOKEN = /\d+(?:\.\d+)+[^\s,]*/u;
+
+/**
+ * Resultado da checagem: true = em dia (nada a instalar), false = desatualizada,
+ * null = resposta ilegível (segue o caminho atual: instala). npm compara o
+ * token de versão — `claude --version` costuma trazer texto junto do número.
+ */
+export function cliVersionCheckUpToDate(
+  check: CliVersionCheck,
+  installedVersion: string,
+  stdout: string,
+): boolean | null {
+  const text = String(stdout).trim();
+  if (!text) return null;
+  if (check.kind === 'npm') {
+    const available = text.match(VERSION_TOKEN)?.[0];
+    const installed = installedVersion.match(VERSION_TOKEN)?.[0];
+    return available && installed ? available === installed : null;
+  }
+  try {
+    const parsed = JSON.parse(text) as {
+      // brew atual emite minúsculas; aceitamos maiúsculas por tolerância.
+      formulae?: readonly { name?: unknown }[];
+      casks?: readonly { name?: unknown }[];
+      Formula?: readonly { name?: unknown }[];
+      Casks?: readonly { name?: unknown }[];
+    };
+    const listed = [
+      ...(parsed.formulae ?? parsed.Formula ?? []),
+      ...(parsed.casks ?? parsed.Casks ?? []),
+    ].some((entry) => entry?.name === check.name);
+    return !listed;
+  } catch {
+    return null;
+  }
+}
+
 type AutoUpdateInput = Parameters<typeof selectCliUpdateRecipe>[0] & {
   readonly isTargetWritable: (targetPath: string) => boolean;
   /** F-1395: artefatos do recibo do cask instalado (null/ausente = manual). */
@@ -277,7 +366,7 @@ export class CliAutoUpdateQueue {
     ids: readonly string[],
     now: number,
     hasLivePane: (adapterId: string) => boolean,
-    run: (adapterId: string) => Promise<boolean>,
+    run: (adapterId: string) => Promise<boolean | 'deferred'>,
     intervalMs = CHECK_INTERVAL_MS,
   ): Promise<string | null> {
     if (this.running) return null;
@@ -285,7 +374,12 @@ export class CliAutoUpdateQueue {
     if (!id) return null;
     this.running = true;
     try {
-      if (await run(id)) this.markAttempt(id, now);
+      const outcome = await run(id);
+      if (outcome === 'deferred') {
+        // F-1397: adiamento (pane/spawn em voo) não é falha — volta no próximo
+        // tique em vez de ficar 1 h de castigo.
+        this.retryAfter[id] = now + DEFER_RETRY_MS;
+      } else if (outcome) this.markAttempt(id, now);
       else this.retryAfter[id] = now + RETRY_AFTER_FAILURE_MS;
       return id;
     } catch (error) {
@@ -301,7 +395,7 @@ export class CliAutoUpdateQueue {
     ids: readonly string[],
     now: number,
     hasLivePane: (adapterId: string) => boolean,
-    run: (adapterId: string) => Promise<boolean>,
+    run: (adapterId: string) => Promise<boolean | 'deferred'>,
     intervalMs = BOOT_RECHECK_MS,
   ): Promise<string[]> {
     const attempted: string[] = [];

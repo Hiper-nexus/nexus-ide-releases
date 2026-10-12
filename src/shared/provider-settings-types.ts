@@ -213,7 +213,8 @@ export const PROVIDER_CHANNELS = {
 /** F-1395: resultado de uma atualização automática, sem caminhos. */
 export interface CliAutoUpdateOutcome {
   at: number;
-  status: 'updated' | 'unchanged' | 'failed';
+  /** F-1397: `up-to-date` = a checagem barata (npm view / brew outdated) não achou versão nova. */
+  status: 'updated' | 'unchanged' | 'up-to-date' | 'failed';
   fromVersion?: string;
   toVersion?: string;
   /** Motivo curto da falha: install-failed, timeout, version-unreadable… */

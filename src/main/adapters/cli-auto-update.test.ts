@@ -4,8 +4,9 @@ import path from 'node:path';
 import { __resetPathResolverForTests, resolveCliBinary, resolveSpawnBinary, warmCliBinaryVersions } from '../path-resolver';
 import { describe, expect, it } from 'vitest';
 import {
-  CliAutoUpdateQueue, CliUpdateLease, caskReceiptArtifactKinds, caskReceiptPath, isSafeAutomaticCliRecipe,
-  isVersionedCliInstall, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent,
+  CliAutoUpdateQueue, CliUpdateLease, caskReceiptArtifactKinds, caskReceiptPath, cliVersionCheck,
+  cliVersionCheckUpToDate, isSafeAutomaticCliRecipe, isVersionedCliInstall,
+  selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent,
 } from './cli-auto-update';
 
 describe('automatic CLI updates', () => {
@@ -296,8 +297,7 @@ describe('F-1395: no boot, analisar e atualizar todas as CLIs', () => {
   });
 
   it('(c) só instalação versionada (claude, devin, grok) atualiza com pane vivo', () => {
-    const home = '/Users/operator';
-    expect(isVersionedCliInstall('claude', `${home}/.local/bin/claude`, `${home}/.local/share/claude/versions/2.1.296`)).toBe(true);
+    const home = '/Users/operator';    expect(isVersionedCliInstall('claude', `${home}/.local/bin/claude`, `${home}/.local/share/claude/versions/2.1.296`)).toBe(true);
     expect(isVersionedCliInstall('devin', `${home}/.local/bin/devin`, `${home}/.local/share/devin/cli/_versions/3000.11.3/bin/devin`)).toBe(true);
     expect(isVersionedCliInstall('grok', `${home}/.grok/bin/grok`, `${home}/.grok/bin/grok-1.0.50`)).toBe(true);
     // npm, brew, cask e o kimi nativo trocam no lugar: esperam o último pane.
@@ -306,5 +306,104 @@ describe('F-1395: no boot, analisar e atualizar todas as CLIs', () => {
     expect(isVersionedCliInstall('kimi', `${home}/.kimi-code/bin/kimi`, `${home}/.kimi-code/bin/kimi`)).toBe(false);
     expect(isVersionedCliInstall('muse', '/opt/homebrew/bin/muse', '/opt/homebrew/Caskroom/muse-code/1.4.6/muse-aarch64-macos')).toBe(false);
     expect(isVersionedCliInstall('grok', `${home}/.grok/bin/grok-1.0.50`, `${home}/.grok/bin/grok-1.0.50`)).toBe(false);
+  });
+});
+
+describe('F-1397: checagem barata de versão antes de instalar', () => {
+  it('receita npm gera `npm view <pkg> version`; brew formula/cask gera `brew outdated --json=v2`', () => {
+    expect(cliVersionCheck({
+      kind: 'argv', argv: ['npm', 'install', '-g', '--prefix', '/opt/homebrew', '@openai/codex'],
+      runner: 'npm', runnerHint: '',
+    })).toEqual({ kind: 'npm', name: '@openai/codex', argv: ['npm', 'view', '@openai/codex', 'version'] });
+    expect(cliVersionCheck({
+      kind: 'argv', argv: ['/opt/homebrew/bin/brew', 'upgrade', 'opencode'],
+      runner: '/opt/homebrew/bin/brew', runnerHint: '',
+    })).toEqual({ kind: 'brew', name: 'opencode', argv: ['/opt/homebrew/bin/brew', 'outdated', '--json=v2', 'opencode'] });
+    expect(cliVersionCheck({
+      kind: 'argv', argv: ['/opt/homebrew/bin/brew', 'upgrade', '--cask', 'muse-code'],
+      runner: '/opt/homebrew/bin/brew', runnerHint: '',
+    })).toEqual({ kind: 'brew', name: 'muse-code', argv: ['/opt/homebrew/bin/brew', 'outdated', '--json=v2', '--cask', 'muse-code'] });
+    // Script e updater próprio (claude update, kimi upgrade, uv) não têm checagem
+    // barata: já são no-op quando em dia, seguem o caminho atual.
+    expect(cliVersionCheck({
+      kind: 'argv', argv: ['/Users/operator/.local/bin/claude', 'update'],
+      runner: '/Users/operator/.local/bin/claude', runnerHint: '',
+    })).toBeNull();
+    expect(cliVersionCheck({
+      kind: 'script', scriptUrl: 'https://cli.devin.ai/install.sh', runner: 'bash', runnerHint: '',
+      automaticUpdate: true,
+    })).toBeNull();
+    expect(cliVersionCheck({
+      kind: 'argv',
+      argv: ['uv', 'tool', 'install', '--force', '--python', 'python3.12', '--with', 'pip', 'aider-chat@latest'],
+      runner: 'uv', runnerHint: '',
+    })).toBeNull();
+  });
+
+  it('npm em dia → true; desatualizado → false; resposta ilegível → null (instala)', () => {
+    const check = { kind: 'npm' as const, name: '@openai/codex', argv: [] };
+    expect(cliVersionCheckUpToDate(check, '0.160.0', '0.160.0\n')).toBe(true);
+    expect(cliVersionCheckUpToDate(check, '0.146.0', '0.160.0')).toBe(false);
+    // `claude --version` costuma trazer texto junto do número: compara o token.
+    expect(cliVersionCheckUpToDate(check, '2.1.296 (Claude Code)', '2.1.296')).toBe(true);
+    expect(cliVersionCheckUpToDate(check, '1.0.0', '')).toBeNull();
+    expect(cliVersionCheckUpToDate(check, '1.0.0', 'npm ERR! network')).toBeNull();
+    expect(cliVersionCheckUpToDate(check, '(sem versão legível)', '1.0.0')).toBeNull();
+  });
+
+  it('brew: fora da lista de outdated = em dia; na lista = desatualizado; JSON ruim = null', () => {
+    const formula = { kind: 'brew' as const, name: 'opencode', argv: [] };
+    // Casing REAL do `brew outdated --json=v2` nesta máquina: minúsculas.
+    expect(cliVersionCheckUpToDate(formula, '1.0.0', '{"formulae":[],"casks":[]}')).toBe(true);
+    expect(cliVersionCheckUpToDate(formula, '1.0.0',
+      '{"formulae":[{"name":"opencode","installed_version":"1.0.0","current_version":"1.1.0"}],"casks":[]}')).toBe(false);
+    const cask = { kind: 'brew' as const, name: 'muse-code', argv: [] };
+    expect(cliVersionCheckUpToDate(cask, '1.4.6', '{"formulae":[],"casks":[{"name":"muse-code"}]}')).toBe(false);
+    // Tolerância a chaves capitalizadas (formatos antigos/alternativos).
+    expect(cliVersionCheckUpToDate(formula, '1.0.0',
+      '{"Formula":[{"name":"opencode"}],"Casks":[]}')).toBe(false);
+    expect(cliVersionCheckUpToDate(cask, '1.4.6', '{"Formula":[],"Casks":[{"name":"muse-code"}]}')).toBe(false);
+    expect(cliVersionCheckUpToDate(formula, '1.0.0', 'Error: undefined method `outdated\'')).toBeNull();
+  });
+
+  it('npm: a checagem consulta o mesmo registry fixado na receita do install', () => {
+    expect(cliVersionCheck({
+      kind: 'argv',
+      argv: ['npm', 'install', '-g', '--registry=https://registry.npmjs.org/', '@minimax-ai/code'],
+      runner: 'npm', runnerHint: '',
+    })).toEqual({
+      kind: 'npm', name: '@minimax-ai/code',
+      argv: ['npm', 'view', '@minimax-ai/code', 'version', '--registry=https://registry.npmjs.org/'],
+    });
+  });
+});
+
+describe('F-1397: spawn durante atualização versionada não espera o lease', () => {
+  it('permit do claude versionado sai na hora; o de instalação no lugar espera o fim', async () => {
+    const lease = new CliUpdateLease();
+    // claude versionado: o binário novo vai para outro diretório; o pane nasce já.
+    expect(lease.acquire('claude', 'manual', true)).toBe(true);
+    const claudeRelease = await lease.acquireSpawnPermit('claude');
+    claudeRelease();
+    lease.release('claude');
+    // codex (npm, troca no lugar): o spawn espera o update acabar.
+    expect(lease.acquire('codex')).toBe(true);
+    let entered = false;
+    const codexPermit = lease.acquireSpawnPermit('codex').then((release) => { entered = true; return release; });
+    await Promise.resolve();
+    expect(entered).toBe(false);
+    lease.release('codex');
+    (await codexPermit)();
+  });
+
+  it('spawnSafe dispensa a exclusão de spawn em voo; a atualização comum não dispensa', async () => {
+    const lease = new CliUpdateLease();
+    const heldPane = await lease.acquireSpawnPermit('claude');
+    expect(lease.acquire('claude')).toBe(false);
+    expect(lease.isSpawning('claude')).toBe(true);
+    expect(lease.acquire('claude', 'manual', true)).toBe(true);
+    heldPane();
+    lease.release('claude');
+    expect(lease.isSpawning('claude')).toBe(false);
   });
 });
