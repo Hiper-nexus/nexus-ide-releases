@@ -136,3 +136,17 @@ describe('escala ambígua do Token Plan (revisão de segurança)', () => {
     expect(parseAlibabaTokenPlanUsage({ data: { per1MonthPercentage: 1.04 } }, 100)[0]?.usedRatio).toBe(1);
   });
 });
+
+describe('authFailed do `bl` só com erro de sessão (revisão de segurança)', () => {
+  it('saída genérica com "auth"/"expired"/"401" não vira sessão recusada', async () => {
+    const runImpl = async () => ({ code: 2, stdout: '', stderr: 'error: authType field missing; cache expired at 4010ms' });
+    expect(await fetchAlibabaTokenPlanUsageFromCli({ runImpl })).toEqual({ windows: null });
+    const ok = async () => ({ code: 0, stdout: '{"login":"user","note":"401 tokens left"}', stderr: '' });
+    expect(await fetchAlibabaTokenPlanUsageFromCli({ runImpl: ok })).toEqual({ windows: null });
+  });
+  it.each(['please login', 'Error: not logged in', 'HTTP 401 Unauthorized', 'session expired, run bl login'])(
+    'erro "%s" é sessão recusada', async (stderr) => {
+      expect(await fetchAlibabaTokenPlanUsageFromCli({ runImpl: async () => ({ code: 1, stdout: '', stderr }) }))
+        .toEqual({ windows: null, authFailed: true });
+    });
+});
