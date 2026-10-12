@@ -50,7 +50,7 @@ import { trace } from '../observability/main-trace';
 import type { PhaseTimer } from '../observability/phase-timer';
 import { emitWorkerSpawnFailed } from './spawn-fail-events';
 import { notePaneStartAccepted, notePaneStartFailure } from './pane-start-watchdog';
-import { admitToolSpawnSync, paneAdmissionRefusalError } from './pane-admission';
+import { admitToolSpawnSync } from './pane-admission';
 import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import {
@@ -1682,7 +1682,11 @@ export async function spawnPaneAndMaybePrompt(
     licensedAgentPanes: licensedAgentCount(),
   });
   if (!admission.ok) {
-    throw new Error(paneAdmissionRefusalError(admission.reason, admission.message));
+    // Aqui quem lê é o Maestro, não o supervisor (que só decodifica a recusa
+    // do renderer): mensagem legível, sem o código cru `pane_admission_*`.
+    throw new Error(
+      `spawn recusado pela admissão de panes (${admission.reason === 'cap' ? 'teto' : 'memória'}): ${admission.message}`,
+    );
   }
   assertMcpInvocationCurrent(hooks.invocation);
   let resolvedAdapter = getAdapter(options.adapterId);
