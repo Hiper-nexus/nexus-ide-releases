@@ -10396,7 +10396,7 @@ export const RELEASE_076239: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076240: AppRelease = {
   version: '0.76.240',
   date: '2026-10-12',
   codename: 'Escrever, julgar, devolver',
@@ -10410,5 +10410,21 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Memória e modelo de negócio', detail: 'Invariantes escolhidos pelos arquivos que a conversa editou, busca por F-XXXX exata e recibos vazios fora da memória injetada.' },
     { title: 'Estado real dos panes', detail: 'One-shot trabalhando aparece ocupado, o minimax "Loading" conta como trabalho, sem alarme falso de travado e sem index.lock órfão.' },
     { title: 'Segurança e configuração', detail: 'O audit não vaza segredo, o startKey não é exposto, segredo em args de MCP vai para o cofre, o playwright do hub volta a abrir e o Muse isola a sessão por pane.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.241',
+  date: '2026-10-12',
+  codename: 'Windows de verdade',
+  summary: 'Suíte inteira rodada num Windows real: os anexos lacrados, o Pet Studio e o consent do smoke deixam de falhar por detalhes POSIX que não existem no NTFS.',
+  highlights: [
+    { title: 'Anexos lacrados funcionam no Windows', detail: 'O selo passa a usar o bit read-only do NTFS e as provas dev/ino/nlink, que são reais lá; modo POSIX 0o700/0o400 só é exigido onde existe.' },
+    { title: 'Pet Studio instala de ponta a ponta', detail: 'O fsync pedia um handle de leitura, que o Windows recusa; agora abre para escrita e o pacote completo instala sem EPERM.' },
+    { title: 'Consent do smoke aceita perfil Windows', detail: 'A checagem de diretório privado não exige mais uid/modo POSIX no Windows — perfil de usuário já é privado por ACL.' },
+  ],
+  fixes: [
+    { title: 'Durabilidade sem fsync de diretório', detail: 'No Windows o rename já é o commit; fsync de diretório (EPERM) só roda em POSIX.' },
+    { title: 'Fixture do atualizador correta', detail: 'O teste F-1280 stuba TEMP/TMP, que é o que os.tmpdir() lê no Windows.' },
   ],
 };
