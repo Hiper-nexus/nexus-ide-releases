@@ -51,6 +51,13 @@ export const PASTE_INGEST_GRACE_MS = 150;
  */
 export const PASTE_QUIESCE_MS = 400;
 /**
+ * Saída que nunca sossega depois do marcador (spinner, repintura, outro
+ * processo escrevendo) não segura o Enter até o teto: passado este prazo do
+ * ÚLTIMO marcador, ele vale mesmo sem quietação. Um bloco novo do Devin traz
+ * marcador novo e recomeça o prazo.
+ */
+export const PASTE_QUIESCE_MAX_MS = 2_000;
+/**
  * Teto da espera: 2 s + 1,5 ms por caractere (3× o ritmo medido com a máquina
  * ociosa — com muitos panes vivos a ingestão é mais lenta), no máximo 30 s.
  * Vencido o teto, o Enter sai assim mesmo: nunca é pior que o caminho antigo.
@@ -130,6 +137,7 @@ export function watchPasteIngest(
   let settled = false;
   let sawMarker = false;
   let lastDataAt = 0;
+  let lastMarkerAt = 0;
   let quiesceTimer: ReturnType<typeof setTimeout> | null = null;
   let resolveDone: (outcome: PasteIngestOutcome) => void = () => {};
   const done = new Promise<PasteIngestOutcome>((resolve) => {
@@ -158,20 +166,27 @@ export function watchPasteIngest(
     resolveDone(outcome);
   };
   // F-1282: o marcador só vale com a saída quieta — cada byte novo (eco da
-  // ingestão, 2º bloco do Devin) recomeça a janela e empurra o Enter.
+  // ingestão, 2º bloco do Devin) empurra o Enter, até PASTE_QUIESCE_MAX_MS
+  // depois do último marcador.
+  const quiet = (now: number) =>
+    now - lastDataAt >= PASTE_QUIESCE_MS || now - lastMarkerAt >= PASTE_QUIESCE_MAX_MS;
   const scheduleQuiesce = () => {
-    if (!sawMarker || settled) return;
-    clearQuiesceTimer();
+    if (!sawMarker || settled || quiesceTimer) return;
+    const now = Date.now();
+    const wait = Math.min(PASTE_QUIESCE_MS - (now - lastDataAt), PASTE_QUIESCE_MAX_MS - (now - lastMarkerAt));
     quiesceTimer = setTimeout(() => {
       quiesceTimer = null;
       if (settled) return;
-      if (Date.now() - lastDataAt >= PASTE_QUIESCE_MS) finish('marker');
+      if (quiet(Date.now())) finish('marker');
       else scheduleQuiesce();
-    }, Math.max(0, PASTE_QUIESCE_MS - (Date.now() - lastDataAt)));
+    }, Math.max(0, wait));
     if (typeof quiesceTimer.unref === 'function') quiesceTimer.unref();
   };
   untapMarker = watchPtyAnalysisSession('paste', sessionId, { adapterId: plan.marker === DEVIN_PASTE_MARKER ? 'devin' : 'codex' }, () => {
     sawMarker = true;
+    // O marcador é saída: conta mesmo se a análise chegar antes do tap.
+    lastMarkerAt = lastDataAt = Date.now();
+    clearQuiesceTimer();
     scheduleQuiesce();
   });
   untapData = tapSessionData((dataSessionId, _data) => {

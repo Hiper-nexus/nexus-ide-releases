@@ -44,6 +44,7 @@ import {
   DEVIN_LARGE_PASTE_LINES,
   DEVIN_PASTE_MARKER,
   PASTE_INGEST_MAX_MS,
+  PASTE_QUIESCE_MAX_MS,
   PASTE_QUIESCE_MS,
   pasteIngestCapMs,
   pasteIngestPlan,
@@ -159,6 +160,29 @@ describe('espera pela ingestão da colagem (F-735)', () => {
     expect(outcome).toBe('marker');
     expect(pty.dataTaps).toHaveLength(0);
     expect(pty.exitTaps).toHaveLength(0);
+  });
+
+  it('F-1282: saída que nunca sossega depois do marcador não segura o Enter até o teto', async () => {
+    // CI Linux 12/10 (pty-analysis-main-load): Codex sob carga contínua
+    // pintava o marcador e seguia escrevendo — o watch caía no 'cap'.
+    const plan = pasteIngestPlan('codex', 'x'.repeat(4_500))!;
+    const watch = watchPasteIngest('pty-codex', plan);
+    let outcome: PasteIngestOutcome | null = null;
+    void watch.done.then((value) => { outcome = value; });
+
+    emit('pty-codex', '[Pasted Content 4500 chars]');
+    for (let elapsed = 0; elapsed < PASTE_QUIESCE_MAX_MS - 100; elapsed += 100) {
+      await vi.advanceTimersByTimeAsync(100);
+      emit('pty-codex', '\x1b[2K\rWorking…');
+    }
+    expect(outcome).toBeNull();
+    for (let step = 0; step < 2; step++) {
+      await vi.advanceTimersByTimeAsync(100);
+      emit('pty-codex', '\x1b[2K\rWorking…');
+    }
+    expect(outcome).toBe('marker');
+    expect(PASTE_QUIESCE_MAX_MS).toBeLessThan(plan.capMs);
+    expect(pty.dataTaps).toHaveLength(0);
   });
 
   it('marcador antigo no composer não conta: só a saída depois do arme', async () => {
