@@ -41,6 +41,11 @@ describe('classifyRouteSpecialty', () => {
     expect(verdict.specialty).toBe('security');
   });
 
+  it('F-1402 (Grok): flexões de/do/dos da linhagem de token viram security', () => {
+    expect(classifyRouteSpecialty('linhagem de token da conta').specialty).toBe('security');
+    expect(classifyRouteSpecialty('linhagem dos tokens de sessão').specialty).toBe('security');
+  });
+
   it('F-1402 C8: linhagem de dados e credenciamento não viram security', () => {
     expect(classifyRouteSpecialty('implementar linhagem de dados no ETL').specialty).not.toBe('security');
     expect(classifyRouteSpecialty('página de credenciamento de parceiros').specialty).not.toBe('security');

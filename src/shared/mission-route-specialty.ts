@@ -125,6 +125,16 @@ const HEURISTIC_EFFORT_FLOOR: Readonly<
 });
 
 /**
+ * F-1402 (revisões Fable C8 e Grok): "linhagem" só é superfície de credencial
+ * quando o objeto é credencial ou token, em qualquer flexão de/do/dos/da/das.
+ * "linhagem de dados no ETL" fica fora.
+ */
+export const CREDENTIAL_LINEAGE_SIGNALS = [
+  'linhagem de credencial', 'linhagem da credencial', 'linhagem de credenciais', 'linhagem das credenciais',
+  'linhagem de token', 'linhagem do token', 'linhagem de tokens', 'linhagem dos tokens',
+] as const;
+
+/**
  * Security overlay — a feature/bug that is actually an auth/payment/secret
  * surface should not ride the generic coding ladder. Doc stays doc: writing
  * about auth is still a document.
@@ -179,8 +189,7 @@ const SECURITY_SPECIALTY_SIGNALS = [
   'login session',
   'conta gerenciada',
   'managed account',
-  'linhagem de credencial',
-  'linhagem do token',
+  ...CREDENTIAL_LINEAGE_SIGNALS,
 ] as const;
 
 /**

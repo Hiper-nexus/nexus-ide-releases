@@ -30,6 +30,7 @@ import {
 } from '../adapters/model-catalog';
 import {
   ROUTE_EFFORTS,
+  CREDENTIAL_LINEAGE_SIGNALS,
   classifyRouteSpecialty,
   decisiveSignals,
   matchSignals,
@@ -379,7 +380,7 @@ const CRITICAL_SIGNALS = [
   'credencial', 'credenciais', 'credential', 'credentials',
   'keychain', 'refresh token', 'access token',
   'sessão de login', 'sessao de login', 'login session',
-  'conta gerenciada', 'managed account', 'linhagem de credencial', 'linhagem do token',
+  'conta gerenciada', 'managed account', ...CREDENTIAL_LINEAGE_SIGNALS,
 ];
 
 const HARD_SIGNALS = [
@@ -468,7 +469,7 @@ const DOMAIN_ONLY_SIGNALS: ReadonlySet<string> = new Set([
   'credencial', 'credenciais', 'credential', 'credentials',
   'keychain', 'refresh token', 'access token',
   'sessão de login', 'sessao de login', 'login session',
-  'conta gerenciada', 'managed account', 'linhagem de credencial', 'linhagem do token',
+  'conta gerenciada', 'managed account', ...CREDENTIAL_LINEAGE_SIGNALS,
   'integração', 'integracao', 'integrações', 'integracoes', 'integration',
   'engine', 'motor', 'protocolo', 'protocol', 'parser', 'compiler',
 ]);

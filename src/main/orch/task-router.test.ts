@@ -79,6 +79,11 @@ describe('classifyTask', () => {
     expect(classifyTask('listar as credenciais escopadas').tier).toBe('trivial');
   });
 
+  it('F-1402 (Grok): flexões de/do/dos da linhagem de token são superfície de credencial', () => {
+    expect(classifyTask('linhagem de token da conta').tier).toBe('critical');
+    expect(classifyTask('linhagem dos tokens de sessão').tier).toBe('critical');
+  });
+
   it('F-1402 C8: linhagem de dados e credenciamento não são superfície de credencial', () => {
     expect(classifyTask('implementar linhagem de dados no ETL').tier).not.toBe('critical');
     expect(classifyTask('página de credenciamento de parceiros').tier).not.toBe('critical');
