@@ -39,6 +39,8 @@ export const STOP_BLOCK_DECAY_MS = 10 * 60_000;
  */
 export const STOP_HOOK_BUDGET_MS = 60_000;
 const STOP_HOOK_MAX_TEST_FILES = 20;
+/** F-1287: quanto do corpo do Stop (não usado) é drenado antes de parar de ler. */
+export const STOP_HOOK_MAX_DRAIN_BYTES = 1024 * 1024;
 const MAX_LEDGERS = 256;
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
@@ -192,13 +194,23 @@ export async function handleHookRegressionHttp(
     sendHookJson(res, 405, { ok: false, error: 'method not allowed' });
     return;
   }
-  // O corpo do Stop (última mensagem do agente) não é usado: é drenado sem
-  // teto. Com o teto dos outros hooks, uma resposta longa virava 400 e o
-  // `curl … || true` desligava o portão em silêncio.
-  await new Promise<void>((resolve) => {
-    req.once('end', resolve);
-    req.once('error', () => resolve());
-    req.resume();
+  // O corpo do Stop (última mensagem do agente) não é usado: é drenado, não
+  // recusado. Com o teto dos outros hooks, uma resposta longa virava 400 e o
+  // `curl … || true` desligava o portão em silêncio. F-1287: drena até
+  // STOP_HOOK_MAX_DRAIN_BYTES; além disso para de ler, segue com o portão e
+  // fecha a conexão depois da resposta — corpo sem fim não segura o handler.
+  const overflowed = await new Promise<boolean>((resolve) => {
+    let drained = 0;
+    const onData = (chunk: Buffer) => {
+      drained += chunk.length;
+      if (drained <= STOP_HOOK_MAX_DRAIN_BYTES) return;
+      req.off('data', onData);
+      req.pause();
+      resolve(true);
+    };
+    req.on('data', onData);
+    req.once('end', () => resolve(false));
+    req.once('error', () => resolve(false));
   });
   // O curl desiste no `--max-time` do hook: conexão fechada
   // antes da resposta cancela os testes (o grupo de processos morre junto).
@@ -207,5 +219,9 @@ export async function handleHookRegressionHttp(
     if (!res.writableEnded) controller.abort();
   });
   const result = await handleHookRegressionRequest(ctx, {}, { ...deps, signal: controller.signal });
+  if (overflowed) {
+    res.setHeader('connection', 'close');
+    res.once('finish', () => req.destroy());
+  }
   sendHookJson(res, result.statusCode, result.payload);
 }

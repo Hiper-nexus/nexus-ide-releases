@@ -188,6 +188,47 @@ describe('handleHookRegressionRequest (Stop do pane do operador)', () => {
     }
   });
 
+  it('F-1287: corpo acima do teto de drenagem que nunca termina não segura o handler; a resposta segue 200 {}', async () => {
+    const ctx = { ...operator, token: 't', label: 'op', allowedTools: null, allowedSkills: null,
+      stopAttempts: 0, handoffSubmitted: false } as unknown as Parameters<typeof handleHookRegressionHttp>[2];
+    const sent: { status?: number; body?: string } = {};
+    let handled: Promise<void> | undefined;
+    const server = http.createServer((req, res) => {
+      const end = res.end.bind(res) as (...args: unknown[]) => http.ServerResponse;
+      res.end = ((...args: unknown[]) => {
+        sent.status = res.statusCode;
+        sent.body = String(args[0]);
+        return end(...args);
+      }) as typeof res.end;
+      handled = handleHookRegressionHttp(req, res, ctx, { git, enabled: () => false });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    let client: http.ClientRequest | undefined;
+    try {
+      const { port } = server.address() as AddressInfo;
+      // 1,5 MB e a requisição nunca termina (sem `end()`): o servidor responde e fecha a conexão.
+      const closed = new Promise<'fechada'>((resolve) => {
+        client = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/hook/regression' }, (response) => response.resume());
+        client.on('error', () => undefined);
+        client.on('close', () => resolve('fechada'));
+        client.write(Buffer.alloc(1536 * 1024, 0x78));
+      });
+      const outcome = await Promise.race([
+        closed.then(async (state) => {
+          await handled;
+          return state;
+        }),
+        new Promise<'sem resposta'>((resolve) => setTimeout(() => resolve('sem resposta'), 5_000)),
+      ]);
+      expect(outcome).toBe('fechada');
+      expect(sent).toEqual({ status: 200, body: '{}' });
+    } finally {
+      client?.destroy();
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it('base da sessão: HEAD no spawn (reflog); sem spawn conhecido, o primeiro HEAD visto', async () => {
     const run = vi.fn(async (_input: { baseSha?: string; startedAtMs?: number }) =>
       result({ status: 'clean', changedFiles: [] }),
