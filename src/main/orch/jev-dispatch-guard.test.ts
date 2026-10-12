@@ -217,6 +217,16 @@ describe('guardToolCall', () => {
     expect(state).not.toContain('sk-aaaaaaaa');
   });
 
+  it('F-1346 (parte 2): objetivo longo chega ao juiz com o pedido do FIM (cabeça + cauda)', async () => {
+    const judge = vi.fn<JudgeMock>(async () => result(benign));
+    const ask = 'PEDIDO DECISIVO: só editar src/main/orch, nunca apagar arquivos.';
+    await guardToolCall(input({ missionObjective: `Contexto da missão. ${'contexto '.repeat(1_200)} ${ask}` }), { judge });
+    const objective = (judge.mock.calls[0]![0].state as { mission: { objective: string } }).mission.objective;
+    expect(objective).toContain('Contexto da missão.');
+    expect(objective).toContain(ask);
+    expect(objective.length).toBeLessThan(1_600);
+  });
+
   it('cache key uses the ORIGINAL args: commands differing after the cut are judged separately', async () => {
     const judge = vi.fn<JudgeMock>(async () => result(benign));
     const head = 'y'.repeat(310);

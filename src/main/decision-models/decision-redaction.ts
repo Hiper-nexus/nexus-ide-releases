@@ -87,7 +87,8 @@ export function redactState(state: unknown): unknown {
 /**
  * Trunca texto longo; keepTail preserva o fim (saída de teste, tail de log).
  * keepEnds preserva cabeça e cauda — pedido do operador: o contexto abre, o
- * pedido de ação costuma fechar (F-1346).
+ * pedido de ação costuma fechar (F-1346). keepEnds redige ANTES de cortar: o
+ * segundo ponto de corte não pode deixar o sufixo de um segredo partido ao meio.
  */
 export function capText(
   text: string,
@@ -95,11 +96,14 @@ export function capText(
   opts?: { keepTail?: boolean; keepEnds?: boolean },
 ): string {
   if (text.length <= maxChars) return text;
-  const omitted = text.length - maxChars;
   if (opts?.keepEnds) {
+    const redacted = redactSecrets(text);
+    if (redacted.length <= maxChars) return redacted;
+    const cut = redacted.length - maxChars;
     const head = Math.ceil(maxChars / 2);
-    return `${text.slice(0, head)}\n[... ${omitted} chars omitted]\n${text.slice(head + omitted)}`;
+    return `${redacted.slice(0, head)}\n[... ${cut} chars omitted]\n${redacted.slice(head + cut)}`;
   }
+  const omitted = text.length - maxChars;
   return opts?.keepTail
     ? `\n[... ${omitted} chars omitted]${text.slice(omitted)}`
     : `${text.slice(0, maxChars)}\n[... ${omitted} chars omitted]`;

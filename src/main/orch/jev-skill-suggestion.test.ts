@@ -345,6 +345,19 @@ describe('suggestSkillForTask', () => {
     expect(plain.signal).toBeUndefined();
   });
 
+  it('F-1346 (parte 2): tarefa longa chega ao Jev com o pedido do FIM (cabeça + cauda)', async () => {
+    const judge = vi.fn(async (_req: unknown) => null);
+    const ask = 'PEDIDO DECISIVO: refaça a landing page com o design system.';
+    await suggestSkillForTask(`Contexto da tarefa. ${'contexto '.repeat(1_200)} ${ask}`, {
+      allowedSkills: null,
+      deps: { judge, ...on },
+    });
+    const task = (judge.mock.calls[0]![0] as { state: { task: string } }).state.task;
+    expect(task).toContain('Contexto da tarefa.');
+    expect(task).toContain(ask);
+    expect(task.length).toBeLessThan(1_600);
+  });
+
   it('returns null when Jev picks none or is not confident', async () => {
     const judgeNone = vi.fn(async (_req: unknown) =>
       jevResult({

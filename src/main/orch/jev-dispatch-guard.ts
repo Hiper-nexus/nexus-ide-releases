@@ -407,7 +407,7 @@ export async function guardToolCall(
   const judgeFn = deps.judge ?? judge;
   const result = await judgeFn({
     state: {
-      mission: { objective: capText(objective, OBJECTIVE_MAX) },
+      mission: { objective: capText(objective, OBJECTIVE_MAX, { keepEnds: true }) },
       call: { tool: canonical, args: argsJson },
       caller: {
         role: input.ctx.role,

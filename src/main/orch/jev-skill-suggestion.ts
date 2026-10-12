@@ -504,7 +504,7 @@ export async function suggestSkillForTask(
 
   try {
     const result = await judgeFn({
-      state: { task: capText(task, TASK_MAX_CHARS) },
+      state: { task: capText(task, TASK_MAX_CHARS, { keepEnds: true }) },
       questions,
       timeoutMs: opts.timeoutMs ?? SKILL_SUGGESTION_TIMEOUT_MS,
       ...(opts.signal ? { signal: opts.signal } : {}),

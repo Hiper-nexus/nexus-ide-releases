@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { redactQuestions, redactSecrets, redactState } from './decision-redaction';
+import { capText, redactQuestions, redactSecrets, redactState } from './decision-redaction';
 
 describe('decision provider egress redaction', () => {
   it('hides the Cloudflare token even when it has no surrounding credential label', () => {
@@ -52,5 +52,17 @@ describe('decision provider egress redaction', () => {
       for (const input of inputs) expect(redactSecrets(input)).toContain('[REDACTED]');
       expect(redactSecrets('ordinary text: no credential')).toBe('ordinary text: no credential');
     }
+  });
+});
+
+describe('capText keepEnds (F-1346)', () => {
+  it('guarda cabeça + cauda no mesmo teto e redige antes de cortar (sem sufixo de segredo)', () => {
+    const secret = `sk-${'s'.repeat(40)}`;
+    // O segredo atravessa o ponto de corte da cauda: cortar antes de redigir
+    // deixaria 'sssssssss' (o sufixo) passar pelos padrões.
+    const out = capText(`${'a'.repeat(100)}${secret} ${'b'.repeat(10)}`, 40, { keepEnds: true });
+    expect(out.startsWith('a'.repeat(20))).toBe(true);
+    expect(out.endsWith(` ${'b'.repeat(10)}`)).toBe(true);
+    expect(out).not.toMatch(/s{5}/);
   });
 });

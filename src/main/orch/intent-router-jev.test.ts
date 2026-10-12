@@ -216,3 +216,15 @@ describe('F-1164: missionId chega ao judge no intake', () => {
     expect(judge.mock.calls[0]![0].missionId).toBeUndefined();
   });
 });
+
+describe('F-1346 (parte 2): pedido longo chega ao intake com o pedido do FIM', () => {
+  it('routeWithJev manda cabeça + cauda', async () => {
+    const judge = vi.fn<typeof jevJudge>(async () => null);
+    const ask = 'PEDIDO DECISIVO: abra três writers, um por achado.';
+    await routeWithJev(`Contexto do pedido. ${'contexto '.repeat(1_000)} ${ask}`, { judge, enabled, hasKey });
+    const request = (judge.mock.calls[0]![0].state as { request: string }).request;
+    expect(request).toContain('Contexto do pedido.');
+    expect(request).toContain(ask);
+    expect(request.length).toBeLessThan(6_100);
+  });
+});

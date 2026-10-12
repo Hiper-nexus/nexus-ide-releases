@@ -232,7 +232,7 @@ export async function classifyTaskForRouting(
   let noAnswer: JevUnavailableReason | undefined;
   const judgeFn = deps.judge ?? judge;
   const result = await judgeFn({
-    state: { task: capText(task, TASK_MAX_CHARS) },
+    state: { task: capText(task, TASK_MAX_CHARS, { keepEnds: true }) },
     questions: TASK_ROUTING_QUESTIONS,
     timeoutMs: TASK_ROUTING_TIMEOUT_MS,
     // A rota roda no caminho crítico do spawn: o timeout já é o prazo máximo
@@ -339,7 +339,7 @@ export async function classifyTaskWithSkillForRouting(
   let noAnswer: JevUnavailableReason | undefined;
   const judgeFn = opts.deps?.judge ?? judge;
   const result = await judgeFn({
-    state: { task: capText(task, TASK_MAX_CHARS) },
+    state: { task: capText(task, TASK_MAX_CHARS, { keepEnds: true }) },
     questions,
     timeoutMs: TASK_ROUTING_TIMEOUT_MS,
     // Mesma regra do classify: rota no caminho crítico do spawn não dobra a

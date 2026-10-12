@@ -10,7 +10,6 @@ import { decisionResultUsage } from '../decision-models/decision-usage';
 import {
   capText,
   judge,
-  redactSecrets,
   type JevQuestion,
 } from './jev-client';
 import { isJevSurfaceEnabled } from './jev-autopilot';
@@ -155,9 +154,9 @@ export async function advisePrompt(
 
   const judgeFn = deps.judge ?? judge;
   const result = await judgeFn({
-    // F-1346: cabeça + cauda — o pedido de ação costuma fechar a mensagem.
-    // Redige antes de cortar: o corte não pode partir um segredo ao meio.
-    state: { message: capText(redactSecrets(message), DELEGATE_MAX_CHARS, { keepEnds: true }) },
+    // F-1346: cabeça + cauda (redigida antes do corte) — o pedido de ação
+    // costuma fechar a mensagem.
+    state: { message: capText(message, DELEGATE_MAX_CHARS, { keepEnds: true }) },
     questions: DELEGATION_QUESTIONS,
     timeoutMs: DELEGATE_TIMEOUT_MS,
     // Teto total: sem isto o retry do judge dobraria a espera do hook.

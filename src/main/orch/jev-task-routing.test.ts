@@ -353,3 +353,22 @@ describe('lote do route_task: skills do projeto numa pergunta própria (F-753)',
     });
   });
 });
+
+describe('F-1346 (parte 2): tarefa longa chega ao Jev com o pedido do FIM', () => {
+  const ask = 'PEDIDO DECISIVO: corrija o deadlock do scheduler em produção.';
+  const long = `Contexto da tarefa. ${'contexto '.repeat(1_200)} ${ask}`;
+
+  it('classifyTaskForRouting e classifyTaskWithSkillForRouting mandam cabeça + cauda', async () => {
+    const judge = vi.fn<JudgeMock>(async () => null);
+    const on = { enabled: () => true, hasKey: () => true };
+    await classifyTaskForRouting(long, { judge, ...on });
+    await classifyTaskWithSkillForRouting(long, { allowedSkills: null, deps: { judge, ...on } });
+    expect(judge).toHaveBeenCalledTimes(2);
+    for (const call of judge.mock.calls) {
+      const task = (call[0].state as { task: string }).task;
+      expect(task).toContain('Contexto da tarefa.');
+      expect(task).toContain(ask);
+      expect(task.length).toBeLessThan(3_100);
+    }
+  });
+});

@@ -185,7 +185,7 @@ export async function routeWithJev(
   const designRefs = designReferences().slice(0, 30);
   const questions = buildQuestions(designRefs);
   const result: JevResult | null = await judgeFn({
-    state: { request: capText(objective, 6_000) },
+    state: { request: capText(objective, 6_000, { keepEnds: true }) },
     questions,
     timeoutMs: JEV_INTAKE_TIMEOUT_MS,
     // O intake roda antes do spawn do orquestrador: retry duplicaria a espera
