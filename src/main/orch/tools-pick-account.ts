@@ -51,9 +51,6 @@ export const pickAccountTool: McpToolDef = {
     }
     // Worker só enxerga o próprio provider (mesma fronteira do quota_status).
     const ownProviderOnly = ctx.role === 'worker';
-    const adapterId = ownProviderOnly
-      ? (ctx.providerId ?? undefined)
-      : parsed.data.adapterId;
     if (ownProviderOnly && !ctx.providerId) {
       return Object.freeze({
         available: false,
@@ -63,6 +60,19 @@ export const pickAccountTool: McpToolDef = {
         alternatives: [],
       });
     }
+    // F-1330: pedir outro provider devolvia o pick do próprio, sem aviso.
+    // A fronteira é a mesma; a recusa agora é explícita.
+    if (ownProviderOnly && parsed.data.adapterId && parsed.data.adapterId !== ctx.providerId) {
+      return Object.freeze({
+        available: false,
+        decidedBy: 'unavailable' as const,
+        reason:
+          `this worker runs on provider "${ctx.providerId}"; picking for "${parsed.data.adapterId}" ` +
+          'is outside its boundary — a worker picks only within its own provider, and nothing was swapped silently',
+        alternatives: [],
+      });
+    }
+    const adapterId = ownProviderOnly ? ctx.providerId : parsed.data.adapterId;
 
     assertMcpInvocationCurrent(invocation);
     const { computeAccountPick } = await import('../quota/account-pick');

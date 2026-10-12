@@ -43,9 +43,6 @@ export const accountWindowsTool: McpToolDef = {
     }
     // Worker só enxerga o próprio provider (mesma fronteira do pick).
     const ownProviderOnly = ctx.role === 'worker';
-    const adapterId = ownProviderOnly
-      ? (ctx.providerId ?? undefined)
-      : parsed.data.adapterId;
     if (ownProviderOnly && !ctx.providerId) {
       return Object.freeze({
         available: false,
@@ -54,6 +51,23 @@ export const accountWindowsTool: McpToolDef = {
         accounts: [],
       });
     }
+    // F-1330: pedir outro provider respondia com o próprio, sem aviso. A
+    // fronteira continua a mesma; a diferença é que a recusa é explícita.
+    const askedOther = Boolean(
+      parsed.data.adapterId && parsed.data.adapterId !== ctx.providerId,
+    );
+    if (ownProviderOnly && askedOther) {
+      return Object.freeze({
+        available: false,
+        reason:
+          `this worker runs on provider "${ctx.providerId}"; windows of "${parsed.data.adapterId}" ` +
+          'are outside its boundary — a worker sees only its own provider, and nothing was swapped silently',
+        accounts: [],
+      });
+    }
+    const adapterId = ownProviderOnly
+      ? (ctx.providerId ?? undefined)
+      : parsed.data.adapterId;
 
     const { requireQuotaService } = await import('../quota/quota-service');
     const snapshot = requireQuotaService().lastSnapshot();

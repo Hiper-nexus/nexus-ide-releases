@@ -133,6 +133,32 @@ describe('nexus_account_windows', () => {
     expect(partial?.status).toBe('ok');
   });
 
+  it('F-1330: worker asking for another adapter is refused, not silently swapped', async () => {
+    state.snapshot = {
+      updatedAt: NOW,
+      entries: [
+        {
+          id: 'claude:a1',
+          adapterId: 'claude',
+          accountId: 'a1',
+          installed: true,
+          onCooldown: false,
+          updatedAt: NOW,
+          windows: [{ kind: 'hours', label: '5h', usedRatio: 0.1, source: 'cli', confidence: 'high' }],
+        },
+      ],
+    };
+    const out = (await accountWindowsTool.handler(
+      { adapterId: 'codex' },
+      ctx('worker', 'claude'),
+      undefined,
+    )) as { available: boolean; reason: string; accounts: unknown[] };
+    expect(out.available).toBe(false);
+    expect(out.reason).toContain('codex');
+    expect(out.reason).toContain('claude');
+    expect(out.accounts).toEqual([]);
+  });
+
   it('worker without provider identity never widens to the fleet', async () => {
     state.snapshot = { updatedAt: NOW, entries: [] };
     const out = (await accountWindowsTool.handler({}, ctx('worker'), undefined)) as {
