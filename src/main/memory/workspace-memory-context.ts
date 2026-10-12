@@ -210,6 +210,12 @@ function appendWithinBudget(
   return out;
 }
 
+/** Prefixo que o trusted-memory põe no Summary de relato de agente. */
+const RECEIPT_PROVENANCE_PREFIX = /^\[Agent report[^\]]*\]\s*/;
+/** Recibos de transporte sem conteúdo de entrega. */
+const EMPTY_RECEIPT_SUMMARY =
+  /^(?:Handoff accepted by Nexus Main\.|Handoff acknowledged by the mission orchestrator\.)$/;
+
 export interface AutoRecallInjection {
   readonly text: string;
   /** Ids efetivamente escritos no bloco — só eles contam recall (F-769). */
@@ -233,7 +239,14 @@ export function planAutoRecallInjection(
   // knowledge. Only their distilled summary belongs in an agent's context.
   const distilled = dedupeHitsBySubject(hits).flatMap((hit) => {
     if (hit.source !== TRANSPORT_RECEIPT_SOURCE) return [hit];
-    const summary = /^Summary: (?!Handoff accepted by Nexus Main\.$)(.+)$/m.exec(hit.content)?.[1];
+    // F-1350: o prefixo de proveniência não é conteúdo; o recibo que só diz
+    // "aceito/confirmado" fica no banco (recall explícito), fora do bloco.
+    const summary = [...hit.content.matchAll(/^Summary: (.+)$/gm)]
+      .map((match) => match[1]!)
+      .find((line) => {
+        const substance = line.replace(RECEIPT_PROVENANCE_PREFIX, '').trim();
+        return substance.length > 0 && !EMPTY_RECEIPT_SUMMARY.test(substance);
+      });
     return summary ? [{ ...hit, content: summary }] : [];
   });
   // F-1350: recibo de entrega tem o peso de uma decisão (importance 4) e vinha

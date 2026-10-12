@@ -317,6 +317,36 @@ describe('automatic workspace-memory recall', () => {
     expect(block.indexOf('cobrarUmaVez')).toBeLessThan(block.indexOf('entrega '));
   });
 
+  it('F-1350: recibo de transporte sem conteúdo não entra na injeção (com ou sem o prefixo), mas o recall explícito o devolve', () => {
+    const store = getWorkspaceMemoryStore(scope);
+    const prefix = '[Agent report, unverified; Jev approved for retention, not factual verification.] ';
+    const receipt = (summary: string, reference: string) => store.retain({
+      content: `# Delivered handoff\n\nAccepted handoff:\nSummary: ${summary}\nReference: ${reference}`,
+      kind: 'fact', importance: 4, source: 'trusted:accepted-handoff',
+    });
+    receipt(`${prefix}Handoff acknowledged by the mission orchestrator.`, 'h-1');
+    receipt('Handoff acknowledged by the mission orchestrator.', 'h-2');
+    receipt(`${prefix}Handoff accepted by Nexus Main.`, 'h-3');
+    receipt('Handoff accepted by Nexus Main.', 'h-4');
+
+    expect(standingWorkspaceMemoryBlock(scope)).toBeNull();
+    expect(workspaceMemoryContextBlock(scope, 'Handoff acknowledged accepted mission orchestrator Nexus Main')).toBeNull();
+    // Nada é apagado: o recall explícito continua achando os quatro.
+    expect(store.recall({ query: 'Handoff orchestrator Main', trustedOnly: true }).length).toBe(4);
+
+    // Recibo com entrega real continua, atrás do fato.
+    receipt(`${prefix}F-1290 corrigido em fix/w-ranking; Handoff acknowledged.`, 'h-5');
+    store.retain({
+      content: 'Resolved problem: cobrança idempotente usa cobrarUmaVez.',
+      kind: 'fact', importance: 4, source: 'trusted:resolved-problem',
+    });
+    const block = standingWorkspaceMemoryBlock(scope)!;
+    expect(block).toContain('F-1290 corrigido');
+    expect(block.indexOf('cobrarUmaVez')).toBeLessThan(block.indexOf('F-1290'));
+    expect(block).not.toContain('Handoff acknowledged by the mission orchestrator.');
+    expect(block).not.toContain('Handoff accepted by Nexus Main.');
+  });
+
   it('caps formatted memory between the architectural 2–4 KB envelope', () => {
     const context = formatAutoRecallContext(
       Array.from({ length: 12 }, (_, index) => ({
