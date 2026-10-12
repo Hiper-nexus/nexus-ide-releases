@@ -1924,7 +1924,13 @@ export async function routeTaskForCaller(
     assertCurrentMissionOrchestratorSession(ctx, mission);
   }
   const task = requireStr(args, 'task');
-  const classificationTask = await routeTaskWithBrief(task, internal.classificationPrompt ?? str(args, 'prompt'));
+  // F-1316 (revisão Fable): brief só de dentro do projeto/worktree ou de
+  // userData/briefs; o apontado que não entrou vai no recibo (reason).
+  const skippedBriefs: string[] = [];
+  const classificationTask = await routeTaskWithBrief(task, internal.classificationPrompt ?? str(args, 'prompt'), {
+    projectRoots: [ctx.scope.rootRealPath, executionScopeFor(ctx).rootRealPath],
+    skipped: skippedBriefs,
+  });
   const tierRaw = str(args, 'tier');
   const callerTier = TIERS.includes(tierRaw as TaskTier)
     ? (tierRaw as TaskTier)
@@ -2340,6 +2346,12 @@ export async function routeTaskForCaller(
         ignoredHealthyExclude.join(',') +
         ` — sem falha ao nascer nos últimos ${START_FAILURE_WINDOW_MIN} min, ` +
         'disjuntor fechado, conta disponível e sem morte nesta missão',
+    };
+  }
+  if (skippedBriefs.length > 0) {
+    decision = {
+      ...decision,
+      reason: `${decision.reason}; brief não lido: ${skippedBriefs.join('; ')}`,
     };
   }
   if (startFailedExclude.length > 0) {

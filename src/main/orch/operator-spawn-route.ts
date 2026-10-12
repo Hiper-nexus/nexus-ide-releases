@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, open } from 'node:fs/promises';
+import { lstat, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { PaneRuntimeState } from '../../shared/orch-types';
 import { redactTerminalText } from '../../shared/secret-redaction';
@@ -27,24 +27,112 @@ export function operatorRouteTask(args: Record<string, unknown>): string | null 
   return nonBlank(args.task) ?? nonBlank(args.prompt) ?? nonBlank(args.title) ?? null;
 }
 
+/**
+ * F-1316 (revisão Fable): só é brief o caminho que a linha APONTA ("Leia e
+ * siga o brief em …", "follow …"). Menção solta a um arquivo não é brief.
+ */
+const BRIEF_POINTER_RE =
+  /(?<![\p{L}\p{N}])(?:leia|ler|lê|siga|seguir|segue|read|follow|consulte|veja|see|abra|open|brief)(?![\p{L}\p{N}])/iu;
+/** Manifesto/config não é brief mesmo apontado: só despeja dependências no classificador. */
+const NON_BRIEF_FILE_RE = /^(?:package(?:-lock)?|npm-shrinkwrap|tsconfig(?:\.[^/\\]+)?|jsconfig)\.json$/i;
+const BRIEF_MAX_BYTES = 64 * 1024;
+const BRIEF_MAX_FILES = 4;
+
+/**
+ * Segredos em prosa de brief que os padrões de `shared/secret-redaction` (via
+ * redactTerminalText) e do `decision-redaction` não pegam: segredo de webhook
+ * (`whsec_…`), valor de cookie (`cookie: "session=…"`) e senha rotulada em
+ * prosa ("Senha do banco de produção: hunter2"). Só vale para o texto que vai
+ * ao classificador — redigir a mais aqui não custa nada à rota.
+ */
+const BRIEF_EXTRA_SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bwhsec_[A-Za-z0-9+/=_-]{8,}/g, '[REDACTED]'],
+  [/((?:set-)?cookie["']?\s*[:=]\s*["']?)[A-Za-z0-9_.-]+=[^\n"']*/gi, '$1[REDACTED]'],
+  [/((?:senha|password|passwd|passphrase|pwd)\b[^\n:=]{0,48}[:=]\s*["']?)[^\s"',;]+/gi, '$1[REDACTED]'],
+];
+
+function redactBriefText(content: string): string {
+  let text = redactSecrets(redactTerminalText(content));
+  for (const [pattern, replacement] of BRIEF_EXTRA_SECRET_PATTERNS) {
+    text = text.replace(pattern, replacement);
+  }
+  return text;
+}
+
+/** userData/briefs: onde o PTY grava o brief longo do spawn (`pty-manager`). */
+function userDataBriefsDir(): string | undefined {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- fora do Electron (vitest) `app` não existe
+    const electron = require('electron') as { app?: { getPath(name: 'userData'): string } };
+    if (typeof electron?.app?.getPath !== 'function') return undefined;
+    return path.join(electron.app.getPath('userData'), 'briefs');
+  } catch {
+    return undefined;
+  }
+}
+
+function isInside(file: string, root: string): boolean {
+  const relative = path.relative(root, file);
+  return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+export interface RouteBriefOptions {
+  /** Raízes do projeto (checkout e worktree de execução) onde um brief pode viver. */
+  readonly projectRoots: readonly string[];
+  /** Teste: substitui userData/briefs. */
+  readonly briefsDir?: string;
+  /** Recibo: brief apontado que não entrou (teto, fora da raiz) — nunca some calado. */
+  readonly skipped?: string[];
+}
+
 /** F-1316: file contents are classification input only, never a durable task. */
-export async function routeTaskWithBrief(task: string, prompt?: string): Promise<string> {
+export async function routeTaskWithBrief(
+  task: string,
+  prompt: string | undefined,
+  options: RouteBriefOptions,
+): Promise<string> {
   const references = `${task}\n${prompt ?? ''}`.slice(0, 128 * 1024);
   const pattern = /["'`]([^"'`\r\n]+\.(?:md|json))["'`]|(?:^|[\s(])((?:\/|[A-Za-z]:[\\/])[^\s"'`<>()[\]]+\.(?:md|json))(?=$|[\s,;!?:)\]>]|\.(?:\s|$))/gi;
+  const roots: string[] = [];
+  for (const root of [...options.projectRoots, options.briefsDir ?? userDataBriefsDir()]) {
+    if (!root) continue;
+    try {
+      roots.push(await realpath(root));
+    } catch {
+      // Raiz que não existe não autoriza nada.
+    }
+  }
+  const skip = (file: string, reason: string) => options.skipped?.push(`${file} (${reason})`);
   const seen = new Set<string>();
-  let remaining = 64 * 1024;
+  let remaining = BRIEF_MAX_BYTES;
   let classified = task;
   for (const match of references.matchAll(pattern)) {
     const file = match[1] ?? match[2];
     if (!path.isAbsolute(file) || file.startsWith('//') || file.startsWith('\\\\') || seen.has(file)) continue;
-    if (seen.size >= 4 || remaining === 0) break;
+    const lineStart = references.lastIndexOf('\n', match.index) + 1;
+    if (!BRIEF_POINTER_RE.test(references.slice(lineStart, match.index))) continue;
+    if (NON_BRIEF_FILE_RE.test(path.basename(file))) continue;
+    if (seen.size >= BRIEF_MAX_FILES || remaining === 0) {
+      skip(file, `limite de ${BRIEF_MAX_FILES} briefs / ${BRIEF_MAX_BYTES / 1024} KiB atingido`);
+      break;
+    }
     seen.add(file);
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
       const before = await lstat(file);
-      if (!before.isFile() || before.size > remaining) continue;
+      if (!before.isFile()) continue;
+      // realpath: diretório-pai simbólico apontando para fora também fica fora.
+      const real = await realpath(file);
+      if (!roots.some((root) => isInside(real, root))) {
+        skip(file, 'fora da raiz do projeto e de userData/briefs');
+        continue;
+      }
+      if (before.size > remaining) {
+        skip(file, `${before.size} bytes acima do teto de ${remaining} bytes`);
+        continue;
+      }
       // Nonblocking open + fd-bound checks avoid FIFO hangs and replacement races.
-      handle = await open(file, constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0));
+      handle = await open(real, constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0));
       const stat = await handle.stat();
       if (!stat.isFile() || stat.size > remaining || stat.ino !== before.ino || stat.dev !== before.dev) continue;
       const buffer = Buffer.alloc(remaining + 1);
@@ -55,7 +143,10 @@ export async function routeTaskWithBrief(task: string, prompt?: string): Promise
         length += bytesRead;
         if (length === buffer.length) break;
       }
-      if (length > remaining) continue;
+      if (length > remaining) {
+        skip(file, `cresceu acima do teto de ${remaining} bytes durante a leitura`);
+        continue;
+      }
       remaining -= length;
       let content = buffer.subarray(0, length).toString('utf8');
       if (path.extname(file).toLowerCase() === '.json') {
@@ -65,7 +156,7 @@ export async function routeTaskWithBrief(task: string, prompt?: string): Promise
           // A readable draft still describes the work before it is valid JSON.
         }
       }
-      classified += `\n${redactSecrets(redactTerminalText(content))}`;
+      classified += `\n${redactBriefText(content)}`;
     } catch {
       // An unreadable reference must not prevent routing the original task.
     } finally {

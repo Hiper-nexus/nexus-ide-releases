@@ -97,17 +97,19 @@ afterEach(() => {
 
 describe('nexus_route_task wiring', () => {
   it('F-1316: classifica brief absoluto do prompt sem persistir seu conteúdo', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'routing-brief-'));
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'routing-brief-')));
     const brief = path.join(dir, 'critical.md');
     const content = 'Corrigir autenticação e autorização de pagamentos. Faça com o GPT-6 Astra. API_KEY=sk-' + 'x'.repeat(32);
     fs.writeFileSync(brief, content);
     mocks.listProviderSettings.mockReturnValue([
       { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-6.1-sol', 'gpt-6-astra'] },
     ]);
+    // Revisão Fable: o brief só é lido de dentro do projeto (ou userData/briefs).
+    const inProject = { ...context(), scope: testProjectScope({ rootRealPath: dir }) };
     try {
       for (const internal of [false, true]) {
         const args = internal ? { task: 'Implementar unidade' } : { task: 'Implementar unidade', prompt: `Leia e siga ${brief}` };
-        const decision = await routeTaskForCaller(args, context(), internal ? { classificationPrompt: `Leia e siga ${brief}` } : {});
+        const decision = await routeTaskForCaller(args, inProject, internal ? { classificationPrompt: `Leia e siga ${brief}` } : {});
         expect(decision.tier).toBe('critical');
         expect(decision.model).not.toContain('astra');
         const classified = mocks.classifyTaskWithSkillForRouting.mock.calls.at(-1)?.[0];
@@ -115,6 +117,22 @@ describe('nexus_route_task wiring', () => {
         expect(classified).not.toContain('sk-' + 'x'.repeat(32));
         expect(recentRouteLog()[0].taskPreview).not.toContain('autenticação');
       }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('F-1316 (revisão Fable): brief apontado fora do projeto não entra e o recibo diz por quê', async () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'routing-brief-')));
+    const brief = path.join(dir, 'critical.md');
+    fs.writeFileSync(brief, 'Corrigir autenticação e autorização de pagamentos.');
+    mocks.listProviderSettings.mockReturnValue([
+      { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-6.1-sol'] },
+    ]);
+    try {
+      const decision = await routeTaskForCaller({ task: 'corrigir typo no README', prompt: `Leia ${brief}` }, context());
+      expect(mocks.classifyTaskWithSkillForRouting.mock.calls.at(-1)?.[0]).toBe('corrigir typo no README');
+      expect(decision.reason).toContain(`brief não lido: ${brief} (fora da raiz do projeto e de userData/briefs)`);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
