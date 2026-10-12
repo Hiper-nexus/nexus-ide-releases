@@ -210,6 +210,60 @@ describe('mcp hub core', () => {
     );
   });
 
+  it('F-1364: N saves seguidos deixam no máximo 1 backup timestamped, e ele ainda faz rollback', () => {
+    enableHub();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-hub-prune-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'mcp.json');
+    const mk = (name: string): McpHubConfig => ({
+      schemaVersion: 1,
+      servers: [
+        {
+          id: 'n',
+          name,
+          transport: 'stdio',
+          command: 'echo',
+          tools: [],
+          source: 'nexus',
+        },
+      ],
+    });
+    writeConfigWithBackup(file, mk('N1'));
+    writeConfigWithBackup(file, mk('N2'));
+    const { backupPath } = writeConfigWithBackup(file, mk('N3'));
+    const baks = fs
+      .readdirSync(dir)
+      .filter((name) => /^mcp\.json\.\d+\.[0-9a-f]{16}\.bak$/.test(name));
+    expect(baks.length).toBeLessThanOrEqual(1);
+    // O bak sobrevivente é o penúltimo conteúdo (N2) e continua rolável.
+    expect(backupPath).toBeTruthy();
+    rollbackFromBackup(file, backupPath!);
+    const restored = JSON.parse(fs.readFileSync(file, 'utf8')) as McpHubConfig;
+    expect(restored.servers[0]?.name).toBe('N2');
+  });
+
+  it('F-1364: o .gitignore do repositório cobre o backup timestamped do hub', () => {
+    // O bak carrega argv/env com segredo: ficar untracked no checkout é o
+    // vazamento (git add -A). Ele tem que casar uma linha do .gitignore.
+    const root = path.resolve(import.meta.dirname, '..', '..', '..');
+    const lines = fs
+      .readFileSync(path.join(root, '.gitignore'), 'utf8')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('#'));
+    const victim = '.nexus/mcp-hub.json.1791722976651.e6e60192c6c00a44.bak';
+    const matches = (rawPattern: string): boolean => {
+      // Glob mínimo do gitignore: '/' inicial ancora na raiz (equivalente a
+      // caminho relativo da raiz), '*' é [^/]*.
+      const pattern = rawPattern.replace(/^\//, '');
+      const re = new RegExp(
+        `^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*')}$`,
+      );
+      return re.test(victim);
+    };
+    expect(lines.some(matches)).toBe(true);
+  });
+
   it('does not follow a destination symlink during rollback', () => {
     enableHub();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-rb-link-'));

@@ -148,6 +148,38 @@ export async function writeFileAtomicAsync(
 }
 
 /**
+ * F-1364: cada backup bem-sucedido deixava um irmão `<file>.<ms>.<hex>.bak`
+ * no diretório do alvo — no checkout do operador esse acúmulo vira lixo
+ * untracked carregando segredo (hub de MCP). Depois de gravar um backup novo,
+ * apaga os irmãos mais antigos no MESMO padrão e conserva só o recém-criado,
+ * que segue sendo o destino do rollback imediato. Best effort: falha de
+ * readdir/unlink nunca derruba o write que o chamou.
+ */
+function pruneTimestampedBackups(file: string, keep: string): void {
+  const dir = path.dirname(file);
+  // O prefixo já carrega o '.' final: o sufixo começa nos dígitos do timestamp.
+  const prefix = `${path.basename(file)}.`;
+  const suffix = /^\d+\.[0-9a-f]{16}\.bak$/;
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    if (!suffix.test(name.slice(prefix.length))) continue;
+    const full = path.join(dir, name);
+    if (full === keep) continue;
+    try {
+      fs.unlinkSync(full);
+    } catch {
+      // Um bak encalhado não pode falhar o write de configuração.
+    }
+  }
+}
+
+/**
  * Create an immutable sibling backup with an unguessable, exclusive name.
  * Returns the path only after bytes and metadata have been flushed.
  */
@@ -174,6 +206,7 @@ export function writeTimestampedBackup(
     } finally {
       fs.closeSync(fd);
     }
+    pruneTimestampedBackups(file, backup);
     return backup;
   } catch (err) {
     try {

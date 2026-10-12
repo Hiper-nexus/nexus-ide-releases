@@ -264,7 +264,9 @@ describe('writeTimestampedBackup', () => {
     const second = writeTimestampedBackup(file, 'two');
 
     expect(first).not.toBe(second);
-    expect(fs.readFileSync(first, 'utf8')).toBe('one');
+    // F-1364: o backup mais antigo é podado — só o recém-criado sobrevive
+    // (o nome segue distinto e exclusivo, sem colisão nem sobrescrita).
+    expect(fs.existsSync(first)).toBe(false);
     expect(fs.readFileSync(second, 'utf8')).toBe('two');
   });
 

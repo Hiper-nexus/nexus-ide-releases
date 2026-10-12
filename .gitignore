@@ -151,6 +151,8 @@ scripts/codesign-retry-bin/
 /.nexus/swarms/
 # Inventário local de servidores MCP: carrega credenciais de auth.
 /.nexus/mcp-hub.json
+# Backup timestamped do hub (F-1364): mesmo segredo, mesmo destino.
+/.nexus/mcp-hub.json.*.bak
 # Capturas da auditoria visual (Impeccable). As críticas em .impeccable/critique
 # continuam versionadas — só os PNGs, que são regeráveis, ficam de fora.
 /.impeccable/shots/
