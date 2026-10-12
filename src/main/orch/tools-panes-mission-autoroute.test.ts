@@ -220,7 +220,7 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     const receipt = await paneSpawnTool.handler(
       { task: 'implementar o login', prompt: 'faça o login', model: 'ignorado' }, ctx,
     ) as Record<string, any>;
-    expect(resolver).toHaveBeenCalledWith('implementar o login', ctx, {});
+    expect(resolver).toHaveBeenCalledWith('implementar o login', ctx, { classificationPrompt: 'faça o login' });
     expect(h.assertRouteReservation).toHaveBeenCalledWith({
       reservationId: 'rr-1', missionId: 'mission-a', adapterId: 'codex', model: 'gpt-5.4', effort: 'high',
     });
@@ -327,6 +327,7 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
       ctx,
     ) as Record<string, any>;
     expect(resolver).toHaveBeenCalledWith('olha o repo', ctx, {
+      classificationPrompt: 'olhe',
       preferAdapterIds: ['claude'],
     });
     expect(h.spawn.mock.calls[0][0]).toMatchObject({
@@ -398,6 +399,7 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     const operatorTab = { ...ctx, promotedFromUserSession: true as const };
     await paneSpawnTool.handler({ task: 'mapear as telas', prompt: 'mapeie' }, operatorTab);
     expect(resolver).toHaveBeenCalledWith('mapear as telas', operatorTab, {
+      classificationPrompt: 'mapeie',
       excludeAdapterIds: ['devin'],
     });
   });
@@ -431,6 +433,7 @@ describe('pin de adapterId sem pedido do operador vira preferência (F-674 ampli
       { adapterId: 'claude', model: 'claude-opus-5-5', task: 'revisar o kanban', prompt: 'revise' }, ctx,
     ) as Record<string, any>;
     expect(resolver).toHaveBeenCalledWith('revisar o kanban', ctx, {
+      classificationPrompt: 'revise',
       preferAdapterIds: ['claude'],
     });
     expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'codex', model: 'gpt-5.4' });
@@ -467,6 +470,7 @@ describe('pin de adapterId sem pedido do operador vira preferência (F-674 ampli
       { adapterId: 'claude', model: 'claude-opus-5-5', operatorChoice: true, task: 'melhorar o visual do pipeline', prompt: 'melhore' }, ctx,
     ) as Record<string, any>;
     expect(resolver).toHaveBeenCalledWith('melhorar o visual do pipeline', ctx, {
+      classificationPrompt: 'melhore',
       preferAdapterIds: ['claude'],
     });
     expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'mimo-code' });
@@ -483,6 +487,7 @@ describe('pin de adapterId sem pedido do operador vira preferência (F-674 ampli
       { adapterId: 'claude', task: 'olha o repo', prompt: 'olhe' }, userCtx,
     ) as Record<string, any>;
     expect(resolver).toHaveBeenCalledWith('olha o repo', userCtx, {
+      classificationPrompt: 'olhe',
       tieBreakUseCounts: expect.anything(),
       excludeAdapterIds: [],
       preferAdapterIds: ['claude'],

@@ -56,6 +56,19 @@ describe('F-1139 private exact physical argv receipt', () => {
     recordNativeArgvSubmission(info, 'lease', 'actual argv', 'original-bearer');
     expect(acceptedNativeArgvPrompt(info, 'lease', 'actual argv', 'replacement-bearer')).toBe(false);
   });
+  it('F-1316: a file pointer proves its original brief only after exact native submission', () => {
+    armNativeArgvAcceptance(info, 'lease', 'read /private/brief.md', 'bearer', 'original large brief');
+    expect(acceptedNativeArgvPrompt(info, 'lease', 'original large brief', 'bearer')).toBe(false);
+    recordNativeArgvSubmission(info, 'lease', 'read /private/brief.md', 'bearer');
+    expect(acceptedNativeArgvPrompt(info, 'lease', 'original large brief', 'bearer')).toBe(true);
+    expect(acceptedNativeArgvPrompt(info, 'lease', 'another brief', 'bearer')).toBe(false);
+    expect(acceptedNativeArgvPrompt(info, 'other-lease', 'original large brief', 'bearer')).toBe(false);
+    expect(acceptedNativeArgvPrompt(info, 'lease', 'original large brief', 'other-bearer')).toBe(false);
+    forgetNativeArgvAcceptance(info.sessionId);
+    armNativeArgvAcceptance(info, 'lease', 'read /private/brief.md', 'bearer', 'original large brief');
+    recordNativeArgvSubmission(info, 'lease', 'original large brief', 'bearer');
+    expect(acceptedNativeArgvPrompt(info, 'lease', 'original large brief', 'bearer')).toBe(false);
+  });
   it('never creates proof for an unarmed session (paste/resume/adopt/warm)', () => {
     recordNativeArgvSubmission(info, 'lease', 'actual argv');
     expect(acceptedNativeArgvPrompt(info, 'lease', 'actual argv')).toBe(false);

@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   isProviderEnabled: vi.fn(() => true),
   providerReadiness: vi.fn(() => ({ ready: true, reason: 'ready' })),
   hasAvailableAccount: vi.fn(),
-  classifyTaskWithSkillForRouting: vi.fn(async (): Promise<unknown> => ({ kind: 'skipped' })),
+  classifyTaskWithSkillForRouting: vi.fn(async (_task: string): Promise<unknown> => ({ kind: 'skipped' })),
   // Espião do motor: passa a chamada para o routeTask real, só conta e lê os
   // argumentos (o contrafactual da regra é uma SEGUNDA chamada e não pode herdar
   // nada do Jev).
@@ -96,6 +96,30 @@ afterEach(() => {
 });
 
 describe('nexus_route_task wiring', () => {
+  it('F-1316: classifica brief absoluto do prompt sem persistir seu conteúdo', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'routing-brief-'));
+    const brief = path.join(dir, 'critical.md');
+    const content = 'Corrigir autenticação e autorização de pagamentos. Faça com o GPT-6 Astra. API_KEY=sk-' + 'x'.repeat(32);
+    fs.writeFileSync(brief, content);
+    mocks.listProviderSettings.mockReturnValue([
+      { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-6.1-sol', 'gpt-6-astra'] },
+    ]);
+    try {
+      for (const internal of [false, true]) {
+        const args = internal ? { task: 'Implementar unidade' } : { task: 'Implementar unidade', prompt: `Leia e siga ${brief}` };
+        const decision = await routeTaskForCaller(args, context(), internal ? { classificationPrompt: `Leia e siga ${brief}` } : {});
+        expect(decision.tier).toBe('critical');
+        expect(decision.model).not.toContain('astra');
+        const classified = mocks.classifyTaskWithSkillForRouting.mock.calls.at(-1)?.[0];
+        expect(classified).toContain('autenticação');
+        expect(classified).not.toContain('sk-' + 'x'.repeat(32));
+        expect(recentRouteLog()[0].taskPreview).not.toContain('autenticação');
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('a descrição não manda rotear antes de cada spawn: o spawn sem adapterId já roteia', () => {
     // Campo (02/10): "Call it for every delegation" levava o Maestro Codex a
     // gastar uma rodada inteira do modelo roteando 5 tarefas antes de abri-las.

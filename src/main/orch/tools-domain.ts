@@ -48,6 +48,7 @@ import {
   liveMissionAdapterIds,
   liveMissionAdapterSeats,
   operatorChildUseCounts,
+  routeTaskWithBrief,
 } from './operator-spawn-route';
 import { isOperatorTabMission } from './operator-tab-mission-resume';
 import { getAdapter, listAdapters } from '../adapters/adapter-registry';
@@ -1922,6 +1923,7 @@ export async function routeTaskForCaller(
     assertCurrentMissionOrchestratorSession(ctx, mission);
   }
   const task = requireStr(args, 'task');
+  const classificationTask = await routeTaskWithBrief(task, internal.classificationPrompt ?? str(args, 'prompt'));
   const tierRaw = str(args, 'tier');
   const callerTier = TIERS.includes(tierRaw as TaskTier)
     ? (tierRaw as TaskTier)
@@ -1935,7 +1937,7 @@ export async function routeTaskForCaller(
   let jevRouting: JevRouteTaskBatch = { kind: 'skipped' };
   try {
     // F-802: sugestão do hook (sem spawn) não gasta a chave do operador.
-    if (internal.suggestOnly !== true) jevRouting = await classifyTaskWithSkillForRouting(task, {
+    if (internal.suggestOnly !== true) jevRouting = await classifyTaskWithSkillForRouting(classificationTask, {
       allowedSkills: ctx.allowedSkills ?? null,
       // F-753: as skills instaladas no projeto concorrem com as do Nexus. A
       // pasta é a de execução: é nela que o pane lê o `path` relativo.
@@ -1952,7 +1954,7 @@ export async function routeTaskForCaller(
   const jevUnavailable =
     jevRouting.kind === 'unavailable' ? jevRouting.reason : undefined;
   const skillSuggestion = jevRouting.kind === 'skipped' ? null : (jevRouting.skillSuggestion ?? null);
-  const routing = routingOverridesFrom(jevClassification, callerTier, task);
+  const routing = routingOverridesFrom(jevClassification, callerTier, classificationTask);
   const tier = routing.tierOverride;
   // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
   // acabou de estourar cota/quebrar, em vez de insistir nela.
@@ -2282,6 +2284,7 @@ export async function routeTaskForCaller(
   // O contrafactual do recibo (`ruleChoice`, abaixo) reusa este objeto como
   // está — por construção ele não carrega especialidade nem esforço do Jev.
   const ruleContext: RouteContext = {
+    classificationText: classificationTask,
     reviewedFindingFix,
     missionUsedAdapters:
       usedAdapterIds.length > 0 ? new Set(usedAdapterIds) : undefined,
@@ -2495,6 +2498,10 @@ const routeTaskTool: McpToolDef = {
       task: {
         type: 'string',
         description: 'What the worker will be asked to do',
+      },
+      prompt: {
+        type: 'string',
+        description: 'Optional prompt with absolute .md/.json brief references used only for classification (64 KiB total)',
       },
       tier: {
         type: 'string',

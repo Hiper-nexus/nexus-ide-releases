@@ -2116,6 +2116,64 @@ describe("AGY advisory native profile", () => {
     }
   });
 
+  it.each(["claude", "grok", "mimo-code"])("F-1316: %s large native prompt is a private redacted file, removed after physical exit", async adapterId => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-file-brief-"));
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const base = revisionBoundWorker(fs.realpathSync.native(root));
+    const prompt = "Implemente a tarefa.\n" + "contexto ".repeat(1_300) + "\nOPENAI_API_KEY=sk-" + "a".repeat(48);
+    let sessionId: string | undefined;
+    let briefPath: string | undefined;
+    try {
+      ({ sessionId } = spawnMainOwnedAgentSession(
+        { kind: "cli-agent", paneId: "large-brief", cols: 100, rows: 30 },
+        builtinCliPtyAdapter(adapterId), {},
+        { ...base, context: { ...base.context!, initialPrompt: prompt } },
+      ));
+      const spec = host.specFor(sessionId);
+      expect(spec.args).not.toContain(prompt);
+      const pointer = spec.args.find(arg => arg.startsWith("Leia e siga integralmente o brief em "));
+      expect(pointer).toBeDefined();
+      briefPath = JSON.parse(pointer!.slice("Leia e siga integralmente o brief em ".length));
+      expect(briefPath!.startsWith(path.join(app.getPath("userData"), "briefs") + path.sep)).toBe(true);
+      const content = fs.readFileSync(briefPath!, "utf8");
+      expect(content).toContain("contexto ".repeat(1_300));
+      expect(content).not.toContain("sk-" + "a".repeat(48));
+      if (process.platform !== "win32") expect(fs.statSync(briefPath!).mode & 0o777).toBe(0o600);
+      await orchTerminateSession(sessionId);
+      sessionId = undefined;
+      expect(fs.existsSync(briefPath!)).toBe(false);
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("F-1316: failed spawn removes its private brief", () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-failed-file-brief-"));
+    const base = revisionBoundWorker(fs.realpathSync.native(root));
+    let briefPath: string | undefined;
+    setPtyHost({ spawn: spec => {
+      const pointer = spec.args.find(arg => arg.startsWith("Leia e siga integralmente o brief em "))!;
+      briefPath = JSON.parse(pointer.slice("Leia e siga integralmente o brief em ".length));
+      expect(fs.existsSync(briefPath!)).toBe(true);
+      throw new Error("test host spawn failed");
+    } });
+    try {
+      expect(() => spawnMainOwnedAgentSession(
+        { kind: "cli-agent", paneId: "failed-large-brief", cols: 100, rows: 30 },
+        builtinCliPtyAdapter("claude"), {},
+        { ...base, context: { ...base.context!, initialPrompt: "contexto ".repeat(1_300) } },
+      )).toThrow("test host spawn failed");
+      expect(briefPath).toBeDefined();
+      expect(fs.existsSync(briefPath!)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   (process.platform === "win32" ? it : it.skip)(
     "F-668: worker claude no Windows nasce no executável do pacote, com o brief multi-linha inteiro",
     async () => {
@@ -2242,7 +2300,7 @@ describe("AGY advisory native profile", () => {
       const host = fakeHost();
       setPtyHost(host.host);
       const base = revisionBoundWorker(fs.realpathSync.native(worktree));
-      // Abaixo dos 20K do brief, mas com a config extra a linha passa de 32K.
+      // F-1316: o brief agora vira ponteiro; a config sozinha estoura 32K.
       const brief = "## Nexus execution authority\n" + "a".repeat(19_000);
       const authority: BoundSpawnAuthority = {
         ...base,
@@ -2256,7 +2314,7 @@ describe("AGY advisory native profile", () => {
         ({ sessionId } = spawnMainOwnedAgentSession(
           { kind: "cli-agent", paneId: "claude-long-line", cols: 100, rows: 30 },
           builtinCliPtyAdapter("claude"),
-          { extraArgs: ["--append-system-prompt", "b".repeat(14_000)] },
+          { extraArgs: ["--append-system-prompt", "b".repeat(34_000)] },
           authority,
         ));
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2489,14 +2547,14 @@ describe("AGY advisory native profile", () => {
     }
   });
 
-  it.each(['fresh', 'no-argv', 'resume', 'paste', 'direct-user'] as const)(
+  it.each(['fresh', 'fresh-large', 'no-argv', 'resume', 'paste', 'direct-user'] as const)(
     'F-1139 arms only the actual final fresh argv launch (%s)', async mode => {
       setSquadCliPolicyLookupForTests(() => "operator-choice");
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-argv-proof-"));
       const worktree = path.join(root, "worktree"); fs.mkdirSync(worktree);
       const host = fakeHost(); setPtyHost(host.host);
       const base = revisionBoundWorker(fs.realpathSync.native(worktree));
-      const prompt = 'exact sanitized native argv';
+      const prompt = mode === 'fresh-large' ? 'large native argv '.repeat(600) : 'exact sanitized native argv';
       const authority = mode === 'direct-user' ? trustedSpawn(fs.realpathSync.native(worktree)) : {
         ...base, context: { ...base.context!, ...(mode === 'no-argv' ? {} : { initialPrompt: prompt }) },
       };
@@ -2515,9 +2573,12 @@ describe("AGY advisory native profile", () => {
         sid = spawnAgentSession(mode === 'direct-user' ? fakeWc() : null, { kind: 'cli-agent', paneId: 'argv-proof', cols: 100, rows: 30,
           ...(mode === 'resume' ? { resume: true } : {}) }, adapter, {}, authority).sessionId;
         expect(host.specFor(sid).args.includes(prompt)).toBe(mode === 'fresh');
-        recordAuthenticatedNativeArgvSubmission(sid, prompt);
+        const submitted = mode === 'fresh-large'
+          ? host.specFor(sid).args.find(arg => arg.startsWith('Leia e siga integralmente o brief em '))!
+          : prompt;
+        recordAuthenticatedNativeArgvSubmission(sid, submitted);
         publishSessionActivityState(sid, 'idle'); // Completion does not erase the exact launch proof.
-        expect(hasAcceptedNativeArgvPrompt(sid, prompt, 'grok')).toBe(mode === 'fresh');
+        expect(hasAcceptedNativeArgvPrompt(sid, prompt, 'grok')).toBe(mode === 'fresh' || mode === 'fresh-large');
         expect(hasAcceptedNativeArgvPrompt(sid, 'later paste', 'grok')).toBe(false);
         // Loss of the exact authenticated bearer never makes a receipt current.
         releaseSession(sid);

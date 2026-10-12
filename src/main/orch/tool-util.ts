@@ -109,7 +109,6 @@ import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { issueAgentIdentityBestEffort } from './agent-identity-spawn';
 import {
   initialPromptChannel,
-  nativeArgvPromptFits,
   spawnBinaryName,
 } from '../../shared/cli-initial-prompt';
 import { ORCH_SPAWN_GRANT_TTL_MS } from './orch-spawn-grant-recovery';
@@ -1923,9 +1922,7 @@ export async function spawnPaneAndMaybePrompt(
     finalPrompt &&
       promptChannel.kind !== 'paste' &&
       (options.role === 'worker' || promptChannel.kind === 'positional') &&
-      // F-668: brief grande demais para a linha de comando do Windows vai por
-      // colagem (o caminho pendente abaixo já cola quando não há argv).
-      nativeArgvPromptFits(finalPrompt, process.platform) &&
+      // F-1316: PTY materializes large native prompts as private brief files.
       // F-721: spawn que retoma conversa não leva prompt no argv (regra do
       // pty-manager); o brief vai por colagem depois do boot.
       !options.resume,

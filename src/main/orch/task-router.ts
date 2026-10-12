@@ -88,6 +88,8 @@ export type RoutingTable = Record<TaskTier, RouteCandidate[]>;
  * Pure — call sites inject orch settings and mission pane history.
  */
 export interface RouteContext {
+  /** Redacted referenced briefs enrich classification, never explicit CLI/model choices. */
+  classificationText?: string;
   /** Main proved a clean, current-HEAD frontier rejection identifying this fix. Never MCP input. */
   reviewedFindingFix?: boolean;
   /** Adapters already used by panes in this mission (diversity boost). */
@@ -1571,7 +1573,8 @@ export function routeTask(
   );
   if (available.size === 0) return null;
 
-  const classification = classifyTask(taskText);
+  const classificationText = context.classificationText ?? taskText;
+  const classification = classifyTask(classificationText);
   const tier = tierOverride ?? classification.tier;
   const mention = mentionedRoute(taskText, provenAdapters);
   const requestedEffort = mention.effort ?? context.effortOverride ?? effortForTier(tier);
@@ -1579,7 +1582,7 @@ export function routeTask(
   const effortNoteFor = (adapterId: string) =>
     `; effort=${effortFor(adapterId) ?? 'cli-default'} requested=${requestedEffort}` +
     ` source=${mention.effort ? 'texto' : context.effortOverride ? 'jev' : 'tier'}`;
-  const heuristicSpecialty = classifyRouteSpecialty(taskText);
+  const heuristicSpecialty = classifyRouteSpecialty(classificationText);
   const specialtyVerdict = context.specialtyOverride
     ? {
         ...heuristicSpecialty,
@@ -1587,7 +1590,7 @@ export function routeTask(
         reason: `especialidade julgada pelo Jev (heurística: ${heuristicSpecialty.specialty})`,
       }
     : heuristicSpecialty;
-  const purpose = routingPurpose(taskText, codeReviewTierFloor(taskText) !== null, context.reviewedFindingFix);
+  const purpose = routingPurpose(classificationText, codeReviewTierFloor(classificationText) !== null, context.reviewedFindingFix);
   const permitsAutomaticAstra = specialtyVerdict.specialty === 'visual';
   const policy = resolveSpecialtyPolicy(
     specialtyVerdict.specialty,
@@ -1616,7 +1619,7 @@ export function routeTask(
       ? `sinais: ${classification.signals.slice(0, 5).join(', ')}`
       : 'sem sinais fortes — tier padrão pelo tamanho da tarefa';
 
-  const frontier = frontierRoutePolicy(taskText, tier, specialtyVerdict.specialty);
+  const frontier = frontierRoutePolicy(classificationText, tier, specialtyVerdict.specialty);
   const routingTable: RoutingTable = frontier
     ? (Object.fromEntries(
         TIER_ORDER.map((t) => [t, frontierFirst(table[t], FRONTIER_ORDER[frontier.policy])]),

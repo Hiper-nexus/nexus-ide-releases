@@ -1,3 +1,7 @@
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, symlinkSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { PaneRuntimeState } from '../../shared/orch-types';
 import {
@@ -6,6 +10,7 @@ import {
   liveMissionAdapterSeats,
   operatorChildUseCounts,
   operatorRouteTask,
+  routeTaskWithBrief,
   parentPaneIdFor,
   routeJevReceipt,
   routeString,
@@ -191,5 +196,72 @@ describe('assentos vivos da missão por CLI (F-985)', () => {
 
   it('linha sem paneId conta (sem prova de que o pane fechou)', () => {
     expect(liveMissionAdapterSeats('claude', 'm1', [{ paneId: null, adapterId: 'claude' }], [])).toBe(1);
+  });
+});
+
+
+describe('F-1316 bounded routing briefs', () => {
+  it('includes quoted JSON with spaces, deduplicates and redacts secrets', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'routing-brief-'));
+    try {
+      const file = path.join(dir, 'brief with spaces.json');
+      const secret = 'sk-' + 'a'.repeat(32);
+      writeFileSync(file, JSON.stringify({ task: 'Corrigir pagamentos', apiKey: secret, password: 'shortpass' }));
+      const classified = await routeTaskWithBrief(`Executar "${file}"`, `Leia "${file}"`);
+      expect(classified).toContain('Corrigir pagamentos');
+      expect(classified.match(/Corrigir pagamentos/g)).toHaveLength(1);
+      expect(classified).not.toContain(secret);
+      expect(classified).not.toContain('shortpass');
+      const draft = path.join(dir, 'draft.json');
+      writeFileSync(draft, `{"task": "Corrigir pagamentos", "apiKey": "${secret}"`);
+      const draftTask = await routeTaskWithBrief('Executar unidade', `Leia ${draft}.`);
+      expect(draftTask).toContain('Corrigir pagamentos');
+      expect(draftTask).not.toContain(secret);
+      const markdown = path.join(dir, 'brief.md');
+      writeFileSync(markdown, 'Corrigir autenticação');
+      expect(await routeTaskWithBrief('Executar unidade', `Leia ${markdown}.`)).toContain('Corrigir autenticação');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('ignores missing, oversized, unsupported and non-regular references', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'routing-brief-'));
+    try {
+      writeFileSync(path.join(dir, 'large.md'), 'a'.repeat(64 * 1024 + 1));
+      writeFileSync(path.join(dir, 'secret.txt'), 'Corrigir pagamentos');
+      mkdirSync(path.join(dir, 'directory.md'));
+      const task = 'Executar unidade';
+      const prompt = ['large.md', 'secret.txt', 'directory.md', 'missing.md'].map(name => path.join(dir, name)).join(' ');
+      expect(await routeTaskWithBrief(task, prompt)).toBe(task);
+      const valid = path.join(dir, 'valid.md');
+      writeFileSync(valid, 'Corrigir pagamentos');
+      const relative = path.relative(process.cwd(), valid);
+      expect(await routeTaskWithBrief(task, `${relative} https://${valid}`)).toBe(task);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('bounds total bytes and the number of referenced files', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'routing-brief-'));
+    try {
+      const files = Array.from({ length: 5 }, (_, index) => path.join(dir, `${index}.md`));
+      files.forEach((file, index) => writeFileSync(file, `marker${index} `));
+      const limited = await routeTaskWithBrief('Executar', files.join(' '));
+      expect(limited).toContain('marker3');
+      expect(limited).not.toContain('marker4');
+      writeFileSync(files[0], 'a'.repeat(64 * 1024));
+      expect(await routeTaskWithBrief('Executar', files.join(' '))).not.toContain('marker1');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses symlinks and FIFO without blocking', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'routing-brief-'));
+    try {
+      const target = path.join(dir, 'target.md');
+      const link = path.join(dir, 'link.md');
+      const fifo = path.join(dir, 'pipe.md');
+      writeFileSync(target, 'Corrigir pagamentos');
+      symlinkSync(target, link);
+      execFileSync('mkfifo', [fifo]);
+      expect(await routeTaskWithBrief('Executar unidade', `${link} ${fifo}`)).toBe('Executar unidade');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

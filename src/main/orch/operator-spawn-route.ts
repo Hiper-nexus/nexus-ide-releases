@@ -1,4 +1,9 @@
+import { constants } from 'node:fs';
+import { lstat, open } from 'node:fs/promises';
+import path from 'node:path';
 import type { PaneRuntimeState } from '../../shared/orch-types';
+import { redactTerminalText } from '../../shared/secret-redaction';
+import { redactSecrets, redactState } from '../decision-models/decision-redaction';
 import {
   isJevUnavailableReason,
   parseSpawnRouteConfidence,
@@ -9,7 +14,7 @@ import {
 } from '../../shared/spawn-route';
 
 /**
- * Peças puras do spawn da mão do operador sempre roteado (A, 25/09): o agente
+ * Peças do spawn da mão do operador sempre roteado (A, 25/09): o agente
  * descreve a tarefa, o Jev + tabela escolhem CLI/modelo/esforço.
  */
 
@@ -20,6 +25,54 @@ function nonBlank(value: unknown): string | undefined {
 /** Texto que o roteador classifica: task, senão prompt, senão title. */
 export function operatorRouteTask(args: Record<string, unknown>): string | null {
   return nonBlank(args.task) ?? nonBlank(args.prompt) ?? nonBlank(args.title) ?? null;
+}
+
+/** F-1316: file contents are classification input only, never a durable task. */
+export async function routeTaskWithBrief(task: string, prompt?: string): Promise<string> {
+  const references = `${task}\n${prompt ?? ''}`.slice(0, 128 * 1024);
+  const pattern = /["'`]([^"'`\r\n]+\.(?:md|json))["'`]|(?:^|[\s(])((?:\/|[A-Za-z]:[\\/])[^\s"'`<>()[\]]+\.(?:md|json))(?=$|[\s,;!?:)\]>]|\.(?:\s|$))/gi;
+  const seen = new Set<string>();
+  let remaining = 64 * 1024;
+  let classified = task;
+  for (const match of references.matchAll(pattern)) {
+    const file = match[1] ?? match[2];
+    if (!path.isAbsolute(file) || file.startsWith('//') || file.startsWith('\\\\') || seen.has(file)) continue;
+    if (seen.size >= 4 || remaining === 0) break;
+    seen.add(file);
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      const before = await lstat(file);
+      if (!before.isFile() || before.size > remaining) continue;
+      // Nonblocking open + fd-bound checks avoid FIFO hangs and replacement races.
+      handle = await open(file, constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0));
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.size > remaining || stat.ino !== before.ino || stat.dev !== before.dev) continue;
+      const buffer = Buffer.alloc(remaining + 1);
+      let length = 0;
+      for (;;) {
+        const { bytesRead } = await handle.read(buffer, length, buffer.length - length, null);
+        if (!bytesRead) break;
+        length += bytesRead;
+        if (length === buffer.length) break;
+      }
+      if (length > remaining) continue;
+      remaining -= length;
+      let content = buffer.subarray(0, length).toString('utf8');
+      if (path.extname(file).toLowerCase() === '.json') {
+        try {
+          content = JSON.stringify(redactState(JSON.parse(content)));
+        } catch {
+          // A readable draft still describes the work before it is valid JSON.
+        }
+      }
+      classified += `\n${redactSecrets(redactTerminalText(content))}`;
+    } catch {
+      // An unreadable reference must not prevent routing the original task.
+    } finally {
+      await handle?.close().catch(() => {});
+    }
+  }
+  return classified;
 }
 
 /** O que o agente pediu e o roteamento descartou — vai no recibo. */

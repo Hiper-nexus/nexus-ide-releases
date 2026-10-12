@@ -32,7 +32,6 @@ import { resolveOpenMissionQuestion } from './mission-open-question';
 import { wasUpdatedBeforeThisProcess } from '../../shared/session-restore-liveness';
 import {
   initialPromptChannel,
-  nativeArgvPromptFits,
   type InitialPromptChannel,
 } from '../../shared/cli-initial-prompt';
 import {
@@ -409,11 +408,8 @@ function tryAcceptIdleOrchestratorKickoff(
 
 function resolveOrchestratorBriefDelivery(
   adapterId: string,
-  brief?: string,
 ): 'argv' | 'paste' {
-  // F-668: o pty-manager não põe no argv o brief que não cabe na linha de
-  // comando do Windows; aqui ele precisa ser colado.
-  if (!nativeArgvPromptFits(brief, process.platform)) return 'paste';
+  // F-1316: PTY puts large briefs in a private file before building argv.
   const adapter = getAdapter(adapterId);
   if (!adapter || adapter.kind !== 'cli-pty') {
     // Fail-closed: sem contrato de argv confiável, cola.
@@ -1374,7 +1370,7 @@ async function spawnAgentPane(
   // do boot. Só o Maestro tinha esse fallback — o worker abria mudo e o
   // operador digitava o briefing à mão (achado 2026-09-27).
   if (role === 'worker' && initialPrompt) {
-    const delivery = resolveOrchestratorBriefDelivery(agent.cli, initialPrompt);
+    const delivery = resolveOrchestratorBriefDelivery(agent.cli);
     if (delivery === 'paste') {
       const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli, spawnOpts?.invocation);
       if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };
@@ -1393,7 +1389,7 @@ async function spawnAgentPane(
     // depois do boot, com prova de aceite.
     const delivery = resumeFromPaneId
       ? 'paste'
-      : resolveOrchestratorBriefDelivery(agent.cli, initialPrompt);
+      : resolveOrchestratorBriefDelivery(agent.cli);
     if (delivery === 'paste') {
       const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli, spawnOpts?.invocation, !spawnOpts?.ownFailureCleanup);
       if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };

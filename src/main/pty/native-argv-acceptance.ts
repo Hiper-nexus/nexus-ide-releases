@@ -20,13 +20,13 @@ export function nativeArgvIdentityKey(info: NativeArgvIdentity): string {
       seal.intentContractHash, seal.contextRevision, seal.contractHash, seal.squadRevisionHash] : null]);
 }
 const launches = new Map<string, { startKey: string; identity: string;
-  digest: string; gateToken?: string; submitted: boolean; accepted: boolean }>();
+  digest: string; sourceDigest?: string; gateToken?: string; submitted: boolean; accepted: boolean }>();
 const digest = (prompt: string) => createHash('sha256').update(prompt, 'utf8').digest('hex');
 
 /** Called only at the physical boundary after final argv placement. */
-export function armNativeArgvAcceptance(info: NativeArgvIdentity, startKey: string, prompt: string, gateToken?: string): void {
+export function armNativeArgvAcceptance(info: NativeArgvIdentity, startKey: string, prompt: string, gateToken?: string, sourcePrompt?: string): void {
   launches.set(info.sessionId, { startKey, identity: nativeArgvIdentityKey(info),
-    digest: digest(prompt), gateToken, submitted: false, accepted: false });
+    digest: digest(prompt), sourceDigest: sourcePrompt === undefined ? undefined : digest(sourcePrompt), gateToken, submitted: false, accepted: false });
 }
 export function forgetNativeArgvAcceptance(sessionId: string): void { launches.delete(sessionId); }
 
@@ -42,5 +42,6 @@ export function recordNativeArgvSubmission(info: NativeArgvIdentity, startKey: s
 export function acceptedNativeArgvPrompt(info: NativeArgvIdentity, startKey: string, prompt: string, gateToken?: string): boolean {
   const launch = launches.get(info.sessionId);
   return Boolean(launch?.accepted && launch.gateToken === gateToken && launch.startKey === startKey
-    && launch.identity === nativeArgvIdentityKey(info) && launch.digest === digest(prompt));
+    && launch.identity === nativeArgvIdentityKey(info)
+    && (launch.sourceDigest ?? launch.digest) === digest(prompt));
 }

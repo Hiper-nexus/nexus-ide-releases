@@ -681,6 +681,8 @@ export function attenuateTools(
  */
 /** Parâmetros internos do roteamento do spawn — nunca vêm de argumento MCP. */
 export interface OperatorRouteInternal {
+  /** Prompt used only to resolve referenced briefs for classification. */
+  readonly classificationPrompt?: string;
   readonly tieBreakUseCounts?: ReadonlyMap<string, number>;
   readonly excludeAdapterIds?: readonly string[];
   /**
@@ -1285,6 +1287,7 @@ const paneSpawnAfterTabMission = {
         let route: Record<string, unknown>;
         try {
           route = await operatorRouteResolver!(task, ctx, {
+            ...(str(args, 'prompt') ? { classificationPrompt: str(args, 'prompt') } : {}),
             tieBreakUseCounts,
             excludeAdapterIds:
               recoveryExcluded.length > 0
@@ -1497,6 +1500,7 @@ const paneSpawnAfterTabMission = {
             task,
             ctx,
             {
+              ...(str(args, 'prompt') ? { classificationPrompt: str(args, 'prompt') } : {}),
               ...(ctx.promotedFromUserSession === true || recoveryExcluded.length > 0
                 ? {
                     excludeAdapterIds: [

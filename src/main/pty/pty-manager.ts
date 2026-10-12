@@ -11,6 +11,7 @@ import { recordSessionInputReceipt, forgetSessionInputReceipt, type SystemInputW
 import { configurePtyAnalysis, bindPtyAnalysisSession, feedPtyAnalysis, inputPtyAnalysis, statePtyAnalysis, resizePtyAnalysis, exitPtyAnalysis, terminatePtyAnalysis } from './pty-analysis-runtime';
 import { assertLicenseAccess, reserveLicensedAgent, licensedAgentCount } from '../license-enforcement';
 import fs from "node:fs";
+import { redactTerminalText } from "../../shared/secret-redaction";
 import { canResumeMimoNativeSession } from "../adapters/mimo-session-owner";
 import { mimoSkipPermissionsViaEnv } from "../adapters/mimo-skip-permissions";
 import os from "node:os";
@@ -26,7 +27,6 @@ import {
 import {
   applyInitialPromptToArgv,
   initialPromptChannel,
-  nativeArgvPromptFits,
 } from "../../shared/cli-initial-prompt";
 import { ensureUtf8Locale } from "./pty-env-locale";
 import { createExactResumeHealth, type ExactResumeAttempt } from "./exact-resume-health";
@@ -241,6 +241,8 @@ interface Session {
   lastBackpressureWarnAt: number;
   /** Temp ZDOTDIR/bashrc dirs for OSC 133 — cleaned on session end. */
   shellIntegrationCleanup: string[];
+  /** Private initial brief, retained until physical process-tree exit. */
+  initialBriefPath?: string;
   /**
    * When set, the agent process lives in a tmux session. App quit detaches
    * (does not kill-session); pane close kills the tmux session.
@@ -1337,6 +1339,7 @@ function finalizeSession(
   exitPtyAnalysis(sessionId);
   sessions.delete(sessionId);
   s.releaseLicenseAgent?.();
+  if (s.initialBriefPath) cleanupShellIntegrationPaths([s.initialBriefPath]);
   sessionLeaseRegistry.revokeLease(sessionId);
   lastInputOrigins.delete(sessionId);
   forgetSessionInputReceipt(sessionId);
@@ -1781,6 +1784,7 @@ export function spawnAgentSession(
   const releaseLicenseAgent = reserveLicensedAgent();
   let licenseChildSpawned = false;
   let museProfileToken: string | undefined;
+  let initialBriefPath: string | undefined;
   try {
   assertExclusiveOrchestratorProcessAvailable(adapter, authority);
   const requestedModel = (req.model ?? overrides.defaultModel)?.trim() || "";
@@ -2012,9 +2016,7 @@ export function spawnAgentSession(
     promptChannel.kind !== "paste" &&
     (authority.context?.role === "worker" ||
       promptChannel.kind === "positional" ||
-      promptChannel.kind === "interactive-flag") &&
-    // F-668: mesma regra dos chamadores, que colam o brief depois do boot.
-    nativeArgvPromptFits(authority.context?.initialPrompt, process.platform)
+      promptChannel.kind === "interactive-flag")
       ? authority.context?.initialPrompt
       : undefined;
   let safeNativeInitialPrompt: string | undefined;
@@ -2030,7 +2032,26 @@ export function spawnAgentSession(
           `1-${MAX_NATIVE_INITIAL_PROMPT_BYTES} bytes`,
       );
     }
-    safeNativeInitialPrompt = safeInitialPrompt;
+    if (Buffer.byteLength(safeInitialPrompt, "utf8") > 4 * 1024) {
+      const directory = path.join(app.getPath("userData"), "briefs");
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      const directoryStat = fs.lstatSync(directory);
+      if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+        throw new Error("initial brief directory must be a real directory");
+      }
+      // Unique per incarnation: an old exit cannot delete a respawn's brief.
+      const briefPath = path.join(directory, `${randomUUID()}.md`);
+      const fd = fs.openSync(briefPath, "wx", 0o600);
+      initialBriefPath = briefPath;
+      try {
+        fs.writeFileSync(fd, redactTerminalText(safeInitialPrompt));
+      } finally {
+        fs.closeSync(fd);
+      }
+      safeNativeInitialPrompt = `Leia e siga integralmente o brief em ${JSON.stringify(initialBriefPath)}`;
+    } else {
+      safeNativeInitialPrompt = safeInitialPrompt;
+    }
   }
   const sessionId = makeSessionId();
   overrides.onSpawnSessionAllocated?.(sessionId);
@@ -2674,6 +2695,7 @@ export function spawnAgentSession(
           // file already produced. Read-only lanes never commit, so they get
           // neither.
           extraReadPaths: [
+            ...(initialBriefPath ? [initialBriefPath] : []),
             ...(heavyZsh ? [heavyZsh.directory] : []),
             ...codexProcessSandbox.providerStatePaths,
             ...(decoration?.missionShimReadPaths ?? []),
@@ -2846,6 +2868,7 @@ export function spawnAgentSession(
           protectedWritePaths: heavyZsh?.protectedWritePaths,
           protectedDirectoryPaths: heavyZsh?.protectedDirectoryPaths,
           extraReadPaths: [
+            ...(initialBriefPath ? [initialBriefPath] : []),
             ...(heavyZsh ? [heavyZsh.directory] : []),
             ...advisorySandbox.extraWritePaths,
             ...advisorySandbox.providerStateReadPaths,
@@ -3121,7 +3144,7 @@ export function spawnAgentSession(
         ? { coordinationScope: authority.coordinationScope } : {}),
       source: authority.source, role: authority.context?.role ?? "user",
       missionId: authority.context?.missionId, workerIncarnationId: authority.context?.workerIncarnationId,
-      authoritySeal: authority.context?.authoritySeal }, lease.startKey, safeNativeInitialPrompt, spawnEnv.NEXUS_GATE_TOKEN);
+      authoritySeal: authority.context?.authoritySeal }, lease.startKey, safeNativeInitialPrompt, spawnEnv.NEXUS_GATE_TOKEN, initialBriefPath ? assertSafePtyPrompt(nativeInitialPrompt!) : undefined);
   }
   try {
     const host = requireHost();
@@ -3248,6 +3271,7 @@ export function spawnAgentSession(
     replayChars: 0,
     lastBackpressureWarnAt: 0,
     shellIntegrationCleanup: [],
+    ...(initialBriefPath ? { initialBriefPath } : {}),
     ...(persistencePlan.mode === "tmux" && persistencePlan.tmuxName
       ? {
           persistentTmuxName: persistencePlan.tmuxName,
@@ -3326,7 +3350,10 @@ export function spawnAgentSession(
   };
   } catch (error) {
     if (!licenseChildSpawned && museProfileToken) cleanupCliMcpSession(museProfileToken);
-    if (!licenseChildSpawned) releaseLicenseAgent();
+    if (!licenseChildSpawned) {
+      if (initialBriefPath) cleanupShellIntegrationPaths([initialBriefPath]);
+      releaseLicenseAgent();
+    }
     throw error;
   }
 }
