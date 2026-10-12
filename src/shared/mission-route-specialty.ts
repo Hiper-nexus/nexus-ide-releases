@@ -160,6 +160,20 @@ const SECURITY_SPECIALTY_SIGNALS = [
   'rls',
   'multitenant',
   'secret',
+  // F-1402: superfície de credencial/conta de login é segurança tanto quanto
+  // auth/pagamento. 'creden' (radical) cobre credencial/credenciais e
+  // credential/credentials. 'login' SOZINHO não entra: "texto do botão de
+  // login" é UI, não superfície de credencial — valem as frases compostas.
+  'creden',
+  'keychain',
+  'refresh token',
+  'access token',
+  'sessão de login',
+  'sessao de login',
+  'login session',
+  'conta gerenciada',
+  'managed account',
+  'linhagem',
 ] as const;
 
 /**
@@ -271,6 +285,8 @@ const SECURITY_SIGNAL_STEMS: ReadonlySet<string> = new Set([
   'desencripta',
   'descriptografa',
   'secret',
+  // F-1402: 'creden' cobre credencial/credenciais/credential/credentials.
+  'creden',
 ]);
 
 export function hasSecuritySpecialtySignals(text: string): boolean {

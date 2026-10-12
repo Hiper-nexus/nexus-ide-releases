@@ -61,6 +61,24 @@ describe('classifyTask', () => {
     );
   });
 
+  it('F-1402: credencial/conta de login é superfície de segurança (critical)', () => {
+    // Frase real do nexus_route_log (mission-94d90f5b) que saía medium/bug.
+    expect(
+      classifyTask(
+        'Writer crítico de contas: remover o limite de um pane Claude por ' +
+        'conta corrigindo a causa (panes da mesma conta gerenciada ' +
+        'compartilham uma única linhagem de credencial, sem cópia de ' +
+        'refresh token), com testes RED',
+      ).tier,
+    ).toBe('critical');
+    expect(classifyTask('rotacionar as credenciais do keychain').tier).toBe('critical');
+    expect(classifyTask('share the managed account login session').tier).toBe('critical');
+    // 'login' sozinho não basta: texto de botão de login é UI, não credencial.
+    expect(classifyTask('ajustar o texto do botão de login').tier).not.toBe('critical');
+    // Domínio só citado continua barato (listagem/documento de uma ação só).
+    expect(classifyTask('listar as credenciais escopadas').tier).toBe('trivial');
+  });
+
   it('critical keywords keep their floor even in short asks', () => {
     expect(classifyTask('corrigir auth').tier).toBe('critical');
   });

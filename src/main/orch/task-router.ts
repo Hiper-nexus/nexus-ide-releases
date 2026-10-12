@@ -369,6 +369,13 @@ const CRITICAL_SIGNALS = [
   // Revisão Fable (F-1340/F-1341): 'token' é ambíguo sozinho (F-1289); JWT não
   // — "corrigir typo na validação do token JWT" é código de autenticação.
   'jwt',
+  // F-1402: credencial/conta de login é superfície de segurança — "tarefa de
+  // credencial compartilhada" saía medium/bug. 'creden' (radical) cobre
+  // credencial/credenciais/credential/credentials. 'login' SOZINHO fica fora:
+  // "ajustar o texto do botão de login" é UI; valem as frases compostas.
+  'creden', 'keychain', 'refresh token', 'access token',
+  'sessão de login', 'sessao de login', 'login session',
+  'conta gerenciada', 'managed account', 'linhagem',
 ];
 
 const HARD_SIGNALS = [
@@ -415,6 +422,8 @@ const CRITICAL_STEMS: ReadonlySet<string> = new Set([
   'descriptografia', 'migration', 'migração', 'migracao', 'tenant',
   'corrup', 'corromp',
   'race condition', 'concorrência', 'concorrencia', 'deadlock', 'webhook',
+  // F-1402: 'creden' cobre credencial/credenciais/credential/credentials.
+  'creden',
 ]);
 
 const HARD_STEMS: ReadonlySet<string> = new Set([
@@ -451,6 +460,12 @@ const DOMAIN_ONLY_SIGNALS: ReadonlySet<string> = new Set([
   'payment', 'pagamento', 'billing', 'cobrança', 'cartão', 'cartao',
   'tenant', 'multitenant', 'rls', 'produção', 'producao', 'production',
   'webhook', 'secret', 'secrets', 'token', 'tokens', 'jwt',
+  // F-1402: os substantivos de credencial também são domínio — "listar as
+  // credenciais escopadas" e "documentar a rotação do refresh token" seguem
+  // baratos como qualquer outro domínio.
+  'creden', 'keychain', 'refresh token', 'access token',
+  'sessão de login', 'sessao de login', 'login session',
+  'conta gerenciada', 'managed account', 'linhagem',
   'integração', 'integracao', 'integrações', 'integracoes', 'integration',
   'engine', 'motor', 'protocolo', 'protocol', 'parser', 'compiler',
 ]);

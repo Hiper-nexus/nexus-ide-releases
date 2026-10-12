@@ -32,6 +32,20 @@ describe('classifyRouteSpecialty', () => {
     expect(verdict.specialty).toBe('doc');
   });
 
+  it('F-1402: credencial/conta gerenciada sobrepõe security', () => {
+    const verdict = classifyRouteSpecialty(
+      'remover o limite de um pane por conta: panes da mesma conta ' +
+      'gerenciada compartilham uma única linhagem de credencial, sem ' +
+      'cópia de refresh token',
+    );
+    expect(verdict.specialty).toBe('security');
+  });
+
+  it('F-1402: botão de login é UI — "login" sozinho não vira security', () => {
+    const verdict = classifyRouteSpecialty('ajustar o texto do botão de login');
+    expect(verdict.specialty).not.toBe('security');
+  });
+
   it('admite general quando não há vocabulário', () => {
     const verdict = classifyRouteSpecialty(
       'me ajuda com aquilo que a gente conversou ontem',
