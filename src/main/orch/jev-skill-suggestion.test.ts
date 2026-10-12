@@ -599,6 +599,40 @@ describe('papel da tarefa e superfície do CLI filtram o catálogo (F-772)', () 
     expect(judge).not.toHaveBeenCalled();
   });
 
+  it('F-1307: pane sem superfície bundled ainda recebe a dica de skill de PROJETO', async () => {
+    const projectScan = (dir: string) =>
+      dir.replaceAll('\\', '/').endsWith('/proj/.claude/skills')
+        ? [{ name: 'bmad-create-prd', description: 'Create a PRD from scratch.' }]
+        : [];
+    const judge = vi.fn(async (_req: unknown) =>
+      jevResult({
+        [PROJECT_SKILL_QUESTION]: {
+          type: 'choice',
+          choice: 'bmad-create-prd',
+          probabilities: { 'bmad-create-prd': 0.9 },
+          confidence: 0.9,
+        },
+      }),
+    );
+    const suggestion = await suggestSkillForTask('escreva o PRD do checkout', {
+      allowedSkills: null,
+      adapterId: 'muse',
+      projectRoot: '/proj',
+      deps: { judge, record: vi.fn(), ...on, scanProjectSkills: projectScan },
+    });
+    expect(suggestion).toEqual({
+      name: 'bmad-create-prd',
+      pkg: 'project',
+      confidence: 0.9,
+      path: '.claude/skills/bmad-create-prd/SKILL.md',
+    });
+    // O catálogo bundled fica de fora (o muse não lê a SKILL.md da HOME).
+    const request = judge.mock.calls[0][0] as {
+      questions: Record<string, { criteria: Record<string, unknown> }>;
+    };
+    expect(Object.keys(request.questions)).toEqual([PROJECT_SKILL_QUESTION]);
+  });
+
   it('a superfície cobre claude-family e as CLIs com entrega própria', () => {
     for (const adapterId of [
       'claude',

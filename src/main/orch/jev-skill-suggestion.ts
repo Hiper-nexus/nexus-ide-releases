@@ -489,17 +489,20 @@ export async function suggestSkillForTask(
   const judgeFn = opts.deps?.judge ?? judge;
   const record = opts.deps?.record ?? recordJevDecision;
   if (!task.trim() || !enabled() || !hasKey()) return null;
-  if (opts.adapterId !== undefined && !cliSupportsSkillSurface(opts.adapterId)) {
-    return null;
-  }
+
+  // F-1307 (refina F-772 G7a): pane sem superfície de skill bundled (muse,
+  // minimax-code…) não lê uma SKILL.md da HOME, mas a skill de PROJETO (um
+  // SKILL.md dentro do workspace, legível por qualquer CLI) continua valendo.
+  // Só o catálogo bundled esvazia; o de projeto segue para o Jev.
+  const bundledSurface =
+    opts.adapterId === undefined || cliSupportsSkillSurface(opts.adapterId);
 
   // F-772 (G7a): papel da tarefa restringe o catálogo bundled antes do Jev
   // escolher — scout/conveyor fora de workers, builder/debugging fora de
   // panes read-only.
-  const catalog = skillCatalogForTaskRole(
-    task,
-    allowedSkillCatalog(opts.allowedSkills),
-  );
+  const catalog = bundledSurface
+    ? skillCatalogForTaskRole(task, allowedSkillCatalog(opts.allowedSkills))
+    : [];
   const projectCatalog = allowedProjectSkillCatalog(
     opts.allowedSkills,
     opts.projectRoot,
