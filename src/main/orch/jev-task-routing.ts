@@ -424,6 +424,7 @@ export function routingOverridesFrom(
    * de regra não tem número. Vai para o recibo da rota, nunca para a decisão.
    */
   confidence: SpawnRouteConfidence | undefined;
+  jevUnavailable?: JevUnavailableReason;
 } {
   if (!classification) {
     return {
@@ -443,6 +444,10 @@ export function routingOverridesFrom(
   const effortFromJev = isRouteEffort(classification.effort) &&
     (classification.effortConfidence ?? 0) >= TASK_ROUTING_MIN_CONFIDENCE;
   const usedJev = Number(tierFromJev) + Number(specialtyFromJev) + Number(effortFromJev);
+  const allLowConfidence =
+    classification.tierConfidence < TASK_ROUTING_MIN_CONFIDENCE &&
+    classification.specialtyConfidence < TASK_ROUTING_MIN_CONFIDENCE &&
+    (!isRouteEffort(classification.effort) || (classification.effortConfidence ?? 0) < TASK_ROUTING_MIN_CONFIDENCE);
   const tierOverride =
     callerTier ??
     (tierFromJev
@@ -453,6 +458,7 @@ export function routingOverridesFrom(
     specialtyOverride: specialtyFromJev ? classification.specialty : undefined,
     effortOverride: effortFromJev ? classification.effort : undefined,
     classifierSource: usedJev === 3 ? 'jev' : usedJev > 0 ? 'mixed' : 'heuristic',
+    ...(allLowConfidence ? { jevUnavailable: 'low-confidence' } : {}),
     escalate: classification.escalate,
     // O piso de revisão de código pode ter elevado o tier do Jev: aí o tier
     // final é da regra, e o número dele ao lado seria mentira.

@@ -2379,7 +2379,7 @@ export async function routeTaskForCaller(
     effort: decision.effort,
     reason: decision.reason,
     classifierSource: routing.classifierSource,
-    ...(jevUnavailable ? { jevUnavailable } : {}),
+    ...((jevUnavailable ?? routing.jevUnavailable) ? { jevUnavailable: jevUnavailable ?? routing.jevUnavailable } : {}),
     ...(routing.confidence ? { confidence: routing.confidence } : {}),
     ...(ruleChoice ? { ruleChoice } : {}),
     // F-773 (G6): quem disputou e perdeu, e a missão — a auditoria "por que
@@ -2396,7 +2396,7 @@ export async function routeTaskForCaller(
   const provenance = {
     classifierSource: routing.classifierSource,
     ...(routing.escalate !== undefined ? { escalate: routing.escalate } : {}),
-    ...(jevUnavailable ? { jevUnavailable } : {}),
+    ...((jevUnavailable ?? routing.jevUnavailable) ? { jevUnavailable: jevUnavailable ?? routing.jevUnavailable } : {}),
     ...(routing.confidence ? { confidence: routing.confidence } : {}),
     ...(ruleChoice ? { ruleChoice } : {}),
   };

@@ -22,7 +22,9 @@ export type JevUnavailableReason =
   /** Os modelos do modo Juntos não concordaram. */
   | 'divergent'
   /** O orçamento de decisão da missão esgotou (F-1164). */
-  | 'budget';
+  | 'budget'
+  /** Resposta com confiança abaixo do limiar (F-1265). */
+  | 'low-confidence';
 
 export type SpawnRouteSource = 'jev' | 'mixed' | 'heuristic';
 
@@ -173,6 +175,7 @@ export const JEV_UNAVAILABLE_LABEL: Readonly<Record<JevUnavailableReason, string
   ambiguous: 'resposta ambígua',
   divergent: 'sem acordo entre os modelos',
   budget: 'orçamento da missão esgotado',
+  'low-confidence': 'baixa confiança',
 };
 
 export function isJevUnavailableReason(value: unknown): value is JevUnavailableReason {

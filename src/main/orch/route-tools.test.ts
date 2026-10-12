@@ -690,6 +690,15 @@ describe('nexus_route_task — recibo: confiança do Jev e o que a regra teria e
     expect(mocks.routeTask).toHaveBeenCalledTimes(1);
   });
 
+  it('Jev com todas as confianças < 0,6 marca jevUnavailable: low-confidence no recibo (F-1265)', async () => {
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue(
+      jev({ tierConfidence: 0.2, specialtyConfidence: 0.2, effortConfidence: 0.2 }),
+    );
+    const decision = await route();
+    expect(decision.classifierSource).toBe('heuristic');
+    expect(decision.jevUnavailable).toBe('low-confidence');
+  });
+
   it('fail-open: se o recálculo da regra lançar, a rota sai igual, só sem ruleChoice', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     mocks.classifyTaskWithSkillForRouting.mockResolvedValue(jev());

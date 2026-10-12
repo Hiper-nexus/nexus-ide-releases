@@ -181,6 +181,15 @@ describe('routingOverridesFrom', () => {
     ).toMatchObject({ tierOverride: undefined, specialtyOverride: undefined, classifierSource: 'heuristic' });
   });
 
+  it('quando todas as confianças do Jev são < 0,6, marca jevUnavailable: low-confidence (F-1265)', () => {
+    const lowConf = routingOverridesFrom(
+      { ...full, tierConfidence: 0.3, specialtyConfidence: 0.2, effortConfidence: 0.2 },
+      undefined,
+    );
+    expect(lowConf.classifierSource).toBe('heuristic');
+    expect(lowConf.jevUnavailable).toBe('low-confidence');
+  });
+
   it('the caller-provided tier always wins over Jev', () => {
     const out = routingOverridesFrom(full, 'easy');
     expect(out.tierOverride).toBe('easy');
