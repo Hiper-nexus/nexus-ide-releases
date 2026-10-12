@@ -1180,6 +1180,19 @@ function warnRoutedModelsMissingFromCli(missing: readonly string[]): string {
   return `; CLI sem o modelo roteado: ${unique.slice(0, 3).join(', ')}`;
 }
 
+function warnLiveCatalogDrops(drops: readonly string[]): string {
+  const unique = [...new Set(drops)];
+  if (unique.length === 0) return '';
+  for (const key of unique) {
+    if (warnedMissingRoutes.has(`drop:${key}`)) continue;
+    warnedMissingRoutes.add(`drop:${key}`);
+    console.warn(
+      `[task-router] CLI desconsiderada da rota por catálogo vivo vazio: ${key}`,
+    );
+  }
+  return `; CLI sem modelos no catálogo: ${unique.slice(0, 3).join(', ')}`;
+}
+
 function evaluatedCandidates(
   specialty: RouteSpecialty,
   tier: TaskTier,
@@ -1433,7 +1446,17 @@ export function routeTask(
       ? `; exige contexto ≥ ${contextRequirement.toLocaleString('en-US')} tokens — excluídos os com maxContext documentado menor`
       : '';
   // F-990: a prova viva vale para TODA lane — inclusive a menção no texto.
-  const provenAdapters = routedAdapters.map((a) => (a.installed ? withLiveRouteCatalog(a) : a));
+  const liveCatalogDrops: string[] = [];
+  const provenAdapters = routedAdapters.map((a) => {
+    if (!a.installed) return a;
+    const proven = withLiveRouteCatalog(a);
+    if (!proven.installed) {
+      liveCatalogDrops.push(
+        proven.unavailableReason ? `${proven.id} (${proven.unavailableReason})` : proven.id,
+      );
+    }
+    return proven;
+  });
   const available = new Map(
     provenAdapters.filter((a) => a.installed).map((a) => [a.id, a]),
   );
@@ -1988,6 +2011,7 @@ export function routeTask(
   }
 
   const missingNote = warnRoutedModelsMissingFromCli(missingFromCli);
+  const liveCatalogDropNote = warnLiveCatalogDrops(liveCatalogDrops);
   const lineUpgradeNote =
     lineUpgrades.length > 0
       ? `; mais novo da linha: ${[...new Set(lineUpgrades)].slice(0, 3).join(', ')}`
@@ -2047,7 +2071,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${writerCostNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${writerCostNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,
@@ -2098,7 +2122,7 @@ export function routeTask(
     adapterId: fallback,
     ...(safeFallbackModels.has(fallback) ? { model: safeFallbackModels.get(fallback)! } : {}),
     effort: effortFor(fallback),
-    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${contextNote}${missingNote}${effortNoteFor(fallback)}`,
+    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${contextNote}${missingNote}${liveCatalogDropNote}${effortNoteFor(fallback)}`,
     alternatives: [],
     specialty: specialtyVerdict.specialty,
     policySource: policy.source,

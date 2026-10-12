@@ -101,6 +101,9 @@ describe('F-990 — prova viva em TODAS as lanes, para toda CLI que lista', () =
     expect(empty.unavailableReason).toMatch(/não anuncia/);
     const decision = routed([agy({ liveModels: [], liveModelsAuthoritative: true }), kimi]);
     expect([decision, ...decision.alternatives].every((c) => c.adapterId !== 'agy')).toBe(true);
+    // F-1266: a CLI pronta que caiu por catálogo vazio/quebrado não some em silêncio
+    expect(decision.reason).toMatch(/agy/);
+    expect(decision.reason).toMatch(/não anuncia/);
   });
 
   it('id custom/catálogo sem prova não entra em nenhuma lane nem pela menção no texto', () => {
