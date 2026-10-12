@@ -7,6 +7,7 @@ import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-st
 import { getMissionEventRuntimeManager } from './mission-event-emit';
 import type { VisualTaskRequirement } from '../../shared/orch-types';
 import { createScopedTaskStore } from './task-store';
+import { withoutMountedPromptContextBlocks } from './prompt-context-blocks';
 
 export type { VisualTaskRequirement } from '../../shared/orch-types';
 export interface VisualHandoffContext {
@@ -27,7 +28,9 @@ export function createVisualTaskRequirement(now = Date.now(), id: string = rando
 }
 export function visualTaskRequirement(assignment: string | undefined, now = Date.now(), id?: string): VisualTaskRequirement | undefined {
   if (!assignment) return undefined;
-  const text = assignment.slice(0, 16_384);
+  // F-1271: os blocos de contexto montados na frente (<business-model> com as
+  // invariantes de UI do projeto, <workspace-memory>…) não são a tarefa.
+  const text = withoutMountedPromptContextBlocks(assignment).slice(0, 16_384);
   // A UI defect is still a visual delivery. Requiring a capture does not
   // reclassify it as new design work or grant design-authority capabilities.
   const required = requiresDesignAuthority(text) || (classifyWorkKind(text).kind === 'bug' && isUiWorkText(text));

@@ -29,6 +29,17 @@ function mountedOpenings(text: string): Set<string> {
   }
 }
 
+/** O texto depois dos blocos montados na frente: a tarefa, sem o contexto do projeto. */
+export function withoutMountedPromptContextBlocks(text: string): string {
+  let rest = text.trimStart();
+  for (const opening of mountedOpenings(text)) {
+    const tag = /^<([a-z][\w-]*)[\s>]/.exec(opening)![1];
+    if (!rest.startsWith(opening)) break;
+    rest = rest.slice(rest.indexOf(`</${tag}>`) + tag.length + 3).trimStart();
+  }
+  return rest;
+}
+
 /** Only leading mounted blocks count; mentioning a tag in the task is not injection. */
 export function hasMountedPromptContextBlock(prompt: string, tag: string): boolean {
   return [...mountedOpenings(prompt)].some(

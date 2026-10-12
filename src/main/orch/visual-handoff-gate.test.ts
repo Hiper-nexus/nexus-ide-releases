@@ -19,6 +19,18 @@ beforeEach(() => {
 });
 afterEach(() => { manager.closeAll(); fs.rmSync(dir, { recursive: true, force: true }); });
 
+it('F-1271: o bloco <business-model> montado na frente não torna visual uma tarefa de backend', () => {
+  const block = '<business-model fonte="modelo e referências locais · jev">\nInvariantes da tarefa:\n' +
+    '- [projeto#27] O PAINEL é superfície Nexus escura SEMPRE (.darkAqua no root e no popover; #111013 ' +
+    'cabeçalho/rodapé). No tema claro o painel… (AGENTS.md:586)\n</business-model>';
+  const task = 'Corrigir bug no nexus_file_search: glob com **/ no meio não casa zero diretórios';
+  expect(visualTaskRequirement(`${block}\n\n${task}`, 1000)).toBeUndefined();
+  expect(visualTaskAtSpawn({ role: 'worker', initialPrompt: `${block}\n\n${task}` })).toBeUndefined();
+  // A tarefa visual continua visual com o mesmo bloco na frente; citar a tag no meio não é montagem.
+  expect(visualTaskRequirement(`${block}\n\nCorrija o bug no layout da tela de login.`, 1000)).toBeDefined();
+  expect(visualTaskRequirement(`Corrija o bug no layout da tela de login citando ${block}`, 1000)).toBeDefined();
+});
+
 it('derives a visual requirement from the assigned task, not from a completion claim', () => {
   expect(visualTaskRequirement('Crie a tela de login com layout responsivo.', 1000)).toEqual({ since: 1000, id: expect.any(String) });
   expect(visualTaskRequirement('Documente os endpoints da API de login.', 1000)).toBeUndefined();
