@@ -179,6 +179,11 @@ export interface BrowserScreenshotResult {
   url: string;
   title: string;
   capturedAt: number;
+  /** F-1326: the pane was smaller than the emulated device; the PNG shows only
+   * `capturedCss` of `viewport` (CSS px) and is not complete visual evidence. */
+  truncated?: true;
+  capturedCss?: { width: number; height: number };
+  viewport?: { width: number; height: number };
 }
 
 /** Dev server announced by a PTY pane's output (VISUAL-EDIT-001, F1.5). */

@@ -52,7 +52,7 @@ const stubs = vi.hoisted(() => ({
     url: 'http://127.0.0.1:1234/',
   })),
   assertBrowserAtExactUrl: vi.fn(),
-  analyzeBrowserResponsive: vi.fn(async () => ({ paneId: 'browser-1', breakpoints: [] })),
+  analyzeBrowserResponsive: vi.fn(async () => ({ paneId: 'browser-1', breakpoints: [] as unknown[] })),
   pressBrowserKey: vi.fn(async () => ({ paneId: 'browser-1' })),
   resolveReviewAuthority: vi.fn(() => null as {
     reviewSessionId: string;
@@ -172,6 +172,21 @@ describe('nexus_browser_responsive', () => {
       scope,
       expect.objectContaining({ devices: [] }),
     );
+  });
+
+  it('F-1326: never records a capture cut to the pane as visual evidence', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_responsive')!;
+    const worker = { scope, role: 'worker', sessionId: 'worker-session', missionId: 'mission-a',
+      visualTask: { since: 1000, id: 'capture-assignment' } } as AgentGateContext;
+    const record = vi.spyOn(visualHandoff, 'recordVisualHandoffEvidence').mockReturnValue(true);
+    stubs.analyzeBrowserResponsive.mockResolvedValueOnce({ paneId: 'browser-1', breakpoints: [
+      { device: 'tablet', audit: {}, screenshot: { artifactId: 'cut', truncated: true } },
+      { device: 'desktop', audit: {}, screenshot: { artifactId: 'whole' } },
+    ] });
+    try {
+      await tool.handler({ paneId: 'browser-1' }, worker);
+      expect(record.mock.calls.map((call) => call[1])).toEqual(['whole']);
+    } finally { record.mockRestore(); }
   });
 
   it('never runs when the pane is not authorized', async () => {

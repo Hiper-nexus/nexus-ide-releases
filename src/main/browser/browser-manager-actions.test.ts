@@ -136,7 +136,7 @@ const state = vi.hoisted(() => {
     profileMode: 'isolated' as 'isolated' | 'personal',
     decisionConfiguration: 'initial',
     encodeBitmap: vi.fn((_bitmap: Buffer, _size: unknown) => ({ toPNG: () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2WQAAAAASUVORK5CYII=', 'base64') })),
-    views: [] as Array<{ setVisible: ReturnType<typeof vi.fn>; setBounds: ReturnType<typeof vi.fn> }>,
+    views: [] as Array<{ setVisible: ReturnType<typeof vi.fn>; setBounds: ReturnType<typeof vi.fn>; getBounds: ReturnType<typeof vi.fn> }>,
   };
 });
 
@@ -925,6 +925,24 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
     expect(state.guest.loadURL).toHaveBeenLastCalledWith('https://example.test/app');
     expect(state.guest.disableDeviceEmulation).toHaveBeenCalled();
     expect(state.guest.setUserAgent).toHaveBeenLastCalledWith('desktop-ua');
+    destroyBrowser(PANE, scope);
+  });
+
+  // F-1326: a pane narrower/shorter than the emulated device paints only the
+  // view's bounds; that capture must never pass as a complete breakpoint.
+  it('flags an emulated breakpoint cut to a small pane instead of returning it as complete', async () => {
+    await boot();
+    state.views[0].getBounds.mockReturnValue({ x: 0, y: 0, width: 309, height: 136 });
+    const result = await analyzeBrowserResponsive(PANE, scope, { devices: ['tablet', 'desktop'] });
+    const [tablet, desktop] = result.breakpoints.map((b) => ('screenshot' in b ? b.screenshot : null));
+    expect(tablet).toMatchObject({
+      width: 309,
+      truncated: true,
+      capturedCss: { width: 309, height: 136 },
+      viewport: { width: 800, height: expect.any(Number) },
+    });
+    // The pane's own width is the desktop viewport: that capture is whole.
+    expect(desktop).not.toHaveProperty('truncated');
     destroyBrowser(PANE, scope);
   });
 

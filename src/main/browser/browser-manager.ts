@@ -1504,16 +1504,22 @@ export async function captureBrowserScreenshot(
   const capturedAt = Date.now();
   // An emulated device paints only its viewSize at the view's top-left; the
   // rest of the slot is blank, so a full capture would be letterboxed.
+  const viewport = options.clip ? undefined : entry.emulatedViewport;
   const clip = options.clip
     ? clampScreenshotClip(options.clip, entry.view.getBounds(), {
         padding: ELEMENT_SHOT_PADDING,
       })
-    : entry.emulatedViewport
-      ? clampScreenshotClip(
-          { x: 0, y: 0, ...entry.emulatedViewport },
-          entry.view.getBounds(),
-        )
+    : viewport
+      ? clampScreenshotClip({ x: 0, y: 0, ...viewport }, entry.view.getBounds())
       : null;
+  // F-1326: the view only paints its own bounds, so a pane smaller than the
+  // emulated device yields a cut capture. ponytail: flagged, not re-rendered
+  // (growing a visible view would overlap the workspace); upgrade path is an
+  // offscreen capture at the emulated size.
+  const cut =
+    viewport && clip && (clip.width < viewport.width || clip.height < viewport.height)
+      ? { truncated: true as const, capturedCss: { width: clip.width, height: clip.height }, viewport: { ...viewport } }
+      : {};
   const image = await captureWithWakeRetry(
     () => (clip ? wc.capturePage(clip) : wc.capturePage()),
     assertCurrentAuthority,
@@ -1549,6 +1555,7 @@ export async function captureBrowserScreenshot(
     url: redactBrowserUrl(wc.getURL() || entry.url),
     title: redactBrowserLabel(wc.getTitle() || entry.title),
     capturedAt,
+    ...cut,
   };
 }
 

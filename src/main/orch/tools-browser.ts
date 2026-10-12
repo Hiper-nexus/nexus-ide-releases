@@ -302,7 +302,7 @@ const browserScreenshotTool: McpToolDef = {
       recordAutomatedReviewBrowserInspection(reviewAuthority, 'screenshot');
     }
     assertMcpInvocationCurrent(invocation);
-    if (ctx.visualTask === visualAssignment) recordVisualHandoffEvidence(ctx, result.artifactId);
+    if (ctx.visualTask === visualAssignment && !result.truncated) recordVisualHandoffEvidence(ctx, result.artifactId);
     return result;
   },
 };
@@ -319,7 +319,9 @@ const browserResponsiveTool: McpToolDef = {
     '(scrollWidth > clientWidth), elements straddling the viewport edge and ' +
     'elements cut by overflow:hidden. Each page load has a 30s deadline: a ' +
     'breakpoint that does not load comes back as { loadTimedOut: true, error } ' +
-    'and the run continues. The original device and page are ' +
+    'and the run continues. A pane smaller than the device yields a cut PNG ' +
+    'marked { truncated: true, capturedCss, viewport }: it is NOT complete ' +
+    'visual evidence; widen the pane and rerun. The original device and page are ' +
     'restored at the end, even on error.',
   inputSchema: {
     type: 'object',
@@ -349,7 +351,9 @@ const browserResponsiveTool: McpToolDef = {
     });
     assertMcpInvocationCurrent(invocation);
     for (const breakpoint of result.breakpoints) {
-      if (ctx.visualTask === visualAssignment && 'screenshot' in breakpoint && breakpoint.screenshot) {
+      // F-1326: a capture cut to the pane is not visual evidence of the breakpoint.
+      if (ctx.visualTask === visualAssignment && 'screenshot' in breakpoint && breakpoint.screenshot
+        && !breakpoint.screenshot.truncated) {
         recordVisualHandoffEvidence(ctx, breakpoint.screenshot.artifactId);
       }
     }
