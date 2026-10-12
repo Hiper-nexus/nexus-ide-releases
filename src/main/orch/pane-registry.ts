@@ -3476,6 +3476,12 @@ export function requestBrowserPane(options: {
         agentName: options.agentName,
         role: options.role,
         scope: options.scope,
+        // F-1408: o navegador aberto por um worker herda a execution worktree
+        // DELE (contexto confiável do gate, nunca argumento MCP): o dono rola,
+        // clica, digita e fecha; worker de outra worktree segue recusado.
+        ...(options.caller?.executionScope
+          ? { executionScope: options.caller.executionScope }
+          : {}),
       },
     };
     pendingBrowserOpens.set(requestId, pending);
