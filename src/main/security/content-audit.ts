@@ -25,7 +25,8 @@ export type AuditCategory =
   | 'exfiltration'
   | 'ssrf'
   | 'supply-chain'
-  | 'repo-poisoning';
+  | 'repo-poisoning'
+  | 'unsafe-sink';
 
 export interface AuditFinding {
   severity: AuditSeverity;
@@ -82,10 +83,27 @@ function revealHidden(value: string): string {
     .replace(/[\u{E0000}-\u{E007F}]/gu, '[UNICODE-TAG]');
 }
 
-function evidenceAt(content: string, index: number, match: string): string {
+/** Credential-like tokens. No evidence excerpt may carry one (F-1331). */
+export const SECRET_RE = /(?:sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|(?:api[_-]?key|auth[_-]?token|secret)\s*[:=]\s*["'][^"']{12,}["'])/i;
+// Only ever used through matchAll, which clones it: no shared lastIndex state.
+const SECRET_GLOBAL_RE = new RegExp(SECRET_RE.source, 'gi');
+
+export function evidenceAt(content: string, index: number, match: string): string {
   const start = Math.max(0, index - 80);
   const end = Math.min(content.length, index + match.length + 80);
-  const excerpt = revealHidden(content.slice(start, end)).replace(/\s+/g, ' ').trim();
+  // F-1331: secrets are found in the whole content, not in the excerpt, so one
+  // cut by the window edge ("pi03-AAAA…") is still redacted.
+  let raw = '';
+  let cursor = start;
+  for (const secret of content.matchAll(SECRET_GLOBAL_RE)) {
+    const secretEnd = secret.index + secret[0].length;
+    if (secretEnd <= start) continue;
+    if (secret.index >= end) break;
+    raw += `${content.slice(cursor, Math.max(cursor, secret.index))}[REDACTED_SECRET]`;
+    cursor = secretEnd;
+  }
+  raw += content.slice(cursor, end);
+  const excerpt = revealHidden(raw).replace(/\s+/g, ' ').trim();
   return excerpt.length > MAX_EVIDENCE_CHARS
     ? `${excerpt.slice(0, MAX_EVIDENCE_CHARS - 1)}…`
     : excerpt;
