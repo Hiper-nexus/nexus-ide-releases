@@ -113,6 +113,20 @@ describe('workspace memory engine (FTS5)', () => {
     expect(hits[0].content).toContain('bravo');
   });
 
+  it('F-1349: identificador hifenado casa como frase — recall("F-1301") não traz o F-918', () => {
+    const store = makeStore();
+    store.retain({ content: 'F-918 corrigido: recibo de entrega do pane duplicado', kind: 'fact' });
+    store.retain({ content: 'F-1301 corrigido: WIP alheio anterior à missão não bloqueia a conclusão', kind: 'fact' });
+    store.retain({ content: 'porta 1301 reservada para o preview local', kind: 'fact' });
+    const hits = store.recall({ query: 'F-1301' });
+    expect(hits.map((hit) => hit.content.slice(0, 6))).toEqual(['F-1301']);
+    // Token de 1 caractere sozinho não vira consulta que casa tudo.
+    expect(store.recall({ query: 'F' })).toEqual([]);
+    // Frase + palavra solta continuam combinando por OR.
+    expect(store.recall({ query: 'F-918 preview' }).map((hit) => hit.content.slice(0, 5)).sort())
+      .toEqual(['F-918', 'porta']);
+  });
+
   it('deduplica retain idêntico renovando updated_at em vez de duplicar', () => {
     let clock = 1_000_000;
     const store = makeStore(() => clock);

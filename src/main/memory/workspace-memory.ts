@@ -435,15 +435,20 @@ function contentHash(content: string): string {
  * Converte a consulta livre em MATCH seguro do FTS5: só tokens alfanuméricos,
  * cada um entre aspas, unidos por OR. Documentos que casam mais termos sobem
  * naturalmente no bm25 (match "exato" > parcial). Retorna null sem tokens.
+ * F-1349: identificador composto (`F-1301`, `PR-12`) vira uma frase — o
+ * tokenizer separa no hífen e `"F" OR "1301"` casava qualquer F-xxxx. Token
+ * de 1 caractere não entra sozinho.
  */
 function buildFtsMatch(query: string): string | null {
-  const tokens: string[] = [];
-  for (const match of query.matchAll(/[\p{L}\p{N}_]+/gu)) {
-    tokens.push(match[0].slice(0, 64));
-    if (tokens.length >= MAX_QUERY_TOKENS) break;
+  const terms: string[] = [];
+  for (const match of query.matchAll(/[\p{L}]+-\p{N}+|[\p{L}\p{N}_]+/gu)) {
+    const term = match[0].slice(0, 64);
+    if (term.length < 2) continue;
+    terms.push(term);
+    if (terms.length >= MAX_QUERY_TOKENS) break;
   }
-  if (tokens.length === 0) return null;
-  return tokens.map((token) => `"${token}"`).join(' OR ');
+  if (terms.length === 0) return null;
+  return terms.map((term) => `"${term}"`).join(' OR ');
 }
 
 /**
