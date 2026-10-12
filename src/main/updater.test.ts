@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -289,6 +290,70 @@ describe('UpdateManager', () => {
     // A mesma versão que falhou não rebaixa a cada checagem de fundo seguinte.
     await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000 - 3_000);
     expect(zipUrls().length).toBe(downloads);
+  });
+
+  describe('F-1280: ZIP temporário e feed local não sobrevivem à instalação', () => {
+    let tmp = '';
+    const leftovers = () => readdirSync(tmp).filter((name) => name.startsWith('nexus-update-'));
+    const probe = (url: string) => new Promise<number>((resolve, reject) => {
+      http.get(url, { agent: false }, (res) => { res.resume(); resolve(res.statusCode ?? 0); }).on('error', reject);
+    });
+    const ghWith = (releases: unknown[]) => vi.fn(async (args: string[]) => {
+      if (args[0] === 'api') return JSON.stringify(releases);
+      throw new Error('gh release download falhou no teste');
+    });
+    beforeEach(() => {
+      tmp = mkdtempSync(path.join(os.tmpdir(), 'updater-tmpdir-'));
+      vi.stubEnv('TMPDIR', tmp);
+    });
+    afterEach(() => {
+      rmSync(tmp, { recursive: true, force: true });
+    });
+
+    it('download que falha (fetch rejeitando e gh lançando) não deixa nexus-update-* no tmpdir', async () => {
+      const manager = createManager(true, { runGh: ghWith([apiRelease('0.16.4')]), runtimeArch: 'arm64', runtimePlatform: 'darwin' });
+      manager.init();
+      const before = leftovers().length;
+
+      await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+      await electron.handlers.get(UPDATE_CHANNELS.install)?.(trustedSenderEvent());
+
+      expect(manager.getState().phase).toBe('error');
+      expect(leftovers().length).toBe(before);
+    });
+
+    it.each([
+      ['update-downloaded', (_manager: UpdateManager, listeners: Map<string, (...args: unknown[]) => void>) => {
+        listeners.get('update-downloaded')?.({}, '', 'v0.16.4');
+      }],
+      ['squirrel:error', (_manager: UpdateManager, listeners: Map<string, (...args: unknown[]) => void>) => {
+        listeners.get('error')?.(new Error('Code signature at URL did not pass validation'));
+      }],
+      ['stop()', async (manager: UpdateManager) => {
+        await manager.stop();
+      }],
+    ])('%s remove o diretório e fecha o feed local', async (_name, finish) => {
+      const listeners = new Map<string, (...args: unknown[]) => void>();
+      electron.autoUpdater.on.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+        listeners.set(event, cb);
+        return electron.autoUpdater;
+      });
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('zip-bytes', { status: 200 })));
+      const manager = createManager(true, { runGh: ghWith([apiRelease('0.16.4')]), runtimeArch: 'arm64', runtimePlatform: 'darwin' });
+      manager.init();
+
+      await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+      await electron.handlers.get(UPDATE_CHANNELS.install)?.(trustedSenderEvent());
+      const feedUrl = (electron.autoUpdater.setFeedURL.mock.calls.at(-1)?.[0] as { url: string }).url;
+      expect(feedUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/feed\.json$/);
+      expect(leftovers()).toHaveLength(1);
+      await expect(probe(feedUrl)).resolves.toBe(200);
+
+      await finish(manager, listeners);
+
+      expect(leftovers()).toEqual([]);
+      await expect(probe(feedUrl)).rejects.toThrow();
+    });
   });
 
   it('F-1182: a checagem de boot reaproveita a do renderer feita segundos antes', async () => {

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -96,6 +96,7 @@ describe('downloadPublicAsset (progresso + watchdog de stall)', () => {
     );
 
     expect(readFileSync(destination, 'utf8')).toBe('abcdefg');
+    expect(existsSync(`${destination}.part`)).toBe(false);
     const calls = onProgress.mock.calls.map((c) => c[0] as { receivedBytes: number });
     expect(calls.at(-1)?.receivedBytes).toBe(7);
     expect(calls.some((c) => c.receivedBytes === 3)).toBe(true);
@@ -117,6 +118,9 @@ describe('downloadPublicAsset (progresso + watchdog de stall)', () => {
       await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_MS + 1_000);
       await promise;
     }).rejects.toThrow(/sem progresso|travou/i);
+    // F-1280: o parcial não fica no destino nem como .part.
+    expect(existsSync(destination)).toBe(false);
+    expect(existsSync(`${destination}.part`)).toBe(false);
   });
 
   it('deadline total continua valendo (abort geral)', async () => {
@@ -134,6 +138,7 @@ describe('downloadPublicAsset (progresso + watchdog de stall)', () => {
       await vi.advanceTimersByTimeAsync(5_000);
       await promise;
     }).rejects.toThrow();
-    expect(statSync(destination).size).toBeGreaterThanOrEqual(0);
+    expect(existsSync(destination)).toBe(false);
+    expect(existsSync(`${destination}.part`)).toBe(false);
   });
 });

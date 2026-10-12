@@ -255,6 +255,8 @@ export async function downloadPublicAsset(
 ): Promise<void> {
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), timeoutMs);
+  // F-1280: só existe arquivo no destino quando o download terminou inteiro.
+  const partial = `${destination}.part`;
   let stallTimer: ReturnType<typeof setTimeout> | null = null;
   let receivedBytes = 0;
   let abortedByStall = false;
@@ -296,9 +298,11 @@ export async function downloadPublicAsset(
     await pipeline(
       Readable.fromWeb(response.body as import('stream/web').ReadableStream),
       counter,
-      fs.createWriteStream(destination),
+      fs.createWriteStream(partial),
     );
+    await fs.promises.rename(partial, destination);
   } catch (err) {
+    await fs.promises.rm(partial, { force: true }).catch(() => undefined);
     if (abortedByStall) {
       throw new Error(
         `download travou: sem byte novo por ${Math.round(DOWNLOAD_STALL_MS / 1000)}s ` +
@@ -345,6 +349,8 @@ export class UpdateManager {
   /** Slug que respondeu na última checagem (org nova ou redirect legado). */
   private releaseRepo: string = CANONICAL_RELEASE_REPO;
   private server: http.Server | null = null;
+  /** Diretório nexus-update-* da instalação em curso (o ZIP servido pelo feed local). */
+  private updateDir: string | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private squirrelWired = false;
   private autoInstallAttempt: { version: string; at: number } | null = null;
@@ -637,7 +643,22 @@ export class UpdateManager {
     if (this.bootCheckTimer) clearTimeout(this.bootCheckTimer);
     if (this.firstRunCheckTimer) clearTimeout(this.firstRunCheckTimer);
     if (this.onFocus) app.removeListener('browser-window-focus', this.onFocus);
+    this.releaseLocalFeed();
     await stopPeriodicTask(this.periodicId);
+  }
+
+  /** F-1280: o ZIP (~240 MB) e o feed local só servem até o Squirrel terminar ou falhar. */
+  private releaseLocalFeed(): void {
+    this.server?.close();
+    this.server = null;
+    const dir = this.updateDir;
+    this.updateDir = null;
+    if (!dir) return;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      writeUpdateLog('warn', 'install:cleanup-failed', err);
+    }
   }
 
   private deferUntilWindowsFirstRunDeadline(): boolean {
@@ -1070,6 +1091,7 @@ export class UpdateManager {
       downloadProgress: undefined,
     });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-update-'));
+    this.updateDir = dir;
     try {
       await this.downloadWithProgress(release, dir);
       const zipPath = path.join(dir, release.zipAsset);
@@ -1081,6 +1103,7 @@ export class UpdateManager {
       autoUpdater.setFeedURL({ url: feedUrl });
       autoUpdater.checkForUpdates(); // Squirrel valida assinatura + faz o swap
     } catch (err) {
+      this.releaseLocalFeed();
       const message = err instanceof Error ? err.message : String(err);
       writeUpdateLog('warn', 'install:failed', { message });
       this.patch({
@@ -1132,6 +1155,7 @@ export class UpdateManager {
     this.squirrelWired = true;
     autoUpdater.on('error', (err) => {
       writeUpdateLog('warn', 'squirrel:error', err);
+      this.releaseLocalFeed();
       const raw = String(err?.message ?? err);
       // A feed can legitimately return 404 while the public mirror has no
       // Windows asset for this channel yet. Treat that as a quiet "no update"
@@ -1169,6 +1193,8 @@ export class UpdateManager {
     // O banner "Atualização pronta" do renderer já oferece "Reiniciar agora".
     autoUpdater.on('update-downloaded', (_e, _notes, name) => {
       writeUpdateLog('info', 'squirrel:update-downloaded', { name });
+      // O Squirrel já copiou e validou o ZIP no cache dele; o nosso e o feed local sobram.
+      this.releaseLocalFeed();
       this.patch({
         phase: 'ready',
         available: this.state.available ?? {
