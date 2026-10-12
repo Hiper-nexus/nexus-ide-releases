@@ -92,7 +92,7 @@ beforeEach(() => {
   h.livePanes = [livePane('pane-orch', 'claude')];
   h.listProviderSettings.mockReturnValue([
     { adapterId: 'agy', enabled: true, installed: true, authStrategy: 'oauth', models: ['gemini-3.8-flash-high'] },
-    { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.6-luna'] },
+    { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-6.1-sol'] },
     { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth', models: ['kimi-code/k3'] },
   ]);
 });
@@ -113,7 +113,8 @@ describe('rota de missão enxerga os helpers vivos (F-658)', () => {
     // Missão com squad: aqui a rota ainda aceita CLI sem MCP (entrega pelo PTY).
     h.mission = { ...TAB_MISSION, squadId: 'nexus-fullstack' };
     const picked = await threeRoutes();
-    expect(new Set(picked).size).toBe(3);
+    // F-1400 ADD2: front reparte só entre assentos do pool; AGY não é assento visual.
+    expect(new Set(picked)).toEqual(new Set(['codex', 'kimi']));
   });
 
   it('não conta duas vezes o pane que já está em mission_panes, nem pane encerrado', async () => {

@@ -461,6 +461,9 @@ export class ScopedMissionStore {
   /**
    * F-232: reservas consumidas por adapter desde `sinceMs`, em todas as
    * missões deste checkout — insumo do fair-share global do router.
+   * F-1400: inclui `visual:adapter:model` (consumidas ou reservas ainda
+   * válidas, para distribuir o fan-out antes dos spawns) e o
+   * marcador `visual:` (zero), mantendo os totais de adapter existentes.
    */
   consumedRouteCountsByAdapterSince(sinceMs: number): Map<string, number> {
     return this.#routeReservations.consumedCountsByAdapterSince(sinceMs);

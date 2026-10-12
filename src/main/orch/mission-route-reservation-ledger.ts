@@ -356,12 +356,34 @@ export class MissionRouteReservationLedger {
     const rows = this.#binding
       .readDatabase()
       .prepare(
-        `SELECT adapter_id, COUNT(*) AS n FROM mission_route_reservations
-          WHERE consumed_at IS NOT NULL AND consumed_at >= ?
-          GROUP BY adapter_id`,
+        `SELECT adapter_id, model,
+                CASE WHEN json_valid(decision_json)
+                  THEN json_extract(decision_json, '$.specialty') END AS specialty,
+                COUNT(*) AS n,
+                SUM(CASE WHEN consumed_at IS NOT NULL THEN 1 ELSE 0 END) AS consumed
+          FROM mission_route_reservations
+          WHERE (consumed_at IS NOT NULL AND consumed_at >= ?)
+             OR (consumed_at IS NULL AND expires_at > ?)
+          GROUP BY adapter_id, model, specialty`,
       )
-      .all(sinceMs) as Array<{ adapter_id: string; n: number }>;
-    return new Map(rows.map((row) => [row.adapter_id, row.n]));
+      .all(sinceMs, this.#binding.now()) as Array<{
+        adapter_id: string; model: string | null; specialty: string | null;
+        n: number; consumed: number;
+      }>;
+    // Reserved namespace carries per-model visual usage through the existing
+    // adapter-count transport. The marker also distinguishes an empty visual
+    // ledger from legacy callers that only supply adapter totals.
+    const counts = new Map<string, number>([['visual:', 0]]);
+    for (const row of rows) {
+      if (row.consumed > 0) {
+        counts.set(row.adapter_id, (counts.get(row.adapter_id) ?? 0) + row.consumed);
+      }
+      if (row.specialty === 'visual' && row.model) {
+        const key = `visual:${row.adapter_id}:${row.model}`;
+        counts.set(key, (counts.get(key) ?? 0) + row.n);
+      }
+    }
+    return counts;
   }
 
   assertRouteReservation(

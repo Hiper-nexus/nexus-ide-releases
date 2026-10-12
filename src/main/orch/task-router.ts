@@ -130,6 +130,8 @@ export interface RouteContext {
    * 7 dias (todas as missões) — alimenta o fair-share global.
    */
   globalUseCounts?: ReadonlyMap<string, number>;
+  /** Recent visual decisions by adapter:model; ledger supplies visual:* keys in globalUseCounts. */
+  visualUseCounts?: ReadonlyMap<string, number>;
   /**
    * F-773 (G4): desfecho real dos handoffs por (CLI, modelo) em 14 dias —
    * termo de sucesso do multi-score. Rotação, fair-share, lanes de topo e
@@ -652,17 +654,9 @@ export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly strin
 };
 
 /**
- * Lane visual (regra do operador, 30/09): trabalho de UI/design sempre vai
- * para os modelos de topo — Opus 5.5 e Sonnet 5.5 lideram (superam até o
- * Astra, palavra do operador). F-1313: Kimi é ótimo em front, lento —
- * aceitar a lentidão; participa antes do Sol 6.1, com o mesmo espalhamento
- * por uso da lane. Ele é assento de PREFERÊNCIA, não modelo de topo: sem
- * nenhum assento de topo pronto, a lane não fica exclusiva dele (F-658 —
- * "todos os LLMs em uso": um assento só não leva todos os helpers visuais).
- * O Astra entra por escolha
- * explícita do operador para UI (a proibição do F-700 vale para a rota
- * automática geral), mas fica por último: `gpt-6-sol` é o fallback para ele
- * não vencer por eliminação quando a missão já tirou o Claude do pool.
+ * F-1400 ADD2: front alterna entre Opus max, Sonnet high, Wonder Full max,
+ * Kimi e Sol 6.1 pelo uso visual recente de cada modelo. Empate segue esta
+ * ordem. Next.js/jogos usam Opus quando elegível; sem ele, vale o pool.
  */
 export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   adapterId: string;
@@ -671,20 +665,19 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   preferenceOnly?: true;
   effort?: RouteEffort | 'max';
 }> = Object.freeze([
-  { adapterId: 'claude', model: 'claude-opus-5-5' },
-  { adapterId: 'claude', model: 'claude-sonnet-5-5' },
+  { adapterId: 'claude', model: 'claude-opus-5-5', effort: 'max' },
+  { adapterId: 'claude', model: 'claude-sonnet-5-5', effort: 'high' },
   { adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' },
-  { adapterId: 'kimi', model: 'kimi-code/k3', preferenceOnly: true },
+  { adapterId: 'kimi', model: 'kimi-code/k3' },
   { adapterId: 'codex', model: 'gpt-6.1-sol' },
-  { adapterId: 'codex', model: 'gpt-6-sol' },
   { adapterId: 'codex', model: 'gpt-6-astra' },
 ]);
 
 /**
  * Lane de julgamento (regra do operador, 01/10): revisão/auditoria/veredito
  * só com modelos de ponta — GLM/MiMo davam "veredito APROVAR" em revisão de
- * código. Fable 5.1 lidera (cross-review clássico), depois Opus/Sonnet e os
- * Codex Sol/Astra.
+ * código. F-1398 ADD3: Wonder Full max lidera, depois Fable, Opus/Sonnet e
+ * Codex Sol/Astra. A restrição de segurança crítica do F-817 continua.
  */
 export const JUDGE_FRONTIER_LANE: ReadonlyArray<{
   adapterId: string;
@@ -1612,12 +1605,15 @@ export function routeTask(
   const mention = mentionedRoute(taskText, provenAdapters);
   const requestedEffort = mention.effort ?? context.effortOverride ?? effortForTier(tier);
   const laneEfforts = new Map<string, RouteEffort | 'max'>();
-  const requestedFor = (adapterId: string, model?: string) => mention.effort ?? context.effortOverride ??
-    laneEfforts.get(`${adapterId}:${model}`) ?? requestedEffort;
+  let nextGameOpusApplied = false;
+  const requestedFor = (adapterId: string, model?: string): RouteEffort | 'max' =>
+    nextGameOpusApplied && adapterId === 'claude' && model === 'claude-opus-5-5' ? 'max' :
+      mention.effort ?? laneEfforts.get(`${adapterId}:${model}`) ?? context.effortOverride ?? requestedEffort;
   const effortFor = (adapterId: string, model?: string) => nativeRouteEffort(requestedFor(adapterId, model), available.get(adapterId)!);
   const effortNoteFor = (adapterId: string, model?: string) =>
     `; effort=${effortFor(adapterId, model) ?? 'cli-default'} requested=${requestedFor(adapterId, model)}` +
-    ` source=${mention.effort ? 'texto' : context.effortOverride ? 'jev' : laneEfforts.has(`${adapterId}:${model}`) ? 'lane' : 'tier'}`;
+    ` source=${nextGameOpusApplied && adapterId === 'claude' && model === 'claude-opus-5-5' ? 'regra-do-operador' : mention.effort ? 'texto' : laneEfforts.has(`${adapterId}:${model}`) ? 'lane' : context.effortOverride ? 'jev' : 'tier'}`;
+  const nextOrGame = /(?<![\p{L}\p{N}_])(?:next(?:\.js|js)?|app\s+router|games?|jogos?|phaser|three\.js|unity\s+webgl)(?![\p{L}\p{N}_])/iu.test(classificationText);
   const heuristicSpecialty = classifyRouteSpecialty(classificationText);
   const specialtyVerdict = context.specialtyOverride
     ? {
@@ -1625,7 +1621,7 @@ export function routeTask(
         specialty: context.specialtyOverride,
         reason: `especialidade julgada pelo Jev (heurística: ${heuristicSpecialty.specialty})`,
       }
-    : heuristicSpecialty;
+    : nextOrGame ? { ...heuristicSpecialty, specialty: 'visual' as const } : heuristicSpecialty;
   const purpose = routingPurpose(classificationText, codeReviewTierFloor(classificationText) !== null, context.reviewedFindingFix);
   const allowsContributor = ['trivial', 'easy', 'medium'].includes(tier) &&
     specialtyVerdict.specialty !== 'visual' && purpose !== 'reviewer' && purpose !== 'finding-fix';
@@ -1938,6 +1934,12 @@ export function routeTask(
   // lane é promovida à frente do resultado do rerank. Dentro da lane, o
   // adapter MENOS usado na missão vai primeiro — N workers se distribuem
   // entre os de topo em vez de concentrarem no primeiro da lista.
+  const ledgerVisualCounts = context.globalUseCounts?.has('visual:') === true;
+  const visualCount = (adapterId: string, model?: string): number | undefined =>
+    context.visualUseCounts ? context.visualUseCounts.get(`${adapterId}:${model}`) ?? 0
+      : ledgerVisualCounts ? context.globalUseCounts!.get(`visual:${adapterId}:${model}`) ?? 0 : undefined;
+  const visualRecentUse = (entry: RankedRouteEntry) => visualCount(entry.c.adapterId, entry.c.model) ??
+    context.globalUseCounts?.get(entry.c.adapterId) ?? 0;
   let preferredLaneSeat: string | undefined;
   let appliedLaneEntries: ReadonlySet<RankedRouteEntry> | undefined;
   const applyFrontierLane = (
@@ -2011,9 +2013,20 @@ export function routeTask(
       return false;
     }
     ranked = [
-      ...inLane.sort((a, b) => used(a) - used(b) || laneRank(a) - laneRank(b)),
+      ...inLane.sort((a, b) => lane === VISUAL_FRONTIER_LANE
+        ? (visualCount(a.c.adapterId, a.c.model) !== undefined
+          ? visualRecentUse(a) - visualRecentUse(b)
+          : used(a) - used(b) || visualRecentUse(a) - visualRecentUse(b)) || laneRank(a) - laneRank(b)
+        : used(a) - used(b) || laneRank(a) - laneRank(b)),
       ...ranked.filter((entry) => !set.has(entry)),
     ];
+    if (lane === VISUAL_FRONTIER_LANE && nextOrGame) {
+      const opus = inLane.find((entry) => entry.c.adapterId === 'claude' && entry.c.model === 'claude-opus-5-5');
+      if (opus) {
+        ranked = [opus, ...ranked.filter((entry) => entry !== opus)];
+        nextGameOpusApplied = true;
+      }
+    }
     appliedLaneEntries = set;
     return true;
   };
@@ -2023,12 +2036,13 @@ export function routeTask(
   let visualNote = '';
   const visualLaneApplied =
     specialtyVerdict.specialty === 'visual' &&
-    policy.source !== 'benchmark' &&
+    (policy.source !== 'benchmark' || nextOrGame) &&
     mention.model === undefined &&
     applyFrontierLane(VISUAL_FRONTIER_LANE);
   const visualLaneEntries = visualLaneApplied ? appliedLaneEntries : undefined;
   if (visualLaneApplied) {
-    visualNote = '; lane visual (modelos de topo)';
+    visualNote = '; lane visual (modelos de topo); revezamento por uso visual recente' +
+      (nextGameOpusApplied ? '; Next/jogo → Opus 5.5 (regra do operador)' : '');
   } else if (preferredLaneSeat) {
     visualNote = `; ${preferredLaneSeat} preferido para visual (sem modelo de topo pronto; rotação mantida)`;
   }
@@ -2187,7 +2201,7 @@ export function routeTask(
   // com mais assentos na missão que um par pronto, ou com uso global além do
   // FAIR_SHARE_GAP, cede ao espalhamento por uso.
   let preferenceYieldNote = '';
-  if (context.preferAdapters?.length && tier !== 'critical' && !securityWork &&
+  if (!nextGameOpusApplied && context.preferAdapters?.length && tier !== 'critical' && !securityWork &&
       frontier === null && purpose !== 'finding-fix' && evaluated.length === 0 &&
       policy.source !== 'benchmark' && mention.model === undefined) {
     const pool = ranked.filter(entry =>
@@ -2197,10 +2211,13 @@ export function routeTask(
     const globalUse = (id: string) => context.globalUseCounts?.get(id) ?? 0;
     const minSeats = Math.min(...pool.map(entry => seats(entry.c.adapterId)));
     const minGlobal = Math.min(...pool.map(entry => globalUse(entry.c.adapterId)));
+    const minVisual = Math.min(...pool.map(visualRecentUse));
     const preferredInPool = pool.filter(entry => context.preferAdapters!.includes(entry.c.adapterId));
     const preferred = preferredInPool.find(entry =>
-      seats(entry.c.adapterId) <= minSeats &&
-      globalUse(entry.c.adapterId) < minGlobal + FAIR_SHARE_GAP);
+      (visualLaneEntries && visualCount(entry.c.adapterId, entry.c.model) !== undefined
+        ? visualRecentUse(entry) <= minVisual
+        : seats(entry.c.adapterId) <= minSeats &&
+          (visualLaneEntries ? visualRecentUse(entry) <= minVisual : globalUse(entry.c.adapterId) < minGlobal + FAIR_SHARE_GAP)));
     if (preferred && preferred !== ranked[0]) {
       ranked = [preferred, ...ranked.filter(entry => entry !== preferred)];
       rotationNote = '';

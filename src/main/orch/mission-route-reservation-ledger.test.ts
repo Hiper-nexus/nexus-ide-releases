@@ -146,6 +146,40 @@ describe('consumedCountsByAdapterSince (fair-share global)', () => {
       store.consumedRouteCountsByAdapterSince(
         Date.now() - GLOBAL_USE_WINDOW_MS,
       ),
-    ).toEqual(new Map([['glm', 2], ['muse', 1]]));
+    ).toEqual(new Map([['visual:', 0], ['glm', 2], ['muse', 1]]));
+  });
+
+  it('conta rotas visuais por modelo com reservas vivas, sem misturar especialidades', () => {
+    const add = (model: string, specialty: 'visual' | 'bug', consume = true) => {
+      const reservation = store.reserveRouteDecision(missionId, `tarefa ${model} ${specialty}`, {
+        tier: 'medium', adapterId: 'claude', model, specialty,
+        reason: 'teste de uso por assento', alternatives: [],
+      });
+      if (consume) store.consumeRouteReservation({
+        reservationId: reservation.id, missionId, adapterId: 'claude', model,
+      }, `sess-${reservation.id}`);
+      return reservation;
+    };
+    add('claude-opus-5-5', 'visual');
+    add('claude-opus-5-5', 'visual');
+    add('claude-sonnet-5-5', 'visual');
+    add('claude-sonnet-5-5', 'bug');
+    add('claude-sonnet-5-5', 'visual', false);
+    const expired = add('claude-sonnet-5-5', 'visual', false);
+    const old = add('claude-opus-5-5', 'visual');
+    const past = Date.now() - GLOBAL_USE_WINDOW_MS - 60_000;
+    runtime.open(scope).db.prepare(
+      `UPDATE mission_route_reservations SET created_at = ?, expires_at = ? WHERE id = ?`,
+    ).run(past, past + 30_000, expired.id);
+    runtime.open(scope).db.prepare(
+      `UPDATE mission_route_reservations
+       SET created_at = ?, expires_at = ?, consumed_at = ? WHERE id = ?`,
+    ).run(past, past + 30_000, past + 1_000, old.id);
+    const counts = store.consumedRouteCountsByAdapterSince(Date.now() - GLOBAL_USE_WINDOW_MS);
+    expect(counts.get('claude')).toBe(4);
+    expect(counts.get('visual:')).toBe(0);
+    expect(counts.get('visual:claude:claude-opus-5-5')).toBe(2);
+    expect(counts.get('visual:claude:claude-sonnet-5-5')).toBe(2);
+    expect(counts.has('visual:glm:glm-5.3')).toBe(false);
   });
 });
