@@ -83,6 +83,8 @@ export interface ProviderSettingsInfo {
   cliInstallationWarning?: string;
   /** F-992: versão quebrada conhecida ou anterior ao modelo padrão; não bloqueia. */
   cliCompatibilityWarning?: string;
+  /** F-1395: última atualização automática desta CLI (antes→depois ou falha). */
+  cliAutoUpdate?: CliAutoUpdateOutcome;
   defaultModel: string;
   models: string[];
   /**
@@ -207,6 +209,16 @@ export const PROVIDER_CHANNELS = {
   exportSecrets: 'provider:exportSecrets',
   importSecrets: 'provider:importSecrets',
 } as const;
+
+/** F-1395: resultado de uma atualização automática, sem caminhos. */
+export interface CliAutoUpdateOutcome {
+  at: number;
+  status: 'updated' | 'unchanged' | 'failed';
+  fromVersion?: string;
+  toVersion?: string;
+  /** Motivo curto da falha: install-failed, timeout, version-unreadable… */
+  reason?: string;
+}
 
 export interface CliAutoUpdateStatus {
   enabled: boolean;

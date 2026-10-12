@@ -12,6 +12,11 @@ export function cliUpdateKey(adapterId: string): string {
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60_000;
 const RETRY_AFTER_FAILURE_MS = 60 * 60_000;
+/**
+ * F-1395: o boot analisa e atualiza TODAS as CLIs. Limite de segurança contra
+ * loop de reinício: a CLI checada com sucesso há menos de 30 min fica de fora.
+ */
+export const BOOT_RECHECK_MS = 30 * 60_000;
 
 export function shouldOfferAutoCliConsent(
   preferences: { readonly enabled: boolean; readonly askAgainAt?: number } | null,
@@ -109,13 +114,55 @@ export function isSafeAutomaticCliRecipe(recipe: CliInstallRecipe): boolean {
   }
   if (recipe.kind !== 'argv') return false;
   const command = recipe.runner.toLowerCase();
+  // F-1395: só o `upgrade` de um cask, pelo brew dono do Caskroom; nunca install.
+  const caskUpgrade = recipe.argv.length === 4 && recipe.argv[0] === recipe.runner &&
+    /^\/.+\/bin\/brew$/u.test(recipe.runner) && recipe.argv[1] === 'upgrade' &&
+    recipe.argv[2] === '--cask' && /^[a-z0-9][a-z0-9@._-]*$/u.test(recipe.argv[3]);
   return command !== 'winget' && command !== 'sudo' &&
-    !recipe.argv.includes('--cask') &&
+    (caskUpgrade || !recipe.argv.includes('--cask')) &&
     !recipe.argv.some((arg) => /^(?:--global|--system)$/iu.test(arg));
+}
+
+/** Artefatos de cask que só gravam no Caskroom/prefixo do usuário (sem sudo). */
+const UNPRIVILEGED_CASK_ARTIFACTS = new Set([
+  'binary', 'manpage', 'zap', 'bash_completion', 'zsh_completion', 'fish_completion',
+]);
+
+/** `<prefix>/Caskroom/<cask>/.metadata/INSTALL_RECEIPT.json` do binário real. */
+export function caskReceiptPath(realBinPath: string): string | null {
+  const match = realBinPath.replaceAll('\\', '/').match(/^(.*\/Caskroom\/[^/]+)\//u);
+  return match ? `${match[1]}/.metadata/INSTALL_RECEIPT.json` : null;
+}
+
+/** Tipos de artefato do recibo do cask; null quando ilegível. */
+export function caskReceiptArtifactKinds(receiptText: string): string[] | null {
+  try {
+    const artifacts = (JSON.parse(receiptText) as { uninstall_artifacts?: unknown }).uninstall_artifacts;
+    if (!Array.isArray(artifacts) || artifacts.length === 0) return null;
+    return artifacts.flatMap((artifact) =>
+      artifact && typeof artifact === 'object' && !Array.isArray(artifact) ? Object.keys(artifact) : ['?']);
+  } catch { return null; }
+}
+
+/**
+ * F-1395: instalação versionada — o update grava o binário novo noutro
+ * diretório e só troca o link. O pane vivo segue no binário velho e o próximo
+ * nasce no novo; atualizar com pane aberto é seguro. npm/brew/uv trocam no
+ * lugar e continuam esperando o último pane fechar.
+ */
+export function isVersionedCliInstall(adapterId: string, binPath: string, realBinPath: string): boolean {
+  const real = realBinPath.replaceAll('\\', '/');
+  if (real === binPath.replaceAll('\\', '/')) return false;
+  if (adapterId === 'claude') return /\/claude\/versions\/[^/]+$/u.test(real);
+  if (adapterId === 'devin') return /\/devin\/cli\/_versions\/[^/]+\//u.test(real);
+  if (adapterId === 'grok') return /\/\.grok\/(?:bin|downloads)\/grok-[^/]+$/u.test(real);
+  return false;
 }
 
 type AutoUpdateInput = Parameters<typeof selectCliUpdateRecipe>[0] & {
   readonly isTargetWritable: (targetPath: string) => boolean;
+  /** F-1395: artefatos do recibo do cask instalado (null/ausente = manual). */
+  readonly caskArtifactKinds?: readonly string[] | null;
 };
 
 /** A background update may only touch a recognized, writable user install. */
@@ -133,6 +180,13 @@ export function selectAutomaticCliUpdateRecipe(input: AutoUpdateInput): CliInsta
     if (!relative || relative === '..' || relative.startsWith(`..${hostPath.sep}`) ||
         hostPath.isAbsolute(relative)) return null;
   }
+  if (selection.recipe.kind === 'argv' && selection.recipe.argv.includes('--cask')) {
+    // Cask com .pkg/instalador/uninstall privilegiado continua manual.
+    const kinds = input.caskArtifactKinds;
+    if (!kinds?.length || !kinds.every((kind) => UNPRIVILEGED_CASK_ARTIFACTS.has(kind))) return null;
+    // Sem TTY: um sudo inesperado do brew falha na hora em vez de pendurar.
+    return { ...selection.recipe, env: { ...selection.recipe.env, SUDO_ASKPASS: '/usr/bin/false' } };
+  }
   return selection.recipe;
 }
 
@@ -146,10 +200,15 @@ export class CliAutoUpdateQueue {
     this.checkedAt = { ...checkedAt };
   }
 
-  next(ids: readonly string[], now: number, hasLivePane: (adapterId: string) => boolean): string | null {
+  next(
+    ids: readonly string[],
+    now: number,
+    hasLivePane: (adapterId: string) => boolean,
+    intervalMs = CHECK_INTERVAL_MS,
+  ): string | null {
     return ids.find((id) =>
-      !hasLivePane(id) && now >= (this.retryAfter[id] ?? 0) &&
-      now - (this.checkedAt[id] ?? 0) >= CHECK_INTERVAL_MS,
+      now >= (this.retryAfter[id] ?? 0) && now - (this.checkedAt[id] ?? 0) >= intervalMs &&
+      !hasLivePane(id),
     ) ?? null;
   }
 
@@ -166,9 +225,10 @@ export class CliAutoUpdateQueue {
     now: number,
     hasLivePane: (adapterId: string) => boolean,
     run: (adapterId: string) => Promise<boolean>,
+    intervalMs = CHECK_INTERVAL_MS,
   ): Promise<string | null> {
     if (this.running) return null;
-    const id = this.next(ids, now, hasLivePane);
+    const id = this.next(ids, now, hasLivePane, intervalMs);
     if (!id) return null;
     this.running = true;
     try {
@@ -181,5 +241,26 @@ export class CliAutoUpdateQueue {
     } finally {
       this.running = false;
     }
+  }
+
+  /** F-1395: passe de boot — cada CLI devida uma vez, em série, até não sobrar nenhuma. */
+  async runAll(
+    ids: readonly string[],
+    now: number,
+    hasLivePane: (adapterId: string) => boolean,
+    run: (adapterId: string) => Promise<boolean>,
+    intervalMs = BOOT_RECHECK_MS,
+  ): Promise<string[]> {
+    const attempted: string[] = [];
+    // Cada volta consome uma CLI (marcada ou em retentativa): no máximo ids.length.
+    for (let turn = 0; turn < ids.length; turn++) {
+      let id: string | null;
+      // Erro numa CLI já a põe em retentativa; as demais seguem no passe.
+      try { id = await this.runOne(ids, now, hasLivePane, run, intervalMs); }
+      catch { continue; }
+      if (!id) break;
+      attempted.push(id);
+    }
+    return attempted;
   }
 }

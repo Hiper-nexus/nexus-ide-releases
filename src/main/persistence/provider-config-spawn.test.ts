@@ -598,9 +598,14 @@ describe('background CLI maintenance during pane startup', () => {
     expect(finishUpdate).toBeUndefined();
   });
 
-  it('leaves launchers available while the operator is active, then updates when idle', async () => {
+  it('after the boot pass, the daily tick leaves launchers available while the operator is active, then updates when idle', async () => {
     spawnDeps.systemIdleTime.mockReturnValue(0);
+    // F-1395: checada há 10 min — o boot pula; o tick diário espera ociosidade.
+    vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: { claude: Date.now() - 10 * 60_000 } }));
     stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(finishUpdate).toBeUndefined();
+    vi.setSystemTime(Date.now() + 24 * 60 * 60_000);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(finishUpdate).toBeUndefined();
     const release = await acquireCliSpawnPermit('claude');
@@ -611,7 +616,98 @@ describe('background CLI maintenance during pane startup', () => {
     expect(finishUpdate).toBeTypeOf('function');
   });
 
-  it.each(['discovery', 'version'])('defers installation if the operator returns during %s', async (phase) => {
+  describe('F-1395: no boot, analisar e atualizar todas as CLIs', () => {
+    const checkedAgo = (ms: number) =>
+      vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: { claude: Date.now() - ms } }));
+    const npmClaude = '/fixture-quota-home/.npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js';
+
+    it('(a) boot com checkedAt de 3 h e sistema NÃO ocioso atualiza sem esperar o tick de 60 s', async () => {
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(finishUpdate).toBeTypeOf('function');
+      // O boot só segura o spawn da CLI em atualização, não o das outras.
+      let kimi: (() => void) | undefined;
+      void acquireCliSpawnPermit('kimi').then((release) => { kimi = release; });
+      let claude: (() => void) | undefined;
+      void acquireCliSpawnPermit('claude').then((release) => { claude = release; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(kimi).toBeTypeOf('function');
+      expect(claude).toBeUndefined();
+      finishUpdate!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(claude).toBeTypeOf('function');
+      kimi!(); claude!();
+      // Antes→depois chega ao snapshot da UI de provedores.
+      expect(listProviderSettings().find((info) => info.adapterId === 'claude')?.cliAutoUpdate)
+        .toMatchObject({ status: 'unchanged', fromVersion: '1.0.0', toVersion: '1.0.0' });
+    });
+
+    it('(d) a CLI checada há < 30 min não repete no boot', async () => {
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(10 * 60_000);
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(finishUpdate).toBeUndefined();
+    });
+
+    it('(c) instalação versionada atualiza com pane vivo', async () => {
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      stop = startCliAutoUpdate('/fixture-quota-home', () => true);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(finishUpdate).toBeTypeOf('function');
+    });
+
+    it('(c) npm com pane vivo espera e dispara quando o ÚLTIMO pane daquela CLI fecha', async () => {
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      vi.spyOn(fs, 'realpathSync').mockReturnValue(npmClaude);
+      vi.spyOn(fsp, 'realpath').mockResolvedValue(npmClaude);
+      let livePanes = 2;
+      let paneExit!: (adapterId: string) => void;
+      stop = startCliAutoUpdate('/fixture-quota-home', () => livePanes > 0, (listener) => {
+        paneExit = listener;
+        return () => undefined;
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(finishUpdate).toBeUndefined();
+      livePanes = 1;
+      paneExit('claude');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(finishUpdate).toBeUndefined();
+      livePanes = 0;
+      paneExit('claude');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(finishUpdate).toBeTypeOf('function');
+    });
+
+    it('a falha da atualização chega ao snapshot com o motivo curto', async () => {
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
+        const argv = args[1] as string[];
+        const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+        if (argv[0] === 'update') callback(new Error('Command failed: claude update\nnetwork unreachable'), '');
+        else callback(null, '1.0.0');
+        return {} as ChildProcess;
+      });
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(listProviderSettings().find((info) => info.adapterId === 'claude')?.cliAutoUpdate)
+        .toMatchObject({ status: 'failed', fromVersion: '1.0.0', reason: 'install-failed' });
+      warn.mockRestore();
+    });
+  });
+
+  it.each(['discovery', 'version'])('the daily tick defers installation if the operator returns during %s', async (phase) => {
+    // F-1395: o boot (checada há 10 min) pula; o tick diário segue cedendo ao operador.
+    vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: { claude: Date.now() - 10 * 60_000 } }));
+    stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    vi.setSystemTime(Date.now() + 24 * 60 * 60_000);
     if (phase === 'discovery') {
       spawnDeps.rescanBinaries.mockImplementationOnce(async () => {
         spawnDeps.systemIdleTime.mockReturnValue(0);
@@ -624,7 +720,6 @@ describe('background CLI maintenance during pane startup', () => {
         return {} as ChildProcess;
       });
     }
-    stop = startCliAutoUpdate('/fixture-quota-home', () => false);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(finishUpdate).toBeUndefined();
   });

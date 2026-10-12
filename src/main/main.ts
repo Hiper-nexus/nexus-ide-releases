@@ -773,6 +773,8 @@ async function bootstrap(): Promise<void> {
       listLiveSessionLocations().some(({ sessionId }) =>
         cliUpdateKey(getAgentSessionInfo(sessionId)?.adapterId ?? '') === cliUpdateKey(adapterId),
       ),
+      // F-1395: a CLI que esperava o último pane atualiza quando ele fecha.
+      (listener) => tapSessionExit((_sessionId, agent) => { if (agent) listener(agent.adapterId); }),
     );
   }
   bootStep('registerArmsIpc', () => registerArmsIpc());

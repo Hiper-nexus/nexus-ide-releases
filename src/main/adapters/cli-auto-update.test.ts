@@ -3,7 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { __resetPathResolverForTests, resolveCliBinary, resolveSpawnBinary, warmCliBinaryVersions } from '../path-resolver';
 import { describe, expect, it } from 'vitest';
-import { CliAutoUpdateQueue, CliUpdateLease, isSafeAutomaticCliRecipe, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent } from './cli-auto-update';
+import {
+  CliAutoUpdateQueue, CliUpdateLease, caskReceiptArtifactKinds, caskReceiptPath, isSafeAutomaticCliRecipe,
+  isVersionedCliInstall, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent,
+} from './cli-auto-update';
 
 describe('automatic CLI updates', () => {
   it.skipIf(process.platform === 'win32')('F-790: updates the same newer npm installation selected for the pane', async () => {
@@ -204,5 +207,87 @@ describe('automatic CLI updates', () => {
       throw new Error('offline');
     })).rejects.toThrow('offline');
     expect(queue.next(['claude', 'codex'], now + 60_000, () => false)).toBe('codex');
+  });
+});
+
+describe('F-1395: no boot, analisar e atualizar todas as CLIs', () => {
+  const hour = 60 * 60_000;
+
+  it('(a) o passe de boot percorre TODAS as candidatas checadas há 3 h, em série', async () => {
+    const now = 100 * hour;
+    const queue = new CliAutoUpdateQueue({ claude: now - 3 * hour, codex: now - 3 * hour, muse: now - 3 * hour });
+    const ran: string[] = [];
+    let inFlight = 0;
+    const attempted = await queue.runAll(['claude', 'codex', 'muse', 'kimi'], now, () => false, async (id) => {
+      inFlight++;
+      expect(inFlight).toBe(1);
+      await Promise.resolve();
+      ran.push(id);
+      inFlight--;
+      return id !== 'kimi';
+    });
+    expect(ran).toEqual(['claude', 'codex', 'muse', 'kimi']);
+    expect(attempted).toEqual(ran);
+    // O tick diário não as repete; a falha (kimi) volta só na retentativa.
+    expect(queue.next(['claude', 'codex', 'muse', 'kimi'], now + 10 * 60_000, () => false)).toBeNull();
+  });
+
+  it('(d) a checada há < 30 min não repete no boot; uma CLI que falha não para o passe', async () => {
+    const now = 100 * hour;
+    const queue = new CliAutoUpdateQueue({ claude: now - 10 * 60_000, codex: now - 31 * 60_000 });
+    const ran: string[] = [];
+    await queue.runAll(['claude', 'codex', 'grok'], now, () => false, async (id) => {
+      ran.push(id);
+      if (id === 'codex') throw new Error('offline');
+      return true;
+    });
+    expect(ran).toEqual(['codex', 'grok']);
+  });
+
+  it('(b) brew upgrade --cask do Caskroom gravável é aceito; .pkg/sudo continua manual', () => {
+    const muse = {
+      adapterId: 'muse', platform: 'darwin' as const,
+      binPath: '/opt/homebrew/bin/muse',
+      realBinPath: '/opt/homebrew/Caskroom/muse-code/1.4.6-R6000.1/muse-aarch64-macos',
+      userHome: '/Users/operator', isRunnerResolvable: () => true, isTargetWritable: () => true,
+    };
+    // Recibo real do muse-code 1.4.6 nesta máquina (só binary + zap).
+    const receipt = JSON.stringify({ uninstall_artifacts: [
+      { binary: ['muse-aarch64-macos', { target: 'muse' }] },
+      { zap: [{ trash: ['~/.config/muse', '~/.local/share/muse'] }] },
+    ] });
+    expect(selectAutomaticCliUpdateRecipe({ ...muse, caskArtifactKinds: ['binary', 'zap'] })).toMatchObject({
+      kind: 'argv', runner: '/opt/homebrew/bin/brew',
+      argv: ['/opt/homebrew/bin/brew', 'upgrade', '--cask', 'muse-code'],
+      env: { SUDO_ASKPASS: '/usr/bin/false' },
+    });
+    expect(caskReceiptPath(muse.realBinPath)).toBe('/opt/homebrew/Caskroom/muse-code/.metadata/INSTALL_RECEIPT.json');
+    expect(caskReceiptArtifactKinds(receipt)).toEqual(['binary', 'zap']);
+    expect(selectAutomaticCliUpdateRecipe({ ...muse, caskArtifactKinds: ['pkg', 'uninstall'] })).toBeNull();
+    expect(selectAutomaticCliUpdateRecipe({ ...muse, caskArtifactKinds: null })).toBeNull();
+    expect(selectAutomaticCliUpdateRecipe(muse)).toBeNull();
+    expect(selectAutomaticCliUpdateRecipe({ ...muse, caskArtifactKinds: ['binary'], isTargetWritable: () => false })).toBeNull();
+    expect(caskReceiptArtifactKinds('{')).toBeNull();
+    expect(isSafeAutomaticCliRecipe({ kind: 'argv', argv: ['brew', 'install', '--cask', 'muse-code'], runner: 'brew', runnerHint: '' })).toBe(false);
+    expect(isSafeAutomaticCliRecipe({ kind: 'argv', argv: ['/opt/homebrew/bin/brew', 'upgrade', '--cask', 'muse-code', '--force'], runner: '/opt/homebrew/bin/brew', runnerHint: '' })).toBe(false);
+    expect(isSafeAutomaticCliRecipe({ kind: 'argv', argv: ['sudo', '/opt/homebrew/bin/brew', 'upgrade', '--cask', 'muse-code'], runner: 'sudo', runnerHint: '' })).toBe(false);
+    // codex e claude-code pelo cask seguem a mesma regra.
+    expect(selectAutomaticCliUpdateRecipe({
+      ...muse, adapterId: 'claude', binPath: '/opt/homebrew/bin/claude',
+      realBinPath: '/opt/homebrew/Caskroom/claude-code/2.1.296/claude', caskArtifactKinds: ['binary'],
+    })).toMatchObject({ argv: ['/opt/homebrew/bin/brew', 'upgrade', '--cask', 'claude-code'] });
+  });
+
+  it('(c) só instalação versionada (claude, devin, grok) atualiza com pane vivo', () => {
+    const home = '/Users/operator';
+    expect(isVersionedCliInstall('claude', `${home}/.local/bin/claude`, `${home}/.local/share/claude/versions/2.1.296`)).toBe(true);
+    expect(isVersionedCliInstall('devin', `${home}/.local/bin/devin`, `${home}/.local/share/devin/cli/_versions/3000.11.3/bin/devin`)).toBe(true);
+    expect(isVersionedCliInstall('grok', `${home}/.grok/bin/grok`, `${home}/.grok/bin/grok-1.0.50`)).toBe(true);
+    // npm, brew, cask e o kimi nativo trocam no lugar: esperam o último pane.
+    expect(isVersionedCliInstall('codex', '/opt/homebrew/bin/codex', '/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js')).toBe(false);
+    expect(isVersionedCliInstall('claude', '/usr/local/bin/claude', '/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js')).toBe(false);
+    expect(isVersionedCliInstall('kimi', `${home}/.kimi-code/bin/kimi`, `${home}/.kimi-code/bin/kimi`)).toBe(false);
+    expect(isVersionedCliInstall('muse', '/opt/homebrew/bin/muse', '/opt/homebrew/Caskroom/muse-code/1.4.6/muse-aarch64-macos')).toBe(false);
+    expect(isVersionedCliInstall('grok', `${home}/.grok/bin/grok-1.0.50`, `${home}/.grok/bin/grok-1.0.50`)).toBe(false);
   });
 });

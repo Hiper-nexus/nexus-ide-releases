@@ -31,6 +31,7 @@ import {
   importSecretsSchema,
   providerConfigPatchSchema,
   setKeySchema,
+  type CliAutoUpdateOutcome,
   type ProviderChoiceInfo,
   type ProviderConfig,
   type ProviderSettingsInfo,
@@ -85,7 +86,11 @@ import {
   removeStaleExecutableCopies,
   restoreExecutableIfMissing,
 } from '../adapters/in-use-executable';
-import { CliAutoUpdateQueue, CliUpdateLease, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent } from '../adapters/cli-auto-update';
+import {
+  BOOT_RECHECK_MS, CliAutoUpdateQueue, CliUpdateLease, caskReceiptArtifactKinds, caskReceiptPath, cliUpdateKey,
+  isVersionedCliInstall, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent,
+} from '../adapters/cli-auto-update';
+import { trace } from '../observability/main-trace';
 import { execFile } from 'node:child_process';
 import {
   getKey,
@@ -1965,6 +1970,7 @@ function toInfo(
     detectedBin,
     ...(cliInstallationWarning ? { cliInstallationWarning } : {}),
     ...(cliCompatibilityWarning ? { cliCompatibilityWarning } : {}),
+    ...(cliAutoUpdateOutcomes.has(adapterId) ? { cliAutoUpdate: cliAutoUpdateOutcomes.get(adapterId) } : {}),
     defaultModel,
     models,
     ...(offer.unverified.length > 0 ? { unverifiedModels: [...offer.unverified] } : {}),
@@ -2171,6 +2177,21 @@ function resolveCliRealPath(filePath: string): string | null {
   catch { return null; }
 }
 
+/** F-1395: artefatos do recibo do cask; fora do Caskroom ou ilegível = null. */
+function readCaskArtifactKinds(realBinPath: string): string[] | null {
+  const receipt = caskReceiptPath(realBinPath);
+  if (!receipt) return null;
+  try { return caskReceiptArtifactKinds(fs.readFileSync(receipt, 'utf8')); }
+  catch { return null; }
+}
+
+async function readCaskArtifactKindsAsync(realBinPath: string): Promise<string[] | null> {
+  const receipt = caskReceiptPath(realBinPath);
+  if (!receipt) return null;
+  try { return caskReceiptArtifactKinds(await fsp.readFile(receipt, 'utf8')); }
+  catch { return null; }
+}
+
 function automaticCliCandidate(adapterId: string): AutomaticCliCandidate | null {
   const adapter = getAdapter(adapterId);
   if (!adapter || adapter.kind !== 'cli-pty' || !isBuiltinAdapter(adapterId) ||
@@ -2191,6 +2212,7 @@ function automaticCliCandidate(adapterId: string): AutomaticCliCandidate | null 
       try { fs.accessSync(path.dirname(target), fs.constants.W_OK); return true; }
       catch { return false; }
     },
+    caskArtifactKinds: readCaskArtifactKinds(realBinPath),
   });
   if (!recipe) return null;
   if (recipe.kind !== 'argv') {
@@ -2223,6 +2245,7 @@ async function automaticCliCandidateAsync(adapterId: string): Promise<AutomaticC
     isRunnerResolvable: (runner) => resolveRunnerPath(runner) !== null,
     resolveRealPath: resolveCliRealPath,
     isTargetWritable: (target) => writable.get(target) === true,
+    caskArtifactKinds: await readCaskArtifactKindsAsync(realBinPath),
   });
   if (!recipe) return null;
   if (recipe.kind !== 'argv') {
@@ -2333,7 +2356,8 @@ async function confirmAutomaticCliConsent(candidates: readonly AutomaticCliCandi
     defaultId: 0, cancelId: 0,
     title: 'Atualização automática das CLIs',
     message: 'Manter as CLIs instaladas atualizadas?',
-    detail: 'O Nexus verifica no máximo uma vez por dia cada CLI, quando ela não tem pane ativo. ' +
+    detail: 'O Nexus verifica cada CLI ao iniciar e uma vez por dia; a que tem pane ativo espera o pane fechar ' +
+      '(instalações versionadas atualizam já, o pane aberto segue na versão dele). ' +
       'Se escolher Agora não, perguntaremos novamente em 7 dias. ' +
       'Estes são os comandos reconhecidos agora; instalações desconhecidas e canais que pedem privilégios ficam manuais:\n\n' +
       candidates.map((candidate) =>
@@ -2349,11 +2373,40 @@ async function confirmAutomaticCliConsent(candidates: readonly AutomaticCliCandi
 }
 
 const CLI_AUTO_UPDATE_IDLE_SECONDS = 60;
+/** F-1395: o passe de boot espera só o boot assentar, não a ociosidade. */
+const CLI_BOOT_PASS_DELAY_MS = 5_000;
 
-/** Background maintenance yields to operator activity and this adapter's live panes. */
+/** F-1395: último resultado por CLI — vai no snapshot que a UI de provedores recebe. */
+const cliAutoUpdateOutcomes = new Map<string, CliAutoUpdateOutcome>();
+
+function recordCliAutoUpdate(adapterId: string, outcome: Omit<CliAutoUpdateOutcome, 'at'>, detail?: string): void {
+  cliAutoUpdateOutcomes.set(adapterId, { at: Date.now(), ...outcome });
+  // `phase` leva o motivo curto ao lifecycle-*.ndjson; o detalhe fica no trace.
+  trace({ kind: 'cli-update', adapterId, status: outcome.status,
+    ...(outcome.reason ? { phase: outcome.reason } : {}),
+    ...(outcome.fromVersion ? { fromVersion: outcome.fromVersion } : {}),
+    ...(outcome.toVersion ? { toVersion: outcome.toVersion } : {}),
+    ...(detail ? { detail } : {}) });
+  if (outcome.status === 'failed') broadcast();
+}
+
+function shortInstallError(error: unknown): string {
+  const lines = String(error instanceof Error ? error.message : error).split(/\r?\n/u)
+    .map((line) => line.trim()).filter(Boolean);
+  return (lines.at(-1) ?? 'erro desconhecido').slice(0, 200);
+}
+
+/**
+ * F-1395: no boot, analisa e atualiza TODAS as CLIs elegíveis numa passada
+ * serial, sem esperar ociosidade nem o intervalo diário (só pula a checada há
+ * < 30 min). Instalação versionada atualiza mesmo com pane vivo; as demais
+ * esperam e disparam quando o último pane daquela CLI fecha. O tick periódico
+ * continua, ocioso, para quem ficou de fora.
+ */
 export function startCliAutoUpdate(
   userDataDir: string,
   hasLivePane: (adapterId: string) => boolean,
+  onCliPaneExit?: (listener: (adapterId: string) => void) => () => void,
 ): () => Promise<void> {
   if (!['darwin', 'win32', 'linux'].includes(process.platform)) return async () => {};
   const file = path.join(userDataDir, 'cli-auto-update.json');
@@ -2364,17 +2417,31 @@ export function startCliAutoUpdate(
   let prompting = false;
   let checking = false;
   let stopped = false;
+  let bootPending = true;
   let lastDiscoveryAt = 0;
   let candidates: AutomaticCliCandidate[] = [];
+  /** Devidas que esperam o último pane (instalação que troca no lugar). */
+  const awaitingPaneClose = new Set<string>();
+  /** Liberadas pelo fechamento do último pane: rodam no próximo passe, sem ociosidade. */
+  const releasedByPaneClose = new Set<string>();
+  const paneBlocks = (id: string, candidate: AutomaticCliCandidate | null | undefined) =>
+    hasLivePane(id) && !(candidate && isVersionedCliInstall(id, candidate.binPath, candidate.realBinPath));
   const tick = async (context: PeriodicTaskContext) => {
     preferences = await context.wait(readAutoCliPreferencesAsync(file)) ?? preferences;
     if (stopped || prompting || checking || cliUpdateLease.isProvisioning() ||
         (preferences?.enabled === false && !shouldOfferAutoCliConsent(preferences, Date.now()))) return;
     checking = true;
     try {
-      // A boot-time update used to take the launcher's lease just as the
-      // operator opened their first pane. Do maintenance while they are away.
-      if (powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS) return;
+      const boot = bootPending;
+      const released = [...releasedByPaneClose];
+      releasedByPaneClose.clear();
+      for (const id of released) awaitingPaneClose.delete(id);
+      // O tick periódico não toma o lease com o operador ativo; o boot e o
+      // fechamento do último pane, sim (o spawn espera só a CLI em atualização).
+      const requireIdle = !boot && released.length === 0;
+      const idleEnough = () =>
+        !requireIdle || powerMonitor.getSystemIdleTime() >= CLI_AUTO_UPDATE_IDLE_SECONDS;
+      if (!idleEnough()) return;
       if (Date.now() - lastDiscoveryAt >= 30 * 60_000) {
         await context.wait(rescanAdapterBinaries());
         candidates = [];
@@ -2386,8 +2453,11 @@ export function startCliAutoUpdate(
         }
         lastDiscoveryAt = Date.now();
       }
+      bootPending = false;
       if (candidates.length === 0) return;
       if (shouldOfferAutoCliConsent(preferences, Date.now())) {
+        // Nada de diálogo no boot nem no fechamento de pane: só com o operador longe.
+        if (!requireIdle) return;
         if (candidates.every((candidate) => hasLivePane(candidate.adapterId))) return;
         if (!cliUpdateLease.beginAutoConsent()) return;
         prompting = true;
@@ -2406,13 +2476,18 @@ export function startCliAutoUpdate(
       if (!preferences?.enabled || stopped) return;
       if ((await context.wait(readAutoCliPreferencesAsync(file)))?.enabled !== true) return;
       const now = Date.now();
-      await queue.runOne(candidates.map((candidate) => candidate.adapterId), now,
-        (id) => hasLivePane(id) || cliUpdateLease.isHeld(id), async (id) => {
+      const byId = new Map(candidates.map((candidate) => [candidate.adapterId, candidate]));
+      const blocked = (id: string) => {
+        if (cliUpdateLease.isHeld(id)) return true;
+        if (!paneBlocks(id, byId.get(id))) return false;
+        awaitingPaneClose.add(id);
+        return true;
+      };
+      const run = async (id: string) => {
         // Revalidate the effective launcher and permissions immediately before mutation.
         const selected = await context.wait(automaticCliCandidateAsync(id));
         const admittedPreference = await context.wait(readAutoCliPreferencesAsync(file));
-        if (!selected || stopped || hasLivePane(id) ||
-            powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS ||
+        if (!selected || stopped || paneBlocks(id, selected) || !idleEnough() ||
             admittedPreference?.enabled !== true ||
             !cliUpdateLease.acquire(id)) return false;
         try {
@@ -2424,21 +2499,27 @@ export function startCliAutoUpdate(
               : selected.binPath) === selected.realBinPath;
           } catch { /* The launcher disappeared while being checked. */ }
           const effectivePreference = await context.wait(readAutoCliPreferencesAsync(file));
-          if (!beforeVersion || !stillSameTarget || stopped || hasLivePane(id) ||
-              powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS ||
+          if (!beforeVersion || !stillSameTarget || stopped || paneBlocks(id, selected) || !idleEnough() ||
               effectivePreference?.enabled !== true ||
               activeProviderBinary(id) !== selected.binPath) return false;
           const preferenceRevision = autoCliPreferencesRevision;
+          const authorityChanged = new Error('CLI update authority changed before execution');
           const assertInstallCurrent = () => {
             context.assertCurrent();
-            if (stopped || autoCliPreferencesRevision !== preferenceRevision || hasLivePane(id) ||
-              powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS || activeProviderBinary(id) !== selected.binPath) {
-              throw new Error('CLI update authority changed before execution');
+            if (stopped || autoCliPreferencesRevision !== preferenceRevision || paneBlocks(id, selected) ||
+              !idleEnough() || activeProviderBinary(id) !== selected.binPath) {
+              throw authorityChanged;
             }
           };
           try { await context.wait(runInstallRecipe(selected.recipe, selected.prepared ?? undefined, assertInstallCurrent)); }
           catch (error) {
             console.warn(`[cli-auto-update] ${id}: update failed`, error);
+            if (!stopped && error !== authorityChanged) {
+              recordCliAutoUpdate(id, {
+                status: 'failed', fromVersion: beforeVersion,
+                reason: (error as { killed?: boolean }).killed ? 'timeout' : 'install-failed',
+              }, shortInstallError(error));
+            }
             return false;
           }
           // Refresh this launcher under the lease. The full PATH/login-shell
@@ -2446,19 +2527,35 @@ export function startCliAutoUpdate(
           resolveAdapterBinary(id);
           const afterBin = activeProviderBinary(id);
           const afterVersion = afterBin ? await context.wait(installedCliVersion(id, afterBin)) : null;
-          if (!afterBin || !afterVersion || stopped) return false;
+          if (stopped) return false;
+          if (!afterBin || !afterVersion) {
+            recordCliAutoUpdate(id, { status: 'failed', fromVersion: beforeVersion,
+              reason: afterBin ? 'version-unreadable' : 'launcher-missing' });
+            return false;
+          }
           const result = assessCliUpdate({
             beforeBin: selected.binPath, beforeVersion, afterBin, afterVersion,
             platform: process.platform,
           });
-          if (result === 'different-launcher') return false;
+          if (result === 'different-launcher') {
+            recordCliAutoUpdate(id, { status: 'failed', fromVersion: beforeVersion, toVersion: afterVersion,
+              reason: 'different-launcher' });
+            return false;
+          }
           console.info(`[cli-auto-update] ${id}: ${result === 'updated' ? 'updated' : 'checked'}, ${afterVersion}`);
+          recordCliAutoUpdate(id, { status: result === 'updated' ? 'updated' : 'unchanged',
+            fromVersion: beforeVersion, toVersion: afterVersion });
         } finally { cliUpdateLease.release(id); }
         await context.wait(rescanAdapterBinaries());
         if (stopped) return false;
         broadcast();
         return true;
-      });
+      };
+      const ids = candidates.map((candidate) => candidate.adapterId);
+      if (boot) await queue.runAll(ids, now, blocked, run, BOOT_RECHECK_MS);
+      else if (released.length > 0) {
+        await queue.runAll(ids.filter((id) => released.includes(id)), now, blocked, run, BOOT_RECHECK_MS);
+      } else await queue.runOne(ids, now, blocked, run);
       const current = await context.wait(readAutoCliPreferencesAsync(file));
       if (current?.enabled) {
         preferences = { ...current, checkedAt: queue.snapshot() };
@@ -2472,13 +2569,23 @@ export function startCliAutoUpdate(
       if (!stopped) console.warn('[cli-auto-update] background check deferred', error);
     } finally { checking = false; }
   };
+  const runTick = () => runPeriodicTask(taskId, tick, { signal: controller.signal, cadenceMs: 60_000 });
   const request = () => {
-    void runPeriodicTask(taskId, tick, { signal: controller.signal, cadenceMs: 60_000 }).catch(() => undefined);
+    // Um passe em curso engole a chamada; quem fechou o último pane roda logo depois.
+    void runTick().then(() => (releasedByPaneClose.size > 0 && !stopped ? runTick() : undefined))
+      .catch(() => undefined);
   };
-  const initial = setTimeout(request, 60_000);
+  const stopPaneExitTap = onCliPaneExit?.((adapterId) => {
+    if (stopped || hasLivePane(adapterId)) return;
+    const key = cliUpdateKey(adapterId);
+    for (const id of awaitingPaneClose) if (cliUpdateKey(id) === key) releasedByPaneClose.add(id);
+    if (releasedByPaneClose.size > 0) request();
+  });
+  const initial = setTimeout(request, CLI_BOOT_PASS_DELAY_MS);
   const interval = setInterval(request, 60_000);
   return async () => {
     stopped = true;
+    stopPaneExitTap?.();
     clearTimeout(initial);
     clearInterval(interval);
     controller.abort(new Error('CLI auto update stopped'));
@@ -2696,12 +2803,15 @@ async function runInstallRecipe(
   const invocation = prepared ?? prepareArgvInstallInvocation(recipe);
   assertCurrent?.();
   await new Promise<void>((resolve, reject) => {
-    execFile(
+    const child = execFile(
       invocation.executable,
       [...invocation.args],
       invocation.options,
       (error) => (error ? reject(error) : resolve()),
     );
+    // F-1395: sem TTY e stdin fechado — um prompt (sudo do brew) recebe EOF e
+    // falha na hora, em vez de pendurar até o timeout.
+    child?.stdin?.end();
   });
 }
 

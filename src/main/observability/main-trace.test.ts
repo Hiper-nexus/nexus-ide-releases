@@ -137,6 +137,26 @@ describe('getTraceFilePath', () => {
     }
   });
 
+  it('F-1395: a atualização de CLI vai para o lifecycle com antes→depois e o motivo curto', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-trace-cli-update-'));
+    try {
+      setTraceDirectory(dir);
+      trace({ kind: 'cli-update', adapterId: 'muse', status: 'updated', fromVersion: '1.4.4', toVersion: '1.4.6' });
+      trace({ kind: 'cli-update', adapterId: 'codex', status: 'failed', phase: 'install-failed',
+        fromVersion: '0.160.0', detail: 'npm error /Users/operator/.npm-global EACCES' });
+      await flushMainTrace();
+      const history = fs.readdirSync(path.join(dir, 'logs')).filter((name) => name.startsWith('lifecycle-'));
+      expect(history).toHaveLength(1);
+      const lines = fs.readFileSync(path.join(dir, 'logs', history[0]!), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+      expect(lines[0]).toMatchObject({ kind: 'cli-update', adapterId: 'muse', status: 'updated', fromVersion: '1.4.4', toVersion: '1.4.6' });
+      expect(lines[1]).toMatchObject({ kind: 'cli-update', adapterId: 'codex', status: 'failed', phase: 'install-failed' });
+      // O detalhe (com caminho) fica só no main.trace, nunca no histórico.
+      expect(lines[1]).not.toHaveProperty('detail');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('devolve null quando não há diretório de userData resolvível', () => {
     setTraceDirectory(null);
     // Fora do Electron (vitest) o `electron` não expõe `app.getPath`.

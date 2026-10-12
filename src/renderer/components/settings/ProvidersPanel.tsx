@@ -638,6 +638,16 @@ function ProviderDetail({
           {provider.cliCompatibilityWarning && (
             <p className="prov-detail__sub" role="status">{provider.cliCompatibilityWarning}</p>
           )}
+          {provider.cliAutoUpdate && (
+            <p className="prov-detail__sub" role="status">
+              {provider.cliAutoUpdate.status === 'failed'
+                ? `Atualização automática falhou (${provider.cliAutoUpdate.reason ?? 'erro'})`
+                : provider.cliAutoUpdate.status === 'updated'
+                  ? `Atualizada automaticamente: ${provider.cliAutoUpdate.fromVersion} → ${provider.cliAutoUpdate.toVersion}`
+                  : `Checada automaticamente: ${provider.cliAutoUpdate.toVersion} (em dia)`}
+              {` · ${new Date(provider.cliAutoUpdate.at).toLocaleTimeString()}`}
+            </p>
+          )}
           {stateChips.length > 0 && (
             <div
               className="prov-state-chips"

@@ -57,6 +57,11 @@ export function traceContextEvent(event: Record<string, unknown>, at: number): R
     const value = event[key];
     if (typeof value === 'string' && /^[a-z][a-z0-9:_-]{0,63}$/i.test(value)) out[key] = value;
   }
+  // F-1395: versões antes→depois da atualização de CLI (rótulos, sem caminho).
+  for (const key of ['fromVersion', 'toVersion']) {
+    const value = event[key];
+    if (typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9 ._+:()-]{0,63}$/.test(value)) out[key] = value;
+  }
   for (const key of ['durationMs', 'elapsedMs', 'windowMs', 'p50Ms', 'p99Ms', 'maxMs', 'liveAgents', 'bytes', 'count', 'code', 'exitCode', 'signal', 'pendingBytes', 'highwaterBytes', 'dropped']) {
     const value = event[key];
     if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
@@ -85,7 +90,7 @@ export function mainTraceStatus() {
 }
 export async function flushMainTrace(): Promise<void> { await Promise.all([...sinks.values()].map(sink => sink.flush())); }
 
-const LIFECYCLE_KIND = /^(?:(?:pty|pane|worker|agent|agent-pty|mission)-(?:spawn|exit|close|terminate|died|start|stop|created|ended|failed|removed)|main-thread-hang|app-shutdown|exact-resume-forgotten|dictation-session$)/;
+const LIFECYCLE_KIND = /^(?:(?:pty|pane|worker|agent|agent-pty|mission)-(?:spawn|exit|close|terminate|died|start|stop|created|ended|failed|removed)|main-thread-hang|app-shutdown|exact-resume-forgotten|cli-update|dictation-session$)/;
 export function trace(event: Record<string, unknown>): void {
   try {
     const at = Date.now();
