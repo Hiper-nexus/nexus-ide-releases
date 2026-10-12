@@ -460,7 +460,23 @@ export class UsageTelemetryService {
 
   #onSessionDictated(info: DictatedSessionInfo): void {
     if (this.#stopped) return;
-    if (info.adapterId !== 'claude' && info.adapterId !== 'codex') return;
+    if (info.adapterId !== 'claude' && info.adapterId !== 'codex') {
+      // F-1353: sem telemetria de uso para este adapter, mas o id DITADO
+      // (`--session-id` do glm, deepseek, qwen…) é a conversa do pane. Sem a
+      // linha, retomar o writer fechado recusava com
+      // `resume_context_unavailable` — e o transcrito estava no provider-state.
+      const owner = getContextBySession(info.ptySessionId);
+      if (owner && info.providerSessionId && info.paneId) {
+        saveProviderPaneSession(
+          owner.scope,
+          info.paneId,
+          info.adapterId,
+          { key: 'session_id', id: info.providerSessionId },
+          info.accountId,
+        );
+      }
+      return;
+    }
     const ctx = getContextBySession(info.ptySessionId);
     if (!ctx) {
       console.warn('[usage] agent session has no bound project authority');

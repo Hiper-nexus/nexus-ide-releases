@@ -940,5 +940,47 @@ describe.skipIf(!sqliteAvailable)(
       ]);
       service.stop();
     });
+
+    it('F-1353: o id ditado de um writer glm vira a conversa que a retomada encontra', () => {
+      // Campo 12/10: writer glm (binário do Claude, `--session-id` ditado)
+      // fechado por autoClose; o transcrito ficou no provider-state, mas a
+      // linha da conversa nunca foi gravada e o resume recusava.
+      const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-glm-dictated-'));
+      tempRoots.push(parent);
+      const scope = scopeFixture(parent, 'checkout-a');
+      const worktree = executionScope(scope, path.join(parent, 'wt', 's240-f1303'));
+      const runtimeManager = new ProjectRuntimeManager({
+        baseDir: path.join(parent, 'runtime'),
+        appVersion: 'usage-service-test',
+      });
+      managers.push(runtimeManager);
+      const service = new UsageTelemetryService(new ProjectUsageStoreRegistry(runtimeManager));
+      service.start();
+      const token = mintToken({ label: 'glm-writer', role: 'worker', scope, executionScope: worktree });
+      bindTokenToSession(token.token, 'pty-glm');
+      const conversation = '3d11ad03-405d-4bd2-9248-0867239f88e5';
+      mocks.dictationHook?.({
+        providerSessionId: conversation,
+        ptySessionId: 'pty-glm',
+        paneId: 'pane-glm',
+        adapterId: 'glm',
+        cwd: worktree.rootRealPath,
+      });
+
+      expect(mocks.saveProviderPaneSession).toHaveBeenCalledWith(
+        expect.objectContaining({ checkoutId: 'checkout-a' }),
+        'pane-glm',
+        'glm',
+        { key: 'session_id', id: conversation },
+        undefined,
+      );
+      // Pane fechado: o spawn da retomada pede `--resume <id>` na mesma worktree.
+      expect(
+        mocks.resumeLookup?.(scope, 'pane-glm', 'glm', undefined, { executionScope: worktree }),
+      ).toBe(conversation);
+      // A telemetria de uso continua só para claude/codex.
+      expect(mocks.watcherOptions).toHaveLength(0);
+      service.stop();
+    });
   },
 );
