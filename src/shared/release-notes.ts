@@ -10364,7 +10364,7 @@ export const RELEASE_076237: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076238: AppRelease = {
   version: '0.76.238',
   date: '2026-10-11',
   codename: 'Autoria pela própria conversa',
@@ -10376,5 +10376,22 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Formatador reconhecido', detail: 'O fim do turno atualiza o hash dos arquivos editados, então o format-on-save do próprio agente não apaga a autoria.' },
     { title: 'Testes portáveis para Linux', detail: 'Quatro testes que falhariam no CI de Linux foram corrigidos, e o CI passa a instalar o zsh.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.239',
+  date: '2026-10-12',
+  codename: 'Missões que terminam',
+  summary: 'Panes que abrem, recebem o prompt e entregam; missões que concluem sem travar por histórico velho nem pela atividade do próprio Maestro; e um processo principal que não para em diálogo.',
+  highlights: [
+    { title: 'Writers isolados voltam a nascer', detail: 'Um writer antigo que falhou num ref velho não envenena mais o estado: depois de trocar de branch, o próximo writer isolado nasce. A fila de merge também não trava mais o checkout por histórico cheio ou linha ilegível.' },
+    { title: 'A missão conclui', detail: 'Erro antigo no histórico não veta mais o done, a atividade do Maestro durante a revisão não anula a conclusão, o trabalho sem commit de outro agente não bloqueia a leitura, e a revisão sem revisor livre reagenda sozinha.' },
+    { title: 'Panes que abrem e não se perdem', detail: 'A recusa por teto chega com o motivo real, o prompt colado em blocos é enviado, e o one-shot que trabalha de tela muda não é mais tratado como ocioso.' },
+  ],
+  fixes: [
+    { title: 'Diálogos sem travar o app', detail: 'O aviso de encerramento, o prompt de sair e o consentimento de hooks abrem como sheet na janela, sem prender o processo principal.' },
+    { title: 'Roteamento econômico que acerta', detail: 'Palavras soltas não decidem mais o nível da tarefa; o ranking mostra os modelos instalados mais novos e o rodízio de CLIs funciona também sem missão.' },
+    { title: 'Ferramentas e atualizador', detail: 'Busca de arquivos, LSP e code map funcionam em arquivo real; o atualizador não faz rajada de checagens nem deixa o ZIP no tmp.' },
   ],
 };

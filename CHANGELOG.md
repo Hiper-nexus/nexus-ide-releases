@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.76.239 — Missões que terminam
+
+- **Writers isolados voltam a nascer.** Depois que um writer isolado falhava e o checkout trocava de branch, todo `nexus_pane_spawn` com `isolatedWriter` morria com "invalid worktree state record". Um registro encerrado num ref antigo envenenava o estado inteiro. Agora a unicidade de raiz e ref vale só entre writers ativos (F-1253). Estados duráveis da fila de merge também deixaram de travar o checkout para sempre, por quatro caminhos:
+  - o histórico chegava a 8.192 eventos;
+  - uma linha ilegível ficava sem quarentena;
+  - uma missão `blocked` era tratada como viva na recuperação;
+  - o purge de órfãos deixava dependências penduradas.
+
+  (F-1257, F-1275–F-1277)
+- **A missão conclui.**
+  - Um texto de erro antigo no histórico (`sandbox_denied` de uma entrega já consumida) vetava o `done` para sempre. Agora só uma falha atual veta (F-1260).
+  - A atividade do próprio Maestro durante a revisão, como passos gastos ou o pane dele em busy, anulava toda conclusão com "review-candidate-changed" (F-1299).
+  - A revisão sem revisor livre agora reagenda a tentativa sozinha (F-1261).
+  - Arquivos sem commit de outro agente, que já estavam no checkout antes da missão, não bloqueiam mais a conclusão por "leitura incompleta". Quando a leitura falha, a mensagem diz quais arquivos causaram (F-1301).
+- **Panes que abrem, recebem o prompt e não se perdem.**
+  - A recusa por teto ou memória chega ao Maestro com o motivo real, já no `nexus_pane_spawn`, e não é mais reenviada inutilmente para outra CLI (F-1270).
+  - O prompt colado em dois blocos (Devin) ou com a TUI ainda montando (Kimi) agora é enviado (F-1282).
+  - Um one-shot (`agy --print`) trabalhando de tela muda deixou de ser tratado como ocioso. Isso acaba com a cobrança falsa, com o reuso que perdia a tarefa e com o fechamento no meio do trabalho. O teto é de 30 min (F-1272).
+  - Toda tarefa de bug virava "visual" por causa das invariantes de UI do projeto, a entrega caía para `partial` e o helper não fechava (F-1271).
+  - Também foram corrigidos vazamentos de vaga e de writer pendente (F-1258/F-1259).
+- **Handoffs sem perda.**
+  - O pai promovido a Maestro recupera o relatório completo do helper sem missão, mesmo depois do auto-close (F-1262).
+  - Uma entrega não-success de um Maestro anterior pode receber ACK do novo (F-1263).
+  - O `nexus_handoff_submit` cabe no prazo do cliente MCP, sem entrega duplicada (F-1288).
+- **O processo principal não trava em diálogo.** O aviso de encerramento, o prompt de sair e o consentimento de hooks abrem como sheet na janela, sem prender o processo. Os travamentos de 295 e 36 min dos logs vinham desse caminho (F-1255).
+- **Roteamento econômico que acerta.**
+  - Palavras soltas e ambíguas ("cobrança", "check", "texto", "investigar") não decidem mais o nível da tarefa.
+  - As flexões em inglês voltaram a marcar risco.
+  - O recibo diz quando o Jev respondeu com baixa confiança.
+  - CLI derrubada e falta de acesso ao Argon aparecem no motivo.
+  - O ranking passa a mostrar os modelos instalados mais novos (Astra, Argon, 6.1-sol), e o rodízio de CLIs funciona também sem missão.
+
+  (F-1264–F-1267, F-1289–F-1292)
+- **Ferramentas do Nexus.**
+  - `nexus_file_search` com `**/` casa zero pastas (F-1251).
+  - LSP `definition`/`diagnostics` funcionam em arquivo real (F-1252).
+  - Code map por várias palavras (F-1256).
+  - Comando pesado medido pelo programa de verdade, não pelo texto (F-1273).
+  - Blocos de comando com o nome certo no bash (F-1274).
+- **Portão de regressão e hooks.**
+  - Caminho absoluto declarado no handoff conta como do próprio writer (F-1283).
+  - Ferramentas de edição de Kimi/Grok entram na proveniência (F-1284).
+  - Cota de bloqueios do Stop decai e avisa (F-1285).
+  - Corpo do hook com teto (F-1287).
+- **Atualizador e pacote.**
+  - Falha de checagem não vira rajada a cada foco (F-1278).
+  - Limite da API do GitHub não vira erro vermelho (F-1279).
+  - O ZIP do update sai do tmp (F-1280).
+  - Download só do github.com (F-1281).
+  - O smoke do app empacotado passa a exigir os recursos que o Main usa (F-1295–F-1297).
+  - Contas e "+ Pane" mostram o erro real (F-1293/F-1294).
+- **Decisões registradas:**
+  - autoria com duas sessões vivas na mesma conversa (F-1286);
+  - sinal de progresso para detectar worker travado na chamada ao modelo (F-1298).
+
 ## 0.76.238 — Autoria pela própria conversa
 
 - **Pane retomado responde pelas próprias edições.** O portão de regressão sabia de quem era um arquivo sujo só pela data. Um pane retomado (`--resume`) perdia a autoria do que ele mesmo tinha editado, e datar pela idade da conversa culparia o pane pelo WIP de outro agente no checkout compartilhado. Agora o Nexus registra os arquivos que a própria conversa editou (Edit/Write do Claude, `apply_patch` do Codex) com o hash do conteúdo. Na retomada, só conta como do pane o arquivo que ainda tem esse conteúdo. A reescrita de outro agente continua alheia, e o formatador do próprio turno é reconhecido no fim do turno (F-1237, F-1242, F-1249).
