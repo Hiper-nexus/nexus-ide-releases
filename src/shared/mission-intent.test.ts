@@ -894,6 +894,33 @@ describe('suggestMissionLaneFromGoal — o que o leigo pede de verdade', () => {
       suggestMissionLaneFromGoal('analise o bug e aponte a causa, sem consertar'),
     ).toBe('consult');
   });
+
+  it('"corrija X sem corrigir Y" é escrita: a negação só nega o objeto dela (F-1304, revisão Fable)', () => {
+    // Revisão Fable: a recusa do passo 1 "vencia TUDO" e casava "sem
+    // corrigir"/"sem aplicar" mesmo com o verbo principal de escrita.
+    expect(
+      suggestMissionLaneFromGoal(
+        'implemente o endpoint de exportação CSV sem aplicar o lint nos arquivos antigos',
+      ),
+    ).toBeNull();
+    expect(
+      suggestMissionLaneFromGoal('corrija o bug do login sem corrigir os warnings antigos'),
+    ).toBeNull();
+    expect(
+      suggestMissionLaneFromGoal('adicione o filtro por data sem alterar o schema do banco'),
+    ).toBeNull();
+    // A recusa sem verbo principal de escrita continua só-leitura, inclusive
+    // quando o verbo de escrita aparece só como complemento ("como corrigir").
+    expect(
+      suggestMissionLaneFromGoal('não altere nada, me diga como corrigir o login'),
+    ).toBe('consult');
+    expect(
+      suggestMissionLaneFromGoal('revise o módulo de pagamento sem corrigir nem refatorar'),
+    ).toBe('consult');
+    expect(
+      suggestMissionLaneFromGoal('corrija o login, mas somente leitura por enquanto'),
+    ).toBe('consult');
+  });
 });
 
 describe('missão MISTA — a lane não pode proibir a outra metade', () => {

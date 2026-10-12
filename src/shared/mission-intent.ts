@@ -1070,6 +1070,21 @@ export function isExplicitGitSyncGoal(goal: string): boolean {
 }
 
 /**
+ * F-1304 (revisão Fable): há verbo de escrita como verbo PRINCIPAL fora de uma
+ * negação? Tira o trecho negado ("sem corrigir", "não altere", "nem refatorar")
+ * e o verbo que é só complemento ("me diga como corrigir", "o que corrigir",
+ * "para resolver") antes de procurar. Substantivos ("o bug") não contam.
+ */
+function hasWriteMainVerbOutsideNegation(goal: string): boolean {
+  const residue = goal
+    .replace(/\b(?:sem|n[aã]o|nem)\s+(?:me\s+)?[\p{L}-]+/giu, ' ')
+    .replace(/\b(?:como|o\s+que|onde|para|pra|de|a)\s+[\p{L}-]+/giu, ' ');
+  return /(?<![\p{L}-])(?:implement(?:ar|e|a|em)|codar|escrev(?:er|a)\s+c[oó]digo|cri(?:ar|e|a)|constru(?:ir|a|am)|mont(?:ar|e|a)|desenvolv(?:er|a)|refator(?:ar|e|a)|otimiz(?:ar|e|a)|adicion(?:ar|e|a)|integr(?:ar|e|a)|traduz(?:ir|a)|fix|corrig(?:ir|e|em)|corrija(?:m)?|arrum(?:ar|e|a)|consert(?:ar|e|a)|resolv(?:er|a|e)|proteg(?:er|e)|proteja)(?![\p{L}-])/iu.test(
+    residue,
+  );
+}
+
+/**
  * Soft lane suggestion from goal text for the mission wizard autopilot.
  * Returns null when the goal is neutral (keep standard). Never forces a lane
  * after the operator has manually picked one (wizard owns that).
@@ -1111,14 +1126,23 @@ export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
   }
 
   // 1. "sem alterar nada", "não mexa", "só me diga", "somente leitura".
-  //    Vence TUDO: é a pessoa proibindo a escrita com todas as letras.
+  //    "só me diga"/"somente leitura"/"read-only" vencem TUDO: é a pessoa
+  //    proibindo a escrita com todas as letras.
   // F-1304: o passo 4 casa "corrigir" sem honrar o "sem" — "revise, sem
   // corrigir" virava lane de escrita. Negar também os verbos de conserto.
-  const readOnlyRefusal =
-    /\b(?:sem|n[aã]o)\s+(?:alterar|mexer|mudar|modificar|editar|tocar|corrigir|aplicar|consertar|resolver)\b|\bn[aã]o\s+(?:mexa|altere|mude|modifique|edite|toque|corrija|aplique|conserte|resolva)\b|\b(?:s[oó]|apenas|somente)\s+(?:me\s+)?(?:diga|dize|olhe|leia|analise|revise|verifique)\b|\bsomente\s+leitura\b|\bread-?only\b/i.test(
+  // F-1304 (revisão Fable): "sem X" só nega X. "corrija o bug sem corrigir os
+  // warnings" e "implemente o endpoint sem aplicar o lint" têm verbo principal
+  // de escrita fora da negação — são escrita, não só-leitura.
+  const globalReadOnly =
+    /\b(?:s[oó]|apenas|somente)\s+(?:me\s+)?(?:diga|dize|olhe|leia|analise|revise|verifique)\b|\bsomente\s+leitura\b|\bread-?only\b/i.test(
       g,
     );
-  if (readOnlyRefusal) return 'consult';
+  if (globalReadOnly) return 'consult';
+  const scopedRefusal =
+    /\b(?:sem|n[aã]o)\s+(?:alterar|mexer|mudar|modificar|editar|tocar|corrigir|aplicar|consertar|resolver)\b|\bn[aã]o\s+(?:mexa|altere|mude|modifique|edite|toque|corrija|aplique|conserte|resolva)\b/i.test(
+      g,
+    );
+  if (scopedRefusal && !hasWriteMainVerbOutsideNegation(g)) return 'consult';
 
   // 2. "só o plano", "sem escrever código", "antes de implementar".
   const planOnly =
