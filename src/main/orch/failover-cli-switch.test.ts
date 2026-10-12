@@ -66,7 +66,10 @@ vi.mock('../observability/main-trace', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../observability/main-trace')>()),
   trace: h.trace,
 }));
-const HITS: Record<string, { kind: 'quota' | 'rate-limit' | 'auth'; reason: string; cooldownMs: number }> = {
+const HITS: Record<string, { kind: 'quota' | 'rate-limit' | 'auth'; reason: string; cooldownMs: number; adapterId?: string; confirmed?: boolean }> = {
+  // F-1410: célula de status do Muse (confirmada pela posição) e a mesma frase solta.
+  MUSE_CELL: { kind: 'rate-limit', reason: 'muse-spark-1.3 · medium · Usage limit reached', cooldownMs: 5 * 60 * 60_000, adapterId: 'muse', confirmed: true },
+  MUSE_TEXT: { kind: 'rate-limit', reason: 'Usage limit reached', cooldownMs: 5 * 60 * 60_000 },
   QUOTA: { kind: 'quota', reason: 'You exceeded your current quota', cooldownMs: 12 * 60 * 60_000 },
   SHORT: { kind: 'rate-limit', reason: 'rate limit — try again in 1 minute', cooldownMs: 60_000 },
   AUTH: { kind: 'auth', reason: '401 OAuth access token has expired', cooldownMs: 15 * 60_000 },
@@ -141,7 +144,7 @@ vi.mock('./idle-delivery', () => ({ onHandoffSubmitted: h.onHandoffSubmitted }))
 vi.mock('../adapters/adapter-registry', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../adapters/adapter-registry')>()),
   getAdapter: vi.fn((id: string) => {
-    const label = { claude: 'Claude', codex: 'Codex', kimi: 'Kimi', grok: 'Grok' }[id];
+    const label = { claude: 'Claude', codex: 'Codex', kimi: 'Kimi', grok: 'Grok', muse: 'Muse Code' }[id];
     return label ? { id, label, models: { default: 'm', list: ['m'] } } : null;
   }),
   getAdapterResolvedBin: vi.fn(() => null),
@@ -165,6 +168,7 @@ import {
   type PaneTaskRerouteHandle,
 } from './pane-task-reroute';
 import { resetPaneStartWatchdogForTests } from './pane-start-watchdog';
+import { activeCliLimit, isCliLimited, resetCliLimits } from './cli-limit-registry';
 
 type Renderer = WebContents & EventEmitter & { send: ReturnType<typeof vi.fn> };
 
@@ -255,6 +259,7 @@ beforeEach(() => {
   setNextCliResolver(resolver);
   resetPaneTaskReroutesForTests();
   resetPaneStartWatchdogForTests();
+  resetCliLimits();
   owner = renderer(51);
   bindResolvedRendererWorkspaceScope(owner, SCOPE);
   registerFailoverListener(owner);
@@ -625,5 +630,39 @@ describe('fresh cross-window account exhaustion uses the real quota policy', () 
     expect(resolver).not.toHaveBeenCalled();
     expect(events().some(event => event.switched)).toBe(false);
     expect(h.trace).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'unconfirmed-refuted' }));
+  });
+});
+
+describe('F-1410: limite do Muse (login nativo, sem conta gerenciada)', () => {
+  it('célula de status confirmada: a CLI fica limitada até o reset e a tarefa segue em outra CLI', async () => {
+    h.longNeedsApi = true;
+    rendererPane({ paneId: 'pane-muse', sessionId: 'session-muse', adapterId: 'muse', accountId: '' });
+    h.dataTaps[0]('session-muse', 'MUSE_CELL');
+    await settle();
+    expect(isCliLimited('muse')).toBe(true);
+    expect(activeCliLimit('muse')?.until).toBe(Date.now() + 5 * 60 * 60_000);
+    expect(h.trace).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'cli-limited', adapterId: 'muse' }));
+    // Confirmado: sem a pausa de 15 min do F-249 — a troca de CLI sai na hora.
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(resolver.mock.calls[0][0].excludeAdapterIds).toContain('muse');
+  });
+
+  it('F-249: a mesma frase solta (cat de log, handoff) não limita a CLI nem troca', async () => {
+    h.longNeedsApi = true;
+    rendererPane({ paneId: 'pane-muse', sessionId: 'session-muse', adapterId: 'muse', accountId: '' });
+    h.dataTaps[0]('session-muse', 'MUSE_TEXT');
+    await settle();
+    expect(isCliLimited('muse')).toBe(false);
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it('a célula do Muse lida no pane de OUTRA CLI não põe o Muse em quarentena', async () => {
+    h.longNeedsApi = true;
+    rendererPane({ paneId: 'pane-kimi', sessionId: 'session-kimi', adapterId: 'kimi', accountId: '' });
+    h.dataTaps[0]('session-kimi', 'MUSE_CELL');
+    await settle();
+    expect(isCliLimited('muse')).toBe(false);
+    expect(isCliLimited('kimi')).toBe(false);
+    expect(resolver).not.toHaveBeenCalled();
   });
 });

@@ -102,6 +102,7 @@ import {
   type ModelQuarantineScope,
 } from './model-access-quarantine';
 import { trace } from '../observability/main-trace';
+import { noteCliLimit } from './cli-limit-registry';
 
 /**
  * Automatic account failover. Watches each pane's output for a limit signature
@@ -2513,6 +2514,19 @@ function handleLimitHit(
     return;
   }
 
+  // F-1410: CLI sem conta gerenciada (login nativo, como o Muse Code) não tem
+  // sonda de provider por conta — `fresh` seria sempre vazio e o limite ficaria
+  // eternamente "não confirmado" (15 min, sem marcar nada). A confirmação dela
+  // é a POSIÇÃO: o hit veio de uma célula de status/erro que só a TUI desta
+  // mesma CLI desenha (`confirmed`, nunca a frase solta — F-249). Então a CLI
+  // entra em janela inteira e a troca segue como confirmada.
+  // Ponto de extensão: quando houver sonda de cota da CLI (ex.: `muse-usage`),
+  // ela refuta com `clearCliLimit` ou ajusta a janela com `noteCliLimit`.
+  if (!current && hit.confirmed === true && hit.adapterId === adapterId) {
+    commitLimitHit(authority, pane, key, hit, now, source, current, adapterId);
+    return;
+  }
+
   // A long multi-hour usage quarantine cannot be authorized by PTY text alone
   // (cascata fantasma: um `cat erro.log` com a frase certa não é limite). Sem
   // leitura provider-api fresca, CONFIRMA com uma sonda ao vivo antes de
@@ -2656,6 +2670,32 @@ function commitLimitHit(
       adapterId,
       reason: hit.reason,
       at: now,
+    });
+  }
+
+  // F-1410: sem conta gerenciada não há onde pôr cooldown (`setCooldown`
+  // abaixo não roda e `hasAvailableAccount` é true para sempre): a rota
+  // reescolheria a CLI esgotada. Limite confirmado pela célula da própria TUI
+  // (mesmo adapter do pane) marca a CLI inteira até o reset; texto não
+  // confirmado nunca marca.
+  if (
+    !current &&
+    !options.unconfirmed &&
+    hit.confirmed === true &&
+    hit.adapterId === adapterId
+  ) {
+    const cliLimit = noteCliLimit(adapterId, hit, now);
+    trace({
+      kind: 'account-failover',
+      outcome: 'cli-limited',
+      paneId: pane.paneId,
+      adapterId,
+      fromAccountId: null,
+      limitKind: hit.kind,
+      reason: hit.reason,
+      missionId: authority.missionId ?? null,
+      unblockAtMs: cliLimit.until,
+      source,
     });
   }
 
