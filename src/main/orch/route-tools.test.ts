@@ -594,6 +594,7 @@ describe('nexus_route_task — recibo: confiança do Jev e o que a regra teria e
     adapterId: string;
     model?: string;
     classifierSource: string;
+    jevUnavailable?: string;
     confidence?: Record<string, number>;
     ruleChoice?: 'same' | { adapterId: string; model?: string; effort?: string };
   };
