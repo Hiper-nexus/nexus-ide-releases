@@ -264,4 +264,16 @@ describe('F-987: redesenho de TUI não estoura o digest', () => {
     );
     expect(digest.text).toBe('linha 1\nlinha 2\nElapsed 14s\nfim');
   });
+
+  it('F-1356: tail só com quadros de spinner/contador devolve aviso legível em vez de dígitos soltos', () => {
+    const rawTail = ['⠋ 5', '⠙ 6'].join('\n');
+    const digest = digestPaneTail(rawTail);
+    expect(digest.text).toMatch(/spinner|sem texto/);
+
+    const mixedTail = ['⠋ 5', '⠙ 6', '⏺ Task executed successfully'].join('\n');
+    const mixedDigest = digestPaneTail(mixedTail);
+    expect(mixedDigest.text).toBe('⏺ Task executed successfully');
+  });
 });
+
+

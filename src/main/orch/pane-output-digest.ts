@@ -307,7 +307,9 @@ export function normalizeRedrawLine(raw: string): string {
  */
 function frameKey(line: string): string | null {
   const trimmed = line.trim();
-  return TICKING_PATTERN.test(trimmed) ? trimmed.replace(/\d+/g, '0') : null;
+  if (TICKING_PATTERN.test(trimmed)) return trimmed.replace(/\d+/g, '0');
+  if (/^\d+$/.test(trimmed)) return '0';
+  return null;
 }
 
 export function digestPaneTail(
@@ -322,10 +324,11 @@ export function digestPaneTail(
   const items = lines.map((raw, index) => {
     const line = normalizeRedrawLine(raw);
     const trimmed = line.trim();
+    const isSpinnerCounter = SPINNER_GLYPHS.test(raw) && /^[\s\d]*$/.test(raw.replace(SPINNER_GLYPHS, ''));
     return {
       index,
       line,
-      drop: trimmed.length === 0 || GLYPH_ONLY_PATTERN.test(trimmed),
+      drop: trimmed.length === 0 || GLYPH_ONLY_PATTERN.test(trimmed) || isSpinnerCounter,
       status: STATUS_LINE_PATTERN.test(trimmed),
     };
   });
@@ -423,6 +426,22 @@ export function digestPaneTail(
   for (const item of tailLines) out.push(item.line);
 
   const keptLines = signals.length + tailLines.length;
+  // F-1356: se todos os quadros eram redesenho de spinner / dígitos soltos sem texto legível
+  if (
+    signals.length === 0 &&
+    (tailLines.length === 0 || tailLines.every((item) => /^\s*\d*\s*$/.test(item.line)))
+  ) {
+    const hadVisibleContent = lines.some((l) => l.trim().length > 0);
+    if (hadVisibleContent) {
+      return {
+        text: 'TUI sem texto legível',
+        keptLines: 0,
+        omittedLines: lines.length,
+        truncated: false,
+      };
+    }
+  }
+
   return {
     text: out.join('\n'),
     keptLines,
