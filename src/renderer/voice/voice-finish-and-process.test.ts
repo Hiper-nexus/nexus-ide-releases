@@ -348,6 +348,32 @@ describe('F-1392 — uma linha dictation.session por ditado, sem o texto', () =>
     expect(useVoiceStore.getState().dictationDelivery).toBeNull();
   });
 
+  it('C-1/C-2/C-5: HUD do pendente cancelado (copiado), substituído (calado) e perdido (confira)', async () => {
+    transcribe.mockResolvedValue(sttOk('abre o painel'));
+    const settlers: Array<(settled: { paneId: string; result: 'ok' | 'error'; errorCode?: string; preserved?: boolean }) => void> = [];
+    vi.mocked(routeDictation).mockImplementation(async (_text, onSettled) => {
+      if (onSettled) settlers.push(onSettled as never);
+      return { ok: false, reason: 'pending', paneId: 'pane-1' };
+    });
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+    settlers[0]!({ paneId: 'pane-1', result: 'error', errorCode: 'pending-cancelled', preserved: true });
+    expect(useVoiceStore.getState().note).toBe('Ditado cancelado: texto copiado, cole com ⌘V.');
+    expect(useVoiceStore.getState().dictationFailed).toBe(false);
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+    const noteBefore = useVoiceStore.getState().note;
+    settlers[1]!({ paneId: 'pane-1', result: 'error', errorCode: 'pending-replaced' });
+    expect(useVoiceStore.getState().note).toBe(noteBefore);
+    expect(useVoiceStore.getState().note).not.toContain('você usou o painel');
+    expect(useVoiceStore.getState().dictationFailed).toBe(false);
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+    settlers[2]!({ paneId: 'pane-1', result: 'error', errorCode: 'pending-lost', preserved: true });
+    expect(useVoiceStore.getState().error).toContain('confira o painel');
+    expect(useVoiceStore.getState().error).toContain('copiado');
+  });
+
   it('STT falha: resultado erro com código curto; transcript vazio: resultado vazio', async () => {
     transcribe.mockResolvedValueOnce(sttFail());
     await finishAndProcess(makeCapture(), { current: false }, makeDeps());

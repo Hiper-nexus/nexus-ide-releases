@@ -377,12 +377,16 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
     cancelled.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
     await Promise.all([deliverDictation('dois', cancelled.ports), vi.advanceTimersByTimeAsync(3_000)]);
     cancelPendingDictation('pane-focused');
+    await vi.advanceTimersByTimeAsync(0);
+    // C-1: responder o diálogo cancela o pendente, e o prompt falado vai para
+    // a área de transferência (o pendente já saiu do mapa: colar não duplica).
+    expect(cancelled.ports.preserveUndelivered).toHaveBeenCalledWith('dois');
     expect(onCancelled).toHaveBeenCalledExactlyOnceWith({
       paneId: 'pane-focused',
       result: 'error',
       errorCode: 'pending-cancelled',
+      preserved: true,
     });
-    expect(cancelled.ports.preserveUndelivered).not.toHaveBeenCalled();
 
     resetPendingDictationsForTests();
     const restarted = claudePane();
@@ -401,13 +405,44 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
     });
   });
 
+  it('C-5: no pane livre, texto escrito sem confirmação vira pending-lost com cópia (não pending-failed)', async () => {
+    vi.useFakeTimers();
+    const pane = claudePane();
+    const onSettled = vi.fn();
+    pane.ports.onSettled = onSettled;
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('abre o PR', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    pane.ports.deliverConfirmed = vi.fn(async () => 'lost' as const);
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: false };
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(pane.ports.deliverOperator).not.toHaveBeenCalled();
+    expect(pane.ports.preserveUndelivered).toHaveBeenCalledWith('abre o PR');
+    expect(onSettled).toHaveBeenCalledExactlyOnceWith({
+      paneId: 'pane-focused',
+      result: 'error',
+      errorCode: 'pending-lost',
+      preserved: true,
+    });
+    expect(pane.logs).toContainEqual({ level: 'error', event: 'dictation.pendingLost' });
+  });
+
   it('um ditado novo substitui o pendente do mesmo pane: só o último entra', async () => {
     vi.useFakeTimers();
     const pane = claudePane();
+    const onFirstSettled = vi.fn();
+    pane.ports.onSettled = onFirstSettled;
     pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
     await Promise.all([deliverDictation('primeiro', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
     await Promise.all([deliverDictation('segundo', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
     expect(pane.logs).toContainEqual({ level: 'info', event: 'dictation.pendingReplaced' });
+    // C-2: substituído é `pending-replaced`, sem cópia (o texto novo é o que vale).
+    expect(onFirstSettled).toHaveBeenCalledWith({
+      paneId: 'pane-focused',
+      result: 'error',
+      errorCode: 'pending-replaced',
+    });
+    expect(pane.ports.preserveUndelivered).not.toHaveBeenCalled();
     pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: false };
     await vi.advanceTimersByTimeAsync(10_000);
     expect(pane.writes).toEqual(['\x1b[200~segundo\x1b[201~', '\r']);

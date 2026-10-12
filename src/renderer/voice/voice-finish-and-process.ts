@@ -146,7 +146,9 @@ function pendingDictationFailure(settled: DictationPendingSettled): string {
       ? 'O painel não ficou livre em 10 minutos — o ditado pendente foi descartado.'
       : settled.errorCode === 'pending-session-changed'
         ? 'O painel reiniciou — o ditado pendente foi descartado.'
-        : 'O painel ficou livre mas não aceitou o ditado pendente.';
+        : settled.errorCode === 'pending-lost'
+          ? 'O ditado foi escrito no painel mas o envio não se confirmou — confira o painel antes de reenviar.'
+          : 'O painel ficou livre mas não aceitou o ditado pendente.';
   return settled.preserved ? `${why} O texto foi copiado: cole com ⌘V.` : why;
 }
 
@@ -456,8 +458,14 @@ export async function finishAndProcess(
           hud.setNote('Ditado entregue: o painel ficou livre.');
           return;
         }
+        // C-2: o novo ditado cuida do HUD; o substituído não fala nada.
+        if (settled.errorCode === 'pending-replaced') return;
         if (settled.errorCode === 'pending-cancelled') {
-          hud.setNote('Ditado pendente cancelado: você usou o painel.');
+          hud.setNote(
+            settled.preserved
+              ? 'Ditado cancelado: texto copiado, cole com ⌘V.'
+              : 'Ditado cancelado: você usou o painel.',
+          );
           return;
         }
         hud.setDictationFailed(true);

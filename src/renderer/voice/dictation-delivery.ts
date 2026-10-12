@@ -28,7 +28,12 @@ export type DictationPendingErrorCode =
   | 'pending-timeout'
   | 'pending-session-changed'
   | 'pending-failed'
-  | 'pending-cancelled';
+  /** C-5: o pane livre recebeu o texto mas o envio não se confirmou. */
+  | 'pending-lost'
+  /** Input humano no pane (respondeu o diálogo): texto vai para a área de transferência. */
+  | 'pending-cancelled'
+  /** C-2: um ditado novo para o mesmo pane tomou o lugar — sem cópia, sem nota. */
+  | 'pending-replaced';
 
 export interface DictationPendingSettled {
   readonly paneId: string;
@@ -221,9 +226,12 @@ function deferUntilFree(
     if (mine()) pendingByPane.delete(paneId);
     ports.log(level, event, msg, { targetPaneId: paneId, sessionId, chars: text.length, ...extra });
     const outcome = { paneId, result: errorCode ? 'error' : 'ok', ...(errorCode ? { errorCode } : {}) } as const;
-    // C2: falha real do pendente (não o cancelamento pelo operador) guarda o
-    // texto agora — B1 tirou a cópia do momento em que ele ficou pendente.
-    if (errorCode && errorCode !== 'pending-cancelled' && ports.preserveUndelivered) {
+    // C2: o pendente que não entra guarda o texto agora — B1 tirou a cópia do
+    // momento em que ele ficou pendente. C-1: inclui o cancelamento por input
+    // humano (responder o diálogo com y/Enter é o único jeito de fechá-lo; sem
+    // cópia o prompt falado sumia) — o pendente já saiu do mapa, então colar
+    // não duplica. Só o substituído por um ditado novo não copia.
+    if (errorCode && errorCode !== 'pending-replaced' && ports.preserveUndelivered) {
       void ports.preserveUndelivered(text)
         .catch(() => false)
         .then((preserved) => ports.onSettled?.({ ...outcome, preserved }));
@@ -241,7 +249,7 @@ function deferUntilFree(
           ? 'ditado pendente substituído por um novo'
           : 'input humano no pane — ditado pendente cancelado',
         { reason },
-        'pending-cancelled',
+        reason === 'replaced' ? 'pending-replaced' : 'pending-cancelled',
       ),
   });
   const tick = async (): Promise<void> => {
@@ -266,10 +274,14 @@ function deferUntilFree(
       const delivered = outcome === 'started' || outcome === 'queued';
       settle(
         delivered ? 'info' : 'error',
-        delivered ? 'dictation.pendingDelivered' : 'dictation.pendingFailed',
-        delivered ? 'ditado pendente entregue ao pane livre' : 'pane livre recusou o ditado pendente',
+        delivered ? 'dictation.pendingDelivered' : outcome === 'lost' ? 'dictation.pendingLost' : 'dictation.pendingFailed',
+        delivered
+          ? 'ditado pendente entregue ao pane livre'
+          : outcome === 'lost'
+            ? 'texto do pendente escrito no pane mas o envio não se confirmou'
+            : 'pane livre recusou o ditado pendente',
         { lane, outcome },
-        delivered ? undefined : 'pending-failed',
+        delivered ? undefined : outcome === 'lost' ? 'pending-lost' : 'pending-failed',
       );
       return;
     }
