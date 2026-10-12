@@ -2,6 +2,7 @@ import type { ProjectExecutionScope } from '../../../shared/types';
 import {
   BUSINESS_MODEL_TARGET_PATH,
   readBusinessModelForExecution,
+  readBusinessModelForExecutionWithOrigin,
   type BusinessInvariant,
 } from './business-model-contract';
 import {
@@ -64,10 +65,14 @@ export function businessModelContextBlock(
   scope: ProjectExecutionScope,
   projectScope?: ProjectExecutionScope,
 ): string | null {
-  const document = readBusinessModelForExecution(scope, projectScope);
+  const model = readBusinessModelForExecutionWithOrigin(scope, projectScope);
+  const document = model?.document ?? null;
   const profile = businessProfileLines(scope, projectScope);
   if ((!document || (document.invariants.length === 0 && document.flows.length === 0)) && !profile.length) return null;
-  const open = `${BUSINESS_MODEL_BLOCK_TAG} fonte="${document ? BUSINESS_MODEL_TARGET_PATH : 'referências locais'}">`;
+  // F-1352: o doc revisado só é a fonte quando o modelo veio dele; o extrato
+  // do HEAD não está naquele arquivo (que pode ser só o doc de produto).
+  const source = !model ? 'referências locais' : model.origin === 'revised' ? BUSINESS_MODEL_TARGET_PATH : 'extrato HEAD';
+  const open = `${BUSINESS_MODEL_BLOCK_TAG} fonte="${source}">`;
   const close = '</business-model>';
   const lines = [open, INSTRUCTION];
   let used = bytes(open) + bytes(INSTRUCTION) + bytes(close) + 3;

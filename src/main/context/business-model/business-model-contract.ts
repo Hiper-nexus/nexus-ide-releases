@@ -288,21 +288,36 @@ function extractedAtHead(scope: ProjectExecutionScope): StoredBusinessModel | nu
     : readLatestBusinessModel(scope);
 }
 
+/** F-1352: de onde veio o modelo de execução — extrato do HEAD ou doc revisado. */
+export interface BusinessModelForExecution {
+  readonly document: BusinessModelDocument;
+  readonly origin: 'extract' | 'revised';
+}
+
 /**
  * Modelo de negócio para execução (contexto de prompt, risco do portão). A
  * ordem vale: o modelo EXTRAÍDO do HEAD atual do checkout vem primeiro; sem
  * ele, o doc REVISADO atestado cumpre o papel. Worktree de aba cai no escopo
  * do projeto (mesma instalação/projeto, raiz diferente). Nunca lança.
  */
+export function readBusinessModelForExecutionWithOrigin(
+  scope: ProjectExecutionScope,
+  projectScope?: ProjectExecutionScope,
+): BusinessModelForExecution | null {
+  const read = (target: ProjectExecutionScope): BusinessModelForExecution | null => {
+    const extracted = extractedAtHead(target)?.document;
+    if (extracted) return { document: extracted, origin: 'extract' };
+    const revised = readBusinessModelDocument(target);
+    return revised ? { document: revised, origin: 'revised' } : null;
+  };
+  return read(scope) ?? (sameProjectFallback(scope, projectScope) ? read(projectScope) : null);
+}
+
 export function readBusinessModelForExecution(
   scope: ProjectExecutionScope,
   projectScope?: ProjectExecutionScope,
 ): BusinessModelDocument | null {
-  return extractedAtHead(scope)?.document ??
-    readBusinessModelDocument(scope) ??
-    (sameProjectFallback(scope, projectScope)
-      ? extractedAtHead(projectScope)?.document ?? readBusinessModelDocument(projectScope)
-      : null);
+  return readBusinessModelForExecutionWithOrigin(scope, projectScope)?.document ?? null;
 }
 
 /**

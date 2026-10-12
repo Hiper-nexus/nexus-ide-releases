@@ -7,6 +7,7 @@ import type { BusinessFlow, BusinessInvariant } from './business-model-contract'
 import type { BusinessHurdle } from './business-model-hurdles';
 import type { BusinessModelSelection } from './business-model-selection';
 import { BUSINESS_MODEL_TARGET_PATH } from './business-model-contract';
+import { configureBusinessModelStore, writeBusinessModel } from './business-model-store';
 import {
   SELECTED_BUSINESS_BLOCK_MAX_BYTES,
   selectedBusinessContextBlock,
@@ -34,6 +35,36 @@ it('root product and PRD excerpts are inert local references with current source
   expect(second).toContain('Clínicas independentes');
   expect(second).not.toContain('Salões independentes');
   expect(second).not.toBe(first);
+});
+
+it('F-1352: modelo vindo do extrato do HEAD → o bloco estático não cita o doc de produto como fonte', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-bm-extract-')));
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-bm-extract-store-'));
+  profileRoots.push(root, storeDir);
+  configureBusinessModelStore(storeDir);
+  try {
+    // Doc de produto escrito à mão no caminho do modelo, sem invariantes.
+    fs.mkdirSync(path.join(root, '.context/docs'), { recursive: true });
+    fs.writeFileSync(path.join(root, BUSINESS_MODEL_TARGET_PATH), '# Product\n\n## Users\nDevs.\n');
+    const scope = testProjectScope({ rootRealPath: root });
+    writeBusinessModel(scope, {
+      headSha: 'a'.repeat(40),
+      fingerprint: 'fp',
+      document: Object.freeze({
+        schemaVersion: 1 as const,
+        flows: Object.freeze([]),
+        invariants: Object.freeze([{ ...rule('conta_claude#1', 'uma sessão por vez'), origem: 'AGENTS.md:131' }]),
+      }),
+      hurdles: [],
+    });
+    const block = businessModelContextBlock(scope)!;
+    expect(block).toContain('conta_claude#1');
+    expect(block).toContain('(AGENTS.md:131)');
+    expect(block.split('\n')[0]).toBe('<business-model fonte="extrato HEAD">');
+    expect(block).not.toContain(BUSINESS_MODEL_TARGET_PATH);
+  } finally {
+    configureBusinessModelStore(null);
+  }
 });
 
 const flow = (nome: string): BusinessFlow =>
