@@ -157,3 +157,69 @@ describe('AsyncProcessGitRunner', () => {
     });
   });
 });
+
+describe('F-1384: Git do Nexus não deixa index.lock órfão na worktree', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function slowFilterRepo(): { root: string; repo: string } {
+    // Filtro clean lento (config global, como o F-580 honra) segura o Git
+    // no meio da operação: o mesmo efeito de uma worktree grande sob swap.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-git-lock-'));
+    const home = path.join(root, 'home');
+    const repo = path.join(root, 'repo');
+    fs.mkdirSync(home);
+    fs.mkdirSync(repo);
+    fs.writeFileSync(
+      path.join(home, '.gitconfig'),
+      '[user]\n\tname = t\n\temail = t@example.test\n[filter "slow"]\n\tclean = "sleep 3; cat"\n',
+    );
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('XDG_CONFIG_HOME', path.join(home, '.config'));
+    const git = new ProcessGitRunner();
+    git.run(repo, ['init', '-q']);
+    fs.writeFileSync(path.join(repo, 'f.txt'), 'a\n');
+    git.run(repo, ['commit', '-q', '--allow-empty', '-m', 'base']);
+    fs.writeFileSync(path.join(repo, '.gitattributes'), 'f.txt filter=slow\n');
+    return { root, repo };
+  }
+
+  it('Git que estoura o timeout do runner sai limpando o próprio index.lock', async () => {
+    // Incidente 12/10: index.lock de 0 byte, sem processo git, em
+    // .git/worktrees/<writer>/ — o runner matava no timeout com SIGKILL, que
+    // não deixa o Git rodar a limpeza dos lockfiles.
+    const { root, repo } = slowFilterRepo();
+    try {
+      const result = await new AsyncProcessGitRunner()
+        .run(repo, ['add', 'f.txt'], { allowFailure: true, timeoutMs: 600 })
+        .catch((error: unknown) => error);
+      expect(result).toBeInstanceOf(Error);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(fs.existsSync(path.join(repo, '.git', 'index.lock'))).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it('git status do Nexus não regrava o index da worktree (sem lock opcional)', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-git-status-'));
+    try {
+      const git = new ProcessGitRunner();
+      git.run(root, ['init', '-q']);
+      fs.writeFileSync(path.join(root, 'f.txt'), 'a\n');
+      git.run(root, ['add', 'f.txt']);
+      git.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-q', '-m', 'x']);
+      const index = path.join(root, '.git', 'index');
+      const past = new Date('2020-01-01T00:00:00Z');
+      fs.utimesSync(path.join(root, 'f.txt'), past, past);
+      const before = fs.statSync(index).ino;
+      await new AsyncProcessGitRunner().run(root, ['status', '--porcelain']);
+      git.run(root, ['status', '--porcelain']);
+      // Regravar = criar index.lock e renomear: a janela que um kill deixa órfã.
+      expect(fs.statSync(index).ino).toBe(before);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

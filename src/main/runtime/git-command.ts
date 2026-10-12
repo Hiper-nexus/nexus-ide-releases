@@ -187,6 +187,11 @@ function safeGitEnvironment(
   env.GIT_MERGE_AUTOEDIT = 'no';
   env.GIT_ALLOW_PROTOCOL = 'https:ssh:git:http';
   env.LC_ALL = 'C';
+  // F-1384: leitura (status, diff) não regrava o index da worktree. Sem isto
+  // o `git status` pega o index.lock para gravar o refresh, e um kill nessa
+  // janela deixa o lock de 0 byte que derruba `git add` do writer. Locks
+  // obrigatórios (add, commit, checkout) não são afetados.
+  env.GIT_OPTIONAL_LOCKS = '0';
   return env;
 }
 
@@ -240,7 +245,9 @@ export class AsyncProcessGitRunner implements AsyncGitRunner {
           env,
           maxBuffer: MAX_GIT_OUTPUT_BYTES,
           timeout: options.timeoutMs ?? 30_000,
-          killSignal: 'SIGKILL',
+          // F-1384: SIGTERM, não SIGKILL — o Git trata o sinal e apaga os
+          // próprios lockfiles; SIGKILL no meio deixava `index.lock` órfão.
+          killSignal: 'SIGTERM',
           windowsHide: true,
         },
         (error, stdout, stderr) => {
