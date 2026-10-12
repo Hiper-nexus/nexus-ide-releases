@@ -61,6 +61,7 @@ import {
 } from './claude-oauth-usage';
 import { probeClaudeCredentialIdentity } from './claude-native-account';
 import { readNativeOAuthCredential } from '../adapters/native-oauth-keychain';
+import { readRegularFileCapped } from '../redline/redline-safe-read';
 import type { QuotaReadHint } from '../../shared/quota-types';
 
 const CRED_PREFIX = 'acctcred:';
@@ -403,13 +404,13 @@ async function readProfileCredential(
       }
     }
   }
-  try {
-    const file = path.join(profile.configDir, '.credentials.json');
-    if (fs.statSync(file).size > 1_000_000) return { credential: null, unavailable: true };
-    return { credential: fs.readFileSync(file, 'utf8'), unavailable: false };
-  } catch {
-    return { credential: null, unavailable: false };
-  }
+  // Revisão de segurança (BAIXA): stat + readFileSync tinha janela entre os
+  // dois e pendurava num FIFO. Um descritor, O_NONBLOCK, só arquivo regular.
+  const read = readRegularFileCapped(path.join(profile.configDir, '.credentials.json'), 1_000_000);
+  if (read.kind === 'text') return { credential: read.text, unavailable: false };
+  // Ausente = sem credencial; presente mas recusado (FIFO, gigante, ilegível)
+  // = fonte indisponível, nunca "sem credencial".
+  return { credential: null, unavailable: read.stamp !== 'missing' };
 }
 
 /**
