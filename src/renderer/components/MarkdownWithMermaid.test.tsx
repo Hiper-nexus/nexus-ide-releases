@@ -134,6 +134,10 @@ describe('MarkdownWithMermaid real async consumer / real sanitizer', () => {
     const { host } = render(<MarkdownWithMermaid source={many} />); await settle();
     expect(host.querySelectorAll('figure')).toHaveLength(MARKDOWN_MAX_DIAGRAMS);
     expect(host.querySelectorAll('pre > code.language-mermaid')).toHaveLength(2);
+    // F-1372: overflow source lives outside MarkdownView's CSS scope.
+    for (const code of host.querySelectorAll('pre > code.language-mermaid')) {
+      expect(code.parentElement?.className).toBe('markdown-with-mermaid__source');
+    }
     expect(api.render).toHaveBeenCalledTimes(MARKDOWN_MAX_DIAGRAMS);
     const big = render(<MarkdownWithMermaid source={'a'.repeat(MARKDOWN_MAX_CHARS + 5)} />);
     expect(big.host.querySelector('[role="note"]')?.textContent).toMatch(/Texto longo/);

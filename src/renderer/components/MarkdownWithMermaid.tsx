@@ -152,7 +152,7 @@ export function MarkdownWithMermaid({ source, theme, onMermaidReady, className, 
         if (part.kind === 'text') return <MarkdownView key={`t${i}`} markdown={part.text} links={links} />;
         if (part.index >= MARKDOWN_MAX_DIAGRAMS) {
           return (
-            <pre key={`m${part.index}`} className="markdown-view__code" data-language="mermaid">
+            <pre key={`m${part.index}`} className="markdown-with-mermaid__source">
               <code className="language-mermaid">{part.source}</code>
             </pre>
           );
