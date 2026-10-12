@@ -93,7 +93,7 @@ import {
 } from '../adapters/cli-auto-update';
 import type { CliVersionCheck } from '../adapters/cli-auto-update';
 import { trace } from '../observability/main-trace';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { redactSecretText } from '../../shared/secret-redaction';
 import {
   getKey,
@@ -2150,14 +2150,6 @@ function resolveCliRealPath(filePath: string): string | null {
   catch { return null; }
 }
 
-/** F-1395: artefatos do recibo do cask; fora do Caskroom ou ilegível = null. */
-function readCaskArtifactKinds(realBinPath: string): string[] | null {
-  const receipt = caskReceiptPath(realBinPath);
-  if (!receipt) return null;
-  try { return caskReceiptArtifactKinds(fs.readFileSync(receipt, 'utf8')); }
-  catch { return null; }
-}
-
 async function readCaskArtifactKindsAsync(realBinPath: string): Promise<string[] | null> {
   const receipt = caskReceiptPath(realBinPath);
   if (!receipt) return null;
@@ -2166,27 +2158,6 @@ async function readCaskArtifactKindsAsync(realBinPath: string): Promise<string[]
 }
 
 /** F-1395 B1: artefatos do manifesto da VERSÃO-ALVO do cask via `brew info --cask --json=v2`. */
-function readCaskTargetArtifactKinds(realBinPath: string): string[] | null {
-  const token = caskTokenFromRealBinPath(realBinPath);
-  const brew = resolveRunnerPath('brew');
-  if (!token || !brew) return null;
-  try {
-    const stdout = execFileSync(
-      brew,
-      ['info', '--cask', '--json=v2', token],
-      {
-        timeout: 10_000,
-        maxBuffer: 1024 * 1024,
-        encoding: 'utf8',
-        env: { ...process.env, HOMEBREW_NO_AUTO_UPDATE: '1', HOMEBREW_NO_SUDO: '1' },
-      },
-    );
-    return caskManifestArtifactKinds(stdout);
-  } catch {
-    return null;
-  }
-}
-
 async function readCaskTargetArtifactKindsAsync(realBinPath: string): Promise<string[] | null> {
   const token = caskTokenFromRealBinPath(realBinPath);
   const brew = resolveRunnerPath('brew');
@@ -2209,39 +2180,6 @@ async function readCaskTargetArtifactKindsAsync(realBinPath: string): Promise<st
       },
     );
   });
-}
-
-function automaticCliCandidate(adapterId: string): AutomaticCliCandidate | null {
-  const adapter = getAdapter(adapterId);
-  if (!adapter || adapter.kind !== 'cli-pty' || !isBuiltinAdapter(adapterId) ||
-      configFor(adapterId).binPath) return null;
-  const binPath = activeProviderBinary(adapterId);
-  if (!binPath) return null;
-  let realBinPath: string;
-  try { realBinPath = fs.realpathSync(process.platform === 'win32'
-    ? windowsNpmShimTarget(adapterId, binPath) ?? binPath : binPath); }
-  catch { return null; }
-  const recipe = selectAutomaticCliUpdateRecipe({
-    adapterId, platform: process.platform, binPath, realBinPath,
-    userHome: realUserHome(), windowsLocalAppData: process.env.LOCALAPPDATA,
-    installationDistribution: adapterId === 'devin' ? installedDevinDistribution(realBinPath) : null,
-    isRunnerResolvable: (runner) => resolveRunnerPath(runner) !== null,
-    resolveRealPath: resolveCliRealPath,
-    isTargetWritable: (target) => {
-      try { fs.accessSync(path.dirname(target), fs.constants.W_OK); return true; }
-      catch { return false; }
-    },
-    caskArtifactKinds: readCaskArtifactKinds(realBinPath),
-    caskTargetArtifactKinds: readCaskTargetArtifactKinds(realBinPath),
-  });
-  if (!recipe) return null;
-  if (recipe.kind !== 'argv') {
-    return { adapterId, label: adapter.label, binPath, realBinPath, recipe, prepared: null };
-  }
-  try {
-    return { adapterId, label: adapter.label, binPath, realBinPath, recipe,
-      prepared: prepareArgvInstallInvocation(recipe) };
-  } catch { return null; }
 }
 
 async function automaticCliCandidateAsync(adapterId: string): Promise<AutomaticCliCandidate | null> {
@@ -2783,9 +2721,9 @@ async function fetchInstallerBody(
   });
 
   try {
-    const fetchCall = options?.signal
-      ? net.fetch(scriptUrl, { signal: controller.signal })
-      : net.fetch(scriptUrl);
+    // C6: sempre com o signal próprio — sem ele o prazo rejeitava a promise
+    // mas a conexão do instalador manual seguia viva.
+    const fetchCall = net.fetch(scriptUrl, { signal: controller.signal });
 
     const response = await Promise.race([fetchCall, abortOrTimeoutPromise]);
     if (!response.ok) {
@@ -3243,9 +3181,11 @@ export function registerProviderIpc(): void {
     }
     try {
       await rescanAdapterBinaries();
-      const candidates = listAdapters()
-        .map((adapter) => automaticCliCandidate(adapter.id))
-        .filter((candidate): candidate is AutomaticCliCandidate => candidate !== null);
+      // C5: descoberta assíncrona — o `brew info` do manifesto de cada cask
+      // (até 15 s) nunca congela o Main enquanto o operador liga o toggle.
+      const candidates = (await Promise.all(
+        listAdapters().map((adapter) => automaticCliCandidateAsync(adapter.id)),
+      )).filter((candidate): candidate is AutomaticCliCandidate => candidate !== null);
       if (candidates.length === 0) {
         return { ...autoCliStatus(previous), error: 'nenhuma CLI elegível para atualização automática nesta máquina' };
       }
