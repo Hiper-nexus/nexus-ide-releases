@@ -829,7 +829,8 @@
 }
 
 /* Compact semantic caption: keep the dense Linear-like form rhythm. */
-.settings-field__note--warning {
+.settings-field__note--warning,
+.prov-detail__sub.settings-field__note--warning {
   color: var(--warn);
 }
 

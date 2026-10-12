@@ -277,6 +277,56 @@ describe('ProvidersPanel hub', () => {
     act(() => root.unmount());
   });
 
+  it.each([
+    ['updated', 'Atualizada automaticamente: 1.4.4 → 1.4.6'],
+    ['unchanged', 'Checada automaticamente: 1.4.6 (em dia)'],
+    ['failed', 'Atualização automática falhou: tempo de espera esgotado.'],
+  ] as const)('F-1399: presents the %s update outcome', (status, copy) => {
+    useProviderStore.setState({ providers: [provider('claude', 'Claude', {
+      cliAutoUpdate: { status, fromVersion: '1.4.4', toVersion: '1.4.6', reason: 'timeout', at: Date.now() },
+    })] });
+    const { host, root } = mount();
+    const note = host.querySelector('.prov-detail [role="status"]');
+    expect(note?.textContent).toContain(copy);
+    expect(note?.classList.contains('settings-field__note--warning')).toBe(status === 'failed');
+    if (status === 'failed') expect(note?.textContent).toContain('Com as atualizações automáticas ativas, o Nexus tenta de novo quando a CLI estiver livre.');
+    act(() => root.unmount());
+  });
+
+  it.each([
+    ['install-failed', 'a instalação não terminou'],
+    ['download-timeout', 'o tempo de espera do download esgotou'],
+    ['different-launcher', 'outra instalação da CLI foi encontrada'],
+    ['version-unreadable', 'não foi possível conferir a versão instalada'],
+    ['launcher-missing', 'a CLI não foi encontrada após a atualização'],
+    ['unknown-code', 'não foi possível concluir a atualização'],
+    [undefined, 'não foi possível concluir a atualização'],
+  ])('F-1399: explains failure %s without exposing internal codes', (reason, copy) => {
+    useProviderStore.setState({ providers: [provider('claude', 'Claude', {
+      cliAutoUpdate: { status: 'failed', reason, at: Date.now() },
+    })] });
+    const { host, root } = mount();
+    expect(host.querySelector('.prov-detail [role="status"]')?.textContent).toContain(copy);
+    act(() => root.unmount());
+  });
+
+  it('F-1399: distinguishes yesterday from today at the same time', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 12, 12));
+    try {
+      for (const [day, expected] of [[11, '11/10 · 08:15'], [12, ' · 08:15']] as const) {
+        useProviderStore.setState({ providers: [provider('claude', 'Claude', {
+          cliAutoUpdate: { status: 'unchanged', toVersion: '1.4.6', at: new Date(2026, 9, day, 8, 15).getTime() },
+        })] });
+        const { host, root } = mount();
+        const copy = host.querySelector('.prov-detail [role="status"]')?.textContent;
+        expect(copy).toContain(expected);
+        if (day === 12) expect(copy).not.toContain('12/10');
+        act(() => root.unmount());
+      }
+    } finally { vi.useRealTimers(); }
+  });
+
   it('F-790: shows the selected duplicate CLI version in the existing detail', () => {
     const warning = '2 instalações: 0.146.0 e 0.160.0; usando 0.160.0';
     useProviderStore.setState({ providers: [provider('codex', 'Codex', { cliInstallationWarning: warning })] });

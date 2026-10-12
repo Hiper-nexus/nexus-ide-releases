@@ -14,6 +14,7 @@ import { useToastStore } from '../../state/toast-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { reportLicenseDenial } from '../../state/access-guard';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
+import { formatDecisionTime } from '../../lib/decision-format';
 import { openExternalFromAnchor } from '../../lib/open-external';
 import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
@@ -39,6 +40,15 @@ import {
   type ProviderOpPhase,
   type ProvidersHubTab,
 } from './providers-panel-view';
+
+const cliUpdateFailureReasons: Record<string, string> = {
+  timeout: 'tempo de espera esgotado',
+  'install-failed': 'a instalação não terminou',
+  'download-timeout': 'o tempo de espera do download esgotou',
+  'different-launcher': 'outra instalação da CLI foi encontrada',
+  'version-unreadable': 'não foi possível conferir a versão instalada',
+  'launcher-missing': 'a CLI não foi encontrada após a atualização',
+};
 
 /**
  * Provider selection stays separate from the selected tool's account actions.
@@ -639,13 +649,13 @@ function ProviderDetail({
             <p className="prov-detail__sub" role="status">{provider.cliCompatibilityWarning}</p>
           )}
           {provider.cliAutoUpdate && (
-            <p className="prov-detail__sub" role="status">
+            <p className={`prov-detail__sub${provider.cliAutoUpdate.status === 'failed' ? ' settings-field__note--warning' : ''}`} role="status">
               {provider.cliAutoUpdate.status === 'failed'
-                ? `Atualização automática falhou (${provider.cliAutoUpdate.reason ?? 'erro'})`
+                ? `Atualização automática falhou: ${cliUpdateFailureReasons[provider.cliAutoUpdate.reason ?? ''] ?? 'não foi possível concluir a atualização'}. Com as atualizações automáticas ativas, o Nexus tenta de novo quando a CLI estiver livre.`
                 : provider.cliAutoUpdate.status === 'updated'
                   ? `Atualizada automaticamente: ${provider.cliAutoUpdate.fromVersion} → ${provider.cliAutoUpdate.toVersion}`
                   : `Checada automaticamente: ${provider.cliAutoUpdate.toVersion} (em dia)`}
-              {` · ${new Date(provider.cliAutoUpdate.at).toLocaleTimeString()}`}
+              {` · ${formatDecisionTime(provider.cliAutoUpdate.at)}`}
             </p>
           )}
           {stateChips.length > 0 && (
