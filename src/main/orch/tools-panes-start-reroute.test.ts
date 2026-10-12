@@ -198,6 +198,27 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
     expect(getPaneStartWatch('pane-2')).toMatchObject({ adapterId: 'codex', rerouted: true });
   });
 
+  it('F-1414: a cadeia de reenvios mantém fora TODAS as CLIs que falharam e conta a geração até o teto', async () => {
+    const resolver = vi.fn(async (_task: string, _ctx: AgentGateContext, internal: { excludeAdapterIds?: readonly string[] }) => {
+      const out = internal.excludeAdapterIds ?? [];
+      if (out.includes('codex')) return { adapterId: 'glm', routeReservationId: 'rr-3' };
+      if (out.includes('qwen')) return { adapterId: 'codex', routeReservationId: 'rr-2' };
+      return { adapterId: 'qwen', routeReservationId: 'rr-1' };
+    });
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler({ task: 'implementar o login', prompt: 'faça o login' }, orchestrator);
+    expect(getPaneStartWatch('pane-1')).toMatchObject({ generation: 0 });
+
+    await getPaneStartWatch('pane-1')!.reroute!(['qwen']);
+    expect(getPaneStartWatch('pane-2')).toMatchObject({ adapterId: 'codex', generation: 1 });
+
+    // O 2º reenvio exclui a CLI que falhou agora E a que falhou antes (o
+    // roster deste squad só tem qwen/codex, então a rota recusa o resto).
+    await getPaneStartWatch('pane-2')!.reroute!(['codex']).catch(() => undefined);
+    expect(resolver.mock.calls.at(-1)![2]).toMatchObject({ excludeAdapterIds: ['qwen', 'codex'] });
+    expect(getPaneStartWatch('pane-2')!.hasAlternative!()).toBe(true);
+  });
+
   it('pin de CLI e reserva antiga não viajam no reenvio', async () => {
     const resolver = vi.fn(async () => ({ adapterId: 'codex', routeReservationId: 'rr-9' }));
     setOperatorRouteResolver(resolver);
