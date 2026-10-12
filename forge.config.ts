@@ -522,7 +522,7 @@ const config: ForgeConfig = {
       // F-1208: the OCR worker runs from app.asar.unpacked, and Node's module
       // lookup never walks into the archive: everything it requires must be
       // unpacked too (regenerator-runtime, is-url, bmp-js included).
-      unpack: '**/{*.node,*.dll,*.dylib,*.so*,*.wasm,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**,regenerator-runtime/**,is-url/**,bmp-js/**}',
+      unpack: '**/{*.node,*.dll,*.dylib,*.so,*.so.*,*.wasm,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**,regenerator-runtime/**,is-url/**,bmp-js/**}',
       // Keep the complete platform package adjacent to its native binding.
       // Release verification separately requires zero spawn-helper entries.
       unpackDir: '**/node_modules/@lydell/{node-pty,node-pty-*}',

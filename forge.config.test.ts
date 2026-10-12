@@ -1,6 +1,14 @@
+import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+
+const require = createRequire(import.meta.url);
+const minimatch = require('minimatch') as (
+  target: string,
+  pattern: string,
+  options?: { matchBase?: boolean },
+) => boolean;
 
 import forgeConfig, {
   assertRequiredWakeResource,
@@ -170,6 +178,19 @@ describe('platform-specific maker matrix', () => {
 });
 
 describe('native terminal packaging', () => {
+  it('F-1296: *.so and *.so.* do not unpack TypeScript sources named *.source.ts', () => {
+    const unpack = (forgeConfig.packagerConfig?.asar as { unpack?: string }).unpack ?? '';
+    expect(
+      minimatch(
+        'node_modules/zod/src/v3/tests/language-server.source.ts',
+        unpack,
+        { matchBase: true },
+      ),
+    ).toBe(false);
+    expect(minimatch('libfoo.so', unpack, { matchBase: true })).toBe(true);
+    expect(minimatch('libfoo.so.1', unpack, { matchBase: true })).toBe(true);
+  });
+
   it('unpacks Windows DLLs used beside native Node bindings', () => {
     expect(
       (forgeConfig.packagerConfig?.asar as { unpack?: string }).unpack,
