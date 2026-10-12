@@ -17,6 +17,11 @@ import {
   type CommandTriageKind,
 } from '../jev/jev-terminal-triage';
 import { handleHookJsonPost } from './hook-http';
+import {
+  maestroInboxNotice,
+  type InboxNoticeContext,
+  type ListUndeliveredHandoffs,
+} from './maestro-inbox-notice';
 
 /** Mesmo teto do /hook/status — payloads de hook são metadados de evento. */
 export const HOOK_TRIAGE_MAX_BODY_BYTES = 64 * 1024;
@@ -88,6 +93,22 @@ export function formatTriageContext(triage: CommandTriage): string {
 export interface HookTriageDeps {
   triage?: typeof triageCommandFailure;
   signal?: AbortSignal;
+  /** F-1359: fila durável do Maestro; default = store da missão. */
+  listUndelivered?: ListUndeliveredHandoffs;
+}
+
+type HookTriageContext = Pick<AgentGateContext, 'sessionId'> & InboxNoticeContext;
+
+/**
+ * F-1359: o hook PostToolUse (corpo fixo, sem o payload da tool) pergunta se
+ * entrou entrega na fila do Maestro ocupado. Só responde quando há aviso.
+ */
+function isInboxPoll(body: unknown): boolean {
+  return Boolean(
+    body &&
+      typeof body === 'object' &&
+      (body as Record<string, unknown>).hook_event_name === 'PostToolUse',
+  );
 }
 
 /**
@@ -96,12 +117,22 @@ export interface HookTriageDeps {
  * exceção) — o hook nunca deve perturbar o Claude.
  */
 export async function handleHookTriageRequest(
-  ctx: Pick<AgentGateContext, 'sessionId'>,
+  ctx: HookTriageContext,
   body: unknown,
   deps: HookTriageDeps = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
-  void ctx;
   try {
+    if (isInboxPoll(body)) {
+      const notice = maestroInboxNotice(ctx, deps.listUndelivered);
+      return notice
+        ? {
+            statusCode: 200,
+            payload: {
+              hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: notice },
+            },
+          }
+        : { statusCode: 200, payload: {} };
+    }
     const failure = parseBashFailure(body);
     if (!failure) return { statusCode: 200, payload: {} };
     const triageFn = deps.triage ?? triageCommandFailure;
@@ -131,7 +162,7 @@ export async function handleHookTriageRequest(
 export async function handleHookTriageHttp(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  ctx: Pick<AgentGateContext, 'sessionId'> | null,
+  ctx: HookTriageContext | null,
 ): Promise<void> {
   await handleHookJsonPost(req, res, ctx, HOOK_TRIAGE_MAX_BODY_BYTES, (body) =>
     handleHookTriageRequest(ctx!, body),

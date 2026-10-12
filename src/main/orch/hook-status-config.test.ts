@@ -71,6 +71,22 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     expect(triage!.hooks[0]!.command).not.toContain('--output /dev/null');
     expect(triage!.hooks[0]!.command).toContain('|| true');
 
+    // F-1359: PostToolUse leva o status hook + o aviso da fila do Maestro
+    // (corpo fixo para /hook/triage; a resposta é o additionalContext).
+    const postToolUse = merged.PostToolUse as Array<{
+      matcher?: string;
+      hooks: Array<{ type: string; command: string; timeout?: number }>;
+    }>;
+    expect(postToolUse).toHaveLength(2);
+    const inbox = postToolUse[1]!;
+    expect(inbox.matcher).toBe('*');
+    expect(inbox.hooks[0]!.command).toContain('$NEXUS_HOOK_TRIAGE_URL');
+    expect(inbox.hooks[0]!.command).toContain('"hook_event_name":"PostToolUse"');
+    expect(inbox.hooks[0]!.command).toContain(MARKER);
+    expect(inbox.hooks[0]!.command).not.toContain('--output /dev/null');
+    expect(inbox.hooks[0]!.command).not.toContain('@-');
+    expect(inbox.hooks[0]!.command).toContain('|| true');
+
     // PreToolUse/Bash → portão de integração (/hook/integration, F-234).
     const preToolUse = merged.PreToolUse as Array<{
       matcher?: string;
@@ -97,13 +113,14 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     // 7 status hooks (claudeHookSpecs, com o StopFailure do F-734) + 1 hook de
     // triagem PostToolUseFailure + 1 hook de delegação UserPromptSubmit (C2)
     // + 1 portão de regressão Stop + 1 portão de integração PreToolUse/Bash
-    // (F-234) + broker de aprovação PermissionRequest (PRV-02) + admissão
-    // física no Bash em plataformas POSIX.
+    // (F-234) + broker de aprovação PermissionRequest (PRV-02) + aviso da
+    // fila do Maestro no PostToolUse (F-1359) + admissão física no Bash em
+    // plataformas POSIX.
     const commands = Object.values(twice)
       .flat()
       .flatMap((entry) => (entry as { hooks: Array<{ command: string }> }).hooks)
       .map((hook) => hook.command);
-    expect(commands.filter(isNexusHookText)).toHaveLength(process.platform === 'win32' ? 12 : 13);
+    expect(commands.filter(isNexusHookText)).toHaveLength(process.platform === 'win32' ? 13 : 14);
   });
 });
 

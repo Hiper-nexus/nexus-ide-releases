@@ -39,7 +39,7 @@ import {
   mergeNestedEntries,
 } from '../../vendor/emdash/hooks/hook-config';
 import { filterUserHooks } from '../../vendor/emdash/hooks/hook-commands';
-import { makeClaudeTriageHookCommand } from './hook-triage-command';
+import { makeClaudeInboxHookCommand, makeClaudeTriageHookCommand } from './hook-triage-command';
 import { makeDelegateHookCommand } from './hook-delegate-command';
 import {
   REGRESSION_HOOK_TIMEOUT_SECONDS,
@@ -84,6 +84,18 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
       hooks: [
         { type: 'command', command: makeClaudeTriageHookCommand(), timeout: 15 },
       ],
+    },
+  ];
+  // PostToolUse → POST /hook/triage com corpo fixo (F-1359): o Maestro
+  // ocupado fica sabendo, numa linha de additionalContext, das entregas que
+  // entraram na fila desde o último aviso. Mesma reescrita idempotente: o
+  // loop de status acima já removeu as entradas com o marker deste evento.
+  const postToolUse = Array.isArray(next.PostToolUse) ? next.PostToolUse : [];
+  next.PostToolUse = [
+    ...postToolUse,
+    {
+      matcher: '*',
+      hooks: [{ type: 'command', command: makeClaudeInboxHookCommand(), timeout: 5 }],
     },
   ];
   // UserPromptSubmit → POST /hook/delegate (C2): o conselho do Jev vira
