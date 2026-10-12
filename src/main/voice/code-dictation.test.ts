@@ -55,6 +55,21 @@ describe('finalizeCodeDictation', () => {
     );
   });
 
+  it('F-1392: devolve tamanhos e resultado da reescrita para o log de uso (sem texto extra)', async () => {
+    const ok = ports({
+      polish: vi.fn(async () => ({ text: 'Commit and open the pull request.', polished: true })),
+    });
+    expect(await finalizeCodeDictation(literalRequest, literalResult, 900, ok.ports)).toMatchObject({
+      polish: { ok: true, rawChars: literalResult.text.length },
+    });
+    const failed = ports({
+      polish: vi.fn(async (text: string) => ({ text, polished: false, reason: 'unparseable' })),
+    });
+    expect(await finalizeCodeDictation(literalRequest, literalResult, 900, failed.ports)).toMatchObject({
+      polish: { ok: false, rawChars: literalResult.text.length, reason: 'unparseable' },
+    });
+  });
+
   it('reescrita falhou no caminho literal: a STT traduz o MESMO áudio — o CODE nunca entrega português', async () => {
     const { ports: p, log } = ports();
     const out = await finalizeCodeDictation(literalRequest, literalResult, 900, p);

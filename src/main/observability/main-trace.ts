@@ -61,6 +61,19 @@ export function traceContextEvent(event: Record<string, unknown>, at: number): R
     const value = event[key];
     if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
   }
+  // F-1392: dictation-session — rótulos de modelo têm ponto (gemini-3.5-…),
+  // tamanhos e latências são números; o texto ditado nunca é campo.
+  if (kind === 'dictation-session') {
+    for (const key of ['mode', 'sttProvider', 'sttModel', 'language', 'result', 'errorCode']) {
+      const value = event[key];
+      if (typeof value === 'string' && /^[a-z][a-z0-9:._-]{0,63}$/i.test(value)) out[key] = value;
+    }
+    for (const key of ['audioMs', 'latencyMs', 'rawChars', 'polishedChars']) {
+      const value = event[key];
+      if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+    }
+    if (typeof event.polished === 'boolean') out.polished = event.polished;
+  }
   return Object.freeze(out);
 }
 export function recentTraceContext(): readonly Readonly<Record<string, string | number | boolean>>[] { return recent.slice(); }
@@ -72,7 +85,7 @@ export function mainTraceStatus() {
 }
 export async function flushMainTrace(): Promise<void> { await Promise.all([...sinks.values()].map(sink => sink.flush())); }
 
-const LIFECYCLE_KIND = /^(?:(?:pty|pane|worker|agent|agent-pty|mission)-(?:spawn|exit|close|terminate|died|start|stop|created|ended|failed|removed)|main-thread-hang|app-shutdown|exact-resume-forgotten)/;
+const LIFECYCLE_KIND = /^(?:(?:pty|pane|worker|agent|agent-pty|mission)-(?:spawn|exit|close|terminate|died|start|stop|created|ended|failed|removed)|main-thread-hang|app-shutdown|exact-resume-forgotten|dictation-session$)/;
 export function trace(event: Record<string, unknown>): void {
   try {
     const at = Date.now();

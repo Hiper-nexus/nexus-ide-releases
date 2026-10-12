@@ -51,6 +51,11 @@ import { WakeEngine } from "./wake-engine";
 import { getAecRuntimeStatus } from "./aec-runtime";
 import { startNativeAecRuntime, type NativeAecRuntime } from "./aec-native-runtime";
 import { logVoice } from "./voice-log";
+import { trace } from "../observability/main-trace";
+import {
+  DICTATION_SESSION_EVENT,
+  dictationSessionTraceEvent,
+} from "./dictation-session-trace";
 import { spawn } from "node:child_process";
 import { transcribe } from "./stt-service";
 import { speak, stopSystemSpeech } from "./tts-service";
@@ -1051,6 +1056,12 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
         parsed.data.msg,
         parsed.data.data,
       );
+      // F-1392: a sessão de ditado também entra no lifecycle (lista branca,
+      // sem texto) — é o log de uso que diz quando e por que o ditado falha.
+      if (parsed.data.event === DICTATION_SESSION_EVENT) {
+        const session = dictationSessionTraceEvent(parsed.data.data);
+        if (session) trace(session);
+      }
     }
   });
 

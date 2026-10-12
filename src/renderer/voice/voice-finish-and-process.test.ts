@@ -177,3 +177,102 @@ describe('F-371 — dictationPending/dictationFailed no fluxo de ditado', () => 
     expect(useVoiceStore.getState().dictationFailed).toBe(true);
   });
 });
+
+describe('F-1392 — uma linha dictation.session por ditado, sem o texto', () => {
+  const logVoice = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    transcribe.mockReset();
+    logVoice.mockReset();
+    vi.stubGlobal('window', {
+      nexus: {
+        voice: {
+          transcribe,
+          logVoice,
+          liveStatus: vi.fn(async () => ({})),
+          liveInterrupt: vi.fn(async () => ({})),
+          liveEndTurn: vi.fn(async () => ({})),
+        },
+      },
+    });
+    setActiveCaptureReason('dictation');
+    vi.mocked(routeDictation).mockResolvedValue({ ok: true, paneId: 'pane-1' });
+    useVoiceStore.setState({
+      status: 'idle',
+      error: null,
+      note: null,
+      dictationPending: null,
+      dictationFailed: false,
+      info: voiceInfo('english'),
+    } as never);
+  });
+
+  afterEach(() => {
+    setActiveCaptureReason('manual');
+    vi.unstubAllGlobals();
+  });
+
+  function sessions(): Array<Record<string, unknown>> {
+    return logVoice.mock.calls
+      .map(([payload]) => payload as { event: string; msg?: string; data?: Record<string, unknown> })
+      .filter((payload) => payload.event === 'dictation.session')
+      .map((payload) => {
+        expect(payload.msg).toBeUndefined();
+        return payload.data ?? {};
+      });
+  }
+
+  it('ditado CODE entregue: modo, STT, idioma, duração, tamanhos e reescrita', async () => {
+    transcribe.mockResolvedValue({
+      ok: true,
+      text: 'Commit this and push the worktree.',
+      provider: 'groq',
+      model: 'whisper-large-v3-turbo',
+      polish: { ok: true, rawChars: 41 },
+      attempts: [],
+    } satisfies TranscribeResult);
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+
+    const all = sessions();
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({
+      mode: 'code',
+      sttProvider: 'groq',
+      sttModel: 'whisper-large-v3-turbo',
+      language: 'pt',
+      audioMs: 1400,
+      rawChars: 41,
+      polishedChars: 34,
+      polished: true,
+      result: 'ok',
+    });
+    expect(typeof all[0]!.latencyMs).toBe('number');
+    expect(JSON.stringify(all[0])).not.toContain('worktree');
+  });
+
+  it('pane não confirma: resultado erro com o código da entrega', async () => {
+    transcribe.mockResolvedValue(sttOk('abre o painel'));
+    vi.mocked(routeDictation).mockResolvedValue({ ok: false, reason: 'delivery-failed' });
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+
+    expect(sessions()).toEqual([
+      expect.objectContaining({ result: 'error', errorCode: 'delivery-failed', polished: false }),
+    ]);
+  });
+
+  it('STT falha: resultado erro com código curto; transcript vazio: resultado vazio', async () => {
+    transcribe.mockResolvedValueOnce(sttFail());
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+    transcribe.mockResolvedValueOnce(sttOk('   '));
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+
+    expect(sessions()).toEqual([
+      expect.objectContaining({ result: 'error', errorCode: 'stt-throttled', mode: 'code' }),
+      expect.objectContaining({ result: 'empty', errorCode: 'discarded', sttProvider: 'groq' }),
+    ]);
+  });
+});
+

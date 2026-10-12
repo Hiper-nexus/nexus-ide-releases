@@ -9,6 +9,12 @@ import type React from 'react';
 import { useVoiceStore } from './voice-store';
 import { codePolishAvailable, dictationSttRequestParams } from './dictation-output-mode';
 import { describeSttFailure, sttSuccessNote } from './stt-failure-help';
+import {
+  dictationSessionData,
+  sttErrorCode,
+  type DictationSessionDraft,
+  type DictationSessionOutcome,
+} from './dictation-session';
 import { hasUsableLocalSpeech, shouldDiscardBeforeRealtime } from './capture-gate';
 import {
   isDiscardableTranscript,
@@ -217,6 +223,20 @@ export async function finishAndProcess(
   };
   let cachedStt: TranscribeResult | null = null;
   let cachedSttLatencyMs = 0;
+  // F-1392: log de uso — UMA linha `dictation.session` por ditado, em
+  // qualquer saída do ramo (ok, vazio, erro, exceção). Só metadados.
+  let dictationSession: DictationSessionDraft | null = null;
+  const reportDictationSession = (outcome: DictationSessionOutcome): void => {
+    if (!dictationSession) return;
+    const draft = dictationSession;
+    dictationSession = null;
+    logVoiceEvent(
+      outcome.result === 'error' ? 'warn' : 'info',
+      'dictation.session',
+      undefined,
+      dictationSessionData(draft, outcome, Date.now()),
+    );
+  };
   try {
     const result = wakeMic.isUtteranceActive()
       ? wakeMic.finishUtterance()
@@ -230,6 +250,14 @@ export async function finishAndProcess(
     // STT da Jarvis: ele segue a config STT (Groq, tradução PT→EN) e injeta
     // o texto no pane focado.
     const dictationTurn = isDictationCapture(activeCaptureReason);
+    if (dictationTurn) {
+      dictationSession = {
+        outputMode: store.info?.dictationOutputMode,
+        language: 'pt',
+        audioSec: result.durationSec,
+        speechEndedAt: Date.now(),
+      };
+    }
     const shouldTryRealtimeTranscript =
       routing === 'jarvis' && !dictationTurn && shouldStreamToRealtime();
     // A paused stream must emit audioStreamEnd promptly; otherwise Gemini can
@@ -303,6 +331,7 @@ export async function finishAndProcess(
       if (result.heardSpeech === false) {
         console.log('[voice] captura sem fala real (silêncio/ruído) — descartada');
       }
+      reportDictationSession({ result: 'empty', errorCode: 'no-speech' });
       store.setStatus('idle');
       liveEndTurn();
       return;
@@ -355,10 +384,12 @@ export async function finishAndProcess(
         store.setDictationPending(null);
         store.setDictationFailed(true);
         store.setError(describeSttFailure(stt));
+        reportDictationSession({ result: 'error', errorCode: sttErrorCode(stt), stt });
         return;
       }
       if (stt.discarded === 'echo') {
         console.log(`[voice] eco do TTS descartado no ditado: "${stt.text}"`);
+        reportDictationSession({ result: 'empty', errorCode: 'echo', stt });
         store.setDictationPending(null);
         store.setStatus('idle');
         return;
@@ -369,6 +400,7 @@ export async function finishAndProcess(
         isDiscardableTranscript(transcript, { inConversation: false })
       ) {
         console.log(`[voice] ditado vazio/lixo descartado: "${stt.text}"`);
+        reportDictationSession({ result: 'empty', errorCode: 'discarded', stt });
         store.setDictationPending(null);
         store.setStatus('idle');
         return;
@@ -386,6 +418,16 @@ export async function finishAndProcess(
       });
       store.setStatus('routing');
       const routed = await routeDictation(transcript);
+      reportDictationSession(
+        routed.ok
+          ? { result: 'ok', stt, deliveredChars: transcript.length }
+          : {
+              result: 'error',
+              errorCode: routed.reason,
+              stt,
+              deliveredChars: transcript.length,
+            },
+      );
       if (!routed.ok) {
         store.setDictationPending(null);
         store.setDictationFailed(true);
@@ -1161,6 +1203,7 @@ export async function finishAndProcess(
       store.setDictationPending(null);
       store.setDictationFailed(true);
     }
+    reportDictationSession({ result: 'error', errorCode: 'exception', stt: cachedStt });
     store.setError(errMsg(err));
     liveStatus('error', errMsg(err));
   } finally {

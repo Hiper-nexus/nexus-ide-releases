@@ -881,6 +881,7 @@ export async function transcribe(
         ok: true,
         text: outcome.text,
         provider: plugin.provider,
+        ...(plugin.model ? { model: plugin.model } : {}),
         fallbackNote: note,
         attempts,
         ...(stalled ? { stalled: true } : {}),

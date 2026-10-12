@@ -94,6 +94,49 @@ describe('getTraceFilePath', () => {
     }
   });
 
+  it('F-1392: dictation-session vai ao lifecycle com os metadados e sem texto', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-trace-lifecycle-'));
+    try {
+      setTraceDirectory(dir);
+      trace({
+        kind: 'dictation-session',
+        mode: 'code',
+        sttProvider: 'groq',
+        sttModel: 'whisper-large-v3-turbo',
+        language: 'pt',
+        audioMs: 13560,
+        latencyMs: 4187,
+        rawChars: 142,
+        polishedChars: 143,
+        polished: true,
+        result: 'error',
+        errorCode: 'delivery-failed',
+        text: 'corrige o login do pane',
+      });
+      await flushMainTrace();
+      const history = fs.readdirSync(path.join(dir, 'logs')).filter((name) => name.startsWith('lifecycle-'));
+      expect(history).toHaveLength(1);
+      const raw = fs.readFileSync(path.join(dir, 'logs', history[0]!), 'utf8');
+      expect(raw).not.toContain('corrige o login');
+      expect(JSON.parse(raw.trim())).toMatchObject({
+        kind: 'dictation-session',
+        mode: 'code',
+        sttProvider: 'groq',
+        sttModel: 'whisper-large-v3-turbo',
+        language: 'pt',
+        audioMs: 13560,
+        latencyMs: 4187,
+        rawChars: 142,
+        polishedChars: 143,
+        polished: true,
+        result: 'error',
+        errorCode: 'delivery-failed',
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('devolve null quando não há diretório de userData resolvível', () => {
     setTraceDirectory(null);
     // Fora do Electron (vitest) o `electron` não expõe `app.getPath`.

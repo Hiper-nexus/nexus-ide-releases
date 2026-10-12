@@ -58,6 +58,19 @@ export async function finalizeCodeDictation(
     }
   }
 
+  // F-1392: o log de uso (dictation-session) mede o que a reescrita fez —
+  // tamanhos e motivo, nunca o texto.
+  if (delivered.ok) {
+    delivered = {
+      ...delivered,
+      polish: {
+        ok: polish.polished,
+        rawChars: result.text.length,
+        ...(polish.reason ? { reason: polish.reason } : {}),
+      },
+    };
+  }
+
   // Quem transcreveu e o que ouviu ANTES da reescrita, e onde foi a espera
   // depois de parar de falar (STT x reescrita) — inclusive no caminho de falha.
   ports.log('info', 'stt.dictationRaw', result.text.slice(0, 400), {

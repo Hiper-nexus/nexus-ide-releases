@@ -268,6 +268,10 @@ export type TranscribeResult =
       discarded?: 'echo' | 'ambient';
       /** ITEM 7: the wake-path budget forced an early jump to local (stt.stall). */
       stalled?: boolean;
+      /** F-1392: modelo do provider que atendeu (log de uso do ditado). */
+      model?: string;
+      /** F-1392: a reescrita do modo CODE rodou? Só tamanhos, nunca o texto. */
+      polish?: { ok: boolean; rawChars: number; reason?: string };
       attempts: SttAttempt[];
     }
   | {
