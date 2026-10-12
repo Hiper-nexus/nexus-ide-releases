@@ -300,3 +300,18 @@ describe('writeRedlineSnapshotFileSync + sink', () => {
     }
   });
 });
+
+describe('Redline com estimativa (revisão F-1416/F-1417)', () => {
+  it('número estimado aparece marcado e não vira o pior consumo nem a barra', () => {
+    const file = buildRedlineSnapshotFile(snapshotWith([
+      {
+        id: 'qwen', adapterId: 'qwen', label: 'Qwen', installed: true, onCooldown: false,
+        windows: [{ kind: 'monthly', label: 'Mensal', usedRatio: 0.9, source: 'provider-api', confidence: 'low' }],
+        updatedAt: NOW,
+      },
+    ]), [], NOW);
+    expect(file.entries[0]!.windows[0]).toMatchObject({ usedRatio: 0.9, estimated: true });
+    expect(file.worstUsedRatio).toBeNull();
+    expect(file.statusBarEntryIds).toEqual([]);
+  });
+});

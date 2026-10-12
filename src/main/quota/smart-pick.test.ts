@@ -214,3 +214,25 @@ describe('pickForAdapter', () => {
     expect(pickForAdapter(ranking, 'kimi')).toBeNull();
   });
 });
+
+describe('estimativa de confiança baixa não decide o pick (revisão F-1416/F-1417)', () => {
+  const estimated = (usedRatio: number): QuotaWindow => ({
+    kind: 'monthly', label: 'Mensal', usedRatio, source: 'provider-api', confidence: 'low',
+  });
+
+  it('linha só com número da sessão `bl` não é elegível, mas mostra o número como estimado', () => {
+    const fleet = scoreFleet([entry('qwen', [estimated(0.05)])], [], NOW);
+    const row = fleet.entries[0]!;
+    expect(row.eligible).toBe(false);
+    expect(row.excludedReason).toBe('unknown-usage');
+    expect(row.decisiveWindow).toBeUndefined();
+    expect(row.windows[0]).toMatchObject({ usedRatio: 0.05, estimated: true });
+    expect(fleet.ranking.qwen).toBeUndefined();
+  });
+
+  it('janela estimada esgotada não vira a decisiva de uma linha medida', () => {
+    const fleet = scoreFleet([entry('glm', [win('5 Horas', 0.2), estimated(1)])], [], NOW);
+    expect(fleet.entries[0]!.decisiveWindow).toMatchObject({ label: '5 Horas', effectiveUsedRatio: 0.2 });
+    expect(fleet.entries[0]!.headroom).toBeCloseTo(0.8);
+  });
+});

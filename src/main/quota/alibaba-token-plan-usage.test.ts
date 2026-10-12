@@ -126,3 +126,13 @@ describe('escala do Token Plan (F-1417)', () => {
     expect(windows.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.5);
   });
 });
+
+describe('escala ambígua do Token Plan (revisão de segurança)', () => {
+  it('payload 0..100 (12 = 12%) nunca vira 100%: a leitura inteira fica indisponível', () => {
+    expect(parseAlibabaTokenPlanUsage({ data: { per5HourPercentage: 12, per1WeekPercentage: 0.4 } }, 100)).toEqual([]);
+    expect(parseAlibabaTokenPlanUsage({ data: { per1MonthPercentage: '55' } }, 100)).toEqual([]);
+  });
+  it('estouro dentro do teto do contrato continua esgotado', () => {
+    expect(parseAlibabaTokenPlanUsage({ data: { per1MonthPercentage: 1.04 } }, 100)[0]?.usedRatio).toBe(1);
+  });
+});

@@ -645,3 +645,13 @@ describe('buildRedlineTrayModel — hostile input goes through the parser', () =
     expect(buildRedlineTrayModel(parseRedlineSnapshot(JSON.stringify(huge)), NOW).hasData).toBe(false);
   });
 });
+
+describe('janela estimada no tray (revisão F-1416/F-1417)', () => {
+  it('não é o pior consumo e o snapshot preserva a marca', () => {
+    const e = entry({ windows: [win({ kind: 'weekly', usedRatio: 0.95 }), win({ kind: 'hours', usedRatio: 0.3 })] });
+    (e.windows[0] as { estimated?: true }).estimated = true;
+    expect(worstBarWindow([e])?.usedRatio).toBe(0.3);
+    const parsed = parseRedlineSnapshot(JSON.stringify(snapshot([e])));
+    expect(parsed?.entries[0]?.windows[0]?.estimated).toBe(true);
+  });
+});
