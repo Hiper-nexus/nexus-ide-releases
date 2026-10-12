@@ -181,7 +181,7 @@ export function resetWorktreeSalvageSweepForTests(): void {
 export async function allocateIsolatedWriterWorktree(
   scope: ProjectExecutionScope,
   missionId: string | undefined,
-  authority: Pick<CreateWorktreeInput, 'assertCurrentAuthority' | 'signal' | 'baseRootRealPath'> = {},
+  authority: Pick<CreateWorktreeInput, 'assertCurrentAuthority' | 'signal' | 'baseRootRealPath' | 'baseRef'> = {},
 ): Promise<IsolatedWriterAllocation> {
   authority.assertCurrentAuthority?.();
   authority.signal?.throwIfAborted();

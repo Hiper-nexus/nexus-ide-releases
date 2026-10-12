@@ -241,6 +241,52 @@ describe('Via Rápida isolated writers', () => {
     expect(fs.readFileSync(path.join(ctx.scope.rootRealPath, 'base.txt'), 'utf8')).toBe('operator WIP\n');
   });
 
+  describe('F-1320: o writer escolhe a base (baseRef)', () => {
+    let oldSha: string;
+    beforeEach(() => {
+      const root = ctx.scope.rootRealPath;
+      oldSha = git(root, 'rev-parse', 'HEAD');
+      git(root, 'tag', 'v-old');
+      fs.writeFileSync(path.join(root, 'newer.txt'), 'newer\n');
+      git(root, 'add', 'newer.txt');
+      git(root, 'commit', '-qm', 'newer');
+    });
+
+    it.each(['v-old', 'sha'])('a worktree nasce na ref pedida (%s) e o recibo traz o baseSha dela', async (kind) => {
+      const baseRef = kind === 'sha' ? oldSha : kind;
+      const receipt = await paneSpawnTool.handler(
+        { agentName: 'Executor', isolatedWriter: true, prompt: 'Implement feature', baseRef }, ctx,
+      ) as Record<string, any>;
+      expect(receipt.isolatedWorktree.baseSha).toBe(oldSha);
+      const [record] = registry.listMission(ctx.scope, ctx.missionId!);
+      expect(record.baseSha).toBe(oldSha);
+      expect(git(record.worktreePath, 'rev-parse', 'HEAD')).toBe(oldSha);
+      expect(fs.existsSync(path.join(record.worktreePath, 'newer.txt'))).toBe(false);
+      expect(git(ctx.scope.rootRealPath, 'rev-parse', 'HEAD')).not.toBe(oldSha);
+    });
+
+    it('sem baseRef continua nascendo do HEAD atual', async () => {
+      const receipt = await paneSpawnTool.handler(
+        { agentName: 'Executor', isolatedWriter: true, prompt: 'Implement feature' }, ctx,
+      ) as Record<string, any>;
+      expect(receipt.isolatedWorktree.baseSha).toBe(git(ctx.scope.rootRealPath, 'rev-parse', 'HEAD'));
+    });
+
+    it.each(['nao-existe', '--output=/tmp/x', 'HEAD^{tree}'])('ref inválida (%s) é erro claro, sem spawn nem worktree', async (baseRef) => {
+      await expect(paneSpawnTool.handler(
+        { agentName: 'Executor', isolatedWriter: true, prompt: 'Implement feature', baseRef }, ctx,
+      )).rejects.toThrow(/baseRef/);
+      expect(h.spawn).not.toHaveBeenCalled();
+      expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(0);
+    });
+
+    it('baseRef sem isolatedWriter é recusado em vez de ignorado', async () => {
+      await expect(paneSpawnTool.handler({ agentName: 'Executor', prompt: 'x', baseRef: 'v-old' }, ctx))
+        .rejects.toThrow(/baseRef .*isolatedWriter/);
+      expect(h.spawn).not.toHaveBeenCalled();
+    });
+  });
+
   it('auto-isola o segundo writer comum da missão em vez de recusar (paridade com a mão do operador)', async () => {
     await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
     expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(0);

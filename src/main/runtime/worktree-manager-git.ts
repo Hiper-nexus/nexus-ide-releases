@@ -303,6 +303,34 @@ export async function readLinkedBaseSnapshotAsync(
   return base;
 }
 
+/**
+ * F-1320: ref pedida pelo writer (sha, branch ou tag) → sha do commit, na raiz
+ * base. `--end-of-options` e a recusa de `-` inicial fecham a porta a opções
+ * vindas de argumento de tool; `^{commit}` recusa tree/blob/tag solta.
+ */
+export async function resolveBaseRefAsync(
+  git: AsyncGitRunner,
+  baseRootRealPath: string,
+  baseRef: string,
+  ownerKind: "pane" | undefined,
+): Promise<string> {
+  const ref = baseRef.trim();
+  if (ownerKind !== "pane") throw new Error("baseRef: only pane writers may choose their base");
+  if (ref === "" || ref.startsWith("-") || /[\s\0]/.test(ref)) {
+    throw new Error(`baseRef inválida: ${JSON.stringify(baseRef)}`);
+  }
+  const result = await git.run(
+    baseRootRealPath,
+    ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`],
+    { allowFailure: true },
+  );
+  const sha = result.stdout.trim();
+  if (result.status !== 0 || !/^[0-9a-f]{40,64}$/.test(sha)) {
+    throw new Error(`baseRef inválida: "${ref}" não é um commit deste repositório (sha, branch ou tag)`);
+  }
+  return sha;
+}
+
 export async function assertTaskWorktreeAsync(
   git: AsyncGitRunner,
   record: WorktreeRecord,

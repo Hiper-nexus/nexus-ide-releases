@@ -56,6 +56,7 @@ import {
   assertTaskWorktreeAsync,
   readRepositorySnapshotAsync,
   readLinkedBaseSnapshotAsync,
+  resolveBaseRefAsync,
   assertTaskWorktree,
   readRepositorySnapshot,
   reconcileInterruptedReservation,
@@ -371,9 +372,14 @@ export class WorktreeManager {
     const repository = await readRepositorySnapshotAsync(this.#asyncGit, input.scope, requireClean);
     assertCurrentAuthority();
     // F-980: writer da aba isolada nasce do HEAD da aba (sem o WIP dela).
-    const base = input.baseRootRealPath === undefined
+    const baseRoot = input.baseRootRealPath === undefined
       ? repository
       : await readLinkedBaseSnapshotAsync(this.#asyncGit, repository, input.baseRootRealPath);
+    assertCurrentAuthority();
+    // F-1320: o writer escolhe a base; sem baseRef vale o HEAD da raiz base.
+    const base = input.baseRef === undefined
+      ? baseRoot
+      : { ...baseRoot, headSha: await resolveBaseRefAsync(this.#asyncGit, baseRoot.rootRealPath, input.baseRef, input.ownerKind) };
     assertCurrentAuthority();
     const missionId = assertIdentifier(input.missionId, "missionId");
     const taskId = assertIdentifier(input.taskId, "taskId");
@@ -565,7 +571,7 @@ export class WorktreeManager {
 
     try {
       await assertRepositoryUnchangedAsync(this.#asyncGit, repository, requireClean);
-      if (base !== repository) await assertRepositoryUnchangedAsync(this.#asyncGit, base, false);
+      if (baseRoot !== repository) await assertRepositoryUnchangedAsync(this.#asyncGit, baseRoot, false);
       assertCurrentAuthority();
       if (reservation.resurrected) {
         // The derived path and branch exist by design: the slot was released
@@ -612,7 +618,7 @@ export class WorktreeManager {
       }
       assertCurrentAuthority();
       await assertRepositoryUnchangedAsync(this.#asyncGit, repository, requireClean);
-      if (base !== repository) await assertRepositoryUnchangedAsync(this.#asyncGit, base, false);
+      if (baseRoot !== repository) await assertRepositoryUnchangedAsync(this.#asyncGit, baseRoot, false);
       assertCurrentAuthority();
       return this.#transition(scopeKey, taskKey, (record) => {
         if (record.status !== "reserved" || record.workerId !== workerId ||

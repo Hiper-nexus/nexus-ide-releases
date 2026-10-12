@@ -99,6 +99,13 @@ export interface CreateWorktreeInput {
    * únicas por escopo. Caminho derivado pelo Main, nunca argumento de tool.
    */
   readonly baseRootRealPath?: string;
+  /**
+   * F-1320: commit de onde a worktree nasce (sha, branch ou tag), resolvido e
+   * validado pelo Main com `rev-parse --verify <ref>^{commit}` na raiz base.
+   * Ausente: HEAD da raiz base. Só writers de pane; ref inválida = erro, sem
+   * reserva.
+   */
+  readonly baseRef?: string;
   /** Main-owned checkpoint: revalidate authority after async proofs, before effects. */
   readonly assertCurrentAuthority?: () => void;
   readonly signal?: AbortSignal;

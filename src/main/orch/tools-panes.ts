@@ -977,6 +977,13 @@ const paneSpawn: McpToolDef = {
         type: 'boolean',
         description: 'Spawn this writer in its own git worktree/branch so several writers run in parallel (with or without a mission); the orchestrator integrates the branch afterwards. The worktree and branch are kept for integration after the pane closes; a merged, clean one is garbage-collected. It starts at the checkout HEAD without uncommitted changes (the receipt carries baseSha); called from a tab with its own isolated folder, it starts at that tab\'s HEAD instead. Resuming such a pane reuses its original worktree.',
       },
+      baseRef: {
+        type: 'string',
+        description:
+          'isolatedWriter only: commit the worktree starts from (sha, branch or tag; validated with ' +
+          'git rev-parse --verify <ref>^{commit}). Default: the current HEAD. Invalid ref = clear ' +
+          'error, no spawn. The receipt baseSha is the resolved commit.',
+      },
       allowedTools: {
         type: 'array',
         items: { type: 'string' },
@@ -1120,6 +1127,12 @@ const paneSpawnAfterTabMission = {
     startRecovery?: PaneStartRecovery,
   ): Promise<unknown> => {
     const agentRef = str(args, 'agentName');
+    // F-1320: a base só existe para quem aloca worktree própria — nunca é
+    // ignorada em silêncio. A ref é validada no Main ao alocar (rev-parse).
+    const baseRef = str(args, 'baseRef');
+    if (baseRef !== undefined && args.isolatedWriter !== true) {
+      throw new Error('baseRef exige isolatedWriter:true: só uma worktree própria pode nascer de outra base');
+    }
     // F-723: CLI que não começou a tarefa sai da rota do reenvio automático —
     // exclusão interna, autoritativa (nunca vem de argumento MCP).
     const recoveryExcluded = startRecovery?.excludeAdapterIds ?? [];
@@ -1738,6 +1751,7 @@ const paneSpawnAfterTabMission = {
               assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
               signal: invocation?.signal,
               ...(baseRootRealPath ? { baseRootRealPath } : {}),
+              ...(baseRef ? { baseRef } : {}),
             });
             if (spawnTiming && isolatedWriter.materialize) {
               spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
@@ -2091,6 +2105,7 @@ const paneSpawnAfterTabMission = {
                   assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
                   signal: invocation?.signal,
                   ...(baseRootRealPath ? { baseRootRealPath } : {}),
+                  ...(baseRef ? { baseRef } : {}),
                 });
                 if (spawnTiming && isolatedWriter.materialize) {
                   spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
