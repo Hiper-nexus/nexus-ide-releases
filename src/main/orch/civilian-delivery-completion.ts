@@ -1449,16 +1449,22 @@ export function maybeCompleteFastLaneOnDelivery(
  */
 function completionState(stores: CivilianStores, missionId: string, panes: readonly LivePane[]): string {
   const current = stores.missions.get(missionId);
+  // F-1299: o detector de corrida olha o que muda o candidato — não a
+  // contabilidade do próprio Maestro. Cada chamada MCP dele soma passos/tokens
+  // no contrato (e mexe no updatedAt), e o pane dele vai a busy: com isso no
+  // carimbo, um Maestro ativo anulava toda conclusão ("review-candidate-changed").
+  const { spentSteps: _steps, spentTokens: _tokens, ...contract } =
+    (current?.intentContract ?? {}) as Record<string, unknown>;
   return JSON.stringify({
     mission: current && [
       current.status, current.intentState, current.intentVersion,
-      current.updatedAt, current.intentContract, current.orchestratorSessionId,
+      contract, current.orchestratorSessionId,
     ],
     tasks: stores.tasks.list(missionId)
       .map((task) => [task.id, task.status, task.updatedAt]),
     handoffs: stores.handoffs.list({ missionId, includeDelivered: true })
       .map((handoff) => [handoff.id, handoff.status, handoff.deliveryState, handoff.createdAt]),
-    panes: panes.filter((pane) => pane.missionId === missionId)
+    panes: panes.filter((pane) => pane.missionId === missionId && pane.role !== 'orchestrator')
       .map((pane) => [pane.paneId, pane.sessionId, pane.agentName, pane.role, pane.state]),
   });
 }

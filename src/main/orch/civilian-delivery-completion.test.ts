@@ -2014,6 +2014,32 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(getAutomaticCompletionProof(scope, state.liveMission)).toBeNull();
   });
 
+  it('F-1299: o próprio Maestro gastando passos e mudando de estado durante a revisão não anula a conclusão', async () => {
+    completeVerified.mockClear();
+    const maestro = {
+      paneId: 'pane-maestro', sessionId: 's-maestro', agentName: 'Orquestrador',
+      role: 'orchestrator', missionId: 'mission-civil-review', state: 'idle',
+    };
+    const state = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      panes: [maestro] as never,
+      depsExtras: { runAutoReviewGate: async () => {
+        // Cada chamada MCP do Maestro soma passos/tokens no contrato e mexe no
+        // updatedAt; o pane dele vai a busy. Nada disso muda o candidato.
+        const contract = state.liveMission.intentContract as unknown as Record<string, number>;
+        state.liveMission.intentContract = {
+          ...contract, spentSteps: (contract.spentSteps ?? 0) + 3, spentTokens: (contract.spentTokens ?? 0) + 150,
+        } as never;
+        state.liveMission.updatedAt = (state.liveMission.updatedAt ?? 0) + 5_000;
+        maestro.state = 'busy';
+        return { kind: 'approved' as const, evidenceId: 'review-ok', note: 'verificado' };
+      } },
+    });
+
+    expect((await state.reconcile()).completed).toBe(true);
+    expect(completeVerified).toHaveBeenCalledOnce();
+  });
+
   it('mudança de intenção enquanto o scanner roda não conclui a missão atualizada', async () => {
     completeVerified.mockClear();
     const state = boardDoneHarness({
