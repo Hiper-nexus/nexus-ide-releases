@@ -230,6 +230,10 @@ function locateBlBinary(): string | null {
   return null;
 }
 
+/** Mensagens de "sem sessão" do `bl`/gateway; nada genérico como "auth". */
+export const BL_NOT_AUTHENTICATED =
+  /\b(?:not (?:logged|signed) in|please (?:run )?`?(?:bl )?log ?in`?|login required|unauthenticated|unauthori[sz]ed|(?:token|session|credentials?) (?:has |have )?expired|invalid (?:access )?token)\b|\b(?:HTTP|status(?: code)?)[\s:=]*40[13]\b/i;
+
 /**
  * Bailian CLI path (signed-in `bl`):
  *   bl console call --api zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage --data '{}' --output json
@@ -295,7 +299,10 @@ export async function fetchAlibabaTokenPlanUsageFromCli(opts?: {
   for (const args of attempts) {
     const { code, stdout, stderr } = await run(bin, args);
     const text = stdout || stderr;
-    if (/login|auth|unauthor|expired|401|403/i.test(text)) authFailed = true;
+    // Revisão de segurança (BAIXA): só uma saída com ERRO que diz "não
+    // autenticado" é sessão recusada. A regex antiga casava "auth", "login",
+    // "expired", "401" em qualquer saída (até num campo JSON de sucesso).
+    if (code !== 0 && BL_NOT_AUTHENTICATED.test(text)) authFailed = true;
     if (code !== 0 || !stdout.trim()) continue;
     try {
       const windows = parseAlibabaTokenPlanUsage(JSON.parse(stdout), opts?.now ?? Date.now());
