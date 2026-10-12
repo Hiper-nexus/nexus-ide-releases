@@ -11,6 +11,12 @@
 
 export const ZERO_DELIVERY_POKE_MS = 3 * 60_000;
 export const ZERO_DELIVERY_ESCALATE_MS = 8 * 60_000;
+/**
+ * F-1272 (revisão): teto do "one-shot vivo conta como ativo". Um `agy --print`
+ * legítimo levou ~10 min nesta onda; preso em rede/login, a raiz segue viva
+ * para sempre — depois deste prazo o watchdog volta a cutucar e escalar.
+ */
+export const ZERO_DELIVERY_ONESHOT_ACTIVE_MAX_MS = 30 * 60_000;
 /** Escritor: a escalada exige workers sem nenhuma atividade por esta janela. */
 export const ZERO_DELIVERY_WRITER_QUIET_ESCALATE_MS = 3 * 60_000;
 /** Somente leitura: poke só depois de tanto tempo SEM atividade nenhuma. */
@@ -61,6 +67,8 @@ export interface ZeroDeliveryWorkerSample {
 export interface ZeroDeliverySeen {
   readonly activeAt: number;
   readonly toolCount: number;
+  /** F-1272: primeira varredura que viu a sessão como one-shot viva. */
+  readonly oneShotSince?: number;
 }
 
 /**
@@ -90,11 +98,16 @@ export function zeroDeliveryWorkerActivity(input: {
   for (const worker of input.workers) {
     // PTY busy/spawning = saída recente do terminal (spinner, leitura de código).
     // One-shot com a raiz viva trabalha com a tela muda (F-1272).
+    const sessionId = worker.sessionId?.trim();
+    const earlier = sessionId ? input.previous(sessionId) : undefined;
+    // F-1272: a marca vale só até o teto — preso, o one-shot volta à regra.
+    const oneShotSince =
+      worker.oneShotAlive === true ? (earlier?.oneShotSince ?? input.now) : undefined;
     let active =
       worker.state === 'busy' ||
       worker.state === 'spawning' ||
-      worker.oneShotAlive === true;
-    const sessionId = worker.sessionId?.trim();
+      (oneShotSince !== undefined &&
+        input.now - oneShotSince < ZERO_DELIVERY_ONESHOT_ACTIVE_MAX_MS);
     if (sessionId) {
       const semantic = input.semanticStatus(sessionId);
       if (semantic) {
@@ -112,7 +125,11 @@ export function zeroDeliveryWorkerActivity(input: {
       if (previous && toolCount > previous.toolCount) active = true;
       note(previous?.activeAt);
       const activeAt = active ? input.now : (previous?.activeAt ?? 0);
-      seen.set(sessionId, { activeAt, toolCount });
+      seen.set(sessionId, {
+        activeAt,
+        toolCount,
+        ...(oneShotSince !== undefined ? { oneShotSince } : {}),
+      });
     }
     if (active) {
       anyActive = true;

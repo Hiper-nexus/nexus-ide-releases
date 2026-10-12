@@ -10,6 +10,7 @@ import {
   zeroDeliveryEscalateSummary,
   zeroDeliveryPokeSummary,
   zeroDeliveryWorkerActivity,
+  ZERO_DELIVERY_ONESHOT_ACTIVE_MAX_MS,
 } from './zero-delivery-watchdog';
 
 describe('zero-delivery watchdog', () => {
@@ -311,6 +312,27 @@ describe('F-1272: worker one-shot (agy --print / opencode run) com a raiz viva',
       });
       expect(decision.action).toBe('none');
     }
+  });
+
+  it('one-shot preso além do teto volta à regra normal (sem atividade eterna)', () => {
+    const since = now - ZERO_DELIVERY_ONESHOT_ACTIVE_MAX_MS - 60_000;
+    const activity = zeroDeliveryWorkerActivity({
+      workers: [{ sessionId: 's1', state: 'idle', oneShotAlive: true }],
+      now,
+      semanticStatus: () => ({ status: 'idle', updatedAt: since }),
+      toolActivityCount: () => 0,
+      previous: () => ({ activeAt: since, toolCount: 0, oneShotSince: since }),
+    });
+    expect(activity.anyActive).toBe(false);
+    // A primeira varredura que vê o one-shot guarda o marco do teto.
+    const first = zeroDeliveryWorkerActivity({
+      workers: [{ sessionId: 's1', state: 'idle', oneShotAlive: true }],
+      now,
+      semanticStatus: () => null,
+      toolActivityCount: () => 0,
+      previous: () => undefined,
+    });
+    expect(first.seen.get('s1')?.oneShotSince).toBe(now);
   });
 
   it('one-shot cuja raiz já saiu (oneShotAlive ausente/falso) segue as regras normais de silêncio', () => {
