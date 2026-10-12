@@ -592,6 +592,9 @@ const REVIEW_CODE_SIGNALS = [
   'módulo', 'modulo', 'module', 'api', 'sql', 'css', 'html', 'script',
   'componente', 'component', 'sênior', 'senior', 'staff', 'arquitetura',
   'architecture', 'repositório', 'repositorio', 'repo',
+  // F-1342: a ENTREGA de um worker/handoff é trabalho de outro modelo —
+  // "audite a entrega da tarefa" caía em easy, e o F-233 manda julgar no topo.
+  'entrega', 'handoff', 'worker',
 ];
 
 /**

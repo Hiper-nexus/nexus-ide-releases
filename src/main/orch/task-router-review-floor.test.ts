@@ -39,6 +39,18 @@ describe('revisão de código: piso hard (bug 27/09; Astra 28/09)', () => {
     expect(classifyTask('Code review sênior da branch; não altere README nem comentários').tier).toBe('hard');
   });
 
+  it('F-1342: julgar a ENTREGA de um worker/handoff é revisão de código (regra F-233)', () => {
+    for (const text of [
+      'audite a entrega da tarefa',
+      'audite a entrega do código',
+      'avalie a entrega do worker',
+      'aprove ou rejeite a entrega do handoff',
+      'dar segunda opinião sobre a entrega do worker',
+    ]) {
+      expect(classifyTask(text).tier, text).toBe('hard');
+    }
+  });
+
   it('revisar texto ou coisa que não é código segue no tier normal', () => {
     expect(classifyTask('revisar o texto do README').tier).not.toBe('hard');
     expect(classifyTask('Revisar a lista de compras').tier).not.toBe('hard');
