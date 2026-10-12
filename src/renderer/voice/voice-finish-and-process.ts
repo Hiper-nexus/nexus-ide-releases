@@ -451,6 +451,7 @@ export async function finishAndProcess(
           );
         }
         const hud = useVoiceStore.getState();
+        if (hud.dictationDelivery === 'pending') hud.setDictationDelivery(null);
         if (settled.result === 'ok') {
           hud.setNote('Ditado entregue: o painel ficou livre.');
           return;
@@ -479,24 +480,28 @@ export async function finishAndProcess(
         // ditado entra sozinho quando o pane ficar livre. Sem cópia (B1):
         // colar e receber o pendente rodaria o prompt duas vezes.
         store.setDictationPending(null);
+        store.setDictationDelivery('pending');
         store.setNote(
-          'Ditado aguardando o pane ficar livre — entra sozinho. Digitar no pane cancela.',
+          'O painel está com uma pergunta aberta ou ocupado. O ditado entra sozinho quando ele ficar livre; se você digitar no painel, ele é cancelado.',
         );
         store.setStatus('idle');
         return;
       }
       if (routed.ok && routed.queued) {
-        store.setNote('Ditado enfileirado: o agente lê quando terminar o turno atual.');
+        store.setDictationDelivery('queued');
+        store.setNote('O agente está trabalhando. O ditado entrou na fila e ele lê quando terminar a tarefa atual.');
+      } else if (useVoiceStore.getState().dictationDelivery === 'queued') {
+        store.setDictationDelivery(null);
       }
       if (!routed.ok) {
         store.setDictationPending(null);
         store.setDictationFailed(true);
         const undelivered =
           routed.reason === 'delivery-lost'
-            ? 'O ditado foi escrito no pane mas o envio não se confirmou — confira o pane antes de reenviar.'
+            ? 'O ditado foi escrito no painel mas o envio não se confirmou — confira o painel antes de reenviar.'
             : routed.reason === 'delivery-failed'
-              ? 'O pane não aceitou o ditado (ocupado ou aguardando resposta) — nada foi escrito.'
-              : 'Nenhum pane ativo para receber o ditado.';
+              ? 'O painel não aceitou o ditado (ocupado ou aguardando resposta) — nada foi escrito.'
+              : 'Nenhum painel ativo para receber o ditado.';
         store.setError(
           routed.preserved
             ? `${undelivered} O texto foi copiado: cole com ⌘V.`

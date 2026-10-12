@@ -71,6 +71,7 @@ export function VoiceHud() {
   const status = useVoiceStore((s) => s.status);
   const transcript = useVoiceStore((s) => s.lastTranscript);
   const note = useVoiceStore((s) => s.note);
+  const dictationDelivery = useVoiceStore((s) => s.dictationDelivery);
   const error = useVoiceStore((s) => s.error);
   const micHealth = useVoiceStore((s) => s.micHealth);
   const info = useVoiceStore((s) => s.info);
@@ -172,7 +173,8 @@ export function VoiceHud() {
     !liveVisible &&
     !wakeBlocked &&
     !canClickWake &&
-    !missingRealtimeKey
+    !missingRealtimeKey &&
+    !dictationDelivery
   ) {
     return null;
   }
@@ -182,11 +184,15 @@ export function VoiceHud() {
     ? 'Sem chave realtime'
     : wakeBlocked
       ? 'Wake ocupado'
-      : canClickWake
-        ? 'Jarvis pronta'
-        : status === 'idle'
-          ? `Jarvis ${liveLabel}`
-          : PHASE_LABEL[status];
+      : status === 'idle' && dictationDelivery
+        ? dictationDelivery === 'pending'
+          ? 'Ditado aguardando'
+          : 'Ditado na fila'
+        : canClickWake
+          ? 'Jarvis pronta'
+          : status === 'idle'
+            ? `Jarvis ${liveLabel}`
+            : PHASE_LABEL[status];
   const isError = status === 'error' || Boolean(missingRealtimeKey);
   const visibleError = error ?? missingRealtimeKey;
   const isMini = isHudMini(hud.mode);

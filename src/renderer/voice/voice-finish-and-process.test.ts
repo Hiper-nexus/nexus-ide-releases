@@ -183,10 +183,12 @@ describe('F-371 — dictationPending/dictationFailed no fluxo de ditado', () => 
 
     await finishAndProcess(makeCapture(), { current: false }, makeDeps());
 
-    expect(useVoiceStore.getState().note).toContain('aguardando o pane ficar livre');
+    expect(useVoiceStore.getState().note).toContain('entra sozinho quando ele ficar livre');
     // B1: o pendente não é copiado — a nota não pode mandar colar.
     expect(useVoiceStore.getState().note).not.toContain('copiado');
-    expect(useVoiceStore.getState().note).toContain('Digitar no pane cancela');
+    expect(useVoiceStore.getState().note).toContain('se você digitar no painel, ele é cancelado');
+    // HUD: título "Ditado aguardando" enquanto houver pendente.
+    expect(useVoiceStore.getState().dictationDelivery).toBe('pending');
     expect(useVoiceStore.getState().dictationFailed).toBe(false);
     expect(useVoiceStore.getState().dictationPending).toBeNull();
   });
@@ -343,6 +345,7 @@ describe('F-1392 — uma linha dictation.session por ditado, sem o texto', () =>
     settlers[1]!({ paneId: 'pane-1', result: 'ok' });
     expect(sessions().at(-1)).toEqual(expect.objectContaining({ result: 'ok' }));
     expect(useVoiceStore.getState().note).toContain('entregue');
+    expect(useVoiceStore.getState().dictationDelivery).toBeNull();
   });
 
   it('STT falha: resultado erro com código curto; transcript vazio: resultado vazio', async () => {

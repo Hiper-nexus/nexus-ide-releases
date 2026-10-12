@@ -29,6 +29,9 @@ const RESPONSE_MUTED_KEY = 'nexus.voice.responseMuted';
  */
 export const DICTATION_FAILED_NOTICE_MS = 4_000;
 let dictationFailedTimer: ReturnType<typeof setTimeout> | null = null;
+let dictationQueuedTimer: ReturnType<typeof setTimeout> | null = null;
+/** F-1393: o título "Ditado na fila" some sozinho — não há sinal de consumo. */
+export const DICTATION_QUEUED_TITLE_MS = 20_000;
 
 function loadResponseMutedFlag(
   store: Pick<Storage, 'getItem' | 'setItem'> | null,
@@ -103,6 +106,12 @@ interface VoiceStore {
   } | null;
   /** Aviso transitório de falha do ditado (auto-limpa em ~4 s). */
   dictationFailed: boolean;
+  /**
+   * F-1393: ditado aguardando o painel ficar livre (`pending`, até entregar
+   * ou cair) ou enfileirado no painel ocupado (`queued`, some em ~20 s).
+   * O HUD fica visível e troca o título enquanto houver um dos dois.
+   */
+  dictationDelivery: 'pending' | 'queued' | null;
 
   setStatus: (status: VoiceUiStatus) => void;
   setInfo: (info: VoiceRuntimeInfo) => void;
@@ -125,6 +134,7 @@ interface VoiceStore {
     pending: { startedAt: number; mode?: DictationOutputMode } | null,
   ) => void;
   setDictationFailed: (failed: boolean) => void;
+  setDictationDelivery: (delivery: 'pending' | 'queued' | null) => void;
   openSettings: () => void;
   closeSettings: () => void;
 }
@@ -157,6 +167,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   responseMuted: loadResponseMutedFlag(hudStorage),
   dictationPending: null,
   dictationFailed: false,
+  dictationDelivery: null,
 
   setStatus: (status) => set({ status, ...(status !== 'error' ? { error: null } : {}) }),
   setInfo: (info) => set({ info }),
@@ -202,6 +213,19 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
       }, DICTATION_FAILED_NOTICE_MS);
     }
     set({ dictationFailed });
+  },
+  setDictationDelivery: (dictationDelivery) => {
+    if (dictationQueuedTimer) {
+      clearTimeout(dictationQueuedTimer);
+      dictationQueuedTimer = null;
+    }
+    if (dictationDelivery === 'queued') {
+      dictationQueuedTimer = setTimeout(() => {
+        dictationQueuedTimer = null;
+        set({ dictationDelivery: null });
+      }, DICTATION_QUEUED_TITLE_MS);
+    }
+    set({ dictationDelivery });
   },
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
