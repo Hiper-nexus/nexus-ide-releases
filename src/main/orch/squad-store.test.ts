@@ -23,6 +23,7 @@ import {
   prepareMissionRuntimeSquadSave,
   prepareSquadSave,
   prepareSquadsImport,
+  requireCatalogAgent,
   saveSquad,
   squadRoutableCliIds,
 } from './squad-store';
@@ -167,6 +168,39 @@ describe('squadRoutableCliIds — CLIs do roster para vincular route/spawn (RC4)
     initSquadStore(db);
 
     expect(squadRoutableCliIds('inexistente').size).toBe(0);
+  });
+});
+
+describe('F-1314: agente do catálogo numa missão sem squad', () => {
+  it('resolve só squads salvos e recusa o nome ambíguo listando squadId:agentId', () => {
+    const db = makeDb();
+    openDb = db;
+    const runtimeId = 'agentic-runtime-0e1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+    insertRawSquad(db, {
+      id: runtimeId,
+      name: 'Equipe da missão',
+      agents: [{ id: 'interface-executor', agentName: 'Implementar interface', category: 'executor', cli: 'codex', allowedTools: [] }],
+    });
+    insertRawSquad(db, {
+      id: 'f1314-kimi',
+      name: 'Kimi',
+      agents: [{ id: 'f1314-writer', agentName: 'Kimi Writer', category: 'executor', cli: 'kimi', allowedTools: [] }],
+    });
+    insertRawSquad(db, {
+      id: 'f1314-codex',
+      name: 'Codex',
+      agents: [{ id: 'f1314-writer', agentName: 'Codex Writer', category: 'executor', cli: 'codex', allowedTools: [] }],
+    });
+    initSquadStore(db);
+    expect(getSquad(runtimeId)?.agents[0]?.id).toBe('interface-executor');
+
+    expect(requireCatalogAgent('Kimi Writer').agent.cli).toBe('kimi');
+    // Snapshot de missão é evidência da missão que o criou, não catálogo.
+    expect(() => requireCatalogAgent('interface-executor')).toThrow(/unknown squad agent: interface-executor/);
+    expect(() => requireCatalogAgent('f1314-writer')).toThrow(
+      /f1314-kimi:f1314-writer.*f1314-codex:f1314-writer|f1314-codex:f1314-writer.*f1314-kimi:f1314-writer/,
+    );
+    expect(requireCatalogAgent('f1314-codex:f1314-writer').agent.cli).toBe('codex');
   });
 });
 

@@ -33,6 +33,7 @@ const h = vi.hoisted(() => ({
   providerSession: vi.fn((..._args: unknown[]): unknown => ({ key: 'session_id', id: 'provider-conversation' })),
   // F-797: expor o navegador ao worker não pode abrir aba nenhuma.
   requestBrowserPane: vi.fn(async () => ({ requestId: 'never', ok: false, error: 'não deveria ser chamado' })),
+  catalogAgent: vi.fn((_ref: string): unknown => null),
 }));
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
@@ -120,6 +121,7 @@ vi.mock('../context/context-workflow-registry', () => ({
 vi.mock('./squad-store', async (original) => ({
   ...(await original<typeof import('./squad-store')>()),
   findAgentInAnySquad: () => null,
+  requireCatalogAgent: (ref: string) => h.catalogAgent(ref),
   getSquad: () => null,
   squadRoutableCliIds: () => new Set(['codex']),
 }));
@@ -506,6 +508,27 @@ describe('pin de adapterId sem pedido do operador vira preferência (F-674 ampli
       { agentName: 'Worker', adapterId: 'claude', task: 'olha o repo' }, ctx,
     )).rejects.toThrow(/unknown squad agent/);
     expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it('F-1314: missão de agente livre usa o agente do catálogo com a CLI selada dele', async () => {
+    // Campo 12/10: `agentName` numa missão Autopilot sem squad recusava com
+    // "squad agent spawn requires a mission bound to a squad".
+    h.mission = {
+      ...h.mission,
+      squadId: undefined,
+      intentContract: { ...(h.mission.intentContract as object), freeAgentChoice: true },
+    };
+    h.catalogAgent.mockReturnValue({
+      squad: { id: 'kimi-squad', agents: [] },
+      agent: { id: 'kimi-writer', agentName: 'Kimi Writer', category: 'executor', cli: 'kimi', allowedTools: [] },
+    });
+    const resolver = vi.fn(async () => ({ adapterId: 'codex' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler({ agentName: 'Kimi Writer', task: 'implementar a interface' }, ctx);
+    expect(h.catalogAgent).toHaveBeenCalledWith('Kimi Writer');
+    expect(resolver).not.toHaveBeenCalled();
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'kimi', agentName: 'Kimi Writer', missionId: 'mission-a' });
   });
 
   it('mão do operador que digitou a CLI no próprio pane tem o pin honrado', async () => {

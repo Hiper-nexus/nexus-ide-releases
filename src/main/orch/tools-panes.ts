@@ -59,6 +59,7 @@ import {
   findAgentInAnySquad,
   findAgentInSquad,
   getSquad,
+  requireCatalogAgent,
   squadRoutableCliIds,
 } from './squad-store';
 import { adHocSpawnGateError } from './route-provenance';
@@ -1344,12 +1345,15 @@ const paneSpawnAfterTabMission = {
       // com qualquer CLI e modelo, então exigir missão só para NOMEAR um
       // agente do roster era cerimônia — e virou parede em campo (09/09:
       // "mandei abrir outro pane e não conseguiu"). Fora do operador, o
-      // vínculo com a missão continua obrigatório.
+      // vínculo com a missão continua obrigatório. F-1314: a missão de agente
+      // livre (sem squad) nomeia agente do catálogo salvo, com a CLI selada.
       const found = mission?.squadId
         ? findAgentInSquad(mission.squadId, agentRef)
         : ctx.role === 'user'
           ? findAgentInAnySquad(agentRef)
-          : null;
+          : mission
+            ? requireCatalogAgent(agentRef)
+            : null;
       if (!found && !mission?.squadId && ctx.role !== 'user') {
         const refusal = 'squad agent spawn requires a mission bound to a squad';
         // F-1334: nada foi gravado até aqui (missão da aba só nasce para

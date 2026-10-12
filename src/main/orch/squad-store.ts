@@ -759,6 +759,37 @@ export function findAgentInAnySquad(
   return matches.length === 1 ? matches[0]! : null;
 }
 
+/**
+ * F-1314: missão de agente livre (sem squad) também nomeia agente do catálogo.
+ * Só squads salvos: o snapshot `*-runtime-*` é evidência da missão que o
+ * criou, não catálogo. Aceita `squadId:agentId`; nome desconhecido ou ambíguo
+ * recusa — o ambíguo listando essas opções.
+ */
+export function requireCatalogAgent(
+  ref: string,
+): { squad: Squad; agent: SquadAgent } {
+  const matches: Array<{ squad: Squad; agent: SquadAgent }> = [];
+  for (const squad of squads.values()) {
+    if (isMissionRuntimeSquadId(squad.id)) continue;
+    for (const agent of squad.agents) {
+      if (agent.id === ref || agent.agentName === ref || `${squad.id}:${agent.id}` === ref) {
+        matches.push({ squad, agent });
+      }
+    }
+  }
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length === 0) {
+    throw new Error(
+      `unknown squad agent: ${ref} — nenhum squad salvo (Configurações › Squads) ` +
+        'tem esse agente; ou abra o pane direto passando adapterId',
+    );
+  }
+  throw new Error(
+    `agente ambíguo: ${ref} existe em mais de um squad salvo — use agentName ` +
+      matches.map(({ squad, agent }) => `"${squad.id}:${agent.id}"`).join(' ou '),
+  );
+}
+
 export function listAgents(): Array<SquadAgent & { squadId: string }> {
   const out: Array<SquadAgent & { squadId: string }> = [];
   for (const squad of squads.values()) {
