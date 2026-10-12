@@ -1,6 +1,7 @@
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { analysisClient, isPtyAnalysisEnabled } from '../pty/pty-analysis-runtime';
 import type { PaneRegistryEntry, PaneSnapshot } from "../../shared/orch-types";
+import type { PaneSessionState } from "../../shared/types";
 import { emitAppEvent } from '../connectors/app-events';
 import { getSessionState, isOneShotSessionRunning } from "../pty/pty-manager";
 
