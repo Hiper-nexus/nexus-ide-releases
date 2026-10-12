@@ -76,7 +76,7 @@ export function CalibrateDecisionModels({ mode }: { mode: DecisionMode }) {
   }
 
   async function run(current: DecisionCalibrationPlan): Promise<void> {
-    if (lock.current) return;
+    if (!auto || lock.current) return;
     lock.current = true; setError(null); setNotice(null); setCancelling(false); setPhase({ kind: 'running', plan: current });
     try {
       const result = await window.nexus.decisionModels.calibrate();
@@ -128,7 +128,7 @@ export function CalibrateDecisionModels({ mode }: { mode: DecisionMode }) {
           <button className="settings-btn settings-btn--sm" type="button" disabled={cancelling} onClick={() => void cancel()}>Cancelar calibração</button>
         </div>
         : <div className="settings-row decision-models__actions">
-          <button className="settings-btn" type="button" onClick={() => void run(phase.plan)}>Calibrar agora</button>
+          <button className="settings-btn" type="button" disabled={!auto} onClick={() => void run(phase.plan)}>Calibrar agora</button>
           <button className="settings-btn settings-btn--sm" type="button" onClick={() => setPhase({ kind: 'idle' })}>Cancelar</button>
         </div>}
     </div>}
