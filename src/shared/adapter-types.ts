@@ -398,6 +398,11 @@ export interface AdapterInfo {
    */
   orchestratorCapable: boolean;
   /**
+   * F-1411: `promptInjection.bracketedPaste` declarado pelo adapter. O renderer
+   * lê isto em vez de hardcode por id; ausente = aceita o marcador.
+   */
+  bracketedPaste?: boolean;
+  /**
    * Main can observe a terminal completion block and bind it to the exact
    * mission worker session. Unlike orchestratorCapable, this does not imply
    * that arbitrary Nexus review/context tools are available to the CLI.
