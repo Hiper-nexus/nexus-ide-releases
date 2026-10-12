@@ -107,7 +107,10 @@ export async function deliverDictation(
   ports: DictationDeliveryPorts,
 ): Promise<DictationRouteResult> {
   const routed = await routeToPane(text, ports);
-  if (routed.ok || !ports.preserveUndelivered) return routed;
+  // B1 (F-1393): pendente NÃO vai para a área de transferência — colar o
+  // texto e depois o Nexus entregar o mesmo pendente rodaria o prompt duas
+  // vezes. A cópia fica só para falha real.
+  if (routed.ok || routed.reason === 'pending' || !ports.preserveUndelivered) return routed;
   const preserved = await ports.preserveUndelivered(text).catch(() => false);
   ports.log(
     preserved ? 'info' : 'error',
@@ -150,14 +153,24 @@ async function deliverOnLanes(
 }
 
 /** Um pendente por pane; um ditado novo para o pane substitui o anterior. */
-const pendingByPane = new Map<string, number>();
+type PendingCancelReason = 'replaced' | 'human-input';
+const pendingByPane = new Map<string, { token: number; cancel(reason: PendingCancelReason): void }>();
 let pendingSeq = 0;
 
-function cancelPending(paneId: string, ports: DictationDeliveryPorts): void {
-  if (!pendingByPane.delete(paneId)) return;
-  ports.log('info', 'dictation.pendingReplaced', 'ditado pendente substituído por um novo', {
-    targetPaneId: paneId,
-  });
+function cancelPending(paneId: string): void {
+  pendingByPane.get(paneId)?.cancel('replaced');
+}
+
+/**
+ * B1 (F-1393): input humano no pane (teclado, colar, espaços do hold-to-talk)
+ * cancela o ditado pendente dele — o operador assumiu o pane (respondeu o
+ * diálogo, colou o texto); entregar depois duplicaria o prompt.
+ */
+export function cancelPendingDictation(paneId: string): boolean {
+  const entry = pendingByPane.get(paneId);
+  if (!entry) return false;
+  entry.cancel('human-input');
+  return true;
 }
 
 function deferUntilFree(
@@ -170,13 +183,24 @@ function deferUntilFree(
   const schedule = ports.schedule!;
   const now = ports.now ?? Date.now;
   const token = ++pendingSeq;
-  pendingByPane.set(paneId, token);
   const startedAt = now();
-  const mine = () => pendingByPane.get(paneId) === token;
+  const mine = () => pendingByPane.get(paneId)?.token === token;
   const settle = (level: DictationLogLevel, event: string, msg: string, extra: Record<string, unknown>) => {
-    pendingByPane.delete(paneId);
+    if (mine()) pendingByPane.delete(paneId);
     ports.log(level, event, msg, { targetPaneId: paneId, sessionId, chars: text.length, ...extra });
   };
+  pendingByPane.set(paneId, {
+    token,
+    cancel: (reason) =>
+      settle(
+        'info',
+        reason === 'replaced' ? 'dictation.pendingReplaced' : 'dictation.pendingCancelled',
+        reason === 'replaced'
+          ? 'ditado pendente substituído por um novo'
+          : 'input humano no pane — ditado pendente cancelado',
+        { reason },
+      ),
+  });
   const tick = async (): Promise<void> => {
     if (!mine()) return;
     if (ports.getSessionId(paneId) !== sessionId) {
@@ -254,7 +278,7 @@ async function routeToPane(
     sessionId,
     usedFallback,
   });
-  cancelPending(targetPaneId, ports);
+  cancelPending(targetPaneId);
 
   // Salto 3 — IPC: despacho da injeção confirmada para o processo main.
   ports.log('info', 'dictation.ipcDispatch', 'despachando injeção confirmada via IPC', {

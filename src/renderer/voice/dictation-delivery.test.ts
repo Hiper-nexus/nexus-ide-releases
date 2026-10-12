@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   DICTATION_PENDING_MAX_MS,
+  cancelPendingDictation,
   deliverDictation,
   resetPendingDictationsForTests,
   type DictationDeliveryPorts,
@@ -292,8 +293,9 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
       ok: false,
       reason: 'pending',
       paneId: 'pane-focused',
-      preserved: true,
     });
+    // B1: pendente não vai para a área de transferência (colar + entrega = 2×).
+    expect(pane.ports.preserveUndelivered).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(pane.writes).toEqual([]);
 
@@ -321,6 +323,23 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
     await vi.advanceTimersByTimeAsync(DICTATION_PENDING_MAX_MS + 5_000);
     expect(stuck.writes).toEqual([]);
     expect(stuck.logs).toContainEqual({ level: 'warn', event: 'dictation.pendingDropped' });
+  });
+
+  it('B1: input humano no pane cancela o pendente — o pane livre não recebe o prompt de novo', async () => {
+    vi.useFakeTimers();
+    const pane = claudePane();
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('roda os testes', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    expect(pane.ports.preserveUndelivered).not.toHaveBeenCalled();
+
+    // O operador respondeu o diálogo e colou o texto à mão.
+    expect(cancelPendingDictation('pane-focused')).toBe(true);
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: false };
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(pane.writes).toEqual([]);
+    expect(pane.logs).toContainEqual({ level: 'info', event: 'dictation.pendingCancelled' });
+    expect(cancelPendingDictation('pane-focused')).toBe(false);
   });
 
   it('um ditado novo substitui o pendente do mesmo pane: só o último entra', async () => {

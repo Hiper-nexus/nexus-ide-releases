@@ -178,12 +178,14 @@ describe('F-371 — dictationPending/dictationFailed no fluxo de ditado', () => 
       ok: false,
       reason: 'pending',
       paneId: 'pane-1',
-      preserved: true,
     });
 
     await finishAndProcess(makeCapture(), { current: false }, makeDeps());
 
     expect(useVoiceStore.getState().note).toContain('aguardando o pane ficar livre');
+    // B1: o pendente não é copiado — a nota não pode mandar colar.
+    expect(useVoiceStore.getState().note).not.toContain('copiado');
+    expect(useVoiceStore.getState().note).toContain('Digitar no pane cancela');
     expect(useVoiceStore.getState().dictationFailed).toBe(false);
     expect(useVoiceStore.getState().dictationPending).toBeNull();
   });

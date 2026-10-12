@@ -87,6 +87,11 @@ vi.mock('@xterm/addon-serialize', () => ({
 }));
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
 vi.mock('./terminal-path-links', () => ({ attachTerminalPathLinks() {} }));
+const cancelPendingDictation = vi.hoisted(() => vi.fn(() => false));
+vi.mock('../voice/dictation-delivery', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../voice/dictation-delivery')>()),
+  cancelPendingDictation,
+}));
 
 const rebindMissionOrchestratorMock = vi.hoisted(() => vi.fn());
 const reflectLeadershipMock = vi.hoisted(() => vi.fn());
@@ -145,6 +150,7 @@ import {
   submitPromptToPane,
   submitPromptToPaneConfirmed,
   submitPromptToPaneOperatorInput,
+  isTerminalReport,
   waitForSession,
   writeToPane,
 } from './terminal-host';
@@ -714,6 +720,40 @@ describe('reabertura de pane encerrado', () => {
     for (const listener of [...xtermEvents.onData]) listener('c');
 
     expect(ptyWrite).toHaveBeenCalledExactlyOnceWith('pty-new', 'c');
+  });
+});
+
+describe('B1 (F-1393): input humano no pane cancela o ditado pendente', () => {
+  it('tecla no xterm e writeToPane cancelam; foco e mouse do terminal não', async () => {
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-b1' });
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(pane, slot);
+    expect(await waitForSession(pane.id, 1_000)).toBe('pty-b1');
+    cancelPendingDictation.mockClear();
+
+    for (const listener of [...xtermEvents.onData]) listener('\x1b[I');
+    for (const listener of [...xtermEvents.onData]) listener('\x1b[<64;10;5M');
+    expect(cancelPendingDictation).not.toHaveBeenCalled();
+
+    for (const listener of [...xtermEvents.onData]) listener('1');
+    expect(cancelPendingDictation).toHaveBeenCalledWith(pane.id);
+
+    cancelPendingDictation.mockClear();
+    writeToPane('pane-colado', 'texto colado');
+    expect(cancelPendingDictation).toHaveBeenCalledWith('pane-colado');
+  });
+
+  it('isTerminalReport separa relatório automático de digitação', () => {
+    expect(isTerminalReport('\x1b[O')).toBe(true);
+    expect(isTerminalReport('\x1b[12;40R')).toBe(true);
+    expect(isTerminalReport('\x1b[?1;2c')).toBe(true);
+    expect(isTerminalReport('\x1b[<0;3;4m')).toBe(true);
+    expect(isTerminalReport('\r')).toBe(false);
+    expect(isTerminalReport('\x1b[A')).toBe(false);
+    expect(isTerminalReport('sim')).toBe(false);
   });
 });
 

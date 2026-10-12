@@ -112,6 +112,8 @@ import {
   type PromptSubmitOutcome,
 } from './pane-submit';
 import { WebglLeasePool } from './webgl-lease';
+import { cancelPendingDictation } from '../voice/dictation-delivery';
+
 import { resumeTerminalVisibilityBeforePaint } from './terminal-visibility-resume';
 import { shouldAutoPinPaneAccount } from './pane-account-authority';
 import {
@@ -1684,6 +1686,9 @@ function startSpawn(
         });
       }
       const input = host.term.onData((data) => {
+        // B1 (F-1393): o operador assumiu o pane — o ditado pendente dele cai
+        // (relatórios automáticos do terminal, como foco e mouse, não contam).
+        if (!isTerminalReport(data)) cancelPendingDictation(pane.id);
         // xterm does not locally echo: the PTY/TUI sends the visible composer
         // back. Return to live output before the key leaves the renderer.
         host.inputVisibility.onUserInput();
@@ -4427,11 +4432,21 @@ function sendOperatorInputOrNotify(
 }
 
 /**
+ * B1 (F-1393): o que o xterm emite sozinho em `onData` — foco (CSI I/O),
+ * posição do cursor, atributos do terminal e relatórios de mouse (rolar a
+ * saída do agente). Não é o operador digitando.
+ */
+export function isTerminalReport(data: string): boolean {
+  return /^(?:\x1b\[[IO]|\x1b\[\d+;\d+R|\x1b\[[?>][\d;]*c|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})+$/u.test(data);
+}
+
+/**
  * Write text into a pane's PTY as if the user typed it — the exact same path as
  * keyboard input. Used by voice routing to inject the transcribed prompt into
  * the focused pane. Returns false when the pane has no live session.
  */
 export function writeToPane(paneId: string, data: string): boolean {
+  cancelPendingDictation(paneId);
   const host = hosts.get(paneId);
   if (host && !host.disposed) {
     host.inputVisibility.onUserInput();

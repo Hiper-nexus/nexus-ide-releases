@@ -432,12 +432,11 @@ export async function finishAndProcess(
       );
       if (!routed.ok && routed.reason === 'pending') {
         // F-1393: diálogo aberto ou adapter sem fila — nada escrito ainda; o
-        // ditado entra sozinho quando o pane ficar livre (e já foi copiado).
+        // ditado entra sozinho quando o pane ficar livre. Sem cópia (B1):
+        // colar e receber o pendente rodaria o prompt duas vezes.
         store.setDictationPending(null);
         store.setNote(
-          routed.preserved
-            ? 'Ditado aguardando o pane ficar livre — entra sozinho (texto também copiado).'
-            : 'Ditado aguardando o pane ficar livre — entra sozinho.',
+          'Ditado aguardando o pane ficar livre — entra sozinho. Digitar no pane cancela.',
         );
         store.setStatus('idle');
         return;
