@@ -43,7 +43,11 @@ import { getAdapter } from '../adapters/adapter-registry';
 import { isJevAutopilotEnabled } from '../jev/jev-autopilot';
 import { trace } from '../observability/main-trace';
 import { maestroStandingDoctrineFor } from './maestro-standing-context';
-import { suggestSkillForTask, SKILL_SUGGESTION_MIN_CONFIDENCE } from './jev-skill-suggestion';
+import {
+  skillSuggestionDegradation,
+  suggestSkillForTask,
+  SKILL_SUGGESTION_MIN_CONFIDENCE,
+} from './jev-skill-suggestion';
 import { helpersToOpenNow, type ParallelHelperBudget } from './pane-admission';
 import { currentParallelHelperBudget } from './parallel-helper-budget';
 import { isRecentHumanPrompt } from './operator-input-receipts';
@@ -147,6 +151,8 @@ const browserHintDeliveredAt = new Map<string, number>();
 const memoryDeliveredAt = new Map<string, { hash: string; at: number }>();
 /** F-753: mesma skill sugerida ao mesmo pane no máximo a cada 30 min. */
 const skillHintDeliveredAt = new Map<string, number>();
+/** F-1309: o aviso de degradação da sugestão de skill, uma vez por sessão. */
+const skillDegradationDeliveredAt = new Map<string, number>();
 /** F-802: a dica de CLI melhor, uma vez por sessão a cada 30 min. */
 const routeHintDeliveredAt = new Map<string, number>();
 
@@ -191,6 +197,7 @@ export function __resetLeanRemindersForTests(): void {
   browserHintDeliveredAt.clear();
   memoryDeliveredAt.clear();
   skillHintDeliveredAt.clear();
+  skillDegradationDeliveredAt.clear();
   routeHintDeliveredAt.clear();
 }
 
@@ -678,6 +685,8 @@ export async function handleHookDelegateRequest(
     maestroDoctrine?: MaestroDoctrineFn;
     /** F-753: skill do Nexus ou do projeto que o Jev/Clef acha útil no pedido. */
     suggestSkill?: typeof suggestSkillForTask;
+    /** F-1309: aviso de degradação quando a sugestão de skill não está disponível. */
+    skillDegradation?: () => string | null;
     /** F-784: teto seguro de helpers agora; default = panes vivos × RAM livre. */
     parallelBudget?: ParallelBudgetFn;
     /** F-802: dica de CLI melhor (busca na web); default = motor de rota sem Jev. */
@@ -795,6 +804,18 @@ export async function handleHookDelegateRequest(
         parts.push(operatorSkillHint(skill));
       }
     }
+    // F-1309: sem chave do Jev a dica de skill some em silêncio — um aviso
+    // único de degradação aparece onde a dica deveria estar. Quem injeta o
+    // sinal é o entrypoint HTTP (handleHookDelegateHttp); o default é passivo.
+    const skillDegradation = skill ? null : (deps.skillDegradation ?? (() => null))();
+    if (
+      skillDegradation &&
+      ctx.sessionId &&
+      !remindedRecently(skillDegradationDeliveredAt, ctx.sessionId, now)
+    ) {
+      markReminded(skillDegradationDeliveredAt, ctx.sessionId, now);
+      parts.push(skillDegradation);
+    }
     // A dica de CLI vale quando o conselho NÃO manda delegar: delegar já passa
     // pelo roteador, e duas linhas do mesmo assunto só gastam contexto.
     const routeLine = await routeHintPromise;
@@ -892,7 +913,12 @@ export async function handleHookDelegateHttp(
     res,
     ctx,
     HOOK_DELEGATE_MAX_BODY_BYTES,
-    (body) => handleHookDelegateRequest(ctx!, body),
+    // F-1309: é aqui, na superfície do operador, que a degradação da sugestão
+    // de skill vira texto — o default do request handler fica passivo.
+    (body) =>
+      handleHookDelegateRequest(ctx!, body, {
+        skillDegradation: skillSuggestionDegradation,
+      }),
     ctx && replyAsPlainText(ctx.providerId) ? additionalContextText : undefined,
   );
 }

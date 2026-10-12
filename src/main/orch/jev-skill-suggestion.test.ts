@@ -17,6 +17,7 @@ import {
   listProjectSkillCatalog,
   parseSkillSuggestions,
   skillCatalogForTaskRole,
+  skillSuggestionDegradation,
   suggestSkillForTask,
 } from './jev-skill-suggestion';
 
@@ -429,6 +430,18 @@ describe('suggestSkillForTask', () => {
         })
       )?.name,
     ).toBe('impeccable');
+  });
+
+  it('F-1309: skillSuggestionDegradation acende só com superfície ligada e sem chave', () => {
+    expect(
+      skillSuggestionDegradation({ enabled: () => true, hasKey: () => false }),
+    ).toContain('Sugestão de skill indisponível');
+    expect(
+      skillSuggestionDegradation({ enabled: () => false, hasKey: () => false }),
+    ).toBeNull();
+    expect(
+      skillSuggestionDegradation({ enabled: () => true, hasKey: () => true }),
+    ).toBeNull();
   });
 
   it('returns null without calling judge when the surface is off or no key', async () => {

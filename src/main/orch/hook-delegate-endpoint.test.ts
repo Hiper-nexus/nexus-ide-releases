@@ -135,6 +135,35 @@ describe('hook /hook/delegate', () => {
     expect(out.payload).toEqual({});
   });
 
+  it('F-1309: sem sugestão e com sinal de degradação, o aviso aparece uma vez por sessão', async () => {
+    __resetLeanRemindersForTests();
+    const degraded = '[Nexus] Sugestão de skill indisponível: sem credencial do Jev.';
+    const scoped = { ...operator, sessionId: 'deg-1' };
+    const first = await handleHookDelegateRequest(
+      scoped,
+      { prompt: 'escreva o PRD do checkout' },
+      {
+        advise: vi.fn(async () => null),
+        suggestSkill: vi.fn(async () => null),
+        skillDegradation: () => degraded,
+      },
+    );
+    expect((first.payload.hookSpecificOutput as { additionalContext: string }).additionalContext).toContain(
+      'Sugestão de skill indisponível',
+    );
+    // Uma vez por sessão: o segundo pedido do mesmo pane não repete o aviso.
+    const again = await handleHookDelegateRequest(
+      scoped,
+      { prompt: 'agora ajuste o PRD' },
+      {
+        advise: vi.fn(async () => null),
+        suggestSkill: vi.fn(async () => null),
+        skillDegradation: () => degraded,
+      },
+    );
+    expect(again.payload).toEqual({});
+  });
+
   it('a mão promovida pelo Main continua recebendo conselho de delegação', async () => {
     __resetLeanRemindersForTests();
     const ctx = { role: 'orchestrator' as const, missionId: 'm', sessionId: 'promoted', promotedFromUserSession: true as const };

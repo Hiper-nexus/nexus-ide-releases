@@ -352,6 +352,21 @@ describe('lote do route_task: skills do projeto numa pergunta própria (F-753)',
       batch: { requestCount: 1 },
     });
   });
+
+  it('F-1309: sem chave devolve reason no-key — sinal explícito, não silêncio', async () => {
+    const judge = vi.fn<JudgeMock>(async () => null);
+    const out = await classifyTaskWithSkillForRouting('corrigir o bug do login', {
+      allowedSkills: null,
+      deps: { judge, enabled: () => true, hasKey: () => false },
+    });
+    expect(out).toEqual({
+      kind: 'unavailable',
+      reason: 'no-key',
+      skillSuggestion: null,
+      batch: { requestCount: 0, questionCount: 0 },
+    });
+    expect(judge).not.toHaveBeenCalled();
+  });
 });
 
 describe('F-1346 (parte 2): tarefa longa chega ao Jev com o pedido do FIM', () => {

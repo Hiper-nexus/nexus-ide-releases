@@ -41,6 +41,25 @@ import { adapterSchema } from '../../shared/adapter-types';
  */
 export const SKILL_SUGGESTION_MIN_CONFIDENCE = 0.7;
 const SKILL_SUGGESTION_TIMEOUT_MS = 4_000;
+
+/**
+ * F-1309: sem credencial do Jev a sugestão de skill (e a dica do hook) morria
+ * em silêncio — a capacidade anunciada sumia da UI do pane. Devolve um aviso
+ * único de degradação quando a superfície está LIGADA mas sem chave; o hook o
+ * acrescenta onde a dica de skill deveria aparecer. Fail-open: desligado ou
+ * sem chave não é erro, é só o aviso (ou null).
+ */
+export const SKILL_SUGGESTION_DEGRADED_NOTICE =
+  '[Nexus] Sugestão de skill indisponível: sem credencial do Jev configurada (Settings → Modelos de decisão).';
+
+export function skillSuggestionDegradation(deps?: {
+  enabled?: () => boolean;
+  hasKey?: () => boolean;
+}): string | null {
+  const enabled = deps?.enabled ?? (() => isJevSurfaceEnabled('taskRouting'));
+  const hasKey = deps?.hasKey ?? (() => hasDecisionCredential('taskRouting'));
+  return enabled() && !hasKey() ? SKILL_SUGGESTION_DEGRADED_NOTICE : null;
+}
 const TASK_MAX_CHARS = 1_500;
 const DESCRIPTION_MAX_CHARS = 300;
 const CRITERIA_SKILLS_MAX = 120;
