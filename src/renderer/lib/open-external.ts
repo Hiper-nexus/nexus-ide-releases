@@ -5,5 +5,5 @@ export function openExternalFromAnchor(
   url: string,
 ): void {
   event.preventDefault();
-  void window.nexus.app.openExternal(url);
+  void window.nexus.app.openExternal(url).catch(() => undefined);
 }
