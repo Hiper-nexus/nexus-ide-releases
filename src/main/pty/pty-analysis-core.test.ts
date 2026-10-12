@@ -98,3 +98,38 @@ describe('production analysis reducers', () => {
     core.close();
   });
 });
+
+describe('F-1419: o primeiro working do detector fecha o responder de primeira execução', () => {
+  const codex = loadManifestDir(path.join(process.cwd(), 'resources/agent-detection'))
+    .filter(({ manifest }) => manifest.id === 'codex').map(({ manifest }) => compileManifest(manifest));
+  const CWD = '/Users/op/Library/Application Support/NexusIDE/worktrees.noindex/task-3b7d';
+  const TRUST = `✓ Trust ${CWD}?  ❭ 1 Yes, trust / 2 No, exit  ↓↑ to select · ↵ to choose`;
+  function firstRunAnswers(workingFirst: boolean) {
+    const results: AnalysisResult[] = [];
+    const core = new PtyAnalysisCore(codex, (result) => results.push(result));
+    let seq = 0;
+    const feed = (body: object) => core.process({ workerEpoch: 1, generation: 1, sessionId: 's', eventSeq: ++seq, observedAt: 100 + seq, ...body } as AnalysisInput);
+    feed({ kind: 'bind', binding: { adapterId: 'codex', paneId: 'p' } });
+    feed({ kind: 'arm', consumer: 'screen', registration: 1 });
+    feed({ kind: 'arm', consumer: 'first-run', registration: 1 });
+    feed({ kind: 'control', consumer: 'first-run', value: { bind: { adapterId: 'devin', missionId: 'm-1', cwd: CWD } } });
+    if (workingFirst) {
+      feed({ kind: 'resize', cols: 80, rows: 3 });
+      feed({ kind: 'data', data: '• Working (1s • esc to interrupt)' });
+      feed({ kind: 'flush' });
+      expect(results.flatMap((r) => r.events).filter((e) => e.consumer === 'screen')
+        .map((e) => (e.value as { record?: { state: string } }).record?.state)).toContain('working');
+    }
+    feed({ kind: 'data', data: `\r\n${TRUST}\r\n` });
+    core.close();
+    return results.flatMap((r) => r.events).filter((e) => e.consumer === 'first-run').map((e) => e.value);
+  }
+
+  it('sem trabalho real ainda, a pergunta de trust do cwd do pane é respondida', () => {
+    expect(firstRunAnswers(false)).toEqual([{ answer: '1\r', pattern: 'devin-trust-path' }]);
+  });
+
+  it('depois do primeiro working, a mesma pergunta não recebe tecla', () => {
+    expect(firstRunAnswers(true)).toEqual([]);
+  });
+});

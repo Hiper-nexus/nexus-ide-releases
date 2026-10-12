@@ -8,6 +8,7 @@ import {
   FIRST_RUN_WINDOW_MS,
   FirstRunInterstitialResponder,
   screenNamesOwnCwd,
+  trustQuestionNamesCwd,
   type FirstRunInterstitialContext,
 } from './first-run-interstitial';
 import { cpuTimeMs } from '../../test/cpu-time';
@@ -632,6 +633,20 @@ describe('F-1419: trust do Devin CLI na worktree do writer isolado', () => {
       `✓ Trust ${WORKTREE}\nd?  ❭ 1 Yes, trust / 2 No, exit  ↓↑ to select · ↵ to choose`,
       devinContext(),
     )).toBeNull();
+  });
+
+  it('revisão Fable: a prova é o path DA PERGUNTA — cwd citado em outro ponto da tela não conta', () => {
+    const elsewhere = `${devinTrust('/tmp/other')} … cwd "${WORKTREE}"`;
+    expect(decideFirstRunInterstitial(elsewhere, devinContext())).toBeNull();
+    expect(trustQuestionNamesCwd(elsewhere, WORKTREE, DEVIN_HOME)).toBe(false);
+    // Antes e depois da pergunta certa, uma pergunta sobre outro path derruba a prova.
+    expect(decideFirstRunInterstitial(
+      `${devinTrust(WORKTREE)}\n${devinTrust('/tmp/other')}`, devinContext(),
+    )).toBeNull();
+    // A mesma pergunta repintada várias vezes continua valendo.
+    expect(decideFirstRunInterstitial(
+      `${devinTrust(WORKTREE)}\n${devinTrust(WORKTREE)}`, devinContext(),
+    )?.pattern).toBe('devin-trust-path');
   });
 
   it('fora de missão, para outro adapter ou depois de responder uma vez: nenhuma tecla', () => {
