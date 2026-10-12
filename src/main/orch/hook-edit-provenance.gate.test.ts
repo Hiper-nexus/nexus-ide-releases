@@ -23,6 +23,11 @@ import {
   type RegressionExec,
 } from '../regression-gate/regression-gate';
 import { ProcessGitRunner } from '../runtime/git-command';
+import {
+  copyProviderPaneSession,
+  providerSessionHeldByOtherPane,
+  saveProviderPaneSession,
+} from '../persistence/provider-session-store';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
   __resetHookEditProvenanceForTests,
@@ -197,5 +202,40 @@ describe('F-1249: o formatador do PostToolUse termina depois do hash', () => {
     expect(result.status).not.toBe('failed');
     expect(result.failures).toEqual([]);
     expect(result.inheritedFailures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
+  });
+});
+
+describe('F-1286: "Retomar" em pane novo continua a conversa — as edições registradas seguem com ela', () => {
+  it('a cópia do vínculo deixa a linha do pane antigo; o pane novo que retoma a conversa ainda responde pelas edições dela', async () => {
+    const { root, scope } = project();
+    const editedAtMs = Date.now() - 20 * HOUR;
+    const old: SessionProviderConversation = {
+      scope: { installationId: scope.installationId, projectId: scope.projectId, checkoutId: scope.checkoutId },
+      adapterId: 'claude',
+      paneId: 'pane-f1286-antigo',
+      conversationId: 'conv-f1286',
+      resumed: false,
+    };
+    expect(saveProviderPaneSession(scope, old.paneId, 'claude', { key: 'session_id', id: 'conv-f1286' })).toBe(true);
+    write(root, 'src/c.ts', 'export const c = 30;\n');
+    age(root, 'src/c.ts', editedAtMs);
+    expect(await recordHookEditProvenance({ sessionId: 'pty-antigo', scope }, 'tool-complete', {
+      session_id: 'conv-f1286', tool_name: 'Write', tool_input: { file_path: path.join(root, 'src/c.ts') },
+    }, { conversationOf: () => old, now: () => editedAtMs })).toBe(1);
+    // Maestro "Retomar" num pane novo: o vínculo é COPIADO antes do spawn (pane-registry).
+    expect(copyProviderPaneSession(scope, old.paneId, 'pane-f1286-novo', 'claude')).toBe(true);
+    // A linha do pane antigo fica. Uma checagem de dono por provider_pane_sessions
+    // (heldByOtherPane) tiraria do pane novo a autoria legítima da conversa.
+    expect(providerSessionHeldByOtherPane('claude', 'conv-f1286', 'pane-f1286-novo')).toBe(true);
+    const resumedInNewPane = { ...old, paneId: 'pane-f1286-novo', resumed: true };
+    const recordedEdits = recordedEditsForSession('pty-novo', root, { conversationOf: () => resumedInNewPane });
+
+    const result = await runRegressionGate(
+      { scope, startedAtMs: Date.now() - 1_000, recordedEdits },
+      { exec: failingOnlyAt(root, ['src/c.test.ts']) },
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.failures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
   });
 });
