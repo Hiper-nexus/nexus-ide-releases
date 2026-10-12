@@ -63,6 +63,9 @@ describe('F-1167: painel "Motor de decisão" da missão', () => {
   });
 
   it('dicas com rota (modelo) e horário: kickoff, triagem, recuperação e cobertura/auditoria', async () => {
+    // F-1377: decisão de hoje mostra só a hora — o relógio fica no dia de AT.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 11, 18, 30));
     await mount();
     const hints = [...host.querySelectorAll('[aria-label="Dicas do motor de decisão"] li')].map(node => node.textContent);
     expect(hints).toHaveLength(4);
@@ -76,6 +79,15 @@ describe('F-1167: painel "Motor de decisão" da missão', () => {
     // Cor só para estado: atenção na triagem alta e na cobertura baixa.
     expect(host.querySelectorAll('.mission-decision__hint--attention')).toHaveLength(2);
     expect(host.querySelector('[title="auto v2 · prior de julgamento"]')).not.toBeNull();
+  });
+
+  it('F-1377: decisão de dia anterior mostra a data antes da hora', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 12, 9, 0));
+    await mount();
+    const hints = [...host.querySelectorAll('[aria-label="Dicas do motor de decisão"] li')].map(node => node.textContent);
+    expect(hints[0]).toContain('jev-1 · 11/10 · 14:05');
+    expect(hints[3]).toContain('auditoria final às 11/10 · 14:05');
   });
 
   it('orçamento: âmbar acima de 80%, vermelho em 100%', async () => {
