@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearRouteProvenance } from './route-provenance';
 import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 
@@ -99,6 +100,9 @@ async function routeLikeSpawn(
 }
 
 beforeEach(() => {
+  // F-1291: a memória de rotas sem missão é estado do módulo; sem limpar, um
+  // caso herda as rotas dos anteriores no fair-share.
+  clearRouteProvenance();
   rememberKimiSeatReadiness('present');
   h.globalUse = new Map();
   h.benchmark = { schemaVersion: 1, source: 'nexus-benchmark/unpublished', specialties: {} };
