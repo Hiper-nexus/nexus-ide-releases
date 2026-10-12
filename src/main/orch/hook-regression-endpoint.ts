@@ -10,7 +10,8 @@
 // Anti-laço: o mesmo diff (hash do conteúdo) é relatado uma vez; no máximo
 // {@link MAX_CONSECUTIVE_STOP_BLOCKS} bloqueios seguidos sem um verde. Fora
 // do caminho feliz, sempre `{}` com 200 — o hook nunca atrapalha o CLI.
-// Árvore limpa zera a sequência de bloqueios.
+// Árvore limpa zera a sequência de bloqueios; F-1285: a sequência também
+// decai {@link STOP_BLOCK_DECAY_MS} depois do último bloqueio.
 import type http from 'node:http';
 import type { AgentGateContext } from './gate';
 import { isOperatorHandContext } from './operator-hand-context';
@@ -25,6 +26,12 @@ import { getSessionSpawnedAtMs } from '../pty/pty-manager';
 import { recordedEditsForSession } from './hook-edit-provenance';
 
 export const MAX_CONSECUTIVE_STOP_BLOCKS = 3;
+/**
+ * F-1285: sem bloqueio há este tempo, a sequência não conta mais. Sem
+ * decaimento, três falhas com diff novo (de qualquer um com o bearer)
+ * desligavam o portão do Stop até um resultado limpo.
+ */
+export const STOP_BLOCK_DECAY_MS = 10 * 60_000;
 /**
  * Orçamento TOTAL do portão no Stop (mapa + testes + retentativa), bem abaixo
  * do `--max-time` do curl: resposta que chega depois do transporte desistir
@@ -44,6 +51,8 @@ interface SessionLedger {
   /** Último diff já relatado ao agente (não repete o mesmo aviso). */
   reportedHash?: string;
   blocks: number;
+  /** F-1285: quando foi o último bloqueio (decaimento da sequência). */
+  lastBlockAtMs?: number;
 }
 
 const ledgers = new Map<string, SessionLedger>();
@@ -88,6 +97,7 @@ export async function handleHookRegressionRequest(
     readonly recordedEdits?: (sessionId: string, rootRealPath: string) => ReadonlyMap<string, string> | undefined;
     /** Abortado quando o transporte do hook desistiu (curl fechou). */
     readonly signal?: AbortSignal;
+    readonly now?: () => number;
   } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   void body;
@@ -131,11 +141,21 @@ export async function handleHookRegressionRequest(
     ledger.reportedHash = result.diffHash;
     const report = formatRegressionGateReport(result);
     if (result.status === 'failed') {
+      const now = (deps.now ?? Date.now)();
+      if (ledger.lastBlockAtMs !== undefined && now - ledger.lastBlockAtMs >= STOP_BLOCK_DECAY_MS) {
+        ledger.blocks = 0;
+      }
       if (ledger.blocks >= MAX_CONSECUTIVE_STOP_BLOCKS) {
         console.warn(`[regression-gate] limite de bloqueios no Stop atingido: ${report.replace(/\n/g, ' | ')}`);
-        return { statusCode: 200, payload: {} };
+        // F-1285: o operador vê que o fim do turno passou sem bloqueio (o
+        // Codex fica com o log, como nos avisos abaixo).
+        const systemMessage =
+          `Portão de regressão: limite de ${MAX_CONSECUTIVE_STOP_BLOCKS} bloqueios seguidos no Stop atingido; ` +
+          `este fim de turno NÃO foi bloqueado.\n${report}`;
+        return { statusCode: 200, payload: ctx.providerId === 'codex' ? {} : { systemMessage } };
       }
       ledger.blocks += 1;
+      ledger.lastBlockAtMs = now;
       return { statusCode: 200, payload: { decision: 'block', reason: report } };
     }
     ledger.blocks = 0;

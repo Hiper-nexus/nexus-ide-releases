@@ -27,6 +27,7 @@ import {
   handleHookRegressionHttp,
   handleHookRegressionRequest,
   MAX_CONSECUTIVE_STOP_BLOCKS,
+  STOP_BLOCK_DECAY_MS,
   STOP_HOOK_BUDGET_MS,
 } from './hook-regression-endpoint';
 import {
@@ -217,6 +218,40 @@ describe('handleHookRegressionRequest (Stop do pane do operador)', () => {
       await handleHookRegressionRequest(operator, {}, { run: clean, git, enabled: () => true });
     }
     expect(decisions).toEqual(Array.from({ length: MAX_CONSECUTIVE_STOP_BLOCKS + 1 }, () => 'block'));
+  });
+
+  it('F-1285: a cota decai — passada a janela desde o último bloqueio, falha com diff novo volta a bloquear', async () => {
+    let n = 0;
+    let now = 1_000_000;
+    const run = vi.fn(async () => ({ ...failed, diffHash: `hash-${(n += 1)}` }));
+    const deps = { run, git, enabled: () => true, now: () => now };
+    for (let i = 0; i < MAX_CONSECUTIVE_STOP_BLOCKS; i += 1) {
+      expect((await handleHookRegressionRequest(operator, {}, deps)).payload.decision).toBe('block');
+      now += 60_000;
+    }
+    // Dentro da janela, a cota segue esgotada.
+    expect((await handleHookRegressionRequest(operator, {}, deps)).payload.decision).toBeUndefined();
+
+    now += STOP_BLOCK_DECAY_MS;
+
+    expect((await handleHookRegressionRequest(operator, {}, deps)).payload).toMatchObject({ decision: 'block' });
+  });
+
+  it('F-1285: cota esgotada avisa o operador (systemMessage), não só o log; Codex fica com o log', async () => {
+    let n = 0;
+    const run = vi.fn(async () => ({ ...failed, diffHash: `hash-${(n += 1)}` }));
+    const deps = { run, git, enabled: () => true, now: () => 1_000_000 };
+    for (let i = 0; i < MAX_CONSECUTIVE_STOP_BLOCKS; i += 1) await handleHookRegressionRequest(operator, {}, deps);
+
+    const exhausted = await handleHookRegressionRequest(operator, {}, deps);
+
+    expect(exhausted.payload.decision).toBeUndefined();
+    expect(String(exhausted.payload.systemMessage)).toContain(`limite de ${MAX_CONSECUTIVE_STOP_BLOCKS} bloqueios`);
+    expect(String(exhausted.payload.systemMessage)).toContain('src/b.test.ts');
+
+    const codex = { ...operator, sessionId: 'op-codex', providerId: 'codex' };
+    for (let i = 0; i < MAX_CONSECUTIVE_STOP_BLOCKS; i += 1) await handleHookRegressionRequest(codex, {}, deps);
+    expect((await handleHookRegressionRequest(codex, {}, deps)).payload).toEqual({});
   });
 
   it('transporte que desistiu não gasta o relato: o próximo Stop do mesmo diff ainda bloqueia', async () => {
