@@ -378,7 +378,7 @@ vi.mock('../path-resolver', () => ({
       ? { binPath: 'C:\\Program Files\\nodejs\\npm.cmd' }
       : runner === 'bash'
       ? { binPath: '/bin/bash' }
-      : runner === 'brew' && spawnDeps.brewBin
+      : (runner === 'brew' || runner === spawnDeps.brewBin) && spawnDeps.brewBin
       ? { binPath: spawnDeps.brewBin }
       : null,
 }));
@@ -503,6 +503,7 @@ import {
   providerAuthStrategy,
   providerReadiness,
   initializeProviderConfigStore,
+  refreshBrewIndexIfDue,
   registerProviderIpc,
   resolveRunnerPath,
   resolveQuotaApiKey,
@@ -537,6 +538,9 @@ describe('background CLI maintenance during pane startup', () => {
     vi.spyOn(fsp, 'mkdir').mockResolvedValue(undefined);
     vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
     vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+    // Sem disco real: o marcador de install interrompido (R3) e o registro do
+    // brew update não existem — leitura real atrasaria o boot sob fake timers.
+    vi.spyOn(fsp, 'readFile').mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }));
     vi.spyOn(periodicFileRead, 'readRegularFileCappedAsync').mockResolvedValue({ kind: 'text', stamp: 'fixture', text: JSON.stringify({ enabled: true, checkedAt: {} }) });
     vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
     finishUpdate = undefined;
@@ -1023,25 +1027,43 @@ describe('background CLI maintenance during pane startup', () => {
     });
   });
 
-  // Índice do Homebrew: um `brew update` assíncrono antes do manifesto, no
-  // máximo a cada 6 h (tentativa persistida); falha não trava o analisador.
+  // Índice do Homebrew: um `brew update` assíncrono antes do que decide a
+  // instalação (manifesto relido e `brew outdated` no run), no máximo a cada
+  // 6 h (tentativa persistida), só com enabled e alguma CLI do brew (M8), e
+  // serializado com os outros brew que gravam (M8). Falha não trava a passada.
   describe('brew update antes do manifesto (índice do Homebrew)', () => {
     const brew = '/opt/homebrew/bin/brew';
+    const caskRecipe = {
+      kind: 'argv' as const,
+      argv: [brew, 'upgrade', '--cask', 'claude-code'],
+      runner: brew,
+      runnerHint: 'instale o Homebrew',
+      env: { SUDO_ASKPASS: '/usr/bin/false', HOMEBREW_NO_SUDO: '1', HOMEBREW_NO_AUTO_UPDATE: '1' },
+    };
     let calls: string[][];
     let updateOptions: Record<string, unknown> | undefined;
     let updateError: Error | null;
-    const brewFixture = (lastAttemptAt: number | null) => {
+    let holdUpdate: boolean;
+    let finishBrewUpdate: (() => void) | undefined;
+    let outdatedReply: string;
+    const brewFixture = async (lastAttemptAt: number | null, opts: { brewCandidate?: boolean } = {}) => {
       spawnDeps.brewBin = brew;
       calls = [];
       updateOptions = undefined;
       updateError = null;
-      const realReadFile = fsp.readFile;
-      vi.spyOn(fsp, 'readFile').mockImplementation((async (file: unknown, ...rest: unknown[]) => {
+      holdUpdate = false;
+      finishBrewUpdate = undefined;
+      outdatedReply = JSON.stringify({ formulae: [], casks: [] });
+      if (opts.brewCandidate !== false) {
+        const cliAutoUpdateModule = await import('../adapters/cli-auto-update');
+        vi.spyOn(cliAutoUpdateModule, 'selectAutomaticCliUpdateRecipe').mockReturnValue(caskRecipe);
+      }
+      vi.spyOn(fsp, 'readFile').mockImplementation((async (file: unknown) => {
         if (String(file).endsWith('brew-index-update.json')) {
           if (lastAttemptAt === null) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
           return JSON.stringify({ lastAttemptAt, ok: true });
         }
-        return (realReadFile as (...args: unknown[]) => Promise<unknown>)(file, ...rest);
+        return Promise.reject(Object.assign(new Error('missing'), { code: 'ENOENT' }));
       }) as never);
       spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
         const argv = args[1] as string[];
@@ -1050,8 +1072,10 @@ describe('background CLI maintenance during pane startup', () => {
           calls.push(argv);
           if (argv[0] === 'update') {
             updateOptions = args[2] as Record<string, unknown>;
-            callback(updateError, '');
-          } else callback(null, '');
+            if (holdUpdate) finishBrewUpdate = () => callback(updateError, '');
+            else callback(updateError, '');
+          } else if (argv[0] === 'outdated') callback(null, outdatedReply);
+          else callback(null, '');
         } else if (argv[0] === 'update') {
           calls.push(['claude', ...argv]);
           finishUpdate = () => callback(null, '');
@@ -1061,43 +1085,178 @@ describe('background CLI maintenance during pane startup', () => {
     };
     afterEach(() => { spawnDeps.brewBin = null; });
     const brewUpdates = () => calls.filter((argv) => argv[0] === 'update');
-
-    it('sem registro: roda UM brew update assíncrono antes da análise, com timeout e signal', async () => {
-      brewFixture(null);
+    const checkedAgo = () =>
       vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: { claude: Date.now() - 3 * 60 * 60_000 } }));
+
+    it('sem registro: UM brew update assíncrono antes do brew outdated, com timeout e signal', async () => {
+      await brewFixture(null);
+      checkedAgo();
       stop = startCliAutoUpdate('/fixture-quota-home', () => false);
       await vi.advanceTimersByTimeAsync(5_000);
       expect(brewUpdates()).toEqual([['update', '--quiet']]);
-      expect(spawnDeps.execFileSync).not.toHaveBeenCalledWith(brew, expect.anything(), expect.anything());
       expect(updateOptions?.timeout).toBe(120_000);
       expect(updateOptions?.signal).toBeInstanceOf(AbortSignal);
-      // O update vem antes de qualquer outra chamada da passada (analisador).
-      expect(calls[0]).toEqual(['update', '--quiet']);
+      const order = calls.map((argv) => argv[0]);
+      expect(order.indexOf('update')).toBeLessThan(order.indexOf('outdated'));
+      expect(order.indexOf('outdated')).toBeGreaterThan(-1);
       expect(fsp.writeFile).toHaveBeenCalledWith(
         expect.stringContaining('brew-index-update.json'), expect.stringContaining('lastAttemptAt'), expect.anything());
-      // Segue para a atualização das CLIs.
-      expect(finishUpdate).toBeTypeOf('function');
     });
 
     it.each([
       ['1 h', 60 * 60_000, []],
       ['7 h', 7 * 60 * 60_000, [['update', '--quiet']]],
     ])('última tentativa há %s: limite de 6 h decide', async (_label, ago, expected) => {
-      brewFixture(Date.now() - (ago as number));
+      await brewFixture(Date.now() - (ago as number));
+      checkedAgo();
       stop = startCliAutoUpdate('/fixture-quota-home', () => false);
       await vi.advanceTimersByTimeAsync(5_000);
       expect(brewUpdates()).toEqual(expected);
     });
 
-    it('brew update falha: só loga e a análise segue com o índice local', async () => {
-      brewFixture(null);
+    it('brew update falha: só loga e a passada segue com o índice local', async () => {
+      await brewFixture(null);
+      checkedAgo();
       updateError = new Error('Command failed: brew update\nfatal: unable to access');
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       stop = startCliAutoUpdate('/fixture-quota-home', () => false);
       await vi.advanceTimersByTimeAsync(5_000);
       expect(brewUpdates()).toHaveLength(1);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('brew update falhou'), expect.any(String));
+      expect(calls.map((argv) => argv[0])).toContain('outdated');
+      warn.mockRestore();
+    });
+
+    it('M8: atualização automática desligada não roda brew update', async () => {
+      await brewFixture(null);
+      const off = JSON.stringify({ enabled: false, askAgainAt: Number.MAX_SAFE_INTEGER, checkedAt: {} });
+      vi.spyOn(fs, 'readFileSync').mockReturnValue(off);
+      vi.spyOn(periodicFileRead, 'readRegularFileCappedAsync').mockResolvedValue({ kind: 'text', stamp: 'off', text: off });
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(brewUpdates()).toEqual([]);
+    });
+
+    it('M8: nenhuma CLI do brew elegível não roda brew update', async () => {
+      await brewFixture(null, { brewCandidate: false });
+      checkedAgo();
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(brewUpdates()).toEqual([]);
+      expect(finishUpdate).toBeTypeOf('function'); // o claude (self-update) segue
+    });
+
+  });
+
+  // M8: as checagens só-leitura rodam sem o lease — o spawn da CLI não espera
+  // ~40 s por um `npm view` que não grava nada.
+  describe('M8: lease só quando há o que instalar', () => {
+    const npmOpencode = '/fixture-quota-home/.npm-global/lib/node_modules/opencode-ai/bin/opencode.js';
+    it('spawn da CLI npm durante a checagem de versão nasce na hora', async () => {
+      spawnDeps.builtinIds.add('opencode');
+      vi.spyOn(fs, 'realpathSync').mockReturnValue(npmOpencode);
+      vi.spyOn(fsp, 'realpath').mockResolvedValue(npmOpencode);
+      vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: { claude: Date.now() } }));
+      let replyView: ((stdout: string) => void) | undefined;
+      const installs: string[][] = [];
+      spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
+        const argv = args[1] as string[];
+        const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+        if (argv[0] === 'view') replyView = (stdout) => callback(null, stdout);
+        else if (argv[0] === 'install' || argv[0] === 'update') {
+          installs.push(argv);
+          finishUpdate = () => callback(null, '');
+        } else callback(null, '1.0.0');
+        return {} as ChildProcess;
+      });
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(replyView).toBeTypeOf('function');
+      let release: (() => void) | undefined;
+      void acquireCliSpawnPermit('opencode').then((permit) => { release = permit; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(release).toBeTypeOf('function'); // checagem só-leitura: sem lease
+      release!();
+      replyView!('2.0.0\n');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(installs.filter((argv) => argv[0] === 'install')).toHaveLength(1);
+    });
+  });
+
+  // R3: fechar o app com um install em curso não mata o npm no meio nem deixa
+  // órfão sem rastro: o stop espera um teto curto; estourado, mata o processo
+  // e o marcador faz o próximo boot reinstalar.
+  describe('R3: install em curso no encerramento', () => {
+    const npmClaude = '/fixture-quota-home/.npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js';
+    let installOptions: Record<string, unknown> | undefined;
+    const npmInstallFixture = () => {
+      vi.spyOn(fs, 'realpathSync').mockReturnValue(npmClaude);
+      vi.spyOn(fsp, 'realpath').mockResolvedValue(npmClaude);
+      vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: { claude: Date.now() - 3 * 60 * 60_000 } }));
+      installOptions = undefined;
+      spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
+        const argv = args[1] as string[];
+        const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+        if (argv[0] === 'install' || argv[0] === 'update') {
+          installOptions = args[2] as Record<string, unknown>;
+          finishUpdate = () => callback(null, '');
+          // Como o execFile real: o signal mata o processo e o callback vem com erro.
+          (installOptions?.signal as AbortSignal | undefined)?.addEventListener('abort', () =>
+            callback(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }), ''));
+        } else if (argv[0] === 'view') callback(null, '9.9.9\n');
+        else callback(null, '1.0.0');
+        return {} as ChildProcess;
+      });
+    };
+    const markerWrites = () => vi.mocked(fsp.writeFile).mock.calls
+      .filter((call) => String(call[0]).endsWith('cli-install-inflight.json'));
+    const markerRemovals = () => vi.mocked(fsp.rm).mock.calls
+      .filter((call) => String(call[0]).endsWith('cli-install-inflight.json'));
+
+    it('stop espera o install terminar dentro do teto e limpa o marcador', async () => {
+      npmInstallFixture();
+      const running = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(finishUpdate).toBeTypeOf('function');
+      expect(markerWrites()).toHaveLength(1);
+      let stopped = false;
+      const stopping = running().then(() => { stopped = true; });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(stopped).toBe(false); // não abandona o npm no meio
+      expect((installOptions?.signal as AbortSignal | undefined)?.aborted).toBe(false);
+      finishUpdate!();
+      finishUpdate = undefined;
+      await vi.advanceTimersByTimeAsync(0);
+      await stopping;
+      expect(markerRemovals().length).toBeGreaterThan(0);
+    });
+
+    it('teto estourado: mata o processo do install e o marcador fica para o boot', async () => {
+      npmInstallFixture();
+      const running = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(finishUpdate).toBeTypeOf('function');
+      const stopping = running();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect((installOptions?.signal as AbortSignal | undefined)?.aborted).toBe(true);
+      // O processo morto (mock não chama o callback) não segura o stop além do teto.
+      await vi.advanceTimersByTimeAsync(2_000);
+      await stopping;
+      finishUpdate = undefined;
+      expect(markerRemovals()).toEqual([]);
+    });
+
+    it('boot com marcador: a CLI interrompida reinstala já, mesmo checada há 10 min', async () => {
+      vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: { claude: Date.now() - 10 * 60_000 } }));
+      vi.spyOn(fsp, 'readFile').mockImplementation((async (file: unknown) =>
+        String(file).endsWith('cli-install-inflight.json')
+          ? JSON.stringify({ adapterId: 'claude', startedAt: Date.now() - 60_000 })
+          : Promise.reject(Object.assign(new Error('missing'), { code: 'ENOENT' }))) as never);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('instalação interrompida'));
+      expect(finishUpdate).toBeTypeOf('function'); // sem o marcador, a de 10 min ficaria de fora
       warn.mockRestore();
     });
   });
@@ -2813,6 +2972,49 @@ describe('C5: toggle de atualização automática não bloqueia o Main', () => {
       }),
       expect.any(Function),
     );
+  });
+});
+
+// M8: um brew que grava por vez — o `brew install` do botão (e do
+// provisionamento) espera o `brew update` do passe, sem "Another active
+// Homebrew update process".
+describe('M8: brew update e brew install serializados', () => {
+  const brew = '/opt/homebrew/bin/brew';
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    spawnDeps.brewBin = brew;
+    spawnDeps.resolvedClaudeBin = '/usr/local/bin/claude';
+    spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
+    registerProviderIpc();
+  });
+  afterEach(() => {
+    spawnDeps.brewBin = null;
+    vi.restoreAllMocks();
+  });
+  it('install do botão só roda depois do brew update em curso', async () => {
+    vi.spyOn(fsp, 'readFile').mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+    vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    const calls: string[][] = [];
+    let finishBrewUpdate: (() => void) | undefined;
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      const argv = args[1] as string[];
+      const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+      if (args[0] === brew) {
+        calls.push(argv);
+        if (argv[0] === 'update') finishBrewUpdate = () => callback(null, '');
+        else callback(null, '');
+      } else callback(null, '1.0.0');
+      return {} as ChildProcess;
+    });
+    const refreshing = refreshBrewIndexIfDue('/fixture-quota-home', new AbortController().signal);
+    await vi.waitFor(() => expect(finishBrewUpdate).toBeTypeOf('function'));
+    const installing = spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId: 'opencode', mode: 'install' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls.filter((argv) => argv[0] === 'install')).toEqual([]);
+    finishBrewUpdate!();
+    await refreshing;
+    await installing;
+    expect(calls.map((argv) => argv[0])).toEqual(['update', 'install']);
   });
 });
 
