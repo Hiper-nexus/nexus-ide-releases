@@ -17,6 +17,8 @@ const DEPENDENCY_RUNTIME_DIRECTORIES = new Set([...SKIP_DIRECTORIES].filter(name
 // Keep the existing confidentiality boundary around provider/runtime dotdirs.
 const PROTECTED_DIRECTORIES = new Set([...SKIP_DIRECTORIES].filter(name => name.startsWith('.') && !AMBIGUOUS_SOURCE_DIRECTORIES.has(name) || name === 'worktrees'));
 const MAX_FILESYSTEM_ENTRIES = 4_096;
+/** Coarse filesystem clocks (HFS+ 1 s, FAT 2 s): near the baseline counts as new. */
+const STALE_MARGIN_MS = 2_000;
 
 export interface WorkingTreeCandidateSnapshot {
   readonly source: 'git' | 'filesystem';
@@ -33,6 +35,8 @@ export interface WorkingTreeCandidateSnapshot {
   readonly incompleteReasons: readonly string[];
   /** Explicit dependency/runtime boundary, never a claim to have inspected these bytes. */
   readonly excludedPaths?: readonly string[];
+  /** F-1301: untracked files untouched since the baseline; outside the delta and NOT reviewed. */
+  readonly staleUntrackedPaths?: readonly string[];
 }
 
 function abortIfNeeded(signal?: AbortSignal): void {
@@ -91,7 +95,7 @@ export function readCandidateFile(scope: ProjectExecutionScope, relativePath: st
 }
 
 type CandidateInventory = Pick<WorkingTreeCandidateSnapshot,
-  'changedPaths' | 'deletedPaths' | 'untrackedPaths' | 'diff' | 'incompleteReasons' | 'excludedPaths'>;
+  'changedPaths' | 'deletedPaths' | 'untrackedPaths' | 'diff' | 'incompleteReasons' | 'excludedPaths' | 'staleUntrackedPaths'>;
 type CandidateGitRead = (args: readonly string[]) => Promise<string>;
 
 /** Declare limited filesystem coverage without descending into dependencies/runtime. */
@@ -154,7 +158,28 @@ async function filesystemInventory(scope: ProjectExecutionScope, signal?: AbortS
     incompleteReasons: [...reasons, ...selected.reasons, ...(truncated ? ['filesystem candidate index was truncated'] : [])] };
 }
 
-async function gitInventory(base: string, run: CandidateGitRead, currentState = false): Promise<CandidateInventory> {
+/**
+ * F-1301: untracked files whose bytes and inode metadata predate the mission
+ * baseline are not that mission's delta (another agent's WIP in a shared
+ * checkout). ctime cannot be set back from user space; any later write,
+ * rename or copy moves it past the baseline and the file re-enters the delta.
+ * Symlinks and paths whose parents resolve elsewhere stay in the delta.
+ */
+async function untouchedSince(root: string, files: readonly string[], since: number): Promise<Set<string>> {
+  const untouched = new Set<string>();
+  for (const file of files.slice(0, MAX_FILESYSTEM_ENTRIES)) {
+    const absolute = path.join(root, file);
+    try {
+      if (await fs.promises.realpath(path.dirname(absolute)) !== path.dirname(absolute)) continue;
+      const stat = await fs.promises.lstat(absolute);
+      if (stat.isFile() && Math.max(stat.ctimeMs, stat.mtimeMs) < since - STALE_MARGIN_MS) untouched.add(file);
+    } catch { /* unreadable stays in the delta and is reported by the read */ }
+  }
+  return untouched;
+}
+
+async function gitInventory(base: string, run: CandidateGitRead, currentState = false,
+  preexisting?: (files: readonly string[]) => Promise<Set<string>>): Promise<CandidateInventory> {
   if (!COMMIT_HASH.test(base)) throw new Error('invalid candidate base commit');
   const [inventory, untracked, removed] = await Promise.all([
     currentState ? run(['ls-files', '--cached', '-z']) : run(['diff', '--name-status', '-z', '--no-renames', base, '--']),
@@ -183,8 +208,11 @@ async function gitInventory(base: string, run: CandidateGitRead, currentState = 
     const boundary = parts.slice(0, -1).findIndex(segment => DEPENDENCY_RUNTIME_DIRECTORIES.has(segment));
     return boundary >= 0 ? parts.slice(0, boundary + 1).join('/') + '/' : file;
   }))].sort();
+  const untouched = preexisting && !currentState
+    ? await preexisting(untrackedNames.filter(file => isSafeCandidatePath(file) && !excluded.has(file)))
+    : new Set<string>();
   if (exclusions.length > MAX_CANDIDATE_FILES) reasons.push('candidate exclusion inventory limit reached');
-  const newFiles = candidatePaths(untrackedNames.filter(file => !excluded.has(file)));
+  const newFiles = candidatePaths(untrackedNames.filter(file => !excluded.has(file) && !untouched.has(file)));
   const changed = candidatePaths([...tracked, ...newFiles.paths]);
   // Never ask Git for secret/provider bodies, even for a tracked deletion.
   const trackedSet = new Set(tracked);
@@ -196,7 +224,9 @@ async function gitInventory(base: string, run: CandidateGitRead, currentState = 
     '--src-prefix=a/', '--dst-prefix=b/', base, '--', ...trackedPaths.map(file => `:(literal)${file}`),
   ]);
   return { changedPaths: changed.paths, deletedPaths: deleted.filter(file => changedSet.has(file)),
-    untrackedPaths: newFiles.paths, diff, excludedPaths: exclusions.slice(0, MAX_CANDIDATE_FILES), incompleteReasons: [...reasons, ...newFiles.reasons, ...changed.reasons] };
+    untrackedPaths: newFiles.paths, diff, excludedPaths: exclusions.slice(0, MAX_CANDIDATE_FILES),
+    ...(untouched.size > 0 ? { staleUntrackedPaths: [...untouched].sort() } : {}),
+    incompleteReasons: [...reasons, ...newFiles.reasons, ...changed.reasons] };
 }
 
 /** Claimed deliverables outside the inspected inventory cannot inherit its proof. */
@@ -241,6 +271,8 @@ export async function captureWorkingTreeCandidate(input: {
   readonly signal?: AbortSignal;
   /** Repo-relative claimed deliverables; excluded paths cannot inherit source-only proof. */
   readonly requiredPaths?: readonly string[];
+  /** Delta only: Main baseline observation time; untracked files untouched since then are excluded (F-1301). */
+  readonly untrackedSince?: number;
 }): Promise<WorkingTreeCandidateSnapshot> {
   abortIfNeeded(input.signal);
   const root = await fs.promises.realpath(input.scope.rootRealPath);
@@ -258,7 +290,9 @@ export async function captureWorkingTreeCandidate(input: {
   } catch {
     abortIfNeeded(input.signal);
   }
-  const inventory = headSha ? await gitInventory(input.baseSha ?? headSha, run, input.mode === 'current-state')
+  const since = input.untrackedSince;
+  const inventory = headSha ? await gitInventory(input.baseSha ?? headSha, run, input.mode === 'current-state',
+    since === undefined || !input.baseSha ? undefined : files => untouchedSince(root, files, since))
     : await filesystemInventory(input.scope, input.signal);
   const required = candidatePaths(input.requiredPaths ?? []);
   const requiredTracked = headSha && required.paths.length > 0
@@ -295,5 +329,8 @@ export async function captureWorkingTreeCandidate(input: {
     changedPaths: Object.freeze(changedPaths), deletedPaths: Object.freeze(deletedPaths),
     untrackedPaths: Object.freeze(untrackedPaths), diff, coveredPaths,
     complete: incompleteReasons.length === 0, incompleteReasons, excludedPaths: Object.freeze(inventory.excludedPaths ?? []),
+    // A declared deliverable read above is covered, not "outside the candidate".
+    ...(inventory.staleUntrackedPaths?.some(file => !coveredPaths.includes(file))
+      ? { staleUntrackedPaths: Object.freeze(inventory.staleUntrackedPaths.filter(file => !coveredPaths.includes(file))) } : {}),
   });
 }

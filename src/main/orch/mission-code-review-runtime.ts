@@ -8,7 +8,7 @@ import type { MissionCodeCandidate, MissionCodeReviewResult } from './mission-co
 export interface CodeReviewerSeat { readonly adapterId: string; readonly model: string; readonly effort?: string;
   readonly agentName?: string; readonly allowedTools?: readonly string[] | null; readonly allowedSkills?: readonly string[] | null }
 export interface CodeReviewerPane { readonly paneId: string; readonly sessionId: string; readonly failure?: string }
-export type CodeReviewBinding = Pick<MissionCodeCandidate, 'scope' | 'executionScope' | 'baseSha' | 'coverage'> & {
+export type CodeReviewBinding = Pick<MissionCodeCandidate, 'scope' | 'executionScope' | 'baseSha' | 'coverage' | 'untrackedSince'> & {
   readonly missionId: string;
   readonly intentVersion: number;
   readonly fingerprint: string;
@@ -109,6 +109,7 @@ export class MissionCodeReviewRuntime {
     if (ticket && (ticket.retiring || ticket.binding.fingerprint !== input.candidate.fingerprint ||
       ticket.binding.baseSha !== input.baseSha || ticket.binding.intentVersion !== (input.mission.intentVersion ?? 0) ||
       ticket.binding.headSha !== input.candidate.headSha || ticket.binding.coverage !== input.coverage ||
+      ticket.binding.untrackedSince !== input.untrackedSince ||
       ticket.binding.missionSignature !== codeReviewMissionSignature(input.mission) ||
       ticket.binding.executionScope.rootRealPath !== input.executionScope.rootRealPath)) {
       if (!await this.#retire(key, ticket)) return { kind: 'waiting', reason: 'A revisão anterior aguarda confirmação de saída física antes da próxima tentativa.' };
@@ -118,6 +119,8 @@ export class MissionCodeReviewRuntime {
       if (this.#tickets.size >= MAX_TICKETS) return { kind: 'waiting', reason: 'O registro de revisões aguarda liberação de missões encerradas.' };
       ticket = { retryAt: 0, controller: new AbortController(), binding: Object.freeze({ scope: Object.freeze({ ...input.scope }), executionScope: Object.freeze({ ...input.executionScope }),
         baseSha: input.baseSha, coverage: input.coverage, missionId: input.mission.id,
+        // F-1301: every recapture of this ticket must cut the same delta.
+        ...(input.untrackedSince !== undefined ? { untrackedSince: input.untrackedSince } : {}),
         intentVersion: input.mission.intentVersion ?? 0, fingerprint: input.candidate.fingerprint,
         headSha: input.candidate.headSha, missionSignature: codeReviewMissionSignature(input.mission),
         requiredPaths: Object.freeze([...(input.candidate.coveredPaths ?? input.candidate.changedPaths).filter(file => !input.candidate.deletedPaths.includes(file))]) }) };

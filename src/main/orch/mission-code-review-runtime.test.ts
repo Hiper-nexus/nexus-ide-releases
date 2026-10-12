@@ -42,6 +42,22 @@ function fixture() {
 }
 
 describe('Main candidate reviewer ownership', () => {
+  it('F-1301: every recapture of the ticket cuts the same delta (untrackedSince)', async () => {
+    const f = fixture();
+    const seen: Array<number | undefined> = [];
+    const original = f.ports.capture;
+    f.ports.capture = async binding => { seen.push(binding.untrackedSince); return original(binding); };
+    const input = { ...f.input, untrackedSince: 1_234 };
+    await f.runtime.ensure(input);
+    expect((await f.submit()).accepted).toBe(true);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every(value => value === 1_234)).toBe(true);
+    expect(f.runtime.receipt(f.input.scope, f.input.mission.id)?.binding.untrackedSince).toBe(1_234);
+    // Outro recorte = outro candidato: o ticket velho é aposentado.
+    await f.runtime.ensure({ ...f.input, untrackedSince: 9_999 });
+    expect(f.closed).toEqual(['review-1']);
+  });
+
   it('coalesces concurrent completion attempts into one independent reviewer', async () => {
     const f = fixture();
     const results = await Promise.all([f.runtime.ensure(f.input), f.runtime.ensure(f.input), f.runtime.ensure(f.input)]);

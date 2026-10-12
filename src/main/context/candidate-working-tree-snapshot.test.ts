@@ -243,3 +243,120 @@ it.each([false, true])('real Git unchanged required app still waits for independ
     ensureIndependentReview: review, assertCurrent: () => {} });
   expect(result.kind).toBe('waiting'); expect(review).toHaveBeenCalledOnce();
 });
+
+describe('F-1301: foreign untracked WIP that predates the mission baseline', () => {
+  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 25));
+  const newest = (file: string) => { const stat = fs.lstatSync(file); return Math.max(stat.ctimeMs, stat.mtimeMs); };
+
+  it('is not the mission delta: an oversized old video no longer blocks, new and re-touched files still count', async () => {
+    const { root, scope, run } = fixture(true);
+    const baseSha = run('rev-parse', 'HEAD');
+    // Campo 12/10: 42 MB de video-presentation/ de outro agente, sem commit,
+    // anteriores à missão — o candidato estourava o teto de 8 MB para sempre.
+    const video = path.join(root, 'video-presentation', 'nexus-presentation.mp4');
+    fs.mkdirSync(path.dirname(video), { recursive: true });
+    fs.writeFileSync(video, Buffer.alloc(9 * 1024 * 1024, 1));
+    fs.writeFileSync(path.join(root, 'old-notes.ts'), 'export const old = 1;\n');
+    await settle();
+    // Base observada 2 s (margem de relógio grosso) depois do WIP alheio.
+    const since = Math.max(newest(video), newest(path.join(root, 'old-notes.ts'))) + 1 + 2_000;
+    await settle();
+    fs.writeFileSync(path.join(root, 'mission.ts'), 'export const mine = 1;\n');
+
+    const blind = await captureWorkingTreeCandidate({ scope, baseSha });
+    expect(blind.complete).toBe(false);
+    expect(blind.incompleteReasons.join('\n')).toContain('video-presentation/nexus-presentation.mp4');
+
+    const delta = await captureWorkingTreeCandidate({ scope, baseSha, untrackedSince: since });
+    expect(delta.complete).toBe(true);
+    expect(delta.changedPaths).toEqual(['mission.ts']);
+    // Fora do delta, mas nomeados para o revisor — não misturados às exclusões de política.
+    expect(delta.staleUntrackedPaths).toEqual(['old-notes.ts', 'video-presentation/nexus-presentation.mp4']);
+    expect(delta.excludedPaths).toEqual([]);
+    expect(delta.coveredPaths).not.toContain('video-presentation/nexus-presentation.mp4');
+
+    // Entregável declarado continua lido mesmo sendo anterior à base.
+    const required = await captureWorkingTreeCandidate({ scope, baseSha, untrackedSince: since, requiredPaths: ['old-notes.ts'] });
+    expect(required.complete).toBe(true);
+    expect(required.coveredPaths).toContain('old-notes.ts');
+    // Coberto não é "fora do candidato".
+    expect(required.staleUntrackedPaths).toEqual(['video-presentation/nexus-presentation.mp4']);
+
+    // Sem base explícita o recorte por data não vale.
+    expect((await captureWorkingTreeCandidate({ scope, untrackedSince: since })).complete).toBe(false);
+
+    // Tocado depois da base = volta ao delta (e muda a impressão digital).
+    fs.appendFileSync(path.join(root, 'old-notes.ts'), 'export const edited = 2;\n');
+    const touched = await captureWorkingTreeCandidate({ scope, baseSha, untrackedSince: since });
+    expect(touched.changedPaths).toEqual(['mission.ts', 'old-notes.ts']);
+    expect(touched.fingerprint).not.toBe(delta.fingerprint);
+
+    // Revisão do estado atual não aceita o recorte por data.
+    const full = await captureWorkingTreeCandidate({ scope, mode: 'current-state', untrackedSince: since });
+    expect(full.changedPaths).toContain('video-presentation/nexus-presentation.mp4');
+    expect(full.complete).toBe(false);
+  });
+
+  it('an old symlink never leaves the delta by date', async () => {
+    const { root, scope, run } = fixture(true);
+    const baseSha = run('rev-parse', 'HEAD');
+    fs.symlinkSync('app.ts', path.join(root, 'old-link.ts'));
+    await settle();
+    const since = newest(path.join(root, 'old-link.ts')) + 1 + 2_000;
+    const snapshot = await captureWorkingTreeCandidate({ scope, baseSha, untrackedSince: since });
+    expect(snapshot.changedPaths).toEqual(['old-link.ts']);
+    expect(snapshot.staleUntrackedPaths).toBeUndefined();
+  });
+
+  it('a file written within 2 s before the baseline still counts as mission work (coarse clocks)', async () => {
+    const { root, scope, run } = fixture(true);
+    const baseSha = run('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(root, 'edge.ts'), 'export const edge = 1;\n');
+    const since = newest(path.join(root, 'edge.ts')) + 1_000;
+    expect((await captureWorkingTreeCandidate({ scope, baseSha, untrackedSince: since })).changedPaths).toEqual(['edge.ts']);
+  });
+
+  it('a docs-only delta keeps its exemption and names the old untracked WIP left outside', async () => {
+    const { scope, run } = fixture(true);
+    const baseSha = run('rev-parse', 'HEAD');
+    const snapshot = (stale: string[]) => ({
+      source: 'git' as const, headSha: baseSha, fingerprint: 'f', changedPaths: ['README.md'], coveredPaths: ['README.md'],
+      deletedPaths: [], untrackedPaths: ['README.md'], diff: '', complete: true, incompleteReasons: [],
+      ...(stale.length ? { staleUntrackedPaths: stale } : {}),
+    });
+    const mission = { id: 'f1301-docs', title: 'Fix code', intentContract: { lane: 'standard' }, intentVersion: 1, updatedAt: 1 } as Mission;
+    const mechanical = vi.fn(async () => { throw new Error('mechanical reached'); });
+    const ports = (stale: string[]) => ({ captureCandidate: async () => snapshot(stale), runMechanical: mechanical,
+      ensureIndependentReview: vi.fn(), assertCurrent: () => {} });
+    const clean = await ensureMissionCodeCompletion({ scope, executionScope: scope, mission, baselineSha: baseSha, authorSessionIds: [] }, ports([]));
+    expect(clean.kind).toBe('exempt');
+    // Negar a isenção prenderia a missão de docs no pré-requisito de testes;
+    // o WIP antigo fica nomeado na prova, nunca escondido.
+    const named = await ensureMissionCodeCompletion({ scope, executionScope: scope, mission, baselineSha: baseSha, authorSessionIds: [] }, ports(['src/feature.ts']));
+    expect(named.kind).toBe('exempt');
+    expect('proof' in named ? named.proof.note : '').toContain('não revisados (não rastreados anteriores à base): src/feature.ts');
+    expect('proof' in clean ? clean.proof.note : '').not.toContain('não revisados');
+    expect(mechanical).not.toHaveBeenCalled();
+  });
+
+  it('the completion gate passes the baseline time only for a delta and names the blocking files', async () => {
+    const { scope, run } = fixture(true);
+    const baseSha = run('rev-parse', 'HEAD');
+    const capture = vi.fn(async (_input: { untrackedSince?: number }) => ({
+      source: 'git' as const, headSha: baseSha, fingerprint: 'f', changedPaths: [], deletedPaths: [], untrackedPaths: [], diff: '',
+      complete: false, incompleteReasons: ['candidate file unavailable or outside limits: big.bin', 'b', 'c', 'd'],
+    }));
+    const mission = { id: 'f1301', title: 'Fix code', intentContract: { lane: 'standard' }, intentVersion: 1, updatedAt: 1 } as Mission;
+    const ports = { captureCandidate: capture, runMechanical: vi.fn(), ensureIndependentReview: vi.fn(), assertCurrent: () => {} };
+    const delta = await ensureMissionCodeCompletion({ scope, executionScope: scope, mission, baselineSha: baseSha,
+      baselineObservedAt: 1_234, authorSessionIds: [] }, ports);
+    expect(capture.mock.calls[0]![0].untrackedSince).toBe(1_234);
+    expect(delta.kind).toBe('blocked');
+    const reason = 'reason' in delta ? delta.reason : '';
+    expect(reason).toContain('outside limits: big.bin');
+    expect(reason).toContain('(+1)');
+    await ensureMissionCodeCompletion({ scope, executionScope: scope, mission, baselineSha: null,
+      baselineObservedAt: 1_234, authorSessionIds: [] }, ports);
+    expect(capture.mock.calls[1]![0].untrackedSince).toBeUndefined();
+  });
+});

@@ -46,6 +46,8 @@ export interface RunCandidateQualityAnalysisInput {
   readonly changedFiles: readonly string[];
   /** Commit review is unchanged; civilian review explicitly includes current/untracked files. */
   readonly candidateSource?: 'commit' | 'working-tree';
+  /** F-1301: working-tree delta excludes untracked files untouched since this baseline time. */
+  readonly untrackedSince?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -191,7 +193,8 @@ export async function runCandidateQualityAnalysis(
   }
   const git = dependencies.git ?? new AsyncProcessGitRunner();
   const scope = Object.freeze({ ...input.scope, rootRealPath: root });
-  const snapshotInput = { scope, baseSha: input.baseSha, git, signal: input.signal };
+  const snapshotInput = { scope, baseSha: input.baseSha, git, signal: input.signal,
+    ...(input.untrackedSince !== undefined ? { untrackedSince: input.untrackedSince } : {}) };
   const snapshot = input.candidateSource === 'working-tree'
     ? await captureWorkingTreeCandidate(snapshotInput)
     : null;

@@ -89,6 +89,8 @@ export interface CivilianMechanicalVerification {
 export interface CivilianAutoReviewInput {
   /** Explicit Main baseline for strict completion; null reviews current state. */
   readonly completionBaseSha?: string | null;
+  /** F-1301: when that baseline was observed; untracked files untouched since then are not the delta. */
+  readonly completionUntrackedSince?: number;
   /** Main mission/leader authority rechecked after resource waits. */
   readonly assertCurrentAuthority?: () => void;
   readonly mission: Mission;
@@ -385,6 +387,7 @@ export async function enforceCivilianAutoReview(
         diffHash,
         changedFiles,
         candidateSource: 'working-tree',
+        ...(input.completionBaseSha && input.completionUntrackedSince !== undefined ? { untrackedSince: input.completionUntrackedSince } : {}),
         ...(input.lifetime ? { signal: input.lifetime.signal } : {}),
       },
       dependencies.git ? { git: dependencies.git } : {},

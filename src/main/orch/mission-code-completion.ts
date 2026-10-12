@@ -11,6 +11,8 @@ export interface MissionCodeCompletionInput {
   readonly mission: Mission;
   /** Main-proved baseline; null requests an explicit current-state review. */
   readonly baselineSha: string | null;
+  /** When the Main baseline was observed; untracked files untouched since then are not this delta (F-1301). */
+  readonly baselineObservedAt?: number;
   readonly authorSessionIds: readonly string[];
   /** Main-resolved delivered/required artifacts, including unchanged files. */
   readonly requiredPaths?: readonly string[];
@@ -24,13 +26,15 @@ export interface MissionCodeCandidate {
   readonly baseSha: string | null;
   readonly coverage: 'delta' | 'current-state';
   readonly candidate: WorkingTreeCandidateSnapshot;
+  /** F-1301: Main baseline observation time behind the delta, when known. */
+  readonly untrackedSince?: number;
 }
 export type MissionCodeReviewResult =
   | { readonly kind: 'waiting' | 'unavailable'; readonly reason: string }
   | { readonly kind: 'reviewed'; readonly verdict: Omit<MissionReviewVerdict, 'headSha'> & { readonly headSha: string | null };
       readonly candidateFingerprint: string; readonly baseSha: string | null; readonly readOnly: boolean };
 export interface MissionCodeCompletionPorts {
-  captureCandidate(input: { scope: ProjectExecutionScope; baseSha?: string; mode: 'delta' | 'current-state'; requiredPaths?: readonly string[] }): Promise<WorkingTreeCandidateSnapshot>;
+  captureCandidate(input: { scope: ProjectExecutionScope; baseSha?: string; mode: 'delta' | 'current-state'; requiredPaths?: readonly string[]; untrackedSince?: number }): Promise<WorkingTreeCandidateSnapshot>;
   runMechanical(input: MissionCodeCandidate): Promise<CivilianAutoReviewOutcome>;
   ensureIndependentReview(input: MissionCodeCandidate): Promise<MissionCodeReviewResult>;
   assertCurrent(): void;
@@ -73,6 +77,14 @@ function docsOnly(paths: readonly string[]): boolean {
   });
 }
 
+/** F-1301: untracked WIP older than the baseline stays outside the certified candidate; name it, never hide it. */
+function staleNote(candidate: WorkingTreeCandidateSnapshot): string {
+  const stale = candidate.staleUntrackedPaths ?? [];
+  if (stale.length === 0) return '';
+  const shown = stale.slice(0, 20);
+  return `Fora do candidato e não revisados (não rastreados anteriores à base): ${shown.join(', ')}${stale.length > shown.length ? ` (+${stale.length - shown.length})` : ''}.`;
+}
+
 /** Stateless: the caller reuses the existing mission completion flight/retry owner. */
 export async function ensureMissionCodeCompletion(input: MissionCodeCompletionInput, ports: MissionCodeCompletionPorts): Promise<MissionCodeCompletionOutcome> {
   const { scope, executionScope, mission } = input;
@@ -93,20 +105,30 @@ export async function ensureMissionCodeCompletion(input: MissionCodeCompletionIn
   const lane = mission.intentContract?.lane ?? 'standard';
   if (input.textOnly || lane !== 'standard') return certify('non-code', undefined, undefined, [], 'Conclusão pela autoridade existente de texto/operação.');
   if (input.baselineSha !== null && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(input.baselineSha)) return refuse('code_baseline_invalid', 'A base de verificação precisa ser restaurada ou a revisão deve abranger o estado atual.');
+  const untrackedSince = coverage === 'delta' ? input.baselineObservedAt : undefined;
   const capture = () => ports.captureCandidate({ scope: executionScope, mode: coverage,
     ...(input.baselineSha ? { baseSha: input.baselineSha } : {}),
+    ...(untrackedSince !== undefined ? { untrackedSince } : {}),
     ...(input.requiredPaths?.length ? { requiredPaths: input.requiredPaths } : {}) });
   let candidate: WorkingTreeCandidateSnapshot;
   try { candidate = await capture(); } catch { ports.assertCurrent(); return refuse('code_candidate_unavailable', 'Não foi possível medir o candidato atual; arquivos e branches foram preservados.'); }
   ports.assertCurrent();
-  if (!candidate.complete) return refuse('code_candidate_incomplete', 'A leitura do candidato ficou incompleta; reduza o escopo da revisão ou restaure uma base conhecida.');
+  if (!candidate.complete) {
+    // F-1301: the operator must see WHICH files blocked the read.
+    const shown = candidate.incompleteReasons.slice(0, 3).join('; ');
+    const more = candidate.incompleteReasons.length > 3 ? ` (+${candidate.incompleteReasons.length - 3})` : '';
+    return refuse('code_candidate_incomplete', `A leitura do candidato ficou incompleta: ${shown}${more}. Reduza o escopo da revisão ou restaure uma base conhecida.`);
+  }
   if (coverage === 'delta' && (!candidate.headSha || candidate.source !== 'git')) return refuse('code_baseline_unavailable', 'A base Git não pôde ser consultada. Restaure o repositório ou revise explicitamente o estado atual.');
   const reviewPaths = [...new Set([...candidate.changedPaths, ...candidate.deletedPaths,
     ...(candidate.coveredPaths ?? []), ...(input.requiredPaths ?? [])])];
   // No diff is not proof of a fulfilled coding request. Existing code claimed
   // as the product must be reviewed too; a README cannot hide that artifact.
-  if (coverage === 'delta' && reviewPaths.length > 0 && docsOnly(reviewPaths)) return certify('non-code', candidate, undefined, [], 'Candidato documental sem entrega de código.');
-  const work: MissionCodeCandidate = { scope, executionScope, mission, baseSha: input.baselineSha, coverage, candidate };
+  if (coverage === 'delta' && reviewPaths.length > 0 && docsOnly(reviewPaths)) {
+    return certify('non-code', candidate, undefined, [], ['Candidato documental sem entrega de código.', staleNote(candidate)].filter(Boolean).join('\n'));
+  }
+  const work: MissionCodeCandidate = { scope, executionScope, mission, baseSha: input.baselineSha, coverage, candidate,
+    ...(untrackedSince !== undefined ? { untrackedSince } : {}) };
   let mechanical: CivilianAutoReviewOutcome;
   try { mechanical = await ports.runMechanical(work); } catch { ports.assertCurrent(); return refuse('code_checks_unavailable', 'As verificações mecânicas não terminaram; restaure as ferramentas necessárias e tente novamente.'); }
   ports.assertCurrent();
@@ -144,6 +166,7 @@ export async function ensureMissionCodeCompletion(input: MissionCodeCompletionIn
     regression?.testsRun.length ? '' : 'Não houve execução de testes: nenhum teste aplicável foi identificado; a cobertura fica limitada à revisão e aos demais checks aplicáveis.',
     coverage === 'current-state' ? 'Base histórica desconhecida: revisão do estado atual, sem atribuir autoria das alterações ou do WIP à missão.' : '',
     coverage === 'delta' ? 'A base delimita o candidato; ela não comprova autoria do WIP preexistente.' : '',
+    staleNote(fresh),
   ].filter(Boolean).join('\n');
   return certify('code', fresh, verdict.reviewerSession, [mechanical.evidenceId, verdict.verdictId], note);
 }
