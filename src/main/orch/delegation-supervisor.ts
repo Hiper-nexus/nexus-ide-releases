@@ -151,9 +151,28 @@ function hungWorkerNotifiedAtFor(
   return notified;
 }
 
+/**
+ * F-1380: última varredura que viu o PTY do worker com saída (busy/spawning),
+ * POR suite (F-725). O `working` semântico sozinho congela no começo do turno
+ * — a tela só publica na transição e CLI sem hook por ferramenta (muse, devin)
+ * não o renova — e a varredura que caía entre dois quadros do spinner via o
+ * PTY idle: turno longo com saída virava "travado".
+ */
+const hungWorkerOutputSeenAt = new Map<string, Map<string, number>>();
+
+/** Última atividade do worker: o status semântico ou a última saída vista. */
+export function workerLastActivityAt(
+  semanticUpdatedAt: number,
+  outputSeenAt: number | undefined,
+): number {
+  return Math.max(semanticUpdatedAt, outputSeenAt ?? semanticUpdatedAt);
+}
+
 export function decideWorkerHung(input: {
   readonly semanticStatus: string | undefined;
   readonly semanticUpdatedAt: number | undefined;
+  /** F-1380: última varredura que viu saída do PTY deste worker. */
+  readonly outputSeenAt?: number;
   readonly paneState: PaneRuntimeState | undefined;
   readonly notifiedAt: number | null;
   readonly now: number;
@@ -171,7 +190,10 @@ export function decideWorkerHung(input: {
   ) {
     return 'none';
   }
-  if (input.now - input.semanticUpdatedAt < WORKER_HUNG_AFTER_MS) {
+  if (
+    input.now - workerLastActivityAt(input.semanticUpdatedAt, input.outputSeenAt) <
+    WORKER_HUNG_AFTER_MS
+  ) {
     return 'none';
   }
   if (input.notifiedAt === null) return 'notify';
@@ -606,6 +628,8 @@ async function notifyHungWorkerPanes(
   current: () => boolean,
 ): Promise<void> {
   const notifiedAt = hungWorkerNotifiedAtFor(suite);
+  const outputSeenAt = hungWorkerOutputSeenAt.get(scopeKey(suite)) ?? new Map<string, number>();
+  hungWorkerOutputSeenAt.set(scopeKey(suite), outputSeenAt);
   for (const hint of panes) {
     await context.checkpoint();
     if (!current()) return;
@@ -613,17 +637,19 @@ async function notifyHungWorkerPanes(
       live.sessionId === hint.sessionId && live.missionId === mission.id);
     if (!pane) continue;
     if (pane.role !== 'worker' || !pane.sessionId) continue;
+    if (pane.state === 'busy' || pane.state === 'spawning') outputSeenAt.set(pane.sessionId, now);
     const semantic = getAgentSemanticStatusBySession(pane.sessionId);
     const decision = decideWorkerHung({
       semanticStatus: semantic?.status,
       semanticUpdatedAt: semantic?.updatedAt,
+      outputSeenAt: outputSeenAt.get(pane.sessionId),
       paneState: pane.state,
       notifiedAt: notifiedAt.get(pane.sessionId) ?? null,
       now,
     });
     if (decision === 'none') continue;
     notifiedAt.set(pane.sessionId, now);
-    const updatedAt = semantic!.updatedAt!;
+    const updatedAt = workerLastActivityAt(semantic!.updatedAt!, outputSeenAt.get(pane.sessionId));
     const hungMinutes = Math.max(1, Math.floor((now - updatedAt) / 60_000));
     const last = new Date(updatedAt);
     const hhmm =
@@ -1669,6 +1695,12 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
       if (!liveSessionIds.has(sessionId)) seenBySession.delete(sessionId);
     }
   }
+  const outputSeenAt = hungWorkerOutputSeenAt.get(scopeKey(suite));
+  if (outputSeenAt) {
+    for (const sessionId of [...outputSeenAt.keys()]) {
+      if (!liveSessionIds.has(sessionId)) outputSeenAt.delete(sessionId);
+    }
+  }
 }
 
 const suites = new Map<string, ProjectDomainStoreSuite>();
@@ -1744,6 +1776,7 @@ export async function shutdownDelegationSupervisor(): Promise<void> {
   zeroDeliverySeen.clear();
   handoffRearmLastRun.clear();
   hungWorkerNotifiedAt.clear();
+  hungWorkerOutputSeenAt.clear();
   momentumSoloSince.clear();
   momentumNudgedAt.clear();
   momentumReadySince.clear();

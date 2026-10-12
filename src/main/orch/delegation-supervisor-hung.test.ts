@@ -238,6 +238,39 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
     expect(h.submit).not.toHaveBeenCalled();
   });
 
+  it('F-1380: worker sem hook de ferramenta com o PTY saindo não é travado; parado de verdade avisa com a última saída', async () => {
+    // Campo 12/10: "[travado] Muse · s240-env … há 60 min (última atividade
+    // 06:55)" e "devin … há 29 min (06:35)": as duas horas eram o nascimento
+    // do pane. A tela seguia "◈ Thinking (5m 20s…)" e os dois entregaram. O
+    // `working` semântico congela (tela só publica na transição; muse não tem
+    // hook, devin não pulsa por ferramenta) e a varredura que caía entre dois
+    // quadros do spinner via o PTY idle.
+    const mission = runningMission();
+    h.onScope!(SCOPE, suite(mission));
+    const panes = (workerState: string) => [
+      { paneId: 'pane-orch', sessionId: 'session-orch', title: 'Maestro', kind: 'cli-agent',
+        role: 'orchestrator', state: 'busy', missionId: mission.id },
+      { paneId: 'pane-mv52tnjk-2c', sessionId: 'session-muse', title: 'Muse · s240-env', kind: 'cli-agent',
+        role: 'worker', state: workerState, adapterId: 'muse', missionId: mission.id },
+    ];
+    h.getSemantic.mockImplementation((sessionId: string) =>
+      sessionId === 'session-muse'
+        ? { status: 'working', updatedAt: NOW - 60 * 60_000 }
+        : { status: 'working', updatedAt: NOW - 10_000 },
+    );
+
+    h.listPaneSnapshots.mockReturnValue(panes('busy') as never);
+    await reconcileDelegationSupervisor(NOW);
+    h.listPaneSnapshots.mockReturnValue(panes('idle') as never);
+    await reconcileDelegationSupervisor(NOW + 15_000);
+    expect(h.submit).not.toHaveBeenCalled();
+
+    // 20 min sem saída desde a última vista: aí é travado, contado dela.
+    await reconcileDelegationSupervisor(NOW + WORKER_HUNG_AFTER_MS + 1_000);
+    expect(h.submit).toHaveBeenCalledTimes(1);
+    expect(h.submit.mock.calls[0]![0].summary).toContain('há 20 min');
+  });
+
   it('F-725: com dois projetos abertos o worker travado é avisado uma vez, não a cada varredura', async () => {
     // Campo 02/10: "[travado] worker DeepSeek … há 45/46 min" saiu a cada
     // 15 s. A limpeza do aviso usava as sessões vivas de UMA suite e apagava
