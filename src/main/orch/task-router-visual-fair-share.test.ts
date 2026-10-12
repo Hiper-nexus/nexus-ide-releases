@@ -129,7 +129,17 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
       expect(decision.reason).toContain('Next/jogo → Opus 5.5 (regra do operador)');
     });
 
-  it.each(['landing em Next.js', 'jogo em canvas'])('B1: Next.js e jogo com contexto continuam Opus max: %s', (task) => {
+  it.each([
+    'explain game theory examples in the browser docs', 'explicar a teoria dos jogos no navegador',
+    'the name of the game is the 2d array', 'fix the pricing game on the strategy canvas',
+    'criar exemplos de teoria dos jogos',
+  ])('Grok: teoria dos jogos e expressão idiomática não pinam Opus: %s', (task) => {
+    const decision = route(task, everyone, { visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]) });
+    expect(decision.reason).not.toContain('Next/jogo');
+    expect(decision.model).not.toBe('claude-opus-5-5');
+  });
+
+  it.each(['landing em Next.js', 'fazer um jogo em canvas'])('B1: Next.js e jogo com contexto continuam Opus max: %s', (task) => {
     const decision = route(task, everyone, { visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]) });
     expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5', effort: 'max', specialty: 'visual' });
     expect(decision.reason).toContain('Next/jogo → Opus 5.5 (regra do operador)');

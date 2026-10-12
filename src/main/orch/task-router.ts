@@ -701,8 +701,9 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
 const BOUNDED = (body: string) => new RegExp(`(?<![\\p{L}\\p{N}_])(?:${body})(?![\\p{L}\\p{N}_])`, 'iu');
 // Revisão Grok: "next app" casava inglês genérico ("prepare the next app release").
 const NEXT_FRONT_RE = BOUNDED('next(?:\\.|[-\\s]+)?js|app\\s+router|create-next-app|phaser|three\\.js|unity\\s+webgl');
-const GAME_WORD_RE = BOUNDED('(?:web\\s+)?games?|jogos?');
-const GAME_CONTEXT_RE = BOUNDED('canvas|phaser|three\\.js|unity|webgl|html5|browser|navegador|2d|3d');
+// Revisão Grok: "game/jogo + browser/2d/canvas" pinava Opus em teoria dos
+// jogos e expressão idiomática — esses trechos saem antes da intenção.
+const NOT_A_GAME_RE = /teoria\s+d[eoa]s?\s+jogos?|teoría\s+d[eoa]s?\s+jogos?|game[-\s]+theor\w*|name\s+of\s+the\s+game/giu;
 // Revisão Grok: JOGO É SEMPRE Opus 5.5 max (regra do operador) — basta a
 // intenção de construir um jogo (verbo de construção + jogo/game) ou uma
 // engine/gênero de jogo, sem exigir palavra de contexto de front.
@@ -713,14 +714,14 @@ const GAME_BUILD_RE = new RegExp(
 const GAME_ENGINE_RE = BOUNDED('godot|unity|unreal|pygame|bevy|raylib|love2d|roguelike|platformer');
 
 /**
- * F-1400 B1 (revisão Fable): a regra Next/jogo → Opus max só vale para
- * Next.js/app router (e engines de jogo web) e para jogo COM contexto de
- * front. "next" e "game" soltos ("the next release", "game theory") não são
- * front.
+ * F-1400 B1 (revisões Fable e Grok): a regra Next/jogo → Opus max vale para
+ * Next.js/app router/create-next-app, para a intenção de construir um jogo e
+ * para engines/gêneros de jogo. "next" e "game" soltos ("the next release",
+ * "game theory", "the name of the game") não são front.
  */
 export function isNextOrGameTask(text: string): boolean {
-  return NEXT_FRONT_RE.test(text) || GAME_BUILD_RE.test(text) || GAME_ENGINE_RE.test(text) ||
-    (GAME_WORD_RE.test(text) && GAME_CONTEXT_RE.test(text));
+  const gameText = text.replace(NOT_A_GAME_RE, ' ');
+  return NEXT_FRONT_RE.test(text) || GAME_BUILD_RE.test(gameText) || GAME_ENGINE_RE.test(gameText);
 }
 
 /**
