@@ -71,8 +71,11 @@ describe('secure dropped-file staging', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe('evidência');
     expect(fs.lstatSync(file).isFile()).toBe(true);
     expect(fs.lstatSync(file).isSymbolicLink()).toBe(false);
-    expect(fs.statSync(droppedDir()).mode & 0o777).toBe(0o700);
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    // Windows não tem modo POSIX: diretório/arquivo reportam 0o666.
+    const dirMode = process.platform === 'win32' ? 0o666 : 0o700;
+    const fileMode = process.platform === 'win32' ? 0o666 : 0o600;
+    expect(fs.statSync(droppedDir()).mode & 0o777).toBe(dirMode);
+    expect(fs.statSync(file).mode & 0o777).toBe(fileMode);
   });
 
   it('does not follow or replace a pre-existing symlink', () => {
@@ -151,8 +154,10 @@ describe('workspace mission-context import', () => {
     expect(fs.existsSync(result.absolutePath ?? '')).toBe(true);
     const abs = path.join(root, result.path);
     expect(fs.readFileSync(abs, 'utf8')).toBe('audio-bytes');
-    expect(fs.statSync(path.dirname(abs)).mode & 0o777).toBe(0o700);
-    expect(fs.statSync(abs).mode & 0o777).toBe(0o600);
+    const dirMode = process.platform === 'win32' ? 0o666 : 0o700;
+    const fileMode = process.platform === 'win32' ? 0o666 : 0o600;
+    expect(fs.statSync(path.dirname(abs)).mode & 0o777).toBe(dirMode);
+    expect(fs.statSync(abs).mode & 0o777).toBe(fileMode);
     expect(path.isAbsolute(result.path)).toBe(false);
 
     const mirror = path.join(
@@ -389,10 +394,13 @@ describe('durable mission attachment validation', () => {
       validateDroppedAttachmentPaths([file], { homeDir }),
     ).toThrow(/link/i);
 
-    const controlPath = regularFile('line\nbreak.txt', 128);
-    expect(() =>
-      validateDroppedAttachmentPaths([controlPath], { homeDir }),
-    ).toThrow(/path is invalid/i);
+    // O Windows não permite criar arquivo com caractere de controle no nome.
+    if (process.platform !== 'win32') {
+      const controlPath = regularFile('line\nbreak.txt', 128);
+      expect(() =>
+        validateDroppedAttachmentPaths([controlPath], { homeDir }),
+      ).toThrow(/path is invalid/i);
+    }
   });
 
   it('rejects a regular file owned by a different POSIX uid', () => {
@@ -520,7 +528,9 @@ describe('sealed mission attachment lifecycle', () => {
     expect(sealed.sealId).toBe('0123456789abcdef0123456789abcdef');
     expect(sealed.device).toMatch(/^[0-9]+$/);
     expect(sealed.inode).toMatch(/^[0-9]+$/);
-    expect(fs.lstatSync(sealed.path).mode & 0o777).toBe(0o400);
+    // Read-only no Windows reporta 0o444; 0o400 exato é POSIX.
+    const sealedMode = process.platform === 'win32' ? 0o444 : 0o400;
+    expect(fs.lstatSync(sealed.path).mode & 0o777).toBe(sealedMode);
     expect(fs.lstatSync(sealed.path).nlink).toBe(1);
   });
 

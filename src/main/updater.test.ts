@@ -305,6 +305,11 @@ describe('UpdateManager', () => {
     beforeEach(() => {
       tmp = mkdtempSync(path.join(os.tmpdir(), 'updater-tmpdir-'));
       vi.stubEnv('TMPDIR', tmp);
+      // No Windows, os.tmpdir() ignora TMPDIR e lê TEMP/TMP.
+      if (process.platform === 'win32') {
+        vi.stubEnv('TEMP', tmp);
+        vi.stubEnv('TMP', tmp);
+      }
     });
     afterEach(() => {
       rmSync(tmp, { recursive: true, force: true });

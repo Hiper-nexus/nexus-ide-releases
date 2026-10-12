@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.241 — Windows de verdade
+
+A suíte inteira do vitest rodou num Windows real (25576 testes) e expôs os pontos de produção que assumiam POSIX. Todos foram portados:
+
+- **Anexos lacrados e dropped-files no Windows.** O modo POSIX exato (0o700/0o400) só é exigido fora do win32; no Windows o lacre usa o bit read-only e a privacidade vem da ACL do perfil. As provas de identidade dev/ino/nlink do NTFS se mantêm.
+- **Pet Studio instala de ponta a ponta.** `fsync` com handle `O_RDONLY` dá EPERM no Windows — agora abre `O_RDWR`, e o fsync de diretório é pulado (o rename já é o commit).
+- **Consent do smoke aceita perfil Windows.** `privateDirectory` não exige mais uid/modo POSIX no win32; isDirectory/not-symlink/realpath continuam valendo em qualquer plataforma.
+- **Fixture do atualizador (F-1280).** O teste stuba `TEMP`/`TMP`, que é o que `os.tmpdir()` lê no Windows.
+
 ## 0.76.240 — Escrever, julgar, devolver
 
 Varredura interna s240: 11 sondas em 11 LLMs testaram o Nexus por dentro. Os 80+ achados (F-1302..F-1389) foram corrigidos com teste RED, julgados pelo orquestrador e aprovados pelo Fable depois de 4 rodadas de revisão. Ficaram 7 decisões de produto registradas como `precisa-decisao`: F-1320 p2, F-1332 p2, F-1345, F-1358 p2, F-1363, F-1386 e F-1389.
