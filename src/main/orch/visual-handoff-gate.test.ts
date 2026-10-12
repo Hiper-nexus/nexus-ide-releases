@@ -31,6 +31,32 @@ it('F-1271: o bloco <business-model> montado na frente não torna visual uma tar
   expect(visualTaskRequirement(`Corrija o bug no layout da tela de login citando ${block}`, 1000)).toBeDefined();
 });
 
+it('F-1311: palavra de UI em lista de exemplos ou nome de ferramenta não torna a tarefa visual', () => {
+  // s240: o prompt da sonda citava "UI/design" dentro de uma lista de
+  // tarefas de exemplo e o pane nasceu com visualTask; o spawn de
+  // ferramentas citava "browser"/"design system" como nomes de ferramenta.
+  expect(visualTaskRequirement(
+    'Sonda: avaliar se o Nexus sugere a especialidade certa para tarefas como UI/design, front-end e jogos.',
+    1000,
+  )).toBeUndefined();
+  expect(visualTaskRequirement(
+    'Sonda: medir as ferramentas de código (browser, design system, terminal, git) e registrar a cobertura.',
+    1000,
+  )).toBeUndefined();
+  expect(visualTaskRequirement(
+    'Avalie o roteamento de skills: para cada tarefa de exemplo ("crie uma landing page", "redesenhe o dashboard"), registre a skill esperada.',
+    1000,
+  )).toBeUndefined();
+  expect(visualTaskRequirement(
+    'Inventário: liste as skills instaladas, incluindo `impeccable` e `design system`.',
+    1000,
+  )).toBeUndefined();
+  // O pedido visual continua visual — só enumeração/contexto foi removido.
+  expect(visualTaskRequirement('Crie a tela de login com layout responsivo.', 1000)).toBeDefined();
+  expect(visualTaskRequirement('Corrija o bug no layout responsivo da tela de login.', 1000)).toBeDefined();
+  expect(visualTaskRequirement('Redesenhe o dashboard com hierarquia visual e modo escuro.', 1000)).toBeDefined();
+});
+
 it('derives a visual requirement from the assigned task, not from a completion claim', () => {
   expect(visualTaskRequirement('Crie a tela de login com layout responsivo.', 1000)).toEqual({ since: 1000, id: expect.any(String) });
   expect(visualTaskRequirement('Documente os endpoints da API de login.', 1000)).toBeUndefined();

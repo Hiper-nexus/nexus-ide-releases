@@ -26,11 +26,40 @@ export type VisualHandoffVerdict = { readonly required: false; readonly verified
 export function createVisualTaskRequirement(now = Date.now(), id: string = randomUUID()): VisualTaskRequirement {
   return Object.freeze({ since: now, id });
 }
+/**
+ * F-1311 — o pedido é visual, não o contexto em volta dele.
+ *
+ * Uma palavra de UI dentro de uma LISTA de exemplos ("tarefas como UI/design,
+ * front-end e jogos"), uma enumeração de ferramentas ("(browser, design
+ * system, terminal)"), um nome de ferramenta citado entre aspas/crases ou um
+ * par de opções separado por barra ("UI/design") não provam que a tarefa
+ * toca interface — o s240 teve pane de avaliação de roteamento marcado
+ * visualTask por causa disso. O que sobra depois de tirar essas enumerações
+ * é que é classificado; um pedido visual direto ("crie a tela de login")
+ * sobrevive porque não é enumeração.
+ */
+const ENUMERATION_INTRODUCER =
+  /\b(?:como|tais como|por exemplo|incluindo|incluem|e\.?\s?g\.?|exemplos?(?:\s+de)?|ferramentas?|tools?|skills?|cite|liste|nomeie|enumere|mencione)\s*:?[^\n.;]*/giu;
+/** Enumeração entre parênteses: só valem as que listam itens (vírgula, barra ou "e"). */
+const PAREN_ENUMERATION = /\([^()\n]*(?:[,\/]|\se\s)[^()\n]*\)/gu;
+const QUOTED_SPAN = /(["'`«»“”‘’])[^"'`«»“”‘’\n]*\1/g;
+const SLASH_OPTION = /\b[\p{L}][\p{L}\p{N}]*\/[\p{L}\p{N}\/]*\b/gu;
+
+function withoutEnumerationContext(text: string): string {
+  return text
+    .replace(QUOTED_SPAN, ' ')
+    .replace(PAREN_ENUMERATION, ' ')
+    .replace(ENUMERATION_INTRODUCER, ' ')
+    .replace(SLASH_OPTION, ' ');
+}
+
 export function visualTaskRequirement(assignment: string | undefined, now = Date.now(), id?: string): VisualTaskRequirement | undefined {
   if (!assignment) return undefined;
   // F-1271: os blocos de contexto montados na frente (<business-model> com as
   // invariantes de UI do projeto, <workspace-memory>…) não são a tarefa.
-  const text = withoutMountedPromptContextBlocks(assignment).slice(0, 16_384);
+  const text = withoutEnumerationContext(
+    withoutMountedPromptContextBlocks(assignment),
+  ).slice(0, 16_384);
   // A UI defect is still a visual delivery. Requiring a capture does not
   // reclassify it as new design work or grant design-authority capabilities.
   const required = requiresDesignAuthority(text) || (classifyWorkKind(text).kind === 'bug' && isUiWorkText(text));
