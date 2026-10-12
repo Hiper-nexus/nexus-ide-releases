@@ -414,14 +414,64 @@ describe("WorktreeManager", () => {
     expect(manager.get(scope, "operator-hand", "pane-old")?.status).toBe("failed");
   });
 
-  it("F-1253: dois writers ATIVOS em refs de integração diferentes continuam recusados", async () => {
-    const scope = projectScope();
-    await manager.create({ scope, missionId: "operator-hand", taskId: "pane-a", workerId: "a",
-      ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["pane-a"] } });
-    git(root, "checkout", "-q", "-b", "feat/outra");
-    await expect(makeManager().create({ scope, missionId: "operator-hand", taskId: "pane-b", workerId: "b",
-      ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["pane-b"] } }))
-      .rejects.toThrow(/integration ref/);
+  describe("F-1422: writers isolados paralelos enquanto a integração anda", () => {
+    /** Avança `refs/heads/integ` com um commit novo, sem mexer no checkout. */
+    function advanceInteg(message: string): string {
+      const parent = git(root, "rev-parse", "refs/heads/integ");
+      const tree = git(root, "rev-parse", `${parent}^{tree}`);
+      const next = execFileSync("git", ["-C", root, "commit-tree", tree, "-p", parent, "-m", message], {
+        encoding: "utf8",
+      }).trim();
+      git(root, "update-ref", "refs/heads/integ", next, parent);
+      return next;
+    }
+    function paneWriter(m: WorktreeManager, id: string) {
+      return m.create({ scope: projectScope(), missionId: "mission-94d90f5b", taskId: `pane-${id}`, workerId: id,
+        ownerKind: "pane", baseRef: "integ", ownership: { files: [], symbols: [], domains: [`pane-${id}`] } });
+    }
+
+    beforeEach(() => {
+      git(root, "branch", "integ");
+    });
+
+    it("writer A ativo na base X, a integ avança, writer B nasce na base Y", async () => {
+      const a = await paneWriter(manager, "devin");
+      const y = advanceInteg("cherry-pick novo na integ");
+      const b = await paneWriter(makeManager(), "codex");
+      expect(a.baseSha).not.toBe(b.baseSha);
+      expect(b.baseSha).toBe(y);
+      expect(a.integrationRef).toBe(b.integrationRef);
+      expect(manager.get(projectScope(), "mission-94d90f5b", "pane-devin")?.status).toBe("ready");
+    });
+
+    it("o checkout de coordenação troca de branch com A ativo: B ainda nasce (caso de produção)", async () => {
+      const a = await paneWriter(manager, "devin");
+      advanceInteg("cherry-pick novo na integ");
+      // Ao vivo: o checkout principal foi de feat/orc-outbox… para t3/t31/t32.
+      git(root, "checkout", "-q", "-b", "t32");
+      const b = await paneWriter(makeManager(), "codex");
+      expect(a.integrationRef).toBe("refs/heads/main");
+      expect(b.integrationRef).toBe("refs/heads/t32");
+      expect(b.baseSha).toBe(git(root, "rev-parse", "refs/heads/integ"));
+      const active = [
+        manager.get(projectScope(), "mission-94d90f5b", "pane-devin"),
+        manager.get(projectScope(), "mission-94d90f5b", "pane-codex"),
+      ];
+      expect(active.map((record) => record?.status)).toEqual(["ready", "ready"]);
+      // Cada um integra só no próprio ref: A recusa enquanto o checkout não estiver nele.
+      expect(() => manager.inspectIntegration(active[0]!)).toThrow(/integration branch changed/);
+      expect(manager.inspectIntegration(active[1]!).integrationRef).toBe("refs/heads/t32");
+    });
+
+    it("raiz de checkout divergente continua recusada e diz qual valor e de quem", async () => {
+      const a = await paneWriter(manager, "devin");
+      const b = await paneWriter(manager, "agy");
+      const scopeKey = manager.scopeKey(projectScope());
+      stateStore.overwrite(scopeKey, [a, { ...b, rootRealPath: path.join(tempDir, "outra-raiz") }]);
+      expect(() => makeManager().get(projectScope(), "mission-94d90f5b", "pane-devin")).toThrow(
+        new RegExp(`checkout root: writer devin .*${a.rootRealPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}, writer agy .*outra-raiz`),
+      );
+    });
   });
 
   it("vincula panes/sessões ao writer de pane de forma durável; registros antigos seguem válidos", async () => {
