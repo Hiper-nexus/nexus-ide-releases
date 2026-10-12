@@ -375,6 +375,12 @@ describe('built-in Review P0–P3 squad', () => {
       expect(squad?.orchestratorInstructions).toContain('1 commit por finding');
     });
 
+    it('F-1297: nativeInstructions de squad builtin não cita caminho resources/ do repositório', () => {
+      for (const squad of BUILTIN_SQUADS) {
+        expect(squad.nativeInstructions ?? '', squad.id).not.toMatch(/\bresources\/[a-z-]+\//);
+      }
+    });
+
     it('absurd-landing e cinema-site carregam com pipelines de design e mídia (T8)', () => {
       const landing = BUILTIN_SQUADS.find((s) => s.id === 'absurd-landing');
       expect(landing).toBeDefined();

@@ -850,7 +850,7 @@ const RAW_SQUADS: Squad[] = [
       '8. allowedSkills: Vincula o worker folha, nunca o chef.\n' +
       '9. Sub-prompts em inglês em todos os níveis internos; chat com humano em pt-BR.\n' +
       '10. Cleanup obrigatório: Cada nível fecha seus filhos com nexus_pane_close após colher o handoff.\n',
-    nativeInstructions: 'Playbook: resources/qa-swarm/PLAYBOOK.md',
+    nativeInstructions: 'O playbook deste squad já está nas instruções do orquestrador.',
     agents: [
       {
         id: 'orch',
@@ -918,7 +918,7 @@ const RAW_SQUADS: Squad[] = [
       '2. Faixas de ID por reviewer: cada reviewer recebe uma faixa exclusiva (ex. F-100 a F-199) para evitar colisões.\n' +
       '3. Validação antes de marcar corrigido: execute npx tsc --noEmit e npx vitest run path/to/file.test.ts.\n' +
       '4. 1 commit por finding: cada finding commitado individualmente (fix(qa): F-XXX ...), nunca git add -A ou git add .\n',
-    nativeInstructions: 'Playbook: resources/qa-vision/PLAYBOOK.md',
+    nativeInstructions: 'O playbook deste squad já está nas instruções do orquestrador.',
     agents: [
       {
         id: 'orch',
@@ -967,7 +967,7 @@ const RAW_SQUADS: Squad[] = [
       '2. UI Design & Design System: Design tokens, hierarquia visual e composição (UI Designer).\n' +
       '3. Frontend Engineering: Implementação React/Tailwind limpa, responsiva e performática (Frontend Engineer).\n' +
       '4. Screenshot Review: Validação visual via capturas reais e auditoria contra slop (Screenshot Reviewer).\n',
-    nativeInstructions: 'Playbook: resources/absurd-landing/PLAYBOOK.md',
+    nativeInstructions: 'O playbook deste squad já está nas instruções do orquestrador.',
     agents: [
       {
         id: 'orch',
@@ -1029,7 +1029,7 @@ const RAW_SQUADS: Squad[] = [
       '2. Produção de Mídia: Assets visuais e áudio coordenados via governed media tools.\n' +
       '3. Web Builder: Arquitetura frontend com canvas/WebGL, scroll cinematográfico e performance 60fps.\n' +
       '4. Editor: Montagem, timing e polimento final.\n',
-    nativeInstructions: 'Playbook: resources/cinema-site/PLAYBOOK.md',
+    nativeInstructions: 'O playbook deste squad já está nas instruções do orquestrador.',
     agents: [
       {
         id: 'orch',
