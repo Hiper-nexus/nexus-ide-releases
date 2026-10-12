@@ -178,7 +178,10 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
 
     const next = await watch.reroute!(['qwen']);
     expect(next).toEqual({ paneId: 'pane-2', adapterId: 'codex' });
+    // F-1316: o reenvio classifica pelo mesmo brief da rota original.
+    expect(resolver.mock.calls[0]![2]).toMatchObject({ classificationPrompt: 'faça o login' });
     expect(resolver).toHaveBeenLastCalledWith('implementar o login', orchestrator, {
+      classificationPrompt: 'faça o login',
       excludeAdapterIds: ['qwen'],
     });
     // A reserva gasta pelo spawn que falhou não é reaproveitada: a rota nova
@@ -204,7 +207,9 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
     );
     expect(h.spawn.mock.calls[0]![0]).toMatchObject({ adapterId: 'qwen' });
     await getPaneStartWatch('pane-1')!.reroute!(['qwen']);
-    expect(resolver).toHaveBeenCalledWith('revisar', orchestrator, { excludeAdapterIds: ['qwen'] });
+    expect(resolver).toHaveBeenCalledWith('revisar', orchestrator, {
+      classificationPrompt: 'revise', excludeAdapterIds: ['qwen'],
+    });
     expect(h.assertRouteReservation).toHaveBeenLastCalledWith(
       expect.objectContaining({ reservationId: 'rr-9', adapterId: 'codex' }),
     );
@@ -266,7 +271,10 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
     });
     expect(next).toEqual({ paneId: 'pane-2', adapterId: 'qwen' });
     // A rota segue a tarefa original; a mesma CLI entra só como preferência.
+    // F-1316: o pacote (arquivos tocados, trecho do terminal) não entra na
+    // classificação — só o brief original.
     expect(resolver).toHaveBeenLastCalledWith('implementar o login', orchestrator, {
+      classificationPrompt: 'faça o login',
       preferAdapterIds: ['qwen'],
     });
     const prompt = String(h.spawn.mock.calls[1]![0].prompt);

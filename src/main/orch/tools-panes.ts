@@ -1143,6 +1143,11 @@ const paneSpawnAfterTabMission = {
     const recoveryExcluded = startRecovery?.excludeAdapterIds ?? [];
     // F-765: a reabertura pelo failover prefere (sem fixar) a CLI de antes.
     const recoveryPreferred = startRecovery?.preferAdapterIds ?? [];
+    // F-1316: a rota classifica pelo brief ORIGINAL — no reenvio, o pacote de
+    // continuidade (arquivos tocados, trecho do terminal) não entra na rota.
+    const classificationPrompt = startRecovery
+      ? startRecovery.classificationPrompt
+      : str(args, 'prompt');
     // F-775: e continua na worktree isolada do pane parado, onde está o
     // trabalho não commitado. Indisponível → writer novo, como antes.
     const recoveryWorktree = (missionId: string | undefined) => {
@@ -1289,7 +1294,7 @@ const paneSpawnAfterTabMission = {
         let route: Record<string, unknown>;
         try {
           route = await operatorRouteResolver!(task, ctx, {
-            ...(str(args, 'prompt') ? { classificationPrompt: str(args, 'prompt') } : {}),
+            ...(classificationPrompt ? { classificationPrompt } : {}),
             tieBreakUseCounts,
             excludeAdapterIds:
               recoveryExcluded.length > 0
@@ -1505,7 +1510,7 @@ const paneSpawnAfterTabMission = {
             task,
             ctx,
             {
-              ...(str(args, 'prompt') ? { classificationPrompt: str(args, 'prompt') } : {}),
+              ...(classificationPrompt ? { classificationPrompt } : {}),
               ...(ctx.promotedFromUserSession === true || recoveryExcluded.length > 0
                 ? {
                     excludeAdapterIds: [
@@ -2420,6 +2425,7 @@ const paneSpawnAfterTabMission = {
               callerSessionId,
               args,
               ...request,
+              classificationPrompt,
               lineageId,
               generation: rerouteGeneration + 1,
               ...(rosterSquadId ? { rosterSuccessor: rosterSuccessor() ?? null } : {}),
@@ -2698,6 +2704,8 @@ interface PaneStartRecovery {
   readonly worktreeFromPaneId?: string;
   /** F-775: pane do pedido original — as reaberturas são a mesma tarefa. */
   readonly lineageId?: string;
+  /** F-1316: prompt do pedido original, só para classificar a rota. */
+  readonly classificationPrompt?: string;
 }
 
 /**
@@ -2779,6 +2787,8 @@ async function rerouteNotStartedSpawn(input: {
   readonly preferAdapterIds?: readonly string[];
   /** F-775: texto do Nexus anexado ao brief (pacote de continuidade). */
   readonly appendPrompt?: string;
+  /** F-1316: prompt do pedido original; a rota do reenvio classifica por ele. */
+  readonly classificationPrompt?: string;
   /** F-775: continuar na worktree isolada deste pane (o parado). */
   readonly worktreeFromPaneId?: string;
   /** F-775: pane do pedido original (a tarefa é a mesma). */
@@ -2845,6 +2855,7 @@ async function rerouteNotStartedSpawn(input: {
         ...(input.preferAdapterIds?.length ? { preferAdapterIds: input.preferAdapterIds } : {}),
         ...(input.worktreeFromPaneId ? { worktreeFromPaneId: input.worktreeFromPaneId } : {}),
         ...(input.lineageId ? { lineageId: input.lineageId } : {}),
+        ...(input.classificationPrompt ? { classificationPrompt: input.classificationPrompt } : {}),
         generation: input.generation,
       },
     )) as { paneId?: unknown; harness?: { adapterId?: unknown } };
