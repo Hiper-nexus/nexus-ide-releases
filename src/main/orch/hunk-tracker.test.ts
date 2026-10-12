@@ -46,4 +46,38 @@ describe('hunk-tracker', () => {
     expect(summarizeAttribution(attributed).agent).toBe(1);
     expect(summarizeAttribution(attributed).user).toBe(1);
   });
+
+  it('F-1324: decodifica caminhos C-quoted do Git em modificação e exclusão', () => {
+    const diff = [
+      'diff --git "a/caf\\303\\251.ts" "b/caf\\303\\251.ts"',
+      '--- "a/caf\\303\\251.ts"',
+      '+++ "b/caf\\303\\251.ts"',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+      'diff --git "a/caf\\303\\251-old.ts" "b/caf\\303\\251-old.ts"',
+      '--- "a/caf\\303\\251-old.ts"',
+      '+++ /dev/null',
+      '@@ -1 +0,0 @@',
+      '-gone',
+      'diff --git "a/espa\\347o com tab\\tnome.ts" "b/espa\\347o com tab\\tnome.ts"',
+      '--- "a/espa\\347o com tab\\tnome.ts"',
+      '+++ "b/espa\\347o com tab\\tnome.ts"',
+      '@@ -1 +1 @@',
+      '-a',
+      '+b',
+      '',
+    ].join('\n');
+
+    const hunks = parseUnifiedDiff(diff);
+    expect(hunks[0]?.file).toBe('café.ts');
+    expect(hunks[1]?.file).toBe('café-old.ts');
+    expect(hunks[2]?.file).toBe('espaço com tab\tnome.ts');
+
+    const attributed = attributeHunks(hunks, [
+      { agentId: 'writer-1', paths: ['café-old.ts'], at: 100 },
+    ]);
+    expect(attributed[1]?.source).toBe('agent');
+    expect(attributed[1]?.agentId).toBe('writer-1');
+  });
 });

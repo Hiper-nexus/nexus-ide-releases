@@ -29,24 +29,126 @@ export interface AgentTouch {
 }
 
 /**
+ * F-1324: o Git escreve caminhos não triviais (UTF-8 fora do ASCII, tab,
+ * aspas, barra invertida) entre aspas, com escapes C — octais de byte UTF-8
+ * (\303\251 = é) e \", \\, \t, \n… Decodifica um token desses; token sem
+ * aspas volta como está.
+ */
+function decodeGitPathToken(token: string): string {
+  if (token.length < 2 || !token.startsWith('"') || !token.endsWith('"')) {
+    return token;
+  }
+  const inner = token.slice(1, -1);
+  let out = '';
+  let bytes: number[] = [];
+  const flushBytes = (): void => {
+    if (bytes.length === 0) return;
+    const percent = bytes
+      .map((b) => `%${b.toString(16).padStart(2, '0')}`)
+      .join('');
+    try {
+      out += decodeURIComponent(percent);
+    } catch {
+      out += bytes.map((b) => String.fromCharCode(b)).join('');
+    }
+    bytes = [];
+  };
+  for (let i = 0; i < inner.length; i += 1) {
+    const ch = inner[i] ?? '';
+    if (ch !== '\\') {
+      flushBytes();
+      out += ch;
+      continue;
+    }
+    const next = inner[i + 1] ?? '';
+    if (/^[0-7]$/.test(next) && /^[0-7]{3}$/.test(inner.slice(i + 1, i + 4))) {
+      bytes.push(parseInt(inner.slice(i + 1, i + 4), 8));
+      i += 3;
+      continue;
+    }
+    flushBytes();
+    i += 1;
+    switch (next) {
+      case 'a': out += '\x07'; break;
+      case 'b': out += '\b'; break;
+      case 'f': out += '\f'; break;
+      case 'n': out += '\n'; break;
+      case 'r': out += '\r'; break;
+      case 't': out += '\t'; break;
+      case 'v': out += '\v'; break;
+      case '\\': out += '\\'; break;
+      case '"': out += '"'; break;
+      default: out += next;
+    }
+  }
+  flushBytes();
+  return out;
+}
+
+/** Dois tokens de caminho depois de `diff --git `, entre aspas ou não. */
+function splitDiffGitPaths(line: string): [string, string] {
+  const rest = line.slice('diff --git '.length);
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < rest.length && tokens.length < 2) {
+    if (rest[i] === ' ') {
+      i += 1;
+      continue;
+    }
+    if (rest[i] === '"') {
+      let j = i + 1;
+      while (j < rest.length) {
+        if (rest[j] === '\\') j += 2;
+        else if (rest[j] === '"') {
+          j += 1;
+          break;
+        } else j += 1;
+      }
+      tokens.push(rest.slice(i, j));
+      i = j;
+    } else {
+      const j = rest.indexOf(' ', i);
+      tokens.push(j === -1 ? rest.slice(i) : rest.slice(i, j));
+      i = j === -1 ? rest.length : j;
+    }
+  }
+  return [tokens[0] ?? '', tokens[1] ?? ''];
+}
+
+function stripDiffPrefix(decoded: string, prefix: 'a/' | 'b/'): string {
+  return decoded.startsWith(prefix) ? decoded.slice(2) : decoded;
+}
+
+/**
  * Parse a unified git diff into hunks (file + @@ blocks).
  */
 export function parseUnifiedDiff(diff: string): DiffHunk[] {
   const hunks: DiffHunk[] = [];
   const lines = diff.split(/\r?\n/);
   let file = '';
+  let oldFile = '';
   let i = 0;
   while (i < lines.length) {
     const line = lines[i] ?? '';
     if (line.startsWith('diff --git ')) {
-      const m = /diff --git a\/(.+?) b\/(.+)$/.exec(line);
-      file = m?.[2] ?? m?.[1] ?? '';
+      const [oldToken, newToken] = splitDiffGitPaths(line);
+      const oldPath = stripDiffPrefix(decodeGitPathToken(oldToken), 'a/');
+      const newPath = stripDiffPrefix(decodeGitPathToken(newToken), 'b/');
+      file = newPath || oldPath;
+      oldFile = oldPath;
+      i += 1;
+      continue;
+    }
+    if (line.startsWith('--- ')) {
+      const p = line.slice(4).trim();
+      oldFile = p === '/dev/null' ? '' : stripDiffPrefix(decodeGitPathToken(p), 'a/');
       i += 1;
       continue;
     }
     if (line.startsWith('+++ ')) {
       const p = line.slice(4).trim();
-      if (p !== '/dev/null') file = p.replace(/^b\//, '');
+      // F-1324: na exclusão o novo nome é /dev/null — vale o nome antigo.
+      file = p === '/dev/null' ? oldFile : stripDiffPrefix(decodeGitPathToken(p), 'b/');
       i += 1;
       continue;
     }
