@@ -28,6 +28,7 @@ import {
 } from './operator-business-model';
 import { taskBusinessContextBlock } from '../context/business-model/business-model-context-block';
 import { ensureBusinessModel } from '../context/business-model/business-model-ensure';
+import { editedFilesForSession } from './hook-edit-provenance';
 import { distillOperatorPreferenceMemory } from '../memory/operator-preference-memory';
 import { operatorWorkspaceMemoryContext } from './operator-workspace-memory';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
@@ -298,6 +299,8 @@ async function defaultBusinessContext(
   const selected = await Promise.race([
     taskBusinessContextBlock(scope, prompt, ctx.scope, {
       sessionId: ctx.sessionId,
+      // F-1347: o que esta conversa já editou (proveniência do PostToolUse).
+      touchedFiles: editedFilesForSession(ctx.sessionId, scope.rootRealPath),
     }),
     new Promise<null>((resolve) =>
       setTimeout(resolve, BUSINESS_CONTEXT_DEADLINE_MS),

@@ -343,3 +343,33 @@ export function recordedEditsForSession(
     return undefined;
   }
 }
+
+/**
+ * F-1347: arquivos que a conversa deste pane registrou nesta raiz (id do argv
+ * ou o fixado pelo SessionStart), para a seleção do modelo de negócio pesar o
+ * que a tarefa já tocou. Ao contrário do portão, vale também para spawn
+ * fresco: são edições da própria conversa. Vazio sem registro; nunca lança.
+ */
+export function editedFilesForSession(
+  sessionId: string | undefined,
+  rootRealPath: string | undefined,
+  deps: {
+    readonly conversationOf?: (sessionId: string) => SessionProviderConversation | null;
+    readonly list?: typeof listConversationEdits;
+  } = {},
+): string[] {
+  try {
+    if (!sessionId || !rootRealPath) return [];
+    const conversation = (deps.conversationOf ?? getSessionProviderConversation)(sessionId);
+    const conversationId = conversation?.conversationId ?? (conversation ? pinnedConversations.get(conversation) : undefined);
+    if (!conversation || !conversationId) return [];
+    return [...(deps.list ?? listConversationEdits)({
+      scope: conversation.scope,
+      adapterId: conversation.adapterId,
+      conversationId,
+      rootRealPath,
+    }).keys()];
+  } catch {
+    return [];
+  }
+}

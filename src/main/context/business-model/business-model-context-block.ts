@@ -166,6 +166,8 @@ export interface TaskBusinessContextOptions extends SelectBusinessContextDeps {
   readonly sessionId?: string;
   readonly missionId?: string;
   readonly maxBytes?: number;
+  /** F-1347: arquivos que a tarefa já tocou; quem não sabe deixa vazio. */
+  readonly touchedFiles?: readonly string[];
 }
 
 const EMPTY_DOCUMENT = Object.freeze({
@@ -198,6 +200,7 @@ export async function taskBusinessContextBlock(
         hurdles,
         sessionId: options.sessionId,
         missionId: options.missionId,
+        touchedFiles: options.touchedFiles,
       },
       options,
     );

@@ -12,6 +12,7 @@ import {
   MAX_QUEUED_EDIT_EVENTS_PER_SESSION,
   MAX_RECORDED_PATHS_PER_EVENT,
   confineEditedPath,
+  editedFilesForSession,
   extractEditedPaths,
   hookBodyMayCarryEdit,
   recordHookEditProvenance,
@@ -434,5 +435,29 @@ describe('recordedEditsForSession (F-1237)', () => {
     expect(recordedEditsForSession('pty-1', '/outra', { conversationOf: () => claude('conv-a', true), list })).toBeUndefined();
     expect(recordedEditsForSession('pty-1', '/r', { conversationOf: () => null, list })).toBeUndefined();
     expect(recordedEditsForSession(undefined, '/r', { conversationOf: () => claude('conv-a', true), list })).toBeUndefined();
+  });
+});
+
+describe('editedFilesForSession (F-1347)', () => {
+  it('arquivos da própria conversa (argv ou fixada pelo SessionStart), na mesma raiz; fresco também conta', async () => {
+    const hash = 'a'.repeat(64);
+    const list = vi.fn((key: ConversationEditKey) =>
+      new Map<string, string>(
+        ['conv-a', 'thread-1'].includes(key.conversationId) && key.rootRealPath === '/r' ? [['src/x.ts', hash]] : [],
+      ));
+
+    // Spawn fresco com id no argv: as edições são da própria conversa.
+    expect(editedFilesForSession('pty-1', '/r', { conversationOf: () => claude('conv-a', false), list })).toEqual(['src/x.ts']);
+    expect(editedFilesForSession('pty-1', '/outra', { conversationOf: () => claude('conv-a'), list })).toEqual([]);
+    expect(editedFilesForSession('pty-1', '/r', { conversationOf: () => claude('conv-b'), list })).toEqual([]);
+    expect(editedFilesForSession('pty-1', '/r', { conversationOf: () => null, list })).toEqual([]);
+    expect(editedFilesForSession(undefined, '/r', { conversationOf: () => claude('conv-a'), list })).toEqual([]);
+
+    // Codex fresco: sem id no argv, só depois do SessionStart fixar a conversa.
+    const conversation = codexFresh();
+    expect(editedFilesForSession('pty-1', '/r', { conversationOf: () => conversation, list })).toEqual([]);
+    await recordHookEditProvenance({ sessionId: 'pty-1', scope: testProjectScope({ rootRealPath: '/r' }) },
+      'session-start', { session_id: 'thread-1' }, { conversationOf: () => conversation, heldByOtherPane: () => false });
+    expect(editedFilesForSession('pty-1', '/r', { conversationOf: () => conversation, list })).toEqual(['src/x.ts']);
   });
 });

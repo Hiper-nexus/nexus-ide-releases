@@ -1,8 +1,9 @@
 import { decisionResultUsage } from '../../decision-models/decision-usage';
-import type {
-  BusinessFlow,
-  BusinessInvariant,
-  BusinessModelDocument,
+import {
+  invariantsTouchedBy,
+  type BusinessFlow,
+  type BusinessInvariant,
+  type BusinessModelDocument,
 } from './business-model-contract';
 import type { BusinessHurdle } from './business-model-hurdles';
 import { capText, judge, type JevQuestion } from '../../jev/jev-client';
@@ -46,6 +47,12 @@ export interface SelectBusinessContextInput {
   readonly maxFlows?: number;
   readonly maxInvariants?: number;
   readonly maxHurdles?: number;
+  /**
+   * F-1347: arquivos que a tarefa já tocou (relativos à raiz). Fluxo ou
+   * invariante cujos `arquivos`/`testes` incluem um deles pontua sem depender
+   * da palavra do pedido. Ausente/vazio: só o texto decide.
+   */
+  readonly touchedFiles?: readonly string[];
 }
 
 export interface SelectBusinessContextDeps {
@@ -65,6 +72,8 @@ const MAX_JEV_HURDLE_CANDIDATES = 40;
 const JEV_RELEVANCE_THRESHOLD = 0.5;
 const JEV_TIMEOUT_MS = 6_000;
 const MAX_TASK_CHARS = 1_200;
+/** Peso do arquivo tocado: vale um match de nome de fluxo (×3). */
+const TOUCHED_FILE_WEIGHT = 3;
 
 const STOPWORDS = new Set([
   'para', 'com', 'uma', 'que', 'dos', 'das', 'isso', 'esse', 'esta', 'este',
@@ -120,33 +129,42 @@ function pickTop<T>(items: readonly Scored<T>[], max: number): T[] {
 /**
  * Ranking lexical determinístico: fluxo ganha peso por tabela/função, o
  * invariante herda a nota do fluxo dele (a regra via de brinde quando o fluxo
- * é tocado), a hurdle pontua por título/resumo/origem.
+ * é tocado), a hurdle pontua por título/resumo/origem. F-1347: arquivo tocado
+ * pela tarefa pesa no fluxo e no invariante que o protegem.
  */
 function lexicalScores(
   taskTokens: ReadonlySet<string>,
   document: BusinessModelDocument,
+  touchedFiles: readonly string[] = [],
 ): { flows: Scored<BusinessFlow>[]; invariants: Scored<BusinessInvariant>[] } {
+  const touchedFlows = new Set(invariantsTouchedBy(document.flows, touchedFiles));
+  const touchedInvariants = new Set(invariantsTouchedBy(document.invariants, touchedFiles));
   const flowScore = new Map<string, number>();
   const flows = document.flows.map((flow, index) => {
     const name = `${flow.fluxo} ${flow.escreve.join(' ')} ${flow.le.join(' ')}`;
     const refs = `${flow.funcoes.join(' ')} ${flow.arquivos.map(basenameTokens).join(' ')} ${flow.testes.map(basenameTokens).join(' ')}`;
-    const score = scoreTokens(taskTokens, name) * 3 + scoreTokens(taskTokens, refs) * 2;
+    const score =
+      scoreTokens(taskTokens, name) * 3 +
+      scoreTokens(taskTokens, refs) * 2 +
+      (touchedFlows.has(flow) ? TOUCHED_FILE_WEIGHT : 0);
     flowScore.set(flow.fluxo, score);
     return { item: flow, score, index };
   });
-  const invariants = document.invariants.map((invariant, index) => {
+  const scored = document.invariants.map((invariant, index) => {
     const own =
       scoreTokens(taskTokens, invariant.regra) +
       scoreTokens(taskTokens, invariant.tabelas.join(' ')) * 3 +
-      scoreTokens(taskTokens, `${invariant.arquivos.map(basenameTokens).join(' ')} ${invariant.testes.map(basenameTokens).join(' ')}`) * 2;
-    // Regra global do projeto é levemente relevante para qualquer tarefa.
-    const base = invariant.fluxo === 'projeto' ? 1 : 0;
-    return {
-      item: invariant,
-      score: own + (flowScore.get(invariant.fluxo) ?? 0) + base,
-      index,
-    };
+      scoreTokens(taskTokens, `${invariant.arquivos.map(basenameTokens).join(' ')} ${invariant.testes.map(basenameTokens).join(' ')}`) * 2 +
+      (touchedInvariants.has(invariant) ? TOUCHED_FILE_WEIGHT : 0);
+    return { item: invariant, score: own + (flowScore.get(invariant.fluxo) ?? 0), index };
   });
+  // Regra global do projeto é levemente relevante para qualquer tarefa — só
+  // quando nem palavra nem arquivo casou nada: senão o baseline ocupava as
+  // vagas com regras de outra área (F-1347).
+  const matched = flows.some((item) => item.score > 0) || scored.some((item) => item.score > 0);
+  const invariants = matched
+    ? scored
+    : scored.map((item) => (item.item.fluxo === 'projeto' ? { ...item, score: item.score + 1 } : item));
   return { flows, invariants };
 }
 
@@ -180,7 +198,7 @@ function lexicalSelection(
   input: SelectBusinessContextInput,
   taskTokens: ReadonlySet<string>,
 ): BusinessModelSelection | null {
-  const { flows, invariants } = lexicalScores(taskTokens, input.document);
+  const { flows, invariants } = lexicalScores(taskTokens, input.document, input.touchedFiles);
   const hurdleScores = lexicalHurdleScores(taskTokens, input.hurdles);
   const pickedFlows = pickTop(
     flows.filter((item) => item.score > 0),
@@ -225,7 +243,7 @@ function jevCandidates(
   invariants: Map<string, BusinessInvariant>;
   hurdles: Map<string, BusinessHurdle>;
 } {
-  const { flows, invariants } = lexicalScores(taskTokens, input.document);
+  const { flows, invariants } = lexicalScores(taskTokens, input.document, input.touchedFiles);
   const hurdleScores = lexicalHurdleScores(taskTokens, input.hurdles);
   const questions: Record<string, JevQuestion> = {};
   const flowMap = new Map<string, BusinessFlow>();
@@ -308,8 +326,11 @@ async function jevSelection(
       relevant.add(id);
     }
   }
+  // F-1347: a pergunta diz "sim se a tarefa toca os arquivos que ela protege",
+  // mas o Jev não vê arquivos — invariante de arquivo tocado entra pelo fato.
+  const byFile = new Set(invariantsTouchedBy(input.document.invariants, input.touchedFiles ?? []));
   const pickedInvariants = [...candidates.invariants.entries()]
-    .filter(([id]) => relevant.has(id))
+    .filter(([id, invariant]) => relevant.has(id) || byFile.has(invariant))
     .map(([, invariant]) => invariant)
     .slice(0, input.maxInvariants ?? DEFAULT_MAX_INVARIANTS);
   const impliedFlows = new Set(pickedInvariants.map((invariant) => invariant.fluxo));

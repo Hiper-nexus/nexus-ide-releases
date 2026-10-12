@@ -330,12 +330,12 @@ export function readBusinessModelInvariants(
 /**
  * Invariantes cujo fluxo é tocado por algum dos arquivos alterados (caminhos
  * relativos à raiz). Regras globais (`projeto`) só entram quando o próprio
- * arquivo de origem muda.
+ * arquivo de origem muda. Vale para fluxos também (mesmos `arquivos`/`testes`).
  */
-export function invariantsTouchedBy(
-  invariants: readonly BusinessInvariant[],
+export function invariantsTouchedBy<T extends Pick<BusinessInvariant, 'arquivos' | 'testes'>>(
+  invariants: readonly T[],
   changedFiles: readonly string[],
-): readonly BusinessInvariant[] {
+): readonly T[] {
   const changed = new Set(changedFiles.map((file) => file.replaceAll('\\', '/').replace(/^\.\//, '')));
   return Object.freeze(
     invariants.filter((invariant) =>
