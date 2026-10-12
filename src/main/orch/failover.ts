@@ -46,7 +46,7 @@ import {
   requestPaneClose,
   type OwnedPaneAuthzInfo,
 } from './pane-registry';
-import { releasePaneStartWatch, shortStartError } from './pane-start-watchdog';
+import { noteConfirmedPaneLimit, releasePaneStartWatch, shortStartError } from './pane-start-watchdog';
 import {
   forgetPaneTaskReroute,
   getPaneTaskReroute,
@@ -2642,6 +2642,22 @@ function commitLimitHit(
 ): void {
   // Feed fleet quota UI (session/5h/weekly bars) from the same limit signal.
   noteQuotaLimitHit(adapterId, hit, current?.id);
+  // F-1414: limite CONFIRMADO (sonda/API ou repetido depois da pausa) vai à
+  // rede do supervisor: se a troca daqui não tirar a tarefa do pane, ela é
+  // reaberta noutra CLI. Texto sem confirmação (F-249) nunca entra, nem a
+  // pausa curta de taxa que a própria CLI atravessa (mesmo piso da troca de CLI).
+  if (
+    !options.unconfirmed &&
+    (hit.kind === 'quota' || (hit.kind === 'rate-limit' && hit.cooldownMs >= CLI_SWITCH_MIN_WAIT_MS))
+  ) {
+    noteConfirmedPaneLimit({
+      paneId: pane.paneId,
+      sessionId: authority.sessionId,
+      adapterId,
+      reason: hit.reason,
+      at: now,
+    });
+  }
 
   // Put the exhausted account on cooldown, then pick the next available one.
   // Com escopo (erro cita um tier anthropic): a conta segue no pool para os
