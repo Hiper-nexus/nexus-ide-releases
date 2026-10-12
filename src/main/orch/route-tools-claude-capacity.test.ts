@@ -188,6 +188,24 @@ describe('F-1401: Claude sem limite de um pane por conta', () => {
     expect(decision.reason).not.toContain('claude=não instalado');
   });
 
+  // C2 (revisão Fable): a barreira de conta vale só em rota de missão — sem
+  // missão o login nativo do Claude segue utilizável (antes do F-1401 o
+  // reserveClaude exigia missionId).
+  it('sem missão, nenhuma conta gerenciada utilizável não esconde o Claude', async () => {
+    h.listProviderSettings.mockReturnValue(CLAUDE_KIMI);
+    h.claudeCapacity.mockReturnValue(0);
+    h.mission = {};
+    h.recorded = [];
+    h.livePanes = [];
+    const { missionId: _mission, providerId: _provider, ...missionless } = ctx;
+    const decision = (await routeTaskForCaller({ task: TASK, preferAdapters: ['claude'] }, missionless)) as {
+      adapterId: string;
+      reason: string;
+    };
+    expect(decision.adapterId).toBe('claude');
+    expect(decision.reason).not.toContain('nenhuma conta Claude utilizável');
+  });
+
   it('preferAdapters claude com codex disponível: claude elegível, não reservado', async () => {
     const decision = await route();
     expect(decision.reason).not.toContain('reservado');
