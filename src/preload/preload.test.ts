@@ -85,6 +85,79 @@ describe('preload PTY delivery', () => {
     electronMock.contextBridge.exposeInMainWorld.mockClear();
   });
 
+  it('F-1368: replays an exit emitted before spawn resolves to the late subscriber', async () => {
+    const api = await loadPreloadApi();
+    electronMock.ipcRenderer.invoke.mockImplementation(async (channel) => {
+      if (channel === PTY_CHANNELS.spawn) {
+        emitIpc(PTY_CHANNELS.exit, {
+          sessionId: 'one-shot', exitCode: 1, signal: 15,
+          terminationOrigin: 'test-origin',
+        });
+        return { ok: true, sessionId: 'one-shot' };
+      }
+      return [];
+    });
+    await api.pty.spawn({ paneId: 'pane-one-shot', kind: 'shell', cols: 80, rows: 24 });
+    const exited = vi.fn();
+    api.pty.onExit('one-shot', exited);
+    await flushMicrotasks();
+    expect(exited).toHaveBeenCalledExactlyOnceWith({
+      exitCode: 1, signal: 15, terminationOrigin: 'test-origin',
+    });
+    const unrelated = vi.fn();
+    api.pty.onExit('another-session', unrelated);
+    await flushMicrotasks();
+    expect(unrelated).not.toHaveBeenCalled();
+  });
+
+  it('F-1368: unsubscribing cancels queued exit replay', async () => {
+    const api = await loadPreloadApi();
+    emitIpc(PTY_CHANNELS.exit, { sessionId: 'closed', exitCode: 0 });
+    const exited = vi.fn();
+    const unsubscribe = api.pty.onExit('closed', exited);
+    unsubscribe();
+    await flushMicrotasks();
+    expect(exited).not.toHaveBeenCalled();
+  });
+
+  it('F-1368: live delivery is single and recent reattachment gets the same exit', async () => {
+    const api = await loadPreloadApi();
+    const live = vi.fn();
+    const unsubscribe = api.pty.onExit('live', live);
+    emitIpc(PTY_CHANNELS.exit, { sessionId: 'live', exitCode: 0 });
+    await flushMicrotasks();
+    expect(live).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    const reattached = vi.fn();
+    api.pty.onExit('live', reattached);
+    await flushMicrotasks();
+    expect(reattached).toHaveBeenCalledExactlyOnceWith({ exitCode: 0, signal: undefined });
+  });
+
+  it('F-1368: expired and oldest exits are evicted from the bounded replay', async () => {
+    const api = await loadPreloadApi();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      emitIpc(PTY_CHANNELS.exit, { sessionId: 'expired', exitCode: 0 });
+      now.mockReturnValue(61_000);
+      const expired = vi.fn();
+      api.pty.onExit('expired', expired);
+      for (let index = 0; index < 257; index += 1) {
+        emitIpc(PTY_CHANNELS.exit, { sessionId: `exit-${index}`, exitCode: 0 });
+      }
+      const oldest = vi.fn();
+      const newest = vi.fn();
+      api.pty.onExit('exit-0', oldest);
+      api.pty.onExit('exit-256', newest);
+      await flushMicrotasks();
+      expect(expired).not.toHaveBeenCalled();
+      expect(oldest).not.toHaveBeenCalled();
+      expect(newest).toHaveBeenCalledOnce();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('exposes only typed status and write operations for Clef configuration', async () => {
     const api = await loadPreloadApi();
     electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true });

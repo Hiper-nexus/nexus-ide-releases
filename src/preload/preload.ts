@@ -195,6 +195,19 @@ const ptyRecoverFlights = new Set<string>();
 const ptyGapWarnAt = new Map<string, number>();
 const PTY_GAP_WARN_INTERVAL_MS = 30_000;
 const exitSubs = new Map<string, Set<ExitCb>>();
+// F-1368: one-shot PTYs can exit before spawn resolves and the host subscribes.
+// Keep only recent exits, bounded independently of pane/host lifetime.
+const recentPtyExits = new Map<string, { event: Parameters<ExitCb>[0]; at: number }>();
+const PTY_EXIT_REPLAY_TTL_MS = 60_000;
+const PTY_EXIT_REPLAY_LIMIT = 256;
+function prunePtyExits(): void {
+  for (const [sessionId, exit] of recentPtyExits) {
+    if (Date.now() - exit.at >= PTY_EXIT_REPLAY_TTL_MS) recentPtyExits.delete(sessionId);
+  }
+  while (recentPtyExits.size > PTY_EXIT_REPLAY_LIMIT) {
+    recentPtyExits.delete(recentPtyExits.keys().next().value!);
+  }
+}
 const stateSubs = new Map<string, Set<StateCb>>();
 const browserStateListeners = new Set<(state: BrowserPaneState) => void>();
 const browserDesignListeners = new Set<
@@ -353,11 +366,14 @@ setInterval(() => {
 
 ipcRenderer.on(PTY_CHANNELS.exit, (_event, payload: PtyExitEvent) => {
   clearPtySequenceState(payload.sessionId);
-  emitToListeners(exitSubs.get(payload.sessionId), 'exitSubs', {
+  const event = {
     exitCode: payload.exitCode,
     signal: payload.signal,
     ...(payload.terminationOrigin ? { terminationOrigin: payload.terminationOrigin } : {}),
-  });
+  };
+  recentPtyExits.set(payload.sessionId, { event, at: Date.now() });
+  prunePtyExits();
+  emitToListeners(exitSubs.get(payload.sessionId), 'exitSubs', event);
 });
 
 ipcRenderer.on(PTY_CHANNELS.stateChange, (_event, payload: PtyStateChangeEvent) => {
@@ -827,7 +843,17 @@ const api: NexusApi = {
         if (!dataSubs.has(sessionId)) clearPtySequenceState(sessionId);
       };
     },
-    onExit: (sessionId, cb) => subscribe(exitSubs, sessionId, cb),
+    onExit: (sessionId, cb) => {
+      const unsubscribe = subscribe(exitSubs, sessionId, cb);
+      prunePtyExits();
+      const exit = recentPtyExits.get(sessionId);
+      let active = true;
+      // Complete host attachment first (including adopted state publication).
+      if (exit) queueMicrotask(() => {
+        if (active) emitToListeners(new Set([cb]), 'exitSubs', exit.event);
+      });
+      return () => { active = false; unsubscribe(); };
+    },
     onStateChange: (sessionId, cb) => subscribe(stateSubs, sessionId, cb),
   },
   browser: {

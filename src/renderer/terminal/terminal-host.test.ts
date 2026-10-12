@@ -109,6 +109,7 @@ vi.mock('./terminal-ghost-assist', () => ({
 }));
 
 import { useLayoutStore } from '../state/layout-store';
+import { useSessionStateStore } from '../state/session-state-store';
 import { setActiveWorkspacePath } from '../state/active-workspace';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
@@ -243,6 +244,24 @@ function fireTitle(title: string): void {
 }
 
 describe('spawn adiado sem ninguém esperando a sessão', () => {
+  it('F-1368: exit replay after attachment overrides adopted idle and clears the live session', async () => {
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-already-exited', adopted: true, state: 'idle' });
+    window.nexus.pty.onExit = (_sessionId, listener) => {
+      let active = true;
+      void Promise.resolve().then(() => { if (active) listener({ exitCode: 1 }); });
+      return () => { active = false; };
+    };
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(pane, slot);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useSessionStateStore.getState().paneStates.get(pane.id)).toBe('exited');
+    expect(getPaneSessionId(pane.id)).toBeNull();
+    expect(host.spawnStarted).toBe(false);
+  });
+
   it('persiste a conta realmente escolhida pelo Main quando a lista de contas do renderer não está disponível', async () => {
     const agent: PaneModel = { id: 'main-account-choice', kind: 'cli-agent', adapterId: 'codex', title: 'Codex' };
     const other: PaneModel = { id: 'other-account', kind: 'cli-agent', adapterId: 'codex', title: 'Outra', accountId: 'account-b' };
