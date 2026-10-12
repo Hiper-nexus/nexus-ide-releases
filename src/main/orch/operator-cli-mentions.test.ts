@@ -527,6 +527,60 @@ describe('F-1418: "solta mais panes usa devin e muse tbm"', () => {
   });
 });
 
+describe('F-1418 (revisão Fable): só Enter nu, casado 1:1, avaliza prompt do transcript', () => {
+  const PHRASE = 'solta mais panes usa devin e muse tbm';
+  const now = 1_000_000;
+  const at = now - 5 * MIN;
+  const prompts = [{ at, text: PHRASE }];
+
+  it('Tab+Enter nu (aceite da sugestão) avaliza', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(at - 50);
+    type('nu-tab', '\t\r');
+    expect(operatorSubmittedPromptNamesCli('nu-tab', 'devin', prompts, now)).toBe(true);
+  });
+
+  it('um Enter com mais de um prompt humano na janela não avaliza nenhum (spray de carimbos)', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(at - 50);
+    type('spray', '\r');
+    const sprayed = [
+      { at, text: PHRASE },
+      { at: at + 200, text: 'usa o codex' },
+      { at: at - 1_000, text: 'usa o grok' },
+    ];
+    for (const adapterId of ['devin', 'codex', 'grok']) {
+      expect(operatorSubmittedPromptNamesCli('spray', adapterId, sprayed, now), adapterId).toBe(false);
+    }
+  });
+
+  it('Enter que submeteu texto digitado não avaliza prompt do transcript', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(at - 50);
+    for (const ch of 'oi') type('digitado', ch);
+    type('digitado', '\r');
+    expect(operatorSubmittedPromptNamesCli('digitado', 'devin', prompts, now)).toBe(false);
+  });
+
+  it('Shift+Enter, colagem multilinha e texto colado pelo Nexus antes do Enter humano não avalizam', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(at - 50);
+    type('shift', '\x1b\r');
+    expect(operatorSubmittedPromptNamesCli('shift', 'devin', prompts, now)).toBe(false);
+    type('multi', '\x1b[200~linha 1\nlinha 2\n\x1b[201~');
+    type('multi', '\r');
+    expect(operatorSubmittedPromptNamesCli('multi', 'devin', prompts, now)).toBe(false);
+    type('nexus', '\x1b[200~[nexus handoff] usa o devin\x1b[201~', 'system');
+    type('nexus', '\r');
+    expect(operatorSubmittedPromptNamesCli('nexus', 'devin', prompts, now)).toBe(false);
+  });
+
+  it('depois de um envio, o composer volta a vazio: o próximo Enter nu avaliza', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(at - 60_000);
+    for (const ch of 'oi') type('ciclo', ch);
+    type('ciclo', '\r');
+    vi.spyOn(Date, 'now').mockReturnValue(at - 50);
+    type('ciclo', '\r');
+    expect(operatorSubmittedPromptNamesCli('ciclo', 'devin', prompts, now)).toBe(true);
+  });
+});
+
 describe('F-1418: id, nome comum e modelo carro-chefe de cada CLI provam o pedido', () => {
   it.each([
     ['usa o devin swe2', 'devin'],
@@ -536,7 +590,9 @@ describe('F-1418: id, nome comum e modelo carro-chefe de cada CLI provam o pedid
     ['roda no swe 2', 'devin'],
     ['usa o muse', 'muse'],
     ['usa o wonder full', 'muse'],
-    ['abre o Wonder', 'muse'],
+    ['abre o Wonder-Full', 'muse'],
+    ['wonderfull nessa revisão', 'muse'],
+    ['usa o muse-wonder-full-1.0', 'muse'],
     ['kimi nesse front', 'kimi'],
     ['glm pra tarefa pequena', 'glm'],
     ['glm flash ai', 'glm-flash'],
@@ -569,9 +625,17 @@ describe('F-1418: id, nome comum e modelo carro-chefe de cada CLI provam o pedid
     ['usa o muze', 'muse'],
     ['usa o cloude', 'claude'],
     ['usa o antigravit', 'agy'],
-    ['usa o mimmo', 'mimo-code'],
   ])('grafia errada comum "%s" nomeia %s', (text, adapterId) => {
     expect(textNamesCli(text, adapterId)).toBe(true);
+  });
+
+  it.each([
+    ['I wonder if the flaky test is the cause', 'muse'],
+    ['No wonder the build is slow', 'muse'],
+    ['claud monet', 'claude'],
+    ['o Mimmo do bar', 'mimo-code'],
+  ])('revisão Fable: "%s" não nomeia %s', (text, adapterId) => {
+    expect(textNamesCli(text, adapterId)).toBe(false);
   });
 
   it('palavras comuns continuam fora (F-818)', () => {

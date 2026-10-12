@@ -9,6 +9,7 @@ import {
   extractCodexEntryText,
   extractCodexFirstUserMessage,
   lastSignificantLine,
+  resolveExactClaudeTranscriptPath,
   resolvePaneActivity,
   sanitizeActivityLine,
 } from './pane-activity-summary';
@@ -239,5 +240,55 @@ describe('PaneActivitySummaryCache', () => {
       fs.utimesSync(file, new Date(mtime1 + 5_000), new Date(mtime1 + 5_000));
     }
     expect(cache.get('k')).toBeNull();
+  });
+});
+
+describe('resolveExactClaudeTranscriptPath — contenção do caminho do hook (F-1418, revisão Fable)', () => {
+  const SESSION = 'c3b2cf6f-642b-4fa5-893d-1c118ed0e537';
+  const CWD = '/Users/op/nexus-ide';
+  function homeWithTranscript() {
+    const home = tmpDir();
+    const projects = path.join(home, '.claude', 'projects', '-Users-op-nexus-ide');
+    fs.mkdirSync(projects, { recursive: true });
+    const computed = path.join(projects, `${SESSION}.jsonl`);
+    fs.writeFileSync(computed, '{}\n');
+    return { home, computed };
+  }
+
+  it('caminho do hook sob a raiz Claude e com o nome da sessão é aceito', () => {
+    const { home, computed } = homeWithTranscript();
+    expect(resolveExactClaudeTranscriptPath({
+      home, adapterId: 'claude', cwd: CWD, sessionId: SESSION, transcriptPath: computed,
+    })).toBe(computed);
+  });
+
+  it('caminho do hook fora das raízes ou com outro nome é ignorado: vale o calculado', () => {
+    const { home, computed } = homeWithTranscript();
+    const outside = path.join(tmpDir(), `${SESSION}.jsonl`);
+    fs.writeFileSync(outside, '{}\n');
+    const otherName = path.join(path.dirname(computed), 'outra-sessao.jsonl');
+    fs.writeFileSync(otherName, '{}\n');
+    for (const transcriptPath of [outside, otherName]) {
+      expect(resolveExactClaudeTranscriptPath({
+        home, adapterId: 'claude', cwd: CWD, sessionId: SESSION, transcriptPath,
+      })).toBe(computed);
+    }
+    // Sem cwd para calcular: nada (nunca o caminho de fora).
+    expect(resolveExactClaudeTranscriptPath({
+      home, adapterId: 'claude', sessionId: SESSION, transcriptPath: outside,
+    })).toBeNull();
+  });
+
+  it('symlink com o nome certo dentro da raiz apontando para fora é recusado', () => {
+    const { home, computed } = homeWithTranscript();
+    const outsideDir = tmpDir();
+    const target = path.join(outsideDir, `${SESSION}.jsonl`);
+    fs.writeFileSync(target, '{}\n');
+    const link = path.join(home, '.claude', 'projects', 'outro', `${SESSION}.jsonl`);
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(target, link);
+    expect(resolveExactClaudeTranscriptPath({
+      home, adapterId: 'claude', cwd: CWD, sessionId: SESSION, transcriptPath: link,
+    })).toBe(computed);
   });
 });

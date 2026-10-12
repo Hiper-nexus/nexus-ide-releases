@@ -90,16 +90,23 @@ describe('extractClaudeHumanPrompts (F-1418)', () => {
     ]);
   });
 
-  it('mensagem de usuário comum com origem humana também conta; filtra pela janela', () => {
-    const line = JSON.stringify({
-      type: 'user', origin: { kind: 'human' },
-      message: { role: 'user', content: [{ type: 'text', text: 'usa o kimi' }] },
+  it('mensagem `user` comum (por onde entra o texto que o Nexus cola) NÃO conta; filtra pela janela', () => {
+    const userLine = JSON.stringify({
+      type: 'user', origin: { kind: 'human' }, promptSource: 'typed',
+      message: { role: 'user', content: '[nexus handoff delivery_metadata] usa o devin' },
       timestamp: '2026-10-12T21:20:00.000Z',
     });
-    expect(extractClaudeHumanPrompts(line)).toEqual([
-      { at: Date.parse('2026-10-12T21:20:00.000Z'), text: 'usa o kimi' },
-    ]);
-    expect(extractClaudeHumanPrompts(line, Date.parse('2026-10-12T21:21:00.000Z'))).toEqual([]);
+    expect(extractClaudeHumanPrompts(userLine)).toEqual([]);
+    expect(extractClaudeHumanPrompts(TRANSCRIPT, SUBMITTED_AT + 1)).toEqual([]);
+  });
+
+  it('queued_command de origem não humana não conta', () => {
+    const line = JSON.stringify({
+      type: 'attachment',
+      attachment: { type: 'queued_command', prompt: 'usa o devin', origin: { kind: 'task-notification' }, timestamp: SUBMITTED_ISO },
+      timestamp: SUBMITTED_ISO,
+    });
+    expect(extractClaudeHumanPrompts(line)).toEqual([]);
   });
 });
 
