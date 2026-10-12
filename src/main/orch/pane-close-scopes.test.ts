@@ -391,3 +391,79 @@ describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", (
     expect(close).toHaveBeenCalledTimes(1);
   });
 });
+
+// F-1409/M3 (revisão Fable): Maestro em turno longo deixa o partial `queued`;
+// contar do submit fechava o worker antes de o Maestro ler e pedir rework.
+describe("F-1409/M3: os 15 min contam da chegada ao Maestro, não do submit", () => {
+  const paneOf = (sessionId: string) => sessionId === "sess-q" ? "pane-q" : null;
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => {
+    disarmAutoCloseOnHandoff("sess-q", "pane-q");
+    vi.useRealTimers();
+  });
+
+  it("entrega queued por 40 min não fecha; fecha 15 min depois de chegar ao Maestro", async () => {
+    let delivered = false;
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-q", "pane-q");
+    scheduleAutoCloseAfterHandoff("sess-q", "partial", paneOf, close, {
+      handoffId: "hoff-q", isBusy: () => false, isDelivered: () => delivered,
+    });
+
+    await vi.advanceTimersByTimeAsync(40 * 60_000);
+    expect(close).not.toHaveBeenCalled();
+
+    delivered = true; // idle-delivery colou: deliveryState saiu de queued
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS - 2 * 60_000);
+    expect(close).not.toHaveBeenCalled();
+    // Rework ainda alcança o pane vivo dentro da janela.
+    expect(armedAutoClosePaneId("sess-q")).toBe("pane-q");
+
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    expect(close).toHaveBeenCalledWith("pane-q", "sess-q");
+  });
+});
+
+describe("F-1409 (revisão Grok): rework vence o close agendado; one-shot por saída nova", () => {
+  const paneOf = (sessionId: string) => sessionId === "sess-g" ? "pane-g" : null;
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => {
+    disarmAutoCloseOnHandoff("sess-g", "pane-g");
+    vi.useRealTimers();
+  });
+
+  it("#1 rework entre o desarme do timer e o setTimeout(0) do close cancela o fechamento", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-g", "pane-g");
+    scheduleAutoCloseAfterHandoff("sess-g", "partial", paneOf, close, {
+      handoffId: "hoff-g", isBusy: () => false, isDelivered: () => true,
+    });
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS - 1);
+    // Fase 1: só o timer da rede de segurança dispara — desarma e agenda o close.
+    vi.advanceTimersToNextTimer();
+    expect(armedAutoClosePaneId("sess-g")).toBeNull();
+    expect(close).not.toHaveBeenCalled();
+    // Rework chega antes da fase 2 (o setTimeout 0).
+    expect(closeAfterNonSuccessHandoffAck("sess-g", "hoff-g", "rework")).toBe(false);
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
+    expect(close).not.toHaveBeenCalled();
+    // Braço volta: a próxima entrega do writer ainda fecha o pane.
+    expect(armedAutoClosePaneId("sess-g")).toBe("pane-g");
+  });
+
+  it("#2 one-shot (isBusy falso, só saída): saída nova na janela adia; sem saída fecha", async () => {
+    let output = 10;
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-g", "pane-g");
+    scheduleAutoCloseAfterHandoff("sess-g", "partial", paneOf, close, {
+      handoffId: "hoff-g", isBusy: () => false, isDelivered: () => true,
+      activityMark: () => output,
+    });
+    output += 3; // o processo one-shot ainda escreve depois da entrega
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS + 1);
+    expect(close).not.toHaveBeenCalled();
+    // Nova janela sem saída nenhuma: fecha (não reagenda para sempre).
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS + 1);
+    expect(close).toHaveBeenCalledWith("pane-g", "sess-g");
+  });
+});
