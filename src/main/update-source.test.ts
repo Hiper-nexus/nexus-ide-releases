@@ -193,6 +193,27 @@ describe('parseGhReleases', () => {
       zipAsset: 'NexusIDE-darwin-x64-0.16.4.zip',
     });
   });
+
+  it('F-1281: só aceita browser_download_url do github.com nos repositórios de release conhecidos', () => {
+    const zip = 'NexusIDE-darwin-arm64-0.16.4.zip';
+    const withUrl = (url: string) =>
+      JSON.stringify([{ ...apiRelease('0.16.4'), assets: [{ name: zip, browser_download_url: url }] }]);
+    const zipUrl = (url: string) =>
+      parseGhReleases(withUrl(url), '0.15.0', 'arm64', 'darwin')?.zipDownloadUrl;
+    const trusted = `https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.16.4/${zip}`;
+
+    expect(zipUrl(trusted)).toBe(trusted);
+    expect(zipUrl(`https://evil.example/${zip}`)).toBeUndefined();
+    expect(zipUrl(`https://github.com.evil.example/Hiper-nexus/nexus-ide-releases/releases/download/v0.16.4/${zip}`)).toBeUndefined();
+    expect(zipUrl(`https://github.com@evil.example/Hiper-nexus/nexus-ide-releases/releases/download/v0.16.4/${zip}`)).toBeUndefined();
+    expect(zipUrl(`https://github.com/attacker/nexus-ide-releases/releases/download/v0.16.4/${zip}`)).toBeUndefined();
+    expect(zipUrl(`https://github.com/Hiper-nexus/nexus-ide-releases/releases/../../../attacker/x/releases/download/v0.16.4/${zip}`)).toBeUndefined();
+    // A oferta continua: o download cai nos endereços montados a partir da etiqueta.
+    expect(parseGhReleases(withUrl(`https://evil.example/${zip}`), '0.15.0', 'arm64', 'darwin')).toMatchObject({
+      version: '0.16.4',
+      zipAsset: zip,
+    });
+  });
 });
 
 describe('buildSquirrelFeed', () => {

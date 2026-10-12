@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import type { UpdateAvailableInfo } from '../shared/update-ipc';
+import { isTrustedGithubReleasePath } from './update-repos';
 
 /**
  * Fonte de updates via `gh` CLI — o repo é PRIVADO, então o feed público
@@ -68,6 +69,22 @@ export function macUpdateArchitecture(arch: string): MacUpdateArchitecture | nul
   return arch === 'arm64' || arch === 'x64' ? arch : null;
 }
 
+/**
+ * F-1281: o updater tenta este endereço ANTES dos montados pela etiqueta, então ele só vale no
+ * github.com e dentro dos repositórios de release conhecidos (o mesmo crivo do Linux).
+ */
+function trustedZipDownloadUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.host === 'github.com' && isTrustedGithubReleasePath(url.pathname)
+      ? value
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function parseReleaseCandidate(
   json: GhReleaseJson,
   currentVersion: string,
@@ -92,11 +109,7 @@ function parseReleaseCandidate(
       asset.name.endsWith(`darwin-${arch}-${version}.zip`),
   );
   if (!zip?.name) return null;
-  const downloadUrlValue = zip.browser_download_url ?? zip.browserDownloadUrl;
-  const zipDownloadUrl =
-    typeof downloadUrlValue === 'string' && /^https:\/\//.test(downloadUrlValue)
-      ? downloadUrlValue
-      : undefined;
+  const zipDownloadUrl = trustedZipDownloadUrl(zip.browser_download_url ?? zip.browserDownloadUrl);
   const notes = typeof json.body === 'string' && json.body.trim()
     ? json.body.trim().slice(0, NOTES_MAX_CHARS)
     : undefined;
