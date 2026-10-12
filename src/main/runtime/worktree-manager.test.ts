@@ -401,6 +401,29 @@ describe("WorktreeManager", () => {
     expect(manager.purgeRecordsWithoutTask(scope, new Set())).toHaveLength(0);
   });
 
+  it("F-1253: writer encerrado num ref antigo não impede o próximo depois da troca de branch do checkout", async () => {
+    const scope = projectScope();
+    const old = await manager.create({ scope, missionId: "operator-hand", taskId: "pane-old", workerId: "old",
+      ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["pane-old"] } });
+    manager.markFailed(scope, "operator-hand", "pane-old", "pane writer interrupted by application restart");
+    git(root, "checkout", "-q", "-b", "feat/outra");
+    const next = await makeManager().create({ scope, missionId: "operator-hand", taskId: "pane-next", workerId: "next",
+      ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["pane-next"] } });
+    expect(old.integrationRef).toBe("refs/heads/main");
+    expect(next.integrationRef).toBe("refs/heads/feat/outra");
+    expect(manager.get(scope, "operator-hand", "pane-old")?.status).toBe("failed");
+  });
+
+  it("F-1253: dois writers ATIVOS em refs de integração diferentes continuam recusados", async () => {
+    const scope = projectScope();
+    await manager.create({ scope, missionId: "operator-hand", taskId: "pane-a", workerId: "a",
+      ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["pane-a"] } });
+    git(root, "checkout", "-q", "-b", "feat/outra");
+    await expect(makeManager().create({ scope, missionId: "operator-hand", taskId: "pane-b", workerId: "b",
+      ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["pane-b"] } }))
+      .rejects.toThrow(/integration ref/);
+  });
+
   it("vincula panes/sessões ao writer de pane de forma durável; registros antigos seguem válidos", async () => {
     const scope = projectScope();
     const [pane, task] = await Promise.all([

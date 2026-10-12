@@ -225,9 +225,15 @@ export function validateWorktreeStateSnapshot(
     }
   }
 
-  const roots = new Set(records.map((record) => record.rootRealPath));
-  const integrationRefs = new Set(records.map((record) => record.integrationRef));
-  if (roots.size > 1 || integrationRefs.size > 1) invalidState();
+  // F-1253: só writers ativos disputam a raiz e o ref de integração. Um writer
+  // encerrado (failed/integrated/abandoned) fica no ref em que nasceu; depois
+  // que o checkout troca de branch, contá-lo aqui recusava todo writer novo.
+  const active = records.filter((record) => ACTIVE_WORKTREE_STATUSES.has(record.status));
+  const roots = new Set(active.map((record) => record.rootRealPath));
+  const integrationRefs = new Set(active.map((record) => record.integrationRef));
+  if (roots.size > 1 || integrationRefs.size > 1) {
+    invalidState('active worktree writers disagree on checkout root or integration ref');
+  }
 
   return Object.freeze({
     revision: snapshot.revision,
