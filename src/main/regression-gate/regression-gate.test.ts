@@ -237,6 +237,9 @@ describe('runRegressionGate', () => {
     expect(first.testsRun).toEqual(['src/a.test.ts']);
     expect(first.testsNotRun).toEqual(['src/b.test.ts']);
     expect(first.warnings.join('\n')).toContain('execução parcial');
+    // F-1348: o runner rodou de fato (a.test.ts) e terminou sem b.test.ts: config, não prazo.
+    expect(first.runner).toBe('vitest');
+    expect(first.notRun?.causes).toEqual(['runner']);
     expect(second.cached).toBe(false);
     expect(exec.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
@@ -292,6 +295,57 @@ describe('runRegressionGate', () => {
     expect(result.status).toBe('unavailable');
     expect(result.testsRun).toHaveLength(1);
     expect(result.testsNotRun).toHaveLength(1);
+    expect(result.notRun?.causes).toEqual(['limit']);
+  });
+
+  it('F-1348: mapa de impacto que consome o prazo — o recibo não afirma runner e diz que foi o prazo do mapa', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    let clock = 0;
+    const { exec } = fakeVitest();
+    // A fase de impacto (raio do code map + grafo de imports) leva 43 dos 45 s.
+    const blastRadius = () => {
+      clock += 43_000;
+      return null;
+    };
+
+    const result = await runRegressionGate(
+      { scope, timeoutMs: 45_000 },
+      { exec, now: () => clock, extensions: { blastRadius } },
+    );
+
+    expect(exec).not.toHaveBeenCalled();
+    expect(result.status).toBe('unavailable');
+    expect(result.testsRun).toEqual([]);
+    expect(result.testsNotRun).toHaveLength(2);
+    // Nenhum runner executou nada: o recibo não pode culpar (nem creditar) o vitest.
+    expect(result.runner).toBeNull();
+    expect(result.notRun).toEqual({ causes: ['map-deadline'], mapMs: 43_000, testBudgetMs: 2_000 });
+  });
+
+  it('F-1348: runner que sobe e estoura o prazo (recibo do F-1302) — sem runner, causa prazo dos testes', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    let clock = 0;
+    // Mesma forma da resposta de execOwnedCheck ao vencer o prazo.
+    const exec = vi.fn<RegressionExec>(async (_file, _args, options) => {
+      clock += options.timeoutMs;
+      return {
+        exitCode: null,
+        timedOut: true,
+        retryable: true,
+        stdout: '',
+        stderr: '\nVerificação excedeu o prazo; aguardando encerramento físico antes de liberar recursos.',
+      };
+    });
+
+    const result = await runRegressionGate({ scope, timeoutMs: 45_000 }, { exec, now: () => clock });
+
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('unavailable');
+    expect(result.testsRun).toEqual([]);
+    expect(result.runner).toBeNull();
+    expect(result.notRun).toEqual({ causes: ['test-deadline'], mapMs: 0, testBudgetMs: 45_000 });
   });
 
   it('falha de arquivo que o portão não pediu (filtro por substring do vitest) não bloqueia', async () => {
@@ -1369,6 +1423,26 @@ describe('evaluateHandoffRegressionGate', () => {
     // estourou o cliente, o agente reenvia e o Maestro recebe duas vezes.
     expect(clock).toBeLessThanOrEqual(HANDOFF_REGRESSION_BUDGET_MS);
     expect(HANDOFF_REGRESSION_BUDGET_MS).toBeLessThan(50_000);
+  });
+
+  it('F-1348: recibo do handoff sem execução não afirma runner e leva a causa fora do corte de avisos', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    let clock = 0;
+    const exec = vi.fn<RegressionExec>(async (_file, _args, options) => {
+      clock += options.timeoutMs;
+      return { exitCode: null, timedOut: true, retryable: true, stdout: '', stderr: '' };
+    });
+    const verdict = await evaluateHandoffRegressionGate(
+      { sessionId: 'sess-f1348', scope },
+      { exec, now: () => clock, enabled: () => true },
+    );
+
+    expect(verdict).toMatchObject({ kind: 'accepted', unverified: true });
+    const payload = verdict.kind === 'accepted' ? verdict.artifact?.payload : undefined;
+    expect(payload?.testsRun).toEqual([]);
+    expect(payload?.runner).toBeNull();
+    expect(payload?.notRun).toEqual({ causes: ['test-deadline'], mapMs: 0, testBudgetMs: HANDOFF_REGRESSION_BUDGET_MS });
   });
 });
 

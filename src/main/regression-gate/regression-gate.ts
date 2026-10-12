@@ -266,6 +266,23 @@ export interface RegressionTestFailure {
   readonly message: string;
 }
 
+/**
+ * F-1348: por que impactados não rodaram. `map-deadline`: o prazo acabou antes
+ * de subir o runner (a fase de impacto o consumiu); `test-deadline`: o runner
+ * subiu e excedeu o prazo (ou esperou admissão até o fim); `runner`: terminou
+ * sem executá-los (config que exclui, sandbox, relatório ausente, sem runner);
+ * `limit`: cortados pelo teto de arquivos de teste.
+ */
+export type RegressionNotRunCause = 'map-deadline' | 'test-deadline' | 'runner' | 'limit';
+
+export interface RegressionNotRun {
+  readonly causes: readonly RegressionNotRunCause[];
+  /** Quanto do prazo total a fase de impacto (raio, invariantes, grafo) consumiu. */
+  readonly mapMs: number;
+  /** O que sobrou do prazo total para os testes quando o mapa terminou. */
+  readonly testBudgetMs: number;
+}
+
 export type RegressionGateStatus =
   | 'passed'
   | 'failed'
@@ -303,7 +320,10 @@ export interface RegressionGateResult {
    * pass/fail continuam saindo só dos testes executados.
    */
   readonly businessRisk?: GateBusinessRisk | null;
+  /** Runner que DE FATO executou testes (deu relatório); null quando nada rodou. */
   readonly runner: RegressionRunnerKind | null;
+  /** F-1348: causa estruturada dos `testsNotRun`, fora do corte de avisos do recibo. */
+  readonly notRun?: RegressionNotRun | null;
   readonly warnings: readonly string[];
   readonly cached: boolean;
   readonly durationMs: number;
@@ -1364,6 +1384,8 @@ interface GroupOutcome {
   readonly skipped?: readonly string[];
   readonly physicalExit?: Promise<void>;
   readonly retryable?: boolean;
+  /** O runner subiu e venceu o prazo (F-1348: causa, não config). */
+  readonly timedOut?: boolean;
   readonly failures: RegressionTestFailure[];
   readonly ran: string[];
   /** Suítes que não carregaram (erro de parse): viram falha só se o diff as explica. */
@@ -1405,7 +1427,8 @@ async function runTests(
     authority: control.authority,
   };
   let physicalExit: Promise<void> | undefined;
-  const notVerified = (why: string, retryable = false): GroupOutcome => ({ failures: [], ran: [], warning: why, retryable, physicalExit });
+  let timedOut = false;
+  const notVerified = (why: string, retryable = false): GroupOutcome => ({ failures: [], ran: [], warning: why, retryable, physicalExit, timedOut });
   try {
     if (runner.kind === 'go' || runner.kind === 'cargo') {
       const command = await prepareNativeRegressionCommand(runner.kind, cwd, sandbox.dir, options.env,
@@ -1413,6 +1436,7 @@ async function runTests(
       const result = await exec(command.file, [...(command.argsPrefix ?? []), ...nativeRegressionArgs(runner.kind, fs.existsSync(path.join(cwd, 'Cargo.lock')))],
         { ...options, nativeCommand: runner.kind, env: command.env, extraReadPaths: command.extraReadPaths });
       physicalExit = result.physicalExit;
+      timedOut = result.timedOut;
       if (result.retryable || result.aborted || result.timedOut) return notVerified(result.stderr || 'Verificação nativa aguardando recursos; tente novamente.', true);
       if (result.outputTruncated) return notVerified('Relatório nativo excedeu o limite de captura; execução não verificada integralmente.');
       const parsed = runner.kind === 'go' ? parseGoTestEvents(result.stdout, result.exitCode) : parseRustTestOutput(result.stdout, result.exitCode, result.stderr);
@@ -1432,6 +1456,7 @@ async function runTests(
         options,
       );
       physicalExit = result.physicalExit;
+      timedOut = result.timedOut;
       if (result.retryable) return notVerified(result.stderr || 'Verificação aguardando recursos; tente novamente.', true);
       if (result.aborted) return notVerified('pytest cancelado');
       if (result.timedOut) return notVerified(`pytest excedeu ${timeoutMs}ms`);
@@ -1475,6 +1500,7 @@ async function runTests(
         : [...configArgs, '--json', `--outputFile=${outFile}`, '--passWithNoTests', '--runTestsByPath', ...relTests];
     const result = await exec(runner.bin, args, options);
     physicalExit = result.physicalExit;
+    timedOut = result.timedOut;
     if (result.retryable) return notVerified(result.stderr || 'Verificação aguardando recursos; tente novamente.', true);
     if (result.aborted) return notVerified(`${runner.kind} cancelado`);
     if (result.timedOut) return notVerified(`${runner.kind} excedeu ${timeoutMs}ms`);
@@ -1840,16 +1866,24 @@ async function evaluateMappedTests(
     });
   }
   const { groups, orphans } = planRunnerGroups(root, tests);
+  // F-1348: quanto o mapa levou e o que sobrou para os testes vão no recibo,
+  // com a causa do que não rodou — o leitor não culpa a config pelo prazo.
+  const totalMs = input.timeoutMs ?? DEFAULT_REGRESSION_TEST_TIMEOUT_MS;
+  const mapMs = now() - started;
+  const notRunCauses = new Set<RegressionNotRunCause>(overflow.length > 0 ? ['limit'] : []);
+  if (groups.length === 0 || orphans.length > 0) notRunCauses.add('runner');
+  const notRunOf = (notRun: readonly string[]): RegressionNotRun | null =>
+    notRun.length > 0 ? { causes: [...notRunCauses], mapMs, testBudgetMs: Math.max(0, totalMs - mapMs) } : null;
   if (groups.length === 0) {
     warnings.push('nenhum runner de teste detectado (vitest/jest/pytest): testes impactados NÃO verificados');
-    return finish({ status: 'unavailable', testsRun: [], testsNotRun: [...tests, ...overflow], failures: [], inheritedFailures: [], preexistingFailures: [], runner: null, businessRisk: await businessRiskPromise, ...common });
+    return finish({ status: 'unavailable', testsRun: [], testsNotRun: [...tests, ...overflow], failures: [], inheritedFailures: [], preexistingFailures: [], runner: null, notRun: notRunOf([...tests, ...overflow]), businessRisk: await businessRiskPromise, ...common });
   }
   if (orphans.length > 0) {
     warnings.push(`sem runner para ${orphans.length} teste(s): ${orphans.slice(0, 5).join(', ')}`);
   }
   // Um prazo só para tudo (mapa já consumiu parte): a retentativa nunca
   // estoura o transporte de quem espera (Stop hook, handoff).
-  const deadline = started + (input.timeoutMs ?? DEFAULT_REGRESSION_TEST_TIMEOUT_MS);
+  const deadline = started + totalMs;
   const remaining = () => deadline - now();
   const exec = deps.exec ?? execSandboxed;
   const control = {
@@ -1880,15 +1914,25 @@ async function evaluateMappedTests(
   const ran = new Set<string>();
   const failuresByGroup = new Map<RunnerGroup, RegressionTestFailure[]>();
   let retryable = false;
+  let launched = false;
+  let executedRunner: RegressionRunnerKind | null = null;
   for (const group of groups) {
     if (remaining() < MIN_RUN_BUDGET_MS) {
+      notRunCauses.add(launched ? 'test-deadline' : 'map-deadline');
       warnings.push(`prazo esgotado antes de rodar ${group.tests.length} teste(s) (${group.runner.kind})`);
       continue;
     }
+    launched = true;
     const outcome = await runTests(input.scope, group, remaining(), exec, control);
     retryable ||= outcome.retryable === true;
     if (outcome.warning) warnings.push(outcome.warning);
     for (const file of outcome.ran) ran.add(file);
+    if (outcome.ran.length > 0 || outcome.failures.length > 0 || (outcome.loadFailures?.length ?? 0) > 0) {
+      executedRunner ??= group.runner.kind;
+    }
+    if (group.tests.some((test) => !outcome.ran.includes(test))) {
+      notRunCauses.add(outcome.timedOut ? 'test-deadline' : 'runner');
+    }
     const groupFailures = [...outcome.failures];
     for (const load of outcome.loadFailures ?? []) {
       if (loadAttributable(load)) {
@@ -1997,7 +2041,8 @@ async function evaluateMappedTests(
     failures: countedFailures,
     inheritedFailures,
     preexistingFailures,
-    runner: groups[0]!.runner.kind,
+    runner: executedRunner,
+    notRun: notRunOf(testsNotRun),
     untestedFiles: impacted.untestedFiles,
     invariantsTouched: touchedSummary(new Set(countedFailures.map((failure) => failure.file))),
     businessRisk: await businessRiskPromise,

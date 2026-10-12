@@ -13,6 +13,7 @@ import {
   runRegressionGate,
   type RegressionGateDependencies,
   type RegressionGateResult,
+  type RegressionNotRun,
 } from './regression-gate';
 
 export const REGRESSION_GATE_BOUNCES_PER_SESSION = 2;
@@ -38,6 +39,8 @@ export interface RegressionGateArtifact {
     readonly headSha: string | null;
     readonly baseSha: string | null;
     readonly runner: RegressionGateResult['runner'];
+    /** F-1348: causa do que não rodou — fora do corte de `warnings`. */
+    readonly notRun?: RegressionNotRun | null;
     readonly testsRun: readonly string[];
     readonly testsNotRun: readonly string[];
     readonly failures: RegressionGateResult['failures'];
@@ -75,6 +78,7 @@ function artifactOf(result: RegressionGateResult): RegressionGateArtifact {
       headSha: result.headSha,
       baseSha: result.baseSha,
       runner: result.runner,
+      notRun: result.notRun ?? null,
       testsRun: result.testsRun.slice(0, 64),
       testsNotRun: result.testsNotRun.slice(0, 64),
       failures: result.failures.slice(0, 16),
