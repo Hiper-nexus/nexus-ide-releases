@@ -64,4 +64,9 @@ export interface InstalledItem {
   file: string;
   size: number;
   modifiedAt: number;
+  /**
+   * F-1308: quando um nome duplicado entre homes colapsa (first-wins), a cópia
+   * vencedora aponta aqui o `file` das cópias ofuscadas que perderam.
+   */
+  shadowedFrom?: string[];
 }

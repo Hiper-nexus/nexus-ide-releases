@@ -49,13 +49,19 @@ function scanDir(
 }
 
 function uniqueInstalledItems(items: InstalledItem[]): InstalledItem[] {
-  const seen = new Set<string>();
-  return items.filter((item) => {
+  const seen = new Map<string, InstalledItem>();
+  for (const item of items) {
     const key = `${item.kind}:${item.name}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+    const winner = seen.get(key);
+    if (!winner) {
+      seen.set(key, { ...item });
+      continue;
+    }
+    // F-1308: nome duplicado colapsa em silêncio (first-wins); a vencedora
+    // expõe de onde saiu a cópia ofuscada.
+    winner.shadowedFrom = [...(winner.shadowedFrom ?? []), item.file];
+  }
+  return [...seen.values()];
 }
 
 export function listInstalledCatalogItems(

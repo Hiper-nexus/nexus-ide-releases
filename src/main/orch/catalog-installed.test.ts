@@ -43,4 +43,19 @@ describe('listInstalledCatalogItems', () => {
     expect(names).toContain('real-skill');
     expect(names).not.toContain('ghost-no-skillmd');
   });
+
+  it('F-1308: nome duplicado entre homes expõe qual cópia venceu (shadowedFrom)', () => {
+    const home = fakeHome();
+    const winner = installSkill(home, '.claude/skills', 'dup-skill');
+    const shadowed = installSkill(home, '.agents/skills', 'dup-skill');
+
+    const items = listInstalledCatalogItems(home).filter(
+      (item) => item.name === 'dup-skill',
+    );
+    // first-wins: .claude/skills vence .agents/skills.
+    expect(items).toHaveLength(1);
+    expect(items[0]!.file).toBe(winner);
+    // A vencedora aponta de onde saiu a cópia ofuscada.
+    expect(items[0]!.shadowedFrom).toEqual([shadowed]);
+  });
 });
