@@ -127,6 +127,23 @@ const READ_ONLY_TOOLS = new Set([
   'cli_inventory',
   // Presença de credencial no cofre com máscara — sem valor, sem label.
   'vault_list',
+  // F-1328: revisados handler a handler — só leem, sem write e sem contato com
+  // provider. account_windows: projeção do snapshot de cota (como quota_status).
+  // perf_events: mesmo coletor do perf_snapshot. recipe_list/recipe_get: mapa
+  // de squads em memória. recipes_lint/recipes_format: safeParse e
+  // JSON.stringify do objeto recebido; format nunca grava (salvar é
+  // recipe_save). cron_list: lê o arquivo do cron (o `cron` e o
+  // `cron_cancel`, que mutam, seguem efeito). route_log: leitura do ledger de
+  // rota. session_lease_inspect: só metadados, nunca o startKey (F-1336).
+  'account_windows',
+  'perf_events',
+  'recipe_list',
+  'recipe_get',
+  'recipes_lint',
+  'recipes_format',
+  'cron_list',
+  'route_log',
+  'session_lease_inspect',
 ]);
 
 /**

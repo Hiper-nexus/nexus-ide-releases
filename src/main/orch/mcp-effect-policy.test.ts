@@ -91,6 +91,30 @@ describe('MCP effect policy', () => {
     expect(effectPolicyForTool('nexus_bg_kill')).toBe('mission-control');
   });
 
+  // F-1328: handlers que só leem (sem write, sem contato com provider) caíam no
+  // padrão mission-effect: erro de leitura virava effectMayHaveCommitted.
+  it.each([
+    'account_windows',
+    'perf_events',
+    'recipe_list',
+    'recipe_get',
+    'recipes_lint',
+    'recipes_format',
+    'cron_list',
+    'route_log',
+    'session_lease_inspect',
+  ])('F-1328: nexus_%s is read-only', (name) => {
+    expect(effectPolicyForTool(`nexus_${name}`)).toBe('read-only');
+    expect(isToolAllowedForReadOnlyContext(`nexus_${name}`)).toBe(true);
+    expect(requiresHumanConfirmationForTool(`nexus_${name}`)).toBe(false);
+  });
+
+  it('F-1328: the mutating siblings stay effectful', () => {
+    for (const tool of ['nexus_cron', 'nexus_cron_cancel', 'nexus_recipe_save']) {
+      expect(effectPolicyForTool(tool)).not.toBe('read-only');
+    }
+  });
+
   it('keeps PREVC transitions under workflow authority without human prompts', () => {
     for (const tool of [
       'nexus_review_submit',

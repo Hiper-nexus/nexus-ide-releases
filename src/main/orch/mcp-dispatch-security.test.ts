@@ -3090,6 +3090,21 @@ describe("MCP dispatch effect safety", () => {
     expect(entries[1].invocation_id).toBe(entries[0].invocation_id);
   });
 
+  it("F-1328: a failed read (recipe not found) never reports a possibly committed effect", async () => {
+    const tool = buildDomainTools().find((item) => item.name === "nexus_recipe_get")!;
+    const result = await dispatchToolCall(
+      "http-mcp",
+      registryWith(tool),
+      tool.name,
+      { id: "does-not-exist" },
+      missionContext(),
+      workflowOptions(),
+    );
+
+    expect(result).toMatchObject({ ok: false, error: "recipe not found: does-not-exist" });
+    expect(result.effectMayHaveCommitted).toBeUndefined();
+  });
+
   it("F-1013: recusa de autoridade anterior a toda escrita não reporta efeito e repassa a dica", async () => {
     const registry = registryWith({
       name: "nexus_terminal_run",
