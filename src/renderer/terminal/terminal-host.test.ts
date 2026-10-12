@@ -114,6 +114,7 @@ vi.mock('./terminal-ghost-assist', () => ({
 }));
 
 import { useLayoutStore } from '../state/layout-store';
+import { useAdapterStore } from '../state/adapter-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { setActiveWorkspacePath } from '../state/active-workspace';
 import { useOrchStore } from '../state/orch-store';
@@ -2841,7 +2842,36 @@ describe('F-266: real terminal host wires Kimi prompt proof on every submission 
     await vi.advanceTimersByTimeAsync(15_000);
     expect(await result).toBe(true);
     expect(probe).toHaveBeenCalledWith('kimi-proof-session');
-    expect(writes).toEqual(['new prompt', '\r', '\r']);
+    // F-1411: kimi.json declara bracketed paste; a lane do operador segue em
+    // texto plano (o handler humano do Main não recebe o marcador).
+    const typed = lane === 'raw' || lane === 'confirmed' ? '\x1b[200~new prompt\x1b[201~' : 'new prompt';
+    expect(writes).toEqual([typed, '\r', '\r']);
+  });
+
+  it('F-1411: bracketedPaste vem da declaração do adapter, não de hardcode por id', async () => {
+    const agent: PaneModel = { id: 'claude-raw-declared', kind: 'cli-agent', adapterId: 'claude', title: 'Claude' };
+    useLayoutStore.setState({ root: buildGridTree([agent]), focusedPaneId: agent.id });
+    useAdapterStore.setState({ adapters: [{
+      id: 'claude', kind: 'cli-pty', label: 'Claude', icon: '◆', models: { list: [], default: '' },
+      installed: true, installCommand: '', idleTimeoutMs: 800, orchestratorCapable: true, bracketedPaste: false,
+    }] });
+    try {
+      const host = getOrCreateHost(agent); host.sessionId = 'claude-raw-session';
+      const writes: string[] = [];
+      let enters = 0;
+      const send = vi.fn(async (_session: unknown, data: string) => { writes.push(data); if (data === '\r') enters++; return true; });
+      Object.assign(window.nexus.pty, {
+        promptState: vi.fn(async () => ({ turnStartSequence: enters >= 1 ? 1 : 0, state: 'idle' as const, awaitingInput: false })),
+        writeConfirmed: send,
+        submitPromptEnter: async (session: string) => send(session, '\r'),
+      });
+      const result = submitPromptToPaneConfirmed(agent.id, 'plain prompt', host.sessionId);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(await result).toBe(true);
+      expect(writes[0]).toBe('plain prompt');
+    } finally {
+      useAdapterStore.setState({ adapters: [] });
+    }
   });
 });
 
@@ -2984,7 +3014,8 @@ describe('F-1137: respawn continuity waits for native prompt acceptance', () => 
     const text = mode === 'cross-account-continuity'
       ? 'Continue the pending step from the handoff.'
       : 'Continue the current mission from exactly where you stopped as the agent. Preserve existing context and execute the next pending step now.';
-    const payload = adapterId === 'claude' ? `\x1b[200~${text}\x1b[201~` : text;
+    // F-1411: Kimi Code 2.x também recebe a continuidade como UMA colagem.
+    const payload = `\x1b[200~${text}\x1b[201~`;
     const submittedNotice = mode === 'cross-account-continuity' ? 'handoff multi-conta submetido' : 'continuidade submetida automaticamente';
 
     await vi.advanceTimersByTimeAsync(2_800);
