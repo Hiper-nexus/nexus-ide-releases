@@ -119,8 +119,9 @@ describe('lane de julgamento (F-233: só modelos de ponta julgam)', () => {
     expect(decision!.reason).not.toContain('lane de julgamento');
   });
 
-  it('lane lista exatamente os sete assentos de topo', () => {
+  it('lane lista exatamente os oito assentos de topo', () => {
     expect([...JUDGE_FRONTIER_LANE]).toEqual([
+      { adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' },
       { adapterId: 'claude', model: 'claude-fable-5-1' },
       { adapterId: 'claude', model: 'claude-opus-5-5' },
       { adapterId: 'claude', model: 'claude-sonnet-5-5' },

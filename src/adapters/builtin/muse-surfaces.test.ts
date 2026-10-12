@@ -57,9 +57,9 @@ describe('Muse CLI spawn contract (F-596)', () => {
     expect(adapter.models.flag).toBe('--model');
   });
 
-  it('F-1391: offers only efforts every Muse model accepts — no `max` (the wonder has none)', () => {
+  it('F-1398: exposes max accepted by Muse 1.4.6', () => {
     expect(adapter.control?.effort?.arg.trim()).toBe('--reasoning-effort');
-    expect(adapter.control?.effort?.levels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
-    expect(adapter.control?.effort?.levels).not.toContain('max');
+    expect(adapter.control?.effort?.levels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+    expect(adapter.control?.effort?.levels).toContain('max');
   });
 });

@@ -10,6 +10,7 @@ import { readQwenSettingsSummary, readQwenSettingsSummaryAsync } from './qwen-se
 import { cachedCliBinaryVersion, resolveCliBinary } from '../path-resolver';
 import { compareAppVersions, isValidAppVersion } from '../../shared/app-version';
 import { modelListAuthority } from './model-availability';
+import { BUILTIN_MODEL_CATALOG } from './model-catalog';
 
 export interface CliModelCacheReadOptions {
   /** Version of the resolved binary, never a synchronous CLI probe. */
@@ -214,16 +215,37 @@ function parseCliEffortsText(text: string, options: CliModelCacheReadOptions): s
  * F-1391: o Muse 1.4.6 guarda o catálogo do provedor (Meta) em
  * `~/.local/share/muse/model-catalog/<hex(provider)>__p<hex(profile)>.json`,
  * `{ rows: [{ model_id, visibility, reasoning_effort_variants: [{ tier }] }] }`.
- * Entram só as linhas `visible`. Fora: `-contributor` (conteúdo vai para
- * melhoria de produto) e geração de imagem. O esforço do adapter é o que TODO
- * modelo oferecido aceita: o `max` do spark-1.3 não vale para o wonder.
+ * F-1398: contributor só com opt-in no settings real do Main. Esforços
+ * conhecidos no estático são unidos ao cache atrasado, por modelo.
  * Diretório ausente ou JSON ilegível não contribui (fica o catálogo estático).
  */
 const MAX_MUSE_CATALOG_FILES = 16;
 
 interface MuseCatalogRow { readonly id: string; readonly efforts: readonly string[] }
 
-function parseMuseCatalogRows(text: string): MuseCatalogRow[] {
+/** Only the real Main HOME proves consent; never XDG_CONFIG_HOME from a pane. */
+function museSettingsFile(): string { return path.join(os.homedir(), '.config', 'muse', 'settings.json'); }
+
+function parseMuseContributorConsent(text: string): boolean {
+  try {
+    const settings = JSON.parse(text) as Record<string, unknown> | null;
+    const contributor = (id: unknown) => typeof id === 'string' && MODEL_ID.test(id) && /-contributor$/iu.test(id);
+    return contributor(settings?.model) || !!(settings?.model_reasoning_efforts &&
+      typeof settings.model_reasoning_efforts === 'object' && !Array.isArray(settings.model_reasoning_efforts) &&
+      Object.keys(settings.model_reasoning_efforts).some(contributor));
+  } catch { return false; }
+}
+
+export function readMuseContributorConsent(settingsFile = museSettingsFile()): boolean {
+  try { return parseMuseContributorConsent(readCacheText(settingsFile)); } catch { return false; }
+}
+
+async function readMuseContributorConsentAsync(settingsFile: string): Promise<boolean> {
+  const result = await readRegularFileCappedAsync(settingsFile, MAX_CACHE_BYTES);
+  return result.kind === 'text' && parseMuseContributorConsent(result.text);
+}
+
+function parseMuseCatalogRows(text: string, consent: boolean): MuseCatalogRow[] {
   try {
     const rows = (JSON.parse(text) as { rows?: unknown } | null)?.rows;
     if (!Array.isArray(rows)) return [];
@@ -231,14 +253,16 @@ function parseMuseCatalogRows(text: string): MuseCatalogRow[] {
       if (!value || typeof value !== 'object') return [];
       const row = value as Record<string, unknown>;
       const id = typeof row.model_id === 'string' ? row.model_id.trim() : '';
-      if (!MODEL_ID.test(id) || row.visibility !== 'visible') return [];
-      if (/-contributor$/iu.test(id) || /^muse-image\b/iu.test(id) || row.supports_image_generation === true) return [];
+      const contributor = /-contributor$/iu.test(id);
+      if (!MODEL_ID.test(id) || (contributor ? !consent : row.visibility !== 'visible')) return [];
+      if (/^muse-image\b/iu.test(id) || row.supports_image_generation === true) return [];
       const variants = Array.isArray(row.reasoning_effort_variants) ? row.reasoning_effort_variants : [];
       const efforts = variants.flatMap((variant) => {
         const tier = variant && typeof variant === 'object' ? (variant as { tier?: unknown }).tier : undefined;
         return typeof tier === 'string' && EFFORT_ID.test(tier.trim()) ? [tier.trim()] : [];
       });
-      return [{ id, efforts }];
+      const known = BUILTIN_MODEL_CATALOG.adapters?.muse?.models?.find((model) => model.id === id)?.efforts ?? [];
+      return [{ id, efforts: [...new Set([...efforts, ...known])] }];
     });
   } catch {
     return [];
@@ -250,45 +274,45 @@ function museCatalogFiles(dir: string, names: readonly string[]): string[] {
     .map((name) => path.join(dir, name));
 }
 
-function readMuseCatalogRows(pattern: string): MuseCatalogRow[] {
+function readMuseCatalogRows(pattern: string, consent: boolean): MuseCatalogRow[] {
   const dir = path.dirname(pattern);
   let names: string[] = [];
   try { names = fs.readdirSync(dir); } catch { return []; }
   return museCatalogFiles(dir, names).flatMap((file) => {
-    try { return parseMuseCatalogRows(readCacheText(file)); } catch { return []; }
+    try { return parseMuseCatalogRows(readCacheText(file), consent); } catch { return []; }
   });
 }
 
-async function readMuseCatalogRowsAsync(pattern: string): Promise<MuseCatalogRow[]> {
+async function readMuseCatalogRowsAsync(pattern: string, consent: boolean): Promise<MuseCatalogRow[]> {
   const dir = path.dirname(pattern);
   let names: string[] = [];
   try { names = await fs.promises.readdir(dir); } catch { return []; }
   const rows: MuseCatalogRow[] = [];
   for (const file of museCatalogFiles(dir, names)) {
     const result = await readRegularFileCappedAsync(file, MAX_CACHE_BYTES);
-    if (result.kind === 'text') rows.push(...parseMuseCatalogRows(result.text));
+    if (result.kind === 'text') rows.push(...parseMuseCatalogRows(result.text, consent));
   }
   return rows;
 }
 
 const museIds = (rows: readonly MuseCatalogRow[]): string[] => [...new Set(rows.map((row) => row.id))];
 
-function museCommonEfforts(rows: readonly MuseCatalogRow[]): string[] {
+function museCatalogEfforts(rows: readonly MuseCatalogRow[]): string[] {
   if (rows.length === 0) return [];
-  return rows[0]!.efforts.filter((effort) => rows.every((row) => row.efforts.includes(effort)));
+  return [...new Set(rows.flatMap((row) => row.efforts))];
 }
 
 /** Fonte do cache do Muse; `dir` é o diretório model-catalog (um JSON por provider/perfil). */
-export function museModelCatalogSource(dir: string): CliModelCacheSource {
+export function museModelCatalogSource(dir: string, settingsFile = museSettingsFile()): CliModelCacheSource {
   // O watcher observa o diretório (`path.dirname` do padrão) e o leitor o lista.
   const pattern = path.join(dir, '*.json');
   return {
     adapterId: 'muse',
     files: [pattern],
-    read: (file) => museIds(readMuseCatalogRows(file)),
-    readAsync: async (file) => museIds(await readMuseCatalogRowsAsync(file)),
-    readEfforts: (file) => museCommonEfforts(readMuseCatalogRows(file)),
-    readEffortsAsync: async (file) => museCommonEfforts(await readMuseCatalogRowsAsync(file)),
+    read: (file) => museIds(readMuseCatalogRows(file, readMuseContributorConsent(settingsFile))),
+    readAsync: async (file) => museIds(await readMuseCatalogRowsAsync(file, await readMuseContributorConsentAsync(settingsFile))),
+    readEfforts: (file) => museCatalogEfforts(readMuseCatalogRows(file, readMuseContributorConsent(settingsFile))),
+    readEffortsAsync: async (file) => museCatalogEfforts(await readMuseCatalogRowsAsync(file, await readMuseContributorConsentAsync(settingsFile))),
   };
 }
 

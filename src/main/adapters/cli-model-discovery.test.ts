@@ -13,6 +13,7 @@ import {
   discoverCliModels,
   discoverCliModelsAsync,
   museModelCatalogSource,
+  readMuseContributorConsent,
   readCliEfforts,
   readCliModelCache,
   readCliModelCacheAsync,
@@ -214,7 +215,7 @@ describe('catálogo dinâmico do Muse (F-1391)', () => {
 
   it('oferece só as linhas visible — sem -contributor, sem muse-image, sem hidden', async () => {
     await withCatalog({ '6d657461__p746268.json': JSON.stringify(MUSE_CATALOG) }, async (dir) => {
-      const source = museModelCatalogSource(dir);
+      const source = museModelCatalogSource(dir, path.join(dir, 'settings.json'));
       const expected = ['muse-wonder-1.0', 'muse-wonder-full-1.0', 'muse-spark-1.3', 'muse-spark-1.2'];
       expect(discoverCliModels([source]).get('muse')).toEqual(expected);
       expect((await discoverCliModelsAsync([source])).get('muse')).toEqual(expected);
@@ -227,7 +228,7 @@ describe('catálogo dinâmico do Muse (F-1391)', () => {
       rows: [...MUSE_CATALOG.rows, museRow('muse-wonder-1.1', 'visible', MUSE_TIERS), museRow('muse-wonder-1.1-contributor', 'visible', MUSE_TIERS)],
     };
     await withCatalog({ 'a.json': JSON.stringify(next) }, (dir) => {
-      const adapter = applyDiscoveredModelsToAdapter(museAdapter(), discoverCliModels([museModelCatalogSource(dir)]));
+      const adapter = applyDiscoveredModelsToAdapter(museAdapter(), discoverCliModels([museModelCatalogSource(dir, path.join(dir, 'settings.json'))]));
       expect(adapter.models.list).toContain('muse-wonder-1.1');
       expect(adapter.models.list).not.toContain('muse-wonder-1.1-contributor');
       expect(adapter.models.list.some((id) => id.startsWith('muse-image'))).toBe(false);
@@ -235,25 +236,71 @@ describe('catálogo dinâmico do Muse (F-1391)', () => {
     });
   });
 
-  it('esforço vem do catálogo e é o que todo modelo oferecido aceita: max do spark-1.3 não vale para o wonder', async () => {
+  it('F-1398: cache desatualizado não retira max aceito pelo adapter Muse', async () => {
     await withCatalog({ '6d657461__p746268.json': JSON.stringify(MUSE_CATALOG) }, async (dir) => {
-      const source = museModelCatalogSource(dir);
-      expect(discoverCliEfforts([source]).get('muse')).toEqual(MUSE_TIERS);
-      expect((await discoverCliEffortsAsync([source])).get('muse')).toEqual(MUSE_TIERS);
+      const source = museModelCatalogSource(dir, path.join(dir, 'settings.json'));
+      expect(discoverCliEfforts([source]).get('muse')).toEqual([...MUSE_TIERS, 'max']);
+      expect((await discoverCliEffortsAsync([source])).get('muse')).toEqual([...MUSE_TIERS, 'max']);
       const adapter = applyDiscoveredEffortsToAdapter(museAdapter(), discoverCliEfforts([source]));
-      expect(adapter.kind === 'cli-pty' ? adapter.control?.effort?.levels : []).not.toContain('max');
+      expect(adapter.kind === 'cli-pty' ? adapter.control?.effort?.levels : []).toContain('max');
     });
   });
 
   it('diretório ausente, JSON ilegível ou sem rows → nada (fica o catálogo estático)', async () => {
-    const missing = museModelCatalogSource(path.join(os.tmpdir(), `nexus-muse-missing-${process.pid}`));
+    const missingDir = path.join(os.tmpdir(), `nexus-muse-missing-${process.pid}`);
+    const missing = museModelCatalogSource(missingDir, path.join(missingDir, 'settings.json'));
     expect(discoverCliModels([missing]).has('muse')).toBe(false);
     expect((await discoverCliModelsAsync([missing])).has('muse')).toBe(false);
     expect(discoverCliEfforts([missing]).has('muse')).toBe(false);
     await withCatalog({ 'bad.json': '{nope', 'other.json': JSON.stringify({ models: [{ id: 'x' }] }), 'notes.txt': 'muse-wonder-9' }, async (dir) => {
-      const source = museModelCatalogSource(dir);
+      const source = museModelCatalogSource(dir, path.join(dir, 'settings.json'));
       expect(discoverCliModels([source]).has('muse')).toBe(false);
       expect((await discoverCliModelsAsync([source])).has('muse')).toBe(false);
+    });
+  });
+
+  it.each([
+    { model: 'muse-wonder-1.0-contributor' },
+    { model_reasoning_efforts: { 'muse-wonder-full-1.0-contributor': 'xhigh' } },
+  ])('F-1398: consentimento em settings %j oferece contributor oculto nos leitores sync e async', async (settings) => {
+    await withCatalog({ 'catalog.json': JSON.stringify(MUSE_CATALOG), 'settings.json': JSON.stringify(settings) }, async (dir) => {
+      const settingsFile = path.join(dir, 'settings.json');
+      expect(readMuseContributorConsent(settingsFile)).toBe(true);
+      const source = museModelCatalogSource(dir, settingsFile);
+      const sync = discoverCliModels([source]).get('muse');
+      expect(sync).toContain('muse-wonder-1.0-contributor');
+      expect(sync).toContain('muse-wonder-full-1.0-contributor');
+      expect(sync).not.toContain('muse-image-1.0');
+      expect((await discoverCliModelsAsync([source])).get('muse')).toEqual(sync);
+    });
+  });
+
+  it.each(['{bad', 'null', '{}', JSON.stringify({ model: 'muse-wonder-full-1.0' }),
+    JSON.stringify({ model_reasoning_efforts: { 'muse-wonder-1.0': 'max' } }),
+  ])('F-1398: settings inválido ou sem opt-in (%s) nega consentimento', async (settings) => {
+    await withCatalog({ 'catalog.json': JSON.stringify(MUSE_CATALOG), 'settings.json': settings }, async (dir) => {
+      const source = museModelCatalogSource(dir, path.join(dir, 'settings.json'));
+      expect(readMuseContributorConsent(path.join(dir, 'settings.json'))).toBe(false);
+      expect(discoverCliModels([source]).get('muse')?.some((id) => id.endsWith('-contributor'))).toBe(false);
+      expect((await discoverCliModelsAsync([source])).get('muse')?.some((id) => id.endsWith('-contributor'))).toBe(false);
+    });
+  });
+
+  it('F-1398: settings ausente nega consentimento e não herda o HOME real do operador', async () => {
+    await withCatalog({ 'catalog.json': JSON.stringify(MUSE_CATALOG) }, async (dir) => {
+      const settingsFile = path.join(dir, 'missing-settings.json');
+      expect(readMuseContributorConsent(settingsFile)).toBe(false);
+      const source = museModelCatalogSource(dir, settingsFile);
+      expect(discoverCliModels([source]).get('muse')?.some((id) => id.endsWith('-contributor'))).toBe(false);
+      expect((await discoverCliModelsAsync([source])).get('muse')?.some((id) => id.endsWith('-contributor'))).toBe(false);
+    });
+  });
+
+  it('F-1398: esforços do Wonder Full unem cache antigo ao suporte estático de max', async () => {
+    await withCatalog({ 'catalog.json': JSON.stringify({ rows: [museRow('muse-wonder-full-1.0', 'visible', MUSE_TIERS)] }) }, async (dir) => {
+      const source = museModelCatalogSource(dir, path.join(dir, 'missing-settings.json'));
+      expect(discoverCliEfforts([source]).get('muse')).toContain('max');
+      expect((await discoverCliEffortsAsync([source])).get('muse')).toContain('max');
     });
   });
 

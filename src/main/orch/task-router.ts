@@ -16,7 +16,8 @@
  *      DEFAULT_ROUTING_TABLE
  *   6. mission diversity (open RouteReservations + live panes)
  *
- * Pure logic (no electron imports) — fully unit-testable; the MCP tool
+ * No electron imports; Muse consent uses a bounded Main settings read unless
+ * the internal availability snapshot already supplies it. The MCP tool
  * nexus_route_task feeds it the live adapter list and the merged benchmark.
  */
 import {
@@ -59,6 +60,7 @@ import {
 import { modelAccessQuarantine } from './model-access-quarantine';
 import { isAstraModel, routingPurpose } from './routing-cost-policy';
 import { modelListAuthority, resolveOfferedModels } from '../adapters/model-availability';
+import { readMuseContributorConsent } from '../adapters/cli-model-discovery';
 
 export type TaskTier = 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
 
@@ -667,9 +669,11 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   model: string;
   /** Preferência da lane, não modelo de topo: sozinho, não a torna exclusiva. */
   preferenceOnly?: true;
+  effort?: RouteEffort | 'max';
 }> = Object.freeze([
   { adapterId: 'claude', model: 'claude-opus-5-5' },
   { adapterId: 'claude', model: 'claude-sonnet-5-5' },
+  { adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' },
   { adapterId: 'kimi', model: 'kimi-code/k3', preferenceOnly: true },
   { adapterId: 'codex', model: 'gpt-6.1-sol' },
   { adapterId: 'codex', model: 'gpt-6-sol' },
@@ -685,7 +689,9 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
 export const JUDGE_FRONTIER_LANE: ReadonlyArray<{
   adapterId: string;
   model: string;
+  effort?: RouteEffort | 'max';
 }> = Object.freeze([
+  { adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' },
   { adapterId: 'claude', model: 'claude-fable-5-1' },
   { adapterId: 'claude', model: 'claude-opus-5-5' },
   { adapterId: 'claude', model: 'claude-sonnet-5-5' },
@@ -853,6 +859,8 @@ export interface AdapterAvailability {
   liveModelsAuthoritative?: boolean;
   /** Live native capabilities; [] = no effort control, absent = bundled contract. */
   efforts?: readonly string[];
+  /** Main proved opt-in in the real Muse settings, never agent input. */
+  museContributorConsent?: boolean;
   /**
    * F-724: ids que o provedor escolhido serve com outro modelo (o DeepSeek no
    * Alibaba Token Plan só tem o v4-pro). A linha da tabela que pede o id
@@ -900,7 +908,8 @@ const BUNDLED_MODELS = new Map(BUILTIN_ADAPTERS.map((raw) => {
 export function withLiveRouteCatalog(adapter: AdapterAvailability): AdapterAvailability {
   const live = adapter.liveModels ?? [];
   if (!adapter.models || adapter.models.length === 0) return adapter;
-  let models = adapter.models;
+  let models = adapter.models.filter((model) => adapter.id !== 'muse' ||
+    adapter.museContributorConsent === true || !/-contributor$/iu.test(model));
   const authority = modelListAuthority(adapter.id);
   if (authority !== 'bundled') {
     if (adapter.liveModelsAuthoritative) {
@@ -1153,12 +1162,13 @@ export function mentionedRoute(
 }
 
 /** Automatic routes never claim a knob the CLI cannot receive. */
-function nativeRouteEffort(effort: RouteEffort, adapter: AdapterAvailability): RouteEffort | undefined {
+function nativeRouteEffort(effort: RouteEffort | 'max', adapter: AdapterAvailability): RouteEffort | 'max' | undefined {
   const levels = adapter.efforts ?? BUNDLED_EFFORTS.get(adapter.id) ?? [];
   if (levels.includes(effort)) return effort;
-  const supported = ROUTE_EFFORTS.filter((level) => levels.includes(level));
+  const order = [...ROUTE_EFFORTS, 'max'] as const;
+  const supported = order.filter((level) => levels.includes(level));
   // Clamp to the nearest supported depth, respecting the CLI's minimum too.
-  return supported.filter((level) => ROUTE_EFFORTS.indexOf(level) <= ROUTE_EFFORTS.indexOf(effort)).at(-1)
+  return supported.filter((level) => order.indexOf(level) <= order.indexOf(effort)).at(-1)
     ?? supported[0];
 }
 
@@ -1578,7 +1588,10 @@ export function routeTask(
       : '';
   // F-990: a prova viva vale para TODA lane — inclusive a menção no texto.
   const liveCatalogDrops: string[] = [];
-  const provenAdapters = routedAdapters.map((a) => {
+  const provenAdapters = routedAdapters.map((input) => {
+    const a = input.id === 'muse' && input.installed
+      ? { ...input, museContributorConsent: input.museContributorConsent ?? readMuseContributorConsent() }
+      : input;
     if (!a.installed) return a;
     const proven = withLiveRouteCatalog(a);
     if (!proven.installed) {
@@ -1598,10 +1611,13 @@ export function routeTask(
   const tier = tierOverride ?? classification.tier;
   const mention = mentionedRoute(taskText, provenAdapters);
   const requestedEffort = mention.effort ?? context.effortOverride ?? effortForTier(tier);
-  const effortFor = (adapterId: string) => nativeRouteEffort(requestedEffort, available.get(adapterId)!);
-  const effortNoteFor = (adapterId: string) =>
-    `; effort=${effortFor(adapterId) ?? 'cli-default'} requested=${requestedEffort}` +
-    ` source=${mention.effort ? 'texto' : context.effortOverride ? 'jev' : 'tier'}`;
+  const laneEfforts = new Map<string, RouteEffort | 'max'>();
+  const requestedFor = (adapterId: string, model?: string) => mention.effort ?? context.effortOverride ??
+    laneEfforts.get(`${adapterId}:${model}`) ?? requestedEffort;
+  const effortFor = (adapterId: string, model?: string) => nativeRouteEffort(requestedFor(adapterId, model), available.get(adapterId)!);
+  const effortNoteFor = (adapterId: string, model?: string) =>
+    `; effort=${effortFor(adapterId, model) ?? 'cli-default'} requested=${requestedFor(adapterId, model)}` +
+    ` source=${mention.effort ? 'texto' : context.effortOverride ? 'jev' : laneEfforts.has(`${adapterId}:${model}`) ? 'lane' : 'tier'}`;
   const heuristicSpecialty = classifyRouteSpecialty(classificationText);
   const specialtyVerdict = context.specialtyOverride
     ? {
@@ -1611,6 +1627,14 @@ export function routeTask(
       }
     : heuristicSpecialty;
   const purpose = routingPurpose(classificationText, codeReviewTierFloor(classificationText) !== null, context.reviewedFindingFix);
+  const allowsContributor = ['trivial', 'easy', 'medium'].includes(tier) &&
+    specialtyVerdict.specialty !== 'visual' && purpose !== 'reviewer' && purpose !== 'finding-fix';
+  // Even a stale provider model list cannot opt a task into content sharing.
+  for (const [id, adapter] of available) {
+    if (id === 'muse' && !allowsContributor && adapter.models) {
+      available.set(id, { ...adapter, models: adapter.models.filter((model) => !/-contributor$/iu.test(model)) });
+    }
+  }
   const permitsAutomaticAstra = specialtyVerdict.specialty === 'visual';
   const policy = resolveSpecialtyPolicy(
     specialtyVerdict.specialty,
@@ -1690,6 +1714,14 @@ export function routeTask(
   };
   for (const candidateTier of searchOrder) {
     const tierCandidates = routingTable[candidateTier]
+      .flatMap((row) => {
+        if (row.adapterId === 'muse' && row.model === 'muse-wonder-1.0' && allowsContributor &&
+            available.get('muse')?.museContributorConsent &&
+            available.get('muse')?.models?.includes('muse-wonder-1.0-contributor')) {
+          return [{ ...row, model: 'muse-wonder-1.0-contributor' }, row];
+        }
+        return [row];
+      })
       .flatMap((row) => {
         const adapter = available.get(row.adapterId);
         if (!adapter) return [];
@@ -1909,7 +1941,7 @@ export function routeTask(
   let preferredLaneSeat: string | undefined;
   let appliedLaneEntries: ReadonlySet<RankedRouteEntry> | undefined;
   const applyFrontierLane = (
-    lane: ReadonlyArray<{ adapterId: string; model: string; preferenceOnly?: true }>,
+    lane: ReadonlyArray<{ adapterId: string; model: string; preferenceOnly?: true; effort?: RouteEffort | 'max' }>,
   ): boolean => {
     const laneSeats: Array<{ lane: number; adapterId: string; model: string; preferenceOnly: boolean }> = [];
     lane.forEach((seat, laneIndex) => {
@@ -1940,6 +1972,7 @@ export function routeTask(
       // F-912: assento de lane com janela documentada menor que a exigida
       // perde o lugar (a lane promove topo de linha; sem fonte, segue).
       if (!fitsContext(seat.adapterId, chosen)) return;
+      if (seat.effort) laneEfforts.set(`${seat.adapterId}:${chosen}`, seat.effort);
       laneSeats.push({
         lane: laneIndex, adapterId: seat.adapterId, model: chosen, preferenceOnly: seat.preferenceOnly === true,
       });
@@ -2228,7 +2261,7 @@ export function routeTask(
       if (alt) chosen = alt;
     }
     const pick = chosen.c;
-    const effort = effortFor(pick.adapterId);
+    const effort = effortFor(pick.adapterId, pick.model);
     const policySource: RoutePolicySource = chosen.evaluated
       ? 'nexus-eval'
       : policy.source;
@@ -2273,8 +2306,8 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${preferenceYieldNote}${writerCostNote}${effortNoteFor(pick.adapterId)}`,
-      alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${preferenceYieldNote}${writerCostNote}${pick.adapterId === 'muse' && pick.model?.endsWith('-contributor') ? '; contributor (conteúdo pode ser usado pela Meta)' : ''}${effortNoteFor(pick.adapterId, pick.model)}`,
+      alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId, c.model) })),
       specialty: specialtyVerdict.specialty,
       policySource,
       ...(judgeUnavailable ? { judgeUnavailable } : {}),

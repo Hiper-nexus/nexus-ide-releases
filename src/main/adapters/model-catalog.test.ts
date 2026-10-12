@@ -139,11 +139,10 @@ describe('published catalog JSON', () => {
       expect(muse?.models?.map((m) => m.id)).toEqual([
         'muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3', 'muse-spark-1.2',
       ]);
+      for (const id of ['muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3']) {
+        expect(modelCatalogInfo(catalog, 'muse', id)?.efforts).toContain('max');
+      }
     }
-    const info = (id: string) => modelCatalogInfo(loadModelCatalog(missing), 'muse', id);
-    expect(info('muse-wonder-1.0')?.efforts).not.toContain('max');
-    expect(info('muse-wonder-full-1.0')?.efforts).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
-    expect(info('muse-spark-1.3')?.efforts).toContain('max');
     // Muse via Claude fica no spark até haver evidência de que o endpoint aceita o wonder.
     expect(PUBLISHED_MODEL_CATALOG.adapters?.['muse-claude']?.default).toBe('muse-spark-1.3');
   });

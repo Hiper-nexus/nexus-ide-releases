@@ -272,12 +272,12 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
     muse: {
       // F-1391: catálogo do provedor Meta (Muse 1.4.6, 12/10) — o default
       // marcado é o muse-wonder-1.0; o wonder-full é o mais forte. Esforços
-      // por modelo vêm de `reasoning_effort_variants`: só o spark-1.3 tem `max`.
+      // F-1398: a CLI aceita max nos wonder e spark-1.3; o cache está atrasado.
       // Fallback estático do cache ~/.local/share/muse/model-catalog.
       default: 'muse-wonder-1.0',
       models: [
-        { id: 'muse-wonder-full-1.0', availability: 'free', costTier: 'free', source: 'bundled', efforts: [...MUSE_EFFORTS] },
-        { id: 'muse-wonder-1.0', availability: 'free', costTier: 'free', source: 'bundled', efforts: [...MUSE_EFFORTS] },
+        { id: 'muse-wonder-full-1.0', availability: 'free', costTier: 'free', source: 'bundled', efforts: [...MUSE_EFFORTS, 'max'] },
+        { id: 'muse-wonder-1.0', availability: 'free', costTier: 'free', source: 'bundled', efforts: [...MUSE_EFFORTS, 'max'] },
         { id: 'muse-spark-1.3', availability: 'free', costTier: 'free', source: 'bundled', efforts: [...MUSE_EFFORTS, 'max'] },
         { id: 'muse-spark-1.2', availability: 'free', costTier: 'free', source: 'bundled', efforts: [...MUSE_EFFORTS] },
       ],
@@ -324,6 +324,10 @@ function safeModels(models: unknown, source: string): ModelCatalogEntryInfo[] {
       typeof raw.maxContext === 'number' && Number.isFinite(raw.maxContext) && raw.maxContext > 0
         ? Math.round(raw.maxContext)
         : undefined;
+    const efforts = Array.isArray(raw.efforts)
+      ? [...new Set(raw.efforts.filter((effort) => typeof effort === 'string' &&
+          /^(?:none|minimal|low|medium|high|xhigh|max|ultra)$/.test(effort)))]
+      : undefined;
     return [
       {
         id: raw.id.trim(),
@@ -332,6 +336,7 @@ function safeModels(models: unknown, source: string): ModelCatalogEntryInfo[] {
         source: raw.source ?? source,
         warning: raw.warning,
         ...(maxContext !== undefined ? { maxContext } : {}),
+        ...(efforts?.length ? { efforts } : {}),
         // Omit when invalid — explicit `quality: undefined` would wipe published
         // scores during mergeModelCatalogs ({ ...prev, ...overlay }).
         ...(quality ? { quality } : {}),
