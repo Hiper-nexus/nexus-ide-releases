@@ -9,7 +9,7 @@ import type React from 'react';
 import { useVoiceStore } from './voice-store';
 import { codePolishAvailable, dictationSttRequestParams } from './dictation-output-mode';
 import { describeSttFailure, sttSuccessNote } from './stt-failure-help';
-import type { DictationPendingSettled } from './dictation-delivery';
+import { hasPendingDictation, type DictationPendingSettled } from './dictation-delivery';
 import {
   dictationSessionData,
   sttErrorCode,
@@ -138,6 +138,10 @@ export interface FinishAndProcessDeps extends RunJarvisTurnDeps {
     reason: 'wake' | 'click',
   ) => AutoStopOptions;
 }
+
+/** F-1393: nota do HUD enquanto o ditado espera o painel ficar livre. */
+const PENDING_DICTATION_NOTE =
+  'O painel está com uma pergunta aberta ou ocupado. O ditado entra sozinho quando ele ficar livre; se você digitar no painel, ele é cancelado.';
 
 /** C2 (F-1393): mensagem do HUD quando um ditado pendente não entra. */
 function pendingDictationFailure(settled: DictationPendingSettled): string {
@@ -453,7 +457,11 @@ export async function finishAndProcess(
           );
         }
         const hud = useVoiceStore.getState();
-        if (hud.dictationDelivery === 'pending') hud.setDictationDelivery(null);
+        // C-6: outro pane ainda pode ter o seu pendente — o título só cai
+        // quando não sobra nenhum.
+        if (hud.dictationDelivery === 'pending' && !hasPendingDictation()) {
+          hud.setDictationDelivery(null);
+        }
         if (settled.result === 'ok') {
           hud.setNote('Ditado entregue: o painel ficou livre.');
           return;
@@ -470,6 +478,9 @@ export async function finishAndProcess(
         }
         hud.setDictationFailed(true);
         hud.setError(pendingDictationFailure(settled));
+      }, (_paneId, active) => {
+        // C-3: paste + Enter em voo — tecla agora não cancela mais.
+        useVoiceStore.getState().setNote(active ? 'Ditado entrando…' : PENDING_DICTATION_NOTE);
       });
       reportDictationSession(
         routed.ok
@@ -489,9 +500,7 @@ export async function finishAndProcess(
         // colar e receber o pendente rodaria o prompt duas vezes.
         store.setDictationPending(null);
         store.setDictationDelivery('pending');
-        store.setNote(
-          'O painel está com uma pergunta aberta ou ocupado. O ditado entra sozinho quando ele ficar livre; se você digitar no painel, ele é cancelado.',
-        );
+        store.setNote(PENDING_DICTATION_NOTE);
         store.setStatus('idle');
         return;
       }

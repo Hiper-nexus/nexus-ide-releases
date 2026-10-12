@@ -22,6 +22,12 @@ vi.mock('./voice-run-jarvis-turn', async (importOriginal) => {
   return { ...actual, routeDictation: vi.fn() };
 });
 
+const hasPendingDictation = vi.hoisted(() => vi.fn(() => false));
+vi.mock('./dictation-delivery', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./dictation-delivery')>()),
+  hasPendingDictation,
+}));
+
 const transcribe = vi.fn();
 
 function sttOk(text: string): TranscribeResult {
@@ -118,6 +124,7 @@ describe('F-371 — dictationPending/dictationFailed no fluxo de ditado', () => 
     expect(useVoiceStore.getState().dictationFailed).toBe(false);
     expect(vi.mocked(routeDictation)).toHaveBeenCalledWith(
       'vamos comitar isso',
+      expect.any(Function),
       expect.any(Function),
     );
   });
@@ -372,6 +379,30 @@ describe('F-1392 — uma linha dictation.session por ditado, sem o texto', () =>
     settlers[2]!({ paneId: 'pane-1', result: 'error', errorCode: 'pending-lost', preserved: true });
     expect(useVoiceStore.getState().error).toContain('confira o painel');
     expect(useVoiceStore.getState().error).toContain('copiado');
+  });
+
+  it('C-3/C-6: HUD mostra "Ditado entrando…" e só tira o título quando não sobra pendente', async () => {
+    transcribe.mockResolvedValue(sttOk('abre o painel'));
+    let settle: ((settled: { paneId: string; result: 'ok' | 'error'; errorCode?: string }) => void) | undefined;
+    let delivering: ((paneId: string, active: boolean) => void) | undefined;
+    vi.mocked(routeDictation).mockImplementation(async (_text, onSettled, onDelivering) => {
+      settle = onSettled as never;
+      delivering = onDelivering;
+      return { ok: false, reason: 'pending', paneId: 'pane-1' };
+    });
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+    delivering!('pane-1', true);
+    expect(useVoiceStore.getState().note).toBe('Ditado entrando…');
+    delivering!('pane-1', false);
+    expect(useVoiceStore.getState().note).toContain('entra sozinho quando ele ficar livre');
+
+    // Outro painel ainda tem pendente: o título "Ditado aguardando" fica.
+    hasPendingDictation.mockReturnValueOnce(true);
+    settle!({ paneId: 'pane-1', result: 'ok' });
+    expect(useVoiceStore.getState().dictationDelivery).toBe('pending');
+    settle!({ paneId: 'pane-2', result: 'ok' });
+    expect(useVoiceStore.getState().dictationDelivery).toBeNull();
   });
 
   it('STT falha: resultado erro com código curto; transcript vazio: resultado vazio', async () => {

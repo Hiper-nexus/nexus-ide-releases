@@ -372,6 +372,7 @@ export async function routePrompt(text: string): Promise<string | null> {
 export function routeDictation(
   text: string,
   onPendingSettled?: (settled: DictationPendingSettled) => void,
+  onPendingDelivering?: (paneId: string, active: boolean) => void,
 ): Promise<DictationRouteResult> {
   // Superfície de UI com claim ativo (wizard de missão) vence o roteamento
   // de panes: o operador está ditando o formulário, não um terminal.
@@ -409,6 +410,7 @@ export function routeDictation(
     probePromptState: (paneId, sessionId) => probePanePromptState(paneId, sessionId),
     schedule: (callback, delayMs) => setTimeout(callback, delayMs),
     ...(onPendingSettled ? { onSettled: onPendingSettled } : {}),
+    ...(onPendingDelivering ? { onDelivering: onPendingDelivering } : {}),
     // F-1393: pane ocupado/recusou — o prompt falado vai para a área de
     // transferência em vez de sumir.
     preserveUndelivered: (promptText) =>

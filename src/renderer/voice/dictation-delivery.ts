@@ -43,6 +43,9 @@ export interface DictationPendingSettled {
   readonly preserved?: boolean;
 }
 
+/** C-7 (F-1393): recusas SEM escrita toleradas no pane livre antes de desistir. */
+export const DICTATION_PENDING_FAILED_RETRIES = 3;
+
 /** F-1393: teto de segurança do ditado pendente e cadência da sonda. */
 export const DICTATION_PENDING_MAX_MS = 10 * 60_000;
 export const DICTATION_PENDING_POLL_MS = 1_000;
@@ -83,6 +86,11 @@ export interface DictationDeliveryPorts {
    * cancelado) — o chamador fecha a sessão de uso e atualiza o HUD.
    */
   onSettled?(settled: DictationPendingSettled): void;
+  /**
+   * C-3 (F-1393): o pendente começou (true) ou desistiu (false, pane voltou a
+   * ficar ocupado) de entrar no pane livre — o HUD mostra "Ditado entrando…".
+   */
+  onDelivering?(paneId: string, active: boolean): void;
   /**
    * F-1393: o ditado que nenhum pane aceitou não pode sumir — o operador
    * falou um prompt inteiro. Guarda o texto (área de transferência) e diz se
@@ -185,8 +193,19 @@ async function deliverOnLanes(
 
 /** Um pendente por pane; um ditado novo para o pane substitui o anterior. */
 type PendingCancelReason = 'replaced' | 'human-input';
-const pendingByPane = new Map<string, { token: number; cancel(reason: PendingCancelReason): void }>();
+interface PendingEntry {
+  readonly token: number;
+  /** C-3: entrega em voo (paste + Enter já saindo) — tecla não cancela. */
+  delivering: boolean;
+  cancel(reason: PendingCancelReason): void;
+}
+const pendingByPane = new Map<string, PendingEntry>();
 let pendingSeq = 0;
+
+/** C-6 (F-1393): ainda há ditado pendente em algum pane? */
+export function hasPendingDictation(): boolean {
+  return pendingByPane.size > 0;
+}
 
 function cancelPending(paneId: string): void {
   pendingByPane.get(paneId)?.cancel('replaced');
@@ -199,7 +218,9 @@ function cancelPending(paneId: string): void {
  */
 export function cancelPendingDictation(paneId: string): boolean {
   const entry = pendingByPane.get(paneId);
-  if (!entry) return false;
+  // C-3: com o paste/Enter em voo, cancelar só mentiria no HUD — o texto
+  // entra de qualquer jeito. A tecla do operador segue para o pane normal.
+  if (!entry || entry.delivering) return false;
   entry.cancel('human-input');
   return true;
 }
@@ -239,8 +260,10 @@ function deferUntilFree(
     }
     ports.onSettled?.(outcome);
   };
-  pendingByPane.set(paneId, {
+  let failedAttempts = 0;
+  const entry: PendingEntry = {
     token,
+    delivering: false,
     cancel: (reason) =>
       settle(
         'info',
@@ -251,7 +274,13 @@ function deferUntilFree(
         { reason },
         reason === 'replaced' ? 'pending-replaced' : 'pending-cancelled',
       ),
-  });
+  };
+  pendingByPane.set(paneId, entry);
+  const backToWaiting = () => {
+    entry.delivering = false;
+    ports.onDelivering?.(paneId, false);
+    schedule(() => void tick(), DICTATION_PENDING_POLL_MS);
+  };
   const tick = async (): Promise<void> => {
     if (!mine()) return;
     if (ports.getSessionId(paneId) !== sessionId) {
@@ -265,10 +294,23 @@ function deferUntilFree(
     const state = await probe(paneId, sessionId).catch(() => null);
     if (!mine()) return;
     if (state && state.state === 'idle' && !state.awaitingInput) {
+      entry.delivering = true;
+      ports.onDelivering?.(paneId, true);
       const { outcome, lane } = await deliverOnLanes(paneId, text, sessionId, ports);
       if (!mine()) return;
       if (outcome === 'wait') {
-        schedule(() => void tick(), DICTATION_PENDING_POLL_MS);
+        backToWaiting();
+        return;
+      }
+      // C-7: recusa sem nada escrito (IPC, posse momentânea) não encerra o
+      // pendente de primeira — tenta de novo nos próximos ticks.
+      if (outcome === 'failed' && ++failedAttempts <= DICTATION_PENDING_FAILED_RETRIES) {
+        ports.log('info', 'dictation.pendingRetry', 'pane livre recusou sem escrever — nova tentativa', {
+          targetPaneId: paneId,
+          sessionId,
+          attempt: failedAttempts,
+        });
+        backToWaiting();
         return;
       }
       const delivered = outcome === 'started' || outcome === 'queued';

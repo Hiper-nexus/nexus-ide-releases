@@ -1,8 +1,10 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
+  DICTATION_PENDING_FAILED_RETRIES,
   DICTATION_PENDING_MAX_MS,
   cancelPendingDictation,
   deliverDictation,
+  hasPendingDictation,
   resetPendingDictationsForTests,
   type DictationDeliveryPorts,
   type DictationLogLevel,
@@ -425,6 +427,63 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
       preserved: true,
     });
     expect(pane.logs).toContainEqual({ level: 'error', event: 'dictation.pendingLost' });
+  });
+
+  it('C-3: tecla durante a entrega em voo não cancela — o HUD ouve "entrando" e o ditado entra', async () => {
+    vi.useFakeTimers();
+    const pane = claudePane();
+    const onDelivering = vi.fn();
+    const onSettled = vi.fn();
+    pane.ports.onDelivering = onDelivering;
+    pane.ports.onSettled = onSettled;
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('roda o lint', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    expect(hasPendingDictation()).toBe(true);
+
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: false };
+    await vi.advanceTimersByTimeAsync(1_100);
+    // Paste já saiu, Enter ainda no settle: a tecla do operador não cancela.
+    expect(pane.writes).toEqual(['\x1b[200~roda o lint\x1b[201~']);
+    expect(onDelivering).toHaveBeenCalledWith('pane-focused', true);
+    expect(cancelPendingDictation('pane-focused')).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(pane.writes).toEqual(['\x1b[200~roda o lint\x1b[201~', '\r']);
+    expect(onSettled).toHaveBeenCalledExactlyOnceWith({ paneId: 'pane-focused', result: 'ok' });
+    expect(hasPendingDictation()).toBe(false);
+  });
+
+  it('C-7: recusa sem escrita no pane livre tenta de novo até 3 vezes antes de desistir', async () => {
+    vi.useFakeTimers();
+    const pane = claudePane();
+    const onSettled = vi.fn();
+    pane.ports.onSettled = onSettled;
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('abre o PR', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    const real = pane.ports.deliverConfirmed;
+    let calls = 0;
+    pane.ports.deliverConfirmed = vi.fn(async (paneId: string, text: string, sessionId: string) =>
+      ++calls <= DICTATION_PENDING_FAILED_RETRIES ? ('failed' as const) : real(paneId, text, sessionId));
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: false };
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(pane.logs.filter((line) => line.event === 'dictation.pendingRetry')).toHaveLength(3);
+    expect(pane.writes).toEqual(['\x1b[200~abre o PR\x1b[201~', '\r']);
+    expect(onSettled).toHaveBeenCalledExactlyOnceWith({ paneId: 'pane-focused', result: 'ok' });
+
+    resetPendingDictationsForTests();
+    const stubborn = claudePane();
+    const onStubborn = vi.fn();
+    stubborn.ports.onSettled = onStubborn;
+    stubborn.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('dois', stubborn.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    stubborn.ports.deliverConfirmed = vi.fn(async () => 'failed' as const);
+    stubborn.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: false };
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(stubborn.ports.deliverConfirmed).toHaveBeenCalledTimes(DICTATION_PENDING_FAILED_RETRIES + 1);
+    expect(onStubborn).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ result: 'error', errorCode: 'pending-failed' }),
+    );
   });
 
   it('um ditado novo substitui o pendente do mesmo pane: só o último entra', async () => {
