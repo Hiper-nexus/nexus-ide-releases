@@ -913,6 +913,29 @@ describe("WorktreeManager", () => {
     expect(dependent.dependencies).toHaveLength(1);
   });
 
+  it("F-1277: purging an orphan also drops the survivors' dependency on it", async () => {
+    const scope = projectScope();
+    const orphan = await manager.create({
+      scope, missionId: "mission-m2", taskId: "task-b", workerId: "worker-b",
+      ownership: { files: ["src/b.ts"], symbols: [], domains: [] },
+    });
+    const survivor = await manager.create({
+      scope, missionId: "mission-m1", taskId: "task-a", workerId: "worker-a",
+      ownership: { files: ["src/a.ts"], symbols: [], domains: [] },
+      dependsOn: [{ missionId: "mission-m2", taskId: "task-b" }],
+    });
+    expect(survivor.dependencies).toEqual([orphan.taskKey]);
+
+    const purged = manager.purgeRecordsWithoutTask(scope, new Set([survivor.taskId]));
+
+    expect(purged.map((record) => record.taskKey)).toEqual([orphan.taskKey]);
+    expect(manager.get(scope, "mission-m2", "task-b")).toBeNull();
+    expect(manager.get(scope, "mission-m1", "task-a")).toMatchObject({
+      status: survivor.status,
+      dependencies: [],
+    });
+  });
+
   it("blocks a directory claim from running with a nested file claim", async () => {
     await manager.create({
       scope: projectScope(),

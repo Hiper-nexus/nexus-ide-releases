@@ -339,8 +339,20 @@ export class WorktreeManager {
         (record) => record.ownerKind !== "pane" && !liveTaskIds.has(record.taskId),
       );
       if (orphans.length === 0) return { records, result: [] };
+      // F-1277: o validador recusa dependência ausente; sem isto o purge
+      // lançava e o órfão seguia reivindicando arquivos.
+      const purgedKeys = new Set(orphans.map((record) => record.taskKey));
       return {
-        records: records.filter((record) => record.ownerKind === "pane" || liveTaskIds.has(record.taskId)),
+        records: records
+          .filter((record) => record.ownerKind === "pane" || liveTaskIds.has(record.taskId))
+          .map((record) =>
+            record.dependencies.some((dependency) => purgedKeys.has(dependency))
+              ? {
+                  ...record,
+                  dependencies: record.dependencies.filter((dependency) => !purgedKeys.has(dependency)),
+                }
+              : record,
+          ),
         result: orphans,
       };
     });
