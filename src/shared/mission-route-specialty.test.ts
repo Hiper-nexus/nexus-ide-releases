@@ -120,3 +120,19 @@ describe('applyEffortFloor', () => {
     expect(applyEffortFloor(undefined, 'high')).toBe('high');
   });
 });
+
+describe('F-1289 (revisão de ponta): overlay de segurança com flexão inglesa', () => {
+  it('authenticated/authorized/payments voltam a sobrepor security', () => {
+    expect(classifyRouteSpecialty('protect the routes for authenticated users').specialty).toBe('security');
+    expect(classifyRouteSpecialty('only authorized admins can export the report').specialty).toBe('security');
+    expect(classifyRouteSpecialty('refactoring the payments and webhooks flow').specialty).toBe('security');
+    expect(classifyRouteSpecialty('corrigir os pagamentos duplicados no fluxo').specialty).toBe('security');
+    expect(classifyRouteSpecialty('fix the pre-auth hook of the gateway').specialty).toBe('security');
+  });
+
+  it('guardas: author não é auth, flag de CLI não é palavra, cobrança sozinha não é security', () => {
+    expect(classifyRouteSpecialty('fix the author bio and the authored by field').specialty).not.toBe('security');
+    expect(classifyRouteSpecialty('run the worker with --auth-token disabled').specialty).not.toBe('security');
+    expect(classifyRouteSpecialty('corrigir a cobrança do worker que não entrega').specialty).not.toBe('security');
+  });
+});

@@ -1249,3 +1249,85 @@ describe('F-1289: palavra ambígua sozinha não decide tier nem especialidade', 
     ).toBe('security');
   });
 });
+
+/**
+ * F-1289, revisão de ponta (12/10): a troca de prefixo por palavra inteira
+ * apagou as flexões em INGLÊS dos sinais de risco ('authenticated',
+ * 'payments', 'migrations', 'debugging') e o hífen/barra deixaram de ser
+ * fronteira ('multi-tenant', 'pre-auth', 'api/auth'). Os squads promptam em
+ * inglês: sem isso a política high-risk e o piso de esforço somem quando o Jev
+ * fica abaixo do limiar. As guardas do F-1289 continuam valendo.
+ */
+describe('F-1289 (revisão de ponta): flexão inglesa e hífen voltam a casar os sinais de risco', () => {
+  it('flexões em inglês de segurança, pagamento e migração voltam a critical', () => {
+    const auth = classifyTask('fix the authorization check for authenticated users');
+    expect(auth.tier).toBe('critical');
+    expect(auth.signals).toEqual(expect.arrayContaining(['authentica', 'authoriz']));
+
+    const payments = classifyTask('refactoring the payments and webhooks flow');
+    expect(payments.tier).toBe('critical');
+    expect(payments.signals).toEqual(expect.arrayContaining(['payment', 'webhook']));
+
+    expect(classifyTask('run the pending migrations')).toEqual({
+      tier: 'critical',
+      signals: ['migration'],
+    });
+    expect(classifyTask('isolate tenants and fix the deadlocks in the race conditions').signals)
+      .toEqual(expect.arrayContaining(['tenant', 'deadlock', 'race condition']));
+    expect(classifyTask('require authorized users').tier).toBe('critical');
+    expect(classifyTask('fix the authz check on the admin routes').signals).toContain('authz');
+  });
+
+  it('flexões em inglês dos sinais hard voltam a casar (frase curta segue o nudge de tamanho)', () => {
+    // Regra da casa: até 6 palavras desce um nível — 'debugging the backend api'
+    // era medium com sinal 'debug' antes do F-1289 e volta a ser exatamente isso.
+    expect(classifyTask('debugging the backend api')).toEqual({ tier: 'medium', signals: ['debug'] });
+    expect(classifyTask('debugging the backend api for the mobile app this week').tier).toBe('hard');
+
+    const hard = classifyTask(
+      'refactoring the parsers and compilers, redesigned algorithms and new integrations for the backend',
+    );
+    expect(hard.tier).toBe('hard');
+    expect(hard.signals).toEqual(
+      expect.arrayContaining(['refactor', 'redesign', 'algorithm', 'parser', 'compiler', 'integration']),
+    );
+    expect(classifyTask('find the memory leaks and root causes in the worker pool').signals)
+      .toEqual(expect.arrayContaining(['memory leak', 'root cause']));
+  });
+
+  it('espelho pt-BR: plural e radical dos mesmos sinais', () => {
+    expect(classifyTask('rode as migrações pendentes do banco').tier).toBe('critical');
+    expect(classifyTask('depurando a api do backend do app mobile').tier).toBe('hard');
+    expect(classifyTask('reescrever os algoritmos de ordenação do backend do app').tier).toBe('hard');
+    expect(classifyTask('mudança arquitetural no gateway de sessões do backend').tier).toBe('hard');
+    expect(classifyTask('ligar as integrações do backend com o app mobile').tier).toBe('hard');
+    expect(classifyTask('ajustar os sistemas distribuídos do backend do app').tier).toBe('hard');
+  });
+
+  it('hífen e barra voltam a ser fronteira de palavra', () => {
+    expect(classifyTask('multi-tenant isolation')).toEqual({ tier: 'critical', signals: ['tenant'] });
+    expect(classifyTask('pre-auth hook')).toEqual({ tier: 'critical', signals: ['auth'] });
+    expect(classifyTask('api/auth login')).toEqual({ tier: 'critical', signals: ['auth'] });
+  });
+
+  it('guardas do F-1289 seguem de pé', () => {
+    // flag de CLI não é palavra: '--print' ≠ print, '--debug' ≠ debug, '-auth' ≠ auth
+    expect(classifyTask('run agy --print on the repo').signals).not.toContain('print');
+    expect(classifyTask('run the build with --debug enabled for the worker').signals).not.toContain('debug');
+    expect(classifyTask('call the cli with -auth disabled for the worker').signals).not.toContain('auth');
+    expect(classifyTask('`--print` e `--debug` no opencode run do worker').signals).toEqual([]);
+    // identificador e palavra maior não casam o sinal
+    expect(classifyTask('fix checkedAt in the checkout page').signals).not.toContain('check');
+    expect(classifyTask('update the authored by field and the author bio').tier).not.toBe('critical');
+    expect(classifyTask('fix the co-author and the authority of the post').signals).toEqual([]);
+    expect(classifyTask('Corrigir o login social com Google').signals).not.toContain('log');
+    expect(classifyTask('Ajustar o Dockerfile do serviço de build').signals).not.toContain('doc');
+    expect(classifyTask('ajustar o pre-login do app').signals).not.toContain('log');
+    // palavra ambígua sozinha não decide tier extremo
+    expect(classifyTask('ajustar a cobrança do worker no painel de entregas').tier).not.toBe('critical');
+    expect(classifyTask('trocar o texto do aviso de cota').tier).toBe('medium');
+    expect(classifyTask('check the updater output').tier).not.toBe('trivial');
+    expect(classifyTask('reduce the token usage of the context window').tier).not.toBe('critical');
+    expect(classifyTask('gerar a produção de vídeo do relatório semanal').tier).not.toBe('critical');
+  });
+});

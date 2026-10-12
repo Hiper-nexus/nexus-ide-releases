@@ -331,14 +331,16 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
 const CRITICAL_SIGNALS = [
   // Com o match por PALAVRA INTEIRA, compostos genuínos precisam de entrada
   // própria no radical: 'encrypt'/'unauthorized'/'cybersecurity'/'reautentic'
-  // não são as palavras base ('crypt', 'authoriza', 'security', …).
+  // não são as palavras base ('crypt', 'authoriz', 'security', …).
   'security', 'cybersecurity', 'ciberseg', 'ciberata', 'segurança',
   'vulnerab', 'auth', 'oauth', 'unauthorized', 'não autorizado',
-  'nao autorizado', 'desautoriz', 'autentica', 'reautentic', 'authoriza',
+  'nao autorizado', 'desautoriz', 'autentica', 'reautentic', 'authentica',
+  'authoriz', 'authn', 'authz',
   'autoriza', 'payment', 'pagamento', 'billing', 'cobrança', 'cartão',
   'cartao', 'migration',
-  'migração', 'migracao', 'cript', 'crypt', 'encrypt', 'decrypt', 'encripta',
-  'reencript', 'desencripta', 'descriptografa', 'descriptografia',
+  'migração', 'migracao', 'migrações', 'migracoes', 'cript', 'crypt',
+  'encrypt', 'decrypt', 'encripta', 'reencript', 'desencripta',
+  'descriptografa', 'descriptografia',
   'tenant', 'multitenant', 'rls',
   'produção', 'producao', 'production', 'data loss', 'perda de dados',
   'race condition', 'concorrência', 'concorrencia', 'deadlock', 'webhook',
@@ -348,10 +350,12 @@ const CRITICAL_SIGNALS = [
 const HARD_SIGNALS = [
   'arquitetura', 'architecture', 'refactor', 'refatora', 'redesign',
   'performance', 'otimiza', 'optimiz', 'algorithm', 'algoritmo', 'debug',
+  'depura',
   'race', 'memory leak', 'vazamento', 'complex', 'complexo', 'complexa',
   'design de sistema', 'system design', 'distributed', 'distribuído',
   'distribuido', 'protocolo', 'protocol', 'parser', 'compiler', 'engine',
-  'motor', 'integração', 'integracao', 'integration',
+  'motor', 'integração', 'integracao', 'integrações', 'integracoes',
+  'integration',
   'root cause', 'causa raiz',
 ];
 
@@ -373,18 +377,27 @@ const TRIVIAL_SIGNALS = [
 // Radicais: casam por PREFIXO DE PALAVRA porque a palavra pt-BR/EN é mais longa
 // que o sinal. O resto da lista casa por PALAVRA INTEIRA (ver `matchSignals`):
 // é o que impede 'check' de casar 'checkedAt', 'auth' de casar 'author' e
-// 'log' de casar 'login' (F-1289).
+// 'log' de casar 'login' (F-1289). A flexão INGLESA também é radical: os squads
+// promptam em inglês, e 'authenticated'/'payments'/'migrations'/'debugging'
+// saíram do critical/hard quando a lista virou palavra inteira (revisão de
+// ponta, 12/10). Fica palavra inteira só o que colide: 'auth' (author),
+// 'secret' (secretaria), 'token' (tokenizer), 'race' (racer), 'log', 'doc'…
 const CRITICAL_STEMS: ReadonlySet<string> = new Set([
   'ciberseg', 'ciberata', 'vulnerab', 'desautoriz', 'autentica', 'reautentic',
-  'autoriza', 'oauth', 'pagamento', 'cript', 'crypt', 'encrypt', 'decrypt',
-  'encripta', 'reencript', 'desencripta', 'descriptografa', 'descriptografia',
-  'migração', 'migracao', 'concorrência', 'concorrencia',
+  'authentica', 'authoriz',
+  'autoriza', 'oauth', 'payment', 'pagamento', 'cript', 'crypt', 'encrypt',
+  'decrypt', 'encripta', 'reencript', 'desencripta', 'descriptografa',
+  'descriptografia', 'migration', 'migração', 'migracao', 'tenant',
+  'race condition', 'concorrência', 'concorrencia', 'deadlock', 'webhook',
 ]);
 
 const HARD_STEMS: ReadonlySet<string> = new Set([
-  'refatora', 'otimiza', 'optimiz', 'complex', 'complexo', 'complexa',
-  'vazamento', 'protocolo', 'protocol', 'engine', 'motor', 'integração',
-  'integracao',
+  'arquitetura', 'architecture', 'refactor', 'refatora', 'redesign',
+  'otimiza', 'optimiz', 'algorithm', 'algoritmo', 'debug', 'depura',
+  'memory leak', 'complex', 'complexo', 'complexa', 'vazamento',
+  'distribuído', 'distribuido', 'protocolo', 'protocol', 'parser',
+  'compiler', 'engine', 'motor', 'integração', 'integracao', 'integration',
+  'root cause',
 ]);
 
 const EASY_STEMS: ReadonlySet<string> = new Set([

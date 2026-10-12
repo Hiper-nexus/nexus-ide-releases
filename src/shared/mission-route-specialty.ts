@@ -141,7 +141,10 @@ const SECURITY_SPECIALTY_SIGNALS = [
   'auth',
   'autentica',
   'reautentic',
-  'authoriza',
+  'authentica',
+  'authoriz',
+  'authn',
+  'authz',
   'autoriza',
   'payment',
   'pagamento',
@@ -170,8 +173,14 @@ const SECURITY_SPECIALTY_SIGNALS = [
  *
  * `stems` é a saída explícita para o que é radical de verdade — o chamador
  * declara, a lista não carrega sintaxe.
+ *
+ * Fronteira à esquerda: letra, dígito, `_`, `.` e `$` grudados barram o sinal
+ * (identificador: `my_check`, `obj.token`, `$token`). Hífen e barra SÃO
+ * fronteira ('multi-tenant', 'pre-auth', 'api/auth' — revisão de ponta 12/10),
+ * exceto a flag de CLI: hífen(s) abrindo a palavra, depois de início/espaço/
+ * pontuação, não é palavra ('--print', '--debug', '-auth').
  */
-const WORD_BEFORE = '(?<![\\p{L}\\p{N}_.$/-])';
+const WORD_BEFORE = '(?<![\\p{L}\\p{N}_.$])(?<!(?:^|[^\\p{L}\\p{N}])-+)';
 const WORD_AFTER = '(?![\\p{L}\\p{N}_])';
 
 const escapeSignal = (signal: string): string =>
@@ -247,8 +256,13 @@ const SECURITY_SIGNAL_STEMS: ReadonlySet<string> = new Set([
   'vulnerab',
   'autentica',
   'reautentic',
-  'authoriza',
+  // Flexão inglesa (revisão de ponta, 12/10): 'authenticated', 'authorized',
+  // 'payments', 'pagamentos' — 'auth' segue palavra inteira por causa de 'author'.
+  'authentica',
+  'authoriz',
   'autoriza',
+  'payment',
+  'pagamento',
   'oauth',
   'encrypt',
   'decrypt',
