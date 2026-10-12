@@ -11,11 +11,13 @@ function deferred<T>() {
 }
 
 function createDeps() {
-  const dialogs: Array<ReturnType<typeof deferred<MessageBoxReturnValue>>> = [];
+  const dialogs: Array<
+    ReturnType<typeof deferred<MessageBoxReturnValue | null>>
+  > = [];
   const options: MessageBoxOptions[] = [];
   const showMessageBox = vi.fn((raw: MessageBoxOptions) => {
     options.push(raw);
-    const dialog = deferred<MessageBoxReturnValue>();
+    const dialog = deferred<MessageBoxReturnValue | null>();
     dialogs.push(dialog);
     return dialog.promise;
   });
@@ -76,6 +78,57 @@ describe("shutdown notice controller", () => {
     await dialogs[0]?.promise;
     await Promise.resolve();
     expect(deps.forceExit).toHaveBeenCalledWith("slow-notice");
+  });
+
+  // F-1255: diálogo não mostrado (null — macOS sem janela para o sheet) não
+  // pode pendurar o controller: o flag libera e o aviso seguinte pode tentar
+  // de novo; o teto do quit continua decidindo sozinho.
+  it("aviso lento não fica pendurado quando o diálogo não pode ser mostrado", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { deps, dialogs } = createDeps();
+      const controller = createShutdownNoticeController(deps);
+
+      controller.showSlowNotice();
+      dialogs[0]?.resolve(null);
+    await dialogs[0]?.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(deps.forceExit).not.toHaveBeenCalled();
+    // null é caminho normal, não falha do diálogo: nada de warn de "failed".
+    expect(warn).not.toHaveBeenCalled();
+
+    controller.showSlowNotice();
+    expect(deps.showMessageBox).toHaveBeenCalledTimes(2);
+    dialogs[1]?.resolve({ response: 0, checkboxChecked: false });
+    await dialogs[1]?.promise;
+    await Promise.resolve();
+    expect(deps.forceExit).toHaveBeenCalledWith("slow-notice");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("falha não mostrada (null) não revoga nem autoriza — e libera nova tentativa", async () => {
+    const { deps, dialogs } = createDeps();
+    const controller = createShutdownNoticeController(deps);
+
+    controller.showFailure(new Error("no window"));
+    dialogs[0]?.resolve(null);
+    await dialogs[0]?.promise;
+    await Promise.resolve();
+    expect(deps.forceExit).not.toHaveBeenCalled();
+    expect(deps.authorizeQuit).not.toHaveBeenCalled();
+    expect(deps.revokeQuitAuthorization).not.toHaveBeenCalled();
+    expect(deps.abandonQuit).not.toHaveBeenCalled();
+
+    controller.showFailure(new Error("retry"));
+    expect(deps.showMessageBox).toHaveBeenCalledTimes(2);
+    dialogs[1]?.resolve({ response: 1, checkboxChecked: false });
+    await dialogs[1]?.promise;
+    await Promise.resolve();
+    expect(deps.authorizeQuit).toHaveBeenCalledOnce();
+    expect(deps.requestQuit).toHaveBeenCalledOnce();
   });
 
   it("falha: forçar encerra, tentar de novo re-autoriza, ficar aberto é a ÚNICA revogação", async () => {

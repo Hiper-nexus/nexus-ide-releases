@@ -284,6 +284,7 @@ import {
   createQuitIncidentFileRecorder,
   createUnclearableQuitCeiling,
   QUIT_CEILING_MS,
+  showQuitConfirmationDialog,
   sweepOrphanPtySupervisors,
 } from "./app-quit-guarantee";
 import { shutdownAllAcpDriverSessions } from "./acp/acp-harness-driver";
@@ -414,6 +415,7 @@ import { startProductActivity } from "./product-activity";
 import { registerTeamIpc } from "./team-ipc";
 import { installAppMenu } from "./app-menu";
 import { findTrustedMainWindow } from "./security/trusted-ipc";
+import { showMessageBoxWithoutBlocking } from "./native-confirm";
 import {
   registerBugReportIpc,
   requestOpenBugReportDialog,
@@ -1162,17 +1164,27 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
         void resolveManagedHookConsent({
           userDataPath,
           prompt: async () => {
-            const { response } = await dialog.showMessageBox({
-              type: "question",
-              buttons: ["Ativar", "Agora não"],
-              defaultId: 0,
-              cancelId: 1,
-              title: "Hooks de status de agente",
-              message: "Ativar os hooks de status do NexusIDE?",
-              detail:
-                "Para saber quando os agentes estão trabalhando, o Nexus pode adicionar hooks ao seu Claude e Codex (edita ~/.claude/settings.json e ~/.codex/hooks.json). Isso também afeta essas ferramentas fora do Nexus. Você pode mudar depois nas configurações.",
-            });
-            return response === 0 ? "granted" : "denied";
+            // F-1255: sheet na janela principal — app-modal sem janela-mãe no
+            // macOS é runModal e prende o Main no meio do arranque. Sem
+            // janela para o sheet (null), NÃO se grava negação: 'undecided'
+            // deixa a pergunta para o próximo arranque.
+            const result = await showMessageBoxWithoutBlocking(
+              {
+                type: "question",
+                buttons: ["Ativar", "Agora não"],
+                defaultId: 0,
+                cancelId: 1,
+                title: "Hooks de status de agente",
+                message: "Ativar os hooks de status do NexusIDE?",
+                detail:
+                  "Para saber quando os agentes estão trabalhando, o Nexus pode adicionar hooks ao seu Claude e Codex (edita ~/.claude/settings.json e ~/.codex/hooks.json). Isso também afeta essas ferramentas fora do Nexus. Você pode mudar depois nas configurações.",
+              },
+              {
+                window: findTrustedMainWindow(BrowserWindow.getAllWindows()),
+              },
+            );
+            if (!result) return "undecided";
+            return result.response === 0 ? "granted" : "denied";
           },
         })
           .then((consent) => {
@@ -1398,7 +1410,13 @@ const forceQuitNow = (origin: "slow-notice" | "failure-notice"): void => {
 const shutdownNotices = createShutdownNoticeController({
   isShutdownComplete: () => shutdownComplete,
   focusApp: () => app.focus({ steal: true }),
-  showMessageBox: (options) => dialog.showMessageBox(options),
+  // F-1255: sem janela-mãe o showMessageBox vira NSAlert runModal e prende o
+  // Main — aí o cronômetro do prazo parava e o encerramento ficava refém do
+  // clique. null = não mostrou; o teto do quit segue decidindo sozinho.
+  showMessageBox: (options) =>
+    showMessageBoxWithoutBlocking(options, {
+      window: findTrustedMainWindow(BrowserWindow.getAllWindows()),
+    }),
   revokeQuitAuthorization: revokeAppQuitAuthorization,
   authorizeQuit: authorizeAppQuit,
   requestQuit: () => app.quit(),
@@ -1731,10 +1749,18 @@ app.on("before-quit", (event) => {
       cancelId: 0,
       noLink: true,
     };
-    // App-modal sempre: um sheet ancorado numa janela minimizada ou fora do
-    // palco fica invisível e o quit trava sem feedback.
-    void dialog
-      .showMessageBox(options)
+    // F-1255: sheet na janela principal restaurada/trazida à frente — sem
+    // janela-mãe o app-modal é runModal e prende o Main; ancorado numa janela
+    // minimizada o sheet ficaria invisível, então ela é restaurada antes.
+    // Sem janela viva (logout/desligamento do macOS) mantém o app-modal —
+    // quem pediu o quit é o operador.
+    void showQuitConfirmationDialog({
+      options,
+      hostWindow: findTrustedMainWindow(BrowserWindow.getAllWindows()),
+      showSheet: (window, boxOptions) =>
+        showMessageBoxWithoutBlocking(boxOptions, { window }),
+      showAppModal: (boxOptions) => dialog.showMessageBox(boxOptions),
+    })
       .then(async ({ response }) => {
         quitPromptOpen = false;
         const choice = quitChoiceFromResponse(response);

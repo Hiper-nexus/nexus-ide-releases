@@ -7,9 +7,15 @@ import {
 export interface ShutdownNoticeControllerDeps {
   readonly isShutdownComplete: () => boolean;
   readonly focusApp: () => void;
+  /**
+   * F-1255: `null` = o diálogo não pôde ser mostrado (no macOS, sem janela
+   * para hospedar o sheet um app-modal seria runModal e prenderia o Main).
+   * O controller não pode ficar pendurado nesse caso: o teto do quit segue
+   * armado e decide sozinho.
+   */
   readonly showMessageBox: (
     options: MessageBoxOptions,
-  ) => Promise<MessageBoxReturnValue>;
+  ) => Promise<MessageBoxReturnValue | null>;
   readonly revokeQuitAuthorization: () => void;
   readonly authorizeQuit: () => void;
   readonly requestQuit: () => void;
@@ -56,8 +62,8 @@ export function createShutdownNoticeController(
           cancelId: 1,
           noLink: true,
         })
-        .then(({ response }) => {
-          if (response === notice.forceButtonIndex) {
+        .then((result) => {
+          if (result && result.response === notice.forceButtonIndex) {
             deps.forceExit("slow-notice");
           }
         })
@@ -89,8 +95,12 @@ export function createShutdownNoticeController(
           cancelId: 2,
           noLink: true,
         })
-        .then(({ response }) => {
+        .then((result) => {
           failurePromptOpen = false;
+          // Diálogo não mostrado: a intenção de sair continua de pé sob o
+          // teto — nada é revogado nem autorizado por ausência de resposta.
+          if (!result) return;
+          const { response } = result;
           if (response === notice.forceButtonIndex) {
             deps.forceExit("failure-notice");
             return;

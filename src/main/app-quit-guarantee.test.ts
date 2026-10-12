@@ -6,6 +6,7 @@ import {
   createUnclearableQuitCeiling,
   QUIT_CEILING_MS,
   selectOrphanSupervisorPids,
+  showQuitConfirmationDialog,
 } from "./app-quit-guarantee";
 import { APP_SHUTDOWN_PTY_TERMINATION } from "./pty/pty-manager";
 
@@ -194,5 +195,103 @@ describe("varredura de supervisores órfãos no boot", () => {
   it("nunca seleciona linhas que só citam o nome sem ser o binário", () => {
     const ps = `  201     1 /bin/zsh -c tail -f ${RESOURCES}/nexus-pty-supervisor.log`;
     expect(selectOrphanSupervisorPids(ps, RESOURCES)).toEqual([]);
+  });
+});
+
+describe("showQuitConfirmationDialog (F-1255)", () => {
+  const options = { message: "sair?" };
+
+  function fakeWindow(state: {
+    destroyed?: boolean;
+    minimized?: boolean;
+    visible?: boolean;
+  }) {
+    return {
+      isDestroyed: vi.fn(() => state.destroyed ?? false),
+      isMinimized: vi.fn(() => state.minimized ?? false),
+      isVisible: vi.fn(() => state.visible ?? true),
+      restore: vi.fn(),
+      show: vi.fn(),
+      focus: vi.fn(),
+    };
+  }
+
+  it("com janela principal: restaura, mostra, foca e usa o sheet nela", async () => {
+    const win = fakeWindow({ minimized: true, visible: false });
+    const showSheet = vi
+      .fn()
+      .mockResolvedValue({ response: 1, checkboxChecked: false });
+    const showAppModal = vi.fn();
+
+    const result = await showQuitConfirmationDialog({
+      options,
+      hostWindow: win,
+      showSheet,
+      showAppModal,
+    });
+
+    expect(win.restore).toHaveBeenCalledOnce();
+    expect(win.show).toHaveBeenCalledOnce();
+    expect(win.focus).toHaveBeenCalledOnce();
+    expect(showSheet).toHaveBeenCalledWith(win, options);
+    expect(showAppModal).not.toHaveBeenCalled();
+    expect(result.response).toBe(1);
+  });
+
+  it("janela já visível e não minimizada: só foca — não re-mostra", async () => {
+    const win = fakeWindow({ minimized: false, visible: true });
+    const showSheet = vi
+      .fn()
+      .mockResolvedValue({ response: 0, checkboxChecked: false });
+    await showQuitConfirmationDialog({
+      options,
+      hostWindow: win,
+      showSheet,
+      showAppModal: vi.fn(),
+    });
+    expect(win.restore).not.toHaveBeenCalled();
+    expect(win.show).not.toHaveBeenCalled();
+    expect(win.focus).toHaveBeenCalledOnce();
+  });
+
+  it("sem janela viva mantém o app-modal (o operador pediu o quit)", async () => {
+    const showSheet = vi.fn();
+    const showAppModal = vi
+      .fn()
+      .mockResolvedValue({ response: 0, checkboxChecked: false });
+    const result = await showQuitConfirmationDialog({
+      options,
+      hostWindow: undefined,
+      showSheet,
+      showAppModal,
+    });
+    expect(showSheet).not.toHaveBeenCalled();
+    expect(showAppModal).toHaveBeenCalledWith(options);
+    expect(result.response).toBe(0);
+  });
+
+  it("janela destruída cai no app-modal; sheet recusado (null) também", async () => {
+    const win = fakeWindow({ destroyed: true });
+    const showAppModal = vi
+      .fn()
+      .mockResolvedValue({ response: 0, checkboxChecked: false });
+    await showQuitConfirmationDialog({
+      options,
+      hostWindow: win,
+      showSheet: vi.fn(),
+      showAppModal,
+    });
+    expect(win.restore).not.toHaveBeenCalled();
+    expect(showAppModal).toHaveBeenCalledOnce();
+
+    showAppModal.mockClear();
+    const showSheet = vi.fn().mockResolvedValue(null);
+    await showQuitConfirmationDialog({
+      options,
+      hostWindow: fakeWindow({}),
+      showSheet,
+      showAppModal,
+    });
+    expect(showAppModal).toHaveBeenCalledWith(options);
   });
 });

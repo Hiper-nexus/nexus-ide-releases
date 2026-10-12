@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -50,6 +50,27 @@ describe('hook-consent', () => {
     const prompt = vi.fn(async () => 'denied' as const);
     expect(await resolveManagedHookConsent({ userDataPath, prompt })).toBe('denied');
     expect(readManagedHookConsent(userDataPath)).toBe('denied');
+  });
+
+  // F-1255: sem janela para o sheet o prompt devolve 'undecided' — nada é
+  // persistido (negação sem pergunta roubaria a escolha) e a próxima chamada
+  // pergunta de novo.
+  it("prompt 'undecided' persists nothing and asks again later", async () => {
+    const userDataPath = freshUserData();
+    const prompt = vi
+      .fn<() => Promise<'granted' | 'denied' | 'undecided'>>()
+      .mockResolvedValueOnce('undecided')
+      .mockResolvedValueOnce('granted');
+
+    expect(await resolveManagedHookConsent({ userDataPath, prompt })).toBe('undecided');
+    expect(readManagedHookConsent(userDataPath)).toBe('undecided');
+    // E nem arquivo é criado: uma negação nunca foi perguntada, então nada
+    // pode ser gravado (o arquivo existindo já seria decisão registrada).
+    expect(existsSync(join(userDataPath, 'agent-hooks', 'consent.json'))).toBe(false);
+
+    expect(await resolveManagedHookConsent({ userDataPath, prompt })).toBe('granted');
+    expect(readManagedHookConsent(userDataPath)).toBe('granted');
+    expect(prompt).toHaveBeenCalledTimes(2);
   });
 
   it('treats a corrupt consent file as undecided (asks again, no silent consent)', async () => {

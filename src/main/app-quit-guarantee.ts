@@ -1,5 +1,9 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import type {
+  MessageBoxOptions,
+  MessageBoxReturnValue,
+} from "electron";
 
 /**
  * Garantia estrutural de quit (diretiva do dono, 06/08): depois que o operador
@@ -181,6 +185,46 @@ export function buildFailureQuitNotice(input: {
     ]),
     forceButtonIndex: 0,
   });
+}
+
+/** Subconjunto de BrowserWindow que o host do diálogo de quit precisa. */
+export interface QuitDialogHostWindow {
+  isDestroyed(): boolean;
+  isMinimized(): boolean;
+  isVisible(): boolean;
+  restore(): void;
+  show(): void;
+  focus(): void;
+}
+
+/**
+ * F-1255: mostra o prompt de quit sem prender a main thread. No macOS um
+ * `showMessageBox` sem janela-mãe é NSAlert runModal (bloqueia o Main); com
+ * janela-mãe vira sheet. Por isso a janela principal é restaurada e trazida
+ * à frente ANTES do sheet — um sheet numa janela minimizada seria invisível
+ * e o quit travaria sem feedback. Sem nenhuma janela viva (ex.: logout/
+ * desligamento do macOS) mantém o app-modal: quem pediu o quit é o operador.
+ */
+export async function showQuitConfirmationDialog<W extends QuitDialogHostWindow>(deps: {
+  readonly options: MessageBoxOptions;
+  readonly hostWindow: W | null | undefined;
+  readonly showSheet: (
+    window: W,
+    options: MessageBoxOptions,
+  ) => Promise<MessageBoxReturnValue | null>;
+  readonly showAppModal: (
+    options: MessageBoxOptions,
+  ) => Promise<MessageBoxReturnValue>;
+}): Promise<MessageBoxReturnValue> {
+  const host = deps.hostWindow;
+  if (host && !host.isDestroyed()) {
+    if (host.isMinimized()) host.restore();
+    if (!host.isVisible()) host.show();
+    host.focus();
+    const result = await deps.showSheet(host, deps.options);
+    if (result) return result;
+  }
+  return deps.showAppModal(deps.options);
 }
 
 /**

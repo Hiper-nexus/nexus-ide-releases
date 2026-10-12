@@ -61,11 +61,17 @@ export function writeManagedHookConsent(
  */
 export async function resolveManagedHookConsent(options: {
   userDataPath: string;
-  prompt: () => Promise<'granted' | 'denied'>;
-}): Promise<Exclude<ManagedHookConsent, 'undecided'>> {
+  /**
+   * Pode devolver 'undecided' quando não foi possível perguntar (ex.: F-1255,
+   * sem janela para hospedar o sheet no boot): NADA é persistido — uma
+   * negação gravada por ausência de janela roubaria a escolha do operador.
+   */
+  prompt: () => Promise<ManagedHookConsent>;
+}): Promise<ManagedHookConsent> {
   const current = readManagedHookConsent(options.userDataPath);
   if (current !== 'undecided') return current;
   const decision = await options.prompt();
+  if (decision === 'undecided') return 'undecided';
   writeManagedHookConsent(options.userDataPath, decision);
   return decision;
 }
