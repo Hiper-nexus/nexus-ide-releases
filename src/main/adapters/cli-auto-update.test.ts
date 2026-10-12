@@ -263,7 +263,9 @@ describe('F-1395: no boot, analisar e atualizar todas as CLIs', () => {
       caskArtifactKinds: ['binary', 'zap'],
       caskTargetArtifactKinds: ['binary', 'pkg', 'postflight', 'zap'],
     })).toBeNull();
-    // B1: manifesto só binary → aceita; env tem HOMEBREW_NO_SUDO=1 além de SUDO_ASKPASS
+    // B1: manifesto só binary → aceita; env tem HOMEBREW_NO_SUDO=1 além de SUDO_ASKPASS.
+    // C7: o upgrade não se auto-atualiza (HOMEBREW_NO_AUTO_UPDATE=1) — instala a
+    // MESMA definição do cask que o `brew info` validou, não uma mais nova.
     expect(selectAutomaticCliUpdateRecipe({
       ...muse,
       caskArtifactKinds: ['binary', 'zap'],
@@ -271,7 +273,7 @@ describe('F-1395: no boot, analisar e atualizar todas as CLIs', () => {
     })).toMatchObject({
       kind: 'argv', runner: '/opt/homebrew/bin/brew',
       argv: ['/opt/homebrew/bin/brew', 'upgrade', '--cask', 'muse-code'],
-      env: { SUDO_ASKPASS: '/usr/bin/false', HOMEBREW_NO_SUDO: '1' },
+      env: { SUDO_ASKPASS: '/usr/bin/false', HOMEBREW_NO_SUDO: '1', HOMEBREW_NO_AUTO_UPDATE: '1' },
     });
     // B1: sem prova completa dos artefatos da versão-alvo → manual (fail-closed)
     expect(selectAutomaticCliUpdateRecipe({
