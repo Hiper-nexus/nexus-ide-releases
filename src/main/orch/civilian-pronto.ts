@@ -52,9 +52,6 @@ const JUNK_DIR = new Set([
   'build',
 ]);
 
-const FAIL_CLOSED_TOKEN =
-  /session_authority_revoked|orchestrator_spawn_forbidden|sandbox_denied|sandbox_forbidden|process sandbox recusou/iu;
-
 const MAX_WALK_FILES = 400;
 const MAX_WALK_VISITS = 2_000;
 const MAX_WALK_DEPTH = 6;
@@ -249,17 +246,13 @@ export function inspectProductEvidence(files: readonly string[]): {
 }
 
 function failClosedHaystack(
-  mission: Pick<Mission, 'status' | 'intentState' | 'description' | 'learnings'>,
-  handoffs: readonly Pick<Handoff, 'summary' | 'status'>[],
+  mission: Pick<Mission, 'status' | 'intentState'>,
 ): boolean {
-  if (mission.status === 'failed' || mission.status === 'blocked') return true;
-  if (mission.intentState === 'blocked_technical') return true;
-  const haystack = [
-    mission.description ?? '',
-    mission.learnings ?? '',
-    ...handoffs.map((handoff) => `${handoff.status} ${handoff.summary}`),
-  ].join('\n');
-  return FAIL_CLOSED_TOKEN.test(haystack);
+  return (
+    mission.status === 'failed' ||
+    mission.status === 'blocked' ||
+    mission.intentState === 'blocked_technical'
+  );
 }
 
 function paneAgentKey(name: string | null | undefined): string {
@@ -473,7 +466,7 @@ export async function maybeApplyCivilianPronto(
   } catch {
     return empty('wait', 'handoffs-unreadable');
   }
-  if (failClosedHaystack(mission, handoffs)) {
+  if (failClosedHaystack(mission)) {
     return empty('refuse', 'fail-closed');
   }
 
@@ -583,7 +576,7 @@ export async function maybeApplyCivilianPronto(
 
   const decision = decideCivilianPronto({
     missionStatus: mission.status,
-    failClosed: failClosedHaystack(mission, handoffs),
+    failClosed: failClosedHaystack(mission),
     boardAllDone,
     sealedDone,
     sealedTotal,

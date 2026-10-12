@@ -560,3 +560,202 @@ describe('religação onda 1 — hasQueuedHandoffs consome resolveMissionLeader'
     expect(result.completed).toBe(false);
   });
 });
+
+describe('F-1260 — veto fail-closed não olha texto histórico', () => {
+  const scope = testProjectScope();
+
+  function prontoHarness(overrides: {
+    learnings?: string;
+    handoffs?: Handoff[];
+  } = {}) {
+    const mission = {
+      id: 'mission-f1260-pronto',
+      title: 'Entregar',
+      description: 'produza server.js',
+      status: 'running',
+      intentState: 'executing',
+      intentVersion: 1,
+      createdAt: 1,
+      updatedAt: 100,
+      learnings: overrides.learnings ?? '',
+    } as unknown as Mission;
+    const completeVerified = vi.fn(
+      (..._args: unknown[]) => {
+        const persisted = mission as { status: string; result: unknown };
+        persisted.status = 'done';
+        persisted.result = { outcome: 'success', summary: 'ok' };
+      },
+    );
+    const handoffs: Handoff[] = overrides.handoffs ?? [
+      {
+        id: 'handoff-current',
+        missionId: mission.id,
+        fromAgent: 'Frontend',
+        status: 'success',
+        claimTrust: 'untrusted',
+        summary: 'server.js entregue.',
+        artifacts: [],
+        evidenceIds: [],
+        evidenceTrust: 'unverified',
+        delivered: true,
+        deliveryState: 'consumed',
+        createdAt: 50,
+      } as Handoff,
+    ];
+    return {
+      mission,
+      completeVerified,
+      deps: {
+        getStores: () =>
+          ({
+            missions: { get: () => mission },
+            tasks: {
+              list: () => [
+                {
+                  missionId: mission.id,
+                  id: 't-back',
+                  title: 'Backend',
+                  detail: '',
+                  status: 'done',
+                  createdAt: 1,
+                  updatedAt: 1,
+                },
+              ],
+              listPlannedTasks: () => [
+                {
+                  taskId: 't-back',
+                  agentCategory: 'executor',
+                  agent: { id: 'backend', agentName: 'Backend', category: 'executor' },
+                  plannerId: 't-back',
+                  missionId: mission.id,
+                  intentVersion: 1,
+                  squadId: null,
+                  rosterHash: 'a'.repeat(64),
+                  agentRef: 'backend',
+                  plannedTitle: 'Backend',
+                  plannedDetail: '',
+                  task: {
+                    missionId: mission.id,
+                    id: 't-back',
+                    title: 'Backend',
+                    detail: '',
+                    status: 'done',
+                    createdAt: 1,
+                    updatedAt: 1,
+                  },
+                },
+              ],
+              markLifecycleStatus: () => null,
+              advanceSealedTaskStatus: () => null,
+            },
+            handoffs: { list: () => handoffs },
+          }) as unknown as ProjectDomainStoreSuite,
+        listPanes: () => [] as const,
+        listProductFiles: () => ['server.js'] as readonly string[],
+        missionEngine: { completeVerified, blockUser: vi.fn() },
+        resolveMissionLeader: () => null,
+        runCodeCompletionGate: async () => ({
+          kind: 'verified' as const,
+          proof: {
+            status: 'verified' as const,
+            note: 'Verificado.',
+            codeCompletion: {
+              kind: 'code' as const,
+              coverage: 'delta' as const,
+              headSha: 'a'.repeat(40),
+              fingerprint: 'candidate-1',
+              evidenceIds: ['review:test'],
+            },
+            candidateFingerprint: 'candidate-1',
+          },
+        }),
+      },
+    };
+  }
+
+  it('handoff antigo failed/consumed com sandbox_denied não faz o Pronto recusar', async () => {
+    const { mission, completeVerified, deps } = prontoHarness({
+      handoffs: [
+        {
+          id: 'handoff-old-failed',
+          missionId: 'mission-f1260-pronto',
+          fromAgent: 'Frontend',
+          status: 'failed',
+          claimTrust: 'untrusted',
+          summary: 'sandbox_denied: o process sandbox recusou.',
+          artifacts: [],
+          evidenceIds: [],
+          evidenceTrust: 'unverified',
+          delivered: true,
+          deliveryState: 'consumed',
+          createdAt: 10,
+        } as Handoff,
+        {
+          id: 'handoff-current',
+          missionId: 'mission-f1260-pronto',
+          fromAgent: 'Backend',
+          status: 'success',
+          claimTrust: 'untrusted',
+          summary: 'server.js entregue.',
+          artifacts: [],
+          evidenceIds: [],
+          evidenceTrust: 'unverified',
+          delivered: true,
+          deliveryState: 'consumed',
+          createdAt: 100,
+        } as Handoff,
+      ],
+    });
+    const runCodeCompletionGate = vi.fn(async () => ({
+      kind: 'verified' as const,
+      proof: {
+        status: 'verified' as const,
+        note: 'Verificado.',
+        codeCompletion: {
+          kind: 'code' as const,
+          coverage: 'delta' as const,
+          headSha: 'a'.repeat(40),
+          fingerprint: 'candidate-1',
+          evidenceIds: ['review:test'],
+        },
+        candidateFingerprint: 'candidate-1',
+      },
+    }));
+    const result = await maybeApplyCivilianPronto(scope, mission.id, {
+      ...deps,
+      runCodeCompletionGate,
+    });
+    expect(result.action).not.toBe('refuse');
+    expect(result.reason).not.toBe('fail-closed');
+    expect(runCodeCompletionGate).toHaveBeenCalled();
+  });
+
+  it('causa só nos learnings após blocked→running não faz o Pronto recusar', async () => {
+    const { mission, completeVerified, deps } = prontoHarness({
+      learnings:
+        '## Encerrada como bloqueada\nsession_authority_revoked: sandbox_denied.',
+    });
+    const runCodeCompletionGate = vi.fn(async () => ({
+      kind: 'verified' as const,
+      proof: {
+        status: 'verified' as const,
+        note: 'Verificado.',
+        codeCompletion: {
+          kind: 'code' as const,
+          coverage: 'delta' as const,
+          headSha: 'a'.repeat(40),
+          fingerprint: 'candidate-1',
+          evidenceIds: ['review:test'],
+        },
+        candidateFingerprint: 'candidate-1',
+      },
+    }));
+    const result = await maybeApplyCivilianPronto(scope, mission.id, {
+      ...deps,
+      runCodeCompletionGate,
+    });
+    expect(result.action).not.toBe('refuse');
+    expect(result.reason).not.toBe('fail-closed');
+    expect(runCodeCompletionGate).toHaveBeenCalled();
+  });
+});

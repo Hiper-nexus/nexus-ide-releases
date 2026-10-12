@@ -77,9 +77,6 @@ const JUNK_DIR = new Set([
 
 const JUNK_FILE = /(?:^|[/\\])(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|\.DS_Store)$/u;
 
-const FAIL_CLOSED_TOKEN =
-  /session_authority_revoked|orchestrator_spawn_forbidden|sandbox_denied|sandbox_forbidden|process sandbox recusou/iu;
-
 const REVIEW_HOLD_TASK =
   /regression|quality-gate|independent-review|guided-regression|guided-quality/iu;
 
@@ -474,17 +471,13 @@ export function inspectDeliveryEvidence(
 }
 
 export function isFailClosedCivilianMission(
-  mission: Pick<Mission, 'status' | 'intentState' | 'description' | 'learnings'>,
-  handoffs: readonly Pick<Handoff, 'summary' | 'status'>[] = [],
+  mission: Pick<Mission, 'status' | 'intentState'>,
 ): boolean {
-  if (mission.status === 'failed' || mission.status === 'blocked') return true;
-  if (mission.intentState === 'blocked_technical') return true;
-  const haystack = [
-    mission.description ?? '',
-    mission.learnings ?? '',
-    ...handoffs.map((handoff) => `${handoff.status} ${handoff.summary}`),
-  ].join('\n');
-  return FAIL_CLOSED_TOKEN.test(haystack);
+  return (
+    mission.status === 'failed' ||
+    mission.status === 'blocked' ||
+    mission.intentState === 'blocked_technical'
+  );
 }
 
 export function holdsReviewForLegacyOrRegression(
@@ -927,7 +920,7 @@ export function inspectCivilianDelivery(input: {
     hasRealWorkerDelivery,
     neverStartedDraft,
     boardAllDone,
-    failClosed: isFailClosedCivilianMission(input.mission, input.handoffs),
+    failClosed: isFailClosedCivilianMission(input.mission),
     holdForReview: holdsReviewForLegacyOrRegression(
       input.mission,
       input.planned,
@@ -1487,7 +1480,7 @@ async function reconcileCivilianCompletionAttempt(
   } catch {
     return emptyResult();
   }
-  if (isFailClosedCivilianMission(mission, handoffs)) {
+  if (isFailClosedCivilianMission(mission)) {
     return emptyResult('refuse-fail-closed');
   }
 

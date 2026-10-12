@@ -2133,5 +2133,112 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(runAutoReviewGate).toHaveBeenCalledOnce();
     expect(completeVerified).not.toHaveBeenCalled();
   });
+
+  it('F-1260: handoff antigo failed/consumed com sandbox_denied não veta o done', async () => {
+    completeVerified.mockClear();
+    const planned = storyPlan(2);
+    const { reconcile } = harness({
+      missionId: 'mission-f1260-old-failed',
+      files: ['server.js'],
+      handoffs: [
+        handoff({
+          id: 'handoff-old-failed',
+          status: 'failed',
+          summary: 'sandbox_denied: o process sandbox recusou o spawn.',
+          delivered: true,
+          deliveryState: 'consumed',
+          createdAt: 10,
+        }),
+        handoff({
+          id: 'handoff-current-success',
+          status: 'success',
+          summary: 'Entrega concluída.',
+          delivered: true,
+          deliveryState: 'consumed',
+          createdAt: 100,
+        }),
+      ],
+      tasks: planned.map((row) =>
+        task({ id: row.taskId, title: row.agent.agentName, status: 'done' }),
+      ),
+      planned,
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: {
+        runAutoReviewGate: async () => ({
+          kind: 'approved' as const,
+          evidenceId: 'nexus-auto-review:f1260-a',
+          note: 'Aprovado.',
+        }),
+      },
+    });
+
+    const result = await reconcile();
+    expect(result.completed).toBe(true);
+    expect(completeVerified).toHaveBeenCalledOnce();
+  });
+
+  it('F-1260: causa só nos learnings após blocked→running não veta o done', async () => {
+    completeVerified.mockClear();
+    const planned = storyPlan(2);
+    const { reconcile } = harness({
+      missionId: 'mission-f1260-learnings',
+      files: ['server.js'],
+      handoffs: [handoff()],
+      tasks: planned.map((row) =>
+        task({ id: row.taskId, title: row.agent.agentName, status: 'done' }),
+      ),
+      planned,
+      missionOverrides: {
+        intentContract: civilianContract,
+        learnings:
+          '## Encerrada como bloqueada\nsession_authority_revoked: sandbox_denied durante o spawn.',
+      },
+      depsExtras: {
+        runAutoReviewGate: async () => ({
+          kind: 'approved' as const,
+          evidenceId: 'nexus-auto-review:f1260-b',
+          note: 'Aprovado.',
+        }),
+      },
+    });
+
+    const result = await reconcile();
+    expect(result.completed).toBe(true);
+    expect(completeVerified).toHaveBeenCalledOnce();
+  });
+
+  it('F-1260: "sandbox_denied corrigido" num handoff success não veta o done', async () => {
+    completeVerified.mockClear();
+    const planned = storyPlan(2);
+    const { reconcile } = harness({
+      missionId: 'mission-f1260-success-mention',
+      files: ['server.js'],
+      handoffs: [
+        handoff({
+          id: 'handoff-success-mention',
+          status: 'success',
+          summary: 'sandbox_denied corrigido; entrega ok.',
+          deliveryState: 'consumed',
+          createdAt: 100,
+        }),
+      ],
+      tasks: planned.map((row) =>
+        task({ id: row.taskId, title: row.agent.agentName, status: 'done' }),
+      ),
+      planned,
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: {
+        runAutoReviewGate: async () => ({
+          kind: 'approved' as const,
+          evidenceId: 'nexus-auto-review:f1260-c',
+          note: 'Aprovado.',
+        }),
+      },
+    });
+
+    const result = await reconcile();
+    expect(result.completed).toBe(true);
+    expect(completeVerified).toHaveBeenCalledOnce();
+  });
   });
 });
