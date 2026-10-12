@@ -7,13 +7,26 @@ import { listInstalledAgentPluginSkills } from './agent-plugin-catalog';
 function scanDir(
   dir: string,
   kind: string,
-  opts: { dirs?: boolean; ext?: string } = {},
+  opts: { dirs?: boolean; ext?: string; requireFile?: string } = {},
 ): InstalledItem[] {
   try {
     return fs.readdirSync(dir, { withFileTypes: true })
       .filter((entry) => {
         if (entry.name.startsWith('.')) return false;
-        if (opts.dirs) return entry.isDirectory();
+        if (opts.dirs) {
+          if (!entry.isDirectory()) return false;
+          // F-1305: pasta de skill só é instalada se o SKILL.md for legível.
+          if (opts.requireFile) {
+            try {
+              return fs
+                .statSync(path.join(dir, entry.name, opts.requireFile))
+                .isFile();
+            } catch {
+              return false;
+            }
+          }
+          return true;
+        }
         if (opts.ext) return entry.isFile() && entry.name.endsWith(opts.ext);
         return entry.isFile();
       })
@@ -60,13 +73,13 @@ export function listInstalledCatalogItems(
   })();
   return uniqueInstalledItems([
     ...scanDir(path.join(home, '.claude', 'agents'), 'agent', { ext: '.md' }),
-    ...scanDir(path.join(home, '.claude', 'skills'), 'skill', { dirs: true }),
-    ...scanDir(path.join(home, '.agents', 'skills'), 'skill', { dirs: true }),
-    ...scanDir(path.join(home, '.codex', 'skills'), 'skill', { dirs: true }),
-    ...scanDir(path.join(home, '.gemini', 'config', 'skills'), 'skill', { dirs: true }),
-    ...scanDir(path.join(home, '.gemini', 'antigravity', 'skills'), 'skill', { dirs: true }),
-    ...scanDir(path.join(home, '.kimi-code', 'skills'), 'skill', { dirs: true }),
-    ...scanDir(path.join(home, '.grok', 'skills'), 'skill', { dirs: true }),
+    ...scanDir(path.join(home, '.claude', 'skills'), 'skill', { dirs: true, requireFile: 'SKILL.md' }),
+    ...scanDir(path.join(home, '.agents', 'skills'), 'skill', { dirs: true, requireFile: 'SKILL.md' }),
+    ...scanDir(path.join(home, '.codex', 'skills'), 'skill', { dirs: true, requireFile: 'SKILL.md' }),
+    ...scanDir(path.join(home, '.gemini', 'config', 'skills'), 'skill', { dirs: true, requireFile: 'SKILL.md' }),
+    ...scanDir(path.join(home, '.gemini', 'antigravity', 'skills'), 'skill', { dirs: true, requireFile: 'SKILL.md' }),
+    ...scanDir(path.join(home, '.kimi-code', 'skills'), 'skill', { dirs: true, requireFile: 'SKILL.md' }),
+    ...scanDir(path.join(home, '.grok', 'skills'), 'skill', { dirs: true, requireFile: 'SKILL.md' }),
     ...listInstalledAgentPluginSkills(home),
     ...legacy,
   ]);
