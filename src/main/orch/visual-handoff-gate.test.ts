@@ -210,3 +210,16 @@ it('F-1417: pedido visual direto com o rodapé continua exigindo captura', () =>
 it('F-1417: pedido visual direto continua exigindo captura', () => {
   expect(visualTaskRequirement('Crie a tela de login com o formulário e o botão de entrar')).toBeDefined();
 });
+
+it('F-1417 (revisão Grok): título da regra citado SEM o fechamento não apaga o pedido visual depois dele', () => {
+  expect(visualTaskRequirement(
+    'O brief cita:\nRegra de design do projeto (sempre que o trabalho envolver UI):\nCrie a tela de login com o botão Entrar.',
+  )).toBeDefined();
+});
+
+it('F-1417 (revisão Grok): título citado e rodapé real depois de linha em branco — o pedido entre eles fica', () => {
+  expect(visualTaskRequirement(
+    'Regra de design do projeto (sempre que o trabalho envolver UI):\nCrie a tela de login com o botão Entrar.' +
+      F1417_DESIGN_FOOTER,
+  )).toBeDefined();
+});
