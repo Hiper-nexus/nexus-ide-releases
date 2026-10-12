@@ -140,6 +140,16 @@ const canonicalGoal = canonicalizeWorkText;
 const DOC_ARTIFACT =
   /\b(prd|adr|rfc|readme|changelog|release\s+notes|runbook|playbook|documentacao|documentation|docs?|guia|guide|tutorial|especificacao|specification|handbook|wiki|postmortem|post\s*mortem|relatorio)\b/;
 
+/**
+ * F-1343: relatório também é SUPERFÍCIE de produto. Num complemento
+ * preposicionado ("exportação para CSV no relatório", "filtro no relatório de
+ * vendas") ele é o LUGAR da feature, não o entregável — o mesmo conceito
+ * locativo de `visual.surface`. Como objeto ("escrever o relatório",
+ * "relatório dos crashes") segue doc forte.
+ */
+const DOC_SURFACE_LOCATIVE =
+  /\b(?:n[oa]s?|em|ao?s?|d[eoa]s?|para\s+[oa]s?)\s+(?:relatorios?)\b/g;
+
 const DOC_VERB =
   /\b(documentar|documente|documenta|documentando|document|documenting|redigir|redija)\b/;
 
@@ -276,13 +286,25 @@ function collectSignals(canonical: string): WorkKindSignal[] {
     if (signal) signals.push(signal);
   };
 
+  const docText = canonical.replace(DOC_SURFACE_LOCATIVE, ' ');
   push(
     matchSignal(
-      canonical,
+      docText,
       { kind: 'doc', rule: 'doc.artifact', pattern: DOC_ARTIFACT },
       'strong',
     ),
   );
+  const docSurface = canonical.match(DOC_SURFACE_LOCATIVE);
+  if (docSurface) {
+    push(
+      Object.freeze({
+        kind: 'doc',
+        rule: 'doc.surface',
+        strength: 'weak',
+        match: docSurface[0],
+      }),
+    );
+  }
   push(
     matchSignal(
       canonical,

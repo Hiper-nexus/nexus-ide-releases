@@ -652,3 +652,19 @@ describe('classifyWorkKind — palavra de domínio não anula verbo de falha (F-
     }
   });
 });
+
+describe('F-1343: relatório como LUGAR da feature, não entregável', () => {
+  it.each([
+    'implementar exportação para CSV no relatório',
+    'adicionar filtro novo no relatório de vendas',
+  ])('%j é feature', (goal) => {
+    expect(classifyWorkKind(goal)).toMatchObject({ kind: 'feature', confidence: 'high' });
+  });
+
+  it.each([
+    'relatório dos crashes da semana',
+    'escrever o relatório da auditoria de acesso',
+  ])('relatório como objeto segue doc: %j', (goal) => {
+    expect(classifyWorkKind(goal).kind).toBe('doc');
+  });
+});
