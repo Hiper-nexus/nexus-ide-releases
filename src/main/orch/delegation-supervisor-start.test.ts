@@ -1372,7 +1372,9 @@ describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra L
     await checkPaneStarts(NOW);
 
     expect(reroute).toHaveBeenCalledWith(['mimo-code']);
-    expect(h.requestPaneClose).toHaveBeenCalledWith('pane-mimo', 'session-mimo');
+    // Revisão Fable (baixa): pane parked não tem sessão viva — fechar pela
+    // sessão morta devolvia false e deixava um zumbi no layout.
+    expect(h.requestPaneClose).toHaveBeenCalledWith('pane-mimo', undefined);
     expect(summaryAt()).toContain('o pane foi estacionado pela admissão de memória antes do primeiro turno');
     expect(summaryAt()).toContain('Reenviada para codex');
     // Memória não é falha da CLI.
@@ -1412,7 +1414,7 @@ describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra L
       adapterId: 'codex',
     }));
 
-    function museWorkerAtLimit(generation = 0): void {
+    function museWorkerAtLimit(generation = 0, at = NOW, sessionId = 'session-muse'): void {
       registerPaneTaskReroute({
         paneId: 'pane-muse',
         adapterId: 'muse',
@@ -1426,17 +1428,17 @@ describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra L
         generation,
         reroute: taskReroute,
         hasAlternative: () => true,
-      }, NOW);
+      }, at);
       h.listPaneSnapshots.mockReturnValue([
-        { paneId: 'pane-muse', sessionId: 'session-muse', kind: 'cli-agent', role: 'worker', state: 'idle', missionId: 'mission-f723', scope: SCOPE },
+        { paneId: 'pane-muse', sessionId, kind: 'cli-agent', role: 'worker', state: 'idle', missionId: 'mission-f723', scope: SCOPE },
       ]);
       h.sessionState.mockReturnValue('idle');
       noteConfirmedPaneLimit({
         paneId: 'pane-muse',
-        sessionId: 'session-muse',
+        sessionId,
         adapterId: 'muse',
         reason: 'Usage limit reached',
-        at: NOW,
+        at,
       });
     }
 
@@ -1485,6 +1487,30 @@ describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra L
       await checkLimitedTaskPanes(NOW + LIMIT_HANDOFF_MS);
       expect(taskReroute).not.toHaveBeenCalled();
       expect(h.requestPaneClose).not.toHaveBeenCalled();
+    });
+
+    it('revisão Fable M2: PTY ocupado (Muse refazendo sozinho, sem status semântico) não recebe veredito', async () => {
+      museWorkerAtLimit();
+      h.sessionState.mockReturnValue('busy');
+      await checkLimitedTaskPanes(NOW + LIMIT_HANDOFF_MS);
+      expect(taskReroute).not.toHaveBeenCalled();
+      expect(h.requestPaneClose).not.toHaveBeenCalled();
+      expect(h.submit).not.toHaveBeenCalled();
+      // Ocupado só adia: parado de novo e sem saída nova, a rede age.
+      h.sessionState.mockReturnValue('idle');
+      await checkLimitedTaskPanes(NOW + 2 * LIMIT_HANDOFF_MS);
+      expect(taskReroute).toHaveBeenCalledTimes(1);
+    });
+
+    it('revisão Fable M2: saída nova no PTY depois do limite cancela a reabertura', async () => {
+      const at = Date.now() - 2 * LIMIT_HANDOFF_MS;
+      // Sessão própria: o buffer de saída é global entre os testes.
+      museWorkerAtLimit(0, at, 'session-muse-out');
+      recordPaneSessionData('session-muse-out', 'retrying… resposta nova\r\n');
+      await checkLimitedTaskPanes(Date.now());
+      expect(taskReroute).not.toHaveBeenCalled();
+      expect(h.requestPaneClose).not.toHaveBeenCalled();
+      expect(h.submit).not.toHaveBeenCalled();
     });
 
     it('(e) no teto de reaberturas: não reabre, deixa o pane e bloqueia com o motivo', async () => {
