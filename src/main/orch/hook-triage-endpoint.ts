@@ -22,6 +22,13 @@ import {
   type InboxNoticeContext,
   type ListUndeliveredHandoffs,
 } from './maestro-inbox-notice';
+import {
+  maestroAgentNudge,
+  parseAgentToolCall,
+  type AgentNudgeEvent,
+} from './maestro-agent-nudge';
+import { countMissionWorkers } from './mission-worker-inventory';
+import { trace } from '../observability/main-trace';
 
 /** Mesmo teto do /hook/status — payloads de hook são metadados de evento. */
 export const HOOK_TRIAGE_MAX_BODY_BYTES = 64 * 1024;
@@ -95,6 +102,14 @@ export interface HookTriageDeps {
   signal?: AbortSignal;
   /** F-1359: fila durável do Maestro; default = store da missão. */
   listUndelivered?: ListUndeliveredHandoffs;
+  /**
+   * F-1396: workers Nexus vivos da missão, para o aviso do atalho de subagente.
+   * Vem do inventário do Main (pty-manager), NUNCA do payload do hook — e só é
+   * consultado quando o aviso realmente vai sair.
+   */
+  countLiveWorkers?: (missionId: string) => number | Promise<number>;
+  /** F-1396: receptor do contador por missão (observabilidade/testes). */
+  onAgentNudge?: (event: AgentNudgeEvent) => void;
 }
 
 type HookTriageContext = Pick<AgentGateContext, 'sessionId'> & InboxNoticeContext;
@@ -112,6 +127,28 @@ function isInboxPoll(body: unknown): boolean {
 }
 
 /**
+ * F-1396: o corpo é uma chamada de subagente? O parser decide o resto (modelo,
+ * tipo de leitura) — aqui basta reconhecer a forma para não passar toda
+ * falha de Bash pelo caminho do aviso.
+ */
+function isAgentDelegation(body: unknown): boolean {
+  return parseAgentToolCall(body) !== null;
+}
+
+/**
+ * Workers vivos DA MISSÃO. O default lê o inventário Main-owned (lazy e
+ * memoizado no módulo da inventário) e devolve 0 em vez de lançar: um hook
+ * jamais pode derrubar o turno do Maestro.
+ */
+async function countLiveWorkersFor(
+  missionId: string,
+  override?: (missionId: string) => number | Promise<number>,
+): Promise<number> {
+  if (override) return await override(missionId);
+  return await countMissionWorkers(missionId);
+}
+
+/**
  * Uma requisição de triagem. Retorna sempre 200: `{}` quando não há o que
  * dizer (payload fora do formato, superfície off, triagem indisponível ou
  * exceção) — o hook nunca deve perturbar o Claude.
@@ -122,6 +159,22 @@ export async function handleHookTriageRequest(
   deps: HookTriageDeps = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   try {
+    // F-1396: o atalho de subagentes internos (tool `Agent`/`Task`) do Maestro.
+    // Antes da triagem e longe dela — é PreToolUse, não uma falha de Bash.
+    if (!isInboxPoll(body) && isAgentDelegation(body)) {
+      const notice = await maestroAgentNudge(ctx, body, {
+        countLiveWorkers: (missionId) => countLiveWorkersFor(missionId, deps.countLiveWorkers),
+        ...(deps.onAgentNudge ? { onTrace: deps.onAgentNudge } : {}),
+      });
+      return notice
+        ? {
+            statusCode: 200,
+            payload: {
+              hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: notice },
+            },
+          }
+        : { statusCode: 200, payload: {} };
+    }
     if (isInboxPoll(body)) {
       const notice = maestroInboxNotice(ctx, deps.listUndelivered);
       return notice
@@ -152,6 +205,22 @@ export async function handleHookTriageRequest(
   }
 }
 
+/**
+ * F-1396: o aviso entrou. `count` e `liveAgents` são campos que o
+ * `traceContextEvent` já promove (contadores aceitos), então o número por
+ * missão aparece no histórico de diagnóstico sem campo novo.
+ */
+function traceAgentNudge(event: AgentNudgeEvent): void {
+  trace({
+    kind: 'agent-nudge',
+    sessionId: event.sessionId,
+    missionId: event.missionId,
+    role: 'orchestrator',
+    count: event.count,
+    liveAgents: event.liveWorkers,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // HTTP plumbing (mesmo contrato do /hook/status: 401 sem bearer, 405 não-POST,
 // 400 body inválido/grande).
@@ -165,6 +234,9 @@ export async function handleHookTriageHttp(
   ctx: HookTriageContext | null,
 ): Promise<void> {
   await handleHookJsonPost(req, res, ctx, HOOK_TRIAGE_MAX_BODY_BYTES, (body) =>
-    handleHookTriageRequest(ctx!, body),
+    // F-1396: o contador por missão vai para o trace de diagnóstico — quantas
+    // vezes o Maestro escolheu o atalho interno nesta missão. Ids e contadores
+    // só; o payload do subagente nunca entra.
+    handleHookTriageRequest(ctx!, body, { onAgentNudge: traceAgentNudge }),
   );
 }

@@ -98,6 +98,17 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     expect(integration!.hooks[0]!.command).toContain(MARKER);
     expect(integration!.hooks[0]!.command).toContain('|| true');
 
+    // F-1396: PreToolUse/Agent|Task leva o aviso do atalho de subagente, pelo
+    // mesmo canal aditivo e SEM tocar no portão Bash acima.
+    const agentNudge = preToolUse.find((entry) => entry.matcher === 'Agent|Task');
+    expect(agentNudge).toBeDefined();
+    expect(agentNudge!.hooks[0]!.command).toContain('$NEXUS_HOOK_TRIAGE_URL');
+    // O payload REAL vem por stdin (é dele que sai o rótulo do subagente).
+    expect(agentNudge!.hooks[0]!.command).toContain('@-');
+    expect(agentNudge!.hooks[0]!.command).toContain(MARKER);
+    expect(agentNudge!.hooks[0]!.command).not.toContain('--output /dev/null');
+    expect(agentNudge!.hooks[0]!.command).toContain('|| true');
+
     const serialized = JSON.stringify(merged);
     expect(serialized).toContain(MARKER);
     expect(serialized).toContain('$NEXUS_HOOK_URL');
@@ -113,14 +124,15 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     // 7 status hooks (claudeHookSpecs, com o StopFailure do F-734) + 1 hook de
     // triagem PostToolUseFailure + 1 hook de delegação UserPromptSubmit (C2)
     // + 1 portão de regressão Stop + 1 portão de integração PreToolUse/Bash
-    // (F-234) + broker de aprovação PermissionRequest (PRV-02) + aviso da
+    // (F-234) + 1 aviso do atalho de subagente em PreToolUse/Agent|Task
+    // (F-1396) + broker de aprovação PermissionRequest (PRV-02) + aviso da
     // fila do Maestro no PostToolUse (F-1359) + admissão física no Bash em
     // plataformas POSIX.
     const commands = Object.values(twice)
       .flat()
       .flatMap((entry) => (entry as { hooks: Array<{ command: string }> }).hooks)
       .map((hook) => hook.command);
-    expect(commands.filter(isNexusHookText)).toHaveLength(process.platform === 'win32' ? 13 : 14);
+    expect(commands.filter(isNexusHookText)).toHaveLength(process.platform === 'win32' ? 14 : 15);
   });
 });
 

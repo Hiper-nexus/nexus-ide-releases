@@ -8,6 +8,7 @@ import type { CommandTriage } from '../jev/jev-terminal-triage';
 import type { Handoff } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { __resetMaestroInboxNoticeForTests } from './maestro-inbox-notice';
+import { __resetAgentNudgeForTests, type AgentNudgeEvent } from './maestro-agent-nudge';
 import { INBOX_POLL_BODY } from './hook-triage-command';
 
 const ctx = { sessionId: 's1' };
@@ -262,5 +263,145 @@ describe('handleHookTriageRequest — fila do Maestro ocupado (PostToolUse)', ()
     const triage = vi.fn();
     await handleHookTriageRequest(maestro, poll, { triage, listUndelivered: () => [] });
     expect(triage).not.toHaveBeenCalled();
+  });
+});
+
+// F-1396: o Maestro escolheu o atalho de subagentes internos (tool Agent/Task)
+// em vez de abrir panes — trabalho invisível ao Nexus. O hook PreToolUse
+// responde additionalContext pelo mesmo canal aditivo, sem bloquear a tool.
+describe('handleHookTriageRequest — atalho de subagente (PreToolUse/Agent)', () => {
+  const scope = { projectId: 'p', rootRealPath: '/repo' } as unknown as ProjectExecutionScope;
+  const maestro = {
+    role: 'orchestrator' as const,
+    missionId: 'mission-1',
+    sessionId: 'pty-maestro',
+    scope,
+  };
+  const agentCall = {
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'general-purpose' },
+  };
+
+  function contextOf(result: { payload: Record<string, unknown> }): string | undefined {
+    return (result.payload.hookSpecificOutput as { additionalContext?: string } | undefined)
+      ?.additionalContext;
+  }
+
+  it('(a) Maestro de missão chamando Agent → additionalContext com os workers vivos e o atalho do Nexus', async () => {
+    __resetAgentNudgeForTests();
+    const result = await handleHookTriageRequest(maestro, agentCall, { countLiveWorkers: () => 0 });
+    expect(result.payload.hookSpecificOutput).toMatchObject({ hookEventName: 'PreToolUse' });
+    expect(contextOf(result)).toContain('0 workers vivos');
+    expect(contextOf(result)).toContain('nexus_pane_spawn');
+    expect(contextOf(result)).toContain('handoff');
+  });
+
+  it('a contagem é da MISSÃO do pane (o deps recebe o missionId do gate), não do payload', async () => {
+    __resetAgentNudgeForTests();
+    const seen: string[] = [];
+    await handleHookTriageRequest(maestro, agentCall, {
+      countLiveWorkers: (missionId) => {
+        seen.push(missionId);
+        return 2;
+      },
+    });
+    expect(seen).toEqual(['mission-1']);
+  });
+
+  it('(b) model fable → {} (revisor obrigatório, o atalho é o uso certo ali)', async () => {
+    __resetAgentNudgeForTests();
+    const countLiveWorkers = vi.fn(() => 0);
+    const result = await handleHookTriageRequest(
+      maestro,
+      { ...agentCall, tool_input: { subagent_type: 'general-purpose', model: 'claude-fable-5-1' } },
+      { countLiveWorkers },
+    );
+    expect(result).toEqual({ statusCode: 200, payload: {} });
+    expect(countLiveWorkers).not.toHaveBeenCalled();
+  });
+
+  it('(c) pane que não é o Maestro da missão → {} e a contagem não é consultada', async () => {
+    __resetAgentNudgeForTests();
+    const countLiveWorkers = vi.fn(() => 0);
+    for (const ctx of [
+      { sessionId: 's1' },
+      { ...maestro, role: 'worker' as const },
+      { ...maestro, missionId: undefined },
+    ]) {
+      expect(await handleHookTriageRequest(ctx, agentCall, { countLiveWorkers })).toEqual({
+        statusCode: 200,
+        payload: {},
+      });
+    }
+    expect(countLiveWorkers).not.toHaveBeenCalled();
+  });
+
+  it('(d) Explore/Plan/claude-code-guide → {} (leitura curta não pede pane)', async () => {
+    __resetAgentNudgeForTests();
+    const countLiveWorkers = vi.fn(() => 0);
+    for (const subagent of ['Explore', 'Plan', 'claude-code-guide']) {
+      expect(
+        await handleHookTriageRequest(
+          maestro,
+          { ...agentCall, tool_input: { subagent_type: subagent } },
+          { countLiveWorkers },
+        ),
+      ).toEqual({ statusCode: 200, payload: {} });
+    }
+    expect(countLiveWorkers).not.toHaveBeenCalled();
+  });
+
+  it('conta por missão no trace, sem nunca carregar o prompt do subagente', async () => {
+    __resetAgentNudgeForTests();
+    const seen: AgentNudgeEvent[] = [];
+    const deps = { countLiveWorkers: () => 1, onAgentNudge: (e: AgentNudgeEvent) => seen.push(e) };
+    const call = { ...agentCall, tool_input: { subagent_type: 'general-purpose', prompt: 'hunter2' } };
+    await handleHookTriageRequest(maestro, call, deps);
+    await handleHookTriageRequest(maestro, call, deps);
+    expect(seen.map((e) => [e.missionId, e.count, e.liveWorkers])).toEqual([
+      ['mission-1', 1, 1],
+      ['mission-1', 2, 1],
+    ]);
+    expect(JSON.stringify(seen)).not.toContain('hunter2');
+  });
+
+  it('a triagem de falha de Bash continua intacta no mesmo endpoint', async () => {
+    __resetAgentNudgeForTests();
+    const triage = vi.fn(async (): Promise<CommandTriage> => ({
+      kind: 'environment',
+      confidence: 0.82,
+      retryHelps: 0.1,
+      model: 'jev',
+    }));
+    const result = await handleHookTriageRequest(
+      maestro,
+      { tool_name: 'Bash', tool_input: { command: 'npm test' }, error: 'Exit code 1\nboom' },
+      { triage, countLiveWorkers: () => 0 },
+    );
+    expect(result.payload.hookSpecificOutput).toMatchObject({ hookEventName: 'PostToolUseFailure' });
+    expect(triage).toHaveBeenCalledTimes(1);
+  });
+
+  it('o poll da fila (PostToolUse) não é confundido com a chamada de subagente', async () => {
+    __resetAgentNudgeForTests();
+    const poll = JSON.parse(INBOX_POLL_BODY) as unknown;
+    const listUndelivered = vi.fn(() => []);
+    const result = await handleHookTriageRequest(maestro, poll, {
+      listUndelivered,
+      countLiveWorkers: () => 0,
+    });
+    expect(result).toEqual({ statusCode: 200, payload: {} });
+    expect(listUndelivered).toHaveBeenCalledTimes(1);
+  });
+
+  it('falha ao contar workers degrada para {} — o hook nunca atrapalha o turno', async () => {
+    __resetAgentNudgeForTests();
+    const result = await handleHookTriageRequest(maestro, agentCall, {
+      countLiveWorkers: () => {
+        throw new Error('inventário fora do ar');
+      },
+    });
+    expect(result).toEqual({ statusCode: 200, payload: {} });
   });
 });

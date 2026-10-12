@@ -39,7 +39,11 @@ import {
   mergeNestedEntries,
 } from '../../vendor/emdash/hooks/hook-config';
 import { filterUserHooks } from '../../vendor/emdash/hooks/hook-commands';
-import { makeClaudeInboxHookCommand, makeClaudeTriageHookCommand } from './hook-triage-command';
+import {
+  makeClaudeAgentNudgeHookCommand,
+  makeClaudeInboxHookCommand,
+  makeClaudeTriageHookCommand,
+} from './hook-triage-command';
 import { makeDelegateHookCommand } from './hook-delegate-command';
 import {
   REGRESSION_HOOK_TIMEOUT_SECONDS,
@@ -127,6 +131,17 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
           command: makeIntegrationHookCommand(),
           timeout: INTEGRATION_HOOK_TIMEOUT_SECONDS,
         },
+      ],
+    },
+    // PreToolUse/Agent|Task → POST /hook/triage (F-1396): o atalho de
+    // subagentes internos do Claude Code é invisível ao Nexus (sem roteamento
+    // entre LLMs, sem quadro, sem handoff). O aviso entra pelo MESMO canal
+    // aditivo da fila/triagem e nunca bloqueia a tool; o matcher garante que só
+    // as duas tools de subagente pagam este hook.
+    {
+      matcher: 'Agent|Task',
+      hooks: [
+        { type: 'command', command: makeClaudeAgentNudgeHookCommand(), timeout: 5 },
       ],
     },
   ];

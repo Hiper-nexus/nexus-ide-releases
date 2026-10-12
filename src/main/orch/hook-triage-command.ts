@@ -85,3 +85,42 @@ export function makeClaudeInboxHookCommand(
     `--data '${INBOX_POLL_BODY}' "$NEXUS_HOOK_TRIAGE_URL" || true`
   );
 }
+
+/**
+ * F-1396: hook `PreToolUse` (matcher `Agent|Task`) que entrega ao /hook/triage o
+ * payload REAL da chamada — é dele que sai o rótulo do subagente e o modelo.
+ * Diferente do poll da fila, o corpo vem por stdin (`--data-binary @-`), e sem
+ * `--output /dev/null` porque a resposta é o `additionalContext` do aviso.
+ *
+ * O timeout é o menor de toda a superfície (2 s) e o hook é aditivo: `|| true`
+ * e `{}` quando não há o que dizer. Um hook lento no PreToolUse atrasa CADA
+ * chamada de subagente do Maestro, então aqui a latência pesa mais.
+ */
+export function makeClaudeAgentNudgeHookCommand(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform === 'win32') {
+    const script = [
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      'if (-not $env:NEXUS_HOOK_TRIAGE_URL -or -not $env:NEXUS_GATE_TOKEN) { exit 0 }',
+      `$env:${NEXUS_HOOK_MARKER} = '1'`,
+      '$payload = [Console]::In.ReadToEnd()',
+      'try { $response = Invoke-WebRequest -UseBasicParsing -Method POST ' +
+        '-Uri $env:NEXUS_HOOK_TRIAGE_URL ' +
+        '-Headers @{ ' +
+        "'Content-Type' = 'application/json'; " +
+        "'authorization' = ('Bearer ' + $env:NEXUS_GATE_TOKEN) " +
+        '} -Body $payload -TimeoutSec 2; ' +
+        'if ($response.Content) { Write-Output $response.Content } ' +
+        '} catch { exit 0 }',
+    ].join('; ');
+    return makeWindowsPowerShellHookCommand(script);
+  }
+  return (
+    `${NEXUS_HOOK_MARKER}=1 curl -sf --connect-timeout 0.5 --max-time 2 ` +
+    '--noproxy 127.0.0.1,localhost -X POST ' +
+    '-H "Content-Type: application/json" ' +
+    '-H "authorization: Bearer $NEXUS_GATE_TOKEN" ' +
+    '--data-binary @- "$NEXUS_HOOK_TRIAGE_URL" || true'
+  );
+}
