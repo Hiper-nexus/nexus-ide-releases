@@ -391,6 +391,19 @@ describe('spool de handoff: ingestão no Main (F-795)', () => {
     expect(handoffs).toHaveLength(1);
   });
 
+  it('F-1310: artifacts em objeto são embrulhados na ingestão, não quarentenados', async () => {
+    const findings = [{ area: 'routing', severity: 'high' }];
+    snippetWriter()(session.env, 'gate-hook', { ...PAYLOAD, artifacts: { findings } });
+
+    await expect(ingestHandoffSpoolNow()).resolves.toMatchObject({ ingested: 1, quarantined: 0 });
+    expect(handoffs).toHaveLength(1);
+    expect(handoffs[0]!.artifacts).toEqual(
+      expect.arrayContaining([
+        { kind: 'nexus.workerArtifacts', payload: { findings } },
+      ]),
+    );
+  });
+
   it('retomada depois de o Main cair no meio da ingestão não duplica (dedupe pelo entryId)', async () => {
     const written = snippetWriter()(session.env, 'mcp-bridge', PAYLOAD)!;
     const [name] = entries();

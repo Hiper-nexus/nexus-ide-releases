@@ -28,6 +28,11 @@ import {
   armedAutoClosePaneId,
   disarmAutoCloseOnHandoff,
 } from "./pane-close-scopes";
+import {
+  armDeliveryContract,
+  parseExpectArg,
+  resetDeliveryContractsForTesting,
+} from "./delivery-contract";
 
 const jevReview = vi.hoisted(() => ({
   reviewMissionHandoff: vi.fn(
@@ -124,6 +129,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   disarmAutoCloseOnHandoff("child");
+  resetDeliveryContractsForTesting();
   vi.useRealTimers();
   vi.restoreAllMocks();
   await disposeProjectDomainStoreRegistry();
@@ -151,6 +157,54 @@ describe("workspace handoff", () => {
     const second = await tool('submit').handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child);
     expect(second).toMatchObject({ status: 'success', visualVerification: { verified: true, artifactId: proof.id } });
     expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true }).map(h => h.status)).toEqual(['partial', 'success']);
+  });
+
+  it("F-1310: artifacts em objeto viram nexus.workerArtifacts em vez de sumir do handoff", async () => {
+    caller("parent");
+    const child = caller("child");
+    const findings = [{ area: "routing", severity: "high" }];
+    const result = await tool("submit").handler(
+      {
+        status: "success",
+        summary: "Relatório de achados conforme o contrato do spawn.",
+        artifacts: { findings },
+      },
+      child,
+    );
+    expect(result).toMatchObject({ status: "success", delivered: true });
+    const rows = getProjectDomainStores(scope).handoffs.list({
+      includeDelivered: true,
+    });
+    expect(rows[0]?.artifacts).toEqual(
+      expect.arrayContaining([
+        { kind: "nexus.workerArtifacts", payload: { findings } },
+      ]),
+    );
+  });
+
+  it("F-1310: contrato esgotado devolve status blocked e as violações na resposta", async () => {
+    caller("parent");
+    const child = caller("child");
+    armDeliveryContract(
+      "child",
+      parseExpectArg({ schema: { type: "array", minItems: 1 }, retries: 0 })!,
+    );
+    const result = await tool("submit").handler(
+      {
+        status: "success",
+        summary: "Entreguei tudo conforme o contrato pedido.",
+        artifacts: [],
+      },
+      child,
+    );
+    expect(result).toMatchObject({
+      status: "blocked",
+      deliveryContract: expect.objectContaining({
+        outcome: "unmet",
+        retries: 0,
+        violations: expect.arrayContaining([expect.any(String)]),
+      }),
+    });
   });
   it('keeps a summary-only helper open until its full report can be preserved', async () => {
     caller('parent');

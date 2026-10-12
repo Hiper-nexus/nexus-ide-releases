@@ -41,6 +41,7 @@ import { capHandoffFullText, condenseHandoffSummary } from './handoff-summary-ru
 import { hasHandoffSubmitInFlight, onHandoffSubmitSettled } from './handoff-submit-inflight';
 import { normalizeHandoffStatusInput } from './legacy-handoff';
 import { validateToolArgs } from './mcp-args-validation';
+import { workerArtifactsList } from './worker-artifacts';
 import {
   HANDOFF_SPOOL_ENTRY_SCHEMA,
   HANDOFF_SPOOL_ENV_DIR,
@@ -632,9 +633,9 @@ function parseEntry(
   if (!status.success || !AGENT_STATUSES.has(status.data)) return { ok: false, reason: 'payload-status-invalid' };
   const summary = typeof record.summary === 'string' ? record.summary.trim() : '';
   if (!summary) return { ok: false, reason: 'payload-summary-missing' };
-  if (record.artifacts !== undefined && !Array.isArray(record.artifacts)) {
-    return { ok: false, reason: 'payload-artifacts-invalid' };
-  }
+  // F-1310: `artifacts` fora de lista NÃO quarentena — o mesmo valor que o
+  // MCP direto aceita cru é embrulhado na ingestão (workerArtifactsList), em
+  // vez de apagar a entrega do worker.
   return { ok: true, entry, payload: record, status: status.data, summary };
 }
 
@@ -710,7 +711,7 @@ function buildSubmitInput(
     // O orquestrador lê isto colado no PTY: diz que chegou atrasado e por quê.
     summary: `[via spool ${clock(entry.createdAt)}] ${condensed.summary}`,
     artifacts: [
-      ...(Array.isArray(payload.artifacts) ? payload.artifacts : []),
+      ...workerArtifactsList(payload.artifacts),
       ...derivedArtifacts(payload),
       ...(condensed.condensed && condensed.original !== undefined && !declaredFullText
         ? [{ kind: 'overclock.fullText', payload: capHandoffFullText(condensed.original) }]

@@ -109,6 +109,7 @@ import {
 import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
 import { withHandoffSubmitResilience } from "./handoff-submit-resilience";
 import { captureWriterHandoffCheckpoint } from "./handoff-checkpoint";
+import { workerArtifactsList } from "./worker-artifacts";
 
 function buildOverclockArtifacts(
   args: Record<string, unknown>,
@@ -427,7 +428,7 @@ const handoffSubmitTool: McpToolDef = {
     );
     const terminalTail = (ctx.sessionId ? suite.handoffs.recoverPhysicalReplayTerminalTail(
       { missionId: ctx.missionId, sessionId: ctx.sessionId, workerIncarnationId: ctx.workerIncarnationId,
-        agentArtifacts: Array.isArray(args.artifacts) ? args.artifacts : [] },
+        agentArtifacts: workerArtifactsList(args.artifacts) },
       physicalReceipt, { worktreeHeadSha, rawPayloadSha256 },
     ) : null) ?? captureTerminalTail();
     // Stale-observation fence: a Guided read_only lane whose tree went stale
@@ -521,7 +522,7 @@ const handoffSubmitTool: McpToolDef = {
           blockers: args.blockers,
           nextSteps: args.nextSteps,
           declaredFiles,
-          artifactKinds: (Array.isArray(args.artifacts) ? args.artifacts : [])
+          artifactKinds: workerArtifactsList(args.artifacts)
             .filter(
               (a): a is { kind: string } =>
                 !!a &&
@@ -623,7 +624,7 @@ const handoffSubmitTool: McpToolDef = {
         : [];
     const artifacts = [
       ...(visual?.required ? [{ kind: 'nexus.visualVerification', payload: visual }] : []),
-      ...(Array.isArray(args.artifacts) ? args.artifacts : []),
+      ...workerArtifactsList(args.artifacts),
       ...overclockArtifacts,
       ...condensedFullText,
       ...contextDagArtifacts,
@@ -846,8 +847,25 @@ const handoffSubmitTool: McpToolDef = {
     return {
       ok: true,
       handoffId: handoff.id,
+      // F-1310: o status registrado volta ao worker — um rebaixamento de
+      // portão (visual, regressão, contrato) nunca chega ao orquestrador como
+      // "success" enquanto o worker lê {ok: true} sem o status real.
+      status,
       ...(terminalTail ? tailWarning : {}),
-      ...(visual?.required ? { visualVerification: visual, status } : {}),
+      ...(visual?.required ? { visualVerification: visual } : {}),
+      // F-1310: contrato esgotado devolve as violações ao worker; o erro de
+      // devolução só existe enquanto há retry, depois a resposta é a
+      // evidência da divergência.
+      ...(contractVerdict.kind === "exhausted"
+        ? {
+            deliveryContract: {
+              outcome: "unmet" as const,
+              violations: contractVerdict.violations,
+              attempts: contractVerdict.attempts,
+              retries: contractVerdict.retries,
+            },
+          }
+        : {}),
       evidenceTrust: handoff.evidenceTrust,
       stopGateSatisfied: handoff.evidenceTrust === "nexus-trusted",
       ...(replayed ? { replayed: true } : {}),

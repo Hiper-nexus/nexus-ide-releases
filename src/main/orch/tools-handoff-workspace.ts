@@ -37,6 +37,7 @@ import {
   type RegressionHandoffVerdict,
 } from "../regression-gate/regression-gate-handoff";
 import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
+import { workerArtifactsList } from "./worker-artifacts";
 
 /** Workspace delivery is untrusted correspondence, never mission completion evidence. */
 export async function submitWorkspaceHandoff(
@@ -136,7 +137,7 @@ export async function submitWorkspaceHandoff(
         blockers: args.blockers,
         nextSteps: args.nextSteps,
         declaredFiles,
-        artifactKinds: (Array.isArray(args.artifacts) ? args.artifacts : [])
+        artifactKinds: workerArtifactsList(args.artifacts)
           .filter(
             (a): a is { kind: string } =>
               !!a &&
@@ -169,7 +170,7 @@ export async function submitWorkspaceHandoff(
   const telemetry = sanitizeHandoffTelemetry(args.telemetry);
   const artifacts = [
     ...(visual?.required ? [{ kind: 'nexus.visualVerification', payload: visual }] : []),
-    ...(Array.isArray(args.artifacts) ? args.artifacts : []),
+    ...workerArtifactsList(args.artifacts),
     ...metadata,
     ...(condensed.condensed && condensed.original && !args.fullText
       ? [
@@ -256,7 +257,23 @@ export async function submitWorkspaceHandoff(
   return {
     ok: true,
     handoffId: handoff.id,
-    ...(visual?.required ? { visualVerification: visual, status } : {}),
+    // F-1310: o status registrado volta ao worker — um rebaixamento de
+    // portão nunca chega ao orquestrador como "success" enquanto o worker lê
+    // {ok: true} sem o status real.
+    status,
+    ...(visual?.required ? { visualVerification: visual } : {}),
+    // F-1310: contrato esgotado devolve as violações ao worker; o erro de
+    // devolução só existe enquanto há retry.
+    ...(verdict.kind === "exhausted"
+      ? {
+          deliveryContract: {
+            outcome: "unmet" as const,
+            violations: verdict.violations,
+            attempts: verdict.attempts,
+            retries: verdict.retries,
+          },
+        }
+      : {}),
     evidenceTrust: handoff.evidenceTrust,
     stopGateSatisfied: false,
     delivered,

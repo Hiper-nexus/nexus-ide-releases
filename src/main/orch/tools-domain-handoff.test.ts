@@ -919,6 +919,101 @@ describe("handoff MCP stop receipt", () => {
     expect(armedDeliveryContract("worker-session")).not.toBeNull();
   });
 
+  it("F-1310: artifacts em objeto viram nexus.workerArtifacts em vez de sumir do handoff", async () => {
+    mocks.submit.mockReturnValue(handoff("unverified"));
+    const findings = [{ area: "routing", severity: "high" }];
+
+    const result = await submitTool().handler(
+      {
+        status: "success",
+        summary: "Relatório de achados conforme o contrato do spawn.",
+        artifacts: { findings },
+      },
+      context(),
+      invocation(),
+    );
+
+    expect(result).toMatchObject({ status: "success" });
+    const persisted = mocks.submit.mock.calls[0]?.[0] as {
+      artifacts?: unknown[];
+    };
+    expect(persisted.artifacts).toEqual(
+      expect.arrayContaining([
+        { kind: "nexus.workerArtifacts", payload: { findings } },
+      ]),
+    );
+  });
+
+  it("F-1310: o status registrado volta ao worker quando um portão rebaixa a entrega", async () => {
+    regressionGate.evaluateHandoffRegressionGate.mockResolvedValueOnce({
+      kind: "exhausted",
+      report: "Seu diff quebrou 1 arquivo(s)",
+      artifact: {
+        kind: "nexus.regressionGate",
+        payload: {
+          status: "failed",
+          diffHash: "h",
+          headSha: null,
+          baseSha: null,
+          runner: "vitest",
+          testsRun: ["src/a.test.ts"],
+          testsNotRun: [],
+          failures: [{ file: "src/a.test.ts", message: "soma" }],
+          inheritedFailures: [],
+          preexistingFailures: [],
+          untestedFiles: [],
+          invariantsTouched: [],
+          warnings: [],
+        },
+      },
+    });
+    mocks.submit.mockReturnValue({ ...handoff("unverified"), status: "blocked" });
+
+    const result = await submitTool().handler(
+      {
+        status: "success",
+        summary: "Worker reports that implementation is complete.",
+      },
+      context(),
+      invocation(),
+    );
+
+    expect(result).toMatchObject({ status: "blocked" });
+  });
+
+  it("F-1310: contrato esgotado devolve status blocked e as violações na resposta", async () => {
+    resetDeliveryContractsForTesting();
+    armDeliveryContract(
+      "worker-session",
+      parseExpectArg({
+        schema: { type: "array", minItems: 1 },
+        retries: 0,
+      })!,
+    );
+    mocks.submit.mockReturnValue({
+      ...handoff("unverified"),
+      status: "blocked",
+    });
+
+    const result = await submitTool().handler(
+      {
+        status: "success",
+        summary: "Entreguei tudo conforme o contrato pedido.",
+      },
+      context(),
+      invocation(),
+    );
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      deliveryContract: expect.objectContaining({
+        outcome: "unmet",
+        retries: 0,
+        violations: expect.arrayContaining([expect.any(String)]),
+      }),
+    });
+  });
+
   it("binds replay identity to the full raw payload before compaction", async () => {
     const submitted = handoff("unverified");
     mocks.submit.mockImplementation((input: { summary: string }) => ({
