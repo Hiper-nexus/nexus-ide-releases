@@ -203,6 +203,10 @@ export class CommandBlockTracker {
         if (isSafeOscCwd(event.path)) session.cwd = event.path;
         return;
       case 'command_line':
+        // F-1274: while a command runs, a 133;E is nested bookkeeping (the
+        // bash DEBUG trap firing inside command substitution, PROMPT_COMMAND
+        // parts); it must not overwrite the name the next block opens with.
+        if (session.running) return;
         session.pendingCommand = event.command;
         return;
       case 'command_start':

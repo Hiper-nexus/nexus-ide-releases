@@ -3,6 +3,7 @@ import {
   CommandBlockTracker,
   resetCommandBlockTrackingForTests,
 } from './command-block-tracker';
+import type { CommandBlock } from '../../shared/command-block';
 import {
   registerCommandBlockScope,
   resolveCommandBlockScope,
@@ -174,5 +175,26 @@ describe('CommandBlockTracker', () => {
     expect(tracker.listBlocks('s')).toEqual([]);
     expect(resolveCommandBlockScope('s')).toBeNull();
     expect(resolveCommandBlockScope('missing', scope.projectId)).toBeNull();
+  });
+
+  // F-1274: the bash DEBUG trap also fires for PROMPT_COMMAND, so the hook's
+  // own 133;E must not stay pending and name the next command's block.
+  it('does not let a hook command line received mid-command name the next block', () => {
+    const finished: CommandBlock[] = [];
+    const tracker = new CommandBlockTracker({ isEnabled: () => true, now: () => 1, onBlock: (b) => finished.push(b) });
+    tracker.bindSession('s', { paneId: 'p', workspaceId: 'w', shell: 'bash', cwd: '/tmp' });
+    // One full bash cycle (DEBUG trap order): command, then PROMPT_COMMAND's
+    // own B/E/C before D, then the next command.
+    tracker.handleData('s',
+      '\x1b]133;B\x07\x1b]133;E;echo hi\x07\x1b]133;C\x07' +
+      '\x1b]133;B\x07\x1b]133;E;__nexus_prompt_command\x07\x1b]133;C\x07' +
+      '\x1b]133;D;0\x07\x1b]133;A\x07' +
+      '\x1b]133;B\x07\x1b]133;E;echo hi2\x07\x1b]133;C\x07' +
+      '\x1b]133;D;1\x07\x1b]133;A\x07');
+    const blocks = tracker.listBlocks('s');
+    expect(blocks.map((b) => [b.command, b.status])).toEqual([
+      ['echo hi', 'success'],
+      ['echo hi2', 'failed'],
+    ]);
   });
 });

@@ -23,6 +23,12 @@ __nexus_osc_escape() {
 
 __nexus_preexec() {
   local cmd=$1
+  # The DEBUG trap also fires for every command of PROMPT_COMMAND (ours and
+  # other hooks'); those firings are prompt bookkeeping, not user work —
+  # emitting them left the hook text pending as the next command's name.
+  case "$PROMPT_COMMAND" in
+    *"$cmd"*) return ;;
+  esac
   __nexus_osc "133;B"
   __nexus_osc "133;E;$(__nexus_osc_escape "$cmd")"
   __nexus_osc "133;C"
@@ -37,6 +43,7 @@ __nexus_prompt_command() {
   fi
 }
 
-# bash 4+ DEBUG trap for preexec
-trap '__nexus_preexec "$BASH_COMMAND"' DEBUG
+# bash 4+ DEBUG trap for preexec. Armed last: while this file sources, its own
+# lines must not fire the trap and leave their text pending as a command name.
 PROMPT_COMMAND="__nexus_prompt_command${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+trap '__nexus_preexec "$BASH_COMMAND"' DEBUG
