@@ -1121,9 +1121,10 @@ describe('F-217 — o mais novo da linha vence mesmo sem catálogo', () => {
       expect(decision?.adapterId).toBe('agy');
       expect(decision?.model).toBe('gemini-3.8-flash-high');
       expect(decision?.effort).toBe('high');
-      // Desde o F-990 a rota já sai da listagem viva: o Argon cai como "CLI sem
-      // o modelo roteado", e o motivo continua nomeando o assento pulado.
-      expect(decision?.reason).toMatch(/agy:gemini-4-argon/);
+      // F-1267: o Argon sem prova de acesso nesta conta tem nota própria,
+      // nunca a nota genérica "CLI sem o modelo roteado" que sugere tabela velha.
+      expect(decision?.reason).toMatch(/sem acesso ao Argon nesta conta: agy:gemini-4-argon/);
+      expect(decision?.reason).not.toMatch(/CLI sem o modelo roteado: agy:gemini-4-argon/);
       expect(decision?.alternatives.map((alt) => alt.model)).not.toContain('gemini-4-argon');
     });
 

@@ -1193,6 +1193,12 @@ function warnLiveCatalogDrops(drops: readonly string[]): string {
   return `; CLI sem modelos no catálogo: ${unique.slice(0, 3).join(', ')}`;
 }
 
+function formatMissingAccessProofNote(missing: readonly string[]): string {
+  const unique = [...new Set(missing)];
+  if (unique.length === 0) return '';
+  return `; sem acesso ao Argon nesta conta: ${unique.slice(0, 3).join(', ')}`;
+}
+
 function evaluatedCandidates(
   specialty: RouteSpecialty,
   tier: TaskTier,
@@ -1536,6 +1542,7 @@ export function routeTask(
   const writerTierKeys = new Set<string>();
   const skippedRisk: string[] = [];
   const missingFromCli: string[] = [];
+  const missingAccessProof: string[] = [];
   const lineUpgrades: string[] = [];
   const providerServed: string[] = [];
   // F-217 (regra do operador 29/09): a CLI anuncia modelos que ninguém
@@ -1580,7 +1587,13 @@ export function routeTask(
           // de capacidade só porque chegou por upgrade (F-912, P2 da revisão).
           const newer = c.model ? newestInModelLine(c.model, eligible) : undefined;
           if (!newer || newer === c.model) {
-            missingFromCli.push(`${c.adapterId}:${c.model}`);
+            // F-1267: assento com prova de acesso exigida (Argon) não comprovado
+            // tem nota própria em vez da nota genérica de CLI desatualizada.
+            if (c.model && judgeSeatNeedsAccessProof({ adapterId: c.adapterId, model: c.model })) {
+              missingAccessProof.push(`${c.adapterId}:${c.model}`);
+            } else {
+              missingFromCli.push(`${c.adapterId}:${c.model}`);
+            }
             return [];
           }
           lineUpgrades.push(`${c.adapterId}:${c.model}→${newer}`);
@@ -2011,6 +2024,7 @@ export function routeTask(
   }
 
   const missingNote = warnRoutedModelsMissingFromCli(missingFromCli);
+  const accessProofNote = formatMissingAccessProofNote(missingAccessProof);
   const liveCatalogDropNote = warnLiveCatalogDrops(liveCatalogDrops);
   const lineUpgradeNote =
     lineUpgrades.length > 0
@@ -2071,7 +2085,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${writerCostNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${writerCostNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,
@@ -2122,7 +2136,7 @@ export function routeTask(
     adapterId: fallback,
     ...(safeFallbackModels.has(fallback) ? { model: safeFallbackModels.get(fallback)! } : {}),
     effort: effortFor(fallback),
-    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${contextNote}${missingNote}${liveCatalogDropNote}${effortNoteFor(fallback)}`,
+    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${contextNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${effortNoteFor(fallback)}`,
     alternatives: [],
     specialty: specialtyVerdict.specialty,
     policySource: policy.source,
