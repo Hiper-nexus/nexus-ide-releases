@@ -148,6 +148,9 @@ export function listIdleHelperCandidates(
     const sessionId = pane.sessionId;
     if (!sessionId || sessionId === input.callerSessionId) continue;
     if (pane.kind !== 'cli-agent' || pane.state !== 'idle') continue;
+    // F-1272: one-shot (agy --print / opencode run) com a raiz viva não lê o
+    // terminal — injetar a tarefa nova a perderia (nexus_pane_ask já recusa).
+    if (pane.oneShotAlive === true) continue;
     if (input.mode === 'operator-hand') {
       const authority = authorityOf(sessionId);
       if (authority?.operatorParentSessionId !== input.callerSessionId) {

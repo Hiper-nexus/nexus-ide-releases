@@ -19,6 +19,7 @@ vi.mock('../pty/pty-manager', () => ({
   getSessionState: vi.fn((sessionId: string) =>
     pty.live.has(sessionId) ? 'idle' : null,
   ),
+  isOneShotSessionRunning: vi.fn(() => false),
   isSessionOwnedBy: vi.fn((_owner: WebContents, sessionId: string) =>
     pty.live.has(sessionId),
   ),

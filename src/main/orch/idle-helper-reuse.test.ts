@@ -70,6 +70,19 @@ describe('listIdleHelperCandidates', () => {
     expect(candidates.map((c) => c.paneId)).toEqual(['pane-1']);
   });
 
+  it('F-1272: pane one-shot (agy --print) com a raiz viva nunca é candidato de reuso', () => {
+    const candidates = listIdleHelperCandidates(
+      operatorHand({ adapterId: 'agy' }),
+      deps({
+        listPaneSnapshots: () => [
+          pane({ adapterId: 'agy', oneShotAlive: true }),
+        ],
+        getAuthority: () => ({ operatorParentSessionId: 'sess-op' }) as never,
+      }),
+    );
+    expect(candidates).toEqual([]);
+  });
+
   it('missão da aba: worker da missão entra; orquestrador e pane de outra missão não', () => {
     const candidates = listIdleHelperCandidates(
       operatorHand({ mode: 'tab-mission', missionId: 'm-1' }),

@@ -7,6 +7,7 @@ const harness = vi.hoisted(() => ({
   agentInfo: vi.fn(
     (_sessionId: string): { paneId?: string } | null => null,
   ),
+  oneShotRunning: vi.fn((_sessionId: string): boolean => false),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -14,6 +15,8 @@ vi.mock('../pty/pty-manager', () => ({
     harness.publish(sessionId, state),
   getAgentSessionInfo: (sessionId: string) => harness.agentInfo(sessionId),
   getSessionState: () => harness.state,
+  isOneShotSessionRunning: (sessionId: string) =>
+    harness.oneShotRunning(sessionId),
 }));
 
 import {
@@ -72,6 +75,7 @@ beforeEach(() => {
   // implementation with a throwing one and it must not leak into later tests.
   harness.publish.mockReset().mockImplementation(() => true);
   harness.agentInfo.mockReset().mockReturnValue(null);
+  harness.oneShotRunning.mockReset().mockReturnValue(false);
   harness.state = 'idle';
 });
 
@@ -364,6 +368,18 @@ describe('isSessionIdleForCleanup — silêncio não autoriza encerrar trabalho'
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('F-1272: one-shot (agy --print) com a raiz viva nunca é ocioso para cleanup/park', () => {
+    // PTY idle (tela muda) + semântico idle (fallback do avaliador) e mesmo
+    // assim o processo segue trabalhando: fechar/estacionar matava o --print.
+    harness.oneShotRunning.mockReturnValue(true);
+    expect(isSessionIdleForCleanup('pty-agy')).toBe(false);
+    applyCanonicalHookEvent({ sessionId: 'pty-agy', event: stop });
+    expect(isSessionIdleForCleanup('pty-agy')).toBe(false);
+    // Raiz morta: as regras normais voltam.
+    harness.oneShotRunning.mockReturnValue(false);
+    expect(isSessionIdleForCleanup('pty-agy')).toBe(true);
   });
 });
 

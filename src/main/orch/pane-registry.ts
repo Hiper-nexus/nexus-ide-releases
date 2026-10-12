@@ -30,6 +30,7 @@ import {
   detachOwnedMissionAgentSession,
   getAgentSessionInfo,
   getSessionState,
+  isOneShotSessionRunning,
   isSessionOwnedBy,
   isSessionDetached,
   listAgentSessionsForPane,
@@ -2342,6 +2343,10 @@ function snapshotOf(registered: RegisteredPane): PaneSnapshot {
     ...(entry.sessionId && getAgentSessionInfo(entry.sessionId)
       ? { executionScope: getAgentSessionInfo(entry.sessionId)!.scope } : {}),
     ...(parked ? { parkedAt: parked.parkedAt, parkedSessionId: parked.sessionId } : {}),
+    // F-1272: one-shot com a raiz viva — tela muda não é ociosidade.
+    ...(entry.sessionId && isOneShotSessionRunning(entry.sessionId)
+      ? { oneShotAlive: true as const }
+      : {}),
   };
 }
 

@@ -36,6 +36,7 @@ vi.mock('../pty/pty-manager', () => ({
     return true;
   }), getAgentSessionInfo: (id: string) => facts.sessions.get(id),
   getSessionState: (id: string) => facts.sessions.get(id)?.live ? 'idle' : null,
+  isOneShotSessionRunning: () => false,
   isSessionOwnedBy: (owner: WebContents, id: string) => facts.sessions.get(id)?.ownerId === owner.id,
   isSessionDetached: (id: string) => facts.sessions.get(id)?.live === true && facts.sessions.get(id)?.ownerId === null,
   listAgentSessions: () => [...facts.sessions.values()],

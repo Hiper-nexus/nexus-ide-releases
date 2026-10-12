@@ -4491,6 +4491,19 @@ export function getSessionState(sessionId: string): PaneSessionState | null {
 }
 
 /**
+ * F-1272: sessão one-shot (`agy --print`, `opencode run`) cuja raiz ainda não
+ * saiu conta como ATIVA. Essas CLIs não redesenham a tela enquanto trabalham,
+ * então a detecção de tela cai no fallback de idle e o PTY apaga por silêncio
+ * — mas o processo segue rodando. O voo de término físico é criado no pedido
+ * de kill e no onExit da raiz (finalizeSession), então "sem voo" = raiz viva.
+ */
+export function isOneShotSessionRunning(sessionId: string): boolean {
+  const session = sessions.get(sessionId);
+  if (session?.agent?.oneShot !== true) return false;
+  return physicalTerminationFlights.get(sessionId)?.session !== session;
+}
+
+/**
  * Stdin is writable when the session is still in the map, not in a
  * physical-termination flight, and `proc.write` accepts a no-op. Used with
  * session-liveness to decide whether a just-spawned writer is actually live.

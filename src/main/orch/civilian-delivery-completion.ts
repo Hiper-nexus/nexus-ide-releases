@@ -144,7 +144,19 @@ type LivePane = TeamQuestionPaneRuntime & {
   readonly role?: 'orchestrator' | 'worker' | string;
   readonly state?: string | null;
   readonly sessionId?: string | null;
+  /** F-1272: one-shot (agy --print / opencode run) com a raiz viva. */
+  readonly oneShotAlive?: boolean;
 };
+
+// F-1272: one-shot com a raiz viva trabalha de tela muda — conta como writer
+// vivo, nunca como writer que sentou (idle/parou sem entrega).
+function isLiveWorkerPane(pane: LivePane): boolean {
+  return isLiveWriterPaneState(pane.state) || pane.oneShotAlive === true;
+}
+
+function isSatWorkerPane(pane: LivePane): boolean {
+  return isSatOrTombstonedPaneState(pane.state) && pane.oneShotAlive !== true;
+}
 
 export interface CivilianDeliveryDependencies {
   readonly runCodeCompletionGate?: CivilianCodeCompletionGate;
@@ -767,16 +779,12 @@ export function inspectCivilianDelivery(input: {
   const successHandoffs = input.handoffs.filter((handoff) => handoff.status === 'success');
   const missionPanes = input.panes.filter((pane) => pane.missionId === input.mission.id);
   const workerPanes = missionPanes.filter((pane) => pane.role !== 'orchestrator');
-  const liveWorkerPanes = workerPanes.filter((pane) =>
-    isLiveWriterPaneState(pane.state),
-  );
-  const satWorkerPanes = workerPanes.filter((pane) =>
-    isSatOrTombstonedPaneState(pane.state),
-  );
+  const liveWorkerPanes = workerPanes.filter((pane) => isLiveWorkerPane(pane));
+  const satWorkerPanes = workerPanes.filter((pane) => isSatWorkerPane(pane));
   const idleWorkersWithoutHandoff = workerPanes.filter(
     (pane) =>
       pane.role !== 'orchestrator' &&
-      isSatOrTombstonedPaneState(pane.state) &&
+      isSatWorkerPane(pane) &&
       !successHandoffs.some((handoff) =>
         matchHandoffToAgent(handoff, pane.agentName ?? '', ''),
       ),
@@ -820,11 +828,10 @@ export function inspectCivilianDelivery(input: {
       ...(liveByAgent.get(paneAgentKey(agentId)) ?? []),
     ];
     const liveBusy = panes.some(
-      (pane) => pane.role !== 'orchestrator' && isLiveWriterPaneState(pane.state),
+      (pane) => pane.role !== 'orchestrator' && isLiveWorkerPane(pane),
     );
     const satOrTombstoned = panes.some(
-      (pane) =>
-        pane.role !== 'orchestrator' && isSatOrTombstonedPaneState(pane.state),
+      (pane) => pane.role !== 'orchestrator' && isSatWorkerPane(pane),
     );
     const hasLivePane = panes.some((pane) =>
       ['busy', 'idle', 'spawning', 'exited', 'hibernated', 'parou', 'tombstoned'].includes(

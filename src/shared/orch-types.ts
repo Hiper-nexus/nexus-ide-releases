@@ -844,6 +844,12 @@ export interface PaneSnapshot extends PaneRegistryEntry {
   /** 0.76.45: quando estacionado, o instante (ms) e a sessão encerrada que o resume reabre. */
   parkedAt?: number;
   parkedSessionId?: string;
+  /**
+   * F-1272: sessão one-shot (agy --print / opencode run) com a raiz viva.
+   * Tela muda não é ociosidade nessas CLIs: consumidores de "pane idle"
+   * (watchdog, reuso de helper, cleanup/park, conclusão civil) tratam como ativo.
+   */
+  oneShotAlive?: boolean;
 }
 
 /** Main → renderer: please create a pane and spawn its session. */

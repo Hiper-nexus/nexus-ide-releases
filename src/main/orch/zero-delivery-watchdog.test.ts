@@ -284,3 +284,54 @@ describe('F-986: zeroDeliveryWorkerActivity', () => {
     ).toBe(false);
   });
 });
+
+describe('F-1272: worker one-shot (agy --print / opencode run) com a raiz viva', () => {
+  const now = 50_000_000;
+
+  it('PTY idle + semântico idle + 0 handoffs: ainda é entrega em curso — nem poke nem escalada', () => {
+    const activity = zeroDeliveryWorkerActivity({
+      workers: [{ sessionId: 's1', state: 'idle', oneShotAlive: true }],
+      now,
+      // A tela muda do one-shot cai no fallback de idle do avaliador.
+      semanticStatus: () => ({ status: 'idle', updatedAt: now - 60_000 }),
+      toolActivityCount: () => 0,
+      previous: () => undefined,
+    });
+    expect(activity.anyActive).toBe(true);
+    for (const alreadyPoked of [false, true]) {
+      const decision = decideZeroDeliveryWatchdog({
+        missionStatus: 'running',
+        workerPanes: 1,
+        workerHandoffCount: 0,
+        orchestratorState: 'idle',
+        executingSinceMs: now - 10 * 60_000,
+        now,
+        alreadyPoked,
+        workerActivity: activity,
+      });
+      expect(decision.action).toBe('none');
+    }
+  });
+
+  it('one-shot cuja raiz já saiu (oneShotAlive ausente/falso) segue as regras normais de silêncio', () => {
+    const activity = zeroDeliveryWorkerActivity({
+      workers: [{ sessionId: 's1', state: 'idle' }],
+      now,
+      semanticStatus: () => null,
+      toolActivityCount: () => 0,
+      previous: () => undefined,
+    });
+    expect(activity.anyActive).toBe(false);
+    const decision = decideZeroDeliveryWatchdog({
+      missionStatus: 'running',
+      workerPanes: 1,
+      workerHandoffCount: 0,
+      orchestratorState: 'idle',
+      executingSinceMs: now - 10 * 60_000,
+      now,
+      alreadyPoked: false,
+      workerActivity: activity,
+    });
+    expect(decision.action).toBe('poke');
+  });
+});

@@ -111,6 +111,7 @@ vi.mock("../pty/pty-manager", () => ({
   getSessionState: vi.fn((sessionId: string) =>
     pty.live.has(sessionId) ? "spawning" : null,
   ),
+  isOneShotSessionRunning: vi.fn(() => false),
   liveClaudeMissionAccountIds: vi.fn(() => []),
   detachOwnedMissionAgentSession: vi.fn(() => true),
   reattachDetachedMissionAgentSession: pty.reattach,

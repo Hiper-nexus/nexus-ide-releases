@@ -41,6 +41,7 @@ import {
 import {
   getAgentSessionInfo,
   getSessionState,
+  isOneShotSessionRunning,
   liveClaudeMissionAccountIds,
   spawnMainOwnedAgentSession,
 } from "../pty/pty-manager";
@@ -291,6 +292,10 @@ export function listMainOwnedPaneSnapshots(
     ...pane.entry,
     state: paneState(pane.entry),
     ...pane.meta,
+    // F-1272: one-shot com a raiz viva — tela muda não é ociosidade.
+    ...(pane.entry.sessionId && isOneShotSessionRunning(pane.entry.sessionId)
+      ? { oneShotAlive: true as const }
+      : {}),
   }));
 }
 
@@ -304,6 +309,9 @@ export function listVisibleMainOwnedPaneSnapshots(
       ...pane.entry,
       state: paneState(pane.entry),
       ...pane.meta,
+      ...(pane.entry.sessionId && isOneShotSessionRunning(pane.entry.sessionId)
+        ? { oneShotAlive: true as const }
+        : {}),
     }));
 }
 

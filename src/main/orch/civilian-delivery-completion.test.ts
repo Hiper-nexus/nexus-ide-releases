@@ -711,6 +711,49 @@ describe('inspectCivilianDelivery', () => {
     expect(inspected.neverStartedDraft).toBe(false);
   });
 
+  it('F-1272: writer one-shot (agy --print) com a raiz viva segura a conclusão mesmo idle no PTY', () => {
+    // A tela muda do one-shot derruba o pane para idle; com board N/N e handoff
+    // success do mesmo agente, a missão concluía com o --print ainda rodando.
+    const planned = [
+      {
+        taskId: 't-front',
+        agentCategory: 'executor' as const,
+        agent: { id: 'frontend', agentName: 'Frontend', category: 'executor' as const },
+      },
+    ];
+    const inspected = inspectCivilianDelivery({
+      mission: mission(),
+      tasks: [task({ id: 't-front', title: 'UI', status: 'done' })],
+      planned,
+      handoffs: [handoff({ status: 'success' })],
+      panes: [
+        {
+          missionId: 'mission-a906d36d',
+          agentName: 'Frontend',
+          role: 'worker',
+          state: 'idle',
+          sessionId: 'pty-agy',
+          oneShotAlive: true,
+        },
+      ],
+      now: 20_000,
+    });
+    expect(inspected.activeWriterCount).toBe(1);
+    const action = decideCivilianDeliveryAction(
+      decision({
+        boardAllDone: true,
+        hasExpectedDelivery: true,
+        hasSuccessHandoff: inspected.hasSuccessHandoff,
+        hasRealWorkerDelivery: inspected.hasRealWorkerDelivery,
+        activeWriterCount: inspected.activeWriterCount,
+        workersDelivered: inspected.workersDelivered,
+        idleWorkersWithoutHandoff: inspected.idleWorkersWithoutHandoff,
+        remainingKinds: inspected.remaining.map((row) => row.kind),
+      }),
+    );
+    expect(action).not.toBe('complete');
+  });
+
   it('plano órfão (planned vazio) + writers idle no pane ainda é entrega real', () => {
     const inspected = inspectCivilianDelivery({
       mission: mission({ id: 'mission-orphan-plan' }),

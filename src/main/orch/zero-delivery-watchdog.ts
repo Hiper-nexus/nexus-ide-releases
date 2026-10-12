@@ -49,6 +49,12 @@ export interface ZeroDeliveryWorkerSample {
   readonly sessionId?: string | null;
   readonly state: string;
   readonly readOnly?: boolean;
+  /**
+   * F-1272: sessão one-shot (agy --print / opencode run) com a raiz viva.
+   * O PTY fica idle porque essas CLIs não redesenham a tela trabalhando —
+   * sem esta marca o watchdog dava poke/escalada com o processo rodando.
+   */
+  readonly oneShotAlive?: boolean;
 }
 
 /** Última atividade observada por sessão (o supervisor guarda entre varreduras). */
@@ -83,7 +89,11 @@ export function zeroDeliveryWorkerActivity(input: {
   };
   for (const worker of input.workers) {
     // PTY busy/spawning = saída recente do terminal (spinner, leitura de código).
-    let active = worker.state === 'busy' || worker.state === 'spawning';
+    // One-shot com a raiz viva trabalha com a tela muda (F-1272).
+    let active =
+      worker.state === 'busy' ||
+      worker.state === 'spawning' ||
+      worker.oneShotAlive === true;
     const sessionId = worker.sessionId?.trim();
     if (sessionId) {
       const semantic = input.semanticStatus(sessionId);

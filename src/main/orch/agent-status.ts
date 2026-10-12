@@ -36,6 +36,7 @@ import type { ObserverFrameInput } from '../../shared/observer-frame';
 import {
   getAgentSessionInfo,
   getSessionState,
+  isOneShotSessionRunning,
   publishSessionActivityState,
 } from '../pty/pty-manager';
 import { publishObserverFrame } from './observer-bus';
@@ -300,6 +301,9 @@ export function isSessionInjectableIdle(sessionId: string): boolean {
  * helper that already delivered a successful handoff.
  */
 export function isSessionIdleForCleanup(sessionId: string): boolean {
+  // F-1272: one-shot com a raiz viva trabalha de tela muda — fechar/estacionar
+  // aqui matava o `agy --print` no meio da entrega.
+  if (isOneShotSessionRunning(sessionId)) return false;
   if (getSessionState(sessionId) !== 'idle') return false;
   switch (getAgentSemanticStatusBySession(sessionId)?.status) {
     case 'working':

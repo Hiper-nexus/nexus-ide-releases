@@ -60,7 +60,7 @@ vi.mock('../persistence/provider-session-store', async original => ({
 }));
 vi.mock('../pty/pty-manager', () => ({
   getAgentSessionInfo: vi.fn(), getSessionState: () => 'spawning', spawnMainOwnedAgentSession: deps.spawn,
-  liveClaudeMissionAccountIds: deps.liveClaudeAccounts,
+  liveClaudeMissionAccountIds: deps.liveClaudeAccounts, isOneShotSessionRunning: () => false,
 }));
 vi.mock('../pty/autonomous-cli-policy', () => ({
   isMissionBoundCodexWorkspaceAuthority: () => false,

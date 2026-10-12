@@ -11,6 +11,7 @@ vi.mock('../pty/pty-manager', () => ({
   publishSessionActivityState: () => true,
   getAgentSessionInfo: () => null,
   getSessionState: () => pty.state,
+  isOneShotSessionRunning: () => false,
   tapSessionExit: () => () => {},
 }));
 
