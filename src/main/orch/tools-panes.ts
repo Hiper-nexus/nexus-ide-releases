@@ -32,6 +32,7 @@ import {
   inspectSessionLease,
   orchWriteSession,
   sessionLeaseRegistry,
+  tapSessionExit,
 } from '../pty/pty-manager';
 import {
   getAdapter,
@@ -483,6 +484,58 @@ export function shouldReleaseWorkerReservation(input: {
 }): boolean {
   if (!input.spawnedPaneId) return true; // spawn failed — nothing to count
   return input.recordedPaneIds.includes(input.spawnedPaneId);
+}
+
+/**
+ * F-1259: a vaga de maxWorkers retida por falta de linha durável não pode
+ * segurar o teto para sempre (budget_exhausted até reiniciar o Main). Na
+ * prova física de saída do filho — o tap de saída do PTY — sem composição
+ * durável para ele, a vaga é liberada. Sem linha E sem saída, a vaga fica:
+ * bloquear uma vaga é melhor que passar do teto. One-shot: desarma no
+ * primeiro match, tenha liberado ou não.
+ */
+function armWorkerReservationExitRelease(input: {
+  readonly scope: ProjectExecutionScope;
+  readonly missionId: string;
+  readonly paneIds: readonly (string | undefined)[];
+  readonly release: () => void;
+}): void {
+  const watched = new Set(
+    input.paneIds.filter((paneId): paneId is string => typeof paneId === 'string'),
+  );
+  if (watched.size === 0) return;
+  const hasDurableRow = (): boolean => {
+    try {
+      const recorded = new Set(
+        getProjectDomainStores(input.scope)
+          .missionPanes.list(input.missionId)
+          .map((row) => row.paneId)
+          .filter((paneId): paneId is string => typeof paneId === 'string'),
+      );
+      return [...watched].some((paneId) => recorded.has(paneId));
+    } catch {
+      return true; // Leitura falhou: mantém a vaga (fail-safe).
+    }
+  };
+  const untap = tapSessionExit((exitedSessionId, agent) => {
+    const snapshotPaneId = listPaneSnapshots()
+      .find((pane) => pane.sessionId === exitedSessionId)?.paneId;
+    const paneId = agent?.paneId
+      ?? getPaneRuntimeAuthorityBySession(exitedSessionId)?.paneId
+      ?? snapshotPaneId;
+    if (paneId === undefined || !watched.has(paneId)) return;
+    untap();
+    if (!hasDurableRow()) input.release();
+  });
+  // A saída pode ter acontecido antes do braço (continuação adiada): a prova
+  // já está nos snapshots.
+  const alreadyExited = [...watched].some((paneId) =>
+    listPaneSnapshots().find((pane) => pane.paneId === paneId)?.state === 'exited',
+  );
+  if (alreadyExited && !hasDurableRow()) {
+    untap();
+    input.release();
+  }
 }
 
 export function activeSameCheckoutWorker(
@@ -2556,6 +2609,16 @@ const paneSpawnAfterTabMission = {
               '[tools-panes] worker com ACK pendente não gravado; mantendo a ' +
                 `reserva de maxWorkers (mission=${missionId})`,
             );
+            // F-1259: sem linha para sempre não pode segurar o teto para
+            // sempre — a prova física de saída libera a vaga.
+            if (missionId) {
+              armWorkerReservationExitRelease({
+                scope: ctx.scope,
+                missionId,
+                paneIds: [spawnedWorkerPaneId, spawnedPaneId],
+                release,
+              });
+            }
           });
         } else if (
           shouldReleaseWorkerReservation({
@@ -2569,6 +2632,15 @@ const paneSpawnAfterTabMission = {
             '[tools-panes] worker spawned but not durably recorded; keeping ' +
               `maxWorkers reservation (mission=${missionId}, pane=${spawnedWorkerPaneId})`,
           );
+          // F-1259: idem — a vaga cai na prova física de saída do filho.
+          if (missionId) {
+            armWorkerReservationExitRelease({
+              scope: ctx.scope,
+              missionId,
+              paneIds: [spawnedWorkerPaneId, spawnedPaneId],
+              release: releaseWorkerSlot,
+            });
+          }
         }
       }
     }

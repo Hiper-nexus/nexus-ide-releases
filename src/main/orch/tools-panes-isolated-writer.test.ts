@@ -7,7 +7,7 @@ import { resetLicensedAccessMock } from '../__tests__/licensed-access';
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import type { PaneSnapshot } from '../../shared/orch-types';
 import type { AgentGateContext } from './gate';
-import type { SpawnToolOptions } from './tool-util';
+import type { PendingMissionPaneRecord, SpawnToolOptions } from './tool-util';
 import type { WebContents } from 'electron';
 import {
   abandonPendingOrchSpawn,
@@ -39,6 +39,8 @@ const h = vi.hoisted(() => ({
   handoffs: {} as Record<string, { sessionId?: string }>,
   resumeRecords: new Map<string, Record<string, unknown>>(),
   pendingPanes: new Set<string>(),
+  // F-1259: panes cuja gravação em missionPanes falhou (sem linha durável).
+  unrecorded: new Set<string>(),
 }));
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
@@ -72,7 +74,7 @@ vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({
     missions: { get: () => h.mission },
     handoffs: { get: (id: string) => h.handoffs[id] ?? null },
-    missionPanes: { list: () => h.panes.map((p) => ({ ...p, role: 'worker' })), findByPaneId: (id: string) => h.resumeRecords.get(id) ?? null },
+    missionPanes: { list: () => h.panes.filter((p) => !h.unrecorded.has(p.paneId)).map((p) => ({ ...p, role: 'worker' })), findByPaneId: (id: string) => h.resumeRecords.get(id) ?? null },
   }),
 }));
 vi.mock('../persistence/provider-session-store', async original => ({
@@ -125,6 +127,7 @@ beforeEach(() => {
   h.handoffs = {};
   h.resumeRecords.clear();
   h.pendingPanes.clear();
+  h.unrecorded.clear();
   temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-pane-writer-')));
   const root = path.join(temp, 'repo');
   fs.mkdirSync(root);
@@ -385,6 +388,49 @@ describe('Via Rápida isolated writers', () => {
       unregisterOrchRenderer(owner);
       clearRendererWorkspaceScope(owner);
     }
+  });
+
+  it('F-1259: onPaneCreated + erro em record recusa enquanto o filho vive e aceita após a saída física', async () => {
+    // Sem linha durável o filho não conta no teto, mas a vaga retida sim.
+    h.mission = { ...h.mission, intentContract: { ...(h.mission as { intentContract: object }).intentContract,
+      budgets: { ...((h.mission as { intentContract: { budgets: object } }).intentContract.budgets), maxWorkers: 1 } } };
+    h.unrecorded.add('pane-0');
+    const first = await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
+    expect(first).toMatchObject({ paneId: 'pane-0' });
+    // O filho vive (sem composição durável): a vaga retida recusa o próximo.
+    await expect(paneSpawnTool.handler({ agentName: 'Executor' }, ctx)).rejects.toThrow('budget_exhausted');
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+    // Prova física de saída sem composição durável libera a vaga.
+    h.panes[0].state = 'exited';
+    exitPane(h.panes[0]);
+    await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
+    expect(h.spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it('F-1259: pending + continuação unrecorded recusa enquanto o filho vive e aceita após a saída física', async () => {
+    h.mission = { ...h.mission, intentContract: { ...(h.mission as { intentContract: object }).intentContract,
+      budgets: { ...((h.mission as { intentContract: { budgets: object } }).intentContract.budgets), maxWorkers: 1 } } };
+    h.unrecorded.add('pane-0');
+    h.spawn.mockImplementationOnce(async (
+      options: SpawnToolOptions,
+      hooks: { onPendingMissionPane?: (recorded: Promise<PendingMissionPaneRecord>) => void },
+    ) => {
+      // O filho nasce (ACK pendente) mas a linha durável nunca é gravada.
+      h.panes.push({ paneId: 'pane-0', sessionId: 'session-pane-0', kind: 'cli-agent',
+        title: 'worker', state: 'busy', role: 'worker', missionId: options.missionId,
+        scope: options.scope, executionScope: options.executionScope ?? options.scope,
+        readOnly: options.readOnly });
+      hooks.onPendingMissionPane?.(Promise.resolve('unrecorded'));
+      throw new Error('pane spawn pending');
+    });
+    h.pending.mockReturnValueOnce({ ok: true, paneId: 'pane-0', sessionId: null, pending: true });
+    await expect(paneSpawnTool.handler({ agentName: 'Executor' }, ctx))
+      .resolves.toMatchObject({ pending: true });
+    await expect(paneSpawnTool.handler({ agentName: 'Executor' }, ctx)).rejects.toThrow('budget_exhausted');
+    h.panes[0].state = 'exited';
+    exitPane(h.panes[0]);
+    await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
+    expect(h.spawn).toHaveBeenCalledTimes(2);
   });
 
   it('F-1258: o watchdog de início também libera o writer isolado sem filho', async () => {
