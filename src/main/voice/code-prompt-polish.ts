@@ -90,14 +90,24 @@ export function parsePolishedPrompt(raw: string): string | null {
   let body = raw.trim();
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/u.exec(body);
   if (fenced) body = fenced[1]!.trim();
-  try {
-    const parsed = JSON.parse(body) as { prompt?: unknown };
-    return typeof parsed.prompt === 'string' && parsed.prompt.trim()
-      ? parsed.prompt.trim()
-      : null;
-  } catch {
-    return null;
+  // F-1394: o head do cérebro pode rodar sem JSON mode (gemini, jsonMode
+  // false) e embrulhar o objeto em texto ("Here is the prompt: ```json …").
+  // Recusar descartava uma reescrita válida e o CODE caía na tradução
+  // literal da STT. Tenta o corpo inteiro e, depois, do 1º "{" ao último "}".
+  const start = body.indexOf('{');
+  const end = body.lastIndexOf('}');
+  const candidates = start >= 0 && end > start ? [body, body.slice(start, end + 1)] : [body];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as { prompt?: unknown };
+      return typeof parsed.prompt === 'string' && parsed.prompt.trim()
+        ? parsed.prompt.trim()
+        : null;
+    } catch {
+      // próximo candidato
+    }
   }
+  return null;
 }
 
 /**

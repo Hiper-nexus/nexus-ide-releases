@@ -81,6 +81,13 @@ describe('parsePolishedPrompt', () => {
     expect(parsePolishedPrompt('```json\n{"prompt":"Run tests."}\n```')).toBe('Run tests.');
   });
 
+  it('F-1394: aceita o objeto JSON com texto em volta (head do cérebro sem JSON mode)', () => {
+    expect(
+      parsePolishedPrompt('Here is the prompt:\n```json\n{"prompt":"Run tests."}\n```'),
+    ).toBe('Run tests.');
+    expect(parsePolishedPrompt('{"prompt":"Fix {a} and {b}."}\nDone.')).toBe('Fix {a} and {b}.');
+  });
+
   it('recusa resposta sem prompt', () => {
     expect(parsePolishedPrompt('Sure! Here is the prompt')).toBeNull();
     expect(parsePolishedPrompt('{"prompt":""}')).toBeNull();
