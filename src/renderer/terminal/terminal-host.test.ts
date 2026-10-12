@@ -725,7 +725,7 @@ describe('reabertura de pane encerrado', () => {
 });
 
 describe('B1 (F-1393): input humano no pane cancela o ditado pendente', () => {
-  it('tecla no xterm e writeToPane cancelam; foco e mouse do terminal não', async () => {
+  it('tecla no xterm cancela; foco, mouse e escrita programática (writeToPane) não', async () => {
     spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-b1' });
     const host = getOrCreateHost(pane);
     setHostSize(host.element, 1200, 800);
@@ -743,8 +743,9 @@ describe('B1 (F-1393): input humano no pane cancela o ditado pendente', () => {
     expect(cancelPendingDictation).toHaveBeenCalledWith(pane.id);
 
     cancelPendingDictation.mockClear();
+    // F-1393 M6: escritas programáticas (hold-to-talk, Jarvis, login) não cancelam ditado pendente
     writeToPane('pane-colado', 'texto colado');
-    expect(cancelPendingDictation).toHaveBeenCalledWith('pane-colado');
+    expect(cancelPendingDictation).not.toHaveBeenCalled();
   });
 
   it('isTerminalReport separa relatório automático de digitação', () => {

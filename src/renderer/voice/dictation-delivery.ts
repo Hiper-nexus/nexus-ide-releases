@@ -97,6 +97,11 @@ export interface DictationDeliveryPorts {
    * conseguiu; ausente, o comportamento antigo segue.
    */
   preserveUndelivered?(text: string): Promise<boolean>;
+  /**
+   * M6 (F-1393): leitura da área de transferência para conferir se o operador
+   * copiou algo novo enquanto o ditado estava pendente.
+   */
+  readClipboard?(): Promise<string>;
   /** Espelha no voice.log cada salto do trajeto. */
   log(
     level: DictationLogLevel,
@@ -240,6 +245,7 @@ function deferUntilFree(
   const now = ports.now ?? Date.now;
   const token = ++pendingSeq;
   const startedAt = now();
+  const initialClipboardPromise = ports.readClipboard ? ports.readClipboard().catch(() => null) : null;
   const mine = () => pendingByPane.get(paneId)?.token === token;
   const settle = (
     level: DictationLogLevel,
@@ -256,10 +262,25 @@ function deferUntilFree(
     // humano (responder o diálogo com y/Enter é o único jeito de fechá-lo; sem
     // cópia o prompt falado sumia) — o pendente já saiu do mapa, então colar
     // não duplica. Só o substituído por um ditado novo não copia.
+    // M6 (F-1393): só copia se o operador não copiou nada novo no meio do caminho.
     if (errorCode && errorCode !== 'pending-replaced' && ports.preserveUndelivered) {
-      void ports.preserveUndelivered(text)
-        .catch(() => false)
-        .then((preserved) => ports.onSettled?.({ ...outcome, preserved }));
+      void (async () => {
+        if (ports.readClipboard && initialClipboardPromise) {
+          const [initialClipboard, currentClipboard] = await Promise.all([
+            initialClipboardPromise,
+            ports.readClipboard().catch(() => null),
+          ]);
+          if (initialClipboard !== null && currentClipboard !== null && currentClipboard !== initialClipboard) {
+            ports.log('info', 'dictation.clipboardKept', 'operador copiou novo conteúdo — área de transferência preservada', {
+              targetPaneId: paneId,
+            });
+            ports.onSettled?.({ ...outcome, preserved: false });
+            return;
+          }
+        }
+        const preserved = await ports.preserveUndelivered(text).catch(() => false);
+        ports.onSettled?.({ ...outcome, preserved });
+      })();
       return;
     }
     ports.onSettled?.(outcome);

@@ -4471,7 +4471,6 @@ export function isTerminalReport(data: string): boolean {
  * the focused pane. Returns false when the pane has no live session.
  */
 export function writeToPane(paneId: string, data: string): boolean {
-  cancelPendingDictation(paneId);
   const host = hosts.get(paneId);
   if (host && !host.disposed) {
     host.inputVisibility.onUserInput();

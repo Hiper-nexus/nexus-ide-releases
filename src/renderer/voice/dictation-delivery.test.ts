@@ -551,6 +551,81 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
       '\r',
     ]);
   });
+
+  it('F-1393 M6: ditado pendente não sobrescreve a área de transferência se o operador copiou algo novo', async () => {
+    vi.useFakeTimers();
+    let clipboard = 'conteúdo copiado pelo operador';
+    const readClipboard = vi.fn(async () => clipboard);
+    const preserveUndelivered = vi.fn(async (text: string) => {
+      clipboard = text;
+      return true;
+    });
+    const onSettled = vi.fn();
+    const pane = claudePane();
+    pane.ports.readClipboard = readClipboard;
+    pane.ports.preserveUndelivered = preserveUndelivered;
+    pane.ports.onSettled = onSettled;
+
+    // Ditado fica pendente
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('ditado falado', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    expect(hasPendingDictation()).toBe(true);
+
+    // Operador copia código novo enquanto o ditado está pendente
+    clipboard = 'código importante copiado no editor';
+
+    // Ditado pendente é cancelado (por tecla do operador)
+    cancelPendingDictation('pane-focused');
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    // O clipboard do operador NÃO foi sobrescrito!
+    expect(preserveUndelivered).not.toHaveBeenCalled();
+    expect(clipboard).toBe('código importante copiado no editor');
+    expect(onSettled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paneId: 'pane-focused',
+        result: 'error',
+        errorCode: 'pending-cancelled',
+        preserved: false,
+      }),
+    );
+  });
+
+  it('F-1393 M6: ditado pendente copia para a área de transferência se o operador NÃO copiou nada', async () => {
+    vi.useFakeTimers();
+    let clipboard = 'conteúdo antigo';
+    const readClipboard = vi.fn(async () => clipboard);
+    const preserveUndelivered = vi.fn(async (text: string) => {
+      clipboard = text;
+      return true;
+    });
+    const onSettled = vi.fn();
+    const pane = claudePane();
+    pane.ports.readClipboard = readClipboard;
+    pane.ports.preserveUndelivered = preserveUndelivered;
+    pane.ports.onSettled = onSettled;
+
+    // Ditado fica pendente
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('ditado falado', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    expect(hasPendingDictation()).toBe(true);
+
+    // Operador NÃO copiou nada novo no clipboard. Ditado é cancelado por tecla.
+    cancelPendingDictation('pane-focused');
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    // Texto falado vai para o clipboard para não se perder
+    expect(preserveUndelivered).toHaveBeenCalledWith('ditado falado');
+    expect(clipboard).toBe('ditado falado');
+    expect(onSettled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paneId: 'pane-focused',
+        result: 'error',
+        errorCode: 'pending-cancelled',
+        preserved: true,
+      }),
+    );
+  });
 });
 
 

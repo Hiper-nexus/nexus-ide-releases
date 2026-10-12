@@ -418,6 +418,8 @@ export function routeDictation(
         () => true,
         () => false,
       ),
+    readClipboard: () =>
+      navigator.clipboard.readText().catch(() => ''),
     log: logVoiceEvent,
   });
 }
