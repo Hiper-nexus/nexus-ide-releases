@@ -3,12 +3,15 @@ import { Worker } from 'node:worker_threads';
 
 const stubs = vi.hoisted(() => ({
   getSessionState: vi.fn((): "busy" | "idle" | null => "busy"),
+  isOneShotSessionRunning: vi.fn((_sessionId: string) => false),
   analysisEnabled: vi.fn(() => false),
   analysisText: vi.fn(() => ""),
 }));
 
 vi.mock("../pty/pty-manager", () => ({
   getSessionState: stubs.getSessionState,
+  isOneShotSessionRunning: (sessionId: string) =>
+    stubs.isOneShotSessionRunning(sessionId),
 }));
 
 vi.mock('../pty/pty-analysis-runtime', () => ({
@@ -68,6 +71,19 @@ describe("marca de exit persiste além do TTL do buffer", () => {
     expect(paneSessionStateForEntry(entry)).toBe("exited");
     __evictExitedBufferForTests("pane-morto");
     expect(paneSessionStateForEntry(entry)).toBe("exited");
+  });
+
+  it("F-1312: paneSessionStateForEntry devolve busy para processo one-shot vivo", () => {
+    stubs.isOneShotSessionRunning.mockImplementation((s) => s === "session-oneshot");
+    stubs.getSessionState.mockReturnValue("idle");
+    const entry = {
+      paneId: "pane-oneshot",
+      title: "one-shot running",
+      kind: "cli-agent",
+      sessionId: "session-oneshot",
+      state: "idle" as const,
+    } satisfies Parameters<typeof paneSessionStateForEntry>[0];
+    expect(paneSessionStateForEntry(entry)).toBe("busy");
   });
 });
 

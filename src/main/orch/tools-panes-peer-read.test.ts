@@ -21,6 +21,7 @@ const h = vi.hoisted(() => {
     requestPaneSpawn: vi.fn(),
     waitForIdle: vi.fn(async () => 'idle' as const),
     waitForNextIdle: vi.fn(async () => 'idle' as const),
+    isOneShotRunning: vi.fn((_sessionId?: string) => false),
   };
 });
 
@@ -52,6 +53,7 @@ vi.mock('../pty/pty-manager', () => ({
   orchTerminateSession: vi.fn(async () => true),
   getAgentSessionInfo: vi.fn(() => null),
   getSessionState: vi.fn(() => 'idle'),
+  isOneShotSessionRunning: (sessionId: string) => h.isOneShotRunning(sessionId),
   tapSessionData: vi.fn(() => () => {}),
   tapSessionExit: vi.fn(() => () => {}),
   tapSessionState: vi.fn(() => () => {}),
@@ -622,6 +624,30 @@ describe('in-mission pane observation (Overclock parity)', () => {
         error: expect.stringMatching(/unknown pane/),
       },
     ]);
+  });
+
+  it('F-1312: processo one-shot vivo sem saída no PTY devolve explicação informativa em vez de string vazia', async () => {
+    registerPane({
+      paneId: 'pane-oneshot',
+      sessionId: 'session-oneshot',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+    }, '');
+    h.isOneShotRunning.mockImplementation((s) => s === 'session-oneshot');
+
+    const fullResult = await tool('nexus_pane_read').handler(
+      { paneId: 'pane-oneshot', mode: 'full' },
+      context(),
+    );
+    expect(fullResult).toBe('one-shot em execução, sem saída no PTY até terminar');
+
+    const digestResult = (await tool('nexus_pane_read').handler(
+      { paneId: 'pane-oneshot', mode: 'digest' },
+      context(),
+    )) as { text: string };
+    expect(digestResult.text).toBe('one-shot em execução, sem saída no PTY até terminar');
   });
 });
 

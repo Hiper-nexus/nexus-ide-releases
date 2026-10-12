@@ -2,8 +2,7 @@ import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-tas
 import { analysisClient, isPtyAnalysisEnabled } from '../pty/pty-analysis-runtime';
 import type { PaneRegistryEntry, PaneSnapshot } from "../../shared/orch-types";
 import { emitAppEvent } from '../connectors/app-events';
-import type { PaneSessionState } from "../../shared/types";
-import { getSessionState } from "../pty/pty-manager";
+import { getSessionState, isOneShotSessionRunning } from "../pty/pty-manager";
 
 const RING_BUFFER_CAP = 262_144;
 const EXITED_BUFFER_TTL_MS = 30 * 60_000;
@@ -165,15 +164,17 @@ export function recordPaneSessionState(
   sessionId: string,
   state: PaneSessionState,
 ): void {
-  sessionStates.set(sessionId, state);
-  if (state === "busy" || state === "spawning") {
+  const effectiveState =
+    isOneShotSessionRunning(sessionId) && state === "idle" ? "busy" : state;
+  sessionStates.set(sessionId, effectiveState);
+  if (effectiveState === "busy" || effectiveState === "spawning") {
     for (const waiter of [...busyWaiters]) {
       if (waiter.sessionId !== sessionId) continue;
       settleBusyWaiter(waiter, "busy");
     }
     return;
   }
-  if (state !== "idle") return;
+  if (effectiveState !== "idle") return;
   for (const waiter of [...idleWaiters]) {
     if (waiter.sessionId !== sessionId) continue;
     settleIdleWaiter(waiter, "idle");
@@ -213,6 +214,7 @@ export function paneSessionStateForEntry(
   entry: PaneRegistryEntry,
 ): PaneSnapshot["state"] {
   if (!entry.sessionId) return entry.state ?? "unknown";
+  if (isOneShotSessionRunning(entry.sessionId)) return "busy";
   const live =
     sessionStates.get(entry.sessionId) ?? getSessionState(entry.sessionId);
   if (live) return live;

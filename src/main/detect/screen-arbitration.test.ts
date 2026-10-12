@@ -7,6 +7,7 @@ const harness = vi.hoisted(() => ({
   agentInfo: vi.fn(
     (_sessionId: string): { paneId?: string } | null => null,
   ),
+  oneShotRunning: vi.fn((_sessionId: string) => false),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -14,6 +15,8 @@ vi.mock('../pty/pty-manager', () => ({
     harness.publish(sessionId, state),
   getAgentSessionInfo: (sessionId: string) => harness.agentInfo(sessionId),
   getSessionState: () => harness.state,
+  isOneShotSessionRunning: (sessionId: string) =>
+    harness.oneShotRunning(sessionId),
 }));
 
 import {
@@ -159,5 +162,12 @@ describe('applyScreenDetectionEvent (hook×screen arbitration)', () => {
     applyScreenDetectionEvent({ sessionId: 's1', state: 'working', now: 1000 });
     applyCanonicalHookEvent({ sessionId: 's1', event: stop, now: 2000 });
     expect(statusOf('s1')).toBe('completed');
+  });
+
+  it('F-1312: processo one-shot vivo mantém status working e busy mesmo quando detector de tela emite idle', () => {
+    harness.oneShotRunning.mockReturnValue(true);
+    applyScreenDetectionEvent({ sessionId: 's-oneshot', state: 'idle', now: 1000 });
+    expect(statusOf('s-oneshot')).toBe('working');
+    expect(harness.publish).toHaveBeenCalledWith('s-oneshot', 'busy');
   });
 });

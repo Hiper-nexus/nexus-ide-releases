@@ -785,7 +785,10 @@ export function applyScreenDetectionEvent(
       }
     }
 
-    const next = mapped;
+    const next =
+      isOneShotSessionRunning(sessionId) && mapped === 'idle'
+        ? 'working'
+        : mapped;
     const transitioned = prevForSession?.status !== next;
     // Re-asserts refresh updatedAt (like hook re-publishes) so the
     // semantic-working veto window stays fresh while the screen keeps

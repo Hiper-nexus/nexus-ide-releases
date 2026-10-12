@@ -1212,6 +1212,7 @@ function armIdleTimer(sessionId: string, session: Session): void {
     session.idleTimer = null;
     if (!sessions.has(sessionId)) return;
     if (session.hookState === "busy") return;
+    if (isOneShotSessionRunning(sessionId)) return;
     session.state = "idle";
     emitStateChange(session.wc, sessionId, "idle");
   }, session.idleTimeoutMs);
@@ -4524,6 +4525,9 @@ export function publishSessionActivityState(
     clearTimeout(session.hookBusyTimer);
     session.hookBusyTimer = null;
   }
+  if (state === "idle" && isOneShotSessionRunning(sessionId)) {
+    return true;
+  }
   // Skip IPC when the pane already shows this state — rapid hook re-asserts
   // (tool loop) used to thrash the toolbar/terminal chrome.
   if (session.state === state) return true;
@@ -4533,7 +4537,10 @@ export function publishSessionActivityState(
 }
 
 export function getSessionState(sessionId: string): PaneSessionState | null {
-  return sessions.get(sessionId)?.state ?? null;
+  const session = sessions.get(sessionId);
+  if (!session) return null;
+  if (isOneShotSessionRunning(sessionId)) return "busy";
+  return session.state;
 }
 
 /**

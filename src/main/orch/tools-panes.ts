@@ -30,6 +30,7 @@ import {
   getAgentSessionInfo,
   getSessionState,
   inspectSessionLease,
+  isOneShotSessionRunning,
   orchWriteSession,
   sessionLeaseRegistry,
   tapSessionExit,
@@ -3120,7 +3121,10 @@ const paneRead: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'paneId'), 'read');
-    const tail = readSessionOutput(sessionId, num(args, 'lines') ?? 200);
+    let tail = readSessionOutput(sessionId, num(args, 'lines') ?? 200);
+    if (tail.trim().length === 0 && isOneShotSessionRunning(sessionId)) {
+      tail = 'one-shot em execução, sem saída no PTY até terminar';
+    }
     if (paneReadMode(args, ctx) !== 'digest') return tail;
     return paneDigestResult(tail, DIGEST_MAX_CHARS, ctx.missionId);
   },
@@ -3192,7 +3196,10 @@ const paneReadMany: McpToolDef = {
         const first = firstBySession.get(item.sessionId);
         if (first !== item.paneId) return { paneId: item.paneId, sameAs: first };
         try {
-          const tail = readSessionOutput(item.sessionId, lines);
+          let tail = readSessionOutput(item.sessionId, lines);
+          if (tail.trim().length === 0 && isOneShotSessionRunning(item.sessionId)) {
+            tail = 'one-shot em execução, sem saída no PTY até terminar';
+          }
           if (mode !== 'digest') return { paneId: item.paneId, output: tail };
           return { paneId: item.paneId, ...(await paneDigestResult(tail, budget, ctx.missionId)) };
         } catch (err) {
