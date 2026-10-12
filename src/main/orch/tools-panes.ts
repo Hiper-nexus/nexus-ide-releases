@@ -898,7 +898,8 @@ const paneSpawn: McpToolDef = {
         type: 'string',
         description:
           'Working directory inside the workspace. A writer whose cwd is the root of another git worktree of ' +
-          'this repository runs in that worktree and is serialized only against writers of that same worktree. ' +
+          'this repository nested INSIDE the workspace (e.g. <root>/.harvest/<name>) runs in that worktree and is ' +
+          'serialized only against writers of that same worktree; a worktree outside the workspace is refused. ' +
           'Prefer isolatedWriter:true, which creates and registers the worktree/branch for integration.',
       },
       title: { type: 'string' },

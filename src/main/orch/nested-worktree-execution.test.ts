@@ -52,6 +52,11 @@ describe('F-981: cwd numa worktree Git aninhada', () => {
     expect(requestedCwdInside(root, root)).toBe(root);
     expect(requestedCwdInside(root, 'sub')).toBe(path.join(root, 'sub'));
     expect(() => requestedCwdInside(root, path.join(temp, 'outside'))).toThrow(/cwd descartado.*isolatedWriter:true/);
+    // F-1254: a saída sugerida tem de funcionar — worktree ligada DENTRO do checkout.
+    const message = (() => { try { requestedCwdInside(root, path.join(temp, 'outside')); } catch (e) { return String(e); } return ''; })();
+    expect(message).toContain(path.join(root, '.harvest', '<nome>'));
+    expect(message).toContain('Worktree fora do checkout não vira cwd de pane');
+    expect(message).not.toMatch(/nem a raiz de outra worktree/);
     expect(() => requestedCwdInside(root, 'missing')).toThrow(/cwd descartado/);
   });
 });

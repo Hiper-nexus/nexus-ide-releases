@@ -108,9 +108,10 @@ export function requestedCwdInside(root: string, requestedCwd: string | undefine
   const cwd = isInsidePath(root, candidate) ? realpathOrNull(candidate) : null;
   if (cwd && isInsidePath(root, cwd) && fs.statSync(cwd).isDirectory()) return cwd;
   throw new Error(
-    `cwd descartado: ${requestedCwd} não é uma pasta dentro de ${root} nem a raiz de outra worktree Git ` +
-      'deste repositório. O worker de missão roda no checkout/worktree da missão; para trabalhar em ' +
-      'outra worktree, use isolatedWriter:true (worktree/branch própria criada pelo Nexus) ou passe a raiz ' +
-      'de uma worktree ligada a este repositório.',
+    `cwd descartado: ${requestedCwd} não é uma pasta dentro de ${root}. O worker de missão roda no ` +
+      'checkout/worktree da missão; para trabalhar em outra worktree, use isolatedWriter:true ' +
+      '(worktree/branch própria criada pelo Nexus) ou crie a worktree ligada DENTRO do checkout ' +
+      `(ex.: git worktree add ${path.join(root, '.harvest', '<nome>')}) e passe a raiz dela. ` +
+      'Worktree fora do checkout não vira cwd de pane.',
   );
 }
