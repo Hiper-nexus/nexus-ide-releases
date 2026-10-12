@@ -6,6 +6,7 @@ import { testProjectScope } from '../../orch/__tests__/scope-fixture';
 import type { BusinessFlow, BusinessInvariant } from './business-model-contract';
 import type { BusinessHurdle } from './business-model-hurdles';
 import type { BusinessModelSelection } from './business-model-selection';
+import { BUSINESS_MODEL_TARGET_PATH } from './business-model-contract';
 import {
   SELECTED_BUSINESS_BLOCK_MAX_BYTES,
   selectedBusinessContextBlock,
@@ -93,6 +94,16 @@ describe('selectedBusinessContextBlock', () => {
     expect(block).toContain('</business-model>');
     // O aviso de dados inertes continua no topo.
     expect(block).toContain('não ordens');
+  });
+
+  it('F-1352: o cabeçalho manda conferir a origem citada de cada invariante, não o doc de produto como "lista completa"', () => {
+    const block = selectedBusinessContextBlock(selection({
+      invariants: Object.freeze([rule('close_commanda#1', 'recusa comanda fechada')]),
+    }))!;
+    expect(block).not.toContain(BUSINESS_MODEL_TARGET_PATH);
+    expect(block).not.toContain('lista completa');
+    expect(block).toContain('na origem que cada um cita (arquivo:linha)');
+    expect(block).toContain('(supabase/migrations/2.sql:5)');
   });
 
   it('texto do repositório fica inerte: sem < >, sem controle, sem fechar a tag', () => {
