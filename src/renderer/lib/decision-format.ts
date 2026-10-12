@@ -16,7 +16,10 @@ export function formatDecisionPercent(ratio: number): string {
 
 export function formatDecisionTime(at: number): string {
   if (!Number.isFinite(at) || at <= 0) return '—';
-  return new Date(at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const date = new Date(at);
+  const time = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return date.toDateString() === new Date().toDateString() ? time
+    : `${date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} · ${time}`;
 }
 
 /** "0,50", "0.5" ou "1" → número; fora de 0–20 ou texto inválido → null. */
