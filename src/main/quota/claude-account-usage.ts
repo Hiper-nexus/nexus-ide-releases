@@ -46,6 +46,7 @@ import {
 import { claudeCredentialBlobIsUsable } from '../adapters/claude-credential';
 import {
   claudeBlobIsExpiredUnhealable,
+  claudeBlobIsRenewable,
   claudeBlobNeedsRefresh,
 } from './claude-oauth-refresh';
 import {
@@ -426,12 +427,28 @@ export async function fetchClaudeAccountUsageWindows(
     return { windows: null, hint: 'no-credential' };
   }
   let hint: QuotaReadHint | undefined;
+  // F-1416: `probeClaudeCredentialIdentity` diz 'auth-expired' só pelo relógio
+  // do access token. Com refresh token vivo isso não prova sessão perdida — a
+  // CLI renova no próximo uso. Virar 'auth-expired' aqui ligava o cooldown de
+  // auth de 12 h (main.ts markAccountAuthExpired) e o "sessão expirada" numa
+  // conta logada e em uso. Sem prova do servidor, a leitura fica só
+  // indisponível.
+  const renewableHint = (
+    credential: string | null,
+    identity: 'mismatch' | 'auth-expired' | 'unavailable',
+  ): QuotaReadHint => {
+    if (identity === 'mismatch') return 'identity-mismatch';
+    if (identity === 'auth-expired' && credential && claudeBlobIsRenewable(credential, now)) {
+      return 'unavailable';
+    }
+    return identity;
+  };
   const ownedWindows = async (credential: string | null): Promise<ClaudeAccountUsageResult> => {
     const identity = await probeClaudeCredentialIdentity(
       credential, account.email, { now, fetchImpl: opts.fetchImpl },
     );
     if (identity !== 'match') {
-      return { windows: null, hint: identity === 'mismatch' ? 'identity-mismatch' : identity };
+      return { windows: null, hint: renewableHint(credential, identity) };
     }
     const token = credential ? extractClaudeAccessToken(credential) : null;
     if (!token) return { windows: null, hint: 'auth-expired' };
@@ -499,14 +516,38 @@ export async function fetchClaudeAccountUsageWindows(
       return snap?.email?.trim().toLowerCase() === email;
     });
     if (profile) {
-      const profileRead = await readProfileCredential(profile, opts.keychainProbe ?? keychainItemExists);
-      const credential = profileRead.credential;
-      const identity = profileRead.unavailable ? 'unavailable' : await probeClaudeCredentialIdentity(credential, email, {
+      const keychainProbe = opts.keychainProbe ?? keychainItemExists;
+      const profileRead = await readProfileCredential(profile, keychainProbe);
+      let credential = profileRead.credential;
+      let identity = profileRead.unavailable ? 'unavailable' : await probeClaudeCredentialIdentity(credential, email, {
         now,
         fetchImpl: opts.fetchImpl,
       });
+      let cliWindows: QuotaWindow[] | null = null;
+      let cliAuthFailed = false;
+      // F-1416: a conta que É o login nativo com access token vencido e
+      // refresh vivo. A CLI é dona da renovação desta linhagem (lock dela):
+      // um `claude /usage` no perfil nativo renova e lê o uso; depois a
+      // credencial é relida e provada de novo. Nexus nunca rotaciona o grant.
+      if (identity === 'auth-expired' && nativeLogin && profile.slug === null &&
+          credential && claudeBlobIsRenewable(credential, now)) {
+        const cli = await probeClaudeCliUsage({ now, runImpl: opts.runImpl });
+        cliAuthFailed = cli.failure === 'auth-expired';
+        cliWindows = cli.windows?.length ? cli.windows : null;
+        const reread = await readProfileCredential(profile, keychainProbe);
+        if (!reread.unavailable && reread.credential && reread.credential !== credential) {
+          credential = reread.credential;
+          identity = await probeClaudeCredentialIdentity(credential, email, {
+            now,
+            fetchImpl: opts.fetchImpl,
+          });
+        }
+      }
       if (identity !== 'match') {
-        hint = identity === 'mismatch' ? 'identity-mismatch' : identity;
+        // A própria CLI recusou a sessão: isso sim é prova de re-login.
+        if (cliAuthFailed) hint = 'auth-expired';
+        else if (cliWindows && identity === 'auth-expired') return { windows: cliWindows };
+        else hint = renewableHint(credential, identity);
       } else {
         const token = credential ? extractClaudeAccessToken(credential) : null;
         const live = token

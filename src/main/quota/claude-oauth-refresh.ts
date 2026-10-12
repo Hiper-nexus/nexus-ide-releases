@@ -53,6 +53,25 @@ function parseBlob(blob: string): ParsedBlob | null {
 }
 
 /**
+ * F-1416: o blob ainda pode ser renovado por quem é dono dele (a CLI, sob o
+ * `.oauth_refresh.lock`)? Refresh token presente e, quando o blob declara
+ * `refreshTokenExpiresAt`, ainda no prazo. Access token vencido com isto
+ * verdadeiro NÃO é sessão expirada — é só um token que a CLI renova no
+ * próximo uso. Só o relógio do access token nunca prova re-login.
+ */
+export function claudeBlobIsRenewable(blob: string, now: number): boolean {
+  const parsed = parseBlob(blob);
+  if (!parsed) return false;
+  if (!refreshTokenFrom(parsed)) return false;
+  const refreshExpiresAt = parsed.oauth.refreshTokenExpiresAt;
+  return !(
+    typeof refreshExpiresAt === 'number' &&
+    Number.isFinite(refreshExpiresAt) &&
+    refreshExpiresAt <= now
+  );
+}
+
+/**
  * Refresh token do blob quando a renovação é necessária (access token perto
  * de expirar, já expirado, ou sem expiresAt confiável). null = nada a fazer.
  */
