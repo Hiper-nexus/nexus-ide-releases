@@ -291,69 +291,22 @@ function hasSupportedSourceExtension(candidate, extensions) {
   return extensions.some((extension) => lower.endsWith(extension));
 }
 
-function scriptsFromConfig(config, options) {
+function scriptsFromParsedConfig(parsed, options) {
   const scripts = new Set();
-  const rawConfiguredFiles = Array.isArray(config.files) ? config.files : null;
-  if (rawConfiguredFiles && rawConfiguredFiles.length > limits.maxProjectFiles) {
-    fail('LSP project-file limit exceeded');
-  }
-  const configuredFiles = rawConfiguredFiles || [];
   const sourceExtensions = options.allowJs === true
     ? SOURCE_EXTENSIONS
     : TYPESCRIPT_SOURCE_EXTENSIONS;
-  for (const configured of configuredFiles) {
-    if (typeof configured !== 'string') continue;
-    const file = safeRealFile(path.resolve(root, configured));
+  for (const fileName of parsed.fileNames || []) {
+    if (scripts.size >= limits.maxProjectFiles) {
+      fail('LSP project-file limit exceeded');
+    }
+    const file = safeRealFile(fileName);
     if (
       file &&
       file.kind === 'workspace' &&
       hasSupportedSourceExtension(file.absolute, sourceExtensions)
     ) {
       scripts.add(file.absolute);
-    }
-  }
-  const includes = Array.isArray(config.include)
-    ? config.include.filter((value) => typeof value === 'string').slice(0, 128)
-    : rawConfiguredFiles
-      ? []
-      : ['**/*'];
-  if (includes.length > 0) {
-    const configuredExcludes = Array.isArray(config.exclude)
-      ? config.exclude.filter((value) => typeof value === 'string').slice(0, 128)
-      : [];
-    const excludes = [
-      ...configuredExcludes,
-      '**/.git/**',
-      '**/.nexus/**',
-      '**/node_modules/**',
-      '**/build/**',
-      '**/coverage/**',
-      '**/dist/**',
-      '**/out/**',
-    ];
-    const matched = ts.matchFiles(
-      root,
-      sourceExtensions,
-      excludes,
-      includes,
-      ts.sys.useCaseSensitiveFileNames,
-      root,
-      undefined,
-      matchFileSystemEntries,
-      (candidate) => candidate
-    );
-    for (const candidate of matched) {
-      const file = safeRealFile(candidate);
-      if (
-        file &&
-        file.kind === 'workspace' &&
-        hasSupportedSourceExtension(file.absolute, sourceExtensions)
-      ) {
-        scripts.add(file.absolute);
-      }
-      if (scripts.size > limits.maxProjectFiles) {
-        fail('LSP project-file limit exceeded');
-      }
     }
   }
   return [...scripts].sort();
@@ -393,12 +346,47 @@ function safeProjectConfig() {
       scripts: scanWorkspaceScripts(),
     };
   }
-  const compilerJson =
-    parsedText.config.compilerOptions && typeof parsedText.config.compilerOptions === 'object'
-      ? parsedText.config.compilerOptions
-      : {};
-  const converted = ts.convertCompilerOptionsFromJson(compilerJson, root);
-  const options = { ...defaults, ...converted.options, noEmit: true, plugins: undefined };
+  // F-1323: parseJsonConfigFileContent resolve a cadeia de "extends" e o
+  // include/exclude/files herdado através de um host restrito — toda leitura
+  // de base passa pelas mesmas guardas de arquivo real, bytes, diretório e
+  // prazo. Base ilegível ou cadeia circular vira erro de parse: o worker
+  // segue com o que resolveu e marca o resultado como degradado, nunca
+  // silencioso.
+  const configDir = path.dirname(configPath);
+  const configHost = {
+    useCaseSensitiveFileNames: ts.sys.useCaseSensitiveFileNames,
+    readDirectory: (rootDir, extensions, excludes, includes, depth) =>
+      ts.matchFiles(
+        rootDir,
+        extensions,
+        excludes,
+        includes,
+        ts.sys.useCaseSensitiveFileNames,
+        configDir,
+        depth,
+        matchFileSystemEntries,
+        (candidate) => candidate
+      ),
+    fileExists: safeFileExists,
+    readFile: safeRead,
+  };
+  const parsed = ts.parseJsonConfigFileContent(
+    parsedText.config,
+    configHost,
+    configDir,
+    undefined,
+    configPath
+  );
+  if (parsedText.config.extends !== undefined && parsed.errors.length > 0) {
+    degraded = true;
+  }
+  const options = {
+    ...defaults,
+    ...parsed.options,
+    noEmit: true,
+    plugins: undefined,
+    configFilePath: undefined,
+  };
   for (const key of ['baseUrl', 'outDir', 'rootDir']) {
     if (typeof options[key] === 'string' && !inside(root, options[key])) {
       delete options[key];
@@ -414,7 +402,7 @@ function safeProjectConfig() {
   if (Array.isArray(options.types)) options.types = options.types.slice(0, 32);
   return {
     options,
-    scripts: scriptsFromConfig(parsedText.config, options),
+    scripts: scriptsFromParsedConfig(parsed, options),
   };
 }
 

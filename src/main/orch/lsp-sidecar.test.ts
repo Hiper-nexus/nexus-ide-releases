@@ -145,6 +145,111 @@ describe('runScopedLspQuery', () => {
     );
   }, 15_000);
 
+  it('F-1323: resolve a cadeia de extends do tsconfig (paths vêm da base)', async () => {
+    fs.writeFileSync(
+      path.join(root, 'tsconfig.base.json'),
+      JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          baseUrl: '.',
+          paths: { '@local/*': ['src/*'] },
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          target: 'ES2022',
+        },
+      }),
+    );
+    writeProjectConfig({
+      extends: './tsconfig.base.json',
+      include: ['src/**/*.ts'],
+    });
+    fs.writeFileSync(
+      path.join(root, 'src', 'use.ts'),
+      [
+        "import { greet } from '@local/lib';",
+        "export const message = greet('Nexus');",
+        '',
+      ].join('\n'),
+    );
+
+    const diagnostics = await runScopedLspQuery(scope, {
+      kind: 'diagnostics',
+      path: 'src/use.ts',
+      maxResults: 20,
+    });
+    expect(diagnostics.items).toEqual([]);
+    expect(diagnostics.budget.degraded).toBe(false);
+
+    const definitions = await runScopedLspQuery(scope, {
+      kind: 'definition',
+      path: 'src/use.ts',
+      line: 1,
+      column: 10,
+      maxResults: 10,
+    });
+    expect(definitions.items).toEqual([
+      expect.objectContaining({ path: 'src/lib.ts', line: 1 }),
+    ]);
+  }, 15_000);
+
+  it('F-1323: base de extends ilegível degrada o resultado em vez de falhar', async () => {
+    writeProjectConfig({
+      extends: './tsconfig.missing.json',
+      include: ['src/**/*.ts'],
+    });
+
+    const result = await runScopedLspQuery(scope, {
+      kind: 'symbols',
+      path: 'src/lib.ts',
+      maxResults: 10,
+    });
+    expect(result.budget.degraded).toBe(true);
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'greet', path: 'src/lib.ts' }),
+      ]),
+    );
+  }, 15_000);
+
+  it('F-1323: extends em cadeia e em lista herdam o aliás mais antigo', async () => {
+    fs.writeFileSync(
+      path.join(root, 'tsconfig.root.json'),
+      JSON.stringify({
+        compilerOptions: {
+          baseUrl: '.',
+          paths: { '@local/*': ['src/*'] },
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          target: 'ES2022',
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(root, 'tsconfig.mid.json'),
+      JSON.stringify({ extends: './tsconfig.root.json' }),
+    );
+    writeProjectConfig({
+      extends: ['./tsconfig.mid.json'],
+      include: ['src/**/*.ts'],
+    });
+    fs.writeFileSync(
+      path.join(root, 'src', 'use.ts'),
+      [
+        "import { greet } from '@local/lib';",
+        "export const message = greet('Nexus');",
+        '',
+      ].join('\n'),
+    );
+
+    const diagnostics = await runScopedLspQuery(scope, {
+      kind: 'diagnostics',
+      path: 'src/use.ts',
+      maxResults: 20,
+    });
+    expect(diagnostics.items).toEqual([]);
+    expect(diagnostics.budget.degraded).toBe(false);
+  }, 15_000);
+
   it('never resolves a definition outside the bound execution scope', async () => {
     fs.writeFileSync(
       path.join(parentDir, 'outside.ts'),
