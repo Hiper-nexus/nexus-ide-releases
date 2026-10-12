@@ -83,6 +83,44 @@ describe('varredura de plugins instalados', () => {
     expect(found?.summary).toContain('plugin.json: arquivo ausente');
   });
 
+  it('F-1333: dot-dirs are never plugin roots', () => {
+    fs.mkdirSync(path.join(home, '.nexus/plugins', '.trash'), { recursive: true });
+    writePlugin('.nexus/plugins', 'kit', manifest('kit'));
+
+    const found = scanInstalledPlugins(home);
+    expect(found.map((p) => p.source)).toEqual(['~/.nexus/plugins/kit']);
+  });
+
+  it('F-1333: Claude Code layout lists installed_plugins.json installs, not its internal dirs', () => {
+    const claudeRoot = path.join(home, '.claude/plugins');
+    for (const internal of ['.trash', 'cache', 'data', 'marketplaces', 'store', 'synced']) {
+      fs.mkdirSync(path.join(claudeRoot, internal), { recursive: true });
+    }
+    const installRel = 'cache/official/real-kit/0.1.0';
+    writePlugin('.claude/plugins', installRel, manifest('real-kit'), '.claude-plugin/plugin.json');
+    fs.writeFileSync(
+      path.join(claudeRoot, 'installed_plugins.json'),
+      JSON.stringify({
+        version: 2,
+        plugins: {
+          'real-kit@official': [
+            { scope: 'user', installPath: path.join(claudeRoot, installRel), version: '0.1.0' },
+          ],
+          'escape@evil': [{ scope: 'user', installPath: path.join(home, 'elsewhere') }],
+        },
+      }),
+    );
+
+    const found = scanInstalledPlugins(home);
+    expect(found.map((p) => p.source)).toEqual([
+      `~/.claude/plugins/${installRel}`,
+      '~/elsewhere',
+    ]);
+    expect(found[0]?.verdict.ok).toBe(true);
+    expect(found[0]?.summary).toContain('real-kit');
+    expect(found[1]?.status).toBe('quarantined');
+  });
+
   /**
    * A regra que mantém a varredura útil: um plugin ruim não pode derrubar os
    * outros. JSON quebrado vira LINHA de relatório, não exceção.

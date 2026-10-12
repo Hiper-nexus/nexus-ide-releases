@@ -467,6 +467,7 @@ function scanPluginDirectory(
   pluginDir: string,
   home: string,
   options: ScanInstalledPluginsOptions,
+  claudeInstall = false,
 ): DiscoveredPlugin {
   const source = homeRelative(pluginDir, home);
   let pluginRoot: string;
@@ -480,9 +481,19 @@ function scanPluginDirectory(
     return rejectedPlugin(source, 'rejected', 'diretório do plugin ilegível');
   }
 
-  const manifestRead = parseJson(
+  let manifestRead = parseJson(
     readContainedFile(pluginRoot, path.join(pluginRoot, 'plugin.json'), MAX_MANIFEST_BYTES),
   );
+  // F-1333: instalação do Claude Code guarda o manifesto em .claude-plugin/.
+  if (claudeInstall && !manifestRead.ok && manifestRead.kind === 'missing') {
+    manifestRead = parseJson(
+      readContainedFile(
+        pluginRoot,
+        path.join(pluginRoot, '.claude-plugin', 'plugin.json'),
+        MAX_MANIFEST_BYTES,
+      ),
+    );
+  }
   if (!manifestRead.ok) {
     const status = manifestRead.kind === 'unsafe' ? 'quarantined' : 'rejected';
     return rejectedPlugin(source, status, `plugin.json: ${manifestRead.reason}`);
@@ -555,6 +566,15 @@ export function scanInstalledPlugins(
   const found: DiscoveredPlugin[] = [];
   for (const root of PLUGIN_ROOTS) {
     const rootDir = path.join(home, root);
+    const installs =
+      root === '.claude/plugins' ? claudeCodeInstalls(rootDir, home, options) : null;
+    if (installs) {
+      for (const plugin of installs) {
+        if (found.length >= MAX_PLUGINS) return Object.freeze(found);
+        found.push(plugin);
+      }
+      continue;
+    }
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(rootDir, { withFileTypes: true });
@@ -563,9 +583,63 @@ export function scanInstalledPlugins(
     }
     for (const entry of entries) {
       if (found.length >= MAX_PLUGINS) return Object.freeze(found);
-      if (!entry.isDirectory()) continue;
+      // F-1333: .trash e afins nunca são raiz de plugin.
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
       found.push(scanPluginDirectory(path.join(rootDir, entry.name), home, options));
     }
   }
   return Object.freeze(found);
+}
+
+/**
+ * F-1333: no layout do Claude Code, ~/.claude/plugins guarda cache/, data/,
+ * marketplaces/… — pastas internas, não plugins. Os plugins de verdade são os
+ * `installPath` do installed_plugins.json. Sem esse arquivo → null (varredura
+ * por filho direto, o layout antigo).
+ */
+function claudeCodeInstalls(
+  rootDir: string,
+  home: string,
+  options: ScanInstalledPluginsOptions,
+): DiscoveredPlugin[] | null {
+  let realRoot: string;
+  try {
+    realRoot = fs.realpathSync(rootDir);
+  } catch {
+    return null;
+  }
+  const indexFile = path.join(realRoot, 'installed_plugins.json');
+  const read = parseJson(readContainedFile(realRoot, indexFile, MAX_MANIFEST_BYTES));
+  if (!read.ok && read.kind === 'missing') return null;
+  const source = homeRelative(indexFile, home);
+  if (!read.ok) return [rejectedPlugin(source, 'rejected', `installed_plugins.json: ${read.reason}`)];
+  const plugins = (read.value as { plugins?: unknown } | null)?.plugins;
+  if (!plugins || typeof plugins !== 'object') {
+    return [rejectedPlugin(source, 'rejected', 'installed_plugins.json: sem objeto "plugins"')];
+  }
+  const dirs = new Set<string>();
+  for (const value of Object.values(plugins)) {
+    for (const install of Array.isArray(value) ? value : [value]) {
+      const installPath = (install as { installPath?: unknown } | null)?.installPath;
+      if (typeof installPath === 'string' && installPath) dirs.add(path.resolve(installPath));
+    }
+  }
+  const realOrSelf = (dir: string): string => {
+    try {
+      return fs.realpathSync(dir);
+    } catch {
+      return dir;
+    }
+  };
+  return [...dirs].map((dir) => {
+    const real = realOrSelf(dir);
+    // Mostrado pela raiz vista do HOME (o ~/.claude/plugins pode ser symlink).
+    return isInside(realRoot, real)
+      ? scanPluginDirectory(path.join(rootDir, path.relative(realRoot, real)), home, options, true)
+      : rejectedPlugin(
+          homeRelative(dir, home),
+          'quarantined',
+          'installPath fora de ~/.claude/plugins',
+        );
+  });
 }
