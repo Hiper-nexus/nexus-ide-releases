@@ -52,12 +52,23 @@ export interface AlibabaTokenPlanUsageRaw {
   per1MonthResetTime?: unknown;
 }
 
-function fraction(raw: unknown): number | null {
+/**
+ * Contrato documentado: fração 0..1 (0.0104 = 1,04% usado). Um estouro do
+ * plano passa um pouco de 1 (1.04 = 104%) — dividir por 100 o transformava em
+ * 1,04% (F-1417). Acima deste teto o número já não cabe no contrato: parece
+ * percentual 0..100 (ex.: 12 = 12%) e lê-lo como fração viraria 100%.
+ * Ambíguo → a leitura inteira fica indisponível, nunca "esgotado".
+ */
+export const ALIBABA_MAX_OVERRUN_FRACTION = 2;
+
+function rawNumber(raw: unknown): number | null {
   const n = typeof raw === 'string' ? Number(raw) : raw;
-  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return null;
-  // Contrato documentado: fração 0..1 (0.0104 = 1,04% usado). Acima de 1 é
-  // estouro do plano (1.04 = 104%), nunca percentual 0..100 — dividir por 100
-  // transformava o estouro em 1,04% (F-1417). knownWindow prende em 1.
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
+function fraction(raw: unknown): number | null {
+  const n = rawNumber(raw);
+  if (n === null || n < 0 || n > ALIBABA_MAX_OVERRUN_FRACTION) return null;
   return n;
 }
 
@@ -96,6 +107,14 @@ export function parseAlibabaTokenPlanUsage(
 ): QuotaWindow[] {
   const raw = extractAlibabaTokenPlanUsage(body);
   if (!raw) return [];
+  // Revisão de segurança: um campo fora da escala de fração denuncia payload
+  // em outra escala — nenhum número dele é confiável.
+  const outOfScale = [raw.per5HourPercentage, raw.per1WeekPercentage, raw.per1MonthPercentage]
+    .some((value) => {
+      const n = rawNumber(value);
+      return n !== null && n > ALIBABA_MAX_OVERRUN_FRACTION;
+    });
+  if (outOfScale) return [];
   const out: QuotaWindow[] = [];
   const push = (
     kind: 'hours' | 'weekly' | 'monthly',
