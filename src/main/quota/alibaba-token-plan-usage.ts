@@ -55,8 +55,10 @@ export interface AlibabaTokenPlanUsageRaw {
 function fraction(raw: unknown): number | null {
   const n = typeof raw === 'string' ? Number(raw) : raw;
   if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return null;
-  // Console emits 0..1 (0.0104). Values > 1 would be percent 0..100 — clamp.
-  return n <= 1 ? n : Math.min(1, n / 100);
+  // Contrato documentado: fração 0..1 (0.0104 = 1,04% usado). Acima de 1 é
+  // estouro do plano (1.04 = 104%), nunca percentual 0..100 — dividir por 100
+  // transformava o estouro em 1,04% (F-1417). knownWindow prende em 1.
+  return n;
 }
 
 function resetAt(raw: unknown): number | undefined {

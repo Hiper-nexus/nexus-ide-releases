@@ -33,6 +33,8 @@ import {
 } from './kimi-usage';
 import {
   fetchWindowsForApiKey,
+  probeWindowsForApiKey,
+  type KeyUsageProbe,
   mergeWorstWindows,
 } from './key-shape-usage';
 import { loadOpenCodeAuthKeys } from './opencode-auth';
@@ -225,6 +227,18 @@ const NO_CREDENTIAL: LiveProviderProbe = { windows: null, hint: 'no-credential' 
 const UNAVAILABLE: LiveProviderProbe = { windows: null, hint: 'unavailable' };
 const AUTH_EXPIRED: LiveProviderProbe = { windows: null, hint: 'auth-expired' };
 
+/**
+ * F-1417: a key probe whose number came from a shared machine session is
+ * tagged with that session's identity, never with the key's HMAC. A rejected
+ * quota source is surfaced (`quota-key-required`), not dropped.
+ */
+function fromKeyProbe(probe: KeyUsageProbe, key: string, fallback: QuotaReadHint): LiveProviderProbe {
+  if (probe.windows?.length) {
+    return withCredential({ windows: probe.windows }, [probe.sessionCredential ?? key]);
+  }
+  return { windows: null, hint: probe.authFailed ? 'quota-key-required' : fallback };
+}
+
 function asProbe(windows: QuotaWindow[] | null, hint: QuotaReadHint): LiveProviderProbe {
   return windows?.length ? { windows } : { windows: null, hint };
 }
@@ -253,9 +267,10 @@ export async function fetchLiveProviderWindows(
     }
     const key = await deps.resolveApiQuotaKey?.({ adapterId, accountId, usageProviderId: declaredUpstream, authMode });
     return key
-      ? withCredential(
-          asProbe(await fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint: declaredUpstream }), 'unavailable'),
-          [key],
+      ? fromKeyProbe(
+          await probeWindowsForApiKey(key, { fetchImpl, now, adapterHint: declaredUpstream }),
+          key,
+          'unavailable',
         )
       : NO_CREDENTIAL;
   }
@@ -344,11 +359,13 @@ export async function fetchLiveProviderWindows(
         accountId,
       );
       if (keys.length === 0) return NO_CREDENTIAL;
+      let quotaSourceRejected = false;
       for (const key of keys) {
-        const windows = await fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint: 'glm' });
-        if (windows && windows.length > 0) return withCredential({ windows }, [key]);
+        const probe = await probeWindowsForApiKey(key, { fetchImpl, now, adapterHint: 'glm' });
+        if (probe.windows?.length) return fromKeyProbe(probe, key, 'unavailable');
+        if (probe.authFailed) quotaSourceRejected = true;
       }
-      return UNAVAILABLE;
+      return quotaSourceRejected ? { windows: null, hint: 'quota-key-required' } : UNAVAILABLE;
     }
     case 'longcat': {
       const keys = await stringCandidates(
@@ -653,18 +670,24 @@ async function fetchMultiKeyWindows(
   if (keys.length === 0) return NO_CREDENTIAL;
   const sets: QuotaWindow[][] = [];
   const readers: string[] = [];
+  let quotaSourceRejected = false;
   for (const key of keys) {
-    const w = await fetchWindowsForApiKey(key, {
+    const probe = await probeWindowsForApiKey(key, {
       fetchImpl,
       now,
       adapterHint: adapterId,
     });
-    if (w?.length) {
-      sets.push(w);
-      readers.push(key);
+    if (probe.windows?.length) {
+      sets.push(probe.windows);
+      const reader = probe.sessionCredential ?? key;
+      if (!readers.includes(reader)) readers.push(reader);
+    } else if (probe.authFailed) {
+      quotaSourceRejected = true;
     }
   }
-  if (sets.length === 0) return UNAVAILABLE;
+  if (sets.length === 0) {
+    return quotaSourceRejected ? { windows: null, hint: 'quota-key-required' } : UNAVAILABLE;
+  }
   const merged = mergeWorstWindows(sets);
   return merged.length > 0 ? withCredential({ windows: merged }, readers) : UNAVAILABLE;
 }

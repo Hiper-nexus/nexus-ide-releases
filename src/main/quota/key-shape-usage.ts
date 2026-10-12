@@ -47,6 +47,8 @@ const DECLARED_PROVIDERS = new Map<string, QuotaProvider>([
   ['grok', 'grok'], ['xai', 'grok'],
   ['glm', 'glm'], ['glm-flash', 'glm'], ['zai', 'glm'], ['zai-coding-plan', 'glm'], ['zhipu', 'glm'],
   ['longcat', 'longcat'],
+  // F-1417: OpenClaude (fork do Claude Code) usa o mesmo OAuth `sk-ant-oat`.
+  ['openclaude', 'claude'],
   ['minimax-code', 'minimax-code'],
   // Um Token Plan Alibaba = um Credits pool: Qwen Code, DeepSeek (rota
   // token-plan) e GLM no mesmo `BAILIAN_TOKEN_PLAN_API_KEY` / `sk-sp-`.
@@ -63,11 +65,38 @@ function prefixProvider(shape: KeyShape): QuotaProvider | 'openai' | null {
 }
 
 /**
+ * F-1416/F-1417: Alibaba Model Studio Token Plan key (`sk-sp-`). A GLM row
+ * carrying this key draws on the shared Token Plan pool, not on z.ai.
+ */
+export function isAlibabaTokenPlanKey(key: string): boolean {
+  return key.trim().startsWith('sk-sp-');
+}
+
+/**
+ * F-1417: the Token Plan percentage comes from the machine's console session
+ * (`bl`), never from the inference key. Every row whose number came from that
+ * session shares this credential identity, so the rows collapse into one pool
+ * without labelling the session's number with the inference key's HMAC.
+ */
+export const ALIBABA_TOKEN_PLAN_SESSION_CREDENTIAL = 'alibaba-token-plan:console-session';
+
+export interface KeyUsageProbe {
+  windows: QuotaWindow[] | null;
+  /**
+   * Set when the windows were read from a shared machine session instead of
+   * from this key. Callers tag the row with this identity, not the key.
+   */
+  sessionCredential?: string;
+  /** The quota source rejected its credential (console/`bl` session). */
+  authFailed?: boolean;
+}
+
+/**
  * Probe only the configured provider. Prefixes may reject mismatches, never
  * authorize a destination. Unverified JWTs require a provider-native resolver.
  * Failure never sends the credential to another vendor.
  */
-export async function fetchWindowsForApiKey(
+export async function probeWindowsForApiKey(
   key: string,
   opts?: {
     fetchImpl?: FetchLike;
@@ -75,38 +104,54 @@ export async function fetchWindowsForApiKey(
     /** Hint adapter for longcat/glm base routing. */
     adapterHint?: string;
   },
-): Promise<QuotaWindow[] | null> {
+): Promise<KeyUsageProbe> {
   const token = key?.trim();
-  if (!token) return null;
+  if (!token) return { windows: null };
   const fetchImpl = opts?.fetchImpl;
   const now = opts?.now ?? Date.now();
   const hint = opts?.adapterHint;
-  const provider = hint ? DECLARED_PROVIDERS.get(hint) : undefined;
+  let provider = hint ? DECLARED_PROVIDERS.get(hint) : undefined;
   const shape = classifyKeyShape(token);
   const prefix = prefixProvider(shape);
-  if (!provider || (prefix && prefix !== provider) || token.startsWith('eyJ')) return null;
+  if (!provider || (prefix && prefix !== provider) || token.startsWith('eyJ')) return { windows: null };
+  // A GLM row on a Token Plan key belongs to the shared Token Plan pool; a
+  // z.ai key keeps reading z.ai. The key never goes to the other vendor.
+  if (provider === 'glm' && isAlibabaTokenPlanKey(token)) provider = 'alibaba-token-plan';
+  const only = async (windows: Promise<QuotaWindow[] | null>): Promise<KeyUsageProbe> => ({ windows: await windows });
   switch (provider) {
     case 'claude': return shape === 'claude-oauth'
-      ? fetchClaudeOauthUsageWindows(token, { fetchImpl, now }) : null;
-    case 'kimi': return fetchKimiCodingUsageWindows(token, { fetchImpl, now });
-    case 'grok': return fetchGrokUsageWindows(token, { fetchImpl, now });
-    case 'longcat': return fetchLongcatUsageWindows(token, { fetchImpl, now });
-    case 'glm': return fetchGlmUsageWindows(token, { fetchImpl, now, platform: hint === 'zhipu' ? 'zhipu' : 'zai' });
-    case 'minimax-code': return fetchMinimaxTokenPlan(token, {
+      ? only(fetchClaudeOauthUsageWindows(token, { fetchImpl, now })) : { windows: null };
+    case 'kimi': return only(fetchKimiCodingUsageWindows(token, { fetchImpl, now }));
+    case 'grok': return only(fetchGrokUsageWindows(token, { fetchImpl, now }));
+    case 'longcat': return only(fetchLongcatUsageWindows(token, { fetchImpl, now }));
+    case 'glm': return only(fetchGlmUsageWindows(token, { fetchImpl, now, platform: hint === 'zhipu' ? 'zhipu' : 'zai' }));
+    case 'minimax-code': return only(fetchMinimaxTokenPlan(token, {
       fetchImpl, now, region: minimaxCodeSignedInRegion() === 'cn' ? 'cn' : 'overseas',
-    });
+    }));
     case 'alibaba-token-plan': {
-      // A chave de inferência (`sk-sp-`) não lê cota: o usage é do console
-      // (Cookie / `bl`). Qwen e DeepSeek compartilham o MESMO probe — a
-      // janela publicada é a do plano, não de cada CLI.
-      const probe = await probeAlibabaTokenPlanUsage({
-        fetchImpl,
-        now,
-        skipCli: false,
-      });
-      return probe.windows?.length ? probe.windows : null;
+      // A chave de inferência (`sk-sp-`) não lê cota: o usage vem da sessão
+      // de console da máquina (`bl`). Nada prova que essa sessão é do plano
+      // desta chave — confiança baixa (não alimenta a folga como cota
+      // medida) e identidade da sessão, não da chave.
+      const probe = await probeAlibabaTokenPlanUsage({ fetchImpl, now, skipCli: false });
+      const windows = probe.windows?.length
+        ? probe.windows.map((window) => ({ ...window, confidence: 'low' as const }))
+        : null;
+      return {
+        windows,
+        ...(windows ? { sessionCredential: ALIBABA_TOKEN_PLAN_SESSION_CREDENTIAL } : {}),
+        ...(probe.authFailed ? { authFailed: true } : {}),
+      };
     }
   }
+}
+
+/** Windows only (legacy callers). Prefer `probeWindowsForApiKey`. */
+export async function fetchWindowsForApiKey(
+  key: string,
+  opts?: { fetchImpl?: FetchLike; now?: number; adapterHint?: string },
+): Promise<QuotaWindow[] | null> {
+  return (await probeWindowsForApiKey(key, opts)).windows;
 }
 
 /**

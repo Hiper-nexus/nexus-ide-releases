@@ -40,6 +40,7 @@ export interface HeadroomInput {
     Pick<QuotaWindow, 'label' | 'usedRatio'> & {
       readonly kind?: QuotaWindowKind;
       readonly resetsAt?: number;
+      readonly confidence?: QuotaWindow['confidence'];
     }
   >;
   readonly onCooldown?: boolean;
@@ -83,6 +84,9 @@ export function headroomReadings(
   const out = new Map<string, HeadroomReading>();
   for (const window of (input ?? EMPTY).windows) {
     if (window.usedRatio === null || !Number.isFinite(window.usedRatio)) continue;
+    // F-1417: número que não foi medido desta credencial (ex.: Token Plan
+    // lido da sessão `bl` da máquina) não é folga medida desta conta.
+    if (window.confidence === 'low') continue;
     const usedRatio = Math.min(1, Math.max(0, window.usedRatio));
     const key = windowKey(window);
     const reading: HeadroomReading = {
