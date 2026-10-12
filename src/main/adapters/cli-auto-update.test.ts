@@ -342,6 +342,31 @@ describe('F-1397: checagem barata de versão antes de instalar', () => {
     })).toBeNull();
   });
 
+  // M8: igualdade pura fazia `npm install -g` (tag latest) rebaixar uma
+  // pré-release mais nova; a pré-release do mesmo núcleo segue abaixo da estável.
+  it('npm: pré-release mais nova não é rebaixada; estável do mesmo núcleo ainda atualiza', () => {
+    const check = { kind: 'npm' as const, name: 'opencode-ai', argv: [] };
+    expect(cliVersionCheckUpToDate(check, '2.1.0-beta.3', '2.0.9\n')).toBe(true);
+    expect(cliVersionCheckUpToDate(check, '2.1.0-beta.3', '2.1.0\n')).toBe(false);
+    expect(cliVersionCheckUpToDate(check, '2.1.0', '2.1.0-beta.3\n')).toBe(true);
+    expect(cliVersionCheckUpToDate(check, '2.10.0', '2.9.0')).toBe(true);
+  });
+
+  // M8: fórmulas (opencode, kimi-code) com as garantias do cask: sem sudo e
+  // sem auto-update fora do `brew update` do passe.
+  it('brew upgrade de fórmula leva HOMEBREW_NO_AUTO_UPDATE e HOMEBREW_NO_SUDO', () => {
+    expect(selectAutomaticCliUpdateRecipe({
+      adapterId: 'opencode', platform: 'darwin' as const,
+      binPath: '/opt/homebrew/bin/opencode',
+      realBinPath: '/opt/homebrew/Cellar/opencode/1.0.0/bin/opencode',
+      userHome: '/Users/operator', isRunnerResolvable: () => true, isTargetWritable: () => true,
+    })).toMatchObject({
+      kind: 'argv',
+      argv: ['/opt/homebrew/bin/brew', 'upgrade', 'opencode'],
+      env: { HOMEBREW_NO_AUTO_UPDATE: '1', HOMEBREW_NO_SUDO: '1', SUDO_ASKPASS: '/usr/bin/false' },
+    });
+  });
+
   it('npm em dia → true; desatualizado → false; resposta ilegível → null (instala)', () => {
     const check = { kind: 'npm' as const, name: '@openai/codex', argv: [] };
     expect(cliVersionCheckUpToDate(check, '0.160.0', '0.160.0\n')).toBe(true);
