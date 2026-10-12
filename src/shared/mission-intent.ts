@@ -1070,18 +1070,20 @@ export function isExplicitGitSyncGoal(goal: string): boolean {
 }
 
 /**
- * F-1304 (revisão Fable): há verbo de escrita como verbo PRINCIPAL fora de uma
- * negação? Tira o trecho negado ("sem corrigir", "não altere", "nem refatorar")
- * e o verbo que é só complemento ("me diga como corrigir", "o que corrigir",
- * "para resolver") antes de procurar. Substantivos ("o bug") não contam.
+ * F-1304 (revisões Fable #1/#2): há verbo de escrita como verbo PRINCIPAL fora
+ * de uma negação? Tira a negação com a cadeia coordenada dela ("sem alterar
+ * ou corrigir", "não altere, mude nem corrija", "nem refatorar") e só conta
+ * forma imperativa/infinitiva no INÍCIO de oração (começo, depois de
+ * pontuação ou de "e/mas/depois/então/agora/também/por favor"). Indicativo
+ * ("a tela cria o registro") e verbo de complemento ("o que precisa
+ * resolver", "como corrigir") não contam; substantivo ("o bug") também não.
  */
+const NEGATED_CHAIN =
+  /\b(?:sem|n[aã]o|nem)\s+(?:me\s+)?[\p{L}-]+(?:\s*(?:,|\be\b|\bou\b|\bnem\b)\s*[\p{L}-]+(?:ar|er|ir|or)(?![\p{L}-]))*/giu;
+const WRITE_MAIN_VERB =
+  /(?:^|[,.;:!?\n]|(?<![\p{L}-])(?:e|mas|depois|ent[aã]o|agora|tamb[eé]m|favor)(?![\p{L}-]))\s*(?:(?:por\s+favor|agora|depois|ent[aã]o|tamb[eé]m)\s*,?\s*)*(?:implement(?:ar|e|em)|codar|escrev(?:er|a)\s+c[oó]digo|cri(?:ar|e|em)|constru(?:ir|a|am)|mont(?:ar|e|em)|desenvolv(?:er|a|am)|refator(?:ar|e|em)|otimiz(?:ar|e|em)|adicion(?:ar|e|em)|integr(?:ar|e|em)|traduz(?:ir|a|am)|fix|implement|add|create|build|corrigir|corrija(?:m)?|arrum(?:ar|e|em)|consert(?:ar|e|em)|resolv(?:er|a|am)|proteg(?:er)|proteja(?:m)?)(?![\p{L}-])/iu;
 function hasWriteMainVerbOutsideNegation(goal: string): boolean {
-  const residue = goal
-    .replace(/\b(?:sem|n[aã]o|nem)\s+(?:me\s+)?[\p{L}-]+/giu, ' ')
-    .replace(/\b(?:como|o\s+que|onde|para|pra|de|a)\s+[\p{L}-]+/giu, ' ');
-  return /(?<![\p{L}-])(?:implement(?:ar|e|a|em)|codar|escrev(?:er|a)\s+c[oó]digo|cri(?:ar|e|a)|constru(?:ir|a|am)|mont(?:ar|e|a)|desenvolv(?:er|a)|refator(?:ar|e|a)|otimiz(?:ar|e|a)|adicion(?:ar|e|a)|integr(?:ar|e|a)|traduz(?:ir|a)|fix|corrig(?:ir|e|em)|corrija(?:m)?|arrum(?:ar|e|a)|consert(?:ar|e|a)|resolv(?:er|a|e)|proteg(?:er|e)|proteja)(?![\p{L}-])/iu.test(
-    residue,
-  );
+  return WRITE_MAIN_VERB.test(goal.replace(NEGATED_CHAIN, ' '));
 }
 
 /**
@@ -1133,8 +1135,13 @@ export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
   // F-1304 (revisão Fable): "sem X" só nega X. "corrija o bug sem corrigir os
   // warnings" e "implemente o endpoint sem aplicar o lint" têm verbo principal
   // de escrita fora da negação — são escrita, não só-leitura.
+  // Revisão Fable #2: "não mexa (em nada)", "sem alterar nada", "sem mexer
+  // em nada" também são recusa global — "nada além do X" é escopo, não é.
   const globalReadOnly =
     /\b(?:s[oó]|apenas|somente)\s+(?:me\s+)?(?:diga|dize|olhe|leia|analise|revise|verifique)\b|\bsomente\s+leitura\b|\bread-?only\b/i.test(
+      g,
+    ) ||
+    /\bn[aã]o\s+mexa(?=\s*(?:[,.;:!?\n]|$))|\b(?:sem|n[aã]o)\s+(?:alterar|mexer|mudar|modificar|editar|tocar|corrigir|aplicar|consertar|resolver|mexa|altere|mude|modifique|edite|toque|corrija|aplique|conserte|resolva)(?:\s*(?:,|\be\b|\bou\b|\bnem\b)\s*[\p{L}-]+)*\s+(?:em\s+|n[oa]\s+)?nada(?![\p{L}-])(?!\s+(?:al[eé]m|fora|exceto|mais\s+(?:que|do\s+que))(?![\p{L}-]))/iu.test(
       g,
     );
   if (globalReadOnly) return 'consult';

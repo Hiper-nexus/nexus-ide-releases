@@ -921,6 +921,21 @@ describe('suggestMissionLaneFromGoal — o que o leigo pede de verdade', () => {
       suggestMissionLaneFromGoal('corrija o login, mas somente leitura por enquanto'),
     ).toBe('consult');
   });
+
+  it('recusa global, cadeia negada e verbo fora do início de oração seguem consult (F-1304, revisão Fable #2)', () => {
+    for (const goal of [
+      'não mexa em nada; só quero saber se a tela cria o registro certo',
+      'sem alterar nada, verifique se a tela cria o registro',
+      'revise o módulo de pagamento sem alterar ou corrigir nada',
+      'analise o fluxo e aponte o que precisa resolver, sem corrigir',
+    ]) {
+      expect(suggestMissionLaneFromGoal(goal), goal).toBe('consult');
+    }
+    // "nada além do X" é escopo, não recusa global.
+    expect(
+      suggestMissionLaneFromGoal('corrija o typo do rodapé sem alterar nada além do README'),
+    ).toBeNull();
+  });
 });
 
 describe('missão MISTA — a lane não pode proibir a outra metade', () => {
