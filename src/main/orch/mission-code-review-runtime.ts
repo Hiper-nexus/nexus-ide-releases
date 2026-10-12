@@ -46,6 +46,8 @@ interface Ticket {
   closing?: Promise<boolean>;
   submissionKey?: string;
   recording?: { key: string; flight: Promise<CodeReviewRecordResult> };
+  lastInput?: MissionCodeCandidate;
+  wakeTimer?: ReturnType<typeof setTimeout>;
 }
 type Reviewed = Extract<MissionCodeReviewResult, { kind: 'reviewed' }>;
 export interface CodeReviewRecordResult { readonly handled: boolean; readonly accepted: boolean; readonly reason?: string; readonly result?: Reviewed }
@@ -78,6 +80,7 @@ export class MissionCodeReviewRuntime {
   #retire(key: string, ticket: Ticket): Promise<boolean> {
     ticket.retiring = true;
     ticket.controller.abort();
+    if (ticket.wakeTimer) { clearTimeout(ticket.wakeTimer); ticket.wakeTimer = undefined; }
     if (ticket.closing) return ticket.closing;
     if (this.ports.now() < (ticket.closeRetryAt ?? 0)) return Promise.resolve(false);
     ticket.closing = Promise.resolve().then(async () => {
@@ -130,6 +133,7 @@ export class MissionCodeReviewRuntime {
     }
     if (!ticket.flight && this.ports.now() >= ticket.retryAt) {
       const owned = ticket;
+      owned.lastInput = input;
       const cancelled = () => { owned.retiring = true; owned.controller.abort(); };
       signal?.addEventListener('abort', cancelled, { once: true });
       // Install ownership before any await so simultaneous completion calls
@@ -151,7 +155,18 @@ export class MissionCodeReviewRuntime {
         .finally(() => {
           signal?.removeEventListener('abort', cancelled);
           owned.flight = undefined; owned.retryAt = this.ports.now() + RETRY_MS;
-          if (!this.#current(owned)) void this.#retire(key, owned);
+          if (!this.#current(owned)) { void this.#retire(key, owned); return; }
+          // F-1261: wake coalescido no retryAt — missão de aba não tem watcher
+          // periódico; sem este timer nada reconsulta retryAt e a missão fica
+          // running até alguém mexer. Cancelado em #retire (troca de líder,
+          // intenção ou encerramento).
+          if (owned.wakeTimer) clearTimeout(owned.wakeTimer);
+          owned.wakeTimer = setTimeout(() => {
+            owned.wakeTimer = undefined;
+            if (!this.#current(owned) || owned.result || owned.pane || owned.flight || !owned.lastInput) return;
+            void this.ensure(owned.lastInput).catch(() => undefined);
+          }, RETRY_MS);
+          owned.wakeTimer.unref?.();
         });
     }
     await ticket.flight;

@@ -157,4 +157,28 @@ describe('Main candidate reviewer ownership', () => {
     f.ports.persist = async (_binding, result) => { f.change({ ...f.input.candidate, fingerprint: 'changed-during-persist' }); return result; };
     expect((await f.submit()).accepted).toBe(false);
   });
+
+  it('F-1261: wake coalescido no retryAt refaz a seleção sem evento externo', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fixture();
+      let selections = 0;
+      f.ports.select = async () => {
+        selections += 1;
+        return selections === 1 ? null : { adapterId: 'codex', model: 'frontier' };
+      };
+      const result = await f.runtime.ensure(f.input);
+      expect(result.kind).toBe('waiting');
+      expect(f.spawned).toHaveLength(0);
+      expect(selections).toBe(1);
+      // Sem eventos: só o timer do retryAt pode reconsultar. O relógio da
+      // fixture (ports.now) anda junto com os timers falsos.
+      f.advance();
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(selections).toBeGreaterThanOrEqual(2);
+      expect(f.spawned).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
