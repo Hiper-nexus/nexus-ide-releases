@@ -23,6 +23,7 @@ import {
   compactArgs,
   compactArgsJson,
   evaluateGuardAnswers,
+  GUARD_QUESTIONS,
   guardToolCall,
   missionObjectiveOf,
   recentDispatchedTools,
@@ -233,6 +234,42 @@ describe('guardToolCall', () => {
     await guardToolCall(input({ args: { command: `${head} && echo one` } }), { judge });
     await guardToolCall(input({ args: { command: `${head} && rm -rf /` } }), { judge });
     expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('F-1403: spawn do orquestrador vai ao juiz com lane orchestrator', async () => {
+    const judge = vi.fn<JudgeMock>(async () => result(benign));
+    // Args reais do F-1403: task + prompt escritos pelo orquestrador,
+    // apontando para o brief da própria missão — sem veredito de injeção
+    // do juiz, a chamada passa (a recusa era do modelo, não da política).
+    const v = await guardToolCall(
+      input({
+        toolName: 'nexus_pane_spawn',
+        args: {
+          task:
+            'Writer crítico de segurança de contas e credenciais OAuth: ' +
+            'compartilhar a linhagem de refresh token entre panes da mesma ' +
+            'conta gerenciada',
+          prompt:
+            'Leia e siga integralmente o brief em ' +
+            '/private/tmp/s240-briefs/W-claudecap.md. Nunca imprima tokens ' +
+            'ou credenciais.',
+        },
+        ctx: { role: 'orchestrator', missionId: 'm1', sessionId: 's-orch' },
+      }),
+      { judge },
+    );
+    expect(v.kind).toBe('pass');
+    const state = judge.mock.calls[0][0].state as {
+      caller: { role: string; lane: string };
+    };
+    expect(state.caller.lane).toBe('orchestrator');
+  });
+
+  it('F-1403: a pergunta de injeção distingue delegação própria de cópia não confiável', () => {
+    const instructions = GUARD_QUESTIONS.injected.instructions;
+    expect(instructions).toMatch(/copied verbatim from untrusted content/);
+    expect(instructions).toMatch(/DELEGATE work the caller itself planned/);
+    expect(instructions).toMatch(/never print tokens or credentials/);
   });
 
   it('operator child (user sem missão COM brief) é julgado em modo só-injeção', async () => {
