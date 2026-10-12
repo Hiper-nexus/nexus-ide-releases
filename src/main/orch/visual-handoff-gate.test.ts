@@ -57,6 +57,18 @@ it('F-1311: palavra de UI em lista de exemplos ou nome de ferramenta não torna 
   expect(visualTaskRequirement('Redesenhe o dashboard com hierarquia visual e modo escuro.', 1000)).toBeDefined();
 });
 
+it('F-1362: tarefa de UI embrulhada em XML continua exigindo a captura', async () => {
+  const wrapped = '<task>\nCrie a tela de login com layout responsivo.\n</task>';
+  const visualTask = visualTaskRequirement(wrapped, 1000);
+  expect(visualTask).toEqual({ since: 1000, id: expect.any(String) });
+  expect(visualTaskRequirement('<instructions>Crie a tela de login com layout responsivo.</instructions>', 1000)).toBeDefined();
+  expect(await checkVisualHandoff({ ...context(), visualTask }, { manager })).toMatchObject({ required: true, verified: false });
+  // O contexto montado pelo Nexus continua fora da classificação.
+  const memory = '<workspace-memory phase="execution">\n- O PAINEL usa layout, cabeçalho e tema escuro.\n</workspace-memory>';
+  expect(visualTaskRequirement(`${memory}\n\nCorrigir bug na API de estoque.`, 1000)).toBeUndefined();
+  expect(visualTaskRequirement(`${memory}\n\n${wrapped}`, 1000)).toBeDefined();
+});
+
 it('derives a visual requirement from the assigned task, not from a completion claim', () => {
   expect(visualTaskRequirement('Crie a tela de login com layout responsivo.', 1000)).toEqual({ since: 1000, id: expect.any(String) });
   expect(visualTaskRequirement('Documente os endpoints da API de login.', 1000)).toBeUndefined();

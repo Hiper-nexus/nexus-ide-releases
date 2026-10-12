@@ -29,12 +29,20 @@ function mountedOpenings(text: string): Set<string> {
   }
 }
 
-/** O texto depois dos blocos montados na frente: a tarefa, sem o contexto do projeto. */
+/** Tags dos blocos de contexto que o próprio Nexus monta na frente do prompt. */
+const NEXUS_CONTEXT_TAGS = new Set(['business-model', 'workspace-memory']);
+
+/**
+ * O texto depois dos blocos montados na frente: a tarefa, sem o contexto do
+ * projeto. F-1362: só sai bloco que o Nexus monta. A remoção para no primeiro
+ * `<task>`, `<instructions>` ou tag desconhecida, porque ali começa a tarefa.
+ * A deduplicação (`mountedOpenings`) continua reconhecendo qualquer tag.
+ */
 export function withoutMountedPromptContextBlocks(text: string): string {
   let rest = text.trimStart();
   for (const opening of mountedOpenings(text)) {
     const tag = /^<([a-z][\w-]*)[\s>]/.exec(opening)![1];
-    if (!rest.startsWith(opening)) break;
+    if (!NEXUS_CONTEXT_TAGS.has(tag) || !rest.startsWith(opening)) break;
     rest = rest.slice(rest.indexOf(`</${tag}>`) + tag.length + 3).trimStart();
   }
   return rest;
