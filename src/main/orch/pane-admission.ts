@@ -140,6 +140,38 @@ export type PaneAdmissionVerdict =
       readonly message: string;
     };
 
+export type PaneAdmissionRefusalReason = 'cap' | 'memory';
+
+/**
+ * F-1270: recusa de capacidade prefixada com um código estável. O ACK pendente
+ * do spawn só retém `Error.message`, então o código é a única forma de o
+ * supervisor distinguir "teto/memória" (CLI-agnóstico, não reroteia) de uma
+ * recusa da própria CLI (modelo selado etc., que reroteia). Segue o padrão do
+ * `LicenseError` (`license_error: message`).
+ */
+export function paneAdmissionRefusalError(
+  reason: PaneAdmissionRefusalReason,
+  message: string,
+): string {
+  return `pane_admission_${reason}: ${message}`;
+}
+
+export interface PaneAdmissionRefusal {
+  readonly reason: PaneAdmissionRefusalReason;
+  readonly message: string;
+}
+
+/** Recupera a recusa de capacidade de um `Error.message` (ou string). */
+export function parsePaneAdmissionRefusal(error: unknown): PaneAdmissionRefusal | null {
+  const text = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const match = text.match(/\bpane_admission_(cap|memory):\s*([\s\S]*)$/u);
+  if (!match) return null;
+  return {
+    reason: match[1] as PaneAdmissionRefusalReason,
+    message: (match[2] ?? '').trim(),
+  };
+}
+
 const CAP_WARNING_RATIO = 0.8;
 
 function describeIdleCandidates(candidates: readonly IdlePaneCandidate[]): string {
@@ -620,4 +652,37 @@ export function admitAgentSpawnSync(
       }`,
     };
   }
+}
+
+/**
+ * F-1270: admissão do caminho MCP (`nexus_pane_spawn` → `spawnPaneAndMaybePrompt`).
+ * O caminho do renderer (`spawnAgentSession`) já chama `admitAgentSpawnSync`; o
+ * caminho MCP só conferia a LICENÇA (`assertLicensedAgentCapacity`), que é
+ * ilimitada no Pro, então o `nexus_pane_spawn` devolvia `ok:true` com o teto de
+ * panes esgotado e a recusa real ficava presa no renderer. Aqui o MCP recusa na
+ * hora, com a MESMA contagem do renderer: worker de missão usa a reserva de
+ * licença (`licensedAgentPanes`), humano usa os panes vivos (`liveAgentPanes`).
+ */
+export interface ToolSpawnAdmissionRequest {
+  readonly role?: 'orchestrator' | 'worker';
+  readonly missionId?: string;
+  readonly operatorOpened?: boolean;
+  readonly liveAgentPanes: number;
+  readonly licensedAgentPanes: number;
+  readonly now?: number;
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+export function admitToolSpawnSync(request: ToolSpawnAdmissionRequest): PaneAdmissionVerdict {
+  const automaticWorker =
+    request.role === 'worker' &&
+    Boolean(request.missionId) &&
+    request.operatorOpened !== true;
+  const liveAgentPanes = automaticWorker ? request.licensedAgentPanes : request.liveAgentPanes;
+  return admitAgentSpawnSync(
+    liveAgentPanes,
+    request.now ?? Date.now(),
+    request.env ?? process.env,
+    { automaticWorker },
+  );
 }

@@ -103,6 +103,7 @@ vi.mock('../pty/pty-analysis-runtime', async original => {
 });
 
 vi.mock('../pty/pty-manager', () => ({
+  countLiveAgentSessions: vi.fn(() => 0),
   getAgentSessionInfo: stubs.physicalSessionInfo,
   hasAcceptedNativeArgvPrompt: stubs.nativeArgvAccepted,
   orchWriteSession: stubs.writeSession,

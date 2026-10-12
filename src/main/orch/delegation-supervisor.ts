@@ -96,6 +96,7 @@ import {
 import { trace } from '../observability/main-trace';
 import { sanitizePaneBootOutput } from './pane-boot-output';
 import { diagnosePaneBoot } from './pane-boot-diagnosis';
+import { parsePaneAdmissionRefusal } from './pane-admission';
 import {
   currentModelQuarantineScope,
   MODEL_ACCESS_QUARANTINE_MS,
@@ -895,6 +896,10 @@ async function handlePaneNotStarted(
   // (`provider-request`, F-765) já tem causa e é do failover.
   const cause: PaneNotStartedCause =
     diagnosis.modelRejected && failureCause === 'boot-exit' ? 'model-rejected' : failureCause;
+  // F-1270: recusa de capacidade (teto/memória) é CLI-agnóstica — não é falha
+  // da CLI nem do modelo. Não reroteia (outra CLI esbarra no mesmo teto), não
+  // conta no disjuntor e devolve a mensagem real a quem pediu.
+  const capacityRefused = cause === 'capacity-refused';
   if (cause === 'model-rejected') {
     const session = watch.sessionId !== null ? getAgentSessionInfo(watch.sessionId) : null;
     const model = diagnosis.rejectedModel ?? session?.model ?? null;
@@ -923,15 +928,21 @@ async function handlePaneNotStarted(
       watch.sessionId !== null &&
       Boolean(getAgentSessionInfo(watch.sessionId)?.accountId);
     await closeNotStartedPane(watch);
-    breaker = startFailureBreakerAction({ cause, accountBound });
-    if (breaker === 'trip') {
-      adapterCircuitBreakers.trip(watch.adapterId, CREDENTIAL_REJECTED_OPEN_MS);
-    } else {
-      adapterCircuitBreakers.recordFailure(watch.adapterId);
+    if (!capacityRefused) {
+      // Recusa de capacidade não é falha da CLI: fecha o pane morto, mas não
+      // conta no disjuntor do adapter.
+      breaker = startFailureBreakerAction({ cause, accountBound });
+      if (breaker === 'trip') {
+        adapterCircuitBreakers.trip(watch.adapterId, CREDENTIAL_REJECTED_OPEN_MS);
+      } else {
+        adapterCircuitBreakers.recordFailure(watch.adapterId);
+      }
     }
   }
   let outcome: PaneStartOutcome;
-  if (action === 'reroute' && watch.reroute) {
+  if (capacityRefused) {
+    outcome = { kind: 'not-rerouted', why: 'capacity' };
+  } else if (action === 'reroute' && watch.reroute) {
     try {
       const next = await watch.reroute([watch.adapterId]);
       outcome = { kind: 'rerouted', paneId: next.paneId, adapterId: next.adapterId };
@@ -950,12 +961,15 @@ async function handlePaneNotStarted(
             : 'no-alternative',
     };
   }
+  // F-1270: o motivo da recusa de capacidade viaja em `failure.detail` (o
+  // diagnóstico do boot só existe com sessão; aqui o spawn foi recusado antes).
+  const detail = diagnosis.detail ?? watch.failure?.detail ?? null;
   const summary = paneStartNoticeSummary({
     paneId: watch.paneId,
     adapterId: watch.adapterId,
     cause,
     outcome,
-    detail: diagnosis.detail,
+    detail,
   });
   trace({
     kind: 'pane-not-started',
@@ -967,7 +981,7 @@ async function handlePaneNotStarted(
     outcome: outcome.kind,
     breaker,
     ...(watch.failure?.exitCode !== undefined ? { exitCode: watch.failure.exitCode } : {}),
-    ...(diagnosis.detail ? { detail: diagnosis.detail } : {}),
+    ...(detail ? { detail } : {}),
     ...(outputTail !== null ? { outputTail } : {}),
     ...(outcome.kind === 'rerouted'
       ? { nextPaneId: outcome.paneId, nextAdapterId: outcome.adapterId }
@@ -1108,7 +1122,16 @@ function installPaneStartTaps(): void {
       `[delegation-supervisor] spawn pendente não subiu (pane=${failure.paneId}, ` +
         `${failure.adapterId ?? '?'}): ${shortStartError(failure.error)}`,
     );
-    notePaneStartFailure(failure.paneId, 'spawn-refused');
+    // F-1270: recusa de capacidade (teto/memória) é CLI-agnóstica — guarda a
+    // mensagem real e marca `capacity-refused` (não reroteia); o resto é recusa
+    // da CLI e segue o reenvio de sempre.
+    const refusal = parsePaneAdmissionRefusal(failure.error);
+    notePaneStartFailure(
+      failure.paneId,
+      refusal ? 'capacity-refused' : 'spawn-refused',
+      Date.now(),
+      refusal?.message,
+    );
   });
   const untapTermination = tapSessionTermination((sessionId, agent, rootExit) => {
     const watch = paneStartWatchForSession(sessionId, agent?.paneId);

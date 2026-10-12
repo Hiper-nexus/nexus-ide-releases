@@ -458,3 +458,65 @@ describe('pane-admission: orçamento de paralelismo da delegação (F-784)', () 
     expect(helpersToOpenNow(4, budget)).toBe(4);
   });
 });
+
+describe('pane-admission: recusa de capacidade no caminho MCP (F-1270)', () => {
+  it('admitToolSpawnSync usa a MESMA contagem do renderer (reserva de licença vs panes vivos)', async () => {
+    const {
+      admitToolSpawnSync,
+      readPaneAdmissionLimits,
+      primeSystemMemoryCacheForTest,
+    } = await import('./pane-admission');
+    primeSystemMemoryCacheForTest({ freeMB: 100_000, swapUsedMB: 0 });
+    const cap = readPaneAdmissionLimits({ NEXUS_PANE_CAP_HARD: '1' }).maxAgentPanes;
+    const hard = { NEXUS_PANE_CAP_HARD: '1' };
+
+    // Worker de missão: o renderer conta `licensedAgentCount()` (reserva de
+    // licença), não os panes vivos do PTY. Um pane humano extra NÃO abre vaga
+    // para o worker. Era o off-by-one que deixava o MCP admitir no teto.
+    expect(
+      admitToolSpawnSync({
+        role: 'worker', missionId: 'mission-1', operatorOpened: false,
+        liveAgentPanes: 0, licensedAgentPanes: cap, env: hard,
+      }),
+    ).toMatchObject({ ok: false, reason: 'cap' });
+    expect(
+      admitToolSpawnSync({
+        role: 'worker', missionId: 'mission-1', operatorOpened: false,
+        liveAgentPanes: 0, licensedAgentPanes: cap - 1, env: hard,
+      }).ok,
+    ).toBe(true);
+
+    // Humano (sem missão): conta os panes vivos e ignora a reserva de licença.
+    expect(
+      admitToolSpawnSync({
+        role: undefined, missionId: undefined, operatorOpened: false,
+        liveAgentPanes: cap, licensedAgentPanes: 0, env: hard,
+      }),
+    ).toMatchObject({ ok: false, reason: 'cap' });
+    expect(
+      admitToolSpawnSync({
+        role: undefined, missionId: undefined, operatorOpened: false,
+        liveAgentPanes: cap - 1, licensedAgentPanes: cap, env: hard,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('o erro codificado sobrevive ao Error.message e a mensagem real volta', async () => {
+    const { paneAdmissionRefusalError, parsePaneAdmissionRefusal } = await import('./pane-admission');
+    const message = 'Teto de 12 panes de agente atingido (12 vivos). Feche os que entregaram.';
+    const coded = paneAdmissionRefusalError('cap', message);
+    expect(coded).toBe(`pane_admission_cap: ${message}`);
+    // O ACK pendente do spawn só retém Error.message: a recusa volta por lá.
+    expect(parsePaneAdmissionRefusal(new Error(coded))).toEqual({
+      reason: 'cap',
+      message,
+    });
+    expect(parsePaneAdmissionRefusal('pane_admission_memory: Sem folga de memória.')).toEqual({
+      reason: 'memory',
+      message: 'Sem folga de memória.',
+    });
+    // Recusa da própria CLI (modelo selado etc.) não é capacidade.
+    expect(parsePaneAdmissionRefusal(new Error('Qwen Code: modelo selado "qwen3.7-plus"'))).toBeNull();
+    expect(parsePaneAdmissionRefusal(undefined)).toBeNull();
+  });
+});

@@ -75,6 +75,8 @@ export type ProviderRejectedCause =
 /** Falha física provada por quem a viu (Main), antes de qualquer prazo. */
 export type PaneStartFailureCause =
   | 'spawn-refused'
+  /** F-1270: teto de panes/memória — CLI-agnóstico, nunca reroteia. */
+  | 'capacity-refused'
   | 'boot-exit'
   | 'brief-rejected'
   /** F-984: sessão viva sem NENHUM byte no terminal depois da graça. */
@@ -251,6 +253,7 @@ const PROVIDER_REJECTED_TAIL = 'o turno do brief acabou antes de qualquer trabal
 
 const CAUSE_TEXT: Readonly<Record<PaneNotStartedCause, string>> = {
   'spawn-refused': 'o CLI não subiu (o spawn foi recusado)',
+  'capacity-refused': 'a máquina não tem vaga para mais um pane de agente',
   'boot-exit': 'o processo saiu antes de abrir o primeiro turno',
   'brief-rejected': 'o briefing não foi aceito pelo pane',
   'boot-silent': `a CLI não escreveu nada no terminal em ${Math.round(START_GRACE_MS / 1000)} s`,
@@ -275,7 +278,7 @@ export type PaneStartOutcome =
   | { readonly kind: 'reroute-failed'; readonly error: string }
   | {
       readonly kind: 'not-rerouted';
-      readonly why: 'operator' | 'second-attempt' | 'pinned' | 'no-alternative';
+      readonly why: 'operator' | 'second-attempt' | 'pinned' | 'no-alternative' | 'capacity';
     };
 
 /** Motivo curto de erro para o aviso: 1ª linha, sem segredo, até 160 chars. */
@@ -322,6 +325,9 @@ export function paneStartNoticeSummary(input: {
       'A CLI foi pedida pelo operador (ou é retomada de conversa); não troquei ' +
       'sozinho — decida.',
     'no-alternative': 'Nenhuma outra CLI está disponível — decida.',
+    capacity:
+      'A máquina está no teto (ou sem memória); não reenviei para outra CLI — ' +
+      'feche os que entregaram ou aguarde.',
   }[outcome.why];
   return `${head} ${why}`;
 }
@@ -364,6 +370,8 @@ export interface PaneStartWatch extends PaneStartWatchInit {
     readonly at: number;
     /** F-984: código de saída da raiz quando o processo saiu sozinho. */
     readonly exitCode?: number;
+    /** F-1270: motivo legível já categorizado (ex.: mensagem real da recusa de capacidade). */
+    readonly detail?: string;
   } | null;
   /** A sessão acabou sem falha provada (pedido de encerramento, one-shot, fora da janela). */
   sessionEnded: boolean;
@@ -387,6 +395,7 @@ const watches = new Map<string, PaneStartWatch>();
 interface EarlyMark {
   readonly at: number;
   readonly failure?: PaneStartFailureCause;
+  readonly detail?: string;
   readonly accepted?: true;
 }
 /** Sinal que chegou antes de a ficha existir (corrida com a resposta da tool). */
@@ -432,7 +441,9 @@ export function trackPaneStart(init: PaneStartWatchInit): PaneStartWatch {
     sessionId: null,
     sessionSpawnedAt: null,
     accepted: early?.accepted === true,
-    failure: early?.failure ? { cause: early.failure, at: early.at } : null,
+    failure: early?.failure
+      ? { cause: early.failure, at: early.at, ...(early.detail ? { detail: early.detail } : {}) }
+      : null,
     sessionEnded: false,
     turnOutcome: null,
     turnOpenedAt: early?.accepted === true ? early.at : null,
@@ -493,15 +504,16 @@ export function notePaneStartFailure(
   paneId: string,
   cause: PaneStartFailureCause,
   now: number = Date.now(),
+  detail?: string,
 ): void {
   const watch = watches.get(paneId);
   if (!watch) {
     pruneEarlyMarks(now);
-    earlyMarks.set(paneId, { at: now, failure: cause });
+    earlyMarks.set(paneId, { at: now, failure: cause, ...(detail ? { detail } : {}) });
     return;
   }
   if (watch.phase !== 'watching' || watch.accepted || watch.failure) return;
-  watch.failure = { cause, at: now };
+  watch.failure = { cause, at: now, ...(detail ? { detail } : {}) };
   scheduleKick();
 }
 

@@ -337,6 +337,54 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(h.submit).toHaveBeenCalledTimes(1);
   });
 
+  it('recusa de capacidade (teto de panes) não reroteia e devolve a mensagem real ao Maestro', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    trackPaneStart(watchInit());
+    h.listPaneSnapshots.mockReturnValue([
+      { paneId: 'pane-qwen', kind: 'cli-agent', role: 'worker', state: 'exited', missionId: 'mission-f723' },
+    ]);
+    h.pendingSession.mockReturnValue({ state: 'gone' });
+    const capError =
+      'pane_admission_cap: Teto de 12 panes de agente atingido (12 vivos). ' +
+      'Nenhum pane ocioso para sugerir; feche panes que já entregaram. ' +
+      'Ajuste o teto com NEXUS_PANE_CAP se esta máquina aguenta mais.';
+    h.startFailureTap!({
+      requestId: 'orchspawn-qwen',
+      paneId: 'pane-qwen',
+      adapterId: 'qwen',
+      missionId: 'mission-f723',
+      error: capError,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flush();
+
+    // F-1270(b): capacidade é CLI-agnóstica — outra CLI esbarra no mesmo teto,
+    // então não reenvia para ninguém (nem conta como falha da CLI no disjuntor).
+    expect(reroute).not.toHaveBeenCalled();
+    expect(redeliver).not.toHaveBeenCalled();
+    expect(adapterCircuitBreakers.snapshot('qwen').recentFailures).toBe(0);
+    // A tentativa sem sessão continua sendo liquidada (nada nasce atrasado).
+    expect(h.abandon).toHaveBeenCalledWith('orchspawn-qwen', expect.any(String));
+
+    // F-1270(a): a mensagem REAL chega ao Maestro, sem o prefixo interno.
+    expect(h.submit).toHaveBeenCalledTimes(1);
+    const handoff = h.submit.mock.calls[0]![0] as Record<string, string>;
+    expect(handoff.summary).toContain('Teto de 12 panes de agente atingido');
+    expect(handoff.summary).not.toContain('pane_admission_cap');
+    expect(handoff.summary).not.toContain('Reenviada para');
+    expect(handoff.summary).toContain('não reenviei para outra CLI');
+    expect(h.trace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'pane-not-started',
+        paneId: 'pane-qwen',
+        cause: 'capacity-refused',
+        outcome: 'not-rerouted',
+        detail: expect.stringContaining('Teto de 12 panes de agente atingido'),
+      }),
+    );
+    expect(getPaneStartWatch('pane-qwen')).toBeNull();
+  });
+
   it('sessão viva sem turno (família Claude): reenvia o brief uma vez e, ainda parado, manda para outro', async () => {
     trackPaneStart(watchInit({
       paneId: 'pane-claude',

@@ -121,7 +121,7 @@ import {
   type CodexGovernedProcessSandbox,
 } from "../orch/cli-mcp-session-config";
 import { requiresSpawnGate } from "../orch/spawn-home-policy";
-import { admitAgentSpawnSync, registerAgentMemoryCensus } from "../orch/pane-admission";
+import { admitAgentSpawnSync, paneAdmissionRefusalError, registerAgentMemoryCensus } from "../orch/pane-admission";
 import { isReleaseQualifiedMissionWorkerCli } from "../orch/squad-runtime-policy";
 import {
   codexGovernedSandboxLaunchMode,
@@ -1754,7 +1754,9 @@ export function spawnAgentSession(
     console.warn(
       `[pane-admission] spawn recusado (${admission.reason}): ${admission.message}`,
     );
-    throw new Error(admission.message);
+    // F-1270: código prefixado para o supervisor distinguir capacidade (não
+    // reroteia) de recusa da CLI; o ACK pendente só retém Error.message.
+    throw new Error(paneAdmissionRefusalError(admission.reason, admission.message));
   }
   if (admission.warning) console.warn(`[pane-admission] ${admission.warning}`);
   const cwd = requireTrustedAgentCwd(authority);

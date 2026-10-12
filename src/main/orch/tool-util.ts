@@ -1,7 +1,7 @@
 import type { SystemInputWriter } from './operator-input-receipts';
 import { commitWorkerContinuation, workerContinuationBirthState, type WorkerContinuationBirthState } from './mission-pane-resume-ownership';
 import { createVisualTaskRequirement, visualTaskRequirement } from './visual-handoff-gate';
-import { assertLicensedAgentCapacity } from '../license-enforcement';
+import { assertLicensedAgentCapacity, licensedAgentCount } from '../license-enforcement';
 import { licenseErrorFrom } from '../../shared/license-errors';
 import { withWorkspaceDesignRule } from './workspace-design-rule';
 import { mountPromptContextBlocks } from './prompt-context-blocks';
@@ -30,6 +30,7 @@ import {
 } from './pane-authz';
 import type { AgentGateContext } from './gate';
 import {
+  countLiveAgentSessions,
   getAgentSessionInfo,
   hasAcceptedNativeArgvPrompt,
   getSessionState,
@@ -49,6 +50,7 @@ import { trace } from '../observability/main-trace';
 import type { PhaseTimer } from '../observability/phase-timer';
 import { emitWorkerSpawnFailed } from './spawn-fail-events';
 import { notePaneStartAccepted, notePaneStartFailure } from './pane-start-watchdog';
+import { admitToolSpawnSync, paneAdmissionRefusalError } from './pane-admission';
 import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import {
@@ -1593,6 +1595,20 @@ export async function spawnPaneAndMaybePrompt(
   hooks: SpawnPaneHooks = {},
 ): Promise<{ paneId: string; sessionId: string }> {
   assertLicensedAgentCapacity();
+  // F-1270: recusa de capacidade na HORA, no caminho MCP. O renderer já roda
+  // este mesmo gate em `spawnAgentSession`; aqui o `nexus_pane_spawn` devolve
+  // ok:false com a mensagem real em vez de um ACK pendente que depois vira
+  // recusa perdida. Mesma contagem do renderer (worker usa reserva de licença).
+  const admission = admitToolSpawnSync({
+    role: options.role,
+    missionId: options.missionId,
+    operatorOpened: options.operatorOpened,
+    liveAgentPanes: countLiveAgentSessions(),
+    licensedAgentPanes: licensedAgentCount(),
+  });
+  if (!admission.ok) {
+    throw new Error(paneAdmissionRefusalError(admission.reason, admission.message));
+  }
   assertMcpInvocationCurrent(hooks.invocation);
   let resolvedAdapter = getAdapter(options.adapterId);
   if (!resolvedAdapter) throw new Error(`unknown adapter: ${options.adapterId}`);
