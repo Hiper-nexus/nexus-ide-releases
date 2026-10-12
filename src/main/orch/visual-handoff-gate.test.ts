@@ -173,3 +173,40 @@ it('selects bounded proof candidates through the worker index', () => {
   expect(JSON.stringify(plan)).toContain('idx_visual_handoff_assignment');
   expect(JSON.stringify(plan)).not.toContain('TEMP B-TREE');
 });
+
+// F-1417: revisão de segurança só leitura (sem UI) foi rebaixada para partial
+// com "[verificação visual pendente]". A decisão olha a TASK, nunca o rodapé
+// de design que o Nexus injeta no prompt.
+const F1417_TASK =
+  'Revisão de segurança, só leitura, do auto-update de CLI (F-1397 × F-1395 com C5/C6/C7) e do F-1411 Kimi bracketed paste';
+// Texto real de `ruleText` (workspace-design-rule.ts), com e sem DESIGN.md.
+const F1417_RULE_TAIL =
+  '\nReutilize tokens e componentes existentes. Na entrega, identifique a referência usada e como ' +
+  'verificou a interface renderizada; se não conseguiu ler ou verificar, declare a limitação. ' +
+  'Não apresente uma proposta de design ainda não aplicada como regra vigente.';
+const F1417_DESIGN_FOOTER =
+  '\n\nRegra de design do projeto (sempre que o trabalho envolver UI):\n' +
+  'Leia DESIGN.md antes de editar a interface. Este é o contrato visual do projeto; referências externas são complementares.' +
+  F1417_RULE_TAIL;
+const F1417_NO_CONTRACT_FOOTER =
+  '\n\nRegra de design do projeto (sempre que o trabalho envolver UI):\n' +
+  'O projeto não tem contrato visual aplicado (DESIGN.md ou .context/docs/design-system.md). Consulte AGENTS.md e siga primeiro os tokens e componentes que o código já usa.\n' +
+  'Se precisar de direção visual, consulte as referências com nexus_design_system_local_list e informe a escolhida.' +
+  F1417_RULE_TAIL;
+
+it('F-1417: revisão de segurança só leitura sem UI na task não exige captura visual', () => {
+  expect(visualTaskRequirement(F1417_TASK)).toBeUndefined();
+});
+
+it('F-1417: o rodapé de design injetado pelo Nexus não torna a task visual', () => {
+  expect(visualTaskRequirement(`${F1417_TASK}${F1417_DESIGN_FOOTER}`)).toBeUndefined();
+  expect(visualTaskRequirement(`${F1417_TASK}${F1417_NO_CONTRACT_FOOTER}`)).toBeUndefined();
+});
+
+it('F-1417: pedido visual direto com o rodapé continua exigindo captura', () => {
+  expect(visualTaskRequirement(`Crie a tela de login com o formulário e o botão de entrar${F1417_DESIGN_FOOTER}`)).toBeDefined();
+});
+
+it('F-1417: pedido visual direto continua exigindo captura', () => {
+  expect(visualTaskRequirement('Crie a tela de login com o formulário e o botão de entrar')).toBeDefined();
+});
