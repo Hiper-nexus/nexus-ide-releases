@@ -163,10 +163,14 @@ const SECURITY_SPECIALTY_SIGNALS = [
   'multitenant',
   'secret',
   // F-1402: superfície de credencial/conta de login é segurança tanto quanto
-  // auth/pagamento. 'creden' (radical) cobre credencial/credenciais e
-  // credential/credentials. 'login' SOZINHO não entra: "texto do botão de
-  // login" é UI, não superfície de credencial — valem as frases compostas.
-  'creden',
+  // auth/pagamento. Palavra inteira (revisão Fable C8): o radical 'creden'
+  // casava "credenciamento de parceiros" e 'linhagem' solta casava "linhagem
+  // de dados no ETL". 'login' SOZINHO não entra: "texto do botão de login" é
+  // UI, não superfície de credencial — valem as frases compostas.
+  'credencial',
+  'credenciais',
+  'credential',
+  'credentials',
   'keychain',
   'refresh token',
   'access token',
@@ -175,7 +179,8 @@ const SECURITY_SPECIALTY_SIGNALS = [
   'login session',
   'conta gerenciada',
   'managed account',
-  'linhagem',
+  'linhagem de credencial',
+  'linhagem do token',
 ] as const;
 
 /**
@@ -287,8 +292,6 @@ const SECURITY_SIGNAL_STEMS: ReadonlySet<string> = new Set([
   'desencripta',
   'descriptografa',
   'secret',
-  // F-1402: 'creden' cobre credencial/credenciais/credential/credentials.
-  'creden',
 ]);
 
 export function hasSecuritySpecialtySignals(text: string): boolean {

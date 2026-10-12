@@ -370,12 +370,14 @@ const CRITICAL_SIGNALS = [
   // — "corrigir typo na validação do token JWT" é código de autenticação.
   'jwt',
   // F-1402: credencial/conta de login é superfície de segurança — "tarefa de
-  // credencial compartilhada" saía medium/bug. 'creden' (radical) cobre
-  // credencial/credenciais/credential/credentials. 'login' SOZINHO fica fora:
-  // "ajustar o texto do botão de login" é UI; valem as frases compostas.
-  'creden', 'keychain', 'refresh token', 'access token',
+  // credencial compartilhada" saía medium/bug. Palavra inteira (revisão
+  // Fable C8): o radical 'creden' casava "credenciamento de parceiros" e
+  // 'linhagem' solta casava "linhagem de dados no ETL". 'login' SOZINHO fica
+  // fora: "ajustar o texto do botão de login" é UI; valem as frases compostas.
+  'credencial', 'credenciais', 'credential', 'credentials',
+  'keychain', 'refresh token', 'access token',
   'sessão de login', 'sessao de login', 'login session',
-  'conta gerenciada', 'managed account', 'linhagem',
+  'conta gerenciada', 'managed account', 'linhagem de credencial', 'linhagem do token',
 ];
 
 const HARD_SIGNALS = [
@@ -422,8 +424,6 @@ const CRITICAL_STEMS: ReadonlySet<string> = new Set([
   'descriptografia', 'migration', 'migração', 'migracao', 'tenant',
   'corrup', 'corromp',
   'race condition', 'concorrência', 'concorrencia', 'deadlock', 'webhook',
-  // F-1402: 'creden' cobre credencial/credenciais/credential/credentials.
-  'creden',
 ]);
 
 const HARD_STEMS: ReadonlySet<string> = new Set([
@@ -463,9 +463,10 @@ const DOMAIN_ONLY_SIGNALS: ReadonlySet<string> = new Set([
   // F-1402: os substantivos de credencial também são domínio — "listar as
   // credenciais escopadas" e "documentar a rotação do refresh token" seguem
   // baratos como qualquer outro domínio.
-  'creden', 'keychain', 'refresh token', 'access token',
+  'credencial', 'credenciais', 'credential', 'credentials',
+  'keychain', 'refresh token', 'access token',
   'sessão de login', 'sessao de login', 'login session',
-  'conta gerenciada', 'managed account', 'linhagem',
+  'conta gerenciada', 'managed account', 'linhagem de credencial', 'linhagem do token',
   'integração', 'integracao', 'integrações', 'integracoes', 'integration',
   'engine', 'motor', 'protocolo', 'protocol', 'parser', 'compiler',
 ]);

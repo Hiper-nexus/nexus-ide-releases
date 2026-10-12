@@ -79,6 +79,12 @@ describe('classifyTask', () => {
     expect(classifyTask('listar as credenciais escopadas').tier).toBe('trivial');
   });
 
+  it('F-1402 C8: linhagem de dados e credenciamento não são superfície de credencial', () => {
+    expect(classifyTask('implementar linhagem de dados no ETL').tier).not.toBe('critical');
+    expect(classifyTask('página de credenciamento de parceiros').tier).not.toBe('critical');
+    expect(classifyTask('implementar a renovação do refresh token da conta').tier).toBe('critical');
+  });
+
   it('critical keywords keep their floor even in short asks', () => {
     expect(classifyTask('corrigir auth').tier).toBe('critical');
   });

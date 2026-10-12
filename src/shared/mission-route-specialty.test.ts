@@ -41,6 +41,13 @@ describe('classifyRouteSpecialty', () => {
     expect(verdict.specialty).toBe('security');
   });
 
+  it('F-1402 C8: linhagem de dados e credenciamento não viram security', () => {
+    expect(classifyRouteSpecialty('implementar linhagem de dados no ETL').specialty).not.toBe('security');
+    expect(classifyRouteSpecialty('página de credenciamento de parceiros').specialty).not.toBe('security');
+    expect(classifyRouteSpecialty('refresh token da conta').specialty).toBe('security');
+    expect(classifyRouteSpecialty('compartilhar a linhagem do token entre panes').specialty).toBe('security');
+  });
+
   it('F-1402: botão de login é UI — "login" sozinho não vira security', () => {
     const verdict = classifyRouteSpecialty('ajustar o texto do botão de login');
     expect(verdict.specialty).not.toBe('security');
