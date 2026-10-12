@@ -50,6 +50,10 @@ export class PtyAnalysisCore {
       return binding?.adapterId ? { adapterId: binding.adapterId, paneId: binding.paneId } : null;
     }, now: Date.now, publish: (record) => {
       const s = this.#sessions.get(record.sessionId); if (!s) return;
+      // F-1419 (revisão Fable): o primeiro `working` do detector fecha o
+      // responder de primeira execução — nunca responde depois que o trabalho
+      // real começou (a tela pode citar "Trust <path>?" vindo do repo).
+      if (record.state === 'working') s.firstRun.drop(record.sessionId);
       const value = { record, explain: this.#detector.lastExplain(record.sessionId), state: this.#detector.currentState(record.sessionId) };
       if (this.#current === s) this.#emit(s, 'screen', value);
       else this.#publish(s, [this.#event(s, 'screen', value)].filter((e): e is AnalysisEvent => e !== null), 0, false);

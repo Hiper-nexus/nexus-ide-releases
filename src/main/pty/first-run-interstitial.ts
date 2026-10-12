@@ -66,11 +66,12 @@ export interface FirstRunInterstitialPattern {
   readonly answer: string;
   readonly directoryProof: DirectoryProof;
   /**
-   * F-1419: o path impresso pode ter espaço e quebrar no meio (worktree em
-   * "Application Support"); a prova `cwd-match` aceita também
-   * `screenNamesWrappedPath`. Continua sendo o cwd do pane, só que remontado.
+   * F-1419: a prova `cwd-match` olha SÓ o path da própria pergunta
+   * ("Trust <path>?"), que pode ter espaço e quebrar no meio (worktree em
+   * "Application Support") — ver `trustQuestionNamesCwd`. O cwd citado em
+   * outro ponto da tela não conta.
    */
-  readonly pathMayWrap?: boolean;
+  readonly cwdFromTrustQuestion?: boolean;
   /** Why this exact answer is safe. Kept next to the pattern on purpose. */
   readonly why: string;
 }
@@ -136,7 +137,7 @@ const PATTERNS: FirstRunInterstitialPattern[] = [
     ],
     answer: ANSWER_FIRST_NUMBERED_OPTION,
     directoryProof: 'cwd-match',
-    pathMayWrap: true,
+    cwdFromTrustQuestion: true,
     why:
       'Option 1 ("Yes, trust") trusts the worktree/cwd Nexus created for this ' +
       'mission pane. Any other path on screen gets no keystroke; option 2 exits.',
@@ -264,41 +265,44 @@ export function screenNamesOwnCwd(
   );
 }
 
-/** Antes do path só cabe início, branco, aspa ou parêntese. */
-const PATH_LEFT_BOUNDARY = /[\s"'`(]/;
-
-/**
- * F-1419: o path da worktree tem espaço ("Application Support") e, num pane
- * estreito, quebra no meio — o candidato por token nunca o reconstitui. Aqui
- * o cwd (completo ou com `~`) casa com espaço em branco OPCIONAL entre os
- * caracteres (quebra de linha) e o espaço do próprio path como 1+ brancos.
- * Fronteiras: antes, nada de caractere de path; depois, o próximo caractere
- * visível é `?`, aspa, `)` ou o fim — "<cwd> d" (outro diretório quebrado
- * na linha) não casa. Linear: cada `\s*` é seguido de um literal.
- */
-export function screenNamesWrappedPath(screenText: string, cwd: string, homeDir?: string): boolean {
-  if (!cwd.trim()) return false;
-  const haystack = stripFrame(screenText);
+/** O cwd (completo ou com `~`) como regex tolerante a quebra de linha. */
+function wrappedCwdBodies(cwd: string, homeDir?: string): string[] {
   const full = normalizePath(cwd, homeDir);
-  if (/^[A-Za-z]:\//.test(full)) return false;
+  if (/^[A-Za-z]:\//.test(full)) return [];
   const variants = [full];
   if (homeDir) {
     const home = normalizePath(homeDir);
     if (home.length > 1 && full.startsWith(`${home}/`)) variants.push(`~${full.slice(home.length)}`);
   }
-  for (const variant of variants) {
-    // Espaço do path → `\s+`; entre os demais caracteres → `\s*` (quebra).
-    const body = variant
-      .split(/\s+/)
-      .map((word) => [...word].map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*'))
-      .join('\\s+');
-    const re = new RegExp(`${body}\\/?(?=\\s*(?:[?"'\`)]|$))`, 'g');
-    for (const match of haystack.matchAll(re)) {
-      const before = match.index > 0 ? haystack[match.index - 1]! : '';
-      if (!before || PATH_LEFT_BOUNDARY.test(before)) return true;
-    }
-  }
-  return false;
+  // Espaço do path → `\s+`; entre os demais caracteres → `\s*` (quebra).
+  return variants.map((variant) => variant
+    .split(/\s+/)
+    .map((word) => [...word].map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*'))
+    .join('\\s+'));
+}
+
+/**
+ * "Trust <path>?" — o path começa em `/x` ou `~/` (o "trust / 2 No, exit" do
+ * próprio menu não abre um path) e vai até o `?` (teto de 2 KB).
+ */
+const TRUST_QUESTION_PATH = /\btrust\s+((?:~\/|\/)[^\s?][^?]{0,2048})\?/gi;
+
+/**
+ * F-1419 (revisão Fable): a prova vem do path DA PERGUNTA. Cada "Trust
+ * <path>?" na tela precisa ser exatamente o cwd do pane — com `~`, com o
+ * espaço do próprio path e com quebras de linha no meio, mas nada além disso
+ * (`<cwd>-irmao`, `<cwd>/sub` e outro diretório falham). Sem pergunta, ou com
+ * qualquer pergunta sobre outro path, não há prova.
+ */
+export function trustQuestionNamesCwd(screenText: string, cwd: string, homeDir?: string): boolean {
+  if (!cwd.trim()) return false;
+  const bodies = wrappedCwdBodies(cwd, homeDir);
+  if (bodies.length === 0) return false;
+  const exact = bodies.map((body) => new RegExp(`^${body}\\/?$`));
+  const questions = [...stripFrame(screenText).matchAll(TRUST_QUESTION_PATH)]
+    .map((match) => match[1]!.trim());
+  return questions.length > 0 &&
+    questions.every((asked) => exact.some((re) => re.test(asked)));
 }
 
 function appliesToAdapter(
@@ -350,8 +354,9 @@ export function decideFirstRunInterstitial(
     // Boundary 3: an authority-granting answer needs the cwd proof.
     if (
       pattern.directoryProof === 'cwd-match' &&
-      !screenNamesOwnCwd(screenText, context.cwd, context.homeDir) &&
-      !(pattern.pathMayWrap && screenNamesWrappedPath(screenText, context.cwd, context.homeDir))
+      !(pattern.cwdFromTrustQuestion
+        ? trustQuestionNamesCwd(screenText, context.cwd, context.homeDir)
+        : screenNamesOwnCwd(screenText, context.cwd, context.homeDir))
     ) {
       continue;
     }
