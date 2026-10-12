@@ -674,6 +674,190 @@ export async function assertFunctionalMarker(userData) {
   return markerPath;
 }
 
+const FORGE_CONFIG_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'forge.config.ts',
+);
+// One file that proves the directory extraResource actually arrived.
+// Basename matches the name Forge copies into Resources/.
+const PACKAGED_RESOURCE_SENTINELS = {
+  'heavy-command': 'preload.cjs',
+  'mission-shims': 'nx-shim.cjs',
+  'shell-integration': 'nexus-osc133.zsh',
+  pets: 'manifest.json',
+  'agent-detection': 'claude.toml',
+  ghostty: 'ghostty-vt.wasm',
+};
+
+function closeBracket(source, open) {
+  let depth = 0;
+  let quote = null;
+  for (let i = open; i < source.length; i += 1) {
+    const ch = source[i];
+    if (quote) {
+      if (ch === '\\') {
+        i += 1;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch;
+      continue;
+    }
+    if (ch === '/' && source[i + 1] === '/') {
+      const newline = source.indexOf('\n', i);
+      i = newline < 0 ? source.length : newline;
+      continue;
+    }
+    if (ch === '/' && source[i + 1] === '*') {
+      const end = source.indexOf('*/', i + 2);
+      if (end < 0) throw new Error('forge extraResource comment is unterminated');
+      i = end + 1;
+      continue;
+    }
+    if (ch === '[') depth += 1;
+    else if (ch === ']') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  throw new Error('forge extraResource array is unterminated');
+}
+
+/**
+ * String entries of packagerConfig.extraResource. Platform ternaries follow
+ * the build host: Forge evaluates `process.platform` while packaging.
+ * Throws on any spread it does not recognize, so a new entry cannot skip
+ * the packaged smoke by accident.
+ */
+export function forgeExtraResourceEntries(source, platform = process.platform) {
+  const marker = source.indexOf('\n    extraResource:');
+  if (marker < 0) throw new Error('forge extraResource is missing');
+  const open = source.indexOf('[', marker);
+  if (open < 0) throw new Error('forge extraResource array is missing');
+  return parseExtraResourceBody(source.slice(open + 1, closeBracket(source, open)), platform);
+}
+
+function parseExtraResourceBody(body, platform) {
+  const entries = [];
+  let i = 0;
+  const skipSpace = () => {
+    while (i < body.length) {
+      const ch = body[i];
+      if (ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t' || ch === ',') {
+        i += 1;
+        continue;
+      }
+      if (ch === '/' && body[i + 1] === '/') {
+        const newline = body.indexOf('\n', i);
+        i = newline < 0 ? body.length : newline + 1;
+        continue;
+      }
+      if (ch === '/' && body[i + 1] === '*') {
+        const end = body.indexOf('*/', i + 2);
+        if (end < 0) throw new Error('forge extraResource comment is unterminated');
+        i = end + 2;
+        continue;
+      }
+      break;
+    }
+  };
+  while (i < body.length) {
+    skipSpace();
+    if (i >= body.length) break;
+    const ch = body[i];
+    if (ch === "'" || ch === '"') {
+      const end = body.indexOf(ch, i + 1);
+      if (end < 0) throw new Error('forge extraResource string is unterminated');
+      entries.push(body.slice(i + 1, end));
+      i = end + 1;
+      continue;
+    }
+    if (body.startsWith('...', i)) {
+      const spread = readPlatformSpread(body, i, platform);
+      entries.push(...spread.entries);
+      i = spread.next;
+      continue;
+    }
+    throw new Error(
+      `forge extraResource has an unrecognized entry near ${JSON.stringify(body.slice(i, i + 48))}`,
+    );
+  }
+  if (entries.length === 0) throw new Error('forge extraResource is empty');
+  return entries;
+}
+
+function readPlatformSpread(body, start, platform) {
+  const head = /^\.\.\.\(\s*process\.platform\s*===\s*'([^']+)'\s*\?\s*/u;
+  const matched = head.exec(body.slice(start));
+  if (!matched) {
+    throw new Error('forge extraResource spread is not a process.platform ternary');
+  }
+  let cursor = start + matched[0].length;
+  if (body[cursor] !== '[') {
+    throw new Error('forge extraResource spread is missing its array');
+  }
+  const close = closeBracket(body, cursor);
+  const inner = parseExtraResourceBody(body.slice(cursor + 1, close), platform);
+  cursor = close + 1;
+  const tail = /^\s*:\s*\[\s*\]\s*\)/u.exec(body.slice(cursor));
+  if (!tail) throw new Error('forge extraResource spread is missing its empty fallback');
+  return {
+    entries: matched[1] === platform ? inner : [],
+    next: cursor + tail[0].length,
+  };
+}
+
+/**
+ * Paths relative to the packaged Resources directory. Derived from
+ * forge extraResource (each entry lands as Resources/<basename>) plus one
+ * sentinel file per directory the Main opens at runtime.
+ */
+export function requiredResourceArtifacts({
+  platform = process.platform,
+  forgeSource,
+} = {}) {
+  const source = forgeSource ?? readFileSync(FORGE_CONFIG_PATH, 'utf8');
+  const required = [];
+  for (const entry of forgeExtraResourceEntries(source, platform)) {
+    if (typeof entry !== 'string' || entry.length === 0 || path.isAbsolute(entry) || entry.split(/[\\/]/u).includes('..')) {
+      throw new Error('forge extraResource entry is not a repo-relative path');
+    }
+    const base = path.basename(entry);
+    const sentinel = PACKAGED_RESOURCE_SENTINELS[base];
+    required.push({
+      source: entry,
+      relative: base,
+      kind: sentinel || path.extname(base) === '' ? 'dir' : 'file',
+    });
+    if (sentinel) {
+      required.push({
+        source: entry,
+        relative: path.posix.join(base, sentinel),
+        kind: 'file',
+      });
+    }
+  }
+  return required;
+}
+
+export async function assertPackagedResourceArtifacts(resourcesDir, options = {}) {
+  const missing = [];
+  for (const spec of requiredResourceArtifacts(options)) {
+    if (!(await pathExists(path.join(resourcesDir, spec.relative)))) {
+      missing.push(spec.relative);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `packaged resources missing under ${resourcesDir}: ${missing.join(', ')}`,
+    );
+  }
+}
+
 /**
  * Expected on-disk native artifacts under app.asar.unpacked for a forge package.
  * Paths are relative to the unpacked root.
@@ -1397,6 +1581,7 @@ export async function runPackagedSmoke(
     platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK,
   );
   await assertNativeArtifactsPresent(target.unpackedRoot, { platform, arch });
+  await assertPackagedResourceArtifacts(target.resourcesDir, { platform });
   inspectMainBundle(target.resourcesDir);
   inspectLegalArtifacts(target.resourcesDir, { platform, arch });
   await inspectWakeModel(target.resourcesDir);

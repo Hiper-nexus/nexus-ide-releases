@@ -37,6 +37,8 @@ import {
   packagedSmokeSpawnOptions,
   packagedSmokeValidationMatrix,
   requiredNativeArtifactGlobs,
+  requiredResourceArtifacts,
+  assertPackagedResourceArtifacts,
   resolveAppArgument,
   resolvePackagedMainBundlePath,
   resolvePackagedTarget,
@@ -58,6 +60,18 @@ function makeTemp(prefix = 'nexus-smoke-unit-') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
+}
+
+function materializePackagedResources(resourcesDir, platform) {
+  for (const spec of requiredResourceArtifacts({ platform })) {
+    const full = path.join(resourcesDir, spec.relative);
+    if (spec.kind === 'dir') {
+      fs.mkdirSync(full, { recursive: true });
+    } else {
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      if (!fs.existsSync(full)) fs.writeFileSync(full, 'resource');
+    }
+  }
 }
 
 function writeTree(root, relativeFiles) {
@@ -625,6 +639,38 @@ describe('proofs: renderer, functional, marker, natives', () => {
     await expect(assertFunctionalMarker(userData)).rejects.toThrow(/mismatch/);
   });
 
+  it('F-1295: Resources sem shell-integration ou sem nx-shim.cjs reprova o pacote', async () => {
+    const platform = 'darwin';
+    const complete = makeTemp('resources-complete-');
+    materializePackagedResources(complete, platform);
+    await expect(assertPackagedResourceArtifacts(complete, { platform })).resolves.toBeUndefined();
+
+    const withoutShell = makeTemp('resources-no-shell-');
+    materializePackagedResources(withoutShell, platform);
+    fs.rmSync(path.join(withoutShell, 'shell-integration'), { recursive: true, force: true });
+    await expect(assertPackagedResourceArtifacts(withoutShell, { platform })).rejects.toThrow(
+      /shell-integration/,
+    );
+
+    const withoutShim = makeTemp('resources-no-shim-');
+    materializePackagedResources(withoutShim, platform);
+    fs.rmSync(path.join(withoutShim, 'mission-shims', 'nx-shim.cjs'));
+    await expect(assertPackagedResourceArtifacts(withoutShim, { platform })).rejects.toThrow(
+      /nx-shim\.cjs/,
+    );
+  });
+
+  it('F-1295: cada extraResource do forge e o sentinela do diretório existem no repositório', () => {
+    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+    // linux: mesmo conjunto estático, sem o supervisor Darwin gerado no build.
+    for (const spec of requiredResourceArtifacts({ platform: 'linux' })) {
+      const sourcePath = spec.kind === 'file' && spec.relative.includes('/')
+        ? path.join(repoRoot, spec.source, path.basename(spec.relative))
+        : path.join(repoRoot, spec.source);
+      expect(fs.existsSync(sourcePath), spec.relative).toBe(true);
+    }
+  });
+
   it('lists native bindings without treating spawn-helper as an artifact', () => {
     const darwin = requiredNativeArtifactGlobs({
       platform: 'darwin',
@@ -1137,6 +1183,7 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
       );
     }
     writeTree(unpacked, files);
+    materializePackagedResources(path.dirname(unpacked), platform);
     if (platform === 'win32') {
       const rgba = Buffer.alloc(8 * 8 * 4, 255);
       fs.writeFileSync(
