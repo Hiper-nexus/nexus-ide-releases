@@ -436,8 +436,13 @@ export function authorizedSessionIdOf(
   return info.sessionId;
 }
 
-/** TUIs que não entendem bracketed paste: o marcador viraria texto (F-537). */
-const NO_BRACKETED_PASTE_ADAPTERS: ReadonlySet<string> = new Set(['kimi', 'agy', 'devin']);
+/**
+ * TUIs que não entendem bracketed paste: o marcador viraria texto (F-537).
+ * F-1411: o Kimi saiu da lista — o Kimi Code 2.x (pi-tui) entende a colagem e
+ * tem paste-burst: teclas cruas + o Enter enfileirado atrás delas viram quebra
+ * de linha, e o brief de nascimento ficava na caixa ("No session yet").
+ */
+const NO_BRACKETED_PASTE_ADAPTERS: ReadonlySet<string> = new Set(['agy', 'devin']);
 
 /**
  * Bytes que digitam o prompt. Briefs com várias linhas viram UMA colagem
