@@ -384,7 +384,7 @@ const CRITICAL_STEMS: ReadonlySet<string> = new Set([
 const HARD_STEMS: ReadonlySet<string> = new Set([
   'refatora', 'otimiza', 'optimiz', 'complex', 'complexo', 'complexa',
   'vazamento', 'protocolo', 'protocol', 'engine', 'motor', 'integração',
-  'integracao', 'diagnos', 'diagnós', 'investig',
+  'integracao',
 ]);
 
 const EASY_STEMS: ReadonlySet<string> = new Set([
