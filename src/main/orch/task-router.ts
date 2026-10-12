@@ -94,7 +94,7 @@ export interface RouteContext {
   missionUsedAdapters?: ReadonlySet<string>;
   /** How many times each adapter appears in the mission (diversity attenuation). */
   missionUseCounts?: ReadonlyMap<string, number>;
-  /** Soft prefer list applied after table rank. */
+  /** Prefer a ready same-tier candidate; critical/security and measured rankings stay protected. */
   preferAdapters?: readonly string[];
   /**
    * When true (default if mission has history or any circuit open), re-rank
@@ -635,7 +635,9 @@ export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly strin
 /**
  * Lane visual (regra do operador, 30/09): trabalho de UI/design sempre vai
  * para os modelos de topo — Opus 5.5 e Sonnet 5.5 lideram (superam até o
- * Astra, palavra do operador), depois Sol 6.1; o Astra entra por escolha
+ * Astra, palavra do operador). F-1313: Kimi é ótimo em front, lento —
+ * aceitar a lentidão; participa antes do Sol 6.1, com o mesmo espalhamento
+ * por uso da lane. O Astra entra por escolha
  * explícita do operador para UI (a proibição do F-700 vale para a rota
  * automática geral), mas fica por último: `gpt-6-sol` é o fallback para ele
  * não vencer por eliminação quando a missão já tirou o Claude do pool.
@@ -646,6 +648,7 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
 }> = Object.freeze([
   { adapterId: 'claude', model: 'claude-opus-5-5' },
   { adapterId: 'claude', model: 'claude-sonnet-5-5' },
+  { adapterId: 'kimi', model: 'kimi-code/k3' },
   { adapterId: 'codex', model: 'gpt-6.1-sol' },
   { adapterId: 'codex', model: 'gpt-6-sol' },
   { adapterId: 'codex', model: 'gpt-6-astra' },
@@ -1749,8 +1752,8 @@ export function routeTask(
   }
 
   // Uso geral: só um benchmark de especialidade MEDIDO reordena a tabela.
-  // `context.preferAdapters` é soft (bônus +4 no multi-score) e a heurística
-  // de especialidade não carrega providers — a qualidade vem dos benchmarks
+  // `context.preferAdapters` também é aplicado ao fim, entre pares elegíveis.
+  // A heurística de especialidade não carrega providers — a qualidade vem dos benchmarks
   // oficiais publicados, não de uma lista fixa de CLIs.
   const prependIds =
     policy.source === 'benchmark' ? policy.preferAdapterIds : [];
@@ -2002,7 +2005,7 @@ export function routeTask(
   let rotationNote = '';
   const usedInMission = new Set<string>([
     ...(context.missionUsedAdapters ?? []),
-    ...(context.missionUseCounts?.keys() ?? []),
+    ...[...(context.missionUseCounts ?? [])].filter(([, count]) => count > 0).map(([id]) => id),
   ]);
   if (
     tier !== 'critical' &&
@@ -2073,7 +2076,7 @@ export function routeTask(
   let writerCostNote = `; purpose=${purpose}`;
   let writerCostApplied = false;
   if (purpose === 'writer' && table === DEFAULT_ROUTING_TABLE && specialtyVerdict.specialty !== 'visual' &&
-      mention.model === undefined && policy.source !== 'benchmark') {
+      rotationNote === '' && fairShareNote === '' && mention.model === undefined && policy.source !== 'benchmark') {
     const baseline = ranked[0];
     const baselineOutcome = baseline && routeSuccessRate(context.routeOutcomes, baseline.c.adapterId, baseline.c.model);
     const economic = ranked.filter(entry => {
@@ -2090,6 +2093,23 @@ export function routeTask(
       ranked = [...economic, ...ranked.filter(entry => !economical.has(entry))];
       writerCostApplied = true;
       writerCostNote += '; escritor econômico elegível no mesmo tier';
+    }
+  }
+
+  // F-1313: preferência explícita vence custo/rotação entre pares prontos,
+  // nunca empresta tier nem derruba segurança, juiz ou evidência medida.
+  if (context.preferAdapters?.length && tier !== 'critical' && !securityWork &&
+      frontier === null && purpose !== 'finding-fix' && evaluated.length === 0 &&
+      policy.source !== 'benchmark' && mention.model === undefined) {
+    const preferred = ranked.find(entry => entry.fromTier === tier &&
+      context.preferAdapters!.includes(entry.c.adapterId) &&
+      !adapterCircuitBreakers.isOpen(entry.c.adapterId));
+    if (preferred && preferred !== ranked[0]) {
+      ranked = [preferred, ...ranked.filter(entry => entry !== preferred)];
+      rotationNote = '';
+      fairShareNote = '';
+      writerCostApplied = false;
+      writerCostNote = `; purpose=${purpose}`;
     }
   }
 

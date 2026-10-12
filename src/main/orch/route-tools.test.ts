@@ -527,7 +527,7 @@ describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
   });
 });
 
-describe('nexus_route_task — preferAdapters é soft (uso geral)', () => {
+describe('nexus_route_task — preferAdapters entre pares prontos (F-1313)', () => {
   // 'tarefa de complexidade média' classifica medium: glm-5.3 lidera o tier,
   // mimo-flash cola em benchmark oficial, longcat fica bem atrás.
   const providers = [
@@ -537,7 +537,7 @@ describe('nexus_route_task — preferAdapters é soft (uso geral)', () => {
     { adapterId: 'agy', enabled: true, installed: true, authStrategy: 'oauth', models: ['gemini-3.8-flash-high', 'gemini-3.7-flash'] },
   ];
 
-  it('prefer decide o near-tie entre líderes do mesmo tier', async () => {
+  it('prefer decide entre líderes do mesmo tier', async () => {
     mocks.listProviderSettings.mockReturnValue(providers);
     const base = (await routeTaskForCaller({ task: 'tarefa de complexidade média' }, context())) as {
       adapterId: string;
@@ -546,23 +546,21 @@ describe('nexus_route_task — preferAdapters é soft (uso geral)', () => {
       { task: 'tarefa de complexidade média', preferAdapters: ['mimo-code'] },
       context(),
     )) as { adapterId: string; reason: string };
-    // O +4 do prefer vira o jogo entre glm-5.3 e mimo-flash (mesmo tier,
-    // benchmark oficial quase igual) — mas nunca como prepend duro.
+    // Preferência explícita ganha entre candidatos prontos do mesmo tier.
     expect(preferred.adapterId).toBe('mimo-code');
     expect(preferred.adapterId).not.toBe(base.adapterId);
     expect(preferred.reason).toContain('mimo-code=preferido escolhido');
   });
 
-  it('prefer não derruba um candidato claramente melhor', async () => {
+  it('preferência explícita vence diferença de benchmark oficial no mesmo tier', async () => {
     mocks.listProviderSettings.mockReturnValue(providers);
     const decision = (await routeTaskForCaller(
       { task: 'tarefa de complexidade média', preferAdapters: ['longcat'] },
       context(),
     )) as { adapterId: string; reason: string };
-    // LongCat-2.0 tem benchmark oficial fraco (TB2.1 70,8): mesmo com o +4 de
-    // preferência fica atrás do glm-5.3 — soft, nunca pin.
-    expect(decision.adapterId).toBe('glm');
-    expect(decision.reason).toContain('longcat=preterido no multi-score');
+    // O benchmark genérico não cancela a preferência do operador entre pares.
+    expect(decision.adapterId).toBe('longcat');
+    expect(decision.reason).toContain('longcat=preferido escolhido');
   });
 });
 

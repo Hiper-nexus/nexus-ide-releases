@@ -2515,7 +2515,7 @@ const routeTaskTool: McpToolDef = {
       preferAdapters: {
         type: 'array',
         items: { type: 'string' },
-        description: 'soft preference: breaks ties, never pins the route',
+        description: 'prefers a ready candidate in the same tier; preserves critical/security and measured rankings',
       },
     },
     required: ['task'],

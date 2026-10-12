@@ -881,12 +881,10 @@ describe('uso geral — multi-score espalha por todos os providers saudáveis', 
   });
 });
 
-describe('preferAdapters é soft — desempata, nunca pina a rota', () => {
+describe('preferAdapters prioriza pares prontos e preserva rotas protegidas', () => {
   const flat = { adapters: {} } as ModelCatalog;
 
-  it('sem multi-score o prefer não reordena (não há mais prepend)', () => {
-    // Antes: preferAdapters virava prepend e claude ganhava do líder da
-    // tabela. Agora a preferência só existe como bônus no multi-score.
+  it('preferência no mesmo tier também vale sem multi-score', () => {
     const decision = routeTask(
       'corrigir typo no README',
       adapters('grok', 'claude'),
@@ -896,7 +894,7 @@ describe('preferAdapters é soft — desempata, nunca pina a rota', () => {
       flat,
       { preferAdapters: ['claude'] },
     );
-    expect(decision!.adapterId).toBe('grok');
+    expect(decision!.adapterId).toBe('claude');
   });
 
   it('prefer não derruba um candidato claramente melhor', () => {
@@ -1379,5 +1377,101 @@ describe('F-1344: verbo de migração e corrupção de dados são critical', () 
     'fix the corrupted rows in the orders table',
   ])('%j → critical', (text) => {
     expect(classifyTask(text).tier).toBe('critical');
+  });
+});
+
+describe('F-1313 — preferência explícita e espalhamento', () => {
+  it('recibo não atribui custo econômico ao writer caro escolhido por preferência', () => {
+    const decision = routeTask('implementar o resumo diário', adapters('glm', 'codex'),
+      DEFAULT_ROUTING_TABLE, 'medium', false, { adapters: {
+        glm: { models: [{ id: 'glm-5.3', costTier: 'low' }] },
+        codex: { models: [{ id: 'gpt-6-luna', costTier: 'high' }] },
+      } }, { multiScore: false, preferAdapters: ['codex'] });
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.reason).toContain('codex=preferido escolhido');
+    expect(decision!.reason).not.toContain('escritor econômico elegível');
+  });
+
+  it('recibo não atribui a escolha final ao fair-share quando a preferência venceu', () => {
+    const decision = routeTask('mapear o resumo diário', adapters('glm', 'deepseek'),
+      DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+        multiScore: false, preferAdapters: ['glm'],
+        globalUseCounts: new Map([['glm', 100], ['deepseek', 0]]),
+      });
+    expect(decision!.adapterId).toBe('glm');
+    expect(decision!.reason).toContain('glm=preferido escolhido');
+    expect(decision!.reason).not.toContain('fair-share:');
+  });
+
+  it.each(['mission', 'global'])('writer preserva o assento sem uso antes do custo: %s', (history) => {
+    const decision = routeTask('implementar o resumo diário', [
+      { id: 'glm', installed: true, models: ['glm-5.3'] },
+      { id: 'codex', installed: true, models: ['gpt-6-luna'] },
+    ], DEFAULT_ROUTING_TABLE, 'medium', false, { adapters: {
+      glm: { models: [{ id: 'glm-5.3', costTier: 'low' }] },
+      codex: { models: [{ id: 'gpt-6-luna', costTier: 'high' }] },
+    } }, {
+      multiScore: false,
+      ...(history === 'mission'
+        ? { missionUseCounts: new Map([['glm', 3], ['codex', 0]]) }
+        : { globalUseCounts: new Map([['glm', 3], ['codex', 0]]) }),
+    });
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.reason).toContain(history === 'mission' ? 'rotação garantida' : 'fair-share');
+    expect(decision!.reason).not.toContain('escritor econômico elegível');
+  });
+
+  it('preferência não empresta candidato de outro tier', () => {
+    const table = { ...DEFAULT_ROUTING_TABLE,
+      medium: [{ adapterId: 'codex', model: 'gpt-6-luna' }],
+      hard: [{ adapterId: 'deepseek', model: 'deepseek-v4-pro' }],
+    };
+    const decision = routeTask('mapear o resumo diário', adapters('codex', 'deepseek'),
+      table, 'medium', false, { adapters: {} }, { preferAdapters: ['deepseek'] });
+    expect(decision!.adapterId).toBe('codex');
+  });
+
+  it('preferência não sobrepõe segurança mesmo com tier medium', () => {
+    const table = { ...DEFAULT_ROUTING_TABLE, medium: [
+      { adapterId: 'codex', model: 'gpt-6-luna' },
+      { adapterId: 'deepseek', model: 'deepseek-v4-pro' },
+    ] };
+    const decision = routeTask('mapear o resumo diário', adapters('codex', 'deepseek'),
+      table, 'medium', false, { adapters: {} }, {
+        preferAdapters: ['deepseek'], specialtyOverride: 'security', multiScore: false,
+      });
+    expect(decision!.adapterId).toBe('codex');
+  });
+
+  it('Kimi pronto sem assentos recebe a tarefa visual medium em vez do Codex com três', () => {
+    const decision = routeTask('implementar a tela responsiva e seus componentes visuais',
+      adapters('codex', 'kimi'), DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+        multiScore: true, missionUseCounts: new Map([['codex', 3], ['kimi', 0]]),
+      });
+    expect(decision!.specialty).toBe('visual');
+    expect(decision!.adapterId).toBe('kimi');
+    expect(decision!.model).toBe('kimi-code/k3');
+  });
+
+  it.each(['mapear o resumo diário', 'implementar o resumo diário'])('DeepSeek pronto preferido vence no mesmo tier: %s', (task) => {
+    const decision = routeTask(task,
+      adapters('codex', 'deepseek', 'glm'), DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+        multiScore: true, preferAdapters: ['deepseek'],
+        missionUseCounts: new Map([['deepseek', 3]]),
+        globalUseCounts: new Map([['deepseek', 100]]),
+      });
+    expect(decision!.adapterId).toBe('deepseek');
+    expect(decision!.reason).toContain('deepseek=preferido escolhido');
+    expect(decision!.reason).not.toContain('rotação garantida');
+    expect(decision!.reason).not.toContain('fair-share:');
+  });
+
+  it('zero explícito no mapa de uso continua sem assento no tier medium', () => {
+    const decision = routeTask('mapear o resumo diário',
+      adapters('glm', 'deepseek'), DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+        multiScore: false, missionUseCounts: new Map([['glm', 3], ['deepseek', 0]]),
+      });
+    expect(decision!.adapterId).toBe('deepseek');
+    expect(decision!.reason).toContain('rotação garantida');
   });
 });
