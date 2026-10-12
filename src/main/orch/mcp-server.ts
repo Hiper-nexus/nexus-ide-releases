@@ -2246,8 +2246,10 @@ export async function startMcpServer(): Promise<void> {
             './project-domain-store-registry'
           );
           const { resolveCwdForScope } = await import('./workspace-path');
+          const { acquireCliSpawnPermit } = await import('../persistence/provider-config-store');
           registerWarmAgentSpawner({
             resolveAdapter: (cli) => getAdapter(cli),
+            acquireSpawnPermit: acquireCliSpawnPermit,
             resolveContext: () => {
               try {
                 const suite = requireProjectDomainStoreRegistry().listSuites()[0];

@@ -48,6 +48,12 @@ function idleWarmAuthority(ctx: WarmSpawnContext): BoundSpawnAuthority {
 export function registerWarmAgentSpawner(deps: {
   resolveAdapter: (cli: string) => Adapter | null;
   resolveContext: WarmScopeProvider;
+  /**
+   * R2: o mesmo permit de spawn dos panes normais (`acquireCliSpawnPermit`).
+   * Sem ele o pool repunha um pane no meio de um `npm install -g` e o updater
+   * não via o spawn em voo.
+   */
+  acquireSpawnPermit: (cli: string) => Promise<() => void>;
 }): void {
   unsubscribeAccess?.();
   unsubscribeAccess = onAccessChanged(state => {
@@ -76,7 +82,15 @@ export function registerWarmAgentSpawner(deps: {
       const proving = ensureNativeHeavyJobBase();
       if (proving) await proving;
       if (nativeHeavyJobBaseMissing()) return null;
-      const spawned = spawnAgentSession(null, req, adapter, {}, authority);
+      const release = await deps.acquireSpawnPermit(adapter.id);
+      let spawned: ReturnType<typeof spawnAgentSession>;
+      try {
+        // O acesso pode ter caído enquanto o permit esperava a atualização.
+        if (!requireAccess('use').ok) return null;
+        spawned = spawnAgentSession(null, req, adapter, {}, authority);
+      } finally {
+        release();
+      }
       if (!spawned.sessionId || !spawned.startKey) {
         // Sem startKey o lease não prova dono — não entra no pool.
         return null;
