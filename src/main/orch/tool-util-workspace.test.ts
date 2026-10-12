@@ -1682,7 +1682,8 @@ describe('agent prompt injection', () => {
 
   it.each([
     ['codex', '\x1b[200~avisa quando começar\x1b[201~'],
-    ['kimi', 'avisa quando começar'],
+    // F-1411: Kimi Code 2.x entende o marcador; tecla crua + Enter vira paste-burst.
+    ['kimi', '\x1b[200~avisa quando começar\x1b[201~'],
     [null, 'avisa quando começar'],
   ])('linha única em pane %s: agente com colagem recebe bracketed paste (Enter não vira newline)', async (adapterId, expected) => {
     vi.useFakeTimers();
@@ -3236,6 +3237,49 @@ describe('agent prompt injection', () => {
       cliPromptAutoResponder.drop('session-1');
       status.mockRestore();
       generation.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * F-1411: o Kimi Code 2.1.1 (pi-tui) tem paste-burst: Enter que chega até
+   * 120 ms depois de uma rajada de teclas cruas vira QUEBRA DE LINHA. Sonda em
+   * PTY real (12/10, 18 KB/169 linhas): crus, o Kimi ingere a ~1,5 ms/byte
+   * (28 s); o '\r' que o Nexus escreve 500 ms depois fica enfileirado atrás do
+   * texto, cai na janela e vira linha vazia — tela idêntica à do campo
+   * ("↑ 157 more", "No session yet", context 0%). Em bracketed paste o MESMO
+   * Enter enfileirado envia e o turno começa ("● OK", context 4%).
+   */
+  it('F-1411: brief multilinha do Kimi Code 2.1.1 sai como bracketed paste e o turno começa', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue({ adapterId: 'kimi' });
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.injectable = true;
+      stubs.readSessionOutput.mockReturnValue(KIMI_211_COMPOSER_SCREEN);
+      stubs.writeSession.mockImplementation(((sessionId: string, data: string) => {
+        if (data === '\r') queueMicrotask(() => {
+          stubs.sessionState.mockReturnValue('busy');
+          for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+          for (const tap of [...stubs.dataTaps]) tap(sessionId, 'turn started');
+        });
+        return true;
+      }) as typeof stubs.writeSession);
+      const brief = [
+        ...Array.from({ length: 160 }, (_, i) => `linha ${i} de contexto injetado`),
+        '',
+        'Reutilize tokens e componentes existentes.',
+      ].join('\n');
+      const pending = deliverAgentPrompt('session-1', brief, undefined, { adapterId: 'kimi' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(pending).resolves.toBe(true);
+      expect(stubs.writeSession).toHaveBeenCalledWith(
+        'session-1',
+        `\x1b[200~${brief}\x1b[201~`,
+        expect.objectContaining({ markInputBusy: false }),
+      );
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
       vi.useRealTimers();
     }
   });
