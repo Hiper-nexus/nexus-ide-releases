@@ -117,6 +117,26 @@ describe('buildCodeMapTools', () => {
     expect(miss.fallbackReason).toBe('no-index-hits');
   });
 
+  it('F-1256: a 1ª consulta de várias palavras acha pelo fallback, sem esperar o índice', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-map-tokens-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-map-cache-'));
+    roots.push(root, cacheRoot);
+    fs.mkdirSync(path.join(root, 'src/main/orch'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src/main/orch/hook-edit-provenance.ts'), 'void 0;\n');
+    fs.writeFileSync(path.join(root, 'src/main/orch/hook-status-endpoint.ts'), 'void 0;\n');
+    fs.writeFileSync(path.join(root, 'src/main/orch/unrelated.ts'), 'void 0;\n');
+    configureProjectOrientationService({ cacheRoot, includeContextSummary: false });
+    const query = buildCodeMapTools().find((tool) => tool.name === 'nexus_code_map_query')!;
+    type Result = { mode: string; paths: string[]; fallbackReason?: string };
+
+    const first = (await query.handler({ q: 'hook provenance edit' }, ctx(scopeFor(root)))) as Result;
+    expect(first.mode).toBe('substring');
+    // O arquivo com as três palavras vem antes do que só tem "hook".
+    expect(first.paths[0]).toBe('src/main/orch/hook-edit-provenance.ts');
+    expect(first.paths).toContain('src/main/orch/hook-status-endpoint.ts');
+    expect(first.paths).not.toContain('src/main/orch/unrelated.ts');
+  });
+
   it('F-1238: queries concorrentes leem o índice estrutural do disco uma vez, sem readFileSync', async () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-map-cold-')));
     const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-map-cache-'));

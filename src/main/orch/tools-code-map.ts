@@ -136,23 +136,31 @@ const queryTool: McpToolDef = {
       });
     }
 
-    const needle = input.q.toLowerCase();
-    const hubs = map.symbols.hubs
-      .filter(
-        (hub) =>
-          hub.name.toLowerCase().includes(needle) ||
-          hub.samplePaths.some((p) => p.toLowerCase().includes(needle)),
-      )
-      .slice(0, input.limit);
-    const paths = [...new Set([
+    // F-1256: "tokens or substring" — cada palavra conta; quem casa mais vem
+    // antes. A consulta inteira como uma substring só nunca achava nada com
+    // duas palavras, justamente na 1ª chamada, enquanto o índice ainda nasce.
+    const tokens = [...new Set(input.q.toLowerCase().split(/\s+/).filter(Boolean))];
+    const matches = (text: string): number => {
+      const lower = text.toLowerCase();
+      return tokens.filter((token) => lower.includes(token)).length;
+    };
+    const byMatches = <T>(items: readonly T[], score: (item: T) => number): T[] =>
+      items
+        .map((item, order) => ({ item, order, score: score(item) }))
+        .filter((entry) => entry.score > 0)
+        .sort((a, b) => b.score - a.score || a.order - b.order)
+        .slice(0, input.limit)
+        .map((entry) => entry.item);
+    const hubs = byMatches(map.symbols.hubs, (hub) =>
+      Math.max(matches(hub.name), ...hub.samplePaths.map(matches)),
+    );
+    const paths = byMatches([...new Set([
       ...map.inventory.entrypoints,
       ...map.inventory.manifests,
       ...map.docs.rootDocs,
       ...map.inventory.topDirs.map((dir) => dir.path),
       ...files,
-    ])]
-      .filter((item) => item.toLowerCase().includes(needle))
-      .slice(0, input.limit);
+    ])], matches);
     return Object.freeze({
       mapHash: map.mapHash,
       status: map.status,
