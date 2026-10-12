@@ -59,12 +59,20 @@ describe('benchmarks oficiais publicados (F-675)', () => {
     expect(missing).toEqual([]);
   });
 
-  it('F-1391: wonder/wonder-full sem número público herdam o piso do spark-1.3, com a fonte não verificada', () => {
+  it('F-1391: wonder-full e wonder usam a DeepSWE oficial da Meta e passam o Opus 5.5', () => {
+    const full = publishedCodingQuality('muse', 'muse-wonder-full-1.0');
+    const wonder = publishedCodingQuality('muse', 'muse-wonder-1.0');
     const spark = publishedCodingQuality('muse', 'muse-spark-1.3');
-    expect(spark).not.toBeNull();
+    const opus = publishedCodingQuality('claude', 'claude-opus-5-5');
+    expect(full).not.toBeNull();
+    expect(wonder).not.toBeNull();
+    // A faixa DeepSWE [45,76] satura acima de 76: os dois wonder chegam ao
+    // teto 24, acima do Opus 5.5 (74,2); a rota escolhe o full no difícil.
+    expect(full!).toBeGreaterThanOrEqual(wonder!);
+    expect(wonder!).toBeGreaterThan(opus!);
+    expect(wonder!).toBeGreaterThanOrEqual(spark!);
     for (const model of ['muse-wonder-1.0', 'muse-wonder-full-1.0']) {
-      expect(publishedCodingQuality('muse', model)).toBe(spark);
-      expect(PUBLISHED_BENCHMARKS[`muse:${model}`]?.source).toMatch(/Meta.*operador.*não verificado/);
+      expect(PUBLISHED_BENCHMARKS[`muse:${model}`]?.source).toBe('https://dev.meta.ai/models/muse-wonder/');
     }
   });
 

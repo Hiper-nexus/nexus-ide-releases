@@ -300,8 +300,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'aider', model: 'claude-opus-4-8' },
     { adapterId: 'opencode', model: 'openrouter/anthropic/claude-opus-4.8' },
     // F-1391: difícil/crítico no Muse vai para o wonder-full-1.0, o mais
-    // forte do catálogo Meta (o fabricante o compara ao Opus 5.5 — informado
-    // pelo operador, sem número público); spark-1.3 para a CLI sem o wonder.
+    // forte do catálogo Meta (DeepSWE 79,0 na tabela oficial, acima do Opus
+    // 5.5); spark-1.3 para a CLI sem o wonder.
     { adapterId: 'muse', model: 'muse-wonder-full-1.0' },
     { adapterId: 'muse', model: 'muse-spark-1.3' },
   ],
