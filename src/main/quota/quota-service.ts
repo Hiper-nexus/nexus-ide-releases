@@ -53,6 +53,19 @@ import {
 const PROVIDER_API_TTL_MS = 60_000;
 
 /**
+ * F-1417: sondas que custam uma inferência real por leitura. A do Muse é um
+ * POST de geração (a Meta não publica endpoint de uso): a 60 s eram 60
+ * gerações por hora debitadas da própria janela que ela mede.
+ */
+const PROVIDER_API_TTL_BY_ADAPTER: Readonly<Record<string, number>> = {
+  muse: 5 * 60_000,
+};
+
+export function providerApiTtlMs(adapterId: string): number {
+  return Math.max(PROVIDER_API_TTL_MS, PROVIDER_API_TTL_BY_ADAPTER[adapterId] ?? 0);
+}
+
+/**
  * Backoff após uma observação que falhou (rede, auth, rate limit — ex. o
  * /api/oauth/usage do Claude responde 429 sob uso pesado). Sem isso cada
  * refresh re-tenta na hora e a martelada sustenta o próprio rate limit:
@@ -685,7 +698,7 @@ export class QuotaService {
         await this.#refreshPlan(row, now, forceApi, generation);
         if (!forceApi) {
           const cached = this.#apiCache.get(id);
-          if (cached && now - cached.at < PROVIDER_API_TTL_MS) {
+          if (cached && now - cached.at < providerApiTtlMs(row.adapterId)) {
             observations.set(id, cached);
             return;
           }

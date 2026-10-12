@@ -16,10 +16,13 @@
  * any failure returns null windows.
  */
 
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import {
+  readRegularFileCapped,
+  readRegularFileCappedAsync,
+} from '../redline/redline-safe-read';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { knownWindow } from './quota-normalize';
 import type { FetchLike } from './claude-oauth-usage';
@@ -272,10 +275,13 @@ export interface MuseLoginResolveOptions {
   home?: string;
   env?: NodeJS.ProcessEnv;
   /** Test seam: conteúdo bruto do auth.json (null = ausente/ilegível). */
-  readAuthFile?: () => string | null;
+  readAuthFile?: () => string | null | Promise<string | null>;
   /** Test seam: segredo do cofre do SO para a conta do provider. */
-  readPlatformSecret?: (account: string) => string | null;
+  readPlatformSecret?: (account: string) => string | null | Promise<string | null>;
 }
+
+/** F-1417: auth.json/settings.json de terceiros — teto e só arquivo regular. */
+export const MUSE_CONFIG_MAX_BYTES = 256 * 1024;
 
 /** Mesma resolução de caminho de `museAuthPath` (subscription-auth). */
 function museAuthFilePath(
@@ -294,7 +300,10 @@ function museSettingsModel(home: string, env: NodeJS.ProcessEnv): string | null 
     const file = path.join(
       xdg && path.isAbsolute(xdg) ? xdg : path.join(home, '.config'), 'muse', 'settings.json',
     );
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { model?: unknown };
+    // O_NONBLOCK + arquivo regular + teto: um FIFO aqui não pendura o Main.
+    const read = readRegularFileCapped(file, MUSE_CONFIG_MAX_BYTES);
+    if (read.kind !== 'text') return null;
+    const parsed = JSON.parse(read.text) as { model?: unknown };
     return typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model.trim() : null;
   } catch {
     return null;
@@ -327,42 +336,92 @@ function platformSecretKey(payload: string): string | null {
   }
 }
 
-/**
- * Segredo do cofre do SO por conta do provider. No macOS isto lê o valor
- * (`-w`) — diferente da detecção de sessão do F-616, que só confere
- * atributos para não disparar prompt do Keychain: aqui o segredo É o
- * insumo da leitura de cota, como nas demais sondas OAuth (a QuotaService
- * já não sonda ao vivo em smoke por este motivo).
- */
-function readMusePlatformSecret(account: string): string | null {
-  try {
-    if (process.platform === 'darwin') {
-      return execFileSync(
-        'security',
-        ['find-generic-password', '-s', MUSE_KEYCHAIN_SERVICE, '-a', account, '-w'],
-        { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000, killSignal: 'SIGKILL', encoding: 'utf8' },
-      );
-    }
-    if (process.platform === 'linux') {
-      return execFileSync(
-        'secret-tool',
-        ['lookup', 'service', MUSE_KEYCHAIN_SERVICE, 'account', account],
-        { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000, killSignal: 'SIGKILL', encoding: 'utf8' },
-      );
-    }
-  } catch {
-    return null;
-  }
-  return null;
+/** Sucesso guardado: o tick de cota não volta ao cofre a cada minuto. */
+export const MUSE_SECRET_CACHE_TTL_MS = 10 * 60_000;
+/** Negado/travado: não reabre o diálogo do Keychain em laço. */
+export const MUSE_SECRET_DENIED_BACKOFF_MS = 5 * 60_000;
+
+type MuseSecretCacheEntry = { value: string | null; until: number };
+const museSecretCache = new Map<string, MuseSecretCacheEntry>();
+const museSecretFlights = new Map<string, Promise<string | null>>();
+
+/** Test seam + limpeza depois de `muse login`. */
+export function clearMuseSecretCache(): void {
+  museSecretCache.clear();
+  museSecretFlights.clear();
 }
 
-function authBlob(opts: MuseLoginResolveOptions, home: string, env: NodeJS.ProcessEnv): string | null {
+type ExecFileLike = (
+  file: string,
+  args: readonly string[],
+  options: { timeout: number; killSignal: NodeJS.Signals; windowsHide: boolean; encoding: 'utf8' },
+  callback: (error: (Error & { code?: unknown }) | null, stdout: string) => void,
+) => unknown;
+
+/**
+ * Segredo do cofre do SO por conta do provider — ASSÍNCRONO (F-1417). O
+ * `execFileSync` antigo rodava dentro do tick de cota e travava o Main até
+ * 5 s por conta delegada. Agora: `execFile` com teto, uma leitura em voo por
+ * conta, sucesso guardado por 10 min e negação em backoff de 5 min. O valor
+ * só existe em memória; nunca é registrado nem gravado.
+ */
+export function readMusePlatformSecret(
+  account: string,
+  execImpl: ExecFileLike = execFile as unknown as ExecFileLike,
+  now: () => number = Date.now,
+): Promise<string | null> {
+  const held = museSecretCache.get(account);
+  if (held && now() < held.until) return Promise.resolve(held.value);
+  const flight = museSecretFlights.get(account);
+  if (flight) return flight;
+  const command =
+    process.platform === 'darwin'
+      ? { file: 'security', args: ['find-generic-password', '-s', MUSE_KEYCHAIN_SERVICE, '-a', account, '-w'] }
+      : process.platform === 'linux'
+        ? { file: 'secret-tool', args: ['lookup', 'service', MUSE_KEYCHAIN_SERVICE, 'account', account] }
+        : null;
+  if (!command) return Promise.resolve(null);
+  const pending = new Promise<string | null>((resolve) => {
+    try {
+      execImpl(command.file, command.args, {
+        timeout: 5_000,
+        killSignal: 'SIGKILL',
+        windowsHide: true,
+        encoding: 'utf8',
+      }, (error, stdout) => {
+        if (!error) {
+          const value = typeof stdout === 'string' && stdout.trim() ? stdout : null;
+          museSecretCache.set(account, { value, until: now() + MUSE_SECRET_CACHE_TTL_MS });
+          resolve(value);
+          return;
+        }
+        // 44 = item ausente no macOS: resposta definitiva, cache curto igual.
+        const backoff = error.code === 44 ? MUSE_SECRET_CACHE_TTL_MS : MUSE_SECRET_DENIED_BACKOFF_MS;
+        museSecretCache.set(account, { value: null, until: now() + backoff });
+        resolve(null);
+      });
+    } catch {
+      museSecretCache.set(account, { value: null, until: now() + MUSE_SECRET_DENIED_BACKOFF_MS });
+      resolve(null);
+    }
+  }).finally(() => museSecretFlights.delete(account));
+  museSecretFlights.set(account, pending);
+  return pending;
+}
+
+async function authBlobAsync(opts: MuseLoginResolveOptions, home: string, env: NodeJS.ProcessEnv): Promise<string | null> {
   if (opts.readAuthFile) return opts.readAuthFile();
-  try {
-    return fs.readFileSync(museAuthFilePath(home, env), 'utf8');
-  } catch {
-    return null;
+  const read = await readRegularFileCappedAsync(museAuthFilePath(home, env), MUSE_CONFIG_MAX_BYTES);
+  return read.kind === 'text' ? read.text : null;
+}
+
+function authBlobSync(opts: MuseLoginResolveOptions, home: string, env: NodeJS.ProcessEnv): string | null {
+  if (opts.readAuthFile) {
+    const value = opts.readAuthFile();
+    return typeof value === 'string' ? value : null;
   }
+  const read = readRegularFileCapped(museAuthFilePath(home, env), MUSE_CONFIG_MAX_BYTES);
+  return read.kind === 'text' ? read.text : null;
 }
 
 /**
@@ -370,9 +429,9 @@ function authBlob(opts: MuseLoginResolveOptions, home: string, env: NodeJS.Proce
  * ambiente → `providers.meta.api_key` (ou access_token) no auth.json →
  * cofre do SO para cada provider delegado declarado no auth.json.
  */
-export function resolveMuseLoginCredential(
+export async function resolveMuseLoginCredential(
   opts: MuseLoginResolveOptions = {},
-): MuseLoginCredential | null {
+): Promise<MuseLoginCredential | null> {
   const home = opts.home ?? os.homedir();
   const env = opts.env ?? process.env;
   const model = resolveMuseProbeModel(home, env);
@@ -380,7 +439,7 @@ export function resolveMuseLoginCredential(
   const envKey = cleanKey(env.META_API_KEY);
   if (envKey) return { apiKey: envKey, model };
 
-  const blob = authBlob(opts, home, env);
+  const blob = await authBlobAsync(opts, home, env);
   if (blob) {
     try {
       const parsed = JSON.parse(blob) as {
@@ -392,9 +451,9 @@ export function resolveMuseLoginCredential(
     } catch {
       // auth.json ilegível: tenta o cofre mesmo assim.
     }
-    const readSecret = opts.readPlatformSecret ?? readMusePlatformSecret;
+    const readSecret = opts.readPlatformSecret ?? ((account: string) => readMusePlatformSecret(account));
     for (const account of museKeychainDelegatedProviders(blob)) {
-      const payload = readSecret(account);
+      const payload = await readSecret(account);
       const key = payload ? platformSecretKey(payload) : null;
       if (key) return { apiKey: key, model };
     }
@@ -411,7 +470,7 @@ export function museLoginSignedIn(opts: MuseLoginResolveOptions = {}): boolean {
   const home = opts.home ?? os.homedir();
   const env = opts.env ?? process.env;
   if (cleanKey(env.META_API_KEY)) return true;
-  const blob = authBlob(opts, home, env);
+  const blob = authBlobSync(opts, home, env);
   if (!blob) return false;
   return museAuthBlobIsUsable(blob) || museKeychainDelegatedProviders(blob).length > 0;
 }

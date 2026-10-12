@@ -29,6 +29,10 @@ import {
   openClaudeKeychainService,
   readNativeOAuthCredential,
 } from '../adapters/native-oauth-keychain';
+import {
+  readRegularFileCapped,
+  readRegularFileCappedAsync,
+} from '../redline/redline-safe-read';
 
 export const OPENCLAUDE_CLI_USAGE_TIMEOUT_MS = 20_000;
 
@@ -46,16 +50,16 @@ export function openclaudeConfigDir(home = os.homedir()): string {
   return path.join(home, '.openclaude');
 }
 
-function readCredentialsFile(home = os.homedir()): string | null {
-  try {
-    const raw = fs.readFileSync(
-      path.join(openclaudeConfigDir(home), '.credentials.json'),
-      'utf8',
-    );
-    return raw.length > 0 ? raw : null;
-  } catch {
-    return null;
-  }
+/** F-1417: credencial de terceiros — teto e só arquivo regular (sem FIFO). */
+export const OPENCLAUDE_CREDENTIALS_MAX_BYTES = 256 * 1024;
+
+function credentialsFile(home: string): string {
+  return path.join(openclaudeConfigDir(home), '.credentials.json');
+}
+
+async function readCredentialsFile(home = os.homedir()): Promise<string | null> {
+  const read = await readRegularFileCappedAsync(credentialsFile(home), OPENCLAUDE_CREDENTIALS_MAX_BYTES);
+  return read.kind === 'text' && read.text.length > 0 ? read.text : null;
 }
 
 /**
@@ -65,7 +69,7 @@ function readCredentialsFile(home = os.homedir()): string | null {
 export async function resolveOpenClaudeToken(
   home = os.homedir(),
 ): Promise<string | null> {
-  const blob = readCredentialsFile(home);
+  const blob = await readCredentialsFile(home);
   const fileToken = blob ? extractClaudeAccessToken(blob) : null;
   if (fileToken || process.platform !== 'darwin') return fileToken;
   try {
@@ -80,7 +84,9 @@ export async function resolveOpenClaudeToken(
 
 /** Public session evidence without touching the secret. */
 export function openclaudeSignedIn(home = os.homedir()): boolean {
-  if (readCredentialsFile(home)) return true;
+  // O_NONBLOCK + arquivo regular + teto: síncrono, mas nunca pendura o Main.
+  const read = readRegularFileCapped(credentialsFile(home), OPENCLAUDE_CREDENTIALS_MAX_BYTES);
+  if (read.kind === 'text' && read.text.length > 0) return true;
   // Keychain presence is async; the sync path only proves the file seat.
   return false;
 }
