@@ -25,7 +25,7 @@ import {
   enforceScopeRules,
   writeSwarmMailboxMessage,
 } from "./swarm-protocol";
-import { markHandoffSubmitted, executionScopeFor, type GateRole } from "./gate";
+import { markHandoffSubmitted, executionScopeFor, type AgentGateContext, type GateRole } from "./gate";
 import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { onHandoffSubmitted } from "./idle-delivery";
 import {
@@ -54,7 +54,9 @@ import {
 } from "./mcp-protocol";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import { normalizeHandoffStatusInput } from "./legacy-handoff";
-import { requireStr, str } from "./tool-util";
+import { injectPrompt, requireStr, str } from "./tool-util";
+import { paneSpawnTool } from "./tools-panes";
+import { isolatedWriterPaneOfSession } from "./isolated-writer-worktree";
 import {
   deliveryContractExhaustedArtifact,
   deliveryContractRetryMessage,
@@ -1273,10 +1275,14 @@ const handoffAcknowledgeTool: McpToolDef = {
     "Orchestrator-only; the ACK is bound to the exact accepted delivery. It never " +
     "completes a mission by itself, but verified completion requires this receipt. " +
     'verdict (default "accepted"): pass "rework" when you do NOT accept the delivery ' +
-    "as-is (you send it back, or redo it elsewhere). It only records the verdict — " +
-    "you still send the correction yourself — and Nexus learns from it: the " +
-    "evidence review is labeled right/wrong against your decision, and a rework " +
-    "counts as a failure in the CLI/model success rate that routing uses.",
+    "as-is. With a `note`, Nexus sends it back to the SAME writer: typed into its " +
+    "PTY if the pane is still alive, otherwise the writer is reopened with resume " +
+    "in its own worktree (branch and WIP intact) and the note is its prompt; the " +
+    "receipt carries paneId and reworkVia. A writer that cannot be resumed (no " +
+    "worktree of its own) is reported as reworkDelivered:false with the reason — " +
+    "then open a new writer with the note yourself. Nexus also learns from the " +
+    "verdict: the evidence review is labeled right/wrong against your decision, and " +
+    "a rework counts as a failure in the CLI/model success rate that routing uses.",
   inputSchema: {
     type: "object",
     properties: {
@@ -1285,7 +1291,12 @@ const handoffAcknowledgeTool: McpToolDef = {
         type: "string",
         enum: ["accepted", "rework"],
         description:
-          'accepted (default) = delivery accepted as-is; rework = sent back or redone',
+          'accepted (default) = delivery accepted as-is; rework = sent back to the writer (with note) or redone',
+      },
+      note: {
+        type: "string",
+        description:
+          "rework only: what must change. Delivered verbatim to the writer as its next prompt.",
       },
     },
     required: ["handoffId"],
@@ -1322,9 +1333,68 @@ const handoffAcknowledgeTool: McpToolDef = {
     );
     if (!consumed)
       throw new Error("handoff is not awaiting consumption in this mission");
-    return { ok: true, handoffId, deliveryState: "consumed", verdict };
+    const rework = verdict === "rework"
+      ? await deliverReworkToWriter(ctx, invocation, handoffId, str(args, "note"))
+      : {};
+    return { ok: true, handoffId, deliveryState: "consumed", verdict, ...rework };
   },
 };
+
+type ReworkDelivery =
+  | { reworkDelivered: true; reworkVia: "pty" | "resume"; paneId: string }
+  | { reworkDelivered: false; reworkReason: string };
+
+/**
+ * F-1319: o veredito "rework" volta ao writer que entregou. Pane vivo: a nota
+ * entra no PTY dele (mesmo transporte do nexus_pane_write). Pane encerrado
+ * (o worker de missão fecha no success): reabre com `resume` — worktree
+ * isolada pelo registro durável, ou cwd de worktree própria pelo snapshot —
+ * e a nota é o prompt. Sem como retomar, diz isso; nunca finge. O ACK já foi
+ * consumido: falha de transporte vira `reworkDelivered:false`, não exceção.
+ */
+async function deliverReworkToWriter(
+  ctx: AgentGateContext,
+  invocation: McpToolInvocation | undefined,
+  handoffId: string,
+  note: string | undefined,
+): Promise<ReworkDelivery> {
+  if (!note?.trim()) {
+    return { reworkDelivered: false, reworkReason: "sem note: nada para devolver ao writer" };
+  }
+  const sessionId = getProjectDomainStores(ctx.scope).handoffs.get(handoffId)?.sessionId;
+  if (!sessionId) {
+    return { reworkDelivered: false, reworkReason: "handoff sem sessão de origem; abra um writer novo com a nota" };
+  }
+  const prompt =
+    `[NEXUS_REWORK] O Maestro devolveu sua entrega (handoff ${handoffId}) para melhorar:\n${note.trim()}\n` +
+    "Corrija na sua worktree/branch atual e entregue de novo com nexus_handoff_submit.";
+  try {
+    const pane = listPaneSnapshots().find((candidate) => candidate.sessionId === sessionId);
+    if (pane && !["exited", "parked", "hibernated"].includes(pane.state)) {
+      await injectPrompt(sessionId, prompt, invocation, "maestro");
+      return { reworkDelivered: true, reworkVia: "pty", paneId: pane.paneId };
+    }
+    const ownWorktree = pane?.executionScope?.rootRealPath !== undefined &&
+      pane.executionScope.rootRealPath !== ctx.scope.rootRealPath;
+    const resumePaneId = isolatedWriterPaneOfSession(ctx.scope, sessionId) ?? (ownWorktree ? pane?.paneId : undefined);
+    if (!resumePaneId) {
+      return {
+        reworkDelivered: false,
+        reworkReason: "writer encerrado sem worktree própria (rodou no checkout compartilhado): abra um writer novo com a nota",
+      };
+    }
+    const reopened = (await paneSpawnTool.handler(
+      { resume: resumePaneId, prompt, ...(ctx.missionId ? { missionId: ctx.missionId } : {}) },
+      ctx,
+      invocation,
+    )) as { paneId?: unknown } | null;
+    const paneId = typeof reopened?.paneId === "string" ? reopened.paneId : resumePaneId;
+    return { reworkDelivered: true, reworkVia: "resume", paneId };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { reworkDelivered: false, reworkReason: `a nota não chegou ao writer: ${reason}` };
+  }
+}
 
 /** F-782: ausente = aceito como veio (o ACK de sempre). */
 function handoffAckVerdictArg(raw: unknown): HandoffAckVerdict {

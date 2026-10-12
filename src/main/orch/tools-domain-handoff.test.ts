@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   heartbeat: vi.fn(),
   acceptHandoff: vi.fn(),
   markConsumedFromPhysicalAck: vi.fn(),
+  getHandoff: vi.fn((): Record<string, unknown> | null => null),
   requireMissionLeaderSession: vi.fn(
     (_scope: unknown, missionId: string, ctx: { sessionId?: string | null }) => {
       try {
@@ -75,6 +76,28 @@ vi.mock("./project-domain-store-registry", () => ({
 
 vi.mock("./mission-leader-gate", () => ({
   requireMissionLeaderSession: mocks.requireMissionLeaderSession,
+}));
+
+// F-1319: transporte do writer ao qual o veredito "rework" volta.
+const reworkMocks = vi.hoisted(() => ({
+  spawn: vi.fn(async (): Promise<unknown> => ({ paneId: "pane-reopened", sessionId: "session-reopened" })),
+  injectPrompt: vi.fn(async (_sessionId: string, _prompt: string) => undefined),
+  isolatedWriterPaneOfSession: vi.fn((): string | undefined => undefined),
+}));
+vi.mock("./tools-panes", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./tools-panes")>();
+  return {
+    ...original,
+    paneSpawnTool: { ...original.paneSpawnTool, handler: reworkMocks.spawn },
+  };
+});
+vi.mock("./tool-util", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./tool-util")>()),
+  injectPrompt: reworkMocks.injectPrompt,
+}));
+vi.mock("./isolated-writer-worktree", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./isolated-writer-worktree")>()),
+  isolatedWriterPaneOfSession: reworkMocks.isolatedWriterPaneOfSession,
 }));
 
 const jevReview = vi.hoisted(() => ({
@@ -332,6 +355,7 @@ describe("handoff MCP stop receipt", () => {
         listCursorPage: mockedListCursorPage,
         listRecentIds: mockedListRecentIds,
         markConsumedFromPhysicalAck: mocks.markConsumedFromPhysicalAck,
+        get: mocks.getHandoff,
       },
       taskDispatches: {
         list: () => [],
@@ -1013,6 +1037,95 @@ describe("handoff MCP stop receipt", () => {
       ),
     ).rejects.toThrow(/verdict must be "accepted" or "rework"/);
     expect(mocks.markConsumedFromPhysicalAck).not.toHaveBeenCalled();
+  });
+
+  describe("F-1319: o veredito rework volta ao writer", () => {
+    const orchestrator = () => ({
+      ...context(),
+      role: "orchestrator" as const,
+      sessionId: "orchestrator-session",
+      workerIncarnationId: undefined,
+    });
+    const ack = (args: Record<string, unknown>) =>
+      acknowledgeTool().handler(
+        { handoffId: "handoff-a", verdict: "rework", ...args },
+        orchestrator(),
+        invocation({ toolCallId: "ack-tool-call-rework", toolName: "nexus_handoff_ack" }),
+      );
+    beforeEach(() => {
+      mocks.markConsumedFromPhysicalAck.mockReturnValue(true);
+      mocks.getHandoff.mockReturnValue({ id: "handoff-a", missionId: "mission-a", sessionId: "writer-session" });
+      reworkMocks.isolatedWriterPaneOfSession.mockReturnValue(undefined);
+      reworkMocks.spawn.mockResolvedValue({ paneId: "pane-reopened", sessionId: "session-reopened" });
+    });
+    afterEach(() => {
+      paneMocks.listPaneSnapshots.mockReturnValue([
+        { paneId: "pane-live", sessionId: "session-live", paneNumber: 1 },
+      ]);
+    });
+
+    it("writer já encerrado com worktree própria: reabre com resume e a nota vira o prompt", async () => {
+      paneMocks.listPaneSnapshots.mockReturnValue([
+        { paneId: "pane-writer", sessionId: "writer-session", paneNumber: 3, state: "exited" } as never,
+      ]);
+      reworkMocks.isolatedWriterPaneOfSession.mockReturnValue("pane-writer");
+      await expect(ack({ note: "falta o teste do caso vazio" })).resolves.toMatchObject({
+        ok: true,
+        verdict: "rework",
+        reworkDelivered: true,
+        reworkVia: "resume",
+        paneId: "pane-reopened",
+      });
+      expect(reworkMocks.spawn).toHaveBeenCalledTimes(1);
+      const [spawnArgs, spawnCtx] = reworkMocks.spawn.mock.calls[0] as unknown as [Record<string, unknown>, { sessionId: string }];
+      expect(spawnArgs).toMatchObject({ resume: "pane-writer", missionId: "mission-a" });
+      expect(spawnArgs.prompt).toContain("falta o teste do caso vazio");
+      expect(spawnArgs.prompt).toContain("handoff-a");
+      expect(spawnCtx.sessionId).toBe("orchestrator-session");
+      expect(reworkMocks.injectPrompt).not.toHaveBeenCalled();
+    });
+
+    it("writer ainda vivo: a nota entra no PTY dele, sem reabrir", async () => {
+      paneMocks.listPaneSnapshots.mockReturnValue([
+        { paneId: "pane-writer", sessionId: "writer-session", paneNumber: 3, state: "idle" } as never,
+      ]);
+      await expect(ack({ note: "renomeie a flag" })).resolves.toMatchObject({
+        reworkDelivered: true,
+        reworkVia: "pty",
+        paneId: "pane-writer",
+      });
+      expect(reworkMocks.injectPrompt).toHaveBeenCalledTimes(1);
+      expect(reworkMocks.injectPrompt.mock.calls[0][0]).toBe("writer-session");
+      expect(String(reworkMocks.injectPrompt.mock.calls[0][1])).toContain("renomeie a flag");
+      expect(reworkMocks.spawn).not.toHaveBeenCalled();
+    });
+
+    it("writer encerrado sem worktree própria: não finge — reworkDelivered:false com motivo", async () => {
+      paneMocks.listPaneSnapshots.mockReturnValue([
+        { paneId: "pane-writer", sessionId: "writer-session", paneNumber: 3, state: "exited", executionScope: scope } as never,
+      ]);
+      const result = (await ack({ note: "refaça" })) as Record<string, unknown>;
+      expect(result).toMatchObject({ ok: true, verdict: "rework", reworkDelivered: false });
+      expect(String(result.reworkReason)).toMatch(/writer novo/);
+      expect(reworkMocks.spawn).not.toHaveBeenCalled();
+      expect(reworkMocks.injectPrompt).not.toHaveBeenCalled();
+    });
+
+    it("rework sem note: o ACK vale, mas nada é entregue e o recibo diz isso", async () => {
+      const result = (await ack({})) as Record<string, unknown>;
+      expect(result).toMatchObject({ ok: true, verdict: "rework", reworkDelivered: false });
+      expect(String(result.reworkReason)).toMatch(/note/);
+      expect(mocks.markConsumedFromPhysicalAck).toHaveBeenCalledTimes(1);
+    });
+
+    it("falha no resume não desfaz o ACK: reworkDelivered:false com o erro", async () => {
+      paneMocks.listPaneSnapshots.mockReturnValue([]);
+      reworkMocks.isolatedWriterPaneOfSession.mockReturnValue("pane-writer");
+      reworkMocks.spawn.mockRejectedValueOnce(new Error("resume: a worktree original sumiu"));
+      const result = (await ack({ note: "x" })) as Record<string, unknown>;
+      expect(result).toMatchObject({ ok: true, deliveryState: "consumed", reworkDelivered: false });
+      expect(String(result.reworkReason)).toContain("worktree original sumiu");
+    });
   });
 
   it("denies ack from a stale orchestrator token even with the right role/mission", async () => {
