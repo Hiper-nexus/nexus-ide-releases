@@ -54,6 +54,13 @@ export interface LimitHit {
    * produto). Em pane de outra CLI é texto citado, nunca sinal vivo.
    */
   adapterId?: string;
+  /**
+   * F-1410: confirmado pela POSIÇÃO — casou uma célula de status/erro que só a
+   * TUI de `adapterId` desenha (padrão marcado na tabela compartilhada), não a
+   * frase solta. O failover só o usa com `hit.adapterId === pane.adapterId`,
+   * e só então marca a CLI sem conta gerenciada como limitada.
+   */
+  confirmed?: boolean;
 }
 
 // Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT):
@@ -126,9 +133,27 @@ function parseResetCooldown(text: string, now: number): number | null {
   if (secs) return Number(secs[1]) * 1000;
   const hrs = /(?:resets?|available again) in (\d+)\s*hour/i.exec(cleaned);
   if (hrs) return Number(hrs[1]) * HOUR;
+  const iso = parseResetIsoMs(cleaned, now);
+  if (iso !== null) return iso;
   const clock = parseResetClockMs(cleaned, now);
   if (clock !== null) return clock;
   return parseRetryAfterMsFromText(cleaned, now);
+}
+
+/**
+ * F-1410: reset em instante ISO-8601 absoluto — a API do Muse escreve "Your
+ * usage window resets at 2026-10-12T21:55:00Z". Sem ambiguidade de fuso, então
+ * vale até a janela semanal; passado (scrollback antigo) ou mais distante que
+ * isso não é reset vivo e devolve null.
+ */
+const RESET_ISO_MAX_MS = 8 * 24 * HOUR;
+
+function parseResetIsoMs(text: string, now: number): number | null {
+  const m = /\bresets?\s+(?:at\s+)?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2}))/i.exec(text);
+  if (!m) return null;
+  const at = Date.parse(m[1]);
+  if (!Number.isFinite(at) || at <= now || at - now > RESET_ISO_MAX_MS) return null;
+  return at - now;
 }
 
 /**
@@ -491,6 +516,8 @@ export function detectLimit(rawText: string, now: number = Date.now()): LimitHit
       reason: match[0].replace(/^[\s⎿│]+/u, '').trim().slice(0, 120),
       cooldownMs,
       ...(scope ? { scope } : {}),
+      // F-1410: célula de status/erro desta CLI — confirmado pela posição.
+      ...(pattern.adapterId ? { adapterId: pattern.adapterId, confirmed: true } : {}),
     };
   }
   const codexRejection = codexChatGptModelRejection(text);

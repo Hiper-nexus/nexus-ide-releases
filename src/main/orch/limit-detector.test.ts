@@ -3,7 +3,11 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { detectLimit, tierScopeFromModelId } from './limit-detector';
-import { sanitizeHandoffExcerptForDetector } from '../../shared/failover-handoff';
+import {
+  FAILOVER_HANDOFF_HEADER,
+  buildContinuityPack,
+  sanitizeHandoffExcerptForDetector,
+} from '../../shared/failover-handoff';
 
 describe('detectLimit', () => {
   it.each([
@@ -27,6 +31,77 @@ describe('detectLimit', () => {
   it('detects Claude usage-limit messages as rate-limit', () => {
     const hit = detectLimit("Claude usage limit reached. Your limit will reset at 3pm.");
     expect(hit?.kind).toBe('rate-limit');
+  });
+
+  // F-1410: o limite do Muse não era confirmado (operador, 12/10: "muse acabou
+  // limite, manda para outro" e a rota respondeu "exclude ignorado (CLI
+  // saudável)"). Formatos: rodapé `modelo · esforço · cwd` (Herdr muse.toml) +
+  // rótulo `Usage limit reached` e peças da entrada quota-hit (strings do
+  // binário 1.4.6); célula de erro literal da sessão Muse de 12/10/2026.
+  describe('F-1410: limite de uso do Muse Code', () => {
+    const MUSE_ERROR =
+      'API error 429 [request_id=0d689170-298c-48aa-a1cb-fa5f21b9ea5b]: Subscription quota exhausted. ' +
+      'Your usage window resets at 2026-10-12T21:55:00Z. (rate_limit_error)';
+
+    it.each([
+      'muse-spark-1.3 · medium · ~/proj · Usage limit reached',
+      'muse-wonder-full-1.0 · max · Usage limit reached',
+      'Usage limit reached\nRun /upgrade (https://meta.ai/muse/upgrade) for increased limits, or wait for usage to reset at 6:55 PM',
+      '  ● Use /upgrade (https://meta.ai/muse/upgrade) for increased limits',
+      MUSE_ERROR,
+      `✗ model failed: ${MUSE_ERROR}`,
+    ])('célula real da TUI do Muse é limite CONFIRMADO: %s', (screen) => {
+      const hit = detectLimit(screen);
+      expect(hit?.kind).toBe('rate-limit');
+      expect(hit?.adapterId).toBe('muse');
+      expect(hit?.confirmed).toBe(true);
+    });
+
+    it('o reset ISO da API dimensiona a janela', () => {
+      const now = Date.parse('2026-10-12T19:10:14Z');
+      expect(detectLimit(MUSE_ERROR, now)?.cooldownMs).toBe(Date.parse('2026-10-12T21:55:00Z') - now);
+      // Reset já passado (scrollback antigo) não é reset vivo: piso de 5 h.
+      expect(detectLimit(MUSE_ERROR, Date.parse('2026-10-13T00:00:00Z'))?.cooldownMs).toBe(5 * 60 * 60 * 1000);
+    });
+
+    it('texto CITADO do mesmo rótulo não confirma nada (F-249)', () => {
+      const notConfirmed = (text: string) => expect(detectLimit(text)?.confirmed).toBeUndefined();
+      // A frase solta numa linha é o que um `cat erro.log` reproduz: segue
+      // limite genérico (sonda decide), nunca confirmado.
+      notConfirmed('Usage limit reached');
+      expect(detectLimit('Usage limit reached')?.kind).toBe('rate-limit');
+      // Prosa citando o rodapé ou o upgrade no meio da frase.
+      notConfirmed('O rodapé do muse mostrava muse-spark-1.3 · medium · Usage limit reached.');
+      notConfirmed('Segundo o print, ele pediu para usar /upgrade (link) for increased limits ontem.');
+      // `cat session.jsonl`: o motivo vem dentro do JSON, não na célula.
+      notConfirmed(`{"kind":"terminal","terminal":"failed","reason":"${MUSE_ERROR}"}`);
+      // Rótulos do /goal: o orçamento do goal não é a conta.
+      expect(detectLimit('usage limited')).toBeNull();
+      expect(detectLimit('limited by budget')).toBeNull();
+      // Log rotulado, blockquote e fence são descartados.
+      expect(detectLimit('Log output: muse-spark-1.3 · medium · Usage limit reached')).toBeNull();
+      expect(detectLimit(`> ${MUSE_ERROR}`)).toBeNull();
+      expect(detectLimit('```\nmuse-spark-1.3 · medium · Usage limit reached\n```')).toBeNull();
+      // Eco do pack de continuidade (neutralizado por construção, F-999).
+      const pack = buildContinuityPack({
+        fromAccountLabel: 'Muse',
+        toAccountLabel: 'Codex',
+        reason: 'muse-spark-1.3 · medium · Usage limit reached',
+        scrollbackExcerpt: `${MUSE_ERROR}\nRun /upgrade (https://x) for increased limits`,
+        limitKind: 'rate-limit',
+        limitCooldownMs: 5 * 60 * 60 * 1000,
+      });
+      expect(detectLimit(pack)).toBeNull();
+      expect(detectLimit(pack.replace(FAILOVER_HANDOFF_HEADER, ''))?.confirmed).toBeUndefined();
+    });
+
+    it('o limite genérico de outras CLIs segue igual e sem marca', () => {
+      const claude = detectLimit('Claude usage limit reached. Resets at 3pm.');
+      expect(claude?.kind).toBe('rate-limit');
+      expect(claude?.adapterId).toBeUndefined();
+      expect(claude?.confirmed).toBeUndefined();
+      expect(detectLimit('Error: quota exhausted')?.confirmed).toBeUndefined();
+    });
   });
 
   it('detects HTTP 429 / rate_limit', () => {
@@ -596,6 +671,7 @@ describe('F-1019: sinal de limite só nasce da fonte compartilhada (anti-drift)'
     'mins /try again in (\\d+)\\s*(?:minute|min)/i',
     'secs /try again in (\\d+)\\s*(?:second|sec)/i',
     'hrs /(?:resets?|available again) in (\\d+)\\s*hour/i',
+    'm /\\bresets?\\s+(?:at\\s+)?(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?(?:Z|[+-]\\d{2}:?\\d{2}))/i',
     'm /\\bresets?\\s+(?:at\\s+)?(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)\\b(?:\\s*\\(([^)]{1,64})\\))?/i',
     'BLOCKQUOTE_LINE /^[ \\t]{0,3}(?:>[ \\t]?)+/',
     'FENCE_LINE /^[ \\t]{0,3}(`{3,}|~{3,})(.*)$/',

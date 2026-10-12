@@ -28,6 +28,14 @@ export interface LimitSignalPattern {
   kind: FailoverReasonKind;
   re: RegExp;
   cooldownMs: number;
+  /**
+   * F-1410: célula de status/erro que só a TUI desta CLI desenha, ancorada
+   * na posição da tela (nunca a frase solta). O hit sai `confirmed` e só vale
+   * quando o pane é a MESMA CLI (`hit.adapterId === pane.adapterId`): é o que
+   * autoriza marcar a CLI sem conta gerenciada como limitada
+   * (`cli-limit-registry.ts`).
+   */
+  adapterId?: string;
 }
 
 const HOUR = 60 * 60 * 1000;
@@ -35,6 +43,53 @@ const HOUR = 60 * 60 * 1000;
 // Order matters: quota before rate-limit before auth.
 // Patterns stay error-shaped to avoid false positives on docs/agent prose.
 export const LIMIT_SIGNAL_PATTERNS: readonly LimitSignalPattern[] = [
+  // ── Muse Code (F-1410) — CONFIRMADOS pela posição ─────────────────────────
+  //
+  // Vêm ANTES de tudo: a tela real do Muse também traz "Subscription quota
+  // exhausted", que o genérico `quota exhausted` abaixo pegaria sem a marca.
+  //
+  // O Muse Code tem login NATIVO por oauth (fora de
+  // `ALL_MULTI_ACCOUNT_ADAPTER_IDS`): não há conta gerenciada para pôr em
+  // cooldown nem irmã para trocar, então só a marcação da CLI inteira
+  // (`cli-limit-registry.ts`) tira o Muse da rota. Isso exige prova — F-249:
+  // a frase solta "Usage limit reached" numa linha é exatamente o texto que
+  // um `cat erro.log` ou um handoff reproduz, e NÃO confirma nada (continua
+  // caindo no genérico, não confirmado). Confirmam só células que a TUI
+  // desenha, ancoradas no começo da linha (brancos e glifos de moldura):
+  //  1. rodapé `modelo · esforço · … · Usage limit reached` — forma do rodapé
+  //     do manifesto Herdr `muse.toml` + o rótulo de status do binário 1.4.6
+  //     (tabela `connected`/`reconnecting`/`closed`/`interrupted`/`Usage
+  //     limit reached`);
+  //  2. o braço de upgrade da entrada de falha "quota-hit" (QH-FR-006):
+  //     `<verbo> /upgrade (<link>) for increased limits[, or wait for usage to
+  //     reset at <hora>]` — peças de formato do binário 1.4.6;
+  //  3. a célula de erro do turno: `API error 429 [request_id=…]: Subscription
+  //     quota exhausted. Your usage window resets at <ISO>. (rate_limit_error)`
+  //     — texto literal do `terminal: failed` da sessão Muse de 12/10/2026.
+  // Fora: `usage limited` e `limited by budget` são estados do /goal (o
+  // segundo é o ORÇAMENTO do goal, não a conta) — não provam limite de conta.
+  // Janela: 5 h (o bloco "5-hour-class" do Muse), dimensionada pelo reset
+  // quando o texto traz (ISO da API ou "reset at 6:55 PM" da entrada).
+  // Sem flag `i`: é a grafia exata da TUI. `adapterId` faz o detector marcar
+  // `confirmed`, e o failover só usa quando o pane também é `muse`.
+  {
+    kind: 'rate-limit',
+    cooldownMs: 5 * HOUR,
+    adapterId: 'muse',
+    re: /^[^\S\r\n\u2028\u2029]*[^\s·]+ · (?:none|minimal|low|medium|high|xhigh|max|ultra)(?: · [^\r\n·]*)* · Usage limit reached(?:[.!\s·]|$)/m,
+  },
+  {
+    kind: 'rate-limit',
+    cooldownMs: 5 * HOUR,
+    adapterId: 'muse',
+    re: /^(?:[^\S\r\n\u2028\u2029]|[◆▌▸⟩│⎿●✗■])*(?:[^\s·]+[^\S\r\n\u2028\u2029]+){0,3}\/upgrade \([^()\r\n]{0,300}\) for increased limits/m,
+  },
+  {
+    kind: 'rate-limit',
+    cooldownMs: 5 * HOUR,
+    adapterId: 'muse',
+    re: /^(?:[^\S\r\n\u2028\u2029]|[◆▌▸⟩│⎿●✗■])*(?:(?:model|run|request) failed:?[^\S\r\n\u2028\u2029]*)?API error 429 \[request_id=[^\]\r\n]{1,80}\]:[^\S\r\n\u2028\u2029]*Subscription quota exhausted/m,
+  },
   // Credits / quota exhausted — long cooldown.
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /insufficient[_\s]?quota/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /credit balance is too low/i },
