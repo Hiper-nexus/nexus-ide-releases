@@ -52,7 +52,24 @@ const JUNK_DIR = new Set([
   'build',
 ]);
 
-const MAX_WALK_FILES = 400;
+const MAX_WALK_FILES = 400;// F-1260: só a falha VIGENTE veta — entrega não-success ainda não consumida.
+// O histórico (handoff já consumido pelo Maestro, texto de learnings, um
+// success que cita a falha corrigida) é dado, nunca veto.
+const FAIL_CLOSED_TOKEN =
+  /session_authority_revoked|orchestrator_spawn_forbidden|sandbox_denied|sandbox_forbidden|process sandbox recusou/iu;
+
+function hasCurrentFailClosedHandoff(
+  handoffs: readonly Pick<Handoff, 'summary' | 'status' | 'deliveryState'>[],
+): boolean {
+  return handoffs.some(
+    (handoff) =>
+      handoff.status !== 'success' &&
+      handoff.deliveryState !== 'consumed' &&
+      FAIL_CLOSED_TOKEN.test(`${handoff.status} ${handoff.summary}`),
+  );
+}
+
+
 const MAX_WALK_VISITS = 2_000;
 const MAX_WALK_DEPTH = 6;
 
@@ -247,11 +264,13 @@ export function inspectProductEvidence(files: readonly string[]): {
 
 function failClosedHaystack(
   mission: Pick<Mission, 'status' | 'intentState'>,
+  handoffs: readonly Pick<Handoff, 'summary' | 'status' | 'deliveryState'>[],
 ): boolean {
   return (
     mission.status === 'failed' ||
     mission.status === 'blocked' ||
-    mission.intentState === 'blocked_technical'
+    mission.intentState === 'blocked_technical' ||
+    hasCurrentFailClosedHandoff(handoffs)
   );
 }
 
@@ -466,7 +485,7 @@ export async function maybeApplyCivilianPronto(
   } catch {
     return empty('wait', 'handoffs-unreadable');
   }
-  if (failClosedHaystack(mission)) {
+  if (failClosedHaystack(mission, handoffs)) {
     return empty('refuse', 'fail-closed');
   }
 
@@ -576,7 +595,7 @@ export async function maybeApplyCivilianPronto(
 
   const decision = decideCivilianPronto({
     missionStatus: mission.status,
-    failClosed: failClosedHaystack(mission),
+    failClosed: failClosedHaystack(mission, handoffs),
     boardAllDone,
     sealedDone,
     sealedTotal,

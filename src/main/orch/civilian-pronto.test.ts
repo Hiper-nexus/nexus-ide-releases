@@ -674,7 +674,7 @@ describe('F-1260 — veto fail-closed não olha texto histórico', () => {
   }
 
   it('handoff antigo failed/consumed com sandbox_denied não faz o Pronto recusar', async () => {
-    const { mission, completeVerified, deps } = prontoHarness({
+    const { mission, deps } = prontoHarness({
       handoffs: [
         {
           id: 'handoff-old-failed',
@@ -731,7 +731,7 @@ describe('F-1260 — veto fail-closed não olha texto histórico', () => {
   });
 
   it('causa só nos learnings após blocked→running não faz o Pronto recusar', async () => {
-    const { mission, completeVerified, deps } = prontoHarness({
+    const { mission, deps } = prontoHarness({
       learnings:
         '## Encerrada como bloqueada\nsession_authority_revoked: sandbox_denied.',
     });

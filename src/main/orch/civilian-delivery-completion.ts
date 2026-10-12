@@ -77,6 +77,23 @@ const JUNK_DIR = new Set([
 
 const JUNK_FILE = /(?:^|[/\\])(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|\.DS_Store)$/u;
 
+// F-1260: só a falha VIGENTE veta — entrega não-success ainda não consumida.
+// O histórico (handoff já consumido pelo Maestro, texto de learnings, um
+// success que cita a falha corrigida) é dado, nunca veto.
+const FAIL_CLOSED_TOKEN =
+  /session_authority_revoked|orchestrator_spawn_forbidden|sandbox_denied|sandbox_forbidden|process sandbox recusou/iu;
+
+function hasCurrentFailClosedHandoff(
+  handoffs: readonly Pick<Handoff, 'summary' | 'status' | 'deliveryState'>[],
+): boolean {
+  return handoffs.some(
+    (handoff) =>
+      handoff.status !== 'success' &&
+      handoff.deliveryState !== 'consumed' &&
+      FAIL_CLOSED_TOKEN.test(`${handoff.status} ${handoff.summary}`),
+  );
+}
+
 const REVIEW_HOLD_TASK =
   /regression|quality-gate|independent-review|guided-regression|guided-quality/iu;
 
@@ -472,11 +489,13 @@ export function inspectDeliveryEvidence(
 
 export function isFailClosedCivilianMission(
   mission: Pick<Mission, 'status' | 'intentState'>,
+  handoffs: readonly Pick<Handoff, 'summary' | 'status' | 'deliveryState'>[] = [],
 ): boolean {
   return (
     mission.status === 'failed' ||
     mission.status === 'blocked' ||
-    mission.intentState === 'blocked_technical'
+    mission.intentState === 'blocked_technical' ||
+    hasCurrentFailClosedHandoff(handoffs)
   );
 }
 
@@ -920,7 +939,7 @@ export function inspectCivilianDelivery(input: {
     hasRealWorkerDelivery,
     neverStartedDraft,
     boardAllDone,
-    failClosed: isFailClosedCivilianMission(input.mission),
+    failClosed: isFailClosedCivilianMission(input.mission, input.handoffs),
     holdForReview: holdsReviewForLegacyOrRegression(
       input.mission,
       input.planned,
@@ -1480,7 +1499,7 @@ async function reconcileCivilianCompletionAttempt(
   } catch {
     return emptyResult();
   }
-  if (isFailClosedCivilianMission(mission)) {
+  if (isFailClosedCivilianMission(mission, handoffs)) {
     return emptyResult('refuse-fail-closed');
   }
 
