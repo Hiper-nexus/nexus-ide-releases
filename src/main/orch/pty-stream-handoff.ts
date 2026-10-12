@@ -34,6 +34,8 @@ import {
   runInsidePtyStreamAgentTransport,
 } from "./http-mcp-boundary";
 import { onHandoffSubmitted } from "./idle-delivery";
+import { scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
+import { findPane, requestPaneClose } from "./pane-registry";
 import { advanceFastLaneStoryTaskFromHandoff } from "./mission-story-plan";
 import {
   committedPhysicalWorkerHead,
@@ -656,6 +658,15 @@ async function persistPtyHandoff(
         );
       }
     }
+    // F-1409: paridade com o MCP — success no ledger consome o braço de
+    // auto-close; a entrega vive no ledger, não no PTY do worker, então a
+    // fila do Maestro (deliveryState queued) não segura o pane.
+    scheduleAutoCloseAfterHandoff(
+      sessionId,
+      committed.handoff.status,
+      (id) => findPane(id)?.paneId ?? null,
+      requestPaneClose,
+    );
     return Object.freeze({
       handoffId: committed.handoff.id,
       taskDispatchState: committed.taskDispatch?.state ?? "",

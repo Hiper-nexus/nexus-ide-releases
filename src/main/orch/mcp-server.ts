@@ -87,7 +87,10 @@ import { MAX_MCP_PAYLOAD_BYTES } from "./mcp-args-validation";
 import { buildToolset } from "./tools";
 import {
   assertMissionSpawnAuthorityCurrent,
+  findPane,
+  requestPaneClose,
 } from "./pane-registry";
+import { scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
 import {
   isPlaceholderSummary,
   LegacyHandoffDedupe,
@@ -2087,7 +2090,18 @@ export async function startMcpServer(): Promise<void> {
   try {
     startHandoffSpool({
       root: handoffSpoolRoot(app.getPath("userData")),
-      deps: { getStores: getProjectDomainStores, deliver: onHandoffSubmitted },
+      deps: {
+        getStores: getProjectDomainStores,
+        deliver: onHandoffSubmitted,
+        // F-1409: success ingerido do spool fecha o worker armado, como no MCP.
+        afterIngest: (handoff) =>
+          scheduleAutoCloseAfterHandoff(
+            handoff.sessionId,
+            handoff.status,
+            (sessionId) => findPane(sessionId)?.paneId ?? null,
+            requestPaneClose,
+          ),
+      },
     });
   } catch (error) {
     console.warn("[handoff-spool] spool desligado:", error);
