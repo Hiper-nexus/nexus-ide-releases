@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -330,6 +331,19 @@ describe('fetchClaudeAccountUsageWindows', () => {
     expect(keychainProbe).not.toHaveBeenCalled();
     expect(mocks.readNativeOAuthCredential).not.toHaveBeenCalled();
     expect(mocks.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('credencial de perfil que é FIFO não pendura e fica indisponível (revisão de segurança)', async () => {
+    const home = makeHome();
+    fs.mkdirSync(path.join(home, '.claude'));
+    writeClaudeJson(path.join(home, '.claude.json'), { oauthAccount: { emailAddress: 'owner@example.test' } });
+    execFileSync('mkfifo', [path.join(home, '.claude', '.credentials.json')]);
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+
+    const r = await fetchClaudeAccountUsageWindows('owner', { now: NOW, home, keychainProbe: () => false });
+
+    expect(r).toEqual({ windows: null, hint: 'unavailable' });
+    expect(mocks.probeClaudeCredentialIdentity).not.toHaveBeenCalled();
   });
 
   it('returns no-credential for non-claude or missing accounts', async () => {
