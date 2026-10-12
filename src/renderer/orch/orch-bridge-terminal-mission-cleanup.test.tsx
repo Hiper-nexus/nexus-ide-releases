@@ -298,4 +298,54 @@ describe('cleanup de panes de missão terminal (campanha 0.50)', () => {
       ).toBe(spaceScopeKey('space-x'));
     },
   );
+
+  it('F-1360: broadcast com três missões da MESMA sessão (uma viva, duas encerradas) não devolve o pane à encerrada', () => {
+    // Regressão do F-1268: o Main preserva orchestratorSessionId nas missões
+    // antigas e lista created_at DESC. O loop usava o snapshot de panes
+    // colhido antes das escritas — a missão A, processada por último,
+    // sobrescrevia a viva C com o vínculo da encerrada.
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-op',
+        pane: {
+          id: 'pane-op',
+          kind: 'cli-agent',
+          title: 'mão do operador',
+          adapterId: 'claude',
+          missionId: 'mission-b',
+          missionHost: true,
+          role: 'orchestrator',
+          spaceId: 'space-x',
+          spaceTitle: 'Meus terminais',
+        },
+      },
+    });
+    terminal.getPaneSessionId.mockImplementation((paneId: string) =>
+      paneId === 'pane-op' ? 'session-s' : null,
+    );
+
+    act(() => {
+      missionsHandler?.([
+        { ...makeMission('mission-c', 'running'), orchestratorSessionId: 'session-s' },
+        { ...makeMission('mission-b', 'failed'), orchestratorSessionId: 'session-s' },
+        { ...makeMission('mission-a', 'failed'), orchestratorSessionId: 'session-s' },
+      ]);
+    });
+
+    const pane = listPanes(useLayoutStore.getState().root).find(
+      (item) => item.id === 'pane-op',
+    );
+    expect(pane?.missionId).toBe('mission-c');
+    expect(pane?.role).toBe('orchestrator');
+    expect(pane?.spaceId).toBe('space-x');
+    const panes = listPanes(useLayoutStore.getState().root);
+    expect(
+      missionHomeScopeKeys(
+        panes,
+        useOrchStore.getState().paneMissions,
+      ).get('mission-c'),
+    ).toBe(spaceScopeKey('space-x'));
+    expect(useOrchStore.getState().paneMissions['pane-op']).toBe('mission-c');
+  });
 });
