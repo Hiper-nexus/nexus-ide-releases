@@ -113,6 +113,20 @@ function button(label: RegExp): HTMLButtonElement {
 }
 
 describe('MissionCheckpoints (F-1173)', () => {
+  it('distingue checkpoints de anos diferentes na data e no nome de restauração (F-1373)', async () => {
+    if (!LIST.ok) throw new Error('fixture inválida');
+    api.listMissionCheckpoints.mockResolvedValueOnce({ ...LIST, scopes: LIST.scopes.map(scope => ({
+      ...scope, checkpoints: scope.checkpoints.map((entry, index) => ({
+        ...entry, createdAt: Date.UTC(2025 + index, 2, 15, 12, 0),
+      })),
+    })) });
+    await renderCheckpoints();
+    const dates = [...host.querySelectorAll('.mission-checkpoints__when')].map(node => node.textContent);
+    expect(dates[0]).toContain('2025');
+    expect(dates[1]).toContain('2026');
+    expect(button(/Restaurar: Fim do turno de Ada/).getAttribute('aria-label')).toContain('2025');
+  });
+
   it('lista por árvore com branch, pasta, writer, data e arquivos', async () => {
     await renderCheckpoints();
 
