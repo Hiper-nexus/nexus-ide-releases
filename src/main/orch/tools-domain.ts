@@ -2840,8 +2840,14 @@ const recipesFormatTool: McpToolDef = {
 const perfEventsTool: McpToolDef = {
   name: 'nexus_perf_events',
   description:
-    'Consulta snapshot recente de eventos e telemetria de performance do sistema ' +
-    '(processo, memória, sessões PTY ativas, browser views e métricas da warm pool de panes).',
+    // F-1337: não há ring de eventos de perf no Main; o nome ficou por
+    // paridade, a descrição diz o que volta.
+    'Return a point-in-time performance snapshot of the Nexus main process: ' +
+    'capturedAt, process (pid, uptime, rss/heap bytes), appMetrics (Electron ' +
+    'per-process memory/CPU), panes (live PTY sessions, browser views) and ' +
+    'warmPool metrics. No event history and no cursor — call again to compare. ' +
+    'For per-pane process-tree RSS, system memory/swap and pane admission ' +
+    'limits use nexus_perf_snapshot.',
   inputSchema: {
     type: 'object',
     properties: {},

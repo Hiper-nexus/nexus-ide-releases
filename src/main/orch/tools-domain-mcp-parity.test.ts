@@ -161,6 +161,17 @@ describe('T7 Superfície MCP (cron aliases, recipes lint/format, perf events)', 
       expect(snapshot.warmPool).toHaveProperty('misses');
       expect(snapshot.warmPool).toHaveProperty('readyCount');
     });
+
+    // F-1337: não existe ring de eventos de perf no Main; a ferramenta devolve
+    // um snapshot instantâneo e a descrição tem de dizer isso.
+    it('F-1337: description describes the point-in-time snapshot, not an event feed', () => {
+      expect(perfTool.description).not.toMatch(/de eventos/i);
+      expect(perfTool.description).toMatch(/no event history/i);
+      expect(perfTool.description).toContain('nexus_perf_snapshot');
+      for (const field of ['process', 'appMetrics', 'panes', 'warmPool']) {
+        expect(perfTool.description).toContain(field);
+      }
+    });
   });
 
   describe('recipes e workspace (paridade de runtime 57 tools)', () => {
