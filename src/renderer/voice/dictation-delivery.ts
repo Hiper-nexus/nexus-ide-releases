@@ -100,8 +100,11 @@ export interface DictationDeliveryPorts {
   /**
    * M6 (F-1393): leitura da área de transferência para conferir se o operador
    * copiou algo novo enquanto o ditado estava pendente.
+   * M6 (F-1419): `null` = não deu para ler (janela sem foco, permissão) — o
+   * estado "não sei", distinto de "li e está vazio". Sem essa distinção uma
+   * falha de leitura fabricava um valor novo e o ditado ia embora.
    */
-  readClipboard?(): Promise<string>;
+  readClipboard?(): Promise<string | null>;
   /** Espelha no voice.log cada salto do trajeto. */
   log(
     level: DictationLogLevel,

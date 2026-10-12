@@ -418,8 +418,12 @@ export function routeDictation(
         () => true,
         () => false,
       ),
-    readClipboard: () =>
-      navigator.clipboard.readText().catch(() => ''),
+    // M6 (F-1419): `null` = "não consegui ler" (janela sem foco, permissão).
+// Antes era `''`, que o dictation-delivery lia como "o operador copiou algo
+// novo" — um valor fabricado que jogava o ditado fora. O tipo tem três
+// estados de propósito: texto lido, clipboard vazio, e não sei.
+readClipboard: () =>
+      navigator.clipboard.readText().catch(() => null),
     log: logVoiceEvent,
   });
 }
