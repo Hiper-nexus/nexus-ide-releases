@@ -50,7 +50,7 @@ vi.mock('./squad-runtime-inventory', async (original) => ({
   ...(await original<typeof import('./squad-runtime-inventory')>()),
   warmSquadRuntimeSubscriptionAuth: async () => undefined,
   liveSquadRuntimeInventory: () => ({
-    policy: { routableWorkerCliIds: new Set(['claude', 'codex', 'kimi', 'muse']) },
+    policy: { routableWorkerCliIds: new Set(['claude', 'codex', 'kimi', 'muse', 'devin']) },
   }),
 }));
 // Kimi só é assento de primeira onda quando `kimi provider list` foi sondado
@@ -67,6 +67,7 @@ vi.mock('../adapters/adapter-registry', async (original) => ({
     { id: 'codex', kind: 'cli-pty', quirks: { nexusMcp: 'codex' } },
     { id: 'kimi', kind: 'cli-pty', quirks: { nexusMcp: 'kimi' } },
     { id: 'muse', kind: 'cli-pty', quirks: { nexusMcp: 'muse' } },
+    { id: 'devin', kind: 'cli-pty', quirks: { nexusMcp: 'devin' } },
   ],
 }));
 vi.mock('./project-domain-store-registry', () => ({
@@ -136,6 +137,21 @@ describe('revezamento visual sem missão (F-1400 parte 2)', () => {
       'kimi:kimi-code/k3',
       'codex:gpt-6.1-sol',
     ]);
+  });
+
+  it('Devin SWE-2 (pedido do operador): seis tarefas visuais sem missão dão assento ao Devin', async () => {
+    h.listProviderSettings.mockReturnValue([
+      ...h.listProviderSettings(),
+      { adapterId: 'devin', enabled: true, installed: true, authStrategy: 'oauth',
+        models: ['swe-2-high', 'swe-2-medium'] },
+    ]);
+    const picks: string[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      const decision = await route();
+      picks.push(`${decision.adapterId}:${decision.model}`);
+    }
+    expect(picks).toContain('devin:swe-2-high');
+    expect(new Set(picks).size).toBe(6);
   });
 
   it('Next.js continua Opus max sem missão, mesmo com uso visual recente alto', async () => {

@@ -241,7 +241,11 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
     devin: {
       default: 'swe-2-high',
       models: [
-        { id: 'swe-2-high', availability: 'paid', costTier: 'high', source: 'bundled' },
+        // Pedido do operador (12/10): SWE-2 tem custo e limites bons — incluso
+        // no plano Devin (docs/models/estudo-2026-09.md) e $3,50/$17,50 por 1M
+        // (pricing.ts), a faixa do K3 ($3/$15, medium). 'high' o tirava do
+        // "escritor econômico elegível" do hard.
+        { id: 'swe-2-high', availability: 'paid', costTier: 'medium', source: 'bundled' },
         { id: 'swe-2-max', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'swe-2-medium', availability: 'paid', costTier: 'medium', source: 'bundled' },
         { id: 'claude-sonnet-5-medium', availability: 'paid', costTier: 'medium', source: 'bundled' },

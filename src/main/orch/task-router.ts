@@ -671,8 +671,10 @@ export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly strin
 
 /**
  * F-1400 ADD2: front alterna entre Opus max, Sonnet high, Wonder Full max,
- * Kimi e Sol 6.1 pelo uso visual recente de cada modelo. Empate segue esta
- * ordem. Next.js/jogos usam Opus quando elegível; sem ele, vale o pool.
+ * Kimi, Sol 6.1 e Devin SWE-2 high pelo uso visual recente de cada modelo.
+ * Empate segue esta ordem. Next.js/jogos usam Opus quando elegível; sem ele,
+ * vale o pool. Devin (pedido do operador, 12/10): "muito massa até em front",
+ * limites e custo bons (plano Devin; DeepSWE 73,0 — cognition.com/blog/swe-2).
  */
 export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   adapterId: string;
@@ -686,6 +688,7 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   { adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' },
   { adapterId: 'kimi', model: 'kimi-code/k3' },
   { adapterId: 'codex', model: 'gpt-6.1-sol' },
+  { adapterId: 'devin', model: 'swe-2-high' },
   { adapterId: 'codex', model: 'gpt-6-astra' },
 ]);
 
@@ -2338,6 +2341,22 @@ export function routeTask(
       return !baselineOutcome || !outcome || outcome.rate >= baselineOutcome.rate;
     });
     if (economic.length > 0) {
+      // Pedido do operador (Devin SWE-2, 12/10): o fair-share acima só olha o
+      // líder ANTES do custo — no hard é o Opus, que este passo sempre tira,
+      // então nunca acumula uso e o 1º econômico (Wonder Full) levava toda
+      // rota de writer. O espalhamento por uso 7d vale entre os econômicos,
+      // com as mesmas exclusões do fair-share (F-821: segurança fora).
+      if (context.globalUseCounts !== undefined && tier !== 'critical' && frontier === null &&
+          evaluated.length === 0 && !securityWork) {
+        const use = (entry: RankedRouteEntry) => context.globalUseCounts!.get(entry.c.adapterId) ?? 0;
+        const minUse = Math.min(...economic.map(use));
+        const pick = economic.find(entry => use(entry) === minUse);
+        if (pick && pick !== economic[0] && use(economic[0]) >= minUse + FAIR_SHARE_GAP) {
+          writerCostNote += `; fair-share entre econômicos: ${pick.c.adapterId} (uso 7d ${minUse} × ${use(economic[0])})`;
+          economic.splice(economic.indexOf(pick), 1);
+          economic.unshift(pick);
+        }
+      }
       const economical = new Set(economic);
       ranked = [...economic, ...ranked.filter(entry => !economical.has(entry))];
       writerCostApplied = true;

@@ -122,6 +122,20 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
     expect(decision.effort).not.toBe('max');
   });
 
+  it('Devin SWE-2 (pedido do operador): seis tarefas visuais dão assento ao Devin no revezamento', () => {
+    const withDevin: AdapterAvailability[] = [...everyone, { id: 'devin', installed: true, models: ['swe-2-high', 'swe-2-medium'] }];
+    const visualUseCounts = new Map<string, number>();
+    const picks: string[] = [];
+    for (let index = 0; index < 6; index++) {
+      const decision = route('implementar a tela responsiva de cadastro com estados vazios', withDevin, { visualUseCounts });
+      const key = `${decision.adapterId}:${decision.model}`;
+      picks.push(key);
+      visualUseCounts.set(key, (visualUseCounts.get(key) ?? 0) + 1);
+    }
+    expect(picks).toContain('devin:swe-2-high');
+    expect(new Set(picks).size).toBe(6);
+  });
+
   it('uso recente por modelo distingue Opus ocupado de Sonnet livre na mesma CLI', () => {
     const decision = route('implementar a tela responsiva de cadastro', everyone, {
       visualUseCounts: new Map([['claude:claude-opus-5-5', 10]]),

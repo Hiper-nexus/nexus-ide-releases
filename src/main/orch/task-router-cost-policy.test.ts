@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildRouteSuccessIndex } from './route-pipeline';
 import { BUILTIN_MODEL_CATALOG } from '../adapters/model-catalog';
-import { routeTask, isFrontierReviewer, type AdapterAvailability, type RouteContext } from './task-router';
+import { DEFAULT_ROUTING_TABLE, routeTask, isFrontierReviewer, type AdapterAvailability, type RouteContext } from './task-router';
 
 const pool: AdapterAvailability[] = [
   { id: 'claude', installed: true, models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] },
@@ -20,6 +20,55 @@ describe('implementation cost policy from actual operator requests', () => {
     const decision = choose(task)!;
     expect(decision).toMatchObject({ adapterId: 'glm', model: 'glm-5.3', tier: 'hard', effort: 'high' });
     expect(decision.reason).toContain('purpose=writer');
+  });
+
+  // Pedido do operador (12/10): Devin SWE-2 tem custo/limite bons (plano
+  // Devin; $3,50/$17,50 ≈ K3) — o swe-2-high do hard é escritor econômico,
+  // não fica sempre atrás do "escritor econômico elegível no mesmo tier".
+  it('Devin swe-2-high é escritor econômico elegível no hard', () => {
+    const decision = routeTask(
+      'Implemente a atualização automática das CLIs no macOS, Windows e Linux preservando os panes vivos',
+      [pool[0], { id: 'devin', installed: true, models: ['swe-2-high', 'swe-2-medium'] }],
+      undefined, 'hard', false, BUILTIN_MODEL_CATALOG, { multiScore: false },
+    )!;
+    expect(decision).toMatchObject({ adapterId: 'devin', model: 'swe-2-high' });
+    expect(decision.reason).toContain('escritor econômico elegível no mesmo tier');
+  });
+
+  it('writers hard seguidos revezam entre os econômicos e dão assento ao Devin (fair-share não fica só no líder caro)', () => {
+    // Frota real dos tiers medium/hard (probe 12/10: 30 writers hard seguidos
+    // iam TODOS para o Wonder Full — o líder antes do custo era o Opus).
+    const models = new Map<string, Set<string>>();
+    for (const tier of ['medium', 'hard'] as const) {
+      for (const entry of DEFAULT_ROUTING_TABLE[tier]) {
+        models.set(entry.adapterId, (models.get(entry.adapterId) ?? new Set()).add(entry.model!));
+      }
+    }
+    const adapters: AdapterAvailability[] = [...models].map(([id, list]) => ({ id, installed: true, models: [...list] }));
+    const globalUseCounts = new Map<string, number>();
+    const picks: string[] = [];
+    for (let index = 0; index < 30; index++) {
+      const decision = routeTask(
+        'Implemente a atualização automática das CLIs no macOS, Windows e Linux preservando os panes vivos',
+        adapters, undefined, 'hard', false, BUILTIN_MODEL_CATALOG, { multiScore: true, globalUseCounts },
+      )!;
+      picks.push(`${decision.adapterId}:${decision.model}`);
+      globalUseCounts.set(decision.adapterId, (globalUseCounts.get(decision.adapterId) ?? 0) + 1);
+    }
+    expect(picks).toContain('devin:swe-2-high');
+    expect(picks.filter(pick => pick.startsWith('muse:')).length).toBeLessThan(10);
+  });
+
+  it('Devin swe-2-medium é escritor econômico elegível no medium', () => {
+    const decision = routeTask(
+      'Implemente o filtro de status na listagem de pedidos com testes',
+      // Só Opus no Claude: Sonnet 5.5 também é econômico (medium) e vem antes na tabela.
+      [{ id: 'claude', installed: true, models: ['claude-opus-5-5'] },
+        { id: 'devin', installed: true, models: ['swe-2-high', 'swe-2-medium'] }],
+      undefined, 'medium', false, BUILTIN_MODEL_CATALOG, { multiScore: false },
+    )!;
+    expect(decision).toMatchObject({ adapterId: 'devin', model: 'swe-2-medium' });
+    expect(decision.reason).toContain('escritor econômico elegível no mesmo tier');
   });
 
   it('independent review still uses frontier judgment', () => {
