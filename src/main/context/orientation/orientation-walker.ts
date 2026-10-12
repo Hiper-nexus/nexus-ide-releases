@@ -37,6 +37,16 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 /**
+ * F-1322: um filho com `.git` (arquivo de worktree ou pasta de repo) é a
+ * raiz de OUTRO checkout — `.harvest/`, `.nexus-worktrees/`, clone do
+ * usuário. Descer nele esgota o orçamento com fontes alheias e deixa o
+ * `src/` atual fora do mapa.
+ */
+function isNestedCheckoutRoot(absoluteChild: string): boolean {
+  return fs.existsSync(path.join(absoluteChild, '.git'));
+}
+
+/**
  * Safe recursive inventory walk. Skips symlinks, secret basenames (listed but
  * never read for content), and standard build/vendor dirs.
  */
@@ -85,6 +95,7 @@ export function walkOrientationTree(
       for (const entry of entries) {
         if (entry.isSymbolicLink()) continue;
         if (entry.isDirectory() && SKIP_DIRECTORIES.has(entry.name)) continue;
+        if (entry.isDirectory() && isNestedCheckoutRoot(path.join(real, entry.name))) continue;
         const child = relative ? path.join(relative, entry.name) : entry.name;
         visit(child, depth + 1);
         if (truncated) return;
@@ -191,6 +202,7 @@ export async function walkOrientationTreeAsync(
       for (const entry of entries) {
         if (entry.isSymbolicLink()) continue;
         if (entry.isDirectory() && SKIP_DIRECTORIES.has(entry.name)) continue;
+        if (entry.isDirectory() && isNestedCheckoutRoot(path.join(real, entry.name))) continue;
         const child = relative ? path.join(relative, entry.name) : entry.name;
         await visit(child, depth + 1);
         if (truncated) return;

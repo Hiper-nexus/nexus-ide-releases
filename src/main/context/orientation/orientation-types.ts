@@ -202,6 +202,7 @@ export const SKIP_DIRECTORIES = Object.freeze(
     '.gemini',
     '.peer-ade-app',
     '.worktrees',
+    '.harvest',
     '.nexus-memory',
     'worktrees',
     '.graphify',
