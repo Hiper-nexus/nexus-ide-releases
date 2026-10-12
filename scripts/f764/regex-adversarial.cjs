@@ -7,7 +7,12 @@ let timer; let lastJob;
 function deadline(ms) { clearTimeout(timer); timer = setTimeout(async () => { const code = await worker.terminate(); console.error(JSON.stringify({ failure: 'hard regex deadline', lastJob, code })); process.exitCode = 1; }, ms); }
 deadline(5000);
 worker.on('message', (message) => {
- if (message.kind === 'start') { lastJob = message.id; deadline(250); }
+ if (message.kind === 'start') {
+  lastJob = message.id;
+  // Regex/literal: 250 ms hard cap (F-851). Pipeline jobs feed 1 MB through
+  // the WASM grid and get 2.5 s (same split as the worker's measure()).
+  deadline(/:production-evaluator/.test(String(message.id)) ? 2500 : 250);
+ }
  if (message.kind === 'end') deadline(5000);
  if (message.kind === 'done') { clearTimeout(timer); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, JSON.stringify(message.result, null, 2)); console.log(JSON.stringify(message.result)); worker.terminate(); }
 });

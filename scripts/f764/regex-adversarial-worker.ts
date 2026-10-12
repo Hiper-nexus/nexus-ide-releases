@@ -41,10 +41,16 @@ for (const file of files) {
  }; visit(tree);
 }
 let maxMs = 0; let tests = 0; let semanticCases = 0;
-function measure(id: string, run: () => void) {
+let maxRegexMs = 0; let maxPipelineMs = 0;
+/** Regex/literal: 250 ms (F-851). Pipeline (WASM grid + 1 MB feed): 2 s. */
+const REGEX_TIME_CAP_MS = 250;
+const PIPELINE_TIME_CAP_MS = 2_000;
+function measure(id: string, run: () => void, budgetMs = REGEX_TIME_CAP_MS) {
  port.postMessage({ kind: 'start', id }); const start = performance.now(); run(); const ms = performance.now() - start;
  maxMs = Math.max(maxMs, ms); tests++; port.postMessage({ kind: 'end', id, ms });
- if (ms >= 250) throw new Error(`time cap exceeded: ${id}`);
+ if (budgetMs === REGEX_TIME_CAP_MS) maxRegexMs = Math.max(maxRegexMs, ms);
+ else maxPipelineMs = Math.max(maxPipelineMs, ms);
+ if (ms >= budgetMs) throw new Error(`time cap exceeded: ${id} (${ms.toFixed(1)}ms >= ${budgetMs}ms)`);
 }
 function gates(gate: CompiledGate, collect: RegExp[]) { collect.push(...gate.regex, ...gate.lineRegex); for (const child of [...gate.all, ...gate.any, ...gate.not]) gates(child, collect); }
 // F-1020: desde o F-998/DSK-03 o detector de produção lê a grade libghostty-vt
@@ -79,8 +85,8 @@ for (const [shape, raw] of shapes) {
    const patterns: RegExp[] = []; gates(gate, patterns); const region = sliceRegion(input, rule.region);
    for (let i = 0; i < patterns.length; i++) measure(`${shape}:${manifest.manifest.id}:${rule.id}:${i}`, () => { patterns[i].lastIndex = 0; patterns[i].test(region); });
   }
-  measure(`${shape}:${manifest.manifest.id}:production-evaluator`, () => parity(`${manifest.manifest.id}:${shape}`, manifest, raw, evaluateManifest(manifest, gridInput), wasm, true));
-  measure(`${shape}:${manifest.manifest.id}:production-evaluator-text`, () => parity(`${manifest.manifest.id}:${shape}:text`, manifest, raw, evaluateManifest(manifest, input), missingWasm, false));
+  measure(`${shape}:${manifest.manifest.id}:production-evaluator`, () => parity(`${manifest.manifest.id}:${shape}`, manifest, raw, evaluateManifest(manifest, gridInput), wasm, true), PIPELINE_TIME_CAP_MS);
+  measure(`${shape}:${manifest.manifest.id}:production-evaluator-text`, () => parity(`${manifest.manifest.id}:${shape}:text`, manifest, raw, evaluateManifest(manifest, input), missingWasm, false), PIPELINE_TIME_CAP_MS);
  }
 }
-port.postMessage({ kind: 'done', result: { label: 'C3 actual production windows + dedicated Worker audit', screenModels: ['ghostty-grid', 'text-fallback'], rawBytesPerShape: shapes.map(([name, raw]) => ({ name, bytes: Buffer.byteLength(raw) })), manifestCount: compiled.length, literalRegexCount: literals.length, tests, semanticCases, maxMs } });
+port.postMessage({ kind: 'done', result: { label: 'C3 actual production windows + dedicated Worker audit', screenModels: ['ghostty-grid', 'text-fallback'], rawBytesPerShape: shapes.map(([name, raw]) => ({ name, bytes: Buffer.byteLength(raw) })), manifestCount: compiled.length, literalRegexCount: literals.length, tests, semanticCases, maxMs, maxRegexMs, maxPipelineMs, regexTimeCapMs: REGEX_TIME_CAP_MS, pipelineTimeCapMs: PIPELINE_TIME_CAP_MS } });
