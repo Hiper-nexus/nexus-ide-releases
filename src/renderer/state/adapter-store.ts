@@ -35,6 +35,17 @@ export const useAdapterStore = create<AdapterStore>((set) => ({
   receive: (list) => set({ adapters: list }),
 }));
 
+/**
+ * F-1411: o adapter aceita bracketed paste? Lê a declaração do registry
+ * (`promptInjection.bracketedPaste`); sem declaração ou antes da hidratação,
+ * cola com o marcador — tecla crua + Enter vira paste-burst no Kimi Code 2.x.
+ */
+export function adapterAcceptsBracketedPaste(adapterId: string | undefined): boolean {
+  if (!adapterId) return true;
+  const info = useAdapterStore.getState().adapters.find((adapter) => adapter.id === adapterId);
+  return info?.bracketedPaste !== false;
+}
+
 export function useAdapterController(): void {
   const hydrate = useAdapterStore((s) => s.hydrate);
   useEffect(() => {
