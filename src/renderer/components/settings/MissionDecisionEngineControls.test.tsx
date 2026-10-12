@@ -129,6 +129,14 @@ describe('F-1167: chave "Motor de decisão em toda missão"', () => {
 });
 
 describe('F-1167: orçamento por missão', () => {
+  it('normaliza o rascunho zero para o orçamento efetivo sem regravar (F-1374)', async () => {
+    await mount();
+    await act(async () => { type('0'); });
+    await act(async () => { budget().dispatchEvent(new FocusEvent('focusout', { bubbles: true })); });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(budget().value).toBe('0,50');
+  });
+
   it('aceita vírgula e salva no blur pela configuração de modelos', async () => {
     await mount();
     await act(async () => { type('1,25'); });

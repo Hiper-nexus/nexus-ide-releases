@@ -67,7 +67,10 @@ export function MissionDecisionEngineControls({ settings, busy, onChange }: {
       return;
     }
     setBudgetError(null);
-    if (value === (settings.missionBudgetUsd ?? 0) || (value === 0 && settings.missionBudgetUsd === undefined)) return;
+    if (value === (settings.missionBudgetUsd ?? 0) || (value === 0 && settings.missionBudgetUsd === undefined)) {
+      setDraft(budgetText(settings));
+      return;
+    }
     onChange({ missionBudgetUsd: value });
   }
 
