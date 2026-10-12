@@ -17,11 +17,15 @@ import {
 
 export const REGRESSION_GATE_BOUNCES_PER_SESSION = 2;
 /**
- * Orçamento TOTAL do portão no handoff (mapa + testes + retentativa): abaixo
- * do `tool_timeout_sec=120` do Codex, senão o worker vê erro de tool enquanto
- * o servidor consome a devolução (ou persiste o handoff) sem ele saber.
+ * Orçamento TOTAL do portão no handoff (mapa + testes + retentativa). F-1288:
+ * abaixo do MENOR prazo de cliente que chama o submit — o MCP de algumas CLIs
+ * derruba a chamada aos 60 s, e o agente reenviava pelo shim antes de o gate
+ * responder (handoff duplicado no Maestro). 45 s deixam ~15 s de folga para o
+ * que ainda roda depois do gate (revisão Jev, persistência) e seguem abaixo
+ * do `tool_timeout_sec=120` do Codex. Vencido, o gate corta como antes:
+ * `unavailable` → aceito e NÃO verificado, fail-open honesto.
  */
-export const HANDOFF_REGRESSION_BUDGET_MS = 100_000;
+export const HANDOFF_REGRESSION_BUDGET_MS = 45_000;
 /** Prefixo no resumo quando os testes impactados não rodaram. */
 export const REGRESSION_UNVERIFIED_PREFIX = '[testes impactados não verificados]';
 const MAX_TRACKED_SESSIONS = 512;

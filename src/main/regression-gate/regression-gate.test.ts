@@ -26,6 +26,7 @@ import {
 import {
   __resetRegressionHandoffBouncesForTests,
   evaluateHandoffRegressionGate,
+  HANDOFF_REGRESSION_BUDGET_MS,
   REGRESSION_GATE_BOUNCES_PER_SESSION,
 } from './regression-gate-handoff';
 
@@ -1343,6 +1344,31 @@ describe('evaluateHandoffRegressionGate', () => {
     );
     expect(verdict).toEqual({ kind: 'skipped', reason: 'disabled' });
     expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('F-1288: portão lento corta no próprio orçamento, que cabe no prazo do cliente MCP (60 s)', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    let clock = 0;
+    // Runner que estoura qualquer prazo que recebe — a "Verificação excedeu
+    // o prazo… 0 rodaram, 10 não" do campo: cada execução consome o teto
+    // que o gate lhe deu e devolve timedOut.
+    const exec = vi.fn<RegressionExec>(async (_file, _args, options) => {
+      clock += options.timeoutMs;
+      return { exitCode: null, timedOut: true, aborted: false, stdout: '', stderr: '' };
+    });
+    const verdict = await evaluateHandoffRegressionGate(
+      { sessionId: 'sess-f1288', scope },
+      { exec, now: () => clock, enabled: () => true },
+    );
+    // Fail-open honesto: prazo vencido continua aceito e NÃO verificado.
+    expect(verdict).toMatchObject({ kind: 'accepted', unverified: true });
+    // O tempo que o submit passa DENTRO do portão respeita o orçamento do
+    // handoff, e esse orçamento precisa deixar folga dos 60 s do cliente
+    // MCP para o que ainda roda depois do gate (revisão Jev, persistência):
+    // estourou o cliente, o agente reenvia e o Maestro recebe duas vezes.
+    expect(clock).toBeLessThanOrEqual(HANDOFF_REGRESSION_BUDGET_MS);
+    expect(HANDOFF_REGRESSION_BUDGET_MS).toBeLessThan(50_000);
   });
 });
 
