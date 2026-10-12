@@ -1,10 +1,11 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-const h = vi.hoisted(() => ({ owned: vi.fn(), scope: vi.fn(), state: vi.fn(), sequence: vi.fn(), semantic: vi.fn(), context: vi.fn(), write: vi.fn(), adapter: vi.fn() }));
+const h = vi.hoisted(() => ({ owned: vi.fn(), scope: vi.fn(), state: vi.fn(), sequence: vi.fn(), semantic: vi.fn(), context: vi.fn(), write: vi.fn(), adapter: vi.fn(), defer: vi.fn() }));
 vi.mock('./pty-manager', () => ({ getOwnedAgentSessionInfo: h.owned, getSessionState: h.state, orchWriteSession: h.write }));
 vi.mock('../orch/agent-status', () => ({ getAgentTurnStartSequence: h.sequence, getAgentSemanticStatusBySession: h.semantic }));
 vi.mock('../persistence/renderer-workspace-scope', () => ({ requireLiveRendererWorkspaceScope: h.scope }));
 vi.mock('../orch/gate', () => ({ getContextBySession: h.context }));
 vi.mock('../adapters/adapter-registry', () => ({ getAdapter: h.adapter }));
+vi.mock('../orch/cli-prompt-autoresponder', () => ({ cliPromptAutoResponder: { shouldDeferInjection: h.defer } }));
 import { readOwnedPromptState, submitOwnedPromptEnter } from './pty-prompt-state';
 const owner = {} as never;
 beforeEach(() => {
@@ -61,4 +62,16 @@ it('F-1393: a capacidade de fila vem do manifesto do adapter da sessão', () => 
   expect(h.adapter).toHaveBeenCalledWith('claude');
   h.adapter.mockReturnValue({ quirks: {} });
   expect(readOwnedPromptState(owner, { sessionId: 'session' })).toEqual({ turnStartSequence: 7, state: 'busy', awaitingInput: false });
+});
+
+it('F-1405: banner de boot segurando a injeção veta o Enter de entrega', () => {
+  // Codex 0.162 "Set up security": o autoresponder segura a injeção enquanto
+  // o banner está na tela; o Enter do submitPromptEnter nunca pode sair antes
+  // do Esc que dispensa — um dígito/Enter no item destacado executa o CTA.
+  h.semantic.mockReturnValue(undefined); // nenhum diálogo semântico detectado
+  h.defer.mockReturnValue(true); // o autoresponder vê o banner
+  expect(readOwnedPromptState(owner, { sessionId: 'session' })).toEqual({ turnStartSequence: 7, state: 'idle', awaitingInput: true });
+  expect(h.defer).toHaveBeenCalledWith('session');
+  expect(submitOwnedPromptEnter(owner, { sessionId: 'session', turnStartSequence: 7, retry: true })).toBe(false);
+  expect(h.write).not.toHaveBeenCalled();
 });

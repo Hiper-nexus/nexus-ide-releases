@@ -6,6 +6,7 @@ import { getAgentSemanticStatusBySession, getAgentTurnStartSequence } from '../o
 import { getContextBySession } from '../orch/gate';
 import { requireLiveRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import { getAdapter } from '../adapters/adapter-registry';
+import { cliPromptAutoResponder } from '../orch/cli-prompt-autoresponder';
 
 const request = z.object({ sessionId: z.string().min(1).max(128) }).strict();
 
@@ -26,7 +27,14 @@ export function readOwnedPromptState(owner: WebContents, raw: unknown): PtyPromp
     return {
       turnStartSequence: getAgentTurnStartSequence(parsed.data.sessionId),
       state,
-      awaitingInput: getAgentSemanticStatusBySession(parsed.data.sessionId)?.status === 'awaiting-input',
+      // awaitingInput é o veto de diálogo da prova de turno: além do status
+      // semântico, um banner de boot que o autoresponder ainda está tratando
+      // também segura o Enter de entrega (F-1405: "Set up security" do Codex
+      // 0.162 — tecla no banner escolhe o CTA em vez de enviar o texto).
+      awaitingInput: Boolean(
+        getAgentSemanticStatusBySession(parsed.data.sessionId)?.status === 'awaiting-input' ||
+          cliPromptAutoResponder.shouldDeferInjection(parsed.data.sessionId),
+      ),
       ...(getAdapter(info.adapterId)?.quirks?.queuesInputWhileBusy ? { queuesInputWhileBusy: true } : {}),
     };
   } catch { return null; }

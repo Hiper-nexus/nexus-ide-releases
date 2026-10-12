@@ -93,6 +93,11 @@ export const ACCEPT_FIRST_OPTION_BY_NUMBER = '1\r';
  * fatal. Ver `claudeWorkspaceTrustResponse`.
  */
 export const ACCEPT_SECOND_TRUST_OPTION_RESPONSE = '\x1b[B\r';
+/**
+ * Esc puro: dispensa um banner/diálogo sem escolher item nenhum (F-1405 —
+ * banner "Set up security" do Codex 0.162, onde um dígito 1–9 dispara o CTA).
+ */
+export const DISMISS_PROMPT_RESPONSE = '\x1b';
 
 /**
  * Claude Code 2.1.x (and Claude-family shells: glm/glm-flash/longcat) show this disclaimer
@@ -270,6 +275,26 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     earlyPhrase: 'trust this folder?',
     watchMs: TRUST_WATCH_WINDOW_MS,
     ungovernedOnly: true,
+  },
+  {
+    // F-1405: Codex 0.162 "Set up security" — banner de backend pintado sobre
+    // o composer (print do operador 12/10: "› 1. Set up security"). Título,
+    // descrição e rótulo do CTA vêm do SERVIDOR (o binário só tem os eventos
+    // "presenting/received security setup notice"); no TUI, um DÍGITO 1–9
+    // com composer vazio dispara o CTA no navegador — exatamente a primeira
+    // tecla de uma entrega de texto plano. Esc dispensa sem executar
+    // (actionable_banner.rs: KeyCode::Esc → dismissed). As frases casam o
+    // rodapé do PRÓPRIO binário ("Press a number to choose · esc to dismiss
+    // · type to continue"): imunes à troca de copy do servidor, e não casam
+    // a tela de login ("Press enter to continue"). Vale nos dois perfis —
+    // dispensar é fechamento cosmético, sem efeito colateral. Janela de
+    // trust: o notice é um fetch do servidor no boot e pode pintar tarde.
+    adapterIds: ['codex'],
+    name: 'codex-security-setup-banner',
+    phrases: ['press a number to choose', 'esc to dismiss', 'type to continue'],
+    response: DISMISS_PROMPT_RESPONSE,
+    earlyPhrase: 'press a number to choose',
+    watchMs: TRUST_WATCH_WINDOW_MS,
   },
   {
     // Devin CLI (herdr workspace_trust_prompt). Interactive spawn cannot pass

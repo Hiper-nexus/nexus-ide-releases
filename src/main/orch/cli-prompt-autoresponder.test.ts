@@ -715,6 +715,68 @@ describe('Codex "Trust this folder?" no pane do operador (F-681)', () => {
   });
 });
 
+// Banner "Set up security" do Codex 0.162.1 (print do operador 12/10):
+// título, descrição e rótulo do CTA vêm do SERVIDOR (o binário só carrega os
+// eventos "presenting/received security setup notice" — "Set up security" não
+// está nas strings); o rodapé é do próprio binário (strings: "Press a number
+// to choose · esc to dismiss · type to continue"). No TUI, um dígito 1–9
+// dispara o CTA (abre o navegador) e Esc dispensa sem executar
+// (actionable_banner.rs: KeyCode::Esc → dismissed). A descrição/CTA abaixo
+// são placeholder de propósito: a assinatura casa SÓ o rodapé do binário —
+// imune à troca de copy do servidor.
+const CODEX_SECURITY_BANNER = [
+  '\x1b[>4;0m\x1b[>7u\x1b[?25l',
+  ' Set up security',
+  ' [descrição que o servidor mandar]',
+  '\x1b[7m› 1. Set up security\x1b[0m',
+  ' Press a number to choose · esc to dismiss · type to continue',
+].join('\n');
+
+// Tela de login real capturada num PTY (Codex 0.162.1 sem sessão
+// autenticada): o notice só chega do servidor DEPOIS do login.
+const CODEX_LOGIN_SCREEN = [
+  'Welcome to Codex, OpenAI’s command-line coding agent',
+  '\x1b[7m> 1. Sign in with ChatGPT\x1b[0m     Usage included with Plus, Pro, Business, and Enterprise plans',
+  '  2. Sign in with Device Code     Sign in from another device with a one-time code',
+  '  3. Provide your own API key     Pay for what you use',
+  ' Press enter to continue',
+].join('\n');
+
+describe('Codex 0.162 "Set up security" (F-1405)', () => {
+  it('dispensa com Esc — nunca o dígito do CTA nem o Enter de entrega', () => {
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-codex-banner', 'codex');
+    expect(responder.observe('session-codex-banner', CODEX_SECURITY_BANNER)).toBe('\x1b');
+  });
+
+  it('o rodapé pintando pela metade já segura a entrega (earlyPhrase)', () => {
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-codex-early', 'codex');
+    expect(responder.observe('session-codex-early', ' Press a number to choose')).toBeNull();
+    expect(responder.shouldDeferInjection('session-codex-early')).toBe(true);
+  });
+
+  it('brief preso além do prazo: forceAccept também dispensa com Esc', () => {
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-codex-force', 'codex');
+    responder.observe('session-codex-force', ' Press a number to choose · esc to dismiss');
+    expect(responder.forceAcceptResponse('session-codex-force')).toEqual({ response: '\x1b' });
+  });
+
+  it('a tela de login ("Press enter to continue") não casa', () => {
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-codex-login', 'codex');
+    expect(responder.observe('session-codex-login', CODEX_LOGIN_SCREEN)).toBeNull();
+    expect(responder.shouldDeferInjection('session-codex-login')).toBe(false);
+  });
+
+  it('dispensa também em pane governado: é fechamento cosmético, sem efeito colateral', () => {
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-codex-gov', 'codex', Date.now(), { governed: true });
+    expect(responder.observe('session-codex-gov', CODEX_SECURITY_BANNER)).toBe('\x1b');
+  });
+});
+
 // Tela real do Claude Code (campo 29/09): sem números, cursor em "Yes".
 const CLAUDE_BYPASS_UNNUMBERED = [
   ' WARNING: Claude Code running in Bypass Permissions mode',
