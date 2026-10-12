@@ -90,6 +90,23 @@ describe('extractEditedPaths (F-1237)', () => {
     expect(hookBodyMayCarryEdit('{"session_id":"s","tool_name": "apply_patch"')).toBe(true);
     expect(hookBodyMayCarryEdit('{"session_id":"s","tool_name":"Read","tool_input":{')).toBe(false);
   });
+
+  it('F-1284: ferramentas de edição do Kimi/Grok e afins (os nomes que o produto já trata como edição)', () => {
+    expect(extractEditedPaths({ tool_name: 'str_replace', tool_input: { path: '/root/a.ts', old_str: 'x', new_str: 'y' } })).toEqual(['/root/a.ts']);
+    expect(extractEditedPaths({ tool_name: 'write_file', tool_input: { file_path: '/root/b.ts', content: '…' } })).toEqual(['/root/b.ts']);
+    expect(extractEditedPaths({ tool_name: 'write_file', tool_input: { path: '/root/b2.ts', content: '…' } })).toEqual(['/root/b2.ts']);
+    expect(extractEditedPaths({ tool_name: 'edit_file', tool_input: { path: '/root/c.ts' } })).toEqual(['/root/c.ts']);
+    expect(extractEditedPaths({ tool_name: 'write_to_file', tool_input: { TargetFile: '/root/d.ts', CodeContent: '…' } })).toEqual(['/root/d.ts']);
+    expect(extractEditedPaths({ tool_name: 'replace_file_content', tool_input: { TargetFile: '/root/e.ts' } })).toEqual(['/root/e.ts']);
+    expect(extractEditedPaths({ tool_name: 'multi_replace_file_content', tool_input: { TargetFile: '/root/f.ts' } })).toEqual(['/root/f.ts']);
+    // Leitura com os mesmos campos continua fora.
+    expect(extractEditedPaths({ tool_name: 'view_file', tool_input: { AbsolutePath: '/root/a.ts' } })).toEqual([]);
+    expect(extractEditedPaths({ tool_name: 'read_file', tool_input: { path: '/root/a.ts' } })).toEqual([]);
+    for (const tool of ['str_replace', 'write_file', 'edit_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content']) {
+      expect(hookBodyMayCarryEdit(`{"session_id":"s","tool_name":"${tool}","tool_input":{`)).toBe(true);
+    }
+    expect(hookBodyMayCarryEdit('{"session_id":"s","tool_name":"read_file","tool_input":{')).toBe(false);
+  });
 });
 
 describe('confineEditedPath (F-1237)', () => {

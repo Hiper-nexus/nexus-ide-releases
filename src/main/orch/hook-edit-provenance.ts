@@ -10,7 +10,10 @@
  * - família Claude: `Edit` / `Write` / `MultiEdit` (`tool_input.file_path`) e
  *   `NotebookEdit` (`tool_input.notebook_path`);
  * - Codex: `apply_patch` (cabeçalhos `*** Add|Update|Delete File:` e
- *   `*** Move to:` do patch em `tool_input`).
+ *   `*** Move to:` do patch em `tool_input`);
+ * - F-1284: Kimi/Grok e afins, com os nomes que o produto já trata como
+ *   edição (`str_replace`, `write_file`, `edit_file`, `write_to_file`,
+ *   `replace_file_content`, `multi_replace_file_content`).
  * CLI sem evento de edição com caminho não registra nada: o portão segue como
  * antes (na dúvida, não culpa o pane).
  *
@@ -55,6 +58,13 @@ const PATH_EDIT_TOOLS = new Map<string, readonly string[]>([
   ['Write', ['file_path']],
   ['MultiEdit', ['file_path']],
   ['NotebookEdit', ['notebook_path', 'file_path']],
+  // F-1284: mesmos nomes e campos de agent-hook-listener/native-chat-diff.
+  ['str_replace', ['path', 'file_path']],
+  ['write_file', ['file_path', 'path']],
+  ['edit_file', ['file_path', 'path']],
+  ['write_to_file', ['TargetFile', 'path', 'file_path']],
+  ['replace_file_content', ['TargetFile', 'path', 'file_path']],
+  ['multi_replace_file_content', ['TargetFile', 'path', 'file_path']],
 ]);
 /** Ferramentas de patch (Codex): os caminhos vêm dos cabeçalhos do patch. */
 const PATCH_EDIT_TOOLS = new Set(['apply_patch']);
@@ -104,7 +114,11 @@ function patchTexts(input: unknown, depth = 0): string[] {
   return ['command', 'input', 'patch', 'cmd'].flatMap((key) => patchTexts(record[key], depth + 1));
 }
 
-const EDIT_TOOL_HEAD_RE = /"tool_?[nN]ame"\s*:\s*"(?:Edit|Write|MultiEdit|NotebookEdit|apply_patch)"/u;
+// F-1284: a triagem do corpo grande aceita exatamente as ferramentas de edição acima.
+const EDIT_TOOL_HEAD_RE = new RegExp(
+  `"tool_?[nN]ame"\\s*:\\s*"(?:${[...PATH_EDIT_TOOLS.keys(), ...PATCH_EDIT_TOOLS].join('|')})"`,
+  'u',
+);
 
 /**
  * Corpo grande demais para o status: só vale ler (e parsear) se o começo já
