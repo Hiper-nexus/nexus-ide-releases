@@ -256,11 +256,28 @@ describe('F-1395: no boot, analisar e atualizar todas as CLIs', () => {
       { binary: ['muse-aarch64-macos', { target: 'muse' }] },
       { zap: [{ trash: ['~/.config/muse', '~/.local/share/muse'] }] },
     ] });
-    expect(selectAutomaticCliUpdateRecipe({ ...muse, caskArtifactKinds: ['binary', 'zap'] })).toMatchObject({
+    // B1: recibo só-binary mas manifesto-alvo com pkg/postflight → manual
+    expect(selectAutomaticCliUpdateRecipe({
+      ...muse,
+      caskArtifactKinds: ['binary', 'zap'],
+      caskTargetArtifactKinds: ['binary', 'pkg', 'postflight', 'zap'],
+    })).toBeNull();
+    // B1: manifesto só binary → aceita; env tem HOMEBREW_NO_SUDO=1 além de SUDO_ASKPASS
+    expect(selectAutomaticCliUpdateRecipe({
+      ...muse,
+      caskArtifactKinds: ['binary', 'zap'],
+      caskTargetArtifactKinds: ['binary', 'zap'],
+    })).toMatchObject({
       kind: 'argv', runner: '/opt/homebrew/bin/brew',
       argv: ['/opt/homebrew/bin/brew', 'upgrade', '--cask', 'muse-code'],
-      env: { SUDO_ASKPASS: '/usr/bin/false' },
+      env: { SUDO_ASKPASS: '/usr/bin/false', HOMEBREW_NO_SUDO: '1' },
     });
+    // B1: sem prova completa dos artefatos da versão-alvo → manual (fail-closed)
+    expect(selectAutomaticCliUpdateRecipe({
+      ...muse,
+      caskArtifactKinds: ['binary', 'zap'],
+      caskTargetArtifactKinds: null,
+    })).toBeNull();
     expect(caskReceiptPath(muse.realBinPath)).toBe('/opt/homebrew/Caskroom/muse-code/.metadata/INSTALL_RECEIPT.json');
     expect(caskReceiptArtifactKinds(receipt)).toEqual(['binary', 'zap']);
     expect(selectAutomaticCliUpdateRecipe({ ...muse, caskArtifactKinds: ['pkg', 'uninstall'] })).toBeNull();

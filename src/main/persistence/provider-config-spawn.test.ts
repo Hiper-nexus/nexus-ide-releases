@@ -1,7 +1,7 @@
 import fsp from 'node:fs/promises';
+import fs from 'node:fs';
 import * as periodicFileRead from '../redline/redline-safe-read';
 import mimoRaw from '../../adapters/builtin/mimo-code.json';
-import fs from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { PROVIDER_CHANNELS } from '../../shared/provider-settings-types';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -537,6 +537,7 @@ describe('background CLI maintenance during pane startup', () => {
     await vi.advanceTimersByTimeAsync(0);
     await stopped;
     vi.restoreAllMocks();
+    spawnDeps.downloadInstaller.mockReset().mockImplementation(async () => ({ ok: true, text: async () => '#!/bin/bash\nexit 0\n' }));
     vi.useRealTimers();
   });
 
@@ -698,6 +699,103 @@ describe('background CLI maintenance during pane startup', () => {
       await vi.advanceTimersByTimeAsync(5_000);
       expect(listProviderSettings().find((info) => info.adapterId === 'claude')?.cliAutoUpdate)
         .toMatchObject({ status: 'failed', fromVersion: '1.0.0', reason: 'install-failed' });
+      warn.mockRestore();
+    });
+
+    it('B2: stderr com Bearer sintético grava motivo no trace sem vazar o token em texto claro', async () => {
+      const traceModule = await import('../observability/main-trace');
+      const traceSpy = vi.spyOn(traceModule, 'trace');
+      try {
+        spawnDeps.systemIdleTime.mockReturnValue(0);
+        checkedAgo(3 * 60 * 60_000);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const secretBearer = 'Bearer synthetic-secret-token-abcdef1234567890';
+        spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
+          const argv = args[1] as string[];
+          const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+          if (argv[0] === 'update') {
+            callback(new Error(`Command failed: claude update\nnpm ERR! 401 Unauthorized: ${secretBearer}`), '');
+          } else {
+            callback(null, '1.0.0');
+          }
+          return {} as ChildProcess;
+        });
+        stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+        await vi.advanceTimersByTimeAsync(5_000);
+        warn.mockRestore();
+
+        const cliUpdateCalls = traceSpy.mock.calls.filter((call) => (call[0] as { kind?: string })?.kind === 'cli-update');
+        expect(cliUpdateCalls.length).toBeGreaterThan(0);
+        const detail = (cliUpdateCalls[0]![0] as { detail?: string }).detail;
+        expect(detail).toBeDefined();
+        expect(detail).not.toContain('synthetic-secret-token-abcdef1234567890');
+        expect(detail).toContain('[REDACTED]');
+      } finally {
+        traceSpy.mockRestore();
+      }
+    });
+
+    it('B3: fetch pendente no boot libera lease após prazo de 120s e permite spawn da mesma CLI', async () => {
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const cliAutoUpdateModule = await import('../adapters/cli-auto-update');
+      vi.spyOn(cliAutoUpdateModule, 'selectAutomaticCliUpdateRecipe').mockReturnValue({
+        kind: 'script',
+        scriptUrl: 'https://cli.devin.ai/install.sh',
+        runner: 'bash',
+        runnerHint: 'instale o bash',
+        automaticUpdate: true,
+      });
+
+      spawnDeps.downloadInstaller.mockImplementation(() => new Promise(() => {}));
+
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      let claudePermit: (() => void) | undefined;
+      void acquireCliSpawnPermit('claude').then((release) => { claudePermit = release; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(claudePermit).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(claudePermit).toBeTypeOf('function');
+      claudePermit!();
+
+      expect(listProviderSettings().find((info) => info.adapterId === 'claude')?.cliAutoUpdate)
+        .toMatchObject({ status: 'failed', reason: 'download-timeout' });
+
+      warn.mockRestore();
+    });
+
+    it('B3: stop resolve prontamente mesmo com download de script pendente', async () => {
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      checkedAgo(3 * 60 * 60_000);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const cliAutoUpdateModule = await import('../adapters/cli-auto-update');
+      vi.spyOn(cliAutoUpdateModule, 'selectAutomaticCliUpdateRecipe').mockReturnValue({
+        kind: 'script',
+        scriptUrl: 'https://cli.devin.ai/install.sh',
+        runner: 'bash',
+        runnerHint: 'instale o bash',
+        automaticUpdate: true,
+      });
+
+      spawnDeps.downloadInstaller.mockImplementation(() => new Promise(() => {}));
+
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      let stoppedResolved = false;
+      const stopPromise = (stop as () => Promise<void>)().then(() => { stoppedResolved = true; });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(stopPromise).resolves.toBeUndefined();
+      expect(stoppedResolved).toBe(true);
+
       warn.mockRestore();
     });
   });

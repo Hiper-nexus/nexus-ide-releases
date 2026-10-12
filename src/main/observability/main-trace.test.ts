@@ -41,6 +41,19 @@ describe('redactSecrets', () => {
     expect(redactSecrets('string')).toBe('string');
     expect(redactSecrets(undefined)).toBeUndefined();
   });
+
+  it('B2: redige padrões de credenciais em campos de texto livre como detail ou stderr', () => {
+    const input = {
+      detail: 'npm ERR! 401 Unauthorized: Bearer secret-auth-token-987654321',
+      nested: {
+        stderr: 'fetch https://user:super-secret-password@registry.npmjs.org/ failed',
+      },
+    };
+    const out = redactSecrets(input) as Record<string, unknown>;
+    expect(out.detail).not.toContain('secret-auth-token-987654321');
+    expect(out.detail).toContain('[REDACTED]');
+    expect((out.nested as Record<string, unknown>).stderr).not.toContain('super-secret-password');
+  });
 });
 
 describe('shouldRotate', () => {

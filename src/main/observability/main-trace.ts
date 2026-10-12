@@ -1,10 +1,12 @@
 /** Bounded Main diagnostics. File IO and rotation never run synchronously on the caller. */
 import { join } from 'node:path';
 import { TraceFileSink } from './trace-file-sink';
+import { redactSecretText } from '../../shared/secret-redaction';
 
 export const TRACE_ROTATION_BYTES = 5 * 1024 * 1024;
 export const TRACE_ROTATION_GENERATIONS = 3;
 const SENSITIVE_KEY_RE = /key|token|secret|password|authorization|bearer|credential/i;
+const FREE_TEXT_KEY_RE = /detail|error|message|stderr|stdout|reason/i;
 
 /** Bounded redaction also handles cycles and excessive depth without exposing their leaves. */
 export function redactSecrets(value: unknown, depth = 0, budget = { left: 256 }, seen = new WeakSet<object>()): unknown {
@@ -19,7 +21,17 @@ export function redactSecrets(value: unknown, depth = 0, budget = { left: 256 },
   for (const key in value) {
     if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
     if (++keys > 64 || budget.left <= 0) { out.truncated = true; break; }
-    out[key] = SENSITIVE_KEY_RE.test(key) ? '[redacted]' : redactSecrets((value as Record<string, unknown>)[key], depth + 1, budget, seen);
+    if (SENSITIVE_KEY_RE.test(key)) {
+      out[key] = '[redacted]';
+    } else {
+      const child = (value as Record<string, unknown>)[key];
+      if (typeof child === 'string' && FREE_TEXT_KEY_RE.test(key)) {
+        const truncated = child.length > 4096 ? `${child.slice(0, 4096)}[truncated]` : child;
+        out[key] = redactSecretText(truncated).text;
+      } else {
+        out[key] = redactSecrets(child, depth + 1, budget, seen);
+      }
+    }
   }
   return out;
 }

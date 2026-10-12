@@ -128,10 +128,46 @@ const UNPRIVILEGED_CASK_ARTIFACTS = new Set([
   'binary', 'manpage', 'zap', 'bash_completion', 'zsh_completion', 'fish_completion',
 ]);
 
+export function isUnprivilegedCaskArtifact(kind: string): boolean {
+  return UNPRIVILEGED_CASK_ARTIFACTS.has(kind) || /^[a-z0-9_]*_completion$/u.test(kind);
+}
+
 /** `<prefix>/Caskroom/<cask>/.metadata/INSTALL_RECEIPT.json` do binário real. */
 export function caskReceiptPath(realBinPath: string): string | null {
   const match = realBinPath.replaceAll('\\', '/').match(/^(.*\/Caskroom\/[^/]+)\//u);
   return match ? `${match[1]}/.metadata/INSTALL_RECEIPT.json` : null;
+}
+
+export function caskTokenFromRealBinPath(realBinPath: string): string | null {
+  const match = realBinPath.replaceAll('\\', '/').match(/^.*\/Caskroom\/([^/]+)\//u);
+  return match ? match[1] : null;
+}
+
+/**
+ * F-1395 B1: Extrai os tipos de artefato do manifesto da versão-alvo do cask
+ * (saída de `brew info --cask --json=v2 <cask>`).
+ * Falha fechado (retorna null) se o JSON for inválido, não contiver o cask
+ * ou a lista de artefatos estiver vazia/ausente.
+ */
+export function caskManifestArtifactKinds(manifestJson: string): string[] | null {
+  try {
+    const data = JSON.parse(manifestJson) as {
+      casks?: Array<{ artifacts?: Array<Record<string, unknown>> }>;
+    };
+    const cask = data?.casks?.[0];
+    if (!cask || !Array.isArray(cask.artifacts) || cask.artifacts.length === 0) return null;
+    const kinds: string[] = [];
+    for (const artifact of cask.artifacts) {
+      if (!artifact || typeof artifact !== 'object' || Array.isArray(artifact)) return null;
+      // Homebrew adiciona 'target' a artefatos relocáveis (binary, app). O resto são os dsl_keys.
+      const dslKeys = Object.keys(artifact).filter((key) => key !== 'target');
+      if (dslKeys.length === 0) return null;
+      kinds.push(...dslKeys);
+    }
+    return kinds;
+  } catch {
+    return null;
+  }
 }
 
 /** Tipos de artefato do recibo do cask; null quando ilegível. */
@@ -163,6 +199,8 @@ type AutoUpdateInput = Parameters<typeof selectCliUpdateRecipe>[0] & {
   readonly isTargetWritable: (targetPath: string) => boolean;
   /** F-1395: artefatos do recibo do cask instalado (null/ausente = manual). */
   readonly caskArtifactKinds?: readonly string[] | null;
+  /** F-1395 B1: artefatos do manifesto da VERSÃO-ALVO (brew info --cask --json=v2). */
+  readonly caskTargetArtifactKinds?: readonly string[] | null;
 };
 
 /** A background update may only touch a recognized, writable user install. */
@@ -181,11 +219,26 @@ export function selectAutomaticCliUpdateRecipe(input: AutoUpdateInput): CliInsta
         hostPath.isAbsolute(relative)) return null;
   }
   if (selection.recipe.kind === 'argv' && selection.recipe.argv.includes('--cask')) {
-    // Cask com .pkg/instalador/uninstall privilegiado continua manual.
-    const kinds = input.caskArtifactKinds;
-    if (!kinds?.length || !kinds.every((kind) => UNPRIVILEGED_CASK_ARTIFACTS.has(kind))) return null;
-    // Sem TTY: um sudo inesperado do brew falha na hora em vez de pendurar.
-    return { ...selection.recipe, env: { ...selection.recipe.env, SUDO_ASKPASS: '/usr/bin/false' } };
+    // F-1395 B1: falhar fechado sem prova completa dos artefatos da VERSÃO-ALVO.
+    // Cask com .pkg/instalador/hooks/uninstall privilegiado continua manual.
+    const targetKinds = input.caskTargetArtifactKinds !== undefined
+      ? input.caskTargetArtifactKinds
+      : input.caskArtifactKinds;
+    if (!targetKinds?.length || !targetKinds.every((kind) => isUnprivilegedCaskArtifact(kind))) return null;
+    const receiptKinds = input.caskArtifactKinds;
+    if (receiptKinds && (!receiptKinds.length || !receiptKinds.every((kind) => isUnprivilegedCaskArtifact(kind)))) {
+      return null;
+    }
+    // Sem TTY e sem sudo: HOMEBREW_NO_SUDO=1 barra sudo mesmo com NOPASSWD;
+    // SUDO_ASKPASS=/usr/bin/false garante que um prompt falha na hora em vez de pendurar.
+    return {
+      ...selection.recipe,
+      env: {
+        ...selection.recipe.env,
+        SUDO_ASKPASS: '/usr/bin/false',
+        HOMEBREW_NO_SUDO: '1',
+      },
+    };
   }
   return selection.recipe;
 }

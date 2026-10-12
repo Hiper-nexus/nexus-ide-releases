@@ -87,11 +87,13 @@ import {
   restoreExecutableIfMissing,
 } from '../adapters/in-use-executable';
 import {
-  BOOT_RECHECK_MS, CliAutoUpdateQueue, CliUpdateLease, caskReceiptArtifactKinds, caskReceiptPath, cliUpdateKey,
+  BOOT_RECHECK_MS, CliAutoUpdateQueue, CliUpdateLease, caskManifestArtifactKinds, caskReceiptArtifactKinds,
+  caskReceiptPath, caskTokenFromRealBinPath, cliUpdateKey,
   isVersionedCliInstall, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent,
 } from '../adapters/cli-auto-update';
 import { trace } from '../observability/main-trace';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { redactSecretText } from '../../shared/secret-redaction';
 import {
   getKey,
   getSecret,
@@ -2192,6 +2194,52 @@ async function readCaskArtifactKindsAsync(realBinPath: string): Promise<string[]
   catch { return null; }
 }
 
+/** F-1395 B1: artefatos do manifesto da VERSÃO-ALVO do cask via `brew info --cask --json=v2`. */
+function readCaskTargetArtifactKinds(realBinPath: string): string[] | null {
+  const token = caskTokenFromRealBinPath(realBinPath);
+  const brew = resolveRunnerPath('brew');
+  if (!token || !brew) return null;
+  try {
+    const stdout = execFileSync(
+      brew,
+      ['info', '--cask', '--json=v2', token],
+      {
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+        encoding: 'utf8',
+        env: { ...process.env, HOMEBREW_NO_AUTO_UPDATE: '1', HOMEBREW_NO_SUDO: '1' },
+      },
+    );
+    return caskManifestArtifactKinds(stdout);
+  } catch {
+    return null;
+  }
+}
+
+async function readCaskTargetArtifactKindsAsync(realBinPath: string): Promise<string[] | null> {
+  const token = caskTokenFromRealBinPath(realBinPath);
+  const brew = resolveRunnerPath('brew');
+  if (!token || !brew) return null;
+  return new Promise((resolve) => {
+    execFile(
+      brew,
+      ['info', '--cask', '--json=v2', token],
+      {
+        timeout: 15_000,
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, HOMEBREW_NO_AUTO_UPDATE: '1', HOMEBREW_NO_SUDO: '1' },
+      },
+      (error, stdout) => {
+        if (error || !stdout) {
+          resolve(null);
+          return;
+        }
+        resolve(caskManifestArtifactKinds(stdout));
+      },
+    );
+  });
+}
+
 function automaticCliCandidate(adapterId: string): AutomaticCliCandidate | null {
   const adapter = getAdapter(adapterId);
   if (!adapter || adapter.kind !== 'cli-pty' || !isBuiltinAdapter(adapterId) ||
@@ -2213,6 +2261,7 @@ function automaticCliCandidate(adapterId: string): AutomaticCliCandidate | null 
       catch { return false; }
     },
     caskArtifactKinds: readCaskArtifactKinds(realBinPath),
+    caskTargetArtifactKinds: readCaskTargetArtifactKinds(realBinPath),
   });
   if (!recipe) return null;
   if (recipe.kind !== 'argv') {
@@ -2246,6 +2295,7 @@ async function automaticCliCandidateAsync(adapterId: string): Promise<AutomaticC
     resolveRealPath: resolveCliRealPath,
     isTargetWritable: (target) => writable.get(target) === true,
     caskArtifactKinds: await readCaskArtifactKindsAsync(realBinPath),
+    caskTargetArtifactKinds: await readCaskTargetArtifactKindsAsync(realBinPath),
   });
   if (!recipe) return null;
   if (recipe.kind !== 'argv') {
@@ -2391,8 +2441,9 @@ function recordCliAutoUpdate(adapterId: string, outcome: Omit<CliAutoUpdateOutco
 }
 
 function shortInstallError(error: unknown): string {
-  const lines = String(error instanceof Error ? error.message : error).split(/\r?\n/u)
-    .map((line) => line.trim()).filter(Boolean);
+  const raw = String(error instanceof Error ? error.message : error);
+  const sanitized = redactSecretText(raw).text;
+  const lines = sanitized.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
   return (lines.at(-1) ?? 'erro desconhecido').slice(0, 200);
 }
 
@@ -2478,6 +2529,7 @@ export function startCliAutoUpdate(
       const now = Date.now();
       const byId = new Map(candidates.map((candidate) => [candidate.adapterId, candidate]));
       const blocked = (id: string) => {
+        if (stopped) return true;
         if (cliUpdateLease.isHeld(id)) return true;
         if (!paneBlocks(id, byId.get(id))) return false;
         awaitingPaneClose.add(id);
@@ -2511,13 +2563,18 @@ export function startCliAutoUpdate(
               throw authorityChanged;
             }
           };
-          try { await context.wait(runInstallRecipe(selected.recipe, selected.prepared ?? undefined, assertInstallCurrent)); }
+          try { await context.wait(runInstallRecipe(selected.recipe, selected.prepared ?? undefined, assertInstallCurrent, context.signal)); }
           catch (error) {
             console.warn(`[cli-auto-update] ${id}: update failed`, error);
             if (!stopped && error !== authorityChanged) {
+              const isDownloadTimeout = (error as { isDownloadTimeout?: boolean })?.isDownloadTimeout === true;
               recordCliAutoUpdate(id, {
                 status: 'failed', fromVersion: beforeVersion,
-                reason: (error as { killed?: boolean }).killed ? 'timeout' : 'install-failed',
+                reason: isDownloadTimeout
+                  ? 'download-timeout'
+                  : (error as { killed?: boolean }).killed
+                    ? 'timeout'
+                    : 'install-failed',
               }, shortInstallError(error));
             }
             return false;
@@ -2637,24 +2694,83 @@ async function installedCliVersion(adapterId: string, binPath: string): Promise<
   });
 }
 
+/** F-1395 B3: teto para baixar o instalador oficial antes de rodar o script. */
+export const CLI_DOWNLOAD_TIMEOUT_MS = 120_000;
+
+export class CliDownloadTimeoutError extends Error {
+  readonly isDownloadTimeout = true;
+  constructor(message = 'tempo limite esgotado ao baixar o instalador oficial') {
+    super(message);
+    this.name = 'CliDownloadTimeoutError';
+  }
+}
+
+async function fetchInstallerBody(
+  scriptUrl: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<string> {
+  const url = new URL(scriptUrl);
+  if (url.protocol !== 'https:') {
+    throw new Error('instalador oficial precisa ser HTTPS');
+  }
+
+  const timeoutMs = options?.timeoutMs ?? CLI_DOWNLOAD_TIMEOUT_MS;
+  const controller = new AbortController();
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let onSignalAbort: (() => void) | null = null;
+
+  const abortOrTimeoutPromise = new Promise<never>((_, reject) => {
+    if (options?.signal?.aborted) {
+      controller.abort(options.signal.reason);
+      reject(options.signal.reason ?? new Error('download cancelado'));
+      return;
+    }
+    if (options?.signal) {
+      onSignalAbort = () => {
+        controller.abort(options.signal?.reason);
+        reject(options.signal?.reason ?? new Error('download cancelado'));
+      };
+      options.signal.addEventListener('abort', onSignalAbort, { once: true });
+    }
+    timer = setTimeout(() => {
+      const err = new CliDownloadTimeoutError();
+      controller.abort(err);
+      reject(err);
+    }, timeoutMs);
+    timer.unref?.();
+  });
+
+  try {
+    const fetchCall = options?.signal
+      ? net.fetch(scriptUrl, { signal: controller.signal })
+      : net.fetch(scriptUrl);
+
+    const response = await Promise.race([fetchCall, abortOrTimeoutPromise]);
+    if (!response.ok) {
+      throw new Error(`download do instalador falhou: HTTP ${response.status}`);
+    }
+    const body = await Promise.race([response.text(), abortOrTimeoutPromise]);
+    if (!body.trim()) throw new Error('instalador oficial veio vazio');
+    return body;
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (options?.signal && onSignalAbort) {
+      options.signal.removeEventListener('abort', onSignalAbort);
+    }
+  }
+}
+
 /** Baixa o instalador oficial (HTTPS) para um arquivo temporário 0700 e o
  * executa com bash — nunca `curl | sh`: o conteúdo em disco é o que roda. */
 async function runScriptInstall(
   scriptUrl: string,
   envOverrides?: Readonly<Record<string, string>>,
   assertCurrent?: () => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   assertCurrent?.();
-  const url = new URL(scriptUrl);
-  if (url.protocol !== 'https:') {
-    throw new Error('instalador oficial precisa ser HTTPS');
-  }
-  const response = await net.fetch(scriptUrl);
-  if (!response.ok) {
-    throw new Error(`download do instalador falhou: HTTP ${response.status}`);
-  }
-  const body = await response.text();
-  if (!body.trim()) throw new Error('instalador oficial veio vazio');
+  const body = await fetchInstallerBody(scriptUrl, { signal });
   const file = path.join(
     os.tmpdir(),
     `nexus-cli-install-${Date.now()}-${process.pid}.sh`,
@@ -2663,7 +2779,7 @@ async function runScriptInstall(
   try {
     assertCurrent?.();
     await new Promise<void>((resolve, reject) => {
-      execFile(
+      const child = execFile(
         resolveRunnerPath('bash') ?? 'bash',
         [file],
         envOverrides
@@ -2671,6 +2787,7 @@ async function runScriptInstall(
           : installExecOptions(),
         (error) => (error ? reject(error) : resolve()),
       );
+      child?.stdin?.end();
     });
   } finally {
     await fsp.rm(file, { force: true });
@@ -2685,18 +2802,10 @@ async function runPowerShellScriptInstall(
   scriptUrl: string,
   replacesLocalAppDataExecutable?: string,
   assertCurrent?: () => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   assertCurrent?.();
-  const url = new URL(scriptUrl);
-  if (url.protocol !== 'https:') {
-    throw new Error('instalador oficial precisa ser HTTPS');
-  }
-  const response = await net.fetch(scriptUrl);
-  if (!response.ok) {
-    throw new Error(`download do instalador falhou: HTTP ${response.status}`);
-  }
-  const body = await response.text();
-  if (!body.trim()) throw new Error('instalador oficial veio vazio');
+  const body = await fetchInstallerBody(scriptUrl, { signal });
   const file = path.join(
     os.tmpdir(),
     `nexus-cli-install-${Date.now()}-${process.pid}.ps1`,
@@ -2790,14 +2899,15 @@ async function runInstallRecipe(
   recipe: CliInstallRecipe,
   prepared?: ArgvInstallInvocation,
   assertCurrent?: () => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   assertCurrent?.();
   if (recipe.kind === 'script') {
-    await runScriptInstall(recipe.scriptUrl, recipe.env, assertCurrent);
+    await runScriptInstall(recipe.scriptUrl, recipe.env, assertCurrent, signal);
     return;
   }
   if (recipe.kind === 'powershell-script') {
-    await runPowerShellScriptInstall(recipe.scriptUrl, recipe.replacesLocalAppDataExecutable, assertCurrent);
+    await runPowerShellScriptInstall(recipe.scriptUrl, recipe.replacesLocalAppDataExecutable, assertCurrent, signal);
     return;
   }
   const invocation = prepared ?? prepareArgvInstallInvocation(recipe);
