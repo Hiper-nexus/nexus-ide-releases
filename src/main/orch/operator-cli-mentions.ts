@@ -14,7 +14,9 @@
  * Contrato do SessionInputTap: o texto é observacional — NUNCA persistido,
  * logado nem encaminhado. Só timestamps + trechos sanitizados em RAM, com
  * retenção de 30 minutos, teto de 4.000 caracteres por sessão e de 1.000 por
- * chunk (colagem gigante fica com o final — F-1303).
+ * chunk (colagem gigante fica com o final — F-1303). A menção é detectada NA
+ * HORA em que o chunk entra e vira só um timestamp (`lastNamedAt`): texto
+ * posterior não a apaga (F-1303, 2ª rodada).
  */
 import { tapSessionExit, tapSessionInput } from '../pty/pty-manager';
 
@@ -38,6 +40,15 @@ interface InputChunk {
 }
 
 const inputBySession = new Map<string, InputChunk[]>();
+
+/**
+ * F-1303 (2ª rodada): menção detectada quando o chunk ENTROU. O buffer por
+ * sessão ainda evicta pelo teto de 4.000 — texto humano digitado depois de uma
+ * menção (mais entregas coladas no pane) empurrava "kimi code mesmo" para fora
+ * em ~23 min. Aqui só o timestamp fica; mesma retenção de 30 min, só em RAM.
+ */
+const lastNamedAtBySession = new Map<string, Map<string, number>>();
+
 let installed = false;
 
 /** Aliases conhecidos → adapter. Adapter fora da lista casa pelo próprio id. */
@@ -61,6 +72,9 @@ const CLI_MENTION_ALIASES: Readonly<Record<string, readonly string[]>> = {
   aider: ['aider'],
   qwen: ['qwen', 'qwen code', 'qwen 3.8'],
 };
+
+/** Adapters conhecidos: a detecção na entrada varre todos (o spawn que pergunta pode ser qualquer um). */
+const KNOWN_ADAPTER_IDS = Object.keys(CLI_MENTION_ALIASES);
 
 /**
  * F-818: erros de digitação CONHECIDOS por alias (chave = alias normalizado).
@@ -183,21 +197,76 @@ function flexibleAliasPattern(core: string): RegExp {
   return new RegExp(`(?<![a-z0-9])${parts.join('[\\s-]*')}(?![a-z0-9])`, 'u');
 }
 
+function aliasPatterns(alias: string): RegExp[] {
+  const core = alias.replace(/[\s-]+/g, '');
+  if (core.length < 4) {
+    return [new RegExp(`(?<![a-z0-9])${escapeRegex(alias)}(?![a-z0-9])`, 'u')];
+  }
+  return [
+    flexibleAliasPattern(core),
+    // F-818: só grafia errada EXPLÍCITA — sem distância de edição genérica.
+    ...(CLI_MENTION_TYPOS[alias] ?? []).map((typo) => flexibleAliasPattern(typo)),
+  ];
+}
+
 function aliasMatches(text: string, alias: string): boolean {
   const normalizedAlias = normalizeForMatch(alias);
   if (!normalizedAlias) return false;
-  const core = normalizedAlias.replace(/[\s-]+/g, '');
-  if (core.length < 4) {
-    return new RegExp(
-      `(?<![a-z0-9])${escapeRegex(normalizedAlias)}(?![a-z0-9])`,
-      'u',
-    ).test(text);
+  return aliasEndsAfter(text, normalizedAlias, 0);
+}
+
+/**
+ * Casa quando um casamento TERMINA depois de `boundary` — o alias inteiro
+ * dentro do trecho anterior ao empalme já foi detectado quando entrou;
+ * redetectá-lo renovaria o timestamp de uma menção velha.
+ */
+function aliasEndsAfter(text: string, alias: string, boundary: number): boolean {
+  return aliasPatterns(alias).some((pattern) => {
+    const global = new RegExp(
+      pattern.source,
+      pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`,
+    );
+    let match: RegExpExecArray | null = global.exec(text);
+    while (match !== null) {
+      if (match.index + match[0].length > boundary) return true;
+      match = global.exec(text);
+    }
+    return false;
+  });
+}
+
+/**
+ * F-1303 (2ª rodada): a detecção cobre só o chunk NOVO, com o final do replay
+ * anterior emprestado para a fronteira de palavra do empalme ("cade gro" +
+ * "k"). ponytail: 64 chars de cauda bastam para o alias mais longo com o
+ * espaço/hífen flexível; um nome "esticado" por mais de ~50 chars de branco
+ * entre as letras não é uma menção.
+ */
+const DETECTION_TAIL_CHARS = 64;
+
+function markNamed(
+  sessionId: string,
+  at: number,
+  previousReplay: string,
+  chunkText: string,
+): void {
+  const tail = previousReplay.slice(-DETECTION_TAIL_CHARS);
+  const junction = replayInput([{ at, text: tail }, { at, text: chunkText }]);
+  let byAdapter = lastNamedAtBySession.get(sessionId);
+  if (!byAdapter) {
+    byAdapter = new Map();
+    lastNamedAtBySession.set(sessionId, byAdapter);
   }
-  if (flexibleAliasPattern(core).test(text)) return true;
-  // F-818: só grafia errada EXPLÍCITA — sem distância de edição genérica.
-  return (CLI_MENTION_TYPOS[normalizedAlias] ?? []).some((typo) =>
-    flexibleAliasPattern(typo).test(text),
-  );
+  for (const adapterId of KNOWN_ADAPTER_IDS) {
+    const named = aliasesFor(adapterId).some((alias) =>
+      aliasEndsAfter(junction, normalizeForMatch(alias), tail.length),
+    );
+    if (named) byAdapter.set(adapterId, at);
+  }
+  for (const [adapterId, namedAt] of byAdapter) {
+    if (at - namedAt > RETENTION_MS) byAdapter.delete(adapterId);
+  }
+  if (byAdapter.size === 0) lastNamedAtBySession.delete(sessionId);
 }
 
 function remember(sessionId: string, data: string): void {
@@ -211,8 +280,14 @@ function remember(sessionId: string, data: string): void {
   // 10 KB evaporava a sessão inteira).
   const clipped =
     text.length > MAX_CHUNK_CHARS ? text.slice(-MAX_CHUNK_CHARS) : text;
-  const chunks = [...(inputBySession.get(sessionId) ?? []), { at: now, text: clipped }]
-    .filter((chunk) => now - chunk.at <= RETENTION_MS);
+  const retained = (inputBySession.get(sessionId) ?? []).filter(
+    (chunk) => now - chunk.at <= RETENTION_MS,
+  );
+  // Detecção na hora (F-1303, 2ª rodada): só o chunk novo é varrido — o final
+  // do replay anterior entra só como fronteira de palavra. Antes da evicção,
+  // para não perder o que está prestes a sair do buffer.
+  markNamed(sessionId, now, replayInput(retained), clipped);
+  const chunks = [...retained, { at: now, text: clipped }];
   // Teto por sessão: corta do lado antigo até caber em MAX_RETAINED_CHARS.
   let total = chunks.reduce((sum, chunk) => sum + chunk.text.length, 0);
   while (total > MAX_RETAINED_CHARS && chunks.length > 0) {
@@ -253,11 +328,13 @@ export function installOperatorCliMentionTap(): () => void {
   });
   const untapExit = tapSessionExit((sessionId) => {
     inputBySession.delete(sessionId);
+    lastNamedAtBySession.delete(sessionId);
   });
   return () => {
     untapInput();
     untapExit();
     inputBySession.clear();
+    lastNamedAtBySession.clear();
     installed = false;
   };
 }
@@ -276,9 +353,15 @@ export function operatorRecentlyNamedCli(
   windowMs = MENTION_WINDOW_MS,
 ): boolean {
   if (!sessionId) return false;
+  const window = Math.min(windowMs, RETENTION_MS);
+  // F-1303 (2ª rodada): a menção detectada quando o chunk entrou não depende
+  // mais do buffer — texto posterior não a apaga.
+  const namedAt = lastNamedAtBySession.get(sessionId)?.get(adapterId);
+  if (namedAt !== undefined && now - namedAt >= 0 && now - namedAt <= window) {
+    return true;
+  }
   const chunks = inputBySession.get(sessionId);
   if (!chunks || chunks.length === 0) return false;
-  const window = Math.min(windowMs, RETENTION_MS);
   const recent = chunks.filter(
     (chunk) => now - chunk.at >= 0 && now - chunk.at <= window,
   );

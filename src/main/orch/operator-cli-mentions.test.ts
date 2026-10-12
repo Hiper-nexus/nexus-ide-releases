@@ -342,14 +342,33 @@ describe('F-1303: colagem gigante não apaga a menção do operador', () => {
     expect(operatorRecentlyNamedCli('f1303-b', 'kimi', now)).toBe(true);
   });
 
-  it('teto por sessão continua: depois de MUITOS chunks o mais antigo sai', () => {
+  it('F-1303 2ª rodada: menção digitada sobrevive a 6 entregas de 1.000+ chars', () => {
+    // Cenário real de ~06:57: o operador digitou "kimi code mesmo" e, nos 23
+    // minutos seguintes, o pane recebeu várias entregas de handoff; o texto
+    // humano digitado depois empurrou a menção para fora do teto de 4.000.
     const now = 1_000_000;
-    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    vi.spyOn(Date, 'now').mockReturnValue(now - 2 * MIN);
+    type('f1303-e', 'kimi code mesmo');
+    for (let i = 0; i < 6; i++) {
+      type('f1303-e', `\x1b[200~entrega numero ${i} ${'x'.repeat(1_200)}\x1b[201~`);
+    }
+    expect(
+      operatorRecentlyNamedCli('f1303-e', 'kimi', now, OPERATOR_CHOICE_PROOF_WINDOW_MS),
+    ).toBe(true);
+  });
+
+  it('menção detectada na hora sobrevive a chunks posteriores, mas expira com a retenção', () => {
+    // O teto por sessão continua cortando o buffer do lado antigo (> 4.000
+    // chars em chunks pequenos), mas a menção já foi DETECTADA quando entrou:
+    // texto posterior não a apaga — só a retenção de 30 min.
+    const t0 = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(t0 - MIN);
     type('f1303-c', 'abre um kimi');
-    // > 4.000 chars em chunks pequenos (digitação corrida): evicção do lado
-    // antigo continua valendo — só a forma do corte do chunk GRANDE mudou.
     for (let i = 0; i < 150; i++) type('f1303-c', `mensagem corrida numero ${i} do operador `);
-    expect(operatorRecentlyNamedCli('f1303-c', 'kimi', now)).toBe(false);
+    expect(operatorRecentlyNamedCli('f1303-c', 'kimi', t0)).toBe(true);
+    expect(
+      operatorRecentlyNamedCli('f1303-c', 'kimi', t0 + 31 * MIN, OPERATOR_CHOICE_PROOF_WINDOW_MS),
+    ).toBe(false);
   });
 
   it('hipótese 2 derrubada: mensagem que COMEÇA com a CLI após outra, sem Enter no tap', () => {
