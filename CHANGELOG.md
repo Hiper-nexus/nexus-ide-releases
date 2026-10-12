@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.76.240 — Escrever, julgar, devolver
+
+Varredura interna s240: 11 sondas em 11 LLMs testaram o Nexus por dentro. Os 80+ achados (F-1302..F-1389) foram corrigidos com teste RED, julgados pelo orquestrador e aprovados pelo Fable depois de 4 rodadas de revisão. Ficaram 7 decisões de produto registradas como `precisa-decisao`: F-1320 p2, F-1332 p2, F-1345, F-1358 p2, F-1363, F-1386 e F-1389.
+
+- **O ciclo writer → julgamento → devolução funciona.**
+  - O Jev não zera mais a escrita num pedido de correção: "N+" vira piso, e `writesCode` garante ao menos um writer (F-1317).
+  - `isolatedWriter` vence `readOnly` (F-1318).
+  - `nexus_handoff_ack({ verdict: 'rework', note })` devolve a nota ao MESMO writer:
+    - pelo PTY vivo ou pelo `resume` da worktree (F-1319);
+    - quando a CLI não tem conversa retomável (kimi, devin, agy, muse, opencode), abre um pane novo na mesma worktree, com o brief, a nota e os commits (F-1388);
+    - também em missão com squad.
+  - O writer escolhe a base com `baseRef` (F-1320).
+  - O resume do glm acha a conversa (F-1353).
+  - Agente do catálogo pode ser usado em missão sem squad (F-1314).
+- **Todas as LLMs trabalham.**
+  - O roteamento espalha por uso entre as CLIs prontas, e `preferAdapters` é boost, não pin (F-1313).
+  - O Kimi é preferido em front-end sem monopolizar a lane visual.
+  - Prompt grande vai para um arquivo `.md` privado, e o roteador lê o brief apontado (F-1316).
+  - A CLI nomeada pelo operador não se perde do buffer (F-1303).
+  - Tradução, typo e migração passam a ser classificados certo (F-1340..F-1346).
+- **O portão de regressão roda os testes.**
+  - Primeiro os testes diretos, dentro dos 45 s, com retentativa e comparação com a base por faixa.
+  - O recibo diz o que não rodou e por quê, e nunca afirma um runner sem execução (F-1348).
+- **Memória e modelo de negócio relevantes.**
+  - Os invariantes injetados levam em conta os arquivos que a conversa editou (F-1347).
+  - `F-1301` acha o F-1301 (F-1349).
+  - Recibos vazios saem da memória injetada (F-1350).
+  - A origem real de cada invariante é citada (F-1352).
+- **Estado real dos panes.**
+  - One-shot trabalhando aparece ocupado (F-1312).
+  - A linha "Loading" do minimax conta como trabalho, e a admissão só sugere fechar pane realmente parado (F-1381).
+  - Fim os alarmes falsos de "travado" (F-1380) e o "boot-exit" depois de 13 minutos (F-1367).
+  - O fechamento registra quem pediu (F-1354), e o digest do devin fica legível (F-1356).
+- **Entregas que não somem.**
+  - Artefato em formato objeto é preservado (F-1310).
+  - O portão visual não confunde lista de exemplos com tarefa de UI (F-1311), mas mantém a captura em tarefa de UI em XML (F-1362).
+  - O Maestro ocupado fica sabendo das entregas na fila (F-1359).
+  - O objetivo da missão do "+ Pane" guarda o pedido inteiro (F-1315).
+  - A remoção de missão fica auditável (F-1358).
+- **Segurança.**
+  - O `security_audit` não vaza o segredo que diz redigir (F-1331).
+  - O `startKey` não é mais exposto (F-1336).
+  - Segredo em args de servidor MCP vai para o cofre (F-1383).
+  - O backup do hub é podado e ignorado pelo git (F-1364).
+  - A configuração do Muse fica isolada por pane (F-1338).
+- **Velocidade.**
+  - O worker usa o Node fixado pelo projeto (F-1385).
+  - A worktree de writer nasce quente, com `node_modules` e caches clonados (F-1386).
+  - O git do Nexus não deixa `index.lock` órfão (F-1384).
+- **Ferramentas.**
+  - O code map olha o checkout certo, e o cache não colide entre raízes (F-1321/F-1322).
+  - LSP com `extends` (F-1323), hunks com caminho entre aspas (F-1324), `file_search` com `./` (F-1325) e captura responsiva honesta (F-1326).
+  - O playwright do hub deixa de dar ENOENT (F-1365).
+  - O `cwd` do hub chega ao spawn (F-1366).
+  - 9 ferramentas de leitura deixam de exigir confirmação (F-1328).
+  - O inventário de plugins e as listas de squads estão limpos (F-1333/F-1335).
+  - As janelas de conta não inventam 0% (F-1329/F-1330).
+  - O limite do grok é de 5 h (F-1357).
+- **Front-end** (revisão do Kimi): pane morto não fica preso em "idle", e há correções de datas, orçamento, traduções e Mermaid (F-1368..F-1379).
+
 ## 0.76.239 — Missões que terminam
 
 - **Writers isolados voltam a nascer.** Depois que um writer isolado falhava e o checkout trocava de branch, todo `nexus_pane_spawn` com `isolatedWriter` morria com "invalid worktree state record". Um registro encerrado num ref antigo envenenava o estado inteiro. Agora a unicidade de raiz e ref vale só entre writers ativos (F-1253). Estados duráveis da fila de merge também deixaram de travar o checkout para sempre, por quatro caminhos:

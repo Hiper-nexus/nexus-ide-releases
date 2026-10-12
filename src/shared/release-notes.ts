@@ -10379,7 +10379,7 @@ export const RELEASE_076238: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076239: AppRelease = {
   version: '0.76.239',
   date: '2026-10-12',
   codename: 'Missões que terminam',
@@ -10393,5 +10393,22 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Diálogos sem travar o app', detail: 'O aviso de encerramento, o prompt de sair e o consentimento de hooks abrem como sheet na janela, sem prender o processo principal.' },
     { title: 'Roteamento econômico que acerta', detail: 'Palavras soltas não decidem mais o nível da tarefa; o ranking mostra os modelos instalados mais novos e o rodízio de CLIs funciona também sem missão.' },
     { title: 'Ferramentas e atualizador', detail: 'Busca de arquivos, LSP e code map funcionam em arquivo real; o atualizador não faz rajada de checagens nem deixa o ZIP no tmp.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.240',
+  date: '2026-10-12',
+  codename: 'Escrever, julgar, devolver',
+  summary: 'Os panes escrevem em paralelo, o orquestrador julga e devolve ao mesmo writer; todas as LLMs prontas recebem trabalho; o portão de regressão roda os testes diretos; e a memória injeta o que importa para o arquivo que você está mexendo.',
+  highlights: [
+    { title: 'Escrever, julgar, devolver', detail: 'O Jev não zera mais a escrita num pedido de correção, e o veredito "refazer" volta ao mesmo writer — pelo PTY, pelo resume ou num pane novo na mesma worktree, em qualquer CLI e também em missão com squad.' },
+    { title: 'Todas as LLMs trabalham', detail: 'O roteamento espalha por uso entre as CLIs prontas, a preferência é um empurrão e não um pin, o Kimi é preferido em front sem monopolizar, e prompt grande vai para um arquivo privado.' },
+    { title: 'Portão de regressão que roda', detail: 'Os testes diretos rodam primeiro, dentro do prazo, com retentativa e comparação com a base; o recibo diz o que não rodou e por quê.' },
+  ],
+  fixes: [
+    { title: 'Memória e modelo de negócio', detail: 'Invariantes escolhidos pelos arquivos que a conversa editou, busca por F-XXXX exata e recibos vazios fora da memória injetada.' },
+    { title: 'Estado real dos panes', detail: 'One-shot trabalhando aparece ocupado, o minimax "Loading" conta como trabalho, sem alarme falso de travado e sem index.lock órfão.' },
+    { title: 'Segurança e configuração', detail: 'O audit não vaza segredo, o startKey não é exposto, segredo em args de MCP vai para o cofre, o playwright do hub volta a abrir e o Muse isola a sessão por pane.' },
   ],
 };
