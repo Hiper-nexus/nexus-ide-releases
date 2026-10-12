@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
       requireHead ? "a".repeat(40) : undefined,
   ),
   assertReadOnlyLaneObservationCurrent: vi.fn(),
+  findPane: vi.fn(),
+  requestPaneClose: vi.fn(),
 }));
 
 vi.mock("./gate", async (importOriginal) => ({
@@ -70,10 +72,19 @@ vi.mock("../jarvis/audit-log", () => ({
   auditError: vi.fn(),
 }));
 
+vi.mock("./pane-registry", () => ({
+  findPane: mocks.findPane,
+  requestPaneClose: mocks.requestPaneClose,
+}));
+
 import {
   extractPromotablePtyHandoffs,
   submitPtyStreamHandoff,
 } from "./pty-stream-handoff";
+import {
+  armAutoCloseOnHandoff,
+  disarmAutoCloseOnHandoff,
+} from "./pane-close-scopes";
 
 const scope = testProjectScope();
 
@@ -158,6 +169,10 @@ describe("submitPtyStreamHandoff MCP parity", () => {
       async (_ctx: unknown, requireHead: boolean) =>
         requireHead ? "a".repeat(40) : undefined,
     );
+    mocks.findPane.mockReset();
+    mocks.requestPaneClose.mockReset();
+    mocks.requestPaneClose.mockResolvedValue(true);
+    disarmAutoCloseOnHandoff("agy-session");
   });
   it("persists without a bound task_dispatch and wakes the Maestro (express / AGY)", async () => {
     const submitWithReplay = vi.fn(() => ({
@@ -577,5 +592,77 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     await expect(submitPtyStreamHandoff("agy-session", payload)).rejects.toThrow(
       /handoff_origin: mission is not live/u,
     );
+  });
+
+  // F-1409: o caminho PTY (legacy block, fechamento mecânico, agy sem MCP)
+  // registrava success no ledger mas nunca acionava o auto-close — o pane
+  // ficava aberto até o operador fechar à mão. A entrega vive no ledger,
+  // não no PTY do worker: success registrado fecha o worker armado,
+  // independentemente de o Maestro já ter consumido (deliveryState queued).
+  describe("F-1409 auto-close no caminho PTY", () => {
+    function mockStoresWithSuccessHandoff(status: string, deliveryState = "queued") {
+      const submitWithReplay = vi.fn(() => ({
+        handoff: {
+          id: "hoff-autoclose",
+          status,
+          evidenceTrust: "nexus-trusted",
+          deliveryState,
+        },
+        replayed: false,
+      }));
+      mocks.getContextBySession.mockReturnValue(workerCtx());
+      mocks.getStores.mockReturnValue({
+        missions: { get: () => approvedMission() },
+        tasks: { list: () => [], getPlannedTask: () => null },
+        missionPanes: { list: () => [] },
+        taskDispatches: { list: () => [] },
+        handoffs: {
+          submitFromPhysicalAgentBoundaryWithReplay: submitWithReplay,
+          submitFromPhysicalAgentBoundaryAndTransitionDispatch: vi.fn(),
+        },
+      });
+      return submitWithReplay;
+    }
+
+    it("worker armado + success com Maestro ocupado (deliveryState=queued) → pane fecha", async () => {
+      armAutoCloseOnHandoff("agy-session", "pane-agy");
+      mocks.findPane.mockReturnValue({ paneId: "pane-agy", sessionId: "agy-session" });
+      mockStoresWithSuccessHandoff("success");
+
+      await submitPtyStreamHandoff("agy-session", payload);
+
+      await vi.waitFor(() => {
+        expect(mocks.requestPaneClose).toHaveBeenCalledWith(
+          "pane-agy",
+          "agy-session",
+        );
+      });
+    });
+
+    it("partial mantém o pane aberto mesmo com o braço armado", async () => {
+      armAutoCloseOnHandoff("agy-session", "pane-agy");
+      mocks.findPane.mockReturnValue({ paneId: "pane-agy", sessionId: "agy-session" });
+      mockStoresWithSuccessHandoff("partial");
+
+      await submitPtyStreamHandoff("agy-session", {
+        ...payload,
+        status: "partial",
+      });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(mocks.requestPaneClose).not.toHaveBeenCalled();
+      // O braço permanece: um success posterior ainda pode fechar.
+      expect(mocks.onHandoffSubmitted).toHaveBeenCalledOnce();
+    });
+
+    it("sem o braço (autoCloseOnHandoff:false / operador) success não fecha o pane", async () => {
+      mocks.findPane.mockReturnValue({ paneId: "pane-agy", sessionId: "agy-session" });
+      mockStoresWithSuccessHandoff("success");
+
+      await submitPtyStreamHandoff("agy-session", payload);
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(mocks.requestPaneClose).not.toHaveBeenCalled();
+    });
   });
 });
