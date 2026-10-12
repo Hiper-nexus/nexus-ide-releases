@@ -51,11 +51,19 @@ export function resolveAgentRestoreAction(
 const accessPending = new Map<string, { pane: PaneModel; path: string | null }>();
 let unsubscribeAccess: (() => void) | undefined;
 
-let promptInFlight: Promise<void> | null = null;
-/** Agent pane ids waiting for the in-flight ask decision. */
-const pendingAskIds = new Set<string>();
-/** Last ask outcome — waiters apply the same decision to their batch. */
-let lastAskDecision: RestoreDecision | null = null;
+/**
+ * Lote do diálogo "ask" POR GERAÇÃO de workspace (F-1269). Globais únicos
+ * faziam o gate de B esperar a promessa de A — e o finalizador de A limpava
+ * os ids de B antes de sair por geração obsoleta: B ficava retido sem
+ * diálogo próprio. Cada geração tem o seu lote e a sua promessa; o
+ * finalizador só limpa o que é dele.
+ */
+interface AskBatch {
+  /** Agent pane ids waiting for this generation's ask decision. */
+  readonly ids: Set<string>;
+  inFlight: Promise<void> | null;
+}
+const askBatches = new Map<number, AskBatch>();
 
 function agentLabel(pane: PaneModel): string {
   const name = pane.title?.trim() || pane.agentName?.trim() || pane.adapterId;
@@ -91,6 +99,7 @@ function invalidateRestoreWorkspaceGeneration(path: string | null): void {
   restoreWorkspaceEpoch += 1;
   missionAuthorityChecks.clear();
   orphanPrunesInFlight.clear();
+  askBatches.clear();
 }
 
 function captureRestoreWorkspaceGeneration(): RestoreWorkspaceGeneration {
@@ -367,17 +376,25 @@ export async function gateRestoredAgents(
     return;
   }
 
-  // action === 'ask' — merge concurrent batches into one dialog.
-  for (const id of ids) pendingAskIds.add(id);
+  // action === 'ask' — merge concurrent batches into one dialog PER
+  // generation. O lote é da geração: um diálogo pendente de A nunca segura
+  // nem decide pelos agentes de B.
+  const askKey = restoreGeneration.epoch;
+  let askBatch = askBatches.get(askKey);
+  if (!askBatch) {
+    askBatch = { ids: new Set(), inFlight: null };
+    askBatches.set(askKey, askBatch);
+  }
+  for (const id of ids) askBatch.ids.add(id);
 
-  if (promptInFlight) {
-    await promptInFlight;
-    // Primary prompt already applied lastAskDecision to the full pending set.
+  if (askBatch.inFlight) {
+    await askBatch.inFlight;
+    // Primary prompt already applied the decision to the full pending set.
     return;
   }
 
-  promptInFlight = (async () => {
-    const snapshotIds = [...pendingAskIds];
+  const flight = (async () => {
+    const snapshotIds = [...askBatch.ids];
     const labels = restorable.slice(0, 5).map(agentLabel).join(', ');
     const more =
       restorable.length > 5 ? ` e mais ${restorable.length - 5}` : '';
@@ -415,18 +432,27 @@ export async function gateRestoredAgents(
       cancelLabel: 'Cancelar',
     });
 
-    lastAskDecision = choice === 'resume' || choice === 'close' ? choice : 'pause';
-    const batch = [...pendingAskIds];
-    pendingAskIds.clear();
+    const decision: RestoreDecision =
+      choice === 'resume' || choice === 'close' ? choice : 'pause';
+    const batch = [...askBatch.ids];
+    askBatch.ids.clear();
     if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
     const batchPanes = listPanes(useLayoutStore.getState().root).filter(pane => batch.includes(pane.id));
-    if (!deferForAccess(batchPanes)) applyDecision(batch, lastAskDecision);
+    if (!deferForAccess(batchPanes)) applyDecision(batch, decision);
   })();
+  askBatch.inFlight = flight;
 
   try {
-    await promptInFlight;
+    await flight;
   } finally {
-    promptInFlight = null;
+    if (askBatch.inFlight === flight) {
+      askBatch.inFlight = null;
+      // Ids que chegaram DEPOIS do fechamento do lote ficam para a próxima
+      // pergunta desta geração; lote vazio morre junto com a promessa.
+      if (askBatch.ids.size === 0 && askBatches.get(askKey) === askBatch) {
+        askBatches.delete(askKey);
+      }
+    }
   }
 }
 
@@ -448,9 +474,6 @@ export function installRestoredAgentsGate(): void {
 /** Drop pending ask state (workspace close / tests). */
 export function resetRestoredAgentsGate(): void {
   accessPending.clear();
-  promptInFlight = null;
-  pendingAskIds.clear();
-  lastAskDecision = null;
   invalidateRestoreWorkspaceGeneration(getActiveWorkspacePath());
 }
 

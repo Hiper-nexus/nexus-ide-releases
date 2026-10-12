@@ -627,6 +627,51 @@ describe('restore-agents-gate', () => {
     expect(releaseHeldSpawns).toHaveBeenCalledWith(['batch-a', 'batch-b'], { resume: true });
   });
 
+  it('workspace switch with the ask dialog open: the new generation gets its own prompt', async () => {
+    // F-1269: o lote `pendingAskIds` e a promessa `promptInFlight` eram globais
+    // entre gerações — B esperava a promessa de A, e o finalizador de A limpava
+    // os ids de B antes de sair por geração obsoleta. Os agentes de B ficavam
+    // retidos sem diálogo próprio.
+    let resolveWorkspaceA!: (value: string | null) => void;
+    askChoice
+      .mockImplementationOnce(
+        () => new Promise<string | null>((resolve) => {
+          resolveWorkspaceA = resolve;
+        }),
+      )
+      .mockResolvedValueOnce('resume');
+
+    const paneA = agent('paneA', 'Agente de A');
+    const paneB = agent('paneB', 'Agente de B');
+    layoutRoot.current = buildGridTree([paneA]) as never;
+    const gateA = gateRestoredAgents([paneA]);
+    await vi.waitFor(() => {
+      expect(askChoice).toHaveBeenCalledTimes(1);
+    });
+
+    setActiveWorkspacePath('/workspace-b');
+    layoutRoot.current = buildGridTree([paneB]) as never;
+    const gateB = gateRestoredAgents([paneB]);
+    await vi.waitFor(() => {
+      expect(askChoice).toHaveBeenCalledTimes(2);
+    });
+    await gateB;
+    expect(releaseHeldSpawns).toHaveBeenCalledWith(['paneB'], {
+      resume: true,
+    });
+
+    // A decisão de A resolve DEPOIS: não libera nada de A nem de B (a de B já
+    // saiu pela própria pergunta), e não fecha nada.
+    resolveWorkspaceA('resume');
+    await gateA;
+    const releasedIds = releaseHeldSpawns.mock.calls.flatMap(
+      ([ids]) => ids as string[],
+    );
+    expect(releasedIds).toEqual(['paneB']);
+    expect(closePane).not.toHaveBeenCalled();
+    expect(discardPaneSpawnState).not.toHaveBeenCalled();
+  });
+
   it('installRestoredAgentsGate wires the layout restore handler', () => {
     installRestoredAgentsGate();
     expect(setRestoredPanesHandler).toHaveBeenCalledOnce();
