@@ -177,6 +177,42 @@ describe('complementary decision model settings', () => {
     expect(status.settings).toMatchObject({ audioConsent: { version: 1, recipients: [] } });
   });
 
+  it('cancels audio consent before saving without sending a settings write (F-1370)', async () => {
+    status = { ...status, settings: { ...status.settings, mode: 'clef', clefModel: 'clef-omni' } };
+    await mount();
+    const audio = host.querySelector<HTMLInputElement>('input[aria-label="Confirmar ativação por voz com Clef-omni"]')!;
+    await act(async () => { audio.click(); });
+    await act(async () => { button('Cancelar').click(); });
+    expect(host.querySelector('[aria-label="Confirmar envio de áudio"]')).toBeNull();
+    expect(orchSet()).not.toHaveBeenCalled();
+    expect(audio.checked).toBe(false);
+    expect(status.settings).not.toHaveProperty('audioConsent');
+  });
+
+  it('removes audio confirmation immediately while the settings write is pending (F-1370)', async () => {
+    status = { ...status, settings: { ...status.settings, mode: 'clef', clefModel: 'clef-omni' } };
+    let finishSave!: () => void;
+    const pendingSave = new Promise<void>(resolve => { finishSave = resolve; });
+    orchSet().mockImplementationOnce(async patch => {
+      await pendingSave;
+      status = { ...status, settings: patch.decisionModels };
+      return { decisionModels: status.settings };
+    });
+    await mount();
+    const audio = () => host.querySelector<HTMLInputElement>('input[aria-label="Confirmar ativação por voz com Clef-omni"]')!;
+    await act(async () => { audio().click(); });
+    await act(async () => { button('Ativar envio de áudio').click(); });
+    expect(orchSet()).toHaveBeenCalledTimes(1);
+    expect(status.settings).not.toHaveProperty('audioConsent');
+    expect(host.querySelector('[aria-label="Confirmar envio de áudio"]')).toBeNull();
+    expect(button('Cancelar')).toBeUndefined();
+    expect(audio().disabled).toBe(true);
+    await act(async () => { finishSave(); await pendingSave; });
+    expect(audio().checked).toBe(true);
+    expect(audio().disabled).toBe(false);
+    expect(status.settings).toMatchObject({ audioConsent: { version: 1, recipients: ['clef'] } });
+  });
+
   it('asks for a fresh confirmation before turning image analysis on, and not before turning it off', async () => {
     status = { ...status, settings: { ...status.settings, mode: 'auto' }, hasStoredKey: true, isReady: true };
     await mount();
