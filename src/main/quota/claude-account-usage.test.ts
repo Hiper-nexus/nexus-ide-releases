@@ -924,6 +924,30 @@ describe('fetchClaudeAccountUsageWindows', () => {
       expect(r).toEqual({ windows: null, hint: 'unavailable' });
     });
 
+    it('saída da CLI sem credencial renovada e provada não é publicada (revisão de segurança)', async () => {
+      const home = nativeHome();
+      // Releitura igual: a CLI pode ter usado CLAUDE_CONFIG_DIR/token de outra conta.
+      mocks.readNativeOAuthCredential.mockResolvedValue(expiredRenewable);
+      mocks.probeClaudeCliUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.77)] });
+
+      const r = await fetchClaudeAccountUsageWindows('acct-retorno', { now: NOW, home, keychainProbe: () => true });
+
+      expect(r).toEqual({ windows: null, hint: 'unavailable' });
+      expect(mocks.probeClaudeCliUsage).toHaveBeenCalledWith(expect.objectContaining({ nativeProfile: true }));
+    });
+
+    it('releitura indisponível também não publica a saída da CLI', async () => {
+      const home = nativeHome();
+      mocks.readNativeOAuthCredential
+        .mockResolvedValueOnce(expiredRenewable)
+        .mockRejectedValueOnce(new Error('Keychain unavailable'));
+      mocks.probeClaudeCliUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.77)] });
+
+      const r = await fetchClaudeAccountUsageWindows('acct-retorno', { now: NOW, home, keychainProbe: () => true });
+
+      expect(r.windows).toBeNull();
+    });
+
     it('a própria CLI recusando a sessão continua pedindo re-login', async () => {
       const home = nativeHome();
       mocks.readNativeOAuthCredential.mockResolvedValue(expiredRenewable);

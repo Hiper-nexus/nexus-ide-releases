@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CLAUDE_CLI_PROBE_ENV,
   CLAUDE_CLI_USAGE_ARGS,
+  CLAUDE_NATIVE_PROFILE_SCRUB_ENV,
   claudeCliProbeEnv,
   probeClaudeCliUsage,
 } from './claude-oauth-usage';
@@ -90,5 +91,37 @@ describe('F-992: sonda /usage do Claude isolada de hooks, MCP e IDE', () => {
       expect(env.get(name)).toBe(value);
     }
     expect(env.has('FORCE_CODE_TERMINAL')).toBe(false);
+  });
+
+  posixIt('F-1416: sonda do perfil nativo não herda config dir nem token de outra conta', async () => {
+    const scrubbed = Object.fromEntries(CLAUDE_NATIVE_PROFILE_SCRUB_ENV.map((name) => [name, process.env[name]]));
+    process.env.HOME = root;
+    for (const name of CLAUDE_NATIVE_PROFILE_SCRUB_ENV) process.env[name] = `planted-${name}`;
+    try {
+      const bin = path.join(root, '.local', 'bin', 'claude');
+      const record = path.join(root, 'probe-record-native');
+      fs.mkdirSync(path.dirname(bin), { recursive: true });
+      fs.writeFileSync(
+        bin,
+        [
+          '#!/bin/sh',
+          `env | sed 's/^/ENV:/' > '${record}'`,
+          "printf 'Current session: 12%% used\\n'",
+        ].join('\n'),
+        { mode: 0o755 },
+      );
+      await probeClaudeCliUsage({ cwd: path.join(root, 'cwd'), nativeProfile: true });
+      const names = new Set(fs.readFileSync(record, 'utf8').split('\n')
+        .filter((line) => line.startsWith('ENV:')).map((line) => line.slice(4).split('=')[0]));
+      for (const name of CLAUDE_NATIVE_PROFILE_SCRUB_ENV) expect(names.has(name)).toBe(false);
+      // A sonda de escopo gerenciado continua recebendo o config dir dela.
+      const env = claudeCliProbeEnv({ CLAUDE_CONFIG_DIR: '/x' }, { CLAUDE_CONFIG_DIR: '/conta/quota' }, '/s', CLAUDE_NATIVE_PROFILE_SCRUB_ENV);
+      expect(env.CLAUDE_CONFIG_DIR).toBe('/conta/quota');
+    } finally {
+      for (const [name, value] of Object.entries(scrubbed)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   });
 });
