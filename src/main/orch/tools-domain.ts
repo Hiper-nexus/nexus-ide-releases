@@ -93,6 +93,7 @@ import {
   hasAvailableAccount,
 } from '../persistence/account-store';
 import { adapterCircuitBreakers, DEFAULT_CIRCUIT_CONFIG } from './circuit-breaker';
+import { activeCliLimit, isCliLimited } from './cli-limit-registry';
 import { workerMortalityCount } from './worker-mortality';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
 import { discoveredModelsFor } from '../adapters/model-discovery';
@@ -1978,11 +1979,17 @@ export async function routeTaskForCaller(
   // iniciou é FECHADO pelo watchdog (não conta como morte, F-918). Falha na
   // janela do disjuntor sem início provado depois (o 1º início zera) basta
   // para honrar o exclude do caller; nunca exclui sozinha.
+  // F-1410: CLI com limite de uso CONFIRMADO e sem conta gerenciada (login
+  // nativo por oauth, como o Muse Code) é doente por prova — o cooldown de
+  // conta não existe aí. O `exclude` do caller é honrado (e a CLI sai da rota
+  // mesmo sem ele, abaixo), com o motivo próprio no lugar de "falhou ao nascer".
+  const cliLimited = callerExclude.filter((id) => isCliLimited(id));
   const startFailedExclude = callerExclude.filter(
-    (id) => adapterCircuitBreakers.snapshot(id).recentFailures > 0,
+    (id) => !cliLimited.includes(id) && adapterCircuitBreakers.snapshot(id).recentFailures > 0,
   );
   const ignoredHealthyExclude = callerExclude.filter(
     (id) =>
+      !cliLimited.includes(id) &&
       !adapterCircuitBreakers.isOpen(id) &&
       !startFailedExclude.includes(id) &&
       hasAvailableAccount(id) &&
@@ -2032,9 +2039,28 @@ export async function routeTaskForCaller(
   // Adapters with no Nexus accounts report available (hasAvailableAccount →
   // true — third-party auth state is not ours to judge) and are never
   // affected; only a fully-cooling account pool leaves the route.
+  //
+  // F-1410: a exceção é a CLI que NÃO tem pool de contas e tem limite de uso
+  // confirmado pela própria TUI (Muse Code). Sem esta lista o auto-exclude era
+  // inútil para ela: `hasAvailableAccount` é true por construção e a rota a
+  // reescolhia a cada chamada — foi o "exclude ignorado (CLI saudável)" de
+  // 12/10. A marcação por tempo de vida (`cli-limit-registry`) expira sozinha
+  // quando a janela acaba, sem varredura.
+  // Sem o `!excluded.has(id)` de propósito: CLI limitada que o caller também
+  // excluiu é o caso NORMAL (foi assim no incidente — `exclude: ['muse']`).
+  // Se o filtro a tirasse daqui, ela cairia no motivo genérico "excluído da
+  // rota" e o recibo perderia a prova. O motivo mais específico é o que vale.
+  const cliLimitExcluded = providers
+    .map((a) => a.adapterId)
+    .filter((id) => isCliLimited(id));
   const quotaExcluded = providers
     .map((a) => a.adapterId)
-    .filter((id) => !excluded.has(id) && !hasAvailableAccount(id));
+    .filter(
+      (id) =>
+        !excluded.has(id) &&
+        !cliLimitExcluded.includes(id) &&
+        !hasAvailableAccount(id),
+    );
   const buildAdapters = (skip: ReadonlySet<string>) =>
     providers.map((a) => {
       const models = [
@@ -2053,6 +2079,7 @@ export async function routeTaskForCaller(
       // Mesma ordem (e mesmo curto-circuito) do `&&` que decidia `installed`.
       const unavailableReason = ((): string | undefined => {
         if (skip.has(a.adapterId)) {
+          if (cliLimitExcluded.includes(a.adapterId)) return 'limite de uso';
           return quotaExcluded.includes(a.adapterId)
             ? 'todas as contas em cooldown'
             : 'excluído da rota';
@@ -2113,15 +2140,20 @@ export async function routeTaskForCaller(
         },
       };
     });
-  let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded]));
+  let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded, ...cliLimitExcluded]));
   let quotaFallbackNote = '';
-  if (quotaExcluded.length > 0 && !adapters.some((a) => a.installed)) {
+  if (
+    (quotaExcluded.length > 0 || cliLimitExcluded.length > 0) &&
+    !adapters.some((a) => a.installed)
+  ) {
     // Fail-safe: the auto-exclude
     // emptied the routable pool → revert to the caller-provided list. A
     // spawn on a cooling account surfaces the real cooldown error; no route
     // at all would hide it.
     adapters = buildAdapters(excluded);
-    quotaFallbackNote = `; quota auto-exclude reverted, all candidates cooling: ${quotaExcluded.join(',')}`;
+    quotaFallbackNote =
+      `; quota auto-exclude reverted, all candidates cooling: ` +
+      [...quotaExcluded, ...cliLimitExcluded].join(',');
   }
   // F-802: helper somente leitura da mão do operador fora do Autopilot só vai
   // para CLI que confina leitura (o spawn recusa as demais).
@@ -2342,6 +2374,32 @@ export async function routeTaskForCaller(
       reason:
         `${decision.reason}; exclude honrado (falhou ao nascer nos últimos ` +
         `${START_FAILURE_WINDOW_MIN} min): ${startFailedExclude.join(',')}`,
+    };
+  }
+  // F-1410: limite de uso confirmado sai com motivo próprio — honrando o
+  // exclude do caller ou retirando a CLI sozinho (o recibo diz por quê).
+  const cliLimitNote = (ids: readonly string[]): string =>
+    ids
+      .map((id) => {
+        const limit = activeCliLimit(id);
+        if (!limit) return `${id}: limite de uso`;
+        const reset = new Date(limit.until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        return `${id}: ${limit.reason} (volta às ${reset})`;
+      })
+      .join(',');
+  const cliLimitAuto = cliLimitExcluded.filter(
+    (id) => !cliLimited.includes(id) && !adapters.some((a) => a.id === id && a.installed),
+  );
+  if (cliLimited.length > 0) {
+    decision = {
+      ...decision,
+      reason: `${decision.reason}; exclude honrado (limite de uso confirmado): ${cliLimitNote(cliLimited)}`,
+    };
+  }
+  if (cliLimitAuto.length > 0) {
+    decision = {
+      ...decision,
+      reason: `${decision.reason}; fora da rota (limite de uso confirmado): ${cliLimitNote(cliLimitAuto)}`,
     };
   }
   const sealedSquad = missionId && mission?.squadId ? getSquad(mission.squadId) : null;

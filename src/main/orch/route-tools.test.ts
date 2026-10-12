@@ -45,6 +45,7 @@ vi.mock('./task-router', async (importOriginal) => {
 
 import { rememberKimiSeatReadiness } from '../adapters/seat-auth-readiness';
 import { adapterCircuitBreakers } from './circuit-breaker';
+import { isCliLimited, noteCliLimit, resetCliLimits } from './cli-limit-registry';
 import { buildDomainTools, routeTaskForCaller } from './tools-domain';
 import { clearRouteProvenance, hasRecentRouteMatch } from './route-provenance';
 import { clearRouteLog, recentRouteLog } from './route-log';
@@ -78,6 +79,7 @@ function tool(name: string) {
 beforeEach(() => {
   clearRouteProvenance();
   clearRouteLog();
+  resetCliLimits();
   rememberKimiSeatReadiness('present');
   mocks.listProviderSettings.mockReset();
   mocks.isProviderEnabled.mockReset();
@@ -466,6 +468,10 @@ describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
     adapterId: 'codex', enabled: true, installed: true,
     authStrategy: 'oauth', models: ['gpt-5.6-luna'],
   };
+  const museProvider = {
+    adapterId: 'muse', enabled: true, installed: true,
+    authStrategy: 'oauth', models: ['muse-spark-1.3'],
+  };
 
   it('exclusão de CLI saudável é ignorada e anotada no motivo', async () => {
     mocks.listProviderSettings.mockReturnValue([kimiProvider, codexProvider]);
@@ -481,6 +487,94 @@ describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
       'exclude ignorado (CLI saudável): kimi,grok',
     );
     expect(decision.adapterId).toBe('kimi');
+  });
+
+  // F-1410: o caso de campo de 12/10. O Muse Code tem login nativo por oauth —
+  // não tem conta gerenciada, então `hasAvailableAccount` é true por construção
+  // e a rota respondia "exclude ignorado (CLI saudável): muse … conta
+  // disponível" logo depois de a conta do operador estourar. Com o limite
+  // confirmado pela célula de status da própria TUI, a exclusão passa a valer.
+  it('limite de uso confirmado tira a CLI da rota e honra o exclude do caller', async () => {
+    mocks.listProviderSettings.mockReturnValue([museProvider, codexProvider]);
+    // Reproduz o campo: disjuntor fechado (1 CLI sadia), sem morte na missão.
+    mocks.hasAvailableAccount.mockReturnValue(true);
+    try {
+      noteCliLimit(
+        'muse',
+        {
+          kind: 'rate-limit',
+          reason: 'Usage limit reached',
+          cooldownMs: 5 * 60 * 60 * 1000,
+          adapterId: 'muse',
+          confirmed: true,
+        },
+        Date.now(),
+      );
+      const decision = (await routeTaskForCaller(
+        { task: 'tarefa média', exclude: ['muse'] },
+        context(),
+      )) as { adapterId: string; reason: string };
+
+      expect(decision.adapterId).not.toBe('muse');
+      expect(decision.reason).not.toContain('exclude ignorado');
+      expect(decision.reason).toContain('exclude honrado (limite de uso confirmado): muse');
+      expect(decision.reason).toContain('Usage limit reached');
+      // A hora do reset sai no motivo — o Maestro sabe quando o Muse volta.
+      expect(decision.reason).toMatch(/volta às \d{2}:\d{2}/);
+      // A linha da CLI na mesa do roteador diz POR QUE saiu.
+      const rows = mocks.routeTask.mock.calls.at(-1)?.[1] as Array<{
+        id: string;
+        installed: boolean;
+        unavailableReason?: string;
+      }>;
+      expect(rows.find((row) => row.id === 'muse')).toMatchObject({
+        installed: false,
+        unavailableReason: 'limite de uso',
+      });
+    } finally {
+      resetCliLimits();
+    }
+  });
+
+  it('CLI com limite confirmado sai da rota mesmo SEM exclude do caller', async () => {
+    mocks.listProviderSettings.mockReturnValue([museProvider, codexProvider]);
+    try {
+      noteCliLimit(
+        'muse',
+        { kind: 'rate-limit', reason: 'usage limited', cooldownMs: 5 * 60 * 60 * 1000, adapterId: 'muse', confirmed: true },
+        Date.now(),
+      );
+      const decision = (await routeTaskForCaller(
+        { task: 'tarefa média' },
+        context(),
+      )) as { adapterId: string; reason: string };
+      expect(decision.adapterId).not.toBe('muse');
+      expect(decision.reason).toContain('fora da rota (limite de uso confirmado): muse: usage limited');
+    } finally {
+      resetCliLimits();
+    }
+  });
+
+  it('a janela vencida devolve a CLI à rota', async () => {
+    mocks.listProviderSettings.mockReturnValue([museProvider, codexProvider]);
+    try {
+      // Janela mínima: o registro expira sozinho e a rota volta a tratar o
+      // exclude de muse como o de CLI saudável (ignorado, com aviso).
+      noteCliLimit(
+        'muse',
+        { kind: 'rate-limit', reason: 'usage limited', cooldownMs: 1, adapterId: 'muse', confirmed: true },
+        Date.now(),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(isCliLimited('muse')).toBe(false);
+      const decision = (await routeTaskForCaller(
+        { task: 'tarefa média', exclude: ['muse'] },
+        context(),
+      )) as { reason: string };
+      expect(decision.reason).toContain('exclude ignorado (CLI saudável): muse');
+    } finally {
+      resetCliLimits();
+    }
   });
 
   it('circuit breaker aberto: a mesma exclusão passa a ser honrada', async () => {
