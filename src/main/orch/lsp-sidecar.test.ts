@@ -320,6 +320,72 @@ describe('runScopedLspQuery', () => {
     expect(result.budget.directoriesRead).toBeLessThanOrEqual(2_000);
   }, 10_000);
 
+  it('F-1252: definition/diagnostics degradam para truncated em vez de estourar o teto de bytes', async () => {
+    // O fecho de imports do alvo não cabe no teto de bytes: a resposta do
+    // arquivo perguntado continua exata (o alvo carrega primeiro e o import da
+    // linha 1 traz lib.ts antes dos fillers) e o resultado vem marcado
+    // truncated em vez de falhar a consulta inteira. A lib .d.ts do TypeScript
+    // é conteúdo fixo do bundle do app e não consome o teto.
+    const fillerImports: string[] = [];
+    for (let index = 0; index < 12; index += 1) {
+      fs.writeFileSync(
+        path.join(root, 'src', `filler-${index}.ts`),
+        `export const filler_${index} = '${'x'.repeat(4096)}';\n`,
+      );
+      fillerImports.push(`import './filler-${index}';`);
+    }
+    fs.writeFileSync(
+      path.join(root, 'src', 'use.ts'),
+      [
+        "import { greet } from './lib';",
+        ...fillerImports,
+        "export const message = greet('Nexus');",
+        'export const bad: string = 42;',
+        '',
+      ].join('\n'),
+    );
+    const typescriptPath = createRequire(import.meta.url).resolve('typescript');
+    const tightLimits = { ...LSP_LIMITS, maxTotalBytes: 32 * 1024 };
+    const runWorker = (query: Record<string, unknown>) =>
+      __settleLspWorkerForTests(
+        new Worker(LSP_WORKER_SOURCE, {
+          eval: true,
+          workerData: {
+            rootRealPath: root,
+            typescriptPath,
+            query,
+            limits: tightLimits,
+          },
+        }),
+        LSP_LIMITS.parentTimeoutMs,
+      );
+
+    const definitions = await runWorker({
+      kind: 'definition',
+      path: 'src/use.ts',
+      line: 1,
+      column: 10,
+      maxResults: 10,
+    });
+    expect(definitions.truncated).toBe(true);
+    expect(definitions.budget.degraded).toBe(true);
+    expect(definitions.items).toEqual([
+      expect.objectContaining({ path: 'src/lib.ts', line: 1 }),
+    ]);
+
+    const diagnostics = await runWorker({
+      kind: 'diagnostics',
+      path: 'src/use.ts',
+      maxResults: 20,
+    });
+    expect(diagnostics.truncated).toBe(true);
+    expect(diagnostics.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'src/use.ts', code: 2322 }),
+      ]),
+    );
+  }, 15_000);
+
   it('F-1183: diagnostics leem a lib do TypeScript servida pelo app.asar', async () => {
     const typescriptPath = createRequire(import.meta.url).resolve('typescript');
     // Como o Electron faz com arquivo de asar: o fd aponta para uma cópia

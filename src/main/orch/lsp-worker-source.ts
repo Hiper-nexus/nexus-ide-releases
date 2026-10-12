@@ -21,6 +21,7 @@ const deadline = startedAt + limits.workerBudgetMs;
 let filesRead = 0;
 let bytesRead = 0;
 let directoriesRead = 0;
+let degraded = false;
 const contentCache = new Map();
 
 function fail(message) {
@@ -69,21 +70,41 @@ function safeRealFile(candidate) {
   }
   const allowedRoot = classified.kind === 'workspace' ? root : typescriptLibRoot;
   if (!inside(allowedRoot, real) || real !== classified.absolute) return null;
-  if (!stat.isFile() || stat.nlink !== 1 || stat.size > limits.maxFileBytes) {
+  // F-1252: a lib .d.ts do TypeScript é conteúdo fixo do bundle do app (não
+  // cresce com o workspace), então não consome o teto por arquivo — sem isso
+  // lib.dom.d.ts (~2,3 MB) era descartada em silêncio e os globais de DOM
+  // sumiam dos diagnostics.
+  if (
+    !stat.isFile() ||
+    stat.nlink !== 1 ||
+    (stat.size > limits.maxFileBytes && classified.kind !== 'typescript-lib')
+  ) {
     return null;
   }
   return { absolute: real, stat, kind: classified.kind };
 }
 
+// F-1252: estourar um teto de leitura degrada para um programa parcial
+// (resultado marcado truncated) em vez de falhar a consulta inteira. O teto
+// continua duro — nenhuma leitura nova acontece depois dele — e o prazo do
+// processo pai continua matando o worker no relógio.
+function degrade() {
+  degraded = true;
+  return undefined;
+}
+
 function safeRead(candidate) {
-  checkDeadline();
+  if (Date.now() > deadline) return degrade();
   const existing = contentCache.get(path.resolve(candidate));
   if (existing !== undefined) return existing;
   const file = safeRealFile(candidate);
   if (!file) return undefined;
-  if (filesRead >= limits.maxReadFiles) fail('LSP file-read limit exceeded');
-  if (bytesRead + file.stat.size > limits.maxTotalBytes) {
-    fail('LSP total-byte limit exceeded');
+  if (
+    file.kind !== 'typescript-lib' &&
+    (filesRead >= limits.maxReadFiles ||
+      bytesRead + file.stat.size > limits.maxTotalBytes)
+  ) {
+    return degrade();
   }
   filesRead += 1;
   bytesRead += file.stat.size;
@@ -129,12 +150,14 @@ function safeRead(candidate) {
 }
 
 function safeFileExists(candidate) {
-  checkDeadline();
+  if (Date.now() > deadline) {
+    degraded = true;
+    return false;
+  }
   return safeRealFile(candidate) !== null;
 }
 
 function safeDirectory(candidate) {
-  checkDeadline();
   const classified = classifyPath(candidate);
   if (!classified) return null;
   try {
@@ -150,10 +173,18 @@ function safeDirectory(candidate) {
 }
 
 function safeDirectoryExists(candidate) {
+  if (Date.now() > deadline) {
+    degraded = true;
+    return false;
+  }
   return safeDirectory(candidate) !== null;
 }
 
 function safeGetDirectories(candidate) {
+  if (Date.now() > deadline) {
+    degraded = true;
+    return [];
+  }
   const directory = safeDirectory(candidate);
   if (!directory) return [];
   if (directoriesRead >= limits.maxDirectories) {
@@ -487,8 +518,19 @@ function execute() {
   if (!target || target.kind !== 'workspace') fail('LSP target is not a safe regular file');
 
   const project = safeProjectConfig();
-  const scripts = project.scripts;
-  if (!scripts.includes(target.absolute)) scripts.push(target.absolute);
+  // F-1252: definition/diagnostics respondem sobre UM arquivo — o programa
+  // precisa só do fecho de imports do alvo (resolvido sob demanda) mais as
+  // declarações de ambiente do projeto (.d.ts), não das milhares de raízes do
+  // tsconfig (neste repo: 2.648 arquivos, ~46 MB — estourava o teto de bytes
+  // e o prazo). references mantém o projeto inteiro: a busca é reversa.
+  // O alvo entra primeiro para o fecho dele carregar antes de qualquer teto.
+  const scripts = [
+    target.absolute,
+    ...(input.query.kind === 'references'
+      ? project.scripts
+      : project.scripts.filter((script) => /\.d\.[cm]?ts$/i.test(script))
+    ).filter((script) => script !== target.absolute),
+  ];
   if (scripts.length > limits.maxProjectFiles) fail('LSP project-file limit exceeded');
   const options = project.options;
   const snapshots = new Map();
@@ -532,7 +574,7 @@ function execute() {
   const maxResults = Math.max(1, Math.min(limits.maxResults, input.query.maxResults || limits.defaultResults));
   let items = [];
 
-  checkDeadline();
+  if (Date.now() > deadline) degraded = true;
   if (input.query.kind === 'symbols') {
     const targetSource = ts.createSourceFile(
       target.absolute,
@@ -587,17 +629,20 @@ function execute() {
   } else {
     fail('unsupported LSP query');
   }
-  checkDeadline();
+  // F-1252: prazo interno estourado não joga fora um resultado já computado —
+  // marca degraded; o prazo do processo pai continua sendo o teto duro.
+  if (Date.now() > deadline) degraded = true;
 
   const result = {
     language: 'typescript',
     path: path.relative(root, target.absolute).split(path.sep).join('/'),
-    truncated: items.length >= maxResults,
+    truncated: degraded || items.length >= maxResults,
     items,
     budget: {
       filesRead,
       bytesRead,
       directoriesRead,
+      degraded,
       elapsedMs: Date.now() - startedAt,
     },
   };

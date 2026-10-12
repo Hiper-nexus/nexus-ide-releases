@@ -21,8 +21,11 @@ export const LSP_LIMITS = Object.freeze({
   maxConfigBytes: 65_536,
   maxTotalBytes: 32 * 1024 * 1024,
   maxOutputBytes: 128 * 1024,
-  workerBudgetMs: 8_000,
-  parentTimeoutMs: 8_500,
+  // F-1252: 8s não cabia uma varredura degradada de references num repo grande
+  // (leituras param no prazo interno e a busca ainda leva ~1,5s; medido ~13s
+  // neste checkout). O teto duro é o pai, que mata o worker no relógio.
+  workerBudgetMs: 12_000,
+  parentTimeoutMs: 15_000,
   maxConcurrentWorkers: 2,
 });
 
@@ -51,6 +54,7 @@ export interface LspQueryResult {
     readonly filesRead: number;
     readonly bytesRead: number;
     readonly directoriesRead: number;
+    readonly degraded: boolean;
     readonly elapsedMs: number;
   };
 }
