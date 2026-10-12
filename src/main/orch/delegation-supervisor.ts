@@ -49,18 +49,25 @@ import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery'
 import {
   CREDENTIAL_REJECTED_OPEN_MS,
   decideStartAction,
+  executionProofGraceMs,
   finishPaneStartWatch,
+  forgetConfirmedPaneLimit,
+  LIMIT_HANDOFF_MS,
+  listConfirmedPaneLimits,
   listPaneStartWatches,
   notePaneSessionEnded,
   notePaneStartFailure,
   notePaneTurnEnded,
   notStartedCause,
+  paneLimitNoticeSummary,
   paneStartNoticeSummary,
   paneStartProgress,
   paneStartWatchForSession,
+  releasePaneStartWatch,
   setPaneStartKick,
   shortStartError,
   startFailureBreakerAction,
+  startRerouteChainExhausted,
   MODEL_REJECTION_HANDOFF_MS,
   START_GRACE_MS,
   START_SETTLE_MS,
@@ -91,8 +98,15 @@ import {
   getAgentToolActivityCount,
   getAgentTurnStartSequence,
   SEMANTIC_WORKING_VETO_MS,
+  tapAgentSemanticStatus,
   tapAgentTurnEnd,
+  tapAgentTurnStart,
 } from './agent-status';
+import {
+  forgetPaneTaskReroute,
+  getPaneTaskReroute,
+  paneTaskRerouteBlocker,
+} from './pane-task-reroute';
 import { trace } from '../observability/main-trace';
 import { sanitizePaneBootOutput } from './pane-boot-output';
 import { diagnosePaneBoot } from './pane-boot-diagnosis';
@@ -725,6 +739,46 @@ function hasPaneStartEvidence(watch: PaneStartWatch, sessionId: string): boolean
 }
 
 /**
+ * F-1414: prova de EXECUÇÃO — o 1º turno começou de verdade. Diferente do
+ * F-723, a entrega do brief (ACK da colagem, argv no grant) não conta: o Kimi
+ * ficou com o brief parado no composer e a ficha já o dava por iniciado.
+ */
+function hasExecutionProof(watch: PaneStartWatch, sessionId: string | null): boolean {
+  if (watch.executionSeenAt !== null || watch.turnOutcome !== null) return true;
+  if (sessionId === null) return false;
+  if (getAgentTurnStartSequence(sessionId) > 0) return true;
+  if (getAgentToolActivityCount(sessionId) > 0) return true;
+  const semantic = getAgentSemanticStatusBySession(sessionId);
+  if (
+    semantic?.status === 'working' ||
+    semantic?.status === 'completed' ||
+    semantic?.status === 'error'
+  ) {
+    return true;
+  }
+  return sessionHasHandoff(watch, sessionId);
+}
+
+/**
+ * F-1414: a CLI desta sessão publica status (hook ou tela do manifesto), então
+ * a falta de turno é observável. CLI sem telemetria nenhuma (agy, MiMo e afins
+ * que trabalham calados, F-765) continua sem esse veredito: ociosa ≠ parada.
+ */
+function executionObservable(sessionId: string): boolean {
+  return (
+    getAgentSemanticStatusBySession(sessionId) !== null ||
+    getAgentTurnStartSequence(sessionId) > 0
+  );
+}
+
+/** F-1414: o guardian estacionou o pane desta ficha (CLI encerrada, pane fica). */
+function paneParkedForWatch(watch: PaneStartWatch): boolean {
+  const snapshot = listPaneSnapshots().find((pane) => pane.paneId === watch.paneId);
+  if (snapshot?.state !== 'parked') return false;
+  return !snapshot.sessionId || watch.sessionId === null || snapshot.sessionId === watch.sessionId;
+}
+
+/**
  * F-765: o PTY da sessão mostra a recusa do modelo pela CLI DA FICHA — a frase
  * do Codex citada no pane de outra CLI não é recusa deste pane.
  */
@@ -804,13 +858,19 @@ function tracePaneStartRejected(
  * de workspace (F-565) entregue ao pane pai pelo mesmo `injectPrompt`. Status
  * `progress`: `stalled` é diagnóstico e não chega ao PTY do Maestro.
  */
-async function notifyPaneStartCaller(watch: PaneStartWatch, summary: string, context?: PeriodicTaskContext): Promise<void> {
+async function notifyPaneStartCaller(
+  watch: Pick<PaneStartWatch, 'scope' | 'missionId' | 'callerSessionId' | 'paneId'>,
+  summary: string,
+  context?: PeriodicTaskContext,
+  // F-1414: teto de reenvios atingido — a tarefa fica `blocked` com o motivo.
+  status: 'progress' | 'blocked' = 'progress',
+): Promise<void> {
   context?.assertCurrent();
   const suite = suiteForScope(watch.scope);
   if (watch.missionId) {
     const handoff = suite.handoffs.submit({
       missionId: watch.missionId,
-      status: 'progress',
+      status,
       summary,
       fromAgent: DELEGATION_SUPERVISOR_AGENT,
     });
@@ -818,7 +878,7 @@ async function notifyPaneStartCaller(watch: PaneStartWatch, summary: string, con
     return;
   }
   const handoff = suite.handoffs.submit({
-    status: 'progress',
+    status,
     summary,
     fromAgent: DELEGATION_SUPERVISOR_AGENT,
   });
@@ -980,8 +1040,8 @@ async function handlePaneNotStarted(
       kind: 'not-rerouted',
       why: watch.operatorOpened
         ? 'operator'
-        : watch.rerouted
-          ? 'second-attempt'
+        : startRerouteChainExhausted(watch)
+          ? 'chain-limit'
           : watch.pinnedRuntime
             ? 'pinned'
             : 'no-alternative',
@@ -1015,7 +1075,12 @@ async function handlePaneNotStarted(
   });
   console.warn(`[delegation-supervisor] ${summary}`);
   try {
-    await notifyPaneStartCaller(watch, summary, context);
+    await notifyPaneStartCaller(
+      watch,
+      summary,
+      context,
+      outcome.kind === 'not-rerouted' && outcome.why === 'chain-limit' ? 'blocked' : 'progress',
+    );
   } catch (error) {
     console.warn(
       `[delegation-supervisor] aviso de pane que não iniciou falhou ` +
@@ -1044,9 +1109,22 @@ async function checkPaneStart(watch: PaneStartWatch, now: number, context?: Peri
   }
   const sessionId = watch.sessionId;
   const state = sessionId !== null ? getSessionState(sessionId) : null;
+  // F-1414: a admissão de memória estacionou o pane antes do 1º turno (a
+  // retomada depois falhou com resume_context_unavailable e a tarefa ficou sem
+  // dono). Encerramento pedido, mas a tarefa não foi feita: reenvia.
+  if (!watch.failure && paneParkedForWatch(watch) && !hasExecutionProof(watch, sessionId)) {
+    watch.failure = { cause: 'parked-before-start', at: now };
+  }
+  // F-1414: CLI observável ainda sem prova de execução (só a entrega do brief).
+  let awaitingExecution = false;
   if (!watch.failure) {
     const progress = paneStartProgressFor(watch, sessionId, now);
-    if (progress.kind === 'started') {
+    if (sessionId !== null && hasExecutionProof(watch, sessionId)) {
+      watch.executionSeenAt ??= now;
+    } else {
+      awaitingExecution = sessionId !== null && executionObservable(sessionId);
+    }
+    if (progress.kind === 'started' && !awaitingExecution) {
       adapterCircuitBreakers.recordSuccess(watch.adapterId);
       finishPaneStartWatch(watch);
       return;
@@ -1075,14 +1153,13 @@ async function checkPaneStart(watch: PaneStartWatch, now: number, context?: Peri
       // o veredito é do desfecho dele (ferramenta, Stop ou StopFailure).
       // F-765: recusa do modelo que o failover não assumiu no prazo vira
       // falha de início (pedido recusado) e segue o reenvio/aviso do F-723.
-      if (
-        watch.modelRejectedAt === null ||
-        now - watch.modelRejectedAt < MODEL_REJECTION_HANDOFF_MS
-      ) {
+      if (watch.modelRejectedAt !== null) {
+        if (now - watch.modelRejectedAt < MODEL_REJECTION_HANDOFF_MS) return;
+        watch.failure = { cause: 'provider-request', at: now };
+        tracePaneStartRejected(watch, 'provider-request');
+      } else if (!awaitingExecution) {
         return;
       }
-      watch.failure = { cause: 'provider-request', at: now };
-      tracePaneStartRejected(watch, 'provider-request');
     }
   }
   // F-984: sessão viva que não escreveu NENHUM byte (ainda 'spawning') depois
@@ -1097,6 +1174,22 @@ async function checkPaneStart(watch: PaneStartWatch, now: number, context?: Peri
   ) {
     watch.failure = { cause: 'boot-silent', at: now };
   }
+  // F-1414: brief entregue (ou no argv) e CLI observável sem 1º turno: depois
+  // do prazo, ociosa, é tarefa que não começou — reenvia para outra CLI. PTY
+  // ocupado segue sem veredito (manifesto que não reconhece o trabalho não
+  // derruba quem trabalha). Família Claude sem ACK segue o passo 1 do F-723.
+  const executionJudged = awaitingExecution && (watch.accepted || !watch.turnProof);
+  if (
+    !watch.failure &&
+    executionJudged &&
+    state === 'idle' &&
+    now - (watch.turnOpenedAt ?? watch.sessionSpawnedAt ?? watch.createdAt) >=
+      executionProofGraceMs(watch.adapterId)
+  ) {
+    watch.failure = { cause: 'turn-not-started', at: now };
+  }
+  // Sem veredito ainda: nunca reenvia por cima de um brief já entregue.
+  if (!watch.failure && executionJudged) return;
   const action = decideStartAction({
     role: watch.role,
     operatorOpened: watch.operatorOpened === true,
@@ -1111,7 +1204,7 @@ async function checkPaneStart(watch: PaneStartWatch, now: number, context?: Peri
     canJudgeLiveSession: watch.turnProof,
     spawnedAt: sessionId === null ? watch.createdAt : watch.sessionSpawnedAt ?? watch.createdAt,
     redeliveredAt: watch.redeliveredAt,
-    rerouted: watch.rerouted,
+    rerouted: startRerouteChainExhausted(watch),
     pinnedRuntime: watch.pinnedRuntime,
     hasAlternative: watch.hasAlternative?.() ?? false,
     now,
@@ -1139,6 +1232,107 @@ export function checkPaneStarts(now: number = Date.now(), parentContext?: Period
   }, { signal: parentContext?.signal, cadenceMs: DELEGATION_SCAN_MS });
 }
 
+/**
+ * F-1414: limite de uso CONFIRMADO pelo failover num pane de tarefa que ainda
+ * não entregou (Muse: "Usage limit reached" e a tarefa parada). O failover tem
+ * LIMIT_HANDOFF_MS para trocar de conta ou reabrir a tarefa; se depois disso o
+ * pane segue na mesma sessão, sem handoff e sem voltar a trabalhar, o
+ * supervisor fecha o pane, reabre a MESMA tarefa noutra CLI (a esgotada fora
+ * da rota, na mesma worktree do writer isolado) e avisa quem pediu. Teto de
+ * reaberturas do pedido (MAX_PANE_TASK_REROUTES) → `blocked` com o motivo.
+ */
+export async function checkLimitedTaskPanes(
+  now: number = Date.now(),
+  context?: PeriodicTaskContext,
+): Promise<void> {
+  for (const limit of listConfirmedPaneLimits()) {
+    context?.assertCurrent();
+    if (now - limit.at < LIMIT_HANDOFF_MS) continue;
+    forgetConfirmedPaneLimit(limit.paneId);
+    const pane = listPaneSnapshots().find((live) => live.paneId === limit.paneId);
+    // O failover já agiu (sessão nova no pane, pane fechado) ou o pane morreu.
+    if (!pane?.scope || pane.sessionId !== limit.sessionId) continue;
+    if (getSessionState(limit.sessionId) === null) continue;
+    const handle = getPaneTaskReroute(limit.paneId, now);
+    // Só tarefa delegada pelo nexus_pane_spawn tem o pedido para reabrir.
+    if (!handle || handle.adapterId !== limit.adapterId) continue;
+    const suite = suiteForScope(pane.scope);
+    try {
+      // Entregou: o limite veio depois do trabalho.
+      if (suite.handoffs.list({ sessionIds: [limit.sessionId], includeDelivered: true }).length > 0) {
+        continue;
+      }
+    } catch {
+      continue; // sem leitura confiável não decide
+    }
+    // Voltou a trabalhar sozinho (janela curta que passou).
+    const semantic = getAgentSemanticStatusBySession(limit.sessionId);
+    if (semantic?.status === 'working' && semantic.updatedAt > limit.at) continue;
+    const blocker = paneTaskRerouteBlocker(handle);
+    let outcome: Parameters<typeof paneLimitNoticeSummary>[0]['outcome'];
+    if (blocker === 'operator' || blocker === 'pinned' || blocker === 'chain-limit') {
+      outcome = { kind: 'not-rerouted', why: blocker };
+    } else if (blocker === 'no-request') {
+      outcome = { kind: 'not-rerouted', why: 'not-reopenable' };
+    } else if (!handle.hasAlternative([limit.adapterId])) {
+      outcome = { kind: 'not-rerouted', why: 'no-alternative' };
+    } else {
+      // A ficha de início (se ainda viva) não reabre a mesma tarefa de novo.
+      releasePaneStartWatch(limit.paneId);
+      const closed = await requestPaneClose(limit.paneId, limit.sessionId).catch(() => false);
+      if (!closed) {
+        outcome = { kind: 'reroute-failed', error: 'o pane parado não fechou; nada foi reaberto' };
+      } else {
+        forgetPaneTaskReroute(limit.paneId);
+        try {
+          const next = await handle.reroute({
+            excludeAdapterIds: [limit.adapterId],
+            worktreeFromPaneId: limit.paneId,
+          });
+          outcome = { kind: 'rerouted', paneId: next.paneId, adapterId: next.adapterId };
+        } catch (error) {
+          outcome = { kind: 'reroute-failed', error: shortStartError(error) };
+        }
+      }
+    }
+    const summary = paneLimitNoticeSummary({
+      paneId: limit.paneId,
+      adapterId: limit.adapterId,
+      reason: limit.reason,
+      outcome,
+    });
+    trace({
+      kind: 'pane-limit-reroute',
+      paneId: limit.paneId,
+      adapterId: limit.adapterId,
+      missionId: handle.missionId ?? null,
+      role: handle.role,
+      outcome: outcome.kind,
+      ...(outcome.kind === 'rerouted'
+        ? { nextPaneId: outcome.paneId, nextAdapterId: outcome.adapterId }
+        : outcome.kind === 'not-rerouted' ? { why: outcome.why } : {}),
+    });
+    console.warn(`[delegation-supervisor] ${summary}`);
+    try {
+      await notifyPaneStartCaller(
+        {
+          scope: pane.scope,
+          ...(handle.missionId ? { missionId: handle.missionId } : {}),
+          callerSessionId: handle.callerSessionId,
+          paneId: limit.paneId,
+        },
+        summary,
+        context,
+        outcome.kind === 'not-rerouted' && outcome.why === 'chain-limit' ? 'blocked' : 'progress',
+      );
+    } catch (error) {
+      console.warn(
+        `[delegation-supervisor] aviso de limite falhou (pane=${limit.paneId}): ${shortStartError(error)}`,
+      );
+    }
+  }
+}
+
 let disposePaneStartTaps: (() => void) | null = null;
 
 function installPaneStartTaps(): void {
@@ -1162,6 +1356,10 @@ function installPaneStartTaps(): void {
   const untapTermination = tapSessionTermination((sessionId, agent, rootExit) => {
     const watch = paneStartWatchForSession(sessionId, agent?.paneId);
     if (!watch || (agent && agent.adapterId !== watch.adapterId)) return;
+    // F-1414: a prova de execução fica na ficha antes de a sessão sumir.
+    if (watch.sessionId === sessionId && hasExecutionProof(watch, sessionId)) {
+      watch.executionSeenAt ??= Date.now();
+    }
     notePaneSessionEnded(watch, {
       sessionId,
       requested: getRequestedTerminationOrigin(sessionId) !== null,
@@ -1195,6 +1393,23 @@ function installPaneStartTaps(): void {
     });
     if (cause) tracePaneStartRejected(watch, cause);
   });
+  // F-1414: turno curto entre duas varreduras (working → idle) ainda é prova
+  // de execução — a ficha guarda o instante em que a viu.
+  const noteExecution = (sessionId: string, paneId: string, at: number): void => {
+    const watch = paneStartWatchForSession(sessionId, paneId);
+    if (!watch || (watch.sessionId !== null && watch.sessionId !== sessionId)) return;
+    const agent = getAgentSessionInfo(sessionId);
+    if (agent && agent.adapterId !== watch.adapterId) return;
+    watch.executionSeenAt ??= at;
+  };
+  const untapStatus = tapAgentSemanticStatus((entry) => {
+    if (entry.status === 'working' || entry.status === 'completed' || entry.status === 'error') {
+      noteExecution(entry.sessionId, entry.paneId, entry.updatedAt);
+    }
+  });
+  const untapTurnStart = tapAgentTurnStart((entry) => {
+    noteExecution(entry.sessionId, entry.paneId, entry.observedAt);
+  });
   setPaneStartKick(() => {
     void checkPaneStarts(Date.now());
   });
@@ -1202,6 +1417,8 @@ function installPaneStartTaps(): void {
     untapFailure();
     untapTermination();
     untapTurnEnd();
+    untapStatus();
+    untapTurnStart();
     setPaneStartKick(null);
   };
 }
@@ -1756,6 +1973,7 @@ export function reconcileDelegationSupervisor(now: number = Date.now(), context?
       }
     }
     await budget.wait(checkPaneStarts(now, budget));
+    await budget.wait(checkLimitedTaskPanes(now, budget));
   };
   return context ? reconcile(context) : runPeriodicTask('delegation-supervisor:legacy', reconcile, { cadenceMs: DELEGATION_SCAN_MS });
 }
