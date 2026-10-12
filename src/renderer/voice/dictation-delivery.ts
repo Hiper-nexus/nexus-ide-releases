@@ -23,6 +23,21 @@ export type DictationLogLevel = 'info' | 'warn' | 'error';
  */
 export type DictationLaneOutcome = 'started' | 'queued' | 'wait' | 'failed' | 'lost';
 
+/** C2 (F-1393): como terminou um ditado pendente. */
+export type DictationPendingErrorCode =
+  | 'pending-timeout'
+  | 'pending-session-changed'
+  | 'pending-failed'
+  | 'pending-cancelled';
+
+export interface DictationPendingSettled {
+  readonly paneId: string;
+  readonly result: 'ok' | 'error';
+  readonly errorCode?: DictationPendingErrorCode;
+  /** Falha real do pendente: o texto foi para a área de transferência. */
+  readonly preserved?: boolean;
+}
+
 /** F-1393: teto de segurança do ditado pendente e cadência da sonda. */
 export const DICTATION_PENDING_MAX_MS = 10 * 60_000;
 export const DICTATION_PENDING_POLL_MS = 1_000;
@@ -58,6 +73,11 @@ export interface DictationDeliveryPorts {
   probePromptState?(paneId: string, sessionId: string): Promise<PtyPromptState | null>;
   schedule?(callback: () => void, delayMs: number): unknown;
   now?(): number;
+  /**
+   * C2 (F-1393): desfecho do ditado pendente (entregue, descartado ou
+   * cancelado) — o chamador fecha a sessão de uso e atualiza o HUD.
+   */
+  onSettled?(settled: DictationPendingSettled): void;
   /**
    * F-1393: o ditado que nenhum pane aceitou não pode sumir — o operador
    * falou um prompt inteiro. Guarda o texto (área de transferência) e diz se
@@ -191,9 +211,25 @@ function deferUntilFree(
   const token = ++pendingSeq;
   const startedAt = now();
   const mine = () => pendingByPane.get(paneId)?.token === token;
-  const settle = (level: DictationLogLevel, event: string, msg: string, extra: Record<string, unknown>) => {
+  const settle = (
+    level: DictationLogLevel,
+    event: string,
+    msg: string,
+    extra: Record<string, unknown>,
+    errorCode?: DictationPendingErrorCode,
+  ) => {
     if (mine()) pendingByPane.delete(paneId);
     ports.log(level, event, msg, { targetPaneId: paneId, sessionId, chars: text.length, ...extra });
+    const outcome = { paneId, result: errorCode ? 'error' : 'ok', ...(errorCode ? { errorCode } : {}) } as const;
+    // C2: falha real do pendente (não o cancelamento pelo operador) guarda o
+    // texto agora — B1 tirou a cópia do momento em que ele ficou pendente.
+    if (errorCode && errorCode !== 'pending-cancelled' && ports.preserveUndelivered) {
+      void ports.preserveUndelivered(text)
+        .catch(() => false)
+        .then((preserved) => ports.onSettled?.({ ...outcome, preserved }));
+      return;
+    }
+    ports.onSettled?.(outcome);
   };
   pendingByPane.set(paneId, {
     token,
@@ -205,16 +241,17 @@ function deferUntilFree(
           ? 'ditado pendente substituído por um novo'
           : 'input humano no pane — ditado pendente cancelado',
         { reason },
+        'pending-cancelled',
       ),
   });
   const tick = async (): Promise<void> => {
     if (!mine()) return;
     if (ports.getSessionId(paneId) !== sessionId) {
-      settle('warn', 'dictation.pendingDropped', 'sessão do pane mudou — ditado pendente descartado', { reason: 'session-changed' });
+      settle('warn', 'dictation.pendingDropped', 'sessão do pane mudou — ditado pendente descartado', { reason: 'session-changed' }, 'pending-session-changed');
       return;
     }
     if (now() - startedAt >= DICTATION_PENDING_MAX_MS) {
-      settle('warn', 'dictation.pendingDropped', 'pane não ficou livre em 10 min — ditado pendente descartado', { reason: 'timeout' });
+      settle('warn', 'dictation.pendingDropped', 'pane não ficou livre em 10 min — ditado pendente descartado', { reason: 'timeout' }, 'pending-timeout');
       return;
     }
     const state = await probe(paneId, sessionId).catch(() => null);
@@ -232,6 +269,7 @@ function deferUntilFree(
         delivered ? 'dictation.pendingDelivered' : 'dictation.pendingFailed',
         delivered ? 'ditado pendente entregue ao pane livre' : 'pane livre recusou o ditado pendente',
         { lane, outcome },
+        delivered ? undefined : 'pending-failed',
       );
       return;
     }

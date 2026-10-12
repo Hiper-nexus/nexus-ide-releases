@@ -118,6 +118,7 @@ describe('F-371 — dictationPending/dictationFailed no fluxo de ditado', () => 
     expect(useVoiceStore.getState().dictationFailed).toBe(false);
     expect(vi.mocked(routeDictation)).toHaveBeenCalledWith(
       'vamos comitar isso',
+      expect.any(Function),
     );
   });
 
@@ -317,6 +318,31 @@ describe('F-1392 — uma linha dictation.session por ditado, sem o texto', () =>
       expect.objectContaining({ result: 'queued' }),
       expect.objectContaining({ result: 'pending' }),
     ]);
+  });
+
+  it('C2: desfecho do pendente vira 2ª linha da sessão e atualiza o HUD', async () => {
+    transcribe.mockResolvedValue(sttOk('abre o painel'));
+    const settlers: Array<(settled: { paneId: string; result: 'ok' | 'error'; errorCode?: string; preserved?: boolean }) => void> = [];
+    vi.mocked(routeDictation).mockImplementation(async (_text, onSettled) => {
+      if (onSettled) settlers.push(onSettled as never);
+      return { ok: false, reason: 'pending', paneId: 'pane-1' };
+    });
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+    settlers[0]!({ paneId: 'pane-1', result: 'error', errorCode: 'pending-timeout', preserved: true });
+
+    expect(sessions()).toEqual([
+      expect.objectContaining({ result: 'pending' }),
+      expect.objectContaining({ result: 'error', errorCode: 'pending-timeout', sttProvider: 'groq' }),
+    ]);
+    expect(useVoiceStore.getState().error).toContain('10 minutos');
+    expect(useVoiceStore.getState().error).toContain('copiado');
+    expect(useVoiceStore.getState().dictationFailed).toBe(true);
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+    settlers[1]!({ paneId: 'pane-1', result: 'ok' });
+    expect(sessions().at(-1)).toEqual(expect.objectContaining({ result: 'ok' }));
+    expect(useVoiceStore.getState().note).toContain('entregue');
   });
 
   it('STT falha: resultado erro com código curto; transcript vazio: resultado vazio', async () => {

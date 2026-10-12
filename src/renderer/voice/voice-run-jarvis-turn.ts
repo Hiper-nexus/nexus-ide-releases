@@ -21,6 +21,7 @@ import { pickFallbackInScope } from '../lib/pane-spaces';
 import { deliverDictationToClaim } from './dictation-target';
 import {
   deliverDictation,
+  type DictationPendingSettled,
   type DictationRouteResult,
 } from './dictation-delivery';
 import { useSessionStateStore } from '../state/session-state-store';
@@ -368,7 +369,10 @@ export async function routePrompt(text: string): Promise<string | null> {
  * injeção. Cada salto (emit → resolução → IPC → escrita) vai pro voice.log via
  * logVoiceEvent, então uma morte silenciosa futura fica rastreável.
  */
-export function routeDictation(text: string): Promise<DictationRouteResult> {
+export function routeDictation(
+  text: string,
+  onPendingSettled?: (settled: DictationPendingSettled) => void,
+): Promise<DictationRouteResult> {
   // Superfície de UI com claim ativo (wizard de missão) vence o roteamento
   // de panes: o operador está ditando o formulário, não um terminal.
   const uiDelivery = deliverDictationToClaim(text);
@@ -404,6 +408,7 @@ export function routeDictation(text: string): Promise<DictationRouteResult> {
       submitDictationToPaneOperatorInput(paneId, promptText, sessionId),
     probePromptState: (paneId, sessionId) => probePanePromptState(paneId, sessionId),
     schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+    ...(onPendingSettled ? { onSettled: onPendingSettled } : {}),
     // F-1393: pane ocupado/recusou — o prompt falado vai para a área de
     // transferência em vez de sumir.
     preserveUndelivered: (promptText) =>

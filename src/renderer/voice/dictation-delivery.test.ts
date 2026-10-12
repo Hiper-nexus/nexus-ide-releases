@@ -359,6 +359,48 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
     expect(logs).toContainEqual({ level: 'error', event: 'dictation.ptyLost' });
   });
 
+  it('C2: o desfecho do pendente chega ao chamador (entregue, cancelado, sessão mudou com cópia)', async () => {
+    vi.useFakeTimers();
+    const delivered = claudePane();
+    const onDelivered = vi.fn();
+    delivered.ports.onSettled = onDelivered;
+    delivered.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('um', delivered.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    delivered.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: false };
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onDelivered).toHaveBeenCalledExactlyOnceWith({ paneId: 'pane-focused', result: 'ok' });
+
+    resetPendingDictationsForTests();
+    const cancelled = claudePane();
+    const onCancelled = vi.fn();
+    cancelled.ports.onSettled = onCancelled;
+    cancelled.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('dois', cancelled.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    cancelPendingDictation('pane-focused');
+    expect(onCancelled).toHaveBeenCalledExactlyOnceWith({
+      paneId: 'pane-focused',
+      result: 'error',
+      errorCode: 'pending-cancelled',
+    });
+    expect(cancelled.ports.preserveUndelivered).not.toHaveBeenCalled();
+
+    resetPendingDictationsForTests();
+    const restarted = claudePane();
+    const onRestarted = vi.fn();
+    restarted.ports.onSettled = onRestarted;
+    restarted.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true };
+    await Promise.all([deliverDictation('três', restarted.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    restarted.switchSession('sess-nova');
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(restarted.ports.preserveUndelivered).toHaveBeenCalledWith('três');
+    expect(onRestarted).toHaveBeenCalledExactlyOnceWith({
+      paneId: 'pane-focused',
+      result: 'error',
+      errorCode: 'pending-session-changed',
+      preserved: true,
+    });
+  });
+
   it('um ditado novo substitui o pendente do mesmo pane: só o último entra', async () => {
     vi.useFakeTimers();
     const pane = claudePane();

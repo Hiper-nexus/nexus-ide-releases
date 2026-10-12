@@ -9,6 +9,7 @@ import type React from 'react';
 import { useVoiceStore } from './voice-store';
 import { codePolishAvailable, dictationSttRequestParams } from './dictation-output-mode';
 import { describeSttFailure, sttSuccessNote } from './stt-failure-help';
+import type { DictationPendingSettled } from './dictation-delivery';
 import {
   dictationSessionData,
   sttErrorCode,
@@ -136,6 +137,17 @@ export interface FinishAndProcessDeps extends RunJarvisTurnDeps {
     busy: React.MutableRefObject<boolean>,
     reason: 'wake' | 'click',
   ) => AutoStopOptions;
+}
+
+/** C2 (F-1393): mensagem do HUD quando um ditado pendente não entra. */
+function pendingDictationFailure(settled: DictationPendingSettled): string {
+  const why =
+    settled.errorCode === 'pending-timeout'
+      ? 'O painel não ficou livre em 10 minutos — o ditado pendente foi descartado.'
+      : settled.errorCode === 'pending-session-changed'
+        ? 'O painel reiniciou — o ditado pendente foi descartado.'
+        : 'O painel ficou livre mas não aceitou o ditado pendente.';
+  return settled.preserved ? `${why} O texto foi copiado: cole com ⌘V.` : why;
 }
 
 export async function finishAndProcess(
@@ -417,7 +429,39 @@ export async function finishAndProcess(
         latencyMs: cachedSttLatencyMs,
       });
       store.setStatus('routing');
-      const routed = await routeDictation(transcript);
+      // C2 (F-1393): o desfecho do pendente vira a 2ª linha da sessão de uso
+      // e atualiza o HUD — antes ficava só no voice.log.
+      const pendingDraft = dictationSession;
+      const routed = await routeDictation(transcript, (settled) => {
+        if (pendingDraft) {
+          logVoiceEvent(
+            settled.result === 'ok' ? 'info' : 'warn',
+            'dictation.session',
+            undefined,
+            dictationSessionData(
+              pendingDraft,
+              {
+                result: settled.result,
+                errorCode: settled.errorCode,
+                stt,
+                deliveredChars: transcript.length,
+              },
+              Date.now(),
+            ),
+          );
+        }
+        const hud = useVoiceStore.getState();
+        if (settled.result === 'ok') {
+          hud.setNote('Ditado entregue: o painel ficou livre.');
+          return;
+        }
+        if (settled.errorCode === 'pending-cancelled') {
+          hud.setNote('Ditado pendente cancelado: você usou o painel.');
+          return;
+        }
+        hud.setDictationFailed(true);
+        hud.setError(pendingDictationFailure(settled));
+      });
       reportDictationSession(
         routed.ok
           ? { result: routed.queued ? 'queued' : 'ok', stt, deliveredChars: transcript.length }
