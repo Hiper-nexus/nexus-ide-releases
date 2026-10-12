@@ -809,6 +809,8 @@ export interface OperatorRouteInternal {
    * confina leitura, então a rota só pode escolher entre as que confinam.
    */
   readonly requireReadOnlyEnforceable?: boolean;
+  /** F-1415: o spawn é readOnly — o roteador trata como revisão, nunca writer. */
+  readonly readOnly?: boolean;
   /**
    * F-802: só sugerir (o hook /hook/delegate apontando a CLI melhor): sem o
    * lote do Jev (não gasta a chave do operador) e sem registrar proveniência
@@ -1423,6 +1425,7 @@ const paneSpawnAfterTabMission = {
             !isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
               ? { requireReadOnlyEnforceable: true }
               : {}),
+            ...(args.readOnly === true ? { readOnly: true } : {}),
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

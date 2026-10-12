@@ -71,6 +71,32 @@ describe('implementation cost policy from actual operator requests', () => {
     expect(decision.reason).toContain('escritor econômico elegível no mesmo tier');
   });
 
+  // F-1415: spawn readOnly de revisão de segurança saiu "purpose=writer;
+  // escritor econômico elegível" → kimi k3 por cima da lane Claude/Codex.
+  describe('F-1415: revisão/segurança crítica não vira escritor econômico', () => {
+    const fleet: AdapterAvailability[] = [...pool, { id: 'kimi', installed: true, models: ['kimi-code/k3'] }];
+    const task = 'Revisão de segurança, só leitura, do auto-update de CLI';
+    it.each([{}, { readOnly: true }])('task exata do recibo fica na lane de segurança crítica (%o)', (extra) => {
+      const decision = routeTask(task, fleet, undefined, 'critical', false, BUILTIN_MODEL_CATALOG,
+        { multiScore: true, ...extra })!;
+      expect(decision.reason).toContain('purpose=reviewer');
+      expect(decision.reason).not.toContain('escritor econômico');
+      expect(['claude', 'codex']).toContain(decision.adapterId);
+    });
+    it('spawn readOnly é revisão mesmo quando o texto tem verbo de escrita', () => {
+      const decision = routeTask('Analise o update automático das CLIs', fleet, undefined, 'hard', false,
+        BUILTIN_MODEL_CATALOG, { multiScore: true, readOnly: true })!;
+      expect(decision.reason).toContain('purpose=reviewer');
+      expect(decision.reason).not.toContain('escritor econômico');
+    });
+    it('escrita de segurança crítica não cai no escritor econômico', () => {
+      const decision = routeTask('Implemente a rotação do refresh token da conta', fleet, undefined, 'critical', false,
+        BUILTIN_MODEL_CATALOG, { multiScore: true })!;
+      expect(decision.reason).not.toContain('escritor econômico');
+      expect(['claude', 'codex']).toContain(decision.adapterId);
+    });
+  });
+
   it('independent review still uses frontier judgment', () => {
     const decision = choose('Revise de forma independente o diff da correção do kickoff e dê o veredito')!;
     expect(isFrontierReviewer(decision.adapterId, decision.model)).toBe(true);

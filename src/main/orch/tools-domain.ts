@@ -2309,6 +2309,7 @@ export async function routeTaskForCaller(
   const ruleContext: RouteContext = {
     classificationText: classificationTask,
     reviewedFindingFix,
+    ...(internal.readOnly === true || args.readOnly === true ? { readOnly: true } : {}),
     missionUsedAdapters:
       usedAdapterIds.length > 0 ? new Set(usedAdapterIds) : undefined,
     missionUseCounts,

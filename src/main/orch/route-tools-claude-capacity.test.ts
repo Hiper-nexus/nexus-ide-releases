@@ -214,6 +214,19 @@ describe('F-1401: Claude sem limite de um pane por conta', () => {
 });
 
 
+describe('F-1415: spawn readOnly chega ao roteador como revisão', () => {
+  it('internal.readOnly vira purpose=reviewer, sem escritor econômico', async () => {
+    h.listProviderSettings.mockReturnValue(h.listProviderSettings().map((provider: Record<string, unknown>) =>
+      provider.adapterId === 'kimi' ? { ...provider, hasKey: true } : provider));
+    h.claudeCapacity.mockReturnValue(2);
+    const decision = (await routeTaskForCaller(
+      { task: 'Analise o update automático das CLIs', tier: 'hard' }, ctx, { readOnly: true },
+    )) as { adapterId: string; reason: string };
+    expect(decision.reason).toContain('purpose=reviewer');
+    expect(decision.reason).not.toContain('escritor econômico');
+  });
+});
+
 describe('Main-bound reviewed finding cost escalation', () => {
   beforeEach(() => {
     // Kimi is economic but still needs real first-wave credential evidence.

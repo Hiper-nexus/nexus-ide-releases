@@ -94,6 +94,8 @@ export interface RouteContext {
   classificationText?: string;
   /** Main proved a clean, current-HEAD frontier rejection identifying this fix. Never MCP input. */
   reviewedFindingFix?: boolean;
+  /** F-1415: spawn somente leitura — nunca é escrita, o propósito é revisão. Never MCP input. */
+  readOnly?: boolean;
   /** Adapters already used by panes in this mission (diversity boost). */
   missionUsedAdapters?: ReadonlySet<string>;
   /** How many times each adapter appears in the mission (diversity attenuation). */
@@ -1734,7 +1736,11 @@ export function routeTask(
         reason: `especialidade julgada pelo Jev (heurística: ${heuristicSpecialty.specialty})`,
       }
     : nextOrGame ? { ...heuristicSpecialty, specialty: 'visual' as const } : heuristicSpecialty;
-  const purpose = routingPurpose(classificationText, codeReviewTierFloor(classificationText) !== null, context.reviewedFindingFix);
+  // F-1415: spawn readOnly não escreve — "auto-update" no texto não o torna writer.
+  // Revisão (sinal de revisão sem escrita) também é 'reviewer', não 'general'.
+  const basePurpose = routingPurpose(classificationText, codeReviewTierFloor(classificationText) !== null, context.reviewedFindingFix);
+  const reviewAsk = matchSignals(classificationText.toLowerCase(), REVIEW_SIGNALS, legacyPrefixSignals(REVIEW_SIGNALS)).length > 0;
+  const purpose = context.readOnly === true || (basePurpose === 'general' && reviewAsk) ? 'reviewer' : basePurpose;
   const allowsContributor = ['trivial', 'easy', 'medium'].includes(tier) &&
     specialtyVerdict.specialty !== 'visual' && purpose !== 'reviewer' && purpose !== 'finding-fix';
   // Even a stale provider model list cannot opt a task into content sharing.
@@ -2327,7 +2333,10 @@ export function routeTask(
 
   let writerCostNote = `; purpose=${purpose}`;
   let writerCostApplied = false;
+  // F-1415: escritor econômico é só para escrita — nunca tira a tarefa da
+  // lane de julgamento (revisão) nem da segurança crítica (Claude/Codex).
   if (purpose === 'writer' && table === DEFAULT_ROUTING_TABLE && specialtyVerdict.specialty !== 'visual' &&
+      frontier?.policy !== 'cross-review' && !(tier === 'critical' && securityWork) &&
       rotationNote === '' && fairShareNote === '' && mention.model === undefined && policy.source !== 'benchmark') {
     const baseline = ranked[0];
     const baselineOutcome = baseline && routeSuccessRate(context.routeOutcomes, baseline.c.adapterId, baseline.c.model);

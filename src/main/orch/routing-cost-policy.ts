@@ -4,7 +4,7 @@ import type { MissionReviewVerdict } from './mission-review-verdict-ledger';
 export type RoutingPurpose = 'general' | 'writer' | 'reviewer' | 'finding-fix';
 const WRITE_ACTION = /\b(?:implement(?:ar|e|ing)?|build|add|adicion(?:ar|e)|criar|crie|corrig(?:ir|e|a)|corrij[ae]|fix|refactor|refator(?:ar|e)|atualiz(?:ar|e)|update|modific(?:ar|ue)|change|write|escrev(?:er|a))\b/i;
 const WRITE_LEADING = new RegExp(`^\\s*(?:\\[[^\\]]*\\]\\s*)?(?:(?:por favor|please|quero que|preciso que|faça|faca)\\s+)?${WRITE_ACTION.source}`, 'i');
-const READ_ONLY = /\bread[ -]only\b|\bsomente leitura\b|\bdo not (?:write|change|modify)\b|\bn[aã]o (?:altere|modifique|escreva)\b/i;
+const READ_ONLY = /\bread[ -]only\b|\b(?:somente|apenas) leitura\b|(?<![a-zà-ú])s[oó] leitura\b|\bdo not (?:write|change|modify)\b|\bn[aã]o (?:altere|modifique|escreva)\b/i;
 const FIX_ACTION = /\b(?:corrig(?:ir|e|a)|corrij[ae]|fix|repair|resolv(?:er|a|e))\b/i;
 const FILE_REFERENCE_SOURCE = String.raw`(?:[\w.-]+/)*[\w.-]+\.[a-z][a-z0-9]*(?::\d+)?`;
 const REVIEW_REFERENCE_SOURCE = String.raw`\bF-\d+\b|` + FILE_REFERENCE_SOURCE;
@@ -16,7 +16,8 @@ export function routingPurpose(task: string, codeReview: boolean, reviewedFindin
     (!codeReview || WRITE_LEADING.test(task));
   if (writes && reviewedFindingFix) return 'finding-fix';
   if (writes) return 'writer';
-  return codeReview ? 'reviewer' : 'general';
+  // F-1415: pedido explícito de só leitura é revisão/análise, nunca escrita.
+  return codeReview || READ_ONLY.test(task) ? 'reviewer' : 'general';
 }
 
 export function isFindingCorrectionTask(task: string): boolean {
