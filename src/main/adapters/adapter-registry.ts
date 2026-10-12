@@ -346,6 +346,11 @@ export interface AdapterBinResolution {
  * Declared auth method for the renderer gate. Static metadata only — never
  * proof of a live session (herança Orca: cada CLI usa sua sessão nativa).
  */
+/** F-1411: a declaração de bracketed paste que o renderer precisa (ausente = aceita). */
+export function bracketedPasteForAdapter(adapter: Adapter): boolean | undefined {
+  return adapter.kind === 'cli-pty' ? adapter.promptInjection?.bracketedPaste : undefined;
+}
+
 export function authMethodForAdapter(adapter: Adapter): string {
   return adapter.kind === 'api-provider' ? 'api_key' : adapter.auth.method;
 }
@@ -371,6 +376,7 @@ function toAdapterInfo(
   const modelList = [...offer.offered];
   const capabilities = adapterCapabilityMatrixForAdapter(adapter, origin);
   const authMethod = authMethodForAdapter(adapter);
+  const bracketedPaste = bracketedPasteForAdapter(adapter);
   return {
     id: adapter.id,
     kind: adapter.kind,
@@ -396,6 +402,7 @@ function toAdapterInfo(
     orchestratorCapable:
       adapter.kind === 'cli-pty' &&
       hasNexusMcpCapability(adapter.quirks),
+    ...(typeof bracketedPaste === 'boolean' ? { bracketedPaste } : {}),
     autonomousWorkspaceWriteCapable: capabilities.governedWriter,
     orchestrationEvidence: orchestrationEvidenceForAdapter(adapter, origin),
     capabilities,
