@@ -474,11 +474,10 @@ async function maestroDelegationDirective(
   const delegation = advice?.delegation;
   if (!delegation || (delegation.parts < 2 && !delegation.heavyRead)) return null;
   const budget = budgetOf();
-  const reads = Math.max(0, delegation.parts - delegation.writers);
   const work = delegation.heavyRead
     ? 'este pedido é uma leitura pesada'
-    : `este pedido se divide em ~${delegation.parts} partes ` +
-      `(${reads} de leitura, ${delegation.writers} de escrita)`;
+    : `este pedido se divide em ${splitSizeText(delegation)} ` +
+      `(${splitCountsText(delegation)})`;
   let text: string;
   if (budget && helpersToOpenNow(delegation.parts, budget) === 0) {
     text =
@@ -527,13 +526,31 @@ function designContextFor(
  * era de antes da auto-isolação da 0.76.110 e fazia o pane enfileirar
  * writers), e o número de helpers vem do teto seguro da máquina.
  */
+/**
+ * F-1317: tamanho do leque — "N+" é piso ("pelo menos N"); contagem exata
+ * segue "~N" como antes.
+ */
+function splitSizeText(advice: DelegationAdvice): string {
+  return advice.partsAtLeast ? `pelo menos ${advice.parts} partes` : `~${advice.parts} partes`;
+}
+
+/**
+ * F-1317: com writersUncertain, a divisão leitura/escrita não é fato — a
+ * diretiva manda os dois flags sem declarar número nenhum.
+ */
+function splitCountsText(advice: DelegationAdvice): string {
+  if (advice.writersUncertain) return 'divisão leitura/escrita incerta';
+  const reads = Math.max(0, advice.parts - advice.writers);
+  return `${reads} de leitura, ${advice.writers} de escrita`;
+}
+
 export function formatDelegationContext(
   advice: DelegationAdvice,
   budget: ParallelHelperBudget | null = null,
 ): string {
   const work = advice.heavyRead
     ? 'Leitura pesada'
-    : `Esta tarefa se divide em ~${advice.parts} partes`;
+    : `Esta tarefa se divide em ${splitSizeText(advice)}`;
   let text: string;
   if (budget && helpersToOpenNow(advice.parts, budget) === 0) {
     text =
@@ -546,9 +563,8 @@ export function formatDelegationContext(
       'nexus_pane_spawn({ task, prompt, readOnly: true }) e encerre o turno; ' +
       'a entrega chega sozinha.';
   } else {
-    const reads = Math.max(0, advice.parts - advice.writers);
     text =
-      `[Nexus · Jev] ${work} (${reads} de leitura, ${advice.writers} de escrita). ` +
+      `[Nexus · Jev] ${work} (${splitCountsText(advice)}). ` +
       'Delegue com nexus_pane_spawn({ task, prompt }), um helper por parte — ' +
       `${parallelWave(advice.parts, budget)}; readOnly: true nas de leitura, ` +
       'isolatedWriter: true nas de escrita. Encerre o turno; não execute tudo sozinho.';
@@ -564,10 +580,9 @@ function formatAutoOrchestrateDirective(
   advice: DelegationAdvice,
   budget: ParallelHelperBudget | null,
 ): string {
-  const reads = Math.max(0, advice.parts - advice.writers);
   const text =
-    `[Nexus · Jev] Esta tarefa se divide em ~${advice.parts} partes ` +
-    `(${reads} de leitura, ${advice.writers} de escrita). O Nexus tornou ` +
+    `[Nexus · Jev] Esta tarefa se divide em ${splitSizeText(advice)} ` +
+    `(${splitCountsText(advice)}). O Nexus tornou ` +
     'este pane orquestrador de uma missão para ela. Abra um helper por ' +
     `parte com nexus_pane_spawn({ task, prompt }) — ${parallelWave(advice.parts, budget)}; ` +
     'readOnly: true nas de leitura, isolatedWriter: true nas de escrita —, ' +

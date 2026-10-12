@@ -179,6 +179,56 @@ describe('F-784: decisão de delegação em casos representativos', () => {
   });
 });
 
+describe('F-1317: pedido de correção não vira "só leitores"', () => {
+  // Caso real mission-94d90f5b (decisão e6aad1cc): divisible 0,79,
+  // parts '5+' (prob 0,56, conf 0,45), writers '0' (prob 0,53, conf 0,30),
+  // writesCode 0,63. O classificador zerava a escrita e a diretiva mandava
+  // readOnly em todas as partes.
+  function realCase(): JevResult {
+    return {
+      model: 'jev-test',
+      answers: {
+        divisible: { type: 'noul', noul: 0.79 },
+        parts: { type: 'choice', choice: '5+', probabilities: { '5+': 0.56 }, confidence: 0.45 },
+        writers: { type: 'choice', choice: '0', probabilities: { '0': 0.53 }, confidence: 0.3 },
+        writesCode: { type: 'noul', noul: 0.63 },
+      },
+      usage: { input_tokens: 50, output_tokens: 5 },
+    };
+  }
+
+  it('writesCode ≥ 0,6 com writers 0: pelo menos 1 parte de escrita', async () => {
+    const judge = vi.fn<JudgeMock>(async () => realCase());
+    expect(await adviseDelegation(LONG, { judge })).toMatchObject({ parts: 5, writers: 1 });
+  });
+
+  it('"N+" é piso: pelo menos N partes', async () => {
+    const judge = vi.fn<JudgeMock>(async () => realCase());
+    expect(await adviseDelegation(LONG, { judge })).toMatchObject({ parts: 5, partsAtLeast: true });
+  });
+
+  it('confiança do writers < 0,6: o número de escrita/leitura não é fato', async () => {
+    const judge = vi.fn<JudgeMock>(async () => realCase());
+    expect(await adviseDelegation(LONG, { judge })).toMatchObject({ writersUncertain: true });
+  });
+
+  it('critérios de writers: corrigir/implementar conta como escrita', async () => {
+    const judge = vi.fn<JudgeMock>(async () => realCase());
+    await advisePrompt(LONG, { judge });
+    const writers = judge.mock.calls[0]![0].questions.writers;
+    expect(writers?.type).toBe('choice');
+    if (writers?.type !== 'choice') return;
+    expect(Object.values(writers.criteria).join(' ')).toMatch(/fix/i);
+  });
+
+  it('sem writesCode, writers 0 com confiança continua 0 (sem piso, sem hedge)', async () => {
+    const judge = vi.fn<JudgeMock>(async () => verdict(0.85, '3', '0', 0.1));
+    expect(await adviseDelegation(LONG, { judge })).toMatchObject({ parts: 3, writers: 0 });
+    expect(await adviseDelegation(LONG, { judge })).not.toHaveProperty('writersUncertain');
+    expect(await adviseDelegation(LONG, { judge })).not.toHaveProperty('partsAtLeast');
+  });
+});
+
 describe('F-1164: missionId chega ao judge na delegação', () => {
   it('propaga a missão conhecida ao judge e ao diário', async () => {
     const judge = vi.fn<JudgeMock>(async () => verdict(0.9, '3', '2'));

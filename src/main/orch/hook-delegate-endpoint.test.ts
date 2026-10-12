@@ -644,6 +644,22 @@ describe('hook /hook/delegate', () => {
     expect((await handleHookDelegateRequest(operator, { prompt: brief }, { advise })).payload).toEqual({});
   });
 
+  it('F-1317: writers incerto não declara "0 de escrita" como fato', () => {
+    const text = formatDelegationContext(
+      { parts: 5, writers: 0, confidence: 0.79, model: 'j', partsAtLeast: true, writersUncertain: true },
+    );
+    expect(text).not.toContain('0 de escrita');
+    expect(text).toContain('isolatedWriter: true');
+  });
+
+  it('F-1317: "5+" vira "pelo menos 5 partes", não "~5"', () => {
+    const text = formatDelegationContext(
+      { parts: 5, writers: 2, confidence: 0.9, model: 'j', partsAtLeast: true },
+    );
+    expect(text).toContain('pelo menos 5 partes');
+    expect(text).not.toContain('~5 partes');
+  });
+
   it('formatDelegationContext conta leitura e escrita, e as escritas também vão em paralelo (F-784)', () => {
     const text = formatDelegationContext({ parts: 4, writers: 1, confidence: 0.9, model: 'j' });
     expect(text).toContain('(3 de leitura, 1 de escrita)');

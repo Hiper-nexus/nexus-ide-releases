@@ -23,6 +23,11 @@ import {
 export const DELEGATE_MIN_PROMPT_CHARS = 40;
 export const DELEGATE_MIN_CONFIDENCE = 0.6;
 /**
+ * F-1317: a partir desta probabilidade o pedido conta como escrita (paridade
+ * com LEAN_REMINDER_MIN_WRITES_CODE no hook — mesma régua, sem importar orch).
+ */
+export const WRITES_CODE_MIN_CONFIDENCE = 0.6;
+/**
  * F-784: leitura pesada (varrer código, logs ou fontes) vai para UM helper
  * readOnly mesmo sem partes independentes — a doutrina do operador manda
  * delegar o que é "divisível, pesado ou paralelizável", e a pergunta de
@@ -68,7 +73,13 @@ const DELEGATION_QUESTIONS: Record<string, JevQuestion> = {
   writers: {
     type: 'choice',
     instructions: 'How many of those parts change code or files (the rest only read)?',
-    criteria: { '0': null, '1': null, '2+': null },
+    criteria: {
+      // F-1317: corrigir ou implementar conta como escrita — sem isto o
+      // pedido de correção real saía "0 de escrita" e virava só leitores.
+      '0': 'no part writes, changes, fixes or implements code or files (pure research, review, analysis or conversation)',
+      '1': 'one part writes, changes, fixes or implements code or files',
+      '2+': 'two or more parts write, change, fix or implement code or files',
+    },
   },
   // Mesma chamada, uma pergunta a mais: pedido de escrever código recebe o
   // lembrete da skill ponytail no hook (hook-delegate-endpoint).
@@ -90,6 +101,17 @@ export interface DelegationAdvice {
   readonly model: string;
   /** F-784: sem partes independentes, mas leitura pesada — um helper readOnly. */
   readonly heavyRead?: true;
+  /**
+   * F-1317: o Jev respondeu "N+" — parts é piso ("pelo menos N"), não exato.
+   * Ausente = contagem exata (mantém os textos antigos byte a byte).
+   */
+  readonly partsAtLeast?: true;
+  /**
+   * F-1317: confiança do choice de writers abaixo do piso — o número de
+   * escrita/leitura não é fato e a diretiva não pode declará-lo como tal.
+   * Ausente = contagem confiável.
+   */
+  readonly writersUncertain?: true;
 }
 
 export interface PromptAdvice {
@@ -148,10 +170,25 @@ export async function advisePrompt(
   const writersAnswer = result.answers.writers;
   if (divisible?.type !== 'noul' || partsAnswer?.type !== 'choice') return null;
   const parts = countOf(partsAnswer.choice);
-  const writers = Math.min(
+  // F-1317: "N+" é piso ("pelo menos N") — o parseInt já devolve N, aqui só
+  // marcamos para a diretiva não dizer "~N" como se fosse exato.
+  const partsAtLeast = partsAnswer.choice.trim().endsWith('+');
+  const writersConfidence =
+    writersAnswer?.type === 'choice' ? writersAnswer.confidence : 0;
+  const writesCodeAnswer = result.answers.writesCode;
+  const writesCode = writesCodeAnswer?.type === 'noul' ? writesCodeAnswer.noul : 0;
+  let writers = Math.min(
     parts,
     writersAnswer?.type === 'choice' ? countOf(writersAnswer.choice) : 0,
   );
+  // F-1317: com writesCode ≥ 0,6, writers 0 não vale — o pedido pede código,
+  // então pelo menos 1 parte escreve (split garante parts ≥ 2, cabe o piso).
+  if (writesCode >= WRITES_CODE_MIN_CONFIDENCE && writers < 1) {
+    writers = Math.min(parts, 1);
+  }
+  // F-1317: confiança do choice de writers abaixo do piso — sem cruzar com
+  // writesCode, o número copiado não é fato.
+  const writersUncertain = writersConfidence < DELEGATE_MIN_CONFIDENCE;
   const split = divisible.noul >= DELEGATE_MIN_CONFIDENCE && parts >= 2;
   const heavyReadAnswer = result.answers.heavyRead;
   const heavyRead = heavyReadAnswer?.type === 'noul' ? heavyReadAnswer.noul : 0;
@@ -174,13 +211,16 @@ export async function advisePrompt(
         : 'solo',
     ...decisionResultUsage(result),
   });
-  const writesCodeAnswer = result.answers.writesCode;
   return {
     delegation: split
-      ? { parts, writers, confidence: divisible.noul, model: result.model }
+      ? {
+          parts, writers, confidence: divisible.noul, model: result.model,
+          ...(partsAtLeast ? { partsAtLeast: true as const } : {}),
+          ...(writersUncertain ? { writersUncertain: true as const } : {}),
+        }
       : readAlone
         ? { parts: 1, writers: 0, confidence: heavyRead, model: result.model, heavyRead: true }
         : null,
-    writesCode: writesCodeAnswer?.type === 'noul' ? writesCodeAnswer.noul : 0,
+    writesCode,
   };
 }
