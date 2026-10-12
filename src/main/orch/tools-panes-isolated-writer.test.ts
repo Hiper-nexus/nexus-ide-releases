@@ -407,6 +407,18 @@ describe('Via Rápida isolated writers', () => {
     expect(h.spawn).toHaveBeenCalledTimes(2);
   });
 
+  it('F-1259: linha durável que chega tarde + saída física também libera a vaga', async () => {
+    h.mission = { ...h.mission, intentContract: { ...(h.mission as { intentContract: object }).intentContract,
+      budgets: { ...((h.mission as { intentContract: { budgets: object } }).intentContract.budgets), maxWorkers: 1 } } };
+    h.unrecorded.add('pane-0');
+    await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
+    // A composição durável aparece depois do braço (gravação atrasada).
+    h.unrecorded.delete('pane-0');
+    h.panes[0].state = 'exited';
+    exitPane(h.panes[0]);
+    await expect(paneSpawnTool.handler({ agentName: 'Executor' }, ctx)).resolves.toMatchObject({ paneId: expect.any(String) });
+  });
+
   it('F-1259: pending + continuação unrecorded recusa enquanto o filho vive e aceita após a saída física', async () => {
     h.mission = { ...h.mission, intentContract: { ...(h.mission as { intentContract: object }).intentContract,
       budgets: { ...((h.mission as { intentContract: { budgets: object } }).intentContract.budgets), maxWorkers: 1 } } };

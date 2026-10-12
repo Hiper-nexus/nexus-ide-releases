@@ -489,14 +489,12 @@ export function shouldReleaseWorkerReservation(input: {
 /**
  * F-1259: a vaga de maxWorkers retida por falta de linha durável não pode
  * segurar o teto para sempre (budget_exhausted até reiniciar o Main). Na
- * prova física de saída do filho — o tap de saída do PTY — sem composição
- * durável para ele, a vaga é liberada. Sem linha E sem saída, a vaga fica:
- * bloquear uma vaga é melhor que passar do teto. One-shot: desarma no
- * primeiro match, tenha liberado ou não.
+ * prova física de saída do filho — o tap de saída do PTY — a vaga é
+ * liberada, com ou sem composição durável (que pode chegar tarde). Sem saída,
+ * a vaga fica: bloquear uma vaga é melhor que passar do teto. One-shot:
+ * desarma no primeiro match.
  */
 function armWorkerReservationExitRelease(input: {
-  readonly scope: ProjectExecutionScope;
-  readonly missionId: string;
   readonly paneIds: readonly (string | undefined)[];
   readonly release: () => void;
 }): void {
@@ -504,19 +502,6 @@ function armWorkerReservationExitRelease(input: {
     input.paneIds.filter((paneId): paneId is string => typeof paneId === 'string'),
   );
   if (watched.size === 0) return;
-  const hasDurableRow = (): boolean => {
-    try {
-      const recorded = new Set(
-        getProjectDomainStores(input.scope)
-          .missionPanes.list(input.missionId)
-          .map((row) => row.paneId)
-          .filter((paneId): paneId is string => typeof paneId === 'string'),
-      );
-      return [...watched].some((paneId) => recorded.has(paneId));
-    } catch {
-      return true; // Leitura falhou: mantém a vaga (fail-safe).
-    }
-  };
   const untap = tapSessionExit((exitedSessionId, agent) => {
     const snapshotPaneId = listPaneSnapshots()
       .find((pane) => pane.sessionId === exitedSessionId)?.paneId;
@@ -525,14 +510,17 @@ function armWorkerReservationExitRelease(input: {
       ?? snapshotPaneId;
     if (paneId === undefined || !watched.has(paneId)) return;
     untap();
-    if (!hasDurableRow()) input.release();
+    // Revisão de ponta: a prova física de saída libera SEMPRE — com linha
+    // durável tardia a vaga ficava presa até reiniciar o Main (o release é
+    // idempotente e o filho já saiu de qualquer forma).
+    input.release();
   });
   // A saída pode ter acontecido antes do braço (continuação adiada): a prova
   // já está nos snapshots.
   const alreadyExited = [...watched].some((paneId) =>
     listPaneSnapshots().find((pane) => pane.paneId === paneId)?.state === 'exited',
   );
-  if (alreadyExited && !hasDurableRow()) {
+  if (alreadyExited) {
     untap();
     input.release();
   }
@@ -2613,8 +2601,6 @@ const paneSpawnAfterTabMission = {
             // sempre — a prova física de saída libera a vaga.
             if (missionId) {
               armWorkerReservationExitRelease({
-                scope: ctx.scope,
-                missionId,
                 paneIds: [spawnedWorkerPaneId, spawnedPaneId],
                 release,
               });
@@ -2635,8 +2621,6 @@ const paneSpawnAfterTabMission = {
           // F-1259: idem — a vaga cai na prova física de saída do filho.
           if (missionId) {
             armWorkerReservationExitRelease({
-              scope: ctx.scope,
-              missionId,
               paneIds: [spawnedWorkerPaneId, spawnedPaneId],
               release: releaseWorkerSlot,
             });
