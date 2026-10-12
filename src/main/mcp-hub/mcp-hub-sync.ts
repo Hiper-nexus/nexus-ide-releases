@@ -12,6 +12,7 @@ import {
   type McpHubSyncExportToolId,
 } from '../../shared/mcp-hub-sync-api';
 import {
+  normalizeHubServerArgv,
   writeConfigWithBackup,
   type McpHubConfig,
   type McpHubServer,
@@ -129,7 +130,9 @@ function hubFromStdioLike(
     undefined;
   const cwd = typeof entry.cwd === 'string' ? entry.cwd.slice(0, 4096) : undefined;
   const headers = stringMap(entry.headers);
-  return {
+  // F-1365: command gravado como string única ("npx pkg@latest") com args
+  // vazio é normalizado em command + args — senão o spawn morre em ENOENT.
+  return normalizeHubServerArgv({
     id,
     name: rawName.slice(0, 256),
     transport: url && !command ? 'streamable-http' : 'stdio',
@@ -141,7 +144,7 @@ function hubFromStdioLike(
     ...(env ? { env } : {}),
     tools: [],
     source,
-  };
+  });
 }
 
 function agentPluginMcpId(pluginName: string, serverName: string): string {
@@ -555,7 +558,10 @@ export function applyMcpSync(options: {
       if (gaps.length === 0) continue;
       const servers = gaps
         .map((id) => hubById.get(id))
-        .filter((s): s is McpHubServer => Boolean(s));
+        .filter((s): s is McpHubServer => Boolean(s))
+        // F-1365: hubs gravados antes do fix carregam o argv inteiro no
+        // command — o export nunca pode emitir essa forma para as tools.
+        .map(normalizeHubServerArgv);
       if (servers.length === 0) continue;
 
       if (tool === 'codex') {

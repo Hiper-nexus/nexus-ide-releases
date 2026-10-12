@@ -77,6 +77,81 @@ describe('hubFromStdioLike', () => {
   });
 });
 
+describe('F-1365 — command com espaço e args vazio vira argv na importação', () => {
+  it('parte "npx @playwright/mcp@latest" em command + args', () => {
+    const server = __testOnly_hubFromStdioLike(
+      'playwright',
+      { command: 'npx @playwright/mcp@latest' },
+      'cursor',
+    );
+    expect(server?.command).toBe('npx');
+    expect(server?.args).toEqual(['@playwright/mcp@latest']);
+  });
+
+  it('respeita aspas ao partir o command', () => {
+    const server = __testOnly_hubFromStdioLike(
+      'demo',
+      { command: 'npx "my tool" --flag' },
+      'cursor',
+    );
+    expect(server?.command).toBe('npx');
+    expect(server?.args).toEqual(['my tool', '--flag']);
+  });
+
+  it('não parte command sem espaço nem command que já tem args', () => {
+    const plain = __testOnly_hubFromStdioLike(
+      'a',
+      { command: '/opt/tool' },
+      'cursor',
+    );
+    expect(plain?.command).toBe('/opt/tool');
+    expect(plain?.args).toBeUndefined();
+    const withArgs = __testOnly_hubFromStdioLike(
+      'b',
+      { command: 'my tool', args: ['--keep'] },
+      'cursor',
+    );
+    expect(withArgs?.command).toBe('my tool');
+    expect(withArgs?.args).toEqual(['--keep']);
+  });
+
+  it('export para cursor/claude nunca emite command com espaço e args vazio', () => {
+    // Hub legado gravado antes do fix: o servidor já persistiu com o command
+    // inteiro. O export tem que partir antes de escrever na tool.
+    const home = tmpHome();
+    fs.mkdirSync(path.join(home, '.cursor'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.cursor', 'mcp.json'),
+      JSON.stringify({ mcpServers: {} }),
+    );
+    const hub: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [
+        {
+          id: 'playwright',
+          name: 'playwright',
+          transport: 'stdio',
+          command: 'npx @playwright/mcp@latest',
+          tools: [],
+          source: 'cursor',
+        },
+      ],
+    };
+    applyMcpSync({
+      hub,
+      hubPath: path.join(home, 'hub.json'),
+      home,
+      mode: 'export',
+      exportTools: ['cursor'],
+    });
+    const cursor = JSON.parse(
+      fs.readFileSync(path.join(home, '.cursor', 'mcp.json'), 'utf8'),
+    ) as { mcpServers: Record<string, { command: string; args?: string[] }> };
+    expect(cursor.mcpServers.playwright?.command).toBe('npx');
+    expect(cursor.mcpServers.playwright?.args).toEqual(['@playwright/mcp@latest']);
+  });
+});
+
 describe('plan + apply fill-gaps', () => {
   beforeEach(() => {
     getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.mcpHub, true);

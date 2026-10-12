@@ -50,6 +50,60 @@ export const mcpHubConfigSchema = z
 
 export type McpHubConfig = z.infer<typeof mcpHubConfigSchema>;
 
+/**
+ * F-1365: configs de terceiros (Cursor etc.) gravam às vezes o argv inteiro
+ * em `command` ("npx @playwright/mcp@latest") com `args` vazio — spawnado
+ * assim, o posix_spawn procura um binário cujo nome tem espaço e morre
+ * ENOENT. Parte a string respeitando aspas simples/duplas.
+ */
+export function splitQuotedArgv(input: string): string[] {
+  const out: string[] = [];
+  let current = '';
+  let started = false;
+  let quote: '"' | "'" | null = null;
+  for (const ch of input.trim()) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else current += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      started = true;
+    } else if (/\s/.test(ch)) {
+      if (started) {
+        out.push(current);
+        current = '';
+        started = false;
+      }
+    } else {
+      current += ch;
+      started = true;
+    }
+  }
+  if (started) out.push(current);
+  return out;
+}
+
+/**
+ * Normaliza um servidor stdio cujo `command` carrega o argv inteiro com
+ * `args` vazio. teto (ponytail): um caminho com espaço e sem args também é
+ * partido — a alternativa (não partir) é ENOENT garantido no spawn.
+ */
+export function normalizeHubServerArgv(server: McpHubServer): McpHubServer {
+  const command = server.command?.trim();
+  if (
+    !command ||
+    !/\s/.test(command) ||
+    (server.args?.length ?? 0) > 0 ||
+    server.transport === 'streamable-http' ||
+    server.transport === 'sse-legacy'
+  ) {
+    return server;
+  }
+  const argv = splitQuotedArgv(command);
+  if (argv.length === 0) return server;
+  return { ...server, command: argv[0], args: argv.slice(1) };
+}
+
 const SECRET_KEY = /(token|secret|password|api[_-]?key|authorization|credential)/i;
 
 export function maskSecretsInValue(value: string): string {
