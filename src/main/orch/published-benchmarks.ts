@@ -141,13 +141,11 @@ export function publishedBenchmarkFor(adapterId: string, model: string): Publish
 }
 
 /**
- * Nota de qualidade 6..24 para o roteador (mesma escala do termo `quality` do
- * pipeline): média das posições normalizadas nos benchmarks publicados.
- * `null` quando o fabricante não publicou nenhum dos três.
+ * Média 0..1 das posições normalizadas nos benchmarks publicados.
+ * `null` quando o fabricante não publicou nenhum dos três — nunca se
+ * inventa nota.
  */
-export function publishedCodingQuality(adapterId: string, model: string): number | null {
-  const entry = publishedBenchmarkFor(adapterId, model);
-  if (!entry) return null;
+function publishedNormalizedMean(entry: PublishedBenchmark): number | null {
   const normalized: number[] = [];
   for (const key of Object.keys(RANGES) as Array<keyof typeof RANGES>) {
     const value = entry[key];
@@ -156,6 +154,61 @@ export function publishedCodingQuality(adapterId: string, model: string): number
     normalized.push(Math.min(1, Math.max(0, (value - lo) / (hi - lo))));
   }
   if (normalized.length === 0) return null;
-  const mean = normalized.reduce((sum, value) => sum + value, 0) / normalized.length;
+  return normalized.reduce((sum, value) => sum + value, 0) / normalized.length;
+}
+
+/**
+ * Nota de qualidade 6..24 para o roteador (mesma escala do termo `quality` do
+ * pipeline): média das posições normalizadas nos benchmarks publicados.
+ * `null` quando o fabricante não publicou nenhum dos três.
+ */
+export function publishedCodingQuality(adapterId: string, model: string): number | null {
+  const entry = publishedBenchmarkFor(adapterId, model);
+  if (!entry) return null;
+  const mean = publishedNormalizedMean(entry);
+  if (mean === null) return null;
   return Math.round((6 + 18 * mean) * 10) / 10;
+}
+
+export interface PublishedScoreHint {
+  /** Média normalizada 0..100 (escala do radar do nexus_model_ranking). */
+  readonly score100: number;
+  /** Proveniência: quais números publicados geraram a estimativa. */
+  readonly label: string;
+}
+
+const PUBLISHED_METRIC_LABELS = {
+  deepSWE: 'DeepSWE',
+  terminalBench21: 'TB2.1',
+  swebenchVerified: 'SWE-bench',
+} as const;
+
+/**
+ * Estimativa 0..100 para o radar a partir dos benchmarks publicados
+ * (F-1290): a mesma média do `publishedCodingQuality`, na escala do fixture.
+ * `null` quando não há número publicado — sem número, sem linha (a regra do
+ * "sem publicação" do F-675 continua valendo: qwen e Cia. seguem de fora).
+ */
+export function publishedScoreHint(
+  adapterId: string,
+  model: string,
+): PublishedScoreHint | null {
+  const entry = publishedBenchmarkFor(adapterId, model);
+  if (!entry) return null;
+  const mean = publishedNormalizedMean(entry);
+  if (mean === null) return null;
+  const parts: string[] = [];
+  for (const key of Object.keys(RANGES) as Array<keyof typeof RANGES>) {
+    const value = entry[key];
+    if (typeof value === 'number') {
+      parts.push(
+        `${PUBLISHED_METRIC_LABELS[key]} ${String(value).replace('.', ',')}`,
+      );
+    }
+  }
+  if (parts.length === 0) return null;
+  return {
+    score100: Math.round(mean * 1000) / 10,
+    label: `estimativa de benchmark publicado (${parts.join(' · ')})`,
+  };
 }

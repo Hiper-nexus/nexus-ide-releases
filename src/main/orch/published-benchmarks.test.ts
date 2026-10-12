@@ -5,6 +5,7 @@ import {
   publishedBenchmarkFor,
   publishedBenchmarkKey,
   publishedCodingQuality,
+  publishedScoreHint,
 } from './published-benchmarks';
 import { DEFAULT_ROUTING_TABLE } from './task-router';
 
@@ -119,5 +120,25 @@ describe('benchmarks oficiais publicados (F-675)', () => {
     // Sem linha publicada continua sem nota — não se inventa piso.
     expect(publishedCodingQuality('mimo-code', 'xiaomi/mimo-v2.6-pro-ultraspeed')).toBeNull();
     expect(publishedCodingQuality('deepseek', 'deepseek-chat')).toBeNull();
+  });
+
+  it('F-1290: hint 0..100 usa a mesma média da nota do roteador, com fonte', () => {
+    const astra = publishedScoreHint('codex', 'gpt-6-astra');
+    expect(astra).not.toBeNull();
+    // DeepSWE 74,1 em [45,76] → (74,1−45)/31 ≈ 0,939 → ≈93,9.
+    expect(astra!.score100).toBeCloseTo(93.9, 1);
+    expect(astra!.label).toMatch(/benchmark publicado/);
+    expect(astra!.label).toContain('DeepSWE 74,1');
+    const argon = publishedScoreHint('agy', 'gemini-4-argon');
+    expect(argon!.score100).toBeGreaterThan(astra!.score100);
+    // Mesma média da escala 6..24: hint/100×18+6 == quality.
+    const quality = publishedCodingQuality('codex', 'gpt-6-astra')!;
+    expect(astra!.score100 / 100).toBeCloseTo((quality - 6) / 18, 3);
+  });
+
+  it('F-1290: sem número publicado não há hint — nunca se inventa', () => {
+    expect(publishedScoreHint('qwen', 'qwen3.8-max')).toBeNull();
+    expect(publishedScoreHint('opencode', 'opencode/deepseek-v4-flash')).toBeNull();
+    expect(publishedScoreHint('nope', 'nope-1')).toBeNull();
   });
 });

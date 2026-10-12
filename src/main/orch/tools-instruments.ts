@@ -16,6 +16,7 @@ import type { EnrichedCatalogItem } from '../../shared/surface-payload-types';
 import { homeRelativeDirOf, OUTSIDE_HOME_LABEL } from './home-relative-path';
 import { migrateModelId } from '../../shared/model-defaults';
 import { newestInModelLine } from '../../shared/model-line';
+import { publishedScoreHint } from './published-benchmarks';
 
 /**
  * Instrument panel — the five READ-ONLY consultations a pilot needs before
@@ -365,6 +366,33 @@ export function alignRankingToInstalled(
       continue;
     }
     kept.set(next.id, next);
+  }
+  // F-1290 (fixture velha): linha sem NENHUMA linha no fixture (astra, argon,
+  // sol novo) nunca passava pelo lift acima e sumia das faixas mesmo
+  // instalada. O modelo instalado com benchmark publicado entra como
+  // estimativa — PUBLISHED_BENCHMARKS continua a única fonte (sem hint, sem
+  // linha: qwen e Cia. seguem de fora, nunca se inventa número).
+  for (const [adapterId, adapter] of installed) {
+    for (const model of adapter.models) {
+      const id = `${adapterId}/${model}`;
+      if (kept.has(id)) continue;
+      const hint = publishedScoreHint(adapterId, model);
+      if (!hint) continue;
+      const info = adapter.info[model];
+      kept.set(id, {
+        id,
+        adapterId,
+        modelId: model,
+        overall: hint.score100,
+        coding: hint.score100,
+        ...(info?.costTier !== undefined ? { costTier: info.costTier } : {}),
+        ...(info?.availability !== undefined
+          ? { availability: info.availability }
+          : {}),
+        estimate: true,
+        sourceLabel: hint.label,
+      });
+    }
   }
   return { rows: [...kept.values()], dropped, lifted };
 }

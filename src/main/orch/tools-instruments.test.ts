@@ -576,6 +576,86 @@ describe('nexus_model_ranking', () => {
       'codex/gpt-4.1-mini',
     ]);
   });
+
+  it('F-1290: linha sem fixture mas com benchmark publicado entra como estimativa', async () => {
+    const row = (adapterId: string, modelId: string, overall: number) => ({
+      id: `${adapterId}/${modelId}`,
+      adapterId,
+      modelId,
+      overall,
+      coding: overall,
+      costTier: 'high',
+      availability: 'paid',
+      evaluatedAt: '2026-09-13T00:00:00.000Z',
+      source: 'nexus-eval/v1/fixture',
+      estimate: true,
+      sourceLabel: 'estimativa (fixture)',
+    });
+    // Fixture velha: do codex só luna e terra; do agy só o 3.8 — nenhuma
+    // linha sol/astra/argon.
+    rankingMocks.getPublicModelRanking.mockReturnValue({
+      ...ranking,
+      entries: [
+        row('codex', 'gpt-5.6-luna', 71),
+        row('codex', 'gpt-5.6-terra', 70),
+        row('agy', 'gemini-3.8-flash-high', 72),
+      ],
+    });
+    const adapter = (id: string, list: string[]) => ({
+      id,
+      kind: 'cli-pty',
+      label: id,
+      models: {
+        list,
+        default: list[0],
+        info: Object.fromEntries(
+          list.map((m) => [m, { costTier: 'high', availability: 'paid' }]),
+        ),
+      },
+      installed: true,
+    });
+    adapterMocks.listAdapterInfos.mockReturnValue([
+      adapter('codex', [
+        'gpt-6.1-sol',
+        'gpt-6-astra',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-5.6-luna',
+        'gpt-5.6-terra',
+      ]),
+      adapter('agy', ['gemini-4-argon', 'gemini-3.8-flash-high']),
+    ]);
+    providerMocks.listProviderSettings.mockReturnValue([]);
+
+    const out = (await tool('nexus_model_ranking').handler(
+      { dimension: 'overall' },
+      ctx(),
+    )) as {
+      available: boolean;
+      bands: Record<string, Array<{ id: string }>>;
+      entries: Array<{ id: string; estimate: boolean; sourceLabel?: string }>;
+    };
+
+    expect(out.available).toBe(true);
+    const banded = Object.values(out.bands).flat().map((e) => e.id);
+    // Lift da linha (luna) + síntese de benchmark publicado (sol, astra, argon).
+    for (const id of [
+      'codex/gpt-6-luna',
+      'codex/gpt-6.1-sol',
+      'codex/gpt-6-astra',
+      'agy/gemini-4-argon',
+    ]) {
+      expect(banded).toContain(id);
+    }
+    // Linha sem sucessor instalado continua listada (sem regressão).
+    expect(banded).toContain('codex/gpt-5.6-terra');
+    // Síntese é estimativa com fonte, nunca número inventado como medição.
+    for (const id of ['codex/gpt-6.1-sol', 'codex/gpt-6-astra', 'agy/gemini-4-argon']) {
+      const entry = out.entries.find((e) => e.id === id);
+      expect(entry?.estimate).toBe(true);
+      expect(entry?.sourceLabel).toMatch(/benchmark publicado/);
+    }
+  });
 });
 
 describe('nexus_mcp_servers', () => {
