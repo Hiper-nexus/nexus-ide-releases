@@ -845,6 +845,28 @@ describe('revisão cruzada 0.76.110: corrida, retomada, WIP e GC', () => {
       expect(options.prompt).toContain('refaça com teste');
     });
 
+    // Revisão Fable #2: a isenção é do ORQUESTRADOR (o ack rework é dele).
+    // Quem não é orquestrador e não cunhou reserva não retoma o pane de um
+    // irmão — senão nasce pane na worktree de W2 com o prompt de outro, sem
+    // orquestrador. Worker já para antes (assertCallerMaySpawnPane); o pane
+    // 'user' vinculado à missão (filho da mão do operador adotado pela missão
+    // da aba) chegava aos gates (b)/(c) e era isento.
+    it.each([
+      ['worker', false, 'workers cannot create panes'],
+      ['user', false, 'route_reservation_required'],
+      ['user', true, 'squad_binding_violation'],
+    ] as const)('%s da missão não retoma pane irmão em missão com squad sem reserva (cli fora do roster atual=%s)', async (role, rosterMoved, refusal) => {
+      await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx);
+      if (rosterMoved) h.rosterClis = new Set(['claude']);
+      h.panes[0].state = 'exited';
+      exitPane(h.panes[0]);
+      const sibling: AgentGateContext = { ...ctx, token: 'w1', label: 'W1', role, sessionId: 'w1-session' };
+      await expect(paneSpawnTool.handler(
+        { resume: 'pane-0', prompt: 'prompt do W1', missionId: ctx.missionId }, sibling,
+      )).rejects.toThrow(refusal);
+      expect(h.spawn).toHaveBeenCalledTimes(1);
+    });
+
     it('writer COM conversa retomável mantém o resume exato (sem fallback)', async () => {
       await paneSpawnTool.handler({ adapterId: 'kimi', isolatedWriter: true }, op);
       const [record] = opRecords();
