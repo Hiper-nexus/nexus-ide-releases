@@ -188,21 +188,32 @@ describe('F-1401: Claude sem limite de um pane por conta', () => {
     expect(decision.reason).not.toContain('claude=não instalado');
   });
 
-  // C2 (revisão Fable): a barreira de conta vale só em rota de missão — sem
-  // missão o login nativo do Claude segue utilizável (antes do F-1401 o
-  // reserveClaude exigia missionId).
-  it('sem missão, nenhuma conta gerenciada utilizável não esconde o Claude', async () => {
-    h.listProviderSettings.mockReturnValue(CLAUDE_KIMI);
-    h.claudeCapacity.mockReturnValue(0);
+  // Revisão Grok: capacidade 0 = contas Claude cadastradas e nenhuma viva
+  // (sem conta cadastrada a capacidade é 1, o login nativo). Sem missão o
+  // Claude também sai; o login nativo segue elegível.
+  async function missionlessRoute() {
+    h.listProviderSettings.mockReturnValue(h.listProviderSettings().map((provider: Record<string, unknown>) =>
+      provider.adapterId === 'kimi' ? { ...provider, hasKey: true } : provider));
     h.mission = {};
     h.recorded = [];
     h.livePanes = [];
     const { missionId: _mission, providerId: _provider, ...missionless } = ctx;
-    const decision = (await routeTaskForCaller({ task: TASK, preferAdapters: ['claude'] }, missionless)) as {
+    return (await routeTaskForCaller({ task: TASK, preferAdapters: ['claude'] }, missionless)) as {
       adapterId: string;
       reason: string;
     };
-    expect(decision.adapterId).toBe('claude');
+  }
+
+  it('sem missão, contas Claude cadastradas e nenhuma viva: Claude sai da rota com motivo', async () => {
+    h.claudeCapacity.mockReturnValue(0);
+    const decision = await missionlessRoute();
+    expect(decision.adapterId).not.toBe('claude');
+    expect(decision.reason).toContain('nenhuma conta Claude utilizável');
+  });
+
+  it('sem missão, login nativo (sem conta cadastrada, capacidade 1): Claude elegível', async () => {
+    h.claudeCapacity.mockReturnValue(1);
+    const decision = await missionlessRoute();
     expect(decision.reason).not.toContain('nenhuma conta Claude utilizável');
   });
 

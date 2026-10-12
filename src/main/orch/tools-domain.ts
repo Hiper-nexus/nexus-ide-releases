@@ -2271,11 +2271,12 @@ export async function routeTaskForCaller(
   // a linhagem de credencial (escopo por conta, não por pane; o CLI do
   // `.oauth_refresh.lock` serializa a renovação). Só a barreira real fica:
   // nenhuma conta Claude utilizável → claude indisponível com o motivo.
-  // Revisão Fable C2: só em rota de missão, como o reserveClaude anterior —
-  // sem missão o login nativo segue utilizável.
+  // Revisão Grok (inverte o C2 da Fable): capacidade 0 só acontece com contas
+  // Claude cadastradas e nenhuma viva (lista vazia = login nativo = 1), então
+  // o Claude sai da rota também sem missão.
   const claudeCapacity = countAccountsWithLiveCredential('claude');
   const reserveClaude = false;
-  if (missionId && claudeCapacity === 0) {
+  if (claudeCapacity === 0) {
     adapters = adapters.map((adapter) =>
       adapter.id === 'claude'
         ? {
