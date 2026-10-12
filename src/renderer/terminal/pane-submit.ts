@@ -98,9 +98,11 @@ function confirmEnterTookEffect(
  * F-1393: resultado do envio do DITADO. `queued` = pane ocupado cujo adapter
  * enfileira texto + Enter (prova = recibo da escrita, o turno só abre depois
  * do atual); `wait` = nada foi escrito (diálogo aberto ou adapter sem fila) e
- * vale esperar o pane ficar livre; `failed` = recusa sem espera útil.
+ * vale esperar o pane ficar livre; `failed` = recusa sem espera útil e nada
+ * escrito; `lost` = o texto FOI escrito mas o envio não se confirmou — nunca
+ * re-colar em outra lane (C1), só avisar e guardar o texto.
  */
-export type PromptSubmitOutcome = 'started' | 'queued' | 'wait' | 'failed';
+export type PromptSubmitOutcome = 'started' | 'queued' | 'wait' | 'failed' | 'lost';
 
 /** Canonical UserPromptSubmit sequence, independent of paste/input-induced busy. */
 async function submitWithTurnProof(
@@ -135,8 +137,8 @@ async function submitWithTurnProofOutcome(
   if (!baseline) return 'failed';
   if (baseline.awaitingInput) return 'wait';
   // First CR submits our own paste even if its echo made the PTY busy.
-  const enter = (retry: boolean) => current() && (ports.submitPromptEnter
-    ? ports.submitPromptEnter(sessionId, baseline.turnStartSequence, retry)
+  const enter = (retry: boolean, sequence = baseline.turnStartSequence) => current() && (ports.submitPromptEnter
+    ? ports.submitPromptEnter(sessionId, sequence, retry)
     : Promise.resolve(false));
   if (baseline.state !== 'idle') {
     if (baseline.state !== 'busy') return 'failed';
@@ -144,19 +146,23 @@ async function submitWithTurnProofOutcome(
     // F-1393: a TUI enfileira a mensagem atrás do turno em curso. O
     // turnStartSequence só sobe quando o turno atual terminar, então a prova
     // é o recibo das escritas; o Enter atômico do Main ainda veta diálogo.
-    if (!await write(sessionId, text) || !current()) return 'failed';
+    // C1: o turno em curso pode terminar durante o settle e a sequência
+    // subir sem o NOSSO texto ter sido enviado — o Enter vai com a sequência
+    // atual (o Main recusa sequência velha), nunca um atalho para 'started'.
+    if (!await write(sessionId, text)) return 'failed';
+    if (!current()) return 'lost';
     await pause(pasteSettleMs(text));
     const queuedReady = await read();
-    if (!queuedReady || queuedReady.awaitingInput) return 'failed';
-    if (queuedReady.turnStartSequence > baseline.turnStartSequence) return 'started';
-    return await enter(false) ? 'queued' : 'failed';
+    if (!queuedReady || queuedReady.awaitingInput) return 'lost';
+    return await enter(false, queuedReady.turnStartSequence) ? 'queued' : 'lost';
   }
-  if (!await write(sessionId, text) || !current()) return 'failed';
+  if (!await write(sessionId, text)) return 'failed';
+  if (!current()) return 'lost';
   await pause(pasteSettleMs(text));
   const ready = await read();
-  if (!ready || ready.awaitingInput) return 'failed';
+  if (!ready || ready.awaitingInput) return 'lost';
   if (ready.turnStartSequence > baseline.turnStartSequence) return 'started';
-  if (!await enter(false)) return 'failed';
+  if (!await enter(false)) return 'lost';
   const waitForProof = async (ms: number): Promise<'started' | 'blocked' | 'timeout'> => {
     const deadline = Date.now() + ms;
     while (Date.now() < deadline) {
@@ -169,12 +175,12 @@ async function submitWithTurnProofOutcome(
     return 'timeout';
   };
   const first = await waitForProof(SUBMIT_TURN_ACCEPTANCE_MS);
-  if (first !== 'timeout') return first === 'started' ? 'started' : 'failed';
+  if (first !== 'timeout') return first === 'started' ? 'started' : 'lost';
   const retry = await read();
-  if (!retry || retry.awaitingInput || retry.state !== 'idle') return 'failed';
+  if (!retry || retry.awaitingInput || retry.state !== 'idle') return 'lost';
   if (retry.turnStartSequence > baseline.turnStartSequence) return 'started';
-  if (!await enter(true)) return 'failed';
-  return await waitForProof(SUBMIT_RETRY_ACCEPTANCE_MS) === 'started' ? 'started' : 'failed';
+  if (!await enter(true)) return 'lost';
+  return await waitForProof(SUBMIT_RETRY_ACCEPTANCE_MS) === 'started' ? 'started' : 'lost';
 }
 
 function isSafePrompt(text: string): boolean {

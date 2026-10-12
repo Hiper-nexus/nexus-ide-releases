@@ -21,7 +21,7 @@ export type DictationLogLevel = 'info' | 'warn' | 'error';
  * + Enter; `wait` = nada escrito, vale esperar o pane ficar livre. Boolean
  * segue aceito (true = started, false = failed) para portas antigas.
  */
-export type DictationLaneOutcome = 'started' | 'queued' | 'wait' | 'failed';
+export type DictationLaneOutcome = 'started' | 'queued' | 'wait' | 'failed' | 'lost';
 
 /** F-1393: teto de segurança do ditado pendente e cadência da sonda. */
 export const DICTATION_PENDING_MAX_MS = 10 * 60_000;
@@ -82,7 +82,11 @@ export type DictationRouteResult =
     }
   | {
       ok: false;
-      reason: 'no-live-pane' | 'delivery-failed';
+      /**
+       * `delivery-lost` (C1): o texto foi escrito no pane mas o envio não se
+       * confirmou — sem re-colar em outra lane; o HUD manda conferir o pane.
+       */
+      reason: 'no-live-pane' | 'delivery-failed' | 'delivery-lost';
       /** F-1393: texto guardado na área de transferência para colar. */
       preserved?: boolean;
     }
@@ -136,6 +140,8 @@ async function deliverOnLanes(
   ports: DictationDeliveryPorts,
 ): Promise<{ outcome: DictationLaneOutcome; lane: 'terminal' | 'operator' }> {
   const outcome = laneOutcome(await ports.deliverConfirmed(targetPaneId, text, sessionId));
+  // C1: só uma recusa SEM escrita cai na outra lane — `lost` já escreveu, e
+  // colar de novo duplicaria o prompt no composer.
   if (outcome !== 'failed') return { outcome, lane: 'terminal' };
   // Pane governado: o IPC cru do terminal recusa sessões de agentes
   // orquestrados por design (pty-manager, presentation-only). A recusa cai na
@@ -307,6 +313,15 @@ async function routeToPane(
     });
     deferUntilFree(targetPaneId, sessionId, text, ports);
     return { ok: false, reason: 'pending', paneId: targetPaneId };
+  }
+  if (outcome === 'lost') {
+    ports.log('error', 'dictation.ptyLost', 'texto escrito no pane mas o envio não se confirmou — sem re-colar', {
+      targetPaneId,
+      sessionId,
+      chars: text.length,
+      lane,
+    });
+    return { ok: false, reason: 'delivery-lost' };
   }
   const delivered = outcome === 'started';
   ports.log(

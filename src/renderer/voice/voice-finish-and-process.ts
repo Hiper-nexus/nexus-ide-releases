@@ -448,9 +448,11 @@ export async function finishAndProcess(
         store.setDictationPending(null);
         store.setDictationFailed(true);
         const undelivered =
-          routed.reason === 'delivery-failed'
-            ? 'O pane não aceitou o ditado (ocupado ou aguardando resposta) — nada foi escrito.'
-            : 'Nenhum pane ativo para receber o ditado.';
+          routed.reason === 'delivery-lost'
+            ? 'O ditado foi escrito no pane mas o envio não se confirmou — confira o pane antes de reenviar.'
+            : routed.reason === 'delivery-failed'
+              ? 'O pane não aceitou o ditado (ocupado ou aguardando resposta) — nada foi escrito.'
+              : 'Nenhum pane ativo para receber o ditado.';
         store.setError(
           routed.preserved
             ? `${undelivered} O texto foi copiado: cole com ⌘V.`

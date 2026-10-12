@@ -342,6 +342,23 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
     expect(cancelPendingDictation('pane-focused')).toBe(false);
   });
 
+  it('C1: lane do terminal escreveu e não confirmou (lost) — a lane do operador NÃO cola de novo', async () => {
+    const deliverOperator = vi.fn(async () => true);
+    const preserveUndelivered = vi.fn(async () => true);
+    const { ports, logs } = makePorts({
+      deliverConfirmed: vi.fn(async () => 'lost' as const),
+      deliverOperator,
+      preserveUndelivered,
+    });
+
+    const result = await deliverDictation('corrige o teste', ports);
+
+    expect(result).toEqual({ ok: false, reason: 'delivery-lost', preserved: true });
+    expect(deliverOperator).not.toHaveBeenCalled();
+    expect(preserveUndelivered).toHaveBeenCalledWith('corrige o teste');
+    expect(logs).toContainEqual({ level: 'error', event: 'dictation.ptyLost' });
+  });
+
   it('um ditado novo substitui o pendente do mesmo pane: só o último entra', async () => {
     vi.useFakeTimers();
     const pane = claudePane();

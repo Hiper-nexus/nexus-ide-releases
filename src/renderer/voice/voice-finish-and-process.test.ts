@@ -190,6 +190,17 @@ describe('F-371 — dictationPending/dictationFailed no fluxo de ditado', () => 
     expect(useVoiceStore.getState().dictationPending).toBeNull();
   });
 
+  it('C1: texto escrito sem confirmação — HUD manda conferir o pane, sem dizer que nada foi escrito', async () => {
+    transcribe.mockResolvedValue(sttOk('abre o painel'));
+    vi.mocked(routeDictation).mockResolvedValue({ ok: false, reason: 'delivery-lost', preserved: true });
+
+    await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+
+    expect(useVoiceStore.getState().error).toContain('confira');
+    expect(useVoiceStore.getState().error).not.toContain('nada foi escrito');
+    expect(useVoiceStore.getState().dictationFailed).toBe(true);
+  });
+
   it('descarte (transcript vazio): limpa o pendente SEM armar falha', async () => {
     transcribe.mockResolvedValue(sttOk('   '));
 

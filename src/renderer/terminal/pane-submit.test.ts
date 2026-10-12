@@ -488,3 +488,50 @@ describe('F-1393: ditado chega ao pane ocupado que enfileira', () => {
   });
 });
 
+describe('C1 (F-1393): ramo busy — Enter com a sequência atual e falha pós-escrita é lost', () => {
+  it('turno termina no settle: o Enter vai com a sequência nova e o ditado entra (queued)', async () => {
+    vi.useFakeTimers();
+    try {
+      let sequence = 3;
+      const writes: string[] = [];
+      const submitPromptEnter = vi.fn(async (_id: string, expected: number) => {
+        if (expected !== sequence) return false; // Main recusa sequência velha
+        writes.push('\r');
+        return true;
+      });
+      const pending = submitDictationToPaneConfirmed('pane-claude', 'roda o lint', 'session-claude', {
+        getSessionId: () => 'session-claude',
+        schedule: (cb, ms) => setTimeout(cb, ms),
+        write: vi.fn(),
+        writeConfirmed: vi.fn(async (_id: string, data: string) => {
+          writes.push(data);
+          sequence = 4; // o turno em curso acabou e outro começou durante o settle
+          return true;
+        }),
+        submitPromptEnter,
+        probePromptState: async () => ({ turnStartSequence: sequence, state: 'busy', awaitingInput: false, queuesInputWhileBusy: true }),
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(pending).resolves.toBe('queued');
+      expect(submitPromptEnter).toHaveBeenCalledWith('session-claude', 4, false);
+      expect(writes).toEqual(['\x1b[200~roda o lint\x1b[201~', '\r']);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('texto escrito e Enter recusado: lost (não failed), para nenhuma lane colar de novo', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = submitDictationToPaneConfirmed('pane-claude', 'abre o PR', 'session-claude', {
+        getSessionId: () => 'session-claude',
+        schedule: (cb, ms) => setTimeout(cb, ms),
+        write: vi.fn(),
+        writeConfirmed: vi.fn(async () => true),
+        submitPromptEnter: vi.fn(async () => false),
+        probePromptState: async () => ({ turnStartSequence: 3, state: 'busy', awaitingInput: false, queuesInputWhileBusy: true }),
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(pending).resolves.toBe('lost');
+    } finally { vi.useRealTimers(); }
+  });
+});
+
