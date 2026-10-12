@@ -109,6 +109,7 @@ import {
 } from './pane-task-reroute';
 import { trace } from '../observability/main-trace';
 import { sanitizePaneBootOutput } from './pane-boot-output';
+import { paneSessionLastOutputAt } from './pane-session-output';
 import { diagnosePaneBoot } from './pane-boot-diagnosis';
 import { parsePaneAdmissionRefusal } from './pane-admission';
 import {
@@ -945,7 +946,9 @@ async function closeNotStartedPane(watch: PaneStartWatch): Promise<void> {
   const current = snapshot.sessionId ?? undefined;
   if (current && current !== watch.sessionId) return;
   try {
-    await requestPaneClose(watch.paneId, current);
+    // Revisão Fable (F-1414): pane parked não tem sessão viva — fechar pela
+    // sessão morta devolve false e deixa um zumbi no layout. Fecha pelo pane.
+    await requestPaneClose(watch.paneId, snapshot.state === 'parked' ? undefined : current);
   } catch {
     // Fechar é limpeza; o aviso e o reenvio importam mais.
   }
@@ -1249,11 +1252,19 @@ export async function checkLimitedTaskPanes(
   for (const limit of listConfirmedPaneLimits()) {
     context?.assertCurrent();
     if (now - limit.at < LIMIT_HANDOFF_MS) continue;
-    forgetConfirmedPaneLimit(limit.paneId);
     const pane = listPaneSnapshots().find((live) => live.paneId === limit.paneId);
+    const physical = getSessionState(limit.sessionId);
+    // Revisão Fable M2: a mesma regra do checkPaneStart — PTY ocupado não
+    // recebe veredito (o Muse refaz sozinho depois do limite e volta a
+    // imprimir, sem status semântico). Só adia: a ficha fica para a próxima.
+    if (pane?.sessionId === limit.sessionId && (physical === 'busy' || physical === 'spawning')) continue;
+    forgetConfirmedPaneLimit(limit.paneId);
     // O failover já agiu (sessão nova no pane, pane fechado) ou o pane morreu.
     if (!pane?.scope || pane.sessionId !== limit.sessionId) continue;
-    if (getSessionState(limit.sessionId) === null) continue;
+    if (physical === null) continue;
+    // Saída nova depois do limite (fora do redesenho logo após ele): voltou.
+    const lastOutputAt = paneSessionLastOutputAt(limit.sessionId);
+    if (lastOutputAt !== undefined && lastOutputAt > limit.at + START_SETTLE_MS) continue;
     const handle = getPaneTaskReroute(limit.paneId, now);
     // Só tarefa delegada pelo nexus_pane_spawn tem o pedido para reabrir.
     if (!handle || handle.adapterId !== limit.adapterId) continue;
