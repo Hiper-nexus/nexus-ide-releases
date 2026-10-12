@@ -22,6 +22,9 @@ export interface CliModelCacheSource {
   /** Custom reader for non-`models`-shaped files (e.g. Qwen settings.json). */
   read?(file: string): string[];
   readAsync?(file: string): Promise<string[]>;
+  /** Custom effort reader for the same non-`models`-shaped files. */
+  readEfforts?(file: string): string[];
+  readEffortsAsync?(file: string): Promise<string[]>;
   clientVersion?: () => string | null | undefined;
 }
 
@@ -102,6 +105,7 @@ export const CLI_MODEL_CACHE_SOURCES: CliModelCacheSource[] = [
       readQwenSettingsSummary(path.dirname(path.dirname(file))).modelIds as string[],
     readAsync: async (file) => [...(await readQwenSettingsSummaryAsync(path.dirname(path.dirname(file)))).modelIds],
   },
+  museModelCatalogSource(path.join(home, '.local', 'share', 'muse', 'model-catalog')),
 ];
 
 const MODEL_ID = MODEL_ID_PATTERN;
@@ -206,6 +210,88 @@ function parseCliEffortsText(text: string, options: CliModelCacheReadOptions): s
   }
 }
 
+/**
+ * F-1391: o Muse 1.4.6 guarda o catálogo do provedor (Meta) em
+ * `~/.local/share/muse/model-catalog/<hex(provider)>__p<hex(profile)>.json`,
+ * `{ rows: [{ model_id, visibility, reasoning_effort_variants: [{ tier }] }] }`.
+ * Entram só as linhas `visible`. Fora: `-contributor` (conteúdo vai para
+ * melhoria de produto) e geração de imagem. O esforço do adapter é o que TODO
+ * modelo oferecido aceita: o `max` do spark-1.3 não vale para o wonder.
+ * Diretório ausente ou JSON ilegível não contribui (fica o catálogo estático).
+ */
+const MAX_MUSE_CATALOG_FILES = 16;
+
+interface MuseCatalogRow { readonly id: string; readonly efforts: readonly string[] }
+
+function parseMuseCatalogRows(text: string): MuseCatalogRow[] {
+  try {
+    const rows = (JSON.parse(text) as { rows?: unknown } | null)?.rows;
+    if (!Array.isArray(rows)) return [];
+    return rows.flatMap((value): MuseCatalogRow[] => {
+      if (!value || typeof value !== 'object') return [];
+      const row = value as Record<string, unknown>;
+      const id = typeof row.model_id === 'string' ? row.model_id.trim() : '';
+      if (!MODEL_ID.test(id) || row.visibility !== 'visible') return [];
+      if (/-contributor$/iu.test(id) || /^muse-image\b/iu.test(id) || row.supports_image_generation === true) return [];
+      const variants = Array.isArray(row.reasoning_effort_variants) ? row.reasoning_effort_variants : [];
+      const efforts = variants.flatMap((variant) => {
+        const tier = variant && typeof variant === 'object' ? (variant as { tier?: unknown }).tier : undefined;
+        return typeof tier === 'string' && EFFORT_ID.test(tier.trim()) ? [tier.trim()] : [];
+      });
+      return [{ id, efforts }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function museCatalogFiles(dir: string, names: readonly string[]): string[] {
+  return names.filter((name) => name.endsWith('.json')).sort().slice(0, MAX_MUSE_CATALOG_FILES)
+    .map((name) => path.join(dir, name));
+}
+
+function readMuseCatalogRows(pattern: string): MuseCatalogRow[] {
+  const dir = path.dirname(pattern);
+  let names: string[] = [];
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  return museCatalogFiles(dir, names).flatMap((file) => {
+    try { return parseMuseCatalogRows(readCacheText(file)); } catch { return []; }
+  });
+}
+
+async function readMuseCatalogRowsAsync(pattern: string): Promise<MuseCatalogRow[]> {
+  const dir = path.dirname(pattern);
+  let names: string[] = [];
+  try { names = await fs.promises.readdir(dir); } catch { return []; }
+  const rows: MuseCatalogRow[] = [];
+  for (const file of museCatalogFiles(dir, names)) {
+    const result = await readRegularFileCappedAsync(file, MAX_CACHE_BYTES);
+    if (result.kind === 'text') rows.push(...parseMuseCatalogRows(result.text));
+  }
+  return rows;
+}
+
+const museIds = (rows: readonly MuseCatalogRow[]): string[] => [...new Set(rows.map((row) => row.id))];
+
+function museCommonEfforts(rows: readonly MuseCatalogRow[]): string[] {
+  if (rows.length === 0) return [];
+  return rows[0]!.efforts.filter((effort) => rows.every((row) => row.efforts.includes(effort)));
+}
+
+/** Fonte do cache do Muse; `dir` é o diretório model-catalog (um JSON por provider/perfil). */
+export function museModelCatalogSource(dir: string): CliModelCacheSource {
+  // O watcher observa o diretório (`path.dirname` do padrão) e o leitor o lista.
+  const pattern = path.join(dir, '*.json');
+  return {
+    adapterId: 'muse',
+    files: [pattern],
+    read: (file) => museIds(readMuseCatalogRows(file)),
+    readAsync: async (file) => museIds(await readMuseCatalogRowsAsync(file)),
+    readEfforts: (file) => museCommonEfforts(readMuseCatalogRows(file)),
+    readEffortsAsync: async (file) => museCommonEfforts(await readMuseCatalogRowsAsync(file)),
+  };
+}
+
 export function discoverCliModels(
   sources: readonly CliModelCacheSource[] = CLI_MODEL_CACHE_SOURCES,
 ): Map<string, string[]> {
@@ -230,7 +316,7 @@ export function discoverCliEfforts(
   for (const source of sources) {
     const levels = new Set<string>();
     for (const file of source.files) {
-      for (const effort of readCliEfforts(file, {
+      for (const effort of source.readEfforts ? source.readEfforts(file) : readCliEfforts(file, {
         clientVersion: source.clientVersion ?? (() => cliCacheConsumerVersion(source.adapterId)),
       })) levels.add(effort);
     }
@@ -264,7 +350,9 @@ export async function discoverCliEffortsAsync(sources: readonly CliModelCacheSou
     const levels = new Set<string>();
     for (const file of source.files) {
       await context?.checkpoint();
-      const efforts = await readCliEffortsAsync(file, { clientVersion: source.clientVersion ?? (() => cliCacheConsumerVersion(source.adapterId)) });
+      const efforts = source.readEffortsAsync
+        ? await source.readEffortsAsync(file)
+        : await readCliEffortsAsync(file, { clientVersion: source.clientVersion ?? (() => cliCacheConsumerVersion(source.adapterId)) });
       context?.assertCurrent();
       for (const effort of efforts) levels.add(effort);
     }

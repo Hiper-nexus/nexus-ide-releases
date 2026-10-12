@@ -225,8 +225,9 @@ export const MODEL_DISCOVERY_INVENTORY: Readonly<
       'sem subcomando list; usa modelProviders do ~/.qwen/settings.json + bundled',
   },
   muse: {
-    kind: 'bundled',
-    reason: 'Muse não expõe comando de listar modelos',
+    // F-1391: sem subcomando list; o Muse 1.4.6 grava o catálogo do provedor.
+    kind: 'cache',
+    reason: 'sem subcomando list; usa ~/.local/share/muse/model-catalog/*.json + bundled',
   },
   sakana: {
     kind: 'bundled',

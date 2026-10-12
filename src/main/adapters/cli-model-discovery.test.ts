@@ -2,12 +2,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { Adapter } from '../../shared/adapter-types';
+import { adapterSchema, type Adapter } from '../../shared/adapter-types';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import {
   CLI_MODEL_CACHE_SOURCES,
   applyDiscoveredModelsToAdapter,
   applyDiscoveredEffortsToAdapter,
+  discoverCliEfforts,
+  discoverCliEffortsAsync,
   discoverCliModels,
+  discoverCliModelsAsync,
+  museModelCatalogSource,
   readCliEfforts,
   readCliModelCache,
   readCliModelCacheAsync,
@@ -168,5 +173,92 @@ describe('CLI model discovery', () => {
     );
     expect(next.kind === 'cli-pty' && next.control?.effort?.levels)
       .toEqual(['high', 'ultra']);
+  });
+});
+
+// F-1391: recorte fiel do cache real do Muse 1.4.6 (12/10/2026,
+// ~/.local/share/muse/model-catalog/6d657461__p746268.json), só os campos lidos.
+const MUSE_TIERS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
+const museRow = (model_id: string, visibility: string, tiers: string[], extra: object = {}) => ({
+  model_id, display_label: model_id, provider_id: 'meta', profile_id: 'tbh', visibility,
+  is_default: false, is_current: false, context_limit: 1007997, output_limit: 128000,
+  reasoning_effort_variants: tiers.map((tier) => ({ tier, description: null })),
+  supports_video: false, supports_image_generation: false, ...extra,
+});
+const MUSE_CATALOG = {
+  schema_version: 2, provider_id: 'meta', profile_id: 'tbh', source: 'provider_catalog',
+  rows: [
+    museRow('muse-wonder-1.0', 'visible', MUSE_TIERS, { is_default: true }),
+    museRow('muse-wonder-1.0-contributor', 'hidden', MUSE_TIERS),
+    museRow('muse-wonder-full-1.0', 'visible', MUSE_TIERS),
+    museRow('muse-wonder-full-1.0-contributor', 'hidden', MUSE_TIERS),
+    museRow('muse-spark-1.3', 'visible', [...MUSE_TIERS, 'max'], { is_current: true }),
+    museRow('muse-spark-1.3-contributor', 'hidden', [...MUSE_TIERS, 'max']),
+    { ...museRow('muse-image-1.0', 'hidden', []), reasoning_effort_variants: null, supports_image_generation: true },
+    museRow('muse-spark-1.2', 'visible', MUSE_TIERS),
+    museRow('muse-spark-1.2-contributor', 'hidden', MUSE_TIERS),
+  ],
+};
+
+describe('catálogo dinâmico do Muse (F-1391)', () => {
+  const withCatalog = async (files: Record<string, string>, run: (dir: string) => Promise<void> | void) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-muse-catalog-'));
+    try {
+      for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text);
+      await run(dir);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  };
+  const museAdapter = (): Adapter => adapterSchema.parse(
+    BUILTIN_ADAPTERS.find((raw) => (raw as { id?: string }).id === 'muse'),
+  );
+
+  it('oferece só as linhas visible — sem -contributor, sem muse-image, sem hidden', async () => {
+    await withCatalog({ '6d657461__p746268.json': JSON.stringify(MUSE_CATALOG) }, async (dir) => {
+      const source = museModelCatalogSource(dir);
+      const expected = ['muse-wonder-1.0', 'muse-wonder-full-1.0', 'muse-spark-1.3', 'muse-spark-1.2'];
+      expect(discoverCliModels([source]).get('muse')).toEqual(expected);
+      expect((await discoverCliModelsAsync([source])).get('muse')).toEqual(expected);
+    });
+  });
+
+  it('modelo novo do cache vira modelo do adapter muse; o default estático fica', async () => {
+    const next = {
+      ...MUSE_CATALOG,
+      rows: [...MUSE_CATALOG.rows, museRow('muse-wonder-1.1', 'visible', MUSE_TIERS), museRow('muse-wonder-1.1-contributor', 'visible', MUSE_TIERS)],
+    };
+    await withCatalog({ 'a.json': JSON.stringify(next) }, (dir) => {
+      const adapter = applyDiscoveredModelsToAdapter(museAdapter(), discoverCliModels([museModelCatalogSource(dir)]));
+      expect(adapter.models.list).toContain('muse-wonder-1.1');
+      expect(adapter.models.list).not.toContain('muse-wonder-1.1-contributor');
+      expect(adapter.models.list.some((id) => id.startsWith('muse-image'))).toBe(false);
+      expect(adapter.models.default).toBe('muse-wonder-1.0');
+    });
+  });
+
+  it('esforço vem do catálogo e é o que todo modelo oferecido aceita: max do spark-1.3 não vale para o wonder', async () => {
+    await withCatalog({ '6d657461__p746268.json': JSON.stringify(MUSE_CATALOG) }, async (dir) => {
+      const source = museModelCatalogSource(dir);
+      expect(discoverCliEfforts([source]).get('muse')).toEqual(MUSE_TIERS);
+      expect((await discoverCliEffortsAsync([source])).get('muse')).toEqual(MUSE_TIERS);
+      const adapter = applyDiscoveredEffortsToAdapter(museAdapter(), discoverCliEfforts([source]));
+      expect(adapter.kind === 'cli-pty' ? adapter.control?.effort?.levels : []).not.toContain('max');
+    });
+  });
+
+  it('diretório ausente, JSON ilegível ou sem rows → nada (fica o catálogo estático)', async () => {
+    const missing = museModelCatalogSource(path.join(os.tmpdir(), `nexus-muse-missing-${process.pid}`));
+    expect(discoverCliModels([missing]).has('muse')).toBe(false);
+    expect((await discoverCliModelsAsync([missing])).has('muse')).toBe(false);
+    expect(discoverCliEfforts([missing]).has('muse')).toBe(false);
+    await withCatalog({ 'bad.json': '{nope', 'other.json': JSON.stringify({ models: [{ id: 'x' }] }), 'notes.txt': 'muse-wonder-9' }, async (dir) => {
+      const source = museModelCatalogSource(dir);
+      expect(discoverCliModels([source]).has('muse')).toBe(false);
+      expect((await discoverCliModelsAsync([source])).has('muse')).toBe(false);
+    });
+  });
+
+  it('a fonte embutida lê o cache do HOME do processo Main, como os caches do Codex/Grok', () => {
+    const muse = CLI_MODEL_CACHE_SOURCES.find((source) => source.adapterId === 'muse');
+    expect(muse?.files).toEqual([path.join(os.homedir(), '.local', 'share', 'muse', 'model-catalog', '*.json')]);
   });
 });

@@ -105,7 +105,9 @@ describe('model discovery', () => {
     expect(MODEL_DISCOVERY_INVENTORY['glm-flash'].reason).toMatch(/claude/);
     expect(MODEL_DISCOVERY_INVENTORY.deepseek.kind).toBe('bundled');
     expect(MODEL_DISCOVERY_INVENTORY).not.toHaveProperty('gemini');
-    expect(MODEL_DISCOVERY_INVENTORY.muse.kind).toBe('bundled');
+    // F-1391: o Muse 1.4.6 grava o catálogo do provedor; segue autoridade bundled.
+    expect(MODEL_DISCOVERY_INVENTORY.muse.kind).toBe('cache');
+    expect(MODEL_DISCOVERY_INVENTORY.muse.reason).toMatch(/model-catalog/);
     expect(MODEL_DISCOVERY_INVENTORY.sakana.kind).toBe('bundled');
   });
 
