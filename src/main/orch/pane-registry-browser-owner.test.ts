@@ -380,7 +380,8 @@ describe('Main-derived browser originating owner', () => {
     const caller = renderSession(original, 'worker');
     registry.registerOrchRenderer(latest);
     expect(registry.callerWithPaneOwner({ ...caller, ownerWebContentsId: 2 }).ownerWebContentsId).toBe(1);
-    const pending = registry.requestBrowserPane({ url: 'about:blank', scope, role: 'worker', caller });
+    const pending = registry.requestBrowserPane({ url: 'about:blank', scope, role: 'worker',
+      missionId: caller.missionId, caller });
     expect(latest.send).not.toHaveBeenCalled();
     await finishOpen(pending, original);
   });
@@ -424,7 +425,8 @@ describe('Main-derived browser originating owner', () => {
     const caller = headlessWorker();
     expect(registry.callerWithPaneOwner(caller).ownerWebContentsId).toBe(1);
     expect(registry.callerWithPaneOwner({ ...caller, workerIncarnationId: 'stale-generation' }).ownerWebContentsId).toBeUndefined();
-    const pending = registry.requestBrowserPane({ url: 'about:blank', scope, role: 'worker', caller });
+    const pending = registry.requestBrowserPane({ url: 'about:blank', scope, role: 'worker',
+      missionId: caller.missionId, caller });
     expect(latest.send).not.toHaveBeenCalled();
     await finishOpen(pending, leaderOwner);
     facts.sessions.get('leader')!.live = false;
@@ -482,6 +484,46 @@ describe('Main-derived browser originating owner', () => {
   });
 });
 
+
+describe('F-1408 — a worker drives the browser it opened', () => {
+  async function openBrowserFor(caller: CallerCtx, wc: WebContents): Promise<string> {
+    const pending = registry.requestBrowserPane({ url: 'about:blank', scope, role: 'worker',
+      missionId: caller.missionId, caller });
+    const request = vi.mocked(wc.send).mock.calls.at(-1)![1] as { requestId: string; paneId: string };
+    registry.resolveBrowserOpen({ requestId: request.requestId, paneId: request.paneId, ok: true }, wc);
+    await expect(pending).resolves.toMatchObject({ ok: true, paneId: request.paneId });
+    return request.paneId;
+  }
+
+  it('inherits the opening worker execution worktree; another worktree stays refused', async () => {
+    const { authorizePaneAccess } = await import('./pane-authz');
+    const executionScope = { ...scope, checkoutId: 'worker-checkout', rootRealPath: '/worktrees/worker-a' };
+    const wc = owner(1);
+    const peer = renderSession(wc, 'worker-b');
+    const otherTree = renderSession(wc, 'worker-c');
+    const opener = { ...renderSession(wc, 'worker-a'), executionScope };
+    const paneId = await openBrowserFor(opener, wc);
+    // O renderer espelha o pane de navegador criado (produção: pane sync) —
+    // junto dos panes de worker, que o sync do dono substitui.
+    registry.syncPanes([
+      { paneId: 'pane-worker-a', sessionId: 'worker-a', kind: 'cli-agent', title: 'worker-a', adapterId: 'provider', accountId: 'account' },
+      { paneId: 'pane-worker-b', sessionId: 'worker-b', kind: 'cli-agent', title: 'worker-b', adapterId: 'provider', accountId: 'account' },
+      { paneId: 'pane-worker-c', sessionId: 'worker-c', kind: 'cli-agent', title: 'worker-c', adapterId: 'provider', accountId: 'account' },
+      { paneId, sessionId: null, kind: 'browser', title: 'browser' },
+    ], wc);
+    const info = registry.getPaneAuthzInfo(paneId);
+    expect(info?.executionScope?.rootRealPath).toBe('/worktrees/worker-a');
+    // Rolar/clicar/digitar/fechar (write) no navegador que ele mesmo abriu.
+    expect(authorizePaneAccess(registry.callerWithPaneOwner(opener), info!, 'write')).toMatchObject({ allow: true });
+    // Leitura de outro worker da mesma missão continua valendo.
+    expect(authorizePaneAccess(registry.callerWithPaneOwner(peer), info!, 'read')).toMatchObject({ allow: true });
+    // Worker de OUTRA worktree continua recusado, como hoje.
+    const foreign = { ...otherTree,
+      executionScope: { ...scope, checkoutId: 'other-checkout', rootRealPath: '/worktrees/worker-c' } };
+    expect(authorizePaneAccess(registry.callerWithPaneOwner(foreign), info!, 'write')).toMatchObject({
+      allow: false, reason: 'workers cannot write to or close panes in another execution worktree' });
+  });
+});
 
 describe('F-1143 — operator MCP adoption metadata publication', () => {
   function adoption() {
