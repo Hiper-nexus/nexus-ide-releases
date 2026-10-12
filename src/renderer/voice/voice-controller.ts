@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { useVoiceStore } from './voice-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { useOnboardingStore } from '../state/onboarding-store';
 import { VoiceCapture } from './voice-capture';
 import type { PassiveWakeUtterance } from './wake-mic';
 import { classifyMicHealth, type MicHealth } from './wake-health';
@@ -1463,6 +1464,8 @@ export function useVoiceController(active = true): void {
         undefined,
         busy,
       );
+      // Fato de ativação do onboarding: o operador ditou (Space hold ou botão).
+      useOnboardingStore.getState().markChecklist('dictatedWithSpace');
     };
     const onDictationStop = () => {
       if (!isListening(capture.current)) return;

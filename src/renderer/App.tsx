@@ -22,6 +22,10 @@ import { BugReportDialog } from './components/bug-report/BugReportDialog';
 import { useBugReportDialogStore } from './state/bug-report-dialog-store';
 import { TerminalGridDialog } from './components/TerminalGridDialog';
 import { OverlayLayer } from './overlay/overlay-layer';
+import { FirstRunWizard } from './components/onboarding/FirstRunWizard';
+import { useOnboardingStore } from './state/onboarding-store';
+import { usePanePickerStore } from './state/pane-picker-store';
+import { openExpressBareShell } from './components/mission/ExpressTerminalOptions';
 import { OrchestrationModeDialog } from './components/OrchestrationModeDialog';
 import { MediaStudioPanel } from './components/MediaStudioPanel';
 import { OperatorProfile } from './components/OperatorProfile';
@@ -931,6 +935,9 @@ export function App() {
   useEffect(() => initDevServerStore(), []);
   useEffect(() => initShotIngestToasts(), []);
   useEffect(() => initDesignSelectionStore(), []);
+  useEffect(() => {
+    useOnboardingStore.getState().hydrate();
+  }, []);
 
   useEffect(() => {
     const petApi = window.nexus.pet;
@@ -1518,7 +1525,27 @@ export function App() {
       {/* Fora de `canUseApp` de propósito: quem está bloqueado por licença ou
           cobrança é justamente quem precisa conseguir reportar — e a faixa de
           main ocupado (F-764 C.7) vale para qualquer tela. */}
-      <OverlayLayer><BugReportDialog /><ConfirmDialog /><ChoiceDialog /><Toasts /><MainBusyBanner /></OverlayLayer>
+      <OverlayLayer>
+        <BugReportDialog />
+        <ConfirmDialog />
+        <ChoiceDialog />
+        <Toasts />
+        <MainBusyBanner />
+        <FirstRunWizard
+          onOpenApiKeys={() => navigation.openSettings('api-keys')}
+          onOpenProviders={() => navigation.openSettings('providers')}
+          onOpenWorkspace={() => {
+            void useWorkspaceStore.getState().pick();
+          }}
+          onStartMission={() => {
+            navigation.openMissionSetup();
+          }}
+          onOpenPane={() => {
+            usePanePickerStore.getState().requestOpen();
+          }}
+          onOpenShellTerminal={() => openExpressBareShell()}
+        />
+      </OverlayLayer>
     </div>
   );
 }

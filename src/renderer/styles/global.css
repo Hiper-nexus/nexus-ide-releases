@@ -49,3 +49,4 @@
    ladder no topo e define scrim/motion da camada. Vindo depois, suas regras
    de vidro e entrada vencem sem precisar de !important. */
 @import './overlay-layer.css';
+@import './onboarding.css';

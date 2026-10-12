@@ -60,17 +60,11 @@ export const onboardingWindowsTerminalExitActionSchema = z.enum([
 ])
 // `dismissed` is intentionally excluded — it's a UI panel-visibility flag, not an activation event.
 export const onboardingChecklistItemSchema = z.enum([
-  'addedRepo',
-  'addedFolder',
-  'choseAgent',
-  'ranFirstAgent',
-  'ranSecondAgentOnSameTask',
-  'triedCmdJ',
-  'shapedSidebar',
-  'reviewedDiff',
-  'openedPr',
-  'openedFile',
-  'ranAgentOnFile'
+  'connectedAccount',
+  'openedProject',
+  'dictatedWithSpace',
+  'openedPlusPane',
+  'createdMission'
 ])
 export const onboardingFeatureSetupFeatureSchema = z.enum([
   'browser_use',

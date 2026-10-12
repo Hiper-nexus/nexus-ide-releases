@@ -5,6 +5,7 @@ import type { WorkspaceInfo } from '../../../shared/workspace-types';
 import type { MissionSetupDraft } from '../../state/mission-setup-store';
 import type { DirectAnswer } from '../../lib/direct-answer';
 import { ExpressTerminalOptions } from './ExpressTerminalOptions';
+import { FirstStepsGuide } from '../onboarding/FirstStepsGuide';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 import { MissionSetupRosterRow } from './MissionSetupRosterRow';
 import { issueForAgent, type MissionTeamInventory } from './TeamStep';
@@ -462,6 +463,7 @@ export function ExpressMissionStart({
             intermediário no caminho padrão — dá para ignorar e apertar
             "Iniciar criação" — mas esconder foi o que incomodou. */}
         <ExpressTerminalOptions />
+        <FirstStepsGuide />
 
         {/* A pendência específica abaixo já oferece a ação de conexão. */}
         {!inventoryLoading && !inventoryReady && !maestroIssue ? (

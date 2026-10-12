@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useOnboardingStore } from './onboarding-store';
 
 /**
  * Pedido para abrir o "+ Pane" quando o gatilho não é o botão do grid
@@ -19,11 +20,14 @@ export interface PanePickerStore {
 export const usePanePickerStore = create<PanePickerStore>()((set) => ({
   pendingOpen: false,
   pendingAccountsAdapterId: null,
-  requestOpen: (accountsAdapterId) =>
+  requestOpen: (accountsAdapterId) => {
+    // Fato de ativação: o operador pediu o + Pane de verdade (qualquer origem).
+    useOnboardingStore.getState().markChecklist('openedPlusPane');
     set({
       pendingOpen: true,
       pendingAccountsAdapterId: accountsAdapterId ?? null,
-    }),
+    });
+  },
   consumePendingOpen: () =>
     set({ pendingOpen: false, pendingAccountsAdapterId: null }),
 }));

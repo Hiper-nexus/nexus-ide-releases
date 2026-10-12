@@ -40,9 +40,9 @@ export function normalizeAgentActivityDisplayMode(value: unknown): AgentActivity
   return value === 'full' || value === 'compact' ? value : DEFAULT_AGENT_ACTIVITY_DISPLAY_MODE
 }
 
-// Why: onboarding wizard's last step index, centralized so backfill, clamps, and UI agree on the bound.
-export const ONBOARDING_FINAL_STEP = 5
-export const ONBOARDING_FLOW_VERSION = 4
+// Why: onboarding wizard's last step index (keys → agents → project → use), centralized so backfill, clamps, and UI agree on the bound.
+export const ONBOARDING_FINAL_STEP = 4
+export const ONBOARDING_FLOW_VERSION = 5
 
 export const ORCA_BROWSER_PARTITION = 'persist:orca-browser'
 // Why: inert blank-tab URL shared by main/renderer so the attach policy can allow just this one data URL and reject others.
@@ -137,17 +137,11 @@ export function getDefaultOnboardingState(): OnboardingState {
     outcome: null,
     lastCompletedStep: -1,
     checklist: {
-      addedRepo: false,
-      choseAgent: false,
-      ranFirstAgent: false,
-      ranSecondAgentOnSameTask: false,
-      triedCmdJ: false,
-      shapedSidebar: false,
-      reviewedDiff: false,
-      openedPr: false,
-      addedFolder: false,
-      openedFile: false,
-      ranAgentOnFile: false,
+      connectedAccount: false,
+      openedProject: false,
+      dictatedWithSpace: false,
+      openedPlusPane: false,
+      createdMission: false,
       dismissed: false
     } satisfies OnboardingChecklistState
   }
