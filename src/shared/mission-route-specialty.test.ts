@@ -46,6 +46,13 @@ describe('classifyRouteSpecialty', () => {
     expect(verdict.specialty).not.toBe('security');
   });
 
+  it('F-1400 B1: teoria dos jogos não é jogo; jogo segue visual', () => {
+    expect(classifyRouteSpecialty('aplicar teoria dos jogos ao leilão de preços').specialty).not.toBe('visual');
+    expect(classifyRouteSpecialty('game theory for the pricing engine').specialty).not.toBe('visual');
+    expect(classifyRouteSpecialty('criar um jogo da velha').specialty).toBe('visual');
+    expect(classifyRouteSpecialty('corrigir XSS no app Next.js').specialty).toBe('security');
+  });
+
   it('admite general quando não há vocabulário', () => {
     const verdict = classifyRouteSpecialty(
       'me ajuda com aquilo que a gente conversou ontem',

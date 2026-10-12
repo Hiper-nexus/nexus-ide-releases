@@ -97,6 +97,31 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
     expect(route(task, pool)).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' });
   });
 
+  // F-1400 B1 (revisão Fable): next/game/jogo soltos casavam e a especialidade
+  // virava 'visual' sem condição — Opus max forçado e securityWork=false (F-821).
+  it.each([
+    'fix the next auth session validation', 'prepare the next release of the CLI',
+    'game theory for the pricing engine', 'write the migration for the next sprint',
+  ])('B1: palavra solta next/game não vira visual nem Opus max: %s', (task) => {
+    const decision = route(task, everyone);
+    expect(decision.specialty).not.toBe('visual');
+    expect(decision.reason).not.toContain('Next/jogo');
+    expect(decision.effort).not.toBe('max');
+  });
+
+  it.each(['landing em Next.js', 'jogo em canvas'])('B1: Next.js e jogo com contexto continuam Opus max: %s', (task) => {
+    const decision = route(task, everyone, { visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]) });
+    expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5', effort: 'max', specialty: 'visual' });
+    expect(decision.reason).toContain('Next/jogo → Opus 5.5 (regra do operador)');
+  });
+
+  it('B1: segurança em app Next.js continua security (F-821), sem Opus max da regra de front', () => {
+    const decision = route('corrigir XSS no app Next.js', everyone);
+    expect(decision.specialty).toBe('security');
+    expect(decision.reason).not.toContain('Next/jogo');
+    expect(decision.effort).not.toBe('max');
+  });
+
   it('uso recente por modelo distingue Opus ocupado de Sonnet livre na mesma CLI', () => {
     const decision = route('implementar a tela responsiva de cadastro', everyone, {
       visualUseCounts: new Map([['claude:claude-opus-5-5', 10]]),

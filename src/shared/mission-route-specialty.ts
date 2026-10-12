@@ -137,6 +137,8 @@ const SECURITY_SPECIALTY_SIGNALS = [
   'segurança',
   'seguranca',
   'vulnerab',
+  // F-1400 B1: "corrigir XSS no app Next.js" é defeito de segurança, não front.
+  'xss',
   'oauth',
   'auth',
   'autentica',

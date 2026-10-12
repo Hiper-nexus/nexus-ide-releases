@@ -688,6 +688,21 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   { adapterId: 'codex', model: 'gpt-6-astra' },
 ]);
 
+const BOUNDED = (body: string) => new RegExp(`(?<![\\p{L}\\p{N}_])(?:${body})(?![\\p{L}\\p{N}_])`, 'iu');
+const NEXT_FRONT_RE = BOUNDED('next\\.?js|nextjs|next\\s+app|app\\s+router|phaser|three\\.js|unity\\s+webgl');
+const GAME_WORD_RE = BOUNDED('(?:web\\s+)?games?|jogos?');
+const GAME_CONTEXT_RE = BOUNDED('canvas|phaser|three\\.js|unity|webgl|html5|browser|navegador|2d|3d');
+
+/**
+ * F-1400 B1 (revisão Fable): a regra Next/jogo → Opus max só vale para
+ * Next.js/app router (e engines de jogo web) e para jogo COM contexto de
+ * front. "next" e "game" soltos ("the next release", "game theory") não são
+ * front.
+ */
+export function isNextOrGameTask(text: string): boolean {
+  return NEXT_FRONT_RE.test(text) || (GAME_WORD_RE.test(text) && GAME_CONTEXT_RE.test(text));
+}
+
 /**
  * F-1412: ordem de PREFERÊNCIA para LEITURA de imagem nos tiers baixos
  * (trivial/easy/medium). Entre os modelos com visão do pool, o rápido/barato
@@ -1700,8 +1715,10 @@ export function routeTask(
   const effortNoteFor = (adapterId: string, model?: string) =>
     `; effort=${effortFor(adapterId, model) ?? 'cli-default'} requested=${requestedFor(adapterId, model)}` +
     ` source=${nextGameOpusApplied && adapterId === 'claude' && model === 'claude-opus-5-5' ? 'regra-do-operador' : mention.effort ? 'texto' : laneEfforts.has(`${adapterId}:${model}`) ? 'lane' : context.effortOverride ? 'jev' : 'tier'}`;
-  const nextOrGame = /(?<![\p{L}\p{N}_])(?:next(?:\.js|js)?|app\s+router|games?|jogos?|phaser|three\.js|unity\s+webgl)(?![\p{L}\p{N}_])/iu.test(classificationText);
   const heuristicSpecialty = classifyRouteSpecialty(classificationText);
+  // F-1400 B1 (revisão Fable): só Next.js/app router e jogo COM contexto de
+  // front; segurança nunca é sobrescrita (F-821 — securityWork precisa valer).
+  const nextOrGame = heuristicSpecialty.specialty !== 'security' && isNextOrGameTask(classificationText);
   const specialtyVerdict = context.specialtyOverride
     ? {
         ...heuristicSpecialty,
