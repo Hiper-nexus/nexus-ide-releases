@@ -180,4 +180,35 @@ describe('renewable managed Claude profiles', () => {
       fs.rmSync(outside, { force: true });
     }
   });
+
+  // F-1401 (b): dois panes na mesma conta gerenciada recebem o MESMO escopo
+  // de credencial — não cópias. A linhagem é por conta, não por pane.
+  it('two panes on the same managed account share one credential scope', () => {
+    const vault = blob('shared', 100);
+    const paneA = materializeManagedClaudeAuth('account-shared', vault, { home });
+    const paneB = materializeManagedClaudeAuth('account-shared', vault, { home });
+    expect(paneA.directory).toBe(paneB.directory);
+    expect(paneA.env).toEqual(paneB.env);
+    expect(paneA.env[CLAUDE_MANAGED_AUTH_ENV]).toBe(paneA.directory);
+    // Apenas um arquivo de credencial — não uma cópia por pane.
+    const credFiles = fs.readdirSync(paneA.directory).filter((f) => f === '.credentials.json');
+    expect(credFiles).toHaveLength(1);
+  });
+
+  // F-1401 (c): renovação num pane não invalida o outro — o CLI escreve no
+  // escopo compartilhado e o próximo materialize vê o token novo (não restaura
+  // o vault velho por cima).
+  it('CLI renewal in one pane does not invalidate the other pane', () => {
+    const original = blob('v1', 100);
+    const renewed = blob('v2', 400);
+    // Pane A materializa o escopo.
+    const paneA = materializeManagedClaudeAuth('account-renew', original, { home });
+    // CLI no pane A renova: grava o token novo no escopo compartilhado.
+    fs.writeFileSync(path.join(paneA.directory, '.credentials.json'), renewed);
+    // Pane B materializa o MESMO escopo — vê o token renovado, não o vault velho.
+    const paneB = materializeManagedClaudeAuth('account-renew', original, { home });
+    expect(paneB.directory).toBe(paneA.directory);
+    expect(paneB.blob).toBe(renewed);
+    expect(readManagedClaudeAuth('account-renew', { home })).toBe(renewed);
+  });
 });

@@ -1627,33 +1627,8 @@ function pickUnpinnedAccountWithHeadroom(
       ? pickAvailableForFailover(adapterId, null, decidedAt, quotaScores, pickOptions)
       : pickAvailableForFailover(adapterId, null, decidedAt, quotaScores)
   ).account;
-  // F-235: exclusões vêm de panes Claude vivos na mesma missão. Se nada livre
-  // sobra, cair no active-fallback poria dois panes na MESMA conta (duas
-  // cópias do refresh token colidem, F-645) — fail-closed com recibo
-  // categórico que o prepare autoritativo transforma em erro visível.
-  if (!picked && excludeIds?.size) {
-    const note =
-      'claude_accounts_in_use: todas as contas Claude com credencial já ' +
-      'têm pane vivo nesta missão';
-    console.warn(`[spawn] ${note} (${adapterId})`);
-    return {
-      account: null,
-      receipt: {
-        adapterId,
-        source: 'legacy',
-        account: null,
-        headroom: null,
-        alternatives: accountChoiceAlternatives(
-          adapterId,
-          null,
-          quotaByAccountId,
-          decidedAt,
-        ),
-        decidedAt,
-        note,
-      },
-    };
-  }
+  // F-1401: sem recusa por colisão de conta — panes Claude da mesma conta
+  // compartilham a linhagem de credencial (escopo por conta, não por pane).
   const alternatives = accountChoiceAlternatives(
     adapterId,
     picked?.id ?? null,
@@ -1804,11 +1779,6 @@ export async function prepareProviderSpawnAuthoritative(
           : undefined,
       )
     : undefined;
-  // F-235: com exclusões de missão e nenhuma conta livre, o picker devolve o
-  // recibo fail-closed em vez do active-fallback — aqui vira recusa visível.
-  if (selectedChoice?.receipt.note?.startsWith('claude_accounts_in_use')) {
-    return { ok: false, error: selectedChoice.receipt.note };
-  }
   const account = perSpawn.accountId
     ? getAccount(perSpawn.accountId)
     : selectedChoice?.account;

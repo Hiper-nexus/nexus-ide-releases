@@ -42,7 +42,6 @@ import {
   getAgentSessionInfo,
   getSessionState,
   isOneShotSessionRunning,
-  liveClaudeMissionAccountIds,
   spawnMainOwnedAgentSession,
 } from "../pty/pty-manager";
 import {
@@ -936,19 +935,12 @@ export async function spawnMainOwnedMissionPaneAsync(
       const operatorChoice = isOperatorChoicePolicy(
         getOrchSettings().squadCliPolicy,
       );
-      // F-235: cada pane Claude da missão fica numa conta distinta — as
-      // contas com pane vivo nesta missão saem da escolha (fail-closed).
-      const claudeMissionExclusions =
-        adapter.id === 'claude'
-          ? liveClaudeMissionAccountIds(options.missionId)
-          : undefined;
+      // F-1401: sem exclusão de contas — panes Claude da mesma conta compartilham
+      // a linhagem de credencial (escopo por conta, CLI do `.oauth_refresh.lock`).
       const prepared = await prepareProviderSpawnAuthoritative(adapter.id, {
         effort: options.effort,
         accountId: options.accountId,
         model: options.model,
-        ...(claudeMissionExclusions?.length
-          ? { excludeAccountIds: claudeMissionExclusions }
-          : {}),
         isolatedHome: shouldUseEphemeralHome(
           adapter,
           requiresSpawnGate({

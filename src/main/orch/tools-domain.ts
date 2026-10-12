@@ -46,7 +46,6 @@ import {
   adapterIdsWithoutNexusMcp,
   limitToReadOnlyCapable,
   liveMissionAdapterIds,
-  liveMissionAdapterSeats,
   operatorChildUseCounts,
   routeTaskWithBrief,
 } from './operator-spawn-route';
@@ -2134,8 +2133,6 @@ export async function routeTaskForCaller(
   quotaFallbackNote += readOnlyPool.note;
   let missionAdapterIds: string[] | undefined;
   let reservedAdapterIds: string[] | undefined;
-  /** F-985: assentos Claude ocupados AGORA (panes vivos + reservas abertas). */
-  let claudeMissionSeats: number | undefined;
   let globalUseCounts: Map<string, number> | undefined;
   if (!missionId) {
     // F-802: o fair-share de 7 dias (F-232) vale também para o "+ Pane" — as
@@ -2187,13 +2184,9 @@ export async function routeTaskForCaller(
         ),
       ];
       reservedAdapterIds = stores.missions.listOpenRouteAdapterIds(missionId);
-      claudeMissionSeats =
-        liveMissionAdapterSeats('claude', missionId, recorded, panes) +
-        reservedAdapterIds.filter((id) => id === 'claude').length;
     } catch {
       missionAdapterIds = undefined;
       reservedAdapterIds = undefined;
-      claudeMissionSeats = undefined;
     }
     // F-232: uso GLOBAL de rota neste checkout (7 dias, todas as missões) —
     // alimenta o fair-share para os providers nunca escolhidos entrarem.
@@ -2240,34 +2233,21 @@ export async function routeTaskForCaller(
     ...(missionAdapterIds ?? []),
     ...(reservedAdapterIds ?? []),
   ];
-  // F-235: panes Claude de missão podem coexistir até o número de contas
-  // Claude utilizáveis, cada pane numa conta distinta (a cópia de refresh
-  // token da F-645 só colide dentro da MESMA conta). Capacidade = contas
-  // com credencial utilizável fora de bloco efetivo; sem conta gerenciada
-  // a capacidade é 1 — o login nativo, e o comportamento histórico de
-  // reservar o Claude ao primeiro pane persiste.
-  // F-985: assento é pane VIVO — o worker Claude que entregou e fechou não
-  // segura mais a conta (o spawn confere as contas vivas e recusa colisão).
-  const claudeSeats = Math.max(
-    claudeMissionSeats ?? usedAdapterIds.filter((id) => id === 'claude').length,
-    ctx.providerId === 'claude' ? 1 : 0,
-  );
+  // F-1401: sem limite de assentos — panes Claude da mesma conta compartilham
+  // a linhagem de credencial (escopo por conta, não por pane; o CLI do
+  // `.oauth_refresh.lock` serializa a renovação). Só a barreira real fica:
+  // nenhuma conta Claude utilizável → claude indisponível com o motivo.
   const claudeCapacity = countAccountsWithLiveCredential('claude');
-  const reserveClaude = Boolean(missionId && claudeSeats >= claudeCapacity);
-  if (reserveClaude) {
-    // F-985: é a política de assentos, não falta de instalação — o recibo do
-    // `preferAdapters` diz isso em vez de "claude=não instalado".
-    const seatReason =
-      claudeCapacity === 0
-        ? 'reservado: nenhuma conta Claude utilizável (cooldown ou sem credencial)'
-        : `reservado: ${claudeSeats} pane(s) Claude vivo(s) nesta missão para ` +
-          `${claudeCapacity} conta(s) Claude utilizável(is) (um pane por conta)`;
+  const reserveClaude = false;
+  if (claudeCapacity === 0) {
     adapters = adapters.map((adapter) =>
       adapter.id === 'claude'
         ? {
             ...adapter,
             installed: false,
-            ...(adapter.installed ? { unavailableReason: seatReason } : {}),
+            ...(adapter.installed
+              ? { unavailableReason: 'nenhuma conta Claude utilizável (cooldown ou sem credencial)' }
+              : {}),
           }
         : adapter,
     );

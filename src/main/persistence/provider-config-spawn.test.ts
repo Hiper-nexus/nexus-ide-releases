@@ -1407,17 +1407,20 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
       );
     });
 
-    it('excluindo A e B, o spawn falha com claude_accounts_in_use — nunca active-fallback', async () => {
+    it('excluindo A e B, o spawn cai no active-fallback (F-1401: linhagem compartilhada)', async () => {
       spawnDeps.pickAvailableForFailover.mockReturnValue({ account: null });
+      spawnDeps.prepareAccount.mockReturnValue({ ok: true, account: acctA,
+        authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/a' } });
 
+      // F-1401: sem recusa por colisão — panes da mesma conta compartilham a
+      // linhagem de credencial (escopo por conta, CLI do .oauth_refresh.lock).
       await expect(prepareProviderSpawnAuthoritative('claude', {
         excludeAccountIds: ['acct-a', 'acct-b'],
-      })).resolves.toEqual({
-        ok: false,
-        error: expect.stringContaining('claude_accounts_in_use'),
+      })).resolves.toMatchObject({
+        ok: true,
+        overrides: { selectedAccountId: 'acct-a' },
       });
-      // Sem fallback para a conta ativa: dois panes nunca dividem uma conta.
-      expect(spawnDeps.prepareAccount).not.toHaveBeenCalled();
+      expect(spawnDeps.prepareAccount).toHaveBeenCalled();
     });
 
     it('sem excludeAccountIds a conta ativa permanece (comportamento atual)', () => {

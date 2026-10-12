@@ -23,7 +23,6 @@ import {
   writeSession,
   resizeSession,
   killSession,
-  liveClaudeMissionAccountIds,
   orchTerminateSession,
   acknowledgeSessionOutput,
   recoverSessionOutput,
@@ -295,19 +294,12 @@ function spawnCliPtyAgentPane(
         `adapter ${adapter.id} cannot enforce native read-only authority`,
       );
     }
-    // F-235: pane Claude de missão nunca nasce na conta de um pane Claude
-    // vivo da mesma missão — cada pane fica numa conta distinta.
-    const claudeMissionExclusions =
-      adapter.id === 'claude' && authority.context?.missionId
-        ? liveClaudeMissionAccountIds(authority.context.missionId)
-        : undefined;
+    // F-1401: sem exclusão de contas — panes Claude da mesma conta compartilham
+    // a linhagem de credencial (escopo por conta, CLI do `.oauth_refresh.lock`).
     const perSpawn = {
       effort: request.effort,
       accountId: request.accountId,
       model: request.model,
-      ...(claudeMissionExclusions?.length
-        ? { excludeAccountIds: claudeMissionExclusions }
-        : {}),
       ...(adapter.id === 'muse' && authority.source === 'direct-user' && authority.context === null
         ? { allowNativeAuthAttempt: true } : {}),
       // Mesmo predicado que o spawn hook usa para trocar o HOME — a credencial

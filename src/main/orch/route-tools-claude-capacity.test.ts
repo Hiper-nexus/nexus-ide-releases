@@ -78,8 +78,7 @@ const ctx: AgentGateContext = {
   missionId: 'mission-tab', providerId: 'claude', scope: testProjectScope(),
   allowedTools: null, allowedSkills: null, stopAttempts: 0, handoffSubmitted: false,
 };
-// Tarefa crítica conhecida (task-router.test.ts): sem reserva o Claude lidera;
-// reservado, a rota cai na melhor alternativa não-claude (codex).
+// Tarefa crítica conhecida (task-router.test.ts): sem reserva o Claude lidera.
 const TASK = 'auditar a segurança da autenticação e dos pagamentos';
 
 function livePane(paneId: string, adapterId: string) {
@@ -116,79 +115,83 @@ async function route() {
   };
 }
 
-describe('F-235: capacidade de panes Claude por conta utilizável', () => {
-  // F-985: a reserva é política de assentos — o recibo diz isso, nunca
-  // "claude=não instalado" para o Claude que roda o próprio orquestrador.
-  it('Maestro Claude + 1 conta: claude segue reservado, e o motivo diz que é reserva', async () => {
+// F-1401: sem limite de assentos — panes Claude da mesma conta compartilham a
+// linhagem de credencial (escopo por conta, CLI do `.oauth_refresh.lock`).
+// Só a barreira real fica: nenhuma conta Claude utilizável → indisponível.
+describe('F-1401: Claude sem limite de um pane por conta', () => {
+  // Sem o codex, o Claude é o único candidato do tier crítico — elegível
+  // significa que ele vence, não que cai numa alternativa.
+  const CLAUDE_KIMI = [
+    { adapterId: 'claude', enabled: true, installed: true, authStrategy: 'oauth',
+      models: ['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] },
+    { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth',
+      models: ['kimi-code/k3'] },
+  ];
+
+  it('Maestro Claude + 1 conta: claude é elegível (não reservado)', async () => {
+    h.listProviderSettings.mockReturnValue(CLAUDE_KIMI);
     const decision = await route();
-    expect(decision.adapterId).not.toBe('claude');
+    expect(decision.adapterId).toBe('claude');
+    expect(decision.reason).not.toContain('reservado');
     expect(decision.reason).not.toContain('claude=não instalado');
-    expect(decision.reason).toContain(
-      'claude=reservado: 1 pane(s) Claude vivo(s) nesta missão para 1 conta(s) Claude utilizável(is)',
-    );
   });
 
-  it('nenhuma conta Claude utilizável: reservado, sem dizer "não instalado"', async () => {
+  it('nenhuma conta Claude utilizável: indisponível com motivo', async () => {
     h.claudeCapacity.mockReturnValue(0);
     const decision = await route();
     expect(decision.adapterId).not.toBe('claude');
     expect(decision.reason).not.toContain('claude=não instalado');
-    expect(decision.reason).toContain('claude=reservado: nenhuma conta Claude utilizável');
+    expect(decision.reason).toContain('nenhuma conta Claude utilizável');
   });
 
-  it('Maestro Claude + 2 contas com credencial: um worker Claude é roteado', async () => {
-    h.claudeCapacity.mockReturnValue(2);
-    // Sem o codex, o Claude é o único candidato do tier crítico: reservado
-    // ele cairia num tier emprestado (kimi), não reservado ele vence.
-    h.listProviderSettings.mockReturnValue([
-      { adapterId: 'claude', enabled: true, installed: true, authStrategy: 'oauth',
-        models: ['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] },
-      { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth',
-        models: ['kimi-code/k3'] },
-    ]);
-    const decision = await route();
-    expect(decision.adapterId).toBe('claude');
-    expect(decision.reason).not.toContain('claude=não instalado');
-  });
-
-  it('Maestro Claude + worker Claude vivo + 2 contas: reservado de novo', async () => {
-    h.claudeCapacity.mockReturnValue(2);
+  it('Maestro Claude + worker Claude vivo + 1 conta: claude continua elegível', async () => {
+    h.listProviderSettings.mockReturnValue(CLAUDE_KIMI);
     h.recorded = [
       { paneId: 'pane-orch', adapterId: 'claude', role: 'orchestrator' },
       { paneId: 'pane-w1', adapterId: 'claude', role: 'worker' },
     ];
     h.livePanes = [livePane('pane-orch', 'claude'), livePane('pane-w1', 'claude')];
     const decision = await route();
-    expect(decision.adapterId).not.toBe('claude');
+    expect(decision.adapterId).toBe('claude');
+    expect(decision.reason).not.toContain('reservado');
     expect(decision.reason).not.toContain('claude=não instalado');
-    expect(decision.reason).toContain(
-      'claude=reservado: 2 pane(s) Claude vivo(s) nesta missão para 2 conta(s) Claude utilizável(is)',
-    );
   });
 
-  // F-985: `mission_panes` guarda o worker depois que ele fecha (o worker de
-  // missão fecha sozinho no handoff de sucesso). Contar a linha morta segurava
-  // a conta e o Claude saía como "não instalado" até o fim da missão.
-  it.each([
-    ['fechado (fora da grade)', [] as Array<Record<string, unknown>>],
-    ['exited na grade', [{ ...livePane('pane-w1', 'claude'), state: 'exited' }]],
-  ])('worker Claude %s não segura assento: o Claude volta à rota', async (_label, deadWorker) => {
-    h.claudeCapacity.mockReturnValue(2);
-    h.listProviderSettings.mockReturnValue([
-      { adapterId: 'claude', enabled: true, installed: true, authStrategy: 'oauth',
-        models: ['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-fable-5-1'] },
-      { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth',
-        models: ['kimi-code/k3'] },
-    ]);
+  it('N panes Claude na mesma conta: claude continua elegível', async () => {
+    h.listProviderSettings.mockReturnValue(CLAUDE_KIMI);
+    h.recorded = [
+      { paneId: 'pane-orch', adapterId: 'claude', role: 'orchestrator' },
+      { paneId: 'pane-w1', adapterId: 'claude', role: 'worker' },
+      { paneId: 'pane-w2', adapterId: 'claude', role: 'worker' },
+    ];
+    h.livePanes = [
+      livePane('pane-orch', 'claude'),
+      livePane('pane-w1', 'claude'),
+      livePane('pane-w2', 'claude'),
+    ];
+    const decision = await route();
+    expect(decision.adapterId).toBe('claude');
+    expect(decision.reason).not.toContain('reservado');
+    expect(decision.reason).not.toContain('claude=não instalado');
+  });
+
+  it('worker Claude fechado não muda nada: claude segue elegível', async () => {
+    h.listProviderSettings.mockReturnValue(CLAUDE_KIMI);
     h.recorded = [
       { paneId: 'pane-orch', adapterId: 'claude', role: 'orchestrator' },
       { paneId: 'pane-w1', adapterId: 'claude', role: 'worker' },
     ];
-    h.livePanes = [livePane('pane-orch', 'claude'), ...deadWorker];
+    h.livePanes = [livePane('pane-orch', 'claude')];
     const decision = await route();
     expect(decision.adapterId).toBe('claude');
+    expect(decision.reason).not.toContain('reservado');
     expect(decision.reason).not.toContain('claude=não instalado');
-    expect(decision.reason).not.toContain('claude=reservado');
+  });
+
+  it('preferAdapters claude com codex disponível: claude elegível, não reservado', async () => {
+    const decision = await route();
+    expect(decision.reason).not.toContain('reservado');
+    expect(decision.reason).not.toContain('claude=não instalado');
   });
 });
 
