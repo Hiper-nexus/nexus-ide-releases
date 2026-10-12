@@ -65,6 +65,11 @@ const PATH_EDIT_TOOLS = new Map<string, readonly string[]>([
   ['write_to_file', ['TargetFile', 'path', 'file_path']],
   ['replace_file_content', ['TargetFile', 'path', 'file_path']],
   ['multi_replace_file_content', ['TargetFile', 'path', 'file_path']],
+  // Revisão de ponta: nomes minúsculos do mapa do agent-hook-listener (escrita).
+  ['create', ['path', 'file_path']],
+  ['write', ['path', 'file_path']],
+  ['edit', ['path', 'file_path']],
+  ['patch', ['path', 'file_path']],
 ]);
 /** Ferramentas de patch (Codex): os caminhos vêm dos cabeçalhos do patch. */
 const PATCH_EDIT_TOOLS = new Set(['apply_patch']);

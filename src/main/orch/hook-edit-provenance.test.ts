@@ -106,6 +106,12 @@ describe('extractEditedPaths (F-1237)', () => {
       expect(hookBodyMayCarryEdit(`{"session_id":"s","tool_name":"${tool}","tool_input":{`)).toBe(true);
     }
     expect(hookBodyMayCarryEdit('{"session_id":"s","tool_name":"read_file","tool_input":{')).toBe(false);
+    // Nomes minúsculos do mapa do agent-hook-listener: escrita entra, leitura não.
+    for (const tool of ['create', 'write', 'edit', 'patch']) {
+      expect(extractEditedPaths({ tool_name: tool, tool_input: { path: `/root/${tool}.ts` } })).toEqual([`/root/${tool}.ts`]);
+    }
+    expect(extractEditedPaths({ tool_name: 'read', tool_input: { path: '/root/a.ts' } })).toEqual([]);
+    expect(extractEditedPaths({ tool_name: 'view', tool_input: { path: '/root/a.ts' } })).toEqual([]);
   });
 });
 
