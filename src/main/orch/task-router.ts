@@ -703,6 +703,14 @@ const BOUNDED = (body: string) => new RegExp(`(?<![\\p{L}\\p{N}_])(?:${body})(?!
 const NEXT_FRONT_RE = BOUNDED('next(?:\\.|[-\\s]+)?js|app\\s+router|create-next-app|phaser|three\\.js|unity\\s+webgl');
 const GAME_WORD_RE = BOUNDED('(?:web\\s+)?games?|jogos?');
 const GAME_CONTEXT_RE = BOUNDED('canvas|phaser|three\\.js|unity|webgl|html5|browser|navegador|2d|3d');
+// Revisão Grok: JOGO É SEMPRE Opus 5.5 max (regra do operador) — basta a
+// intenção de construir um jogo (verbo de construção + jogo/game) ou uma
+// engine/gênero de jogo, sem exigir palavra de contexto de front.
+const GAME_BUILD_RE = new RegExp(
+  '(?<![\\p{L}\\p{N}_])(?:criar|crie|cria|fazer|faça|faca|faz|implementar|implemente|desenvolver|desenvolva|' +
+  'construir|construa|programar|programe|build|make|create|develop|implement)(?![\\p{L}\\p{N}_])' +
+  '[^.;!?\\n]{0,60}?(?<![\\p{L}\\p{N}_])(?:jogos?|games?|videogames?)(?![\\p{L}\\p{N}_])', 'iu');
+const GAME_ENGINE_RE = BOUNDED('godot|unity|unreal|pygame|bevy|raylib|love2d|roguelike|platformer');
 
 /**
  * F-1400 B1 (revisão Fable): a regra Next/jogo → Opus max só vale para
@@ -711,7 +719,8 @@ const GAME_CONTEXT_RE = BOUNDED('canvas|phaser|three\\.js|unity|webgl|html5|brow
  * front.
  */
 export function isNextOrGameTask(text: string): boolean {
-  return NEXT_FRONT_RE.test(text) || (GAME_WORD_RE.test(text) && GAME_CONTEXT_RE.test(text));
+  return NEXT_FRONT_RE.test(text) || GAME_BUILD_RE.test(text) || GAME_ENGINE_RE.test(text) ||
+    (GAME_WORD_RE.test(text) && GAME_CONTEXT_RE.test(text));
 }
 
 /**

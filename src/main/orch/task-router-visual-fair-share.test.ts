@@ -109,6 +109,13 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
     expect(decision.effort).not.toBe('max');
   });
 
+  it.each(['criar um jogo da velha', 'implementar um jogo no Godot', 'fazer um roguelike', 'criar um jogo de plataforma'])(
+    'Grok: jogo é sempre Opus max, sem exigir palavra de contexto: %s', (task) => {
+      const decision = route(task, everyone, { visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]) });
+      expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5', effort: 'max' });
+      expect(decision.reason).toContain('Next/jogo → Opus 5.5 (regra do operador)');
+    });
+
   it.each(['prepare the next app release', 'ship the next app version'])('Grok: "next app" em inglês genérico não é Next.js: %s', (task) => {
     const decision = route(task, everyone);
     expect(decision.reason).not.toContain('Next/jogo');
