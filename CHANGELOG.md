@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.252 — Linux em dia com o campo
+
+A 0.76.249 foi a última com pacote Linux. A 0.76.250 (comandos pesados no Windows) e a 0.76.251 (Campo em dia) saíram só para Mac e Windows, e o atualizador do Linux só avança quando a release traz os três pacotes. Esta versão é o mesmo produto da 0.76.251, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.249:
+
+- **Missões.** O Maestro adotado pelo «+ Pane» volta a delegar em vez de trabalhar sozinho, e o vigia de esteira fica vivo para a missão da aba (F-1448). Um «401» citado no terminal não troca mais a conta de uma missão que estava funcionando: a sonda de cota confirma antes (F-1449).
+- **Squads.** Squad salvo que carrega a marca de dono dos documentos de plano volta a abrir no editor e em «Usar integrantes» (F-1450).
+- **Contas.** O pane do Muse com login nativo não decreta mais «sessão expirada» sobre uma credencial que a sonda aceita (F-1451). A 2ª conta do Antigravity espera a sessão de login em vez de falhar com «terminal não ficou disponível» (F-1444). Providers mostra a contagem de modelos por extenso (F-1445).
+
+No mesmo binário, sem mudar o comportamento do Linux: no Windows os comandos pesados pelo Git Bash voltam a rodar e o encerramento pedido pelo Nexus deixa de aparecer como queda (0.76.250, F-1446); no macOS o ditado segurando Space não derruba o app e a sonda do Muse não repete o diálogo do Keychain (F-1443, F-1447).
+
 ## 0.76.251 — Campo em dia
 
 Uma leva de correções de campo: ditar segurando Space não derruba mais o app no macOS 27.2, a 2ª conta do Antigravity entra, o Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, um «401» citado no terminal não troca mais a conta de uma missão que estava funcionando, um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais "sessão expirada" sobre uma credencial que está funcionando.

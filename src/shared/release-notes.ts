@@ -10519,7 +10519,7 @@ export const RELEASE_076250: AppRelease = {
     { title: 'Recusa com o motivo real', detail: 'A mensagem diz se foi outro job na mesma pasta, o limite de jobs da máquina, swap ou RAM abaixo da reserva. A RAM só é citada quando falta RAM.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076251: AppRelease = {
   version: '0.76.251',
   date: '2026-10-13',
   codename: 'Campo em dia',
@@ -10536,5 +10536,20 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Windows sem falsa queda', detail: 'Pane encerrado pelo próprio Nexus ao fim da missão mostrava «processo caiu (code 129)»; o encerramento normal não é mais rotulado como queda.' },
     { title: 'Squad salvo abre de novo', detail: 'Squads de plano (e as cópias deles) falhavam ao abrir e em «Usar integrantes», sem jeito de corrigir no editor. Agora o roster carrega normalmente e o squad volta a ser utilizável.' },
     { title: 'Muse sem falsa expiração', detail: 'O pane do Muse com login nativo mostrava «Sessão expirada» por causa de um erro de autenticação que só aparecia no texto do terminal, mesmo com a credencial funcionando. O Nexus agora confirma com a sonda de cota antes de avisar: sem confirmação, nada de toast e o pane segue trabalhando.' },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.252',
+  date: '2026-10-13',
+  codename: 'Linux em dia com o campo',
+  summary: 'O app no Linux deixa a 0.76.249 e passa a incluir a 0.76.250 e a 0.76.251: o Maestro do «+ Pane» volta a delegar, um erro citado no terminal não troca a conta da missão, e o squad salvo volta a abrir.',
+  highlights: [
+    { title: 'Maestro que delega', detail: 'O orquestrador criado pelo «+ Pane» recebia os pedidos e executava tudo no próprio terminal. Agora ele recebe a doutrina de delegar e o vigia de esteira cobra quando a missão fica sem workers.' },
+    { title: 'Conta da missão estável', detail: 'Um «401» que só aparecia no texto do terminal não troca mais a conta nem para a missão. A sonda de cota confirma antes.' },
+    { title: 'Squad salvo abre de novo', detail: 'Squads de plano, e as cópias deles, falhavam ao abrir no editor. O roster carrega e o squad volta a ser utilizável.' },
+  ],
+  fixes: [
+    { title: 'Muse e a segunda conta', detail: 'O pane do Muse com login nativo não avisa mais «sessão expirada» sem a sonda confirmar, e a segunda conta do Antigravity espera a sessão em vez de falhar na hora.' },
+    { title: 'Atualização do Linux', detail: 'A 0.76.250 e a 0.76.251 só tinham pacote de Mac ou Windows. O Omarchy consultava o espelho e ficava na 0.76.249.' },
   ],
 };
