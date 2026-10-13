@@ -138,7 +138,19 @@ describe('providers-panel-view', () => {
   });
 
   it('formats model readiness, status chips and select value', () => {
-    expect(modelCountLabel(claude)).toBe('3/3');
+    expect(modelCountLabel(claude)).toBe('3 modelos');
+    expect(modelCountLabel({ ...claude, models: ['a'] })).toBe('1 modelo');
+    expect(modelCountLabel({ ...claude, models: [] })).toBe('sem modelos');
+    expect(
+      modelCountLabel({
+        ...claude,
+        models: ['a', 'b', 'c'],
+        modelInfo: {
+          b: { id: 'b', availability: 'api-only' },
+          c: { id: 'c', availability: 'deprecated' },
+        },
+      }),
+    ).toBe('1 de 3 modelos');
     expect(providerStatusLabel(claude)).toEqual({
       label: 'conectado',
       tone: 'ok',

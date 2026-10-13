@@ -458,7 +458,7 @@ function ProviderRow({
         className="prov-row__select"
         onClick={onSelect}
         aria-pressed={selected}
-        aria-label={`${provider.label}, ${status.label}, modelos ${models}`}
+        aria-label={`${provider.label}, ${status.label}, ${models}`}
         data-adapter={provider.adapterId}
       >
         <ProviderLogo
@@ -474,7 +474,10 @@ function ProviderRow({
           </span>
         </span>
         <span className="prov-row__meta">
-          <span className="prov-row__models" title="Modelos prontos / no catálogo">
+          <span
+            className="prov-row__models"
+            title="Modelos no catálogo prontos para uso; modelos só-API ou descontinuados não contam como prontos"
+          >
             {models}
           </span>
           {accountCount > 0 && (

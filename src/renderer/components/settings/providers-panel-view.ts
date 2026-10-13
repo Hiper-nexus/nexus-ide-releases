@@ -93,18 +93,21 @@ function compareProvidersForDisplay(
 }
 
 /**
- * Model readiness chip: ready catalog entries vs listed models.
- * api-only / deprecated count as not ready for auto-routing.
+ * Model count on the provider row, in words like the neighbouring
+ * "N contas": "13 modelos" when every listed model is usable, or
+ * "13 de 15 modelos" when some are not ready for auto-routing
+ * (api-only / deprecated count as not ready).
  */
 export function modelCountLabel(provider: ProviderSettingsInfo): string {
   const total = Math.max(0, provider.models.length);
-  if (total === 0) return '0/0';
+  if (total === 0) return 'sem modelos';
   const blocked = provider.models.filter((model) => {
     const availability = provider.modelInfo?.[model]?.availability;
     return availability === 'api-only' || availability === 'deprecated';
   }).length;
   const ready = Math.max(0, total - blocked);
-  return `${ready}/${total}`;
+  if (ready === total) return `${total} modelo${total === 1 ? '' : 's'}`;
+  return `${ready} de ${total} modelos`;
 }
 
 /**

@@ -151,7 +151,7 @@ describe('ProvidersPanel hub', () => {
     expect(host.textContent).toContain('Claude');
     expect(host.textContent).toContain('Codex');
     expect(host.textContent).toContain('Kimi');
-    expect(host.textContent).toContain('2/2');
+    expect(host.textContent).toContain('2 modelos');
     // Single rescan CTA (no duplicate buttons).
     const refresh = [...host.querySelectorAll('button')].filter((b) =>
       /Reexaminar CLIs|Examinando/.test(b.textContent ?? ''),
