@@ -121,6 +121,41 @@ it('confirmed empty or dependency-blocked backlog, full slots and unproved autho
   }
 });
 
+// Bug7 (B): missão adotada/livre (freeAgentChoice, mão do operador) nunca
+// ganha suite.tasks dos pedidos de chat — o backlog confirmado vem sempre
+// vazio e matava o ramo solo de 20 min. Só com soloNudgeWhenNoBacklog o
+// vazio confirmado cai no ramo legado; sem a flag, vazio continua silêncio.
+it('Bug7: confirmed-empty backlog falls back to the solo-20min nudge only when explicitly allowed', () => {
+  const empty = {
+    ...base,
+    maxWorkers: 3,
+    readyTaskIds: [] as readonly string[],
+    availableSlots: 2,
+    readySinceMs: null,
+    dispatchAuthorized: true,
+    readOnly: false,
+  };
+  expect(decideMomentumNudge(empty)).toEqual({ action: 'none' });
+  expect(decideMomentumNudge({ ...empty, soloNudgeWhenNoBacklog: true })).toEqual({
+    action: 'nudge',
+    soloForMs: MOMENTUM_SOLO_MS,
+  });
+  // O fallback herda TODAS as cercas: worker vivo, sem vaga, <20 min e
+  // lembrete na última hora continuam silêncio.
+  for (const patch of [
+    { workerPanes: 1 },
+    { availableSlots: 0 },
+    { soloSinceMs: now - MOMENTUM_SOLO_MS + 1 },
+    { lastNudgeAtMs: now - MOMENTUM_REPEAT_MS + 1 },
+    { dispatchAuthorized: false },
+  ]) {
+    expect(
+      decideMomentumNudge({ ...empty, soloNudgeWhenNoBacklog: true, ...patch }),
+      JSON.stringify(patch),
+    ).toEqual({ action: 'none' });
+  }
+});
+
 it('same ready backlog repeats hourly; genuinely changed backlog may refresh only after a minute', () => {
   const ready = {
     ...base,

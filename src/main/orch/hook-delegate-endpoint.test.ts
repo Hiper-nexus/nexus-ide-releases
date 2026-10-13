@@ -456,15 +456,31 @@ describe('hook /hook/delegate', () => {
       expect(text(out)).toBe(`${AUXILIARY_CONTEXT_HEADER}\nDOUTRINA DO MAESTRO`);
     });
 
-    it('a mão promovida recebe o lembrete junto com o conselho do Jev', async () => {
+    // Bug7 (A): a mão promovida nasceu `user` — o initialize do MCP entregou
+    // a doutrina do operador e nunca a do Maestro, em nenhuma CLI. O hook
+    // entrega a doutrina INTEIRA (como já fazia só para Codex/Kimi), não o
+    // lembrete que pressupõe o canal MCP.
+    it('Bug7: a mão promovida recebe a doutrina inteira (não o lembrete) junto com o conselho do Jev', async () => {
       __resetLeanRemindersForTests();
       const out = await handleHookDelegateRequest(
-        { ...maestro, promotedFromUserSession: true as const },
+        { ...maestro, providerId: 'claude', promotedFromUserSession: true as const },
         { prompt: LONG },
-        { advise: async () => delegation(3, 1), maestroDoctrine: () => 'DOUTRINA' },
+        { advise: async () => delegation(3, 1), maestroDoctrine: () => 'DOUTRINA DO MAESTRO', suggestSkill: vi.fn(async () => null) },
       );
-      expect(text(out)).toContain(MAESTRO_TURN_REMINDER);
+      expect(text(out)).toContain('DOUTRINA DO MAESTRO');
+      expect(text(out)).not.toContain(MAESTRO_TURN_REMINDER);
       expect(text(out)).toContain('~3 partes');
+    });
+
+    it('Bug7: promovido no Codex não recebe de novo a doutrina do operador ("faça você mesmo")', async () => {
+      __resetLeanRemindersForTests();
+      const out = await handleHookDelegateRequest(
+        { ...maestro, providerId: 'codex', promotedFromUserSession: true as const },
+        { prompt: LONG },
+        { advise: vi.fn(async () => null), maestroDoctrine: () => 'DOUTRINA DO MAESTRO', suggestSkill: vi.fn(async () => null) },
+      );
+      expect(text(out)).toContain('DOUTRINA DO MAESTRO');
+      expect(text(out)).not.toContain(OPERATOR_DELEGATION_DOCTRINE);
     });
 
     it('missão sem delegação (execução direta, pergunta aos panes), worker e operador sem missão: nada', async () => {

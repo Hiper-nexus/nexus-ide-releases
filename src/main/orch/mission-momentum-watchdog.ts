@@ -46,6 +46,14 @@ export function decideMomentumNudge(input: {
   readonly readOnly?: boolean;
   readonly backlogKey?: string;
   readonly lastBacklogKey?: string | null;
+  /**
+   * Bug7: missão livre/adotada (freeAgentChoice) sem plano selado — os
+   * pedidos vivem no chat e nunca viram `suite.tasks`, então o backlog
+   * confirmado é sempre vazio. Só com esta flag o vazio confirmado cai no
+   * empurrão solo de 20 min; sem ela, vazio continua silêncio (nada de
+   * inventar trabalho para missão selada/plano).
+   */
+  readonly soloNudgeWhenNoBacklog?: boolean;
 }): MomentumDecision {
   if (input.missionStatus !== 'running') return { action: 'none' };
   if (input.lane === 'plan' || input.lane === 'consult')
@@ -57,6 +65,19 @@ export function decideMomentumNudge(input: {
     input.readOnly === true
   )
     return { action: 'none' };
+  const legacySoloNudge = (): MomentumDecision => {
+    if (input.workerPanes > 0) return { action: 'none' };
+    if (input.soloSinceMs === null) return { action: 'none' };
+    const soloForMs = input.now - input.soloSinceMs;
+    if (soloForMs < MOMENTUM_SOLO_MS) return { action: 'none' };
+    if (
+      input.lastNudgeAtMs !== null &&
+      input.now - input.lastNudgeAtMs < MOMENTUM_REPEAT_MS
+    ) {
+      return { action: 'none' };
+    }
+    return { action: 'nudge', soloForMs };
+  };
   if (input.readyTaskIds !== undefined) {
     const max = input.maxWorkers;
     if (
@@ -70,13 +91,17 @@ export function decideMomentumNudge(input: {
       input.availableSlots ?? 0,
       max - input.workerPanes,
     );
-    if (
-      !Number.isSafeInteger(availableSlots) ||
-      availableSlots <= 0 ||
-      input.readyTaskIds.length === 0 ||
-      input.readySinceMs == null
-    )
+    if (!Number.isSafeInteger(availableSlots) || availableSlots <= 0)
       return { action: 'none' };
+    // Bug7: vazio confirmado só vira empurrão solo para a missão livre/
+    // adotada (flag do supervisor), herdando as cercas acima e as do ramo
+    // legado (zero workers, 20 min, repetição de 1 h).
+    if (input.readyTaskIds.length === 0) {
+      return input.soloNudgeWhenNoBacklog === true
+        ? legacySoloNudge()
+        : { action: 'none' };
+    }
+    if (input.readySinceMs == null) return { action: 'none' };
     const readyForMs = input.now - input.readySinceMs;
     if (readyForMs < MOMENTUM_READY_MS) return { action: 'none' };
     const changed = Boolean(
@@ -99,17 +124,7 @@ export function decideMomentumNudge(input: {
       backlogKey: input.backlogKey,
     };
   }
-  if (input.workerPanes > 0) return { action: 'none' };
-  if (input.soloSinceMs === null) return { action: 'none' };
-  const soloForMs = input.now - input.soloSinceMs;
-  if (soloForMs < MOMENTUM_SOLO_MS) return { action: 'none' };
-  if (
-    input.lastNudgeAtMs !== null &&
-    input.now - input.lastNudgeAtMs < MOMENTUM_REPEAT_MS
-  ) {
-    return { action: 'none' };
-  }
-  return { action: 'nudge', soloForMs };
+  return legacySoloNudge();
 }
 
 export function momentumNudgeSummary(

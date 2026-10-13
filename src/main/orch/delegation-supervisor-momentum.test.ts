@@ -355,6 +355,37 @@ describe('real supervisor momentum queue', () => {
     expect(h.delivered).not.toHaveBeenCalled();
   });
 
+  // Bug7 (B), justificativa do escopo: registrar cada pedido de chat como
+  // suite.task foi rejeitado por invasivo — `tasks.list(mission).length`
+  // alimenta sealedCount/taskCount (intent state, recovery stage, quadro de
+  // entregas) e o backlog selado filtra tasks avulsas de qualquer jeito.
+  // Em vez disso, só a missão livre/adotada (freeAgentChoice, sem plano
+  // selado) com ZERO workers volta ao empurrão solo de 20 min do F-714;
+  // missão não-livre sem trabalho registrado continua em silêncio, e com
+  // worker (mesmo idle) o teste seguinte segue valendo sem alteração.
+  it('Bug7: adopted free mission, no registered tasks, zero workers: solo nudge after 20 min', async () => {
+    const c = setup();
+    h.panes = h.panes.slice(0, 1);
+    await c.scan(0);
+    await c.scan(19 * 60_000);
+    expect(c.notices()).toHaveLength(0);
+    await c.scan(20 * 60_000);
+    expect(c.notices()).toHaveLength(1);
+    expect(c.notices()[0].summary).toContain('Esteira parada');
+    expect(c.notices()[0].summary).toContain('20 min');
+    expect(c.notices()[0].summary).not.toContain('tarefas registradas prontas');
+    await c.scan(21 * 60_000);
+    expect(c.notices()).toHaveLength(1);
+  });
+
+  it('Bug7: non-free mission without registered work stays quiet even solo for an hour', async () => {
+    const c = setup({ free: false });
+    h.panes = h.panes.slice(0, 1);
+    await c.scan(0);
+    await c.scan(3600000);
+    expect(c.notices()).toHaveLength(0);
+  });
+
   it('no registered work or only unmet dependencies never creates a made-up directive', async () => {
     const c = setup();
     await c.scan(0);

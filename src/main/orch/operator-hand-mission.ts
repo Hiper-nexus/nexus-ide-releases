@@ -6,6 +6,7 @@ import {
   type MissionLane,
 } from '../../shared/mission-intent';
 import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
+import { MAESTRO_STANDING_DOCTRINE } from './orchestrator-doctrine';
 
 /**
  * Única categoria que a mão do operador aceita derivar do texto: `ops` quando o
@@ -70,12 +71,21 @@ export function operatorHandMissionContract(
  * A linha que o pane recém-promovido recebe: sem ela o Quadro mostra uma
  * missão em andamento cujo orquestrador não sabe que lidera. Uma linha só,
  * colada como qualquer briefing; falhar em avisar nunca desfaz a promoção.
+ *
+ * Bug7: o pane nasceu `user` e o `initialize` do MCP já entregou a doutrina
+ * do operador ("tarefa pequena: faça você"); a promoção só mutava o ctx em
+ * memória e a doutrina do Maestro nunca chegava. O aviso carrega a doutrina
+ * permanente inteira (achatada numa linha, como o resto do aviso); o hook
+ * a reentrega a cada 30 min para o promovido (hook-delegate-endpoint).
  */
 export function tabMissionLeaderNotice(missionTitle: string): string {
   const title = missionTitle.replace(/\s+/g, ' ').trim().slice(0, 120) || 'Missão da aba';
   return (
     `[Nexus] Você agora orquestra a ${title}. Helpers que abrir com ` +
-    'nexus_pane_spawn entram nela e as entregas deles chegam aqui. ' + TAB_COMPLETION_INSTRUCTION
+    'nexus_pane_spawn entram nela e as entregas deles chegam aqui. ' +
+    'A doutrina do pane do operador não vale mais aqui; vale esta: ' +
+    MAESTRO_STANDING_DOCTRINE.replace(/\n/gu, ' ') +
+    ' ' + TAB_COMPLETION_INSTRUCTION
   );
 }
 

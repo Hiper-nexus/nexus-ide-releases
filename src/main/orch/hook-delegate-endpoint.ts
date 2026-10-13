@@ -133,7 +133,9 @@ export const BROWSER_TOOL_HINT =
 /**
  * Lembrete do Maestro (F-701) no prompt, a cada 30 min por sessão. A doutrina
  * inteira já está nas instructions do MCP; o Codex, que não as recebe, ganha
- * a doutrina no lugar deste lembrete.
+ * a doutrina no lugar deste lembrete. Bug7: o promovido da mão do operador
+ * também nunca a recebeu pelo MCP (o initialize foi como `user`), então
+ * também ganha a doutrina inteira aqui — ver maestroContextFor.
  */
 export const MAESTRO_TURN_REMINDER =
   '[Nexus] Maestro: o trabalho da missão vai para workers (nexus_pane_spawn, ' +
@@ -452,7 +454,13 @@ function maestroContextFor(
   const doctrine = doctrineFor(ctx);
   if (!doctrine) return null;
   markReminded(maestroRemindedAt, ctx.sessionId, now);
-  const text = providerReceivesContextOnlyByHook(ctx.providerId) ? doctrine : MAESTRO_TURN_REMINDER;
+  // Bug7: promovido de `user` nunca recebeu a doutrina pelas instructions do
+  // MCP (initialize único, antes da promoção) — recebe a inteira pelo hook,
+  // como Codex/Kimi, e não o lembrete que pressupõe esse canal.
+  const text =
+    ctx.promotedFromUserSession === true || providerReceivesContextOnlyByHook(ctx.providerId)
+      ? doctrine
+      : MAESTRO_TURN_REMINDER;
   // F-784: o lembrete manda abrir workers; com a máquina no teto seguro ele
   // diz o contrário, com o número.
   const budget = budgetOf();
@@ -773,8 +781,11 @@ export async function handleHookDelegateRequest(
     const advice = await advicePromise;
     // O Codex não recebe a doutrina pelas instructions do MCP (ele as repete
     // em cada tool) e o Kimi nem as lê; ela chega aqui, uma vez por sessão a
-    // cada 30 min.
+    // cada 30 min. Bug7: depois da promoção a Maestro, reentregar a doutrina
+    // do operador ("tarefa pequena: faça você") contradiz a do Maestro
+    // entregue acima — o promovido fica só com a do Maestro.
     if (
+      ctx.promotedFromUserSession !== true &&
       providerReceivesContextOnlyByHook(ctx.providerId) &&
       ctx.sessionId &&
       !remindedRecently(doctrineDeliveredAt, ctx.sessionId, now)

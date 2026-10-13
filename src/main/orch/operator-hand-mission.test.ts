@@ -6,6 +6,7 @@ import {
   operatorHandMissionLane,
   tabMissionLeaderNotice,
 } from './operator-hand-mission';
+import { MAESTRO_STANDING_DOCTRINE } from './orchestrator-doctrine';
 
 describe('aviso ao pane promovido a orquestrador da aba', () => {
   it('cola uma linha só dizendo qual missão ele orquestra', async () => {
@@ -13,6 +14,17 @@ describe('aviso ao pane promovido a orquestrador da aba', () => {
     expect(await announceTabMissionLeader('pty-b', 'Missão · Login', inject)).toBe(true);
     expect(inject).toHaveBeenCalledWith('pty-b', expect.stringContaining('Você agora orquestra a Missão · Login'));
     expect(tabMissionLeaderNotice('Missão\n· Login')).not.toContain('\n');
+  });
+
+  // Bug7 (A): o pane nasceu `user` e o initialize do MCP já entregou a
+  // doutrina do operador ("tarefa pequena: faça você"); a promoção nunca
+  // reenviava a do Maestro. O aviso carrega a doutrina permanente inteira.
+  it('Bug7: o aviso ao promovido carrega a doutrina permanente do Maestro (delegue, não faça você)', () => {
+    const notice = tabMissionLeaderNotice('Missão · Login');
+    expect(notice).toContain(MAESTRO_STANDING_DOCTRINE.replace(/\n/gu, ' '));
+    expect(notice).toContain('todo trabalho do objetivo');
+    expect(notice).toContain('Não implemente nem revise você mesmo');
+    expect(notice).not.toContain('\n');
   });
 
   it('falhar em avisar não derruba nada', async () => {

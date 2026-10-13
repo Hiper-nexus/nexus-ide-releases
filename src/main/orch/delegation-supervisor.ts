@@ -91,6 +91,7 @@ import {
 } from './zero-delivery-watchdog';
 import { flushAllNexusTaskFailClosedRetries } from './nexus-task-fail-closed-recovery';
 import { decideMomentumNudge, momentumNudgeSummary, momentumReadyBacklog } from './mission-momentum-watchdog';
+import { getContextBySession } from './gate';
 import { judgeMissionMomentum, momentumNudgeFromJudgment } from './jev-mission-momentum';
 import {
   getAgentLastTurnEnd,
@@ -1763,10 +1764,22 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
       const remembered = momentumNudgedAt.get(key);
       const lastNotice = remembered && (!persisted || remembered.at >= persisted.createdAt)
         ? remembered : persisted ? { at: persisted.createdAt, backlogKey: persisted.summary.match(/\[momentum-ready:([a-f0-9]{64})\]/u)?.[1] } : null;
+      // Bug7: missão livre/adotada não ganha suite.tasks dos pedidos de
+      // chat, então o backlog confirmado é sempre [] e o ramo solo do
+      // F-714 nunca disparava. Registrar cada pedido como task mexeria em
+      // sealedCount/taskCount (intent state, recovery, quadro) — em vez
+      // disso, só livre/promovida com zero workers cai no solo de 20 min.
+      const leaderCtx = leader?.sessionId ? getContextBySession(leader.sessionId) : undefined;
+      const soloNudgeWhenNoBacklog =
+        mission.intentContract?.freeAgentChoice === true ||
+        (leaderCtx?.promotedFromUserSession === true &&
+          leaderCtx.role === 'orchestrator' &&
+          leaderCtx.missionId === mission.id);
       const momentum = decideMomentumNudge({
         missionStatus: mission.status, lane: lane ?? null, maxWorkers: cap,
         workerPanes: workerPaneCount, orchestratorAlive, dispatchAuthorized: authorized,
         readOnly: leader?.readOnly === true, readyTaskIds, availableSlots, usefulWorkingWorkers,
+        soloNudgeWhenNoBacklog,
         readySinceMs: momentumReadySince.get(key) ?? null,
         soloSinceMs: momentumSoloSince.get(key) ?? null,
         lastNudgeAtMs: lastNotice?.at ?? null, backlogKey, lastBacklogKey: lastNotice?.backlogKey,
