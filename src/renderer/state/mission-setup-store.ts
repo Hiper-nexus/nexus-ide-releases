@@ -788,7 +788,20 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
     },
 
     setRoster: (roster) => {
-      const parsed = strictRosterSchema.safeParse(roster);
+      // Autoridade de documento de plano (ownsPlanDocs) é main-owned e o
+      // rascunho nunca a porta. Squads salvos legítimos a carregam
+      // (builtins de plano e suas cópias de usuário), então a fronteira do
+      // rascunho a REBAIXA em vez de recusar o roster inteiro: remover o
+      // campo não concede nada, e toda ponte squad→rascunho (Configurações,
+      // voz) fica coberta. O schema persistido continua recusando o campo.
+      const downgraded = Array.isArray(roster)
+        ? roster.map((agent) => {
+            if (!agent || typeof agent !== 'object') return agent;
+            const { ownsPlanDocs: _planAuthority, ...member } = agent;
+            return member;
+          })
+        : roster;
+      const parsed = strictRosterSchema.safeParse(downgraded);
       if (!parsed.success) return false;
       const lane = get().draft.advanced.lane;
       const nextRoster = parsed.data.map((agent) =>

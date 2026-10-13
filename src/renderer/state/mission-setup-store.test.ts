@@ -492,6 +492,29 @@ describe('mission setup draft store', () => {
     }
   });
 
+  it('downgrades planning authority instead of refusing a saved squad roster', () => {
+    const store = useMissionSetupStore.getState();
+    store.setWorkspace('/projects/alpha');
+
+    const accepted = store.setRoster([
+      { ...coordinator, ownsPlanDocs: true },
+      { ...implementer, ownsPlanDocs: false },
+    ]);
+
+    expect(accepted).toBe(true);
+    const roster = useMissionSetupStore.getState().draft.roster;
+    expect(roster.map((agent) => agent.id)).toEqual([
+      coordinator.id,
+      implementer.id,
+    ]);
+    expect(roster.every((agent) => agent.ownsPlanDocs === undefined)).toBe(true);
+    // O rascunho persistido também nunca carrega a autoridade.
+    const persisted = localStorage.getItem(
+      missionSetupStorageKey('/projects/alpha'),
+    );
+    expect(persisted).not.toContain('ownsPlanDocs');
+  });
+
   it('copies roster members and nested scopes on every write', () => {
     const store = useMissionSetupStore.getState();
     store.setWorkspace('/projects/alpha');

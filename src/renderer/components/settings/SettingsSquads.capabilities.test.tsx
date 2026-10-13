@@ -268,6 +268,28 @@ describe('Settings → Squads retained management capability', () => {
     expect(squadMocks.saveSquad).not.toHaveBeenCalled();
   });
 
+  it('opens a squad whose members carry planning authority by downgrading it at the draft boundary', async () => {
+    // Builtin plan squads (e suas cópias de usuário via "Personalizar")
+    // carregam ownsPlanDocs — autoridade que o rascunho nunca pode portar.
+    // Abrir esse squad não pode virar erro sem saída: o editor nem expõe o
+    // campo para removê-lo.
+    const saved = squad('plan-copy', 'Execução de Plano (cópia)');
+    saved.agents[0] = { ...saved.agents[0], ownsPlanDocs: true };
+    saved.agents.push(
+      { ...saved.agents[0], id: 'executor', agentName: 'Implementador', category: 'executor', ownsPlanDocs: undefined },
+      { ...saved.agents[0], id: 'reviewer', agentName: 'Revisor', category: 'reviewer', ownsPlanDocs: true },
+    );
+    useOrchStore.setState({ squads: [saved] });
+    const host = renderSquads();
+    await settle();
+    act(() => requiredButton(host, /Usar integrantes/i).click());
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'mission-setup' });
+    const roster = useMissionSetupStore.getState().draft.roster;
+    expect(roster.map((agent) => agent.id)).toEqual(saved.agents.map((agent) => agent.id));
+    expect(roster.every((agent) => agent.ownsPlanDocs === undefined)).toBe(true);
+    expect(announcementText(host)).not.toMatch(/não foi possível aplicar/i);
+  });
+
   it('preserves an older team without a reviewer and opens the team step for correction', async () => {
     const saved = squad('old-members', 'Equipe antiga');
     saved.agents.push({ ...saved.agents[0], id: 'executor', agentName: 'Implementador', category: 'executor' });
