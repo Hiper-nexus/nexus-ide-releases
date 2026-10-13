@@ -68,6 +68,18 @@ export function isMissionCodeCompletionProof(proof: AutomaticCompletionProof, sc
     proof.candidateFingerprint === certification.fingerprint;
 }
 
+/**
+ * F-1428: every path a snapshot accounted for (read, declared unread or absent),
+ * minus deletions. A recapture bound to these paths cuts the same candidate.
+ */
+export function candidateRecapturePaths(
+  candidate: Pick<WorkingTreeCandidateSnapshot, 'changedPaths' | 'deletedPaths' | 'coveredPaths' | 'unreadPaths' | 'absentPaths'>,
+): string[] {
+  const deleted = new Set(candidate.deletedPaths);
+  return [...new Set([...(candidate.coveredPaths ?? candidate.changedPaths), ...(candidate.unreadPaths ?? []),
+    ...(candidate.absentPaths ?? [])])].filter(file => !deleted.has(file));
+}
+
 function docsOnly(paths: readonly string[]): boolean {
   return paths.every(file => {
     if (/(?:^|\/)(?:CMakeLists\.txt|requirements(?:[._-][^/]*)?\.txt)$/i.test(file)) return false;
@@ -83,6 +95,17 @@ function staleNote(candidate: WorkingTreeCandidateSnapshot): string {
   if (stale.length === 0) return '';
   const shown = stale.slice(0, 20);
   return `Fora do candidato e não revisados (não rastreados anteriores à base): ${shown.join(', ')}${stale.length > shown.length ? ` (+${stale.length - shown.length})` : ''}.`;
+}
+
+/** F-1428: a release-sized candidate is certified with its declared read limit; name what was left out. */
+function limitNote(candidate: WorkingTreeCandidateSnapshot): string {
+  const named = (paths: readonly string[]) => `${paths.slice(0, 20).join(', ')}${paths.length > 20 ? ` (+${paths.length - 20})` : ''}`;
+  const unread = candidate.unreadPaths ?? [];
+  const absent = candidate.absentPaths ?? [];
+  return [
+    unread.length ? `Limite declarado da leitura (8 MiB): ${unread.length} arquivo(s) sem leitura de conteúdo pelo Nexus, presos à impressão digital por metadados: ${named(unread)}.` : '',
+    absent.length ? `Ausentes no checkout (apagados/renomeados), sem conteúdo a ler: ${named(absent)}.` : '',
+  ].filter(Boolean).join('\n');
 }
 
 /** Stateless: the caller reuses the existing mission completion flight/retry owner. */
@@ -125,7 +148,7 @@ export async function ensureMissionCodeCompletion(input: MissionCodeCompletionIn
   // No diff is not proof of a fulfilled coding request. Existing code claimed
   // as the product must be reviewed too; a README cannot hide that artifact.
   if (coverage === 'delta' && reviewPaths.length > 0 && docsOnly(reviewPaths)) {
-    return certify('non-code', candidate, undefined, [], ['Candidato documental sem entrega de código.', staleNote(candidate)].filter(Boolean).join('\n'));
+    return certify('non-code', candidate, undefined, [], ['Candidato documental sem entrega de código.', staleNote(candidate), limitNote(candidate)].filter(Boolean).join('\n'));
   }
   const work: MissionCodeCandidate = { scope, executionScope, mission, baseSha: input.baselineSha, coverage, candidate,
     ...(untrackedSince !== undefined ? { untrackedSince } : {}) };
@@ -167,6 +190,7 @@ export async function ensureMissionCodeCompletion(input: MissionCodeCompletionIn
     coverage === 'current-state' ? 'Base histórica desconhecida: revisão do estado atual, sem atribuir autoria das alterações ou do WIP à missão.' : '',
     coverage === 'delta' ? 'A base delimita o candidato; ela não comprova autoria do WIP preexistente.' : '',
     staleNote(fresh),
+    limitNote(fresh),
   ].filter(Boolean).join('\n');
   return certify('code', fresh, verdict.reviewerSession, [mechanical.evidenceId, verdict.verdictId], note);
 }

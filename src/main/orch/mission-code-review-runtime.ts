@@ -3,7 +3,7 @@ import { missionIntentAuthoritySnapshot } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { WorkingTreeCandidateSnapshot } from '../context/candidate-working-tree-snapshot';
 import { missionLifecycleKey } from './mission-lifecycle-lock';
-import type { MissionCodeCandidate, MissionCodeReviewResult } from './mission-code-completion';
+import { candidateRecapturePaths, type MissionCodeCandidate, type MissionCodeReviewResult } from './mission-code-completion';
 
 export interface CodeReviewerSeat { readonly adapterId: string; readonly model: string; readonly effort?: string;
   readonly agentName?: string; readonly allowedTools?: readonly string[] | null; readonly allowedSkills?: readonly string[] | null }
@@ -123,7 +123,7 @@ export class MissionCodeReviewRuntime {
         ...(input.untrackedSince !== undefined ? { untrackedSince: input.untrackedSince } : {}),
         intentVersion: input.mission.intentVersion ?? 0, fingerprint: input.candidate.fingerprint,
         headSha: input.candidate.headSha, missionSignature: codeReviewMissionSignature(input.mission),
-        requiredPaths: Object.freeze([...(input.candidate.coveredPaths ?? input.candidate.changedPaths).filter(file => !input.candidate.deletedPaths.includes(file))]) }) };
+        requiredPaths: Object.freeze(candidateRecapturePaths(input.candidate)) }) };
       this.#tickets.set(key, ticket);
     }
     if (!this.#current(ticket)) { await this.#retire(key, ticket); return { kind: 'unavailable', reason: 'A autoridade da missão mudou antes da revisão.' }; }

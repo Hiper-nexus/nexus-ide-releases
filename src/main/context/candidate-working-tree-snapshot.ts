@@ -37,6 +37,14 @@ export interface WorkingTreeCandidateSnapshot {
   readonly excludedPaths?: readonly string[];
   /** F-1301: untracked files untouched since the baseline; outside the delta and NOT reviewed. */
   readonly staleUntrackedPaths?: readonly string[];
+  /**
+   * F-1428: safe regular files beyond the declared content budget. Their bytes
+   * were NOT read; size/mtime/ctime/inode keep them in the fingerprint, so a
+   * later edit still changes the candidate. Declared, never hidden.
+   */
+  readonly unreadPaths?: readonly string[];
+  /** F-1428: listed paths absent from the checkout (deleted/renamed after listing or claim); nothing to read. */
+  readonly absentPaths?: readonly string[];
 }
 
 function abortIfNeeded(signal?: AbortSignal): void {
@@ -231,10 +239,12 @@ async function gitInventory(base: string, run: CandidateGitRead, currentState = 
 
 /** Claimed deliverables outside the inspected inventory cannot inherit its proof. */
 export function candidateCoverageReasons(
-  candidate: Pick<WorkingTreeCandidateSnapshot, 'changedPaths' | 'deletedPaths' | 'coveredPaths'>,
+  candidate: Pick<WorkingTreeCandidateSnapshot, 'changedPaths' | 'deletedPaths' | 'coveredPaths' | 'unreadPaths' | 'absentPaths'>,
   requiredPaths: readonly string[],
 ): readonly string[] {
-  const covered = new Set([...(candidate.coveredPaths ?? candidate.changedPaths), ...candidate.deletedPaths]);
+  // F-1428: a declared unread/absent path is accounted for, not silently missing.
+  const covered = new Set([...(candidate.coveredPaths ?? candidate.changedPaths), ...candidate.deletedPaths,
+    ...(candidate.unreadPaths ?? []), ...(candidate.absentPaths ?? [])]);
   const reasons = requiredPaths.length > MAX_CANDIDATE_FILES ? ['required candidate path limit reached'] : [];
   for (const file of requiredPaths.slice(0, MAX_CANDIDATE_FILES)) {
     if (!isSafeCandidatePath(file) || !covered.has(file)) reasons.push(`delivered candidate path was not inspected: ${JSON.stringify(file)}`);
@@ -242,23 +252,59 @@ export function candidateCoverageReasons(
   return reasons;
 }
 
+function errorCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code) : undefined;
+}
+
+/** The nearest existing ancestor must be a physical directory inside the checkout (no symlinked parent). */
+async function physicalAncestorInside(root: string, absolute: string): Promise<boolean> {
+  for (let directory = path.dirname(absolute); directory.startsWith(root); directory = path.dirname(directory)) {
+    try { return await fs.promises.realpath(directory) === directory; }
+    catch (error) { if (!['ENOENT', 'ENOTDIR'].includes(errorCode(error) ?? '')) return false; }
+    if (directory === root) return false;
+  }
+  return false;
+}
+
+/**
+ * F-1428: only bounded bytes are read, but every listed path is accounted for.
+ * Beyond the content budget a safe regular file is declared unread and kept in
+ * the fingerprint by metadata; an absent path is declared absent. Unsafe paths
+ * (symlinks, hardlinks, special files, parents leaving the checkout, secret
+ * names) still fail closed through `readCandidateFile`.
+ */
 async function fingerprintFiles(scope: ProjectExecutionScope, inventory: CandidateInventory, signal?: AbortSignal) {
   // Hash current bytes too: Git attributes/filters may normalize away a meaningful edit.
   const files: Array<{ path: string; hash: string; size: number }> = [];
+  const unread: Array<{ path: string; size: number; mtimeMs: number; ctimeMs: number; ino: number }> = [];
+  const absent: string[] = [];
   const reasons: string[] = [];
   let bytes = 0;
+  let visited = 0;
   for (const file of inventory.changedPaths.filter((value) => !inventory.deletedPaths.includes(value))) {
     abortIfNeeded(signal);
+    if (++visited % 32 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+    const absolute = path.join(scope.rootRealPath, file);
+    let stat: fs.Stats | null = null;
+    try { stat = await fs.promises.lstat(absolute); }
+    catch (error) {
+      if (['ENOENT', 'ENOTDIR'].includes(errorCode(error) ?? '') && isSafeCandidatePath(file) && inCandidateScope(file) &&
+        await physicalAncestorInside(scope.rootRealPath, absolute)) { absent.push(file); continue; }
+    }
+    if (stat && stat.size > MAX_CANDIDATE_BYTES - bytes && stat.isFile() && stat.nlink === 1 &&
+      isSafeCandidatePath(file) && inCandidateScope(file) && await physicalAncestorInside(scope.rootRealPath, absolute)) {
+      unread.push({ path: file, size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, ino: stat.ino });
+      continue;
+    }
     try {
       const content = readCandidateFile(scope, file, MAX_CANDIDATE_BYTES - bytes);
       bytes += content.length;
       files.push({ path: file, hash: sha256(content), size: content.length });
     } catch {
-      reasons.push(`candidate file unavailable or outside limits: ${file}`);
+      reasons.push(`candidate file not readable under the safety policy: ${file}`);
     }
-    if (files.length % 32 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
   }
-  return { files, reasons };
+  return { files, unread, absent, reasons };
 }
 
 /** Read-only fingerprint. Never stages files or writes objects/index; no Git is required for a new project. */
@@ -308,9 +354,11 @@ export async function captureWorkingTreeCandidate(input: {
   // Required artifacts can be unchanged since baseline. Hash them without
   // inventing a Git delta; their coverage is recorded separately below.
   const readTargets = candidatePaths([...inventory.changedPaths, ...admittedRequired]);
-  const { files, reasons } = await fingerprintFiles(input.scope, { ...inventory, changedPaths: readTargets.paths }, input.signal);
+  const { files, unread, absent, reasons } = await fingerprintFiles(input.scope, { ...inventory, changedPaths: readTargets.paths }, input.signal);
   reasons.push(...required.reasons, ...readTargets.reasons);
   const coveredPaths = Object.freeze(files.map(file => file.path));
+  const unreadPaths = Object.freeze(unread.map(file => file.path));
+  const absentPaths = Object.freeze([...absent]);
   if (headSha) {
     try {
       if ((await run(['rev-parse', '--verify', 'HEAD^{commit}'])).trim() !== headSha) {
@@ -321,13 +369,18 @@ export async function captureWorkingTreeCandidate(input: {
       reasons.push('candidate HEAD could not be revalidated');
     }
   }
-  const incompleteReasons = Object.freeze([...new Set([...inventory.incompleteReasons, ...reasons, ...candidateCoverageReasons({ ...inventory, coveredPaths }, input.requiredPaths ?? [])])]);
+  const incompleteReasons = Object.freeze([...new Set([...inventory.incompleteReasons, ...reasons,
+    ...candidateCoverageReasons({ ...inventory, coveredPaths, unreadPaths, absentPaths }, input.requiredPaths ?? [])])]);
   const { diff, changedPaths, deletedPaths, untrackedPaths } = inventory;
   return Object.freeze({
     source: headSha ? 'git' : 'filesystem', headSha,
-    fingerprint: sha256(canonicalJson({ headSha, diffHash: sha256(diff), changedPaths, deletedPaths, files })),
+    // Unchanged shape when nothing was left out, so existing fingerprints stay stable.
+    fingerprint: sha256(canonicalJson({ headSha, diffHash: sha256(diff), changedPaths, deletedPaths, files,
+      ...(unread.length > 0 ? { unread } : {}), ...(absent.length > 0 ? { absent } : {}) })),
     changedPaths: Object.freeze(changedPaths), deletedPaths: Object.freeze(deletedPaths),
     untrackedPaths: Object.freeze(untrackedPaths), diff, coveredPaths,
+    ...(unreadPaths.length > 0 ? { unreadPaths } : {}),
+    ...(absentPaths.length > 0 ? { absentPaths } : {}),
     complete: incompleteReasons.length === 0, incompleteReasons, excludedPaths: Object.freeze(inventory.excludedPaths ?? []),
     // A declared deliverable read above is covered, not "outside the candidate".
     ...(inventory.staleUntrackedPaths?.some(file => !coveredPaths.includes(file))

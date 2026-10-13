@@ -263,9 +263,12 @@ describe('F-1301: foreign untracked WIP that predates the mission baseline', () 
     await settle();
     fs.writeFileSync(path.join(root, 'mission.ts'), 'export const mine = 1;\n');
 
+    // F-1428: sem o recorte por data o vídeo entra no delta, mas o teto de 8 MiB
+    // é limite declarado (metadados na impressão digital), não bloqueio.
     const blind = await captureWorkingTreeCandidate({ scope, baseSha });
-    expect(blind.complete).toBe(false);
-    expect(blind.incompleteReasons.join('\n')).toContain('video-presentation/nexus-presentation.mp4');
+    expect(blind.complete).toBe(true);
+    expect(blind.changedPaths).toContain('video-presentation/nexus-presentation.mp4');
+    expect(blind.unreadPaths).toEqual(['video-presentation/nexus-presentation.mp4']);
 
     const delta = await captureWorkingTreeCandidate({ scope, baseSha, untrackedSince: since });
     expect(delta.complete).toBe(true);
@@ -282,8 +285,10 @@ describe('F-1301: foreign untracked WIP that predates the mission baseline', () 
     // Coberto não é "fora do candidato".
     expect(required.staleUntrackedPaths).toEqual(['video-presentation/nexus-presentation.mp4']);
 
-    // Sem base explícita o recorte por data não vale.
-    expect((await captureWorkingTreeCandidate({ scope, untrackedSince: since })).complete).toBe(false);
+    // Sem base explícita o recorte por data não vale (o vídeo volta, declarado sem leitura).
+    const noBase = await captureWorkingTreeCandidate({ scope, untrackedSince: since });
+    expect(noBase.staleUntrackedPaths).toBeUndefined();
+    expect(noBase.unreadPaths).toEqual(['video-presentation/nexus-presentation.mp4']);
 
     // Tocado depois da base = volta ao delta (e muda a impressão digital).
     fs.appendFileSync(path.join(root, 'old-notes.ts'), 'export const edited = 2;\n');
@@ -294,7 +299,8 @@ describe('F-1301: foreign untracked WIP that predates the mission baseline', () 
     // Revisão do estado atual não aceita o recorte por data.
     const full = await captureWorkingTreeCandidate({ scope, mode: 'current-state', untrackedSince: since });
     expect(full.changedPaths).toContain('video-presentation/nexus-presentation.mp4');
-    expect(full.complete).toBe(false);
+    expect(full.staleUntrackedPaths).toBeUndefined();
+    expect(full.unreadPaths).toEqual(['video-presentation/nexus-presentation.mp4']);
   });
 
   it('an old symlink never leaves the delta by date', async () => {
@@ -358,5 +364,71 @@ describe('F-1301: foreign untracked WIP that predates the mission baseline', () 
     await ensureMissionCodeCompletion({ scope, executionScope: scope, mission, baselineSha: null,
       baselineObservedAt: 1_234, authorSessionIds: [] }, ports);
     expect(capture.mock.calls[1]![0].untrackedSince).toBeUndefined();
+  });
+});
+
+describe('F-1428: a release-sized candidate declares its read limit instead of blocking completion', () => {
+  const MiB = 1024 * 1024;
+
+  it('reads up to the content budget, declares the rest by metadata and stays complete', async () => {
+    const { root, scope, run } = fixture(true);
+    const baseSha = run('rev-parse', 'HEAD');
+    // Campo 13/10 (mission-94d90f5b): release com centenas de arquivos estourava
+    // o orçamento de 8 MiB e cada arquivo seguinte virava "outside limits".
+    fs.mkdirSync(path.join(root, 'release'));
+    for (const name of ['a.ts', 'b.ts', 'c.ts']) fs.writeFileSync(path.join(root, 'release', name), Buffer.alloc(3 * MiB, 0x61));
+    const snapshot = await captureWorkingTreeCandidate({ scope, baseSha });
+    expect(snapshot.incompleteReasons).toEqual([]);
+    expect(snapshot.complete).toBe(true);
+    expect(snapshot.coveredPaths).toEqual(['release/a.ts', 'release/b.ts']);
+    expect(snapshot.unreadPaths).toEqual(['release/c.ts']);
+    expect(snapshot.changedPaths).toContain('release/c.ts');
+    // O arquivo fora da leitura continua na impressão digital (metadados).
+    expect((await captureWorkingTreeCandidate({ scope, baseSha })).fingerprint).toBe(snapshot.fingerprint);
+    fs.appendFileSync(path.join(root, 'release', 'c.ts'), 'x');
+    expect((await captureWorkingTreeCandidate({ scope, baseSha })).fingerprint).not.toBe(snapshot.fingerprint);
+  });
+
+  it('a deliverable deleted or renamed after the handoff is declared absent, never a blocking read failure', async () => {
+    const { root, scope, run } = fixture(true);
+    const baseSha = run('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(root, 'renamed.ts'), 'export const value = 2;\n');
+    const snapshot = await captureWorkingTreeCandidate({ scope, baseSha, requiredPaths: ['old-name.ts', 'renamed.ts'] });
+    expect(snapshot.incompleteReasons).toEqual([]);
+    expect(snapshot.complete).toBe(true);
+    expect(snapshot.absentPaths).toEqual(['old-name.ts']);
+    expect(snapshot.coveredPaths).toContain('renamed.ts');
+    // Recaptura com o mesmo conjunto (como o juiz faz) corta o mesmo candidato.
+    const again = await captureWorkingTreeCandidate({ scope, baseSha, requiredPaths: ['renamed.ts', 'old-name.ts'] });
+    expect(again.fingerprint).toBe(snapshot.fingerprint);
+  });
+
+  it('a file staged and then deleted from the checkout does not block a current-state review', async () => {
+    const { root, scope, run } = fixture(true);
+    fs.writeFileSync(path.join(root, 'staged.ts'), 'export const staged = 1;\n');
+    run('add', '--', 'staged.ts');
+    fs.unlinkSync(path.join(root, 'staged.ts'));
+    const snapshot = await captureWorkingTreeCandidate({ scope, mode: 'current-state' });
+    expect(snapshot.incompleteReasons).toEqual([]);
+    expect(snapshot.complete).toBe(true);
+    expect(snapshot.absentPaths).toEqual(['staged.ts']);
+  });
+
+  it('genuine safety still blocks past the budget: symlinks and paths that leave the checkout', async () => {
+    const { root, scope, run } = fixture(true);
+    const baseSha = run('rev-parse', 'HEAD');
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-candidate-outside-')));
+    roots.push(outside);
+    fs.writeFileSync(path.join(outside, 'secret.ts'), Buffer.alloc(MiB, 0x62));
+    fs.writeFileSync(path.join(root, 'a.ts'), Buffer.alloc(7 * MiB, 0x61));
+    fs.writeFileSync(path.join(root, 'b.ts'), Buffer.alloc(2 * MiB, 0x61));
+    fs.symlinkSync(path.join(outside, 'secret.ts'), path.join(root, 'c-link.ts'));
+    fs.symlinkSync(outside, path.join(root, 'd-outside'));
+    const snapshot = await captureWorkingTreeCandidate({ scope, baseSha, requiredPaths: ['d-outside/missing.ts'] });
+    expect(snapshot.complete).toBe(false);
+    expect(snapshot.unreadPaths).toEqual(['b.ts']);
+    expect(snapshot.incompleteReasons.some(reason => reason.includes('c-link.ts'))).toBe(true);
+    expect(snapshot.incompleteReasons.some(reason => reason.includes('d-outside/missing.ts'))).toBe(true);
+    expect(snapshot.absentPaths ?? []).not.toContain('d-outside/missing.ts');
   });
 });

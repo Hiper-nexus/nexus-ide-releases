@@ -251,3 +251,17 @@ it('admission timeout waits without blaming code or spending frontier review', a
   expect(await ensureMissionCodeCompletion(f.input, f.ports)).toMatchObject({ kind: 'waiting', code: 'code_checks_pending' });
   expect(f.ports.ensureIndependentReview).not.toHaveBeenCalled();
 });
+
+describe('F-1428: release-sized candidates', () => {
+  it('certifies with a declared read limit and names what was left out instead of refusing', async () => {
+    const f = fixture();
+    const sampled = { ...candidate(['src/app.ts', 'src/big.ts']), coveredPaths: ['src/app.ts'],
+      unreadPaths: ['src/big.ts'], absentPaths: ['src/old-name.ts'] } as WorkingTreeCandidateSnapshot;
+    f.ports.captureCandidate = vi.fn(async () => sampled);
+    const result = await ensureMissionCodeCompletion(f.input, f.ports);
+    expect(result.kind).toBe('verified');
+    const note = 'proof' in result ? result.proof.note ?? '' : '';
+    expect(note).toContain('src/big.ts');
+    expect(note).toContain('src/old-name.ts');
+  });
+});
