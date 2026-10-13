@@ -281,12 +281,15 @@ export function spreadPresentClisAcrossWriterRoles(
   const usedIds = new Set<string>();
 
   for (const cli of clis) {
-    const named = agents.find(
-      (agent) =>
-        agent.category !== 'orchestrator' &&
-        agent.cli === cli &&
-        !usedIds.has(agent.id),
-    );
+    const unusedOn = (agent: SquadAgent): boolean =>
+      agent.cli === cli && !usedIds.has(agent.id);
+    // F-1501: o escritor do roster nessa CLI (quem originou a oferta) senta
+    // primeiro, em qualquer ordem do roster; o revisor só pega o assento da
+    // CLI que nenhum escritor tem. Antes, um Revisor listado antes do
+    // Executor sentava e o Executor era remintado em outra CLI sem o modelo.
+    const named =
+      roles.find(unusedOn) ??
+      agents.find((agent) => agent.category !== 'orchestrator' && unusedOn(agent));
     if (!named) continue;
     seated.push(named);
     usedIds.add(named.id);
@@ -415,16 +418,22 @@ export function planFirstWaveSeats(input: {
   const isPresentCli = (cli: string): boolean =>
     canSeat(classify(syntheticWriter(cli, cli, `probe-${cli}`)));
 
-  const considerCli = (cli: string): boolean => {
+  // F-1501: a CLI do Maestro só fica de fora do assento EXTRA. Integrante do
+  // roster nessa CLI foi escolha do usuário: num squad todo Codex, descartá-lo
+  // remintava o Executor em outra CLI, sem o modelo escolhido.
+  const isMaestroExtra = (cli: string, fromRoster: boolean): boolean =>
+    !fromRoster && orchestratorCli !== '' && cli === orchestratorCli;
+
+  const considerCli = (cli: string, fromRoster: boolean): boolean => {
     if (!cli || blocked.has(cli)) return false;
-    if (orchestratorCli && cli === orchestratorCli) return false;
+    if (isMaestroExtra(cli, fromRoster)) return false;
     return isPresentCli(cli);
   };
 
   const skipped: string[] = [];
-  const recordUnauth = (cli: string): void => {
+  const recordUnauth = (cli: string, fromRoster: boolean): void => {
     if (!cli || blocked.has(cli)) return;
-    if (orchestratorCli && cli === orchestratorCli) return;
+    if (isMaestroExtra(cli, fromRoster)) return;
     if (isPresentCli(cli)) return;
     skipped.push(cli);
   };
@@ -433,16 +442,16 @@ export function planFirstWaveSeats(input: {
   if (input.extraPresentClis) {
     const ordered: string[] = [];
     const seen = new Set<string>();
-    const offer = (cli: string): void => {
+    const offer = (cli: string, fromRoster: boolean): void => {
       const id = cli.trim();
       if (!id || seen.has(id)) return;
-      recordUnauth(id);
-      if (!considerCli(id)) return;
+      recordUnauth(id, fromRoster);
+      if (!considerCli(id, fromRoster)) return;
       seen.add(id);
       ordered.push(id);
     };
-    for (const agent of allWriters) offer(agent.cli);
-    for (const cli of input.extraPresentClis) offer(cli);
+    for (const agent of allWriters) offer(agent.cli, true);
+    for (const cli of input.extraPresentClis) offer(cli, false);
     present = spreadPresentClisAcrossWriterRoles(input.agents, ordered);
   } else {
     present = filterPresentWriterAgents(input.agents, classify).filter(
@@ -450,7 +459,7 @@ export function planFirstWaveSeats(input: {
     );
     for (const agent of allWriters) {
       if (!present.some((row) => row.id === agent.id)) {
-        recordUnauth(agent.cli);
+        recordUnauth(agent.cli, true);
       }
     }
   }

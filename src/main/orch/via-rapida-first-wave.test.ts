@@ -498,6 +498,56 @@ describe('modelo do assento respeita a escolha do usuário (grok 4.6→4.5, 19/0
   });
 });
 
+describe('F-1501: CLI do Maestro no roster do usuário', () => {
+  const allCodex: SquadAgent[] = [
+    agent({ id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'codex', model: 'gpt-6.1-sol' }),
+    agent({ id: 'exec', agentName: 'Executor', category: 'executor', cli: 'codex', model: 'gpt-6.1-sol' }),
+    agent({ id: 'qa', agentName: 'Revisor', category: 'reviewer', cli: 'codex', model: 'gpt-6.1-sol' }),
+  ];
+
+  it('o integrante do roster na mesma CLI do Maestro senta com a CLI e o modelo escolhidos', () => {
+    const wave = planFirstWaveSeats({
+      storyCount: 3,
+      agents: allCodex,
+      extraPresentClis: ['codex', 'agy', 'grok'],
+      orchestratorCli: 'codex',
+      classifySeat: presentOf(new Set(['codex', 'agy', 'grok'])),
+    });
+
+    const executor = wave.seats.find((seat) => seat.agent.id === 'exec');
+    expect(executor?.agent.cli).toBe('codex');
+    expect(executor?.agent.model).toBe('gpt-6.1-sol');
+  });
+
+  it('o Executor senta na CLI e no modelo dele mesmo com o Revisor antes no roster', () => {
+    const reviewerFirst = [allCodex[0]!, allCodex[2]!, allCodex[1]!];
+    const wave = planFirstWaveSeats({
+      storyCount: 1,
+      agents: reviewerFirst,
+      extraPresentClis: ['codex', 'agy'],
+      orchestratorCli: 'codex',
+      classifySeat: presentOf(new Set(['codex', 'agy'])),
+    });
+
+    // A oferta da CLI veio do Executor (o escritor): ele senta, com o modelo.
+    expect(wave.presentWriters[0]).toMatchObject({ id: 'exec', cli: 'codex', model: 'gpt-6.1-sol' });
+    expect(wave.seats).toHaveLength(1);
+    expect(wave.seats[0]?.agent).toMatchObject({ id: 'exec', cli: 'codex', model: 'gpt-6.1-sol' });
+  });
+
+  it('a CLI do Maestro continua sem assento EXTRA fora do roster', () => {
+    const wave = planFirstWaveSeats({
+      storyCount: 6,
+      agents: fullstackRoster,
+      extraPresentClis: ['claude', 'codex', 'grok'],
+      orchestratorCli: 'claude',
+      classifySeat: presentOf(new Set(['claude', 'codex', 'grok'])),
+    });
+
+    expect(wave.seats.some((seat) => seat.agent.cli === 'claude')).toBe(false);
+  });
+});
+
 describe('planFirstWaveSeats — teto seguro da máquina (F-784)', () => {
   const present = new Set(['codex', 'grok', 'glm', 'kimi', 'opencode', 'aider']);
   const plan = (storyCount: number, maxNewSeats?: number) =>
