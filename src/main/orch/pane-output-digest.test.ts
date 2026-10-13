@@ -8,6 +8,7 @@ import {
   DIGEST_MAX_SIGNAL_LINES,
   DIGEST_TAIL_LINES,
   normalizeRedrawLine,
+  isSpinnerFrameLine,
   PANE_READ_MANY_MAX_PANES,
 } from './pane-output-digest';
 
@@ -284,6 +285,38 @@ describe('F-987: redesenho de TUI não estoura o digest', () => {
     const mixedTail = ['⠋ 5', '⠙ 6', '⏺ Task executed successfully'].join('\n');
     const mixedDigest = digestPaneTail(mixedTail);
     expect(mixedDigest.text).toBe('⏺ Task executed successfully');
+  });
+
+  it('F-1425: quadros reais de spinner (braille do Devin, glifos do Claude Code) marcam noReadableText spinner', () => {
+    for (const frame of ['⠤⠄', '⣀⡀', '⠋']) {
+      const devin = digestPaneTail([frame, frame].join('\n'));
+      expect(devin.text).toMatch(/sem texto/);
+      expect(devin.noReadableText).toBe('spinner');
+    }
+    const claude = digestPaneTail(
+      ['✽ ✻ ✶ ✳ ✢ ·', '✻ 12', '✶ 13', '✳ 14'].join('\n'),
+    );
+    expect(claude.text).toMatch(/sem texto/);
+    expect(claude.noReadableText).toBe('spinner');
+  });
+
+  it('F-1425: moldura estática sem letra nenhuma marca noReadableText static (não spinner)', () => {
+    const digest = digestPaneTail(['┌────┐', '│    │', '└────┘'].join('\n'));
+    expect(digest.noReadableText).toBe('static');
+  });
+
+  it('F-1425: texto legível no tail não marca noReadableText', () => {
+    const digest = digestPaneTail('⠤⠄\n⣀⡀\n⏺ resposta pronta\n fim');
+    expect(digest.noReadableText).toBeUndefined();
+  });
+
+  it('isSpinnerFrameLine: braille, glifos e contadores são moldura; resposta curta legível fica', () => {
+    for (const frame of ['⠤⠄', '⣀⡀', '⠋', '✽ ✻ ✶ ✳ ✢ ·', '⠋ 5', '', '   ']) {
+      expect(isSpinnerFrameLine(frame)).toBe(true);
+    }
+    for (const content of ['⏺ Task executed successfully', '42', 'ok', 'linha 1']) {
+      expect(isSpinnerFrameLine(content)).toBe(false);
+    }
   });
 });
 

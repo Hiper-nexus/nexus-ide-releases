@@ -25,7 +25,9 @@ const h = vi.hoisted(() => {
   };
 });
 
-vi.mock('./pane-registry', () => ({
+vi.mock('./pane-registry', async () => ({
+  // F-1425: o real — o teste de resposta de spinner ancora o diff nele.
+  newOutputSince: (await import('./pane-session-output')).newOutputSince,
   getPaneAuthzInfo: h.getPaneAuthzInfo,
   listLivePaneNumbers: h.listLivePaneNumbers,
   listPaneSnapshots: h.listPaneSnapshots,
@@ -239,6 +241,50 @@ describe('in-mission pane observation (Overclock parity)', () => {
       stateConfidence: 0.9,
       needsHuman: 0.8,
     });
+  });
+
+  it('F-1425: digest de tail só com spinner (Devin ⠤⠄ / Claude ✽ ✻) é working, sem Jev e sem errored', async () => {
+    registerPane({
+      paneId: 'pane-b',
+      sessionId: 'session-b',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+    }, ['⠤⠄', '⣀⡀', '⠋', '✽ ✻ ✶ ✳ ✢ ·', '✻ 12', '✶ 13'].join('\n'));
+
+    const result = await tool('nexus_pane_read').handler(
+      { paneId: 'pane-b' },
+      context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null }),
+    ) as Record<string, unknown>;
+    expect(result).toMatchObject({
+      mode: 'digest',
+      state: 'working',
+      stateConfidence: 1,
+      needsHuman: 0,
+    });
+    expect(result.text).toMatch(/sem texto/);
+    // Spinner é trabalho ativo: classificação determinística, Jev nem chamado.
+    expect(digestClassify.classifyPaneTailForDigest).not.toHaveBeenCalled();
+  });
+
+  it('F-1425: digest de moldura estática sem letra nenhuma sai sem estado (nem errored)', async () => {
+    registerPane({
+      paneId: 'pane-b',
+      sessionId: 'session-b',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+    }, ['┌────┐', '│    │', '└────┘'].join('\n'));
+
+    const result = await tool('nexus_pane_read').handler(
+      { paneId: 'pane-b' },
+      context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null }),
+    ) as Record<string, unknown>;
+    expect(result.state).toBeUndefined();
+    expect(result.stateConfidence).toBeUndefined();
+    expect(digestClassify.classifyPaneTailForDigest).not.toHaveBeenCalled();
   });
 
   it('digest compacts the tail: signal lines + last 30 verbatim + counts', async () => {
@@ -694,5 +740,68 @@ describe('nexus_session_lease_inspect boundary (F-1336)', () => {
       )) as { lease: Record<string, unknown> };
       expect(result.lease).toEqual({ sessionId, bornAtMs: 1, kind: 'agent', hasStartKey: true });
     }
+  });
+});
+
+describe('nexus_pane_ask resposta de spinner (F-1425)', () => {
+  const current = { assertCurrentAuthority: () => {} };
+  function orchestratorContext() {
+    return context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null });
+  }
+
+  function queueOutputs(before: string, after: string): void {
+    registerPane({
+      paneId: 'pane-b',
+      sessionId: 'session-b',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+    });
+    let call = 0;
+    h.readSessionOutput.mockImplementation((_sessionId: string, _lines?: number) =>
+      call++ === 0 ? before : after,
+    );
+  }
+
+  it('resposta composta só de quadros de spinner braille (Devin) não é resposta: ok:false com motivo', async () => {
+    queueOutputs('pronto para a pergunta', 'pronto para a pergunta\n⠤⠄\n⣀⡀');
+
+    const result = (await tool('nexus_pane_ask').handler(
+      { paneId: 'pane-b', question: 'qual o status?' },
+      orchestratorContext(),
+      current,
+    )) as { ok: boolean; state: string; answer: string; reason?: string };
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/spinner/i);
+    expect(result.answer).not.toMatch(/[⠁-⣿]/);
+  });
+
+  it('glifos do Claude Code com dígitos soltos também não são resposta', async () => {
+    queueOutputs('antes', 'antes\n✽ ✻ ✶ ✳ ✢ ·\n✻ 12\n✶ 13');
+
+    const result = (await tool('nexus_pane_ask').handler(
+      { paneId: 'pane-b', question: 'andamento?' },
+      orchestratorContext(),
+      current,
+    )) as { ok: boolean; reason?: string };
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/spinner/i);
+  });
+
+  it('quadros de spinner no meio da saída são filtrados; a resposta legível volta', async () => {
+    queueOutputs(
+      'antes',
+      'antes\n⠤⠄\n⣀⡀\n⏺ A resposta é 4 testes falhando',
+    );
+
+    const result = (await tool('nexus_pane_ask').handler(
+      { paneId: 'pane-b', question: 'quantos falharam?' },
+      orchestratorContext(),
+      current,
+    )) as { ok: boolean; state: string; answer: string };
+    expect(result.ok).toBe(true);
+    expect(result.answer).toBe('⏺ A resposta é 4 testes falhando');
+    expect(result.answer).not.toMatch(/[⠁-⣿]/);
   });
 });
