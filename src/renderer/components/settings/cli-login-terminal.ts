@@ -183,7 +183,13 @@ export async function openCliLoginTerminal(input: {
 
   let sessionId: string | null = null;
   try {
-    sessionId = await waitForSession(paneId, 10_000);
+    // Sem teto curto próprio: o orçamento é o padrão do terminal-host
+    // (SESSION_WAIT_TIMEOUT_MS). No login da 2ª conta o chamador acabou de
+    // preservar a sessão viva e disparar o refresh de cotas no Main — as
+    // sondas síncronas dessa leva (AGY: descoberta do bridge, scan do
+    // binário) concorrem com o spawn deste PTY, e 10 s transformavam
+    // "ainda abrindo" em "terminal não ficou disponível" só nesse fluxo.
+    sessionId = await waitForSession(paneId);
   } catch {
     // A cópia de falha abaixo é a única mensagem anunciada ao operador.
   }

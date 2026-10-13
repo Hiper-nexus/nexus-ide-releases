@@ -17,7 +17,10 @@ const navigation = vi.hoisted(() => ({
 }));
 
 const host = vi.hoisted(() => ({
-  waitForSession: vi.fn(async (_paneId: string): Promise<string | null> => 'session-login'),
+  waitForSession: vi.fn(
+    async (_paneId: string, _timeoutMs?: number): Promise<string | null> =>
+      'session-login',
+  ),
   writeToPane: vi.fn(),
 }));
 
@@ -36,7 +39,8 @@ vi.mock('../../state/product-navigation-store', () => ({
 }));
 
 vi.mock('../../terminal/terminal-host', () => ({
-  waitForSession: (paneId: string) => host.waitForSession(paneId),
+  waitForSession: (paneId: string, timeoutMs?: number) =>
+    host.waitForSession(paneId, timeoutMs),
   writeToPane: (paneId: string, text: string) => host.writeToPane(paneId, text),
 }));
 
@@ -147,6 +151,21 @@ describe('openCliLoginTerminal', () => {
       'cli-login-terminal-unavailable',
     );
     expect(navigation.openTerminal).not.toHaveBeenCalled();
+  });
+
+  it('usa o orçamento padrão da sessão, sem teto curto próprio (2ª conta AGY)', async () => {
+    // O login da 2ª conta preserva a sessão viva e dispara o refresh de
+    // cotas no Main (sondas síncronas do AGY) ANTES de abrir o terminal —
+    // esse trabalho concorre com o spawn do PTY. Um teto curto aqui
+    // transformava "ainda abrindo" em "terminal não ficou disponível"
+    // justamente na 2ª conta; o orçamento é o do terminal-host.
+    const result = await openCliLoginTerminal({
+      command: 'agy',
+      adapterId: 'agy',
+      adapterLabel: 'Antigravity (agy)',
+    });
+    expect(result).toEqual({ ok: true, paneId: 'pane-login' });
+    expect(host.waitForSession).toHaveBeenCalledWith('pane-login', undefined);
   });
 
   it('comando que não pode ser digitado fecha o pane e devolve erro (F-355)', async () => {
