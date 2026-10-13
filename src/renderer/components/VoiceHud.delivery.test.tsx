@@ -6,7 +6,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // "Reenviar" entrega o texto de novo pelo MESMO caminho do ditado.
-const resend = vi.hoisted(() => vi.fn(async () => ({ ok: true, paneId: 'pane-focused' })));
+const resend = vi.hoisted(() =>
+  vi.fn(async (_text: string, ..._hooks: unknown[]) => ({ ok: true, paneId: 'pane-focused' })),
+);
 vi.mock('../voice/voice-run-jarvis-turn', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../voice/voice-run-jarvis-turn')>()),
   routeDictation: resend,
@@ -203,7 +205,55 @@ describe('F-1419 — refúgio do ditado que ficou sem destino', () => {
     await act(async () => {
       again.click();
     });
-    expect(resend).toHaveBeenCalledWith('o texto que o operador falou');
+    expect(resend.mock.calls[0]?.[0]).toBe('o texto que o operador falou');
     expect(useVoiceStore.getState().lastUndeliveredDictation).toBeNull();
+  });
+
+  const seed = (reason: string) =>
+    useVoiceStore.setState({
+      lastUndeliveredDictation: { text: 'o texto que o operador falou', paneId: 'pane-focused', reason },
+    } as never);
+  const action = (name: string) =>
+    [...host.querySelectorAll('.voice-hud__action')].find(
+      (b) => b.textContent === name,
+    ) as HTMLButtonElement;
+
+  it('"Copiar ditado" que falha mantém o refúgio e o "Reenviar" à mão', async () => {
+    writeText.mockRejectedValueOnce(new Error('sem foco'));
+    seed('pending-cancelled');
+    render();
+    await act(async () => {
+      action('Copiar ditado').click();
+    });
+    expect(useVoiceStore.getState().lastUndeliveredDictation).not.toBeNull();
+    expect(useVoiceStore.getState().note).toContain('Não consegui copiar');
+    expect(action('Reenviar')).toBeTruthy();
+  });
+
+  it('"Reenviar" que fica pendente mostra "Ditado aguardando", não "recusou"', async () => {
+    resend.mockResolvedValueOnce({ ok: false, reason: 'pending', paneId: 'pane-focused' } as never);
+    seed('pending-cancelled');
+    render();
+    await act(async () => {
+      action('Reenviar').click();
+    });
+    expect(resend).toHaveBeenCalledWith(
+      'o texto que o operador falou',
+      expect.any(Function),
+      expect.any(Function),
+    );
+    expect(useVoiceStore.getState().note).toBe(PENDING_NOTE);
+    expect(host.querySelector('.voice-hud__label')?.textContent).toBe('Ditado aguardando');
+  });
+
+  it('motivo *-lost avisa para conferir o pane antes de reenviar', () => {
+    for (const reason of ['pending-lost', 'delivery-lost']) {
+      seed(reason);
+      render();
+      expect(refugeText()).toContain('Confira o pane antes de reenviar');
+    }
+    seed('pending-cancelled');
+    render();
+    expect(refugeText()).not.toContain('Confira o pane');
   });
 });

@@ -9,7 +9,6 @@ import type React from 'react';
 import { useVoiceStore } from './voice-store';
 import { codePolishAvailable, dictationSttRequestParams } from './dictation-output-mode';
 import { describeSttFailure, sttSuccessNote } from './stt-failure-help';
-import { hasPendingDictation, type DictationPendingSettled } from './dictation-delivery';
 import {
   dictationSessionData,
   sttErrorCode,
@@ -111,7 +110,15 @@ const MAX_REPLY_MUTE_REOPENS = 0;
 let replyMuteReopenCount = 0;
 import { personaUserName } from './jarvis-screen-context';
 import { withTimeout } from './voice-speak-pipeline';
-import { runJarvisTurn, routePrompt, routeDictation, captureResponse, type RunJarvisTurnDeps } from './voice-run-jarvis-turn';
+import {
+  runJarvisTurn,
+  routePrompt,
+  routeDictation,
+  captureResponse,
+  dictationPendingHooks,
+  PENDING_DICTATION_NOTE,
+  type RunJarvisTurnDeps,
+} from './voice-run-jarvis-turn';
 import { MIN_WAKE_SUPPRESSION_MS } from './voice-suppression-window';
 import type { VoiceCapture, AutoStopOptions } from './voice-capture';
 import { noticeMuffledMic } from './speech-quality';
@@ -137,23 +144,6 @@ export interface FinishAndProcessDeps extends RunJarvisTurnDeps {
     busy: React.MutableRefObject<boolean>,
     reason: 'wake' | 'click',
   ) => AutoStopOptions;
-}
-
-/** F-1393: nota do HUD enquanto o ditado espera o painel ficar livre. */
-const PENDING_DICTATION_NOTE =
-  'O painel está com uma pergunta aberta ou ocupado. O ditado entra sozinho quando ele ficar livre; se você digitar no painel, ele é cancelado.';
-
-/** C2 (F-1393): mensagem do HUD quando um ditado pendente não entra. */
-function pendingDictationFailure(settled: DictationPendingSettled): string {
-  const why =
-    settled.errorCode === 'pending-timeout'
-      ? 'O painel não ficou livre em 10 minutos — o ditado pendente foi descartado.'
-      : settled.errorCode === 'pending-session-changed'
-        ? 'O painel reiniciou — o ditado pendente foi descartado.'
-        : settled.errorCode === 'pending-lost'
-          ? 'O ditado foi escrito no painel mas o envio não se confirmou — confira o painel antes de reenviar.'
-          : 'O painel ficou livre mas não aceitou o ditado pendente.';
-  return settled.preserved ? `${why} O texto foi copiado: cole com ⌘V.` : why;
 }
 
 export async function finishAndProcess(
@@ -438,53 +428,29 @@ export async function finishAndProcess(
       // C2 (F-1393): o desfecho do pendente vira a 2ª linha da sessão de uso
       // e atualiza o HUD — antes ficava só no voice.log.
       const pendingDraft = dictationSession;
-      const routed = await routeDictation(transcript, (settled) => {
-        if (pendingDraft) {
-          logVoiceEvent(
-            settled.result === 'ok' ? 'info' : 'warn',
-            'dictation.session',
-            undefined,
-            dictationSessionData(
-              pendingDraft,
-              {
-                result: settled.result,
-                errorCode: settled.errorCode,
-                stt,
-                deliveredChars: transcript.length,
-              },
-              Date.now(),
-            ),
-          );
-        }
-        const hud = useVoiceStore.getState();
-        // C-6: outro pane ainda pode ter o seu pendente — o título só cai
-        // quando não sobra nenhum.
-        if (hud.dictationDelivery === 'pending' && !hasPendingDictation()) {
-          hud.setDictationDelivery(null);
-        }
-        if (settled.result === 'ok') {
-          hud.setNote('Ditado entregue: o painel ficou livre.');
-          return;
-        }
-        // C-2: o novo ditado cuida do HUD; o substituído não fala nada.
-        if (settled.errorCode === 'pending-replaced') return;
-        if (settled.errorCode === 'pending-cancelled') {
-          // M6 (F-1419): sem cópia (o clipboard do operador foi respeitado), o
-          // texto não está mais em nenhum lugar — o HUD mostra a ação de
-          // recuperar. Com cópia, a instrução antiga (⌘V) basta.
-          hud.setNote(
-            settled.preserved
-              ? 'Ditado cancelado: texto copiado, cole com ⌘V.'
-              : 'Ditado cancelado: você usou o painel. O texto ficou aqui para copiar ou reenviar.',
-          );
-          return;
-        }
-        hud.setDictationFailed(true);
-        hud.setNote(pendingDictationFailure(settled));
-      }, (_paneId, active) => {
-        // C-3: paste + Enter em voo — tecla agora não cancela mais.
-        useVoiceStore.getState().setNote(active ? 'Ditado entrando…' : PENDING_DICTATION_NOTE);
+      const pendingHooks = dictationPendingHooks((settled) => {
+        if (!pendingDraft) return;
+        logVoiceEvent(
+          settled.result === 'ok' ? 'info' : 'warn',
+          'dictation.session',
+          undefined,
+          dictationSessionData(
+            pendingDraft,
+            {
+              result: settled.result,
+              errorCode: settled.errorCode,
+              stt,
+              deliveredChars: transcript.length,
+            },
+            Date.now(),
+          ),
+        );
       });
+      const routed = await routeDictation(
+        transcript,
+        pendingHooks.onSettled,
+        pendingHooks.onDelivering,
+      );
       reportDictationSession(
         routed.ok
           ? { result: routed.queued ? 'queued' : 'ok', stt, deliveredChars: transcript.length }

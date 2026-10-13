@@ -10,7 +10,11 @@ import {
   publishFloatingSafeArea,
 } from '../voice/hud-prefs';
 import { requestJarvisWake } from '../voice/manual-wake';
-import { routeDictation } from '../voice/voice-run-jarvis-turn';
+import {
+  dictationPendingHooks,
+  PENDING_DICTATION_NOTE,
+  routeDictation,
+} from '../voice/voice-run-jarvis-turn';
 import { canAttemptRealtime } from '../voice/voice-realtime-gates';
 import { realtimeMissingCredentialMessage } from './voice-settings-helpers';
 import {
@@ -109,25 +113,43 @@ export function VoiceHud() {
   const copyUndeliveredDictation = (): void => {
     const pending = lastUndeliveredDictation;
     if (!pending) return;
-    void navigator.clipboard
-      .writeText(pending.text)
-      .then(() => setNote('Ditado copiado: cole com ⌘V.'))
-      .catch(() => setNote('Não consegui copiar o ditado — use "Reenviar".'));
-    setLastUndeliveredDictation(null);
+    // Só some do HUD depois que a cópia confirmou: se a escrita falhar, o
+    // refúgio continua com "Reenviar" à mão.
+    void navigator.clipboard.writeText(pending.text).then(
+      () => {
+        setLastUndeliveredDictation(null);
+        setNote('Ditado copiado: cole com ⌘V.');
+      },
+      () => setNote('Não consegui copiar o ditado. Use "Reenviar".'),
+    );
   };
 
   const resendUndeliveredDictation = (): void => {
     const pending = lastUndeliveredDictation;
     if (!pending) return;
+    // Uma nova falha sem cópia devolve o texto ao refúgio (onUndelivered).
     setLastUndeliveredDictation(null);
-    void routeDictation(pending.text).then((routed) => {
+    const hooks = dictationPendingHooks();
+    void routeDictation(pending.text, hooks.onSettled, hooks.onDelivering).then((routed) => {
+      if (!routed.ok && routed.reason === 'pending') {
+        const store = useVoiceStore.getState();
+        store.setDictationDelivery('pending');
+        store.setNote(PENDING_DICTATION_NOTE);
+        return;
+      }
       setNote(
         routed.ok
           ? 'Ditado reenviado ao painel.'
-          : 'O reenvio não entrou — o painel recusou de novo.',
+          : routed.preserved
+            ? 'O reenvio não entrou. O texto foi copiado: cole com ⌘V.'
+            : 'O reenvio não entrou: o painel recusou de novo.',
       );
     });
   };
+  /** `*-lost`: o texto pode já estar no composer — reenviar colaria de novo. */
+  const undeliveredMayBeInPane =
+    lastUndeliveredDictation?.reason === 'pending-lost' ||
+    lastUndeliveredDictation?.reason === 'delivery-lost';
   // Chip CODE/CHAT no titlebar (paridade Bridge): mesmo controle do chip da
   // barra superior — useDictationMode centraliza estado + persistência.
   const {
@@ -574,6 +596,11 @@ export function VoiceHud() {
                   <span className="voice-hud__refuge-text">
                     {lastUndeliveredDictation.text}
                   </span>
+                  {undeliveredMayBeInPane && (
+                    <span className="voice-hud__refuge-check">
+                      Confira o pane antes de reenviar: o texto pode já estar lá.
+                    </span>
+                  )}
                   <button
                     type="button"
                     className="voice-hud__action"

@@ -537,3 +537,9 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+/* Motivo `*-lost`: o aviso fica na própria linha, antes das ações. */
+.voice-hud__refuge-check {
+  display: block;
+  margin-bottom: var(--space-1);
+}
