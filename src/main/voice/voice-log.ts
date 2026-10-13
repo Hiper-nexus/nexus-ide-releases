@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { VoiceLogPayload } from '../../shared/voice-ipc';
+
 /**
  * Logger persistente do pipeline de voz. Escreve em ~/.nexus/logs/voice.log
  * (com rotação) e espelha no console — assim o dev vê no terminal e o app
@@ -23,6 +25,78 @@ export interface VoiceLogEntry {
   event: string;
   msg?: string;
   data?: Record<string, unknown>;
+}
+
+/**
+ * Eventos do pipeline cujo nome indica transcrição, ditado cru ou resposta gerada.
+ * F-1424: defesa em profundidade no handler IPC — se um renderer enviar
+ * o texto do usuário ou do assistente em `msg` ou em campos de `data`, o log
+ * descarta o conteúdo sensível e preserva apenas metadados (ex.: contagem de caracteres).
+ */
+export const CONTENT_EVENT_PATTERN = /(?:transcript|raw|brainreply)/i;
+
+/**
+ * Mensagens descritivas estáticas permitidas em eventos de conteúdo.
+ * Qualquer `msg` fora desta lista em um evento de conteúdo é tratada como
+ * potencial vazamento de texto do operador/resposta e é redigida.
+ */
+export const SAFE_CONTENT_EVENT_MESSAGES: ReadonlySet<string> = new Set([
+  'ditado transcrito',
+  'transcrição bruta concluída',
+  'transcrição realtime recebida',
+  'transcrição classic recebida',
+  'resposta do cérebro gerada',
+]);
+
+/**
+ * Chaves em `data` que costumam carregar texto falado, transcrito ou gerado.
+ */
+export const SENSITIVE_DATA_KEY_PATTERN = /^(?:text|transcript|raw|final|say|lastUserTranscript)$/i;
+
+/**
+ * Sanitiza um evento de log vindo do renderer antes de encaminhar ao logger persistente.
+ * Garante que textos do operador e da resposta nunca cheguem ao voice.log.
+ */
+export function sanitizeRendererVoiceEvent(payload: VoiceLogPayload): {
+  level: VoiceLogLevel;
+  event: string;
+  msg?: string;
+  data?: Record<string, unknown>;
+} {
+  const isContent = CONTENT_EVENT_PATTERN.test(payload.event);
+  let msg = payload.msg;
+  let data: Record<string, unknown> | undefined = payload.data ? { ...payload.data } : undefined;
+
+  if (isContent) {
+    if (msg && !SAFE_CONTENT_EVENT_MESSAGES.has(msg)) {
+      if (!data) data = {};
+      if (typeof data.chars !== 'number') {
+        data.chars = msg.length;
+      }
+      msg = undefined;
+    }
+  }
+
+  if (data) {
+    for (const key of Object.keys(data)) {
+      if (SENSITIVE_DATA_KEY_PATTERN.test(key)) {
+        const val = data[key];
+        if (typeof val === 'string') {
+          if (typeof data.chars !== 'number') {
+            data.chars = val.length;
+          }
+        }
+        delete data[key];
+      }
+    }
+  }
+
+  return {
+    level: payload.level,
+    event: payload.event,
+    msg,
+    data,
+  };
 }
 
 /** Caminho padrão (display/diagnóstico). logVoice resolve o path a cada call. */

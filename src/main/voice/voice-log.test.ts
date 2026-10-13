@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   formatVoiceLine,
   logVoice,
+  sanitizeRendererVoiceEvent,
 } from './voice-log';
 
 /**
@@ -107,5 +108,55 @@ describe('voice-log logVoice (persistência)', () => {
     expect(fs.existsSync(rotated)).toBe(true);
     // Após rotacionar, voice.log volta a ser pequeno (poucas linhas novas).
     expect(fs.statSync(logFile).size).toBeLessThan(2048);
+  });
+
+  it('F-1424: defesa em profundidade e fluxo de log nunca gravam frase sintética no arquivo de log', () => {
+    const syntheticPhrase = 'frase-sintetica-f1424';
+
+    // 1. Evento com transcrição em msg: msg é redigida e vira chars em data
+    const sanitizedMsg = sanitizeRendererVoiceEvent({
+      level: 'info',
+      event: 'stt.dictationTranscript',
+      msg: syntheticPhrase,
+      data: { latencyMs: 50 },
+    });
+    expect(sanitizedMsg.msg).toBeUndefined();
+    expect(sanitizedMsg.data?.chars).toBe(syntheticPhrase.length);
+    expect(JSON.stringify(sanitizedMsg)).not.toContain(syntheticPhrase);
+
+    // 2. Evento com campos sensíveis em data: chaves text/transcript/raw são removidas
+    const sanitizedData = sanitizeRendererVoiceEvent({
+      level: 'info',
+      event: 'stt.dictationRaw',
+      msg: 'transcrição bruta concluída',
+      data: {
+        text: syntheticPhrase,
+        raw: syntheticPhrase,
+        final: syntheticPhrase,
+        mode: 'code',
+      },
+    });
+    expect(sanitizedData.msg).toBe('transcrição bruta concluída');
+    expect(sanitizedData.data?.text).toBeUndefined();
+    expect(sanitizedData.data?.raw).toBeUndefined();
+    expect(sanitizedData.data?.final).toBeUndefined();
+    expect(sanitizedData.data?.chars).toBe(syntheticPhrase.length);
+    expect(JSON.stringify(sanitizedData)).not.toContain(syntheticPhrase);
+
+    // 3. Linha formatada não contém a frase sintética
+    const line = formatVoiceLine({
+      ts: '2026-07-07T12:00:00.000Z',
+      level: sanitizedMsg.level,
+      event: sanitizedMsg.event,
+      msg: sanitizedMsg.msg,
+      data: sanitizedMsg.data,
+    });
+    expect(line).not.toContain(syntheticPhrase);
+
+    // 4. Arquivo gravado em disco não contém a frase sintética
+    logVoice(sanitizedMsg.level, sanitizedMsg.event, sanitizedMsg.msg, sanitizedMsg.data);
+    logVoice(sanitizedData.level, sanitizedData.event, sanitizedData.msg, sanitizedData.data);
+    const content = fs.readFileSync(logFile, 'utf8');
+    expect(content).not.toContain(syntheticPhrase);
   });
 });

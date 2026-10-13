@@ -50,7 +50,7 @@ import {
 import { WakeEngine } from "./wake-engine";
 import { getAecRuntimeStatus } from "./aec-runtime";
 import { startNativeAecRuntime, type NativeAecRuntime } from "./aec-native-runtime";
-import { logVoice } from "./voice-log";
+import { logVoice, sanitizeRendererVoiceEvent } from "./voice-log";
 import { trace } from "../observability/main-trace";
 import {
   DICTATION_SESSION_EVENT,
@@ -855,7 +855,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
           Boolean(matchWakeWord(res.text, parsed.data.passiveWakeWord || "Jarvis"));
         if (res.ok && !containsRequestedWake && echoSuppressor.isEcho(res.text)) {
           logVoice("info", "stt.echoDiscarded", "eco do TTS descartado", {
-            text: res.text.slice(0, 120),
+            chars: res.text.length,
           });
           return { ...res, discarded: "echo" };
         }
@@ -887,10 +887,11 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
           });
         }
         if (res.ok && parsed.data.purpose !== "passive-wake") {
-          logVoice("info", "stt.dictationRaw", res.text.slice(0, 400), {
+          logVoice("info", "stt.dictationRaw", "transcrição bruta concluída", {
             provider: res.provider,
             fallbackNote: res.fallbackNote,
             mode: parsed.data.translate ? "translate" : "literal",
+            chars: res.text.length,
             sttMs,
           });
         }
@@ -1050,11 +1051,15 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
   onIpcGuarded(VOICE_CHANNELS.logEvent, (_event, raw: unknown) => {
     const parsed = voiceLogSchema.safeParse(raw);
     if (parsed.success) {
+      // F-1424: defesa em profundidade — sanitiza eventos vindos do renderer
+      // cujo nome ou campos indiquem transcrição/conteúdo bruto, garantindo
+      // que nenhum texto do operador ou de resposta chegue ao voice.log.
+      const sanitized = sanitizeRendererVoiceEvent(parsed.data);
       logVoice(
-        parsed.data.level,
-        parsed.data.event,
-        parsed.data.msg,
-        parsed.data.data,
+        sanitized.level,
+        sanitized.event,
+        sanitized.msg,
+        sanitized.data,
       );
       // F-1392: a sessão de ditado também entra no lifecycle (lista branca,
       // sem texto) — é o log de uso que diz quando e por que o ditado falha.
@@ -1160,8 +1165,8 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
         conversation.record(parsed.data.transcript, reply.say);
         liveSession.onJarvisReply(parsed.data.transcript, reply);
         console.log(
-          `[voice] jarvis: "${parsed.data.transcript}" → ${reply.action.type}` +
-            ` | say="${reply.say.slice(0, 80)}"`,
+          `[voice] jarvis: (chars=${parsed.data.transcript.length}) → ${reply.action.type}` +
+            ` | sayChars=${reply.say.length}`,
         );
         return reply;
       } catch (err) {
