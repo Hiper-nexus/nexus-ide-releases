@@ -10492,14 +10492,25 @@ export const RELEASE_076245: AppRelease = {
   ],
 };
 
-// Não lançado: notas das correções locais F-1434..F-1442 («Orquestração viva»
-// + «Squad abre»), integradas sobre a 0.76.248 publicada. Nunca foram a
-// 0.76.245/0.76.246 do remoto; a preparação da próxima release dobra este
-// bloco na nova CURRENT_RELEASE e remove esta constante.
-export const RELEASE_NAO_LANCADO_F1434_F1442: AppRelease = {
-  version: 'não-lançado',
+export const RELEASE_076248: AppRelease = {
+  version: '0.76.248',
   date: '2026-10-13',
-  codename: 'Orquestração viva + Squad abre',
+  codename: 'Linux em dia com o Mac e o Windows',
+  summary: 'O app no Omarchy, no Debian e no Ubuntu deixa a 0.76.201 e passa a incluir tudo o que o Mac e o Windows receberam até a 0.76.245: missões que concluem, cada modelo no seu lugar e as telas novas.',
+  highlights: [
+    { title: 'Missões que terminam', detail: 'Writers isolados voltam a nascer, a conclusão não trava num erro antigo e a revisão independente aceita a entrega atual.' },
+    { title: 'Cada modelo no que faz de melhor', detail: 'Argon e Wonder Full entram na rota, o front reveza entre as CLIs e Next.js e jogos ficam com o Opus. Vários panes Claude da mesma conta convivem.' },
+    { title: 'Telas, ditado e celular', detail: 'Markdown, editor da missão, diff do Git e checkpoints dos writers. O ditado não se perde com o pane ocupado, e o celular pareado controla o desktop.' },
+  ],
+  fixes: [
+    { title: 'Atualização do Linux', detail: 'Da 0.76.202 à 0.76.245 só havia pacote de Mac ou Windows. O Omarchy consultava o espelho e ficava na 0.76.201, achando que já estava na mais recente.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.249',
+  date: '2026-10-13',
+  codename: 'Campo em dia',
   summary: 'O Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, ditar segurando Space não derruba mais o app no macOS, a segunda conta do Antigravity entra, um erro de autenticação citado no terminal não troca mais a conta de uma missão que estava funcionando, um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais «sessão expirada» sobre uma credencial que está funcionando.',
   highlights: [
     { title: 'Maestro que delega', detail: 'O orquestrador criado pelo «+ Pane» recebia os pedidos e executava tudo no próprio terminal, sem abrir workers. Agora ele recebe a doutrina de delegar e o vigia de esteira cobra quando a missão fica sem workers.' },
@@ -10513,21 +10524,6 @@ export const RELEASE_NAO_LANCADO_F1434_F1442: AppRelease = {
     { title: 'Windows sem falsa queda', detail: 'Pane encerrado pelo próprio Nexus ao fim da missão mostrava «processo caiu (code 129)»; o encerramento normal não é mais rotulado como queda.' },
     { title: 'Squad salvo abre de novo', detail: 'Squads de plano (e as cópias deles) falhavam ao abrir e em «Usar integrantes», sem jeito de corrigir no editor. Agora o roster carrega normalmente e o squad volta a ser utilizável.' },
     { title: 'Muse sem falsa expiração', detail: 'O pane do Muse com login nativo mostrava «Sessão expirada» por causa de um erro de autenticação que só aparecia no texto do terminal, mesmo com a credencial funcionando. O Nexus agora confirma com a sonda de cota antes de avisar: sem confirmação, nada de toast e o pane segue trabalhando.' },
-  ],
-};
-
-export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.248',
-  date: '2026-10-13',
-  codename: 'Linux em dia com o Mac e o Windows',
-  summary: 'O app no Omarchy, no Debian e no Ubuntu deixa a 0.76.201 e passa a incluir tudo o que o Mac e o Windows receberam até a 0.76.245: missões que concluem, cada modelo no seu lugar e as telas novas.',
-  highlights: [
-    { title: 'Missões que terminam', detail: 'Writers isolados voltam a nascer, a conclusão não trava num erro antigo e a revisão independente aceita a entrega atual.' },
-    { title: 'Cada modelo no que faz de melhor', detail: 'Argon e Wonder Full entram na rota, o front reveza entre as CLIs e Next.js e jogos ficam com o Opus. Vários panes Claude da mesma conta convivem.' },
-    { title: 'Telas, ditado e celular', detail: 'Markdown, editor da missão, diff do Git e checkpoints dos writers. O ditado não se perde com o pane ocupado, e o celular pareado controla o desktop.' },
-  ],
-  fixes: [
-    { title: 'Atualização do Linux', detail: 'Da 0.76.202 à 0.76.245 só havia pacote de Mac ou Windows. O Omarchy consultava o espelho e ficava na 0.76.201, achando que já estava na mais recente.' },
   ],
 };
 

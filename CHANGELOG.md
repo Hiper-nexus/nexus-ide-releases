@@ -1,8 +1,8 @@
 # Changelog
 
-## Não lançado
+## 0.76.249 — Campo em dia
 
-Correções de campo F-1434..F-1442 integradas na `main` local sobre a 0.76.248 publicada, aguardando a próxima release (eram as notas locais «Orquestração viva» e «Squad abre», nunca publicadas com os números 0.76.245/0.76.246, que no remoto são outras releases): ditar segurando Space não derruba mais o app no macOS 27.2, a 2ª conta do Antigravity entra, o Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, um «401» citado no terminal não troca mais a conta de uma missão que estava funcionando, um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais "sessão expirada" sobre uma credencial que está funcionando.
+Uma leva de correções de campo: ditar segurando Space não derruba mais o app no macOS 27.2, a 2ª conta do Antigravity entra, o Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, um «401» citado no terminal não troca mais a conta de uma missão que estava funcionando, um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais "sessão expirada" sobre uma credencial que está funcionando.
 
 - **Voz.**
   - Segurar Space para ditar crashava o app no macOS 27.2: os serviços de mídia do Chromium rodavam fora do processo e morriam ao abrir o microfone. Agora rodam dentro do processo, no macOS (F-1434).
