@@ -164,7 +164,9 @@ describe('resolveMuseLoginCredential', () => {
 describe('cofre e auth.json do Muse sem travar o Main (F-1417)', () => {
   type Cb = (error: (Error & { code?: unknown }) | null, stdout: string) => void;
 
-  it('lê o cofre de forma assíncrona, uma leitura em voo, e guarda o sucesso', async () => {
+  // A leitura do cofre usa `security` (darwin) e `secret-tool` (linux); no
+  // Windows a função retorna null cedo e o exec nunca é chamado.
+  it.skipIf(process.platform === 'win32')('lê o cofre de forma assíncrona, uma leitura em voo, e guarda o sucesso', async () => {
     clearMuseSecretCache();
     let clock = 1_000;
     const pending: Cb[] = [];
@@ -185,7 +187,7 @@ describe('cofre e auth.json do Muse sem travar o Main (F-1417)', () => {
     clearMuseSecretCache();
   });
 
-  it('negação do cofre entra em backoff (não reabre o diálogo a cada tick)', async () => {
+  it.skipIf(process.platform === 'win32')('negação do cofre entra em backoff (não reabre o diálogo a cada tick)', async () => {
     clearMuseSecretCache();
     const execImpl = vi.fn((_f: string, _a: readonly string[], _o: unknown, cb: Cb) => {
       cb(Object.assign(new Error('denied'), { code: 51 }), '');
