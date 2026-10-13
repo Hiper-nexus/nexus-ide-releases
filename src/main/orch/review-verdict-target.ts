@@ -111,7 +111,8 @@ function measureBranch(
   branch: string,
 ): { headSha: string; treeDirty: boolean } {
   assertSafeBranch(branch);
-  const sha = verifyCommit(git, repoRoot, branch);
+  // Tag homônima vence o nome solto (`release` = refs/tags antes de heads).
+  const sha = verifyCommit(git, repoRoot, `refs/heads/${branch}`);
   if (!sha) throw new Error('nexus_review_verdict: branch não existe neste repositório');
   const checkout = listed.find((entry) => entry.branch === `refs/heads/${branch}`);
   if (!checkout) return { headSha: sha, treeDirty: false };
@@ -120,12 +121,16 @@ function measureBranch(
 
 function verifyHeadSha(git: GitRunner, repoRoot: string, headSha: string): string {
   const raw = headSha.trim().toLowerCase();
-  // Só hex curto ou cheio. Revisão (`^`, `~`, `:`) não entra no rev-parse.
-  if (!/^[a-f0-9]{4,64}$/u.test(raw)) {
+  // Hex ≥ 7. Abaixo disso um nome de branch (`cafe`) casa no rev-parse.
+  // Revisão (`^`, `~`, `:`) não entra. O SHA resolvido tem de começar pelo
+  // valor pedido — prefixo que aponta um objeto com outro nome é recusado.
+  if (!/^[a-f0-9]{7,64}$/u.test(raw)) {
     throw new Error('nexus_review_verdict: headSha não existe neste repositório');
   }
   const sha = verifyCommit(git, repoRoot, raw);
-  if (!sha) throw new Error('nexus_review_verdict: headSha não existe neste repositório');
+  if (!sha || !sha.startsWith(raw)) {
+    throw new Error('nexus_review_verdict: headSha não existe neste repositório');
+  }
   return sha;
 }
 
