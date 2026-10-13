@@ -64,6 +64,7 @@ import {
   measureIntegrationState,
   measureIntegrationStateAsync,
 } from './integration-review-gate';
+import { resolveReviewVerdictTarget } from './review-verdict-target';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import {
   GLOBAL_USE_WINDOW_MS,
@@ -1065,6 +1066,9 @@ const reviewVerdictArgsSchema = z
     verdict: z.enum(['approve', 'reject']),
     summary: z.string().trim().min(1).max(2_000),
     findings: z.array(z.string().trim().min(1).max(500)).max(40).optional(),
+    worktree: z.string().trim().min(1).max(4_096).optional(),
+    branch: z.string().trim().min(1).max(255).optional(),
+    headSha: z.string().trim().min(4).max(64).optional(),
   })
   .strict();
 
@@ -1072,15 +1076,22 @@ const reviewVerdictArgsSchema = z
  * F-234: a tool registra o veredito da revisão; o portão de integração decide
  * sozinho se ele satisfaz o push (approve + juiz de ponta + HEAD exato +
  * árvore limpa). Um `reject` também é registrado — bloqueia até o HEAD andar.
+ * F-1423: worktree, branch ou headSha amarram o commit revisado quando o pane
+ * não está nesse checkout. Sem alvo, o veredito continua no HEAD do pane.
  */
 const reviewVerdictTool: McpToolDef = {
   name: 'nexus_review_verdict',
   description:
-    'Record a code-review verdict for the mission checkout (F-234). ' +
-    'The verdict binds to the exact current HEAD; push/integration only runs ' +
-    'after an "approve" from a frontier judge (Fable/Opus/Sonnet/Sol 6.1/Astra) ' +
-    'on a clean tree. Cheaper models may record, but their verdict never ' +
-    'satisfies the push gate.',
+    'Record a code-review verdict for a mission checkout (F-234/F-1423). ' +
+    'Without worktree, branch or headSha the verdict binds to this pane\'s ' +
+    'execution HEAD. Pass the reviewed worktree path (absolute or relative to ' +
+    'the execution root), branch, or commit when this pane\'s cwd is another ' +
+    'checkout — for example the main checkout reviewing a linked integration ' +
+    'worktree. The three must name the same commit. A headSha that is not in ' +
+    'this repository is refused and nothing is recorded. Push/integration only ' +
+    'runs after an "approve" from a frontier judge (Fable/Opus/Sonnet/Sol 6.1/Astra) ' +
+    'on that exact HEAD with a clean tree. Cheaper models may record, but their ' +
+    'verdict never satisfies the push gate.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1097,6 +1108,20 @@ const reviewVerdictTool: McpToolDef = {
         type: 'array',
         items: { type: 'string' },
         description: 'Optional findings (each max 500 chars, max 40)',
+      },
+      worktree: {
+        type: 'string',
+        description:
+          'Reviewed worktree path (linked checkout of this repository). Binds the verdict to that checkout\'s HEAD.',
+      },
+      branch: {
+        type: 'string',
+        description: 'Reviewed branch name. Binds the verdict to that branch\'s commit.',
+      },
+      headSha: {
+        type: 'string',
+        description:
+          'Reviewed commit (full SHA or unique short prefix). Refused when it does not exist in this repository.',
       },
     },
     required: ['verdict', 'summary'],
@@ -1121,9 +1146,11 @@ const reviewVerdictTool: McpToolDef = {
           ? 'Veredito do candidato registrado. Entregue o handoff da revisão; o Nexus revalida a entrega antes da conclusão.'
           : completion.reason };
     }
-    const { headSha, treeDirty } = measureIntegrationState(
-      executionScopeFor(ctx).rootRealPath,
-    );
+    const repoRoot = executionScopeFor(ctx).rootRealPath;
+    const hasTarget = input.worktree !== undefined || input.branch !== undefined || input.headSha !== undefined;
+    const { headSha, treeDirty } = hasTarget
+      ? resolveReviewVerdictTarget(repoRoot, input)
+      : measureIntegrationState(repoRoot);
     const reviewerAdapter = ctx.providerId ?? 'unknown';
     const reviewerModel = ctx.sessionId
       ? getAgentSessionInfo(ctx.sessionId)?.model

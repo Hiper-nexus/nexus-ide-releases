@@ -9,11 +9,13 @@
 // Fora do caminho (sem missão, comando não integrador, --dry-run) e em falha
 // de infraestrutura (store/git indisponível) responde `{}`: o hook nunca
 // atrapalha o CLI — o portão autoritativo continua no Main.
+import fs from 'node:fs';
 import path from 'node:path';
 import type http from 'node:http';
 import type { AgentGateContext } from './gate';
 import { executionScopeFor } from './gate';
 import { handleHookJsonPost } from './hook-http';
+import { sameRepositoryExecutionRoot } from './nested-worktree-execution';
 import { isInsidePath } from './workspace-path';
 import {
   assertIntegrationReviewedAsync,
@@ -77,8 +79,18 @@ export function boundedHookGitRunner(
 // F-814: `git merge` só é o subcomando `merge` quando seguido de espaço/fim. Com
 // `\b`, o hífen de `git merge-base`/`merge-tree`/`merge-file` (plumbing de
 // leitura) casava como fronteira de palavra e tudo virava "integração".
-const GIT_MERGE_COMMAND = /^\s*git\s+merge(?=\s|$)/u;
-const INTEGRATION_SEGMENT = /^\s*(git\s+push\b|gh\s+pr\s+(?:create|merge)\b|git\s+merge(?=\s)[^;&|]*\b(?:main|master)\b)/u;
+// F-1423: `git -C <path> push|merge` é o mesmo subcomando. O prefixo é linear
+// (um caminho, sem quantificador aninhado). Flag entre `-C` e o subcomando
+// (`git -C wt -c k=v push`) continua fora — o teto é o `-C` sozinho.
+const GIT_C_PREFIX = '(?:-C\\s+(?:"[^"]*"|\'[^\']*\'|\\S+)\\s+)?';
+const GIT_MERGE_COMMAND = new RegExp(String.raw`^\s*git\s+${GIT_C_PREFIX}merge(?=\s|$)`, 'u');
+const GIT_MERGE_REST = new RegExp(String.raw`^\s*git\s+${GIT_C_PREFIX}merge(?=\s|$)(.*)$`, 'u');
+const INTEGRATION_SEGMENT = new RegExp(
+  String.raw`^\s*(?:git\s+${GIT_C_PREFIX}push\b|gh\s+pr\s+(?:create|merge)\b|git\s+${GIT_C_PREFIX}merge(?=\s)[^;&|]*\b(?:main|master)\b)`,
+  'u',
+);
+const GIT_DASH_C = /^\s*git\s+-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))/u;
+const CD_COMMAND = /^\s*cd\s+(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/u;
 
 /**
  * F-814: `git merge --abort|--quit|--continue` só encerra/retoma um merge JÁ
@@ -92,12 +104,95 @@ const MERGE_CONTROL_FLAGS = new Set(['--abort', '--quit', '--continue']);
 const SHELL_REDIRECTION_TOKEN = /^(?:\d*|&)(?:>>?|<)/u;
 
 function isMergeControlSegment(segment: string): boolean {
-  const match = /^\s*git\s+merge(?=\s|$)(.*)$/u.exec(segment);
+  const match = GIT_MERGE_REST.exec(segment);
   if (!match) return false;
-  const args = tokenizeArgs(match[1]).filter(
+  const args = tokenizeArgs(match[1] ?? '').filter(
     (token) => !SHELL_REDIRECTION_TOKEN.test(token),
   );
   return args.length === 1 && MERGE_CONTROL_FLAGS.has(args[0]);
+}
+
+function commandSegments(command: string): string[] {
+  return command.split(/&&|\|\||[;\n|]/u);
+}
+
+/** Segmento que pode integrar, depois de pular dry-run e controle de merge. */
+function segmentRequestsIntegration(segment: string): boolean {
+  if (segment.includes('--dry-run')) return false;
+  if (isMergeControlSegment(segment)) return false;
+  return INTEGRATION_SEGMENT.test(segment) || GIT_MERGE_COMMAND.test(segment);
+}
+
+function commandRequestsIntegration(command: string): boolean {
+  return commandSegments(command).some(segmentRequestsIntegration);
+}
+
+function applyCd(segment: string, cwd: string): string | null {
+  const match = CD_COMMAND.exec(segment);
+  if (!match) return null;
+  const raw = match[1] ?? match[2] ?? match[3];
+  if (!raw || raw === '-' || raw.startsWith('-')) return null;
+  return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(cwd, raw);
+}
+
+function gitDashCDirectory(segment: string, cwd: string): string | null {
+  const match = GIT_DASH_C.exec(segment);
+  if (!match) return null;
+  const raw = match[1] ?? match[2] ?? match[3];
+  if (!raw || raw === '-' || raw.startsWith('-')) return null;
+  return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(cwd, raw);
+}
+
+/**
+ * Checkout em que o primeiro segmento integrador roda. `cd` atualiza o cwd;
+ * `git -C` vence o cwd desse segmento.
+ *
+ * ponytail: `||` é partido como `&&` (o mesmo split do detector). Um lado que
+ * o shell nem executaria ainda assim aponta o checkout. O teto é bloquear a
+ * mais, nunca medir a árvore do pane quando o comando aponta outra.
+ */
+function integrationCommandDirectory(command: string, baseCwd: string): string {
+  let cwd = baseCwd;
+  for (const segment of commandSegments(command)) {
+    const next = applyCd(segment, cwd);
+    if (next) {
+      cwd = next;
+      continue;
+    }
+    if (!segmentRequestsIntegration(segment)) continue;
+    return gitDashCDirectory(segment, cwd) ?? cwd;
+  }
+  return baseCwd;
+}
+
+/**
+ * Caminho lexicamente dentro da raiz de execução fica como está (o git dessa
+ * pasta já devolve o HEAD da worktree aninhada, sem `worktree list`). Fora,
+ * só uma worktree registrada deste repositório entra; o resto é null e o
+ * hook bloqueia em vez de medir o pane.
+ */
+async function locateMergeCheckout(
+  execution: ReturnType<typeof executionScopeFor>,
+  candidate: string,
+  git: AsyncGitRunner,
+): Promise<string | null> {
+  const lexical = path.resolve(candidate);
+  if (isInsidePath(execution.rootRealPath, lexical)) return lexical;
+  const real = (() => {
+    try {
+      return fs.realpathSync(lexical);
+    } catch {
+      return null;
+    }
+  })();
+  if (!real) return null;
+  if (isInsidePath(execution.rootRealPath, real)) return real;
+  try {
+    const linked = await sameRepositoryExecutionRoot(execution, real, git);
+    return linked?.rootRealPath ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function currentBranchName(
@@ -215,10 +310,10 @@ export async function isExemptFastForwardSync(
   }
 
   const mergeSegment = mergeSegments[0];
-  const match = mergeSegment.match(/^\s*git\s+merge(?=\s|$)(.*)$/u);
+  const match = GIT_MERGE_REST.exec(mergeSegment);
   if (!match) return false;
 
-  const tokens = tokenizeArgs(match[1]);
+  const tokens = tokenizeArgs(match[1] ?? '');
   if (!tokens.includes('--ff-only')) return false;
 
   const forbiddenOptions = new Set([
@@ -369,34 +464,32 @@ export async function handleHookIntegrationRequest(
     // Orçamento de tempo por requisição (F-815): ver `boundedHookGitRunner`.
     const runner = boundedHookGitRunner(deps.git ?? defaultGitRunner());
 
-    // O comando roda DENTRO do checkout de execução da missão; um cwd fora
-    // dele tentando integrar é bloqueio deliberado, não fail-open.
-    const root = executionScopeFor({
-      scope: ctx.scope,
-      executionScope: ctx.executionScope,
-    }).rootRealPath;
-    let cwd = root;
-    let cwdInside = true;
-    if (call.cwd !== undefined) {
-      const resolved = path.isAbsolute(call.cwd)
-        ? path.resolve(call.cwd)
-        : path.resolve(root, call.cwd);
-      if (!isInsidePath(root, resolved)) {
-        cwdInside = false;
-      }
-      cwd = resolved;
-    }
-
-    const hit = await integrationCommandHit(
-      call.command,
-      cwdInside ? { cwd, git: runner } : undefined,
-      runner,
-    );
-    if (!hit) {
+    // Comando que não integra não paga git. `git status`, `merge-base` e
+    // `git merge --abort` (dentro ou fora) continuam {}.
+    if (!commandRequestsIntegration(call.command)) {
       return { statusCode: 200, payload: {} };
     }
 
-    if (!cwdInside) {
+    // F-1423: mede o checkout onde o merge/push roda (`cd` ou `git -C`), não
+    // o cwd do pane. Dentro da raiz, o git dessa pasta já devolve o HEAD da
+    // worktree. Fora, só worktree registrada deste repositório; o resto bloqueia
+    // (não fail-open) em vez de carimbar o veredito do pane.
+    const execution = executionScopeFor({
+      scope: ctx.scope,
+      executionScope: ctx.executionScope,
+    });
+    const root = execution.rootRealPath;
+    const base = call.cwd === undefined
+      ? root
+      : path.isAbsolute(call.cwd)
+        ? path.resolve(call.cwd)
+        : path.resolve(root, call.cwd);
+    const checkout = await locateMergeCheckout(
+      execution,
+      integrationCommandDirectory(call.command, base),
+      runner,
+    );
+    if (!checkout) {
       return {
         statusCode: 200,
         payload: {
@@ -408,8 +501,13 @@ export async function handleHookIntegrationRequest(
       };
     }
 
+    const hit = await integrationCommandHit(call.command, { cwd: checkout, git: runner });
+    if (!hit) {
+      return { statusCode: 200, payload: {} };
+    }
+
     // F-778: isenta sincronização fast-forward comprovada pelo git
-    if (await isExemptFastForwardSync(call.command, cwd, runner)) {
+    if (await isExemptFastForwardSync(call.command, checkout, runner)) {
       trace({
         kind: 'integration-review-gate',
         missionId: ctx.missionId,
@@ -426,7 +524,7 @@ export async function handleHookIntegrationRequest(
     await assertIntegrationReviewedAsync(
       suite,
       ctx.missionId,
-      cwd,
+      checkout,
       deps.signal,
       runner,
     );

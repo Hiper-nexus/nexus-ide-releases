@@ -397,6 +397,96 @@ describe('POST /hook/integration', () => {
     fs.rmSync(outside, { recursive: true, force: true });
   });
 
+  describe('F-1423: o portão mede o HEAD da worktree onde o merge acontece', () => {
+    function approve(head: string): void {
+      store.reviewVerdicts.record({
+        missionId,
+        headSha: head,
+        treeDirty: false,
+        verdict: 'approve',
+        reviewerAdapter: 'claude',
+        reviewerModel: 'claude-opus-5-6',
+        frontier: true,
+        summary: 'Aprovado na worktree.',
+      });
+    }
+
+    function addWorktree(name: string, outside: boolean): { wt: string; sha: string } {
+      const branch = `integ/${name}`;
+      const wt = outside ? path.join(dir, name) : path.join(repo, '.harvest', name);
+      fs.mkdirSync(path.dirname(wt), { recursive: true });
+      git('branch', branch);
+      git('worktree', 'add', '-q', wt, branch);
+      fs.writeFileSync(path.join(wt, 'note.txt'), name);
+      runGit(wt, 'add', 'note.txt');
+      runGit(wt, 'commit', '-qm', name);
+      return { wt, sha: runGit(wt, 'rev-parse', 'HEAD') };
+    }
+
+    it('cd e git -C usam o HEAD da worktree, não o do pane', async () => {
+      const { wt, sha } = addWorktree('s241-integ', false);
+      const paneHead = git('rev-parse', 'HEAD');
+      expect(sha).not.toBe(paneHead);
+      approve(paneHead);
+      for (const command of [`cd ${wt} && git push origin main`, `git -C ${wt} push origin main`]) {
+        const blocked = await handleHookIntegrationRequest(hookCtx(), bash(command, repo), { storesFor });
+        expect(blocked.payload, command).toMatchObject({
+          decision: 'block',
+          reason: expect.stringContaining(sha.slice(0, 7)),
+        });
+        expect(String((blocked.payload as { reason?: unknown }).reason)).not.toContain(paneHead.slice(0, 7));
+      }
+      approve(sha);
+      for (const command of [
+        `cd ${path.relative(repo, wt)} && git push origin main`,
+        `git -C ${wt} push origin main`,
+      ]) {
+        const allowed = await handleHookIntegrationRequest(hookCtx(), bash(command, repo), { storesFor });
+        expect(allowed.payload, command).toEqual({});
+      }
+    });
+
+    it('worktree ligada fora do checkout de execução entra no portão pelo HEAD dela', async () => {
+      const { wt, sha } = addWorktree('s241-fora', true);
+      const missing = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash(`git -C ${wt} push origin main`, repo),
+        { storesFor },
+      );
+      expect(missing.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining(sha.slice(0, 7)),
+      });
+      approve(sha);
+      const allowed = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash(`cd ${wt} && git merge main`, repo),
+        { storesFor },
+      );
+      expect(allowed.payload).toEqual({});
+    });
+
+    it('git -C para outro repositório continua bloqueado', async () => {
+      const other = path.join(dir, 'outro');
+      fs.mkdirSync(other);
+      runGit(dir, 'init', '-q', '-b', 'main', other);
+      runGit(other, 'config', 'user.name', 'Nexus Fixture');
+      runGit(other, 'config', 'user.email', 'fixture@example.invalid');
+      fs.writeFileSync(path.join(other, 'a.txt'), 'a');
+      runGit(other, 'add', 'a.txt');
+      runGit(other, 'commit', '-qm', 'init');
+      const result = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash(`git -C ${other} push origin main`, repo),
+        { storesFor },
+      );
+      expect(result.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining('cwd fora do checkout'),
+      });
+    });
+  });
+
   it('approve de ponta do HEAD exato libera o comando', async () => {
     store.reviewVerdicts.record({
       missionId,
