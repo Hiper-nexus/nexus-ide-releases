@@ -14,6 +14,9 @@ import {
   deleteSquad,
   discardMissionRuntimeSquadIfUnchanged,
   exportSquadsJson,
+  findAgent,
+  findAgentInAnySquad,
+  findAgentInSquad,
   getSquad,
   importSquadsJson,
   importLegacySquadsJson,
@@ -27,6 +30,7 @@ import {
   saveSquad,
   squadRoutableCliIds,
 } from './squad-store';
+import { assertUniqueAgentNames } from './squad-agent-names';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 
 /**
@@ -168,6 +172,132 @@ describe('squadRoutableCliIds — CLIs do roster para vincular route/spawn (RC4)
     initSquadStore(db);
 
     expect(squadRoutableCliIds('inexistente').size).toBe(0);
+  });
+});
+
+describe('F-1500: nome de integrante repetido ou com espaço nas pontas', () => {
+  it('acha o integrante pelo nome sem os espaços das pontas', () => {
+    const db = makeDb();
+    openDb = db;
+    insertRawSquad(db, {
+      id: 'f1500-spaces',
+      name: 'Equipe com espaço',
+      agents: [
+        { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', allowedTools: null },
+        { id: 'f1500-dev', agentName: 'Dev Espaço ', category: 'executor', cli: 'codex', allowedTools: [] },
+      ],
+    });
+    initSquadStore(db);
+
+    expect(findAgentInSquad('f1500-spaces', 'Dev Espaço')?.agent.id).toBe('f1500-dev');
+    expect(findAgentInSquad('f1500-spaces', ' Dev Espaço ')?.agent.id).toBe('f1500-dev');
+    expect(findAgentInAnySquad('Dev Espaço')?.agent.id).toBe('f1500-dev');
+    expect(requireCatalogAgent('Dev Espaço').agent.id).toBe('f1500-dev');
+  });
+
+  it('recusa salvar equipe com dois integrantes de mesmo nome, dizendo qual', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const twoDevs = {
+      id: 'f1500-duplicate',
+      name: 'Dois Devs',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: '',
+      agents: [
+        { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude' },
+        { id: 'dev-a', agentName: 'Dev', category: 'executor', cli: 'codex' },
+        { id: 'dev-b', agentName: 'Dev ', category: 'executor', cli: 'grok' },
+      ],
+    };
+
+    expect(() => saveSquad(twoDevs)).toThrow(
+      /mais de um integrante chamado `Dev`/,
+    );
+    expect(getSquad('f1500-duplicate')).toBeNull();
+    // Os built-ins também passam pelo selo de missão (pinMissionRuntimeSquad).
+    for (const builtin of BUILTIN_SQUADS) {
+      expect(() => assertUniqueAgentNames(builtin.agents)).not.toThrow();
+    }
+  });
+
+  it('carrega a equipe antiga com nome repetido em vez de sumir com ela', () => {
+    const db = makeDb();
+    openDb = db;
+    insertRawSquad(db, {
+      id: 'f1500-legacy',
+      name: 'Equipe antiga com dois Devs',
+      agents: [
+        { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', allowedTools: null },
+        { id: 'dev-a', agentName: 'Dev', category: 'executor', cli: 'codex', allowedTools: [] },
+        { id: 'dev-b', agentName: 'Dev', category: 'executor', cli: 'grok', allowedTools: [] },
+      ],
+    });
+    initSquadStore(db);
+
+    // Continua no catálogo (o usuário renomeia no editor); o prepare recusa
+    // dizendo o nome repetido, e o id continua resolvendo cada um.
+    expect(getSquad('f1500-legacy')?.agents).toHaveLength(3);
+    expect(findAgentInSquad('f1500-legacy', 'dev-b')?.agent.cli).toBe('grok');
+  });
+
+  it('missão selada antes da regra com `Dev` e `Dev ` abre cada um pelo nome exato', () => {
+    const db = makeDb();
+    openDb = db;
+    const runtimeId = 'mission-runtime-123e4567-e89b-42d3-a456-426614175000';
+    insertRawSquad(db, {
+      id: runtimeId,
+      name: 'Missão selada com dois Devs',
+      agents: [
+        { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', allowedTools: null },
+        { id: 'old-a', agentName: 'Dev', category: 'executor', cli: 'codex', allowedTools: [] },
+        { id: 'old-b', agentName: 'Dev ', category: 'executor', cli: 'grok', allowedTools: [] },
+      ],
+    });
+    initSquadStore(db);
+
+    // O nome exato vence o aparado: a cópia selada não pode ser renomeada.
+    expect(findAgentInSquad(runtimeId, 'Dev')?.agent.id).toBe('old-a');
+    expect(findAgentInSquad(runtimeId, 'Dev ')?.agent.id).toBe('old-b');
+    expect(findAgentInSquad(runtimeId, 'old-b')?.agent.id).toBe('old-b');
+    // Sem nome exato, o aparado casa os dois e continua ambíguo.
+    expect(findAgentInSquad(runtimeId, ' Dev  ')).toBeNull();
+  });
+
+  it('id com espaço nas pontas casa literalmente antes de qualquer nome', () => {
+    const db = makeDb();
+    openDb = db;
+    insertRawSquad(db, {
+      id: 'f1500-spaced-ids',
+      name: 'Ids com espaço',
+      agents: [
+        { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', allowedTools: null },
+        { id: 'dev ', agentName: 'Implementador A', category: 'executor', cli: 'codex', allowedTools: [] },
+        { id: 'dev', agentName: 'Implementador B', category: 'executor', cli: 'claude', allowedTools: [] },
+      ],
+    });
+    insertRawSquad(db, {
+      id: 'f1500-id-vs-name',
+      name: 'Id contra nome',
+      agents: [
+        { id: 'orch2', agentName: 'Maestro 2', category: 'orchestrator', cli: 'claude', allowedTools: null },
+        { id: 'impl', agentName: 'Implementador', category: 'executor', cli: 'codex', allowedTools: [] },
+        { id: 'qa', agentName: 'impl ', category: 'reviewer', cli: 'claude', allowedTools: [] },
+        // Renomeado para o id de outro integrante: o id literal vence.
+        { id: 'backend', agentName: 'qa', category: 'executor', cli: 'grok', allowedTools: [] },
+      ],
+    });
+    initSquadStore(db);
+
+    expect(findAgentInSquad('f1500-spaced-ids', 'dev ')?.agent.cli).toBe('codex');
+    expect(findAgentInSquad('f1500-spaced-ids', 'dev')?.agent.cli).toBe('claude');
+    expect(findAgent('dev ')?.agent.cli).toBe('codex');
+    expect(findAgentInAnySquad('dev ')?.agent.cli).toBe('codex');
+    expect(requireCatalogAgent('dev ').agent.cli).toBe('codex');
+    expect(requireCatalogAgent('f1500-spaced-ids:dev ').agent.cli).toBe('codex');
+    expect(findAgentInSquad('f1500-id-vs-name', 'impl')?.agent.id).toBe('impl');
+    expect(findAgentInSquad('f1500-id-vs-name', 'qa')?.agent.id).toBe('qa');
   });
 });
 

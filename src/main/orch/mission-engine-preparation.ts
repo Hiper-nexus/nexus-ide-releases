@@ -46,6 +46,7 @@ import {
   getSquad,
   prepareMissionRuntimeSquadSave,
 } from './squad-store';
+import { assertUniqueAgentNames } from './squad-agent-names';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { routeIntent } from './intent-router';
 import { objectiveFirstLinePlainText } from '../../shared/mission-identity';
@@ -203,6 +204,9 @@ function assertRosterShape(
       );
     }
   }
+  // F-1500: equipe salva antes da validação no salvar chega aqui com nome
+  // repetido; o Maestro não conseguiria abrir nenhum dos dois pelo nome.
+  assertUniqueAgentNames(roster);
   const coordinators = roster.filter(
     (agent) => agent.category === 'orchestrator',
   );

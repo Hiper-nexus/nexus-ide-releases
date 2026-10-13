@@ -31,6 +31,7 @@ import {
   applyGuidedSquadSkillPolicy,
   withGuidedSkillDefaults,
 } from './guided-squad-skills';
+import { assertUniqueAgentNames } from './squad-agent-names';
 
 /**
  * Squad store. SQLite is authoritative. The in-memory map is a read cache that
@@ -134,6 +135,50 @@ function hydratedAgents(squad: Squad): SquadAgent[] {
   return withGuidedSkillDefaults(withAllowlists(squad.agents));
 }
 
+type AgentRefCandidate = { squad: Squad; agent: SquadAgent };
+
+/**
+ * F-1500: resolve a member reference in tiers — literal id (or
+ * `squadId:agentId`), then literal name, and only then the trimmed
+ * comparison. The first tier with any match decides, so squads saved before
+ * the unique-name rule (`Dev` and `Dev ` with distinct ids, ids with spaces)
+ * keep resolving exactly as they did; the trimmed fallback only finds what an
+ * exact reference would not.
+ */
+function matchAgentRef(
+  candidates: readonly AgentRefCandidate[],
+  ref: string,
+  options: { qualified?: boolean } = {},
+): AgentRefCandidate[] {
+  const qualifiedId = ({ squad, agent }: AgentRefCandidate) => `${squad.id}:${agent.id}`;
+  const wanted = ref.trim();
+  const tiers: Array<(candidate: AgentRefCandidate) => boolean> = [
+    (candidate) =>
+      candidate.agent.id === ref || (options.qualified === true && qualifiedId(candidate) === ref),
+    ({ agent }) => agent.agentName === ref,
+    (candidate) =>
+      candidate.agent.id.trim() === wanted ||
+      candidate.agent.agentName.trim() === wanted ||
+      (options.qualified === true && qualifiedId(candidate).trim() === wanted),
+  ];
+  for (const tier of tiers) {
+    const matches = candidates.filter(tier);
+    if (matches.length > 0) return matches;
+  }
+  return [];
+}
+
+function catalogCandidates(
+  include: (squad: Squad) => boolean = () => true,
+): AgentRefCandidate[] {
+  const candidates: AgentRefCandidate[] = [];
+  for (const squad of squads.values()) {
+    if (!include(squad)) continue;
+    for (const agent of squad.agents) candidates.push({ squad, agent });
+  }
+  return candidates;
+}
+
 /**
  * Validate and normalize a main-designed squad without publishing it to the
  * reusable catalog. Agentic design is a draft operation: only the explicit
@@ -183,6 +228,7 @@ function assertManagedSavePolicy(
   ) {
     throw new Error('mission runtime squad requires exact main-owned lineage');
   }
+  assertUniqueAgentNames(parsed.agents);
   return preserveExplicitRoster
     ? { ...parsed, builtin: false }
     : normalizeUserSquad(parsed);
@@ -734,14 +780,7 @@ export function squadRoutableCliIds(squadId: string): ReadonlySet<string> {
 export function findAgent(
   ref: string,
 ): { squad: Squad; agent: SquadAgent } | null {
-  for (const squad of squads.values()) {
-    for (const agent of squad.agents) {
-      if (agent.id === ref || agent.agentName === ref) {
-        return { squad, agent };
-      }
-    }
-  }
-  return null;
+  return matchAgentRef(catalogCandidates(), ref)[0] ?? null;
 }
 
 export function findAgentInSquad(
@@ -750,10 +789,11 @@ export function findAgentInSquad(
 ): { squad: Squad; agent: SquadAgent } | null {
   const squad = getSquad(squadId);
   if (!squad) return null;
-  const matches = squad.agents.filter(
-    (agent) => agent.id === ref || agent.agentName === ref,
+  const matches = matchAgentRef(
+    squad.agents.map((agent) => ({ squad, agent })),
+    ref,
   );
-  return matches.length === 1 ? { squad, agent: matches[0] } : null;
+  return matches.length === 1 ? matches[0]! : null;
 }
 
 /**
@@ -764,14 +804,7 @@ export function findAgentInSquad(
 export function findAgentInAnySquad(
   ref: string,
 ): { squad: Squad; agent: SquadAgent } | null {
-  const matches: Array<{ squad: Squad; agent: SquadAgent }> = [];
-  for (const squad of squads.values()) {
-    for (const agent of squad.agents) {
-      if (agent.id === ref || agent.agentName === ref) {
-        matches.push({ squad, agent });
-      }
-    }
-  }
+  const matches = matchAgentRef(catalogCandidates(), ref);
   return matches.length === 1 ? matches[0]! : null;
 }
 
@@ -784,15 +817,11 @@ export function findAgentInAnySquad(
 export function requireCatalogAgent(
   ref: string,
 ): { squad: Squad; agent: SquadAgent } {
-  const matches: Array<{ squad: Squad; agent: SquadAgent }> = [];
-  for (const squad of squads.values()) {
-    if (isMissionRuntimeSquadId(squad.id)) continue;
-    for (const agent of squad.agents) {
-      if (agent.id === ref || agent.agentName === ref || `${squad.id}:${agent.id}` === ref) {
-        matches.push({ squad, agent });
-      }
-    }
-  }
+  const matches = matchAgentRef(
+    catalogCandidates((squad) => !isMissionRuntimeSquadId(squad.id)),
+    ref,
+    { qualified: true },
+  );
   if (matches.length === 1) return matches[0]!;
   if (matches.length === 0) {
     throw new Error(

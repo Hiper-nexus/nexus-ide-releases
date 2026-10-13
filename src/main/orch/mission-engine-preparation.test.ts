@@ -573,6 +573,35 @@ describe('production MissionEngine preparation ports', () => {
     expect(store.missions.create).not.toHaveBeenCalled();
   });
 
+  it('F-1500: recusa equipe com dois integrantes de mesmo nome antes de gravar a missão', async () => {
+    const store = createStoreHarness();
+    const persistRuntimeSquad = vi.fn(() => runtimeSquad);
+    const preparation = createMissionEnginePreparationPorts({
+      scope,
+      missions: store.missions,
+      deps: {
+        now: () => 200,
+        persistRuntimeSquad,
+        getSquad: () => runtimeSquad,
+        resolveRuntime: () => runtime,
+        discardRuntimeSquad: () => true,
+      },
+    });
+
+    await expect(
+      preparation.arm({
+        ...request,
+        roster: request.roster.map((agent) =>
+          agent.category === 'reviewer'
+            ? { ...agent, agentName: 'Implementar checkout ' }
+            : agent,
+        ),
+      }),
+    ).rejects.toThrow(/mais de um integrante chamado `Implementar checkout`/);
+    expect(persistRuntimeSquad).not.toHaveBeenCalled();
+    expect(store.missions.create).not.toHaveBeenCalled();
+  });
+
   it.each([
     { lane: 'consult' as const, allowedTool: 'Edit' },
     { lane: 'consult' as const, allowedTool: 'Bash' },
