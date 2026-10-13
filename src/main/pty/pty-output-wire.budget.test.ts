@@ -41,7 +41,8 @@ vi.mock('../license-access', async () => (await import('../__tests__/licensed-ac
  *   em lote (o 1º chunk na virada para busy + 1 lote de ≤ 16 ms / 32 KB), não
  *   chunk a chunk.
  * - unackedPushChars (524288 = 512 KiB): renderer que não drena pausa o push
- *   em 512 KiB sem ack; a fila de IPC dentro do Main não cresce sem limite.
+ *   sem ack; a fila de IPC dentro do Main não cresce sem limite. Teto externo:
+ *   quem segura de fato é a janela T3 abaixo (64 KiB em voo).
  * - pendingPushChunks (8) e pendingPushChars (65536 = 64 KiB): janela T3
  *   `OutputProtocol` — no máximo 8 chunks / 64 KiB em voo sem ack, para que
  *   rajadas de chunks minúsculos não encham o IPC do Electron (400×80 chars
@@ -210,13 +211,19 @@ describe('orçamento de wire da saída de PTY (QLT-01)', () => {
     expect(work.chunks).toBeLessThanOrEqual(BUDGET.pendingPushChunks);
     expect(work.pushedChars).toBeLessThanOrEqual(BUDGET.pendingPushChars);
 
-    // ACK dos 8 em voo reabre a janela para o próximo chunk ao vivo.
+    // ACK dos 8 em voo reabre a janela: os PAUSADOS saem na hora, em ordem
+    // (9..16), sem saída nova nem pull — e de novo no máximo 8 em voo. O chunk
+    // ao vivo seguinte não fura a fila: espera atrás dos pausados.
     const last = events.at(-1)!;
     acknowledgeSessionOutput(shell.owner, shell.sessionId, last.sequence);
+    const drained = (sendsOn(shell, PTY_CHANNELS.data) as Array<{ sequence: number }>)
+      .slice(events.length)
+      .map((event) => event.sequence);
     shell.handlers.onData(tiny);
     const afterAck = sendsOn(shell, PTY_CHANNELS.data).length;
     console.info('[perf-budget] pty-output pending-window-after-ack', JSON.stringify({ afterAck }));
-    expect(afterAck).toBe(events.length + 1);
+    expect(drained).toEqual(Array.from({ length: BUDGET.pendingPushChunks }, (_, i) => last.sequence + 1 + i));
+    expect(afterAck).toBe(events.length + BUDGET.pendingPushChunks);
     await finish(shell);
   });
 });

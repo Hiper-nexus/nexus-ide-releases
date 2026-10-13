@@ -1145,21 +1145,17 @@ function canSend(wc: WebContents | null): wc is WebContents {
 }
 
 /**
- * Push backpressure budget per session. `replay` holds exactly the unacked
- * chunks and is trimmed at ~1 MB chars; once unacked output exceeds half that
- * window the renderer is provably not draining, so `wc.send` pauses — a
- * wedged renderer must not queue unbounded IPC inside the MAIN process.
- * Chunks keep landing in the capped replay window; the preload recover pull
- * drains them and the resulting acks resume the push. Half the window keeps
- * the full hole pullable before eviction.
- */
-const MAX_UNACKED_OUTPUT_CHARS = 512 * 1024;
-/**
+ * Push backpressure per session. `replay` holds exactly the unacked chunks
+ * (trimmed at ~1 MB chars) and is the single source of every push: a chunk is
+ * either in flight (sequence <= lastPushedSequence) or paused behind the window.
+ * Acks free the window and drain the paused tail in order; process exit flushes
+ * whatever is left before pty:exit; the preload recover pull still covers holes.
+ *
  * T3 Code `withTerminalOutputWindow` (MIT, `apps/server/src/terminal/OutputProtocol.ts`):
  * at most 8 unacked chunks / 64 KiB of payload in flight before the stream pauses.
- * The char cap above bounds total retained recovery data; this window bounds how
- * many tiny messages can pile up in Electron IPC before the renderer acks them.
- * 1 000×80-char chunks are 80 KiB — under the char cap, but 1 000 IPC messages.
+ * The window bounds both how many messages and how many chars can pile up in
+ * Electron IPC inside the MAIN process before the renderer acks them.
+ * A char cap alone would still let 1 000 tiny chunks become 1 000 IPC messages.
  */
 const MAX_PENDING_PUSH_CHUNKS = 8;
 const MAX_PENDING_PUSH_CHARS = 64 * 1024;
@@ -1180,8 +1176,8 @@ function warnOutputBackpressureThrottled(
   console.warn(
     `[pty-manager] output backpressure for ${sessionId}: ` +
       `unacked ${session.replayChars} chars / ${session.pendingPushChunks} chunks ` +
-      `(limits ${MAX_UNACKED_OUTPUT_CHARS} chars, ${MAX_PENDING_PUSH_CHUNKS}×${MAX_PENDING_PUSH_CHARS}); ` +
-      `push paused until the renderer drains`,
+      `(window ${MAX_PENDING_PUSH_CHUNKS}×${MAX_PENDING_PUSH_CHARS}); ` +
+      `push paused until the renderer acks`,
   );
 }
 
@@ -1252,6 +1248,68 @@ function makeSessionId(): string {
  * old attachProc so a spawn path can build the host session handlers without
  * ever holding a live node-pty handle.
  */
+function pushWindowHasRoom(session: Session): boolean {
+  return (
+    session.pendingPushChunks < MAX_PENDING_PUSH_CHUNKS &&
+    session.pendingPushChars < MAX_PENDING_PUSH_CHARS
+  );
+}
+
+function pushOutputEvent(
+  session: Session,
+  event: { sessionId: string; data: string; sequence: number },
+): void {
+  session.wc!.send(PTY_CHANNELS.data, event);
+  session.lastPushedSequence = event.sequence;
+  session.pendingPushChunks += 1;
+  session.pendingPushChars += event.data.length;
+}
+
+/** Índice da primeira entrada do replay com sequence > lastPushedSequence. */
+function firstUnpushedReplayIndex(session: Session): number {
+  const replay = session.replay;
+  let lo = 0;
+  let hi = replay.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (replay[mid]!.sequence <= session.lastPushedSequence) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * Empurra, em ordem estrita, os chunks do replay ainda não enviados
+ * (sequence > lastPushedSequence). Sem `endOfStream`, para quando a janela T3
+ * (8 chunks / 64 KiB) fecha — o próximo ack retoma daqui; com `endOfStream`
+ * (saída do processo) ignora a janela: é o fim do stream e a sessão morta não
+ * responde mais ao recover. Nunca re-envia: começa depois do último enviado,
+ * e se a evicção do replay abriu um buraco, começa na primeira entrada
+ * disponível (o gap buffer do preload aceita o buraco).
+ *
+ * O antigo teto de 512K não-ackeados saiu: o que ele protegia — fila de IPC
+ * sem limite dentro do Main — já fica preso à janela de 64 KiB em voo; contar
+ * também os pausados (que só existem no replay, já limitado a ~1M) deixaria
+ * uma rajada >512K parada até o pull de 15 s mesmo com o renderer ackeando.
+ */
+function drainPausedOutput(
+  session: Session,
+  sessionId: string,
+  endOfStream = false,
+): void {
+  if (!canSend(session.wc)) return;
+  const replay = session.replay;
+  for (let i = firstUnpushedReplayIndex(session); i < replay.length; i += 1) {
+    if (!endOfStream && !pushWindowHasRoom(session)) return;
+    const entry = replay[i]!;
+    pushOutputEvent(session, {
+      sessionId,
+      data: entry.data,
+      sequence: entry.sequence,
+    });
+  }
+}
+
 /** Unacked output kept for recover pulls (~1M chars). */
 const MAX_REPLAY_WINDOW_CHARS = 1_000_000;
 
@@ -1290,19 +1348,20 @@ function onSessionData(
     session.replay.splice(0, drop);
   }
   if (canSend(session.wc)) {
-    const pendingWindowFull =
-      session.pendingPushChunks >= MAX_PENDING_PUSH_CHUNKS ||
-      session.pendingPushChars >= MAX_PENDING_PUSH_CHARS;
-    if (session.replayChars > MAX_UNACKED_OUTPUT_CHARS || pendingWindowFull) {
-      // Renderer is not draining: pause the push. The chunk above still
-      // landed in the replay window, so the recover pull catches up and its
-      // acks resume the push — no data loss, no unbounded main-side IPC queue.
-      warnOutputBackpressureThrottled(sessionId, session);
+    if (
+      session.lastPushedSequence === event.sequence - 1 &&
+      pushWindowHasRoom(session)
+    ) {
+      // Caminho quente: nada pausado à frente e janela aberta — envio direto.
+      pushOutputEvent(session, event);
     } else {
-      session.wc.send(PTY_CHANNELS.data, event);
-      session.lastPushedSequence = event.sequence;
-      session.pendingPushChunks += 1;
-      session.pendingPushChars += data.length;
+      // Há pausados à frente (ou a janela fechou): o chunk novo não fura a
+      // fila. O dreno respeita a ordem e a janela; o que sobrar sai no
+      // próximo ack, e o recover pull continua cobrindo buracos.
+      drainPausedOutput(session, sessionId);
+      if (session.lastPushedSequence < event.sequence) {
+        warnOutputBackpressureThrottled(sessionId, session);
+      }
     }
   }
   // F-764 C.1: taps de dados em lote por sessão (o push ao renderer acima e a
@@ -1386,6 +1445,9 @@ function finalizeSession(
   // dados ainda acham a sessão registrada enquanto recebem o último lote.
   dataTapDispatcher.flush(sessionId);
   exitPtyAnalysis(sessionId);
+  // Cauda pausada pela janela de ACK vai inteira, em ordem, ANTES do pty:exit:
+  // depois do delete o recover devolve [] e ela se perderia para sempre.
+  drainPausedOutput(s, sessionId, true);
   sessions.delete(sessionId);
   s.releaseLicenseAgent?.();
   if (s.initialBriefPath) cleanupShellIntegrationPaths([s.initialBriefPath]);
@@ -3706,6 +3768,9 @@ export function acknowledgeSessionOutput(
     session.pendingPushChunks = Math.max(0, session.pendingPushChunks - droppedPushedChunks);
     session.pendingPushChars = Math.max(0, session.pendingPushChars - droppedPushedChars);
   }
+  // O ack liberou a janela: os pausados saem já, sem esperar saída nova nem o
+  // pull periódico de 15 s do preload.
+  drainPausedOutput(session, sessionId);
 }
 
 export function recoverSessionOutput(
