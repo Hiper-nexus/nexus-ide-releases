@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   humanizeMissionErrorDetail,
   toUserFacingMissionError,
+  toUserFacingMissionRecovery,
 } from "./user-facing-mission-error";
 
 describe("user-facing mission errors", () => {
@@ -133,6 +134,18 @@ describe("user-facing mission errors", () => {
       "Não foi possível iniciar a missão. Tente novamente.",
     );
     expect(residue).toMatch(/^Não foi possível iniciar a missão\./);
+  });
+
+  it("F-1490: withholds a Windows absolute path even inside authored Portuguese", () => {
+    const fallback = "Não foi possível preparar a revisão.";
+    for (const raw of [
+      "Não foi possível ler C:\\Users\\cliente\\AppData\\Roaming\\Nexus\\squads.json.",
+      "Não foi possível ler \\\\servidor\\equipe\\squads.json.",
+    ]) {
+      const recovery = toUserFacingMissionRecovery(new Error(raw), fallback);
+      expect(recovery).toBe(fallback);
+      expect(recovery).not.toMatch(/Users|servidor/);
+    }
   });
 
   it("keeps mapped recoveries free of technical noise", () => {

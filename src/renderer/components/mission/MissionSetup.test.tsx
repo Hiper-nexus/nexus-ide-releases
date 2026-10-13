@@ -2083,6 +2083,45 @@ describe('MissionSetup', () => {
     expect(host.textContent).toContain(REVIEW.objective);
   });
 
+  it('F-1490: mostra a causa real que o Main deu ao preparar, sem o invólucro do IPC', async () => {
+    api.prepare.mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'orch:mission-prepare': Error: " +
+          'A equipe precisa ter exatamente um coordenador (orchestrator).',
+      ),
+    );
+    const host = await renderAtReview();
+
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain(
+      'A equipe precisa ter exatamente um coordenador',
+    );
+    expect(host.textContent).not.toContain('Error invoking remote method');
+    expect(button(host, 'Preparar nova revisão')).toBeDefined();
+  });
+
+  it('F-1490: a validação local aponta a equipe, não o objetivo', async () => {
+    useMissionSetupStore.setState({
+      draft: {
+        objective: 'Criar um fluxo simples de missão',
+        title: '',
+        contextPaths: [],
+        roster: [REVIEW_ROSTER[0]!, REVIEW_ROSTER[1]!],
+        advanced: { lane: 'standard' },
+        step: 'review',
+        revision: 1,
+      },
+    });
+    const host = render(<MissionSetup />);
+    await flush();
+
+    expect(api.prepare).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+      'Adicione ao menos uma pessoa independente para verificar a entrega.',
+    );
+    expect(host.textContent).not.toContain('Revise o objetivo');
+  });
+
   it('descarta uma revisão desatualizada e exige uma nova revisão exata antes de reiniciar', async () => {
     const refreshedReview: MissionReview = {
       ...REVIEW,
@@ -2242,6 +2281,31 @@ describe('Caminho Expresso', () => {
     expect(
       host.querySelector('input[type="file"][accept*="audio"]'),
     ).not.toBeNull();
+  });
+
+  it('F-1490: equipe sem verificação no Expresso aponta a equipe, não o objetivo', async () => {
+    const host = await renderAtExpress();
+    act(() => {
+      useMissionSetupStore
+        .getState()
+        .setRoster([REVIEW_ROSTER[0]!, REVIEW_ROSTER[1]!]);
+    });
+    enterText(
+      objectiveField(host, 'Seu pedido'),
+      'Construir uma landing page com formulário de contato',
+    );
+    await flush();
+    await flush();
+
+    act(() => button(host, 'Iniciar criação').click());
+    await flush();
+    await flush();
+
+    expect(api.prepare).not.toHaveBeenCalled();
+    expect(host.textContent).toContain(
+      'Adicione ao menos uma pessoa independente para verificar a entrega.',
+    );
+    expect(host.textContent).not.toContain('Revise o objetivo');
   });
 
   it('oferece o caminho manual na própria tela, sem mandar o operador a Terminais', async () => {

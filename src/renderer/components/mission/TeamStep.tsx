@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AccountInfo } from '../../../shared/account-types';
 import type { MissionLane } from '../../../shared/mission-intent';
-import { missionDeliveryRosterIssue } from '../../../shared/mission-engine-contract';
+import {
+  missionDeliveryRosterIssue,
+  type MissionDeliveryRosterIssue,
+} from '../../../shared/mission-engine-contract';
 import {
   strictSquadAgentSchema,
   type SquadAgent,
@@ -216,6 +219,15 @@ export function buildRecommendedMissionRoster({
   return roster;
 }
 
+/** Mesma cópia no Continuar da Equipe e na validação local do pedido. */
+export function missionDeliveryIssueCopy(
+  issue: MissionDeliveryRosterIssue,
+): string {
+  return issue === 'executor-required'
+    ? 'Adicione ao menos uma pessoa responsável por implementar ou executar a entrega.'
+    : 'Adicione ao menos uma pessoa independente para verificar a entrega.';
+}
+
 export function missionRosterIssue(input: {
   roster: readonly SquadAgent[];
   lane: MissionLane;
@@ -247,12 +259,7 @@ export function missionRosterIssue(input: {
   }
   if (!isExactPetStudioEntryContext(input.entryContext)) {
     const deliveryIssue = missionDeliveryRosterIssue(input.roster, input.lane);
-    if (deliveryIssue === 'executor-required') {
-      return 'Adicione ao menos uma pessoa responsável por implementar ou executar a entrega.';
-    }
-    if (deliveryIssue === 'reviewer-required') {
-      return 'Adicione ao menos uma pessoa independente para verificar a entrega.';
-    }
+    if (deliveryIssue) return missionDeliveryIssueCopy(deliveryIssue);
   }
 
   // Doutrina fluxo-por-padrão: a equipe só é barrada por FORMA (schema, uma

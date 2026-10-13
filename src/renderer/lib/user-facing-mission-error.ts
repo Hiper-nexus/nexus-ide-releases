@@ -206,7 +206,8 @@ function stripTransportWrappers(raw: string): string {
 
 /**
  * Machine residue that is never operator copy in any language: internal snake
- * codes, stack frames, URLs, filesystem paths and errno-style constants.
+ * codes, stack frames, URLs, POSIX and Windows filesystem paths and
+ * errno-style constants.
  */
 function containsErrnoStyleToken(value: string): boolean {
   // ENOENT/EACCES — not authored caps like EXATAMENTE (065 title).
@@ -219,6 +220,9 @@ function containsMachineResidue(value: string): boolean {
     /\b(?:stack trace|typeerror|referenceerror)\b/i.test(value) ||
     /https?:\/\/|\bwww\./i.test(value) ||
     /(?:\/[^/\s]+){2,}/.test(value) ||
+    // F-1490: caminho do Windows (C:\… ou \\servidor\…) passava pelo filtro
+    // de caminhos, que só conhecia a barra do POSIX.
+    /\b[A-Za-z]:\\|\\\\[^\\\s]+\\/.test(value) ||
     /\bat\s+\S+\s+\([^)]*:\d+:\d+\)/i.test(value)
   );
 }

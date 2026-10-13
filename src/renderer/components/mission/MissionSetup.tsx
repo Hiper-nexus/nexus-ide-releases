@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
+  missionDeliveryRosterIssue,
   missionPrepareRequestSchema,
   type MissionPrepareRequest,
   type MissionReview,
@@ -29,7 +30,10 @@ import {
   type MissionSetupStore,
   useMissionSetupStore,
 } from '../../state/mission-setup-store';
-import { toUserFacingMissionError } from '../../lib/user-facing-mission-error';
+import {
+  toUserFacingMissionError,
+  toUserFacingMissionRecovery,
+} from '../../lib/user-facing-mission-error';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
 import { reflectAdoptedOrchestratorWithToast } from '../../orch/adopted-orchestrator-reflect';
@@ -51,6 +55,7 @@ import {
 import {
   buildRecommendedMissionRoster,
   issueForAgent,
+  missionDeliveryIssueCopy,
   TeamStep,
   type MissionTeamInventory,
 } from './TeamStep';
@@ -209,6 +214,39 @@ function humanizeMissionStartError(message: string): string {
     trimmed,
     'Não foi possível iniciar a missão. A preparação foi preservada quando seguro; abra a aba Atividade ou tente novamente.',
   );
+}
+
+/**
+ * F-1490: a validação local do pedido respondia "Revise o objetivo…" para
+ * qualquer reprovação — inclusive equipe sem verificação ou papel inválido,
+ * que mexer no objetivo não resolve. Aponta a parte que precisa de ajuste.
+ */
+function prepareRequestIssueMessage(
+  request: MissionPrepareRequest,
+  issues: readonly { readonly path: readonly PropertyKey[] }[],
+): string {
+  const [field, index] = issues[0]?.path ?? [];
+  if (field === 'roster') {
+    const delivery = missionDeliveryRosterIssue(
+      request.roster,
+      request.advanced?.lane ?? 'standard',
+    );
+    if (index === undefined && delivery) {
+      return missionDeliveryIssueCopy(delivery);
+    }
+    const agentName =
+      typeof index === 'number' ? request.roster[index]?.agentName.trim() : '';
+    return agentName
+      ? `Revise o papel “${agentName}” na equipe antes de tentar novamente.`
+      : 'Revise a equipe antes de tentar novamente.';
+  }
+  if (field === 'contextPaths') {
+    return 'Revise os arquivos de contexto antes de tentar novamente.';
+  }
+  if (field === 'title') {
+    return 'Revise o título da missão antes de tentar novamente.';
+  }
+  return 'Revise o objetivo antes de tentar novamente.';
 }
 
 
@@ -543,17 +581,16 @@ export function MissionSetup({
     }
 
 
-    const requestResult = missionPrepareRequestSchema.safeParse(
-      missionPrepareRequestFromDraft(
-        setupState.draft,
-        setupState.entryContext,
-      ),
+    const request = missionPrepareRequestFromDraft(
+      setupState.draft,
+      setupState.entryContext,
     );
+    const requestResult = missionPrepareRequestSchema.safeParse(request);
     if (!requestResult.success) {
       setReviewEnvelope(null);
       setPrepareStatus('error');
       setReviewError(
-        'Revise o objetivo, os arquivos e a equipe antes de tentar novamente.',
+        prepareRequestIssueMessage(request, requestResult.error.issues),
       );
       return;
     }
@@ -585,12 +622,19 @@ export function MissionSetup({
       setReviewEnvelope({ authorityKey: capturedAuthorityKey, review });
       startedReviewMissionIdRef.current = null;
       setPrepareStatus('ready');
-    } catch {
+    } catch (error) {
       if (generation !== authorityGenerationRef.current) return;
       setReviewEnvelope(null);
       setPrepareStatus('error');
+      // F-1490: a recusa do Main (coordenador, ferramenta, permissões) é o
+      // que o operador precisa ler. O saneador deixa passar só a cópia em
+      // português escrita para ele; diagnóstico cru de IPC/rede, caminho e
+      // stack continuam fora e caem na mensagem genérica.
       setReviewError(
-        'Não foi possível preparar a revisão. O rascunho foi preservado; tente novamente.',
+        toUserFacingMissionRecovery(
+          error,
+          'Não foi possível preparar a revisão. O rascunho foi preservado; tente novamente.',
+        ),
       );
     } finally {
       if (
@@ -964,11 +1008,15 @@ export function MissionSetup({
       roster,
       advanced: { lane: expressLane, freeAgentChoice: true },
     };
-    const requestResult = missionPrepareRequestSchema.safeParse(
-      missionPrepareRequestFromDraft(expressDraft, setupState.entryContext),
+    const expressRequest = missionPrepareRequestFromDraft(
+      expressDraft,
+      setupState.entryContext,
     );
+    const requestResult = missionPrepareRequestSchema.safeParse(expressRequest);
     if (!requestResult.success) {
-      setExpressError('Revise o objetivo antes de tentar novamente.');
+      setExpressError(
+        prepareRequestIssueMessage(expressRequest, requestResult.error.issues),
+      );
       return;
     }
     const capturedAuthorityKey = authorityKey;
