@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { OwnedCommandProcesses } from './owned-command-process';
-import { collectDescendantRows, type DescendantSnapshot, type ProcessTableRow } from './pty-descendant-termination';
+import { collectDescendantRows, parseProcessTable, type DescendantSnapshot, type ProcessTableRow } from './pty-descendant-termination';
 const row = (pid: number, ppid: number, startedAt = 'Sat Oct  3 12:00:00 2026'): ProcessTableRow => ({ pid, ppid, pgid: 1, sid: 1, tty: 'ttys001', startedAt });
 function fixture() {
  let rows = [row(10, 1), row(20, 10)]; const identity = {};
@@ -98,7 +98,7 @@ it('supervised claims ignore sampled disappearance until their authenticated who
 it('F-1435: um órfão antigo com o PPID reciclado não segura a vaga depois que o comando sai', async () => {
  // Real walk (collectDescendantRows) over Windows-shaped rows: the job's child
  // 30 got a recycled PID that an hours-old process still names as its parent.
- const at = (time: string): ProcessTableRow => ({ pid: 0, ppid: 0, pgid: 0, sid: 0, tty: '?', startedAt: `2026-10-13T${time}Z` });
+ const at = (time: string): ProcessTableRow => ({ pid: 0, ppid: 0, pgid: 0, sid: 0, tty: '?', startedAt: `2026-10-13T${time}Z`, startedAtUtcMs: Date.parse(`2026-10-13T${time}Z`) });
  const proc = (pid: number, ppid: number, time: string): ProcessTableRow => ({ ...at(time), pid, ppid });
  const pane = proc(10, 1, '18:00:00.000'), browser = proc(90, 30, '09:00:00.000'), tab = proc(91, 90, '09:00:01.000');
  let table = [pane, proc(20, 10, '19:00:00.000'), browser, tab];
@@ -108,5 +108,29 @@ it('F-1435: um órfão antigo com o PPID reciclado não segura a vaga depois que
  table = [pane, proc(20, 10, '19:00:00.000'), proc(30, 20, '19:00:02.000'), browser, tab];
  expect(await tracker.probe('s', id)).toBe('live');
  table = [pane, browser, tab];
+ expect(await tracker.probe('s', id)).toBe('gone');
+});
+
+it('F-1479: na volta do horário de verão o filho real com `lstart` "anterior" ao pai segura a vaga depois que o pai sai', async () => {
+ // `ps lstart` sai na hora local, sem offset. Formatada com a zona IANA fixa
+ // (não depende do TZ de quem roda o teste): em America/New_York, 2026-11-01,
+ // o pai nasce 05:50Z (01:50 EDT) e o filho 06:10Z (01:10 EST).
+ const parts = (iso: string) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23',
+   weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+   .formatToParts(new Date(iso)).map((part) => [part.type, part.value]));
+ const lstart = (iso: string) => { const p = parts(iso); return `${p.weekday} ${p.month} ${p.day.padStart(2, ' ')} ${p.hour}:${p.minute}:${p.second} ${p.year}`; };
+ expect([lstart('2026-11-01T05:50:00Z'), lstart('2026-11-01T06:10:00Z')]).toEqual(['Sun Nov  1 01:50:00 2026', 'Sun Nov  1 01:10:00 2026']);
+ const ps = (...lines: Array<[number, number, string]>) => parseProcessTable(lines.map(([pid, ppid, iso]) => `${pid} ${ppid} ${pid} ${pid} ttys001 ${lstart(iso)}`).join('\n'));
+ const pane: [number, number, string] = [10, 1, '2026-11-01T05:00:00Z'], job: [number, number, string] = [20, 10, '2026-11-01T05:50:00Z'];
+ let table = ps(pane, job);
+ // Bem depois de qualquer leitura local dessas horas, em qualquer TZ do runner.
+ const capture = async (pid: number): Promise<DescendantSnapshot> => collectDescendantRows(pid, table, Date.parse('2026-11-02T12:00:00Z'));
+ const tracker = new OwnedCommandProcesses((id) => id === 's' ? { pid: 10, identity: pane } : null, capture);
+ const id = (await tracker.claim('s', 20))!; expect(id).toBeTypeOf('string');
+ table = ps(pane, job, [30, 20, '2026-11-01T06:10:00Z']);
+ expect(await tracker.probe('s', id)).toBe('live');
+ table = ps(pane, [30, 1, '2026-11-01T06:10:00Z']);
+ expect(await tracker.probe('s', id)).toBe('live');
+ table = ps(pane);
  expect(await tracker.probe('s', id)).toBe('gone');
 });

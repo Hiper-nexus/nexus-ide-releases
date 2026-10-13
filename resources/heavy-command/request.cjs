@@ -30,6 +30,8 @@ if (inheritedProxy) {
 function accepted(status, raw) {
   let result;
   try { result = JSON.parse(raw); } catch { fail(`Nexus admission sent an unreadable reply (HTTP ${status})`); }
+  // F-1479: `null` (or any non-object) would throw a TypeError below instead of naming the cause.
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) fail(`Nexus admission sent an unreadable reply (HTTP ${status})`);
   if (status !== 200 || result.allow !== true || typeof result.leaseId !== 'string' || !result.leaseId || result.leaseId.length > 128) {
     // F-1229: Main's reason (queue wait, root, jobs there) instead of a bare exit.
     if (status === 200 && typeof result.message === 'string') { process.stderr.write(result.message.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 600) + '\n'); process.exit(78); }
@@ -98,7 +100,7 @@ setTimeout(async () => {
   const req = http.request(url, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), authorization: 'Bearer ' + process.env.NEXUS_GATE_TOKEN }, timeout: 360_000 }, (res) => {
     let text = '';
     res.on('data', (part) => { text += part; if (text.length > 2048) req.destroy(Object.assign(new Error('oversized'), { code: 'reply over 2 KB' })); });
-    res.on('end', () => accepted(res.statusCode, text));
+    res.on('end', () => { try { accepted(res.statusCode, text); } catch { fail(`Nexus admission sent an unreadable reply (HTTP ${res.statusCode})`); } });
   });
   req.on('timeout', () => req.destroy(Object.assign(new Error('timeout'), { code: 'no answer in 360 s' })));
   req.on('error', (error) => fail(`Nexus admission did not answer (${error?.code || 'connection failed'})`)); req.end(body);

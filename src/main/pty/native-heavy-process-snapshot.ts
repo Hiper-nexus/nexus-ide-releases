@@ -14,7 +14,8 @@ export function parseWindowsCommandProcesses(raw: string): ProcessTableRow[] {
     if (!row || !Number.isSafeInteger(row.pid) || Number(row.pid) <= 0 || !Number.isSafeInteger(row.ppid) || Number(row.ppid) < 0 ||
       typeof row.startedAt !== 'string' || !Number.isFinite(Date.parse(row.startedAt)) || seen.has(Number(row.pid))) throw new Error('ambiguous command process inventory');
     seen.add(Number(row.pid));
-    return { pid: Number(row.pid), ppid: Number(row.ppid), startedAt: row.startedAt, pgid: 0, sid: 0, tty: '?' };
+    // The query below emits CreationDate as UTC ISO 'o' (trailing Z): an absolute instant.
+    return { pid: Number(row.pid), ppid: Number(row.ppid), startedAt: row.startedAt, startedAtUtcMs: Date.parse(row.startedAt), pgid: 0, sid: 0, tty: '?' };
   });
 }
 

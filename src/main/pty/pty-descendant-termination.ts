@@ -17,6 +17,13 @@ export interface ProcessTableRow {
   readonly tty: string;
   /** `ps lstart` text, retained for delayed PID-reuse fencing. */
   readonly startedAt: string;
+  /**
+   * F-1479: absolute creation instant (epoch ms), set only by an inventory
+   * that reports creation time in UTC (Windows CIM). `ps lstart` is local
+   * wall-clock time without an offset, ambiguous across a DST fall-back, and
+   * never sets it.
+   */
+  readonly startedAtUtcMs?: number;
 }
 
 export interface ProcessTableCapture {
@@ -226,15 +233,17 @@ export function collectDescendantRows(
   const visited = new Set([rootPid]);
   for (let index = 0; index < queue.length; index += 1) {
     const parent = queue[index];
-    const parentBorn = Date.parse(parent.startedAt);
+    const parentBorn = parent.startedAtUtcMs;
     for (const child of childrenByPpid.get(parent.pid) ?? []) {
       if (visited.has(child.pid)) continue;
       // F-1435: Windows never rewrites ParentProcessId when a parent dies and
       // recycles the PID. A process born before its recorded parent is the
       // orphan of an earlier holder of that number (Chrome, Explorer, Nexus
-      // itself), never a descendant. POSIX reparents orphans, so no real
-      // child is born before its parent there.
-      if (Date.parse(child.startedAt) < parentBorn) continue;
+      // itself), never a descendant. F-1479: only absolute instants compare.
+      // POSIX reparents orphans, so the fence is never needed there, and its
+      // local `lstart` makes a real child look older than its parent when
+      // the clock falls back for DST.
+      if (parentBorn !== undefined && child.startedAtUtcMs !== undefined && child.startedAtUtcMs < parentBorn) continue;
       visited.add(child.pid);
       descendants.push(child);
       queue.push(child);

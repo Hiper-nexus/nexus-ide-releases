@@ -88,3 +88,15 @@ it.skipIf(!bash)('F-1434: Main que não responde vira motivo explícito, não "C
  expect(run.stderr).toMatch(/nexus-heavy: .*(did not answer|não respondeu)/);
  expect(run.stderr).not.toMatch(/CPU\/RAM/);
 }, 30_000);
+
+it.each([[null], [42], ['allow'], [[]]])('F-1479: resposta HTTP 200 que não é objeto (%j) sai 78 com o motivo, sem TypeError', async (reply) => {
+ const main = await fakeMain(() => reply);
+ const child = spawn(process.execPath, [path.join(resources, 'request.cjs'), String(process.pid), 'tests'], {
+  env: { NEXUS_HEAVY_COMMAND_URL: main.url, NEXUS_GATE_TOKEN: 'finite-pid-fixture', ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows' } : {}) },
+  stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+ });
+ let stdout = '', stderr = ''; child.stdout.on('data', (part) => { stdout += part; }); child.stderr.on('data', (part) => { stderr += part; });
+ const code = await new Promise<number | null>((resolve) => child.once('close', resolve));
+ expect(main.received).toHaveLength(1);
+ expect({ code, stdout, stderr }).toEqual({ code: 78, stdout: '', stderr: 'nexus-heavy: Nexus admission sent an unreadable reply (HTTP 200)\n' });
+}, 30_000);
