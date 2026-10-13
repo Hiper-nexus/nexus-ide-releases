@@ -28,7 +28,7 @@ it('reports structured applicability without treating a configured but unavailab
     }, { ...dependencies, typecheck: async () => ({ kind: 'typecheck', status: 'unavailable', summary: 'Compiler absent', findings: [] }) });
     expect(result.kind).toBe('approved'); // Legacy callers retain their existing outcome contract.
     if (result.kind !== 'approved') return;
-    expect(result.verification).toMatchObject({ analysisComplete: true, headSha: HEAD_SHA, baseSha: BASE_SHA,
+    expect(result.verification).toMatchObject({ analysisFailures: [], declaredLimits: [], headSha: HEAD_SHA, baseSha: BASE_SHA,
       checks: expect.arrayContaining([{ kind: 'typecheck', status: 'unavailable', summary: 'Compiler absent' }]),
     });
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -117,6 +117,8 @@ function analysis(
     inspectedFiles: findings.length + 3,
     inspectedBytes: 4_096,
     incompleteReasons: [],
+    declaredLimits: [],
+    failures: [],
     reviewerMarkdown: '',
   };
 }

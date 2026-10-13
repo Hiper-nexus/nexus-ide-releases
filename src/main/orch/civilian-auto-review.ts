@@ -13,6 +13,7 @@ import {
 import {
   runCandidateQualityAnalysis,
   type CandidateQualityAnalysis,
+  type CandidateQualityDeclaredLimit,
 } from '../context/candidate-quality-scanner';
 import {
   runDependencyAuditSensor,
@@ -76,7 +77,10 @@ export type CivilianAutoReviewOutcome =
   | { readonly kind: 'defer-to-roster-review'; readonly reason?: string; readonly retryable?: boolean };
 
 export interface CivilianMechanicalVerification {
-  readonly analysisComplete: boolean;
+  /** F-1430: real read/integrity failures; non-empty still blocks completion. */
+  readonly analysisFailures: readonly string[];
+  /** F-1430: declared limits (budget/count/ceiling/time), each naming files left out. */
+  readonly declaredLimits: readonly CandidateQualityDeclaredLimit[];
   readonly headSha: string | null;
   /** null means current-state verification, not a claim about authorship. */
   readonly baseSha: string | null;
@@ -506,7 +510,8 @@ export async function enforceCivilianAutoReview(
         !observedHead ? 'Arquivos atuais analisados sem comparação com histórico Git.' : '',
       ].filter(Boolean).join('\n'),
       verification: {
-        analysisComplete: analysis.complete,
+        analysisFailures: analysis.failures,
+        declaredLimits: analysis.declaredLimits,
         headSha: observedHead,
         baseSha: input.completionBaseSha !== undefined ? input.completionBaseSha : observedHead ? baseSha : null,
         checks: mechanical.map(check => ({ kind: check.kind, summary: check.summary,

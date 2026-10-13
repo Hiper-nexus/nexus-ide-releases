@@ -239,7 +239,7 @@ it.each([false, true])('real Git unchanged required app still waits for independ
     mission: { id: 'required-app', title: 'Fix existing app.ts', intentContract: { lane: 'standard' }, intentVersion: 1, updatedAt: 1 } as Mission,
     baselineSha: baseSha, authorSessionIds: [],
   }, { captureCandidate: capture, runMechanical: async () => ({ kind: 'approved', evidenceId: 'mechanical', note: 'fixture checks',
-    verification: { analysisComplete: true, headSha: baseSha, baseSha, checks: [], regression: null, regressionApplicable: false } }),
+    verification: { analysisFailures: [], declaredLimits: [], headSha: baseSha, baseSha, checks: [], regression: null, regressionApplicable: false } }),
     ensureIndependentReview: review, assertCurrent: () => {} });
   expect(result.kind).toBe('waiting'); expect(review).toHaveBeenCalledOnce();
 });

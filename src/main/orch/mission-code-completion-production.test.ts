@@ -67,7 +67,7 @@ beforeEach(async () => {
   });
   state.close.mockImplementation(async (options: { sessionId: string }) => { if (!state.closeAccepts) return false; state.live.delete(options.sessionId); return true; });
   state.checks.mockImplementation(async () => ({ kind: 'approved', evidenceId: 'checks:current', note: 'Checks atuais', verification: {
-    analysisComplete: true, headSha: state.candidate!.headSha, baseSha: state.baseSha,
+    analysisFailures: [], declaredLimits: [], headSha: state.candidate!.headSha, baseSha: state.baseSha,
     checks: [{ kind: 'typecheck', status: 'passed', summary: 'Compiler passed' }],
     regression: { status: 'no-tests', testsRun: [], testsNotRun: [] }, regressionApplicable: false,
   } }));

@@ -13,7 +13,7 @@ const passed = (kind: 'typecheck' | 'dependency-audit' | 'test-coverage' | 'depe
 const analysis: CandidateQualityAnalysis = { version: 'candidate-quality-v1', complete: true,
   analysisHash: 'f'.repeat(64), findings: [{ severity: 'high', category: 'correctness', file: 'src/fixture.ts',
     criterionRefs: [], invariantRefs: [], evidence: 'Private fixture needs repair.', recommendation: 'Repair fixture.' }],
-  inspectedFiles: 1, inspectedBytes: 100, incompleteReasons: [], reviewerMarkdown: '' };
+  inspectedFiles: 1, inspectedBytes: 100, incompleteReasons: [], declaredLimits: [], failures: [], reviewerMarkdown: '' };
 const mission = { id: 'mission-f889-fixture', title: 'Private fixture', status: 'running', description: 'Fixture source review.',
   intentState: 'executing', intentVersion: 1, createdAt: 1000, updatedAt: 2000, milestones: [], learnings: '' } as Mission;
 const deps = { git: { run: async (_cwd: string, args: readonly string[]) => ({ status: 0,

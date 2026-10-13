@@ -1,6 +1,7 @@
 import type { Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { WorkingTreeCandidateSnapshot } from '../context/candidate-working-tree-snapshot';
+import type { CandidateQualityDeclaredLimit } from '../context/candidate-quality-scanner';
 import type { AutomaticCompletionProof } from './automatic-completion-proof';
 import type { CivilianAutoReviewOutcome } from './civilian-auto-review';
 import type { MissionReviewVerdict } from './mission-review-verdict-ledger';
@@ -108,6 +109,17 @@ function limitNote(candidate: WorkingTreeCandidateSnapshot): string {
   ].filter(Boolean).join('\n');
 }
 
+/** F-1430: each declared scanner limit names what it left out; executable source over the ceiling is highlighted. */
+function declaredLimitNote(limits: readonly CandidateQualityDeclaredLimit[]): string {
+  if (limits.length === 0) return '';
+  const named = (paths: readonly string[]) => `${paths.slice(0, 20).join(', ')}${paths.length > 20 ? ` (+${paths.length - 20})` : ''}`;
+  return limits.map((limit) => {
+    const highlight = limit.executable ? ' — inclui código-fonte executável alterado além do teto por arquivo' : '';
+    const files = limit.files.length ? named(limit.files) : '—';
+    return `Limite declarado do scanner (${limit.reason}): ${files}${highlight}.`;
+  }).join('\n');
+}
+
 /** Stateless: the caller reuses the existing mission completion flight/retry owner. */
 export async function ensureMissionCodeCompletion(input: MissionCodeCompletionInput, ports: MissionCodeCompletionPorts): Promise<MissionCodeCompletionOutcome> {
   const { scope, executionScope, mission } = input;
@@ -159,7 +171,13 @@ export async function ensureMissionCodeCompletion(input: MissionCodeCompletionIn
   if (mechanical.kind === 'defer-to-roster-review' && mechanical.retryable) return refuse('code_checks_pending', mechanical.reason ?? 'Verificações aguardando recursos; tente novamente.', 'waiting');
   if (mechanical.kind !== 'approved') return refuse('code_checks_failed', mechanical.kind === 'blocked' ? mechanical.description : mechanical.reason ?? 'Verificação mecânica indisponível.');
   const verification = mechanical.verification;
-  if (!verification || !verification.analysisComplete) return refuse('code_checks_incomplete', 'A análise estática completa do candidato ainda não foi comprovada.');
+  // F-1430: declared limits (budget/count/ceiling/time) are accepted; only a
+  // real read/integrity failure keeps the candidate from being certified.
+  if (!verification || verification.analysisFailures.length > 0) {
+    const shown = verification ? verification.analysisFailures.slice(0, 3).join('; ') : '';
+    const more = verification && verification.analysisFailures.length > 3 ? ` (+${verification.analysisFailures.length - 3})` : '';
+    return refuse('code_checks_incomplete', `A análise estática do candidato falhou ao ler fontes: ${shown}${more}. Reduza o escopo ou restaure os arquivos.`);
+  }
   if (verification.headSha !== candidate.headSha || verification.baseSha !== input.baselineSha) return refuse('code_checks_stale', 'As verificações mecânicas pertencem a outro candidato.', 'waiting');
   if (verification.checks.some(check => check.kind !== 'dependency-freshness' && (check.status === 'failed' || check.status === 'unavailable'))) return refuse('code_checks_unavailable', 'Há verificação aplicável que falhou ou não pôde executar.');
   const regression = verification.regression;
@@ -191,6 +209,7 @@ export async function ensureMissionCodeCompletion(input: MissionCodeCompletionIn
     coverage === 'delta' ? 'A base delimita o candidato; ela não comprova autoria do WIP preexistente.' : '',
     staleNote(fresh),
     limitNote(fresh),
+    declaredLimitNote(verification.declaredLimits),
   ].filter(Boolean).join('\n');
   return certify('code', fresh, verdict.reviewerSession, [mechanical.evidenceId, verdict.verdictId], note);
 }

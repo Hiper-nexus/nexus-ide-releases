@@ -27,7 +27,7 @@ const regression = (): RegressionGateResult => ({ status: 'passed', headSha, bas
   testsRun: ['src/app.test.ts'], testsNotRun: [], failures: [],
 } as unknown as RegressionGateResult);
 const mechanical = () => ({ kind: 'approved' as const, evidenceId: 'mechanical:1', note: 'Main checks',
-  verification: { analysisComplete: true, headSha, baseSha,
+  verification: { analysisFailures: [], declaredLimits: [], headSha, baseSha,
     checks: [{ kind: 'typecheck' as const, status: 'passed' as const, summary: 'Typecheck executado' }],
     regression: regression(), regressionApplicable: true,
   },
@@ -153,7 +153,7 @@ describe('Main code completion across pane and ordinary missions', () => {
     for (const verification of [
       { ...mechanical().verification, regression: { ...regression(), testsNotRun: ['src/app.test.ts'] } },
       { ...mechanical().verification, regression: { ...regression(), status: 'unavailable' as const } },
-      { ...mechanical().verification, analysisComplete: false },
+      { ...mechanical().verification, analysisFailures: ['changed source could not be read: src/broken.ts'] },
     ]) {
       const f = fixture(); f.ports.runMechanical = async () => ({ ...mechanical(), verification });
       expect((await ensureMissionCodeCompletion(f.input, f.ports)).kind).toBe('blocked');
@@ -238,7 +238,7 @@ describe('Main code completion across pane and ordinary missions', () => {
     f.ports.captureCandidate = async () => ({ ...candidate(['index.html']), source: 'filesystem', headSha: null });
     const ticket = review(); if (ticket.kind !== 'reviewed') throw new Error('fixture');
     f.ports.ensureIndependentReview = async () => ({ ...ticket, baseSha: null, verdict: { ...ticket.verdict, headSha: null } });
-    f.ports.runMechanical = async () => ({ ...mechanical(), verification: { analysisComplete: true, headSha: null, baseSha: null,
+    f.ports.runMechanical = async () => ({ ...mechanical(), verification: { analysisFailures: [], declaredLimits: [], headSha: null, baseSha: null,
       checks: [{ kind: 'typecheck', status: 'not-applicable', summary: 'Sem TypeScript' }], regression: null, regressionApplicable: false } });
     const result = await ensureMissionCodeCompletion({ ...f.input, baselineSha: null }, f.ports);
     expect(result.kind).toBe('verified');
@@ -263,5 +263,51 @@ describe('F-1428: release-sized candidates', () => {
     const note = 'proof' in result ? result.proof.note ?? '' : '';
     expect(note).toContain('src/big.ts');
     expect(note).toContain('src/old-name.ts');
+  });
+});
+
+describe('F-1430: declared scanner limits are not read failures', () => {
+  it('certifies a repo over the byte budget once the changed files were read, naming what was left out', async () => {
+    const f = fixture();
+    f.ports.runMechanical = async () => ({ ...mechanical(), verification: { ...mechanical().verification,
+      declaredLimits: [{ kind: 'byte-budget', reason: 'source byte limit 8388608 reached',
+        files: ['src/a0.ts', 'src/a1.ts', 'src/z-existing.ts'] }] } });
+    const result = await ensureMissionCodeCompletion(f.input, f.ports);
+    expect(result.kind).toBe('verified');
+    if (result.kind === 'verified') {
+      expect(result.proof.note).toContain('src/a0.ts');
+      expect(result.proof.note).toContain('src/z-existing.ts');
+    }
+  });
+
+  it('certifies a changed file over the per-file ceiling as a declared limit, never a block', async () => {
+    const f = fixture();
+    f.ports.runMechanical = async () => ({ ...mechanical(), verification: { ...mechanical().verification,
+      declaredLimits: [{ kind: 'file-ceiling', reason: 'source file over the per-file byte ceiling (393216 bytes)',
+        files: ['src/shared/release-notes.ts'], executable: false }] } });
+    const result = await ensureMissionCodeCompletion(f.input, f.ports);
+    expect(result.kind).toBe('verified');
+    if (result.kind === 'verified') expect(result.proof.note).toContain('src/shared/release-notes.ts');
+  });
+
+  it('highlights a changed executable source over the per-file ceiling in the note', async () => {
+    const f = fixture();
+    f.ports.runMechanical = async () => ({ ...mechanical(), verification: { ...mechanical().verification,
+      declaredLimits: [{ kind: 'file-ceiling', reason: 'source file over the per-file byte ceiling (393216 bytes)',
+        files: ['src/big-machine.ts'], executable: true }] } });
+    const result = await ensureMissionCodeCompletion(f.input, f.ports);
+    expect(result.kind).toBe('verified');
+    if (result.kind === 'verified') expect(result.proof.note).toContain('código-fonte executável');
+  });
+
+  it('still refuses a real read failure even with declared limits present', async () => {
+    const f = fixture();
+    f.ports.runMechanical = async () => ({ ...mechanical(), verification: { ...mechanical().verification,
+      declaredLimits: [{ kind: 'byte-budget', reason: 'source byte limit 8388608 reached', files: ['src/big.ts'] }],
+      analysisFailures: ['changed source could not be read: src/broken.ts'] } });
+    const result = await ensureMissionCodeCompletion(f.input, f.ports);
+    expect(result.kind).toBe('blocked');
+    if (result.kind === 'blocked') expect(result.code).toBe('code_checks_incomplete');
+    expect(f.ports.ensureIndependentReview).not.toHaveBeenCalled();
   });
 });

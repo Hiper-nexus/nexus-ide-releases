@@ -51,6 +51,25 @@ export interface RunCandidateQualityAnalysisInput {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * F-1430: a budget/count/ceiling decision the scanner declared, with the files
+ * it left out. Declared limits are never a read failure: the verifier accepts
+ * them and writes them into the completion note.
+ */
+export interface CandidateQualityDeclaredLimit {
+  readonly kind:
+    | 'byte-budget'
+    | 'file-ceiling'
+    | 'file-count'
+    | 'changed-file-count'
+    | 'time-budget'
+    | 'index-truncated';
+  readonly reason: string;
+  readonly files: readonly string[];
+  /** file-ceiling only: true when the oversized file is changed executable source (not data/notes). */
+  readonly executable?: boolean;
+}
+
 export interface CandidateQualityAnalysis {
   readonly version: typeof ANALYZER_VERSION;
   readonly complete: boolean;
@@ -59,6 +78,10 @@ export interface CandidateQualityAnalysis {
   readonly inspectedFiles: number;
   readonly inspectedBytes: number;
   readonly incompleteReasons: readonly string[];
+  /** F-1430: declared limits (budget/count/ceiling/time), each naming files left out. */
+  readonly declaredLimits: readonly CandidateQualityDeclaredLimit[];
+  /** F-1430: real read/integrity failures; non-empty still blocks the verifier. */
+  readonly failures: readonly string[];
   readonly reviewerMarkdown: string;
   readonly candidateFingerprint?: string;
 }
@@ -128,16 +151,33 @@ function parseAddedLines(diff: string): ReadonlyMap<string, readonly CandidateQu
   );
 }
 
+/** Basenames that are data/notes, not executable source (F-1430 highlight rule). */
+const DATA_NOTES_NAMES = /(?:release[-_.]?notes?|notes?|changelog|data|fixtures?|mocks?|snapshots?|constants?|messages?|strings?|locales?|i18n|translations?)$/i;
+
+/** F-1430: a changed source over the per-file ceiling is data/notes only when its basename says so. */
+function isExecutableSource(relativePath: string): boolean {
+  return !DATA_NOTES_NAMES.test(path.posix.basename(relativePath, path.posix.extname(relativePath)));
+}
+
+type ReadSourceResult =
+  | { readonly kind: 'ok'; readonly content: string }
+  /** F-1430: per-file byte ceiling — a declared limit, never a read failure. */
+  | { readonly kind: 'limit'; readonly reason: string }
+  | { readonly kind: 'failure'; readonly reason: string };
+
 async function readPhysicalSource(
   scope: ProjectExecutionScope,
   relativePath: string,
   signal?: AbortSignal,
-): Promise<string | null> {
+): Promise<ReadSourceResult> {
   throwIfAborted(signal);
   try {
-    return readCandidateFile(scope, relativePath, MAX_FILE_BYTES).toString('utf8');
-  } catch {
-    return null;
+    return { kind: 'ok', content: readCandidateFile(scope, relativePath, MAX_FILE_BYTES).toString('utf8') };
+  } catch (error) {
+    if (error instanceof Error && error.message === 'candidate byte limit reached') {
+      return { kind: 'limit', reason: `source file over the per-file byte ceiling (${MAX_FILE_BYTES} bytes)` };
+    }
+    return { kind: 'failure', reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -203,12 +243,31 @@ export async function runCandidateQualityAnalysis(
     .map(normalizeRelativePath)
     .filter((value): value is string => value !== null);
   const limitedChanged = [...new Set(changedFiles)].slice(0, MAX_CHANGED_FILES);
+  // F-1430: declared limits (budget/count/ceiling/time) are tracked apart from
+  // real read/integrity failures, so the verifier accepts the former and names
+  // what was left out while still refusing the latter.
   const reasons: string[] = [...(snapshot?.incompleteReasons ?? [])];
+  const failures: string[] = [...(snapshot?.incompleteReasons ?? [])];
+  const limitFiles = new Map<CandidateQualityDeclaredLimit['kind'], Set<string>>();
+  const ceilingExecutable = new Set<string>();
+  const addLimit = (kind: CandidateQualityDeclaredLimit['kind'], file?: string, executable = false): void => {
+    if (file !== undefined) {
+      if (!limitFiles.has(kind)) limitFiles.set(kind, new Set<string>());
+      limitFiles.get(kind)!.add(file);
+      if (executable) ceilingExecutable.add(file);
+    }
+  };
+  const declare = (kind: CandidateQualityDeclaredLimit['kind'], reason: string, file?: string, executable = false): void => {
+    reasons.push(reason);
+    addLimit(kind, file, executable);
+  };
+  const fail = (reason: string): void => { reasons.push(reason); failures.push(reason); };
   if (changedFiles.length !== requestedPaths.length) {
-    reasons.push('one or more changed paths were unsafe');
+    fail('one or more changed paths were unsafe');
   }
   if (new Set(changedFiles).size > MAX_CHANGED_FILES) {
-    reasons.push(`changed-file limit ${MAX_CHANGED_FILES} reached`);
+    declare('changed-file-count', `changed-file limit ${MAX_CHANGED_FILES} reached`);
+    for (const file of [...new Set(changedFiles)].slice(MAX_CHANGED_FILES)) addLimit('changed-file-count', file);
   }
 
   const observedHead = snapshot
@@ -240,11 +299,9 @@ export async function runCandidateQualityAnalysis(
     addedLines = parseAddedLines(diff.stdout);
     diffAvailable = true;
   } catch (error) {
-    reasons.push(
-      boundedReason(
-        `added-line diff unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      ),
-    );
+    fail(boundedReason(
+      `added-line diff unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    ));
   }
 
   const deletedPaths = new Set(snapshot?.deletedPaths ?? []);
@@ -259,7 +316,7 @@ export async function runCandidateQualityAnalysis(
     limits,
     input.signal,
   );
-  if (walk.truncated) reasons.push('bounded project index was truncated');
+  if (walk.truncated) declare('index-truncated', 'bounded project index was truncated');
 
   const now = dependencies.now ?? Date.now;
   const deadline = now() + ANALYSIS_BUDGET_MS;
@@ -293,6 +350,8 @@ export async function runCandidateQualityAnalysis(
       ),
     ...unchangedSources,
   ];
+  const changedSet = new Set(limitedChanged);
+  const skippedChangedByLimit = new Set<string>();
   for (const file of prioritizedFiles) {
     throwIfAborted(input.signal);
     if (
@@ -302,49 +361,63 @@ export async function runCandidateQualityAnalysis(
       continue;
     }
     if (sources.length >= MAX_SOURCE_FILES) {
-      reasons.push(`source file limit ${MAX_SOURCE_FILES} reached`);
+      const remaining = prioritizedFiles.slice(prioritizedFiles.indexOf(file)).map((value) => value.relativePath);
+      declare('file-count', `source file limit ${MAX_SOURCE_FILES} reached`);
+      for (const relativePath of remaining) {
+        addLimit('file-count', relativePath);
+        if (changedSet.has(relativePath)) skippedChangedByLimit.add(relativePath);
+      }
       break;
     }
     if (now() > deadline) {
-      reasons.push(`analysis time budget ${ANALYSIS_BUDGET_MS}ms reached`);
+      const remaining = prioritizedFiles.slice(prioritizedFiles.indexOf(file)).map((value) => value.relativePath);
+      declare('time-budget', `analysis time budget ${ANALYSIS_BUDGET_MS}ms reached`);
+      for (const relativePath of remaining) {
+        addLimit('time-budget', relativePath);
+        if (changedSet.has(relativePath)) skippedChangedByLimit.add(relativePath);
+      }
       break;
     }
     if (inspectedBytes + file.size > MAX_SOURCE_BYTES) {
-      reasons.push(`source byte limit ${MAX_SOURCE_BYTES} reached`);
+      declare('byte-budget', `source byte limit ${MAX_SOURCE_BYTES} reached`, file.relativePath);
+      if (changedSet.has(file.relativePath)) skippedChangedByLimit.add(file.relativePath);
       continue;
     }
-    let content: string | null = null;
-    try {
-      content = await readPhysicalSource(scope, file.relativePath, input.signal);
-    } catch {
-      throwIfAborted(input.signal);
+    const read = await readPhysicalSource(scope, file.relativePath, input.signal);
+    if (read.kind === 'limit') {
+      // F-1430: a file over the per-file ceiling is declared, never a read failure.
+      declare('file-ceiling', read.reason, file.relativePath,
+        changedSet.has(file.relativePath) && isExecutableSource(file.relativePath));
+      if (changedSet.has(file.relativePath)) skippedChangedByLimit.add(file.relativePath);
+      continue;
     }
-    if (content === null) {
-      if (limitedChanged.includes(file.relativePath)) {
-        reasons.push(`changed source could not be read: ${file.relativePath}`);
+    if (read.kind === 'failure') {
+      if (changedSet.has(file.relativePath)) {
+        fail(`changed source could not be read: ${file.relativePath}`);
       }
       continue;
     }
-    const contentBytes = Buffer.byteLength(content, 'utf8');
+    const contentBytes = Buffer.byteLength(read.content, 'utf8');
     if (inspectedBytes + contentBytes > MAX_SOURCE_BYTES) {
-      reasons.push(`source byte limit ${MAX_SOURCE_BYTES} reached`);
+      declare('byte-budget', `source byte limit ${MAX_SOURCE_BYTES} reached`, file.relativePath);
+      if (changedSet.has(file.relativePath)) skippedChangedByLimit.add(file.relativePath);
       continue;
     }
     inspectedBytes += contentBytes;
     sources.push(Object.freeze({
       relativePath: file.relativePath,
-      content,
+      content: read.content,
       addedLines: untrackedPaths.has(file.relativePath)
-        ? Object.freeze([{ start: 1, end: content.split('\n').length }])
+        ? Object.freeze([{ start: 1, end: read.content.split('\n').length }])
         : addedLines.get(file.relativePath) ?? Object.freeze([]),
     }));
     if (
       diffAvailable &&
-      limitedChanged.includes(file.relativePath) &&
+      changedSet.has(file.relativePath) &&
       !untrackedPaths.has(file.relativePath) &&
       !addedLines.has(file.relativePath)
     ) {
-      reasons.push(`changed source had no parseable diff header: ${file.relativePath}`);
+      fail(`changed source had no parseable diff header: ${file.relativePath}`);
     }
     if (sources.length % 32 === 0) {
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -356,26 +429,57 @@ export async function runCandidateQualityAnalysis(
     if (
       TS_JS_EXTENSIONS.has(path.posix.extname(changed).toLowerCase()) &&
       !deletedPaths.has(changed) &&
-      !sourcePathSet.has(changed)
+      !sourcePathSet.has(changed) &&
+      !skippedChangedByLimit.has(changed)
     ) {
-      reasons.push(`changed source was outside the bounded index: ${changed}`);
+      fail(`changed source was outside the bounded index: ${changed}`);
     }
   }
   if (snapshot) {
     try {
       const after = await captureWorkingTreeCandidate(snapshotInput);
-      reasons.push(...after.incompleteReasons);
-      if (snapshot.fingerprint !== after.fingerprint) reasons.push('working-tree candidate changed during analysis');
+      for (const reason of after.incompleteReasons) fail(reason);
+      if (snapshot.fingerprint !== after.fingerprint) fail('working-tree candidate changed during analysis');
       for (const source of sources) {
-        if (await readPhysicalSource(scope, source.relativePath, input.signal) !== source.content) {
-          reasons.push(`source changed during analysis: ${source.relativePath}`);
+        const reread = await readPhysicalSource(scope, source.relativePath, input.signal);
+        if (reread.kind !== 'ok' || reread.content !== source.content) {
+          fail(`source changed during analysis: ${source.relativePath}`);
         }
       }
     } catch {
       throwIfAborted(input.signal);
-      reasons.push('working-tree candidate could not be revalidated');
+      fail('working-tree candidate could not be revalidated');
     }
   }
+  const declaredLimits: CandidateQualityDeclaredLimit[] = [];
+  const pushLimit = (
+    kind: CandidateQualityDeclaredLimit['kind'],
+    reason: string,
+    files: readonly string[],
+    executable?: boolean,
+  ): void => {
+    declaredLimits.push(Object.freeze({ kind, reason, files: Object.freeze([...files]),
+      ...(executable !== undefined ? { executable } : {}) }));
+  };
+  const ceilingExec = [...ceilingExecutable].sort();
+  const ceilingRest = [...(limitFiles.get('file-ceiling') ?? [])].filter((file) => !ceilingExecutable.has(file)).sort();
+  if (ceilingExec.length > 0) {
+    pushLimit('file-ceiling', `changed executable source over the per-file byte ceiling (${MAX_FILE_BYTES} bytes)`, ceilingExec, true);
+  }
+  if (ceilingRest.length > 0) {
+    pushLimit('file-ceiling', `source file over the per-file byte ceiling (${MAX_FILE_BYTES} bytes)`, ceilingRest, false);
+  }
+  const reasonFor: Record<'byte-budget' | 'file-count' | 'changed-file-count' | 'time-budget', string> = {
+    'byte-budget': `source byte limit ${MAX_SOURCE_BYTES} reached`,
+    'file-count': `source file limit ${MAX_SOURCE_FILES} reached`,
+    'changed-file-count': `changed-file limit ${MAX_CHANGED_FILES} reached`,
+    'time-budget': `analysis time budget ${ANALYSIS_BUDGET_MS}ms reached`,
+  };
+  for (const kind of ['byte-budget', 'file-count', 'changed-file-count', 'time-budget'] as const) {
+    const files = limitFiles.get(kind);
+    if (files && files.size > 0) pushLimit(kind, reasonFor[kind], [...files].sort());
+  }
+  if (walk.truncated) pushLimit('index-truncated', 'bounded project index was truncated', []);
   const uniqueReasons = Object.freeze(
     [...new Set(reasons.map(boundedReason).filter(Boolean))].slice(0, 32),
   );
@@ -417,6 +521,8 @@ export async function runCandidateQualityAnalysis(
     inspectedFiles: sources.length,
     inspectedBytes,
     incompleteReasons: uniqueReasons,
+    declaredLimits: Object.freeze(declaredLimits),
+    failures: Object.freeze([...new Set(failures)]),
     reviewerMarkdown: reviewerMarkdown({
       complete,
       analysisHash,

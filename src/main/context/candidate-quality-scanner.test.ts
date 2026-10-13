@@ -113,6 +113,9 @@ describe('candidate quality scanner', () => {
     expect(result.inspectedBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
     expect(result.complete).toBe(false);
     expect(result.incompleteReasons).toContain('source byte limit 8388608 reached');
+    // F-1430: a budget decision is a declared limit, not a read failure.
+    expect(result.failures).toEqual([]);
+    expect(result.declaredLimits.some((limit) => limit.kind === 'byte-budget' && limit.files.length > 0)).toBe(true);
   });
 
   it.each(['dirty', 'staged', 'untracked'] as const)(
@@ -220,7 +223,7 @@ describe('candidate quality scanner', () => {
     })).rejects.toThrow('HEAD does not match');
   });
 
-  it('does not claim completeness when changed source exceeds the scanner limit', async () => {
+  it('declares a source over the per-file ceiling instead of failing the read', async () => {
     const { root, scope, headSha } = realGitFixture();
     fs.writeFileSync(path.join(root, 'src/large.ts'), ' '.repeat(384 * 1024 + 1));
     const result = await runCandidateQualityAnalysis({
@@ -228,7 +231,21 @@ describe('candidate quality scanner', () => {
       diffHash: 'd'.repeat(64), changedFiles: [], candidateSource: 'working-tree',
     });
     expect(result.complete).toBe(false);
-    expect(result.incompleteReasons.some((reason) => reason.includes('large.ts'))).toBe(true);
+    expect(result.failures).toEqual([]);
+    expect(result.declaredLimits.some((limit) => limit.kind === 'file-ceiling' && limit.files.includes('src/large.ts'))).toBe(true);
+  });
+
+  it('declares a changed release-notes.ts over the per-file ceiling as data, not executable source', async () => {
+    const { root, scope, headSha } = realGitFixture();
+    fs.writeFileSync(path.join(root, 'src', 'release-notes.ts'), ' '.repeat(384 * 1024 + 1));
+    const result = await runCandidateQualityAnalysis({
+      scope, checkoutPath: root, baseSha: headSha, headSha,
+      diffHash: 'd'.repeat(64), changedFiles: ['src/release-notes.ts'], candidateSource: 'working-tree',
+    });
+    expect(result.failures).toEqual([]);
+    const ceiling = result.declaredLimits.find((limit) => limit.kind === 'file-ceiling' && limit.files.includes('src/release-notes.ts'));
+    expect(ceiling).toBeDefined();
+    expect(ceiling?.executable).toBe(false);
   });
 
   it('binds evidence to current source bytes even when HEAD, filenames, and findings stay equal', async () => {
