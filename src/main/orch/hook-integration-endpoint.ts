@@ -6,9 +6,9 @@
 //
 // Decisão deliberada do portão (`review_required: …`) vira
 // `{"decision":"block","reason":…}` — o agente continua com a instrução.
-// Fora do caminho (sem missão, comando não integrador, --dry-run) e em falha
-// de infraestrutura (store/git indisponível) responde `{}`: o hook nunca
-// atrapalha o CLI — o portão autoritativo continua no Main.
+// Fora do caminho (sem missão, comando não integrador, --dry-run) responde
+// `{}`. Falha de store/infra antes de saber que o comando integra também é
+// `{}`. Depois que o comando é integrador, erro ao medir o checkout bloqueia.
 import fs from 'node:fs';
 import path from 'node:path';
 import type http from 'node:http';
@@ -19,6 +19,7 @@ import { sameRepositoryExecutionRoot } from './nested-worktree-execution';
 import { isInsidePath } from './workspace-path';
 import {
   assertIntegrationReviewedAsync,
+  INTEGRATION_REVIEW_REQUIRED,
   isIntegrationReviewRequiredError,
 } from './integration-review-gate';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -39,8 +40,9 @@ export const HOOK_INTEGRATION_MAX_BODY_BYTES = 64 * 1024;
  * hooks desligados, `GIT_*` descartado — e `assertSafeLocalGitConfigAsync`
  * antes de qualquer leitura num checkout que o agente escreve), com timeout
  * curto e um orçamento total por requisição. O transporte do hook desiste em
- * 10 s (`INTEGRATION_HOOK_TRANSPORT_SECONDS`); estourar o orçamento é falha de
- * infraestrutura e o hook responde `{}` (nunca atrapalha o CLI).
+ * 10 s (`INTEGRATION_HOOK_TRANSPORT_SECONDS`). Estourar o orçamento no meio da
+ * medida de um comando já integrador bloqueia; antes de saber que integra, a
+ * falha continua `{}` (o hook responde, não pendura o CLI).
  */
 export const HOOK_GIT_CALL_TIMEOUT_MS = 5_000;
 export const HOOK_GIT_TOTAL_BUDGET_MS = 8_000;
@@ -91,6 +93,9 @@ const INTEGRATION_SEGMENT = new RegExp(
 );
 const GIT_DASH_C = /^\s*git\s+-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))/u;
 const CD_COMMAND = /^\s*cd\s+(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/u;
+// ponytail: presença do caractere, sem parser de shell. Teto: `~` literal no
+// nome do diretório também recusa; o agente usa caminho absoluto.
+const SHELL_UNRESOLVABLE = /[$`~*?{]/u;
 
 /**
  * F-814: `git merge --abort|--quit|--continue` só encerra/retoma um merge JÁ
@@ -127,6 +132,29 @@ function commandRequestsIntegration(command: string): boolean {
   return commandSegments(command).some(segmentRequestsIntegration);
 }
 
+function cdOperand(segment: string): string | null {
+  if (!/^\s*cd\b/u.test(segment)) return null;
+  const match = CD_COMMAND.exec(segment);
+  if (match) return match[1] ?? match[2] ?? match[3] ?? '';
+  return segment.replace(/^\s*cd\s*/u, '');
+}
+
+function gitDashCOperand(segment: string): string | null {
+  if (!/^\s*git\s+-C\b/u.test(segment)) return null;
+  const match = GIT_DASH_C.exec(segment);
+  if (match) return match[1] ?? match[2] ?? match[3] ?? '';
+  return segment.replace(/^\s*git\s+-C\s*/u, '');
+}
+
+function assertResolvableCheckoutOperand(raw: string | null): void {
+  if (raw != null && SHELL_UNRESOLVABLE.test(raw)) {
+    throw new Error(
+      `${INTEGRATION_REVIEW_REQUIRED}: checkout do merge/push não resolvível; ` +
+        'rode no próprio cwd ou use caminho absoluto',
+    );
+  }
+}
+
 function applyCd(segment: string, cwd: string): string | null {
   const match = CD_COMMAND.exec(segment);
   if (!match) return null;
@@ -154,22 +182,24 @@ function gitDashCDirectory(segment: string, cwd: string): string | null {
 function integrationCommandDirectory(command: string, baseCwd: string): string {
   let cwd = baseCwd;
   for (const segment of commandSegments(command)) {
+    assertResolvableCheckoutOperand(cdOperand(segment));
     const next = applyCd(segment, cwd);
     if (next) {
       cwd = next;
       continue;
     }
     if (!segmentRequestsIntegration(segment)) continue;
+    assertResolvableCheckoutOperand(gitDashCOperand(segment));
     return gitDashCDirectory(segment, cwd) ?? cwd;
   }
   return baseCwd;
 }
 
 /**
- * Caminho lexicamente dentro da raiz de execução fica como está (o git dessa
- * pasta já devolve o HEAD da worktree aninhada, sem `worktree list`). Fora,
- * só uma worktree registrada deste repositório entra; o resto é null e o
- * hook bloqueia em vez de medir o pane.
+ * O caminho escolhido tem de existir. Dentro da raiz, o realpath basta (o git
+ * dessa pasta devolve o HEAD da worktree aninhada, sem `worktree list`).
+ * Fora, só uma worktree registrada deste repositório entra; o resto é null e
+ * o hook bloqueia em vez de medir o pane.
  */
 async function locateMergeCheckout(
   execution: ReturnType<typeof executionScopeFor>,
@@ -177,7 +207,6 @@ async function locateMergeCheckout(
   git: AsyncGitRunner,
 ): Promise<string | null> {
   const lexical = path.resolve(candidate);
-  if (isInsidePath(execution.rootRealPath, lexical)) return lexical;
   const real = (() => {
     try {
       return fs.realpathSync(lexical);
@@ -185,6 +214,10 @@ async function locateMergeCheckout(
       return null;
     }
   })();
+  if (isInsidePath(execution.rootRealPath, lexical)) {
+    if (real && isInsidePath(execution.rootRealPath, real)) return real;
+    if (!real) return null;
+  }
   if (!real) return null;
   if (isInsidePath(execution.rootRealPath, real)) return real;
   try {
@@ -456,6 +489,7 @@ export async function handleHookIntegrationRequest(
     >;
   } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
+  let integrates = false;
   try {
     const call = parseBashPreToolUse(body);
     if (!call) return { statusCode: 200, payload: {} };
@@ -469,6 +503,7 @@ export async function handleHookIntegrationRequest(
     if (!commandRequestsIntegration(call.command)) {
       return { statusCode: 200, payload: {} };
     }
+    integrates = true;
 
     // F-1423: mede o checkout onde o merge/push roda (`cd` ou `git -C`), não
     // o cwd do pane. Dentro da raiz, o git dessa pasta já devolve o HEAD da
@@ -536,6 +571,17 @@ export async function handleHookIntegrationRequest(
         payload: {
           decision: 'block',
           reason: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+    // O comando já é integração. Medir o checkout e falhar não pode abrir o
+    // push. Fail-open fica só para store/infra antes desse reconhecimento.
+    if (integrates) {
+      return {
+        statusCode: 200,
+        payload: {
+          decision: 'block',
+          reason: `${INTEGRATION_REVIEW_REQUIRED}: não consegui medir o checkout do merge/push`,
         },
       };
     }

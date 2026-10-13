@@ -485,6 +485,70 @@ describe('POST /hook/integration', () => {
         reason: expect.stringContaining('cwd fora do checkout'),
       });
     });
+
+    it('cd para a worktree que existe mede o HEAD dela, não o do pane', async () => {
+      const { wt, sha } = addWorktree('s243-existe', false);
+      const rel = path.relative(repo, wt);
+      expect(rel.startsWith(path.join('.harvest', ''))).toBe(true);
+      const paneHead = git('rev-parse', 'HEAD');
+      approve(paneHead);
+      const blocked = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash(`cd ${rel} && git push`, repo),
+        { storesFor },
+      );
+      expect(blocked.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining(sha.slice(0, 7)),
+      });
+      expect(String((blocked.payload as { reason?: unknown }).reason)).not.toContain(paneHead.slice(0, 7));
+      approve(sha);
+      const allowed = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash(`cd ${rel} && git push`, repo),
+        { storesFor },
+      );
+      expect(allowed.payload).toEqual({});
+    });
+
+    it('expansão de shell no cd ou no git -C bloqueia mesmo com o pane aprovado', async () => {
+      approve(git('rev-parse', 'HEAD'));
+      const reason = 'checkout do merge/push não resolvível; rode no próprio cwd ou use caminho absoluto';
+      for (const command of [
+        'cd ~/nexus-ide && git push',
+        'cd "$WT" && git push',
+        'cd $(git rev-parse --show-toplevel) && git push',
+        'git -C "$WT" push',
+      ]) {
+        const result = await handleHookIntegrationRequest(
+          hookCtx(),
+          bash(command, repo),
+          { storesFor },
+        );
+        expect(result.payload, command).toMatchObject({
+          decision: 'block',
+          reason: expect.stringContaining(reason),
+        });
+      }
+    });
+
+    it('caminho léxico dentro da raiz que não existe bloqueia, com o pane aprovado', async () => {
+      approve(git('rev-parse', 'HEAD'));
+      for (const command of [
+        'cd .harvest/nao-existe && git push',
+        'git -C .harvest/nao-existe push',
+      ]) {
+        const result = await handleHookIntegrationRequest(
+          hookCtx(),
+          bash(command, repo),
+          { storesFor },
+        );
+        expect(result.payload, command).toMatchObject({
+          decision: 'block',
+          reason: expect.stringContaining('cwd fora do checkout'),
+        });
+      }
+    });
   });
 
   it('approve de ponta do HEAD exato libera o comando', async () => {
@@ -781,21 +845,30 @@ describe('POST /hook/integration', () => {
       expect(seen).toHaveLength(2);
     });
 
-    it('git que estoura o timeout é falha de infraestrutura: o hook responde {} e não trava o CLI', async () => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-      try {
-        const timedOut: AsyncGitRunner = {
-          run: (_cwd, args) =>
-            Promise.reject(new GitCommandError('Git process could not complete', args)),
-        };
-        for (const command of ['git push origin main', 'git merge --ff-only origin/main', 'git merge feature']) {
-          await expect(
-            handleHookIntegrationRequest(hookCtx(), bash(command), { storesFor, git: timedOut }),
-          ).resolves.toMatchObject({ payload: {} });
-        }
-      } finally {
-        warn.mockRestore();
+    it('timeout do git em comando já integrador bloqueia a medida e não abre o push', async () => {
+      const timedOut: AsyncGitRunner = {
+        run: (_cwd, args) =>
+          Promise.reject(new GitCommandError('Git process could not complete', args)),
+      };
+      for (const command of ['git push origin main', 'git merge --ff-only origin/main']) {
+        const result = await handleHookIntegrationRequest(
+          hookCtx(),
+          bash(command),
+          { storesFor, git: timedOut },
+        );
+        expect(result.payload, command).toMatchObject({
+          decision: 'block',
+          reason: expect.stringContaining('não consegui medir o checkout'),
+        });
       }
+      // `git merge feature` só integra se a branch atual for main/master. A sonda
+      // da branch engole o erro do git, o hit não se confirma e o hook segue {}.
+      await expect(
+        handleHookIntegrationRequest(hookCtx(), bash('git merge feature'), { storesFor, git: timedOut }),
+      ).resolves.toMatchObject({ payload: {} });
+      await expect(
+        handleHookIntegrationRequest(hookCtx(), bash('git status'), { storesFor, git: timedOut }),
+      ).resolves.toMatchObject({ payload: {} });
     });
 
     it('config local executável: a isenção não roda nenhum git além da inspeção de config', async () => {
