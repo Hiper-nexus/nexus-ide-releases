@@ -1057,9 +1057,20 @@ export function reapOrphanedWorkerBrowsers(
   sessionId: string,
   agent: OwnedAgentSessionInfo | null,
 ): void {
+  // F-1420: um worker PARKED não é órfão — a PTY encerrou para liberar memória,
+  // mas o pane fica retido e acordável. O exit do park não pode colher o
+  // navegador; a colheita fica para o fechamento real (forgetParkedRecords).
+  for (const parked of parkedByPane.values()) {
+    if (parked.sessionId === sessionId) return;
+  }
   const dead = agent ?? getAgentSessionInfo(sessionId) ?? getAcpDriverSession(sessionId)?.agent ?? null;
   const root = dead?.scope?.rootRealPath;
   if (!root) return;
+  reapOrphanedWorkerBrowsersAtRoot(root, sessionId);
+}
+
+/** Colhe os navegadores de worker presos a `root` sem sucessor vivo. */
+function reapOrphanedWorkerBrowsersAtRoot(root: string, sessionId: string): void {
   const survivor =
     listAgentSessions().some(
       (candidate) =>
@@ -1095,7 +1106,15 @@ export function reapOrphanedWorkerBrowsers(
       doomed.add(parked.entry.paneId);
     }
   }
-  for (const paneId of doomed) void requestPaneClose(paneId);
+  for (const paneId of doomed) {
+    // F-1420: fechar o navegador órfão é best-effort — um close recusado não
+    // pode derrubar a colheita dos demais panes.
+    void requestPaneClose(paneId).catch(() => {
+      console.warn(
+        `[pane-registry] reap orphan browser: close refused pane=${paneId}`,
+      );
+    });
+  }
 }
 
 export function initPaneRegistry(): void {
@@ -2371,7 +2390,10 @@ function paneState(entry: PaneRegistryEntry): PaneSnapshot["state"] {
 }
 
 /** 0.76.45: panes estacionados pelo guardian (chave = owner:paneId). */
-const parkedByPane = new Map<string, { sessionId: string; parkedAt: number }>();
+const parkedByPane = new Map<
+  string,
+  { sessionId: string; parkedAt: number; rootRealPath?: string }
+>();
 
 function parkedRecordFor(registered: RegisteredPane): { sessionId: string; parkedAt: number } | null {
   const key = paneMetaKey(registered.owner, registered.entry.paneId);
@@ -2395,7 +2417,15 @@ export function getPaneWokeAt(paneId: string): number | null {
 
 function forgetParkedRecords(paneId: string): void {
   for (const key of [...parkedByPane.keys()]) {
-    if (key.endsWith(`:${paneId}`)) parkedByPane.delete(key);
+    if (!key.endsWith(`:${paneId}`)) continue;
+    const record = parkedByPane.get(key);
+    parkedByPane.delete(key);
+    // F-1420: o pane estacionado foi de fato fechado — agora o navegador do
+    // worker pode estar órfão. A colheita usa a raiz capturada no park, já que
+    // a PTY morreu lá atrás e não há novo exit para disparar o tap.
+    if (record?.rootRealPath) {
+      reapOrphanedWorkerBrowsersAtRoot(record.rootRealPath, record.sessionId);
+    }
   }
   wokeAtByPane.delete(paneId);
 }
@@ -4199,19 +4229,35 @@ export async function requestPanePark(
   );
   const sessionId = registered?.entry.sessionId;
   if (!registered || !sessionId) return false;
+  // F-1420: marca o pane como retido ANTES de encerrar a PTY. O exit que vem do
+  // park dispara o tap de saída, e a colheita de navegador precisa ver o pane
+  // ainda retido para pular — a raiz de execução fica guardada para a colheita
+  // no fechamento real.
+  const parkedAt = Date.now();
+  const rootRealPath = (
+    getAgentSessionInfo(sessionId) ??
+    getAcpDriverSession(sessionId)?.agent ??
+    null
+  )?.scope?.rootRealPath;
+  const key = paneMetaKey(owner, paneId);
+  parkedByPane.set(key, { sessionId, parkedAt, rootRealPath });
   const exited = await terminateOwnedMissionSession(
     sessionId,
     `pane-guardian:park:${reason}`,
   );
-  if (!exited) return false;
+  if (!exited) {
+    parkedByPane.delete(key);
+    return false;
+  }
   // Reconfirma depois do await (como requestPaneClose): um respawn/close
   // concorrente no mesmo pane não pode receber um parkRequest com sessão velha.
   const current = panes.find(
     (candidate) => candidate.owner === owner && candidate.entry.paneId === paneId,
   );
-  if (!current || current.entry.sessionId !== sessionId) return false;
-  const parkedAt = Date.now();
-  parkedByPane.set(paneMetaKey(owner, paneId), { sessionId, parkedAt });
+  if (!current || current.entry.sessionId !== sessionId) {
+    parkedByPane.delete(key);
+    return false;
+  }
   const request: PaneParkRequest = { paneId, sessionId, parkedAt, reason };
   if (!owner.isDestroyed()) owner.send(ORCH_CHANNELS.paneParkRequest, request);
   panesVersion += 1;

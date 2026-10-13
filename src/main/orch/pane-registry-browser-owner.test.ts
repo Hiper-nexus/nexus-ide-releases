@@ -612,6 +612,29 @@ describe('F-1420 — o navegador do worker morto não fica órfão na worktree',
     registry.reapOrphanedWorkerBrowsers('worker-a', deadWorker('worker-a'));
     expect(closeRequests(wc)).not.toContain(paneId);
   });
+
+  it('mantém o navegador de um worker estacionado e colhe só no fechamento real', async () => {
+    const wc = owner(1);
+    renderSession(wc, 'worker-a');
+    // O worker roda numa worktree própria: o escopo de execução da sessão.
+    facts.sessions.get('worker-a')!.scope = worktreeScope;
+    const paneId = await openBrowserFor(workerCaller('worker-a'), wc, 'worker');
+    registry.syncPanes([
+      { paneId: 'pane-worker-a', sessionId: 'worker-a', kind: 'cli-agent', title: 'worker-a', adapterId: 'provider', accountId: 'account' },
+      { paneId, sessionId: null, kind: 'browser', title: 'worker browser' },
+    ], wc);
+    vi.mocked(wc.send).mockClear();
+    // Estacionar encerra a PTY mas o pane fica retido e acordável.
+    await expect(registry.requestPanePark('pane-worker-a', 'memory-pressure')).resolves.toBe('parked');
+    vi.mocked(wc.send).mockClear();
+    // O exit do park não colhe o navegador — o worker não é órfão.
+    registry.reapOrphanedWorkerBrowsers('worker-a', deadWorker('worker-a'));
+    expect(closeRequests(wc)).not.toContain(paneId);
+    // Fechamento real: sem sucessor na worktree, o navegador é colhido.
+    facts.sessions.get('worker-a')!.live = false;
+    await expect(registry.requestPaneClose('pane-worker-a')).resolves.toBe(true);
+    expect(closeRequests(wc)).toContain(paneId);
+  });
 });
 
 describe('F-1143 — operator MCP adoption metadata publication', () => {
