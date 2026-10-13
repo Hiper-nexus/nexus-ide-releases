@@ -578,6 +578,28 @@ function quotaEntryFor(
 }
 
 /**
+ * Linha de cota do pane: a da conta gerenciada, ou — login nativo sem conta
+ * (ex.: Muse) — a linha NATIVA do adapter (`accountId` ausente no snapshot).
+ * Sem isto a sonda F-249 era cega para panes nativos: `fresh` nascia sempre
+ * `undefined`, nada refutava nem confirmava, e o texto do PTY decidia sozinho
+ * (Bug 9: toast «Sessão expirada em "muse"» com a credencial viva).
+ */
+function quotaEntryForPane(
+  adapterId: string,
+  current: { id: string } | null | undefined,
+): ProviderQuotaEntry | undefined {
+  if (current) return quotaEntryFor(adapterId, current.id);
+  try {
+    const snap = requireQuotaService().lastSnapshot();
+    return snap?.entries.find(
+      (e) => e.adapterId === adapterId && !e.accountId,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * F-775: pior janela MEDIDA da conta exausta (label + resetsAt) para o pack
  * de continuidade. Sem snapshot ou sem janela conhecida, devolve undefined —
  * o pack nunca inventa reset.
@@ -1639,20 +1661,22 @@ async function fireUnconfirmedLimitRetry(
   let fresh: ProviderQuotaEntry | undefined;
   try {
     await requireQuotaService().refreshForLimitHit(now);
-    fresh = current ? quotaEntryFor(adapterId, current.id) : undefined;
+    fresh = quotaEntryForPane(adapterId, current);
   } catch {
     fresh = undefined;
   }
   const probedAt = Date.now();
-  if (current && providerApiRefutesLimit(fresh, hit, probedAt)) {
-    clearCooldown(current.id, 'limite não confirmado pela API do provider — sonda saudável no retry');
+  if (providerApiRefutesLimit(fresh, hit, probedAt)) {
+    if (current) {
+      clearCooldown(current.id, 'limite não confirmado pela API do provider — sonda saudável no retry');
+    }
     logSuppressedFailover(pane, current, hit, 'unconfirmed-limit-refuted-at-retry', 'transient-watch');
     trace({
       kind: 'account-failover',
       outcome: 'unconfirmed-refuted',
       paneId: pane.paneId,
       adapterId,
-      fromAccountId: current.id,
+      fromAccountId: current?.id ?? null,
       limitKind: hit.kind,
       reason: hit.reason,
       missionId: authority.missionId ?? null,
@@ -2524,17 +2548,12 @@ function handleLimitHit(
 ): void {
   const adapterId = pane.adapterId;
   const current = paneAccount(pane);
-  const quotaEntry = current
-    ? quotaEntryFor(adapterId, current.id)
-    : undefined;
+  const quotaEntry = quotaEntryForPane(adapterId, current);
 
   // Provider-api readings are authoritative evidence over scrollback text AND
   // observer hook frames. If a fresh provider API reading proves the account is healthy,
-  // failover is suppressed.
-  if (
-    current &&
-    providerApiRefutesLimit(quotaEntry, hit, now)
-  ) {
+  // failover is suppressed. Pane nativo (sem conta) refuta pela linha nativa.
+  if (providerApiRefutesLimit(quotaEntry, hit, now)) {
     logSuppressedFailover(pane, current, hit, 'provider-api-healthy', source);
     return;
   }
@@ -2613,7 +2632,7 @@ async function confirmLimitByProbe(
   let probeUnavailable = false;
   try {
     await requireQuotaService().refreshForLimitHit(now);
-    fresh = current ? quotaEntryFor(adapterId, current.id) : undefined;
+    fresh = quotaEntryForPane(adapterId, current);
   } catch (error) {
     console.warn(
       '[failover] sonda de cota após limite falhou:',
@@ -2623,7 +2642,7 @@ async function confirmLimitByProbe(
     probeUnavailable = true;
   }
   const probedAt = Date.now();
-  if (current && providerApiRefutesLimit(fresh, hit, probedAt)) {
+  if (providerApiRefutesLimit(fresh, hit, probedAt)) {
     logSuppressedFailover(pane, current, hit, 'provider-api-healthy-after-probe', source);
     return;
   }
@@ -2662,18 +2681,22 @@ async function confirmLimitByProbe(
     { cooldownMs: hit.cooldownMs, cappedToMs: CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS },
   );
   if (!current) {
-    // Sem conta gerenciada (adapter api-key): não há cooldown nem irmã — o
-    // caminho legado resolve (nextUnblockAtMs/espera-pela-irmã ou no-switch).
-    commitLimitHit(
-      authority,
-      pane,
+    // Sem conta gerenciada (login nativo — ex.: Muse — ou adapter api-key):
+    // não há cooldown nem irmã, mas F-249 vale igual — texto de PTY que a
+    // sonda NÃO confirmou não pode virar o toast definitivo «Sessão
+    // expirada» (Bug 9). «Desconhecido» não é «expirado»: com o Keychain
+    // negado (F-1438) a sonda do Muse devolve `quota-key-required` pela
+    // sessão inteira, e o caminho legado commitava esse desconhecido como
+    // expiração na hora. Aqui nada muda de estado (sem conta para pôr em
+    // pausa), então nada se anuncia: agenda a re-sondagem e cala.
+    // Confirmado (auth-expired/janela) foi tratado acima; no retry,
+    // confirmado-ou-ainda-sem-dados troca e avisa, como na conta gerenciada.
+    noteQuotaLimitHit(adapterId, hit, undefined);
+    scheduleUnconfirmedLimitRetry(
       key,
-      { ...hit, cooldownMs: CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS },
-      now,
-      source,
-      current,
-      adapterId,
-      { unconfirmed: true },
+      authority,
+      hit,
+      now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS + RETRY_BUFFER_MS,
     );
     return;
   }

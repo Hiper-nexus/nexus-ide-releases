@@ -4,7 +4,10 @@ import type { WebContents } from 'electron';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { ACCOUNT_CHANNELS, type Account } from '../../shared/account-types';
 import { testProjectScope } from './__tests__/scope-fixture';
-import { pickAvailableForFailover } from '../persistence/account-store';
+import {
+  getActiveAccount,
+  pickAvailableForFailover,
+} from '../persistence/account-store';
 
 const ptyMocks = vi.hoisted(() => ({
   dataTaps: [] as Array<(sessionId: string, data: string) => void>,
@@ -204,12 +207,13 @@ function addPane(options: {
   missionId?: string;
   scope: ProjectExecutionScope;
   accountId?: string;
+  adapterId?: string;
 }): void {
   const pane = {
     paneId: options.paneId,
     sessionId: options.sessionId,
     kind: 'cli-agent',
-    adapterId: 'claude',
+    adapterId: options.adapterId ?? 'claude',
     accountId: options.accountId ?? 'account-a',
   };
   paneMocks.panes.set(options.sessionId, pane);
@@ -607,6 +611,114 @@ describe('account failover authority and lifecycle', () => {
     expect(owner.send).not.toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
       expect.anything(),
+    );
+  });
+
+  // Bug 9 (2026-10-13): toast «Sessão expirada em "muse" — Authentication_error»
+  // com a credencial Muse viva. O pane muse usa login NATIVO (sem conta
+  // gerenciada): a sonda F-249 nunca lia a linha nativa de cota
+  // (`fresh = current ? … : undefined`), e o ramo sem-conta commitava o texto
+  // do PTY como expiração definitiva — «desconhecido» (ex.: Keychain negado,
+  // F-1438 → `quota-key-required` a sessão inteira) virava «expirado» no toast.
+  async function nativeMuseAuthHit(paneNo: number, nativeEntry: Record<string, unknown>) {
+    resetInstantAuthDeaths('muse');
+    vi.mocked(getActiveAccount).mockImplementation(() => null as never);
+    accountMocks.next = null;
+    const { detectLimit } = await import('./limit-detector');
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? {
+            kind: 'auth' as const,
+            reason: 'Authentication_error',
+            cooldownMs: 15 * 60 * 1000,
+          }
+        : null,
+    );
+    const { requireQuotaService } = await import('../quota/quota-service');
+    const snapshot = {
+      updatedAt: 100_000,
+      worstUsedRatio: null,
+      highUsageCount: 0,
+      unknownCount: 1,
+      entries: [{
+        id: 'muse',
+        adapterId: 'muse',
+        label: 'Muse',
+        installed: true,
+        onCooldown: false,
+        updatedAt: 100_000,
+        windows: [],
+        ...nativeEntry,
+      }],
+    };
+    let probed = false;
+    vi.mocked(requireQuotaService).mockImplementation(
+      () =>
+        ({
+          refreshForLimitHit: async () => {
+            probed = true;
+            return snapshot;
+          },
+          lastSnapshot: () => (probed ? snapshot : undefined),
+        }) as unknown as ReturnType<typeof requireQuotaService>,
+    );
+    const scope = testProjectScope();
+    const owner = renderer(paneNo);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: `pane-${paneNo}`,
+      sessionId: `session-${paneNo}`,
+      scope,
+      adapterId: 'muse',
+      accountId: '',
+    });
+    ptyMocks.dataTaps[0](`session-${paneNo}`, 'LIMIT');
+    await settleFailover();
+    return owner;
+  }
+  afterEach(() => {
+    vi.mocked(getActiveAccount).mockImplementation(() => accountMocks.current as never);
+  });
+
+  it('muse nativo: sonda com janela medida REFUTA o auth do PTY — sem toast de sessão expirada', async () => {
+    const owner = await nativeMuseAuthHit(724, {
+      windows: [{
+        kind: 'hours',
+        label: '5 Horas',
+        usedRatio: 0.3,
+        source: 'provider-api',
+        confidence: 'high',
+      }],
+    });
+    expect(accountMocks.setCooldown).not.toHaveBeenCalled();
+    expect(owner.send).not.toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.anything(),
+    );
+  });
+
+  it('muse nativo: sonda desconhecida (Keychain negado) NÃO vira «sessão expirada» na 1ª batida', async () => {
+    const owner = await nativeMuseAuthHit(725, { readHint: 'quota-key-required' });
+    // Sem confirmação, nada de toast definitivo: a re-sondagem decide no retry.
+    expect(owner.send).not.toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ kind: 'auth', switched: false }),
+    );
+  });
+
+  it('muse nativo: sonda auth-expired CONFIRMA — o aviso de expiração sai (UX legítima)', async () => {
+    const owner = await nativeMuseAuthHit(726, { readHint: 'auth-expired' });
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-726',
+        kind: 'auth',
+        switched: false,
+        fromAccountLabel: 'muse',
+      }),
     );
   });
 
