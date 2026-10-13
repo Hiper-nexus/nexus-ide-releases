@@ -260,7 +260,7 @@ describe('UsageQuotaSection', () => {
 
     expect(history).toHaveBeenCalled();
     expect(host.querySelector('.usage-history__chart')).not.toBeNull();
-    expect(host.querySelector('.usage-history__summary')?.textContent).toContain('42.0k tokens');
+    expect(host.querySelector('.usage-history__summary')?.textContent).toContain('42k tokens');
     act(() => root.unmount());
   });
 

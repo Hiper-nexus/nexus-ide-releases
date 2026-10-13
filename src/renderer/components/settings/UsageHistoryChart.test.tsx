@@ -64,7 +64,7 @@ describe('UsageHistoryChart', () => {
       [...row.children].map((cell) => cell.textContent),
     );
     expect(rows).toHaveLength(2);
-    expect(rows[0]!.slice(1)).toEqual(['300.0k', '$0.90', '3']);
+    expect(rows[0]!.slice(1)).toEqual(['300k', '$0.90', '3']);
     expect(rows[1]!.slice(1)).toEqual(['1.2M', '$3.40', '12']);
   });
 
@@ -89,7 +89,7 @@ describe('UsageHistoryChart', () => {
     act(() => {
       svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
     });
-    expect(readout()).toContain('300.0k tokens · $0.90 em API · 3 turnos');
+    expect(readout()).toContain('300k tokens · $0.90 em API · 3 turnos');
     expect(host.querySelectorAll('.usage-history__day.is-active')).toHaveLength(1);
 
     act(() => {
