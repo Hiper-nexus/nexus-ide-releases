@@ -2699,6 +2699,65 @@ describe('agent prompt injection', () => {
     }
   });
 
+  it('F-1426: Devin frio — o retry nunca re-cola o brief, só remata com o Enter', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue({ adapterId: 'devin' });
+      stubs.sessionState.mockReturnValue('idle');
+      let settled: boolean | Error | undefined;
+      const brief = 'linha do brief\n'.repeat(20);
+      const pending = deliverAgentPrompt('session-1', brief, undefined, {
+        adapterId: 'devin',
+      });
+      void pending.then(
+        (value) => { settled = value; },
+        (error: unknown) => { settled = error instanceof Error ? error : new Error(String(error)); },
+      );
+
+      // Tentativa 1: colagem crua sem eco de colagem e sem turno — o Devin
+      // frio engole o Enter e não prova nada. UMA colagem só.
+      stubs.readSessionOutput.mockReturnValue(DEVIN_COMPOSER_SCREEN);
+      await vi.advanceTimersByTimeAsync(1_500);
+      const briefWrites = () =>
+        stubs.writeSession.mock.calls.filter(
+          ([, data]) => typeof data === 'string' && (data as string).includes('linha do brief'),
+        );
+      expect(briefWrites()).toHaveLength(1);
+
+      // Sem prova de aceite, a janela da 1ª tentativa estoura (o watch de
+      // ingestão do paste atrasa o Enter) e o retry entra.
+      // O brief JÁ está no composer: re-colar é o que empilhava as colagens
+      // #2/#3 na caixa — o retry tem de ser SÓ o Enter final.
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect(briefWrites()).toHaveLength(1);
+
+      // O Enter do retry é rematado com a prova de turno nativa: a cada novo
+      // Enter depois do turno inicial (4º '\r'), a sequência nativa sobe —
+      // o injectWithBusyProof do retry arma o listener ANTES do Enter dele.
+      let prevEnters = 0;
+      let seq = 0;
+      for (let i = 0; i < 120 && settled === undefined; i += 1) {
+        await vi.advanceTimersByTimeAsync(250);
+        const enters = stubs.writeSession.mock.calls.filter(
+          ([, data]) => data === '\r',
+        ).length;
+        if (enters > prevEnters && enters >= 4) {
+          seq += 1;
+          stubs.turnStartSequence = seq;
+          for (const tap of [...stubs.turnStartTaps]) {
+            tap({ sessionId: 'session-1', sequence: seq });
+          }
+        }
+        prevEnters = enters;
+      }
+      await pending;
+      expect(settled).toBe(true);
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      vi.useRealTimers();
+    }
+  });
+
   it('resubmits the prompt already restored in an idle agent editor', async () => {
     vi.useFakeTimers();
     try {
