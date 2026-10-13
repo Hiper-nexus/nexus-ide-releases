@@ -999,6 +999,24 @@ export function MissionSetup({
         return;
       }
     }
+    // F-1494: só o coordenador era conferido; um papel com ferramenta que não
+    // está nesta máquina passava e a missão quebrava depois, ao abrir o
+    // terminal dele. Mesma régua do Continuar da Equipe (`missionRosterIssue`).
+    const missingTool = roster.find(
+      (agent) =>
+        !inventory.readiness.detectedAdapters.some(
+          (candidate) => candidate.id === agent.cli,
+        ),
+    );
+    if (missingTool) {
+      const label =
+        inventory.adapters.find((candidate) => candidate.id === missingTool.cli)
+          ?.label ?? missingTool.cli;
+      setExpressError(
+        `A ferramenta de “${missingTool.agentName}” (${label}) não está instalada nesta máquina. Troque a ferramenta desse papel em Personalizar equipe.`,
+      );
+      return;
+    }
     // Override local do draft — NUNCA setRoster/setFreeAgentChoice no store:
     // ambos bumpam `revision` → `authorityKey` muda → o efeito de autoridade
     // invalida o start em voo. O request enviado usa o roster que está na

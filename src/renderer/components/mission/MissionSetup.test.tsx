@@ -2467,6 +2467,32 @@ describe('Caminho Expresso', () => {
     expect(host.textContent).not.toContain('Revise o objetivo');
   });
 
+  it('F-1494: confere a ferramenta de todos os papéis antes de iniciar', async () => {
+    api.listAdapters.mockResolvedValue([
+      CLAUDE,
+      adapter('codex', { installed: false }),
+    ]);
+    const host = await renderAtExpress();
+    act(() => {
+      useMissionSetupStore.getState().setRoster(REVIEW_ROSTER);
+    });
+    enterText(
+      objectiveField(host, 'Seu pedido'),
+      'Construir uma landing page com formulário de contato',
+    );
+    await flush();
+    await flush();
+
+    act(() => button(host, 'Iniciar criação').click());
+    await flush();
+    await flush();
+
+    expect(api.prepare).not.toHaveBeenCalled();
+    expect(host.textContent).toContain(
+      'A ferramenta de “Implementar interface” (Codex) não está instalada nesta máquina. Troque a ferramenta desse papel em Personalizar equipe.',
+    );
+  });
+
   it('oferece o caminho manual na própria tela, sem mandar o operador a Terminais', async () => {
     const host = await renderAtExpress();
 
