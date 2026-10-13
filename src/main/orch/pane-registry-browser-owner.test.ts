@@ -3,6 +3,7 @@ import type { WebContents } from 'electron';
 import type { CallerCtx, PaneAuthzInfo } from './pane-authz';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { AcpDriverSession } from '../acp/acp-harness-driver';
+import type { OwnedAgentSessionInfo } from '../pty/pty-manager';
 import type { MainOwnedPane } from './main-owned-pane-runtime';
 import type { AgentGateContext } from './gate';
 
@@ -88,6 +89,7 @@ vi.mock('./main-owned-pane-runtime', () => ({
   retainClaimedPendingSpawn: vi.fn(), setMainOwnedPane: (id: string, pane: MainOwnedPane) => facts.owned.set(id, pane), spawnMainOwnedMissionPane: vi.fn(), spawnMainOwnedMissionPaneAsync: vi.fn(),
 }));
 vi.mock('./pane-session-output', () => ({
+  markPaneDeliberatelyClosed: vi.fn(),
   paneSessionStateForEntry: () => 'idle', recordPaneSessionData: vi.fn(), recordPaneSessionExit: vi.fn(), recordPaneSessionState: vi.fn(),
   newOutputSince: vi.fn(), readSessionOutput: vi.fn(), sessionOutputExitedAt: vi.fn(), stripAnsi: vi.fn(), waitForIdle: vi.fn(), waitForNextIdle: vi.fn(),
 }));
@@ -522,6 +524,93 @@ describe('F-1408 — a worker drives the browser it opened', () => {
       executionScope: { ...scope, checkoutId: 'other-checkout', rootRealPath: '/worktrees/worker-c' } };
     expect(authorizePaneAccess(registry.callerWithPaneOwner(foreign), info!, 'write')).toMatchObject({
       allow: false, reason: 'workers cannot write to or close panes in another execution worktree' });
+  });
+});
+
+describe('F-1420 — o navegador do worker morto não fica órfão na worktree', () => {
+  const worktreeScope = { ...scope, checkoutId: 'worker-checkout', rootRealPath: '/worktrees/worker-a' };
+  const siblingScope = { ...scope, checkoutId: 'sibling-checkout', rootRealPath: '/worktrees/worker-b' };
+  function workerCaller(id: string, execution = worktreeScope): CallerCtx {
+    return { sessionId: id, role: 'worker', missionId: 'mission', scope, executionScope: execution };
+  }
+  const deadWorker = (id: string, execution = worktreeScope) =>
+    ({ sessionId: id, role: 'worker', scope: execution, adapterId: 'provider' }) as OwnedAgentSessionInfo;
+  async function openBrowserFor(caller: CallerCtx | undefined, wc: WebContents, role?: 'worker' | 'orchestrator'): Promise<string> {
+    const pending = registry.requestBrowserPane({ url: 'about:blank', scope,
+      ...(role ? { role } : {}), ...(caller?.missionId ? { missionId: caller.missionId } : {}),
+      ...(caller ? { caller } : {}) });
+    const request = vi.mocked(wc.send).mock.calls.at(-1)![1] as { requestId: string; paneId: string };
+    registry.resolveBrowserOpen({ requestId: request.requestId, paneId: request.paneId, ok: true }, wc);
+    await expect(pending).resolves.toMatchObject({ ok: true, paneId: request.paneId });
+    return request.paneId;
+  }
+  const closeRequests = (wc: WebContents) =>
+    vi.mocked(wc.send).mock.calls.map(([, payload]) => payload);
+
+  it('fecha o navegador do worker quando o pane dono morre sem sucessor na worktree', async () => {
+    const wc = owner(1);
+    renderSession(wc, 'worker-a');
+    const paneId = await openBrowserFor(workerCaller('worker-a'), wc, 'worker');
+    registry.syncPanes([{ paneId, sessionId: null, kind: 'browser', title: 'worker browser' }], wc);
+    facts.sessions.get('worker-a')!.live = false;
+    vi.mocked(wc.send).mockClear();
+    registry.reapOrphanedWorkerBrowsers('worker-a', deadWorker('worker-a'));
+    expect(closeRequests(wc)).toContain(paneId);
+  });
+
+  it('transfere a posse em vez de fechar quando outro pane vivo compartilha a worktree', async () => {
+    const wc = owner(1);
+    renderSession(wc, 'worker-a');
+    renderSession(wc, 'worker-b');
+    // Irmão vivo na MESMA worktree: o navegador passa a ser dele (a posse é
+    // por escopo — a autorização já compara a raiz de execução).
+    facts.sessions.get('worker-b')!.scope = worktreeScope;
+    // O sync do 2º renderSession substitui o layout; o pane do dono precisa
+    // estar de volta no espelho para sustentar o open.
+    registry.syncPanes([
+      { paneId: 'pane-worker-a', sessionId: 'worker-a', kind: 'cli-agent', title: 'worker-a', adapterId: 'provider', accountId: 'account' },
+      { paneId: 'pane-worker-b', sessionId: 'worker-b', kind: 'cli-agent', title: 'worker-b', adapterId: 'provider', accountId: 'account' },
+    ], wc);
+    const paneId = await openBrowserFor(workerCaller('worker-a'), wc, 'worker');
+    registry.syncPanes([{ paneId, sessionId: null, kind: 'browser', title: 'worker browser' }], wc);
+    facts.sessions.get('worker-a')!.live = false;
+    vi.mocked(wc.send).mockClear();
+    registry.reapOrphanedWorkerBrowsers('worker-a', deadWorker('worker-a'));
+    expect(closeRequests(wc)).not.toContain(paneId);
+  });
+
+  it('nunca fecha o navegador do operador nem do orquestrador, mesmo na worktree morta', async () => {
+    const wc = owner(1);
+    renderSession(wc, 'worker-a');
+    renderSession(wc, 'leader', 'orchestrator');
+    const operatorPane = await openBrowserFor(undefined, wc);
+    // Navegador do operador ligado à worktree do worker por fora (meta sem
+    // role): nem assim ele entra na colheita.
+    registry.attachOrchMeta(wc, operatorPane, { scope, executionScope: worktreeScope });
+    const orchPane = await openBrowserFor(
+      { sessionId: 'leader', role: 'orchestrator', missionId: 'mission', scope, executionScope: worktreeScope },
+      wc, 'orchestrator');
+    registry.syncPanes([
+      { paneId: operatorPane, sessionId: null, kind: 'browser', title: 'operator browser' },
+      { paneId: orchPane, sessionId: null, kind: 'browser', title: 'orchestrator browser' },
+    ], wc);
+    facts.sessions.get('worker-a')!.live = false;
+    vi.mocked(wc.send).mockClear();
+    registry.reapOrphanedWorkerBrowsers('worker-a', deadWorker('worker-a'));
+    expect(closeRequests(wc)).not.toContain(operatorPane);
+    expect(closeRequests(wc)).not.toContain(orchPane);
+  });
+
+  it('não fecha o navegador de outra worktree', async () => {
+    const wc = owner(1);
+    renderSession(wc, 'worker-a');
+    renderSession(wc, 'worker-b');
+    const paneId = await openBrowserFor(workerCaller('worker-b', siblingScope), wc, 'worker');
+    registry.syncPanes([{ paneId, sessionId: null, kind: 'browser', title: 'sibling browser' }], wc);
+    facts.sessions.get('worker-a')!.live = false;
+    vi.mocked(wc.send).mockClear();
+    registry.reapOrphanedWorkerBrowsers('worker-a', deadWorker('worker-a'));
+    expect(closeRequests(wc)).not.toContain(paneId);
   });
 });
 
