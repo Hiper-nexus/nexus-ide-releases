@@ -527,10 +527,25 @@ export function SquadsSection() {
       const error = squadResultError(result);
       if (result.ok) {
         const count = result.count ?? 0;
-        setFeedback({
-          tone: 'success',
-          message: `Importados ${count} ${count === 1 ? 'squad' : 'squads'}.`,
-        });
+        // F-1502: os squads do próprio Nexus no arquivo não entram; dizer
+        // quantos, para "Importados 0" não parecer falha.
+        const skipped = result.skipped?.length ?? 0;
+        const ignored = `${skipped} ${skipped === 1 ? 'squad' : 'squads'} do próprio Nexus`;
+        setFeedback(
+          count === 0 && skipped > 0
+            ? {
+                tone: 'info',
+                message: `Nenhum squad seu no arquivo: só havia ${ignored}, que o app já tem.`,
+              }
+            : {
+                tone: 'success',
+                message:
+                  `Importados ${count} ${count === 1 ? 'squad' : 'squads'}.` +
+                  (skipped > 0
+                    ? ` Ignorados ${ignored} que vieram no arquivo (o app já tem os dele).`
+                    : ''),
+              },
+        );
       } else if (!error || error === 'user_denied') {
         setFeedback({ tone: 'info', message: 'Importação cancelada.' });
       } else {

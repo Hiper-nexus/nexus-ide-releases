@@ -1364,26 +1364,29 @@ describe('squad-store save path', () => {
     expect(after.count).toBe(before.count);
   });
 
-  it('rejects every managed builtin id even when the imported flag says user-owned', () => {
+  it('never imports a managed builtin id even when the imported flag says user-owned', () => {
     const db = makeDb();
     openDb = db;
     initSquadStore(db);
 
-    expect(() =>
-      prepareSquadsImport(
-        JSON.stringify({
-          squads: [
-            {
-              id: PET_STUDIO_SQUAD_ID,
-              name: 'Builtin takeover',
-              createdAt: '1',
-              builtin: false,
-              agents: [],
-            },
-          ],
-        }),
-      ),
-    ).toThrow(/managed.*built-in|reserved/i);
+    // F-1502: o id reservado é ignorado com aviso (antes recusava o arquivo
+    // inteiro); continua sem poder sobrescrever o squad do app.
+    const candidate = prepareSquadsImport(
+      JSON.stringify({
+        squads: [
+          {
+            id: PET_STUDIO_SQUAD_ID,
+            name: 'Builtin takeover',
+            createdAt: '1',
+            builtin: false,
+            agents: [],
+          },
+        ],
+      }),
+    );
+    expect(candidate.targetIds).toEqual([]);
+    expect(candidate.skippedIds).toEqual([PET_STUDIO_SQUAD_ID]);
+    expect(applyPreparedSquadsImport(candidate)).toBe(0);
     expect(getSquad(PET_STUDIO_SQUAD_ID)).toEqual(PET_STUDIO_SQUAD);
   });
 
@@ -1507,5 +1510,75 @@ describe('squad-store save path', () => {
       },
     ];
     expect(findBlockingWorker(unsafe)?.id).toBe('w1');
+  });
+});
+
+describe('F-1502: levar os squads para outro PC pelo exportar/importar do app', () => {
+  const userSquad = {
+    id: 'f1502-meu-squad',
+    name: 'Meu squad',
+    createdAt: '1',
+    builtin: false,
+    orchestratorInstructions: '# Meu squad',
+    agents: [
+      { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude' },
+      { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex' },
+    ],
+  };
+
+  it('o arquivo exportado importa no outro PC e traz só os squads do usuário', () => {
+    const source = makeDb();
+    initSquadStore(source);
+    const saved = saveSquad(userSquad);
+    const exported = exportSquadsJson();
+    source.close();
+
+    const target = makeDb();
+    openDb = target;
+    initSquadStore(target);
+    const candidate = prepareSquadsImport(Buffer.from(exported, 'utf8'));
+
+    expect(candidate.targetIds).toEqual([saved.id]);
+    expect(applyPreparedSquadsImport(candidate)).toBe(1);
+    expect(getSquad(saved.id)).toEqual(saved);
+    for (const builtin of BUILTIN_SQUADS) {
+      expect(getSquad(builtin.id)).toEqual(builtin);
+    }
+  });
+
+  it('arquivo de versão antiga com squads internos ignora esses ids e avisa, sem recusar o arquivo', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const managed = BUILTIN_SQUADS.find((squad) => squad.id !== PET_STUDIO_SQUAD_ID)!;
+    // Exportações antigas também levavam a cópia selada de cada missão.
+    const runtimeId = 'mission-runtime-123e4567-e89b-42d3-a456-426614174099';
+
+    const candidate = prepareSquadsImport(
+      JSON.stringify({
+        squads: [
+          { ...managed, name: 'Cópia velha do interno' },
+          { ...PET_STUDIO_SQUAD, builtin: false },
+          {
+            ...userSquad,
+            id: runtimeId,
+            runtimeSourceSquadId: userSquad.id,
+            runtimeSourceSquadRevisionHash: 'a'.repeat(64),
+          },
+          userSquad,
+        ],
+      }),
+    );
+
+    expect(candidate.targetIds).toEqual([userSquad.id]);
+    expect(candidate.skippedIds).toEqual([
+      managed.id,
+      PET_STUDIO_SQUAD_ID,
+      runtimeId,
+    ]);
+    expect(applyPreparedSquadsImport(candidate)).toBe(1);
+    expect(getSquad(managed.id)).toEqual(managed);
+    expect(getSquad(PET_STUDIO_SQUAD_ID)).toEqual(PET_STUDIO_SQUAD);
+    expect(getSquad(runtimeId)).toBeNull();
   });
 });

@@ -989,7 +989,13 @@ export interface NexusApi {
     ): Promise<SquadSaveResult>;
     deleteSquad(id: string): Promise<{ ok: boolean }>;
     exportSquads(): Promise<{ ok: boolean; path?: string; error?: string }>;
-    importSquads(): Promise<{ ok: boolean; count?: number; error?: string }>;
+    importSquads(): Promise<{
+      ok: boolean;
+      count?: number;
+      /** Ids do próprio Nexus no arquivo (internos/cópias de missão), ignorados. */
+      skipped?: string[];
+      error?: string;
+    }>;
     getMcpInfo(): Promise<McpRuntimeInfo>;
     getCatalogIndex(refresh?: boolean): Promise<CatalogIndexResult>;
     installCatalogItem(req: {

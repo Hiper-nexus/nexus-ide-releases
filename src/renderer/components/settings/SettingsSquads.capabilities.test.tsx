@@ -375,6 +375,33 @@ describe('Settings → Squads retained management capability', () => {
     expect(announcementText(host)).toMatch(/\/exports\/nexus-squads\.json/i);
   });
 
+  it('F-1502: diz quantos squads do próprio Nexus o arquivo trazia e que foram ignorados', async () => {
+    squadMocks.importSquads.mockResolvedValueOnce({
+      ok: true,
+      count: 2,
+      skipped: ['nexus-fullstack'],
+    });
+    squadMocks.importSquads.mockResolvedValueOnce({
+      ok: true,
+      count: 0,
+      skipped: ['nexus-fullstack', 'nexus-review'],
+    });
+    const host = renderSquads();
+    await settle();
+
+    act(() => requiredButton(host, /Importar/i).click());
+    await settle();
+    expect(announcementText(host)).toMatch(
+      /Importados 2 squads\. Ignorados 1 squad do próprio Nexus/i,
+    );
+
+    act(() => requiredButton(host, /Importar/i).click());
+    await settle();
+    expect(announcementText(host)).toMatch(
+      /Nenhum squad seu no arquivo: só havia 2 squads do próprio Nexus/i,
+    );
+  });
+
   it('edits an existing squad in place and danger-confirms deletion before changing inventory', async () => {
     useOrchStore.setState({
       squads: [squad('squad-owned', 'Equipe original')],

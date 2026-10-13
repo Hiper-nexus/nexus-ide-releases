@@ -85,6 +85,8 @@ export interface PreparedSquadsImport {
   readonly agentCount: number;
   readonly targetIds: readonly string[];
   readonly expectedTargets: readonly SquadTargetExpectation[];
+  /** Ids do arquivo que pertencem ao app (internos/cópias de missão): ignorados. */
+  readonly skippedIds: readonly string[];
 }
 
 function sha256(value: string | Buffer): string {
@@ -93,6 +95,14 @@ function sha256(value: string | Buffer): string {
 
 function canonicalSquadJson(squad: Squad): string {
   return JSON.stringify(squad);
+}
+
+/**
+ * Ids que nunca são catálogo do usuário: os squads internos (re-sincronizados
+ * a cada boot) e as cópias seladas de missão. Nem exportam nem importam.
+ */
+function isAppOwnedSquadId(id: string): boolean {
+  return MANAGED_SQUAD_IDS.has(id) || isMissionRuntimeSquadId(id);
 }
 
 function currentTargetExpectation(id: string): SquadTargetExpectation {
@@ -277,7 +287,7 @@ function assertPreparedImportIntegrity(candidate: PreparedSquadsImport): void {
     if (
       squad.id !== candidate.targetIds[index] ||
       squad.id !== candidate.expectedTargets[index]?.id ||
-      MANAGED_SQUAD_IDS.has(squad.id) ||
+      isAppOwnedSquadId(squad.id) ||
       squad.builtin ||
       snapshotSquadAuthority(squad).hash !== candidate.snapshots[index]?.hash
     ) {
@@ -843,15 +853,17 @@ export function listAgents(): Array<SquadAgent & { squadId: string }> {
   return out;
 }
 
-/** Serialize all squads in the JSON file format. */
+/** Serialize the user's own squads in the JSON file format. */
 export function exportSquadsJson(): string {
   // Runtime snapshots are immutable mission evidence, not reusable catalog
   // configuration. Keep them available to mission bootstrap/history while
-  // excluding them from the user's normal squads export.
+  // excluding them from the user's normal squads export. F-1502: the managed
+  // built-ins ship with every install and the import refuses their ids, so
+  // exporting them made the app's own file unimportable on another PC.
   return JSON.stringify(
     {
       squads: listSquads().filter(
-        (squad) => !isMissionRuntimeSquadId(squad.id),
+        (squad) => !squad.builtin && !isAppOwnedSquadId(squad.id),
       ),
     },
     null,
@@ -877,14 +889,15 @@ export function prepareSquadsImport(
       ? raw
       : new TextDecoder('utf-8', { fatal: true }).decode(raw);
   const parsed = squadsFileSchema.parse(JSON.parse(rawText));
-  for (const squad of parsed.squads) {
-    if (MANAGED_SQUAD_IDS.has(squad.id)) {
-      throw new Error(
-        `managed built-in squad id is reserved and cannot be imported: ${squad.id}`,
-      );
-    }
-  }
-  const importedSquads = parsed.squads.map(normalizeUserSquad);
+  // F-1502: arquivos de versões anteriores trazem os internos (e cópias de
+  // missão). Esses ids continuam reservados — nunca sobrescrevem o app —, mas
+  // são ignorados com aviso em vez de recusar os squads do usuário junto.
+  const skippedIds = parsed.squads
+    .filter((squad) => isAppOwnedSquadId(squad.id))
+    .map((squad) => squad.id);
+  const importedSquads = parsed.squads
+    .filter((squad) => !isAppOwnedSquadId(squad.id))
+    .map(normalizeUserSquad);
   const canonicalJson = JSON.stringify({ squads: importedSquads }, null, 2);
   const candidate = Object.freeze({
     rawSha256: sha256(
@@ -903,6 +916,7 @@ export function prepareSquadsImport(
     expectedTargets: Object.freeze(
       importedSquads.map((squad) => currentTargetExpectation(squad.id)),
     ),
+    skippedIds: Object.freeze(skippedIds),
   });
   preparedSquadImports.add(candidate);
   return candidate;

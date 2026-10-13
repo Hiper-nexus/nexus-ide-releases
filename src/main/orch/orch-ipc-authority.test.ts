@@ -248,6 +248,7 @@ const harness = vi.hoisted(() => {
           exists: false,
           canonicalSha256: null,
         })),
+        skippedIds: [] as string[],
       };
     }),
     applyPreparedSquadsImport: vi.fn((candidate: any) => {
@@ -3784,6 +3785,55 @@ describe('squad import/export global authority boundary', () => {
     const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
     expect(options?.detail).toContain('SHA-256 canônico');
     expect(options?.detail).not.toContain('N'.repeat(200));
+    expect(harness.applyPreparedSquadsImport).not.toHaveBeenCalled();
+  });
+
+  it('F-1502: squads do próprio Nexus no arquivo aparecem como ignorados no modal e no resultado', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadImport, 894);
+    const { file } = validImportFile();
+    const prepare = harness.prepareSquadsImport.getMockImplementation()!;
+    harness.prepareSquadsImport.mockImplementationOnce((raw: string | Buffer) => ({
+      ...prepare(raw),
+      skippedIds: ['nexus-fullstack', 'nexus-pet-studio'],
+    }));
+    harness.dialog.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [file],
+    });
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
+
+    await expect(handler({ sender })).resolves.toEqual({
+      ok: true,
+      count: 1,
+      skipped: ['nexus-fullstack', 'nexus-pet-studio'],
+    });
+    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
+    expect(options?.detail).toContain(
+      'Ignorados (squads do próprio Nexus, não importados): nexus-fullstack, nexus-pet-studio',
+    );
+  });
+
+  it('F-1502: arquivo só com squads do próprio Nexus volta sem modal nem gravação', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadImport, 895);
+    const dir = makeTempDir();
+    const file = path.join(dir, 'only-builtins.json');
+    fs.writeFileSync(file, JSON.stringify({ squads: [] }), 'utf8');
+    const prepare = harness.prepareSquadsImport.getMockImplementation()!;
+    harness.prepareSquadsImport.mockImplementationOnce((raw: string | Buffer) => ({
+      ...prepare(raw),
+      skippedIds: ['nexus-fullstack'],
+    }));
+    harness.dialog.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [file],
+    });
+
+    await expect(handler({ sender })).resolves.toEqual({
+      ok: true,
+      count: 0,
+      skipped: ['nexus-fullstack'],
+    });
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
     expect(harness.applyPreparedSquadsImport).not.toHaveBeenCalled();
   });
 

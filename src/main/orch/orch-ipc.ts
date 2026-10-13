@@ -1224,7 +1224,10 @@ async function confirmSquadsImport(
       `SHA-256 bruto: ${candidate.rawSha256}\n` +
       `SHA-256 canônico (fixa o conteúdo normalizado integral): ${candidate.canonicalSha256}\n` +
       `Squads: ${candidate.squadCount}; agentes: ${candidate.agentCount}\n` +
-      `IDs alvo: ${safeDialogLabel(candidate.targetIds.join(', '), 800)}`,
+      `IDs alvo: ${safeDialogLabel(candidate.targetIds.join(', '), 800)}` +
+      (candidate.skippedIds.length > 0
+        ? `\nIgnorados (squads do próprio Nexus, não importados): ${safeDialogLabel(candidate.skippedIds.join(', '), 800)}`
+        : ''),
   );
   const result = await dialog.showMessageBox(window, {
     type: 'warning',
@@ -3238,6 +3241,10 @@ export function registerOrchIpc(): void {
       if (candidate.rawSha256 !== selected.sha256) {
         throw new Error('prepared squads import raw hash does not match file');
       }
+      const skipped = [...candidate.skippedIds];
+      // F-1502: só squads do próprio Nexus no arquivo — nada a gravar nem a
+      // confirmar; o resultado diz ao usuário o que foi ignorado.
+      if (candidate.squadCount === 0) return { ok: true, count: 0, skipped };
       assertSquadsNotExecuting(event.sender, candidate.targetIds);
       const approved = await confirmSquadsImport(
         event.sender,
@@ -3251,7 +3258,7 @@ export function registerOrchIpc(): void {
       assertSameSecureImportRead(selected, confirmed);
       assertSquadsNotExecuting(event.sender, candidate.targetIds);
       const count = applyPreparedSquadsImport(candidate);
-      return { ok: true, count };
+      return { ok: true, count, skipped };
     } catch (err) {
       return {
         ok: false,
