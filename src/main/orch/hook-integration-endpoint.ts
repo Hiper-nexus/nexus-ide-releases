@@ -235,7 +235,7 @@ function resolveGitGlobalDirectory(segment: string, cwd: string): string | null 
       const raw = match[2] ?? match[3] ?? match[4] ?? '';
       assertResolvableCheckoutOperand(raw);
       if (!raw || raw === '-' || raw.startsWith('-')) throwUnresolvedCheckout();
-      const base = dir ?? cwd;
+      const base: string = dir ?? cwd;
       dir = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(base, raw);
     }
     rest = rest.slice(match[0].length);
