@@ -38,7 +38,7 @@ import {
   type RouteEffort,
   type RouteSpecialty,
 } from '../../shared/mission-route-specialty';
-import { codeReviewTierFloor, raiseToTierFloor, type TaskTier } from './task-router';
+import { codeReviewTierFloor, explicitTaskTier, raiseToTierFloor, type TaskTier } from './task-router';
 import {
   parseSpawnRouteConfidence,
   type JevUnavailableReason,
@@ -426,6 +426,11 @@ export function routingOverridesFrom(
   confidence: SpawnRouteConfidence | undefined;
   jevUnavailable?: JevUnavailableReason;
 } {
+  // F-1427: o tier escrito na tarefa ("Correção hard no …") vale como o do
+  // chamador — o Jev confiante em "trivial" não o rebaixa. Quando o Jev
+  // concorda, a decisão segue sendo dele (origem e confiança no recibo).
+  const declaredTier = callerTier === undefined && taskText ? explicitTaskTier(taskText) : null;
+  if (declaredTier && classification?.tier !== declaredTier) callerTier = declaredTier;
   if (!classification) {
     return {
       tierOverride: callerTier,

@@ -519,12 +519,76 @@ export interface TaskClassification {
   signals: string[];
 }
 
+const TIER_WORDS: Readonly<Record<string, TaskTier>> = {
+  trivial: 'trivial',
+  easy: 'easy', 'fácil': 'easy', facil: 'easy',
+  medium: 'medium', 'média': 'medium', media: 'medium', 'médio': 'medium', medio: 'medium',
+  hard: 'hard', 'difícil': 'hard', dificil: 'hard',
+  critical: 'critical', 'crítica': 'critical', critica: 'critical',
+  'crítico': 'critical', critico: 'critical',
+};
+const TIER_WORD = Object.keys(TIER_WORDS).join('|');
+const NOT_LETTER_AFTER = '(?![\\p{L}\\p{N}_])';
+const NOT_LETTER_BEFORE = '(?<![\\p{L}\\p{N}_])';
+/** "tier: hard", "Complexidade: média" — rótulo com separador (ou `tier` nu). */
+const LABELED_TIER_RE = new RegExp(
+  `${NOT_LETTER_BEFORE}(?:tier\\s*[:=]?|(?:n[ií]vel|complexidade|dificuldade|complexity|difficulty)\\s*[:=])\\s*(${TIER_WORD})${NOT_LETTER_AFTER}`,
+  'iu',
+);
+/** "[hard]" — etiqueta entre colchetes. */
+const BRACKET_TIER_RE = new RegExp(`\\[\\s*(${TIER_WORD})\\s*\\]`, 'iu');
+/**
+ * "Correção hard no …", "Tarefa crítica:", "Crítico: …" — o tier abre a
+ * tarefa logo depois do substantivo do pedido, ou sozinho seguido de
+ * separador. "media"/"medio" sem acento ficam fora daqui ("Media query…").
+ */
+const LEADING_TIER_WORD = Object.keys(TIER_WORDS)
+  .filter((word) => word !== 'media' && word !== 'medio')
+  .join('|');
+const LEADING_TIER_RE = new RegExp(
+  '^[\\s#>*_`-]*(?:' +
+    '(?:corre[cç][aã]o|tarefa|task|fix|bug|bugfix|hotfix|implementa[cç][aã]o|' +
+    `refatora[cç][aã]o|refactor)\\s+(${LEADING_TIER_WORD})${NOT_LETTER_AFTER}` +
+    `|(${LEADING_TIER_WORD})\\s*[:.)\\]—–-]` +
+    ')',
+  'iu',
+);
+
+/**
+ * F-1427: o tier que QUEM ESCREVEU a tarefa declarou no texto. Vale como o
+ * `tier` do chamador: domina os sinais lexicais da heurística e o tier do Jev.
+ * Só a palavra em posição de rótulo conta — "caminho crítico", "modo hard do
+ * jogo" e "nível médio" (sem separador) são prosa, não tier.
+ */
+export function explicitTaskTier(taskText: string): TaskTier | null {
+  const match =
+    LEADING_TIER_RE.exec(taskText) ??
+    LABELED_TIER_RE.exec(taskText) ??
+    BRACKET_TIER_RE.exec(taskText);
+  const word = match?.[1] ?? match?.[2];
+  return word ? (TIER_WORDS[word.toLowerCase()] ?? null) : null;
+}
+
+/**
+ * F-1427: pedido de CORREÇÃO. "contar"/"leitura" dentro dele descrevem o
+ * comportamento a consertar, não uma inspeção barata — não decidem trivial.
+ */
+const CORRECTION_RE = new RegExp(
+  `${NOT_LETTER_BEFORE}(?:corre[cç][aã]o|corre[cç][oõ]es|corrig\\p{L}*|corrija|conserta\\p{L}*|` +
+    `fix|fixes|fixed|fixing|bug|bugs|bugfix|hotfix|regress\\p{L}*)${NOT_LETTER_AFTER}`,
+  'iu',
+);
+
 /**
  * Heuristic complexity classifier. Keyword buckets set the base tier
  * (critical > hard > easy/trivial > default medium); task size nudges it:
  * a one-liner drops a level, a long multi-part description raises one.
  */
 export function classifyTask(taskText: string): TaskClassification {
+  // F-1427: o tier declarado na tarefa vence os sinais fracos (como o `tier`
+  // do chamador, sem piso de revisão: quem declarou sabe a complexidade).
+  const declared = explicitTaskTier(taskText);
+  if (declared) return { tier: declared, signals: [`tier explícito: ${declared}`] };
   // Permissão de escrita não mede dificuldade: uma investigação read-only
   // pode exigir tanto raciocínio quanto uma alteração de código.
   const text = taskText.toLowerCase().replace(
@@ -562,7 +626,11 @@ export function classifyTask(taskText: string): TaskClassification {
   ) {
     tier = 'easy';
     signals = easy;
-  } else if (trivial.length > 0 && decisiveSignals(trivial).length > 0) {
+  } else if (
+    trivial.length > 0 &&
+    decisiveSignals(trivial).length > 0 &&
+    !CORRECTION_RE.test(text)
+  ) {
     tier = 'trivial';
     signals = trivial;
   } else {
