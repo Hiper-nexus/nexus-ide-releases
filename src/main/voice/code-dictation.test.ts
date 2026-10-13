@@ -50,9 +50,10 @@ describe('finalizeCodeDictation', () => {
     expect(log).toHaveBeenCalledWith(
       'info',
       'stt.dictationRaw',
-      literalResult.text,
-      expect.objectContaining({ polished: true, sttMs: 900, mode: 'code' }),
+      'transcrição bruta concluída',
+      expect.objectContaining({ polished: true, sttMs: 900, mode: 'code', chars: literalResult.text.length }),
     );
+    expect(JSON.stringify(log.mock.calls)).not.toContain(literalResult.text);
   });
 
   it('F-1392: devolve tamanhos e resultado da reescrita para o log de uso (sem texto extra)', async () => {
@@ -83,17 +84,20 @@ describe('finalizeCodeDictation', () => {
       }),
     );
     expect(out).toMatchObject({ ok: true, text: 'Commit and open the pull request.' });
-    // O caminho de falha também fica rastreável no voice.log.
+    // O caminho de falha também fica rastreável no voice.log com metadados.
     expect(log).toHaveBeenCalledWith(
       'info',
       'stt.dictationRaw',
-      literalResult.text,
+      'transcrição bruta concluída',
       expect.objectContaining({
         polished: false,
-        final: 'Commit and open the pull request.',
+        chars: literalResult.text.length,
+        finalChars: 'Commit and open the pull request.'.length,
         translateFallback: { ok: true, provider: 'gemini' },
       }),
     );
+    expect(JSON.stringify(log.mock.calls)).not.toContain(literalResult.text);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('Commit and open the pull request.');
   });
 
   it('pedido que já traduzia não transcreve de novo quando a reescrita falha', async () => {

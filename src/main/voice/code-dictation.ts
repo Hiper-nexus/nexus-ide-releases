@@ -71,15 +71,16 @@ export async function finalizeCodeDictation(
     };
   }
 
-  // Quem transcreveu e o que ouviu ANTES da reescrita, e onde foi a espera
-  // depois de parar de falar (STT x reescrita) — inclusive no caminho de falha.
-  ports.log('info', 'stt.dictationRaw', result.text.slice(0, 400), {
+  // F-1424: observabilidade registra metadados (chars, latência, modo),
+  // nunca o texto falado nem o prompt polido.
+  ports.log('info', 'stt.dictationRaw', 'transcrição bruta concluída', {
     provider: result.provider,
     fallbackNote: result.fallbackNote,
     mode: 'code',
     translate: request.translate === true,
     polished: polish.polished,
-    final: (delivered.ok ? delivered.text : polish.text).slice(0, 400),
+    chars: result.text.length,
+    finalChars: (delivered.ok ? delivered.text : polish.text).length,
     sttMs,
     polishMs,
     ...(fallback ? { translateFallback: fallback } : {}),

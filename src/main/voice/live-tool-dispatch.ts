@@ -171,7 +171,7 @@ export function dispatchNexusAction(
       'warn',
       'live.newWorkspaceRejected',
       'new_workspace sem intenção explícita no transcript — ação bloqueada',
-      { lastUserTranscript: host.lastUserTranscript.slice(0, 120) },
+      { chars: host.lastUserTranscript.length },
     );
     rejectToolCall(host, call, 'não abri workspace: pedido explícito ausente', {
       error: 'no_explicit_new_workspace_intent',
@@ -293,7 +293,7 @@ function answerDirectToolCall(
 function answerEndToolCall(host: ToolDispatchHost, call: RealtimeToolCallEvent): void {
   if (!isFarewellIntent(host.lastUserTranscript)) {
     logVoice('warn', 'encerrar.rejected', 'encerrar sem intenção de despedida — sessão mantida', {
-      lastUserTranscript: host.lastUserTranscript.slice(0, 120),
+      chars: host.lastUserTranscript.length,
     });
     rejectToolCall(host, call, 'não encerrei: sem despedida explícita, sigo na conversa', {
       error: 'no_farewell_intent',

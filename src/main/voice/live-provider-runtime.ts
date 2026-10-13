@@ -172,13 +172,13 @@ function bindTranscripts(
     if (line.role === 'assistant') echoSuppressor.record(line.text);
     if (line.role === 'user' && line.final && echoSuppressor.isEcho(line.text)) {
       logVoice('info', 'live.inputEchoDiscarded', 'eco do TTS/ack descartado (live)', {
-        text: line.text.slice(0, 120),
+        chars: line.text.length,
       });
       return;
     }
     if (line.role === 'user' && line.final && isLikelyNoiseTranscript(line.text)) {
       logVoice('info', 'live.noiseDiscarded', 'transcript live ruído/ambiente descartado', {
-        text: line.text.slice(0, 120),
+        chars: line.text.length,
       });
       return;
     }
