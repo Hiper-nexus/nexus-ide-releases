@@ -81,21 +81,28 @@ export function boundedHookGitRunner(
 // F-814: `git merge` só é o subcomando `merge` quando seguido de espaço/fim. Com
 // `\b`, o hífen de `git merge-base`/`merge-tree`/`merge-file` (plumbing de
 // leitura) casava como fronteira de palavra e tudo virava "integração".
-// F-1423: `git -C <path> push|merge` é o mesmo subcomando. O prefixo é linear
-// (um caminho, sem quantificador aninhado). Flag entre `-C` e o subcomando
-// (`git -C wt -c k=v push`) continua fora — o teto é o `-C` sozinho.
-const GIT_C_PREFIX = '(?:-C\\s+(?:"[^"]*"|\'[^\']*\'|\\S+)\\s+)?';
+// F-1423/F-1432: opções globais lineares antes do subcomando — `-C <path>`,
+// `-c <arg>` e `--no-pager`, em qualquer ordem, cada uma com o argumento dela.
+// Sem quantificador aninhado. `--git-dir` e `--work-tree` continuam fora.
+const GIT_GLOBAL_OPTION =
+  '(?:-C\\s+(?:"[^"]*"|\'[^\']*\'|\\S+)|-c\\s+(?:"[^"]*"|\'[^\']*\'|\\S+)|--no-pager(?=\\s))';
+const GIT_C_PREFIX = `(?:${GIT_GLOBAL_OPTION}\\s+)*`;
 const GIT_MERGE_COMMAND = new RegExp(String.raw`^\s*git\s+${GIT_C_PREFIX}merge(?=\s|$)`, 'u');
 const GIT_MERGE_REST = new RegExp(String.raw`^\s*git\s+${GIT_C_PREFIX}merge(?=\s|$)(.*)$`, 'u');
 const INTEGRATION_SEGMENT = new RegExp(
   String.raw`^\s*(?:git\s+${GIT_C_PREFIX}push\b|gh\s+pr\s+(?:create|merge)\b|git\s+${GIT_C_PREFIX}merge(?=\s)[^;&|]*\b(?:main|master)\b)`,
   'u',
 );
-const GIT_DASH_C = /^\s*git\s+-C\s+(?:"([^"]*)"|'([^']*)'|(\S+))/u;
+const GIT_GLOBAL_STEP =
+  /^\s+(?:(-C)\s+(?:"([^"]*)"|'([^']*)'|(\S+))|(-c)\s+(?:"[^"]*"|'[^']*'|\S+)|(--no-pager)(?=\s|$))/u;
 const CD_COMMAND = /^\s*cd\s+(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/u;
 // ponytail: presença do caractere, sem parser de shell. Teto: `~` literal no
 // nome do diretório também recusa; o agente usa caminho absoluto.
 const SHELL_UNRESOLVABLE = /[$`~*?{]/u;
+const DIRECTORY_CHANGE_ATTEMPT =
+  /^\s*(?:\\(?:cd|pushd|popd)|builtin(?:\s+-\S+)*\s+(?:cd|pushd|popd)|command(?:\s+-\S+)*\s+(?:cd|pushd|popd)|cd|pushd|popd)\b/u;
+const SUBSHELL_DIRECTORY_WORD =
+  /(?:^|[^A-Za-z0-9_])\\?(?:cd|pushd|popd)(?![A-Za-z0-9_])/u;
 
 /**
  * F-814: `git merge --abort|--quit|--continue` só encerra/retoma um merge JÁ
@@ -139,20 +146,15 @@ function cdOperand(segment: string): string | null {
   return segment.replace(/^\s*cd\s*/u, '');
 }
 
-function gitDashCOperand(segment: string): string | null {
-  if (!/^\s*git\s+-C\b/u.test(segment)) return null;
-  const match = GIT_DASH_C.exec(segment);
-  if (match) return match[1] ?? match[2] ?? match[3] ?? '';
-  return segment.replace(/^\s*git\s+-C\s*/u, '');
+function throwUnresolvedCheckout(): never {
+  throw new Error(
+    `${INTEGRATION_REVIEW_REQUIRED}: checkout do merge/push não resolvível; ` +
+      'rode no próprio cwd ou use caminho absoluto',
+  );
 }
 
 function assertResolvableCheckoutOperand(raw: string | null): void {
-  if (raw != null && SHELL_UNRESOLVABLE.test(raw)) {
-    throw new Error(
-      `${INTEGRATION_REVIEW_REQUIRED}: checkout do merge/push não resolvível; ` +
-        'rode no próprio cwd ou use caminho absoluto',
-    );
-  }
+  if (raw != null && SHELL_UNRESOLVABLE.test(raw)) throwUnresolvedCheckout();
 }
 
 function applyCd(segment: string, cwd: string): string | null {
@@ -163,25 +165,106 @@ function applyCd(segment: string, cwd: string): string | null {
   return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(cwd, raw);
 }
 
-function gitDashCDirectory(segment: string, cwd: string): string | null {
-  const match = GIT_DASH_C.exec(segment);
-  if (!match) return null;
+function isSimpleResolvableCd(segment: string): boolean {
+  const match = CD_COMMAND.exec(segment);
+  if (!match || /[()]/.test(segment)) return false;
   const raw = match[1] ?? match[2] ?? match[3];
-  if (!raw || raw === '-' || raw.startsWith('-')) return null;
-  return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(cwd, raw);
+  return !!raw && raw !== '-' && !raw.startsWith('-') && !SHELL_UNRESOLVABLE.test(raw);
 }
 
 /**
- * Checkout em que o primeiro segmento integrador roda. `cd` atualiza o cwd;
- * `git -C` vence o cwd desse segmento.
+ * Aspas simples/duplas saem por inteiro. Aspas sem fechar escondem o resto
+ * (teto: o que vem depois não é lido). Não expande `$` nem crase.
+ */
+function stripShellQuotes(command: string): string {
+  let out = '';
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+    if (ch !== '"' && ch !== "'") {
+      out += ch;
+      continue;
+    }
+    const quote = ch;
+    i += 1;
+    while (i < command.length && command[i] !== quote) i += 1;
+    if (i >= command.length) break;
+    out += ' ';
+  }
+  return out;
+}
+
+/** Subshell com cd/pushd/popd: o cwd de dentro não é o cwd que o parser vê. */
+function throwIfSubshellChangesDirectory(command: string): void {
+  const text = stripShellQuotes(command);
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '(') {
+      if (depth === 0) start = i + 1;
+      depth += 1;
+      continue;
+    }
+    if (ch !== ')' || depth === 0) continue;
+    depth -= 1;
+    if (depth === 0 && start >= 0) {
+      if (SUBSHELL_DIRECTORY_WORD.test(text.slice(start, i))) throwUnresolvedCheckout();
+      start = -1;
+    }
+  }
+  if (depth > 0 && start >= 0 && SUBSHELL_DIRECTORY_WORD.test(text.slice(start))) {
+    throwUnresolvedCheckout();
+  }
+}
+
+function segmentHidesDirectoryChange(segment: string): boolean {
+  const plain = stripShellQuotes(segment);
+  if (!plain.includes('(') && !plain.includes(')')) return false;
+  return SUBSHELL_DIRECTORY_WORD.test(plain);
+}
+
+/** Último `-C` vale, relativo ao `-C` anterior. Sem `-C`, null (fica o cwd). */
+function resolveGitGlobalDirectory(segment: string, cwd: string): string | null {
+  if (!/^\s*git\b/u.test(segment)) return null;
+  let rest = segment.replace(/^\s*git\b/u, '');
+  let dir: string | null = null;
+  for (;;) {
+    const match = GIT_GLOBAL_STEP.exec(rest);
+    if (!match) break;
+    if (match[1] === '-C') {
+      const raw = match[2] ?? match[3] ?? match[4] ?? '';
+      assertResolvableCheckoutOperand(raw);
+      if (!raw || raw === '-' || raw.startsWith('-')) throwUnresolvedCheckout();
+      const base = dir ?? cwd;
+      dir = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(base, raw);
+    }
+    rest = rest.slice(match[0].length);
+  }
+  return dir;
+}
+
+/**
+ * Checkout em que o primeiro segmento integrador roda. `cd` simples atualiza
+ * o cwd; `git -C` vence o cwd desse segmento. O restante do comando ainda é
+ * lido: um `cd`/`pushd` posterior que não dá para resolver recusa o comando
+ * inteiro, em vez de medir o pane.
  *
  * ponytail: `||` é partido como `&&` (o mesmo split do detector). Um lado que
  * o shell nem executaria ainda assim aponta o checkout. O teto é bloquear a
  * mais, nunca medir a árvore do pane quando o comando aponta outra.
+ * Heredoc sem aspas que cita `( cd … )` também recusa. `( git push )` sem
+ * cd/pushd não entra no portão — o segmento não começa com `git`. Aspas sem
+ * fechar escondem o que vem depois. `--git-dir`/`--work-tree` não são lidos.
  */
 function integrationCommandDirectory(command: string, baseCwd: string): string {
+  throwIfSubshellChangesDirectory(command);
   let cwd = baseCwd;
+  let checkout: string | null = null;
   for (const segment of commandSegments(command)) {
+    if (segmentHidesDirectoryChange(segment)) throwUnresolvedCheckout();
+    if (!isSimpleResolvableCd(segment) && DIRECTORY_CHANGE_ATTEMPT.test(segment)) {
+      throwUnresolvedCheckout();
+    }
     assertResolvableCheckoutOperand(cdOperand(segment));
     const next = applyCd(segment, cwd);
     if (next) {
@@ -189,10 +272,10 @@ function integrationCommandDirectory(command: string, baseCwd: string): string {
       continue;
     }
     if (!segmentRequestsIntegration(segment)) continue;
-    assertResolvableCheckoutOperand(gitDashCOperand(segment));
-    return gitDashCDirectory(segment, cwd) ?? cwd;
+    const redirected = resolveGitGlobalDirectory(segment, cwd);
+    if (checkout === null) checkout = redirected ?? cwd;
   }
-  return baseCwd;
+  return checkout ?? baseCwd;
 }
 
 /**

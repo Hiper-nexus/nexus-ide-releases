@@ -551,6 +551,132 @@ describe('POST /hook/integration', () => {
     });
   });
 
+  describe('F-1432: cd que o parser não resolve não mede o cwd do pane', () => {
+    const UNRESOLVED = 'checkout do merge/push não resolvível';
+
+    function approve(head: string): void {
+      store.reviewVerdicts.record({
+        missionId,
+        headSha: head,
+        treeDirty: false,
+        verdict: 'approve',
+        reviewerAdapter: 'claude',
+        reviewerModel: 'claude-opus-5-6',
+        frontier: true,
+        summary: 'Aprovado na worktree.',
+      });
+    }
+
+    function addWorktree(name: string): { wt: string; sha: string } {
+      const branch = `integ/${name}`;
+      const wt = path.join(repo, '.harvest', name);
+      fs.mkdirSync(path.dirname(wt), { recursive: true });
+      git('branch', branch);
+      git('worktree', 'add', '-q', wt, branch);
+      fs.writeFileSync(path.join(wt, 'note.txt'), name);
+      runGit(wt, 'add', 'note.txt');
+      runGit(wt, 'commit', '-qm', name);
+      return { wt, sha: runGit(wt, 'rev-parse', 'HEAD') };
+    }
+
+    it('cd com flag, builtin, command, barra, pushd, popd e subshell bloqueiam o push e passam sem ele', async () => {
+      const { wt, sha } = addWorktree('s243-bypass');
+      const paneHead = git('rev-parse', 'HEAD');
+      expect(sha).not.toBe(paneHead);
+      approve(paneHead);
+      const blocked = [
+        `cd -P ${wt} && git push`,
+        `cd -- ${wt} && git push`,
+        `builtin cd ${wt} && git push`,
+        `command cd ${wt} && git push`,
+        `\\cd ${wt} && git push`,
+        `pushd ${wt} && git push`,
+        `popd && git push`,
+        `( cd ${wt} && git push )`,
+      ];
+      for (const command of blocked) {
+        const result = await handleHookIntegrationRequest(hookCtx(), bash(command, repo), { storesFor });
+        expect(result.payload, command).toMatchObject({
+          decision: 'block',
+          reason: expect.stringContaining(UNRESOLVED),
+        });
+        expect(String((result.payload as { reason?: unknown }).reason), command).not.toContain(paneHead.slice(0, 7));
+      }
+      const free = [
+        `cd -P ${wt}`,
+        `cd -- ${wt}`,
+        `builtin cd ${wt}`,
+        `command cd ${wt}`,
+        `\\cd ${wt}`,
+        `pushd ${wt}`,
+        `popd`,
+        `( cd ${wt} )`,
+        `cd -P ${wt} && git status`,
+        `( cd ${wt} && git status )`,
+      ];
+      for (const command of free) {
+        const result = await handleHookIntegrationRequest(hookCtx(), bash(command, repo), { storesFor });
+        expect(result.payload, command).toEqual({});
+      }
+    });
+
+    it('cd simples continua medindo o HEAD da worktree', async () => {
+      const { wt, sha } = addWorktree('s243-simples');
+      const rel = path.relative(repo, wt);
+      const paneHead = git('rev-parse', 'HEAD');
+      approve(paneHead);
+      const blocked = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash(`cd ${rel} && git push`, repo),
+        { storesFor },
+      );
+      expect(blocked.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining(sha.slice(0, 7)),
+      });
+      expect(String((blocked.payload as { reason?: unknown }).reason)).not.toContain(paneHead.slice(0, 7));
+      approve(sha);
+      const allowed = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash(`cd ${wt} && git push`, repo),
+        { storesFor },
+      );
+      expect(allowed.payload).toEqual({});
+    });
+
+    it('git -C com -c ou --no-pager mede a worktree', async () => {
+      const { wt, sha } = addWorktree('s243-git-c');
+      const paneHead = git('rev-parse', 'HEAD');
+      approve(paneHead);
+      for (const command of [
+        `git -C ${wt} -c user.name=Nexus push`,
+        `git -C ${wt} --no-pager push`,
+        `git --no-pager -C ${wt} push`,
+        `git -c user.email=a@b.invalid -C ${wt} push`,
+      ]) {
+        const blocked = await handleHookIntegrationRequest(hookCtx(), bash(command, repo), { storesFor });
+        expect(blocked.payload, command).toMatchObject({
+          decision: 'block',
+          reason: expect.stringContaining(sha.slice(0, 7)),
+        });
+        expect(String((blocked.payload as { reason?: unknown }).reason), command).not.toContain(paneHead.slice(0, 7));
+      }
+      approve(sha);
+      const allowed = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash(`git -C ${wt} -c user.name=Nexus push`, repo),
+        { storesFor },
+      );
+      expect(allowed.payload).toEqual({});
+      const status = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash(`git -C ${wt} -c user.name=Nexus status`, repo),
+        { storesFor },
+      );
+      expect(status.payload).toEqual({});
+    });
+  });
+
   it('approve de ponta do HEAD exato libera o comando', async () => {
     store.reviewVerdicts.record({
       missionId,
