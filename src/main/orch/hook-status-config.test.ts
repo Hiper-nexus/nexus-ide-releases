@@ -6,7 +6,11 @@ import {
   grokStatusHooksDocument,
   mergeClaudeStatusHooks,
   mergeKimiStatusHooks,
+  shortHookTimeoutSeconds,
+  withPowerShellStartupMargin,
 } from './hook-status-config';
+import { makeDelegateHookCommand } from './hook-delegate-command';
+import { makeClaudeAgentNudgeHookCommand, makeClaudeInboxHookCommand } from './hook-triage-command';
 import { REGRESSION_HOOK_TIMEOUT_SECONDS } from './hook-regression-command';
 import { PERMISSION_HOOK_TIMEOUT_SECONDS } from './hook-permission-command';
 import { isNexusHookText } from '../../vendor/emdash/hooks/hook-commands';
@@ -51,7 +55,7 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     expect(regression.command).toContain('$NEXUS_HOOK_REGRESSION_URL');
     expect(regression.command).not.toContain('/dev/null');
     expect(regression.command).toContain('|| true');
-    expect(regression.timeout).toBe(REGRESSION_HOOK_TIMEOUT_SECONDS);
+    expect(regression.timeout).toBe(withPowerShellStartupMargin(REGRESSION_HOOK_TIMEOUT_SECONDS));
     // User hook intact, ours appended: status + conselho de delegação (C2).
     expect(merged.UserPromptSubmit![0]).toEqual(USER_PROMPT_HOOK);
     expect(merged.UserPromptSubmit).toHaveLength(3);
@@ -154,7 +158,7 @@ describe('mergeClaudeStatusHooks — aprovação estruturada (PRV-02)', () => {
     expect(hook.hooks[0]!.command).toContain(MARKER);
     expect(hook.hooks[0]!.command).toContain('|| true');
     expect(hook.hooks[0]!.command).not.toContain('/dev/null');
-    expect(hook.hooks[0]!.timeout).toBe(PERMISSION_HOOK_TIMEOUT_SECONDS);
+    expect(hook.hooks[0]!.timeout).toBe(withPowerShellStartupMargin(PERMISSION_HOOK_TIMEOUT_SECONDS));
   });
 
   it('a per-spawn rewrite keeps ONE Nexus PermissionRequest entry', () => {
@@ -174,6 +178,46 @@ describe('mergeClaudeStatusHooks — conselho de delegação (C2)', () => {
       .flatMap((entry) => entry.hooks.map((hook) => hook.command));
     expect(commands.filter((c) => c.includes('NEXUS_HOOK_DELEGATE_URL'))).toHaveLength(1);
     expect(commands.some((c) => c.includes('NEXUS_HOOK_URL'))).toBe(true);
+  });
+});
+
+describe('F-1474: hooks curtos no Windows têm folga para o powershell.exe abrir', () => {
+  const scriptTimeoutSec = (command: string): number => {
+    const script = Buffer.from(command.split('-EncodedCommand ')[1]!, 'base64').toString('utf16le');
+    return Number(/-TimeoutSec (\d+)/.exec(script)![1]);
+  };
+
+  it('o teto do Claude cobre a abertura do PowerShell além da espera do próprio script', () => {
+    for (const command of [
+      makeDelegateHookCommand('win32'),
+      makeClaudeInboxHookCommand('win32'),
+      makeClaudeAgentNudgeHookCommand('win32'),
+    ]) {
+      expect(shortHookTimeoutSeconds('win32')).toBeGreaterThanOrEqual(scriptTimeoutSec(command) + 10);
+    }
+    expect(shortHookTimeoutSeconds('darwin')).toBe(5);
+    expect(shortHookTimeoutSeconds('linux')).toBe(5);
+  });
+
+  it('delegação, fila de entregas e aviso de subagente usam esse teto nos settings do Claude', () => {
+    const merged = mergeClaudeStatusHooks({});
+    const timeoutOf = (event: string, command: string): number | undefined =>
+      (merged[event] as Array<{ hooks: Array<{ command: string; timeout?: number }> }>)
+        .flatMap((entry) => entry.hooks)
+        .find((hook) => hook.command === command)?.timeout;
+    expect(timeoutOf('UserPromptSubmit', makeDelegateHookCommand())).toBe(shortHookTimeoutSeconds());
+    expect(timeoutOf('PostToolUse', makeClaudeInboxHookCommand())).toBe(shortHookTimeoutSeconds());
+    expect(timeoutOf('PreToolUse', makeClaudeAgentNudgeHookCommand())).toBe(shortHookTimeoutSeconds());
+  });
+
+  it('hooks longos ganham a folga do PowerShell só no Windows', () => {
+    expect(withPowerShellStartupMargin(15, 'win32')).toBe(25);
+    expect(withPowerShellStartupMargin(15, 'darwin')).toBe(15);
+    expect(withPowerShellStartupMargin(15, 'linux')).toBe(15);
+    const merged = mergeClaudeStatusHooks({});
+    const triage = (merged.PostToolUseFailure as Array<{ matcher?: string; hooks: Array<{ timeout?: number }> }>)
+      .find((entry) => entry.matcher === 'Bash')!.hooks[0]!;
+    expect(triage.timeout).toBe(withPowerShellStartupMargin(15));
   });
 });
 

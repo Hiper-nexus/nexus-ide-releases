@@ -63,6 +63,31 @@ import {
 export type ClaudeHooksMap = Record<string, unknown[]>;
 
 /**
+ * F-1474: teto do Claude para os hooks curtos (delegação, fila, aviso de
+ * subagente). No Windows eles rodam pelo powershell.exe, que leva segundos só
+ * para abrir com a máquina carregada: com 5 s o Claude matava o hook antes do
+ * `-TimeoutSec` do script e despejava o `-EncodedCommand` inteiro na tela. O
+ * script segue limitando a própria espera e sai 0 em silêncio.
+ */
+export function shortHookTimeoutSeconds(
+  platform: NodeJS.Platform = process.platform,
+): number {
+  return platform === 'win32' ? 20 : 5;
+}
+
+/**
+ * F-1474: os hooks longos (triagem, integração, permissão, regressão) já têm
+ * teto acima do `-TimeoutSec` do script, mas com só 5–10 s de folga. No
+ * Windows somamos o tempo de abertura do powershell.exe a esse teto.
+ */
+export function withPowerShellStartupMargin(
+  seconds: number,
+  platform: NodeJS.Platform = process.platform,
+): number {
+  return platform === 'win32' ? seconds + 10 : seconds;
+}
+
+/**
  * Merge the status hooks (UserPromptSubmit → start, Notification →
  * notification, Stop → stop) into a Claude settings `hooks` map. Marker-aware:
  * prior Nexus entries are replaced (idempotent per-spawn rewrite), skill-gate
@@ -86,7 +111,7 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
     {
       matcher: 'Bash',
       hooks: [
-        { type: 'command', command: makeClaudeTriageHookCommand(), timeout: 15 },
+        { type: 'command', command: makeClaudeTriageHookCommand(), timeout: withPowerShellStartupMargin(15) },
       ],
     },
   ];
@@ -99,7 +124,7 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
     ...postToolUse,
     {
       matcher: '*',
-      hooks: [{ type: 'command', command: makeClaudeInboxHookCommand(), timeout: 5 }],
+      hooks: [{ type: 'command', command: makeClaudeInboxHookCommand(), timeout: shortHookTimeoutSeconds() }],
     },
   ];
   // UserPromptSubmit → POST /hook/delegate (C2): o conselho do Jev vira
@@ -110,7 +135,7 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
     ...prompt,
     {
       hooks: [
-        { type: 'command', command: makeDelegateHookCommand(), timeout: 5 },
+        { type: 'command', command: makeDelegateHookCommand(), timeout: shortHookTimeoutSeconds() },
       ],
     },
   ];
@@ -129,7 +154,7 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
         {
           type: 'command',
           command: makeIntegrationHookCommand(),
-          timeout: INTEGRATION_HOOK_TIMEOUT_SECONDS,
+          timeout: withPowerShellStartupMargin(INTEGRATION_HOOK_TIMEOUT_SECONDS),
         },
       ],
     },
@@ -141,7 +166,7 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
     {
       matcher: 'Agent|Task',
       hooks: [
-        { type: 'command', command: makeClaudeAgentNudgeHookCommand(), timeout: 5 },
+        { type: 'command', command: makeClaudeAgentNudgeHookCommand(), timeout: shortHookTimeoutSeconds() },
       ],
     },
   ];
@@ -168,7 +193,7 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
         {
           type: 'command',
           command: makePermissionHookCommand('claude'),
-          timeout: PERMISSION_HOOK_TIMEOUT_SECONDS,
+          timeout: withPowerShellStartupMargin(PERMISSION_HOOK_TIMEOUT_SECONDS),
         },
       ],
     },
@@ -183,7 +208,7 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
         {
           type: 'command',
           command: makeRegressionHookCommand(),
-          timeout: REGRESSION_HOOK_TIMEOUT_SECONDS,
+          timeout: withPowerShellStartupMargin(REGRESSION_HOOK_TIMEOUT_SECONDS),
         },
       ],
     },
