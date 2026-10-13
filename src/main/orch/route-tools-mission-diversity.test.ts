@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   listProviderSettings: vi.fn(),
   livePanes: [] as Array<Record<string, unknown>>,
   mission: {} as Record<string, unknown>,
+  routeOutcomes: [] as Array<Record<string, unknown>>,
   recorded: [] as Array<Record<string, unknown>>,
 }));
 
@@ -59,6 +60,7 @@ vi.mock('./project-domain-store-registry', () => ({
       reserveRouteDecision: () => ({ id: 'rr', expiresAt: 1 }),
     },
     missionPanes: { list: () => h.recorded },
+    handoffs: { routeOutcomeCountsSince: () => h.routeOutcomes },
   }),
 }));
 
@@ -68,6 +70,7 @@ import {
   recordWorkerDeathWithoutDelivery,
   resetMissionWorkerMortality,
 } from './worker-mortality';
+import { noteMissionCliFailure, resetMissionCliFailures } from './mission-cli-failures';
 
 const ctx: AgentGateContext = {
   token: 't', label: 'orquestrador da aba', role: 'orchestrator', sessionId: 'orch',
@@ -87,6 +90,8 @@ const TAB_MISSION = {
 
 beforeEach(() => {
   rememberKimiSeatReadiness('present');
+  h.routeOutcomes = [];
+  resetMissionCliFailures();
   h.mission = TAB_MISSION;
   h.recorded = [{ paneId: 'pane-orch', adapterId: 'claude', role: 'orchestrator' }];
   h.livePanes = [livePane('pane-orch', 'claude')];
@@ -156,6 +161,50 @@ describe('exclude do caller só honra CLI doente (uso geral)', () => {
       'exclude ignorado (CLI saudável): codex',
     );
     // codex continua elegível: está no ranked e pode até ser o escolhido.
+  });
+});
+
+// F-1427 (13/10): o MiMo travou >1 h, o MiniMax caiu num erro do provedor, o
+// Maestro fechou os dois panes (nexus_pane_close, sem handoff) e pediu
+// exclude: ["mimo-code","minimax-code"] — a rota respondeu "exclude ignorado
+// (CLI saudável) … sem morte nesta missão" e escolheu o MiMo de novo.
+describe('F-1427: falha da CLI nesta missão honra o exclude e entra no sucesso 14d', () => {
+  it('pane fechado sem entrega depois de receber a tarefa: o exclude do Maestro vale', async () => {
+    noteMissionCliFailure({
+      missionId: 'mission-tab', adapterId: 'kimi', cause: 'closed-without-delivery', attemptKey: 'pane-kimi',
+    });
+    const route = (await routeTaskForCaller({ task: TASK, exclude: ['kimi'] }, ctx)) as {
+      adapterId: string; reason: string;
+    };
+    expect(route.adapterId).not.toBe('kimi');
+    expect(route.reason).not.toContain('exclude ignorado');
+    expect(route.reason).toContain('exclude honrado (falhou nesta missão): kimi (fechado sem entrega)');
+  });
+
+  it('erro do provedor e reabertura por falta de prova também contam; falha de outra missão não', async () => {
+    noteMissionCliFailure({
+      missionId: 'mission-tab', adapterId: 'kimi', cause: 'provider-error', attemptKey: 'pane-a',
+    });
+    noteMissionCliFailure({
+      missionId: 'outra-missao', adapterId: 'codex', cause: 'no-execution-proof', attemptKey: 'pane-b',
+    });
+    const route = (await routeTaskForCaller({ task: TASK, exclude: ['kimi', 'codex'] }, ctx)) as {
+      reason: string;
+    };
+    expect(route.reason).toContain('exclude honrado (falhou nesta missão): kimi (erro do provedor)');
+    expect(route.reason).toContain('exclude ignorado (CLI saudável): codex');
+  });
+
+  it('a falha entra como amostra failed no sucesso 14d da rota', async () => {
+    // 5 entregas limpas do kimi no banco; a falha do pane fechado puxa a taxa.
+    h.routeOutcomes = [{ adapterId: 'kimi', successes: 5, total: 5 }];
+    const before = (await routeTaskForCaller({ task: TASK }, ctx)) as { reason: string };
+    expect(before.reason).toMatch(/sucesso 14d: [^;]*kimi[^;]*1,00 \(5, CLI\)/);
+    noteMissionCliFailure({
+      missionId: 'mission-tab', adapterId: 'kimi', cause: 'closed-without-delivery', attemptKey: 'pane-kimi',
+    });
+    const after = (await routeTaskForCaller({ task: TASK }, ctx)) as { reason: string };
+    expect(after.reason).toMatch(/sucesso 14d: [^;]*kimi[^;]*0,83 \(6, CLI\)/);
   });
 });
 

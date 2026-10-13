@@ -95,6 +95,11 @@ import {
 import { adapterCircuitBreakers, DEFAULT_CIRCUIT_CONFIG } from './circuit-breaker';
 import { activeCliLimit, isCliLimited } from './cli-limit-registry';
 import { workerMortalityCount } from './worker-mortality';
+import {
+  missionCliFailureNote,
+  missionCliFailures,
+  routeFailureOutcomeRows,
+} from './mission-cli-failures';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
 import { discoveredModelsFor } from '../adapters/model-discovery';
 import { currentModelOffer } from '../adapters/model-offer';
@@ -1987,11 +1992,24 @@ export async function routeTaskForCaller(
   const startFailedExclude = callerExclude.filter(
     (id) => !cliLimited.includes(id) && adapterCircuitBreakers.snapshot(id).recentFailures > 0,
   );
+  // F-1427: pane fechado pelo Maestro sem entrega depois de receber a tarefa,
+  // reabertura do supervisor por falta de prova e erro de provedor que não
+  // voltou também são falha DESTA CLI NESTA missão — não só a morte espontânea
+  // da mortalidade (que deixa o fechamento por pedido de fora, F-918).
+  const missionFailedExclude = missionId
+    ? callerExclude.filter(
+        (id) =>
+          !cliLimited.includes(id) &&
+          !startFailedExclude.includes(id) &&
+          missionCliFailures(missionId, id).length > 0,
+      )
+    : [];
   const ignoredHealthyExclude = callerExclude.filter(
     (id) =>
       !cliLimited.includes(id) &&
       !adapterCircuitBreakers.isOpen(id) &&
       !startFailedExclude.includes(id) &&
+      !missionFailedExclude.includes(id) &&
       hasAvailableAccount(id) &&
       !(missionId && workerMortalityCount(missionId, id) > 0),
   );
@@ -2241,11 +2259,13 @@ export async function routeTaskForCaller(
   // isolado: sem leitura, a rota segue exatamente como antes.
   let routeOutcomes: RouteSuccessIndex | undefined;
   try {
-    routeOutcomes = buildRouteSuccessIndex(
-      getProjectDomainStores(ctx.scope).handoffs.routeOutcomeCountsSince(
-        Date.now() - ROUTE_OUTCOME_WINDOW_MS,
-      ),
-    );
+    const since = Date.now() - ROUTE_OUTCOME_WINDOW_MS;
+    routeOutcomes = buildRouteSuccessIndex([
+      ...getProjectDomainStores(ctx.scope).handoffs.routeOutcomeCountsSince(since),
+      // F-1427: falha sem handoff (pane fechado, reaberto, erro do provedor)
+      // também é desfecho da rota — amostra `failed` da memória do processo.
+      ...routeFailureOutcomeRows(since),
+    ]);
   } catch {
     routeOutcomes = undefined;
   }
@@ -2363,7 +2383,15 @@ export async function routeTaskForCaller(
         `${decision.reason}; exclude ignorado (CLI saudável): ` +
         ignoredHealthyExclude.join(',') +
         ` — sem falha ao nascer nos últimos ${START_FAILURE_WINDOW_MIN} min, ` +
-        'disjuntor fechado, conta disponível e sem morte nesta missão',
+        'disjuntor fechado, conta disponível e sem morte nem falha nesta missão',
+    };
+  }
+  if (missionId && missionFailedExclude.length > 0) {
+    decision = {
+      ...decision,
+      reason:
+        `${decision.reason}; exclude honrado (falhou nesta missão): ` +
+        missionFailedExclude.map((id) => missionCliFailureNote(missionId, id)).join(', '),
     };
   }
   if (skippedBriefs.length > 0) {

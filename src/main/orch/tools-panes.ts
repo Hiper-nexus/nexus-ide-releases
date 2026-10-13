@@ -115,11 +115,13 @@ import {
 } from './pane-start-watchdog';
 import {
   forgetPaneTaskReroute,
+  getPaneTaskReroute,
   registerPaneTaskReroute,
   setNextCliResolver,
   type PaneTaskRerouteRequest,
 } from './pane-task-reroute';
 import { selectSpawnFailSuccessor } from './spawn-fail-reroute';
+import { closedWorkerFailure, noteMissionCliFailure } from './mission-cli-failures';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { isMissionWorkerWriteEligibleCli } from './squad-runtime-policy';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
@@ -3677,6 +3679,40 @@ export function broadcastSkipReason(
   return null;
 }
 
+/**
+ * F-1427: o Maestro fechou o pane do worker que recebeu a tarefa e não
+ * entregou — falha da CLI nesta missão (honra o exclude seguinte e entra no
+ * sucesso 14d). Fail-open: sem leitura confiável, não conta nada.
+ */
+function closedWorkerFailureFor(
+  paneId: string,
+  ctx: AgentGateContext,
+): ReturnType<typeof closedWorkerFailure> {
+  try {
+    const pane = listPaneSnapshots().find((live) => live.paneId === paneId);
+    const sessionId = pane?.sessionId ?? null;
+    if (!pane || !sessionId || !pane.missionId) return null;
+    const handoffAuthors = getProjectDomainStores(ctx.scope)
+      .handoffs.list({ sessionIds: [sessionId], includeDelivered: true })
+      .map((handoff) => handoff.fromAgent);
+    const session = getAgentSessionInfo(sessionId);
+    return closedWorkerFailure({
+      paneId,
+      sessionId,
+      adapterId: pane.adapterId ?? session?.adapterId ?? null,
+      missionId: pane.missionId,
+      role: pane.role,
+      operatorOpened: pane.operatorOpened === true,
+      sessionState: getSessionState(sessionId),
+      hasTaskRequest: getPaneTaskReroute(paneId)?.routeTask != null,
+      handoffAuthors,
+      ...(session?.model ? { model: session.model } : {}),
+    });
+  } catch {
+    return null;
+  }
+}
+
 const paneClose: McpToolDef = {
   name: 'nexus_pane_close',
   description:
@@ -3717,6 +3753,8 @@ const paneClose: McpToolDef = {
           throw new Error(`pane_close refused: ${auth.reason}`);
         }
       }
+      // F-1427: lido antes de fechar — depois a sessão e o pedido somem.
+      const closedFailure = ctx.role === 'orchestrator' ? closedWorkerFailureFor(info.paneId, ctx) : null;
       if (
         !(await requestPaneClose(info.paneId, undefined, {
           callerSessionId: ctx.sessionId,
@@ -3725,6 +3763,7 @@ const paneClose: McpToolDef = {
       ) {
         throw new Error('no renderer window available');
       }
+      if (closedFailure) noteMissionCliFailure(closedFailure);
       return { ok: true };
     }
     if (scope !== 'caller_mission' && scope !== 'caller_workspace') {
