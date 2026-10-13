@@ -2953,6 +2953,7 @@ async function runPowerShellScriptInstall(
   replacesLocalAppDataExecutable?: string,
   assertCurrent?: () => void,
   signal?: AbortSignal,
+  hooks?: InstallChildHooks,
 ): Promise<void> {
   assertCurrent?.();
   const body = await fetchInstallerBody(scriptUrl, { signal });
@@ -2975,16 +2976,17 @@ async function runPowerShellScriptInstall(
       aside = moveExecutableAside(entry, String(Date.now()));
     }
     assertCurrent?.();
-    await new Promise<void>((resolve, reject) => {
+    // powershell.exe é um binário real; não precisa do shell=true que os
+    // shims `.cmd` de npm/brew exigem no Windows.
+    const options = { ...installExecOptions(), shell: false };
+    await trackInstallChild(new Promise<void>((resolve, reject) => {
       execFile(
         resolveRunnerPath('powershell') ?? 'powershell.exe',
         ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file],
-        // powershell.exe é um binário real; não precisa do shell=true que os
-        // shims `.cmd` de npm/brew exigem no Windows.
-        { ...installExecOptions(), shell: false },
+        hooks?.childSignal ? { ...options, signal: hooks.childSignal } : options,
         (error) => (error ? reject(error) : resolve()),
       );
-    });
+    }), hooks);
   } catch (error) {
     // Falhou sem deixar binário novo: o antigo volta, a CLI não some.
     if (entry) restoreExecutableIfMissing(entry, aside);
@@ -3045,7 +3047,7 @@ function describeArgvInstallInvocation(invocation: ArgvInstallInvocation): strin
   return `Executável: ${invocation.executable}\nArgumentos: ${invocation.args.map((arg) => JSON.stringify(arg)).join(' ')}${environment}`;
 }
 
-async function runInstallRecipe(
+export async function runInstallRecipe(
   recipe: CliInstallRecipe,
   prepared?: ArgvInstallInvocation,
   assertCurrent?: () => void,
@@ -3058,7 +3060,7 @@ async function runInstallRecipe(
     return;
   }
   if (recipe.kind === 'powershell-script') {
-    await runPowerShellScriptInstall(recipe.scriptUrl, recipe.replacesLocalAppDataExecutable, assertCurrent, signal);
+    await runPowerShellScriptInstall(recipe.scriptUrl, recipe.replacesLocalAppDataExecutable, assertCurrent, signal, hooks);
     return;
   }
   const invocation = prepared ?? prepareArgvInstallInvocation(recipe);

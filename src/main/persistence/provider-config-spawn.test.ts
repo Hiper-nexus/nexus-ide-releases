@@ -506,6 +506,7 @@ import {
   refreshBrewIndexIfDue,
   registerProviderIpc,
   resolveRunnerPath,
+  runInstallRecipe,
   resolveQuotaApiKey,
   resolveRuntimeApiKey,
   hasRuntimeKey,
@@ -1253,6 +1254,25 @@ describe('background CLI maintenance during pane startup', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('instalação interrompida'));
       expect(finishUpdate).toBeTypeOf('function'); // sem o marcador, a de 10 min ficaria de fora
       warn.mockRestore();
+    });
+
+    it('Windows: o install por PowerShell também entra no teto do stop e no marcador', async () => {
+      let psOptions: Record<string, unknown> | undefined;
+      spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
+        psOptions = args[2] as Record<string, unknown>;
+        (args.at(-1) as (error: null, stdout: string) => void)(null, '');
+        return {} as ChildProcess;
+      });
+      const childSignal = new AbortController().signal;
+      const onChildStart = vi.fn();
+      await runInstallRecipe({
+        kind: 'powershell-script', scriptUrl: 'https://static.devin.ai/cli/setup.ps1',
+        runner: 'powershell', runnerHint: '',
+      }, undefined, undefined, undefined, { childSignal, onChildStart });
+      expect(spawnDeps.execFile.mock.calls.at(-1)?.[1]).toContain('-File');
+      expect(onChildStart).toHaveBeenCalledOnce();
+      expect(psOptions?.signal).toBe(childSignal);
+      expect(psOptions?.shell).toBe(false);
     });
   });
 
