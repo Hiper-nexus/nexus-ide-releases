@@ -1,6 +1,6 @@
 # Changelog
 
-## Não lançado — Campo em dia
+## 0.76.251 — Campo em dia
 
 Uma leva de correções de campo: ditar segurando Space não derruba mais o app no macOS 27.2, a 2ª conta do Antigravity entra, o Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, um «401» citado no terminal não troca mais a conta de uma missão que estava funcionando, um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais "sessão expirada" sobre uma credencial que está funcionando.
 

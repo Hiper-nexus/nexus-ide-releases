@@ -10506,7 +10506,7 @@ export const RELEASE_076249: AppRelease = {
     { title: 'Atualização do Linux', detail: 'Da 0.76.202 à 0.76.245 só havia pacote de Mac ou Windows. O Omarchy consultava o espelho e ficava na 0.76.201, achando que já estava na mais recente.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076250: AppRelease = {
   version: '0.76.250',
   date: '2026-10-13',
   codename: 'Comandos pesados de volta no Windows',
@@ -10517,5 +10517,24 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Fila de comandos pesados presa', detail: 'Um processo antigo, com número reaproveitado pelo Windows, era confundido com filho de um teste e a vaga do projeto nunca voltava. Agora só conta como filho quem nasceu depois do pai.' },
     { title: 'Recusa com o motivo real', detail: 'A mensagem diz se foi outro job na mesma pasta, o limite de jobs da máquina, swap ou RAM abaixo da reserva. A RAM só é citada quando falta RAM.' },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.251',
+  date: '2026-10-13',
+  codename: 'Campo em dia',
+  summary: 'O Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, ditar segurando Space não derruba mais o app no macOS, a segunda conta do Antigravity entra, um erro de autenticação citado no terminal não troca mais a conta de uma missão que estava funcionando, um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais «sessão expirada» sobre uma credencial que está funcionando.',
+  highlights: [
+    { title: 'Maestro que delega', detail: 'O orquestrador criado pelo «+ Pane» recebia os pedidos e executava tudo no próprio terminal, sem abrir workers. Agora ele recebe a doutrina de delegar e o vigia de esteira cobra quando a missão fica sem workers.' },
+  ],
+  fixes: [
+    { title: 'Ditado sem crash no macOS', detail: 'Segurar Space para ditar derrubava o app no macOS 27.2 porque os serviços de mídia morriam ao abrir o microfone; eles agora rodam dentro do processo.' },
+    { title: 'Segunda conta do Antigravity', detail: 'Adicionar a segunda conta falhava com «terminal não ficou disponível»; o login agora espera a sessão do jeito certo e entra.' },
+    { title: 'Modelos por extenso', detail: 'Providers mostrava frações nuas como 13/13 e 256/256; a contagem de modelos agora vem em palavras, sem adivinhação.' },
+    { title: 'Sem o diálogo do Keychain em loop', detail: 'O macOS repetia sem fim o pedido de acesso às credenciais do Muse a cada sonda de cota; a leitura não dispara mais o diálogo.' },
+    { title: 'Falso limite do AGY', detail: 'Um «401» que aparecia no texto do terminal fazia o Nexus trocar de conta e parar a missão, mesmo com a conta funcionando. Agora a sonda de cota confirma antes: credencial aceita pelo provider desmente o alarme e o pane segue na mesma conta.' },
+    { title: 'Windows sem falsa queda', detail: 'Pane encerrado pelo próprio Nexus ao fim da missão mostrava «processo caiu (code 129)»; o encerramento normal não é mais rotulado como queda.' },
+    { title: 'Squad salvo abre de novo', detail: 'Squads de plano (e as cópias deles) falhavam ao abrir e em «Usar integrantes», sem jeito de corrigir no editor. Agora o roster carrega normalmente e o squad volta a ser utilizável.' },
+    { title: 'Muse sem falsa expiração', detail: 'O pane do Muse com login nativo mostrava «Sessão expirada» por causa de um erro de autenticação que só aparecia no texto do terminal, mesmo com a credencial funcionando. O Nexus agora confirma com a sonda de cota antes de avisar: sem confirmação, nada de toast e o pane segue trabalhando.' },
   ],
 };
