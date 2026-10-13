@@ -19,6 +19,7 @@ import {
   type WorktreeStateSnapshot,
 } from './worktree-contract';
 import { acceptedWorktreePaths } from './managed-worktree-layout';
+import { isPathInsideOrEqual } from './worktree-removal-safety';
 
 interface WorktreeStateValidationOptions {
   readonly scopeKey: string;
@@ -126,14 +127,27 @@ function validateRecord(
   const expectedBranch = worktreeBranchRef(record);
   const dependencies = record.dependencies;
 
+  const isAcceptedWorktreePath =
+    acceptedPaths.includes(record.worktreePath) ||
+    (record.ownerKind === 'pane' &&
+      typeof record.worktreePath === 'string' &&
+      path.isAbsolute(record.worktreePath) &&
+      path.resolve(record.worktreePath) === record.worktreePath &&
+      record.worktreePath !== record.rootRealPath &&
+      isPathInsideOrEqual(record.rootRealPath, record.worktreePath));
+
+  const isAcceptedBranchRef =
+    record.branchRef === expectedBranch ||
+    (record.ownerKind === 'pane' && isIntegrationRef(record.branchRef));
+
   if (
     (record.ownerKind !== undefined && record.ownerKind !== "pane") ||
     record.scopeKey !== options.scopeKey ||
     record.scopeKey !== expectedScopeKey ||
     record.taskKey !== expectedTaskKey ||
     record.id !== `worktree-${expectedTaskKey}` ||
-    !acceptedPaths.includes(record.worktreePath) ||
-    record.branchRef !== expectedBranch ||
+    !isAcceptedWorktreePath ||
+    !isAcceptedBranchRef ||
     typeof record.rootRealPath !== 'string' ||
     !path.isAbsolute(record.rootRealPath) ||
     path.resolve(record.rootRealPath) !== record.rootRealPath ||

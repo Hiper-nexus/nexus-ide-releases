@@ -1072,6 +1072,74 @@ export class WorktreeManager {
   }
 
   /**
+   * F-1429: registra um writer que roda numa worktree Git aninhada já existente
+   * no workspace (ex.: `.harvest/s243-...`). Cria o registro durável `ready`,
+   * permitindo recibo com a worktree e retomada (resume) no rework do handoff.
+   */
+  registerExistingPaneWriter(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    input: {
+      readonly workerId: string;
+      readonly worktreePath: string;
+      readonly branchRef: string;
+      readonly baseSha: string;
+    },
+  ): WorktreeRecord {
+    const scopeKey = this.scopeKey(scope);
+    const repository = readRepositorySnapshot(this.#git, scope, false);
+    const realWorktree = fs.existsSync(input.worktreePath) ? fs.realpathSync(input.worktreePath) : "";
+    if (
+      !realWorktree ||
+      realWorktree === repository.rootRealPath ||
+      !isPathInsideOrEqual(repository.rootRealPath, realWorktree)
+    ) {
+      throw new WorktreeStateConflictError("worktree path is not inside repository root");
+    }
+    assertSafeLocalGitConfig(this.#git, realWorktree);
+    const top = this.#git.run(realWorktree, ["rev-parse", "--show-toplevel"], { allowFailure: true });
+    if (top.status !== 0 || fs.realpathSync(top.stdout.trim()) !== realWorktree) {
+      throw new WorktreeStateConflictError("worktree is not a valid git top-level");
+    }
+    const taskId = `pane-${assertIdentifier(input.workerId, "workerId")}`;
+    const taskKey = worktreeTaskKey(missionId, taskId);
+    const now = this.#timestamp();
+
+    return this.#mutate(scopeKey, (records) => {
+      const existing = records.find((record) => record.worktreePath === realWorktree);
+      const recordsWithout = records.filter(
+        (record) => record.worktreePath !== realWorktree && record.taskKey !== taskKey,
+      );
+      const candidate: WorktreeRecord = cloneRecord({
+        ownerKind: "pane",
+        reservationGeneration: randomUUID(),
+        id: `worktree-${taskKey}`,
+        scopeKey,
+        projectId: scope.projectId,
+        checkoutId: scope.checkoutId,
+        missionId,
+        taskId,
+        taskKey,
+        workerId: input.workerId,
+        rootRealPath: repository.rootRealPath,
+        worktreePath: realWorktree,
+        branchRef: input.branchRef,
+        integrationRef: repository.integrationRef,
+        baseSha: input.baseSha,
+        ownership: { files: [], symbols: [], domains: [taskId] },
+        dependencies: [],
+        status: "ready",
+        createdAt: existing ? existing.createdAt : now,
+        updatedAt: now,
+      });
+      return {
+        records: [...recordsWithout, candidate],
+        result: candidate,
+      };
+    });
+  }
+
+  /**
    * Retomada de um writer de pane: reabre o registro liberado (`failed`) da
    * MESMA worktree/branch, sem materializar nada. Prova a identidade física
    * (raiz Git + branch); WIP não commitado é permitido — é do próprio writer.

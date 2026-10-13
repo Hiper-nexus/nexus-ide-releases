@@ -523,6 +523,19 @@ export class WorktreeRuntimeRegistry {
     );
   }
 
+  registerExistingPaneWriter(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    input: {
+      readonly workerId: string;
+      readonly worktreePath: string;
+      readonly branchRef: string;
+      readonly baseSha: string;
+    },
+  ): WorktreeRecord {
+    return this.forScope(scope).worktrees.registerExistingPaneWriter(scope, missionId, input);
+  }
+
   reopenPaneWriter(
     scope: ProjectExecutionScope,
     missionId: string,
