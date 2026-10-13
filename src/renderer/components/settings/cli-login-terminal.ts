@@ -147,8 +147,9 @@ async function ensureWorkspaceForLoginTerminal(): Promise<boolean> {
   if (typeof window === 'undefined' || !window.nexus?.workspace) {
     return true;
   }
-  const recent =
-    ws.recents.find((candidate) => !candidate.missing) ?? ws.recents[0];
+  // Recents são WorkspaceInfo (path, name, lastOpenedAt), o mais novo primeiro.
+  // `missing` só existe no evento de liveness do workspace aberto, não aqui.
+  const recent = ws.recents[0];
   if (recent?.path) {
     try {
       await useWorkspaceStore.getState().open(recent.path);

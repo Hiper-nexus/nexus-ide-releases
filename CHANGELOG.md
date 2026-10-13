@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.76.246 — Linux em dia com o Mac e o Windows
+## 0.76.247 — Linux em dia com o Mac e o Windows
 
 O Omarchy (ZIP portátil) e o Debian/Ubuntu (`.deb`, também o `.rpm`) estavam parados na 0.76.201. As versões 0.76.202 a 0.76.245 saíram só para Mac e Windows, e o atualizador do Linux só avança quando a release traz os três pacotes juntos. Sem eles, o app instalado consultava o espelho e respondia que já estava na mais recente.
 
@@ -12,6 +12,7 @@ Esta versão é o mesmo produto da 0.76.245, empacotado para Linux x64 a partir 
 - **Ditado e CLIs.** O texto ditado não se perde com o pane ocupado, e as CLIs instaladas são conferidas no boot (0.76.242).
 - **Celular.** O app pareado fala o protocolo do Nexus: panes, missões, aprovações e fila offline (0.76.210, 0.76.212).
 - **Contas.** Várias contas nas CLIs de arquivo (`openclaude`, `minimax-code`, `muse`) e o login a partir do Início que espera o terminal (0.76.245). A vaga do Cofre de Credenciais do Windows continua sendo só do Windows.
+- **Build Linux.** A 0.76.246 não compilou: o login a partir do Início lia `missing` na lista de projetos recentes, e esse campo não existe ali. O build em container também deixa de depender da API da Launchpad para instalar o Git, porque `api.launchpad.net` não responde em algumas redes.
 
 ## 0.76.245 — Multi-conta no Antigravity e login sem tropeço
 
