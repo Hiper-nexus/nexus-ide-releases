@@ -2192,6 +2192,73 @@ describe('MissionSetup', () => {
     ).toContain('Equipe');
   });
 
+  function renderTeamWith(roster: SquadAgent[]): HTMLElement {
+    useMissionSetupStore.setState({
+      draft: {
+        objective: 'Criar um fluxo simples de missão',
+        title: '',
+        contextPaths: [],
+        roster,
+        advanced: { lane: 'standard' },
+        step: 'team',
+        revision: 1,
+      },
+    });
+    return render(<MissionSetup />);
+  }
+
+  it('F-1492: dois coordenadores — diz o que fazer e deixa remover o extra', async () => {
+    const extra: SquadAgent = {
+      ...REVIEW_ROSTER[0]!,
+      id: 'second-coordinator',
+      agentName: 'Coordenar de novo',
+    };
+    const host = renderTeamWith([...REVIEW_ROSTER, extra]);
+    await flush();
+
+    expect(host.textContent).toContain(
+      'A equipe tem 2 coordenadores, e a missão aceita só um. Remova os coordenadores extras.',
+    );
+    act(() => buttonByAriaLabel(host, 'Remover Coordenar de novo').click());
+    await flush();
+
+    const roster = useMissionSetupStore.getState().draft.roster;
+    expect(roster.filter((agent) => agent.category === 'orchestrator')).toHaveLength(1);
+    expect(
+      [...host.querySelectorAll('button')].some(
+        (item) => item.getAttribute('aria-label') === 'Remover Coordenar e revisar',
+      ),
+    ).toBe(false);
+
+    act(() => button(host, 'Continuar para revisão').click());
+    await flush();
+    expect(api.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it('F-1492: sem coordenador — oferece adicionar a coordenação', async () => {
+    const host = renderTeamWith(
+      REVIEW_ROSTER.filter((agent) => agent.category !== 'orchestrator'),
+    );
+    await flush();
+
+    expect(host.textContent).toContain(
+      'A equipe não tem quem coordene. Use “Adicionar coordenação” para incluir um coordenador.',
+    );
+    act(() => button(host, 'Adicionar coordenação').click());
+    await flush();
+
+    const coordinators = useMissionSetupStore
+      .getState()
+      .draft.roster.filter((agent) => agent.category === 'orchestrator');
+    expect(coordinators).toHaveLength(1);
+    expect(coordinators[0]).toMatchObject({ cli: 'claude', model: 'sonnet' });
+    expect(() => button(host, 'Adicionar coordenação')).toThrow();
+
+    act(() => button(host, 'Continuar para revisão').click());
+    await flush();
+    expect(api.prepare).toHaveBeenCalledTimes(1);
+  });
+
   it('F-1490: a validação local aponta a equipe, não o objetivo', async () => {
     useMissionSetupStore.setState({
       draft: {

@@ -117,14 +117,12 @@ const TEAM_PRESETS: ReadonlyArray<{ total: number; label: string }> = [
   { total: 8, label: 'Força total' },
 ];
 
-export function buildRecommendedMissionRoster({
-  objective,
-  lane,
-  readiness,
-  providers,
-  accounts,
-  settings,
-}: BuildRecommendedMissionRosterInput): SquadAgent[] | null {
+/** Ferramenta da coordenação: a padrão do operador, com sessão, primeiro. */
+function pickMissionCoordinator(
+  readiness: MissionRuntimeReadiness,
+  providers: readonly ProviderSettingsInfo[],
+  settings: OrchSettings,
+): AdapterInfo | null {
   const coordinators = [...readiness.verifiedMaestros].sort((left, right) =>
     left.id.localeCompare(right.id),
   );
@@ -138,7 +136,18 @@ export function buildRecommendedMissionRoster({
   const configuredCoordinator = pickFrom.find(
     (adapter) => adapter.id === settings.defaultAdapterId,
   );
-  const coordinator = configuredCoordinator ?? pickFrom[0] ?? null;
+  return configuredCoordinator ?? pickFrom[0] ?? null;
+}
+
+export function buildRecommendedMissionRoster({
+  objective,
+  lane,
+  readiness,
+  providers,
+  accounts,
+  settings,
+}: BuildRecommendedMissionRosterInput): SquadAgent[] | null {
+  const coordinator = pickMissionCoordinator(readiness, providers, settings);
   const workers = readiness.qualifiedWorkers
     .filter(
       (adapter) =>
@@ -248,8 +257,13 @@ export function missionRosterIssue(input: {
   const coordinators = input.roster.filter(
     (agent) => agent.category === 'orchestrator',
   );
-  if (coordinators.length !== 1) {
-    return 'A equipe precisa ter uma pessoa responsável por coordenar e revisar.';
+  // F-1492: a frase genérica não dizia o que fazer, e a Equipe não deixava
+  // remover coordenador nem adicionar um — beco sem saída.
+  if (coordinators.length === 0) {
+    return 'A equipe não tem quem coordene. Use “Adicionar coordenação” para incluir um coordenador.';
+  }
+  if (coordinators.length > 1) {
+    return `A equipe tem ${coordinators.length} coordenadores, e a missão aceita só um. Remova os coordenadores extras.`;
   }
   if (
     input.roster.length === 1 &&
@@ -422,6 +436,56 @@ export function TeamStep({
     onRosterChange([
       ...roster.map((agent) => ({ ...agent })),
       nextAgent,
+    ]);
+    setEditError(null);
+  };
+
+  const coordinatorCount = roster.filter(
+    (agent) => agent.category === 'orchestrator',
+  ).length;
+
+  /** F-1492: equipe salva sem coordenador ganha um pela mesma escolha da recomendação. */
+  const addCoordinator = (): void => {
+    if (roster.length >= MISSION_ROSTER_MAX_AGENTS) {
+      setEditError(
+        'Limite de 12 integrantes por missão. Remova um papel antes de adicionar a coordenação.',
+      );
+      return;
+    }
+    const adapter = pickMissionCoordinator(
+      inventory.readiness,
+      inventory.providers,
+      inventory.settings,
+    );
+    const role = recommendMissionRosterRoles({ objective: '', lane }).find(
+      (candidate) => candidate.category === 'orchestrator',
+    );
+    if (!adapter || !role) {
+      setEditError('Não há uma ferramenta de IA pronta para coordenar.');
+      return;
+    }
+    const model = readyModelForAdapter({
+      adapter,
+      providers: inventory.providers,
+      accounts: inventory.accounts,
+      preferredModel:
+        adapter.id === inventory.settings.defaultAdapterId
+          ? inventory.settings.defaultModel
+          : undefined,
+    });
+    const effort = providerEffort(adapter.id, inventory.providers);
+    onRosterChange([
+      {
+        id: `custom-orchestrator-${(revision + roster.length + 1).toString(36)}`,
+        agentName: role.agentName,
+        category: 'orchestrator',
+        cli: adapter.id,
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
+        allowedSkills: [],
+        allowedTools: role.allowedTools === null ? null : [...role.allowedTools],
+      },
+      ...roster.map((agent) => ({ ...agent })),
     ]);
     setEditError(null);
   };
@@ -667,7 +731,9 @@ export function TeamStep({
                 providers={inventory.providers}
                 accounts={inventory.accounts}
                 issue={issueForAgent(agent, inventory)}
-                removable={agent.category !== 'orchestrator'}
+                removable={
+                  agent.category !== 'orchestrator' || coordinatorCount > 1
+                }
                 onChange={updateAgent}
                 onRemove={() => removeAgent(agent)}
               />
@@ -680,6 +746,16 @@ export function TeamStep({
         <div className="mission-setup__continuous-section mission-setup__team-actions">
           <h2>Adicionar papel</h2>
           <div className="mission-setup__inline-actions mission-setup__role-chips">
+            {coordinatorCount === 0 && (
+              <button
+                type="button"
+                className="mission-setup__role-chip"
+                onClick={addCoordinator}
+              >
+                <span aria-hidden="true">♛</span>
+                Adicionar coordenação
+              </button>
+            )}
             <button
               ref={addRoleControlRef}
               type="button"

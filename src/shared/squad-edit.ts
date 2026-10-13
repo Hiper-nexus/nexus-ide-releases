@@ -37,8 +37,18 @@ export interface SquadEditPatch {
 function validate(name: string, agents: EditableAgent[]): void {
   if (!name.trim()) throw new Error('o nome do squad não pode ficar vazio');
   if (agents.length === 0) throw new Error('o squad precisa de ao menos um agente');
-  if (!agents.some((a) => a.category === 'orchestrator')) {
-    throw new Error('o roster precisa de um agente orquestrador');
+  // F-1492: o Main exige exatamente um coordenador ao usar a equipe; dois
+  // passavam aqui e a missão recusava depois, sem a pessoa saber por quê.
+  const coordinators = agents.filter((a) => a.category === 'orchestrator').length;
+  if (coordinators === 0) {
+    throw new Error(
+      'A equipe precisa de um coordenador (orquestrador): marque um agente como “Coordenar”.',
+    );
+  }
+  if (coordinators > 1) {
+    throw new Error(
+      `A equipe tem ${coordinators} coordenadores; deixe só um agente como “Coordenar”.`,
+    );
   }
 }
 

@@ -148,6 +148,45 @@ describe('SquadEditor', () => {
     act(() => root.unmount());
   });
 
+  it('F-1492: salvar com dois coordenadores é recusado com o que fazer', async () => {
+    const saveSquad = vi.fn(async (_squad: Squad) => ({ ok: true as const }));
+    stubNexus(saveSquad);
+    const squad: Squad = {
+      ...builtin,
+      builtin: false,
+      id: 'meu-time',
+      agents: [
+        ...builtin.agents,
+        { id: 'exec', agentName: 'Executor', category: 'executor', cli: 'claude', allowedTools: null },
+      ],
+    };
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(<SquadEditor squad={squad} onClose={vi.fn()} onSaved={vi.fn()} />);
+    });
+    const executorCategory = document.body.querySelectorAll<HTMLSelectElement>(
+      'select[aria-label="Categoria"]',
+    )[1]!;
+    await act(async () => {
+      executorCategory.value = 'orchestrator';
+      executorCategory.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const saveBtn = [...document.body.querySelectorAll('button')].find((b) =>
+      /^salvar$/i.test(b.textContent?.trim() ?? ''),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      saveBtn.click();
+    });
+
+    expect(saveSquad).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toMatch(
+      /2 coordenadores.*só um/,
+    );
+    act(() => root.unmount());
+  });
+
   it('bloqueia modelo sem sessão e escolhe o primeiro usável ao trocar de CLI', async () => {
     const adapters: AdapterInfo[] = [
       {

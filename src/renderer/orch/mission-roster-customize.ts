@@ -323,6 +323,11 @@ export function planRemoveRosterAgent(
     return { ok: false, error: 'Integrante não encontrado na equipe.' };
   }
   if (target.category === 'orchestrator') {
+    // F-1492: equipe salva com dois coordenadores ficava sem saída na Equipe.
+    // O extra sai; o único coordenador continua protegido.
+    if (roster.filter((a) => a.category === 'orchestrator').length > 1) {
+      return { ok: true, next: roster.filter((a) => a.id !== id) };
+    }
     return { ok: false, error: 'O Maestro não pode ser removido.' };
   }
   const workers = roster.filter((a) => a.category !== 'orchestrator');

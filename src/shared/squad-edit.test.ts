@@ -55,6 +55,18 @@ describe('applySquadEdit', () => {
     ).toThrow(/orquestrador/i);
   });
 
+  it('F-1492: rejeita roster com mais de um coordenador, dizendo o que fazer', () => {
+    expect(() =>
+      applySquadEdit(userSquad, {
+        agents: [
+          { id: 'o1', agentName: 'Coordenador', category: 'orchestrator', cli: 'claude' },
+          { id: 'o2', agentName: 'Outro', category: 'orchestrator', cli: 'codex' },
+          { id: 'e', agentName: 'Executor', category: 'executor', cli: 'codex' },
+        ],
+      }, 'x'),
+    ).toThrow(/2 coordenadores.*só um.*“Coordenar”/);
+  });
+
   it('rejeita nome vazio', () => {
     expect(() => applySquadEdit(userSquad, { name: '   ' }, 'x')).toThrow(/nome/i);
   });
