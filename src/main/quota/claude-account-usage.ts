@@ -408,6 +408,9 @@ async function readProfileCredential(
   // dois e pendurava num FIFO. Um descritor, O_NONBLOCK, só arquivo regular.
   const read = readRegularFileCapped(path.join(profile.configDir, '.credentials.json'), 1_000_000);
   if (read.kind === 'text') return { credential: read.text, unavailable: false };
+  // `unchanged` só existe com `knownStamp`, que aqui não é passado. Se ainda
+  // assim vier, nada foi lido agora: fonte indisponível, nunca "sem credencial".
+  if (read.kind === 'unchanged') return { credential: null, unavailable: true };
   // Ausente = sem credencial; presente mas recusado (FIFO, gigante, ilegível)
   // = fonte indisponível, nunca "sem credencial".
   return { credential: null, unavailable: read.stamp !== 'missing' };
