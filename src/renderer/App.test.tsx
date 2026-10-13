@@ -299,6 +299,7 @@ import { useMediaStudioStore } from './state/media-studio-store';
 import { useMissionSetupStore } from './state/mission-setup-store';
 import { useMissionInspectorStore } from './state/mission-inspector-store';
 import { useOrchStore } from './state/orch-store';
+import { useOnboardingStore } from './state/onboarding-store';
 import { useProductNavigationStore } from './state/product-navigation-store';
 import { useBugReportDialogStore } from './state/bug-report-dialog-store';
 import { useToastStore } from './state/toast-store';
@@ -368,6 +369,12 @@ beforeEach(() => {
   setActiveWorkspacePath(null);
   useMissionSetupStore.setState({ workspacePath: null });
   vi.spyOn(useOrchStore.getState(), 'hydrateCrossWorkspace').mockResolvedValue();
+  // O first-run wizard renderiza role=dialog aria-modal e o handler global de
+  // atalhos (App.tsx) não dispara com modal aberto — estes testes medem os
+  // atalhos, não o onboarding, então o wizard nasce fechado.
+  vi.spyOn(useOnboardingStore.getState(), 'hydrate').mockImplementation(() => {
+    useOnboardingStore.setState({ hydrated: true, wizardOpen: false });
+  });
   missionInspectorView.selectedTab = () =>
     useMissionInspectorStore.getState().tab;
   attentionHandler = null;

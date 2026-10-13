@@ -3,6 +3,7 @@ import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAccessStore } from './state/access-store';
+import { useOnboardingStore } from './state/onboarding-store';
 import { DEFAULT_LICENSE } from '../shared/billing-types';
 
 const browserHost = vi.hoisted(() => ({
@@ -235,6 +236,11 @@ function terminalVisibility() {
 beforeEach(() => {
   useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
   vi.clearAllMocks();
+  // Wizard de first-run fechado: com role=dialog aria-modal aberto, os
+  // atalhos globais e o menu Ajuda não disparam (guarda em App.tsx).
+  vi.spyOn(useOnboardingStore.getState(), 'hydrate').mockImplementation(() => {
+    useOnboardingStore.setState({ hydrated: true, wizardOpen: false });
+  });
   Object.defineProperty(window, 'nexus', {
     configurable: true,
     writable: true,
