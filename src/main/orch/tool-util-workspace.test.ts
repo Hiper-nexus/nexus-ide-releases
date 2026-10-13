@@ -2719,8 +2719,8 @@ describe('agent prompt injection', () => {
       stubs.readSessionOutput.mockReturnValue(DEVIN_COMPOSER_SCREEN);
       await vi.advanceTimersByTimeAsync(1_500);
       const briefWrites = () =>
-        stubs.writeSession.mock.calls.filter(
-          ([, data]) => typeof data === 'string' && (data as string).includes('linha do brief'),
+        (stubs.writeSession.mock.calls as unknown as Array<readonly [string, string]>).filter(
+          ([, data]) => typeof data === 'string' && data.includes('linha do brief'),
         );
       expect(briefWrites()).toHaveLength(1);
 
@@ -2738,7 +2738,7 @@ describe('agent prompt injection', () => {
       let seq = 0;
       for (let i = 0; i < 120 && settled === undefined; i += 1) {
         await vi.advanceTimersByTimeAsync(250);
-        const enters = stubs.writeSession.mock.calls.filter(
+        const enters = (stubs.writeSession.mock.calls as unknown as Array<readonly [string, string]>).filter(
           ([, data]) => data === '\r',
         ).length;
         if (enters > prevEnters && enters >= 4) {
