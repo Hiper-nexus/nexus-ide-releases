@@ -299,9 +299,15 @@ export function resolveProductionMissionOrchestratorRuntime(
   const sealedModel = runtimeComesFromRoster
     ? present(orchestrator.model)
     : undefined;
+  // F-1497: o modelo padrão global pertence à CLI padrão global. Com o
+  // Codex como padrão, um Maestro Claude sem modelo subia com o id do Codex.
+  const settingsModel =
+    present(settings.defaultAdapterId) === adapterId
+      ? present(settings.defaultModel)
+      : undefined;
   const model =
     sealedModel ||
-    present(settings.defaultModel) ||
+    settingsModel ||
     defaultSquadModelForAdapter(adapterId);
   if (requireProviderReadiness && !account) {
     const readiness = deps.providerReadiness(adapterId, model);

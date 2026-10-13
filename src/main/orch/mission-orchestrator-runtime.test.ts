@@ -360,6 +360,55 @@ describe('mission orchestrator runtime authority', () => {
     });
   });
 
+  it('F-1497: Maestro sem modelo não herda o modelo padrão de OUTRA CLI', () => {
+    const claudeAdapter = cliPtyAdapterSchema.parse({
+      ...customAdapter,
+      id: 'claude',
+      label: 'Claude',
+      bin: 'claude',
+      detect: 'claude --version',
+      install: { method: 'manual', command: 'install claude' },
+    });
+    const base = productionDeps('operator-choice');
+    const withDefault = (defaultAdapterId: string, defaultModel: string) => ({
+      ...base,
+      getSettings: () => ({
+        squadCliPolicy: 'operator-choice',
+        defaultAdapterId,
+        defaultModel,
+        defaultAccountId: '',
+      }),
+      getAdapter: () => claudeAdapter,
+      listAdapterInfos: () =>
+        base.listAdapterInfos().map((info) => ({ ...info, id: 'claude' })),
+    });
+    const maestro = {
+      id: 'maestro',
+      agentName: 'Maestro',
+      category: 'orchestrator' as const,
+      cli: 'claude',
+    };
+
+    // Padrão global no Codex: o Claude sobe no padrão da própria CLI.
+    const foreign = resolveProductionMissionOrchestratorRuntime(
+      squad,
+      maestro,
+      withDefault('codex', 'gpt-6.1-sol'),
+    );
+    expect(foreign.adapterId).toBe('claude');
+    expect(foreign.model).not.toBe('gpt-6.1-sol');
+    expect(foreign.model).toBeUndefined();
+
+    // Padrão global na MESMA CLI do Maestro continua valendo.
+    expect(
+      resolveProductionMissionOrchestratorRuntime(
+        squad,
+        maestro,
+        withDefault('claude', 'claude-sonnet-5'),
+      ).model,
+    ).toBe('claude-sonnet-5');
+  });
+
   it('preserves the MCP and native read-only gates in governed mode', () => {
     expect(() =>
       resolveProductionMissionOrchestratorRuntime(
