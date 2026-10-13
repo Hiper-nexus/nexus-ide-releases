@@ -10493,7 +10493,7 @@ export const RELEASE_076245: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.247',
+  version: '0.76.248',
   date: '2026-10-13',
   codename: 'Linux em dia com o Mac e o Windows',
   summary: 'O app no Omarchy, no Debian e no Ubuntu deixa a 0.76.201 e passa a incluir tudo o que o Mac e o Windows receberam até a 0.76.245: missões que concluem, cada modelo no seu lugar e as telas novas.',
