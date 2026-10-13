@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.76.243 — Herança do T3
+
+Entram os PRs abertos da janela do T3 (#131, #133, #135, #136) e o backlog herdado do T3 Code (#132, #134): terminal com janela de ACK por chunks, assistente de primeira execução, chip de contexto, seletor de fontes e editor de tema. Junto vêm as correções dos atritos que o próprio Nexus teve nesta release (F-1423, F-1425..F-1433): pane com spinner não é mais dado como erro, brief do Devin não é colado duas vezes, erro de provedor reabre a tarefa noutra CLI, missão recusada pelo verificador volta ao Maestro em vez de travar, worktree criada à mão nunca é apagada e o portão de push mede o checkout certo. Cada item teve teste RED, julgamento do orquestrador e veredito de modelo de ponta.
+
+- **Terminal.**
+  - Janela de ACK do T3: no máximo 8 chunks / 64 KiB em voo por sessão. Rajadas de chunks pequenos não enchem mais o IPC do Electron; o ACK drena a cauda pausada em ordem, e a saída do processo entrega a cauda antes do `pty:exit` (#131).
+  - Perfil de carga canônico de 15 sessões no wire, com orçamento em teste (F-764, #135).
+  - A auditoria de performance separa o orçamento de regex (250 ms) do pipeline WASM (2 s); as regexes estão em 5,65 ms (F-851, #133).
+  - `node -r ./hooks.js …/tsc` não rouba mais o script do programa na admissão pesada (F-852, #136).
+
+- **Herdado do T3 Code.**
+  - Assistente de primeira execução em 4 etapas (chaves → agentes → projeto → como usar) e checklist de ativação que só marca fatos reais. Abre só em instalação nova: quem já usa o Nexus não vê o assistente na atualização (#132).
+  - Chip de janela de contexto no pane, contando a última rodada contra a janela do modelo.
+  - Links `nexus://new?prompt=` com sanitizador: caracteres invisíveis removidos e contados, link só de invisíveis recusado, confirmação nativa em link não confiável, e o prefill só entra com rascunho vazio.
+  - "Atualizar tudo": CLIs primeiro, app por último.
+  - Seletor de fontes da interface, do código e do terminal, com pilha que nunca perde glifos; editor de tema com os 14 papéis da paleta.
+  - Revelar o terminal de uma sessão abre o pane dono dela em vez de outro PTY (F-572). `+ Pane`, "abre o Claude" e o sync por voz continuam abrindo pane novo, mesmo com outro pane da mesma CLI aberto (F-1431).
+  - Tokens compactos num formatador só: 1k, 42k, 300k, 1m — nunca "1000k".
+
+- **Panes e missões.**
+  - Spinner de TUI (Devin, Claude, fases da lua do Kimi, OVNI do MiMo) é `working`, não `errored`; `pane_ask` não devolve mais glifo como resposta (F-1425).
+  - Brief sem aceite reenvia só o Enter, nunca cola o texto de novo, nem quando o Enter falha: acabou o "[Pasted text #2/#3]" empilhado no Devin (F-1426, F-1432).
+  - Spinner parado há mais de 2 minutos sem nenhum byte novo não é mais lido como "working": o `nexus_pane_read` traz a idade da última saída e avisa que a CLI pode estar travada (F-1433).
+  - Erro de provedor parado no pane (ex.: MiniMax 50113) reabre a tarefa noutra CLI; a CLI que falhou na missão sai da rota e o exclude do Maestro vale; "Correção hard" não vira mais tarefa trivial (F-1427).
+  - Recusa do verificador de conclusão volta ao Maestro como prompt e a missão segue `running`, então ele pode abrir workers e corrigir em vez de ficar travado em `dispatch_required` (F-1428).
+  - O verificador separa limite declarado (orçamento de 8 MiB, arquivo acima do teto) de falha real de leitura: o limite vira ressalva nomeada na nota, a falha real continua recusando, e os arquivos alterados são lidos primeiro; o juiz de conclusão recebe a lista do que ficou fora da leitura mecânica (F-1428, F-1430, F-1433).
+  - Writer aberto com `cwd` numa worktree já existente (ex.: `.harvest/…`) é adotado como worktree isolada, com recibo e rework pelo mesmo writer. A worktree adotada nunca perde pasta nem branch na coleta de lixo do Nexus; se a adoção não for possível, o spawn segue no modo de antes com o motivo no recibo (F-1429).
+
+- **Segurança.**
+  - O portão de merge/push mede o checkout real do comando (`cd`, `git -C`, inclusive com `-c` e `--no-pager`); caminho com expansão de shell, inexistente ou com erro de git bloqueia em vez de passar, e `cd` com opções, `builtin cd`, `pushd` e subshell com `cd` também bloqueiam (F-1423, F-1432).
+  - O veredito de revisão amarra o HEAD exato da worktree revisada, resolve a branch por `refs/heads/` e recusa SHA curto ambíguo; `nexus_handoff_ack` aceita os sinônimos accept/approve/ok e reject/redo (F-1423, F-1432).
+
 ## 0.76.242 — Cada LLM no seu lugar
 
 Varredura interna s241 (F-1391..F-1424): cada modelo passa a ser usado pelo que faz de melhor — o Wonder Full no julgamento, o Opus no Next e nos jogos, o Devin e o Kimi no revezamento de front, o GLM Flash lendo imagem e o GLM 5.3 escrevendo código — e nenhum trabalho fica sem dono: o Nexus confere se o worker de fato começou, atualiza todas as CLIs ao iniciar, mostra a cota de cada conta e não perde mais o texto ditado. Cada correção teve teste RED, julgamento do orquestrador e revisão cruzada (Fable e Grok) até ficar apta.

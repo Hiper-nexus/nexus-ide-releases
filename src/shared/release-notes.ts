@@ -10429,7 +10429,7 @@ export const RELEASE_076241: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076242: AppRelease = {
   version: '0.76.242',
   date: '2026-10-12',
   codename: 'Cada LLM no seu lugar',
@@ -10444,5 +10444,23 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Nenhum trabalho sem dono', detail: 'O Nexus confere se o worker de fato começou e, se não, reabre a tarefa em outra CLI na mesma worktree; os workers fecham ao entregar; o Maestro é avisado quando faz tudo sozinho.' },
     { title: 'Cota de cada conta', detail: 'Conta logada não aparece mais como sessão expirada, a cota de cada conta só é mostrada com a identidade provada, e Muse, OpenClaude e Alibaba Token Plan ganharam sondas de cota no Redline.' },
     { title: 'Telas', detail: 'Painel Git estreito sem sobreposição, o navegador do Stage não rola por cima dos outros painéis, e a falha de atualização de CLI aparece clara no painel de Providers.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.243',
+  date: '2026-10-13',
+  codename: 'Herança do T3',
+  summary: 'O terminal ganha a janela de ACK do T3 e o Nexus herda do T3 Code o assistente de primeira execução, o chip de contexto, o seletor de fontes e o editor de tema; panes com spinner não viram erro, o brief não é colado duas vezes, a missão recusada volta ao Maestro e worktree criada à mão nunca é apagada.',
+  highlights: [
+    { title: 'Terminal mais leve', detail: 'No máximo 8 pedaços de saída em voo por terminal: rajadas não entopem mais a ponte do Electron, e o fim da saída chega inteiro antes do terminal fechar.' },
+    { title: 'Primeira execução guiada', detail: 'Instalação nova abre um assistente de 4 etapas — chaves, agentes, projeto e como usar — e um checklist que só marca o que você de fato fez. Quem atualiza não vê o assistente.' },
+    { title: 'Fontes, tema e contexto', detail: 'Escolha as fontes da interface, do código e do terminal, edite os 14 papéis do tema e veja no pane quanto da janela de contexto do modelo a última rodada usou.' },
+  ],
+  fixes: [
+    { title: 'Panes lidos certo', detail: 'Spinner de Devin, Claude, Kimi e MiMo conta como trabalhando, não como erro, e o brief do Devin não é mais colado duas vezes: o reenvio é só o Enter.' },
+    { title: 'Missões que terminam', detail: 'Erro de provedor parado reabre a tarefa noutra CLI; recusa do verificador volta ao Maestro e a missão segue rodando; limite de leitura vira ressalva na nota em vez de travar a conclusão.' },
+    { title: 'Worktrees protegidas', detail: 'Worker aberto numa worktree já existente é adotado com recibo e rework, e o Nexus nunca apaga a pasta nem a branch de uma worktree criada à mão.' },
+    { title: 'Portão de push', detail: 'O portão mede o checkout real de cd e git -C; caminho com expansão, inexistente ou com erro de git bloqueia, e o veredito de revisão amarra o HEAD exato revisado.' },
   ],
 };
