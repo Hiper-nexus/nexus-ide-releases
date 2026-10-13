@@ -268,7 +268,13 @@ function missionOutputRoot(
 }
 
 function fsyncPath(file: string): void {
-  const fd = openSync(file, constants.O_RDONLY);
+  // No Windows o fsync exige handle de escrita (O_RDONLY dá EPERM) e não há
+  // fsync de diretório — o rename já é o commit nessa plataforma.
+  if (process.platform === 'win32' && statSync(file).isDirectory()) return;
+  const fd = openSync(
+    file,
+    process.platform === 'win32' ? constants.O_RDWR : constants.O_RDONLY,
+  );
   try {
     fsyncSync(fd);
   } finally {
