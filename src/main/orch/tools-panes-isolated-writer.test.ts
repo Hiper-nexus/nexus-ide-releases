@@ -1182,6 +1182,66 @@ describe('F-980/F-981: writers paralelos da aba isolada e cwd em outra worktree'
     expect(resumeCall.executionScope.rootRealPath).toBe(nested);
   });
 
+  it('F-1429 parte 3: adoção recusada (worktree aninhada na worktree da aba) cai no same_checkout de antes, com o motivo', async () => {
+    const { tab } = await tabMission();
+    const nested = path.join(tab.rootRealPath, '.harvest', 'w1');
+    git(tab.rootRealPath, 'worktree', 'add', '-q', '-b', 'harvest/w1', nested);
+    const receipt = await paneSpawnTool.handler({ agentName: 'Executor', cwd: nested }, ctx) as Record<string, any>;
+    // Comportamento de antes do F-1429: roda na worktree aninhada, no checkout dela.
+    expect(receipt.executionMode).toBe('same_checkout');
+    expect(receipt.isolatedWorktree).toBeUndefined();
+    expect(receipt.adoptionSkipped).toMatch(/not inside repository root/);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ cwd: nested });
+    expect(h.spawn.mock.calls[0][0].isolatedWriter).toBeUndefined();
+    expect(h.spawn.mock.calls[0][0].executionScope.rootRealPath).toBe(nested);
+    expect(registry.listMission(ctx.scope, ctx.missionId!)).toEqual([]);
+    // O writer segue serializado contra a worktree aninhada.
+    await expect(paneSpawnTool.handler({ agentName: 'Executor', cwd: nested }, ctx))
+      .rejects.toThrow(/same-checkout delegation is serialized.*isolatedWriter:true/);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('F-1429 parte 3: writer isolado com cwd relativo devolve o recibo com cwdDiscarded (sem ReferenceError)', async () => {
+    fs.mkdirSync(path.join(ctx.scope.rootRealPath, 'sub'));
+    const receipt = await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true, cwd: 'sub' }, ctx) as Record<string, any>;
+    const [record] = registry.listMission(ctx.scope, ctx.missionId!);
+    expect(receipt.executionMode).toBe('isolated_worktree');
+    expect(receipt.isolatedWorktree).toMatchObject({
+      worktreePath: record.worktreePath,
+      cwdDiscarded: { requested: 'sub' },
+    });
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ cwd: record.worktreePath, isolatedWriter: true });
+  });
+
+  it('F-1429 parte 3: falha do registro na adoção (mão do operador) não derruba o spawn nem vaza o claim', async () => {
+    const root = ctx.scope.rootRealPath;
+    const nested = path.join(root, '.harvest', 'w1');
+    git(root, 'worktree', 'add', '-q', '-b', 'harvest/w1', nested);
+    const operator = { ...ctx, role: 'user' as const, missionId: undefined, sessionId: 'op-session' };
+    const spy = vi.spyOn(registry, 'registerExistingPaneWriter').mockImplementation(() => {
+      throw new Error('worktree branch belongs to another writer');
+    });
+    try {
+      const receipt = await paneSpawnTool.handler({ adapterId: 'codex', cwd: nested }, operator) as Record<string, any>;
+      expect(receipt.isolatedWorktree).toBeUndefined();
+      expect(receipt.executionMode).toBeUndefined();
+      expect(receipt.adoptionSkipped).toMatch(/belongs to another writer/);
+      expect(h.spawn.mock.calls[0][0]).toMatchObject({ cwd: nested });
+      expect(h.spawn.mock.calls[0][0].isolatedWriter).toBeUndefined();
+      expect(h.spawn.mock.calls[0][0].executionScope.rootRealPath).toBe(nested);
+      expect(registry.listMission(ctx.scope, OPERATOR_HAND_WORKTREE_KEY)).toEqual([]);
+      // O claim do checkout aninhado foi assentado no pane: encerrado ele, o próximo writer entra.
+      exitPane(h.panes[0]);
+      h.panes[0].state = 'exited';
+      await paneSpawnTool.handler({ adapterId: 'codex', cwd: nested }, operator);
+      expect(h.spawn).toHaveBeenCalledTimes(2);
+      expect(h.spawn.mock.calls[1][0]).toMatchObject({ cwd: nested });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('F-1327: sonda readOnly com cwd de worktree aninhada ganha escopo de execução na worktree', async () => {
     const root = ctx.scope.rootRealPath;
     const nested = path.join(root, '.harvest', 'w1');

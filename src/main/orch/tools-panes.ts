@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 import { getMissionDecisionHints } from './mission-decision-hints';
 import type { MissionDecisionHints } from '../../shared/orch-types';
 import { assertLicenseAccess } from '../license-enforcement';
@@ -601,6 +602,28 @@ export const ISOLATED_WORKTREE_NOTE =
 /** F-980: writer aberto da pasta isolada de uma aba nasce do HEAD dela. */
 export const ISOLATED_TAB_WORKTREE_NOTE =
   'nasce do HEAD da pasta isolada da aba e não contém as alterações não commitadas dela';
+
+/**
+ * F-1429 parte 3: adotar a worktree aninhada (recibo isolated_worktree +
+ * rework por resume) é melhoria, não pré-condição do spawn. Qualquer recusa —
+ * pasta fora da raiz do checkout de coordenação (aninhada na worktree de uma
+ * aba isolada), falha de Git, conflito no registry — mantém o spawn de antes
+ * do F-1429: escopo da worktree aninhada e writer serializado nela pelo claim
+ * (que continua com o chamador). O motivo volta no recibo (`adoptionSkipped`).
+ */
+async function tryAdoptNestedWorktreeWriter(
+  ...args: Parameters<typeof adoptNestedWorktreeWriter>
+): Promise<{ readonly allocation: IsolatedWriterAllocation } | { readonly skipped: string }> {
+  try {
+    return { allocation: await adoptNestedWorktreeWriter(...args) };
+  } catch (error) {
+    const skipped = (error instanceof Error ? error.message : String(error))
+      .replaceAll('\0', ' ')
+      .slice(0, 300);
+    console.warn('[isolated-writer] adoção da worktree aninhada recusada; spawn segue no checkout dela:', skipped);
+    return { skipped };
+  }
+}
 
 /** F-981: worktree aninhada já tem writer — a recusa diz a saída. */
 function nestedWorktreeBusy(reason: string, worktreeRoot: string): string {
@@ -1857,6 +1880,8 @@ const paneSpawnAfterTabMission = {
     }
     let isolatedWriter: IsolatedWriterAllocation | undefined;
     let isolatedWriterReason: string | undefined;
+    /** F-1429 parte 3: por que a worktree aninhada não foi adotada (spawn seguiu). */
+    let adoptionSkipped: string | undefined;
     // Claim síncrono do checkout (ver delegated-writer-gate): tomado no mesmo
     // bloco da decisão, antes de qualquer await; solto no finally.
     let writerClaim: ReturnType<typeof claimSameCheckoutWriter> | undefined;
@@ -1937,8 +1962,14 @@ const paneSpawnAfterTabMission = {
             spawnTiming?.timer.mark('writer-isolation');
           }
         } else if (nested && nested.cwd === nested.scope.rootRealPath) {
-          isolatedWriter = await adoptNestedWorktreeWriter(ctx.scope, undefined, nested, writerClaim);
-          writerClaim = undefined;
+          const adoption = await tryAdoptNestedWorktreeWriter(ctx.scope, undefined, nested, writerClaim);
+          if ('allocation' in adoption) {
+            isolatedWriter = adoption.allocation;
+            // O claim agora é da alocação (assentado no link/release dela).
+            writerClaim = undefined;
+          } else {
+            adoptionSkipped = adoption.skipped;
+          }
         }
       }
       if (isolatedWriter) {
@@ -1963,7 +1994,7 @@ const paneSpawnAfterTabMission = {
             : {}),
           ...(isolatedWriterReason ? { reason: isolatedWriterReason } : {}),
         } }
-      : {};
+      : adoptionSkipped ? { adoptionSkipped } : {};
     let releaseWorkerSlot: (() => void) | undefined;
     let spawnedWorkerPaneId: string | undefined;
     /** F-1388: recibo do resume fresh-in-worktree (writer sem conversa retomável). */
@@ -2306,8 +2337,14 @@ const paneSpawnAfterTabMission = {
                 spawnTiming?.timer.mark('writer-isolation');
               }
             } else if (nested && nested.cwd === nested.scope.rootRealPath && !isolatedWriter) {
-              isolatedWriter = await adoptNestedWorktreeWriter(ctx.scope, missionId, nested, writerClaim);
-              writerClaim = undefined;
+              const adoption = await tryAdoptNestedWorktreeWriter(ctx.scope, missionId, nested, writerClaim);
+              if ('allocation' in adoption) {
+                isolatedWriter = adoption.allocation;
+                // O claim agora é da alocação (assentado no link/release dela).
+                writerClaim = undefined;
+              } else {
+                adoptionSkipped = adoption.skipped;
+              }
             }
           }
           if (isolatedWriter) {
