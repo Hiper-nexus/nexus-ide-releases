@@ -68,6 +68,8 @@ vi.mock('./voice-store', () => ({
   useVoiceStore: { getState: () => ({ closeSettings: vi.fn() }) },
 }));
 vi.mock('../terminal/terminal-host', () => ({
+  getPaneSessionId: (paneId: string) =>
+    paneId === 'pane-agent' ? 'sess-agent' : null,
   submitPromptToPane,
   submitPromptToPaneConfirmed,
   waitForSession,
@@ -219,6 +221,33 @@ describe('sync_repo_via_pane executor', () => {
     expect(execution.toolResult).toMatchObject({ ok: true });
     expect(execution.sayText).toMatch(/agente único/i);
     expect(execution.sayText).toMatch(/status/i);
+  });
+
+  // F-1431: o sync de repositório nunca digita num pane de agente que já
+  // existia — mesmo vivo, mesmo ocupado. Nasce um pane novo.
+  it('no-agent-pane com agente vivo ocupado nasce pane novo e não digita no existente', async () => {
+    resolveSyncRepoViaPaneTarget.mockReturnValueOnce({ kind: 'no-agent-pane' });
+    layoutState.panes = [
+      { id: 'pane-agent', kind: 'cli-agent', title: 'Claude', adapterId: 'claude' },
+    ];
+    paneStates.set('pane-agent', 'busy');
+    const execution = await executeJarvisAction(
+      { say: '', action: { type: 'sync_repo_via_pane', mode: 'status' } },
+      context,
+    );
+
+    expect(layoutState.spawnAgent).toHaveBeenCalledWith('codex', 'gpt-5.6-luna');
+    expect(submitPromptToPaneConfirmed).not.toHaveBeenCalledWith(
+      'pane-agent',
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(submitPromptToPaneConfirmed).toHaveBeenCalledWith(
+      'pane-spawned-2',
+      buildSyncRepoViaPanePrompt('status'),
+      'session-1',
+    );
+    expect(execution.toolResult).toMatchObject({ ok: true });
   });
 });
 

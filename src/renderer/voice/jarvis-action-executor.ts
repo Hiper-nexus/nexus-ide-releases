@@ -6,11 +6,6 @@ import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
 import { pickFallbackInScope } from '../lib/pane-spaces';
 import { attentionMissionIdForPane } from '../lib/mission-attention-route';
-import {
-  findReusableAgentPane,
-  revealPaneTerminal,
-} from '../lib/reveal-pane-terminal';
-import { isLivePaneSessionState } from '../lib/pane-mission-promote';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
@@ -20,7 +15,6 @@ import {
 } from '../state/mission-setup-store';
 import { useVoiceStore } from './voice-store';
 import {
-  getPaneSessionId,
   submitPromptToPane,
   submitPromptToPaneConfirmed,
   waitForSession,
@@ -217,22 +211,6 @@ async function openSingleAgentPaneForSync(): Promise<{
   paneTitle: string;
 } | null> {
   const before = listPanes(useLayoutStore.getState().root);
-  // F-572: já existe um agente vivo com sessão? Revela em vez de nascer PTY.
-  const existingLive = before.find(
-    (pane) =>
-      pane.kind === 'cli-agent' &&
-      Boolean(getPaneSessionId(pane.id)) &&
-      isLivePaneSessionState(
-        useSessionStateStore.getState().paneStates.get(pane.id),
-      ),
-  );
-  if (existingLive) {
-    revealPaneTerminal({ kind: 'pane', paneId: existingLive.id });
-    return {
-      paneId: existingLive.id,
-      paneTitle: existingLive.title || existingLive.id,
-    };
-  }
   const beforeIds = new Set(before.map((pane) => pane.id));
   const adapters = await window.nexus.adapters.list().catch(() => []);
   const adapter = adapters.find((candidate) => candidate.installed);
@@ -938,49 +916,22 @@ export async function executeJarvisAction(
         model = action.model || 'swe-2-high';
       }
 
-      // F-572: a mesma CLI já tem pane vivo com sessão? Revela o existente
-      // em vez de nascer outro PTY (~0,5–1 GB por pane de agente).
-      const existingAgent = findReusableAgentPane(
-        listPanes(useLayoutStore.getState().root),
-        (paneId) => getPaneSessionId(paneId),
-        (paneId) =>
-          isLivePaneSessionState(
-            useSessionStateStore.getState().paneStates.get(paneId),
-          ),
-        {
-          adapterId: agentId,
-          paneStates: useSessionStateStore.getState().paneStates,
-        },
-      );
-      let paneId: string | undefined;
-      if (existingAgent) {
-        revealPaneTerminal({ kind: 'pane', paneId: existingAgent.id });
-        paneId = existingAgent.id;
-        sayText = sayText || `Agente ${agentId} já estava aberto — mostrei o painel existente.`;
-      } else {
-        paneId = useLayoutStore.getState().spawnAgent(agentId, model || '', {
-          ...(effort ? { effort } : {}),
-        });
-      }
+      const paneId = useLayoutStore.getState().spawnAgent(agentId, model || '', {
+        ...(effort ? { effort } : {}),
+      });
 
       if (paneId) {
-        if (!existingAgent) revealPaneForUser(paneId);
+        revealPaneForUser(paneId);
         markEffect(control);
         const sessionId = await waitForSession(paneId, 5_000);
         checkpoint(control);
         if (sessionId) {
-          sayText =
-            sayText ||
-            (existingAgent
-              ? `Agente ${agentId} já estava aberto — mostrei o painel existente.`
-              : `Agente ${agentId} aberto.`);
+          sayText = sayText || `Agente ${agentId} aberto.`;
           toolResult = {
             tool: action.type,
             ok: true,
-            summary: existingAgent
-              ? `agente ${agentId} já aberto — painel revelado (${model ?? 'padrão'})`
-              : `agente ${agentId} aberto e visível (${model ?? 'padrão'})`,
-            output: { paneId, agentId, model, effort, revealed: Boolean(existingAgent) },
+            summary: `agente ${agentId} aberto e visível (${model ?? 'padrão'})`,
+            output: { paneId, agentId, model, effort },
           };
         } else {
           sayText = `Abri o painel, mas o agente ${agentId} ainda não iniciou.`;
