@@ -163,6 +163,7 @@ import {
   viaRapidaAllowsOrchestratorWorkerSpawn,
 } from './task-dispatch-authority';
 import {
+  adoptNestedWorktreeWriter,
   allocateIsolatedWriterWorktree,
   isolatedWriterPaneOfSession,
   resumeIsolatedWriterWorktree,
@@ -1935,6 +1936,9 @@ const paneSpawnAfterTabMission = {
           } finally {
             spawnTiming?.timer.mark('writer-isolation');
           }
+        } else if (nested && nested.cwd === nested.scope.rootRealPath) {
+          isolatedWriter = await adoptNestedWorktreeWriter(ctx.scope, undefined, nested, writerClaim);
+          writerClaim = undefined;
         }
       }
       if (isolatedWriter) {
@@ -1952,7 +1956,9 @@ const paneSpawnAfterTabMission = {
           baseSha: isolatedWriter.baseSha,
           note: isolatedWriter.baseRootRealPath ? ISOLATED_TAB_WORKTREE_NOTE : ISOLATED_WORKTREE_NOTE,
           // F-981: o writer isolado roda na raiz da worktree própria; o cwd pedido não vale.
-          ...(requestedCwd && requestedCwd !== isolatedWriter.worktreePath
+          ...(requestedCwd &&
+            requestedCwd !== isolatedWriter.worktreePath &&
+            path.resolve(callerExecutionScope.rootRealPath, requestedCwd) !== isolatedWriter.worktreePath
             ? { cwdDiscarded: { requested: requestedCwd, reason: 'o writer isolado roda na raiz da worktree própria' } }
             : {}),
           ...(isolatedWriterReason ? { reason: isolatedWriterReason } : {}),
@@ -2299,6 +2305,9 @@ const paneSpawnAfterTabMission = {
               } finally {
                 spawnTiming?.timer.mark('writer-isolation');
               }
+            } else if (nested && nested.cwd === nested.scope.rootRealPath && !isolatedWriter) {
+              isolatedWriter = await adoptNestedWorktreeWriter(ctx.scope, missionId, nested, writerClaim);
+              writerClaim = undefined;
             }
           }
           if (isolatedWriter) {

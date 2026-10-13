@@ -74,10 +74,19 @@ vi.mock('./gate', async (original) => ({
   ...(await original<typeof import('./gate')>()),
   assertCurrentMissionOrchestratorSession: vi.fn(),
 }));
+vi.mock('./mission-leader-gate', () => ({
+  requireMissionLeaderSession: (_scope: unknown, _missionId: unknown, context: { sessionId?: string }) => ({
+    ok: true,
+    leader: { sessionId: context.sessionId ?? 'orch-session' },
+  }),
+}));
 vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({
     missions: { get: () => h.mission },
-    handoffs: { get: (id: string) => h.handoffs[id] ?? null },
+    handoffs: {
+      get: (id: string) => h.handoffs[id] ?? null,
+      markConsumedFromPhysicalAck: () => true,
+    },
     missionPanes: { list: () => h.panes.filter((p) => !h.unrecorded.has(p.paneId)).map((p) => ({ ...p, role: 'worker' })), findByPaneId: (id: string) => h.resumeRecords.get(id) ?? null },
   }),
 }));
@@ -110,6 +119,7 @@ import { OPERATOR_HAND_WORKTREE_KEY, operatorHandGcIdle } from './isolated-write
 import { newMissionWorkspaceBinding, prepareMissionExecutionScope } from './mission-execution-scope';
 import { resetWriterClaimsForTests } from './delegated-writer-gate';
 import { worktreeSalvageIdle } from './isolated-writer-salvage';
+import { buildHandoffTools } from './tools-handoff';
 
 let temp: string;
 let manager: ProjectRuntimeManager;
@@ -1106,21 +1116,68 @@ describe('F-980/F-981: writers paralelos da aba isolada e cwd em outra worktree'
     expect(receipt.isolatedWorktree.reason).toMatch(/auto-isolado/);
   });
 
-  it('F-981: cwd na raiz de outra worktree git roda lá e não serializa contra o writer do checkout', async () => {
+  it('F-981 / F-1429: cwd na raiz de outra worktree git roda lá como isolated_worktree e rework reabre com resume', async () => {
     const root = ctx.scope.rootRealPath;
     await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
     const nested = path.join(root, '.harvest', 'w1');
     git(root, 'worktree', 'add', '-q', '-b', 'harvest/w1', nested);
     const receipt = await paneSpawnTool.handler({ agentName: 'Executor', cwd: nested }, ctx) as Record<string, any>;
-    expect(receipt.executionMode).toBe('same_checkout');
-    expect(receipt.isolatedWorktree).toBeUndefined();
-    expect(h.spawn.mock.calls[1][0]).toMatchObject({ cwd: nested });
+    expect(receipt.executionMode).toBe('isolated_worktree');
+    expect(receipt.isolatedWorktree).toMatchObject({
+      branch: 'harvest/w1',
+      worktreePath: nested,
+    });
+    expect(h.spawn.mock.calls[1][0]).toMatchObject({ cwd: nested, isolatedWriter: true });
     expect(h.spawn.mock.calls[1][0].executionScope.rootRealPath).toBe(nested);
-    expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(0);
+    const missionRecords = registry.listMission(ctx.scope, ctx.missionId!);
+    expect(missionRecords).toHaveLength(1);
+    expect(missionRecords[0]).toMatchObject({
+      ownerKind: 'pane',
+      worktreePath: nested,
+      branchRef: 'refs/heads/harvest/w1',
+      status: 'ready',
+    });
     // Segundo writer na MESMA worktree aninhada: serializado, com a saída.
     await expect(paneSpawnTool.handler({ agentName: 'Executor', cwd: path.join(nested, '.') }, ctx))
       .rejects.toThrow(/same-checkout delegation is serialized.*isolatedWriter:true/);
     expect(h.spawn).toHaveBeenCalledTimes(2);
+
+    // F-1429 (b): worker entrega e pane encerra (exited); rework reabre via resume na worktree aninhada
+    const workerPane = h.panes.find((p) => p.paneId === receipt.paneId)!;
+    exitPane(workerPane);
+    workerPane.state = 'exited';
+    h.handoffs['h-nested-1'] = { sessionId: receipt.sessionId };
+
+    const ackTool = buildHandoffTools().find((t) => t.name === 'nexus_handoff_ack')!;
+    const reworkInvocation = {
+      assertCurrentAuthority: vi.fn(),
+      agentTransportPhysicalReceipt: Object.freeze({}),
+      effectIntent: {
+        toolCallId: 'tool-call-ack',
+        toolName: 'nexus_handoff_ack',
+        source: 'http-mcp',
+        issuedAt: Date.now(),
+      },
+    } as any;
+    const reworkResult = await ackTool.handler(
+      { handoffId: 'h-nested-1', verdict: 'rework', note: 'melhore o teste' },
+      ctx,
+      reworkInvocation,
+    ) as Record<string, any>;
+
+    expect(reworkResult).toMatchObject({
+      ok: true,
+      verdict: 'rework',
+      reworkDelivered: true,
+      reworkVia: 'resume',
+    });
+    expect(h.spawn).toHaveBeenCalledTimes(3);
+    const resumeCall = h.spawn.mock.calls[2][0];
+    expect(resumeCall).toMatchObject({
+      cwd: nested,
+      isolatedWriter: true,
+    });
+    expect(resumeCall.executionScope.rootRealPath).toBe(nested);
   });
 
   it('F-1327: sonda readOnly com cwd de worktree aninhada ganha escopo de execução na worktree', async () => {

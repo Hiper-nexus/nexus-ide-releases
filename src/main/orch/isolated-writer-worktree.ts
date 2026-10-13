@@ -9,6 +9,7 @@ import { claimSameCheckoutWriter, hasPendingWriterClaim } from './delegated-writ
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { scheduleWorktreeSalvage } from './isolated-writer-salvage';
 import { KeyedCoalescingWorker } from '../util/keyed-coalescing-worker';
+import { AsyncProcessGitRunner, type AsyncGitRunner } from '../runtime/git-command';
 
 /**
  * Chave do registry para writers isolados da mão do operador (sem missão).
@@ -208,6 +209,50 @@ export async function allocateIsolatedWriterWorktree(
     : tracked;
   sweepReleasedPaneWriterWorktrees(scope);
   return materialize ? { ...allocation, materialize } : allocation;
+}
+
+let sharedGit: AsyncGitRunner | undefined;
+
+/**
+ * F-1429: adota uma worktree Git aninhada já existente no workspace (ex.:
+ * `.harvest/s243-...`) como worktree do writer. Prova a branch e commit HEAD
+ * atuais, registra o writer durável no registry e devolve a alocação para o
+ * spawn e handoff/rework operarem exatamente como em isolatedWriter.
+ */
+export async function adoptNestedWorktreeWriter(
+  scope: ProjectExecutionScope,
+  missionId: string | undefined,
+  nested: {
+    readonly cwd: string;
+    readonly scope: ProjectExecutionScope;
+  },
+  claim?: ReturnType<typeof claimSameCheckoutWriter>,
+  git: AsyncGitRunner = (sharedGit ??= new AsyncProcessGitRunner()),
+): Promise<IsolatedWriterAllocation> {
+  const workerId = randomUUID();
+  const registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
+  schedulePaneWriterGc(scope, registryKey);
+
+  const branchResult = await git.run(nested.cwd, ['symbolic-ref', '--quiet', 'HEAD'], { allowFailure: true });
+  let branchRef = branchResult.status === 0 ? branchResult.stdout.trim() : '';
+  if (!branchRef) {
+    const rev = await git.run(nested.cwd, ['rev-parse', 'HEAD']);
+    branchRef = `refs/heads/nested-${rev.stdout.trim().slice(0, 12)}`;
+  }
+  const baseResult = await git.run(nested.cwd, ['rev-parse', 'HEAD']);
+  const baseSha = baseResult.stdout.trim();
+
+  const record = requireWorktreeRuntimeRegistry().registerExistingPaneWriter(
+    scope,
+    registryKey,
+    {
+      workerId,
+      worktreePath: nested.cwd,
+      branchRef,
+      baseSha,
+    },
+  );
+  return trackAllocation(scope, missionId, registryKey, record, claim);
 }
 
 /**
