@@ -289,6 +289,67 @@ describe('squad-store load path self-heals existing squads', () => {
     ).toBe(true);
   });
 
+  it('F-1499: cópia selada sem modelo mantém bytes e hash depois de reiniciar', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    // Roster do wizard (Nova missão): o operador deixou Codex, Grok e AGY no
+    // padrão da CLI, sem modelo. O selo guarda exatamente esses bytes.
+    const source: Squad = {
+      id: 'custom-mission-setup-f1499',
+      name: 'Equipe — F-1499',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: 'Coordene a missão aprovada.',
+      agents: [
+        { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', allowedTools: null, allowedSkills: [] },
+        { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex', allowedTools: [], allowedSkills: ['ponytail'] },
+        { id: 'scout', agentName: 'Scout', category: 'scout', cli: 'agy', allowedTools: [], allowedSkills: [] },
+        { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', allowedTools: [], allowedSkills: ['check-work'] },
+      ],
+    };
+    const sealed = applyPreparedSquadSave(
+      prepareMissionRuntimeSquadSave(
+        {
+          ...source,
+          id: 'agentic-runtime-123e4567-e89b-42d3-a456-426614174045',
+          createdAt: '2',
+          runtimeSourceSquadId: source.id,
+          runtimeSourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
+          agents: source.agents.map((agent) => ({ ...agent })),
+        },
+        source,
+        false,
+        'ephemeral',
+      ),
+    );
+    const sealedHash = snapshotSquadAuthority(sealed).hash;
+    const rowOf = () =>
+      db
+        .prepare('SELECT roster_json FROM squads WHERE id = ?')
+        .get(sealed.id) as { roster_json: string };
+    const sealedRow = rowOf().roster_json;
+    expect(sealed.agents.map((agent) => agent.model)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+
+    // Reiniciar o app hidrata de novo do SQLite.
+    initSquadStore(db);
+
+    const rehydrated = getSquad(sealed.id) as Squad;
+    expect(rehydrated.agents.map((agent) => agent.model)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(snapshotSquadAuthority(rehydrated).hash).toBe(sealedHash);
+    expect(rowOf().roster_json).toBe(sealedRow);
+  });
+
   it('replaces a stale custom row using the reserved Pet Studio id', () => {
     const db = makeDb();
     openDb = db;

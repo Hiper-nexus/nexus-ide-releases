@@ -61,9 +61,10 @@ const SPEAK_HUMAN =
  * (governed-cli-profile → skill-mirror), então o roster builtin rodava sem
  * ferramenta alguma em máquina limpa. O piso determinístico por papel vive em
  * `withGuidedSkillDefaults` (guided-squad-skills.ts) e é aplicado AO LADO
- * desta função — nunca dentro dela: `withAllowlists` também roda na hidratação
- * do SQLite, e preencher o roster de um squad de missão já selado mudaria o
- * hash de autoridade de missões em voo.
+ * desta função — nunca dentro dela. A hidratação do SQLite não passa cópia
+ * selada de missão (`*-runtime-*`) por nenhuma das duas (F-1499): esta função
+ * também preenche o modelo padrão da CLI, e mudar o roster de um squad de
+ * missão já selado mudaria o hash de autoridade de missões em voo.
  */
 export function withAllowlists(agents: SquadAgent[]): SquadAgent[] {
   return agents.map((agent) => ({

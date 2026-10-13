@@ -123,14 +123,15 @@ function normalizeUserSquad(squad: Squad): Squad {
  * Hydration repair (F-1498). A catalog squad saved before the skill floor
  * existed comes back with the same agent normalization as a save — without it
  * the wizard sends no `allowedSkills` and the prepare refuses the role ("não
- * possui permissões revisadas"). A sealed mission runtime copy stays outside
- * the skill floor: its authority hash was computed on those bytes.
+ * possui permissões revisadas"). A sealed mission runtime copy comes back
+ * byte for byte (F-1499): its authority hash was computed on those bytes, and
+ * `withAllowlists` also fills the per-CLI model default — a Codex/Grok/AGY
+ * seat sealed without a model gained one after a restart and every pane of
+ * that mission went "squad authority is stale".
  */
 function hydratedAgents(squad: Squad): SquadAgent[] {
-  const agents = withAllowlists(squad.agents);
-  return isMissionRuntimeSquadId(squad.id)
-    ? agents
-    : withGuidedSkillDefaults(agents);
+  if (isMissionRuntimeSquadId(squad.id)) return squad.agents;
+  return withGuidedSkillDefaults(withAllowlists(squad.agents));
 }
 
 /**
