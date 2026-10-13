@@ -29,6 +29,11 @@ export interface MissionCodeCandidate {
   readonly candidate: WorkingTreeCandidateSnapshot;
   /** F-1301: Main baseline observation time behind the delta, when known. */
   readonly untrackedSince?: number;
+  /**
+   * F-1433: declared mechanical read limits of THIS candidate (filled after
+   * runMechanical), so the judge prompt can name what the analysis left out.
+   */
+  readonly declaredLimits?: readonly CandidateQualityDeclaredLimit[];
 }
 export type MissionCodeReviewResult =
   | { readonly kind: 'waiting' | 'unavailable'; readonly reason: string }
@@ -110,7 +115,7 @@ function limitNote(candidate: WorkingTreeCandidateSnapshot): string {
 }
 
 /** F-1430: each declared scanner limit names what it left out; executable source over the ceiling is highlighted. */
-function declaredLimitNote(limits: readonly CandidateQualityDeclaredLimit[]): string {
+export function declaredLimitNote(limits: readonly CandidateQualityDeclaredLimit[]): string {
   if (limits.length === 0) return '';
   const named = (paths: readonly string[]) => `${paths.slice(0, 20).join(', ')}${paths.length > 20 ? ` (+${paths.length - 20})` : ''}`;
   return limits.map((limit) => {
@@ -191,8 +196,10 @@ export async function ensureMissionCodeCompletion(input: MissionCodeCompletionIn
   try { afterChecks = await capture(); } catch { ports.assertCurrent(); return refuse('code_candidate_unavailable', 'Não foi possível revalidar o candidato depois dos checks.'); }
   ports.assertCurrent();
   if (!afterChecks.complete || afterChecks.fingerprint !== candidate.fingerprint || afterChecks.headSha !== candidate.headSha) return refuse('code_candidate_changed', 'A entrega mudou durante os checks; verifique o novo candidato antes de abrir o juiz.', 'waiting');
+  // F-1433: the judge must know which files the mechanical read skipped.
+  const forReview: MissionCodeCandidate = { ...work, declaredLimits: verification.declaredLimits };
   let review: MissionCodeReviewResult;
-  try { review = await ports.ensureIndependentReview(work); } catch { ports.assertCurrent(); return refuse('code_reviewer_unavailable', 'Não foi possível iniciar ou consultar o revisor independente.'); }
+  try { review = await ports.ensureIndependentReview(forReview); } catch { ports.assertCurrent(); return refuse('code_reviewer_unavailable', 'Não foi possível iniciar ou consultar o revisor independente.'); }
   ports.assertCurrent();
   if (review.kind !== 'reviewed') return refuse('code_review_pending', review.reason, review.kind === 'waiting' ? 'waiting' : 'blocked');
   const verdict = review.verdict;
