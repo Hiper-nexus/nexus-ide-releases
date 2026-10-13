@@ -47,6 +47,7 @@ import {
 } from './MissionSetup';
 import {
   buildRecommendedMissionRoster,
+  issueForAgent,
   missionRosterIssue,
 } from './TeamStep';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
@@ -797,6 +798,56 @@ describe('recommended mission team', () => {
         roster: [REVIEW_ROSTER[0]!, REVIEW_ROSTER[1]!],
       }),
     ).toMatch(/verific|revis/i);
+  });
+
+  it('F-1491: coordenador numa ferramenta que não coordena é barrado com o motivo', () => {
+    const agy = adapter('agy', {
+      label: 'Antigravity',
+      missionControlCapable: false,
+    });
+    const providers = [...PROVIDERS, provider(agy)];
+    const readiness = missionRuntimeReadiness(
+      [CLAUDE, CODEX, agy],
+      providers,
+      ACCOUNTS,
+      ORCH_SETTINGS.squadCliPolicy,
+    );
+    const roster = REVIEW_ROSTER.map((agent) =>
+      agent.category === 'orchestrator' ? { ...agent, cli: 'agy' } : agent,
+    );
+
+    expect(
+      missionRosterIssue({
+        roster,
+        lane: 'standard',
+        readiness,
+        providers,
+        accounts: ACCOUNTS,
+      }),
+    ).toMatch(/“Coordenar e revisar”.*não consegue coordenar/i);
+    expect(
+      issueForAgent(roster[0]!, {
+        status: 'ready',
+        adapters: [CLAUDE, CODEX, agy],
+        providers,
+        accounts: ACCOUNTS,
+        settings: ORCH_SETTINGS,
+        readiness,
+        error: null,
+      }),
+    ).toMatch(/Antigravity não consegue coordenar/i);
+    // O mesmo agy como executor continua livre (escolha do operador).
+    expect(
+      missionRosterIssue({
+        roster: REVIEW_ROSTER.map((agent) =>
+          agent.id === 'interface-executor' ? { ...agent, cli: 'agy' } : agent,
+        ),
+        lane: 'standard',
+        readiness,
+        providers,
+        accounts: ACCOUNTS,
+      }),
+    ).toBeNull();
   });
 
   it('keeps compatibility with the existing coordinator/removal guard', () => {
@@ -2098,6 +2149,47 @@ describe('MissionSetup', () => {
     );
     expect(host.textContent).not.toContain('Error invoking remote method');
     expect(button(host, 'Preparar nova revisão')).toBeDefined();
+  });
+
+  it('F-1491: equipe salva com coordenador AGY para na Equipe e diz por quê', async () => {
+    const agy = adapter('agy', {
+      label: 'Antigravity',
+      missionControlCapable: false,
+    });
+    api.listAdapters.mockResolvedValue([CLAUDE, CODEX, agy]);
+    api.listProviders.mockResolvedValue([...PROVIDERS, provider(agy)]);
+    useMissionSetupStore.setState({
+      draft: {
+        objective: 'Criar um fluxo simples de missão',
+        title: '',
+        contextPaths: [],
+        roster: REVIEW_ROSTER.map((agent) =>
+          agent.category === 'orchestrator' ? { ...agent, cli: 'agy' } : agent,
+        ),
+        advanced: { lane: 'standard' },
+        step: 'team',
+        revision: 1,
+      },
+    });
+    const host = render(<MissionSetup />);
+    await flush();
+
+    const coordinator = host.querySelector('[data-category="orchestrator"]');
+    expect(coordinator?.getAttribute('data-state')).toBe('needs-attention');
+    expect(coordinator?.textContent).toContain(
+      'Antigravity não consegue coordenar',
+    );
+
+    act(() => button(host, 'Continuar para revisão').click());
+    await flush();
+
+    expect(api.prepare).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="alert"]')?.textContent).toMatch(
+      /“Coordenar e revisar”.*não consegue coordenar/,
+    );
+    expect(
+      host.querySelector('[aria-current="step"]')?.textContent,
+    ).toContain('Equipe');
   });
 
   it('F-1490: a validação local aponta a equipe, não o objetivo', async () => {

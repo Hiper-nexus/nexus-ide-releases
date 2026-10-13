@@ -1,5 +1,5 @@
 import { ProviderLogo } from './ProviderLogo';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { OverlayLayer } from '../overlay/overlay-layer';
 import type { Squad, AgentCategory } from '../../shared/orch-types';
 import type { AdapterInfo } from '../../shared/adapter-types';
@@ -8,6 +8,7 @@ import { CloseButton } from './CloseButton';
 import { PixelIcon } from './PixelIcon';
 import { useFocusTrap } from '../lib/use-focus-trap';
 import { authViewForModel } from '../lib/model-picker-rank';
+import { canCoordinateMission } from '../orch/mission-runtime-readiness';
 import { useProviderStore } from '../state/provider-store';
 
 const CATEGORIES: AgentCategory[] = [
@@ -60,6 +61,20 @@ export function SquadEditor({
   }, []);
 
   const installed = useMemo(() => adapters.filter((a) => a.installed), [adapters]);
+  // F-1491: o assento de coordenação só oferece ferramenta que o Main aceita
+  // como coordenador; as demais continuam livres para os outros papéis.
+  const coordinatorClis = useMemo(
+    () => installed.filter(canCoordinateMission),
+    [installed],
+  );
+
+  /** Coordenador numa ferramenta que não coordena: o Main recusaria no uso. */
+  function coordinatorIssue(agent: EditableAgent): string | null {
+    if (agent.category !== 'orchestrator') return null;
+    const adapter = adapters.find((a) => a.id === agent.cli);
+    if (!adapter || canCoordinateMission(adapter)) return null;
+    return `${adapter.label} não consegue coordenar uma missão. Escolha outra ferramenta para “${agent.agentName.trim() || 'Coordenar'}”.`;
+  }
   // Mesmo motor do ModelPicker: sessão pronta por modelo, nunca inventada.
   // Provider ausente (store ainda hidratando) = desconhecido, não bloqueado.
   const providers = useProviderStore((s) => s.providers);
@@ -107,6 +122,11 @@ export function SquadEditor({
     setBusy(true);
     setError(null);
     try {
+      const coordinatorProblem = agents.map(coordinatorIssue).find(Boolean);
+      if (coordinatorProblem) {
+        setError(coordinatorProblem);
+        return;
+      }
       const newId = squad.builtin ? `squad-${crypto.randomUUID()}` : squad.id;
       const edited = applySquadEdit(
         {
@@ -206,8 +226,14 @@ export function SquadEditor({
       </details>
       <div className="squad-editor__roster">
         <span className="squad-editor__roster-label">Agentes</span>
-        {agents.map((agent, index) => (
-          <div className="squad-editor__agent" key={agent.id}>
+        {agents.map((agent, index) => {
+          const cliOptions =
+            agent.category === 'orchestrator' ? coordinatorClis : installed;
+          const installedCurrent = installed.find((a) => a.id === agent.cli);
+          const agentIssue = coordinatorIssue(agent);
+          return (
+          <Fragment key={agent.id}>
+          <div className="squad-editor__agent">
             <input
               className="squad-editor__input squad-editor__input--name"
               value={agent.agentName}
@@ -240,13 +266,17 @@ export function SquadEditor({
                 updateAgent(index, { cli, model: firstUsableModel(cli, models) });
               }}
             >
-              {installed.map((a) => (
+              {cliOptions.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.label}
                 </option>
               ))}
-              {!installed.some((a) => a.id === agent.cli) && (
-                <option value={agent.cli}>{agent.cli} (não instalado)</option>
+              {!cliOptions.some((a) => a.id === agent.cli) && (
+                <option value={agent.cli}>
+                  {installedCurrent
+                    ? `${installedCurrent.label} (não coordena)`
+                    : `${agent.cli} (não instalado)`}
+                </option>
               )}
             </select>
             </div>
@@ -278,7 +308,14 @@ export function SquadEditor({
               )}
             </select>
           </div>
-        ))}
+          {agentIssue && (
+            <p className="squad-editor__error" role="status">
+              <PixelIcon name="warn" size={11} /> {agentIssue}
+            </p>
+          )}
+          </Fragment>
+          );
+        })}
       </div>
       {error && (
         <p className="squad-editor__error" role="alert">

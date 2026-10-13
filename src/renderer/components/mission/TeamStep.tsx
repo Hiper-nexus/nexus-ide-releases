@@ -15,6 +15,7 @@ import { PET_STUDIO_SQUAD } from '../../../shared/pet-studio';
 import type { AdapterInfo } from '../../../shared/types';
 import { CoffeeCup } from '../../pet/CoffeeCup';
 import {
+  canCoordinateMission,
   isAdapterModelAuthenticated,
   type MissionRuntimeReadiness,
 } from '../../orch/mission-runtime-readiness';
@@ -274,6 +275,15 @@ export function missionRosterIssue(input: {
       return `A ferramenta de “${agent.agentName}” não está instalada nesta máquina. Troque a ferramenta desse papel.`;
     }
   }
+  // F-1491: o Main recusa no prepare o coordenador que não coordena (ex.: AGY)
+  // e a pessoa só via "tente novamente". Mesma régua do Main, aqui na Equipe.
+  const coordinator = coordinators[0]!;
+  const coordinatorAdapter = input.readiness.detectedAdapters.find(
+    (candidate) => candidate.id === coordinator.cli,
+  );
+  if (coordinatorAdapter && !canCoordinateMission(coordinatorAdapter)) {
+    return `A ferramenta de “${coordinator.agentName}” (${coordinatorAdapter.label}) não consegue coordenar uma missão. Troque a ferramenta desse papel.`;
+  }
   return null;
 }
 
@@ -293,6 +303,9 @@ export function issueForAgent(
     return 'Ferramenta desligada nas configurações — religue ou troque a ferramenta.';
   }
   if (agent.category === 'orchestrator') {
+    if (!canCoordinateMission(adapter)) {
+      return `${adapter.label} não consegue coordenar uma missão — troque a ferramenta deste papel.`;
+    }
     const provider = providerForAdapter(agent.cli, inventory.providers);
     if (provider?.authStrategy === 'login-needed') {
       return (

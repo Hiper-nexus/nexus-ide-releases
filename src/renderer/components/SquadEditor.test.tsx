@@ -65,6 +65,89 @@ describe('SquadEditor', () => {
     act(() => root.unmount());
   });
 
+  it('F-1491: o coordenador só recebe ferramenta que coordena e o salvar recusa a que não coordena', async () => {
+    const cli = (
+      id: string,
+      label: string,
+      missionControlCapable: boolean,
+    ): AdapterInfo => ({
+      id,
+      kind: 'cli-pty',
+      label,
+      icon: '?',
+      models: { list: [], default: '' },
+      installed: true,
+      installCommand: '',
+      idleTimeoutMs: 800,
+      orchestratorCapable: missionControlCapable,
+      missionControlCapable,
+    });
+    const adapters = [
+      cli('claude', 'Claude', true),
+      cli('agy', 'Antigravity', false),
+    ];
+    const saveSquad = vi.fn(async (_squad: Squad) => ({ ok: true as const }));
+    (window as unknown as { nexus: unknown }).nexus = {
+      adapters: { list: vi.fn(async () => adapters) },
+      orch: { saveSquad },
+    };
+    const squad: Squad = {
+      ...builtin,
+      builtin: false,
+      id: 'meu-time',
+      agents: [
+        { id: 'orch', agentName: 'Coordenador', category: 'orchestrator', cli: 'claude', allowedTools: null },
+        { id: 'exec', agentName: 'Executor', category: 'executor', cli: 'claude', allowedTools: null },
+      ],
+    };
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(<SquadEditor squad={squad} onClose={vi.fn()} onSaved={vi.fn()} />);
+    });
+    await act(async () => {});
+
+    const [coordinatorCli, executorCli] = [
+      ...document.body.querySelectorAll<HTMLSelectElement>('select[aria-label="CLI"]'),
+    ];
+    expect([...coordinatorCli!.options].map((option) => option.value)).toEqual(['claude']);
+    expect([...executorCli!.options].map((option) => option.value)).toEqual(['claude', 'agy']);
+
+    // Executor promovido a coordenador numa ferramenta que não coordena.
+    const executorCategory = document.body.querySelectorAll<HTMLSelectElement>(
+      'select[aria-label="Categoria"]',
+    )[1]!;
+    await act(async () => {
+      executorCli!.value = 'agy';
+      executorCli!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => {
+      executorCategory.value = 'orchestrator';
+      executorCategory.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const coordinatorCategory = document.body.querySelectorAll<HTMLSelectElement>(
+      'select[aria-label="Categoria"]',
+    )[0]!;
+    await act(async () => {
+      coordinatorCategory.value = 'executor';
+      coordinatorCategory.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const saveBtn = [...document.body.querySelectorAll('button')].find((b) =>
+      /^salvar$/i.test(b.textContent?.trim() ?? ''),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      saveBtn.click();
+    });
+
+    expect(saveSquad).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toMatch(
+      /Antigravity não consegue coordenar/,
+    );
+    act(() => root.unmount());
+  });
+
   it('bloqueia modelo sem sessão e escolhe o primeiro usável ao trocar de CLI', async () => {
     const adapters: AdapterInfo[] = [
       {

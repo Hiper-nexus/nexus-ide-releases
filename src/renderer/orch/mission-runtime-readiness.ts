@@ -45,6 +45,15 @@ export function isAdapterModelAuthenticated(
 }
 
 /**
+ * Pode coordenar uma missão: a capacidade publicada pelo Main
+ * (`missionControlCapable`), o mesmo requisito que o Autopiloto confere no
+ * prepare. Fonte única do assento de coordenação na UI (F-1491).
+ */
+export function canCoordinateMission(adapter: AdapterInfo): boolean {
+  return adapter.kind === "cli-pty" && adapter.missionControlCapable === true;
+}
+
+/**
  * CLIs instaladas continuam disponíveis para execução e escolha manual.
  * Coordenação exige a capacidade de MCP publicada pelo Main, que aplica o
  * mesmo requisito físico no início da missão.
@@ -62,9 +71,7 @@ export function missionRuntimeReadiness(
   const cliAdapters = authenticatedAdapters.filter(
     (adapter) => adapter.kind === "cli-pty",
   );
-  const verifiedMaestros = cliAdapters.filter(
-    (adapter) => adapter.missionControlCapable === true,
-  );
+  const verifiedMaestros = cliAdapters.filter(canCoordinateMission);
   const qualifiedWorkers = cliAdapters;
   const readyProviders = authenticatedAdapters;
   return Object.freeze({
