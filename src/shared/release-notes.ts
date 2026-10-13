@@ -10465,7 +10465,7 @@ export const RELEASE_076243: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076244: AppRelease = {
   version: '0.76.244',
   date: '2026-10-13',
   codename: 'Argon liberado',
@@ -10477,3 +10477,18 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Acesso ao Argon reconhecido', detail: 'O Nexus dizia "sem acesso ao Argon nesta conta" mesmo com acesso, porque procurava o nome antigo do modelo. Se a conta for recusada, o Argon sai da rota por 12 horas sem insistir.' },
   ],
 };
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.245',
+  date: '2026-10-13',
+  codename: 'Multi-conta no Antigravity e login sem tropeço',
+  summary: 'Você pode cadastrar e alternar várias contas Google no Antigravity (agy) e nas demais CLIs sem perder a sessão anterior; o terminal de login abre mesmo vindo do Início ou em máquinas com partida mais lenta do PowerShell, e a lista de Providers mostra "10 modelos" em vez de "10/10".',
+  highlights: [
+    { title: 'Várias contas no Antigravity e em todas as CLIs', detail: 'Ao adicionar outra conta do Antigravity no Windows, o Nexus guarda a conta atual no cofre e libera a vaga local para o navegador abrir o login da nova conta — sem desconectar a anterior no Google — e sincroniza o cofre ao clicar em "Usar".' },
+    { title: 'Contagem clara de modelos em Providers', detail: 'A lista lateral de Providers agora mostra "10 modelos" (em vez de "10/10" ou "13/15"), deixando claro que o número é o total de modelos da ferramenta e não consumo de cota.' },
+  ],
+  fixes: [
+    { title: 'Terminal de login sempre disponível', detail: 'Abrir o login de uma CLI a partir do Início reabre automaticamente o projeto recente (ou pede uma pasta) e aguarda até 60 segundos pela partida do terminal, eliminando o erro "O terminal não ficou disponível. O login não foi iniciado.".' },
+  ],
+};
+

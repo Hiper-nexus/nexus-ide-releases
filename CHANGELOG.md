@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.245 — Multi-conta no Antigravity e login sem tropeço
+
+Adicionar uma segunda conta Google Antigravity (`agy`) no Windows não abria o login porque a CLI encontrava a Conta 1 no Cofre de Credenciais do Windows (`gemini:antigravity`), e abrir o terminal de login a partir do Início (sem pasta aberta) ou numa partida a frio do ConPTY acima de 10 s falhava com "O terminal não ficou disponível. O login não foi iniciado.". Agora o Nexus guarda a Conta 1 no cofre criptografado e esvazia apenas o slot local antes de abrir o `agy` (sem revogar o refresh token no Google), restaura a Conta 1 se o login for cancelado, sincroniza o Cofre do Windows ao clicar em "Usar", estende o cofre multi-conta a todas as CLIs (`openclaude`, `minimax-code` e `muse`), reabre o projeto recente antes do login quando necessário com janela de 60 s, e troca a fração solta `10/10` na lista de Providers por `10 modelos`.
+
+- **Contas e autenticação.**
+  - `prepareAgyNativeLogin` e `restoreAgyNativeLogin`: antes de abrir o login do `agy`, a sessão atual do Windows Credential Manager (`gemini:antigravity`) é preservada no cofre e a vaga local é limpa via `CredDeleteW` (sem `agy /logout`); se o login terminar sem nova sessão verificada, a Conta 1 volta ao slot.
+  - Clicar em "Usar" numa conta do `agy` sincroniza também a credencial `gemini:antigravity` no Windows, e a sonda invalida o cache de 15 s antes de ler o novo login (`Authentication successful`).
+  - `openclaude`, `minimax-code` e `muse` entram em `FILE_AUTH_ADAPTER_IDS` e `MANAGED_PROVIDER_SPECS`, com fallback de Keychain no macOS para `agy`.
+- **Terminal de login e painel de Providers.**
+  - `openCliLoginTerminal` garante um workspace ativo (reabrindo o recente ou pedindo uma pasta se aberto a partir do Início) e aguarda o timeout padrão de 60 s do PTY em vez de cortar em 10 s.
+  - A contagem na lista de Providers exibe `10 modelos` (`1 modelo`, `9 modelos`) em vez de frações soltas como `10/10` ou `13/15`.
+
 ## 0.76.244 — Argon liberado
 
 O AGY 1.3.4 passou a listar o Gemini 4 Argon só com sufixo de esforço (`gemini-4-argon-low/-medium/-high`). A prova de acesso do roteador procurava o id sem sufixo, e a conta com acesso ao Argon recebia "sem acesso ao Argon nesta conta": a rota caía no Gemini 3.8 Flash. Agora a variante que a CLI anuncia é a prova, e o Argon volta ao tier difícil e à lane de julgamento.
