@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.76.245 — Orquestração viva
+
+Sete atritos de campo corrigidos (F-1434..F-1440): ditar segurando Space não derruba mais o app no macOS 27.2, a 2ª conta do Antigravity entra, o Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, e um «401» citado no terminal não troca mais a conta de uma missão que estava funcionando.
+
+- **Voz.**
+  - Segurar Space para ditar crashava o app no macOS 27.2: os serviços de mídia do Chromium rodavam fora do processo e morriam ao abrir o microfone. Agora rodam dentro do processo, no macOS (F-1434).
+- **Contas e providers.**
+  - O login da 2ª conta Antigravity falhava com «terminal não ficou disponível»; a espera pela sessão de login foi corrigida (F-1435).
+  - Providers mostrava frações nuas (13/13, 256/256) na contagem de modelos; agora a contagem vem por extenso (F-1436).
+  - O macOS repetia sem fim o diálogo «security deseja acessar ai.meta.dev.credentials» a cada sonda de cota do Muse; a leitura da credencial não dispara mais o diálogo em loop (F-1438).
+- **Missões e orquestração.**
+  - Maestro adotado pelo «+ Pane» trabalhava sozinho: não recebia a doutrina de delegar e o vigia de esteira estava morto para ele. Doutrina e vigia valem agora também para o Maestro da aba (F-1439).
+  - Falso limite do AGY: um «401 authentication_error» no terminal trocava a conta e parava a missão mesmo com a conta operacional. Erro de autenticação agora passa pela mesma sonda de confirmação dos limites de uso: credencial que a API do provider aceitou refuta o alarme, e sem confirmação o pane segue na mesma conta (F-1440).
+- **Windows.**
+  - Pane encerrado pelo próprio Nexus (fim de missão, teardown) mostrava «[nexus] processo caiu (code 129)»; o encerramento normal não é mais rotulado como queda (F-1437).
+
 ## 0.76.244 — Argon liberado
 
 O AGY 1.3.4 passou a listar o Gemini 4 Argon só com sufixo de esforço (`gemini-4-argon-low/-medium/-high`). A prova de acesso do roteador procurava o id sem sufixo, e a conta com acesso ao Argon recebia "sem acesso ao Argon nesta conta": a rota caía no Gemini 3.8 Flash. Agora a variante que a CLI anuncia é a prova, e o Argon volta ao tier difícil e à lane de julgamento.

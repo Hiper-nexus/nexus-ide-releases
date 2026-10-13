@@ -10465,7 +10465,7 @@ export const RELEASE_076243: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076244: AppRelease = {
   version: '0.76.244',
   date: '2026-10-13',
   codename: 'Argon liberado',
@@ -10475,5 +10475,23 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     { title: 'Acesso ao Argon reconhecido', detail: 'O Nexus dizia "sem acesso ao Argon nesta conta" mesmo com acesso, porque procurava o nome antigo do modelo. Se a conta for recusada, o Argon sai da rota por 12 horas sem insistir.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.245',
+  date: '2026-10-13',
+  codename: 'Orquestração viva',
+  summary: 'O Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, ditar segurando Space não derruba mais o app no macOS, a segunda conta do Antigravity entra e um erro de autenticação citado no terminal não troca mais a conta de uma missão que estava funcionando.',
+  highlights: [
+    { title: 'Maestro que delega', detail: 'O orquestrador criado pelo «+ Pane» recebia os pedidos e executava tudo no próprio terminal, sem abrir workers. Agora ele recebe a doutrina de delegar e o vigia de esteira cobra quando a missão fica sem workers.' },
+  ],
+  fixes: [
+    { title: 'Ditado sem crash no macOS', detail: 'Segurar Space para ditar derrubava o app no macOS 27.2 porque os serviços de mídia morriam ao abrir o microfone; eles agora rodam dentro do processo.' },
+    { title: 'Segunda conta do Antigravity', detail: 'Adicionar a segunda conta falhava com «terminal não ficou disponível»; o login agora espera a sessão do jeito certo e entra.' },
+    { title: 'Modelos por extenso', detail: 'Providers mostrava frações nuas como 13/13 e 256/256; a contagem de modelos agora vem em palavras, sem adivinhação.' },
+    { title: 'Sem o diálogo do Keychain em loop', detail: 'O macOS repetia sem fim o pedido de acesso às credenciais do Muse a cada sonda de cota; a leitura não dispara mais o diálogo.' },
+    { title: 'Falso limite do AGY', detail: 'Um «401» que aparecia no texto do terminal fazia o Nexus trocar de conta e parar a missão, mesmo com a conta funcionando. Agora a sonda de cota confirma antes: credencial aceita pelo provider desmente o alarme e o pane segue na mesma conta.' },
+    { title: 'Windows sem falsa queda', detail: 'Pane encerrado pelo próprio Nexus ao fim da missão mostrava «processo caiu (code 129)»; o encerramento normal não é mais rotulado como queda.' },
   ],
 };
