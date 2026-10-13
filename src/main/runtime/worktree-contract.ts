@@ -41,6 +41,15 @@ export interface WorktreeRecord {
   readonly sessionIds?: readonly string[];
   /** Unique reservation attempt; absent on legacy records until reused/reclaimed. */
   readonly reservationGeneration?: string;
+  /**
+   * F-1429 parte 2: worktree ADOTADA — a pasta e a branch foram criadas fora
+   * do Nexus (ex.: à mão pelo orquestrador em `<repo>/.harvest/...`) e só
+   * registradas por `registerExistingPaneWriter`. Só writer de pane, com a
+   * pasta dentro da raiz do repositório. Nenhum caminho de remoção do Nexus
+   * apaga a pasta nem a branch dela: liberada, só o registro pode sair.
+   * Ausente = worktree criada pelo próprio Nexus.
+   */
+  readonly adopted?: true;
   readonly id: string;
   readonly scopeKey: string;
   readonly projectId: string;
@@ -537,6 +546,8 @@ export function cloneWorktreeRecord(record: WorktreeRecord): WorktreeRecord {
     dependencies: Object.freeze([...record.dependencies]),
     ...(record.paneIds ? { paneIds: Object.freeze([...record.paneIds]) } : {}),
     ...(record.sessionIds ? { sessionIds: Object.freeze([...record.sessionIds]) } : {}),
+    // F-1429 parte 2: a marca de adoção atravessa toda transição de estado.
+    ...(record.adopted === true ? { adopted: true as const } : {}),
   });
 }
 

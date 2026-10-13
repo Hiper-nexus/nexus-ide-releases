@@ -101,6 +101,8 @@ export interface TeardownTaskWorktreeOptions {
   readonly worktreePath: string;
   readonly force?: boolean;
   readonly deleteBranch?: boolean;
+  /** `WorktreeRecord.adopted` (F-1429 parte 2): a teardown recusa. */
+  readonly adopted?: boolean;
   readonly runner?: GitRunner;
 }
 
@@ -116,6 +118,7 @@ export function teardownTaskWorktree(
       worktreePath: options.worktreePath,
       force: options.force,
       deleteBranch: options.deleteBranch,
+      adopted: options.adopted,
     },
     options.runner,
   );

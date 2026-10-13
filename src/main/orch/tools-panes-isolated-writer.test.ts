@@ -1133,6 +1133,8 @@ describe('F-980/F-981: writers paralelos da aba isolada e cwd em outra worktree'
     expect(missionRecords).toHaveLength(1);
     expect(missionRecords[0]).toMatchObject({
       ownerKind: 'pane',
+      // F-1429 parte 2: pasta criada fora do Nexus — nenhuma GC a apaga.
+      adopted: true,
       worktreePath: nested,
       branchRef: 'refs/heads/harvest/w1',
       status: 'ready',

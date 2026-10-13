@@ -59,6 +59,19 @@ export class WorktreeStatusUnknownError extends Error {
 }
 
 /**
+ * F-1429 parte 2: worktree ADOTADA (pasta e branch criadas fora do Nexus e só
+ * registradas por ele). Nem `force` autoriza removê-la ou apagar a branch.
+ */
+export class AdoptedWorktreeRemovalError extends Error {
+  constructor(worktreePath: string) {
+    super(
+      `worktree at "${worktreePath}" foi adotada (criada fora do Nexus); o Nexus nunca remove a pasta nem apaga a branch dela`,
+    );
+    this.name = 'AdoptedWorktreeRemovalError';
+  }
+}
+
+/**
  * Check if an isolated worktree is completely clean and safe for archiving/removal.
  */
 export function checkWorktreeStatus(
@@ -112,6 +125,8 @@ export interface ArchiveWorktreeOptions {
   readonly branchName?: string;
   readonly deleteBranch?: boolean;
   readonly force?: boolean;
+  /** `WorktreeRecord.adopted`: recusa tudo antes de qualquer Git (F-1429 parte 2). */
+  readonly adopted?: boolean;
 }
 
 export interface ArchiveWorktreeResult {
@@ -128,6 +143,9 @@ export function archiveWorktree(
   options: ArchiveWorktreeOptions,
   runner: GitRunner = new ProcessGitRunner(),
 ): ArchiveWorktreeResult {
+  if (options.adopted === true) {
+    throw new AdoptedWorktreeRemovalError(options.worktreePath);
+  }
   const meta = readWorktreeMetadata(options.worktreePath);
   const branchName = options.branchName ?? meta?.branchName;
 

@@ -127,21 +127,30 @@ function validateRecord(
   const expectedBranch = worktreeBranchRef(record);
   const dependencies = record.dependencies;
 
-  const isAcceptedWorktreePath =
-    acceptedPaths.includes(record.worktreePath) ||
-    (record.ownerKind === 'pane' &&
-      typeof record.worktreePath === 'string' &&
+  // F-1429 parte 2: worktree ADOTADA (criada fora do Nexus) é marcada de forma
+  // explícita e só vale para writer de pane com a pasta DENTRO da raiz do
+  // repositório (nunca a própria raiz). Sem a marca, vale o layout gerenciado
+  // e a branch derivada — exatamente como antes do F-1429.
+  // Valor cru do disco: só `true` ou ausente são aceitos.
+  const rawAdopted: unknown = record.adopted;
+  const adopted = rawAdopted === true;
+  const isAcceptedWorktreePath = adopted
+    ? typeof record.worktreePath === 'string' &&
+      typeof record.rootRealPath === 'string' &&
       path.isAbsolute(record.worktreePath) &&
       path.resolve(record.worktreePath) === record.worktreePath &&
       record.worktreePath !== record.rootRealPath &&
-      isPathInsideOrEqual(record.rootRealPath, record.worktreePath));
+      isPathInsideOrEqual(record.rootRealPath, record.worktreePath)
+    : acceptedPaths.includes(record.worktreePath);
 
-  const isAcceptedBranchRef =
-    record.branchRef === expectedBranch ||
-    (record.ownerKind === 'pane' && isIntegrationRef(record.branchRef));
+  const isAcceptedBranchRef = adopted
+    ? isIntegrationRef(record.branchRef)
+    : record.branchRef === expectedBranch;
 
   if (
     (record.ownerKind !== undefined && record.ownerKind !== "pane") ||
+    (rawAdopted !== undefined &&
+      (!adopted || record.ownerKind !== 'pane' || !record.taskId.startsWith('pane-'))) ||
     record.scopeKey !== options.scopeKey ||
     record.scopeKey !== expectedScopeKey ||
     record.taskKey !== expectedTaskKey ||

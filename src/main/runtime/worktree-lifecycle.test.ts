@@ -100,6 +100,30 @@ describe('checkWorktreeStatus', () => {
 });
 
 describe('archiveWorktree', () => {
+  test('F-1429 parte 2: worktree adotada nunca é removida nem tem a branch apagada, nem com force', () => {
+    const runner = makeMockRunner({
+      'status --porcelain': { stdout: '' },
+      'worktree remove': { stdout: '' },
+      'worktree prune': { stdout: '' },
+      'branch -D': { stdout: '' },
+    });
+
+    expect(() =>
+      archiveWorktree(
+        {
+          mainRepoPath: '/repo',
+          worktreePath: makeExistingWorktreeDir(),
+          branchName: 'harvest/s243-fix',
+          deleteBranch: true,
+          force: true,
+          adopted: true,
+        },
+        runner,
+      ),
+    ).toThrow(/adotada/);
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
   test('refuses to remove dirty worktree without force', () => {
     const runner = makeMockRunner({
       'status --porcelain': { stdout: ' M dirty.txt\n' },

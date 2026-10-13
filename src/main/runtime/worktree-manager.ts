@@ -101,6 +101,13 @@ const REGENERABLE_IGNORED = new Set([
   "node_modules", ".vite", ".turbo", ".cache", ".pytest_cache",
 ]);
 
+/**
+ * F-1429 parte 2: motivos (em `kept`) da GC de writers de pane para a worktree
+ * ADOTADA — a pasta e a branch sempre ficam; no segundo, o registro saiu.
+ */
+const ADOPTED_KEPT = "adopted";
+const ADOPTED_RECORD_DROPPED = "adopted-record-dropped";
+
 function regenerableIgnored(entry: string): boolean {
   const segments = entry.replace(/\/$/, "").split("/");
   return segments.some((segment, index) => REGENERABLE_IGNORED.has(segment) ||
@@ -679,7 +686,9 @@ export class WorktreeManager {
     taskId: string,
   ): WorktreeRecord | null {
     const record = this.get(scope, missionId, taskId);
-    if (!record || record.status !== "ready") return record;
+    // F-1429 parte 2: a branch de uma worktree adotada é do operador; o Nexus
+    // nunca a move com `reset --hard`.
+    if (!record || record.status !== "ready" || record.adopted === true) return record;
     const snapshot = this.inspectIntegration(record);
     if (snapshot.headSha === record.baseSha) return record;
     const taskHeadSha = assertTaskWorktree(this.#git, record);
@@ -1075,6 +1084,11 @@ export class WorktreeManager {
    * F-1429: registra um writer que roda numa worktree Git aninhada já existente
    * no workspace (ex.: `.harvest/s243-...`). Cria o registro durável `ready`,
    * permitindo recibo com a worktree e retomada (resume) no rework do handoff.
+   *
+   * F-1429 parte 2: a pasta e a branch NÃO são do Nexus. O registro nasce com
+   * `adopted: true` e nenhum caminho de remoção (GC de writers, prune,
+   * re-ancoragem) toca a pasta ou a branch; liberado, só o registro sai. A
+   * pasta de um writer criado pelo Nexus nunca é adotada (perderia a GC).
    */
   registerExistingPaneWriter(
     scope: ProjectExecutionScope,
@@ -1107,11 +1121,26 @@ export class WorktreeManager {
 
     return this.#mutate(scopeKey, (records) => {
       const existing = records.find((record) => record.worktreePath === realWorktree);
+      if (existing && existing.adopted !== true) {
+        throw new WorktreeStateConflictError("worktree path belongs to a writer created by Nexus");
+      }
+      // A mesma branch noutra pasta (a adotada antiga foi removida à mão e
+      // recriada): o registro adotado e LIBERADO é velho e sai; sem isto o
+      // estado ficaria com branch duplicada e toda gravação seria recusada.
+      // Qualquer outro dono da branch continua recusando a adoção.
+      const branchHolder = records.find((record) =>
+        record.worktreePath !== realWorktree && record.taskKey !== taskKey &&
+        record.branchRef === input.branchRef);
+      if (branchHolder && (branchHolder.adopted !== true || ACTIVE_STATUSES.has(branchHolder.status))) {
+        throw new WorktreeStateConflictError("worktree branch belongs to another writer");
+      }
       const recordsWithout = records.filter(
-        (record) => record.worktreePath !== realWorktree && record.taskKey !== taskKey,
+        (record) => record.worktreePath !== realWorktree && record.taskKey !== taskKey &&
+          record !== branchHolder,
       );
       const candidate: WorktreeRecord = cloneRecord({
         ownerKind: "pane",
+        adopted: true,
         reservationGeneration: randomUUID(),
         id: `worktree-${taskKey}`,
         scopeKey,
@@ -1266,7 +1295,9 @@ export class WorktreeManager {
       try {
         reason = this.#collecting.has(candidate.taskKey)
           ? "collecting"
-          : await this.#collectReleasedPaneWorktree(scopeKey, candidate, released, options);
+          : candidate.adopted === true
+            ? this.#releaseAdoptedPaneWriter(scopeKey, candidate, released, options)
+            : await this.#collectReleasedPaneWorktree(scopeKey, candidate, released, options);
       } catch (error) {
         // Identidade incerta mantém worktree, branch e registro — mas conta.
         reason = `error: ${this.#failureMessage(error).slice(0, 120)}`;
@@ -1275,9 +1306,40 @@ export class WorktreeManager {
         removed.push(candidate);
         this.#lastExamined.delete(candidate.taskKey);
       }
-      else kept[reason] = (kept[reason] ?? 0) + 1;
+      else {
+        kept[reason] = (kept[reason] ?? 0) + 1;
+        if (reason === ADOPTED_RECORD_DROPPED) this.#lastExamined.delete(candidate.taskKey);
+      }
     }
     return Object.freeze({ removed: Object.freeze(removed), kept: Object.freeze(kept), deferred });
+  }
+
+  /**
+   * F-1429 parte 2: writer ADOTADO liberado. A pasta e a branch são de quem as
+   * criou (o orquestrador, à mão): nenhum `worktree remove`, nenhum
+   * `branch -d`, nenhum Git. Na coleta estrita (fim de pane) o registro fica
+   * — o rework ainda retoma o writer nele. Na coleta de paradas (missão
+   * encerrada, parado além da idade mínima) só o registro sai.
+   */
+  #releaseAdoptedPaneWriter(
+    scopeKey: string,
+    candidate: WorktreeRecord,
+    released: (record: WorktreeRecord) => boolean,
+    options: PaneWorktreeGcOptions,
+  ): string {
+    if (options.salvageDirty === undefined) return ADOPTED_KEPT;
+    return this.#mutate(scopeKey, (records) => {
+      const record = records.find((current) => current.taskKey === candidate.taskKey);
+      // Retomado, reapontado ou já fora: nada a esquecer.
+      if (!record || record.adopted !== true || !released(record) ||
+          record.updatedAt !== candidate.updatedAt) {
+        return { records, result: "changed" };
+      }
+      return {
+        records: records.filter((current) => current.taskKey !== record.taskKey),
+        result: ADOPTED_RECORD_DROPPED,
+      };
+    });
   }
 
   // Entre dois awaits o estado pode mudar (resume, pane novo): antes de
@@ -1289,6 +1351,8 @@ export class WorktreeManager {
     released: (record: WorktreeRecord) => boolean,
     options: PaneWorktreeGcOptions,
   ): Promise<string | null> {
+    // F-1429 parte 2: defesa em profundidade — pasta adotada nunca chega à remoção.
+    if (candidate.adopted === true) return ADOPTED_KEPT;
     const git = this.#asyncGit;
     const root = candidate.rootRealPath;
     const aged = options.salvageDirty !== undefined;
@@ -1357,6 +1421,7 @@ export class WorktreeManager {
     const record = this.#snapshot(scopeKey).records.find((current) =>
       current.taskKey === candidate.taskKey);
     if (!record || !released(record) || record.updatedAt !== candidate.updatedAt) return "changed";
+    if (record.adopted === true) return ADOPTED_KEPT;
     // Marca exclusiva: outro coletor (fim do pane × paradas) que entrou antes
     // da marca não a toma nem a apaga ao sair, senão a retomada passaria.
     if (this.#collecting.has(record.taskKey)) return "collecting";
@@ -1420,7 +1485,10 @@ export class WorktreeManager {
     if (prunable.length === 0) return { pruned: 0 };
     // Só caminhos de registros Nexus atuais deste runtime; formato de caminho
     // não é proveniência (worktree manual do operador nunca é esquecida).
-    const known = new Set(this.#snapshot(this.scopeKey(scope)).records.map((record) => record.worktreePath));
+    // F-1429 parte 2: a adotada É manual — registro dela não autoriza o prune.
+    const known = new Set(this.#snapshot(this.scopeKey(scope)).records
+      .filter((record) => record.adopted !== true)
+      .map((record) => record.worktreePath));
     if (!prunable.every((worktree) => known.has(worktree.path))) return { skipped: "prunable-not-nexus" };
     await this.#asyncGit.run(scope.rootRealPath, ["worktree", "prune"]);
     return { pruned: prunable.length };

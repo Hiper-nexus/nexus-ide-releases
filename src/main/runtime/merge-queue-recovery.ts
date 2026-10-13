@@ -16,6 +16,7 @@ import {
 } from './merge-queue-contract';
 import { cloneMergeQueueEntry as cloneEntry } from './merge-queue-state';
 import { acceptedCandidatePaths } from './managed-worktree-layout';
+import { isPathInsideOrEqual } from './worktree-removal-safety';
 import {
   stalledMergeReason,
   type MergeReconcileStallContext,
@@ -816,6 +817,13 @@ export class MergeQueueRecovery {
           entry.taskId,
         );
         if (!record) continue;
+        // F-1429 parte 2: o candidato é a worktree destacada que a própria fila
+        // criou na raiz de candidatos — nunca a pasta do writer e, se o writer
+        // é adotado (pasta criada fora do Nexus), nada dentro dela.
+        if (
+          real === record.worktreePath ||
+          (record.adopted === true && isPathInsideOrEqual(record.worktreePath, real))
+        ) continue;
         this.#git.run(record.rootRealPath, ['worktree', 'remove', real]);
       } catch {
         // Never force-remove an interrupted candidate with uncertain identity.

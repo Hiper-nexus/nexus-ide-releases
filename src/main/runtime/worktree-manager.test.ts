@@ -767,6 +767,179 @@ describe("WorktreeManager", () => {
     });
   });
 
+  describe("F-1429 parte 2: worktree adotada nunca perde pasta nem branch", () => {
+    const scope = () => projectScope();
+    const realRoot = () => fs.realpathSync(root);
+    const branchExists = (branchRef: string) => {
+      try {
+        git(root, "rev-parse", "--verify", "--quiet", branchRef);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    /** Worktree aninhada criada À MÃO (fora do Nexus), como o orquestrador faz em `.harvest/`. */
+    const handMade = (name: string) => {
+      const nested = path.join(realRoot(), ".harvest", name);
+      git(root, "worktree", "add", "-q", "-b", `harvest/${name}`, nested);
+      return nested;
+    };
+    const adopt = (gc: WorktreeManager, nested: string, workerId: string, missionId = "operator-hand") =>
+      gc.registerExistingPaneWriter(scope(), missionId, {
+        workerId,
+        worktreePath: nested,
+        branchRef: git(nested, "symbolic-ref", "HEAD"),
+        baseSha: git(nested, "rev-parse", "HEAD"),
+      });
+    const commitIn = (worktreePath: string, file: string) => {
+      write(file, file, worktreePath);
+      git(worktreePath, "add", file);
+      git(worktreePath, "commit", "-qm", file);
+    };
+    const merge = (record: WorktreeRecord) =>
+      git(root, "merge", "-q", "--no-edit", record.branchRef.slice("refs/heads/".length));
+    /**
+     * Pior caso: a raiz gerenciada CONTÉM a pasta adotada, então a recusa
+     * "outside-managed-root" não a salva — só a marca de adoção salva.
+     */
+    const enclosingManager = () => {
+      fs.mkdirSync(path.join(root, ".harvest"), { recursive: true });
+      return new WorktreeManager({ runtimeRoot, worktreesRoot: path.join(root, ".harvest"), stateStore,
+        gitRunner, now: () => 1_700_000_000_000 });
+    };
+
+    it("registra a adoção com a marca explícita e a mantém através das transições", () => {
+      const adopted = adopt(manager, handMade("mark"), "w-mark");
+      expect(adopted.adopted).toBe(true);
+      expect(manager.markFailed(scope(), "operator-hand", adopted.taskId, "pane closed").adopted).toBe(true);
+      expect(manager.reopenPaneWriter(scope(), "operator-hand", adopted.taskId).adopted).toBe(true);
+      expect(manager.get(scope(), "operator-hand", adopted.taskId)?.adopted).toBe(true);
+    });
+
+    it("(a)+(b) coleta estrita: adotada mesclada e limpa fica (pasta, branch, registro); a do Nexus ao lado sai", async () => {
+      const gc = enclosingManager();
+      const adopted = adopt(gc, handMade("fix"), "w-fix");
+      const nexus = await gc.create({ scope: scope(), missionId: "operator-hand", taskId: "pane-nx", workerId: "nx",
+        ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["pane-nx"] } });
+      expect(nexus.adopted).toBeUndefined();
+      for (const [record, file] of [[adopted, "fix.txt"], [nexus, "nx.txt"]] as const) {
+        commitIn(record.worktreePath, file);
+        gc.markFailed(scope(), "operator-hand", record.taskId, "pane closed");
+        merge(record);
+      }
+      const report = await gc.collectReleasedPaneWorktrees(scope(), { owner: () => true, inUse: () => false });
+      expect(report.removed.map((record) => record.taskId)).toEqual([nexus.taskId]);
+      expect(report.kept).toEqual({ adopted: 1 });
+      // (b) Writer criado pelo Nexus: pasta, branch e registro saem como antes.
+      expect(fs.existsSync(nexus.worktreePath)).toBe(false);
+      expect(branchExists(nexus.branchRef)).toBe(false);
+      expect(gc.get(scope(), "operator-hand", nexus.taskId)).toBeNull();
+      // (a) Adotada: pasta, branch e registro (ignorado) ficam.
+      expect(fs.readFileSync(path.join(adopted.worktreePath, "fix.txt"), "utf8")).toBe("fix.txt");
+      expect(branchExists(adopted.branchRef)).toBe(true);
+      expect(gc.get(scope(), "operator-hand", adopted.taskId)).toMatchObject({ adopted: true, status: "failed" });
+    });
+
+    it("(a) coleta de paradas: adotada limpa com branch não mesclada perde só o registro", async () => {
+      const gc = enclosingManager();
+      const adopted = adopt(gc, handMade("stale"), "w-stale");
+      commitIn(adopted.worktreePath, "stale.txt");
+      gc.markFailed(scope(), "operator-hand", adopted.taskId, "pane closed");
+      const tip = git(adopted.worktreePath, "rev-parse", "HEAD");
+      const report = await gc.collectReleasedPaneWorktrees(scope(),
+        { owner: () => true, inUse: () => false, salvageDirty: async () => undefined });
+      expect(report).toMatchObject({ removed: [], kept: { "adopted-record-dropped": 1 } });
+      expect(gc.get(scope(), "operator-hand", adopted.taskId)).toBeNull();
+      expect(fs.readFileSync(path.join(adopted.worktreePath, "stale.txt"), "utf8")).toBe("stale.txt");
+      expect(git(root, "rev-parse", adopted.branchRef)).toBe(tip);
+      expect(git(root, "worktree", "list", "--porcelain")).toContain(`worktree ${adopted.worktreePath}`);
+    });
+
+    it("(a) pasta removida à mão: a branch mesclada da adotada nunca é apagada", async () => {
+      const adopted = adopt(manager, handMade("gone"), "w-gone");
+      commitIn(adopted.worktreePath, "gone.txt");
+      manager.markFailed(scope(), "operator-hand", adopted.taskId, "pane closed");
+      merge(adopted);
+      git(root, "worktree", "remove", adopted.worktreePath);
+      expect(await manager.collectIntegratedPaneWorktrees(scope(), "operator-hand", () => false)).toEqual([]);
+      expect(branchExists(adopted.branchRef)).toBe(true);
+    });
+
+    it("prune não esquece a worktree adotada cuja pasta sumiu", async () => {
+      const nexus = await manager.create({ scope: scope(), missionId: "operator-hand", taskId: "pane-p",
+        workerId: "p", ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["pane-p"] } });
+      const adopted = adopt(manager, handMade("pruned"), "w-pruned");
+      fs.rmSync(adopted.worktreePath, { recursive: true, force: true });
+      fs.rmSync(nexus.worktreePath, { recursive: true, force: true });
+      expect(await manager.pruneManagedWorktrees(scope())).toEqual({ skipped: "prunable-not-nexus" });
+      expect(git(root, "worktree", "list", "--porcelain")).toContain(`worktree ${adopted.worktreePath}`);
+    });
+
+    it("re-ancoragem nunca dá reset --hard na branch de uma worktree adotada", () => {
+      const adopted = adopt(manager, handMade("anchor"), "w-anchor");
+      const before = git(adopted.worktreePath, "rev-parse", "HEAD");
+      write("ahead.txt", "checkout andou\n");
+      git(root, "add", "ahead.txt");
+      git(root, "commit", "-qm", "ahead");
+      expect(manager.reanchorReadyWorktreeToIntegrationHead(scope(), "operator-hand", adopted.taskId))
+        .toMatchObject({ adopted: true, baseSha: before });
+      expect(git(adopted.worktreePath, "rev-parse", "HEAD")).toBe(before);
+      expect(git(root, "rev-parse", adopted.branchRef)).toBe(before);
+    });
+
+    it("nunca adota a pasta de uma worktree criada pelo Nexus", async () => {
+      const gc = enclosingManager();
+      const nexus = await gc.create({ scope: scope(), missionId: "operator-hand", taskId: "pane-own",
+        workerId: "own", ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["pane-own"] } });
+      expect(() => adopt(gc, nexus.worktreePath, "w-own")).toThrow(/created by Nexus/);
+      expect(gc.get(scope(), "operator-hand", nexus.taskId)).toMatchObject({ status: "ready" });
+      expect(gc.get(scope(), "operator-hand", nexus.taskId)?.adopted).toBeUndefined();
+    });
+
+    it("readotar a mesma branch noutra pasta troca o registro liberado e velho (não trava o estado)", () => {
+      const first = adopt(manager, handMade("move"), "w-move-1");
+      const branchRef = first.branchRef;
+      manager.markFailed(scope(), "operator-hand", first.taskId, "pane closed");
+      git(root, "worktree", "remove", first.worktreePath);
+      const moved = path.join(realRoot(), ".harvest", "move-2");
+      git(root, "worktree", "add", "-q", moved, branchRef.slice("refs/heads/".length));
+      const second = adopt(manager, moved, "w-move-2");
+      expect(second).toMatchObject({ adopted: true, worktreePath: moved, branchRef, status: "ready" });
+      expect(manager.get(scope(), "operator-hand", first.taskId)).toBeNull();
+    });
+
+    it("(c) o validador exige a marca exata, writer de pane e pasta dentro da raiz do repositório", async () => {
+      const adopted = adopt(manager, handMade("valid"), "w-valid");
+      const nexus = await manager.create({ scope: scope(), missionId: "operator-hand", taskId: "pane-v",
+        workerId: "v", ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["pane-v"] } });
+      const key = manager.scopeKey(scope());
+      const original = stateStore.read(key).records;
+      const tamper = (taskId: string, patch: Record<string, unknown>) =>
+        stateStore.overwrite(key, original.map((record) =>
+          record.taskId === taskId ? ({ ...record, ...patch } as unknown as WorktreeRecord) : record));
+      const outside = path.join(fs.realpathSync(tempDir), "fora");
+      const cases: Array<[string, Record<string, unknown>]> = [
+        // Pasta fora da raiz do repositório.
+        [adopted.taskId, { worktreePath: outside }],
+        // Caminho gerenciado do Nexus (fora do repositório) não vira adotado.
+        [nexus.taskId, { adopted: true }],
+        // A marca é exatamente `true`.
+        [adopted.taskId, { adopted: "yes" }],
+        [adopted.taskId, { adopted: false }],
+        // Só writer de pane é adotado.
+        [adopted.taskId, { ownerKind: undefined }],
+        // Sem a marca, pasta fora do layout gerenciado continua recusada (como antes do F-1429).
+        [adopted.taskId, { adopted: undefined }],
+      ];
+      for (const [taskId, patch] of cases) {
+        tamper(taskId, patch);
+        expect(() => manager.get(scope(), "operator-hand", taskId), JSON.stringify(patch)).toThrow();
+      }
+      stateStore.overwrite(key, original);
+      expect(manager.get(scope(), "operator-hand", adopted.taskId)).toMatchObject({ adopted: true });
+    });
+  });
+
   it("never delegates versioned context authority to executor worktrees", async () => {
     await expect(manager.create({
         scope: projectScope(),
