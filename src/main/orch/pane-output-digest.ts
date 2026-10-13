@@ -85,6 +85,13 @@ export const DIGEST_MIN_CHARS = 400;
 /** Reserva por item para chaves, contagens e escapes do JSON. */
 const DIGEST_ENTRY_OVERHEAD_CHARS = 300;
 
+/**
+ * F-1433: spinner-only sem NENHUM byte novo há mais que isto não prova
+ * trabalho — a CLI pode estar travada (hook pendurado, rede morta). Acima
+ * disso o digest não deixa o chamador afirmar `working` por conta do frame.
+ */
+export const SPINNER_STALL_AGE_MS = 120_000;
+
 const ELLIPSIS = '…';
 const LINE_HEAD_CHARS = 60;
 /** Acima disto a linha passa pela compactação de quadros repetidos. */
@@ -113,11 +120,22 @@ export interface PaneTailDigest {
    * prova nada). Ausente quando há texto legível.
    */
   readonly noReadableText?: 'spinner' | 'static';
+  /**
+   * F-1433: ms desde o último byte de saída da sessão, ecoado do option.
+   * Ausente quando o chamador não sabe (sem registro de saída).
+   */
+  readonly lastOutputAgeMs?: number;
 }
 
 export interface DigestOptions {
   /** Teto de caracteres do texto (padrão DIGEST_MAX_CHARS). */
   readonly maxChars?: number;
+  /**
+   * F-1433: ms desde o último byte de saída da sessão (o chamador lê do
+   * registro de sessão). Com spinner-only, age > SPINNER_STALL_AGE_MS
+   * desqualifica a afirmação de trabalho ativo.
+   */
+  readonly lastOutputAgeMs?: number;
 }
 
 /**
@@ -469,6 +487,10 @@ export function digestPaneTail(
         noReadableText: lines.some((l) => SPINNER_TEST.test(l))
           ? 'spinner'
           : 'static',
+        // F-1433: a idade acompanha o digest para o chamador julgar o frame.
+        ...(options.lastOutputAgeMs !== undefined
+          ? { lastOutputAgeMs: options.lastOutputAgeMs }
+          : {}),
       };
     }
   }
@@ -478,5 +500,8 @@ export function digestPaneTail(
     keptLines,
     omittedLines: Math.max(0, lines.length - keptLines),
     truncated: cutByBudget > 0,
+    ...(options.lastOutputAgeMs !== undefined
+      ? { lastOutputAgeMs: options.lastOutputAgeMs }
+      : {}),
   };
 }

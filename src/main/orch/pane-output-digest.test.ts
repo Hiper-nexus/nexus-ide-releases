@@ -310,6 +310,12 @@ describe('F-987: redesenho de TUI não estoura o digest', () => {
     expect(digest.noReadableText).toBeUndefined();
   });
 
+  it('F-1433: digest ecoa lastOutputAgeMs quando o chamador informa a idade do último byte', () => {
+    const digest = digestPaneTail('⠤⠄\n⣀⡀', { lastOutputAgeMs: 5_000 });
+    expect(digest.noReadableText).toBe('spinner');
+    expect(digest.lastOutputAgeMs).toBe(5_000);
+  });
+
   it('isSpinnerFrameLine: braille, glifos e contadores são moldura; resposta curta legível fica', () => {
     for (const frame of ['⠤⠄', '⣀⡀', '⠋', '✽ ✻ ✶ ✳ ✢ ·', '⠋ 5', '', '   ']) {
       expect(isSpinnerFrameLine(frame)).toBe(true);

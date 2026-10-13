@@ -6,9 +6,11 @@ import { testProjectScope } from './__tests__/scope-fixture';
 const h = vi.hoisted(() => {
   const panes = new Map<string, PaneAuthzInfo>();
   const outputs = new Map<string, string>();
+  const lastOutputAt = new Map<string, number>();
   return {
     panes,
     outputs,
+    lastOutputAt,
     getPaneAuthzInfo: vi.fn((ref: string) => panes.get(ref) ?? null),
     readSessionOutput: vi.fn((sessionId: string, _lines?: number) => {
       return outputs.get(sessionId) ?? '';
@@ -38,6 +40,8 @@ vi.mock('./pane-registry', async () => ({
   requestPaneSpawn: h.requestPaneSpawn,
   waitForIdle: h.waitForIdle,
   waitForNextIdle: h.waitForNextIdle,
+  // F-1433: idade da última saída controlada pelo teste (spinner congelado).
+  paneSessionLastOutputAt: (sessionId: string) => h.lastOutputAt.get(sessionId),
 }));
 
 const leases = vi.hoisted(() => ({
@@ -117,6 +121,7 @@ describe('in-mission pane observation (Overclock parity)', () => {
   beforeEach(() => {
     h.panes.clear();
     h.outputs.clear();
+    h.lastOutputAt.clear();
     vi.clearAllMocks();
     h.getPaneAuthzInfo.mockImplementation((ref: string) => h.panes.get(ref) ?? null);
     h.readSessionOutput.mockImplementation((sessionId: string) => {
@@ -284,6 +289,55 @@ describe('in-mission pane observation (Overclock parity)', () => {
     ) as Record<string, unknown>;
     expect(result.state).toBeUndefined();
     expect(result.stateConfidence).toBeUndefined();
+    expect(digestClassify.classifyPaneTailForDigest).not.toHaveBeenCalled();
+  });
+
+  it('F-1433: tail só de spinner com última saída há 5 s segue working/1 e traz lastOutputAgeMs', async () => {
+    h.lastOutputAt.set('session-b', Date.now() - 5_000);
+    registerPane({
+      paneId: 'pane-b',
+      sessionId: 'session-b',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+    }, ['⠤⠄', '⣀⡀'].join('\n'));
+
+    const result = await tool('nexus_pane_read').handler(
+      { paneId: 'pane-b' },
+      context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null }),
+    ) as Record<string, unknown>;
+    expect(result).toMatchObject({
+      mode: 'digest',
+      state: 'working',
+      stateConfidence: 1,
+      needsHuman: 0,
+    });
+    expect(Number(result.lastOutputAgeMs)).toBeGreaterThanOrEqual(5_000);
+    expect(Number(result.lastOutputAgeMs)).toBeLessThan(15_000);
+    expect(digestClassify.classifyPaneTailForDigest).not.toHaveBeenCalled();
+  });
+
+  it('F-1433: spinner CONGELADO (saída há mais de 120 s) não afirma working — estado desconhecido, confiança baixa e hint com a idade', async () => {
+    h.lastOutputAt.set('session-b', Date.now() - 180_000);
+    registerPane({
+      paneId: 'pane-b',
+      sessionId: 'session-b',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+    }, ['⠤⠄', '⣀⡀'].join('\n'));
+
+    const result = await tool('nexus_pane_read').handler(
+      { paneId: 'pane-b' },
+      context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null }),
+    ) as Record<string, unknown>;
+    expect(result.state).not.toBe('working');
+    expect(result.state).toBe('unknown');
+    expect(Number(result.stateConfidence)).toBeLessThan(0.5);
+    expect(Number(result.lastOutputAgeMs)).toBeGreaterThanOrEqual(180_000);
+    expect(String(result.hint)).toMatch(/\d+m|\d+s/);
     expect(digestClassify.classifyPaneTailForDigest).not.toHaveBeenCalled();
   });
 

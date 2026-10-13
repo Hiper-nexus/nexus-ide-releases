@@ -21,6 +21,7 @@ import {
   listPaneSnapshots,
   listVisiblePaneSnapshots,
   newOutputSince,
+  paneSessionLastOutputAt,
   readSessionOutput,
   requestPaneClose,
   PENDING_SPAWN_RESULT,
@@ -188,8 +189,10 @@ import {
   isSpinnerFrameLine,
   PANE_READ_MANY_MAX_PANES,
   PANE_READ_MANY_MAX_REFS,
+  SPINNER_STALL_AGE_MS,
 } from './pane-output-digest';
 import { classifyPaneTailForDigest } from '../jev/jev-pane-state';
+import { formatNativeChatDuration } from '../../shared/native-chat-turn-status';
 import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
 import { getOrchSettings } from '../persistence/settings-store';
 import { isPaneMetaTask } from './mission-fast-lane';
@@ -3277,6 +3280,12 @@ const paneListProviders: McpToolDef = {
 
 const paneReadHint = "mode:'full' devolve o texto inteiro";
 
+/** F-1433: ms desde o último byte registrado da sessão; undefined sem registro. */
+function sessionOutputAgeMs(sessionId: string): number | undefined {
+  const at = paneSessionLastOutputAt(sessionId);
+  return at === undefined ? undefined : Math.max(0, Date.now() - at);
+}
+
 type PaneReadMode = 'digest' | 'full';
 
 // Default por papel: o orquestrador lê para DECIDIR — ganha o digest
@@ -3298,20 +3307,35 @@ async function paneDigestResult(
   tail: string,
   maxChars: number = DIGEST_MAX_CHARS,
   missionId?: string,
+  lastOutputAgeMs?: number,
 ): Promise<Record<string, unknown>> {
   // F-987: redesenho de TUI colapsado e teto de caracteres por pane.
-  const digest = digestPaneTail(tail, { maxChars });
+  const digest = digestPaneTail(tail, { maxChars, lastOutputAgeMs });
   // F-1425: tail só de spinner é trabalho ativo — classificação
   // determinística. Alimentar o Jev com "TUI sem texto legível" devolvia
   // `errored` falso (stateConfidence ~0.25) e fazia o orquestrador fechar
   // pane vivo. Quadro estático sem letra nenhuma não prova nada: sai sem
   // estado (unknown) em vez de adivinhar.
-  const classified = digest.noReadableText === 'spinner'
-    ? { state: 'working' as const, confidence: 1, needsHuman: 0 }
-    : digest.noReadableText === 'static'
-      ? null
-      : // F-1164: quem lê (o Maestro) paga a classificação no orçamento da missão dele.
-        await classifyPaneTailForDigest(digest.text, { missionId });
+  //
+  // F-1433: um spinner CONGELADO não manda byte nenhum e hoje também lia
+  // `working`/1.0 para sempre. Sem saída nova além do limiar o frame não
+  // prova trabalho: o vocabulário do pane_read não tem 'stalled' (procurado
+  // aqui e no classificador Jev), então sai 'unknown' — o estado de "não sei"
+  // que já existe (PaneRuntimeState) — com confiança baixa e a hint dizendo
+  // há quanto tempo não sai nada.
+  const ageMs = digest.lastOutputAgeMs;
+  const stalled =
+    digest.noReadableText === 'spinner' &&
+    ageMs !== undefined &&
+    ageMs > SPINNER_STALL_AGE_MS;
+  const classified = stalled
+    ? { state: 'unknown' as const, confidence: 0.2, needsHuman: 0 }
+    : digest.noReadableText === 'spinner'
+      ? { state: 'working' as const, confidence: 1, needsHuman: 0 }
+      : digest.noReadableText === 'static'
+        ? null
+        : // F-1164: quem lê (o Maestro) paga a classificação no orçamento da missão dele.
+          await classifyPaneTailForDigest(digest.text, { missionId });
   return {
     mode: 'digest',
     ...(classified
@@ -3325,7 +3349,11 @@ async function paneDigestResult(
     keptLines: digest.keptLines,
     omittedLines: digest.omittedLines,
     ...(digest.truncated ? { truncated: true } : {}),
-    hint: paneReadHint,
+    ...(ageMs !== undefined ? { lastOutputAgeMs: ageMs } : {}),
+    hint:
+      stalled && ageMs !== undefined
+        ? `sem saída nova há ${formatNativeChatDuration(Math.round(ageMs / 1000))}: spinner pode estar congelado (CLI travada); ${paneReadHint}`
+        : paneReadHint,
   };
 }
 
@@ -3339,7 +3367,8 @@ const paneRead: McpToolDef = {
     'collapsed and a per-pane character cap (truncated:true marks a cut), ' +
     'Jev state when the classifier ' +
     'answers, keptLines/omittedLines counts and a hint — much cheaper than ' +
-    'raw text. mode:\'full\' returns the raw tail string as before (default ' +
+    'raw text (lastOutputAgeMs when the session output timestamp is known). ' +
+    'mode:\'full\' returns the raw tail string as before (default ' +
     'for workers/user/unknown roles). ' +
     'When the operator says "look at what pane X is doing" / "olha o que ' +
     'o pane X está fazendo", call this once with that pane — do not poll ' +
@@ -3377,7 +3406,7 @@ const paneRead: McpToolDef = {
       tail = 'one-shot em execução, sem saída no PTY até terminar';
     }
     if (paneReadMode(args, ctx) !== 'digest') return tail;
-    return paneDigestResult(tail, DIGEST_MAX_CHARS, ctx.missionId);
+    return paneDigestResult(tail, DIGEST_MAX_CHARS, ctx.missionId, sessionOutputAgeMs(sessionId));
   },
 };
 
@@ -3452,7 +3481,7 @@ const paneReadMany: McpToolDef = {
             tail = 'one-shot em execução, sem saída no PTY até terminar';
           }
           if (mode !== 'digest') return { paneId: item.paneId, output: tail };
-          return { paneId: item.paneId, ...(await paneDigestResult(tail, budget, ctx.missionId)) };
+          return { paneId: item.paneId, ...(await paneDigestResult(tail, budget, ctx.missionId, sessionOutputAgeMs(item.sessionId))) };
         } catch (err) {
           return {
             paneId: item.paneId,

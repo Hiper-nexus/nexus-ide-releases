@@ -83,6 +83,7 @@ import {
 } from "./pane-session-output";
 export {
   newOutputSince,
+  paneSessionLastOutputAt,
   readSessionOutput,
   sessionOutputExitedAt,
   stripAnsi,
