@@ -1158,17 +1158,23 @@ export async function deliverAgentPrompt(
         // Devin frio engoliu o Enter e a tentativa 2 re-colava o brief inteiro
         // (colagens #2/#3 empilhadas, paradas até um Enter à mão). O retry é
         // SÓ o Enter final, com a mesma prova de turno; nunca re-colar.
-        const resubmitted = await injectWithBusyProof(
-          sessionId,
-          '',
-          PROMPT_ACCEPTANCE_WINDOW_MS,
-          invocation,
-          requiresClaudeFamilyTurnProof(options.adapterId),
-        );
-        if (resubmitted === 'accepted') return true;
-        lastError = new Error(
-          'agent pane did not start: the brief reached the composer but no Enter was accepted',
-        );
+        // F-1432: se esse Enter lança, a exceção também encerra o laço. O
+        // catch de fora só cobre a colagem do brief, que ainda pode repetir.
+        try {
+          const resubmitted = await injectWithBusyProof(
+            sessionId,
+            '',
+            PROMPT_ACCEPTANCE_WINDOW_MS,
+            invocation,
+            requiresClaudeFamilyTurnProof(options.adapterId),
+          );
+          if (resubmitted === 'accepted') return true;
+          lastError = new Error(
+            'agent pane did not start: the brief reached the composer but no Enter was accepted',
+          );
+        } catch (error) {
+          lastError = error;
+        }
         break;
       }
     } catch (error) {

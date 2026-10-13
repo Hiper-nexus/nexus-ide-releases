@@ -2758,6 +2758,36 @@ describe('agent prompt injection', () => {
     }
   });
 
+  it('F-1432: Enter-only que lança encerra a entrega — o brief sai uma vez', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue({ adapterId: 'devin' });
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.writeSession.mockImplementation(((...args: unknown[]) => {
+        const data = args[1];
+        if (data === '') throw new Error('enter-only pty write failed');
+        return true;
+      }) as typeof stubs.writeSession);
+      const brief = 'linha do brief\n'.repeat(20);
+      const pending = deliverAgentPrompt('session-1', brief, undefined, {
+        adapterId: 'devin',
+      });
+      const rejected = expect(pending).rejects.toThrow(/enter-only pty write failed/);
+      stubs.readSessionOutput.mockReturnValue(DEVIN_COMPOSER_SCREEN);
+      await vi.advanceTimersByTimeAsync(90_000);
+      await rejected;
+      const briefWrites = (
+        stubs.writeSession.mock.calls as unknown as Array<readonly [string, string]>
+      ).filter(([, data]) => typeof data === 'string' && data.includes('linha do brief'));
+      expect(briefWrites).toHaveLength(1);
+    } finally {
+      stubs.writeSession.mockReset().mockReturnValue(true);
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      stubs.sessionState.mockReset().mockReturnValue('busy');
+      vi.useRealTimers();
+    }
+  });
+
   it('resubmits the prompt already restored in an idle agent editor', async () => {
     vi.useFakeTimers();
     try {
