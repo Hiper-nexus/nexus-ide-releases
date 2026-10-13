@@ -1696,7 +1696,7 @@ describe("PTY session ownership (renderer capability boundary)", () => {
     const send = vi.fn();
     const owner = { isDestroyed: () => false, isCrashed: () => false, send } as unknown as WebContents;
     const trusted = trustedSpawn();
-    const { sessionId } = spawnSession(
+    spawnSession(
       owner,
       { kind: "shell", cols: 80, rows: 24 },
       { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
