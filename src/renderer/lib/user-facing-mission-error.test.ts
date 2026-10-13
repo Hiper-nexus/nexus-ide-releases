@@ -5,6 +5,37 @@ import {
 } from "./user-facing-mission-error";
 
 describe("user-facing mission errors", () => {
+  it("F-1470: a recusa do vínculo do coordenador vira a ação que destrava, pelo rótulo", () => {
+    const refused =
+      "Orquestrador não reabriu: orchestrator physical spawn authority is missing or mismatched";
+    const teamChanged =
+      "O coordenador não voltou porque a equipe aprovada mudou. Revise a equipe e aprove a missão de novo.";
+    const accountChanged =
+      "O coordenador não voltou porque a conta aprovada para ele mudou. Revise a equipe e aprove a missão de novo.";
+    const modelChanged =
+      "O coordenador não voltou porque o modelo ou o esforço aprovado mudou. Revise a equipe e aprove a missão de novo.";
+    const otherLive =
+      "Já há outro coordenador rodando nesta missão. Feche os panes antigos do coordenador e use Retomar o coordenador.";
+    const generic =
+      "O coordenador não voltou. Use Retomar o coordenador; se repetir, use Reportar bug.";
+    const cases: Array<[string, string]> = [
+      [`${refused}: account[diferente]`, accountChanged],
+      [`${refused}: account[ausente], cwd[diferente]`, accountChanged],
+      [`${refused}: model[roster-model != approved-model]`, modelChanged],
+      [`${refused}: effort[high != medium]`, modelChanged],
+      [`${refused}: seal`, teamChanged],
+      [`${refused}: adapter[claude != codex]`, teamChanged],
+      [`${refused}: other-orchestrator[0f3a9c1d busy]`, otherLive],
+      [`${refused}: account[diferente], other-orchestrator[0f3a9c1d busy]`, otherLive],
+      [`${refused}: runtime, scope`, generic],
+      // Build antigo: o prefixo sem rótulos.
+      [refused, generic],
+    ];
+    for (const [raw, expected] of cases) {
+      expect(toUserFacingMissionError(new Error(raw))).toBe(expected);
+    }
+  });
+
   it("maps governed preflight codes to a concrete recovery instruction", () => {
     expect(
       humanizeMissionErrorDetail(

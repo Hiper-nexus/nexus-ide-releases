@@ -126,9 +126,11 @@ import { warmPool } from '../pty/warm-pool';
 import {
   hasRuntimeKey,
   listProviderSettings,
+  pickMissionOrchestratorAccountId,
   providerAuthStrategy,
   providerReadiness,
 } from '../persistence/provider-config-store';
+import { missionOrchestratorAccountAllowed } from './mission-orchestrator-account';
 import {
   PREFERRED_AUTO_SEAT_CLIS,
   remintWriterCliForAutoSeat,
@@ -287,39 +289,71 @@ function bindSpawnedMissionPane(
   const spawnedSession = getAgentSessionInfo(spawn.sessionId)
     ?? getAcpDriverSession(spawn.sessionId)?.agent;
   const physical = spawnedSession;
-  if (role === 'worker' && (!physical || physical.sessionId !== spawn.sessionId ||
-    physical.paneId !== spawn.paneId || physical.missionId !== mission.id ||
-    physical.role !== role || physical.agentName !== agent.agentName ||
-    physical.adapterId !== agent.cli || !isDeepStrictEqual(physical.scope, executionScope) ||
-    !physical.workerIncarnationId || !physical.authoritySeal ||
-    physical.authoritySeal.intentVersion !== mission.intentVersion ||
-    !mission.intentContract ||
-    physical.authoritySeal.intentContractHash !== hashMissionIntentAuthority(mission.intentContract))) {
-    throw new Error('first-wave worker physical spawn authority is missing or mismatched');
+  // F-1470: a recusa nomeia cada divergência (precedente F-1434). Valor só de
+  // adapter, modelo, esforço e flags; conta e cwd só "ausente/diferente".
+  const mismatches: string[] = [];
+  const failed = (label: string, diverges: boolean) => { if (diverges) mismatches.push(label); };
+  const differs = (label: string, actual: unknown, expected: unknown) =>
+    failed(`${label}[${String(actual)} != ${String(expected)}]`, actual !== expected);
+  const refuse = (message: string) => {
+    if (mismatches.length === 0) return;
+    trace({ kind: `${role}-bind-refused`, missionId: mission.id, sessionId: spawn.sessionId,
+      paneId: spawn.paneId, role, mismatches: [...mismatches] });
+    throw new Error(`${message}: ${mismatches.join(', ')}`);
+  };
+  const samePhysicalPane = (live: NonNullable<typeof physical>) => {
+    failed('session', live.sessionId !== spawn.sessionId);
+    failed('pane', live.paneId !== spawn.paneId);
+    failed('mission', live.missionId !== mission.id);
+    failed('role', live.role !== role);
+  };
+  if (role === 'worker') {
+    if (!physical) mismatches.push('session[ausente]');
+    else {
+      samePhysicalPane(physical);
+      failed('agent', physical.agentName !== agent.agentName);
+      differs('adapter', physical.adapterId, agent.cli);
+      failed('scope', !isDeepStrictEqual(physical.scope, executionScope));
+      failed('incarnation', !physical.workerIncarnationId);
+      failed('seal', !physical.authoritySeal || physical.authoritySeal.intentVersion !== mission.intentVersion ||
+        !mission.intentContract ||
+        physical.authoritySeal.intentContractHash !== hashMissionIntentAuthority(mission.intentContract));
+    }
+    refuse('first-wave worker physical spawn authority is missing or mismatched');
   }
   const approved = role === 'orchestrator' ? mission.intentContract?.orchestratorRuntime : undefined;
   if (approved) {
     const current = stores.missions.get(mission.id);
     const runtime = getPaneRuntimeAuthorityBySession(spawn.sessionId);
-    if (!runtime || runtime.sessionId !== spawn.sessionId || runtime.paneId !== spawn.paneId ||
+    failed('runtime', !runtime || runtime.sessionId !== spawn.sessionId || runtime.paneId !== spawn.paneId ||
       runtime.kind !== 'cli-agent' || runtime.role !== role || runtime.missionId !== mission.id ||
-      !isDeepStrictEqual(runtime.scope, scope) ||
-      !current || current.intentVersion !== mission.intentVersion ||
+      !isDeepStrictEqual(runtime.scope, scope));
+    failed('intent', !current || current.intentVersion !== mission.intentVersion ||
       !current.intentContract || !mission.intentContract ||
       hashMissionIntentAuthority(current.intentContract) !== hashMissionIntentAuthority(mission.intentContract) ||
-      !isDeepStrictEqual(current.intentContract?.orchestratorRuntime, approved) ||
-      !physical || physical.sessionId !== spawn.sessionId || physical.paneId !== spawn.paneId ||
-      physical.missionId !== mission.id || physical.role !== role || physical.adapterId !== approved.adapterId ||
-      physical.requestedModel !== approved.model || physical.effort !== approved.effort ||
-      physical.accountId !== approved.accountId || physical.readOnly !== approved.readOnly ||
-      physical.nativeReadOnly !== approved.nativeReadOnly ||
-      physical.cwd !== executionScope.rootRealPath || !isDeepStrictEqual(physical.scope, executionScope) ||
-      !sameMissionPaneAuthoritySeal(physical.authoritySeal, resolveCurrentMissionSpawnAuthoritySeal(scope, mission.id)) ||
-      [...registeredOrchestratorSessionsForMission(mission.id),
-        ...listAcpDriverAgentSessions().filter(session => session.missionId === mission.id && session.role === 'orchestrator')]
-        .some(session => session.sessionId !== spawn.sessionId)) {
-      throw new Error('orchestrator physical spawn authority is missing or mismatched');
+      !isDeepStrictEqual(current.intentContract?.orchestratorRuntime, approved));
+    if (!physical) mismatches.push('session[ausente]');
+    else {
+      samePhysicalPane(physical);
+      differs('adapter', physical.adapterId, approved.adapterId);
+      differs('model', physical.requestedModel, approved.model);
+      differs('effort', physical.effort, approved.effort);
+      failed(`account[${physical.accountId ? 'diferente' : 'ausente'}]`,
+        !missionOrchestratorAccountAllowed(approved, physical.accountId));
+      differs('readOnly', physical.readOnly, approved.readOnly);
+      differs('nativeReadOnly', physical.nativeReadOnly, approved.nativeReadOnly);
+      failed(`cwd[${physical.cwd ? 'diferente' : 'ausente'}]`, physical.cwd !== executionScope.rootRealPath);
+      failed('scope', !isDeepStrictEqual(physical.scope, executionScope));
+      let currentSeal: ReturnType<typeof resolveCurrentMissionSpawnAuthoritySeal> | undefined;
+      try { currentSeal = resolveCurrentMissionSpawnAuthoritySeal(scope, mission.id); } catch { currentSeal = undefined; }
+      failed(currentSeal ? 'seal' : 'seal[indisponível]', !sameMissionPaneAuthoritySeal(physical.authoritySeal, currentSeal));
     }
+    for (const other of [...registeredOrchestratorSessionsForMission(mission.id),
+      ...listAcpDriverAgentSessions().filter(session => session.missionId === mission.id && session.role === 'orchestrator')]) {
+      failed(`other-orchestrator[${other.sessionId.slice(0, 8)} ${'state' in other ? other.state : 'acp'}]`,
+        other.sessionId !== spawn.sessionId);
+    }
+    refuse('orchestrator physical spawn authority is missing or mismatched');
   }
   const title = spawn.title?.trim() || agent.agentName;
   if (previous) {
@@ -1213,6 +1247,12 @@ async function spawnAgentPane(
      */
     readonly resumeFromPaneId?: string;
     readonly accountId?: string;
+    /**
+     * F-1470: retomada da aba que trocou de conta. A linha do orquestrador
+     * vai para o pane novo com a conta nova; um record() abriria uma segunda
+     * linha (a identidade da composição inclui a conta).
+     */
+    readonly replaceOrchestratorRow?: ScopedMissionPaneSpec;
     readonly invocation?: McpToolInvocation;
     readonly onBootstrapRuntime?: (runtime: BootstrapRuntime) => void;
     /** Respawn owns exact row/native compensation and physical exit proof. */
@@ -1224,24 +1264,32 @@ async function spawnAgentPane(
   const role: 'orchestrator' | 'worker' =
     agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
   const approvedRuntime = role === 'orchestrator' ? mission.intentContract?.orchestratorRuntime : undefined;
-  // "Default" was resolved at review time. Send that exact value to the new
-  // process and persist it, without changing the roster or a live session.
+  // "Default" was resolved at review time, and the approval owns the model
+  // and effort (F-1470: a roster edited later must not reach the spawn — the
+  // bind demands the approved values). Persisted without touching the roster.
   const runtimeAgent = approvedRuntime ? {
-    ...agent, model: agent.model || approvedRuntime.model, effort: agent.effort || approvedRuntime.effort,
+    ...agent, model: approvedRuntime.model, effort: approvedRuntime.effort,
   } : agent;
   const stores = getProjectDomainStores(scope);
   const priorLeaders = approvedRuntime ? stores.missionPanes.list(mission.id).filter(pane => pane.role === 'orchestrator') : [];
   if (priorLeaders.length > 1) return { error: 'orchestrator pane authority is ambiguous' };
-  const previous = priorLeaders[0];
-  if (previous && (previous.adapterId !== approvedRuntime?.adapterId ||
-    previous.model !== undefined && previous.model !== approvedRuntime?.model ||
-    previous.effort !== undefined && previous.effort !== approvedRuntime?.effort ||
-    previous.accountId !== undefined && previous.accountId !== approvedRuntime?.accountId ||
-    (previous.readOnly === true) !== approvedRuntime?.readOnly ||
+  const previous = approvedRuntime ? priorLeaders[0] : spawnOpts?.replaceOrchestratorRow;
+  if (previous && approvedRuntime && (previous.adapterId !== approvedRuntime.adapterId ||
+    previous.model !== undefined && previous.model !== approvedRuntime.model ||
+    previous.effort !== undefined && previous.effort !== approvedRuntime.effort ||
+    previous.accountId !== undefined && !missionOrchestratorAccountAllowed(approvedRuntime, previous.accountId) ||
+    (previous.readOnly === true) !== approvedRuntime.readOnly ||
     previous.cwd !== executionScope.rootRealPath ||
     !isDeepStrictEqual(previous.executionScope, executionScope))) {
     return { error: 'persisted orchestrator runtime differs from approved authority' };
   }
+  // F-1470: o Maestro volta na conta da linha (o failover F-995 pode tê-la
+  // trocado) ou na aprovada enquanto ela serve; esgotada, numa irmã do mesmo
+  // provider com folga. Sem pin, o seletor escolhia outra conta e o vínculo
+  // recusava — a missão dormia e queimava o orçamento de respawn.
+  const accountId = spawnOpts?.accountId ?? (approvedRuntime
+    ? pickMissionOrchestratorAccountId(agent.cli, previous?.accountId ?? approvedRuntime.accountId)
+    : undefined);
   const title = paneTitle?.trim() || agent.agentName;
   const readOnly = spawnOpts?.readOnly === true;
   // Mesmos blocos de contexto do wrapper de spawn (<business-model>,
@@ -1322,7 +1370,7 @@ async function spawnAgentPane(
     ...(readOnly ? { readOnly: true, nativeReadOnly: true } : {}),
     resume: Boolean(resumeFromPaneId),
     ...(resumeFromPaneId ? { resumeFromPaneId } : {}),
-    ...(spawnOpts?.accountId ? { accountId: spawnOpts.accountId } : {}),
+    ...(accountId ? { accountId } : {}),
     ...(initialPrompt ? { initialPrompt } : {}),
   });
 
@@ -2222,16 +2270,26 @@ async function respawnFastLaneOrchestrator(
   const operatorResume = operatorTabMissionResumeSpec(live, composition);
   let orchestrator: SquadAgent;
   let prompt: string;
+  // F-1470: a conversa só retoma na conta dona dela (o pty-manager nega resume
+  // entre contas). Conta da linha sem cota → irmã do mesmo provider, numa
+  // conversa nova com o aviso; sem irmã utilizável, segue a conta da linha.
+  let resumeAccountId = operatorResume?.accountId;
   if (operatorResume) {
     orchestrator = operatorTabResumeAgent(
       operatorResume,
       operatorTabMissionLeader(composition),
     );
     assertFastLaneMaestroMcp(orchestrator.cli);
+    if (resumeAccountId) {
+      resumeAccountId = pickMissionOrchestratorAccountId(orchestrator.cli, resumeAccountId) ?? resumeAccountId;
+    }
+    const accountNote = resumeAccountId !== operatorResume.accountId
+      ? 'A conta da conversa anterior ficou sem cota; esta conversa é nova, em outra conta do mesmo provedor.'
+      : undefined;
     prompt = buildRespawnPrompt({
       basePrompt: OPERATOR_TAB_RESUME_NOTE,
       awaitingAdjustment: operatorTabResumeAwaitsAdjustment(live),
-      note: options.note,
+      note: [options.note, accountNote].filter(Boolean).join(' ') || undefined,
     });
   } else {
     const squad = resolveFastLaneSquad(mission.squadId);
@@ -2380,8 +2438,10 @@ async function respawnFastLaneOrchestrator(
     const result = operatorResume
       ? await spawnAgentPane(scope, live, orchestrator, prompt, operatorResume.title, {
           invocation, onBootstrapRuntime: captureRuntime, ownFailureCleanup: true,
-          resumeFromPaneId: operatorResume.paneId,
-          ...(operatorResume.accountId ? { accountId: operatorResume.accountId } : {}),
+          ...(resumeAccountId === operatorResume.accountId
+            ? { resumeFromPaneId: operatorResume.paneId }
+            : { replaceOrchestratorRow: composition.find(row => row.id === operatorResume.id) }),
+          ...(resumeAccountId ? { accountId: resumeAccountId } : {}),
         })
       : await spawnAgentPane(scope, live, orchestrator, prompt, undefined, { invocation, onBootstrapRuntime: captureRuntime, ownFailureCleanup: true });
     if ('error' in result) {
@@ -2851,10 +2911,12 @@ export async function fastLaneBootstrap(
   // eterno sem MCP.
   assertFastLaneMaestroMcp(orchestrator.cli);
 
-  // Auth pre-gate: CLI sem credencial não sobe como fake-run.
+  // Auth pre-gate: CLI sem credencial não sobe como fake-run. F-1470: com
+  // runtime aprovado, o probe testa o modelo aprovado — o mesmo do spawn.
+  const approvedOrchestratorRuntime = mission.intentContract?.orchestratorRuntime;
   try {
     await assertPreSpawnProbe(orchestrator.cli, {
-      model: orchestrator.model || mission.intentContract?.orchestratorRuntime?.model,
+      model: approvedOrchestratorRuntime ? approvedOrchestratorRuntime.model : orchestrator.model,
       failClosed: true,
     });
   } catch (error) {

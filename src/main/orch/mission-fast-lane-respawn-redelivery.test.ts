@@ -58,7 +58,30 @@ const harness = vi.hoisted(() => ({
   /** F-721: roda dentro do spawn, antes do pane novo existir. */
   onSpawn: undefined as undefined | (() => void),
   plannedTasks: [] as Array<{ id: string; title: string; plannerId: string; status: 'pending' }>,
+  /** F-1470: contas que o store do Main conhece (id → provider, cooldown). */
+  accounts: new Map<string, { adapterId: string; blocked?: boolean }>(),
+  probe: vi.fn(async (..._args: unknown[]) => undefined),
 }));
+
+vi.mock('../persistence/account-store', async importOriginal => {
+  const actual = await importOriginal<typeof import('../persistence/account-store')>();
+  const account = (id: string) => {
+    const row = harness.accounts.get(id);
+    return row ? { id, label: id, mode: 'api-key' as const, upstream: 'fixture', createdAt: 1, adapterId: row.adapterId } : null;
+  };
+  const free = (id: string) => harness.accounts.has(id) && harness.accounts.get(id)?.blocked !== true;
+  return {
+    ...actual,
+    getAccount: account,
+    isAccountBlockedForScope: (id: string) => harness.accounts.get(id)?.blocked === true,
+    accountHasFailoverCredential: (row: { id: string }) => harness.accounts.has(row.id),
+    pickAvailableForFailover: (adapterId: string, excludeId: string | null) => ({
+      account: [...harness.accounts.keys()].filter(id => id !== excludeId && free(id)).map(account)
+        .find(row => row?.adapterId === adapterId) ?? null,
+      probe: false,
+    }),
+  };
+});
 
 vi.mock('../pty/pty-manager', () => ({
   getAgentSessionInfo: (sessionId: string) => harness.acpSessions.has(sessionId) ? null : harness.physicalSessions.get(sessionId) ?? null,
@@ -105,7 +128,7 @@ vi.mock('../adapters/adapter-registry', async importOriginal => ({
 vi.mock('./squad-runtime-inventory', () => ({ warmSquadRuntimeSubscriptionAuth: async () => undefined }));
 vi.mock('../pty/pre-spawn-probe', async importOriginal => ({
   ...await importOriginal<typeof import('../pty/pre-spawn-probe')>(),
-  assertPreSpawnProbe: async () => undefined,
+  assertPreSpawnProbe: (...args: unknown[]) => harness.probe(...args),
 }));
 vi.mock('../adapters/subscription-auth', async importOriginal => ({
   ...await importOriginal<typeof import('../adapters/subscription-auth')>(),
@@ -364,6 +387,8 @@ beforeEach(async () => {
   harness.trace.mockClear();
   harness.onSpawn = undefined;
   harness.plannedTasks.length = 0;
+  harness.accounts.clear();
+  harness.probe.mockClear();
   harness.movePane.mockReset().mockImplementation((_missionId, specId, paneId) => {
     const spec = harness.missionPaneSpecs.find((row) => row.id === specId);
     if (spec) spec.paneId = paneId;
@@ -445,7 +470,19 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
             expect(harness.acpSessions.size).toBe(1);
           } finally { release(); }
           await expect(attempt).rejects.toThrow(/changed/);
-        } else await expect(fastLane.fastLaneBootstrap(scope, mission.id)).rejects.toThrow(/authority|runtime|changed/);
+        } else {
+          const refusal = await fastLane.fastLaneBootstrap(scope, mission.id).then(() => '', (error: Error) => error.message);
+          expect(refusal).toMatch(/authority|runtime|changed/);
+          // F-1470: a recusa do vínculo nomeia o que divergiu, sem caminho.
+          const label = ({ 'native-readonly': 'nativeReadOnly[true != false]', 'live-old': 'other-orchestrator[old-sess busy]',
+            'missing-seal': 'seal', 'wrong-scope': 'scope', 'wrong-coordination': 'runtime' } as Record<string, string>)[fault];
+          if (label) {
+            expect(refusal.split('orchestrator physical spawn authority is missing or mismatched: ')[1]?.split(', ')).toContain(label);
+            expect(refusal).not.toContain(scope.rootRealPath);
+            expect(harness.trace).toHaveBeenCalledWith(expect.objectContaining({
+              kind: 'orchestrator-bind-refused', missionId: mission.id, mismatches: expect.arrayContaining([label]) }));
+          }
+        }
         expect(panes.list(mission.id)).toEqual([{ ...previous, ...(['stale-spec', 'acp-stale-spec'].includes(fault) ? { paneId: 'concurrent-pane' } : {}) }]);
         expect(harness.terminate).not.toHaveBeenCalledWith('old-session', expect.anything());
         if (fault === 'acp-stale-spec') { expect(harness.acpShutdown).toHaveBeenCalledOnce(); expect(harness.acpSessions.size).toBe(0); expect(harness.terminate).not.toHaveBeenCalled(); }
@@ -1079,4 +1116,209 @@ it.each(['spend', 'timestamp-only', 'goal', 'budget', 'capability', 'spend-regre
         .rejects.toThrow(/resume_attempt_authority_changed|setup_unproven/);
       expect(liveMission.status).toBe('running'); expect(harness.terminate).not.toHaveBeenCalled();
     }
+});
+
+describe('F-1470: o Maestro volta numa conta do provider aprovado e a recusa diz o motivo', () => {
+  type Physical = import('../pty/pty-manager').OwnedAgentSessionInfo;
+  const approved = (accountId?: string) => ({ adapterId: 'codex', model: 'approved-model', effort: 'medium',
+    ...(accountId ? { accountId } : {}), readOnly: false as const, nativeReadOnly: false });
+  // Imita o seletor do Main: sem pin, o pane nasce na conta com folga.
+  const imitateSelector = (tamper?: (physical: Physical) => void) => {
+    harness.afterSpawn = physical => { physical.accountId ??= 'acct-headroom'; tamper?.(physical); };
+  };
+  const refusalLabels = (message: string) =>
+    message.split('orchestrator physical spawn authority is missing or mismatched: ')[1]?.split(', ') ?? [];
+
+  async function withPersistedMaestro(
+    input: { approvedAccountId?: string; previousAccountId?: string },
+    run: (fixture: {
+      panes: ReturnType<typeof import('./mission-pane-store').createScopedMissionPaneStore>;
+      previous: import('./mission-pane-store').ScopedMissionPaneSpec;
+      runtime: ReturnType<typeof approved>;
+    }) => Promise<void>,
+  ): Promise<void> {
+    const { ProjectRuntimeManager } = await import('../runtime/project-runtime-manager');
+    const { createScopedMissionStore } = await import('./mission-store');
+    const { createScopedMissionPaneStore } = await import('./mission-pane-store');
+    const { snapshotSquadAuthority } = await import('./squad-authority-snapshot');
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-f1470-')));
+    const manager = new ProjectRuntimeManager({ baseDir: root, appVersion: 'test' });
+    try {
+      createScopedMissionStore(manager, scope, { idFactory: () => mission.id }).create({ title: mission.title });
+      const panes = createScopedMissionPaneStore(manager, scope);
+      harness.realPaneStore = panes;
+      const previous = panes.record({ missionId: mission.id, paneId: 'old-pane', adapterId: 'codex',
+        ...(input.previousAccountId ? { accountId: input.previousAccountId } : {}),
+        model: 'approved-model', effort: 'medium', cwd: scope.rootRealPath, role: 'orchestrator',
+        title: 'Coordenar e revisar', agentName: 'Coordenar e revisar', allowedTools: null, allowedSkills: null });
+      reviewedSquad = { id: 'squad-1', name: 'Fixture', createdAt: '1', builtin: false, orchestratorInstructions: '',
+        agents: squadAgents.map(agent => ({ ...agent, allowedTools: ['nexus_pane_spawn'], allowedSkills: [] })) };
+      const runtime = approved(input.approvedAccountId);
+      liveMission = { ...mission, orchestratorSessionId: 'old-session', intentContract: {
+        ...compileIntentContract({ goal: 'Prove Maestro account rotation', acceptanceCriteria: ['Same provider after resume'], intentVersion: 1 }),
+        approvedAt: 10, dispatchedAt: 11, squadRevisionHash: snapshotSquadAuthority(reviewedSquad).hash,
+        orchestratorRuntime: runtime,
+      } } as Mission;
+      await run({ panes, previous, runtime });
+    } finally { harness.realPaneStore = null; manager.closeAll(); fs.rmSync(root, { recursive: true, force: true }); }
+  }
+
+  async function sealedMismatches(runtime: ReturnType<typeof approved>): Promise<string[]> {
+    const { runtimeAuthorityMismatches } = await import('./mission-engine-production');
+    const physical = harness.physicalSessions.get('session-1')!;
+    const persisted = harness.realPaneStore!.findByPaneId('pane-1')!;
+    const authority = { sessionId: physical.sessionId, paneId: physical.paneId!, kind: 'cli-agent' as const,
+      missionId: mission.id, role: 'orchestrator' as const, scope, owner: null };
+    return runtimeAuthorityMismatches(scope, liveMission, persisted, physical, authority, runtime);
+  }
+
+  it('A: bootstrap e respawn pedem a conta aprovada, e o seletor não derruba o vínculo', async () => {
+    harness.accounts.set('acct-sealed', { adapterId: 'codex' });
+    harness.accounts.set('acct-headroom', { adapterId: 'codex' });
+    imitateSelector();
+    const registry = await import('./project-domain-store-registry');
+    registry.configureProjectDomainStoreRegistry(leadershipRuntime!.manager).forScope(scope);
+    liveMission = { ...mission, status: 'pending', intentState: 'ready_to_start', intentContract: {
+      ...compileIntentContract({ goal: 'Prove sealed Maestro account', acceptanceCriteria: ['same account'], intentVersion: 1 }),
+      approvedAt: Date.now(), dispatchedAt: Date.now(), orchestratorRuntime: approved('acct-sealed'),
+    } } as Mission;
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    expect(harness.spawnOptions[0]).toMatchObject({ accountId: 'acct-sealed' });
+    expect(harness.recordedPaneSpecs[0]).toMatchObject({ accountId: 'acct-sealed' });
+    for (const session of harness.sessionStates.keys()) harness.sessionStates.set(session, 'exited');
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(harness.spawnOptions.length).toBeGreaterThan(1);
+    expect(harness.spawnOptions.at(-1)).toMatchObject({ accountId: 'acct-sealed' });
+    expect(harness.recordedPaneSpecs.at(-1)).toMatchObject({ accountId: 'acct-sealed' });
+    expect(harness.trace).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'orchestrator-bind-refused' }));
+    expect(liveMission.status).not.toBe('blocked');
+  });
+
+  it.each(['acct-sealed', 'acct-b'])('A2: conta aprovada em cooldown — o respawn fixa a irmã do mesmo provider (linha em %s)', async previousAccountId => {
+    harness.accounts.set('acct-sealed', { adapterId: 'codex', blocked: true });
+    harness.accounts.set('acct-b', { adapterId: 'codex' });
+    imitateSelector();
+    await withPersistedMaestro({ approvedAccountId: 'acct-sealed', previousAccountId }, async ({ panes, previous, runtime }) => {
+      await fastLane.fastLaneBootstrap(scope, mission.id);
+      expect(harness.spawnOptions[0]).toMatchObject({ accountId: 'acct-b' });
+      expect(panes.list(mission.id)).toHaveLength(1);
+      expect(panes.findByPaneId('pane-1')).toMatchObject({ id: previous.id, accountId: 'acct-b', model: 'approved-model', effort: 'medium' });
+      expect(liveMission).toMatchObject({ status: 'running', orchestratorSessionId: 'session-1' });
+      // O `mission direct` seguinte não é recusado por pane.accountId×runtime.
+      expect(await sealedMismatches(runtime)).toEqual([]);
+    });
+  });
+
+  it('B: missão aprovada sem conta, com contas cadastradas — o spawn fixa a conta com folga do provider', async () => {
+    // Mesma régua do seletor sem pin (pickAvailableForFailover com as janelas
+    // de cota), mas fixada: a conta física fica decidida antes do PTY.
+    harness.accounts.set('acct-headroom', { adapterId: 'codex' });
+    await withPersistedMaestro({}, async ({ panes, runtime }) => {
+      await fastLane.fastLaneBootstrap(scope, mission.id);
+      expect(harness.spawnOptions[0]).toMatchObject({ accountId: 'acct-headroom' });
+      expect(panes.findByPaneId('pane-1')).toMatchObject({ accountId: 'acct-headroom' });
+      expect(await sealedMismatches(runtime)).toEqual([]);
+    });
+  });
+
+  it('B2: missão aprovada sem conta e provider sem conta cadastrada — sem pin, como antes', async () => {
+    await withPersistedMaestro({}, async ({ panes, runtime }) => {
+      await fastLane.fastLaneBootstrap(scope, mission.id);
+      expect((harness.spawnOptions[0] as { accountId?: string }).accountId).toBeUndefined();
+      expect(panes.findByPaneId('pane-1')?.accountId).toBeUndefined();
+      expect(await sealedMismatches(runtime)).toEqual([]);
+    });
+  });
+
+  it('B3: missão aprovada sem conta ainda recusa conta física de outro provider', async () => {
+    harness.accounts.set('acct-foreign', { adapterId: 'claude' });
+    harness.afterSpawn = physical => { physical.accountId = 'acct-foreign'; };
+    await withPersistedMaestro({}, async ({ panes, previous }) => {
+      const refusal = await fastLane.fastLaneBootstrap(scope, mission.id).then(() => '', (error: Error) => error.message);
+      expect(refusalLabels(refusal)).toContain('account[diferente]');
+      expect(panes.list(mission.id)).toEqual([previous]);
+    });
+  });
+
+  it.each([
+    ['conta de outro provider', (physical: Physical) => { physical.accountId = 'acct-foreign'; }, 'account[diferente]'],
+    ['conta desconhecida', (physical: Physical) => { physical.accountId = 'acct-ghost'; }, 'account[diferente]'],
+    ['modelo divergente', (physical: Physical) => { physical.requestedModel = 'other-model'; }, 'model[other-model != approved-model]'],
+  ])('E: %s continua recusado, com o rótulo e sem vazar a conta', async (_name, tamper, label) => {
+    harness.accounts.set('acct-sealed', { adapterId: 'codex' });
+    harness.accounts.set('acct-foreign', { adapterId: 'claude' });
+    imitateSelector(tamper);
+    await withPersistedMaestro({ approvedAccountId: 'acct-sealed', previousAccountId: 'acct-sealed' }, async ({ panes, previous }) => {
+      const refusal = await fastLane.fastLaneBootstrap(scope, mission.id).then(() => '', (error: Error) => error.message);
+      expect(refusalLabels(refusal)).toContain(label);
+      expect(refusal).not.toMatch(/acct-/);
+      expect(refusal).not.toContain(scope.rootRealPath);
+      expect(harness.trace).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'orchestrator-bind-refused', missionId: mission.id, sessionId: 'session-1', mismatches: expect.arrayContaining([label]) }));
+      expect(panes.list(mission.id)).toEqual([previous]);
+    });
+  });
+
+  it.each(['running', 'pending'] as const)('D: roster editado depois da aprovação — probe e spawn usam o modelo e o esforço aprovados (%s)', async status => {
+    reviewedSquad = { id: 'squad-1', name: 'Fixture', createdAt: '1', builtin: false, orchestratorInstructions: '',
+      agents: squadAgents.map(agent => agent.category === 'orchestrator' ? { ...agent, model: 'roster-model', effort: 'high' } : agent),
+    };
+    if (status === 'pending') {
+      const registry = await import('./project-domain-store-registry');
+      registry.configureProjectDomainStoreRegistry(leadershipRuntime!.manager).forScope(scope);
+      liveMission = { ...mission, status: 'pending', intentState: 'ready_to_start', intentContract: {
+        ...compileIntentContract({ goal: 'Prove approved Maestro model', acceptanceCriteria: ['approved model'], intentVersion: 1 }),
+        approvedAt: Date.now(), dispatchedAt: Date.now(), orchestratorRuntime: approved(),
+      } } as Mission;
+    } else {
+      liveMission = { ...mission, intentContract: { ...mission.intentContract, orchestratorRuntime: approved() } } as Mission;
+    }
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    expect(harness.spawnOptions[0]).toMatchObject({ model: 'approved-model', effort: 'medium' });
+    expect(harness.recordedPaneSpecs[0]).toMatchObject({ model: 'approved-model', effort: 'medium' });
+    // O probe de auth do bootstrap testa o mesmo modelo que vai no spawn.
+    if (status === 'pending') expect(harness.probe).toHaveBeenCalledWith('codex', expect.objectContaining({ model: 'approved-model' }));
+  });
+
+  it.each([
+    ['sem cota: a irmã do mesmo provider abre uma conversa nova', true,
+      { adapterId: 'claude', accountId: 'acct-b', resume: false }],
+    ['com cota: a conversa é retomada na própria conta', false,
+      { adapterId: 'claude', accountId: 'acct-operador', resume: true, resumeFromPaneId: 'pane-operador' }],
+  ])('A3: retomada da aba com a conta da conversa %s', async (_name, exhausted, expected) => {
+    harness.accounts.set('acct-operador', { adapterId: 'claude', blocked: exhausted });
+    harness.accounts.set('acct-b', { adapterId: 'claude' });
+    const { ProjectRuntimeManager } = await import('../runtime/project-runtime-manager');
+    const { createScopedMissionStore } = await import('./mission-store');
+    const { createScopedMissionPaneStore } = await import('./mission-pane-store');
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-f1470-tab-')));
+    const manager = new ProjectRuntimeManager({ baseDir: root, appVersion: 'test' });
+    try {
+      createScopedMissionStore(manager, scope, { idFactory: () => mission.id }).create({ title: mission.title });
+      const panes = createScopedMissionPaneStore(manager, scope);
+      harness.realPaneStore = panes;
+      const previous = panes.record({ missionId: mission.id, paneId: 'pane-operador', adapterId: 'claude',
+        model: 'claude-opus-5-5', accountId: 'acct-operador', cwd: scope.rootRealPath, role: 'orchestrator',
+        title: 'Orquestrador', agentName: 'Orquestrador', allowedTools: null, allowedSkills: null });
+      liveMission = {
+        ...mission,
+        squadId: undefined,
+        intentContract: { ...mission.intentContract, workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+      } as unknown as Mission;
+      await fastLane.fastLaneBootstrap(scope, 'mission-1');
+      expect(harness.spawnCount).toBe(1);
+      const spawn = harness.spawnOptions[0] as Record<string, unknown>;
+      expect(spawn).toMatchObject(expected);
+      // UMA linha de orquestrador: a mesma, agora no pane novo e na conta do pane.
+      const leaders = panes.list(mission.id).filter(row => row.role === 'orchestrator');
+      expect(leaders).toHaveLength(1);
+      expect(leaders[0]).toMatchObject({ id: previous.id, paneId: 'pane-1', accountId: expected.accountId });
+      if (exhausted) {
+        // A conversa só retoma na conta dona dela; a nova leva o aviso e o contexto.
+        expect(spawn.resumeFromPaneId).toBeUndefined();
+        expect(String(spawn.initialPrompt)).toContain('Esta conversa foi retomada');
+        expect(String(spawn.initialPrompt)).toContain('outra conta do mesmo provedor');
+      }
+    } finally { harness.realPaneStore = null; manager.closeAll(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
 });

@@ -29,6 +29,13 @@ import { takeKickoffDirects, resetKickoffDirectQueueForTests, beginKickoffBriefD
 
 afterEach(resetKickoffDirectQueueForTests);
 
+/** F-1470: contas que o store do Main conhece (vazio = store sem contas). */
+const knownAccounts = vi.hoisted(() => new Map<string, { id: string; adapterId: string }>());
+vi.mock('../persistence/account-store', async importOriginal => ({
+  ...await importOriginal<typeof import('../persistence/account-store')>(),
+  getAccount: (id: string) => knownAccounts.get(id) ?? null,
+}));
+
 /**
  * Caminho operador-como-orquestrador (P0-2, dossiê 2026-08-11): numa squad SEM
  * orquestrador (modo livre da Via Rápida), `deliverMissionDirectInstruction`
@@ -272,6 +279,40 @@ it('keeps the approved Maestro model and effort strict after default materializa
   expect(runtimeAuthorityMismatches(scope, mission, pane, agent, authority, runtime)).toEqual([]);
   expect(runtimeAuthorityMismatches(scope, mission, { ...pane, effort: 'high' }, { ...agent, effort: 'high' }, authority, runtime)).toContain('pane.effort×runtime[high != medium]');
   expect(runtimeAuthorityMismatches(scope, mission, { ...pane, model: 'other-model' }, { ...agent, requestedModel: 'other-model' }, authority, runtime)).toContain('pane.model×runtime[other-model != approved-model]');
+});
+
+it('F-1470: a conta do Maestro pode ser outra do mesmo provider; outro provider ou conta desconhecida continua recusada', () => {
+  knownAccounts.set('acct-b', { id: 'acct-b', adapterId: 'cli' });
+  knownAccounts.set('acct-headroom', { id: 'acct-headroom', adapterId: 'cli' });
+  knownAccounts.set('acct-foreign', { id: 'acct-foreign', adapterId: 'other-cli' });
+  try {
+    const scope = makeScope();
+    const mission = makeMission({ orchestratorSessionId: 'sess-orch-live' });
+    const runtime = { adapterId: 'cli', model: 'approved-model', effort: 'medium', accountId: 'acct-sealed', readOnly: false, nativeReadOnly: false } satisfies Parameters<typeof runtimeAuthorityMismatches>[5];
+    const seal = { intentVersion: 1, intentContractHash: 'a'.repeat(64), contextRevision: 'reviewed', contractHash: 'b'.repeat(64), squadRevisionHash: 'c'.repeat(64) };
+    const pane = makeOrchPane({ model: runtime.model, effort: runtime.effort, cwd: scope.rootRealPath, authoritySeal: seal });
+    const agent = makeOrchSession({ requestedModel: runtime.model, effort: runtime.effort, nativeReadOnly: false, authoritySeal: seal });
+    const authority = { sessionId: agent.sessionId, paneId: pane.paneId!, kind: 'cli-agent' as const, missionId: mission.id, role: 'orchestrator' as const, scope, owner: null };
+    const mismatches = (accountId: string | undefined, approved: Parameters<typeof runtimeAuthorityMismatches>[5] = runtime) =>
+      runtimeAuthorityMismatches(scope, mission, { ...pane, accountId }, { ...agent, accountId }, authority, approved);
+    expect(mismatches('acct-sealed')).toEqual([]);
+    // A2: o failover F-995 trocou a linha para a irmã do mesmo provider.
+    expect(mismatches('acct-b')).toEqual([]);
+    // B: missão aprovada sem conta — vale a conta do mesmo provider que o Main
+    // conhece, ou nenhuma; outro provider ou conta desconhecida não.
+    const unsealed = { ...runtime, accountId: undefined };
+    expect(mismatches('acct-headroom', unsealed)).toEqual([]);
+    expect(mismatches(undefined, unsealed)).toEqual([]);
+    expect(mismatches('acct-foreign', unsealed)).toContain('pane.accountId×runtime[acct-foreign != undefined]');
+    expect(mismatches('acct-ghost', unsealed)).toContain('pane.accountId×runtime[acct-ghost != undefined]');
+    // E: outro provider, conta desconhecida ou ausente continuam recusados.
+    expect(mismatches('acct-foreign')).toContain('pane.accountId×runtime[acct-foreign != acct-sealed]');
+    expect(mismatches('acct-ghost')).toContain('pane.accountId×runtime[acct-ghost != acct-sealed]');
+    expect(mismatches(undefined)).toContain('pane.accountId×runtime[undefined != acct-sealed]');
+    // A comparação ao vivo sessão×linha continua estrita.
+    expect(runtimeAuthorityMismatches(scope, mission, { ...pane, accountId: 'acct-b' }, { ...agent, accountId: 'acct-sealed' }, authority, runtime))
+      .toContain('agent.accountId×pane[acct-sealed != acct-b]');
+  } finally { knownAccounts.clear(); }
 });
 
 describe('mission direct — operador como orquestrador', () => {

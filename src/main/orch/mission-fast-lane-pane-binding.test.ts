@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
   physical: new Map<string, OwnedAgentSessionInfo>(),
   transport: 'pty',
   corrupt: null as ((info: OwnedAgentSessionInfo) => OwnedAgentSessionInfo) | null,
+  trace: vi.fn(),
 }));
 
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
@@ -43,7 +44,7 @@ vi.mock('../persistence/provider-config-store', () => ({
 vi.mock('../adapters/subscription-auth', () => ({ detectSubscriptionAuthReadiness: () => 'present' }));
 vi.mock('./squad-runtime-inventory', () => ({ warmSquadRuntimeSubscriptionAuth: async () => undefined }));
 vi.mock('../pty/warm-pool', () => ({ warmPool: { take: () => null } }));
-vi.mock('../observability/main-trace', () => ({ trace: () => undefined }));
+vi.mock('../observability/main-trace', () => ({ trace: state.trace }));
 vi.mock('./tool-util', () => ({
   deliverAgentPrompt: async () => true,
   withProjectContextBlocks: (options: { prompt?: string }) => options.prompt,
@@ -88,6 +89,7 @@ afterEach(() => {
   state.physical.clear();
   state.corrupt = null;
   state.transport = 'pty';
+  state.trace.mockClear();
 });
 
 function prepare(requestedScope = testProjectScope()) {
@@ -144,19 +146,22 @@ describe('first-wave physical pane binding', () => {
   });
 
   it.each([
-    ['missing nonce', (info: OwnedAgentSessionInfo) => ({ ...info, workerIncarnationId: undefined })],
-    ['missing seal', (info: OwnedAgentSessionInfo) => ({ ...info, authoritySeal: undefined })],
-    ['different session', (info: OwnedAgentSessionInfo) => ({ ...info, sessionId: 'another-session' })],
-    ['different pane', (info: OwnedAgentSessionInfo) => ({ ...info, paneId: 'another-pane' })],
-    ['different mission', (info: OwnedAgentSessionInfo) => ({ ...info, missionId: 'another-mission' })],
-    ['different agent', (info: OwnedAgentSessionInfo) => ({ ...info, agentName: 'another-agent' })],
-    ['different checkout', (info: OwnedAgentSessionInfo) => ({ ...info, scope: { ...info.scope, checkoutId: 'another-checkout' } })],
-    ['old intent hash', (info: OwnedAgentSessionInfo) => ({ ...info, authoritySeal: { ...info.authoritySeal!, intentContractHash: 'f'.repeat(64) } })],
-  ])('does not persist a worker with %s', async (_name, corrupt) => {
+    ['missing nonce', (info: OwnedAgentSessionInfo) => ({ ...info, workerIncarnationId: undefined }), 'incarnation'],
+    ['missing seal', (info: OwnedAgentSessionInfo) => ({ ...info, authoritySeal: undefined }), 'seal'],
+    ['different session', (info: OwnedAgentSessionInfo) => ({ ...info, sessionId: 'another-session' }), 'session'],
+    ['different pane', (info: OwnedAgentSessionInfo) => ({ ...info, paneId: 'another-pane' }), 'pane'],
+    ['different mission', (info: OwnedAgentSessionInfo) => ({ ...info, missionId: 'another-mission' }), 'mission'],
+    ['different agent', (info: OwnedAgentSessionInfo) => ({ ...info, agentName: 'another-agent' }), 'agent'],
+    ['different checkout', (info: OwnedAgentSessionInfo) => ({ ...info, scope: { ...info.scope, checkoutId: 'another-checkout' } }), 'scope'],
+    ['old intent hash', (info: OwnedAgentSessionInfo) => ({ ...info, authoritySeal: { ...info.authoritySeal!, intentContractHash: 'f'.repeat(64) } }), 'seal'],
+  ])('does not persist a worker with %s', async (_name, corrupt, label) => {
     state.corrupt = corrupt;
     const { scope, mission, panes } = prepare();
     expect(await dispatchFastLaneFirstWave(scope, mission.id)).toBe(0);
     expect(panes.list(mission.id)).toEqual([]);
+    // F-1470: a recusa nomeia o que divergiu no trace do Main.
+    expect(state.trace).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'worker-bind-refused', missionId: mission.id, mismatches: [label] }));
   });
 
   it.each(['pty', 'acp'])('persists the original %s spawn authority and makes its later physical responses eligible', async (transport) => {

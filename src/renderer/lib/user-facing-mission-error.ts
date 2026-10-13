@@ -41,9 +41,40 @@ function refusedGoalRecovery(raw: string): string | null {
   }
 }
 
+/**
+ * F-1470: o Main recusa o coordenador recém-aberto listando o que divergiu
+ * (`...mismatched: account[diferente], model[a != b]`). O banner mostrava o
+ * inglês cru; cada rótulo vira a ação que destrava. Build antigo sem rótulos
+ * cai na cópia genérica.
+ */
+function refusedCoordinatorBindRecovery(raw: string): string | null {
+  const match =
+    /orchestrator physical spawn authority is missing or mismatched(?::\s*(.*))?/i.exec(
+      raw,
+    );
+  if (!match) return null;
+  const labels = match[1] ?? "";
+  const retry = "Revise a equipe e aprove a missão de novo.";
+  if (/\bother-orchestrator\[/i.test(labels)) {
+    return "Já há outro coordenador rodando nesta missão. Feche os panes antigos do coordenador e use Retomar o coordenador.";
+  }
+  if (/\baccount\[/i.test(labels)) {
+    return `O coordenador não voltou porque a conta aprovada para ele mudou. ${retry}`;
+  }
+  if (/\b(?:model|effort)\[/i.test(labels)) {
+    return `O coordenador não voltou porque o modelo ou o esforço aprovado mudou. ${retry}`;
+  }
+  if (/\b(?:seal|intent|adapter)\b/i.test(labels)) {
+    return `O coordenador não voltou porque a equipe aprovada mudou. ${retry}`;
+  }
+  return "O coordenador não voltou. Use Retomar o coordenador; se repetir, use Reportar bug.";
+}
+
 function knownMissionRecovery(raw: string): string | null {
   const refusedGoal = refusedGoalRecovery(raw);
   if (refusedGoal) return refusedGoal;
+  const refusedCoordinator = refusedCoordinatorBindRecovery(raw);
+  if (refusedCoordinator) return refusedCoordinator;
   // F-245: retry-kickoff com o pane do coordenador fechado pelo operador.
   if (/orchestrator_operator_dismissed/i.test(raw)) {
     return "Você fechou o pane do coordenador. Clique em Retomar para reabrir a missão.";

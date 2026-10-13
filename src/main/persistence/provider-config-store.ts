@@ -1600,6 +1600,26 @@ function resolveSpawnAccountChoice(
 }
 
 /**
+ * F-1470: conta do Maestro de uma missão aprovada (bootstrap e respawn). A
+ * candidata — a linha durável, que o failover F-995 pode ter trocado, ou a
+ * conta aprovada — continua enquanto for deste provider, sem bloco e com
+ * credencial; senão vale a irmã com folga, pela mesma régua do failover.
+ * undefined = nenhuma conta utilizável: o spawn segue sem pin, como antes.
+ */
+export function pickMissionOrchestratorAccountId(
+  adapterId: string,
+  candidateId: string | undefined,
+  now = Date.now(),
+): string | undefined {
+  const candidate = candidateId ? getAccount(candidateId) : null;
+  if (candidate?.adapterId === adapterId && !isAccountBlockedForScope(candidate.id, now) &&
+    accountHasFailoverCredential(candidate)) return candidate.id;
+  const quotaByAccountId = quotaHeadroomFor(adapterId);
+  return pickAvailableForFailover(adapterId, candidateId ?? null, now, quotaScoresFor(adapterId),
+    quotaByAccountId ? { quotaByAccountId } : undefined).account?.id;
+}
+
+/**
  * Pane sem conta pinada nasce na conta ativa enquanto ela ainda tem cota.
  * A irmã só entra quando a ativa mede disponibilidade zero ou sai da lista
  * (cooldown, sem credencial, excluída pelo hit). Sem snapshot a ativa

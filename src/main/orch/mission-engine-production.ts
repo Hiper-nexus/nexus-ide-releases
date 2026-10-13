@@ -116,6 +116,7 @@ import {
   resumeFastLaneMission,
 } from "./mission-fast-lane";
 import { getSquad } from "./squad-store";
+import { missionOrchestratorAccountAllowed } from "./mission-orchestrator-account";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import { isFreeAgentChoiceContract } from "./free-agent-choice";
 import {
@@ -320,7 +321,11 @@ export function runtimeAuthorityMismatches(
   check("agent.readOnly×pane", agent.readOnly, pane.readOnly === true);
   check("pane.adapterId×runtime", pane.adapterId, approvedRuntime.adapterId);
   check("pane.model×runtime", pane.model, approvedRuntime.model);
-  check("pane.accountId×runtime", pane.accountId, approvedRuntime.accountId);
+  // F-1470: a conta é política do Main (folga, failover F-995) — outra conta
+  // do mesmo provider aprovado vale; a comparação sessão×linha segue estrita.
+  if (!missionOrchestratorAccountAllowed(approvedRuntime, pane.accountId)) {
+    check("pane.accountId×runtime", pane.accountId, approvedRuntime.accountId);
+  }
   check("pane.effort×runtime", pane.effort, approvedRuntime.effort);
   check(
     "pane.readOnly×runtime",
