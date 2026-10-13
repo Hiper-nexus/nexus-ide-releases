@@ -483,6 +483,28 @@ describe('copy alinhada ao caminho real', () => {
     expect(crashed).toMatch(/Digite para religar/);
     expect(crashed).toMatch(/rail/);
   });
+
+  it('encerramento PEDIDO pelo Nexus não é "caiu" — nem com o 129 do ConPTY (F-680/Windows)', () => {
+    // No Windows o kill do Nexus fecha o pseudoconsole e a CLI devolve
+    // 129 (Claude, 128+SIGHUP) ou -1073741510 (Codex, STATUS_CONTROL_C_EXIT):
+    // código de console fechado, não crash. Quem manda é a origem rotulada
+    // pelo Main, não o número.
+    for (const exitCode of [129, -1073741510, 143]) {
+      const notice = missionOwnedExitNotice(exitCode, 'mission-termination');
+      expect(notice).toMatch(/encerrado pelo Nexus/);
+      expect(notice).not.toMatch(/caiu/);
+      expect(notice).toMatch(/rail/);
+    }
+    const orchLines = orchestratorOwnedExitLines({
+      exitCode: 129,
+      terminationOrigin: 'mission-termination',
+    });
+    expect(orchLines.join('\n')).toMatch(/encerrado pelo Nexus/);
+    expect(orchLines.join('\n')).not.toMatch(/caiu/);
+    // Sem origem o mesmo 129 segue tratado como queda: o número sozinho
+    // não prova quem fechou o console.
+    expect(missionOwnedExitNotice(129)).toMatch(/caiu/);
+  });
 });
 
 describe('coordenador de missão concluída continua sendo o canal da revisão', () => {

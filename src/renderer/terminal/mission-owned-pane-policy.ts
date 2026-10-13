@@ -381,10 +381,28 @@ export function latestCivilianDeliverySummary(input: {
  * Exit de worker: o turno do AGENTE acabou, a missão não. "turno encerrado"
  * em 4 panes lia como missão fechada (print 24/08: resultado 2+2=4 no JSON
  * e Maestro morto). Instrução de tecla só quando o processo CAIU.
+ *
+ * Encerramento PEDIDO pelo próprio Nexus (`terminationOrigin` rotulada pelo
+ * Main, F-212) não é queda, qualquer que seja o código: no Windows o kill
+ * fecha o pseudoconsole (ConPTY) e a CLI devolve o código do console
+ * fechado — 129 no Claude (128+SIGHUP), -1073741510/0xC000013A no Codex —
+ * que o F-680 já mediu no trace como artefato do `mission-termination`,
+ * não crash. Classificar pelo número chamaria todo encerramento deliberado
+ * de "caiu"; quem decide é a origem. Sem origem, o mesmo código continua
+ * queda: o número sozinho não prova quem fechou o console.
  */
-export function missionOwnedExitNotice(exitCode: number): string {
+export function missionOwnedExitNotice(
+  exitCode: number,
+  terminationOrigin?: string,
+): string {
   if (exitCode === 0) {
     return `[nexus] agente entregou — a missão segue no Maestro.`;
+  }
+  if (terminationOrigin) {
+    return (
+      `[nexus] processo encerrado pelo Nexus (code ${exitCode}). ` +
+      'A missão continua no rail — retome por lá.'
+    );
   }
   return (
     `[nexus] processo caiu (code ${exitCode}). ` +
@@ -400,9 +418,10 @@ export function missionOwnedExitNotice(exitCode: number): string {
 export function orchestratorOwnedExitLines(input: {
   readonly exitCode: number;
   readonly deliverySummary?: string | null;
+  readonly terminationOrigin?: string;
 }): readonly string[] {
   if (input.exitCode !== 0) {
-    return [missionOwnedExitNotice(input.exitCode)];
+    return [missionOwnedExitNotice(input.exitCode, input.terminationOrigin)];
   }
   const summary = clampDeliverySummary(input.deliverySummary ?? '');
   return [

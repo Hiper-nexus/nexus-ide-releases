@@ -1536,6 +1536,7 @@ function startSpawn(
               const lines = orchestratorOwnedExitLines({
                 exitCode,
                 deliverySummary: summary,
+                terminationOrigin,
               });
               lines.forEach((line, index) => {
                 host.term.writeln(
@@ -1544,7 +1545,7 @@ function startSpawn(
               });
             } else {
               host.term.writeln(
-                `\r\n\x1b[33m${missionOwnedExitNotice(exitCode)}\x1b[0m`,
+                `\r\n\x1b[33m${missionOwnedExitNotice(exitCode, terminationOrigin)}\x1b[0m`,
               );
             }
           } else if (missionId && exitCode === 0) {
