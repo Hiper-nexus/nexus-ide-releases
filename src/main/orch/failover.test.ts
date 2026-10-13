@@ -172,6 +172,10 @@ import {
   clearRendererWorkspaceScope,
 } from '../persistence/renderer-workspace-scope';
 import {
+  listConfirmedPaneLimits,
+  resetPaneStartWatchdogForTests,
+} from './pane-start-watchdog';
+import {
   initFailover,
   registerFailoverListener,
   requestSessionRecovery,
@@ -1528,6 +1532,63 @@ describe('erro do provider (5xx) — episódio sem troca de conta', () => {
     expect(events[1]).toMatchObject({ kind: 'transient', switched: false, transientPhase: 'nudged' });
     expect(events.some((event) => event.switched === true)).toBe(false);
     expect(accountMocks.setCooldown).not.toHaveBeenCalled();
+  });
+
+  // F-1427: o MiniMax parou no erro do provedor, ficou idle_prompt e ninguém
+  // reabriu a tarefa — o "continue" era a única saída e o supervisor nem sabia.
+  it('F-1427: a parada no erro vai à rede do supervisor; a 2ª parada pula o retry', async () => {
+    resetPaneStartWatchdogForTests();
+    try {
+      const owner = await setupTransient();
+      ptyMocks.dataTaps[0]('session-503', E503);
+      ptyMocks.sessionStates.set('session-503', 'idle');
+      await vi.advanceTimersByTimeAsync(21_000);
+      await settleFailover();
+
+      // 1ª parada: um retry ("continue") e a ficha no prazo normal do supervisor.
+      expect(toolMocks.injectPrompt).toHaveBeenCalledOnce();
+      const first = listConfirmedPaneLimits();
+      expect(first).toHaveLength(1);
+      expect(first[0]).toMatchObject({
+        paneId: 'pane-503',
+        sessionId: 'session-503',
+        kind: 'provider-error',
+        reason: 'status:503',
+      });
+      expect(first[0]!.readyAt).toBeUndefined();
+
+      // O retry falhou igual: erro novo, CLI parada de novo.
+      ptyMocks.sessionStates.set('session-503', 'busy');
+      ptyMocks.dataTaps[0]('session-503', `${E503} (attempt 2)`);
+      await settleFailover();
+      ptyMocks.sessionStates.set('session-503', 'idle');
+      await vi.advanceTimersByTimeAsync(21_000);
+      await settleFailover();
+
+      // Sem 2º retry: a ficha fica pronta para o supervisor agir já.
+      expect(toolMocks.injectPrompt).toHaveBeenCalledOnce();
+      const second = listConfirmedPaneLimits();
+      expect(second).toHaveLength(1);
+      expect(second[0]).toMatchObject({ kind: 'provider-error' });
+      expect(second[0]!.readyAt).toBe(second[0]!.at);
+      expect(failoverEvents(owner).at(-1)).toMatchObject({
+        kind: 'transient',
+        switched: false,
+        transientPhase: 'stopped',
+      });
+      expect(accountMocks.setCooldown).not.toHaveBeenCalled();
+    } finally {
+      resetPaneStartWatchdogForTests();
+    }
+  });
+
+  it('F-1427: pane do operador (sem missão) nunca entra na rede de reabertura', async () => {
+    resetPaneStartWatchdogForTests();
+    await setupTransient({});
+    ptyMocks.dataTaps[0]('session-503', E503);
+    ptyMocks.sessionStates.set('session-503', 'idle');
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(listConfirmedPaneLimits()).toHaveLength(0);
   });
 
   it('CLI voltou a responder: não retoma nem mexe no pane', async () => {

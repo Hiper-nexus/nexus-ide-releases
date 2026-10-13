@@ -191,6 +191,12 @@ interface SessionWatch {
   /** F-764: varredura estourou o orçamento — nenhuma nova antes disto. */
   slowDetectUntil: number;
   analysisUnavailable?: boolean;
+  /**
+   * F-1427: esta sessão de missão já recebeu o retry único depois de parar no
+   * erro do provedor. Sobrevive ao fim do episódio: a próxima parada no erro
+   * vai direto para o supervisor reabrir a tarefa noutra CLI.
+   */
+  providerStopRetried?: boolean;
 }
 
 /**
@@ -2004,6 +2010,38 @@ function checkTransientRecoveryNow(
     return;
   }
   endTransientEpisode(watch);
+  if (authority.missionId) {
+    // F-1427: o MiniMax parou no "provider is temporarily unavailable" e o pane
+    // ficou ocioso até o Maestro fechar — o "continue" era a única saída. Agora
+    // a parada vai também à rede do supervisor (F-1414): sem saída nova, sem
+    // handoff e sem voltar a trabalhar, a tarefa é reaberta noutra CLI. Um
+    // retry só por sessão; a 2ª parada no erro já não espera o prazo.
+    const now = Date.now();
+    const retried = watch.providerStopRetried === true;
+    watch.providerStopRetried = true;
+    noteConfirmedPaneLimit({
+      paneId: pane.paneId,
+      sessionId: authority.sessionId,
+      adapterId: pane.adapterId,
+      reason: hit.reason,
+      at: now,
+      kind: 'provider-error',
+      ...(pane.model ? { model: pane.model } : {}),
+      ...(retried ? { readyAt: now } : {}),
+    });
+    if (retried) {
+      logSuppressedFailover(pane, current, hit, 'transient-cli-stopped-after-retry', 'transient-watch');
+      emitNoSwitch(
+        authority,
+        pane,
+        current,
+        hit,
+        `${hit.reason} — a CLI parou de novo depois do retry; a tarefa vai para outra CLI`,
+        'stopped',
+      );
+      return;
+    }
+  }
   if (!authority.missionId) {
     logSuppressedFailover(pane, current, hit, 'transient-cli-stopped-operator-pane', 'transient-watch');
     emitNoSwitch(

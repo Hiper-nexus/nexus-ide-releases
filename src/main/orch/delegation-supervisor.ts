@@ -108,6 +108,7 @@ import {
   paneTaskRerouteBlocker,
 } from './pane-task-reroute';
 import { trace } from '../observability/main-trace';
+import { noteMissionCliFailure } from './mission-cli-failures';
 import { sanitizePaneBootOutput } from './pane-boot-output';
 import { paneSessionLastOutputAt } from './pane-session-output';
 import { diagnosePaneBoot } from './pane-boot-diagnosis';
@@ -1023,9 +1024,8 @@ async function handlePaneNotStarted(
   let breaker: 'trip' | 'count' | 'skipped' = 'skipped';
   if (!watch.operatorOpened) {
     // F-734: o escopo da credencial é lido antes de fechar (a sessão some).
-    const accountBound =
-      watch.sessionId !== null &&
-      Boolean(getAgentSessionInfo(watch.sessionId)?.accountId);
+    const session = watch.sessionId !== null ? getAgentSessionInfo(watch.sessionId) : null;
+    const accountBound = Boolean(session?.accountId);
     await closeNotStartedPane(watch);
     if (deliveredMeanwhile()) return;
     if (!capacityRefused) {
@@ -1036,6 +1036,17 @@ async function handlePaneNotStarted(
         adapterCircuitBreakers.trip(watch.adapterId, CREDENTIAL_REJECTED_OPEN_MS);
       } else if (breaker === 'count') {
         adapterCircuitBreakers.recordFailure(watch.adapterId);
+      }
+      // F-1427: a tarefa saiu desta CLI sem prova de execução — falha dela
+      // nesta missão (o exclude do Maestro vale e o sucesso 14d registra).
+      if (watch.missionId) {
+        noteMissionCliFailure({
+          missionId: watch.missionId,
+          adapterId: watch.adapterId,
+          ...(session?.model ? { model: session.model } : {}),
+          cause: 'no-execution-proof',
+          attemptKey: watch.sessionId ?? watch.requestId,
+        });
       }
     }
   }
@@ -1263,7 +1274,8 @@ export async function checkLimitedTaskPanes(
 ): Promise<void> {
   for (const limit of listConfirmedPaneLimits()) {
     context?.assertCurrent();
-    if (now - limit.at < LIMIT_HANDOFF_MS) continue;
+    // F-1427: o erro de provedor que já gastou o retry chega pronto (`readyAt`).
+    if (now < (limit.readyAt ?? limit.at + LIMIT_HANDOFF_MS)) continue;
     const pane = listPaneSnapshots().find((live) => live.paneId === limit.paneId);
     const physical = getSessionState(limit.sessionId);
     // Revisão Fable M2: a mesma regra do checkPaneStart — PTY ocupado não
@@ -1292,6 +1304,17 @@ export async function checkLimitedTaskPanes(
     // Voltou a trabalhar sozinho (janela curta que passou).
     const semantic = getAgentSemanticStatusBySession(limit.sessionId);
     if (semantic?.status === 'working' && semantic.updatedAt > limit.at) continue;
+    // F-1427: a tarefa não saiu deste pane — falha da CLI nesta missão, com
+    // ou sem reabertura (teto, operador e pin também não fazem a tarefa andar).
+    if (handle.missionId && handle.role === 'worker' && !handle.operatorOpened) {
+      noteMissionCliFailure({
+        missionId: handle.missionId,
+        adapterId: limit.adapterId,
+        ...(limit.model ? { model: limit.model } : {}),
+        cause: limit.kind === 'provider-error' ? 'provider-error' : 'usage-limit',
+        attemptKey: limit.sessionId,
+      });
+    }
     const blocker = paneTaskRerouteBlocker(handle);
     let outcome: Parameters<typeof paneLimitNoticeSummary>[0]['outcome'];
     if (blocker === 'operator' || blocker === 'pinned' || blocker === 'chain-limit') {
@@ -1324,6 +1347,7 @@ export async function checkLimitedTaskPanes(
       adapterId: limit.adapterId,
       reason: limit.reason,
       outcome,
+      ...(limit.kind ? { kind: limit.kind } : {}),
     });
     trace({
       kind: 'pane-limit-reroute',

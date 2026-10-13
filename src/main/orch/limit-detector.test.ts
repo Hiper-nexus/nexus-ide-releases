@@ -995,3 +995,48 @@ describe('F-765: recusa de modelo do Codex com conta ChatGPT', () => {
     expect(elapsedMs).toBeLessThan(50);
   });
 });
+
+describe('F-1427: célula de erro de provedor/rede da própria CLI', () => {
+  // Tela real do MiniMax Code (13/10/2026): o pane ficou idle_prompt parado.
+  const MINIMAX_SCREEN = [
+    '⏺ Vou começar lendo o supervisor do F-1414.',
+    '',
+    '× Error  The response failed.',
+    'Reason: [Error] Connection error.',
+    'Run /retry to resend your last message. Your prompt is preserved.',
+    '× Error  The model provider is temporarily unavailable.',
+    'Code: 50113',
+    '',
+    '> ',
+  ].join('\n');
+
+  it('reconhece o rodapé do MiniMax Code como erro transitório do provedor', () => {
+    const hit = detectLimit(MINIMAX_SCREEN);
+    expect(hit).toMatchObject({ kind: 'transient' });
+    expect(hit?.reason).toContain('The response failed');
+    // Nunca vira limite de conta/CLI: sem marca de confirmação.
+    expect(hit?.confirmed).toBeUndefined();
+  });
+
+  it.each([
+    ['provedor indisponível', '  ✗ Error: The model provider is temporarily unavailable.'],
+    ['erro de conexão', '× Error  Connection error.'],
+    ['serviço sobrecarregado', '× Error  The service is temporarily overloaded'],
+    ['motivo de rede', 'Reason: [Error] socket hang up'],
+  ])('célula genérica no começo da linha: %s', (_label, line) => {
+    expect(detectLimit(`resposta parcial\n${line}\n> `)?.kind).toBe('transient');
+  });
+
+  it.each([
+    ['frase solta no meio da linha (log)', '2026-10-13 12:00:01 WARN upstream: The model provider is temporarily unavailable (retrying)'],
+    ['asserção de teste', "    expect(screen).toContain('× Error  The response failed.');"],
+    ['saída de ferramenta emoldurada', '  ⎿  × Error  The response failed.'],
+    ['caixa de ferramenta', '│ Reason: [Error] Connection error.'],
+    ['nome de teste do vitest', ' × src/main/x.test.ts > shows Connection error 12ms'],
+    ['prosa do agente', 'O MiniMax mostrou "Connection error" e "The response failed" no rodapé.'],
+    ['bloco citado', '```\n× Error  The response failed.\n```'],
+    ['recuo de código', '        × Error  Connection error.'],
+  ])('não dispara em texto de erro fora da célula da CLI: %s', (_label, text) => {
+    expect(detectLimit(text)).toBeNull();
+  });
+});

@@ -167,6 +167,7 @@ import {
   type PaneStartWatchInit,
 } from './pane-start-watchdog';
 import { adapterCircuitBreakers } from './circuit-breaker';
+import { missionCliFailures, resetMissionCliFailures } from './mission-cli-failures';
 import {
   getPaneTaskReroute,
   registerPaneTaskReroute,
@@ -1333,6 +1334,20 @@ describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra L
     expect(getPaneStartWatch('pane-kimi')).toBeNull();
   });
 
+  // F-1427: a reabertura por falta de prova é falha da CLI nesta missão — o
+  // exclude seguinte do Maestro vale e o sucesso 14d registra.
+  it('F-1427: reabrir por falta de prova conta como falha da CLI nesta missão', async () => {
+    resetMissionCliFailures();
+    kimiStuckInComposer(10 * 60_000);
+    h.agentInfo.mockReturnValue({ adapterId: 'kimi', model: 'kimi-code/k3' });
+    await checkPaneStarts(NOW);
+    expect(reroute).toHaveBeenCalledTimes(1);
+    expect(missionCliFailures('mission-f723', 'kimi')).toEqual([
+      expect.objectContaining({ cause: 'no-execution-proof', model: 'kimi-code/k3', attemptKey: 'session-kimi' }),
+    ]);
+    resetMissionCliFailures();
+  });
+
   it('revisão Grok: worker que entrega enquanto o pane fecha não tem a tarefa reaberta noutra CLI', async () => {
     kimiStuckInComposer(10 * 60_000);
     h.requestPaneClose.mockImplementationOnce(async () => {
@@ -1526,6 +1541,80 @@ describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra L
       expect(taskReroute).not.toHaveBeenCalled();
       expect(h.requestPaneClose).not.toHaveBeenCalled();
       expect(h.submit).not.toHaveBeenCalled();
+    });
+
+    // F-1427: o MiniMax parou no erro do provedor, o retry não adiantou e o
+    // pane ficou idle_prompt até o Maestro fechar.
+    it('F-1427: erro do provedor depois do retry reabre noutra CLI sem esperar o prazo e conta na missão', async () => {
+      resetMissionCliFailures();
+      registerPaneTaskReroute({
+        paneId: 'pane-mm',
+        adapterId: 'minimax-code',
+        missionId: 'mission-f723',
+        role: 'worker',
+        callerSessionId: 'session-maestro',
+        routeTask: 'Correção hard no supervisor',
+        lineageId: 'pane-mm',
+        operatorOpened: false,
+        pinnedRuntime: false,
+        generation: 0,
+        reroute: taskReroute,
+        hasAlternative: () => true,
+      }, NOW);
+      h.listPaneSnapshots.mockReturnValue([
+        { paneId: 'pane-mm', sessionId: 'session-mm', kind: 'cli-agent', role: 'worker', state: 'idle', missionId: 'mission-f723', scope: SCOPE },
+      ]);
+      h.sessionState.mockReturnValue('idle');
+      noteConfirmedPaneLimit({
+        paneId: 'pane-mm',
+        sessionId: 'session-mm',
+        adapterId: 'minimax-code',
+        reason: '× Error  The model provider is temporarily unavailable.',
+        at: NOW,
+        kind: 'provider-error',
+        model: 'MiniMax-M3',
+        readyAt: NOW,
+      });
+      await checkLimitedTaskPanes(NOW);
+      expect(h.requestPaneClose).toHaveBeenCalledWith('pane-mm', 'session-mm');
+      expect(taskReroute).toHaveBeenCalledWith({
+        excludeAdapterIds: ['minimax-code'],
+        worktreeFromPaneId: 'pane-mm',
+      });
+      expect(summaryAt()).toBe(
+        '[provedor:pane-mm] O pane pane-mm (minimax-code) parou no erro do provedor ' +
+          '(× Error  The model provider is temporarily unavailable.) e não voltou depois do retry, ' +
+          'antes de entregar a tarefa. Reenviada para codex (pane pane-novo), na mesma worktree quando havia uma.',
+      );
+      expect(missionCliFailures('mission-f723', 'minimax-code')).toEqual([
+        expect.objectContaining({ cause: 'provider-error', model: 'MiniMax-M3', attemptKey: 'session-mm' }),
+      ]);
+      resetMissionCliFailures();
+    });
+
+    it('F-1427: 1ª parada no erro do provedor espera o prazo do retry; quem voltou a imprimir fica', async () => {
+      // Sessão própria: o buffer de saída é global entre os testes.
+      const at = Date.now() - 2 * LIMIT_HANDOFF_MS;
+      registerPaneTaskReroute({
+        paneId: 'pane-mm2', adapterId: 'minimax-code', missionId: 'mission-f723', role: 'worker',
+        callerSessionId: 'session-maestro', routeTask: 'x', lineageId: 'pane-mm2', operatorOpened: false,
+        pinnedRuntime: false, generation: 0, reroute: taskReroute, hasAlternative: () => true,
+      }, at);
+      h.listPaneSnapshots.mockReturnValue([
+        { paneId: 'pane-mm2', sessionId: 'session-mm2-out', kind: 'cli-agent', role: 'worker', state: 'idle', missionId: 'mission-f723', scope: SCOPE },
+      ]);
+      h.sessionState.mockReturnValue('idle');
+      noteConfirmedPaneLimit({
+        paneId: 'pane-mm2', sessionId: 'session-mm2-out', adapterId: 'minimax-code',
+        reason: '× Error  Connection error.', at, kind: 'provider-error',
+      });
+      await checkLimitedTaskPanes(at + LIMIT_HANDOFF_MS - 1);
+      expect(taskReroute).not.toHaveBeenCalled();
+      // O retry funcionou: saída nova depois do settle.
+      recordPaneSessionData('session-mm2-out', 'resposta nova depois do retry\r\n');
+      await checkLimitedTaskPanes(Date.now());
+      expect(taskReroute).not.toHaveBeenCalled();
+      expect(h.requestPaneClose).not.toHaveBeenCalled();
     });
 
     it('(e) no teto de reaberturas: não reabre, deixa o pane e bloqueia com o motivo', async () => {

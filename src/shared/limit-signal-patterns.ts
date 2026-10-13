@@ -236,6 +236,33 @@ export const LIMIT_SIGNAL_PATTERNS: readonly LimitSignalPattern[] = [
   // F-683: OpenCode Zen com o modelo desligado para a conta (29/09):
   // "Error: Upstream request failed: Model access is disabled".
   { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /upstream request failed:\s*model access is disabled/i },
+  // ── F-1427: célula de erro de provedor/rede da PRÓPRIA CLI (transient) ───
+  //
+  // Tela real do MiniMax Code (minimax-code) em 13/10/2026 — o pane ficou
+  // `idle_prompt` parado até o Maestro fechar, porque nada aqui casava:
+  //   × Error  The response failed.
+  //   Reason: [Error] Connection error.
+  //   Run /retry to resend your last message. Your prompt is preserved.
+  //   × Error  The model provider is temporarily unavailable.
+  //   Code: 50113
+  // Forma genérica de célula de erro de TUI: no começo da linha (até 4
+  // espaços de recuo, sem moldura de ferramenta `⎿`/`│`), o glifo de falha,
+  // "Error" e a frase de provedor/rede. A frase solta no meio de uma linha
+  // (log, teste, `cat`, prosa do agente) nunca casa; citação em bloco/cerca
+  // sai antes (`stripQuotedDiagnosticExamples`). Sobrecarga, 5xx e limite de
+  // taxa já têm padrão próprio (acima e no classify do omp). `transient`: a
+  // conta está sã — o failover não troca de conta; dá um retry e, sem
+  // progresso, entrega a tarefa à rede do supervisor (F-1414).
+  {
+    kind: 'transient',
+    cooldownMs: 30_000,
+    re: /^[^\S\r\n]{0,4}[×✗✕✘❌][^\S\r\n]*Error:?[^\S\r\n]+(?:The response failed|The model provider is (?:temporarily )?unavailable|(?:The )?(?:API |model )?(?:provider|server|service) is (?:temporarily )?(?:unavailable|overloaded)|Connection error|Network error|Request timed out)\b/m,
+  },
+  {
+    kind: 'transient',
+    cooldownMs: 30_000,
+    re: /^[^\S\r\n]{0,4}Reason:[^\S\r\n]*\[Error\][^\S\r\n]*(?:Connection error|Network error|Request timed out|fetch failed|socket hang up|ECONNRESET|ETIMEDOUT)\b/m,
+  },
 ];
 
 /** F-511: a 2ª linha de um pack antigo, exatamente como o Nexus a escreve. */

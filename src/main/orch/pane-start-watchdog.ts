@@ -405,10 +405,14 @@ export function paneLimitNoticeSummary(input: {
   readonly outcome:
     | PaneStartOutcome
     | { readonly kind: 'not-rerouted'; readonly why: 'not-reopenable' };
+  /** F-1427: erro de provedor/rede em vez de limite de uso. */
+  readonly kind?: ConfirmedPaneLimit['kind'];
 }): string {
-  const head =
-    `[limite:${input.paneId}] O pane ${input.paneId} (${input.adapterId}) bateu o ` +
-    `limite de uso confirmado (${input.reason}) antes de entregar a tarefa.`;
+  const head = input.kind === 'provider-error'
+    ? `[provedor:${input.paneId}] O pane ${input.paneId} (${input.adapterId}) parou no ` +
+      `erro do provedor (${input.reason}) e não voltou depois do retry, antes de entregar a tarefa.`
+    : `[limite:${input.paneId}] O pane ${input.paneId} (${input.adapterId}) bateu o ` +
+      `limite de uso confirmado (${input.reason}) antes de entregar a tarefa.`;
   const outcome = input.outcome;
   if (outcome.kind === 'rerouted') {
     return `${head} Reenviada para ${outcome.adapterId} (pane ${outcome.paneId}), na mesma worktree quando havia uma.`;
@@ -775,6 +779,19 @@ export interface ConfirmedPaneLimit {
   readonly adapterId: string;
   readonly reason: string;
   readonly at: number;
+  /**
+   * F-1427: `provider-error` = o pane parou no erro de provedor/rede da própria
+   * CLI e não voltou depois do retry. Ausente = limite de uso (F-1414).
+   */
+  readonly kind?: 'limit' | 'provider-error';
+  /** Modelo da sessão, para o sucesso 14d da rota (F-1427). */
+  readonly model?: string;
+  /**
+   * F-1427: a partir de quando o supervisor age. Ausente = `at` +
+   * LIMIT_HANDOFF_MS (o prazo do failover). O 2º erro de provedor depois do
+   * retry já não espera: o retry único foi gasto.
+   */
+  readonly readyAt?: number;
 }
 
 const confirmedLimits = new Map<string, ConfirmedPaneLimit>();
