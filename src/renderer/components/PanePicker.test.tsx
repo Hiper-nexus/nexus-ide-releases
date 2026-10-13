@@ -31,6 +31,14 @@ const accountsManager = vi.hoisted(() => ({
   added: null as null | ((accountId: string) => void),
   adapterId: '',
 }));
+
+// Sessões físicas por pane — o host real não existe no jsdom; o contrato que
+// importa aqui é "pane com sessão viva" (F-1431).
+const paneSessions = vi.hoisted(() => new Map<string, string>());
+vi.mock('../terminal/terminal-host', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../terminal/terminal-host')>()),
+  getPaneSessionId: (paneId: string) => paneSessions.get(paneId) ?? null,
+}));
 vi.mock('./settings/AccountsManager', () => ({
   AccountsManager: (props: {
     adapterId: string;
@@ -220,6 +228,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     ).__nexusGetScrollbackExcerpt;
     accountsManager.added = null;
     accountsManager.adapterId = '';
+    paneSessions.clear();
   });
 
   afterEach(() => {
@@ -443,6 +452,75 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     expect(
       runPanePickerIntent({ kind: 'agent', adapterId: 'codex', model: 'x' }),
     ).toBe('pane-agent');
+  });
+
+  // F-1431: "+ Pane" é um pedido de pane NOVO. Um pane vivo da mesma CLI+conta
+  // (mesmo ocupado) não pode virar limite de 1 pane por conta disfarçado.
+  it('+ Pane numa CLI com pane vivo OCUPADO nasce pane novo e devolve o id novo', () => {
+    paneSessions.set('pane-live', 'sess-live');
+    useSessionStateStore.setState({
+      paneStates: new Map([['pane-live', 'busy']]),
+    });
+    useLayoutStore.setState({
+      spawnAgent,
+      addShellPane,
+      addBrowserPane,
+      focusedPaneId: 'pane-live',
+      root: createLeaf({
+        id: 'pane-live',
+        kind: 'cli-agent',
+        title: 'Claude',
+        adapterId: 'claude',
+        accountId: 'acc-a',
+      }),
+    } as never);
+
+    spawnAgent.mockReturnValueOnce('pane-novo');
+    const id = runPanePickerIntent({
+      kind: 'agent',
+      adapterId: 'claude',
+      model: 'claude-alt',
+      accountId: 'acc-a',
+    });
+
+    expect(spawnAgent).toHaveBeenCalledTimes(1);
+    expect(spawnAgent).toHaveBeenCalledWith(
+      'claude',
+      'claude-alt',
+      expect.objectContaining({ accountId: 'acc-a' }),
+    );
+    expect(id).toBe('pane-novo');
+  });
+
+  it('+ Pane numa CLI com pane vivo OCIOSO também nasce pane novo', () => {
+    paneSessions.set('pane-live', 'sess-live');
+    useSessionStateStore.setState({
+      paneStates: new Map([['pane-live', 'idle']]),
+    });
+    useLayoutStore.setState({
+      spawnAgent,
+      addShellPane,
+      addBrowserPane,
+      focusedPaneId: 'pane-live',
+      root: createLeaf({
+        id: 'pane-live',
+        kind: 'cli-agent',
+        title: 'Claude',
+        adapterId: 'claude',
+        accountId: 'acc-a',
+      }),
+    } as never);
+
+    spawnAgent.mockReturnValueOnce('pane-novo');
+    const id = runPanePickerIntent({
+      kind: 'agent',
+      adapterId: 'claude',
+      model: 'claude-alt',
+      accountId: 'acc-a',
+    });
+
+    expect(spawnAgent).toHaveBeenCalledTimes(1);
+    expect(id).toBe('pane-novo');
   });
 
   it('setas movem a seleção e Enter abre a linha ativa', () => {

@@ -7,11 +7,6 @@ import type { ProviderSettingsInfo } from '../../shared/provider-settings-types'
 import { filterPaletteActions } from '../lib/command-palette-filter';
 import { rankPickerModels, type PickerModelRow } from '../lib/pane-picker-models';
 import { listPanes } from '../lib/split-tree';
-import {
-  findReusableAgentPane,
-  revealPaneTerminal,
-} from '../lib/reveal-pane-terminal';
-import { isLivePaneSessionState } from '../lib/pane-mission-promote';
 import { planOperatorAgentSpawn } from '../orch/stranded-mission-handoff';
 import { useAccountStore } from '../state/account-store';
 import { useLayoutStore } from '../state/layout-store';
@@ -725,31 +720,6 @@ export function runPanePickerIntent(intent: PanePickerIntent): string | undefine
     fromAccountLabel: accountLabelOf(focused?.accountId, 'conta anterior'),
     toAccountLabel: accountLabelOf(intent.accountId, DEFAULT_ACCOUNT_LABEL),
   });
-  // F-572: continuidade de failover é sessão NOVA (outro trabalho). Sem ela,
-  // a mesma CLI+conta com pane vivo e sessão é revelada em vez de nascer
-  // outro PTY (~0,5–1 GB).
-  if (!planned.continuityPack) {
-    const reusable = findReusableAgentPane(
-      panes,
-      (paneId) => getPaneSessionId(paneId),
-      (paneId) =>
-        isLivePaneSessionState(
-          useSessionStateStore.getState().paneStates.get(paneId),
-        ),
-      {
-        adapterId: intent.adapterId,
-        accountId: intent.accountId,
-        paneStates: useSessionStateStore.getState().paneStates,
-      },
-    );
-    if (reusable) {
-      const revealed = revealPaneTerminal({
-        kind: 'pane',
-        paneId: reusable.id,
-      });
-      if (revealed.action !== 'missing') return reusable.id;
-    }
-  }
   if (planned.accountId || planned.continuityPack) {
     return layout.spawnAgent(intent.adapterId, intent.model, planned);
   }
