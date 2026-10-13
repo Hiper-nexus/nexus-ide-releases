@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.250 — Comandos pesados de volta no Windows
+
+No Windows, todo comando pesado que um pane Claude rodava pelo Bash (testes, `tsc`, build, `npm install`) saía na hora com "physical CPU/RAM admission unavailable", mesmo com a máquina ociosa. O Bash do Claude no Windows é o Git Bash, que numera os processos do jeito dele, e o Nexus procurava o comando pelo número errado. Agora vai o número do Windows e o comando roda, inclusive nos workers de squad e de missão.
+
+- **Fila que não trava.** O Windows reaproveita números de processo. Um processo antigo (navegador, Explorer, o próprio Nexus) podia ser confundido com filho de um teste, e a vaga do projeto nunca voltava: todo comando pesado seguinte esperava 5 minutos e desistia. Agora só conta como filho quem nasceu depois do pai.
+- **Recusa que diz o motivo.** Quando o Nexus não deixa um comando pesado começar, a mensagem diz por quê: outro job na mesma pasta, o limite de jobs paralelos da máquina, swap ou RAM livre abaixo da reserva (com os GB). A RAM só é citada quando falta RAM.
+
 ## 0.76.249 — Linux em dia com o Mac e o Windows
 
 O Omarchy (ZIP portátil) e o Debian/Ubuntu (`.deb`, também o `.rpm`) estavam parados na 0.76.201. As versões 0.76.202 a 0.76.245 saíram só para Mac e Windows, e o atualizador do Linux só avança quando a release traz os três pacotes juntos. Sem eles, o app instalado consultava o espelho e respondia que já estava na mais recente.

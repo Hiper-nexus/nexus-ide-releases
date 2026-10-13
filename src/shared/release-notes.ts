@@ -10492,7 +10492,7 @@ export const RELEASE_076245: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076249: AppRelease = {
   version: '0.76.249',
   date: '2026-10-13',
   codename: 'Linux em dia com o Mac e o Windows',
@@ -10506,4 +10506,16 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Atualização do Linux', detail: 'Da 0.76.202 à 0.76.245 só havia pacote de Mac ou Windows. O Omarchy consultava o espelho e ficava na 0.76.201, achando que já estava na mais recente.' },
   ],
 };
-
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.250',
+  date: '2026-10-13',
+  codename: 'Comandos pesados de volta no Windows',
+  summary: 'No Windows, testes, typecheck, build e npm install rodados pelo Bash de um pane Claude voltam a rodar, a fila de comandos pesados não trava mais e toda recusa diz o motivo real.',
+  highlights: [
+    { title: 'Testes e build pelo Bash no Windows', detail: 'O Git Bash numera os processos do jeito dele e o Nexus procurava o comando pelo número errado. Agora vai o número do Windows, e os workers de squad e de missão voltam a testar e compilar.' },
+  ],
+  fixes: [
+    { title: 'Fila de comandos pesados presa', detail: 'Um processo antigo, com número reaproveitado pelo Windows, era confundido com filho de um teste e a vaga do projeto nunca voltava. Agora só conta como filho quem nasceu depois do pai.' },
+    { title: 'Recusa com o motivo real', detail: 'A mensagem diz se foi outro job na mesma pasta, o limite de jobs da máquina, swap ou RAM abaixo da reserva. A RAM só é citada quando falta RAM.' },
+  ],
+};
