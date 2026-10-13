@@ -87,9 +87,9 @@
       "file": "src/main/adapters/subscription-auth.ts",
       "method": "execFileSync",
       "kind": "call",
-      "fingerprint": "50ae2a04574cc4b5f81ed28728e3882a569d8e9c31214f012f0c40a6f8eb3e0d",
+      "fingerprint": "40e9a283241a18b762924e42d7a080ea4d863c0318eb73f7bc877a5610c7e41d",
       "count": 1,
-      "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
+      "reason": "Same existing bounded Muse keychain-presence probe (security find-generic-password, 5s SIGKILL cap), routed through an injectable seam for the F-1438 denial-backoff tests; no new process or arguments."
     },
     {
       "file": "src/main/adapters/subscription-auth.ts",
@@ -144,7 +144,7 @@
       "method": "execFileSync",
       "kind": "reference",
       "fingerprint": "caaa07be0bbda7e65609e75d781d7fb7b053254b5c08e3b2f713ff563ea9eb28",
-      "count": 4,
+      "count": 5,
       "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
     },
     {
