@@ -285,6 +285,18 @@ export function submitPromptToPaneOperator(
   );
 }
 
+/**
+ * F-1411 follow-up: `bracketedPaste: false` do adapter declara o método de
+ * injeção do argv (ex.: Claude `promptInjection`), não que a TUI rejeite
+ * colagem. LF cru vira Enter no composer (só a 1ª linha envia): multiline
+ * SEMPRE cola com o marcador; linha única mantém o caminho cru do F-1411.
+ * Kimi declara true e cola sempre — intocado.
+ */
+function bracketedPasteInput(bracketedPaste: boolean | undefined, text: string): string {
+  if (bracketedPaste === false && !text.includes('\n')) return text;
+  return `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}`;
+}
+
 /** Confirm paste and Enter against the exact recovered PTY identity. */
 export function submitPromptToPaneConfirmed(
   paneId: string,
@@ -297,7 +309,7 @@ export function submitPromptToPaneConfirmed(
     return Promise.resolve(false);
   }
   if (ports.probePromptState) {
-    const input = ports.bracketedPaste === false ? text : `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}`;
+    const input = bracketedPasteInput(ports.bracketedPaste, text);
     return submitWithTurnProof(paneId, input, expectedSessionId, ports, ports.writeConfirmed);
   }
   return ports.writeConfirmed(
@@ -352,7 +364,7 @@ export function submitDictationToPaneConfirmed(
     return submitPromptToPaneConfirmed(paneId, text, expectedSessionId, ports)
       .then((ok) => (ok ? 'started' : 'failed'));
   }
-  const input = ports.bracketedPaste === false ? text : `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}`;
+  const input = bracketedPasteInput(ports.bracketedPaste, text);
   return submitWithTurnProofOutcome(paneId, input, expectedSessionId, ports, ports.writeConfirmed, true);
 }
 

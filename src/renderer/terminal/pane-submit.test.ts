@@ -535,3 +535,58 @@ describe('C1 (F-1393): ramo busy — Enter com a sequência atual e falha pós-e
   });
 });
 
+describe('F-1411 follow-up: multiline to Claude (bracketedPaste:false) stays bracketed', () => {
+  function declinedPorts(state: 'idle' | 'busy' = 'idle') {
+    const writes: string[] = [];
+    let enters = 0;
+    const ports: PaneSubmitPorts = {
+      getSessionId: () => 'session-claude',
+      schedule: (cb: () => void, ms: number) => setTimeout(cb, ms),
+      write: vi.fn(),
+      writeConfirmed: vi.fn(async (_id: string, data: string) => { writes.push(data); return true; }),
+      submitPromptEnter: vi.fn(async () => { writes.push('\r'); enters++; return true; }),
+      bracketedPaste: false,
+      probePromptState: async () => ({
+        turnStartSequence: enters >= 1 ? 1 : 0,
+        state: state as 'idle' | 'busy',
+        awaitingInput: false,
+        ...(state === 'busy' ? { queuesInputWhileBusy: true } : {}),
+      }),
+    };
+    return { ports, writes };
+  }
+
+  it('confirmed multiline wraps despite bracketedPaste:false (LF-as-Enter guard)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, writes } = declinedPorts();
+      const pending = submitPromptToPaneConfirmed('pane-claude', 'linha um\nlinha dois', 'session-claude', ports);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(await pending).toBe(true);
+      expect(writes[0]).toBe('\x1b[200~linha um\nlinha dois\x1b[201~');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('single-line keeps the F-1411 raw path', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, writes } = declinedPorts();
+      const pending = submitPromptToPaneConfirmed('pane-claude', 'uma linha', 'session-claude', ports);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(await pending).toBe(true);
+      expect(writes[0]).toBe('uma linha');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('dictation multiline wraps despite bracketedPaste:false', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, writes } = declinedPorts('busy');
+      const pending = submitDictationToPaneConfirmed('pane-claude', 'fala um\nfala dois', 'session-claude', ports);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(pending).resolves.toBe('queued');
+      expect(writes).toEqual(['\x1b[200~fala um\nfala dois\x1b[201~', '\r']);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
