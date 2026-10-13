@@ -486,8 +486,8 @@ describe('F-1424 — privacidade do ditado (nunca grava texto falado em log ou c
       const logCalls = (window.nexus.voice.logVoice as unknown as ReturnType<typeof vi.fn>).mock.calls;
       const transcriptCall = logCalls.find((call) => call[0]?.event === 'stt.dictationTranscript');
       expect(transcriptCall).toBeDefined();
-      expect(transcriptCall[0].msg).not.toContain(syntheticPhrase);
-      expect(JSON.stringify(transcriptCall[0])).not.toContain(syntheticPhrase);
+      expect(transcriptCall?.[0].msg).not.toContain(syntheticPhrase);
+      expect(JSON.stringify(transcriptCall?.[0])).not.toContain(syntheticPhrase);
 
       const consoleCalls = consoleLogSpy.mock.calls.map((c) => c.join(' ')).join('\n');
       expect(consoleCalls).not.toContain(syntheticPhrase);
