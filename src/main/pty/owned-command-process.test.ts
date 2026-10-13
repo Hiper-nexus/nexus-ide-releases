@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { OwnedCommandProcesses } from './owned-command-process';
-import type { DescendantSnapshot, ProcessTableRow } from './pty-descendant-termination';
+import { collectDescendantRows, type DescendantSnapshot, type ProcessTableRow } from './pty-descendant-termination';
 const row = (pid: number, ppid: number, startedAt = 'Sat Oct  3 12:00:00 2026'): ProcessTableRow => ({ pid, ppid, pgid: 1, sid: 1, tty: 'ttys001', startedAt });
 function fixture() {
  let rows = [row(10, 1), row(20, 10)]; const identity = {};
@@ -93,4 +93,20 @@ it('supervised claims ignore sampled disappearance until their authenticated who
  rows = [row(10, 1)]; expect(await tracker.probe('s', claim)).toBe('live');
  state = 'unknown'; expect(await tracker.probe('s', claim)).toBe('unknown');
  state = 'gone'; expect(await tracker.probe('s', claim)).toBe('gone');
+});
+
+it('F-1435: um órfão antigo com o PPID reciclado não segura a vaga depois que o comando sai', async () => {
+ // Real walk (collectDescendantRows) over Windows-shaped rows: the job's child
+ // 30 got a recycled PID that an hours-old process still names as its parent.
+ const at = (time: string): ProcessTableRow => ({ pid: 0, ppid: 0, pgid: 0, sid: 0, tty: '?', startedAt: `2026-10-13T${time}Z` });
+ const proc = (pid: number, ppid: number, time: string): ProcessTableRow => ({ ...at(time), pid, ppid });
+ const pane = proc(10, 1, '18:00:00.000'), browser = proc(90, 30, '09:00:00.000'), tab = proc(91, 90, '09:00:01.000');
+ let table = [pane, proc(20, 10, '19:00:00.000'), browser, tab];
+ const capture = async (pid: number): Promise<DescendantSnapshot> => collectDescendantRows(pid, table, Date.parse('2026-10-13T19:00:05Z'));
+ const tracker = new OwnedCommandProcesses((id) => id === 's' ? { pid: 10, identity: pane } : null, capture);
+ const id = (await tracker.claim('s', 20))!; expect(id).toBeTypeOf('string');
+ table = [pane, proc(20, 10, '19:00:00.000'), proc(30, 20, '19:00:02.000'), browser, tab];
+ expect(await tracker.probe('s', id)).toBe('live');
+ table = [pane, browser, tab];
+ expect(await tracker.probe('s', id)).toBe('gone');
 });

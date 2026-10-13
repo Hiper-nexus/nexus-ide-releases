@@ -85,7 +85,7 @@ function hooks(node: string, resources: string): Record<string, unknown> {
   // The integration is permanent but the app or Node may disappear. Outside
   // Nexus that keeps normal AGY policy; inside (gate token) it denies.
   const command = `if [ -x ${quote(node)} ] && [ -f ${quote(script)} ]; then NODE_OPTIONS= NEXUS_AGY_HEAVY_PLUGIN=1 NEXUS_HOOK_STATUS=1 ${quote(node)} ${quote(script)}; ` +
-    `elif [ -n "$NEXUS_GATE_TOKEN" ]; then printf '%s' '{"decision":"deny","reason":"Physical CPU/RAM admission is unavailable for this Nexus command."}'; else printf '%s' '{"decision":"ask"}'; fi`;
+    `elif [ -n "$NEXUS_GATE_TOKEN" ]; then printf '%s' '{"decision":"deny","reason":"Nexus heavy-command admission is not configured for this session."}'; else printf '%s' '{"decision":"ask"}'; fi`;
   return { [AGY_NATIVE_HEAVY_PLUGIN]: { PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command, timeout: 5 }] }] } };
 }
 async function install(options: AgyNativeHeavyPluginOptions): Promise<void> {

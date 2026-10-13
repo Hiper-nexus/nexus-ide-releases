@@ -222,14 +222,22 @@ export function collectDescendantRows(
   }
 
   const descendants: ProcessTableRow[] = [];
-  const queue = [rootPid];
-  const visited = new Set(queue);
+  const queue = [root];
+  const visited = new Set([rootPid]);
   for (let index = 0; index < queue.length; index += 1) {
-    for (const child of childrenByPpid.get(queue[index]) ?? []) {
+    const parent = queue[index];
+    const parentBorn = Date.parse(parent.startedAt);
+    for (const child of childrenByPpid.get(parent.pid) ?? []) {
       if (visited.has(child.pid)) continue;
+      // F-1435: Windows never rewrites ParentProcessId when a parent dies and
+      // recycles the PID. A process born before its recorded parent is the
+      // orphan of an earlier holder of that number (Chrome, Explorer, Nexus
+      // itself), never a descendant. POSIX reparents orphans, so no real
+      // child is born before its parent there.
+      if (Date.parse(child.startedAt) < parentBorn) continue;
       visited.add(child.pid);
       descendants.push(child);
-      queue.push(child.pid);
+      queue.push(child);
     }
   }
   return { root, descendants, inventory: table, capturedAtMs };

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.76.249 — Campo em dia
+## Não lançado — Campo em dia
 
 Uma leva de correções de campo: ditar segurando Space não derruba mais o app no macOS 27.2, a 2ª conta do Antigravity entra, o Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, um «401» citado no terminal não troca mais a conta de uma missão que estava funcionando, um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais "sessão expirada" sobre uma credencial que está funcionando.
 
@@ -19,7 +19,14 @@ Uma leva de correções de campo: ditar segurando Space não derruba mais o app 
 - **Windows.**
   - Pane encerrado pelo próprio Nexus (fim de missão, teardown) mostrava «[nexus] processo caiu (code 129)»; o encerramento normal não é mais rotulado como queda (F-1437).
 
-## 0.76.248 — Linux em dia com o Mac e o Windows
+## 0.76.250 — Comandos pesados de volta no Windows
+
+No Windows, todo comando pesado que um pane Claude rodava pelo Bash (testes, `tsc`, build, `npm install`) saía na hora com "physical CPU/RAM admission unavailable", mesmo com a máquina ociosa. O Bash do Claude no Windows é o Git Bash, que numera os processos do jeito dele, e o Nexus procurava o comando pelo número errado. Agora vai o número do Windows e o comando roda, inclusive nos workers de squad e de missão.
+
+- **Fila que não trava.** O Windows reaproveita números de processo. Um processo antigo (navegador, Explorer, o próprio Nexus) podia ser confundido com filho de um teste, e a vaga do projeto nunca voltava: todo comando pesado seguinte esperava 5 minutos e desistia. Agora só conta como filho quem nasceu depois do pai.
+- **Recusa que diz o motivo.** Quando o Nexus não deixa um comando pesado começar, a mensagem diz por quê: outro job na mesma pasta, o limite de jobs paralelos da máquina, swap ou RAM livre abaixo da reserva (com os GB). A RAM só é citada quando falta RAM.
+
+## 0.76.249 — Linux em dia com o Mac e o Windows
 
 O Omarchy (ZIP portátil) e o Debian/Ubuntu (`.deb`, também o `.rpm`) estavam parados na 0.76.201. As versões 0.76.202 a 0.76.245 saíram só para Mac e Windows, e o atualizador do Linux só avança quando a release traz os três pacotes juntos. Sem eles, o app instalado consultava o espelho e respondia que já estava na mais recente.
 
@@ -31,7 +38,7 @@ Esta versão é o mesmo produto da 0.76.245, empacotado para Linux x64 a partir 
 - **Ditado e CLIs.** O texto ditado não se perde com o pane ocupado, e as CLIs instaladas são conferidas no boot (0.76.242).
 - **Celular.** O app pareado fala o protocolo do Nexus: panes, missões, aprovações e fila offline (0.76.210, 0.76.212).
 - **Contas.** Várias contas nas CLIs de arquivo (`openclaude`, `minimax-code`, `muse`) e o login a partir do Início que espera o terminal (0.76.245). A vaga do Cofre de Credenciais do Windows continua sendo só do Windows.
-- **Build Linux.** A 0.76.246 não compilou: o login a partir do Início lia `missing` na lista de projetos recentes, e esse campo não existe ali. O build em container também deixa de depender da API da Launchpad para instalar o Git, porque `api.launchpad.net` não responde em algumas redes. A suíte que o Mac e o Windows não rodaram nesta leva estava vermelha em seis pontos (contas de arquivo do OpenClaude e do MiniMax, teto do preload, ledger do T3 e o transporte do celular sem o Expo instalado); agora passam.
+- **Build Linux.** A 0.76.246 não compilou: o login a partir do Início lia `missing` na lista de projetos recentes, e esse campo não existe ali. O build em container também deixa de depender da API da Launchpad para instalar o Git, porque `api.launchpad.net` não responde em algumas redes. A suíte que o Mac e o Windows não rodaram nesta leva estava vermelha em seis pontos (contas de arquivo do OpenClaude e do MiniMax, teto do preload, ledger do T3 e o transporte do celular sem o Expo instalado); agora passam. O empacotamento também registra, no portão de processos síncronos, a leitura e a exclusão da vaga do Antigravity no Chaveiro do Mac e a limpeza da vaga no Cofre do Windows — as três já saíram na 0.76.245 e o `make` do Linux as recusava.
 
 ## 0.76.245 — Multi-conta no Antigravity e login sem tropeço
 

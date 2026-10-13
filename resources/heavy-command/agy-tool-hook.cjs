@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const ask = { decision: 'ask' };
-const deny = { decision: 'deny', reason: 'Physical CPU/RAM admission is unavailable for this Nexus command.' };
+const deny = { decision: 'deny', reason: 'Nexus heavy-command admission is not configured for this session.' };
 let raw = '', bytes = 0, finished = false;
 const output = (value) => { if (!finished) { finished = true; process.stdout.write(JSON.stringify(value)); } };
 process.stdin.on('data', (part) => { bytes += part.length; if (bytes > 131072) output(process.env.NEXUS_GATE_TOKEN ? deny : ask); else if (!finished) raw += part; });

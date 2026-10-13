@@ -18,7 +18,7 @@ if [[ -n "${NEXUS_HEAVY_COMMAND_URL-}" && -n "${NEXUS_GATE_TOKEN-}" && "${NEXUS_
   TRAPDEBUG() {
     if (( $+functions[__nexus_heavy_previous_debug] )); then __nexus_heavy_previous_debug "$@"; fi
     [[ "${__nexus_heavy_admitted-}" == 1 || "${__nexus_heavy_in_debug-}" == 1 ]] && return 0
-    local nexus_command="${ZSH_DEBUG_CMD-}" nexus_kind nexus_lease
+    local nexus_command="${ZSH_DEBUG_CMD-}" nexus_kind nexus_lease nexus_pid
     case "$nexus_command" in
       *node*|*npm*|*pnpm*|*yarn*|*bun*|*tsc*|*tsgo*|*typecheck*|*vitest*|*jest*|*pytest*|*mocha*|*vite*|*esbuild*|*webpack*|*rollup*|*cargo*|*'go '*|*dotnet*|*make*|*ninja*|*gradle*|*mvn*) ;;
       *) return 0 ;;
@@ -26,7 +26,10 @@ if [[ -n "${NEXUS_HEAVY_COMMAND_URL-}" && -n "${NEXUS_GATE_TOKEN-}" && "${NEXUS_
     __nexus_heavy_in_debug=1
     nexus_kind=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/classify.cjs" "$nexus_command") || exit 78
     if [[ -n "$nexus_kind" ]]; then
-      nexus_lease=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/request.cjs" "$$" "$nexus_kind") || { print -u2 -- '[Nexus] Heavy command not started: physical CPU/RAM admission unavailable.'; exit 78; }
+      # F-1434: no MSYS2/Cygwin, $$ é PID do runtime POSIX, não do Windows.
+      nexus_pid="$$"
+      if [[ -r "/proc/$nexus_pid/winpid" ]]; then read -r nexus_pid < "/proc/$nexus_pid/winpid" || nexus_pid=; fi
+      nexus_lease=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/request.cjs" "$nexus_pid" "$nexus_kind") || { print -u2 -- '[Nexus] Heavy command not started: Nexus did not admit it (reason above).'; exit 78; }
       export NEXUS_HEAVY_LEASE="$nexus_lease"
       __nexus_heavy_admitted=1
     fi

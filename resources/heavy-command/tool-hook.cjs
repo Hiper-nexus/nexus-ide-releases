@@ -17,7 +17,7 @@ process.stdin.on('end', () => {
   const directory = process.env.NEXUS_HEAVY_DIR;
   const node = process.env.NEXUS_HEAVY_NODE;
   if (!url || url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.pathname !== '/hook/heavy-command' || url.username || url.password || url.search || url.hash || !url.port || !process.env.NEXUS_GATE_TOKEN || !directory || !path.isAbsolute(directory) || !node || !path.isAbsolute(node)) {
-    output({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'Physical CPU/RAM admission is unavailable for this native heavy command.' } }); return;
+    output({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'Nexus heavy-command admission is not configured for this session.' } }); return;
   }
   const quote = (value) => "'" + value.replace(/'/g, "'\\''") + "'";
   if (process.env.NEXUS_HEAVY_JOB_BASE) {
