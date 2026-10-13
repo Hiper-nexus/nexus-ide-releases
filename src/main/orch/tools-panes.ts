@@ -836,6 +836,11 @@ export interface OperatorRouteInternal {
    */
   readonly preferAdapterIds?: readonly string[];
   /**
+   * F-1471: troca de conta na mesma CLI — o modelo do pane anterior vence o da
+   * rota quando a CLI o oferece (a reserva nasce com ele); roster selado vence.
+   */
+  readonly preferModel?: { readonly adapterId: string; readonly model: string };
+  /**
    * F-802: spawn somente leitura FORA do Autopilot — o spawn recusa CLI que não
    * confina leitura, então a rota só pode escolher entre as que confinam.
    */
@@ -1461,6 +1466,7 @@ const paneSpawnAfterTabMission = {
                 ? [...recoveryExcluded, ...excluded]
                 : excluded,
             ...routePreference(pinRedistributed, recoveryPreferred),
+            ...(startRecovery?.preferModel ? { preferModel: startRecovery.preferModel } : {}),
             ...(args.readOnly === true &&
             !isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
               ? { requireReadOnlyEnforceable: true }
@@ -1695,6 +1701,8 @@ const paneSpawnAfterTabMission = {
                   }
                 : {}),
               ...routePreference(pinRedistributed, recoveryPreferred),
+              // F-1471: troca de conta — o modelo do pane anterior fica.
+              ...(startRecovery?.preferModel ? { preferModel: startRecovery.preferModel } : {}),
             },
           );
         } finally {
@@ -2007,6 +2015,18 @@ const paneSpawnAfterTabMission = {
     let consumeReservedRoute: (() => void) | undefined;
     let reservedRouteConsumed = false;
     try {
+      // F-1471: reabertura por troca de conta — a irmã preparada pelo failover
+      // é o pin do spawn, e só vale na MESMA CLI (dentro do try: a reserva da
+      // rota que devolveu outra CLI é fechada pelo finally).
+      const accountPin = startRecovery?.accountPin;
+      if (accountPin) {
+        if (options.adapterId !== accountPin.adapterId) {
+          throw new Error(
+            `a troca de conta exige a mesma CLI (${accountPin.adapterId}); a rota devolveu ${options.adapterId}`,
+          );
+        }
+        options = { ...options, accountId: accountPin.accountId };
+      }
       let missionSuite: ReturnType<typeof getProjectDomainStores> | undefined;
       let missionRow: ReturnType<
         ReturnType<typeof getProjectDomainStores>['missions']['get']
@@ -2666,8 +2686,12 @@ const paneSpawnAfterTabMission = {
               excludeAdapterIds: chainExclude(request.excludeAdapterIds),
               classificationPrompt,
               lineageId,
-              generation: rerouteGeneration + 1,
-              ...(rosterSquadId ? { rosterSuccessor: rosterSuccessor() ?? null } : {}),
+              // F-1471: trocar de conta na mesma CLI não é reabrir noutra CLI:
+              // a cadeia não avança e o agente do roster segue o mesmo.
+              generation: request.sameAdapter ? rerouteGeneration : rerouteGeneration + 1,
+              ...(rosterSquadId && !request.sameAdapter
+                ? { rosterSuccessor: rosterSuccessor() ?? null }
+                : {}),
             }),
           hasAlternative: (excludeAdapterIds: readonly string[]) =>
             rosterSquadId
@@ -2690,6 +2714,8 @@ const paneSpawnAfterTabMission = {
           operatorOpened: options.operatorOpened === true,
           pinnedRuntime,
           generation: rerouteGeneration,
+          // F-1471: leitor não segura checkout; writer (ou worktree isolada) sim.
+          exclusiveCheckout: options.readOnly !== true || isolatedWriter !== undefined,
           ...taskRerouteFor(adapterId, startCallerSessionId, startRecovery?.lineageId ?? paneId),
         });
       };
@@ -2952,6 +2978,10 @@ interface PaneStartRecovery {
   readonly lineageId?: string;
   /** F-1316: prompt do pedido original, só para classificar a rota. */
   readonly classificationPrompt?: string;
+  /** F-1471: conta irmã preparada pelo failover — pin do spawn, só nesta CLI. */
+  readonly accountPin?: { readonly adapterId: string; readonly accountId: string };
+  /** F-1471: modelo do pane anterior, preferido pela rota restrita à mesma CLI. */
+  readonly preferModel?: { readonly adapterId: string; readonly model: string };
 }
 
 /**
@@ -3043,6 +3073,8 @@ async function rerouteNotStartedSpawn(input: {
   readonly generation: number;
   /** Agente de roster: o sucessor; null = o roster não tem outra CLI. */
   readonly rosterSuccessor?: string | null;
+  /** F-1471: troca de conta na MESMA CLI (ver PaneTaskRerouteRequest). */
+  readonly sameAdapter?: PaneTaskRerouteRequest['sameAdapter'];
 }): Promise<PaneStartRerouteResult> {
   if (input.rosterSuccessor === null) {
     throw new Error('o roster não tem agente em outra CLI');
@@ -3068,10 +3100,19 @@ async function rerouteNotStartedSpawn(input: {
     operatorChoice: _operatorChoice,
     routeReservationId: _routeReservationId,
     resume: _resume,
-    agentName: _agentName,
+    agentName: requestedAgentName,
     fresh: _fresh,
     ...rest
   } = input.args;
+  // F-1471: troca de conta — a rota só enxerga a mesma CLI (toda outra fica
+  // fora), o agente do roster é o mesmo e a conta irmã vira o pin do spawn.
+  const same = input.sameAdapter;
+  const excludeAdapterIds = same
+    ? listAdapters()
+        .filter((adapter) => adapter.kind === 'cli-pty' && adapter.id !== same.adapterId)
+        .map((adapter) => adapter.id)
+    : input.excludeAdapterIds;
+  const preferAdapterIds = same ? [same.adapterId] : input.preferAdapterIds;
   const brief = str(rest, 'prompt') ?? str(rest, 'task');
   const args: Record<string, unknown> = {
     ...rest,
@@ -3082,12 +3123,13 @@ async function rerouteNotStartedSpawn(input: {
           prompt: brief ? `${brief}\n\n${input.appendPrompt}` : input.appendPrompt,
         }
       : {}),
+    ...(same && requestedAgentName !== undefined ? { agentName: requestedAgentName } : {}),
     ...(input.rosterSuccessor ? { agentName: input.rosterSuccessor } : {}),
     fresh: true,
   };
   // F-787: a tentativa de recuperação e o resultado dela também vão ao trace
   // (origem 'sistema') — antes, o reenvio automático era invisível.
-  let receipt: { paneId?: unknown; harness?: { adapterId?: unknown } };
+  let receipt: { paneId?: unknown; harness?: { adapterId?: unknown; model?: unknown } };
   try {
     receipt = (await paneSpawnAfterTabMission.handler(
       args,
@@ -3097,19 +3139,21 @@ async function rerouteNotStartedSpawn(input: {
       parseExpectArg(args.expect),
       undefined,
       {
-        excludeAdapterIds: input.excludeAdapterIds,
-        ...(input.preferAdapterIds?.length ? { preferAdapterIds: input.preferAdapterIds } : {}),
+        excludeAdapterIds,
+        ...(preferAdapterIds?.length ? { preferAdapterIds } : {}),
         ...(input.worktreeFromPaneId ? { worktreeFromPaneId: input.worktreeFromPaneId } : {}),
         ...(input.lineageId ? { lineageId: input.lineageId } : {}),
         ...(input.classificationPrompt ? { classificationPrompt: input.classificationPrompt } : {}),
+        ...(same ? { accountPin: { adapterId: same.adapterId, accountId: same.accountId } } : {}),
+        ...(same?.model ? { preferModel: { adapterId: same.adapterId, model: same.model } } : {}),
         generation: input.generation,
       },
-    )) as { paneId?: unknown; harness?: { adapterId?: unknown } };
+    )) as { paneId?: unknown; harness?: { adapterId?: unknown; model?: unknown } };
   } catch (error) {
     trace(
       buildPaneSpawnRecoveryEvent({
         callerSessionId: input.callerSessionId,
-        excludeAdapterIds: input.excludeAdapterIds,
+        excludeAdapterIds,
         ok: false,
         errorCode: classifySpawnErrorCode(error),
       }),
@@ -3123,13 +3167,14 @@ async function rerouteNotStartedSpawn(input: {
   trace(
     buildPaneSpawnRecoveryEvent({
       callerSessionId: input.callerSessionId,
-      excludeAdapterIds: input.excludeAdapterIds,
+      excludeAdapterIds,
       paneId,
       adapterId,
       ok: true,
     }),
   );
-  return { paneId, adapterId };
+  const model = typeof receipt.harness?.model === 'string' ? receipt.harness.model : undefined;
+  return { paneId, adapterId, ...(model ? { model } : {}) };
 }
 
 const paneList: McpToolDef = {

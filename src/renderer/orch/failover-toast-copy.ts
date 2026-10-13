@@ -94,6 +94,15 @@ export function reroutedFailoverToastCopy(
   event: FailoverEvent,
 ): FailoverToastCopy {
   const to = event.toAdapterId ?? 'outra CLI';
+  // F-1471: a conta esgotou e a tarefa seguiu na irmã da MESMA CLI.
+  if (event.toAccountId && event.toAdapterId === event.fromAdapterId) {
+    return {
+      title: `Trocado para "${event.toAccountLabel}"`,
+      detail:
+        `"${event.fromAccountLabel}" atingiu o limite (${event.reason}). A tarefa seguiu no pane ` +
+        `${event.toPaneId ?? 'novo'}, na mesma CLI, com o pacote de continuidade.`,
+    };
+  }
   if (effectiveKind(event) === 'model') {
     return {
       title: `Tarefa reaberta em ${to}`,

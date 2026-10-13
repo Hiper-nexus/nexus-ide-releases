@@ -2471,6 +2471,21 @@ export async function routeTaskForCaller(
       reason: `${decision.reason}; fora da rota (limite de uso confirmado): ${cliLimitNote(cliLimitAuto)}`,
     };
   }
+  // F-1471: troca de conta na mesma CLI — o modelo que o pane rodava fica,
+  // se a CLI escolhida o oferece; antes do roster selado, que segue vencendo.
+  const keptModel = internal.preferModel;
+  if (
+    keptModel &&
+    decision.adapterId === keptModel.adapterId &&
+    decision.model !== keptModel.model &&
+    adapters.some((adapter) => adapter.id === keptModel.adapterId && adapter.models.includes(keptModel.model))
+  ) {
+    decision = {
+      ...decision,
+      model: keptModel.model,
+      reason: `${decision.reason}; modelo do pane anterior mantido (${keptModel.model})`,
+    };
+  }
   const sealedSquad = missionId && mission?.squadId ? getSquad(mission.squadId) : null;
   if (!missionId) {
     // Sem missão vinculada não existe roster para honrar — e o chamador não

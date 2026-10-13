@@ -177,7 +177,7 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
     expect(watch.hasAlternative?.()).toBe(true);
 
     const next = await watch.reroute!(['qwen']);
-    expect(next).toEqual({ paneId: 'pane-2', adapterId: 'codex' });
+    expect(next).toEqual({ paneId: 'pane-2', adapterId: 'codex', model: 'gpt-5.4' });
     // F-1316: o reenvio classifica pelo mesmo brief da rota original.
     expect(resolver.mock.calls[0]![2]).toMatchObject({ classificationPrompt: 'faça o login' });
     expect(resolver).toHaveBeenLastCalledWith('implementar o login', orchestrator, {
@@ -289,7 +289,7 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
     const next = await handle.reroute({
       excludeAdapterIds: [], preferAdapterIds: ['qwen'], appendPrompt: pack,
     });
-    expect(next).toEqual({ paneId: 'pane-2', adapterId: 'qwen' });
+    expect(next).toEqual({ paneId: 'pane-2', adapterId: 'qwen', model: 'qwen3.7-max' });
     // A rota segue a tarefa original; a mesma CLI entra só como preferência.
     // F-1316: o pacote (arquivos tocados, trecho do terminal) não entra na
     // classificação — só o brief original.
@@ -328,6 +328,62 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
     expect(h.resumeWorktree).toHaveBeenCalledWith(expect.anything(), 'mission-a', 'pane-1');
     await getPaneTaskReroute('pane-2')!.reroute({ excludeAdapterIds: ['codex'] });
     expect(getPaneTaskReroute('pane-3')).toMatchObject({ lineageId: 'pane-1', generation: 2 });
+  });
+
+  it('F-1471: troca de conta na MESMA CLI — a rota só pode devolver a mesma CLI, com o modelo anterior; a conta irmã fixa o spawn e a cadeia não avança', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'qwen', model: 'qwen3.8-max', routeReservationId: 'rr-1' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler(
+      { task: 'implementar o login', prompt: 'faça o login', title: 'login' }, orchestrator,
+    );
+    // O spawn original não fixa conta: quem escolhe é o pool.
+    expect(h.spawn.mock.calls[0]![0].accountId).toBeUndefined();
+    // Writer segura o checkout: o sucessor só entra depois de ele sair.
+    expect(getPaneTaskReroute('pane-1')).toMatchObject({ exclusiveCheckout: true });
+
+    resolver.mockResolvedValueOnce({ adapterId: 'qwen', model: 'qwen3.8-max', routeReservationId: 'rr-2' });
+    const pack = '[NEXUS FAILOVER HANDOFF]\nYou are now running on account "m•••m" in a NEW provider session.';
+    const next = await getPaneTaskReroute('pane-1')!.reroute({
+      excludeAdapterIds: [],
+      sameAdapter: { adapterId: 'qwen', accountId: 'qwen-b', model: 'qwen3.8-max' },
+      appendPrompt: pack,
+      worktreeFromPaneId: 'pane-1',
+    });
+    // O modelo que nasceu volta no resultado (o recibo compara com o anterior).
+    expect(next).toEqual({ paneId: 'pane-2', adapterId: 'qwen', model: 'qwen3.8-max' });
+    // Toda outra CLI fica fora da rota; a mesma CLI nunca é excluída; o modelo
+    // anterior vai como preferência da rota (a reserva nasce com ele).
+    expect(resolver).toHaveBeenLastCalledWith('implementar o login', orchestrator, {
+      classificationPrompt: 'faça o login',
+      excludeAdapterIds: ['codex', 'devin'],
+      preferAdapterIds: ['qwen'],
+      preferModel: { adapterId: 'qwen', model: 'qwen3.8-max' },
+    });
+    expect(h.spawn.mock.calls[1]![0]).toMatchObject({
+      adapterId: 'qwen', model: 'qwen3.8-max', accountId: 'qwen-b', role: 'worker', missionId: 'mission-a',
+    });
+    const prompt = String(h.spawn.mock.calls[1]![0].prompt);
+    expect(prompt.indexOf('faça o login')).toBeLessThan(prompt.indexOf('[NEXUS FAILOVER HANDOFF]'));
+    expect(h.resumeWorktree).toHaveBeenCalledWith(expect.anything(), 'mission-a', 'pane-1');
+    // Trocar de conta não é reabrir noutra CLI: a geração do pedido fica.
+    expect(getPaneTaskReroute('pane-2')).toMatchObject({ adapterId: 'qwen', lineageId: 'pane-1', generation: 0 });
+  });
+
+  it('F-1471: leitor não segura o checkout — o sucessor pode nascer antes de ele sair', async () => {
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'qwen', routeReservationId: 'rr-1' })));
+    await paneSpawnTool.handler({ task: 'revisar o login', prompt: 'revise', readOnly: true }, orchestrator);
+    expect(getPaneTaskReroute('pane-1')).toMatchObject({ exclusiveCheckout: false });
+  });
+
+  it('F-1471: rota que devolve OUTRA CLI recusa a troca de conta — nada nasce com a conta de outro provedor', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'qwen', routeReservationId: 'rr-1' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler({ task: 'implementar o login', prompt: 'faça o login' }, orchestrator);
+    resolver.mockResolvedValueOnce({ adapterId: 'codex', routeReservationId: 'rr-2' });
+    await expect(getPaneTaskReroute('pane-1')!.reroute({
+      excludeAdapterIds: [], sameAdapter: { adapterId: 'qwen', accountId: 'qwen-b' },
+    })).rejects.toThrow(/mesma CLI/);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
   });
 
   it('F-765: CLI nomeada pelo operador fica guardada como fixa (o failover não a troca)', async () => {

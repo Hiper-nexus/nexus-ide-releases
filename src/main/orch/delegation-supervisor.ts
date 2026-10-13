@@ -109,6 +109,7 @@ import {
   paneTaskRerouteBlocker,
 } from './pane-task-reroute';
 import { trace } from '../observability/main-trace';
+import { hasPendingFailoverRecovery } from './failover';
 import { noteMissionCliFailure } from './mission-cli-failures';
 import { sanitizePaneBootOutput } from './pane-boot-output';
 import { paneSessionLastOutputAt } from './pane-session-output';
@@ -1283,6 +1284,10 @@ export async function checkLimitedTaskPanes(
     // recebe veredito (o Muse refaz sozinho depois do limite e volta a
     // imprimir, sem status semântico). Só adia: a ficha fica para a próxima.
     if (pane?.sessionId === limit.sessionId && (physical === 'busy' || physical === 'spawning')) continue;
+    // F-1471: o failover ainda cuida do pane (espera-pela-irmã agendada ou
+    // troca de conta em curso): reabrir noutra CLI agora daria dois workers.
+    // Só adia — a ficha fica para a próxima passada.
+    if (hasPendingFailoverRecovery(limit.paneId, limit.sessionId)) continue;
     forgetConfirmedPaneLimit(limit.paneId);
     // O failover já agiu (sessão nova no pane, pane fechado) ou o pane morreu.
     if (!pane?.scope || pane.sessionId !== limit.sessionId) continue;

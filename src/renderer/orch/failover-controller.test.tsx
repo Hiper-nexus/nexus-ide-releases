@@ -7,6 +7,7 @@ vi.mock('../terminal/terminal-host', () => ({ respawnWithResume: vi.fn(), getScr
 import { useFailoverController } from './failover-controller';
 import { useToastStore } from '../state/toast-store';
 import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { respawnWithResume } from '../terminal/terminal-host';
 import { listPanes } from '../lib/split-tree';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -218,6 +219,86 @@ describe('failover notifications', () => {
       const toasts = useToastStore.getState().toasts.filter((toast) => toast.dedupeKey === 'failover:pane-t');
       expect(toasts).toHaveLength(1);
       expect(toasts[0].title).toBe('Missão continuou na mesma conta');
+    } finally {
+      await act(async () => root.unmount()); container.remove();
+      for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+    }
+  });
+
+  it('F-1471: a conta de pane de missão viva é do Main — o renderer não a muda; pane do operador e pane de missão encerrada seguem mudando', async () => {
+    let notify!: (event: FailoverEvent) => void;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
+      onFailover: (callback: typeof notify) => { notify = callback; return () => {}; },
+    } } });
+    const originalRoot = useLayoutStore.getState().root;
+    useLayoutStore.setState({ root: { kind: 'split', id: 'split-1471', direction: 'row', children: [
+      { kind: 'leaf', id: 'leaf-mission', pane: {
+        id: 'mission-worker', kind: 'cli-agent', title: 'Claude', adapterId: 'claude',
+        accountId: 'claude-a', role: 'worker', missionId: 'mission-1471',
+      } },
+      { kind: 'split', id: 'split-1471-b', direction: 'column', children: [
+        { kind: 'leaf', id: 'leaf-op', pane: {
+          id: 'op-pane-1471', kind: 'cli-agent', title: 'Claude', adapterId: 'claude', accountId: 'claude-a',
+        } },
+        { kind: 'leaf', id: 'leaf-ended', pane: {
+          id: 'ended-worker', kind: 'cli-agent', title: 'Claude', adapterId: 'claude',
+          accountId: 'claude-a', role: 'worker', missionId: 'mission-ended',
+        } },
+      ] },
+    ] } });
+    const originalMissions = useOrchStore.getState().missions;
+    useOrchStore.setState({ missions: [
+      { id: 'mission-1471', status: 'running', description: '' },
+      { id: 'mission-ended', status: 'failed', description: '' },
+    ] as never });
+    vi.mocked(respawnWithResume).mockClear();
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    const switched: FailoverEvent = {
+      paneId: 'mission-worker', kind: 'rate-limit', switched: true, crossAccount: true,
+      fromAccountLabel: 'gu•••om', toAccountLabel: 'ma•••om',
+      fromAccountId: 'claude-a', toAccountId: 'claude-b', reason: "You've hit your session limit",
+    };
+    const accountOf = (id: string) =>
+      listPanes(useLayoutStore.getState().root).find((entry) => entry.id === id)?.accountId;
+    try {
+      await act(async () => root.render(<Harness />));
+      notify({ ...switched, missionId: 'mission-1471' });
+      expect(accountOf('mission-worker')).toBe('claude-a');
+      notify({ ...switched, paneId: 'op-pane-1471' });
+      expect(accountOf('op-pane-1471')).toBe('claude-b');
+      // A missão encerrada não é mais dona do pane: ele troca no lugar.
+      notify({ ...switched, paneId: 'ended-worker', missionId: 'mission-ended' });
+      expect(accountOf('ended-worker')).toBe('claude-b');
+    } finally {
+      await act(async () => root.unmount()); container.remove();
+      useOrchStore.setState({ missions: originalMissions });
+      useLayoutStore.setState({ root: originalRoot });
+      for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+    }
+  });
+
+  it('F-1471: tarefa seguiu na conta irmã da MESMA CLI num pane novo — avisa a troca de conta, sem religar', async () => {
+    let notify!: (event: FailoverEvent) => void;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
+      onFailover: (callback: typeof notify) => { notify = callback; return () => {}; },
+    } } });
+    vi.mocked(respawnWithResume).mockClear();
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<Harness />));
+      notify({
+        paneId: 'pane-claude', kind: 'quota', switched: true, crossAccount: true,
+        fromAccountLabel: 'gu•••om', toAccountLabel: 'ma•••om',
+        fromAccountId: 'claude-a', toAccountId: 'claude-b', reason: 'You exceeded your current quota',
+        fromAdapterId: 'claude', toAdapterId: 'claude', toPaneId: 'pane-claude-2', missionId: 'mission-1',
+      });
+      expect(respawnWithResume).not.toHaveBeenCalled();
+      const toast = useToastStore.getState().toasts.find((entry) => entry.dedupeKey === 'failover:pane-claude');
+      expect(toast?.title).toBe('Trocado para "ma•••om"');
+      expect(toast?.detail).toContain('pane-claude-2');
+      expect(toast?.detail).not.toContain('esgotou em todas as contas');
     } finally {
       await act(async () => root.unmount()); container.remove();
       for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);

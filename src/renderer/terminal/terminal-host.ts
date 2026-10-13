@@ -47,7 +47,7 @@ import {
 import { listPanes } from '../lib/split-tree';
 import { cliPaneDisplayTitle, normalizePaneTitle } from '../lib/pane-title';
 import {
-  missionAwaitsOperatorReview,
+  missionOwnsItsPanes,
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
 import { wasMissionLeftoverParked } from '../../shared/mission-leftover-isolation';
@@ -3506,8 +3506,7 @@ function missionStillOwnsPane(paneId: string, pane?: PaneModel): boolean {
   // operador reclama. Done sem carimbo do humano ainda é revisão — o
   // coordenador continua dono do pane (F-108).
   if (!mission) return false;
-  if (mission.status === 'running' || mission.status === 'blocked') return true;
-  return missionAwaitsOperatorReview(mission);
+  return missionOwnsItsPanes(mission);
 }
 
 function terminalMissionLinkOf(pane: PaneModel): TerminalMissionLink {

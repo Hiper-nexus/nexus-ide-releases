@@ -96,6 +96,18 @@ export function missionAwaitsOperatorReview(
   return mission.status === 'done' && !wasMissionApprovedByOperator(mission);
 }
 
+/**
+ * A missão ainda é dona dos panes dela: rodando, bloqueada ou concluída sem o
+ * carimbo de quem pediu (F-108). Fora disso o pane volta para o operador.
+ * F-1471: a mesma noção decide quem troca a conta de um pane de missão.
+ */
+export function missionOwnsItsPanes(
+  mission: Pick<RecoverableMission, 'status' | 'description'>,
+): boolean {
+  return mission.status === 'running' || mission.status === 'blocked' ||
+    missionAwaitsOperatorReview(mission);
+}
+
 export function wasMissionRuntimeClosedByOperator(
   mission: Pick<RecoverableMission, 'status' | 'intentState' | 'description'>,
 ): boolean {

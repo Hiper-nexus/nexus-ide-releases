@@ -436,6 +436,8 @@ export function paneLimitNoticeSummary(input: {
 export interface PaneStartRerouteResult {
   readonly paneId: string;
   readonly adapterId: string;
+  /** F-1471: modelo com que o pane novo nasceu (o recibo compara com o anterior). */
+  readonly model?: string;
 }
 
 export interface PaneStartWatchInit {

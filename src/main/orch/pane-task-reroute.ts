@@ -25,6 +25,18 @@ export interface PaneTaskRerouteRequest {
    * trabalho não commitado está lá) — sem retomar a conversa do provedor.
    */
   readonly worktreeFromPaneId?: string;
+  /**
+   * F-1471: troca de CONTA, não de CLI — a conta do pane esgotou e o failover
+   * preparou a irmã do mesmo provedor. A tarefa reabre na MESMA CLI (a rota
+   * só pode devolvê-la; agente do roster é o mesmo) com a irmã como pin do
+   * spawn, e a cadeia de reaberturas não avança. `excludeAdapterIds` não vale.
+   * `model`: o do pane anterior — a rota o mantém quando a CLI o oferece.
+   */
+  readonly sameAdapter?: {
+    readonly adapterId: string;
+    readonly accountId: string;
+    readonly model?: string;
+  };
 }
 
 export interface PaneTaskRerouteHandle {
@@ -44,6 +56,12 @@ export interface PaneTaskRerouteHandle {
   readonly pinnedRuntime: boolean;
   /** 0 = pedido original; n = n-ésima reabertura automática do mesmo pedido. */
   readonly generation: number;
+  /**
+   * F-1471: writer — dono do checkout/worktree em que roda (a delegação no
+   * mesmo checkout é serializada e a worktree isolada aceita um pane só). O
+   * sucessor só entra depois de ele sair; ausente = writer (conservador).
+   */
+  readonly exclusiveCheckout?: boolean;
   readonly reroute: (request: PaneTaskRerouteRequest) => Promise<PaneStartRerouteResult>;
   /** Há CLI, fora destas, que poderia receber a tarefa? (aproximação barata) */
   readonly hasAlternative: (excludeAdapterIds: readonly string[]) => boolean;

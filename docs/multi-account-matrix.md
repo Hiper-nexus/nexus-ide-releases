@@ -45,8 +45,20 @@ O renderer não troca credenciais globais para abrir um pane. O fluxo canônico 
    Settings → Providers → “Por assinatura (provider logado)” → label → Salvar.  
    Switcher na bar/rail → ativa conta → materializa managed home / OAuth env.  
    Sessões já abertas mantêm a conta antiga até **↻ reiniciar panes**.
-2. **Continuar na mesma conversa após limite**  
-   Conta A em cooldown → failover → Conta B → spawn com resume flags do adapter.
+2. **Continuar a tarefa após limite**  
+   Conta A em cooldown → failover → Conta B do mesmo provedor → sessão NOVA na
+   Conta B, na mesma worktree, com o pacote de continuidade (arquivos tocados,
+   diff, trecho do terminal e próximo passo). Não há `--resume` entre contas: a
+   conversa do provedor fica amarrada à conta que a gravou. Worker de missão
+   num pane do renderer (F-1471): o Main reabre a MESMA tarefa na MESMA CLI,
+   fixada na Conta B e com o modelo de antes quando a CLI o oferece; o recibo
+   só sai com o pane novo. Leitor: o pane novo nasce antes de o velho fechar.
+   Writer: o checkout é de um writer só, então o velho sai e o novo entra logo
+   depois. Se a Conta B não recebe a tarefa, ela segue em outra CLI ou espera a
+   conta liberar, com o motivo no recibo. Pane que o Nexus não pode trocar
+   sozinho (aberto pelo operador, sem pedido de spawn guardado) recebe recibo
+   "não trocado" com o motivo, e o Maestro é avisado. Sem conta irmã com folga,
+   a tarefa segue em outra CLI ou espera a conta liberar.
    Vale também para o orquestrador de missão e para o pane do operador adotado
    pela missão da aba (F-995): com limite CONFIRMADO (F-249), o Main troca a
    conta selada do orquestrador e religa o MESMO pane na Conta B pela

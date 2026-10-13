@@ -6,6 +6,7 @@ import { useOrchStore } from '../state/orch-store';
 import { listPanes } from '../lib/split-tree';
 import { respawnWithResume, getScrollbackExcerpt } from '../terminal/terminal-host';
 import { buildContinuityPack } from './failover-continuity';
+import { missionOwnsItsPanes } from '../../shared/mission-recovery-policy';
 import {
   isSameAccountFailover,
   resolveContinuityMission,
@@ -163,7 +164,15 @@ export function useFailoverController(): void {
         });
         return;
       }
-      if (event.toAccountId) {
+      // F-1471: a conta de pane de missão viva é do Main (linha selada da
+      // missão); espelhá-la aqui sem troca real deixava o layout em B e o
+      // registro em A. Missão encerrada devolveu o pane: ele troca no lugar.
+      const orchState = useOrchStore.getState();
+      const paneMissionId = event.missionId ?? pane.missionId ?? orchState.paneMissions[pane.id];
+      const owningMission = paneMissionId
+        ? orchState.missions.find((mission) => mission.id === paneMissionId)
+        : undefined;
+      if (event.toAccountId && !(owningMission && missionOwnsItsPanes(owningMission))) {
         useLayoutStore.getState().setAccountId(pane.id, event.toAccountId);
       }
       const updated = listPanes(useLayoutStore.getState().root).find(

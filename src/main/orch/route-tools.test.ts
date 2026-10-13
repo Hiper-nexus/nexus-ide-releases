@@ -457,6 +457,31 @@ describe('nexus_route_task — Jev fora e desempate interno', () => {
     );
     expect(decision.adapterId).toBe('codex');
   });
+
+  it('F-1471: troca de conta mantém o modelo do pane anterior quando a CLI o oferece; senão fica o da rota', async () => {
+    mocks.listProviderSettings.mockReturnValue([
+      { adapterId: 'glm', enabled: true, installed: true, authStrategy: 'oauth', models: ['glm-5.3', 'glm-5.2'] },
+    ]);
+    const base = (await routeTaskForCaller({ task: 'tarefa média' }, context())) as {
+      adapterId: string; model: string;
+    };
+    expect(base.adapterId).toBe('glm');
+    const kept = base.model === 'glm-5.3' ? 'glm-5.2' : 'glm-5.3';
+    const decision = (await routeTaskForCaller({ task: 'tarefa média' }, context(), {
+      preferModel: { adapterId: 'glm', model: kept },
+    })) as { model: string; reason: string };
+    expect(decision.model).toBe(kept);
+    expect(decision.reason).toContain(`modelo do pane anterior mantido (${kept})`);
+    // Modelo que a CLI não oferece (ou de outra CLI) não entra: a rota decide.
+    const unknown = (await routeTaskForCaller({ task: 'tarefa média' }, context(), {
+      preferModel: { adapterId: 'glm', model: 'glm-4-legacy' },
+    })) as { model: string };
+    expect(unknown.model).toBe(base.model);
+    const otherCli = (await routeTaskForCaller({ task: 'tarefa média' }, context(), {
+      preferModel: { adapterId: 'codex', model: kept },
+    })) as { model: string };
+    expect(otherCli.model).toBe(base.model);
+  });
 });
 
 describe('nexus_route_task — exclude do caller só honra CLI doente', () => {

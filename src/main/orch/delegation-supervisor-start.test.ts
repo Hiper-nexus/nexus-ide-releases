@@ -48,7 +48,11 @@ const h = vi.hoisted(() => ({
   handoffList: vi.fn((_filter?: unknown): unknown[] => []),
   injectPrompt: vi.fn(async (_sessionId: string, _text: string) => {}),
   trace: vi.fn(),
+  // F-1471: o failover ainda cuida do pane (retry agendado / troca em curso).
+  failoverRecovery: vi.fn((_paneId: string, _sessionId: string) => false),
 }));
+
+vi.mock('./failover', () => ({ hasPendingFailoverRecovery: h.failoverRecovery }));
 
 vi.mock('./project-domain-store-registry', () => ({
   requireProjectDomainStoreRegistry: () => ({
@@ -1497,6 +1501,22 @@ describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra L
           '(pane pane-novo), na mesma worktree quando havia uma.',
       );
       // Uma vez só.
+      await checkLimitedTaskPanes(NOW + 2 * LIMIT_HANDOFF_MS);
+      expect(taskReroute).toHaveBeenCalledTimes(1);
+    });
+
+    it('F-1471: com o failover ainda cuidando do pane, a rede espera — sem dois workers para a mesma tarefa', async () => {
+      museWorkerAtLimit();
+      h.failoverRecovery.mockReturnValue(true);
+      try {
+        await checkLimitedTaskPanes(NOW + LIMIT_HANDOFF_MS);
+        expect(h.failoverRecovery).toHaveBeenCalledWith('pane-muse', 'session-muse');
+        expect(taskReroute).not.toHaveBeenCalled();
+        expect(h.requestPaneClose).not.toHaveBeenCalled();
+      } finally {
+        h.failoverRecovery.mockReturnValue(false);
+      }
+      // Só adia: o failover terminou sem tirar a tarefa do pane, a rede age.
       await checkLimitedTaskPanes(NOW + 2 * LIMIT_HANDOFF_MS);
       expect(taskReroute).toHaveBeenCalledTimes(1);
     });
