@@ -318,6 +318,32 @@ describe('F-987: redesenho de TUI não estoura o digest', () => {
       expect(isSpinnerFrameLine(content)).toBe(false);
     }
   });
+
+  it('F-1425b: fases da lua do Kimi (🌒–🌘, 🌙) são spinner — tail só de luas é working', () => {
+    const moonTail = ['🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘', '🌒', '🌒 3'].join('\n');
+    const digest = digestPaneTail(moonTail);
+    expect(digest.text).toMatch(/sem texto/);
+    expect(digest.noReadableText).toBe('spinner');
+    for (const frame of ['🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘', '🌙', '🌕 7']) {
+      expect(isSpinnerFrameLine(frame)).toBe(true);
+    }
+  });
+
+  it('F-1425b: OVNI do MiMo Code com pontos é animação, não resposta', () => {
+    const frame = '🛸˙·∙˙·  🛸·∙˙·∙  ·∙˙·∙🛸∙˙·∙˙';
+    const digest = digestPaneTail([frame, frame].join('\n'));
+    expect(digest.text).toMatch(/sem texto/);
+    expect(digest.noReadableText).toBe('spinner');
+    expect(isSpinnerFrameLine(frame)).toBe(true);
+  });
+
+  it('F-1425b: "🌓 · Tip: ctrl-s to add guidance" continua texto legível (vai ao Jev)', () => {
+    const digest = digestPaneTail('🌓 · Tip: ctrl-s to add guidance');
+    expect(digest.noReadableText).toBeUndefined();
+    // A lua é decoração e sai na normalização; o texto fica.
+    expect(digest.text).toBe(' · Tip: ctrl-s to add guidance');
+    expect(isSpinnerFrameLine('🌓 · Tip: ctrl-s to add guidance')).toBe(false);
+  });
 });
 
 
