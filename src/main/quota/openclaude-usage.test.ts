@@ -11,7 +11,20 @@ import {
   probeOpenClaudeUsage,
   resolveOpenClaudeToken,
 } from './openclaude-usage';
-import { parseClaudeCliUsage } from './claude-oauth-usage';
+import { CLAUDE_NATIVE_PROFILE_SCRUB_ENV, parseClaudeCliUsage } from './claude-oauth-usage';
+
+/** Binário falso só nos testes que o pedem; o resto resolve como antes. */
+const fakeCli = vi.hoisted(() => ({ bin: null as string | null }));
+vi.mock('../path-resolver', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../path-resolver')>();
+  return {
+    ...actual,
+    resolveCliBinary: (...args: Parameters<typeof actual.resolveCliBinary>) =>
+      fakeCli.bin
+        ? { binPath: fakeCli.bin, effectivePath: process.env.PATH ?? '', source: 'absolute' as const }
+        : actual.resolveCliBinary(...args),
+  };
+});
 
 describe('openclaude-usage', () => {
   it('reads the native token from ~/.openclaude/.credentials.json', async () => {
@@ -118,6 +131,37 @@ describe('credencial do OpenClaude sem readFileSync sem teto (F-1417)', () => {
     } finally {
       if (prev === undefined) delete process.env.OPENCLAUDE_CONFIG_DIR; else process.env.OPENCLAUDE_CONFIG_DIR = prev;
       fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sonda /usage do OpenClaude no perfil nativo (revisão Fable 0.76.241)', () => {
+  it.skipIf(process.platform === 'win32')('não herda chave, token nem config dir de outra conta do Claude', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-oc-env-'));
+    const saved = Object.fromEntries(CLAUDE_NATIVE_PROFILE_SCRUB_ENV.map((name) => [name, process.env[name]]));
+    for (const name of CLAUDE_NATIVE_PROFILE_SCRUB_ENV) process.env[name] = `planted-${name}`;
+    const record = path.join(root, 'probe-record');
+    fakeCli.bin = path.join(root, 'openclaude');
+    fs.writeFileSync(fakeCli.bin, [
+      '#!/bin/sh',
+      `env | sed 's/^/ENV:/' > '${record}'`,
+      "printf 'Current session: 12%% used\\n'",
+    ].join('\n'), { mode: 0o755 });
+    try {
+      const probe = await probeOpenClaudeCliUsage({ cwd: path.join(root, 'cwd'), home: root });
+      expect(probe.windows?.[0]?.usedRatio).toBeCloseTo(0.12);
+      const env = new Map(fs.readFileSync(record, 'utf8').split('\n')
+        .filter((line) => line.startsWith('ENV:'))
+        .map((line) => line.slice(4).split(/=(.*)/su).slice(0, 2) as [string, string]));
+      for (const name of CLAUDE_NATIVE_PROFILE_SCRUB_ENV) expect(env.has(name)).toBe(false);
+      expect(env.get('OPENCLAUDE_CONFIG_DIR')).toBe(openclaudeConfigDir(root));
+    } finally {
+      fakeCli.bin = null;
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

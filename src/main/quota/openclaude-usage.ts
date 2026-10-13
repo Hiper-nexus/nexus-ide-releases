@@ -19,6 +19,8 @@ import {
   parseClaudeCliUsage,
   probeClaudeOauthUsage,
   claudeCliOutputIsAuthFailure,
+  claudeCliProbeEnv,
+  CLAUDE_NATIVE_PROFILE_SCRUB_ENV,
   type ClaudeCliUsageProbe,
   type ClaudeCliRunImpl,
   type ClaudeCliRunResult,
@@ -96,19 +98,13 @@ async function runOpenClaudeCli(
   args: readonly string[],
   cwd: string,
   env?: Record<string, string>,
+  unset?: readonly string[],
 ): Promise<ClaudeCliRunResult> {
   return new Promise((resolve) => {
     const child = spawn(binary, [...args], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        ...env,
-        ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
-        CLAUDE_CODE_AUTO_CONNECT_IDE: '0',
-        CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: '1',
-        PWD: cwd,
-      },
+      env: claudeCliProbeEnv(process.env, env, cwd, unset),
     });
     let stdout = '';
     let stderr = '';
@@ -170,11 +166,14 @@ export async function probeOpenClaudeCliUsage(opts?: {
     OPENCLAUDE_CONFIG_DIR: configDir,
   };
 
+  // Mesmo scrub do perfil nativo do Claude (F-1416): chave/token/config dir
+  // herdados do shell publicariam a cota de outra conta na linha OpenClaude.
   const { code, stdout, stderr } = await run(
     binary,
     OPENCLAUDE_CLI_USAGE_ARGS,
     cwd,
     env,
+    CLAUDE_NATIVE_PROFILE_SCRUB_ENV,
   );
   if (
     claudeCliOutputIsAuthFailure(stdout) ||
