@@ -107,8 +107,9 @@ function currentTargetExpectation(id: string): SquadTargetExpectation {
  * Canonical save-time normalization. `withAllowlists` fixes tool authority;
  * `withGuidedSkillDefaults` fills the skill floor of agents that declare none
  * (absent = zero skills under governance) without ever rewriting a reviewed
- * list. Deliberately NOT applied on the hydration path: a sealed mission
- * runtime roster must keep the exact bytes its authority hash was computed on.
+ * list. Hydration reuses the agent normalization only for catalog squads
+ * (`hydratedAgents`): a sealed mission runtime roster must keep the exact
+ * bytes its authority hash was computed on.
  */
 function normalizeUserSquad(squad: Squad): Squad {
   return {
@@ -116,6 +117,20 @@ function normalizeUserSquad(squad: Squad): Squad {
     builtin: false,
     agents: withGuidedSkillDefaults(withAllowlists(squad.agents)),
   };
+}
+
+/**
+ * Hydration repair (F-1498). A catalog squad saved before the skill floor
+ * existed comes back with the same agent normalization as a save — without it
+ * the wizard sends no `allowedSkills` and the prepare refuses the role ("não
+ * possui permissões revisadas"). A sealed mission runtime copy stays outside
+ * the skill floor: its authority hash was computed on those bytes.
+ */
+function hydratedAgents(squad: Squad): SquadAgent[] {
+  const agents = withAllowlists(squad.agents);
+  return isMissionRuntimeSquadId(squad.id)
+    ? agents
+    : withGuidedSkillDefaults(agents);
 }
 
 /**
@@ -322,7 +337,7 @@ function recoverMissingUserSquadsFromSiblingDbs(): void {
           if (!parsed.success) continue;
           const squad: Squad = {
             ...parsed.data,
-            agents: withAllowlists(parsed.data.agents),
+            agents: hydratedAgents(parsed.data),
           };
           persist(squad, 'sibling recovery');
           squads.set(squad.id, squad);
@@ -372,7 +387,7 @@ export function initSquadStore(database: Db | null): void {
         ? PET_STUDIO_SQUAD
         : {
             ...parsed.data,
-            agents: withAllowlists(parsed.data.agents),
+            agents: hydratedAgents(parsed.data),
           };
       hydrated.set(healed.id, healed);
       if (JSON.stringify(healed) !== JSON.stringify(parsed.data)) {

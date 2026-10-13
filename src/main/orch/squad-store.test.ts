@@ -255,6 +255,40 @@ describe('squad-store load path self-heals existing squads', () => {
     }
   });
 
+  it('F-1498: squad salvo antes do piso de skills volta com permissões revisadas', () => {
+    const db = makeDb();
+    openDb = db;
+    // Linha gravada entre 23/07 e 02/08: `allowedTools` normalizado, sem
+    // `allowedSkills`. O prepare recusa "não possui permissões revisadas".
+    insertRawSquad(db, {
+      id: 'old-skills',
+      name: 'Equipe antiga',
+      agents: [
+        { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', allowedTools: null },
+        { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex', model: 'gpt-6.1-sol', allowedTools: [] },
+        { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'codex', model: 'gpt-6.1-sol', allowedTools: [] },
+      ],
+    });
+
+    initSquadStore(db);
+
+    const loaded = getSquad('old-skills') as Squad;
+    expect(
+      loaded.agents.filter((agent) => agent.allowedSkills === undefined),
+    ).toEqual([]);
+    // O piso é o mesmo do salvar: executor ganha ponytail, revisor check-work.
+    expect(loaded.agents.find((agent) => agent.id === 'dev')?.allowedSkills).toContain('ponytail');
+    expect(loaded.agents.find((agent) => agent.id === 'qa')?.allowedSkills).toContain('check-work');
+    const row = db
+      .prepare('SELECT roster_json FROM squads WHERE id = ?')
+      .get('old-skills') as { roster_json: string };
+    expect(
+      (JSON.parse(row.roster_json) as SquadAgent[]).every(
+        (agent) => agent.allowedSkills !== undefined,
+      ),
+    ).toBe(true);
+  });
+
   it('replaces a stale custom row using the reserved Pet Studio id', () => {
     const db = makeDb();
     openDb = db;
