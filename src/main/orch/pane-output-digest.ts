@@ -27,10 +27,10 @@ const SIGNAL_PATTERN =
  * blocos ou ruído de progresso — nunca é conteúdo.
  */
 const GLYPH_ONLY_PATTERN =
-  /^[\s─━│┃┄┅┆┇┈┉┊┋┌┍┎┏┐┑┒┓└┕┖┗┘┙┚┛├┝┞┟┠┡┢┣┤┥┦┧┨┩┪┫┬┭┮┯┰┱┲┳┴┵┶┷┸┹┺┻┼╀╁╂╃╄╅╆╇╈╉╊╋═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬╭╮╯╰╱╲╳╴╵╶╷▀▄█▌▐░▒▓⠁-⣿◐◓◑◒○◔◕●◌•∙⋅·■□▪▫▲►▼◄◆◇✢✳✶✻✽✺✹✸✷✴✵❋❊❉❈*…]+$/u;
+  /^[\s─━│┃┄┅┆┇┈┉┊┋┌┍┎┏┐┑┒┓└┕┖┗┘┙┚┛├┝┞┟┠┡┢┣┤┥┦┧┨┩┪┫┬┭┮┯┰┱┲┳┴┵┶┷┸┹┺┻┼╀╁╂╃╄╅╆╇╈╉╊╋═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬╭╮╯╰╱╲╳╴╵╶╷▀▄█▌▐░▒▓⠁-⣿◐◓◑◒○◔◕●◌•∙⋅·˙■□▪▫▲►▼◄◆◇✢✳✶✻✽✺✹✸✷✴✵❋❊❉❈\u{1F311}-\u{1F319}🛸*…]+$/u;
 
-/** Glifos de spinner (Claude ✢✳✶✻✽, braille do Gemini/Qwen, meia-lua): decoração pura. */
-const SPINNER_GLYPHS = /[✢✳✶✻✽✺✹✸✷✴✵❋❊❉❈⠀-⣿◐◓◑◒]/gu;
+/** Glifos de spinner (Claude ✢✳✶✻✽, braille do Gemini/Qwen, meia-lua, luas do Kimi 🌒–🌙, OVNI do MiMo 🛸): decoração pura. */
+const SPINNER_GLYPHS = /[✢✳✶✻✽✺✹✸✷✴✵❋❊❉❈⠀-⣿◐◓◑◒\u{1F311}-\u{1F319}🛸]/gu;
 /** Mesma classe sem a flag `g` — `regex.test` com `g` é stateful (lastIndex). */
 const SPINNER_TEST = new RegExp(SPINNER_GLYPHS.source, 'u');
 
