@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import {
   activationChecklistRemaining,
   shouldShowFirstRunWizard,
@@ -83,5 +83,106 @@ describe('onboarding-store', () => {
     expect(checklist.connectedAccount).toBe(true);
     expect(checklist.openedProject).toBe(true);
     expect(checklist.createdMission).toBe(false);
+  });
+});
+
+describe('hydrate: wizard só em instalação nova (update não tem a chave v5)', () => {
+  const flushProbe = () => new Promise((r) => setTimeout(r, 0));
+
+  function mockNexus(signals: {
+    workspace?: unknown;
+    accounts?: unknown[];
+    providers?: unknown[];
+    missions?: unknown[];
+  }): void {
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      writable: true,
+      value: {
+        workspace: {
+          get: vi.fn(async () => signals.workspace ?? { current: null, recents: [] }),
+        },
+        accounts: { list: vi.fn(async () => signals.accounts ?? []) },
+        providers: { list: vi.fn(async () => signals.providers ?? []) },
+        orch: { listMissions: vi.fn(async () => signals.missions ?? []) },
+      },
+    });
+  }
+
+  beforeEach(() => {
+    useOnboardingStore.getState().reset();
+    useOnboardingStore.setState({ hydrated: false, wizardOpen: false, stepIndex: 0 });
+    // reset() persiste o default; a chave precisa SUMIR para simular update.
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    // @ts-expect-error remove o bridge mockado
+    delete window.nexus;
+  });
+
+  it('RED/GREEN: usuário existente sem a chave v5 mas com workspace → wizard fechado e migração silenciosa', async () => {
+    mockNexus({
+      workspace: { current: { path: '/proj' }, recents: [] },
+      providers: [{ hasKey: true }],
+    });
+    useOnboardingStore.getState().hydrate();
+    // Nunca abre no sync — a decisão espera a sonda de uso anterior.
+    expect(useOnboardingStore.getState().wizardOpen).toBe(false);
+    await flushProbe();
+    const after = useOnboardingStore.getState();
+    expect(after.wizardOpen).toBe(false);
+    expect(after.state.closedAt).not.toBeNull();
+    expect(after.state.outcome).toBe('completed');
+    expect(after.state.checklist.dismissed).toBe(true);
+    // Migração gravada: o próximo boot nem sonda.
+    expect(window.localStorage.getItem('nexus.onboarding.v5')).toContain(
+      '"outcome":"completed"',
+    );
+  });
+
+  it('RED/GREEN: sinal por conta ou missão também fecha o wizard', async () => {
+    mockNexus({ accounts: [{ id: 'acct-1' }] });
+    useOnboardingStore.getState().hydrate();
+    await flushProbe();
+    expect(useOnboardingStore.getState().wizardOpen).toBe(false);
+
+    window.localStorage.clear();
+    useOnboardingStore.getState().reset();
+    useOnboardingStore.setState({ hydrated: false, wizardOpen: false });
+    // reset() persiste o default — limpar de novo para simular update.
+    window.localStorage.clear();
+    mockNexus({ missions: [{ id: 'm-1' }] });
+    useOnboardingStore.getState().hydrate();
+    await flushProbe();
+    expect(useOnboardingStore.getState().wizardOpen).toBe(false);
+  });
+
+  it('RED/GREEN: instalação nova (sem chave v5 e sem nenhum sinal) → wizard abre', async () => {
+    mockNexus({});
+    useOnboardingStore.getState().hydrate();
+    expect(useOnboardingStore.getState().wizardOpen).toBe(false);
+    await flushProbe();
+    expect(useOnboardingStore.getState().wizardOpen).toBe(true);
+    // Nada migrado: o estado segue fresco para o fluxo real.
+    expect(useOnboardingStore.getState().state.closedAt).toBeNull();
+  });
+
+  it('estado v5 já gravado decide na hora, sem sonda', async () => {
+    mockNexus({ accounts: [{ id: 'acct-1' }] });
+    window.localStorage.setItem(
+      'nexus.onboarding.v5',
+      JSON.stringify({
+        ...getDefaultOnboardingState(),
+        flowVersion: ONBOARDING_FLOW_VERSION,
+      }),
+    );
+    useOnboardingStore.getState().hydrate();
+    expect(useOnboardingStore.getState().wizardOpen).toBe(true);
+    await flushProbe();
+    // Com a chave presente, os sinais de uso não são consultados.
+    expect(
+      (window.nexus as unknown as { accounts: { list: unknown } }).accounts.list,
+    ).not.toHaveBeenCalled();
   });
 });

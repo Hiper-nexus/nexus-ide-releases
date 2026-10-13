@@ -67,6 +67,30 @@ export function shouldShowFirstRunWizard(state: OnboardingState): boolean {
   return state.lastCompletedStep < 1;
 }
 
+/**
+ * A chave de storage é nova nesta versão: quem só ATUALIZOU o app não a tem.
+ * Antes de abrir o wizard de primeira execução, prova-se uso anterior pelos
+ * fatos já persistidos (workspace aberto/recente, conta ou chave de provider,
+ * missão no histórico). Qualquer sinal migra o estado como concluído em
+ * silêncio — o wizard é de instalação nova, não de update.
+ */
+async function probePriorUse(): Promise<boolean> {
+  const [workspace, accounts, providers, missions] = await Promise.all([
+    window.nexus.workspace.get().catch(() => null),
+    window.nexus.accounts.list().catch(() => null),
+    window.nexus.providers.list().catch(() => null),
+    window.nexus.orch.listMissions().catch(() => null),
+  ]);
+  if (workspace?.current || (workspace?.recents.length ?? 0) > 0) return true;
+  if ((accounts?.length ?? 0) > 0) return true;
+  if (
+    providers?.some((p) => p.hasKey || p.authState === 'ok')
+  ) {
+    return true;
+  }
+  return (missions?.length ?? 0) > 0;
+}
+
 export function stepIdForIndex(index: number): OnboardingStepId {
   const clamped = Math.min(
     ONBOARDING_STEP_IDS.length - 1,
@@ -111,13 +135,41 @@ export const useOnboardingStore = create<OnboardingStore>()((set, get) => ({
 
   hydrate: () => {
     const stored = readStored();
-    const state = stored ?? getDefaultOnboardingState();
-    set({
-      state,
-      hydrated: true,
-      wizardOpen: shouldShowFirstRunWizard(state),
-      stepIndex: 0,
-    });
+    if (stored) {
+      set({
+        state: stored,
+        hydrated: true,
+        wizardOpen: shouldShowFirstRunWizard(stored),
+        stepIndex: 0,
+      });
+      return;
+    }
+    // Sem a chave desta versão: instalação nova OU update por cima de versão
+    // anterior. O wizard fica fechado até a sonda de uso anterior decidir —
+    // abrir para quem já usa o app é o defeito que esta sonda evita.
+    const state = getDefaultOnboardingState();
+    set({ state, hydrated: true, wizardOpen: false, stepIndex: 0 });
+    void (async () => {
+      const usedBefore = await probePriorUse();
+      // Se algo persistiu estado enquanto a sonda rodava (interação real),
+      // o que está gravado manda — não migra nem abre por cima.
+      if (readStored() !== null) return;
+      if (usedBefore) {
+        const migrated = persist({
+          ...get().state,
+          closedAt: Date.now(),
+          outcome: 'completed' as const,
+          // Checklist de ativação é ajuda de primeiro run; quem já usava o
+          // produto não a vê (itens cumpridos não precisam de prova nova).
+          checklist: { ...get().state.checklist, dismissed: true },
+        });
+        set({ state: migrated, wizardOpen: false });
+        return;
+      }
+      if (shouldShowFirstRunWizard(get().state)) {
+        set({ wizardOpen: true, stepIndex: 0 });
+      }
+    })();
   },
 
   openWizard: () => set({ wizardOpen: true, stepIndex: 0 }),
