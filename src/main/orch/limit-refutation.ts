@@ -11,8 +11,12 @@
  *
  * Deliberately conservative — it only ever refutes a claim it can actually
  * disprove:
- *  - usage-based kinds only (`quota` / `rate-limit`). `auth` is a credential
- *    problem orthogonal to usage; `transient` is already a seconds-long cooldown.
+ *  - usage claims (`quota` / `rate-limit`) by a clearly-healthy measured
+ *    window; an `auth` claim by ANY fresh measured provider-api window —
+ *    producing that reading required the provider to ACCEPT this account's
+ *    credential, so the credential is operational (agy incident 2026-10-13:
+ *    PTY "authentication_error" stopped a mission on a working account).
+ *    `transient` is already a seconds-long cooldown and is never refuted.
  *  - unscoped hits only. A per-tier claim (`tier:opus`) is not cleared by an
  *    account-wide reading.
  *  - a provider-api window of the MATCHING kind must exist, be fresh, and read
@@ -171,20 +175,48 @@ export function providerApiRefutesCooldown(
   return sawRatio;
 }
 
+/**
+ * A fresh probe that the provider answered with `auth-expired` CONFIRMS an
+ * auth hit: the account's own credential was tried and rejected. Any other
+ * hint (unavailable, no-credential, …) proves nothing about the pane's
+ * credential and never confirms.
+ */
+export function providerApiConfirmsAuth(
+  entry: ProviderQuotaEntry | undefined,
+  hit: Pick<LimitHit, 'kind' | 'scope'>,
+  now: number,
+): boolean {
+  if (!entry || hit.kind !== 'auth' || hit.scope) return false;
+  const age = now - entry.updatedAt;
+  if (!Number.isFinite(age) || age < 0 || age > REFUTE_FRESH_MS) return false;
+  return entry.readHint === 'auth-expired';
+}
+
 export function providerApiRefutesLimit(
   entry: ProviderQuotaEntry | undefined,
   hit: Pick<LimitHit, 'kind' | 'scope'>,
   now: number,
 ): boolean {
   if (!entry) return false;
-  // Only usage-based claims can be disproven by usage data.
-  if (hit.kind !== 'quota' && hit.kind !== 'rate-limit') return false;
   // A per-tier claim is not cleared by an account-wide reading.
   if (hit.scope) return false;
   // The reading must be recent to be trusted over a live terminal signal.
   if (!Number.isFinite(entry.updatedAt) || now - entry.updatedAt > REFUTE_FRESH_MS) {
     return false;
   }
+  // Auth: a fresh MEASURED provider-api window could only be produced with
+  // this account's credential accepted — the credential works, whatever the
+  // PTY text said. Unknown/cooldown windows prove nothing and never refute.
+  if (hit.kind === 'auth') {
+    return entry.windows.some(
+      (w) =>
+        w.source === 'provider-api' &&
+        w.usedRatio !== null &&
+        Number.isFinite(w.usedRatio),
+    );
+  }
+  // Only usage-based claims can be disproven by usage data.
+  if (hit.kind !== 'quota' && hit.kind !== 'rate-limit') return false;
 
   // A healthy alleged window does not disprove another measured exhausted
   // account window. Keep all callers on the same conservative policy.

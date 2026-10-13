@@ -5,6 +5,7 @@ import type {
 } from '../../shared/quota-types';
 import {
   hasFreshProviderApiWindowForLimit,
+  providerApiConfirmsAuth,
   providerApiExhaustsAccount,
   longCooldownNeedsFreshProviderApi,
   providerApiRefutesCooldown,
@@ -53,9 +54,23 @@ describe('providerApiRefutesLimit', () => {
     expect(providerApiRefutesLimit(e, { kind: 'quota' }, NOW)).toBe(true);
   });
 
-  it('does NOT refute auth hits (credential validity is orthogonal to usage)', () => {
+  it('refutes an auth hit when a fresh provider-api window was measured (credential accepted)', () => {
+    // Incidente agy 2026-10-13: produzir a leitura exigiu a credencial da
+    // conta — se ela foi aceita, "authentication_error" no PTY não é limite.
     const e = entry({ windows: [win({ kind: 'hours', usedRatio: 0.07 })] });
-    expect(providerApiRefutesLimit(e, { kind: 'auth' }, NOW)).toBe(false);
+    expect(providerApiRefutesLimit(e, { kind: 'auth' }, NOW)).toBe(true);
+  });
+
+  it('does NOT refute an auth hit from unknown/stale readings (nothing was proven)', () => {
+    const unknown = entry({
+      windows: [win({ kind: 'hours', source: 'unknown', usedRatio: null })],
+    });
+    expect(providerApiRefutesLimit(unknown, { kind: 'auth' }, NOW)).toBe(false);
+    const stale = entry({
+      updatedAt: NOW - REFUTE_FRESH_MS - 1,
+      windows: [win({ kind: 'hours', usedRatio: 0.07 })],
+    });
+    expect(providerApiRefutesLimit(stale, { kind: 'auth' }, NOW)).toBe(false);
   });
 
   it('does NOT refute transient hits (already short, self-healing)', () => {
@@ -114,6 +129,30 @@ describe('providerApiRefutesLimit', () => {
 
   it('returns false for an unknown (missing) entry', () => {
     expect(providerApiRefutesLimit(undefined, { kind: 'quota' }, NOW)).toBe(false);
+  });
+});
+
+describe('providerApiConfirmsAuth', () => {
+  it('confirms auth only from a fresh auth-expired probe hint', () => {
+    expect(
+      providerApiConfirmsAuth(entry({ readHint: 'auth-expired' }), { kind: 'auth' }, NOW),
+    ).toBe(true);
+    for (const readHint of ['unavailable', 'no-credential', 'quota-key-required', undefined] as const) {
+      expect(
+        providerApiConfirmsAuth(entry({ readHint }), { kind: 'auth' }, NOW),
+      ).toBe(false);
+    }
+    expect(
+      providerApiConfirmsAuth(
+        entry({ readHint: 'auth-expired', updatedAt: NOW - REFUTE_FRESH_MS - 1 }),
+        { kind: 'auth' },
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      providerApiConfirmsAuth(entry({ readHint: 'auth-expired' }), { kind: 'quota' }, NOW),
+    ).toBe(false);
+    expect(providerApiConfirmsAuth(undefined, { kind: 'auth' }, NOW)).toBe(false);
   });
 });
 

@@ -64,6 +64,7 @@ import { retryTargetMsForLimit } from './failover-retry-policy';
 import {
   hasFreshProviderApiWindowForLimit,
   longCooldownNeedsFreshProviderApi,
+  providerApiConfirmsAuth,
   providerApiRefutesLimit,
   providerApiExhaustsAccount,
 } from './limit-refutation';
@@ -1666,7 +1667,8 @@ async function fireUnconfirmedLimitRetry(
   // a conta sai da disputa de vez (evita respawnar na conta ainda limitada);
   // sem dados ela pode voltar a ser escolhida (falso positivo provável).
   const confirmed = hasFreshProviderApiWindowForLimit(fresh, hit, probedAt) ||
-    providerApiExhaustsAccount(fresh, hit, probedAt);
+    providerApiExhaustsAccount(fresh, hit, probedAt) ||
+    providerApiConfirmsAuth(fresh, hit, probedAt);
   void performSwitch({
     key,
     authority,
@@ -2578,10 +2580,18 @@ function handleLimitHit(
   // janela inteira. Outra janela da conta só confirma com 100% MEDIDO.
   // Sonda sem resposta preserva F-249: pausa curta na mesma conta e retry.
   // Provider errors (transient) never reach this function.
+  //
+  // Auth entra na MESMA sonda (incidente agy 2026-10-13): o cooldown de auth
+  // é curto (15 min), mas ele TROCA de conta e, sem irmã, move a tarefa a
+  // outra CLI (`planCliSwitch` aceita auth) — texto "authentication_error"
+  // no PTY parou uma missão com a conta operacional. A sonda decide: leitura
+  // provider-api medida refuta (a credencial foi aceita para produzi-la),
+  // `auth-expired` confirma, sem dados vira pausa capada na mesma conta.
   if (
-    longCooldownNeedsFreshProviderApi(hit) &&
+    (longCooldownNeedsFreshProviderApi(hit) || hit.kind === 'auth') &&
     !hasFreshProviderApiWindowForLimit(quotaEntry, hit, now) &&
-    !providerApiExhaustsAccount(quotaEntry, hit, now)
+    !providerApiExhaustsAccount(quotaEntry, hit, now) &&
+    !providerApiConfirmsAuth(quotaEntry, hit, now)
   ) {
     void confirmLimitByProbe(authority, pane, key, hit, now, source, current, adapterId);
     return;
@@ -2600,6 +2610,7 @@ async function confirmLimitByProbe(
   adapterId: string,
 ): Promise<void> {
   let fresh: ProviderQuotaEntry | undefined;
+  let probeUnavailable = false;
   try {
     await requireQuotaService().refreshForLimitHit(now);
     fresh = current ? quotaEntryFor(adapterId, current.id) : undefined;
@@ -2609,14 +2620,24 @@ async function confirmLimitByProbe(
       error instanceof Error ? error.message : error,
     );
     fresh = undefined;
+    probeUnavailable = true;
   }
   const probedAt = Date.now();
   if (current && providerApiRefutesLimit(fresh, hit, probedAt)) {
     logSuppressedFailover(pane, current, hit, 'provider-api-healthy-after-probe', source);
     return;
   }
+  // Serviço de cota fora do ar (boot race): nenhuma autoridade pôde julgar.
+  // Auth mantém a recuperação legada (trocar de credencial é o conserto de um
+  // 401 real e o disjuntor de morte instantânea freia o loop); uso continua
+  // no caminho não confirmado abaixo, como sempre foi.
+  if (hit.kind === 'auth' && probeUnavailable) {
+    commitLimitHit(authority, pane, key, hit, now, source, current, adapterId);
+    return;
+  }
   if (hasFreshProviderApiWindowForLimit(fresh, hit, probedAt) ||
-      providerApiExhaustsAccount(fresh, hit, probedAt)) {
+      providerApiExhaustsAccount(fresh, hit, probedAt) ||
+      providerApiConfirmsAuth(fresh, hit, probedAt)) {
     commitLimitHit(authority, pane, key, hit, now, source, current, adapterId);
     return;
   }

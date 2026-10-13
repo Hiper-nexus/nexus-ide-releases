@@ -550,6 +550,66 @@ describe('account failover authority and lifecycle', () => {
     }
   });
 
+  // Incidente agy (2026-10-13): "401 authentication_error" lido no PTY virou
+  // limite confirmado — cooldown, troca de conta e missão movida a outra CLI —
+  // com a conta operacional. Auth NÃO passava pela sonda F-249 (só cooldowns
+  // longos de uso passavam), então texto nenhum era refutado/confirmado.
+  it('auth no PTY com a conta operacional na sonda: NÃO põe cooldown nem troca (F-249)', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? {
+            kind: 'auth' as const,
+            reason: '401 authentication_error',
+            cooldownMs: 15 * 60 * 1000,
+          }
+        : null,
+    );
+    const { requireQuotaService } = await import('../quota/quota-service');
+    const snapshot = {
+      updatedAt: 100_000,
+      worstUsedRatio: 0.3,
+      highUsageCount: 0,
+      unknownCount: 0,
+      entries: [probedEntry(0.3)],
+    };
+    let probed = false;
+    vi.mocked(requireQuotaService).mockImplementation(
+      () =>
+        ({
+          refreshForLimitHit: async () => {
+            probed = true;
+            return snapshot;
+          },
+          lastSnapshot: () => (probed ? snapshot : undefined),
+        }) as unknown as ReturnType<typeof requireQuotaService>,
+    );
+    const scope = testProjectScope();
+    const owner = renderer(723);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: 'pane-723',
+      sessionId: 'session-723',
+      missionId: 'mission-723',
+      scope,
+    });
+
+    ptyMocks.dataTaps[0]('session-723', 'LIMIT');
+    await settleFailover();
+
+    // A sonda rodou e a leitura provider-api fresca prova a credencial aceita:
+    // o sinal de auth é refutado — sem cooldown, sem troca, missão intacta.
+    expect(probed).toBe(true);
+    expect(accountMocks.setCooldown).not.toHaveBeenCalled();
+    expect(owner.send).not.toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.anything(),
+    );
+  });
+
   it('allows a long cooldown when a fresh matching provider-api window exists', async () => {
     const { detectLimit } = await import('./limit-detector');
     vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
