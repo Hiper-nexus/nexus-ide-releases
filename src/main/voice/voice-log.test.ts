@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +8,8 @@ import {
   logVoice,
   sanitizeRendererVoiceEvent,
 } from './voice-log';
+import { LiveToolCallCoordinator } from './live-tool-call-registry';
+import { JarvisLiveSession } from './jarvis-live';
 
 /**
  * Logger persistente de voz: garante que a morte silenciosa do mic (e demais
@@ -158,5 +160,137 @@ describe('voice-log logVoice (persistência)', () => {
     logVoice(sanitizedData.level, sanitizedData.event, sanitizedData.msg, sanitizedData.data);
     const content = fs.readFileSync(logFile, 'utf8');
     expect(content).not.toContain(syntheticPhrase);
+  });
+});
+
+/**
+ * F-1424 parte 2: a sanitização vive DENTRO do `logVoice` — o gargalo único
+ * que formata, grava no voice.log e espelha no console. Os achados da revisão
+ * eram exatamente chamadores que burlavam o sanitizador do IPC: summaries de
+ * ação/tool (com URL ditada, títulos de pane/missão) em `msg` de
+ * actionResult/realtimeActionResult e em `data.summary` de live.toolLateResult
+ * gravados direto do Main. Aqui o marcador sintético entra pelo caminho que o
+ * revisor reproduziu e não pode sobreviver nem no arquivo nem no console.
+ */
+describe('voice-log F-1424 parte 2 (sanitização no gargalo logVoice)', () => {
+  const MARKER = 'https://example.invalid/frase-sintetica-f1424b';
+
+  let tmpDir: string;
+  let logFile: string;
+  let previousLogFile: string | undefined;
+  let consoleSpies: Array<ReturnType<typeof vi.spyOn>>;
+
+  const readCapturedConsole = (): string =>
+    consoleSpies
+      .flatMap((spy) => spy.mock.calls)
+      .map((call) => call.map((arg) => String(arg)).join(' '))
+      .join('\n');
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-voice-log2-'));
+    logFile = path.join(tmpDir, 'voice.log');
+    previousLogFile = process.env.NEXUS_VOICE_LOG_FILE;
+    process.env.NEXUS_VOICE_LOG_FILE = logFile;
+    consoleSpies = [
+      vi.spyOn(console, 'log').mockImplementation(() => {}),
+      vi.spyOn(console, 'warn').mockImplementation(() => {}),
+      vi.spyOn(console, 'error').mockImplementation(() => {}),
+    ];
+  });
+
+  afterEach(() => {
+    for (const spy of consoleSpies) spy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (previousLogFile === undefined) {
+      delete process.env.NEXUS_VOICE_LOG_FILE;
+    } else {
+      process.env.NEXUS_VOICE_LOG_FILE = previousLogFile;
+    }
+  });
+
+  it('jarvis.actionResult com summary (URL ditada) em msg não vaza para arquivo nem console', () => {
+    logVoice('info', 'jarvis.actionResult', `browser aberto em ${MARKER}`, {
+      tool: 'open_browser',
+      ok: true,
+    });
+    const content = fs.readFileSync(logFile, 'utf8');
+    expect(content).toContain('jarvis.actionResult');
+    expect(content).not.toContain(MARKER);
+    expect(readCapturedConsole()).not.toContain(MARKER);
+  });
+
+  it('jarvis.realtimeActionResult com summary em msg não vaza para arquivo nem console', () => {
+    logVoice('warn', 'jarvis.realtimeActionResult', `abrir browser em ${MARKER}`, {
+      tool: 'open_browser',
+      ok: false,
+      callId: 'call-1',
+    });
+    const content = fs.readFileSync(logFile, 'utf8');
+    expect(content).toContain('jarvis.realtimeActionResult');
+    expect(content).not.toContain(MARKER);
+    expect(readCapturedConsole()).not.toContain(MARKER);
+  });
+
+  it('live.toolLateResult via LiveToolCallCoordinator real (call desconhecida) não grava o summary', () => {
+    const session = new JarvisLiveSession(() => {}, () => 1_000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const coordinator = new LiveToolCallCoordinator({
+      fsm: session,
+      getProvider: () => null,
+      onResultContext: vi.fn(),
+    });
+
+    // Call jamais "claimada": o coordinator cai no ramo tardio/desconhecido
+    // e loga direto do Main — o caminho que o revisor apontou.
+    expect(
+      coordinator.complete({
+        sessionId: session.getState().sessionId ?? 'sess-1',
+        at: 1_001,
+        source: 'realtime',
+        callId: 'call-never-claimed',
+        name: 'nexus_action',
+        tool: 'open_browser',
+        ok: true,
+        summary: `browser aberto em ${MARKER}`,
+        output: null,
+      }),
+    ).toBe(false);
+
+    const content = fs.readFileSync(logFile, 'utf8');
+    expect(content).toContain('live.toolLateResult');
+    expect(content).not.toContain(MARKER);
+    expect(readCapturedConsole()).not.toContain(MARKER);
+  });
+
+  it('chaves sensíveis em data (summary/url/args/prompt/query/message/content) viram chars ou somem', () => {
+    logVoice('warn', 'live.toolLateResult', 'resultado tardio/duplicado não reenviado', {
+      callId: 'call-1',
+      summary: `browser aberto em ${MARKER}`,
+      url: MARKER,
+      args: { url: MARKER, prompt: MARKER },
+      prompt: MARKER,
+      query: MARKER,
+      message: MARKER,
+      content: MARKER,
+    });
+    const content = fs.readFileSync(logFile, 'utf8');
+    expect(content).toContain('"callId":"call-1"');
+    expect(content).not.toContain(MARKER);
+    expect(content).not.toContain('"summary"');
+    expect(readCapturedConsole()).not.toContain(MARKER);
+  });
+
+  it('mensagens estáticas da allowlist seguem inteiras (log não degrada)', () => {
+    logVoice('info', 'stt.dictationTranscript', 'ditado transcrito', {
+      chars: 21,
+      latencyMs: 50,
+    });
+    logVoice('warn', 'live.toolLateResult', 'resultado tardio/duplicado não reenviado', {
+      callId: 'call-1',
+    });
+    const content = fs.readFileSync(logFile, 'utf8');
+    expect(content).toContain(': ditado transcrito');
+    expect(content).toContain(': resultado tardio/duplicado não reenviado');
   });
 });

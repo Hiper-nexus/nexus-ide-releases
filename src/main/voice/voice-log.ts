@@ -28,34 +28,108 @@ export interface VoiceLogEntry {
 }
 
 /**
- * Eventos do pipeline cujo nome indica transcrição, ditado cru ou resposta gerada.
- * F-1424: defesa em profundidade no handler IPC — se um renderer enviar
- * o texto do usuário ou do assistente em `msg` ou em campos de `data`, o log
- * descarta o conteúdo sensível e preserva apenas metadados (ex.: contagem de caracteres).
+ * Eventos do pipeline cujo nome indica transcrição, ditado cru, resposta
+ * gerada ou resultado de ação/tool. F-1424: a sanitização vive DENTRO do
+ * `logVoice` — todo chamador (Main direto ou handler IPC do renderer) passa
+ * pelo mesmo gargalo antes de formatar, gravar no arquivo e espelhar no
+ * console. O sanitize do IPC ficou sozinho na parte 1 e chamadores do Main
+ * (live.toolLateResult) burlaram o filtro.
  */
-export const CONTENT_EVENT_PATTERN = /(?:transcript|raw|brainreply)/i;
+export const CONTENT_EVENT_PATTERN =
+  /(?:transcript|raw|reply|actionresult|toollateresult|incident)/i;
 
 /**
- * Mensagens descritivas estáticas permitidas em eventos de conteúdo.
- * Qualquer `msg` fora desta lista em um evento de conteúdo é tratada como
- * potencial vazamento de texto do operador/resposta e é redigida.
+ * Mensagens descritivas estáticas permitidas em eventos de conteúdo/ação.
+ * Estratégia ALLOWLIST: nesses eventos o `msg` é não confiável por definição —
+ * ele carrega transcrição, resposta gerada ou summary de tool (o executor
+ * monta "browser aberto em <url ditada>"). Uma mensagem fora desta lista é
+ * redigida e vira `data.chars`; uma mensagem da lista é literal de código,
+ * sem interpolação, e passa inteira. Ao criar um evento novo da família
+ * (nome contendo transcript/raw/reply/actionResult/toolLateResult/incident),
+ * adicione aqui a literal EXATA usada no chamador — senão o log degrada para
+ * chars (falha fechada, nunca vaza).
  */
 export const SAFE_CONTENT_EVENT_MESSAGES: ReadonlySet<string> = new Set([
+  // transcrição/ditado/resposta (parte 1)
   'ditado transcrito',
   'transcrição bruta concluída',
   'transcrição realtime recebida',
   'transcrição classic recebida',
   'resposta do cérebro gerada',
+  'transcript de turno antigo descartado',
+  'final antigo ignorado',
+  'turno superado antes de falar',
+  'síntese concluída em turno superado',
+  'confirmação pendente sem energia acústica suficiente',
+  'reply ruído/eco garbled descartado',
+  'follow-up mudo — reabre escuta em vez de idle',
+  'follow-up sem resposta Live — idle (sessão ainda quente se Live up)',
+  // códigos de máquina do emptyReplyReason (cadeia de providers do cérebro)
+  'noise-transcript',
+  'provider-chain-deadline',
+  'all-providers-failed',
+  'provider-returned-empty',
+  // resultado de ação/tool e incidentes (parte 2)
+  'resultado de ação local',
+  'resultado de ação realtime',
+  'resultado tardio/duplicado não reenviado',
+  'incidente de execução de ação',
 ]);
 
 /**
- * Chaves em `data` que costumam carregar texto falado, transcrito ou gerado.
+ * Chaves em `data` que costumam carregar texto falado, transcrito ou gerado,
+ * ou argumentos/sumários de ação/tool (url ditada, prompt, resposta do MCP).
+ * Valor string vira `data.chars`; outros tipos são apenas removidos.
  */
-export const SENSITIVE_DATA_KEY_PATTERN = /^(?:text|transcript|raw|final|say|lastUserTranscript)$/i;
+export const SENSITIVE_DATA_KEY_PATTERN =
+  /^(?:text|transcript|raw|final|say|lastUserTranscript|fingerprint|summary|url|args|prompt|query|message|content)$/i;
 
 /**
- * Sanitiza um evento de log vindo do renderer antes de encaminhar ao logger persistente.
- * Garante que textos do operador e da resposta nunca cheguem ao voice.log.
+ * Núcleo da defesa F-1424, aplicado dentro do `logVoice` para TODO chamador:
+ * em evento de conteúdo/ação, `msg` fora da allowlist vira `data.chars`; em
+ * qualquer evento, chaves sensíveis de `data` são descartadas (string preserva
+ * o comprimento em `chars`). Falha fechada: prefere degradar o log a vazar.
+ */
+function sanitizeVoiceLogFields(
+  event: string,
+  msg?: string,
+  data?: Record<string, unknown>,
+): { msg?: string; data?: Record<string, unknown> } {
+  let safeMsg = msg;
+  let safeData: Record<string, unknown> | undefined = data ? { ...data } : undefined;
+
+  if (
+    CONTENT_EVENT_PATTERN.test(event) &&
+    safeMsg &&
+    !SAFE_CONTENT_EVENT_MESSAGES.has(safeMsg)
+  ) {
+    if (!safeData) safeData = {};
+    if (typeof safeData.chars !== 'number') {
+      safeData.chars = safeMsg.length;
+    }
+    safeMsg = undefined;
+  }
+
+  if (safeData) {
+    for (const key of Object.keys(safeData)) {
+      if (SENSITIVE_DATA_KEY_PATTERN.test(key)) {
+        const val = safeData[key];
+        if (typeof val === 'string' && typeof safeData.chars !== 'number') {
+          safeData.chars = val.length;
+        }
+        delete safeData[key];
+      }
+    }
+  }
+
+  return { msg: safeMsg, data: safeData };
+}
+
+/**
+ * Sanitiza um evento de log vindo do renderer antes de encaminhar ao logger
+ * persistente. Garante que textos do operador e da resposta nunca cheguem ao
+ * voice.log. Hoje é redundância consciente: `logVoice` também sanitiza (é o
+ * gargalo único); a função fica exposta para o teste direto da regra.
  */
 export function sanitizeRendererVoiceEvent(payload: VoiceLogPayload): {
   level: VoiceLogLevel;
@@ -63,40 +137,8 @@ export function sanitizeRendererVoiceEvent(payload: VoiceLogPayload): {
   msg?: string;
   data?: Record<string, unknown>;
 } {
-  const isContent = CONTENT_EVENT_PATTERN.test(payload.event);
-  let msg = payload.msg;
-  let data: Record<string, unknown> | undefined = payload.data ? { ...payload.data } : undefined;
-
-  if (isContent) {
-    if (msg && !SAFE_CONTENT_EVENT_MESSAGES.has(msg)) {
-      if (!data) data = {};
-      if (typeof data.chars !== 'number') {
-        data.chars = msg.length;
-      }
-      msg = undefined;
-    }
-  }
-
-  if (data) {
-    for (const key of Object.keys(data)) {
-      if (SENSITIVE_DATA_KEY_PATTERN.test(key)) {
-        const val = data[key];
-        if (typeof val === 'string') {
-          if (typeof data.chars !== 'number') {
-            data.chars = val.length;
-          }
-        }
-        delete data[key];
-      }
-    }
-  }
-
-  return {
-    level: payload.level,
-    event: payload.event,
-    msg,
-    data,
-  };
+  const { msg, data } = sanitizeVoiceLogFields(payload.event, payload.msg, payload.data);
+  return { level: payload.level, event: payload.event, msg, data };
 }
 
 /** Caminho padrão (display/diagnóstico). logVoice resolve o path a cada call. */
@@ -154,12 +196,15 @@ export function logVoice(
   msg?: string,
   data?: Record<string, unknown>,
 ): void {
+  // F-1424: gargalo único — Main e IPC passam por aqui antes do arquivo e do
+  // console; nenhum chamador consegue burlar a redação.
+  const { msg: safeMsg, data: safeData } = sanitizeVoiceLogFields(event, msg, data);
   const line = formatVoiceLine({
     ts: new Date().toISOString(),
     level,
     event,
-    msg,
-    data,
+    msg: safeMsg,
+    data: safeData,
   });
   consoleMirror(level, line);
   appendVoiceLine(resolveLogFile(), line, resolveMaxBytes());

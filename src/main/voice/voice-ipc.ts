@@ -50,7 +50,7 @@ import {
 import { WakeEngine } from "./wake-engine";
 import { getAecRuntimeStatus } from "./aec-runtime";
 import { startNativeAecRuntime, type NativeAecRuntime } from "./aec-native-runtime";
-import { logVoice, sanitizeRendererVoiceEvent } from "./voice-log";
+import { logVoice } from "./voice-log";
 import { trace } from "../observability/main-trace";
 import {
   DICTATION_SESSION_EVENT,
@@ -1051,16 +1051,9 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
   onIpcGuarded(VOICE_CHANNELS.logEvent, (_event, raw: unknown) => {
     const parsed = voiceLogSchema.safeParse(raw);
     if (parsed.success) {
-      // F-1424: defesa em profundidade — sanitiza eventos vindos do renderer
-      // cujo nome ou campos indiquem transcrição/conteúdo bruto, garantindo
-      // que nenhum texto do operador ou de resposta chegue ao voice.log.
-      const sanitized = sanitizeRendererVoiceEvent(parsed.data);
-      logVoice(
-        sanitized.level,
-        sanitized.event,
-        sanitized.msg,
-        sanitized.data,
-      );
+      // F-1424: logVoice sanitiza internamente (gargalo único de Main e IPC)
+      // — nenhum texto do operador ou de resposta chega ao voice.log/console.
+      logVoice(parsed.data.level, parsed.data.event, parsed.data.msg, parsed.data.data);
       // F-1392: a sessão de ditado também entra no lifecycle (lista branca,
       // sem texto) — é o log de uso que diz quando e por que o ditado falha.
       if (parsed.data.event === DICTATION_SESSION_EVENT) {
