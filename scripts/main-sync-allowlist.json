@@ -16,8 +16,8 @@
       "method": "execFileSync",
       "kind": "reference",
       "fingerprint": "8cbce4944c355550a83933c4b3744ae375ca279d08daf247a6b46799d8d2e7de",
-      "count": 2,
-      "reason": "Windows credential-slot read/write uses fixed PowerShell scripts and bounded native-store transactions (F-677); no new calls permitted."
+      "count": 3,
+      "reason": "Windows credential-slot read, write and CredDelete use the same fixed PowerShell scripts and bounded native-store transactions (F-677); eight-second timeout, no new calls permitted."
     },
     {
       "file": "src/main/adapters/claude-credential.ts",
@@ -74,6 +74,22 @@
       "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
       "count": 1,
       "reason": "Existing bounded Keychain existence proof for managed authentication; account isolation owner, never a PTY text detector."
+    },
+    {
+      "file": "src/main/adapters/managed-credentials.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "0b2c952d5c44c3d62935f56f5efe2281770c22f738c6109a819b82843c0c06f6",
+      "count": 1,
+      "reason": "Existing bounded macOS Keychain read of the AGY gemini:antigravity slot; four-second timeout, darwin-only, skipped under VITEST (F-677)."
+    },
+    {
+      "file": "src/main/adapters/managed-credentials.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing bounded macOS Keychain read of the AGY gemini:antigravity slot; four-second timeout, darwin-only, skipped under VITEST (F-677)."
     },
     {
       "file": "src/main/adapters/subscription-auth.ts",
@@ -330,6 +346,22 @@
       "fingerprint": "ab3b772e1be9b35a37eb11b353a5758b1844787f0bdc225d359635249385948f",
       "count": 1,
       "reason": "Compatibility/test-injection seam and cached Windows no-daemon help probe; production version discovery is cache-only/async."
+    },
+    {
+      "file": "src/main/persistence/account-store.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "5a9e2e53467c8a93a9eb73d028cc4e7932041b44a140e6b85f0e74e0e7c4eff8",
+      "count": 1,
+      "reason": "Existing bounded macOS Keychain delete of the AGY slot before a new login; four-second timeout, darwin-only, skipped under VITEST (F-677)."
+    },
+    {
+      "file": "src/main/persistence/account-store.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing bounded macOS Keychain delete of the AGY slot before a new login; four-second timeout, darwin-only, skipped under VITEST (F-677)."
     },
     {
       "file": "src/main/persistence/project-git-lineage.ts",
