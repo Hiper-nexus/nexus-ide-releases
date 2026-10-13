@@ -588,7 +588,8 @@ function ProviderDetail({
     }
     layout.renameTitle(paneId, paneTitle);
     try {
-      await waitForSession(paneId, 10_000);
+      const sessionId = await waitForSession(paneId);
+      if (!sessionId) throw new Error('terminal-unavailable');
       writeToPane(paneId, `${command}\n`);
       announceOp('terminal-install', 'ok', undefined, {
         label: 'Ver terminal',

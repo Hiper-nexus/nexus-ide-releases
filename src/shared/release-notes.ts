@@ -10481,8 +10481,26 @@ export const RELEASE_076244: AppRelease = {
 export const RELEASE_076245: AppRelease = {
   version: '0.76.245',
   date: '2026-10-13',
-  codename: 'Orquestração viva',
-  summary: 'O Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, ditar segurando Space não derruba mais o app no macOS, a segunda conta do Antigravity entra e um erro de autenticação citado no terminal não troca mais a conta de uma missão que estava funcionando.',
+  codename: 'Multi-conta no Antigravity e login sem tropeço',
+  summary: 'Você pode cadastrar e alternar várias contas Google no Antigravity (agy) e nas demais CLIs sem perder a sessão anterior; o terminal de login abre mesmo vindo do Início ou em máquinas com partida mais lenta do PowerShell, e a lista de Providers mostra "10 modelos" em vez de "10/10".',
+  highlights: [
+    { title: 'Várias contas no Antigravity e em todas as CLIs', detail: 'Ao adicionar outra conta do Antigravity no Windows, o Nexus guarda a conta atual no cofre e libera a vaga local para o navegador abrir o login da nova conta — sem desconectar a anterior no Google — e sincroniza o cofre ao clicar em "Usar".' },
+    { title: 'Contagem clara de modelos em Providers', detail: 'A lista lateral de Providers agora mostra "10 modelos" (em vez de "10/10" ou "13/15"), deixando claro que o número é o total de modelos da ferramenta e não consumo de cota.' },
+  ],
+  fixes: [
+    { title: 'Terminal de login sempre disponível', detail: 'Abrir o login de uma CLI a partir do Início reabre automaticamente o projeto recente (ou pede uma pasta) e aguarda até 60 segundos pela partida do terminal, eliminando o erro "O terminal não ficou disponível. O login não foi iniciado.".' },
+  ],
+};
+
+// Não lançado: notas das correções locais F-1434..F-1442 («Orquestração viva»
+// + «Squad abre»), integradas sobre a 0.76.248 publicada. Nunca foram a
+// 0.76.245/0.76.246 do remoto; a preparação da próxima release dobra este
+// bloco na nova CURRENT_RELEASE e remove esta constante.
+export const RELEASE_NAO_LANCADO_F1434_F1442: AppRelease = {
+  version: 'não-lançado',
+  date: '2026-10-13',
+  codename: 'Orquestração viva + Squad abre',
+  summary: 'O Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, ditar segurando Space não derruba mais o app no macOS, a segunda conta do Antigravity entra, um erro de autenticação citado no terminal não troca mais a conta de uma missão que estava funcionando, um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais «sessão expirada» sobre uma credencial que está funcionando.',
   highlights: [
     { title: 'Maestro que delega', detail: 'O orquestrador criado pelo «+ Pane» recebia os pedidos e executava tudo no próprio terminal, sem abrir workers. Agora ele recebe a doutrina de delegar e o vigia de esteira cobra quando a missão fica sem workers.' },
   ],
@@ -10493,17 +10511,23 @@ export const RELEASE_076245: AppRelease = {
     { title: 'Sem o diálogo do Keychain em loop', detail: 'O macOS repetia sem fim o pedido de acesso às credenciais do Muse a cada sonda de cota; a leitura não dispara mais o diálogo.' },
     { title: 'Falso limite do AGY', detail: 'Um «401» que aparecia no texto do terminal fazia o Nexus trocar de conta e parar a missão, mesmo com a conta funcionando. Agora a sonda de cota confirma antes: credencial aceita pelo provider desmente o alarme e o pane segue na mesma conta.' },
     { title: 'Windows sem falsa queda', detail: 'Pane encerrado pelo próprio Nexus ao fim da missão mostrava «processo caiu (code 129)»; o encerramento normal não é mais rotulado como queda.' },
-  ],
-};
-
-export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.246',
-  date: '2026-10-13',
-  codename: 'Squad abre',
-  summary: 'Um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais «sessão expirada» sobre uma credencial que está funcionando.',
-  highlights: [],
-  fixes: [
     { title: 'Squad salvo abre de novo', detail: 'Squads de plano (e as cópias deles) falhavam ao abrir e em «Usar integrantes», sem jeito de corrigir no editor. Agora o roster carrega normalmente e o squad volta a ser utilizável.' },
     { title: 'Muse sem falsa expiração', detail: 'O pane do Muse com login nativo mostrava «Sessão expirada» por causa de um erro de autenticação que só aparecia no texto do terminal, mesmo com a credencial funcionando. O Nexus agora confirma com a sonda de cota antes de avisar: sem confirmação, nada de toast e o pane segue trabalhando.' },
   ],
 };
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.248',
+  date: '2026-10-13',
+  codename: 'Linux em dia com o Mac e o Windows',
+  summary: 'O app no Omarchy, no Debian e no Ubuntu deixa a 0.76.201 e passa a incluir tudo o que o Mac e o Windows receberam até a 0.76.245: missões que concluem, cada modelo no seu lugar e as telas novas.',
+  highlights: [
+    { title: 'Missões que terminam', detail: 'Writers isolados voltam a nascer, a conclusão não trava num erro antigo e a revisão independente aceita a entrega atual.' },
+    { title: 'Cada modelo no que faz de melhor', detail: 'Argon e Wonder Full entram na rota, o front reveza entre as CLIs e Next.js e jogos ficam com o Opus. Vários panes Claude da mesma conta convivem.' },
+    { title: 'Telas, ditado e celular', detail: 'Markdown, editor da missão, diff do Git e checkpoints dos writers. O ditado não se perde com o pane ocupado, e o celular pareado controla o desktop.' },
+  ],
+  fixes: [
+    { title: 'Atualização do Linux', detail: 'Da 0.76.202 à 0.76.245 só havia pacote de Mac ou Windows. O Omarchy consultava o espelho e ficava na 0.76.201, achando que já estava na mais recente.' },
+  ],
+};
+

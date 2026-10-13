@@ -209,6 +209,8 @@ export const ACCOUNT_CHANNELS = {
   remove: 'account:remove',
   activate: 'account:activate',
   supportsSnapshot: 'account:supportsSnapshot',
+  prepareAgyLogin: 'account:prepareAgyLogin',
+  restoreAgyLogin: 'account:restoreAgyLogin',
   quota: 'account:quota',
   changed: 'account:changed',
   activated: 'account:activated',

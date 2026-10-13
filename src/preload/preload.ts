@@ -1453,6 +1453,8 @@ const api: NexusApi = {
       }),
     supportsSnapshot: (adapterId: string) =>
       ipcRenderer.invoke(ACCOUNT_CHANNELS.supportsSnapshot, { adapterId }),
+    prepareAgyLogin: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.prepareAgyLogin),
+    restoreAgyLogin: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.restoreAgyLogin),
     rename: (id: string, label: string) =>
       ipcRenderer.invoke(ACCOUNT_CHANNELS.rename, { id, label }),
     remove: (id: string) => ipcRenderer.invoke(ACCOUNT_CHANNELS.remove, { id }),

@@ -35,7 +35,7 @@ it('offers the official MiniMax Code CLI with its models, OAuth login and instal
   expect(primaryKeyEnvVar(adapter)).toBeNull();
   expect(accountLoginCommandFor('minimax-code')).toBe('mcode login --region global');
   expect(adapter.auth.loginCommand).toBe('mcode login --region global');
-  expect(isFileAuthAdapter('minimax-code')).toBe(false);
+  expect(isFileAuthAdapter('minimax-code')).toBe(true);
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
     const recipe = cliInstallRecipeFor('minimax-code', platform);
     expect(recipe).not.toBeNull();

@@ -20,6 +20,7 @@ import {
   isFileAuthAdapter,
   nativeAuthIdentity,
 } from './managed-credentials';
+import { invalidateAgyWindowsKeyringCache } from './agy-windows-keyring';
 import {
   detailWithIdentity,
   emailFromAuthDetail,
@@ -130,10 +131,11 @@ const OAUTH_PROBES: Record<
     hasNativeFileAuth('codex')
       ? { state: 'ok', detail: 'sessão Codex OAuth local (auth.json)' }
       : { state: 'missing', detail: 'sem sessão — rode `codex login`' },
-  agy: async () =>
+  agy: async () => {
+    invalidateAgyWindowsKeyringCache();
     // Delegate to the shared detector (like grok/kimi) so a managed AGY account
     // under $GEMINI_CLI_HOME is recognized, not just ~/.gemini in the real home.
-    (await refreshAgySubscriptionAuthCache(
+    return (await refreshAgySubscriptionAuthCache(
       HOME,
       undefined,
       { authoritative: true },
@@ -142,7 +144,8 @@ const OAUTH_PROBES: Record<
       : {
           state: 'missing',
           detail: 'sem sessão — rode `agy` e conclua o OAuth',
-        },
+        };
+  },
   grok: async () =>
     hasNativeFileAuth('grok')
       ? { state: 'ok', detail: 'sessão Grok OAuth local' }

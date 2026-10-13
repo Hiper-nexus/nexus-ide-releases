@@ -18,8 +18,10 @@ import {
   initAccountStore,
   listAccountInfos,
   onAccountsChange,
+  prepareAgyNativeLogin,
   removeAccount,
   renameAccount,
+  restoreAgyNativeLogin,
   supportsSessionSnapshot,
 } from './account-store';
 import { listAccountQuota } from './account-quota';
@@ -72,6 +74,11 @@ export function registerAccountIpc(): void {
     if (!parsed.success) return { ok: false, supported: false };
     return { ok: true, supported: supportsSessionSnapshot(parsed.data.adapterId) };
   });
+
+  handleTrusted(ACCOUNT_CHANNELS.prepareAgyLogin, () => prepareAgyNativeLogin());
+  handleTrusted(ACCOUNT_CHANNELS.restoreAgyLogin, () => ({
+    ok: restoreAgyNativeLogin(),
+  }));
 
   handleTrusted(ACCOUNT_CHANNELS.add, (_e, raw) => {
     const parsed = addAccountSchema.safeParse(raw);

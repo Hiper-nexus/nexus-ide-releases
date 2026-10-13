@@ -105,7 +105,7 @@ describe('supportsSessionSnapshot matrix (main vault)', () => {
     kimi: true,
     'mimo-code': true,
     opencode: true,
-    openclaude: false,
+    openclaude: true,
     glm: false,
     'glm-flash': false,
     longcat: false,

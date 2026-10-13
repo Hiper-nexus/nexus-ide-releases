@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   decodeAgyKeyringPayload,
+  deleteAgyWindowsKeyringBlob,
   invalidateAgyWindowsKeyringCache,
   isAgyKeyringBlob,
   readAgyWindowsKeyringBlob,
@@ -33,6 +34,7 @@ describe('vaga do AGY no Gerenciador de Credenciais (F-677)', () => {
     const exec = vi.fn();
     expect(readAgyWindowsKeyringBlob({ exec: exec as never, platform: 'darwin' })).toBeNull();
     expect(writeAgyWindowsKeyringBlob(keyringBlob, { exec: exec as never, platform: 'linux' })).toBe(false);
+    expect(deleteAgyWindowsKeyringBlob({ exec: exec as never, platform: 'darwin' })).toBe(false);
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -45,6 +47,16 @@ describe('vaga do AGY no Gerenciador de Credenciais (F-677)', () => {
     expect(writeAgyWindowsKeyringBlob(keyringBlob, { exec: exec as never, platform: 'win32' })).toBe(true);
     const failing = vi.fn(() => 'fail');
     expect(writeAgyWindowsKeyringBlob(keyringBlob, { exec: failing as never, platform: 'win32' })).toBe(false);
+  });
+
+  it('esvazia a vaga local sem tocar no servidor e invalida o cache', () => {
+    const readExec = vi.fn(() => Buffer.from(keyringBlob).toString('base64'));
+    expect(readAgyWindowsKeyringBlob({ exec: readExec as never, platform: 'win32', now: 1_000 })).toBe(keyringBlob);
+    const deleteExec = vi.fn(() => 'ok');
+    expect(deleteAgyWindowsKeyringBlob({ exec: deleteExec as never, platform: 'win32' })).toBe(true);
+    const emptyExec = vi.fn(() => '');
+    expect(readAgyWindowsKeyringBlob({ exec: emptyExec as never, platform: 'win32', now: 1_500 })).toBeNull();
+    expect(emptyExec).toHaveBeenCalledTimes(1);
   });
 
   it('recusa blob acima do limite do Windows sem chamar o PowerShell', () => {

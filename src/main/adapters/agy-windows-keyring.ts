@@ -29,6 +29,8 @@ public class NexusAgyKeyring {
   public static extern bool CredRead(string t, int type, int f, out IntPtr p);
   [DllImport("advapi32", SetLastError=true, CharSet=CharSet.Unicode)]
   public static extern bool CredWrite(ref C c, uint flags);
+  [DllImport("advapi32", SetLastError=true, CharSet=CharSet.Unicode)]
+  public static extern bool CredDelete(string t, int type, int f);
   [DllImport("advapi32")] public static extern void CredFree(IntPtr p);
   [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
   public struct C { public uint Flags; public uint Type; public IntPtr TargetName; public IntPtr Comment; public long LastWritten; public uint CredentialBlobSize; public IntPtr CredentialBlob; public uint Persist; public uint AttributeCount; public IntPtr Attributes; public IntPtr TargetAlias; public IntPtr UserName; }
@@ -40,6 +42,10 @@ public class NexusAgyKeyring {
     try { Marshal.Copy(blob, 0, c.CredentialBlob, blob.Length); return CredWrite(ref c, 0); }
     finally { Marshal.FreeCoTaskMem(c.TargetName); Marshal.FreeCoTaskMem(c.UserName); Marshal.FreeCoTaskMem(c.CredentialBlob); }
   }
+  public static bool Delete(string target) {
+    if (CredDelete(target, 1, 0)) return true;
+    return Marshal.GetLastWin32Error() == 1168;
+  }
 }
 "@`;
 
@@ -49,6 +55,9 @@ const READ_SCRIPT = `${CRED_TYPE}
 const WRITE_SCRIPT = `${CRED_TYPE}
 $b = [Convert]::FromBase64String(([Console]::In.ReadToEnd()).Trim())
 if ([NexusAgyKeyring]::Write('${AGY_KEYRING_TARGET}', '${AGY_KEYRING_USER}', $b)) { [Console]::Out.Write('ok') } else { [Console]::Out.Write('fail') }`;
+
+const DELETE_SCRIPT = `${CRED_TYPE}
+if ([NexusAgyKeyring]::Delete('${AGY_KEYRING_TARGET}')) { [Console]::Out.Write('ok') } else { [Console]::Out.Write('fail') }`;
 
 type ExecFileSync = typeof execFileSync;
 
@@ -125,6 +134,27 @@ export function writeAgyWindowsKeyringBlob(
   invalidateAgyWindowsKeyringCache();
   try {
     return runPowerShell(options.exec ?? execFileSync, WRITE_SCRIPT, bytes.toString('base64')) === 'ok';
+  } catch {
+    return false;
+  } finally {
+    invalidateAgyWindowsKeyringCache();
+  }
+}
+
+/**
+ * Esvazia a vaga `gemini:antigravity` no Gerenciador de Credenciais sem chamar
+ * `/logout` no servidor do Google (o que revogaria o refresh_token da conta
+ * já salva no cofre do Nexus). Retorna true se a vaga foi removida ou já
+ * estava vazia (`ERROR_NOT_FOUND = 1168`).
+ */
+export function deleteAgyWindowsKeyringBlob(
+  options: { exec?: ExecFileSync; platform?: NodeJS.Platform } = {},
+): boolean {
+  if ((options.platform ?? process.platform) !== 'win32') return false;
+  if (!options.exec && process.env.VITEST) return false;
+  invalidateAgyWindowsKeyringCache();
+  try {
+    return runPowerShell(options.exec ?? execFileSync, DELETE_SCRIPT) === 'ok';
   } catch {
     return false;
   } finally {

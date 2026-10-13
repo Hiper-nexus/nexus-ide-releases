@@ -8,6 +8,7 @@ import { useProductNavigationStore } from '../../state/product-navigation-store'
 import { useProviderStore } from '../../state/provider-store';
 import { useSessionStateStore } from '../../state/session-state-store';
 import { useToastStore } from '../../state/toast-store';
+import { useWorkspaceStore } from '../../state/workspace-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { kimiLoginCommandFor } from '../../../shared/kimi-login-command';
 import { askKimiLoginRegion } from './kimi-login-region';
@@ -132,6 +133,40 @@ function cliLoginProvedReauthentication(
 const LOGIN_WATCH_TIMEOUT_MS = 15 * 60 * 1000;
 const LOGIN_AUTH_POLL_MS = 2_000;
 
+/**
+ * O `pty.spawn` no Main exige `requireRendererWorkspaceScope` (pasta de projeto
+ * autorizada para a janela) e o `App` só monta `<TerminalWorkspace>` quando
+ * `useWorkspaceStore.getState().current` existe. Se o operador abriu
+ * Configurações a partir do Launcher (`Início`) ou do assistente inicial sem
+ * projeto ativo, reabrimos o projeto mais recente ou pedimos uma pasta antes
+ * de criar o pane de login.
+ */
+async function ensureWorkspaceForLoginTerminal(): Promise<boolean> {
+  const ws = useWorkspaceStore.getState();
+  if (ws.current) return true;
+  if (typeof window === 'undefined' || !window.nexus?.workspace) {
+    return true;
+  }
+  // Recents são WorkspaceInfo (path, name, lastOpenedAt), o mais novo primeiro.
+  // `missing` só existe no evento de liveness do workspace aberto, não aqui.
+  const recent = ws.recents[0];
+  if (recent?.path) {
+    try {
+      await useWorkspaceStore.getState().open(recent.path);
+    } catch {
+      // Se a pasta recente falhar, cai para o seletor manual logo abaixo.
+    }
+  }
+  if (!useWorkspaceStore.getState().current) {
+    try {
+      await useWorkspaceStore.getState().pick();
+    } catch {
+      // Cancelamento ou erro tratado pela checagem de `current` a seguir.
+    }
+  }
+  return Boolean(useWorkspaceStore.getState().current);
+}
+
 export async function openCliLoginTerminal(input: {
   readonly command: string;
   /** Adapter cuja sessão deve sair de "login-needed" quando o login pegar. */
@@ -159,6 +194,15 @@ export async function openCliLoginTerminal(input: {
   }
   if (command.length === 0) {
     return { ok: false, error: 'Esta CLI não declara comando de login.' };
+  }
+
+  if (!(await ensureWorkspaceForLoginTerminal())) {
+    return {
+      ok: false,
+      error:
+        'Escolha uma pasta de projeto antes de abrir o terminal de login.',
+      cancelled: true,
+    };
   }
 
   // Estado ANTES do terminal: num login de N-ésima conta a CLI JÁ está
@@ -221,6 +265,18 @@ export async function openCliLoginTerminal(input: {
         `printf '%s\\n%s\\n%s\\n\\n' ${posixSingleQuote(safeMsg)} ${posixSingleQuote(safeCmdMsg)} ${posixSingleQuote(tipMsg)}\n`,
       );
     } else {
+      if (input.adapterId === 'agy') {
+        const prep = await window.nexus?.accounts?.prepareAgyLogin?.();
+        if (prep && !prep.ok) {
+          useLayoutStore.getState().close(paneId, 'cli-login-prepare-failed');
+          return {
+            ok: false,
+            error:
+              prep.error ??
+              'Não foi possível preparar a vaga de login do Antigravity.',
+          };
+        }
+      }
       writeToPane(
         paneId,
         cliLoginTypeLine({ command, adapterId: input.adapterId }),
@@ -333,14 +389,25 @@ function watchLoginPane(input: {
     }
     probeInFlight = true;
     try {
-      const status = await probe(freshClaudeCredential);
+      let status = await probe(freshClaudeCredential);
       const verified = cliLoginProvedNewSession(input.baseline, status) ||
         (input.reauthenticate === true && cliLoginLooksComplete(output) &&
-          cliLoginProvedReauthentication(input.baseline, status));
+          cliLoginProvedReauthentication(input.baseline, status)) ||
+        (input.adapterId === 'agy' && cliLoginLooksComplete(output) && status?.state === 'ok');
       // "Signed in" é só um gatilho para reler. Keychain/auth.json pode ficar
       // visível alguns milissegundos depois da linha impressa; encerrar aqui
       // com `verified:false` perdia para sempre o login recém-concluído.
-      if (verified || final) release({ verified, status });
+      if (verified || final) {
+        if (!verified && input.adapterId === 'agy') {
+          try {
+            await window.nexus?.accounts?.restoreAgyLogin?.();
+            status = (await probe(false)) ?? status;
+          } catch {
+            // Best-effort restore.
+          }
+        }
+        release({ verified, status });
+      }
     } finally {
       probeInFlight = false;
       if (!done && probeQueued) {

@@ -1,17 +1,8 @@
 # Changelog
 
-## 0.76.246 — Squad abre
+## Não lançado
 
-Dois atritos de campo corrigidos (F-1441..F-1442): um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais "sessão expirada" sobre uma credencial que está funcionando.
-
-- **Squads.**
-  - Squad salvo que carrega a marca de dono dos documentos de plano (os squads de plano embutidos e as cópias deles) falhava ao abrir e em «Usar integrantes», sem saída no editor — relato do cliente no Windows, o mesmo no Mac. O rascunho agora descarta essa marca ao carregar o roster (a autoridade continua do Main) e o squad abre (F-1441).
-- **Contas e providers.**
-  - Falsa expiração do Muse: o pane de login nativo (sem conta gerenciada) mostrava «Sessão expirada em "muse"» a partir de um erro de autenticação citado no terminal, mesmo com a credencial viva. A sonda de cota agora lê também a linha nativa do adapter: credencial aceita refuta o alarme, e sem confirmação o pane segue na mesma conta com re-sondagem silenciosa, sem toast (F-1442).
-
-## 0.76.245 — Orquestração viva
-
-Sete atritos de campo corrigidos (F-1434..F-1440): ditar segurando Space não derruba mais o app no macOS 27.2, a 2ª conta do Antigravity entra, o Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, e um «401» citado no terminal não troca mais a conta de uma missão que estava funcionando.
+Correções de campo F-1434..F-1442 integradas na `main` local sobre a 0.76.248 publicada, aguardando a próxima release (eram as notas locais «Orquestração viva» e «Squad abre», nunca publicadas com os números 0.76.245/0.76.246, que no remoto são outras releases): ditar segurando Space não derruba mais o app no macOS 27.2, a 2ª conta do Antigravity entra, o Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, um «401» citado no terminal não troca mais a conta de uma missão que estava funcionando, um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais "sessão expirada" sobre uma credencial que está funcionando.
 
 - **Voz.**
   - Segurar Space para ditar crashava o app no macOS 27.2: os serviços de mídia do Chromium rodavam fora do processo e morriam ao abrir o microfone. Agora rodam dentro do processo, no macOS (F-1434).
@@ -19,11 +10,40 @@ Sete atritos de campo corrigidos (F-1434..F-1440): ditar segurando Space não de
   - O login da 2ª conta Antigravity falhava com «terminal não ficou disponível»; a espera pela sessão de login foi corrigida (F-1435).
   - Providers mostrava frações nuas (13/13, 256/256) na contagem de modelos; agora a contagem vem por extenso (F-1436).
   - O macOS repetia sem fim o diálogo «security deseja acessar ai.meta.dev.credentials» a cada sonda de cota do Muse; a leitura da credencial não dispara mais o diálogo em loop (F-1438).
+  - Falsa expiração do Muse: o pane de login nativo (sem conta gerenciada) mostrava «Sessão expirada em "muse"» a partir de um erro de autenticação citado no terminal, mesmo com a credencial viva. A sonda de cota agora lê também a linha nativa do adapter: credencial aceita refuta o alarme, e sem confirmação o pane segue na mesma conta com re-sondagem silenciosa, sem toast (F-1442).
 - **Missões e orquestração.**
   - Maestro adotado pelo «+ Pane» trabalhava sozinho: não recebia a doutrina de delegar e o vigia de esteira estava morto para ele. Doutrina e vigia valem agora também para o Maestro da aba (F-1439).
   - Falso limite do AGY: um «401 authentication_error» no terminal trocava a conta e parava a missão mesmo com a conta operacional. Erro de autenticação agora passa pela mesma sonda de confirmação dos limites de uso: credencial que a API do provider aceitou refuta o alarme, e sem confirmação o pane segue na mesma conta (F-1440).
+- **Squads.**
+  - Squad salvo que carrega a marca de dono dos documentos de plano (os squads de plano embutidos e as cópias deles) falhava ao abrir e em «Usar integrantes», sem saída no editor — relato do cliente no Windows, o mesmo no Mac. O rascunho agora descarta essa marca ao carregar o roster (a autoridade continua do Main) e o squad abre (F-1441).
 - **Windows.**
   - Pane encerrado pelo próprio Nexus (fim de missão, teardown) mostrava «[nexus] processo caiu (code 129)»; o encerramento normal não é mais rotulado como queda (F-1437).
+
+## 0.76.248 — Linux em dia com o Mac e o Windows
+
+O Omarchy (ZIP portátil) e o Debian/Ubuntu (`.deb`, também o `.rpm`) estavam parados na 0.76.201. As versões 0.76.202 a 0.76.245 saíram só para Mac e Windows, e o atualizador do Linux só avança quando a release traz os três pacotes juntos. Sem eles, o app instalado consultava o espelho e respondia que já estava na mais recente.
+
+Esta versão é o mesmo produto da 0.76.245, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). O que chega no desktop:
+
+- **Missões que terminam.** Writers isolados nascem de novo, a conclusão não trava em erro antigo nem na atividade do Maestro, e a revisão independente volta a aceitar a entrega (0.76.209, 0.76.210, 0.76.239).
+- **Cada modelo no que faz de melhor.** Argon, Wonder Full, revezamento de front, Opus em Next.js e jogos, e o fim do limite de um pane Claude por conta (0.76.242, 0.76.244).
+- **Telas herdadas do T3 Code.** Markdown e Mermaid, editor da missão, paleta, diff do Git, checkpoints dos writers, histórico das CLIs e o card de recursos da máquina (0.76.210, 0.76.212, 0.76.235).
+- **Ditado e CLIs.** O texto ditado não se perde com o pane ocupado, e as CLIs instaladas são conferidas no boot (0.76.242).
+- **Celular.** O app pareado fala o protocolo do Nexus: panes, missões, aprovações e fila offline (0.76.210, 0.76.212).
+- **Contas.** Várias contas nas CLIs de arquivo (`openclaude`, `minimax-code`, `muse`) e o login a partir do Início que espera o terminal (0.76.245). A vaga do Cofre de Credenciais do Windows continua sendo só do Windows.
+- **Build Linux.** A 0.76.246 não compilou: o login a partir do Início lia `missing` na lista de projetos recentes, e esse campo não existe ali. O build em container também deixa de depender da API da Launchpad para instalar o Git, porque `api.launchpad.net` não responde em algumas redes. A suíte que o Mac e o Windows não rodaram nesta leva estava vermelha em seis pontos (contas de arquivo do OpenClaude e do MiniMax, teto do preload, ledger do T3 e o transporte do celular sem o Expo instalado); agora passam.
+
+## 0.76.245 — Multi-conta no Antigravity e login sem tropeço
+
+Adicionar uma segunda conta Google Antigravity (`agy`) no Windows não abria o login porque a CLI encontrava a Conta 1 no Cofre de Credenciais do Windows (`gemini:antigravity`), e abrir o terminal de login a partir do Início (sem pasta aberta) ou numa partida a frio do ConPTY acima de 10 s falhava com "O terminal não ficou disponível. O login não foi iniciado.". Agora o Nexus guarda a Conta 1 no cofre criptografado e esvazia apenas o slot local antes de abrir o `agy` (sem revogar o refresh token no Google), restaura a Conta 1 se o login for cancelado, sincroniza o Cofre do Windows ao clicar em "Usar", estende o cofre multi-conta a todas as CLIs (`openclaude`, `minimax-code` e `muse`), reabre o projeto recente antes do login quando necessário com janela de 60 s, e troca a fração solta `10/10` na lista de Providers por `10 modelos`.
+
+- **Contas e autenticação.**
+  - `prepareAgyNativeLogin` e `restoreAgyNativeLogin`: antes de abrir o login do `agy`, a sessão atual do Windows Credential Manager (`gemini:antigravity`) é preservada no cofre e a vaga local é limpa via `CredDeleteW` (sem `agy /logout`); se o login terminar sem nova sessão verificada, a Conta 1 volta ao slot.
+  - Clicar em "Usar" numa conta do `agy` sincroniza também a credencial `gemini:antigravity` no Windows, e a sonda invalida o cache de 15 s antes de ler o novo login (`Authentication successful`).
+  - `openclaude`, `minimax-code` e `muse` entram em `FILE_AUTH_ADAPTER_IDS` e `MANAGED_PROVIDER_SPECS`, com fallback de Keychain no macOS para `agy`.
+- **Terminal de login e painel de Providers.**
+  - `openCliLoginTerminal` garante um workspace ativo (reabrindo o recente ou pedindo uma pasta se aberto a partir do Início) e aguarda o timeout padrão de 60 s do PTY em vez de cortar em 10 s.
+  - A contagem na lista de Providers exibe `10 modelos` (`1 modelo`, `9 modelos`) em vez de frações soltas como `10/10` ou `13/15`.
 
 ## 0.76.244 — Argon liberado
 

@@ -38,7 +38,20 @@ if [ "$STAGE" = root ]; then
   apt-get install --no-install-recommends -y ca-certificates curl gnupg dirmngr software-properties-common >/dev/null
   # O runner oficial tem Git recente. O 2.34 do Ubuntu 22.04 não conhece
   # `git merge-tree --write-tree` (2.38+), que a fila de merge usa.
-  add-apt-repository -y ppa:git-core/ppa >/dev/null
+  # add-apt-repository fala com api.launchpad.net. Nessa rede o IPv4 expira e o
+  # IPv6 nem conecta; o arquivo do PPA e o keyserver respondem. Sem Git >= 2.38
+  # a fila de merge não tem `git merge-tree --write-tree`.
+  if ! timeout 25 add-apt-repository -y ppa:git-core/ppa >/dev/null; then
+    log "Launchpad API fora; o PPA do Git entra pelo arquivo e pelo keyserver"
+    install -d -m 0755 /etc/apt/keyrings
+    {
+      curl -fsSL --retry 3 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF911AB184317630C59970973E363C90F8F1B6217'
+      echo
+      curl -fsSL --retry 3 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xE1DD270288B4E6030699E45FA1715D88E1DF1F24'
+    } | gpg --dearmor -o /etc/apt/keyrings/git-core-ppa.gpg
+    codename="$(. /etc/os-release && printf '%s' "$VERSION_CODENAME")"
+    printf 'deb [signed-by=/etc/apt/keyrings/git-core-ppa.gpg] https://ppa.launchpadcontent.net/git-core/ppa/ubuntu %s main\n' "$codename" > /etc/apt/sources.list.d/git-core-ppa.list
+  fi
   apt-get update -qq
   # g++-12: o runner oficial tem o GCC 12 e o clang-15 usa a libstdc++ dele (C++20).
   apt-get install --no-install-recommends -y \

@@ -1,4 +1,5 @@
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -42,7 +43,14 @@ import {
 } from '../adapters/managed-credentials';
 import { chooseAccount } from './account-select';
 import type { HeadroomInput } from '../quota/account-headroom';
-import { readAgyWindowsKeyringBlob } from '../adapters/agy-windows-keyring';
+import {
+  deleteAgyWindowsKeyringBlob,
+  invalidateAgyWindowsKeyringCache,
+  isAgyKeyringBlob,
+  readAgyWindowsKeyringBlob,
+  writeAgyWindowsKeyringBlob,
+} from '../adapters/agy-windows-keyring';
+import { resetAgyKeychainCache } from '../adapters/subscription-auth';
 import { accountCredentialCandidates } from '../adapters/account-credential-candidates';
 import {
   freshestClaudeCredential,
@@ -398,6 +406,20 @@ export function ensureSubscriptionActive(account: Account): boolean {
         account.id,
         blob,
       );
+      if (
+        account.adapterId === 'agy' &&
+        process.platform === 'win32' &&
+        !process.env.VITEST &&
+        isAgyKeyringBlob(blob)
+      ) {
+        const currentSlot = readAgyWindowsKeyringBlob({ fresh: true });
+        if (currentSlot && currentSlot !== blob) {
+          preserveAgyKeyringSession(currentSlot);
+        }
+        if (currentSlot !== blob) {
+          writeAgyWindowsKeyringBlob(blob);
+        }
+      }
       return true;
     } catch (err) {
       console.warn('[accounts] materialize managed home failed:', err);
@@ -1727,6 +1749,126 @@ export function preserveAgyKeyringSession(blob: string): Account | null {
   replaceMap(activeByAdapter, nextActive);
   emit();
   return account;
+}
+
+let vacatedAgyNative: {
+  blob: string;
+  authRelativePath: string;
+  home: string;
+} | null = null;
+
+/**
+ * Prepara a vaga nativa do Antigravity (`agy`) para um novo login sem chamar
+ * `/logout` no servidor do Google (que revogaria o refresh_token da Conta 1).
+ *
+ * 1. Lê a sessão nativa atual (`gemini:antigravity` / `~/.gemini`) e a guarda
+ *    no cofre do Nexus (`preserveAgyKeyringSession` — fail-closed se falhar).
+ * 2. Esvazia apenas a vaga local (Credential Manager / Keychain / arquivos de
+ *    token em `~/.gemini`), para que o binário `agy` abra o fluxo OAuth do
+ *    navegador imediatamente em vez de entrar no chat da Conta 1.
+ */
+export function prepareAgyNativeLogin(
+  home = os.homedir(),
+): { ok: boolean; error?: string } {
+  invalidateAgyWindowsKeyringCache();
+  resetAgyKeychainCache();
+  const current = captureNativeAuth('agy', home);
+  if (current) {
+    try {
+      const preserved = preserveAgyKeyringSession(current.blob);
+      if (!preserved) {
+        return {
+          ok: false,
+          error:
+            'Não foi possível guardar a sessão AGY atual no cofre antes de abrir o novo login.',
+        };
+      }
+      vacatedAgyNative = {
+        blob: current.blob,
+        authRelativePath: current.authRelativePath,
+        home,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Não foi possível guardar a sessão AGY atual no cofre.',
+      };
+    }
+  }
+
+  if (process.platform === 'win32' && !process.env.VITEST) {
+    if (!deleteAgyWindowsKeyringBlob()) {
+      return {
+        ok: false,
+        error:
+          'Não foi possível liberar a vaga local do Antigravity no Gerenciador de Credenciais.',
+      };
+    }
+  } else if (process.platform === 'darwin' && !process.env.VITEST) {
+    try {
+      execFileSync(
+        '/usr/bin/security',
+        ['delete-generic-password', '-s', 'gemini', '-a', 'antigravity'],
+        { stdio: 'ignore', timeout: 4_000, killSignal: 'SIGKILL' },
+      );
+    } catch {
+      // Item pode já estar ausente.
+    }
+    resetAgyKeychainCache();
+  }
+
+  const geminiDir = path.join(home, '.gemini');
+  const nativeTokenFiles = [
+    path.join(geminiDir, 'oauth_creds.json'),
+    path.join(geminiDir, 'antigravity-cli', 'antigravity-oauth-token'),
+    path.join(geminiDir, 'jetski-standalone-oauth-token'),
+    path.join(geminiDir, 'google_accounts.json'),
+  ];
+  for (const file of nativeTokenFiles) {
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      // Ignora arquivo ausente.
+    }
+  }
+  invalidateAgyWindowsKeyringCache();
+  return { ok: true };
+}
+
+/**
+ * Se o terminal de login do AGY foi fechado/cancelado sem concluir um novo
+ * OAuth, devolve a sessão anterior para a vaga nativa.
+ */
+export function restoreAgyNativeLogin(): boolean {
+  const vacated = vacatedAgyNative;
+  if (!vacated) return false;
+  invalidateAgyWindowsKeyringCache();
+  resetAgyKeychainCache();
+  if (captureNativeAuth('agy', vacated.home) !== null) {
+    vacatedAgyNative = null;
+    return true;
+  }
+  try {
+    if (
+      process.platform === 'win32' &&
+      !process.env.VITEST &&
+      isAgyKeyringBlob(vacated.blob)
+    ) {
+      writeAgyWindowsKeyringBlob(vacated.blob);
+    } else {
+      const target = path.join(vacated.home, '.gemini', vacated.authRelativePath);
+      fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(target, vacated.blob, { mode: 0o600 });
+    }
+    vacatedAgyNative = null;
+    invalidateAgyWindowsKeyringCache();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** @deprecated Prefer addActiveSessionAccount('claude', label). */
