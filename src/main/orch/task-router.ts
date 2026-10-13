@@ -860,8 +860,9 @@ export const JUDGE_FRONTIER_LANE: ReadonlyArray<{
  *    histórico de julgar segurança; sem Claude/Codex roteável o Maestro julga
  *    (nenhum empréstimo de assento).
  *
- * `isFrontierReviewer` (F-234) NÃO muda: a identidade do revisor é o modelo
- * da sessão, medida pelo Main — quem rodou, rodou com acesso.
+ * `isFrontierReviewer` (F-234) continua medindo a identidade pelo modelo da
+ * sessão (quem rodou, rodou com acesso); só aceita também a variante da
+ * família (`gemini-4-argon-high`).
  */
 const JUDGE_LANE_ACCESS_PROOF_REQUIRED: readonly { adapterId: string; model: string }[] = [
   { adapterId: 'agy', model: 'gemini-4-argon' },
@@ -903,6 +904,27 @@ function lacksAccessProof(
     judgeSeatNeedsAccessProof({ adapterId: adapter.id, model }) &&
     !(adapter.liveModels ?? []).includes(model)
   );
+}
+
+/**
+ * Quarentena (F-683) vista pela rota. No Argon o acesso é da conta, não do
+ * esforço: a rota escolhe a `-medium`, o pty-manager roda a `-high` e o
+ * failover quarentena a `-high` — qualquer variante recusada tira a família.
+ */
+function routeAccessQuarantine(adapterId: string, model: string | undefined): string | null {
+  const direct = modelAccessQuarantine(adapterId, model);
+  if (direct || model === undefined) return direct;
+  const family = JUDGE_LANE_ACCESS_PROOF_REQUIRED.find(
+    (required) =>
+      required.adapterId === adapterId &&
+      isRoutableModelResolution(required.model, model),
+  );
+  if (!family) return null;
+  for (const sibling of [family.model, ...(ROUTABLE_MODEL_FAMILY_VARIANTS.get(family.model) ?? [])]) {
+    const reason = modelAccessQuarantine(adapterId, sibling);
+    if (reason) return reason;
+  }
+  return null;
 }
 
 /**
@@ -1506,7 +1528,7 @@ function evaluatedCandidates(
       }
       // F-984: modelo recusado pela CLI (no nascimento ou no failover) sai
       // também do ranking avaliado e das alternativas, não só da tabela.
-      if (modelAccessQuarantine(adapter.id, model)) return [];
+      if (routeAccessQuarantine(adapter.id, model)) return [];
       // F-912: candidato com janela documentada menor que o pedido sai do
       // ranking (ausência de maxContext = sem filtro).
       if (contextRequirement !== null) {
@@ -1925,7 +1947,7 @@ export function routeTask(
       (model) =>
         !isModelBlockedForAutoRouting(
           modelCatalogInfo(modelCatalog, adapter.id, model),
-        ) && !modelAccessQuarantine(adapter.id, model),
+        ) && !routeAccessQuarantine(adapter.id, model),
     );
     eligibleByAdapter.set(adapter.id, eligible);
     return eligible;
@@ -1993,7 +2015,7 @@ export function routeTask(
           return [];
         }
         // F-683: provider recusou este modelo há pouco (acesso desligado).
-        if (modelAccessQuarantine(routed.adapterId, routed.model)) {
+        if (routeAccessQuarantine(routed.adapterId, routed.model)) {
           skippedRisk.push(
             `${routed.adapterId}:${routed.model ?? '(default)'} (recusado pelo provider)`,
           );
@@ -2200,7 +2222,7 @@ export function routeTask(
       ) return;
       if (
         isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, seat.adapterId, chosen)) ||
-        modelAccessQuarantine(seat.adapterId, chosen)
+        routeAccessQuarantine(seat.adapterId, chosen)
       ) return;
       // F-912: assento de lane com janela documentada menor que a exigida
       // perde o lugar (a lane promove topo de linha; sem fonte, segue).
@@ -2674,7 +2696,7 @@ export function routeTask(
         safeFallbackModels.set(id, newestInModelLine(safe[0]!, safe));
       }
       return permitsAutomaticAstra || models === undefined || models.length === 0 ||
-        models.some(model => !isAstraModel(id, model) && !isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, id, model)) && !modelAccessQuarantine(id, model));
+        models.some(model => !isAstraModel(id, model) && !isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, id, model)) && !routeAccessQuarantine(id, model));
     });
   if (fallbackPool.length === 0) return null;
   // F-1412: o degrau final também respeita a visão — tarefa de imagem com

@@ -1191,6 +1191,24 @@ describe('F-217 — o mais novo da linha vence mesmo sem catálogo', () => {
       expect(decision?.effort).toBe('high');
       expect(decision?.reason).not.toMatch(/sem acesso ao Argon/);
     });
+
+    it('recusa de uma variante do Argon tira a família inteira da rota', () => {
+      // A rota escolhe a -medium, o pty-manager roda a -high (esforço) e o
+      // failover quarentena a -high: acesso é da conta, não do esforço.
+      const argon = ['gemini-4-argon-medium', 'gemini-4-argon-high', 'gemini-4-argon-low'];
+      quarantineRejectedModel('agy', 'gemini-4-argon-high', 'Model access is disabled');
+      try {
+        const decision = route({
+          models: [...argon, ...announced],
+          liveModels: [...argon, ...announced],
+          liveModelsAuthoritative: true,
+        });
+        expect(decision?.model).not.toMatch(/^gemini-4-argon/);
+        expect(decision?.alternatives.map((alt) => alt.model).join(' ')).not.toMatch(/gemini-4-argon/);
+      } finally {
+        resetModelAccessQuarantineForTests();
+      }
+    });
   });
 
   it('modelo pedido no texto sobe para o mais novo da linha e continua vencendo (F-218)', () => {
