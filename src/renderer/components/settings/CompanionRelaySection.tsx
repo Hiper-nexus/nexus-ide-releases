@@ -47,8 +47,9 @@ function connectionChip(info: CompanionRelayTransportInfo | null): {
   tone: 'ok' | 'warn' | 'danger';
 } {
   if (!info?.running) return { label: 'desligado', tone: 'warn' };
-  if (info.lastError) return { label: 'erro de socket', tone: 'danger' };
   if (info.connected) return { label: 'conectado ao relay', tone: 'ok' };
+  if (!info.fullLink) return { label: 'sala encerrada', tone: 'danger' };
+  if (info.lastError) return { label: 'tentando reconectar', tone: 'danger' };
   return { label: 'conectando…', tone: 'warn' };
 }
 
@@ -183,7 +184,20 @@ export function CompanionRelaySection() {
     }
   }, []);
 
+  // F-1472: QR novo = o mesmo caminho de Parar + Iniciar (sala e segredos novos).
+  const regenerate = useCallback(async () => {
+    await stop();
+    await start();
+  }, [stop, start]);
+
   const chip = connectionChip(info);
+  // QR só aparece com o desktop conectado ao relay: sem isso o celular abre a
+  // página e fica "desconectado" sem saber por quê.
+  const pairingLive =
+    running && info?.connected === true && !!info.fullWebUrl && !!info.viewWebUrl;
+  // Fechamento fatal (TTL, sala inexistente, conflito): o main apagou o QR.
+  const roomGone = running && !info?.fullLink;
+  const retrying = running && !info?.connected && !!info?.fullLink && !!info.lastError;
 
   return (
     <section className="sys-section">
@@ -271,13 +285,38 @@ export function CompanionRelaySection() {
             </div>
           </div>
 
-          {(uiError || info?.lastError) && (
+          {uiError && (
             <p className="settings-field__note settings-field__note--warning" role="status">
-              {uiError ?? info?.lastError}
+              {uiError}
             </p>
           )}
 
-          {running && info?.fullLink && info.viewLink && (
+          {retrying && (
+            <p className="settings-field__note settings-field__note--warning" role="status">
+              Servidor de conexão indisponível — tentando de novo ({info?.lastError}).
+              O QR aparece quando a conexão voltar.
+            </p>
+          )}
+
+          {roomGone && (
+            <div className="relay-conn__row" role="status">
+              <p className="settings-field__note settings-field__note--warning">
+                A sala do celular foi encerrada
+                {info?.lastError ? ` (${info.lastError})` : ''}. O QR antigo não
+                vale mais.
+              </p>
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary"
+                disabled={busy}
+                onClick={() => void regenerate()}
+              >
+                Gerar novo QR
+              </button>
+            </div>
+          )}
+
+          {pairingLive && info?.fullWebUrl && info.viewWebUrl && (
             <>
               <p
                 className="settings-field__note settings-field__note--warning"
@@ -322,14 +361,14 @@ export function CompanionRelaySection() {
               <ul className="settings-list">
                 <LinkRow
                   title="Link full"
-                  hint="Pareia com controle total — trate como segredo."
-                  link={info.fullLink}
+                  hint="Abra no navegador do celular. Pareia com controle total — trate como segredo."
+                  link={info.fullWebUrl}
                   tone="danger"
                 />
                 <LinkRow
                   title="Link view"
-                  hint="Pareia só para observar a sessão."
-                  link={info.viewLink}
+                  hint="Abra no navegador do celular. Pareia só para observar a sessão."
+                  link={info.viewWebUrl}
                   tone="ok"
                 />
               </ul>

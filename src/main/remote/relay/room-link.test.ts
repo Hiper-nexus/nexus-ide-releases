@@ -125,6 +125,27 @@ describe('verifyGuestWriteToken (timing-safe)', () => {
     expect(verifyGuestWriteToken(secrets.writeToken, wrong)).toBe(false);
   });
 
+  it('F-1472: aceita o MESMO token em base64 padrão com padding (PWA publicado usa btoa)', () => {
+    // 0xfb/0xff forçam '+' e '/' no base64 padrão; 16 bytes terminam em '=='.
+    const token = new Uint8Array(Buffer.from('fbefbeff'.repeat(4), 'hex'));
+    const standard = Buffer.from(token).toString('base64');
+    expect(standard).toMatch(/[+/]/);
+    expect(standard.endsWith('==')).toBe(true);
+    expect(verifyGuestWriteToken(token, standard)).toBe(true);
+    expect(verifyGuestWriteToken(token, Buffer.from(token).toString('base64url'))).toBe(true);
+  });
+
+  it('F-1472: base64 padrão continua exigindo os mesmos bytes e o tamanho exato', () => {
+    const token = new Uint8Array(Buffer.from('fbefbeff'.repeat(4), 'hex'));
+    const otherBytes = Buffer.from(token);
+    otherBytes[15] ^= 1;
+    expect(verifyGuestWriteToken(token, otherBytes.toString('base64'))).toBe(false);
+    const longer = Buffer.concat([Buffer.from(token), Buffer.from([0xff])]);
+    expect(verifyGuestWriteToken(token, longer.toString('base64'))).toBe(false);
+    expect(verifyGuestWriteToken(token, Buffer.from(token).subarray(0, 15).toString('base64'))).toBe(false);
+    expect(verifyGuestWriteToken(token, `${Buffer.from(token).toString('base64')}=`)).toBe(false);
+  });
+
   it('rejeita token de tamanho diferente, ausente ou malformado', () => {
     const secrets = createRelayRoomSecrets();
     expect(

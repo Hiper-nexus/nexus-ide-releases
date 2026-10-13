@@ -220,3 +220,158 @@ describe('Celular na rede local', () => {
     act(() => root.unmount());
   });
 });
+
+describe('Acesso pelo celular (relay)', () => {
+  const ROOM_LINK = 'wss://relay.nexuside.app/r/0123456789abcdef0123456789abcdef';
+  const fullLink = `${ROOM_LINK}#${'A'.repeat(64)}`;
+  const viewLink = `${ROOM_LINK}#${'A'.repeat(43)}`;
+  const fullWebUrl = `https://app.nexuside.app/#${encodeURIComponent(fullLink)}`;
+  const viewWebUrl = `https://app.nexuside.app/#${encodeURIComponent(viewLink)}`;
+  const paired = {
+    running: true,
+    connected: true,
+    relayUrl: 'wss://relay.nexuside.app',
+    roomId: '0123456789abcdef0123456789abcdef',
+    fullLink,
+    viewLink,
+    fullWebUrl,
+    viewWebUrl,
+    qrSvgFull: '<svg></svg>',
+    qrSvgView: '<svg></svg>',
+    guestCount: 0,
+  };
+  let relay: Record<string, ReturnType<typeof vi.fn>>;
+
+  beforeEach(() => {
+    relay = {
+      status: vi.fn(async () => paired),
+      start: vi.fn(async () => paired),
+      stop: vi.fn(async () => ({ running: false, connected: false, guestCount: 0 })),
+    };
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        remote: { bridgeStatus: vi.fn(async () => bridgeInfo), relay },
+        product: {
+          flagsList: vi.fn(async () => [
+            { id: 'feature.remote.relayTransport', enabled: true },
+          ]),
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'nexus');
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  const fullQr = (host: HTMLElement) =>
+    host.querySelector('img[alt="QR do link full (controle da sessão)"]');
+
+  it('F-1472: sem conexão com o relay não mostra QR e diz que está tentando de novo, com o motivo', async () => {
+    relay.status.mockResolvedValue({
+      ...paired,
+      connected: false,
+      lastError: 'Unexpected server response: 404',
+    });
+    const { host, root } = mount(<CompanionRelaySection />);
+    await flush();
+
+    expect(fullQr(host)).toBeNull();
+    expect(host.textContent).toContain(
+      'Servidor de conexão indisponível — tentando de novo',
+    );
+    expect(host.textContent).toContain('Unexpected server response: 404');
+    expect(host.querySelector('input[aria-label="Link full (link de pareamento)"]')).toBeNull();
+
+    act(() => root.unmount());
+  });
+
+  it('F-1472: conectado mostra o QR e as caixas mostram/copiam a URL https do QR, não o wss', async () => {
+    const writeText = vi.fn(async (_text: string) => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const { host, root } = mount(<CompanionRelaySection />);
+    await flush();
+
+    expect(fullQr(host)).not.toBeNull();
+    const fullInput = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Link full (link de pareamento)"]',
+    )!;
+    const viewInput = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Link view (link de pareamento)"]',
+    )!;
+    expect(fullInput.value).toBe(fullWebUrl);
+    expect(viewInput.value).toBe(viewWebUrl);
+
+    const copy = host.querySelector<HTMLButtonElement>('button[aria-label="Copiar Link full"]')!;
+    await act(async () => copy.click());
+    expect(writeText).toHaveBeenCalledWith(fullWebUrl);
+    expect(writeText.mock.calls[0]![0]).not.toMatch(/^wss:/);
+
+    act(() => root.unmount());
+  });
+
+  it('F-1472: o poll de 4 s troca o QR por "Gerar novo QR" quando o relay encerra a sala', async () => {
+    vi.useFakeTimers();
+    try {
+      const { host, root } = mount(<CompanionRelaySection />);
+      await flush();
+      expect(fullQr(host)).not.toBeNull();
+
+      // Estado que o CompanionRelayHost publica depois do TTL do server.ts (4001).
+      relay.status.mockResolvedValue({
+        running: true,
+        connected: false,
+        relayUrl: 'wss://relay.nexuside.app',
+        guestCount: 0,
+        lastError: 'room closed',
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(4_000);
+      });
+      await flush();
+
+      expect(fullQr(host)).toBeNull();
+      expect(host.textContent).toContain('A sala do celular foi encerrada (room closed)');
+      expect(
+        [...host.querySelectorAll('button')].some((button) => button.textContent === 'Gerar novo QR'),
+      ).toBe(true);
+      act(() => root.unmount());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-1472: sala encerrada (sem QR válido) oferece "Gerar novo QR", que reinicia pela rota de Parar/Iniciar', async () => {
+    relay.status.mockResolvedValue({
+      running: true,
+      connected: false,
+      relayUrl: 'wss://relay.nexuside.app',
+      guestCount: 0,
+      lastError: 'room closed',
+    });
+    const { host, root } = mount(<CompanionRelaySection />);
+    await flush();
+
+    expect(fullQr(host)).toBeNull();
+    const regenerate = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Gerar novo QR',
+    );
+    expect(regenerate).toBeDefined();
+    await act(async () => regenerate!.click());
+    await flush();
+    expect(relay.stop).toHaveBeenCalledTimes(1);
+    expect(relay.start).toHaveBeenCalledWith({ relayUrl: 'wss://relay.nexuside.app' });
+    expect(relay.stop.mock.invocationCallOrder[0]).toBeLessThan(
+      relay.start.mock.invocationCallOrder[0]!,
+    );
+    expect(fullQr(host)).not.toBeNull();
+
+    act(() => root.unmount());
+  });
+});

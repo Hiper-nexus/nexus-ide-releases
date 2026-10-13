@@ -70,6 +70,8 @@ export class CompanionRelayHost {
   #socket: RelaySocket | null = null;
   #fullLink: string | null = null;
   #viewLink: string | null = null;
+  #fullWebUrl: string | null = null;
+  #viewWebUrl: string | null = null;
   #qrSvgFull: string | null = null;
   #qrSvgView: string | null = null;
   #connected = false;
@@ -109,8 +111,11 @@ export class CompanionRelayHost {
       secrets.roomId,
       secrets.roomKey,
     );
-    this.#qrSvgFull = encodeQrSvg(formatCompanionWebUrl(this.#fullLink));
-    this.#qrSvgView = encodeQrSvg(formatCompanionWebUrl(this.#viewLink));
+    // A UI mostra/copia exatamente a URL https que o QR codifica.
+    this.#fullWebUrl = formatCompanionWebUrl(this.#fullLink);
+    this.#viewWebUrl = formatCompanionWebUrl(this.#viewLink);
+    this.#qrSvgFull = encodeQrSvg(this.#fullWebUrl);
+    this.#qrSvgView = encodeQrSvg(this.#viewWebUrl);
     const key = await importRoomKey(secrets.roomKey);
     const socket = new RelaySocket({
       wsUrl: `${normalized.origin}/r/${secrets.roomId}`,
@@ -119,6 +124,9 @@ export class CompanionRelayHost {
     });
     socket.onOpen = () => {
       this.#connected = true;
+      this.#lastError = null;
+      // Sala recém-(re)criada no relay: nenhum guest herdado da conexão anterior.
+      this.#peers.clear();
     };
     socket.onControl = (msg: RelayControlMessage) => {
       this.#handleControl(msg);
@@ -128,9 +136,16 @@ export class CompanionRelayHost {
     };
     socket.onClose = (reason: string, willReconnect: boolean) => {
       this.#connected = false;
+      // Motivo vem do relay-socket (código/close reason/erro sem URL): nunca
+      // carrega link, chave ou token. Transitório também aparece na UI.
+      this.#lastError = reason;
+      // Host fora da sala = o relay já expulsou os guests (sem peer-left):
+      // nada de guestCount inflado nem aprovação esperando peer fantasma.
+      this.#peers.clear();
       if (!willReconnect) {
-        this.#lastError = reason;
-        this.#peers.clear();
+        // Fatal (sala fechada/inexistente, conflito, sala cheia): a sala não
+        // volta, então QR e links velhos somem e a UI oferece um QR novo.
+        this.#clearPairing();
       }
     };
     this.#socket = socket;
@@ -151,12 +166,19 @@ export class CompanionRelayHost {
     this.#peers.clear();
     this.#running = false;
     this.#connected = false;
+    this.#lastError = null;
+    this.#clearPairing();
+    return this.info();
+  }
+
+  #clearPairing(): void {
     this.#secrets = null;
     this.#fullLink = null;
     this.#viewLink = null;
+    this.#fullWebUrl = null;
+    this.#viewWebUrl = null;
     this.#qrSvgFull = null;
     this.#qrSvgView = null;
-    return this.info();
   }
 
   info(): CompanionRelayTransportInfo {
@@ -167,6 +189,8 @@ export class CompanionRelayHost {
       ...(this.#secrets ? { roomId: this.#secrets.roomId } : {}),
       ...(this.#fullLink ? { fullLink: this.#fullLink } : {}),
       ...(this.#viewLink ? { viewLink: this.#viewLink } : {}),
+      ...(this.#fullWebUrl ? { fullWebUrl: this.#fullWebUrl } : {}),
+      ...(this.#viewWebUrl ? { viewWebUrl: this.#viewWebUrl } : {}),
       ...(this.#qrSvgFull ? { qrSvgFull: this.#qrSvgFull } : {}),
       ...(this.#qrSvgView ? { qrSvgView: this.#qrSvgView } : {}),
       guestCount: this.#peers.size,

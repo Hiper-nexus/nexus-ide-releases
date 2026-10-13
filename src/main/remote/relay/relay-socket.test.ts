@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const relayMocks = vi.hoisted(() => ({
   seal: vi.fn(),
@@ -275,5 +275,78 @@ describe('RelaySocket send queue hardening', () => {
     expect(ws.sent).toHaveLength(0);
     expect(socket.pendingSendCount).toBe(0);
     expect(socket.pendingSendBytes).toBe(0);
+  });
+});
+
+describe('F-1472: quedas do host', () => {
+  beforeEach(() => {
+    relayMocks.sockets.length = 0;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function closeWith(index: number, code: number, reason = ''): void {
+    const ws = relayMocks.sockets[index] as unknown as {
+      emit(event: 'close', code: number, reason: Buffer): void;
+    };
+    ws.emit('close', code, Buffer.from(reason));
+  }
+
+  it('4009 no primeiro connect continua fatal (outro host de verdade)', () => {
+    const socket = createSocket();
+    const onClose = vi.fn();
+    socket.onClose = onClose;
+    socket.connect();
+    closeWith(0, 4009, 'host already connected');
+
+    expect(onClose).toHaveBeenLastCalledWith('a host is already connected for this room', false);
+    expect(socket.state).toBe('failed');
+  });
+
+  it('4009 em reconexão é retry com backoff (zumbi do próprio host) e só vira fatal depois da janela', () => {
+    vi.useFakeTimers();
+    const socket = createSocket();
+    const onClose = vi.fn();
+    socket.onClose = onClose;
+    socket.connect();
+    relayMocks.sockets[0]!.openNow();
+    closeWith(0, 1006);
+    expect(onClose).toHaveBeenLastCalledWith('connection lost (code 1006)', true);
+
+    vi.advanceTimersByTime(2_000);
+    expect(relayMocks.sockets).toHaveLength(2);
+    closeWith(1, 4009, 'host already connected');
+    expect(socket.state).toBe('reconnecting');
+    expect(onClose).toHaveBeenLastCalledWith(expect.stringMatching(/previous connection/), true);
+
+    const lostAt = Date.now() - 2_000;
+    while (socket.state === 'reconnecting' && relayMocks.sockets.length < 40) {
+      vi.advanceTimersByTime(40_000);
+      closeWith(relayMocks.sockets.length - 1, 4009);
+    }
+    expect(socket.state).toBe('failed');
+    expect(Date.now() - lostAt).toBeGreaterThanOrEqual(120_000);
+    expect(onClose).toHaveBeenLastCalledWith('a host is already connected for this room', false);
+  });
+
+  it('close reason vindo da rede não leva URL da sala e tem teto de tamanho', () => {
+    const socket = createSocket();
+    const onClose = vi.fn();
+    socket.onClose = onClose;
+    socket.connect();
+    relayMocks.sockets[0]!.openNow();
+    closeWith(0, 1011, `upstream wss://relay.nexuside.app/r/test-room#c2VncmVkbw down ${'x'.repeat(400)}`);
+
+    const reason = onClose.mock.calls.at(-1)![0] as string;
+    expect(onClose.mock.calls.at(-1)![1]).toBe(true);
+    expect(reason).toContain('<relay>');
+    expect(reason).not.toMatch(/wss?:\/\//);
+    expect(reason).not.toContain('test-room');
+    expect(reason).not.toContain('c2VncmVkbw');
+    expect(reason.length).toBeLessThanOrEqual(160);
+    expect(socket.lastError).toBe(reason);
+    socket.close();
   });
 });

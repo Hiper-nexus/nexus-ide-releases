@@ -1,5 +1,9 @@
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import type { Duplex } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import WebSocket, { type RawData } from 'ws';
+import WebSocket, { WebSocketServer, type RawData } from 'ws';
+import { startRelayServer } from '../../../../server/src/relay/server';
 import {
   COMPANION_RELAY_PROTO,
   type CompanionHostFrame,
@@ -18,6 +22,7 @@ import {
 import { clearRemoteTerminalStreams } from '../remote-terminal-streams';
 import { startBlindRelay, type BlindRelay } from './blind-relay';
 import { parseRelayRoomLink } from './room-link';
+import { formatCompanionWebUrl } from './companion-web-link';
 import {
   CompanionRelayHost,
   type CompanionDispatchMessage,
@@ -185,6 +190,162 @@ describe('companion-relay-transport', () => {
     expect(full.writeToken).toBeDefined();
     expect(view.writeToken).toBeUndefined();
     expect(Buffer.from(full.roomKey)).toEqual(Buffer.from(view.roomKey));
+  });
+
+  it('F-1472: expõe a MESMA URL https do PWA que o QR codifica (não o wss cru)', async () => {
+    const { fullLink, viewLink } = await startTransport();
+    const info = transport!.info();
+    expect(info.fullWebUrl).toBe(formatCompanionWebUrl(fullLink));
+    expect(info.viewWebUrl).toBe(formatCompanionWebUrl(viewLink));
+    expect(info.fullWebUrl).toMatch(/^https:\/\/app\.nexuside\.app\/#/);
+  });
+
+  it('F-1472: relay respondendo 404 ao upgrade grava o motivo transitório sem segredo e mantém o QR', async () => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(404).end();
+    });
+    server.on('upgrade', (_request, socket: Duplex) => {
+      // O que o Railway devolve quando o serviço do relay não existe.
+      socket.end(
+        'HTTP/1.1 404 Not Found\r\nX-Railway-Fallback: true\r\nContent-Length: 0\r\n\r\n',
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    try {
+      transport = new CompanionRelayHost({
+        relayUrl: `ws://127.0.0.1:${port}`,
+        scope: projectScope,
+        dispatch: vi.fn(async () => ({})),
+      });
+      const started = await transport.start();
+      await waitFor(() => transport!.info().lastError !== undefined, 3_000);
+      const info = transport.info();
+      expect(info).toMatchObject({ running: true, connected: false });
+      expect(info.lastError).toMatch(/404/);
+      const fragment = started.fullLink!.split('#')[1]!;
+      const viewFragment = started.viewLink!.split('#')[1]!;
+      for (const secret of [started.roomId!, fragment, viewFragment]) {
+        expect(info.lastError).not.toContain(secret);
+      }
+      expect(info.lastError).not.toMatch(/wss?:\/\//);
+      // Queda transitória: a sala volta com o mesmo id, então o QR não muda.
+      expect(info.fullLink).toBe(started.fullLink);
+    } finally {
+      transport?.stop();
+      transport = null;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('F-1472: close reason com URL da sala chega à UI redigido (sem sala nem chave)', async () => {
+    let closeReason = '';
+    const fake = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    fake.on('connection', (socket) => {
+      socket.close(1011, closeReason || 'upstream down');
+    });
+    await new Promise<void>((resolve) => fake.once('listening', () => resolve()));
+    const { port } = fake.address() as AddressInfo;
+    try {
+      transport = new CompanionRelayHost({
+        relayUrl: `ws://127.0.0.1:${port}`,
+        scope: projectScope,
+        dispatch: vi.fn(async () => ({})),
+      });
+      const started = await transport.start();
+      // Um relay/proxy hostil devolvendo o próprio link da sala no close reason.
+      closeReason = `up ${started.viewLink!}`;
+      await waitFor(() => transport!.info().lastError?.includes('<relay>') === true, 5_000);
+      const lastError = transport.info().lastError!;
+      expect(lastError).not.toContain(started.roomId!);
+      expect(lastError).not.toContain(started.viewLink!.split('#')[1]!);
+      expect(lastError).not.toMatch(/wss?:\/\//);
+      expect(transport.info().fullLink).toBe(started.fullLink);
+    } finally {
+      transport?.stop();
+      transport = null;
+      await new Promise<void>((resolve) => fake.close(() => resolve()));
+    }
+  });
+
+  it('F-1472: queda transitória esquece os guests (sem guestCount inflado nem respondente fantasma)', async () => {
+    const { fullLink } = await startTransport();
+    const guest = await joinGuest(fullLink, 'phone');
+    expect(await guest.next()).toMatchObject({ t: 'welcome', readOnly: false });
+    expect(transport!.info().guestCount).toBe(1);
+    expect(transport!.hasWritablePeer()).toBe(true);
+
+    // O relay cai: expulsa o guest e fecha o host com 1001 (transitório).
+    await relay!.stop();
+    relay = null;
+    await waitFor(() => !transport!.info().connected);
+    expect(transport!.info().guestCount).toBe(0);
+    expect(transport!.hasWritablePeer()).toBe(false);
+    expect(transport!.info().fullLink).toBe(fullLink);
+  });
+
+  it('F-1472: relay de produção (server.ts) fecha o host pelo TTL e o desktop apaga o QR', async () => {
+    const production = await startRelayServer({
+      port: 0,
+      host: '127.0.0.1',
+      allowedOrigins: new Set(),
+      maxRooms: 4,
+      maxPeersPerRoom: 2,
+      maxFrameBytes: 256 * 1024,
+      roomTtlMs: 150,
+      heartbeatMs: 60_000,
+      maxUpgradesPerIpPerMinute: 100,
+    });
+    try {
+      transport = new CompanionRelayHost({
+        relayUrl: `ws://127.0.0.1:${production.port}`,
+        scope: projectScope,
+        dispatch: vi.fn(async () => ({})),
+      });
+      await transport.start();
+      await waitFor(() => transport!.info().connected);
+      await waitFor(() => transport!.info().lastError !== undefined, 3_000);
+      // Estado que a UI traduz em "A sala do celular foi encerrada" + "Gerar novo QR".
+      expect(transport.info()).toEqual({
+        running: true,
+        connected: false,
+        relayUrl: `ws://127.0.0.1:${production.port}`,
+        guestCount: 0,
+        lastError: 'room closed',
+      });
+    } finally {
+      transport?.stop();
+      transport = null;
+      production.stop();
+    }
+  });
+
+  it('F-1472: sala encerrada pelo relay (TTL → 4001) apaga QR e links velhos', async () => {
+    relay = await startBlindRelay({ roomTtlMs: 100, sweepIntervalMs: 20 });
+    transport = new CompanionRelayHost({
+      relayUrl: relay.url,
+      scope: projectScope,
+      dispatch: vi.fn(async () => ({})),
+    });
+    await transport.start();
+    await waitFor(() => transport!.info().connected);
+    await waitFor(() => transport!.info().lastError !== undefined, 3_000);
+    const info = transport.info();
+    expect(info).toMatchObject({
+      running: true,
+      connected: false,
+      lastError: 'room closed',
+      guestCount: 0,
+    });
+    expect(info.roomId).toBeUndefined();
+    expect(info.fullLink).toBeUndefined();
+    expect(info.viewLink).toBeUndefined();
+    expect(info.fullWebUrl).toBeUndefined();
+    expect(info.qrSvgFull).toBeUndefined();
+    expect(info.qrSvgView).toBeUndefined();
+
+    // "Gerar novo QR" passa por Parar + Iniciar: Parar não deixa motivo velho.
+    expect(transport.stop().lastError).toBeUndefined();
   });
 
   it('guest com writeToken recebe welcome com escrita e RPC é despachado', async () => {

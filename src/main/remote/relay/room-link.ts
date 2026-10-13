@@ -165,17 +165,25 @@ export function parseRelayRoomLink(
   };
 }
 
+/** base64url (pi-wire) ou base64 padrão com até dois `=` (PWA publicado usa `btoa`). */
+const WRITE_TOKEN_RE = /^[A-Za-z0-9_+/-]+={0,2}$/;
+
 /**
  * Verificação timing-safe do write token apresentado em um hello de guest
- * (base64url, formato pi-wire). Peers sem token válido são read-only.
+ * (base64url, formato pi-wire; base64 padrão com padding também é aceito e
+ * normalizado antes de decodificar). Peers sem token válido são read-only.
  */
 export function verifyGuestWriteToken(
   expected: Uint8Array,
   presented: string | undefined,
 ): boolean {
   if (expected.byteLength === 0 || !presented) return false;
-  if (!B64URL_RE.test(presented)) return false;
-  const bytes = Buffer.from(presented, 'base64url');
+  if (!WRITE_TOKEN_RE.test(presented)) return false;
+  const normalized = presented
+    .replace(/=+$/, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+  const bytes = Buffer.from(normalized, 'base64url');
   return (
     bytes.byteLength === expected.byteLength &&
     timingSafeEqual(bytes, Buffer.from(expected))

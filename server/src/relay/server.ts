@@ -15,6 +15,8 @@ interface RelayOptions {
   maxPeersPerRoom: number;
   maxFrameBytes: number;
   roomTtlMs: number;
+  /** Intervalo de ping; quem não responder até o próximo é derrubado. */
+  heartbeatMs: number;
   maxUpgradesPerIpPerMinute: number;
 }
 
@@ -77,6 +79,7 @@ export function relayOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): Relay
     maxPeersPerRoom: positiveInteger(env, 'RELAY_MAX_PEERS_PER_ROOM', 8, 128),
     maxFrameBytes: positiveInteger(env, 'RELAY_MAX_FRAME_BYTES', 256 * 1024, 4 * 1024 * 1024),
     roomTtlMs: positiveInteger(env, 'RELAY_ROOM_TTL_MS', 30 * 60 * 1000, 24 * 60 * 60 * 1000),
+    heartbeatMs: positiveInteger(env, 'RELAY_HEARTBEAT_MS', 30_000, 10 * 60 * 1000),
     maxUpgradesPerIpPerMinute: positiveInteger(
       env,
       'RELAY_MAX_UPGRADES_PER_IP_PER_MINUTE',
@@ -97,7 +100,13 @@ function rejectUpgrade(socket: Duplex, status: string): void {
   socket.destroy();
 }
 
-export async function startRelayServer(options = relayOptionsFromEnv()): Promise<void> {
+export interface RelayServer {
+  /** Porta efetivamente escutada (útil com `port: 0` nos testes). */
+  port: number;
+  stop(): void;
+}
+
+export async function startRelayServer(options = relayOptionsFromEnv()): Promise<RelayServer> {
   const rooms = new Map<string, Room>();
   const metadata = new WeakMap<WebSocket, SocketMeta>();
   const upgrades = new Map<string, { count: number; resetAt: number }>();
@@ -115,7 +124,12 @@ export async function startRelayServer(options = relayOptionsFromEnv()): Promise
     room.guests.clear();
   };
 
+  // Socket meio-aberto (Wi-Fi do desktop caiu) não fecha sozinho: sem isto o
+  // host zumbi segura a sala e a reconexão do desktop toma 4009 dele mesmo.
+  const awaitingPong = new WeakSet<WebSocket>();
+
   const attachSocket = (socket: WebSocket): void => {
+    socket.on('pong', () => awaitingPong.delete(socket));
     socket.on('message', (data: RawData, isBinary: boolean) => {
       if (!isBinary) return;
       const meta = metadata.get(socket);
@@ -198,25 +212,52 @@ export async function startRelayServer(options = relayOptionsFromEnv()): Promise
   const sweeper = setInterval(() => {
     const now = Date.now();
     for (const [roomId, room] of rooms) {
-      if (now - room.lastActivityMs > options.roomTtlMs) closeRoom(roomId, room);
+      if (now - room.lastActivityMs > options.roomTtlMs) {
+        closeRoom(roomId, room);
+        // Sem isto o host seguia "conectado" a uma sala apagada e todo QR dava
+        // 4004. 4001 é fatal no desktop: ele apaga o QR e oferece um novo.
+        room.host.close(4001, 'idle timeout');
+      }
     }
   }, Math.min(options.roomTtlMs, 60_000));
   sweeper.unref();
+
+  const heartbeat = setInterval(() => {
+    for (const socket of sockets.clients) {
+      if (awaitingPong.has(socket)) {
+        socket.terminate();
+        continue;
+      }
+      awaitingPong.add(socket);
+      try {
+        socket.ping();
+      } catch {
+        // Ainda conectando ou já fechando: o próximo ciclo decide.
+      }
+    }
+  }, options.heartbeatMs);
+  heartbeat.unref();
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(options.port, options.host, resolve);
   });
-  process.stdout.write(`[relay] listening on ${options.port}\n`);
+  const address = server.address();
+  const port = address && typeof address === 'object' ? address.port : options.port;
+  process.stdout.write(`[relay] listening on ${port}\n`);
 
   const stop = (): void => {
+    process.off('SIGINT', stop);
+    process.off('SIGTERM', stop);
     clearInterval(sweeper);
+    clearInterval(heartbeat);
     for (const [roomId, room] of rooms) closeRoom(roomId, room);
     sockets.close();
     server.close();
   };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+  return { port, stop };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

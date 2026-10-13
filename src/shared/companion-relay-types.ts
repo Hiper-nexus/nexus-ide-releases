@@ -75,6 +75,10 @@ export interface CompanionRelayTransportInfo {
   fullLink?: string;
   /** Link view-only: `<wss>/r/<roomId>#<base64url(roomKey)>`. */
   viewLink?: string;
+  /** URL https do PWA que o QR Full codifica (`https://app.nexuside.app/#<fullLink>`). */
+  fullWebUrl?: string;
+  /** URL https do PWA que o QR View codifica. */
+  viewWebUrl?: string;
   /** SVG do QR do link full (pareamento com controle). */
   qrSvgFull?: string;
   /** SVG do QR do link view (espectador). */

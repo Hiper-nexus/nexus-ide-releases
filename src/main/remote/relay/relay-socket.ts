@@ -8,7 +8,8 @@
  * Conecta em `<wsUrl>?role=…`, sela/abre frames AES-GCM e reconecta com
  * backoff exponencial (1s→30s com jitter) em quedas transitórias. Close codes
  * fatais do relay (sala fechada/inexistente, conflito de host, sala cheia) e
- * falha de decriptação NUNCA reconectam.
+ * falha de decriptação NUNCA reconectam — exceto 4009 logo depois de uma
+ * conexão que já abriu (zumbi do próprio host; ver HOST_CONFLICT_RETRY_WINDOW_MS).
  *
  * NUNCA loga chaves, tokens ou payloads — falhas são reportadas via onClose.
  */
@@ -23,6 +24,12 @@ const FATAL_CLOSE_REASONS: Record<number, string> = {
   4029: 'room is full',
 };
 
+/**
+ * 4009 depois de já ter conectado costuma ser o próprio socket antigo (Wi-Fi
+ * caiu, o relay ainda não percebeu): tenta de novo com backoff por até esta
+ * janela, que cobre o heartbeat do relay derrubar o zumbi. No 1º connect segue fatal.
+ */
+const HOST_CONFLICT_RETRY_WINDOW_MS = 2 * 60_000;
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 /** Limites duplos: quantidade sozinha não protege contra um frame gigante. */
@@ -72,6 +79,10 @@ export class RelaySocket {
   #pendingSendBytes = 0;
   #state: RelaySocketState = 'idle';
   #lastError: string | null = null;
+  /** Já abriu desde o último connect(); só então 4009 pode ser o próprio zumbi. */
+  #openedOnce = false;
+  /** Quando a última conexão aberta caiu (null enquanto aberta). */
+  #lostAt: number | null = null;
 
   constructor(opts: RelaySocketOptions) {
     this.#opts = opts;
@@ -104,6 +115,8 @@ export class RelaySocket {
     this.#closed = false;
     this.#attempt = 0;
     this.#lastError = null;
+    this.#openedOnce = false;
+    this.#lostAt = null;
     this.#state = 'connecting';
     this.#openSocket();
   }
@@ -271,6 +284,8 @@ export class RelaySocket {
       this.#attempt = 0;
       this.#state = 'open';
       this.#lastError = null;
+      this.#openedOnce = true;
+      this.#lostAt = null;
       if (this.#pendingSends.length > 0) {
         this.#sendChain = this.#sendChain
           .then(async () => {
@@ -290,14 +305,17 @@ export class RelaySocket {
       if (this.#ws !== ws) return;
       this.#handleMessage(ws, data, isBinary);
     });
-    ws.on('error', () => {
-      // O close pareado carrega o estado acionável; nada a fazer aqui.
+    // O close pareado carrega o estado acionável; o erro só explica a queda
+    // (ex.: "Unexpected server response: 404" quando o relay não existe).
+    let transportError = '';
+    ws.on('error', (error: unknown) => {
+      transportError = error instanceof Error ? redactRelayUrls(error.message) : '';
     });
     ws.on('close', (code: number, reason: Buffer) => {
       if (this.#ws !== ws) return;
       this.#clearBackpressureDrain();
       this.#ws = null;
-      this.#handleClose(code, reason.toString('utf8'));
+      this.#handleClose(code, redactRelayUrls(reason.toString('utf8')) || transportError);
     });
   }
 
@@ -340,8 +358,13 @@ export class RelaySocket {
   #handleClose(code: number, reason: string): void {
     if (this.#closed) return;
     this.#clearBackpressureDrain();
+    if (this.#openedOnce) this.#lostAt ??= Date.now();
     const fatalReason = FATAL_CLOSE_REASONS[code];
-    if (fatalReason !== undefined) {
+    const ownStaleHost =
+      code === 4009 &&
+      this.#lostAt !== null &&
+      Date.now() - this.#lostAt < HOST_CONFLICT_RETRY_WINDOW_MS;
+    if (fatalReason !== undefined && !ownStaleHost) {
       this.#closed = true;
       this.#state = 'failed';
       this.#lastError = fatalReason;
@@ -349,7 +372,9 @@ export class RelaySocket {
       this.onClose?.(fatalReason, false);
       return;
     }
-    const reconnectReason = reason || `connection lost (code ${code})`;
+    const reconnectReason = ownStaleHost
+      ? 'previous connection still holds the room; retrying'
+      : reason || `connection lost (code ${code})`;
     this.#state = 'reconnecting';
     this.#lastError = reconnectReason;
     this.onClose?.(reconnectReason, true);
@@ -400,6 +425,11 @@ export class RelaySocket {
       this.#retryTimer = undefined;
     }
   }
+}
+
+/** Motivo vai para a UI: nunca carrega o endereço da sala. */
+function redactRelayUrls(message: string): string {
+  return message.replace(/\b(?:wss?|https?):\/\/\S+/gi, '<relay>').slice(0, 160);
 }
 
 function toBytes(data: RawData): Buffer {
