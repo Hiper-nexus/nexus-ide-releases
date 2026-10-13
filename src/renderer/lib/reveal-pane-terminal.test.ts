@@ -91,7 +91,10 @@ describe('findPaneOwningAgentSession (F-572)', () => {
 
   it('duas panes com a mesma sessão é ambiguidade — fail-closed', () => {
     const ghost: PaneRevealSubject = { ...worker, id: 'pane-ghost' };
-    const map = { ...sessions, 'pane-ghost': 'sess-worker' };
+    const map: Record<string, string | null> = {
+      ...sessions,
+      'pane-ghost': 'sess-worker',
+    };
     expect(
       findPaneOwningAgentSession(
         [worker, ghost],

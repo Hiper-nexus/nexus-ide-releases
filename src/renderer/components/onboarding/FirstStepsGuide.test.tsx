@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FirstStepsGuide } from './FirstStepsGuide';
 import { useOnboardingStore } from '../../state/onboarding-store';
 import { useProviderStore } from '../../state/provider-store';
