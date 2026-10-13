@@ -33,7 +33,9 @@ import {
   isOneShotSessionRunning,
   isSessionOwnedBy,
   isSessionDetached,
+  listAgentSessions,
   listAgentSessionsForPane,
+  type OwnedAgentSessionInfo,
   orchTerminateSession,
   reattachDetachedMissionAgentSession,
   tapSessionData,
@@ -100,7 +102,7 @@ import {
 } from "./mission-pane-authority";
 import { isAutomatedReviewerCompositionPane } from "./mission-pane-store";
 import { getOrchSettings } from "../persistence/settings-store";
-import { getAcpDriverSession } from "../acp/acp-harness-driver";
+import { getAcpDriverSession, listAcpDriverAgentSessions } from "../acp/acp-harness-driver";
 import { issueAgentIdentityBestEffort } from "./agent-identity-spawn";
 import {
   shouldTripWorkerMortalityBreaker,
@@ -1043,6 +1045,59 @@ function rendererForMission(
   return null;
 }
 
+/**
+ * F-1420: o navegador aberto por um worker herda a execution worktree DELE
+ * (F-1408). Quando o pane dono morre, um navegador preso àquela worktree não
+ * pode ficar órfão. A posse é por escopo, não por sessão: enquanto outro pane
+ * vivo compartilha a raiz de execução morta, o navegador passa a ser dele;
+ * sem sucessor, fecha. Só navegadores abertos por worker (meta.role ===
+ * 'worker') são tocados — o do operador e o do orquestrador nunca entram.
+ */
+export function reapOrphanedWorkerBrowsers(
+  sessionId: string,
+  agent: OwnedAgentSessionInfo | null,
+): void {
+  const dead = agent ?? getAgentSessionInfo(sessionId) ?? getAcpDriverSession(sessionId)?.agent ?? null;
+  const root = dead?.scope?.rootRealPath;
+  if (!root) return;
+  const survivor =
+    listAgentSessions().some(
+      (candidate) =>
+        candidate.sessionId !== sessionId &&
+        candidate.scope?.rootRealPath === root &&
+        getSessionState(candidate.sessionId) !== null,
+    ) ||
+    listAcpDriverAgentSessions().some(
+      (candidate) =>
+        candidate.sessionId !== sessionId &&
+        candidate.scope?.rootRealPath === root,
+    );
+  if (survivor) return;
+  const boundRoot = (
+    meta: OrchMeta | undefined,
+    fallback?: Readonly<ProjectExecutionScope>,
+  ) => (meta?.executionScope ?? meta?.scope ?? fallback)?.rootRealPath;
+  const doomed = new Set<string>();
+  for (const registered of panes) {
+    if (registered.entry.kind !== "browser") continue;
+    const meta = orchMetaByPane.get(
+      paneMetaKey(registered.owner, registered.entry.paneId),
+    );
+    if (meta?.role === "worker" && boundRoot(meta) === root) {
+      doomed.add(registered.entry.paneId);
+    }
+  }
+  for (const parked of parkedBrowserPanes.values()) {
+    const meta = orchMetaByPane.get(
+      paneMetaKey(parked.owner, parked.entry.paneId),
+    );
+    if (meta?.role === "worker" && boundRoot(meta, parked.scope) === root) {
+      doomed.add(parked.entry.paneId);
+    }
+  }
+  for (const paneId of doomed) void requestPaneClose(paneId);
+}
+
 export function initPaneRegistry(): void {
   // F-764 C.1/C.2: o anel de saída é o que os agentes leem do pane — recebe o
   // lote inteiro. O scanner de dev server é análise: sob inundação, só o tail.
@@ -1060,10 +1115,11 @@ export function initPaneRegistry(): void {
     recordPaneSessionState(sessionId, state);
   });
 
-  tapSessionExit((sessionId) => {
+  tapSessionExit((sessionId, agent) => {
     devServerScanner.onExit(sessionId);
     scopeBySession.delete(sessionId);
     browserOriginBySession.delete(sessionId);
+    reapOrphanedWorkerBrowsers(sessionId, agent);
     recordPaneSessionExit(sessionId);
   });
 }
