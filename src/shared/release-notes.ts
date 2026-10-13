@@ -10478,7 +10478,7 @@ export const RELEASE_076244: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076245: AppRelease = {
   version: '0.76.245',
   date: '2026-10-13',
   codename: 'Orquestração viva',
@@ -10493,5 +10493,17 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Sem o diálogo do Keychain em loop', detail: 'O macOS repetia sem fim o pedido de acesso às credenciais do Muse a cada sonda de cota; a leitura não dispara mais o diálogo.' },
     { title: 'Falso limite do AGY', detail: 'Um «401» que aparecia no texto do terminal fazia o Nexus trocar de conta e parar a missão, mesmo com a conta funcionando. Agora a sonda de cota confirma antes: credencial aceita pelo provider desmente o alarme e o pane segue na mesma conta.' },
     { title: 'Windows sem falsa queda', detail: 'Pane encerrado pelo próprio Nexus ao fim da missão mostrava «processo caiu (code 129)»; o encerramento normal não é mais rotulado como queda.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.246',
+  date: '2026-10-13',
+  codename: 'Squad abre',
+  summary: 'Um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais «sessão expirada» sobre uma credencial que está funcionando.',
+  highlights: [],
+  fixes: [
+    { title: 'Squad salvo abre de novo', detail: 'Squads de plano (e as cópias deles) falhavam ao abrir e em «Usar integrantes», sem jeito de corrigir no editor. Agora o roster carrega normalmente e o squad volta a ser utilizável.' },
+    { title: 'Muse sem falsa expiração', detail: 'O pane do Muse com login nativo mostrava «Sessão expirada» por causa de um erro de autenticação que só aparecia no texto do terminal, mesmo com a credencial funcionando. O Nexus agora confirma com a sonda de cota antes de avisar: sem confirmação, nada de toast e o pane segue trabalhando.' },
   ],
 };

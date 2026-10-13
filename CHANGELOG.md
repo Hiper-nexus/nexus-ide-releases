@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.246 — Squad abre
+
+Dois atritos de campo corrigidos (F-1441..F-1442): um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais "sessão expirada" sobre uma credencial que está funcionando.
+
+- **Squads.**
+  - Squad salvo que carrega a marca de dono dos documentos de plano (os squads de plano embutidos e as cópias deles) falhava ao abrir e em «Usar integrantes», sem saída no editor — relato do cliente no Windows, o mesmo no Mac. O rascunho agora descarta essa marca ao carregar o roster (a autoridade continua do Main) e o squad abre (F-1441).
+- **Contas e providers.**
+  - Falsa expiração do Muse: o pane de login nativo (sem conta gerenciada) mostrava «Sessão expirada em "muse"» a partir de um erro de autenticação citado no terminal, mesmo com a credencial viva. A sonda de cota agora lê também a linha nativa do adapter: credencial aceita refuta o alarme, e sem confirmação o pane segue na mesma conta com re-sondagem silenciosa, sem toast (F-1442).
+
 ## 0.76.245 — Orquestração viva
 
 Sete atritos de campo corrigidos (F-1434..F-1440): ditar segurando Space não derruba mais o app no macOS 27.2, a 2ª conta do Antigravity entra, o Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, e um «401» citado no terminal não troca mais a conta de uma missão que estava funcionando.
