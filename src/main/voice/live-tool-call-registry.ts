@@ -154,12 +154,15 @@ export class LiveToolCallCoordinator {
     };
     const record = this.records.get(event.sessionId, callId);
     if (!record || !this.records.complete(event.sessionId, callId, response)) {
+      // F-1424: summary de tool carrega conteúdo ditado (ex.: URL) — no log
+      // entra só mensagem estática + contagem; o sanitizador do logVoice é a
+      // segunda barreira.
       logVoice('warn', 'live.toolLateResult', 'resultado tardio/duplicado não reenviado', {
         callId,
         terminalState: record?.status ?? 'unknown',
         reportedOk: event.ok,
         effectMayHaveCommitted: event.ok,
-        summary,
+        summaryChars: summary.length,
       });
       return false;
     }

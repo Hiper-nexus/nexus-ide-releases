@@ -382,8 +382,10 @@ async function executeViaMcp(
     onEffectMayHaveCommitted: control.onEffectMayHaveCommitted,
   });
   checkpoint(control);
+  // F-1424: o erro do MCP pode carregar conteúdo da resposta da tool —
+  // no console entra só o estado, sem o texto.
   console.log(
-    `[voice] mcp ${mapping.tool} → ${result.ok ? 'OK' : result.error ?? 'FALHOU'}`,
+    `[voice] mcp ${mapping.tool} → ${result.ok ? 'OK' : 'FALHOU'}`,
   );
   return {
     sayText: result.ok

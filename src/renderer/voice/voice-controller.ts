@@ -1190,11 +1190,14 @@ export function useVoiceController(active = true): void {
     const unsubLiveToolCancelled = window.nexus.voice.onLiveToolCancelled((event) => {
       if (isJarvisPoweredOff()) return;
       const result = cancelRealtimeToolExecution(event);
-      logVoiceEvent('warn', 'jarvis.realtimeActionCancelReceived', event.summary, {
+      // F-1424: summary de cancelamento pode carregar conteúdo da ação —
+      // no log entra só mensagem estática + contagem.
+      logVoiceEvent('warn', 'jarvis.realtimeActionCancelReceived', 'ação realtime cancelada pelo Main', {
         callId: event.callId,
         reason: event.reason,
         known: result.known,
         effectMayHaveCommitted: result.effectMayHaveCommitted,
+        summaryChars: event.summary.length,
       });
     });
     const unsubLiveToolResult = window.nexus.voice.onLiveToolResult((event) => {

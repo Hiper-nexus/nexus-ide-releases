@@ -183,7 +183,7 @@ describe('voice-log F-1424 parte 2 (sanitização no gargalo logVoice)', () => {
   const readCapturedConsole = (): string =>
     consoleSpies
       .flatMap((spy) => spy.mock.calls)
-      .map((call) => call.map((arg) => String(arg)).join(' '))
+      .map((call) => call.map((arg: unknown) => String(arg)).join(' '))
       .join('\n');
 
   beforeEach(() => {
@@ -259,6 +259,8 @@ describe('voice-log F-1424 parte 2 (sanitização no gargalo logVoice)', () => {
 
     const content = fs.readFileSync(logFile, 'utf8');
     expect(content).toContain('live.toolLateResult');
+    // o chamador registra a contagem, não o texto (defesa é a 2ª barreira)
+    expect(content).toContain('"summaryChars"');
     expect(content).not.toContain(MARKER);
     expect(readCapturedConsole()).not.toContain(MARKER);
   });

@@ -66,10 +66,12 @@ export async function executeJarvisActionForTurn(
     );
     persistRuntimeIncidents(supervised.incidents);
     for (const runtimeIncident of supervised.incidents) {
+      // F-1424: a mensagem do incidente herda o summary da ação (conteúdo
+      // ditado) — no log entra só mensagem estática + contagem.
       logVoiceEvent(
         runtimeIncident.recovered ? 'warn' : 'error',
         'runtime.incident',
-        runtimeIncident.message,
+        'incidente de execução de ação',
         {
           incidentId: runtimeIncident.id,
           action: runtimeIncident.action,
@@ -77,6 +79,7 @@ export async function executeJarvisActionForTurn(
           attempt: runtimeIncident.attempt,
           recovered: runtimeIncident.recovered,
           effectMayHaveCommitted: runtimeIncident.effectMayHaveCommitted,
+          messageChars: runtimeIncident.message.length,
         },
       );
     }
@@ -267,11 +270,13 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
       });
     }
     execution.checkpoint();
+    // F-1424: summary de tool carrega conteúdo ditado (ex.: URL de
+    // open_browser) — no log entra só mensagem estática + contagem.
     logVoiceEvent(
       toolResult.ok ? 'info' : 'warn',
       'jarvis.realtimeActionResult',
-      toolResult.summary,
-      { tool: toolResult.tool, ok: toolResult.ok, callId: event.callId },
+      'resultado de ação realtime',
+      { tool: toolResult.tool, ok: toolResult.ok, callId: event.callId, summaryChars: toolResult.summary.length },
     );
     const sayText =
       exec.sayText.trim() ||

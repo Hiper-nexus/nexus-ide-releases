@@ -224,9 +224,12 @@ export async function runJarvisTurn(
   if (exec.expectReply !== undefined) reply.expectReply = exec.expectReply;
   const toolResult = exec.toolResult;
   if (toolResult) {
-    logVoiceEvent(toolResult.ok ? 'info' : 'warn', 'jarvis.actionResult', toolResult.summary, {
+    // F-1424: summary de ação carrega conteúdo ditado (ex.: URL de
+    // open_browser) — no log entra só mensagem estática + contagem.
+    logVoiceEvent(toolResult.ok ? 'info' : 'warn', 'jarvis.actionResult', 'resultado de ação local', {
       tool: toolResult.tool,
       ok: toolResult.ok,
+      summaryChars: toolResult.summary.length,
     });
     if (toolResult.ok) {
       logVoiceTurnMilestone(turnId, 'effect_confirmed', {
