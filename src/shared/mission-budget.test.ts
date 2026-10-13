@@ -84,6 +84,7 @@ describe('mission budget dashboard', () => {
     expect(agg.totalSpentTokens).toBe(1000);
     expect(agg.label).toMatch(/1 missões/);
     expect(agg.shortLabel).toMatch(/tok/);
-    expect(agg.shortLabel).toMatch(/1\.0k|1000/);
+    // formatCompactTokens (T3): 1000 → "1k", sem casa decimal à toa.
+    expect(agg.shortLabel).toMatch(/\b1k\b/);
   });
 });
