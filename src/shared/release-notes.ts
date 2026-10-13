@@ -10447,7 +10447,7 @@ export const RELEASE_076242: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076243: AppRelease = {
   version: '0.76.243',
   date: '2026-10-13',
   codename: 'Herança do T3',
@@ -10462,5 +10462,18 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Missões que terminam', detail: 'Erro de provedor parado reabre a tarefa noutra CLI; recusa do verificador volta ao Maestro e a missão segue rodando; limite de leitura vira ressalva na nota em vez de travar a conclusão.' },
     { title: 'Worktrees protegidas', detail: 'Worker aberto numa worktree já existente é adotado com recibo e rework, e o Nexus nunca apaga a pasta nem a branch de uma worktree criada à mão.' },
     { title: 'Portão de push', detail: 'O portão mede o checkout real de cd e git -C; caminho com expansão, inexistente ou com erro de git bloqueia, e o veredito de revisão amarra o HEAD exato revisado.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.244',
+  date: '2026-10-13',
+  codename: 'Argon liberado',
+  summary: 'O Gemini 4 Argon volta a ser usado pelo Nexus: o AGY 1.3.4 o lista com sufixo de esforço, e a rota agora reconhece essas variantes como prova de acesso da sua conta.',
+  highlights: [
+    { title: 'Gemini 4 Argon na rota', detail: 'Com o Argon liberado na sua conta do AGY, tarefas difíceis e revisões voltam a usá-lo em vez de cair no Gemini 3.8 Flash; o esforço pedido escolhe a variante (baixo, médio ou alto).' },
+  ],
+  fixes: [
+    { title: 'Acesso ao Argon reconhecido', detail: 'O Nexus dizia "sem acesso ao Argon nesta conta" mesmo com acesso, porque procurava o nome antigo do modelo. Se a conta for recusada, o Argon sai da rota por 12 horas sem insistir.' },
   ],
 };

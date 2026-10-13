@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.244 — Argon liberado
+
+O AGY 1.3.4 passou a listar o Gemini 4 Argon só com sufixo de esforço (`gemini-4-argon-low/-medium/-high`). A prova de acesso do roteador procurava o id sem sufixo, e a conta com acesso ao Argon recebia "sem acesso ao Argon nesta conta": a rota caía no Gemini 3.8 Flash. Agora a variante que a CLI anuncia é a prova, e o Argon volta ao tier difícil e à lane de julgamento.
+
+- **Roteamento.**
+  - `gemini-4-argon` resolve para a variante que o `agy models` lista, pelo mesmo mecanismo de família do `gpt-5.6`; o pty-manager troca a variante pelo esforço pedido no spawn.
+  - A prova de acesso vale para as variantes, e o revisor que rodou numa variante do Argon conta como revisor de ponta (F-234).
+  - Recusa de acesso numa variante do Argon tira a família inteira da rota por 12 h: acesso é da conta, não do esforço. `gpt-5.6` e Flash seguem por id.
+  - O catálogo classifica as três variantes (paga, custo alto).
+
 ## 0.76.243 — Herança do T3
 
 Entram os PRs abertos da janela do T3 (#131, #133, #135, #136) e o backlog herdado do T3 Code (#132, #134): terminal com janela de ACK por chunks, assistente de primeira execução, chip de contexto, seletor de fontes e editor de tema. Junto vêm as correções dos atritos que o próprio Nexus teve nesta release (F-1423, F-1425..F-1433): pane com spinner não é mais dado como erro, brief do Devin não é colado duas vezes, erro de provedor reabre a tarefa noutra CLI, missão recusada pelo verificador volta ao Maestro em vez de travar, worktree criada à mão nunca é apagada e o portão de push mede o checkout certo. Cada item teve teste RED, julgamento do orquestrador e veredito de modelo de ponta.
