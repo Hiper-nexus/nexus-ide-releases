@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react';
 import { useSettingsStore } from '../../state/settings-store';
 import { askConfirm } from '../../state/confirm-store';
 import { useOrchStore } from '../../state/orch-store';
-import { useMissionSetupStore } from '../../state/mission-setup-store';
+import {
+  MISSION_SETUP_MAX_ROSTER,
+  useMissionSetupStore,
+} from '../../state/mission-setup-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { useToastStore } from '../../state/toast-store';
@@ -491,7 +494,15 @@ export function SquadsSection() {
     setup.clearEntryContext();
     setup.setWorkspace(workspacePath);
     if (!setup.setRoster(squad.agents)) {
-      setFeedback({ tone: 'error', message: 'Não foi possível aplicar os integrantes. Revise os agentes no editor e use uma equipe de até 12 pessoas.' });
+      // F-1496: o tamanho é a única causa que o usuário consegue ver; a outra
+      // é um integrante com dado que a missão não aceita.
+      setFeedback({
+        tone: 'error',
+        message:
+          squad.agents.length > MISSION_SETUP_MAX_ROSTER
+            ? `Não foi possível aplicar os integrantes: esta equipe tem ${squad.agents.length} pessoas e a missão aceita até ${MISSION_SETUP_MAX_ROSTER}. Remova alguns no editor e tente de novo.`
+            : 'Não foi possível aplicar os integrantes: um deles tem um dado que a missão não aceita. Abra a equipe no editor, salve de novo e tente outra vez.',
+      });
       return;
     }
     const { draft } = useMissionSetupStore.getState();

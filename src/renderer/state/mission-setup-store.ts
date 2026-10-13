@@ -16,6 +16,8 @@ import { MISSION_PREPARE_TITLE_MAX_CHARS } from '../../shared/mission-engine-con
 import { getActiveWorkspacePath } from './active-workspace';
 
 export const MISSION_SETUP_DRAFT_VERSION = 1 as const;
+/** Teto de integrantes de uma missão montada pelo rascunho. */
+export const MISSION_SETUP_MAX_ROSTER = 12;
 const MISSION_SETUP_STORAGE_PREFIX = 'nexus:mission-setup:draft:v1:';
 
 export type MissionSetupStep = 'mission' | 'express' | 'team' | 'review';
@@ -178,7 +180,7 @@ const missionSetupDraftSchema = z
         (paths) => new Set(paths).size === paths.length,
         'context paths must be unique',
       ),
-    roster: z.array(missionSetupRosterAgentSchema).max(12),
+    roster: z.array(missionSetupRosterAgentSchema).max(MISSION_SETUP_MAX_ROSTER),
     advanced: z
       .object({
         lane: missionLaneSchema,
@@ -198,7 +200,9 @@ const storedMissionSetupDraftSchema = z
   })
   .strict();
 
-const strictRosterSchema = z.array(missionSetupRosterAgentSchema).max(12);
+const strictRosterSchema = z
+  .array(missionSetupRosterAgentSchema)
+  .max(MISSION_SETUP_MAX_ROSTER);
 
 export function createEmptyMissionSetupDraft(
   revision = 0,

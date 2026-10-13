@@ -323,6 +323,7 @@ describe('Settings → Squads retained management capability', () => {
     act(() => requiredButton(host, /Usar integrantes/i).click());
     expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'squads' });
     expect(announcementText(host)).toMatch(/não foi possível aplicar/i);
+    expect(announcementText(host)).toMatch(/tem 13 pessoas e a missão aceita até 12/i);
     expect(useMissionSetupStore.getState().draft.roster).toEqual([]);
   });
   it('renders an actionable empty inventory with create/import available and export disabled', async () => {
