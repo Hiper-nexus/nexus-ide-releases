@@ -187,6 +187,70 @@ describe('SquadEditor', () => {
     act(() => root.unmount());
   });
 
+  it('F-1493: o modelo que aparece é o que é salvo (padrão da ferramenta explícito)', async () => {
+    const saveSquad = vi.fn(async (_squad: Squad) => ({ ok: true as const }));
+    (window as unknown as { nexus: unknown }).nexus = {
+      adapters: {
+        list: vi.fn(async (): Promise<AdapterInfo[]> => [
+          {
+            id: 'claude',
+            kind: 'cli-pty',
+            label: 'Claude',
+            icon: '◆',
+            models: { list: ['sonnet', 'opus'], default: 'sonnet' },
+            installed: true,
+            installCommand: '',
+            idleTimeoutMs: 800,
+            orchestratorCapable: true,
+            missionControlCapable: true,
+          },
+        ]),
+      },
+      orch: { saveSquad },
+    };
+    const squad: Squad = {
+      ...builtin,
+      builtin: false,
+      id: 'meu-time',
+      agents: [
+        { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', allowedTools: null },
+      ],
+    };
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(<SquadEditor squad={squad} onClose={vi.fn()} onSaved={vi.fn()} />);
+    });
+    await act(async () => {});
+
+    const model = document.body.querySelector<HTMLSelectElement>(
+      'select[aria-label="Modelo"]',
+    )!;
+    expect(model.value).toBe('');
+    expect(model.selectedOptions[0]?.textContent).toBe('Padrão da ferramenta');
+
+    await act(async () => {
+      model.value = 'opus';
+      model.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => {
+      model.value = '';
+      model.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const saveBtn = [...document.body.querySelectorAll('button')].find((b) =>
+      /^salvar$/i.test(b.textContent?.trim() ?? ''),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      saveBtn.click();
+    });
+
+    expect(saveSquad).toHaveBeenCalledTimes(1);
+    expect(saveSquad.mock.calls[0]![0].agents[0]).not.toHaveProperty('model', '');
+    expect(saveSquad.mock.calls[0]![0].agents[0]!.model).toBeUndefined();
+    act(() => root.unmount());
+  });
+
   it('bloqueia modelo sem sessão e escolhe o primeiro usável ao trocar de CLI', async () => {
     const adapters: AdapterInfo[] = [
       {

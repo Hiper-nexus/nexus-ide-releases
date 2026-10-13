@@ -284,8 +284,13 @@ export function SquadEditor({
               className="squad-editor__input"
               value={agent.model ?? ''}
               aria-label="Modelo"
-              onChange={(e) => updateAgent(index, { model: e.target.value })}
+              onChange={(e) =>
+                updateAgent(index, { model: e.target.value || undefined })
+              }
             >
+              {/* F-1493: sem esta opção o select exibia o primeiro modelo da
+                  lista enquanto o agente salvava `undefined`. */}
+              <option value="">Padrão da ferramenta</option>
               {modelsFor(agent.cli).map((m) => {
                 const view = authViewForModel(providerById.get(agent.cli), m);
                 return (
