@@ -247,6 +247,11 @@ export function scheduleAutoCloseAfterHandoff(
   const armedPaneId = armedAutoClosePaneId(sessionId, paneId);
   if (armedPaneId === null) return;
   if (!shouldAutoCloseAfterHandoff({ armed: true, status })) {
+    // A rede de segurança só arma para entrega terminal não-success
+    // (partial|failed|blocked): `progress`/`stalled` são sintéticos e o worker
+    // ainda trabalha — não há entrega para o Maestro consumir, então armar
+    // aqui fecharia o pane parado antes de ele entregar.
+    if (status !== "partial" && status !== "failed" && status !== "blocked") return;
     if (nonSuccess) {
       clearPendingNonSuccess(sessionId);
       const idleMs = nonSuccess.idleCloseMs ?? NON_SUCCESS_IDLE_CLOSE_MS;

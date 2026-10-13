@@ -390,6 +390,14 @@ describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", (
     await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
     expect(close).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["progress", "stalled"])("%s nunca arma a rede de 15 min (só partial|failed|blocked)", async (status) => {
+    const close = deliver(status);
+    await vi.advanceTimersByTimeAsync(NON_SUCCESS_IDLE_CLOSE_MS * 2);
+    expect(close).not.toHaveBeenCalled();
+    expect(closeAfterNonSuccessHandoffAck("sess-w", "hoff-1", "accepted")).toBe(false);
+    expect(armedAutoClosePaneId("sess-w")).toBe("pane-w");
+  });
 });
 
 // F-1409/M3 (revisão Fable): Maestro em turno longo deixa o partial `queued`;
