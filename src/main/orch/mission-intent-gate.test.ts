@@ -89,6 +89,18 @@ describe('mission intent gate', () => {
     }
   });
 
+  it('F-1428: a blocked mission spawn denial names the state and the leader reopen path', () => {
+    const blocked = { ...dispatched, status: 'blocked', intentState: 'blocked_user' } as Mission;
+    const result = assertMissionIntentAllowsTool('nexus_pane_spawn', { mission: blocked });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('dispatch_required');
+      expect(result.error).toContain('dispatch_required: workers e worktrees só após a missão iniciar');
+      expect(result.error).toContain('status=blocked');
+      expect(result.error).toContain('nexus_mission_request_resume');
+    }
+  });
+
   it('denies pane_spawn before dispatch', () => {
     const result = assertMissionIntentAllowsTool('nexus_pane_spawn', {
       mission: awaitingGoal,

@@ -96,6 +96,33 @@ describe('nexus_mission_request_resume (resto F-1040)', () => {
     });
   });
 
+  it('F-1428: reopening a blocked mission reports reopened/running, coherent with the spawn gate', async () => {
+    let status = 'blocked';
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: (id: string) => ({ id, status, orchestratorSessionId: 'stale-session' }),
+      },
+    });
+    // Campo 13/10: resumeTechnical (blocked → running) + liderança viva = "already-running".
+    mocks.resumeFastLaneMission.mockImplementation(async () => {
+      status = 'running';
+      return { kind: 'already-running', sessionId: 'stale-session' };
+    });
+    const result = await requestResumeTool().handler(
+      { missionId: 'mission-existing' },
+      context(),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      resumed: true,
+      reopened: true,
+      reason: 'reopened',
+      previousStatus: 'blocked',
+      status: 'running',
+    });
+    expect(String((result as { note?: string }).note)).toMatch(/reaberta/i);
+  });
+
   it('unknown mission is refused without touching resume', async () => {
     mocks.getProjectDomainStores.mockReturnValue({
       missions: { get: () => null },

@@ -77,7 +77,7 @@ import { maybeApplyCivilianPronto } from './civilian-pronto';
 import { getAutomaticCompletionProof } from './automatic-completion-proof';
 import type { ScopedTaskRecord } from './task-store';
 import { MissionLeadershipError } from './mission-leadership';
-import { recordOperatorTabCompletionRequest } from './operator-tab-completion';
+import { hasCurrentCompletionRequest, recordOperatorTabCompletionRequest } from './operator-tab-completion';
 
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedEffectOutboxStore } from './effect-outbox';
@@ -1759,6 +1759,68 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(blockUser).toHaveBeenCalledOnce();
     expect(blockUser.mock.calls[0]![1]!.description).toContain(description);
     expect(blockUser.mock.calls[0]![1]!.description).toContain('Tente novamente.');
+  });
+
+  it('F-1428: recusa do verificador volta ao Maestro vivo e a missão segue running (sem blockUser)', async () => {
+    completeVerified.mockClear();
+    blockUser.mockClear();
+    const description = 'A leitura do candidato ficou incompleta: src/main/orch/preview-server.test.ts.';
+    const deliverCompletionRefusal = vi.fn(async (_sessionId: string, _prompt: string) => true);
+    const state = boardDoneHarness({
+      missionOverrides: { id: 'mission-f1428-leader', intentContract: civilianContract, orchestratorSessionId: 'maestro-vivo' },
+      depsExtras: {
+        runAutoReviewGate: vi.fn(async () => ({ kind: 'blocked' as const, description })),
+        resolveMissionLeader: () => ({ sessionId: 'maestro-vivo', paneId: 'pane-1', source: 'durable' as const, proven: true }),
+        deliverCompletionRefusal,
+      },
+    });
+    recordOperatorTabCompletionRequest(scope, state.liveMission, 1_000);
+    expect(hasCurrentCompletionRequest(scope, state.liveMission)).toBe(true);
+
+    const first = await state.reconcile();
+    expect(first.completed).toBe(false);
+    expect(first.action).toBe('wait');
+    expect(first.reason).toBe('completion-refused-to-leader');
+    expect(blockUser).not.toHaveBeenCalled();
+    expect(completeVerified).not.toHaveBeenCalled();
+    expect(state.liveMission.status).toBe('running');
+    expect(deliverCompletionRefusal).toHaveBeenCalledOnce();
+    const [sessionId, prompt] = deliverCompletionRefusal.mock.calls[0]!;
+    expect(sessionId).toBe('maestro-vivo');
+    expect(prompt).toContain(description);
+    expect(prompt).toContain('Tente novamente.');
+    expect(prompt).toContain('nexus_pane_spawn');
+    // O pedido de done foi respondido: o idle do Maestro não reverifica em loop.
+    expect(hasCurrentCompletionRequest(scope, state.liveMission)).toBe(false);
+
+    // Mesmo veredito num gatilho de worker (handoff/idle): sem spam ao Maestro.
+    expect((await state.reconcile()).reason).toBe('completion-refused-to-leader');
+    expect(deliverCompletionRefusal).toHaveBeenCalledOnce();
+
+    // Novo pedido de done com o mesmo veredito: o Maestro recebe a resposta de novo.
+    recordOperatorTabCompletionRequest(scope, state.liveMission, 2_000);
+    await state.reconcile();
+    expect(deliverCompletionRefusal).toHaveBeenCalledTimes(2);
+    expect(blockUser).not.toHaveBeenCalled();
+  });
+
+  it('F-1428: sem Maestro que receba a recusa, o bloqueio visível continua', async () => {
+    completeVerified.mockClear();
+    blockUser.mockClear();
+    const deliverCompletionRefusal = vi.fn(async () => false);
+    const { reconcile } = boardDoneHarness({
+      missionOverrides: { id: 'mission-f1428-no-leader', intentContract: civilianContract },
+      depsExtras: {
+        runAutoReviewGate: vi.fn(async () => ({ kind: 'blocked' as const, description: 'Checks falharam.' })),
+        resolveMissionLeader: () => ({ sessionId: 'maestro-mudo', paneId: 'pane-1', source: 'durable' as const, proven: true }),
+        deliverCompletionRefusal,
+      },
+    });
+    const result = await reconcile();
+    expect(result.action).toBe('refuse-fail-closed');
+    expect(deliverCompletionRefusal).toHaveBeenCalledOnce();
+    expect(blockUser).toHaveBeenCalledOnce();
+    expect(blockUser.mock.calls[0]![1]!.description).toContain('Checks falharam.');
   });
 
   it('civil com reparo despachado ao Maestro → espera, não completa', async () => {

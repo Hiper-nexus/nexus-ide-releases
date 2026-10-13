@@ -279,9 +279,14 @@ export function assertMissionIntentAllowsTool(
     if (isDispatchAuthorized || canDispatchWorkers(intentState)) {
       return { ok: true, intentState, intentVersion };
     }
+    // F-1428: name the state the gate saw. A blocked mission has a way back for
+    // its leader (request_resume reopens it); a bare refusal left it guessing.
+    const reopen = ctx.mission.status === 'blocked'
+      ? ' Missão blocked: o Maestro a reabre com nexus_mission_request_resume e então delega.'
+      : '';
     return deny(
       'dispatch_required',
-      'dispatch_required: workers e worktrees só após a missão iniciar',
+      `dispatch_required: workers e worktrees só após a missão iniciar (status=${ctx.mission.status}, intentState=${intentState}).${reopen}`,
       ctx,
       intentState,
       intentVersion,

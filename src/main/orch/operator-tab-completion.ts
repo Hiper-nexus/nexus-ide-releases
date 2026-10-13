@@ -38,6 +38,21 @@ export function hasCurrentCompletionRequest(scope: ProjectExecutionScope, missio
     request.sessionId !== undefined && request.sessionId === mission.orchestratorSessionId);
 }
 
+/** F-1428: when the current leader's done request was recorded (null when there is none). */
+export function completionRequestedAt(scope: ProjectExecutionScope, mission: CompletionMission): number | null {
+  return hasCurrentCompletionRequest(scope, mission)
+    ? requests.get(missionLifecycleKey(scope, mission.id))!.requestedAt : null;
+}
+
+/**
+ * F-1428: the verifier answered this request with a refusal delivered to the
+ * leader. Consume it so the leader's idle does not re-verify in a loop; the
+ * leader asks done again after the correction (same tool, same authority).
+ */
+export function clearCompletionRequest(scope: ProjectExecutionScope, missionId: string): void {
+  requests.delete(missionLifecycleKey(scope, missionId));
+}
+
 /**
  * Only the authorized done handler records intent (any automatic-completion
  * mission; the tab gate above reads it only for an adopted pane). Description/handoff text is

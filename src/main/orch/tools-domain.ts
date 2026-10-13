@@ -747,17 +747,27 @@ const missionRequestResumeTool: McpToolDef = {
     assertMcpInvocationCurrent(invocation);
     if (outcome.kind === 'operator-dismissed') return operatorDismissedResumeResult(missionId);
     const after = stores.missions.get(missionId);
+    const status = after?.status ?? mission.status;
+    // F-1428: resumeTechnical reabre blocked → running mesmo com a liderança
+    // viva ("already-running"). Responder resumed:false/already-running dizia
+    // que nada mudou enquanto o gate de spawn tinha acabado de ver blocked.
+    const reopened = mission.status !== 'running' && status === 'running' && outcome.kind !== 'mounted';
     return {
       ok: true,
       missionId,
-      resumed: outcome.kind === 'mounted',
-      reason: outcome.kind,
-      status: after?.status ?? mission.status,
+      resumed: outcome.kind === 'mounted' || reopened,
+      reopened,
+      reason: reopened ? 'reopened' : outcome.kind,
+      previousStatus: mission.status,
+      status,
       note: outcome.kind === 'mounted'
         ? 'O Main montou a liderança. Continue no painel de liderança da missão.'
-        : outcome.kind === 'already-running'
-          ? 'Já existe liderança viva nesta missão; esta chamada não a transferiu para sua sessão.'
-          : 'Pedido processado sem prova de nova montagem. Confira o estado da missão na interface.',
+        : reopened
+          ? `A missão estava ${mission.status} e foi reaberta (status running): workers e worktrees voltam a ser permitidos. ` +
+            (outcome.kind === 'already-running' ? 'A liderança viva foi mantida; esta chamada não a transferiu para sua sessão.' : 'Confira a liderança no painel da missão.')
+          : outcome.kind === 'already-running'
+            ? 'Já existe liderança viva nesta missão; esta chamada não a transferiu para sua sessão.'
+            : 'Pedido processado sem prova de nova montagem. Confira o estado da missão na interface.',
     };
   },
 };
