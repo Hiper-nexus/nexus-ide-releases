@@ -37,7 +37,7 @@ if [[ -n "${NEXUS_HEAVY_COMMAND_URL-}" && -n "${NEXUS_GATE_TOKEN-}" && "${NEXUS_
       fi
       __nexus_heavy_in_debug=0
     fi
-    local nexus_command="${BASH_COMMAND-}" nexus_kind nexus_lease
+    local nexus_command="${BASH_COMMAND-}" nexus_kind nexus_lease nexus_pid
     case "$nexus_command" in
       *node*|*npm*|*pnpm*|*yarn*|*bun*|*tsc*|*tsgo*|*typecheck*|*vitest*|*jest*|*pytest*|*mocha*|*vite*|*esbuild*|*webpack*|*rollup*|*cargo*|*'go '*|*dotnet*|*make*|*ninja*|*gradle*|*mvn*) ;;
       *) return 0 ;;
@@ -45,7 +45,11 @@ if [[ -n "${NEXUS_HEAVY_COMMAND_URL-}" && -n "${NEXUS_GATE_TOKEN-}" && "${NEXUS_
     __nexus_heavy_in_debug=1
     nexus_kind=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/classify.cjs" "$nexus_command") || exit 78
     if [[ -n "$nexus_kind" ]]; then
-      nexus_lease=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/request.cjs" "${BASHPID:-$$}" "$nexus_kind") || { printf '%s\n' '[Nexus] Heavy command not started: physical CPU/RAM admission unavailable.' >&2; exit 78; }
+      # F-1434: no Git Bash/MSYS2/Cygwin, BASHPID e $$ são PIDs do runtime
+      # POSIX; o Main confere a árvore do pane pelo PID do kernel do Windows.
+      nexus_pid="${BASHPID:-$$}"
+      if [[ -r "/proc/$nexus_pid/winpid" ]]; then read -r nexus_pid < "/proc/$nexus_pid/winpid" || nexus_pid=; fi
+      nexus_lease=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/request.cjs" "$nexus_pid" "$nexus_kind") || { printf '%s\n' '[Nexus] Heavy command not started: Nexus did not admit it (reason above).' >&2; exit 78; }
       export NEXUS_HEAVY_LEASE="$nexus_lease"
       __nexus_heavy_admitted=1
     fi

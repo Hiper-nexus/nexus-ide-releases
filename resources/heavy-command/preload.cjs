@@ -85,8 +85,11 @@ if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GAT
       admitted = true;
     } catch (failure) {
       // F-1229: request.cjs names a queue wait (time, root, jobs there).
-      if (typeof failure?.stderr === 'string') process.stderr.write(failure.stderr.slice(0, 1024));
-      process.stderr.write('[Nexus] Heavy command not started: scoped CPU/RAM admission or process ownership could not be proved.\n');
+      // F-1434: and every other refusal; local failures name themselves.
+      if (typeof failure?.stderr === 'string' && failure.stderr) process.stderr.write(failure.stderr.slice(0, 1024));
+      else if (failure?.code === 'ETIMEDOUT') process.stderr.write('nexus-heavy: Nexus admission did not answer in 370 s\n');
+      else process.stderr.write(`nexus-heavy: ${String(failure?.message ?? failure).replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 200)}\n`);
+      process.stderr.write('[Nexus] Heavy command not started: Nexus did not admit it (reason above).\n');
       process.exit(78);
     }
   }

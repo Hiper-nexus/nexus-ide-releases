@@ -23,6 +23,8 @@ export interface HeavyCommandQueueWait {
   readonly waiting: number;
   readonly machineActive: number;
   readonly maxActive: number;
+  /** F-1434: the RAM budget at give-up time; freeMB null = no telemetry. */
+  readonly memory?: { readonly freeMB: number | null; readonly neededMB: number; readonly swapBound: boolean };
 }
 interface Waiter {
   readonly request: HeavyCommandRequest;
@@ -120,20 +122,26 @@ export class HeavyCommandPermitPool {
     return { waitedMs: Date.now() - waiter.since, root: waiter.request.scope.rootRealPath,
       running: [...this.#active.values()].filter(entry => entry.lane === waiter.lane).length,
       waiting: this.#waiters.filter(other => other !== waiter && other.lane === waiter.lane).length,
-      machineActive: this.#active.size, maxActive };
+      machineActive: this.#active.size, maxActive, memory: this.#memoryBudget() };
+  }
+
+  #memoryBudget(): { freeMB: number | null; neededMB: number; swapBound: boolean } {
+    let memory: SystemMemorySample | null;
+    try { memory = this.#options.memory(); } catch { memory = null; }
+    const limits = this.#options.limits();
+    const neededMB = limits.minFreeMB + this.snapshot().reservedMB + (this.#options.reserveMB ?? 2048);
+    const freeMB = memory && memory.freeMB !== null && Number.isFinite(memory.freeMB) ? memory.freeMB : null;
+    const swapBound = Boolean(memory && limits.maxSwapUsedMB > 0 && memory.swapUsedMB !== null && memory.swapUsedMB > limits.maxSwapUsedMB);
+    return { freeMB, neededMB, swapBound };
   }
 
   #hasRam(): boolean {
-    let memory: SystemMemorySample | null;
-    try { memory = this.#options.memory(); } catch { memory = null; }
-    if (memory?.freeMB === null || memory === null || !Number.isFinite(memory.freeMB)) {
-      // Missing telemetry is explicit: conservative machine-wide serialization,
-      // not invented free RAM and not a permanent inability to run one job.
-      return this.#active.size === 0;
-    }
-    const limits = this.#options.limits();
-    if (limits.maxSwapUsedMB > 0 && memory.swapUsedMB !== null && memory.swapUsedMB > limits.maxSwapUsedMB) return false;
-    return memory.freeMB >= limits.minFreeMB + this.snapshot().reservedMB + (this.#options.reserveMB ?? 2048);
+    const budget = this.#memoryBudget();
+    // Missing telemetry is explicit: conservative machine-wide serialization,
+    // not invented free RAM and not a permanent inability to run one job.
+    if (budget.freeMB === null) return this.#active.size === 0;
+    if (budget.swapBound) return false;
+    return budget.freeMB >= budget.neededMB;
   }
 
   #pump(): void {

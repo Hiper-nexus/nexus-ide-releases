@@ -25,10 +25,26 @@ export interface NativeHeavyCommandPorts {
 /** F-1229: the 74 says it was a queue wait, for how long and behind what. */
 function queueWaitMessage(wait: HeavyCommandQueueWait): string {
   const root = wait.root.length > 160 ? `…${wait.root.slice(-159)}` : wait.root;
-  const cause = wait.running > 0 ? 'one job per root at a time' : 'machine CPU/RAM bound, not this root';
+  // F-1434: RAM is named only when free RAM was really below the reserve.
+  const gb = (mb: number) => (mb / 1024).toFixed(1);
+  const cause = wait.running > 0 ? 'one job per root at a time'
+    : wait.machineActive >= wait.maxActive ? `machine limit of ${wait.maxActive} parallel heavy jobs`
+    : wait.memory?.swapBound ? 'swap use above the configured limit'
+    : wait.memory && wait.memory.freeMB !== null && wait.memory.freeMB < wait.memory.neededMB ? `free RAM ${gb(wait.memory.freeMB)} GB below the ${gb(wait.memory.neededMB)} GB reserve`
+    : 'machine capacity, not this root';
   return `nexus-heavy: gave up after ${Math.round(wait.waitedMs / 1000)} s in the admission queue of ${root}: ` +
     `${wait.running} job(s) running there, ${wait.waiting} more waiting (${cause}); machine ${wait.machineActive}/${wait.maxActive} heavy jobs running.`;
 }
+/** F-1434: every refusal carries the line the shell prints; none blames CPU/RAM. */
+function denied(reason: string, detail: string): Admission {
+  return { allow: false, reason, message: `nexus-heavy: ${detail}` };
+}
+const POOL_REFUSALS: Readonly<Record<string, string>> = {
+  heavy_command_closed: 'Nexus is shutting down and no longer admits heavy commands',
+  heavy_command_aborted: 'the admission request was cancelled before a slot opened',
+  heavy_command_queue_full: 'too many heavy commands are already waiting for admission',
+  heavy_command_authority_revoked: 'this terminal lost its Nexus authority while waiting for a slot',
+};
 interface Flight { ctx: AgentGateContext; claim: string; permit: HeavyCommandPermit; done: Promise<void> }
 /** No remote release endpoint. Kernel identity disappearance or physical PTY
  * proof alone releases RAM/CPU; PostToolUse never does. */
@@ -50,18 +66,24 @@ export class NativeHeavyCommands {
   }
   async #admit(ctx: AgentGateContext, raw: unknown, signal?: AbortSignal): Promise<Admission> {
     const body = schema.safeParse(raw);
-    if (!body.success || !ctx.sessionId || !this.#accepting || !this.#current(ctx)) return { allow: false, reason: 'heavy_command_authority_unavailable' };
+    if (!body.success) return denied('heavy_command_authority_unavailable', 'malformed admission request');
+    if (!ctx.sessionId || !this.#accepting || !this.#current(ctx)) return denied('heavy_command_authority_unavailable', 'this terminal has no live Nexus admission authority (pane closed or Nexus shutting down)');
     if (body.data.leaseId) {
       const flight = [...this.#flights].find((candidate) => candidate.permit.id === body.data.leaseId && candidate.ctx.token === ctx.token && candidate.ctx.sessionId === ctx.sessionId);
       let proved = false;
       try { proved = Boolean(flight && await this.ports.borrow?.(ctx.sessionId, flight.claim, body.data.pid)); } catch { /* fail closed */ }
       return proved && Boolean(flight && this.#flights.has(flight)) && this.#accepting && this.#current(ctx) && !signal?.aborted
         ? { allow: true, leaseId: body.data.leaseId }
-        : { allow: false, reason: 'heavy_command_nested_ownership_unproved' };
+        : denied('heavy_command_nested_ownership_unproved', `the inherited admission could not be proved for pid ${body.data.pid}`);
     }
     let claim: string | null = null;
     try { claim = await this.ports.claim(ctx.sessionId, body.data.pid, body.data.proof); } catch { /* ownership unavailable */ }
-    if (!claim || !this.#accepting || !this.#current(ctx) || signal?.aborted) { if (claim) this.#reap(ctx, claim); return { allow: false, reason: 'heavy_command_process_ownership_unproved' }; }
+    if (!claim || !this.#accepting || !this.#current(ctx) || signal?.aborted) {
+      if (claim) this.#reap(ctx, claim);
+      return denied('heavy_command_process_ownership_unproved', claim
+        ? 'this terminal lost its Nexus authority during admission'
+        : `could not prove that pid ${body.data.pid} runs inside this agent terminal's process tree`);
+    }
     let permit: HeavyCommandPermit;
     // F-983/F-997: a fila é por raiz de EXECUÇÃO (a worktree do writer), não
     // pelo checkout de coordenação do token — senão writers isolados voltam à
@@ -71,13 +93,17 @@ export class NativeHeavyCommands {
     catch (failure) {
       this.#reap(ctx, claim);
       const wait = (failure as { queue?: HeavyCommandQueueWait } | null)?.queue;
-      return wait ? { allow: false, reason: 'heavy_command_wait_timeout', message: queueWaitMessage(wait) } : { allow: false, reason: 'heavy_command_admission_denied' };
+      if (wait) return { allow: false, reason: 'heavy_command_wait_timeout', message: queueWaitMessage(wait) };
+      const code = failure instanceof Error ? failure.message : '';
+      return denied('heavy_command_admission_denied', POOL_REFUSALS[code] ?? `admission failed (${code || 'unknown'})`);
     }
     const flight: Flight = { ctx, claim, permit, done: Promise.resolve() }; this.#flights.add(flight);
     flight.done = this.#observe(flight); void flight.done.catch(() => {});
     let state: CommandProcessState = 'unknown';
     try { state = await this.ports.probe(ctx.sessionId, claim); } catch { /* unknown is not permission */ }
-    if (state !== 'live' || !this.#flights.has(flight) || !this.#accepting || !this.#current(ctx) || signal?.aborted) return { allow: false, reason: 'heavy_command_process_ownership_changed' };
+    if (state !== 'live' || !this.#flights.has(flight) || !this.#accepting || !this.#current(ctx) || signal?.aborted) {
+      return denied('heavy_command_process_ownership_changed', `pid ${body.data.pid} exited or changed while it was being admitted`);
+    }
     return { allow: true, leaseId: permit.id };
   }
   async #executionScope(ctx: AgentGateContext, cwd: string | undefined, pid: number): Promise<Readonly<ProjectExecutionScope>> {

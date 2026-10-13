@@ -136,7 +136,7 @@ it.runIf(process.platform === 'darwin' && process.env.NEXUS_TEST_AGY_AUTHENTICAT
       });
       const row = { phase: name, shellHooks, exit: result, timedOut, durationMs: Date.now() - started, marker: fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : null,
         hookDecisions: decisions, admissions, transitions, checks, stopCalls, tcpHits, outputBytes: bytes,
-        failureClasses: ['Authentication required', 'not authenticated', 'Not logged in', 'sign in', 'Permission denied', 'Operation not permitted', 'Physical CPU/RAM admission', 'quota', 'rate limit', 'timed out', 'deadline'].filter(value => output.toLowerCase().includes(value.toLowerCase())) };
+        failureClasses: ['Authentication required', 'not authenticated', 'Not logged in', 'sign in', 'Permission denied', 'Operation not permitted', 'Physical CPU/RAM admission', 'heavy-command admission', 'quota', 'rate limit', 'timed out', 'deadline'].filter(value => output.toLowerCase().includes(value.toLowerCase())) };
       (receipt.phases as unknown[]).push(row);
       return row;
     } finally {

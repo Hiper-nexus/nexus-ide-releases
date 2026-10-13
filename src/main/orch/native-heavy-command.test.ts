@@ -320,3 +320,29 @@ it('drain stops an owned native authority and refuses success after that authori
  state = 'unknown'; await expect(native.drain()).rejects.toThrow('unproved'); expect(released).toBe(false);
  state = 'live'; await native.drain(); expect(stops).toBe(2); expect(released).toBe(true);
 });
+
+it('F-1434: toda recusa traz a frase do motivo, e só culpa a RAM quando a RAM faltou', async () => {
+ const scope = { version: 1 as const, installationId: 'finite', projectId: 'f1434', checkoutId: 'main', rootRealPath: '/f1434', identitySource: 'manifest' as const };
+ const ctx = { token: 'f1434', sessionId: 'f1434', role: 'user', scope } as AgentGateContext;
+ const limits = () => ({ minFreeMB: 512, maxSwapUsedMB: 0 });
+ const owned = (acquire: ConstructorParameters<typeof NativeHeavyCommands>[0]['acquire']) =>
+  new NativeHeavyCommands({ current: () => true, claim: async () => 'owned', probe: async () => 'gone', acquire });
+ const ownership = await new NativeHeavyCommands({ current: () => true, claim: async () => null, probe: async () => 'gone', acquire: () => Promise.reject(new Error('unreachable')) })
+  .admit(ctx, { pid: 4242, kind: 'tests' });
+ expect(ownership).toMatchObject({ allow: false, reason: 'heavy_command_process_ownership_unproved' });
+ expect(ownership.message).toBe("nexus-heavy: could not prove that pid 4242 runs inside this agent terminal's process tree");
+ const closedPool = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 65_536, swapUsedMB: 0 }), limits, refreshMemory: async () => {} }); closedPool.close();
+ const closed = owned((request) => closedPool.acquire(request));
+ expect(await closed.admit(ctx, { pid: 4243, kind: 'tests' })).toMatchObject({ allow: false, reason: 'heavy_command_admission_denied', message: 'nexus-heavy: Nexus is shutting down and no longer admits heavy commands' });
+ expect(await closed.admit(ctx, { pid: -1, kind: 'tests' })).toMatchObject({ allow: false, message: 'nexus-heavy: malformed admission request' });
+ const lowRam = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 1024, swapUsedMB: 0 }), limits, refreshMemory: async () => {}, pollMs: 5, waitMs: 30 });
+ const ram = await owned((request) => lowRam.acquire(request)).admit(ctx, { pid: 4244, kind: 'tests' });
+ expect(ram).toMatchObject({ allow: false, reason: 'heavy_command_wait_timeout' });
+ expect(ram.message).toContain('(free RAM 1.0 GB below the 2.5 GB reserve)');
+ const busy = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 65_536, swapUsedMB: 0 }), limits, refreshMemory: async () => {}, pollMs: 5, waitMs: 30, maxActive: 1 });
+ const held = await busy.acquire({ scope: { ...scope, rootRealPath: '/elsewhere' }, kind: 'tests' });
+ const machine = await owned((request) => busy.acquire(request)).admit(ctx, { pid: 4245, kind: 'tests' });
+ expect(machine.message).toContain('(machine limit of 1 parallel heavy jobs)');
+ for (const result of [ownership, machine]) expect(result.message).not.toMatch(/RAM/);
+ held.release(); lowRam.close(); busy.close();
+});

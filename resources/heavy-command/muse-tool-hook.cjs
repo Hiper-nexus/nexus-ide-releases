@@ -5,7 +5,7 @@ const path = require('node:path');
 const { commandKind } = require('./catalog.cjs');
 const directory = path.dirname(fs.realpathSync(__filename));
 const quote = (value) => "'" + value.replace(/'/g, "'\\''") + "'";
-const deny = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'Physical CPU/RAM admission cannot prepare this shell command.' } };
+const deny = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'Nexus heavy-command admission cannot prepare this shell command.' } };
 let raw = '', bytes = 0, finished = false;
 const output = (value) => { if (finished) return; finished = true; process.stdout.write(JSON.stringify(value)); };
 process.stdin.on('data', (part) => {

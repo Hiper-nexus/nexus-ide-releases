@@ -13,8 +13,12 @@ try {
   }).trim();
   if (!lease || lease.length > 128) throw new Error('missing lease');
   process.env.NEXUS_HEAVY_LEASE = lease;
-} catch {
-  process.stderr.write('[Nexus] Heavy command not started: physical CPU/RAM admission unavailable.\n'); process.exit(78);
+} catch (error) {
+  // F-1434: request.cjs already printed its reason (inherited stderr); only a
+  // kill by this timeout or a malformed lease has no line of its own.
+  if (error?.code === 'ETIMEDOUT') process.stderr.write('nexus-heavy: Nexus admission did not answer in 370 s\n');
+  else if (error?.message === 'missing lease') process.stderr.write('nexus-heavy: Nexus admission returned no usable lease\n');
+  process.stderr.write('[Nexus] Heavy command not started: Nexus did not admit it (reason above).\n'); process.exit(78);
 }
 // This process is itself a descendant covered by the physical lease. Prevent
 // its preload from recursively wrapping the already-admitted target a second time.
