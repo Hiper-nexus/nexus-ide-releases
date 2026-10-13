@@ -44,6 +44,10 @@ import {
 } from './macos-activation-policy';
 import { configureWindowsAppIdentity } from './windows-app-identity';
 import { configureLinuxSecretStore } from './linux-secret-store';
+import {
+  darwinMediaDisabledFeatures,
+  darwinMediaEnabledFeatures,
+} from './darwin-media-services';
 
 // Squirrel supplies this same AUMID to the installed launcher. Make the
 // Electron process explicit too, before a BrowserWindow is created, so Windows
@@ -68,10 +72,23 @@ registerRendererProtocolScheme(protocol);
 // timers do main indefinidamente sob I/O contínuo de PTY — worker spawn/merge
 // do scheduler congelavam com o app fora de foco).
 app.commandLine.appendSwitch('disable-background-timer-throttling');
+// F-1434: no macOS os serviços de mídia (áudio/vídeo) NÃO podem nascer como
+// utility processes sandboxados — o launch desses helpers ao abrir o
+// getUserMedia do ditado derrubou o app (ver darwin-media-services.ts).
+// Um único appendSwitch por nome: o Chromium guarda switches por nome, então
+// as features de throttling e as de mídia precisam ir na MESMA chamada.
 app.commandLine.appendSwitch(
   'disable-features',
-  'IntensiveWakeUpThrottling,TimerThrottlingForBackgroundTabs',
+  [
+    'IntensiveWakeUpThrottling',
+    'TimerThrottlingForBackgroundTabs',
+    ...darwinMediaDisabledFeatures(process.platform),
+  ].join(','),
 );
+const darwinMediaEnabled = darwinMediaEnabledFeatures(process.platform);
+if (darwinMediaEnabled.length > 0) {
+  app.commandLine.appendSwitch('enable-features', darwinMediaEnabled.join(','));
+}
 
 // Sandbox de userData para dev/testes explícitos: redireciona SQLite, layout,
 // sessões e o single-instance lock. Launches normais empacotados nunca
