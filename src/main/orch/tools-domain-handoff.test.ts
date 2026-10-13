@@ -1116,6 +1116,38 @@ describe("handoff MCP stop receipt", () => {
     );
   });
 
+  it('accept/approve/approved/ok viram accepted e reject/rejected/redo viram rework', async () => {
+    mocks.markConsumedFromPhysicalAck.mockReturnValue(true);
+    const orchestrator = {
+      ...context(),
+      role: 'orchestrator' as const,
+      sessionId: 'orchestrator-session',
+      workerIncarnationId: undefined,
+    };
+    const ack = (verdict: string) =>
+      acknowledgeTool().handler(
+        { handoffId: 'handoff-a', verdict },
+        orchestrator,
+        invocation({ toolCallId: `ack-${verdict}`, toolName: 'nexus_handoff_ack' }),
+      );
+    for (const verdict of ['accept', 'approve', 'approved', 'ok', 'Accept', ' OK ']) {
+      mocks.markConsumedFromPhysicalAck.mockClear();
+      await expect(ack(verdict)).resolves.toMatchObject({ ok: true, verdict: 'accepted' });
+      expect(mocks.markConsumedFromPhysicalAck).toHaveBeenCalledWith(
+        expect.objectContaining({ verdict: 'accepted' }),
+        expect.any(Object),
+      );
+    }
+    for (const verdict of ['reject', 'rejected', 'redo', 'REJECT']) {
+      mocks.markConsumedFromPhysicalAck.mockClear();
+      await expect(ack(verdict)).resolves.toMatchObject({ ok: true, verdict: 'rework' });
+      expect(mocks.markConsumedFromPhysicalAck).toHaveBeenCalledWith(
+        expect.objectContaining({ verdict: 'rework' }),
+        expect.any(Object),
+      );
+    }
+  });
+
   it("F-782: veredito inválido é recusado ANTES de consumir o handoff", async () => {
     const orchestrator = {
       ...context(),

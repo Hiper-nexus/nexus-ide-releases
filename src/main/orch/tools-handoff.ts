@@ -1303,7 +1303,8 @@ const handoffAcknowledgeTool: McpToolDef = {
     "Orchestrator-only; the ACK is bound to the exact accepted delivery. It never " +
     "completes a mission by itself, but verified completion requires this receipt. " +
     'verdict (default "accepted"): pass "rework" when you do NOT accept the delivery ' +
-    "as-is. With a `note`, Nexus sends it back to the SAME writer: typed into its " +
+    "as-is. Synonyms: accept, approve, approved and ok mean accepted; reject, " +
+    "rejected and redo mean rework. With a `note`, Nexus sends it back to the SAME writer: typed into its " +
     "PTY if the pane is still alive, otherwise the writer is reopened with resume " +
     "in its own worktree (branch and WIP intact) and the note is its prompt; " +
     "when the CLI kept no resumable conversation the pane spawns fresh in the " +
@@ -1320,9 +1321,19 @@ const handoffAcknowledgeTool: McpToolDef = {
       handoffId: { type: "string" },
       verdict: {
         type: "string",
-        enum: ["accepted", "rework"],
+        enum: [
+          "accepted",
+          "accept",
+          "approve",
+          "approved",
+          "ok",
+          "rework",
+          "reject",
+          "rejected",
+          "redo",
+        ],
         description:
-          'accepted (default) = delivery accepted as-is; rework = sent back to the writer (with note) or redone',
+          'accepted (default; also accept, approve, approved, ok) = delivery accepted as-is; rework (also reject, rejected, redo) = sent back to the writer (with note) or redone',
       },
       note: {
         type: "string",
@@ -1446,10 +1457,18 @@ async function deliverReworkToWriter(
   }
 }
 
-/** F-782: ausente = aceito como veio (o ACK de sempre). */
+const HANDOFF_ACK_ACCEPTED = new Set(["accepted", "accept", "approve", "approved", "ok"]);
+const HANDOFF_ACK_REWORK = new Set(["rework", "reject", "rejected", "redo"]);
+
+/** F-782: ausente = aceito como veio (o ACK de sempre). Sinônimos caem nos dois valores do banco. */
 function handoffAckVerdictArg(raw: unknown): HandoffAckVerdict {
-  if (raw === undefined || raw === null || raw === "accepted") return "accepted";
-  if (raw === "rework") return "rework";
+  if (raw === undefined || raw === null) return "accepted";
+  if (typeof raw !== "string") {
+    throw new Error('nexus_handoff_ack verdict must be "accepted" or "rework"');
+  }
+  const verdict = raw.trim().toLowerCase();
+  if (HANDOFF_ACK_ACCEPTED.has(verdict)) return "accepted";
+  if (HANDOFF_ACK_REWORK.has(verdict)) return "rework";
   throw new Error('nexus_handoff_ack verdict must be "accepted" or "rework"');
 }
 
