@@ -10478,7 +10478,7 @@ export const RELEASE_076244: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076245: AppRelease = {
   version: '0.76.245',
   date: '2026-10-13',
   codename: 'Multi-conta no Antigravity e login sem tropeço',
@@ -10489,6 +10489,21 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     { title: 'Terminal de login sempre disponível', detail: 'Abrir o login de uma CLI a partir do Início reabre automaticamente o projeto recente (ou pede uma pasta) e aguarda até 60 segundos pela partida do terminal, eliminando o erro "O terminal não ficou disponível. O login não foi iniciado.".' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.246',
+  date: '2026-10-13',
+  codename: 'Linux em dia com o Mac e o Windows',
+  summary: 'O app no Omarchy, no Debian e no Ubuntu deixa a 0.76.201 e passa a incluir tudo o que o Mac e o Windows receberam até a 0.76.245: missões que concluem, cada modelo no seu lugar e as telas novas.',
+  highlights: [
+    { title: 'Missões que terminam', detail: 'Writers isolados voltam a nascer, a conclusão não trava num erro antigo e a revisão independente aceita a entrega atual.' },
+    { title: 'Cada modelo no que faz de melhor', detail: 'Argon e Wonder Full entram na rota, o front reveza entre as CLIs e Next.js e jogos ficam com o Opus. Vários panes Claude da mesma conta convivem.' },
+    { title: 'Telas, ditado e celular', detail: 'Markdown, editor da missão, diff do Git e checkpoints dos writers. O ditado não se perde com o pane ocupado, e o celular pareado controla o desktop.' },
+  ],
+  fixes: [
+    { title: 'Atualização do Linux', detail: 'Da 0.76.202 à 0.76.245 só havia pacote de Mac ou Windows. O Omarchy consultava o espelho e ficava na 0.76.201, achando que já estava na mais recente.' },
   ],
 };
 

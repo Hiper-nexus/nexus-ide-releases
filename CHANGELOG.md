@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.76.246 — Linux em dia com o Mac e o Windows
+
+O Omarchy (ZIP portátil) e o Debian/Ubuntu (`.deb`, também o `.rpm`) estavam parados na 0.76.201. As versões 0.76.202 a 0.76.245 saíram só para Mac e Windows, e o atualizador do Linux só avança quando a release traz os três pacotes juntos. Sem eles, o app instalado consultava o espelho e respondia que já estava na mais recente.
+
+Esta versão é o mesmo produto da 0.76.245, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). O que chega no desktop:
+
+- **Missões que terminam.** Writers isolados nascem de novo, a conclusão não trava em erro antigo nem na atividade do Maestro, e a revisão independente volta a aceitar a entrega (0.76.209, 0.76.210, 0.76.239).
+- **Cada modelo no que faz de melhor.** Argon, Wonder Full, revezamento de front, Opus em Next.js e jogos, e o fim do limite de um pane Claude por conta (0.76.242, 0.76.244).
+- **Telas herdadas do T3 Code.** Markdown e Mermaid, editor da missão, paleta, diff do Git, checkpoints dos writers, histórico das CLIs e o card de recursos da máquina (0.76.210, 0.76.212, 0.76.235).
+- **Ditado e CLIs.** O texto ditado não se perde com o pane ocupado, e as CLIs instaladas são conferidas no boot (0.76.242).
+- **Celular.** O app pareado fala o protocolo do Nexus: panes, missões, aprovações e fila offline (0.76.210, 0.76.212).
+- **Contas.** Várias contas nas CLIs de arquivo (`openclaude`, `minimax-code`, `muse`) e o login a partir do Início que espera o terminal (0.76.245). A vaga do Cofre de Credenciais do Windows continua sendo só do Windows.
+
 ## 0.76.245 — Multi-conta no Antigravity e login sem tropeço
 
 Adicionar uma segunda conta Google Antigravity (`agy`) no Windows não abria o login porque a CLI encontrava a Conta 1 no Cofre de Credenciais do Windows (`gemini:antigravity`), e abrir o terminal de login a partir do Início (sem pasta aberta) ou numa partida a frio do ConPTY acima de 10 s falhava com "O terminal não ficou disponível. O login não foi iniciado.". Agora o Nexus guarda a Conta 1 no cofre criptografado e esvazia apenas o slot local antes de abrir o `agy` (sem revogar o refresh token no Google), restaura a Conta 1 se o login for cancelado, sincroniza o Cofre do Windows ao clicar em "Usar", estende o cofre multi-conta a todas as CLIs (`openclaude`, `minimax-code` e `muse`), reabre o projeto recente antes do login quando necessário com janela de 60 s, e troca a fração solta `10/10` na lista de Providers por `10 modelos`.
