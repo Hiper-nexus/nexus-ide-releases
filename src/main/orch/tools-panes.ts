@@ -183,6 +183,7 @@ import {
   DIGEST_MAX_CHARS,
   digestBudgetPerPane,
   digestPaneTail,
+  isSpinnerFrameLine,
   PANE_READ_MANY_MAX_PANES,
   PANE_READ_MANY_MAX_REFS,
 } from './pane-output-digest';
@@ -3254,8 +3255,17 @@ async function paneDigestResult(
 ): Promise<Record<string, unknown>> {
   // F-987: redesenho de TUI colapsado e teto de caracteres por pane.
   const digest = digestPaneTail(tail, { maxChars });
-  // F-1164: quem lê (o Maestro) paga a classificação no orçamento da missão dele.
-  const classified = await classifyPaneTailForDigest(digest.text, { missionId });
+  // F-1425: tail só de spinner é trabalho ativo — classificação
+  // determinística. Alimentar o Jev com "TUI sem texto legível" devolvia
+  // `errored` falso (stateConfidence ~0.25) e fazia o orquestrador fechar
+  // pane vivo. Quadro estático sem letra nenhuma não prova nada: sai sem
+  // estado (unknown) em vez de adivinhar.
+  const classified = digest.noReadableText === 'spinner'
+    ? { state: 'working' as const, confidence: 1, needsHuman: 0 }
+    : digest.noReadableText === 'static'
+      ? null
+      : // F-1164: quem lê (o Maestro) paga a classificação no orçamento da missão dele.
+        await classifyPaneTailForDigest(digest.text, { missionId });
   return {
     mode: 'digest',
     ...(classified
@@ -3538,14 +3548,29 @@ const paneAsk: McpToolDef = {
       // Maestro colhe a tela antiga, chama nexus 6 vezes e o "3" nasce depois.
       const state = await waitForNextIdle(sessionId, timeoutMs);
       const after = readSessionOutput(sessionId, 400);
-      const answer = newOutputSince(before, after).trim();
+      // F-1425: quadros de spinner/braille que a TUI redesenha enquanto o
+      // worker trabalha não são resposta — devolvê-los como `answer`
+      // ("⠤⠄") fazia o Maestro tratar glifo como resposta.
+      const raw = newOutputSince(before, after).trim();
+      const readable = raw
+        .split('\n')
+        .filter((line) => !isSpinnerFrameLine(line))
+        .join('\n')
+        .trim();
+      const spinnerOnly = readable.length === 0 && raw.length > 0;
       return {
-        ok: state === 'idle' && answer.length > 0,
+        ok: state === 'idle' && readable.length > 0,
         state,
         answer:
-          answer.length > 0
-            ? answer.slice(0, 8_000)
+          readable.length > 0
+            ? readable.slice(0, 8_000)
             : '(o pane não produziu texto novo dentro do prazo)',
+        ...(spinnerOnly
+          ? {
+              reason:
+                'pane ocupado, sem resposta legível (só quadros de spinner) — repita mais tarde ou leia o pane',
+            }
+          : {}),
       };
     } finally {
       paneAskInFlight.delete(asker);

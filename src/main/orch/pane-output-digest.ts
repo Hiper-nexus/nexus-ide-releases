@@ -31,6 +31,23 @@ const GLYPH_ONLY_PATTERN =
 
 /** Glifos de spinner (Claude ✢✳✶✻✽, braille do Gemini/Qwen, meia-lua): decoração pura. */
 const SPINNER_GLYPHS = /[✢✳✶✻✽✺✹✸✷✴✵❋❊❉❈⠀-⣿◐◓◑◒]/gu;
+/** Mesma classe sem a flag `g` — `regex.test` com `g` é stateful (lastIndex). */
+const SPINNER_TEST = new RegExp(SPINNER_GLYPHS.source, 'u');
+
+/**
+ * F-1425: linha que é pura decoração de TUI — moldura/box-drawing, spinner
+ * braille (Devin ⠤⠄) ou glifo do Claude Code ("✽ ✻ ✶ ✳ ✢ ·"), contador
+ * ("⠋ 5") — nunca é conteúdo legível nem resposta. Dígitos soltos SEM glifo
+ * (uma resposta que é só "42") não são spinner: ficam.
+ */
+export function isSpinnerFrameLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return true;
+  if (GLYPH_ONLY_PATTERN.test(trimmed)) return true;
+  const withoutSpinner = trimmed.replace(SPINNER_GLYPHS, '').trim();
+  return withoutSpinner !== trimmed && /^[\s\d]*$/.test(withoutSpinner);
+}
+
 /** Escape residual (CSI/OSC/ESC solto) e controle, menos TAB e CR. */
 // F-1406: [0-?]* (ECMA-48, 0x30–0x3F) cobre os parâmetros privados que o
 // Codex 0.162 emite no boot (ESC[>4;0m, ESC[>7u) — a classe antiga [0-9;?]
@@ -90,6 +107,12 @@ export interface PaneTailDigest {
   readonly omittedLines: number;
   /** O teto de caracteres cortou linhas que ainda seriam emitidas. */
   readonly truncated: boolean;
+  /**
+   * F-1425: o tail inteiro não tinha texto legível — 'spinner' (redesenho
+   * animando = trabalho ativo) ou 'static' (quadro sem letra nenhuma, não
+   * prova nada). Ausente quando há texto legível.
+   */
+  readonly noReadableText?: 'spinner' | 'static';
 }
 
 export interface DigestOptions {
@@ -328,11 +351,10 @@ export function digestPaneTail(
   const items = lines.map((raw, index) => {
     const line = normalizeRedrawLine(raw);
     const trimmed = line.trim();
-    const isSpinnerCounter = SPINNER_GLYPHS.test(raw) && /^[\s\d]*$/.test(raw.replace(SPINNER_GLYPHS, ''));
     return {
       index,
       line,
-      drop: trimmed.length === 0 || GLYPH_ONLY_PATTERN.test(trimmed) || isSpinnerCounter,
+      drop: isSpinnerFrameLine(raw) || isSpinnerFrameLine(line),
       status: STATUS_LINE_PATTERN.test(trimmed),
     };
   });
@@ -442,6 +464,11 @@ export function digestPaneTail(
         keptLines: 0,
         omittedLines: lines.length,
         truncated: false,
+        // F-1425: spinner visível = a TUI está animando = trabalho ativo.
+        // Sem spinner nenhum é quadro estático: não prova estado algum.
+        noReadableText: lines.some((l) => SPINNER_TEST.test(l))
+          ? 'spinner'
+          : 'static',
       };
     }
   }
