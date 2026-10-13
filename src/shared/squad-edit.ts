@@ -37,6 +37,22 @@ export interface SquadEditPatch {
 function validate(name: string, agents: EditableAgent[]): void {
   if (!name.trim()) throw new Error('o nome do squad não pode ficar vazio');
   if (agents.length === 0) throw new Error('o squad precisa de ao menos um agente');
+  // F-1495: o Maestro abre o agente pelo nome (`findAgentInSquad` exige um
+  // único casamento exato); nome repetido ou com espaço nas pontas virava
+  // "unknown squad agent" no meio da missão.
+  const seen = new Map<string, string>();
+  for (const agent of agents) {
+    const agentName = agent.agentName.trim();
+    if (!agentName) throw new Error('Dê um nome a cada agente da equipe.');
+    const key = agentName.toLocaleLowerCase('pt-BR');
+    const first = seen.get(key);
+    if (first !== undefined) {
+      throw new Error(
+        `Dois agentes se chamam “${first}”. Dê um nome diferente a cada agente.`,
+      );
+    }
+    seen.set(key, agentName);
+  }
   // F-1492: o Main exige exatamente um coordenador ao usar a equipe; dois
   // passavam aqui e a missão recusava depois, sem a pessoa saber por quê.
   const coordinators = agents.filter((a) => a.category === 'orchestrator').length;
@@ -73,6 +89,6 @@ export function applySquadEdit(
     orchestratorInstructions:
       patch.orchestratorInstructions ?? source.orchestratorInstructions,
     nativeInstructions: patch.nativeInstructions ?? source.nativeInstructions,
-    agents: agents.map((a) => ({ ...a })),
+    agents: agents.map((a) => ({ ...a, agentName: a.agentName.trim() })),
   };
 }

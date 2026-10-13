@@ -251,6 +251,60 @@ describe('SquadEditor', () => {
     act(() => root.unmount());
   });
 
+  it('F-1495: recusa nome de agente repetido e salva o nome sem espaços nas pontas', async () => {
+    const saveSquad = vi.fn(async (_squad: Squad) => ({ ok: true as const }));
+    stubNexus(saveSquad);
+    const squad: Squad = {
+      ...builtin,
+      builtin: false,
+      id: 'meu-time',
+      agents: [
+        ...builtin.agents,
+        { id: 'exec', agentName: 'Executor', category: 'executor', cli: 'claude', allowedTools: null },
+      ],
+    };
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(<SquadEditor squad={squad} onClose={vi.fn()} onSaved={vi.fn()} />);
+    });
+    const names = () =>
+      document.body.querySelectorAll<HTMLInputElement>('input[aria-label="Nome do agente"]');
+    const type = async (input: HTMLInputElement, value: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value',
+        )?.set;
+        setter?.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    };
+    const save = async () => {
+      const saveBtn = [...document.body.querySelectorAll('button')].find((b) =>
+        /^salvar$/i.test(b.textContent?.trim() ?? ''),
+      ) as HTMLButtonElement;
+      await act(async () => {
+        saveBtn.click();
+      });
+    };
+
+    await type(names()[1]!, ' maestro ');
+    await save();
+    expect(saveSquad).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toMatch(
+      /“Maestro”.*nome diferente/,
+    );
+
+    await type(names()[1]!, '  Revisor final ');
+    await save();
+    expect(saveSquad).toHaveBeenCalledTimes(1);
+    expect(saveSquad.mock.calls[0]![0].agents.map((agent) => agent.agentName))
+      .toEqual(['Maestro', 'Revisor final']);
+    act(() => root.unmount());
+  });
+
   it('bloqueia modelo sem sessão e escolhe o primeiro usável ao trocar de CLI', async () => {
     const adapters: AdapterInfo[] = [
       {

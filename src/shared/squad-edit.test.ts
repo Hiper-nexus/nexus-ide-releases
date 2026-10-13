@@ -67,6 +67,35 @@ describe('applySquadEdit', () => {
     ).toThrow(/2 coordenadores.*só um.*“Coordenar”/);
   });
 
+  it('F-1495: recusa nome de agente repetido (sem espaços nas pontas, sem caixa)', () => {
+    expect(() =>
+      applySquadEdit(userSquad, {
+        agents: [
+          { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude' },
+          { id: 'exec', agentName: '  maestro ', category: 'executor', cli: 'codex' },
+        ],
+      }, 'x'),
+    ).toThrow(/“Maestro”.*nome diferente/);
+    expect(() =>
+      applySquadEdit(userSquad, {
+        agents: [
+          { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude' },
+          { id: 'exec', agentName: '   ', category: 'executor', cli: 'codex' },
+        ],
+      }, 'x'),
+    ).toThrow(/nome/i);
+  });
+
+  it('F-1495: salva o nome do agente sem espaços nas pontas', () => {
+    const out = applySquadEdit(userSquad, {
+      agents: [
+        { id: 'orch', agentName: ' Maestro ', category: 'orchestrator', cli: 'claude' },
+        { id: 'exec', agentName: 'Executor\t', category: 'executor', cli: 'codex' },
+      ],
+    }, 'x');
+    expect(out.agents.map((agent) => agent.agentName)).toEqual(['Maestro', 'Executor']);
+  });
+
   it('rejeita nome vazio', () => {
     expect(() => applySquadEdit(userSquad, { name: '   ' }, 'x')).toThrow(/nome/i);
   });
