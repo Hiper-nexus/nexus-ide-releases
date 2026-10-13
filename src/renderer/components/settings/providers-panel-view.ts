@@ -93,18 +93,20 @@ function compareProvidersForDisplay(
 }
 
 /**
- * Model readiness chip: ready catalog entries vs listed models.
- * api-only / deprecated count as not ready for auto-routing.
+ * Quantidade de modelos prontos no catálogo desta CLI, em linguagem direta
+ * ("9 modelos", "1 modelo") em vez de frações opacas como "10/10" ou "13/15"
+ * que pareciam consumo de cota ao lado de "1 conta".
  */
 export function modelCountLabel(provider: ProviderSettingsInfo): string {
   const total = Math.max(0, provider.models.length);
-  if (total === 0) return '0/0';
+  if (total === 0) return '0 modelos';
   const blocked = provider.models.filter((model) => {
     const availability = provider.modelInfo?.[model]?.availability;
     return availability === 'api-only' || availability === 'deprecated';
   }).length;
   const ready = Math.max(0, total - blocked);
-  return `${ready}/${total}`;
+  const count = ready > 0 ? ready : total;
+  return `${count} ${count === 1 ? 'modelo' : 'modelos'}`;
 }
 
 /**

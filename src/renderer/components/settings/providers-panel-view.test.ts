@@ -138,7 +138,9 @@ describe('providers-panel-view', () => {
   });
 
   it('formats model readiness, status chips and select value', () => {
-    expect(modelCountLabel(claude)).toBe('3/3');
+    expect(modelCountLabel(claude)).toBe('3 modelos');
+    expect(modelCountLabel({ ...claude, models: ['only-one'] })).toBe('1 modelo');
+    expect(modelCountLabel({ ...claude, models: [] })).toBe('0 modelos');
     expect(providerStatusLabel(claude)).toEqual({
       label: 'conectado',
       tone: 'ok',

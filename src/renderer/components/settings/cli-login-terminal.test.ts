@@ -17,8 +17,40 @@ const navigation = vi.hoisted(() => ({
 }));
 
 const host = vi.hoisted(() => ({
-  waitForSession: vi.fn(async (_paneId: string): Promise<string | null> => 'session-login'),
+  waitForSession: vi.fn(
+    async (_paneId: string, _timeoutMs?: number): Promise<string | null> =>
+      'session-login',
+  ),
   writeToPane: vi.fn(),
+}));
+
+const workspaceState = vi.hoisted(() => ({
+  current: { path: '/tmp/proj', name: 'proj', lastOpenedAt: 1 } as {
+    path: string;
+    name: string;
+    lastOpenedAt: number;
+    missing?: boolean;
+  } | null,
+  recents: [] as Array<{
+    path: string;
+    name: string;
+    lastOpenedAt: number;
+    missing?: boolean;
+  }>,
+  open: vi.fn(async (path: string) => {
+    workspaceState.current = { path, name: 'proj', lastOpenedAt: 2 };
+  }),
+  pick: vi.fn(async () => undefined),
+}));
+
+vi.mock('../../state/workspace-store', () => ({
+  useWorkspaceStore: Object.assign(
+    () => workspaceState,
+    {
+      getState: () => workspaceState,
+      subscribe: () => () => undefined,
+    },
+  ),
 }));
 
 vi.mock('../../state/layout-store', () => ({
@@ -36,7 +68,8 @@ vi.mock('../../state/product-navigation-store', () => ({
 }));
 
 vi.mock('../../terminal/terminal-host', () => ({
-  waitForSession: (paneId: string) => host.waitForSession(paneId),
+  waitForSession: (paneId: string, timeoutMs?: number) =>
+    host.waitForSession(paneId, timeoutMs),
   writeToPane: (paneId: string, text: string) => host.writeToPane(paneId, text),
 }));
 
@@ -102,6 +135,10 @@ describe('openCliLoginTerminal', () => {
     panes.open = [{ id: 'pane-login' }];
     providerState.providers = [];
     kimiAsk.askKimiLoginRegion.mockReset().mockResolvedValue('global');
+    workspaceState.current = { path: '/tmp/proj', name: 'proj', lastOpenedAt: 1 };
+    workspaceState.recents = [];
+    workspaceState.open.mockClear();
+    workspaceState.pick.mockClear();
   });
 
   it('espera a sessão e só então sai de Configurações (F-003)', async () => {
@@ -585,6 +622,54 @@ describe('openCliLoginTerminal — o que o watcher entrega ao fechar', () => {
       status: { sessionFingerprint: 'depois' },
     });
   });
+
+  it('prepara a vaga local do Antigravity antes de digitar agy e restaura se o pane fechar sem login', async () => {
+    panes.open = [{ id: 'pane-login' }];
+    const agyBaseline = {
+      adapterId: 'agy',
+      state: 'ok' as const,
+      detail: 'sessão AGY local · retornoja@gmail.com',
+      sessionFingerprint: 'fp-conta-1',
+    };
+    const prepareAgyLogin = vi.fn(async () => ({ ok: true }));
+    const restoreAgyLogin = vi.fn(async () => ({ ok: true }));
+    let current = {
+      adapterId: 'agy',
+      state: 'missing' as const,
+      detail: 'sem sessão',
+    };
+    let onData: ((chunk: string) => void) | undefined;
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        accounts: { prepareAgyLogin, restoreAgyLogin },
+        providers: { authStatus: vi.fn(async () => [current]) },
+        pty: {
+          onData: vi.fn((_id: string, cb: (chunk: string) => void) => {
+            onData = cb;
+            return () => undefined;
+          }),
+        },
+      },
+    });
+    const finished: CliLoginFinish[] = [];
+    await openCliLoginTerminal({
+      command: 'agy',
+      adapterId: 'agy',
+      baseline: agyBaseline,
+      onFinished: (finish) => finished.push(finish),
+    });
+    expect(prepareAgyLogin).toHaveBeenCalledOnce();
+    expect(host.writeToPane).toHaveBeenCalledWith('pane-login', 'agy\n');
+
+    // Operador fechou o pane sem completar o OAuth no browser -> restaura a Conta 1.
+    panes.open = [];
+    current = agyBaseline as never;
+    onData?.('\n');
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(restoreAgyLogin).toHaveBeenCalledOnce();
+    expect(finished[0]?.verified).toBe(false);
+  });
 });
 
 /**
@@ -635,4 +720,51 @@ describe('openCliLoginTerminal — o aviso de CLI ausente não executa o própri
     const written = host.writeToPane.mock.calls[0]?.[1] as string;
     expect(outsideSingleQuotes(written)).not.toMatch(/[$`]/);
   });
+
+  it('usa o timeout padrão de sessão (60s) em vez de truncar em 10s e reabre o projeto recente se aberto do Início', async () => {
+    workspaceState.current = null;
+    workspaceState.recents = [
+      { path: 'C:/proj/recent', name: 'recent', lastOpenedAt: 10 },
+    ];
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        workspace: { open: vi.fn(), pick: vi.fn() },
+      },
+    });
+
+    const result = await openCliLoginTerminal({
+      command: 'agy',
+      adapterId: 'agy',
+    });
+
+    expect(result).toEqual({ ok: true, paneId: 'pane-login' });
+    expect(workspaceState.open).toHaveBeenCalledWith('C:/proj/recent');
+    expect(host.waitForSession).toHaveBeenCalledWith('pane-login', undefined);
+  });
+
+  it('pede pasta ao operador quando não há workspace ativo nem recente e cancela se nenhuma pasta for escolhida', async () => {
+    workspaceState.current = null;
+    workspaceState.recents = [];
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        workspace: { open: vi.fn(), pick: vi.fn() },
+      },
+    });
+
+    const result = await openCliLoginTerminal({
+      command: 'agy',
+      adapterId: 'agy',
+    });
+
+    expect(workspaceState.pick).toHaveBeenCalledOnce();
+    expect(result).toEqual({
+      ok: false,
+      error: 'Escolha uma pasta de projeto antes de abrir o terminal de login.',
+      cancelled: true,
+    });
+    expect(layout.addShellPane).not.toHaveBeenCalled();
+  });
 });
+

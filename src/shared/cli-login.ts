@@ -70,6 +70,8 @@ export function cliLoginLooksComplete(output: string): boolean {
   if (/successfully (?:logged|signed) in/i.test(text)) return true;
   // Claude no Windows: "Paste code here if prompted > Login successful!"
   if (/\blogin successful\b/i.test(text)) return true;
+  // Antigravity (agy): "Authentication successful!" após OAuth no browser.
+  if (/\bauthentication successful\b/i.test(text)) return true;
   return false;
 }
 

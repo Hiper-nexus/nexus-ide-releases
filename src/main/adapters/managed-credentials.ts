@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { ensurePrivateDirectory, linkFile, linkProviderSessionState } from '../orch/cli-mcp-session-artifacts';
 import { compareAuthFreshness } from './auth-freshness';
-import { readAgyWindowsKeyringBlob } from './agy-windows-keyring';
+import { decodeAgyKeyringPayload, readAgyWindowsKeyringBlob } from './agy-windows-keyring';
 import { parseMimoAuth, readMimoNativeAuthBlob } from './mimo-auth';
 import {
   isFileAuthAdapter,
@@ -259,8 +260,8 @@ export function identityFromAuthBlob(
         ? new Set(['userid', 'principalid'])
         : adapterId === 'kimi'
           ? new Set(['userid', 'sub'])
-          : adapterId === 'agy'
-            ? new Set(['sub'])
+          : adapterId === 'agy' || adapterId === 'openclaude' || adapterId === 'minimax-code' || adapterId === 'muse'
+            ? new Set(['sub', 'userid', 'accountuuid'])
             : null;
   const subject = subjectKeys
     ? findStringClaimDeep(parsed, subjectKeys)
@@ -322,6 +323,33 @@ export function authBlobIsUsable(adapterId: string, blob: string): boolean {
       'access_token',
       'refresh_token',
       'id_token',
+    ]);
+  }
+  if (adapterId === 'openclaude') {
+    return hasNonEmptyClaim(parsed, [
+      'accessToken',
+      'refreshToken',
+      'access_token',
+      'refresh_token',
+      'key',
+    ]);
+  }
+  if (adapterId === 'minimax-code') {
+    return (
+      hasNonEmptyClaim(parsed, [
+        'accessToken',
+        'refreshToken',
+        'access_token',
+        'refresh_token',
+      ]) || parsed.status === 'authenticated'
+    );
+  }
+  if (adapterId === 'muse') {
+    return hasNonEmptyClaim(parsed, [
+      'access_token',
+      'refresh_token',
+      'api_key',
+      'email',
     ]);
   }
   return false;
@@ -440,6 +468,35 @@ export const MANAGED_PROVIDER_SPECS: Record<FileAuthAdapterId, ManagedProviderSp
       'jetski-standalone-oauth-token',
     ],
     systemHome: (home = os.homedir()) => path.join(home, '.gemini'),
+  },
+  openclaude: {
+    adapterId: 'openclaude',
+    homeEnvVar: 'OPENCLAUDE_CONFIG_DIR',
+    authRelativePath: '.credentials.json',
+    skipLinkNames: ['.credentials.json'],
+    systemHome: (home = os.homedir()) =>
+      process.env.OPENCLAUDE_CONFIG_DIR?.trim() || path.join(home, '.openclaude'),
+  },
+  'minimax-code': {
+    adapterId: 'minimax-code',
+    homeEnvVar: 'MINIMAX_DATA_DIR',
+    authRelativePath: 'auth',
+    skipLinkNames: ['auth'],
+    systemHome: (home = os.homedir()) => {
+      for (const key of ['MINIMAX_DATA_DIR', 'MAVIS_DATA_DIR']) {
+        const value = process.env[key]?.trim();
+        if (value && path.isAbsolute(value)) return value;
+      }
+      return path.join(home, '.minimax');
+    },
+  },
+  muse: {
+    adapterId: 'muse',
+    homeEnvVar: 'XDG_CONFIG_HOME',
+    authRelativePath: path.join('muse', 'auth.json'),
+    skipLinkNames: ['muse'],
+    systemHome: (home = os.homedir()) =>
+      process.env.XDG_CONFIG_HOME?.trim() || path.join(home, '.config'),
   },
   devin: {
     adapterId: 'devin',
@@ -934,8 +991,44 @@ export function captureNativeAuth(
         authRelativePath: spec.authRelativePath,
       };
     }
+    const macBlob = readAgyMacKeychainBlob(home);
+    if (macBlob && authBlobIsUsable('agy', macBlob)) {
+      return {
+        blob: macBlob,
+        email: identityFromAuthBlob('agy', macBlob).email,
+        authRelativePath: spec.authRelativePath,
+      };
+    }
   }
   return null;
+}
+
+function readAgyMacKeychainBlob(home: string): string | null {
+  if (process.platform !== 'darwin' || process.env.VITEST) return null;
+  try {
+    const raw = execFileSync(
+      '/usr/bin/security',
+      ['find-generic-password', '-s', 'gemini', '-a', 'antigravity', '-w'],
+      {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 4_000,
+        killSignal: 'SIGKILL',
+        encoding: 'utf8',
+        env: {
+          HOME: home,
+          USERPROFILE: home,
+          PATH: '/usr/bin:/bin',
+          LANG: 'C',
+          LC_ALL: 'C',
+        },
+      },
+    );
+    return typeof raw === 'string' && raw.trim()
+      ? decodeAgyKeyringPayload(Buffer.from(raw.trim(), 'utf8'))
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 const MAX_SNAPSHOT_FILES = 64;

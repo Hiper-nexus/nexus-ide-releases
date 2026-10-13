@@ -458,7 +458,7 @@ function ProviderRow({
         className="prov-row__select"
         onClick={onSelect}
         aria-pressed={selected}
-        aria-label={`${provider.label}, ${status.label}, modelos ${models}`}
+        aria-label={`${provider.label}, ${status.label}, ${models}`}
         data-adapter={provider.adapterId}
       >
         <ProviderLogo
@@ -474,7 +474,7 @@ function ProviderRow({
           </span>
         </span>
         <span className="prov-row__meta">
-          <span className="prov-row__models" title="Modelos prontos / no catálogo">
+          <span className="prov-row__models" title="Quantidade de modelos disponíveis neste provider">
             {models}
           </span>
           {accountCount > 0 && (
@@ -585,7 +585,8 @@ function ProviderDetail({
     }
     layout.renameTitle(paneId, paneTitle);
     try {
-      await waitForSession(paneId, 10_000);
+      const sessionId = await waitForSession(paneId);
+      if (!sessionId) throw new Error('terminal-unavailable');
       writeToPane(paneId, `${command}\n`);
       announceOp('terminal-install', 'ok', undefined, {
         label: 'Ver terminal',

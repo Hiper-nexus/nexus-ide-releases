@@ -1282,6 +1282,8 @@ export interface NexusApi {
     supportsSnapshot(
       adapterId: string,
     ): Promise<{ ok: boolean; supported?: boolean }>;
+    prepareAgyLogin(): Promise<{ ok: boolean; error?: string }>;
+    restoreAgyLogin(): Promise<{ ok: boolean }>;
     rename(id: string, label: string): Promise<{ ok: boolean }>;
     remove(id: string): Promise<{ ok: boolean }>;
     activate(id: string): Promise<{ ok: boolean; error?: string; needsRestart?: boolean }>;

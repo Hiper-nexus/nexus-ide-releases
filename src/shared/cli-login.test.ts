@@ -97,6 +97,14 @@ describe('cliLoginLooksComplete', () => {
     ).toBe(true);
   });
 
+  it('recognizes Antigravity printing Authentication successful!', () => {
+    expect(
+      cliLoginLooksComplete(
+        'Waiting for browser authentication...\nAuthentication successful!',
+      ),
+    ).toBe(true);
+  });
+
   it('does not mistake already-logged-in for a fresh login', () => {
     expect(
       cliLoginLooksComplete(

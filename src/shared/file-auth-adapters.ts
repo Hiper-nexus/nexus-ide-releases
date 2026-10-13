@@ -9,6 +9,9 @@ export const FILE_AUTH_ADAPTER_IDS = [
   'opencode',
   'mimo-code',
   'agy',
+  'openclaude',
+  'minimax-code',
+  'muse',
   // Devin grava TOML plano (sem seções) em
   // ~/.local/share/devin/credentials.toml. Os helpers de identidade/frescor de
   // managed-credentials são JSON-shaped e devolvem null para ele — por isso o
