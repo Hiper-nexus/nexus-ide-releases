@@ -1,4 +1,4 @@
-import type { PaneModel, PaneSessionState } from '../../shared/types';
+import type { PaneModel } from '../../shared/types';
 import { listPanes } from './split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
@@ -12,6 +12,11 @@ import { attentionMissionIdForPane } from './mission-attention-route';
  * F-572 / t3code `revealThreadTerminal`: um terminal que já mostra o trabalho
  * é REVELADO (foco, restaurar maximize/stage, scroll), nunca duplicado por
  * outro PTY. Um pane de agente custa ~0,5–1 GB (CLI + servidores MCP filhos).
+ *
+ * F-1431: o reveal vale só para o pane DONO de um sessionId selado — nunca
+ * para "abrir o agente" por palpite (mesma CLI+conta), que sempre nasce pane
+ * novo: o Nexus é multi-pane, reuso por palpite virava limite de 1 pane por
+ * conta disfarçado.
  *
  * A decisão é pura (`planPaneReveal`); o efeito (`revealPaneTerminal`) só
  * aplica o plano e explica em pt-BR.
@@ -72,37 +77,6 @@ export function findPaneOwningAgentSession(
   // Duas panes com a MESMA sessão é ambiguidade de attach — fail-closed,
   // ninguém é revelado (mesma régua de `confirmedLeaderPaneId`).
   return matches.length === 1 ? matches[0]! : null;
-}
-
-/**
- * Reuso para "abrir o agente" quando um pane vivo da mesma CLI+conta já tem
- * sessão: revela em vez de nascer outro PTY. Conta distinta não casa
- * (multi-conta é trabalho diferente). Preferir ocioso a ocupado.
- */
-export function findReusableAgentPane(
-  panes: readonly PaneRevealSubject[],
-  sessionIdOf: (paneId: string) => string | null,
-  isPaneSessionLive: (paneId: string) => boolean,
-  match: {
-    readonly adapterId: string;
-    readonly accountId?: string | undefined;
-    readonly paneStates: ReadonlyMap<string, PaneSessionState>;
-  },
-): PaneRevealSubject | null {
-  const candidates = panes.filter((pane) => {
-    if (pane.kind !== 'cli-agent' || pane.adapterId !== match.adapterId) {
-      return false;
-    }
-    // Conta fixada só casa com a mesma; sem conta no modelo casa com "de
-    // padrão" (accountId ausente nos dois lados).
-    if (pane.accountId !== match.accountId) return false;
-    return Boolean(sessionIdOf(pane.id)) && isPaneSessionLive(pane.id);
-  });
-  if (candidates.length === 0) return null;
-  const idle = candidates.find(
-    (pane) => (match.paneStates.get(pane.id) ?? '') === 'idle',
-  );
-  return idle ?? candidates[0]!;
 }
 
 /** Decide revelar vs destaque vs ausente. Pura; o efeito vem depois. */
