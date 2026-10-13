@@ -105,7 +105,7 @@
       "kind": "call",
       "fingerprint": "40e9a283241a18b762924e42d7a080ea4d863c0318eb73f7bc877a5610c7e41d",
       "count": 1,
-      "reason": "Same existing bounded Muse keychain-presence probe (security find-generic-password, 5s SIGKILL cap), routed through an injectable seam for the F-1438 denial-backoff tests; no new process or arguments."
+      "reason": "Same existing bounded Muse keychain-presence probe (security find-generic-password, 5s SIGKILL cap), routed through an injectable seam for the F-1447 denial-backoff tests; no new process or arguments."
     },
     {
       "file": "src/main/adapters/subscription-auth.ts",

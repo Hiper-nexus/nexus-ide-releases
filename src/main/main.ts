@@ -72,7 +72,7 @@ registerRendererProtocolScheme(protocol);
 // timers do main indefinidamente sob I/O contínuo de PTY — worker spawn/merge
 // do scheduler congelavam com o app fora de foco).
 app.commandLine.appendSwitch('disable-background-timer-throttling');
-// F-1434: no macOS os serviços de mídia (áudio/vídeo) NÃO podem nascer como
+// F-1443: no macOS os serviços de mídia (áudio/vídeo) NÃO podem nascer como
 // utility processes sandboxados — o launch desses helpers ao abrir o
 // getUserMedia do ditado derrubou o app (ver darwin-media-services.ts).
 // Um único appendSwitch por nome: o Chromium guarda switches por nome, então

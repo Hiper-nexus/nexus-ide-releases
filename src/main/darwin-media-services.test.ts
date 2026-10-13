@@ -4,7 +4,7 @@ import {
   darwinMediaEnabledFeatures,
 } from './darwin-media-services';
 
-describe('darwinMediaDisabledFeatures (F-1434)', () => {
+describe('darwinMediaDisabledFeatures (F-1443)', () => {
   it('no macOS desliga o Audio Service out-of-process (captura roda no browser)', () => {
     // Segurar Space (ditado) abria getUserMedia → o Chromium lançava o
     // Audio Service num NexusIDE Helper com sandbox seatbelt; no macOS
@@ -22,7 +22,7 @@ describe('darwinMediaDisabledFeatures (F-1434)', () => {
   );
 });
 
-describe('darwinMediaEnabledFeatures (F-1434)', () => {
+describe('darwinMediaEnabledFeatures (F-1443)', () => {
   it('no macOS traz o Video Capture Service para o browser process', () => {
     // enumerateDevices (antes do getUserMedia do ditado) também conversa
     // com o serviço de captura de vídeo out-of-process.

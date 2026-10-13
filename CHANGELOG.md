@@ -5,19 +5,19 @@
 Uma leva de correções de campo: ditar segurando Space não derruba mais o app no macOS 27.2, a 2ª conta do Antigravity entra, o Maestro do «+ Pane» volta a delegar em vez de trabalhar sozinho, um «401» citado no terminal não troca mais a conta de uma missão que estava funcionando, um squad salvo que não abria mais no editor volta a abrir, e o pane do Muse com login nativo não decreta mais "sessão expirada" sobre uma credencial que está funcionando.
 
 - **Voz.**
-  - Segurar Space para ditar crashava o app no macOS 27.2: os serviços de mídia do Chromium rodavam fora do processo e morriam ao abrir o microfone. Agora rodam dentro do processo, no macOS (F-1434).
+  - Segurar Space para ditar crashava o app no macOS 27.2: os serviços de mídia do Chromium rodavam fora do processo e morriam ao abrir o microfone. Agora rodam dentro do processo, no macOS (F-1443).
 - **Contas e providers.**
-  - O login da 2ª conta Antigravity falhava com «terminal não ficou disponível»; a espera pela sessão de login foi corrigida (F-1435).
-  - Providers mostrava frações nuas (13/13, 256/256) na contagem de modelos; agora a contagem vem por extenso (F-1436).
-  - O macOS repetia sem fim o diálogo «security deseja acessar ai.meta.dev.credentials» a cada sonda de cota do Muse; a leitura da credencial não dispara mais o diálogo em loop (F-1438).
-  - Falsa expiração do Muse: o pane de login nativo (sem conta gerenciada) mostrava «Sessão expirada em "muse"» a partir de um erro de autenticação citado no terminal, mesmo com a credencial viva. A sonda de cota agora lê também a linha nativa do adapter: credencial aceita refuta o alarme, e sem confirmação o pane segue na mesma conta com re-sondagem silenciosa, sem toast (F-1442).
+  - O login da 2ª conta Antigravity falhava com «terminal não ficou disponível»; a espera pela sessão de login foi corrigida (F-1444).
+  - Providers mostrava frações nuas (13/13, 256/256) na contagem de modelos; agora a contagem vem por extenso (F-1445).
+  - O macOS repetia sem fim o diálogo «security deseja acessar ai.meta.dev.credentials» a cada sonda de cota do Muse; a leitura da credencial não dispara mais o diálogo em loop (F-1447).
+  - Falsa expiração do Muse: o pane de login nativo (sem conta gerenciada) mostrava «Sessão expirada em "muse"» a partir de um erro de autenticação citado no terminal, mesmo com a credencial viva. A sonda de cota agora lê também a linha nativa do adapter: credencial aceita refuta o alarme, e sem confirmação o pane segue na mesma conta com re-sondagem silenciosa, sem toast (F-1451).
 - **Missões e orquestração.**
-  - Maestro adotado pelo «+ Pane» trabalhava sozinho: não recebia a doutrina de delegar e o vigia de esteira estava morto para ele. Doutrina e vigia valem agora também para o Maestro da aba (F-1439).
-  - Falso limite do AGY: um «401 authentication_error» no terminal trocava a conta e parava a missão mesmo com a conta operacional. Erro de autenticação agora passa pela mesma sonda de confirmação dos limites de uso: credencial que a API do provider aceitou refuta o alarme, e sem confirmação o pane segue na mesma conta (F-1440).
+  - Maestro adotado pelo «+ Pane» trabalhava sozinho: não recebia a doutrina de delegar e o vigia de esteira estava morto para ele. Doutrina e vigia valem agora também para o Maestro da aba (F-1448).
+  - Falso limite do AGY: um «401 authentication_error» no terminal trocava a conta e parava a missão mesmo com a conta operacional. Erro de autenticação agora passa pela mesma sonda de confirmação dos limites de uso: credencial que a API do provider aceitou refuta o alarme, e sem confirmação o pane segue na mesma conta (F-1449).
 - **Squads.**
-  - Squad salvo que carrega a marca de dono dos documentos de plano (os squads de plano embutidos e as cópias deles) falhava ao abrir e em «Usar integrantes», sem saída no editor — relato do cliente no Windows, o mesmo no Mac. O rascunho agora descarta essa marca ao carregar o roster (a autoridade continua do Main) e o squad abre (F-1441).
+  - Squad salvo que carrega a marca de dono dos documentos de plano (os squads de plano embutidos e as cópias deles) falhava ao abrir e em «Usar integrantes», sem saída no editor — relato do cliente no Windows, o mesmo no Mac. O rascunho agora descarta essa marca ao carregar o roster (a autoridade continua do Main) e o squad abre (F-1450).
 - **Windows.**
-  - Pane encerrado pelo próprio Nexus (fim de missão, teardown) mostrava «[nexus] processo caiu (code 129)»; o encerramento normal não é mais rotulado como queda (F-1437).
+  - Pane encerrado pelo próprio Nexus (fim de missão, teardown) mostrava «[nexus] processo caiu (code 129)»; o encerramento normal não é mais rotulado como queda (F-1446).
 
 ## 0.76.250 — Comandos pesados de volta no Windows
 

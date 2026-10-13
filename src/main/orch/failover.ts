@@ -2685,7 +2685,7 @@ async function confirmLimitByProbe(
     // não há cooldown nem irmã, mas F-249 vale igual — texto de PTY que a
     // sonda NÃO confirmou não pode virar o toast definitivo «Sessão
     // expirada» (Bug 9). «Desconhecido» não é «expirado»: com o Keychain
-    // negado (F-1438) a sonda do Muse devolve `quota-key-required` pela
+    // negado (F-1447) a sonda do Muse devolve `quota-key-required` pela
     // sessão inteira, e o caminho legado commitava esse desconhecido como
     // expiração na hora. Aqui nada muda de estado (sem conta para pôr em
     // pausa), então nada se anuncia: agenda a re-sondagem e cala.

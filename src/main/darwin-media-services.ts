@@ -1,5 +1,5 @@
 /**
- * F-1434 — no macOS, os serviços de mídia do Chromium rodam NO browser
+ * F-1443 — no macOS, os serviços de mídia do Chromium rodam NO browser
  * process em vez de utility processes sandboxados.
  *
  * Campo (13/10/2026, 0.76.244, macOS 27.2): segurar Space para ditar abria

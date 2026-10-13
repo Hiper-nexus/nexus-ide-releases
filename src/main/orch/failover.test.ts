@@ -619,7 +619,7 @@ describe('account failover authority and lifecycle', () => {
   // gerenciada): a sonda F-249 nunca lia a linha nativa de cota
   // (`fresh = current ? … : undefined`), e o ramo sem-conta commitava o texto
   // do PTY como expiração definitiva — «desconhecido» (ex.: Keychain negado,
-  // F-1438 → `quota-key-required` a sessão inteira) virava «expirado» no toast.
+  // F-1447 → `quota-key-required` a sessão inteira) virava «expirado» no toast.
   async function nativeMuseAuthHit(paneNo: number, nativeEntry: Record<string, unknown>) {
     resetInstantAuthDeaths('muse');
     vi.mocked(getActiveAccount).mockImplementation(() => null as never);
