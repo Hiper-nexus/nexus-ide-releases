@@ -120,7 +120,7 @@ export async function runJarvisTurn(
     // normal pro cérebro (a fala era outro assunto, ela ainda merece resposta).
     store.setNote('Missão pro squad descartada — confirmação não veio.');
     logVoiceEvent('info', 'jarvis.delegationDropped', 'pendência descartada sem confirmação', {
-      transcript: transcript.slice(0, 120),
+      transcriptChars: transcript.length,
       chars: delegationReply.delegation.text.length,
     });
   } else if (delegationReply.kind !== 'none') {
@@ -186,10 +186,11 @@ export async function runJarvisTurn(
   );
   const brainMs = Date.now() - tBrain;
   console.log(`[voice] cérebro: ${brainMs}ms`);
-  logVoiceEvent('info', 'jarvis.brainReply', reply.say, {
+  logVoiceEvent('info', 'jarvis.brainReply', 'resposta do cérebro gerada', {
     latencyMs: brainMs,
     action: reply.action.type,
     expectReply: reply.expectReply === true,
+    sayChars: reply.say.length,
   });
   const newHistory = [
     ...jarvisHistory,
@@ -284,7 +285,7 @@ export async function runJarvisTurn(
         'warn',
         'jarvis.liveSpeakDegraded',
         'Live não falou — Classic TTS assume',
-        { text: sayText.slice(0, 80), action: reply.action.type },
+        { chars: sayText.length, action: reply.action.type },
       );
     }
   }

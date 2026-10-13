@@ -396,7 +396,7 @@ export async function finishAndProcess(
         return;
       }
       if (stt.discarded === 'echo') {
-        console.log(`[voice] eco do TTS descartado no ditado: "${stt.text}"`);
+        console.log(`[voice] eco do TTS descartado no ditado (${stt.text.length} chars)`);
         reportDictationSession({ result: 'empty', errorCode: 'echo', stt });
         store.setDictationPending(null);
         store.setStatus('idle');
@@ -407,7 +407,7 @@ export async function finishAndProcess(
         !transcript ||
         isDiscardableTranscript(transcript, { inConversation: false })
       ) {
-        console.log(`[voice] ditado vazio/lixo descartado: "${stt.text}"`);
+        console.log(`[voice] ditado vazio/lixo descartado (${stt.text.length} chars)`);
         reportDictationSession({ result: 'empty', errorCode: 'discarded', stt });
         store.setDictationPending(null);
         store.setStatus('idle');
@@ -419,10 +419,11 @@ export async function finishAndProcess(
       store.setNote(sttSuccessNote(stt));
       store.setTranscript(transcript);
       console.log(
-        `[voice] ditado transcrito (${cachedSttLatencyMs}ms): "${transcript}"`,
+        `[voice] ditado transcrito (${cachedSttLatencyMs}ms, ${transcript.length} chars)`,
       );
-      logVoiceEvent('info', 'stt.dictationTranscript', transcript, {
+      logVoiceEvent('info', 'stt.dictationTranscript', 'ditado transcrito', {
         latencyMs: cachedSttLatencyMs,
+        chars: transcript.length,
       });
       store.setStatus('routing');
       // C2 (F-1393): o desfecho do pendente vira a 2ª linha da sessão de uso
@@ -574,7 +575,7 @@ export async function finishAndProcess(
           isAckGatedCapture() &&
           isWakeAckOnlyTranscript(rawTranscript, personaUserName(), stripOpts)
         ) {
-          console.log(`[voice] realtime wake/click só ack/eco: "${liveTranscript}"`);
+          console.log(`[voice] realtime wake/click só ack/eco (${liveTranscript.length} chars)`);
           resetPendingRealtimeAudioOut();
           if (
             stripOpts.protectConfirmation &&
@@ -592,7 +593,7 @@ export async function finishAndProcess(
           : rawTranscript;
         if (!transcript) {
           console.log(
-            `[voice] realtime transcript descartado como eco wake: "${liveTranscript}"`,
+            `[voice] realtime transcript descartado como eco wake (${liveTranscript.length} chars)`,
           );
           resetPendingRealtimeAudioOut();
           if (
@@ -611,10 +612,10 @@ export async function finishAndProcess(
             activeCaptureReason,
             {
               log: (source, t, reason) => {
-                console.log(`[voice] eco do TTS descartado (${source}): "${t}"`);
+                console.log(`[voice] eco do TTS descartado (${source}, ${t.length} chars)`);
                 logVoiceEvent('info', 'stt.echoDiscarded', 'eco do TTS descartado', {
                   source,
-                  text: t.slice(0, 120),
+                  chars: t.length,
                   reason,
                 });
               },
@@ -634,7 +635,7 @@ export async function finishAndProcess(
           JARVIS_MEMORY_MS_LOCAL,
         );
         if (isDiscardableTranscript(transcript, { inConversation })) {
-          console.log(`[voice] realtime transcript lixo descartado: "${transcript}"`);
+          console.log(`[voice] realtime transcript lixo descartado (${transcript.length} chars)`);
           store.setStatus('idle');
           resetPendingRealtimeAudioOut();
           void window.nexus.voice.liveInterrupt('discarded-transcript').catch(() => {});
@@ -645,10 +646,11 @@ export async function finishAndProcess(
         resetAutoReplyLoopForCapture(activeCaptureReason);
         if (activeCaptureReason !== 'reply') replyMuteReopenCount = 0;
         const realtimeMs = Date.now() - tRealtime;
-        console.log(`[voice] realtime transcript (${realtimeMs}ms): "${transcript}"`);
-        logVoiceEvent('info', 'jarvis.realtimeTranscript', transcript, {
+        console.log(`[voice] realtime transcript (${realtimeMs}ms, ${transcript.length} chars)`);
+        logVoiceEvent('info', 'jarvis.realtimeTranscript', 'transcrição realtime recebida', {
           latencyMs: realtimeMs,
           reason: activeCaptureReason,
+          chars: transcript.length,
         });
 
         // ADE parity: while Live is hot, NEVER Classic-bridge / interrupt.
@@ -709,7 +711,7 @@ export async function finishAndProcess(
               wakeMic.suppressWakeDetection(MIN_WAKE_SUPPRESSION_MS);
               logVoiceEvent('info', 'jarvis.liveProviderAnswer', 'provider realtime', {
                 reason: activeCaptureReason,
-                transcript: transcript.slice(0, 180),
+                chars: transcript.length,
                 evidence: answerEvidence,
               });
             }
@@ -753,12 +755,12 @@ export async function finishAndProcess(
         if (shouldUseClassicActionBridge(transcript)) {
           logVoiceEvent('info', 'jarvis.actionBridge', 'classic executor', {
             reason: 'app_action',
-            transcript: transcript.slice(0, 180),
+            chars: transcript.length,
           });
         } else {
           logVoiceEvent('info', 'jarvis.liveBridge', 'classic executor', {
             reason: 'conversation',
-            transcript: transcript.slice(0, 180),
+            chars: transcript.length,
           });
         }
         setRealtimeTurnActive(false);
@@ -1088,10 +1090,10 @@ export async function finishAndProcess(
     }
     if (stt.discarded === 'echo') {
       cancelMutedLiveValidation('classic-validation-echo');
-      console.log(`[voice] eco do TTS descartado: "${stt.text}"`);
+      console.log(`[voice] eco do TTS descartado (${stt.text.length} chars)`);
       logVoiceEvent('info', 'stt.echoDiscarded', 'eco do TTS descartado', {
         source: 'classic',
-        text: stt.text.slice(0, 120),
+        chars: stt.text.length,
         reason: activeCaptureReason,
       });
       store.setStatus('idle');
@@ -1107,7 +1109,7 @@ export async function finishAndProcess(
     };
     if (isAckGatedCapture() && isWakeAckOnlyTranscript(stt.text, personaUserName(), stripOpts)) {
       cancelMutedLiveValidation('classic-validation-ack-only');
-      console.log(`[voice] turno wake/click só ack/eco descartado: "${stt.text}"`);
+      console.log(`[voice] turno wake/click só ack/eco descartado (${stt.text.length} chars)`);
       if (
         stripOpts.protectConfirmation &&
         (await reaskPendingDelegation(capture, busy, turnToken, deps))
@@ -1124,7 +1126,7 @@ export async function finishAndProcess(
     if (!transcript) {
       cancelMutedLiveValidation('classic-validation-empty');
       const reason = isAckGatedCapture() ? 'eco do wake/click/ack' : 'transcrição vazia';
-      console.log(`[voice] ${reason} descartado: "${stt.text}"`);
+      console.log(`[voice] ${reason} descartado (${stt.text.length} chars)`);
       if (
         stripOpts.protectConfirmation &&
         (await reaskPendingDelegation(capture, busy, turnToken, deps))
@@ -1141,10 +1143,10 @@ export async function finishAndProcess(
         activeCaptureReason,
         {
           log: (source, t, reason) => {
-            console.log(`[voice] eco do TTS descartado (${source}): "${t}"`);
+            console.log(`[voice] eco do TTS descartado (${source}, ${t.length} chars)`);
             logVoiceEvent('info', 'stt.echoDiscarded', 'eco do TTS descartado', {
               source,
-              text: t.slice(0, 120),
+              chars: t.length,
               reason,
             });
           },
@@ -1163,16 +1165,16 @@ export async function finishAndProcess(
     );
     if (isDiscardableTranscript(transcript, { inConversation })) {
       cancelMutedLiveValidation('classic-validation-discarded');
-      console.log(`[voice] transcrição-lixo do Whisper descartada: "${transcript}"`);
+      console.log(`[voice] transcrição-lixo do Whisper descartada (${transcript.length} chars)`);
       store.setStatus('idle');
       liveEndTurn();
       return;
     }
     if (activeCaptureReason === 'reply' && isLikelyNoiseTranscript(transcript)) {
       cancelMutedLiveValidation('classic-validation-noise');
-      console.log(`[voice] reply-lixo descartado antes do cérebro: "${transcript}"`);
+      console.log(`[voice] reply-lixo descartado antes do cérebro (${transcript.length} chars)`);
       logVoiceEvent('info', 'jarvis.replyNoiseDiscarded', 'reply ruído/eco garbled descartado', {
-        text: transcript.slice(0, 120),
+        chars: transcript.length,
         reason: activeCaptureReason,
       });
       store.setStatus('idle');
@@ -1206,10 +1208,11 @@ export async function finishAndProcess(
       setRealtimeTurnActive(false);
     }
     store.setTranscript(transcript);
-    console.log(`[voice] transcrito (${tStt}ms): "${transcript}"`);
-    logVoiceEvent('info', 'jarvis.classicTranscript', transcript, {
+    console.log(`[voice] transcrito (${tStt}ms, ${transcript.length} chars)`);
+    logVoiceEvent('info', 'jarvis.classicTranscript', 'transcrição classic recebida', {
       latencyMs: tStt,
       reason: activeCaptureReason,
+      chars: transcript.length,
     });
     resetAutoReplyLoopForCapture(activeCaptureReason);
     store.setNote(sttSuccessNote(stt));

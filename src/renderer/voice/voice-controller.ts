@@ -238,7 +238,7 @@ function onRealtimeTranscriptForActionBridge(event: JarvisLiveTranscriptEvent): 
   const text = commandFromRealtimeTranscript(event.text);
   if (!text) {
     if (isAckGatedCapture()) {
-      console.log(`[voice] realtime wake/click só ack/eco: "${event.text.trim()}"`);
+      console.log(`[voice] realtime wake/click só ack/eco (${event.text.trim().length} chars)`);
     }
     return;
   }
@@ -876,17 +876,10 @@ export function useVoiceController(active = true): void {
             return;
           }
           if (!followUpAuthority.isAuthorized()) {
-            const fingerprint = text
-              .split(/\s+/)
-              .filter(Boolean)
-              .slice(0, 8)
-              .map((token) => token.toLocaleLowerCase().normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '').slice(0, 10))
-              .join('|');
             logVoiceEvent('info', 'wake.passiveHotUnauthorized', 'socket quente sem autoridade de follow-up', {
               latencyMs,
               charLen: text.length,
-              fingerprint,
+              tokenCount: text.split(/\s+/).filter(Boolean).length,
             });
             passiveWakeAdmission.reject(Date.now());
             return;
@@ -917,23 +910,10 @@ export function useVoiceController(active = true): void {
         }
 
         if (!match) {
-          const tokens = text
-            .split(/\s+/)
-            .filter(Boolean)
-            .slice(0, 4)
-            .map((t) =>
-              t
-                .toLocaleLowerCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/[^a-z0-9]+/g, '')
-                .slice(0, 6),
-            );
           logVoiceEvent('info', 'wake.passiveMiss', 'STT não confirmou o nome da Jarvis', {
             latencyMs,
             provider: result.provider,
             tokenCount: text.split(/\s+/).filter(Boolean).length,
-            fingerprint: tokens.join('|'),
             charLen: text.length,
           });
           passiveWakeAdmission.reject(Date.now());

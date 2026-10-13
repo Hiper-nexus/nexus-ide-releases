@@ -443,4 +443,58 @@ describe('F-1392 — uma linha dictation.session por ditado, sem o texto', () =>
   });
 });
 
+describe('F-1424 — privacidade do ditado (nunca grava texto falado em log ou console)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    transcribe.mockReset();
+    vi.stubGlobal('window', {
+      nexus: {
+        voice: {
+          transcribe,
+          logVoice: vi.fn(async () => ({})),
+          liveStatus: vi.fn(async () => ({})),
+          liveInterrupt: vi.fn(async () => ({})),
+          liveEndTurn: vi.fn(async () => ({})),
+        },
+      },
+    });
+    setActiveCaptureReason('dictation');
+    vi.mocked(routeDictation).mockResolvedValue({ ok: true, paneId: 'pane-1' });
+    useVoiceStore.setState({
+      status: 'idle',
+      error: null,
+      note: null,
+      dictationPending: null,
+      dictationFailed: false,
+      info: voiceInfo('portuguese'),
+    } as never);
+  });
+
+  afterEach(() => {
+    setActiveCaptureReason('manual');
+    vi.unstubAllGlobals();
+  });
+
+  it('ditado com frase sintética não vaza texto para o logVoice nem para console.log', async () => {
+    const syntheticPhrase = 'frase-sintetica-f1424';
+    transcribe.mockResolvedValueOnce(sttOk(syntheticPhrase));
+
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await finishAndProcess(makeCapture(), { current: false }, makeDeps());
+
+      const logCalls = (window.nexus.voice.logVoice as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      const transcriptCall = logCalls.find((call) => call[0]?.event === 'stt.dictationTranscript');
+      expect(transcriptCall).toBeDefined();
+      expect(transcriptCall[0].msg).not.toContain(syntheticPhrase);
+      expect(JSON.stringify(transcriptCall[0])).not.toContain(syntheticPhrase);
+
+      const consoleCalls = consoleLogSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+      expect(consoleCalls).not.toContain(syntheticPhrase);
+    } finally {
+      consoleLogSpy.mockRestore();
+    }
+  });
+});
+
 
