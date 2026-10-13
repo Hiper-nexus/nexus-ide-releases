@@ -338,8 +338,18 @@ function platformSecretKey(payload: string): string | null {
 
 /** Sucesso guardado: o tick de cota não volta ao cofre a cada minuto. */
 export const MUSE_SECRET_CACHE_TTL_MS = 10 * 60_000;
-/** Negado/travado: não reabre o diálogo do Keychain em laço. */
-export const MUSE_SECRET_DENIED_BACKOFF_MS = 5 * 60_000;
+/**
+ * Negado/travado: não reabre o diálogo do Keychain em laço. O recuo anterior
+ * (5 min) era EXATAMENTE o período do poll de cota (quota-store, 5 min) com
+ * `forceApi`, que ignora TTL e backoff do QuotaService — cada poll caía no
+ * instante em que o recuo expirava e rodava `security … -w` de novo: um
+ * diálogo de ACL por poll, para sempre, por um número de cota opcional.
+ * «Negar» (ou deixar o prazo de 5 s matar o `security`) é a resposta do
+ * operador para esta sessão do processo; `Infinity` a guarda como tal.
+ * Item AUSENTE (44) não exibiu diálogo nenhum e segue no TTL curto: um
+ * `muse login` minutos depois precisa aparecer sem reiniciar o app.
+ */
+export const MUSE_SECRET_DENIED_BACKOFF_MS = Number.POSITIVE_INFINITY;
 
 type MuseSecretCacheEntry = { value: string | null; until: number };
 const museSecretCache = new Map<string, MuseSecretCacheEntry>();

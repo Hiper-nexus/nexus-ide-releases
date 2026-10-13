@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   MUSE_KEYCHAIN_SERVICE,
   museAuthBlobIsUsable,
   museKeychainDelegatedProviders,
+  museKeychainItemExists,
   museKeychainSessionExists,
+  resetMuseKeychainCache,
 } from './subscription-auth';
 
 /**
@@ -95,5 +97,46 @@ describe('Muse keychain-delegated session', () => {
 
   it('pins the service name the Muse binary uses', () => {
     expect(MUSE_KEYCHAIN_SERVICE).toBe('ai.meta.dev.credentials');
+  });
+});
+
+describe.skipIf(process.platform !== 'darwin')('Muse keychain item probe throttle', () => {
+  function execFailing(status: number) {
+    return vi.fn(() => {
+      throw Object.assign(new Error('security failed'), { status });
+    }) as unknown as typeof import('node:child_process').execFileSync;
+  }
+
+  it('does not re-run `security` after an ACL denial (dialog shown once, then backoff)', () => {
+    resetMuseKeychainCache();
+    const execImpl = execFailing(51);
+    let clock = 10_000;
+    expect(museKeychainItemExists('meta', execImpl, () => clock)).toBe(false);
+    clock += 60_000;
+    expect(museKeychainItemExists('meta', execImpl, () => clock)).toBe(false);
+    expect(execImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-probes when the item is simply absent (44: no dialog; a fresh login must appear)', () => {
+    resetMuseKeychainCache();
+    const execImpl = vi.fn()
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error('not found'), { status: 44 });
+      })
+      .mockImplementationOnce(() => Buffer.from('')) as unknown as typeof import('node:child_process').execFileSync;
+    const clock = 20_000;
+    expect(museKeychainItemExists('meta', execImpl, () => clock)).toBe(false);
+    expect(museKeychainItemExists('meta', execImpl, () => clock)).toBe(true);
+    expect(execImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('serves a confirmed item from the memo instead of re-running `security`', () => {
+    resetMuseKeychainCache();
+    const execImpl = vi.fn(() => Buffer.from('')) as unknown as typeof import('node:child_process').execFileSync;
+    let clock = 30_000;
+    expect(museKeychainItemExists('meta', execImpl, () => clock)).toBe(true);
+    clock += 30_000;
+    expect(museKeychainItemExists('meta', execImpl, () => clock)).toBe(true);
+    expect(execImpl).toHaveBeenCalledTimes(1);
   });
 });

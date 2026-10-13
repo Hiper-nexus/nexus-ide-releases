@@ -860,16 +860,52 @@ export function museKeychainDelegatedProviders(blob: string): string[] {
   }
 }
 
-/** Só atributos (`-s`/`-a`, sem `-w`): confirma sem custar prompt. */
-function museKeychainItemExists(account: string): boolean {
+/**
+ * Recuo depois que o `security` falhou por negação/timeout (espelha o
+ * `CREDENTIAL_DENIED_BACKOFF_MS` de claude-credential): ali o macOS exibiu
+ * (ou exibiria) um diálogo, e repetir a sonda síncrona em cada snapshot de
+ * auth/cota é o que vira enxurrada de pedidos de permissão.
+ */
+const MUSE_KEYCHAIN_DENIED_BACKOFF_MS = 5 * 60_000;
+const museKeychainMemo = new Map<string, { value: boolean; until: number }>();
+
+/** Test seam: drop the memoized Muse keychain probe results. */
+export function resetMuseKeychainCache(): void {
+  museKeychainMemo.clear();
+}
+
+/**
+ * Só atributos (`-s`/`-a`, sem `-w`): confirma a presença do item. Memoizado
+ * por conta como a sonda AGY: confirmado vale {@link CACHE_TTL_MS} e uma
+ * falha que não seja «item ausente» recua por
+ * {@link MUSE_KEYCHAIN_DENIED_BACKOFF_MS}. Ausente (44) NÃO é memoizado —
+ * é barato, não pede autorização, e um `muse login` concluído segundos
+ * depois precisa aparecer na hora (a mesma razão de `hasSubscriptionAuth`
+ * nunca guardar uma negativa).
+ */
+export function museKeychainItemExists(
+  account: string,
+  execImpl: typeof execFileSync = execFileSync,
+  now: () => number = Date.now,
+): boolean {
   if (process.platform !== 'darwin') return false;
+  const held = museKeychainMemo.get(account);
+  if (held && now() < held.until) return held.value;
   try {
-    return execFileSync(
+    const exists = execImpl(
       'security',
       ['find-generic-password', '-s', MUSE_KEYCHAIN_SERVICE, '-a', account],
       { stdio: ['ignore', 'ignore', 'ignore'], timeout: 5_000, killSignal: 'SIGKILL' },
     ) !== undefined;
-  } catch {
+    museKeychainMemo.set(account, { value: exists, until: now() + CACHE_TTL_MS });
+    return exists;
+  } catch (error) {
+    if ((error as { status?: number }).status !== 44) {
+      museKeychainMemo.set(account, {
+        value: false,
+        until: now() + MUSE_KEYCHAIN_DENIED_BACKOFF_MS,
+      });
+    }
     return false;
   }
 }
@@ -1363,6 +1399,7 @@ export async function warmKeychainOnlySubscriptionAuth(
 /** Test hook. */
 export function resetSubscriptionAuthCacheForTests(): void {
   cache.clear();
+  resetMuseKeychainCache();
   claudeRefreshInFlight = null;
   openClaudeRefreshInFlight = null;
   agyRefreshInFlight = null;

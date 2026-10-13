@@ -198,6 +198,24 @@ describe('cofre e auth.json do Muse sem travar o Main (F-1417)', () => {
     clearMuseSecretCache();
   });
 
+  it.skipIf(process.platform === 'win32')('negação do cofre não reabre o diálogo nos polls seguintes da mesma sessão', async () => {
+    clearMuseSecretCache();
+    const execImpl = vi.fn((_f: string, _a: readonly string[], _o: unknown, cb: Cb) => {
+      cb(Object.assign(new Error('denied'), { code: 51 }), '');
+    });
+    const quotaPoll = 5 * 60_000;
+    let clock = 1_000_000;
+    expect(await readMusePlatformSecret('meta', execImpl, () => clock)).toBeNull();
+    // O poll de cota volta a cada 5 min com forceApi; a resposta do operador
+    // («Negar», ou ignorar até o timeout) vale por toda a sessão do processo.
+    for (let poll = 0; poll < 24; poll += 1) {
+      clock += quotaPoll;
+      expect(await readMusePlatformSecret('meta', execImpl, () => clock)).toBeNull();
+    }
+    expect(execImpl).toHaveBeenCalledTimes(1);
+    clearMuseSecretCache();
+  });
+
   it.skipIf(process.platform === 'win32')('auth.json FIFO ou acima do teto não é lido (nem pendura)', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-muse-'));
     try {
