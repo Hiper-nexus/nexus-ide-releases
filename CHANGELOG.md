@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.76.242 — Cada LLM no seu lugar
+
+Varredura interna s241 (F-1391..F-1424): cada modelo passa a ser usado pelo que faz de melhor — o Wonder Full no julgamento, o Opus no Next e nos jogos, o Devin e o Kimi no revezamento de front, o GLM Flash lendo imagem e o GLM 5.3 escrevendo código — e nenhum trabalho fica sem dono: o Nexus confere se o worker de fato começou, atualiza todas as CLIs ao iniciar, mostra a cota de cada conta e não perde mais o texto ditado. Cada correção teve teste RED, julgamento do orquestrador e revisão cruzada (Fable e Grok) até ficar apta.
+
+- **Roteamento de modelos.**
+  - Muse Wonder 1.0 (padrão) e Wonder Full 1.0 entram no catálogo com as notas oficiais da Meta no DeepSWE (79,0 e 78,8); o catálogo do Muse é lido do cache do provedor, e o esforço `max` vale na linha inteira (F-1391).
+  - O Wonder Full max lidera a lane de julgamento e entra no pool de front; modelos `-contributor` só pegam tarefas menores e só com o consentimento da conta, e o recibo avisa o uso dos dados (F-1398).
+  - O front reveza por modelo — Opus 5.5 max, Sonnet 5.5, Wonder Full max, Kimi K3, Codex Sol e Devin SWE-2 — vencendo quem fez menos front recentemente; o revezamento persiste entre reinícios (F-1400, F-1421).
+  - Next.js e jogos (Phaser, three.js, Unity WebGL) vão sempre para o Opus 5.5 max, com recibo explícito, dentro e fora de missão (F-1400).
+  - GLM 5.3 Flash fica com leituras leves e imagem; código medium+ vai para o GLM 5.3. Leitura de imagem só vai para modelo com visão declarada (F-1412).
+  - Revisão e segurança crítica nunca caem num writer econômico (F-1415); tarefa de credencial, token, keychain ou conta sobe de tier e ganha a especialidade de segurança (F-1402).
+  - Fim do limite de um pane Claude por conta: a linhagem de credencial é compartilhada por conta, então Maestro e N workers convivem (F-1401).
+  - A CLI que o operador nomeia vale, inclusive quando ele aceita uma sugestão no meio do turno; o pedido é verificado contra falsificação (F-1418).
+  - Limite de uso do Muse é detectado com a hora do reset: a rota tira a CLI limitada até lá e a recusa de spawn fica registrada (F-1410).
+
+- **Panes que começam, terminam e fecham.**
+  - O supervisor exige prova de execução (primeiro turno, ferramenta, handoff). Sem prova no prazo — 90 s, ou 180 s para Kimi e MiMo — o pane fecha e a tarefa reabre em outra CLI na mesma worktree, até 3 vezes, excluindo todas as CLIs que já falharam (F-1414).
+  - O worker fecha depois da entrega por todos os caminhos (MCP, PTY e spool). Entrega `partial`, `failed` ou `blocked` também fecha quando o Maestro aceita, ou após 15 minutos parado; com `rework`, o pane fica vivo para a nota (F-1409).
+  - O Maestro é avisado, sem bloqueio, quando usa subagente interno com workers Nexus disponíveis (F-1396).
+  - O brief do Kimi chega como colagem e é enviado, em vez de ficar parado na caixa de entrada (F-1411).
+  - O Devin responde sozinho à pergunta de confiança, mas só para a própria worktree (F-1419).
+  - Writers isolados não são mais recusados quando o checkout principal troca de branch (F-1422).
+  - O worker opera o navegador que ele mesmo abriu; worker de outra worktree continua recusado (F-1408).
+  - O navegador aberto por um worker fecha quando o worker sai de vez, ou passa para outro pane vivo da mesma worktree; worker estacionado mantém o seu, e o do operador e do orquestrador nunca são tocados (F-1420).
+  - Uma revisão só leitura não recebe mais "verificação visual pendente" por causa do rodapé de design do brief (F-1417).
+
+- **Contas e cotas.**
+  - Sondas novas de cota: Muse (janela de 5 h e semanal), OpenClaude (uso OAuth com fallback) e Alibaba Token Plan (um pool só para Qwen Code, DeepSeek e GLM), com a leitura compartilhada entre os panes da conta. O Redline foi reconstruído em cima delas.
+  - Uma conta logada não aparece mais como "sessão expirada": a cota de cada conta só é mostrada quando a identidade foi provada, contas gerenciadas revogadas aparecem como expiradas e valores estimados vêm marcados (F-1416).
+
+- **Atualização das CLIs.**
+  - Cinco segundos após o boot, o Nexus confere e atualiza todas as CLIs em série; erro numa não para as outras. Casks do Homebrew atualizam sozinhos só quando o manifesto da versão-alvo não pede privilégio, com sudo bloqueado no ambiente (F-1395).
+  - Claude, Devin e Grok atualizam com pane aberto: o atual segue no binário antigo e o próximo nasce no novo (F-1395, F-1397).
+  - Boot mais rápido: CLI de npm em dia não reinstala; o `brew update` roda no máximo a cada 6 h, com trava (F-1397).
+  - O pool quente respeita a licença de spawn, a instalação não fica órfã no desligamento e as chamadas ao brew são serializadas (F-1395).
+  - No painel de Providers, falha de atualização fica distinta da conexão, com motivo traduzido, e a data da checagem aparece certa (F-1399).
+
+- **Voz e ditado.**
+  - Com o pane ocupado, o ditado entra na fila; com diálogo aberto, fica pendente e entra sozinho quando o pane fica livre; se nada der certo, vai para a área de transferência com aviso no HUD (F-1393).
+  - Ditado que não achou destino não se perde mais: o HUD guarda o texto com as ações Copiar ditado e Reenviar, sem mexer na sua área de transferência. Exceção na entrega encerra o pendente em vez de prendê-lo.
+  - Ditado ou prompt de várias linhas chega inteiro ao pane Claude, colado de uma vez em vez de linha a linha (F-1411).
+  - Cada sessão registra modo, modelo, idioma, duração e resultado, sem o texto falado (F-1392). O texto ditado e as respostas do Jarvis também saíram do `voice.log` e do console: os logs de voz guardam só contagens e metadados, e o canal de log do renderer filtra conteúdo por precaução (F-1424). A reescrita CODE aceita JSON com texto em volta (F-1394).
+
+- **Telas.**
+  - Painel Git estreito sem sobreposição: branch com reticências, botões alinhados, sub-abas com rolagem e tooltip com o caminho completo (F-1413).
+  - O navegador acompanha o scroll no Stage Focus e some quando sai da coluna (F-1407).
+  - Sem o lixo `>4;0m>7u` na primeira linha do pane Codex (F-1406); o banner "Set up security" do Codex é dispensado sem disparar o botão (F-1405).
+
+- **Segurança.**
+  - A guarda de despacho distingue a delegação do próprio orquestrador de instrução copiada de fonte não confiável, e a isenção de delegação vale só para spawn de pane (F-1403).
+  - Quando a credencial Claude gira no meio do spawn, o Nexus refaz a verificação e o preparo em vez de usar o token velho (F-1401).
+
 ## 0.76.241 — Windows de verdade
 
 A suíte inteira do vitest rodou num Windows real (25576 testes) e expôs os pontos de produção que assumiam POSIX. Todos foram portados:

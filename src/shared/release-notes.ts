@@ -10413,7 +10413,7 @@ export const RELEASE_076240: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076241: AppRelease = {
   version: '0.76.241',
   date: '2026-10-12',
   codename: 'Windows de verdade',
@@ -10426,5 +10426,23 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Durabilidade sem fsync de diretório', detail: 'No Windows o rename já é o commit; fsync de diretório (EPERM) só roda em POSIX.' },
     { title: 'Fixture do atualizador correta', detail: 'O teste F-1280 stuba TEMP/TMP, que é o que os.tmpdir() lê no Windows.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.242',
+  date: '2026-10-12',
+  codename: 'Cada LLM no seu lugar',
+  summary: 'O Muse Wonder Full no esforço máximo lidera o front e o julgamento; o front reveza entre os melhores modelos e Next.js e jogos vão para o Opus; o ditado chega ao painel ocupado; o Nexus atualiza todas as CLIs ao iniciar; o Nexus confere se cada worker começou e mostra a cota de cada conta.',
+  highlights: [
+    { title: 'Muse Wonder e Wonder Full', detail: 'Os modelos novos da Meta entram no Nexus com os números oficiais. O Wonder Full no esforço máximo lidera a revisão e o front, os modelos contributor ficam nas tarefas menores com o seu consentimento, e o catálogo do próprio Muse é lido sozinho.' },
+    { title: 'Ditado que chega', detail: 'Com o painel ocupado, o ditado entra na fila; com uma pergunta aberta, espera e entra sozinho quando o painel fica livre. Nada é entregue duas vezes, e o HUD diz o que está acontecendo.' },
+    { title: 'CLIs sempre atualizadas', detail: 'Ao iniciar, o Nexus confere e atualiza todas as CLIs. Claude, Devin e Grok atualizam mesmo com painel aberto; as demais, quando o último painel delas fecha. Cask só com manifesto sem privilégio.' },
+  ],
+  fixes: [
+    { title: 'Cada LLM no seu lugar', detail: 'Front em revezamento entre Opus, Sonnet, Wonder Full, Kimi, Sol e Devin; Next.js e jogos no Opus; GLM 5.3 no código e o Flash nas tarefas leves e de imagem; revisão de segurança nunca num modelo econômico; sem limite de um painel Claude por conta.' },
+    { title: 'Nenhum trabalho sem dono', detail: 'O Nexus confere se o worker de fato começou e, se não, reabre a tarefa em outra CLI na mesma worktree; os workers fecham ao entregar; o Maestro é avisado quando faz tudo sozinho.' },
+    { title: 'Cota de cada conta', detail: 'Conta logada não aparece mais como sessão expirada, a cota de cada conta só é mostrada com a identidade provada, e Muse, OpenClaude e Alibaba Token Plan ganharam sondas de cota no Redline.' },
+    { title: 'Telas', detail: 'Painel Git estreito sem sobreposição, o navegador do Stage não rola por cima dos outros painéis, e a falha de atualização de CLI aparece clara no painel de Providers.' },
   ],
 };
