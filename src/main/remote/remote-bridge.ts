@@ -125,6 +125,10 @@ interface AuthenticationChallenge {
 
 const ROOT = path.join(os.homedir(), '.nexus', 'remote-bridge');
 const TLS_FILE = path.join(ROOT, 'tls.json');
+// F-1478: a porta do bridge persiste entre inícios, para o QR/endereço já
+// lido e uma regra de firewall por porta continuarem valendo.
+const PORT_FILE = path.join(ROOT, 'port.json');
+const DEFAULT_REMOTE_BRIDGE_PORT = 47820;
 const PAIRING_TTL_MS = 5 * 60 * 1000;
 const AUTH_CHALLENGE_TTL_MS = 30_000;
 const MAX_MESSAGE_BYTES = 64 * 1024;
@@ -158,6 +162,14 @@ let server: https.Server | null = null;
 let wss: WebSocketServer | null = null;
 let port: number | null = null;
 let boundHost: string | null = null;
+// F-1478: porta salva que estava ocupada neste início (o bridge usou outra).
+let portFallbackFrom: number | null = null;
+// F-1478: fila de inícios e contador de stops (um stop cancela os inícios
+// pedidos antes dele).
+let lifecycleQueue: Promise<unknown> = Promise.resolve();
+let stopEpoch = 0;
+// F-1478: o Host pelo qual cada socket chegou (a URL que o aparelho usou).
+const clientHosts = new WeakMap<WebSocket, string>();
 let tlsRecord: TlsRecord | null = null;
 // Chave: IP direto (LAN) ou `pre:conn:<n>` para conexões via loopback/proxy.
 const pairingFailuresByIp = new Map<
@@ -271,6 +283,28 @@ async function applyBridgeTailscale(enabled: boolean): Promise<void> {
 
 function ensureRoot(): void {
   fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 });
+}
+
+function savedBridgePort(): number {
+  try {
+    const saved = (JSON.parse(fs.readFileSync(PORT_FILE, 'utf8')) as { port?: unknown }).port;
+    if (typeof saved === 'number' && Number.isInteger(saved) && saved >= 1024 && saved <= 65535) {
+      return saved;
+    }
+  } catch {
+    // Sem arquivo ou ilegível: porta padrão.
+  }
+  return DEFAULT_REMOTE_BRIDGE_PORT;
+}
+
+function saveBridgePort(value: number): void {
+  try {
+    ensureRoot();
+    writeJsonAtomic(PORT_FILE, { port: value });
+  } catch (err) {
+    // A porta só não persiste; o bridge já está no ar.
+    console.warn('[remote-bridge] could not save the bridge port:', err);
+  }
 }
 
 function randomCode(): string {
@@ -1178,6 +1212,11 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
     }
   }
   clients.add(ws);
+  // F-1478: a URL que o aparelho usou (só para o card do desktop).
+  const hostHeader = req.headers.host;
+  if (typeof hostHeader === 'string' && /^[A-Za-z0-9.:[\]-]{1,255}$/.test(hostHeader)) {
+    clientHosts.set(ws, hostHeader);
+  }
   const ip = clientIp(req);
   // Loopback = desktop local ou qualquer aparelho do tailnet via Serve: o IP
   // não distingue ninguém e X-Forwarded-* nunca vira identidade. A
@@ -1383,40 +1422,172 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
   });
 }
 
+export interface RemoteBridgeStartOptions {
+  /** F-1478: só o início pela tela grava a porta em port.json. */
+  readonly persistPort?: boolean;
+}
+
+/**
+ * F-1478: inícios (e rebinds) em fila — um por vez; o seguinte espera e
+ * reavalia o estado. Um stop cancela todo início pedido antes dele, inclusive
+ * o que está no meio do listen: nenhum listener sobra órfão.
+ */
 export async function startRemoteBridge(
   req: RemoteBridgeStartRequest,
   scope: ProjectExecutionScope,
+  options: RemoteBridgeStartOptions = {},
 ): Promise<RemoteBridgeInfo> {
   if (!scope) throw new Error('remote bridge requires a project scope');
+  const epoch = stopEpoch;
+  const run = lifecycleQueue.then(() => startRemoteBridgeNow(req, scope, options, epoch));
+  lifecycleQueue = run.catch(() => undefined);
+  return run;
+}
+
+function assertNotStopped(epoch: number): void {
+  if (epoch !== stopEpoch) throw new Error('remote bridge stopped while starting');
+}
+
+async function startRemoteBridgeNow(
+  req: RemoteBridgeStartRequest,
+  scope: ProjectExecutionScope,
+  options: RemoteBridgeStartOptions,
+  epoch: number,
+): Promise<RemoteBridgeInfo> {
+  assertNotStopped(epoch);
   if (server && port) {
     assertBridgeScope(scope);
-    if (req.tailscale !== undefined) await applyBridgeTailscale(req.tailscale);
-    return getRemoteBridgeInfo(scope);
+    if (req.host === undefined || req.host === boundHost) {
+      if (req.tailscale !== undefined) await applyBridgeTailscale(req.tailscale);
+      return getRemoteBridgeInfo(scope);
+    }
+    return rebindRemoteBridge(req, scope, options, epoch);
   }
+  return listenRemoteBridge(req, scope, options, epoch);
+}
+
+/**
+ * F-1478: no ar em outro host (só 127.0.0.1 → rede local, ou o inverso).
+ * Refaz o bind: aparelhos pareados ficam (o token está no disco), a porta
+ * salva é reaproveitada, o tailnet publicado volta e sai um código novo. Se o
+ * bind novo falhar, o anterior é restaurado (mesmo host, porta e código).
+ */
+async function rebindRemoteBridge(
+  req: RemoteBridgeStartRequest,
+  scope: ProjectExecutionScope,
+  options: RemoteBridgeStartOptions,
+  epoch: number,
+): Promise<RemoteBridgeInfo> {
+  const previous = {
+    host: boundHost ?? '127.0.0.1',
+    port: port ?? 0,
+    tailscale: bridgeTailscale !== null,
+    pairing,
+  };
+  teardownRemoteBridge(scope);
+  try {
+    return await listenRemoteBridge(
+      { ...req, tailscale: req.tailscale ?? previous.tailscale },
+      scope,
+      options,
+      epoch,
+    );
+  } catch (error) {
+    teardownRemoteBridge(scope);
+    if (epoch !== stopEpoch) throw error;
+    const reason = error instanceof Error ? error.message : String(error);
+    let restored = true;
+    try {
+      await listenRemoteBridge(
+        { host: previous.host, port: previous.port, tailscale: previous.tailscale },
+        scope,
+        {},
+        epoch,
+      );
+      pairing = previous.pairing;
+    } catch {
+      teardownRemoteBridge(scope);
+      restored = false;
+    }
+    const failure = new Error(
+      restored
+        ? `${reason} (o bridge anterior continua em ${previous.host}:${previous.port})`
+        : `${reason} (o bridge anterior não voltou; inicie de novo)`,
+      { cause: error },
+    ) as NodeJS.ErrnoException;
+    failure.code = (error as NodeJS.ErrnoException | undefined)?.code;
+    throw failure;
+  }
+}
+
+async function listenRemoteBridge(
+  req: RemoteBridgeStartRequest,
+  scope: ProjectExecutionScope,
+  options: RemoteBridgeStartOptions,
+  epoch: number,
+): Promise<RemoteBridgeInfo> {
+  const tls = await ensureTls();
+  assertNotStopped(epoch);
+  // Default seguro: só localhost. Expor na LAN (0.0.0.0/::) exige pedido
+  // explícito do usuário — a bridge controla PTYs reais.
+  const host = req.host ?? '127.0.0.1';
+  // F-1478: sem porta explícita, a salva (padrão 47820); ocupada ou
+  // reservada, uma livre só neste início, com aviso.
+  const preferredPort = req.port ?? savedBridgePort();
+  let fellBackFrom: number | null = null;
+  const listening = https.createServer(
+    { key: tls.key, cert: tls.cert },
+    serveRemoteClientPage,
+  );
+  await new Promise<void>((resolve, reject) => {
+    const disarm = () => {
+      listening.off('error', onError);
+      listening.off('listening', onListening);
+    };
+    const onListening = () => {
+      disarm();
+      resolve();
+    };
+    const onError = (err: NodeJS.ErrnoException) => {
+      const portTaken = err.code === 'EADDRINUSE' || err.code === 'EACCES';
+      if (req.port !== undefined || !portTaken || fellBackFrom !== null) {
+        disarm();
+        reject(err);
+        return;
+      }
+      fellBackFrom = preferredPort;
+      listening.listen(0, host);
+    };
+    listening.on('error', onError);
+    listening.on('listening', onListening);
+    listening.listen(preferredPort, host);
+  });
+  if (epoch !== stopEpoch) {
+    listening.close();
+    assertNotStopped(epoch);
+  }
+  // Daqui ao fim do commit não há await: nenhuma conexão chega antes.
+  const addr = listening.address();
+  server = listening;
+  wss = new WebSocketServer({ server: listening, maxPayload: MAX_MESSAGE_BYTES });
+  wss.on('connection', onConnection);
+  wss.on('error', (err) => console.warn('[remote-bridge] wss error:', err));
+  port = addr && typeof addr === 'object' ? addr.port : null;
+  boundHost = host;
+  portFallbackFrom = fellBackFrom;
   activeBridgeScope = Object.freeze({ ...scope });
   // Starting the bridge is the desktop user's explicit issuance/approval of
   // one pairing code. Expiry/consumption never auto-mints another code.
   pairing = makePairing(req.scopes); // MOB-12
-  const tls = await ensureTls();
-  // Default seguro: só localhost. Expor na LAN (0.0.0.0/::) exige pedido
-  // explícito do usuário — a bridge controla PTYs reais.
-  const host = req.host ?? '127.0.0.1';
-  await new Promise<void>((resolve, reject) => {
-    server = https.createServer(
-      { key: tls.key, cert: tls.cert },
-      serveRemoteClientPage,
-    );
-    wss = new WebSocketServer({ server, maxPayload: MAX_MESSAGE_BYTES });
-    wss.on('connection', onConnection);
-    wss.on('error', (err) => console.warn('[remote-bridge] wss error:', err));
-    server.once('error', reject);
-    server.listen(req.port ?? 0, host, () => {
-      const addr = server?.address();
-      if (addr && typeof addr === 'object') port = addr.port;
-      boundHost = host;
-      resolve();
-    });
-  });
+  if (
+    options.persistPort &&
+    req.port === undefined &&
+    fellBackFrom === null &&
+    port &&
+    port !== savedBridgePort()
+  ) {
+    saveBridgePort(port);
+  }
   // O Serve encaminha o tailnet ao loopback: funciona até com o bind padrão
   // 127.0.0.1, sem expor a bridge na LAN.
   if (req.tailscale) await applyBridgeTailscale(true);
@@ -1424,6 +1595,11 @@ export async function startRemoteBridge(
 }
 
 export function stopRemoteBridge(scope?: ProjectExecutionScope): RemoteBridgeInfo {
+  stopEpoch += 1;
+  return teardownRemoteBridge(scope);
+}
+
+function teardownRemoteBridge(scope?: ProjectExecutionScope): RemoteBridgeInfo {
   clearStreamSubscriptions();
   clearRemoteTerminalStreams();
   if (scope && activeBridgeScope) assertBridgeScope(scope);
@@ -1439,6 +1615,7 @@ export function stopRemoteBridge(scope?: ProjectExecutionScope): RemoteBridgeInf
   server = null;
   port = null;
   boundHost = null;
+  portFallbackFrom = null;
   invalidatePairing();
   activeBridgeScope = null;
   return getRemoteBridgeInfo();
@@ -1522,20 +1699,26 @@ export function getRemoteBridgeInfo(
   return {
     running: Boolean(server && port),
     port: port ?? undefined,
+    ...(port && portFallbackFrom ? { portFallbackFrom } : {}),
     urls: endpoints.map((endpoint) => endpoint.url),
     endpoints,
     pairingCode: pairingAvailable ? current.code : undefined,
     pairingExpiresAt: pairingAvailable ? current.expiresAt : undefined,
     // MOB-12 (início)
     pairingScopes: pairingAvailable ? [...current.scopes] : undefined,
-    devices: listRemoteDeviceTokens(tokenScope ?? undefined).map((token) => ({
-      id: token.id,
-      keyFingerprint: token.deviceKeyFingerprint,
-      pairedAt: token.createdAt,
-      expiresAt: token.expiresAt,
-      scopes: [...token.scopes],
-      connected: [...authenticatedClients.values()].some((client) => client.tokenId === token.id),
-    })),
+    devices: listRemoteDeviceTokens(tokenScope ?? undefined).map((token) => {
+      const socket = [...authenticatedClients].find(([, client]) => client.tokenId === token.id)?.[0];
+      const via = socket ? clientHosts.get(socket) : undefined;
+      return {
+        id: token.id,
+        keyFingerprint: token.deviceKeyFingerprint,
+        pairedAt: token.createdAt,
+        expiresAt: token.expiresAt,
+        scopes: [...token.scopes],
+        connected: socket !== undefined,
+        ...(via ? { connectedUrl: `https://${via}` } : {}), // F-1478
+      };
+    }),
     // MOB-12 (fim)
     tokenCount: countRemoteDeviceTokens(tokenScope ?? undefined),
     clientCount: clients.size,

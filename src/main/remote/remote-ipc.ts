@@ -187,7 +187,8 @@ export function registerRemoteIpc(): void {
     const wasRunning = getRemoteBridgeInfo(scope).running;
     try {
       authority.assertCurrentAuthority();
-      const info = await startRemoteBridge(parsed.data, scope);
+      // F-1478: o início pela tela fixa a porta em port.json.
+      const info = await startRemoteBridge(parsed.data, scope, { persistPort: true });
       authority.assertCurrentAuthority();
       return info;
     } catch (error) {

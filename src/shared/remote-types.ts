@@ -53,6 +53,8 @@ export interface RemoteBridgeDeviceView {
   expiresAt: number;
   scopes: RemoteDeviceScope[];
   connected: boolean;
+  /** F-1478: URL (https://host) pela qual o aparelho conectado chegou. */
+  connectedUrl?: string;
 }
 
 export interface RemoteBridgeSetDeviceScopesRequest {
@@ -63,6 +65,8 @@ export interface RemoteBridgeSetDeviceScopesRequest {
 export interface RemoteBridgeInfo {
   running: boolean;
   port?: number;
+  /** F-1478: porta salva que estava ocupada neste início; o bridge abriu em `port`. */
+  portFallbackFrom?: number;
   urls: string[];
   /** As mesmas URLs de `urls`, rotuladas pela rede de origem. */
   endpoints?: RemoteBridgeEndpoint[];

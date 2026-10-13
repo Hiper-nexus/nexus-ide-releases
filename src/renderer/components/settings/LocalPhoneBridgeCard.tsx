@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RemoteBridgeInfo } from '../../../shared/types';
 import {
   REMOTE_DEVICE_SCOPES,
@@ -112,6 +112,53 @@ function tailnetDescription(
   );
 }
 
+// F-1478: "Online" só diz que o bridge escuta. Estes textos dizem ao leigo o
+// que conferir quando o celular não conecta.
+const STATUS_POLL_MS = 4_000;
+const LAST_PAIRED_URL_KEY = 'nexus.phoneBridge.lastPairedUrl.v1';
+const NOBODY_CONNECTED_LAN =
+  'Nenhum celular conectou ainda. No celular: mesmo Wi-Fi (sem rede de convidado), abra o link ' +
+  'ou o QR e aceite o aviso de certificado. Se nada conectar, o firewall do computador pode ter ' +
+  'bloqueado — no Windows, permita o NexusIDE em redes privadas.';
+const NOBODY_CONNECTED_TAILNET =
+  'Nenhum celular conectou ainda. No celular: entre no app do Tailscale com a mesma conta e ' +
+  'abra o link ou o QR.';
+const CODE_EXPIRED = ' O código venceu (vale 5 minutos): toque em Novo código antes de ler o QR.';
+const CERT_WARNING =
+  'O navegador do celular vai avisar “conexão não privada”: é o certificado local do Nexus. ' +
+  'Toque em Avançado → continuar.';
+
+function readLastPairedUrl(): string | null {
+  try {
+    return localStorage.getItem(LAST_PAIRED_URL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveLastPairedUrl(url: string | null): void {
+  try {
+    if (url) localStorage.setItem(LAST_PAIRED_URL_KEY, url);
+    else localStorage.removeItem(LAST_PAIRED_URL_KEY);
+  } catch {
+    /* storage bloqueado: só perde o aviso de endereço mudado */
+  }
+}
+
+function urlOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
+/** Tira o envelope do Electron ("Error invoking remote method '…': Error: "). */
+function bridgeErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, '');
+}
+
 /**
  * "Celular na rede local": bridge LAN (código de pareamento + QR) que antes
  * morava em Máquinas remotas. Vive na página Celular, ao lado do relay, para
@@ -131,7 +178,12 @@ export function LocalPhoneBridgeCard() {
   const scopeRequest =
     nextScopes.length === REMOTE_DEVICE_SCOPES.length ? {} : { scopes: nextScopes };
 
+  const [lastPairedUrl, setLastPairedUrl] = useState(readLastPairedUrl);
+  // F-1478: uma leitura periódica não sobrescreve a resposta de uma ação.
+  const infoSeq = useRef(0);
+
   const applyInfo = (next: RemoteBridgeInfo) => {
+    infoSeq.current += 1;
     setInfo(next);
     if (next.tailscale) setTailnet(next.tailscale);
   };
@@ -146,24 +198,60 @@ export function LocalPhoneBridgeCard() {
     };
   }, []);
 
+  // F-1478: com o bridge no ar, relê o estado para o diagnóstico acompanhar o
+  // celular que pareia, conecta ou cai.
+  const running = info?.running === true;
+  useEffect(() => {
+    if (!running) return undefined;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      const seq = infoSeq.current;
+      window.nexus.remote.bridgeStatus().then(
+        (bridge) => {
+          if (!cancelled && infoSeq.current === seq) applyInfo(bridge);
+        },
+        () => undefined,
+      );
+    }, STATUS_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [running]);
+
   // Nasce LIGADO quando a CLI existe e está logada; só age no start.
   const tailnetUsable = tailnet !== null && tailnet.status !== 'unavailable';
   const publishTailnet = tailnetUsable && (publishChoice ?? true);
 
-  const start = async (request: RemoteBridgeStartRequest) => {
+  const [bridgeError, setBridgeError] = useState('');
+  // F-1478: Iniciar/Parar dizem quando falham e mostram o estado real depois.
+  const runBridgeAction = async (action: () => Promise<RemoteBridgeInfo>, failure: string) => {
     setStarting(true);
+    setBridgeError('');
     try {
-      applyInfo(
-        await window.nexus.remote.bridgeStart({
-          ...request,
-          ...scopeRequest,
-          tailscale: publishTailnet,
-        }),
-      );
+      applyInfo(await action());
+    } catch (error) {
+      setBridgeError(`${failure}: ${bridgeErrorMessage(error)}`);
+      try {
+        applyInfo(await window.nexus.remote.bridgeStatus());
+      } catch {
+        // Sem estado novo: fica o último.
+      }
     } finally {
       setStarting(false);
     }
   };
+
+  const start = (request: RemoteBridgeStartRequest) =>
+    runBridgeAction(
+      () =>
+        window.nexus.remote.bridgeStart({
+          ...request,
+          ...scopeRequest,
+          tailscale: publishTailnet,
+        }),
+      'Não deu para iniciar o bridge',
+    );
 
   // LAN de verdade antes do IP do tailnet (este usa o certificado self-signed).
   const lanWss = info?.endpoints
@@ -179,6 +267,33 @@ export function LocalPhoneBridgeCard() {
   const urlText = info?.endpoints?.length
     ? info.endpoints.map((endpoint) => `${endpoint.label}: ${endpoint.url}`).join(' · ')
     : info?.urls.join(' · ');
+
+  // F-1478: diagnóstico do "ninguém conectou".
+  const devices = info?.devices ?? [];
+  const deviceConnected = devices.some((device) => device.connected);
+  // A URL que um aparelho conectado de fato usou (o Host que chegou no bridge).
+  const usedUrl = devices.find((device) => device.connected && device.connectedUrl)?.connectedUrl;
+  const viaTailnet = Boolean(phoneUrl) && phoneUrl === tailnetUrl;
+  useEffect(() => {
+    if (!usedUrl || usedUrl === lastPairedUrl) return;
+    saveLastPairedUrl(usedUrl);
+    setLastPairedUrl(usedUrl);
+  }, [usedUrl, lastPairedUrl]);
+  let diagnosis: string | null = null;
+  if (running && phoneUrl) {
+    if (info.tokenCount === 0 && !info.clientCount) {
+      diagnosis =
+        (viaTailnet ? NOBODY_CONNECTED_TAILNET : NOBODY_CONNECTED_LAN) +
+        (info.pairingCode ? '' : CODE_EXPIRED);
+    } else if (devices.length > 0 && !deviceConnected) {
+      diagnosis =
+        lastPairedUrl && urlOrigin(lastPairedUrl) !== urlOrigin(phoneUrl)
+          ? `O endereço mudou desde o último pareamento (era ${lastPairedUrl}, agora ${phoneUrl}): ` +
+            'o celular ainda procura o antigo. Gere um QR novo em Novo código e leia de novo no celular.'
+          : 'Aparelho pareado, mas desconectado. No celular, abra o link de novo no mesmo Wi-Fi; ' +
+            'se não voltar, gere um QR novo em Novo código e leia de novo.';
+    }
+  }
 
   return (
     <section className="settings-card" aria-labelledby="remote-bridge-title">
@@ -237,7 +352,7 @@ export function LocalPhoneBridgeCard() {
           type="button"
           className="settings-btn"
           disabled={starting}
-          onClick={() => void start({})}
+          onClick={() => void start({ host: '127.0.0.1' })}
           title="Este computador (127.0.0.1); com o tailnet ligado, também os aparelhos do seu tailnet"
         >
           Iniciar neste computador
@@ -254,6 +369,20 @@ export function LocalPhoneBridgeCard() {
         <button
           type="button"
           className="settings-btn"
+          disabled={starting || !running}
+          onClick={() =>
+            void runBridgeAction(
+              () => window.nexus.remote.bridgeStop(),
+              'Não deu para parar o bridge',
+            )
+          }
+          title="Fecha o bridge: ninguém mais conecta até você iniciar de novo"
+        >
+          Parar
+        </button>
+        <button
+          type="button"
+          className="settings-btn"
           onClick={async () => {
             applyInfo(await window.nexus.remote.bridgeRotatePairing(scopeRequest));
           }}
@@ -265,14 +394,32 @@ export function LocalPhoneBridgeCard() {
           className="settings-btn"
           onClick={async () => {
             applyInfo(await window.nexus.remote.bridgeRevokeTokens());
+            saveLastPairedUrl(null);
+            setLastPairedUrl(null);
           }}
         >
           Revogar acessos
         </button>
       </div>
 
+      {bridgeError ? (
+        <p className="settings-card__note" role="alert">
+          {bridgeError}
+        </p>
+      ) : null}
+
       {info ? (
         <div className="settings-card__body">
+          {diagnosis ? (
+            <p className="settings-card__note" role="status">
+              {diagnosis}
+            </p>
+          ) : null}
+          {running && info.portFallbackFrom ? (
+            <p className="settings-card__note" role="status">
+              {`A porta ${info.portFallbackFrom} não estava livre (outro programa ou o Windows a reservou); o bridge abriu na porta ${info.port} só desta vez e tenta a ${info.portFallbackFrom} de novo no próximo início. Um QR lido antes não vale mais: leia este.`}
+            </p>
+          ) : null}
           <div className="settings-meta-grid">
             <div className="settings-meta">
               <span className="settings-meta__label">Código</span>
@@ -354,6 +501,14 @@ export function LocalPhoneBridgeCard() {
                   ? `Abra no celular: ${phoneUrl}`
                   : 'Só localhost — inicie na rede local ou publique no tailnet.'}
               </p>
+              {phoneUrl && !viaTailnet ? (
+                <p className="settings-card__note">
+                  {CERT_WARNING}
+                  {tailnetUsable
+                    ? ' Sem esse aviso: ligue “Publicar no tailnet” acima e toque em Iniciar de novo.'
+                    : ''}
+                </p>
+              ) : null}
               {phoneUrl ? (
                 <div className="settings-qr">
                   <QrCode
