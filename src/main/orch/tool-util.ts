@@ -825,6 +825,15 @@ async function assertAcceptedPromptAuthority(
  * after injectPrompt returned missed fast turns that became busy and idle
  * inside that delay, then re-sent an already completed prompt.
  */
+/**
+ * F-1426: resultado da injeção com prova de aceite. `written-unconfirmed` =
+ * o texto SAIU para o PTY mas o turno não provou aceite — o retry do
+ * chamador tem de ser SÓ o Enter final (re-colar empilha colagens: o Devin
+ * abriu com as colagens #2/#3 paradas na caixa). `not-written` = nada saiu
+ * (ou o composer foi limpo) e o chamador pode recolar.
+ */
+type PromptInjectOutcome = 'accepted' | 'written-unconfirmed' | 'not-written';
+
 async function injectWithBusyProof(
   sessionId: string,
   prompt: string,
@@ -832,10 +841,10 @@ async function injectWithBusyProof(
   invocation?: McpToolInvocation,
   requireTurnStartProof = false,
   canSubmit?: () => boolean,
-): Promise<boolean> {
+): Promise<PromptInjectOutcome> {
   // Never interleave a brief with boot or a turn already in progress. The
   // caller may retry only after an actual idle snapshot/edge.
-  if (!isSessionInjectableIdle(sessionId)) return false;
+  if (!isSessionInjectableIdle(sessionId)) return 'not-written';
   let observedBusy = false;
   let postSubmitBusy = false;
   let observedOutput = false;
@@ -938,12 +947,12 @@ async function injectWithBusyProof(
       safePrompt.includes('\n') && allowsBracketedPaste
         ? `\x1b[200~${safePrompt}\x1b[201~`
         : safePrompt;
-    if (!isSessionInjectableIdle(sessionId)) return false;
+    if (!isSessionInjectableIdle(sessionId)) return 'not-written';
     assertMcpInvocationCurrent(invocation);
     const ingest = armPasteIngest(sessionId, safePrompt);
     if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
       ingest?.cancel();
-      return false;
+      return 'not-written';
     }
     // Voo real 19/08: colagem sem prova de Enter deixava o briefing LARGADO
     // no composer ("checa o pane 5…" eterno) e o retry re-colava por cima.
@@ -974,7 +983,7 @@ async function injectWithBusyProof(
     );
     if (!submitted) {
       clearStrandedComposer();
-      return false;
+      return 'not-written';
     }
     if (getAgentTurnStartSequence(sessionId) > turnStartBaseline) {
       turnStartObserved = true;
@@ -986,9 +995,11 @@ async function injectWithBusyProof(
     armPhysicalTurnConfirmation();
     if (hasAcceptanceProof()) {
       await assertAcceptedPromptAuthority(sessionId, invocation);
-      return true;
+      return 'accepted';
     }
-    if (sessionExited || getSessionState(sessionId) === null) return false;
+    if (sessionExited || getSessionState(sessionId) === null) {
+      return submitted ? 'written-unconfirmed' : 'not-written';
+    }
     const accepted = await new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         settle = null;
@@ -1006,7 +1017,7 @@ async function injectWithBusyProof(
       await assertAcceptedPromptAuthority(sessionId, invocation);
     }
     if (!accepted && !submitted) clearStrandedComposer();
-    return accepted;
+    return accepted ? 'accepted' : submitted ? 'written-unconfirmed' : 'not-written';
   } finally {
     settle = null;
     if (physicalConfirmTimer) clearTimeout(physicalConfirmTimer);
@@ -1045,7 +1056,7 @@ export function submitPendingAgentPrompt(
     invocation,
     requiresClaudeFamilyTurnProof(options.adapterId),
     options.canSubmit,
-  );
+  ).then((outcome) => outcome === 'accepted');
 }
 
 /**
@@ -1134,16 +1145,31 @@ export async function deliverAgentPrompt(
     // Linearization point after boot/menu waits and immediately before paste.
     assertMcpInvocationCurrent(invocation);
     try {
-      if (
-        await injectWithBusyProof(
+      const outcome = await injectWithBusyProof(
+        sessionId,
+        prompt,
+        PROMPT_ACCEPTANCE_WINDOW_MS,
+        invocation,
+        requiresClaudeFamilyTurnProof(options.adapterId),
+      );
+      if (outcome === 'accepted') return true;
+      if (outcome === 'written-unconfirmed') {
+        // F-1426: o texto saiu da caixa e está no composer sem aceite — o
+        // Devin frio engoliu o Enter e a tentativa 2 re-colava o brief inteiro
+        // (colagens #2/#3 empilhadas, paradas até um Enter à mão). O retry é
+        // SÓ o Enter final, com a mesma prova de turno; nunca re-colar.
+        const resubmitted = await injectWithBusyProof(
           sessionId,
-          prompt,
+          '',
           PROMPT_ACCEPTANCE_WINDOW_MS,
           invocation,
           requiresClaudeFamilyTurnProof(options.adapterId),
-        )
-      ) {
-        return true;
+        );
+        if (resubmitted === 'accepted') return true;
+        lastError = new Error(
+          'agent pane did not start: the brief reached the composer but no Enter was accepted',
+        );
+        break;
       }
     } catch (error) {
       lastError = error;
